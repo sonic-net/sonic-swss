@@ -19,7 +19,7 @@ public:
 
 private:
     ProducerStateTable m_appVlanTableProducer, m_appVlanMemberTableProducer;
-    Table m_cfgVlanTable, m_cfgVlanMemberTable;
+    Table m_cfgVlanTable, m_cfgVlanMemberTable, m_cfgLagTable, m_cfgPortTable;
     Table m_statePortTable, m_stateLagTable;
     Table m_stateVlanTable, m_stateVlanMemberTable;
     std::set<std::string> m_vlans;
@@ -31,6 +31,7 @@ private:
     void doVlanTask(Consumer &consumer);
     void doVlanMemberTask(Consumer &consumer);
     void processUntaggedVlanMembers(std::string vlan, const std::string &members);
+    void doVlanMemberUpdateTask(Consumer &consumer);
 
     bool addHostVlan(int vlan_id);
     bool removeHostVlan(int vlan_id);
@@ -43,6 +44,8 @@ private:
     bool isVlanStateOk(const std::string &alias);
     bool isVlanMacOk();
     bool isVlanMemberStateOk(const std::string &vlanMemberKey);
+    void getVlanMembersMap(std::map<std::string, std::vector<std::string>> &member_map);
+    void updateHostVlanMtu(int vlan_id);
 };
 
 }

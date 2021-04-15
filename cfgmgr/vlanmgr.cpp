@@ -7,6 +7,7 @@
 #include "tokenize.h"
 #include "shellcmd.h"
 #include "warm_restart.h"
+#include <algorithm>
 
 using namespace std;
 using namespace swss;
@@ -24,6 +25,8 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         Orch(cfgDb, tableNames),
         m_cfgVlanTable(cfgDb, CFG_VLAN_TABLE_NAME),
         m_cfgVlanMemberTable(cfgDb, CFG_VLAN_MEMBER_TABLE_NAME),
+        m_cfgLagTable(cfgDb, CFG_LAG_TABLE_NAME),
+        m_cfgPortTable(cfgDb, CFG_PORT_TABLE_NAME),
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
         m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME),
         m_stateVlanTable(stateDb, STATE_VLAN_TABLE_NAME),
@@ -347,12 +350,6 @@ void VlanMgr::doVlanTask(Consumer &consumer)
                 else if (fvField(i) == "mtu")
                 {
                     mtu = fvValue(i);
-                    /*
-                     * TODO: support host VLAN mtu setting.
-                     * Host VLAN mtu should be set only after member configured
-                     * and VLAN state is not UNKNOWN.
-                     */
-                    SWSS_LOG_DEBUG("%s mtu %s: Host VLAN mtu setting to be supported.", key.c_str(), mtu.c_str());
                 }
                 else if (fvField(i) == "members@") {
                     members = fvValue(i);
@@ -394,6 +391,8 @@ void VlanMgr::doVlanTask(Consumer &consumer)
             {
                 processUntaggedVlanMembers(key, members);
             }
+
+            updateHostVlanMtu(vlan_id);
         }
         else if (op == DEL_COMMAND)
         {
@@ -477,6 +476,125 @@ bool VlanMgr::isVlanMemberStateOk(const string &vlanMemberKey)
         return true;
     }
     return false;
+}
+
+void VlanMgr::getVlanMembersMap(map<string, vector<string>> &member_map)
+{
+    vector<string> vlanMemberKeys;
+
+    m_cfgVlanMemberTable.getKeys(vlanMemberKeys);
+    for (auto member: vlanMemberKeys)
+    {
+        size_t found = member.find(CONFIGDB_KEY_SEPARATOR);
+        string current_vlan_alias, member_alias;
+        if (found == string::npos)
+        {
+            continue;
+        }
+        current_vlan_alias = member.substr(0, found);
+        member_alias = member.substr(found+1);
+
+        if (!isMemberStateOk(member_alias))
+        {
+            // Member's status is not ok, skipping.
+            continue;
+        }
+
+        // add members to the map
+        if (member_map.find(current_vlan_alias) == member_map.end())
+        {
+            member_map.insert(pair<string,vector<string>>(current_vlan_alias, {member_alias}));
+        }
+        else
+        {
+            member_map[current_vlan_alias].push_back(member_alias);
+        }
+    }
+}
+
+void VlanMgr::updateHostVlanMtu(int vlan_id)
+{
+    vector<FieldValueTuple> vlan_data;
+    string vlan_alias = VLAN_PREFIX + to_string(vlan_id);
+    int desired_mtu = stoi(DEFAULT_MTU_STR);
+    int allowed_max_mtu = -1;
+
+    if (!isVlanStateOk(vlan_alias))
+    {
+        SWSS_LOG_DEBUG("Do not update MTU for Host Vlan %d. The Vlan is not ready yet.", vlan_id);
+        return;
+    }
+
+    if (m_cfgVlanTable.get(vlan_alias, vlan_data))
+    {
+        for (auto field_data: vlan_data)
+        {
+            if (fvField(field_data) == "mtu")
+            {
+                desired_mtu = stoi(fvValue(field_data));
+                SWSS_LOG_DEBUG("Found desired value of MTU in config for Vlan %d: %d.", vlan_id, desired_mtu);
+            }
+        }
+
+        map<string, vector<string>> member_map;
+        getVlanMembersMap(member_map);
+
+        if (member_map.find(vlan_alias) == member_map.end())
+        {
+            SWSS_LOG_DEBUG("Do not update MTU for Host Vlan %d. The Vlan has no members.", vlan_id);
+            return;
+        }
+
+        for (auto member_alias: member_map[vlan_alias])
+        {
+            vector<FieldValueTuple> member_data;
+            if (!member_alias.compare(0, strlen(LAG_PREFIX), LAG_PREFIX))
+            {
+                if (!m_cfgLagTable.get(member_alias, member_data))
+                {
+                    SWSS_LOG_DEBUG("Skip Vlan member %s. Cannot get config for the LAG", member_alias.c_str());
+                    continue;
+                }
+            }
+            else if (!m_cfgPortTable.get(member_alias, member_data))
+            {
+                SWSS_LOG_DEBUG("Skip Vlan member %s. Cannot get config for the port", member_alias.c_str());
+                continue;
+            }
+
+            for (auto field_data: member_data)
+            {
+                if (fvField(field_data) == "mtu")
+                {
+                    int tmp_mtu = stoi(fvValue(field_data));
+                    if (allowed_max_mtu < 0 || tmp_mtu < allowed_max_mtu)
+                    {
+                        // Update allowed value of mtu for the vlan
+                        // as it is greater than mtu of current member,
+                        // or it is the first check.
+                        allowed_max_mtu = tmp_mtu;
+                    }
+                }
+            }
+        }
+
+        SWSS_LOG_DEBUG("Updating MTU for Host Vlan %d: desired %d, allowed %d", vlan_id, desired_mtu, allowed_max_mtu);
+
+        // Update desired value of mtu according to allowed value, if available
+        if (allowed_max_mtu > 0 && desired_mtu > allowed_max_mtu)
+        {
+            desired_mtu = allowed_max_mtu;
+        }
+
+        if (!setHostVlanMtu(vlan_id, desired_mtu))
+        {
+            SWSS_LOG_ERROR("Failed to set MTU %d for Host Vlan %d", desired_mtu, vlan_id);
+        }
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Failed to get config for vlan %d", vlan_id);
+    }
 }
 
 /*
@@ -614,6 +732,8 @@ void VlanMgr::doVlanMemberTask(Consumer &consumer)
                 m_stateVlanMemberTable.set(kfvKey(t), fvVector);
 
                 m_vlanMemberReplay.erase(kfvKey(t));
+
+                updateHostVlanMtu(vlan_id);
             }
         }
         else if (op == DEL_COMMAND)
@@ -626,6 +746,8 @@ void VlanMgr::doVlanMemberTask(Consumer &consumer)
                 key += port_alias;
                 m_appVlanMemberTableProducer.del(key);
                 m_stateVlanMemberTable.del(kfvKey(t));
+
+                updateHostVlanMtu(vlan_id);
             }
             else
             {
@@ -652,6 +774,51 @@ void VlanMgr::doVlanMemberTask(Consumer &consumer)
     }
 }
 
+void VlanMgr::doVlanMemberUpdateTask(Consumer &consumer)
+{
+    auto it = consumer.m_toSync.begin();
+    map<string, vector<string>> member_map;
+
+    getVlanMembersMap(member_map);
+
+    while (it != consumer.m_toSync.end())
+    {
+        auto &t = it->second;
+        string key = kfvKey(t);
+        string vlan_alias = "";
+
+        for (auto member_data: member_map)
+        {
+            auto vlan_member_data = member_data.second;
+            if (find(vlan_member_data.begin(), vlan_member_data.end(), key) != vlan_member_data.end())
+            {
+                // The key is a member of vlan.
+                // Stop searching, go to updating of the vlan.
+                vlan_alias = member_data.first;
+                break;
+            }
+        }
+        if (vlan_alias.empty())
+        {
+            // No suitable vlan members found,
+            // go to the next port/lag.
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+        for (auto i : kfvFieldsValues(t))
+        {
+            if (fvField(i) == "mtu")
+            {
+                SWSS_LOG_DEBUG("Member of Vlan %s has updated: %s. Updating MTU for the Host Vlan", vlan_alias.c_str(), key.c_str());
+                updateHostVlanMtu(stoi(vlan_alias.substr(4)));
+                // Do not update the vlan again. Remove it from the map.
+                member_map.erase(vlan_alias);
+            }
+        }
+        it = consumer.m_toSync.erase(it);
+    }
+}
+
 void VlanMgr::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -665,6 +832,10 @@ void VlanMgr::doTask(Consumer &consumer)
     else if (table_name == CFG_VLAN_MEMBER_TABLE_NAME)
     {
         doVlanMemberTask(consumer);
+    }
+    else if (table_name == CFG_PORT_TABLE_NAME || table_name == CFG_LAG_TABLE_NAME)
+    {
+        doVlanMemberUpdateTask(consumer);
     }
     else
     {
