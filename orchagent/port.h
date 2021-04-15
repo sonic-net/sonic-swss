@@ -109,6 +109,8 @@ public:
     std::vector<bool> m_queue_lock;
     std::vector<bool> m_priority_group_lock;
 
+    bool m_fec_cfg = false;
+    bool m_an_cfg = false;
 };
 
 }
