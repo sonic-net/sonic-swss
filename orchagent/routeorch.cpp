@@ -1424,7 +1424,6 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
             {
                 /* NextHopGroup is in "Ip1|alias1,Ip2|alias2,..." format*/
                 std::vector<std::string> nhops = tokenize(nextHops.to_string(), ',');
-                bool missingNexthop = false;
                 for(auto it = nhops.begin(); it != nhops.end(); ++it)
                 {
                     NextHopKey nextHop;
@@ -1463,14 +1462,8 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                                 m_neighOrch->resolveNeighborEntry(nextHop, MacAddress());
                                 m_neighborToResolve.insert(nextHop);
                             }
-                            missingNexthop = true;
                         }
                     }
-                }
-
-                if (missingNexthop)
-                {
-                    return false;
                 }
 
                 /* Failed to create the next hop group and check if a temporary route is needed */
