@@ -1501,7 +1501,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                 /* Return false since the original route is not successfully added */
                 return false;
             }
-            else
+            else if (!m_neighborToResolve.empty())
             {
                 for (auto it : nextHops.getNextHops())
                 {
