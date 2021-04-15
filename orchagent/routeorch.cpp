@@ -1403,7 +1403,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                 {
                     SWSS_LOG_INFO("Failed to get next hop %s for %s, resolving neighbor",
                             nextHops.to_string().c_str(), ipPrefix.to_string().c_str());
-                    if (m_neighborToResolve.find(nexthop) == m_neighborToResolve.end())
+                    if (m_neighborToResolve.find(nexthop) == m_neighborToResolve.end()) // TODO: Allow retry for unresolved neighbors
                     {
                         m_neighOrch->resolveNeighborEntry(nexthop, MacAddress());
                         m_neighborToResolve.insert(nexthop);
@@ -1458,7 +1458,8 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                         {
                             SWSS_LOG_INFO("Failed to get next hop %s in %s, resolving neighbor",
                                     nextHop.to_string().c_str(), nextHops.to_string().c_str());
-                            if (m_neighborToResolve.find(nextHop) == m_neighborToResolve.end()){
+                            if (m_neighborToResolve.find(nextHop) == m_neighborToResolve.end()) // TODO: Allow retry for unresolved neighbors
+                            {
                                 m_neighOrch->resolveNeighborEntry(nextHop, MacAddress());
                                 m_neighborToResolve.insert(nextHop);
                             }
