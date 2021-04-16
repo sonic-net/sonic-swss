@@ -502,7 +502,9 @@ class TestRoute(TestRouteBase):
 
         dvs.servers[1].runcmd("ip -6 address add 2001::2/64 dev eth0")
         dvs.servers[1].runcmd("ip -6 route add default via 2001::1")
-        time.sleep(2)
+        time.sleep(5)
+
+        dvs.servers[0].runcmd("ping -6 -c 1 2001::2")
 
         # check application database
         self.pdb.wait_for_entry("ROUTE_TABLE", "3000::/64")
