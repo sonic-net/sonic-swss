@@ -136,7 +136,6 @@ private:
     NextHopGroupTable m_syncdNextHopGroups;
 
     std::set<NextHopGroupKey> m_bulkNhgReducedRefCnt;
-    std::set<NextHopKey> m_neighborToResolve;
 
     NextHopObserverTable m_nextHopObservers;
 

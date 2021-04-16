@@ -1374,12 +1374,6 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
             if (m_neighOrch->hasNextHop(nexthop))
             {
                 next_hop_id = m_neighOrch->getNextHopId(nexthop);
-                if (m_neighborToResolve.find(nexthop) != m_neighborToResolve.end())
-                {
-                    m_neighOrch->clearResolvedNeighborEntry(nexthop);
-                    m_neighborToResolve.erase(nexthop);
-                    SWSS_LOG_INFO("Resolved neighbor for %s", nexthop.to_string().c_str());
-                }
             }
             else
             {
@@ -1403,11 +1397,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                 {
                     SWSS_LOG_INFO("Failed to get next hop %s for %s, resolving neighbor",
                             nextHops.to_string().c_str(), ipPrefix.to_string().c_str());
-                    if (m_neighborToResolve.find(nexthop) == m_neighborToResolve.end()) // TODO: Allow retry for unresolved neighbors
-                    {
-                        m_neighOrch->resolveNeighborEntry(nexthop, MacAddress());
-                        m_neighborToResolve.insert(nexthop);
-                    }
+                    m_neighOrch->resolveNeighbor(nexthop);
                     return false;
                 }
             }
@@ -1458,11 +1448,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                         {
                             SWSS_LOG_INFO("Failed to get next hop %s in %s, resolving neighbor",
                                     nextHop.to_string().c_str(), nextHops.to_string().c_str());
-                            if (m_neighborToResolve.find(nextHop) == m_neighborToResolve.end()) // TODO: Allow retry for unresolved neighbors
-                            {
-                                m_neighOrch->resolveNeighborEntry(nextHop, MacAddress());
-                                m_neighborToResolve.insert(nextHop);
-                            }
+                            m_neighOrch->resolveNeighbor(nextHop);
                         }
                     }
                 }
@@ -1494,18 +1480,6 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                 addTempRoute(ctx, nextHops);
                 /* Return false since the original route is not successfully added */
                 return false;
-            }
-            else if (!m_neighborToResolve.empty())
-            {
-                for (auto it : nextHops.getNextHops())
-                {
-                    if (m_neighborToResolve.find(it) != m_neighborToResolve.end())
-                    {
-                        m_neighOrch->clearResolvedNeighborEntry(it);
-                        m_neighborToResolve.erase(it);
-                        SWSS_LOG_INFO("Resolved neighbor for %s", it.to_string().c_str());
-                    }
-                }
             }
         }
 

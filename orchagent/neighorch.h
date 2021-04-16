@@ -74,8 +74,7 @@ public:
     bool addInbandNeighbor(string alias, IpAddress ip_address);
     bool delInbandNeighbor(string alias, IpAddress ip_address);
 
-    bool resolveNeighborEntry(const NeighborEntry &, const MacAddress &);
-    void clearResolvedNeighborEntry(const NeighborEntry &);
+    void resolveNeighbor(const NeighborEntry &);
 
 private:
     PortsOrch *m_portsOrch;
@@ -85,6 +84,8 @@ private:
 
     NeighborTable m_syncdNeighbors;
     NextHopTable m_syncdNextHops;
+
+    std::set<NextHopKey> m_neighborToResolve;
 
     bool addNextHop(const IpAddress&, const string&);
     bool removeNextHop(const IpAddress&, const string&);
@@ -106,6 +107,9 @@ private:
     bool addVoqEncapIndex(string &alias, IpAddress &ip, vector<sai_attribute_t> &neighbor_attrs);
     void voqSyncAddNeigh(string &alias, IpAddress &ip_address, const MacAddress &mac, sai_neighbor_entry_t &neighbor_entry);
     void voqSyncDelNeigh(string &alias, IpAddress &ip_address);
+
+    bool resolveNeighborEntry(const NeighborEntry &, const MacAddress &);
+    void clearResolvedNeighborEntry(const NeighborEntry &);
 };
 
 #endif /* SWSS_NEIGHORCH_H */

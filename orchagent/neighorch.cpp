@@ -72,6 +72,17 @@ bool NeighOrch::resolveNeighborEntry(const NeighborEntry &entry, const MacAddres
     return true;
 }
 
+void NeighOrch::resolveNeighbor(const NeighborEntry &entry)
+{
+    if (m_neighborToResolve.find(entry) == m_neighborToResolve.end()) // TODO: Allow retry for unresolved neighbors
+    {
+        resolveNeighborEntry(entry, MacAddress());
+        m_neighborToResolve.insert(entry);
+    }
+
+    return;
+}
+
 void NeighOrch::clearResolvedNeighborEntry(const NeighborEntry &entry)
 {
     string key, alias = entry.alias;
@@ -221,6 +232,12 @@ bool NeighOrch::addNextHop(const IpAddress &ipAddress, const string &alias)
 
     SWSS_LOG_NOTICE("Created next hop %s on %s",
                     ipAddress.to_string().c_str(), alias.c_str());
+    if (m_neighborToResolve.find(nexthop) != m_neighborToResolve.end())
+    {
+        clearResolvedNeighborEntry(nexthop);
+        m_neighborToResolve.erase(nexthop);
+        SWSS_LOG_INFO("Resolved neighbor for %s", nexthop.to_string().c_str());
+    }
 
     NextHopEntry next_hop_entry;
     next_hop_entry.next_hop_id = next_hop_id;
