@@ -301,6 +301,10 @@ void VrfMgr::doTask(Consumer &consumer)
                     {
                         vrfFvVector = kfvFieldsValues(t);
                     }
+                    else
+                    {
+                        vrfFvVector.emplace_back("NULL", "NULL");
+                    }
 
                     m_appVrfTableProducer.set(vrfName, vrfFvVector);
 
