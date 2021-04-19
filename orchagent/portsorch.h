@@ -74,7 +74,7 @@ struct VlanMemberUpdate
 class PortsOrch : public Orch, public Subject
 {
 public:
-    PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, DBConnector *chassisAppDb);
+    PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames, DBConnector *chassisAppDb);
 
     bool allPortsReady();
     bool isInitDone();
@@ -162,6 +162,7 @@ private:
     unique_ptr<Table> m_stateBufferMaximumValueTable;
     unique_ptr<ProducerTable> m_flexCounterTable;
     unique_ptr<ProducerTable> m_flexCounterGroupTable;
+    Table m_portStateTable;
 
     std::string getQueueWatermarkFlexCounterTableKey(std::string s);
     std::string getPriorityGroupWatermarkFlexCounterTableKey(std::string s);
@@ -268,12 +269,14 @@ private:
     bool setBridgePortAdminStatus(sai_object_id_t id, bool up);
 
     bool isSpeedSupported(const std::string& alias, sai_object_id_t port_id, sai_uint32_t speed);
+    void getPortSupportedSpeeds(const std::string& alias, sai_object_id_t port_id, PortSupportedSpeeds &supported_speeds);
+    void initPortSupportedSpeeds(const std::string& alias, sai_object_id_t port_id);
     bool setPortSpeed(Port &port, sai_uint32_t speed);
     bool getPortSpeed(sai_object_id_t id, sai_uint32_t &speed);
     bool setGearboxPortsAttr(Port &port, sai_port_attr_t id, void *value);
     bool setGearboxPortAttr(Port &port, dest_port_type_t port_type, sai_port_attr_t id, void *value);
 
-    bool setPortAdvSpeed(sai_object_id_t port_id, sai_uint32_t speed);
+    bool setPortAdvSpeeds(sai_object_id_t port_id, std::vector<sai_uint32_t>& speed_list);
 
     bool getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uint8_t &index);
 
@@ -285,11 +288,19 @@ private:
 
     bool setPortAutoNeg(sai_object_id_t id, int an);
     bool setPortFecMode(sai_object_id_t id, int fec);
+    bool setPortInterfaceType(sai_object_id_t id, sai_port_interface_type_t interface_type);
+    bool setPortAdvInterfaceTypes(sai_object_id_t id, std::vector<uint32_t> &interface_types);
 
     bool getPortOperStatus(const Port& port, sai_port_oper_status_t& status) const;
     void updatePortOperStatus(Port &port, sai_port_oper_status_t status);
 
+    bool getPortOperSpeed(const Port& port, sai_uint32_t& speed) const;
+    void updateDbPortOperSpeed(Port &port, sai_uint32_t speed);
+
     void getPortSerdesVal(const std::string& s, std::vector<uint32_t> &lane_values);
+    bool getPortAdvSpeedsVal(const std::string &s, std::vector<uint32_t> &speed_values);
+    bool getPortInterfaceTypeVal(const std::string &s, sai_port_interface_type_t &interface_type);
+    bool getPortAdvInterfaceTypesVal(const std::string &s, std::vector<uint32_t> &type_values);
 
     bool setPortSerdesAttribute(sai_object_id_t port_id,
                                 std::map<sai_port_serdes_attr_t, std::vector<uint32_t>> &serdes_attr);
@@ -301,6 +312,8 @@ private:
                                 sai_acl_bind_point_type_t &sai_acl_bind_type);
     void initGearbox();
     bool initGearboxPort(Port &port);
+
+    
     
     //map key is tuple of <attached_switch_id, core_index, core_port_index>
     map<tuple<int, int, int>, sai_object_id_t> m_systemPortOidMap;
