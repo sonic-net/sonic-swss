@@ -46,7 +46,7 @@ int main(int argc, char **argv)
             CFG_VRF_TABLE_NAME,
             CFG_VNET_TABLE_NAME,
             CFG_VXLAN_EVPN_NVO_TABLE_NAME,
-            CFG_MGMT_VRF_TABLE_NAME
+            CFG_MGMT_VRF_CONFIG_TABLE_NAME
         };
 
         DBConnector cfgDb("CONFIG_DB", 0);
