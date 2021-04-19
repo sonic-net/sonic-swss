@@ -28,6 +28,7 @@
 #include "countercheckorch.h"
 #include "notifier.h"
 #include "fdborch.h"
+#include "subscriberstatetable.h"
 
 extern sai_switch_api_t *sai_switch_api;
 extern sai_bridge_api_t *sai_bridge_api;
@@ -45,6 +46,11 @@ extern CrmOrch *gCrmOrch;
 extern BufferOrch *gBufferOrch;
 extern FdbOrch *gFdbOrch;
 extern Directory<Orch*> gDirectory;
+extern sai_system_port_api_t *sai_system_port_api;
+extern string gMySwitchType;
+extern int32_t gVoqMySwitchId;
+extern string gMyHostName;
+extern string gMyAsicName;
 
 #define VLAN_PREFIX         "Vlan"
 #define DEFAULT_VLAN_ID     1
@@ -55,6 +61,7 @@ extern Directory<Orch*> gDirectory;
 #define QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   10000
 #define QUEUE_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS "10000"
 #define PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS    "10000"
+#define PG_DROP_FLEX_STAT_COUNTER_POLL_MSECS         "10000"
 #define PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS   "1000"
 
 
@@ -198,6 +205,11 @@ static const vector<sai_ingress_priority_group_stat_t> ingressPriorityGroupWater
     SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_BYTES,
 };
 
+static const vector<sai_ingress_priority_group_stat_t> ingressPriorityGroupDropStatIds =
+{
+    SAI_INGRESS_PRIORITY_GROUP_STAT_DROPPED_PACKETS
+};
+
 static char* hostif_vlan_tag[] = {
     [SAI_HOSTIF_VLAN_TAG_STRIP]     = "SAI_HOSTIF_VLAN_TAG_STRIP",
     [SAI_HOSTIF_VLAN_TAG_KEEP]      = "SAI_HOSTIF_VLAN_TAG_KEEP",
@@ -218,7 +230,7 @@ static char* hostif_vlan_tag[] = {
  *    bridge. By design, SONiC switch starts with all bridge ports removed from
  *    default VLAN and all ports removed from .1Q bridge.
  */
-PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames) :
+PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, DBConnector *chassisAppDb) :
         Orch(db, tableNames),
         port_stat_manager(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
         port_buffer_drop_stat_manager(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS, true),
@@ -237,7 +249,6 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
 
     /* Initialize port and vlan table */
     m_portTable = unique_ptr<Table>(new Table(db, APP_PORT_TABLE_NAME));
-    m_vlanTable = unique_ptr<Table>(new Table(db, APP_VLAN_TABLE_NAME));
 
     /* Initialize gearbox */
     m_gearboxTable = unique_ptr<Table>(new Table(db, "_GEARBOX_TABLE"));
@@ -257,7 +268,8 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
     m_flexCounterTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_TABLE));
     m_flexCounterGroupTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_GROUP_TABLE));
 
-    notifications = unique_ptr<swss::NotificationProducer>(new swss::NotificationProducer(db, "VLANSTATE"));
+    m_state_db = shared_ptr<DBConnector>(new DBConnector("STATE_DB", 0));
+    m_stateBufferMaximumValueTable = unique_ptr<Table>(new Table(m_state_db.get(), STATE_BUFFER_MAXIMUM_VALUE_TABLE));
 
     initGearbox();
 
@@ -294,6 +306,11 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
         fieldValues.emplace_back(POLL_INTERVAL_FIELD, PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS);
         fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
         m_flexCounterGroupTable->set(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
+
+        fieldValues.clear();
+        fieldValues.emplace_back(POLL_INTERVAL_FIELD, PG_DROP_FLEX_STAT_COUNTER_POLL_MSECS);
+        fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
+        m_flexCounterGroupTable->set(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
     }
     catch (const runtime_error &e)
     {
@@ -394,19 +411,10 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
     }
 
     m_default1QBridge = attrs[0].value.oid;
-    m_defaultVlan_ObjId = attrs[1].value.oid;
+    m_defaultVlan = attrs[1].value.oid;
 
-    memset(&attr, 0x00, sizeof(attr));
-    attr.id  = SAI_VLAN_ATTR_VLAN_ID;
-
-    status = sai_vlan_api->get_vlan_attribute(m_defaultVlan_ObjId, 1, &attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to get default VLAN ID, rv:%d", status);
-        throw runtime_error("PortsOrch initialization failure");
-    }
-
-    m_defaultVlan_Id = attr.value.u16;
+    /* Get System ports */
+    getSystemPorts();
 
     removeDefaultVlanMembers();
     removeDefaultBridgePorts();
@@ -416,19 +424,35 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
     m_portStatusNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
     auto portStatusNotificatier = new Notifier(m_portStatusNotificationConsumer, this, "PORT_STATUS_NOTIFICATIONS");
     Orch::addExecutor(portStatusNotificatier);
+
+    if (gMySwitchType == "voq")
+    {
+        string tableName;
+        //Add subscriber to process system LAG (System PortChannel) table
+        tableName = CHASSIS_APP_LAG_TABLE_NAME;
+        Orch::addExecutor(new Consumer(new SubscriberStateTable(chassisAppDb, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, 0), this, tableName));
+        m_tableVoqSystemLagTable = unique_ptr<Table>(new Table(chassisAppDb, CHASSIS_APP_LAG_TABLE_NAME));
+
+        //Add subscriber to process system LAG member (System PortChannelMember) table
+        tableName = CHASSIS_APP_LAG_MEMBER_TABLE_NAME;
+        Orch::addExecutor(new Consumer(new SubscriberStateTable(chassisAppDb, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, 0), this, tableName));
+        m_tableVoqSystemLagMemberTable = unique_ptr<Table>(new Table(chassisAppDb, CHASSIS_APP_LAG_MEMBER_TABLE_NAME));
+
+        m_lagIdAllocator = unique_ptr<LagIdAllocator> (new LagIdAllocator(chassisAppDb));
+    }
 }
 
 void PortsOrch::removeDefaultVlanMembers()
 {
     /* Get VLAN members in default VLAN */
-    vector<sai_object_id_t> vlan_member_list(m_portCount);
+    vector<sai_object_id_t> vlan_member_list(m_portCount + m_systemPortCount);
 
     sai_attribute_t attr;
     attr.id = SAI_VLAN_ATTR_MEMBER_LIST;
     attr.value.objlist.count = (uint32_t)vlan_member_list.size();
     attr.value.objlist.list = vlan_member_list.data();
 
-    sai_status_t status = sai_vlan_api->get_vlan_attribute(m_defaultVlan_ObjId, 1, &attr);
+    sai_status_t status = sai_vlan_api->get_vlan_attribute(m_defaultVlan, 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to get VLAN member list in default VLAN, rv:%d", status);
@@ -452,10 +476,10 @@ void PortsOrch::removeDefaultVlanMembers()
 void PortsOrch::removeDefaultBridgePorts()
 {
     /* Get bridge ports in default 1Q bridge
-     * By default, there will be m_portCount number of SAI_BRIDGE_PORT_TYPE_PORT
+     * By default, there will be (m_portCount + m_systemPortCount) number of SAI_BRIDGE_PORT_TYPE_PORT
      * ports and one SAI_BRIDGE_PORT_TYPE_1Q_ROUTER port. The former type of
      * ports will be removed. */
-    vector<sai_object_id_t> bridge_port_list(m_portCount + 1);
+    vector<sai_object_id_t> bridge_port_list(m_portCount + m_systemPortCount + 1);
 
     sai_attribute_t attr;
     attr.id = SAI_BRIDGE_ATTR_PORT_LIST;
@@ -587,12 +611,35 @@ bool PortsOrch::getPort(sai_object_id_t id, Port &port)
 {
     SWSS_LOG_ENTER();
 
-    auto itr = portOidToName.find(id);
-    if (itr == portOidToName.end())
-        return false;
-    else {
-        getPort(itr->second, port);
-        return true;
+    for (const auto& portIter: m_portList)
+    {
+        switch (portIter.second.m_type)
+        {
+        case Port::PHY:
+        case Port::SYSTEM:
+            if(portIter.second.m_port_id == id)
+            {
+                port = portIter.second;
+                return true;
+            }
+            break;
+        case Port::LAG:
+            if(portIter.second.m_lag_id == id)
+            {
+                port = portIter.second;
+                return true;
+            }
+            break;
+        case Port::VLAN:
+            if (portIter.second.m_vlan_info.vlan_oid == id)
+            {
+                port = portIter.second;
+                return true;
+            }
+            break;
+        default:
+            continue;
+        }
     }
 
     return false;
@@ -614,12 +661,13 @@ bool PortsOrch::getPortByBridgePortId(sai_object_id_t bridge_port_id, Port &port
 {
     SWSS_LOG_ENTER();
 
-    auto itr = portOidToName.find(bridge_port_id);
-    if (itr == portOidToName.end())
-        return false;
-    else {
-        getPort(itr->second, port);
-        return true;
+    for (auto &it: m_portList)
+    {
+        if (it.second.m_bridge_port_id == bridge_port_id)
+        {
+            port = it.second;
+            return true;
+        }
     }
 
     return false;
@@ -693,6 +741,17 @@ bool PortsOrch::addSubPort(Port &port, const string &alias, const bool &adminUp,
     }
     p.m_vlan_info.vlan_id = vlan_id;
 
+    // Change hostif vlan tag for the parent port only when a first subport is created
+    if (parentPort.m_child_ports.empty())
+    {
+        if (!setHostIntfsStripTag(parentPort, SAI_HOSTIF_VLAN_TAG_KEEP))
+        {
+            SWSS_LOG_ERROR("Failed to set %s for hostif of port %s",
+                    hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_KEEP], parentPort.m_alias.c_str());
+            return false;
+        }
+    }
+
     parentPort.m_child_ports.insert(p.m_alias);
 
     m_portList[alias] = p;
@@ -729,6 +788,21 @@ bool PortsOrch::removeSubPort(const string &alias)
     m_portList[parentPort.m_alias] = parentPort;
 
     m_portList.erase(it);
+
+    // Restore hostif vlan tag for the parent port when the last subport is removed
+    if (parentPort.m_child_ports.empty())
+    {
+        if (parentPort.m_bridge_port_id == SAI_NULL_OBJECT_ID)
+        {
+            if (!setHostIntfsStripTag(parentPort, SAI_HOSTIF_VLAN_TAG_STRIP))
+            {
+                SWSS_LOG_ERROR("Failed to set %s for hostif of port %s",
+                        hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_STRIP], parentPort.m_alias.c_str());
+                return false;
+            }
+        }
+    }
+
     return true;
 }
 
@@ -777,11 +851,16 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
     attr.id = SAI_PORT_ATTR_ADMIN_STATE;
     attr.value.booldata = state;
 
-    if (sai_port_api->set_port_attribute(port.m_port_id, &attr) != SAI_STATUS_SUCCESS)
+    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set admin status %s to port pid:%" PRIx64,
                        state ? "UP" : "DOWN", port.m_port_id);
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_INFO("Set admin status %s to port pid:%" PRIx64,
@@ -827,7 +906,11 @@ bool PortsOrch::setPortMtu(sai_object_id_t id, sai_uint32_t mtu)
     {
         SWSS_LOG_ERROR("Failed to set MTU %u to port pid:%" PRIx64 ", rv:%d",
                 attr.value.u32, id, status);
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     SWSS_LOG_INFO("Set MTU %u to port pid:%" PRIx64, attr.value.u32, id);
     return true;
@@ -841,10 +924,15 @@ bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t mode)
     attr.id = SAI_PORT_ATTR_FEC_MODE;
     attr.value.s32 = mode;
 
-    if (sai_port_api->set_port_attribute(port.m_port_id, &attr) != SAI_STATUS_SUCCESS)
+    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set fec mode %d to port pid:%" PRIx64, mode, port.m_port_id);
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_INFO("Set fec mode %d to port pid:%" PRIx64, mode, port.m_port_id);
@@ -904,7 +992,11 @@ bool PortsOrch::setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set PFC 0x%x to port id 0x%" PRIx64 " (rc:%d)", attr.value.u8, portId, status);
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     if (p.m_pfc_bitmask != pfc_bitmask)
@@ -952,7 +1044,11 @@ bool PortsOrch::setPortPfcAsym(Port &port, string pfc_asym)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set PFC mode %d to port id 0x%" PRIx64 " (rc:%d)", port.m_pfc_asym, port.m_port_id, status);
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     if (!setPortPfc(port.m_port_id, pfc))
@@ -969,7 +1065,11 @@ bool PortsOrch::setPortPfcAsym(Port &port, string pfc_asym)
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to set RX PFC 0x%x to port id 0x%" PRIx64 " (rc:%d)", attr.value.u8, port.m_port_id, status);
-            return false;
+            task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+            if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
         }
     }
 
@@ -1015,6 +1115,16 @@ bool PortsOrch::bindUnbindAclTableGroup(Port &port,
             attr.id = ingress ?
                     SAI_PORT_ATTR_INGRESS_ACL : SAI_PORT_ATTR_EGRESS_ACL;
             status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+            if (SAI_STATUS_SUCCESS != status)
+            {
+                SWSS_LOG_ERROR("Failed to %s %s to ACL table group %" PRIx64 ", rv:%d",
+                            bind_str.c_str(), port.m_alias.c_str(), attr.value.oid, status);
+                task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
+            }
             break;
         }
         case Port::LAG:
@@ -1022,6 +1132,16 @@ bool PortsOrch::bindUnbindAclTableGroup(Port &port,
             attr.id = ingress ?
                     SAI_LAG_ATTR_INGRESS_ACL : SAI_LAG_ATTR_EGRESS_ACL;
             status = sai_lag_api->set_lag_attribute(port.m_lag_id, &attr);
+            if (SAI_STATUS_SUCCESS != status)
+            {
+                SWSS_LOG_ERROR("Failed to %s %s to ACL table group %" PRIx64 ", rv:%d",
+                            bind_str.c_str(), port.m_alias.c_str(), attr.value.oid, status);
+                task_process_status handle_status = handleSaiSetStatus(SAI_API_LAG, status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
+            }
             break;
         }
         case Port::VLAN:
@@ -1031,6 +1151,16 @@ bool PortsOrch::bindUnbindAclTableGroup(Port &port,
             status =
                 sai_vlan_api->set_vlan_attribute(port.m_vlan_info.vlan_oid,
                                                  &attr);
+            if (SAI_STATUS_SUCCESS != status)
+            {
+                SWSS_LOG_ERROR("Failed to %s %s to ACL table group %" PRIx64 ", rv:%d",
+                            bind_str.c_str(), port.m_alias.c_str(), attr.value.oid, status);
+                task_process_status handle_status = handleSaiSetStatus(SAI_API_VLAN, status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
+            }
             break;
         }
         default:
@@ -1039,13 +1169,6 @@ bool PortsOrch::bindUnbindAclTableGroup(Port &port,
                            bind_str.c_str(), port.m_alias.c_str(), port.m_type);
             return false;
         }
-    }
-
-    if (SAI_STATUS_SUCCESS != status)
-    {
-        SWSS_LOG_ERROR("Failed to %s %s to ACL table group %" PRIx64 ", rv:%d",
-                       bind_str.c_str(), port.m_alias.c_str(), attr.value.oid, status);
-        return false;
     }
 
     return true;
@@ -1105,7 +1228,11 @@ bool PortsOrch::unbindRemoveAclTableGroup(sai_object_id_t  port_oid,
     if (SAI_STATUS_SUCCESS != status)
     {
         SWSS_LOG_ERROR("Failed to remove ACL table group, rv:%d", status);
-        return false;
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_ACL, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     sai_acl_bind_point_type_t bind_type;
     if (!getSaiAclBindPointType(port.m_type, bind_type))
@@ -1188,7 +1315,11 @@ bool PortsOrch::createBindAclTableGroup(sai_object_id_t  port_oid,
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create ACL table group, rv:%d", status);
-            return false;
+            task_process_status handle_status = handleSaiCreateStatus(SAI_API_ACL, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
         assert(group_oid_ref != SAI_NULL_OBJECT_ID);
 
@@ -1231,7 +1362,18 @@ bool PortsOrch::unbindAclTable(sai_object_id_t  port_oid,
     if (status != SAI_STATUS_SUCCESS) {
         SWSS_LOG_ERROR("Failed to remove ACL group member: %" PRIu64 " ",
                        acl_group_member_oid);
-        return false;
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_ACL, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+
+    Port port;
+    if (getPort(port_oid, port))
+    {
+        decreasePortRefCount(port.m_alias);
     }
 
     if (!unbindRemoveAclTableGroup(port_oid, acl_table_oid, acl_stage)) {
@@ -1291,7 +1433,17 @@ bool PortsOrch::bindAclTable(sai_object_id_t  port_oid,
     {
         SWSS_LOG_ERROR("Failed to create member in ACL table group %" PRIx64 " for ACL table %" PRIx64 ", rv:%d",
                 group_oid, table_oid, status);
-        return false;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_ACL, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    Port port;
+    if (getPort(port_oid, port))
+    {
+        increasePortRefCount(port.m_alias);
     }
 
     return true;
@@ -1304,6 +1456,12 @@ bool PortsOrch::setPortPvid(Port &port, sai_uint32_t pvid)
     if(port.m_type == Port::TUNNEL)
     {
         SWSS_LOG_ERROR("pvid setting for tunnel %s is not allowed", port.m_alias.c_str());
+        return true;
+    }
+
+    if(port.m_type == Port::SYSTEM)
+    {
+        SWSS_LOG_INFO("pvid setting for system port %s is not applicable", port.m_alias.c_str());
         return true;
     }
 
@@ -1324,7 +1482,11 @@ bool PortsOrch::setPortPvid(Port &port, sai_uint32_t pvid)
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to set pvid %u to port: %s", attr.value.u32, port.m_alias.c_str());
-            return false;
+            task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
         SWSS_LOG_NOTICE("Set pvid %u to port: %s", attr.value.u32, port.m_alias.c_str());
     }
@@ -1338,7 +1500,11 @@ bool PortsOrch::setPortPvid(Port &port, sai_uint32_t pvid)
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to set pvid %u to lag: %s", attr.value.u32, port.m_alias.c_str());
-            return false;
+            task_process_status handle_status = handleSaiSetStatus(SAI_API_LAG, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
         SWSS_LOG_NOTICE("Set pvid %u to lag: %s", attr.value.u32, port.m_alias.c_str());
     }
@@ -1406,7 +1572,11 @@ bool PortsOrch::setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip)
         {
             SWSS_LOG_ERROR("Failed to set %s to host interface %s",
                         hostif_vlan_tag[strip], p.m_alias.c_str());
-            return false;
+            task_process_status handle_status = handleSaiSetStatus(SAI_API_HOSTIF, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
         SWSS_LOG_NOTICE("Set %s to host interface: %s",
                         hostif_vlan_tag[strip], p.m_alias.c_str());
@@ -1594,11 +1764,16 @@ bool PortsOrch::setGearboxPortAttr(Port &port, dest_port_type_t port_type, sai_p
             else
             {
                 SWSS_LOG_ERROR("BOX: Failed to set %s port attribute %d", port.m_alias.c_str(), id);
+                task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
         }
     }
 
-    return status == SAI_STATUS_SUCCESS;
+    return true;
 }
 
 bool PortsOrch::setPortSpeed(Port &port, sai_uint32_t speed)
@@ -1612,13 +1787,17 @@ bool PortsOrch::setPortSpeed(Port &port, sai_uint32_t speed)
     attr.value.u32 = speed;
 
     status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
-
-    if (status == SAI_STATUS_SUCCESS)
+    if (status != SAI_STATUS_SUCCESS)
     {
-        setGearboxPortsAttr(port, SAI_PORT_ATTR_SPEED, &speed);
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
-    return status == SAI_STATUS_SUCCESS;
+    setGearboxPortsAttr(port, SAI_PORT_ATTR_SPEED, &speed);
+    return true;
 }
 
 bool PortsOrch::getPortSpeed(sai_object_id_t id, sai_uint32_t &speed)
@@ -1654,8 +1833,16 @@ bool PortsOrch::setPortAdvSpeed(sai_object_id_t port_id, sai_uint32_t speed)
     attr.value.u32list.count = static_cast<uint32_t>(speeds.size());
 
     status = sai_port_api->set_port_attribute(port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
 
-    return status == SAI_STATUS_SUCCESS;
+    return true;
 }
 
 bool PortsOrch::getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uint8_t &index)
@@ -1713,7 +1900,11 @@ bool PortsOrch::setPortAutoNeg(sai_object_id_t id, int an)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set AutoNeg %u to port pid:%" PRIx64, attr.value.booldata, id);
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     SWSS_LOG_INFO("Set AutoNeg %u to port pid:%" PRIx64, attr.value.booldata, id);
     return true;
@@ -1741,6 +1932,55 @@ bool PortsOrch::setHostIntfsOperStatus(const Port& port, bool isUp) const
     return true;
 }
 
+bool PortsOrch::createVlanHostIntf(Port& vl, string hostif_name)
+{
+    SWSS_LOG_ENTER();
+
+    if (vl.m_vlan_info.host_intf_id != SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("Host interface already assigned to VLAN %d", vl.m_vlan_info.vlan_id);
+        return false;
+    }
+
+    vector<sai_attribute_t> attrs;
+    sai_attribute_t attr;
+
+    attr.id = SAI_HOSTIF_ATTR_TYPE;
+    attr.value.s32 = SAI_HOSTIF_TYPE_NETDEV;
+    attrs.push_back(attr);
+
+    attr.id = SAI_HOSTIF_ATTR_OBJ_ID;
+    attr.value.oid = vl.m_vlan_info.vlan_oid;
+    attrs.push_back(attr);
+
+    attr.id = SAI_HOSTIF_ATTR_NAME;
+    strncpy(attr.value.chardata, hostif_name.c_str(), sizeof(attr.value.chardata));
+    attrs.push_back(attr);
+
+    sai_status_t status = sai_hostif_api->create_hostif(&vl.m_vlan_info.host_intf_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create host interface %s for VLAN %d", hostif_name.c_str(), vl.m_vlan_info.vlan_id);
+        return false;
+    }
+
+    m_portList[vl.m_alias] = vl;
+
+    return true;
+}
+
+bool PortsOrch::removeVlanHostIntf(Port vl)
+{
+    sai_status_t status = sai_hostif_api->remove_hostif(vl.m_vlan_info.host_intf_id);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove VLAN %d host interface", vl.m_vlan_info.vlan_id);
+        return false;
+    }
+
+    return true;
+}
+
 void PortsOrch::updateDbPortOperStatus(const Port& port, sai_port_oper_status_t status) const
 {
     SWSS_LOG_ENTER();
@@ -1756,21 +1996,6 @@ void PortsOrch::updateDbPortOperStatus(const Port& port, sai_port_oper_status_t 
     FieldValueTuple tuple("oper_status", oper_status_strings.at(status));
     tuples.push_back(tuple);
     m_portTable->set(port.m_alias, tuples);
-}
-
-void PortsOrch::updateDbVlanOperStatus(const Port& vlan, string status) const
-{
-    SWSS_LOG_NOTICE("vlan %s status %s", vlan.m_alias.c_str(), status.c_str());
-
-    vector<FieldValueTuple> tuples;
-    FieldValueTuple tuple("oper_status", status);
-    tuples.push_back(tuple);
-
-    std::vector<swss::FieldValueTuple> entry;
-
-    SWSS_LOG_NOTICE("sending oper state notification to VlanMgr");
-
-    notifications->send(status, vlan.m_alias, entry);
 }
 
 bool PortsOrch::addPort(const set<int> &lane_set, uint32_t speed, int an, string fec_mode)
@@ -1810,7 +2035,11 @@ bool PortsOrch::addPort(const set<int> &lane_set, uint32_t speed, int an, string
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create port with the speed %u, rv:%d", speed, status);
-        return false;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     m_portListLaneMap[lane_set] = port_id;
@@ -1826,6 +2055,16 @@ sai_status_t PortsOrch::removePort(sai_object_id_t port_id)
     SWSS_LOG_ENTER();
 
     Port port;
+
+    /*
+     * Make sure to bring down admin state.
+     * SET would have replaced with DEL
+     */
+    if (getPort(port_id, port))
+    {
+        setPortAdminStatus(port, false);
+    }
+    /* else : port is in default state or not yet created */
 
     sai_status_t status = sai_port_api->remove_port(port_id);
     if (status != SAI_STATUS_SUCCESS)
@@ -1847,6 +2086,11 @@ string PortsOrch::getQueueWatermarkFlexCounterTableKey(string key)
 string PortsOrch::getPriorityGroupWatermarkFlexCounterTableKey(string key)
 {
     return string(PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
+}
+
+string PortsOrch::getPriorityGroupDropPacketsFlexCounterTableKey(string key)
+{
+    return string(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
 }
 
 bool PortsOrch::initPort(const string &alias, const int index, const set<int> &lane_set)
@@ -1878,7 +2122,6 @@ bool PortsOrch::initPort(const string &alias, const int index, const set<int> &l
 
                 /* Add port to port list */
                 m_portList[alias] = p;
-                portOidToName[id] = alias;
                 m_port_ref_count[alias] = 0;
                 m_portOidToIndex[id] = index;
 
@@ -1936,6 +2179,9 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
 
     /* remove port name map from counter table */
     m_counter_db->hdel(COUNTERS_PORT_NAME_MAP, alias);
+
+    /* Remove the associated port serdes attribute */
+    removePortSerdesAttribute(p.m_port_id);
 
     m_portList[alias].m_init = false;
     SWSS_LOG_NOTICE("De-Initialized port %s", alias.c_str());
@@ -2082,6 +2328,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
              */
             if (!m_initDone)
             {
+                addSystemPorts();
                 m_initDone = true;
                 SWSS_LOG_INFO("Get PortInitDone notification from portsyncd.");
             }
@@ -2094,9 +2341,9 @@ void PortsOrch::doPortTask(Consumer &consumer)
         if (op == SET_COMMAND)
         {
             set<int> lane_set;
-            vector<uint32_t> pre_emphasis;
-            vector<uint32_t> idriver;
-            vector<uint32_t> ipredriver;
+            vector<uint32_t> attr_val;
+            map<sai_port_serdes_attr_t, vector<uint32_t>> serdes_attr;
+            typedef pair<sai_port_serdes_attr_t, vector<uint32_t>> serdes_attr_pair;
             string admin_status;
             string fec_mode;
             string pfc_asym;
@@ -2108,14 +2355,14 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
             for (auto i : kfvFieldsValues(t))
             {
+                attr_val.clear();
                 /* Set interface index */
                 if (fvField(i) == "index")
                 {
                     index = (int)stoul(fvValue(i));
                 }
-
                 /* Get lane information of a physical port and initialize the port */
-                if (fvField(i) == "lanes")
+                else if (fvField(i) == "lanes")
                 {
                     string lane_str;
                     istringstream iss(fvValue(i));
@@ -2125,65 +2372,107 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         int lane = stoi(lane_str);
                         lane_set.insert(lane);
                     }
-
                 }
-
                 /* Set port admin status */
-                if (fvField(i) == "admin_status")
+                else if (fvField(i) == "admin_status")
                 {
                     admin_status = fvValue(i);
                 }
-
                 /* Set port MTU */
-                if (fvField(i) == "mtu")
+                else if (fvField(i) == "mtu")
                 {
                     mtu = (uint32_t)stoul(fvValue(i));
                 }
-
                 /* Set port speed */
-                if (fvField(i) == "speed")
+                else if (fvField(i) == "speed")
                 {
                     speed = (uint32_t)stoul(fvValue(i));
                 }
-
                 /* Set port fec */
-                if (fvField(i) == "fec")
+                else if (fvField(i) == "fec")
                 {
                     fec_mode = fvValue(i);
                 }
-
                 /* Get port fdb learn mode*/
-                if (fvField(i) == "learn_mode")
+                else if (fvField(i) == "learn_mode")
                 {
                     learn_mode = fvValue(i);
                 }
-
                 /* Set port asymmetric PFC */
-                if (fvField(i) == "pfc_asym")
+                else if (fvField(i) == "pfc_asym")
+                {
                     pfc_asym = fvValue(i);
-
+                }
                 /* Set autoneg and ignore the port speed setting */
-                if (fvField(i) == "autoneg")
+                else if (fvField(i) == "autoneg")
                 {
-                    an = (int)stoul(fvValue(i));
+                    an = (fvValue(i) == "on");
                 }
-
                 /* Set port serdes Pre-emphasis */
-                if (fvField(i) == "preemphasis")
+                else if (fvField(i) == "preemphasis")
                 {
-                    getPortSerdesVal(fvValue(i), pre_emphasis);
+                    getPortSerdesVal(fvValue(i), attr_val);
+                    serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_PREEMPHASIS, attr_val));
                 }
-
                 /* Set port serdes idriver */
-                if (fvField(i) == "idriver")
+                else if (fvField(i) == "idriver")
                 {
-                    getPortSerdesVal(fvValue(i), idriver);
+                    getPortSerdesVal(fvValue(i), attr_val);
+                    serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_IDRIVER, attr_val));
                 }
-
                 /* Set port serdes ipredriver */
-                if (fvField(i) == "ipredriver")
+                else if (fvField(i) == "ipredriver")
                 {
-                    getPortSerdesVal(fvValue(i), ipredriver);
+                    getPortSerdesVal(fvValue(i), attr_val);
+                    serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_IPREDRIVER, attr_val));
+                }
+                /* Set port serdes pre1 */
+                else if (fvField(i) == "pre1")
+                {
+                    getPortSerdesVal(fvValue(i), attr_val);
+                    serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_TX_FIR_PRE1, attr_val));
+                }
+                /* Set port serdes pre2 */
+                else if (fvField(i) == "pre2")
+                {
+                    getPortSerdesVal(fvValue(i), attr_val);
+                    serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_TX_FIR_PRE2, attr_val));
+                }
+                /* Set port serdes pre3 */
+                else if (fvField(i) == "pre3")
+                {
+                    getPortSerdesVal(fvValue(i), attr_val);
+                    serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_TX_FIR_PRE3, attr_val));
+                }
+                /* Set port serdes main */
+                else if (fvField(i) == "main")
+                {
+                    getPortSerdesVal(fvValue(i), attr_val);
+                    serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_TX_FIR_MAIN, attr_val));
+                }
+                /* Set port serdes post1 */
+                else if (fvField(i) == "post1")
+                {
+                    getPortSerdesVal(fvValue(i), attr_val);
+                    serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_TX_FIR_POST1, attr_val));
+                }
+                /* Set port serdes post2 */
+                else if (fvField(i) == "post2")
+                {
+                    getPortSerdesVal(fvValue(i), attr_val);
+                    serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_TX_FIR_POST2, attr_val));
+                }
+                /* Set port serdes post3 */
+                else if (fvField(i) == "post3")
+                {
+                    getPortSerdesVal(fvValue(i), attr_val);
+                    serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_TX_FIR_POST3, attr_val));
+                }
+                /* Set port serdes attn */
+                else if (fvField(i) == "attn")
+                {
+                    getPortSerdesVal(fvValue(i), attr_val);
+                    serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_TX_FIR_ATTN, attr_val));
                 }
             }
 
@@ -2275,12 +2564,13 @@ void PortsOrch::doPortTask(Consumer &consumer)
             }
             else
             {
-                if (an != -1 && an != p.m_autoneg)
+                if (an != -1 && (!p.m_an_cfg || an != p.m_autoneg))
                 {
                     if (setPortAutoNeg(p.m_port_id, an))
                     {
                         SWSS_LOG_NOTICE("Set port %s AutoNeg to %u", alias.c_str(), an);
                         p.m_autoneg = an;
+                        p.m_an_cfg = true;
                         m_portList[alias] = p;
 
                         // Once AN is changed
@@ -2413,7 +2703,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     if (fec_mode_map.find(fec_mode) != fec_mode_map.end())
                     {
                         /* reset fec mode upon mode change */
-                        if (p.m_fec_mode != fec_mode_map[fec_mode])
+                        if (!p.m_fec_cfg || p.m_fec_mode != fec_mode_map[fec_mode])
                         {
                             if (p.m_admin_state_up)
                             {
@@ -2427,6 +2717,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                                 p.m_admin_state_up = false;
                                 p.m_fec_mode = fec_mode_map[fec_mode];
+                                p.m_fec_cfg = true;
 
                                 if (setPortFec(p, p.m_fec_mode))
                                 {
@@ -2444,6 +2735,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             {
                                 /* Port is already down, setting fec mode*/
                                 p.m_fec_mode = fec_mode_map[fec_mode];
+                                p.m_fec_cfg = true;
                                 if (setPortFec(p, p.m_fec_mode))
                                 {
                                     m_portList[alias] = p;
@@ -2504,45 +2796,15 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                 }
 
-                if (pre_emphasis.size() != 0)
+                if (serdes_attr.size() != 0)
                 {
-                    if (setPortSerdesAttribute(p.m_port_id, SAI_PORT_ATTR_SERDES_PREEMPHASIS, pre_emphasis))
+                    if (setPortSerdesAttribute(p.m_port_id, serdes_attr))
                     {
                         SWSS_LOG_NOTICE("Set port %s  preemphasis is success", alias.c_str());
                     }
                     else
                     {
                         SWSS_LOG_ERROR("Failed to set port %s pre-emphasis", alias.c_str());
-                        it++;
-                        continue;
-                    }
-
-                }
-
-                if (idriver.size() != 0)
-                {
-                    if (setPortSerdesAttribute(p.m_port_id, SAI_PORT_ATTR_SERDES_IDRIVER, idriver))
-                    {
-                        SWSS_LOG_NOTICE("Set port %s idriver is success", alias.c_str());
-                    }
-                    else
-                    {
-                        SWSS_LOG_ERROR("Failed to set port %s idriver", alias.c_str());
-                        it++;
-                        continue;
-                    }
-
-                }
-
-                if (ipredriver.size() != 0)
-                {
-                    if (setPortSerdesAttribute(p.m_port_id, SAI_PORT_ATTR_SERDES_IPREDRIVER, ipredriver))
-                    {
-                        SWSS_LOG_NOTICE("Set port %s ipredriver is success", alias.c_str());
-                    }
-                    else
-                    {
-                        SWSS_LOG_ERROR("Failed to set port %s ipredriver", alias.c_str());
                         it++;
                         continue;
                     }
@@ -2660,6 +2922,7 @@ void PortsOrch::doVlanTask(Consumer &consumer)
             // Retrieve attributes
             uint32_t mtu = 0;
             MacAddress mac;
+            string hostif_name = "";
             for (auto i : kfvFieldsValues(t))
             {
                 if (fvField(i) == "mtu")
@@ -2669,6 +2932,10 @@ void PortsOrch::doVlanTask(Consumer &consumer)
                 if (fvField(i) == "mac")
                 {
                     mac = MacAddress(fvValue(i));
+                }
+                if (fvField(i) == "hostif_name")
+                {
+                    hostif_name = fvValue(i);
                 }
             }
 
@@ -2710,6 +2977,16 @@ void PortsOrch::doVlanTask(Consumer &consumer)
                     if (vl.m_rif_id)
                     {
                         gIntfsOrch->setRouterIntfsMac(vl);
+                    }
+                }
+                if (!hostif_name.empty())
+                {
+                    if (!createVlanHostIntf(vl, hostif_name))
+                    {
+                        // No need to fail in case of error as this is for monitoring VLAN.
+                        // Error message is printed by "createVlanHostIntf" so just handle failure gracefully.
+                        it = consumer.m_toSync.erase(it);
+                        continue;
                     }
                 }
             }
@@ -2824,23 +3101,24 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            int ret = true;
             if (vlan.m_members.find(port_alias) != vlan.m_members.end())
             {
-                ret = removeVlanMember(vlan, port);
-            }
-            if ((ret) && m_portVlanMember[port.m_alias].empty())
-            {
-                ret = removeBridgePort(port);
-            }
-            if (ret)
-            {
-                it = consumer.m_toSync.erase(it);
+                if (removeVlanMember(vlan, port))
+                {
+                    if (port.m_vlan_members.empty())
+                    {
+                        removeBridgePort(port);
+                    }
+                    it = consumer.m_toSync.erase(it);
+                }
+                else
+                {
+                    it++;
+                }
             }
             else
-            {
-                it++;
-            }
+                /* Cannot locate the VLAN */
+                it = consumer.m_toSync.erase(it);
         }
         else
         {
@@ -2854,6 +3132,8 @@ void PortsOrch::doLagTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
+    string table_name = consumer.getTableName();
+
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
@@ -2866,11 +3146,10 @@ void PortsOrch::doLagTask(Consumer &consumer)
         {
             // Retrieve attributes
             uint32_t mtu = 0;
-
-            string oper_status;
             string learn_mode;
             string operation_status;
-            bool operation_status_changed = false;
+            uint32_t lag_id = 0;
+            int32_t switch_id = -1;
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -2891,21 +3170,43 @@ void PortsOrch::doLagTask(Consumer &consumer)
                         it++;
                         continue;
                     }
-
-                    gNeighOrch->ifChangeInformNextHop(alias,
-                                                 (operation_status == "up"));
-                    Port lag;
-                    if (getPort(alias, lag))
-                    {
-                        operation_status_changed = 
-                           (string_oper_status.at(operation_status) != 
-                                                    lag.m_oper_status);
-                    }
-                    oper_status = fvValue(i);
+                }
+                else if (fvField(i) == "lag_id")
+                {
+                    lag_id = (uint32_t)stoul(fvValue(i));
+                }
+                else if (fvField(i) == "switch_id")
+                {
+                    switch_id = stoi(fvValue(i));
                 }
             }
 
-            auto status = addLag(alias);
+            if (table_name == CHASSIS_APP_LAG_TABLE_NAME)
+            {
+                if (switch_id == gVoqMySwitchId)
+                {
+                    //Already created, syncd local lag from CHASSIS_APP_DB. Skip
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+            }
+            else
+            {
+                // For local portchannel
+
+                lag_id = 0;
+                switch_id = -1;
+            }
+
+            // Create a new LAG when the new alias comes
+            if (m_portList.find(alias) == m_portList.end())
+            {
+                if (!addLag(alias, lag_id, switch_id))
+                {
+                    it++;
+                    continue;
+                }
+            }
 
             // Process attributes
             Port l;
@@ -2922,14 +3223,7 @@ void PortsOrch::doLagTask(Consumer &consumer)
                     m_portList[alias] = l;
                 }
 
-                if (operation_status_changed)
-                {
-                    PortOperStateUpdate update;
-                    update.port = l;
-                    update.operStatus = string_oper_status.at(operation_status);
-                    notify(SUBJECT_TYPE_PORT_OPER_STATE_CHANGE, static_cast<void *>(&update));
-                }
-                if ((mtu != 0) && (mtu != l.m_mtu))
+                if (mtu != 0)
                 {
                     l.m_mtu = mtu;
                     m_portList[alias] = l;
@@ -2939,16 +3233,6 @@ void PortsOrch::doLagTask(Consumer &consumer)
                     }
                     // Sub interfaces inherit parent LAG mtu
                     updateChildPortsMtu(l, mtu);
-                }
-
-                if (!oper_status.empty())
-                {
-                    if (oper_status != "up")
-                        gFdbOrch->flushFdbByPort(alias, 0);
-
-                    /* Trigger status updated only if it is set */
-                    sai_port_oper_status_t status = (oper_status == "up") ? SAI_PORT_OPER_STATUS_UP : SAI_PORT_OPER_STATUS_DOWN;
-                    updateLagOperStatus(l, status);
                 }
 
                 if (!learn_mode.empty() && (l.m_learn_mode != learn_mode))
@@ -2977,15 +3261,8 @@ void PortsOrch::doLagTask(Consumer &consumer)
                     }
                 }
             }
-            if (!status)
-            {
-                it++;
-                continue;
-            }
-            else
-            {
-                it = consumer.m_toSync.erase(it);
-            }
+
+            it = consumer.m_toSync.erase(it);
         }
         else if (op == DEL_COMMAND)
         {
@@ -3013,6 +3290,8 @@ void PortsOrch::doLagTask(Consumer &consumer)
 void PortsOrch::doLagMemberTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
+
+    string table_name = consumer.getTableName();
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
@@ -3046,6 +3325,27 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
             SWSS_LOG_ERROR("Failed to locate port %s", port_alias.c_str());
             it = consumer.m_toSync.erase(it);
             continue;
+        }
+
+        if (table_name == CHASSIS_APP_LAG_MEMBER_TABLE_NAME)
+        {
+            int32_t lag_switch_id = lag.m_system_lag_info.switch_id;
+            if (lag_switch_id == gVoqMySwitchId)
+            {
+                //Synced local member addition to local lag. Skip
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
+            //Sanity check: The switch id-s of lag and member must match
+            int32_t port_switch_id = port.m_system_port_info.switch_id;
+            if (port_switch_id != lag_switch_id)
+            {
+                SWSS_LOG_ERROR("System lag switch id mismatch. Lag %s switch id: %d, Member %s switch id: %d",
+                        lag_alias.c_str(), lag_switch_id, port_alias.c_str(), port_switch_id);
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
         }
 
         /* Update a LAG member */
@@ -3190,11 +3490,11 @@ void PortsOrch::doTask(Consumer &consumer)
         {
             doVlanMemberTask(consumer);
         }
-        else if (table_name == APP_LAG_TABLE_NAME)
+        else if (table_name == APP_LAG_TABLE_NAME || table_name == CHASSIS_APP_LAG_TABLE_NAME)
         {
             doLagTask(consumer);
         }
-        else if (table_name == APP_LAG_MEMBER_TABLE_NAME)
+        else if (table_name == APP_LAG_MEMBER_TABLE_NAME || table_name == CHASSIS_APP_LAG_MEMBER_TABLE_NAME)
         {
             doLagMemberTask(consumer);
         }
@@ -3273,6 +3573,25 @@ void PortsOrch::initializePriorityGroups(Port &port)
     SWSS_LOG_INFO("Get priority groups for port %s", port.m_alias.c_str());
 }
 
+void PortsOrch::initializePortMaximumHeadroom(Port &port)
+{
+    sai_attribute_t attr;
+
+    attr.id = SAI_PORT_ATTR_QOS_MAXIMUM_HEADROOM_SIZE;
+
+    sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_NOTICE("Unable to get the maximum headroom for port %s rv:%d, ignored", port.m_alias.c_str(), status);
+        return;
+    }
+
+    vector<FieldValueTuple> fvVector;
+    port.m_maximum_headroom = attr.value.u32;
+    fvVector.emplace_back("max_headroom_size", to_string(port.m_maximum_headroom));
+    m_stateBufferMaximumValueTable->set(port.m_alias, fvVector);
+}
+
 bool PortsOrch::initializePort(Port &port)
 {
     SWSS_LOG_ENTER();
@@ -3281,6 +3600,7 @@ bool PortsOrch::initializePort(Port &port)
 
     initializePriorityGroups(port);
     initializeQueues(port);
+    initializePortMaximumHeadroom(port);
 
     /* Create host interface */
     if (!addHostIntfs(port, port.m_alias, port.m_hif_id))
@@ -3375,7 +3695,11 @@ bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_int
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create host interface for port %s", alias.c_str());
-        return false;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_HOSTIF, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Create host interface for port %s", alias.c_str());
@@ -3398,7 +3722,11 @@ bool PortsOrch::setBridgePortLearningFDB(Port &port, sai_bridge_port_fdb_learnin
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set bridge port %" PRIx64 " learning_mode attribute: %d", bridge_port_id, status);
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_BRIDGE, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     SWSS_LOG_NOTICE("Disable FDB learning on bridge port %s(%" PRIx64 ")", port.m_alias.c_str(), bridge_port_id);
     return true;
@@ -3408,40 +3736,8 @@ bool PortsOrch::addBridgePort(Port &port)
 {
     SWSS_LOG_ENTER();
 
-    if (port.m_rif_id)
-    {
-        SWSS_LOG_ERROR("Adding router interface %s as bridge port is not allowed", port.m_alias.c_str());
-        return false;
-    }
     if (port.m_bridge_port_id != SAI_NULL_OBJECT_ID)
     {
-        /* If the port is being added to the first VLAN,
-         * set bridge port admin status to UP.
-         * This can happen if the port was just removed from
-         * last VLAN and fdb flush is still in progress.
-         */
-        if (m_portVlanMember[port.m_alias].empty())
-        {
-            sai_attribute_t attr;
-            attr.id = SAI_BRIDGE_PORT_ATTR_ADMIN_STATE;
-            attr.value.booldata = true;
-
-            sai_status_t status = sai_bridge_api->set_bridge_port_attribute(port.m_bridge_port_id, &attr);
-            if (status != SAI_STATUS_SUCCESS)
-            {
-                SWSS_LOG_ERROR("Failed to set bridge port %s admin status to UP, rv:%d",
-                    port.m_alias.c_str(), status);
-                return false;
-            }
-            port.m_bridge_port_admin_state = true;
-            m_portList[port.m_alias] = port;
-            if (!setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_KEEP))
-            {
-                SWSS_LOG_ERROR("Failed to set %s for hostif of port %s",
-                        hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_KEEP], port.m_alias.c_str());
-                return false;
-            }
-        }
         return true;
     }
 
@@ -3512,15 +3808,12 @@ bool PortsOrch::addBridgePort(Port &port)
     {
         SWSS_LOG_ERROR("Failed to add bridge port %s to default 1Q bridge, rv:%d",
             port.m_alias.c_str(), status);
-        return false;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_BRIDGE, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
-    if (!setPortPvid(port, 0))
-    {
-        SWSS_LOG_ERROR("Failed to set pvid for port %s, rv:%d",
-            port.m_alias.c_str(), status);
-        return false;
-    }
-    port.m_bridge_port_admin_state = true;
 
     if (!setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_KEEP))
     {
@@ -3529,12 +3822,10 @@ bool PortsOrch::addBridgePort(Port &port)
         return false;
     }
     m_portList[port.m_alias] = port;
-    portOidToName[port.m_bridge_port_id] = port.m_alias;
     SWSS_LOG_NOTICE("Add bridge port %s to default 1Q bridge", port.m_alias.c_str());
 
     return true;
 }
-
 
 bool PortsOrch::removeBridgePort(Port &port)
 {
@@ -3544,45 +3835,46 @@ bool PortsOrch::removeBridgePort(Port &port)
     {
         return true;
     }
-    if (port.m_bridge_port_admin_state)
+    /* Set bridge port admin status to DOWN */
+    sai_attribute_t attr;
+    attr.id = SAI_BRIDGE_PORT_ATTR_ADMIN_STATE;
+    attr.value.booldata = false;
+
+    sai_status_t status = sai_bridge_api->set_bridge_port_attribute(port.m_bridge_port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
     {
-        /* Set bridge port admin status to DOWN */
-        sai_attribute_t attr;
-        attr.id = SAI_BRIDGE_PORT_ATTR_ADMIN_STATE;
-        attr.value.booldata = false;
-
-        sai_status_t status = sai_bridge_api->set_bridge_port_attribute(port.m_bridge_port_id, &attr);
-        if (status != SAI_STATUS_SUCCESS)
+        SWSS_LOG_ERROR("Failed to set bridge port %s admin status to DOWN, rv:%d",
+            port.m_alias.c_str(), status);
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_BRIDGE, status);
+        if (handle_status != task_success)
         {
-            SWSS_LOG_ERROR("Failed to set bridge port %s admin status to DOWN, rv:%d",
-                port.m_alias.c_str(), status);
-            return false;
-        }
-        port.m_bridge_port_admin_state = false;
-        m_portList[port.m_alias] = port;
-
-        if (!setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_STRIP))
-        {
-            SWSS_LOG_ERROR("Failed to set %s for hostif of port %s",
-                    hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_STRIP], port.m_alias.c_str());
-            return false;
+            return parseHandleSaiStatusFailure(handle_status);
         }
     }
 
-    if (port.m_fdb_count != 0) {
-        //SWSS_LOG_NOTICE("Port still has fdb entries, will not remove bridge port for %s", port.m_alias.c_str());
+    if (!setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_STRIP))
+    {
+        SWSS_LOG_ERROR("Failed to set %s for hostif of port %s",
+                hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_STRIP], port.m_alias.c_str());
         return false;
     }
 
+    //Flush the FDB entires corresponding to the port
+    gFdbOrch->flushFDBEntries(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
+    SWSS_LOG_INFO("Flush FDB entries for port %s", port.m_alias.c_str());
+
     /* Remove bridge port */
-    sai_status_t status = sai_bridge_api->remove_bridge_port(port.m_bridge_port_id);
+    status = sai_bridge_api->remove_bridge_port(port.m_bridge_port_id);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove bridge port %s from default 1Q bridge, rv:%d",
             port.m_alias.c_str(), status);
-        return false;
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_BRIDGE, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
-    portOidToName.erase(port.m_bridge_port_id);
     port.m_bridge_port_id = SAI_NULL_OBJECT_ID;
 
     SWSS_LOG_NOTICE("Remove bridge port %s from default 1Q bridge", port.m_alias.c_str());
@@ -3617,7 +3909,11 @@ bool PortsOrch::setBridgePortLearnMode(Port &port, string learn_mode)
     {
         SWSS_LOG_ERROR("Failed to set bridge port %s learning mode, rv:%d",
             port.m_alias.c_str(), status);
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_BRIDGE, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Set bridge port %s learning mode %s", port.m_alias.c_str(), learn_mode.c_str());
@@ -3635,22 +3931,16 @@ bool PortsOrch::addVlan(string vlan_alias)
     sai_attribute_t attr;
     attr.id = SAI_VLAN_ATTR_VLAN_ID;
     attr.value.u16 = vlan_id;
-    sai_status_t status = SAI_STATUS_SUCCESS;
-
-    /* Do not create default VLAN. It is already created by default */
-    if (vlan_id != m_defaultVlan_Id)
-    {
-       status = sai_vlan_api->create_vlan(&vlan_oid, gSwitchId, 1, &attr);
-    }
-    else
-    {
-       vlan_oid = m_defaultVlan_ObjId; /* use the default VLAN object id instead */
-    }
+    sai_status_t status = sai_vlan_api->create_vlan(&vlan_oid, gSwitchId, 1, &attr);
 
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create VLAN %s vid:%hu", vlan_alias.c_str(), vlan_id);
-        return false;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_VLAN, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Create an empty VLAN %s vid:%hu", vlan_alias.c_str(), vlan_id);
@@ -3660,7 +3950,6 @@ bool PortsOrch::addVlan(string vlan_alias)
     vlan.m_vlan_info.vlan_id = vlan_id;
     vlan.m_members = set<string>();
     m_portList[vlan_alias] = vlan;
-    portOidToName[vlan_oid] =  vlan_alias;
     m_port_ref_count[vlan_alias] = 0;
 
     return true;
@@ -3669,18 +3958,11 @@ bool PortsOrch::addVlan(string vlan_alias)
 bool PortsOrch::removeVlan(Port vlan)
 {
     SWSS_LOG_ENTER();
-
     if (m_port_ref_count[vlan.m_alias] > 0)
     {
         SWSS_LOG_ERROR("Failed to remove ref count %d VLAN %s",
                        m_port_ref_count[vlan.m_alias],
                        vlan.m_alias.c_str());
-        return false;
-    }
-    /* If there are still fdb entries associated with the VLAN,
-       return false for retry */
-    if (vlan.m_fdb_count > 0)
-    {
         return false;
     }
 
@@ -3699,18 +3981,23 @@ bool PortsOrch::removeVlan(Port vlan)
        return false;
     }
 
+
+    if (vlan.m_vlan_info.host_intf_id && !removeVlanHostIntf(vlan))
+    {
+        SWSS_LOG_ERROR("Failed to remove VLAN %d host interface", vlan.m_vlan_info.vlan_id);
+        return false;
+    }
+
     sai_status_t status = sai_vlan_api->remove_vlan(vlan.m_vlan_info.vlan_oid);
     if (status != SAI_STATUS_SUCCESS)
-    /* Do not delete default VLAN from driver, but clear internal state */
-    if (vlan.m_vlan_info.vlan_id != m_defaultVlan_Id)
     {
-      sai_status_t status = sai_vlan_api->remove_vlan(vlan.m_vlan_info.vlan_oid);
-      if (status != SAI_STATUS_SUCCESS)
-      {
         SWSS_LOG_ERROR("Failed to remove VLAN %s vid:%hu",
                 vlan.m_alias.c_str(), vlan.m_vlan_info.vlan_id);
-        return false;
-      }
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_VLAN, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     removeAclTableGroup(vlan);
@@ -3718,7 +4005,6 @@ bool PortsOrch::removeVlan(Port vlan)
     SWSS_LOG_NOTICE("Remove VLAN %s vid:%hu", vlan.m_alias.c_str(),
             vlan.m_vlan_info.vlan_id);
 
-    portOidToName.erase(vlan.m_vlan_info.vlan_oid);
     m_portList.erase(vlan.m_alias);
     m_port_ref_count.erase(vlan.m_alias);
 
@@ -3774,7 +4060,11 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode)
     {
         SWSS_LOG_ERROR("Failed to add member %s to VLAN %s vid:%hu pid:%" PRIx64,
                 port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_info.vlan_id, port.m_port_id);
-        return false;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_VLAN, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     SWSS_LOG_NOTICE("Add member %s to VLAN %s vid:%hu pid%" PRIx64,
             port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_info.vlan_id, port.m_port_id);
@@ -3789,19 +4079,10 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode)
     }
 
     /* a physical port may join multiple vlans */
-    VlanMemberEntry vme = {vlan.m_alias, vlan_member_id, sai_tagging_mode};
-    m_portVlanMember[port.m_alias][vlan.m_vlan_info.vlan_id] = vme;
+    VlanMemberEntry vme = {vlan_member_id, sai_tagging_mode};
+    port.m_vlan_members[vlan.m_vlan_info.vlan_id] = vme;
     m_portList[port.m_alias] = port;
     vlan.m_members.insert(port.m_alias);
-    if (port.m_oper_status == SAI_PORT_OPER_STATUS_UP)
-    {
-        auto old_count = vlan.m_up_member_count;
-        vlan.m_up_member_count++;
-        if (old_count == 0)
-        {
-            updateDbVlanOperStatus(vlan, "up");
-        }
-    }
     m_portList[vlan.m_alias] = vlan;
 
     VlanMemberUpdate update = { vlan, port, true };
@@ -3816,10 +4097,10 @@ bool PortsOrch::removeVlanMember(Port &vlan, Port &port)
 
     sai_object_id_t vlan_member_id;
     sai_vlan_tagging_mode_t sai_tagging_mode;
-    auto vlan_member = m_portVlanMember[port.m_alias].find(vlan.m_vlan_info.vlan_id);
+    auto vlan_member = port.m_vlan_members.find(vlan.m_vlan_info.vlan_id);
 
     /* Assert the port belongs to this VLAN */
-    assert (vlan_member != m_portVlanMember[port.m_alias].end());
+    assert (vlan_member != port.m_vlan_members.end());
     sai_tagging_mode = vlan_member->second.vlan_mode;
     vlan_member_id = vlan_member->second.vlan_member_id;
 
@@ -3828,18 +4109,20 @@ bool PortsOrch::removeVlanMember(Port &vlan, Port &port)
     {
         SWSS_LOG_ERROR("Failed to remove member %s from VLAN %s vid:%hx vmid:%" PRIx64,
                 port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_info.vlan_id, vlan_member_id);
-        return false;
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_VLAN, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
-    m_portVlanMember[port.m_alias].erase(vlan_member);
-    if (m_portVlanMember[port.m_alias].empty())
-        m_portVlanMember.erase(port.m_alias);
+    port.m_vlan_members.erase(vlan_member);
     SWSS_LOG_NOTICE("Remove member %s from VLAN %s lid:%hx vmid:%" PRIx64,
             port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_info.vlan_id, vlan_member_id);
 
     /* Restore to default pvid if this port joined this VLAN in untagged mode previously */
     if (sai_tagging_mode == SAI_VLAN_TAGGING_MODE_UNTAGGED)
     {
-        if (!setPortPvid(port, 0))
+        if (!setPortPvid(port, DEFAULT_PORT_VLAN_ID))
         {
             return false;
         }
@@ -3847,14 +4130,6 @@ bool PortsOrch::removeVlanMember(Port &vlan, Port &port)
 
     m_portList[port.m_alias] = port;
     vlan.m_members.erase(port.m_alias);
-    if (port.m_oper_status == SAI_PORT_OPER_STATUS_UP)
-    {
-        vlan.m_up_member_count--;
-        if (vlan.m_up_member_count == 0)
-        {
-            updateDbVlanOperStatus(vlan, "down");
-        }
-    }
     m_portList[vlan.m_alias] = vlan;
 
     VlanMemberUpdate update = { vlan, port, false };
@@ -3871,28 +4146,52 @@ bool PortsOrch::isVlanMember(Port &vlan, Port &port)
     return true;
 }
 
-bool PortsOrch::addLag(string lag_alias)
+bool PortsOrch::addLag(string lag_alias, uint32_t spa_id, int32_t switch_id)
 {
     SWSS_LOG_ENTER();
 
-    auto lagport = m_portList.find(lag_alias);
-    if (lagport != m_portList.end())
+    vector<sai_attribute_t> lag_attrs;
+    string system_lag_alias = lag_alias;
+
+    if (gMySwitchType == "voq")
     {
-        if ((m_portList[lag_alias].m_bridge_port_id != SAI_NULL_OBJECT_ID) &&
-            (m_portVlanMember[lag_alias].empty()))
+        if (switch_id < 0)
         {
-            return false;
+            // Local PortChannel. Allocate unique lag id from central CHASSIS_APP_DB
+            // Use the chassis wide unique system lag name.
+
+            // Get the local switch id and derive the system lag name.
+
+            switch_id = gVoqMySwitchId;
+            system_lag_alias = gMyHostName + "|" + gMyAsicName + "|" + lag_alias;
+
+            // Allocate unique lag id
+            spa_id = m_lagIdAllocator->lagIdAdd(system_lag_alias, 0);
+
+            if ((int32_t)spa_id <= 0)
+            {
+                SWSS_LOG_ERROR("Failed to allocate unique LAG id for local lag %s rv:%d", lag_alias.c_str(), spa_id);
+                return false;
+            }
         }
-        return true;
+
+        sai_attribute_t attr;
+        attr.id = SAI_LAG_ATTR_SYSTEM_PORT_AGGREGATE_ID;
+        attr.value.u32 = spa_id;
+        lag_attrs.push_back(attr);
     }
 
     sai_object_id_t lag_id;
-    sai_status_t status = sai_lag_api->create_lag(&lag_id, gSwitchId, 0, NULL);
+    sai_status_t status = sai_lag_api->create_lag(&lag_id, gSwitchId, static_cast<uint32_t>(lag_attrs.size()), lag_attrs.data());
 
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create LAG %s lid:%" PRIx64, lag_alias.c_str(), lag_id);
-        return false;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_LAG, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Create an empty LAG %s lid:%" PRIx64, lag_alias.c_str(), lag_id);
@@ -3901,17 +4200,33 @@ bool PortsOrch::addLag(string lag_alias)
     lag.m_lag_id = lag_id;
     lag.m_members = set<string>();
     m_portList[lag_alias] = lag;
-    portOidToName[lag_id] = lag_alias;
     m_port_ref_count[lag_alias] = 0;
 
-    /* Add lag name map to counter table */
+    PortUpdate update = { lag, true };
+    notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
+
     FieldValueTuple tuple(lag_alias, sai_serialize_object_id(lag_id));
     vector<FieldValueTuple> fields;
     fields.push_back(tuple);
     m_counterLagTable->set("", fields);
 
-    PortUpdate update = { lag, true };
-    notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
+    if (gMySwitchType == "voq")
+    {
+        // If this is voq switch, record system lag info
+
+        lag.m_system_lag_info.alias = system_lag_alias;
+        lag.m_system_lag_info.switch_id = switch_id;
+        lag.m_system_lag_info.spa_id = spa_id;
+
+        // This will update port list with local port channel name for local port channels
+        // and with system lag name for the system lags received from chassis app db
+
+        m_portList[lag_alias] = lag;
+
+        // Sync to SYSTEM_LAG_TABLE of CHASSIS_APP_DB
+
+        voqSyncAddLag(lag);
+    }
 
     return true;
 }
@@ -3934,13 +4249,9 @@ bool PortsOrch::removeLag(Port lag)
         SWSS_LOG_ERROR("Failed to remove non-empty LAG %s", lag.m_alias.c_str());
         return false;
     }
-    if (m_portVlanMember[lag.m_alias].size() > 0)
+    if (lag.m_vlan_members.size() > 0)
     {
         SWSS_LOG_ERROR("Failed to remove LAG %s, it is still in VLAN", lag.m_alias.c_str());
-        return false;
-    }
-    if (lag.m_bridge_port_id != SAI_NULL_OBJECT_ID)
-    {
         return false;
     }
 
@@ -3948,13 +4259,15 @@ bool PortsOrch::removeLag(Port lag)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove LAG %s lid:%" PRIx64, lag.m_alias.c_str(), lag.m_lag_id);
-        return false;
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_LAG, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
-
 
     SWSS_LOG_NOTICE("Remove LAG %s lid:%" PRIx64, lag.m_alias.c_str(), lag.m_lag_id);
 
-    portOidToName.erase(lag.m_lag_id);
     m_portList.erase(lag.m_alias);
     m_port_ref_count.erase(lag.m_alias);
 
@@ -3962,6 +4275,29 @@ bool PortsOrch::removeLag(Port lag)
     notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
 
     m_counterLagTable->hdel("", lag.m_alias);
+
+    if (gMySwitchType == "voq")
+    {
+        // Free the lag id, if this is local LAG
+
+        if (lag.m_system_lag_info.switch_id == gVoqMySwitchId)
+        {
+            int32_t rv;
+            int32_t spa_id = lag.m_system_lag_info.spa_id;
+
+            rv = m_lagIdAllocator->lagIdDel(lag.m_system_lag_info.alias);
+
+            if (rv != spa_id)
+            {
+                SWSS_LOG_ERROR("Failed to delete LAG id %d of local lag %s rv:%d", spa_id, lag.m_alias.c_str(), rv);
+                return false;
+            }
+
+            // Sync to SYSTEM_LAG_TABLE of CHASSIS_APP_DB
+
+            voqSyncDelLag(lag);
+        }
+    }
 
     return true;
 }
@@ -4002,7 +4338,7 @@ bool PortsOrch::addLagMember(Port &lag, Port &port, bool enableForwarding)
     attr.value.oid = port.m_port_id;
     attrs.push_back(attr);
 
-    if (!enableForwarding)
+    if (!enableForwarding && port.m_type != Port::SYSTEM)
     {
         attr.id = SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE;
         attr.value.booldata = true;
@@ -4020,7 +4356,11 @@ bool PortsOrch::addLagMember(Port &lag, Port &port, bool enableForwarding)
     {
         SWSS_LOG_ERROR("Failed to add member %s to LAG %s lid:%" PRIx64 " pid:%" PRIx64,
                 port.m_alias.c_str(), lag.m_alias.c_str(), lag.m_lag_id, port.m_port_id);
-        return false;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_LAG, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Add member %s to LAG %s lid:%" PRIx64 " pid:%" PRIx64,
@@ -4046,6 +4386,12 @@ bool PortsOrch::addLagMember(Port &lag, Port &port, bool enableForwarding)
     LagMemberUpdate update = { lag, port, true };
     notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));
 
+    if (gMySwitchType == "voq")
+    {
+        //Sync to SYSTEM_LAG_MEMBER_TABLE of CHASSIS_APP_DB
+        voqSyncAddLagMember(lag, port);
+    }
+
     return true;
 }
 
@@ -4057,7 +4403,11 @@ bool PortsOrch::removeLagMember(Port &lag, Port &port)
     {
         SWSS_LOG_ERROR("Failed to remove member %s from LAG %s lid:%" PRIx64 " lmid:%" PRIx64,
                 port.m_alias.c_str(), lag.m_alias.c_str(), lag.m_lag_id, port.m_lag_member_id);
-        return false;
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_LAG, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Remove member %s from LAG %s lid:%" PRIx64 " lmid:%" PRIx64,
@@ -4081,6 +4431,12 @@ bool PortsOrch::removeLagMember(Port &lag, Port &port)
     LagMemberUpdate update = { lag, port, false };
     notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));
 
+    if (gMySwitchType == "voq")
+    {
+        //Sync to SYSTEM_LAG_MEMBER_TABLE of CHASSIS_APP_DB
+        voqSyncDelLagMember(lag, port);
+    }
+
     return true;
 }
 
@@ -4088,6 +4444,12 @@ bool PortsOrch::setCollectionOnLagMember(Port &lagMember, bool enableCollection)
 {
     /* Port must be LAG member */
     assert(lagMember.m_lag_member_id);
+
+    // Collection is not applicable for system port lag members (i.e, members of remote LAGs)
+    if (lagMember.m_type == Port::SYSTEM)
+    {
+        return true;
+    }
 
     sai_status_t status = SAI_STATUS_FAILURE;
     sai_attribute_t attr {};
@@ -4101,7 +4463,11 @@ bool PortsOrch::setCollectionOnLagMember(Port &lagMember, bool enableCollection)
         SWSS_LOG_ERROR("Failed to %s collection on LAG member %s",
             enableCollection ? "enable" : "disable",
             lagMember.m_alias.c_str());
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_LAG, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("%s collection on LAG member %s",
@@ -4116,6 +4482,12 @@ bool PortsOrch::setDistributionOnLagMember(Port &lagMember, bool enableDistribut
     /* Port must be LAG member */
     assert(lagMember.m_lag_member_id);
 
+    // Distribution is not applicable for system port lag members (i.e, members of remote LAGs)
+    if (lagMember.m_type == Port::SYSTEM)
+    {
+        return true;
+    }
+
     sai_status_t status = SAI_STATUS_FAILURE;
     sai_attribute_t attr {};
 
@@ -4128,7 +4500,11 @@ bool PortsOrch::setDistributionOnLagMember(Port &lagMember, bool enableDistribut
         SWSS_LOG_ERROR("Failed to %s distribution on LAG member %s",
             enableDistribution ? "enable" : "disable",
             lagMember.m_alias.c_str());
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_LAG, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("%s distribution on LAG member %s",
@@ -4296,7 +4672,22 @@ void PortsOrch::generatePriorityGroupMapPerPort(const Port& port)
 
         vector<FieldValueTuple> fieldValues;
         fieldValues.emplace_back(PG_COUNTER_ID_LIST, counters_stream.str());
+        m_flexCounterTable->set(key, fieldValues);
 
+        delimiter = "";
+        std::ostringstream ingress_pg_drop_packets_counters_stream;
+        key = getPriorityGroupDropPacketsFlexCounterTableKey(id);
+        /* Add dropped packets counters to flex_counter */
+        for (const auto& it: ingressPriorityGroupDropStatIds)
+        {
+            ingress_pg_drop_packets_counters_stream << delimiter << sai_serialize_ingress_priority_group_stat(it);
+            if (delimiter.empty())
+            {
+                delimiter = comma;
+            }
+        }
+        fieldValues.clear();
+        fieldValues.emplace_back(PG_COUNTER_ID_LIST, ingress_pg_drop_packets_counters_stream.str());
         m_flexCounterTable->set(key, fieldValues);
     }
 
@@ -4382,26 +4773,7 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
     }
 
     bool isUp = status == SAI_PORT_OPER_STATUS_UP;
-
-    for(auto vlan_member: m_portVlanMember[port.m_alias])
-    {
-        auto Vlan = m_portList[vlan_member.second.alias];
-        auto old_count = Vlan.m_up_member_count;
-        isUp ? Vlan.m_up_member_count++ : Vlan.m_up_member_count--;
-        if (Vlan.m_up_member_count == 0)
-        {
-            updateDbVlanOperStatus(Vlan, "down");
-        }
-        else if ((old_count == 0) && (Vlan.m_up_member_count == 1))
-        {
-            updateDbVlanOperStatus(Vlan, "up");
-        }
-        SWSS_LOG_NOTICE("Vlan %s Port %s state %s m_up_member_count %d",
-            vlan_member.second.alias.c_str(), port.m_alias.c_str(), oper_status_strings.at(port.m_oper_status).c_str(), Vlan.m_up_member_count);
-
-        m_portList[Vlan.m_alias] = Vlan;
-    }
-    if (!setHostIntfsOperStatus(port, isUp))
+    if (port.m_type == Port::PHY)
     {
         if (!setHostIntfsOperStatus(port, isUp))
         {
@@ -4413,53 +4785,12 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
     {
         SWSS_LOG_WARN("Inform nexthop operation failed for interface %s", port.m_alias.c_str());
     }
-
     for (const auto &child_port : port.m_child_ports)
     {
         if (!gNeighOrch->ifChangeInformNextHop(child_port, isUp))
         {
             SWSS_LOG_WARN("Inform nexthop operation failed for sub interface %s", child_port.c_str());
         }
-    }
-    /* flush all dynamic FDB on this port */
-    if (status == SAI_PORT_OPER_STATUS_DOWN)
-    {
-        gFdbOrch->flushFdbByPort(port.m_alias, 0);
-    }
-}
-
-void PortsOrch::updateLagOperStatus(Port &port, sai_port_oper_status_t status)
-{
-    if (status == port.m_oper_status)
-    {
-        return ;
-    }
-    SWSS_LOG_NOTICE("Port %s oper state set from %s to %s",
-            port.m_alias.c_str(), oper_status_strings.at(port.m_oper_status).c_str(),
-            oper_status_strings.at(status).c_str());
-
-    port.m_oper_status = status;
-    m_portList[port.m_alias] = port;
-
-    bool isUp = status == SAI_PORT_OPER_STATUS_UP;
-
-    for(auto vlan_member: m_portVlanMember[port.m_alias])
-    {
-        auto Vlan = m_portList[vlan_member.second.alias];
-        auto old_count = Vlan.m_up_member_count;
-        isUp ? Vlan.m_up_member_count++ : Vlan.m_up_member_count--;
-        if (Vlan.m_up_member_count == 0)
-        {
-            updateDbVlanOperStatus(Vlan, "down");
-        }
-        else if ((old_count == 0) && (Vlan.m_up_member_count == 1))
-        {
-            updateDbVlanOperStatus(Vlan, "up");
-        }
-        SWSS_LOG_NOTICE("Vlan %s Port %s state %s m_up_member_count %d",
-            vlan_member.second.alias.c_str(), port.m_alias.c_str(), oper_status_strings.at(port.m_oper_status).c_str(), Vlan.m_up_member_count);
-
-        m_portList[Vlan.m_alias] = Vlan;
     }
 
     PortOperStateUpdate update = {port, status};
@@ -4561,7 +4892,11 @@ bool PortsOrch::removeAclTableGroup(const Port &p)
         if (ret != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to remove ingress acl table group for %s", p.m_alias.c_str());
-            return false;
+            task_process_status handle_status = handleSaiRemoveStatus(SAI_API_ACL, ret);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
         gCrmOrch->decCrmAclUsedCounter(CrmResourceType::CRM_ACL_GROUP, SAI_ACL_STAGE_INGRESS, bind_type, p.m_ingress_acl_table_group_id);
     }
@@ -4572,34 +4907,113 @@ bool PortsOrch::removeAclTableGroup(const Port &p)
         if (ret != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to remove egress acl table group for %s", p.m_alias.c_str());
-            return false;
+            task_process_status handle_status = handleSaiRemoveStatus(SAI_API_ACL, ret);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
         gCrmOrch->decCrmAclUsedCounter(CrmResourceType::CRM_ACL_GROUP, SAI_ACL_STAGE_EGRESS, bind_type, p.m_egress_acl_table_group_id);
     }
     return true;
 }
 
-bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id, sai_attr_id_t attr_id,
-                                       vector<uint32_t> &serdes_val)
+bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id,
+                                       map<sai_port_serdes_attr_t, vector<uint32_t>> &serdes_attr)
 {
     SWSS_LOG_ENTER();
 
-    sai_attribute_t attr;
+    vector<sai_attribute_t> attr_list;
+    sai_attribute_t port_attr;
+    sai_attribute_t port_serdes_attr;
+    sai_status_t status;
+    sai_object_id_t port_serdes_id = SAI_NULL_OBJECT_ID;
 
-    memset(&attr, 0, sizeof(attr));
-    attr.id = attr_id;
-
-    attr.value.u32list.count = (uint32_t)serdes_val.size();
-    attr.value.u32list.list = serdes_val.data();
-
-    sai_status_t status = sai_port_api->set_port_attribute(port_id, &attr);
+    port_attr.id = SAI_PORT_ATTR_PORT_SERDES_ID;
+    status = sai_port_api->get_port_attribute(port_id, 1, &port_attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to set serdes attribute %d to port pid:%" PRIx64,
-                       attr_id, port_id);
+        SWSS_LOG_ERROR("Failed to get port attr serdes id %d to port pid:0x%" PRIx64,
+                       port_attr.id, port_id);
         return false;
     }
+
+    if (port_attr.value.oid != SAI_NULL_OBJECT_ID)
+    {
+        status = sai_port_api->remove_port_serdes(port_attr.value.oid);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove existing port serdes attr 0x%" PRIx64 " port 0x%" PRIx64,
+                           port_attr.value.oid, port_id);
+            task_process_status handle_status = handleSaiRemoveStatus(SAI_API_PORT, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
+        }
+    }
+
+
+    port_serdes_attr.id = SAI_PORT_SERDES_ATTR_PORT_ID;
+    port_serdes_attr.value.oid = port_id;
+    attr_list.emplace_back(port_serdes_attr);
+    SWSS_LOG_INFO("Creating serdes for port 0x%" PRIx64, port_id);
+
+    for (auto it = serdes_attr.begin(); it != serdes_attr.end(); it++)
+    {
+        port_serdes_attr.id = it->first;
+        port_serdes_attr.value.u32list.count = (uint32_t)it->second.size();
+        port_serdes_attr.value.u32list.list = it->second.data();
+        attr_list.emplace_back(port_serdes_attr);
+    }
+    status = sai_port_api->create_port_serdes(&port_serdes_id, gSwitchId,
+                                              static_cast<uint32_t>(serdes_attr.size()+1),
+                                              attr_list.data());
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create port serdes for port 0x%" PRIx64,
+                       port_id);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+    SWSS_LOG_NOTICE("Created port serdes object 0x%" PRIx64 " for port 0x%" PRIx64, port_serdes_id, port_id);
     return true;
+}
+
+void PortsOrch::removePortSerdesAttribute(sai_object_id_t port_id)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t port_attr;
+    sai_status_t status;
+    sai_object_id_t port_serdes_id = SAI_NULL_OBJECT_ID;
+
+    port_attr.id = SAI_PORT_ATTR_PORT_SERDES_ID;
+    status = sai_port_api->get_port_attribute(port_id, 1, &port_attr);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_DEBUG("Failed to get port attr serdes id %d to port pid:0x%" PRIx64,
+                       port_attr.id, port_id);
+        return;
+    }
+
+    if (port_attr.value.oid != SAI_NULL_OBJECT_ID)
+    {
+        status = sai_port_api->remove_port_serdes(port_attr.value.oid);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove existing port serdes attr 0x%" PRIx64 " port 0x%" PRIx64,
+                           port_attr.value.oid, port_id);
+            handleSaiRemoveStatus(SAI_API_PORT, status);
+            return;
+        }
+    }
+    SWSS_LOG_NOTICE("Removed port serdes object 0x%" PRIx64 " for port 0x%" PRIx64, port_serdes_id, port_id);
 }
 
 void PortsOrch::getPortSerdesVal(const std::string& val_str,
@@ -4712,7 +5126,7 @@ bool PortsOrch::initGearboxPort(Port &port)
     {
         if (m_gearboxInterfaceMap.find(port.m_index) != m_gearboxInterfaceMap.end())
         {
-            SWSS_LOG_NOTICE("BOX: port_id:0x%lx index:%d alias:%s", port.m_port_id, port.m_index, port.m_alias.c_str());
+            SWSS_LOG_NOTICE("BOX: port_id:0x%" PRIx64 " index:%d alias:%s", port.m_port_id, port.m_index, port.m_alias.c_str());
 
             phy_id = m_gearboxInterfaceMap[port.m_index].phy_id;
             phyOidStr = m_gearboxPhyMap[phy_id].phy_oid;
@@ -4769,11 +5183,15 @@ bool PortsOrch::initGearboxPort(Port &port)
             status = sai_port_api->create_port(&systemPort, phyOid, static_cast<uint32_t>(attrs.size()), attrs.data());
             if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("BOX: Failed to create Gearbox system-side port for alias:%s port_id:0x%lx index:%d status:%d",
+                SWSS_LOG_ERROR("BOX: Failed to create Gearbox system-side port for alias:%s port_id:0x%" PRIx64 " index:%d status:%d",
                         port.m_alias.c_str(), port.m_port_id, port.m_index, status);
-                return false;
+                task_process_status handle_status = handleSaiCreateStatus(SAI_API_PORT, status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
-            SWSS_LOG_NOTICE("BOX: Created Gearbox system-side port 0x%lx for alias:%s index:%d",
+            SWSS_LOG_NOTICE("BOX: Created Gearbox system-side port 0x%" PRIx64 " for alias:%s index:%d",
                     systemPort, port.m_alias.c_str(), port.m_index);
 
             /* Create LINE-SIDE port */
@@ -4852,11 +5270,15 @@ bool PortsOrch::initGearboxPort(Port &port)
             status = sai_port_api->create_port(&linePort, phyOid, static_cast<uint32_t>(attrs.size()), attrs.data());
             if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("BOX: Failed to create Gearbox line-side port for alias:%s port_id:0x%lx index:%d status:%d",
+                SWSS_LOG_ERROR("BOX: Failed to create Gearbox line-side port for alias:%s port_id:0x%" PRIx64 " index:%d status:%d",
                    port.m_alias.c_str(), port.m_port_id, port.m_index, status);
-                return false;
+                task_process_status handle_status = handleSaiCreateStatus(SAI_API_PORT, status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
-            SWSS_LOG_NOTICE("BOX: Created Gearbox line-side port 0x%lx for alias:%s index:%d",
+            SWSS_LOG_NOTICE("BOX: Created Gearbox line-side port 0x%" PRIx64 " for alias:%s index:%d",
                 linePort, port.m_alias.c_str(), port.m_index);
 
             /* Connect SYSTEM-SIDE to LINE-SIDE */
@@ -4872,14 +5294,339 @@ bool PortsOrch::initGearboxPort(Port &port)
             status = sai_port_api->create_port_connector(&connector, phyOid, static_cast<uint32_t>(attrs.size()), attrs.data());
             if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("BOX: Failed to connect Gearbox system-side:0x%lx to line-side:0x%lx; status:%d", systemPort, linePort, status);
-                return false;
+                SWSS_LOG_ERROR("BOX: Failed to connect Gearbox system-side:0x%" PRIx64 " to line-side:0x%" PRIx64 "; status:%d", systemPort, linePort, status);
+                task_process_status handle_status = handleSaiCreateStatus(SAI_API_PORT, status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
 
-            SWSS_LOG_NOTICE("BOX: Connected Gearbox ports; system-side:0x%lx to line-side:0x%lx", systemPort, linePort);
+            SWSS_LOG_NOTICE("BOX: Connected Gearbox ports; system-side:0x%" PRIx64 " to line-side:0x%" PRIx64, systemPort, linePort);
             m_gearboxPortListLaneMap[port.m_port_id] = make_tuple(systemPort, linePort);
         }
     }
 
     return true;
+}
+
+bool PortsOrch::getSystemPorts()
+{
+    sai_status_t status;
+    sai_attribute_t attr;
+    uint32_t i;
+
+    m_systemPortCount = 0;
+
+    attr.id = SAI_SWITCH_ATTR_NUMBER_OF_SYSTEM_PORTS;
+
+    status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_INFO("Failed to get number of system ports, rv:%d", status);
+        return false;
+    }
+
+    m_systemPortCount = attr.value.u32;
+    SWSS_LOG_NOTICE("Got %d system ports", m_systemPortCount);
+
+    if(m_systemPortCount)
+    {
+        /* Make <switch_id, core, core port> tuple and system port oid map */
+
+        vector<sai_object_id_t> system_port_list;
+        system_port_list.resize(m_systemPortCount);
+
+        attr.id = SAI_SWITCH_ATTR_SYSTEM_PORT_LIST;
+        attr.value.objlist.count = (uint32_t)system_port_list.size();
+        attr.value.objlist.list = system_port_list.data();
+
+        status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to get system port list, rv:%d", status);
+            return false;
+        }
+
+        uint32_t spcnt = attr.value.objlist.count;
+        for(i = 0; i < spcnt; i++)
+        {
+            attr.id = SAI_SYSTEM_PORT_ATTR_CONFIG_INFO;
+
+            status = sai_system_port_api->get_system_port_attribute(system_port_list[i], 1, &attr);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to get system port config info spid:%" PRIx64, system_port_list[i]);
+                return false;
+            }
+
+            SWSS_LOG_NOTICE("SystemPort(0x%" PRIx64 ") - port_id:%u, switch_id:%u, core:%u, core_port:%u, speed:%u, voqs:%u",
+                            system_port_list[i],
+                            attr.value.sysportconfig.port_id,
+                            attr.value.sysportconfig.attached_switch_id,
+                            attr.value.sysportconfig.attached_core_index,
+                            attr.value.sysportconfig.attached_core_port_index,
+                            attr.value.sysportconfig.speed,
+                            attr.value.sysportconfig.num_voq);
+
+            tuple<int, int, int> sp_key(attr.value.sysportconfig.attached_switch_id,
+                    attr.value.sysportconfig.attached_core_index,
+                    attr.value.sysportconfig.attached_core_port_index);
+
+            m_systemPortOidMap[sp_key] = system_port_list[i];
+        }
+    }
+
+    return true;
+}
+
+bool PortsOrch::addSystemPorts()
+{
+    vector<string> keys;
+    vector<FieldValueTuple> spFv;
+
+    DBConnector appDb(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    Table appSystemPortTable(&appDb, APP_SYSTEM_PORT_TABLE_NAME);
+
+    //Retrieve system port configurations from APP DB
+    appSystemPortTable.getKeys(keys);
+    for ( auto &alias : keys )
+    {
+        appSystemPortTable.get(alias, spFv);
+
+        int32_t system_port_id = -1;
+        int32_t switch_id = -1;
+        int32_t core_index = -1;
+        int32_t core_port_index = -1;
+
+        for ( auto &fv : spFv )
+        {
+            if(fv.first == "switch_id")
+            {
+                switch_id = stoi(fv.second);
+                continue;
+            }
+            if(fv.first == "core_index")
+            {
+                core_index = stoi(fv.second);
+                continue;
+            }
+            if(fv.first == "core_port_index")
+            {
+                core_port_index = stoi(fv.second);
+                continue;
+            }
+            if(fv.first == "system_port_id")
+            {
+                system_port_id = stoi(fv.second);
+                continue;
+            }
+        }
+
+        if(system_port_id < 0 || switch_id < 0 || core_index < 0 || core_port_index < 0)
+        {
+            SWSS_LOG_ERROR("Invalid or Missing field values for %s! system_port id:%d, switch_id:%d, core_index:%d, core_port_index:%d",
+                    alias.c_str(), system_port_id, switch_id, core_index, core_port_index);
+            continue;
+        }
+
+        tuple<int, int, int> sp_key(switch_id, core_index, core_port_index);
+
+        if(m_systemPortOidMap.find(sp_key) != m_systemPortOidMap.end())
+        {
+
+            sai_attribute_t attr;
+            vector<sai_attribute_t> attrs;
+            sai_object_id_t system_port_oid;
+            sai_status_t status;
+
+            //Retrive system port config info and enable
+            system_port_oid = m_systemPortOidMap[sp_key];
+
+            attr.id = SAI_SYSTEM_PORT_ATTR_TYPE;
+            attrs.push_back(attr);
+
+            attr.id = SAI_SYSTEM_PORT_ATTR_CONFIG_INFO;
+            attrs.push_back(attr);
+
+            status = sai_system_port_api->get_system_port_attribute(system_port_oid, static_cast<uint32_t>(attrs.size()), attrs.data());
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to get system port config info spid:%" PRIx64, system_port_oid);
+                continue;
+            }
+
+            //Create or update system port and add to the port list.
+            Port port(alias, Port::SYSTEM);
+            port.m_port_id = system_port_oid;
+            port.m_admin_state_up = true;
+            port.m_oper_status = SAI_PORT_OPER_STATUS_UP;
+            port.m_speed = attrs[1].value.sysportconfig.speed;
+            if (attrs[0].value.s32 == SAI_SYSTEM_PORT_TYPE_LOCAL)
+            {
+                //Get the local port oid
+                attr.id = SAI_SYSTEM_PORT_ATTR_PORT;
+
+                status = sai_system_port_api->get_system_port_attribute(system_port_oid, 1, &attr);
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to get local port oid of local system port spid:%" PRIx64, system_port_oid);
+                    continue;
+                }
+
+                //System port for local port. Update the system port info in the existing physical port
+                if(!getPort(attr.value.oid, port))
+                {
+                    //This is system port for non-front panel local port (CPU or OLP or RCY (Inband)). Not an error
+                    SWSS_LOG_NOTICE("Add port for non-front panel local system port 0x%" PRIx64 "; core: %d, core port: %d",
+                            system_port_oid, core_index, core_port_index);
+                }
+                port.m_system_port_info.local_port_oid = attr.value.oid;
+            }
+
+            port.m_system_port_oid = system_port_oid;
+
+            port.m_system_port_info.alias = alias;
+            port.m_system_port_info.type = (sai_system_port_type_t) attrs[0].value.s32;
+            port.m_system_port_info.port_id = attrs[1].value.sysportconfig.port_id;
+            port.m_system_port_info.switch_id = attrs[1].value.sysportconfig.attached_switch_id;
+            port.m_system_port_info.core_index = attrs[1].value.sysportconfig.attached_core_index;
+            port.m_system_port_info.core_port_index = attrs[1].value.sysportconfig.attached_core_port_index;
+            port.m_system_port_info.speed = attrs[1].value.sysportconfig.speed;
+            port.m_system_port_info.num_voq = attrs[1].value.sysportconfig.num_voq;
+
+            setPort(port.m_alias, port);
+            if(m_port_ref_count.find(port.m_alias) == m_port_ref_count.end())
+            {
+                m_port_ref_count[port.m_alias] = 0;
+            }
+
+            SWSS_LOG_NOTICE("Added system port %" PRIx64 " for %s", system_port_oid, alias.c_str());
+        }
+        else
+        {
+            //System port does not exist in the switch
+            //This can not happen since all the system ports are supposed to be created during switch creation itself
+
+            SWSS_LOG_ERROR("System port %s does not exist in switch. Port not added!", alias.c_str());
+            continue;
+        }
+    }
+
+    return true;
+}
+
+bool PortsOrch::getInbandPort(Port &port)
+{
+    if (m_portList.find(m_inbandPortName) == m_portList.end())
+    {
+        return false;
+    }
+    else
+    {
+        port = m_portList[m_inbandPortName];
+        return true;
+    }
+}
+
+bool PortsOrch::isInbandPort(const string &alias)
+{
+    return (m_inbandPortName == alias);
+}
+
+bool PortsOrch::setVoqInbandIntf(string &alias, string &type)
+{
+    if(m_inbandPortName == alias)
+    {
+        //Inband interface already exists with this name
+        SWSS_LOG_NOTICE("Interface %s is already configured as inband!", alias.c_str());
+        return true;
+    }
+
+    Port port;
+    if(type == "port")
+    {
+        if (!getPort(alias, port))
+        {
+            SWSS_LOG_NOTICE("Port configured for inband intf %s is not ready!", alias.c_str());
+            return false;
+        }
+    }
+
+    // Check for existence of host interface. If does not exist, may create
+    // host if for the inband here
+
+    // May do the processing for other inband type like type=vlan here
+
+    //Store the name of the local inband port
+    m_inbandPortName = alias;
+
+    return true;
+}
+
+void PortsOrch::voqSyncAddLag (Port &lag)
+{
+    int32_t switch_id = lag.m_system_lag_info.switch_id;
+
+    // Sync only local lag add to CHASSIS_APP_DB
+
+    if (switch_id != gVoqMySwitchId)
+    {
+        return;
+    }
+
+    uint32_t spa_id = lag.m_system_lag_info.spa_id;
+
+    vector<FieldValueTuple> attrs;
+
+    FieldValueTuple li ("lag_id", to_string(spa_id));
+    attrs.push_back(li);
+
+    FieldValueTuple si ("switch_id", to_string(switch_id));
+    attrs.push_back(si);
+
+    string key = lag.m_system_lag_info.alias;
+
+    m_tableVoqSystemLagTable->set(key, attrs);
+}
+
+void PortsOrch::voqSyncDelLag(Port &lag)
+{
+    // Sync only local lag del to CHASSIS_APP_DB
+    if (lag.m_system_lag_info.switch_id != gVoqMySwitchId)
+    {
+        return;
+    }
+
+    string key = lag.m_system_lag_info.alias;
+
+    m_tableVoqSystemLagTable->del(key);
+}
+
+void PortsOrch::voqSyncAddLagMember(Port &lag, Port &port)
+{
+    // Sync only local lag's member add to CHASSIS_APP_DB
+    if (lag.m_system_lag_info.switch_id != gVoqMySwitchId)
+    {
+        return;
+    }
+
+    vector<FieldValueTuple> attrs;
+    FieldValueTuple nullFv ("NULL", "NULL");
+    attrs.push_back(nullFv);
+
+    string key = lag.m_system_lag_info.alias + ":" + port.m_system_port_info.alias;
+    m_tableVoqSystemLagMemberTable->set(key, attrs);
+}
+
+void PortsOrch::voqSyncDelLagMember(Port &lag, Port &port)
+{
+    // Sync only local lag's member del to CHASSIS_APP_DB
+    if (lag.m_system_lag_info.switch_id != gVoqMySwitchId)
+    {
+        return;
+    }
+
+    string key = lag.m_system_lag_info.alias + ":" + port.m_system_port_info.alias;
+    m_tableVoqSystemLagMemberTable->del(key);
 }

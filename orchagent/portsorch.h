@@ -9,10 +9,10 @@
 #include "observer.h"
 #include "macaddress.h"
 #include "producertable.h"
-#include "notificationproducer.h"
 #include "flex_counter_manager.h"
 #include "gearboxutils.h"
 #include "saihelper.h"
+#include "lagid.h"
 
 
 #define FCS_LEN 4
@@ -23,7 +23,7 @@
 #define QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_STAT_COUNTER"
 #define QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_WATERMARK_STAT_COUNTER"
 #define PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "PG_WATERMARK_STAT_COUNTER"
-
+#define PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP "PG_DROP_STAT_COUNTER"
 
 typedef std::vector<sai_uint32_t> PortSupportedSpeeds;
 
@@ -74,7 +74,7 @@ struct VlanMemberUpdate
 class PortsOrch : public Orch, public Subject
 {
 public:
-    PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames);
+    PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, DBConnector *chassisAppDb);
 
     bool allPortsReady();
     bool isInitDone();
@@ -92,13 +92,15 @@ public:
     void decreasePortRefCount(const string &alias);
     bool getPortByBridgePortId(sai_object_id_t bridge_port_id, Port &port);
     void setPort(string alias, Port port);
-    void erasePort(string alias);
     void getCpuPort(Port &port);
+    bool getInbandPort(Port &port);
     bool getVlanByVlanId(sai_vlan_id_t vlan_id, Port &vlan);
 
     bool setHostIntfsOperStatus(const Port& port, bool up) const;
     void updateDbPortOperStatus(const Port& port, sai_port_oper_status_t status) const;
-    void updateDbVlanOperStatus(const Port& port, string status) const;
+
+    bool createVlanHostIntf(Port& vl, string hostif_name);
+    bool removeVlanHostIntf(Port vl);
 
     bool createBindAclTableGroup(sai_object_id_t  port_oid,
                    sai_object_id_t  acl_table_oid,
@@ -117,7 +119,7 @@ public:
                         acl_stage_type_t acl_stage);
     bool bindUnbindAclTableGroup(Port &port,
                                  bool ingress,
-     bool bind);
+                                 bool bind);
     bool getPortPfc(sai_object_id_t portId, uint8_t *pfc_bitmask);
     bool setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask);
 
@@ -141,11 +143,14 @@ public:
     bool removeVlanMember(Port &vlan, Port &port);
     bool isVlanMember(Port &vlan, Port &port);
 
+    string m_inbandPortName = "";
+    bool isInbandPort(const string &alias);
+    bool setVoqInbandIntf(string &alias, string &type);
+
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_counterLagTable;
     unique_ptr<Table> m_portTable;
-    unique_ptr<Table> m_vlanTable;
     unique_ptr<Table> m_gearboxTable;
     unique_ptr<Table> m_queueTable;
     unique_ptr<Table> m_queuePortTable;
@@ -154,16 +159,18 @@ private:
     unique_ptr<Table> m_pgTable;
     unique_ptr<Table> m_pgPortTable;
     unique_ptr<Table> m_pgIndexTable;
+    unique_ptr<Table> m_stateBufferMaximumValueTable;
     unique_ptr<ProducerTable> m_flexCounterTable;
     unique_ptr<ProducerTable> m_flexCounterGroupTable;
-    unique_ptr<NotificationProducer> notifications;
 
     std::string getQueueWatermarkFlexCounterTableKey(std::string s);
     std::string getPriorityGroupWatermarkFlexCounterTableKey(std::string s);
+    std::string getPriorityGroupDropPacketsFlexCounterTableKey(std::string s);
     std::string getPortRateFlexCounterTableKey(std::string s);
 
     shared_ptr<DBConnector> m_counter_db;
     shared_ptr<DBConnector> m_flex_db;
+    shared_ptr<DBConnector> m_state_db;
 
     FlexCounterManager port_stat_manager;
     FlexCounterManager port_buffer_drop_stat_manager;
@@ -175,8 +182,7 @@ private:
     Port m_cpuPort;
     // TODO: Add Bridge/Vlan class
     sai_object_id_t m_default1QBridge;
-    sai_object_id_t m_defaultVlan_ObjId;
-    sai_vlan_id_t   m_defaultVlan_Id;
+    sai_object_id_t m_defaultVlan;
 
     typedef enum
     {
@@ -204,15 +210,6 @@ private:
     map<set<int>, sai_object_id_t> m_portListLaneMap;
     map<set<int>, tuple<string, uint32_t, int, string, int>> m_lanesAliasSpeedMap;
     map<string, Port> m_portList;
-    map<string, vlan_members_t> m_portVlanMember;
-
-    /* mapping from SAI object ID to Name for faster
-       retrieval of Port/VLAN from object ID for events
-
-       coming from SAI
-     */
-    unordered_map<sai_object_id_t, string> portOidToName;
-
     unordered_map<sai_object_id_t, int> m_portOidToIndex;
     map<string, uint32_t> m_port_ref_count;
     unordered_set<string> m_pendingPortSet;
@@ -236,6 +233,7 @@ private:
 
     bool initializePort(Port &port);
     void initializePriorityGroups(Port &port);
+    void initializePortMaximumHeadroom(Port &port);
     void initializeQueues(Port &port);
 
     bool addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id);
@@ -246,7 +244,7 @@ private:
     bool addVlan(string vlan);
     bool removeVlan(Port vlan);
 
-    bool addLag(string lag);
+    bool addLag(string lag, uint32_t spa_id, int32_t switch_id);
     bool removeLag(Port lag);
     bool addLagMember(Port &lag, Port &port, bool enableForwarding);
     bool removeLagMember(Port &lag, Port &port);
@@ -293,14 +291,29 @@ private:
 
     void getPortSerdesVal(const std::string& s, std::vector<uint32_t> &lane_values);
 
-    bool setPortSerdesAttribute(sai_object_id_t port_id, sai_attr_id_t attr_id,
-                                vector<uint32_t> &serdes_val);
-    void updateLagOperStatus(Port &port, sai_port_oper_status_t status);
+    bool setPortSerdesAttribute(sai_object_id_t port_id,
+                                std::map<sai_port_serdes_attr_t, std::vector<uint32_t>> &serdes_attr);
+
+
+    void removePortSerdesAttribute(sai_object_id_t port_id);
+
     bool getSaiAclBindPointType(Port::Type                type,
                                 sai_acl_bind_point_type_t &sai_acl_bind_type);
     void initGearbox();
     bool initGearboxPort(Port &port);
     
+    //map key is tuple of <attached_switch_id, core_index, core_port_index>
+    map<tuple<int, int, int>, sai_object_id_t> m_systemPortOidMap;
+    sai_uint32_t m_systemPortCount;
+    bool getSystemPorts();
+    bool addSystemPorts();
+    unique_ptr<Table> m_tableVoqSystemLagTable;
+    unique_ptr<Table> m_tableVoqSystemLagMemberTable;
+    void voqSyncAddLag(Port &lag);
+    void voqSyncDelLag(Port &lag);
+    void voqSyncAddLagMember(Port &lag, Port &port);
+    void voqSyncDelLagMember(Port &lag, Port &port);
+    unique_ptr<LagIdAllocator> m_lagIdAllocator;
+
 };
 #endif /* SWSS_PORTSORCH_H */
-
