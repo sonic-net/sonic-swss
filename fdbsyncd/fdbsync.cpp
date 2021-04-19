@@ -418,6 +418,39 @@ void FdbSync::updateMclagRemoteMac (struct m_fdb_info *info)
     return;
 }
 
+void FdbSync::updateMclagRemoteMacPort(int ifindex, int vlan, std::string mac)
+{
+    string key = "Vlan" + to_string(vlan) + ":" + mac;
+    int type = 0;
+    string port_name = "";
+
+    SWSS_LOG_INFO("Updating Intf %d, Vlan:%d MAC:%s Key %s", ifindex, vlan, mac.c_str(), key.c_str());
+
+    if (m_mclag_remote_fdb_mac.find(key) != m_mclag_remote_fdb_mac.end())
+    {
+        type = m_mclag_remote_fdb_mac[key].type;
+        port_name = m_mclag_remote_fdb_mac[key].port_name;
+        SWSS_LOG_INFO(" port %s, type %d\n", port_name.c_str(), type);
+
+        if (type == FDB_TYPE_STATIC)
+        {
+            const std::string cmds = std::string("")
+                + " bridge fdb " + "replace" + " " + mac + " dev "
+                + port_name + " master " + "static"  + " vlan " + to_string(vlan);
+
+            std::string res;
+            int ret = swss::exec(cmds, res);
+            if (ret != 0)
+            {
+                SWSS_LOG_NOTICE("Failed cmd:%s, res=%s, ret=%d", cmds.c_str(), res.c_str(), ret);
+            }
+
+            SWSS_LOG_NOTICE("Update cmd:%s, res=%s, ret=%d", cmds.c_str(), res.c_str(), ret);
+        }
+    }
+    return;
+}
+
 /*
  * This is a special case handling where mac is learned in the ASIC.
  * Then MAC is learned in the Kernel, Since this mac is learned in the Kernel
@@ -655,6 +688,16 @@ void FdbSync::onMsgNbr(int nlmsg_type, struct nl_object *obj)
 
     if (isVxlanIntf == false)
     {
+        if (nlmsg_type == RTM_NEWNEIGH)
+        {
+            int vid = rtnl_neigh_get_vlan(neigh);
+            int state = rtnl_neigh_get_state(neigh);
+            if (state & NUD_PERMANENT)
+            {
+                updateMclagRemoteMacPort(ifindex, vid, macStr);
+            }
+        }
+
         if (nlmsg_type != RTM_DELNEIGH)
         {
             return;

@@ -106,6 +106,8 @@ private:
 
     void updateMclagRemoteMac(struct m_fdb_info *info);
 
+    void updateMclagRemoteMacPort(int ifindex, int vlan, std::string mac);
+
     void macUpdateMclagRemoteCache(struct m_fdb_info *info);
 
     bool checkImetExist(std::string key, uint32_t vni);
