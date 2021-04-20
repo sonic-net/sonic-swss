@@ -539,7 +539,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
 
                 storeFdbEntryState(update);
 
-                for (auto observer: m_observers)
+                for (auto &observer: m_observers)
                 {
                     observer->update(SUBJECT_TYPE_FDB_CHANGE, static_cast<void *>(&update));
                 }
@@ -563,7 +563,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
 
                     storeFdbEntryState(update);
 
-                    for (auto observer: m_observers)
+                    for (auto &observer: m_observers)
                     {
                         observer->update(SUBJECT_TYPE_FDB_CHANGE, static_cast<void *>(&update));
                     }
@@ -1005,7 +1005,7 @@ void FdbOrch::notifyObserversFDBFlush(Port &port, sai_object_id_t& bvid)
 
     if (!flushUpdate.entries.empty())
     {
-        for (auto observer: m_observers)
+        for (auto &observer: m_observers)
         {
             observer->update(SUBJECT_TYPE_FDB_FLUSH_CHANGE, static_cast<void *>(&flushUpdate));
         }
