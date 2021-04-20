@@ -107,6 +107,7 @@ private:
     fdb_entries_by_port_t saved_fdb_entries;
     vector<Table*> m_appTables;
     Table m_fdbStateTable;
+    Table m_mclagFdbStateTable;
     NotificationConsumer* m_flushNotificationsConsumer;
     NotificationConsumer* m_fdbNotificationConsumer;
 

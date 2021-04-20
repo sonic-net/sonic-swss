@@ -618,32 +618,6 @@ void FdbOrch::update(SubjectType type, void *cntx)
     return;
 }
 
-void FdbOrch::update(SubjectType type, void *cntx)
-{
-    SWSS_LOG_ENTER();
-
-    assert(cntx);
-
-    switch(type) {
-        case SUBJECT_TYPE_VLAN_MEMBER_CHANGE:
-        {
-            VlanMemberUpdate *update = reinterpret_cast<VlanMemberUpdate *>(cntx);
-            updateVlanMember(*update);
-            break;
-        }
-        case SUBJECT_TYPE_PORT_OPER_STATE_CHANGE:
-        {
-            PortOperStateUpdate *update = reinterpret_cast<PortOperStateUpdate *>(cntx);
-            updatePortOperState(*update);
-            break;
-        }
-        default:
-            break;
-    }
-
-    return;
-}
-
 bool FdbOrch::getPort(const MacAddress& mac, uint16_t vlan, Port& port)
 {
     SWSS_LOG_ENTER();
@@ -1208,7 +1182,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
             }
             else if ((oldOrigin == FDB_ORIGIN_LEARN) && (fdbData.origin == FDB_ORIGIN_MCLAG_ADVERTIZED))
             {
-                if ((port.m_bridge_port_id == it->second.bridge_port_id) && (oldType == "dynamic") && (type == "dynamic_local"))
+                if ((port.m_bridge_port_id == it->second.bridge_port_id) && (oldType == "dynamic") && (fdbData.type == "dynamic_local"))
                 {
                     SWSS_LOG_INFO("FdbOrch: mac=%s %s port=%s type=%s origin=%d old_origin=%d"
                         " old_type=%s local mac exists,"
@@ -1361,7 +1335,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
     FdbData storeFdbData = fdbData;
     storeFdbData.bridge_port_id = port.m_bridge_port_id;
     // overwrite the type and origin
-    if ((origin == FDB_ORIGIN_MCLAG_ADVERTIZED) && (type == "dynamic_local"))
+    if ((fdbData.origin == FDB_ORIGIN_MCLAG_ADVERTIZED) && (fdbData.type == "dynamic_local"))
     {
         //If the MAC is dynamic_local change the origin accordingly
         //MAC is added/updated as dynamic to allow aging.
@@ -1373,28 +1347,22 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
 
     string key = "Vlan" + to_string(vlan.m_vlan_info.vlan_id) + ":" + entry.mac.to_string();
 
-        status = sai_fdb_api->create_fdb_entry(&fdb_entry, (uint32_t)attrs.size(), attrs.data());
-        if (status != SAI_STATUS_SUCCESS)
+    status = sai_fdb_api->create_fdb_entry(&fdb_entry, (uint32_t)attrs.size(), attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create %s FDB %s in %s on %s, rv:%d",
+                fdbData.type.c_str(), entry.mac.to_string().c_str(),
+                vlan.m_alias.c_str(), port_name.c_str(), status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_FDB, status); //FIXME: it should be based on status. Some could be retried, some not
+        if (handle_status != task_success)
         {
-            SWSS_LOG_ERROR("Failed to create %s FDB %s in %s on %s, rv:%d",
-                    fdbData.type.c_str(), entry.mac.to_string().c_str(),
-                    vlan.m_alias.c_str(), port_name.c_str(), status);
-            task_process_status handle_status = handleSaiCreateStatus(SAI_API_FDB, status); //FIXME: it should be based on status. Some could be retried, some not
-            if (handle_status != task_success)
-            {
-                return parseHandleSaiStatusFailure(handle_status);
-            }
+            return parseHandleSaiStatusFailure(handle_status);
         }
-        port.m_fdb_count++;
-        m_portsOrch->setPort(port.m_alias, port);
-        vlan.m_fdb_count++;
-        m_portsOrch->setPort(vlan.m_alias, vlan);
     }
-
-    FdbData storeFdbData = fdbData;
-    storeFdbData.bridge_port_id = port.m_bridge_port_id;
-
-    m_entries[entry] = storeFdbData;
+    port.m_fdb_count++;
+    m_portsOrch->setPort(port.m_alias, port);
+    vlan.m_fdb_count++;
+    m_portsOrch->setPort(vlan.m_alias, vlan);
 
     if ( (fdbData.type == "dynamic_local") ||
             (fdbData.origin != FDB_ORIGIN_MCLAG_ADVERTIZED) ||
