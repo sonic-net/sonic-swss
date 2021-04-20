@@ -5438,7 +5438,7 @@ bool PortsOrch::doProcessRecircPort(string alias, string role, set<int> lane_set
         if (port_id == SAI_NULL_OBJECT_ID)
         {
             SWSS_LOG_ERROR("Failed to find port id for recirc port %s", alias.c_str());
-            return;
+            return false;
         }
 
         Port p(alias, Port::PHY);
