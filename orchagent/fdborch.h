@@ -64,26 +64,6 @@ struct FdbFlushUpdate
     Port port;
 };
 
-struct FdbData
-{
-    sai_object_id_t bridge_port_id;
-    string type;
-    FdbOrigin origin;
-    /**
-      {"dynamic", FDB_ORIGIN_LEARN} => dynamically learnt
-      {"dynamic", FDB_ORIGIN_PROVISIONED} => provisioned dynamic with swssconfig in APPDB
-      {"dynamic", FDB_ORIGIN_ADVERTIZED} => synced from remote device e.g. BGP MAC route
-      {"static", FDB_ORIGIN_LEARN} => Invalid
-      {"static", FDB_ORIGIN_PROVISIONED} => statically provisioned
-      {"static", FDB_ORIGIN_ADVERTIZED} => sticky synced from remote device
-    */
-
-    /* Remote FDB related info */
-    string remote_ip;
-    string    esi;
-    unsigned int vni;
-};
-
 struct SavedFdbEntry
 {
     MacAddress mac;

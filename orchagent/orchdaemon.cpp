@@ -100,18 +100,14 @@ bool OrchDaemon::init()
 
     vector<table_name_with_pri_t> app_fdb_tables = {
         { APP_FDB_TABLE_NAME,        FdbOrch::fdborch_pri},
-        { APP_VXLAN_FDB_TABLE_NAME,  FdbOrch::fdborch_pri}
+        { APP_VXLAN_FDB_TABLE_NAME,  FdbOrch::fdborch_pri},
+        { APP_MCLAG_FDB_TABLE_NAME,  FdbOrch::fdborch_pri}
     };
 
     gCrmOrch = new CrmOrch(m_configDb, CFG_CRM_TABLE_NAME);
-    gPortsOrch = new PortsOrch(m_applDb, ports_tables);
+    gPortsOrch = new PortsOrch(m_applDb, ports_tables, m_chassisAppDb);
 
     const int fdborch_pri = 20;
-
-    vector<table_name_with_pri_t> app_fdb_tables = {
-        { APP_FDB_TABLE_NAME,        fdborch_pri},
-        { APP_MCLAG_FDB_TABLE_NAME,  fdborch_pri}
-    };
 
     TableConnector stateDbFdb(m_stateDb, STATE_FDB_TABLE_NAME);
     TableConnector stateMclagDbFdb(m_stateDb, STATE_MCLAG_REMOTE_FDB_TABLE_NAME);
