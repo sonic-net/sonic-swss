@@ -538,11 +538,12 @@ void FdbOrch::update(sai_fdb_event_t        type,
                 itr++;
 
                 storeFdbEntryState(update);
-
+#if 0  //tbd_build
                 for (auto &observer: m_observers)
                 {
                     observer->update(SUBJECT_TYPE_FDB_CHANGE, static_cast<void *>(&update));
                 }
+#endif
             }
         }
         else if (entry->bv_id == SAI_NULL_OBJECT_ID)
@@ -562,11 +563,12 @@ void FdbOrch::update(sai_fdb_event_t        type,
                     update.add = false;
 
                     storeFdbEntryState(update);
-
+#if 0  //tbd_build
                     for (auto &observer: m_observers)
                     {
                         observer->update(SUBJECT_TYPE_FDB_CHANGE, static_cast<void *>(&update));
                     }
+#endif
                 }
                 itr = next_item;
             }
@@ -1002,7 +1004,7 @@ void FdbOrch::notifyObserversFDBFlush(Port &port, sai_object_id_t& bvid)
             flushUpdate.entries.push_back(entry);
         }
     }
-
+#if 0  //tbd_build
     if (!flushUpdate.entries.empty())
     {
         for (auto &observer: m_observers)
@@ -1010,6 +1012,7 @@ void FdbOrch::notifyObserversFDBFlush(Port &port, sai_object_id_t& bvid)
             observer->update(SUBJECT_TYPE_FDB_FLUSH_CHANGE, static_cast<void *>(&flushUpdate));
         }
     }
+#endif
 }
 
 void FdbOrch::updatePortOperState(const PortOperStateUpdate& update)
