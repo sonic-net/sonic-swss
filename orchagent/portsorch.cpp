@@ -52,6 +52,7 @@ extern int32_t gVoqMySwitchId;
 extern string gMyHostName;
 extern string gMyAsicName;
 
+#define DEFAULT_SYSTEM_PORT_MTU 9100
 #define VLAN_PREFIX         "Vlan"
 #define DEFAULT_VLAN_ID     1
 #define MAX_VALID_VLAN_ID   4094
@@ -1932,6 +1933,55 @@ bool PortsOrch::setHostIntfsOperStatus(const Port& port, bool isUp) const
     return true;
 }
 
+bool PortsOrch::createVlanHostIntf(Port& vl, string hostif_name)
+{
+    SWSS_LOG_ENTER();
+
+    if (vl.m_vlan_info.host_intf_id != SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("Host interface already assigned to VLAN %d", vl.m_vlan_info.vlan_id);
+        return false;
+    }
+
+    vector<sai_attribute_t> attrs;
+    sai_attribute_t attr;
+
+    attr.id = SAI_HOSTIF_ATTR_TYPE;
+    attr.value.s32 = SAI_HOSTIF_TYPE_NETDEV;
+    attrs.push_back(attr);
+
+    attr.id = SAI_HOSTIF_ATTR_OBJ_ID;
+    attr.value.oid = vl.m_vlan_info.vlan_oid;
+    attrs.push_back(attr);
+
+    attr.id = SAI_HOSTIF_ATTR_NAME;
+    strncpy(attr.value.chardata, hostif_name.c_str(), sizeof(attr.value.chardata));
+    attrs.push_back(attr);
+
+    sai_status_t status = sai_hostif_api->create_hostif(&vl.m_vlan_info.host_intf_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create host interface %s for VLAN %d", hostif_name.c_str(), vl.m_vlan_info.vlan_id);
+        return false;
+    }
+
+    m_portList[vl.m_alias] = vl;
+
+    return true;
+}
+
+bool PortsOrch::removeVlanHostIntf(Port vl)
+{
+    sai_status_t status = sai_hostif_api->remove_hostif(vl.m_vlan_info.host_intf_id);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove VLAN %d host interface", vl.m_vlan_info.vlan_id);
+        return false;
+    }
+
+    return true;
+}
+
 void PortsOrch::updateDbPortOperStatus(const Port& port, sai_port_oper_status_t status) const
 {
     SWSS_LOG_ENTER();
@@ -2537,12 +2587,13 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     continue;
                 }
 
-                if (an != -1 && an != p.m_autoneg)
+                if (an != -1 && (!p.m_an_cfg || an != p.m_autoneg))
                 {
                     if (setPortAutoNeg(p.m_port_id, an))
                     {
                         SWSS_LOG_NOTICE("Set port %s AutoNeg to %u", alias.c_str(), an);
                         p.m_autoneg = an;
+                        p.m_an_cfg = true;
                         m_portList[alias] = p;
 
                         // Once AN is changed
@@ -2675,7 +2726,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     if (fec_mode_map.find(fec_mode) != fec_mode_map.end())
                     {
                         /* reset fec mode upon mode change */
-                        if (p.m_fec_mode != fec_mode_map[fec_mode])
+                        if (!p.m_fec_cfg || p.m_fec_mode != fec_mode_map[fec_mode])
                         {
                             if (p.m_admin_state_up)
                             {
@@ -2689,6 +2740,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                                 p.m_admin_state_up = false;
                                 p.m_fec_mode = fec_mode_map[fec_mode];
+                                p.m_fec_cfg = true;
 
                                 if (setPortFec(p, p.m_fec_mode))
                                 {
@@ -2706,6 +2758,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             {
                                 /* Port is already down, setting fec mode*/
                                 p.m_fec_mode = fec_mode_map[fec_mode];
+                                p.m_fec_cfg = true;
                                 if (setPortFec(p, p.m_fec_mode))
                                 {
                                     m_portList[alias] = p;
@@ -2892,6 +2945,7 @@ void PortsOrch::doVlanTask(Consumer &consumer)
             // Retrieve attributes
             uint32_t mtu = 0;
             MacAddress mac;
+            string hostif_name = "";
             for (auto i : kfvFieldsValues(t))
             {
                 if (fvField(i) == "mtu")
@@ -2901,6 +2955,10 @@ void PortsOrch::doVlanTask(Consumer &consumer)
                 if (fvField(i) == "mac")
                 {
                     mac = MacAddress(fvValue(i));
+                }
+                if (fvField(i) == "hostif_name")
+                {
+                    hostif_name = fvValue(i);
                 }
             }
 
@@ -2942,6 +3000,16 @@ void PortsOrch::doVlanTask(Consumer &consumer)
                     if (vl.m_rif_id)
                     {
                         gIntfsOrch->setRouterIntfsMac(vl);
+                    }
+                }
+                if (!hostif_name.empty())
+                {
+                    if (!createVlanHostIntf(vl, hostif_name))
+                    {
+                        // No need to fail in case of error as this is for monitoring VLAN.
+                        // Error message is printed by "createVlanHostIntf" so just handle failure gracefully.
+                        it = consumer.m_toSync.erase(it);
+                        continue;
                     }
                 }
             }
@@ -3934,6 +4002,13 @@ bool PortsOrch::removeVlan(Port vlan)
        SWSS_LOG_ERROR("VLAN-VNI mapping not yet removed. VLAN %s VNI %d",
                       vlan.m_alias.c_str(), vlan.m_vnid);
        return false;
+    }
+
+
+    if (vlan.m_vlan_info.host_intf_id && !removeVlanHostIntf(vlan))
+    {
+        SWSS_LOG_ERROR("Failed to remove VLAN %d host interface", vlan.m_vlan_info.vlan_id);
+        return false;
     }
 
     sai_status_t status = sai_vlan_api->remove_vlan(vlan.m_vlan_info.vlan_oid);
@@ -5497,6 +5572,7 @@ bool PortsOrch::addSystemPorts()
             port.m_admin_state_up = true;
             port.m_oper_status = SAI_PORT_OPER_STATUS_UP;
             port.m_speed = attrs[1].value.sysportconfig.speed;
+            port.m_mtu = DEFAULT_SYSTEM_PORT_MTU;
             if (attrs[0].value.s32 == SAI_SYSTEM_PORT_TYPE_LOCAL)
             {
                 //Get the local port oid
@@ -5578,21 +5654,20 @@ bool PortsOrch::setVoqInbandIntf(string &alias, string &type)
         return true;
     }
 
+    //Make sure port and host if exists for the configured inband interface
     Port port;
-    if(type == "port")
+    if (!getPort(alias, port))
     {
-        if (!getPort(alias, port))
-        {
-            SWSS_LOG_NOTICE("Port configured for inband intf %s is not ready!", alias.c_str());
-            return false;
-        }
+        SWSS_LOG_ERROR("Port/Vlan configured for inband intf %s is not ready!", alias.c_str());
+        return false;
     }
 
-    // Check for existence of host interface. If does not exist, may create
-    // host if for the inband here
+    if(type == "port" && !port.m_hif_id)
+    {
+        SWSS_LOG_ERROR("Host interface is not available for port %s", alias.c_str());
+        return false;
+    }
 
-    // May do the processing for other inband type like type=vlan here
-    
     //Store the name of the local inband port
     m_inbandPortName = alias;
 

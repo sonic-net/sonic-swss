@@ -44,6 +44,10 @@ IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
     {
         //Build the interface list to be replayed to Kernel
         buildIntfReplayList();
+        if (m_pendingReplayIntfList.empty())
+        {
+            setWarmReplayDoneState();
+        }
     }
 }
 
@@ -191,14 +195,23 @@ void IntfMgr::buildIntfReplayList(void)
 
     m_cfgLoopbackIntfTable.getKeys(intfList);
     std::copy( intfList.begin(), intfList.end(), std::inserter( m_pendingReplayIntfList, m_pendingReplayIntfList.end() ) );
-        
+
     m_cfgVlanIntfTable.getKeys(intfList);
     std::copy( intfList.begin(), intfList.end(), std::inserter( m_pendingReplayIntfList, m_pendingReplayIntfList.end() ) );
-        
+
     m_cfgLagIntfTable.getKeys(intfList);
     std::copy( intfList.begin(), intfList.end(), std::inserter( m_pendingReplayIntfList, m_pendingReplayIntfList.end() ) );
 
     SWSS_LOG_INFO("Found %d Total Intfs to be replayed", (int)m_pendingReplayIntfList.size() );
+}
+
+void IntfMgr::setWarmReplayDoneState()
+{
+    m_replayDone = true;
+    WarmStart::setWarmStartState("intfmgrd", WarmStart::REPLAYED);
+    // There is no operation to be performed for intfmgr reconcillation
+    // Hence mark it reconciled right away
+    WarmStart::setWarmStartState("intfmgrd", WarmStart::RECONCILED);
 }
 
 bool IntfMgr::isIntfCreated(const string &alias)
@@ -705,7 +718,6 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
 void IntfMgr::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
-    static bool replayDone = false;
 
     string table_name = consumer.getTableName();
 
@@ -761,13 +773,9 @@ void IntfMgr::doTask(Consumer &consumer)
 
         it = consumer.m_toSync.erase(it);
     }
-    
-    if (!replayDone && WarmStart::isWarmStart() && m_pendingReplayIntfList.empty() )
+
+    if (!m_replayDone && WarmStart::isWarmStart() && m_pendingReplayIntfList.empty() )
     {
-        replayDone = true;
-        WarmStart::setWarmStartState("intfmgrd", WarmStart::REPLAYED);
-        // There is no operation to be performed for intfmgr reconcillation
-        // Hence mark it reconciled right away
-        WarmStart::setWarmStartState("intfmgrd", WarmStart::RECONCILED);
+        setWarmReplayDoneState();
     }
 }

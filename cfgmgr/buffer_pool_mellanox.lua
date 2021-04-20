@@ -7,6 +7,9 @@ local state_db = "6"
 
 local lossypg_reserved = 19 * 1024
 local lossypg_reserved_400g = 37 * 1024
+-- Number of 400G ports
+local port_count_400g = 0
+-- Number of lossy PG on 400G ports
 local lossypg_400g = 0
 
 local result = {}
@@ -56,8 +59,11 @@ local function iterate_all_items(all_items)
             end
             profiles[index][2] = profiles[index][2] + size
             local speed = redis.call('HGET', 'PORT_TABLE:'..port, 'speed')
-            if speed == '400000' and profile == '[BUFFER_PROFILE_TABLE:ingress_lossy_profile]' then
-                lossypg_400g = lossypg_400g + size
+            if speed == '400000' then
+                if profile == '[BUFFER_PROFILE_TABLE:ingress_lossy_profile]' then
+                    lossypg_400g = lossypg_400g + size
+                end
+                port_count_400g = port_count_400g + 1
             end
         end
     end
@@ -145,6 +151,10 @@ end
 local lossypg_extra_for_400g = (lossypg_reserved_400g - lossypg_reserved) * lossypg_400g
 accumulative_occupied_buffer = accumulative_occupied_buffer + lossypg_extra_for_400g
 
+-- Accumulate sizes for management PGs
+local accumulative_management_pg = (total_port - port_count_400g) * lossypg_reserved + port_count_400g * lossypg_reserved_400g
+accumulative_occupied_buffer = accumulative_occupied_buffer + accumulative_management_pg
+
 -- Accumulate sizes for egress mirror and management pool
 local accumulative_egress_mirror_overhead = total_port * egress_mirror_headroom
 accumulative_occupied_buffer = accumulative_occupied_buffer + accumulative_egress_mirror_overhead + mgmt_pool_size
@@ -228,8 +238,9 @@ table.insert(result, "debug:accumulative size:" .. accumulative_occupied_buffer)
 for i = 1, #statistics do
     table.insert(result, "debug:" .. statistics[i][1] .. ":" .. statistics[i][2] .. ":" .. statistics[i][3])
 end
-table.insert(result, "debug:extra_400g:" .. (lossypg_reserved_400g - lossypg_reserved) .. ":" .. lossypg_400g)
+table.insert(result, "debug:extra_400g:" .. (lossypg_reserved_400g - lossypg_reserved) .. ":" .. lossypg_400g .. ":" .. port_count_400g)
 table.insert(result, "debug:mgmt_pool:" .. mgmt_pool_size)
+table.insert(result, "debug:accumulative_mgmt_pg:" .. accumulative_management_pg)
 table.insert(result, "debug:egress_mirror:" .. accumulative_egress_mirror_overhead)
 table.insert(result, "debug:shp_enabled:" .. tostring(shp_enabled))
 table.insert(result, "debug:shp_size:" .. shp_size)
