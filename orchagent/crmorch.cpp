@@ -436,31 +436,42 @@ void CrmOrch::getResAvailableCounters()
 
     for (auto &res : m_resourcesMap)
     {
-        sai_attribute_t attr;
-        attr.id = crmResSaiAvailAttrMap.at(res.first);
-
-        switch (attr.id)
+        // ignore unsupported resources
+        if (res.second.resStatus != CrmResourceStatus::CRM_RES_SUPPORTED)
         {
-            case SAI_SWITCH_ATTR_AVAILABLE_IPV4_ROUTE_ENTRY:
-            case SAI_SWITCH_ATTR_AVAILABLE_IPV6_ROUTE_ENTRY:
-            case SAI_SWITCH_ATTR_AVAILABLE_IPV4_NEXTHOP_ENTRY:
-            case SAI_SWITCH_ATTR_AVAILABLE_IPV6_NEXTHOP_ENTRY:
-            case SAI_SWITCH_ATTR_AVAILABLE_IPV4_NEIGHBOR_ENTRY:
-            case SAI_SWITCH_ATTR_AVAILABLE_IPV6_NEIGHBOR_ENTRY:
-            case SAI_SWITCH_ATTR_AVAILABLE_NEXT_HOP_GROUP_MEMBER_ENTRY:
-            case SAI_SWITCH_ATTR_AVAILABLE_NEXT_HOP_GROUP_ENTRY:
-            case SAI_SWITCH_ATTR_AVAILABLE_FDB_ENTRY:
-            case SAI_SWITCH_ATTR_AVAILABLE_IPMC_ENTRY:
-            case SAI_SWITCH_ATTR_AVAILABLE_SNAT_ENTRY:
-            case SAI_SWITCH_ATTR_AVAILABLE_DNAT_ENTRY:
+            continue;
+        }
+
+        switch (res.first)
+        {
+            case CrmResourceType::CRM_IPV4_ROUTE:
+            case CrmResourceType::CRM_IPV6_ROUTE:
+            case CrmResourceType::CRM_IPV4_NEXTHOP:
+            case CrmResourceType::CRM_IPV6_NEXTHOP:
+            case CrmResourceType::CRM_IPV4_NEIGHBOR:
+            case CrmResourceType::CRM_IPV6_NEIGHBOR:
+            case CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER:
+            case CrmResourceType::CRM_NEXTHOP_GROUP:
+            case CrmResourceType::CRM_FDB_ENTRY:
+            case CrmResourceType::CRM_IPMC_ENTRY:
+            case CrmResourceType::CRM_SNAT_ENTRY:
+            case CrmResourceType::CRM_DNAT_ENTRY:
             {
+                sai_attribute_t attr;
+                attr.id = crmResSaiAvailAttrMap.at(res.first);
+
                 sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
-                    if(status == SAI_STATUS_NOT_SUPPORTED)
+                    if((status == SAI_STATUS_NOT_SUPPORTED) ||
+                       (status == SAI_STATUS_NOT_IMPLEMENTED) ||
+                       SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
+                       SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status))
                     {
-                        // remove unsupported resources from map
-                        m_resourcesMap.erase(res.first);
+                        // mark unsupported resources
+                        res.second.resStatus = CrmResourceStatus::CRM_RES_NOT_SUPPORTED;
+                        SWSS_LOG_NOTICE("Switch attribute %u not supported", attr.id);
+                        break;
                     }
                     SWSS_LOG_ERROR("Failed to get switch attribute %u , rv:%d", attr.id, status);
                     break;
@@ -471,9 +482,12 @@ void CrmOrch::getResAvailableCounters()
                 break;
             }
 
-            case SAI_SWITCH_ATTR_AVAILABLE_ACL_TABLE:
-            case SAI_SWITCH_ATTR_AVAILABLE_ACL_TABLE_GROUP:
+            case CrmResourceType::CRM_ACL_TABLE:
+            case CrmResourceType::CRM_ACL_GROUP:
             {
+                sai_attribute_t attr;
+                attr.id = crmResSaiAvailAttrMap.at(res.first);
+
                 vector<sai_acl_resource_t> resources(CRM_ACL_RESOURCE_COUNT);
 
                 attr.value.aclresource.count = CRM_ACL_RESOURCE_COUNT;
@@ -501,9 +515,12 @@ void CrmOrch::getResAvailableCounters()
                 break;
             }
 
-            case SAI_ACL_TABLE_ATTR_AVAILABLE_ACL_ENTRY:
-            case SAI_ACL_TABLE_ATTR_AVAILABLE_ACL_COUNTER:
+            case CrmResourceType::CRM_ACL_ENTRY:
+            case CrmResourceType::CRM_ACL_COUNTER:
             {
+                sai_attribute_t attr;
+                attr.id = crmResSaiAvailAttrMap.at(res.first);
+
                 for (auto &cnt : res.second.countersMap)
                 {
                     sai_status_t status = sai_acl_api->get_acl_table_attribute(cnt.second.id, 1, &attr);
@@ -520,7 +537,7 @@ void CrmOrch::getResAvailableCounters()
             }
 
             default:
-                SWSS_LOG_ERROR("Failed to get CRM attribute %u. Unknown attribute.\n", attr.id);
+                SWSS_LOG_ERROR("Failed to get CRM resource type %u. Unknown resource type.\n", (uint32_t)res.first);
                 return;
         }
     }
@@ -591,7 +608,7 @@ void CrmOrch::checkCrmThresholds()
                 }
                 else
                 {
-                    SWSS_LOG_WARN("%s Exception occured (div by Zero): Used count %u free count %u",
+                    SWSS_LOG_WARN("%s Exception occurred (div by Zero): Used count %u free count %u",
                                   res.name.c_str(), cnt.usedCounter, cnt.availableCounter);
                 }
             }

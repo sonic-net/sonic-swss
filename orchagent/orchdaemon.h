@@ -33,13 +33,14 @@
 #include "natorch.h"
 #include "mlagorch.h"
 #include "muxorch.h"
+#include "macsecorch.h"
 
 using namespace swss;
 
 class OrchDaemon
 {
 public:
-    OrchDaemon(DBConnector *, DBConnector *, DBConnector *);
+    OrchDaemon(DBConnector *, DBConnector *, DBConnector *, DBConnector *);
     ~OrchDaemon();
 
     bool init();
@@ -53,6 +54,7 @@ private:
     DBConnector *m_applDb;
     DBConnector *m_configDb;
     DBConnector *m_stateDb;
+    DBConnector *m_chassisAppDb;
 
     std::vector<Orch *> m_orchList;
     Select *m_select;

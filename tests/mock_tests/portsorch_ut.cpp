@@ -16,6 +16,7 @@ namespace portsorch_test
         shared_ptr<swss::DBConnector> m_config_db;
         shared_ptr<swss::DBConnector> m_state_db;
         shared_ptr<swss::DBConnector> m_counters_db;
+        shared_ptr<swss::DBConnector> m_chassis_app_db;
 
         PortsOrchTest()
         {
@@ -28,6 +29,8 @@ namespace portsorch_test
                 "CONFIG_DB", 0);
             m_state_db = make_shared<swss::DBConnector>(
                 "STATE_DB", 0);
+            m_chassis_app_db = make_shared<swss::DBConnector>(
+                "CHASSIS_APP_DB", 0);
         }
 
         virtual void SetUp() override
@@ -142,7 +145,7 @@ namespace portsorch_test
         };
 
         ASSERT_EQ(gPortsOrch, nullptr);
-        gPortsOrch = new PortsOrch(m_app_db.get(), ports_tables);
+        gPortsOrch = new PortsOrch(m_app_db.get(), ports_tables, m_chassis_app_db.get());
         vector<string> buffer_tables = { APP_BUFFER_POOL_TABLE_NAME,
                                          APP_BUFFER_PROFILE_TABLE_NAME,
                                          APP_BUFFER_QUEUE_TABLE_NAME,
@@ -271,7 +274,7 @@ namespace portsorch_test
         };
 
         ASSERT_EQ(gPortsOrch, nullptr);
-        gPortsOrch = new PortsOrch(m_app_db.get(), ports_tables);
+        gPortsOrch = new PortsOrch(m_app_db.get(), ports_tables, m_chassis_app_db.get());
         vector<string> buffer_tables = { APP_BUFFER_POOL_TABLE_NAME,
                                          APP_BUFFER_PROFILE_TABLE_NAME,
                                          APP_BUFFER_QUEUE_TABLE_NAME,
@@ -341,7 +344,7 @@ namespace portsorch_test
         };
 
         ASSERT_EQ(gPortsOrch, nullptr);
-        gPortsOrch = new PortsOrch(m_app_db.get(), ports_tables);
+        gPortsOrch = new PortsOrch(m_app_db.get(), ports_tables, m_chassis_app_db.get());
         vector<string> buffer_tables = { APP_BUFFER_POOL_TABLE_NAME,
                                          APP_BUFFER_PROFILE_TABLE_NAME,
                                          APP_BUFFER_QUEUE_TABLE_NAME,
@@ -446,7 +449,7 @@ namespace portsorch_test
 
         pgConsumer = static_cast<Consumer*>(gBufferOrch->getExecutor(APP_BUFFER_PG_TABLE_NAME));
         pgConsumer->dumpPendingTasks(ts);
-        ASSERT_TRUE(ts.empty()); // PG should be proceesed now
+        ASSERT_TRUE(ts.empty()); // PG should be processed now
         ts.clear();
     }
 
@@ -486,7 +489,7 @@ namespace portsorch_test
         };
 
         ASSERT_EQ(gPortsOrch, nullptr);
-        gPortsOrch = new PortsOrch(m_app_db.get(), ports_tables);
+        gPortsOrch = new PortsOrch(m_app_db.get(), ports_tables, m_chassis_app_db.get());
         vector<string> buffer_tables = { APP_BUFFER_POOL_TABLE_NAME,
                                          APP_BUFFER_PROFILE_TABLE_NAME,
                                          APP_BUFFER_QUEUE_TABLE_NAME,
@@ -571,7 +574,7 @@ namespace portsorch_test
 
         vector<string> ts;
 
-        // check LAG, VLAN tasks were proceesed
+        // check LAG, VLAN tasks were processed
         // port table may require one more doTask iteration
         for (auto tableName: {
                 APP_LAG_TABLE_NAME,

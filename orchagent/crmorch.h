@@ -37,6 +37,12 @@ enum class CrmThresholdType
     CRM_FREE,
 };
 
+enum class CrmResourceStatus
+{
+    CRM_RES_SUPPORTED,
+    CRM_RES_NOT_SUPPORTED,
+};
+
 class CrmOrch : public Orch
 {
 public:
@@ -77,6 +83,7 @@ private:
         std::map<std::string, CrmResourceCounter> countersMap;
 
         uint32_t exceededLogCounter = 0;
+        CrmResourceStatus resStatus = CrmResourceStatus::CRM_RES_SUPPORTED;
     };
 
     std::chrono::seconds m_pollingInterval;

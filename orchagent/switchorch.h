@@ -42,7 +42,7 @@ private:
     std::shared_ptr<swss::Table> m_asicSensorsTable= nullptr;
     swss::SelectableTimer* m_sensorsPollerTimer = nullptr;
     bool m_sensorsPollerEnabled = false;
-    uint32_t m_sensorsPollerInterval = DEFAULT_ASIC_SENSORS_POLLER_INTERVAL;
+    time_t m_sensorsPollerInterval = DEFAULT_ASIC_SENSORS_POLLER_INTERVAL;
     bool m_sensorsPollerIntervalChanged = false;
     uint8_t m_numTempSensors = 0;
     bool m_numTempSensorsInitialized = false;

@@ -178,7 +178,7 @@ void BufferOrch::generateBufferPoolWatermarkCounterIdList(void)
     // is received on buffer pool watermark key under table "FLEX_COUNTER_GROUP_TABLE"
     // Because the SubscriberStateTable listens to the entire keyspace of "BUFFER_POOL_WATERMARK", any update
     // to field value tuples under key "BUFFER_POOL_WATERMARK" will cause this tuple to be heard again
-    // To avoid resync the coutner ID list a second time, we introduce a data member variable to mark whether
+    // To avoid resync the counter ID list a second time, we introduce a data member variable to mark whether
     // this operation has already been done or not yet
     if (m_isBufferPoolWatermarkCounterIdListGenerated)
     {
@@ -367,10 +367,19 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
             for (auto &attribute : attribs)
             {
                 sai_status = sai_buffer_api->set_buffer_pool_attribute(sai_object, &attribute);
-                if (SAI_STATUS_SUCCESS != sai_status)
+                if (SAI_STATUS_ATTR_NOT_IMPLEMENTED_0 == sai_status)
+                {
+                    SWSS_LOG_NOTICE("Buffer pool SET for name:%s, sai object:%" PRIx64 ", not implemented. status:%d. Ignoring it", object_name.c_str(), sai_object, sai_status);
+                    return task_process_status::task_ignore;
+                }
+                else if (SAI_STATUS_SUCCESS != sai_status)
                 {
                     SWSS_LOG_ERROR("Failed to modify buffer pool, name:%s, sai object:%" PRIx64 ", status:%d", object_name.c_str(), sai_object, sai_status);
-                    return task_process_status::task_failed;
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_BUFFER, sai_status);
+                    if (handle_status != task_process_status::task_success)
+                    {
+                        return handle_status;
+                    }
                 }
             }
             SWSS_LOG_DEBUG("Modified existing pool:%" PRIx64 ", type:%s name:%s ", sai_object, map_type_name.c_str(), object_name.c_str());
@@ -381,7 +390,11 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
             if (SAI_STATUS_SUCCESS != sai_status)
             {
                 SWSS_LOG_ERROR("Failed to create buffer pool %s with type %s, rv:%d", object_name.c_str(), map_type_name.c_str(), sai_status);
-                return task_process_status::task_failed;
+                task_process_status handle_status = handleSaiCreateStatus(SAI_API_BUFFER, sai_status);
+                if (handle_status != task_process_status::task_success)
+                {
+                    return handle_status;
+                }
             }
             (*(m_buffer_type_maps[map_type_name]))[object_name].m_saiObjectId = sai_object;
             SWSS_LOG_NOTICE("Created buffer pool %s with type %s", object_name.c_str(), map_type_name.c_str());
@@ -407,7 +420,11 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
         if (SAI_STATUS_SUCCESS != sai_status)
         {
             SWSS_LOG_ERROR("Failed to remove buffer pool %s with type %s, rv:%d", object_name.c_str(), map_type_name.c_str(), sai_status);
-            return task_process_status::task_failed;
+            task_process_status handle_status = handleSaiRemoveStatus(SAI_API_BUFFER, sai_status);
+            if (handle_status != task_process_status::task_success)
+            {
+                return handle_status;
+            }
         }
         SWSS_LOG_NOTICE("Removed buffer pool %s with type %s", object_name.c_str(), map_type_name.c_str());
         auto it_to_delete = (m_buffer_type_maps[map_type_name])->find(object_name);
@@ -553,10 +570,19 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
             for (auto &attribute : attribs)
             {
                 sai_status = sai_buffer_api->set_buffer_profile_attribute(sai_object, &attribute);
-                if (SAI_STATUS_SUCCESS != sai_status)
+                if (SAI_STATUS_ATTR_NOT_IMPLEMENTED_0 == sai_status)
+                {
+                    SWSS_LOG_NOTICE("Buffer profile SET for name:%s, sai object:%" PRIx64 ", not implemented. status:%d. Ignoring it", object_name.c_str(), sai_object, sai_status);
+                    return task_process_status::task_ignore;
+                }
+                else if (SAI_STATUS_SUCCESS != sai_status)
                 {
                     SWSS_LOG_ERROR("Failed to modify buffer profile, name:%s, sai object:%" PRIx64 ", status:%d", object_name.c_str(), sai_object, sai_status);
-                    return task_process_status::task_failed;
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_BUFFER, sai_status);
+                    if (handle_status != task_process_status::task_success)
+                    {
+                        return handle_status;
+                    }
                 }
             }
         }
@@ -566,7 +592,11 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
             if (SAI_STATUS_SUCCESS != sai_status)
             {
                 SWSS_LOG_ERROR("Failed to create buffer profile %s with type %s, rv:%d", object_name.c_str(), map_type_name.c_str(), sai_status);
-                return task_process_status::task_failed;
+                task_process_status handle_status = handleSaiCreateStatus(SAI_API_BUFFER, sai_status);
+                if (handle_status != task_process_status::task_success)
+                {
+                    return handle_status;
+                }
             }
             (*(m_buffer_type_maps[map_type_name]))[object_name].m_saiObjectId = sai_object;
             SWSS_LOG_NOTICE("Created buffer profile %s with type %s", object_name.c_str(), map_type_name.c_str());
@@ -589,7 +619,11 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
         if (SAI_STATUS_SUCCESS != sai_status)
         {
             SWSS_LOG_ERROR("Failed to remove buffer profile %s with type %s, rv:%d", object_name.c_str(), map_type_name.c_str(), sai_status);
-            return task_process_status::task_failed;
+            task_process_status handle_status = handleSaiRemoveStatus(SAI_API_BUFFER, sai_status);
+            if (handle_status != task_process_status::task_success)
+            {
+                return handle_status;
+            }
         }
 
         SWSS_LOG_NOTICE("Remove buffer profile %s with type %s", object_name.c_str(), map_type_name.c_str());
@@ -692,7 +726,11 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
             if (sai_status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to set queue's buffer profile attribute, status:%d", sai_status);
-                return task_process_status::task_failed;
+                task_process_status handle_status = handleSaiSetStatus(SAI_API_QUEUE, sai_status);
+                if (handle_status != task_process_status::task_success)
+                {
+                    return handle_status;
+                }
             }
         }
     }
@@ -815,7 +853,11 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
                 if (sai_status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("Failed to set port:%s pg:%zd buffer profile attribute, status:%d", port_name.c_str(), ind, sai_status);
-                    return task_process_status::task_failed;
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_BUFFER, sai_status);
+                    if (handle_status != task_process_status::task_success)
+                    {
+                        return handle_status;
+                    }
                 }
             }
         }
@@ -894,7 +936,11 @@ task_process_status BufferOrch::processIngressBufferProfileList(KeyOpFieldsValue
         if (sai_status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to set ingress buffer profile list on port, status:%d, key:%s", sai_status, port_name.c_str());
-            return task_process_status::task_failed;
+            task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, sai_status);
+            if (handle_status != task_process_status::task_success)
+            {
+                return handle_status;
+            }
         }
     }
 
@@ -944,7 +990,11 @@ task_process_status BufferOrch::processEgressBufferProfileList(KeyOpFieldsValues
         if (sai_status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to set egress buffer profile list on port, status:%d, key:%s", sai_status, port_name.c_str());
-            return task_process_status::task_failed;
+            task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, sai_status);
+            if (handle_status != task_process_status::task_success)
+            {
+                return handle_status;
+            }
         }
     }
 
@@ -966,7 +1016,7 @@ void BufferOrch::doTask()
     //     ├── buffer queue
     //     └── buffer pq table
 
-    SWSS_LOG_INFO("Handling buffer task");
+    SWSS_LOG_DEBUG("Handling buffer task");
 
     auto pool_consumer = getExecutor((APP_BUFFER_POOL_TABLE_NAME));
     pool_consumer->drain();
@@ -1011,6 +1061,7 @@ void BufferOrch::doTask(Consumer &consumer)
         switch(task_status)
         {
             case task_process_status::task_success :
+            case task_process_status::task_ignore :
                 it = consumer.m_toSync.erase(it);
                 break;
             case task_process_status::task_invalid_entry:

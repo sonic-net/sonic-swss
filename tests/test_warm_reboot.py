@@ -46,7 +46,7 @@ def swss_check_RestoreCount(dvs, state_db, restore_count):
             if fv[0] == "restore_count":
                 assert int(fv[1]) == restore_count[key] + 1
             elif fv[0] == "state":
-                assert fv[1] == "reconciled"
+                assert fv[1] == "reconciled" or fv[1] == "disabled"
 
 def check_port_oper_status(appl_db, port_name, state):
     portTbl = swsscommon.Table(appl_db, swsscommon.APP_PORT_TABLE_NAME)
@@ -76,7 +76,8 @@ def swss_app_check_RestoreCount_single(state_db, restore_count, name):
             if fv[0] == "restore_count":
                 assert int(fv[1]) == restore_count[key] + 1
             elif fv[0] == "state":
-                assert fv[1] == "reconciled"
+                assert fv[1] == "reconciled" or fv[1] == "disabled"
+    return status, fvs
 
 def swss_app_check_warmstart_state(state_db, name, state):
     warmtbl = swsscommon.Table(state_db, swsscommon.STATE_WARM_RESTART_TABLE_NAME)
@@ -444,6 +445,28 @@ class TestWarmReboot(object):
         intf_tbl._del("Vlan16")
         intf_tbl._del("Vlan20")
         time.sleep(2)
+
+    def test_IntfMgrdWarmRestartNoInterfaces(self, dvs, testlog):
+        """ Tests that intfmgrd reaches reconciled state when
+        there are no interfaces in configuration. """
+
+        state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+        restore_count = swss_get_RestoreCount(dvs, state_db)
+
+        dvs.runcmd("config warm_restart enable swss")
+        dvs.runcmd("supervisorctl restart intfmgrd")
+
+        reached_desired_state = False
+        retries = 10
+        delay = 2
+        for _ in range(retries):
+            ok, fvs = swss_app_check_RestoreCount_single(state_db, restore_count, "intfmgrd")
+            if ok and dict(fvs)["state"] == "reconciled":
+                reached_desired_state = True
+                break
+            time.sleep(delay)
+
+        assert reached_desired_state, "intfmgrd haven't reached desired state 'reconciled', after {} sec it was {}".format(retries * delay, dict(fvs)["state"])
 
     def test_swss_neighbor_syncup(self, dvs, testlog):
 
@@ -1150,7 +1173,7 @@ class TestWarmReboot(object):
         time.sleep(5)
 
         # Verify FSM
-        swss_app_check_warmstart_state(state_db, "bgp", "")
+        swss_app_check_warmstart_state(state_db, "bgp", "disabled")
 
         # Verify that multiple changes are seen in swss and sairedis logs as there's
         # no warm-reboot logic in place.

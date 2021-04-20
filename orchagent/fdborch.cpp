@@ -12,6 +12,7 @@
 #include "notifier.h"
 #include "sai_serialize.h"
 #include "mlagorch.h"
+#include "vxlanorch.h"
 #include "directory.h"
 
 extern sai_fdb_api_t    *sai_fdb_api;
@@ -22,7 +23,7 @@ extern CrmOrch *        gCrmOrch;
 extern MlagOrch*        gMlagOrch;
 extern Directory<Orch*> gDirectory;
 
-const int fdborch_pri = 20;
+const int FdbOrch::fdborch_pri = 20;
 
 FdbOrch::FdbOrch(DBConnector* applDbConnector, vector<table_name_with_pri_t> appFdbTables,
     TableConnector stateDbFdbConnector, TableConnector stateDbMclagFdbConnector, PortsOrch *port) :
@@ -831,6 +832,27 @@ void FdbOrch::doTask(Consumer& consumer)
                     }
                 }
 
+            if(origin == FDB_ORIGIN_VXLAN_ADVERTIZED)
+            {
+                VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
+
+                if(!remote_ip.length())
+                {
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+                port = tunnel_orch->getTunnelPortName(remote_ip);
+            }
+
+
+            FdbData fdbData;
+            fdbData.bridge_port_id = SAI_NULL_OBJECT_ID;
+            fdbData.type = type;
+            fdbData.origin = origin;
+            fdbData.remote_ip = remote_ip;
+            fdbData.esi = esi;
+            fdbData.vni = vni;
+            if (addFdbEntry(entry, port, fdbData))
                 it = consumer.m_toSync.erase(it);
             }
             else
@@ -1351,9 +1373,28 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
 
     string key = "Vlan" + to_string(vlan.m_vlan_info.vlan_id) + ":" + entry.mac.to_string();
 
-    SWSS_LOG_NOTICE("Storing FDB entry: [%s, 0x%" PRIx64 "] [ port: %s , type: %s]",
-                    entry.mac.to_string().c_str(),
-                    entry.bv_id, entry.port_name.c_str(), type.c_str());
+        status = sai_fdb_api->create_fdb_entry(&fdb_entry, (uint32_t)attrs.size(), attrs.data());
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create %s FDB %s in %s on %s, rv:%d",
+                    fdbData.type.c_str(), entry.mac.to_string().c_str(),
+                    vlan.m_alias.c_str(), port_name.c_str(), status);
+            task_process_status handle_status = handleSaiCreateStatus(SAI_API_FDB, status); //FIXME: it should be based on status. Some could be retried, some not
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
+        }
+        port.m_fdb_count++;
+        m_portsOrch->setPort(port.m_alias, port);
+        vlan.m_fdb_count++;
+        m_portsOrch->setPort(vlan.m_alias, vlan);
+    }
+
+    FdbData storeFdbData = fdbData;
+    storeFdbData.bridge_port_id = port.m_bridge_port_id;
+
+    m_entries[entry] = storeFdbData;
 
     if ( (fdbData.type == "dynamic_local") ||
             (fdbData.origin != FDB_ORIGIN_MCLAG_ADVERTIZED) ||
@@ -1587,3 +1628,4 @@ void FdbOrch::notifyTunnelOrch(Port& port)
 
     tunnel_orch->deleteTunnelPort(port);
 }
+

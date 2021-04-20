@@ -10,7 +10,7 @@ from swsscommon import swsscommon
 
 
 class TestNextHopGroup(object):
-    def test_route_nhg(self, dvs, testlog):
+    def test_route_nhg(self, dvs, dvs_route, testlog):
         config_db = dvs.get_config_db()
         fvs = {"NULL": "NULL"}
         config_db.create_entry("INTERFACE", "Ethernet0", fvs)
@@ -35,32 +35,23 @@ class TestNextHopGroup(object):
         assert dvs.servers[1].runcmd("ip link set up dev eth0") == 0
         assert dvs.servers[2].runcmd("ip link set up dev eth0") == 0
 
+        rtprefix = "2.2.2.0/24"
+
         app_db = dvs.get_app_db()
         ps = swsscommon.ProducerStateTable(app_db.db_connection, "ROUTE_TABLE")
 
         asic_db = dvs.get_asic_db()
-        asic_routes_count = len(asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"))
+
+        dvs_route.check_asicdb_deleted_route_entries([rtprefix])
 
         fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.3,10.0.0.5"), ("ifname", "Ethernet0,Ethernet4,Ethernet8")])
-        ps.set("2.2.2.0/24", fvs)
+        ps.set(rtprefix, fvs)
 
         # check if route was propagated to ASIC DB
-
-        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY", asic_routes_count + 1)
-        keys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
-
-        found_route = False
-        for k in keys:
-            rt_key = json.loads(k)
-
-            if rt_key['dest'] == "2.2.2.0/24":
-                found_route = True
-                break
-
-        assert found_route
+        rtkeys = dvs_route.check_asicdb_route_entries([rtprefix])
 
         # assert the route points to next hop group
-        fvs = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY", k)
+        fvs = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY", rtkeys[0])
 
         nhgid = fvs["SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID"]
 
@@ -112,10 +103,10 @@ class TestNextHopGroup(object):
                 assert fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"] == nhgid
 
         # Remove route 2.2.2.0/24
-        ps._del("2.2.2.0/24")
+        ps._del(rtprefix)
 
         # Wait for route 2.2.2.0/24 to be removed
-        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY", asic_routes_count)
+        dvs_route.check_asicdb_deleted_route_entries([rtprefix])
 
     def test_route_nhg_exhaust(self, dvs, testlog):
         """

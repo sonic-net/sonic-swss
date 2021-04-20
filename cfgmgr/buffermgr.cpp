@@ -246,7 +246,7 @@ void BufferMgr::transformReference(string &name)
  * This function copies the data from tables in CONFIG_DB to APPL_DB.
  * With dynamically buffer calculation supported, the following tables
  * will be moved to APPL_DB from CONFIG_DB because the CONFIG_DB contains
- * confgured entries only while APPL_DB contains dynamically generated entries
+ * configured entries only while APPL_DB contains dynamically generated entries
  *  - BUFFER_POOL
  *  - BUFFER_PROFILE
  *  - BUFFER_PG

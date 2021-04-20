@@ -111,7 +111,8 @@ class PfcWdAclHandler: public PfcWdLossyHandler
         string m_strEgressTable;
         string m_strRule;
         void createPfcAclTable(sai_object_id_t port, string strTable, bool ingress);
-        void createPfcAclRule(shared_ptr<AclRulePfcwd> rule, uint8_t queueId, string strTable);
+        void createPfcAclRule(shared_ptr<AclRulePfcwd> rule, uint8_t queueId, string strTable, sai_object_id_t port);
+        void updatePfcAclRule(shared_ptr<AclRule> rule, uint8_t queueId, string strTable, vector<sai_object_id_t> port);
 };
 
 // PFC queue that implements drop action by draining queue with buffer of zero size
@@ -125,7 +126,7 @@ class PfcWdZeroBufferHandler: public PfcWdLossyHandler
     private:
         /*
          * Sets lock bits on port's priority group and queue
-         * to protect them from beeing changed by other Orch's
+         * to protect them from being changed by other Orch's
          */
         void setPriorityGroupAndQueueLockFlag(Port& port, bool isLocked) const;
 

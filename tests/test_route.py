@@ -328,6 +328,7 @@ class TestRoute(TestRouteBase):
         dvs.servers[3].runcmd("ip route del default dev eth0")
         dvs.servers[3].runcmd("ip address del 10.0.0.3/31 dev eth0")
 
+    @pytest.mark.skip(reason="FRR 7.5 issue https://github.com/Azure/sonic-buildimage/issues/6359")
     def test_RouteAddRemoveIpv6RouteWithVrf(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -424,6 +425,7 @@ class TestRoute(TestRouteBase):
         dvs.servers[3].runcmd("ip -6 route del default dev eth0")
         dvs.servers[3].runcmd("ip -6 address del 2001::2/64 dev eth0")
 
+    @pytest.mark.skip(reason="FRR 7.5 issue https://github.com/Azure/sonic-buildimage/issues/6359")
     def test_RouteAndNexthopInDifferentVrf(self, dvs, testlog):
         self.setup_db(dvs)
 

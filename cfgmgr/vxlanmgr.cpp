@@ -906,7 +906,7 @@ void VxlanMgr::createAppDBTunnelMapTable(const KeyOpFieldsValuesTuple & t)
     std::replace(vxlanTunnelMapName.begin(), vxlanTunnelMapName.end(), config_db_key_delimiter, delimiter);
 
     /* Case 1: Entry exist - Erase from cache & return
-     * Case 2: Enry does not exist - Write to AppDB 
+     * Case 2: Entry does not exist - Write to AppDB 
      * Case 3: Entry exist but modified - Not taken care. Will address later
      */
     if (m_in_reconcile)
@@ -921,7 +921,7 @@ void VxlanMgr::createAppDBTunnelMapTable(const KeyOpFieldsValuesTuple & t)
         }
         else
         {
-            SWSS_LOG_INFO("Reconcile App Tunnel Map Table create %s doesnt not exist. Pending %zu",
+            SWSS_LOG_INFO("Reconcile App Tunnel Map Table create %s does not exist. Pending %zu",
                             vxlanTunnelMapName.c_str(), m_appVxlanTunnelMapKeysRecon.size());
         }
     }
@@ -956,7 +956,7 @@ int VxlanMgr::createVxlanNetdevice(std::string vxlanTunnelName, std::string vni_
                     vlan_id.c_str());
 
     // Case 1: Entry exist - Erase from cache & return
-    // Case 2: Enry does not exist - Create netDevice in Kernel
+    // Case 2: Entry does not exist - Create netDevice in Kernel
     // Case 3: Entry exist but modified - Not taken care. Will address later
      
     if (m_in_reconcile)

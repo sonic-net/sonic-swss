@@ -91,7 +91,7 @@ void SwitchOrch::doCfgSensorsTableTask(Consumer &consumer)
             }
             else if (table_attr == ASIC_SENSORS_POLLER_INTERVAL)
             {
-                uint32_t interval=to_uint<uint32_t>(fvValue(fvt));
+                auto interval=to_int<time_t>(fvValue(fvt));
 
                 if (fvField(fvt) == "interval")
                 {
@@ -104,7 +104,7 @@ void SwitchOrch::doCfgSensorsTableTask(Consumer &consumer)
                     }
                     else
                     {
-                        SWSS_LOG_INFO("ASIC sensors : poller interval unchanged : %d seconds",m_sensorsPollerInterval);
+                        SWSS_LOG_INFO("ASIC sensors : poller interval unchanged : %s seconds", to_string(m_sensorsPollerInterval).c_str());
                     }
                 }
                 else
@@ -205,7 +205,7 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
                 {
                     SWSS_LOG_ERROR("Failed to set switch attribute %s to %s, rv:%d",
                             attribute.c_str(), value.c_str(), status);
-                    retry = true;
+                    retry = (handleSaiSetStatus(SAI_API_SWITCH, status) == task_need_retry);
                     break;
                 }
 
@@ -306,7 +306,11 @@ bool SwitchOrch::setAgingFDB(uint32_t sec)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set switch %" PRIx64 " fdb_aging_time attribute: %d", gSwitchId, status);
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_SWITCH, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     SWSS_LOG_NOTICE("Set switch %" PRIx64 " fdb_aging_time %u sec", gSwitchId, sec);
     return true;

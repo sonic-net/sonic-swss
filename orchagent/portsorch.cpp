@@ -5557,7 +5557,7 @@ bool PortsOrch::setVoqInbandIntf(string &alias, string &type)
     // host if for the inband here
 
     // May do the processing for other inband type like type=vlan here
-
+    
     //Store the name of the local inband port
     m_inbandPortName = alias;
 

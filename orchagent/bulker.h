@@ -208,10 +208,10 @@ public:
         if (found_setting != setting_entries.end())
         {
             // Mark old one as done
-            auto& attrmap = found_setting->second;
-            for (auto& attr: attrmap)
+            auto& attrs = found_setting->second;
+            for (auto& attr: attrs)
             {
-                *attr.second.second = SAI_STATUS_SUCCESS;
+                *attr.second = SAI_STATUS_SUCCESS;
             }
             // Erase old one
             setting_entries.erase(found_setting);
@@ -252,27 +252,15 @@ public:
         if (!attr) throw std::invalid_argument("attr is null");
 
         // Insert or find the key (entry)
-        auto& attrmap = setting_entries.emplace(std::piecewise_construct,
+        auto& attrs = setting_entries.emplace(std::piecewise_construct,
                 std::forward_as_tuple(*entry),
                 std::forward_as_tuple()
         ).first->second;
 
-        // Insert or find the key (attr)
-        auto rc = attrmap.emplace(std::piecewise_construct,
-                std::forward_as_tuple(attr->id),
-                std::forward_as_tuple());
-        bool inserted = rc.second;
-        auto it = rc.first;
-
-        // If inserted new key, assign the attr
-        // If found existing key, overwrite the old attr
-        it->second.first = *attr;
-        if (!inserted)
-        {
-            // If found existing key, mark old status as success
-            *it->second.second = SAI_STATUS_SUCCESS;
-        }
-        it->second.second = object_status;
+        // Insert attr
+        attrs.emplace_back(std::piecewise_construct,
+                std::forward_as_tuple(*attr),
+                std::forward_as_tuple(object_status));
         *object_status = SAI_STATUS_NOT_EXECUTED;
     }
 
@@ -351,19 +339,21 @@ public:
         {
             std::vector<Te> rs;
             std::vector<sai_attribute_t> ts;
+            std::vector<sai_status_t*> status_vector;
 
             for (auto const& i: setting_entries)
             {
                 auto const& entry = i.first;
-                auto const& attrmap = i.second;
-                for (auto const& ia: attrmap)
+                auto const& attrs = i.second;
+                for (auto const& ia: attrs)
                 {
-                    auto const& attr = ia.second.first;
-                    sai_status_t *object_status = ia.second.second;
+                    auto const& attr = ia.first;
+                    sai_status_t *object_status = ia.second;
                     if (*object_status == SAI_STATUS_NOT_EXECUTED)
                     {
                         rs.push_back(entry);
                         ts.push_back(attr);
+                        status_vector.push_back(object_status);
                     }
                 }
             }
@@ -375,9 +365,7 @@ public:
 
             for (size_t ir = 0; ir < count; ir++)
             {
-                auto& entry = rs[ir];
-                auto& attr_id = ts[ir].id;
-                sai_status_t *object_status = setting_entries[entry][attr_id].second;
+                sai_status_t *object_status = status_vector[ir];
                 if (object_status)
                 {
                     SWSS_LOG_INFO("EntityBulker.flush setting_entries status[%zu]=%d(0x%8p)\n", ir, statuses[ir], object_status);
@@ -426,8 +414,7 @@ private:
 
     std::unordered_map<                                     // A map of
             Te,                                             // entry ->
-            std::unordered_map<                             //     another map of
-                    sai_attr_id_t,                          //     attr_id ->
+            std::vector<                                    //     vector of attribute and status
                     std::pair<
                             sai_attribute_t,                //     (attr_value, OUT object_status)
                             sai_status_t *
