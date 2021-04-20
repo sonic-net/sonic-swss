@@ -231,8 +231,14 @@ public:
             {
                 return nullptr;
             }
-            m_port_id = std::make_unique<sai_object_id_t>(port->m_port_id);
-            // TODO: If the MACsec was enabled at the gearbox, should use line port id as the port id.
+            if (port->m_line_side_id != SAI_NULL_OBJECT_ID)
+            {
+                m_port_id = std::make_unique<sai_object_id_t>(port->m_line_side_id);
+            }
+            else
+            {
+                m_port_id = std::make_unique<sai_object_id_t>(port->m_port_id);
+            }
         }
         return m_port_id.get();
     }
@@ -241,12 +247,22 @@ public:
     {
         if (m_switch_id == nullptr)
         {
-            if (gSwitchId == SAI_NULL_OBJECT_ID)
+            auto port = get_port();
+            sai_object_id_t switchId;
+            if (port == nullptr || port->m_switch_id == SAI_NULL_OBJECT_ID)
+            {
+                switchId = gSwitchId;
+            }
+            else
+            {
+                switchId = port->m_switch_id;
+            }
+            if (switchId == SAI_NULL_OBJECT_ID)
             {
                 SWSS_LOG_ERROR("Switch ID cannot be found");
                 return nullptr;
             }
-            m_switch_id = std::make_unique<sai_object_id_t>(gSwitchId);
+            m_switch_id = std::make_unique<sai_object_id_t>(switchId);
         }
         return m_switch_id.get();
     }

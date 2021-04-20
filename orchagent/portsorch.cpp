@@ -5140,6 +5140,9 @@ bool PortsOrch::initGearboxPort(Port &port)
 
             sai_deserialize_object_id(phyOidStr, phyOid);
 
+            SWSS_LOG_NOTICE("BOX: Gearbox port %s assigned phyOid 0x%" PRIx64, port.m_alias.c_str(), phyOid);
+            port.m_switch_id = phyOid;
+
             /* Create SYSTEM-SIDE port */
             attrs.clear();
 
@@ -5305,6 +5308,7 @@ bool PortsOrch::initGearboxPort(Port &port)
 
             SWSS_LOG_NOTICE("BOX: Connected Gearbox ports; system-side:0x%" PRIx64 " to line-side:0x%" PRIx64, systemPort, linePort);
             m_gearboxPortListLaneMap[port.m_port_id] = make_tuple(systemPort, linePort);
+            port.m_line_side_id = linePort;
         }
     }
 
