@@ -541,7 +541,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
 
                 for (auto observer: m_observers)
                 {
-                    observer->update(SUBJECT_TYPE_FDB_CHANGE, &update);
+                    observer->update(SUBJECT_TYPE_FDB_CHANGE, static_cast<void *>(&update));
                 }
             }
         }
@@ -565,7 +565,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
 
                     for (auto observer: m_observers)
                     {
-                        observer->update(SUBJECT_TYPE_FDB_CHANGE, &update);
+                        observer->update(SUBJECT_TYPE_FDB_CHANGE, static_cast<void *>(&update));
                     }
                 }
                 itr = next_item;
@@ -1007,7 +1007,7 @@ void FdbOrch::notifyObserversFDBFlush(Port &port, sai_object_id_t& bvid)
     {
         for (auto observer: m_observers)
         {
-            observer->update(SUBJECT_TYPE_FDB_FLUSH_CHANGE, &flushUpdate);
+            observer->update(SUBJECT_TYPE_FDB_FLUSH_CHANGE, static_cast<void *>(&flushUpdate));
         }
     }
 }
