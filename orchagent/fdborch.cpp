@@ -800,6 +800,7 @@ void FdbOrch::doTask(Consumer& consumer)
             {
                 if (origin == FDB_ORIGIN_MCLAG_ADVERTIZED)
                 {
+                    string key = "Vlan" + to_string(vlan.m_vlan_info.vlan_id) + ":" + entry.mac.to_string();
                     if (type == "dynamic_local")
                     {
                         m_mclagFdbStateTable.del(key);
@@ -838,6 +839,7 @@ void FdbOrch::doTask(Consumer& consumer)
             {
                 if (origin == FDB_ORIGIN_MCLAG_ADVERTIZED)
                 {
+                    string key = "Vlan" + to_string(vlan.m_vlan_info.vlan_id) + ":" + entry.mac.to_string();
                     m_mclagFdbStateTable.del(key);
                     SWSS_LOG_NOTICE("fdbEvent: do Task Delete MCLAG FDB from state mclag remote fdb table: "
                             "Mac: %s Vlan: %d ",entry.mac.to_string().c_str(), vlan.m_vlan_info.vlan_id );
@@ -1188,7 +1190,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
                         " old_type=%s local mac exists,"
                         " received dynamic_local from iccpd, ignore update",
                         entry.mac.to_string().c_str(), vlan.m_alias.c_str(), port_name.c_str(),
-                        type.c_str(), fdbData.origin, oldOrigin, oldType.c_str());
+                        fdbData.type.c_str(), fdbData.origin, oldOrigin, oldType.c_str());
 
                     return true;
                 }
@@ -1398,14 +1400,14 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
 
         SWSS_LOG_NOTICE("fdbEvent: AddFdbEntry: Add MCLAG MAC with state mclag remote fdb table "
               "Mac: %s Vlan: %d port:%s type:%s", entry.mac.to_string().c_str(),
-              vlan.m_vlan_info.vlan_id, port_name.c_str(), type.c_str());
+              vlan.m_vlan_info.vlan_id, port_name.c_str(), fdbData.type.c_str());
     }
     else if (macUpdate && (oldOrigin == FDB_ORIGIN_MCLAG_ADVERTIZED) &&
             (fdbData.origin != FDB_ORIGIN_MCLAG_ADVERTIZED))
     {
         SWSS_LOG_NOTICE("fdbEvent: AddFdbEntry: del MCLAG MAC from state MCLAG remote fdb table "
                     "Mac: %s Vlan: %d port:%s type:%s", entry.mac.to_string().c_str(),
-                    vlan.m_vlan_info.vlan_id, port_name.c_str(), type.c_str());
+                    vlan.m_vlan_info.vlan_id, port_name.c_str(), fdbData.type.c_str());
         m_mclagFdbStateTable.del(key);
     }
 
