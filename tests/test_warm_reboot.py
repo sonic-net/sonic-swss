@@ -869,11 +869,13 @@ class TestWarmReboot(object):
         appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         ps = swsscommon.ProducerStateTable(appl_db, swsscommon.APP_ROUTE_TABLE_NAME)
         fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1"), ("ifname", "Ethernet0")])
-
         ps.set("2.2.2.0/24", fvs)
 
+        fvs = swsscommon.FieldValuePairs([("nexthop","20.0.0.1"), ("ifname", "Ethernet0")])
+        ps.set("3.3.3.0/24", fvs)
+
         time.sleep(1)
-        # Should fail, since neighbor for next 10.0.0.1 has not been not resolved yet
+        # Should fail, since neighbor for next 20.0.0.1 has not been not resolved yet
         (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check")
         assert result == "RESTARTCHECK failed\n"
 
@@ -882,8 +884,8 @@ class TestWarmReboot(object):
         (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check -n -s -w 500")
         assert result == "RESTARTCHECK succeeded\n"
 
-        # get neighbor and arp entry
-        dvs.servers[1].runcmd("ping -c 1 10.0.0.1")
+        # Remove unfinished routes
+        ps._del("3.3.3.0/24")
 
         time.sleep(1)
         (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check")

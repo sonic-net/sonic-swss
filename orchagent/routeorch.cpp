@@ -1411,8 +1411,9 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                 }
                 else
                 {
-                    SWSS_LOG_INFO("Failed to get next hop %s for %s",
+                    SWSS_LOG_INFO("Failed to get next hop %s for %s, resolving neighbor",
                             nextHops.to_string().c_str(), ipPrefix.to_string().c_str());
+                    m_neighOrch->resolveNeighbor(nexthop);
                     return false;
                 }
             }
@@ -1459,8 +1460,15 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                                 return false;
                             }
                         }
+                        else
+                        {
+                            SWSS_LOG_INFO("Failed to get next hop %s in %s, resolving neighbor",
+                                    nextHop.to_string().c_str(), nextHops.to_string().c_str());
+                            m_neighOrch->resolveNeighbor(nextHop);
+                        }
                     }
                 }
+
                 /* Failed to create the next hop group and check if a temporary route is needed */
 
                 /* If the current next hop is part of the next hop group to sync,

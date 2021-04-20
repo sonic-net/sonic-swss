@@ -71,6 +71,8 @@ public:
     bool removeOverlayNextHop(const NextHopKey &);
     void update(SubjectType, void *);
 
+    void resolveNeighbor(const NeighborEntry &);
+
 private:
     PortsOrch *m_portsOrch;
     IntfsOrch *m_intfsOrch;
@@ -79,6 +81,8 @@ private:
 
     NeighborTable m_syncdNeighbors;
     NextHopTable m_syncdNextHops;
+
+    std::set<NextHopKey> m_neighborToResolve;
 
     bool addNextHop(const IpAddress&, const string&);
     bool removeNextHop(const IpAddress&, const string&);
@@ -90,9 +94,11 @@ private:
     bool clearNextHopFlag(const NextHopKey &, const uint32_t);
 
     void processFDBFlushUpdate(const FdbFlushUpdate &);
-    bool resolveNeighborEntry(const NeighborEntry &, const MacAddress &);
 
     void doTask(Consumer &consumer);
+
+    bool resolveNeighborEntry(const NeighborEntry &, const MacAddress &);
+    void clearResolvedNeighborEntry(const NeighborEntry &);
 };
 
 #endif /* SWSS_NEIGHORCH_H */

@@ -219,6 +219,13 @@ void NbrMgr::doResolveNeighTask(Consumer &consumer)
     while (it != consumer.m_toSync.end())
     {
         KeyOpFieldsValuesTuple    t = it->second;
+        if (kfvOp(t) == DEL_COMMAND)
+        {
+            SWSS_LOG_INFO("Received DEL operation for %s, skipping", kfvKey(t).c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+
         vector<string>            keys = parseAliasIp(kfvKey(t), consumer.getConsumerTable()->getTableNameSeparator().c_str());
 
         MacAddress                mac;
