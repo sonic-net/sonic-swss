@@ -3885,7 +3885,7 @@ bool PortsOrch::addVlan(string vlan_alias)
         }
     }
 
-    SWSS_LOG_NOTICE("Create an empty VLAN %s vid:%hu vlan_oid 0x%lx", vlan_alias.c_str(), vlan_id, vlan_oid);
+    SWSS_LOG_NOTICE("Create an empty VLAN %s vid:%hu vlan_oid 0x%lx", vlan_alias.c_str(), vlan_id, (long unsigned int)vlan_oid);
 
     Port vlan(vlan_alias, Port::VLAN);
     vlan.m_vlan_info.vlan_oid = vlan_oid;
