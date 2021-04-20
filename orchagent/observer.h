@@ -38,26 +38,64 @@ public:
 class Subject
 {
 public:
+    virtual void attach(SubjectType type, Observer *observer)
+    {
+        m_observers.emplace_back(type, observer);
+    }
+
     virtual void attach(Observer *observer)
     {
-        m_observers.push_back(observer);
+        attach(SUBJECT_TYPE_ALL_CHANGES, observer);
+    }
+
+    virtual void detach(SubjectType type, Observer *observer)
+    {
+        pair<SubjectType, Observer *> temp(type, observer);
+
+        auto it = find(m_observers.begin(), m_observers.end(), temp);
+        if (it != m_observers.end())
+        {
+            m_observers.erase(it);
+        }
     }
 
     virtual void detach(Observer *observer)
     {
-        m_observers.remove(observer);
+        detach(SUBJECT_TYPE_ALL_CHANGES, observer);
+    }
+
+    virtual bool isObserver(SubjectType type, Observer *observer)
+    {
+        pair<SubjectType, Observer *> temp(type, observer);
+
+        return m_observers.end() != find(m_observers.begin(), m_observers.end(), temp);
+    }
+
+    virtual bool isObserver(Observer *observer)
+    {
+        return isObserver(SUBJECT_TYPE_ALL_CHANGES, observer);
+    }
+
+    virtual bool hasObservers()
+    {
+        return m_observers.size() > 0;
     }
 
     virtual ~Subject() {}
 
 protected:
-    list<Observer *> m_observers;
+    list<pair<SubjectType, Observer *>> m_observers;
 
     virtual void notify(SubjectType type, void *cntx)
     {
-        for (auto iter: m_observers)
+        for (auto iter = m_observers.begin(); iter != m_observers.end(); /* No-op */)
         {
-            iter->update(type, cntx);
+            auto nxt = next(iter);
+            if (((*iter).first == SUBJECT_TYPE_ALL_CHANGES) || ((*iter).first == type))
+            {
+                (*iter).second->update(type, cntx);
+            }
+            iter = nxt;
         }
     }
 };
