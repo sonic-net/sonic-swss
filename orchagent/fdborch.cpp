@@ -1079,8 +1079,7 @@ void FdbOrch::updateVlanMember(const VlanMemberUpdate& update)
     }
 }
 
-bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
-        FdbData fdbData)
+bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, FdbData fdbData)
 {
     Port vlan;
     Port port;
@@ -1283,7 +1282,6 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
         }
     }
 
-
     if (macUpdate)
     {
         SWSS_LOG_INFO("MAC-Update FDB %s in %s on from-%s:to-%s from-%s:to-%s origin-%d-to-%d",
@@ -1391,7 +1389,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
     }
 
     //register with NeighborOrch for ICCP learned MAC addresses
-    if (origin == FDB_ORIGIN_MCLAG_ADVERTIZED && (fdbData.type != "dynamic_local"))
+    if (fdbData.origin == FDB_ORIGIN_MCLAG_ADVERTIZED && (fdbData.type != "dynamic_local"))
     {
         std::vector<FieldValueTuple> fvs;
         fvs.push_back(FieldValueTuple("port", port_name));
