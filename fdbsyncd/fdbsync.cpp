@@ -435,14 +435,15 @@ void FdbSync::updateMclagRemoteMacPort(int ifindex, int vlan, std::string mac)
         if (type == FDB_TYPE_STATIC)
         {
             const std::string cmds = std::string("")
-                + " bridge fdb " + "replace" + " " + mac + " dev "
-                + port_name + " master " + "static"  + " vlan " + to_string(vlan);
+                + " bridge fdb replace" + " " + mac + " dev "
+                + port_name + " master static vlan " + to_string(vlan);
 
             std::string res;
             int ret = swss::exec(cmds, res);
             if (ret != 0)
             {
                 SWSS_LOG_NOTICE("Failed cmd:%s, res=%s, ret=%d", cmds.c_str(), res.c_str(), ret);
+                return;
             }
 
             SWSS_LOG_NOTICE("Update cmd:%s, res=%s, ret=%d", cmds.c_str(), res.c_str(), ret);

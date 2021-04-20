@@ -301,7 +301,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
             }
             else
             {
-             SWSS_LOG_INFO("FdbOrch LEARN notification: mac %s is already in bv_id 0x%"
+                SWSS_LOG_INFO("FdbOrch LEARN notification: mac %s is already in bv_id 0x%"
                 PRIx64 "existing-bp 0x%" PRIx64 "new-bp:0x%" PRIx64,
                 update.entry.mac.to_string().c_str(), entry->bv_id, existing_entry->second.bridge_port_id, bridge_port_id);
             }
@@ -770,11 +770,7 @@ void FdbOrch::doTask(Consumer& consumer)
                 }
             }
 
-            /* FDB type is either dynamic or static */
-            if (origin == FDB_ORIGIN_MCLAG_ADVERTIZED)
-                assert(type == "dynamic" || type == "dynamic_local" || type == "static" );
-            else
-                assert(type == "dynamic" || type == "static");
+            assert(type == "dynamic" || type == "dynamic_local" || type == "static" );
 
             if(origin == FDB_ORIGIN_VXLAN_ADVERTIZED)
             {
