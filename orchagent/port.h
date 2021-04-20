@@ -36,6 +36,7 @@ struct VlanInfo
 {
     sai_object_id_t     vlan_oid = 0;
     sai_vlan_id_t       vlan_id = 0;
+    sai_object_id_t     host_intf_id = SAI_NULL_OBJECT_ID;
 };
 
 struct SystemPortInfo
@@ -160,6 +161,8 @@ public:
     SystemPortInfo   m_system_port_info;
     SystemLagInfo    m_system_lag_info;
 
+    bool m_fec_cfg = false;
+    bool m_an_cfg = false;
 };
 
 }

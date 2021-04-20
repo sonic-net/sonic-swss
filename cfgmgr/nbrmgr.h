@@ -32,11 +32,12 @@ private:
     void doSetNeighTask(Consumer &consumer);
     void doTask(Consumer &consumer);
     void doStateSystemNeighTask(Consumer &consumer);
-    bool getVoqInbandInterfaceName(string &nbr_odev);
+    bool getVoqInbandInterfaceName(string &nbr_odev, string &ibiftype);
     bool addKernelRoute(string odev, IpAddress ip_addr);
     bool delKernelRoute(IpAddress ip_addr);
     bool addKernelNeigh(string odev, IpAddress ip_addr, MacAddress mac_addr);
     bool delKernelNeigh(string odev, IpAddress ip_addr);
+    bool isIntfOperUp(const std::string &alias);
     unique_ptr<Table> m_cfgVoqInbandInterfaceTable;
 
     Table m_statePortTable, m_stateLagTable, m_stateVlanTable, m_stateIntfTable, m_stateNeighRestoreTable;
