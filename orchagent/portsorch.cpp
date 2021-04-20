@@ -2056,7 +2056,7 @@ sai_status_t PortsOrch::removePort(sai_object_id_t port_id)
 
     Port port;
 
-    /*
+    /* 
      * Make sure to bring down admin state.
      * SET would have replaced with DEL
      */
