@@ -1376,6 +1376,12 @@ bool MACsecOrch::createMACsecSC(
                 : macsec_port.m_ingress_flow_id;
     }
 
+    auto table =
+        (direction == SAI_MACSEC_DIRECTION_EGRESS)
+            ? &macsec_port.m_egress_acl_table
+            : &macsec_port.m_ingress_acl_table;
+    sc->m_entry_id = table->m_data_entry_id;
+
     if (!createMACsecSC(
             sc->m_sc_id,
             switch_id,
@@ -1391,32 +1397,6 @@ bool MACsecOrch::createMACsecSC(
     }
     recover.add_action([this, sc]() { this->deleteMACsecSC(sc->m_sc_id); });
 
-    auto table =
-        (direction == SAI_MACSEC_DIRECTION_EGRESS)
-            ? &macsec_port.m_egress_acl_table
-            : &macsec_port.m_ingress_acl_table;
-    if (table->m_available_acl_priorities.empty())
-    {
-        SWSS_LOG_WARN("Available ACL priorities have been exhausted.");
-        return false;
-    }
-    sc->m_acl_priority = *(table->m_available_acl_priorities.begin());
-    table->m_available_acl_priorities.erase(table->m_available_acl_priorities.begin());
-    if (!createMACsecACLDataEntry(
-            sc->m_entry_id,
-            table->m_table_id,
-            switch_id,
-            macsec_port.m_sci_in_sectag,
-            sci,
-            sc->m_acl_priority))
-    {
-        SWSS_LOG_WARN("Cannot create ACL Data entry");
-        return false;
-    }
-    recover.add_action([this, sc, table]() {
-        deleteMACsecACLEntry(sc->m_entry_id);
-        table->m_available_acl_priorities.insert(sc->m_acl_priority);
-    });
 
     SWSS_LOG_NOTICE("MACsec SC %s is created.", port_sci.c_str());
 
@@ -1515,9 +1495,6 @@ task_process_status MACsecOrch::deleteMACsecSC(
         const std::string port_sci_an = swss::join(':', port_sci, sa.first);
         deleteMACsecSA(port_sci_an, direction);
     }
-
-    deleteMACsecACLEntry(ctx.get_macsec_sc()->m_entry_id);
-    ctx.get_acl_table()->m_available_acl_priorities.insert(ctx.get_macsec_sc()->m_acl_priority);
 
     if (!deleteMACsecSC(ctx.get_macsec_sc()->m_sc_id))
     {
@@ -1941,12 +1918,6 @@ bool MACsecOrch::initMACsecACLTable(
         acl_table.m_eapol_packet_forward_entry_id = SAI_NULL_OBJECT_ID;
     });
 
-    if (!bindMACsecACLTabletoPort(acl_table.m_table_id, port_id, direction))
-    {
-        SWSS_LOG_WARN("Cannot bind ACL table");
-        return false;
-    }
-    recover.add_action([this, port_id, direction]() { this->unbindMACsecACLTable(port_id, direction); });
 
     sai_uint32_t minimum_priority = 0;
     if (!getAclPriority(switch_id, SAI_SWITCH_ATTR_ACL_ENTRY_MINIMUM_PRIORITY, minimum_priority))
@@ -1970,6 +1941,43 @@ bool MACsecOrch::initMACsecACLTable(
     }
     recover.add_action([&acl_table]() { acl_table.m_available_acl_priorities.clear(); });
 
+
+    if (acl_table.m_available_acl_priorities.empty())
+    {
+        SWSS_LOG_WARN("Available ACL priorities have been exhausted.");
+        return false;
+    }
+
+    auto acl_priority = *(acl_table.m_available_acl_priorities.begin());
+    acl_table.m_available_acl_priorities.erase(acl_table.m_available_acl_priorities.begin());
+    acl_table.m_acl_priority = acl_priority;
+
+    sai_uint64_t sci = {0};
+    if (!createMACsecACLDataEntry(
+            acl_table.m_data_entry_id,
+            acl_table.m_table_id,
+            switch_id,
+            sci_in_sectag,
+            sci,
+            acl_priority))
+    {
+        SWSS_LOG_WARN("Cannot create ACL Data entry");
+        return false;
+    }
+    recover.add_action([this, &acl_table]() {
+        this->deleteMACsecACLEntry(acl_table.m_data_entry_id);
+        acl_table.m_data_entry_id = SAI_NULL_OBJECT_ID;
+        acl_table.m_available_acl_priorities.insert(acl_table.m_acl_priority);
+    });
+
+
+    if (!bindMACsecACLTabletoPort(acl_table.m_table_id, port_id, direction))
+    {
+        SWSS_LOG_WARN("Cannot bind ACL table");
+        return false;
+    }
+    recover.add_action([this, port_id, direction]() { this->unbindMACsecACLTable(port_id, direction); });
+
     recover.clear();
     return true;
 }
@@ -1984,6 +1992,11 @@ bool MACsecOrch::deinitMACsecACLTable(
     if (!unbindMACsecACLTable(port_id, direction))
     {
         SWSS_LOG_WARN("Cannot unbind ACL table");
+        result &= false;
+    }
+    if (!deleteMACsecACLEntry(acl_table.m_data_entry_id))
+    {
+        SWSS_LOG_WARN("Cannot delete data ACL entry");
         result &= false;
     }
     if (!deleteMACsecACLEntry(acl_table.m_eapol_packet_forward_entry_id))

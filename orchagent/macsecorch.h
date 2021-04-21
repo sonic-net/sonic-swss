@@ -69,6 +69,8 @@ private:
     {
         sai_object_id_t         m_table_id;
         sai_object_id_t         m_eapol_packet_forward_entry_id;
+        sai_object_id_t         m_data_entry_id;
+        sai_uint32_t            m_acl_priority;
         std::set<sai_uint32_t>  m_available_acl_priorities;
     };
     struct MACsecSC
