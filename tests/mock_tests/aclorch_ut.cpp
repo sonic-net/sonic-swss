@@ -331,11 +331,6 @@ namespace aclorch_test
             const int fdborch_pri = 20;
 
             vector<table_name_with_pri_t> app_fdb_tables = {
-                { APP_FDB_TABLE_NAME,        fdborch_pri},
-                { APP_MCLAG_FDB_TABLE_NAME,  fdborch_pri}
-            };
-
-            vector<table_name_with_pri_t> app_fdb_tables = {
                 { APP_FDB_TABLE_NAME,        FdbOrch::fdborch_pri},
                 { APP_VXLAN_FDB_TABLE_NAME,  FdbOrch::fdborch_pri},
                 { APP_MCLAG_FDB_TABLE_NAME,  fdborch_pri}
