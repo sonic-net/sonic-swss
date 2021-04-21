@@ -1457,7 +1457,7 @@ bool MACsecOrch::createMACsecSC(
     attr.value.oid = flow_id;
     attrs.push_back(attr);
     attr.id = SAI_MACSEC_SC_ATTR_MACSEC_SCI;
-    attr.value.u64 = sci;
+    attr.value.u64 = send_sci ? sci : 0xffffffffffffffff;
     attrs.push_back(attr);
     attr.id = SAI_MACSEC_SC_ATTR_ENCRYPTION_ENABLE;
     attr.value.booldata = encryption_enable;
