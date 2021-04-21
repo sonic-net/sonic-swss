@@ -76,7 +76,8 @@ def swss_app_check_RestoreCount_single(state_db, restore_count, name):
             if fv[0] == "restore_count":
                 assert int(fv[1]) == restore_count[key] + 1
             elif fv[0] == "state":
-                assert fv[1] == "reconciled"  or fv[1] == "disabled"
+                assert fv[1] == "reconciled" or fv[1] == "disabled"
+    return status, fvs
 
 def swss_app_check_warmstart_state(state_db, name, state):
     warmtbl = swsscommon.Table(state_db, swsscommon.STATE_WARM_RESTART_TABLE_NAME)
@@ -444,6 +445,28 @@ class TestWarmReboot(object):
         intf_tbl._del("Vlan16")
         intf_tbl._del("Vlan20")
         time.sleep(2)
+
+    def test_IntfMgrdWarmRestartNoInterfaces(self, dvs, testlog):
+        """ Tests that intfmgrd reaches reconciled state when
+        there are no interfaces in configuration. """
+
+        state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+        restore_count = swss_get_RestoreCount(dvs, state_db)
+
+        dvs.runcmd("config warm_restart enable swss")
+        dvs.runcmd("supervisorctl restart intfmgrd")
+
+        reached_desired_state = False
+        retries = 10
+        delay = 2
+        for _ in range(retries):
+            ok, fvs = swss_app_check_RestoreCount_single(state_db, restore_count, "intfmgrd")
+            if ok and dict(fvs)["state"] == "reconciled":
+                reached_desired_state = True
+                break
+            time.sleep(delay)
+
+        assert reached_desired_state, "intfmgrd haven't reached desired state 'reconciled', after {} sec it was {}".format(retries * delay, dict(fvs)["state"])
 
     def test_swss_neighbor_syncup(self, dvs, testlog):
 
@@ -846,11 +869,13 @@ class TestWarmReboot(object):
         appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         ps = swsscommon.ProducerStateTable(appl_db, swsscommon.APP_ROUTE_TABLE_NAME)
         fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1"), ("ifname", "Ethernet0")])
-
         ps.set("2.2.2.0/24", fvs)
 
+        fvs = swsscommon.FieldValuePairs([("nexthop","20.0.0.1"), ("ifname", "Ethernet0")])
+        ps.set("3.3.3.0/24", fvs)
+
         time.sleep(1)
-        # Should fail, since neighbor for next 10.0.0.1 has not been not resolved yet
+        # Should fail, since neighbor for next 20.0.0.1 has not been not resolved yet
         (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check")
         assert result == "RESTARTCHECK failed\n"
 
@@ -859,8 +884,8 @@ class TestWarmReboot(object):
         (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check -n -s -w 500")
         assert result == "RESTARTCHECK succeeded\n"
 
-        # get neighbor and arp entry
-        dvs.servers[1].runcmd("ping -c 1 10.0.0.1")
+        # Remove unfinished routes
+        ps._del("3.3.3.0/24")
 
         time.sleep(1)
         (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check")
@@ -1150,7 +1175,7 @@ class TestWarmReboot(object):
         time.sleep(5)
 
         # Verify FSM
-        swss_app_check_warmstart_state(state_db, "bgp", "")
+        swss_app_check_warmstart_state(state_db, "bgp", "disabled")
 
         # Verify that multiple changes are seen in swss and sairedis logs as there's
         # no warm-reboot logic in place.

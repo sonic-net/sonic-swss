@@ -117,6 +117,16 @@ AppRestartAssist::cache_state_t AppRestartAssist::getCacheEntryState(const std::
     throw std::logic_error("cache entry state is invalid");
 }
 
+void AppRestartAssist::appDataReplayed()
+{
+    WarmStart::setWarmStartState(m_appName, WarmStart::REPLAYED);
+}
+
+void AppRestartAssist::warmStartDisabled()
+{
+    WarmStart::setWarmStartState(m_appName, WarmStart::WSDISABLED);
+}
+
 // Read table(s) from APPDB and append stale flag then insert to cachemap
 void AppRestartAssist::readTablesToMap()
 {
@@ -272,6 +282,13 @@ void AppRestartAssist::reconcile()
     WarmStart::setWarmStartState(m_appName, WarmStart::RECONCILED);
     m_warmStartInProgress = false;
     return;
+}
+
+// set the reconcile interval
+void AppRestartAssist::setReconcileInterval(uint32_t time)
+{
+    m_reconcileTimer = time;
+    m_warmStartTimer.setInterval(timespec{m_reconcileTimer, 0});
 }
 
 // start the timer, take Select class "s" to add the timer.

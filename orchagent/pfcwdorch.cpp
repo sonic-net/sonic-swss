@@ -177,8 +177,7 @@ task_process_status PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const st
     uint32_t detectionTime = 0;
     uint32_t restorationTime = 0;
     // According to requirements, drop action is default
-    PfcWdAction action = PfcWdAction::PFC_WD_ACTION_DROP;
-
+    PfcWdAction action = PfcWdAction::PFC_WD_ACTION_DROP; 
     Port port;
     if (!gPortsOrch->getPort(key, port))
     {

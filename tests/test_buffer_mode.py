@@ -1,11 +1,4 @@
-import time
-import json
-import redis
 import pytest
-import re
-
-from pprint import pprint
-from swsscommon import swsscommon
 
 class TestBufferModel(object):
     def test_bufferModel(self, dvs, testlog):

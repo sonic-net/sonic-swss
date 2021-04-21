@@ -168,11 +168,24 @@ void FdbOrch::update(sai_fdb_event_t        type,
                    type, update.entry.mac.to_string().c_str(),
                    entry->bv_id, bridge_port_id);
 
+
     if (bridge_port_id &&
         !m_portsOrch->getPortByBridgePortId(bridge_port_id, update.port))
     {
-        SWSS_LOG_ERROR("Failed to get port by bridge port ID 0x%" PRIx64 ".",
+        if (type == SAI_FDB_EVENT_FLUSHED)
+        {
+            /* In case of flush - can be ignored due to a race.
+               There are notifications about FDB FLUSH (syncd/sai_redis) on port,
+               which was already removed by orchagent as a result of
+               removeVlanMember action (removeBridgePort) */
+            SWSS_LOG_INFO("Flush event: Failed to get port by bridge port ID 0x%" PRIx64 ".",
                         bridge_port_id);
+
+        } else {
+            SWSS_LOG_ERROR("Failed to get port by bridge port ID 0x%" PRIx64 ".",
+                        bridge_port_id);
+
+        }
         return;
     }
 
@@ -263,7 +276,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
             {
                 /*port added back to vlan before we receive delete
                   notification for flush from SAI. Re-add entry to SAI
-                 */ 
+                 */
                 sai_attribute_t attr;
                 vector<sai_attribute_t> attrs;
 
@@ -278,7 +291,10 @@ void FdbOrch::update(sai_fdb_event_t        type,
                 {
                     SWSS_LOG_ERROR("Failed to create FDB %s on %s, rv:%d",
                         existing_entry->first.mac.to_string().c_str(), update.port.m_alias.c_str(), status);
-                    return;
+                    if (handleSaiCreateStatus(SAI_API_FDB, status) != task_success)
+                    {
+                        return;
+                    }
                 }
                 return;
             }
@@ -286,7 +302,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
 
         update.add = false;
         if (!update.port.m_alias.empty())
-        { 
+        {
             update.port.m_fdb_count--;
             m_portsOrch->setPort(update.port.m_alias, update.port);
         }
@@ -1036,8 +1052,8 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
         attr.value.ipaddr = ipaddr;
         attrs.push_back(attr);
     }
-    else if (macUpdate 
-            && (oldOrigin == FDB_ORIGIN_VXLAN_ADVERTIZED) 
+    else if (macUpdate
+            && (oldOrigin == FDB_ORIGIN_VXLAN_ADVERTIZED)
             && (fdbData.origin != oldOrigin))
     {
         /* origin is changed from Remote-advertized to Local-provisioned
@@ -1051,7 +1067,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
         attrs.push_back(attr);
     }
 
-    if (macUpdate && (oldOrigin == FDB_ORIGIN_VXLAN_ADVERTIZED)) 
+    if (macUpdate && (oldOrigin == FDB_ORIGIN_VXLAN_ADVERTIZED))
     {
         if ((fdbData.origin != oldOrigin)
            || ((oldType == "dynamic") && (oldType != fdbData.type)))
@@ -1062,7 +1078,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
         }
     }
 
-    
+
     if (macUpdate)
     {
         SWSS_LOG_INFO("MAC-Update FDB %s in %s on from-%s:to-%s from-%s:to-%s origin-%d-to-%d",
@@ -1076,7 +1092,11 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
             {
                 SWSS_LOG_ERROR("macUpdate-Failed for attr.id=0x%x for FDB %s in %s on %s, rv:%d",
                             itr.id, entry.mac.to_string().c_str(), vlan.m_alias.c_str(), port_name.c_str(), status);
-                return false;
+                task_process_status handle_status = handleSaiSetStatus(SAI_API_FDB, status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
         }
         if (oldPort.m_bridge_port_id != port.m_bridge_port_id)
@@ -1097,7 +1117,11 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
             SWSS_LOG_ERROR("Failed to create %s FDB %s in %s on %s, rv:%d",
                     fdbData.type.c_str(), entry.mac.to_string().c_str(),
                     vlan.m_alias.c_str(), port_name.c_str(), status);
-            return false; //FIXME: it should be based on status. Some could be retried, some not
+            task_process_status handle_status = handleSaiCreateStatus(SAI_API_FDB, status); //FIXME: it should be based on status. Some could be retried, some not
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
         port.m_fdb_count++;
         m_portsOrch->setPort(port.m_alias, port);
@@ -1212,7 +1236,11 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry, FdbOrigin origin)
     {
         SWSS_LOG_ERROR("FdbOrch RemoveFDBEntry: Failed to remove FDB entry. mac=%s, bv_id=0x%" PRIx64,
                        entry.mac.to_string().c_str(), entry.bv_id);
-        return true; //FIXME: it should be based on status. Some could be retried. some not
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_FDB, status); //FIXME: it should be based on status. Some could be retried. some not
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_INFO("Removed mac=%s bv_id=0x%" PRIx64 " port:%s",
@@ -1225,7 +1253,7 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry, FdbOrigin origin)
     (void)m_entries.erase(entry);
 
     // Remove in StateDb
-    if (fdbData.origin != FDB_ORIGIN_VXLAN_ADVERTIZED) 
+    if (fdbData.origin != FDB_ORIGIN_VXLAN_ADVERTIZED)
     {
         m_fdbStateTable.del(key);
     }
@@ -1245,7 +1273,7 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry, FdbOrigin origin)
     return true;
 }
 
-void FdbOrch::deleteFdbEntryFromSavedFDB(const MacAddress &mac, 
+void FdbOrch::deleteFdbEntryFromSavedFDB(const MacAddress &mac,
         const unsigned short &vlanId, FdbOrigin origin, const string portName)
 {
     bool found=false;
@@ -1268,7 +1296,7 @@ void FdbOrch::deleteFdbEntryFromSavedFDB(const MacAddress &mac,
                     if (iter->fdbData.origin == origin)
                     {
                         SWSS_LOG_INFO("FDB entry found in saved fdb. deleting..."
-                                "mac=%s vlan_id=0x%x origin:%d port:%s", 
+                                "mac=%s vlan_id=0x%x origin:%d port:%s",
                                 mac.to_string().c_str(), vlanId, origin,
                                 itr.first.c_str());
                         saved_fdb_entries[itr.first].erase(iter);
@@ -1280,7 +1308,7 @@ void FdbOrch::deleteFdbEntryFromSavedFDB(const MacAddress &mac,
                     {
                         SWSS_LOG_INFO("FDB entry found in saved fdb, but Origin is "
                                 "different mac=%s vlan_id=0x%x reqOrigin:%d "
-                                "foundOrigin:%d port:%s, IGNORED", 
+                                "foundOrigin:%d port:%s, IGNORED",
                                 mac.to_string().c_str(), vlanId, origin,
                                 iter->fdbData.origin, itr.first.c_str());
                     }

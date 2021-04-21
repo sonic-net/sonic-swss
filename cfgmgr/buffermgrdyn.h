@@ -82,7 +82,9 @@ typedef enum {
     // Port is under initializing, which means its info hasn't been comprehensive for calculating headroom
     PORT_INITIALIZING,
     // All necessary information for calculating headroom is ready
-    PORT_READY
+    PORT_READY,
+    // Port is admin down. All PGs programmed to APPL_DB should be removed from the port
+    PORT_ADMIN_DOWN
 } port_state_t;
 
 typedef struct {
@@ -234,7 +236,8 @@ private:
     void refreshSharedHeadroomPool(bool enable_state_updated_by_ratio, bool enable_state_updated_by_size);
 
     // Main flows
-    task_process_status refreshPriorityGroupsForPort(const std::string &port, const std::string &speed, const std::string &cable_length, const std::string &mtu, const std::string &exactly_matched_key);
+    task_process_status removeAllPgsFromPort(const std::string &port);
+    task_process_status refreshPgsForPort(const std::string &port, const std::string &speed, const std::string &cable_length, const std::string &mtu, const std::string &exactly_matched_key);
     task_process_status doUpdatePgTask(const std::string &pg_key, const std::string &port);
     task_process_status doRemovePgTask(const std::string &pg_key, const std::string &port);
     task_process_status doAdminStatusTask(const std::string port, const std::string adminStatus);

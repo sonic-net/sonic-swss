@@ -205,6 +205,27 @@ bool NbrMgr::setNeighbor(const string& alias, const IpAddress& ip, const MacAddr
     return send_message(m_nl_sock, msg);
 }
 
+/**
+ * Parse APPL_DB neighbors resolve table.
+ *
+ * @param [app_db_nbr_tbl_key], key from APPL_DB - APP_NEIGH_RESOLVE_TABLE_NAME
+ * @param [delimiter], APPL_DB delimiter ":"
+ *
+ * @return the string vector which contain the VLAN alias and IP address
+ */
+vector<string> NbrMgr::parseAliasIp(const string &app_db_nbr_tbl_key, const char *delimiter)
+{
+    vector<string> ret;
+    size_t found = app_db_nbr_tbl_key.find(delimiter);
+    string alias = app_db_nbr_tbl_key.substr(0, found);
+    string ip_address = app_db_nbr_tbl_key.substr(found + 1, app_db_nbr_tbl_key.size() - 1);
+
+    ret.push_back(alias);
+    ret.push_back(ip_address);
+
+    return ret;
+}
+
 void NbrMgr::doResolveNeighTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -213,7 +234,15 @@ void NbrMgr::doResolveNeighTask(Consumer &consumer)
     while (it != consumer.m_toSync.end())
     {
         KeyOpFieldsValuesTuple    t = it->second;
-        vector<string>            keys = tokenize(kfvKey(t),delimiter);
+        if (kfvOp(t) == DEL_COMMAND)
+        {
+            SWSS_LOG_INFO("Received DEL operation for %s, skipping", kfvKey(t).c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+
+        vector<string>            keys = parseAliasIp(kfvKey(t), consumer.getConsumerTable()->getTableNameSeparator().c_str());
+
         MacAddress                mac;
         IpAddress                 ip(keys[1]);
         string                    alias(keys[0]);
@@ -326,7 +355,8 @@ void NbrMgr::doStateSystemNeighTask(Consumer &consumer)
     //Get the name of the device on which the neigh and route are
     //going to be programmed.
     string nbr_odev;
-    if(!getVoqInbandInterfaceName(nbr_odev))
+    string ibif_type;
+    if(!getVoqInbandInterfaceName(nbr_odev, ibif_type))
     {
         //The inband interface is not available yet
         return;
@@ -358,9 +388,9 @@ void NbrMgr::doStateSystemNeighTask(Consumer &consumer)
                     mac_address = MacAddress(fvValue(*i));
             }
 
-            if (!isIntfStateOk(nbr_odev))
+            if (ibif_type == "port" && !isIntfOperUp(nbr_odev))
             {
-                SWSS_LOG_DEBUG("Interface %s is not ready, skipping system neigh %s'", nbr_odev.c_str(), kfvKey(t).c_str());
+                SWSS_LOG_DEBUG("Device %s is not oper up, skipping system neigh %s'", nbr_odev.c_str(), kfvKey(t).c_str());
                 it++;
                 continue;
             }
@@ -368,6 +398,9 @@ void NbrMgr::doStateSystemNeighTask(Consumer &consumer)
             if (!addKernelNeigh(nbr_odev, ip_address, mac_address))
             {
                 SWSS_LOG_ERROR("Neigh entry add on dev %s failed for '%s'", nbr_odev.c_str(), kfvKey(t).c_str());
+                // Delete neigh to take care of deletion of exiting nbr for mac change. This makes sure that
+                // re-try will be successful and route addtion (below) will be attempted and be successful
+                delKernelNeigh(nbr_odev, ip_address);
                 it++;
                 continue;
             }
@@ -380,6 +413,8 @@ void NbrMgr::doStateSystemNeighTask(Consumer &consumer)
             {
                 SWSS_LOG_ERROR("Route entry add on dev %s failed for '%s'", nbr_odev.c_str(), kfvKey(t).c_str());
                 delKernelNeigh(nbr_odev, ip_address);
+                // Delete route to take care of deletion of exiting route of nbr for mac change.
+                delKernelRoute(ip_address);
                 it++;
                 continue;
             }
@@ -415,9 +450,24 @@ void NbrMgr::doStateSystemNeighTask(Consumer &consumer)
     }
 }
 
-bool NbrMgr::getVoqInbandInterfaceName(string &ibif)
+bool NbrMgr::isIntfOperUp(const string &alias)
 {
+    string oper;
 
+    if (m_statePortTable.hget(alias, "netdev_oper_status", oper))
+    {
+        if (oper == "up")
+        {
+            SWSS_LOG_DEBUG("NetDev %s is oper up", alias.c_str());
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool NbrMgr::getVoqInbandInterfaceName(string &ibif, string &type)
+{
     vector<string> keys;
     m_cfgVoqInbandInterfaceTable->getKeys(keys);
 
@@ -426,9 +476,21 @@ bool NbrMgr::getVoqInbandInterfaceName(string &ibif)
         SWSS_LOG_NOTICE("Voq Inband interface is not configured!");
         return false;
     }
-    //key:"alias" = inband interface name
+
+    // key:"alias" = inband interface name
+
     vector<string> if_keys = tokenize(keys[0], config_db_key_delimiter);
+
     ibif = if_keys[0];
+
+    // Get the type of the inband interface
+
+    if (!m_cfgVoqInbandInterfaceTable->hget(ibif, "inband_type", type))
+    {
+        SWSS_LOG_ERROR("Getting Voq Inband interface type failed for %s", ibif.c_str());
+        return false;
+    }
+
     return true;
 }
 

@@ -31,6 +31,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 mock_table.cpp \
                 mock_hiredis.cpp \
                 mock_redisreply.cpp \
+                bulker_ut.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/orchagent/orchdaemon.cpp \
                 $(top_srcdir)/orchagent/orch.cpp \
@@ -66,7 +67,8 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/debugcounterorch.cpp \
                 $(top_srcdir)/orchagent/natorch.cpp \
                 $(top_srcdir)/orchagent/muxorch.cpp \
-                $(top_srcdir)/orchagent/macsecorch.cpp
+                $(top_srcdir)/orchagent/macsecorch.cpp \
+                $(top_srcdir)/orchagent/lagid.cpp 
 
 tests_SOURCES += $(FLEX_CTR_DIR)/flex_counter_manager.cpp $(FLEX_CTR_DIR)/flex_counter_stat_manager.cpp
 tests_SOURCES += $(DEBUG_CTR_DIR)/debug_counter.cpp $(DEBUG_CTR_DIR)/drop_counter.cpp

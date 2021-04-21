@@ -13,6 +13,7 @@ using namespace swss;
 map<string,string> sflowSpeedRateInitMap =
 {
     {SFLOW_SAMPLE_RATE_KEY_400G, SFLOW_SAMPLE_RATE_VALUE_400G},
+    {SFLOW_SAMPLE_RATE_KEY_200G, SFLOW_SAMPLE_RATE_VALUE_200G},
     {SFLOW_SAMPLE_RATE_KEY_100G, SFLOW_SAMPLE_RATE_VALUE_100G},
     {SFLOW_SAMPLE_RATE_KEY_50G, SFLOW_SAMPLE_RATE_VALUE_50G},
     {SFLOW_SAMPLE_RATE_KEY_40G, SFLOW_SAMPLE_RATE_VALUE_40G},
@@ -229,7 +230,7 @@ void SflowMgr::sflowCheckAndFillValues(string alias, vector<FieldValueTuple> &va
         {
             string speed = m_sflowPortConfMap[alias].speed;
 
-            if (speed != SFLOW_ERROR_SPEED_STR)
+            if (speed != SFLOW_ERROR_SPEED_STR && sflowSpeedRateInitMap.find(speed) != sflowSpeedRateInitMap.end())
             {
                 rate = sflowSpeedRateInitMap[speed];
             }

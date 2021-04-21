@@ -19,6 +19,7 @@ extern "C" {
 #include "timestamp.h"
 #include "sai_serialize.h"
 #include "saihelper.h"
+#include "orch.h"
 
 using namespace std;
 using namespace swss;
@@ -27,6 +28,7 @@ using namespace swss;
 #define STR(s) _STR(s)
 
 #define CONTEXT_CFG_FILE "/usr/share/sonic/hwsku/context_config.json"
+#define SAI_REDIS_SYNC_OPERATION_RESPONSE_TIMEOUT (480*1000)
 
 // hwinfo = "INTERFACE_NAME/PHY ID", mii_ioctl_data->phy_id is a __u16
 #define HWINFO_MAX_SIZE IFNAMSIZ + 1 + 5
@@ -278,6 +280,26 @@ void initSaiRedis(const string &record_location, const std::string &record_filen
     }
     SWSS_LOG_NOTICE("Enable redis pipeline");
 
+    char *platform = getenv("platform");
+    if (platform && strstr(platform, MLNX_PLATFORM_SUBSTRING))
+    {
+        /* We set this long timeout in order for Orchagent to wait enough time for
+         * response from syncd. It is needed since in init, systemd syncd startup
+         * script first calls FW upgrade script (that might take up to 7 minutes
+         * in systems with Gearbox) and only then launches syncd container */
+        attr.id = SAI_REDIS_SWITCH_ATTR_SYNC_OPERATION_RESPONSE_TIMEOUT;
+        attr.value.u64 = SAI_REDIS_SYNC_OPERATION_RESPONSE_TIMEOUT;
+        status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set SAI REDIS response timeout");
+            exit(EXIT_FAILURE);
+        }
+
+        SWSS_LOG_NOTICE("SAI REDIS response timeout set successfully to %" PRIu64 " ", attr.value.u64);
+    }
+
     attr.id = SAI_REDIS_SWITCH_ATTR_NOTIFY_SYNCD;
     attr.value.s32 = SAI_REDIS_NOTIFY_SYNCD_INIT_VIEW;
     status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
@@ -288,6 +310,22 @@ void initSaiRedis(const string &record_location, const std::string &record_filen
         exit(EXIT_FAILURE);
     }
     SWSS_LOG_NOTICE("Notify syncd INIT_VIEW");
+
+    if (platform && strstr(platform, MLNX_PLATFORM_SUBSTRING))
+    {
+        /* Set timeout back to the default value */
+        attr.id = SAI_REDIS_SWITCH_ATTR_SYNC_OPERATION_RESPONSE_TIMEOUT;
+        attr.value.u64 = SAI_REDIS_DEFAULT_SYNC_OPERATION_RESPONSE_TIMEOUT;
+        status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set SAI REDIS response timeout");
+            exit(EXIT_FAILURE);
+        }
+
+        SWSS_LOG_NOTICE("SAI REDIS response timeout set successfully to %" PRIu64 " ", attr.value.u64);
+    }
 }
 
 sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)

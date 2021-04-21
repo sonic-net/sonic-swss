@@ -74,6 +74,8 @@ public:
     bool addInbandNeighbor(string alias, IpAddress ip_address);
     bool delInbandNeighbor(string alias, IpAddress ip_address);
 
+    void resolveNeighbor(const NeighborEntry &);
+
 private:
     PortsOrch *m_portsOrch;
     IntfsOrch *m_intfsOrch;
@@ -82,6 +84,8 @@ private:
 
     NeighborTable m_syncdNeighbors;
     NextHopTable m_syncdNextHops;
+
+    std::set<NextHopKey> m_neighborToResolve;
 
     bool addNextHop(const IpAddress&, const string&);
     bool removeNextHop(const IpAddress&, const string&);
@@ -93,7 +97,6 @@ private:
     bool clearNextHopFlag(const NextHopKey &, const uint32_t);
 
     void processFDBFlushUpdate(const FdbFlushUpdate &);
-    bool resolveNeighborEntry(const NeighborEntry &, const MacAddress &);
 
     void doTask(Consumer &consumer);
 
@@ -106,7 +109,10 @@ private:
     void voqSyncAddNeigh(string &alias, IpAddress &ip_address, const MacAddress &mac, sai_neighbor_entry_t &neighbor_entry);
     void voqSyncDelNeigh(string &alias, IpAddress &ip_address);
 
-    std::map<IpAddress, string> m_remoteNeigh;     
+    bool resolveNeighborEntry(const NeighborEntry &, const MacAddress &);
+    void clearResolvedNeighborEntry(const NeighborEntry &);
+    
+    std::map<IpAddress, string> m_remoteNeigh;
 };
 
 #endif /* SWSS_NEIGHORCH_H */

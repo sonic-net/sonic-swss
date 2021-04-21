@@ -8,6 +8,7 @@
 #include <tuple>
 #include <map>
 #include <condition_variable>
+
 #include "orch.h"
 #include "switchorch.h"
 #include "portsorch.h"
@@ -15,27 +16,12 @@
 #include "dtelorch.h"
 #include "observer.h"
 
+#include "acltable.h"
+
 // ACL counters update interval in the DB
 // Value is in seconds. Should not be less than 5 seconds
 // (in worst case update of 1265 counters takes almost 5 sec)
 #define COUNTERS_READ_INTERVAL 10
-
-#define TABLE_DESCRIPTION "POLICY_DESC"
-#define TABLE_TYPE        "TYPE"
-#define TABLE_PORTS       "PORTS"
-#define TABLE_SERVICES    "SERVICES"
-
-#define TABLE_TYPE_L3                   "L3"
-#define TABLE_TYPE_L3V6                 "L3V6"
-#define TABLE_TYPE_MIRROR               "MIRROR"
-#define TABLE_TYPE_MIRRORV6             "MIRRORV6"
-#define TABLE_TYPE_MIRROR_DSCP          "MIRROR_DSCP"
-#define TABLE_TYPE_PFCWD                "PFCWD"
-#define TABLE_TYPE_CTRLPLANE            "CTRLPLANE"
-#define TABLE_TYPE_DTEL_FLOW_WATCHLIST  "DTEL_FLOW_WATCHLIST"
-#define TABLE_TYPE_DTEL_DROP_WATCHLIST  "DTEL_DROP_WATCHLIST"
-#define TABLE_TYPE_MCLAG                "MCLAG"
-#define TABLE_TYPE_MUX                  "MUX"
 
 #define RULE_PRIORITY           "PRIORITY"
 #define MATCH_IN_PORTS          "IN_PORTS"
@@ -49,6 +35,7 @@
 #define MATCH_ETHER_TYPE        "ETHER_TYPE"
 #define MATCH_IP_PROTOCOL       "IP_PROTOCOL"
 #define MATCH_NEXT_HEADER       "NEXT_HEADER"
+#define MATCH_VLAN_ID           "VLAN_ID"
 #define MATCH_TCP_FLAGS         "TCP_FLAGS"
 #define MATCH_IP_TYPE           "IP_TYPE"
 #define MATCH_DSCP              "DSCP"
@@ -103,24 +90,10 @@
 #define IP_TYPE_ARP_REPLY       "ARP_REPLY"
 
 #define MLNX_MAX_RANGES_COUNT   16
+#define INGRESS_TABLE_DROP      "IngressTableDrop"
+#define RULE_OPER_ADD           0
+#define RULE_OPER_DELETE        1
 
-typedef enum
-{
-    ACL_TABLE_UNKNOWN,
-    ACL_TABLE_L3,
-    ACL_TABLE_L3V6,
-    ACL_TABLE_MIRROR,
-    ACL_TABLE_MIRRORV6,
-    ACL_TABLE_MIRROR_DSCP,
-    ACL_TABLE_PFCWD,
-    ACL_TABLE_CTRLPLANE,
-    ACL_TABLE_DTEL_FLOW_WATCHLIST,
-    ACL_TABLE_DTEL_DROP_WATCHLIST,
-    ACL_TABLE_MCLAG,
-    ACL_TABLE_MUX
-} acl_table_type_t;
-
-typedef map<string, acl_table_type_t> acl_table_type_lookup_t;
 typedef map<string, sai_acl_entry_attr_t> acl_rule_attr_lookup_t;
 typedef map<string, sai_acl_ip_type_t> acl_ip_type_lookup_t;
 typedef map<string, sai_acl_dtel_flow_op_t> acl_dtel_flow_op_type_lookup_t;
@@ -196,6 +169,7 @@ public:
     virtual bool create();
     virtual bool remove();
     virtual void update(SubjectType, void *) = 0;
+    virtual void updateInPorts();
     virtual AclRuleCounters getCounters();
 
     string getId()
@@ -211,6 +185,11 @@ public:
     sai_object_id_t getCounterOid()
     {
         return m_counterOid;
+    }
+
+    vector<sai_object_id_t> getInPorts() 
+    {
+        return m_inPorts;
     }
 
     static shared_ptr<AclRule> makeShared(acl_table_type_t type, AclOrch *acl, MirrorOrch *mirror, DTelOrch *dtel, const string& rule, const string& table, const KeyOpFieldsValuesTuple&);
@@ -417,7 +396,6 @@ public:
         return m_countersTable;
     }
 
-
     // FIXME: Add getters for them? I'd better to add a common directory of orch objects and use it everywhere
     MirrorOrch *m_mirrorOrch;
     NeighOrch *m_neighOrch;
@@ -429,6 +407,8 @@ public:
     bool updateAclTable(AclTable &currentTable, AclTable &newTable);
     bool addAclRule(shared_ptr<AclRule> aclRule, string table_id);
     bool removeAclRule(string table_id, string rule_id);
+    bool updateAclRule(string table_id, string rule_id, string attr_name, void *data, bool oper);
+    AclRule* getAclRule(string table_id, string rule_id);
 
     bool isCombinedMirrorV6Table();
     bool isAclActionSupported(acl_stage_type_t stage, sai_acl_action_type_t action) const;
@@ -443,6 +423,10 @@ public:
     static bool getAclBindPortId(Port& port, sai_object_id_t& port_id);
 
     using Orch::doTask;  // Allow access to the basic doTask
+    map<sai_object_id_t, AclTable>  getAclTables()
+    {
+        return m_AclTables;
+    }
 
 private:
     SwitchOrch *m_switchOrch;

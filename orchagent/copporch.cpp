@@ -125,7 +125,10 @@ void CoppOrch::initDefaultHostIntfTable()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create default host interface table, rv:%d", status);
-        throw "CoppOrch initialization failure";
+        if (handleSaiCreateStatus(SAI_API_HOSTIF, status) != task_success)
+        {
+            throw "CoppOrch initialization failure";
+        }
     }
 
     SWSS_LOG_NOTICE("Create default host interface table");
@@ -243,7 +246,11 @@ bool CoppOrch::createGenetlinkHostIfTable(vector<sai_hostif_trap_type_t> &trap_i
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("Failed to create hostif table entry failed, rv %d", status);
-                    return false;
+                    task_process_status handle_status = handleSaiCreateStatus(SAI_API_HOSTIF, status);
+                    if (handle_status != task_success)
+                    {
+                        return parseHandleSaiStatusFailure(handle_status);
+                    }
                 }
                 m_trapid_hostif_table_map[trap_id] = hostif_table_entry;
             }
@@ -266,7 +273,11 @@ bool CoppOrch::removeGenetlinkHostIfTable(vector<sai_hostif_trap_type_t> &trap_i
             {
                 SWSS_LOG_ERROR("Failed to delete hostif table entry %" PRId64 " \
                                rc=%d", m_trapid_hostif_table_map[trap_id], sai_status);
-                return false;
+                task_process_status handle_status = handleSaiRemoveStatus(SAI_API_HOSTIF, sai_status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
             m_trapid_hostif_table_map.erase(trap_id);
         }
@@ -294,7 +305,11 @@ bool CoppOrch::applyAttributesToTrapIds(sai_object_id_t trap_group_id,
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create trap %d, rv:%d", trap_id, status);
-            return false;
+            task_process_status handle_status = handleSaiCreateStatus(SAI_API_HOSTIF, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
         m_syncdTrapIds[trap_id].trap_group_obj = trap_group_id;
         m_syncdTrapIds[trap_id].trap_obj = hostif_trap_id;
@@ -323,14 +338,22 @@ bool CoppOrch::removePolicer(string trap_group_name)
     if (sai_status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set policer to NULL for trap group %s, rc=%d", trap_group_name.c_str(), sai_status);
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_HOSTIF, sai_status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     sai_status = sai_policer_api->remove_policer(policer_id);
     if (sai_status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove policer for trap group %s, rc=%d", trap_group_name.c_str(), sai_status);
-        return false;
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_POLICER, sai_status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Remove policer for trap group %s", trap_group_name.c_str());
@@ -367,7 +390,11 @@ bool CoppOrch::createPolicer(string trap_group_name, vector<sai_attribute_t> &po
     if (sai_status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create policer trap group %s, rc=%d", trap_group_name.c_str(), sai_status);
-        return false;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_POLICER, sai_status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Create policer for trap group %s", trap_group_name.c_str());
@@ -380,7 +407,11 @@ bool CoppOrch::createPolicer(string trap_group_name, vector<sai_attribute_t> &po
     if (sai_status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to bind policer to trap group %s, rc=%d", trap_group_name.c_str(), sai_status);
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_HOSTIF, sai_status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Bind policer to trap group %s:", trap_group_name.c_str());
@@ -402,7 +433,11 @@ bool CoppOrch::createGenetlinkHostIf(string trap_group_name, vector<sai_attribut
     {
         SWSS_LOG_ERROR("Failed to create genetlink hostif for trap group %s, rc=%d",
                        trap_group_name.c_str(), sai_status);
-        return false;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_HOSTIF, sai_status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     m_trap_group_hostif_map[m_trap_group_map[trap_group_name]] = hostif_id;
@@ -430,7 +465,11 @@ bool CoppOrch::removeGenetlinkHostIf(string trap_group_name)
         {
             SWSS_LOG_ERROR("Failed to delete host info %" PRId64 " on trap group %s. rc=%d",
                            hostInfo->second, trap_group_name.c_str(), sai_status);
-            return false;
+            task_process_status handle_status = handleSaiRemoveStatus(SAI_API_HOSTIF, sai_status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
         m_trap_group_hostif_map.erase(m_trap_group_map[trap_group_name]);
     }
@@ -489,7 +528,11 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
                 if (sai_status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("Failed to apply attribute:%d to trap group:%" PRIx64 ", name:%s, error:%d\n", trap_gr_attr.id, m_trap_group_map[trap_group_name], trap_group_name.c_str(), sai_status);
-                    return task_process_status::task_failed;
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_HOSTIF, sai_status);
+                    if (handle_status != task_process_status::task_success)
+                    {
+                        return handle_status;
+                    }
                 }
                 SWSS_LOG_NOTICE("Set trap group %s to host interface", trap_group_name.c_str());
             }
@@ -503,7 +546,11 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
             if (sai_status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to create host interface trap group %s, rc=%d", trap_group_name.c_str(), sai_status);
-                return task_process_status::task_failed;
+                task_process_status handle_status = handleSaiCreateStatus(SAI_API_HOSTIF, sai_status);
+                if (handle_status != task_process_status::task_success)
+                {
+                    return handle_status;
+                }
             }
 
             SWSS_LOG_NOTICE("Create host interface trap group %s", trap_group_name.c_str());
@@ -534,7 +581,11 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
                         SWSS_LOG_ERROR("Failed to set attribute %d on trap %" PRIx64 ""
                                 " on group %s", i.id, m_syncdTrapIds[trap_id].trap_obj, 
                                 trap_group_name.c_str());
-                        return task_process_status::task_failed;
+                        task_process_status handle_status = handleSaiSetStatus(SAI_API_HOSTIF, sai_status);
+                        if (handle_status != task_process_status::task_success)
+                        {
+                            return handle_status;
+                        }
                     }
                 }
             }
@@ -724,7 +775,11 @@ bool CoppOrch::trapGroupProcessTrapIdChange (string trap_group_name,
                 {
                     SWSS_LOG_ERROR("Failed to remove trap object %" PRId64 "",
                             m_syncdTrapIds[i].trap_obj);
-                    return false;
+                    task_process_status handle_status = handleSaiRemoveStatus(SAI_API_HOSTIF, sai_status);
+                    if (handle_status != task_success)
+                    {
+                        return parseHandleSaiStatusFailure(handle_status);
+                    }
                 }
             }
         }
@@ -773,7 +828,11 @@ bool CoppOrch::trapGroupProcessTrapIdChange (string trap_group_name,
                     {
                         SWSS_LOG_ERROR("Failed to remove trap object %" PRId64 "", 
                                        m_syncdTrapIds[i].trap_obj);
-                        return false;
+                        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_HOSTIF, sai_status);
+                        if (handle_status != task_success)
+                        {
+                            return parseHandleSaiStatusFailure(handle_status);
+                        }
                     }
                     m_syncdTrapIds.erase(i);
                 }
@@ -819,7 +878,11 @@ bool CoppOrch::processTrapGroupDel (string trap_group_name)
             if (sai_status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to remove trap object %" PRId64 "", it.second.trap_obj);
-                return false;
+                task_process_status handle_status = handleSaiRemoveStatus(SAI_API_HOSTIF, sai_status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
         }
     }
@@ -834,7 +897,11 @@ bool CoppOrch::processTrapGroupDel (string trap_group_name)
     if (sai_status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove trap group %s", trap_group_name.c_str());
-        return false;
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_HOSTIF, sai_status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     m_trap_group_map.erase(it_del);
@@ -1011,7 +1078,11 @@ bool CoppOrch::trapGroupUpdatePolicer (string trap_group_name,
                 SWSS_LOG_ERROR("Failed to apply attribute[%d].id=%d to policer for trap group:"
                                "%s, error:%d\n",ind, policer_attr.id, trap_group_name.c_str(),
                                sai_status);
-                return false;
+                task_process_status handle_status = handleSaiSetStatus(SAI_API_POLICER, sai_status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
         }
     }

@@ -38,7 +38,7 @@ class MuxStateOrch;
 class MuxAclHandler
 {
 public:
-    MuxAclHandler(sai_object_id_t port);
+    MuxAclHandler(sai_object_id_t port, string alias);
     ~MuxAclHandler(void);
 
 private:
@@ -48,6 +48,7 @@ private:
     // class shared dict: ACL table name -> ACL table
     static std::map<std::string, AclTable> acl_table_;
     sai_object_id_t port_ = SAI_NULL_OBJECT_ID;
+    string alias_;
 };
 
 // IP to nexthop index mapping
@@ -87,6 +88,7 @@ public:
     void setState(string state);
     string getState();
     bool isStateChangeInProgress() { return st_chg_in_progress_; }
+    bool isStateChangeFailed() { return st_chg_failed_; }
 
     bool isIpInSubnet(IpAddress ip);
     void updateNeighbor(NextHopKey nh, bool add);
@@ -100,13 +102,14 @@ private:
     bool stateInitActive();
     bool stateStandby();
 
-    bool aclHandler(sai_object_id_t, bool add = true);
+    bool aclHandler(sai_object_id_t port, string alias, bool add = true);
     bool nbrHandler(bool enable, bool update_routes = true);
 
     string mux_name_;
 
     MuxState state_ = MuxState::MUX_STATE_INIT;
     bool st_chg_in_progress_ = false;
+    bool st_chg_failed_ = false;
 
     IpPrefix srv_ip4_, srv_ip6_;
     IpAddress peer_ip4_;

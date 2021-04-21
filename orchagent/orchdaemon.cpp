@@ -102,7 +102,7 @@ bool OrchDaemon::init()
     };
 
     gCrmOrch = new CrmOrch(m_configDb, CFG_CRM_TABLE_NAME);
-    gPortsOrch = new PortsOrch(m_applDb, ports_tables);
+    gPortsOrch = new PortsOrch(m_applDb, ports_tables, m_chassisAppDb);
     TableConnector stateDbFdb(m_stateDb, STATE_FDB_TABLE_NAME);
     gFdbOrch = new FdbOrch(m_applDb, app_fdb_tables, stateDbFdb, gPortsOrch);
 

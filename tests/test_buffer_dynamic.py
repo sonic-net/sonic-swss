@@ -1,12 +1,8 @@
 import time
-import json
-import redis
 import pytest
 import re
 import buffer_model
 
-from pprint import pprint
-from swsscommon import swsscommon
 from dvslib.dvs_common import PollingConfig
 
 @pytest.yield_fixture
@@ -102,10 +98,17 @@ class TestBufferMgrDyn(object):
                     self.ingress_lossless_pool_oid = key
 
     def check_new_profile_in_asic_db(self, dvs, profile):
-        diff = set(self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_PROFILE")) - self.initProfileSet
-        if len(diff) == 1:
-            self.newProfileInAsicDb = diff.pop()
-        assert self.newProfileInAsicDb, "Can't get SAI OID for newly created profile {}".format(profile)
+        retry_count = 0
+        self.newProfileInAsicDb = None
+        while retry_count < 5:
+            retry_count += 1
+            diff = set(self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_PROFILE")) - self.initProfileSet
+            if len(diff) == 1:
+                self.newProfileInAsicDb = diff.pop()
+                break
+            else:
+                time.sleep(1)
+        assert self.newProfileInAsicDb, "Can't get SAI OID for newly created profile {} after retry {} times".format(profile, retry_count)
 
         # in case diff is empty, we just treat the newProfileInAsicDb cached the latest one
         fvs = self.app_db.get_entry("BUFFER_PROFILE_TABLE", profile)
@@ -141,7 +144,10 @@ class TestBufferMgrDyn(object):
     def test_changeSpeed(self, dvs, testlog):
         self.setup_db(dvs)
 
-        # configure lossless PG 3-4 on interface
+        # Startup interface
+        dvs.runcmd('config interface startup Ethernet0')
+
+        # Configure lossless PG 3-4 on interface
         self.config_db.update_entry('BUFFER_PG', 'Ethernet0|3-4', {'profile': 'NULL'})
 
         # Change speed to speed1 and verify whether the profile has been updated
@@ -179,14 +185,20 @@ class TestBufferMgrDyn(object):
         self.check_new_profile_in_asic_db(dvs, expectedProfile)
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile + "]"})
 
-        # remove lossless PG 3-4 on interface
+        # Remove lossless PG 3-4 on interface
         self.config_db.delete_entry('BUFFER_PG', 'Ethernet0|3-4')
         self.app_db.wait_for_deleted_entry("BUFFER_PG_TABLE", "Ethernet0:3-4")
+
+        # Shutdown interface
+        dvs.runcmd('config interface shutdown Ethernet0')
 
     def test_changeCableLen(self, dvs, testlog):
         self.setup_db(dvs)
 
-        # configure lossless PG 3-4 on interface
+        # Startup interface
+        dvs.runcmd('config interface startup Ethernet0')
+
+        # Configure lossless PG 3-4 on interface
         self.config_db.update_entry('BUFFER_PG', 'Ethernet0|3-4', {'profile': 'NULL'})
 
         # Change to new cable length
@@ -224,13 +236,19 @@ class TestBufferMgrDyn(object):
         self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", expectedProfile)
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile + "]"})
 
-        # remove lossless PG 3-4 on interface
+        # Remove lossless PG 3-4 on interface
         self.config_db.delete_entry('BUFFER_PG', 'Ethernet0|3-4')
+
+        # Shutdown interface
+        dvs.runcmd('config interface shutdown Ethernet0')
 
     def test_MultipleLosslessPg(self, dvs, testlog):
         self.setup_db(dvs)
 
-        # configure lossless PG 3-4 on interface
+        # Startup interface
+        dvs.runcmd('config interface startup Ethernet0')
+
+        # Configure lossless PG 3-4 on interface
         self.config_db.update_entry('BUFFER_PG', 'Ethernet0|3-4', {'profile': 'NULL'})
 
         # Add another lossless PG
@@ -238,14 +256,14 @@ class TestBufferMgrDyn(object):
         expectedProfile = self.make_lossless_profile_name(self.originalSpeed, self.originalCableLen)
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:6", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile + "]"})
 
-        # change speed and check
+        # Change speed and check
         dvs.runcmd("config interface speed Ethernet0 " + self.speedToTest1)
         expectedProfile = self.make_lossless_profile_name(self.speedToTest1, self.originalCableLen)
         self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", expectedProfile)
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile + "]"})
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:6", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile + "]"})
 
-        # change cable length and check
+        # Change cable length and check
         self.change_cable_length(self.cableLenTest1)
         self.app_db.wait_for_deleted_entry("BUFFER_PROFILE_TABLE", expectedProfile)
         expectedProfile = self.make_lossless_profile_name(self.speedToTest1, self.cableLenTest1)
@@ -254,7 +272,7 @@ class TestBufferMgrDyn(object):
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile + "]"})
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:6", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile + "]"})
 
-        # revert the speed and cable length and check
+        # Revert the speed and cable length and check
         self.change_cable_length(self.originalCableLen)
         dvs.runcmd("config interface speed Ethernet0 " + self.originalSpeed)
         self.app_db.wait_for_deleted_entry("BUFFER_PROFILE_TABLE", expectedProfile)
@@ -264,12 +282,18 @@ class TestBufferMgrDyn(object):
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile + "]"})
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:6", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile + "]"})
 
-        # remove lossless PG 3-4 and 6 on interface
+        # Remove lossless PG 3-4 and 6 on interface
         self.config_db.delete_entry('BUFFER_PG', 'Ethernet0|3-4')
         self.config_db.delete_entry('BUFFER_PG', 'Ethernet0|6')
 
+        # Shutdown interface
+        dvs.runcmd('config interface shutdown Ethernet0')
+
     def test_headroomOverride(self, dvs, testlog):
         self.setup_db(dvs)
+
+        # Startup interface
+        dvs.runcmd('config interface startup Ethernet0')
 
         # Configure static profile
         self.config_db.update_entry('BUFFER_PROFILE', 'test',
@@ -328,7 +352,7 @@ class TestBufferMgrDyn(object):
         self.app_db.wait_for_deleted_entry("BUFFER_PG_TABLE", "Ethernet0:6")
 
         # readd lossless PG with dynamic profile
-        self.config_db.update_entry('BUFFER_PG', 'Ethernet0|3-4', {'profie': 'NULL'})
+        self.config_db.update_entry('BUFFER_PG', 'Ethernet0|3-4', {'profile': 'NULL'})
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile + "]"})
 
         # remove the headroom override profile
@@ -345,8 +369,14 @@ class TestBufferMgrDyn(object):
         # remove lossless PG 3-4 on interface
         self.config_db.delete_entry('BUFFER_PG', 'Ethernet0|3-4')
 
+        # Shutdown interface
+        dvs.runcmd('config interface shutdown Ethernet0')
+
     def test_mtuUpdate(self, dvs, testlog):
         self.setup_db(dvs)
+
+        # Startup interface
+        dvs.runcmd('config interface startup Ethernet0')
 
         test_mtu = '1500'
         default_mtu = '9100'
@@ -373,8 +403,14 @@ class TestBufferMgrDyn(object):
         # clear configuration
         self.config_db.delete_entry('BUFFER_PG', 'Ethernet0|3-4')
 
+        # Shutdown interface
+        dvs.runcmd('config interface shutdown Ethernet0')
+
     def test_nonDefaultAlpha(self, dvs, testlog):
         self.setup_db(dvs)
+
+        # Startup interface
+        dvs.runcmd('config interface startup Ethernet0')
 
         test_dynamic_th_1 = '1'
         expectedProfile_th1 = self.make_lossless_profile_name(self.originalSpeed, self.originalCableLen, dynamic_th = test_dynamic_th_1)
@@ -409,12 +445,17 @@ class TestBufferMgrDyn(object):
         self.config_db.delete_entry('BUFFER_PG', 'Ethernet0|3-4')
         self.config_db.delete_entry('BUFFER_PROFILE', 'non-default-dynamic')
 
+        # Shutdown interface
+        dvs.runcmd('config interface shutdown Ethernet0')
+
     def test_sharedHeadroomPool(self, dvs, testlog):
         self.setup_db(dvs)
 
+        # Startup interface
+        dvs.runcmd('config interface startup Ethernet0')
+
         # configure lossless PG 3-4 on interface and start up the interface
         self.config_db.update_entry('BUFFER_PG', 'Ethernet0|3-4', {'profile': 'NULL'})
-        dvs.runcmd('config interface startup Ethernet0')
 
         expectedProfile = self.make_lossless_profile_name(self.originalSpeed, self.originalCableLen)
         self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", expectedProfile)
@@ -500,3 +541,37 @@ class TestBufferMgrDyn(object):
         # remove lossless PG 3-4 on interface
         self.config_db.delete_entry('BUFFER_PG', 'Ethernet0|3-4')
         dvs.runcmd('config interface shutdown Ethernet0')
+
+        # Shutdown interface
+        dvs.runcmd('config interface shutdown Ethernet0')
+
+    def test_shutdownPort(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        # Startup interface
+        dvs.runcmd('config interface startup Ethernet0')
+
+        # Configure lossless PG 3-4 on interface
+        self.config_db.update_entry('BUFFER_PG', 'Ethernet0|3-4', {'profile': 'NULL'})
+        expectedProfile = self.make_lossless_profile_name(self.originalSpeed, self.originalCableLen)
+        self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile + "]"})
+
+        # Shutdown port and check whether all the PGs have been removed
+        dvs.runcmd("config interface shutdown Ethernet0")
+        self.app_db.wait_for_deleted_entry("BUFFER_PG_TABLE", "Ethernet0:3-4")
+        self.app_db.wait_for_deleted_entry("BUFFER_PROFILE", expectedProfile)
+
+        # Add another PG when port is administratively down
+        self.config_db.update_entry('BUFFER_PG', 'Ethernet0|6', {'profile': 'NULL'})
+
+        # Startup port and check whether all the PGs haved been added
+        dvs.runcmd("config interface startup Ethernet0")
+        self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile + "]"})
+        self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:6", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile + "]"})
+
+        # Remove lossless PG 3-4 on interface
+        self.config_db.delete_entry('BUFFER_PG', 'Ethernet0|3-4')
+        self.config_db.delete_entry('BUFFER_PG', 'Ethernet0|6')
+
+        # Shutdown interface
+        dvs.runcmd("config interface shutdown Ethernet0")
