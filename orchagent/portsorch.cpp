@@ -3107,10 +3107,13 @@ void PortsOrch::doLagTask(Consumer &consumer)
                 switch_id = -1;
             }
 
-            if (!addLag(alias, lag_id, switch_id))
+            if (m_portList.find(alias) == m_portList.end())
             {
-                it++;
-                continue;
+                if (!addLag(alias, lag_id, switch_id))
+                {
+                    it++;
+                    continue;
+                }
             }
 
             // Process attributes
