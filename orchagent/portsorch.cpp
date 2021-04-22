@@ -52,6 +52,7 @@ extern int32_t gVoqMySwitchId;
 extern string gMyHostName;
 extern string gMyAsicName;
 
+#define DEFAULT_SYSTEM_PORT_MTU 9100
 #define VLAN_PREFIX         "Vlan"
 #define DEFAULT_VLAN_ID     1
 #define MAX_VALID_VLAN_ID   4094
@@ -2564,12 +2565,13 @@ void PortsOrch::doPortTask(Consumer &consumer)
             }
             else
             {
-                if (an != -1 && an != p.m_autoneg)
+                if (an != -1 && (!p.m_an_cfg || an != p.m_autoneg))
                 {
                     if (setPortAutoNeg(p.m_port_id, an))
                     {
                         SWSS_LOG_NOTICE("Set port %s AutoNeg to %u", alias.c_str(), an);
                         p.m_autoneg = an;
+                        p.m_an_cfg = true;
                         m_portList[alias] = p;
 
                         // Once AN is changed
@@ -2702,7 +2704,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     if (fec_mode_map.find(fec_mode) != fec_mode_map.end())
                     {
                         /* reset fec mode upon mode change */
-                        if (p.m_fec_mode != fec_mode_map[fec_mode])
+                        if (!p.m_fec_cfg || p.m_fec_mode != fec_mode_map[fec_mode])
                         {
                             if (p.m_admin_state_up)
                             {
@@ -2716,6 +2718,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                                 p.m_admin_state_up = false;
                                 p.m_fec_mode = fec_mode_map[fec_mode];
+                                p.m_fec_cfg = true;
 
                                 if (setPortFec(p, p.m_fec_mode))
                                 {
@@ -2733,6 +2736,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             {
                                 /* Port is already down, setting fec mode*/
                                 p.m_fec_mode = fec_mode_map[fec_mode];
+                                p.m_fec_cfg = true;
                                 if (setPortFec(p, p.m_fec_mode))
                                 {
                                     m_portList[alias] = p;
@@ -5459,6 +5463,7 @@ bool PortsOrch::addSystemPorts()
             port.m_admin_state_up = true;
             port.m_oper_status = SAI_PORT_OPER_STATUS_UP;
             port.m_speed = attrs[1].value.sysportconfig.speed;
+            port.m_mtu = DEFAULT_SYSTEM_PORT_MTU;
             if (attrs[0].value.s32 == SAI_SYSTEM_PORT_TYPE_LOCAL)
             {
                 //Get the local port oid
@@ -5540,21 +5545,20 @@ bool PortsOrch::setVoqInbandIntf(string &alias, string &type)
         return true;
     }
 
+    //Make sure port and host if exists for the configured inband interface
     Port port;
-    if(type == "port")
+    if (!getPort(alias, port))
     {
-        if (!getPort(alias, port))
-        {
-            SWSS_LOG_NOTICE("Port configured for inband intf %s is not ready!", alias.c_str());
-            return false;
-        }
+        SWSS_LOG_ERROR("Port/Vlan configured for inband intf %s is not ready!", alias.c_str());
+        return false;
     }
 
-    // Check for existence of host interface. If does not exist, may create
-    // host if for the inband here
+    if(type == "port" && !port.m_hif_id)
+    {
+        SWSS_LOG_ERROR("Host interface is not available for port %s", alias.c_str());
+        return false;
+    }
 
-    // May do the processing for other inband type like type=vlan here
-    
     //Store the name of the local inband port
     m_inbandPortName = alias;
 

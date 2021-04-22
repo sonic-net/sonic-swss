@@ -73,6 +73,25 @@ bool NeighOrch::resolveNeighborEntry(const NeighborEntry &entry, const MacAddres
     return true;
 }
 
+void NeighOrch::resolveNeighbor(const NeighborEntry &entry)
+{
+    if (m_neighborToResolve.find(entry) == m_neighborToResolve.end()) // TODO: Allow retry for unresolved neighbors
+    {
+        resolveNeighborEntry(entry, MacAddress());
+        m_neighborToResolve.insert(entry);
+    }
+
+    return;
+}
+
+void NeighOrch::clearResolvedNeighborEntry(const NeighborEntry &entry)
+{
+    string key, alias = entry.alias;
+    key = alias + ":" + entry.ip_address.to_string();
+    m_appNeighResolveProducer.del(key);
+    return;
+}
+
 /*
  * Function Name: processFDBFlushUpdate
  * Description:
@@ -214,6 +233,12 @@ bool NeighOrch::addNextHop(const IpAddress &ipAddress, const string &alias)
 
     SWSS_LOG_NOTICE("Created next hop %s on %s",
                     ipAddress.to_string().c_str(), alias.c_str());
+    if (m_neighborToResolve.find(nexthop) != m_neighborToResolve.end())
+    {
+        clearResolvedNeighborEntry(nexthop);
+        m_neighborToResolve.erase(nexthop);
+        SWSS_LOG_INFO("Resolved neighbor for %s", nexthop.to_string().c_str());
+    }
 
     NextHopEntry next_hop_entry;
     next_hop_entry.next_hop_id = next_hop_id;
@@ -313,7 +338,10 @@ bool NeighOrch::isNextHopFlagSet(const NextHopKey &nexthop, const uint32_t nh_fl
 
     auto nhop = m_syncdNextHops.find(nexthop);
 
-    assert(nhop != m_syncdNextHops.end());
+    if (nhop == m_syncdNextHops.end())
+    {
+        return false;
+    }
 
     if (nhop->second.nh_flags & nh_flag)
     {
@@ -1026,6 +1054,16 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
         return;
     }
 
+    // For "port" type inband interface, wait till the Inband interface is both admin up and oper up
+    if (ibif.m_type != Port::VLAN)
+    {
+        if (ibif.m_admin_state_up != true || ibif.m_oper_status != SAI_PORT_OPER_STATUS_UP)
+        {
+            // Inband port is not operational yet
+            return;
+        }
+    }
+
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
@@ -1159,20 +1197,126 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
 
 bool NeighOrch::addInbandNeighbor(string alias, IpAddress ip_address)
 {
-    //For "port" type inband, the inband reachability info syncing can be done through static
-    //configureation or CHASSIS_APP_DB sync (this function)
+    //Add neighbor record in SAI without adding host route for local inband to avoid route
+    //looping for packets destined to the Inband interface if the Inband is port type
 
-    //For "vlan" type inband, the inband reachability info syncinng can be ARP learning of other
-    //asics inband or static configuration or through CHASSIS_APP_DB sync (this function)
+    if(gIntfsOrch->isRemoteSystemPortIntf(alias))
+    {
+        //Remote Inband interface. Skip
+        return true;
+    }
 
-    //May implement inband rechability info syncing through CHASSIS_APP_DB sync here
+    sai_status_t status;
+    MacAddress inband_mac = gMacAddress;
+
+    sai_object_id_t rif_id = gIntfsOrch->getRouterIntfsId(alias);
+    if (rif_id == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_INFO("Failed to get rif_id for %s", alias.c_str());
+        return false;
+    }
+
+    //Make the object key
+    sai_neighbor_entry_t neighbor_entry;
+    neighbor_entry.rif_id = rif_id;
+    neighbor_entry.switch_id = gSwitchId;
+    copy(neighbor_entry.ip_address, ip_address);
+
+    vector<sai_attribute_t> neighbor_attrs;
+    sai_attribute_t attr;
+    attr.id = SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS;
+    memcpy(attr.value.mac, inband_mac.getMac(), 6);
+    neighbor_attrs.push_back(attr);
+
+    //No host route for neighbor of the Inband IP address
+    attr.id = SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE;
+    attr.value.booldata = true;
+    neighbor_attrs.push_back(attr);
+
+    status = sai_neighbor_api->create_neighbor_entry(&neighbor_entry, static_cast<uint32_t>(neighbor_attrs.size()), neighbor_attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
+        {
+            SWSS_LOG_ERROR("Entry exists: neighbor %s on %s, rv:%d", inband_mac.to_string().c_str(), alias.c_str(), status);
+            return true;
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to create neighbor %s on %s, rv:%d", inband_mac.to_string().c_str(), alias.c_str(), status);
+            return false;
+        }
+    }
+
+    SWSS_LOG_NOTICE("Created inband neighbor %s on %s", inband_mac.to_string().c_str(), alias.c_str());
+
+    gIntfsOrch->increaseRouterIntfsRefCount(alias);
+
+    if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+    {
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEIGHBOR);
+    }
+    else
+    {
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
+    }
+
+    //Sync the neighbor to add to the CHASSIS_APP_DB
+    voqSyncAddNeigh(alias, ip_address, inband_mac, neighbor_entry);
 
     return true;
 }
 
 bool NeighOrch::delInbandNeighbor(string alias, IpAddress ip_address)
 {
-    //Remove inband rechability info sync
+    // Remove local inband neighbor from SAI
+
+    if(gIntfsOrch->isRemoteSystemPortIntf(alias))
+    {
+        //Remote Inband interface. Skip
+        return true;
+    }
+
+    MacAddress inband_mac = gMacAddress;
+
+    sai_object_id_t rif_id = gIntfsOrch->getRouterIntfsId(alias);
+
+    sai_neighbor_entry_t neighbor_entry;
+    neighbor_entry.rif_id = rif_id;
+    neighbor_entry.switch_id = gSwitchId;
+    copy(neighbor_entry.ip_address, ip_address);
+
+    sai_status_t status;
+    status = sai_neighbor_api->remove_neighbor_entry(&neighbor_entry);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        if (status == SAI_STATUS_ITEM_NOT_FOUND)
+        {
+            SWSS_LOG_ERROR("Failed to locate neigbor %s on %s, rv:%d", inband_mac.to_string().c_str(), alias.c_str(), status);
+            return true;
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to remove neighbor %s on %s, rv:%d", inband_mac.to_string().c_str(), alias.c_str(), status);
+            return false;
+        }
+    }
+
+    if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+    {
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEIGHBOR);
+    }
+    else
+    {
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
+    }
+
+    SWSS_LOG_NOTICE("Removed neighbor %s on %s", inband_mac.to_string().c_str(), alias.c_str());
+
+    gIntfsOrch->decreaseRouterIntfsRefCount(alias);
+
+    //Sync the neighbor to delete from the CHASSIS_APP_DB
+    voqSyncDelNeigh(alias, ip_address);
 
     return true;
 }
