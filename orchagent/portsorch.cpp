@@ -2934,7 +2934,7 @@ void PortsOrch::doVlanTask(Consumer &consumer)
                 {
                     mac = MacAddress(fvValue(i));
                 }
-                if (fvField(i) == "hostif_name")
+                if (fvField(i) == "host_ifname")
                 {
                     hostif_name = fvValue(i);
                 }
