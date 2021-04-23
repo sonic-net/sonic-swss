@@ -225,25 +225,37 @@ void VrfMgr::doTask(Consumer &consumer)
         auto vrfName = kfvKey(t);
 
         string op = kfvOp(t);
-		// Mgmt VRF table event handling for in-band management
-        if (consumer.getTableName() == CFG_MGMT_VRF_CONFIG_TABLE_NAME) {
+        // Mgmt VRF table event handling for in-band management
+        if (consumer.getTableName() == CFG_MGMT_VRF_CONFIG_TABLE_NAME)
+        {
             SWSS_LOG_DEBUG("Event for mgmt VRF op %s", op.c_str());
-            if (op == SET_COMMAND) {
+            if (op == SET_COMMAND) 
+            {
                 bool in_band_mgmt_enabled = false;
                 bool mgmt_vrf_enabled = false;
                 for (auto i : kfvFieldsValues(t))
                 {
-                    if (fvField(i) == "mgmtVrfEnabled") {
-                        if (fvValue(i) == "true") {
+                    if (fvField(i) == "mgmtVrfEnabled")
+                    {
+                        if (fvValue(i) == "true")
+                        {
                             mgmt_vrf_enabled = true;
-                        } else {
+                        }
+                        else
+                        {
                             op = DEL_COMMAND;
                         }
                         SWSS_LOG_DEBUG("Event for mgmt VRF table mgmt_vrf_enabled is set val:%s", fvValue(i).c_str());
-                    } else if (fvField(i) == "in_band_mgmt_enabled") {
-                        if (fvValue(i) == "true") {
+                    }
+                    else if (fvField(i) == "in_band_mgmt_enabled")
+                    {
+                        if (fvValue(i) == "true")
+                        {
                             in_band_mgmt_enabled = true;
-                        } else {
+                        }
+                        else
+                        {
+                            /* Delete the mgmt VRF when no in-band-intf is associated with mgmt VRF */
                             op = DEL_COMMAND;
                         }
                         SWSS_LOG_DEBUG("Event for mgmt VRF table in_band_mgmt_enabled is set val:%s", fvValue(i).c_str());
@@ -251,13 +263,15 @@ void VrfMgr::doTask(Consumer &consumer)
                 }
                 // If mgmt VRF is not enabled or in-band-mgmt is not enabled delete the in-band-mgmt 
                 // related VRF table map information
-                if ((op == SET_COMMAND) && ((mgmt_vrf_enabled == false) || (in_band_mgmt_enabled == false))) {
+                if ((op == SET_COMMAND) && ((mgmt_vrf_enabled == false) || (in_band_mgmt_enabled == false)))
+                {
                     op = DEL_COMMAND;
                 }
             }
             vrfName = MGMT_VRF;
-            if (((op == DEL_COMMAND) && (m_vrfTableMap.find(vrfName) == m_vrfTableMap.end())) || 
-                    ((op == SET_COMMAND) && (m_vrfTableMap.find(vrfName) != m_vrfTableMap.end()))) {
+            if (((op == DEL_COMMAND) && (m_vrfTableMap.find(vrfName) == m_vrfTableMap.end())) ||
+                    ((op == SET_COMMAND) && (m_vrfTableMap.find(vrfName) != m_vrfTableMap.end())))
+            {
                 // If the mgmt VRF is not populated already, return
                 it = consumer.m_toSync.erase(it);
                 continue;
