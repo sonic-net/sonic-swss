@@ -19,6 +19,7 @@ using namespace swss;
 #define VNET_PREFIX         "Vnet"
 #define MTU_INHERITANCE     "0"
 #define VRF_PREFIX          "Vrf"
+#define VRF_MGMT            "mgmt"
 
 #define LOOPBACK_DEFAULT_MTU_STR "65536"
 
@@ -399,7 +400,8 @@ bool IntfMgr::isIntfStateOk(const string &alias)
             return true;
         }
     }
-    else if (!alias.compare(0, strlen(VRF_PREFIX), VRF_PREFIX))
+    else if ((!alias.compare(0, strlen(VRF_PREFIX), VRF_PREFIX)) ||
+            (alias == VRF_MGMT))
     {
         if (m_stateVrfTable.get(alias, temp))
         {

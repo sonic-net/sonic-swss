@@ -24,6 +24,7 @@ struct IntfsEntry
     std::set<IpPrefix>  ip_addresses;
     int                 ref_count;
     sai_object_id_t     vrf_id;
+    string              vrf_name;
     bool                proxy_arp;
 };
 
@@ -36,6 +37,7 @@ public:
 
     sai_object_id_t getRouterIntfsId(const string&);
     bool isPrefixSubnet(const IpPrefix&, const string&);
+    bool isInbandIntfInMgmtVrf(const string& alias);
     string getRouterIntfsAlias(const IpAddress &ip, const string &vrf_name = "");
     string getRifRateFlexCounterTableKey(string key);
     void increaseRouterIntfsRefCount(const string&);
@@ -52,7 +54,8 @@ public:
     void addRifToFlexCounter(const string&, const string&, const string&);
     void removeRifFromFlexCounter(const string&, const string&);
 
-    bool setIntf(const string& alias, sai_object_id_t vrf_id = gVirtualRouterId, const IpPrefix *ip_prefix = nullptr, const bool adminUp = true, const uint32_t mtu = 0);
+    bool setIntf(const string& alias, const string& vrf_name, sai_object_id_t vrf_id = gVirtualRouterId, const IpPrefix *ip_prefix = nullptr,
+                 const bool adminUp = true, const uint32_t mtu = 0);
     bool removeIntf(const string& alias, sai_object_id_t vrf_id = gVirtualRouterId, const IpPrefix *ip_prefix = nullptr);
 
     void addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix);
