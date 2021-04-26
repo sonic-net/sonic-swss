@@ -638,10 +638,8 @@ void RouteOrch::doTask(Consumer& consumer)
 
                 if (ipv.size() == 1 && IpAddress(ipv[0]).isZero())
                 {
-                    /* blackhole to be done */
                     if (alsv[0] == "unknown")
                     {
-                        /* add addBlackholeRoute or addRoute support empty nhg */
                         it = consumer.m_toSync.erase(it);
                     }
                     /* skip direct routes to tun0 */
