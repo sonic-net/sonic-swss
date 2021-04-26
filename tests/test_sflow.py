@@ -175,6 +175,43 @@ class TestSflow:
         time.sleep(1) 
         appldb.wait_for_field_match("SFLOW_SESSION_TABLE", "Ethernet4", {"sample_rate": "256"})
     
+    def test_InterfaceDisableAllUpdate(self, dvs, testlog):
+        '''  
+        This test checks if the SflowMgr updates sflow session table in APPL_DB when user has not configured the admin_status.
+        Steps to verify the issue:
+        1) Enable sflow globally
+        2) Configure sample rate for Ethernet0
+        3) Configure sample rate for Ethernet4
+        4) verify whether sample rates are reflected in the Ethernet0 & Ethernet4 interfaces
+        5) Execute sflow disable all command to disable all interfaces
+        6) Verify whether all interfaces are disabled (without the fix, interfaces were shown with admin up with configured rate, 
+           this is not expected).
+        '''
+        self.setup_sflow(dvs)
+
+        appldb = dvs.get_app_db()
+        # create the interface session
+        session_params = {"sample_rate": "256"}
+        self.cdb.create_entry("SFLOW_SESSION", "Ethernet0", session_params)
+        expected_fields = {"sample_rate": "256"}
+        appldb.wait_for_field_match("SFLOW_SESSION_TABLE", "Ethernet0", expected_fields)
+        
+        session_params = {"sample_rate": "512"}
+        self.cdb.create_entry("SFLOW_SESSION", "Ethernet4", session_params)
+        expected_fields = {"sample_rate": "512"}
+        appldb.wait_for_field_match("SFLOW_SESSION_TABLE", "Ethernet4", expected_fields)
+
+        session_params = {"admin_state": "down"}
+        self.cdb.create_entry("SFLOW_SESSION", "all", session_params)
+        expected_fields = {"sample_rate": "256", "admin_state": "up"}
+        appldb.wait_for_field_negative_match("SFLOW_SESSION_TABLE", "Ethernet0", expected_fields)
+        expected_fields = {"sample_rate": "512", "admin_state": "up"}
+        appldb.wait_for_field_negative_match("SFLOW_SESSION_TABLE", "Ethernet4", expected_fields)
+
+        self.cdb.delete_entry("SFLOW_SESSION", "all")
+        self.cdb.delete_entry("SFLOW_SESSION", "Ethernet0")
+        self.cdb.delete_entry("SFLOW_SESSION", "Ethernet4")
+
 
     def test_Teardown(self, dvs, testlog):
         self.setup_sflow(dvs)
