@@ -237,7 +237,7 @@ private:
 
     // Main flows
     task_process_status removeAllPgsFromPort(const std::string &port);
-    task_process_status refreshPriorityGroupsForPort(const std::string &port, const std::string &speed, const std::string &cable_length, const std::string &mtu, const std::string &exactly_matched_key);
+    task_process_status refreshPgsForPort(const std::string &port, const std::string &speed, const std::string &cable_length, const std::string &mtu, const std::string &exactly_matched_key);
     task_process_status doUpdatePgTask(const std::string &pg_key, const std::string &port);
     task_process_status doRemovePgTask(const std::string &pg_key, const std::string &port);
     task_process_status doAdminStatusTask(const std::string port, const std::string adminStatus);

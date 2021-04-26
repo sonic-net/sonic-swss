@@ -1,12 +1,8 @@
 import time
-import json
-import redis
 import pytest
 import re
 import buffer_model
 
-from pprint import pprint
-from swsscommon import swsscommon
 from dvslib.dvs_common import PollingConfig
 
 @pytest.yield_fixture

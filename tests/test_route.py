@@ -233,6 +233,320 @@ class TestRoute(TestRouteBase):
         dvs.servers[1].runcmd("ip -6 route del default dev eth0")
         dvs.servers[1].runcmd("ip -6 address del 2001::2/64 dev eth0")
 
+    def test_RouteAddRemoveIpv4RouteResolveNeigh(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        self.clear_srv_config(dvs)
+
+        # create l3 interface
+        self.create_l3_intf("Ethernet0", "")
+        self.create_l3_intf("Ethernet4", "")
+
+        # set ip address
+        self.add_ip_address("Ethernet0", "10.0.0.0/31")
+        self.add_ip_address("Ethernet4", "10.0.0.2/31")
+
+        # bring up interface
+        self.set_admin_status("Ethernet0", "up")
+        self.set_admin_status("Ethernet4", "up")
+
+        # set ip address and default route
+        dvs.servers[0].runcmd("ip address add 10.0.0.1/31 dev eth0")
+        dvs.servers[0].runcmd("ip route add default via 10.0.0.0")
+
+        dvs.servers[1].runcmd("ip address add 10.0.0.3/31 dev eth0")
+        dvs.servers[1].runcmd("ip route add default via 10.0.0.2")
+        time.sleep(2)
+
+        # add route entry -- single nexthop
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"ip route 2.2.2.0/24 10.0.0.1\"")
+
+        # add route entry -- multiple nexthop
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"ip route 3.3.3.0/24 10.0.0.1\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"ip route 3.3.3.0/24 10.0.0.3\"")
+
+        # check application database
+        self.pdb.wait_for_entry("ROUTE_TABLE", "2.2.2.0/24")
+        self.pdb.wait_for_entry("ROUTE_TABLE", "3.3.3.0/24")
+
+        # check neighbor got resolved and removed from NEIGH_RESOLVE_TABLE
+        self.pdb.wait_for_deleted_entry("NEIGH_RESOLVE_TABLE", "Ethernet0:10.0.0.1")
+        self.pdb.wait_for_deleted_entry("NEIGH_RESOLVE_TABLE", "Ethernet4:10.0.0.3")
+
+        # check ASIC route database
+        self.check_route_entries(["2.2.2.0/24", "3.3.3.0/24"])
+
+        # remove route entry
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route 2.2.2.0/24 10.0.0.1\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route 3.3.3.0/24 10.0.0.1\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route 3.3.3.0/24 10.0.0.3\"")
+
+        # check application database
+        self.pdb.wait_for_deleted_entry("ROUTE_TABLE", "2.2.2.0/24")
+        self.pdb.wait_for_deleted_entry("ROUTE_TABLE", "3.3.3.0/24")
+
+        # check ASIC route database
+        self.check_deleted_route_entries(["2.2.2.0/24", "3.3.3.0/24"])
+
+        # remove ip address
+        self.remove_ip_address("Ethernet0", "10.0.0.0/31")
+        self.remove_ip_address("Ethernet4", "10.0.0.2/31")
+
+        # remove l3 interface
+        self.remove_l3_intf("Ethernet0")
+        self.remove_l3_intf("Ethernet4")
+
+        self.set_admin_status("Ethernet0", "down")
+        self.set_admin_status("Ethernet4", "down")
+
+        # remove ip address and default route
+        dvs.servers[0].runcmd("ip route del default dev eth0")
+        dvs.servers[0].runcmd("ip address del 10.0.0.1/31 dev eth0")
+
+        dvs.servers[1].runcmd("ip route del default dev eth0")
+        dvs.servers[1].runcmd("ip address del 10.0.0.3/31 dev eth0")
+
+    def test_RouteAddRemoveIpv6RouteResolveNeigh(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        # create l3 interface
+        self.create_l3_intf("Ethernet0", "")
+        self.create_l3_intf("Ethernet4", "")
+
+        # bring up interface
+        self.set_admin_status("Ethernet0", "up")
+        self.set_admin_status("Ethernet4", "up")
+
+        # set ip address
+        self.add_ip_address("Ethernet0", "2000::1/64")
+        self.add_ip_address("Ethernet4", "2001::1/64")
+        dvs.runcmd("sysctl -w net.ipv6.conf.all.forwarding=1")
+
+        # set ip address and default route
+        dvs.servers[0].runcmd("ip -6 address add 2000::2/64 dev eth0")
+        dvs.servers[0].runcmd("ip -6 route add default via 2000::1")
+
+        dvs.servers[1].runcmd("ip -6 address add 2001::2/64 dev eth0")
+        dvs.servers[1].runcmd("ip -6 route add default via 2001::1")
+        time.sleep(2)
+
+        # add route entry -- single nexthop
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"ipv6 route 3000::0/64 2000::2\"")
+
+        # add route entry -- multiple nexthop
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"ipv6 route 4000::0/64 2000::2\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"ipv6 route 4000::0/64 2001::2\"")
+
+        # check application database
+        self.pdb.wait_for_entry("ROUTE_TABLE", "3000::/64")
+        self.pdb.wait_for_entry("ROUTE_TABLE", "4000::/64")
+
+        # check neighbor got resolved and removed from NEIGH_RESOLVE_TABLE
+        self.pdb.wait_for_deleted_entry("NEIGH_RESOLVE_TABLE", "Ethernet0:2000::2")
+        self.pdb.wait_for_deleted_entry("NEIGH_RESOLVE_TABLE", "Ethernet4:2001::2")
+
+        # check ASIC route database
+        self.check_route_entries(["3000::/64", "4000::/64"])
+
+        # remove route entry
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ipv6 route 3000::0/64 2000::2\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ipv6 route 4000::0/64 2000::2\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ipv6 route 4000::0/64 2001::2\"")
+
+        # check application database
+        self.pdb.wait_for_deleted_entry("ROUTE_TABLE", "3000::/64")
+        self.pdb.wait_for_deleted_entry("ROUTE_TABLE", "4000::/64")
+
+        # check ASIC route database
+        self.check_deleted_route_entries(["3000::/64", "4000::/64"])
+
+        # remove ip address
+        self.remove_ip_address("Ethernet0", "2000::1/64")
+        self.remove_ip_address("Ethernet4", "2001::1/64")
+
+        # remove l3 interface
+        self.remove_l3_intf("Ethernet0")
+        self.remove_l3_intf("Ethernet4")
+
+        self.set_admin_status("Ethernet0", "down")
+        self.set_admin_status("Ethernet4", "down")
+
+        # remove ip address and default route
+        dvs.servers[0].runcmd("ip -6 route del default dev eth0")
+        dvs.servers[0].runcmd("ip -6 address del 2000::2/64 dev eth0")
+
+        dvs.servers[1].runcmd("ip -6 route del default dev eth0")
+        dvs.servers[1].runcmd("ip -6 address del 2001::2/64 dev eth0")
+
+    def test_RouteAddRemoveIpv4RouteUnresolvedNeigh(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        self.clear_srv_config(dvs)
+
+        # create l3 interface
+        self.create_l3_intf("Ethernet0", "")
+        self.create_l3_intf("Ethernet4", "")
+
+        # set ip address
+        self.add_ip_address("Ethernet0", "10.0.0.0/31")
+        self.add_ip_address("Ethernet4", "10.0.0.2/31")
+
+        # bring up interface
+        self.set_admin_status("Ethernet0", "up")
+        self.set_admin_status("Ethernet4", "up")
+
+        # add route entry -- single nexthop
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"ip route 2.2.2.0/24 10.0.0.1\"")
+
+        # add route entry -- multiple nexthop
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"ip route 3.3.3.0/24 10.0.0.1\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"ip route 3.3.3.0/24 10.0.0.3\"")
+
+        # check application database
+        self.pdb.wait_for_entry("ROUTE_TABLE", "2.2.2.0/24")
+        self.pdb.wait_for_entry("ROUTE_TABLE", "3.3.3.0/24")
+
+        # check for unresolved neighbor entries
+        self.pdb.wait_for_entry("NEIGH_RESOLVE_TABLE", "Ethernet0:10.0.0.1")
+        self.pdb.wait_for_entry("NEIGH_RESOLVE_TABLE", "Ethernet4:10.0.0.3")
+
+        # check routes does not show up in ASIC_DB
+        self.check_deleted_route_entries(["2.2.2.0/24", "3.3.3.0/24"])
+
+        # set ip address and default route
+        dvs.servers[0].runcmd("ip address add 10.0.0.1/31 dev eth0")
+        dvs.servers[0].runcmd("ip route add default via 10.0.0.0")
+
+        dvs.servers[1].runcmd("ip address add 10.0.0.3/31 dev eth0")
+        dvs.servers[1].runcmd("ip route add default via 10.0.0.2")
+        time.sleep(2)
+
+        # check application database
+        self.pdb.wait_for_entry("ROUTE_TABLE", "2.2.2.0/24")
+        self.pdb.wait_for_entry("ROUTE_TABLE", "3.3.3.0/24")
+
+        # check neighbor got resolved and removed from NEIGH_RESOLVE_TABLE
+        self.pdb.wait_for_deleted_entry("NEIGH_RESOLVE_TABLE", "Ethernet0:10.0.0.1")
+        self.pdb.wait_for_deleted_entry("NEIGH_RESOLVE_TABLE", "Ethernet4:10.0.0.3")
+
+        # check ASIC route database
+        self.check_route_entries(["2.2.2.0/24", "3.3.3.0/24"])
+
+        # remove route entry
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route 2.2.2.0/24 10.0.0.1\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route 3.3.3.0/24 10.0.0.1\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route 3.3.3.0/24 10.0.0.3\"")
+
+        # check application database
+        self.pdb.wait_for_deleted_entry("ROUTE_TABLE", "2.2.2.0/24")
+        self.pdb.wait_for_deleted_entry("ROUTE_TABLE", "3.3.3.0/24")
+
+        # check ASIC route database
+        self.check_deleted_route_entries(["2.2.2.0/24", "3.3.3.0/24"])
+
+        # remove ip address
+        self.remove_ip_address("Ethernet0", "10.0.0.0/31")
+        self.remove_ip_address("Ethernet4", "10.0.0.2/31")
+
+        # remove l3 interface
+        self.remove_l3_intf("Ethernet0")
+        self.remove_l3_intf("Ethernet4")
+
+        self.set_admin_status("Ethernet0", "down")
+        self.set_admin_status("Ethernet4", "down")
+
+        # remove ip address and default route
+        dvs.servers[0].runcmd("ip route del default dev eth0")
+        dvs.servers[0].runcmd("ip address del 10.0.0.1/31 dev eth0")
+
+        dvs.servers[1].runcmd("ip route del default dev eth0")
+        dvs.servers[1].runcmd("ip address del 10.0.0.3/31 dev eth0")
+
+    def test_RouteAddRemoveIpv6RouteUnresolvedNeigh(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        # create l3 interface
+        self.create_l3_intf("Ethernet0", "")
+        self.create_l3_intf("Ethernet4", "")
+
+        # bring up interface
+        self.set_admin_status("Ethernet0", "up")
+        self.set_admin_status("Ethernet4", "up")
+
+        # set ip address
+        self.add_ip_address("Ethernet0", "2000::1/64")
+        self.add_ip_address("Ethernet4", "2001::1/64")
+        dvs.runcmd("sysctl -w net.ipv6.conf.all.forwarding=1")
+
+        # add route entry -- single nexthop
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"ipv6 route 3000::0/64 2000::2\"")
+
+        # add route entry -- multiple nexthop
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"ipv6 route 4000::0/64 2000::2\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"ipv6 route 4000::0/64 2001::2\"")
+
+        # check application database
+        self.pdb.wait_for_entry("ROUTE_TABLE", "3000::/64")
+        self.pdb.wait_for_entry("ROUTE_TABLE", "4000::/64")
+
+        # check for unresolved neighbor entries
+        self.pdb.wait_for_entry("NEIGH_RESOLVE_TABLE", "Ethernet0:2000::2")
+        self.pdb.wait_for_entry("NEIGH_RESOLVE_TABLE", "Ethernet4:2001::2")
+
+        # check routes does not show up in ASIC_DB
+        self.check_deleted_route_entries(["3000::/64", "4000::/64"])
+
+        # set ip address and default route
+        dvs.servers[0].runcmd("ip -6 address add 2000::2/64 dev eth0")
+        dvs.servers[0].runcmd("ip -6 route add default via 2000::1")
+
+        dvs.servers[1].runcmd("ip -6 address add 2001::2/64 dev eth0")
+        dvs.servers[1].runcmd("ip -6 route add default via 2001::1")
+        time.sleep(5)
+
+        dvs.servers[0].runcmd("ping -6 -c 1 2001::2")
+
+        # check application database
+        self.pdb.wait_for_entry("ROUTE_TABLE", "3000::/64")
+        self.pdb.wait_for_entry("ROUTE_TABLE", "4000::/64")
+
+        # check neighbor got resolved and removed from NEIGH_RESOLVE_TABLE
+        self.pdb.wait_for_deleted_entry("NEIGH_RESOLVE_TABLE", "Ethernet0:2000::2")
+        self.pdb.wait_for_deleted_entry("NEIGH_RESOLVE_TABLE", "Ethernet4:2001::2")
+
+        # check ASIC route database
+        self.check_route_entries(["3000::/64", "4000::/64"])
+
+        # remove route entry
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ipv6 route 3000::0/64 2000::2\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ipv6 route 4000::0/64 2000::2\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ipv6 route 4000::0/64 2001::2\"")
+
+        # check application database
+        self.pdb.wait_for_deleted_entry("ROUTE_TABLE", "3000::/64")
+        self.pdb.wait_for_deleted_entry("ROUTE_TABLE", "4000::/64")
+
+        # check ASIC route database
+        self.check_deleted_route_entries(["3000::/64", "4000::/64"])
+
+        # remove ip address
+        self.remove_ip_address("Ethernet0", "2000::1/64")
+        self.remove_ip_address("Ethernet4", "2001::1/64")
+
+        # remove l3 interface
+        self.remove_l3_intf("Ethernet0")
+        self.remove_l3_intf("Ethernet4")
+
+        self.set_admin_status("Ethernet0", "down")
+        self.set_admin_status("Ethernet4", "down")
+
+        # remove ip address and default route
+        dvs.servers[0].runcmd("ip -6 route del default dev eth0")
+        dvs.servers[0].runcmd("ip -6 address del 2000::2/64 dev eth0")
+
+        dvs.servers[1].runcmd("ip -6 route del default dev eth0")
+        dvs.servers[1].runcmd("ip -6 address del 2001::2/64 dev eth0")
+
     def test_RouteAddRemoveIpv4RouteWithVrf(self, dvs, testlog):
         self.setup_db(dvs)
 

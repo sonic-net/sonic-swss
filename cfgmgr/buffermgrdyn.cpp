@@ -659,9 +659,9 @@ void BufferMgrDynamic::releaseProfile(const string &profile_name)
 
 bool BufferMgrDynamic::isHeadroomResourceValid(const string &port, const buffer_profile_t &profile, const string &new_pg = "")
 {
-    //port: used to fetch the maximum headroom size
-    //profile: the profile referenced by the new_pg (if provided) or all PGs
-    //new_pg: which pg is newly added?
+    // port: used to fetch the maximum headroom size
+    // profile: the profile referenced by the new_pg (if provided) or all PGs
+    // new_pg: which pg is newly added?
 
     if (!profile.lossless)
     {
@@ -786,7 +786,7 @@ task_process_status BufferMgrDynamic::removeAllPgsFromPort(const string &port)
 // 2. Update port's info: speed, cable length and mtu
 // 3. If any of the PGs is updated, recalculate pool size
 // 4. try release each profile in to-be-released profile set
-task_process_status BufferMgrDynamic::refreshPriorityGroupsForPort(const string &port, const string &speed, const string &cable_length, const string &mtu, const string &exactly_matched_key = "")
+task_process_status BufferMgrDynamic::refreshPgsForPort(const string &port, const string &speed, const string &cable_length, const string &mtu, const string &exactly_matched_key = "")
 {
     port_info_t &portInfo = m_portInfoLookup[port];
     string &gearbox_model = portInfo.gearbox_model;
@@ -1025,7 +1025,7 @@ task_process_status BufferMgrDynamic::doUpdatePgTask(const string &pg_key, const
         // Not having profile_name but both speed and cable length have been configured for that port
         // This is because the first PG on that port is configured after speed, cable length configured
         // Just regenerate the profile
-        task_status = refreshPriorityGroupsForPort(port, portInfo.speed, portInfo.cable_length, portInfo.mtu, pg_key);
+        task_status = refreshPgsForPort(port, portInfo.speed, portInfo.cable_length, portInfo.mtu, pg_key);
         if (task_status != task_process_status::task_success)
             return task_status;
 
@@ -1038,7 +1038,7 @@ task_process_status BufferMgrDynamic::doUpdatePgTask(const string &pg_key, const
         }
         else
         {
-            task_status = refreshPriorityGroupsForPort(port, portInfo.speed, portInfo.cable_length, portInfo.mtu, pg_key);
+            task_status = refreshPgsForPort(port, portInfo.speed, portInfo.cable_length, portInfo.mtu, pg_key);
             if (task_status != task_process_status::task_success)
                 return task_status;
         }
@@ -1059,7 +1059,7 @@ task_process_status BufferMgrDynamic::doUpdatePgTask(const string &pg_key, const
     return task_process_status::task_success;
 }
 
-//Remove the currently configured lossless pg
+// Remove the currently configured lossless pg
 task_process_status BufferMgrDynamic::doRemovePgTask(const string &pg_key, const string &port)
 {
     auto &bufferPgs = m_portPgLookup[port];
@@ -1114,7 +1114,7 @@ task_process_status BufferMgrDynamic::doUpdateBufferProfileForDynamicTh(buffer_p
             SWSS_LOG_DEBUG("Checking PG %s for dynamic profile %s", key.c_str(), profileName.c_str());
             portsChecked.insert(portName);
 
-            rc = refreshPriorityGroupsForPort(portName, port.speed, port.cable_length, port.mtu);
+            rc = refreshPgsForPort(portName, port.speed, port.cable_length, port.mtu);
             if (task_process_status::task_success != rc)
             {
                 SWSS_LOG_ERROR("Update the profile on %s failed", key.c_str());
@@ -1284,16 +1284,16 @@ task_process_status BufferMgrDynamic::handleCableLenTable(KeyOpFieldsValuesTuple
 
             SWSS_LOG_INFO("Updating BUFFER_PG for port %s due to cable length updated", port.c_str());
 
-            //Try updating the buffer information
+            // Try updating the buffer information
             switch (portInfo.state)
             {
             case PORT_INITIALIZING:
                 portInfo.state = PORT_READY;
-                task_status = refreshPriorityGroupsForPort(port, speed, cable_length, mtu);
+                task_status = refreshPgsForPort(port, speed, cable_length, mtu);
                 break;
 
             case PORT_READY:
-                task_status = refreshPriorityGroupsForPort(port, speed, cable_length, mtu);
+                task_status = refreshPgsForPort(port, speed, cable_length, mtu);
                 break;
 
             case PORT_ADMIN_DOWN:
@@ -1346,7 +1346,7 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
     string op = kfvOp(tuple);
     bool speed_updated = false, mtu_updated = false, admin_status_updated = false, admin_up;
 
-    SWSS_LOG_DEBUG("processing command:%s PORT table key %s", op.c_str(), port.c_str());
+    SWSS_LOG_DEBUG("Processing command:%s PORT table key %s", op.c_str(), port.c_str());
 
     port_info_t &portInfo = m_portInfoLookup[port];
 
@@ -1449,7 +1449,6 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
                 SWSS_LOG_WARN("Cable length or speed for %s hasn't been configured yet, unable to calculate headroom", port.c_str());
                 // We don't retry here because it doesn't make sense until both cable length and speed are configured.
             }
-
         }
 
         if (admin_status_updated)
@@ -1470,7 +1469,8 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
                 need_remove_all_pgs = true;
             }
 
-            SWSS_LOG_INFO("Recalculate shared buffer pool size due to port %s's admin_status updated", port.c_str());
+            SWSS_LOG_INFO("Recalculate shared buffer pool size due to port %s's admin_status updated to %s",
+                          port.c_str(), (admin_up ? "up" : "down"));
         }
 
         // In case both need_remove_all_pgs and need_refresh_all_pgs are true, the need_remove_all_pgs will take effect.
@@ -1482,7 +1482,7 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
         }
         else if (need_refresh_all_pgs)
         {
-            task_status = refreshPriorityGroupsForPort(port, portInfo.speed, portInfo.cable_length, portInfo.mtu);
+            task_status = refreshPgsForPort(port, portInfo.speed, portInfo.cable_length, portInfo.mtu);
         }
     }
 
@@ -1496,7 +1496,7 @@ task_process_status BufferMgrDynamic::handleBufferPoolTable(KeyOpFieldsValuesTup
     string op = kfvOp(tuple);
     vector<FieldValueTuple> fvVector;
 
-    SWSS_LOG_DEBUG("processing command:%s table BUFFER_POOL key %s", op.c_str(), pool.c_str());
+    SWSS_LOG_DEBUG("Processing command:%s table BUFFER_POOL key %s", op.c_str(), pool.c_str());
     if (op == SET_COMMAND)
     {
         // For set command:
@@ -1511,7 +1511,7 @@ task_process_status BufferMgrDynamic::handleBufferPoolTable(KeyOpFieldsValuesTup
             string &field = fvField(*i);
             string &value = fvValue(*i);
 
-            SWSS_LOG_DEBUG("field:%s, value:%s", field.c_str(), value.c_str());
+            SWSS_LOG_DEBUG("Field:%s, value:%s", field.c_str(), value.c_str());
             if (field == buffer_size_field_name)
             {
                 bufferPool.dynamic_size = false;
@@ -1595,12 +1595,12 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
     string op = kfvOp(tuple);
     vector<FieldValueTuple> fvVector;
 
-    SWSS_LOG_DEBUG("processing command:%s BUFFER_PROFILE table key %s", op.c_str(), profileName.c_str());
+    SWSS_LOG_DEBUG("Processing command:%s BUFFER_PROFILE table key %s", op.c_str(), profileName.c_str());
     if (op == SET_COMMAND)
     {
-        //For set command:
-        //1. Create the corresponding table entries in APPL_DB
-        //2. Record the table in the internal cache m_bufferProfileLookup
+        // For set command:
+        // 1. Create the corresponding table entries in APPL_DB
+        // 2. Record the table in the internal cache m_bufferProfileLookup
         buffer_profile_t &profileApp = m_bufferProfileLookup[profileName];
 
         profileApp.static_configured = true;
@@ -1615,7 +1615,7 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
             const string &field = fvField(*i);
             string value = fvValue(*i);
 
-            SWSS_LOG_DEBUG("field:%s, value:%s", field.c_str(), value.c_str());
+            SWSS_LOG_DEBUG("Field:%s, value:%s", field.c_str(), value.c_str());
             if (field == buffer_pool_field_name)
             {
                 if (!value.empty())
@@ -1765,7 +1765,7 @@ task_process_status BufferMgrDynamic::handleOneBufferPgEntry(const string &key, 
     vector<FieldValueTuple> fvVector;
     buffer_pg_t &bufferPg = m_portPgLookup[port][key];
 
-    SWSS_LOG_DEBUG("processing command:%s table BUFFER_PG key %s", op.c_str(), key.c_str());
+    SWSS_LOG_DEBUG("Processing command:%s table BUFFER_PG key %s", op.c_str(), key.c_str());
     if (op == SET_COMMAND)
     {
         bool ignored = false;
@@ -1789,7 +1789,7 @@ task_process_status BufferMgrDynamic::handleOneBufferPgEntry(const string &key, 
             const string &field = fvField(*i);
             string value = fvValue(*i);
 
-            SWSS_LOG_DEBUG("field:%s, value:%s", field.c_str(), value.c_str());
+            SWSS_LOG_DEBUG("Field:%s, value:%s", field.c_str(), value.c_str());
             if (field == buffer_profile_field_name && value != "NULL")
             {
                 // Headroom override
@@ -1988,7 +1988,7 @@ task_process_status BufferMgrDynamic::doBufferTableTask(KeyOpFieldsValuesTuple &
     string key = kfvKey(tuple);
     const string &name = applTable.getTableName();
 
-    //transform the separator in key from "|" to ":"
+    // Transform the separator in key from "|" to ":"
     transformSeperator(key);
 
     string op = kfvOp(tuple);
@@ -2000,7 +2000,7 @@ task_process_status BufferMgrDynamic::doBufferTableTask(KeyOpFieldsValuesTuple &
 
         for (auto i : kfvFieldsValues(tuple))
         {
-            //transform the separator in values from "|" to ":"
+            // Transform the separator in values from "|" to ":"
             if (fvField(i) == "pool")
                 transformReference(fvValue(i));
             if (fvField(i) == "profile")

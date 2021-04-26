@@ -574,7 +574,7 @@ void RouteOrch::doTask(Consumer& consumer)
                      * way is to create loopback interface and then create
                      * route pointing to it, so that we can traps packets to
                      * CPU */
-                    if (alias == "eth0" || alias == "docker0" || alias == "tun0" ||
+                    if (alias == "eth0" || alias == "docker0" ||
                         alias == "lo" || !alias.compare(0, strlen(LOOPBACK_PREFIX), LOOPBACK_PREFIX))
                     {
                         excp_intfs_flag = true;
@@ -599,10 +599,18 @@ void RouteOrch::doTask(Consumer& consumer)
 
                 if (overlay_nh == false)
                 {
+                    if (alsv[0] == "tun0" && !(IpAddress(ipv[0]).isZero()))
+                    {
+                        alsv[0] = gIntfsOrch->getRouterIntfsAlias(ipv[0]);
+                    }
                     nhg_str = ipv[0] + NH_DELIMITER + alsv[0];
 
                     for (uint32_t i = 1; i < ipv.size(); i++)
                     {
+                        if (alsv[i] == "tun0" && !(IpAddress(ipv[i]).isZero()))
+                        {
+                            alsv[i] = gIntfsOrch->getRouterIntfsAlias(ipv[i]);
+                        }
                         nhg_str += NHG_DELIMITER + ipv[i] + NH_DELIMITER + alsv[i];
                     }
 
@@ -626,6 +634,11 @@ void RouteOrch::doTask(Consumer& consumer)
                     if (alsv[0] == "unknown")
                     {
                         /* add addBlackholeRoute or addRoute support empty nhg */
+                        it = consumer.m_toSync.erase(it);
+                    }
+                    /* skip direct routes to tun0 */
+                    else if (alsv[0] == "tun0")
+                    {
                         it = consumer.m_toSync.erase(it);
                     }
                     /* directly connected route to VRF interface which come from kernel */
@@ -1013,6 +1026,7 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
     vector<sai_object_id_t> next_hop_ids;
     set<NextHopKey> next_hop_set = nexthops.getNextHops();
     std::map<sai_object_id_t, NextHopKey> nhopgroup_members_set;
+    std::map<sai_object_id_t, set<NextHopKey>> nhopgroup_shared_set;
 
     /* Assert each IP address exists in m_syncdNextHops table,
      * and add the corresponding next_hop_id to next_hop_ids. */
@@ -1033,7 +1047,14 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
 
         sai_object_id_t next_hop_id = m_neighOrch->getNextHopId(it);
         next_hop_ids.push_back(next_hop_id);
-        nhopgroup_members_set[next_hop_id] = it;
+        if (nhopgroup_members_set.find(next_hop_id) == nhopgroup_members_set.end())
+        {
+            nhopgroup_members_set[next_hop_id] = it;
+        }
+        else
+        {
+            nhopgroup_shared_set[next_hop_id].insert(it);
+        }
     }
 
     sai_attribute_t nhg_attr;
@@ -1107,8 +1128,20 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
 
         // Save the membership into next hop structure
-        next_hop_group_entry.nhopgroup_members[nhopgroup_members_set.find(nhid)->second] =
-                                                                nhgm_id;
+        if (nhopgroup_shared_set.find(nhid) != nhopgroup_shared_set.end())
+        {
+            auto it = nhopgroup_shared_set[nhid].begin();
+            next_hop_group_entry.nhopgroup_members[*it] = nhgm_id;
+            nhopgroup_shared_set[nhid].erase(it);
+            if (nhopgroup_shared_set[nhid].empty())
+            {
+                nhopgroup_shared_set.erase(nhid);
+            }
+        }
+        else
+        {
+            next_hop_group_entry.nhopgroup_members[nhopgroup_members_set.find(nhid)->second] = nhgm_id;
+        }
     }
 
     /* Increment the ref_count for the next hops used by the next hop group. */
@@ -1121,7 +1154,6 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
      */
     next_hop_group_entry.ref_count = 0;
     m_syncdNextHopGroups[nexthops] = next_hop_group_entry;
-
 
     return true;
 }
@@ -1364,6 +1396,15 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
 
         if (nexthop.ip_address.isZero())
         {
+            if(gPortsOrch->isInbandPort(nexthop.alias))
+            {
+                //This routes is the static route added for the remote system neighbors
+                //We do not need this route in the ASIC since the static neighbor creation
+                //in ASIC adds the same full mask route (host route) in ASIC automatically
+                //So skip.
+                return true;
+            }
+
             next_hop_id = m_intfsOrch->getRouterIntfsId(nexthop.alias);
             /* rif is not created yet */
             if (next_hop_id == SAI_NULL_OBJECT_ID)
@@ -1399,8 +1440,9 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                 }
                 else
                 {
-                    SWSS_LOG_INFO("Failed to get next hop %s for %s",
+                    SWSS_LOG_INFO("Failed to get next hop %s for %s, resolving neighbor",
                             nextHops.to_string().c_str(), ipPrefix.to_string().c_str());
+                    m_neighOrch->resolveNeighbor(nexthop);
                     return false;
                 }
             }
@@ -1447,8 +1489,15 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                                 return false;
                             }
                         }
+                        else
+                        {
+                            SWSS_LOG_INFO("Failed to get next hop %s in %s, resolving neighbor",
+                                    nextHop.to_string().c_str(), nextHops.to_string().c_str());
+                            m_neighOrch->resolveNeighbor(nextHop);
+                        }
                     }
                 }
+
                 /* Failed to create the next hop group and check if a temporary route is needed */
 
                 /* If the current next hop is part of the next hop group to sync,

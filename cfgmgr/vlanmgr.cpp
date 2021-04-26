@@ -306,6 +306,7 @@ void VlanMgr::doVlanTask(Consumer &consumer)
             string admin_status;
             string mtu = DEFAULT_MTU_STR;
             string mac = gMacAddress.to_string();
+            string hostif_name = "";
             vector<FieldValueTuple> fvVector;
             string members;
 
@@ -362,6 +363,10 @@ void VlanMgr::doVlanTask(Consumer &consumer)
                     mac = fvValue(i);
                     setHostVlanMac(vlan_id, mac);
                 }
+                else if (fvField(i) == "host_ifname")
+                {
+                    hostif_name = fvValue(i);
+                }
             }
             /* fvVector should not be empty */
             if (fvVector.empty())
@@ -375,6 +380,9 @@ void VlanMgr::doVlanTask(Consumer &consumer)
 
             FieldValueTuple mc("mac", mac);
             fvVector.push_back(mc);
+
+            FieldValueTuple hostif_name_fvt("host_ifname", hostif_name);
+            fvVector.push_back(hostif_name_fvt);
 
             m_appVlanTableProducer.set(key, fvVector);
             m_vlans.insert(key);

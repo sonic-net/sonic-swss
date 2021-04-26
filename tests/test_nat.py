@@ -287,9 +287,6 @@ class TestNat(object):
         #check the entry is not there in asic db
         self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 0)
 
-        # clear interfaces
-        self.clear_interfaces(dvs)
-
     def test_VerifyConntrackTimeoutForNatEntry(self, dvs, testlog):
         # get neighbor and arp entry
         dvs.servers[0].runcmd("ping -c 1 18.18.18.2")
@@ -353,6 +350,81 @@ class TestNat(object):
         dvs_acl.remove_acl_table(L3_TABLE_NAME)
         dvs_acl.verify_acl_table_count(0)
 
+    def test_CrmSnatAndDnatEntryUsedCount(self, dvs, testlog):
+        # initialize
+        self.setup_db(dvs)
+
+        # get neighbor and arp entry
+        dvs.servers[0].runcmd("ping -c 1 18.18.18.2")
+
+        # set pooling interval to 1
+        dvs.runcmd("crm config polling interval 1")
+
+        dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_SNAT_ENTRY', '1000')
+        dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_DNAT_ENTRY', '1000')
+
+        time.sleep(2)
+
+        # get snat counters
+        used_snat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_snat_entry_used')
+        avail_snat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_snat_entry_available')
+
+        # get dnat counters
+        used_dnat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_dnat_entry_used')
+        avail_dnat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_dnat_entry_available')
+
+        # add a static nat entry
+        dvs.runcmd("config nat add static basic 67.66.65.1 18.18.18.2")
+
+        #check the entry in asic db, 3 keys = SNAT, DNAT and DNAT_Pool
+        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 3)
+        for key in keys:
+            if (key.find("dst_ip:67.66.65.1")) or (key.find("src_ip:18.18.18.2")):
+                assert True
+            else:
+                assert False
+
+        dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_SNAT_ENTRY', '999')
+        dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_DNAT_ENTRY', '999')
+
+        time.sleep(2)
+
+        # get snat counters
+        new_used_snat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_snat_entry_used')
+        new_avail_snat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_snat_entry_available')
+
+        # get dnat counters
+        new_used_dnat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_dnat_entry_used')
+        new_avail_dnat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_dnat_entry_available')
+
+        assert new_used_snat_counter - used_snat_counter == 1
+        assert avail_snat_counter - new_avail_snat_counter == 1
+        assert new_used_dnat_counter - used_dnat_counter == 1
+        assert avail_dnat_counter - new_avail_dnat_counter == 1
+
+        # delete a static nat entry
+        dvs.runcmd("config nat remove static basic 67.66.65.1 18.18.18.2")
+
+        dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_SNAT_ENTRY', '1000')
+        dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_DNAT_ENTRY', '1000')
+
+        time.sleep(2)
+
+        # get snat counters
+        new_used_snat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_snat_entry_used')
+        new_avail_snat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_snat_entry_available')
+
+        # get dnat counters
+        new_used_dnat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_dnat_entry_used')
+        new_avail_dnat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_dnat_entry_available')
+
+        assert new_used_snat_counter == used_snat_counter
+        assert new_avail_snat_counter == avail_snat_counter
+        assert new_used_dnat_counter == used_dnat_counter
+        assert new_avail_dnat_counter == avail_dnat_counter
+
+        # clear interfaces
+        self.clear_interfaces(dvs)
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
