@@ -168,7 +168,9 @@ bool IntfsOrch::isInbandIntfInMgmtVrf(const string& alias)
     string vrf_name = "";
     vrf_name = m_syncdIntfses[alias].vrf_name;
     if ((!vrf_name.empty()) && (vrf_name == MGMT_VRF))
+    {
         return true;
+    }
 
     return false;
 }
