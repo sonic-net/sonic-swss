@@ -603,7 +603,7 @@ void RouteOrch::doTask(Consumer& consumer)
 
                 if (blackhole)
                 {
-                    nhg = nhg = NextHopGroupKey();
+                    nhg = NextHopGroupKey();
                 }
                 else if (overlay_nh == false)
                 {
