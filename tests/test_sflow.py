@@ -203,6 +203,8 @@ class TestSflow:
 
         session_params = {"admin_state": "down"}
         self.cdb.create_entry("SFLOW_SESSION", "all", session_params)
+        # Wait for the APPL_DB from sflowmgrd
+        time.sleep(2)
         expected_fields = {"sample_rate": "256", "admin_state": "up"}
         appldb.wait_for_field_negative_match("SFLOW_SESSION_TABLE", "Ethernet0", expected_fields)
         expected_fields = {"sample_rate": "512", "admin_state": "up"}
@@ -212,7 +214,40 @@ class TestSflow:
         self.cdb.delete_entry("SFLOW_SESSION", "Ethernet0")
         self.cdb.delete_entry("SFLOW_SESSION", "Ethernet4")
 
-
+    def test_InterfaceDefaultSampleRate(self, dvs, testlog):
+        '''
+        This test checks if the SflowMgr updates sflow session table in APPL_DB with default rate.
+        Steps to verify the issue:
+        1) Enable sflow globally
+        2) Configure sample rate for Ethernet0
+        3) Verify whether sample rate is reflected in the Ethernet0 interfaces
+        4) Remove sample rate for Ethernet0
+        5) Verify whether sample rate of Ethernet0 interface moved to default sample rate
+        '''
+        self.setup_sflow(dvs)
+    
+        time.sleep(2)
+        port_oid = self.adb.port_name_map["Ethernet0"]
+        expected_fields = {"SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE": "oid:0x0"}
+        fvs = self.adb.wait_for_field_negative_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
+        sample_session = fvs["SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE"]
+        speed = fvs["SAI_PORT_ATTR_SPEED"]
+        rate = self.speed_rate_table.get(speed, None)
+        assert rate
+    
+        appldb = dvs.get_app_db()
+        # create the interface session
+        session_params = {"sample_rate": "256"}
+        self.cdb.create_entry("SFLOW_SESSION", "Ethernet0", session_params)
+        expected_fields = {"sample_rate": "256"}
+        appldb.wait_for_field_match("SFLOW_SESSION_TABLE", "Ethernet0", expected_fields)
+    
+        session_params = {"NULL": "NULL"}
+        self.cdb.create_entry("SFLOW_SESSION", "Ethernet0", session_params)
+        expected_fields = {"sample_rate": rate}
+        appldb.wait_for_field_match("SFLOW_SESSION_TABLE", "Ethernet0", expected_fields)
+    
+        self.cdb.delete_entry("SFLOW_SESSION", "Ethernet0")
     def test_Teardown(self, dvs, testlog):
         self.setup_sflow(dvs)
 
