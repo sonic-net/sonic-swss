@@ -141,18 +141,27 @@ void SflowMgr::sflowHandleSessionAll(bool enable)
 {
     for (auto it: m_sflowPortConfMap)
     {
-        if (!(it.second.local_rate_cfg || it.second.local_admin_cfg))
+        if (enable)
         {
             vector<FieldValueTuple> fvs;
-            sflowGetGlobalInfo(fvs, it.second.speed);
-            if (enable)
+            if (it.second.local_rate_cfg || it.second.local_admin_cfg)
             {
-                m_appSflowSessionTable.set(it.first, fvs);
+                sflowGetPortInfo(fvs, it.second);
+                /* Use global admin state if there is not a local one */
+                if (!it.second.local_admin_cfg) {
+                    FieldValueTuple fv1("admin_state", "up");
+                    fvs.push_back(fv1);
+                }
             }
             else
             {
-                m_appSflowSessionTable.del(it.first);
+                sflowGetGlobalInfo(fvs, it.second.speed);
             }
+            m_appSflowSessionTable.set(it.first, fvs);
+        }
+        else if (!it.second.local_admin_cfg)
+        {
+            m_appSflowSessionTable.del(it.first);
         }
     }
 }
@@ -167,13 +176,6 @@ void SflowMgr::sflowHandleSessionLocal(bool enable)
             sflowGetPortInfo(fvs, it.second);
             if (enable)
             {
-                /* Use global admin state if there is not a local one */
-                if (!it.second.local_admin_cfg) 
-                {
-                    FieldValueTuple fv1("admin_state", "up");
-                    fvs.push_back(fv1);
-                }
-
                 m_appSflowSessionTable.set(it.first, fvs);
             }
             else
