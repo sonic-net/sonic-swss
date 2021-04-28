@@ -54,6 +54,7 @@ extern int32_t gVoqMySwitchId;
 extern string gMyHostName;
 extern string gMyAsicName;
 
+#define DEFAULT_SYSTEM_PORT_MTU 9100
 #define VLAN_PREFIX         "Vlan"
 #define DEFAULT_VLAN_ID     1
 #define MAX_VALID_VLAN_ID   4094
@@ -283,9 +284,9 @@ static char* hostif_vlan_tag[] = {
 PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames, DBConnector *chassisAppDb) :
         Orch(db, tableNames),
         m_portStateTable(stateDb, STATE_PORT_TABLE_NAME),
-        port_stat_manager(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
-        port_buffer_drop_stat_manager(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS, true),
-        queue_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true)
+        port_stat_manager(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
+        port_buffer_drop_stat_manager(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS, false),
+        queue_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false)
 {
     SWSS_LOG_ENTER();
 
@@ -2219,19 +2220,21 @@ bool PortsOrch::initPort(const string &alias, const int index, const set<int> &l
                 vector<FieldValueTuple> fields;
                 fields.push_back(tuple);
                 m_counterTable->set("", fields);
+
                 // Install a flex counter for this port to track stats
-                std::unordered_set<std::string> counter_stats;
-                for (const auto& it: port_stat_ids)
+                auto flex_counters_orch = gDirectory.get<FlexCounterOrch*>();
+                /* Delay installing the counters if they are yet enabled
+                If they are enabled, install the counters immediately */
+                if (flex_counters_orch->getPortCountersState())
                 {
-                    counter_stats.emplace(sai_serialize_port_stat(it));
+                    auto port_counter_stats = generateCounterStats(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP);
+                    port_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, port_counter_stats);
                 }
-                port_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, counter_stats);
-                std::unordered_set<std::string> port_buffer_drop_stats;
-                for (const auto& it: port_buffer_drop_stat_ids)
+                if (flex_counters_orch->getPortBufferDropCountersState())
                 {
-                    port_buffer_drop_stats.emplace(sai_serialize_port_stat(it));
+                    auto port_buffer_drop_stats = generateCounterStats(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP);
+                    port_buffer_drop_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, port_buffer_drop_stats);
                 }
-                port_buffer_drop_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, port_buffer_drop_stats);
 
                 PortUpdate update = { p, true };
                 notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
@@ -2264,8 +2267,11 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
     p.m_port_id = port_id;
 
     /* remove port from flex_counter_table for updating counters  */
-    port_stat_manager.clearCounterIdList(p.m_port_id);
-
+    auto flex_counters_orch = gDirectory.get<FlexCounterOrch*>();
+    if ((flex_counters_orch->getPortCountersState()))
+    {
+        port_stat_manager.clearCounterIdList(p.m_port_id);
+    }
     /* remove port name map from counter table */
     m_counter_db->hdel(COUNTERS_PORT_NAME_MAP, alias);
 
@@ -3146,7 +3152,7 @@ void PortsOrch::doVlanTask(Consumer &consumer)
                 {
                     mac = MacAddress(fvValue(i));
                 }
-                if (fvField(i) == "hostif_name")
+                if (fvField(i) == "host_ifname")
                 {
                     hostif_name = fvValue(i);
                 }
@@ -4911,6 +4917,38 @@ void PortsOrch::generatePriorityGroupMapPerPort(const Port& port)
     CounterCheckOrch::getInstance().addPort(port);
 }
 
+void PortsOrch::generatePortCounterMap()
+{
+    if (m_isPortCounterMapGenerated)
+    {
+        return;
+    }
+
+    auto port_counter_stats = generateCounterStats(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP);
+    for (const auto& it: m_portList)
+    {
+        port_stat_manager.setCounterIdList(it.second.m_port_id, CounterType::PORT, port_counter_stats);
+    }
+
+    m_isPortCounterMapGenerated = true;
+}
+
+void PortsOrch::generatePortBufferDropCounterMap()
+{
+    if (m_isPortBufferDropCounterMapGenerated)
+    {
+        return;
+    }
+
+    auto port_buffer_drop_stats = generateCounterStats(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP);
+    for (const auto& it: m_portList)
+    {
+        port_buffer_drop_stat_manager.setCounterIdList(it.second.m_port_id, CounterType::PORT, port_buffer_drop_stats);
+    }
+
+    m_isPortBufferDropCounterMapGenerated = true;
+}
+
 void PortsOrch::doTask(NotificationConsumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -5812,6 +5850,7 @@ bool PortsOrch::addSystemPorts()
             port.m_admin_state_up = true;
             port.m_oper_status = SAI_PORT_OPER_STATUS_UP;
             port.m_speed = attrs[1].value.sysportconfig.speed;
+            port.m_mtu = DEFAULT_SYSTEM_PORT_MTU;
             if (attrs[0].value.s32 == SAI_SYSTEM_PORT_TYPE_LOCAL)
             {
                 //Get the local port oid
@@ -5893,25 +5932,44 @@ bool PortsOrch::setVoqInbandIntf(string &alias, string &type)
         return true;
     }
 
+    //Make sure port and host if exists for the configured inband interface
     Port port;
-    if(type == "port")
+    if (!getPort(alias, port))
     {
-        if (!getPort(alias, port))
-        {
-            SWSS_LOG_NOTICE("Port configured for inband intf %s is not ready!", alias.c_str());
-            return false;
-        }
+        SWSS_LOG_ERROR("Port/Vlan configured for inband intf %s is not ready!", alias.c_str());
+        return false;
     }
 
-    // Check for existence of host interface. If does not exist, may create
-    // host if for the inband here
+    if(type == "port" && !port.m_hif_id)
+    {
+        SWSS_LOG_ERROR("Host interface is not available for port %s", alias.c_str());
+        return false;
+    }
 
-    // May do the processing for other inband type like type=vlan here
-    
     //Store the name of the local inband port
     m_inbandPortName = alias;
 
     return true;
+}
+
+std::unordered_set<std::string> PortsOrch::generateCounterStats(const string& type)
+{
+    std::unordered_set<std::string> counter_stats;
+    if (type == PORT_STAT_COUNTER_FLEX_COUNTER_GROUP)
+    {
+        for (const auto& it: port_stat_ids)
+        {
+            counter_stats.emplace(sai_serialize_port_stat(it));
+        }
+    }
+    else if (type == PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP)
+    {
+        for (const auto& it: port_buffer_drop_stat_ids)
+        {
+            counter_stats.emplace(sai_serialize_port_stat(it));
+        }
+    }
+    return counter_stats;
 }
 
 void PortsOrch::voqSyncAddLag (Port &lag)

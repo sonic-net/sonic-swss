@@ -228,7 +228,7 @@ private:
 
     // Meta flows
     void calculateHeadroomSize(buffer_profile_t &headroom);
-    void checkSharedBufferPoolSize();
+    void checkSharedBufferPoolSize(bool force_update_during_initialization);
     void recalculateSharedBufferPool();
     task_process_status allocateProfile(const std::string &speed, const std::string &cable, const std::string &mtu, const std::string &threshold, const std::string &gearbox_model, std::string &profile_name);
     void releaseProfile(const std::string &profile_name);

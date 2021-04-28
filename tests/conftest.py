@@ -1446,7 +1446,7 @@ class DockerVirtualChassisTopology:
     def get_chassis_instance_port_statuses(self):
         instance_to_port_status_map = {}
         if "neighbor_connections" not in self.virt_topo:
-            return instance_to_neighbor_map
+            return instance_to_port_status_map
 
         working_dir = os.getcwd()
         for conn, endpoints in self.virt_topo["neighbor_connections"].items():
