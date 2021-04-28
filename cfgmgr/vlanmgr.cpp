@@ -223,15 +223,27 @@ bool VlanMgr::addHostVlanMember(int vlan_id, const string &port_alias, const str
     // /bin/bash -c "/sbin/ip link set {{port_alias}} master Bridge &&
     //               /sbin/bridge vlan del vid 1 dev {{ port_alias }} &&
     //               /sbin/bridge vlan add vid {{vlan_id}} dev {{port_alias}} {{tagging_mode}}"
-    ostringstream cmds, inner;
-    inner << IP_CMD " link set " << shellquote(port_alias) << " master " DOT1Q_BRIDGE_NAME " && "
-      BRIDGE_CMD " vlan del vid " DEFAULT_VLAN_ID " dev " << shellquote(port_alias) << " && "
-      BRIDGE_CMD " vlan add vid " + std::to_string(vlan_id) + " dev " << shellquote(port_alias) << " " + tagging_cmd;
-    cmds << BASH_CMD " -c " << shellquote(inner.str());
-
-    std::string res;
-    EXEC_WITH_ERROR_THROW(cmds.str(), res);
-
+    const std::string key = std::string("") + "Vlan1|" + port_alias;
+    if (isVlanMemberStateOk(key)) {
+        const std::string cmds = std::string("")
+          + BASH_CMD + " -c \""
+          + IP_CMD + " link set " + port_alias + " master " + DOT1Q_BRIDGE_NAME + " && "
+          + BRIDGE_CMD + " vlan add vid " + std::to_string(vlan_id) + " dev " + port_alias + " " + tagging_cmd + "\"";
+    
+        std::string res;
+        EXEC_WITH_ERROR_THROW(cmds, res);
+    }
+    else
+    {
+        const std::string cmds = std::string("")
+          + BASH_CMD + " -c \""
+          + IP_CMD + " link set " + port_alias + " master " + DOT1Q_BRIDGE_NAME + " && "
+          + BRIDGE_CMD + " vlan del vid 1 " + " dev " + port_alias + " " + "untagged" + " && "
+          + BRIDGE_CMD + " vlan add vid " + std::to_string(vlan_id) + " dev " + port_alias + " " + tagging_cmd + "\"";
+    
+        std::string res;
+        EXEC_WITH_ERROR_THROW(cmds, res);
+    }
     return true;
 }
 
