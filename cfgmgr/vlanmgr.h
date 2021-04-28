@@ -4,6 +4,7 @@
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "orch.h"
+#include "notifier.h"
 
 #include <set>
 #include <map>
@@ -25,9 +26,11 @@ private:
     std::set<std::string> m_vlans;
     std::set<std::string> m_vlanReplay;
     std::set<std::string> m_vlanMemberReplay;
+    NotificationConsumer* m_VlanStateNotificationConsumer;
     bool replayDone;
     
     void doTask(Consumer &consumer);
+    void doTask(NotificationConsumer &consumer);
     void doVlanTask(Consumer &consumer);
     void doVlanMemberTask(Consumer &consumer);
     void processUntaggedVlanMembers(std::string vlan, const std::string &members);

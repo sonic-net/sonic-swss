@@ -112,6 +112,11 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
 
         EXEC_WITH_ERROR_THROW(echo_cmd_backup, res);
     }
+
+    /* vlan state notification from portsorch */
+    m_VlanStateNotificationConsumer = new swss::NotificationConsumer(appDb, "VLANSTATE");
+    auto vlanStatusNotificatier = new Notifier(m_VlanStateNotificationConsumer, this, "VLANSTATE");
+    Orch::addExecutor(vlanStatusNotificatier);
 }
 
 bool VlanMgr::addHostVlan(int vlan_id)
@@ -125,7 +130,7 @@ bool VlanMgr::addHostVlan(int vlan_id)
       + BASH_CMD + " -c \""
       + BRIDGE_CMD + " vlan add vid " + std::to_string(vlan_id) + " dev " + DOT1Q_BRIDGE_NAME + " self && "
       + IP_CMD + " link add link " + DOT1Q_BRIDGE_NAME
-               + " up"
+               + " down"
                + " name " + VLAN_PREFIX + std::to_string(vlan_id)
                + " address " + gMacAddress.to_string()
                + " type vlan id " + std::to_string(vlan_id) + "\"";
@@ -336,6 +341,10 @@ void VlanMgr::doVlanTask(Consumer &consumer)
             /* set up host env .... */
             for (auto i : kfvFieldsValues(t))
             {
+				/* Set the admin state of the VLAN to DOWN in kernel
+				 * when VLAN is created.
+				 */
+#if 0
                 /* Set vlan admin status */
                 if (fvField(i) == "admin_status")
                 {
@@ -345,6 +354,10 @@ void VlanMgr::doVlanTask(Consumer &consumer)
                 }
                 /* Set vlan mtu */
                 else if (fvField(i) == "mtu")
+#else
+    
+                if (fvField(i) == "mtu")
+#endif
                 {
                     mtu = fvValue(i);
                     /*
@@ -670,5 +683,32 @@ void VlanMgr::doTask(Consumer &consumer)
     {
         SWSS_LOG_ERROR("Unknown config table %s ", table_name.c_str());
         throw runtime_error("VlanMgr doTask failure.");
+    }
+}
+
+void VlanMgr::doTask(NotificationConsumer &consumer)
+{
+	std::string op;
+	std::string data;
+	std::vector<swss::FieldValueTuple> values;
+
+	consumer.pop(op, data, values);
+
+	if (&consumer != m_VlanStateNotificationConsumer)
+	{
+		return;
+	}
+
+	int vlan_id = stoi(data.substr(4));
+
+	SWSS_LOG_NOTICE("vlanmgr received port status notification state %s vlan %s id %d",
+	                 op.c_str(), data.c_str(), vlan_id);
+
+    if (isVlanStateOk(data)) {
+        setHostVlanAdminState(vlan_id, op);
+    }
+    else
+    {
+        SWSS_LOG_ERROR("received state update for vlan %s not existing", data.c_str());
     }
 }

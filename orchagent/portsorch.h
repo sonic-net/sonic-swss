@@ -13,6 +13,7 @@
 #include "gearboxutils.h"
 #include "saihelper.h"
 #include "lagid.h"
+#include "notificationproducer.h"
 
 
 #define FCS_LEN 4
@@ -98,6 +99,7 @@ public:
 
     bool setHostIntfsOperStatus(const Port& port, bool up) const;
     void updateDbPortOperStatus(const Port& port, sai_port_oper_status_t status) const;
+    void updateDbVlanOperStatus(const Port& port, string status) const;
 
     bool createBindAclTableGroup(sai_object_id_t  port_oid,
                    sai_object_id_t  acl_table_oid,
@@ -149,6 +151,7 @@ private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_counterLagTable;
     unique_ptr<Table> m_portTable;
+    unique_ptr<Table> m_vlanTable;
     unique_ptr<Table> m_gearboxTable;
     unique_ptr<Table> m_queueTable;
     unique_ptr<Table> m_queuePortTable;
@@ -160,6 +163,7 @@ private:
     unique_ptr<Table> m_stateBufferMaximumValueTable;
     unique_ptr<ProducerTable> m_flexCounterTable;
     unique_ptr<ProducerTable> m_flexCounterGroupTable;
+    NotificationProducer* notifications;
 
     std::string getQueueWatermarkFlexCounterTableKey(std::string s);
     std::string getPriorityGroupWatermarkFlexCounterTableKey(std::string s);
@@ -292,6 +296,7 @@ private:
 
     bool getPortOperStatus(const Port& port, sai_port_oper_status_t& status) const;
     void updatePortOperStatus(Port &port, sai_port_oper_status_t status);
+    void updateLagOperStatus(Port &port, sai_port_oper_status_t status);
 
     void getPortSerdesVal(const std::string& s, std::vector<uint32_t> &lane_values);
 

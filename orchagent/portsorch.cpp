@@ -249,6 +249,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
 
     /* Initialize port and vlan table */
     m_portTable = unique_ptr<Table>(new Table(db, APP_PORT_TABLE_NAME));
+    m_vlanTable = unique_ptr<Table>(new Table(db, APP_VLAN_TABLE_NAME));
 
     /* Initialize gearbox */
     m_gearboxTable = unique_ptr<Table>(new Table(db, "_GEARBOX_TABLE"));
@@ -267,6 +268,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
     m_flex_db = shared_ptr<DBConnector>(new DBConnector("FLEX_COUNTER_DB", 0));
     m_flexCounterTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_TABLE));
     m_flexCounterGroupTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_GROUP_TABLE));
+    notifications = new swss::NotificationProducer(db, "VLANSTATE");
 
     m_state_db = shared_ptr<DBConnector>(new DBConnector("STATE_DB", 0));
     m_stateBufferMaximumValueTable = unique_ptr<Table>(new Table(m_state_db.get(), STATE_BUFFER_MAXIMUM_VALUE_TABLE));
@@ -1925,6 +1927,22 @@ void PortsOrch::updateDbPortOperStatus(const Port& port, sai_port_oper_status_t 
     m_portTable->set(port.m_alias, tuples);
 }
 
+void PortsOrch::updateDbVlanOperStatus(const Port& vlan, string status) const
+{
+    SWSS_LOG_NOTICE("vlan %s status %s", vlan.m_alias.c_str(), status.c_str());
+
+    vector<FieldValueTuple> tuples;
+    FieldValueTuple tuple("oper_status", status);
+    tuples.push_back(tuple);
+    m_vlanTable->set(vlan.m_alias, tuples);
+
+    std::vector<swss::FieldValueTuple> entry;
+
+    SWSS_LOG_NOTICE("sending oper state notification to VlanMgr");
+
+    notifications->send(status, vlan.m_alias, entry);
+}
+
 bool PortsOrch::addPort(const set<int> &lane_set, uint32_t speed, int an, string fec_mode)
 {
     SWSS_LOG_ENTER();
@@ -3142,6 +3160,8 @@ void PortsOrch::doLagTask(Consumer &consumer)
                     // Sub interfaces inherit parent LAG mtu
                     updateChildPortsMtu(l, mtu);
                 }
+                sai_port_oper_status_t status = (operation_status == "up") ? SAI_PORT_OPER_STATUS_UP : SAI_PORT_OPER_STATUS_DOWN;
+                updateLagOperStatus(l, status);
 
                 if (!learn_mode.empty() && (l.m_learn_mode != learn_mode))
                 {
@@ -4028,10 +4048,19 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode)
     }
 
     /* a physical port may join multiple vlans */
-    VlanMemberEntry vme = {vlan_member_id, sai_tagging_mode};
+    VlanMemberEntry vme = {vlan.m_alias, vlan_member_id, sai_tagging_mode};
     m_portVlanMember[port.m_alias][vlan.m_vlan_info.vlan_id] = vme;
     m_portList[port.m_alias] = port;
     vlan.m_members.insert(port.m_alias);
+    if (port.m_oper_status == SAI_PORT_OPER_STATUS_UP)
+    {
+        auto old_count = vlan.m_up_member_count;
+        vlan.m_up_member_count++;
+        if (old_count == 0)
+        {
+            updateDbVlanOperStatus(vlan, "up");
+        }
+    }
     m_portList[vlan.m_alias] = vlan;
 
     VlanMemberUpdate update = { vlan, port, true };
@@ -4087,6 +4116,14 @@ bool PortsOrch::removeVlanMember(Port &vlan, Port &port)
 
     m_portList[port.m_alias] = port;
     vlan.m_members.erase(port.m_alias);
+    if (port.m_oper_status == SAI_PORT_OPER_STATUS_UP)
+    {
+        vlan.m_up_member_count--;
+        if (vlan.m_up_member_count == 0)
+        {
+            updateDbVlanOperStatus(vlan, "down");
+        }
+    }
     m_portList[vlan.m_alias] = vlan;
 
     VlanMemberUpdate update = { vlan, port, false };
@@ -4747,6 +4784,25 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
     }
 
     bool isUp = status == SAI_PORT_OPER_STATUS_UP;
+
+    for(auto vlan_member: m_portVlanMember)
+    {
+        auto Vlan = m_portList[vlan_member.second.alias];
+        auto old_count = Vlan.m_up_member_count;
+        isUp ? Vlan.m_up_member_count++ : Vlan.m_up_member_count--;
+        if (Vlan.m_up_member_count == 0)
+        {
+            updateDbVlanOperStatus(Vlan, "down");
+        }
+        else if ((old_count == 0) && (Vlan.m_up_member_count == 1))
+        {
+            updateDbVlanOperStatus(Vlan, "up");
+        }
+        SWSS_LOG_NOTICE("Vlan %s Port %s state %s m_up_member_count %d",
+                vlan_member.second.alias.c_str(), port.m_alias.c_str(), oper_status_strings.at(port.m_oper_status).c_str(), Vlan.m_up_member_count);
+
+        m_portList[Vlan.m_alias] = Vlan;
+    }
     if (port.m_type == Port::PHY)
     {
         if (!setHostIntfsOperStatus(port, isUp))
@@ -4771,6 +4827,40 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
     notify(SUBJECT_TYPE_PORT_OPER_STATE_CHANGE, static_cast<void *>(&update));
 }
 
+void PortsOrch::updateLagOperStatus(Port &port, sai_port_oper_status_t status)
+{
+    SWSS_LOG_NOTICE("Port %s oper state set from %s to %s",
+            port.m_alias.c_str(), oper_status_strings.at(port.m_oper_status).c_str(),
+            oper_status_strings.at(status).c_str());
+    if (status == port.m_oper_status)
+    {
+        return ;
+    }
+    
+    port.m_oper_status = status;
+    m_portList[port.m_alias] = port;
+    
+    bool isUp = status == SAI_PORT_OPER_STATUS_UP;
+    
+    for(auto vlan_member: m_portVlanMember)
+    {
+        auto Vlan = m_portList[vlan_member.second.alias];
+        auto old_count = Vlan.m_up_member_count;
+        isUp ? Vlan.m_up_member_count++ : Vlan.m_up_member_count--;
+        if (Vlan.m_up_member_count == 0)
+        {
+            updateDbVlanOperStatus(Vlan, "down");
+        }
+        else if ((old_count == 0) && (Vlan.m_up_member_count == 1))
+        {
+            updateDbVlanOperStatus(Vlan, "up");
+        }
+        SWSS_LOG_NOTICE("Vlan %s Port %s state %s m_up_member_count %d",
+            vlan_member.second.alias.c_str(), port.m_alias.c_str(), oper_status_strings.at(port.m_oper_status).c_str(), Vlan.m_up_member_count);
+    
+        m_portList[Vlan.m_alias] = Vlan;
+    }
+}
 /*
  * sync up orchagent with libsai/ASIC for port state.
  *
