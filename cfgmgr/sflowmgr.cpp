@@ -108,9 +108,8 @@ void SflowMgr::sflowUpdatePortInfo(Consumer &consumer)
 
             if (m_gEnable && m_intfAllConf)
             {
-                // If the Local Conf is already present, dont't override it even though the speed is changed
-                if (new_port || (speed_change && 
-                   !(m_sflowPortConfMap[key].local_rate_cfg || m_sflowPortConfMap[key].local_admin_cfg)))
+                // If the Local rate Conf is already present, dont't override it even though the speed is changed
+                if (new_port || (speed_change && !m_sflowPortConfMap[key].local_rate_cfg))
                 {
                     vector<FieldValueTuple> fvs;
                     sflowGetGlobalInfo(fvs, m_sflowPortConfMap[key].speed);

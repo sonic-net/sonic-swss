@@ -204,10 +204,9 @@ class TestSflow:
         session_params = {"admin_state": "down"}
         self.cdb.create_entry("SFLOW_SESSION", "all", session_params)
         # Wait for the APPL_DB from sflowmgrd
-        expected_fields = {"admin_state": "up", "sample_rate": "256"}
-        appldb.wait_for_field_negative_match("SFLOW_SESSION_TABLE", "Ethernet0", expected_fields)
-        expected_fields = {"admin_state": "up", "sample_rate": "512"}
-        appldb.wait_for_field_negative_match("SFLOW_SESSION_TABLE", "Ethernet4", expected_fields)
+        expected_fields = {}
+        appldb.wait_for_field_match("SFLOW_SESSION_TABLE", "Ethernet0", expected_fields)
+        appldb.wait_for_field_match("SFLOW_SESSION_TABLE", "Ethernet4", expected_fields)
 
         self.cdb.delete_entry("SFLOW_SESSION", "all")
         self.cdb.delete_entry("SFLOW_SESSION", "Ethernet0")
@@ -239,8 +238,8 @@ class TestSflow:
         expected_fields = {"admin_state": "up", "sample_rate": "256"}
         appldb.wait_for_field_match("SFLOW_SESSION_TABLE", "Ethernet0", expected_fields)
     
-        session_params = {"NULL": "NULL"}
-        self.cdb.create_entry("SFLOW_SESSION", "Ethernet0", session_params)
+        self.cdb.update_entry("SFLOW_SESSION", "Ethernet0", {"NULL": "NULL"})
+        self.cdb.wait_for_field_match("SFLOW_SESSION_TABLE", "Ethernet0", {})
         expected_fields = {"admin_state": "up", "sample_rate": rate}
         appldb.wait_for_field_match("SFLOW_SESSION_TABLE", "Ethernet0", expected_fields)
     
