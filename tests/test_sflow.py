@@ -1,4 +1,5 @@
 import time
+from swsscommon import swsscommon
 
 class TestSflow:
     speed_rate_table = {
@@ -238,8 +239,10 @@ class TestSflow:
         expected_fields = {"admin_state": "up", "sample_rate": "256"}
         appldb.wait_for_field_match("SFLOW_SESSION_TABLE", "Ethernet0", expected_fields)
     
-        self.cdb.update_entry("SFLOW_SESSION", "Ethernet0", {"NULL": "NULL"})
-        self.cdb.wait_for_field_match("SFLOW_SESSION_TABLE", "Ethernet0", {})
+        tbl = swsscommon.Table(self.cdb, "SFLOW_SESSION")
+        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        tbl.set("Ethernet0", fvs)
+
         expected_fields = {"admin_state": "up", "sample_rate": rate}
         appldb.wait_for_field_match("SFLOW_SESSION_TABLE", "Ethernet0", expected_fields)
     
