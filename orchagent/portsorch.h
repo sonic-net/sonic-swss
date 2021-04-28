@@ -76,6 +76,7 @@ class PortsOrch : public Orch, public Subject
 {
 public:
     PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, DBConnector *chassisAppDb);
+    ~PortsOrch();
 
     bool allPortsReady();
     bool isInitDone();
@@ -163,7 +164,7 @@ private:
     unique_ptr<Table> m_stateBufferMaximumValueTable;
     unique_ptr<ProducerTable> m_flexCounterTable;
     unique_ptr<ProducerTable> m_flexCounterGroupTable;
-    NotificationProducer* notifications;
+    NotificationProducer* m_notifications;
 
     std::string getQueueWatermarkFlexCounterTableKey(std::string s);
     std::string getPriorityGroupWatermarkFlexCounterTableKey(std::string s);
