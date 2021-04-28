@@ -13,6 +13,7 @@ using namespace swss;
 
 #define DOT1Q_BRIDGE_NAME   "Bridge"
 #define VLAN_PREFIX         "Vlan"
+#define SWITCH_STR       "switch"
 #define LAG_PREFIX          "PortChannel"
 #define DEFAULT_VLAN_ID     "1"
 #define DEFAULT_MTU_STR     "9100"
@@ -28,6 +29,8 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME),
         m_stateVlanTable(stateDb, STATE_VLAN_TABLE_NAME),
         m_stateVlanMemberTable(stateDb, STATE_VLAN_MEMBER_TABLE_NAME),
+        m_appFdbTableProducer(appDb, APP_FDB_TABLE_NAME),
+        m_appSwitchTableProducer(appDb, APP_SWITCH_TABLE_NAME),
         m_appVlanTableProducer(appDb, APP_VLAN_TABLE_NAME),
         m_appVlanMemberTableProducer(appDb, APP_VLAN_MEMBER_TABLE_NAME),
         replayDone(false)
@@ -280,6 +283,142 @@ bool VlanMgr::isVlanMacOk()
     return !!gMacAddress;
 }
 
+void VlanMgr::doSwitchTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+    auto it = consumer.m_toSync.begin();
+    
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple t = it->second;
+    
+        string key = kfvKey(t);
+        string op = kfvOp(t);
+    
+        /* Ensure the key starts with "switch" otherwise ignore */
+        if (key != SWITCH_STR)
+        {
+            SWSS_LOG_ERROR("Invalid key format %s", key.c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+    
+        SWSS_LOG_DEBUG("key:switch");
+    
+        for (auto i : kfvFieldsValues(t))
+        {
+            if (fvField(i) == "fdb_aging_time")
+            {
+                int agingTime = 0;
+                SWSS_LOG_DEBUG("attribute:fdb_aging_time");
+                if (op == SET_COMMAND)
+                {
+                    SWSS_LOG_DEBUG("operation:set");
+                    agingTime = atoi(fvValue(i).c_str());
+                    if(agingTime < 0)
+                    {
+                        SWSS_LOG_ERROR("Invalid fdb_aging_time %s", fvValue(i).c_str());
+                        break;
+                    }
+                    SWSS_LOG_DEBUG("value:%s",fvValue(i).c_str());
+                }
+                else if (op == DEL_COMMAND)
+                {
+                    SWSS_LOG_DEBUG("operation:del");
+                    agingTime=0;
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
+                    break;
+                }
+    
+                vector<FieldValueTuple> fvVector;
+                FieldValueTuple aging_time("fdb_aging_time", to_string(agingTime));
+                fvVector.push_back(aging_time);
+                m_appSwitchTableProducer.set(key, fvVector);
+                break;
+            }
+        }
+    
+        it = consumer.m_toSync.erase(it);
+    }
+}
+    
+void VlanMgr::doFdbTask(Consumer &consumer)
+{
+    if (!isVlanMacOk())
+    {
+        SWSS_LOG_DEBUG("VLAN mac not ready, delaying VLAN task");
+        return;
+    }
+    
+    auto it = consumer.m_toSync.begin();
+    
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple t = it->second;
+    
+        /* format: <VLAN_name>|<MAC_address> */
+        vector<string> keys = tokenize(kfvKey(t), config_db_key_delimiter, 1);
+        /* keys[0] is vlan as (Vlan10) and keys[1] is mac as (00-00-00-00-00-00) */
+        string op = kfvOp(t);
+    
+        /* Ensure the key starts with "Vlan" otherwise ignore */
+        if (strncmp(keys[0].c_str(), VLAN_PREFIX, 4))
+        {
+            SWSS_LOG_ERROR("Invalid key format. No 'Vlan' prefix: %s", keys[0].c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+    
+        int vlan_id;
+        vlan_id = stoi(keys[0].substr(4));
+        if ((vlan_id <= 0) || (vlan_id > 4095))
+        {
+            SWSS_LOG_ERROR("Invalid key format. Vlan is out of range: %s", keys[0].c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+    
+        MacAddress mac = MacAddress(keys[1]);
+    
+        string key = VLAN_PREFIX + to_string(vlan_id);
+        key += DEFAULT_KEY_SEPARATOR;
+        key += mac.to_string();
+    
+        if (op == SET_COMMAND)
+        {
+            string port;
+            for (auto i : kfvFieldsValues(t))
+            {
+                if (fvField(i) == "port")
+                {
+                    port = fvValue(i);
+                    break;
+                }
+            }
+    
+            vector<FieldValueTuple> fvVector;
+            FieldValueTuple p("port", port);
+            fvVector.push_back(p);
+            FieldValueTuple t("type", "static");
+            fvVector.push_back(t);
+    
+            m_appFdbTableProducer.set(key, fvVector);
+        }
+        else if (op == DEL_COMMAND)
+        {
+            m_appFdbTableProducer.del(key);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
+        }
+        it = consumer.m_toSync.erase(it);
+    }
+}
+    
 void VlanMgr::doVlanTask(Consumer &consumer)
 {
     if (!isVlanMacOk())
@@ -690,6 +829,15 @@ void VlanMgr::doTask(Consumer &consumer)
     else if (table_name == CFG_VLAN_MEMBER_TABLE_NAME)
     {
         doVlanMemberTask(consumer);
+    }
+    else if (table_name == CFG_FDB_TABLE_NAME)
+    {
+        doFdbTask(consumer);
+    }
+    else if (table_name == CFG_SWITCH_TABLE_NAME)
+    {
+        SWSS_LOG_DEBUG("Table:SWITCH");
+        doSwitchTask(consumer);
     }
     else
     {
