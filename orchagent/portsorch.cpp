@@ -4785,7 +4785,7 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
 
     bool isUp = status == SAI_PORT_OPER_STATUS_UP;
 
-    for(auto vlan_member: m_portVlanMember)
+    for(auto vlan_member: m_portVlanMember[port.m_alias])
     {
         auto Vlan = m_portList[vlan_member.second.alias];
         auto old_count = Vlan.m_up_member_count;
@@ -4842,7 +4842,7 @@ void PortsOrch::updateLagOperStatus(Port &port, sai_port_oper_status_t status)
     
     bool isUp = status == SAI_PORT_OPER_STATUS_UP;
     
-    for(auto vlan_member: m_portVlanMember)
+    for(auto vlan_member: m_portVlanMember[port.m_alias])
     {
         auto Vlan = m_portList[vlan_member.second.alias];
         auto old_count = Vlan.m_up_member_count;
