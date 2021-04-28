@@ -1666,9 +1666,9 @@ void PortsOrch::getPortSupportedSpeeds(const std::string& alias, sai_object_id_t
 
     PortSupportedSpeeds speeds(size_guess);
 
-    for (int attempt = 0; attempt < 2; ++attempt) // two attempts to get our value
-    {                                             // first with the guess,
-                                                    // other with the returned value
+    // two attempts to get our value, first with the guess, other with the returned value
+    for (int attempt = 0; attempt < 2; ++attempt)
+    {
         attr.id = SAI_PORT_ATTR_SUPPORTED_SPEED;
         attr.value.u32list.count = static_cast<uint32_t>(speeds.size());
         attr.value.u32list.list = speeds.data();
@@ -1679,8 +1679,8 @@ void PortsOrch::getPortSupportedSpeeds(const std::string& alias, sai_object_id_t
             break;
         }
 
-        speeds.resize(attr.value.u32list.count); // if our guess was wrong
-                                                    // retry with the correct value
+        // if our guess was wrong, retry with the correct value
+        speeds.resize(attr.value.u32list.count); 
     }
 
     if (status == SAI_STATUS_SUCCESS)
@@ -1694,21 +1694,21 @@ void PortsOrch::getPortSupportedSpeeds(const std::string& alias, sai_object_id_t
         {
             // something went wrong in SAI implementation
             SWSS_LOG_ERROR("Failed to get supported speed list for port %s id=%" PRIx64 ". Not enough container size",
-                            alias.c_str(), port_id);
+                           alias.c_str(), port_id);
         }
         else if (SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
-                    SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status) ||
-                    status == SAI_STATUS_NOT_IMPLEMENTED)
+                 SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status) ||
+                 status == SAI_STATUS_NOT_IMPLEMENTED)
         {
             // unable to validate speed if attribute is not supported on platform
             // assuming input value is correct
             SWSS_LOG_WARN("Unable to validate speed for port %s id=%" PRIx64 ". Not supported by platform",
-                            alias.c_str(), port_id);
+                          alias.c_str(), port_id);
         }
         else
         {
             SWSS_LOG_ERROR("Failed to get a list of supported speeds for port %s id=%" PRIx64 ". Error=%d",
-                            alias.c_str(), port_id, status);
+                           alias.c_str(), port_id, status);
         }
 
         supported_speeds.clear(); // return empty
