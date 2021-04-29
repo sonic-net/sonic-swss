@@ -15,7 +15,7 @@ class DVSVlan(object):
 
     def create_vlan_hostif(self, vlan, hostif_name):
         vlan = "Vlan{}".format(vlan)
-        vlan_entry = {"vlanid": vlan,  "hostif_name": hostif_name}
+        vlan_entry = {"vlanid": vlan,  "host_ifname": hostif_name}
         self.config_db.update_entry("VLAN", vlan, vlan_entry)
 
     def remove_vlan(self, vlan):
