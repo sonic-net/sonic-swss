@@ -12,6 +12,7 @@
 #include "flex_counter_manager.h"
 #include "gearboxutils.h"
 #include "saihelper.h"
+#include "flexcounterorch.h"
 #include "lagid.h"
 
 
@@ -125,6 +126,8 @@ public:
 
     void generateQueueMap();
     void generatePriorityGroupMap();
+    void generatePortCounterMap();
+    void generatePortBufferDropCounterMap();
 
     void refreshPortStatus();
     bool removeAclTableGroup(const Port &p);
@@ -283,6 +286,9 @@ private:
     bool m_isPriorityGroupMapGenerated = false;
     void generatePriorityGroupMapPerPort(const Port& port);
 
+    bool m_isPortCounterMapGenerated = false;
+    bool m_isPortBufferDropCounterMapGenerated = false;
+
     bool setPortAutoNeg(sai_object_id_t id, int an);
     bool setPortFecMode(sai_object_id_t id, int fec);
 
@@ -307,6 +313,9 @@ private:
     sai_uint32_t m_systemPortCount;
     bool getSystemPorts();
     bool addSystemPorts();
+
+    std::unordered_set<std::string> generateCounterStats(const string& type);
+    
     unique_ptr<Table> m_tableVoqSystemLagTable;
     unique_ptr<Table> m_tableVoqSystemLagMemberTable;
     void voqSyncAddLag(Port &lag);

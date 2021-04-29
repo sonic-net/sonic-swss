@@ -363,7 +363,7 @@ void VlanMgr::doVlanTask(Consumer &consumer)
                     mac = fvValue(i);
                     setHostVlanMac(vlan_id, mac);
                 }
-                else if (fvField(i) == "hostif_name")
+                else if (fvField(i) == "host_ifname")
                 {
                     hostif_name = fvValue(i);
                 }
@@ -381,7 +381,7 @@ void VlanMgr::doVlanTask(Consumer &consumer)
             FieldValueTuple mc("mac", mac);
             fvVector.push_back(mc);
 
-            FieldValueTuple hostif_name_fvt("hostif_name", hostif_name);
+            FieldValueTuple hostif_name_fvt("host_ifname", hostif_name);
             fvVector.push_back(hostif_name_fvt);
 
             m_appVlanTableProducer.set(key, fvVector);

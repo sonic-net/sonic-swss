@@ -59,6 +59,7 @@ class TestMuxTunnelBase(object):
         fvs = {"NULL": "NULL"}
         confdb.create_entry("VLAN_INTERFACE", "Vlan1000", fvs)
         confdb.create_entry("VLAN_INTERFACE", "Vlan1000|192.168.0.1/24", fvs)
+        confdb.create_entry("VLAN_INTERFACE", "Vlan1000|fc02:1000::1/64", fvs)
 
         dvs.runcmd("config interface startup Ethernet0")
         dvs.runcmd("config interface startup Ethernet4")
@@ -333,6 +334,44 @@ class TestMuxTunnelBase(object):
         # Step: 4 - Change the other NH to Active and verify ecmp route
         self.set_mux_state(appdb, "Ethernet4", "active")
         self.check_nexthop_group_in_asic_db(asicdb, rtkeys[0])
+
+        ps._del(rtprefix)
+
+        # Test IPv6 ECMP routes and start with standby config
+        self.set_mux_state(appdb, "Ethernet0", "standby")
+        self.set_mux_state(appdb, "Ethernet4", "standby")
+
+        rtprefix = "2020::/64"
+
+        dvs_route.check_asicdb_deleted_route_entries([rtprefix])
+
+        ps = swsscommon.ProducerStateTable(pdb.db_connection, "ROUTE_TABLE")
+
+        fvs = swsscommon.FieldValuePairs([("nexthop", self.SERV1_IPV6 + "," + self.SERV2_IPV6), ("ifname", "tun0,tun0")])
+
+        ps.set(rtprefix, fvs)
+
+        # Check if route was propagated to ASIC DB
+        rtkeys = dvs_route.check_asicdb_route_entries([rtprefix])
+
+        # Check for nexthop group and validate nexthop group member in asic db
+        self.check_nexthop_group_in_asic_db(asicdb, rtkeys[0], 2)
+
+        # Step: 1 - Change one NH to active and verify ecmp route
+        self.set_mux_state(appdb, "Ethernet0", "active")
+        self.check_nexthop_group_in_asic_db(asicdb, rtkeys[0], 1)
+
+        # Step: 2 - Change the other NH to active and verify ecmp route
+        self.set_mux_state(appdb, "Ethernet4", "active")
+        self.check_nexthop_group_in_asic_db(asicdb, rtkeys[0])
+
+        # Step: 3 - Change one NH to back to standby and verify ecmp route
+        self.set_mux_state(appdb, "Ethernet0", "standby")
+        self.check_nexthop_group_in_asic_db(asicdb, rtkeys[0], 1)
+
+        # Step: 4 - Change the other NH to standby and verify ecmp route
+        self.set_mux_state(appdb, "Ethernet4", "standby")
+        self.check_nexthop_group_in_asic_db(asicdb, rtkeys[0], 2)
 
 
     def get_expected_sai_qualifiers(self, portlist, dvs_acl):
