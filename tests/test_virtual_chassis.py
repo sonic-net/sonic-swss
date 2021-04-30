@@ -473,14 +473,14 @@ class TestVirtualChassis(object):
         self.del_inbandif(vct, inbandif_name)
 
     def test_chassis_system_neigh_with_inband_port(self, vct):
-       """Test neigh record create/delete and syncing to chassis app db with inband port.
-       """
+        """Test neigh record create/delete and syncing to chassis app db with inband port.
+        """
 
         self.do_test_chassis_system_neigh(vct, "port")
 
     def test_chassis_system_neigh_with_inband_vlan(self, vct):
-       """Test neigh record create/delete and syncing to chassis app db with inband vlan.
-       """
+        """Test neigh record create/delete and syncing to chassis app db with inband vlan.
+        """
 
         self.do_test_chassis_system_neigh(vct, "vlan")
         
