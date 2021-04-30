@@ -169,8 +169,8 @@ bool FdbOrch::storeFdbEntryState(const FdbUpdate& update)
             m_mclagFdbStateTable.del(key);
         }
 
-        if ((oldFdbData.origin != FDB_ORIGIN_VXLAN_ADVERTIZED)  &&
-                (oldFdbData.origin != FDB_ORIGIN_MCLAG_ADVERTIZED))
+        if ((oldFdbData.origin == FDB_ORIGIN_LEARN)  ||
+                (oldFdbData.origin == FDB_ORIGIN_PROVISIONED))
         {
             // Remove in StateDb for non advertised mac addresses
             m_fdbStateTable.del(key);
@@ -538,12 +538,9 @@ void FdbOrch::update(sai_fdb_event_t        type,
                 itr++;
 
                 storeFdbEntryState(update);
-#if 0  //tbd_build
-                for (auto &observer: m_observers)
-                {
-                    observer->update(SUBJECT_TYPE_FDB_CHANGE, static_cast<void *>(&update));
-                }
-#endif
+
+                notify(SUBJECT_TYPE_FDB_CHANGE, &update);
+
             }
         }
         else if (entry->bv_id == SAI_NULL_OBJECT_ID)
@@ -563,12 +560,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
                     update.add = false;
 
                     storeFdbEntryState(update);
-#if 0  //tbd_build
-                    for (auto &observer: m_observers)
-                    {
-                        observer->update(SUBJECT_TYPE_FDB_CHANGE, static_cast<void *>(&update));
-                    }
-#endif
+                    notify(SUBJECT_TYPE_FDB_CHANGE, &update);
                 }
                 itr = next_item;
             }
@@ -1004,15 +996,11 @@ void FdbOrch::notifyObserversFDBFlush(Port &port, sai_object_id_t& bvid)
             flushUpdate.entries.push_back(entry);
         }
     }
-#if 0  //tbd_build
+
     if (!flushUpdate.entries.empty())
     {
-        for (auto &observer: m_observers)
-        {
-            observer->update(SUBJECT_TYPE_FDB_FLUSH_CHANGE, static_cast<void *>(&flushUpdate));
-        }
+        notify(SUBJECT_TYPE_FDB_CHANGE, &flushUpdate);
     }
-#endif
 }
 
 void FdbOrch::updatePortOperState(const PortOperStateUpdate& update)
@@ -1078,7 +1066,8 @@ void FdbOrch::updateVlanMember(const VlanMemberUpdate& update)
     }
 }
 
-bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, FdbData fdbData)
+bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
+        FdbData fdbData)
 {
     Port vlan;
     Port port;
@@ -1122,6 +1111,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, FdbDat
     string oldType;
     FdbOrigin oldOrigin = FDB_ORIGIN_INVALID ;
     bool macUpdate = false;
+
     auto it = m_entries.find(entry);
     if (it != m_entries.end())
     {
@@ -1193,6 +1183,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, FdbDat
                     return true;
                 }
             }
+
         }
         else /* (fdbData.origin == oldOrigin) */
         {
@@ -1211,12 +1202,13 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, FdbDat
     vector<sai_attribute_t> attrs;
 
     attr.id = SAI_FDB_ENTRY_ATTR_TYPE;
-    if ((fdbData.origin == FDB_ORIGIN_MCLAG_ADVERTIZED) || (fdbData.origin == FDB_ORIGIN_VXLAN_ADVERTIZED))
+    if (fdbData.origin == FDB_ORIGIN_VXLAN_ADVERTIZED)
     {
-        if (fdbData.type == "dynamic_local")
-            attr.value.s32 = SAI_FDB_ENTRY_TYPE_DYNAMIC;
-        else
-            attr.value.s32 =  SAI_FDB_ENTRY_TYPE_STATIC;
+        attr.value.s32 =  SAI_FDB_ENTRY_TYPE_STATIC;
+    }
+    else if (fdbData.origin == FDB_ORIGIN_MCLAG_ADVERTIZED)
+    {
+        attr.value.s32 = (fdbData.type == "dynamic_local") ? SAI_FDB_ENTRY_TYPE_DYNAMIC : SAI_FDB_ENTRY_TYPE_STATIC;
     }
     else
     {
@@ -1363,9 +1355,8 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, FdbDat
     vlan.m_fdb_count++;
     m_portsOrch->setPort(vlan.m_alias, vlan);
 
-    if ( (fdbData.type == "dynamic_local") ||
-            (fdbData.origin != FDB_ORIGIN_MCLAG_ADVERTIZED) ||
-                (fdbData.origin != FDB_ORIGIN_VXLAN_ADVERTIZED))
+    if ((fdbData.origin != FDB_ORIGIN_MCLAG_ADVERTIZED) ||
+            (fdbData.origin != FDB_ORIGIN_VXLAN_ADVERTIZED))
     {
         /* State-DB is updated only for Local Mac addresses */
         // Write to StateDb
@@ -1377,6 +1368,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, FdbDat
             fvs.push_back(FieldValueTuple("type", fdbData.type));
         m_fdbStateTable.set(key, fvs);
     }
+
     else if (macUpdate && (oldOrigin != FDB_ORIGIN_MCLAG_ADVERTIZED) &&
             (oldOrigin != FDB_ORIGIN_VXLAN_ADVERTIZED))
     {
@@ -1387,8 +1379,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, FdbDat
         m_fdbStateTable.del(key);
     }
 
-    //register with NeighborOrch for ICCP learned MAC addresses
-    if (fdbData.origin == FDB_ORIGIN_MCLAG_ADVERTIZED && (fdbData.type != "dynamic_local"))
+    if ((fdbData.origin == FDB_ORIGIN_MCLAG_ADVERTIZED) && (fdbData.type != "dynamic_local"))
     {
         std::vector<FieldValueTuple> fvs;
         fvs.push_back(FieldValueTuple("port", port_name));
