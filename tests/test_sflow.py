@@ -239,7 +239,8 @@ class TestSflow:
         expected_fields = {"admin_state": "up", "sample_rate": "256"}
         appldb.wait_for_field_match("SFLOW_SESSION_TABLE", "Ethernet0", expected_fields)
    
-        tbl = swsscommon.Table(dvs.cdb, "SFLOW_SESSION")
+        cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "SFLOW_SESSION")
         tbl.hdel("Ethernet0","sample_rate")
         
         expected_fields = {"admin_state": "up", "sample_rate": rate}
