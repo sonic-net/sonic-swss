@@ -25,8 +25,8 @@ class TestVirtualChassis(object):
                 chassis_app_db.db_connection.set("SYSTEM_LAG_ID_END", "2")
                 break
             
-    def config_inbandif_port(self, vct, ibport):
-        """This function configures port type inband interface in each linecard"""
+    def config_inbandif(self, vct, inbandif_name, inband_type):
+        """This function configures inband interface in each linecard"""
 
         dvss = vct.dvss
         for name in dvss.keys():
@@ -39,11 +39,12 @@ class TestVirtualChassis(object):
 
             # Configure only for line cards
             if cfg_switch_type == "voq":
-                dvs.runcmd(f"config interface startup {ibport}")
-                config_db.create_entry("VOQ_INBAND_INTERFACE", f"{ibport}", {"inband_type": "port"})
+                if inband_type == "port":
+                    dvs.runcmd(f"config interface startup {inbandif_name}")
+                config_db.create_entry("VOQ_INBAND_INTERFACE", f"{inbandif_name}", {"inband_type": f"{inband_type}"})
                 
-    def del_inbandif_port(self, vct, ibport):
-        """This function deletes existing port type inband interface"""
+    def del_inbandif(self, vct, inbandif_name):
+        """This function deletes existing inband interface"""
 
         dvss = vct.dvss
         for name in dvss.keys():
@@ -56,7 +57,7 @@ class TestVirtualChassis(object):
 
             # Applicable only for line cards
             if cfg_switch_type == "voq":
-                config_db.delete_entry("VOQ_INBAND_INTERFACE", f"{ibport}")
+                config_db.delete_entry("VOQ_INBAND_INTERFACE", f"{inbandif_name}")
                 
     def test_connectivity(self, vct):
         if vct is None:
@@ -212,7 +213,7 @@ class TestVirtualChassis(object):
                     # Remote system ports's switch id should not match local switch id
                     assert spcfginfo["attached_switch_id"] != lc_switch_id, "RIF system port with wrong switch_id"
 
-    def test_chassis_system_neigh(self, vct):
+    def do_test_chassis_system_neigh(self, vct, inband_type):
         """Test neigh record create/delete and syncing to chassis app db.
 
         This test validates that:
@@ -227,15 +228,18 @@ class TestVirtualChassis(object):
         if vct is None:
             return
 
-        # We use Ethernet0 as inband port in each line card. In real hardware, this will be a
-        # special port used for inband. For testing purpose, we need port record and rif record
-        # for the inband interface and valid kernel interface. Since Ethernet0 is already 
-        # setup, the port record, rif record and kernel interface already exist. So we use it
-        # for testing
-        inband_port = "Ethernet0"
+        if inband_type == "port":
+            # We use Ethernet0 as inband port in each line card. In real hardware, this will be a
+            # special port used for inband. For testing purpose, we need port record and rif record
+            # for the inband interface and valid kernel interface. Since Ethernet0 is already 
+            # setup, the port record, rif record and kernel interface already exist. So we use it
+            # for testing
+            inbandif_name = "Ethernet0"
+        else:
+            inbandif_name = "Vlan3094"
 
-        # Configure port type inband interface
-        self.config_inbandif_port(vct, inband_port)
+        # Configure inband interface
+        self.config_inbandif(vct, inbandif_name, inband_type)
 
         # Test neighbor on Ethernet4 since Ethernet0 is used as Inband port
         test_neigh_dev = "Ethernet4"
@@ -361,10 +365,10 @@ class TestVirtualChassis(object):
                     # Check for kernel entries
 
                     _, output = dvs.runcmd("ip neigh show")
-                    assert f"{test_neigh_ip} dev {inband_port}" in output, "Kernel neigh not found for remote neighbor"
+                    assert f"{test_neigh_ip} dev {inbandif_name}" in output, "Kernel neigh not found for remote neighbor"
 
                     _, output = dvs.runcmd("ip route show")
-                    assert f"{test_neigh_ip} dev {inband_port} scope link" in output, "Kernel route not found for remote neighbor"
+                    assert f"{test_neigh_ip} dev {inbandif_name} scope link" in output, "Kernel route not found for remote neighbor"
                    
                     # Check for ASIC_DB entries. 
 
@@ -458,15 +462,27 @@ class TestVirtualChassis(object):
                     # Check for kernel entries. Kernel entries (neigh and route) should have been removed
 
                     _, output = dvs.runcmd("ip neigh show")
-                    assert f"{test_neigh_ip} dev {inband_port}" not in output, "Kernel neigh of remote neighbor not removed"
+                    assert f"{test_neigh_ip} dev {inbandif_name}" not in output, "Kernel neigh of remote neighbor not removed"
 
                     _, output = dvs.runcmd("ip route show")
-                    assert f"{test_neigh_ip} dev {inband_port} scope link" not in output, "Kernel route of remote neighbor not removed"
+                    assert f"{test_neigh_ip} dev {inbandif_name} scope link" not in output, "Kernel route of remote neighbor not removed"
                     
                     break
 
         # Cleanup inband if configuration
-        self.del_inbandif_port(vct, inband_port)
+        self.del_inbandif(vct, inbandif_name)
+
+    def test_chassis_system_neigh_with_inband_port(self, vct):
+       """Test neigh record create/delete and syncing to chassis app db with inband port.
+       """
+
+        self.do_test_chassis_system_neigh(vct, "port")
+
+    def test_chassis_system_neigh_with_inband_vlan(self, vct):
+       """Test neigh record create/delete and syncing to chassis app db with inband vlan.
+       """
+
+        self.do_test_chassis_system_neigh(vct, "vlan")
         
     def test_chassis_system_lag(self, vct):
         """Test PortChannel in VOQ based chassis systems.
