@@ -735,11 +735,50 @@ void IntfMgr::doTask(Consumer &consumer)
             if((table_name == CFG_VOQ_INBAND_INTERFACE_TABLE_NAME) &&
                     (op == SET_COMMAND))
             {
-                //No further processing needed. Just relay to orchagent
-                m_appIntfTableProducer.set(keys[0], data);
-                m_stateIntfTable.hset(keys[0], "vrf", "");
+                string inband_type = "";
+                for (auto idx : data)
+                {
+                    const auto &field = fvField(idx);
+                    const auto &value = fvValue(idx);
+                    if (field == "inband_type")
+                    {
+                        inband_type = value;
+                    }
+                }
 
-                it = consumer.m_toSync.erase(it);
+                vector<FieldValueTuple> temp;
+                if (!m_stateIntfTable.get(keys[0], temp))
+                {
+                    //No further processing needed. Just relay to orchagent
+                    m_appIntfTableProducer.set(keys[0], data);
+                    m_stateIntfTable.hset(keys[0], "vrf", "");
+                }
+
+                if (inband_type == "port")
+                {
+                    it = consumer.m_toSync.erase(it);
+                }
+                else
+                {
+                    // Bring up kernel intf of inband Vlan after it has been created in SAI.
+                    vector<FieldValueTuple> temp;
+                    if( m_stateVlanTable.get(keys[0], temp))
+                    {
+                        stringstream cmd;
+                        cmd << IP_CMD << " link set " << keys[0] << " up";
+                        std::string res;
+                        int ret = swss::exec(cmd.str(), res);
+                        if (ret)
+                        {
+                            SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
+                        }
+                        else
+                        {
+                            SWSS_LOG_NOTICE("Inband Vlan %s was up", keys[0].c_str());
+                            it = consumer.m_toSync.erase(it);
+                        }
+                    }
+                }
                 continue;
             }
             if (!doIntfGeneralTask(keys, data, op))

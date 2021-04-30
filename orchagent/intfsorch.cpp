@@ -1444,22 +1444,10 @@ void IntfsOrch::processInbandVlanReady()
      const auto id = sai_serialize_object_id(inbandVlan.m_rif_id);
      if (m_vidToRidTable->hget("", id, value))
      {
-         stringstream cmd;
-         cmd << "ip link set " << inbandVlan.m_alias << " up";
+         m_stateVlanTable->hset(inbandVlan.m_alias, "state", "ok");
+         SWSS_LOG_INFO("Added inband VLAN %s to STATE_VLAN_TABLE", inbandVlan.m_alias.c_str());
 
-         std::string res;
-         int ret = swss::exec(cmd.str(), res);
-         if (ret)
-         {
-             SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
-         }
-         else
-         {
-             m_stateVlanTable->hset(inbandVlan.m_alias, "state", "ok");
-             SWSS_LOG_INFO("Added inband VLAN %s to STATE_VLAN_TABLE", inbandVlan.m_alias.c_str());
-
-             m_inbandVlanTimer->stop();
-         }
+         m_inbandVlanTimer->stop();
      }
 }
 
