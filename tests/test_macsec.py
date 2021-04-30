@@ -2,7 +2,6 @@ from swsscommon import swsscommon
 import conftest
 
 import sys
-import pytest
 import functools
 import typing
 import re
