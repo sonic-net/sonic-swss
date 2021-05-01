@@ -272,7 +272,7 @@ IsolationGroup::create()
     }
     else
     {
-        SWSS_LOG_NOTICE("Isolation group %s has oid %lx", m_name.c_str(), m_oid);
+        SWSS_LOG_NOTICE("Isolation group %s has oid 0x%" PRIx64 , m_name.c_str(), m_oid);
     }
 
     return ISO_GRP_STATUS_SUCCESS;
@@ -325,7 +325,7 @@ IsolationGroup::destroy()
     {
         if (SAI_STATUS_SUCCESS != sai_isolation_group_api->remove_isolation_group_member(kv.second))
         {
-            SWSS_LOG_ERROR("Unable to delete isolation group member %lx from %s:%lx for port %s",
+            SWSS_LOG_ERROR("Unable to delete isolation group member 0x%" PRIx64 " from %s: 0x%" PRIx64 " for port %s",
                            kv.second,
                            m_name.c_str(),
                            m_oid,
@@ -333,7 +333,7 @@ IsolationGroup::destroy()
         }
         else
         {
-            SWSS_LOG_NOTICE("Isolation group member %lx deleted from %s:%lx for port %s",
+            SWSS_LOG_NOTICE("Isolation group member 0x%" PRIx64 " deleted from %s: 0x%" PRIx64 " for port %s",
                             kv.second,
                             m_name.c_str(),
                             m_oid,
@@ -345,11 +345,11 @@ IsolationGroup::destroy()
     sai_status_t status = sai_isolation_group_api->remove_isolation_group(m_oid);
     if (SAI_STATUS_SUCCESS != status)
     {
-        SWSS_LOG_ERROR("Unable to delete isolation group %s with oid %lx", m_name.c_str(), m_oid);
+        SWSS_LOG_ERROR("Unable to delete isolation group %s with oid 0x%" PRIx64 , m_name.c_str(), m_oid);
     }
     else
     {
-        SWSS_LOG_NOTICE("Isolation group %s with oid %lx deleted", m_name.c_str(), m_oid);
+        SWSS_LOG_NOTICE("Isolation group %s with oid 0x%" PRIx64 " deleted", m_name.c_str(), m_oid);
     }
     m_oid = SAI_NULL_OBJECT_ID;
 
@@ -385,7 +385,7 @@ IsolationGroup::addMember(Port &port)
 
     if (m_members.find(port.m_alias) != m_members.end())
     {
-        SWSS_LOG_DEBUG("Port %s:%lx already a member of %s", port.m_alias.c_str(), port_id, m_name.c_str());
+        SWSS_LOG_DEBUG("Port %s: 0x%" PRIx64 "already a member of %s", port.m_alias.c_str(), port_id, m_name.c_str());
     }
     else
     {
@@ -401,14 +401,14 @@ IsolationGroup::addMember(Port &port)
         status = sai_isolation_group_api->create_isolation_group_member(&mem_id, gSwitchId, 2, mem_attr);
         if (SAI_STATUS_SUCCESS != status)
         {
-            SWSS_LOG_ERROR("Unable to add %s:%lx as member of %s:%lx", port.m_alias.c_str(), port_id,
+            SWSS_LOG_ERROR("Unable to add %s:  0x%" PRIx64 " as member of %s:0x%" PRIx64 , port.m_alias.c_str(), port_id,
                            m_name.c_str(), m_oid);
             return ISO_GRP_STATUS_FAIL;
         }
         else
         {
             m_members[port.m_alias] = mem_id;
-            SWSS_LOG_NOTICE("Port %s:%lx added as member of %s:%lx with oid %lx",
+            SWSS_LOG_NOTICE("Port %s: 0x%" PRIx64 " added as member of %s: 0x%" PRIx64 "with oid 0x%" PRIx64,
                             port.m_alias.c_str(),
                             port_id,
                             m_name.c_str(),
@@ -442,7 +442,7 @@ IsolationGroup::delMember(Port &port, bool do_fwd_ref)
     status = sai_isolation_group_api->remove_isolation_group_member(mem_id);
     if (SAI_STATUS_SUCCESS != status)
     {
-        SWSS_LOG_ERROR("Unable to delete isolation group member %lx for port %s and iso group %s %lx",
+        SWSS_LOG_ERROR("Unable to delete isolation group member 0x%" PRIx64 " for port %s and iso group %s 0x%" PRIx64 ,
                        mem_id,
                        port.m_alias.c_str(),
                        m_name.c_str(),
@@ -452,7 +452,7 @@ IsolationGroup::delMember(Port &port, bool do_fwd_ref)
     }
     else
     {
-        SWSS_LOG_NOTICE("Deleted isolation group member %lx for port %s and iso group %s %lx",
+        SWSS_LOG_NOTICE("Deleted isolation group member 0x%" PRIx64 "for port %s and iso group %s 0x%" PRIx64 ,
                        mem_id,
                        port.m_alias.c_str(),
                        m_name.c_str(),
@@ -555,7 +555,7 @@ IsolationGroup::bind(Port &port)
             status = sai_bridge_api->set_bridge_port_attribute(port.m_bridge_port_id, &attr);
             if (SAI_STATUS_SUCCESS != status)
             {
-                SWSS_LOG_ERROR("Unable to set attribute %d value %lx to %s",
+                SWSS_LOG_ERROR("Unable to set attribute %d value  0x%" PRIx64 "to %s",
                                attr.id,
                                attr.value.oid,
                                port.m_alias.c_str());
@@ -582,7 +582,7 @@ IsolationGroup::bind(Port &port)
             status = sai_port_api->set_port_attribute((port.m_type == Port::PHY ? port.m_port_id : port.m_lag_id), &attr);
             if (SAI_STATUS_SUCCESS != status)
             {
-                SWSS_LOG_ERROR("Unable to set attribute %d value %lx to %s",
+                SWSS_LOG_ERROR("Unable to set attribute %d value  0x%" PRIx64 "to %s",
                                attr.id,
                                attr.value.oid,
                                port.m_alias.c_str());
@@ -645,7 +645,7 @@ IsolationGroup::unbind(Port &port, bool do_fwd_ref)
 
     if (SAI_STATUS_SUCCESS != status)
     {
-        SWSS_LOG_ERROR("Unable to set attribute %d value %lx to %s", attr.id, attr.value.oid, port.m_alias.c_str());
+        SWSS_LOG_ERROR("Unable to set attribute %d value 0x%" PRIx64 "to %s", attr.id, attr.value.oid, port.m_alias.c_str());
     }
     else
     {
