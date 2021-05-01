@@ -241,11 +241,11 @@ void FdbOrch::update(sai_fdb_event_t        type,
                 if (existing_entry->second.bridge_port_id != bridge_port_id)
                 {
                     Port port;
-                    SWSS_LOG_NOTICE("FdbOrch LEARN notification: mac %s is already in bv_id 0x%lx with different existing-bp 0x%lx new-bp:0x%lx",
-                             update.entry.mac.to_string().c_str(), entry->bv_id, existing_entry->second.bridge_port_id, bridge_port_id);
+                    SWSS_LOG_NOTICE("FdbOrch LEARN notification: mac %s is already in bv_id 0x%" PRIx64 "with different existing-bp 0x%" PRIx64 " new-bp:0x%" PRIx64,
+                            update.entry.mac.to_string().c_str(), entry->bv_id, existing_entry->second.bridge_port_id, bridge_port_id);
                 if (!m_portsOrch->getPortByBridgePortId(existing_entry->second.bridge_port_id, port))
                 {
-                    SWSS_LOG_NOTICE("FdbOrch LEARN notification: Failed to get port by bridge port ID 0x%lx", existing_entry->second.bridge_port_id);
+                    SWSS_LOG_NOTICE("FdbOrch LEARN notification: Failed to get port by bridge port ID 0x%" PRIx64, existing_entry->second.bridge_port_id);
                     return;
                 }
                 else
@@ -260,7 +260,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
                 }
                 else
                 {
-                    SWSS_LOG_NOTICE("FdbOrch LEARN notification: mac %s is already in bv_id 0x%lx with same bp 0x%lx ",
+                    SWSS_LOG_NOTICE("FdbOrch LEARN notification: mac %s is already in bv_id 0x%" PRIx64 "with same bp 0x%" PRIx64,
                             update.entry.mac.to_string().c_str(), entry->bv_id, existing_entry->second.bridge_port_id);
                     // Continue to move the MAC as local.
 
@@ -287,7 +287,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
                         status = sai_fdb_api->set_fdb_entry_attribute(&fdb_entry, &itr);
                         if (status != SAI_STATUS_SUCCESS)
                         {
-                            SWSS_LOG_ERROR("macUpdate-Failed for MCLAG mac attr.id=0x%x for FDB %s in 0x%lx on %s, rv:%d",
+                            SWSS_LOG_ERROR("macUpdate-Failed for MCLAG mac attr.id=0x%x for FDB %s in 0x%" PRIx64 "on %s, rv:%d",
                                         itr.id, update.entry.mac.to_string().c_str(), entry->bv_id, update.port.m_alias.c_str(), status);
                         }
                     }
