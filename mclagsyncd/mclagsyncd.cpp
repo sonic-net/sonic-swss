@@ -48,14 +48,14 @@ int main(int argc, char **argv)
             Select s;
             MclagLink mclag(&s);
 
-            mclag.mclagsyncd_fetch_system_mac_from_configdb();
+            mclag.mclagsyncdFetchSystemMacFromConfigdb();
 
             cout << "Waiting for connection..." << endl;
             mclag.accept();
             cout << "Connected!" << endl;
 
-            mclag.mclagsyncd_fetch_mclag_config_from_configdb();
-            mclag.mclagsyncd_fetch_mclag_interface_config_from_configdb();
+            mclag.mclagsyncdFetchMclagConfigFromConfigdb();
+            mclag.mclagsyncdFetchMclagInterfaceConfigFromConfigdb();
 
             s.addSelectable(&mclag);
 
@@ -88,14 +88,14 @@ int main(int argc, char **argv)
                     SWSS_LOG_DEBUG("MCLAGSYNCD processing mclag_intf_cfg_tbl notifications");
                     std::deque<KeyOpFieldsValuesTuple> entries;
                     mclag.getMclagIntfCfgTable()->pops(entries);
-                    mclag.mclagsyncd_send_mclag_iface_cfg(entries);
+                    mclag.mclagsyncdSendMclagIfaceCfg(entries);
                 }
                 else if (temps == (Selectable *)mclag.getMclagUniqueCfgTable())  //Reading MCLAG Unique IP Config Table
                 {
                     SWSS_LOG_DEBUG("MCLAGSYNCD processing mclag_unique_ip_cfg_tbl notifications");
                     std::deque<KeyOpFieldsValuesTuple> entries;
                     mclag.getMclagUniqueCfgTable()->pops(entries);
-                    mclag.mclagsyncd_send_mclag_unique_ip_cfg(entries);
+                    mclag.mclagsyncdSendMclagUniqueIpCfg(entries);
                 }
                 else if (temps == (Selectable *)mclag.getStateVlanMemberTable())
                 {

@@ -112,7 +112,7 @@ void MclagLink::getVidByBvid(std::string &bvid, std::string &vlanid)
     return;
 }
 
-void MclagLink::mclagsyncd_fetch_system_mac_from_configdb()
+void MclagLink::mclagsyncdFetchSystemMacFromConfigdb()
 {
     vector<FieldValueTuple> fvs; 
     p_device_metadata_tbl->get("localhost",fvs);
@@ -133,7 +133,7 @@ void MclagLink::mclagsyncd_fetch_system_mac_from_configdb()
 }
 
 
-void MclagLink::mclagsyncd_fetch_mclag_config_from_configdb()
+void MclagLink::mclagsyncdFetchMclagConfigFromConfigdb()
 {
     TableDump mclag_cfg_dump;
     SWSS_LOG_NOTICE("mclag cfg dump....");
@@ -160,7 +160,7 @@ void MclagLink::mclagsyncd_fetch_mclag_config_from_configdb()
     }
 }
 
-void MclagLink::mclagsyncd_fetch_mclag_interface_config_from_configdb()
+void MclagLink::mclagsyncdFetchMclagInterfaceConfigFromConfigdb()
 {
     TableDump mclag_intf_cfg_dump;
     SWSS_LOG_NOTICE("mclag cfg dump....");
@@ -182,7 +182,7 @@ void MclagLink::mclagsyncd_fetch_mclag_interface_config_from_configdb()
             kfvFieldsValues(cfgentry).push_back(value);
         }
         entries.push_back(cfgentry);
-        mclagsyncd_send_mclag_iface_cfg(entries);
+        mclagsyncdSendMclagIfaceCfg(entries);
     }
 }
 
@@ -531,7 +531,7 @@ void MclagLink::setFdbEntry(char *msg, int msg_len)
     return;
 }
 
-void MclagLink::mclagsyncd_send_fdb_entries(std::deque<KeyOpFieldsValuesTuple> &entries)
+void MclagLink::mclagsyncdSendFdbEntries(std::deque<KeyOpFieldsValuesTuple> &entries)
 {
     size_t infor_len = sizeof(mclag_msg_hdr_t);
     struct mclag_fdb_info info;
@@ -997,7 +997,7 @@ void MclagLink::delDomainCfgDependentSelectables()
 }
 
 
-void MclagLink::mclagsyncd_send_mclag_iface_cfg(std::deque<KeyOpFieldsValuesTuple> &entries)
+void MclagLink::mclagsyncdSendMclagIfaceCfg(std::deque<KeyOpFieldsValuesTuple> &entries)
 {
     struct mclag_iface_cfg_info cfg_info;
     mclag_msg_hdr_t *cfg_msg_hdr = NULL;
@@ -1096,7 +1096,7 @@ void MclagLink::mclagsyncd_send_mclag_iface_cfg(std::deque<KeyOpFieldsValuesTupl
     return;
 }
 
-void MclagLink::mclagsyncd_send_mclag_unique_ip_cfg(std::deque<KeyOpFieldsValuesTuple> &entries)
+void MclagLink::mclagsyncdSendMclagUniqueIpCfg(std::deque<KeyOpFieldsValuesTuple> &entries)
 {
     struct mclag_unique_ip_cfg_info cfg_info;
     mclag_msg_hdr_t *cfg_msg_hdr = NULL;
@@ -1297,7 +1297,7 @@ void MclagLink::processVlanMemberTableUpdates(std::deque<KeyOpFieldsValuesTuple>
 
 
 /* Enable/Disable traffic distribution mode for LAG member port */
-void MclagLink::mclagsyncd_set_traffic_disable(
+void MclagLink::mclagsyncdSetTrafficDisable(
         char                      *msg,
         uint8_t                   msg_type)
 {
@@ -1328,7 +1328,7 @@ void MclagLink::mclagsyncd_set_traffic_disable(
 }
 
 /* Set the oper_status field in the STATE_MCLAG_TABLE */
-void MclagLink::mclagsyncd_set_iccp_state(
+void MclagLink::mclagsyncdSetIccpState(
         char                      *msg,
         size_t                    msg_len)
 {
@@ -1376,7 +1376,7 @@ void MclagLink::mclagsyncd_set_iccp_state(
 }
 
 /* Set the role field in the STATE_MCLAG_TABLE */
-void MclagLink::mclagsyncd_set_iccp_role(
+void MclagLink::mclagsyncdSetIccpRole(
         char                      *msg,
         size_t                    msg_len)
 {
@@ -1432,7 +1432,7 @@ void MclagLink::mclagsyncd_set_iccp_role(
 }
 
 /* Set the system_mac field in the STATE_MCLAG_TABLE */
-void MclagLink::mclagsyncd_set_system_id(
+void MclagLink::mclagsyncdSetSystemId(
         char                      *msg,
         size_t                    msg_len)
 {
@@ -1483,7 +1483,7 @@ void MclagLink::processStateFdb(SubscriberStateTable *stateFdbTbl)
     SWSS_LOG_INFO("MCLAGSYNCD: Process State Fdb events ");
     std::deque<KeyOpFieldsValuesTuple> entries;
     stateFdbTbl->pops(entries);
-    mclagsyncd_send_fdb_entries(entries);
+    mclagsyncdSendFdbEntries(entries);
 }
 
 void MclagLink::processStateVlanMember(SubscriberStateTable *stateVlanMemberTbl)
@@ -1495,7 +1495,7 @@ void MclagLink::processStateVlanMember(SubscriberStateTable *stateVlanMemberTbl)
 }
 
 /* Delete Mlag entry in the STATE_MCLAG_TABLE */
-void MclagLink::mclagsyncd_del_iccp_info(
+void MclagLink::mclagsyncdDelIccpInfo(
         char                      *msg)
 {
     int                       mlag_id;
@@ -1549,7 +1549,7 @@ void MclagLink::deleteLocalIfPortIsolate(std::string mclag_if)
  * STATE_MCLAG_REMOTE_INTF_TABLE.
  * Key = "Mclag<id>|interface"
  */
-void MclagLink::mclagsyncd_set_remote_if_state(
+void MclagLink::mclagsyncdSetRemoteIfState(
         char                      *msg,
         size_t                    msg_len)
 {
@@ -1606,7 +1606,7 @@ void MclagLink::mclagsyncd_set_remote_if_state(
 /* Delete remote interface state entry in the STATE_MCLAG_REMOTE_INTF_TABLE
  * Key = "Mclag<id>|interface"
  */
-void MclagLink::mclagsyncd_del_remote_if_info(
+void MclagLink::mclagsyncdDelRemoteIfInfo(
         char                      *msg,
         size_t                    msg_len)
 {
@@ -1654,7 +1654,7 @@ void MclagLink::mclagsyncd_del_remote_if_info(
 /* Set peer-link isolation for the specified Mlag interface
  * Notes: Mlag-ID is not used currently for the local interface table
  */
-void MclagLink::mclagsyncd_set_peer_link_isolation(
+void MclagLink::mclagsyncdSetPeerLinkIsolation(
         char                      *msg,
         size_t                    msg_len)
 {
@@ -1705,7 +1705,7 @@ void MclagLink::mclagsyncd_set_peer_link_isolation(
 }
 
 /* Set the remote system mac field in the STATE_MCLAG_TABLE */
-void MclagLink::mclagsyncd_set_peer_system_id(
+void MclagLink::mclagsyncdSetPeerSystemId(
         char                      *msg,
         size_t                    msg_len)
 {
@@ -1942,31 +1942,31 @@ uint64_t MclagLink::readData()
                 break;
             case MCLAG_MSG_TYPE_SET_TRAFFIC_DIST_ENABLE:
             case MCLAG_MSG_TYPE_SET_TRAFFIC_DIST_DISABLE:
-                mclagsyncd_set_traffic_disable(msg, hdr->msg_type);
+                mclagsyncdSetTrafficDisable(msg, hdr->msg_type);
                 break;
             case MCLAG_MSG_TYPE_SET_ICCP_STATE:
-                mclagsyncd_set_iccp_state(msg, mclag_msg_data_len(hdr));
+                mclagsyncdSetIccpState(msg, mclag_msg_data_len(hdr));
                 break;
             case MCLAG_MSG_TYPE_SET_ICCP_ROLE:
-                mclagsyncd_set_iccp_role(msg, mclag_msg_data_len(hdr));
+                mclagsyncdSetIccpRole(msg, mclag_msg_data_len(hdr));
                 break;
             case MCLAG_MSG_TYPE_SET_ICCP_SYSTEM_ID:
-                mclagsyncd_set_system_id(msg, mclag_msg_data_len(hdr));
+                mclagsyncdSetSystemId(msg, mclag_msg_data_len(hdr));
                 break;
             case MCLAG_MSG_TYPE_DEL_ICCP_INFO:
-                mclagsyncd_del_iccp_info(msg);
+                mclagsyncdDelIccpInfo(msg);
                 break;
             case MCLAG_MSG_TYPE_SET_REMOTE_IF_STATE:
-                mclagsyncd_set_remote_if_state(msg, mclag_msg_data_len(hdr));
+                mclagsyncdSetRemoteIfState(msg, mclag_msg_data_len(hdr));
                 break;
             case MCLAG_MSG_TYPE_DEL_REMOTE_IF_INFO:
-                mclagsyncd_del_remote_if_info(msg, mclag_msg_data_len(hdr));
+                mclagsyncdDelRemoteIfInfo(msg, mclag_msg_data_len(hdr));
                 break;
             case MCLAG_MSG_TYPE_SET_PEER_LINK_ISOLATION:
-                mclagsyncd_set_peer_link_isolation(msg, mclag_msg_data_len(hdr));
+                mclagsyncdSetPeerLinkIsolation(msg, mclag_msg_data_len(hdr));
                 break;
             case MCLAG_MSG_TYPE_SET_ICCP_PEER_SYSTEM_ID:
-                mclagsyncd_set_peer_system_id(msg, mclag_msg_data_len(hdr));
+                mclagsyncdSetPeerSystemId(msg, mclag_msg_data_len(hdr));
                 break;
             default:
                 break;

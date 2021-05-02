@@ -243,18 +243,18 @@ namespace swss {
             int getConnSocket();
             uint64_t readData() override; 
 
-            void mclagsyncd_send_fdb_entries(std::deque<KeyOpFieldsValuesTuple> &entries);
+            void mclagsyncdSendFdbEntries(std::deque<KeyOpFieldsValuesTuple> &entries);
 
 
-            void mclagsyncd_set_traffic_disable(char *msg_buf, uint8_t msg_type);
-            void mclagsyncd_set_iccp_state(char *msg, size_t msg_size);
-            void mclagsyncd_set_iccp_role(char *msg, size_t msg_size);
-            void mclagsyncd_set_system_id(char *msg, size_t msg_size);
-            void mclagsyncd_del_iccp_info(char *msg);
-            void mclagsyncd_set_remote_if_state(char *msg, size_t msg_size);
-            void mclagsyncd_del_remote_if_info(char *msg, size_t msg_size);
-            void mclagsyncd_set_peer_link_isolation(char *msg, size_t msg_size);
-            void mclagsyncd_set_peer_system_id(char *msg, size_t msg_size);
+            void mclagsyncdSetTrafficDisable(char *msg_buf, uint8_t msg_type);
+            void mclagsyncdSetIccpState(char *msg, size_t msg_size);
+            void mclagsyncdSetIccpRole(char *msg, size_t msg_size);
+            void mclagsyncdSetSystemId(char *msg, size_t msg_size);
+            void mclagsyncdDelIccpInfo(char *msg);
+            void mclagsyncdSetRemoteIfState(char *msg, size_t msg_size);
+            void mclagsyncdDelRemoteIfInfo(char *msg, size_t msg_size);
+            void mclagsyncdSetPeerLinkIsolation(char *msg, size_t msg_size);
+            void mclagsyncdSetPeerSystemId(char *msg, size_t msg_size);
 
 
             void addDomainCfgDependentSelectables();
@@ -294,9 +294,9 @@ namespace swss {
             /* Wait for connection (blocking) */
             void accept();
 
-            void mclagsyncd_fetch_system_mac_from_configdb();
-            void mclagsyncd_fetch_mclag_config_from_configdb();
-            void mclagsyncd_fetch_mclag_interface_config_from_configdb();
+            void mclagsyncdFetchSystemMacFromConfigdb();
+            void mclagsyncdFetchMclagConfigFromConfigdb();
+            void mclagsyncdFetchMclagInterfaceConfigFromConfigdb();
 
             SubscriberStateTable *getStateFdbTable()
             {
@@ -325,8 +325,8 @@ namespace swss {
             void processStateFdb(SubscriberStateTable *stateFdbTbl);
             void processStateVlanMember(SubscriberStateTable *stateVlanMemberTbl);
 
-            void mclagsyncd_send_mclag_iface_cfg(std::deque<KeyOpFieldsValuesTuple> &entries);
-            void mclagsyncd_send_mclag_unique_ip_cfg(std::deque<KeyOpFieldsValuesTuple> &entries);
+            void mclagsyncdSendMclagIfaceCfg(std::deque<KeyOpFieldsValuesTuple> &entries);
+            void mclagsyncdSendMclagUniqueIpCfg(std::deque<KeyOpFieldsValuesTuple> &entries);
 
     };
 
