@@ -186,58 +186,6 @@ void MclagLink::mclagsyncd_fetch_mclag_interface_config_from_configdb()
     }
 }
 
-void MclagLink::mclagsyncd_fetch_fdb_entries_from_statedb()
-{
-    TableDump fdb_dump;
-    SWSS_LOG_NOTICE("FDB state db dump....");
-    p_state_fdb_table->dump(fdb_dump);
-
-    std::deque<KeyOpFieldsValuesTuple> entries;
-    for (const auto&key: fdb_dump)
-    {
-        KeyOpFieldsValuesTuple stateEntry;
-        SWSS_LOG_DEBUG("Key: %s", key.first.c_str());
-        kfvKey(stateEntry) = key.first;
-        kfvOp(stateEntry) = "SET";
-        SWSS_LOG_DEBUG("Value:");
-        for (const auto& val : key.second) {
-            SWSS_LOG_DEBUG("%s: %s", val.first.c_str(), val.second.c_str());
-            FieldValueTuple value;
-            fvField(value) = val.first;
-            fvValue(value) = val.second;
-            kfvFieldsValues(stateEntry).push_back(value);
-        }
-        entries.push_back(stateEntry);
-    }
-    mclagsyncd_send_fdb_entries(entries);
-}
-
-void MclagLink::mclagsyncd_fetch_vlan_mbr_table_from_statedb()
-{
-    TableDump vlan_mbr_table_dump;
-    SWSS_LOG_NOTICE("%s", __FUNCTION__);
-    p_state_vlan_mbr_table->dump(vlan_mbr_table_dump);
-
-    std::deque<KeyOpFieldsValuesTuple> entries;
-    for (const auto&key: vlan_mbr_table_dump)
-    {
-        KeyOpFieldsValuesTuple entry;
-        SWSS_LOG_DEBUG("Key: %s", key.first.c_str());
-        kfvKey(entry) = key.first;
-        kfvOp(entry) = "SET";
-        SWSS_LOG_DEBUG("Value:");
-        for (const auto& val : key.second) {
-            SWSS_LOG_DEBUG("%s: %s", val.first.c_str(), val.second.c_str());
-            FieldValueTuple value;
-            fvField(value) = val.first;
-            fvValue(value) = val.second;
-            kfvFieldsValues(entry).push_back(value);
-        }
-        entries.push_back(entry);
-    }
-    processVlanMemberTableUpdates(entries);
-}
-
 void MclagLink::setPortIsolate(char *msg)
 {
     char *platform = getenv("platform");
@@ -252,10 +200,10 @@ void MclagLink::setPortIsolate(char *msg)
         cur = msg;
 
 
-    /*get isolate src port infor*/
-    op_hdr = reinterpret_cast<mclag_sub_option_hdr_t *>(static_cast<void *>(cur));
-    cur = cur + MCLAG_SUB_OPTION_HDR_LEN;
-    isolate_src_port.insert(0, (const char*)cur, op_hdr->op_len);
+        /*get isolate src port infor*/
+        op_hdr = reinterpret_cast<mclag_sub_option_hdr_t *>(static_cast<void *>(cur));
+        cur = cur + MCLAG_SUB_OPTION_HDR_LEN;
+        isolate_src_port.insert(0, (const char*)cur, op_hdr->op_len);
 
         cur = cur + op_hdr->op_len;
 
@@ -318,8 +266,8 @@ void MclagLink::setPortIsolate(char *msg)
 
             p_iso_grp_tbl->set("MCLAG_ISO_GRP", fvts);
             SWSS_LOG_NOTICE("Isolation group created with ports %s and members %s",
-                            isolate_src_port.c_str(),
-                            isolate_dst_port.c_str());
+                    isolate_src_port.c_str(),
+                    isolate_dst_port.c_str());
         }
     }
     else
@@ -356,12 +304,12 @@ void MclagLink::setPortIsolate(char *msg)
             p_acl_table_tbl->del(acl_name);
             acl_table_is_added = 0;
             SWSS_LOG_NOTICE("set port isolate, src port: %s, dst port is NULL",
-                            isolate_src_port.c_str());
+                    isolate_src_port.c_str());
             return;
         }
 
         SWSS_LOG_NOTICE("set port isolate, src port: %s, dst port: %s",
-                        isolate_src_port.c_str(), isolate_dst_port.c_str());
+                isolate_src_port.c_str(), isolate_dst_port.c_str());
 
         if (acl_table_is_added == 0)
         {
@@ -451,19 +399,19 @@ void MclagLink::setPortMacLearnMode(char *msg)
         p_lag_tbl->set(learn_port, attrs);
     /* vxlan tunnel is currently not supported, for src_ip is the mandatory attribute */
     /* else if(strncmp(learn_port.c_str(),VXLAN_TUNNEL_PREFIX,5)==0)
-        p_tnl_tbl->set(learn_port, attrs); */
+       p_tnl_tbl->set(learn_port, attrs); */
     else
         p_port_tbl->set(learn_port, attrs);
 
     SWSS_LOG_NOTICE("set port mac learn mode, port: %s, learn-mode: %s",
-                    learn_port.c_str(), learn_mode.c_str());
+            learn_port.c_str(), learn_mode.c_str());
 
     return;
 }
 
 void MclagLink::setFdbFlush()
 {
-    swss::NotificationProducer flushFdb(p_appl_db, "FLUSHFDBREQUEST");
+    swss::NotificationProducer flushFdb(p_appl_db.get(), "FLUSHFDBREQUEST");
 
     vector<FieldValueTuple> values;
 
@@ -479,7 +427,7 @@ void MclagLink::setFdbFlushByPort(char *msg)
     string port;
     char *cur = NULL;
     mclag_sub_option_hdr_t *op_hdr = NULL;
-    swss::NotificationProducer flushFdb(p_appl_db, "FLUSHFDBREQUEST");
+    swss::NotificationProducer flushFdb(p_appl_db.get(), "FLUSHFDBREQUEST");
     vector<FieldValueTuple> values;
 
     cur = msg;
@@ -648,7 +596,7 @@ void MclagLink::mclagsyncd_send_fdb_entries(std::deque<KeyOpFieldsValuesTuple> &
             msg_head ->msg_type = MCLAG_SYNCD_MSG_TYPE_FDB_OPERATION;
 
             SWSS_LOG_DEBUG("mclagsycnd buffer full send msg to iccpd, msg_len =%d, msg_type =%d count : %d",
-                msg_head->msg_len, msg_head->msg_type, count);
+                    msg_head->msg_len, msg_head->msg_type, count);
             write = ::write(m_connection_socket, infor_start, msg_head->msg_len);
 
             if (write <= 0)
@@ -674,7 +622,7 @@ void MclagLink::mclagsyncd_send_fdb_entries(std::deque<KeyOpFieldsValuesTuple> &
     msg_head ->msg_type = MCLAG_SYNCD_MSG_TYPE_FDB_OPERATION;
 
     SWSS_LOG_DEBUG("mclagsycnd send msg to iccpd, msg_len =%d, msg_type =%d count : %d",
-                                    msg_head->msg_len, msg_head->msg_type, count);
+            msg_head->msg_len, msg_head->msg_type, count);
     write = ::write(m_connection_socket, infor_start, msg_head->msg_len);
 
     if (write <= 0)
@@ -869,9 +817,9 @@ void MclagLink::processMclagDomainCfg(std::deque<KeyOpFieldsValuesTuple> &entrie
             //Add/update domain map
             m_mclag_domains[domain] = domainData;
 
-        //send config msg to iccpd
-        SWSS_LOG_DEBUG(" MCLAGSYNCD CFG Table Updates : domain_id:%d op_type:%d attrBmap:0x%x attrDelBmap:0x%x cfg_info.local_ip %s, peer_ip: %s peer_link:%s system_mac:%s session_timeout:%d keepalive_time:%d ",
-                domain.domain_id, cfgOpType, attrBmap, attrDelBmap, cfg_info.local_ip, cfg_info.peer_ip, cfg_info.peer_ifname, m_system_mac.c_str(), cfg_info.session_timeout, cfg_info.keepalive_time);
+            //send config msg to iccpd
+            SWSS_LOG_DEBUG(" MCLAGSYNCD CFG Table Updates : domain_id:%d op_type:%d attrBmap:0x%x attrDelBmap:0x%x cfg_info.local_ip %s, peer_ip: %s peer_link:%s system_mac:%s session_timeout:%d keepalive_time:%d ",
+                    domain.domain_id, cfgOpType, attrBmap, attrDelBmap, cfg_info.local_ip, cfg_info.peer_ip, cfg_info.peer_ifname, m_system_mac.c_str(), cfg_info.session_timeout, cfg_info.keepalive_time);
 
             //Entry not found previously and got created now - do add operation
             if (!entryExists)
@@ -972,21 +920,80 @@ void MclagLink::processMclagDomainCfg(std::deque<KeyOpFieldsValuesTuple> &entrie
 
 void MclagLink::addDomainCfgDependentSelectables()
 {
+    p_state_fdb_tbl = new SubscriberStateTable(p_state_db.get(), STATE_FDB_TABLE_NAME);
+    SWSS_LOG_INFO(" MCLAGSYNCD create state fdb table");
+
+    p_state_vlan_mbr_subscriber_table = new SubscriberStateTable(p_state_db.get(), STATE_VLAN_MEMBER_TABLE_NAME);
+    SWSS_LOG_INFO(" MCLAGSYNCD create state vlan member table");
+
+    p_mclag_intf_cfg_tbl      = new SubscriberStateTable(p_config_db.get(), CFG_MCLAG_INTF_TABLE_NAME);
+    SWSS_LOG_INFO(" MCLAGSYNCD create cfg mclag intf table");
+
+    p_mclag_unique_ip_cfg_tbl = new SubscriberStateTable(p_config_db.get(), CFG_MCLAG_UNIQUE_IP_TABLE_NAME);
+    SWSS_LOG_INFO(" MCLAGSYNCD create cfg unique ip table");
+
+    if (p_state_fdb_tbl) 
+    {
+        m_select->addSelectable(p_state_fdb_tbl);
+        SWSS_LOG_INFO(" MCLAGSYNCD Add state_fdb_tbl to selectable");
+    }
+
+
+    if (p_state_vlan_mbr_subscriber_table) 
+    {
+        m_select->addSelectable(p_state_vlan_mbr_subscriber_table);
+        SWSS_LOG_NOTICE(" MCLAGSYNCD Add p_state_vlan_mbr_subscriber_table  to selectable");
+    }
+
     //add mclag interface table to selectable
-    m_select->addSelectable(p_mclag_intf_cfg_tbl);
-    SWSS_LOG_NOTICE("MCLagSYNCD Adding mclag_intf_cfg_tbl to selectable");
+    if (p_mclag_intf_cfg_tbl)
+    {
+        m_select->addSelectable(p_mclag_intf_cfg_tbl);
+        SWSS_LOG_NOTICE("MCLagSYNCD Adding mclag_intf_cfg_tbl to selectable");
+    }
 
-    mclagsyncd_fetch_fdb_entries_from_statedb();
-    SWSS_LOG_NOTICE(" MCLAGSYNCD fetched FDB entries from state db");
-
-    mclagsyncd_fetch_vlan_mbr_table_from_statedb();
-    SWSS_LOG_NOTICE(" MCLAGSYNCD fetched vlan member entries from state db"); 
+    //add mclag unique ip table to selectable
+    if (p_mclag_unique_ip_cfg_tbl)
+    {
+        m_select->addSelectable(getMclagUniqueCfgTable());
+        SWSS_LOG_NOTICE("MCLagSYNCD Adding mclag_unique_ip_cfg_tbl to selectable");
+    }
 }
 
 void MclagLink::delDomainCfgDependentSelectables()
 {
-    m_select->removeSelectable(p_mclag_intf_cfg_tbl);
-    SWSS_LOG_NOTICE("MCLagSYNCD remove mclag_intf_cfg_tbl to selectable");
+    if (p_mclag_intf_cfg_tbl)
+    {
+        m_select->removeSelectable(getMclagIntfCfgTable());
+        SWSS_LOG_NOTICE("MCLagSYNCD remove mclag_intf_cfg_tbl to selectable");
+        delete p_mclag_intf_cfg_tbl;
+        p_mclag_intf_cfg_tbl = NULL;
+    }
+
+    if (p_mclag_unique_ip_cfg_tbl)
+    {
+        m_select->removeSelectable(getMclagUniqueCfgTable());
+        SWSS_LOG_NOTICE("MCLagSYNCD remove mclag_unique_ip_cfg_tbl to selectable");
+        delete p_mclag_unique_ip_cfg_tbl;
+        p_mclag_unique_ip_cfg_tbl = NULL;
+    }
+
+    if (p_state_fdb_tbl)
+    {
+        m_select->removeSelectable(p_state_fdb_tbl);
+        SWSS_LOG_INFO(" MCLAGSYNCD remove state_fdb_tbl from selectable");
+        delete p_state_fdb_tbl;
+        p_state_fdb_tbl = NULL;
+    }
+
+    if (p_state_vlan_mbr_subscriber_table)
+    {
+        m_select->removeSelectable(p_state_vlan_mbr_subscriber_table);
+        SWSS_LOG_INFO(" MCLAGSYNCD remove p_state_vlan_mbr_subscriber_table selectable");
+
+        delete p_state_vlan_mbr_subscriber_table;
+        p_state_vlan_mbr_subscriber_table = NULL;
+    }
 }
 
 
@@ -1291,8 +1298,8 @@ void MclagLink::processVlanMemberTableUpdates(std::deque<KeyOpFieldsValuesTuple>
 
 /* Enable/Disable traffic distribution mode for LAG member port */
 void MclagLink::mclagsyncd_set_traffic_disable(
-    char                      *msg,
-    uint8_t                   msg_type)
+        char                      *msg,
+        uint8_t                   msg_type)
 {
     string                    lag_name;
     string                    traffic_dist_disable;
@@ -1316,14 +1323,14 @@ void MclagLink::mclagsyncd_set_traffic_disable(
     fvVector.push_back(make_pair("traffic_disable", traffic_dist_disable));
     p_lag_tbl->set(lag_name, fvVector);
     SWSS_LOG_NOTICE("Set traffic %s for %s",
-        (msg_type == MCLAG_MSG_TYPE_SET_TRAFFIC_DIST_DISABLE) ?
-        "disable" : "enable", lag_name.c_str());
+            (msg_type == MCLAG_MSG_TYPE_SET_TRAFFIC_DIST_DISABLE) ?
+            "disable" : "enable", lag_name.c_str());
 }
 
 /* Set the oper_status field in the STATE_MCLAG_TABLE */
 void MclagLink::mclagsyncd_set_iccp_state(
-    char                      *msg,
-    size_t                    msg_len)
+        char                      *msg,
+        size_t                    msg_len)
 {
     int                       mlag_id = 0;
     bool                      is_oper_up = false;
@@ -1345,7 +1352,7 @@ void MclagLink::mclagsyncd_set_iccp_state(
             case MCLAG_SUB_OPTION_TYPE_OPER_STATUS:
                 memcpy(&is_oper_up, op_hdr->data, op_hdr->op_len);
                 fvVector.push_back(
-                    make_pair("oper_status", is_oper_up ? "up" : "down"));
+                        make_pair("oper_status", is_oper_up ? "up" : "down"));
                 break;
 
             default:
@@ -1360,7 +1367,7 @@ void MclagLink::mclagsyncd_set_iccp_state(
         /* Update MLAG table: key = mlag_id, value = oper_status */
         p_mclag_tbl->set(to_string(mlag_id), fvVector);
         SWSS_LOG_NOTICE("Set mlag %d ICCP state to %s",
-            mlag_id, is_oper_up ? "up" : "down");
+                mlag_id, is_oper_up ? "up" : "down");
     }
     else
     {
@@ -1370,8 +1377,8 @@ void MclagLink::mclagsyncd_set_iccp_state(
 
 /* Set the role field in the STATE_MCLAG_TABLE */
 void MclagLink::mclagsyncd_set_iccp_role(
-    char                      *msg,
-    size_t                    msg_len)
+        char                      *msg,
+        size_t                    msg_len)
 {
     int                       mlag_id = 0;
     bool                      is_active_role;
@@ -1396,7 +1403,7 @@ void MclagLink::mclagsyncd_set_iccp_role(
             case MCLAG_SUB_OPTION_TYPE_ICCP_ROLE:
                 memcpy(&is_active_role, op_hdr->data, op_hdr->op_len);
                 fvVector.push_back(
-                    make_pair("role", is_active_role ? "active" : "standby"));
+                        make_pair("role", is_active_role ? "active" : "standby"));
                 break;
 
             case MCLAG_SUB_OPTION_TYPE_SYSTEM_ID:
@@ -1415,8 +1422,8 @@ void MclagLink::mclagsyncd_set_iccp_role(
         /* Update MLAG table: key = mlag_id, value = role */
         p_mclag_tbl->set(to_string(mlag_id), fvVector);
         SWSS_LOG_NOTICE("Set mlag %d ICCP role to %s, system_id(%s)",
-            mlag_id, is_active_role ? "active" : "standby",
-            valid_system_id ? system_id_str.c_str() : "None");
+                mlag_id, is_active_role ? "active" : "standby",
+                valid_system_id ? system_id_str.c_str() : "None");
     }
     else
     {
@@ -1426,8 +1433,8 @@ void MclagLink::mclagsyncd_set_iccp_role(
 
 /* Set the system_mac field in the STATE_MCLAG_TABLE */
 void MclagLink::mclagsyncd_set_system_id(
-    char                      *msg,
-    size_t                    msg_len)
+        char                      *msg,
+        size_t                    msg_len)
 {
     int                       mlag_id = 0;
     string                    system_id_str;
@@ -1463,7 +1470,7 @@ void MclagLink::mclagsyncd_set_system_id(
         /* Update MLAG table: key = mlag_id, value = system_mac */
         p_mclag_tbl->set(to_string(mlag_id), fvVector);
         SWSS_LOG_NOTICE("Set mlag %d system mac to %s",
-            mlag_id, system_id_str.c_str());
+                mlag_id, system_id_str.c_str());
     }
     else
     {
@@ -1471,9 +1478,25 @@ void MclagLink::mclagsyncd_set_system_id(
     }
 }
 
+void MclagLink::processStateFdb(SubscriberStateTable *stateFdbTbl)
+{
+    SWSS_LOG_INFO("MCLAGSYNCD: Process State Fdb events ");
+    std::deque<KeyOpFieldsValuesTuple> entries;
+    stateFdbTbl->pops(entries);
+    mclagsyncd_send_fdb_entries(entries);
+}
+
+void MclagLink::processStateVlanMember(SubscriberStateTable *stateVlanMemberTbl)
+{
+    SWSS_LOG_INFO("MCLAGSYNCD: Process State Vlan Member events ");
+    std::deque<KeyOpFieldsValuesTuple> entries;
+    stateVlanMemberTbl->pops(entries);
+    processVlanMemberTableUpdates(entries);
+}
+
 /* Delete Mlag entry in the STATE_MCLAG_TABLE */
 void MclagLink::mclagsyncd_del_iccp_info(
-    char                      *msg)
+        char                      *msg)
 {
     int                       mlag_id;
     mclag_sub_option_hdr_t    *op_hdr = NULL;
@@ -1527,8 +1550,8 @@ void MclagLink::deleteLocalIfPortIsolate(std::string mclag_if)
  * Key = "Mclag<id>|interface"
  */
 void MclagLink::mclagsyncd_set_remote_if_state(
-    char                      *msg,
-    size_t                    msg_len)
+        char                      *msg,
+        size_t                    msg_len)
 {
     int                       mlag_id = 0;
     bool                      is_oper_up;
@@ -1556,7 +1579,7 @@ void MclagLink::mclagsyncd_set_remote_if_state(
             case MCLAG_SUB_OPTION_TYPE_OPER_STATUS:
                 memcpy(&is_oper_up, op_hdr->data, op_hdr->op_len);
                 fvVector.push_back(
-                    make_pair("oper_status", is_oper_up ? "up" : "down"));
+                        make_pair("oper_status", is_oper_up ? "up" : "down"));
                 break;
 
             default:
@@ -1571,12 +1594,12 @@ void MclagLink::mclagsyncd_set_remote_if_state(
         key =  to_string(mlag_id) + "|" + lag_name;
         p_mclag_remote_intf_tbl->set(key, fvVector);
         SWSS_LOG_NOTICE("Set mlag %d, remote interface %s to %s",
-            mlag_id, lag_name.c_str(), is_oper_up ? "up" : "down");
+                mlag_id, lag_name.c_str(), is_oper_up ? "up" : "down");
     }
     else
     {
         SWSS_LOG_ERROR("Invalid parameter, mlag %d, remote interface %s",
-            mlag_id, lag_name.empty() ? "None" : lag_name.c_str());
+                mlag_id, lag_name.empty() ? "None" : lag_name.c_str());
     }
 }
 
@@ -1584,8 +1607,8 @@ void MclagLink::mclagsyncd_set_remote_if_state(
  * Key = "Mclag<id>|interface"
  */
 void MclagLink::mclagsyncd_del_remote_if_info(
-    char                      *msg,
-    size_t                    msg_len)
+        char                      *msg,
+        size_t                    msg_len)
 {
     int                       mlag_id = 0;
     string                    lag_name;
@@ -1620,7 +1643,7 @@ void MclagLink::mclagsyncd_del_remote_if_info(
         key = to_string(mlag_id) + "|" + lag_name;
         p_mclag_remote_intf_tbl->del(key);
         SWSS_LOG_NOTICE("Delete mlag %d, remote interface %s",
-            mlag_id, lag_name.c_str());
+                mlag_id, lag_name.c_str());
     }
     else
     {
@@ -1632,8 +1655,8 @@ void MclagLink::mclagsyncd_del_remote_if_info(
  * Notes: Mlag-ID is not used currently for the local interface table
  */
 void MclagLink::mclagsyncd_set_peer_link_isolation(
-    char                      *msg,
-    size_t                    msg_len)
+        char                      *msg,
+        size_t                    msg_len)
 {
     int                       mlag_id = 0;
     bool                      is_isolation_enable;
@@ -1672,19 +1695,19 @@ void MclagLink::mclagsyncd_set_peer_link_isolation(
     {
         setLocalIfPortIsolate(mclag_if_name, is_isolation_enable);
         SWSS_LOG_NOTICE("%s %s isolation from peer-link",
-            is_isolation_enable ? "Enable" : "Disable", mclag_if_name.c_str());
+                is_isolation_enable ? "Enable" : "Disable", mclag_if_name.c_str());
     }
     else
     {
         SWSS_LOG_ERROR("Missing parameter, mclag interface %s, ",
-            mclag_if_name.empty() ? "None" : mclag_if_name.c_str());
+                mclag_if_name.empty() ? "None" : mclag_if_name.c_str());
     }
 }
- 
+
 /* Set the remote system mac field in the STATE_MCLAG_TABLE */
 void MclagLink::mclagsyncd_set_peer_system_id(
-    char                      *msg,
-    size_t                    msg_len)
+        char                      *msg,
+        size_t                    msg_len)
 {
     int                       mlag_id = 0;
     string                    system_id_str;
@@ -1744,14 +1767,14 @@ MclagLink::MclagLink(Select *select, int port) :
         throw system_error(errno, system_category());
 
     if (setsockopt(m_server_socket, SOL_SOCKET, SO_REUSEADDR, &true_val,
-           sizeof(true_val)) < 0)
+                sizeof(true_val)) < 0)
     {
         close(m_server_socket);
         throw system_error(errno, system_category());
     }
 
     if (setsockopt(m_server_socket, SOL_SOCKET, SO_KEEPALIVE, &true_val,
-           sizeof(true_val)) < 0)
+                sizeof(true_val)) < 0)
     {
         close(m_server_socket);
         throw system_error(errno, system_category());
@@ -1777,6 +1800,37 @@ MclagLink::MclagLink(Select *select, int port) :
     m_server_up = true;
     m_messageBuffer = new char[m_bufSize];
     m_messageBuffer_send = new char[MCLAG_MAX_SEND_MSG_LEN];
+
+    p_learn = NULL;
+
+    p_state_db    = unique_ptr<DBConnector>(new DBConnector("STATE_DB", 0));
+    p_appl_db     = unique_ptr<DBConnector>(new DBConnector("APPL_DB", 0));
+    p_config_db   = unique_ptr<DBConnector>(new DBConnector("CONFIG_DB", 0));
+    p_asic_db     = unique_ptr<DBConnector>(new DBConnector("ASIC_DB", 0));
+    p_counters_db = unique_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
+    p_notificationsDb = unique_ptr<DBConnector>(new DBConnector("STATE_DB", 0));
+
+    p_device_metadata_tbl          = unique_ptr<Table>(new Table(p_config_db.get(), CFG_DEVICE_METADATA_TABLE_NAME));
+    p_mclag_cfg_table              = unique_ptr<Table>(new Table(p_config_db.get(), CFG_MCLAG_TABLE_NAME)); 
+    p_mclag_intf_cfg_table         = unique_ptr<Table>(new Table(p_config_db.get(), CFG_MCLAG_INTF_TABLE_NAME));
+
+    p_mclag_tbl                    = unique_ptr<Table>(new Table(p_state_db.get(), STATE_MCLAG_TABLE_NAME));
+    p_mclag_local_intf_tbl         = unique_ptr<Table>(new Table(p_state_db.get(), STATE_MCLAG_LOCAL_INTF_TABLE_NAME));
+    p_mclag_remote_intf_tbl        = unique_ptr<Table>(new Table(p_state_db.get(), STATE_MCLAG_REMOTE_INTF_TABLE_NAME));
+
+
+    p_intf_tbl      = unique_ptr<ProducerStateTable>(new ProducerStateTable(p_appl_db.get(), APP_INTF_TABLE_NAME));
+    p_iso_grp_tbl   = unique_ptr<ProducerStateTable>(new ProducerStateTable(p_appl_db.get(), APP_ISOLATION_GROUP_TABLE_NAME));
+    p_fdb_tbl       = unique_ptr<ProducerStateTable>(new ProducerStateTable(p_appl_db.get(), APP_MCLAG_FDB_TABLE_NAME));
+    p_acl_table_tbl = unique_ptr<ProducerStateTable>(new ProducerStateTable(p_appl_db.get(), APP_ACL_TABLE_TABLE_NAME));
+    p_acl_rule_tbl  = unique_ptr<ProducerStateTable>(new ProducerStateTable(p_appl_db.get(), APP_ACL_RULE_TABLE_NAME));
+    p_lag_tbl       = unique_ptr<ProducerStateTable>(new ProducerStateTable(p_appl_db.get(), APP_LAG_TABLE_NAME));
+    p_port_tbl      = unique_ptr<ProducerStateTable>(new ProducerStateTable(p_appl_db.get(), APP_PORT_TABLE_NAME));
+
+    p_state_fdb_tbl                   = NULL;
+    p_state_vlan_mbr_subscriber_table = NULL;
+    p_mclag_intf_cfg_tbl              = NULL;
+    p_mclag_unique_ip_cfg_tbl         = NULL;
 }
 
 MclagLink::~MclagLink()
@@ -1787,6 +1841,18 @@ MclagLink::~MclagLink()
         close(m_connection_socket);
     if (m_server_up)
         close(m_server_socket);
+
+    if (p_state_fdb_tbl) 
+        delete p_state_fdb_tbl;
+
+    if (p_state_vlan_mbr_subscriber_table) 
+        delete p_state_vlan_mbr_subscriber_table;
+
+    if (p_mclag_unique_ip_cfg_tbl) 
+        delete p_mclag_unique_ip_cfg_tbl;
+
+    if (p_mclag_intf_cfg_tbl) 
+        delete p_mclag_intf_cfg_tbl;
 }
 
 void MclagLink::accept()
@@ -1795,7 +1861,7 @@ void MclagLink::accept()
     socklen_t client_len;
 
     m_connection_socket = ::accept(m_server_socket, (struct sockaddr *)&client_addr,
-                                   &client_len);
+            &client_len);
     if (m_connection_socket < 0)
         throw system_error(errno, system_category());
 
