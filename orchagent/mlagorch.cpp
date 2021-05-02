@@ -300,7 +300,7 @@ bool MlagOrch::addIslIsolationGroup()
     //Need peer link and at least one MLAG interface to create an isolation group
     if (m_isl_name.empty() || (m_mlagIntfs.size() == 0))
     {
-        SWSS_LOG_NOTICE("MLAG skips adding isolation group: isl name(%s), num MLAG interface %lu",
+        SWSS_LOG_NOTICE("MLAG skips adding isolation group: isl name(%s), num MLAG interface %zu",
             m_isl_name.empty() ? "invalid" : m_isl_name.c_str(), m_mlagIntfs.size());
         return false;
     }
@@ -366,7 +366,7 @@ bool MlagOrch::deleteIslIsolationGroup()
     //Delete isolation group if either peer link or all MLAG interfaces are removed
     if (!m_isl_name.empty() && (m_mlagIntfs.size() > 0))
     {
-        SWSS_LOG_NOTICE("MLAG skips deleting isolation group: isl name %s, num MLAG interface %lu",
+        SWSS_LOG_NOTICE("MLAG skips deleting isolation group: isl name %s, num MLAG interface %zu",
             m_isl_name.c_str(), m_mlagIntfs.size());
         return false;
     }
@@ -479,7 +479,7 @@ bool MlagOrch::addAllMlagInterfacesToIsolationGroup()
     //Need peer link and at least one MLAG interface to create an isolation group
     if (m_isl_name.empty() || (m_mlagIntfs.size() == 0))
     {
-        SWSS_LOG_NOTICE("MLAG skips adding mlag-if to isolation group: isl name(%s), mlag-if count %lu",
+        SWSS_LOG_NOTICE("MLAG skips adding mlag-if to isolation group: isl name(%s), mlag-if count %zu",
             m_isl_name.empty() ? "invalid" : m_isl_name.c_str(), m_mlagIntfs.size());
         return false;
     }
