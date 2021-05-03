@@ -36,7 +36,7 @@ SWSS, Redis, and all the other required components run inside a virtual switch D
     ```
     sudo modprobe team
     sudo apt install python3-pip net-tools ethtool vlan libnl-nf-3-200 libnl-cli-3-200
-    sudo pip3 install docker pytest flaky redis distro
+    sudo pip3 install docker pytest flaky redis distro dataclasses fstring
     ```
 
     If you are running **Ubuntu 18.04** you will need to install this package:

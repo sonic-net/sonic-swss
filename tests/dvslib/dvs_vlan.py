@@ -1,4 +1,4 @@
-from .dvs_database import DVSDatabase
+from .dvs_common import PollingConfig
 
 class DVSVlan(object):
     def __init__(self, adb, cdb, sdb, cntrdb, appdb):
@@ -13,8 +13,13 @@ class DVSVlan(object):
         vlan_entry = {"vlanid": vlanID}
         self.config_db.create_entry("VLAN", vlan, vlan_entry)
 
-    def remove_vlan(self, vlanID):
-        vlan = "Vlan{}".format(vlanID)
+    def create_vlan_hostif(self, vlan, hostif_name):
+        vlan = "Vlan{}".format(vlan)
+        vlan_entry = {"vlanid": vlan,  "host_ifname": hostif_name}
+        self.config_db.update_entry("VLAN", vlan, vlan_entry)
+
+    def remove_vlan(self, vlan):
+        vlan = "Vlan{}".format(vlan)
         self.config_db.delete_entry("VLAN", vlan)
 
     def create_vlan_member(self, vlanID, interface, tagging_mode="untagged"):
@@ -49,10 +54,11 @@ class DVSVlan(object):
 
     def get_and_verify_vlan_ids(self,
                                 expected_num,
-                                polling_config=DVSDatabase.DEFAULT_POLLING_CONFIG):
+                                polling_config=PollingConfig()):
         vlan_entries = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_VLAN",
                                                     expected_num + 1,
                                                     polling_config)
+
         return [v for v in vlan_entries if v != self.asic_db.default_vlan_id]
 
     def verify_vlan_member(self, vlan_oid, iface, tagging_mode="SAI_VLAN_TAGGING_MODE_UNTAGGED"):
@@ -73,4 +79,22 @@ class DVSVlan(object):
         #     to do it.
         assert self.asic_db.port_to_id_map[bridge_port["SAI_BRIDGE_PORT_ATTR_PORT_ID"]] == expected_iface
         return bridge_port_id
+
+    def verify_vlan_hostif(self, hostif_name, hostifs_oid, vlan_oid):
+        hostif = {}
+
+        for hostif_oid in hostifs_oid:
+            hostif = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF", hostif_oid)
+            if hostif.get("SAI_HOSTIF_ATTR_NAME") == hostif_name:
+                break
+
+        assert hostif.get("SAI_HOSTIF_ATTR_TYPE") == "SAI_HOSTIF_TYPE_NETDEV"
+        assert hostif.get("SAI_HOSTIF_ATTR_OBJ_ID") == vlan_oid
+        assert hostif.get("SAI_HOSTIF_ATTR_NAME") == hostif_name
+
+    def get_and_verify_vlan_hostif_ids(self, expected_num, polling_config=PollingConfig()):
+        hostif_entries = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF",
+                                                      expected_num + 1,
+                                                      polling_config)
+        return hostif_entries
 

@@ -23,7 +23,10 @@ private:
     Table m_statePortTable, m_stateLagTable;
     Table m_stateVlanTable, m_stateVlanMemberTable;
     std::set<std::string> m_vlans;
-
+    std::set<std::string> m_vlanReplay;
+    std::set<std::string> m_vlanMemberReplay;
+    bool replayDone;
+    
     void doTask(Consumer &consumer);
     void doVlanTask(Consumer &consumer);
     void doVlanMemberTask(Consumer &consumer);

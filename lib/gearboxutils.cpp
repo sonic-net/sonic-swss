@@ -173,6 +173,10 @@ std::map<int, gearbox_phy_t> GearboxUtils::loadPhyMap(Table *gearboxTable)
                 {
                     phy.access = val.second;
                 }
+                else if (val.first == "hwinfo")
+                {
+                    phy.hwinfo = val.second;
+                }
                 else if (val.first == "address")
                 {
                     phy.address = std::stoi(val.second);

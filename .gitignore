@@ -51,11 +51,13 @@ cfgmgr/vrfmgrd
 cfgmgr/vxlanmgrd
 cfgmgr/natmgrd
 cfgmgr/sflowmgrd
+cfgmgr/macsecmgrd
 fpmsyncd/fpmsyncd
 gearsyncd/gearsyncd
 mclagsyncd/mclagsyncd
 natsyncd/natsyncd
 neighsyncd/neighsyncd
+fdbsyncd/fdbsyncd
 orchagent/orchagent
 orchagent/orchagent_restart_check
 orchagent/routeresync

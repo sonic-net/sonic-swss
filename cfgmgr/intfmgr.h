@@ -19,10 +19,12 @@ public:
 
 private:
     ProducerStateTable m_appIntfTableProducer;
+    Table m_cfgIntfTable, m_cfgVlanIntfTable, m_cfgLagIntfTable, m_cfgLoopbackIntfTable;
     Table m_statePortTable, m_stateLagTable, m_stateVlanTable, m_stateVrfTable, m_stateIntfTable;
 
     std::set<std::string> m_subIntfList;
     std::set<std::string> m_loopbackIntfList;
+    std::set<std::string> m_pendingReplayIntfList;
 
     void setIntfIp(const std::string &alias, const std::string &opCmd, const IpPrefix &ipPrefix);
     void setIntfVrf(const std::string &alias, const std::string &vrfName);
@@ -36,6 +38,8 @@ private:
     bool isIntfCreated(const std::string &alias);
     bool isIntfChangeVrf(const std::string &alias, const std::string &vrfName);
     int getIntfIpCount(const std::string &alias);
+    void buildIntfReplayList(void);
+    void setWarmReplayDoneState();
 
     void addLoopbackIntf(const std::string &alias);
     void delLoopbackIntf(const std::string &alias);
@@ -49,6 +53,9 @@ private:
     void removeSubIntfState(const std::string &alias);
 
     bool setIntfProxyArp(const std::string &alias, const std::string &proxy_arp);
+    bool setIntfGratArp(const std::string &alias, const std::string &grat_arp);
+
+    bool m_replayDone {false};
 };
 
 }

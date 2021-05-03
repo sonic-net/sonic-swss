@@ -103,7 +103,7 @@ class TestMirror(object):
 
         # check asic database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_POLICER")
-        policer_entries = tbl.getKeys()
+        policer_entries = [p for p in tbl.getKeys() if p not in dvs.asicdb.default_copp_policers]
         assert len(policer_entries) == 1
         policer_oid = policer_entries[0]
 

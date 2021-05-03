@@ -24,6 +24,10 @@ using namespace swss;
 
 IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
+        m_cfgIntfTable(cfgDb, CFG_INTF_TABLE_NAME),
+        m_cfgVlanIntfTable(cfgDb, CFG_VLAN_INTF_TABLE_NAME),
+        m_cfgLagIntfTable(cfgDb, CFG_LAG_INTF_TABLE_NAME),
+        m_cfgLoopbackIntfTable(cfgDb, CFG_LOOPBACK_INTERFACE_TABLE_NAME),
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
         m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME),
         m_stateVlanTable(stateDb, STATE_VLAN_TABLE_NAME),
@@ -34,6 +38,16 @@ IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
     if (!WarmStart::isWarmStart())
     {
         flushLoopbackIntfs();
+        WarmStart::setWarmStartState("intfmgrd", WarmStart::WSDISABLED);
+    }
+    else
+    {
+        //Build the interface list to be replayed to Kernel
+        buildIntfReplayList();
+        if (m_pendingReplayIntfList.empty())
+        {
+            setWarmReplayDoneState();
+        }
     }
 }
 
@@ -172,6 +186,34 @@ int IntfMgr::getIntfIpCount(const string &alias)
     return std::stoi(res);
 }
 
+void IntfMgr::buildIntfReplayList(void)
+{
+    vector<string> intfList;
+
+    m_cfgIntfTable.getKeys(intfList);
+    std::copy( intfList.begin(), intfList.end(), std::inserter( m_pendingReplayIntfList, m_pendingReplayIntfList.end() ) );
+
+    m_cfgLoopbackIntfTable.getKeys(intfList);
+    std::copy( intfList.begin(), intfList.end(), std::inserter( m_pendingReplayIntfList, m_pendingReplayIntfList.end() ) );
+
+    m_cfgVlanIntfTable.getKeys(intfList);
+    std::copy( intfList.begin(), intfList.end(), std::inserter( m_pendingReplayIntfList, m_pendingReplayIntfList.end() ) );
+
+    m_cfgLagIntfTable.getKeys(intfList);
+    std::copy( intfList.begin(), intfList.end(), std::inserter( m_pendingReplayIntfList, m_pendingReplayIntfList.end() ) );
+
+    SWSS_LOG_INFO("Found %d Total Intfs to be replayed", (int)m_pendingReplayIntfList.size() );
+}
+
+void IntfMgr::setWarmReplayDoneState()
+{
+    m_replayDone = true;
+    WarmStart::setWarmStartState("intfmgrd", WarmStart::REPLAYED);
+    // There is no operation to be performed for intfmgr reconcillation
+    // Hence mark it reconciled right away
+    WarmStart::setWarmStartState("intfmgrd", WarmStart::RECONCILED);
+}
+
 bool IntfMgr::isIntfCreated(const string &alias)
 {
     vector<FieldValueTuple> temp;
@@ -270,6 +312,36 @@ void IntfMgr::removeSubIntfState(const string &alias)
         // EthernetX using PORT_TABLE
         m_statePortTable.del(alias);
     }
+}
+
+bool IntfMgr::setIntfGratArp(const string &alias, const string &grat_arp)
+{
+    /*
+     * Enable gratuitous ARP by accepting unsolicited ARP replies
+     */
+    stringstream cmd;
+    string res;
+    string garp_enabled;
+
+    if (grat_arp == "enabled")
+    {
+        garp_enabled = "1";
+    }
+    else if (grat_arp == "disabled")
+    {
+        garp_enabled = "0";
+    }
+    else
+    {
+        SWSS_LOG_ERROR("GARP state is invalid: \"%s\"", grat_arp.c_str());
+        return false;
+    }
+
+    cmd << ECHO_CMD << " " << garp_enabled << " > /proc/sys/net/ipv4/conf/" << alias << "/arp_accept";
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+
+    SWSS_LOG_INFO("ARP accept set to \"%s\" on interface \"%s\"",  grat_arp.c_str(), alias.c_str());
+    return true;
 }
 
 bool IntfMgr::setIntfProxyArp(const string &alias, const string &proxy_arp)
@@ -374,6 +446,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
     string adminStatus = "";
     string nat_zone = "";
     string proxy_arp = "";
+    string grat_arp = "";
 
     for (auto idx : data)
     {
@@ -395,6 +468,10 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         else if (field == "proxy_arp")
         {
             proxy_arp = value;
+        }
+        else if (field == "grat_arp")
+        {
+            grat_arp = value;
         }
 
         if (field == "nat_zone")
@@ -474,6 +551,21 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
             }
         }
 
+        if (!grat_arp.empty())
+        {
+            if (!setIntfGratArp(alias, grat_arp))
+            {
+                SWSS_LOG_ERROR("Failed to set ARP accept to \"%s\" state for the \"%s\" interface", grat_arp.c_str(), alias.c_str());
+                return false;
+            }
+
+            if (!alias.compare(0, strlen(VLAN_PREFIX), VLAN_PREFIX))
+            {
+                FieldValueTuple fvTuple("grat_arp", grat_arp);
+                data.push_back(fvTuple);
+            }
+        }
+
         if (!subIntfAlias.empty())
         {
             if (m_subIntfList.find(subIntfAlias) == m_subIntfList.end())
@@ -534,7 +626,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
     else if (op == DEL_COMMAND)
     {
         /* make sure all ip addresses associated with interface are removed, otherwise these ip address would
-           be set with global vrf and it may cause ip address confliction. */
+           be set with global vrf and it may cause ip address conflict. */
         if (getIntfIpCount(alias))
         {
             return false;
@@ -627,6 +719,8 @@ void IntfMgr::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
+    string table_name = consumer.getTableName();
+
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
@@ -638,10 +732,25 @@ void IntfMgr::doTask(Consumer &consumer)
 
         if (keys.size() == 1)
         {
+            if((table_name == CFG_VOQ_INBAND_INTERFACE_TABLE_NAME) &&
+                    (op == SET_COMMAND))
+            {
+                //No further processing needed. Just relay to orchagent
+                m_appIntfTableProducer.set(keys[0], data);
+                m_stateIntfTable.hset(keys[0], "vrf", "");
+
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
             if (!doIntfGeneralTask(keys, data, op))
             {
                 it++;
                 continue;
+            }
+            else
+            {
+                //Entry programmed, remove it from pending list if present
+                m_pendingReplayIntfList.erase(keys[0]);
             }
         }
         else if (keys.size() == 2)
@@ -651,6 +760,11 @@ void IntfMgr::doTask(Consumer &consumer)
                 it++;
                 continue;
             }
+            else
+            {
+                //Entry programmed, remove it from pending list if present
+                m_pendingReplayIntfList.erase(keys[0] + config_db_key_delimiter + keys[1] );
+            }
         }
         else
         {
@@ -658,5 +772,10 @@ void IntfMgr::doTask(Consumer &consumer)
         }
 
         it = consumer.m_toSync.erase(it);
+    }
+
+    if (!m_replayDone && WarmStart::isWarmStart() && m_pendingReplayIntfList.empty() )
+    {
+        setWarmReplayDoneState();
     }
 }

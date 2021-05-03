@@ -163,7 +163,7 @@ void DebugCounterOrch::doTask(Consumer& consumer)
                 ++it;
                 break;
             case task_process_status::task_failed:
-                SWSS_LOG_ERROR("Failed to process debug counters '%s' task, error(s) occured during execution", op.c_str());
+                SWSS_LOG_ERROR("Failed to process debug counters '%s' task, error(s) occurred during execution", op.c_str());
                 consumer.m_toSync.erase(it++);
                 break;
             default:
@@ -255,7 +255,7 @@ task_process_status DebugCounterOrch::installDebugCounter(const string& counter_
     addFreeCounter(counter_name, counter_type);
     reconcileFreeDropCounters(counter_name);
 
-    SWSS_LOG_NOTICE("Succesfully created drop counter %s", counter_name.c_str());
+    SWSS_LOG_NOTICE("Successfully created drop counter %s", counter_name.c_str());
     return task_process_status::task_success;
 }
 
@@ -294,7 +294,7 @@ task_process_status DebugCounterOrch::uninstallDebugCounter(const string& counte
         m_counterNameToSwitchStatMap->hdel("", counter_name);
     }
 
-    SWSS_LOG_NOTICE("Succesfully deleted drop counter %s", counter_name.c_str());
+    SWSS_LOG_NOTICE("Successfully deleted drop counter %s", counter_name.c_str());
     return task_process_status::task_success;
 }
 
@@ -451,7 +451,7 @@ void DebugCounterOrch::reconcileFreeDropCounters(const string& counter_name)
         createDropCounter(counter_name, counter_it->second, reasons_it->second);
         free_drop_counters.erase(counter_it);
         free_drop_reasons.erase(reasons_it);
-        SWSS_LOG_NOTICE("Succesfully matched drop reasons to counter %s", counter_name.c_str());
+        SWSS_LOG_NOTICE("Successfully matched drop reasons to counter %s", counter_name.c_str());
     }
 }
 

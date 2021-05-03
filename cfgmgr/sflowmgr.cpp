@@ -13,6 +13,7 @@ using namespace swss;
 map<string,string> sflowSpeedRateInitMap =
 {
     {SFLOW_SAMPLE_RATE_KEY_400G, SFLOW_SAMPLE_RATE_VALUE_400G},
+    {SFLOW_SAMPLE_RATE_KEY_200G, SFLOW_SAMPLE_RATE_VALUE_200G},
     {SFLOW_SAMPLE_RATE_KEY_100G, SFLOW_SAMPLE_RATE_VALUE_100G},
     {SFLOW_SAMPLE_RATE_KEY_50G, SFLOW_SAMPLE_RATE_VALUE_50G},
     {SFLOW_SAMPLE_RATE_KEY_40G, SFLOW_SAMPLE_RATE_VALUE_40G},
@@ -82,23 +83,33 @@ void SflowMgr::sflowUpdatePortInfo(Consumer &consumer)
             if (sflowPortConf == m_sflowPortConfMap.end())
             {
                 new_port = true;
-                port_info.local_conf = false;
+                port_info.local_rate_cfg = false;
+                port_info.local_admin_cfg = false;
                 port_info.speed = SFLOW_ERROR_SPEED_STR;
                 port_info.rate = "";
                 port_info.admin = "";
                 m_sflowPortConfMap[key] = port_info;
             }
+
+            bool speed_change = false;
+            string new_speed = SFLOW_ERROR_SPEED_STR;
             for (auto i : values)
             {
                 if (fvField(i) == "speed")
                 {
-                    m_sflowPortConfMap[key].speed = fvValue(i);
+                    new_speed = fvValue(i);
                 }
             }
-
-            if (new_port)
+            if (m_sflowPortConfMap[key].speed != new_speed)
             {
-                if (m_gEnable && m_intfAllConf)
+                m_sflowPortConfMap[key].speed = new_speed;
+                speed_change = true;
+            }
+
+            if (m_gEnable && m_intfAllConf)
+            {
+                // If the Local rate Conf is already present, dont't override it even though the speed is changed
+                if (new_port || (speed_change && !m_sflowPortConfMap[key].local_rate_cfg))
                 {
                     vector<FieldValueTuple> fvs;
                     sflowGetGlobalInfo(fvs, m_sflowPortConfMap[key].speed);
@@ -111,7 +122,8 @@ void SflowMgr::sflowUpdatePortInfo(Consumer &consumer)
             auto sflowPortConf = m_sflowPortConfMap.find(key);
             if (sflowPortConf != m_sflowPortConfMap.end())
             {
-                bool local_cfg = m_sflowPortConfMap[key].local_conf;
+                bool local_cfg = m_sflowPortConfMap[key].local_rate_cfg ||
+                                 m_sflowPortConfMap[key].local_admin_cfg;
 
                 m_sflowPortConfMap.erase(key);
                 if ((m_intfAllConf && m_gEnable) || local_cfg)
@@ -128,18 +140,27 @@ void SflowMgr::sflowHandleSessionAll(bool enable)
 {
     for (auto it: m_sflowPortConfMap)
     {
-        if (!it.second.local_conf)
+        if (enable)
         {
             vector<FieldValueTuple> fvs;
-            sflowGetGlobalInfo(fvs, it.second.speed);
-            if (enable)
+            if (it.second.local_rate_cfg || it.second.local_admin_cfg)
             {
-                m_appSflowSessionTable.set(it.first, fvs);
+                sflowGetPortInfo(fvs, it.second);
+                /* Use global admin state if there is not a local one */
+                if (!it.second.local_admin_cfg) {
+                    FieldValueTuple fv1("admin_state", "up");
+                    fvs.push_back(fv1);
+                }
             }
             else
             {
-                m_appSflowSessionTable.del(it.first);
+                sflowGetGlobalInfo(fvs, it.second.speed);
             }
+            m_appSflowSessionTable.set(it.first, fvs);
+        }
+        else if (!it.second.local_admin_cfg)
+        {
+            m_appSflowSessionTable.del(it.first);
         }
     }
 }
@@ -148,7 +169,7 @@ void SflowMgr::sflowHandleSessionLocal(bool enable)
 {
     for (auto it: m_sflowPortConfMap)
     {
-        if (it.second.local_conf)
+        if (it.second.local_admin_cfg || it.second.local_rate_cfg)
         {
             vector<FieldValueTuple> fvs;
             sflowGetPortInfo(fvs, it.second);
@@ -170,7 +191,7 @@ void SflowMgr::sflowGetGlobalInfo(vector<FieldValueTuple> &fvs, string speed)
     FieldValueTuple fv1("admin_state", "up");
     fvs.push_back(fv1);
 
-    if (speed != SFLOW_ERROR_SPEED_STR)
+    if (speed != SFLOW_ERROR_SPEED_STR && sflowSpeedRateInitMap.find(speed) != sflowSpeedRateInitMap.end())
     {
         rate = sflowSpeedRateInitMap[speed];
     }
@@ -184,7 +205,7 @@ void SflowMgr::sflowGetGlobalInfo(vector<FieldValueTuple> &fvs, string speed)
 
 void SflowMgr::sflowGetPortInfo(vector<FieldValueTuple> &fvs, SflowPortInfo &local_info)
 {
-    if (local_info.admin.length() > 0)
+    if (local_info.local_admin_cfg)
     {
         FieldValueTuple fv1("admin_state", local_info.admin);
         fvs.push_back(fv1);
@@ -194,33 +215,48 @@ void SflowMgr::sflowGetPortInfo(vector<FieldValueTuple> &fvs, SflowPortInfo &loc
     fvs.push_back(fv2);
 }
 
-void SflowMgr::sflowCheckAndFillValues(string alias, vector<FieldValueTuple> &fvs)
+void SflowMgr::sflowCheckAndFillValues(string alias, vector<FieldValueTuple> &values,
+                                       vector<FieldValueTuple> &fvs)
 {
     string rate;
     bool admin_present = false;
     bool rate_present = false;
 
-    for (auto i : fvs)
+    for (auto i : values)
     {
         if (fvField(i) == "sample_rate")
         {
             rate_present = true;
             m_sflowPortConfMap[alias].rate = fvValue(i);
+            m_sflowPortConfMap[alias].local_rate_cfg = true;
+            FieldValueTuple fv(fvField(i), fvValue(i));
+            fvs.push_back(fv);
         }
         if (fvField(i) == "admin_state")
         {
             admin_present = true;
             m_sflowPortConfMap[alias].admin = fvValue(i);
+            m_sflowPortConfMap[alias].local_admin_cfg = true;
+            FieldValueTuple fv(fvField(i), fvValue(i));
+            fvs.push_back(fv);
+        }
+        if (fvField(i) == "NULL")
+        {
+            continue;
         }
     }
 
     if (!rate_present)
     {
-        if (m_sflowPortConfMap[alias].rate == "")
+        /* Go back to default sample-rate if there is not existing rate OR
+         * if a local config has been done but the rate has been removed
+         */
+        if (m_sflowPortConfMap[alias].rate == "" ||
+            m_sflowPortConfMap[alias].local_rate_cfg)
         {
             string speed = m_sflowPortConfMap[alias].speed;
 
-            if (speed != SFLOW_ERROR_SPEED_STR)
+            if (speed != SFLOW_ERROR_SPEED_STR && sflowSpeedRateInitMap.find(speed) != sflowSpeedRateInitMap.end())
             {
                 rate = sflowSpeedRateInitMap[speed];
             }
@@ -230,6 +266,7 @@ void SflowMgr::sflowCheckAndFillValues(string alias, vector<FieldValueTuple> &fv
             }
             m_sflowPortConfMap[alias].rate = rate;
         }
+        m_sflowPortConfMap[alias].local_rate_cfg = false;
         FieldValueTuple fv("sample_rate", m_sflowPortConfMap[alias].rate);
         fvs.push_back(fv);
     }
@@ -238,9 +275,10 @@ void SflowMgr::sflowCheckAndFillValues(string alias, vector<FieldValueTuple> &fv
     {
         if (m_sflowPortConfMap[alias].admin == "")
         {
-            /* By default admin state is enable if not set explicitely */
+            /* By default admin state is enabled if not set explicitly */
             m_sflowPortConfMap[alias].admin = "up";
         }
+        m_sflowPortConfMap[alias].local_admin_cfg = false;
         FieldValueTuple fv("admin_state", m_sflowPortConfMap[alias].admin);
         fvs.push_back(fv);
     }
@@ -326,11 +364,11 @@ void SflowMgr::doTask(Consumer &consumer)
                         it++;
                         continue;
                     }
-                    sflowCheckAndFillValues(key,values);
-                    m_sflowPortConfMap[key].local_conf = true;
+                    vector<FieldValueTuple> fvs;
+                    sflowCheckAndFillValues(key, values, fvs);
                     if (m_gEnable)
                     {
-                        m_appSflowSessionTable.set(key, values);
+                        m_appSflowSessionTable.set(key, fvs);
                     }
                 }
             }
@@ -364,7 +402,8 @@ void SflowMgr::doTask(Consumer &consumer)
                 else
                 {
                     m_appSflowSessionTable.del(key);
-                    m_sflowPortConfMap[key].local_conf = false;
+                    m_sflowPortConfMap[key].local_rate_cfg = false;
+                    m_sflowPortConfMap[key].local_admin_cfg = false;
                     m_sflowPortConfMap[key].rate = "";
                     m_sflowPortConfMap[key].admin = "";
 

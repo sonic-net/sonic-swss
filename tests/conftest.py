@@ -19,10 +19,13 @@ from swsscommon import swsscommon
 from dvslib.dvs_database import DVSDatabase
 from dvslib.dvs_common import PollingConfig, wait_for_result
 from dvslib.dvs_acl import DVSAcl
+from dvslib.dvs_route import DVSRoute
 from dvslib import dvs_vlan
 from dvslib import dvs_lag
 from dvslib import dvs_mirror
 from dvslib import dvs_policer
+
+from buffer_model import enable_dynamic_buffer
 
 # FIXME: For the sake of stabilizing the PR pipeline we currently assume there are 32 front-panel
 # ports in the system (much like the rest of the test suite). This should be adjusted to accomodate
@@ -70,6 +73,11 @@ def pytest_addoption(parser):
                      action="store",
                      default=None,
                      help="Topology file for the Virtual Chassis Topology")
+
+    parser.addoption("--buffer_model",
+                     action="store",
+                     default="traditional",
+                     help="Buffer model")
 
 
 def random_string(size=4, chars=string.ascii_uppercase + string.digits):
@@ -127,6 +135,8 @@ class AsicDbValidator(DVSDatabase):
         self.default_acl_tables = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
         self.default_acl_entries = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
 
+        self.default_copp_policers = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_POLICER")
+
 
 class ApplDbValidator(DVSDatabase):
     NEIGH_TABLE = "NEIGH_TABLE"
@@ -158,9 +168,11 @@ class VirtualServer:
             ensure_system(f"ip netns add {self.nsname}")
 
             # create vpeer link
-            ensure_system(f"ip link add {self.nsname[0:12]} type veth peer name {self.pifname}")
-            ensure_system(f"ip link set {self.nsname[0:12]} netns {self.nsname}")
-            ensure_system(f"ip link set {self.pifname} netns {pid}")
+            ensure_system(
+                f"ip netns exec {self.nsname} ip link add {self.nsname[0:12]}"
+                f" type veth peer name {self.pifname}"
+            )
+            ensure_system(f"ip netns exec {self.nsname} ip link set {self.pifname} netns {pid}")
 
             # bring up link in the virtual server
             ensure_system(f"ip netns exec {self.nsname} ip link set dev {self.nsname[0:12]} name eth0")
@@ -224,7 +236,8 @@ class DockerVirtualSwitch:
         forcedvs: bool = None,
         vct: str = None,
         newctnname: str = None,
-        ctnmounts: Dict[str, str] = None
+        ctnmounts: Dict[str, str] = None,
+        buffer_model: str = None,
     ):
         self.basicd = ["redis-server", "rsyslogd"]
         self.swssd = [
@@ -368,6 +381,10 @@ class DockerVirtualSwitch:
 
         # Make sure everything is up and running before turning over control to the caller
         self.check_ready_status_and_init_db()
+
+        # Switch buffer model to dynamic if necessary
+        if buffer_model == 'dynamic':
+            enable_dynamic_buffer(self.get_config_db(), self.runcmd)
 
     def destroy(self) -> None:
         if self.appldb:
@@ -1014,14 +1031,23 @@ class DockerVirtualSwitch:
         tbl._del(interface + ":" + ip)
         time.sleep(1)
 
-    # deps: mirror_port_erspan
+    # deps: mirror_port_erspan, warm_reboot
     def add_route(self, prefix, nexthop):
         self.runcmd("ip route add " + prefix + " via " + nexthop)
         time.sleep(1)
 
-    # deps: mirror_port_erspan
+    # deps: mirror_port_erspan, warm_reboot
     def change_route(self, prefix, nexthop):
         self.runcmd("ip route change " + prefix + " via " + nexthop)
+        time.sleep(1)
+
+    # deps: warm_reboot
+    def change_route_ecmp(self, prefix, nexthops):
+        cmd = ""
+        for nexthop in nexthops:
+            cmd += " nexthop via " + nexthop
+
+        self.runcmd("ip route change " + prefix + cmd)
         time.sleep(1)
 
     # deps: acl, mirror_port_erspan
@@ -1050,6 +1076,24 @@ class DockerVirtualSwitch:
         self.adb = swsscommon.DBConnector(1, self.redis_sock, 0)
         self.cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
         self.sdb = swsscommon.DBConnector(6, self.redis_sock, 0)
+
+    def getSwitchOid(self):
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_SWITCH")
+        keys = tbl.getKeys()
+        return str(keys[0])
+
+    def getVlanOid(self, vlanId):
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        vlan_oid = None
+        keys = tbl.getKeys()
+        for k in keys:
+            (status, fvs) = tbl.get(k)
+            assert status == True, "Could not read vlan from DB"
+            for fv in fvs:
+                if fv[0] == "SAI_VLAN_ATTR_VLAN_ID" and fv[1] == str(vlanId):
+                    vlan_oid = str(k)
+                    break
+        return vlan_oid
 
     # deps: acl_portchannel, fdb
     def getCrmCounterValue(self, key, counter):
@@ -1099,6 +1143,7 @@ class DockerVirtualSwitch:
             db = DVSDatabase(self.ASIC_DB_ID, self.redis_sock)
             db.default_acl_tables = self.asicdb.default_acl_tables
             db.default_acl_entries = self.asicdb.default_acl_entries
+            db.default_copp_policers = self.asicdb.default_copp_policers
             db.port_name_map = self.asicdb.portnamemap
             db.default_vlan_id = self.asicdb.default_vlan_id
             db.port_to_id_map = self.asicdb.portoidmap
@@ -1402,7 +1447,7 @@ class DockerVirtualChassisTopology:
     def get_chassis_instance_port_statuses(self):
         instance_to_port_status_map = {}
         if "neighbor_connections" not in self.virt_topo:
-            return instance_to_neighbor_map
+            return instance_to_port_status_map
 
         working_dir = os.getcwd()
         for conn, endpoints in self.virt_topo["neighbor_connections"].items():
@@ -1494,10 +1539,11 @@ def dvs(request) -> DockerVirtualSwitch:
     keeptb = request.config.getoption("--keeptb")
     imgname = request.config.getoption("--imgname")
     max_cpu = request.config.getoption("--max_cpu")
+    buffer_model = request.config.getoption("--buffer_model")
     fakeplatform = getattr(request.module, "DVS_FAKE_PLATFORM", None)
     log_path = name if name else request.module.__name__
 
-    dvs = DockerVirtualSwitch(name, imgname, keeptb, fakeplatform, log_path, max_cpu, forcedvs)
+    dvs = DockerVirtualSwitch(name, imgname, keeptb, fakeplatform, log_path, max_cpu, forcedvs, buffer_model = buffer_model)
 
     yield dvs
 
@@ -1541,6 +1587,12 @@ def dvs_acl(request, dvs) -> DVSAcl:
                   dvs.get_config_db(),
                   dvs.get_state_db(),
                   dvs.get_counters_db())
+
+@pytest.fixture(scope="class")
+def dvs_route(request, dvs) -> DVSRoute:
+    return DVSRoute(dvs.get_asic_db(),
+                    dvs.get_config_db())
+
 
 # FIXME: The rest of these also need to be reverted back to normal fixtures to
 # appease the linter.

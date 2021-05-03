@@ -12,6 +12,7 @@ class SaiWmStats:
     pg_shared = "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_BYTES"
     pg_headroom = "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_WATERMARK_BYTES"
     buffer_pool = "SAI_BUFFER_POOL_STAT_WATERMARK_BYTES"
+    hdrm_pool = "SAI_BUFFER_POOL_STAT_XOFF_ROOM_WATERMARK_BYTES"
 
 
 class WmTables:
@@ -23,7 +24,7 @@ class WmTables:
 class WmFCEntry:
     queue_stats_entry = {"QUEUE_COUNTER_ID_LIST": SaiWmStats.queue_shared}
     pg_stats_entry = {"PG_COUNTER_ID_LIST": "{},{}".format(SaiWmStats.pg_shared, SaiWmStats.pg_headroom)}
-    buffer_stats_entry = {"BUFFER_POOL_COUNTER_ID_LIST": SaiWmStats.buffer_pool}
+    buffer_stats_entry = {"BUFFER_POOL_COUNTER_ID_LIST": "{},{}".format(SaiWmStats.buffer_pool, SaiWmStats.hdrm_pool)}
 
 
 class TestWatermark(object):
@@ -80,6 +81,7 @@ class TestWatermark(object):
         self.populate_asic(dvs, "SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP", SaiWmStats.pg_shared, val)
         self.populate_asic(dvs, "SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP", SaiWmStats.pg_headroom, val)
         self.populate_asic(dvs, "SAI_OBJECT_TYPE_BUFFER_POOL", SaiWmStats.buffer_pool, val)
+        self.populate_asic(dvs, "SAI_OBJECT_TYPE_BUFFER_POOL", SaiWmStats.hdrm_pool, val)
         time.sleep(self.DEFAULT_POLL_INTERVAL)
 
     def verify_value(self, dvs, obj_ids, table_name, watermark_name, expected_value):
@@ -157,14 +159,18 @@ class TestWatermark(object):
 
         self.uc_q = []
         self.mc_q = []
+        self.all_q = []
 
         for q in self.qs:
-             if self.qs.index(q) % 16 < 8:
+             if self.qs.index(q) % 16 < 5:
                  tbl.set('', [(q, "SAI_QUEUE_TYPE_UNICAST")])
                  self.uc_q.append(q)
-             else:
+             elif self.qs.index(q) % 16 < 10:
                  tbl.set('', [(q, "SAI_QUEUE_TYPE_MULTICAST")])
                  self.mc_q.append(q)
+             else:
+                 tbl.set('', [(q, "SAI_QUEUE_TYPE_ALL")])
+                 self.all_q.append(q)
 
     def test_telemetry_period(self, dvs):
         self.setup_dbs(dvs)
@@ -181,6 +187,7 @@ class TestWatermark(object):
             self.verify_value(dvs, self.pgs, WmTables.periodic, SaiWmStats.pg_headroom, "0")
             self.verify_value(dvs, self.qs, WmTables.periodic, SaiWmStats.queue_shared, "0")
             self.verify_value(dvs, self.buffers, WmTables.periodic, SaiWmStats.buffer_pool, "0")
+            self.verify_value(dvs, self.buffers, WmTables.periodic, SaiWmStats.hdrm_pool, "0")
 
             self.populate_asic_all(dvs, "123")
 
@@ -193,6 +200,7 @@ class TestWatermark(object):
             self.verify_value(dvs, self.pgs, WmTables.periodic, SaiWmStats.pg_headroom, "0")
             self.verify_value(dvs, self.qs, WmTables.periodic, SaiWmStats.queue_shared, "0")
             self.verify_value(dvs, self.buffers, WmTables.periodic, SaiWmStats.buffer_pool, "0")
+            self.verify_value(dvs, self.buffers, WmTables.periodic, SaiWmStats.hdrm_pool, "0")
 
         finally:
             self.clear_flex_counter(dvs)
@@ -214,6 +222,7 @@ class TestWatermark(object):
                 self.verify_value(dvs, self.selected_pgs, table_name, SaiWmStats.pg_headroom, "192")
                 self.verify_value(dvs, self.selected_pgs, table_name, SaiWmStats.pg_shared, "192")
                 self.verify_value(dvs, self.buffers, table_name, SaiWmStats.buffer_pool, "192")
+                self.verify_value(dvs, self.buffers, table_name, SaiWmStats.hdrm_pool, "192")
 
             self.populate_asic_all(dvs, "96")
 
@@ -222,6 +231,7 @@ class TestWatermark(object):
                 self.verify_value(dvs, self.selected_pgs, table_name, SaiWmStats.pg_headroom, "192")
                 self.verify_value(dvs, self.selected_pgs, table_name, SaiWmStats.pg_shared, "192")
                 self.verify_value(dvs, self.buffers, table_name, SaiWmStats.buffer_pool, "192")
+                self.verify_value(dvs, self.buffers, table_name, SaiWmStats.hdrm_pool, "192")
 
             self.populate_asic_all(dvs, "288")
 
@@ -230,6 +240,7 @@ class TestWatermark(object):
                 self.verify_value(dvs, self.selected_pgs, table_name, SaiWmStats.pg_headroom, "288")
                 self.verify_value(dvs, self.selected_pgs, table_name, SaiWmStats.pg_shared, "288")
                 self.verify_value(dvs, self.buffers, table_name, SaiWmStats.buffer_pool, "288")
+                self.verify_value(dvs, self.buffers, table_name, SaiWmStats.hdrm_pool, "288")
 
         finally:
             self.clear_flex_counter(dvs)
@@ -272,6 +283,30 @@ class TestWatermark(object):
         self.verify_value(dvs, self.mc_q, WmTables.persistent, SaiWmStats.queue_shared, "288")
         self.verify_value(dvs, self.uc_q, WmTables.user, SaiWmStats.queue_shared, "288")
         self.verify_value(dvs, self.mc_q, WmTables.user, SaiWmStats.queue_shared, "288")
+        self.verify_value(dvs, self.all_q, WmTables.user, SaiWmStats.queue_shared, "288")
+        self.verify_value(dvs, self.all_q, WmTables.persistent, SaiWmStats.queue_shared, "288")
+
+        # clear queue all watermark, and verify that multicast and unicast watermarks are not affected
+
+        # clear persistent all watermark
+        exitcode, output = dvs.runcmd("sonic-clear queue persistent-watermark all")
+        time.sleep(1)
+        assert exitcode == 0, "CLI failure: %s" % output
+        # make sure it cleared
+        self.verify_value(dvs, self.all_q, WmTables.persistent, SaiWmStats.queue_shared, "0")
+
+        # clear user all watermark
+        exitcode, output = dvs.runcmd("sonic-clear queue watermark all")
+        time.sleep(1)
+        assert exitcode == 0, "CLI failure: %s" % output
+        # make sure it cleared
+        self.verify_value(dvs, self.all_q, WmTables.user, SaiWmStats.queue_shared, "0")
+
+        # make sure the rest is untouched
+        self.verify_value(dvs, self.mc_q, WmTables.user, SaiWmStats.queue_shared, "288")
+        self.verify_value(dvs, self.mc_q, WmTables.persistent, SaiWmStats.queue_shared, "288")
+        self.verify_value(dvs, self.uc_q, WmTables.user, SaiWmStats.queue_shared, "288")
+        self.verify_value(dvs, self.uc_q, WmTables.persistent, SaiWmStats.queue_shared, "0")
 
         self.enable_unittests(dvs, "false")
 

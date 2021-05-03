@@ -14,14 +14,24 @@ extern "C" {
 #include <set>
 #include <tuple>
 #include <vector>
+#include <linux/limits.h>
+#include <net/if.h>
 #include "timestamp.h"
 #include "sai_serialize.h"
 #include "saihelper.h"
+#include "orch.h"
 
 using namespace std;
 using namespace swss;
 
+#define _STR(s) #s
+#define STR(s) _STR(s)
+
 #define CONTEXT_CFG_FILE "/usr/share/sonic/hwsku/context_config.json"
+#define SAI_REDIS_SYNC_OPERATION_RESPONSE_TIMEOUT (480*1000)
+
+// hwinfo = "INTERFACE_NAME/PHY ID", mii_ioctl_data->phy_id is a __u16
+#define HWINFO_MAX_SIZE IFNAMSIZ + 1 + 5
 
 /* Initialize all global api pointers */
 sai_switch_api_t*           sai_switch_api;
@@ -51,6 +61,8 @@ sai_dtel_api_t*             sai_dtel_api;
 sai_samplepacket_api_t*     sai_samplepacket_api;
 sai_debug_counter_api_t*    sai_debug_counter_api;
 sai_nat_api_t*              sai_nat_api;
+sai_system_port_api_t*      sai_system_port_api;
+sai_macsec_api_t*           sai_macsec_api;
 
 extern sai_object_id_t gSwitchId;
 extern bool gSairedisRecord;
@@ -169,6 +181,8 @@ void initSaiApi()
     sai_api_query(SAI_API_SAMPLEPACKET,         (void **)&sai_samplepacket_api);
     sai_api_query(SAI_API_DEBUG_COUNTER,        (void **)&sai_debug_counter_api);
     sai_api_query(SAI_API_NAT,                  (void **)&sai_nat_api);
+    sai_api_query(SAI_API_SYSTEM_PORT,          (void **)&sai_system_port_api);
+    sai_api_query(SAI_API_MACSEC,               (void **)&sai_macsec_api);
 
     sai_log_set(SAI_API_SWITCH,                 SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_BRIDGE,                 SAI_LOG_LEVEL_NOTICE);
@@ -197,9 +211,11 @@ void initSaiApi()
     sai_log_set(SAI_API_SAMPLEPACKET,           SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_DEBUG_COUNTER,          SAI_LOG_LEVEL_NOTICE);
     sai_log_set((sai_api_t)SAI_API_NAT,         SAI_LOG_LEVEL_NOTICE);
+    sai_log_set(SAI_API_SYSTEM_PORT,            SAI_LOG_LEVEL_NOTICE);
+    sai_log_set(SAI_API_MACSEC,                 SAI_LOG_LEVEL_NOTICE);
 }
 
-void initSaiRedis(const string &record_location)
+void initSaiRedis(const string &record_location, const std::string &record_filename)
 {
     /**
      * NOTE: Notice that all Redis attributes here are using SAI_NULL_OBJECT_ID
@@ -225,6 +241,19 @@ void initSaiRedis(const string &record_location)
                 record_location.c_str(), status);
             exit(EXIT_FAILURE);
         }
+
+        attr.id = SAI_REDIS_SWITCH_ATTR_RECORDING_FILENAME;
+        attr.value.s8list.count = (uint32_t)record_filename.size();
+        attr.value.s8list.list = (int8_t*)const_cast<char *>(record_filename.c_str());
+
+        status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set SAI Redis recording logfile to %s, rv:%d",
+                record_filename.c_str(), status);
+            exit(EXIT_FAILURE);
+        }
+
     }
 
     /* Disable/enable SAI Redis recording */
@@ -251,6 +280,26 @@ void initSaiRedis(const string &record_location)
     }
     SWSS_LOG_NOTICE("Enable redis pipeline");
 
+    char *platform = getenv("platform");
+    if (platform && strstr(platform, MLNX_PLATFORM_SUBSTRING))
+    {
+        /* We set this long timeout in order for Orchagent to wait enough time for
+         * response from syncd. It is needed since in init, systemd syncd startup
+         * script first calls FW upgrade script (that might take up to 7 minutes
+         * in systems with Gearbox) and only then launches syncd container */
+        attr.id = SAI_REDIS_SWITCH_ATTR_SYNC_OPERATION_RESPONSE_TIMEOUT;
+        attr.value.u64 = SAI_REDIS_SYNC_OPERATION_RESPONSE_TIMEOUT;
+        status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set SAI REDIS response timeout");
+            exit(EXIT_FAILURE);
+        }
+
+        SWSS_LOG_NOTICE("SAI REDIS response timeout set successfully to %" PRIu64 " ", attr.value.u64);
+    }
+
     attr.id = SAI_REDIS_SWITCH_ATTR_NOTIFY_SYNCD;
     attr.value.s32 = SAI_REDIS_NOTIFY_SYNCD_INIT_VIEW;
     status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
@@ -261,6 +310,22 @@ void initSaiRedis(const string &record_location)
         exit(EXIT_FAILURE);
     }
     SWSS_LOG_NOTICE("Notify syncd INIT_VIEW");
+
+    if (platform && strstr(platform, MLNX_PLATFORM_SUBSTRING))
+    {
+        /* Set timeout back to the default value */
+        attr.id = SAI_REDIS_SWITCH_ATTR_SYNC_OPERATION_RESPONSE_TIMEOUT;
+        attr.value.u64 = SAI_REDIS_DEFAULT_SYNC_OPERATION_RESPONSE_TIMEOUT;
+        status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set SAI REDIS response timeout");
+            exit(EXIT_FAILURE);
+        }
+
+        SWSS_LOG_NOTICE("SAI REDIS response timeout set successfully to %" PRIu64 " ", attr.value.u64);
+    }
 }
 
 sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
@@ -269,6 +334,11 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
     sai_status_t status;
+    char fwPath[PATH_MAX];
+    char hwinfo[HWINFO_MAX_SIZE + 1];
+    char hwinfoIntf[IFNAMSIZ + 1];
+    unsigned int hwinfoPhyid;
+    int ret;
 
     SWSS_LOG_ENTER();
 
@@ -284,14 +354,48 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
     attr.value.u32 = 0;
     attrs.push_back(attr);
 
+    ret = sscanf(phy->hwinfo.c_str(), "%" STR(IFNAMSIZ) "[^/]/%u", hwinfoIntf, &hwinfoPhyid);
+    if (ret != 2) {
+        SWSS_LOG_ERROR("BOX: hardware info doesn't match the 'interface_name/phyid' "
+                       "format");
+        return SAI_STATUS_FAILURE;
+    }
+
+    if (hwinfoPhyid > std::numeric_limits<uint16_t>::max()) {
+        SWSS_LOG_ERROR("BOX: phyid is bigger than maximum limit");
+        return SAI_STATUS_FAILURE;
+    }
+
+    strcpy(hwinfo, phy->hwinfo.c_str());
+
     attr.id = SAI_SWITCH_ATTR_SWITCH_HARDWARE_INFO;
-    attr.value.s8list.count = 0;
-    attr.value.s8list.list = 0;
+    attr.value.s8list.count = (uint32_t) phy->hwinfo.length();
+    attr.value.s8list.list = (int8_t *) hwinfo;
     attrs.push_back(attr);
 
-    attr.id = SAI_SWITCH_ATTR_FIRMWARE_LOAD_METHOD;
-    attr.value.u32 = SAI_SWITCH_FIRMWARE_LOAD_METHOD_NONE;
-    attrs.push_back(attr);
+    if (phy->firmware.length() == 0)
+    {
+        attr.id = SAI_SWITCH_ATTR_FIRMWARE_LOAD_METHOD;
+        attr.value.u32 = SAI_SWITCH_FIRMWARE_LOAD_METHOD_NONE;
+        attrs.push_back(attr);
+    }
+    else
+    {
+        attr.id = SAI_SWITCH_ATTR_FIRMWARE_LOAD_METHOD;
+        attr.value.u32 = SAI_SWITCH_FIRMWARE_LOAD_METHOD_INTERNAL;
+        attrs.push_back(attr);
+
+        strncpy(fwPath, phy->firmware.c_str(), PATH_MAX - 1);
+
+        attr.id = SAI_SWITCH_ATTR_FIRMWARE_PATH_NAME;
+        attr.value.s8list.list = (int8_t *) fwPath;
+        attr.value.s8list.count = (uint32_t) strlen(fwPath) + 1;
+        attrs.push_back(attr);
+
+        attr.id = SAI_SWITCH_ATTR_FIRMWARE_LOAD_TYPE;
+        attr.value.u32 = SAI_SWITCH_FIRMWARE_LOAD_TYPE_AUTO;
+        attrs.push_back(attr);
+    }
 
     attr.id = SAI_SWITCH_ATTR_REGISTER_READ;
     attr.value.ptr = (void *) mdio_read;

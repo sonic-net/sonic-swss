@@ -276,7 +276,7 @@ private:
     natDnatPool_map_t        m_natDnatPoolInfo;
     SelectableTimer          *m_natRefreshTimer;
 
-    /* Declare doTask related fucntions */
+    /* Declare doTask related functions */
     void doTask(Consumer &consumer);
     void doTask(SelectableTimer &timer);
     void doNatRefreshTimerTask();

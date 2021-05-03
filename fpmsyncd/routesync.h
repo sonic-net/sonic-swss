@@ -41,7 +41,7 @@ private:
     /* Handle regular route (include VRF route) */
     void onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf);
 
-    void parseEncap(struct rtattr *tb, uint32_t &encap_value, string &rmac, uint32_t &vlan);
+    void parseEncap(struct rtattr *tb, uint32_t &encap_value, string &rmac);
 
     void parseRtAttrNested(struct rtattr **tb, int max,
                  struct rtattr *rta);
@@ -64,7 +64,7 @@ private:
     void getEvpnNextHopGwIf(char *gwaddr, int vni_value,
                           string& nexthops, string& vni_list,
                           string& mac_list, string& intf_list,
-                          string rmac, unsigned int vid);
+                          string rmac, string vlan_id);
 
     bool getEvpnNextHop(struct nlmsghdr *h, int received_bytes, struct rtattr *tb[],
                         string& nexthops, string& vni_list, string& mac_list,

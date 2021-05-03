@@ -12,7 +12,9 @@
 #define CLEAR_PG_SHARED_REQUEST "PG_SHARED"
 #define CLEAR_QUEUE_SHARED_UNI_REQUEST "Q_SHARED_UNI"
 #define CLEAR_QUEUE_SHARED_MULTI_REQUEST "Q_SHARED_MULTI"
+#define CLEAR_QUEUE_SHARED_ALL_REQUEST "Q_SHARED_ALL"
 #define CLEAR_BUFFER_POOL_REQUEST "BUFFER_POOL"
+#define CLEAR_HEADROOM_POOL_REQUEST "HEADROOM_POOL"
 
 extern PortsOrch *gPortsOrch;
 extern BufferOrch *gBufferOrch;
@@ -91,7 +93,7 @@ void WatermarkOrch::doTask(Consumer &consumer)
 
 void WatermarkOrch::handleWmConfigUpdate(const std::string &key, const std::vector<FieldValueTuple> &fvt)
 {
-    SWSS_LOG_ENTER();    
+    SWSS_LOG_ENTER();
     if (key == "TELEMETRY_INTERVAL")
     {
         for (std::pair<std::basic_string<char>, std::basic_string<char> > i: fvt)
@@ -152,7 +154,7 @@ void WatermarkOrch::doTask(NotificationConsumer &consumer)
         init_pg_ids();
     }
 
-    if (m_multicast_queue_ids.empty() and m_unicast_queue_ids.empty())
+    if (m_multicast_queue_ids.empty() and m_unicast_queue_ids.empty() and m_all_queue_ids.empty())
     {
         init_queue_ids();
     }
@@ -182,32 +184,44 @@ void WatermarkOrch::doTask(NotificationConsumer &consumer)
     if (data == CLEAR_PG_HEADROOM_REQUEST)
     {
         clearSingleWm(table,
-        "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_WATERMARK_BYTES",
-        m_pg_ids);
+                      "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_WATERMARK_BYTES",
+                      m_pg_ids);
     }
     else if (data == CLEAR_PG_SHARED_REQUEST)
     {
         clearSingleWm(table,
-        "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_BYTES",
-        m_pg_ids);
+                      "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_BYTES",
+                      m_pg_ids);
     }
     else if (data == CLEAR_QUEUE_SHARED_UNI_REQUEST)
     {
         clearSingleWm(table,
-        "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES",
-        m_unicast_queue_ids);
+                      "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES",
+                      m_unicast_queue_ids);
     }
     else if (data == CLEAR_QUEUE_SHARED_MULTI_REQUEST)
     {
         clearSingleWm(table,
-        "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES",
-        m_multicast_queue_ids);
+                      "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES",
+                      m_multicast_queue_ids);
+    }
+    else if (data == CLEAR_QUEUE_SHARED_ALL_REQUEST)
+    {
+        clearSingleWm(table,
+                      "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES",
+                      m_all_queue_ids);
     }
     else if (data == CLEAR_BUFFER_POOL_REQUEST)
     {
         clearSingleWm(table,
-        "SAI_BUFFER_POOL_STAT_WATERMARK_BYTES",
-        gBufferOrch->getBufferPoolNameOidMap());
+                      "SAI_BUFFER_POOL_STAT_WATERMARK_BYTES",
+                      gBufferOrch->getBufferPoolNameOidMap());
+    }
+    else if (data == CLEAR_HEADROOM_POOL_REQUEST)
+    {
+        clearSingleWm(table,
+                      "SAI_BUFFER_POOL_STAT_XOFF_ROOM_WATERMARK_BYTES",
+                      gBufferOrch->getBufferPoolNameOidMap());
     }
     else
     {
@@ -225,7 +239,7 @@ void WatermarkOrch::doTask(SelectableTimer &timer)
         init_pg_ids();
     }
 
-    if (m_multicast_queue_ids.empty() and m_unicast_queue_ids.empty())
+    if (m_multicast_queue_ids.empty() and m_unicast_queue_ids.empty() and m_all_queue_ids.empty())
     {
         init_queue_ids();
     }
@@ -243,15 +257,26 @@ void WatermarkOrch::doTask(SelectableTimer &timer)
         }
 
         clearSingleWm(m_periodicWatermarkTable.get(),
-            "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_WATERMARK_BYTES", m_pg_ids);
+                      "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_WATERMARK_BYTES",
+                      m_pg_ids);
         clearSingleWm(m_periodicWatermarkTable.get(),
-            "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_BYTES", m_pg_ids);
+                      "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_BYTES",
+                      m_pg_ids);
         clearSingleWm(m_periodicWatermarkTable.get(),
-            "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES", m_unicast_queue_ids);
+                      "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES",
+                      m_unicast_queue_ids);
         clearSingleWm(m_periodicWatermarkTable.get(),
-            "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES", m_multicast_queue_ids);
+                      "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES",
+                      m_multicast_queue_ids);
         clearSingleWm(m_periodicWatermarkTable.get(),
-            "SAI_BUFFER_POOL_STAT_WATERMARK_BYTES", gBufferOrch->getBufferPoolNameOidMap());
+                      "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES",
+                      m_all_queue_ids);
+        clearSingleWm(m_periodicWatermarkTable.get(),
+                      "SAI_BUFFER_POOL_STAT_WATERMARK_BYTES",
+                      gBufferOrch->getBufferPoolNameOidMap());
+        clearSingleWm(m_periodicWatermarkTable.get(),
+                      "SAI_BUFFER_POOL_STAT_XOFF_ROOM_WATERMARK_BYTES",
+                      gBufferOrch->getBufferPoolNameOidMap());
         SWSS_LOG_DEBUG("Periodic watermark cleared by timer!");
     }
 }
@@ -284,9 +309,13 @@ void WatermarkOrch::init_queue_ids()
         {
             m_unicast_queue_ids.push_back(id);
         }
-        else
+        else if (fv.second == "SAI_QUEUE_TYPE_MULTICAST")
         {
             m_multicast_queue_ids.push_back(id);
+        }
+        else if (fv.second == "SAI_QUEUE_TYPE_ALL")
+        {
+            m_all_queue_ids.push_back(id);
         }
     }
 }

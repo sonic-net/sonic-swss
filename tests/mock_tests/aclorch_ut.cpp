@@ -21,6 +21,9 @@ extern sai_vlan_api_t *sai_vlan_api;
 extern sai_bridge_api_t *sai_bridge_api;
 extern sai_route_api_t *sai_route_api;
 extern sai_next_hop_group_api_t* sai_next_hop_group_api;
+extern string gMySwitchType;
+
+using namespace saimeta;
 
 namespace aclorch_test
 {
@@ -103,6 +106,7 @@ namespace aclorch_test
         auto v = vector<swss::FieldValueTuple>(
             { { "SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST", "2:SAI_ACL_BIND_POINT_TYPE_PORT,SAI_ACL_BIND_POINT_TYPE_LAG" },
               { "SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE", "true" },
+              { "SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID", "true" },
               { "SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE", "true" },
               { "SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL", "true" },
               { "SAI_ACL_TABLE_ATTR_FIELD_SRC_IP", "true" },
@@ -113,7 +117,7 @@ namespace aclorch_test
               { "SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT", "true" },
               { "SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS", "true" },
               { "SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE", "2:SAI_ACL_RANGE_TYPE_L4_DST_PORT_RANGE,SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE" },
-              { "SAI_ACL_TABLE_ATTR_ACL_STAGE", "SAI_ACL_STAGE_INGRESS" } });
+              { "SAI_ACL_TABLE_ATTR_ACL_STAGE", "SAI_ACL_STAGE_INGRESS" }});
         SaiAttributeList attr_list(SAI_OBJECT_TYPE_ACL_TABLE, v, false);
 
         ASSERT_TRUE(Check::AttrListEq(SAI_OBJECT_TYPE_ACL_TABLE, res->attr_list, attr_list));
@@ -182,6 +186,7 @@ namespace aclorch_test
         shared_ptr<swss::DBConnector> m_app_db;
         shared_ptr<swss::DBConnector> m_config_db;
         shared_ptr<swss::DBConnector> m_state_db;
+        shared_ptr<swss::DBConnector> m_chassis_app_db;
 
         AclOrchTest()
         {
@@ -189,6 +194,8 @@ namespace aclorch_test
             m_app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
             m_config_db = make_shared<swss::DBConnector>("CONFIG_DB", 0);
             m_state_db = make_shared<swss::DBConnector>("STATE_DB", 0);
+            if(gMySwitchType == "voq")
+                m_chassis_app_db = make_shared<swss::DBConnector>("CHASSIS_APP_DB", 0);
         }
 
         static map<string, string> gProfileMap;
@@ -286,8 +293,16 @@ namespace aclorch_test
             gVirtualRouterId = attr.value.oid;
 
             TableConnector stateDbSwitchTable(m_state_db.get(), "SWITCH_CAPABILITY");
+            TableConnector conf_asic_sensors(m_config_db.get(), CFG_ASIC_SENSORS_TABLE_NAME);
+            TableConnector app_switch_table(m_app_db.get(),  APP_SWITCH_TABLE_NAME);
+
+            vector<TableConnector> switch_tables = {
+                conf_asic_sensors,
+                app_switch_table
+            };
+
             ASSERT_EQ(gSwitchOrch, nullptr);
-            gSwitchOrch = new SwitchOrch(m_app_db.get(), APP_SWITCH_TABLE_NAME, stateDbSwitchTable);
+            gSwitchOrch = new SwitchOrch(m_app_db.get(), switch_tables, stateDbSwitchTable);
 
             // Create dependencies ...
 
@@ -302,7 +317,7 @@ namespace aclorch_test
             };
 
             ASSERT_EQ(gPortsOrch, nullptr);
-            gPortsOrch = new PortsOrch(m_app_db.get(), ports_tables);
+            gPortsOrch = new PortsOrch(m_app_db.get(), ports_tables, m_chassis_app_db.get());
 
             ASSERT_EQ(gCrmOrch, nullptr);
             gCrmOrch = new CrmOrch(m_config_db.get(), CFG_CRM_TABLE_NAME);
@@ -311,27 +326,34 @@ namespace aclorch_test
             gVrfOrch = new VRFOrch(m_app_db.get(), APP_VRF_TABLE_NAME, m_state_db.get(), STATE_VRF_OBJECT_TABLE_NAME);
 
             ASSERT_EQ(gIntfsOrch, nullptr);
-            gIntfsOrch = new IntfsOrch(m_app_db.get(), APP_INTF_TABLE_NAME, gVrfOrch);
+            gIntfsOrch = new IntfsOrch(m_app_db.get(), APP_INTF_TABLE_NAME, gVrfOrch, m_chassis_app_db.get());
+
+            TableConnector applDbFdb(m_app_db.get(), APP_FDB_TABLE_NAME);
+            TableConnector stateDbFdb(m_state_db.get(), STATE_FDB_TABLE_NAME);
+
+            vector<table_name_with_pri_t> app_fdb_tables = {
+                { APP_FDB_TABLE_NAME,        FdbOrch::fdborch_pri},
+                { APP_VXLAN_FDB_TABLE_NAME,  FdbOrch::fdborch_pri}
+            };
+
+            ASSERT_EQ(gFdbOrch, nullptr);
+            gFdbOrch = new FdbOrch(m_app_db.get(), app_fdb_tables, stateDbFdb, gPortsOrch);
 
             ASSERT_EQ(gNeighOrch, nullptr);
-            gNeighOrch = new NeighOrch(m_app_db.get(), APP_NEIGH_TABLE_NAME, gIntfsOrch);
+            gNeighOrch = new NeighOrch(m_app_db.get(), APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch, m_chassis_app_db.get());
 
             ASSERT_EQ(gFgNhgOrch, nullptr);
-            vector<string> fgnhg_tables = {
-                CFG_FG_NHG,
-                CFG_FG_NHG_PREFIX,
-                CFG_FG_NHG_MEMBER
+            const int fgnhgorch_pri = 15;
+
+            vector<table_name_with_pri_t> fgnhg_tables = {
+                { CFG_FG_NHG,                 fgnhgorch_pri },
+                { CFG_FG_NHG_PREFIX,          fgnhgorch_pri },
+                { CFG_FG_NHG_MEMBER,          fgnhgorch_pri }
             };
             gFgNhgOrch = new FgNhgOrch(m_config_db.get(), m_app_db.get(), m_state_db.get(), fgnhg_tables, gNeighOrch, gIntfsOrch, gVrfOrch);
 
             ASSERT_EQ(gRouteOrch, nullptr);
             gRouteOrch = new RouteOrch(m_app_db.get(), APP_ROUTE_TABLE_NAME, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch);
-
-            TableConnector applDbFdb(m_app_db.get(), APP_FDB_TABLE_NAME);
-            TableConnector stateDbFdb(m_state_db.get(), STATE_FDB_TABLE_NAME);
-
-            ASSERT_EQ(gFdbOrch, nullptr);
-            gFdbOrch = new FdbOrch(applDbFdb, stateDbFdb, gPortsOrch);
 
             PolicerOrch *policer_orch = new PolicerOrch(m_config_db.get(), "POLICER");
 
@@ -355,14 +377,14 @@ namespace aclorch_test
 
             delete gSwitchOrch;
             gSwitchOrch = nullptr;
-            delete gFdbOrch;
-            gFdbOrch = nullptr;
             delete gMirrorOrch;
             gMirrorOrch = nullptr;
             delete gRouteOrch;
             gRouteOrch = nullptr;
             delete gNeighOrch;
             gNeighOrch = nullptr;
+            delete gFdbOrch;
+            gFdbOrch = nullptr;
             delete gIntfsOrch;
             gIntfsOrch = nullptr;
             delete gVrfOrch;
@@ -372,7 +394,7 @@ namespace aclorch_test
             delete gPortsOrch;
             gPortsOrch = nullptr;
             delete gFgNhgOrch;
-            gFgNhgOrch = nullptr; 
+            gFgNhgOrch = nullptr;
 
             auto status = sai_switch_api->remove_switch(gSwitchId);
             ASSERT_EQ(status, SAI_STATUS_SUCCESS);
@@ -399,8 +421,8 @@ namespace aclorch_test
             vector<swss::FieldValueTuple> fields;
 
             fields.push_back({ "SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST", "2:SAI_ACL_BIND_POINT_TYPE_PORT,SAI_ACL_BIND_POINT_TYPE_LAG" });
+            fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID", "true" });
             fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE", "true" });
-
             fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT", "true" });
             fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT", "true" });
             fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS", "true" });
@@ -498,7 +520,7 @@ namespace aclorch_test
                     switch (meta->attrvaluetype)
                     {
                         case SAI_ATTR_VALUE_TYPE_INT32_LIST:
-                            new_attr.value.s32list.list = (int32_t *)malloc(sizeof(int32_t) * attr.value.s32list.count);
+                            new_attr.value.s32list.list = (int32_t *)calloc(attr.value.s32list.count, sizeof(int32_t));
                             new_attr.value.s32list.count = attr.value.s32list.count;
                             m_s32list_pool.emplace_back(new_attr.value.s32list.list);
                             break;
@@ -555,7 +577,7 @@ namespace aclorch_test
                     switch (meta->attrvaluetype)
                     {
                         case SAI_ATTR_VALUE_TYPE_INT32_LIST:
-                            new_attr.value.s32list.list = (int32_t *)malloc(sizeof(int32_t) * attr.value.s32list.count);
+                            new_attr.value.s32list.list = (int32_t *)calloc(attr.value.s32list.count, sizeof(int32_t));
                             new_attr.value.s32list.count = attr.value.s32list.count;
                             m_s32list_pool.emplace_back(new_attr.value.s32list.list);
                             break;
@@ -621,7 +643,7 @@ namespace aclorch_test
             if (crmAclTableBindingCount != aclorchAclTableBindingCount)
             {
                 ADD_FAILURE() << "ACL table binding count is not consistent between CrmOrch ("
-                        << crmAclTableBindingCount << ") and AclOrch (" 
+                        << crmAclTableBindingCount << ") and AclOrch ("
                         << aclorchAclTableBindingCount << ")";
                 return false;
             }
@@ -726,10 +748,7 @@ namespace aclorch_test
         {
             for (const auto &fv : values)
             {
-                if (fv.first == TABLE_DESCRIPTION)
-                {
-                }
-                else if (fv.first == TABLE_TYPE)
+                if (fv.first == ACL_TABLE_TYPE)
                 {
                     if (fv.second == TABLE_TYPE_L3)
                     {
@@ -750,16 +769,16 @@ namespace aclorch_test
                         return false;
                     }
                 }
-                else if (fv.first == TABLE_STAGE)
+                else if (fv.first == ACL_TABLE_STAGE)
                 {
-                    if (fv.second == TABLE_INGRESS)
+                    if (fv.second == STAGE_INGRESS)
                     {
                         if (acl_table.stage != ACL_STAGE_INGRESS)
                         {
                             return false;
                         }
                     }
-                    else if (fv.second == TABLE_EGRESS)
+                    else if (fv.second == STAGE_EGRESS)
                     {
                         if (acl_table.stage != ACL_STAGE_EGRESS)
                         {
@@ -770,9 +789,6 @@ namespace aclorch_test
                     {
                         return false;
                     }
-                }
-                else if (fv.first == TABLE_PORTS)
-                {
                 }
             }
 
@@ -812,13 +828,13 @@ namespace aclorch_test
                 }
                 else
                 {
-                    // unkonw attr_value
+                    // unknown attr_value
                     return false;
                 }
             }
             else
             {
-                // unknow attr_name
+                // unknown attr_name
                 return false;
             }
 
@@ -875,7 +891,7 @@ namespace aclorch_test
             }
             else
             {
-                // unknow attr_name
+                // unknown attr_name
                 return false;
             }
 
@@ -905,7 +921,7 @@ namespace aclorch_test
                 }
                 else
                 {
-                    // unknow attr_name
+                    // unknown attr_name
                     return false;
                 }
             }
@@ -929,17 +945,17 @@ namespace aclorch_test
 
         for (const auto &acl_table_type : { TABLE_TYPE_L3, TABLE_TYPE_L3V6 })
         {
-            for (const auto &acl_table_stage : { TABLE_INGRESS, TABLE_EGRESS })
+            for (const auto &acl_table_stage : { STAGE_INGRESS, STAGE_EGRESS })
             {
                 string acl_table_id = "acl_table_1";
 
                 auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
                     { { acl_table_id,
                         SET_COMMAND,
-                        { { TABLE_DESCRIPTION, "filter source IP" },
-                          { TABLE_TYPE, acl_table_type },
-                          { TABLE_STAGE, acl_table_stage },
-                          { TABLE_PORTS, "1,2" } } } });
+                        { { ACL_TABLE_DESCRIPTION, "filter source IP" },
+                          { ACL_TABLE_TYPE, acl_table_type },
+                          { ACL_TABLE_STAGE, acl_table_stage },
+                          { ACL_TABLE_PORTS, "1,2" } } } });
                 // FIXME:                  ^^^^^^^^^^^^^ fixed port
 
                 orch->doAclTableTask(kvfAclTable);
@@ -978,7 +994,7 @@ namespace aclorch_test
     // When received ACL rule DEL_COMMAND, orchagent can delete corresponding ACL rule.
     //
     // Verify ACL table type = { L3 }, stage = { INGRESS, ENGRESS }
-    // Input by matchs = { SIP, DIP ...}, pkg:actions = { FORWARD, DROP ... }
+    // Input by matches = { SIP, DIP ...}, pkg:actions = { FORWARD, DROP ... }
     //
     TEST_F(AclOrchTest, L3Acl_Matches_Actions)
     {
@@ -990,12 +1006,12 @@ namespace aclorch_test
         auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
             { { acl_table_id,
                 SET_COMMAND,
-                { { TABLE_DESCRIPTION, "filter source IP" },
-                  { TABLE_TYPE, TABLE_TYPE_L3 },
+                { { ACL_TABLE_DESCRIPTION, "filter source IP" },
+                  { ACL_TABLE_TYPE, TABLE_TYPE_L3 },
                   //            ^^^^^^^^^^^^^ L3 ACL
-                  { TABLE_STAGE, TABLE_INGRESS },
+                  { ACL_TABLE_STAGE, STAGE_INGRESS },
                   // FIXME:      ^^^^^^^^^^^^^ only support / test for ingress ?
-                  { TABLE_PORTS, "1,2" } } } });
+                  { ACL_TABLE_PORTS, "1,2" } } } });
         // FIXME:                  ^^^^^^^^^^^^^ fixed port
 
         orch->doAclTableTask(kvfAclTable);
@@ -1068,7 +1084,7 @@ namespace aclorch_test
     // When received ACL rule DEL_COMMAND, orchagent can delete corresponding ACL rule.
     //
     // Verify ACL table type = { L3V6 }, stage = { INGRESS, ENGRESS }
-    // Input by matchs = { SIP, DIP ...}, pkg:actions = { FORWARD, DROP ... }
+    // Input by matches = { SIP, DIP ...}, pkg:actions = { FORWARD, DROP ... }
     //
     TEST_F(AclOrchTest, L3V6Acl_Matches_Actions)
     {
@@ -1080,12 +1096,12 @@ namespace aclorch_test
         auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
             { { acl_table_id,
                 SET_COMMAND,
-                { { TABLE_DESCRIPTION, "filter source IP" },
-                  { TABLE_TYPE, TABLE_TYPE_L3V6 },
+                { { ACL_TABLE_DESCRIPTION, "filter source IP" },
+                  { ACL_TABLE_TYPE, TABLE_TYPE_L3V6 },
                   //            ^^^^^^^^^^^^^ L3V6 ACL
-                  { TABLE_STAGE, TABLE_INGRESS },
+                  { ACL_TABLE_STAGE, STAGE_INGRESS },
                   // FIXME:      ^^^^^^^^^^^^^ only support / test for ingress ?
-                  { TABLE_PORTS, "1,2" } } } });
+                  { ACL_TABLE_PORTS, "1,2" } } } });
         // FIXME:                  ^^^^^^^^^^^^^ fixed port
 
         orch->doAclTableTask(kvfAclTable);
