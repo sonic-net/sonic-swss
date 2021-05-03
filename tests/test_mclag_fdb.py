@@ -138,7 +138,8 @@ def test_mclagFdb_remote_dynamic_mac_add(dvs, testlog):
 
     ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
             [("mac", "3C:85:99:5E:00:01"), ("bvid", str(dvs.getVlanOid("200")))],
-                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC_MACMOVE"),
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC"),
+                     ("SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE", "true"),
                      ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", get_bridge_port_oid(dvs, get_port_oid(dvs, "PortChannel0005")))]
     )
 
@@ -223,7 +224,8 @@ def test_mclagFdb_remote_to_local_mac_move(dvs, testlog):
 
     ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
             [("mac", "3C:85:99:5E:00:01"), ("bvid", str(dvs.getVlanOid("200")))],
-                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC_MACMOVE"),
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC"),
+                     ("SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE", "true"),
                      ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", get_bridge_port_oid(dvs, get_port_oid(dvs, "PortChannel0005")))]
     )
 
@@ -327,7 +329,8 @@ def test_mclagFdb_local_to_remote_move(dvs, testlog):
 
     ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
             [("mac", "3C:85:99:5E:00:01"), ("bvid", str(dvs.getVlanOid("200")))],
-                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC_MACMOVE"),
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC"),
+                     ("SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE", "true"),
                      ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", get_bridge_port_oid(dvs, get_port_oid(dvs, "PortChannel0005")))]
     )
 
@@ -350,7 +353,8 @@ def test_mclagFdb_remote_move_del(dvs, testlog):
 
     ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
             [("mac", "3C:85:99:5E:00:01"), ("bvid", str(dvs.getVlanOid("200")))],
-                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC_MACMOVE"),
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC"),
+                     ("SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE", "true"),
                      ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", get_bridge_port_oid(dvs, get_port_oid(dvs, "PortChannel0005")))]
     )
 
@@ -389,7 +393,8 @@ def test_mclagFdb_remote_move_peer_node(dvs, testlog):
 
     ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
             [("mac", "3C:85:99:5E:00:01"), ("bvid", str(dvs.getVlanOid("200")))],
-                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC_MACMOVE"),
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC"),
+                     ("SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE", "true"),
                      ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", get_bridge_port_oid(dvs, get_port_oid(dvs, "PortChannel0005")))]
     )
 
@@ -410,7 +415,8 @@ def test_mclagFdb_remote_move_peer_node(dvs, testlog):
 
     ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
             [("mac", "3C:85:99:5E:00:01"), ("bvid", str(dvs.getVlanOid("200")))],
-                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC_MACMOVE"),
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC"),
+                     ("SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE", "true"),
                      ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", get_bridge_port_oid(dvs, get_port_oid(dvs, "PortChannel0006")))]
     )
 
