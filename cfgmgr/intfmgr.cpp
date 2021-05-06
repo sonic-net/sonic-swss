@@ -746,22 +746,25 @@ void IntfMgr::doTask(Consumer &consumer)
                     }
                 }
 
-                vector<FieldValueTuple> temp;
-                if (!m_stateIntfTable.get(keys[0], temp))
+
+                if (inband_type == "port")
                 {
                     //No further processing needed. Just relay to orchagent
                     m_appIntfTableProducer.set(keys[0], data);
                     m_stateIntfTable.hset(keys[0], "vrf", "");
-                }
 
-                if (inband_type == "port")
-                {
                     it = consumer.m_toSync.erase(it);
                 }
                 else
                 {
-                    // Bring up kernel intf of inband Vlan after it has been created in SAI.
                     vector<FieldValueTuple> temp;
+                    if (!m_stateIntfTable.get(keys[0], temp))
+                    {
+                        m_appIntfTableProducer.set(keys[0], data);
+                        m_stateIntfTable.hset(keys[0], "vrf", "");
+                    }
+
+                    // Bring up kernel intf of inband Vlan only after it has been created in SAI.
                     if( m_stateVlanTable.get(keys[0], temp))
                     {
                         stringstream cmd;
