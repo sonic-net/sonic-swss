@@ -5677,19 +5677,19 @@ bool PortsOrch::setVoqInbandIntf(string &alias, string &type)
         SWSS_LOG_ERROR("Port/Vlan configured for inband intf %s is not ready!", alias.c_str());
         return false;
     }
-    else
+
+    if (type == "port" && !port.m_hif_id)
+    {
+        SWSS_LOG_ERROR("Host interface is not available for port %s", alias.c_str());
+        return false;
+    }
+    else if (type == "vlan")
     {
         if (!addInbandVlan(alias, type))
         {
             SWSS_LOG_ERROR("Failed to add inband VLAN");
             return false;
         }
-    }
-
-    if(type == "port" && !port.m_hif_id)
-    {
-        SWSS_LOG_ERROR("Host interface is not available for port %s", alias.c_str());
-        return false;
     }
 
     //Store the name of the local inband port
