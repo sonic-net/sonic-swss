@@ -30,6 +30,7 @@ Table of Contents
          * [Management port](#management-port)  
          * [Management VRF](#management-vrf)  
          * [MAP_PFC_PRIORITY_TO_QUEUE](#map_pfc_priority_to_queue)  
+         * [NTP Global Configuration](#ntp-global-configuration)
          * [NTP and SYSLOG servers](#ntp-and-syslog-servers)  
          * [Port](#port)   
          * [Port Channel](#port-channel)  
