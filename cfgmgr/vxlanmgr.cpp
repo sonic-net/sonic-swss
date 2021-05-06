@@ -183,7 +183,7 @@ VxlanMgr::VxlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb,
         m_stateVrfTable(stateDb, STATE_VRF_TABLE_NAME),
         m_stateVxlanTable(stateDb, STATE_VXLAN_TABLE_NAME),
         m_stateVlanTable(stateDb, STATE_VLAN_TABLE_NAME),
-        m_stateTunnelVlanMapTable(stateDb, STATE_NEIGH_SUPPRESS_VLAN_TABLE_NAME),
+        m_stateNeighSuppressVlanTable(stateDb, STATE_NEIGH_SUPPRESS_VLAN_TABLE_NAME),
         m_stateVxlanTunnelTable(stateDb, STATE_VXLAN_TUNNEL_TABLE_NAME)
 {
     getAllVxlanNetDevices();
@@ -606,7 +606,7 @@ bool VxlanMgr::doVxlanTunnelMapCreateTask(const KeyOpFieldsValuesTuple & t)
     vector<FieldValueTuple> fvVector;
     FieldValueTuple s("netdev", vxlan_dev_name);
     fvVector.push_back(s);
-    m_stateTunnelVlanMapTable.set(key,fvVector);
+    m_stateNeighSuppressVlanTable.set(key,fvVector);
 
     return true;
 }
@@ -655,7 +655,7 @@ bool VxlanMgr::doVxlanTunnelMapDeleteTask(const KeyOpFieldsValuesTuple & t)
     found = vxlan_dev_name.find(vlan_delimiter);
     std::string key = "Vlan" + vxlan_dev_name.substr(found+1,vxlan_dev_name.length());
     SWSS_LOG_INFO("Delete Tunnel Map for %s -> %s ", key.c_str(), vxlan_dev_name.c_str());
-    m_stateTunnelVlanMapTable.del(key);
+    m_stateNeighSuppressVlanTable.del(key);
     return true;
 }
 
