@@ -5491,6 +5491,20 @@ bool PortsOrch::addInbandVlan(const string &alias, const string &type)
         SWSS_LOG_NOTICE("add port %s to inbandVlan %s", port.m_alias.c_str(), inbandVlan.m_alias.c_str());
     }
 
+    // Vlan type hostif is not supported in VS. So skip adding hostif for inband Vlan in VS.
+    // Note hostif_required field is only set in VS test with inband Vlan.
+    DBConnector configDb(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    Table voqInbandIfTable(&configDb, CFG_VOQ_INBAND_INTERFACE_TABLE_NAME);
+    vector<FieldValueTuple> fvs;
+    voqInbandIfTable.get(alias, fvs);
+    for (auto &fv : fvs)
+    {
+        if (fv.first == "hostif_required" && fv.second == "0")
+        {
+            return true;
+        }
+    }
+
     if (!addHostIntfs(inbandVlan, inbandVlan.m_alias, inbandVlan.m_hif_id))
     {
         SWSS_LOG_ERROR("Failed to add host intf for inband VLAN");
