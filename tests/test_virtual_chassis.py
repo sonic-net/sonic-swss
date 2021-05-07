@@ -41,9 +41,20 @@ class TestVirtualChassis(object):
             if cfg_switch_type == "voq":
                 if inband_type == "port":
                     dvs.runcmd(f"config interface startup {inbandif_name}")
-                config_db.create_entry("VOQ_INBAND_INTERFACE", f"{inbandif_name}", {"inband_type": f"{inband_type}"})
+                    config_db.create_entry("VOQ_INBAND_INTERFACE", f"{inbandif_name}", {"inband_type": f"{inband_type}"})
+                else
+                    config_db.create_entry("VOQ_INBAND_INTERFACE", f"{inbandif_name}",
+                                           {"inband_type": f"{inband_type}", "hostif_required": "0"})
+
+                    # Wait for inband Vlan to be created in SAI
+                    state_db = dvs.get_state_db()
+                    result = state_db.wait_for_entry("VLAN_TABLE", f"{inbandif_name}")
+                    assert result["state"] == "ok"
+
+                    # Vlan type hostif is not supported in VS. So create a dummy kernel intf for inband vlan.
+                    dvs.runcmd(f"ip link add {inbandif_name} type dummy")
                 
-    def del_inbandif(self, vct, inbandif_name):
+    def del_inbandif(self, vct, inbandif_name, inband_type):
         """This function deletes existing inband interface"""
 
         dvss = vct.dvss
@@ -58,7 +69,9 @@ class TestVirtualChassis(object):
             # Applicable only for line cards
             if cfg_switch_type == "voq":
                 config_db.delete_entry("VOQ_INBAND_INTERFACE", f"{inbandif_name}")
-                
+                if inband_type == "vlan":
+                    dvs.runcmd(f"ip link delete {inbandif_name}")
+
     def test_connectivity(self, vct):
         if vct is None:
             return
@@ -294,6 +307,10 @@ class TestVirtualChassis(object):
                     encap_index = test_neigh_entry_attrs["SAI_NEIGHBOR_ENTRY_ATTR_ENCAP_INDEX"]
                     assert encap_index != "" and encap_index != None, "VOQ encap index is not programmed in ASIC_DB"
 
+                    # Router mac is published into chassis system neigh table if inband type is vlan.
+                    if inband_type == "vlan":
+                        test_neigh_mac = metatbl.get("mac").upper()
+
                     break
 
         # Verify neighbor record syncing with encap index
@@ -470,7 +487,7 @@ class TestVirtualChassis(object):
                     break
 
         # Cleanup inband if configuration
-        self.del_inbandif(vct, inbandif_name)
+        self.del_inbandif(vct, inbandif_name, inband_type)
 
     def test_chassis_system_neigh_with_inband_port(self, vct):
         """Test neigh record create/delete and syncing to chassis app db with inband port.
