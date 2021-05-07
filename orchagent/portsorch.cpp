@@ -5672,7 +5672,7 @@ bool PortsOrch::setVoqInbandIntf(string &alias, string &type)
 
     //Make sure port and host if exists for the configured inband interface
     Port port;
-    if (!getPort(alias, port))
+    if (type == "port" && !getPort(alias, port))
     {
         SWSS_LOG_ERROR("Port/Vlan configured for inband intf %s is not ready!", alias.c_str());
         return false;
