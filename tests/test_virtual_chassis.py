@@ -42,7 +42,7 @@ class TestVirtualChassis(object):
                 if inband_type == "port":
                     dvs.runcmd(f"config interface startup {inbandif_name}")
                     config_db.create_entry("VOQ_INBAND_INTERFACE", f"{inbandif_name}", {"inband_type": f"{inband_type}"})
-                else
+                else:
                     config_db.create_entry("VOQ_INBAND_INTERFACE", f"{inbandif_name}",
                                            {"inband_type": f"{inband_type}", "hostif_required": "0"})
 
