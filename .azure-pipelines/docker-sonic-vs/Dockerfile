@@ -15,3 +15,7 @@ RUN dpkg -i /debs/syncd-vs_1.0.0_amd64.deb
 
 RUN dpkg --purge swss
 RUN dpkg -i /debs/swss_1.0.0_amd64.deb
+
+RUN apt-get update
+
+RUN apt-get -y install lcov
