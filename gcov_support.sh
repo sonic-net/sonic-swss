@@ -285,7 +285,7 @@ gcov_support_collect_gcda()
     fi
 
     pushd /sonic
-    tar -zcvf /tmp/swss_gcov/gcda.tar.gz *
+    tar -zcvf /tmp/gcov/gcda.tar.gz *
     popd
 
     popd
