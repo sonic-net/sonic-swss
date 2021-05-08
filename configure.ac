@@ -84,7 +84,10 @@ CFLAGS_COMMON+=" -Wno-switch-default"
 CFLAGS_COMMON+=" -Wno-long-long"
 CFLAGS_COMMON+=" -Wno-redundant-decls"
 
+CFLAGS_COMMON+=" -fprofile-arcs -ftest-coverage"
 AC_SUBST(CFLAGS_COMMON)
+LDFLAGS+=" -fprofile-arcs"
+AC_SUBST(LDFLAGS)
 
 AC_CONFIG_FILES([
     Makefile
