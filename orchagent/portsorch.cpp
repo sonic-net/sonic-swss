@@ -1642,11 +1642,7 @@ bool PortsOrch::isSpeedSupported(const std::string& alias, sai_object_id_t port_
     // This method will return false iff we get a list of supported speeds and the requested speed
     // is not supported
     // Otherwise the method will return true (even if we received errors)
-
-    if (!m_portSupportedSpeeds.count(port_id))
-    {
-        initPortSupportedSpeeds(alias, port_id);
-    }
+    initPortSupportedSpeeds(alias, port_id);
 
     const auto &supp_speeds = m_portSupportedSpeeds[port_id];
     if (supp_speeds.empty())
@@ -1717,6 +1713,10 @@ void PortsOrch::getPortSupportedSpeeds(const std::string& alias, sai_object_id_t
 
 void PortsOrch::initPortSupportedSpeeds(const std::string& alias, sai_object_id_t port_id)
 {
+    if (!m_portSupportedSpeeds.count(port_id))
+    {
+        return;
+    }
     PortSupportedSpeeds supported_speeds;
     getPortSupportedSpeeds(alias, port_id, supported_speeds);
     m_portSupportedSpeeds[port_id] = supported_speeds;
@@ -2163,6 +2163,7 @@ sai_status_t PortsOrch::removePort(sai_object_id_t port_id)
     }
 
     m_portCount--;
+    m_portSupportedSpeeds.erase(port_id);
     SWSS_LOG_NOTICE("Remove port %" PRIx64, port_id);
 
     return status;
