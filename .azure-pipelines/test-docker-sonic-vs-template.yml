@@ -61,9 +61,9 @@ jobs:
 
   - script: |
       cp -r tests/log $(Build.ArtifactStagingDirectory)/
-      docker cp $(docker ps -q -a --format "{{.Names}}" | grep docker-sonic-vs):/tmp/swss_gcov/src/sonic-swss/gcov_output $(Build.ArtifactStagingDirectory)/
-      docker stop $(docker ps -q -a --format "{{.Names}}" | grep docker-sonic-vs)
-      docker rm $(docker ps -q -a --format "{{.Names}}" | grep docker-sonic-vs)
+      docker cp $(docker ps -q -l):/tmp/swss_gcov/src/sonic-swss/gcov_output $(Build.ArtifactStagingDirectory)/
+      docker stop $(docker ps -q -a)
+      docker rm $(docker ps -q -a)
     displayName: "Collect logs"
     condition: always()
 
