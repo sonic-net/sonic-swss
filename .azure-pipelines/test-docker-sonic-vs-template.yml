@@ -73,8 +73,8 @@ jobs:
     condition: always()
 
   - task: PublishCodeCoverageResults@1
-      inputs:
-        codeCoverageTool: Cobertura
-        summaryFileLocation: '$(Build.ArtifactStagingDirectory)/gcov_output/AllMergeReport/index.xml'
-        reportDirectory: '$(Build.ArtifactStagingDirectory)/gcov_output/AllMergeReport/'
-      displayName: 'Publish c c++ test coverage'
+    inputs:
+      codeCoverageTool: Cobertura
+      summaryFileLocation: '$(Build.ArtifactStagingDirectory)/gcov_output/AllMergeReport/index.xml'
+      reportDirectory: '$(Build.ArtifactStagingDirectory)/gcov_output/AllMergeReport/'
+    displayName: 'Publish c c++ test coverage'
