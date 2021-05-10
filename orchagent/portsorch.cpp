@@ -4714,6 +4714,10 @@ void PortsOrch::generatePortCounterMap()
     auto port_counter_stats = generateCounterStats(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP);
     for (const auto& it: m_portList)
     {
+        if (it.first == "CPU")
+        {
+            continue;
+        }
         port_stat_manager.setCounterIdList(it.second.m_port_id, CounterType::PORT, port_counter_stats);
     }
 
