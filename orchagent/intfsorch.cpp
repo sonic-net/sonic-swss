@@ -43,9 +43,6 @@ const int intfsorch_pri = 35;
 #define RIF_FLEX_STAT_COUNTER_POLL_MSECS "1000"
 #define UPDATE_MAPS_SEC 1
 
-#define INBAND_INTF_TIMER_SEC 1
-
-
 static const vector<sai_router_interface_stat_t> rifStatIds =
 {
     SAI_ROUTER_INTERFACE_STAT_IN_PACKETS,
@@ -109,13 +106,6 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch, DBCon
         unique_ptr<DBConnector> stateDb;
         stateDb = make_unique<DBConnector>("STATE_DB", 0);
         m_stateVlanTable = unique_ptr<Table>(new Table(stateDb.get(), STATE_VLAN_TABLE_NAME));
-
-        //Timer to bring up inband Vlan netdev
-        auto intervT = timespec { .tv_sec = INBAND_INTF_TIMER_SEC , .tv_nsec = 0 };
-        m_inbandVlanTimer = new SelectableTimer(intervT);
-        auto executorInbandVlan = new ExecutableTimer(m_inbandVlanTimer, this,
-                                                      "INBAND_VLAN_TIMER");
-        Orch::addExecutor(executorInbandVlan);
 
         //Add subscriber to process VOQ system interface
         tableName = CHASSIS_APP_SYSTEM_INTERFACE_TABLE_NAME;
@@ -777,10 +767,6 @@ void IntfsOrch::doTask(Consumer &consumer)
                     it++;
                     continue;
                 }
-                if (inband_type == "vlan")
-                {
-                    m_inbandVlanTimer->start();
-                }
             }
 
             Port port;
@@ -832,6 +818,30 @@ void IntfsOrch::doTask(Consumer &consumer)
                 {
                     it++;
                     continue;
+                }
+
+                if (inband_type == "vlan")
+                {
+                    Port inbandVlan;
+                    if (!gPortsOrch->getInbandPort(inbandVlan))
+                    {
+                        it++;
+                        continue;
+                    }
+
+                    string value;
+                    const auto id = sai_serialize_object_id(inbandVlan.m_rif_id);
+                    if (m_vidToRidTable->hget("", id, value))
+                    {
+                        m_stateVlanTable->hset(inbandVlan.m_alias, "state", "ok");
+                        SWSS_LOG_NOTICE("Added inband VLAN %s to STATE_VLAN_TABLE", inbandVlan.m_alias.c_str());
+                    }
+                    else
+                    {
+                        SWSS_LOG_INFO("Cannot find rid of inband vlan in stateDb");
+                        it++;
+                        continue;
+                    }
                 }
 
                 if (gPortsOrch->getPort(alias, port))
@@ -1387,11 +1397,6 @@ void IntfsOrch::doTask(SelectableTimer &timer)
 {
     SWSS_LOG_ENTER();
 
-    if (m_inbandVlanTimer == &timer)
-    {
-        return processInbandVlanReady();
-    }
-
     SWSS_LOG_DEBUG("Registering %" PRId64 " new intfs", m_rifsToAdd.size());
     string value;
     for (auto it = m_rifsToAdd.begin(); it != m_rifsToAdd.end(); )
@@ -1428,27 +1433,6 @@ void IntfsOrch::doTask(SelectableTimer &timer)
             ++it;
         }
     }
-}
-
-void IntfsOrch::processInbandVlanReady()
-{
-     SWSS_LOG_ENTER();
-
-     Port inbandVlan;
-     if (!gPortsOrch->getInbandPort(inbandVlan))
-     {
-         return;
-     }
-
-     string value;
-     const auto id = sai_serialize_object_id(inbandVlan.m_rif_id);
-     if (m_vidToRidTable->hget("", id, value))
-     {
-         m_stateVlanTable->hset(inbandVlan.m_alias, "state", "ok");
-         SWSS_LOG_INFO("Added inband VLAN %s to STATE_VLAN_TABLE", inbandVlan.m_alias.c_str());
-
-         m_inbandVlanTimer->stop();
-     }
 }
 
 bool IntfsOrch::isRemoteSystemPortIntf(string alias)
