@@ -2,7 +2,6 @@ from swsscommon import swsscommon
 import conftest
 
 import sys
-import pytest
 import functools
 import typing
 import re
@@ -588,7 +587,6 @@ class TestMACsec(object):
                 macsec_port_identifier))
         wpa.deinit_macsec_port(port_name)
 
-    @pytest.mark.skip("Skip to be removed after macsec orch is made compatible to SAI v1.8.0")
     def test_macsec_term_orch(self, dvs: conftest.DockerVirtualSwitch, testlog):
         port_name = "Ethernet0"
         local_mac_address = "00-15-5D-78-FF-C1"

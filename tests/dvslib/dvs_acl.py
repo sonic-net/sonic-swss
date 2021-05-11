@@ -61,7 +61,7 @@ class DVSAcl:
         table_attrs = {
             "policy_desc": table_name,
             "type": table_type,
-            "ports": ",".join(ports)
+            "ports@": ",".join(ports)
         }
 
         if stage:
@@ -95,7 +95,7 @@ class DVSAcl:
             table_name: The name of the ACL table to update.
             ports: The new list of ports to bind to the ACL table.
         """
-        table_attrs = {"ports": ",".join(ports)}
+        table_attrs = {"ports@": ",".join(ports)}
         self.config_db.update_entry(self.CDB_ACL_TABLE_NAME, table_name, table_attrs)
 
     def remove_acl_table(self, table_name: str) -> None:

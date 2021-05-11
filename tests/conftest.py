@@ -42,7 +42,6 @@ def ensure_system(cmd):
     if rc:
         raise RuntimeError(f"Failed to run command: {cmd}. rc={rc}. output: {output}")
 
-
 def pytest_addoption(parser):
     parser.addoption("--dvsname",
                      action="store",
@@ -221,7 +220,6 @@ class VirtualServer:
 
     def runcmd_output(self, cmd: str) -> str:
         return subprocess.check_output(f"ip netns exec {self.nsname} {cmd}", shell=True).decode("utf-8")
-
 
 class DockerVirtualSwitch:
     APPL_DB_ID = 0
@@ -1204,6 +1202,10 @@ class DockerVirtualSwitch:
 
         return self.state_db
 
+    def change_port_breakout_mode(self, intf_name, target_mode, options=""):
+        cmd = f"config interface breakout {intf_name} {target_mode} -y {options}"
+        self.runcmd(cmd)
+        time.sleep(2)
 
 class DockerVirtualChassisTopology:
     def __init__(
@@ -1550,7 +1552,6 @@ class DockerVirtualChassisTopology:
         print("vct verifications passed ? %s" % (ret1 and ret2))
         return ret1 and ret2
 
-
 @pytest.yield_fixture(scope="module")
 def dvs(request) -> DockerVirtualSwitch:
     if sys.version_info[0] < 3:
@@ -1580,7 +1581,6 @@ def dvs(request) -> DockerVirtualSwitch:
         dvs.runcmd("mv /etc/sonic/config_db.json.orig /etc/sonic/config_db.json")
         dvs.ctn_restart()
 
-
 @pytest.yield_fixture(scope="module")
 def vct(request):
     vctns = request.config.getoption("--vctns")
@@ -1600,13 +1600,11 @@ def vct(request):
     vct.get_logs(request.module.__name__)
     vct.destroy()
 
-
 @pytest.yield_fixture
 def testlog(request, dvs):
     dvs.runcmd(f"logger === start test {request.node.name} ===")
     yield testlog
     dvs.runcmd(f"logger === finish test {request.node.name} ===")
-
 
 ################# DVSLIB module manager fixtures #############################
 @pytest.fixture(scope="class")
@@ -1653,7 +1651,6 @@ def dvs_policer_manager(request, dvs):
     request.cls.dvs_policer = dvs_policer.DVSPolicer(dvs.get_asic_db(),
                                                      dvs.get_config_db())
 
-
 ##################### DPB fixtures ###########################################
 def create_dpb_config_file(dvs):
     cmd = "sonic-cfggen -j /etc/sonic/init_cfg.json -j /tmp/ports.json --print-data > /tmp/dpb_config_db.json"
@@ -1663,11 +1660,9 @@ def create_dpb_config_file(dvs):
     cmd = "cp /tmp/dpb_config_db.json /etc/sonic/config_db.json"
     dvs.runcmd(cmd)
 
-
 def remove_dpb_config_file(dvs):
     cmd = "mv /etc/sonic/config_db.json.bak /etc/sonic/config_db.json"
     dvs.runcmd(cmd)
-
 
 @pytest.yield_fixture(scope="module")
 def dpb_setup_fixture(dvs):
