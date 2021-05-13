@@ -290,7 +290,10 @@ public:
                 }
             }
 
-            flush_removing_entries(rs);
+            if (!rs.empty())
+            {
+                flush_removing_entries(rs);
+            }
             
             removing_entries.clear();
         }
@@ -323,7 +326,10 @@ public:
                 }
             }
 
-            flush_creating_entries(rs, tss, cs);
+            if (!rs.empty())
+            {
+                flush_creating_entries(rs, tss, cs);
+            }
             
             creating_entries.clear();
         }
@@ -360,7 +366,10 @@ public:
                 }
             }
 
-            flush_setting_entries(rs, ts, status_vector);
+            if (!rs.empty())
+            {
+                flush_setting_entries(rs, ts, status_vector);
+            }
             
             setting_entries.clear();
         }
@@ -425,10 +434,6 @@ private:
         _In_ std::vector<Te> rs)
     {
         size_t count = rs.size();
-        if (count == 0)
-        {
-            return;
-        }
         std::vector<sai_status_t> statuses(count);
         sai_status_t status = (*remove_entries)((uint32_t)count, rs.data(), SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR, statuses.data());
         if (status == SAI_STATUS_SUCCESS)
@@ -458,10 +463,6 @@ private:
         _In_ std::vector<uint32_t> cs)
     {
         size_t count = rs.size();
-        if (count == 0)
-        {
-            return;
-        }
         std::vector<sai_status_t> statuses(count);
         sai_status_t status = (*create_entries)((uint32_t)count, rs.data(), cs.data(), tss.data()
             , SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR, statuses.data());
@@ -492,10 +493,6 @@ private:
         _Inout_ std::vector<sai_status_t*> &status_vector)
     {
         size_t count = rs.size();
-        if (count == 0)
-        {
-            return;
-        }
         std::vector<sai_status_t> statuses(count);
         sai_status_t status = (*set_entries_attribute)((uint32_t)count, rs.data(), ts.data()
             , SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR, statuses.data());
@@ -636,8 +633,11 @@ public:
                     rs.clear();
                 }
             }
-            
-            flush_removing_entries(rs);
+
+            if (!rs.empty())
+            {
+                flush_removing_entries(rs);
+            }
 
             removing_entries.clear();
         }
@@ -669,7 +669,10 @@ public:
                 }
             }
 
-            flush_creating_entries(rs, tss, cs);
+            if (!rs.empty())
+            {
+                flush_creating_entries(rs, tss, cs);
+            }
 
             creating_entries.clear();
         }
@@ -700,7 +703,10 @@ public:
                 }
             }
 
-            flush_setting_entries(rs, ts);
+            if (!rs.empty())
+            {
+                flush_setting_entries(rs, ts);
+            }
 
             setting_entries.clear();
         }
@@ -770,10 +776,6 @@ private:
         _In_ std::vector<sai_object_id_t> rs)
     {
         size_t count = rs.size();
-        if (count == 0)
-        {
-            return;
-        }
         std::vector<sai_status_t> statuses(count);
         sai_status_t status = (*remove_entries)((uint32_t)count, rs.data(), SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR, statuses.data());
         if (status == SAI_STATUS_SUCCESS)
@@ -800,10 +802,6 @@ private:
         _In_ std::vector<uint32_t> cs)
     {
         size_t count = rs.size();
-        if (count == 0)
-        {
-            return;
-        }
         std::vector<sai_object_id_t> object_ids(count);
         std::vector<sai_status_t> statuses(count);
         sai_status_t status = (*create_entries)(switch_id, (uint32_t)count, cs.data(), tss.data()
@@ -832,10 +830,6 @@ private:
         _In_ std::vector<sai_attribute_t> ts)
     {
         size_t count = rs.size();
-        if (count == 0)
-        {
-            return;
-        }
         std::vector<sai_status_t> statuses(count);
         sai_status_t status = (*set_entries_attribute)((uint32_t)count, rs.data(), ts.data()
             , SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR, statuses.data());
