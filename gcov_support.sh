@@ -314,7 +314,7 @@ gcov_support_collect_gcno()
     done
 
     echo " === Start collecting .gcno files... === "
-    submodule_name = $1
+    submodule_name=$1
     exec 3>$GCNO_LIST_FILE
     find_command=`find -name *.gcno`
     echo "${find_command}"
