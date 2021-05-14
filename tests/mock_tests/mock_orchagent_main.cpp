@@ -12,6 +12,9 @@ sai_object_id_t gSwitchId = SAI_NULL_OBJECT_ID;
 MacAddress gMacAddress;
 MacAddress gVxlanMacAddress;
 
+#define DEFAULT_MAX_BULK_SIZE 1000
+size_t gMaxBulkSize = DEFAULT_MAX_BULK_SIZE;
+
 #define DEFAULT_BATCH_SIZE 128
 int gBatchSize = DEFAULT_BATCH_SIZE;
 

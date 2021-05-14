@@ -11,7 +11,7 @@
 #include "logger.h"
 #include "sai_serialize.h"
 
-#define MAX_BULK_SIZE 1000
+extern size_t gMaxBulkSize;
 
 static inline bool operator==(const sai_ip_prefix_t& a, const sai_ip_prefix_t& b)
 {
@@ -281,12 +281,11 @@ public:
                 if (*object_status == SAI_STATUS_NOT_EXECUTED)
                 {
                     rs.push_back(entry);
-                }
 
-                if (rs.size() >= MAX_BULK_SIZE)
-                {
-                    flush_removing_entries(rs);
-                    rs.clear();
+                    if (rs.size() >= gMaxBulkSize)
+                    {
+                        flush_removing_entries(rs);
+                    }
                 }
             }
 
@@ -315,14 +314,11 @@ public:
                     rs.push_back(entry);
                     tss.push_back(attrs.data());
                     cs.push_back((uint32_t)attrs.size());
-                }
 
-                if (rs.size() >= MAX_BULK_SIZE)
-                {
-                    flush_creating_entries(rs, tss, cs);
-                    rs.clear();
-                    tss.clear();
-                    cs.clear();
+                    if (rs.size() >= gMaxBulkSize)
+                    {
+                        flush_creating_entries(rs, tss, cs);
+                    }
                 }
             }
 
@@ -354,14 +350,11 @@ public:
                         rs.push_back(entry);
                         ts.push_back(attr);
                         status_vector.push_back(object_status);
-                    }
 
-                    if (rs.size() >= MAX_BULK_SIZE)
-                    {
-                        flush_setting_entries(rs, ts, status_vector);
-                        rs.clear();
-                        ts.clear();
-                        status_vector.clear();
+                        if (rs.size() >= gMaxBulkSize)
+                        {
+                            flush_setting_entries(rs, ts, status_vector);
+                        }
                     }
                 }
             }
@@ -431,7 +424,7 @@ private:
     typename Ts::bulk_set_entry_attribute_fn                set_entries_attribute;
 
     void flush_removing_entries(
-        _In_ std::vector<Te> rs)
+        _Inout_ std::vector<Te> &rs)
     {
         size_t count = rs.size();
         std::vector<sai_status_t> statuses(count);
@@ -455,12 +448,14 @@ private:
                 *object_status = statuses[ir];
             }
         }
+
+        rs.clear();
     }
 
     void flush_creating_entries(
-        _In_ std::vector<Te> rs,
-        _In_ std::vector<sai_attribute_t const*> tss,
-        _In_ std::vector<uint32_t> cs)
+        _Inout_ std::vector<Te> &rs,
+        _Inout_ std::vector<sai_attribute_t const*> &tss,
+        _Inout_ std::vector<uint32_t> &cs)
     {
         size_t count = rs.size();
         std::vector<sai_status_t> statuses(count);
@@ -485,11 +480,15 @@ private:
                 *object_status = statuses[ir];
             }
         }
+
+        rs.clear();
+        tss.clear();
+        cs.clear();
     }
 
     void flush_setting_entries(
-        _In_ std::vector<Te> rs,
-        _In_ std::vector<sai_attribute_t> ts,
+        _Inout_ std::vector<Te> &rs,
+        _Inout_ std::vector<sai_attribute_t> &ts,
         _Inout_ std::vector<sai_status_t*> &status_vector)
     {
         size_t count = rs.size();
@@ -515,6 +514,10 @@ private:
                 *object_status = statuses[ir];
             }
         }
+
+        rs.clear();
+        ts.clear();
+        status_vector.clear();
     }
 };
 
@@ -625,12 +628,11 @@ public:
                 if (*object_status == SAI_STATUS_NOT_EXECUTED)
                 {
                     rs.push_back(entry);
-                }
 
-                if (rs.size() >= MAX_BULK_SIZE)
-                {
-                    flush_removing_entries(rs);
-                    rs.clear();
+                    if (rs.size() >= gMaxBulkSize)
+                    {
+                        flush_removing_entries(rs);
+                    }
                 }
             }
 
@@ -658,14 +660,11 @@ public:
                     rs.push_back(pid);
                     tss.push_back(attrs.data());
                     cs.push_back((uint32_t)attrs.size());
-                }
 
-                if (rs.size() >= MAX_BULK_SIZE)
-                {
-                    flush_creating_entries(rs, tss, cs);
-                    rs.clear();
-                    tss.clear();
-                    cs.clear();
+                    if (rs.size() >= gMaxBulkSize)
+                    {
+                        flush_creating_entries(rs, tss, cs);
+                    }
                 }
             }
 
@@ -694,11 +693,9 @@ public:
                     rs.push_back(entry);
                     ts.push_back(attr);
 
-                    if (rs.size() >= MAX_BULK_SIZE)
+                    if (rs.size() >= gMaxBulkSize)
                     {
                         flush_setting_entries(rs, ts);
-                        rs.clear();
-                        ts.clear();
                     }
                 }
             }
@@ -773,7 +770,7 @@ private:
     //typename Ts::bulk_set_entry_attribute_fn                set_entries_attribute;
 
     void flush_removing_entries(
-        _In_ std::vector<sai_object_id_t> rs)
+        _Inout_ std::vector<sai_object_id_t> &rs)
     {
         size_t count = rs.size();
         std::vector<sai_status_t> statuses(count);
@@ -794,12 +791,14 @@ private:
             sai_status_t object_status = statuses[i];
             *removing_entries[entry] = object_status;
         }
+
+        rs.clear();
     }
 
     void flush_creating_entries(
-        _In_ std::vector<sai_object_id_t *> rs,
-        _In_ std::vector<sai_attribute_t const*> tss,
-        _In_ std::vector<uint32_t> cs)
+        _Inout_ std::vector<sai_object_id_t *> &rs,
+        _Inout_ std::vector<sai_attribute_t const*> &tss,
+        _Inout_ std::vector<uint32_t> &cs)
     {
         size_t count = rs.size();
         std::vector<sai_object_id_t> object_ids(count);
@@ -821,13 +820,17 @@ private:
             sai_object_id_t *pid = rs[i];
             *pid = (statuses[i] == SAI_STATUS_SUCCESS) ? object_ids[i] : SAI_NULL_OBJECT_ID;
         }
+
+        rs.clear();
+        tss.clear();
+        cs.clear();
     }
 
     // TODO: wait until available in SAI
     /*
     void flush_setting_entries(
-        _In_ std::vector<sai_object_id_t> rs,
-        _In_ std::vector<sai_attribute_t> ts)
+        _Inout_ std::vector<sai_object_id_t> &rs,
+        _Inout_ std::vector<sai_attribute_t> &ts)
     {
         size_t count = rs.size();
         std::vector<sai_status_t> statuses(count);
@@ -842,6 +845,9 @@ private:
             SWSS_LOG_ERROR("ObjectBulker.flush set entry attribute failed, number of entries to set: %zu, status: %s",
                             count, sai_serialize_status(status).c_str());
         }
+
+        rs.clear();
+        ts.clear();
     }
      */
 };

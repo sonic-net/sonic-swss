@@ -47,6 +47,9 @@ sai_object_id_t gSwitchId = SAI_NULL_OBJECT_ID;
 MacAddress gMacAddress;
 MacAddress gVxlanMacAddress;
 
+#define DEFAULT_MAX_BULK_SIZE 1000
+size_t gMaxBulkSize = DEFAULT_MAX_BULK_SIZE;
+
 #define DEFAULT_BATCH_SIZE  128
 int gBatchSize = DEFAULT_BATCH_SIZE;
 
@@ -72,7 +75,7 @@ string gMyAsicName = "";
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    0: do not record logs" << endl;
@@ -87,6 +90,7 @@ void usage()
     cout << "    -z: redis communication mode (redis_async|redis_sync|zmq_sync), default: redis_async" << endl;
     cout << "    -f swss_rec_filename: swss record log filename(default 'swss.rec')" << endl;
     cout << "    -j sairedis_rec_filename: sairedis record log filename(default sairedis.rec)" << endl;
+    cout << "    -k max bulk size in bulk mode (default 1000)";
 }
 
 void sighup_handler(int signo)
@@ -319,7 +323,7 @@ int main(int argc, char **argv)
     string swss_rec_filename = "swss.rec";
     string sairedis_rec_filename = "sairedis.rec";
 
-    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:")) != -1)
     {
         switch (opt)
         {
@@ -396,6 +400,9 @@ int main(int argc, char **argv)
             {
                 sairedis_rec_filename = optarg;
             }
+            break;
+        case 'k':
+            gMaxBulkSize = atoi(optarg);
             break;
         default: /* '?' */
             exit(EXIT_FAILURE);
