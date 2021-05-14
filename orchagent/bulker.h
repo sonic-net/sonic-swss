@@ -423,7 +423,7 @@ private:
     typename Ts::bulk_remove_entry_fn                       remove_entries;
     typename Ts::bulk_set_entry_attribute_fn                set_entries_attribute;
 
-    void flush_removing_entries(
+    sai_status_t flush_removing_entries(
         _Inout_ std::vector<Te> &rs)
     {
         size_t count = rs.size();
@@ -450,9 +450,11 @@ private:
         }
 
         rs.clear();
+
+        return status;
     }
 
-    void flush_creating_entries(
+    sai_status_t flush_creating_entries(
         _Inout_ std::vector<Te> &rs,
         _Inout_ std::vector<sai_attribute_t const*> &tss,
         _Inout_ std::vector<uint32_t> &cs)
@@ -484,9 +486,11 @@ private:
         rs.clear();
         tss.clear();
         cs.clear();
+
+        return status;
     }
 
-    void flush_setting_entries(
+    sai_status_t flush_setting_entries(
         _Inout_ std::vector<Te> &rs,
         _Inout_ std::vector<sai_attribute_t> &ts,
         _Inout_ std::vector<sai_status_t*> &status_vector)
@@ -518,6 +522,8 @@ private:
         rs.clear();
         ts.clear();
         status_vector.clear();
+
+        return status;
     }
 };
 
@@ -769,7 +775,7 @@ private:
     // TODO: wait until available in SAI
     //typename Ts::bulk_set_entry_attribute_fn                set_entries_attribute;
 
-    void flush_removing_entries(
+    sai_status_t flush_removing_entries(
         _Inout_ std::vector<sai_object_id_t> &rs)
     {
         size_t count = rs.size();
@@ -793,9 +799,11 @@ private:
         }
 
         rs.clear();
+
+        return status;
     }
 
-    void flush_creating_entries(
+    sai_status_t flush_creating_entries(
         _Inout_ std::vector<sai_object_id_t *> &rs,
         _Inout_ std::vector<sai_attribute_t const*> &tss,
         _Inout_ std::vector<uint32_t> &cs)
@@ -824,11 +832,13 @@ private:
         rs.clear();
         tss.clear();
         cs.clear();
+
+        return status;
     }
 
     // TODO: wait until available in SAI
     /*
-    void flush_setting_entries(
+    sai_status_t flush_setting_entries(
         _Inout_ std::vector<sai_object_id_t> &rs,
         _Inout_ std::vector<sai_attribute_t> &ts)
     {
@@ -848,6 +858,8 @@ private:
 
         rs.clear();
         ts.clear();
+
+        return status;
     }
      */
 };
