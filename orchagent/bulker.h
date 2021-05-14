@@ -288,12 +288,8 @@ public:
                     }
                 }
             }
+            flush_removing_entries(rs);
 
-            if (!rs.empty())
-            {
-                flush_removing_entries(rs);
-            }
-            
             removing_entries.clear();
         }
 
@@ -321,12 +317,8 @@ public:
                     }
                 }
             }
+            flush_creating_entries(rs, tss, cs);
 
-            if (!rs.empty())
-            {
-                flush_creating_entries(rs, tss, cs);
-            }
-            
             creating_entries.clear();
         }
 
@@ -358,12 +350,8 @@ public:
                     }
                 }
             }
+            flush_setting_entries(rs, ts, status_vector);
 
-            if (!rs.empty())
-            {
-                flush_setting_entries(rs, ts, status_vector);
-            }
-            
             setting_entries.clear();
         }
     }
@@ -426,6 +414,10 @@ private:
     sai_status_t flush_removing_entries(
         _Inout_ std::vector<Te> &rs)
     {
+        if (rs.empty())
+        {
+            return SAI_STATUS_SUCCESS;
+        }
         size_t count = rs.size();
         std::vector<sai_status_t> statuses(count);
         sai_status_t status = (*remove_entries)((uint32_t)count, rs.data(), SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR, statuses.data());
@@ -459,6 +451,10 @@ private:
         _Inout_ std::vector<sai_attribute_t const*> &tss,
         _Inout_ std::vector<uint32_t> &cs)
     {
+        if (rs.empty())
+        {
+            return SAI_STATUS_SUCCESS;
+        }
         size_t count = rs.size();
         std::vector<sai_status_t> statuses(count);
         sai_status_t status = (*create_entries)((uint32_t)count, rs.data(), cs.data(), tss.data()
@@ -495,6 +491,10 @@ private:
         _Inout_ std::vector<sai_attribute_t> &ts,
         _Inout_ std::vector<sai_status_t*> &status_vector)
     {
+        if (rs.empty())
+        {
+            return SAI_STATUS_SUCCESS;
+        }
         size_t count = rs.size();
         std::vector<sai_status_t> statuses(count);
         sai_status_t status = (*set_entries_attribute)((uint32_t)count, rs.data(), ts.data()
@@ -641,11 +641,7 @@ public:
                     }
                 }
             }
-
-            if (!rs.empty())
-            {
-                flush_removing_entries(rs);
-            }
+            flush_removing_entries(rs);
 
             removing_entries.clear();
         }
@@ -673,11 +669,7 @@ public:
                     }
                 }
             }
-
-            if (!rs.empty())
-            {
-                flush_creating_entries(rs, tss, cs);
-            }
+            flush_creating_entries(rs, tss, cs);
 
             creating_entries.clear();
         }
@@ -705,11 +697,7 @@ public:
                     }
                 }
             }
-
-            if (!rs.empty())
-            {
-                flush_setting_entries(rs, ts);
-            }
+            flush_setting_entries(rs, ts);
 
             setting_entries.clear();
         }
@@ -778,6 +766,10 @@ private:
     sai_status_t flush_removing_entries(
         _Inout_ std::vector<sai_object_id_t> &rs)
     {
+        if (rs.empty())
+        {
+            return SAI_STATUS_SUCCESS;
+        }
         size_t count = rs.size();
         std::vector<sai_status_t> statuses(count);
         sai_status_t status = (*remove_entries)((uint32_t)count, rs.data(), SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR, statuses.data());
@@ -808,6 +800,10 @@ private:
         _Inout_ std::vector<sai_attribute_t const*> &tss,
         _Inout_ std::vector<uint32_t> &cs)
     {
+        if (rs.empty())
+        {
+            return SAI_STATUS_SUCCESS;
+        }
         size_t count = rs.size();
         std::vector<sai_object_id_t> object_ids(count);
         std::vector<sai_status_t> statuses(count);
@@ -842,6 +838,10 @@ private:
         _Inout_ std::vector<sai_object_id_t> &rs,
         _Inout_ std::vector<sai_attribute_t> &ts)
     {
+        if (rs.empty())
+        {
+            return SAI_STATUS_SUCCESS;
+        }
         size_t count = rs.size();
         std::vector<sai_status_t> statuses(count);
         sai_status_t status = (*set_entries_attribute)((uint32_t)count, rs.data(), ts.data()
