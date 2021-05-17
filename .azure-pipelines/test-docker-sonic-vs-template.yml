@@ -42,6 +42,7 @@ jobs:
       sudo apt-get install -y net-tools bridge-utils vlan
       sudo apt-get install -y python3-pip
       sudo pip3 install pytest==4.6.2 attrs==19.1.0 exabgp==4.0.10 distro==1.5.0 docker==4.4.1 redis==3.3.4 flaky==3.7.0
+      sudo apt-get install lcov
     displayName: "Install dependencies"
 
   - script: |
@@ -61,8 +62,8 @@ jobs:
 
   - script: |
       cp -r tests/log $(Build.ArtifactStagingDirectory)/
-      docker cp $(docker ps -q -l):/tmp/swss_gcov/src/sonic-swss/gcov_output $(Build.ArtifactStagingDirectory)/
-      docker stop $(docker ps -q -a)
+      ./tests/gcov_support.sh merge_container_info $(Build.ArtifactStagingDirectory)
+      docker stop $(docker ps -q -a) 
       docker rm $(docker ps -q -a)
     displayName: "Collect logs"
     condition: always()
