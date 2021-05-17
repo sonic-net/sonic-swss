@@ -666,7 +666,12 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
 
     string detectSha, restoreSha;
     string detectPluginName = "pfc_detect_" + platform + ".lua";
-    string restorePluginName = "pfc_restore.lua";
+    string restorePluginName;
+    if (platform == CISCO_8000_PLATFORM_SUBSTRING) {
+        restorePluginName = "pfc_restore_" + platform + ".lua";
+    } else {
+        restorePluginName = "pfc_restore.lua";
+    }
 
     try
     {
@@ -1056,3 +1061,4 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::bake()
 // Trick to keep member functions in a separate file
 template class PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>;
 template class PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>;
+template class PfcWdSwOrch<PfcWdSaiDlrInitHandler, PfcWdSaiDlrInitHandler>;

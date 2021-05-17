@@ -488,6 +488,27 @@ bool OrchDaemon::init()
                     queueStatIds,
                     queueAttrIds,
                     PFC_WD_POLL_MSECS));
+    } else if (platform == CISCO_8000_PLATFORM_SUBSTRING)
+    {
+        static const vector<sai_port_stat_t> portStatIds;
+
+        static const vector<sai_queue_stat_t> queueStatIds =
+        {
+            SAI_QUEUE_STAT_PACKETS,
+        };
+
+        static const vector<sai_queue_attr_t> queueAttrIds =
+        {
+            SAI_QUEUE_ATTR_PAUSE_STATUS,
+        };
+
+        m_orchList.push_back(new PfcWdSwOrch<PfcWdSaiDlrInitHandler, PfcWdSaiDlrInitHandler>(
+                    m_configDb,
+                    pfc_wd_tables,
+                    portStatIds,
+                    queueStatIds,
+                    queueAttrIds,
+                    PFC_WD_POLL_MSECS));
     }
 
     m_orchList.push_back(&CounterCheckOrch::getInstance(m_configDb));
