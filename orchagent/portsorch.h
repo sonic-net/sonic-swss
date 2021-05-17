@@ -13,6 +13,7 @@
 #include "gearboxutils.h"
 #include "saihelper.h"
 #include "lagid.h"
+#include "notificationproducer.h"
 
 
 #define FCS_LEN 4
@@ -98,6 +99,7 @@ public:
 
     bool setHostIntfsOperStatus(const Port& port, bool up) const;
     void updateDbPortOperStatus(const Port& port, sai_port_oper_status_t status) const;
+    void updateDbVlanOperStatus(const Port& port, string status) const;
 
     bool createVlanHostIntf(Port& vl, string hostif_name);
     bool removeVlanHostIntf(Port vl);
@@ -146,11 +148,13 @@ public:
     string m_inbandPortName = "";
     bool isInbandPort(const string &alias);
     bool setVoqInbandIntf(string &alias, string &type);
+    bool getPortVlanMembers(Port &port, vlan_members_t &vlan_members);
 
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_counterLagTable;
     unique_ptr<Table> m_portTable;
+    unique_ptr<Table> m_vlanTable;
     unique_ptr<Table> m_gearboxTable;
     unique_ptr<Table> m_queueTable;
     unique_ptr<Table> m_queuePortTable;
@@ -162,6 +166,7 @@ private:
     unique_ptr<Table> m_stateBufferMaximumValueTable;
     unique_ptr<ProducerTable> m_flexCounterTable;
     unique_ptr<ProducerTable> m_flexCounterGroupTable;
+    NotificationProducer* notifications;
 
     std::string getQueueWatermarkFlexCounterTableKey(std::string s);
     std::string getPriorityGroupWatermarkFlexCounterTableKey(std::string s);
@@ -210,6 +215,12 @@ private:
     map<set<int>, sai_object_id_t> m_portListLaneMap;
     map<set<int>, tuple<string, uint32_t, int, string, int>> m_lanesAliasSpeedMap;
     map<string, Port> m_portList;
+    map<string, vlan_members_t> m_portVlanMember;
+    /* mapping from SAI object ID to Name for faster
+     * retrieval of Port/VLAN from object ID for events
+     * coming from SAI
+     */
+    unordered_map<sai_object_id_t, string> portOidToName;
     unordered_map<sai_object_id_t, int> m_portOidToIndex;
     map<string, uint32_t> m_port_ref_count;
     unordered_set<string> m_pendingPortSet;
@@ -288,6 +299,7 @@ private:
 
     bool getPortOperStatus(const Port& port, sai_port_oper_status_t& status) const;
     void updatePortOperStatus(Port &port, sai_port_oper_status_t status);
+    void updateLagOperStatus(Port &port, sai_port_oper_status_t status);
 
     void getPortSerdesVal(const std::string& s, std::vector<uint32_t> &lane_values);
 
