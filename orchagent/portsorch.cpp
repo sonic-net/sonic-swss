@@ -917,6 +917,36 @@ bool PortsOrch::setPortMtu(sai_object_id_t id, sai_uint32_t mtu)
     return true;
 }
 
+
+bool PortsOrch::setPortTpid(sai_object_id_t id, sai_uint16_t tpid)
+{
+    SWSS_LOG_ENTER();
+    sai_status_t status = SAI_STATUS_SUCCESS;
+    sai_attribute_t attr;
+
+    attr.id = SAI_PORT_ATTR_TPID;
+
+    attr.value.u16 = (uint16_t)tpid;
+
+    status = sai_port_api->set_port_attribute(id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set TPID 0x%x to port pid:%" PRIx64 ", rv:%d",
+                attr.value.u16, id, status);
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("Set TPID 0x%x to port pid:%" PRIx64, attr.value.u16, id);
+    }
+    return true;
+}
+
+
 bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t mode)
 {
     SWSS_LOG_ENTER();
@@ -2353,6 +2383,8 @@ void PortsOrch::doPortTask(Consumer &consumer)
             string learn_mode;
             int an = -1;
             int index = -1;
+            string tpid_string;
+            uint16_t tpid = 0;
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -2383,6 +2415,15 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 else if (fvField(i) == "mtu")
                 {
                     mtu = (uint32_t)stoul(fvValue(i));
+                }
+                /* Set port TPID */
+                if (fvField(i) == "tpid")
+                {
+                    tpid_string = fvValue(i);
+                    // Need to get rid of the leading 0x
+                    tpid_string.erase(0,2);
+                    tpid = (uint16_t)stoi(tpid_string, 0, 16);
+                    SWSS_LOG_DEBUG("Handling TPID to 0x%x, string value:%s", tpid, tpid_string.c_str());
                 }
                 /* Set port speed */
                 else if (fvField(i) == "speed")
@@ -2694,6 +2735,22 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     else
                     {
                         SWSS_LOG_ERROR("Failed to set port %s MTU to %u", alias.c_str(), mtu);
+                        it++;
+                        continue;
+                    }
+                }
+
+                if (tpid != 0 && tpid != p.m_tpid)
+                {
+                    SWSS_LOG_DEBUG("Set port %s TPID to 0x%x", alias.c_str(), tpid);
+                    if (setPortTpid(p.m_port_id, tpid))
+                    {
+                        p.m_tpid = tpid;
+                        m_portList[alias] = p;
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed to set port %s TPID to 0x%x", alias.c_str(), tpid);
                         it++;
                         continue;
                     }
@@ -3151,6 +3208,8 @@ void PortsOrch::doLagTask(Consumer &consumer)
             string operation_status;
             uint32_t lag_id = 0;
             int32_t switch_id = -1;
+            string tpid_string;
+            uint16_t tpid = 0;
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -3180,6 +3239,14 @@ void PortsOrch::doLagTask(Consumer &consumer)
                 {
                     switch_id = stoi(fvValue(i));
                 }
+                else if (fvField(i) == "tpid")
+                {
+                    tpid_string = fvValue(i);
+                    // Need to get rid of the leading 0x
+                    tpid_string.erase(0,2);
+                    tpid = (uint16_t)stoi(tpid_string, 0, 16);
+                    SWSS_LOG_DEBUG("reading TPID string:%s to uint16: 0x%x", tpid_string.c_str(), tpid);
+                 }
             }
 
             if (table_name == CHASSIS_APP_LAG_TABLE_NAME)
@@ -3234,6 +3301,23 @@ void PortsOrch::doLagTask(Consumer &consumer)
                     }
                     // Sub interfaces inherit parent LAG mtu
                     updateChildPortsMtu(l, mtu);
+                }
+
+                if (tpid != 0)
+                {
+                    if (tpid != l.m_tpid)
+                    {
+                        if(!setLagTpid(l.m_lag_id, tpid))
+                        {
+                            SWSS_LOG_ERROR("Failed to set LAG %s TPID 0x%x", alias.c_str(), tpid);
+                        }
+                        else
+                        {
+                            SWSS_LOG_DEBUG("Set LAG %s TPID to 0x%x", alias.c_str(), tpid);
+                            l.m_tpid = tpid;
+                            m_portList[alias] = l;
+                        }
+                    }
                 }
 
                 if (!learn_mode.empty() && (l.m_learn_mode != learn_mode))
@@ -4440,6 +4524,35 @@ bool PortsOrch::removeLagMember(Port &lag, Port &port)
 
     return true;
 }
+
+bool PortsOrch::setLagTpid(sai_object_id_t id, sai_uint16_t tpid)
+{
+    SWSS_LOG_ENTER();
+    sai_status_t status = SAI_STATUS_SUCCESS;
+    sai_attribute_t attr;
+
+    attr.id = SAI_LAG_ATTR_TPID;
+
+    attr.value.u16 = (uint16_t)tpid;
+
+    status = sai_lag_api->set_lag_attribute(id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set TPID 0x%x to LAG pid:%" PRIx64 ", rv:%d",
+                attr.value.u16, id, status);
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_LAG, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("Set TPID 0x%x to LAG pid:%" PRIx64 , attr.value.u16, id);
+    }
+    return true;
+}
+
 
 bool PortsOrch::setCollectionOnLagMember(Port &lagMember, bool enableCollection)
 {

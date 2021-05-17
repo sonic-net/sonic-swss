@@ -20,6 +20,12 @@ extern "C" {
  */
 #define DEFAULT_MTU             1492
 
+/*
+ * Default TPID is 8100
+ * User can configure other values such as 9100, 9200, or 88A8
+ */
+#define DEFAULT_TPID             0x8100
+
 #define VNID_NONE               0xFFFFFFFF
 
 namespace swss {
@@ -128,6 +134,7 @@ public:
     std::vector<sai_object_id_t> m_priority_group_ids;
     sai_port_priority_flow_control_mode_t m_pfc_asym = SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_COMBINED;
     uint8_t   m_pfc_bitmask = 0;
+    uint16_t  m_tpid = DEFAULT_TPID;
     uint32_t  m_nat_zone_id = 0;
     uint32_t  m_vnid = VNID_NONE;
     uint32_t  m_fdb_count = 0;
