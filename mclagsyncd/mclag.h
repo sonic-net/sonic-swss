@@ -108,8 +108,7 @@ typedef enum mclag_msg_type_e_ {
     MCLAG_MSG_TYPE_SET_REMOTE_IF_STATE      = 12,
     MCLAG_MSG_TYPE_DEL_REMOTE_IF_INFO       = 13,
     MCLAG_MSG_TYPE_SET_PEER_LINK_ISOLATION  = 14,
-    MCLAG_MSG_TYPE_SET_ICCP_PEER_SYSTEM_ID  = 15,
-    MCLAG_MSG_TYPE_FLUSH_FDB_BY_PORT = 20
+    MCLAG_MSG_TYPE_SET_ICCP_PEER_SYSTEM_ID  = 15
 }mclag_msg_type_e;
 
 typedef struct mclag_sub_option_hdr_t_ {    

@@ -422,26 +422,6 @@ void MclagLink::setFdbFlush()
     return;
 }
 
-void MclagLink::setFdbFlushByPort(char *msg)
-{
-    string port;
-    char *cur = NULL;
-    mclag_sub_option_hdr_t *op_hdr = NULL;
-    swss::NotificationProducer flushFdb(p_appl_db.get(), "FLUSHFDBREQUEST");
-    vector<FieldValueTuple> values;
-
-    cur = msg;
-    /*get port infor*/
-    op_hdr = reinterpret_cast<mclag_sub_option_hdr_t *>(static_cast<void *>(cur));
-    cur = cur + MCLAG_SUB_OPTION_HDR_LEN;
-    port.insert(0, (const char*)cur, op_hdr->op_len);
-
-    SWSS_LOG_NOTICE("send fdb flush by port %s notification", port.c_str());
-
-    flushFdb.send("ALL", port, values);
-
-    return;
-}
 
 void MclagLink::setIntfMac(char *msg)
 {
@@ -1927,10 +1907,6 @@ uint64_t MclagLink::readData()
 
             case MCLAG_MSG_TYPE_FLUSH_FDB:
                 setFdbFlush();
-                break;
-
-            case MCLAG_MSG_TYPE_FLUSH_FDB_BY_PORT:
-                setFdbFlushByPort(msg);
                 break;
 
             case MCLAG_MSG_TYPE_SET_INTF_MAC:

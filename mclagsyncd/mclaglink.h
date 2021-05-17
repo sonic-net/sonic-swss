@@ -271,7 +271,6 @@ namespace swss {
             void setPortMacLearnMode(char *msg);
             void setPortMacLearnNLAPI(char *msg);
             void setFdbFlush();
-            void setFdbFlushByPort(char *msg);
             void setIntfMac(char *msg);
             void setFdbEntry(char *msg, int msg_len);
 
