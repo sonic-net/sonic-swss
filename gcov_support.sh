@@ -217,7 +217,7 @@ gcov_merge_info()
     do
         local container_id=${line}
         script_count=`docker exec -i ${container_id} find / -name gcov_support.sh | wc -l`
-        if [ ${script_count} -gt 0]; then
+        if [ ${script_count} -gt 0 ]; then
             docker exec -i ${container_id} /tmp/gcov/gcov_support.sh collect_gcda
             docker exec -i ${container_id} /tmp/gcov/gcov_support.sh generate
         fi
