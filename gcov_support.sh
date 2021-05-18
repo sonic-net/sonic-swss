@@ -206,6 +206,8 @@ gcov_merge_info()
 
     build_dir=$1
 
+    sleep 60
+
     mkdir -p ${build_dir}/gcov_tmp
     mkdir -p ${build_dir}/gcov_tmp/gcov_output
     mkdir -p ${build_dir}/gcov_tmp/gcov_output/info

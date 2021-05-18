@@ -62,6 +62,7 @@ jobs:
 
   - script: |
       cp -r tests/log $(Build.ArtifactStagingDirectory)/
+      docker restart $(docker ps -q -a)
       ./tests/gcov_support.sh merge_container_info $(Build.ArtifactStagingDirectory)
       docker stop $(docker ps -q -a) 
       docker rm $(docker ps -q -a)
