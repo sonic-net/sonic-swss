@@ -289,34 +289,34 @@ gcov_support_generate_html()
     gcov_support_clean
 
     add_new_home_for_sonic
-    pushd $HOME
-    gcno_count=`find gcno*.tar.gz 2>/dev/null | wc -l`
+    pushd /tmp/gcov
+    gcno_count=`find -name gcno*.tar.gz 2>/dev/null | wc -l`
     if [ ${gcno_count} -lt 1 ]; then
         echo "### Fail! Cannot find any gcno files, please check."
         return -1
     fi
 
-    gcda_count=`find gcda*.tar.gz 2>/dev/null | wc -l`
+    gcda_count=`find -name gcda*.tar.gz 2>/dev/null | wc -l`
     if [ ${gcda_count} -lt 1 ]; then
-        echo "### Fail! Cannot find any gcda files, please check."
-        return -1
+        echo "### Cannot find any gcda files, please check."
+        return 0
     fi
 
     # echo "### Extract .gcda and .gcno files..."
     # tar -zxvf $GCNO_ALL_TAR_GZ
-    find gcda*.tar.gz > tmp_gcda.txt
+    find -name gcda*.tar.gz > tmp_gcda.txt
     while read LINE ; do
-        tar -zxvf ${LINE}
+        tar -zxvf ${LINE#*.}
     done < tmp_gcda.txt
     rm tmp_gcda.txt
 
-    find gcno*.tar.gz > tmp_gcno.txt
+    find -name gcno*.tar.gz > tmp_gcno.txt
     while read LINE ; do
-        #submodule_name=`echo ${LINE%%.*} | awk -F _ '{print $2}'`
-        #cp ${LINE} $HOME/src/sonic-${submodule_name}
-        #pushd $HOME/src/sonic-${submodule_name}/
-        tar -zxvf ${LINE}
-        #popd
+        submodule_name=`echo ${LINE%%.*} | awk -F _ '{print $2}' | awk -F . '{print $1}'`
+        cp ${LINE#*/} /tmp/gcov/src/sonic-${submodule_name}
+        pushd /tmp/gcov/src/sonic-${submodule_name}/
+        tar -zxvf ${LINE#*.}
+        popd
     done < tmp_gcno.txt
     rm tmp_gcno.txt
 
