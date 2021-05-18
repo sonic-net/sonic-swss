@@ -67,11 +67,8 @@ for i = n, 1, -1 do
                     pfc_on2off_last = tonumber(pfc_on2off_last)
 
                     -- Check actual condition of queue being in PFC storm
-                    if (occupancy_bytes > 0 and packets - packets_last == 0 and pfc_rx_packets - pfc_rx_packets_last > 0) or
-                        -- DEBUG CODE START. Uncomment to enable
-                        (debug_storm == "enabled") or
-                        -- DEBUG CODE END.
-                        (occupancy_bytes == 0 and pfc_rx_packets - pfc_rx_packets_last > 0 and pfc_on2off - pfc_on2off_last == 0 and queue_pause_status_last == 'true' and queue_pause_status == 'true') then
+                    if (pfc_rx_packets - pfc_rx_packets_last > 0 and pfc_on2off - pfc_on2off_last == 0 and queue_pause_status_last == 'true' and queue_pause_status == 'true') or
+                        (debug_storm == "enabled") then
                         if time_left <= poll_time then
                             redis.call('PUBLISH', 'PFC_WD_ACTION', '["' .. KEYS[i] .. '","storm"]')
                             is_deadlock = true

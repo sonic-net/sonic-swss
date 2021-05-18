@@ -9,6 +9,7 @@
 #include <sairedis.h>
 #include "sai.h"
 #include "logger.h"
+#include "sai_serialize.h"
 
 static inline bool operator==(const sai_ip_prefix_t& a, const sai_ip_prefix_t& b)
 {
@@ -282,8 +283,16 @@ public:
             }
             size_t count = rs.size();
             std::vector<sai_status_t> statuses(count);
-            (*remove_entries)((uint32_t)count, rs.data(), SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR, statuses.data());
-            SWSS_LOG_INFO("EntityBulker.flush removing_entries %zu\n", removing_entries.size());
+            sai_status_t status = (*remove_entries)((uint32_t)count, rs.data(), SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR, statuses.data());
+            if (status == SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_INFO("EntityBulker.flush removing_entries %zu\n", removing_entries.size());
+            }
+            else
+            {
+                SWSS_LOG_ERROR("EntityBulker.flush remove entries failed, number of entries to remove: %zu, status: %s",
+                                removing_entries.size(), sai_serialize_status(status).c_str());
+            }
 
             for (size_t ir = 0; ir < count; ir++)
             {
@@ -318,9 +327,17 @@ public:
             }
             size_t count = rs.size();
             std::vector<sai_status_t> statuses(count);
-            (*create_entries)((uint32_t)count, rs.data(), cs.data(), tss.data()
+            sai_status_t status = (*create_entries)((uint32_t)count, rs.data(), cs.data(), tss.data()
                 , SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR, statuses.data());
-            SWSS_LOG_INFO("EntityBulker.flush creating_entries %zu\n", creating_entries.size());
+            if (status == SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_INFO("EntityBulker.flush creating_entries %zu\n", creating_entries.size());
+            }
+            else
+            {
+                SWSS_LOG_ERROR("EntityBulker.flush create entries failed, number of entries to create: %zu, status: %s",
+                                creating_entries.size(), sai_serialize_status(status).c_str());
+            }
 
             for (size_t ir = 0; ir < count; ir++)
             {
@@ -359,9 +376,17 @@ public:
             }
             size_t count = rs.size();
             std::vector<sai_status_t> statuses(count);
-            (*set_entries_attribute)((uint32_t)count, rs.data(), ts.data()
+            sai_status_t status = (*set_entries_attribute)((uint32_t)count, rs.data(), ts.data()
                 , SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR, statuses.data());
-            SWSS_LOG_INFO("EntityBulker.flush setting_entries %zu, count %zu\n", setting_entries.size(), count);
+            if (status == SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_INFO("EntityBulker.flush setting_entries %zu, count %zu\n", setting_entries.size(), count);
+            }
+            else
+            {
+                SWSS_LOG_ERROR("EntityBulker.flush set entry attribute failed, number of entries to set: %zu, status: %s",
+                                setting_entries.size(), sai_serialize_status(status).c_str());
+            }
 
             for (size_t ir = 0; ir < count; ir++)
             {
@@ -544,7 +569,15 @@ public:
             size_t count = rs.size();
             std::vector<sai_status_t> statuses(count);
             sai_status_t status = (*remove_entries)((uint32_t)count, rs.data(), SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR, statuses.data());
-            SWSS_LOG_INFO("ObjectBulker.flush removing_entries %zu rc=%d statuses[0]=%d\n", removing_entries.size(), status, statuses[0]);
+            if (status == SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_INFO("ObjectBulker.flush removing_entries %zu rc=%d statuses[0]=%d\n", removing_entries.size(), status, statuses[0]);
+            }
+            else
+            {
+                SWSS_LOG_ERROR("ObjectBulker.flush remove entries failed, number of entries to remove: %zu, status: %s",
+                                removing_entries.size(), sai_serialize_status(status).c_str());
+            }
 
             for (size_t i = 0; i < count; i++)
             {
@@ -574,9 +607,17 @@ public:
             size_t count = creating_entries.size();
             std::vector<sai_object_id_t> object_ids(count);
             std::vector<sai_status_t> statuses(count);
-            (*create_entries)(switch_id, (uint32_t)count, cs.data(), tss.data()
+            sai_status_t status = (*create_entries)(switch_id, (uint32_t)count, cs.data(), tss.data()
                 , SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR, object_ids.data(), statuses.data());
-            SWSS_LOG_INFO("ObjectBulker.flush creating_entries %zu\n", creating_entries.size());
+            if (status == SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_INFO("ObjectBulker.flush creating_entries %zu\n", creating_entries.size());
+            }
+            else
+            {
+                SWSS_LOG_ERROR("ObjectBulker.flush create entries failed, number of entries to create: %zu, status: %s",
+                                creating_entries.size(), sai_serialize_status(status).c_str());
+            }
 
             for (size_t i = 0; i < count; i++)
             {
@@ -607,10 +648,17 @@ public:
             }
             size_t count = setting_entries.size();
             std::vector<sai_status_t> statuses(count);
-            (*set_entries_attribute)((uint32_t)count, rs.data(), ts.data()
+            sai_status_t status = (*set_entries_attribute)((uint32_t)count, rs.data(), ts.data()
                 , SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR, statuses.data());
-
-            SWSS_LOG_INFO("ObjectBulker.flush setting_entries %zu\n", setting_entries.size());
+            if (status == SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_INFO("ObjectBulker.flush setting_entries %zu\n", setting_entries.size());
+            }
+            else
+            {
+                SWSS_LOG_ERROR("ObjectBulker.flush set entry attribute failed, number of entries to set: %zu, status: %s",
+                                setting_entries.size(), sai_serialize_status(status).c_str());
+            }
 
             setting_entries.clear();
         }
