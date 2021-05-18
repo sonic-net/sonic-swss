@@ -216,6 +216,8 @@ gcov_merge_info()
     while read line
     do
         local container_id=${line}
+        docker exec -i ${container_id} /tmp/gcov/gcov_support.sh collect_gcda
+        docker exec -i ${container_id} /tmp/gcov/gcov_support.sh generate
         info_count=`docker exec -i ${container_id} find / -name *.info | wc -l`
         if [ ${info_count} -gt 0 ]; then
             mkdir -p ${build_dir}/gcov_tmp/${container_id}

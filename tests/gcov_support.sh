@@ -140,18 +140,18 @@ lcov_merge_all()
     # check c/cpp source files
     project_c_source=`find -name "*\.[c|cpp]" 2>/dev/null | wc -l`
     
-    pushd $GCOV_OUTPUT
-    if [ ! -d ${GCOV_MERGE_REPORT_OUTPUT} ]; then
-        mkdir -p ${GCOV_MERGE_REPORT_OUTPUT}
+    pushd gcov_output/
+    if [ ! -d ${ALLMERGE_DIR} ]; then
+        mkdir -p ${ALLMERGE_DIR}
     fi
 
     all_info_files=`find . -name *\.info`
     if [ ${project_c_source} -lt 1 ]; then
         echo "############# build reports without sources ###############"
-        genhtml -o $GCOV_MERGE_REPORT_OUTPUT --no-source ${all_info_files}
+        genhtml -o $ALLMERGE_DIR --no-source ${all_info_files}
     else
         echo "############# build reports with sources ##################"
-        genhtml -o $GCOV_MERGE_REPORT_OUTPUT ${all_info_files}
+        genhtml -o $ALLMERGE_DIR ${all_info_files}
     fi
     popd
 }
@@ -207,6 +207,8 @@ gcov_merge_info()
     build_dir=$1
 
     mkdir -p ${build_dir}/gcov_tmp
+    mkdir -p ${build_dir}/gcov_tmp/gcov_output
+    mkdir -p ${build_dir}/gcov_tmp/gcov_output/info
 
     echo "### Start collecting info files from existed containers"
     docker ps -q > ${CONTAINER_LIST}
@@ -214,12 +216,14 @@ gcov_merge_info()
     while read line
     do
         local container_id=${line}
-        docker exec -i ${container_id} gcov_support_collect_gcda
+        docker exec -i ${container_id} /tmp/gcov/gcov_support.sh collect_gcda
+        docker exec -i ${container_id} /tmp/gcov/gcov_support.sh generate
         info_count=`docker exec -i ${container_id} find / -name *.info | wc -l`
         if [ ${info_count} -gt 0 ]; then
             mkdir -p ${build_dir}/gcov_tmp/${container_id}
             pushd ${build_dir}/gcov_tmp/${container_id}
             docker cp ${container_id}:/tmp/gcov/gcov_output .
+            cp gcov_output/* ../gcov_output/
             popd
         fi
     done < ${CONTAINER_LIST}
@@ -228,7 +232,7 @@ gcov_merge_info()
     pushd ${build_dir}/gcov_tmp
     find -name *.info > ${ALL_INFO_FILES}
     while read line
-    do 
+    do
         local info_file_name=${line##*/}
         local info_repeat_times=`grep ${info_file_name} ${ALL_INFO_FILES} | wc -l`
         if [ ${info_repeat_times} -gt 1 ]; then
@@ -238,16 +242,22 @@ gcov_merge_info()
 
     echo ${REPE_INFO_LIST} | while read line
     do
-        local info_file_name=${line}
-        find -name ${info_file_name} > ${SINGLE_INFO_LIST}
+        local info_name=${line%.*}
+        find -name ${info_name} > ${SINGLE_INFO_LIST}
         while read line
         do
-            local info_file_path=${line}
-            lcov -o 
-        done
-    done
-    popd
+            if [ ! -f "total_${info_name}.info" ]; then
+                lcov -o total_${info_name}.info -a ${line}
+            else
+                lcov -o total_${info_name}.info -a total_${info_name}.info -a ${line}
+            fi
+            cp total_${info_name}.info gcov_output/info/
+        done < ${SINGLE_INFO_LIST}
+    done < ${REPE_INFO_LIST}
+    lcov_merge_all
+    tar_gcov_output
 
+    popd
 }
 
 tar_gcov_output()
@@ -255,17 +265,17 @@ tar_gcov_output()
     local time_stamp
 
     time_stamp=$(date "+%Y%m%d%H%M")
-    tar -czvf ${time_stamp}_SONiC_gcov_report.tar.gz ${GCOV_OUTPUT}
+    tar -czvf ${time_stamp}_SONiC_gcov_report.tar.gz gcov_output
 }
 
 collect_merged_report()
 {
     get_info_file
     get_html_file
-    lcov_merge_all
+    #lcov_merge_all
     mv $INFO_ERR_LIST $GCOV_OUTPUT
     mv $GCDA_DIR_LIST $GCOV_OUTPUT
-    tar_gcov_output
+    #tar_gcov_output
 }
 
 gcov_support_generate_html()
