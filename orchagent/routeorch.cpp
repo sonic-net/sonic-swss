@@ -1775,11 +1775,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
             {
                 SWSS_LOG_ERROR("Failed to set blackhole route %s with packet action drop, %d",
                                 ipPrefix.to_string().c_str(), status);
-                task_process_status handle_status = handleSaiSetStatus(SAI_API_ROUTE, status);
-                if (handle_status != task_success)
-                {
-                    return parseHandleSaiStatusFailure(handle_status);
-                }
+                return false;
             }
         }
 
