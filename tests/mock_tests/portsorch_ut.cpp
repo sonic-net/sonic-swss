@@ -145,7 +145,9 @@ namespace portsorch_test
         };
 
         ASSERT_EQ(gPortsOrch, nullptr);
-        gPortsOrch = new PortsOrch(m_app_db.get(), ports_tables, m_chassis_app_db.get());
+
+        gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
+
         vector<string> buffer_tables = { APP_BUFFER_POOL_TABLE_NAME,
                                          APP_BUFFER_PROFILE_TABLE_NAME,
                                          APP_BUFFER_QUEUE_TABLE_NAME,
@@ -274,7 +276,7 @@ namespace portsorch_test
         };
 
         ASSERT_EQ(gPortsOrch, nullptr);
-        gPortsOrch = new PortsOrch(m_app_db.get(), ports_tables, m_chassis_app_db.get());
+        gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
         vector<string> buffer_tables = { APP_BUFFER_POOL_TABLE_NAME,
                                          APP_BUFFER_PROFILE_TABLE_NAME,
                                          APP_BUFFER_QUEUE_TABLE_NAME,
@@ -344,7 +346,7 @@ namespace portsorch_test
         };
 
         ASSERT_EQ(gPortsOrch, nullptr);
-        gPortsOrch = new PortsOrch(m_app_db.get(), ports_tables, m_chassis_app_db.get());
+        gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
         vector<string> buffer_tables = { APP_BUFFER_POOL_TABLE_NAME,
                                          APP_BUFFER_PROFILE_TABLE_NAME,
                                          APP_BUFFER_QUEUE_TABLE_NAME,
@@ -489,7 +491,7 @@ namespace portsorch_test
         };
 
         ASSERT_EQ(gPortsOrch, nullptr);
-        gPortsOrch = new PortsOrch(m_app_db.get(), ports_tables, m_chassis_app_db.get());
+        gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
         vector<string> buffer_tables = { APP_BUFFER_POOL_TABLE_NAME,
                                          APP_BUFFER_PROFILE_TABLE_NAME,
                                          APP_BUFFER_QUEUE_TABLE_NAME,
