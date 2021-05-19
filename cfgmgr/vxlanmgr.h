@@ -75,7 +75,7 @@ private:
     /*
     * Query the state of vrf by STATE_VRF_TABLE
     * Return
-    *  true: The state of vrf is OK 
+    *  true: The state of vrf is OK
     *  false: the vrf hasn't been created
     */
     bool isVrfStateOk(const std::string & vrfName);
@@ -90,7 +90,7 @@ private:
 
     ProducerStateTable m_appVxlanTunnelTable,m_appVxlanTunnelMapTable,m_appEvpnNvoTable;
     Table m_cfgVxlanTunnelTable,m_cfgVnetTable,m_stateVrfTable,m_stateVxlanTable, m_appSwitchTable;
-    Table m_stateVlanTable, m_stateTunnelVlanMapTable, m_stateVxlanTunnelTable;
+    Table m_stateVlanTable, m_stateNeighSuppressVlanTable, m_stateVxlanTunnelTable;
 
     /*
     * Vxlan Tunnel Cache

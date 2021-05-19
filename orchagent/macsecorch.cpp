@@ -1848,13 +1848,13 @@ bool MACsecOrch::createMACsecSA(
 
     if (direction == SAI_MACSEC_DIRECTION_EGRESS)
     {
-        attr.id = SAI_MACSEC_SA_ATTR_XPN;
+        attr.id = SAI_MACSEC_SA_ATTR_CONFIGURED_EGRESS_XPN;
         attr.value.u64 = pn;
         attrs.push_back(attr);
     }
     else
     {
-        attr.id = SAI_MACSEC_SA_ATTR_MINIMUM_XPN;
+        attr.id = SAI_MACSEC_SA_ATTR_MINIMUM_INGRESS_XPN;
         attr.value.u64 = pn;
         attrs.push_back(attr);
     }
