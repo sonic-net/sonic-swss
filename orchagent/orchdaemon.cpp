@@ -10,11 +10,6 @@
 #include "sairedis.h"
 #include "chassisorch.h"
 
-extern "C" {
-#include "sai.h"
-}
-#include "sai_serialize.h"
-
 using namespace std;
 using namespace swss;
 
@@ -280,56 +275,6 @@ bool OrchDaemon::init()
 
     gMacsecOrch = new MACsecOrch(m_applDb, m_stateDb, macsec_app_tables, gPortsOrch);
   
-    Table m_switchTable(stateDbSwitchTable.first, stateDbSwitchTable.second);
-    // Check if SAI is capable of handling TPID config and store result in StateDB switch capability table
-    {
-        vector<FieldValueTuple> fvVector;
-        sai_status_t status = SAI_STATUS_SUCCESS;
-        sai_attr_capability_t capability;
-
-        // Check if SAI is capable of handling TPID for Port
-        status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_PORT, SAI_PORT_ATTR_TPID, &capability);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_WARN("Could not query port TPID capability %d", status);
-            // Since pre-req of TPID support requires querry capability failed, it means TPID not supported
-            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_TPID_CAPABLE, "false");
-        }
-        else
-        {
-            if (capability.set_implemented)
-            {
-                fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_TPID_CAPABLE, "true");
-            }
-            else
-            {
-                fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_TPID_CAPABLE, "false");
-            }
-            SWSS_LOG_NOTICE("port TPID capability %d", capability.set_implemented);
-        }
-        // Check if SAI is capable of handling TPID for LAG
-        status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_LAG, SAI_LAG_ATTR_TPID, &capability);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_WARN("Could not query LAG TPID capability %d", status);
-            // Since pre-req of TPID support requires querry capability failed, it means TPID not supported
-            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_LAG_TPID_CAPABLE, "false");
-        }
-        else
-        {
-            if (capability.set_implemented)
-            {
-                fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_LAG_TPID_CAPABLE, "true");
-            }
-            else
-            {
-                fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_LAG_TPID_CAPABLE, "false");
-            }
-            SWSS_LOG_NOTICE("LAG TPID capability %d", capability.set_implemented);
-        }
-        m_switchTable.set("switch", fvVector);
-    }
-
     /*
      * The order of the orch list is important for state restore of warm start and
      * the queued processing in m_toSync map after gPortsOrch->allPortsReady() is set.

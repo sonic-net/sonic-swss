@@ -37,9 +37,6 @@
 
 using namespace swss;
 
-#define SWITCH_CAPABILITY_TABLE_PORT_TPID_CAPABLE                      "PORT_TPID_CAPABLE"
-#define SWITCH_CAPABILITY_TABLE_LAG_TPID_CAPABLE                       "LAG_TPID_CAPABLE"
-
 class OrchDaemon
 {
 public:

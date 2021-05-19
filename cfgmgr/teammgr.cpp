@@ -415,8 +415,7 @@ bool TeamMgr::setLagTpid(const string &alias, const string &tpid)
     fvs.push_back(fv);
     m_appLagTable.set(alias, fvs);
 
-    SWSS_LOG_NOTICE("Set port channel %s TPID to %s",
-            alias.c_str(), tpid.c_str());
+    SWSS_LOG_NOTICE("Set port channel %s TPID to %s", alias.c_str(), tpid.c_str());
 
     return true;
 }
