@@ -206,7 +206,9 @@ gcov_merge_info()
 
     build_dir=$1
 
-    sleep 60
+    docker kill --signal "TERM" $(docker ps -q -a)
+    sleep 120
+    docker start $(docker ps -q -a)
 
     mkdir -p ${build_dir}/gcov_tmp
     mkdir -p ${build_dir}/gcov_tmp/gcov_output
