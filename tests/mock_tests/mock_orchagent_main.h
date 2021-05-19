@@ -25,7 +25,6 @@ extern bool gLogRotate;
 extern bool gSaiRedisLogRotate;
 extern ofstream gRecordOfs;
 extern string gRecordFile;
-extern size_t gMaxBulkSize;
 
 extern MacAddress gMacAddress;
 extern MacAddress gVxlanMacAddress;

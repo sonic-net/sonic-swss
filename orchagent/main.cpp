@@ -47,8 +47,7 @@ sai_object_id_t gSwitchId = SAI_NULL_OBJECT_ID;
 MacAddress gMacAddress;
 MacAddress gVxlanMacAddress;
 
-#define DEFAULT_MAX_BULK_SIZE 1000
-size_t gMaxBulkSize = DEFAULT_MAX_BULK_SIZE;
+extern size_t gMaxBulkSize;
 
 #define DEFAULT_BATCH_SIZE  128
 int gBatchSize = DEFAULT_BATCH_SIZE;
@@ -402,7 +401,18 @@ int main(int argc, char **argv)
             }
             break;
         case 'k':
-            gMaxBulkSize = atoi(optarg);
+            {
+                auto limit = atoi(optarg);
+                if (limit > 0)
+                {
+                    gMaxBulkSize = limit;
+                    SWSS_LOG_NOTICE("Setting maximum bulk size in bulk mode as %zu", gMaxBulkSize);
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Invalid input for maximum bulk size in bulk mode: %d. Ignoring.", limit);
+                }
+            }
             break;
         default: /* '?' */
             exit(EXIT_FAILURE);

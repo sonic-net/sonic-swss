@@ -18,6 +18,8 @@ extern PortsOrch *gPortsOrch;
 extern CrmOrch *gCrmOrch;
 extern Directory<Orch*> gDirectory;
 
+extern size_t gMaxBulkSize;
+
 /* Default maximum number of next hop groups */
 #define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
 #define DEFAULT_MAX_ECMP_GROUP_SIZE     32
@@ -25,8 +27,8 @@ extern Directory<Orch*> gDirectory;
 const int routeorch_pri = 5;
 
 RouteOrch::RouteOrch(DBConnector *db, string tableName, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch) :
-        gRouteBulker(sai_route_api),
-        gNextHopGroupMemberBulker(sai_next_hop_group_api, gSwitchId),
+        gRouteBulker(sai_route_api, gMaxBulkSize),
+        gNextHopGroupMemberBulker(sai_next_hop_group_api, gSwitchId, gMaxBulkSize),
         Orch(db, tableName, routeorch_pri),
         m_switchOrch(switchOrch),
         m_neighOrch(neighOrch),

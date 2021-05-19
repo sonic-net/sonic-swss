@@ -11,8 +11,6 @@
 #include "logger.h"
 #include "sai_serialize.h"
 
-extern size_t gMaxBulkSize;
-
 static inline bool operator==(const sai_ip_prefix_t& a, const sai_ip_prefix_t& b)
 {
     if (a.addr_family != b.addr_family) return false;
@@ -160,7 +158,8 @@ public:
     using Ts = SaiBulkerTraits<T>;
     using Te = typename Ts::entry_t;
 
-    EntityBulker(typename Ts::api_t *api)
+    EntityBulker(typename Ts::api_t *api, size_t max_bulk_size) :
+        max_bulk_size(max_bulk_size)
     {
         throw std::logic_error("Not implemented");
     }
@@ -282,7 +281,7 @@ public:
                 {
                     rs.push_back(entry);
 
-                    if (rs.size() >= gMaxBulkSize)
+                    if (rs.size() >= max_bulk_size)
                     {
                         flush_removing_entries(rs);
                     }
@@ -311,7 +310,7 @@ public:
                     tss.push_back(attrs.data());
                     cs.push_back((uint32_t)attrs.size());
 
-                    if (rs.size() >= gMaxBulkSize)
+                    if (rs.size() >= max_bulk_size)
                     {
                         flush_creating_entries(rs, tss, cs);
                     }
@@ -343,7 +342,7 @@ public:
                         ts.push_back(attr);
                         status_vector.push_back(object_status);
 
-                        if (rs.size() >= gMaxBulkSize)
+                        if (rs.size() >= max_bulk_size)
                         {
                             flush_setting_entries(rs, ts, status_vector);
                         }
@@ -406,6 +405,8 @@ private:
             Te,                                             // entry ->
             sai_status_t *                                  // OUT object_status
     >                                                       removing_entries;
+
+    size_t max_bulk_size;
 
     typename Ts::bulk_create_entry_fn                       create_entries;
     typename Ts::bulk_remove_entry_fn                       remove_entries;
@@ -528,7 +529,8 @@ private:
 };
 
 template <>
-inline EntityBulker<sai_route_api_t>::EntityBulker(sai_route_api_t *api)
+inline EntityBulker<sai_route_api_t>::EntityBulker(sai_route_api_t *api, size_t max_bulk_size) :
+    max_bulk_size(max_bulk_size)
 {
     create_entries = api->create_route_entries;
     remove_entries = api->remove_route_entries;
@@ -536,7 +538,8 @@ inline EntityBulker<sai_route_api_t>::EntityBulker(sai_route_api_t *api)
 }
 
 template <>
-inline EntityBulker<sai_fdb_api_t>::EntityBulker(sai_fdb_api_t *api)
+inline EntityBulker<sai_fdb_api_t>::EntityBulker(sai_fdb_api_t *api, size_t max_bulk_size) :
+    max_bulk_size(max_bulk_size)
 {
     // TODO: implement after create_fdb_entries() is available in SAI
     throw std::logic_error("Not implemented");
@@ -553,7 +556,8 @@ class ObjectBulker
 public:
     using Ts = SaiBulkerTraits<T>;
 
-    ObjectBulker(typename Ts::api_t* next_hop_group_api, sai_object_id_t switch_id)
+    ObjectBulker(typename Ts::api_t* next_hop_group_api, sai_object_id_t switch_id, size_t max_bulk_size) :
+        max_bulk_size(max_bulk_size)
     {
         throw std::logic_error("Not implemented");
     }
@@ -635,7 +639,7 @@ public:
                 {
                     rs.push_back(entry);
 
-                    if (rs.size() >= gMaxBulkSize)
+                    if (rs.size() >= max_bulk_size)
                     {
                         flush_removing_entries(rs);
                     }
@@ -663,7 +667,7 @@ public:
                     tss.push_back(attrs.data());
                     cs.push_back((uint32_t)attrs.size());
 
-                    if (rs.size() >= gMaxBulkSize)
+                    if (rs.size() >= max_bulk_size)
                     {
                         flush_creating_entries(rs, tss, cs);
                     }
@@ -691,7 +695,7 @@ public:
                     rs.push_back(entry);
                     ts.push_back(attr);
 
-                    if (rs.size() >= gMaxBulkSize)
+                    if (rs.size() >= max_bulk_size)
                     {
                         flush_setting_entries(rs, ts);
                     }
@@ -740,6 +744,8 @@ private:
     };
 
     sai_object_id_t                                         switch_id;
+
+    size_t max_bulk_size;
 
     std::vector<std::pair<                                  // A vector of pair of
             sai_object_id_t *,                              // - object_id
@@ -865,8 +871,9 @@ private:
 };
 
 template <>
-inline ObjectBulker<sai_next_hop_group_api_t>::ObjectBulker(SaiBulkerTraits<sai_next_hop_group_api_t>::api_t *api, sai_object_id_t switch_id)
-    : switch_id(switch_id)
+inline ObjectBulker<sai_next_hop_group_api_t>::ObjectBulker(SaiBulkerTraits<sai_next_hop_group_api_t>::api_t *api, sai_object_id_t switch_id, size_t max_bulk_size) : 
+    switch_id(switch_id),
+    max_bulk_size(max_bulk_size)
 {
     create_entries = api->create_next_hop_group_members;
     remove_entries = api->remove_next_hop_group_members;
