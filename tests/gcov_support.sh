@@ -184,7 +184,7 @@ get_info_file()
         popd
         #ToFullpath=/tmp/gcov/${INFO_DIR}/${FromFullpath#*/}
         ToFullpath=/tmp/gcov/${INFO_DIR}/${info_file}
-        cp ${info_file} ${ToFullpath}
+        cp -r ${info_file} ${ToFullpath}
     done < /tmp/gcov/gcov_output/infolist
 }
 
@@ -208,7 +208,7 @@ get_html_file()
         mkdir -p ${html_report}
         popd
         ToFullpath=/tmp/gcov/${HTML_DIR}/${html_report}
-        cp ${html_report} ${ToFullpath}
+        cp -r ${html_report} ${ToFullpath}
     done < /tmp/gcov/gcov_output/htmllist
 }
 
@@ -217,13 +217,13 @@ gcov_merge_info()
     local build_dir
 
     build_dir=$1
-    echo "docker kill begin"
-    docker kill --signal "TERM" $(docker ps -q -a)
-    echo "docker kill done"
-    sleep 30
-    echo "sleep done"
-    docker start $(docker ps -q -a)
-    echo "docker start done"
+    #echo "docker kill begin"
+    #docker kill --signal "TERM" $(docker ps -q -a)
+    #echo "docker kill done"
+    #sleep 30
+    #echo "sleep done"
+    #docker start $(docker ps -q -a)
+    #echo "docker start done"
 
     mkdir -p ${build_dir}/gcov_tmp
     mkdir -p ${build_dir}/gcov_tmp/gcov_output
@@ -237,6 +237,8 @@ gcov_merge_info()
         local container_id=${line}
         script_count=`docker exec -i ${container_id} find / -name gcov_support.sh | wc -l`
         if [ ${script_count} -gt 0 ]; then
+            docker exec -i ${container_id} killall5 -15
+            sleep 20
             docker exec -i ${container_id} /tmp/gcov/gcov_support.sh collect_gcda
             docker exec -i ${container_id} /tmp/gcov/gcov_support.sh generate
         fi
