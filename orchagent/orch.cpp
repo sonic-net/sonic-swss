@@ -301,7 +301,7 @@ bool Orch::bake()
 }
 
 /*
-- Validates reference has proper format which is [table_name:object_name]
+- Validates reference has proper format which is object_name
 - validates table_name exists
 - validates object with object_name exists
 
@@ -310,59 +310,42 @@ bool Orch::bake()
 - both type_name and object_name are cleared to empty strings as an
 - indication to the caller of the special case
 */
-bool Orch::parseReference(type_map &type_maps, string &ref_in, string &type_name, string &object_name)
+bool Orch::parseReference(type_map &type_maps, string &ref_in, const string &type_name, string &object_name)
 {
     SWSS_LOG_ENTER();
 
     SWSS_LOG_DEBUG("input:%s", ref_in.c_str());
-    if (ref_in.size() < 2)
+
+    if (ref_in.size() == 0)
     {
-        SWSS_LOG_ERROR("invalid reference received:%s\n", ref_in.c_str());
-        return false;
-    }
-    if ((ref_in[0] != ref_start) || (ref_in[ref_in.size()-1] != ref_end))
-    {
-        SWSS_LOG_ERROR("malformed reference:%s. Must be surrounded by [ ]\n", ref_in.c_str());
-        return false;
-    }
-    if (ref_in.size() == 2)
-    {
-        // value set by user is "[]"
+        // value set by user is ""
         // Deem it as a valid format
         // clear both type_name and object_name
         // as an indication to the caller that
         // such a case has been encountered
-        type_name.clear();
         object_name.clear();
         return true;
     }
-    string ref_content = ref_in.substr(1, ref_in.size() - 2);
-    vector<string> tokens;
-    tokens = tokenize(ref_content, delimiter);
-    if (tokens.size() != 2)
+
+    if ((ref_in[0] == ref_start) || (ref_in[ref_in.size()-1] == ref_end))
     {
-        tokens = tokenize(ref_content, config_db_key_delimiter);
-        if (tokens.size() != 2)
-        {
-            SWSS_LOG_ERROR("malformed reference:%s. Must contain 2 tokens\n", ref_content.c_str());
-            return false;
-        }
+        SWSS_LOG_ERROR("malformed reference:%s. Must not be surrounded by [ ]\n", ref_in.c_str());
+        return false;
     }
-    auto type_it = type_maps.find(tokens[0]);
+    auto type_it = type_maps.find(type_name);
     if (type_it == type_maps.end())
     {
-        SWSS_LOG_ERROR("not recognized type:%s\n", tokens[0].c_str());
+        SWSS_LOG_ERROR("not recognized type:%s\n", type_name.c_str());
         return false;
     }
-    auto obj_map = type_maps[tokens[0]];
-    auto obj_it = obj_map->find(tokens[1]);
+    auto obj_map = type_maps[type_name];
+    auto obj_it = obj_map->find(ref_in);
     if (obj_it == obj_map->end())
     {
-        SWSS_LOG_INFO("map:%s does not contain object with name:%s\n", tokens[0].c_str(), tokens[1].c_str());
+        SWSS_LOG_INFO("map:%s does not contain object with name:%s\n", type_name.c_str(), ref_in.c_str());
         return false;
     }
-    type_name = tokens[0];
-    object_name = tokens[1];
+    object_name = ref_in;
     SWSS_LOG_DEBUG("parsed: type_name:%s, object_name:%s", type_name.c_str(), object_name.c_str());
     return true;
 }
@@ -370,6 +353,7 @@ bool Orch::parseReference(type_map &type_maps, string &ref_in, string &type_name
 ref_resolve_status Orch::resolveFieldRefValue(
     type_map &type_maps,
     const string &field_name,
+    const string &ref_type_name,
     KeyOpFieldsValuesTuple &tuple,
     sai_object_id_t &sai_object,
     string &referenced_object_name)
@@ -387,7 +371,7 @@ ref_resolve_status Orch::resolveFieldRefValue(
                 SWSS_LOG_ERROR("Multiple same fields %s", field_name.c_str());
                 return ref_resolve_status::multiple_instances;
             }
-            string ref_type_name, object_name;
+            string object_name;
             if (!parseReference(type_maps, fvValue(*i), ref_type_name, object_name))
             {
                 return ref_resolve_status::not_resolved;
@@ -568,11 +552,12 @@ string Orch::dumpTuple(Consumer &consumer, const KeyOpFieldsValuesTuple &tuple)
 ref_resolve_status Orch::resolveFieldRefArray(
     type_map &type_maps,
     const string &field_name,
+    const string &ref_type_name,
     KeyOpFieldsValuesTuple &tuple,
     vector<sai_object_id_t> &sai_object_arr,
     string &object_name_list)
 {
-    // example: [BUFFER_PROFILE_TABLE:e_port.profile0],[BUFFER_PROFILE_TABLE:e_port.profile1]
+    // example: e_port.profile0,e_port.profile1
     SWSS_LOG_ENTER();
     size_t count = 0;
     sai_object_arr.clear();
@@ -585,7 +570,7 @@ ref_resolve_status Orch::resolveFieldRefArray(
                 SWSS_LOG_ERROR("Singleton field with name:%s must have only 1 instance, actual count:%zd\n", field_name.c_str(), count);
                 return ref_resolve_status::multiple_instances;
             }
-            string ref_type_name, object_name;
+            string object_name;
             string list = fvValue(*i);
             vector<string> list_items;
             if (list.find(list_item_delimiter) != string::npos)
