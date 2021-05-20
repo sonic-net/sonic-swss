@@ -90,6 +90,7 @@ protected:
 private:
     struct PfcWdQueueEntry
     {
+        PfcWdQueueEntry() = default;
         PfcWdQueueEntry(
                 PfcWdAction action,
                 sai_object_id_t port,
@@ -105,8 +106,13 @@ private:
 
     template <typename T>
     static string counterIdsToStr(const vector<T> ids, string (*convert)(T));
+    void registerPortInWdDb(const Port& port, set<uint8_t>& losslessTc);
+    void registerQueueInWdDb(const Port& port, uint8_t qIdx,
+            uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action);
     bool registerInWdDb(const Port& port,
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action);
+    void unregisterPortFromWdDb(const Port& port);
+    void unregisterQueueFromWdDb(const Port& port, uint8_t qIdx);
     void unregisterFromWdDb(const Port& port);
     void doTask(swss::NotificationConsumer &wdNotification);
 
@@ -117,8 +123,8 @@ private:
     void enableBigRedSwitchMode();
     void setBigRedSwitchMode(string value);
 
-    map<sai_object_id_t, PfcWdQueueEntry> m_entryMap;
-    map<sai_object_id_t, PfcWdQueueEntry> m_brsEntryMap;
+    unordered_map<sai_object_id_t, PfcWdQueueEntry> m_entryMap;
+    unordered_map<sai_object_id_t, PfcWdQueueEntry> m_brsEntryMap;
 
     const vector<sai_port_stat_t> c_portStatIds;
     const vector<sai_queue_stat_t> c_queueStatIds;

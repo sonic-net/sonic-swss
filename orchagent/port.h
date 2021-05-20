@@ -127,7 +127,8 @@ public:
     std::vector<sai_object_id_t> m_queue_ids;
     std::vector<sai_object_id_t> m_priority_group_ids;
     sai_port_priority_flow_control_mode_t m_pfc_asym = SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_COMBINED;
-    uint8_t   m_pfc_bitmask = 0;
+    uint8_t   m_pfc_bitmask_usercfg = 0;    // bitmask from user config
+    uint8_t   m_pfc_bitmask_wdcfg = 0;      // bitmask of pfcwd config / status in asic
     uint32_t  m_nat_zone_id = 0;
     uint32_t  m_vnid = VNID_NONE;
     uint32_t  m_fdb_count = 0;

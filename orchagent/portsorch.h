@@ -120,8 +120,9 @@ public:
     bool bindUnbindAclTableGroup(Port &port,
                                  bool ingress,
                                  bool bind);
-    bool getPortPfc(sai_object_id_t portId, uint8_t *pfc_bitmask);
-    bool setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask);
+    bool getPortPfc(sai_object_id_t portId, uint8_t &pfc_bitmask_status, uint8_t &pfc_bitmask_cfg);
+    bool setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask_cfg);
+    bool setPortPfcStatus(sai_object_id_t portId, uint8_t pfc_bitmask_status);
 
     void generateQueueMap();
     void generatePriorityGroupMap();
@@ -265,6 +266,7 @@ private:
     bool setPortFec(Port &port, sai_port_fec_mode_t mode);
     bool setPortPfcAsym(Port &port, string pfc_asym);
     bool getDestPortId(sai_object_id_t src_port_id, dest_port_type_t port_type, sai_object_id_t &des_port_id);
+    bool setPortPfcStatus_(const Port &p, uint8_t pfc_bitmask_status);
 
     bool setBridgePortAdminStatus(sai_object_id_t id, bool up);
 
