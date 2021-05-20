@@ -122,14 +122,16 @@ lcov_genhtml_report()
         fi
     done < ${GCDA_DIR_LIST}
 
-    cd ${work_dir}
+    #cd ${work_dir}
+    cd /tmp/gcov
 }
 
 # generate html reports for all eligible submodules
 lcov_genhtml_all()
 {
     echo " === Start generating all gcov reports === "
-    lcov_genhtml_report ${work_dir}
+    #lcov_genhtml_report ${work_dir}
+    lcov_genhtml_report /tmp/gcov
 }
 
 lcov_merge_all()
@@ -167,13 +169,13 @@ get_info_file()
         local FromFullpath=${line%/*}
         local ToFullpath
 
-        if [ ! -d ${GCOV_INFO_OUTPUT} ]; then
-            mkdir -p ${GCOV_INFO_OUTPUT}
+        if [ ! -d /tmp/gcov/${INFO_DIR} ]; then
+            mkdir -p /tmp/gcov/${INFO_DIR}
         fi
-        pushd ${GCOV_INFO_OUTPUT}
+        pushd /tmp/gcov/${INFO_DIR}
         mkdir -p ${FromFullpath}
         popd
-        ToFullpath=${GCOV_INFO_OUTPUT}/${FromFullpath#*/}
+        ToFullpath=/tmp/gcov/${INFO_DIR}/${FromFullpath#*/}
         cp ${info_file} ${ToFullpath}
     done < ${INFO_FILE_LIST}
 }
@@ -189,13 +191,13 @@ get_html_file()
         local FromFullpath=${line%/*}
         local ToFullpath
 
-        if [ ! -d ${GCOV_HTML_OUTPUT} ]; then
-            mkdir -p ${GCOV_HTML_OUTPUT}
+        if [ ! -d /tmp/gcov/${HTML_DIR} ]; then
+            mkdir -p /tmp/gcov/${HTML_DIR}
         fi
-        pushd ${GCOV_HTML_OUTPUT}
+        pushd /tmp/gcov/${HTML_DIR}
         mkdir -p ${FromFullpath}
         popd
-        ToFullpath=${GCOV_HTML_OUTPUT}/${FromFullpath#*/}
+        ToFullpath=/tmp/gcov/${HTML_DIR}/${FromFullpath#*/}
         cp ${html_report} ${ToFullpath}
     done < ${HTML_FILE_LIST}
 }
@@ -205,10 +207,13 @@ gcov_merge_info()
     local build_dir
 
     build_dir=$1
-
+    echo "docker kill begin"
     docker kill --signal "TERM" $(docker ps -q -a)
-    sleep 120
+    echo "docker kill done"
+    sleep 30
+    echo "sleep done"
     docker start $(docker ps -q -a)
+    echo "docker start done"
 
     mkdir -p ${build_dir}/gcov_tmp
     mkdir -p ${build_dir}/gcov_tmp/gcov_output
@@ -280,8 +285,12 @@ collect_merged_report()
     get_info_file
     get_html_file
     #lcov_merge_all
-    mv $INFO_ERR_LIST $GCOV_OUTPUT
-    mv $GCDA_DIR_LIST $GCOV_OUTPUT
+    #mv $INFO_ERR_LIST $GCOV_OUTPUT
+    mv /tmp/gcov/info_err_list /tmp/gcov/gcov_output
+
+    #mv $GCDA_DIR_LIST $GCOV_OUTPUT
+    mv /tmp/gcov/gcda_dir_list.txt /tmp/gcov/gcov_output
+
     #tar_gcov_output
 }
 
@@ -292,7 +301,7 @@ gcov_support_generate_html()
 
     gcov_support_clean
 
-    add_new_home_for_sonic
+    #add_new_home_for_sonic
     pushd /tmp/gcov
     gcno_count=`find -name gcno*.tar.gz 2>/dev/null | wc -l`
     if [ ${gcno_count} -lt 1 ]; then
@@ -310,25 +319,33 @@ gcov_support_generate_html()
     # tar -zxvf $GCNO_ALL_TAR_GZ
     find -name gcda*.tar.gz > tmp_gcda.txt
     while read LINE ; do
-        tar -zxvf ${LINE#*.}
+        echo ${LINE}
+        echo ${LINE#*.}
+        #tar -zxvf ${LINE#*.}
+        tar -zxvf ${LINE}
     done < tmp_gcda.txt
     rm tmp_gcda.txt
 
     find -name gcno*.tar.gz > tmp_gcno.txt
     while read LINE ; do
-        submodule_name=`echo ${LINE%%.*} | awk -F _ '{print $2}' | awk -F . '{print $1}'`
-        cp ${LINE#*/} /tmp/gcov/src/sonic-${submodule_name}
-        pushd /tmp/gcov/src/sonic-${submodule_name}/
-        tar -zxvf ${LINE#*.}
-        popd
+        echo ${LINE}
+        echo ${LINE%%.*}
+        #submodule_name=`echo ${LINE%%.*} | awk -F _ '{print $2}' | awk -F . '{print $1}'`
+        #cp ${LINE#*/} /tmp/gcov/src/sonic-${submodule_name}
+        #pushd /tmp/gcov/src/sonic-${submodule_name}/
+        #tar -zxvf ${LINE#*.}
+        tar -zxvf ${LINE}
+        #popd
     done < tmp_gcno.txt
     rm tmp_gcno.txt
 
     popd
 
     # remove old output dir
-    rm -rf ${work_dir}/gcov_output
-    mkdir -p $GCOV_OUTPUT
+    #rm -rf ${work_dir}/gcov_output
+    rm -rf /tmp/gcov/gcov_output
+    #mkdir -p $GCOV_OUTPUT
+    mkdir -p /tmp/gcov/gcov_output
 
     lcov_genhtml_all
     if [ "$?" != "0" ]; then
@@ -338,13 +355,14 @@ gcov_support_generate_html()
 
     # collect gcov output
     collect_merged_report
-    reset_home
+    #reset_home
     echo "### Make gcovhtml completed !!"
 }
 
 # list and save the generated .gcda files
 gcov_support_collect_gcda()
 {
+    echo "gcov_support_collect_gcda begin"
     local gcda_files_count
 
     pushd /
@@ -355,11 +373,15 @@ gcov_support_collect_gcda()
         return 0
     fi
 
-    pushd /sonic
+    #CODE_PREFFIX=`find -name "*.gcda" | head -1 | cut -d "/" -f2`
+    CODE_PREFFIX=/__w/1/s/
+
+    pushd ${CODE_PREFFIX}
     tar -zcvf /tmp/gcov/gcda.tar.gz *
     popd
 
     popd
+    echo "gcov_support_collect_gcda done"
 
 }
 
