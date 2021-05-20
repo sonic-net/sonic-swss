@@ -56,7 +56,8 @@ void CounterCheckOrch::mcCounterCheck()
     {
         auto oid = i.first;
         auto mcCounters = i.second;
-        uint8_t pfcMask = 0;
+        uint8_t dummy = 0;
+        uint8_t pfcMaskCfg = 0;
 
         Port port;
         if (!gPortsOrch->getPort(oid, port))
@@ -67,7 +68,7 @@ void CounterCheckOrch::mcCounterCheck()
 
         auto newMcCounters = getQueueMcCounters(port);
 
-        if (!gPortsOrch->getPortPfc(port.m_port_id, &pfcMask))
+        if (!gPortsOrch->getPortPfc(port.m_port_id, dummy, pfcMaskCfg))
         {
             SWSS_LOG_ERROR("Failed to get PFC mask on port %s", port.m_alias.c_str());
             continue;
@@ -75,7 +76,7 @@ void CounterCheckOrch::mcCounterCheck()
 
         for (size_t prio = 0; prio != mcCounters.size(); prio++)
         {
-            bool isLossy = ((1 << prio) & pfcMask) == 0;
+            bool isLossy = ((1 << prio) & pfcMaskCfg) == 0;
             if (newMcCounters[prio] == numeric_limits<uint64_t>::max())
             {
                 SWSS_LOG_WARN("Could not retreive MC counters on queue %zu port %s",
@@ -104,7 +105,8 @@ void CounterCheckOrch::pfcFrameCounterCheck()
         auto oid = i.first;
         auto counters = i.second;
         auto newCounters = getPfcFrameCounters(oid);
-        uint8_t pfcMask = 0;
+        uint8_t dummy = 0;
+        uint8_t pfcMaskCfg = 0;
 
         Port port;
         if (!gPortsOrch->getPort(oid, port))
@@ -113,7 +115,7 @@ void CounterCheckOrch::pfcFrameCounterCheck()
             continue;
         }
 
-        if (!gPortsOrch->getPortPfc(port.m_port_id, &pfcMask))
+        if (!gPortsOrch->getPortPfc(port.m_port_id, dummy, pfcMaskCfg))
         {
             SWSS_LOG_ERROR("Failed to get PFC mask on port %s", port.m_alias.c_str());
             continue;
@@ -121,7 +123,7 @@ void CounterCheckOrch::pfcFrameCounterCheck()
 
         for (size_t prio = 0; prio != counters.size(); prio++)
         {
-            bool isLossy = ((1 << prio) & pfcMask) == 0;
+            bool isLossy = ((1 << prio) & pfcMaskCfg) == 0;
             if (newCounters[prio] == numeric_limits<uint64_t>::max())
             {
                 SWSS_LOG_WARN("Could not retreive PFC frame count on queue %zu port %s",
