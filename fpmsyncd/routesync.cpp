@@ -982,11 +982,11 @@ string RouteSync::getNextHopWt(struct rtnl_route *route_obj)
     for (int i = 0; i < rtnl_route_get_nnexthops(route_obj); i++)
     {
         struct rtnl_nexthop *nexthop = rtnl_route_nexthop_n(route_obj, i);
-        /* Get the ID of next hop interface */
-        uint8_t if_weight = rtnl_route_nh_get_weight(nexthop);
-        if (if_weight)
+        /* Get the weight of next hop */
+        uint8_t weight = rtnl_route_nh_get_weight(nexthop);
+        if (weight)
         {
-            result += to_string(if_weight + 1);
+            result += to_string(weight + 1);
         }
         else
         {
