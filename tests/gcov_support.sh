@@ -46,13 +46,15 @@ reset_home()
 # reset compiling environment
 gcov_support_clean()
 {
-    find ${work_dir} -name $INFO_FILE_PREFIX* | xargs rm -rf
-    find ${work_dir} -name $HTML_FILE_PREFIX* | xargs rm -rf
-    find ${work_dir} -name *.gcno | xargs rm -rf
-    find ${work_dir} -name *.gcda | xargs rm -rf
-    find ${work_dir} -name $TMP_GCDA_FILE_LIST | xargs rm -rf
-    rm $INFO_ERR_LIST
-    rm $GCDA_DIR_LIST
+    find /tmp/gcov -name $INFO_FILE_PREFIX* | xargs rm -rf
+    find /tmp/gcov -name $HTML_FILE_PREFIX* | xargs rm -rf
+    find /tmp/gcov -name *.gcno | xargs rm -rf
+    find /tmp/gcov -name *.gcda | xargs rm -rf
+    find /tmp/gcov -name $TMP_GCDA_FILE_LIST | xargs rm -rf
+    #rm $INFO_ERR_LIST
+    rm /tmp/gcov/info_err_list
+    #rm $GCDA_DIR_LIST
+    rm /tmp/gcov/gcda_dir_list.txt
 }
 
 # verify whether the info file generated is valid
@@ -62,7 +64,8 @@ verify_info_file()
     local path=$2
     local FILE_OK=`grep "FN:" ${file} | wc -l`
     if [ $FILE_OK -lt 1 ] ;then
-        echo ${path}/${file} >> ${INFO_ERR_LIST}
+        #echo ${path}/${file} >> ${INFO_ERR_LIST}
+        echo ${path}/${file} >> /tmp/gcov/info_err_list
         rm ${file}
     fi
 }
@@ -82,7 +85,8 @@ list_lcov_path()
     echo "$RESULT" >&4
     exec 4>&-
     # save the dirnames where the .gcda files exist
-    cat ${TMP_FILE} | xargs dirname | uniq > ${GCDA_DIR_LIST}
+    #cat ${TMP_FILE} | xargs dirname | uniq > ${GCDA_DIR_LIST}
+    cat ${TMP_FILE} | xargs dirname | uniq > /tmp/gcov/gcda_dir_list.txt
 #    rm ${TMP_FILE}
 }
 
@@ -339,7 +343,7 @@ gcov_support_generate_html()
     done < tmp_gcno.txt
     rm tmp_gcno.txt
 
-    popd
+    #popd
 
     # remove old output dir
     #rm -rf ${work_dir}/gcov_output
@@ -357,6 +361,7 @@ gcov_support_generate_html()
     collect_merged_report
     #reset_home
     echo "### Make gcovhtml completed !!"
+    popd
 }
 
 # list and save the generated .gcda files
