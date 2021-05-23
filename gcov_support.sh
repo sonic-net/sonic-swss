@@ -111,7 +111,7 @@ lcov_genhtml_report()
         echo "gcda count: $GCDA_COUNT"
         if [ $GCDA_COUNT -ge 1 ]; then
             echo "Executing lcov -c -d . -o ${infoname}"
-            lcov -c -d . -o ${infoname} 2>/dev/null
+            lcov -c -d . -o ${infoname}
             if [ "$?" != "0" ]; then
                 echo "lcov fail!"
                 rm ${infoname}
