@@ -111,7 +111,7 @@ lcov_genhtml_report()
         echo "gcda count: $GCDA_COUNT"
         if [ $GCDA_COUNT -ge 1 ]; then
             echo "Executing lcov -c -d . -o ${infoname}"
-            lcov -c -d . -o ${infoname}
+            lcov --gcov-tool /usr/bin/gcov-8 -c -d . -o ${infoname}
             if [ "$?" != "0" ]; then
                 echo "lcov fail!"
                 rm ${infoname}
@@ -494,6 +494,8 @@ gcov_support_collect_gcno()
         # temporarily using fixed dir
         cp gcno_$submodule_name.tar.gz ${work_dir}/debian/$submodule_name/tmp/gcov
         cp gcov_support.sh ${work_dir}/debian/$submodule_name/tmp/gcov
+        mkdir -p ${work_dir}/debian/$submodule_name/etc/
+        mkdir -p ${work_dir}/debian/$submodule_name/etc/ld.so.conf.d/
         cp libgcov_preload.so ${work_dir}/debian/$submodule_name/etc/ld.so.conf.d/
         rm $GCNO_LIST_FILE
         echo " === Collect finished... === "

@@ -42,7 +42,6 @@ jobs:
       sudo apt-get install -y net-tools bridge-utils vlan
       sudo apt-get install -y python3-pip
       sudo pip3 install pytest==4.6.2 attrs==19.1.0 exabgp==4.0.10 distro==1.5.0 docker==4.4.1 redis==3.3.4 flaky==3.7.0
-      sudo apt-get install lcov
     displayName: "Install dependencies"
 
   - script: |
@@ -62,6 +61,12 @@ jobs:
 
   - script: |
       cp -r tests/log $(Build.ArtifactStagingDirectory)/
+      sudo apt-get install -y gcc-8 g++-8
+      sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-8 100
+      sudo update-alternatives --config gcc
+      sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-8 100
+      sudo update-alternatives --config g++
+      sudo apt-get install -y lcov
       ./tests/gcov_support.sh merge_container_info $(Build.ArtifactStagingDirectory)
       docker stop $(docker ps -q -a) 
       docker rm $(docker ps -q -a)
