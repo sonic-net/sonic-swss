@@ -6,6 +6,9 @@ parameters:
 - name: log_artifact_name
   type: string
 
+- name: sonic_slave
+  type: string
+
 jobs:
 - job:
   displayName: vstest
@@ -70,6 +73,8 @@ jobs:
       ./tests/gcov_support.sh merge_container_info $(Build.ArtifactStagingDirectory)
       docker stop $(docker ps -q -a) 
       docker rm $(docker ps -q -a)
+      docker run --privileged -d --name swss-build sonicdev-microsoft.azurecr.io:443/${{ parameters.sonic_slave }}:latest
+      docker ps -a
     displayName: "Collect logs"
     condition: always()
 
