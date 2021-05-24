@@ -64,18 +64,21 @@ jobs:
 
   - script: |
       cp -r tests/log $(Build.ArtifactStagingDirectory)/
-      sudo apt-get install -y gcc-8 g++-8
-      sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-8 100
-      sudo update-alternatives --config gcc
-      sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-8 100
-      sudo update-alternatives --config g++
+      #sudo apt-get install -y gcc-8 g++-8
+      #sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-8 100
+      #sudo update-alternatives --config gcc
+      #sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-8 100
+      #sudo update-alternatives --config g++
       sudo apt-get install -y lcov
       ./tests/gcov_support.sh merge_container_info $(Build.ArtifactStagingDirectory)
       docker stop $(docker ps -q -a) 
       docker rm $(docker ps -q -a)
-      docker run --privileged -d --name swss-build sonicdev-microsoft.azurecr.io:443/${{ parameters.sonic_slave }}:latest
-      docker ps -a
     displayName: "Collect logs"
+    condition: always()
+
+  - publish: $(Build.ArtifactStagnigDirectory)/
+    artifact: ${{ parameters.swss_artifact_name }}
+    displayName: "Publish gcov output"
     condition: always()
 
   - publish: $(Build.ArtifactStagingDirectory)/

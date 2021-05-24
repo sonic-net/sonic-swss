@@ -39,3 +39,14 @@ stages:
   - template: .azure-pipelines/test-docker-sonic-vs-template.yml
     parameters:
       log_artifact_name: log
+      swss_artifact_name: sonic-swss
+      sonic_slave: sonic-slave-buster
+
+- stage: Gcov
+  dependsOn: Test
+  condition: succeeded('Test')
+  jobs:
+  - template: .azure-pipelines/gcov.yml
+    parameters:
+      swss_artifact_name: sonic-swss
+      log_artifact_name: log
