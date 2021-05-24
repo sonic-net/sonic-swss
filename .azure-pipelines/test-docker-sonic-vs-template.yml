@@ -6,6 +6,9 @@ parameters:
 - name: log_artifact_name
   type: string
 
+- name: gcov_artifact_name
+  type: string
+
 - name: sonic_slave
   type: string
 
@@ -77,7 +80,7 @@ jobs:
     condition: always()
 
   - publish: $(Build.ArtifactStagnigDirectory)/
-    artifact: ${{ parameters.swss_artifact_name }}
+    artifact: ${{ parameters.gcov_artifact_name }}
     displayName: "Publish gcov output"
     condition: always()
 

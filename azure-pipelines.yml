@@ -39,7 +39,7 @@ stages:
   - template: .azure-pipelines/test-docker-sonic-vs-template.yml
     parameters:
       log_artifact_name: log
-      swss_artifact_name: sonic-swss
+      gcov_artifact_name: sonic-gcov
       sonic_slave: sonic-slave-buster
 
 - stage: Gcov
@@ -48,5 +48,10 @@ stages:
   jobs:
   - template: .azure-pipelines/gcov.yml
     parameters:
+      arch: amd64
+      sonic_slave: sonic-slave-buster
+      swss_common_artifact_name: sonic-swss-common
+      sairedis_artifact_name: sonic-sairedis
       swss_artifact_name: sonic-swss
-      log_artifact_name: log
+      artifact_name: sonic-gcov
+      archive_pytests: true
