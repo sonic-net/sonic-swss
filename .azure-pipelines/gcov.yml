@@ -104,6 +104,6 @@ jobs:
   - script: |
       set -x
       pushd ${{ parameters.artifact_name }}
-      ls -l
+      ls -lh
       popd
     displayName: "test gcov"
