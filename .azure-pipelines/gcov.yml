@@ -81,7 +81,7 @@ jobs:
       pipeline: 12
       artifacts: ${{ parameters.sairedis_artifact_name }}
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/832'
+      runBranch: 'refs/heads/829'
     displayName: "Download sonic sairedis deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
