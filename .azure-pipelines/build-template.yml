@@ -78,7 +78,7 @@ jobs:
       pipeline: 12
       artifacts: ${{ parameters.sairedis_artifact_name }}
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
+      runBranch: 'refs/heads/832'
     displayName: "Download sonic sairedis deb packages"
   - script: |
       sudo dpkg -i ${{ parameters.swss_common_artifact_name }}/libswsscommon_1.0.0_${{ parameters.arch }}.deb
