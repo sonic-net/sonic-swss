@@ -1294,10 +1294,11 @@ void MuxCableOrch::updateMuxMetricState(string portName, string muxState, bool s
     auto dur = now - std::chrono::system_clock::from_time_t(now_t);
     auto micros = std::chrono::duration_cast<std::chrono::microseconds>(dur).count();
 
-    std::tm* now_tm= std::gmtime(&now_t);
+    std::tm now_tm;
+    gmtime_r(&now_t, &now_tm);
 
     char buf[256];
-    std::strftime(buf, 256, "%Y-%b-%d %H:%M:%S.",now_tm);
+    std::strftime(buf, 256, "%Y-%b-%d %H:%M:%S.", &now_tm);
 
     string time = string(buf) + to_string(micros);
 
