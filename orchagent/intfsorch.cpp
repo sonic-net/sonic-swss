@@ -731,6 +731,7 @@ void IntfsOrch::doTask(Consumer &consumer)
                     {
                         IntfsEntry intfs_entry;
                         intfs_entry.ref_count = 0;
+                        intfs_entry.proxy_arp = false;
                         intfs_entry.vrf_id = vrf_id;
                         m_syncdIntfses[alias] = intfs_entry;
                         m_vrfOrch->increaseVrfRefCount(vrf_id);

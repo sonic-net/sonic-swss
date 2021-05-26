@@ -106,7 +106,7 @@ public:
     uint32_t            m_mtu = DEFAULT_MTU;
     uint32_t            m_speed = 0;    // Mbps
     std::string         m_learn_mode = "hardware";
-    bool                m_autoneg = false;
+    int                 m_autoneg = -1;  // -1 means not set, 0 = disabled, 1 = enabled
     bool                m_admin_state_up = false;
     bool                m_init = false;
     bool                m_l3_vni = false;
@@ -140,6 +140,9 @@ public:
     uint32_t  m_fdb_count = 0;
     uint32_t  m_up_member_count = 0;
     uint32_t  m_maximum_headroom = 0;
+    std::vector<uint32_t> m_adv_speeds;
+    sai_port_interface_type_t m_interface_type;
+    std::vector<uint32_t> m_adv_interface_types;
 
     /*
      * Following two bit vectors are used to lock

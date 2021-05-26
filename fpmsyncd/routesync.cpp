@@ -700,6 +700,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
     /* Get nexthop lists */
     string nexthops = getNextHopGw(route_obj);
     string ifnames = getNextHopIf(route_obj);
+    string weights = getNextHopWt(route_obj);
 
     vector<string> alsv = tokenize(ifnames, ',');
     for (auto alias : alsv)
@@ -722,6 +723,11 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
 
     fvVector.push_back(nh);
     fvVector.push_back(idx);
+    if (!weights.empty())
+    {
+        FieldValueTuple wt("weight", weights);
+        fvVector.push_back(wt);
+    }
 
     if (!warmRestartInProgress)
     {
@@ -953,6 +959,39 @@ string RouteSync::getNextHopIf(struct rtnl_route *route_obj)
         }
 
         result += if_name;
+
+        if (i + 1 < rtnl_route_get_nnexthops(route_obj))
+        {
+            result += string(",");
+        }
+    }
+
+    return result;
+}
+
+/*
+ * Get next hop weights
+ * @arg route_obj     route object
+ *
+ * Return concatenation of interface names: wt0 + "," + wt1 + .... + "," + wtN
+ */
+string RouteSync::getNextHopWt(struct rtnl_route *route_obj)
+{
+    string result = "";
+
+    for (int i = 0; i < rtnl_route_get_nnexthops(route_obj); i++)
+    {
+        struct rtnl_nexthop *nexthop = rtnl_route_nexthop_n(route_obj, i);
+        /* Get the weight of next hop */
+        uint8_t weight = rtnl_route_nh_get_weight(nexthop);
+        if (weight)
+        {
+            result += to_string(weight + 1);
+        }
+        else
+        {
+            return "";
+        }
 
         if (i + 1 < rtnl_route_get_nnexthops(route_obj))
         {

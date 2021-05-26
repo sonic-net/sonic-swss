@@ -1003,8 +1003,8 @@ class DockerVirtualSwitch:
         tbl.set(interface, fvs)
         time.sleep(1)
 
-    # deps: acl, fdb_update, fdb, mirror_port_erspan, vlan
-    def add_ip_address(self, interface, ip):
+    # deps: acl, fdb_update, fdb, mirror_port_erspan, vlan, sub port intf
+    def add_ip_address(self, interface, ip, vrf_name=None):
         if interface.startswith("PortChannel"):
             tbl_name = "PORTCHANNEL_INTERFACE"
         elif interface.startswith("Vlan"):
@@ -1012,7 +1012,10 @@ class DockerVirtualSwitch:
         else:
             tbl_name = "INTERFACE"
         tbl = swsscommon.Table(self.cdb, tbl_name)
-        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        pairs = [("NULL", "NULL")]
+        if vrf_name:
+            pairs = [("vrf_name", vrf_name)]
+        fvs = swsscommon.FieldValuePairs(pairs)
         tbl.set(interface, fvs)
         tbl.set(interface + "|" + ip, fvs)
         time.sleep(1)

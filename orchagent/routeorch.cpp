@@ -18,6 +18,8 @@ extern PortsOrch *gPortsOrch;
 extern CrmOrch *gCrmOrch;
 extern Directory<Orch*> gDirectory;
 
+extern size_t gMaxBulkSize;
+
 /* Default maximum number of next hop groups */
 #define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
 #define DEFAULT_MAX_ECMP_GROUP_SIZE     32
@@ -25,8 +27,8 @@ extern Directory<Orch*> gDirectory;
 const int routeorch_pri = 5;
 
 RouteOrch::RouteOrch(DBConnector *db, string tableName, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch) :
-        gRouteBulker(sai_route_api),
-        gNextHopGroupMemberBulker(sai_next_hop_group_api, gSwitchId),
+        gRouteBulker(sai_route_api, gMaxBulkSize),
+        gNextHopGroupMemberBulker(sai_next_hop_group_api, gSwitchId, gMaxBulkSize),
         Orch(db, tableName, routeorch_pri),
         m_switchOrch(switchOrch),
         m_neighOrch(neighOrch),
@@ -323,6 +325,13 @@ bool RouteOrch::validnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t& 
         nhgm_attr.value.oid = m_neighOrch->getNextHopId(nexthop);
         nhgm_attrs.push_back(nhgm_attr);
 
+        if (nexthop.weight)
+        {
+            nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT;
+            nhgm_attr.value.s32 = nexthop.weight;
+            nhgm_attrs.push_back(nhgm_attr);
+        }
+
         status = sai_next_hop_group_api->create_next_hop_group_member(&nexthop_id, gSwitchId,
                                                                       (uint32_t)nhgm_attrs.size(),
                                                                       nhgm_attrs.data());
@@ -511,6 +520,7 @@ void RouteOrch::doTask(Consumer& consumer)
                 string aliases;
                 string vni_labels;
                 string remote_macs;
+                string weights;
                 bool& excp_intfs_flag = ctx.excp_intfs_flag;
                 bool overlay_nh = false;
                 bool blackhole = false;
@@ -533,6 +543,9 @@ void RouteOrch::doTask(Consumer& consumer)
 
                     if (fvField(i) == "blackhole")
                         blackhole = fvValue(i) == "true";
+
+                    if (fvField(i) == "weight")
+                        weights = fvValue(i);
                 }
 
                 vector<string>& ipv = ctx.ipv;
@@ -622,7 +635,7 @@ void RouteOrch::doTask(Consumer& consumer)
                         nhg_str += NHG_DELIMITER + ipv[i] + NH_DELIMITER + alsv[i];
                     }
 
-                    nhg = NextHopGroupKey(nhg_str);
+                    nhg = NextHopGroupKey(nhg_str, weights);
 
                 }
                 else
@@ -1100,6 +1113,7 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
     for (size_t i = 0; i < npid_count; i++)
     {
         auto nhid = next_hop_ids[i];
+        auto weight = nhopgroup_members_set[nhid].weight;
 
         // Create a next hop group member
         vector<sai_attribute_t> nhgm_attrs;
@@ -1112,6 +1126,13 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
         nhgm_attr.value.oid = nhid;
         nhgm_attrs.push_back(nhgm_attr);
+
+        if (weight)
+        {
+            nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT;
+            nhgm_attr.value.s32 = weight;
+            nhgm_attrs.push_back(nhgm_attr);
+        }
 
         gNextHopGroupMemberBulker.create_entry(&nhgm_ids[i],
                                                  (uint32_t)nhgm_attrs.size(),
