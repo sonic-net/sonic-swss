@@ -28,6 +28,7 @@ extern sai_router_interface_api_t* sai_router_intfs_api;
 extern sai_fdb_api_t* sai_fdb_api;
 extern sai_neighbor_api_t* sai_neighbor_api;
 extern sai_next_hop_api_t* sai_next_hop_api;
+extern sai_next_hop_group_api_t* sai_next_hop_group_api;
 extern sai_object_id_t gSwitchId;
 extern sai_object_id_t gVirtualRouterId;
 extern Directory<Orch*> gDirectory;
@@ -614,7 +615,7 @@ VNetRouteOrch::VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOr
 
 template<>
 bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipPrefix,
-                                               tunnelEndpoint& endp, string& op)
+                                               vector<tunnelEndpoint>& endps, string& op)
 {
     SWSS_LOG_ENTER();
 
@@ -648,29 +649,119 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
     auto *vrf_obj = vnet_orch_->getTypePtr<VNetVrfObject>(vnet);
     sai_ip_prefix_t pfx;
     copy(pfx, ipPrefix);
-    sai_object_id_t nh_id = (op == SET_COMMAND)?vrf_obj->getTunnelNextHop(endp):SAI_NULL_OBJECT_ID;
-
-    for (auto vr_id : vr_set)
-    {
-        if (op == SET_COMMAND && !add_route(vr_id, pfx, nh_id))
-        {
-            SWSS_LOG_ERROR("Route add failed for %s, vr_id '0x%" PRIx64, ipPrefix.to_string().c_str(), vr_id);
-            return false;
-        }
-        else if (op == DEL_COMMAND && !del_route(vr_id, pfx))
-        {
-            SWSS_LOG_ERROR("Route del failed for %s, vr_id '0x%" PRIx64, ipPrefix.to_string().c_str(), vr_id);
-            return false;
-        }
-    }
 
     if (op == SET_COMMAND)
     {
-        vrf_obj->addRoute(ipPrefix, endp);
+        sai_object_id_t nh_id;
+        /* The route in pointing to one single endpoint */
+        if (endps.size() == 1)
+        {
+            nh_id = vrf_obj->getTunnelNextHop(endps[0]);
+        }
+        /* The route in pointing to multiple endpoint */
+        else
+        {
+            // TODO: create nexthop group
+            vector<sai_object_id_t> next_hop_ids;
+            for (auto endp : endps)
+            {
+                sai_object_id_t next_hop_id = vrf_obj->getTunnelNextHop(endp);
+                next_hop_ids.push_back(next_hop_id);
+            }
+
+            sai_object_id_t next_hop_group_id;
+            std::vector<sai_attribute_t> attrs;
+            sai_attribute_t attr;
+            attr.id = SAI_NEXT_HOP_GROUP_ATTR_TYPE;
+            attr.value.s32 = SAI_NEXT_HOP_GROUP_TYPE_ECMP;
+            attrs.push_back(attr);
+            sai_status_t status = sai_next_hop_group_api->create_next_hop_group(&next_hop_group_id,
+                                            gSwitchId,
+                                            static_cast<uint32_t>(attrs.size()),
+                                            attrs.data());
+
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to create next hop group");
+                return false;
+            }
+
+            for (auto nhid: next_hop_ids)
+            {
+                vector<sai_attribute_t> nhgm_attrs;
+
+                sai_attribute_t nhgm_attr;
+                nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID;
+                nhgm_attr.value.oid = next_hop_group_id;
+                nhgm_attrs.push_back(nhgm_attr);
+
+                nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
+                nhgm_attr.value.oid = nhid;
+                nhgm_attrs.push_back(nhgm_attr);
+
+                sai_object_id_t next_hop_group_member_id;
+                status = sai_next_hop_group_api->create_next_hop_group_member(&next_hop_group_member_id,
+                                                                            gSwitchId,
+                                                                            (uint32_t)nhgm_attrs.size(),
+                                                                            nhgm_attrs.data());
+
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    // TODO: do we need to clean up?
+                    SWSS_LOG_ERROR("Failed to create next hop group %" PRIx64 " member %" PRIx64 ": %d\n",
+                                next_hop_group_id, next_hop_group_member_id, status);
+                    return false;
+                }
+            }
+
+            nh_id = next_hop_group_id;
+        }
+
+        for (auto vr_id : vr_set)
+        {
+            if (!add_route(vr_id, pfx, nh_id))
+            {
+                SWSS_LOG_ERROR("Route add failed for %s, vr_id '0x%" PRIx64, ipPrefix.to_string().c_str(), vr_id);
+                return false;
+            }
+        }
+
+        /* The route in pointing to one single endpoint */
+        if (endps.size() == 1)
+        {
+            vrf_obj->addRoute(ipPrefix, endps[0]);
+        }
+        /* The route in pointing to multiple endpoint */
+        else
+        {
+            // TODO: Add the corresponding operations here
+        }
+    }
+    else if (op == DEL_COMMAND)
+    {
+        for (auto vr_id : vr_set)
+        {
+            if (!del_route(vr_id, pfx))
+            {
+                SWSS_LOG_ERROR("Route del failed for %s, vr_id '0x%" PRIx64, ipPrefix.to_string().c_str(), vr_id);
+                return false;
+            }
+        }
+
+        /* The route in pointing to one single endpoint */
+        if (endps.size() == 1)
+        {
+            vrf_obj->removeRoute(ipPrefix);
+        }
+        /* The route in pointing to multiple endpoint */
+        else
+        {
+            // TODO: Add the corresponding operations here
+        }
     }
     else
     {
-        vrf_obj->removeRoute(ipPrefix);
+        SWSS_LOG_ERROR("Unknown operation");
     }
 
     return true;
@@ -1045,29 +1136,25 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     vector<MacAddress> mac_list;
     vector<uint64_t> vni_list; 
 
-    IpAddress ip;
-    MacAddress mac;
-    uint32_t vni = 0;
-
     for (const auto& name: request.getAttrFieldNames())
     {
         if (name == "endpoint")
         {
             ip_list = request.getAttrIPList(name);
-            ip = ip_list[0];
-            SWSS_LOG_WARN("[olecmp] Ipaddr[0]: %s, size %zu", ip.to_string().c_str(), ip_list.size());
+            // ip = ip_list[0];
+            // SWSS_LOG_WARN("[olecmp] Ipaddr[0]: %s, size %zu", ip.to_string().c_str(), ip_list.size());
         }
         else if (name == "vni")
         {
             vni_list = request.getAttrUintList(name);
-            vni = static_cast<uint32_t>(vni_list[0]);
-            SWSS_LOG_WARN("[olecmp] vni[0]: %u, size %zu", vni, vni_list.size());
+            // vni = static_cast<uint32_t>(vni_list[0]);
+            // SWSS_LOG_WARN("[olecmp] vni[0]: %u, size %zu", vni, vni_list.size());
         }
         else if (name == "mac_address")
         {
             mac_list = request.getAttrMacAddressList(name);
-            mac = mac_list[0];
-            SWSS_LOG_WARN("[olecmp] MACaddr[0]: %s, size %zu", mac.to_string().c_str(), mac_list.size());
+            // mac = mac_list[0];
+            // SWSS_LOG_WARN("[olecmp] MACaddr[0]: %s, size %zu", mac.to_string().c_str(), mac_list.size());
         }
         else
         {
@@ -1076,6 +1163,17 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         }
     }
 
+    if (!vni_list.empty() && vni_list.size() != ip_list.size())
+    {
+        SWSS_LOG_ERROR("VNI size of %zu does not match endpoint size of %zu", vni_list.size(), ip_list.size());
+        return false;
+    }
+
+    if (!mac_list.empty() && mac_list.size() != ip_list.size())
+    {
+        SWSS_LOG_ERROR("MAC address size of %zu does not match endpoint size of %zu", mac_list.size(), ip_list.size());
+        return false;
+    }
     const std::string& vnet_name = request.getKeyString(0);
     auto ip_pfx = request.getKeyIpPrefix(1);
     auto op = request.getOperation();
@@ -1083,11 +1181,29 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     SWSS_LOG_INFO("VNET-RT '%s' op '%s' for pfx %s", vnet_name.c_str(),
                    op.c_str(), ip_pfx.to_string().c_str());
 
-    tunnelEndpoint endp = { ip, mac, vni };
+    vector<tunnelEndpoint> endps;
+    for (size_t idx_ip = 0; idx_ip < ip_list.size(); idx_ip++)
+    {
+        IpAddress ip = ip_list[idx_ip];
+        MacAddress mac;
+        uint32_t vni = 0;
+        if (!vni_list.empty())
+        {
+            vni = static_cast<uint32_t>(vni_list[idx_ip]);
+        }
+
+        if (!mac_list.empty())
+        {
+            mac = mac_list[idx_ip];
+        }
+
+        tunnelEndpoint endp = { ip, mac, vni };
+        endps.emplace_back(endp);
+    }
 
     if (vnet_orch_->isVnetExecVrf())
     {
-        return doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, endp, op);
+        return doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, endps, op);
     }
 
     return true;

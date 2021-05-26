@@ -303,7 +303,7 @@ private:
     bool handleTunnel(const Request&);
 
     template<typename T>
-    bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, tunnelEndpoint& endp, string& op);
+    bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, vector<tunnelEndpoint>& endps, string& op);
 
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, nextHop& nh, string& op);
