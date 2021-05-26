@@ -47,6 +47,8 @@ sai_object_id_t gSwitchId = SAI_NULL_OBJECT_ID;
 MacAddress gMacAddress;
 MacAddress gVxlanMacAddress;
 
+extern size_t gMaxBulkSize;
+
 #define DEFAULT_BATCH_SIZE  128
 int gBatchSize = DEFAULT_BATCH_SIZE;
 
@@ -65,7 +67,7 @@ string gRecordFile;
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    0: do not record logs" << endl;
@@ -78,6 +80,7 @@ void usage()
     cout << "    -i INST_ID: set the ASIC instance_id in multi-asic platform" << endl;
     cout << "    -s: enable synchronous mode (deprecated, use -z)" << endl;
     cout << "    -z: redis communication mode (redis_async|redis_sync|zmq_sync), default: redis_async" << endl;
+    cout << "    -k max bulk size in bulk mode (default 1000)";
 }
 
 void sighup_handler(int signo)
@@ -162,7 +165,7 @@ int main(int argc, char **argv)
 
     string record_location = ".";
 
-    while ((opt = getopt(argc, argv, "b:m:r:d:i:hsz:")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:d:i:hsz:k:")) != -1)
     {
         switch (opt)
         {
@@ -227,7 +230,20 @@ int main(int argc, char **argv)
         case 'z':
             sai_deserialize_redis_communication_mode(optarg, gRedisCommunicationMode);
             break;
-
+        case 'k':
+            {
+                auto limit = atoi(optarg);
+                if (limit > 0)
+                {
+                    gMaxBulkSize = limit;
+                    SWSS_LOG_NOTICE("Setting maximum bulk size in bulk mode as %zu", gMaxBulkSize);
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Invalid input for maximum bulk size in bulk mode: %d. Ignoring.", limit);
+                }
+            }
+            break;
         default: /* '?' */
             exit(EXIT_FAILURE);
         }
