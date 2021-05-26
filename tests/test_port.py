@@ -11,19 +11,6 @@ class TestPort(object):
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
         cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
 
-        # check application database for default TPID before set operation
-        pdb_port_tbl = swsscommon.Table(pdb, "PORT_TABLE")
-        (status, fvs) = pdb_port_tbl.get("Ethernet8")
-        assert status == True
-        tpid = "0x0000"
-        for fv in fvs:
-            if fv[0] == "tpid":
-                tpid = fv[1]
-
-        # Old Application DB do not have tpid field yet. After TPID feature is complete
-        # We can revisit here and assert it is 0x8100 only
-        assert tpid == "0x8100" or tpid == "0x0000"
-
         # set TPID to port
         cdb_port_tbl = swsscommon.Table(cdb, "PORT")
         fvs = swsscommon.FieldValuePairs([("tpid", "0x9200")])
@@ -31,6 +18,7 @@ class TestPort(object):
         time.sleep(1)
 
         # check application database
+        pdb_port_tbl = swsscommon.Table(pdb, "PORT_TABLE")
         (status, fvs) = pdb_port_tbl.get("Ethernet8")
         assert status == True
         for fv in fvs:
