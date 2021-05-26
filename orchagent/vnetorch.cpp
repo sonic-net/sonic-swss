@@ -17,7 +17,6 @@
 #include "vxlanorch.h"
 #include "directory.h"
 #include "swssnet.h"
-#include "intfsorch.h"
 #include "neighorch.h"
 #include "crmorch.h"
 
@@ -151,7 +150,7 @@ bool VNetVrfObject::hasRoute(IpPrefix& ipPrefix)
     return false;
 }
 
-bool VNetVrfObject::addRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp)
+bool VNetVrfObject::addRoute(IpPrefix& ipPrefix, NextHopGroupKey& nexthops)
 {
     if (hasRoute(ipPrefix))
     {
@@ -159,7 +158,7 @@ bool VNetVrfObject::addRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp)
         return false;
     }
 
-    tunnels_[ipPrefix] = endp;
+    tunnels_[ipPrefix] = nexthops;
     return true;
 }
 
@@ -238,8 +237,12 @@ bool VNetVrfObject::removeRoute(IpPrefix& ipPrefix)
 
     if (tunnels_.find(ipPrefix) != tunnels_.end())
     {
-        auto endp = tunnels_.at(ipPrefix);
-        removeTunnelNextHop(endp);
+        auto nexthops = tunnels_.at(ipPrefix);
+        set<NextHopKey> next_hop_set = nexthops.getNextHops();
+        for (auto it : next_hop_set)
+        {
+            removeTunnelNextHop(it);
+        }
         tunnels_.erase(ipPrefix);
     }
     else
@@ -268,32 +271,32 @@ bool VNetVrfObject::getRouteNextHop(IpPrefix& ipPrefix, nextHop& nh)
     return true;
 }
 
-sai_object_id_t VNetVrfObject::getTunnelNextHop(tunnelEndpoint& endp)
+sai_object_id_t VNetVrfObject::getTunnelNextHop(NextHopKey& nh)
 {
     sai_object_id_t nh_id = SAI_NULL_OBJECT_ID;
     auto tun_name = getTunnelName();
 
     VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
 
-    nh_id = vxlan_orch->createNextHopTunnel(tun_name, endp.ip, endp.mac, endp.vni);
+    nh_id = vxlan_orch->createNextHopTunnel(tun_name, nh.ip_address, nh.mac_address, nh.vni);
     if (nh_id == SAI_NULL_OBJECT_ID)
     {
-        throw std::runtime_error("NH Tunnel create failed for " + vnet_name_ + " ip " + endp.ip.to_string());
+        throw std::runtime_error("NH Tunnel create failed for " + vnet_name_ + " ip " + nh.ip_address.to_string());
     }
 
     return nh_id;
 }
 
-bool VNetVrfObject::removeTunnelNextHop(tunnelEndpoint& endp)
+bool VNetVrfObject::removeTunnelNextHop(NextHopKey& nh)
 {
     auto tun_name = getTunnelName();
 
     VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
 
-    if (!vxlan_orch->removeNextHopTunnel(tun_name, endp.ip, endp.mac, endp.vni))
+    if (!vxlan_orch->removeNextHopTunnel(tun_name, nh.ip_address, nh.mac_address, nh.vni))
     {
         SWSS_LOG_ERROR("VNET %s Tunnel NextHop remove failed for '%s'",
-                        vnet_name_.c_str(), endp.ip.to_string().c_str());
+                        vnet_name_.c_str(), nh.ip_address.to_string().c_str());
         return false;
     }
 
@@ -615,7 +618,7 @@ VNetRouteOrch::VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOr
 
 template<>
 bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipPrefix,
-                                               vector<tunnelEndpoint>& endps, string& op)
+                                               NextHopGroupKey& nexthops, string& op)
 {
     SWSS_LOG_ENTER();
 
@@ -654,18 +657,20 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
     {
         sai_object_id_t nh_id;
         /* The route in pointing to one single endpoint */
-        if (endps.size() == 1)
+        if (nexthops.getSize() == 1)
         {
-            nh_id = vrf_obj->getTunnelNextHop(endps[0]);
+            NextHopKey nexthop(nexthops.to_string(), true);
+            nh_id = vrf_obj->getTunnelNextHop(nexthop);
         }
         /* The route in pointing to multiple endpoint */
         else
         {
             // TODO: create nexthop group
             vector<sai_object_id_t> next_hop_ids;
-            for (auto endp : endps)
+            set<NextHopKey> next_hop_set = nexthops.getNextHops();
+            for (auto it : next_hop_set)
             {
-                sai_object_id_t next_hop_id = vrf_obj->getTunnelNextHop(endp);
+                sai_object_id_t next_hop_id = vrf_obj->getTunnelNextHop(it);
                 next_hop_ids.push_back(next_hop_id);
             }
 
@@ -726,16 +731,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             }
         }
 
-        /* The route in pointing to one single endpoint */
-        if (endps.size() == 1)
-        {
-            vrf_obj->addRoute(ipPrefix, endps[0]);
-        }
-        /* The route in pointing to multiple endpoint */
-        else
-        {
-            // TODO: Add the corresponding operations here
-        }
+        vrf_obj->addRoute(ipPrefix, nexthops);
     }
     else if (op == DEL_COMMAND)
     {
@@ -748,16 +744,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             }
         }
 
-        /* The route in pointing to one single endpoint */
-        if (endps.size() == 1)
-        {
-            vrf_obj->removeRoute(ipPrefix);
-        }
-        /* The route in pointing to multiple endpoint */
-        else
-        {
-            // TODO: Add the corresponding operations here
-        }
+        vrf_obj->removeRoute(ipPrefix);
     }
     else
     {
@@ -1141,20 +1128,14 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         if (name == "endpoint")
         {
             ip_list = request.getAttrIPList(name);
-            // ip = ip_list[0];
-            // SWSS_LOG_WARN("[olecmp] Ipaddr[0]: %s, size %zu", ip.to_string().c_str(), ip_list.size());
         }
         else if (name == "vni")
         {
             vni_list = request.getAttrUintList(name);
-            // vni = static_cast<uint32_t>(vni_list[0]);
-            // SWSS_LOG_WARN("[olecmp] vni[0]: %u, size %zu", vni, vni_list.size());
         }
         else if (name == "mac_address")
         {
             mac_list = request.getAttrMacAddressList(name);
-            // mac = mac_list[0];
-            // SWSS_LOG_WARN("[olecmp] MACaddr[0]: %s, size %zu", mac.to_string().c_str(), mac_list.size());
         }
         else
         {
@@ -1174,6 +1155,7 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         SWSS_LOG_ERROR("MAC address size of %zu does not match endpoint size of %zu", mac_list.size(), ip_list.size());
         return false;
     }
+
     const std::string& vnet_name = request.getKeyString(0);
     auto ip_pfx = request.getKeyIpPrefix(1);
     auto op = request.getOperation();
@@ -1181,7 +1163,8 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     SWSS_LOG_INFO("VNET-RT '%s' op '%s' for pfx %s", vnet_name.c_str(),
                    op.c_str(), ip_pfx.to_string().c_str());
 
-    vector<tunnelEndpoint> endps;
+    // vector<tunnelEndpoint> endps;
+    NextHopGroupKey nhg("", true);
     for (size_t idx_ip = 0; idx_ip < ip_list.size(); idx_ip++)
     {
         IpAddress ip = ip_list[idx_ip];
@@ -1197,13 +1180,15 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
             mac = mac_list[idx_ip];
         }
 
-        tunnelEndpoint endp = { ip, mac, vni };
-        endps.emplace_back(endp);
+        // tunnelEndpoint endp = { ip, mac, vni };
+        // endps.emplace_back(endp);
+        NextHopKey nh(ip, mac, vni, true);
+        nhg.add(nh);
     }
 
     if (vnet_orch_->isVnetExecVrf())
     {
-        return doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, endps, op);
+        return doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, nhg, op);
     }
 
     return true;

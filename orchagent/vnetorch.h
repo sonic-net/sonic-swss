@@ -12,6 +12,8 @@
 #include "ipaddresses.h"
 #include "producerstatetable.h"
 #include "observer.h"
+#include "intfsorch.h"
+#include "nexthopgroupkey.h"
 
 #define VNET_BITMAP_SIZE 32
 #define VNET_TUNNEL_SIZE 40960
@@ -125,7 +127,7 @@ struct nextHop
     string ifname;
 };
 
-typedef std::map<IpPrefix, tunnelEndpoint> TunnelRoutes;
+typedef std::map<IpPrefix, NextHopGroupKey> TunnelRoutes;
 typedef std::map<IpPrefix, nextHop> RouteMap;
 
 class VNetVrfObject : public VNetObject
@@ -165,7 +167,7 @@ public:
 
     bool updateObj(vector<sai_attribute_t>&);
 
-    bool addRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp);
+    bool addRoute(IpPrefix& ipPrefix, NextHopGroupKey& nexthops);
     bool addRoute(IpPrefix& ipPrefix, nextHop& nh);
     bool removeRoute(IpPrefix& ipPrefix);
 
@@ -173,8 +175,8 @@ public:
     bool getRouteNextHop(IpPrefix& ipPrefix, nextHop& nh);
     bool hasRoute(IpPrefix& ipPrefix);
 
-    sai_object_id_t getTunnelNextHop(tunnelEndpoint& endp);
-    bool removeTunnelNextHop(tunnelEndpoint& endp);
+    sai_object_id_t getTunnelNextHop(NextHopKey& nh);
+    bool removeTunnelNextHop(NextHopKey& nh);
     void increaseNextHopRefCount(const nextHop&);
     void decreaseNextHopRefCount(const nextHop&);
 
@@ -303,7 +305,7 @@ private:
     bool handleTunnel(const Request&);
 
     template<typename T>
-    bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, vector<tunnelEndpoint>& endps, string& op);
+    bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op);
 
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, nextHop& nh, string& op);
