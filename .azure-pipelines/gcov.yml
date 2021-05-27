@@ -104,15 +104,16 @@ jobs:
       sudo dpkg -i libsaimetadata_*.deb
       sudo dpkg -i libsaimetadata-dev_*.deb
       sudo dpkg -i syncd-vs_*.deb
+      sudo find / -name "sonic-gcov*" 2>/dev/null
+      ls -lh
     workingDirectory: $(Pipeline.Workspace)
     displayName: "Install sonic swss common and sairedis"
   - checkout: self
     submodules: true
   - script: |
       set -x
-      find / -name "sonic-gcov*" 2>/dev/null
+      sudo find / -name "sonic-gcov*" 2>/dev/null
       #unzip ${{ parameters.artifact_name }}.*
       #pushd ${{ parameters.artifact_name }}
       ls -lh
-      popd
     displayName: "test gcov"
