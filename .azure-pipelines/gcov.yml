@@ -78,7 +78,7 @@ jobs:
   - task: DownloadPipelineArtifact@2
     inputs:
       artifact: ${{ parameters.artifact_name }}
-    displayName: "Download sonic swss artifact"
+    displayName: "Download gcov artifact"
   - script: |
       curl -k -O -L "https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&platform=vs&target=target/debs/buster/libsaivs_1.0.0_amd64.deb"
       curl -k -O -L "https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&platform=vs&target=target/debs/buster/libsaivs-dev_1.0.0_amd64.deb"
@@ -110,6 +110,7 @@ jobs:
     submodules: true
   - script: |
       set -x
+      unzip ${{ parameters.artifact_name }}.*
       pushd ${{ parameters.artifact_name }}
       ls -lh
       popd
