@@ -41,15 +41,6 @@ jobs:
     displayName: "Download sonic swss common deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
-      source: specific
-      project: build
-      pipeline: 12
-      artifact: ${{ parameters.sairedis_artifact_name }}
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
-    displayName: "Download sonic sairedis deb packages"
-  - task: DownloadPipelineArtifact@2
-    inputs:
       artifact: ${{ parameters.swss_artifact_name }}
     displayName: "Download sonic swss artifact"
   - task: DownloadPipelineArtifact@2
@@ -69,6 +60,16 @@ jobs:
       mkdir -p .azure-pipelines/docker-sonic-vs/debs
 
       cp -v ../*.deb .azure-pipelines/docker-sonic-vs/debs
+
+      curl -k -O -L "https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&platform=vs&target=target/debs/buster/libsaivs_1.0.0_amd64.deb"
+      curl -k -O -L "https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&platform=vs&target=target/debs/buster/libsaivs-dev_1.0.0_amd64.deb"
+      curl -k -O -L "https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&platform=vs&target=target/debs/buster/libsairedis_1.0.0_amd64.deb"
+      curl -k -O -L "https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&platform=vs&target=target/debs/buster/libsairedis-dev_1.0.0_amd64.deb"
+      curl -k -O -L "https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&platform=vs&target=target/debs/buster/libsaimetadata_1.0.0_amd64.deb"
+      curl -k -O -L "https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&platform=vs&target=target/debs/buster/libsaimetadata-dev_1.0.0_amd64.deb"
+      curl -k -O -L "https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&platform=vs&target=target/debs/buster/syncd-vs_1.0.0_amd64.deb"
+
+      cp -v *.deb .azure-pipelines/docker-sonic-vs/debs
 
       pushd .azure-pipelines
 
