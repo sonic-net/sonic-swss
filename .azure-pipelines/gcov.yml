@@ -110,8 +110,9 @@ jobs:
     submodules: true
   - script: |
       set -x
-      unzip ${{ parameters.artifact_name }}.*
-      pushd ${{ parameters.artifact_name }}
+      find / -name "sonic-gcov*" 2>/dev/null
+      #unzip ${{ parameters.artifact_name }}.*
+      #pushd ${{ parameters.artifact_name }}
       ls -lh
       popd
     displayName: "test gcov"
