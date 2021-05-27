@@ -77,7 +77,7 @@ jobs:
 
   - task: DownloadPipelineArtifact@2
     inputs:
-      artifact: ${{ parameters.swss_artifact_name }}
+      artifact: ${{ parameters.artifact_name }}
     displayName: "Download sonic swss artifact"
   - script: |
       curl -k -O -L "https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&platform=vs&target=target/debs/buster/libsaivs_1.0.0_amd64.deb"
