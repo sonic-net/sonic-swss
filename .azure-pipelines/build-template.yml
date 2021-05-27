@@ -73,14 +73,13 @@ jobs:
     displayName: "Download sonic swss common deb packages"
 
   - script: |
-      sudo apt-get install -y wget
-      wget https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&platform=vs&target=target/debs/buster/libsaivs_1.0.0_amd64.deb
-      wget https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&platform=vs&target=target/debs/buster/libsaivs-dev_1.0.0_amd64.deb
-      wget https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&platform=vs&target=target/debs/buster/libsairedis_1.0.0_amd64.deb
-      wget https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&platform=vs&target=target/debs/buster/libsairedis-dev_1.0.0_amd64.deb
-      wget https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&platform=vs&target=target/debs/buster/libsaimetadata_1.0.0_amd64.deb
-      wget https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&platform=vs&target=target/debs/buster/libsaimetadata-dev_1.0.0_amd64.deb
-      wget https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&platform=vs&target=target/debs/buster/syncd-vs_1.0.0_amd64.deb
+      curl -O libsaivs_1.0.0_amd64.deb "https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&platform=vs&target=target/debs/buster/libsaivs_1.0.0_amd64.deb"
+      curl -O libsaivs-dev_1.0.0_amd64.deb "https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&platform=vs&target=target/debs/buster/libsaivs-dev_1.0.0_amd64.deb"
+      curl -O libsairedis_1.0.0_amd64.deb "https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&platform=vs&target=target/debs/buster/libsairedis_1.0.0_amd64.deb"
+      curl -O libsairedis-dev_1.0.0_amd64.deb "https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&platform=vs&target=target/debs/buster/libsairedis-dev_1.0.0_amd64.deb"
+      curl -O libsaimetadata_1.0.0_amd64.deb "https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&platform=vs&target=target/debs/buster/libsaimetadata_1.0.0_amd64.deb"
+      curl -O libsaimetadata-dev_1.0.0_amd64.deb "https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&platform=vs&target=target/debs/buster/libsaimetadata-dev_1.0.0_amd64.deb"
+      curl -O syncd-vs_1.0.0_amd64.deb "https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&platform=vs&target=target/debs/buster/syncd-vs_1.0.0_amd64.deb"
       sudo dpkg -i ${{ parameters.swss_common_artifact_name }}/libswsscommon_1.0.0_${{ parameters.arch }}.deb
       sudo dpkg -i ${{ parameters.swss_common_artifact_name }}/libswsscommon-dev_1.0.0_${{ parameters.arch }}.deb
       #sudo dpkg -i ${{ parameters.sairedis_artifact_name }}/libsaivs_*.deb
