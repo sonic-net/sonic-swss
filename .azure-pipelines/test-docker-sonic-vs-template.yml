@@ -79,7 +79,7 @@ jobs:
     displayName: "Collect logs"
     condition: always()
 
-  - publish: $(Build.ArtifactStagnigDirectory)/
+  - publish: $(Build.ArtifactStagingDirectory)/gcov_tmp
     artifact: ${{ parameters.gcov_artifact_name }}
     displayName: "Publish gcov output"
     condition: always()
@@ -88,10 +88,3 @@ jobs:
     artifact: ${{ parameters.log_artifact_name }}@$(System.JobAttempt)
     displayName: "Publish logs"
     condition: always()
-
-  - task: PublishCodeCoverageResults@1
-    inputs:
-      codeCoverageTool: Cobertura
-      summaryFileLocation: '$(Build.ArtifactStagingDirectory)/gcov_output/AllMergeReport/index.xml'
-      reportDirectory: '$(Build.ArtifactStagingDirectory)/gcov_output/AllMergeReport/'
-    displayName: 'Publish c c++ test coverage'
