@@ -44,7 +44,9 @@ class TestNextHopGroup(object):
 
         dvs_route.check_asicdb_deleted_route_entries([rtprefix])
 
-        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.3,10.0.0.5"), ("ifname", "Ethernet0,Ethernet4,Ethernet8")])
+        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.3,10.0.0.5"),
+                                          ("ifname", "Ethernet0,Ethernet4,Ethernet8"),
+                                          ("weight", "10,30,50")])
         ps.set(rtprefix, fvs)
 
         # check if route was propagated to ASIC DB
@@ -67,6 +69,16 @@ class TestNextHopGroup(object):
             fvs = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER", k)
 
             assert fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"] == nhgid
+
+            # verify weight attributes in asic db
+            nhid = fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID"]
+            weight = fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT"]
+
+            fvs = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", nhid)
+            nhip = fvs["SAI_NEXT_HOP_ATTR_IP"].split('.')
+            expected_weight = int(nhip[3]) * 10
+
+            assert int(weight) == expected_weight
 
         # bring links down one-by-one
         for i in [0, 1, 2]:

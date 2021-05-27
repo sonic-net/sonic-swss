@@ -29,8 +29,11 @@ namespace bulker_test
     TEST_F(BulkerTest, BulkerAttrOrder)
     {
         // Create bulker
-        EntityBulker<sai_route_api_t> gRouteBulker(sai_route_api);
+        EntityBulker<sai_route_api_t> gRouteBulker(sai_route_api, 1000);
         deque<sai_status_t> object_statuses;
+
+        // Check max bulk size
+        ASSERT_EQ(gRouteBulker.max_bulk_size, 1000);
 
         // Create a dummy route entry
         sai_route_entry_t route_entry;

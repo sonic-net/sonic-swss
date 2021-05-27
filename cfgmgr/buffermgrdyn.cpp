@@ -455,10 +455,16 @@ void BufferMgrDynamic::recalculateSharedBufferPool()
     }
 }
 
-void BufferMgrDynamic::checkSharedBufferPoolSize()
+void BufferMgrDynamic::checkSharedBufferPoolSize(bool force_update_during_initialization = false)
 {
     // PortInitDone indicates all steps of port initialization has been done
     // Only after that does the buffer pool size update starts
+    if (!m_portInitDone && !force_update_during_initialization)
+    {
+        SWSS_LOG_INFO("Skip buffer pool updating during initialization");
+        return;
+    }
+
     if (!m_portInitDone)
     {
         vector<FieldValueTuple> values;
@@ -2060,5 +2066,5 @@ void BufferMgrDynamic::doTask(Consumer &consumer)
 
 void BufferMgrDynamic::doTask(SelectableTimer &timer)
 {
-    checkSharedBufferPoolSize();
+    checkSharedBufferPoolSize(true);
 }

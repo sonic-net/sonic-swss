@@ -15,10 +15,12 @@ struct NextHopKey
     string              alias;          // incoming interface alias
     uint32_t            vni;            // Encap VNI overlay nexthop
     MacAddress          mac_address;    // Overlay Nexthop MAC.
+    uint32_t            weight;         // NH weight for NHGs
 
-    NextHopKey() = default;
-    NextHopKey(const std::string &ipstr, const std::string &alias) : ip_address(ipstr), alias(alias), vni(0), mac_address() {}
-    NextHopKey(const IpAddress &ip, const std::string &alias) : ip_address(ip), alias(alias), vni(0), mac_address() {}
+
+    NextHopKey() : weight(0) {}
+    NextHopKey(const std::string &ipstr, const std::string &alias) : ip_address(ipstr), alias(alias), vni(0), mac_address(), weight(0) {}
+    NextHopKey(const IpAddress &ip, const std::string &alias) : ip_address(ip), alias(alias), vni(0), mac_address(), weight(0) {}
     NextHopKey(const std::string &str)
     {
         if (str.find(NHG_DELIMITER) != string::npos)

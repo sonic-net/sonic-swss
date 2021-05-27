@@ -789,6 +789,11 @@ bool MACsecOrch::initMACsecObject(sai_object_id_t switch_id)
     attr.id = SAI_MACSEC_ATTR_DIRECTION;
     attr.value.s32 = SAI_MACSEC_DIRECTION_EGRESS;
     attrs.push_back(attr);
+
+    attr.id = SAI_MACSEC_ATTR_PHYSICAL_BYPASS_ENABLE;
+    attr.value.booldata = true;
+    attrs.push_back(attr);
+
     sai_status_t status = sai_macsec_api->create_macsec(
                                 &macsec_obj.first->second.m_egress_id,
                                 switch_id,
@@ -809,6 +814,11 @@ bool MACsecOrch::initMACsecObject(sai_object_id_t switch_id)
     attr.id = SAI_MACSEC_ATTR_DIRECTION;
     attr.value.s32 = SAI_MACSEC_DIRECTION_INGRESS;
     attrs.push_back(attr);
+
+    attr.id = SAI_MACSEC_ATTR_PHYSICAL_BYPASS_ENABLE;
+    attr.value.booldata = true;
+    attrs.push_back(attr);
+
     status = sai_macsec_api->create_macsec(
                                 &macsec_obj.first->second.m_ingress_id,
                                 switch_id,
@@ -1838,13 +1848,13 @@ bool MACsecOrch::createMACsecSA(
 
     if (direction == SAI_MACSEC_DIRECTION_EGRESS)
     {
-        attr.id = SAI_MACSEC_SA_ATTR_XPN;
+        attr.id = SAI_MACSEC_SA_ATTR_CONFIGURED_EGRESS_XPN;
         attr.value.u64 = pn;
         attrs.push_back(attr);
     }
     else
     {
-        attr.id = SAI_MACSEC_SA_ATTR_MINIMUM_XPN;
+        attr.id = SAI_MACSEC_SA_ATTR_MINIMUM_INGRESS_XPN;
         attr.value.u64 = pn;
         attrs.push_back(attr);
     }
