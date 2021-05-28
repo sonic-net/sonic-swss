@@ -26,6 +26,7 @@ extern void syncd_apply_view();
  * Global orch daemon variables
  */
 PortsOrch *gPortsOrch;
+FabricPortsOrch *gFabricPortsOrch;
 FdbOrch *gFdbOrch;
 IntfsOrch *gIntfsOrch;
 NeighOrch *gNeighOrch;
@@ -42,6 +43,9 @@ MACsecOrch *gMacsecOrch;
 
 bool gIsNatSupported = false;
 
+#define DEFAULT_MAX_BULK_SIZE 1000
+size_t gMaxBulkSize = DEFAULT_MAX_BULK_SIZE;
+
 OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb, DBConnector *chassisAppDb) :
         m_applDb(applDb),
         m_configDb(configDb),
@@ -49,6 +53,7 @@ OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *
         m_chassisAppDb(chassisAppDb)
 {
     SWSS_LOG_ENTER();
+    m_select = new Select();
 }
 
 OrchDaemon::~OrchDaemon()
@@ -68,6 +73,7 @@ OrchDaemon::~OrchDaemon()
     for(; it != m_orchList.rend(); ++it) {
         delete(*it);
     }
+    delete m_select;
 }
 
 bool OrchDaemon::init()
@@ -102,7 +108,7 @@ bool OrchDaemon::init()
     };
 
     gCrmOrch = new CrmOrch(m_configDb, CFG_CRM_TABLE_NAME);
-    gPortsOrch = new PortsOrch(m_applDb, ports_tables, m_chassisAppDb);
+    gPortsOrch = new PortsOrch(m_applDb, m_stateDb, ports_tables, m_chassisAppDb);
     TableConnector stateDbFdb(m_stateDb, STATE_FDB_TABLE_NAME);
     gFdbOrch = new FdbOrch(m_applDb, app_fdb_tables, stateDbFdb, gPortsOrch);
 
@@ -333,17 +339,20 @@ bool OrchDaemon::init()
     m_orchList.push_back(mux_cb_orch);
     m_orchList.push_back(mux_st_orch);
 
-    m_select = new Select();
+    if (m_fabricEnabled)
+    {
+        vector<table_name_with_pri_t> fabric_port_tables = {
+           // empty for now
+        };
+        gFabricPortsOrch = new FabricPortsOrch(m_applDb, fabric_port_tables);
+        m_orchList.push_back(gFabricPortsOrch);
+    }
 
     vector<string> flex_counter_tables = {
         CFG_FLEX_COUNTER_TABLE_NAME
     };
 
-    auto* flexCounterOrch = new FlexCounterOrch(m_configDb, flex_counter_tables);
-    m_orchList.push_back(flexCounterOrch);
-
-    gDirectory.set(flexCounterOrch);
-    gDirectory.set(gPortsOrch);
+    m_orchList.push_back(new FlexCounterOrch(m_configDb, flex_counter_tables));
 
     vector<string> pfc_wd_tables = {
         CFG_PFC_WD_TABLE_NAME
@@ -574,7 +583,7 @@ void OrchDaemon::start()
          * Not doing this under Select::TIMEOUT condition because of
          * the existence of finer granularity ExecutableTimer with select
          */
-        if (gSwitchOrch->checkRestartReady())
+        if (gSwitchOrch && gSwitchOrch->checkRestartReady())
         {
             bool ret = warmRestartCheck();
             if (ret)
@@ -587,10 +596,13 @@ void OrchDaemon::start()
                     gSwitchOrch->setAgingFDB(0);
 
                     // Disable FDB learning on all bridge ports
-                    for (auto& pair: gPortsOrch->getAllPorts())
+                    if (gPortsOrch)
                     {
-                        auto& port = pair.second;
-                        gPortsOrch->setBridgePortLearningFDB(port, SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE);
+                        for (auto& pair: gPortsOrch->getAllPorts())
+                        {
+                            auto& port = pair.second;
+                            gPortsOrch->setBridgePortLearningFDB(port, SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE);
+                        }
                     }
 
                     // Flush sairedis's redis pipeline
@@ -747,4 +759,37 @@ bool OrchDaemon::warmRestartCheck()
     SWSS_LOG_NOTICE("Restart check result: %s", data.c_str());
     gSwitchOrch->restartCheckReply(op,  data, values);
     return ret;
+}
+
+void OrchDaemon::addOrchList(Orch *o)
+{
+    m_orchList.push_back(o);
+}
+
+FabricOrchDaemon::FabricOrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb, DBConnector *chassisAppDb) :
+    OrchDaemon(applDb, configDb, stateDb, chassisAppDb),
+    m_applDb(applDb),
+    m_configDb(configDb)
+{
+    SWSS_LOG_ENTER();
+    SWSS_LOG_NOTICE("FabricOrchDaemon starting...");
+}
+
+bool FabricOrchDaemon::init()
+{
+    SWSS_LOG_ENTER();
+    SWSS_LOG_NOTICE("FabricOrchDaemon init");
+
+    vector<table_name_with_pri_t> fabric_port_tables = {
+        // empty for now, I don't consume anything yet
+    };
+    gFabricPortsOrch = new FabricPortsOrch(m_applDb, fabric_port_tables);
+    addOrchList(gFabricPortsOrch);
+
+    vector<string> flex_counter_tables = {
+        CFG_FLEX_COUNTER_TABLE_NAME
+    };
+    addOrchList(new FlexCounterOrch(m_configDb, flex_counter_tables));
+
+    return true;
 }

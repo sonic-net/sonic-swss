@@ -135,7 +135,8 @@ private:
     RouteTables m_syncdRoutes;
     NextHopGroupTable m_syncdNextHopGroups;
 
-    std::set<NextHopGroupKey> m_bulkNhgReducedRefCnt;
+    std::set<std::pair<NextHopGroupKey, sai_object_id_t>> m_bulkNhgReducedRefCnt;
+    /* m_bulkNhgReducedRefCnt: nexthop, vrf_id */
 
     NextHopObserverTable m_nextHopObservers;
 

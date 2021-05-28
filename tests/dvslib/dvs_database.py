@@ -330,6 +330,7 @@ class DVSDatabase:
         self,
         table_name: str,
         num_keys: int,
+        wait_at_least_n_keys: bool = False, 
         polling_config: PollingConfig = PollingConfig(),
         failure_message: str = None,
     ) -> List[str]:
@@ -348,7 +349,10 @@ class DVSDatabase:
 
         def access_function():
             keys = self.get_keys(table_name)
-            return (len(keys) == num_keys, keys)
+            if wait_at_least_n_keys:
+                return (len(keys) >= num_keys, keys)
+            else:
+                return (len(keys) == num_keys, keys)
 
         status, result = wait_for_result(
             access_function, self._disable_strict_polling(polling_config)

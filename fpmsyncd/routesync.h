@@ -75,6 +75,9 @@ private:
 
     /* Get next hop interfaces */
     string getNextHopIf(struct rtnl_route *route_obj);
+
+    /* Get next hop weights*/
+    string getNextHopWt(struct rtnl_route *route_obj);
 };
 
 }
