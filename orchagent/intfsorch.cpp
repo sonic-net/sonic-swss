@@ -503,7 +503,8 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
         }
     }
 
-    if (port.m_type == Port::VLAN)
+    // Directed boardcast is not required by Inband Vlan.
+    if (port.m_type == Port::VLAN && !gPortsOrch->isInbandPort(alias))
     {
         addDirectedBroadcast(port, *ip_prefix);
     }
