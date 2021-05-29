@@ -17,6 +17,15 @@ class TestPort(object):
         cdb_port_tbl.set("Ethernet8", fvs)
         time.sleep(1)
 
+        # check application database
+        pdb_port_tbl = swsscommon.Table(pdb, "PORT_TABLE")
+        (status, fvs) = pdb_port_tbl.get("Ethernet8")
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "tpid":
+                tpid = fv[1]
+        assert tpid == "0x9200"
+
         # Check ASIC DB
         atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
         # get TPID and validate it to be 0x9200 (37376)

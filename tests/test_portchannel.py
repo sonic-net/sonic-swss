@@ -162,6 +162,17 @@ class TestPortchannel(object):
         tbl.set("PortChannel0002", fvs)
         time.sleep(1)
 
+        # check application database for the correct TPID
+        pdb_port_tbl = swsscommon.Table(pdb, "LAG_TABLE")
+        (status, fvs) = pdb_port_tbl.get("PortChannel0002")
+        assert status == True
+        tpid = "0"
+        for fv in fvs:
+            if fv[0] == "tpid":
+                tpid = fv[1]
+
+        assert tpid == "0x9200"
+
         # Check ASIC DB
         # get TPID and validate it to be 0x9200 (37376)
         atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_LAG")
