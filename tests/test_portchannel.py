@@ -156,27 +156,11 @@ class TestPortchannel(object):
         cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
         pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
 
-        # create port channel
+        # create port channel with tpid 0x9200
         tbl = swsscommon.Table(cdb, "PORTCHANNEL")
-        fvs = swsscommon.FieldValuePairs([("admin_status", "up"),
-                                          ("mtu", "9100")])
+        fvs = swsscommon.FieldValuePairs([("admin_status", "up"), ("mtu", "9100"), ("tpid", "0x9200"), ("oper_status", "up")])
         tbl.set("PortChannel0002", fvs)
         time.sleep(1)
-
-        fvs = swsscommon.FieldValuePairs([("tpid", "0x9200")])
-        tbl.set("PortChannel0002", fvs)
-        time.sleep(1)
-
-        # check application database for the correct TPID
-        pdb_port_tbl = swsscommon.Table(pdb, "LAG_TABLE")
-        (status, fvs) = pdb_port_tbl.get("PortChannel0002")
-        assert status == True
-        tpid = "0"
-        for fv in fvs:
-            if fv[0] == "tpid":
-                tpid = fv[1]
-
-        assert tpid == "0x9200"
 
         # Check ASIC DB
         # get TPID and validate it to be 0x9200 (37376)
