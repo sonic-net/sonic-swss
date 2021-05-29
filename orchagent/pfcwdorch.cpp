@@ -33,17 +33,30 @@ extern sai_queue_api_t *sai_queue_api;
 extern PortsOrch *gPortsOrch;
 
 template <typename DropHandler, typename ForwardHandler>
-PfcWdOrch<DropHandler, ForwardHandler>::PfcWdOrch(DBConnector *db, vector<string> &tableNames):
+PfcWdOrch<DropHandler, ForwardHandler>::PfcWdOrch(DBConnector *db, vector<string> &tableNames, QosOrch *qosOrch):
     Orch(db, tableNames),
     m_countersDb(new DBConnector("COUNTERS_DB", 0)),
-    m_countersTable(new Table(m_countersDb.get(), COUNTERS_TABLE))
+    m_countersTable(new Table(m_countersDb.get(), COUNTERS_TABLE)),
+    m_qosOrch(qosOrch)
 {
     SWSS_LOG_ENTER();
+
+    m_qosOrch->attach(this);
 }
 
 
 template <typename DropHandler, typename ForwardHandler>
 PfcWdOrch<DropHandler, ForwardHandler>::~PfcWdOrch(void)
+{
+    SWSS_LOG_ENTER();
+}
+
+template <typename DropHandler, typename ForwardHandler>
+PfcWdOrch<DropHandler, ForwardHandler>::PfcWdCfgEntry::PfcWdCfgEntry(
+        uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action) :
+    detectionTime(detectionTime),
+    restorationTime(restorationTime),
+    action(action)
 {
     SWSS_LOG_ENTER();
 }
@@ -254,11 +267,12 @@ task_process_status PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const st
         SWSS_LOG_ERROR("%s missing", PFC_WD_DETECTION_TIME);
         return task_process_status::task_invalid_entry;
     }
+    m_portCfgMap[port.m_alias] = PfcWdCfgEntry(detectionTime, restorationTime, action);
 
     if (!startWdOnPort(port, detectionTime, restorationTime, action))
     {
-        SWSS_LOG_ERROR("Failed to start PFC Watchdog on port %s", port.m_alias.c_str());
-        return task_process_status::task_need_retry;
+        SWSS_LOG_INFO("Failed to start PFC Watchdog on port %s", port.m_alias.c_str());
+        return task_process_status::task_failed;
     }
 
     SWSS_LOG_NOTICE("Started PFC Watchdog on port %s", port.m_alias.c_str());
@@ -278,6 +292,8 @@ task_process_status PfcWdOrch<DropHandler, ForwardHandler>::deleteEntry(const st
         SWSS_LOG_ERROR("Failed to stop PFC Watchdog on port %s", name.c_str());
         return task_process_status::task_failed;
     }
+
+    m_portCfgMap.erase(name);
 
     SWSS_LOG_NOTICE("Stopped PFC Watchdog on port %s", name.c_str());
     return task_process_status::task_success;
@@ -324,7 +340,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::setBigRedSwitchMode(const string 
 
     if (value == "enable")
     {
-        // When BIG_RED_SWITCH mode is enabled, pfcwd is automatically disabled
+        // When BIG_RED_SWITCH mode is enabled, pfcwd state machine is automatically disabled
         enableBigRedSwitchMode();
     }
     else if (value == "disable")
@@ -339,6 +355,27 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::setBigRedSwitchMode(const string 
 }
 
 template <typename DropHandler, typename ForwardHandler>
+void PfcWdSwOrch<DropHandler, ForwardHandler>::disableBigRedSwitchModeOnQueue(const Port& port, uint8_t qIdx)
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_id_t queueId = port.m_queue_ids[qIdx];
+
+    auto entryIt = m_brsEntryMap.find(queueId);
+    if (entryIt != m_brsEntryMap.end() && entryIt->second.handler != nullptr)
+    {
+        entryIt->second.handler->commitCounters();
+        entryIt->second.handler = nullptr;
+    }
+
+    m_brsEntryMap.erase(entryIt);
+
+    string countersKey = this->getCountersTable()->getTableName() + this->getCountersTable()->getTableNameSeparator()
+        + sai_serialize_object_id(queueId);
+    this->getCountersDb()->hdel(countersKey, "BIG_RED_SWITCH_MODE");
+}
+
+template <typename DropHandler, typename ForwardHandler>
 void PfcWdSwOrch<DropHandler, ForwardHandler>::disableBigRedSwitchMode()
 {
     SWSS_LOG_ENTER();
@@ -347,7 +384,6 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::disableBigRedSwitchMode()
     // Disable pfcwdaction handler on each queue if exists.
     for (auto &entry : m_brsEntryMap)
     {
-
         if (entry.second.handler != nullptr)
         {
             SWSS_LOG_NOTICE(
@@ -362,11 +398,44 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::disableBigRedSwitchMode()
         }
 
         auto queueId = entry.first;
-        string countersKey = this->getCountersTable()->getTableName() + this->getCountersTable()->getTableNameSeparator() + sai_serialize_object_id(queueId);
+        string countersKey = this->getCountersTable()->getTableName() + this->getCountersTable()->getTableNameSeparator()
+            + sai_serialize_object_id(queueId);
         this->getCountersDb()->hdel(countersKey, "BIG_RED_SWITCH_MODE");
     }
 
     m_brsEntryMap.clear();
+}
+
+template <typename DropHandler, typename ForwardHandler>
+void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchModeOnQueue(const Port& port, uint8_t qIdx)
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_id_t queueId = port.m_queue_ids[qIdx];
+    string queueIdStr = sai_serialize_object_id(queueId);
+
+    vector<FieldValueTuple> countersFieldValues;
+    countersFieldValues.emplace_back("BIG_RED_SWITCH_MODE", "enable");
+    this->getCountersTable()->set(queueIdStr, countersFieldValues);
+
+    auto entry = m_brsEntryMap.emplace(queueId, PfcWdQueueEntry(PfcWdAction::PFC_WD_ACTION_DROP, port.m_port_id, qIdx, port.m_alias)).first;
+
+    if (entry->second.handler == nullptr)
+    {
+        SWSS_LOG_NOTICE(
+                "PFC Watchdog BIG_RED_SWITCH mode enabled on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ".",
+                entry->second.portAlias.c_str(),
+                entry->second.index,
+                entry->first,
+                entry->second.portId);
+
+        entry->second.handler = make_shared<DropHandler>(
+                entry->second.portId,
+                entry->first,
+                entry->second.index,
+                this->getCountersTable());
+        entry->second.handler->initCounters();
+    }
 }
 
 template <typename DropHandler, typename ForwardHandler>
@@ -381,7 +450,8 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
     for (auto &it: allPorts)
     {
         Port port = it.second;
-        uint8_t pfcMask = 0;
+        uint8_t pfcMaskWdCfg = 0;
+        uint8_t dummy = 0;
 
         if (port.m_type != Port::PHY)
         {
@@ -389,7 +459,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
             continue;
         }
 
-        if (!gPortsOrch->getPortPfc(port.m_port_id, &pfcMask))
+        if (!gPortsOrch->getPortPfc(port.m_port_id, pfcMaskWdCfg, dummy))
         {
             SWSS_LOG_ERROR("Failed to get PFC mask on port %s", port.m_alias.c_str());
             return;
@@ -398,7 +468,11 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
         for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
         {
             sai_object_id_t queueId = port.m_queue_ids[i];
-            if ((pfcMask & (1 << i)) == 0 && m_entryMap.find(queueId) == m_entryMap.end())
+            // PFC enable bit not set can be the case that the corresponding TC
+            // is lossless, and is currently in PFC storm, with PFC action in act.
+            // We pick up such a case to enable big red switch mode by checking if a corresponding
+            // entry exists in m_entryMap
+            if ((pfcMaskWdCfg & (1 << i)) == 0 && m_entryMap.find(queueId) == m_entryMap.end())
             {
                 continue;
             }
@@ -418,14 +492,18 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
         {
             entry.second.handler->commitCounters();
             entry.second.handler = nullptr;
+            // Remove storm status in APPL_DB for warm-reboot purpose
+            string key = m_applTable->getTableName() + m_applTable->getTableNameSeparator() + entry.second.portAlias;
+            m_applDb->hdel(key, to_string(entry.second.index));
         }
     }
 
-    // Create pfcwdaction handler on all the ports.
+    // Create pfcwdaction handler on all ports.
     for (auto & it: allPorts)
     {
         Port port = it.second;
-        uint8_t pfcMask = 0;
+        uint8_t pfcMaskWdCfg = 0;
+        uint8_t pfcMaskUserCfg = 0;
 
         if (port.m_type != Port::PHY)
         {
@@ -433,15 +511,18 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
             continue;
         }
 
-        if (!gPortsOrch->getPortPfc(port.m_port_id, &pfcMask))
+        if (!gPortsOrch->getPortPfc(port.m_port_id, pfcMaskWdCfg, pfcMaskUserCfg))
         {
             SWSS_LOG_ERROR("Failed to get PFC mask on port %s", port.m_alias.c_str());
             return;
         }
+        // By removing action handler, we expect PFC bit mask status in asic (pfcwd config) to
+        // be the same as user config
+        assert(pfcMaskWdCfg == pfcMaskUserCfg);
 
         for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
         {
-            if ((pfcMask & (1 << i)) == 0)
+            if ((pfcMaskUserCfg & (1 << i)) == 0)
             {
                 continue;
             }
@@ -472,34 +553,9 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
 }
 
 template <typename DropHandler, typename ForwardHandler>
-bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
-        uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action)
+void PfcWdSwOrch<DropHandler, ForwardHandler>::registerPortInWdDb(const Port& port, set<uint8_t>& losslessTc)
 {
     SWSS_LOG_ENTER();
-
-    uint8_t pfcMask = 0;
-
-    if (!gPortsOrch->getPortPfc(port.m_port_id, &pfcMask))
-    {
-        SWSS_LOG_ERROR("Failed to get PFC mask on port %s", port.m_alias.c_str());
-        return false;
-    }
-
-    set<uint8_t> losslessTc;
-    for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
-    {
-        if ((pfcMask & (1 << i)) == 0)
-        {
-            continue;
-        }
-
-        losslessTc.insert(i);
-    }
-    if (losslessTc.empty())
-    {
-        SWSS_LOG_NOTICE("No lossless TC found on port %s", port.m_alias.c_str());
-        return false;
-    }
 
     if (!c_portStatIds.empty())
     {
@@ -512,49 +568,93 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
 
         m_flexCounterTable->set(key, fieldValues);
     }
+}
+
+template <typename DropHandler, typename ForwardHandler>
+void PfcWdSwOrch<DropHandler, ForwardHandler>::registerQueueInWdDb(const Port& port, uint8_t qIdx,
+        uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action)
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_id_t queueId = port.m_queue_ids[qIdx];
+    string queueIdStr = sai_serialize_object_id(queueId);
+
+    // Store detection and restoration time for plugins
+    vector<FieldValueTuple> countersFieldValues;
+    countersFieldValues.emplace_back("PFC_WD_DETECTION_TIME", to_string(detectionTime * 1000));
+    // Restoration time is optional
+    countersFieldValues.emplace_back("PFC_WD_RESTORATION_TIME",
+            restorationTime == 0 ?
+            "" :
+            to_string(restorationTime * 1000));
+    countersFieldValues.emplace_back("PFC_WD_ACTION", this->serializeAction(action));
+
+    this->getCountersTable()->set(queueIdStr, countersFieldValues);
+
+    // We register our queues in PFC_WD table so that syncd will know that it must poll them
+    vector<FieldValueTuple> queueFieldValues;
+
+    if (!c_queueStatIds.empty())
+    {
+        string str = counterIdsToStr(c_queueStatIds, sai_serialize_queue_stat);
+        queueFieldValues.emplace_back(QUEUE_COUNTER_ID_LIST, str);
+    }
+
+    if (!c_queueAttrIds.empty())
+    {
+        string str = counterIdsToStr(c_queueAttrIds, sai_serialize_queue_attr);
+        queueFieldValues.emplace_back(QUEUE_ATTR_ID_LIST, str);
+    }
+
+    // Create or update an internal entry
+    m_entryMap[queueId] = PfcWdQueueEntry(action, port.m_port_id, qIdx, port.m_alias);
+
+    string key = getFlexCounterTableKey(queueIdStr);
+    m_flexCounterTable->set(key, queueFieldValues);
+
+    // Initialize PFC WD related counters
+    PfcWdActionHandler::initWdCounters(
+            this->getCountersTable(),
+            sai_serialize_object_id(queueId));
+}
+
+template <typename DropHandler, typename ForwardHandler>
+bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
+        uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action)
+{
+    SWSS_LOG_ENTER();
+
+    uint8_t dummy = 0;
+    uint8_t pfcMaskUserCfg = 0;
+
+    if (!gPortsOrch->getPortPfc(port.m_port_id, dummy, pfcMaskUserCfg))
+    {
+        SWSS_LOG_ERROR("Failed to get PFC mask on port %s", port.m_alias.c_str());
+        return false;
+    }
+
+    set<uint8_t> losslessTc;
+    for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
+    {
+        if ((pfcMaskUserCfg & (1 << i)) == 0)
+        {
+            continue;
+        }
+
+        SWSS_LOG_NOTICE("Lossless TC %u found on port %s", i, port.m_alias.c_str());
+        losslessTc.insert(i);
+    }
+    if (losslessTc.empty())
+    {
+        SWSS_LOG_INFO("No lossless TC found on port %s", port.m_alias.c_str());
+        return false;
+    }
+
+    registerPortInWdDb(port, losslessTc);
 
     for (auto i : losslessTc)
     {
-        sai_object_id_t queueId = port.m_queue_ids[i];
-        string queueIdStr = sai_serialize_object_id(queueId);
-
-        // Store detection and restoration time for plugins
-        vector<FieldValueTuple> countersFieldValues;
-        countersFieldValues.emplace_back("PFC_WD_DETECTION_TIME", to_string(detectionTime * 1000));
-        // Restoration time is optional
-        countersFieldValues.emplace_back("PFC_WD_RESTORATION_TIME",
-                restorationTime == 0 ?
-                "" :
-                to_string(restorationTime * 1000));
-        countersFieldValues.emplace_back("PFC_WD_ACTION", this->serializeAction(action));
-
-        this->getCountersTable()->set(queueIdStr, countersFieldValues);
-
-        // We register our queues in PFC_WD table so that syncd will know that it must poll them
-        vector<FieldValueTuple> queueFieldValues;
-
-        if (!c_queueStatIds.empty())
-        {
-            string str = counterIdsToStr(c_queueStatIds, sai_serialize_queue_stat);
-            queueFieldValues.emplace_back(QUEUE_COUNTER_ID_LIST, str);
-        }
-
-        if (!c_queueAttrIds.empty())
-        {
-            string str = counterIdsToStr(c_queueAttrIds, sai_serialize_queue_attr);
-            queueFieldValues.emplace_back(QUEUE_ATTR_ID_LIST, str);
-        }
-
-        // Create internal entry
-        m_entryMap.emplace(queueId, PfcWdQueueEntry(action, port.m_port_id, i, port.m_alias));
-
-        string key = getFlexCounterTableKey(queueIdStr);
-        m_flexCounterTable->set(key, queueFieldValues);
-
-        // Initialize PFC WD related counters
-        PfcWdActionHandler::initWdCounters(
-                this->getCountersTable(),
-                sai_serialize_object_id(queueId));
+        registerQueueInWdDb(port, i, detectionTime, restorationTime, action);
     }
 
     // We do NOT need to create ACL table group here. It will be
@@ -577,10 +677,13 @@ string PfcWdSwOrch<DropHandler, ForwardHandler>::filterPfcCounters(string counte
         index = counter.find(SAI_PORT_STAT_PFC_PREFIX);
         if (index != 0)
         {
+            // non SAI_PORT_STAT_PFC_* counter
             filterCounters = filterCounters + counter + ",";
         }
         else
         {
+            // index == 0
+            // SAI_PORT_STAT_PFC_* counter
             uint8_t tc = (uint8_t)atoi(counter.substr(index + sizeof(SAI_PORT_STAT_PFC_PREFIX) - 1, 1).c_str());
             if (losslessTc.count(tc))
             {
@@ -606,45 +709,68 @@ string PfcWdSwOrch<DropHandler, ForwardHandler>::getFlexCounterTableKey(string k
 }
 
 template <typename DropHandler, typename ForwardHandler>
-void PfcWdSwOrch<DropHandler, ForwardHandler>::unregisterFromWdDb(const Port& port)
+void PfcWdSwOrch<DropHandler, ForwardHandler>::unregisterPortFromWdDb(const Port& port)
 {
     SWSS_LOG_ENTER();
 
     string key = getFlexCounterTableKey(sai_serialize_object_id(port.m_port_id));
     m_flexCounterTable->del(key);
+}
+
+template <typename DropHandler, typename ForwardHandler>
+void PfcWdSwOrch<DropHandler, ForwardHandler>::unregisterQueueFromWdDb(const Port& port, uint8_t qIdx)
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_id_t queueId = port.m_queue_ids[qIdx];
+    string key = getFlexCounterTableKey(sai_serialize_object_id(queueId));
+
+    // Unregister in syncd
+    m_flexCounterTable->del(key);
+
+    auto entry = m_entryMap.find(queueId);
+    if (entry != m_entryMap.end() && entry->second.handler != nullptr)
+    {
+        entry->second.handler->commitCounters();
+        // Remove storm status in APPL_DB for warm-reboot purpose
+        string key = m_applTable->getTableName() + m_applTable->getTableNameSeparator() + entry->second.portAlias;
+        m_applDb->hdel(key, to_string(entry->second.index));
+    }
+
+    // If a queue is in PFC storm, a call to erase will detach queue
+    // from storm action
+    m_entryMap.erase(queueId);
+    SWSS_LOG_NOTICE("Removed queue 0x%" PRIx64 " entry, queue index %d, port id 0x%" PRIx64, queueId, qIdx, port.m_port_id);
+
+    // Clean up
+    string countersKey = this->getCountersTable()->getTableName() + this->getCountersTable()->getTableNameSeparator()
+        + sai_serialize_object_id(queueId);
+    this->getCountersDb()->hdel(countersKey, {"PFC_WD_DETECTION_TIME", "PFC_WD_RESTORATION_TIME", "PFC_WD_ACTION", "PFC_WD_STATUS"});
+}
+
+template <typename DropHandler, typename ForwardHandler>
+void PfcWdSwOrch<DropHandler, ForwardHandler>::unregisterFromWdDb(const Port& port)
+{
+    SWSS_LOG_ENTER();
+
+    unregisterPortFromWdDb(port);
 
     for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
     {
-        sai_object_id_t queueId = port.m_queue_ids[i];
-        string key = getFlexCounterTableKey(sai_serialize_object_id(queueId));
-
-        // Unregister in syncd
-        m_flexCounterTable->del(key);
-
-        auto entry = m_entryMap.find(queueId);
-        if (entry != m_entryMap.end() && entry->second.handler != nullptr)
-        {
-            entry->second.handler->commitCounters();
-        }
-
-        m_entryMap.erase(queueId);
-
-        // Clean up
-        string countersKey = this->getCountersTable()->getTableName() + this->getCountersTable()->getTableNameSeparator() + sai_serialize_object_id(queueId);
-        this->getCountersDb()->hdel(countersKey, {"PFC_WD_DETECTION_TIME", "PFC_WD_RESTORATION_TIME", "PFC_WD_ACTION", "PFC_WD_STATUS"});
+        unregisterQueueFromWdDb(port, i);
     }
-
 }
 
 template <typename DropHandler, typename ForwardHandler>
 PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
         DBConnector *db,
         vector<string> &tableNames,
+        QosOrch *qosOrch,
         const vector<sai_port_stat_t> &portStatIds,
         const vector<sai_queue_stat_t> &queueStatIds,
         const vector<sai_queue_attr_t> &queueAttrIds,
-        int pollInterval):
-    PfcWdOrch<DropHandler, ForwardHandler>(db, tableNames),
+        int pollInterval) :
+    PfcWdOrch<DropHandler, ForwardHandler>(db, tableNames, qosOrch),
     m_flexCounterDb(new DBConnector("FLEX_COUNTER_DB", 0)),
     m_flexCounterTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_TABLE)),
     m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE)),
@@ -718,7 +844,7 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::~PfcWdSwOrch(void)
 
 template <typename DropHandler, typename ForwardHandler>
 PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdQueueEntry::PfcWdQueueEntry(
-        PfcWdAction action, sai_object_id_t port, uint8_t idx, string alias):
+        PfcWdAction action, sai_object_id_t port, uint8_t idx, string alias) :
     action(action),
     portId(port),
     index(idx),
@@ -749,6 +875,8 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::stopWdOnPort(const Port& port)
 template <typename DropHandler, typename ForwardHandler>
 void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(Consumer& consumer)
 {
+    SWSS_LOG_ENTER();
+
     PfcWdOrch<DropHandler, ForwardHandler>::doTask(consumer);
 
     if (!gPortsOrch->allPortsReady())
@@ -889,7 +1017,6 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(SelectableTimer &timer)
             handlerPair.second.handler->commitCounters(true);
         }
     }
-
 }
 
 template <typename DropHandler, typename ForwardHandler>
@@ -1051,6 +1178,109 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::bake()
     SWSS_LOG_NOTICE("Add warm input PFC watchdog State: %s, %zd", APP_PFC_WD_TABLE_NAME, refilled);
 
     return true;
+}
+
+template <typename DropHandler, typename ForwardHandler>
+void PfcWdSwOrch<DropHandler, ForwardHandler>::update(SubjectType type, void *cntx)
+{
+    SWSS_LOG_ENTER();
+
+    if (cntx == nullptr)
+    {
+        return;
+    }
+
+    switch(type)
+    {
+        case SUBJECT_TYPE_PORT_PFC_CHANGE:
+        {
+            PortPfcUpdate *update = static_cast<PortPfcUpdate *>(cntx);
+
+            const Port &port = update->port;
+            if (port.m_pfc_bitmask_usercfg == update->pfc_enable)
+            {
+                SWSS_LOG_NOTICE("No change on PFC enable bits. Skipping update");
+                return;
+            }
+            if (port.m_type != Port::PHY)
+            {
+                SWSS_LOG_NOTICE("%s to update is not a physical port. Skipping update", port.m_alias.c_str());
+                return;
+            }
+
+            auto portCfgIt = this->m_portCfgMap.find(port.m_alias);
+            uint8_t bitmask = 0x1;
+            set<uint8_t> losslessTc;
+            for (uint8_t qIdx = 0; qIdx < PFC_WD_TC_MAX; qIdx++)
+            {
+                if ((port.m_pfc_bitmask_usercfg & bitmask)
+                        && !(update->pfc_enable & bitmask))
+                {
+                    if (m_bigRedSwitchFlag)
+                    {
+                        // Disable big red switch mode on PFC disabled queue
+                        disableBigRedSwitchModeOnQueue(port, qIdx);
+                    }
+
+                    // Call after disableBigRedSwitchModeOnQueue so that PFC_WD_STATUS is removed
+                    // from COUNTERS_DB
+                    if (portCfgIt != this->m_portCfgMap.end())
+                    {
+                        // Stop watchdog state machine on and
+                        // detach storm action, if present, from PFC disabled queue
+                        unregisterQueueFromWdDb(port, qIdx);
+                    }
+                }
+                else if (!(port.m_pfc_bitmask_usercfg & bitmask)
+                         && (update->pfc_enable & bitmask))
+                {
+                    if (portCfgIt != this->m_portCfgMap.end())
+                    {
+                        // Start watchdog state machine on PFC enabled queue
+                        registerQueueInWdDb(port, qIdx,
+                                            portCfgIt->second.detectionTime,
+                                            portCfgIt->second.restorationTime,
+                                            portCfgIt->second.action);
+                    }
+
+                    // Call after registerQueueInWdDb so that PFC_WD_STATUS in COUNTERS_DB
+                    // is set stormed on enabling big red switch on queue
+                    if (m_bigRedSwitchFlag)
+                    {
+                        // Enable brs mode on PFC enabled queue
+                        enableBigRedSwitchModeOnQueue(port, qIdx);
+                    }
+                }
+
+                if (update->pfc_enable & bitmask)
+                {
+                    losslessTc.insert(qIdx);
+                }
+
+                bitmask = static_cast<uint8_t>(bitmask << 1);
+            }
+
+            // Port level watchdog processing
+            if (losslessTc.empty())
+            {
+                unregisterPortFromWdDb(port);
+            }
+            else
+            {
+                // Create or update port counters in database
+                registerPortInWdDb(port, losslessTc);
+
+                // We do NOT need to create ACL table group here. It will be
+                // done when ACL tables are bound to ports
+            }
+            break;
+        }
+        default:
+        {
+            // Receive update we are not interested in. Ignore it.
+            return;
+        }
+    }
 }
 
 // Trick to keep member functions in a separate file

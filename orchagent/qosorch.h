@@ -52,6 +52,12 @@ const string ecn_green_red                      = "ecn_green_red";
 const string ecn_green_yellow                   = "ecn_green_yellow";
 const string ecn_all                            = "ecn_all";
 
+struct PortPfcUpdate
+{
+    Port port;
+    uint8_t pfc_enable;
+};
+
 class QosMapHandler
 {
 public:
@@ -119,7 +125,7 @@ public:
     sai_object_id_t addQosItem(const vector<sai_attribute_t> &attributes);
 };
 
-class QosOrch : public Orch
+class QosOrch : public Orch, public Subject
 {
 public:
     QosOrch(DBConnector *db, vector<string> &tableNames);

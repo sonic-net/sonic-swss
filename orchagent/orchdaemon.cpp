@@ -277,7 +277,7 @@ bool OrchDaemon::init()
     };
 
     gMacsecOrch = new MACsecOrch(m_applDb, m_stateDb, macsec_app_tables, gPortsOrch);
-  
+
     /*
      * The order of the orch list is important for state restore of warm start and
      * the queued processing in m_toSync map after gPortsOrch->allPortsReady() is set.
@@ -392,6 +392,7 @@ bool OrchDaemon::init()
         m_orchList.push_back(new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
                     m_configDb,
                     pfc_wd_tables,
+                    qos_orch,
                     portStatIds,
                     queueStatIds,
                     queueAttrIds,
@@ -435,6 +436,7 @@ bool OrchDaemon::init()
             m_orchList.push_back(new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
                         m_configDb,
                         pfc_wd_tables,
+                        qos_orch,
                         portStatIds,
                         queueStatIds,
                         queueAttrIds,
@@ -445,6 +447,7 @@ bool OrchDaemon::init()
             m_orchList.push_back(new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
                         m_configDb,
                         pfc_wd_tables,
+                        qos_orch,
                         portStatIds,
                         queueStatIds,
                         queueAttrIds,
@@ -487,6 +490,7 @@ bool OrchDaemon::init()
         m_orchList.push_back(new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
                     m_configDb,
                     pfc_wd_tables,
+                    qos_orch,
                     portStatIds,
                     queueStatIds,
                     queueAttrIds,

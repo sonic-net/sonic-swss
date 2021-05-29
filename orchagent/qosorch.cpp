@@ -1359,7 +1359,7 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
             SWSS_LOG_INFO("Applied %s to port %s", it->second.first.c_str(), port_name.c_str());
         }
 
-        if (pfc_enable)
+        if (port.m_pfc_bitmask_usercfg != pfc_enable)
         {
             if (!gPortsOrch->setPortPfc(port.m_port_id, pfc_enable))
             {
@@ -1367,6 +1367,10 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
             }
 
             SWSS_LOG_INFO("Applied PFC bits 0x%x to port %s", pfc_enable, port_name.c_str());
+
+            // update contains both old and new pfc enable bitmaps
+            PortPfcUpdate update = { port, pfc_enable };
+            notify(SUBJECT_TYPE_PORT_PFC_CHANGE, static_cast<void *>(&update));
         }
     }
 

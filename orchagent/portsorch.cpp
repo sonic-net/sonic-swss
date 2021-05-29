@@ -994,7 +994,7 @@ bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t mode)
     return true;
 }
 
-bool PortsOrch::getPortPfc(sai_object_id_t portId, uint8_t *pfc_bitmask)
+bool PortsOrch::getPortPfc(sai_object_id_t portId, uint8_t &pfc_bitmask_status, uint8_t &pfc_bitmask_cfg)
 {
     SWSS_LOG_ENTER();
 
@@ -1006,23 +1006,17 @@ bool PortsOrch::getPortPfc(sai_object_id_t portId, uint8_t *pfc_bitmask)
         return false;
     }
 
-    *pfc_bitmask = p.m_pfc_bitmask;
+    pfc_bitmask_status = p.m_pfc_bitmask_wdcfg;
+    pfc_bitmask_cfg = p.m_pfc_bitmask_usercfg;
 
     return true;
 }
 
-bool PortsOrch::setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask)
+bool PortsOrch::setPortPfcStatus_(const Port &p, uint8_t pfc_bitmask_status)
 {
     SWSS_LOG_ENTER();
 
     sai_attribute_t attr;
-    Port p;
-
-    if (!getPort(portId, p))
-    {
-        SWSS_LOG_ERROR("Failed to get port object for port id 0x%" PRIx64, portId);
-        return false;
-    }
 
     if (p.m_pfc_asym == SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_COMBINED)
     {
@@ -1038,12 +1032,12 @@ bool PortsOrch::setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask)
         return false;
     }
 
-    attr.value.u8 = pfc_bitmask;
+    attr.value.u8 = pfc_bitmask_status;
 
-    sai_status_t status = sai_port_api->set_port_attribute(portId, &attr);
+    sai_status_t status = sai_port_api->set_port_attribute(p.m_port_id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to set PFC 0x%x to port id 0x%" PRIx64 " (rc:%d)", attr.value.u8, portId, status);
+        SWSS_LOG_ERROR("Failed to set PFC status 0x%x to port id 0x%" PRIx64 ", rc: %d", attr.value.u8, p.m_port_id, status);
         task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
         if (handle_status != task_success)
         {
@@ -1051,9 +1045,65 @@ bool PortsOrch::setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask)
         }
     }
 
-    if (p.m_pfc_bitmask != pfc_bitmask)
+    return true;
+}
+
+bool PortsOrch::setPortPfcStatus(sai_object_id_t portId, uint8_t pfc_bitmask_status)
+{
+    SWSS_LOG_ENTER();
+
+    Port p;
+
+    if (!getPort(portId, p))
     {
-        p.m_pfc_bitmask = pfc_bitmask;
+        SWSS_LOG_ERROR("Failed to get port object for port id 0x%" PRIx64, portId);
+        return false;
+    }
+
+    if (!setPortPfcStatus_(p, pfc_bitmask_status))
+    {
+        SWSS_LOG_ERROR("Failed to set PFC status 0x%x to port id 0x%" PRIx64, pfc_bitmask_status, portId);
+        return false;
+    }
+
+    if (p.m_pfc_bitmask_wdcfg != pfc_bitmask_status)
+    {
+        p.m_pfc_bitmask_wdcfg = pfc_bitmask_status;
+        m_portList[p.m_alias] = p;
+    }
+
+    return true;
+}
+
+bool PortsOrch::setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask_cfg)
+{
+    SWSS_LOG_ENTER();
+
+    Port p;
+
+    if (!getPort(portId, p))
+    {
+        SWSS_LOG_ERROR("Failed to get port object for port id 0x%" PRIx64, portId);
+        return false;
+    }
+
+    // PFC enable bit is temporarily cleared if the corresponding TC is in PFC storm.
+    // This causes PFC bit mask status in asic (i.e., pfcwd config) to be different from user config.
+    // We leave such different bits as they are to be further handled by the corresponding
+    // orch (i.e., pfcwd) while update the rest bits to asic according to user config.
+    uint8_t bitmask = p.m_pfc_bitmask_usercfg ^ p.m_pfc_bitmask_wdcfg;
+    uint8_t pfc_bitmask_status = static_cast<uint8_t>((bitmask & p.m_pfc_bitmask_wdcfg) | (~bitmask & pfc_bitmask_cfg));
+    if (!setPortPfcStatus_(p, pfc_bitmask_status))
+    {
+        SWSS_LOG_ERROR("Failed to set PFC status 0x%x to port id 0x%" PRIx64, pfc_bitmask_status, portId);
+        return false;
+    }
+
+    if (p.m_pfc_bitmask_usercfg != pfc_bitmask_cfg
+            || p.m_pfc_bitmask_wdcfg != pfc_bitmask_status)
+    {
+        p.m_pfc_bitmask_usercfg = pfc_bitmask_cfg;
+        p.m_pfc_bitmask_wdcfg = pfc_bitmask_status;
         m_portList[p.m_alias] = p;
     }
 
@@ -1065,9 +1115,10 @@ bool PortsOrch::setPortPfcAsym(Port &port, string pfc_asym)
     SWSS_LOG_ENTER();
 
     sai_attribute_t attr;
-    uint8_t pfc = 0;
+    uint8_t pfc_status = 0;
+    uint8_t dummy = 0;
 
-    if (!getPortPfc(port.m_port_id, &pfc))
+    if (!getPortPfc(port.m_port_id, pfc_status, dummy))
     {
         return false;
     }
@@ -1103,7 +1154,7 @@ bool PortsOrch::setPortPfcAsym(Port &port, string pfc_asym)
         }
     }
 
-    if (!setPortPfc(port.m_port_id, pfc))
+    if (!setPortPfcStatus(port.m_port_id, pfc_status))
     {
         return false;
     }

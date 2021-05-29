@@ -4,6 +4,7 @@
 #include "orch.h"
 #include "port.h"
 #include "pfcactionhandler.h"
+#include "qosorch.h"
 #include "producertable.h"
 #include "notificationconsumer.h"
 #include "timer.h"
@@ -23,10 +24,10 @@ enum class PfcWdAction
 };
 
 template <typename DropHandler, typename ForwardHandler>
-class PfcWdOrch: public Orch
+class PfcWdOrch: public Orch, public Observer
 {
 public:
-    PfcWdOrch(DBConnector *db, vector<string> &tableNames);
+    PfcWdOrch(DBConnector *db, vector<string> &tableNames, QosOrch *qosOrch);
     virtual ~PfcWdOrch(void);
 
     virtual void doTask(Consumer& consumer);
@@ -53,8 +54,23 @@ public:
 protected:
     virtual bool startWdActionOnQueue(const string &event, sai_object_id_t queueId) = 0;
 
-private:
+    QosOrch *m_qosOrch;
 
+    struct PfcWdCfgEntry
+    {
+        PfcWdCfgEntry() = default;
+        PfcWdCfgEntry(
+                uint32_t detectionTime,
+                uint32_t restorationTime,
+                PfcWdAction action);
+
+        uint32_t detectionTime = 0;
+        uint32_t restorationTime = 0;
+        PfcWdAction action = PfcWdAction::PFC_WD_ACTION_UNKNOWN;
+    };
+    unordered_map<string, PfcWdCfgEntry> m_portCfgMap;
+
+private:
     shared_ptr<DBConnector> m_countersDb = nullptr;
     shared_ptr<Table> m_countersTable = nullptr;
 };
@@ -66,6 +82,7 @@ public:
     PfcWdSwOrch(
             DBConnector *db,
             vector<string> &tableNames,
+            QosOrch *qosOrch,
             const vector<sai_port_stat_t> &portStatIds,
             const vector<sai_queue_stat_t> &queueStatIds,
             const vector<sai_queue_attr_t> &queueAttrIds,
@@ -84,12 +101,15 @@ public:
     bool bake() override;
     void doTask() override;
 
+    virtual void update(SubjectType subjectType, void *cntx);
+
 protected:
     bool startWdActionOnQueue(const string &event, sai_object_id_t queueId) override;
 
 private:
     struct PfcWdQueueEntry
     {
+        PfcWdQueueEntry() = default;
         PfcWdQueueEntry(
                 PfcWdAction action,
                 sai_object_id_t port,
@@ -105,20 +125,27 @@ private:
 
     template <typename T>
     static string counterIdsToStr(const vector<T> ids, string (*convert)(T));
+    void registerPortInWdDb(const Port& port, set<uint8_t>& losslessTc);
+    void registerQueueInWdDb(const Port& port, uint8_t qIdx,
+            uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action);
     bool registerInWdDb(const Port& port,
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action);
+    void unregisterPortFromWdDb(const Port& port);
+    void unregisterQueueFromWdDb(const Port& port, uint8_t qIdx);
     void unregisterFromWdDb(const Port& port);
     void doTask(swss::NotificationConsumer &wdNotification);
 
     string filterPfcCounters(string counters, set<uint8_t>& losslessTc);
     string getFlexCounterTableKey(string s);
 
+    void disableBigRedSwitchModeOnQueue(const Port& port, uint8_t qIdx);
     void disableBigRedSwitchMode();
+    void enableBigRedSwitchModeOnQueue(const Port& port, uint8_t qIdx);
     void enableBigRedSwitchMode();
     void setBigRedSwitchMode(string value);
 
-    map<sai_object_id_t, PfcWdQueueEntry> m_entryMap;
-    map<sai_object_id_t, PfcWdQueueEntry> m_brsEntryMap;
+    unordered_map<sai_object_id_t, PfcWdQueueEntry> m_entryMap;
+    unordered_map<sai_object_id_t, PfcWdQueueEntry> m_brsEntryMap;
 
     const vector<sai_port_stat_t> c_portStatIds;
     const vector<sai_queue_stat_t> c_queueStatIds;
