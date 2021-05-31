@@ -46,18 +46,15 @@ reset_home()
 # reset compiling environment
 gcov_support_clean()
 {
-    local container_id
-    container_id=$1
-
-    find ${container_id}/gcov -name $INFO_FILE_PREFIX* | xargs rm -rf
-    find ${container_id}/gcov -name $HTML_FILE_PREFIX* | xargs rm -rf
-    find ${container_id}/gcov -name *.gcno | xargs rm -rf
-    find ${container_id}/gcov -name *.gcda | xargs rm -rf
-    find ${container_id}/gcov -name $TMP_GCDA_FILE_LIST | xargs rm -rf
+    find /tmp/gcov -name $INFO_FILE_PREFIX* | xargs rm -rf
+    find /tmp/gcov -name $HTML_FILE_PREFIX* | xargs rm -rf
+    find /tmp/gcov -name *.gcno | xargs rm -rf
+    find /tmp/gcov -name *.gcda | xargs rm -rf
+    find /tmp/gcov -name $TMP_GCDA_FILE_LIST | xargs rm -rf
     #rm $INFO_ERR_LIST
-    rm ${container_id}/gcov/info_err_list
+    rm /tmp/gcov/info_err_list
     #rm $GCDA_DIR_LIST
-    rm ${container_id}/gcov/gcda_dir_list.txt
+    rm /tmp/gcov/gcda_dir_list.txt
 }
 
 # verify whether the info file generated is valid
@@ -111,7 +108,7 @@ lcov_genhtml_report()
         echo "gcda count: $GCDA_COUNT"
         if [ $GCDA_COUNT -ge 1 ]; then
             echo "Executing lcov -c -d . -o ${infoname}"
-            lcov --gcov-tool /usr/bin/gcov-8 -c -d . -o ${infoname}
+            lcov -c -d . -o ${infoname}
             if [ "$?" != "0" ]; then
                 echo "lcov fail!"
                 rm ${infoname}
@@ -141,20 +138,17 @@ lcov_genhtml_all()
 
     echo " === Start generating all gcov reports === "
     lcov_genhtml_report ${container_id}/gcov
-}
+} 
 
 lcov_merge_all()
 {
     local project_c_source
     local all_info_files
-    local merge_dir
-
-    merge_dir=$1
 
     # check c/cpp source files
     project_c_source=`find -name "*\.[c|cpp]" 2>/dev/null | wc -l`
     
-    pushd ${merge_dir}/gcov_output/
+    pushd gcov_output/
     if [ ! -d ${ALLMERGE_DIR} ]; then
         mkdir -p ${ALLMERGE_DIR}
     fi
@@ -225,7 +219,7 @@ get_html_file()
     done < ${container_id}/gcov/gcov_output/htmllist
 }
 
-gcov_merge_info()
+gcov_set_environment()
 {
     local build_dir
 
@@ -239,8 +233,8 @@ gcov_merge_info()
     #echo "docker start done"
 
     mkdir -p ${build_dir}/gcov_tmp
-    mkdir -p ${build_dir}/gcov_tmp/gcov_output
-    mkdir -p ${build_dir}/gcov_tmp/gcov_output/info
+    # mkdir -p ${build_dir}/gcov_tmp/gcov_output
+    # mkdir -p ${build_dir}/gcov_tmp/gcov_output/info
 
     echo "### Start collecting info files from existed containers"
     docker ps -q > ${CONTAINER_LIST}
@@ -254,24 +248,25 @@ gcov_merge_info()
             docker exec -i ${container_id} export LD_PRELOAD="libgcov_preload.so"
             docker exec -i ${container_id} killall5 -15
             docker exec -i ${container_id} /tmp/gcov/gcov_support.sh collect_gcda
-            docker exec -i ${container_id} /tmp/gcov/gcov_support.sh set_environment
         fi
         gcda_count=`docker exec -i ${container_id} find / -name *.gcda | wc -l`
         if [ ${gcda_count} -gt 0 ]; then
             mkdir -p ${build_dir}/gcov_tmp/${container_id}
             pushd ${build_dir}/gcov_tmp/${container_id}
             docker cp ${container_id}:/tmp/gcov/ .
-            gcov/gcov_support.sh generate ${build_dir}/gcov_tmp/${container_id}
-            cp -r gcov/gcov_output/* ../gcov_output/
+            cp gcov/gcov_support.sh ${build_dir}/gcov_tmp
+            # gcov/gcov_support.sh generate ${build_dir}/gcov_tmp/${container_id}
             popd
         fi
     done < ${CONTAINER_LIST}
     rm ${CONTAINER_LIST}
+}
 
-    pushd ${build_dir}/gcov_tmp
+gcov_merge_info()
+{
     #find -name *.info > ${ALL_INFO_FILES}
     find -name *.info > allinfofileslist
-
+ 
     while read line
     do
         local info_file_name=${line##*/}
@@ -299,10 +294,14 @@ gcov_merge_info()
             cp total_${info_name}.info gcov_output/info/
         done < singleinfolist
     done < tmpinfolist
-    lcov_merge_all ${build_dir}/gcov_tmp
-    tar_gcov_output
 
-    popd
+    echo allinfofileslist | while read line
+    do
+        cp -r ${container_id}/gcov/gcov_output/* gcov_output/
+    done
+
+    lcov_merge_all
+    tar_gcov_output
 }
 
 tar_gcov_output()
@@ -331,34 +330,52 @@ collect_merged_report()
     #tar_gcov_output
 }
 
-gcov_support_generate_html()
+gcov_support_generate_report()
 {
-    local container_id
-
-    container_id=$1
-
-    pushd ${container_id}/gcov
-
     rm -rf gcov_output
-    #mkdir -p $GCOV_OUTPUT
     mkdir -p gcov_output
 
-    lcov_genhtml_all ${container_id}
-    if [ "$?" != "0" ]; then
-        echo "###lcov operation fail.."
+    ls -F | grep "/$" > container_dir_list
+    while read line
+    do
+        local container_id=${line%/*}
+        lcov_genhtml_all ${container_id}
+        if [ "$?" != "0" ]; then
+            echo "###lcov operation fail.."
+            return 0
+        fi
+        
+        # collect gcov output
+        collect_merged_report ${container_id}
+    done
+
+    echo "### Make info generating completed !!"
+}
+
+# list and save the generated .gcda files
+gcov_support_collect_gcda()
+{
+    echo "gcov_support_collect_gcda begin"
+    local gcda_files_count
+    local gcda_count
+
+    pushd /
+    # check whether .gcda files exist
+    gcda_files_count=`find \. -name "*\.gcda" 2>/dev/null | wc -l`
+    if [ ${gcda_files_count} -lt 1 ]; then
+        echo "### no gcda files found!"
         return 0
     fi
 
-    # collect gcov output
-    collect_merged_report ${container_id}
+    #CODE_PREFFIX=`find -name "*.gcda" | head -1 | cut -d "/" -f2`
+    CODE_PREFFIX=/__w/1/s/
 
-    echo "### Make info generating completed !!"
+    pushd ${CODE_PREFFIX}
+    tar -zcvf /tmp/gcov/gcda.tar.gz *
     popd
-}
 
-gcov_support_set_environment()
-{
-    local gcda_count
+    popd
+    echo "### collect gcda done!"
 
     gcov_support_clean
 
@@ -417,33 +434,8 @@ gcov_support_set_environment()
     # collect gcov output
     #collect_merged_report
     #reset_home
-    echo "### Make /tmp/gcov completed !!"
+    echo "### Make /tmp/gcov dir completed !!"
     popd
-}
-
-# list and save the generated .gcda files
-gcov_support_collect_gcda()
-{
-    echo "gcov_support_collect_gcda begin"
-    local gcda_files_count
-
-    pushd /
-    # check whether .gcda files exist
-    gcda_files_count=`find \. -name "*\.gcda" 2>/dev/null | wc -l`
-    if [ ${gcda_files_count} -lt 1 ]; then
-        echo "### no gcda files found!"
-        return 0
-    fi
-
-    #CODE_PREFFIX=`find -name "*.gcda" | head -1 | cut -d "/" -f2`
-    CODE_PREFFIX=/__w/1/s/
-
-    pushd ${CODE_PREFFIX}
-    tar -zcvf /tmp/gcov/gcda.tar.gz *
-    popd
-
-    popd
-    echo "gcov_support_collect_gcda done"
 
 }
 
@@ -512,19 +504,16 @@ main()
             gcov_support_collect_gcda
             ;;
         generate)
-            gcov_support_generate_html $2
-            ;;
-        clean)
-            gcov_support_clean
+            gcov_support_generate_report
             ;;
         tar_output)
             tar_gcov_output
             ;;
         merge_container_info)
-            gcov_merge_info $2
+            gcov_merge_info
             ;;
         set_environment)
-            gcov_support_set_environment
+            gcov_set_environment $2
             ;;
         *)
             echo "Usage:"
@@ -532,7 +521,6 @@ main()
             echo " collect_gcda          collect .gcda files"
             echo " collect_gcda_files    collect .gcda files in a docker"
             echo " generate              generate gcov report in html form (all or submodule_name)"
-            echo " clean                 reset environment"
             echo " tar_output            tar gcov_output forder"
             echo " merge_container_info  merge homonymic info files from different container"
             echo " set_environment       set environment ready for report generating in containers"
