@@ -113,8 +113,9 @@ jobs:
       cp -rf gcov_output $(Build.ArtifactStagingDirectory)
       popd
     displayName: "Install sonic swss common and sairedis and generate gcov info"
+    condition: always()
+
   - publish: $(Build.ArtifactStagingDirectory)/gcov_output
-    artifact: "gcov_info"
+    artifact: gcov_info
     displayName: "Archive gcov info"
-
-
+    condition: always()
