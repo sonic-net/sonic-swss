@@ -30,6 +30,7 @@ Table of Contents
          * [Management port](#management-port)  
          * [Management VRF](#management-vrf)  
          * [MAP_PFC_PRIORITY_TO_QUEUE](#map_pfc_priority_to_queue)  
+         * [NTP Global Configuration](#ntp-global-configuration)  
          * [NTP and SYSLOG servers](#ntp-and-syslog-servers)  
          * [Port](#port)   
          * [Port Channel](#port-channel)  
@@ -915,7 +916,48 @@ instead of data network.
   }
 }
 ```
+### NTP Global Configuration
 
+These configuration options are used to modify the way that
+ntp binds to the ports on the switch and which port it uses to
+make ntp update requests from.
+
+***NTP VRF***
+
+If this option is set to `default` then ntp will run within the default vrf
+**when the management vrf is enabled**. If the mgmt vrf is enabled and this value is
+not set to default then ntp will run within the mgmt vrf.
+
+This option **has no effect** if the mgmt vrf is not enabled.
+
+```
+{
+"NTP": {
+    "global": {
+        "vrf": "default"
+        }
+    }
+}
+```
+
+
+***NTP Source Port***
+
+This option sets the port which ntp will choose to send time update requests from by.  
+
+NOTE: If a Loopback interface is defined on the switch ntp will choose this by default, so this setting
+is **required** if the switch has a Loopback interface and the ntp peer does not have defined routes
+for that address.
+ 
+```
+{
+"NTP": {
+    "global": {
+        "src_intf": "Ethernet1"
+        }
+    }
+}
+```
 
 ### NTP and SYSLOG servers
 

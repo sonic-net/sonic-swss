@@ -6,6 +6,8 @@
 #include "logger.h"
 #include "swssnet.h"
 
+#define OVERLAY_RIF_DEFAULT_MTU 9100
+
 extern sai_tunnel_api_t* sai_tunnel_api;
 extern sai_router_interface_api_t* sai_router_intfs_api;
 extern sai_next_hop_api_t* sai_next_hop_api;
@@ -226,6 +228,10 @@ bool TunnelDecapOrch::addDecapTunnel(string key, string type, IpAddresses dst_ip
 
     overlay_intf_attr.id = SAI_ROUTER_INTERFACE_ATTR_TYPE;
     overlay_intf_attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_LOOPBACK;
+    overlay_intf_attrs.push_back(overlay_intf_attr);
+
+    overlay_intf_attr.id = SAI_ROUTER_INTERFACE_ATTR_MTU;
+    overlay_intf_attr.value.u32 = OVERLAY_RIF_DEFAULT_MTU;
     overlay_intf_attrs.push_back(overlay_intf_attr);
 
     status = sai_router_intfs_api->create_router_interface(&overlayIfId, gSwitchId, (uint32_t)overlay_intf_attrs.size(), overlay_intf_attrs.data());

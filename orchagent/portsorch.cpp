@@ -1743,7 +1743,8 @@ void PortsOrch::getPortSupportedSpeeds(const std::string& alias, sai_object_id_t
 
 void PortsOrch::initPortSupportedSpeeds(const std::string& alias, sai_object_id_t port_id)
 {
-    if (!m_portSupportedSpeeds.count(port_id))
+    // If port supported speeds map already contains the information, save the SAI call
+    if (m_portSupportedSpeeds.count(port_id))
     {
         return;
     }
