@@ -115,4 +115,8 @@ jobs:
     workingDirectory: $(Pipeline.Workspace)
     displayName: "Install sonic swss common and sairedis"
 
+    - publish: $(Build.ArtifactStagingDirectory)/gcov_output
+    artifact: "gcov_info"
+    displayName: "Archive gcov info
+
 
