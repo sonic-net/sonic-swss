@@ -332,6 +332,7 @@ class TestPortchannel(object):
     def test_Portchannel_tpid(self, dvs, testlog):
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
         cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
 
         # Create PortChannel
         tbl = swsscommon.Table(cdb, "PORTCHANNEL")
