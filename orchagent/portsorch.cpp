@@ -2507,26 +2507,23 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 {
                     an_str = fvValue(i);
                 }
-
                 /* Set advertised speeds */
-                if (fvField(i) == "adv_speeds")
+                else if (fvField(i) == "adv_speeds")
                 {
                     adv_speeds_str = fvValue(i);
                 }
-
                 /* Set interface type */
-                if (fvField(i) == "interface_type")
+                else if (fvField(i) == "interface_type")
                 {
                     interface_type_str = fvValue(i);
                 }
-
                 /* Set advertised interface type */
-                if (fvField(i) == "adv_interface_types")
+                else if (fvField(i) == "adv_interface_types")
                 {
                     adv_interface_types_str = fvValue(i);
                 }
                 /* Set port serdes Pre-emphasis */
-                if (fvField(i) == "preemphasis")
+                else if (fvField(i) == "preemphasis")
                 {
                     getPortSerdesVal(fvValue(i), attr_val);
                     serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_PREEMPHASIS, attr_val));
