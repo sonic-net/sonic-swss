@@ -115,6 +115,6 @@ jobs:
     displayName: "Install sonic swss common and sairedis and generate gcov info"
   - publish: $(Build.ArtifactStagingDirectory)/gcov_output
     artifact: "gcov_info"
-    displayName: "Archive gcov info
+    displayName: "Archive gcov info"
 
 
