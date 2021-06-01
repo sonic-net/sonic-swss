@@ -115,11 +115,4 @@ jobs:
     workingDirectory: $(Pipeline.Workspace)
     displayName: "Install sonic swss common and sairedis"
 
-    - task: PublishCodeCoverageResults@1
-    inputs:
-      codeCoverageTool: Cobertura
-      summaryFileLocation: '$(Build.ArtifactStagingDirectory)/gcov_output/AllMergeReport/index.xml'
-      reportDirectory: '$(Build.ArtifactStagingDirectory)/gcov_output/AllMergeReport/'
-    displayName: 'Publish c c++ test coverage'
-
 
