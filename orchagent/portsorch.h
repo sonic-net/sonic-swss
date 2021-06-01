@@ -165,6 +165,7 @@ private:
     Table m_portStateTable;
 
     std::string getQueueWatermarkFlexCounterTableKey(std::string s);
+    std::string getPortFlexCounterTableKey(std::string s);
     std::string getPriorityGroupWatermarkFlexCounterTableKey(std::string s);
     std::string getPriorityGroupDropPacketsFlexCounterTableKey(std::string s);
     std::string getPortRateFlexCounterTableKey(std::string s);
@@ -255,6 +256,7 @@ private:
     bool addPort(const set<int> &lane_set, uint32_t speed, int an=0, string fec="");
     sai_status_t removePort(sai_object_id_t port_id);
     bool initPort(const string &alias, const int index, const set<int> &lane_set);
+    void initCpuPort(Port &cpu_port);
     void deInitPort(string alias, sai_object_id_t port_id);
 
     bool setPortAdminStatus(Port &port, bool up);
