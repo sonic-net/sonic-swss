@@ -114,6 +114,7 @@ jobs:
       touch gcov_output/ssp.txt
       cp -rf gcov_output $(Build.ArtifactStagingDirectory)
       popd
+    workingDirectory: $(Pipeline.Workspace)
     displayName: "Install sonic swss common and sairedis and generate gcov info"
     condition: always()
 
