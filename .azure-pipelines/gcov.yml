@@ -108,8 +108,9 @@ jobs:
       ls -lh
 
       pushd sonic-gcov
-      ./gcov_support.sh generate
-      ./gcov_support.sh merge_container_info
+      #./gcov_support.sh generate
+      #./gcov_support.sh merge_container_info
+      mkdir gcov_output
       cp -rf gcov_output $(Build.ArtifactStagingDirectory)
       popd
     displayName: "Install sonic swss common and sairedis and generate gcov info"
