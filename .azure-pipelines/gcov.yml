@@ -105,8 +105,10 @@ jobs:
       sudo dpkg -i libsaimetadata-dev_*.deb
       sudo dpkg -i syncd-vs_*.deb
       sudo find / -name "sonic-gcov*" 2>/dev/null
-      ls -lh
+
       pushd sonic-gcov
+      ls -lh
+      sudo chmod +x gcov_support.sh
       sudo ./gcov_support.sh generate
       sudo ./gcov_support.sh merge_container_info
       sudo cp -rf gcov_output $(Build.ArtifactStagingDirectory)
