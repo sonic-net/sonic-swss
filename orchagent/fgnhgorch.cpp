@@ -294,11 +294,15 @@ bool FgNhgOrch::createFineGrainedNextHopGroup(FGNextHopGroupEntry &syncd_fg_rout
         {
             SWSS_LOG_ERROR("Failed to query next hop group %s SAI_NEXT_HOP_GROUP_ATTR_REAL_SIZE, rv:%d",
                        nextHops.to_string().c_str(), status);
-            if (!removeFineGrainedNextHopGroup(&syncd_fg_route_entry))
+            task_process_status handle_status = handleSaiGetStatus(SAI_API_NEXT_HOP_GROUP, status);
+            if (handle_status != task_process_status::task_success)
             {
-                SWSS_LOG_ERROR("Failed to clean-up after next hop group real_size query failure");
+                if (!removeFineGrainedNextHopGroup(&syncd_fg_route_entry))
+                {
+                    SWSS_LOG_ERROR("Failed to clean-up after next hop group real_size query failure");
+                }
+                return parseHandleSaiStatusFailure(handle_status);
             }
-            return false;
         }
         fgNhgEntry->real_bucket_size = nhg_attr.value.u32;
     }

@@ -115,6 +115,7 @@ NatOrch::NatOrch(DBConnector *appDb, DBConnector *stateDb, vector<table_name_wit
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_NOTICE("Failed to get the SNAT available entry count, rv:%d", status);
+        handleSaiGetStatus(SAI_API_SWITCH, status);
     }
     else
     {
@@ -3598,6 +3599,7 @@ bool NatOrch::getNatCounters(const NatEntry::iterator &iter)
         {
             SWSS_LOG_ERROR("Failed to get Counters for SNAT entry [src-ip %s], bytes = %" PRIu64 ", pkts = %" PRIu64 "", ipAddr.to_string().c_str(),
                            nat_entry_attr[0].value.u64, nat_entry_attr[1].value.u64);
+            handleSaiGetStatus(SAI_API_NAT, status);
         }
         else
         {
@@ -3664,6 +3666,7 @@ bool NatOrch::getTwiceNatCounters(const TwiceNatEntry::iterator &iter)
         SWSS_LOG_ERROR("Failed to get Counters for Twice NAT entry [src-ip %s, dst-ip %s], bytes = %" PRIu64 ", pkts = %" PRIu64 "",
                         key.src_ip.to_string().c_str(), key.dst_ip.to_string().c_str(),
                         nat_entry_attr[0].value.u64, nat_entry_attr[1].value.u64);
+        handleSaiGetStatus(SAI_API_NAT, status);
     }
     else
     {
@@ -3817,6 +3820,7 @@ bool NatOrch::getNaptCounters(const NaptEntry::iterator &iter)
             SWSS_LOG_ERROR("Failed to get Counters for SNAPT entry for [proto %s, src-ip %s, src-port %d], bytes = %" PRIu64 ", pkts = %" PRIu64 "",
                            naptKey.prototype.c_str(), naptKey.ip_address.to_string().c_str(), naptKey.l4_port,
                            nat_entry_attr[0].value.u64, nat_entry_attr[1].value.u64);
+            handleSaiGetStatus(SAI_API_NAT, status);
         }
         else
         {
@@ -3893,6 +3897,7 @@ bool NatOrch::getTwiceNaptCounters(const TwiceNaptEntry::iterator &iter)
         SWSS_LOG_DEBUG("Failed to get Counters for Twice NAPT entry for [proto %s, src ip %s, src port %d, dst ip %s, dst port %d], as not yet added to HW",
                        key.prototype.c_str(), key.src_ip.to_string().c_str(), key.src_l4_port, key.dst_ip.to_string().c_str(),
                        key.dst_l4_port);
+        handleSaiGetStatus(SAI_API_NAT, status);
     }
     else
     {
@@ -4296,6 +4301,22 @@ bool NatOrch::checkIfNatEntryIsActive(const NatEntry::iterator &iter, time_t now
                     return 1;
                 }
             }
+            else
+            {
+                task_process_status handle_status = handleSaiGetStatus(SAI_API_NAT, status);
+                if (handle_status != task_process_status::task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
+            }
+        }
+    }
+    else
+    {
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_NAT, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
         }
     }
     return 0;
@@ -4410,6 +4431,22 @@ bool NatOrch::checkIfNaptEntryIsActive(const NaptEntry::iterator &iter, time_t n
                     return 1;
                 }
             }
+            else
+            {
+                task_process_status handle_status = handleSaiGetStatus(SAI_API_NAT, status);
+                if (handle_status != task_process_status::task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
+            }
+        }
+    }
+    else
+    {
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_NAT, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
         }
     }
     return 0;
@@ -4464,6 +4501,14 @@ bool NatOrch::checkIfTwiceNatEntryIsActive(const TwiceNatEntry::iterator &iter, 
         {
             entry.ageOutTime = now + timeout;
             return 1;
+        }
+    }
+    else
+    {
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_NAT, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
         }
     }
     return 0;
@@ -4526,6 +4571,14 @@ bool NatOrch::checkIfTwiceNaptEntryIsActive(const TwiceNaptEntry::iterator &iter
         {
             entry.ageOutTime = now + ((protoType == IPPROTO_TCP) ? tcp_timeout : udp_timeout);
             return 1;
+        }
+    }
+    else
+    {
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_NAT, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
         }
     }
     return 0;

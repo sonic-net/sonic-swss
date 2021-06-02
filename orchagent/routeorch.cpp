@@ -48,7 +48,11 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
     {
         SWSS_LOG_WARN("Failed to get switch attribute number of ECMP groups. \
                        Use default value. rv:%d", status);
-        m_maxNextHopGroupCount = DEFAULT_NUMBER_OF_ECMP_GROUPS;
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            m_maxNextHopGroupCount = DEFAULT_NUMBER_OF_ECMP_GROUPS;
+        }
     }
     else
     {

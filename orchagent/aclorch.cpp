@@ -2309,7 +2309,11 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     else
     {
         SWSS_LOG_ERROR("Failed to get ACL entry priority min/max values, rv:%d", status);
-        throw "AclOrch initialization failure";
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            throw "AclOrch initialization failure";
+        }
     }
 
     queryAclActionCapability();
@@ -2376,7 +2380,11 @@ void AclOrch::queryAclActionCapability()
                 SWSS_LOG_WARN("Failed to query ACL %s action capabilities - "
                         "API assumed to be not implemented, using defaults",
                         stage_str);
-                initDefaultAclActionCapabilities(stage);
+                task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
+                if (handle_status != task_process_status::task_success)
+                {
+                    initDefaultAclActionCapabilities(stage);
+                }
             }
 
             // put capabilities in state DB
@@ -2388,10 +2396,14 @@ void AclOrch::queryAclActionCapability()
         SWSS_LOG_WARN("Failed to query maximum ACL action count - "
                 "API assumed to be not implemented, using defaults capabilities for both %s and %s",
                 STAGE_INGRESS, STAGE_EGRESS);
-        for (auto stage: {ACL_STAGE_INGRESS, ACL_STAGE_EGRESS})
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
+        if (handle_status != task_process_status::task_success)
         {
-            initDefaultAclActionCapabilities(stage);
-            putAclActionCapabilityInDB(stage);
+            for (auto stage: {ACL_STAGE_INGRESS, ACL_STAGE_EGRESS})
+            {
+                initDefaultAclActionCapabilities(stage);
+                putAclActionCapabilityInDB(stage);
+            }
         }
     }
 

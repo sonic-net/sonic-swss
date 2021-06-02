@@ -503,7 +503,11 @@ bool FdbOrch::getPort(const MacAddress& mac, uint16_t vlan, Port& port)
     {
         SWSS_LOG_ERROR("Failed to get bridge port ID for FDB entry %s, rv:%d",
             mac.to_string().c_str(), status);
-        return false;
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_FDB, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     if (!m_portsOrch->getPortByBridgePortId(attr.value.oid, port))

@@ -854,15 +854,20 @@ bool MACsecOrch::initMACsecObject(sai_object_id_t switch_id)
     attrs.clear();
     attr.id = SAI_MACSEC_ATTR_SCI_IN_INGRESS_MACSEC_ACL;
     attrs.push_back(attr);
-    if (sai_macsec_api->get_macsec_attribute(
-            macsec_obj.first->second.m_ingress_id,
-            static_cast<uint32_t>(attrs.size()),
-            attrs.data()) != SAI_STATUS_SUCCESS)
+    status = sai_macsec_api->get_macsec_attribute(
+                    macsec_obj.first->second.m_ingress_id,
+                    static_cast<uint32_t>(attrs.size()),
+                    attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_WARN(
             "Cannot get MACsec attribution SAI_MACSEC_ATTR_SCI_IN_INGRESS_MACSEC_ACL at the switch 0x%" PRIx64,
             switch_id);
-        return false;
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_MACSEC, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     macsec_obj.first->second.m_sci_in_ingress_macsec_acl = attrs.front().value.booldata;
 
