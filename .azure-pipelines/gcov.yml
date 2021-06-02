@@ -106,17 +106,22 @@ jobs:
       sudo dpkg -i syncd-vs_*.deb
       sudo find / -name "sonic-gcov*" 2>/dev/null
       ls -lh
-
-      pushd sonic-gcov
+      #pushd sonic-gcov
       #./gcov_support.sh generate
       #./gcov_support.sh merge_container_info
       mkdir gcov_output
       touch gcov_output/ssp.txt
       cp -rf gcov_output $(Build.ArtifactStagingDirectory)
-      popd
+      #popd
     workingDirectory: $(Pipeline.Workspace)
     displayName: "Install sonic swss common and sairedis and generate gcov info"
-    condition: always()
+  - checkout: self
+    submodules: true
+  - script: |
+      set -x
+      sudo find / -name "sonic-gcov*" 2>/dev/null
+      ls -lh
+    displayName: "test gcov"
 
   - publish: $(Build.ArtifactStagingDirectory)/gcov_output
     artifact: gcov_info
