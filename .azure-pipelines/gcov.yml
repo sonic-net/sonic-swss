@@ -107,9 +107,9 @@ jobs:
       sudo find / -name "sonic-gcov*" 2>/dev/null
       ls -lh
       pushd sonic-gcov
-      ./gcov_support.sh generate
-      ./gcov_support.sh merge_container_info
-      cp -rf gcov_output $(Build.ArtifactStagingDirectory)
+      sudo ./gcov_support.sh generate
+      sudo ./gcov_support.sh merge_container_info
+      sudo cp -rf gcov_output $(Build.ArtifactStagingDirectory)
       popd
     workingDirectory: $(Pipeline.Workspace)
     displayName: "Install sonic swss common and sairedis and generate gcov info"
