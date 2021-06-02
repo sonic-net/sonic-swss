@@ -786,8 +786,11 @@ task_process_status Orch::handleSaiGetStatus(sai_api_t api, sai_status_t status,
         case SAI_STATUS_NOT_IMPLEMENTED:
             SWSS_LOG_ERROR("Encountered failure in get operation due to the function is not implemented, exiting orchagent, SAI API: %s",
                         sai_serialize_api(api).c_str());
-            // exit(EXIT_FAILURE);
-            break; // TODO: enable EXIT_FAILURE
+#ifdef MOCK_TEST
+            exit(EXIT_FAILURE);
+#else
+            break;
+#endif
         default:
             SWSS_LOG_ERROR("Encountered failure in get operation, SAI API: %s, status: %s",
                         sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
