@@ -233,6 +233,7 @@ gcov_set_environment()
     #echo "docker start done"
 
     mkdir -p ${build_dir}/gcov_tmp
+    mkdir -p ${build_dir}/gcov_tmp/sonic-gcov
     # mkdir -p ${build_dir}/gcov_tmp/gcov_output
     # mkdir -p ${build_dir}/gcov_tmp/gcov_output/info
 
@@ -251,10 +252,10 @@ gcov_set_environment()
         fi
         gcda_count=`docker exec -i ${container_id} find / -name *.gcda | wc -l`
         if [ ${gcda_count} -gt 0 ]; then
-            mkdir -p ${build_dir}/gcov_tmp/${container_id}
-            pushd ${build_dir}/gcov_tmp/${container_id}
+            mkdir -p ${build_dir}/gcov_tmp/sonic-gcov/${container_id}
+            pushd ${build_dir}/gcov_tmp/sonic-gcov/${container_id}
             docker cp ${container_id}:/tmp/gcov/ .
-            cp gcov/gcov_support.sh ${build_dir}/gcov_tmp
+            cp gcov/gcov_support.sh ${build_dir}/gcov_tmp/sonic-gcov
             # gcov/gcov_support.sh generate ${build_dir}/gcov_tmp/${container_id}
             popd
         fi
