@@ -268,6 +268,43 @@ class TestPortchannel(object):
         dvs.servers[0].runcmd("ip link set up dev eth0")
         time.sleep(1)
 
+    def test_Portchannel_tpid(self, dvs, testlog):
+        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+
+        # Create PortChannel
+        tbl = swsscommon.Table(cdb, "PORTCHANNEL")
+        fvs = swsscommon.FieldValuePairs([("admin_status", "up"),("mtu", "9100"),("tpid", "0x9200")])
+
+        tbl.set("PortChannel002", fvs)
+        time.sleep(1)
+
+        # set oper_status for PortChannels
+        ps = swsscommon.ProducerStateTable(pdb, "LAG_TABLE")
+        fvs = swsscommon.FieldValuePairs([("admin_status", "up"),("mtu", "9100"),("tpid", "0x9200"),("oper_status", "up")])
+        ps.set("PortChannel002", fvs)
+        time.sleep(1)
+
+        # Check ASIC DB
+        # get TPID and validate it to be 0x9200 (37376)
+        atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_LAG")
+        lag = atbl.getKeys()[0]
+        (status, fvs) = atbl.get(lag)
+        assert status == True
+        asic_tpid = "0"
+
+        for fv in fvs:
+            if fv[0] == "SAI_LAG_ATTR_TPID":
+                asic_tpid = fv[1]
+
+        assert asic_tpid == "37376"
+
+        # remove port channel
+        tbl = swsscommon.Table(cdb, "PORTCHANNEL")
+        tbl._del("PortChannel0002")
+        time.sleep(1)
+
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
