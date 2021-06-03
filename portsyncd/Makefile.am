@@ -12,5 +12,5 @@ portsyncd_SOURCES = $(top_srcdir)/lib/gearboxutils.cpp portsyncd.cpp linksync.cp
 
 portsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
 portsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
-portsyncd_LDADD = -lnl-3 -lnl-route-3 -lswsscommon -lgcov_preload
+portsyncd_LDADD = -lnl-3 -lnl-route-3 -lswsscommon -lgcov_preload -lgcov_preload
 

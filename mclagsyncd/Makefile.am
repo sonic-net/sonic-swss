@@ -12,4 +12,4 @@ mclagsyncd_SOURCES = mclagsyncd.cpp mclaglink.cpp
 
 mclagsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
 mclagsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
-mclagsyncd_LDADD = -lnl-3 -lnl-route-3 -lswsscommon 
+mclagsyncd_LDADD = -lnl-3 -lnl-route-3 -lswsscommon -lgcov_preload

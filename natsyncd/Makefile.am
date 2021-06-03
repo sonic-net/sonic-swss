@@ -12,5 +12,5 @@ natsyncd_SOURCES = natsyncd.cpp natsync.cpp $(top_srcdir)/warmrestart/warmRestar
 
 natsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
 natsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
-natsyncd_LDADD = -lnl-3 -lnl-route-3 -lnl-nf-3 -lswsscommon
+natsyncd_LDADD = -lnl-3 -lnl-route-3 -lnl-nf-3 -lswsscommon -lgcov_preload
 

@@ -77,8 +77,8 @@ orchagent_LDADD = -lnl-3 -lnl-route-3 -lpthread -lsairedis -lsaimeta -lsaimetada
 routeresync_SOURCES = routeresync.cpp
 routeresync_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
 routeresync_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
-routeresync_LDADD = -lswsscommon
+routeresync_LDADD = -lswsscommon -lgcov_preload
 
 orchagent_restart_check_SOURCES = orchagent_restart_check.cpp
 orchagent_restart_check_CPPFLAGS = $(DBGFLAGS) $(AM_CPPFLAGS) $(CFLAGS_COMMON)
-orchagent_restart_check_LDADD = -lhiredis -lswsscommon -lpthread
+orchagent_restart_check_LDADD = -lhiredis -lswsscommon -lpthread -lgcov_preload

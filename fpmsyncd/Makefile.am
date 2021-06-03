@@ -12,4 +12,4 @@ fpmsyncd_SOURCES = fpmsyncd.cpp fpmlink.cpp routesync.cpp $(top_srcdir)/warmrest
 
 fpmsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
 fpmsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
-fpmsyncd_LDADD = -lnl-3 -lnl-route-3 -lswsscommon
+fpmsyncd_LDADD = -lnl-3 -lnl-route-3 -lswsscommon -lgcov_preload

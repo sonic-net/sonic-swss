@@ -12,10 +12,10 @@ swssconfig_SOURCES = swssconfig.cpp
 
 swssconfig_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
 swssconfig_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
-swssconfig_LDADD = -lswsscommon
+swssconfig_LDADD = -lswsscommon -lgcov_preload
 
 swssplayer_SOURCES = swssplayer.cpp
 
 swssplayer_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
 swssplayer_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
-swssplayer_LDADD = -lswsscommon
+swssplayer_LDADD = -lswsscommon -lgcov_preload
