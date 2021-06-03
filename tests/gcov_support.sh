@@ -260,8 +260,8 @@ gcov_set_environment()
         local container_id=${line}
         script_count=`docker exec -i ${container_id} find / -name gcov_support.sh | wc -l`
         if [ ${script_count} -gt 0 ]; then
-            docker exec -i ${container_id} chmod 777 /etc/ld.so.conf.d/libgcov_preload.so
-            docker exec -i ${container_id} export LD_PRELOAD="libgcov_preload.so"
+            #docker exec -i ${container_id} chmod 777 /etc/ld.so.conf.d/libgcov_preload.so
+            #docker exec -i ${container_id} export LD_PRELOAD="/etc/ld.so.conf.d/libgcov_preload.so"
             docker exec -i ${container_id} killall5 -15
             docker exec -i ${container_id} /tmp/gcov/gcov_support.sh collect_gcda
         fi
