@@ -55,3 +55,11 @@ stages:
       swss_artifact_name: sonic-swss
       artifact_name: sonic-gcov
       archive_pytests: true
+
+- stage: Publish-Gcov
+  dependsOn: Gcov
+  condition: always()
+  jobs:
+  - template: .azure-pipelines/publish-gcov.yml
+    parameters:
+      gcov_artifact_name: gcov_info

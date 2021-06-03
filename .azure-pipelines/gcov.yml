@@ -65,6 +65,8 @@ jobs:
           libteam5 \
           libteamdctl0
       sudo apt-get install -y lcov
+      sudo snap install dotnet-sdk --classic --channel=5.0
+
     displayName: "Install dependencies"
   - task: DownloadPipelineArtifact@2
     inputs:
@@ -122,9 +124,3 @@ jobs:
     displayName: "Archive gcov info"
     condition: always()
   
-  - task: PublishCodeCoverageResults@1
-    inputs:
-      codeCoverageTool: Cobertura
-      summaryFileLocation: '$(Build.ArtifactStagingDirectory)/gcov_output/AllMergeReport/index.xml'
-      reportDirectory: '$(Build.ArtifactStagingDirectory)/gcov_output/AllMergeReport/'
-    displayName: 'Publish c c++ test coverage'

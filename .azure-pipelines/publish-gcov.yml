@@ -1,0 +1,43 @@
+parameters:
+- name: timeout
+  type: number
+  default: 60
+
+- name: gcov_artifact_name
+  type: string
+
+jobs:
+- job:
+  displayName: publish-gcov
+  timeoutInMinutes: ${{ parameters.timeout }}
+
+  pool:
+    vmImage: 'ubuntu-20.04'
+
+  steps:
+  - task: DownloadPipelineArtifact@2
+    inputs:
+      artifact: gcov_artifact_name
+    displayName: "Download gcov info files"
+
+  - script: |
+      set -ex
+ 
+      # Install .NET CORE
+      wget https://packages.microsoft.com/config/ubuntu/20.04/packages-microsoft-prod.deb -O packages-microsoft-prod.deb
+      sudo dpkg -i packages-microsoft-prod.deb
+      sudo apt-get update
+      sudo apt --fix-broken install -y
+      sudo apt-get install -y apt-transport-https
+      sudo apt-get update
+      sudo apt-get install -y dotnet-sdk-5.0
+
+      ls -lh
+    displayName: "Install Publish Dependencies"
+
+  - task: PublishCodeCoverageResults@1
+    inputs:
+      codeCoverageTool: Cobertura
+      summaryFileLocation: 'AllMergeReport/index.xml'
+      reportDirectory: 'AllMergeReport/'
+    displayName: 'Publish c c++ test coverage'
