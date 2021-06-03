@@ -68,11 +68,11 @@ public:
     VNetRequest() : Request(vnet_request_description, ':') { }
 };
 
-struct tunnelEndpoint
+struct NextHopGroupInfo
 {
-    IpAddress ip;
-    MacAddress mac;
-    uint32_t vni;
+    sai_object_id_t                         next_hop_group_id;      // next hop group id
+    int                                     ref_count;              // reference count
+    std::map<NextHopKey, sai_object_id_t>   nhopgroup_members;      // ids of members indexed by <ip_address, if_alias>
 };
 
 class VNetObject
@@ -304,6 +304,11 @@ private:
     bool handleRoutes(const Request&);
     bool handleTunnel(const Request&);
 
+    bool hasNextHopGroup(const NextHopGroupKey&) const;
+    sai_object_id_t getNextHopGroupId(const NextHopGroupKey&);
+    bool addNextHopGroup(const NextHopGroupKey&, VNetVrfObject *vrf_obj);
+    bool removeNextHopGroup(const NextHopGroupKey&);
+
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op);
 
@@ -316,6 +321,8 @@ private:
 
     VNetRouteTable syncd_routes_;
     VNetNextHopObserverTable next_hop_observers_;
+    std::map<NextHopGroupKey, NextHopGroupInfo> syncd_nexthop_groups_;
+    std::map<IpPrefix, NextHopGroupKey> syncd_tunnel_routes_;
 };
 
 class VNetCfgRouteOrch : public Orch
