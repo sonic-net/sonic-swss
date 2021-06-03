@@ -56,7 +56,7 @@ stages:
       artifact_name: sonic-gcov
       archive_pytests: true
 
-- stage: Publish-Gcov
+- stage: PublishGcov
   dependsOn: Gcov
   condition: always()
   jobs:
