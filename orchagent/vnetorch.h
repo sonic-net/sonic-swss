@@ -246,11 +246,11 @@ private:
 const request_description_t vnet_route_description = {
     { REQ_T_STRING, REQ_T_IP_PREFIX },
     {
-        { "endpoint",    REQ_T_IP },
+        { "endpoint",    REQ_T_IP_LIST },
         { "ifname",      REQ_T_STRING },
         { "nexthop",     REQ_T_STRING },
-        { "vni",         REQ_T_UINT },
-        { "mac_address", REQ_T_MAC_ADDRESS },
+        { "vni",         REQ_T_UINT_LIST },
+        { "mac_address", REQ_T_MAC_ADDRESS_LIST },
     },
     { }
 };

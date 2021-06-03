@@ -1041,6 +1041,10 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
 {
     SWSS_LOG_ENTER();
 
+    vector<IpAddress> ip_list;
+    vector<MacAddress> mac_list;
+    vector<uint64_t> vni_list; 
+
     IpAddress ip;
     MacAddress mac;
     uint32_t vni = 0;
@@ -1049,15 +1053,21 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     {
         if (name == "endpoint")
         {
-            ip = request.getAttrIP(name);
+            ip_list = request.getAttrIPList(name);
+            ip = ip_list[0];
+            SWSS_LOG_WARN("[olecmp] Ipaddr[0]: %s, size %zu", ip.to_string().c_str(), ip_list.size());
         }
         else if (name == "vni")
         {
-            vni = static_cast<uint32_t>(request.getAttrUint(name));
+            vni_list = request.getAttrUintList(name);
+            vni = static_cast<uint32_t>(vni_list[0]);
+            SWSS_LOG_WARN("[olecmp] vni[0]: %u, size %zu", vni, vni_list.size());
         }
         else if (name == "mac_address")
         {
-            mac = request.getAttrMacAddress(name);
+            mac_list = request.getAttrMacAddressList(name);
+            mac = mac_list[0];
+            SWSS_LOG_WARN("[olecmp] MACaddr[0]: %s, size %zu", mac.to_string().c_str(), mac_list.size());
         }
         else
         {
