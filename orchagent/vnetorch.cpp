@@ -17,6 +17,7 @@
 #include "vxlanorch.h"
 #include "directory.h"
 #include "swssnet.h"
+#include "intfsorch.h"
 #include "neighorch.h"
 #include "crmorch.h"
 
