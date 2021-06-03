@@ -65,8 +65,6 @@ jobs:
           libteam5 \
           libteamdctl0
       sudo apt-get install -y lcov
-      sudo snap install dotnet-sdk --classic --channel=5.0
-
     displayName: "Install dependencies"
   - task: DownloadPipelineArtifact@2
     inputs:
