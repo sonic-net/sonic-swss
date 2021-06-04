@@ -357,6 +357,7 @@ gcov_support_generate_report()
     do
         local container_id=${line}
         echo ${container_id}
+        tar -zxvf swss.tar.gz -C ${container_id}
 	    lcov_genhtml_all ${container_id}
         if [ "$?" != "0" ]; then
             echo "###lcov operation fail.."
