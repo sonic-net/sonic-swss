@@ -17,7 +17,7 @@ jobs:
   steps:
   - task: DownloadPipelineArtifact@2
     inputs:
-      artifact: gcov_artifact_name
+      artifact: ${{ parameters.gcov_artifact_name }}
     displayName: "Download gcov info files"
 
   - script: |
