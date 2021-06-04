@@ -21,7 +21,7 @@ jobs:
     displayName: "Download gcov info files"
 
   - script: |
-      set -ex
+      set -x
  
       # Install .NET CORE
       wget https://packages.microsoft.com/config/ubuntu/20.04/packages-microsoft-prod.deb -O packages-microsoft-prod.deb
@@ -38,6 +38,6 @@ jobs:
   - task: PublishCodeCoverageResults@1
     inputs:
       codeCoverageTool: Cobertura
-      summaryFileLocation: 'AllMergeReport/index.xml'
-      reportDirectory: 'AllMergeReport/'
+      summaryFileLocation: '$(System.DefaultWorkingDirectory)/gcov_output/gcov_info/AllMergeReport/index.xml'
+      reportDirectory: '$(System.DefaultWorkingDirectory)/gcov_output/gcov_info/AllMergeReport/'
     displayName: 'Publish c c++ test coverage'

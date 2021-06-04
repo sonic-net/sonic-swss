@@ -112,12 +112,12 @@ jobs:
       sudo chmod +x gcov_support.sh
       sudo ./gcov_support.sh generate
       sudo ./gcov_support.sh merge_container_info
-      sudo cp -rf gcov_output $(Build.ArtifactStagingDirectory)
+      sudo cp -rf gcov_output $(System.DefaultWorkingDirectory)
       popd
     workingDirectory: $(Pipeline.Workspace)
     displayName: "Install sonic swss common and sairedis and generate gcov info"
 
-  - publish: $(Build.ArtifactStagingDirectory)/gcov_output
+  - publish: $(System.DefaultWorkingDirectory)/gcov_output
     artifact: gcov_info
     displayName: "Archive gcov info"
     condition: always()
