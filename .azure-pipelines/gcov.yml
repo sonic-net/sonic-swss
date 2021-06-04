@@ -58,8 +58,12 @@ jobs:
       artifact: ${{ parameters.artifact_name }}
     displayName: "Download gcov artifact"
   - script: |
+      set -x
       ls -lh
-      sudo cp sonic-gcov $(Build.ArtifactStagingDirectory)
+      sudo cp -rf sonic-gcov $(Build.ArtifactStagingDirectory)
+      ls -lh
+    workingDirectory: $(Pipeline.Workspace)
+    displayName: "store sonic-gcov"
   - checkout: self
     submodules: true
   - script: |
@@ -67,8 +71,8 @@ jobs:
 
       sudo tar -zcvf swss.tar.gz ./*
 
-      sudo cp $(Build.ArtifactStagingDirectory)/sonic-gcov ./
-      sudo cp swss.tar.gz sonic-gcov
+      sudo cp -rf $(Build.ArtifactStagingDirectory)/sonic-gcov ./
+      sudo cp swss.tar.gz sonic-gcov/
       pushd sonic-gcov
       ls -lh
       sudo chmod +x gcov_support.sh
@@ -78,7 +82,7 @@ jobs:
       ls -lh $(Build.ArtifactStagingDirectory)
       popd
     workingDirectory: $(Pipeline.Workspace)
-    displayName: "Install sonic swss common and sairedis and generate gcov info"
+    displayName: "generate gcov reports"
 
   - publish: $(Build.ArtifactStagingDirectory)/gcov_output
     artifact: gcov_info
