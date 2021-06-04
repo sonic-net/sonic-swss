@@ -352,16 +352,28 @@ gcov_support_generate_report()
     sed -i '/gcov_output/d' container_dir_list
     sed -i "s#\/##g" container_dir_list
 
+    #for same code path
+    mkdir -p common_work
+
     cat container_dir_list
     while read line
     do
         local container_id=${line}
         echo ${container_id}
-	    lcov_genhtml_all ${container_id}
+        cp -rf ${container_id}/* common_work
+        #tar -zxvf swss.tar.gz -C ${container_id}
+        tar -zxvf swss.tar.gz -C common_work
+
+	    #lcov_genhtml_all ${container_id}
+        lcov_genhtml_all common_work
         if [ "$?" != "0" ]; then
             echo "###lcov operation fail.."
             return 0
         fi
+
+        cp -rf common_work/*  ${container_id}/*
+
+        rm -rf common_work/*
         
         # collect gcov output
         # collect_merged_report ${container_id}
@@ -504,9 +516,9 @@ gcov_support_collect_gcno()
         # temporarily using fixed dir
         cp gcno_$submodule_name.tar.gz ${work_dir}/debian/$submodule_name/tmp/gcov
         cp gcov_support.sh ${work_dir}/debian/$submodule_name/tmp/gcov
-        mkdir -p ${work_dir}/debian/$submodule_name/etc/
-        mkdir -p ${work_dir}/debian/$submodule_name/etc/ld.so.conf.d/
-        cp libgcov_preload.so ${work_dir}/debian/$submodule_name/etc/ld.so.conf.d/
+        mkdir -p ${work_dir}/debian/$submodule_name/usr
+        mkdir -p ${work_dir}/debian/$submodule_name/usr/lib
+        cp libgcov_preload.so ${work_dir}/debian/$submodule_name/usr/lib/
         rm $GCNO_LIST_FILE
         echo " === Collect finished... === "
     fi
