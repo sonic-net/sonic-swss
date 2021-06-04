@@ -69,7 +69,9 @@ jobs:
   - script: |
       set -x
 
-      sudo tar -zcvf swss.tar.gz ./*
+      ls -lh
+
+      sudo tar -zcvf swss.tar.gz ./s/*
 
       sudo cp -rf $(Build.ArtifactStagingDirectory)/sonic-gcov ./
       sudo cp swss.tar.gz sonic-gcov/

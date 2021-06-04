@@ -106,6 +106,7 @@ jobs:
       tar czf pytest.tgz tests
       cp -r pytest.tgz $(Build.ArtifactStagingDirectory)/
       sudo cp libgcov_preload.so /usr/lib/
+      ls -lh
       ./autogen.sh
       dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
     displayName: "Compile sonic swss"
