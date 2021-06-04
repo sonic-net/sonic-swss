@@ -35,7 +35,7 @@ jobs:
       
       ls -lh $(Build.ArtifactStagingDirectory)
       ls -lh $(System.DefaultWorkingDirectory)/
-      sudo cp -rf $(Build.ArtifactStagingDirectory)/gcov_output/gcov_info/ ./
+      sudo cp -rf AllMergeReport $(Build.ArtifactStagingDirectory)
 
       ls -lh
     workingDirectory: $(Pipeline.Workspace)
@@ -44,6 +44,6 @@ jobs:
   - task: PublishCodeCoverageResults@1
     inputs:
       codeCoverageTool: Cobertura
-      summaryFileLocation: '$(Build.ArtifactStagingDirectory)/gcov_output/gcov_info/AllMergeReport/index.xml'
-      reportDirectory: '$(Build.ArtifactStagingDirectory)/gcov_output/gcov_info/AllMergeReport/'
+      summaryFileLocation: '$(Build.ArtifactStagingDirectory)/AllMergeReport/index.html'
+      reportDirectory: '$(Build.ArtifactStagingDirectory)/AllMergeReport/'
     displayName: 'Publish c c++ test coverage'
