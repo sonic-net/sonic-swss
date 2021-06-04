@@ -72,7 +72,7 @@ jobs:
       ls -lh
       pushd ./s/
       sudo tar -zcvf swss.tar.gz ./*
-      sudp cp -rf swss.tar.gz $(Build.ArtifactStagingDirectory)/sonic-gcov
+      sudo cp -rf swss.tar.gz $(Build.ArtifactStagingDirectory)/sonic-gcov
       popd
 
       sudo cp -rf $(Build.ArtifactStagingDirectory)/sonic-gcov ./
