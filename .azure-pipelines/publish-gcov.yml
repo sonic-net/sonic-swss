@@ -32,6 +32,8 @@ jobs:
       sudo apt-get update
       sudo apt-get install -y dotnet-sdk-5.0
 
+      sudo ap -rf $(System.DefaultWorkingDirectory)/gcov_output/gcov_info/ ./
+
       ls -lh
     displayName: "Install Publish Dependencies"
 
