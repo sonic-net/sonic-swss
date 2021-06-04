@@ -70,11 +70,12 @@ jobs:
       set -x
 
       ls -lh
-
-      sudo tar -zcvf swss.tar.gz ./s/*
+      pushd ./s/
+      sudo tar -zcvf swss.tar.gz ./*
+      sudp cp -rf swss.tar.gz $(Build.ArtifactStagingDirectory)/sonic-gcov
+      popd
 
       sudo cp -rf $(Build.ArtifactStagingDirectory)/sonic-gcov ./
-      sudo cp swss.tar.gz sonic-gcov/
       pushd sonic-gcov
       ls -lh
       sudo chmod +x gcov_support.sh
