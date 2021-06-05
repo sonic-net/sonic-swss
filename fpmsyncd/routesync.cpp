@@ -624,10 +624,20 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
          * it is difficult to split vrf_name:ipv6_addr.
          */
         if (memcmp(vrf, VRF_PREFIX, strlen(VRF_PREFIX)))
-        {
-            SWSS_LOG_ERROR("Invalid VRF name %s (ifindex %u)", vrf, rtnl_route_get_table(route_obj));
-            return;
-        }
+		{
+			if(memcmp(vrf, MGMT_VRF_PREFIX, strlen(MGMT_VRF_PREFIX)))
+			{
+				SWSS_LOG_ERROR("Invalid VRF name %s (ifindex %u)", vrf, rtnl_route_get_table(route_obj));
+			}
+			else
+			{
+				dip = rtnl_route_get_dst(route_obj);
+				nl_addr2str(dip, destipprefix, MAX_ADDR_SIZE);
+				SWSS_LOG_INFO("Skip routes for Mgmt VRF name %s (ifindex %u) prefix: %s", vrf,
+						rtnl_route_get_table(route_obj), destipprefix);
+			}
+			return;
+		}
         memcpy(destipprefix, vrf, strlen(vrf));
         destipprefix[strlen(vrf)] = ':';
     }

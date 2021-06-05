@@ -163,7 +163,9 @@ string IntfsOrch::getRouterIntfsAlias(const IpAddress &ip, const string &vrf_nam
 bool IntfsOrch::isInbandIntfInMgmtVrf(const string& alias)
 {
     if (m_syncdIntfses.find(alias) == m_syncdIntfses.end())
+    {
         return false;
+    }
 
     string vrf_name = "";
     vrf_name = m_vrfOrch->getVRFname(m_syncdIntfses[alias].vrf_id);
@@ -405,8 +407,7 @@ set<IpPrefix> IntfsOrch:: getSubnetRoutes()
     return subnet_routes;
 }
 
-bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPrefix *ip_prefix, 
-                        const bool adminUp, const uint32_t mtu)
+bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPrefix *ip_prefix, const bool adminUp, const uint32_t mtu)
 {
     SWSS_LOG_ENTER();
 
