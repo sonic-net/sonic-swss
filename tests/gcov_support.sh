@@ -362,9 +362,10 @@ gcov_support_generate_report()
         echo ${container_id}
         cp -rf ${container_id}/* common_work
         #tar -zxvf swss.tar.gz -C ${container_id}
-        tar -zxvf swss.tar.gz -C common_work
+        tar -zxvf swss.tar.gz -C common_work/gcov
 
 	    #lcov_genhtml_all ${container_id}
+        ls -lh common_work/*
         lcov_genhtml_all common_work
         if [ "$?" != "0" ]; then
             echo "###lcov operation fail.."
