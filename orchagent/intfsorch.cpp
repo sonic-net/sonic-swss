@@ -166,7 +166,7 @@ bool IntfsOrch::isInbandIntfInMgmtVrf(const string& alias)
         return false;
 
     string vrf_name = "";
-    vrf_name = m_syncdIntfses[alias].vrf_name;
+    vrf_name = m_vrfOrch->getVRFname(m_syncdIntfses[alias].vrf_id);
     if ((!vrf_name.empty()) && (vrf_name == MGMT_VRF))
     {
         return true;
@@ -405,7 +405,7 @@ set<IpPrefix> IntfsOrch:: getSubnetRoutes()
     return subnet_routes;
 }
 
-bool IntfsOrch::setIntf(const string& alias, const string& vrf_name, sai_object_id_t vrf_id, const IpPrefix *ip_prefix, 
+bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPrefix *ip_prefix, 
                         const bool adminUp, const uint32_t mtu)
 {
     SWSS_LOG_ENTER();
@@ -423,9 +423,6 @@ bool IntfsOrch::setIntf(const string& alias, const string& vrf_name, sai_object_
             intfs_entry.ref_count = 0;
             intfs_entry.proxy_arp = false;
             intfs_entry.vrf_id = vrf_id;
-            if (!vrf_name.empty()) {
-                intfs_entry.vrf_name = vrf_name;
-            }
             m_syncdIntfses[alias] = intfs_entry;
             m_vrfOrch->increaseVrfRefCount(vrf_id);
         }
@@ -816,7 +813,7 @@ void IntfsOrch::doTask(Consumer &consumer)
                     it++;
                     continue;
                 }
-                if (!vnet_orch->setIntf(alias, vnet_name, vrf_name, ip_prefix_in_key ? &ip_prefix : nullptr, adminUp, mtu))
+                if (!vnet_orch->setIntf(alias, vnet_name, ip_prefix_in_key ? &ip_prefix : nullptr, adminUp, mtu))
                 {
                     it++;
                     continue;
@@ -829,7 +826,7 @@ void IntfsOrch::doTask(Consumer &consumer)
             }
             else
             {
-                if (!setIntf(alias, vrf_name, vrf_id, ip_prefix_in_key ? &ip_prefix : nullptr, adminUp, mtu))
+                if (!setIntf(alias, vrf_id, ip_prefix_in_key ? &ip_prefix : nullptr, adminUp, mtu))
                 {
                     it++;
                     continue;
