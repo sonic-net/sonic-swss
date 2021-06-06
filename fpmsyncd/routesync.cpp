@@ -19,6 +19,7 @@ using namespace swss;
 #define VXLAN_IF_NAME_PREFIX    "Brvxlan"
 #define VNET_PREFIX             "Vnet"
 #define VRF_PREFIX              "Vrf"
+#define MGMT_VRF_PREFIX         "mgmt"
 
 #ifndef ETH_ALEN
 #define ETH_ALEN 6
