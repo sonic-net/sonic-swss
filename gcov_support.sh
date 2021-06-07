@@ -185,6 +185,7 @@ lcov_merge_all()
     cp coverage.xml ${ALLMERGE_DIR}
 
     cd ../
+    cp -rf common_work gcov_output
 }
 
 get_info_file()
