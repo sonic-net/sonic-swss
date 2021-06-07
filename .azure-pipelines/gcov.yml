@@ -87,7 +87,7 @@ jobs:
       ls -lh
       sudo chmod +x gcov_support.sh
       sudo ./gcov_support.sh generate
-      sudo ./gcov_support.sh merge_container_info
+      sudo ./gcov_support.sh merge_container_info $(Build.ArtifactStagingDirectory)
       sudo cp -rf gcov_output $(Build.ArtifactStagingDirectory)
       ls -lh $(Build.ArtifactStagingDirectory)
       popd
