@@ -39,6 +39,6 @@ jobs:
   - task: PublishCodeCoverageResults@1
     inputs:
       codeCoverageTool: Cobertura
-      summaryFileLocation: '$(Build.ArtifactStagingDirectory)/AllMergeReport/index.html'
+      summaryFileLocation: '$(Build.ArtifactStagingDirectory)/AllMergeReport/coverage.xml'
       reportDirectory: '$(Build.ArtifactStagingDirectory)/AllMergeReport/'
     displayName: 'Publish c c++ test coverage'

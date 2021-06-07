@@ -153,7 +153,7 @@ lcov_merge_all()
     local all_info_files
 
     # check c/cpp source files
-    project_c_source=`find -name "*\.[c|cpp]" 2>/dev/null | wc -l`
+    project_c_source=`find / -name "*\.[c|cpp]" 2>/dev/null | wc -l`
     
     pushd gcov_output/
     if [ ! -d ${ALLMERGE_DIR} ]; then
@@ -161,6 +161,7 @@ lcov_merge_all()
     fi
 
     all_info_files=`find . -name *\.info`
+
     if [ ${project_c_source} -lt 1 ]; then
         echo "############# build reports without sources ###############"
         genhtml -o $ALLMERGE_DIR --no-source ${all_info_files}
@@ -168,6 +169,17 @@ lcov_merge_all()
         echo "############# build reports with sources ##################"
         genhtml -o $ALLMERGE_DIR ${all_info_files}
     fi
+
+    touch total.info
+    find . -name *.info > infolist
+    while read line
+    do
+        lcov -o total.info -a total.info -a ${line}
+    done < infolist
+    #lcov ${all_a_info_files} -o total.info
+    python lcov_cobertura.py total.info -o coverage.xml
+    cp coverage.xml ${ALLMERGE_DIR}
+
     popd
 }
 
@@ -379,6 +391,10 @@ gcov_support_generate_report()
         # collect gcov output
         # collect_merged_report ${container_id}
     done < container_dir_list
+
+    # generate report with code
+    mkdir -p common_work/gcov
+    tar -zxvf swss.tar.gz -C common_work/gcov
 
     echo "### Make info generating completed !!"
 }
