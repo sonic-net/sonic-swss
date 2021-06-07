@@ -170,14 +170,18 @@ lcov_merge_all()
         genhtml -o $ALLMERGE_DIR ${all_info_files}
     fi
 
-    touch total.info
     find . -name *.info > infolist
     while read line
     do
-        lcov -o total.info -a total.info -a ${line}
+        if [ ! -f "total.info" ]; then
+            lcov -o total.info -a ${line}
+        else
+            lcov -o total.info -a total.info -a ${line}
+        fi
     done < infolist
     #lcov ${all_a_info_files} -o total.info
-    python ../lcov_cobertura.py total.info -o coverage.xml
+    ls -lh ../
+    python ../common_work/gcov/lcov_cobertura.py total.info -o coverage.xml
     cp coverage.xml ${ALLMERGE_DIR}
 
     cd ../

@@ -153,14 +153,15 @@ lcov_merge_all()
     local all_info_files
 
     # check c/cpp source files
-    project_c_source=`find -name "*\.[c|cpp]" 2>/dev/null | wc -l`
+    project_c_source=`find / -name "*\.[c|cpp]" 2>/dev/null | wc -l`
     
-    pushd gcov_output/
+    cd gcov_output/
     if [ ! -d ${ALLMERGE_DIR} ]; then
         mkdir -p ${ALLMERGE_DIR}
     fi
 
     all_info_files=`find . -name *\.info`
+
     if [ ${project_c_source} -lt 1 ]; then
         echo "############# build reports without sources ###############"
         genhtml -o $ALLMERGE_DIR --no-source ${all_info_files}
@@ -168,7 +169,22 @@ lcov_merge_all()
         echo "############# build reports with sources ##################"
         genhtml -o $ALLMERGE_DIR ${all_info_files}
     fi
-    popd
+
+    find . -name *.info > infolist
+    while read line
+    do
+        if [ ! -f "total.info" ]; then
+            lcov -o total.info -a ${line}
+        else
+            lcov -o total.info -a total.info -a ${line}
+        fi
+    done < infolist
+    #lcov ${all_a_info_files} -o total.info
+    ls -lh ../
+    python ../common_work/gcov/lcov_cobertura.py total.info -o coverage.xml
+    cp coverage.xml ${ALLMERGE_DIR}
+
+    cd ../
 }
 
 get_info_file()
@@ -271,6 +287,7 @@ gcov_set_environment()
             pushd ${build_dir}/gcov_tmp/sonic-gcov/${container_id}
             docker cp ${container_id}:/tmp/gcov/ .
             cp gcov/gcov_support.sh ${build_dir}/gcov_tmp/sonic-gcov
+            cp gcov/lcov_cobertura.py ${build_dir}/gcov_tmp/sonic-gcov
             # gcov/gcov_support.sh generate ${build_dir}/gcov_tmp/${container_id}
             popd
         fi
@@ -379,6 +396,10 @@ gcov_support_generate_report()
         # collect gcov output
         # collect_merged_report ${container_id}
     done < container_dir_list
+
+    # generate report with code
+    mkdir -p common_work/gcov
+    tar -zxvf swss.tar.gz -C common_work/gcov
 
     echo "### Make info generating completed !!"
 }
@@ -517,6 +538,7 @@ gcov_support_collect_gcno()
         # temporarily using fixed dir
         cp gcno_$submodule_name.tar.gz ${work_dir}/debian/$submodule_name/tmp/gcov
         cp gcov_support.sh ${work_dir}/debian/$submodule_name/tmp/gcov
+        cp lcov_cobertura.py ${work_dir}/debian/$submodule_name/tmp/gcov
         mkdir -p ${work_dir}/debian/$submodule_name/usr
         mkdir -p ${work_dir}/debian/$submodule_name/usr/lib
         cp libgcov_preload.so ${work_dir}/debian/$submodule_name/usr/lib/
