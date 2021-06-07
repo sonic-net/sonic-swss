@@ -1993,7 +1993,7 @@ class TestRouterInterface(object):
         self.setup_db(dvs)
 
         # create ipv6 link local interface
-        self.create_ipv6_link_local("Ethernet8", "")
+        self.create_ipv6_link_local("Ethernet8")
 
         # check application database
         tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
