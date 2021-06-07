@@ -155,6 +155,7 @@ lcov_merge_all()
     # check c/cpp source files
     project_c_source=`find / -name "*\.[c|cpp]" 2>/dev/null | wc -l`
     
+    cp -rf common_work gcov_output
     cd gcov_output/
     if [ ! -d ${ALLMERGE_DIR} ]; then
         mkdir -p ${ALLMERGE_DIR}
@@ -181,11 +182,11 @@ lcov_merge_all()
     done < infolist
 
     lcov --extract total.info '*sonic-gcov/*' -o total.info
-    python ../common_work/gcov/lcov_cobertura.py total.info -o coverage.xml
+    python /__w/1/a/gcov_output/common_work/gcov/lcov_cobertura.py total.info -o coverage.xml
     cp coverage.xml ${ALLMERGE_DIR}
 
     cd ../
-    cp -rf common_work gcov_output
+    #cp -rf common_work gcov_output
 }
 
 get_info_file()
