@@ -1906,7 +1906,7 @@ bool RouteOrch::removeRoute(RouteBulkContext& ctx)
     auto& object_statuses = ctx.object_statuses;
 
     // set to blackhole for default route
-    if (ipPrefix.isDefaultRoute())
+    if (ipPrefix.isDefaultRoute() && vrf_id == gVirtualRouterId)
     {
         sai_attribute_t attr;
         attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
@@ -1950,7 +1950,7 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
     auto it_status = object_statuses.begin();
 
     // set to blackhole for default route
-    if (ipPrefix.isDefaultRoute())
+    if (ipPrefix.isDefaultRoute() && vrf_id == gVirtualRouterId)
     {
         sai_status_t status = *it_status++;
         if (status != SAI_STATUS_SUCCESS)
@@ -2030,7 +2030,7 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
     SWSS_LOG_INFO("Remove route %s with next hop(s) %s",
             ipPrefix.to_string().c_str(), it_route->second.to_string().c_str());
 
-    if (ipPrefix.isDefaultRoute())
+    if (ipPrefix.isDefaultRoute() && vrf_id == gVirtualRouterId)
     {
         it_route_table->second[ipPrefix] = NextHopGroupKey();
 
