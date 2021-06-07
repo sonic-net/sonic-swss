@@ -179,8 +179,8 @@ lcov_merge_all()
             lcov -o total.info -a total.info -a ${line}
         fi
     done < infolist
-    #lcov ${all_a_info_files} -o total.info
-    ls -lh ../
+
+    lcov --extract total.info '*sonic-gcov/*' -o total.info
     python ../common_work/gcov/lcov_cobertura.py total.info -o coverage.xml
     cp coverage.xml ${ALLMERGE_DIR}
 
