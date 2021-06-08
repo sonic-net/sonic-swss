@@ -60,7 +60,9 @@ jobs:
   - script: |
       set -x
       ls -lh
+      sudo tar -zxvf sonic-gcov.tar.gz
       sudo cp -rf sonic-gcov $(Build.ArtifactStagingDirectory)
+      sudo rm sonic-gcov.tar.gz
       ls -lh
     workingDirectory: $(Pipeline.Workspace)
     displayName: "store sonic-gcov"
