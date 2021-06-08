@@ -1,0 +1,52 @@
+import time
+import json
+import redis
+import pytest
+
+from pprint import pprint
+from swsscommon import swsscommon
+
+
+class TestSetRo(object):
+    def test_SetReadOnlyAttribute(self, dvs, testlog):
+
+        db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+
+        tbl = swsscommon.Table(db, "ASIC_STATE:SAI_OBJECT_TYPE_SWITCH")
+
+        keys = tbl.getKeys()
+
+        assert len(keys) == 1
+
+        swVid = keys[0]
+
+        r = redis.Redis(unix_socket_path=dvs.redis_sock, db=swsscommon.ASIC_DB,
+                        encoding="utf-8", decode_responses=True)
+
+        swRid = r.hget("VIDTORID", swVid)
+
+        assert swRid is not None
+
+        ntf = swsscommon.NotificationProducer(db, "SAI_VS_UNITTEST_CHANNEL")
+
+        fvp = swsscommon.FieldValuePairs()
+
+        ntf.send("enable_unittests", "true", fvp)
+
+        fvp = swsscommon.FieldValuePairs([('SAI_SWITCH_ATTR_PORT_MAX_MTU', '42')])
+
+        key = "SAI_OBJECT_TYPE_SWITCH:" + swRid
+
+        print(key)
+
+        # explicit convert unicode string to str for python2
+        ntf.send("set_ro", str(key), fvp)
+
+        # make action on appdb so orchagent will get RO value
+        # read asic db to see if orchagent behaved correctly
+
+
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass
