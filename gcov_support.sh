@@ -258,18 +258,8 @@ gcov_set_environment()
     local build_dir
 
     build_dir=$1
-    #echo "docker kill begin"
-    #docker kill --signal "TERM" $(docker ps -q -a)
-    #echo "docker kill done"
-    #sleep 30
-    #echo "sleep done"
-    #docker start $(docker ps -q -a)
-    #echo "docker start done"
-
     mkdir -p ${build_dir}/gcov_tmp
     mkdir -p ${build_dir}/gcov_tmp/sonic-gcov
-    # mkdir -p ${build_dir}/gcov_tmp/gcov_output
-    # mkdir -p ${build_dir}/gcov_tmp/gcov_output/info
 
     docker ps -q > ${CONTAINER_LIST}
 
@@ -283,8 +273,6 @@ gcov_set_environment()
         script_count=`docker exec -i ${container_id} find / -name gcov_support.sh | wc -l`
         echo ${script_count}
         if [ ${script_count} -gt 0 ]; then
-            #docker exec -i ${container_id} chmod 777 /etc/ld.so.conf.d/libgcov_preload.so
-            #docker exec -i ${container_id} export LD_PRELOAD="/etc/ld.so.conf.d/libgcov_preload.so"
             docker exec -i ${container_id} killall5 -15
             docker exec -i ${container_id} /tmp/gcov/gcov_support.sh collect_gcda
         fi
@@ -297,7 +285,6 @@ gcov_set_environment()
             docker cp ${container_id}:/tmp/gcov/ .
             cp gcov/gcov_support.sh ${build_dir}/gcov_tmp/sonic-gcov
             cp gcov/lcov_cobertura.py ${build_dir}/gcov_tmp/sonic-gcov
-            # gcov/gcov_support.sh generate ${build_dir}/gcov_tmp/${container_id}
             popd
         fi
     done
@@ -394,9 +381,30 @@ gcov_support_generate_report()
     do
         local container_id=${line}
         echo ${container_id}
+
+
         cp -rf ${container_id}/* common_work
         #tar -zxvf swss.tar.gz -C ${container_id}
         tar -zxvf swss.tar.gz -C common_work/gcov
+        cd common_work/gcov/
+        find -name gcda*.tar.gz > tmp_gcda.txt
+        while read LINE ; do
+            echo ${LINE}
+            echo ${LINE#*.}
+            #tar -zxvf ${LINE#*.}
+            tar -zxvf ${LINE}
+        done < tmp_gcda.txt
+        rm tmp_gcda.txt
+
+        find -name gcno*.tar.gz > tmp_gcno.txt
+        while read LINE ; do
+            echo ${LINE}
+            echo ${LINE%%.*}
+            tar -zxvf ${LINE}
+            #popd
+        done < tmp_gcno.txt
+        rm tmp_gcno.txt
+        cd -
 
 	    #lcov_genhtml_all ${container_id}
         ls -lh common_work/*
@@ -405,8 +413,13 @@ gcov_support_generate_report()
             echo "###lcov operation fail.."
             return 0
         fi
-
+        cd common_work
+        find . -name "*.gcda" -o -name "*.gcno" -o -name "*.gz" -o -name "*.cpp" -o -name "*.h"| xargs rm -rf
+        cd ../
         cp -rf common_work/*  ${container_id}/*
+        cd ${container_id}
+        find . -name "*.gcda" -o -name "*.gcno" -o -name "*.gz" -o -name "*.cpp" -o -name "*.h"| xargs rm -rf
+        cd ../
 
         rm -rf common_work/*
         
@@ -464,27 +477,7 @@ gcov_support_collect_gcda()
 
     # echo "### Extract .gcda and .gcno files..."
     # tar -zxvf $GCNO_ALL_TAR_GZ
-    find -name gcda*.tar.gz > tmp_gcda.txt
-    while read LINE ; do
-        echo ${LINE}
-        echo ${LINE#*.}
-        #tar -zxvf ${LINE#*.}
-        tar -zxvf ${LINE}
-    done < tmp_gcda.txt
-    rm tmp_gcda.txt
-
-    find -name gcno*.tar.gz > tmp_gcno.txt
-    while read LINE ; do
-        echo ${LINE}
-        echo ${LINE%%.*}
-        #submodule_name=`echo ${LINE%%.*} | awk -F _ '{print $2}' | awk -F . '{print $1}'`
-        #cp ${LINE#*/} /tmp/gcov/src/sonic-${submodule_name}
-        #pushd /tmp/gcov/src/sonic-${submodule_name}/
-        #tar -zxvf ${LINE#*.}
-        tar -zxvf ${LINE}
-        #popd
-    done < tmp_gcno.txt
-    rm tmp_gcno.txt
+    
 
     #popd
 
@@ -494,15 +487,6 @@ gcov_support_collect_gcda()
     #mkdir -p $GCOV_OUTPUT
     mkdir -p /tmp/gcov/gcov_output
 
-    #lcov_genhtml_all
-    # if [ "$?" != "0" ]; then
-    #     echo "###lcov operation fail.."
-    #     return -1
-    # fi
-
-    # collect gcov output
-    #collect_merged_report
-    #reset_home
     echo "### Make /tmp/gcov dir completed !!"
     popd
 
