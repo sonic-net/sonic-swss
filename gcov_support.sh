@@ -271,12 +271,16 @@ gcov_set_environment()
     # mkdir -p ${build_dir}/gcov_tmp/gcov_output
     # mkdir -p ${build_dir}/gcov_tmp/gcov_output/info
 
-    echo "### Start collecting info files from existed containers"
+    
     docker ps -q > ${CONTAINER_LIST}
 
+    echo "### Start collecting info files from existed containers"
+
+    cat ${CONTAINER_LIST}
     while read line
     do
         local container_id=${line}
+        echo "try to process ${container_id}"
         script_count=`docker exec -i ${container_id} find / -name gcov_support.sh | wc -l`
         if [ ${script_count} -gt 0 ]; then
             #docker exec -i ${container_id} chmod 777 /etc/ld.so.conf.d/libgcov_preload.so
@@ -286,6 +290,7 @@ gcov_set_environment()
         fi
         gcda_count=`docker exec -i ${container_id} find / -name *.gcda | wc -l`
         if [ ${gcda_count} -gt 0 ]; then
+            echo "find gcda in ${container_id}"
             mkdir -p ${build_dir}/gcov_tmp/sonic-gcov/${container_id}
             pushd ${build_dir}/gcov_tmp/sonic-gcov/${container_id}
             docker cp ${container_id}:/tmp/gcov/ .
