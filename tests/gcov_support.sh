@@ -275,8 +275,7 @@ gcov_set_environment()
 
     echo "### Start collecting info files from existed containers"
 
-    cat ${CONTAINER_LIST}
-    while read line
+    for line in $(cat ${CONTAINER_LIST})
     do
         local container_id=${line}
         echo ${container_id}
@@ -291,7 +290,8 @@ gcov_set_environment()
         fi
         gcda_count=`docker exec -i ${container_id} find / -name *.gcda | wc -l`
         if [ ${gcda_count} -gt 0 ]; then
-            echo "find gcda in ${container_id}"
+            echo "find gcda in "
+            echo ${container_id}
             mkdir -p ${build_dir}/gcov_tmp/sonic-gcov/${container_id}
             pushd ${build_dir}/gcov_tmp/sonic-gcov/${container_id}
             docker cp ${container_id}:/tmp/gcov/ .
@@ -300,7 +300,7 @@ gcov_set_environment()
             # gcov/gcov_support.sh generate ${build_dir}/gcov_tmp/${container_id}
             popd
         fi
-    done < ${CONTAINER_LIST}
+    done
 
     echo "cat list"
     cat ${CONTAINER_LIST}

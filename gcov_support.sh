@@ -275,8 +275,7 @@ gcov_set_environment()
 
     echo "### Start collecting info files from existed containers"
 
-    cat ${CONTAINER_LIST}
-    while read line
+    for line in $(cat ${CONTAINER_LIST})
     do
         local container_id=${line}
         echo ${container_id}
@@ -301,7 +300,7 @@ gcov_set_environment()
             # gcov/gcov_support.sh generate ${build_dir}/gcov_tmp/${container_id}
             popd
         fi
-    done < ${CONTAINER_LIST}
+    done
 
     echo "cat list"
     cat ${CONTAINER_LIST}
