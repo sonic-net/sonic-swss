@@ -11,7 +11,9 @@
 
 #define VRF_TABLE_START 1001
 #define VRF_TABLE_END 2000
-#define TABLE_LOCAL_PREF 1001 // after l3mdev-table
+#define L3MDEV_UNICAST_PREF 1000
+#define VRF_FALLBACK_DISABLE_PREF 1001
+#define TABLE_LOCAL_PREF 1002 // after l3mdev-table
 
 using namespace swss;
 
@@ -99,7 +101,9 @@ VrfMgr::VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
         cmd.str("");
         cmd.clear();
         cmd << IP_CMD << " rule add pref " << TABLE_LOCAL_PREF << " table local && " << IP_CMD << " rule del pref 0 && "
-            << IP_CMD << " -6 rule add pref " << TABLE_LOCAL_PREF << " table local && " << IP_CMD << " -6 rule del pref 0";
+            << IP_CMD << " -6 rule add pref " << TABLE_LOCAL_PREF << " table local && " << IP_CMD << " -6 rule del pref 0 && "
+                << IP_CMD << " rule add pref " << VRF_FALLBACK_DISABLE_PREF << " l3mdev unreachable && "
+                << IP_CMD << " -6 rule add pref " << VRF_FALLBACK_DISABLE_PREF << " l3mdev unreachable";
         EXEC_WITH_ERROR_THROW(cmd.str(), res);
     }
 
