@@ -50,7 +50,6 @@ jobs:
       docker ps
       ip netns list
       pushd tests
-      lsmod | grep vrf
       sudo py.test test_evpn_l3_vxlan.py::TestL3Vxlan -v --force-flaky --junitxml=tr.xml --imgname=docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber)
     displayName: "Run vs tests"
 
