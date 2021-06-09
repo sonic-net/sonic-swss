@@ -154,6 +154,8 @@ lcov_merge_all()
 
     # # check c/cpp source files
     # project_c_source=`find / -name "*\.[c|cpp]" 2>/dev/null | wc -l`
+
+    cp -rf common_work $1/
     find . -name *.info > infolist
     while read line
     do
@@ -169,7 +171,6 @@ lcov_merge_all()
 
     sed -i "s#../common_work#$1/common_work#" coverage.xml
 
-    cp -rf common_work $1
     cd gcov_output/
     if [ ! -d ${ALLMERGE_DIR} ]; then
         mkdir -p ${ALLMERGE_DIR}
@@ -358,7 +359,6 @@ gcov_support_generate_report()
     sed -i '/gcov_output/d' container_dir_list
     sed -i "s#\/##g" container_dir_list
 
-    rm -rf gcov_output
     mkdir -p gcov_output
     mkdir -p gcov_output/info
 
@@ -370,7 +370,6 @@ gcov_support_generate_report()
     do
         local container_id=${line}
         echo ${container_id}
-
 
         cp -rf ${container_id}/* common_work
         #tar -zxvf swss.tar.gz -C ${container_id}
