@@ -139,9 +139,12 @@ public:
     bool removeTunnel(Port tunnel);
     bool addBridgePort(Port &port);
     bool removeBridgePort(Port &port);
-    bool addVlanMember(Port &vlan, Port &port, string& tagging_mode);
-    bool removeVlanMember(Port &vlan, Port &port);
-    bool isVlanMember(Port &vlan, Port &port);
+    bool addVlanMember(Port &vlan, Port &port, string& tagging_mode, string end_point_ip = "");
+    bool removeVlanMember(Port &vlan, Port &port, string end_point_ip = "");
+    bool isVlanMember(Port &vlan, Port &port, string end_point_ip = "");
+    bool addVlanFloodGroups(Port &vlan, Port &port, string end_point_ip);
+    bool createVlanMember(Port &vlan, Port &port, sai_vlan_tagging_mode_t &sai_tagging_mode, sai_object_id_t &vlan_member_id);
+    bool removeVlanEndPointIp(Port &vlan, Port &port, string end_point_ip);
 
     string m_inbandPortName = "";
     bool isInbandPort(const string &alias);
@@ -216,6 +219,9 @@ private:
     unordered_map<sai_object_id_t, int> m_portOidToIndex;
     map<string, uint32_t> m_port_ref_count;
     unordered_set<string> m_pendingPortSet;
+    uint32_t max_flood_control_types = 4;
+    set<sai_vlan_flood_control_type_t> uuc_sup_flood_control_type;
+    set<sai_vlan_flood_control_type_t> bc_sup_flood_control_type;
 
     NotificationConsumer* m_portStatusNotificationConsumer;
 

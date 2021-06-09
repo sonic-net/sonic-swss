@@ -2,12 +2,15 @@ from swsscommon import swsscommon
 import time
 from evpn_tunnel import VxlanTunnel,VxlanEvpnHelper
 
-def get_vxlan_p2p_tunnel_bp(db, remote_ip):
+DVS_FAKE_PLATFORM = "mellanox"
+
+def get_vxlan_p2mp_tunnel_bp(db, src_ip):
     tnl_id = None
     bp = None
-    print("remote_ip = " + remote_ip)
+    print("src_ip = " + src_ip)
     attributes = [("SAI_TUNNEL_ATTR_TYPE", "SAI_TUNNEL_TYPE_VXLAN"),
-             ("SAI_TUNNEL_ATTR_ENCAP_DST_IP", remote_ip)
+             ("SAI_TUNNEL_ATTR_PEER_MODE", "SAI_TUNNEL_PEER_MODE_P2MP"),
+             ("SAI_TUNNEL_ATTR_ENCAP_SRC_IP", src_ip)
             ]
     tbl = swsscommon.Table(db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL")
     keys = tbl.getKeys()
@@ -46,7 +49,7 @@ def get_vxlan_p2p_tunnel_bp(db, remote_ip):
     return bp
                     
 
-def test_evpnFdb(dvs, testlog):
+def test_evpnFdbP2MP(dvs, testlog):
     vxlan_obj = VxlanTunnel()
     helper = VxlanEvpnHelper()
     dvs.setup_db()
@@ -131,7 +134,7 @@ def test_evpnFdb(dvs, testlog):
     )
     time.sleep(1)
 
-    tnl_bp_oid_6 = get_vxlan_p2p_tunnel_bp(dvs.adb, remote_ip_6)
+    tnl_bp_oid_6 = get_vxlan_p2mp_tunnel_bp(dvs.adb, source_tnl_ip)
 
     # check that the FDB entry is inserted into ASIC DB
     ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
@@ -302,7 +305,7 @@ def test_evpnFdb(dvs, testlog):
 
     time.sleep(1)
 
-    tnl_bp_oid_8 = get_vxlan_p2p_tunnel_bp(dvs.adb, remote_ip_8)
+    tnl_bp_oid_8 = get_vxlan_p2mp_tunnel_bp(dvs.adb, source_tnl_ip)
 
     print("Creating Evpn FDB Vlan3:"+mac.lower()+":8.8.8.8 in APP-DB")
     helper.create_entry_pst(
