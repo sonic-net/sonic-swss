@@ -3,7 +3,6 @@ parameters:
   type: string
   values:
   - amd64
-  - arm64
   default: amd64
 
 - name: pool
