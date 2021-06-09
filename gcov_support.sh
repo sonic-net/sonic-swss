@@ -149,28 +149,11 @@ lcov_genhtml_all()
 
 lcov_merge_all()
 {
-    local project_c_source
-    local all_info_files
+    # local project_c_source
+    # local all_info_files
 
-    # check c/cpp source files
-    project_c_source=`find / -name "*\.[c|cpp]" 2>/dev/null | wc -l`
-    
-    cp -rf common_work $1
-    cd gcov_output/
-    if [ ! -d ${ALLMERGE_DIR} ]; then
-        mkdir -p ${ALLMERGE_DIR}
-    fi
-
-    #all_info_files=`find . -name *\.info`
-
-    # if [ ${project_c_source} -lt 1 ]; then
-    #     echo "############# build reports without sources ###############"
-    #     genhtml -o $ALLMERGE_DIR --no-source ${all_info_files}
-    # else
-    #     echo "############# build reports with sources ##################"
-    #     genhtml -o $ALLMERGE_DIR ${all_info_files}
-    # fi
-
+    # # check c/cpp source files
+    # project_c_source=`find / -name "*\.[c|cpp]" 2>/dev/null | wc -l`
     find . -name *.info > infolist
     while read line
     do
@@ -185,7 +168,14 @@ lcov_merge_all()
     python $1/common_work/gcov/lcov_cobertura.py total.info -o coverage.xml
 
     sed -i "s#../common_work#$1/common_work#" coverage.xml
-    cp coverage.xml ${ALLMERGE_DIR}
+
+    cp -rf common_work $1
+    cd gcov_output/
+    if [ ! -d ${ALLMERGE_DIR} ]; then
+        mkdir -p ${ALLMERGE_DIR}
+    fi
+
+    cp ../coverage.xml ${ALLMERGE_DIR}
 
     cd ../
 }
@@ -301,12 +291,7 @@ gcov_set_environment()
 
 gcov_merge_info()
 {
-    rm -rf gcov_output
-    mkdir -p gcov_output
-    mkdir -p gcov_output/info
-
-    touch tmpinfolist
-    find -name *.info > allinfofileslist
+    
 
     # while read line
     # do
@@ -340,13 +325,13 @@ gcov_merge_info()
     #     done < singleinfolist
     # done < tmpinfolist
 
-    echo allinfofileslist | while read line
-    do
-        cp -r ${line} gcov_output/info/
-    done < allinfofileslist
+    # echo allinfofileslist | while read line
+    # do
+    #     cp -r ${line} gcov_output/info/
+    # done < allinfofileslist
 
     lcov_merge_all $1
-    tar_gcov_output
+    #tar_gcov_output
 }
 
 tar_gcov_output()
@@ -372,6 +357,10 @@ gcov_support_generate_report()
     ls -F | grep "/$" > container_dir_list
     sed -i '/gcov_output/d' container_dir_list
     sed -i "s#\/##g" container_dir_list
+
+    rm -rf gcov_output
+    mkdir -p gcov_output
+    mkdir -p gcov_output/info
 
     #for same code path
     mkdir -p common_work
@@ -422,6 +411,8 @@ gcov_support_generate_report()
         cd ../
 
         rm -rf common_work/*
+
+        cp -rf ${container_id} gcov_output/
         
         # collect gcov output
         # collect_merged_report ${container_id}
