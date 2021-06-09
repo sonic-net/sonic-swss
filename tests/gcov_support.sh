@@ -122,13 +122,13 @@ lcov_genhtml_report()
         fi
 
         # generate html report
-        local SOURCE_CODE_COUNT=`find . -name "*\.[c|cpp]" | wc -l`
-        if [ $SOURCE_CODE_COUNT -lt 1 ]; then
-            genhtml -o ${htmldirname} -t ${fullpath##*/} --no-source *.info
-        else
-            echo "Executing genhtml..."
-            genhtml -o ${htmldirname} -t ${fullpath##*/} *.info
-        fi
+        #local SOURCE_CODE_COUNT=`find . -name "*\.[c|cpp]" | wc -l`
+        #if [ $SOURCE_CODE_COUNT -lt 1 ]; then
+        #    genhtml -o ${htmldirname} -t ${fullpath##*/} --no-source *.info
+        #else
+         #   echo "Executing genhtml..."
+        #    genhtml -o ${htmldirname} -t ${fullpath##*/} *.info
+        #fi
 
         popd
     done < ${gcda_file_range}/gcda_dir_list.txt
@@ -161,15 +161,15 @@ lcov_merge_all()
         mkdir -p ${ALLMERGE_DIR}
     fi
 
-    all_info_files=`find . -name *\.info`
+    #all_info_files=`find . -name *\.info`
 
-    if [ ${project_c_source} -lt 1 ]; then
-        echo "############# build reports without sources ###############"
-        genhtml -o $ALLMERGE_DIR --no-source ${all_info_files}
-    else
-        echo "############# build reports with sources ##################"
-        genhtml -o $ALLMERGE_DIR ${all_info_files}
-    fi
+    # if [ ${project_c_source} -lt 1 ]; then
+    #     echo "############# build reports without sources ###############"
+    #     genhtml -o $ALLMERGE_DIR --no-source ${all_info_files}
+    # else
+    #     echo "############# build reports with sources ##################"
+    #     genhtml -o $ALLMERGE_DIR ${all_info_files}
+    # fi
 
     find . -name *.info > infolist
     while read line
@@ -308,37 +308,37 @@ gcov_merge_info()
     touch tmpinfolist
     find -name *.info > allinfofileslist
 
-    while read line
-    do
-        local info_file_name=${line##*/}
-        echo ${info_file_name}
-        local info_repeat_times=`grep ${info_file_name} allinfofileslist | wc -l`
-        if [ ${info_repeat_times} -gt 1 ]; then
-            grep ${info_file_name} tmpinfolist > /dev/null
-            if [ $? -ne 0 ]; then
-                echo ${info_file_name} >> tmpinfolist
-            fi
-        fi
-    done < allinfofileslist
+    # while read line
+    # do
+    #     local info_file_name=${line##*/}
+    #     echo ${info_file_name}
+    #     local info_repeat_times=`grep ${info_file_name} allinfofileslist | wc -l`
+    #     if [ ${info_repeat_times} -gt 1 ]; then
+    #         grep ${info_file_name} tmpinfolist > /dev/null
+    #         if [ $? -ne 0 ]; then
+    #             echo ${info_file_name} >> tmpinfolist
+    #         fi
+    #     fi
+    # done < allinfofileslist
 
-    #echo ${REPE_INFO_LIST} | while read line
-    echo tmpinfolist | while read line
-    do
-        local info_name=${line%.*}
-        #find -name ${info_name} > ${SINGLE_INFO_LIST}
-        echo "singleinfolistelement:"
-        echo ${info_name}
-        find -name "${info_name}*" > singleinfolist
-        while read line
-        do
-            if [ ! -f "total_${info_name}.info" ]; then
-                lcov -o total_${info_name}.info -a ${line}
-            else
-                lcov -o total_${info_name}.info -a total_${info_name}.info -a ${line}
-            fi
-            mv total_${info_name}.info gcov_output/info/
-        done < singleinfolist
-    done < tmpinfolist
+    # #echo ${REPE_INFO_LIST} | while read line
+    # echo tmpinfolist | while read line
+    # do
+    #     local info_name=${line%.*}
+    #     #find -name ${info_name} > ${SINGLE_INFO_LIST}
+    #     echo "singleinfolistelement:"
+    #     echo ${info_name}
+    #     find -name "${info_name}*" > singleinfolist
+    #     while read line
+    #     do
+    #         if [ ! -f "total_${info_name}.info" ]; then
+    #             lcov -o total_${info_name}.info -a ${line}
+    #         else
+    #             lcov -o total_${info_name}.info -a total_${info_name}.info -a ${line}
+    #         fi
+    #         mv total_${info_name}.info gcov_output/info/
+    #     done < singleinfolist
+    # done < tmpinfolist
 
     echo allinfofileslist | while read line
     do
