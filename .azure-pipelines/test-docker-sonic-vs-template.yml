@@ -51,6 +51,9 @@ jobs:
       ip netns list
       pushd tests
       lsmod | grep vrf
+      sudo /sbin/ip link add "Vrf-RED1" type vrf table 1002
+      ip link show | grep Vrf
+      lsmod | grep vrf
       sudo py.test test_evpn_l3_vxlan.py::TestL3Vxlan -v --force-flaky --junitxml=tr.xml --imgname=docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber)
     displayName: "Run vs tests"
 
