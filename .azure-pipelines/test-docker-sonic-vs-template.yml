@@ -54,6 +54,13 @@ jobs:
       sudo /sbin/ip link add "Vrf-RED1" type vrf table 1002
       ip link show | grep Vrf
       lsmod | grep vrf
+      sudo /sbin/ip link add "Vrf-RED2" type vrf table 1000
+      ip link show | grep Vrf
+      sudo /sbin/ip link add "Vrf-RED3" type vrf table 1001
+      ip link show | grep Vrf
+      /sbin/ip -V
+      lsb_release -a
+      uname -a
       sudo py.test test_evpn_l3_vxlan.py::TestL3Vxlan -v --force-flaky --junitxml=tr.xml --imgname=docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber)
     displayName: "Run vs tests"
 
