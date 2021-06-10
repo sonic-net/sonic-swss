@@ -548,6 +548,9 @@ class TestBufferMgrDyn(object):
     def test_shutdownPort(self, dvs, testlog):
         self.setup_db(dvs)
 
+        lossy_pg_reference_config_db = '[BUFFER_PROFILE|ingress_lossy_profile]'
+        lossy_pg_reference_appl_db = '[BUFFER_PROFILE_TABLE:ingress_lossy_profile]'
+
         # Startup interface
         dvs.runcmd('config interface startup Ethernet0')
 
@@ -558,14 +561,23 @@ class TestBufferMgrDyn(object):
 
         # Shutdown port and check whether all the PGs have been removed
         dvs.runcmd("config interface shutdown Ethernet0")
+        self.app_db.wait_for_deleted_entry("BUFFER_PG_TABLE", "Ethernet0:0")
         self.app_db.wait_for_deleted_entry("BUFFER_PG_TABLE", "Ethernet0:3-4")
         self.app_db.wait_for_deleted_entry("BUFFER_PROFILE", expectedProfile)
 
-        # Add another PG when port is administratively down
+        # Add extra lossy and lossless PGs when a port is administratively down
+        self.config_db.update_entry('BUFFER_PG', 'Ethernet0|1', {'profile': lossy_pg_reference_config_db})
         self.config_db.update_entry('BUFFER_PG', 'Ethernet0|6', {'profile': 'NULL'})
+
+        # Make sure they have not been added to APPL_DB
+        time.sleep(30)
+        self.app_db.wait_for_deleted_entry("BUFFER_PG_TABLE", "Ethernet0:1")
+        self.app_db.wait_for_deleted_entry("BUFFER_PG_TABLE", "Ethernet0:6")
 
         # Startup port and check whether all the PGs haved been added
         dvs.runcmd("config interface startup Ethernet0")
+        self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:0", {"profile": lossy_pg_reference_appl_db})
+        self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:1", {"profile": lossy_pg_reference_appl_db})
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile + "]"})
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:6", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile + "]"})
 
