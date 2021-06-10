@@ -575,3 +575,51 @@ class TestBufferMgrDyn(object):
 
         # Shutdown interface
         dvs.runcmd("config interface shutdown Ethernet0")
+
+    def test_autoNegPort(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        advertised_speeds = '10000,25000,50000'
+        maximum_advertised_speed = '50000'
+        if maximum_advertised_speed == self.originalSpeed:
+            # Let's make sure the configured speed isn't equal to maximum advertised speed
+            advertised_speeds = '10000,25000'
+            maximum_advertised_speed = '25000'
+
+        # Startup interfaces
+        dvs.runcmd('config interface startup Ethernet0')
+
+        # Configure lossless PG 3-4 on the interface
+        self.config_db.update_entry('BUFFER_PG', 'Ethernet0|3-4', {'profile': 'NULL'})
+
+        # Enable port auto negotiation
+        dvs.runcmd('config interface autoneg Ethernet0 enabled')
+        dvs.runcmd('config interface advertised-speeds Ethernet0 {}'.format(advertised_speeds))
+
+        # Check the buffer profile. The maximum_advertised_speed should be used
+        expectedProfile = self.make_lossless_profile_name(maximum_advertised_speed, self.originalCableLen)
+        self.app_db.wait_for_entry("BUFFER_PG_TABLE", "Ethernet0:3-4")
+        self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", expectedProfile)
+        self.check_new_profile_in_asic_db(dvs, expectedProfile)
+        self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "[BUFFER_PROFILE_TABLE:{}]".format(expectedProfile)})
+
+        # Configure another lossless PG on the interface
+        self.config_db.update_entry('BUFFER_PG', 'Ethernet0|6', {'profile': 'NULL'})
+        self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:6", {"profile": "[BUFFER_PROFILE_TABLE:{}]".format(expectedProfile)})
+
+        # Disable port auto negotiation
+        dvs.runcmd('config interface autoneg Ethernet0 disabled')
+
+        # Check the buffer profile. The configured speed should be used
+        expectedProfile = self.make_lossless_profile_name(self.originalSpeed, self.originalCableLen)
+        self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", expectedProfile)
+        self.check_new_profile_in_asic_db(dvs, expectedProfile)
+        self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "[BUFFER_PROFILE_TABLE:{}]".format(expectedProfile)})
+        self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:6", {"profile": "[BUFFER_PROFILE_TABLE:{}]".format(expectedProfile)})
+
+        # Remove lossless PGs on the interface
+        self.config_db.delete_entry('BUFFER_PG', 'Ethernet0|3-4')
+        self.config_db.delete_entry('BUFFER_PG', 'Ethernet0|6')
+
+        # Shutdown interface
+        dvs.runcmd('config interface shutdown Ethernet0')
