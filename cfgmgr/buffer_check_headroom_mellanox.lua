@@ -7,10 +7,25 @@ local port = KEYS[1]
 local input_profile_name = ARGV[1]
 local input_profile_size = ARGV[2]
 local new_pg = ARGV[3]
-local accumulative_size = 0
+
+local function is_port_with_8lanes(lanes)
+    -- On Spectrum 3, ports with 8 lanes have doubled pipeline latency
+    local number_of_lanes = 0
+    if lanes then
+        local _
+        _, number_of_lanes = string.gsub(lanes, ",", ",")
+        number_of_lanes = number_of_lanes + 1
+    end
+    return number_of_lanes == 8
+end
+
+-- Initialize the accumulative size with 4096
+-- This is to absorb the possible deviation
+local accumulative_size = 4096
 
 local appl_db = "0"
 local state_db = "6"
+local config_db = "4"
 
 local ret_true = {}
 local ret = {}
@@ -20,7 +35,18 @@ table.insert(ret_true, "result:true")
 
 default_ret = ret_true
 
-local speed = redis.call('HGET', 'PORT|' .. port, 'speed')
+-- Connect to CONFIG_DB
+redis.call('SELECT', config_db)
+
+local lanes
+
+-- On SPC3 switch, we need to know whether it's a 8-lane port because it has extra pipeline latency
+local is_spc3 = false
+local platform = redis.call('HGET', 'DEVICE_METADATA|localhost', 'platform')
+if platform and string.sub(platform, 1, 16) == "x86_64-mlnx_msn4" then
+    is_spc3 = true
+    lanes = redis.call('HGET', 'PORT|' .. port, 'lanes')
+end
 
 -- Fetch the threshold from STATE_DB
 redis.call('SELECT', state_db)
@@ -31,11 +57,12 @@ if max_headroom_size == nil then
 end
 
 local asic_keys = redis.call('KEYS', 'ASIC_TABLE*')
-local pipeline_delay = tonumber(redis.call('HGET', asic_keys[1], 'pipeline_latency'))
-if speed == 400000 then
-    pipeline_delay = pipeline_delay * 2 - 1
+local pipeline_latency = tonumber(redis.call('HGET', asic_keys[1], 'pipeline_latency'))
+if is_spc3 and is_port_with_8lanes(lanes) then
+    -- The pipeline latency should be adjusted accordingly for ports with 2 buffer units
+    pipeline_latency = pipeline_latency * 2 - 1
 end
-accumulative_size = accumulative_size + 2 * pipeline_delay * 1024
+accumulative_size = accumulative_size + 2 * pipeline_latency * 1024
 
 -- Fetch all keys in BUFFER_PG according to the port
 redis.call('SELECT', appl_db)
@@ -95,6 +122,7 @@ end
 
 if max_headroom_size > accumulative_size then
     table.insert(ret, "result:true")
+    table.insert(ret, "debug:Accumulative headroom on port " .. accumulative_size .. ", the maximum available headroom " .. max_headroom_size)
 else
     table.insert(ret, "result:false")
     table.insert(ret, "debug:Accumulative headroom on port " .. accumulative_size .. " exceeds the maximum available headroom which is " .. max_headroom_size)

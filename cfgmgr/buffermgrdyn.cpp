@@ -29,6 +29,7 @@ using namespace swss;
 
 BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBConnector *applDb, const vector<TableConnector> &tables, shared_ptr<vector<KeyOpFieldsValuesTuple>> gearboxInfo = nullptr) :
         Orch(tables),
+        m_platform(),
         m_applDb(applDb),
         m_cfgPortTable(cfgDb, CFG_PORT_TABLE_NAME),
         m_cfgCableLenTable(cfgDb, CFG_PORT_CABLE_LEN_TABLE_NAME),
@@ -67,6 +68,8 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
     string headroomPluginName = "buffer_headroom_" + platform + ".lua";
     string bufferpoolPluginName = "buffer_pool_" + platform + ".lua";
     string checkHeadroomPluginName = "buffer_check_headroom_" + platform + ".lua";
+
+    m_platform = platform;
 
     try
     {
@@ -242,7 +245,7 @@ string BufferMgrDynamic::parseObjectNameFromReference(const string &reference)
     return parseObjectNameFromKey(objName, 1);
 }
 
-string BufferMgrDynamic::getDynamicProfileName(const string &speed, const string &cable, const string &mtu, const string &threshold, const string &gearbox_model)
+string BufferMgrDynamic::getDynamicProfileName(const string &speed, const string &cable, const string &mtu, const string &threshold, const string &gearbox_model, bool is_8lane)
 {
     string buffer_profile_key;
 
@@ -265,6 +268,14 @@ string BufferMgrDynamic::getDynamicProfileName(const string &speed, const string
         buffer_profile_key = buffer_profile_key + "_" + gearbox_model;
     }
 
+    if (is_8lane && m_platform == "mellanox")
+    {
+        if (speed != "400000")
+        {
+            buffer_profile_key = buffer_profile_key + "_8lane";
+        }
+    }
+
     return buffer_profile_key + "_profile";
 }
 
@@ -285,6 +296,7 @@ void BufferMgrDynamic::calculateHeadroomSize(buffer_profile_t &headroom)
     argv.emplace_back(headroom.cable_length);
     argv.emplace_back(headroom.port_mtu);
     argv.emplace_back(m_identifyGearboxDelay);
+    argv.emplace_back(headroom.is_8lane ? "true" : "false");
 
     try
     {
@@ -571,7 +583,7 @@ void BufferMgrDynamic::updateBufferPgToDb(const string &key, const string &profi
 }
 
 // We have to check the headroom ahead of applying them
-task_process_status BufferMgrDynamic::allocateProfile(const string &speed, const string &cable_len, const string &mtu, const string &threshold, const string &gearbox_model, string &profile_name)
+task_process_status BufferMgrDynamic::allocateProfile(const string &speed, const string &cable_len, const string &mtu, const string &threshold, const string &gearbox_model, bool is_8lane, string &profile_name)
 {
     // Create record in BUFFER_PROFILE table
 
@@ -595,6 +607,7 @@ task_process_status BufferMgrDynamic::allocateProfile(const string &speed, const
         profile.cable_length = cable_len;
         profile.port_mtu = mtu;
         profile.gearbox_model = gearbox_model;
+        profile.is_8lane = is_8lane;
 
         // Call vendor-specific lua plugin to calculate the xon, xoff, xon_offset, size
         // Pay attention, the threshold can contain valid value
@@ -796,6 +809,7 @@ task_process_status BufferMgrDynamic::refreshPgsForPort(const string &port, cons
 {
     port_info_t &portInfo = m_portInfoLookup[port];
     string &gearbox_model = portInfo.gearbox_model;
+    bool is8lane = portInfo.is_8lane;
     bool isHeadroomUpdated = false;
     buffer_pg_lookup_t &portPgs = m_portPgLookup[port];
     set<string> profilesToBeReleased;
@@ -834,8 +848,8 @@ task_process_status BufferMgrDynamic::refreshPgsForPort(const string &port, cons
             {
                 threshold = m_defaultThreshold;
             }
-            newProfile = getDynamicProfileName(speed, cable_length, mtu, threshold, gearbox_model);
-            auto rc = allocateProfile(speed, cable_length, mtu, threshold, gearbox_model, newProfile);
+            newProfile = getDynamicProfileName(speed, cable_length, mtu, threshold, gearbox_model, is8lane);
+            auto rc = allocateProfile(speed, cable_length, mtu, threshold, gearbox_model, is8lane, newProfile);
             if (task_process_status::task_success != rc)
                 return rc;
 
@@ -1369,6 +1383,12 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
 
         for (auto i : kfvFieldsValues(tuple))
         {
+            if (fvField(i) == "lanes")
+            {
+                auto &lanes = fvValue(i);
+                portInfo.is_8lane = (count(lanes.begin(), lanes.end(), ',') + 1 == 8);
+            }
+
             if (fvField(i) == "speed" && fvValue(i) != portInfo.speed)
             {
                 speed_updated = true;

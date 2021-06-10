@@ -3,6 +3,7 @@
 -- ARGV[2] - cable length
 -- ARGV[3] - port mtu
 -- ARGV[4] - gearbox delay
+-- ARGV[5] - whether the port is an 8-lane port
 
 -- parameters retried from databases:
 -- From CONFIG_DB.LOSSLESS_TRAFFIC_PATTERN
@@ -26,6 +27,7 @@ local port_speed = tonumber(ARGV[1])
 local cable_length = tonumber(string.sub(ARGV[2], 1, -2))
 local port_mtu = tonumber(ARGV[3])
 local gearbox_delay = tonumber(ARGV[4])
+local is_8lane = ARGV[5]
 
 local appl_db = "0"
 local config_db = "4"
@@ -100,9 +102,9 @@ local xon_value
 local headroom_size
 local speed_overhead
 
--- Adjustment for 400G
-if port_speed == 400000 then
-    pipeline_latency = 37 * 1024
+-- Adjustment for 8-lane port
+if is_8lane ~= nil and is_8lane == "true" then
+    pipeline_latency = pipeline_latency * 2 - 1024
     speed_overhead = port_mtu
 else
     speed_overhead = 0

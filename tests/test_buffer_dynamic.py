@@ -477,11 +477,12 @@ class TestBufferMgrDyn(object):
         self.app_db.wait_for_field_match('BUFFER_PROFILE_TABLE', expectedProfile, profileInApplDb)
         self.check_new_profile_in_asic_db(dvs, expectedProfile)
 
-        # check ingress_lossless_pool between appldb and asicdb
-        # there are only two lossless PGs configured on one port.
-        # hence the shared headroom pool size should be pg xoff * 2 / over subscribe ratio (2) = xoff.
+        # Check ingress_lossless_pool between appldb and asicdb
+        # There are only two lossless PGs configured on one port.
+        # Hence the shared headroom pool size should be (pg xoff * 2 - private headroom) / over subscribe ratio (2) = xoff - private_headroom / 2.
         ingress_lossless_pool_in_appldb = self.app_db.get_entry('BUFFER_POOL_TABLE', 'ingress_lossless_pool')
-        shp_size = profileInApplDb['xoff']
+        private_headroom = 10 * 1024
+        shp_size = str(int(profileInApplDb['xoff']) - int(private_headroom / 2))
         ingress_lossless_pool_in_appldb['xoff'] = shp_size
         # toggle shared headroom pool, it requires some time to update pools
         time.sleep(20)
@@ -514,8 +515,8 @@ class TestBufferMgrDyn(object):
         # remove size configuration, new over subscribe ratio takes effect
         ingress_lossless_pool_in_configdb['xoff'] = '0'
         self.config_db.update_entry('BUFFER_POOL', 'ingress_lossless_pool', ingress_lossless_pool_in_configdb)
-        # shp size: pg xoff * 2 / over subscribe ratio (4) = pg xoff / 2
-        shp_size = str(int(int(profileInApplDb['xoff']) / 2))
+        # shp size: (pg xoff * 2 - private headroom) / over subscribe ratio (4)
+        shp_size = str(int((2 * int(profileInApplDb['xoff']) - private_headroom) / 4))
         time.sleep(30)
         ingress_lossless_pool_in_appldb['xoff'] = shp_size
         self.app_db.wait_for_field_match('BUFFER_POOL_TABLE', 'ingress_lossless_pool', ingress_lossless_pool_in_appldb)
