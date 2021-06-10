@@ -62,7 +62,7 @@ jobs:
       lsb_release -a
       uname -a
       cat /proc/cpuinfo
-      sudo py.test test_evpn_l3_vxlan.py::TestL3Vxlan -v --force-flaky --junitxml=tr.xml --imgname=docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber)
+      sudo py.test -v --force-flaky --junitxml=tr.xml --imgname=docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber)
     displayName: "Run vs tests"
 
   - task: PublishTestResults@2
