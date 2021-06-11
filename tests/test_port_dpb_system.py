@@ -205,6 +205,7 @@ class TestPortDPBSystem(object):
         # Verify DPB is successful
         dpb.verify_port_breakout_mode(dvs, "Ethernet0", breakoutMode1)
 
+    @pytest.mark.skip(reason="This test is not stable enough")
     def test_port_breakout_with_acl(self, dvs, dvs_acl):
         dvs.setup_db()
         dpb = DPB()
@@ -540,6 +541,7 @@ class TestPortDPBSystem(object):
         status, result = wait_for_result(_check_route_absent, ROUTE_CHECK_POLLING)
         assert status == True
 
+    @pytest.mark.skip(reason="This test is not stable enough")
     def test_cli_command_negative(self, dvs, dvs_acl):
         dvs.setup_db()
         dpb = DPB()
