@@ -1112,7 +1112,7 @@ bool MACsecOrch::updateMACsecPort(MACsecPort &macsec_port, const TaskArgs &port_
             }
             else
             {
-                setMACsecFlowActive(macsec_sc->m_encoding_an, macsec_sc->m_flow_id, false);
+                setMACsecFlowActive(macsec_sc->m_entry_id, macsec_sc->m_flow_id, false);
             }
         }
     }
