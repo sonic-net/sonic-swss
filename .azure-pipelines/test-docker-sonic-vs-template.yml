@@ -61,7 +61,7 @@ jobs:
       /sbin/ip -V
       lsb_release -a
       uname -a
-      sudo /sbin/ip link add Vrf1 type vrf table 1001 || { echo 'vrf command failed' ; exit 1; }
+      sudo /sbin/ip link add Vrf1 type vrf table || { echo 'vrf command failed' ; exit 1; }
       sudo /sbin/ip link del Vrf1 type vrf table 1001
       #sudo py.test -v --force-flaky --junitxml=tr.xml --imgname=docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber)
     displayName: "Run vs tests"
