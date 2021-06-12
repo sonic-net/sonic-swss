@@ -299,10 +299,8 @@ void VrfMgr::doTask(Consumer &consumer)
                         it = consumer.m_toSync.erase(it);
                         continue;
                     }
-                    vector<FieldValueTuple> vrfFvVector;
-                    vrfFvVector = kfvFieldsValues(t);
 
-                    m_appVrfTableProducer.set(vrfName, vrfFvVector);
+                    m_appVrfTableProducer.set(vrfName, kfvFieldsValues(t););
 
                 }
                 else
