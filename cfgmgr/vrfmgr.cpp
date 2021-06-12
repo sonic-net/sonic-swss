@@ -300,7 +300,7 @@ void VrfMgr::doTask(Consumer &consumer)
                         continue;
                     }
 
-                    m_appVrfTableProducer.set(vrfName, kfvFieldsValues(t););
+                    m_appVrfTableProducer.set(vrfName, kfvFieldsValues(t));
 
                 }
                 else
