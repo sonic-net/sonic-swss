@@ -241,10 +241,6 @@ void VrfMgr::doTask(Consumer &consumer)
                         {
                             mgmt_vrf_enabled = true;
                         }
-                        else
-                        {
-                            op = DEL_COMMAND;
-                        }
                         SWSS_LOG_DEBUG("Event for mgmt VRF table mgmt_vrf_enabled is set val:%s", fvValue(i).c_str());
                     }
                     else if (fvField(i) == "in_band_mgmt_enabled")
@@ -252,11 +248,6 @@ void VrfMgr::doTask(Consumer &consumer)
                         if (fvValue(i) == "true")
                         {
                             in_band_mgmt_enabled = true;
-                        }
-                        else
-                        {
-                            /* Delete the mgmt VRF when no in-band-intf is associated with mgmt VRF */
-                            op = DEL_COMMAND;
                         }
                         SWSS_LOG_DEBUG("Event for mgmt VRF table in_band_mgmt_enabled is set val:%s", fvValue(i).c_str());
                     }
@@ -309,16 +300,7 @@ void VrfMgr::doTask(Consumer &consumer)
                         continue;
                     }
                     vector<FieldValueTuple> vrfFvVector;
-                    // Incase of MGMT_VRF_CONFIG table event, the fields mgmtVrfEnabled, 
-                    // in_band_mgmt_enabled should be ignored.
-                    if (consumer.getTableName() != CFG_MGMT_VRF_CONFIG_TABLE_NAME) 
-                    {
-                        vrfFvVector = kfvFieldsValues(t);
-                    }
-                    else
-                    {
-                        vrfFvVector.emplace_back("NULL", "NULL");
-                    }
+                    vrfFvVector = kfvFieldsValues(t);
 
                     m_appVrfTableProducer.set(vrfName, vrfFvVector);
 
