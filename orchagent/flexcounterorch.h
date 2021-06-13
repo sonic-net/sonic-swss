@@ -15,8 +15,8 @@ public:
     void doTask(Consumer &consumer);
     FlexCounterOrch(swss::DBConnector *db, std::vector<std::string> &tableNames);
     virtual ~FlexCounterOrch(void);
-    bool getPortCountersState();
-    bool getPortBufferDropCountersState();
+    bool getPortCountersState() const;
+    bool getPortBufferDropCountersState() const;
  
 private:
     std::shared_ptr<swss::DBConnector> m_flexCounterDb = nullptr;

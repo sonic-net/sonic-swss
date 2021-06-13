@@ -155,12 +155,12 @@ void FlexCounterOrch::doTask(Consumer &consumer)
     }
 }
 
-bool FlexCounterOrch::getPortCountersState()
+bool FlexCounterOrch::getPortCountersState() const
 {
     return m_port_counter_enabled;
 }
 
-bool FlexCounterOrch::getPortBufferDropCountersState()
+bool FlexCounterOrch::getPortBufferDropCountersState() const
 {
     return m_port_buffer_drop_counter_enabled;
 }
