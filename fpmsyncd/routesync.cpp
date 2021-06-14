@@ -42,12 +42,13 @@ using namespace swss;
 
 #define ETHER_ADDR_STRLEN (3*ETH_ALEN)
 
-RouteSync::RouteSync(RedisPipeline *pipeline) :
+RouteSync::RouteSync(RedisPipeline *pipeline, bool useFpmLink) :
     m_routeTable(pipeline, APP_ROUTE_TABLE_NAME, true),
     m_vnet_routeTable(pipeline, APP_VNET_RT_TABLE_NAME, true),
     m_vnet_tunnelTable(pipeline, APP_VNET_RT_TUNNEL_TABLE_NAME, true),
     m_warmStartHelper(pipeline, &m_routeTable, APP_ROUTE_TABLE_NAME, "bgp", "bgp"),
-    m_nl_sock(NULL), m_link_cache(NULL)
+    m_nl_sock(NULL), m_link_cache(NULL),
+    m_usingFpmLink(useFpmLink)
 {
     m_nl_sock = nl_socket_alloc();
     nl_connect(m_nl_sock, NETLINK_ROUTE);
@@ -582,7 +583,9 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
     char master_name[IFNAMSIZ] = {0};
 
     /* if the table_id is not set in the route obj then route is for default vrf. */
-    if (master_index)
+    /* Linux Netlink connection does not substitute VRF ifindex for RTTABLE_ID
+     *   so VRF not supported in Linux NetLink mode */
+    if (m_usingFpmLink && master_index)
     {
         /* Get the name of the master device */
         getIfName(master_index, master_name, IFNAMSIZ);
@@ -598,7 +601,6 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
         {
             onRouteMsg(nlmsg_type, obj, master_name);
         }
-
     }
     else
     {

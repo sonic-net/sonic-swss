@@ -21,7 +21,7 @@ class RouteSync : public NetMsg
 public:
     enum { MAX_ADDR_SIZE = 64 };
 
-    RouteSync(RedisPipeline *pipeline);
+    RouteSync(RedisPipeline *pipeline, bool usingFpmLink);
 
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
 
@@ -37,6 +37,7 @@ private:
     ProducerStateTable  m_vnet_tunnelTable; 
     struct nl_cache    *m_link_cache;
     struct nl_sock     *m_nl_sock;
+    bool                m_usingFpmLink;
 
     /* Handle regular route (include VRF route) */
     void onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf);
