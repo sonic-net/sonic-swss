@@ -26,6 +26,7 @@ PORT_BUFFER_DROP_MAP      =   "COUNTERS_PORT_NAME_MAP"
 PG_WATERMARK_MAP          =   "COUNTERS_PG_NAME_MAP"
 
 NUMBER_OF_RETRIES         =   10
+CPU_PORT_OID              = "0x0"
 
 counter_type_dict = {"port_counter":[PORT_KEY, PORT_STAT, PORT_MAP],
                      "queue_counter":[QUEUE_KEY, QUEUE_STAT, QUEUE_MAP],
@@ -72,6 +73,10 @@ class TestFlexCounters(object):
             oid = counter_entry[1]
             self.wait_for_id_list(stat, name, oid)
 
+    def verify_cpu_interface_not_in_db(self, stat):
+        cpu = self.flex_db.db_connection.hgetall("FLEX_COUNTER_TABLE:" + stat + ":" + CPU_PORT_OID)
+        assert cpu.size() == 0, "FLEX_COUNTER_TABLE:" + stat + ":" + CPU_PORT_OID + " - CPU port exist in DB"
+
     def enable_flex_counter_group(self, group, map):
         group_stats_entry = {"FLEX_COUNTER_STATUS": "enable"}
         self.config_db.create_entry("FLEX_COUNTER_TABLE", group, group_stats_entry)
@@ -97,6 +102,9 @@ class TestFlexCounters(object):
 
         self.enable_flex_counter_group(counter_key, counter_map)
         self.verify_flex_counters_populated(counter_map, counter_stat)
+
+        if counter_type == "port_counter":
+            self.verify_cpu_interface_not_in_db(counter_stat)
 
         if counter_type == "rif_counter":
             self.config_db.db_connection.hdel('INTERFACE|Ethernet0|192.168.0.1/24', "NULL")

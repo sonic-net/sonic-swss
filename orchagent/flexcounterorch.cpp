@@ -92,16 +92,6 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                 }
                 else if(field == FLEX_COUNTER_STATUS_FIELD)
                 {
-                    if((key == PORT_KEY) && (value == "enable"))
-                    {
-                        gPortsOrch->generatePortCounterMap();
-                        m_port_counter_enabled = true;
-                    }
-                    if((key == PORT_BUFFER_DROP_KEY) && (value == "enable"))
-                    {
-                        gPortsOrch->generatePortBufferDropCounterMap();
-                        m_port_buffer_drop_counter_enabled = true;
-                    }
                     // Currently, the counters are disabled for polling by default
                     // The queue maps will be generated as soon as counters are enabled for polling
                     // Counter polling is enabled by pushing the COUNTER_ID_LIST/ATTR_ID_LIST, which contains
@@ -110,26 +100,32 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     // which is automatically satisfied upon the creation of the orch object that requires
                     // the syncd flex counter polling service
                     // This postponement is introduced by design to accelerate the initialization process
-                    //
-                    // generateQueueMap() is called as long as a field "FLEX_COUNTER_STATUS" event is heard,
-                    // regardless of whether the key is "QUEUE" or whether the value is "enable" or "disable"
-                    // This can be because generateQueueMap() installs a fundamental list of queue stats
-                    // that need to be polled. So my doubt here is if queue watermark stats shall be piggybacked
-                    // into the same function as they may not be counted as fundamental
-                    if((key == QUEUE_KEY) && (value == "enable"))
+                    if(gPortsOrch && (value == "enable"))
                     {
-                        gPortsOrch->generateQueueMap();
+                        if(key == PORT_KEY)
+                        {
+                            gPortsOrch->generatePortCounterMap();
+                            m_port_counter_enabled = true;
+                        }
+                        else if(key == PORT_BUFFER_DROP_KEY)
+                        {
+                            gPortsOrch->generatePortBufferDropCounterMap();
+                            m_port_buffer_drop_counter_enabled = true;
+                        }
+                        else if(key == QUEUE_KEY)
+                        {
+                            gPortsOrch->generateQueueMap();
+                        }
+                        else if(key == PG_WATERMARK_KEY)
+                        {
+                            gPortsOrch->generatePriorityGroupMap();
+                        }
                     }
-                    if((key == PG_WATERMARK_KEY) && (value == "enable"))
-                    {
-                        gPortsOrch->generatePriorityGroupMap();
-                    }
-                    if((key == RIF_KEY) && (value == "enable"))
+                    if(gIntfsOrch && (key == RIF_KEY) && (value == "enable"))
                     {
                         gIntfsOrch->generateInterfaceMap();
                     }
-                    // Install COUNTER_ID_LIST/ATTR_ID_LIST only when hearing buffer pool watermark enable event
-                    if ((key == BUFFER_POOL_WATERMARK_KEY) && (value == "enable"))
+                    if (gBufferOrch && (key == BUFFER_POOL_WATERMARK_KEY) && (value == "enable"))
                     {
                         gBufferOrch->generateBufferPoolWatermarkCounterIdList();
                     }
@@ -149,12 +145,12 @@ void FlexCounterOrch::doTask(Consumer &consumer)
     }
 }
 
-bool FlexCounterOrch::getPortCountersState()
-    {
-        return m_port_counter_enabled;
-    }
+bool FlexCounterOrch::getPortCountersState() const
+{
+    return m_port_counter_enabled;
+}
 
-bool FlexCounterOrch::getPortBufferDropCountersState()
-    {
-        return m_port_buffer_drop_counter_enabled;
-    }
+bool FlexCounterOrch::getPortBufferDropCountersState() const
+{
+    return m_port_buffer_drop_counter_enabled;
+}
