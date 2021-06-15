@@ -1106,9 +1106,9 @@ bool MACsecOrch::updateMACsecPort(MACsecPort &macsec_port, const TaskArgs &port_
                     SWSS_LOG_WARN("Cannot change the ACL entry action from packet action to MACsec flow");
                     return false;
                 }
-                auto an = macsec_sc->m_encoding_an;
+                auto entry_id = macsec_sc->m_entry_id;
                 auto flow_id = macsec_sc->m_flow_id;
-                recover.add_action([this, an, flow_id]() { this->setMACsecFlowActive(an, flow_id, false); });
+                recover.add_action([this, entry_id, flow_id]() { this->setMACsecFlowActive(entry_id, flow_id, false); });
             }
             else
             {
@@ -1696,7 +1696,7 @@ task_process_status MACsecOrch::createMACsecSA(
         }
         recover.add_action([this, sc]() {
             this->setMACsecFlowActive(
-                sc->m_encoding_an,
+                sc->m_entry_id,
                 sc->m_flow_id,
                 false);
         });
