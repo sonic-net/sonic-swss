@@ -8,9 +8,9 @@ INBAND_INTF_NAME = 'Ethernet4'
 
 class TestInbandInterface(object):
     def setup_db(self, dvs):
-        self.appl_db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
-        self.asic_db = swsscommon.DBConnector(1, dvs.redis_sock, 0)
-        self.cfg_db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        self.appl_db = dvs.get_app_db()
+        self.asic_db = dvs.get_asic_db()
+        self.cfg_db = dvs.get_config_db()
 
     def add_mgmt_vrf(self):
         tbl = swsscommon.Table(self.asic_db, 'ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER')
@@ -28,7 +28,7 @@ class TestInbandInterface(object):
         assert vrf_keys[0] == MGMT_VRF_NAME
 
         # check SAI database
-        current_entries = asicdb.wait_for_n_keys('ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER', 1)
+        current_entries = self.asic_db.wait_for_n_keys('ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER', (initial_entries + 1))
         assert len(current_entries - initial_entries) == 1
         return list(current_entries - initial_entries)[0]
 
@@ -43,7 +43,7 @@ class TestInbandInterface(object):
         assert len(vrf_keys) == 0
 
         # check SAI database
-        asicdb.wait_for_n_keys('ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER', 0)
+        self.asic_db.wait_for_n_keys('ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER', 0)
 
     def create_inband_intf(self, interface):
         cfg_tbl = cfg_key = cfg_fvs = None
@@ -120,7 +120,7 @@ class TestInbandInterface(object):
         if not intf_name.startswith('Loopback'):
             # check ASIC router interface database
             tbl = swsscommon.Table(self.asic_db, 'ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE')
-            intf_keys = asicdb.wait_for_n_keys('ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE', 1)
+            intf_keys = self.asic_db.wait_for_n_keys('ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE', 1)
             # one loopback router interface one port based router interface
             assert len(intf_keys) == 1
             for key in intf_keys:
@@ -148,7 +148,7 @@ class TestInbandInterface(object):
 
         if not intf_name.startswith('Loopback'):
             # check ASIC router interface database
-            asicdb.wait_for_n_keys('ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE', 0)
+            self.asic_db.wait_for_n_keys('ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE', 0)
  
         self.del_mgmt_vrf()
 
