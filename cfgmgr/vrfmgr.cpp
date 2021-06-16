@@ -299,16 +299,8 @@ void VrfMgr::doTask(Consumer &consumer)
                         it = consumer.m_toSync.erase(it);
                         continue;
                     }
-                    if (consumer.getTableName() == CFG_MGMT_VRF_CONFIG_TABLE_NAME)
-                    {
-                        /* Incase of mgmt VRF, no need to add "mgmtVrfEnabled" & "in_band_mgmt_enabled" fields in the VRF_TABLE */
-                        vector<FieldValueTuple> vrfFvVector;
-                        m_appVrfTableProducer.set(vrfName, vrfFvVector);
-                    }
-                    else
-                    {
-                        m_appVrfTableProducer.set(vrfName, kfvFieldsValues(t));
-                    }
+                    
+                    m_appVrfTableProducer.set(vrfName, kfvFieldsValues(t));
                 }
                 else
                 {

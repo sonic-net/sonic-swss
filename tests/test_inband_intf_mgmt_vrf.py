@@ -28,8 +28,7 @@ class TestInbandInterface(object):
         assert vrf_keys[0] == MGMT_VRF_NAME
 
         # check SAI database
-        tbl = swsscommon.Table(self.asic_db, 'ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER')
-        current_entries = set(tbl.getKeys())
+        current_entries = asicdb.wait_for_n_keys('ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER', 1)
         assert len(current_entries - initial_entries) == 1
         return list(current_entries - initial_entries)[0]
 
@@ -44,9 +43,7 @@ class TestInbandInterface(object):
         assert len(vrf_keys) == 0
 
         # check SAI database
-        tbl = swsscommon.Table(self.asic_db, 'ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER')
-        current_entries = set(tbl.getKeys())
-        assert len(current_entries) == 1
+        asicdb.wait_for_n_keys('ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER', 0)
 
     def create_inband_intf(self, interface):
         cfg_tbl = cfg_key = cfg_fvs = None
@@ -123,9 +120,9 @@ class TestInbandInterface(object):
         if not intf_name.startswith('Loopback'):
             # check ASIC router interface database
             tbl = swsscommon.Table(self.asic_db, 'ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE')
-            intf_keys = tbl.getKeys()
+            intf_keys = asicdb.wait_for_n_keys('ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE', 1)
             # one loopback router interface one port based router interface
-            assert len(intf_keys) == 2
+            assert len(intf_keys) == 1
             for key in intf_keys:
                 status, fvs = tbl.get(key)
                 assert status == True
@@ -151,10 +148,11 @@ class TestInbandInterface(object):
 
         if not intf_name.startswith('Loopback'):
             # check ASIC router interface database
-            tbl = swsscommon.Table(self.asic_db, 'ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE')
-            intf_keys = tbl.getKeys()
-            # one loopback router interface
-            assert len(intf_keys) ==1 
+            asicdb.wait_for_n_keys('ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE', 0)
  
         self.del_mgmt_vrf()
 
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass
