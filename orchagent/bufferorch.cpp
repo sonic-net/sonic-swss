@@ -582,16 +582,23 @@ task_process_status BufferOrch::processQueue(Consumer &consumer)
     {
         return task_process_status::task_invalid_entry;
     }
-    ref_resolve_status  resolve_result = resolveFieldRefValue(m_buffer_type_maps, buffer_profile_field_name, tuple, sai_buffer_profile);
-    if (ref_resolve_status::success != resolve_result)
+    if (op == SET_COMMAND)
     {
-        if(ref_resolve_status::not_resolved == resolve_result)
+        ref_resolve_status  resolve_result = resolveFieldRefValue(m_buffer_type_maps, buffer_profile_field_name, tuple, sai_buffer_profile);
+        if (ref_resolve_status::success != resolve_result)
         {
-            SWSS_LOG_INFO("Missing or invalid queue buffer profile reference specified");
-            return task_process_status::task_need_retry;
+            if(ref_resolve_status::not_resolved == resolve_result)
+            {
+                SWSS_LOG_INFO("Missing or invalid queue buffer profile reference specified");
+                return task_process_status::task_need_retry;
+            }
+            SWSS_LOG_ERROR("Resolving queue profile reference failed");
+            return task_process_status::task_failed;
         }
-        SWSS_LOG_ERROR("Resolving queue profile reference failed");
-        return task_process_status::task_failed;
+    }
+    else
+    {
+        sai_buffer_profile = SAI_NULL_OBJECT_ID;
     }
     sai_attribute_t attr;
     attr.id = SAI_QUEUE_ATTR_BUFFER_PROFILE_ID;
@@ -668,11 +675,6 @@ task_process_status BufferOrch::processPriorityGroup(Consumer &consumer)
     vector<string> tokens;
     sai_uint32_t range_low, range_high;
 
-    if (op != SET_COMMAND)
-    {
-        return task_process_status::task_success;
-    }
-
     SWSS_LOG_DEBUG("processing:%s", key.c_str());
     tokens = tokenize(key, config_db_key_delimiter);
     if (tokens.size() != 2)
@@ -686,16 +688,24 @@ task_process_status BufferOrch::processPriorityGroup(Consumer &consumer)
         SWSS_LOG_ERROR("Failed to obtain pg range values");
         return task_process_status::task_invalid_entry;
     }
-    ref_resolve_status  resolve_result = resolveFieldRefValue(m_buffer_type_maps, buffer_profile_field_name, tuple, sai_buffer_profile);
-    if (ref_resolve_status::success != resolve_result)
+    
+    if (op == SET_COMMAND)
     {
-        if(ref_resolve_status::not_resolved == resolve_result)
+        ref_resolve_status  resolve_result = resolveFieldRefValue(m_buffer_type_maps, buffer_profile_field_name, tuple, sai_buffer_profile);
+        if (ref_resolve_status::success != resolve_result)
         {
-            SWSS_LOG_INFO("Missing or invalid pg profile reference specified");
-            return task_process_status::task_need_retry;
+            if(ref_resolve_status::not_resolved == resolve_result)
+            {
+                SWSS_LOG_INFO("Missing or invalid pg profile reference specified");
+                return task_process_status::task_need_retry;
+            }
+            SWSS_LOG_ERROR("Resolving pg profile reference failed");
+            return task_process_status::task_failed;
         }
-        SWSS_LOG_ERROR("Resolving pg profile reference failed");
-        return task_process_status::task_failed;
+    }
+    else
+    {
+        sai_buffer_profile = SAI_NULL_OBJECT_ID;
     }
     sai_attribute_t attr;
     attr.id = SAI_INGRESS_PRIORITY_GROUP_ATTR_BUFFER_PROFILE;
