@@ -34,6 +34,12 @@ class TestInbandInterface(object):
         assert len(current_entries - initial_entries) == 1
         return list(current_entries - initial_entries)[0]
 
+    def del_inband_mgmt_vrf(self):
+        tbl = swsscommon.Table(self.cfg_db, 'MGMT_VRF_CONFIG')
+        fvs = swsscommon.FieldValuePairs([('mgmtVrfEnabled', 'true')])
+        tbl.set('vrf_global', fvs)
+        time.sleep(5)
+
     def del_mgmt_vrf(self):
         tbl = swsscommon.Table(self.cfg_db, 'MGMT_VRF_CONFIG')
         tbl._del('vrf_global')
@@ -93,7 +99,7 @@ class TestInbandInterface(object):
         self.setup_db(dvs)
 
         vrf_oid = self.add_mgmt_vrf()
-        self.del_mgmt_vrf()
+        self.del_inband_mgmt_vrf()
 
     @pytest.mark.parametrize('intf_name', ['Ethernet4', 'Vlan100', 'PortChannel5', 'Loopback1'])
     def test_InbandIntf(self, intf_name, dvs, testlog):
@@ -113,7 +119,7 @@ class TestInbandInterface(object):
 
         if not intf_name.startswith('Loopback'):
             # check ASIC router interface database
-            sleep(5)
+            time.sleep(5)
             tbl = swsscommon.Table(self.asic_db, 'ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE')
             intf_keys = tbl.getKeys()
             # one loopback router interface one port based router interface
@@ -135,21 +141,27 @@ class TestInbandInterface(object):
                 assert intf_vrf_oid == vrf_oid
 
         self.remove_inband_intf(intf_name)
-        sleep(1)
+        time.sleep(1)
         # check application database
         tbl = swsscommon.Table(self.appl_db, 'INTF_TABLE')
         intf_keys = tbl.getKeys()
         assert len(intf_keys) == 0
 
         if not intf_name.startswith('Loopback'):
-            sleep(5)  
+            time.sleep(5)  
             # check ASIC router interface database
             tbl = swsscommon.Table(self.asic_db, 'ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE')
             intf_keys = tbl.getKeys()
             # one loopback router interface one port based router interface
             assert len(intf_keys) == 0
  
+        self.del_inband_mgmt_vrf()
+
+    def test_MgmtVrfDel(self, dvs, testlog):
+        self.setup_db(dvs)
+
         self.del_mgmt_vrf()
+
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
