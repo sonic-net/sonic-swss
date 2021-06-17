@@ -5973,8 +5973,6 @@ bool PortsOrch::doProcessRecircPort(string alias, string role, set<int> lane_set
         Port p(alias, Port::PHY);
         p.m_port_id = port_id;
         p.m_init = true;
-        m_recircPortRole[alias] = role;
-        setPort(alias, p);
 
         string lane_str = "";
         for (auto lane : lane_set)
@@ -6002,6 +6000,14 @@ bool PortsOrch::doProcessRecircPort(string alias, string role, set<int> lane_set
         {
             SWSS_LOG_ERROR("Failed to set host intf oper status for recirc port %s", p.m_alias.c_str());
         }
+
+        // DNX SAI does not support setting admin and oper status of recirc ports today.
+        // Set status to up to allow programming remote neighbor with inband port.
+        p.m_admin_state_up = true;
+        p.m_oper_status = SAI_PORT_OPER_STATUS_UP;
+
+        setPort(alias, p);
+        m_recircPortRole[alias] = role;
 
         PortUpdate update = { p, true };
         notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
@@ -6120,6 +6126,14 @@ bool PortsOrch::addSystemPorts()
                     //This is system port for non-front panel local port (CPU or OLP or RCY (Inband)). Not an error
                     SWSS_LOG_NOTICE("Add port for non-front panel local system port 0x%" PRIx64 "; core: %d, core port: %d",
                             system_port_oid, core_index, core_port_index);
+
+                    // For recirc ports, SAI call get_system_port_attribute() returns a pid that's different from the pid
+                    // returned from get_switch_attribute(SAI_SWITCH_ATTR_PORT_LIST). In order to set system_port_info of
+                    // inband port correctly, retrieve port with its alias here.
+                    if(getPort(alias, port))
+                    {
+                        SWSS_LOG_NOTICE("Found port %s in port list", alias.c_str());
+                    }
                 }
                 port.m_system_port_info.local_port_oid = attr.value.oid;
             }
