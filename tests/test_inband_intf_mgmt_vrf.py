@@ -29,7 +29,7 @@ class TestInbandInterface(object):
 
         # check SAI database
         time.sleep(5)
-        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")
+        tbl = swsscommon.Table(self.asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")
         current_entries = set(tbl.getKeys())
         assert len(current_entries - initial_entries) == 1
         return list(current_entries - initial_entries)[0]
