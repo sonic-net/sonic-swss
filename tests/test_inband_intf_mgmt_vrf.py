@@ -8,9 +8,9 @@ INBAND_INTF_NAME = 'Ethernet4'
 
 class TestInbandInterface(object):
     def setup_db(self, dvs):
-        self.appl_db = dvs.get_app_db()
-        self.asic_db = dvs.get_asic_db()
-        self.cfg_db = dvs.get_config_db()
+        self.appl_db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        self.asic_db = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        self.cfg_db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
 
     def add_mgmt_vrf(self):
         tbl = swsscommon.Table(self.asic_db, 'ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER')
@@ -28,7 +28,9 @@ class TestInbandInterface(object):
         assert vrf_keys[0] == MGMT_VRF_NAME
 
         # check SAI database
-        current_entries = self.asic_db.wait_for_n_keys('ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER', (initial_entries + 1))
+        time.sleep(5)
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")
+        current_entries = set(tbl.getKeys())
         assert len(current_entries - initial_entries) == 1
         return list(current_entries - initial_entries)[0]
 
@@ -36,14 +38,6 @@ class TestInbandInterface(object):
         tbl = swsscommon.Table(self.cfg_db, 'MGMT_VRF_CONFIG')
         tbl._del('vrf_global')
         time.sleep(1)
-
-        # check application database
-        tbl = swsscommon.Table(self.appl_db, 'VRF_TABLE')
-        vrf_keys = tbl.getKeys()
-        assert len(vrf_keys) == 0
-
-        # check SAI database
-        self.asic_db.wait_for_n_keys('ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER', 0)
 
     def create_inband_intf(self, interface):
         cfg_tbl = cfg_key = cfg_fvs = None
@@ -119,10 +113,11 @@ class TestInbandInterface(object):
 
         if not intf_name.startswith('Loopback'):
             # check ASIC router interface database
+            sleep(5)
             tbl = swsscommon.Table(self.asic_db, 'ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE')
-            intf_keys = self.asic_db.wait_for_n_keys('ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE', 1)
+            intf_keys = tbl.getKeys()
             # one loopback router interface one port based router interface
-            assert len(intf_keys) == 1
+            assert len(intf_keys) == 2
             for key in intf_keys:
                 status, fvs = tbl.get(key)
                 assert status == True
@@ -140,15 +135,19 @@ class TestInbandInterface(object):
                 assert intf_vrf_oid == vrf_oid
 
         self.remove_inband_intf(intf_name)
-
+        sleep(1)
         # check application database
         tbl = swsscommon.Table(self.appl_db, 'INTF_TABLE')
         intf_keys = tbl.getKeys()
         assert len(intf_keys) == 0
 
         if not intf_name.startswith('Loopback'):
+            sleep(5)  
             # check ASIC router interface database
-            self.asic_db.wait_for_n_keys('ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE', 0)
+            tbl = swsscommon.Table(self.asic_db, 'ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE')
+            intf_keys = tbl.getKeys()
+            # one loopback router interface one port based router interface
+            assert len(intf_keys) == 0
  
         self.del_mgmt_vrf()
 
