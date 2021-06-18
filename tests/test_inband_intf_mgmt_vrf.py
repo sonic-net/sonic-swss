@@ -16,7 +16,9 @@ class TestInbandInterface(object):
         tbl = swsscommon.Table(self.asic_db, 'ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER')
         initial_entries = set(tbl.getKeys())
 
-        dvs.runcmd("config vrf add mgmt")
+        #dvs.runcmd("config vrf add mgmt")
+        dvs.runcmd("ip link add mgmt type vrf table 5000")
+        dvs.runcmd("ifconfig mgmt up")
         time.sleep(2)
 
         # check application database
@@ -54,7 +56,9 @@ class TestInbandInterface(object):
         assert len(vrf_keys) == 0
 
     def del_mgmt_vrf(self, dvs):
-        dvs.runcmd("config vrf del mgmt")
+        dvs.runcmd("ip link del mgmt")
+        tbl = swsscommon.Table(self.cfg_db, 'MGMT_VRF_CONFIG')
+        tbl._del('vrf_global')
         time.sleep(5)
 
     def create_inband_intf(self, interface):
