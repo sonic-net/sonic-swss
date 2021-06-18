@@ -31,7 +31,7 @@ parameters:
 - name: artifact_name
   type: string
 
-- name: archive_pytests
+- name: archive_gcov
   type: boolean
   default: false
 
@@ -53,10 +53,12 @@ jobs:
   - script: |
       sudo apt-get install -y lcov
     displayName: "Install dependencies"
+    condition: eq('${{ parameters.archive_gcov }}', true)
   - task: DownloadPipelineArtifact@2
     inputs:
       artifact: ${{ parameters.artifact_name }}
     displayName: "Download gcov artifact"
+    condition: eq('${{ parameters.archive_gcov }}', true)
   - script: |
       set -x
       ls -lh
@@ -66,42 +68,42 @@ jobs:
       ls -lh
     workingDirectory: $(Pipeline.Workspace)
     displayName: "store sonic-gcov"
+    condition: eq('${{ parameters.archive_gcov }}', true)
   - checkout: self
     submodules: true
+    condition: eq('${{ parameters.archive_gcov }}', true)
   - script: |
       set -x
 
-      wget https://packages.microsoft.com/config/debian/10/packages-microsoft-prod.deb -O packages-microsoft-prod.deb
-      sudo dpkg -i packages-microsoft-prod.deb
-      sudo apt-get update
-      sudo apt-get install -y apt-transport-https
-      sudo apt-get update
-      sudo apt-get install -y dotnet-sdk-5.0
-
-      ls -lh
-      pushd ./s/
-      sudo tar -zcvf swss.tar.gz ./*
-      sudo cp -rf swss.tar.gz $(Build.ArtifactStagingDirectory)/sonic-gcov
-      popd
-
-      sudo cp -rf $(Build.ArtifactStagingDirectory)/sonic-gcov ./
-      pushd sonic-gcov
-      ls -lh
-      sudo chmod +x gcov_support.sh
-      sudo ./gcov_support.sh generate
-      sudo ./gcov_support.sh merge_container_info $(Build.ArtifactStagingDirectory)
-      sudo cp -rf gcov_output $(Build.ArtifactStagingDirectory)
-      ls -lh $(Build.ArtifactStagingDirectory)
-      popd
+      if [ -f ./s/gcov_support.sh ]; then
+        wget https://packages.microsoft.com/config/debian/10/packages-microsoft-prod.deb -O packages-microsoft-prod.deb
+        sudo dpkg -i packages-microsoft-prod.deb
+        sudo apt-get update
+        sudo apt-get install -y dotnet-sdk-5.0
+        pushd ./s/
+        sudo tar -zcvf swss.tar.gz ./*
+        sudo cp -rf swss.tar.gz $(Build.ArtifactStagingDirectory)/sonic-gcov
+        popd
+        sudo cp -rf $(Build.ArtifactStagingDirectory)/sonic-gcov ./
+        pushd sonic-gcov
+        sudo chmod +x gcov_support.sh
+        sudo ./gcov_support.sh generate
+        sudo ./gcov_support.sh merge_container_info $(Build.ArtifactStagingDirectory)
+        sudo cp -rf gcov_output $(Build.ArtifactStagingDirectory)
+        ls -lh $(Build.ArtifactStagingDirectory)
+        popd
+      fi
     workingDirectory: $(Pipeline.Workspace)
     displayName: "generate gcov reports"
+    condition: eq('${{ parameters.archive_gcov }}', true)
 
   - publish: $(Build.ArtifactStagingDirectory)/gcov_output
     artifact: gcov_info
     displayName: "Archive gcov info"
-    condition: always()
+    condition: fileExists('$(Build.ArtifactStagingDirectory)/gcov_output/AllMergeReport/coverage.xml')
 
   - task: PublishCodeCoverageResults@1
+    condition: fileExists('$(Build.ArtifactStagingDirectory)/gcov_output/AllMergeReport/coverage.xml')
     inputs:
       codeCoverageTool: Cobertura
       summaryFileLocation: '$(Build.ArtifactStagingDirectory)/gcov_output/AllMergeReport/coverage.xml'

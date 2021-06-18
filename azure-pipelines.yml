@@ -20,6 +20,7 @@ stages:
       sairedis_artifact_name: sonic-sairedis
       artifact_name: sonic-swss
       archive_pytests: true
+      archive_gcov: true
 
 - stage: BuildDocker
   dependsOn: Build
@@ -41,6 +42,7 @@ stages:
       log_artifact_name: log
       gcov_artifact_name: sonic-gcov
       sonic_slave: sonic-slave-buster
+      archive_gcov: true
 
 - stage: Gcov
   dependsOn: Test
@@ -54,11 +56,4 @@ stages:
       sairedis_artifact_name: sonic-sairedis
       swss_artifact_name: sonic-swss
       artifact_name: sonic-gcov
-      archive_pytests: true
-#- stage: PublishGcov
-#  dependsOn: Gcov
-#  condition: always()
-#  jobs:
-#  - template: .azure-pipelines/publish-gcov.yml
-#    parameters:
-#      gcov_artifact_name: gcov_info
+      archive_gcov: true

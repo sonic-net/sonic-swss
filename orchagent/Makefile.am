@@ -72,13 +72,19 @@ orchagent_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 orchagent_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
-orchagent_LDADD = -lnl-3 -lnl-route-3 -lpthread -lsairedis -lsaimeta -lsaimetadata -lswsscommon -lzmq -lgcov_preload
+orchagent_LDADD = -lnl-3 -lnl-route-3 -lpthread -lsairedis -lsaimeta -lsaimetadata -lswsscommon -lzmq
 
 routeresync_SOURCES = routeresync.cpp
 routeresync_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
 routeresync_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
-routeresync_LDADD = -lswsscommon -lgcov_preload
+routeresync_LDADD = -lswsscommon
 
 orchagent_restart_check_SOURCES = orchagent_restart_check.cpp
 orchagent_restart_check_CPPFLAGS = $(DBGFLAGS) $(AM_CPPFLAGS) $(CFLAGS_COMMON)
-orchagent_restart_check_LDADD = -lhiredis -lswsscommon -lpthread -lgcov_preload
+orchagent_restart_check_LDADD = -lhiredis -lswsscommon -lpthread
+
+if GCOV_ENABLED
+orchagent_LDADD += -lgcovpreload
+routeresync_LDADD += -lgcovpreload
+orchagent_restart_check_LDADD += -lgcovpreload
+endif

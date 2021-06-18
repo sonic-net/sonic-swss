@@ -32,6 +32,10 @@ parameters:
   type: boolean
   default: false
 
+- name: archive_gcov
+  type: boolean
+  default: false
+
 jobs:
 - job:
   displayName: ${{ parameters.arch }}
@@ -105,8 +109,11 @@ jobs:
       set -x
       tar czf pytest.tgz tests
       cp -r pytest.tgz $(Build.ArtifactStagingDirectory)/
-      sudo cp libgcov_preload.so /usr/lib/
       ls -lh
+
+      if [ ${{ parameters.archive_gcov }} ]; then
+         export ENABLE_GCOV=y
+      endif
       ./autogen.sh
       dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
     displayName: "Compile sonic swss"
