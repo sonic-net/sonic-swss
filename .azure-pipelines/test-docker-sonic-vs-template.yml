@@ -84,10 +84,10 @@ jobs:
 
   - script: |
       set -x
-      if [ -f ./tests/gcov_support.sh ]; then
+      if [ '${{ parameters.archive_gcov }}' == true ]; then
         sudo apt-get install -y lcov
         ./tests/gcov_support.sh set_environment $(Build.ArtifactStagingDirectory)
-      endif
+      fi
       docker stop $(docker ps -q -a)
       docker rm $(docker ps -q -a)
     displayName: "Collect gcda"
