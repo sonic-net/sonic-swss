@@ -36,7 +36,7 @@ class TestInbandInterface(object):
 
     def del_inband_mgmt_vrf(self):
         tbl = swsscommon.Table(self.cfg_db, 'MGMT_VRF_CONFIG')
-        fvs = swsscommon.FieldValuePairs([('mgmtVrfEnabled', 'true')])
+        fvs = swsscommon.FieldValuePairs([('mgmtVrfEnabled', 'true'), ('in_band_mgmt_enabled', 'false')])
         tbl.set('vrf_global', fvs)
         time.sleep(5)
 
