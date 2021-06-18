@@ -65,14 +65,12 @@ class TestPGDropCounter(object):
         fc_status_enable = {"FLEX_COUNTER_STATUS": "enable"}
 
         self.config_db.create_entry("FLEX_COUNTER_TABLE", "PG_DROP", fc_status_enable)
-        self.config_db.create_entry("FLEX_COUNTER_TABLE", "PG_WATERMARK", fc_status_enable)
 
     def clear_flex_counter(self):
         for pg in self.pgs:
             self.flex_db.delete_entry("FLEX_COUNTER_TABLE", "PG_DROP_STAT_COUNTER:{}".format(pg))
 
         self.config_db.delete_entry("FLEX_COUNTER_TABLE", "PG_DROP")
-        self.config_db.delete_entry("FLEX_COUNTER_TABLE", "PG_WATERMARK")
 
 
     def test_pg_drop_counters(self, dvs):

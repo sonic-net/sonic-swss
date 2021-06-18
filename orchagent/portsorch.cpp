@@ -284,9 +284,9 @@ static char* hostif_vlan_tag[] = {
 PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames, DBConnector *chassisAppDb) :
         Orch(db, tableNames),
         m_portStateTable(stateDb, STATE_PORT_TABLE_NAME),
-        port_stat_manager(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
-        port_buffer_drop_stat_manager(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS, false),
-        queue_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false)
+        port_stat_manager(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
+        port_buffer_drop_stat_manager(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS, true),
+        queue_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true)
 {
     SWSS_LOG_ENTER();
 
@@ -2273,21 +2273,19 @@ bool PortsOrch::initPort(const string &alias, const string &role, const int inde
                 vector<FieldValueTuple> fields;
                 fields.push_back(tuple);
                 m_counterTable->set("", fields);
-
                 // Install a flex counter for this port to track stats
-                auto flex_counters_orch = gDirectory.get<FlexCounterOrch*>();
-                /* Delay installing the counters if they are yet enabled
-                If they are enabled, install the counters immediately */
-                if (flex_counters_orch->getPortCountersState())
+                std::unordered_set<std::string> counter_stats;
+                for (const auto& it: port_stat_ids)
                 {
-                    auto port_counter_stats = generateCounterStats(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP);
-                    port_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, port_counter_stats);
+                    counter_stats.emplace(sai_serialize_port_stat(it));
                 }
-                if (flex_counters_orch->getPortBufferDropCountersState())
+                port_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, counter_stats);
+                std::unordered_set<std::string> port_buffer_drop_stats;
+                for (const auto& it: port_buffer_drop_stat_ids)
                 {
-                    auto port_buffer_drop_stats = generateCounterStats(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP);
-                    port_buffer_drop_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, port_buffer_drop_stats);
+                    port_buffer_drop_stats.emplace(sai_serialize_port_stat(it));
                 }
+                port_buffer_drop_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, port_buffer_drop_stats);
 
                 PortUpdate update = { p, true };
                 notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
@@ -2320,11 +2318,8 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
     p.m_port_id = port_id;
 
     /* remove port from flex_counter_table for updating counters  */
-    auto flex_counters_orch = gDirectory.get<FlexCounterOrch*>();
-    if ((flex_counters_orch->getPortCountersState()))
-    {
-        port_stat_manager.clearCounterIdList(p.m_port_id);
-    }
+    port_stat_manager.clearCounterIdList(p.m_port_id);
+
     /* remove port name map from counter table */
     m_counter_db->hdel(COUNTERS_PORT_NAME_MAP, alias);
 
@@ -5077,42 +5072,6 @@ void PortsOrch::generatePriorityGroupMapPerPort(const Port& port)
     CounterCheckOrch::getInstance().addPort(port);
 }
 
-void PortsOrch::generatePortCounterMap()
-{
-    if (m_isPortCounterMapGenerated)
-    {
-        return;
-    }
-
-    auto port_counter_stats = generateCounterStats(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP);
-    for (const auto& it: m_portList)
-    {
-        if (it.first == "CPU")
-        {
-            continue;
-        }
-        port_stat_manager.setCounterIdList(it.second.m_port_id, CounterType::PORT, port_counter_stats);
-    }
-
-    m_isPortCounterMapGenerated = true;
-}
-
-void PortsOrch::generatePortBufferDropCounterMap()
-{
-    if (m_isPortBufferDropCounterMapGenerated)
-    {
-        return;
-    }
-
-    auto port_buffer_drop_stats = generateCounterStats(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP);
-    for (const auto& it: m_portList)
-    {
-        port_buffer_drop_stat_manager.setCounterIdList(it.second.m_port_id, CounterType::PORT, port_buffer_drop_stats);
-    }
-
-    m_isPortBufferDropCounterMapGenerated = true;
-}
-
 void PortsOrch::doTask(NotificationConsumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -6268,24 +6227,4 @@ void PortsOrch::voqSyncDelLagMember(Port &lag, Port &port)
 
     string key = lag.m_system_lag_info.alias + ":" + port.m_system_port_info.alias;
     m_tableVoqSystemLagMemberTable->del(key);
-}
-
-std::unordered_set<std::string> PortsOrch::generateCounterStats(const string& type)
-{
-    std::unordered_set<std::string> counter_stats;
-    if (type == PORT_STAT_COUNTER_FLEX_COUNTER_GROUP)
-    {
-        for (const auto& it: port_stat_ids)
-        {
-            counter_stats.emplace(sai_serialize_port_stat(it));
-        }
-    }
-    else if (type == PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP)
-    {
-        for (const auto& it: port_buffer_drop_stat_ids)
-        {
-            counter_stats.emplace(sai_serialize_port_stat(it));
-        }
-    }
-    return counter_stats;
 }

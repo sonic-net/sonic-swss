@@ -18,11 +18,6 @@ extern IntfsOrch *gIntfsOrch;
 extern BufferOrch *gBufferOrch;
 
 #define BUFFER_POOL_WATERMARK_KEY   "BUFFER_POOL_WATERMARK"
-#define PORT_KEY                    "PORT"
-#define PORT_BUFFER_DROP_KEY        "PORT_BUFFER_DROP"
-#define QUEUE_KEY                   "QUEUE"
-#define PG_WATERMARK_KEY            "PG_WATERMARK"
-#define RIF_KEY                     "RIF"
 
 unordered_map<string, string> flexCounterGroupMap =
 {
@@ -107,31 +102,26 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     // which is automatically satisfied upon the creation of the orch object that requires
                     // the syncd flex counter polling service
                     // This postponement is introduced by design to accelerate the initialization process
-                    if(gPortsOrch && (value == "enable"))
+                    //
+                    // generateQueueMap() is called as long as a field "FLEX_COUNTER_STATUS" event is heard,
+                    // regardless of whether the key is "QUEUE" or whether the value is "enable" or "disable"
+                    // This can be because generateQueueMap() installs a fundamental list of queue stats
+                    // that need to be polled. So my doubt here is if queue watermark stats shall be piggybacked
+                    // into the same function as they may not be counted as fundamental
+                    if(gPortsOrch)
                     {
-                        if(key == PORT_KEY)
-                        {
-                            gPortsOrch->generatePortCounterMap();
-                            m_port_counter_enabled = true;
-                        }
-                        else if(key == PORT_BUFFER_DROP_KEY)
-                        {
-                            gPortsOrch->generatePortBufferDropCounterMap();
-                            m_port_buffer_drop_counter_enabled = true;
-                        }
-                        else if(key == QUEUE_KEY)
-                        {
-                            gPortsOrch->generateQueueMap();
-                        }
-                        else if(key == PG_WATERMARK_KEY)
-                        {
-                            gPortsOrch->generatePriorityGroupMap();
-                        }
+                        gPortsOrch->generateQueueMap();
+                        gPortsOrch->generatePriorityGroupMap();
                     }
-                    if(gIntfsOrch && (key == RIF_KEY) && (value == "enable"))
+                    if(gPortsOrch)
+                    {
+                        gPortsOrch->generatePriorityGroupMap();
+                    }
+                    if(gIntfsOrch)
                     {
                         gIntfsOrch->generateInterfaceMap();
                     }
+                    // Install COUNTER_ID_LIST/ATTR_ID_LIST only when hearing buffer pool watermark enable event
                     if (gBufferOrch && (key == BUFFER_POOL_WATERMARK_KEY) && (value == "enable"))
                     {
                         gBufferOrch->generateBufferPoolWatermarkCounterIdList();
@@ -153,14 +143,4 @@ void FlexCounterOrch::doTask(Consumer &consumer)
 
         consumer.m_toSync.erase(it++);
     }
-}
-
-bool FlexCounterOrch::getPortCountersState() const
-{
-    return m_port_counter_enabled;
-}
-
-bool FlexCounterOrch::getPortBufferDropCountersState() const
-{
-    return m_port_buffer_drop_counter_enabled;
 }

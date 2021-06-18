@@ -352,11 +352,7 @@ bool OrchDaemon::init()
         CFG_FLEX_COUNTER_TABLE_NAME
     };
 
-    auto* flexCounterOrch = new FlexCounterOrch(m_configDb, flex_counter_tables);
-    m_orchList.push_back(flexCounterOrch);
-
-    gDirectory.set(flexCounterOrch);
-    gDirectory.set(gPortsOrch);
+    m_orchList.push_back(new FlexCounterOrch(m_configDb, flex_counter_tables));
 
     vector<string> pfc_wd_tables = {
         CFG_PFC_WD_TABLE_NAME
