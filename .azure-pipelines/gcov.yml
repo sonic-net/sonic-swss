@@ -97,13 +97,13 @@ jobs:
   - publish: $(Build.ArtifactStagingDirectory)/gcov_output
     artifact: gcov_info
     displayName: "Archive gcov info"
-    condition: fileExists('$(Build.ArtifactStagingDirectory)/gcov_output/AllMergeReport/coverage.xml')
+    condition: eq('${{ parameters.archive_gcov }}', true)
 
   - task: PublishCodeCoverageResults@1
-    condition: fileExists('$(Build.ArtifactStagingDirectory)/gcov_output/AllMergeReport/coverage.xml')
     inputs:
       codeCoverageTool: Cobertura
       summaryFileLocation: '$(Build.ArtifactStagingDirectory)/gcov_output/AllMergeReport/coverage.xml'
       reportDirectory: '$(Build.ArtifactStagingDirectory)/gcov_output/AllMergeReport/'
     displayName: 'Publish c c++ test coverage'
+    condition: eq('${{ parameters.archive_gcov }}', true)
   
