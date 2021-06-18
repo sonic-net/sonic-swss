@@ -111,7 +111,7 @@ jobs:
       cp -r pytest.tgz $(Build.ArtifactStagingDirectory)/
       ls -lh
 
-      if [ ${{ parameters.archive_gcov }} ]; then
+      if [ $(parameters.archive_gcov) ]; then
          export ENABLE_GCOV=y
       endif
       ./autogen.sh
