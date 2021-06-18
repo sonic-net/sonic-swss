@@ -64,11 +64,11 @@ jobs:
       sudo /sbin/ip link del Vrf1 type vrf table 1001
       pushd tests
 
-      if [ $(parameters.archive_gcov) ]; then
+      if [ '${{ parameters.archive_gcov }}' == true ]; then
         sudo py.test -v --force-flaky --junitxml=tr.xml --keeptb --imgname=docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber)
       else
         sudo py.test -v --force-flaky --junitxml=tr.xml --imgname=docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber)
-      endif
+      fi
     displayName: "Run vs tests"
 
   - task: PublishTestResults@2
