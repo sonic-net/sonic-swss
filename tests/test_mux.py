@@ -410,6 +410,51 @@ class TestMuxTunnelBase(object):
         self.set_mux_state(appdb, "Ethernet4", "active")
         dvs_acl.verify_no_acl_rules()
 
+    def create_and_test_metrics(self, appdb, statedb, dvs):
+
+        # Set to active and test attributes for start and end time
+        self.set_mux_state(appdb, "Ethernet0", "active")
+        keys = statedb.get_keys("MUX_METRICS_TABLE")
+        assert len(keys) != 0
+
+        for key in keys:
+            if key != "Ethernet0":
+                continue
+            fvs = statedb.get_entry("MUX_METRICS_TABLE", key)
+            assert fvs != {}
+
+            start = end = False
+            for f,v in fvs.items():
+                if f == "orch_switch_active_start":
+                    start = True
+                elif f == "orch_switch_active_end":
+                    end = True
+
+            assert start
+            assert end
+
+        # Set to standby and test attributes for start and end time
+        self.set_mux_state(appdb, "Ethernet0", "standby")
+
+        keys = statedb.get_keys("MUX_METRICS_TABLE")
+        assert len(keys) != 0
+
+        for key in keys:
+            if key != "Ethernet0":
+                continue
+            fvs = statedb.get_entry("MUX_METRICS_TABLE", key)
+            assert fvs != {}
+
+            start = end = False
+            for f,v in fvs.items():
+                if f == "orch_switch_standby_start":
+                    start = True
+                elif f == "orch_switch_standby_end":
+                    end = True
+
+            assert start
+            assert end
+
 
     def check_interface_exists_in_asicdb(self, asicdb, sai_oid):
         asicdb.wait_for_entry(self.ASIC_RIF_TABLE, sai_oid)
@@ -643,12 +688,20 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
 
     def test_acl(self, dvs, dvs_acl, testlog):
-        """ test Route entries and mux state change """
+        """ test acl and mux state change """
 
         appdb  = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         asicdb = dvs.get_asic_db()
 
         self.create_and_test_acl(appdb, asicdb, dvs, dvs_acl)
+
+    def test_mux_metrics(self, dvs, testlog):
+        """ test metrics for mux state change """
+
+        appdb  = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        statedb = dvs.get_state_db()
+
+        self.create_and_test_metrics(appdb, statedb, dvs)
 
 
 # Add Dummy always-pass test at end as workaroud

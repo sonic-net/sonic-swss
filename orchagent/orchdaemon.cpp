@@ -262,7 +262,7 @@ bool OrchDaemon::init()
     MuxOrch *mux_orch = new MuxOrch(m_configDb, mux_tables, tunnel_decap_orch, gNeighOrch, gFdbOrch);
     gDirectory.set(mux_orch);
 
-    MuxCableOrch *mux_cb_orch = new MuxCableOrch(m_applDb, APP_MUX_CABLE_TABLE_NAME);
+    MuxCableOrch *mux_cb_orch = new MuxCableOrch(m_applDb, m_stateDb, APP_MUX_CABLE_TABLE_NAME);
     gDirectory.set(mux_cb_orch);
 
     MuxStateOrch *mux_st_orch = new MuxStateOrch(m_stateDb, STATE_HW_MUX_CABLE_TABLE_NAME);
@@ -352,7 +352,11 @@ bool OrchDaemon::init()
         CFG_FLEX_COUNTER_TABLE_NAME
     };
 
-    m_orchList.push_back(new FlexCounterOrch(m_configDb, flex_counter_tables));
+    auto* flexCounterOrch = new FlexCounterOrch(m_configDb, flex_counter_tables);
+    m_orchList.push_back(flexCounterOrch);
+
+    gDirectory.set(flexCounterOrch);
+    gDirectory.set(gPortsOrch);
 
     vector<string> pfc_wd_tables = {
         CFG_PFC_WD_TABLE_NAME
