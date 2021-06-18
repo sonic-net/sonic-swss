@@ -79,19 +79,15 @@ jobs:
 
   - script: |
       cp -r tests/log $(Build.ArtifactStagingDirectory)/
-    displayName: "Collect logs"
-    condition: always()
 
-  - script: |
-      set -x
       if [ '${{ parameters.archive_gcov }}' == True ]; then
         sudo apt-get install -y lcov
         ./tests/gcov_support.sh set_environment $(Build.ArtifactStagingDirectory)
+        docker stop $(docker ps -q -a)
+        docker rm $(docker ps -q -a)
       fi
-      docker stop $(docker ps -q -a)
-      docker rm $(docker ps -q -a)
-    displayName: "Collect gcda"
-    condition: eq('${{ parameters.archive_gcov }}', true)
+    displayName: "Collect logs"
+    condition: always()
 
   - publish: $(Build.ArtifactStagingDirectory)/gcov_tmp
     artifact: ${{ parameters.gcov_artifact_name }}
