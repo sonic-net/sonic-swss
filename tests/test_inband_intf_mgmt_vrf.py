@@ -17,7 +17,7 @@ class TestInbandInterface(object):
         initial_entries = set(tbl.getKeys())
 
         dvs.runcmd("config vrf add mgmt")
-        sleep(2)
+        time.sleep(2)
 
         # check application database
         tbl = swsscommon.Table(self.appl_db, 'VRF_TABLE')
