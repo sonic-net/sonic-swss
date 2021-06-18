@@ -416,7 +416,7 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
             return task_process_status::task_need_retry;
         }
 
-        if (SAI_NULL_OBJECT_ID == sai_object)
+        if (SAI_NULL_OBJECT_ID != sai_object)
         {
             sai_status = sai_buffer_api->remove_buffer_pool(sai_object);
             if (SAI_STATUS_SUCCESS != sai_status)
