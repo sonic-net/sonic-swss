@@ -12,9 +12,17 @@ class TestInbandInterface(object):
         self.asic_db = swsscommon.DBConnector(1, dvs.redis_sock, 0)
         self.cfg_db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
 
-    def add_mgmt_vrf(self):
+    def add_mgmt_vrf(self, dvs):
         tbl = swsscommon.Table(self.asic_db, 'ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER')
         initial_entries = set(tbl.getKeys())
+
+        dvs.runcmd("config vrf add mgmt")
+        sleep(2)
+
+        # check application database
+        tbl = swsscommon.Table(self.appl_db, 'VRF_TABLE')
+        vrf_keys = tbl.getKeys()
+        assert len(vrf_keys) == 0
 
         tbl = swsscommon.Table(self.cfg_db, 'MGMT_VRF_CONFIG')
         fvs = swsscommon.FieldValuePairs([('mgmtVrfEnabled', 'true'), ('in_band_mgmt_enabled', 'true')])
@@ -40,10 +48,14 @@ class TestInbandInterface(object):
         tbl.set('vrf_global', fvs)
         time.sleep(5)
 
-    def del_mgmt_vrf(self):
-        tbl = swsscommon.Table(self.cfg_db, 'MGMT_VRF_CONFIG')
-        tbl._del('vrf_global')
-        time.sleep(1)
+        # check application database
+        tbl = swsscommon.Table(self.appl_db, 'VRF_TABLE')
+        vrf_keys = tbl.getKeys()
+        assert len(vrf_keys) == 0
+
+    def del_mgmt_vrf(self, dvs):
+        dvs.runcmd("config vrf del mgmt")
+        time.sleep(5)
 
     def create_inband_intf(self, interface):
         cfg_tbl = cfg_key = cfg_fvs = None
@@ -98,14 +110,15 @@ class TestInbandInterface(object):
     def test_MgmtVrf(self, dvs, testlog):
         self.setup_db(dvs)
 
-        vrf_oid = self.add_mgmt_vrf()
+        vrf_oid = self.add_mgmt_vrf(dvs)
         self.del_inband_mgmt_vrf()
+        self.del_mgmt_vrf(dvs)
 
     @pytest.mark.parametrize('intf_name', ['Ethernet4', 'Vlan100', 'PortChannel5', 'Loopback1'])
     def test_InbandIntf(self, intf_name, dvs, testlog):
         self.setup_db(dvs)
 
-        vrf_oid = self.add_mgmt_vrf()
+        vrf_oid = self.add_mgmt_vrf(dvs)
         self.create_inband_intf(intf_name)
 
         # check application database
@@ -156,11 +169,7 @@ class TestInbandInterface(object):
             assert len(intf_keys) == 0
  
         self.del_inband_mgmt_vrf()
-
-    def test_MgmtVrfDel(self, dvs, testlog):
-        self.setup_db(dvs)
-
-        self.del_mgmt_vrf()
+        self.del_mgmt_vrf(dvs)
 
 
 # Add Dummy always-pass test at end as workaroud
