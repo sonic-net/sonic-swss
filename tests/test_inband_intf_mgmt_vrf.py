@@ -170,7 +170,7 @@ class TestInbandInterface(object):
             tbl = swsscommon.Table(self.asic_db, 'ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE')
             intf_keys = tbl.getKeys()
             # one loopback router interface one port based router interface
-            assert len(intf_keys) == 0
+            assert len(intf_keys) == 1
  
         self.del_inband_mgmt_vrf()
         self.del_mgmt_vrf(dvs)
