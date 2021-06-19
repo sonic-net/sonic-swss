@@ -12,6 +12,4 @@ all:
 	$(DYLIB_MAKE_CMD)
 	sudo cp $(DYLIBNAME) /usr/lib
 	sudo chmod 777 -R /usr/lib/$(DYLIBNAME)
-	sudo cp gcov_support.sh ../
-	sudo cp gcov_support.sh ../tests/
 	sudo cp lcov_cobertura.py ../
