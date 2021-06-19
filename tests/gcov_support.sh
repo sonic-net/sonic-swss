@@ -353,6 +353,7 @@ gcov_support_collect_gcno()
         cp lcov_cobertura.py ${work_dir}/debian/$submodule_name/tmp/gcov
         mkdir -p ${work_dir}/debian/$submodule_name/usr
         mkdir -p ${work_dir}/debian/$submodule_name/usr/lib
+        cp /usr/lib/libgcovpreload.so ${work_dir}/debian/$submodule_name/usr/lib
         rm $GCNO_LIST_FILE
         echo " === Collect finished... === "
     fi
