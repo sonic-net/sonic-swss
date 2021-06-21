@@ -3,6 +3,7 @@ import json
 from port_dpb import Port
 from port_dpb import DPB
 from dvslib.dvs_common import wait_for_result, PollingConfig
+import time
 
 ARP_FLUSH_POLLING = PollingConfig(polling_interval=0.01, timeout=10, strict=True)
 ROUTE_CHECK_POLLING = PollingConfig(polling_interval=0.01, timeout=5, strict=True)
@@ -16,10 +17,14 @@ Ethernet8_IPME = "10.0.0.8/32"
 @pytest.mark.usefixtures('dpb_setup_fixture')
 @pytest.mark.usefixtures('dvs_vlan_manager')
 class TestPortDPBSystem(object):
+    def setup_db(self, dvs):
+        self.pdb = dvs.get_app_db()
+        self.adb = dvs.get_asic_db()
+        self.cdb = dvs.get_config_db()
 
-    def create_l3_intf(self, dvs, interface, vrf_name):
-        dvs_asic_db = dvs.get_asic_db()
-        initial_entries = set(dvs_asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE"))
+
+    def create_l3_intf(self, interface, vrf_name):
+        initial_entries = set(self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE"))
 
         if interface.startswith("PortChannel"):
             tbl_name = "PORTCHANNEL_INTERFACE"
@@ -34,14 +39,11 @@ class TestPortDPBSystem(object):
             fvs = {'NULL':'NULL'}
         else:
             fvs = {'vrf_name':vrf_name}
-        dvs.get_config_db().create_entry(tbl_name, interface, fvs)
 
-        dvs_asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE", len(initial_entries)+1)
-        current_entries = set(dvs_asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE"))
-        assert len(current_entries - initial_entries) == 1
-        return list(current_entries - initial_entries)[0]
+        self.cdb.create_entry(tbl_name, interface, fvs)
+        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE", len(initial_entries)+1)
 
-    def remove_l3_intf(self, dvs, interface):
+    def remove_l3_intf(self, interface):
         if interface.startswith("PortChannel"):
             tbl_name = "PORTCHANNEL_INTERFACE"
         elif interface.startswith("Vlan"):
@@ -51,9 +53,10 @@ class TestPortDPBSystem(object):
         else:
             tbl_name = "INTERFACE"
 
-        dvs.get_config_db().delete_entry(tbl_name, interface)
+        self.cdb.delete_entry(tbl_name, interface)
+        time.sleep(1)
 
-    def add_ip_address(self, dvs, interface, ip):
+    def add_ip_address(self, interface, ip):
         if interface.startswith("PortChannel"):
             tbl_name = "PORTCHANNEL_INTERFACE"
         elif interface.startswith("Vlan"):
@@ -63,9 +66,10 @@ class TestPortDPBSystem(object):
         else:
             tbl_name = "INTERFACE"
 
-        dvs.get_config_db().create_entry(tbl_name, interface+'|'+ip, {'NULL':'NULL'})
+        self.cdb.create_entry(tbl_name, interface+'|'+ip, {'NULL':'NULL'})
+        time.sleep(1)
 
-    def remove_ip_address(self, dvs, interface, ip):
+    def remove_ip_address(self, interface, ip):
         if interface.startswith("PortChannel"):
             tbl_name = "PORTCHANNEL_INTERFACE"
         elif interface.startswith("Vlan"):
@@ -75,23 +79,25 @@ class TestPortDPBSystem(object):
         else:
             tbl_name = "INTERFACE"
 
-        dvs.get_config_db().delete_entry(tbl_name, interface+'|'+ip)
+        self.cdb.delete_entry(tbl_name, interface+'|'+ip)
+        time.sleep(1)
 
     def clear_srv_config(self, dvs):
         dvs.servers[0].runcmd("ip address flush dev eth0")
         dvs.servers[1].runcmd("ip address flush dev eth0")
         dvs.servers[2].runcmd("ip address flush dev eth0")
         dvs.servers[3].runcmd("ip address flush dev eth0")
+        time.sleep(1)
 
-    def set_admin_status(self, dvs, interface, status):
-        dvs_cfg_db = dvs.get_config_db()
+    def set_admin_status(self, interface, status):
         if interface.startswith("PortChannel"):
             tbl_name = "PORTCHANNEL"
         elif interface.startswith("Vlan"):
             tbl_name = "VLAN"
         else:
             tbl_name = "PORT"
-        dvs_cfg_db.create_entry(tbl_name, interface, {'admin_status':status})
+        self.cdb.create_entry(tbl_name, interface, {'admin_status':status})
+        time.sleep(1)
 
     def verify_only_ports_exist(self, dvs, port_names):
         all_port_names = ["Ethernet0", "Ethernet1", "Ethernet2", "Ethernet3"]
@@ -124,7 +130,6 @@ class TestPortDPBSystem(object):
     |-----------------------------------------------------------------------------------------------------
     | 1x50G(2)+2x25G(2) |       |   P    |       |  P    |  P    |        P          |        NA         |
     |-----------------------------------------------------------------------------------------------------
-
     NA    --> Not Applicable
     P     --> Pass
     F     --> Fail
@@ -152,6 +157,7 @@ class TestPortDPBSystem(object):
         ('Ethernet0', '1x50G(2)+2x25G(2)'),
         ('Ethernet0', '1x100G[40G]')
     ], scope="function")
+
     def test_port_breakout_simple(self, dvs, root_port, breakout_mode):
         dvs.setup_db()
         dpb = DPB()
@@ -324,13 +330,13 @@ class TestPortDPBSystem(object):
         dvs.get_asic_db().wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE", 1)
 
         # Bring up port
-        self.set_admin_status(dvs, "Ethernet8", "up")
+        self.set_admin_status("Ethernet8", "up")
 
         # Create L3 interface
-        self.create_l3_intf(dvs, "Ethernet8", "");
+        self.create_l3_intf("Ethernet8", "");
 
         # Configure IPv4 address on Ethernet8
-        self.add_ip_address(dvs, "Ethernet8", Ethernet8_IP)
+        self.add_ip_address("Ethernet8", Ethernet8_IP)
 
         # one loopback router interface and one port based router interface
         dvs.get_asic_db().wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE", 2)
@@ -378,7 +384,7 @@ class TestPortDPBSystem(object):
 
     @pytest.mark.skip("DEBUG: When we have more than one child ports, operation status of all does NOT go down")
     def test_cli_command_with_load_port_breakout_config_option(self, dvs, dvs_acl):
-        dvs.setup_db()
+        self.setup_db(dvs)
         dpb = DPB()
 
         # Note below definitions are dependent on port_breakout_config_db.json
@@ -541,9 +547,8 @@ class TestPortDPBSystem(object):
         status, result = wait_for_result(_check_route_absent, ROUTE_CHECK_POLLING)
         assert status == True
 
-    @pytest.mark.skip(reason="This test is not stable enough")
     def test_cli_command_negative(self, dvs, dvs_acl):
-        dvs.setup_db()
+        self.setup_db(dvs)
         dpb = DPB()
 
         portGroup = ["Ethernet0", "Ethernet1", "Ethernet2", "Ethernet3"]
@@ -625,7 +630,6 @@ class TestPortDPBSystem(object):
         dvs_acl.verify_acl_table_count(0)
         self.dvs_vlan.get_and_verify_vlan_ids(0)
 
-    @pytest.mark.skip(reason="This test is not stable enough")
     def test_dpb_arp_flush(self, dvs):
         dvs.setup_db()
         dvs_asic_db = dvs.get_asic_db()
@@ -639,13 +643,13 @@ class TestPortDPBSystem(object):
         self.clear_srv_config(dvs)
 
         # Create l3 interface
-        rif_oid = self.create_l3_intf(dvs, portName, vrfName)
+        rif_oid = self.create_l3_intf(portName, vrfName)
 
         # set ip address
-        self.add_ip_address(dvs, portName, ipAddress)
+        self.add_ip_address(portName, ipAddress)
 
         # bring up interface
-        self.set_admin_status(dvs, portName, "up")
+        self.set_admin_status(portName, "up")
 
         # Set IP address and default route
         cmd = "ip link set eth0 address " + srv0MAC
@@ -676,7 +680,6 @@ class TestPortDPBSystem(object):
         dvs.change_port_breakout_mode("Ethernet0", "1x100G[40G]")
         dpb.verify_port_breakout_mode(dvs, "Ethernet0", "1x100G[40G]")
 
-    @pytest.mark.skip(reason="This test is not stable enough")
     def test_dpb_arp_flush_vlan(self, dvs):
         dvs.setup_db()
         dvs_asic_db = dvs.get_asic_db()
@@ -695,14 +698,14 @@ class TestPortDPBSystem(object):
         self.dvs_vlan.create_vlan_member(vlanID, portName)
 
         # bring up interface
-        self.set_admin_status(dvs, portName, "up")
-        self.set_admin_status(dvs, vlanName, "up")
+        self.set_admin_status(portName, "up")
+        self.set_admin_status(vlanName, "up")
 
         # create vlan interface
-        rif_oid = self.create_l3_intf(dvs, vlanName, vrfName)
+        rif_oid = self.create_l3_intf(vlanName, vrfName)
 
         # assign IP to interface
-        self.add_ip_address(dvs, vlanName, ipAddress)
+        self.add_ip_address(vlanName, ipAddress)
 
         # Set IP address and default route
         cmd = "ip link set eth0 address " + srv0MAC
@@ -734,13 +737,12 @@ class TestPortDPBSystem(object):
         dpb.verify_port_breakout_mode(dvs, "Ethernet0", "1x100G[40G]")
 
         # Remove IP from interface, and then remove interface
-        self.remove_ip_address(dvs, vlanName, ipAddress)
-        self.remove_l3_intf(dvs, vlanName)
+        self.remove_ip_address(vlanName, ipAddress)
+        self.remove_l3_intf(vlanName)
 
         # Remove VLAN(note that member was removed during port breakout)
         self.dvs_vlan.remove_vlan(vlanID)
 
-    @pytest.mark.skip(reason="This test is not stable enough")
     def test_dpb_arp_flush_on_port_oper_shut(self, dvs):
         dvs.setup_db()
         dvs_asic_db = dvs.get_asic_db()
@@ -759,14 +761,14 @@ class TestPortDPBSystem(object):
         self.dvs_vlan.create_vlan_member(vlanID, portName)
 
         # bring up interface
-        self.set_admin_status(dvs, portName, "up")
-        self.set_admin_status(dvs, vlanName, "up")
+        self.set_admin_status(portName, "up")
+        self.set_admin_status(vlanName, "up")
 
         # create vlan interface
-        rif_oid = self.create_l3_intf(dvs, vlanName, vrfName)
+        rif_oid = self.create_l3_intf(vlanName, vrfName)
 
         # assign IP to interface
-        self.add_ip_address(dvs, vlanName, ipAddress)
+        self.add_ip_address(vlanName, ipAddress)
 
         # Set IP address and default route
         cmd = "ip link set eth0 address " + srv0MAC
@@ -786,7 +788,7 @@ class TestPortDPBSystem(object):
                                          {"SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS":srv0MAC})
 
         # Bring link operation state down
-        self.set_admin_status(dvs, portName, "down")
+        self.set_admin_status(portName, "down")
         dvs.servers[0].runcmd("ip link set dev eth0 down")
 
         #Verify ARP/Neighbor entry is removed
@@ -794,18 +796,17 @@ class TestPortDPBSystem(object):
                                            intf_entries[0], ARP_FLUSH_POLLING)
 
         # Bring link operation state up
-        self.set_admin_status(dvs, portName, "up")
+        self.set_admin_status(portName, "up")
         dvs.servers[0].runcmd("ip link set dev eth0 up")
 
         # Remove IP from interface, and then remove interface
-        self.remove_ip_address(dvs, vlanName, ipAddress)
-        self.remove_l3_intf(dvs, vlanName)
+        self.remove_ip_address(vlanName, ipAddress)
+        self.remove_l3_intf(vlanName)
 
         # Remove VLAN member and VLAN
         self.dvs_vlan.remove_vlan_member(vlanID, portName)
         self.dvs_vlan.remove_vlan(vlanID)
 
-    @pytest.mark.skip(reason="This test is not stable enough")
     def test_dpb_arp_flush_on_vlan_member_remove(self, dvs):
         dvs.setup_db()
         dvs_asic_db = dvs.get_asic_db()
@@ -824,14 +825,14 @@ class TestPortDPBSystem(object):
         self.dvs_vlan.create_vlan_member(vlanID, portName)
 
         # bring up interface
-        self.set_admin_status(dvs, portName, "up")
-        self.set_admin_status(dvs, vlanName, "up")
+        self.set_admin_status(portName, "up")
+        self.set_admin_status(vlanName, "up")
 
         # create vlan interface
-        rif_oid = self.create_l3_intf(dvs, vlanName, vrfName)
+        rif_oid = self.create_l3_intf(vlanName, vrfName)
 
         # assign IP to interface
-        self.add_ip_address(dvs, vlanName, ipAddress)
+        self.add_ip_address(vlanName, ipAddress)
 
         # Set IP address and default route
         cmd = "ip link set eth0 address " + srv0MAC
@@ -858,8 +859,8 @@ class TestPortDPBSystem(object):
                                            intf_entries[0], ARP_FLUSH_POLLING)
 
         # Remove IP from interface, and then remove interface
-        self.remove_ip_address(dvs, vlanName, ipAddress)
-        self.remove_l3_intf(dvs, vlanName)
+        self.remove_ip_address(vlanName, ipAddress)
+        self.remove_l3_intf(vlanName)
 
         # Remove VLAN
         self.dvs_vlan.remove_vlan(vlanID)
