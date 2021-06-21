@@ -8,6 +8,9 @@ trigger:
     include:
       - "*"
 
+custom_parameters:
+  enable_gcov: true
+
 stages:
 - stage: Build
 
@@ -20,7 +23,7 @@ stages:
       sairedis_artifact_name: sonic-sairedis
       artifact_name: sonic-swss
       archive_pytests: true
-      archive_gcov: true
+      archive_gcov: '${{ custom_parameters.enable_gcov }}'
 
 - stage: BuildDocker
   dependsOn: Build
@@ -42,7 +45,7 @@ stages:
       log_artifact_name: log
       gcov_artifact_name: sonic-gcov
       sonic_slave: sonic-slave-buster
-      archive_gcov: true
+      archive_gcov: '${{ custom_parameters.enable_gcov }}'
 
 - stage: Gcov
   dependsOn: Test
@@ -56,4 +59,4 @@ stages:
       sairedis_artifact_name: sonic-sairedis
       swss_artifact_name: sonic-swss
       artifact_name: sonic-gcov
-      archive_gcov: true
+      archive_gcov: '${{ custom_parameters.enable_gcov }}'

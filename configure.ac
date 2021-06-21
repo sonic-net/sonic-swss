@@ -96,7 +96,7 @@ if test "x$enable_gcov" = "xyes"; then
     CFLAGS_COMMON+=" -fprofile-arcs -ftest-coverage"
     AC_SUBST(CFLAGS_COMMON)
 
-    LDFLAGS+=" -fprofile-arcs"
+    LDFLAGS+=" -fprofile-arcs -lgcov"
     AC_SUBST(LDFLAGS)
 fi
 
@@ -121,6 +121,10 @@ AC_CONFIG_FILES([
     cfgmgr/Makefile
     tests/Makefile
 ])
+
+if test "x$enable_gcov" = "xyes"; then
+    AC_CONFIG_FILES([gcovpreload/Makefile])
+fi
 
 # If no SAI library is installed, compile with SAIVS and run unit tests
 AM_COND_IF([HAVE_SAI],[],
