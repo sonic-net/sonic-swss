@@ -53,7 +53,7 @@ typedef struct {
     std::string cable_length;
     std::string port_mtu;
     std::string gearbox_model;
-    bool is_8lane;
+    long lane_count;
 
     // APPL_DB.BUFFER_PROFILE fields
     std::string name;
@@ -94,7 +94,7 @@ typedef struct {
     std::string cable_length;
     std::string mtu;
     std::string gearbox_model;
-    bool is_8lane;
+    long lane_count;
 } port_info_t;
 
 //TODO:
@@ -218,7 +218,7 @@ private:
     void transformReference(std::string &name);
     std::string parseObjectNameFromKey(const std::string &key, size_t pos/* = 1*/);
     std::string parseObjectNameFromReference(const std::string &reference);
-    std::string getDynamicProfileName(const std::string &speed, const std::string &cable, const std::string &mtu, const std::string &threshold, const std::string &gearbox_model, bool is_8lane);
+    std::string getDynamicProfileName(const std::string &speed, const std::string &cable, const std::string &mtu, const std::string &threshold, const std::string &gearbox_model, long lane_count);
     inline bool isNonZero(const std::string &value) const
     {
         return !value.empty() && value != "0";
@@ -233,7 +233,7 @@ private:
     void calculateHeadroomSize(buffer_profile_t &headroom);
     void checkSharedBufferPoolSize(bool force_update_during_initialization);
     void recalculateSharedBufferPool();
-    task_process_status allocateProfile(const std::string &speed, const std::string &cable, const std::string &mtu, const std::string &threshold, const std::string &gearbox_model, bool is_8lane, std::string &profile_name);
+    task_process_status allocateProfile(const std::string &speed, const std::string &cable, const std::string &mtu, const std::string &threshold, const std::string &gearbox_model, long lane_count, std::string &profile_name);
     void releaseProfile(const std::string &profile_name);
     bool isHeadroomResourceValid(const std::string &port, const buffer_profile_t &profile, const std::string &new_pg);
     void refreshSharedHeadroomPool(bool enable_state_updated_by_ratio, bool enable_state_updated_by_size);
