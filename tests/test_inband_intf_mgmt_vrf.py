@@ -36,7 +36,7 @@ class TestInbandInterface(object):
         assert vrf_keys[0] == MGMT_VRF_NAME
 
         # check SAI database info present in ASIC_DB
-        vrf_oid = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER", 1)[0]
+        vrf_oid = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER", 2)[0]
         return vrf_oid
 
     def del_inband_mgmt_vrf(self):
