@@ -35,7 +35,7 @@ class TestInbandInterface(object):
         assert len(vrf_keys) == 1
         assert vrf_keys[0] == MGMT_VRF_NAME
 
-        # check SAI database info present in ASIC_DB
+        # check SAI database info present in ASIC_DB 
         self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER", len(initial_entries) + 1)
         current_entries = set(self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER"))
         assert len(current_entries - initial_entries) == 1
