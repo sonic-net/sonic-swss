@@ -846,6 +846,60 @@ class TestRoute(TestRouteBase):
         dvs.servers[3].runcmd("ip route del default dev eth0")
         dvs.servers[3].runcmd("ip address del 20.0.1.2/24 dev eth0")
 
+    def test_RouteAddRemoveIpv4BlackholeRoute(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        self.clear_srv_config(dvs)
+
+        # add route entry
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"ip route 2.2.2.0/24 blackhole\"")
+
+        # check application database
+        self.pdb.wait_for_entry("ROUTE_TABLE", "2.2.2.0/24")
+
+        # check ASIC route database
+        self.check_route_entries(["2.2.2.0/24"])
+        key = self.get_asic_db_key("2.2.2.0/24")
+        assert key
+        fvs = self.adb.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY", key)
+        assert fvs.get("SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION") == "SAI_PACKET_ACTION_DROP"
+
+        # remove route entry
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route 2.2.2.0/24 blackhole\"")
+
+        # check application database
+        self.pdb.wait_for_deleted_entry("ROUTE_TABLE", "2.2.2.0/24")
+
+        # check ASIC route database
+        self.check_deleted_route_entries(["2.2.2.0/24"])
+
+    def test_RouteAddRemoveIpv6BlackholeRoute(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        self.clear_srv_config(dvs)
+
+        # add route entry
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"ipv6 route 3000::0/64 blackhole\"")
+
+        # check application database
+        self.pdb.wait_for_entry("ROUTE_TABLE", "3000::/64")
+
+        # check ASIC route database
+        self.check_route_entries(["3000::/64"])
+        key = self.get_asic_db_key("3000::/64")
+        assert key
+        fvs = self.adb.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY", key)
+        assert fvs.get("SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION") == "SAI_PACKET_ACTION_DROP"
+
+        # remove route entry
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ipv6 route 3000::0/64 blackhole\"")
+
+        # check application database
+        self.pdb.wait_for_deleted_entry("ROUTE_TABLE", "3000::/64")
+
+        # check ASIC route database
+        self.check_deleted_route_entries(["3000::/64"])
+
 class TestRoutePerf(TestRouteBase):
     """ Performance tests for route """
     def test_PerfAddRemoveRoute(self, dvs, testlog):

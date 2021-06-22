@@ -30,7 +30,6 @@ class TestPortAutoNeg(object):
         adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
 
     def test_PortAutoNegCold(self, dvs, testlog):
-
         db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
 
         tbl = swsscommon.ProducerStateTable(db, "PORT_TABLE")
@@ -56,13 +55,13 @@ class TestPortAutoNeg(object):
             elif fv[0] == "SAI_PORT_ATTR_ADVERTISED_SPEED":
                 assert fv[1] == "1:1000"
 
-                # set adv_speeds = 100,1000
+        # set adv_speeds = 100,1000
         fvs = swsscommon.FieldValuePairs([("adv_speeds", "100,1000")])
 
         tbl.set("Ethernet0", fvs)
 
         time.sleep(1)
-
+        
         (status, fvs) = atbl.get(dvs.asicdb.portnamemap["Ethernet0"])
         assert status == True
 
@@ -251,7 +250,6 @@ class TestPortAutoNeg(object):
             elif fv[0] == "SAI_PORT_ATTR_ADVERTISED_INTERFACE_TYPE":
                 assert fv[1] == "2:SAI_PORT_INTERFACE_TYPE_CR2,SAI_PORT_INTERFACE_TYPE_CR4"
 
-
         # set admin up
         cfvs = swsscommon.FieldValuePairs([("admin_status", "up")])
         ctbl.set("Ethernet0", cfvs)
@@ -281,11 +279,14 @@ class TestPortAutoNeg(object):
 
             assert "SAI_PORT_ATTR_AUTO_NEG_MODE" in [fv[0] for fv in fvs]
             assert "SAI_PORT_ATTR_ADVERTISED_SPEED" in [fv[0] for fv in fvs]
+            assert "SAI_PORT_ATTR_ADVERTISED_INTERFACE_TYPE" in [fv[0] for fv in fvs]
             for fv in fvs:
                 if fv[0] == "SAI_PORT_ATTR_AUTO_NEG_MODE":
                     assert fv[1] == "true"
                 elif fv[0] == "SAI_PORT_ATTR_ADVERTISED_SPEED":
-                    assert fv[1] == "1:100"
+                    assert fv[1] == "2:100,1000"
+                elif fv[0] == "SAI_PORT_ATTR_ADVERTISED_INTERFACE_TYPE":
+                    assert fv[1] == "2:SAI_PORT_INTERFACE_TYPE_CR2,SAI_PORT_INTERFACE_TYPE_CR4"
 
         finally:
             # disable warm restart
