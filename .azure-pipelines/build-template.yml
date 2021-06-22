@@ -3,6 +3,8 @@ parameters:
   type: string
   values:
   - amd64
+  - armhf
+  - arm64
   default: amd64
 
 - name: pool
@@ -84,7 +86,6 @@ jobs:
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/master'
     displayName: "Download sonic sairedis deb packages"
-
   - script: |
       sudo dpkg -i ${{ parameters.swss_common_artifact_name }}/libswsscommon_1.0.0_${{ parameters.arch }}.deb
       sudo dpkg -i ${{ parameters.swss_common_artifact_name }}/libswsscommon-dev_1.0.0_${{ parameters.arch }}.deb
@@ -103,8 +104,6 @@ jobs:
       set -x
       tar czf pytest.tgz tests
       cp -r pytest.tgz $(Build.ArtifactStagingDirectory)/
-      ls -lh
-
       if [ '${{ parameters.archive_gcov }}' == True ]; then
          export ENABLE_GCOV=y
       fi

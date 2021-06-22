@@ -3,6 +3,8 @@ parameters:
   type: string
   values:
   - amd64
+  - armhf
+  - arm64
   default: amd64
 
 - name: timeout
@@ -41,10 +43,6 @@ jobs:
     displayName: "Download sonic swss common deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
-      artifact: ${{ parameters.swss_artifact_name }}
-    displayName: "Download sonic swss artifact"
-  - task: DownloadPipelineArtifact@2
-    inputs:
       source: specific
       project: build
       pipeline: 12
@@ -52,6 +50,10 @@ jobs:
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/master'
     displayName: "Download sonic sairedis deb packages"
+  - task: DownloadPipelineArtifact@2
+    inputs:
+      artifact: ${{ parameters.swss_artifact_name }}
+    displayName: "Download sonic swss artifact"
   - task: DownloadPipelineArtifact@2
     inputs:
       source: specific

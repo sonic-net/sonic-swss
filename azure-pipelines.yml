@@ -22,6 +22,32 @@ stages:
       archive_pytests: true
       archive_gcov: true
 
+- stage: BuildArm
+  dependsOn: Build
+  condition: succeeded('Build')
+  jobs:
+  - template: .azure-pipelines/build-template.yml
+    parameters:
+      arch: armhf
+      timeout: 240
+      pool: sonicbld
+      sonic_slave: sonic-slave-buster-armhf
+      swss_common_artifact_name: sonic-swss-common.armhf
+      sairedis_artifact_name: sonic-sairedis.armhf
+      artifact_name: sonic-swss.armhf
+      archive_gcov: false
+
+  - template: .azure-pipelines/build-template.yml
+    parameters:
+      arch: arm64
+      timeout: 240
+      pool: sonicbld
+      sonic_slave: sonic-slave-buster-arm64
+      swss_common_artifact_name: sonic-swss-common.arm64
+      sairedis_artifact_name: sonic-sairedis.arm64
+      artifact_name: sonic-swss.arm64
+      archive_gcov: false
+
 - stage: BuildDocker
   dependsOn: Build
   condition: succeeded('Build')
