@@ -299,6 +299,7 @@ void VrfMgr::doTask(Consumer &consumer)
                         it = consumer.m_toSync.erase(it);
                         continue;
                     }
+
                     m_appVrfTableProducer.set(vrfName, kfvFieldsValues(t));
 
                 }
