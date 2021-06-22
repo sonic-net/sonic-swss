@@ -13,7 +13,7 @@ class TestInbandInterface(object):
         self.cfg_db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
 
     def add_mgmt_vrf(self, dvs):
-
+        initial_entries = set(self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")) 
         #dvs.runcmd("config vrf add mgmt")
         dvs.runcmd("ip link add mgmt type vrf table 5000")
         dvs.runcmd("ifconfig mgmt up")
@@ -36,8 +36,10 @@ class TestInbandInterface(object):
         assert vrf_keys[0] == MGMT_VRF_NAME
 
         # check SAI database info present in ASIC_DB
-        vrf_oid = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER", 2)[0]
-        return vrf_oid
+        self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER", len(initial_entries) + 1)
+        current_entries = set(self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER"))
+        assert len(current_entries - initial_entries) == 1
+        return list(current_entries - initial_entries)[0]
 
     def del_inband_mgmt_vrf(self):
         tbl = swsscommon.Table(self.cfg_db, 'MGMT_VRF_CONFIG')
@@ -137,13 +139,12 @@ class TestInbandInterface(object):
                 fvs = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE", key)
                 loopback = False
                 intf_vrf_oid = None
-                for fv in fvs:
-                    if (fv[0] == 'SAI_ROUTER_INTERFACE_ATTR_TYPE' and
-                        fv[1] == 'SAI_ROUTER_INTERFACE_TYPE_LOOPBACK'):
+                for k, v in fvs.items():
+                    if k == 'SAI_ROUTER_INTERFACE_ATTR_TYPE' and v == 'SAI_ROUTER_INTERFACE_TYPE_LOOPBACK':
                         loopback = True
                         break
-                    if fv[0] == 'SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID':
-                        intf_vrf_oid = fv[1]
+                    if k == 'SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID':
+                        intf_vrf_oid = v
                 if loopback:
                     continue
                 assert intf_vrf_oid == vrf_oid
