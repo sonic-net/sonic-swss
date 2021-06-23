@@ -274,18 +274,16 @@ string BufferMgrDynamic::getMaxSpeedFromList(string speedList)
 {
     auto &&speedVec = tokenize(speedList, ',');
     unsigned long maxSpeedNum = 0, speedNum;
-    string maxSpeedStr;
     for (auto &speedStr : speedVec)
     {
         speedNum = atol(speedStr.c_str());
         if (speedNum > maxSpeedNum)
         {
             maxSpeedNum = speedNum;
-            maxSpeedStr = speedStr;
         }
     }
 
-    return maxSpeedStr;
+    return to_string(maxSpeedNum);
 }
 
 string BufferMgrDynamic::getPgPoolMode()
