@@ -2732,11 +2732,9 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 continue;
             }
 
-            if (!gBufferOrch->isPortReady(alias) && (admin_status == "up"))
+            if (!gBufferOrch->isPortReady(alias))
             {
                 // buffer configuration hasn't been applied yet. save it for future retry
-                // We don't need to check it if the port isn't admin up because
-                // the buffer configuration won't be applied until the port is admin up
                 m_pendingPortSet.emplace(alias);
                 it++;
                 continue;

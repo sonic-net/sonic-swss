@@ -1052,6 +1052,12 @@ task_process_status BufferMgrDynamic::doUpdatePgTask(const string &pg_key, const
 
     case PORT_ADMIN_DOWN:
         SWSS_LOG_NOTICE("Skip setting BUFFER_PG for %s because the port is administratively down", port.c_str());
+        if (!m_portInitDone)
+        {
+            // In case the port is admin down during initialization, the PG will be removed from the port,
+            // which effectively notifies bufferOrch to add the item to the m_ready_list
+            m_applBufferPgTable.del(pg_key);
+        }
         break;
 
     default:
@@ -1868,6 +1874,12 @@ task_process_status BufferMgrDynamic::handleOneBufferPgEntry(const string &key, 
                 SWSS_LOG_NOTICE("Inserting BUFFER_PG table entry %s into APPL_DB directly", key.c_str());
                 m_applBufferPgTable.set(key, fvVector);
                 bufferPg.running_profile_name = bufferPg.configured_profile_name;
+            }
+            else if (!m_portInitDone)
+            {
+                // In case the port is admin down during initialization, the PG will be removed from the port,
+                // which effectively notifies bufferOrch to add the item to the m_ready_list
+                m_applBufferPgTable.del(key);
             }
         }
 
