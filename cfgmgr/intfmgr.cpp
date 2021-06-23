@@ -114,6 +114,33 @@ void IntfMgr::setIntfVrf(const string &alias, const string &vrfName)
     }
 }
 
+bool IntfMgr::setIntfMpls(const string &alias, const string& mpls)
+{
+    stringstream cmd;
+    string res;
+
+    if (mpls == "enable")
+    {
+        cmd << "sysctl -w net.mpls.conf." << alias << ".input=1";
+    }
+    else if ((mpls == "disable") || mpls.empty())
+    {
+        cmd << "sysctl -w net.mpls.conf." << alias << ".input=0";
+    }
+    else
+    {
+        SWSS_LOG_ERROR("MPLS state is invalid: \"%s\"", mpls.c_str());
+        return false;
+    }
+    int ret = swss::exec(cmd.str(), res);
+    // Don't return error unless MPLS is explicitly set
+    if (ret && !mpls.empty())
+    {
+        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
+    }
+    return true;
+}
+
 void IntfMgr::addLoopbackIntf(const string &alias)
 {
     stringstream cmd;
@@ -446,6 +473,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
     string nat_zone = "";
     string proxy_arp = "";
     string grat_arp = "";
+    string mpls = "";
 
     for (auto idx : data)
     {
@@ -471,6 +499,10 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         else if (field == "grat_arp")
         {
             grat_arp = value;
+        }
+        else if (field == "mpls")
+        {
+            mpls = value;
         }
 
         if (field == "nat_zone")
@@ -515,6 +547,17 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
             if (!nat_zone.empty())
             {
                 FieldValueTuple fvTuple("nat_zone", nat_zone);
+                data.push_back(fvTuple);
+            }
+            /* Set mpls */
+            if (!setIntfMpls(alias, mpls))
+            {
+                SWSS_LOG_ERROR("Failed to set MPLS to \"%s\" for the \"%s\" interface", mpls.c_str(), alias.c_str());
+                return false;
+            }
+            if (!mpls.empty())
+            {
+                FieldValueTuple fvTuple("mpls", mpls);
                 data.push_back(fvTuple);
             }
         }

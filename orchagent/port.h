@@ -143,6 +143,7 @@ public:
     std::vector<uint32_t> m_adv_speeds;
     sai_port_interface_type_t m_interface_type;
     std::vector<uint32_t> m_adv_interface_types;
+    bool      m_mpls = false;
 
     /*
      * Following two bit vectors are used to lock

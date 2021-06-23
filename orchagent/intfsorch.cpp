@@ -177,6 +177,31 @@ void IntfsOrch::decreaseRouterIntfsRefCount(const string &alias)
                   alias.c_str(), m_syncdIntfses[alias].ref_count);
 }
 
+bool IntfsOrch::setRouterIntfsMpls(const Port &port)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_ADMIN_MPLS_STATE;
+    attr.value.booldata = port.m_mpls;
+
+    sai_status_t status =
+        sai_router_intfs_api->set_router_interface_attribute(port.m_rif_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set router interface %s MPLS to %s, rv:%d",
+                       port.m_alias.c_str(), (port.m_mpls ? "enable" : "disable"), status);
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_ROUTER_INTERFACE, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+    SWSS_LOG_NOTICE("Set router interface %s MPLS to %s", port.m_alias.c_str(),
+                    (port.m_mpls ? "enable" : "disable"));
+    return true;
+}
+
 bool IntfsOrch::setRouterIntfsMtu(const Port &port)
 {
     SWSS_LOG_ENTER();
@@ -618,6 +643,7 @@ void IntfsOrch::doTask(Consumer &consumer)
         uint32_t nat_zone_id = 0;
         string proxy_arp = "";
         string inband_type = "";
+        bool mpls = false;
 
         for (auto idx : data)
         {
@@ -642,6 +668,10 @@ void IntfsOrch::doTask(Consumer &consumer)
                     SWSS_LOG_ERROR("Invalid mac argument %s to %s()", value.c_str(), e.what());
                     continue;
                 }
+            }
+            else if (field == "mpls")
+            {
+                mpls = (value == "enable" ? true : false);
             }
             else if (field == "nat_zone")
             {
@@ -832,6 +862,14 @@ void IntfsOrch::doTask(Consumer &consumer)
                             SWSS_LOG_NOTICE("Not set router interface %s NAT Zone Id to %u, as NAT is not supported",
                                             port.m_alias.c_str(), port.m_nat_zone_id);
                         }
+                        gPortsOrch->setPort(alias, port);
+                    }
+                    /* Set MPLS */
+                    if ((!ip_prefix_in_key) && (port.m_mpls != mpls))
+                    {
+                        port.m_mpls = mpls;
+
+                        setRouterIntfsMpls(port);
                         gPortsOrch->setPort(alias, port);
                     }
                 }
@@ -1073,6 +1111,17 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port)
     attr.value.u32 = port.m_mtu;
     attrs.push_back(attr);
 
+    if (port.m_mpls)
+    {
+        //  Default value of ADMIN_MPLS_STATE is disabled and does not need
+        //  to be explicitly included in RIF Create request.
+        attr.id = SAI_ROUTER_INTERFACE_ATTR_ADMIN_MPLS_STATE;
+        attr.value.booldata = port.m_mpls;
+
+        SWSS_LOG_INFO("Enabling MPLS on interface %s\n", port.m_alias.c_str());
+        attrs.push_back(attr);
+    }
+
     if (gIsNatSupported)
     {
         attr.id = SAI_ROUTER_INTERFACE_ATTR_NAT_ZONE_ID;
@@ -1135,6 +1184,7 @@ bool IntfsOrch::removeRouterIntfs(Port &port)
     port.m_rif_id = 0;
     port.m_vr_id = 0;
     port.m_nat_zone_id = 0;
+    port.m_mpls = false;
     gPortsOrch->setPort(port.m_alias, port);
 
     SWSS_LOG_NOTICE("Remove router interface for port %s", port.m_alias.c_str());

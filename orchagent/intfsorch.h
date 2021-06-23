@@ -45,6 +45,7 @@ public:
     bool setRouterIntfsMac(const Port &port);
     bool setRouterIntfsNatZoneId(Port &port);
     bool setRouterIntfsAdminStatus(const Port &port);
+    bool setRouterIntfsMpls(const Port &port);
 
     std::set<IpPrefix> getSubnetRoutes();
 
