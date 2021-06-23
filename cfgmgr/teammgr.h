@@ -49,6 +49,7 @@ private:
     bool setLagAdminStatus(const std::string &alias, const std::string &admin_status);
     bool setLagMtu(const std::string &alias, const std::string &mtu);
     bool setLagLearnMode(const std::string &alias, const std::string &learn_mode);
+    bool setLagTpid(const std::string &alias, const std::string &tpid);
  
 
     bool isPortEnslaved(const std::string &);
@@ -56,6 +57,7 @@ private:
     bool checkPortIffUp(const std::string &);
     bool isPortStateOk(const std::string&);
     bool isLagStateOk(const std::string&);
+    uint16_t generateLacpKey(const std::string&);
 };
 
 }

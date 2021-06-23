@@ -18,6 +18,8 @@ extern PortsOrch *gPortsOrch;
 extern CrmOrch *gCrmOrch;
 extern Directory<Orch*> gDirectory;
 
+extern size_t gMaxBulkSize;
+
 /* Default maximum number of next hop groups */
 #define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
 #define DEFAULT_MAX_ECMP_GROUP_SIZE     32
@@ -25,8 +27,8 @@ extern Directory<Orch*> gDirectory;
 const int routeorch_pri = 5;
 
 RouteOrch::RouteOrch(DBConnector *db, string tableName, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch) :
-        gRouteBulker(sai_route_api),
-        gNextHopGroupMemberBulker(sai_next_hop_group_api, gSwitchId),
+        gRouteBulker(sai_route_api, gMaxBulkSize),
+        gNextHopGroupMemberBulker(sai_next_hop_group_api, gSwitchId, gMaxBulkSize),
         Orch(db, tableName, routeorch_pri),
         m_switchOrch(switchOrch),
         m_neighOrch(neighOrch),
@@ -781,11 +783,15 @@ void RouteOrch::doTask(Consumer& consumer)
         }
 
         /* Remove next hop group if the reference count decreases to zero */
-        for (auto it_nhg = m_bulkNhgReducedRefCnt.begin(); it_nhg != m_bulkNhgReducedRefCnt.end(); it_nhg++)
+        for (auto& it_nhg : m_bulkNhgReducedRefCnt)
         {
-            if (m_syncdNextHopGroups[*it_nhg].ref_count == 0)
+            if (it_nhg.first.is_overlay_nexthop() && it_nhg.second != 0)
             {
-                removeNextHopGroup(*it_nhg);
+                removeOverlayNextHops(it_nhg.second, it_nhg.first);
+            }
+            else if (m_syncdNextHopGroups[it_nhg.first].ref_count == 0)
+            {
+                removeNextHopGroup(it_nhg.first);
             }
         }
     }
@@ -1516,7 +1522,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                     auto old_nextHops = it_route->second;
 
                     if (old_nextHops.is_overlay_nexthop()) {
-                        nexthop = NextHopKey(it_route->second.to_string(), true);
+                        nexthop = NextHopKey(old_nextHops.to_string(), true);
                     } else {
                         nexthop = NextHopKey(it_route->second.to_string());
                     }
@@ -1729,7 +1735,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
                 if (it_route->second.getSize() > 1
                     && m_syncdNextHopGroups[it_route->second].ref_count == 0)
                 {
-                    m_bulkNhgReducedRefCnt.emplace(it_route->second);
+                    m_bulkNhgReducedRefCnt.emplace(it_route->second, 0);
                 }
             }
             SWSS_LOG_INFO("FG Post set route %s with next hop(s) %s",
@@ -1817,11 +1823,10 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
             if (it_route->second.getSize() > 1
                 && m_syncdNextHopGroups[it_route->second].ref_count == 0)
             {
-                m_bulkNhgReducedRefCnt.emplace(it_route->second);
+                m_bulkNhgReducedRefCnt.emplace(it_route->second, 0);
             } else if (ol_nextHops.is_overlay_nexthop()){
-
                 SWSS_LOG_NOTICE("Update overlay Nexthop %s", ol_nextHops.to_string().c_str());
-                removeOverlayNextHops(vrf_id, ol_nextHops);
+                m_bulkNhgReducedRefCnt.emplace(ol_nextHops, vrf_id);
             }
         }
 
@@ -1882,7 +1887,7 @@ bool RouteOrch::removeRoute(RouteBulkContext& ctx)
     auto& object_statuses = ctx.object_statuses;
 
     // set to blackhole for default route
-    if (ipPrefix.isDefaultRoute())
+    if (ipPrefix.isDefaultRoute() && vrf_id == gVirtualRouterId)
     {
         sai_attribute_t attr;
         attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
@@ -1926,7 +1931,7 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
     auto it_status = object_statuses.begin();
 
     // set to blackhole for default route
-    if (ipPrefix.isDefaultRoute())
+    if (ipPrefix.isDefaultRoute() && vrf_id == gVirtualRouterId)
     {
         sai_status_t status = *it_status++;
         if (status != SAI_STATUS_SUCCESS)
@@ -1996,17 +2001,17 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
         if (it_route->second.getSize() > 1
             && m_syncdNextHopGroups[it_route->second].ref_count == 0)
         {
-            m_bulkNhgReducedRefCnt.emplace(it_route->second);
+            m_bulkNhgReducedRefCnt.emplace(it_route->second, 0);
         } else if (ol_nextHops.is_overlay_nexthop()){
             SWSS_LOG_NOTICE("Remove overlay Nexthop %s", ol_nextHops.to_string().c_str());
-            removeOverlayNextHops(vrf_id, ol_nextHops);
+            m_bulkNhgReducedRefCnt.emplace(ol_nextHops, vrf_id);
         }
     }
 
     SWSS_LOG_INFO("Remove route %s with next hop(s) %s",
             ipPrefix.to_string().c_str(), it_route->second.to_string().c_str());
 
-    if (ipPrefix.isDefaultRoute())
+    if (ipPrefix.isDefaultRoute() && vrf_id == gVirtualRouterId)
     {
         it_route_table->second[ipPrefix] = NextHopGroupKey();
 

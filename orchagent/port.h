@@ -20,6 +20,12 @@ extern "C" {
  */
 #define DEFAULT_MTU             1492
 
+/*
+ * Default TPID is 8100
+ * User can configure other values such as 9100, 9200, or 88A8
+ */
+#define DEFAULT_TPID             0x8100
+
 #define VNID_NONE               0xFFFFFFFF
 
 namespace swss {
@@ -100,7 +106,7 @@ public:
     uint32_t            m_mtu = DEFAULT_MTU;
     uint32_t            m_speed = 0;    // Mbps
     std::string         m_learn_mode = "hardware";
-    bool                m_autoneg = false;
+    int                 m_autoneg = -1;  // -1 means not set, 0 = disabled, 1 = enabled
     bool                m_admin_state_up = false;
     bool                m_init = false;
     bool                m_l3_vni = false;
@@ -128,11 +134,15 @@ public:
     std::vector<sai_object_id_t> m_priority_group_ids;
     sai_port_priority_flow_control_mode_t m_pfc_asym = SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_COMBINED;
     uint8_t   m_pfc_bitmask = 0;
+    uint16_t  m_tpid = DEFAULT_TPID;
     uint32_t  m_nat_zone_id = 0;
     uint32_t  m_vnid = VNID_NONE;
     uint32_t  m_fdb_count = 0;
     uint32_t  m_up_member_count = 0;
     uint32_t  m_maximum_headroom = 0;
+    std::vector<uint32_t> m_adv_speeds;
+    sai_port_interface_type_t m_interface_type;
+    std::vector<uint32_t> m_adv_interface_types;
 
     /*
      * Following two bit vectors are used to lock
@@ -151,6 +161,9 @@ public:
     sai_object_id_t  m_system_port_oid = 0;
     SystemPortInfo   m_system_port_info;
     SystemLagInfo    m_system_lag_info;
+
+    sai_object_id_t  m_switch_id = 0;
+    sai_object_id_t  m_line_side_id = 0;
 
     bool m_fec_cfg = false;
     bool m_an_cfg = false;
