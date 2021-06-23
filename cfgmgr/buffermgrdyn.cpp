@@ -272,6 +272,16 @@ string BufferMgrDynamic::getDynamicProfileName(const string &speed, const string
     {
         if ((speed != "400000") && (lane_count == 8))
         {
+            // On Mellanox platform, ports with 8 lanes have different(double) xon value then other ports
+            // For ports at speed other than 400G can have
+            // - 8 lanes, double xon
+            // - other number of lanes, normal xon
+            // So they can not share the same buffer profiles.
+            // An extra "_8lane" is added to the name of buffer profiles to distinguish both scenarios
+            // Eg.
+            // - A 100G port with 8 lanes will use buffer profile "pg_profile_100000_5m_8lane_profile"
+            // - A 100G port with 4 lanes will use buffer profile "pg_profile_100000_5m_profile"
+            // Currently, 400G ports can only have 8 lanes. So we don't add this to the profile
             buffer_profile_key = buffer_profile_key + "_8lane";
         }
     }
