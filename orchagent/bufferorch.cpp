@@ -149,12 +149,8 @@ void BufferOrch::initBufferConstants()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to get Maximum memory size, rv:%d", status);
-        task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
-        if (handle_status != task_process_status::task_success)
-        {
-            // This is not a mandatory attribute so in case of failure we just return
-            return;
-        }
+        // This is not a mandatory attribute so in case of failure we just return
+        return;
     }
 
     vector<FieldValueTuple> fvVector;

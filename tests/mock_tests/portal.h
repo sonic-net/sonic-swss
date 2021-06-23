@@ -2,14 +2,12 @@
 
 #define private public
 #define protected public
-#define MOCK_TEST
 
 #include "aclorch.h"
 #include "crmorch.h"
 
 #undef protected
 #undef private
-#undef MOCK_TEST
 
 struct Portal
 {

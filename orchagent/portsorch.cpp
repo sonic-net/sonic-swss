@@ -3999,11 +3999,7 @@ void PortsOrch::initializePortMaximumHeadroom(Port &port)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_NOTICE("Unable to get the maximum headroom for port %s rv:%d, ignored", port.m_alias.c_str(), status);
-        task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, status);
-        if (handle_status != task_process_status::task_success)
-        {
-            return;
-        }
+        return;
     }
 
     vector<FieldValueTuple> fvVector;
@@ -5965,11 +5961,7 @@ bool PortsOrch::getSystemPorts()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_INFO("Failed to get number of system ports, rv:%d", status);
-        task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
-        if (handle_status != task_process_status::task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
+        return false;
     }
 
     m_systemPortCount = attr.value.u32;
