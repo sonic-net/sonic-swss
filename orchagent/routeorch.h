@@ -156,6 +156,9 @@ public:
     void delLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);
     std::string getLinkLocalEui64Addr(void);
 
+    void increaseNextHopGroupCount();
+    void decreaseNextHopGroupCount();
+    bool checkNextHopGroupCount();
 private:
     SwitchOrch *m_switchOrch;
     NeighOrch *m_neighOrch;
