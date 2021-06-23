@@ -19,7 +19,7 @@ class TestInbandInterface(object):
         dvs.runcmd("ifconfig mgmt up")
         time.sleep(2)
 
-        # check application database
+        # check application database 
         tbl = swsscommon.Table(self.appl_db, 'VRF_TABLE')
         vrf_keys = tbl.getKeys()
         assert len(vrf_keys) == 0
@@ -47,7 +47,7 @@ class TestInbandInterface(object):
         tbl.set('vrf_global', fvs)
         time.sleep(5)
 
-        # check application database
+        # check application database 
         tbl = swsscommon.Table(self.appl_db, 'VRF_TABLE')
         vrf_keys = tbl.getKeys()
         assert len(vrf_keys) == 0
