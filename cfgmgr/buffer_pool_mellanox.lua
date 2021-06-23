@@ -10,8 +10,6 @@ local port_count_8lanes = 0
 -- Number of lossy PG on ports with 8 lanes
 local lossypg_8lanes = 0
 
-local is_spc3 = false
-
 -- Private headrom
 local private_headroom = 10 * 1024
 
@@ -61,7 +59,7 @@ local function iterate_all_items(all_items, check_lossless)
                 size = 1 + tonumber(string.sub(range, -1)) - tonumber(string.sub(range, 1, 1))
             end
             profiles[profile_name] = profile_ref_count + size
-            if is_spc3 and port_set_8lanes[port] and profile_name == 'BUFFER_PROFILE_TABLE:ingress_lossy_profile' then
+            if port_set_8lanes[port] and profile_name == 'BUFFER_PROFILE_TABLE:ingress_lossy_profile' then
                 lossypg_8lanes = lossypg_8lanes + size
             end
             if check_lossless and lossless_profiles[profile_name] then
@@ -83,26 +81,22 @@ local ports_table = redis.call('KEYS', 'PORT|*')
 total_port = #ports_table
 
 -- Initialize the port_set_8lanes set
-local platform = redis.call('HGET', 'DEVICE_METADATA|localhost', 'platform')
-if platform and string.sub(platform, 1, 16) == "x86_64-mlnx_msn4" then
-    is_spc3 = true
-    local lanes
-    local number_of_lanes
-    local port
-    for i = 1, total_port, 1 do
-        -- Load lanes from PORT table
-        lanes = redis.call('HGET', ports_table[i], 'lanes')
-        if lanes then
-            local _
-            _, number_of_lanes = string.gsub(lanes, ",", ",")
-            number_of_lanes = number_of_lanes + 1
-            port = string.sub(ports_table[i], 6, -1)
-            if (number_of_lanes == 8) then
-                port_set_8lanes[port] = true
-                port_count_8lanes = port_count_8lanes + 1
-            else
-                port_set_8lanes[port] = false
-            end
+local lanes
+local number_of_lanes
+local port
+for i = 1, total_port, 1 do
+    -- Load lanes from PORT table
+    lanes = redis.call('HGET', ports_table[i], 'lanes')
+    if lanes then
+        local _
+        _, number_of_lanes = string.gsub(lanes, ",", ",")
+        number_of_lanes = number_of_lanes + 1
+        port = string.sub(ports_table[i], 6, -1)
+        if (number_of_lanes == 8) then
+            port_set_8lanes[port] = true
+            port_count_8lanes = port_count_8lanes + 1
+        else
+            port_set_8lanes[port] = false
         end
     end
 end

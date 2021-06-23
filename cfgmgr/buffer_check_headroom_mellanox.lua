@@ -40,13 +40,8 @@ redis.call('SELECT', config_db)
 
 local lanes
 
--- On SPC3 switch, we need to know whether it's a 8-lane port because it has extra pipeline latency
-local is_spc3 = false
-local platform = redis.call('HGET', 'DEVICE_METADATA|localhost', 'platform')
-if platform and string.sub(platform, 1, 16) == "x86_64-mlnx_msn4" then
-    is_spc3 = true
-    lanes = redis.call('HGET', 'PORT|' .. port, 'lanes')
-end
+-- We need to know whether it's a 8-lane port because it has extra pipeline latency
+lanes = redis.call('HGET', 'PORT|' .. port, 'lanes')
 
 -- Fetch the threshold from STATE_DB
 redis.call('SELECT', state_db)
@@ -58,7 +53,7 @@ end
 
 local asic_keys = redis.call('KEYS', 'ASIC_TABLE*')
 local pipeline_latency = tonumber(redis.call('HGET', asic_keys[1], 'pipeline_latency'))
-if is_spc3 and is_port_with_8lanes(lanes) then
+if is_port_with_8lanes(lanes) then
     -- The pipeline latency should be adjusted accordingly for ports with 2 buffer units
     pipeline_latency = pipeline_latency * 2 - 1
 end
