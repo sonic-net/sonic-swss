@@ -3599,7 +3599,6 @@ bool NatOrch::getNatCounters(const NatEntry::iterator &iter)
         {
             SWSS_LOG_ERROR("Failed to get Counters for SNAT entry [src-ip %s], bytes = %" PRIu64 ", pkts = %" PRIu64 "", ipAddr.to_string().c_str(),
                            nat_entry_attr[0].value.u64, nat_entry_attr[1].value.u64);
-            handleSaiGetStatus(SAI_API_NAT, status);
         }
         else
         {

@@ -549,11 +549,7 @@ void CrmOrch::getResAvailableCounters()
                     if (status != SAI_STATUS_SUCCESS)
                     {
                         SWSS_LOG_ERROR("Failed to get ACL table attribute %u , rv:%d", attr.id, status);
-                        task_process_status handle_status = handleSaiGetStatus(SAI_API_ACL, status);
-                        if (handle_status != task_process_status::task_success)
-                        {
-                            break;
-                        }
+                        break;
                     }
 
                     cnt.second.availableCounter = attr.value.u32;

@@ -5548,11 +5548,7 @@ void PortsOrch::removePortSerdesAttribute(sai_object_id_t port_id)
     {
         SWSS_LOG_DEBUG("Failed to get port attr serdes id %d to port pid:0x%" PRIx64,
                        port_attr.id, port_id);
-        task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, status);
-        if (handle_status != task_process_status::task_success)
-        {
-            return;
-        }
+        return;
     }
 
     if (port_attr.value.oid != SAI_NULL_OBJECT_ID)
