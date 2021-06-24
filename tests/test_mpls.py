@@ -270,7 +270,7 @@ class TestMplsRoute(TestMplsBase):
         # add route entry
         prefix = "2.2.2.0/24"
         if self.mpls_appdb_mode():
-            fieldValues = {"nexthop": "10.0.0.1", "ifname": "Ethernet0", "mpls_nh": "push+201"}
+            fieldValues = {"nexthop": "10.0.0.1", "ifname": "Ethernet0", "mpls_nh": "push201"}
             self.create_route_entry(prefix, fieldValues)
         else:
             # dvs.runcmd("ip route add 2.2.2.0/24 encap mpls 201 via inet 10.0.0.1 dev Ethernet0")
@@ -305,7 +305,7 @@ class TestMplsRoute(TestMplsBase):
         # add route entry
         label = "200"
         if self.mpls_appdb_mode():
-            fieldValues = {"nexthop": "10.0.0.1", "ifname": "Ethernet0", "mpls_nh": "swap+201", "mpls_pop": "1"}
+            fieldValues = {"nexthop": "10.0.0.1", "ifname": "Ethernet0", "mpls_nh": "swap201", "mpls_pop": "1"}
             self.create_inseg_entry(label, fieldValues)
         else:
             # dvs.runcmd("ip -f mpls route add 200 as 201 via inet 10.0.0.1 dev Ethernet0")
@@ -376,7 +376,7 @@ class TestMplsRoute(TestMplsBase):
         # add route entry
         label = "200"
         if self.mpls_appdb_mode():
-            fieldValues = {"nexthop": "10.0.0.1", "ifname": "Ethernet0", "mpls_nh": "swap+0", "mpls_pop": "1"}
+            fieldValues = {"nexthop": "10.0.0.1", "ifname": "Ethernet0", "mpls_nh": "swap0", "mpls_pop": "1"}
             self.create_inseg_entry(label, fieldValues)
         else:
             # dvs.runcmd("ip -f mpls route add 200 as 0 via inet 10.0.0.1 dev Ethernet0")
@@ -411,7 +411,7 @@ class TestMplsRoute(TestMplsBase):
         # add route entry
         prefix = "2.2.2.0/24"
         if self.mpls_appdb_mode():
-            fieldValues = {"nexthop": "10.0.0.1,10.0.0.5", "ifname": "Ethernet0,Ethernet8", "mpls_nh": "push+200,push+201"}
+            fieldValues = {"nexthop": "10.0.0.1,10.0.0.5", "ifname": "Ethernet0,Ethernet8", "mpls_nh": "push200,push201"}
             self.create_route_entry(prefix, fieldValues)
         else:
             dvs.runcmd("ip route add 2.2.2.0/24 nexthop encap mpls 200 via inet 10.0.0.1 dev Ethernet0 nexthop encap mpls 201 via inet 10.0.0.5 dev Ethernet8")
@@ -449,7 +449,7 @@ class TestMplsRoute(TestMplsBase):
         # add route entry
         label = "200"
         if self.mpls_appdb_mode():
-            fieldValues = {"nexthop": "10.0.0.1,10.0.0.5", "ifname": "Ethernet0,Ethernet8", "mpls_nh": "swap+201,swap+202", "mpls_pop": "1"}
+            fieldValues = {"nexthop": "10.0.0.1,10.0.0.5", "ifname": "Ethernet0,Ethernet8", "mpls_nh": "swap201,swap202", "mpls_pop": "1"}
             self.create_inseg_entry(label, fieldValues)
         else:
             dvs.runcmd("ip -f mpls route add 200 nexthop as 201 via inet 10.0.0.1 dev Ethernet0 nexthop as 202 via inet 10.0.0.5 dev Ethernet8")
@@ -526,7 +526,7 @@ class TestMplsRoute(TestMplsBase):
         # add route entry
         prefix = "2.2.2.0/24"
         if self.mpls_appdb_mode():
-            fieldValues = {"nexthop": "10.0.0.1,10.0.0.5", "ifname": "Ethernet0,Ethernet8", "mpls_nh": "push+200,na"}
+            fieldValues = {"nexthop": "10.0.0.1,10.0.0.5", "ifname": "Ethernet0,Ethernet8", "mpls_nh": "push200,na"}
             self.create_route_entry(prefix, fieldValues)
         else:
             dvs.runcmd("ip route add 2.2.2.0/24 nexthop encap mpls 200 via inet 10.0.0.1 dev Ethernet0 nexthop via inet 10.0.0.5 dev Ethernet8")
@@ -565,7 +565,7 @@ class TestMplsRoute(TestMplsBase):
         # add route entry
         label = "200"
         if self.mpls_appdb_mode():
-            fieldValues = {"nexthop": "10.0.0.1,10.0.0.5", "ifname": "Ethernet0,Ethernet8", "mpls_nh": "na,swap+201", "mpls_pop": "1"}
+            fieldValues = {"nexthop": "10.0.0.1,10.0.0.5", "ifname": "Ethernet0,Ethernet8", "mpls_nh": "na,swap201", "mpls_pop": "1"}
             self.create_inseg_entry(label, fieldValues)
         else:
             dvs.runcmd("ip -f mpls route add 200 nexthop via inet 10.0.0.1 dev Ethernet0 nexthop as 201 via inet 10.0.0.5 dev Ethernet8")
@@ -604,7 +604,7 @@ class TestMplsRoute(TestMplsBase):
         # add route entry
         label = "200"
         if self.mpls_appdb_mode():
-            fieldValues = {"nexthop": "10.0.0.1", "ifname": "Ethernet0", "mpls_nh": "swap+201", "mpls_pop": "1"}
+            fieldValues = {"nexthop": "10.0.0.1", "ifname": "Ethernet0", "mpls_nh": "swap201", "mpls_pop": "1"}
             self.create_inseg_entry(label, fieldValues)
         else:
             # dvs.runcmd("ip -f mpls route add 200 as 201 via inet 10.0.0.1 dev Ethernet0")

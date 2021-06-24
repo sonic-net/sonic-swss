@@ -15,32 +15,21 @@ struct NextHopKey
 {
     IpAddress           ip_address;     // neighbor IP address
     string              alias;          // incoming interface alias
-    sai_next_hop_type_t nh_type;        // NH type
     uint32_t            vni;            // Encap VNI overlay nexthop
     MacAddress          mac_address;    // Overlay Nexthop MAC.
     LabelStack          label_stack;    // MPLS label stack
-    sai_outseg_type_t   outseg_type;    // MPLS outseg type
 
-    NextHopKey() :
-        nh_type(SAI_NEXT_HOP_TYPE_IP),
-        vni(0), mac_address(),
-        outseg_type(SAI_OUTSEG_TYPE_SWAP) {}
+    NextHopKey() = default;
     NextHopKey(const std::string &str, const std::string &alias) :
-        alias(alias), nh_type(SAI_NEXT_HOP_TYPE_IP),
-        vni(0), mac_address(),
-        outseg_type(SAI_OUTSEG_TYPE_SWAP)
+        alias(alias), vni(0), mac_address()
     {
         std::string ip_str = parseMplsNextHop(str);
         ip_address = ip_str;
     }
     NextHopKey(const IpAddress &ip, const std::string &alias) :
-        ip_address(ip), alias(alias), nh_type(SAI_NEXT_HOP_TYPE_IP),
-        vni(0), mac_address(),
-        outseg_type(SAI_OUTSEG_TYPE_SWAP) {}
+        ip_address(ip), alias(alias), vni(0), mac_address() {}
     NextHopKey(const std::string &str) :
-        nh_type(SAI_NEXT_HOP_TYPE_IP),
-        vni(0), mac_address(),
-        outseg_type(SAI_OUTSEG_TYPE_SWAP)
+        vni(0), mac_address()
     {
         if (str.find(NHG_DELIMITER) != string::npos)
         {
@@ -69,9 +58,7 @@ struct NextHopKey
             throw std::invalid_argument(err);
         }
     }
-    NextHopKey(const std::string &str, bool overlay_nh) :
-        nh_type(SAI_NEXT_HOP_TYPE_IP),
-        outseg_type(SAI_OUTSEG_TYPE_SWAP)
+    NextHopKey(const std::string &str, bool overlay_nh)
     {
         if (str.find(NHG_DELIMITER) != string::npos)
         {
@@ -108,14 +95,14 @@ struct NextHopKey
 
     bool operator<(const NextHopKey &o) const
     {
-        return tie(ip_address, alias, nh_type, label_stack, outseg_type, vni, mac_address) <
-            tie(o.ip_address, o.alias, o.nh_type, o.label_stack, o.outseg_type, o.vni, o.mac_address);
+        return tie(ip_address, alias, label_stack, vni, mac_address) <
+            tie(o.ip_address, o.alias, o.label_stack, o.vni, o.mac_address);
     }
 
     bool operator==(const NextHopKey &o) const
     {
-        return (ip_address == o.ip_address) && (alias == o.alias) && (nh_type == o.nh_type) &&
-            (label_stack == o.label_stack) && (outseg_type == o.outseg_type) &&
+        return (ip_address == o.ip_address) && (alias == o.alias) &&
+            (label_stack == o.label_stack) &&
             (vni == o.vni) && (mac_address == o.mac_address);
     }
 
@@ -131,14 +118,14 @@ struct NextHopKey
 
     bool isMplsNextHop() const
     {
-        return (nh_type == SAI_NEXT_HOP_TYPE_MPLS);
+        return (!label_stack.empty());
     }
 
     std::string parseMplsNextHop(const std::string& str)
     {
         // parseMplsNextHop initializes MPLS-related member data of the NextHopKey
         //   based on content of the input param str.
-        //   outseg_type, nh_type, and label_stack may be updated.
+        //   label_stack may be updated.
         std::string ip_str;
         auto keys = tokenize(str, LABELSTACK_DELIMITER);
         if (keys.size() == 1)
@@ -146,30 +133,15 @@ struct NextHopKey
             // No MPLS info to parse
             ip_str = str;
         }
-        else if (keys.size() == 3)
+        else if (keys.size() == 2)
         {
-            // Expected MPLS format = "<outsegtype>+<labelstack>+<non-mpls-str>"
+            // Expected MPLS format = "<outsegtype><labelstack>+<non-mpls-str>"
             // key[0] = <outsegtype> = "swap" | "push"
-            // key[1] = <labelstack> = "<label0>/<label1>/../<labelN>"
-            // key[2] = <non-mpls-str> = returned to caller and not parsed here
-            // Example = "push+10100/10101+10.0.0.3@Ethernet4"
-            nh_type = SAI_NEXT_HOP_TYPE_MPLS;
-            if (keys[0] == "swap")
-            {
-                outseg_type = SAI_OUTSEG_TYPE_SWAP;
-            }
-            else if (keys[0] == "push")
-            {
-                outseg_type = SAI_OUTSEG_TYPE_PUSH;
-            }
-            else
-            {
-                // Malformed string
-                std::string err = "Error converting " + str + " to MPLS NextHop";
-                throw std::invalid_argument(err);
-            }
-            label_stack = LabelStack(keys[1]);
-            ip_str = keys[2];
+            // key[0] = <labelstack> = "<label0>/<label1>/../<labelN>"
+            // key[1] = <non-mpls-str> = returned to caller and not parsed here
+            // Example = "push10100/10101+10.0.0.3@Ethernet4"
+            label_stack = LabelStack(keys[0]);
+            ip_str = keys[1];
         }
         else
         {
@@ -183,19 +155,9 @@ struct NextHopKey
     std::string formatMplsNextHop() const
     {
         std::string str;
-        if (nh_type == SAI_NEXT_HOP_TYPE_MPLS)
+        if (isMplsNextHop())
         {
-            if (outseg_type == SAI_OUTSEG_TYPE_SWAP)
-            {
-                str += "swap";
-                str += LABELSTACK_DELIMITER;
-            }
-            else if (outseg_type == SAI_OUTSEG_TYPE_PUSH)
-            {
-                str += "push";
-                str += LABELSTACK_DELIMITER;
-            }
-            str += label_stack.to_string() + LABELSTACK_DELIMITER;
+            label_stack.to_string() + LABELSTACK_DELIMITER;
         }
         return str;
     }

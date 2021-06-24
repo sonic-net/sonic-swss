@@ -215,7 +215,7 @@ bool NeighOrch::addNextHop(const NextHopKey &nh)
         next_hop_attrs.push_back(next_hop_attr);
 
         next_hop_attr.id = SAI_NEXT_HOP_ATTR_OUTSEG_TYPE;
-        next_hop_attr.value.s32 = nexthop.outseg_type;
+        next_hop_attr.value.s32 = nexthop.label_stack.m_outseg_type;
         next_hop_attrs.push_back(next_hop_attr);
 
         next_hop_attr.id = SAI_NEXT_HOP_ATTR_LABELSTACK;
