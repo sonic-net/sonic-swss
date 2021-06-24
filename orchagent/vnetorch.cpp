@@ -1311,7 +1311,6 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     SWSS_LOG_INFO("VNET-RT '%s' op '%s' for pfx %s", vnet_name.c_str(),
                    op.c_str(), ip_pfx.to_string().c_str());
 
-    // vector<tunnelEndpoint> endps;
     NextHopGroupKey nhg("", true);
     for (size_t idx_ip = 0; idx_ip < ip_list.size(); idx_ip++)
     {
@@ -1328,8 +1327,6 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
             mac = mac_list[idx_ip];
         }
 
-        // tunnelEndpoint endp = { ip, mac, vni };
-        // endps.emplace_back(endp);
         NextHopKey nh(ip, mac, vni, true);
         nhg.add(nh);
     }
