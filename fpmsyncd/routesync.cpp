@@ -916,11 +916,6 @@ string RouteSync::getNextHopGw(struct rtnl_route *route_obj)
         if (addr)
         {
             char gw_ip[MAX_ADDR_SIZE + 1] = {0};
-            if (nl_addr_get_prefixlen(addr) > IPV4_MAX_BITLEN
-                && nl_addr_get_family(addr) == AF_INET)
-            {
-                nl_addr_set_family(addr, AF_INET6);
-            }
             nl_addr2str(addr, gw_ip, MAX_ADDR_SIZE);
             result += gw_ip;
         }
