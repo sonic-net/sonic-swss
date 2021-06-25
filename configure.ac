@@ -84,10 +84,26 @@ CFLAGS_COMMON+=" -Wno-switch-default"
 CFLAGS_COMMON+=" -Wno-long-long"
 CFLAGS_COMMON+=" -Wno-redundant-decls"
 
-CFLAGS_COMMON+=" -fprofile-arcs -ftest-coverage"
+# Code testing coverage with gcov
+AC_MSG_CHECKING(whether to build with gcov testing)
+AC_ARG_ENABLE(gcov, AS_HELP_STRING([--enable-gcov], [Whether to enable gcov testing]),, enable_gcov=no)
+
+if test "x$enable_gcov" = "xyes"; then
+    if test "$GCC" = "no"; then
+        AC_MSG_ERROR(not compiling with gcc, which is required for gcov testing)
+    fi
+
+    CFLAGS_COMMON+=" -fprofile-arcs -ftest-coverage"
+    AC_SUBST(CFLAGS_COMMON)
+
+    LDFLAGS+=" -fprofile-arcs -lgcov"
+    AC_SUBST(LDFLAGS)
+fi
+
+AM_CONDITIONAL(GCOV_ENABLED, test x$enable_gcov = xyes)
+AC_MSG_RESULT($enable_gcov)
+
 AC_SUBST(CFLAGS_COMMON)
-LDFLAGS+=" -fprofile-arcs"
-AC_SUBST(LDFLAGS)
 
 AC_CONFIG_FILES([
     Makefile

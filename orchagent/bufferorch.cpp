@@ -315,6 +315,10 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
                 {
                     attr.value.u32 = SAI_BUFFER_POOL_TYPE_EGRESS;
                 }
+                else if (type == buffer_value_both)
+                {
+                    attr.value.u32 = SAI_BUFFER_POOL_TYPE_BOTH;
+                }
                 else
                 {
                     SWSS_LOG_ERROR("Unknown pool type specified:%s", type.c_str());

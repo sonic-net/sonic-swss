@@ -32,6 +32,11 @@ from buffer_model import enable_dynamic_buffer
 # a dynamic number of ports. GitHub Issue: Azure/sonic-swss#1384.
 NUM_PORTS = 32
 
+# FIXME: Voq asics will have 16 fabric ports created (defined in Azure/sonic-buildimage#6185).
+# Right now, we set FABRIC_NUM_PORTS to 0, and change to 16 when PR#6185 merges. PR#6185 can't
+# be merged before this PR. Otherwise it will cause swss voq test failures.
+FABRIC_NUM_PORTS = 0
+
 def ensure_system(cmd):
     rc, output = subprocess.getstatusoutput(cmd)
     if rc:
@@ -467,6 +472,12 @@ class DockerVirtualSwitch:
         """
         num_ports = NUM_PORTS
 
+        # Voq and fabric asics have fabric ports enabled
+        self.get_config_db()
+        metadata = self.config_db.get_entry('DEVICE_METADATA|localhost', '')
+        if metadata.get('switch_type', 'npu') in ['voq', 'fabric']:
+            num_ports = NUM_PORTS + FABRIC_NUM_PORTS
+
         # Verify that all ports have been initialized and configured
         app_db = self.get_app_db()
         startup_polling_config = PollingConfig(5, timeout, strict=True)
@@ -479,7 +490,22 @@ class DockerVirtualSwitch:
 
         # Verify that all ports have been created
         asic_db = self.get_asic_db()
-        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT", num_ports + 1)  # +1 CPU Port
+
+        # Verify that we have "at least" NUM_PORTS + FABRIC_NUM_PORTS, rather exact number.
+        # Right now, FABRIC_NUM_PORTS = 0. So it essentially waits for at least NUM_PORTS.
+        # This will allow us to merge Azure/sonic-buildimage#6185 that creates 16 fabric ports.
+        # When PR#6185 merges, FABRIC_NUM_PORTS should be 16, and so this verification (at least
+        # NUM_PORTS) still holds.
+        # Will update FABRIC_NUM_PORTS to 16, and revert back to wait exact NUM_PORTS + FABRIC_NUM_PORTS
+        # when PR#6185 merges.
+        wait_at_least_n_keys = True
+
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT", num_ports + 1, wait_at_least_n_keys)  # +1 CPU Port
+
+        # Verify that fabric ports are monitored in STATE_DB
+        if metadata.get('switch_type', 'npu') in ['voq', 'fabric']:
+            self.get_state_db()
+            self.state_db.wait_for_n_keys("FABRIC_PORT_TABLE", FABRIC_NUM_PORTS, wait_at_least_n_keys)
 
     def net_cleanup(self) -> None:
         """Clean up network, remove extra links."""
@@ -977,8 +1003,8 @@ class DockerVirtualSwitch:
         tbl.set(interface, fvs)
         time.sleep(1)
 
-    # deps: acl, fdb_update, fdb, mirror_port_erspan, vlan
-    def add_ip_address(self, interface, ip):
+    # deps: acl, fdb_update, fdb, mirror_port_erspan, vlan, sub port intf
+    def add_ip_address(self, interface, ip, vrf_name=None):
         if interface.startswith("PortChannel"):
             tbl_name = "PORTCHANNEL_INTERFACE"
         elif interface.startswith("Vlan"):
@@ -986,7 +1012,10 @@ class DockerVirtualSwitch:
         else:
             tbl_name = "INTERFACE"
         tbl = swsscommon.Table(self.cdb, tbl_name)
-        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        pairs = [("NULL", "NULL")]
+        if vrf_name:
+            pairs = [("vrf_name", vrf_name)]
+        fvs = swsscommon.FieldValuePairs(pairs)
         tbl.set(interface, fvs)
         tbl.set(interface + "|" + ip, fvs)
         time.sleep(1)

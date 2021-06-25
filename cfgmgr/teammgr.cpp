@@ -145,6 +145,7 @@ void TeamMgr::doLagTask(Consumer &consumer)
             string admin_status = DEFAULT_ADMIN_STATUS_STR;
             string mtu = DEFAULT_MTU_STR;
             string learn_mode;
+            string tpid;
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -178,6 +179,11 @@ void TeamMgr::doLagTask(Consumer &consumer)
                     SWSS_LOG_INFO("Get learn_mode %s",
                             learn_mode.c_str());
                 }
+                else if (fvField(i) == "tpid")
+                {
+                    tpid = fvValue(i);
+                    SWSS_LOG_INFO("Get TPID %s", tpid.c_str());
+                 }
             }
 
             if (m_lagList.find(alias) == m_lagList.end())
@@ -197,6 +203,11 @@ void TeamMgr::doLagTask(Consumer &consumer)
             {
                 setLagLearnMode(alias, learn_mode);
                 SWSS_LOG_NOTICE("Configure %s MAC learn mode to %s", alias.c_str(), learn_mode.c_str());
+            }
+            if (!tpid.empty())
+            {
+                setLagTpid(alias, tpid);
+                SWSS_LOG_NOTICE("Configure %s TPID to %s", alias.c_str(), tpid.c_str());
             }
         }
         else if (op == DEL_COMMAND)
@@ -394,6 +405,21 @@ bool TeamMgr::setLagMtu(const string &alias, const string &mtu)
 
     return true;
 }
+
+bool TeamMgr::setLagTpid(const string &alias, const string &tpid)
+{
+    SWSS_LOG_ENTER();
+
+    vector<FieldValueTuple> fvs;
+    FieldValueTuple fv("tpid", tpid);
+    fvs.push_back(fv);
+    m_appLagTable.set(alias, fvs);
+
+    SWSS_LOG_NOTICE("Set port channel %s TPID to %s", alias.c_str(), tpid.c_str());
+
+    return true;
+}
+
 
 bool TeamMgr::setLagLearnMode(const string &alias, const string &learn_mode)
 {

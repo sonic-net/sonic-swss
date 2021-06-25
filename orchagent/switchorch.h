@@ -7,6 +7,9 @@
 #define ASIC_SENSORS_POLLER_STATUS "ASIC_SENSORS_POLLER_STATUS"
 #define ASIC_SENSORS_POLLER_INTERVAL "ASIC_SENSORS_POLLER_INTERVAL"
 
+#define SWITCH_CAPABILITY_TABLE_PORT_TPID_CAPABLE                      "PORT_TPID_CAPABLE"
+#define SWITCH_CAPABILITY_TABLE_LAG_TPID_CAPABLE                       "LAG_TPID_CAPABLE"
+
 struct WarmRestartCheck
 {
     bool    checkRestartReadyState;
@@ -31,6 +34,7 @@ private:
     void doCfgSensorsTableTask(Consumer &consumer);
     void doAppSwitchTableTask(Consumer &consumer);
     void initSensorsTable();
+    void querySwitchTpidCapability();
 
     swss::NotificationConsumer* m_restartCheckNotificationConsumer;
     void doTask(swss::NotificationConsumer& consumer);

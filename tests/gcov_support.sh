@@ -84,9 +84,7 @@ lcov_genhtml_report()
         local infoname=${INFO_FILE_PREFIX}${fullpath##*/}.info
         htmldirname=${HTML_FILE_PREFIX}${fullpath##*/}
         
-        echo "lcov_genhtml_report patch"
         echo ${fullpath}
-        ls -lh ${fullpath}
 
         pushd ${fullpath}
         GCDA_COUNT=`find -name "*.gcda" | wc -l`
@@ -104,14 +102,13 @@ lcov_genhtml_report()
 }
 
 # generate html reports for all eligible submodules
-lcov_genhtml_all() 
+lcov_genhtml_all()
 {
     local container_id
 
     container_id=$1
 
     echo " === Start generating all gcov reports === "
-    ls -lh ${container_id}/gcov
     lcov_genhtml_report ${container_id}/gcov
 } 
 
@@ -210,9 +207,7 @@ gcov_support_generate_report()
     while read line
     do
         local container_id=${line}
-        echo "check container patch"
         echo ${container_id}
-        ls -lh ${container_id}
 
         cp -rf ${container_id}/* common_work
         tar -zxvf swss.tar.gz -C common_work/gcov
@@ -233,8 +228,7 @@ gcov_support_generate_report()
         done < tmp_gcno.txt
         rm tmp_gcno.txt
         cd -
-        
-        echo "check common work path"
+
         ls -lh common_work/*
         lcov_genhtml_all common_work
         if [ "$?" != "0" ]; then

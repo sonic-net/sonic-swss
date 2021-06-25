@@ -5,6 +5,9 @@
 #include <unordered_set>
 #include <stdexcept>
 #include <inttypes.h>
+#include <math.h>
+#include <chrono>
+#include <time.h>
 
 #include "sai.h"
 #include "ipaddress.h"
@@ -405,6 +408,8 @@ void MuxCable::setState(string new_state)
         return;
     }
 
+    mux_cb_orch_->updateMuxMetricState(mux_name_, new_state, true);
+
     MuxState state = state_;
     state_ = ns;
 
@@ -418,6 +423,8 @@ void MuxCable::setState(string new_state)
         st_chg_failed_ = true;
         throw std::runtime_error("Failed to handle state transition");
     }
+
+    mux_cb_orch_->updateMuxMetricState(mux_name_, new_state, false);
 
     st_chg_in_progress_ = false;
     st_chg_failed_ = false;
@@ -1261,9 +1268,10 @@ bool MuxOrch::delOperation(const Request& request)
     return true;
 }
 
-MuxCableOrch::MuxCableOrch(DBConnector *db, const std::string& tableName):
+MuxCableOrch::MuxCableOrch(DBConnector *db, DBConnector *sdb, const std::string& tableName):
               Orch2(db, tableName, request_),
-              app_tunnel_route_table_(db, APP_TUNNEL_ROUTE_TABLE_NAME)
+              app_tunnel_route_table_(db, APP_TUNNEL_ROUTE_TABLE_NAME),
+              mux_metric_table_(sdb, STATE_MUX_METRICS_TABLE_NAME)
 {
     mux_table_ = unique_ptr<Table>(new Table(db, APP_HW_MUX_CABLE_TABLE_NAME));
 }
@@ -1274,6 +1282,27 @@ void MuxCableOrch::updateMuxState(string portName, string muxState)
     FieldValueTuple tuple("state", muxState);
     tuples.push_back(tuple);
     mux_table_->set(portName, tuples);
+}
+
+void MuxCableOrch::updateMuxMetricState(string portName, string muxState, bool start)
+{
+    string msg = "orch_switch_" + muxState;
+    msg += start? "_start": "_end";
+
+    auto now  = std::chrono::system_clock::now();
+    auto now_t = std::chrono::system_clock::to_time_t(now);
+    auto dur = now - std::chrono::system_clock::from_time_t(now_t);
+    auto micros = std::chrono::duration_cast<std::chrono::microseconds>(dur).count();
+
+    std::tm now_tm;
+    gmtime_r(&now_t, &now_tm);
+
+    char buf[256];
+    std::strftime(buf, 256, "%Y-%b-%d %H:%M:%S.", &now_tm);
+
+    string time = string(buf) + to_string(micros);
+
+    mux_metric_table_.hset(portName, msg, time);
 }
 
 void MuxCableOrch::addTunnelRoute(const NextHopKey &nhKey)
@@ -1349,7 +1378,7 @@ MuxStateOrch::MuxStateOrch(DBConnector *db, const std::string& tableName) :
               Orch2(db, tableName, request_),
               mux_state_table_(db, STATE_MUX_CABLE_TABLE_NAME)
 {
-     SWSS_LOG_ENTER();
+    SWSS_LOG_ENTER();
 }
 
 void MuxStateOrch::updateMuxState(string portName, string muxState)
