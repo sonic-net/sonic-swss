@@ -128,7 +128,7 @@ lcov_merge_all()
     lcov --extract total.info '*sonic-gcov/*' -o total.info
     python $1/common_work/gcov/lcov_cobertura.py total.info -o coverage.xml
 
-    sed -i "s#../common_work#$1/common_work#" coverage.xml
+    sed -i "s#common_work/#$1/common_work/#" coverage.xml
 
     cd gcov_output/
     if [ ! -d ${ALLMERGE_DIR} ]; then
@@ -353,6 +353,8 @@ gcov_support_collect_gcno()
         cp lcov_cobertura.py ${work_dir}/debian/$submodule_name/tmp/gcov
         mkdir -p ${work_dir}/debian/$submodule_name/usr
         mkdir -p ${work_dir}/debian/$submodule_name/usr/lib
+        cp ./gcovpreload/libgcovpreload.so ${work_dir}/debian/$submodule_name/usr/lib
+        sudo chmod 777 -R /${work_dir}/debian/$submodule_name/usr/lib/libgcovpreload.so
         rm $GCNO_LIST_FILE
         echo " === Collect finished... === "
     fi
