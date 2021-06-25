@@ -29,7 +29,7 @@ configure
 libtool
 Makefile.in
 stamp-h1
-**/Makefile
+#**/Makefile
 autom4te.cache
 
 # Dependency Folder #
