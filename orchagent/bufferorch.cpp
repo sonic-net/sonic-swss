@@ -2,6 +2,7 @@
 #include "bufferorch.h"
 #include "logger.h"
 #include "sai_serialize.h"
+#include "warm_restart.h"
 
 #include <inttypes.h>
 #include <sstream>
@@ -45,7 +46,7 @@ BufferOrch::BufferOrch(DBConnector *applDb, DBConnector *confDb, DBConnector *st
 {
     SWSS_LOG_ENTER();
     initTableHandlers();
-    initBufferReadyLists(confDb);
+    initBufferReadyLists(confDb, applDb);
     initFlexCounterGroupTable();
     initBufferConstants();
 };
@@ -61,31 +62,61 @@ void BufferOrch::initTableHandlers()
     m_bufferHandlerMap.insert(buffer_handler_pair(APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, &BufferOrch::processEgressBufferProfileList));
 }
 
-void BufferOrch::initBufferReadyLists(DBConnector *db)
+void BufferOrch::initBufferReadyLists(DBConnector *applDb, DBConnector *confDb)
 {
-    // The motivation of m_ready_list is to get the preconfigured buffer pg and buffer queue items
-    // from the database when system starts.
-    // When a buffer pg or queue item is updated, if the item isn't in the m_ready_list
+    // Map m_ready_list and m_port_ready_list_ref are designed to track whether the ports are "ready" from buffer's POV
+    // by testing whether all configured buffer PGs and queues have been applied to SAI. The idea is:
+    // - bufferorch read initial configuration and put them into m_port_ready_list_ref.
+    // - A buffer pg or queue item will be put into m_ready_list once it is applied to SAI.
+    // The rest of port initialization won't be started before the port being ready.
+    //
+    // However, the items won't be applied to admin down ports in dynamic buffer model, which means the admin down ports won't be "ready"
+    // The solution is:
+    // - buffermgr to notify bufferorch explicitly to remove the PG and queue items configured on admin down ports
+    // - bufferorch to add the items to m_ready_list on receiving notifications, which is an existing logic
+    //
+    // Theoretically, the initial configuration should come from CONFIG_DB but APPL_DB is used for warm reboot, because:
+    // - For cold/fast start, buffermgr is responsible for injecting items to APPL_DB
+    //   There is no guarantee that items in APPL_DB are ready when orchagent starts
+    // - For warm reboot, APPL_DB is restored from the previous boot, which means they are ready when orchagent starts
+    //   In addition, bufferorch won't be notified removal of items on admin down ports during warm reboot
+    //   because buffermgrd hasn't been started yet.
+    //   Using APPL_DB means items of admin down ports won't be inserted into m_port_ready_list_ref
+    //   and guarantees the admin down ports always be ready in dynamic buffer model
+    //
     SWSS_LOG_ENTER();
 
-    Table pg_table(db, CFG_BUFFER_PG_TABLE_NAME);
-    initBufferReadyList(pg_table);
+    if (WarmStart::isWarmStart())
+    {
+        Table pg_table(applDb, APP_BUFFER_PG_TABLE_NAME);
+        initBufferReadyList(pg_table, false);
 
-    Table queue_table(db, CFG_BUFFER_QUEUE_TABLE_NAME);
-    initBufferReadyList(queue_table);
+        Table queue_table(applDb, APP_BUFFER_QUEUE_TABLE_NAME);
+        initBufferReadyList(queue_table, false);
+    }
+    else
+    {
+        Table pg_table(confDb, CFG_BUFFER_PG_TABLE_NAME);
+        initBufferReadyList(pg_table, true);
+
+        Table queue_table(confDb, CFG_BUFFER_QUEUE_TABLE_NAME);
+        initBufferReadyList(queue_table, true);
+    }
 }
 
-void BufferOrch::initBufferReadyList(Table& table)
+void BufferOrch::initBufferReadyList(Table& table, bool isConfigDb)
 {
     SWSS_LOG_ENTER();
 
     std::vector<std::string> keys;
     table.getKeys(keys);
 
+    const char dbKeyDelimiter = (isConfigDb ? config_db_key_delimiter : delimiter);
+
     // populate the lists with buffer configuration information
     for (const auto& key: keys)
     {
-        auto tokens = tokenize(key, config_db_key_delimiter);
+        auto &&tokens = tokenize(key, dbKeyDelimiter);
         if (tokens.size() != 2)
         {
             SWSS_LOG_ERROR("Wrong format of a table '%s' key '%s'. Skip it", table.getTableName().c_str(), key.c_str());
@@ -96,7 +127,7 @@ void BufferOrch::initBufferReadyList(Table& table)
         auto appldb_key = tokens[0] + delimiter + tokens[1];
         m_ready_list[appldb_key] = false;
 
-        auto port_names = tokenize(tokens[0], list_item_delimiter);
+        auto &&port_names = tokenize(tokens[0], list_item_delimiter);
 
         for(const auto& port_name: port_names)
         {
