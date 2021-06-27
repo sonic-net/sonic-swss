@@ -46,7 +46,7 @@ BufferOrch::BufferOrch(DBConnector *applDb, DBConnector *confDb, DBConnector *st
 {
     SWSS_LOG_ENTER();
     initTableHandlers();
-    initBufferReadyLists(confDb, applDb);
+    initBufferReadyLists(applDb, confDb);
     initFlexCounterGroupTable();
     initBufferConstants();
 };
@@ -64,26 +64,27 @@ void BufferOrch::initTableHandlers()
 
 void BufferOrch::initBufferReadyLists(DBConnector *applDb, DBConnector *confDb)
 {
-    // Map m_ready_list and m_port_ready_list_ref are designed to track whether the ports are "ready" from buffer's POV
-    // by testing whether all configured buffer PGs and queues have been applied to SAI. The idea is:
-    // - bufferorch read initial configuration and put them into m_port_ready_list_ref.
-    // - A buffer pg or queue item will be put into m_ready_list once it is applied to SAI.
-    // The rest of port initialization won't be started before the port being ready.
-    //
-    // However, the items won't be applied to admin down ports in dynamic buffer model, which means the admin down ports won't be "ready"
-    // The solution is:
-    // - buffermgr to notify bufferorch explicitly to remove the PG and queue items configured on admin down ports
-    // - bufferorch to add the items to m_ready_list on receiving notifications, which is an existing logic
-    //
-    // Theoretically, the initial configuration should come from CONFIG_DB but APPL_DB is used for warm reboot, because:
-    // - For cold/fast start, buffermgr is responsible for injecting items to APPL_DB
-    //   There is no guarantee that items in APPL_DB are ready when orchagent starts
-    // - For warm reboot, APPL_DB is restored from the previous boot, which means they are ready when orchagent starts
-    //   In addition, bufferorch won't be notified removal of items on admin down ports during warm reboot
-    //   because buffermgrd hasn't been started yet.
-    //   Using APPL_DB means items of admin down ports won't be inserted into m_port_ready_list_ref
-    //   and guarantees the admin down ports always be ready in dynamic buffer model
-    //
+    /*
+       Map m_ready_list and m_port_ready_list_ref are designed to track whether the ports are "ready" from buffer's POV
+       by testing whether all configured buffer PGs and queues have been applied to SAI. The idea is:
+       - bufferorch read initial configuration and put them into m_port_ready_list_ref.
+       - A buffer pg or queue item will be put into m_ready_list once it is applied to SAI.
+       The rest of port initialization won't be started before the port being ready.
+
+       However, the items won't be applied to admin down ports in dynamic buffer model, which means the admin down ports won't be "ready"
+       The solution is:
+       - buffermgr to notify bufferorch explicitly to remove the PG and queue items configured on admin down ports
+       - bufferorch to add the items to m_ready_list on receiving notifications, which is an existing logic
+
+       Theoretically, the initial configuration should come from CONFIG_DB but APPL_DB is used for warm reboot, because:
+       - For cold/fast start, buffermgr is responsible for injecting items to APPL_DB
+         There is no guarantee that items in APPL_DB are ready when orchagent starts
+       - For warm reboot, APPL_DB is restored from the previous boot, which means they are ready when orchagent starts
+         In addition, bufferorch won't be notified removal of items on admin down ports during warm reboot
+         because buffermgrd hasn't been started yet.
+         Using APPL_DB means items of admin down ports won't be inserted into m_port_ready_list_ref
+         and guarantees the admin down ports always be ready in dynamic buffer model
+    */
     SWSS_LOG_ENTER();
 
     if (WarmStart::isWarmStart())
