@@ -791,7 +791,7 @@ task_process_status Orch::handleSaiGetStatus(sai_api_t api, sai_status_t status,
             SWSS_LOG_ERROR("Encountered failure in get operation, SAI API: %s, status: %s",
                         sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
     }
-    return task_failed;
+    return task_need_retry;
 }
 
 bool Orch::parseHandleSaiStatusFailure(task_process_status status)
