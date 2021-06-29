@@ -1,4 +1,3 @@
-import pytest
 from swsscommon import swsscommon
 from dvslib.dvs_database import DVSDatabase
 import ast
