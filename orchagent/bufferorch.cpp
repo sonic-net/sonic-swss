@@ -448,14 +448,17 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
             return task_process_status::task_need_retry;
         }
 
-        sai_status = sai_buffer_api->remove_buffer_pool(sai_object);
-        if (SAI_STATUS_SUCCESS != sai_status)
+        if (SAI_NULL_OBJECT_ID != sai_object)
         {
-            SWSS_LOG_ERROR("Failed to remove buffer pool %s with type %s, rv:%d", object_name.c_str(), map_type_name.c_str(), sai_status);
-            task_process_status handle_status = handleSaiRemoveStatus(SAI_API_BUFFER, sai_status);
-            if (handle_status != task_process_status::task_success)
+            sai_status = sai_buffer_api->remove_buffer_pool(sai_object);
+            if (SAI_STATUS_SUCCESS != sai_status)
             {
-                return handle_status;
+                SWSS_LOG_ERROR("Failed to remove buffer pool %s with type %s, rv:%d", object_name.c_str(), map_type_name.c_str(), sai_status);
+                task_process_status handle_status = handleSaiRemoveStatus(SAI_API_BUFFER, sai_status);
+                if (handle_status != task_process_status::task_success)
+                {
+                    return handle_status;
+                }
             }
         }
         SWSS_LOG_NOTICE("Removed buffer pool %s with type %s", object_name.c_str(), map_type_name.c_str());
@@ -647,14 +650,17 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
             return task_process_status::task_need_retry;
         }
 
-        sai_status = sai_buffer_api->remove_buffer_profile(sai_object);
-        if (SAI_STATUS_SUCCESS != sai_status)
+        if (SAI_NULL_OBJECT_ID != sai_object)
         {
-            SWSS_LOG_ERROR("Failed to remove buffer profile %s with type %s, rv:%d", object_name.c_str(), map_type_name.c_str(), sai_status);
-            task_process_status handle_status = handleSaiRemoveStatus(SAI_API_BUFFER, sai_status);
-            if (handle_status != task_process_status::task_success)
+            sai_status = sai_buffer_api->remove_buffer_profile(sai_object);
+            if (SAI_STATUS_SUCCESS != sai_status)
             {
-                return handle_status;
+                SWSS_LOG_ERROR("Failed to remove buffer profile %s with type %s, rv:%d", object_name.c_str(), map_type_name.c_str(), sai_status);
+                task_process_status handle_status = handleSaiRemoveStatus(SAI_API_BUFFER, sai_status);
+                if (handle_status != task_process_status::task_success)
+                {
+                    return handle_status;
+                }
             }
         }
 
