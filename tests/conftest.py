@@ -36,7 +36,7 @@ NUM_PORTS = 32
 # FIXME: Voq asics will have 16 fabric ports created (defined in Azure/sonic-buildimage#6185).
 # Right now, we set FABRIC_NUM_PORTS to 0, and change to 16 when PR#6185 merges. PR#6185 can't
 # be merged before this PR. Otherwise it will cause swss voq test failures.
-FABRIC_NUM_PORTS = 0
+FABRIC_NUM_PORTS = 16
 
 def ensure_system(cmd):
     rc, output = subprocess.getstatusoutput(cmd)
