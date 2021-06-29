@@ -3819,7 +3819,6 @@ bool NatOrch::getNaptCounters(const NaptEntry::iterator &iter)
             SWSS_LOG_ERROR("Failed to get Counters for SNAPT entry for [proto %s, src-ip %s, src-port %d], bytes = %" PRIu64 ", pkts = %" PRIu64 "",
                            naptKey.prototype.c_str(), naptKey.ip_address.to_string().c_str(), naptKey.l4_port,
                            nat_entry_attr[0].value.u64, nat_entry_attr[1].value.u64);
-            handleSaiGetStatus(SAI_API_NAT, status);
         }
         else
         {
