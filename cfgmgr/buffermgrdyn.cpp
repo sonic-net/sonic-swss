@@ -29,6 +29,7 @@ using namespace swss;
 
 BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBConnector *applDb, const vector<TableConnector> &tables, shared_ptr<vector<KeyOpFieldsValuesTuple>> gearboxInfo = nullptr) :
         Orch(tables),
+        m_platform(),
         m_applDb(applDb),
         m_cfgPortTable(cfgDb, CFG_PORT_TABLE_NAME),
         m_cfgCableLenTable(cfgDb, CFG_PORT_CABLE_LEN_TABLE_NAME),
@@ -68,6 +69,8 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
     string headroomPluginName = "buffer_headroom_" + platform + ".lua";
     string bufferpoolPluginName = "buffer_pool_" + platform + ".lua";
     string checkHeadroomPluginName = "buffer_check_headroom_" + platform + ".lua";
+
+    m_platform = platform;
 
     try
     {
@@ -244,7 +247,7 @@ string BufferMgrDynamic::parseObjectNameFromReference(const string &reference)
     return parseObjectNameFromKey(objName, 1);
 }
 
-string BufferMgrDynamic::getDynamicProfileName(const string &speed, const string &cable, const string &mtu, const string &threshold, const string &gearbox_model)
+string BufferMgrDynamic::getDynamicProfileName(const string &speed, const string &cable, const string &mtu, const string &threshold, const string &gearbox_model, long lane_count)
 {
     string buffer_profile_key;
 
@@ -265,6 +268,24 @@ string BufferMgrDynamic::getDynamicProfileName(const string &speed, const string
     if (!gearbox_model.empty())
     {
         buffer_profile_key = buffer_profile_key + "_" + gearbox_model;
+    }
+
+    if (m_platform == "mellanox")
+    {
+        if ((speed != "400000") && (lane_count == 8))
+        {
+            // On Mellanox platform, ports with 8 lanes have different(double) xon value then other ports
+            // For ports at speed other than 400G can have
+            // - 8 lanes, double xon
+            // - other number of lanes, normal xon
+            // So they can not share the same buffer profiles.
+            // An extra "_8lane" is added to the name of buffer profiles to distinguish both scenarios
+            // Eg.
+            // - A 100G port with 8 lanes will use buffer profile "pg_profile_100000_5m_8lane_profile"
+            // - A 100G port with 4 lanes will use buffer profile "pg_profile_100000_5m_profile"
+            // Currently, 400G ports can only have 8 lanes. So we don't add this to the profile
+            buffer_profile_key = buffer_profile_key + "_8lane";
+        }
     }
 
     return buffer_profile_key + "_profile";
@@ -356,6 +377,7 @@ void BufferMgrDynamic::calculateHeadroomSize(buffer_profile_t &headroom)
     argv.emplace_back(headroom.cable_length);
     argv.emplace_back(headroom.port_mtu);
     argv.emplace_back(m_identifyGearboxDelay);
+    argv.emplace_back(to_string(headroom.lane_count));
 
     try
     {
@@ -642,7 +664,7 @@ void BufferMgrDynamic::updateBufferPgToDb(const string &key, const string &profi
 }
 
 // We have to check the headroom ahead of applying them
-task_process_status BufferMgrDynamic::allocateProfile(const string &speed, const string &cable_len, const string &mtu, const string &threshold, const string &gearbox_model, string &profile_name)
+task_process_status BufferMgrDynamic::allocateProfile(const string &speed, const string &cable_len, const string &mtu, const string &threshold, const string &gearbox_model, long lane_count, string &profile_name)
 {
     // Create record in BUFFER_PROFILE table
 
@@ -666,6 +688,7 @@ task_process_status BufferMgrDynamic::allocateProfile(const string &speed, const
         profile.cable_length = cable_len;
         profile.port_mtu = mtu;
         profile.gearbox_model = gearbox_model;
+        profile.lane_count = lane_count;
 
         // Call vendor-specific lua plugin to calculate the xon, xoff, xon_offset, size
         // Pay attention, the threshold can contain valid value
@@ -867,6 +890,7 @@ task_process_status BufferMgrDynamic::refreshPgsForPort(const string &port, cons
 {
     port_info_t &portInfo = m_portInfoLookup[port];
     string &gearbox_model = portInfo.gearbox_model;
+    long laneCount = portInfo.lane_count;
     bool isHeadroomUpdated = false;
     buffer_pg_lookup_t &portPgs = m_portPgLookup[port];
     set<string> profilesToBeReleased;
@@ -905,8 +929,8 @@ task_process_status BufferMgrDynamic::refreshPgsForPort(const string &port, cons
             {
                 threshold = m_defaultThreshold;
             }
-            newProfile = getDynamicProfileName(speed, cable_length, mtu, threshold, gearbox_model);
-            auto rc = allocateProfile(speed, cable_length, mtu, threshold, gearbox_model, newProfile);
+            newProfile = getDynamicProfileName(speed, cable_length, mtu, threshold, gearbox_model, laneCount);
+            auto rc = allocateProfile(speed, cable_length, mtu, threshold, gearbox_model, laneCount, newProfile);
             if (task_process_status::task_success != rc)
                 return rc;
 
@@ -1119,6 +1143,12 @@ task_process_status BufferMgrDynamic::doUpdatePgTask(const string &pg_key, const
 
     case PORT_ADMIN_DOWN:
         SWSS_LOG_NOTICE("Skip setting BUFFER_PG for %s because the port is administratively down", port.c_str());
+        if (!m_portInitDone)
+        {
+            // In case the port is admin down during initialization, the PG will be removed from the port,
+            // which effectively notifies bufferOrch to add the item to the m_ready_list
+            m_applBufferPgTable.del(pg_key);
+        }
         break;
 
     default:
@@ -1464,7 +1494,12 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
     {
         for (auto i : kfvFieldsValues(tuple))
         {
-            if (fvField(i) == "speed")
+            if (fvField(i) == "lanes")
+            {
+                auto &lanes = fvValue(i);
+                portInfo.lane_count = count(lanes.begin(), lanes.end(), ',') + 1;
+            }
+            else if (fvField(i) == "speed")
             {
                 if (fvValue(i) != portInfo.speed)
                 {
@@ -1978,9 +2013,19 @@ task_process_status BufferMgrDynamic::handleOneBufferPgEntry(const string &key, 
         }
         else
         {
-            SWSS_LOG_NOTICE("Inserting BUFFER_PG table entry %s into APPL_DB directly", key.c_str());
-            m_applBufferPgTable.set(key, fvVector);
-            bufferPg.running_profile_name = bufferPg.configured_profile_name;
+            port_info_t &portInfo = m_portInfoLookup[port];
+            if (PORT_ADMIN_DOWN != portInfo.state)
+            {
+                SWSS_LOG_NOTICE("Inserting BUFFER_PG table entry %s into APPL_DB directly", key.c_str());
+                m_applBufferPgTable.set(key, fvVector);
+                bufferPg.running_profile_name = bufferPg.configured_profile_name;
+            }
+            else if (!m_portInitDone)
+            {
+                // In case the port is admin down during initialization, the PG will be removed from the port,
+                // which effectively notifies bufferOrch to add the item to the m_ready_list
+                m_applBufferPgTable.del(key);
+            }
         }
 
         if (!bufferPg.configured_profile_name.empty())

@@ -228,9 +228,10 @@ public:
 class MuxCableOrch : public Orch2
 {
 public:
-    MuxCableOrch(DBConnector *db, const std::string& tableName);
+    MuxCableOrch(DBConnector *db, DBConnector *sdb, const std::string& tableName);
 
     void updateMuxState(string portName, string muxState);
+    void updateMuxMetricState(string portName, string muxState, bool start);
     void addTunnelRoute(const NextHopKey &nhKey);
     void removeTunnelRoute(const NextHopKey &nhKey);
 
@@ -240,6 +241,7 @@ private:
 
     unique_ptr<Table> mux_table_;
     MuxCableRequest request_;
+    swss::Table mux_metric_table_;
     ProducerStateTable app_tunnel_route_table_;
 };
 

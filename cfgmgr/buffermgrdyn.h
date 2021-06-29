@@ -53,6 +53,7 @@ typedef struct {
     std::string cable_length;
     std::string port_mtu;
     std::string gearbox_model;
+    long lane_count;
 
     // APPL_DB.BUFFER_PROFILE fields
     std::string name;
@@ -79,12 +80,12 @@ typedef struct {
 } buffer_pg_t;
 
 typedef enum {
+    // Port is admin down. All PGs programmed to APPL_DB should be removed from the port
+    PORT_ADMIN_DOWN,
     // Port is under initializing, which means its info hasn't been comprehensive for calculating headroom
     PORT_INITIALIZING,
     // All necessary information for calculating headroom is ready
-    PORT_READY,
-    // Port is admin down. All PGs programmed to APPL_DB should be removed from the port
-    PORT_ADMIN_DOWN
+    PORT_READY
 } port_state_t;
 
 typedef struct {
@@ -98,6 +99,8 @@ typedef struct {
     std::string effective_speed;
     std::string adv_speeds;
     std::string supported_speeds;
+
+    long lane_count;
 } port_info_t;
 
 //TODO:
@@ -132,6 +135,8 @@ private:
     typedef task_process_status (BufferMgrDynamic::*buffer_table_handler)(KeyOpFieldsValuesTuple &t);
     typedef std::map<std::string, buffer_table_handler> buffer_table_handler_map;
     typedef std::pair<std::string, buffer_table_handler> buffer_handler_pair;
+
+    std::string m_platform;
 
     buffer_table_handler_map m_bufferTableHandlerMap;
 
@@ -220,7 +225,7 @@ private:
     void transformReference(std::string &name);
     std::string parseObjectNameFromKey(const std::string &key, size_t pos/* = 1*/);
     std::string parseObjectNameFromReference(const std::string &reference);
-    std::string getDynamicProfileName(const std::string &speed, const std::string &cable, const std::string &mtu, const std::string &threshold, const std::string &gearbox_model);
+    std::string getDynamicProfileName(const std::string &speed, const std::string &cable, const std::string &mtu, const std::string &threshold, const std::string &gearbox_model, long lane_count);
     inline bool isNonZero(const std::string &value) const
     {
         return !value.empty() && value != "0";
@@ -237,7 +242,7 @@ private:
     void calculateHeadroomSize(buffer_profile_t &headroom);
     void checkSharedBufferPoolSize(bool force_update_during_initialization);
     void recalculateSharedBufferPool();
-    task_process_status allocateProfile(const std::string &speed, const std::string &cable, const std::string &mtu, const std::string &threshold, const std::string &gearbox_model, std::string &profile_name);
+    task_process_status allocateProfile(const std::string &speed, const std::string &cable, const std::string &mtu, const std::string &threshold, const std::string &gearbox_model, long lane_count, std::string &profile_name);
     void releaseProfile(const std::string &profile_name);
     bool isHeadroomResourceValid(const std::string &port, const buffer_profile_t &profile, const std::string &new_pg);
     void refreshSharedHeadroomPool(bool enable_state_updated_by_ratio, bool enable_state_updated_by_size);

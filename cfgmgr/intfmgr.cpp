@@ -19,6 +19,7 @@ using namespace swss;
 #define VNET_PREFIX         "Vnet"
 #define MTU_INHERITANCE     "0"
 #define VRF_PREFIX          "Vrf"
+#define VRF_MGMT            "mgmt"
 
 #define LOOPBACK_DEFAULT_MTU_STR "65536"
 
@@ -112,6 +113,33 @@ void IntfMgr::setIntfVrf(const string &alias, const string &vrfName)
     {
         SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
     }
+}
+
+bool IntfMgr::setIntfMpls(const string &alias, const string& mpls)
+{
+    stringstream cmd;
+    string res;
+
+    if (mpls == "enable")
+    {
+        cmd << "sysctl -w net.mpls.conf." << alias << ".input=1";
+    }
+    else if ((mpls == "disable") || mpls.empty())
+    {
+        cmd << "sysctl -w net.mpls.conf." << alias << ".input=0";
+    }
+    else
+    {
+        SWSS_LOG_ERROR("MPLS state is invalid: \"%s\"", mpls.c_str());
+        return false;
+    }
+    int ret = swss::exec(cmd.str(), res);
+    // Don't return error unless MPLS is explicitly set
+    if (ret && !mpls.empty())
+    {
+        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
+    }
+    return true;
 }
 
 void IntfMgr::addLoopbackIntf(const string &alias)
@@ -399,7 +427,8 @@ bool IntfMgr::isIntfStateOk(const string &alias)
             return true;
         }
     }
-    else if (!alias.compare(0, strlen(VRF_PREFIX), VRF_PREFIX))
+    else if ((!alias.compare(0, strlen(VRF_PREFIX), VRF_PREFIX)) ||
+            (alias == VRF_MGMT))
     {
         if (m_stateVrfTable.get(alias, temp))
         {
@@ -428,16 +457,15 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
 
     string alias(keys[0]);
     string vlanId;
-    string subIntfAlias;
+    string parentAlias;
     size_t found = alias.find(VLAN_SUB_INTERFACE_SEPARATOR);
     if (found != string::npos)
     {
         // This is a sub interface
-        // subIntfAlias holds the complete sub interface name
-        // while alias becomes the parent interface
-        subIntfAlias = alias;
+        // alias holds the complete sub interface name
+        // while parentAlias holds the parent port name
         vlanId = alias.substr(found + 1);
-        alias = alias.substr(0, found);
+        parentAlias = alias.substr(0, found);
     }
     bool is_lo = !alias.compare(0, strlen(LOOPBACK_PREFIX), LOOPBACK_PREFIX);
     string mac = "";
@@ -447,6 +475,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
     string nat_zone = "";
     string proxy_arp = "";
     string grat_arp = "";
+    string mpls = "";
 
     for (auto idx : data)
     {
@@ -473,6 +502,10 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         {
             grat_arp = value;
         }
+        else if (field == "mpls")
+        {
+            mpls = value;
+        }
 
         if (field == "nat_zone")
         {
@@ -482,7 +515,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
 
     if (op == SET_COMMAND)
     {
-        if (!isIntfStateOk(alias))
+        if (!isIntfStateOk(parentAlias.empty() ? alias : parentAlias))
         {
             SWSS_LOG_DEBUG("Interface is not ready, skipping %s", alias.c_str());
             return false;
@@ -518,6 +551,72 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
                 FieldValueTuple fvTuple("nat_zone", nat_zone);
                 data.push_back(fvTuple);
             }
+            /* Set mpls */
+            if (!setIntfMpls(alias, mpls))
+            {
+                SWSS_LOG_ERROR("Failed to set MPLS to \"%s\" for the \"%s\" interface", mpls.c_str(), alias.c_str());
+                return false;
+            }
+            if (!mpls.empty())
+            {
+                FieldValueTuple fvTuple("mpls", mpls);
+                data.push_back(fvTuple);
+            }
+        }
+
+        if (!parentAlias.empty())
+        {
+            if (m_subIntfList.find(alias) == m_subIntfList.end())
+            {
+                try
+                {
+                    addHostSubIntf(parentAlias, alias, vlanId);
+                }
+                catch (const std::runtime_error &e)
+                {
+                    SWSS_LOG_NOTICE("Sub interface ip link add failure. Runtime error: %s", e.what());
+                    return false;
+                }
+
+                m_subIntfList.insert(alias);
+            }
+
+            if (!mtu.empty())
+            {
+                try
+                {
+                    setHostSubIntfMtu(alias, mtu);
+                }
+                catch (const std::runtime_error &e)
+                {
+                    SWSS_LOG_NOTICE("Sub interface ip link set mtu failure. Runtime error: %s", e.what());
+                    return false;
+                }
+            }
+            else
+            {
+                FieldValueTuple fvTuple("mtu", MTU_INHERITANCE);
+                data.push_back(fvTuple);
+            }
+
+            if (adminStatus.empty())
+            {
+                adminStatus = "up";
+                FieldValueTuple fvTuple("admin_status", adminStatus);
+                data.push_back(fvTuple);
+            }
+            try
+            {
+                setHostSubIntfAdminStatus(alias, adminStatus);
+            }
+            catch (const std::runtime_error &e)
+            {
+                SWSS_LOG_NOTICE("Sub interface ip link set admin status %s failure. Runtime error: %s", adminStatus.c_str(), e.what());
+                return false;
+            }
+
+            // set STATE_DB port state
+            setSubIntfStateOk(alias);
         }
 
         if (!vrf_name.empty())
@@ -566,62 +665,8 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
             }
         }
 
-        if (!subIntfAlias.empty())
-        {
-            if (m_subIntfList.find(subIntfAlias) == m_subIntfList.end())
-            {
-                try
-                {
-                    addHostSubIntf(alias, subIntfAlias, vlanId);
-                }
-                catch (const std::runtime_error &e)
-                {
-                    SWSS_LOG_NOTICE("Sub interface ip link add failure. Runtime error: %s", e.what());
-                    return false;
-                }
-
-                m_subIntfList.insert(subIntfAlias);
-            }
-
-            if (!mtu.empty())
-            {
-                try
-                {
-                    setHostSubIntfMtu(subIntfAlias, mtu);
-                }
-                catch (const std::runtime_error &e)
-                {
-                    SWSS_LOG_NOTICE("Sub interface ip link set mtu failure. Runtime error: %s", e.what());
-                    return false;
-                }
-            }
-            else
-            {
-                FieldValueTuple fvTuple("mtu", MTU_INHERITANCE);
-                data.push_back(fvTuple);
-            }
-
-            if (adminStatus.empty())
-            {
-                adminStatus = "up";
-                FieldValueTuple fvTuple("admin_status", adminStatus);
-                data.push_back(fvTuple);
-            }
-            try
-            {
-                setHostSubIntfAdminStatus(subIntfAlias, adminStatus);
-            }
-            catch (const std::runtime_error &e)
-            {
-                SWSS_LOG_NOTICE("Sub interface ip link set admin status %s failure. Runtime error: %s", adminStatus.c_str(), e.what());
-                return false;
-            }
-
-            // set STATE_DB port state
-            setSubIntfStateOk(subIntfAlias);
-        }
-        m_appIntfTableProducer.set(subIntfAlias.empty() ? alias : subIntfAlias, data);
-        m_stateIntfTable.hset(subIntfAlias.empty() ? alias : subIntfAlias, "vrf", vrf_name);
+        m_appIntfTableProducer.set(alias, data);
+        m_stateIntfTable.hset(alias, "vrf", vrf_name);
     }
     else if (op == DEL_COMMAND)
     {
@@ -640,16 +685,16 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
             m_loopbackIntfList.erase(alias);
         }
 
-        if (!subIntfAlias.empty())
+        if (!parentAlias.empty())
         {
-            removeHostSubIntf(subIntfAlias);
-            m_subIntfList.erase(subIntfAlias);
+            removeHostSubIntf(alias);
+            m_subIntfList.erase(alias);
 
-            removeSubIntfState(subIntfAlias);
+            removeSubIntfState(alias);
         }
 
-        m_appIntfTableProducer.del(subIntfAlias.empty() ? alias : subIntfAlias);
-        m_stateIntfTable.del(subIntfAlias.empty() ? alias : subIntfAlias);
+        m_appIntfTableProducer.del(alias);
+        m_stateIntfTable.del(alias);
     }
     else
     {

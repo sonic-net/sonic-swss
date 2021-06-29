@@ -32,7 +32,9 @@ const request_description_t request_description = {
         { "ip_opt_action", REQ_T_PACKET_ACTION },
         { "l3_mc_action",  REQ_T_PACKET_ACTION },
         { "fallback",      REQ_T_BOOL },
-        { "vni",           REQ_T_UINT }
+        { "vni",           REQ_T_UINT },
+        { "mgmtVrfEnabled",       REQ_T_BOOL },
+        { "in_band_mgmt_enabled", REQ_T_BOOL }
     },
     { } // no mandatory attributes
 };

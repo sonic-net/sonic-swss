@@ -48,6 +48,8 @@ public:
     ~NeighOrch();
 
     bool hasNextHop(const NextHopKey&);
+    bool addNextHop(const NextHopKey&);
+    bool removeMplsNextHop(const NextHopKey&);
 
     sai_object_id_t getNextHopId(const NextHopKey&);
     sai_object_id_t getLocalNextHopId(const NextHopKey&);
@@ -87,7 +89,6 @@ private:
 
     std::set<NextHopKey> m_neighborToResolve;
 
-    bool addNextHop(const IpAddress&, const string&);
     bool removeNextHop(const IpAddress&, const string&);
 
     bool addNeighbor(const NeighborEntry&, const MacAddress&);

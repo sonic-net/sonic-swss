@@ -36,6 +36,7 @@ public:
 
     sai_object_id_t getRouterIntfsId(const string&);
     bool isPrefixSubnet(const IpPrefix&, const string&);
+    bool isInbandIntfInMgmtVrf(const string& alias);
     string getRouterIntfsAlias(const IpAddress &ip, const string &vrf_name = "");
     string getRifRateFlexCounterTableKey(string key);
     void increaseRouterIntfsRefCount(const string&);
@@ -45,6 +46,7 @@ public:
     bool setRouterIntfsMac(const Port &port);
     bool setRouterIntfsNatZoneId(Port &port);
     bool setRouterIntfsAdminStatus(const Port &port);
+    bool setRouterIntfsMpls(const Port &port);
 
     std::set<IpPrefix> getSubnetRoutes();
 

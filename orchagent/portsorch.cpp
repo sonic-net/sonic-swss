@@ -727,6 +727,8 @@ bool PortsOrch::getPortByBridgePortId(sai_object_id_t bridge_port_id, Port &port
 
 bool PortsOrch::addSubPort(Port &port, const string &alias, const bool &adminUp, const uint32_t &mtu)
 {
+    SWSS_LOG_ENTER();
+
     size_t found = alias.find(VLAN_SUB_INTERFACE_SEPARATOR);
     if (found == string::npos)
     {
@@ -804,15 +806,19 @@ bool PortsOrch::addSubPort(Port &port, const string &alias, const bool &adminUp,
         }
     }
 
-    parentPort.m_child_ports.insert(p.m_alias);
+    parentPort.m_child_ports.insert(alias);
+    increasePortRefCount(parentPort.m_alias);
 
     m_portList[alias] = p;
+    m_port_ref_count[alias] = 0;
     port = p;
     return true;
 }
 
 bool PortsOrch::removeSubPort(const string &alias)
 {
+    SWSS_LOG_ENTER();
+
     auto it = m_portList.find(alias);
     if (it == m_portList.end())
     {
@@ -827,6 +833,12 @@ bool PortsOrch::removeSubPort(const string &alias)
         return false;
     }
 
+    if (m_port_ref_count[alias] > 0)
+    {
+        SWSS_LOG_ERROR("Unable to remove sub interface %s: ref count %u", alias.c_str(), m_port_ref_count[alias]);
+        return false;
+    }
+
     Port parentPort;
     if (!getPort(port.m_parent_port_id, parentPort))
     {
@@ -836,6 +848,10 @@ bool PortsOrch::removeSubPort(const string &alias)
     if (!parentPort.m_child_ports.erase(alias))
     {
         SWSS_LOG_WARN("Sub interface %s not associated to parent port %s", alias.c_str(), parentPort.m_alias.c_str());
+    }
+    else
+    {
+        decreasePortRefCount(parentPort.m_alias);
     }
     m_portList[parentPort.m_alias] = parentPort;
 
@@ -967,6 +983,36 @@ bool PortsOrch::setPortMtu(sai_object_id_t id, sai_uint32_t mtu)
     SWSS_LOG_INFO("Set MTU %u to port pid:%" PRIx64, attr.value.u32, id);
     return true;
 }
+
+
+bool PortsOrch::setPortTpid(sai_object_id_t id, sai_uint16_t tpid)
+{
+    SWSS_LOG_ENTER();
+    sai_status_t status = SAI_STATUS_SUCCESS;
+    sai_attribute_t attr;
+
+    attr.id = SAI_PORT_ATTR_TPID;
+
+    attr.value.u16 = (uint16_t)tpid;
+
+    status = sai_port_api->set_port_attribute(id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set TPID 0x%x to port pid:%" PRIx64 ", rv:%d",
+                attr.value.u16, id, status);
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("Set TPID 0x%x to port pid:%" PRIx64, attr.value.u16, id);
+    }
+    return true;
+}
+
 
 bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t mode)
 {
@@ -1713,7 +1759,8 @@ void PortsOrch::getPortSupportedSpeeds(const std::string& alias, sai_object_id_t
 
 void PortsOrch::initPortSupportedSpeeds(const std::string& alias, sai_object_id_t port_id)
 {
-    if (!m_portSupportedSpeeds.count(port_id))
+    // If port supported speeds map already contains the information, save the SAI call
+    if (m_portSupportedSpeeds.count(port_id))
     {
         return;
     }
@@ -2184,9 +2231,14 @@ string PortsOrch::getPriorityGroupDropPacketsFlexCounterTableKey(string key)
     return string(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
 }
 
-bool PortsOrch::initPort(const string &alias, const int index, const set<int> &lane_set)
+bool PortsOrch::initPort(const string &alias, const string &role, const int index, const set<int> &lane_set)
 {
     SWSS_LOG_ENTER();
+
+    if (role == "Rec" || role == "Inb")
+    {
+        return doProcessRecircPort(alias, role, lane_set, SET_COMMAND);
+    }
 
     /* Determine if the lane combination exists in switch */
     if (m_portListLaneMap.find(lane_set) != m_portListLaneMap.end())
@@ -2444,12 +2496,15 @@ void PortsOrch::doPortTask(Consumer &consumer)
             string an_str;
             int an = -1;
             int index = -1;
+            string role;
             string adv_speeds_str;
             string interface_type_str;
             string adv_interface_types_str;
             vector<uint32_t> adv_speeds;
             sai_port_interface_type_t interface_type;
             vector<uint32_t> adv_interface_types;
+            string tpid_string;
+            uint16_t tpid = 0;
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -2480,6 +2535,15 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 else if (fvField(i) == "mtu")
                 {
                     mtu = (uint32_t)stoul(fvValue(i));
+                }
+                /* Set port TPID */
+                if (fvField(i) == "tpid")
+                {
+                    tpid_string = fvValue(i);
+                    // Need to get rid of the leading 0x
+                    tpid_string.erase(0,2);
+                    tpid = (uint16_t)stoi(tpid_string, 0, 16);
+                    SWSS_LOG_DEBUG("Handling TPID to 0x%x, string value:%s", tpid, tpid_string.c_str());
                 }
                 /* Set port speed */
                 else if (fvField(i) == "speed")
@@ -2590,12 +2654,18 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     getPortSerdesVal(fvValue(i), attr_val);
                     serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_TX_FIR_ATTN, attr_val));
                 }
+
+                /* Get port role */
+                if (fvField(i) == "role")
+                {
+                    role = fvValue(i);
+                }
             }
 
             /* Collect information about all received ports */
             if (lane_set.size())
             {
-                m_lanesAliasSpeedMap[lane_set] = make_tuple(alias, speed, an, fec_mode, index);
+                m_lanesAliasSpeedMap[lane_set] = make_tuple(alias, speed, an, fec_mode, index, role);
             }
 
             // TODO:
@@ -2637,7 +2707,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         }
                     }
 
-                    if (!initPort(get<0>(it->second), get<4>(it->second), it->first))
+                    if (!initPort(get<0>(it->second), get<5>(it->second), get<4>(it->second), it->first))
                     {
                         throw runtime_error("PortsOrch initialization failure.");
                     }
@@ -2681,6 +2751,15 @@ void PortsOrch::doPortTask(Consumer &consumer)
             }
             else
             {
+                /* Skip configuring recirc port for now because the current SAI implementation of some vendors
+                 * have limiited support for recirc port. This check can be removed once SAI implementation
+                 * is enhanced/changed in the future.
+                 */
+                if (m_recircPortRole.find(alias) != m_recircPortRole.end())
+                {
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
 
                 if (!an_str.empty())
                 {
@@ -2913,6 +2992,22 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                 }
 
+                if (tpid != 0 && tpid != p.m_tpid)
+                {
+                    SWSS_LOG_DEBUG("Set port %s TPID to 0x%x", alias.c_str(), tpid);
+                    if (setPortTpid(p.m_port_id, tpid))
+                    {
+                        p.m_tpid = tpid;
+                        m_portList[alias] = p;
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed to set port %s TPID to 0x%x", alias.c_str(), tpid);
+                        it++;
+                        continue;
+                    }
+                }
+
                 if (!fec_mode.empty())
                 {
                     if (fec_mode_map.find(fec_mode) != fec_mode_map.end())
@@ -3046,6 +3141,13 @@ void PortsOrch::doPortTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
+            if (m_port_ref_count[alias] > 0)
+            {
+                SWSS_LOG_WARN("Unable to remove port %s: ref count %u", alias.c_str(), m_port_ref_count[alias]);
+                it++;
+                continue;
+            }
+
             SWSS_LOG_NOTICE("Deleting Port %s", alias.c_str());
             auto port_id = m_portList[alias].m_port_id;
             auto hif_id = m_portList[alias].m_hif_id;
@@ -3365,6 +3467,8 @@ void PortsOrch::doLagTask(Consumer &consumer)
             string operation_status;
             uint32_t lag_id = 0;
             int32_t switch_id = -1;
+            string tpid_string;
+            uint16_t tpid = 0;
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -3394,6 +3498,14 @@ void PortsOrch::doLagTask(Consumer &consumer)
                 {
                     switch_id = stoi(fvValue(i));
                 }
+                else if (fvField(i) == "tpid")
+                {
+                    tpid_string = fvValue(i);
+                    // Need to get rid of the leading 0x
+                    tpid_string.erase(0,2);
+                    tpid = (uint16_t)stoi(tpid_string, 0, 16);
+                    SWSS_LOG_DEBUG("reading TPID string:%s to uint16: 0x%x", tpid_string.c_str(), tpid);
+                 }
             }
 
             if (table_name == CHASSIS_APP_LAG_TABLE_NAME)
@@ -3448,6 +3560,23 @@ void PortsOrch::doLagTask(Consumer &consumer)
                     }
                     // Sub interfaces inherit parent LAG mtu
                     updateChildPortsMtu(l, mtu);
+                }
+
+                if (tpid != 0)
+                {
+                    if (tpid != l.m_tpid)
+                    {
+                        if(!setLagTpid(l.m_lag_id, tpid))
+                        {
+                            SWSS_LOG_ERROR("Failed to set LAG %s TPID 0x%x", alias.c_str(), tpid);
+                        }
+                        else
+                        {
+                            SWSS_LOG_DEBUG("Set LAG %s TPID to 0x%x", alias.c_str(), tpid);
+                            l.m_tpid = tpid;
+                            m_portList[alias] = l;
+                        }
+                    }
                 }
 
                 if (!learn_mode.empty() && (l.m_learn_mode != learn_mode))
@@ -4173,6 +4302,7 @@ bool PortsOrch::addVlan(string vlan_alias)
 bool PortsOrch::removeVlan(Port vlan)
 {
     SWSS_LOG_ENTER();
+
     if (m_port_ref_count[vlan.m_alias] > 0)
     {
         SWSS_LOG_ERROR("Failed to remove ref count %d VLAN %s",
@@ -4654,6 +4784,35 @@ bool PortsOrch::removeLagMember(Port &lag, Port &port)
 
     return true;
 }
+
+bool PortsOrch::setLagTpid(sai_object_id_t id, sai_uint16_t tpid)
+{
+    SWSS_LOG_ENTER();
+    sai_status_t status = SAI_STATUS_SUCCESS;
+    sai_attribute_t attr;
+
+    attr.id = SAI_LAG_ATTR_TPID;
+
+    attr.value.u16 = (uint16_t)tpid;
+
+    status = sai_lag_api->set_lag_attribute(id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set TPID 0x%x to LAG pid:%" PRIx64 ", rv:%d",
+                attr.value.u16, id, status);
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_LAG, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("Set TPID 0x%x to LAG pid:%" PRIx64 , attr.value.u16, id);
+    }
+    return true;
+}
+
 
 bool PortsOrch::setCollectionOnLagMember(Port &lagMember, bool enableCollection)
 {
@@ -5491,6 +5650,9 @@ bool PortsOrch::initGearboxPort(Port &port)
 
             sai_deserialize_object_id(phyOidStr, phyOid);
 
+            SWSS_LOG_NOTICE("BOX: Gearbox port %s assigned phyOid 0x%" PRIx64, port.m_alias.c_str(), phyOid);
+            port.m_switch_id = phyOid;
+
             /* Create SYSTEM-SIDE port */
             attrs.clear();
 
@@ -5656,6 +5818,7 @@ bool PortsOrch::initGearboxPort(Port &port)
 
             SWSS_LOG_NOTICE("BOX: Connected Gearbox ports; system-side:0x%" PRIx64 " to line-side:0x%" PRIx64, systemPort, linePort);
             m_gearboxPortListLaneMap[port.m_port_id] = make_tuple(systemPort, linePort);
+            port.m_line_side_id = linePort;
         }
     }
 
@@ -5730,6 +5893,93 @@ bool PortsOrch::getSystemPorts()
     }
 
     return true;
+}
+
+bool PortsOrch::getRecircPort(Port &port, string role)
+{
+    for (auto it = m_recircPortRole.begin(); it != m_recircPortRole.end(); it++)
+    {
+        if (it->second == role)
+        {
+            return getPort(it->first, port);
+        }
+    }
+    SWSS_LOG_ERROR("Failed to find recirc port with role %s", role.c_str());
+    return false;
+}
+
+bool PortsOrch::doProcessRecircPort(string alias, string role, set<int> lane_set, string op)
+{
+    SWSS_LOG_ENTER();
+
+    if (op == SET_COMMAND)
+    {
+        if (m_recircPortRole.find(alias) != m_recircPortRole.end())
+        {
+            SWSS_LOG_DEBUG("Recirc port %s already added", alias.c_str());
+            return true;
+        }
+
+        /* Find pid of recirc port */ 
+        sai_object_id_t port_id = SAI_NULL_OBJECT_ID;
+        if (m_portListLaneMap.find(lane_set) != m_portListLaneMap.end())
+        {
+            port_id = m_portListLaneMap[lane_set];
+        }
+
+        if (port_id == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_ERROR("Failed to find port id for recirc port %s", alias.c_str());
+            return false;
+        }
+
+        Port p(alias, Port::PHY);
+        p.m_port_id = port_id;
+        p.m_init = true;
+        m_recircPortRole[alias] = role;
+        setPort(alias, p);
+
+        string lane_str = "";
+        for (auto lane : lane_set)
+        {
+            lane_str += to_string(lane) + " ";
+        }
+        SWSS_LOG_NOTICE("Added recirc port %s, pid:%" PRIx64 " lanes:%s",
+                        alias.c_str(), port_id, lane_str.c_str());
+
+        /* Create host intf for recirc port */
+        if(addHostIntfs(p, p.m_alias, p.m_hif_id))
+        {
+            SWSS_LOG_NOTICE("Created host intf for recycle port %s", p.m_alias.c_str());
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to Create host intf for recirc port %s", p.m_alias.c_str());
+        }
+
+        if(setHostIntfsOperStatus(p, true))
+        {
+            SWSS_LOG_NOTICE("Set host intf oper status UP for recirc port %s", p.m_alias.c_str());
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to set host intf oper status for recirc port %s", p.m_alias.c_str());
+        }
+
+        PortUpdate update = { p, true };
+        notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
+        return true;
+    }
+    else if (op == DEL_COMMAND)
+    {
+        SWSS_LOG_ERROR("Delete recirc port is not supported.");
+        return false;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
+        return false;
+    }
 }
 
 bool PortsOrch::addSystemPorts()

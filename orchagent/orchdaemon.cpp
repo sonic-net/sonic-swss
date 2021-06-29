@@ -43,6 +43,9 @@ MACsecOrch *gMacsecOrch;
 
 bool gIsNatSupported = false;
 
+#define DEFAULT_MAX_BULK_SIZE 1000
+size_t gMaxBulkSize = DEFAULT_MAX_BULK_SIZE;
+
 OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb, DBConnector *chassisAppDb) :
         m_applDb(applDb),
         m_configDb(configDb),
@@ -149,7 +152,13 @@ bool OrchDaemon::init()
 
     gFgNhgOrch = new FgNhgOrch(m_configDb, m_applDb, m_stateDb, fgnhg_tables, gNeighOrch, gIntfsOrch, vrf_orch);
     gDirectory.set(gFgNhgOrch);
-    gRouteOrch = new RouteOrch(m_applDb, APP_ROUTE_TABLE_NAME, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch);
+
+    const int routeorch_pri = 5;
+    vector<table_name_with_pri_t> route_tables = {
+        { APP_ROUTE_TABLE_NAME,        routeorch_pri },
+        { APP_LABEL_ROUTE_TABLE_NAME,  routeorch_pri }
+    };
+    gRouteOrch = new RouteOrch(m_applDb, route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch);
 
     CoppOrch  *copp_orch  = new CoppOrch(m_applDb, APP_COPP_TABLE_NAME);
     TunnelDecapOrch *tunnel_decap_orch = new TunnelDecapOrch(m_applDb, APP_TUNNEL_DECAP_TABLE_NAME);
@@ -259,7 +268,7 @@ bool OrchDaemon::init()
     MuxOrch *mux_orch = new MuxOrch(m_configDb, mux_tables, tunnel_decap_orch, gNeighOrch, gFdbOrch);
     gDirectory.set(mux_orch);
 
-    MuxCableOrch *mux_cb_orch = new MuxCableOrch(m_applDb, APP_MUX_CABLE_TABLE_NAME);
+    MuxCableOrch *mux_cb_orch = new MuxCableOrch(m_applDb, m_stateDb, APP_MUX_CABLE_TABLE_NAME);
     gDirectory.set(mux_cb_orch);
 
     MuxStateOrch *mux_st_orch = new MuxStateOrch(m_stateDb, STATE_HW_MUX_CABLE_TABLE_NAME);

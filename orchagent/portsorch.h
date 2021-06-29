@@ -147,6 +147,8 @@ public:
     bool isInbandPort(const string &alias);
     bool setVoqInbandIntf(string &alias, string &type);
 
+    bool getRecircPort(Port &p, string role);
+
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_counterLagTable;
@@ -209,7 +211,7 @@ private:
     port_config_state_t m_portConfigState = PORT_CONFIG_MISSING;
     sai_uint32_t m_portCount;
     map<set<int>, sai_object_id_t> m_portListLaneMap;
-    map<set<int>, tuple<string, uint32_t, int, string, int>> m_lanesAliasSpeedMap;
+    map<set<int>, tuple<string, uint32_t, int, string, int, string>> m_lanesAliasSpeedMap;
     map<string, Port> m_portList;
     unordered_map<sai_object_id_t, int> m_portOidToIndex;
     map<string, uint32_t> m_port_ref_count;
@@ -247,6 +249,7 @@ private:
 
     bool addLag(string lag, uint32_t spa_id, int32_t switch_id);
     bool removeLag(Port lag);
+    bool setLagTpid(sai_object_id_t id, sai_uint16_t tpid);
     bool addLagMember(Port &lag, Port &port, bool enableForwarding);
     bool removeLagMember(Port &lag, Port &port);
     bool setCollectionOnLagMember(Port &lagMember, bool enableCollection);
@@ -254,12 +257,13 @@ private:
 
     bool addPort(const set<int> &lane_set, uint32_t speed, int an=0, string fec="");
     sai_status_t removePort(sai_object_id_t port_id);
-    bool initPort(const string &alias, const int index, const set<int> &lane_set);
+    bool initPort(const string &alias, const string &role, const int index, const set<int> &lane_set);
     void deInitPort(string alias, sai_object_id_t port_id);
 
     bool setPortAdminStatus(Port &port, bool up);
     bool getPortAdminStatus(sai_object_id_t id, bool& up);
     bool setPortMtu(sai_object_id_t id, sai_uint32_t mtu);
+    bool setPortTpid(sai_object_id_t id, sai_uint16_t tpid);
     bool setPortPvid (Port &port, sai_uint32_t pvid);
     bool getPortPvid(Port &port, sai_uint32_t &pvid);
     bool setPortFec(Port &port, sai_port_fec_mode_t mode);
@@ -313,8 +317,9 @@ private:
     void initGearbox();
     bool initGearboxPort(Port &port);
 
-    
-    
+    map<string, string> m_recircPortRole;
+    bool doProcessRecircPort(string alias, string role, set<int> laneSet, string op);
+
     //map key is tuple of <attached_switch_id, core_index, core_port_index>
     map<tuple<int, int, int>, sai_object_id_t> m_systemPortOidMap;
     sai_uint32_t m_systemPortCount;

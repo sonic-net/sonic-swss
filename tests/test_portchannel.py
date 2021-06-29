@@ -1,7 +1,6 @@
 import time
 import re
 import json
-import pytest
 import itertools
 
 from swsscommon import swsscommon
@@ -214,7 +213,6 @@ class TestPortchannel(object):
         assert len(intf_entries) == 1
         assert intf_entries[0] == "40.0.0.6/31"
 
-
         # set oper_status for PortChannels
         ps = swsscommon.ProducerStateTable(self.pdb, "LAG_TABLE")
         fvs = swsscommon.FieldValuePairs([("admin_status", "up"),("mtu", "9100"),("oper_status", "up")])
@@ -234,8 +232,8 @@ class TestPortchannel(object):
         time.sleep(1)
 
         ps = swsscommon.ProducerStateTable(self.pdb, "ROUTE_TABLE")
-        fvs = swsscommon.FieldValuePairs([("nexthop","40.0.0.1,40.0.0.3,40.0.0.5,40.0.0.7"), ("ifname", "PortChannel001,PortChannel002,PortChannel003,PortChannel004")])
-
+        fvs = swsscommon.FieldValuePairs([("nexthop","40.0.0.1,40.0.0.3,40.0.0.5,40.0.0.7"),
+                                          ("ifname", "PortChannel001,PortChannel002,PortChannel003,PortChannel004")])
         ps.set("2.2.2.0/24", fvs)
         time.sleep(1)
 
@@ -284,6 +282,11 @@ class TestPortchannel(object):
         keys = nhg_member_tbl.getKeys()
         assert len(keys) == 3
 
+        # remove route entry
+        ps = swsscommon.ProducerStateTable(self.pdb, "ROUTE_TABLE")
+        ps._del("2.2.2.0/24")
+        time.sleep(1)
+
         # remove IP address
         tbl = swsscommon.Table(self.cdb, "PORTCHANNEL_INTERFACE")
         tbl._del("PortChannel001|40.0.0.0/31")
@@ -309,6 +312,19 @@ class TestPortchannel(object):
         intf_entries = tbl.getKeys()
         assert len(intf_entries) == 0
 
+        # remove router interfaces
+        tbl = swsscommon.Table(self.cdb, "PORTCHANNEL_INTERFACE")
+        tbl._del("PortChannel001")
+        tbl._del("PortChannel002")
+        tbl._del("PortChannel003")
+        tbl._del("PortChannel004")
+        time.sleep(1)
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
+
         # remove PortChannel members
         tbl = swsscommon.Table(self.cdb, "PORTCHANNEL_MEMBER")
         tbl._del("PortChannel001|Ethernet0")
@@ -327,6 +343,43 @@ class TestPortchannel(object):
 
         # Restore eth0 up
         dvs.servers[0].runcmd("ip link set up dev eth0")
+        time.sleep(1)
+
+    def test_Portchannel_tpid(self, dvs, testlog):
+        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+
+        # Create PortChannel
+        tbl = swsscommon.Table(cdb, "PORTCHANNEL")
+        fvs = swsscommon.FieldValuePairs([("admin_status", "up"),("mtu", "9100"),("tpid", "0x9200")])
+
+        tbl.set("PortChannel002", fvs)
+        time.sleep(1)
+
+        # set oper_status for PortChannels
+        ps = swsscommon.ProducerStateTable(pdb, "LAG_TABLE")
+        fvs = swsscommon.FieldValuePairs([("admin_status", "up"),("mtu", "9100"),("tpid", "0x9200"),("oper_status", "up")])
+        ps.set("PortChannel002", fvs)
+        time.sleep(1)
+
+        # Check ASIC DB
+        # get TPID and validate it to be 0x9200 (37376)
+        atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_LAG")
+        lag = atbl.getKeys()[0]
+        (status, fvs) = atbl.get(lag)
+        assert status == True
+        asic_tpid = "0"
+
+        for fv in fvs:
+            if fv[0] == "SAI_LAG_ATTR_TPID":
+                asic_tpid = fv[1]
+
+        assert asic_tpid == "37376"
+
+        # remove port channel
+        tbl = swsscommon.Table(cdb, "PORTCHANNEL")
+        tbl._del("PortChannel0002")
         time.sleep(1)
 
 
