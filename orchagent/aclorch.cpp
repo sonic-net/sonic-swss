@@ -2380,11 +2380,7 @@ void AclOrch::queryAclActionCapability()
                 SWSS_LOG_WARN("Failed to query ACL %s action capabilities - "
                         "API assumed to be not implemented, using defaults",
                         stage_str);
-                task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
-                if (handle_status != task_process_status::task_success)
-                {
-                    initDefaultAclActionCapabilities(stage);
-                }
+                initDefaultAclActionCapabilities(stage);
             }
 
             // put capabilities in state DB
@@ -2396,14 +2392,10 @@ void AclOrch::queryAclActionCapability()
         SWSS_LOG_WARN("Failed to query maximum ACL action count - "
                 "API assumed to be not implemented, using defaults capabilities for both %s and %s",
                 STAGE_INGRESS, STAGE_EGRESS);
-        task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
-        if (handle_status != task_process_status::task_success)
+        for (auto stage: {ACL_STAGE_INGRESS, ACL_STAGE_EGRESS})
         {
-            for (auto stage: {ACL_STAGE_INGRESS, ACL_STAGE_EGRESS})
-            {
-                initDefaultAclActionCapabilities(stage);
-                putAclActionCapabilityInDB(stage);
-            }
+            initDefaultAclActionCapabilities(stage);
+            putAclActionCapabilityInDB(stage);
         }
     }
 

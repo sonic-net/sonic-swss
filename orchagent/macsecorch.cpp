@@ -866,7 +866,7 @@ bool MACsecOrch::initMACsecObject(sai_object_id_t switch_id)
         task_process_status handle_status = handleSaiGetStatus(SAI_API_MACSEC, status);
         if (handle_status != task_process_status::task_success)
         {
-            return parseHandleSaiStatusFailure(handle_status);
+            return false;
         }
     }
     macsec_obj.first->second.m_sci_in_ingress_macsec_acl = attrs.front().value.booldata;

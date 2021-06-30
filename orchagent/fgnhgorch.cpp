@@ -301,7 +301,7 @@ bool FgNhgOrch::createFineGrainedNextHopGroup(FGNextHopGroupEntry &syncd_fg_rout
                 {
                     SWSS_LOG_ERROR("Failed to clean-up after next hop group real_size query failure");
                 }
-                return parseHandleSaiStatusFailure(handle_status);
+                return false;
             }
         }
         fgNhgEntry->real_bucket_size = nhg_attr.value.u32;

@@ -4299,22 +4299,6 @@ bool NatOrch::checkIfNatEntryIsActive(const NatEntry::iterator &iter, time_t now
                     return 1;
                 }
             }
-            else
-            {
-                task_process_status handle_status = handleSaiGetStatus(SAI_API_NAT, status);
-                if (handle_status != task_process_status::task_success)
-                {
-                    return parseHandleSaiStatusFailure(handle_status);
-                }
-            }
-        }
-    }
-    else
-    {
-        task_process_status handle_status = handleSaiGetStatus(SAI_API_NAT, status);
-        if (handle_status != task_process_status::task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
         }
     }
     return 0;
@@ -4429,22 +4413,6 @@ bool NatOrch::checkIfNaptEntryIsActive(const NaptEntry::iterator &iter, time_t n
                     return 1;
                 }
             }
-            else
-            {
-                task_process_status handle_status = handleSaiGetStatus(SAI_API_NAT, status);
-                if (handle_status != task_process_status::task_success)
-                {
-                    return parseHandleSaiStatusFailure(handle_status);
-                }
-            }
-        }
-    }
-    else
-    {
-        task_process_status handle_status = handleSaiGetStatus(SAI_API_NAT, status);
-        if (handle_status != task_process_status::task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
         }
     }
     return 0;
@@ -4576,7 +4544,7 @@ bool NatOrch::checkIfTwiceNaptEntryIsActive(const TwiceNaptEntry::iterator &iter
         task_process_status handle_status = handleSaiGetStatus(SAI_API_NAT, status);
         if (handle_status != task_process_status::task_success)
         {
-            return parseHandleSaiStatusFailure(handle_status);
+            return 1;
         }
     }
     return 0;

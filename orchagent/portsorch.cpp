@@ -987,7 +987,7 @@ bool PortsOrch::getPortAdminStatus(sai_object_id_t id, bool &up)
         task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, status);
         if (handle_status != task_process_status::task_success)
         {
-            return parseHandleSaiStatusFailure(handle_status);
+            return false;
         }
     }
 
@@ -1970,11 +1970,11 @@ bool PortsOrch::getPortSpeed(sai_object_id_t id, sai_uint32_t &speed)
         task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, status);
         if (handle_status != task_process_status::task_success)
         {
-            return parseHandleSaiStatusFailure(handle_status);
+            return false;
         }
     }
 
-    return status == SAI_STATUS_SUCCESS;
+    return true;
 }
 
 bool PortsOrch::setPortAdvSpeeds(sai_object_id_t port_id, std::vector<sai_uint32_t>& speed_list)
@@ -2044,7 +2044,7 @@ bool PortsOrch::getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uin
         task_process_status handle_status = handleSaiGetStatus(SAI_API_QUEUE, status);
         if (handle_status != task_process_status::task_success)
         {
-            return parseHandleSaiStatusFailure(handle_status);
+            return false;
         }
     }
 
@@ -5483,7 +5483,7 @@ bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id,
         task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, status);
         if (handle_status != task_process_status::task_success)
         {
-            return parseHandleSaiStatusFailure(handle_status);
+            return false;
         }
     }
 
@@ -5497,7 +5497,7 @@ bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id,
             task_process_status handle_status = handleSaiRemoveStatus(SAI_API_PORT, status);
             if (handle_status != task_success)
             {
-                return parseHandleSaiStatusFailure(handle_status);
+                return false;
             }
         }
     }
@@ -5526,7 +5526,7 @@ bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id,
         task_process_status handle_status = handleSaiCreateStatus(SAI_API_PORT, status);
         if (handle_status != task_success)
         {
-            return parseHandleSaiStatusFailure(handle_status);
+            return false;
         }
     }
     SWSS_LOG_NOTICE("Created port serdes object 0x%" PRIx64 " for port 0x%" PRIx64, port_serdes_id, port_id);
@@ -5981,7 +5981,7 @@ bool PortsOrch::getSystemPorts()
             task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
             if (handle_status != task_process_status::task_success)
             {
-                return parseHandleSaiStatusFailure(handle_status);
+                return false;
             }
         }
 
@@ -5997,7 +5997,7 @@ bool PortsOrch::getSystemPorts()
                 task_process_status handle_status = handleSaiGetStatus(SAI_API_SYSTEM_PORT, status);
                 if (handle_status != task_process_status::task_success)
                 {
-                    return parseHandleSaiStatusFailure(handle_status);
+                    return false;
                 }
             }
 

@@ -506,7 +506,7 @@ bool FdbOrch::getPort(const MacAddress& mac, uint16_t vlan, Port& port)
         task_process_status handle_status = handleSaiGetStatus(SAI_API_FDB, status);
         if (handle_status != task_process_status::task_success)
         {
-            return parseHandleSaiStatusFailure(handle_status);
+            return false;
         }
     }
 
