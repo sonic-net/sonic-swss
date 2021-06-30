@@ -5497,7 +5497,7 @@ bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id,
             task_process_status handle_status = handleSaiRemoveStatus(SAI_API_PORT, status);
             if (handle_status != task_success)
             {
-                return false;
+                return parseHandleSaiStatusFailure(handle_status);
             }
         }
     }
@@ -5526,7 +5526,7 @@ bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id,
         task_process_status handle_status = handleSaiCreateStatus(SAI_API_PORT, status);
         if (handle_status != task_success)
         {
-            return false;
+            return parseHandleSaiStatusFailure(handle_status);
         }
     }
     SWSS_LOG_NOTICE("Created port serdes object 0x%" PRIx64 " for port 0x%" PRIx64, port_serdes_id, port_id);

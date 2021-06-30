@@ -4469,14 +4469,6 @@ bool NatOrch::checkIfTwiceNatEntryIsActive(const TwiceNatEntry::iterator &iter, 
             return 1;
         }
     }
-    else
-    {
-        task_process_status handle_status = handleSaiGetStatus(SAI_API_NAT, status);
-        if (handle_status != task_process_status::task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
-    }
     return 0;
 }
 
@@ -4536,14 +4528,6 @@ bool NatOrch::checkIfTwiceNaptEntryIsActive(const TwiceNaptEntry::iterator &iter
         if (nat_entry_attr[0].value.booldata)
         {
             entry.ageOutTime = now + ((protoType == IPPROTO_TCP) ? tcp_timeout : udp_timeout);
-            return 1;
-        }
-    }
-    else
-    {
-        task_process_status handle_status = handleSaiGetStatus(SAI_API_NAT, status);
-        if (handle_status != task_process_status::task_success)
-        {
             return 1;
         }
     }
