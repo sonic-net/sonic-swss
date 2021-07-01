@@ -5087,6 +5087,7 @@ void PortsOrch::generatePortCounterMap()
     auto port_counter_stats = generateCounterStats(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP);
     for (const auto& it: m_portList)
     {
+        // Set counter stats only for PHY ports to ensure syncd will not try to query the counter statistics from the HW for non-PHY ports.
         if (it.second.m_type != Port::Type::PHY)
         {
             continue;
@@ -5107,6 +5108,7 @@ void PortsOrch::generatePortBufferDropCounterMap()
     auto port_buffer_drop_stats = generateCounterStats(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP);
     for (const auto& it: m_portList)
     {
+        // Set counter stats only for PHY ports to ensure syncd will not try to query the counter statistics from the HW for non-PHY ports.
         if (it.second.m_type != Port::Type::PHY)
         {
             continue;
