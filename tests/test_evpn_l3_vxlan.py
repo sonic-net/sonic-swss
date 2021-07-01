@@ -165,12 +165,14 @@ def create_vrf_routes_ecmp(dvs, prefix, vrf_name, ecmp_nexthop_attributes):
 
     time.sleep(2)
 
-def create_vlan(dvs, vlan_name, vlan_ids):
+def create_vlan(dvs, vlan_name):
     asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
     vlan_id = vlan_name[4:]
-    
+    tbl =  swsscommon.Table(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+    vlan_ids = set(tbl.getKeys())
+
     # create vlan
     create_entry_tbl(
         conf_db,
@@ -1101,8 +1103,7 @@ class TestL3Vxlan(object):
 
         print ("\n\nTesting Create and Delete DIP Tunnel on adding and removing prefix route")
         print ("\tCreate SIP Tunnel")
-        vlan_ids = get_exist_entries(dvs, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
-        vlan_oid = create_vlan(dvs,"Vlan100", vlan_ids)
+        vlan_oid = create_vlan(dvs,"Vlan100")
         create_vxlan_tunnel(dvs, tunnel_name, '6.6.6.6')
         create_evpn_nvo(dvs, 'nvo1', tunnel_name)
 
