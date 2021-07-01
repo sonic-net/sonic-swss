@@ -5,7 +5,6 @@ import random
 import pytest
 from pprint import pprint
 
-@pytest.mark.usefixtures('dvs_vlan_manager')
 
 def create_entry(tbl, key, pairs):
     fvs = swsscommon.FieldValuePairs(pairs)
@@ -195,9 +194,13 @@ def create_vlan(dvs, vlan_name, vlan_ids):
 
 def remove_vlan(dvs, vlan):
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
     tbl = swsscommon.Table(conf_db, "VLAN")
     tbl._del("Vlan" + vlan)
-    time.sleep(1)
+    time.sleep(2)
+    vlan_tbl = swsscommon.Table(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+    entries = set(vlan_tbl.getKeys())
+    assert len(entries) == 1
 
 def create_vlan_member(dvs, vlan, interface, tagging_mode="untagged"):
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
@@ -1081,8 +1084,7 @@ class TestL3Vxlan(object):
         remove_vxlan_tunnel(dvs, tunnel_name)
         remove_evpn_nvo(dvs, 'nvo1')
         vxlan_obj.check_vxlan_sip_tunnel_delete(dvs, tunnel_name)
-        self.dvs_vlan.remove_vlan("100")
-        self.dvs_vlan.get_and_verify_vlan_ids(0)
+        remove_vlan(dvs, "100")
 
 
 #    Test 2 - Create and Delete DIP Tunnel on adding and removing prefix route
