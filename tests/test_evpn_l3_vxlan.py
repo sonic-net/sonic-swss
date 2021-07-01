@@ -194,9 +194,14 @@ def create_vlan(dvs, vlan_name, vlan_ids):
 
 def remove_vlan(dvs, vlan):
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
     tbl = swsscommon.Table(conf_db, "VLAN")
     tbl._del("Vlan" + vlan)
     time.sleep(1)
+
+    vlan_tbl = swsscommon.Table(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+    entries = set(vlan_tbl.getKeys())
+    assert len(entries) == 0
 
 def create_vlan_member(dvs, vlan, interface, tagging_mode="untagged"):
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
