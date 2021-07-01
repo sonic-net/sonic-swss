@@ -758,7 +758,7 @@ bool MirrorOrch::setUnsetPortMirror(Port port,
             status = sai_port_api->set_port_attribute(p.m_port_id, &port_attr);
             if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("Failed to configure %s session on port %s: %s, status %d, sessionId %x",
+                SWSS_LOG_ERROR("Failed to configure %s session on port %s: %s, status %d, sessionId %lx",
                                 ingress ? "RX" : "TX", port.m_alias.c_str(),
                                 p.m_alias.c_str(), status, sessionId);
                 task_process_status handle_status =  handleSaiSetStatus(SAI_API_PORT, status);
@@ -774,7 +774,7 @@ bool MirrorOrch::setUnsetPortMirror(Port port,
         status = sai_port_api->set_port_attribute(port.m_port_id, &port_attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to configure %s session on port %s, status %d, sessionId %x",
+            SWSS_LOG_ERROR("Failed to configure %s session on port %s, status %d, sessionId %lx",
                             ingress ? "RX" : "TX", port.m_alias.c_str(), status, sessionId);
             task_process_status handle_status =  handleSaiSetStatus(SAI_API_PORT, status);
             if (handle_status != task_success)
