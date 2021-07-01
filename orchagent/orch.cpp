@@ -760,9 +760,9 @@ task_process_status Orch::handleSaiRemoveStatus(sai_api_t api, sai_status_t stat
         default:
             SWSS_LOG_ERROR("Encountered failure in remove operation, exiting orchagent, SAI API: %s, status: %s",
                         sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-            throw std::logic_error("SAI get function not implemented");
+            exit(EXIT_FAILURE);
     }
-    return task_failed;
+    return task_need_retry;
 }
 
 task_process_status Orch::handleSaiGetStatus(sai_api_t api, sai_status_t status, void *context)
@@ -786,12 +786,12 @@ task_process_status Orch::handleSaiGetStatus(sai_api_t api, sai_status_t status,
         case SAI_STATUS_NOT_IMPLEMENTED:
             SWSS_LOG_ERROR("Encountered failure in get operation due to the function is not implemented, exiting orchagent, SAI API: %s",
                         sai_serialize_api(api).c_str());
-            exit(EXIT_FAILURE);
+            throw std::logic_error("SAI get function not implemented");
         default:
             SWSS_LOG_ERROR("Encountered failure in get operation, SAI API: %s, status: %s",
                         sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
     }
-    return task_need_retry;
+    return task_failed;
 }
 
 bool Orch::parseHandleSaiStatusFailure(task_process_status status)
