@@ -3895,7 +3895,6 @@ bool NatOrch::getTwiceNaptCounters(const TwiceNaptEntry::iterator &iter)
         SWSS_LOG_DEBUG("Failed to get Counters for Twice NAPT entry for [proto %s, src ip %s, src port %d, dst ip %s, dst port %d], as not yet added to HW",
                        key.prototype.c_str(), key.src_ip.to_string().c_str(), key.src_l4_port, key.dst_ip.to_string().c_str(),
                        key.dst_l4_port);
-        handleSaiGetStatus(SAI_API_NAT, status);
     }
     else
     {
