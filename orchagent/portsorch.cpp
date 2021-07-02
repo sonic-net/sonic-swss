@@ -1787,7 +1787,6 @@ void PortsOrch::getPortSupportedSpeeds(const std::string& alias, sai_object_id_t
         {
             SWSS_LOG_ERROR("Failed to get a list of supported speeds for port %s id=%" PRIx64 ". Error=%d",
                            alias.c_str(), port_id, status);
-            handleSaiGetStatus(SAI_API_PORT, status);
         }
 
         supported_speeds.clear(); // return empty
