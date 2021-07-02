@@ -186,15 +186,18 @@ def create_vlan(dvs, vlan_name):
     tbl =  swsscommon.Table(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
     vlan_ids = set(tbl.getKeys())
 
+    expected_attributes = { "SAI_VLAN_ATTR_VLAN_ID": vlan_id }
+
     for vlan in vlan_ids:
         status, fvs = tbl.get(vlan)
         assert status, "Got an error when get a key"
 
         for name, value in fvs:
-            if name == SAI_VLAN_ATTR_VLAN_ID and value == vlan_id:
-                vlan_oid = vlan
-                vlan_oid_found = True
-                break
+            if name in expected_attributes:
+                if expected_attributes[name] == value:
+                    vlan_oid = vlan
+                    vlan_oid_found = True
+                    break
 
         if vlan_oid_found == True:
             break
