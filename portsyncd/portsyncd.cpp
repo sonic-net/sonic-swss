@@ -88,10 +88,8 @@ int main(int argc, char **argv)
 
         if (!handlePortConfigFromConfigDB(p, cfgDb, warm))
         {
-            // if port config is missing in ConfigDB
-            // program will exit with failure
-            SWSS_LOG_THROW("ConfigDB does not have port information, exiting...");
-            return EXIT_FAILURE;
+            SWSS_LOG_NOTICE("ConfigDB does not have port information, "
+                            "however ports can be added later on, continuing...");
         }
 
         LinkSync sync(&appl_db, &state_db);
