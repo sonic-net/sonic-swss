@@ -170,8 +170,7 @@ def create_vlan(dvs, vlan_name):
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
     vlan_id = vlan_name[4:]
-    tbl =  swsscommon.Table(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
-    vlan_ids = set(tbl.getKeys())
+    vlan_oid_found = False
 
     # create vlan
     create_entry_tbl(
@@ -184,14 +183,23 @@ def create_vlan(dvs, vlan_name):
 
     time.sleep(1)
 
-    vlan_oid = get_created_entry(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN", vlan_ids)
+    tbl =  swsscommon.Table(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+    vlan_ids = set(tbl.getKeys())
 
-    check_object(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN", vlan_oid,
-                    {
-                        "SAI_VLAN_ATTR_VLAN_ID": vlan_id,
-                    }
-                )
+    for vlan in vlan_ids:
+        status, fvs = tbl.get(vlan)
+        assert status, "Got an error when get a key"
 
+        for name, value in fvs:
+            if name == SAI_VLAN_ATTR_VLAN_ID and value == vlan_id:
+                vlan_oid = vlan
+                vlan_oid_found = True
+                break
+
+        if vlan_oid_found == True:
+            break
+
+    assert vlan_oid_found, "Vlan OID not found"
     return vlan_oid
 
 def remove_vlan(dvs, vlan):
