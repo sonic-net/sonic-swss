@@ -709,10 +709,10 @@ task_process_status Orch::handleSaiCreateStatus(sai_api_t api, sai_status_t stat
                     return task_success;
                 case SAI_STATUS_ITEM_ALREADY_EXISTS:
                     /*
-                    *  In FDB creation, there are scenarios where the hardware learns an FDB entry before orchagent.
-                    *  In such cases, the FDB SAI creation would report the status of SAI_STATUS_ITEM_ALREADY_EXISTS,
-                    *  and orchagent should ignore the error and treat it as entry was explicitly created.
-                    */
+                     *  In FDB creation, there are scenarios where the hardware learns an FDB entry before orchagent.
+                     *  In such cases, the FDB SAI creation would report the status of SAI_STATUS_ITEM_ALREADY_EXISTS,
+                     *  and orchagent should ignore the error and treat it as entry was explicitly created.
+                     */
                     return task_success;
                 default:
                     SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
