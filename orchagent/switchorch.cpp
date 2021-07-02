@@ -360,7 +360,6 @@ void SwitchOrch::doTask(SelectableTimer &timer)
             else
             {
                 SWSS_LOG_ERROR("ASIC sensors : failed to get SAI_SWITCH_ATTR_TEMP_LIST: %d", status);
-                handleSaiGetStatus(SAI_API_SWITCH, status);
             }
         }
 
@@ -385,7 +384,6 @@ void SwitchOrch::doTask(SelectableTimer &timer)
             {
                 m_sensorsMaxTempSupported = false;
                 SWSS_LOG_ERROR("ASIC sensors : failed to get SAI_SWITCH_ATTR_MAX_TEMP: %d", status);
-                handleSaiGetStatus(SAI_API_SWITCH, status);
             }
         }
 
@@ -410,7 +408,6 @@ void SwitchOrch::doTask(SelectableTimer &timer)
             {
                 m_sensorsAvgTempSupported = false;
                 SWSS_LOG_ERROR("ASIC sensors : failed to get SAI_SWITCH_ATTR_AVERAGE_TEMP: %d", status);
-                handleSaiGetStatus(SAI_API_SWITCH, status);
             }
         }
     }
@@ -444,7 +441,6 @@ void SwitchOrch::initSensorsTable()
         else
         {
             SWSS_LOG_ERROR("ASIC sensors : failed to get SAI_SWITCH_ATTR_MAX_NUMBER_OF_TEMP_SENSORS: 0x%x", status);
-            handleSaiGetStatus(SAI_API_SWITCH, status);
         }
     }
 
@@ -469,7 +465,6 @@ void SwitchOrch::initSensorsTable()
         else
         {
             SWSS_LOG_ERROR("ASIC sensors : failed to get SAI_SWITCH_ATTR_TEMP_LIST: %d", status);
-            handleSaiGetStatus(SAI_API_SWITCH, status);
         }
     }
 

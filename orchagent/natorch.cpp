@@ -115,7 +115,6 @@ NatOrch::NatOrch(DBConnector *appDb, DBConnector *stateDb, vector<table_name_wit
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_NOTICE("Failed to get the SNAT available entry count, rv:%d", status);
-        handleSaiGetStatus(SAI_API_SWITCH, status);
     }
     else
     {
@@ -3665,7 +3664,6 @@ bool NatOrch::getTwiceNatCounters(const TwiceNatEntry::iterator &iter)
         SWSS_LOG_ERROR("Failed to get Counters for Twice NAT entry [src-ip %s, dst-ip %s], bytes = %" PRIu64 ", pkts = %" PRIu64 "",
                         key.src_ip.to_string().c_str(), key.dst_ip.to_string().c_str(),
                         nat_entry_attr[0].value.u64, nat_entry_attr[1].value.u64);
-        handleSaiGetStatus(SAI_API_NAT, status);
     }
     else
     {
