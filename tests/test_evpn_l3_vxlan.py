@@ -970,9 +970,6 @@ class VxlanTunnel(object):
         conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
-        tbl = swsscommon.Table(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")
-        initial_entries = set(tbl.getKeys())
-
         attrs = [
             ("vni", "0"),
         ]
@@ -980,10 +977,6 @@ class VxlanTunnel(object):
         fvs = swsscommon.FieldValuePairs(attrs)
         tbl.set(vrf_name, fvs)
         time.sleep(2)
-
-        tbl = swsscommon.Table(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")
-        current_entries = set(tbl.getKeys())
-        assert len(current_entries - initial_entries) == 1
 
         new_vr_ids  = get_created_entries(asic_db, self.ASIC_VRF_TABLE, self.vnet_vr_ids, 1)
         self.vnet_vr_ids.update(new_vr_ids)
