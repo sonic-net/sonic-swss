@@ -982,7 +982,7 @@ class VxlanTunnel(object):
         self.vnet_vr_ids.update(new_vr_ids)
         self.vr_map[vrf_name] = { 'ing':new_vr_ids[0], 'egr':new_vr_ids[0]}
 
-        return list(current_entries - initial_entries)[0]
+        return new_vr_ids
 
     def remove_vrf(self, dvs, vrf_name):
         conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
