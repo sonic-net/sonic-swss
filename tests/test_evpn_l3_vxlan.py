@@ -1037,6 +1037,7 @@ class TestL3Vxlan(object):
         vrf_map_name = 'evpn_map_1000_Vrf-RED1'
 
         vxlan_obj.fetch_exist_entries(dvs)
+        vxlan_obj.remove_vrf(dvs, "Vrf-RED1")
 
         print ("\n\nTesting Create and Delete SIP Tunnel and VRF VNI Map entries")
         print ("\tCreate SIP Tunnel")
@@ -1109,6 +1110,7 @@ class TestL3Vxlan(object):
         map_name = 'map_1000_100'
         vrf_map_name = 'evpn_map_1000_Vrf-RED2'
         vxlan_obj.fetch_exist_entries(dvs)
+        vxlan_obj.remove_vrf(dvs, "Vrf-RED2")
 
         print ("\n\nTesting Create and Delete DIP Tunnel on adding and removing prefix route")
         print ("\tCreate SIP Tunnel")
@@ -1206,6 +1208,7 @@ class TestL3Vxlan(object):
         map_name = 'map_1000_100'
         vrf_map_name = 'evpn_map_1000_Vrf-RED3'
         vxlan_obj.fetch_exist_entries(dvs)
+        vxlan_obj.remove_vrf(dvs, "Vrf-RED3")
 
         print ("\n\nTesting IPv4 Route and Overlay Nexthop Add and Delete")
         print ("\tCreate SIP Tunnel")
@@ -1410,6 +1413,7 @@ class TestL3Vxlan(object):
         map_name = 'map_1000_100'
         vrf_map_name = 'evpn_map_1000_Vrf-RED4'
         vxlan_obj.fetch_exist_entries(dvs)
+        vxlan_obj.remove_vrf(dvs, "Vrf-RED4")
 
         print ("\n\nTesting IPv6 Route and Overlay Nexthop Add and Delete")
         print ("\tCreate SIP Tunnel")
