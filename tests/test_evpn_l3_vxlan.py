@@ -993,6 +993,7 @@ class VxlanTunnel(object):
         vrf_tbl = swsscommon.Table(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")
         entries = set(vrf_tbl.getKeys())
         assert len(entries) == 1
+        self.vnet_vr_ids = entries
 
 
     def is_vrf_attributes_correct(self, db, table, key, expected_attributes):
