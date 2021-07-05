@@ -120,7 +120,7 @@ IsoGrpOrch::doIsoGrpTblTask(Consumer &consumer)
                         type = ISOLATION_GROUP_TYPE_BRIDGE_PORT;
                     }
                     else
-                        SWSS_LOG_WARN("Attr:%s unknown type:%s", attr_name.c_str(), type.c_str());
+                        SWSS_LOG_WARN("Attr:%s unknown type:%d", attr_name.c_str(), type);
                 }
                 else if (attr_name == ISOLATION_GRP_PORTS)
                 {
