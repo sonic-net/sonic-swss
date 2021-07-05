@@ -152,6 +152,7 @@ class TestPortDPBSystem(object):
         ('Ethernet0', '1x50G(2)+2x25G(2)'),
         ('Ethernet0', '1x100G[40G]')
     ], scope="function")
+    @pytest.mark.skip(reason="This test is not stable enough")
     def test_port_breakout_simple(self, dvs, root_port, breakout_mode):
         dvs.setup_db()
         dpb = DPB()
@@ -161,6 +162,7 @@ class TestPortDPBSystem(object):
         expected_ports = dpb.get_child_ports(root_port, breakout_mode)
         self.verify_only_ports_exist(dvs, expected_ports)
 
+    @pytest.mark.skip(reason="This test is not stable enough")
     def test_port_breakout_with_vlan(self, dvs):
         dvs.setup_db()
         dpb = DPB()

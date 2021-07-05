@@ -68,6 +68,11 @@ bool VRFOrch::addOperation(const Request& request)
             vni = static_cast<uint32_t>(request.getAttrUint(name));
             continue;
         }
+        else if ((name == "mgmtVrfEnabled") || (name == "in_band_mgmt_enabled"))
+        {
+            SWSS_LOG_INFO("MGMT VRF field: %s ignored", name.c_str());
+            continue;
+        }
         else
         {
             SWSS_LOG_ERROR("Logic error: Unknown attribute: %s", name.c_str());

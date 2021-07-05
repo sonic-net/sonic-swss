@@ -1225,13 +1225,6 @@ bool AclRuleMirror::create()
         SWSS_LOG_THROW("Failed to get mirror session state for session %s", m_sessionName.c_str());
     }
 
-    // Increase session reference count regardless of state to deny
-    // attempt to remove mirror session with attached ACL rules.
-    if (!m_pMirrorOrch->increaseRefCount(m_sessionName))
-    {
-        SWSS_LOG_THROW("Failed to increase mirror session reference count for session %s", m_sessionName.c_str());
-    }
-
     if (!state)
     {
         return true;
@@ -1252,6 +1245,11 @@ bool AclRuleMirror::create()
     if (!AclRule::create())
     {
         return false;
+    }
+
+    if (!m_pMirrorOrch->increaseRefCount(m_sessionName))
+    {
+        SWSS_LOG_THROW("Failed to increase mirror session reference count for session %s", m_sessionName.c_str());
     }
 
     m_state = true;

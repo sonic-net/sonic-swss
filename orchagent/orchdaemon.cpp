@@ -156,7 +156,13 @@ bool OrchDaemon::init()
 
     gFgNhgOrch = new FgNhgOrch(m_configDb, m_applDb, m_stateDb, fgnhg_tables, gNeighOrch, gIntfsOrch, vrf_orch);
     gDirectory.set(gFgNhgOrch);
-    gRouteOrch = new RouteOrch(m_applDb, APP_ROUTE_TABLE_NAME, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch);
+
+    const int routeorch_pri = 5;
+    vector<table_name_with_pri_t> route_tables = {
+        { APP_ROUTE_TABLE_NAME,        routeorch_pri },
+        { APP_LABEL_ROUTE_TABLE_NAME,  routeorch_pri }
+    };
+    gRouteOrch = new RouteOrch(m_applDb, route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch);
 
     CoppOrch  *copp_orch  = new CoppOrch(m_applDb, APP_COPP_TABLE_NAME);
     TunnelDecapOrch *tunnel_decap_orch = new TunnelDecapOrch(m_applDb, APP_TUNNEL_DECAP_TABLE_NAME);
@@ -371,7 +377,11 @@ bool OrchDaemon::init()
         CFG_FLEX_COUNTER_TABLE_NAME
     };
 
-    m_orchList.push_back(new FlexCounterOrch(m_configDb, flex_counter_tables));
+    auto* flexCounterOrch = new FlexCounterOrch(m_configDb, flex_counter_tables);
+    m_orchList.push_back(flexCounterOrch);
+
+    gDirectory.set(flexCounterOrch);
+    gDirectory.set(gPortsOrch);
 
     vector<string> pfc_wd_tables = {
         CFG_PFC_WD_TABLE_NAME
