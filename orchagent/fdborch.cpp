@@ -99,12 +99,7 @@ bool FdbOrch::storeFdbEntryState(const FdbUpdate& update)
              */
             if (port.m_bridge_port_id == it->second.bridge_port_id)
             {
-                if (it->second.origin == FDB_ORIGIN_MCLAG_ADVERTIZED)
-                {
-                    mac_move=true;
-                    oldFdbData = it->second;
-                }
-                else
+                if (it->second.origin != FDB_ORIGIN_MCLAG_ADVERTIZED)
                 {
                     SWSS_LOG_INFO("FdbOrch notification: mac %s is duplicate", entry.mac.to_string().c_str());
                     return false;
@@ -243,19 +238,18 @@ void FdbOrch::update(sai_fdb_event_t        type,
                     Port port;
                     SWSS_LOG_NOTICE("FdbOrch LEARN notification: mac %s is already in bv_id 0x%" PRIx64 "with different existing-bp 0x%" PRIx64 " new-bp:0x%" PRIx64,
                             update.entry.mac.to_string().c_str(), entry->bv_id, existing_entry->second.bridge_port_id, bridge_port_id);
-                if (!m_portsOrch->getPortByBridgePortId(existing_entry->second.bridge_port_id, port))
-                {
-                    SWSS_LOG_NOTICE("FdbOrch LEARN notification: Failed to get port by bridge port ID 0x%" PRIx64, existing_entry->second.bridge_port_id);
-                    return;
-                }
-                else
-                {
-                    port.m_fdb_count--;
-                    m_portsOrch->setPort(port.m_alias, port);
-                    vlan.m_fdb_count--;
-                    m_portsOrch->setPort(vlan.m_alias, vlan);
-                }
-
+                    if (!m_portsOrch->getPortByBridgePortId(existing_entry->second.bridge_port_id, port))
+                    {
+                        SWSS_LOG_NOTICE("FdbOrch LEARN notification: Failed to get port by bridge port ID 0x%" PRIx64, existing_entry->second.bridge_port_id);
+                        return;
+                    }
+                    else
+                    {
+                        port.m_fdb_count--;
+                        m_portsOrch->setPort(port.m_alias, port);
+                        vlan.m_fdb_count--;
+                        m_portsOrch->setPort(vlan.m_alias, vlan);
+                    }
                     // Continue to add (update/move) the MAC
                 }
                 else
@@ -797,27 +791,19 @@ void FdbOrch::doTask(Consumer& consumer)
                     }
                 }
 
-            if(origin == FDB_ORIGIN_VXLAN_ADVERTIZED)
-            {
-                VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
-
-                if(!remote_ip.length())
+                if(origin == FDB_ORIGIN_VXLAN_ADVERTIZED)
                 {
-                    it = consumer.m_toSync.erase(it);
-                    continue;
+                    VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
+
+                    if(!remote_ip.length())
+                    {
+                        it = consumer.m_toSync.erase(it);
+                        continue;
+                    }
+                    port = tunnel_orch->getTunnelPortName(remote_ip);
                 }
-                port = tunnel_orch->getTunnelPortName(remote_ip);
-            }
 
 
-            FdbData fdbData;
-            fdbData.bridge_port_id = SAI_NULL_OBJECT_ID;
-            fdbData.type = type;
-            fdbData.origin = origin;
-            fdbData.remote_ip = remote_ip;
-            fdbData.esi = esi;
-            fdbData.vni = vni;
-            if (addFdbEntry(entry, port, fdbData))
                 it = consumer.m_toSync.erase(it);
             }
             else

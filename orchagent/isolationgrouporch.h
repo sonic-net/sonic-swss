@@ -42,7 +42,7 @@ typedef enum IsolationGroupStatus
     ISO_GRP_STATUS_FAIL,
     ISO_GRP_STATUS_INVALID_PARAM,
     ISO_GRP_STATUS_SUCCESS = 0
-}isolation_group_status_t;
+} isolation_group_status_t;
 
 class IsolationGroup: public Observer, public Subject
 {

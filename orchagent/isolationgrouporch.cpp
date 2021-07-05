@@ -119,6 +119,8 @@ IsoGrpOrch::doIsoGrpTblTask(Consumer &consumer)
                     {
                         type = ISOLATION_GROUP_TYPE_BRIDGE_PORT;
                     }
+                    else
+                        SWSS_LOG_WARN("Attr:%s unknown type:%s", attr_name.c_str(), type.c_str());
                 }
                 else if (attr_name == ISOLATION_GRP_PORTS)
                 {
@@ -128,6 +130,8 @@ IsoGrpOrch::doIsoGrpTblTask(Consumer &consumer)
                 {
                     mem_ports = attr_value;
                 }
+                else
+                    SWSS_LOG_WARN("unknown Attr:%s ", attr_name.c_str());
             }
 
             status = addIsolationGroup(name, type, descr, bind_ports, mem_ports);
@@ -193,7 +197,7 @@ IsoGrpOrch::addIsolationGroup(string name, isolation_group_type_t type, string d
         grp->setBindPorts(bindPorts);
         this->m_isolationGrps[name] = grp;
     }
-    else if ((grp) && (grp->getType() == type))
+    else if (grp->getType() == type)
     {
         grp->m_description = descr;
         grp->setMembers(memPorts);
@@ -603,6 +607,7 @@ IsolationGroup::bind(Port &port)
     }
     else
     {
+        SWSS_LOG_ERROR("Invalid attribute type %d ", m_type);
         return ISO_GRP_STATUS_INVALID_PARAM;
     }
 

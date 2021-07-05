@@ -101,7 +101,7 @@ int main(int argc, char **argv)
         }
         catch (const std::exception& e)
         {
-            cout << "Exception \"" << e.what() << "\" had been thrown in deamon" << endl;
+            cout << "Exception \"" << e.what() << "\" had been thrown in daemon" << endl;
             return 0;
         }
     }
