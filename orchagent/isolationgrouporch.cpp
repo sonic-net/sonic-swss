@@ -578,12 +578,12 @@ IsolationGroup::bind(Port &port)
                             m_type);
         }
     }
-    else if (m_type == ISOLATION_GROUP_TYPE_PORT)
+    else if ((m_type == ISOLATION_GROUP_TYPE_PORT) && (port.m_type == Port::PHY))
     {
-        if ((port.m_type == Port::PHY ? port.m_port_id : port.m_lag_id) != SAI_NULL_OBJECT_ID)
+        if (port.m_port_id !=  SAI_NULL_OBJECT_ID)
         {
             attr.id = SAI_PORT_ATTR_ISOLATION_GROUP;
-            status = sai_port_api->set_port_attribute((port.m_type == Port::PHY ? port.m_port_id : port.m_lag_id), &attr);
+            status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
             if (SAI_STATUS_SUCCESS != status)
             {
                 SWSS_LOG_ERROR("Unable to set attribute %d value  0x%" PRIx64 "to %s",
@@ -638,7 +638,7 @@ IsolationGroup::unbind(Port &port, bool do_fwd_ref)
         attr.id = SAI_BRIDGE_PORT_ATTR_ISOLATION_GROUP;
         status = sai_bridge_api->set_bridge_port_attribute(port.m_bridge_port_id, &attr);
     }
-    else if (m_type == ISOLATION_GROUP_TYPE_PORT)
+    else if ((m_type == ISOLATION_GROUP_TYPE_PORT) && (port.m_type == Port::PORT))
     {
         attr.id = SAI_PORT_ATTR_ISOLATION_GROUP;
         status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
