@@ -956,6 +956,14 @@ class VxlanTunnel(object):
         tbl = swsscommon.Table(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")
         initial_entries = set(tbl.getKeys())
 
+        print ("ROUTER_Ids = {}".format(initial_entries))
+        for entry in initial_entries:
+            status, fvs = tbl.get(entry)
+            print ("entry = {}, fvs = {}".format(entry, fvs))
+
+        initial_entries1 = dvs.runcmd("redis-cli -n 1 keys *ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER*")
+        print ("Router_IDs = {}".format(initial_entries1))
+
         attrs = [
             ("vni", "0"),
         ]
@@ -1098,6 +1106,15 @@ class TestL3Vxlan(object):
         print ("\n\nTesting Create and Delete DIP Tunnel on adding and removing prefix route")
         print ("\tCreate SIP Tunnel")
         vlan_ids = get_exist_entries(dvs, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        print ("vlan_ids = {}".format(vlan_ids))
+        tbl =  swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        for vlan in vlan_ids:
+            status, fvs = tbl.get(vlan)
+            print ("vlan_id = {}, fvs = {}".format(vlan, fvs))
+
+        vlan_id1s = dvs.runcmd("redis-cli -n 1 keys *ASIC_STATE:SAI_OBJECT_TYPE_VLAN*")
+        print ("vlan_ids = {}".format(vlan_id1s))
+
         vlan_oid = create_vlan(dvs,"Vlan100", vlan_ids)
         create_vxlan_tunnel(dvs, tunnel_name, '6.6.6.6')
         create_evpn_nvo(dvs, 'nvo1', tunnel_name)
