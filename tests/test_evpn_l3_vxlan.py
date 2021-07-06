@@ -1155,6 +1155,8 @@ class TestL3Vxlan(object):
         assert len(new_entries) == 1, "Wrong number of created entries."
         new_entries.sort()
         new_vr_ids = new_entries
+        self.vnet_vr_ids.update(new_vr_ids)
+        self.vr_map[vrf_name] = { 'ing':new_vr_ids[0], 'egr':new_vr_ids[0]}
 
         create_vxlan_vrf_tunnel_map(dvs, 'Vrf-RED', '1000')
 
