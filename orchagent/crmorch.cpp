@@ -474,7 +474,11 @@ void CrmOrch::getResAvailableCounters()
                         break;
                     }
                     SWSS_LOG_ERROR("Failed to get switch attribute %u , rv:%d", attr.id, status);
-                    break;
+                    task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
+                    if (handle_status != task_process_status::task_success)
+                    {
+                        break;
+                    }
                 }
 
                 res.second.countersMap[CRM_COUNTERS_TABLE_KEY].availableCounter = attr.value.u32;
@@ -500,7 +504,11 @@ void CrmOrch::getResAvailableCounters()
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("Failed to get switch attribute %u , rv:%d", attr.id, status);
-                    break;
+                    task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
+                    if (handle_status != task_process_status::task_success)
+                    {
+                        break;
+                    }
                 }
 
                 for (uint32_t i = 0; i < attr.value.aclresource.count; i++)
