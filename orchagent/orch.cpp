@@ -699,15 +699,38 @@ task_process_status Orch::handleSaiCreateStatus(sai_api_t api, sai_status_t stat
      *          in each orch.
      *       3. Take the type of sai api into consideration.
      */
-    switch (status)
+    switch (api)
     {
-        case SAI_STATUS_SUCCESS:
-            SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiCreateStatus");
-            return task_success;
+        case SAI_API_FDB:
+            switch (status)
+            {
+                case SAI_STATUS_SUCCESS:
+                    SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiCreateStatus");
+                    return task_success;
+                case SAI_STATUS_ITEM_ALREADY_EXISTS:
+                    /*
+                     *  In FDB creation, there are scenarios where the hardware learns an FDB entry before orchagent.
+                     *  In such cases, the FDB SAI creation would report the status of SAI_STATUS_ITEM_ALREADY_EXISTS,
+                     *  and orchagent should ignore the error and treat it as entry was explicitly created.
+                     */
+                    return task_success;
+                default:
+                    SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
+                                sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+                    exit(EXIT_FAILURE);
+            }
+            break;
         default:
-            SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
-                        sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-            exit(EXIT_FAILURE);
+            switch (status)
+            {
+                case SAI_STATUS_SUCCESS:
+                    SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiCreateStatus");
+                    return task_success;
+                default:
+                    SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
+                                sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+                    exit(EXIT_FAILURE);
+            }
     }
     return task_need_retry;
 }
