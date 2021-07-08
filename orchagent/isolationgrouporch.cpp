@@ -638,7 +638,7 @@ IsolationGroup::unbind(Port &port, bool do_fwd_ref)
         attr.id = SAI_BRIDGE_PORT_ATTR_ISOLATION_GROUP;
         status = sai_bridge_api->set_bridge_port_attribute(port.m_bridge_port_id, &attr);
     }
-    else if ((m_type == ISOLATION_GROUP_TYPE_PORT) && (port.m_type == Port::PORT))
+    else if ((m_type == ISOLATION_GROUP_TYPE_PORT) && (port.m_type == Port::PHY))
     {
         attr.id = SAI_PORT_ATTR_ISOLATION_GROUP;
         status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
