@@ -146,7 +146,6 @@ class LcovCobertura(object):
                         'lines-covered': 0, 'branches-total': 0,
                         'branches-covered': 0
                 }
-                package = package
                 current_file = relative_file_name
                 file_lines_total = 0
                 file_lines_covered = 0
@@ -168,7 +167,7 @@ class LcovCobertura(object):
                 try:
                     if int(line_hits) > 0:
                         file_lines_covered += 1
-                except:
+                except Exception:
                     pass
                 file_lines_total += 1
             elif input_type == 'BRDA':

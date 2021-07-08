@@ -46,7 +46,6 @@ class LcovCobertura(object):
     Converts code coverage report files in lcov format to Cobertura's XML
     report format so that CI servers like Jenkins can aggregate results and
     determine build stability etc.
-
     >>> from lcov_cobertura import LcovCobertura
     >>> LCOV_INPUT = 'your lcov input'
     >>> converter = LcovCobertura(LCOV_INPUT)
@@ -58,7 +57,6 @@ class LcovCobertura(object):
         """
         Create a new :class:`LcovCobertura` object using the given `lcov_data`
         and `options`.
-
         :param lcov_data: Path to LCOV data file
         :type lcov_data: string
         :param base_dir: Path upon which to base all sources
@@ -148,7 +146,6 @@ class LcovCobertura(object):
                         'lines-covered': 0, 'branches-total': 0,
                         'branches-covered': 0
                 }
-                package = package
                 current_file = relative_file_name
                 file_lines_total = 0
                 file_lines_covered = 0
@@ -170,7 +167,7 @@ class LcovCobertura(object):
                 try:
                     if int(line_hits) > 0:
                         file_lines_covered += 1
-                except:
+                except Exception:
                     pass
                 file_lines_total += 1
             elif input_type == 'BRDA':
@@ -223,7 +220,6 @@ class LcovCobertura(object):
     def generate_cobertura_xml(self, coverage_data):
         """
         Given parsed coverage data, return a String cobertura XML representation.
-
         :param coverage_data: Nested dict representing coverage information.
         :type coverage_data: dict
         """
@@ -327,7 +323,6 @@ class LcovCobertura(object):
     def _el(self, document, name, attrs):
         """
         Create an element within document with given name and attributes.
-
         :param document: Document element
         :type document: Document
         :param name: Element name
@@ -340,7 +335,6 @@ class LcovCobertura(object):
     def _attrs(self, element, attrs):
         """
         Set attributes on given element.
-
         :param element: DOM Element
         :type element: Element
         :param attrs: Attributes for element
@@ -353,7 +347,6 @@ class LcovCobertura(object):
     def _percent(self, lines_total, lines_covered):
         """
         Get the percentage of lines covered in the total, with formatting.
-
         :param lines_total: Total number of lines in given module
         :type lines_total: number
         :param lines_covered: Number of lines covered by tests in module
@@ -368,11 +361,9 @@ class LcovCobertura(object):
 def main(argv=None):
     """
     Converts LCOV coverage data to Cobertura-compatible XML for reporting.
-
     Usage:
         lcov_cobertura.py lcov-file.dat
         lcov_cobertura.py lcov-file.dat -b src/dir -e test.lib -o path/out.xml
-
     By default, XML output will be written to ./coverage.xml
     """
     if argv is None:
