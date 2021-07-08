@@ -16,6 +16,7 @@
 #include "warm_restart.h"
 #include "tokenize.h"
 
+
 /* Global variables */
 extern sai_object_id_t gSwitchId;
 extern sai_object_id_t gVirtualRouterId;
@@ -57,6 +58,13 @@ const map<MAP_T, std::pair<uint32_t, uint32_t>> vxlanTunnelMapKeyVal =
     },
 };
 
+const vector<sai_port_stat_t> tunnel_stat_ids =
+{
+    SAI_TUNNEL_STAT_IN_OCTETS,
+    SAI_TUNNEL_STAT_IN_PACKETS,
+    SAI_TUNNEL_STAT_OUT_OCTETS,
+    SAI_TUNNEL_STAT_OUT_PACKETS
+}
 /*
  * Manipulators for the above Map
  */
@@ -511,6 +519,13 @@ bool VxlanTunnel::createTunnel(MAP_T encap, MAP_T decap, uint8_t encap_ttl)
 
         ids_.tunnel_id = create_tunnel(&ids_, ip, NULL, gUnderlayIfId, false, encap_ttl);
 
+        if (ids_.tunnel_id != SAI_NULL_OBJECT_ID)
+        {
+            auto tunnel_stats = generateTunnelCounterStats();
+            tunnel_stat_manager.setCounterIdList(ids_.tunnel_id, CounterType::TUNNEL,
+                                                 tunnel_stats);
+        }
+
         ip = nullptr;
         if (!dst_ip_.isZero())
         {
@@ -845,6 +860,7 @@ bool VxlanTunnel::deleteTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src,
             remove_tunnel_termination(ids_.tunnel_term_id);
         }
   
+        tunnel_stat_manager.clearCounterIdList(ids_.tunnel_id);
         remove_tunnel(ids_.tunnel_id);
         deleteMapperHw(mapper_list, map_src);
     }
@@ -884,6 +900,13 @@ bool VxlanTunnel::createTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src,
         }
 
         ids_.tunnel_id = create_tunnel(&ids_, &ips, ip, gUnderlayIfId, p2p);
+
+        if (ids_.tunnel_id != SAI_NULL_OBJECT_ID)
+        {
+            auto tunnel_stats = generateTunnelCounterStats();
+            tunnel_stat_manager.setCounterIdList(ids_.tunnel_id, CounterType::TUNNEL,
+                                                 tunnel_stats);
+        }
 
         if (with_term)
         {
@@ -1156,6 +1179,34 @@ bool VxlanTunnel::deleteDynamicDIPTunnel(const std::string dip, tunnel_user_t us
 
 //------------------- VxlanTunnelOrch Implementation --------------------------//
 
+std::unordered_set<std::string> VxlanTunnelOrch::generateVxlanCounterStats()
+{
+    std::unordered_set<std::string> counter_stats;
+
+    for (const auto& it: tunnel_stat_ids)
+    {
+        counter_stats.emplace(sai_serialize_tunnel_stat(it));
+    }
+    return counter_stats;
+}
+
+void VxlanTunnelOrch::generateTunnelCounterMap()
+{
+    if (m_isTunnelCounterMapGenerated)
+    {
+        return;
+    }
+
+    auto tunnel_counter_stats = generateTunnelCounterStats();
+    for (const auto& it: vxlan_tunnel_table_)
+    {
+        tunnel_stat_manager.setCounterIdList(it.second.get()->getTunnelId(), CounterType::TUNNEL, tunnel_counter_stats);
+    }
+
+    m_isTunnelCounterMapGenerated = true;
+}
+
+
 sai_object_id_t
 VxlanTunnelOrch::createNextHopTunnel(string tunnelName, IpAddress& ipAddr, 
                                      MacAddress macAddress, uint32_t vni)
@@ -1334,6 +1385,7 @@ bool VxlanTunnelOrch::removeVxlanTunnelMap(string tunnelName, uint32_t vni)
         auto tunnel_id = vxlan_tunnel_table_[tunnelName].get()->getTunnelId();
         try
         {
+            tunnel_stat_manager.clearCounterIdList(tunnel_id);
             remove_tunnel(tunnel_id);
         }
         catch(const std::runtime_error& error)

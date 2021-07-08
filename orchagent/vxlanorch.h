@@ -35,6 +35,9 @@ typedef enum
 #define IS_TUNNELMAP_SET_VRF(x) ((x)& (1<<TUNNEL_MAP_T_VIRTUAL_ROUTER))
 #define IS_TUNNELMAP_SET_BRIDGE(x) ((x)& (1<<TUNNEL_MAP_T_BRIDGE))
 
+#define TUNNEL_STAT_COUNTER_FLEX_COUNTER_GROUP "TUNNEL_STAT_COUNTER"
+#define TUNNEL_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS 10000
+
 typedef enum
 {
     TNL_CREATION_SRC_CLI,
@@ -195,6 +198,8 @@ public:
     int getDipTunnelCnt();
     bool createDynamicDIPTunnel(const string dip, tunnel_user_t usr);
     bool deleteDynamicDIPTunnel(const string dip, tunnel_user_t usr, bool update_refcnt = true);
+    unordered_set<string> generateVxlanCounterStats();
+    void generateTunnelCounterMap();
     uint32_t vlan_vrf_vni_count = 0;
     bool del_tnl_hw_pending = false;
 
@@ -243,7 +248,9 @@ class VxlanTunnelOrch : public Orch2
 public:
     VxlanTunnelOrch(DBConnector *statedb, DBConnector *db, const std::string& tableName) :
                     Orch2(db, tableName, request_),
-                    m_stateVxlanTable(statedb, STATE_VXLAN_TUNNEL_TABLE_NAME)
+                    m_stateVxlanTable(statedb, STATE_VXLAN_TUNNEL_TABLE_NAME),
+                    tunnel_stat_manager(TUNNEL_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                        StatsMode::READ, TUNNEL_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false)
     {}
 
 
@@ -349,6 +356,8 @@ private:
     VxlanVniVlanMapTable vxlan_vni_vlan_map_table_;
     VTEPTable vtep_table_;
     Table m_stateVxlanTable;
+    FlexCounterManager vxlan_tunnel_stat_manager;
+    bool m_isTunnelCounterMapGenerated = false;
 };
 
 const request_description_t vxlan_tunnel_map_request_description = {

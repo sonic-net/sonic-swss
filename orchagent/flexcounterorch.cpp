@@ -23,6 +23,7 @@ extern BufferOrch *gBufferOrch;
 #define QUEUE_KEY                   "QUEUE"
 #define PG_WATERMARK_KEY            "PG_WATERMARK"
 #define RIF_KEY                     "RIF"
+#define TUNNEL_KEY                  "TUNNEL"
 
 unordered_map<string, string> flexCounterGroupMap =
 {
@@ -38,6 +39,7 @@ unordered_map<string, string> flexCounterGroupMap =
     {"RIF", RIF_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"RIF_RATES", RIF_RATE_COUNTER_FLEX_COUNTER_GROUP},
     {"DEBUG_COUNTER", DEBUG_COUNTER_FLEX_COUNTER_GROUP},
+    {"TUNNEL_COUNTER", TUNNEL_STAT_COUNTER_FLEX_COUNTER_GROUP},
 };
 
 
@@ -58,6 +60,7 @@ void FlexCounterOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
+    VxlanTunnelOrch* vxlan_tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
     if (gPortsOrch && !gPortsOrch->allPortsReady())
     {
         return;
@@ -139,6 +142,10 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     if (gFabricPortsOrch)
                     {
                         gFabricPortsOrch->generateQueueStats();
+                    }
+                    if (vxlan_tunnel_orch && (key== TUNNEL_KEY) && (value == "enable"))
+                    {
+                        vxlan_tunnel_orch->generateTunnelStats();
                     }
                     vector<FieldValueTuple> fieldValues;
                     fieldValues.emplace_back(FLEX_COUNTER_STATUS_FIELD, value);
