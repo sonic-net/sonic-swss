@@ -2309,7 +2309,11 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     else
     {
         SWSS_LOG_ERROR("Failed to get ACL entry priority min/max values, rv:%d", status);
-        throw "AclOrch initialization failure";
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            throw "AclOrch initialization failure";
+        }
     }
 
     queryAclActionCapability();

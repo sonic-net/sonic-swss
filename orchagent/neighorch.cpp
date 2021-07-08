@@ -1547,7 +1547,11 @@ void NeighOrch::voqSyncAddNeigh(string &alias, IpAddress &ip_address, const MacA
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to get neighbor attribute for %s on %s, rv:%d", ip_address.to_string().c_str(), alias.c_str(), status);
-        return;
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_NEIGHBOR, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            return;
+        }
     }
 
     if (!attr.value.u32)
