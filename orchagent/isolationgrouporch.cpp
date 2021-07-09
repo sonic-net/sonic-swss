@@ -157,10 +157,10 @@ IsoGrpOrch::doIsoGrpTblTask(Consumer &consumer)
                 /* Send a notification and see if observers want to detach */
                 IsolationGroupUpdate update = {grp.get(), false};
                 grp->notifyObservers(SUBJECT_TYPE_ISOLATION_GROUP_CHANGE, &update);
-            }
 
-            // Finally delete it if it
-            status = delIsolationGroup(name);
+                // Finally delete it if it
+                status = delIsolationGroup(name);
+            }
         }
 
         if (status != ISO_GRP_STATUS_RETRY)
