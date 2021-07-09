@@ -1367,7 +1367,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
             SWSS_LOG_ERROR("Failed to create %s FDB %s in %s on %s, rv:%d",
                     fdbData.type.c_str(), entry.mac.to_string().c_str(),
                     vlan.m_alias.c_str(), port_name.c_str(), status);
-            task_process_status handle_status = handleSaiCreateStatus(SAI_API_FDB, status); //FIXME: it should be based on status. Some could be retried, some not
+            task_process_status handle_status = handleSaiCreateStatus(SAI_API_FDB, status); //Address me: it should be based on status. Some could be retried, some not
             if (handle_status != task_success)
             {
                 return parseHandleSaiStatusFailure(handle_status);
@@ -1400,7 +1400,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
         SWSS_LOG_ERROR("Failed to create %s FDB %s in %s on %s, rv:%d",
                 fdbData.type.c_str(), entry.mac.to_string().c_str(),
                 vlan.m_alias.c_str(), port_name.c_str(), status);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_FDB, status); //FIXME: it should be based on status. Some could be retried, some not
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_FDB, status); //Address me: it should be based on status. Some could be retried, some not
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
@@ -1546,7 +1546,7 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry, FdbOrigin origin)
     {
         SWSS_LOG_ERROR("FdbOrch RemoveFDBEntry: Failed to remove FDB entry. mac=%s, bv_id=0x%" PRIx64,
                        entry.mac.to_string().c_str(), entry.bv_id);
-        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_FDB, status); //FIXME: it should be based on status. Some could be retried. some not
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_FDB, status); //Address me: it should be based on status. Some could be retried. some not
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
