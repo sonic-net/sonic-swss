@@ -31,14 +31,9 @@ constexpr bool DEFAULT_ENABLE_ENCRYPT = true;
 constexpr bool DEFAULT_SCI_IN_SECTAG = false;
 constexpr sai_macsec_cipher_suite_t DEFAULT_CIPHER_SUITE = SAI_MACSEC_CIPHER_SUITE_GCM_AES_128;
 
-static const std::vector<std::string> macsec_egress_sa_attrs =
+static const std::vector<std::string> macsec_sa_attrs =
     {
-        "SAI_MACSEC_SA_ATTR_XPN",
-};
-
-static const std::vector<std::string> macsec_ingress_sa_attrs =
-    {
-        "SAI_MACSEC_SA_ATTR_MINIMUM_XPN",
+        "SAI_MACSEC_SA_ATTR_CURRENT_XPN",
 };
 
 template <typename T, typename... Args>
@@ -1722,16 +1717,15 @@ task_process_status MACsecOrch::createMACsecSA(
         sc->m_sa_ids.erase(an);
     });
 
+    installCounter(CounterType::MACSEC_SA_ATTR, port_sci_an, sc->m_sa_ids[an], macsec_sa_attrs);
     std::vector<FieldValueTuple> fvVector;
     fvVector.emplace_back("state", "ok");
     if (direction == SAI_MACSEC_DIRECTION_EGRESS)
     {
-        installCounter(CounterType::MACSEC_SA_ATTR, port_sci_an, sc->m_sa_ids[an], macsec_egress_sa_attrs);
         m_state_macsec_egress_sa.set(swss::join('|', port_name, sci, an), fvVector);
     }
     else
     {
-        installCounter(CounterType::MACSEC_SA_ATTR, port_sci_an, sc->m_sa_ids[an], macsec_ingress_sa_attrs);
         m_state_macsec_ingress_sa.set(swss::join('|', port_name, sci, an), fvVector);
     }
 
