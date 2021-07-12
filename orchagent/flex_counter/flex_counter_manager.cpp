@@ -42,6 +42,41 @@ const unordered_map<CounterType, string> FlexCounterManager::counter_id_field_lo
     { CounterType::TUNNEL,          TUNNEL_ATTR_ID_LIST },
 };
 
+FlexManagerDirectory g_FlexManagerDirectory;
+
+FlexCounterManager *FlexManagerDirectory::createFlexCounterManager(const string& group_name,
+                                                                   const StatsMode stats_mode,
+                                                                   const uint polling_interval,
+                                                                   const bool enabled)
+{
+    if (m_managers.find(group_name) != m_managers.end())
+    {
+        if (stats_mode != m_managers[group_name]->getStatsMode())
+        {
+            SWSS_LOG_ERROR("Stats mode mismatch with already created flex counter manager %s", 
+                          group_name.c_str());
+            return NULL;
+        }
+        if (polling_interval != m_managers[group_name]->getPollingInterval())
+        {
+            SWSS_LOG_ERROR("Polling interval mismatch with already created flex counter manager %s", 
+                          group_name.c_str());
+            return NULL;
+        }
+        if (enabled != m_managers[group_name]->getEnabled())
+        {
+            SWSS_LOG_ERROR("Enabled field mismatch with already created flex counter manager %s", 
+                          group_name.c_str());
+            return NULL;
+        }
+        return m_managers[group_name];
+    }
+    FlexCounterManager *fc_manager = new FlexCounterManager(group_name, stats_mode, polling_interval,
+                                                            enabled);
+    m_managers[group_name] = fc_manager;
+    return fc_manager;
+}
+
 FlexCounterManager::FlexCounterManager(
         const string& group_name,
         const StatsMode stats_mode,

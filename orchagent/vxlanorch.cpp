@@ -15,6 +15,8 @@
 #include "swssnet.h"
 #include "warm_restart.h"
 #include "tokenize.h"
+#include "sai_serialize.h"
+#include "flex_counter_manager.h"
 
 
 /* Global variables */
@@ -25,6 +27,7 @@ extern sai_next_hop_api_t *sai_next_hop_api;
 extern Directory<Orch*> gDirectory;
 extern PortsOrch*       gPortsOrch;
 extern sai_object_id_t  gUnderlayIfId;
+extern FlexManagerDirectory g_FlexManagerDirectory;
 
 const map<MAP_T, uint32_t> vxlanTunnelMap =
 {
@@ -58,13 +61,14 @@ const map<MAP_T, std::pair<uint32_t, uint32_t>> vxlanTunnelMapKeyVal =
     },
 };
 
-const vector<sai_port_stat_t> tunnel_stat_ids =
+const vector<sai_tunnel_stat_t> tunnel_stat_ids =
 {
     SAI_TUNNEL_STAT_IN_OCTETS,
     SAI_TUNNEL_STAT_IN_PACKETS,
     SAI_TUNNEL_STAT_OUT_OCTETS,
     SAI_TUNNEL_STAT_OUT_PACKETS
-}
+};
+
 /*
  * Manipulators for the above Map
  */
@@ -490,6 +494,7 @@ bool VxlanTunnel::createTunnel(MAP_T encap, MAP_T decap, uint8_t encap_ttl)
 {
     try
     {
+        VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
         sai_ip_address_t ips, ipd, *ip=nullptr;
         uint8_t mapper_list = 0;
         swss::copy(ips, src_ip_);
@@ -519,12 +524,7 @@ bool VxlanTunnel::createTunnel(MAP_T encap, MAP_T decap, uint8_t encap_ttl)
 
         ids_.tunnel_id = create_tunnel(&ids_, ip, NULL, gUnderlayIfId, false, encap_ttl);
 
-        if (ids_.tunnel_id != SAI_NULL_OBJECT_ID)
-        {
-            auto tunnel_stats = generateTunnelCounterStats();
-            tunnel_stat_manager.setCounterIdList(ids_.tunnel_id, CounterType::TUNNEL,
-                                                 tunnel_stats);
-        }
+        tunnel_orch->addTunnelToFlexCounter(ids_.tunnel_id, tunnel_name_);
 
         ip = nullptr;
         if (!dst_ip_.isZero())
@@ -855,12 +855,14 @@ bool VxlanTunnel::deleteTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src,
 {
     try
     {
+        VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
+ 
         if (with_term)
         {
             remove_tunnel_termination(ids_.tunnel_term_id);
         }
   
-        tunnel_stat_manager.clearCounterIdList(ids_.tunnel_id);
+        tunnel_orch->removeTunnelFromFlexCounter(ids_.tunnel_id, tunnel_name_);
         remove_tunnel(ids_.tunnel_id);
         deleteMapperHw(mapper_list, map_src);
     }
@@ -885,6 +887,7 @@ bool VxlanTunnel::createTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src,
 
     try
     {
+        VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
         sai_ip_address_t ips, ipd, *ip=nullptr;
         swss::copy(ips, src_ip_);
 
@@ -903,9 +906,7 @@ bool VxlanTunnel::createTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src,
 
         if (ids_.tunnel_id != SAI_NULL_OBJECT_ID)
         {
-            auto tunnel_stats = generateTunnelCounterStats();
-            tunnel_stat_manager.setCounterIdList(ids_.tunnel_id, CounterType::TUNNEL,
-                                                 tunnel_stats);
+            tunnel_orch->addTunnelToFlexCounter(ids_.tunnel_id, tunnel_name_);
         }
 
         if (with_term)
@@ -1179,7 +1180,66 @@ bool VxlanTunnel::deleteDynamicDIPTunnel(const std::string dip, tunnel_user_t us
 
 //------------------- VxlanTunnelOrch Implementation --------------------------//
 
-std::unordered_set<std::string> VxlanTunnelOrch::generateVxlanCounterStats()
+VxlanTunnelOrch::VxlanTunnelOrch(DBConnector *statedb, DBConnector *db, const std::string& tableName) :
+                                 Orch2(db, tableName, request_),
+                                 m_stateVxlanTable(statedb, STATE_VXLAN_TUNNEL_TABLE_NAME)
+{
+    tunnel_stat_manager = g_FlexManagerDirectory.createFlexCounterManager(TUNNEL_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                        StatsMode::READ, TUNNEL_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false);
+    m_counter_db = shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
+
+    m_tunnelNameTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_TUNNEL_NAME_MAP));
+    m_tunnelTypeTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_TUNNEL_TYPE_MAP));
+
+
+}
+
+void VxlanTunnelOrch::addTunnelToFlexCounter(sai_object_id_t oid, const string &name)
+{
+    SWSS_LOG_ENTER();
+    string type = "SAI_TUNNEL_TYPE_VXLAN";
+
+    if (oid == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_WARN("Not adding NULL OID to flex for tunnel %s", name.c_str());
+        return;
+    }
+
+    string sai_oid = sai_serialize_object_id(oid);
+    vector<FieldValueTuple> tunnelNameFvs;
+    vector<FieldValueTuple> tunnelTypeFvs;
+
+    tunnelNameFvs.emplace_back(name, sai_oid);
+    tunnelTypeFvs.emplace_back(sai_oid, type);
+
+    m_tunnelNameTable->set("", tunnelNameFvs);
+    m_tunnelTypeTable->set("", tunnelTypeFvs);
+
+    auto tunnel_stats = generateTunnelCounterStats();
+    tunnel_stat_manager->setCounterIdList(oid, CounterType::TUNNEL,
+                                          tunnel_stats);
+    SWSS_LOG_DEBUG("Registered tunnel %s to Flex counter", name.c_str());
+}
+
+void VxlanTunnelOrch::removeTunnelFromFlexCounter(sai_object_id_t oid, const string &name)
+{
+    SWSS_LOG_ENTER();
+
+    if (oid == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_WARN("Not removing NULL OID to flex for tunnel %s", name.c_str());
+        return;
+    }
+
+    string sai_oid = sai_serialize_object_id(oid);
+
+    m_tunnelNameTable->hdel("", name);
+    m_tunnelTypeTable->hdel("", sai_oid);
+    tunnel_stat_manager->clearCounterIdList(oid);
+    SWSS_LOG_DEBUG("Unregistered tunnel %s to Flex counter", name.c_str());
+}
+
+std::unordered_set<std::string> VxlanTunnelOrch::generateTunnelCounterStats()
 {
     std::unordered_set<std::string> counter_stats;
 
@@ -1197,10 +1257,9 @@ void VxlanTunnelOrch::generateTunnelCounterMap()
         return;
     }
 
-    auto tunnel_counter_stats = generateTunnelCounterStats();
     for (const auto& it: vxlan_tunnel_table_)
     {
-        tunnel_stat_manager.setCounterIdList(it.second.get()->getTunnelId(), CounterType::TUNNEL, tunnel_counter_stats);
+        addTunnelToFlexCounter(it.second.get()->getTunnelId(), it.second.get()->getTunnelName());
     }
 
     m_isTunnelCounterMapGenerated = true;
@@ -1385,7 +1444,7 @@ bool VxlanTunnelOrch::removeVxlanTunnelMap(string tunnelName, uint32_t vni)
         auto tunnel_id = vxlan_tunnel_table_[tunnelName].get()->getTunnelId();
         try
         {
-            tunnel_stat_manager.clearCounterIdList(tunnel_id);
+            removeTunnelFromFlexCounter(tunnel_id, tunnelName);
             remove_tunnel(tunnel_id);
         }
         catch(const std::runtime_error& error)

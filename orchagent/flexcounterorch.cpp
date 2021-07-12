@@ -9,6 +9,7 @@
 #include "bufferorch.h"
 #include "flexcounterorch.h"
 #include "debugcounterorch.h"
+#include "directory.h"
 
 extern sai_port_api_t *sai_port_api;
 
@@ -16,6 +17,7 @@ extern PortsOrch *gPortsOrch;
 extern FabricPortsOrch *gFabricPortsOrch;
 extern IntfsOrch *gIntfsOrch;
 extern BufferOrch *gBufferOrch;
+extern Directory<Orch*> gDirectory;
 
 #define BUFFER_POOL_WATERMARK_KEY   "BUFFER_POOL_WATERMARK"
 #define PORT_KEY                    "PORT"
@@ -145,7 +147,7 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     }
                     if (vxlan_tunnel_orch && (key== TUNNEL_KEY) && (value == "enable"))
                     {
-                        vxlan_tunnel_orch->generateTunnelStats();
+                        vxlan_tunnel_orch->generateTunnelCounterMap();
                     }
                     vector<FieldValueTuple> fieldValues;
                     fieldValues.emplace_back(FLEX_COUNTER_STATUS_FIELD, value);

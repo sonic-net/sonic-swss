@@ -198,8 +198,6 @@ public:
     int getDipTunnelCnt();
     bool createDynamicDIPTunnel(const string dip, tunnel_user_t usr);
     bool deleteDynamicDIPTunnel(const string dip, tunnel_user_t usr, bool update_refcnt = true);
-    unordered_set<string> generateVxlanCounterStats();
-    void generateTunnelCounterMap();
     uint32_t vlan_vrf_vni_count = 0;
     bool del_tnl_hw_pending = false;
 
@@ -246,13 +244,7 @@ typedef std::map<IpAddress, VxlanTunnel*> VTEPTable;
 class VxlanTunnelOrch : public Orch2
 {
 public:
-    VxlanTunnelOrch(DBConnector *statedb, DBConnector *db, const std::string& tableName) :
-                    Orch2(db, tableName, request_),
-                    m_stateVxlanTable(statedb, STATE_VXLAN_TUNNEL_TABLE_NAME),
-                    tunnel_stat_manager(TUNNEL_STAT_COUNTER_FLEX_COUNTER_GROUP,
-                                        StatsMode::READ, TUNNEL_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false)
-    {}
-
+    VxlanTunnelOrch(DBConnector *statedb, DBConnector *db, const std::string& tableName);
 
     bool isTunnelExists(const std::string& tunnelName) const
     {
@@ -345,7 +337,10 @@ public:
         vxlan_vni_vlan_map_table_.erase(vni);
     }
 
-
+    unordered_set<string> generateTunnelCounterStats();
+    void generateTunnelCounterMap();
+    void addTunnelToFlexCounter(sai_object_id_t oid, const std::string &name);
+    void removeTunnelFromFlexCounter(sai_object_id_t oid, const std::string &name);
 
 private:
     virtual bool addOperation(const Request& request);
@@ -358,6 +353,10 @@ private:
     Table m_stateVxlanTable;
     FlexCounterManager vxlan_tunnel_stat_manager;
     bool m_isTunnelCounterMapGenerated = false;
+    FlexCounterManager *tunnel_stat_manager;
+    unique_ptr<Table> m_tunnelNameTable;
+    unique_ptr<Table> m_tunnelTypeTable;
+    shared_ptr<DBConnector> m_counter_db;
 };
 
 const request_description_t vxlan_tunnel_map_request_description = {

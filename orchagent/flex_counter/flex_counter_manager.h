@@ -41,6 +41,9 @@ class FlexCounterManager
                 const uint polling_interval,
                 const bool enabled);
 
+        FlexCounterManager() 
+        {}
+
         FlexCounterManager(const FlexCounterManager&) = delete;
         FlexCounterManager& operator=(const FlexCounterManager&) = delete;
         virtual ~FlexCounterManager();
@@ -54,6 +57,26 @@ class FlexCounterManager
                 const CounterType counter_type,
                 const std::unordered_set<std::string>& counter_stats);
         void clearCounterIdList(const sai_object_id_t object_id);
+
+        std::string getGroupName()
+        {
+            return group_name;
+        }
+
+        StatsMode getStatsMode()
+        {
+            return stats_mode;
+        }
+
+        uint getPollingInterval()
+        {
+            return polling_interval;
+        }
+
+        bool getEnabled()
+        {
+            return enabled;
+        }
 
     protected:
         void applyGroupConfiguration();
@@ -78,6 +101,15 @@ class FlexCounterManager
         static const std::unordered_map<StatsMode, std::string> stats_mode_lookup;
         static const std::unordered_map<bool, std::string> status_lookup;
         static const std::unordered_map<CounterType, std::string> counter_id_field_lookup;
+};
+
+class FlexManagerDirectory
+{
+    public:
+        FlexCounterManager* createFlexCounterManager(const std::string& group_name, const StatsMode stats_mode,
+                                                     const uint polling_interval, const bool enabled);
+    private:
+        std::unordered_map<std::string, FlexCounterManager*>  m_managers;
 };
 
 #endif // ORCHAGENT_FLEX_COUNTER_MANAGER_H
