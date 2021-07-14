@@ -4843,7 +4843,16 @@ bool PortsOrch::removeLagMember(Port &lag, Port &port)
 
     if (lag.m_bridge_port_id > 0)
     {
-        if (!setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_STRIP))
+        bool hostif_exists = true;
+        sai_attribute_t attr;
+        attr.id = SAI_HOSTIF_ATTR_START;
+
+        sai_status_t status = sai_hostif_api->get_hostif_attribute(port.m_hif_id, 1, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+	    hostif_exists = false;
+        }
+        if (hostif_exists && !setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_STRIP))
         {
             SWSS_LOG_ERROR("Failed to set %s for hostif of port %s which is leaving LAG %s",
                     hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_STRIP], port.m_alias.c_str(), lag.m_alias.c_str());
