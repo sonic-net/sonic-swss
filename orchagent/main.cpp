@@ -669,7 +669,6 @@ int main(int argc, char **argv)
             }
         }
     }
-    auto orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db, chassis_app_db.get());
 
     if (!orchDaemon->init())
     {
