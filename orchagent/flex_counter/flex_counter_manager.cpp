@@ -47,7 +47,8 @@ FlexManagerDirectory g_FlexManagerDirectory;
 FlexCounterManager *FlexManagerDirectory::createFlexCounterManager(const string& group_name,
                                                                    const StatsMode stats_mode,
                                                                    const uint polling_interval,
-                                                                   const bool enabled)
+                                                                   const bool enabled,
+                                                                   FieldValueTuple fv_plugin)
 {
     if (m_managers.find(group_name) != m_managers.end())
     {
@@ -72,7 +73,7 @@ FlexCounterManager *FlexManagerDirectory::createFlexCounterManager(const string&
         return m_managers[group_name];
     }
     FlexCounterManager *fc_manager = new FlexCounterManager(group_name, stats_mode, polling_interval,
-                                                            enabled);
+                                                            enabled, fv_plugin);
     m_managers[group_name] = fc_manager;
     return fc_manager;
 }
@@ -81,11 +82,13 @@ FlexCounterManager::FlexCounterManager(
         const string& group_name,
         const StatsMode stats_mode,
         const uint polling_interval,
-        const bool enabled) :
+        const bool enabled,
+        FieldValueTuple fv_plugin) :
     group_name(group_name),
     stats_mode(stats_mode),
     polling_interval(polling_interval),
     enabled(enabled),
+    fv_plugin(fv_plugin),
     flex_counter_db(new DBConnector("FLEX_COUNTER_DB", 0)),
     flex_counter_group_table(new ProducerTable(flex_counter_db.get(), FLEX_COUNTER_GROUP_TABLE)),
     flex_counter_table(new ProducerTable(flex_counter_db.get(), FLEX_COUNTER_TABLE))
@@ -121,6 +124,11 @@ void FlexCounterManager::applyGroupConfiguration()
         FieldValueTuple(POLL_INTERVAL_FIELD, std::to_string(polling_interval)),
         FieldValueTuple(FLEX_COUNTER_STATUS_FIELD, status_lookup.at(enabled))
     };
+
+    if (!fvField(fv_plugin).empty())
+    {
+        field_values.emplace_back(fv_plugin);
+    }
 
     flex_counter_group_table->set(group_name, field_values);
 }

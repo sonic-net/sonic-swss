@@ -1184,8 +1184,22 @@ VxlanTunnelOrch::VxlanTunnelOrch(DBConnector *statedb, DBConnector *db, const st
                                  Orch2(db, tableName, request_),
                                  m_stateVxlanTable(statedb, STATE_VXLAN_TUNNEL_TABLE_NAME)
 {
+    FieldValueTuple fv;
+    string tunnel_rate_plugin = "tunnel_rates.lua";
+    try
+    {
+        string tunnel_rate_script = swss::loadLuaScript(tunnel_rate_plugin);
+        string tunnel_rate_sha = swss::loadRedisScript(m_counter_db.get(), tunnel_rate_script);
+
+        fv = make_pair(TUNNEL_PLUGIN_FIELD, tunnel_rate_sha);
+    }
+    catch (const runtime_error &e)
+    {
+        SWSS_LOG_WARN("Tunnel flex counter group plugins was not set successfully: %s", e.what());
+    }
+
     tunnel_stat_manager = g_FlexManagerDirectory.createFlexCounterManager(TUNNEL_STAT_COUNTER_FLEX_COUNTER_GROUP,
-                                        StatsMode::READ, TUNNEL_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false);
+                                        StatsMode::READ, TUNNEL_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false, fv);
     m_counter_db = shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
 
     m_tunnelNameTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_TUNNEL_NAME_MAP));

@@ -4,8 +4,10 @@
 #include <string>
 #include <unordered_set>
 #include <unordered_map>
+#include <utility>
 #include "dbconnector.h"
 #include "producertable.h"
+#include "table.h"
 #include <inttypes.h>
 
 extern "C" {
@@ -39,7 +41,8 @@ class FlexCounterManager
                 const std::string& group_name,
                 const StatsMode stats_mode,
                 const uint polling_interval,
-                const bool enabled);
+                const bool enabled,
+                swss::FieldValueTuple fv_plugin = std::make_pair("",""));
 
         FlexCounterManager() 
         {}
@@ -92,6 +95,7 @@ class FlexCounterManager
         StatsMode stats_mode;
         uint polling_interval;
         bool enabled;
+        swss::FieldValueTuple fv_plugin;
         std::unordered_set<sai_object_id_t> installed_counters;
 
         std::shared_ptr<swss::DBConnector> flex_counter_db = nullptr;
@@ -107,7 +111,8 @@ class FlexManagerDirectory
 {
     public:
         FlexCounterManager* createFlexCounterManager(const std::string& group_name, const StatsMode stats_mode,
-                                                     const uint polling_interval, const bool enabled);
+                                                     const uint polling_interval, const bool enabled, 
+                                                     swss::FieldValueTuple fv_plugin = std::make_pair("",""));
     private:
         std::unordered_map<std::string, FlexCounterManager*>  m_managers;
 };
