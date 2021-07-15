@@ -3221,7 +3221,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 {
                     throw runtime_error("Remove hostif for the port failed");
                 }
-		m_portList[alias].m_hif_id = SAI_NULL_OBJECT_ID;
+                m_portList[alias].m_hif_id = SAI_NULL_OBJECT_ID;
 
                 Port p;
                 if (getPort(port_id, p))
