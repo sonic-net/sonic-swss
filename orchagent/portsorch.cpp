@@ -3221,7 +3221,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 {
                     throw runtime_error("Remove hostif for the port failed");
                 }
-                m_portList[alias].m_hif_id = SAI_NULL_OBJECT_ID;
 
                 Port p;
                 if (getPort(port_id, p))
@@ -4846,7 +4845,7 @@ bool PortsOrch::removeLagMember(Port &lag, Port &port)
 
     if (lag.m_bridge_port_id > 0)
     {
-        if (port.m_hif_id != SAI_NULL_OBJECT_ID && !setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_STRIP))
+        if (!setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_STRIP))
         {
             SWSS_LOG_ERROR("Failed to set %s for hostif of port %s which is leaving LAG %s",
                     hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_STRIP], port.m_alias.c_str(), lag.m_alias.c_str());
