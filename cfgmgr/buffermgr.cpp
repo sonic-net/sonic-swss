@@ -112,10 +112,26 @@ Create/update two tables: profile (in m_cfgBufferProfileTable) and port buffer (
         }
     }
 */
-task_process_status BufferMgr::doSpeedUpdateTask(string port, string speed)
+task_process_status BufferMgr::doSpeedUpdateTask(string port, string speed, bool admin_up)
 {
     vector<FieldValueTuple> fvVector;
     string cable;
+
+    string buffer_pg_key = port + m_cfgBufferPgTable.getTableNameSeparator() + LOSSLESS_PGS;
+
+    m_cfgBufferPgTable.get(buffer_pg_key, fvVector);
+
+    if (!admin_up)
+    {
+        // Remove the entry in BUFFER_PG table if any
+        if (!fvVector.empty())
+        {
+            SWSS_LOG_NOTICE("Removing PG %s from port %s which is administrative down", buffer_pg_key.c_str(), port.c_str());
+            m_cfgBufferPgTable.del(buffer_pg_key);
+        }
+
+        return task_process_status::task_success;
+    }
 
     if (m_cableLenLookup.count(port) == 0)
     {
@@ -174,8 +190,6 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, string speed)
 
     fvVector.clear();
 
-    string buffer_pg_key = port + m_cfgBufferPgTable.getTableNameSeparator() + LOSSLESS_PGS;
-
     string profile_ref = string("[") +
                          CFG_BUFFER_PROFILE_TABLE_NAME +
                          m_cfgBufferPgTable.getTableNameSeparator() +
@@ -183,9 +197,6 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, string speed)
                          "]";
 
     /* Check if PG Mapping is already then log message and return. */
-
-    m_cfgBufferPgTable.get(buffer_pg_key, fvVector);
-    
     for (auto& prop : fvVector)
     {
         if ((fvField(prop) == "profile") && (profile_ref == fvValue(prop)))
@@ -194,9 +205,9 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, string speed)
             return task_process_status::task_success;
         }
     }
-    
+
     fvVector.clear();
- 
+
     fvVector.push_back(make_pair("profile", profile_ref));
     m_cfgBufferPgTable.set(buffer_pg_key, fvVector);
     return task_process_status::task_success;
@@ -221,23 +232,41 @@ void BufferMgr::doTask(Consumer &consumer)
         task_process_status task_status = task_process_status::task_success;
         if (op == SET_COMMAND)
         {
-            for (auto i : kfvFieldsValues(t))
+            if (table_name == CFG_PORT_CABLE_LEN_TABLE_NAME)
             {
-                if (table_name == CFG_PORT_CABLE_LEN_TABLE_NAME)
+                // receive and cache cable length table
+                for (auto i : kfvFieldsValues(t))
                 {
-                    // receive and cache cable length table
-                    task_status = doCableTask(fvField(i), fvValue(i));
+                    if (table_name == CFG_PORT_CABLE_LEN_TABLE_NAME)
+                    {
+                        task_status = doCableTask(fvField(i), fvValue(i));
+                    }
+                    if (task_status != task_process_status::task_success)
+                    {
+                        break;
+                    }
                 }
-                // In case of PORT table update, Buffer Manager is interested in speed update only
-                if (m_pgfile_processed && table_name == CFG_PORT_TABLE_NAME && fvField(i) == "speed")
+            }
+            else if (m_pgfile_processed && table_name == CFG_PORT_TABLE_NAME)
+            {
+                bool speed_updated = false, admin_status_updated = false, admin_up = false;
+                string speed;
+                for (auto i : kfvFieldsValues(t))
                 {
-                    // create/update profile for port
-                    task_status = doSpeedUpdateTask(port, fvValue(i));
+                    if (fvField(i) == "speed")
+                    {
+                        speed_updated = true;
+                        speed = fvValue(i);
+                    }
+                    else if (fvField(i) == "admin_status")
+                    {
+                        admin_status_updated = true;
+                        admin_up = ("up" == fvValue(i));
+                    }
                 }
-                if (task_status != task_process_status::task_success)
-                {
-                    break;
-                }
+
+                if (speed_updated || admin_status_updated)
+                    task_status = doSpeedUpdateTask(port, speed, admin_up);
             }
         }
 
