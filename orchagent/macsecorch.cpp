@@ -219,7 +219,7 @@ public:
 
     sai_object_id_t *get_port_id()
     {
-        if(m_port_id == nullptr)
+        if (m_port_id == nullptr)
         {
             auto port = get_port();
             if (port == nullptr)
