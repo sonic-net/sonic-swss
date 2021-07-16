@@ -191,7 +191,7 @@ bool NeighOrch::addNextHop(const NextHopKey &nh)
     }
 
     NextHopKey nexthop(nh);
-    if (m_intfsOrch->isRemoteSystemPortIntf(nexthop.alias))
+    if (m_intfsOrch->isRemoteSystemPortIntf(nh.alias))
     {
         //For remote system ports kernel nexthops are always on inband. Change the key
         Port inbp;
@@ -202,7 +202,7 @@ bool NeighOrch::addNextHop(const NextHopKey &nh)
     }
 
     assert(!hasNextHop(nexthop));
-    sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(nexthop.alias);
+    sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(nh.alias);
 
     vector<sai_attribute_t> next_hop_attrs;
 
