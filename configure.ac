@@ -13,8 +13,6 @@ AC_HEADER_STDC
 AC_CHECK_LIB([hiredis], [redisConnect],,
     AC_MSG_ERROR([libhiredis is not installed.]))
 
-AC_CHECK_LIB([nl-genl-3], [genl_connect])
-
 AC_CHECK_LIB([team], [team_alloc],
     AM_CONDITIONAL(HAVE_LIBTEAM, true),
    [AC_MSG_WARN([libteam is not installed.])
@@ -46,7 +44,27 @@ AC_ARG_WITH(extra-lib,
                           prefix where extra libraries are installed],
 [AC_SUBST(LDFLAGS, "$LDFLAGS -L${withval}")])
 
-CFLAGS_COMMON="-std=c++14 -Wall -fPIC -Wno-write-strings -I/usr/include/libnl3 -I/usr/include/swss"
+AC_ARG_WITH(extra-usr-lib,
+[  --with-extra-usr-lib=DIR
+                          prefix where extra libraries are installed],
+[AC_SUBST(LDFLAGS, "$LDFLAGS -L${withval}")])
+
+AC_CHECK_LIB([nl-3], [nl_addr_alloc])
+AC_CHECK_LIB([nl-genl-3], [nl_socket_get_cb])
+AC_CHECK_LIB([nl-route-3], [nl_object_alloc])
+AC_CHECK_LIB([nl-nf-3], [nfnl_connect])
+
+CFLAGS_COMMON="-std=c++14 -Wall -fPIC -Wno-write-strings -I/usr/include/swss"
+
+AC_ARG_WITH(libnl-3.0-inc,
+[  --with-libnl-3.0-inc=DIR
+                           prefix where libnl-3.0 includes are installed],
+[AC_SUBST(CPPFLAGS, "$CPPFLAGS -I${withval}")
+ AC_SUBST(LIBNL_INC_DIR, "${withval}")])
+
+if test "${with_libnl_3_0_inc+set}" != set; then
+    CFLAGS_COMMON+=" I/usr/include/libnl3"
+fi
 
 CFLAGS_COMMON+=" -Werror"
 CFLAGS_COMMON+=" -Wno-reorder"
