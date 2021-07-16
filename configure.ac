@@ -63,7 +63,7 @@ AC_ARG_WITH(libnl-3.0-inc,
  AC_SUBST(LIBNL_INC_DIR, "${withval}")])
 
 if test "${with_libnl_3_0_inc+set}" != set; then
-    CFLAGS_COMMON+=" I/usr/include/libnl3"
+    CFLAGS_COMMON+=" -I/usr/include/libnl3"
 fi
 
 CFLAGS_COMMON+=" -Werror"
