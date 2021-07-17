@@ -524,7 +524,10 @@ bool VxlanTunnel::createTunnel(MAP_T encap, MAP_T decap, uint8_t encap_ttl)
 
         ids_.tunnel_id = create_tunnel(&ids_, ip, NULL, gUnderlayIfId, false, encap_ttl);
 
-        tunnel_orch->addTunnelToFlexCounter(ids_.tunnel_id, tunnel_name_);
+        if (ids_.tunnel_id != SAI_NULL_OBJECT_ID)
+        {
+            tunnel_orch->addTunnelToFlexCounter(ids_.tunnel_id, tunnel_name_);
+        }
 
         ip = nullptr;
         if (!dst_ip_.isZero())
@@ -1213,12 +1216,6 @@ void VxlanTunnelOrch::addTunnelToFlexCounter(sai_object_id_t oid, const string &
     SWSS_LOG_ENTER();
     string type = "SAI_TUNNEL_TYPE_VXLAN";
 
-    if (oid == SAI_NULL_OBJECT_ID)
-    {
-        SWSS_LOG_WARN("Not adding NULL OID to flex for tunnel %s", name.c_str());
-        return;
-    }
-
     string sai_oid = sai_serialize_object_id(oid);
     vector<FieldValueTuple> tunnelNameFvs;
     vector<FieldValueTuple> tunnelTypeFvs;
@@ -1273,7 +1270,11 @@ void VxlanTunnelOrch::generateTunnelCounterMap()
 
     for (const auto& it: vxlan_tunnel_table_)
     {
-        addTunnelToFlexCounter(it.second.get()->getTunnelId(), it.second.get()->getTunnelName());
+        auto tunnel_id = it.second.get()->getTunnelId();
+        if (tunnel_id != SAI_NULL_OBJECT_ID)
+        {
+            addTunnelToFlexCounter(it.second.get()->getTunnelId(), it.second.get()->getTunnelName());
+        }
     }
 
     m_isTunnelCounterMapGenerated = true;
