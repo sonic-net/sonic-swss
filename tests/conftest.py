@@ -1620,9 +1620,9 @@ def manage_dvs(request) -> str:
             curr_fake_platform = new_fake_platform
 
         else:
-            # If not re-creating the DVS, restart it 
+            # If not re-creating the DVS, reload supervisor
             # between modules to ensure a consistent start state
-            dvs.restart()
+            dvs.run_cmd("supervisorctl reload")
 
         return dvs
 
