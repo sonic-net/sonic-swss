@@ -51,7 +51,7 @@ AC_ARG_WITH(extra-usr-lib,
 
 AC_CHECK_LIB([nl-3], [nl_addr_alloc])
 AC_CHECK_LIB([nl-genl-3], [nl_socket_get_cb])
-AC_CHECK_LIB([nl-route-3], [nl_object_alloc])
+AC_CHECK_LIB([nl-route-3], [rtnl_route_nh_get_encap_mpls_dst])
 AC_CHECK_LIB([nl-nf-3], [nfnl_connect])
 
 CFLAGS_COMMON="-std=c++14 -Wall -fPIC -Wno-write-strings -I/usr/include/swss"
