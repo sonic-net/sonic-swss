@@ -378,17 +378,17 @@ void BufferMgr::doTask(Consumer &consumer)
                 }
                 if (m_pgfile_processed && table_name == CFG_PORT_TABLE_NAME && (fvField(i) == "speed" || fvField(i) == "admin_status"))
                 {
-	            if (fvField(i) == "speed")
-		        {
-		            m_speedLookup[port] = fvValue(i);
+                    if (fvField(i) == "speed")
+                    {
+                        m_speedLookup[port] = fvValue(i);
                     }
-
-		        if (m_speedLookup.count(port) != 0)
+                    
+                    if (m_speedLookup.count(port) != 0)
                     {
                         // create/update profile for port
                         task_status = doSpeedUpdateTask(port);
-	            }
-		    }
+                    }
+                }
                 if (task_status != task_process_status::task_success)
                 {
                     break;
