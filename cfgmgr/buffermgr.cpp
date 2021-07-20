@@ -136,7 +136,7 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
     cable = m_cableLenLookup[port];
     if (cable == "0m")
     {
-        SWSS_LOG_INFO("Not creating/updating PG profile for port %s. Cable length is set to %s", port.c_str(), cable.c_str());
+        SWSS_LOG_NOTICE("Not creating/updating PG profile for port %s. Cable length is set to %s", port.c_str(), cable.c_str());
         return task_process_status::task_success;
     }
 
