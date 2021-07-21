@@ -183,6 +183,7 @@ void DebugCounterOrch::publishDropCounterCapabilities()
 {
     supported_ingress_drop_reasons = DropCounter::getSupportedDropReasons(SAI_DEBUG_COUNTER_ATTR_IN_DROP_REASON_LIST);
     supported_egress_drop_reasons  = DropCounter::getSupportedDropReasons(SAI_DEBUG_COUNTER_ATTR_OUT_DROP_REASON_LIST);
+    supported_counter_types        = DropCounter::getSupportedCounterTypes();
 
     string ingress_drop_reason_str = DropCounter::serializeSupportedDropReasons(supported_ingress_drop_reasons);
     string egress_drop_reason_str = DropCounter::serializeSupportedDropReasons(supported_egress_drop_reasons);
@@ -190,6 +191,12 @@ void DebugCounterOrch::publishDropCounterCapabilities()
     for (auto const &counter_type : DebugCounter::getDebugCounterTypeLookup())
     {
         string drop_reasons;
+
+        if (!supported_counter_types.count(counter_type.first))
+        {
+            continue;
+        }
+
         if (counter_type.first == PORT_INGRESS_DROPS || counter_type.first == SWITCH_INGRESS_DROPS)
         {
             drop_reasons = ingress_drop_reason_str;
@@ -212,8 +219,6 @@ void DebugCounterOrch::publishDropCounterCapabilities()
         {
             continue;
         }
-
-        supported_counter_types.emplace(counter_type.first);
 
         vector<FieldValueTuple> fieldValues;
         fieldValues.push_back(FieldValueTuple("count", num_counters));

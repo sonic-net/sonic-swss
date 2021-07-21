@@ -7,6 +7,7 @@
 #include "netdispatcher.h"
 #include "netlink.h"
 #include "fdbsyncd/fdbsync.h"
+#include "warm_restart.h"
 
 using namespace std;
 using namespace swss;
@@ -35,6 +36,7 @@ int main(int argc, char **argv)
             Selectable *temps;
             int ret;
             Select s;
+            SelectableTimer replayCheckTimer(timespec{0, 0});
 
             using namespace std::chrono;
 
@@ -45,7 +47,29 @@ int main(int argc, char **argv)
             if (sync.getRestartAssist()->isWarmStartInProgress())
             {
                 sync.getRestartAssist()->readTablesToMap();
-                SWSS_LOG_NOTICE("Starting ReconcileTimer");
+                
+                steady_clock::time_point starttime = steady_clock::now();
+                while (!sync.isIntfRestoreDone())
+                {
+                    duration<double> time_span =
+                        duration_cast<duration<double>>(steady_clock::now() - starttime);
+                    int pasttime = int(time_span.count());
+
+                    if (pasttime > INTF_RESTORE_MAX_WAIT_TIME)
+                    {
+                        SWSS_LOG_INFO("timed-out before all interface data was replayed to kernel!!!");
+                        throw runtime_error("fdbsyncd: timedout on interface data replay");
+                    }
+                    sleep(1);
+                }
+                replayCheckTimer.setInterval(timespec{1, 0});
+                replayCheckTimer.start();
+                s.addSelectable(&replayCheckTimer);
+            }
+            else
+            {
+                sync.getRestartAssist()->warmStartDisabled();
+                sync.m_reconcileDone = true;
             }
 
             netlink.registerGroup(RTNLGRP_LINK);
@@ -80,6 +104,33 @@ int main(int argc, char **argv)
                 {
                     sync.processCfgEvpnNvo();
                 }
+                else if (temps == &replayCheckTimer)
+                {
+                    if (sync.getFdbStateTable()->empty() && sync.getCfgEvpnNvoTable()->empty())
+                    {
+                        sync.getRestartAssist()->appDataReplayed();
+                        SWSS_LOG_NOTICE("FDB Replay Complete");
+                        s.removeSelectable(&replayCheckTimer);
+
+                        /* Obtain warm-restart timer defined for routing application */
+                        uint32_t warmRestartIval = WarmStart::getWarmStartTimer("bgp","bgp");
+                        if (warmRestartIval)
+                        {
+                            sync.getRestartAssist()->setReconcileInterval(warmRestartIval);
+                        }
+                        //Else the interval is already set to default value
+
+                        //TODO: Optimise the reconcillation time using eoiu - issue#1657
+                        SWSS_LOG_NOTICE("Starting ReconcileTimer");
+                        sync.getRestartAssist()->startReconcileTimer(s);
+                    }
+                    else
+                    {
+                        replayCheckTimer.setInterval(timespec{1, 0});
+                        // re-start replay check timer
+                        replayCheckTimer.start();
+                    }
+                }
                 else
                 {
                     /*
@@ -93,7 +144,7 @@ int main(int argc, char **argv)
                             sync.m_reconcileDone = true;
                             sync.getRestartAssist()->stopReconcileTimer(s);
                             sync.getRestartAssist()->reconcile();
-                            SWSS_LOG_NOTICE("VXLAN FDB VNI Reconcillation Complete (Timer)");
+                            SWSS_LOG_NOTICE("VXLAN FDB VNI Reconcillation Complete");
                         }
                     }
                 }
