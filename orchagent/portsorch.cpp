@@ -749,6 +749,24 @@ void PortsOrch::decreasePortRefCount(const string &alias)
     m_port_ref_count[alias]--;
 }
 
+void PortsOrch::increaseBridgePortRefCount(Port &port)
+{
+    assert (m_bridge_port_ref_count.find(port.m_alias) != m_bridge_port_ref_count.end());
+    m_bridge_port_ref_count[port.m_alias]++;
+}
+
+void PortsOrch::decreaseBridgePortRefCount(Port &port)
+{
+    assert (m_bridge_port_ref_count.find(port.m_alias) != m_bridge_port_ref_count.end());
+    m_bridge_port_ref_count[port.m_alias]--;
+}
+
+bool PortsOrch::getBridgePortReferenceCount(Port &port)
+{
+    assert (m_bridge_port_ref_count.find(port.m_alias) != m_bridge_port_ref_count.end());
+    return m_bridge_port_ref_count[port.m_alias];
+}
+
 bool PortsOrch::getPortByBridgePortId(sai_object_id_t bridge_port_id, Port &port)
 {
     SWSS_LOG_ENTER();
@@ -4532,6 +4550,7 @@ bool PortsOrch::addVlanFloodGroups(Port &vlan, Port &port, string end_point_ip)
     }
     vlan.m_vlan_info.l2mc_members[end_point_ip] = l2mc_group_member;
     m_portList[vlan.m_alias] = vlan;
+    increaseBridgePortRefCount(port);
     return true;
 }
 
@@ -4645,6 +4664,7 @@ bool PortsOrch::removeVlanEndPointIp(Port &vlan, Port &port, string end_point_ip
                        end_point_ip.c_str(), vlan.m_vlan_info.vlan_id);
         return false;
     }
+    decreaseBridgePortRefCount(port);
     vlan.m_vlan_info.l2mc_members.erase(end_point_ip);
     sai_object_id_t l2mc_group_id = SAI_NULL_OBJECT_ID;
     sai_attribute_t attr;

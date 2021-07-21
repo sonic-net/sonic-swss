@@ -194,11 +194,13 @@ public:
     // Total Routes using the DIP tunnel. 
     int getDipTunnelRefCnt(const std::string);
     int getDipTunnelIMRRefCnt(const std::string);
-    int getDipTunnelIPRefCnt(const std::string);
+    int getRemoteEndPointIPRefCnt(const std::string);
     // Total DIP tunnels associated with this SIP tunnel.
     int getDipTunnelCnt();
     bool createDynamicDIPTunnel(const string dip, tunnel_user_t usr);
     bool deleteDynamicDIPTunnel(const string dip, tunnel_user_t usr, bool update_refcnt = true);
+    bool isTunnelReferenced(void);
+    void updateRemoteEndPointIpRef(const std::string remote_vtep, bool inc);
     uint32_t vlan_vrf_vni_count = 0;
     bool del_tnl_hw_pending = false;
 

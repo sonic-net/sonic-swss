@@ -906,7 +906,11 @@ bool VxlanTunnel::createTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src,
 
 void VxlanTunnel::deletePendingSIPTunnel()
 {
-   if ((getDipTunnelCnt() == 0) && del_tnl_hw_pending)
+   VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
+   bool dip_tunnels_used  = tunnel_orch->dipTunnelsUsed();
+
+   if (((dip_tunnels_used && getDipTunnelCnt() == 0) ||
+        !dip_tunnels_used ) && del_tnl_hw_pending)
    {
        uint8_t mapper_list=0;
 
@@ -994,7 +998,7 @@ int VxlanTunnel::getDipTunnelIMRRefCnt(const std::string remote_vtep)
     }
 }
 
-int VxlanTunnel::getDipTunnelIPRefCnt(const std::string remote_vtep)
+int VxlanTunnel::getRemoteEndPointIPRefCnt(const std::string remote_vtep)
 {
     tunnel_refcnt_t tnl_refcnts;
 
@@ -1055,6 +1059,43 @@ void VxlanTunnel::updateDipTunnelRefCnt(bool inc, tunnel_refcnt_t& tnl_refcnts,
             break;
         }
         default : break;
+    }
+}
+
+void VxlanTunnel::updateRemoteEndPointIpRef(const std::string remote_vtep, bool inc)
+{
+    tunnel_refcnt_t tnl_refcnts;
+
+    auto it = tnl_users_.find(remote_vtep);
+    if (inc)
+    {
+        if (it == tnl_users_.end())
+        {
+            memset(&tnl_refcnts,0,sizeof(tunnel_refcnt_t));
+            tnl_refcnts.ip_refcnt++;
+            tnl_users_[remote_vtep] = tnl_refcnts;
+        }
+        else
+        {
+            it->second.ip_refcnt++;
+        }
+        SWSS_LOG_DEBUG("Incrementing remote end point %s reference to %d", remote_vtep.c_str(),
+                       it->second.ip_refcnt);
+    }
+    else
+    {
+        if (it == tnl_users_.end())
+        {
+            SWSS_LOG_ERROR("Cannot decrement ref. End point not referenced %s", remote_vtep.c_str());
+        }
+        it->second.ip_refcnt--;
+
+        SWSS_LOG_DEBUG("Decrementing remote end point %s reference to %d", remote_vtep.c_str(),
+                       it->second.ip_refcnt);
+        if (it->second.ip_refcnt == 0)
+        {
+             tnl_users_.erase(remote_vtep);
+        }
     }
 }
 
@@ -1439,6 +1480,12 @@ bool  VxlanTunnelOrch::addTunnelUser(const std::string remote_vtep, uint32_t vni
         return false;
     }
 
+    if (!dipTunnelsUsed() && usr == TUNNEL_USER_IP)
+    {
+        vtep_ptr->updateRemoteEndPointIpRef(remote_vtep, true);
+        return true;
+    }
+
     vtep_ptr->createDynamicDIPTunnel(remote_vtep, usr);
 
     getTunnelNameFromDIP(remote_vtep, tunnel_name);
@@ -1479,12 +1526,29 @@ bool  VxlanTunnelOrch::delTunnelUser(const std::string remote_vtep, uint32_t vni
 
     Port tunnelPort;
     gPortsOrch->getPort(port_tunnel_name,tunnelPort);
+    bool ret;
+
+    if (!dipTunnelsUsed())
+    {
+        vtep_ptr->updateRemoteEndPointIpRef(remote_vtep, false);
+        if (vtep_ptr->del_tnl_hw_pending && !vtep_ptr->isTunnelReferenced())
+        {
+            ret = gPortsOrch->removeBridgePort(tunnelPort);
+            if (!ret)
+            {
+                SWSS_LOG_ERROR("Remove Bridge port failed for source vtep = %s fdbcount = %d",
+                               port_tunnel_name.c_str(), tunnelPort.m_fdb_count);
+                return true;
+            }
+            gPortsOrch->removeTunnel(tunnelPort);
+            vtep_ptr->deletePendingSIPTunnel();
+        }
+        return true;
+    }
 
     if ((vtep_ptr->getDipTunnelRefCnt(remote_vtep) == 1) &&
        tunnelPort.m_fdb_count == 0)
     {
-        bool ret;
-
         ret = gPortsOrch->removeBridgePort(tunnelPort);
         if (!ret) 
         {
@@ -1522,6 +1586,18 @@ void VxlanTunnelOrch::deleteTunnelPort(Port &tunnelPort)
 
     if (isSrcVtepTunnel(tunnelPort)) 
     {
+        if (vtep_ptr->del_tnl_hw_pending && !vtep_ptr->isTunnelReferenced())
+        {
+            ret = gPortsOrch->removeBridgePort(tunnelPort);
+            if (!ret)
+            {
+                SWSS_LOG_ERROR("Remove Bridge port failed for source vtep = %s fdbcount = %d",
+                               tunnelPort.m_alias.c_str(), tunnelPort.m_fdb_count);
+                return;
+            }
+            gPortsOrch->removeTunnel(tunnelPort);
+            vtep_ptr->deletePendingSIPTunnel();
+        }
         return;
     }
     getTunnelDIPFromPort(tunnelPort, remote_vtep);
@@ -1677,6 +1753,49 @@ bool VxlanTunnelOrch::getTunnelPort(const std::string& vtep,Port& tunnelPort, bo
     return ret;
 }
 
+bool VxlanTunnel::isTunnelReferenced()
+{
+    VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
+    auto src_vtep = getSrcIP().to_string();
+    auto port_tunnel_name = tunnel_orch->getTunnelPortName(src_vtep, true);
+    bool ret;
+    Port tunnelPort;
+    bool dip_tunnels_used = tunnel_orch->dipTunnelsUsed();
+
+    ret = gPortsOrch->getPort(port_tunnel_name, tunnelPort);
+    if (!ret)
+    {
+        SWSS_LOG_ERROR("Get port failed for source vtep %s", port_tunnel_name.c_str());
+	return false;
+    }
+
+    if (tunnelPort.m_fdb_count != 0)
+    {
+        return true;
+    }
+
+    if (dip_tunnels_used)
+    {
+        return (getDipTunnelCnt() != 0);
+    }
+    else
+    {
+        /* Bridge port will have reference since on IMET routes reception L2MC group member
+           would be created with end point IP and the P2MP tunnel bridge port */
+
+        if (gPortsOrch->getBridgePortReferenceCount(tunnelPort) != 0)
+        {
+            return true;
+        }
+        /* If there are routes pointing to the tunnel */
+        if (!tnl_users_.empty())
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 //------------------- VXLAN_TUNNEL_MAP Table --------------------------//
 
 bool VxlanTunnelMapOrch::addOperation(const Request& request)
@@ -1785,7 +1904,7 @@ bool VxlanTunnelMapOrch::delOperation(const Request& request)
     const auto& tunnel_name = request.getKeyString(0);
     const auto& tunnel_map_entry_name = request.getKeyString(1);
     const auto& full_tunnel_map_entry_name = request.getFullKey();
-
+    VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
 
     if (!isTunnelMapExists(full_tunnel_map_entry_name))
     {
@@ -1815,7 +1934,6 @@ bool VxlanTunnelMapOrch::delOperation(const Request& request)
 
     vxlan_tunnel_map_table_.erase(full_tunnel_map_entry_name);
 
-    VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
     if (!tunnel_orch->isTunnelExists(tunnel_name))
     {
         SWSS_LOG_WARN("Vxlan tunnel '%s' doesn't exist", tunnel_name.c_str());
@@ -1832,22 +1950,21 @@ bool VxlanTunnelMapOrch::delOperation(const Request& request)
 
     if (tunnel_obj->vlan_vrf_vni_count == 0)
     {
+      Port tunnelPort;
+      auto src_vtep = tunnel_obj->getSrcIP().to_string();
+      auto port_tunnel_name = tunnel_orch->getTunnelPortName(src_vtep, true);
+      bool ret;
+
+      ret = gPortsOrch->getPort(port_tunnel_name,tunnelPort);
       // If there are Dynamic DIP Tunnels referring to this SIP Tunnel 
       // then mark it as pending for delete. 
-      if (tunnel_obj->getDipTunnelCnt() == 0)
+      if (!tunnel_obj->isTunnelReferenced())
       {
-          Port tunnelPort;
-          auto src_vtep = tunnel_obj->getSrcIP().to_string();
-          auto port_tunnel_name = tunnel_orch->getTunnelPortName(src_vtep, true);
-          bool ret;
-
-          ret = gPortsOrch->getPort(port_tunnel_name,tunnelPort);
           if (!ret)
           {
               SWSS_LOG_ERROR("Get port failed for source vtep %s", port_tunnel_name.c_str());
               return true;
           }
-
           ret = gPortsOrch->removeBridgePort(tunnelPort);
           if (!ret)
           {
@@ -1866,8 +1983,16 @@ bool VxlanTunnelMapOrch::delOperation(const Request& request)
       else
       {
           tunnel_obj->del_tnl_hw_pending = true;
-          SWSS_LOG_WARN("Postponing the SIP Tunnel HW deletion DIP Tunnel count = %d",
-                      tunnel_obj->getDipTunnelCnt());
+          if (tunnel_orch->dipTunnelsUsed())
+          {
+              SWSS_LOG_WARN("Postponing the SIP Tunnel HW deletion DIP Tunnel count = %d",
+                          tunnel_obj->getDipTunnelCnt());
+          }
+          else
+          {
+              SWSS_LOG_WARN("Postponing the SIP Tunnel HW deletion Remote reference count = %d",
+                            gPortsOrch->getBridgePortReferenceCount(tunnelPort));
+          }
       }
     }
 
@@ -2295,6 +2420,20 @@ bool EvpnRemoteVnip2mpOrch::delOperation(const Request& request)
         SWSS_LOG_WARN("RemoteVniDel remove vlan member fails: vlan:%hu ip %s",
                       vlan_id, end_point_ip.c_str());
         return false;
+    }
+
+    if (vtep_ptr->del_tnl_hw_pending &&
+        !vtep_ptr->isTunnelReferenced())
+    {
+        bool ret = gPortsOrch->removeBridgePort(tunnelPort);
+        if (!ret)
+        {
+            SWSS_LOG_ERROR("Remove Bridge port failed for source vtep = %s fdbcount = %d",
+                           src_vtep.c_str(), tunnelPort.m_fdb_count);
+            return true;
+        }
+        gPortsOrch->removeTunnel(tunnelPort);
+        vtep_ptr->deletePendingSIPTunnel();
     }
 
     return true;

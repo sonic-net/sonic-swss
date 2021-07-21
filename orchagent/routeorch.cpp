@@ -2043,16 +2043,12 @@ bool RouteOrch::createRemoteVtep(sai_object_id_t vrf_id, const NextHopKey &nextH
     bool status = false;
     int ip_refcnt = 0;
 
-    if (!tunnel_orch->dipTunnelsUsed())
-    {
-        return true;
-    }
     status = tunnel_orch->addTunnelUser(nextHop.ip_address.to_string(), nextHop.vni, 0, TUNNEL_USER_IP, vrf_id);
 
     auto vtep_ptr = evpn_orch->getEVPNVtep();
     if (vtep_ptr)
     {
-        ip_refcnt = vtep_ptr->getDipTunnelIPRefCnt(nextHop.ip_address.to_string());
+        ip_refcnt = vtep_ptr->getRemoteEndPointIPRefCnt(nextHop.ip_address.to_string());
     }
     SWSS_LOG_INFO("Routeorch Add Remote VTEP %s, VNI %d, VR_ID %" PRIx64 ", IP ref_cnt %d",
             nextHop.ip_address.to_string().c_str(), nextHop.vni, vrf_id, ip_refcnt);
@@ -2067,16 +2063,12 @@ bool RouteOrch::deleteRemoteVtep(sai_object_id_t vrf_id, const NextHopKey &nextH
     bool status = false;
     int ip_refcnt = 0;
 
-    if (!tunnel_orch->dipTunnelsUsed())
-    {
-        return true;
-    }
     status = tunnel_orch->delTunnelUser(nextHop.ip_address.to_string(), nextHop.vni, 0, TUNNEL_USER_IP, vrf_id);
 
     auto vtep_ptr = evpn_orch->getEVPNVtep();
     if (vtep_ptr)
     {
-        ip_refcnt = vtep_ptr->getDipTunnelIPRefCnt(nextHop.ip_address.to_string());
+        ip_refcnt = vtep_ptr->getRemoteEndPointIPRefCnt(nextHop.ip_address.to_string());
     }
 
     SWSS_LOG_INFO("Routeorch Del Remote VTEP %s, VNI %d, VR_ID %" PRIx64 ", IP ref_cnt %d",

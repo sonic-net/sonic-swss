@@ -145,6 +145,9 @@ public:
     bool addVlanFloodGroups(Port &vlan, Port &port, string end_point_ip);
     bool createVlanMember(Port &vlan, Port &port, sai_vlan_tagging_mode_t &sai_tagging_mode, sai_object_id_t &vlan_member_id);
     bool removeVlanEndPointIp(Port &vlan, Port &port, string end_point_ip);
+    void increaseBridgePortRefCount(Port &port);
+    void decreaseBridgePortRefCount(Port &port);
+    bool getBridgePortReferenceCount(Port &port);
 
     string m_inbandPortName = "";
     bool isInbandPort(const string &alias);
@@ -222,6 +225,7 @@ private:
     uint32_t max_flood_control_types = 4;
     set<sai_vlan_flood_control_type_t> uuc_sup_flood_control_type;
     set<sai_vlan_flood_control_type_t> bc_sup_flood_control_type;
+    map<string, uint32_t> m_bridge_port_ref_count;
 
     NotificationConsumer* m_portStatusNotificationConsumer;
 
