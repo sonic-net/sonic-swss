@@ -112,18 +112,53 @@ void TeamMgr::doTask(Consumer &consumer)
     }
 }
 
-
 void TeamMgr::cleanTeamProcesses()
 {
     SWSS_LOG_ENTER();
     SWSS_LOG_NOTICE("Cleaning up LAGs during shutdown...");
-    for (const auto& it: m_lagList)
+
+    std::unordered_map<std::string, pid_t> aliasPidMap;
+
+    for (const auto& alias: m_lagList)
     {
-        //This will call team -k kill -t <teamdevicename> which internally send SIGTERM 
-        removeLag(it);
+        std::string res;
+        pid_t pid;
+
+        {
+            std::stringstream cmd;
+            cmd << "cat " << shellquote("/var/run/teamd/" + alias + ".pid");
+            EXEC_WITH_ERROR_THROW(cmd.str(), res);
+
+            pid = static_cast<pid_t>(std::stoul(res, nullptr, 10));
+            aliasPidMap[alias] = pid;
+
+            SWSS_LOG_INFO("Read port channel %s pid %d", alias.c_str(), pid);
+        }
+
+        {
+            std::stringstream cmd;
+            cmd << "kill -TERM " << pid;
+            EXEC_WITH_ERROR_THROW(cmd.str(), res);
+
+            SWSS_LOG_INFO("Sent SIGTERM to port channel %s pid %d", alias.c_str(), pid);
+        }
     }
 
-    return;
+    for (const auto& cit: aliasPidMap)
+    {
+        const auto &alias = cit.first;
+        const auto &pid = cit.second;
+
+        std::stringstream cmd;
+        std::string res;
+
+        SWSS_LOG_NOTICE("Waiting for port channel %s to stop...", alias.c_str());
+
+        cmd << "tail -f --pid=" << pid << " /dev/null";
+        EXEC_WITH_ERROR_THROW(cmd.str(), res);
+    }
+
+    SWSS_LOG_NOTICE("LAGs cleanup is done");
 }
 
 void TeamMgr::doLagTask(Consumer &consumer)
