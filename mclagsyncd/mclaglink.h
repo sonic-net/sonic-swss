@@ -204,7 +204,6 @@ namespace swss {
             std::string m_system_mac;
             std::set<vlan_mbr> m_vlan_mbrship; //set of vlan,mbr tuples
 
-            const int MSG_BATCH_SIZE;
             std::map<std::string, std:: string> *p_learn;
 
             unique_ptr<DBConnector> p_state_db;
