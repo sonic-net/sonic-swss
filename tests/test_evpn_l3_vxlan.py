@@ -974,17 +974,6 @@ class VxlanTunnel(object):
 
         return list(current_entries - initial_entries)[0]
 
-    def create_vrf1(self, dvs, vrf_name):
-        conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-
-        attrs = [
-            ("vni", "0"),
-        ]
-        tbl = swsscommon.Table(conf_db, "VRF")
-        fvs = swsscommon.FieldValuePairs(attrs)
-        tbl.set(vrf_name, fvs)
-        time.sleep(2)
-
     def remove_vrf(self, dvs, vrf_name):
         conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
         tbl = swsscommon.Table(conf_db, "VRF")
@@ -1108,26 +1097,8 @@ class TestL3Vxlan(object):
 
         print ("\n\nTesting Create and Delete DIP Tunnel on adding and removing prefix route")
         print ("\tCreate SIP Tunnel")
-
-        # Get existing asic_db Vlan Ids
-        vlan_asic_tbl =  swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
-        existing_vlan_ids = set(vlan_asic_tbl.getKeys())
-
-        # Print the existing entries
-        print ("Existing vlan_ids = {}".format(existing_vlan_ids))
-        for vlan in existing_vlan_ids:
-            status, fvs = vlan_asic_tbl.get(vlan)
-            print ("vlan_id = {}, fvs = {}".format(vlan, fvs))
-
-        # Create Vlan 100
-        create_vlan1(dvs,"Vlan100")
-
-        # Get asic_db Vlan Ids entries
-        entries_vlan_ids = set(vlan_asic_tbl.getKeys())
-        new_vlan_ids = list(entries_vlan_ids - existing_vlan_ids)
-        assert len(new_vlan_ids) == 1, "Wrong number of created entries."
-        vlan_oid = new_vlan_ids[0]
-
+        vlan_ids = get_exist_entries(dvs, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        vlan_oid = create_vlan(dvs,"Vlan100", vlan_ids)
         create_vxlan_tunnel(dvs, tunnel_name, '6.6.6.6')
         create_evpn_nvo(dvs, 'nvo1', tunnel_name)
 
@@ -1135,29 +1106,7 @@ class TestL3Vxlan(object):
         create_vxlan_tunnel_map(dvs, tunnel_name, map_name, '1000', 'Vlan100')
 
         print ("\tTesting VRF-VNI map in APP DB")
-
-        # Get the initial VRF ids
-        vrf_asic_tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")
-        initial_entries = set(vrf_asic_tbl.getKeys())
-
-        # Print the Existing VRF Ids
-        print ("Existing Router_IDs = {}".format(initial_entries))
-        for entry in initial_entries:
-            status, fvs = vrf_asic_tbl .get(entry)
-            print ("entry = {}, fvs = {}".format(entry, fvs))
-
-        # Create VRF "Vrf_Red"
-        vxlan_obj.create_vrf1(dvs, "Vrf-RED")
-
-        # Get the current VRF ids
-        current_entries = set(vrf_asic_tbl.getKeys())
-        new_entries = list(current_entries - initial_entries)
-        assert len(new_entries) == 1, "Wrong number of created entries."
-        new_entries.sort()
-        new_vr_ids = new_entries
-        self.vnet_vr_ids.update(new_vr_ids)
-        self.vr_map[vrf_name] = { 'ing':new_vr_ids[0], 'egr':new_vr_ids[0]}
-
+        vxlan_obj.create_vrf(dvs, "Vrf-RED")
         create_vxlan_vrf_tunnel_map(dvs, 'Vrf-RED', '1000')
 
         vlanlist = ['100']
