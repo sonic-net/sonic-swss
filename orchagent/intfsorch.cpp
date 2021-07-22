@@ -1043,6 +1043,18 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port)
         return true;
     }
 
+    if (port.m_lag_member_id)
+    {
+        SWSS_LOG_WARN("It's portchannel member %s", port.m_alias.c_str());
+        return false;
+    }
+
+    if (!port.m_vlan_members.empty())
+    {
+        SWSS_LOG_WARN("It's vlan member %s", port.m_alias.c_str());
+        return false;
+    }
+
     /* Create router interface if the router interface doesn't exist */
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
