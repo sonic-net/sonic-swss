@@ -43,6 +43,7 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
         m_applBufferQueueTable(applDb, APP_BUFFER_QUEUE_TABLE_NAME),
         m_applBufferIngressProfileListTable(applDb, APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME),
         m_applBufferEgressProfileListTable(applDb, APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME),
+        m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
         m_stateBufferMaximumTable(stateDb, STATE_BUFFER_MAXIMUM_VALUE_TABLE),
         m_stateBufferPoolTable(stateDb, STATE_BUFFER_POOL_TABLE_NAME),
         m_stateBufferProfileTable(stateDb, STATE_BUFFER_PROFILE_TABLE_NAME),
@@ -188,6 +189,7 @@ void BufferMgrDynamic::initTableHandlerMap()
     m_bufferTableHandlerMap.insert(buffer_handler_pair(CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, &BufferMgrDynamic::handleBufferPortEgressProfileListTable));
     m_bufferTableHandlerMap.insert(buffer_handler_pair(CFG_PORT_TABLE_NAME, &BufferMgrDynamic::handlePortTable));
     m_bufferTableHandlerMap.insert(buffer_handler_pair(CFG_PORT_CABLE_LEN_TABLE_NAME, &BufferMgrDynamic::handleCableLenTable));
+    m_bufferTableHandlerMap.insert(buffer_handler_pair(STATE_PORT_TABLE_NAME, &BufferMgrDynamic::handlePortStateTable));
 }
 
 // APIs to handle variant kinds of keys
@@ -289,9 +291,78 @@ string BufferMgrDynamic::getDynamicProfileName(const string &speed, const string
     return buffer_profile_key + "_profile";
 }
 
+string BufferMgrDynamic::getMaxSpeedFromList(string speedList)
+{
+    auto &&speedVec = tokenize(speedList, ',');
+    unsigned long maxSpeedNum = 0, speedNum;
+    for (auto &speedStr : speedVec)
+    {
+        speedNum = atol(speedStr.c_str());
+        if (speedNum > maxSpeedNum)
+        {
+            maxSpeedNum = speedNum;
+        }
+    }
+
+    return to_string(maxSpeedNum);
+}
+
 string BufferMgrDynamic::getPgPoolMode()
 {
     return m_bufferPoolLookup[INGRESS_LOSSLESS_PG_POOL_NAME].mode;
+}
+
+// Conduct the effective speed and compare the new value against the old one
+// Return true if they differ and false otherwise, meaning the headroom should be updated accordingly.
+//
+// The way to conduct the effective speed for headroom calculating
+// If auto_neg enabled on the port
+//   if adv_speed configured
+//     max(adv_speed) => new effective speed
+//   elif sup_speed learnt
+//     max(sup_speed) => new effective speed
+//   elif PORT READY
+//     INITIALIZING => port.state
+// else
+//   port speed will be the new effective speed
+// return whether effective speed has been updated
+bool BufferMgrDynamic::needRefreshPortDueToEffectiveSpeed(port_info_t &portInfo, string &portName)
+{
+    string newEffectiveSpeed;
+
+    if (portInfo.auto_neg)
+    {
+        if (isNonZero(portInfo.adv_speeds))
+        {
+            newEffectiveSpeed = move(getMaxSpeedFromList(portInfo.adv_speeds));
+            SWSS_LOG_INFO("Port %s: maximum configured advertised speed (%s from %s) is taken as the effective speed",
+                          portName.c_str(), portInfo.effective_speed.c_str(), portInfo.adv_speeds.c_str());
+        }
+        else if (isNonZero(portInfo.supported_speeds))
+        {
+            newEffectiveSpeed = move(getMaxSpeedFromList(portInfo.supported_speeds));
+            SWSS_LOG_INFO("Port %s: maximum supported speed (%s from %s) is taken as the effective speed",
+                          portName.c_str(), portInfo.effective_speed.c_str(), portInfo.supported_speeds.c_str());
+        }
+        else if (portInfo.state == PORT_READY)
+        {
+            portInfo.state = PORT_INITIALIZING;
+            SWSS_LOG_NOTICE("Port %s: unable to deduct the effective speed because auto negotiation is enabled but neither configured advertised speed nor supported speed is available", portName.c_str());
+        }
+    }
+    else
+    {
+        newEffectiveSpeed = portInfo.speed;
+        SWSS_LOG_INFO("Port %s: speed (%s) is taken as the effective speed", portName.c_str(), portInfo.effective_speed.c_str());
+    }
+
+    bool effectiveSpeedChanged = (newEffectiveSpeed != portInfo.effective_speed);
+    if (effectiveSpeedChanged)
+    {
+        portInfo.effective_speed = newEffectiveSpeed;
+    }
+
+    return effectiveSpeedChanged;
 }
 
 // Meta flows which are called by main flows
@@ -907,10 +978,6 @@ task_process_status BufferMgrDynamic::refreshPgsForPort(const string &port, cons
         isHeadroomUpdated = true;
     }
 
-    portInfo.speed = speed;
-    portInfo.cable_length = cable_length;
-    portInfo.gearbox_model = gearbox_model;
-
     if (isHeadroomUpdated)
     {
         checkSharedBufferPoolSize();
@@ -1055,7 +1122,7 @@ task_process_status BufferMgrDynamic::doUpdatePgTask(const string &pg_key, const
         // Not having profile_name but both speed and cable length have been configured for that port
         // This is because the first PG on that port is configured after speed, cable length configured
         // Just regenerate the profile
-        task_status = refreshPgsForPort(port, portInfo.speed, portInfo.cable_length, portInfo.mtu, pg_key);
+        task_status = refreshPgsForPort(port, portInfo.effective_speed, portInfo.cable_length, portInfo.mtu, pg_key);
         if (task_status != task_process_status::task_success)
             return task_status;
 
@@ -1068,7 +1135,7 @@ task_process_status BufferMgrDynamic::doUpdatePgTask(const string &pg_key, const
         }
         else
         {
-            task_status = refreshPgsForPort(port, portInfo.speed, portInfo.cable_length, portInfo.mtu, pg_key);
+            task_status = refreshPgsForPort(port, portInfo.effective_speed, portInfo.cable_length, portInfo.mtu, pg_key);
             if (task_status != task_process_status::task_success)
                 return task_status;
         }
@@ -1113,7 +1180,7 @@ task_process_status BufferMgrDynamic::doRemovePgTask(const string &pg_key, const
 
     if (portInfo.state != PORT_ADMIN_DOWN)
     {
-        if (!portInfo.speed.empty() && !portInfo.cable_length.empty())
+        if (!portInfo.effective_speed.empty() && !portInfo.cable_length.empty())
             portInfo.state = PORT_READY;
         else
             portInfo.state = PORT_INITIALIZING;
@@ -1150,7 +1217,7 @@ task_process_status BufferMgrDynamic::doUpdateBufferProfileForDynamicTh(buffer_p
             SWSS_LOG_DEBUG("Checking PG %s for dynamic profile %s", key.c_str(), profileName.c_str());
             portsChecked.insert(portName);
 
-            rc = refreshPgsForPort(portName, port.speed, port.cable_length, port.mtu);
+            rc = refreshPgsForPort(portName, port.effective_speed, port.cable_length, port.mtu);
             if (task_process_status::task_success != rc)
             {
                 SWSS_LOG_ERROR("Update the profile on %s failed", key.c_str());
@@ -1282,13 +1349,13 @@ task_process_status BufferMgrDynamic::handleCableLenTable(KeyOpFieldsValuesTuple
             auto &port = fvField(i);
             auto &cable_length = fvValue(i);
             port_info_t &portInfo = m_portInfoLookup[port];
-            string &speed = portInfo.speed;
+            string &effectiveSpeed = portInfo.effective_speed;
             string &mtu = portInfo.mtu;
 
             SWSS_LOG_DEBUG("Handling CABLE_LENGTH table field %s length %s", port.c_str(), cable_length.c_str());
             SWSS_LOG_DEBUG("Port Info for %s before handling %s %s %s",
                            port.c_str(),
-                           portInfo.speed.c_str(), portInfo.cable_length.c_str(), portInfo.gearbox_model.c_str());
+                           portInfo.effective_speed.c_str(), portInfo.cable_length.c_str(), portInfo.gearbox_model.c_str());
 
             if (portInfo.cable_length == cable_length)
             {
@@ -1296,7 +1363,7 @@ task_process_status BufferMgrDynamic::handleCableLenTable(KeyOpFieldsValuesTuple
             }
 
             portInfo.cable_length = cable_length;
-            if (speed.empty())
+            if (effectiveSpeed.empty())
             {
                 SWSS_LOG_WARN("Speed for %s hasn't been configured yet, unable to calculate headroom", port.c_str());
                 // We don't retry here because it doesn't make sense until the speed is configured.
@@ -1325,11 +1392,11 @@ task_process_status BufferMgrDynamic::handleCableLenTable(KeyOpFieldsValuesTuple
             {
             case PORT_INITIALIZING:
                 portInfo.state = PORT_READY;
-                task_status = refreshPgsForPort(port, speed, cable_length, mtu);
+                task_status = refreshPgsForPort(port, effectiveSpeed, cable_length, mtu);
                 break;
 
             case PORT_READY:
-                task_status = refreshPgsForPort(port, speed, cable_length, mtu);
+                task_status = refreshPgsForPort(port, effectiveSpeed, cable_length, mtu);
                 break;
 
             case PORT_ADMIN_DOWN:
@@ -1353,7 +1420,7 @@ task_process_status BufferMgrDynamic::handleCableLenTable(KeyOpFieldsValuesTuple
 
             SWSS_LOG_DEBUG("Port Info for %s after handling speed %s cable %s gb %s",
                            port.c_str(),
-                           portInfo.speed.c_str(), portInfo.cable_length.c_str(), portInfo.gearbox_model.c_str());
+                           portInfo.effective_speed.c_str(), portInfo.cable_length.c_str(), portInfo.gearbox_model.c_str());
         }
     }
 
@@ -1365,6 +1432,36 @@ task_process_status BufferMgrDynamic::handleCableLenTable(KeyOpFieldsValuesTuple
     return task_process_status::task_success;
 }
 
+task_process_status BufferMgrDynamic::handlePortStateTable(KeyOpFieldsValuesTuple &tuple)
+{
+    auto &port = kfvKey(tuple);
+    string op = kfvOp(tuple);
+
+    if (op == SET_COMMAND)
+    {
+        for (auto i : kfvFieldsValues(tuple))
+        {
+            if (fvField(i) == "supported_speeds")
+            {
+                auto &portInfo = m_portInfoLookup[port];
+                if (fvValue(i) != portInfo.supported_speeds)
+                {
+                    portInfo.supported_speeds = fvValue(i);
+                    SWSS_LOG_INFO("Port %s: supported speeds updated to %s", port.c_str(), portInfo.supported_speeds.c_str());
+                    if (portInfo.auto_neg && needRefreshPortDueToEffectiveSpeed(portInfo, port))
+                    {
+                        if (isNonZero(portInfo.cable_length) && portInfo.state != PORT_ADMIN_DOWN)
+                        {
+                            refreshPgsForPort(port, portInfo.effective_speed, portInfo.cable_length, portInfo.mtu);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return task_process_status::task_success;
+}
 // A tiny state machine is required for handling the events
 // flags:
 //      speed_updated
@@ -1380,7 +1477,8 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
 {
     auto &port = kfvKey(tuple);
     string op = kfvOp(tuple);
-    bool speed_updated = false, mtu_updated = false, admin_status_updated = false, admin_up;
+    bool effective_speed_updated = false, mtu_updated = false, admin_status_updated = false, admin_up = false;
+    bool need_check_speed = false;
 
     SWSS_LOG_DEBUG("Processing command:%s PORT table key %s", op.c_str(), port.c_str());
 
@@ -1388,15 +1486,12 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
 
     SWSS_LOG_DEBUG("Port Info for %s before handling %s %s %s",
                    port.c_str(),
-                   portInfo.speed.c_str(), portInfo.cable_length.c_str(), portInfo.gearbox_model.c_str());
+                   portInfo.effective_speed.c_str(), portInfo.cable_length.c_str(), portInfo.gearbox_model.c_str());
 
     task_process_status task_status = task_process_status::task_success;
 
     if (op == SET_COMMAND)
     {
-        string old_speed;
-        string old_mtu;
-
         for (auto i : kfvFieldsValues(tuple))
         {
             if (fvField(i) == "lanes")
@@ -1404,57 +1499,77 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
                 auto &lanes = fvValue(i);
                 portInfo.lane_count = count(lanes.begin(), lanes.end(), ',') + 1;
             }
-
-            if (fvField(i) == "speed" && fvValue(i) != portInfo.speed)
+            else if (fvField(i) == "speed")
             {
-                speed_updated = true;
-                old_speed = move(portInfo.speed);
-                portInfo.speed = fvValue(i);
+                if (fvValue(i) != portInfo.speed)
+                {
+                    need_check_speed = true;
+                    auto old_speed = move(portInfo.speed);
+                    portInfo.speed = fvValue(i);
+                    SWSS_LOG_INFO("Port %s: speed updated from %s to %s", port.c_str(), old_speed.c_str(), portInfo.speed.c_str());
+                }
             }
-
-            if (fvField(i) == "mtu" && fvValue(i) != portInfo.mtu)
+            else if (fvField(i) == "mtu")
             {
-                mtu_updated = true;
-                old_mtu = move(portInfo.mtu);
-                portInfo.mtu = fvValue(i);
+                if (fvValue(i) != portInfo.mtu)
+                {
+                    auto old_mtu = move(portInfo.mtu);
+                    mtu_updated = true;
+                    portInfo.mtu = fvValue(i);
+                    SWSS_LOG_INFO("Port %s: MTU updated from %s to %s", port.c_str(), old_mtu.c_str(), portInfo.mtu.c_str());
+                }
             }
-
-            if (fvField(i) == "admin_status")
+            else if (fvField(i) == "admin_status")
             {
                 admin_up = (fvValue(i) == "up");
                 auto old_admin_up = (portInfo.state != PORT_ADMIN_DOWN);
                 admin_status_updated = (admin_up != old_admin_up);
             }
+            else if (fvField(i) == "adv_speeds")
+            {
+                if (fvValue(i) != portInfo.adv_speeds)
+                {
+                    auto old_adv_speeds = move(portInfo.adv_speeds);
+                    if (fvValue(i) == "all")
+                    {
+                        portInfo.adv_speeds.clear();
+                    }
+                    else
+                    {
+                        portInfo.adv_speeds = fvValue(i);
+                    }
+                    need_check_speed = true;
+                    SWSS_LOG_INFO("Port %s: advertised speed updated from %s to %s", port.c_str(), old_adv_speeds.c_str(), portInfo.adv_speeds.c_str());
+                }
+            }
+            else if (fvField(i) == "autoneg")
+            {
+                auto auto_neg = (fvValue(i) == "on");
+                if (auto_neg != portInfo.auto_neg)
+                {
+                    portInfo.auto_neg = auto_neg;
+                    need_check_speed = true;
+                    SWSS_LOG_INFO("Port %s: auto negotiation %s", port.c_str(), (portInfo.auto_neg ? "enabled" : "disabled"));
+                }
+            }
+        }
+
+        if (need_check_speed && needRefreshPortDueToEffectiveSpeed(portInfo, port))
+        {
+            effective_speed_updated = true;
         }
 
         string &cable_length = portInfo.cable_length;
         string &mtu = portInfo.mtu;
-        string &speed = portInfo.speed;
+        string &effective_speed = portInfo.effective_speed;
 
         bool need_refresh_all_pgs = false, need_remove_all_pgs = false;
 
-        if (speed_updated || mtu_updated)
+        if (effective_speed_updated || mtu_updated)
         {
-            if (!cable_length.empty() && !speed.empty())
+            if (!cable_length.empty() && !effective_speed.empty())
             {
-                if (speed_updated)
-                {
-                    if (mtu_updated)
-                    {
-                        SWSS_LOG_INFO("Updating BUFFER_PG for port %s due to speed updated from %s to %s and MTU updated from %s to %s",
-                                      port.c_str(), old_speed.c_str(), portInfo.speed.c_str(), old_mtu.c_str(), portInfo.mtu.c_str());
-                    }
-                    else
-                    {
-                        SWSS_LOG_INFO("Updating BUFFER_PG for port %s due to speed updated from %s to %s",
-                                      port.c_str(), old_speed.c_str(), portInfo.speed.c_str());
-                    }
-                }
-                else
-                {
-                    SWSS_LOG_INFO("Updating BUFFER_PG for port %s due to MTU updated from %s to %s",
-                                  port.c_str(), old_mtu.c_str(), portInfo.mtu.c_str());
-                }
+                SWSS_LOG_INFO("Updating BUFFER_PG for port %s due to effective speed and/or MTU updated", port.c_str());
 
                 // Try updating the buffer information
                 switch (portInfo.state)
@@ -1474,7 +1589,7 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
                     break;
 
                 case PORT_ADMIN_DOWN:
-                    SWSS_LOG_INFO("Nothing to be done when port %s's speed or cable length updated since the port is administratively down", port.c_str());
+                    SWSS_LOG_INFO("Nothing to be done when port %s's effective speed or cable length updated since the port is administratively down", port.c_str());
                     break;
 
                 default:
@@ -1482,13 +1597,13 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
                     break;
                 }
 
-                SWSS_LOG_DEBUG("Port Info for %s after handling speed %s cable %s gb %s",
+                SWSS_LOG_DEBUG("Port Info for %s after handling effective speed %s cable %s gb %s",
                                port.c_str(),
-                               portInfo.speed.c_str(), portInfo.cable_length.c_str(), portInfo.gearbox_model.c_str());
+                               portInfo.effective_speed.c_str(), portInfo.cable_length.c_str(), portInfo.gearbox_model.c_str());
             }
             else
             {
-                SWSS_LOG_WARN("Cable length or speed for %s hasn't been configured yet, unable to calculate headroom", port.c_str());
+                SWSS_LOG_WARN("Cable length or effective speed for %s hasn't been configured yet, unable to calculate headroom", port.c_str());
                 // We don't retry here because it doesn't make sense until both cable length and speed are configured.
             }
         }
@@ -1497,7 +1612,7 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
         {
             if (admin_up)
             {
-                if (!portInfo.speed.empty() && !portInfo.cable_length.empty())
+                if (!portInfo.effective_speed.empty() && !portInfo.cable_length.empty())
                     portInfo.state = PORT_READY;
                 else
                     portInfo.state = PORT_INITIALIZING;
@@ -1516,15 +1631,15 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
         }
 
         // In case both need_remove_all_pgs and need_refresh_all_pgs are true, the need_remove_all_pgs will take effect.
-        // This can happen when both speed (or mtu) is changed and the admin_status is down.
-        // In this case, we just need record the new speed (or mtu) but don't need to refresh all PGs on the port since the port is administratively down
+        // This can happen when both effective speed (or mtu) is changed and the admin_status is down.
+        // In this case, we just need record the new effective speed (or mtu) but don't need to refresh all PGs on the port since the port is administratively down
         if (need_remove_all_pgs)
         {
             task_status = removeAllPgsFromPort(port);
         }
         else if (need_refresh_all_pgs)
         {
-            task_status = refreshPgsForPort(port, portInfo.speed, portInfo.cable_length, portInfo.mtu);
+            task_status = refreshPgsForPort(port, portInfo.effective_speed, portInfo.cable_length, portInfo.mtu);
         }
     }
 
