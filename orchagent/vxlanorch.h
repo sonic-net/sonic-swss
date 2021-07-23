@@ -484,6 +484,11 @@ public:
         return source_vtep_ptr;
     }
 
+    void delEVPNVtep() 
+    { 
+        source_vtep_ptr = NULL;
+    }
+
 private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
