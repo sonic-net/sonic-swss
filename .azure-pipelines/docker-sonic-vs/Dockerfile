@@ -6,6 +6,7 @@ ADD ["debs", "/debs"]
 
 RUN dpkg --purge python-swsscommon
 RUN dpkg --purge python3-swsscommon
+RUN dpkg --purge swss
 RUN dpkg --purge libsairedis
 RUN dpkg --purge libswsscommon
 RUN dpkg --purge libsaimetadata
