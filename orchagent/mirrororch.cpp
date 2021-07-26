@@ -1347,6 +1347,36 @@ void MirrorOrch::updateFdb(const FdbUpdate& update)
     }
 }
 
+bool MirrorOrch::selectEnabledLagMember(const Port &lag, Port &port)
+{
+    // Select a LAG member of enabled status using first-fit strategy
+    for (const auto &member : lag.m_members)
+    {
+        // Get member oper status
+        string status;
+        string key = lag.m_alias + m_applLagMemberTable->getTableNameSeparator() + member;
+        if (!m_applLagMemberTable->hget(key, "status", status))
+        {
+            continue;
+        }
+
+        if (status == "enabled")
+        {
+            Port p;
+            if (m_portsOrch->getPort(member, p))
+            {
+                port = p;
+                return true;
+            }
+
+            SWSS_LOG_ERROR("Failed to get Port object for lag %s member %s",
+                           lag.m_alias.c_str(),
+                           member.c_str());
+        }
+    }
+    return false;
+}
+
 void MirrorOrch::updateLagMember(const LagMemberUpdate& update)
 {
     SWSS_LOG_ENTER();
@@ -1389,37 +1419,13 @@ void MirrorOrch::updateLagMember(const LagMemberUpdate& update)
         {
             if (session.status && session.neighborInfo.portId == update.member.m_port_id)
             {
-                // Find and switch to LAG member of enabled status, using first-fit strategy
-                bool found = false;
-                for (const auto &member : update.lag.m_members)
+                Port p;
+                if (selectEnabledLagMember(update.lag, p))
                 {
-                    // Get member oper status
-                    string status;
-                    string key = update.lag.m_alias + m_applLagMemberTable->getTableNameSeparator() + member;
-                    if (!m_applLagMemberTable->hget(key, "status", status))
-                    {
-                        continue;
-                    }
-
-                    if (status == "enabled")
-                    {
-                        Port p;
-                        if (!m_portsOrch->getPort(member, p))
-                        {
-                            SWSS_LOG_ERROR("Failed to get Port object for lag %s member %s",
-                                           update.lag.m_alias.c_str(),
-                                           member.c_str());
-                            continue;
-                        }
-                        session.neighborInfo.portId = p.m_port_id;
-                        updateSessionDstPort(name, session);
-
-                        found = true;
-                        break;
-                    }
+                    session.neighborInfo.portId = p.m_port_id;
+                    updateSessionDstPort(name, session);
                 }
-
-                if (!found)
+                else
                 {
                     session.neighborInfo.portId = SAI_NULL_OBJECT_ID;
                     deactivateSession(name, session);
@@ -1459,37 +1465,13 @@ void MirrorOrch::updateLagMemberStatus(const LagMemberStatusUpdate& update)
         {
             if (session.status && session.neighborInfo.portId == update.member.m_port_id)
             {
-                // Find and switch to a LAG member of enabled status, using first-fit stretegy
-                bool found = false;
-                for (const auto &member : update.lag.m_members)
+                Port p;
+                if (selectEnabledLagMember(update.lag, p))
                 {
-                    // Get member oper status
-                    string status;
-                    string key = update.lag.m_alias + m_applLagMemberTable->getTableNameSeparator() + member;
-                    if (!m_applLagMemberTable->hget(key, "status", status))
-                    {
-                        continue;
-                    }
-
-                    if (status == "enabled")
-                    {
-                        Port p;
-                        if (!m_portsOrch->getPort(member, p))
-                        {
-                            SWSS_LOG_ERROR("Failed to get Port object for lag %s member %s",
-                                           update.lag.m_alias.c_str(),
-                                           member.c_str());
-                            continue;
-                        }
-                        session.neighborInfo.portId = p.m_port_id;
-                        updateSessionDstPort(name, session);
-
-                        found = true;
-                        break;
-                    }
+                    session.neighborInfo.portId = p.m_port_id;
+                    updateSessionDstPort(name, session);
                 }
-
-                if (!found)
+                else
                 {
                     session.neighborInfo.portId = SAI_NULL_OBJECT_ID;
                     deactivateSession(name, session);

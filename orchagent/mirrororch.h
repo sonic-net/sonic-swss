@@ -138,6 +138,8 @@ private:
                                     sai_object_id_t sessionId);
     bool configurePortMirrorSession(const string&, MirrorEntry&, bool enable);
 
+    bool selectEnabledLagMember(const Port &lag, Port &port);
+
     void doTask(Consumer& consumer);
 };
 
