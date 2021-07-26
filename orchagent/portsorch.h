@@ -65,6 +65,13 @@ struct LagMemberUpdate
     bool add;
 };
 
+struct LagMemberStatusUpdate
+{
+    Port lag;
+    Port member;
+    bool enabled;
+};
+
 struct VlanMemberUpdate
 {
     Port vlan;

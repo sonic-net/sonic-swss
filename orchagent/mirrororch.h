@@ -125,6 +125,7 @@ private:
     void updateNeighbor(const NeighborUpdate&);
     void updateFdb(const FdbUpdate&);
     void updateLagMember(const LagMemberUpdate&);
+    void updateLagMemberStatus(const LagMemberStatusUpdate&);
     void updateVlanMember(const VlanMemberUpdate&);
 
     bool checkPortExistsInSrcPortList(const string& port, const string& srcPortList);

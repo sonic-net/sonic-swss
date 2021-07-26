@@ -3784,6 +3784,9 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
                 if (setCollectionOnLagMember(port, true) &&
                     setDistributionOnLagMember(port, true))
                 {
+                    LagMemberStatusUpdate update = { lag, port, true };
+                    notify(SUBJECT_TYPE_LAG_MEMBER_STATUS_CHANGE, static_cast<void *>(&update));
+
                     it = consumer.m_toSync.erase(it);
                 }
                 else
@@ -3801,6 +3804,9 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
                 if (setDistributionOnLagMember(port, false) &&
                     setCollectionOnLagMember(port, false))
                 {
+                    LagMemberStatusUpdate update = { lag, port, false };
+                    notify(SUBJECT_TYPE_LAG_MEMBER_STATUS_CHANGE, static_cast<void *>(&update));
+
                     it = consumer.m_toSync.erase(it);
                 }
                 else

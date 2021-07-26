@@ -164,6 +164,12 @@ void MirrorOrch::update(SubjectType type, void *cntx)
         updateLagMember(*update);
         break;
     }
+    case SUBJECT_TYPE_LAG_MEMBER_STATUS_CHANGE:
+    {
+        LagMemberStatusUpdate *update = static_cast<LagMemberStatusUpdate *>(cntx);
+        updateLagMemberStatus(*update);
+        break;
+    }
     case SUBJECT_TYPE_VLAN_MEMBER_CHANGE:
     {
         VlanMemberUpdate *update = static_cast<VlanMemberUpdate *>(cntx);
