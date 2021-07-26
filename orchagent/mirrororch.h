@@ -102,6 +102,9 @@ private:
     // session_name -> VLAN | monitor_port_alias | next_hop_ip
     map<string, string> m_recoverySessionMap;
 
+    shared_ptr<DBConnector> m_applDb = nullptr;
+    shared_ptr<Table> m_applLagMemberTable = nullptr;
+
     task_process_status createEntry(const string&, const vector<FieldValueTuple>&);
     task_process_status deleteEntry(const string&);
 

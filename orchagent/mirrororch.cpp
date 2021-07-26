@@ -78,7 +78,9 @@ MirrorOrch::MirrorOrch(TableConnector stateDbConnector, TableConnector confDbCon
         m_neighOrch(neighOrch),
         m_fdbOrch(fdbOrch),
         m_policerOrch(policerOrch),
-        m_mirrorTable(stateDbConnector.first, stateDbConnector.second)
+        m_mirrorTable(stateDbConnector.first, stateDbConnector.second),
+        m_applDb(make_shared<DBConnector>("APPL_DB", 0)),
+        m_applLagMemberTable(make_shared<Table>(m_applDb.get(), APP_LAG_MEMBER_TABLE_NAME))
 {
     m_portsOrch->attach(this);
     m_neighOrch->attach(this);
