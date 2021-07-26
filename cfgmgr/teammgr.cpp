@@ -32,7 +32,8 @@ TeamMgr::TeamMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     m_appPortTable(applDb, APP_PORT_TABLE_NAME),
     m_appLagTable(applDb, APP_LAG_TABLE_NAME),
     m_statePortTable(statDb, STATE_PORT_TABLE_NAME),
-    m_stateLagTable(statDb, STATE_LAG_TABLE_NAME)
+    m_stateLagTable(statDb, STATE_LAG_TABLE_NAME),
+    m_stateMACsecPortTable(state_db, STATE_MACSEC_PORT_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
 
@@ -88,6 +89,20 @@ bool TeamMgr::isLagStateOk(const string &alias)
     }
 
     return true;
+}
+
+bool TeamMgr::isEnableMACsec(const std::string &port_name)
+{
+    SWSS_LOG_ENTER();
+
+    vector<FieldValueTuple> temp;
+
+    if (m_stateMACsecPortTable.get(port_name, temp))
+    {
+        return true;
+    }
+
+    return false;
 }
 
 void TeamMgr::doTask(Consumer &consumer)
@@ -521,6 +536,20 @@ task_process_status TeamMgr::addLagMember(const string &lag, const string &membe
     stringstream cmd;
     string res;
 
+    vector<FieldValueTuple> fvs;
+    m_cfgPortTable.get(member, fvs);
+
+    // Get the MACsec status
+    auto it = find_if(fvs.begin(), fvs.end(), [](const FieldValueTuple &fv) {
+            return fv.first == "macsec";
+            });
+    // Portchannel needs to be enabled after MACsec enabled
+    if (it != fvs.end()) {
+        if (!isEnableMACsec(member)) {
+            return task_need_retry;
+        }
+    }
+
     // Set admin down LAG member (required by teamd) and enslave it
     // ip link set dev <member> down;
     // teamdctl <port_channel_name> port add <member>;
@@ -548,9 +577,6 @@ task_process_status TeamMgr::addLagMember(const string &lag, const string &membe
             return task_failed;
         }
     }
-
-    vector<FieldValueTuple> fvs;
-    m_cfgPortTable.get(member, fvs);
 
     // Get the member admin status
     auto it = find_if(fvs.begin(), fvs.end(), [](const FieldValueTuple &fv) {

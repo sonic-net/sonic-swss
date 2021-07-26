@@ -27,6 +27,7 @@ private:
     Table m_cfgLagMemberTable;
     Table m_statePortTable;
     Table m_stateLagTable;
+    Table m_stateMACsecPortTable;
 
     ProducerStateTable m_appPortTable;
     ProducerStateTable m_appLagTable;
@@ -56,6 +57,7 @@ private:
     bool checkPortIffUp(const std::string &);
     bool isPortStateOk(const std::string&);
     bool isLagStateOk(const std::string&);
+    bool isEnableMACsec(const std::string &);
 };
 
 }
