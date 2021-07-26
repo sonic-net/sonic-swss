@@ -1454,7 +1454,7 @@ void MirrorOrch::updateVlanMember(const VlanMemberUpdate& update)
         }
 
         // Deactivate session. Wait for FDB event to activate session
-        session.neighborInfo.portId = SAI_OBJECT_TYPE_NULL;
+        session.neighborInfo.portId = SAI_NULL_OBJECT_ID;
         deactivateSession(name, session);
     }
 }
