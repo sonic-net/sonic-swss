@@ -155,12 +155,6 @@ bool VNetVrfObject::hasRoute(IpPrefix& ipPrefix)
 
 bool VNetVrfObject::addRoute(IpPrefix& ipPrefix, NextHopGroupKey& nexthops)
 {
-    if (hasRoute(ipPrefix))
-    {
-        SWSS_LOG_INFO("VNET route '%s' exists", ipPrefix.to_string().c_str());
-        return false;
-    }
-
     if (nexthops.is_overlay_nexthop())
     {
         tunnels_[ipPrefix] = nexthops;
@@ -619,6 +613,28 @@ static bool add_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_object
     return true;
 }
 
+static bool update_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_object_id_t nh_id)
+{
+    sai_route_entry_t route_entry;
+    route_entry.vr_id = vr_id;
+    route_entry.switch_id = gSwitchId;
+    route_entry.destination = ip_pfx;
+
+    sai_attribute_t route_attr;
+
+    route_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+    route_attr.value.oid = nh_id;
+
+    sai_status_t status = sai_route_api->set_route_entry_attribute(&route_entry, &route_attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("SAI failed to update route");
+        return false;
+    }
+
+    return true;
+}
+
 VNetRouteOrch::VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOrch *vnetOrch)
                                   : Orch2(db, tableNames, request_), vnet_orch_(vnetOrch)
 {
@@ -844,17 +860,31 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             nh_id = syncd_nexthop_groups_[nexthops].next_hop_group_id;
         }
 
+        auto it_route = syncd_tunnel_routes_.find(ipPrefix);
         for (auto vr_id : vr_set)
         {
-            if (!add_route(vr_id, pfx, nh_id))
+            bool route_status = (it_route == syncd_tunnel_routes_.end()) ? add_route(vr_id, pfx, nh_id) : update_route(vr_id, pfx, nh_id);
+            if (!route_status)
             {
-                SWSS_LOG_ERROR("Route add failed for %s, vr_id '0x%" PRIx64, ipPrefix.to_string().c_str(), vr_id);
+                SWSS_LOG_ERROR("Route add/update failed for %s, vr_id '0x%" PRIx64, ipPrefix.to_string().c_str(), vr_id);
                 /* Clean up the newly created next hop group entry */
                 if (nexthops.getSize() > 1)
                 {
                     removeNextHopGroup(nexthops);
                 }
                 return false;
+            }
+        }
+
+        if (it_route != syncd_tunnel_routes_.end())
+        {
+            NextHopGroupKey nhg = it_route->second;
+            if (nhg.getSize() > 1)
+            {
+                if(--syncd_nexthop_groups_[nhg].ref_count == 0)
+                {
+                    removeNextHopGroup(nhg);
+                }
             }
         }
 
