@@ -112,7 +112,7 @@ Create/update two tables: profile (in m_cfgBufferProfileTable) and port buffer (
         }
     }
 */
-task_process_status BufferMgr::doSpeedUpdateTask(string port, string speed, bool admin_up)
+task_process_status BufferMgr::doPortTableUpdateTask(string port, string speed, bool admin_up)
 {
     vector<FieldValueTuple> fvVector;
     string cable;
@@ -237,10 +237,7 @@ void BufferMgr::doTask(Consumer &consumer)
                 // receive and cache cable length table
                 for (auto i : kfvFieldsValues(t))
                 {
-                    if (table_name == CFG_PORT_CABLE_LEN_TABLE_NAME)
-                    {
-                        task_status = doCableTask(fvField(i), fvValue(i));
-                    }
+                    task_status = doCableTask(fvField(i), fvValue(i));
                     if (task_status != task_process_status::task_success)
                     {
                         break;
@@ -266,7 +263,7 @@ void BufferMgr::doTask(Consumer &consumer)
                 }
 
                 if (speed_updated || admin_status_updated)
-                    task_status = doSpeedUpdateTask(port, speed, admin_up);
+                    task_status = doPortTableUpdateTask(port, speed, admin_up);
             }
         }
 
