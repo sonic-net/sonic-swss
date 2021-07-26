@@ -1395,7 +1395,7 @@ void MirrorOrch::updateLagMember(const LagMemberUpdate& update)
                 {
                     // Get member oper status
                     string status;
-                    string key = lag.m_alias + m_applLagMemberTable->getTableNameSeparator() + member.m_alias;
+                    string key = update.lag.m_alias + m_applLagMemberTable->getTableNameSeparator() + member;
                     if (!m_applLagMemberTable->hget(key, "status", status))
                     {
                         continue;
@@ -1407,8 +1407,8 @@ void MirrorOrch::updateLagMember(const LagMemberUpdate& update)
                         if (!m_portsOrch->getPort(member, p))
                         {
                             SWSS_LOG_ERROR("Failed to get Port object for lag %s member %s",
-                                           lag.m_alias.c_str(),
-                                           p.m_alias.c_str());
+                                           update.lag.m_alias.c_str(),
+                                           member.c_str());
                             continue;
                         }
                         session.neighborInfo.portId = p.m_port_id;
@@ -1465,7 +1465,7 @@ void MirrorOrch::updateLagMemberStatus(const LagMemberStatusUpdate& update)
                 {
                     // Get member oper status
                     string status;
-                    string key = lag.m_alias + m_applLagMemberTable->getTableNameSeparator() + member.m_alias;
+                    string key = update.lag.m_alias + m_applLagMemberTable->getTableNameSeparator() + member;
                     if (!m_applLagMemberTable->hget(key, "status", status))
                     {
                         continue;
@@ -1477,8 +1477,8 @@ void MirrorOrch::updateLagMemberStatus(const LagMemberStatusUpdate& update)
                         if (!m_portsOrch->getPort(member, p))
                         {
                             SWSS_LOG_ERROR("Failed to get Port object for lag %s member %s",
-                                           lag.m_alias.c_str(),
-                                           p.m_alias.c_str());
+                                           update.lag.m_alias.c_str(),
+                                           member.c_str());
                             continue;
                         }
                         session.neighborInfo.portId = p.m_port_id;
