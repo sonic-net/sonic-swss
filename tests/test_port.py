@@ -6,6 +6,39 @@ from swsscommon import swsscommon
 
 
 class TestPort(object):
+    def test_PortTpid(self, dvs, testlog):
+        pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+
+        # set TPID to port
+        cdb_port_tbl = swsscommon.Table(cdb, "PORT")
+        fvs = swsscommon.FieldValuePairs([("tpid", "0x9200")])
+        cdb_port_tbl.set("Ethernet8", fvs)
+        time.sleep(1)
+
+        # check application database
+        pdb_port_tbl = swsscommon.Table(pdb, "PORT_TABLE")
+        (status, fvs) = pdb_port_tbl.get("Ethernet8")
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "tpid":
+                tpid = fv[1]
+        assert tpid == "0x9200"
+
+        # Check ASIC DB
+        atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
+        # get TPID and validate it to be 0x9200 (37376)
+        (status, fvs) = atbl.get(dvs.asicdb.portnamemap["Ethernet8"])
+        assert status == True
+        asic_tpid = "0"
+
+        for fv in fvs:
+            if fv[0] == "SAI_PORT_ATTR_TPID":
+                asic_tpid = fv[1]
+
+        assert asic_tpid == "37376"
+
     def test_PortMtu(self, dvs, testlog):
         pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)

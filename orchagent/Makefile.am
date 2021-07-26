@@ -33,9 +33,11 @@ orchagent_SOURCES = \
             orch.cpp \
             notifications.cpp \
             routeorch.cpp \
+            mplsrouteorch.cpp \
             neighorch.cpp \
             intfsorch.cpp \
             portsorch.cpp \
+            fabricportsorch.cpp \
             fgnhgorch.cpp \
             copporch.cpp \
             tunneldecaporch.cpp \

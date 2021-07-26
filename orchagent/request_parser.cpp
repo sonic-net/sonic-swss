@@ -187,6 +187,15 @@ void Request::parseAttrs(const KeyOpFieldsValuesTuple& request)
             case REQ_T_SET:
                 attr_item_set_[fvField(*i)] = parseSet(fvValue(*i));
                 break;
+            case REQ_T_MAC_ADDRESS_LIST:
+                attr_item_mac_addresses_list_[fvField(*i)] = parseMacAddressList(fvValue(*i));
+                break;
+            case REQ_T_IP_LIST:
+                attr_item_ip_list_[fvField(*i)] = parseIpAddressList(fvValue(*i));
+                break;
+            case REQ_T_UINT_LIST:
+                attr_item_uint_list_[fvField(*i)] = parseUintList(fvValue(*i));
+                break;
             default:
                 throw std::logic_error(std::string("Not implemented attribute type parser for attribute:") + fvField(*i));
         }
@@ -351,4 +360,71 @@ sai_packet_action_t Request::parsePacketAction(const std::string& str)
     }
 
     return found->second;
+}
+
+vector<IpAddress> Request::parseIpAddressList(const std::string& str)
+{
+    try
+    {
+        vector<IpAddress> addrs;
+        string substr;
+        std::istringstream iss(str);
+        while (getline(iss, substr, ','))
+        {
+            IpAddress addr(substr);
+            addrs.emplace_back(addr);
+        }
+        return addrs;
+    }
+    catch (std::invalid_argument& _)
+    {
+        throw std::invalid_argument(std::string("Invalid ip address list: ") + str);
+    }
+}
+
+vector<MacAddress> Request::parseMacAddressList(const std::string& str)
+{
+    try
+    {
+        vector<MacAddress> addrs;
+        string substr;
+        std::istringstream iss(str);
+        while (getline(iss, substr, ','))
+        {
+            uint8_t mac[ETHER_ADDR_LEN];
+            if (!MacAddress::parseMacString(substr, mac))
+            {
+                throw std::invalid_argument(std::string("Invalid mac address: ") + str);
+            }
+            addrs.emplace_back(MacAddress(mac));
+        }
+        return addrs;
+    }
+    catch (std::invalid_argument& _)
+    {
+        throw std::invalid_argument(std::string("Invalid mac address list: ") + str);
+    }
+}
+
+vector<uint64_t> Request::parseUintList(const std::string& str)
+{
+    try
+    {
+        vector<uint64_t> res;
+        string substr;
+        std::istringstream iss(str);
+        while (getline(iss, substr, ','))
+        {
+            res.emplace_back(std::stoul(substr));
+        }
+        return res;
+    }
+    catch (std::invalid_argument& _)
+    {
+        throw std::invalid_argument(std::string("Invalid unsigned integer list: ") + str);
+    }
+    catch(std::out_of_range& _)
+    {
+        throw std::invalid_argument(std::string("Out of range unsigned integer: ") + str);
+    }
 }

@@ -48,6 +48,10 @@ typedef std::map<NextHopGroupKey, NextHopGroupEntry> NextHopGroupTable;
 typedef std::map<IpPrefix, NextHopGroupKey> RouteTable;
 /* RouteTables: vrf_id, RouteTable */
 typedef std::map<sai_object_id_t, RouteTable> RouteTables;
+/* LabelRouteTable: destination label, next hop address(es) */
+typedef std::map<Label, NextHopGroupKey> LabelRouteTable;
+/* LabelRouteTables: vrf_id, LabelRouteTable */
+typedef std::map<sai_object_id_t, LabelRouteTable> LabelRouteTables;
 /* Host: vrf_id, IpAddress */
 typedef std::pair<sai_object_id_t, IpAddress> Host;
 /* NextHopObserverTable: Host, next hop observer entry */
@@ -67,7 +71,6 @@ struct RouteBulkContext
     sai_object_id_t                     vrf_id;
     IpPrefix                            ip_prefix;
     bool                                excp_intfs_flag;
-    std::vector<string>                 ipv;
 
     RouteBulkContext()
         : excp_intfs_flag(false)
@@ -83,7 +86,35 @@ struct RouteBulkContext
         object_statuses.clear();
         tmp_next_hop.clear();
         nhg.clear();
-        ipv.clear();
+        excp_intfs_flag = false;
+        vrf_id = SAI_NULL_OBJECT_ID;
+    }
+};
+
+struct LabelRouteBulkContext
+{
+    std::deque<sai_status_t>            object_statuses;    // Bulk statuses
+    NextHopGroupKey                     tmp_next_hop;       // Temporary next hop
+    NextHopGroupKey                     nhg;
+    sai_object_id_t                     vrf_id;
+    Label                               label;
+    bool                                excp_intfs_flag;
+    uint8_t                             pop_count;
+
+    LabelRouteBulkContext()
+        : excp_intfs_flag(false)
+    {
+    }
+
+    // Disable any copy constructors
+    LabelRouteBulkContext(const LabelRouteBulkContext&) = delete;
+    LabelRouteBulkContext(LabelRouteBulkContext&&) = delete;
+
+    void clear()
+    {
+        object_statuses.clear();
+        tmp_next_hop.clear();
+        nhg.clear();
         excp_intfs_flag = false;
         vrf_id = SAI_NULL_OBJECT_ID;
     }
@@ -92,7 +123,7 @@ struct RouteBulkContext
 class RouteOrch : public Orch, public Subject
 {
 public:
-    RouteOrch(DBConnector *db, string tableName, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch);
+    RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch);
 
     bool hasNextHopGroup(const NextHopGroupKey&) const;
     sai_object_id_t getNextHopGroupId(const NextHopGroupKey&);
@@ -133,13 +164,16 @@ private:
     bool m_resync;
 
     RouteTables m_syncdRoutes;
+    LabelRouteTables m_syncdLabelRoutes;
     NextHopGroupTable m_syncdNextHopGroups;
 
-    std::set<NextHopGroupKey> m_bulkNhgReducedRefCnt;
+    std::set<std::pair<NextHopGroupKey, sai_object_id_t>> m_bulkNhgReducedRefCnt;
+    /* m_bulkNhgReducedRefCnt: nexthop, vrf_id */
 
     NextHopObserverTable m_nextHopObservers;
 
     EntityBulker<sai_route_api_t>           gRouteBulker;
+    EntityBulker<sai_mpls_api_t>            gLabelRouteBulker;
     ObjectBulker<sai_next_hop_group_api_t>  gNextHopGroupMemberBulker;
 
     void addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey&);
@@ -148,10 +182,17 @@ private:
     bool addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
     bool removeRoutePost(const RouteBulkContext& ctx);
 
+    void addTempLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroupKey&);
+    bool addLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroupKey&);
+    bool removeLabelRoute(LabelRouteBulkContext& ctx);
+    bool addLabelRoutePost(const LabelRouteBulkContext& ctx, const NextHopGroupKey &nextHops);
+    bool removeLabelRoutePost(const LabelRouteBulkContext& ctx);
+
     std::string getLinkLocalEui64Addr(void);
     void        addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);
 
     void doTask(Consumer& consumer);
+    void doLabelTask(Consumer& consumer);
 };
 
 #endif /* SWSS_ROUTEORCH_H */

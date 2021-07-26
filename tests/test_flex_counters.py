@@ -26,6 +26,7 @@ PORT_BUFFER_DROP_MAP      =   "COUNTERS_PORT_NAME_MAP"
 PG_WATERMARK_MAP          =   "COUNTERS_PG_NAME_MAP"
 
 NUMBER_OF_RETRIES         =   10
+CPU_PORT_OID              = "0x0"
 
 counter_type_dict = {"port_counter":[PORT_KEY, PORT_STAT, PORT_MAP],
                      "queue_counter":[QUEUE_KEY, QUEUE_STAT, QUEUE_MAP],
@@ -58,7 +59,7 @@ class TestFlexCounters(object):
                 return
             else:
                 time.sleep(1)
-        
+
         assert False, "No ID list for counter " + str(name)
 
     def verify_no_flex_counters_tables(self, counter_stat):
@@ -71,6 +72,12 @@ class TestFlexCounters(object):
             name = counter_entry[0]
             oid = counter_entry[1]
             self.wait_for_id_list(stat, name, oid)
+
+    def verify_only_phy_ports_created(self):
+        port_counters_keys = self.counters_db.db_connection.hgetall(PORT_MAP)
+        port_counters_stat_keys = self.flex_db.get_keys("FLEX_COUNTER_TABLE:" + PORT_STAT)
+        for port_stat in port_counters_stat_keys:
+            assert port_stat in dict(port_counters_keys.items()).values(), "Non PHY port created on PORT_STAT_COUNTER group: {}".format(port_stat)
 
     def enable_flex_counter_group(self, group, map):
         group_stats_entry = {"FLEX_COUNTER_STATUS": "enable"}
@@ -97,6 +104,9 @@ class TestFlexCounters(object):
 
         self.enable_flex_counter_group(counter_key, counter_map)
         self.verify_flex_counters_populated(counter_map, counter_stat)
+
+        if counter_type == "port_counter":
+            self.verify_only_phy_ports_created()
 
         if counter_type == "rif_counter":
             self.config_db.db_connection.hdel('INTERFACE|Ethernet0|192.168.0.1/24', "NULL")

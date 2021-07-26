@@ -47,6 +47,8 @@ sai_object_id_t gSwitchId = SAI_NULL_OBJECT_ID;
 MacAddress gMacAddress;
 MacAddress gVxlanMacAddress;
 
+extern size_t gMaxBulkSize;
+
 #define DEFAULT_BATCH_SIZE  128
 int gBatchSize = DEFAULT_BATCH_SIZE;
 
@@ -72,7 +74,7 @@ string gMyAsicName = "";
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    0: do not record logs" << endl;
@@ -83,10 +85,11 @@ void usage()
     cout << "    -b batch_size: set consumer table pop operation batch size (default 128)" << endl;
     cout << "    -m MAC: set switch MAC address" << endl;
     cout << "    -i INST_ID: set the ASIC instance_id in multi-asic platform" << endl;
-    cout << "    -s: enable synchronous mode (deprecated, use -z)" << endl;
-    cout << "    -z: redis communication mode (redis_async|redis_sync|zmq_sync), default: redis_async" << endl;
+    cout << "    -s enable synchronous mode (deprecated, use -z)" << endl;
+    cout << "    -z redis communication mode (redis_async|redis_sync|zmq_sync), default: redis_async" << endl;
     cout << "    -f swss_rec_filename: swss record log filename(default 'swss.rec')" << endl;
     cout << "    -j sairedis_rec_filename: sairedis record log filename(default sairedis.rec)" << endl;
+    cout << "    -k max bulk size in bulk mode (default 1000)" << endl;
 }
 
 void sighup_handler(int signo)
@@ -319,7 +322,7 @@ int main(int argc, char **argv)
     string swss_rec_filename = "swss.rec";
     string sairedis_rec_filename = "sairedis.rec";
 
-    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:")) != -1)
     {
         switch (opt)
         {
@@ -397,6 +400,20 @@ int main(int argc, char **argv)
                 sairedis_rec_filename = optarg;
             }
             break;
+        case 'k':
+            {
+                auto limit = atoi(optarg);
+                if (limit > 0)
+                {
+                    gMaxBulkSize = limit;
+                    SWSS_LOG_NOTICE("Setting maximum bulk size in bulk mode as %zu", gMaxBulkSize);
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Invalid input for maximum bulk size in bulk mode: %d. Ignoring.", limit);
+                }
+            }
+            break;
         default: /* '?' */
             exit(EXIT_FAILURE);
         }
@@ -446,7 +463,7 @@ int main(int argc, char **argv)
     // Get switch_type
     getCfgSwitchType(&config_db, gMySwitchType);
 
-    if (gMacAddress)
+    if (gMySwitchType != "fabric" && gMacAddress)
     {
         attr.id = SAI_SWITCH_ATTR_SRC_MAC_ADDRESS;
         memcpy(attr.value.mac, gMacAddress.getMac(), 6);
@@ -513,6 +530,13 @@ int main(int argc, char **argv)
         //connection info in database_config.json
         chassis_app_db = make_shared<DBConnector>("CHASSIS_APP_DB", 0, true);
     }
+    else if (gMySwitchType == "fabric")
+    {
+        SWSS_LOG_NOTICE("Switch type is fabric");
+        attr.id = SAI_SWITCH_ATTR_TYPE;
+        attr.value.u32 = SAI_SWITCH_TYPE_FABRIC;
+        attrs.push_back(attr);
+    }
 
     /* Must be last Attribute */
     attr.id = SAI_REDIS_SWITCH_ATTR_CONTEXT;
@@ -527,81 +551,97 @@ int main(int argc, char **argv)
     }
     SWSS_LOG_NOTICE("Create a switch, id:%" PRIu64, gSwitchId);
 
-    /* Get switch source MAC address if not provided */
-    if (!gMacAddress)
+
+    if (gMySwitchType != "fabric")
     {
-        attr.id = SAI_SWITCH_ATTR_SRC_MAC_ADDRESS;
+        /* Get switch source MAC address if not provided */
+        if (!gMacAddress)
+        {
+            attr.id = SAI_SWITCH_ATTR_SRC_MAC_ADDRESS;
+            status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to get MAC address from switch, rv:%d", status);
+                exit(EXIT_FAILURE);
+            }
+            else
+            {
+                gMacAddress = attr.value.mac;
+            }
+        }
+
+        /* Get the default virtual router ID */
+        attr.id = SAI_SWITCH_ATTR_DEFAULT_VIRTUAL_ROUTER_ID;
+
         status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to get MAC address from switch, rv:%d", status);
+            SWSS_LOG_ERROR("Fail to get switch virtual router ID %d", status);
             exit(EXIT_FAILURE);
+        }
+
+        gVirtualRouterId = attr.value.oid;
+        SWSS_LOG_NOTICE("Get switch virtual router ID %" PRIx64, gVirtualRouterId);
+
+        /* Get the NAT supported info */
+        attr.id = SAI_SWITCH_ATTR_AVAILABLE_SNAT_ENTRY;
+
+        status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_NOTICE("Failed to get the SNAT available entry count, rv:%d", status);
         }
         else
         {
-            gMacAddress = attr.value.mac;
+            if (attr.value.u32 != 0)
+            {
+                gIsNatSupported = true;
+            }
         }
+
+        /* Create a loopback underlay router interface */
+        vector<sai_attribute_t> underlay_intf_attrs;
+
+        sai_attribute_t underlay_intf_attr;
+        underlay_intf_attr.id = SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID;
+        underlay_intf_attr.value.oid = gVirtualRouterId;
+        underlay_intf_attrs.push_back(underlay_intf_attr);
+
+        underlay_intf_attr.id = SAI_ROUTER_INTERFACE_ATTR_TYPE;
+        underlay_intf_attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_LOOPBACK;
+        underlay_intf_attrs.push_back(underlay_intf_attr);
+
+        underlay_intf_attr.id = SAI_ROUTER_INTERFACE_ATTR_MTU;
+        underlay_intf_attr.value.u32 = UNDERLAY_RIF_DEFAULT_MTU;
+        underlay_intf_attrs.push_back(underlay_intf_attr);
+
+        status = sai_router_intfs_api->create_router_interface(&gUnderlayIfId, gSwitchId, (uint32_t)underlay_intf_attrs.size(), underlay_intf_attrs.data());
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create underlay router interface %d", status);
+            exit(EXIT_FAILURE);
+        }
+
+        SWSS_LOG_NOTICE("Created underlay router interface ID %" PRIx64, gUnderlayIfId);
+
+        /* Initialize orchestration components */
+
+        init_gearbox_phys(&appl_db);
     }
 
-    /* Get the default virtual router ID */
-    attr.id = SAI_SWITCH_ATTR_DEFAULT_VIRTUAL_ROUTER_ID;
-
-    status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
-    if (status != SAI_STATUS_SUCCESS)
+    shared_ptr<OrchDaemon> orchDaemon;
+    if (gMySwitchType != "fabric")
     {
-        SWSS_LOG_ERROR("Fail to get switch virtual router ID %d", status);
-        exit(EXIT_FAILURE);
-    }
-
-    gVirtualRouterId = attr.value.oid;
-    SWSS_LOG_NOTICE("Get switch virtual router ID %" PRIx64, gVirtualRouterId);
-
-    /* Get the NAT supported info */
-    attr.id = SAI_SWITCH_ATTR_AVAILABLE_SNAT_ENTRY;
-
-    status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_NOTICE("Failed to get the SNAT available entry count, rv:%d", status);
+        orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db, chassis_app_db.get());
+        if (gMySwitchType == "voq")
+        {
+            orchDaemon->setFabricEnabled(true);
+        }
     }
     else
     {
-        if (attr.value.u32 != 0)
-        {
-            gIsNatSupported = true;
-        }
+        orchDaemon = make_shared<FabricOrchDaemon>(&appl_db, &config_db, &state_db, chassis_app_db.get()); 
     }
-
-    /* Create a loopback underlay router interface */
-    vector<sai_attribute_t> underlay_intf_attrs;
-
-    sai_attribute_t underlay_intf_attr;
-    underlay_intf_attr.id = SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID;
-    underlay_intf_attr.value.oid = gVirtualRouterId;
-    underlay_intf_attrs.push_back(underlay_intf_attr);
-
-    underlay_intf_attr.id = SAI_ROUTER_INTERFACE_ATTR_TYPE;
-    underlay_intf_attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_LOOPBACK;
-    underlay_intf_attrs.push_back(underlay_intf_attr);
-
-    underlay_intf_attr.id = SAI_ROUTER_INTERFACE_ATTR_MTU;
-    underlay_intf_attr.value.u32 = UNDERLAY_RIF_DEFAULT_MTU;
-    underlay_intf_attrs.push_back(underlay_intf_attr);
-
-    status = sai_router_intfs_api->create_router_interface(&gUnderlayIfId, gSwitchId, (uint32_t)underlay_intf_attrs.size(), underlay_intf_attrs.data());
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to create underlay router interface %d", status);
-        exit(EXIT_FAILURE);
-    }
-
-    SWSS_LOG_NOTICE("Created underlay router interface ID %" PRIx64, gUnderlayIfId);
-
-    /* Initialize orchestration components */
-    
-    init_gearbox_phys(&appl_db);
-
-    auto orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db, chassis_app_db.get());
 
     if (!orchDaemon->init())
     {
