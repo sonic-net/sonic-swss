@@ -50,19 +50,18 @@ class TestPortDPBLag(object):
         dvs.add_log_marker()
         p.write_to_config_db()
         time.sleep(2)
-        #p.verify_config_db()
-        #p.verify_app_db()
-        #p.verify_asic_db()
+        p.verify_config_db()
+        p.verify_app_db()
+        p.verify_asic_db()
 
         # 10. Remove PortChannel0001 and verify that its removed.
         dvs.add_log_marker()
         self.dvs_lag.remove_port_channel(lag)
         
         time.sleep(5)
-        (exitcode, output) = dvs.runcmd(['cat', '/var/log/syslog'])
+        (exitcode, output) = dvs.runcmd(['tail', '-1000', '/var/log/syslog'])
         print(output)
         
-        dvs.add_log_marker()
         self.dvs_lag.get_and_verify_port_channel(0)
 
 
