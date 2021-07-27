@@ -439,13 +439,13 @@ class TestMirror(object):
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
         assert len(tbl.getKeys()) == 0
 
-        # Test creating lag member with oper status down in the first place
+        # Test lag member creation with oper status down in the first place
         self.create_port_channel_member("008", "Ethernet88", status="disabled")
         assert self.get_mirror_session_state(session)["status"] == "inactive"
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
         assert len(tbl.getKeys()) == 0
 
-        # Test lag member oper status up that activates session
+        # set lag member oper status up to activate session
         self.create_port_channel_member("008", "Ethernet88", status="enabled")
         assert self.get_mirror_session_state(session)["status"] == "active"
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
@@ -467,10 +467,8 @@ class TestMirror(object):
         self.set_interface_status(dvs, "Ethernet92", "up")
         self.create_port_channel_member("008", "Ethernet92", status="enabled")
         # monitor port stays unchanged
-        # state db
         assert self.get_mirror_session_state(session)["status"] == "active"
         assert self.get_mirror_session_state(session)["monitor_port"] == "Ethernet88"
-        # asic db
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
         assert len(tbl.getKeys()) == 1
         (status, fvs) = tbl.get(tbl.getKeys()[0])
@@ -483,10 +481,8 @@ class TestMirror(object):
 
         # Test lag member oper status down that triggers monitor port update
         self.create_port_channel_member("008", "Ethernet88", status="disabled")
-        # state db
         assert self.get_mirror_session_state(session)["status"] == "active"
         assert self.get_mirror_session_state(session)["monitor_port"] == "Ethernet92"
-        # asic db
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
         assert len(tbl.getKeys()) == 1
         (status, fvs) = tbl.get(tbl.getKeys()[0])
@@ -500,10 +496,8 @@ class TestMirror(object):
         # Restore lag member oper status up
         self.create_port_channel_member("008", "Ethernet88", status="enabled")
         # monitor port stays unchanged
-        # state db
         assert self.get_mirror_session_state(session)["status"] == "active"
         assert self.get_mirror_session_state(session)["monitor_port"] == "Ethernet92"
-        # asic db
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
         assert len(tbl.getKeys()) == 1
         (status, fvs) = tbl.get(tbl.getKeys()[0])
@@ -516,10 +510,8 @@ class TestMirror(object):
 
         # Test lag member removal that triggers monitor port update
         self.remove_port_channel_member("008", "Ethernet92")
-        # state db
         assert self.get_mirror_session_state(session)["status"] == "active"
         assert self.get_mirror_session_state(session)["monitor_port"] == "Ethernet88"
-        # asic db
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
         assert len(tbl.getKeys()) == 1
         (status, fvs) = tbl.get(tbl.getKeys()[0])

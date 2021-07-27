@@ -1278,6 +1278,7 @@ void MirrorOrch::updateNeighbor(const NeighborUpdate& update)
         auto& session = it->second;
 
         // Check if the session's destination IP matches the neighbor's update IP
+        // (destination IP in directly connected subnet),
         // or if the session's next hop IP matches the neighbor's update IP
         if (session.dstIp != update.entry.ip_address &&
                 session.nexthopInfo.nexthop.ip_address != update.entry.ip_address)
