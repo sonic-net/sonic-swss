@@ -623,10 +623,12 @@ bool MirrorOrch::getNeighborInfo(const string& name, MirrorEntry& session)
             }
             else
             {
-                // Get the first member of the LAG
                 Port member;
-                string first_member_alias = *session.neighborInfo.port.m_members.begin();
-                m_portsOrch->getPort(first_member_alias, member);
+                if (!selectEnabledLagMember(session.neighborInfo.port, member))
+                {
+                    session.neighborInfo.portId = SAI_NULL_OBJECT_ID;
+                    return false;
+                }
 
                 session.neighborInfo.portId = member.m_port_id;
             }
