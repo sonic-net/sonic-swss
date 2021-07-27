@@ -17,18 +17,18 @@ class TestPortDPBLag(object):
 
         # 1. Create PortChannel0001.
         self.dvs_lag.create_port_channel(lag)
-        time.sleep(5)
+        time.sleep(2)
 
         # 2. Add Ethernet0 to PortChannel0001.
         self.dvs_lag.create_port_channel_member(lag, p.get_name())
-        time.sleep(5)
+        time.sleep(2)
 
         # 3. Add log marker to syslog
         marker = dvs.add_log_marker()
 
         # 4. Delete Ethernet0 from config DB.
         p.delete_from_config_db()
-        time.sleep(5)
+        time.sleep(2)
 
         # 5. Verify that we are waiting in portsorch for the port
         #    to be removed from LAG, by looking at the log
@@ -39,7 +39,7 @@ class TestPortDPBLag(object):
 
         # 7. Remove port from LAG
         self.dvs_lag.remove_port_channel_member(lag, p.get_name())
-        time.sleep(5)
+        time.sleep(2)
 
         # 8. Verify that port is removed from ASIC DB
         assert(p.not_exists_in_asic_db() == True)
@@ -47,7 +47,7 @@ class TestPortDPBLag(object):
         # 9. Re-create port Ethernet0 and verify that it is
         #    present in CONFIG, APPL, and ASIC DBs
         p.write_to_config_db()
-        time.sleep(5)
+        time.sleep(2)
         p.verify_config_db()
         p.verify_app_db()
         p.verify_asic_db()
@@ -55,6 +55,8 @@ class TestPortDPBLag(object):
         # 10. Remove PortChannel0001 and verify that its removed.
         self.dvs_lag.remove_port_channel(lag)
         time.sleep(5)
+        (exitcode, output) = dvs.runcmd(['cat', '/var/log/syslog'])
+        print(output)
         self.dvs_lag.get_and_verify_port_channel(0)
 
 
