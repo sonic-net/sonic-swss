@@ -38,6 +38,12 @@ struct FdbUpdate
     bool add;
 };
 
+struct FdbFlushUpdate
+{
+    vector<FdbEntry> entries;
+    Port port;
+};
+
 struct FdbData
 {
     sai_object_id_t bridge_port_id;
@@ -56,12 +62,6 @@ struct FdbData
     string remote_ip;
     string    esi;
     unsigned int vni;
-};
-
-struct FdbFlushUpdate
-{
-    vector<FdbEntry> entries;
-    Port port;
 };
 
 struct SavedFdbEntry
