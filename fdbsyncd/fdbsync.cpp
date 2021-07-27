@@ -659,6 +659,9 @@ void FdbSync::macAddVxlan(string key, struct in_addr vtep, string type, uint32_t
     fvVector.push_back(t);
     fvVector.push_back(v);
 
+    SWSS_LOG_INFO("%sVXLAN_FDB_TABLE: ADD_KEY %s vtep:%s type:%s", 
+            m_AppRestartAssist->isWarmStartInProgress() ? "WARM-RESTART:" : "" ,
+            key.c_str(), svtep.c_str(), type.c_str());
     // If warmstart is in progress, we take all netlink changes into the cache map
     if (m_AppRestartAssist->isWarmStartInProgress())
     {

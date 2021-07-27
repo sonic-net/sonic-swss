@@ -92,11 +92,11 @@ int main(int argc, char **argv)
             {
                 s.select(&temps);
 
-                if(temps == (Selectable *)sync.getFdbStateTable())
+                if (temps == (Selectable *)sync.getFdbStateTable())
                 {
                     sync.processStateFdb();
                 }
-                else if(temps == (Selectable *)sync.getMclagRemoteFdbStateTable())
+                else if (temps == (Selectable *)sync.getMclagRemoteFdbStateTable())
                 {
                     sync.processStateMclagRemoteFdb();
                 }

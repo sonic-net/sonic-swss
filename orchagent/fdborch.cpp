@@ -32,7 +32,6 @@ FdbOrch::FdbOrch(DBConnector* applDbConnector, vector<table_name_with_pri_t> app
     m_fdbStateTable(stateDbFdbConnector.first, stateDbFdbConnector.second),
     m_mclagFdbStateTable(stateDbMclagFdbConnector.first, stateDbMclagFdbConnector.second)
 {
-
     for(auto it: appFdbTables)
     {
         m_appTables.push_back(new Table(applDbConnector, it.first));
@@ -46,7 +45,6 @@ FdbOrch::FdbOrch(DBConnector* applDbConnector, vector<table_name_with_pri_t> app
     /* Add FDB notifications support from ASIC */
     DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
     m_fdbNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
-
     auto fdbNotifier = new Notifier(m_fdbNotificationConsumer, this, "FDB_NOTIFICATIONS");
     Orch::addExecutor(fdbNotifier);
 }
