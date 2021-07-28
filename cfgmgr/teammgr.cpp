@@ -617,8 +617,10 @@ task_process_status TeamMgr::addLagMember(const string &lag, const string &membe
             return fv.first == "macsec";
             });
     // Portchannel needs to be enabled after MACsec enabled
-    if (it != fvs.end()) {
-        if (!isEnableMACsec(member)) {
+    if (it != fvs.end())
+    {
+        if (!isEnableMACsec(member))
+        {
             return task_need_retry;
         }
     }
