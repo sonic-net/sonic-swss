@@ -22,6 +22,15 @@ BufferMgr::BufferMgr(DBConnector *cfgDb, DBConnector *stateDb, string pg_lookup_
         m_cfgLosslessPgPoolTable(cfgDb, CFG_BUFFER_POOL_TABLE_NAME)
 {
     readPgProfileLookupFile(pg_lookup_file);
+    char *platform = getenv("ASIC_VENDOR");
+    if (NULL == platform)
+    {
+        SWSS_LOG_WARN("Platform environment variable is not defined");
+    }
+    else
+    {
+        m_platform = platform;
+    }
 }
 
 //# speed, cable, size,    xon,  xoff, threshold,  xon_offset
@@ -121,7 +130,7 @@ task_process_status BufferMgr::doPortTableUpdateTask(string port, string speed, 
 
     m_cfgBufferPgTable.get(buffer_pg_key, fvVector);
 
-    if (!admin_up)
+    if (!admin_up && m_platform == "mellanox")
     {
         // Remove the entry in BUFFER_PG table if any
         if (!fvVector.empty())

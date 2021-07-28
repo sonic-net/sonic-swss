@@ -33,6 +33,8 @@ public:
     using Orch::doTask;
 
 private:
+    std::string m_platform;
+
     Table m_cfgPortTable;
     Table m_cfgCableLenTable;
     Table m_cfgBufferProfileTable;
