@@ -18,15 +18,10 @@
 #include "portsorch.h"
 #include "mlagorch.h"
 
-//Name of ISL isolation group must match with the name used by Mclagsyncd
-#define MLAG_ISL_ISOLATION_GROUP_NAME  "MCLAG_ISO_GRP"
-#define MLAG_ISL_ISOLATION_GROUP_DESCR "Isolation group for MCLAG"
-
 using namespace std;
 using namespace swss;
 
 extern PortsOrch *gPortsOrch;
-extern IsoGrpOrch *gIsoGrpOrch;
 extern MlagOrch *gMlagOrch;
 
 MlagOrch::MlagOrch(DBConnector *db, vector<string> &tableNames):
@@ -38,28 +33,6 @@ MlagOrch::MlagOrch(DBConnector *db, vector<string> &tableNames):
 MlagOrch::~MlagOrch()
 {
     SWSS_LOG_ENTER();
-}
-
-void MlagOrch::update(SubjectType type, void *cntx)
-{
-    IsolationGroupUpdate *update;
-
-    if (type == SUBJECT_TYPE_ISOLATION_GROUP_CHANGE)
-    {
-        update = static_cast<IsolationGroupUpdate *>(cntx);
-
-        if (update->add)
-        {
-            m_iccp_control_isolation_grp = true;
-            SWSS_LOG_NOTICE("MLAG yields control of isolation group");
-        }
-        else
-        {
-            m_iccp_control_isolation_grp = false;
-            addAllMlagInterfacesToIsolationGroup();
-            SWSS_LOG_NOTICE("MLAG takes control of isolation group");
-        }
-    }
 }
 
 //------------------------------------------------------------------
@@ -187,9 +160,6 @@ bool MlagOrch::addIslInterface(string isl_name)
 
     m_isl_name = isl_name;
 
-    //Create isolation group if ICCPd has not created it yet
-    addIslIsolationGroup();
-
     //Update observers
     update.isl_name = isl_name;
     update.is_add = true;
@@ -208,8 +178,6 @@ bool MlagOrch::delIslInterface()
     update.is_add = false;
 
     m_isl_name.clear();
-    //Delete isolation group if ICCP has not taken control yet
-    deleteIslIsolationGroup();
 
     //Notify observer
     notify(SUBJECT_TYPE_MLAG_ISL_CHANGE, static_cast<void *>(&update));
@@ -232,12 +200,6 @@ bool MlagOrch::addMlagInterface(string if_name)
 
         m_mlagIntfs.insert(if_name);
 
-        //If this is the first MLAG interface added, create isolation group
-        if (m_mlagIntfs.size() == 1)
-            addIslIsolationGroup();
-        else
-            updateIslIsolationGroup(if_name, true);
-
         //Notify observer
         update.if_name = if_name;
         update.is_add = true;
@@ -258,12 +220,6 @@ bool MlagOrch::delMlagInterface(string if_name)
     else
     {
         m_mlagIntfs.erase(if_name);
-
-        //If this is the last MLAG interface added, delete isolation group
-        if (m_mlagIntfs.size() == 0)
-            deleteIslIsolationGroup();
-        else
-            updateIslIsolationGroup(if_name, false);
 
         //Notify observers
         update.if_name = if_name;
@@ -288,231 +244,3 @@ bool MlagOrch::isIslInterface(string if_name)
     else
         return false;
 }
-
-/* Create isolation group based on MLAG configuration before ICCPd
- * takes control of the isolation group
- */
-bool MlagOrch::addIslIsolationGroup()
-{
-    isolation_group_status_t status;
-    string isolate_dst_ports;
-
-    //Need peer link and at least one MLAG interface to create an isolation group
-    if (m_isl_name.empty() || (m_mlagIntfs.size() == 0))
-    {
-        SWSS_LOG_NOTICE("MLAG skips adding isolation group: isl name(%s), num MLAG interface %zu",
-            m_isl_name.empty() ? "invalid" : m_isl_name.c_str(), m_mlagIntfs.size());
-        return false;
-    }
-    //During SwSS warm reboot, isolation group can be created first by ICCP
-    //due to IsoGrpOrch processing info from APP_DB first
-    auto isolation_grp = gIsoGrpOrch->getIsolationGroup(MLAG_ISL_ISOLATION_GROUP_NAME);
-    if (isolation_grp)
-    {
-        m_iccp_control_isolation_grp = true;
-
-        //Register with IsoGrpOrch to receive update when ICCP deletes the group
-        isolation_grp->attach(this);
-        ++m_num_isolation_grp_attach;
-        m_attach_isolation_grp = true;
-        SWSS_LOG_NOTICE("MLAG found ICCP-controlled isolation group. Attach to it");
-
-        return false;
-    }
-    //Create a new isolation group
-    for (auto mlag_if = m_mlagIntfs.begin(); mlag_if != m_mlagIntfs.end(); ++mlag_if)
-    {
-        if (isolate_dst_ports.length())
-        {
-            isolate_dst_ports = isolate_dst_ports + ',' + *mlag_if;
-        }
-        else
-        {
-            isolate_dst_ports = *mlag_if;
-        }
-    }
-    status = gIsoGrpOrch->addIsolationGroup(
-        MLAG_ISL_ISOLATION_GROUP_NAME,
-        ISOLATION_GROUP_TYPE_BRIDGE_PORT,
-        MLAG_ISL_ISOLATION_GROUP_DESCR,
-        m_isl_name, isolate_dst_ports);
-
-    if (status != ISO_GRP_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("MLAG failed to create ISL isolation group, status %d", status);
-        ++m_num_isolation_grp_add_error;
-        return false;
-    }
-    //Register wiht IsoGrpOrch to receive update when ICCP adds the group
-    isolation_grp = gIsoGrpOrch->getIsolationGroup(MLAG_ISL_ISOLATION_GROUP_NAME);
-    if (isolation_grp)
-    {
-        isolation_grp->attach(SUBJECT_TYPE_ISOLATION_GROUP_CHANGE, this);
-        ++m_num_isolation_grp_attach;
-        m_attach_isolation_grp = true;
-    }
-    SWSS_LOG_NOTICE("MLAG creates ISL isolation group");
-    return true;
-}
-
-bool MlagOrch::deleteIslIsolationGroup()
-{
-    isolation_group_status_t status;
-
-    //Delete isolation group if either peer link or all MLAG interfaces are removed
-    if (!m_isl_name.empty() && (m_mlagIntfs.size() > 0))
-    {
-        SWSS_LOG_NOTICE("MLAG skips deleting isolation group: isl name %s, num MLAG interface %zu",
-            m_isl_name.c_str(), m_mlagIntfs.size());
-        return false;
-    }
-    //The delete request is triggered when the last MLAG interface is deleted
-    //or when peer link interface is deleted. If MlagOrch no longer attaches
-    //to isolation group due to previous deletion, do not need to do anything
-    if (!m_attach_isolation_grp)
-        return false;
-
-    auto isolation_grp = gIsoGrpOrch->getIsolationGroup(MLAG_ISL_ISOLATION_GROUP_NAME);
-
-    if (!isolation_grp)
-    {
-        SWSS_LOG_ERROR("MLAG fails to find isolation group, iccp_control %d",
-            m_iccp_control_isolation_grp);
-        return false;
-    }
-    //Reset the ICCP control flag since MlagOrch will detach from the group
-    //and won't receive any further update
-    m_iccp_control_isolation_grp = false;
-
-    //Only need to unregister with IsoGrpOrch if ICCP is in control
-    if (m_iccp_control_isolation_grp)
-    {
-        //Mlag configuration is deleted while it is up
-        if (m_attach_isolation_grp)
-        {
-            isolation_grp->detach(this);
-            ++m_num_isolation_grp_detach;
-            m_attach_isolation_grp = false;
-            SWSS_LOG_NOTICE("MLAG detaches from ICCP-controlled isolation group");
-        }
-        else
-            SWSS_LOG_ERROR("MLAG is not attached to ICCP-controlled isolation group");
-    }
-    else
-    {
-        //Unregister with IsoGrpOrch before deleting since the group is deleted
-        //only after all observers are removed
-        if (m_attach_isolation_grp)
-        {
-            isolation_grp->detach(this);
-            ++m_num_isolation_grp_detach;
-            m_attach_isolation_grp = false;
-        }
-        status = gIsoGrpOrch->delIsolationGroup(MLAG_ISL_ISOLATION_GROUP_NAME);
-        if (status == ISO_GRP_STATUS_SUCCESS)
-        {
-            SWSS_LOG_NOTICE("MLAG deletes ISL isolation group");
-            return true;
-        }
-        else
-        {
-            SWSS_LOG_ERROR("MLAG can't delete ISL isolation group, status %d", status);
-            ++m_num_isolation_grp_del_error;
-            return false;
-        }
-    }
-    return true;
-}
-
-bool MlagOrch::updateIslIsolationGroup(string if_name, bool is_add)
-{
-    string isolate_dst_ports;
-    isolation_group_status_t status;
-
-    //Do not trigger any update if ICCP already tooks control
-    if (m_iccp_control_isolation_grp)
-        return false;
-
-    auto isolation_grp = gIsoGrpOrch->getIsolationGroup(MLAG_ISL_ISOLATION_GROUP_NAME);
-    if (isolation_grp)
-    {
-        //Isolation group can handle forward reference. Updated it with
-        //the latest set of MLAG interfaces
-        for (auto mlag_if = m_mlagIntfs.begin(); mlag_if != m_mlagIntfs.end(); ++mlag_if)
-        {
-            if (isolate_dst_ports.length())
-                isolate_dst_ports = isolate_dst_ports + ',' + *mlag_if;
-            else
-                isolate_dst_ports = *mlag_if;
-        }
-        status = isolation_grp->setMembers(isolate_dst_ports);
-        if (status != ISO_GRP_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("MLAG can't %s member %s for isolation group, status %d",
-                is_add ? "add" : "delete", if_name.c_str(), status);
-            ++m_num_isolation_grp_update_error;
-            return false;
-        }
-        else
-        {
-            SWSS_LOG_NOTICE("MLAG %s member %s for isolation group",
-                is_add ? "adds" : "deletes", if_name.c_str());
-            return true;
-        }
-    }
-    else
-    {
-        SWSS_LOG_ERROR("MLAG can't find MlagOrch-controlled isolation group to update");
-    }
-    return true;
-}
-
-bool MlagOrch::addAllMlagInterfacesToIsolationGroup()
-{
-    isolation_group_status_t status;
-    string isolate_dst_ports;
-
-    //Need peer link and at least one MLAG interface to create an isolation group
-    if (m_isl_name.empty() || (m_mlagIntfs.size() == 0))
-    {
-        SWSS_LOG_NOTICE("MLAG skips adding mlag-if to isolation group: isl name(%s), mlag-if count %zu",
-            m_isl_name.empty() ? "invalid" : m_isl_name.c_str(), m_mlagIntfs.size());
-        return false;
-    }
-    auto isolation_grp = gIsoGrpOrch->getIsolationGroup(MLAG_ISL_ISOLATION_GROUP_NAME);
-    if (!isolation_grp)
-    {
-        SWSS_LOG_ERROR("MLAG can't find ISL isolation group");
-        return false;
-    }
-    for (auto mlag_if = m_mlagIntfs.begin(); mlag_if != m_mlagIntfs.end(); ++mlag_if)
-    {
-        if (isolate_dst_ports.length())
-        {
-            isolate_dst_ports = isolate_dst_ports + ',' + *mlag_if;
-        }
-        else
-        {
-            isolate_dst_ports = *mlag_if;
-        }
-    }
-    //Update isolation group
-    status = gIsoGrpOrch->addIsolationGroup(
-        MLAG_ISL_ISOLATION_GROUP_NAME,
-        ISOLATION_GROUP_TYPE_BRIDGE_PORT,
-        MLAG_ISL_ISOLATION_GROUP_DESCR,
-        m_isl_name, isolate_dst_ports);
-
-    if (status != ISO_GRP_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("MLAG fails to update ISL isolation group, status %d", status);
-        ++m_num_isolation_grp_update_error;
-        return false;
-    }
-    else
-    {
-        SWSS_LOG_NOTICE("MLAG adds all MLAG interfaces to ISL isolation group");
-        return true;
-    }
-}
-

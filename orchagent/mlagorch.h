@@ -22,7 +22,6 @@
 #include <string>
 #include "orch.h"
 #include "port.h"
-#include "isolationgrouporch.h"
 
 struct MlagIfUpdate
 {
@@ -54,13 +53,6 @@ public:
 private:
     std::string m_isl_name;
     std::set<std::string> m_mlagIntfs;
-    bool m_iccp_control_isolation_grp = false;
-    bool m_attach_isolation_grp = false;
-    uint32_t m_num_isolation_grp_attach = 0;
-    uint32_t m_num_isolation_grp_detach = 0;
-    uint32_t m_num_isolation_grp_add_error = 0;
-    uint32_t m_num_isolation_grp_del_error = 0;
-    uint32_t m_num_isolation_grp_update_error = 0;
 
     void doTask(Consumer &consumer);
     void doMlagDomainTask(Consumer &consumer);
@@ -69,10 +61,6 @@ private:
     bool delIslInterface();
     bool addMlagInterface(string if_name);
     bool delMlagInterface(string if_name);
-    bool addIslIsolationGroup();
-    bool deleteIslIsolationGroup();
-    bool updateIslIsolationGroup(string if_name, bool is_add);
-    bool addAllMlagInterfacesToIsolationGroup();
 };
 
 #endif /* SWSS_MLAGORCH_H */
