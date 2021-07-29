@@ -1,7 +1,10 @@
+from swsscommon import swsscommon
+
 class DVSLag(object):
-    def __init__(self, adb, cdb):
+    def __init__(self, adb, cdb, pdb):
         self.asic_db = adb
         self.config_db = cdb
+        self.appl_db = pdb
 
     def create_port_channel(self, lag_id, admin_status="up", mtu="1500"):
         lag = "PortChannel{}".format(lag_id)
@@ -27,3 +30,7 @@ class DVSLag(object):
     def get_and_verify_port_channel(self, expected_num):
         return self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG", expected_num)
 
+    def set_port_channel_member_status(self, lag_id, interface, status):
+        fvs = swsscommon.FieldValuePairs([("status", status)])
+        tbl = swsscommon.ProducerStateTable(self.appl_db.db_connection, "LAG_MEMBER_TABLE")
+        tbl.set("PortChannel{}:{}".format(lag_id, interface), fvs)
