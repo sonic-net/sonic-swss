@@ -35,6 +35,10 @@ MlagOrch::~MlagOrch()
     SWSS_LOG_ENTER();
 }
 
+void MlagOrch::update(SubjectType type, void *cntx)
+{
+    SWSS_LOG_ENTER();
+}
 //------------------------------------------------------------------
 //Private API section
 //------------------------------------------------------------------
