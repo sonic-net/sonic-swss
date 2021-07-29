@@ -40,7 +40,6 @@ class MlagOrch: public Orch, public Observer, public Subject
 public:
     MlagOrch(DBConnector *db, vector<string> &tableNames);
     ~MlagOrch();
-    void update(SubjectType type, void *cntx);
     bool isMlagInterface(string if_name);
     bool isIslInterface(string if_name);
 
