@@ -138,13 +138,10 @@ IsoGrpOrch::doIsoGrpTblTask(Consumer &consumer)
             if (ISO_GRP_STATUS_SUCCESS == status)
             {
                 auto grp = getIsolationGroup(name);
-                if (!grp->isObserver(this))
-                {
-                    IsolationGroupUpdate update = {grp.get(), true};
-                    grp->notifyObservers(SUBJECT_TYPE_ISOLATION_GROUP_CHANGE, &update);
+                IsolationGroupUpdate update = {grp.get(), true};
+                grp->notifyObservers(SUBJECT_TYPE_ISOLATION_GROUP_CHANGE, &update);
 
-                    grp->attach(this);
-                }
+                grp->attach(this);
             }
         }
         else
@@ -220,15 +217,8 @@ IsoGrpOrch::delIsolationGroup(string name)
     auto grp = m_isolationGrps.find(name);
     if (grp != m_isolationGrps.end())
     {
-        if (!grp->second->hasObservers())
-        {
-            grp->second->destroy();
-            m_isolationGrps.erase(name);
-        }
-        else
-        {
-            SWSS_LOG_NOTICE("%s group has observers. Not deleting", name.c_str());
-        }
+        grp->second->destroy();
+        m_isolationGrps.erase(name);
     }
 
     return ISO_GRP_STATUS_SUCCESS;

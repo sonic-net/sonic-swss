@@ -312,15 +312,11 @@ bool MlagOrch::addIslIsolationGroup()
         m_iccp_control_isolation_grp = true;
 
         //Register with IsoGrpOrch to receive update when ICCP deletes the group
-        if (!isolation_grp->isObserver(this))
-        {
-            isolation_grp->attach(SUBJECT_TYPE_ISOLATION_GROUP_CHANGE, this);
-            ++m_num_isolation_grp_attach;
-            m_attach_isolation_grp = true;
-            SWSS_LOG_NOTICE("MLAG found ICCP-controlled isolation group. Attach to it");
-        }
-        else
-            SWSS_LOG_NOTICE("MLAG is already attached to ICCP-controlled isolation group");
+        isolation_grp->attach(this);
+        ++m_num_isolation_grp_attach;
+        m_attach_isolation_grp = true;
+        SWSS_LOG_NOTICE("MLAG found ICCP-controlled isolation group. Attach to it");
+
         return false;
     }
     //Create a new isolation group
@@ -394,7 +390,7 @@ bool MlagOrch::deleteIslIsolationGroup()
         //Mlag configuration is deleted while it is up
         if (m_attach_isolation_grp)
         {
-            isolation_grp->detach(SUBJECT_TYPE_ISOLATION_GROUP_CHANGE, this);
+            isolation_grp->detach(this);
             ++m_num_isolation_grp_detach;
             m_attach_isolation_grp = false;
             SWSS_LOG_NOTICE("MLAG detaches from ICCP-controlled isolation group");
@@ -408,7 +404,7 @@ bool MlagOrch::deleteIslIsolationGroup()
         //only after all observers are removed
         if (m_attach_isolation_grp)
         {
-            isolation_grp->detach(SUBJECT_TYPE_ISOLATION_GROUP_CHANGE, this);
+            isolation_grp->detach(this);
             ++m_num_isolation_grp_detach;
             m_attach_isolation_grp = false;
         }
