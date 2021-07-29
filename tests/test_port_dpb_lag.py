@@ -12,16 +12,16 @@ class TestPortDPBLag(object):
 
     def test_dependency(self, dvs):
         lag = "0001"
-        #p = Port(dvs, "Ethernet0")
-        #p.sync_from_config_db()
+        p = Port(dvs, "Ethernet0")
+        p.sync_from_config_db()
 
         # 1. Create PortChannel0001.
         self.dvs_lag.create_port_channel(lag)
         time.sleep(2)
 
         # 2. Add Ethernet0 to PortChannel0001.
-        #self.dvs_lag.create_port_channel_member(lag, p.get_name())
-        #time.sleep(2)
+        self.dvs_lag.create_port_channel_member(lag, p.get_name())
+        time.sleep(2)
 
         # 3. Add log marker to syslog
         #marker = dvs.add_log_marker()
@@ -39,8 +39,8 @@ class TestPortDPBLag(object):
 
         # 7. Remove port from LAG
         #dvs.add_log_marker()
-        #self.dvs_lag.remove_port_channel_member(lag, p.get_name())
-        #time.sleep(2)
+        self.dvs_lag.remove_port_channel_member(lag, p.get_name())
+        time.sleep(2)
 
         # 8. Verify that port is removed from ASIC DB
         #assert(p.not_exists_in_asic_db() == True)
