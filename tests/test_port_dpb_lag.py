@@ -47,9 +47,9 @@ class TestPortDPBLag(object):
 
         # 9. Re-create port Ethernet0 and verify that it is
         #    present in CONFIG, APPL, and ASIC DBs
-        #dvs.add_log_marker()
-        #p.write_to_config_db()
-        #time.sleep(2)
+        dvs.add_log_marker()
+        p.write_to_config_db()
+        time.sleep(2)
         #p.verify_config_db()
         #p.verify_app_db()
         #p.verify_asic_db()
