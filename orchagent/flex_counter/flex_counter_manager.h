@@ -61,22 +61,22 @@ class FlexCounterManager
                 const std::unordered_set<std::string>& counter_stats);
         void clearCounterIdList(const sai_object_id_t object_id);
 
-        std::string getGroupName()
+        const std::string& getGroupName() const
         {
             return group_name;
         }
 
-        StatsMode getStatsMode()
+        const StatsMode& getStatsMode() const
         {
             return stats_mode;
         }
 
-        uint getPollingInterval()
+        const uint& getPollingInterval() const
         {
             return polling_interval;
         }
 
-        bool getEnabled()
+        const bool& getEnabled() const
         {
             return enabled;
         }
