@@ -54,8 +54,7 @@ class TestPortDPBLag(object):
 
         # 10. Remove PortChannel0001 and verify that its removed.
         self.dvs_lag.remove_port_channel(lag)        
-        time.sleep(5)
-      
+        time.sleep(60)
         self.dvs_lag.get_and_verify_port_channel(0)
 
 
