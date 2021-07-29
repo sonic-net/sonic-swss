@@ -24,18 +24,18 @@ class TestPortDPBLag(object):
         time.sleep(2)
 
         # 3. Add log marker to syslog
-        #marker = dvs.add_log_marker()
+        marker = dvs.add_log_marker()
 
         # 4. Delete Ethernet0 from config DB.
-        #p.delete_from_config_db()
-        #time.sleep(2)
+        p.delete_from_config_db()
+        time.sleep(2)
 
         # 5. Verify that we are waiting in portsorch for the port
         #    to be removed from LAG, by looking at the log
-        #self.check_syslog(dvs, marker, "Unable to remove port Ethernet0: ref count 1", 1)
+        self.check_syslog(dvs, marker, "Unable to remove port Ethernet0: ref count 1", 1)
 
         # 6. Also verify that port is still present in ASIC DB.
-        #assert(p.exists_in_asic_db() == True)
+        assert(p.exists_in_asic_db() == True)
 
         # 7. Remove port from LAG
         #dvs.add_log_marker()
@@ -43,7 +43,7 @@ class TestPortDPBLag(object):
         time.sleep(2)
 
         # 8. Verify that port is removed from ASIC DB
-        #assert(p.not_exists_in_asic_db() == True)
+        assert(p.not_exists_in_asic_db() == True)
 
         # 9. Re-create port Ethernet0 and verify that it is
         #    present in CONFIG, APPL, and ASIC DBs
