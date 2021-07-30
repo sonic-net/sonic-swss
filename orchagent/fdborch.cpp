@@ -1053,7 +1053,7 @@ void FdbOrch::notifyObserversFDBFlush(Port &port, sai_object_id_t& bvid)
 
     if (!flushUpdate.entries.empty())
     {
-        notify(SUBJECT_TYPE_FDB_CHANGE, &flushUpdate);
+        notify(SUBJECT_TYPE_FDB_FLUSH_CHANGE, &flushUpdate);
     }
 }
 
@@ -1391,23 +1391,6 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
     m_entries[entry] = storeFdbData;
 
     string key = "Vlan" + to_string(vlan.m_vlan_info.vlan_id) + ":" + entry.mac.to_string();
-
-    status = sai_fdb_api->create_fdb_entry(&fdb_entry, (uint32_t)attrs.size(), attrs.data());
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to create %s FDB %s in %s on %s, rv:%d",
-                fdbData.type.c_str(), entry.mac.to_string().c_str(),
-                vlan.m_alias.c_str(), port_name.c_str(), status);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_FDB, status); //FIXME: it should be based on status. Some could be retried, some not
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
-    }
-    port.m_fdb_count++;
-    m_portsOrch->setPort(port.m_alias, port);
-    vlan.m_fdb_count++;
-    m_portsOrch->setPort(vlan.m_alias, vlan);
 
     if ((fdbData.origin != FDB_ORIGIN_MCLAG_ADVERTIZED) ||
             (fdbData.origin != FDB_ORIGIN_VXLAN_ADVERTIZED))
