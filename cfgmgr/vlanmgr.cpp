@@ -196,7 +196,8 @@ bool VlanMgr::setHostVlanMac(int vlan_id, const string &mac)
     // The command should be generated as:
     // /sbin/ip link set Vlan{{vlan_id}} address {{mac}}
     ostringstream cmds;
-    cmds << IP_CMD " link set " VLAN_PREFIX + std::to_string(vlan_id) + " address " << shellquote(mac);
+    cmds << IP_CMD " link set " VLAN_PREFIX + std::to_string(vlan_id) + " address " << shellquote(mac) << " && "
+            IP_CMD " link set " DOT1Q_BRIDGE_NAME " address " << shellquote(mac);
 
     std::string res;
     EXEC_WITH_ERROR_THROW(cmds.str(), res);
