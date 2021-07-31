@@ -2,14 +2,12 @@
 #define SWSS_OBSERVER_H
 
 #include <list>
-#include <algorithm>
 
 using namespace std;
 using namespace swss;
 
 enum SubjectType
 {
-    SUBJECT_TYPE_ALL_CHANGES,
     SUBJECT_TYPE_NEXTHOP_CHANGE,
     SUBJECT_TYPE_NEIGH_CHANGE,
     SUBJECT_TYPE_FDB_CHANGE,
