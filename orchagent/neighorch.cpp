@@ -783,16 +783,16 @@ bool NeighOrch::addNeighbor(const NeighborEntry &neighborEntry, const MacAddress
     MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
     bool hw_config = isHwConfigured(neighborEntry);
 
+    if (gMySwitchType == "voq")
+    {
+        if (!addVoqEncapIndex(alias, ip_address, neighbor_attrs))
+        {
+            return false;
+        }
+    }
+
     if (!hw_config && mux_orch->isNeighborActive(ip_address, macAddress, alias))
     {
-        if (gMySwitchType == "voq")
-        {
-            if (!addVoqEncapIndex(alias, ip_address, neighbor_attrs))
-            {
-                return false;
-            }
-        }
-
         status = sai_neighbor_api->create_neighbor_entry(&neighbor_entry,
                                    (uint32_t)neighbor_attrs.size(), neighbor_attrs.data());
         if (status != SAI_STATUS_SUCCESS)
@@ -1230,8 +1230,43 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
             }
 
             if (m_syncdNeighbors.find(neighbor_entry) == m_syncdNeighbors.end() ||
-                    m_syncdNeighbors[neighbor_entry].mac != mac_address)
+                    m_syncdNeighbors[neighbor_entry].mac != mac_address ||
+                    m_syncdNeighbors[neighbor_entry].voq_encap_index != encap_index)
             {
+
+                if (m_syncdNeighbors.find(neighbor_entry) != m_syncdNeighbors.end() &&
+                    m_syncdNeighbors[neighbor_entry].voq_encap_index != encap_index)
+                {
+
+                    // Encap index changed. Set encap index attribute with new encap index
+                    if (!updateVoqNeighborEncapIndex(neighbor_entry, encap_index))
+                    {
+                        // Setting encap index failed. SAI does not support change of encap index for
+                        // existing neighbors. Remove the neighbor but do not errase from consumer sync
+                        // buffer. The next iteration will add the neighbor back with new encap index
+
+                        SWSS_LOG_NOTICE("VOQ encap index set failed for neighbor %s. Removing and re-adding", kfvKey(t).c_str());
+
+                        //Remove neigh from SAI
+                        if (removeNeighbor(neighbor_entry))
+                        {
+                            //neigh successfully deleted from SAI. Set STATE DB to signal to remove entries from kernel
+                            m_stateSystemNeighTable->del(state_key);
+                        }
+                        else
+                        {
+                            SWSS_LOG_ERROR("Failed to remove voq neighbor %s from SAI during encap index update", kfvKey(t).c_str());
+                        }
+                        it++;
+                    }
+                    else
+                    {
+                        SWSS_LOG_NOTICE("VOQ encap index updated for neighbor %s", kfvKey(t).c_str());
+                        it = consumer.m_toSync.erase(it);
+                    }
+                    continue;
+                }
+
                 //Add neigh to SAI
                 if (addNeighbor(neighbor_entry, mac_address))
                 {
@@ -1242,6 +1277,42 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
                     if(ibif.m_type != Port::VLAN)
                     {
                         mac_address = gMacAddress;
+
+                        // For VS platforms, the mac of the static neigh should not be same as asic's own mac.
+                        // This is because host originated packets will have same mac for both src and dst which
+                        // will result in host NOT sending packet out. To address this problem which is specific
+                        // to port type inband interfaces, set the mac to the neighbor's owner asic's mac. Since
+                        // the owner asic's mac is not readily avaiable here, the owner asic mac is derived from
+                        // the switch id and lower 5 bytes of asic mac which is assumed to be same for all asics
+                        // in the VS system.
+                        // Therefore to make VOQ chassis systems work in VS platform based setups like the setups 
+                        // using KVMs, it is required that all asics have same base mac in the format given below
+                        // <lower 5 bytes of mac same for all asics>:<6th byte = switch_id>
+
+                        string platform = getenv("ASIC_VENDOR") ? getenv("ASIC_VENDOR") : "";
+
+                        if (platform == VS_PLATFORM_SUBSTRING)
+                        {
+                            int8_t sw_id = -1;
+                            uint8_t egress_asic_mac[ETHER_ADDR_LEN];
+
+                            gMacAddress.getMac(egress_asic_mac);
+
+                            if (p.m_type == Port::LAG)
+                            {
+                                sw_id = (int8_t) p.m_system_lag_info.switch_id;
+                            }
+                            else if (p.m_type == Port::PHY || p.m_type == Port::SYSTEM)
+                            {
+                                sw_id = (int8_t) p.m_system_port_info.switch_id;
+                            }
+
+                            if(sw_id != -1)
+                            {
+                                egress_asic_mac[5] = sw_id;
+                                mac_address = MacAddress(egress_asic_mac);
+                            }
+                        }
                     }
                     vector<FieldValueTuple> fvVector;
                     FieldValueTuple mac("neigh", mac_address.to_string());
@@ -1467,6 +1538,31 @@ void NeighOrch::voqSyncAddNeigh(string &alias, IpAddress &ip_address, const MacA
     sai_attribute_t attr;
     sai_status_t status;
 
+    // Get the encap index and store it for handling change of
+    // encap index for remote neighbors synced via CHASSIS_APP_DB
+
+    attr.id = SAI_NEIGHBOR_ENTRY_ATTR_ENCAP_INDEX;
+
+    status = sai_neighbor_api->get_neighbor_entry_attribute(&neighbor_entry, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get neighbor attribute for %s on %s, rv:%d", ip_address.to_string().c_str(), alias.c_str(), status);
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_NEIGHBOR, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            return;
+        }
+    }
+
+    if (!attr.value.u32)
+    {
+        SWSS_LOG_ERROR("Invalid neighbor encap_index for %s on %s", ip_address.to_string().c_str(), alias.c_str());
+        return;
+    }
+
+    NeighborEntry nbrEntry = {ip_address, alias};
+    m_syncdNeighbors[nbrEntry].voq_encap_index = attr.value.u32;
+
     //Sync only local neigh. Confirm for the local neigh and
     //get the system port alias for key for syncing to CHASSIS_APP_DB
     Port port;
@@ -1492,21 +1588,6 @@ void NeighOrch::voqSyncAddNeigh(string &alias, IpAddress &ip_address, const MacA
     else
     {
         SWSS_LOG_ERROR("Port does not exist for %s!", alias.c_str());
-        return;
-    }
-
-    attr.id = SAI_NEIGHBOR_ENTRY_ATTR_ENCAP_INDEX;
-
-    status = sai_neighbor_api->get_neighbor_entry_attribute(&neighbor_entry, 1, &attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to get neighbor attribute for %s on %s, rv:%d", ip_address.to_string().c_str(), alias.c_str(), status);
-        return;
-    }
-
-    if (!attr.value.u32)
-    {
-        SWSS_LOG_ERROR("Invalid neighbor encap_index for %s on %s", ip_address.to_string().c_str(), alias.c_str());
         return;
     }
 
@@ -1554,4 +1635,43 @@ void NeighOrch::voqSyncDelNeigh(string &alias, IpAddress &ip_address)
 
     string key = alias + m_tableVoqSystemNeighTable->getTableNameSeparator().c_str() + ip_address.to_string();
     m_tableVoqSystemNeighTable->del(key);
+}
+
+bool NeighOrch::updateVoqNeighborEncapIndex(const NeighborEntry &neighborEntry, uint32_t encap_index)
+{
+    SWSS_LOG_ENTER();
+
+    sai_status_t status;
+    IpAddress ip_address = neighborEntry.ip_address;
+    string alias = neighborEntry.alias;
+
+    sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(alias);
+    if (rif_id == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_INFO("Failed to get rif_id for %s", alias.c_str());
+        return false;
+    }
+
+    sai_neighbor_entry_t neighbor_entry;
+    neighbor_entry.rif_id = rif_id;
+    neighbor_entry.switch_id = gSwitchId;
+    copy(neighbor_entry.ip_address, ip_address);
+
+    sai_attribute_t neighbor_attr;
+    neighbor_attr.id = SAI_NEIGHBOR_ENTRY_ATTR_ENCAP_INDEX;
+    neighbor_attr.value.u32 = encap_index;
+
+    status = sai_neighbor_api->set_neighbor_entry_attribute(&neighbor_entry, &neighbor_attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to update voq encap index for neighbor %s on %s, rv:%d",
+                       ip_address.to_string().c_str(), alias.c_str(), status);
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("Updated voq encap index for neighbor %s on %s", ip_address.to_string().c_str(), alias.c_str());
+
+    m_syncdNeighbors[neighborEntry].voq_encap_index = encap_index;
+
+    return true;
 }
