@@ -418,7 +418,7 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
 
     /* Must be last Attribute */
     attr.id = SAI_REDIS_SWITCH_ATTR_CONTEXT;
-    attr.value.u64 = phy->phy_id;
+    attr.value.u64 = phy->context_id;
     attrs.push_back(attr);
 
     status = sai_switch_api->create_switch(&phyOid, (uint32_t)attrs.size(), attrs.data());

@@ -44,6 +44,7 @@ typedef struct
     std::string hwinfo;
     uint32_t address;
     uint32_t bus_id;
+    uint32_t context_id;
 } gearbox_phy_t;
 
 typedef struct

@@ -185,6 +185,10 @@ std::map<int, gearbox_phy_t> GearboxUtils::loadPhyMap(Table *gearboxTable)
                 {
                     phy.bus_id = std::stoi(val.second);
                 }
+                else if (val.first == "context_id")
+                {
+                    phy.context_id = std::stoi(val.second);
+                }
             }
             gearboxPhyMap[phy.phy_id] = phy;
         }
