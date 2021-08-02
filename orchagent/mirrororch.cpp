@@ -1408,6 +1408,12 @@ void MirrorOrch::updateLagMember(const LagMemberUpdate& update)
             {
                 SWSS_LOG_ERROR("Parent lag of local sub interface %s does not exist",
                         p.m_alias.c_str());
+
+                session.neighborInfo.portId = SAI_NULL_OBJECT_ID;
+                if (session.status)
+                {
+                    deactivateSession(name, session);
+                }
                 continue;
             }
 
