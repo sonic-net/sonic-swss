@@ -21,6 +21,7 @@ APP_INTF_TABLE_NAME = "INTF_TABLE"
 APP_ROUTE_TABLE_NAME = "ROUTE_TABLE"
 APP_PORT_TABLE_NAME = "PORT_TABLE"
 APP_LAG_TABLE_NAME = "LAG_TABLE"
+APP_LAG_MEMBER_TABLE_NAME = "LAG_MEMBER_TABLE"
 APP_NEIGH_TABLE_NAME = "NEIGH_TABLE"
 
 ASIC_RIF_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE"
@@ -42,6 +43,8 @@ ADMIN_STATUS = "admin_status"
 UP = "up"
 DOWN = "down"
 VRF_NAME = "vrf_name"
+ENABLED = "enabled"
+DISABLED = "disabled"
 
 ETHERNET_PREFIX = "Ethernet"
 LAG_PREFIX = "PortChannel"
@@ -174,6 +177,12 @@ class TestSubPortIntf(object):
         for member in members:
             key = "{}|{}".format(lag, member)
             self.config_db.create_entry(CFG_LAG_MEMBER_TABLE_NAME, key, fvs)
+
+    def set_lag_member_status(self, lag, member, status):
+        fvs = swsscommon.FieldValuePairs([(STATUS, status)])
+
+        tbl = swsscommon.ProducerStateTable(self.app_db.db_connection, APP_LAG_MEMBER_TABLE_NAME)
+        tbl.set("{}:{}".format(lag, member), fvs)
 
     def create_sub_port_intf_profile_appl_db(self, sub_port_intf_name, admin_status, vrf_name=None):
         pairs = [
@@ -1452,12 +1461,15 @@ class TestSubPortIntf(object):
         else:
             assert parent_port.startswith(LAG_PREFIX)
             phy_port = self.LAG_MEMBERS_UNDER_TEST[0]
+            lag_member_cnt = 0
         phy_port_oid = dvs.asicdb.portnamemap[phy_port]
 
         self.set_parent_port_admin_status(dvs, parent_port, UP)
         if parent_port.startswith(LAG_PREFIX):
             self.add_lag_members(parent_port, [phy_port])
-            self.asic_db.wait_for_n_keys(ASIC_LAG_MEMBER_TABLE, 1)
+            lag_member_cnt += 1
+            self.asic_db.wait_for_n_keys(ASIC_LAG_MEMBER_TABLE, lag_member_cnt)
+            self.set_lag_member_status(parent_port, phy_port, ENABLED)
         self.create_sub_port_intf_profile(sub_port_intf_name)
         time.sleep(2)
         self.dvs_mirror.verify_session_status(session_name, INACTIVE)
@@ -1525,22 +1537,30 @@ class TestSubPortIntf(object):
         if parent_port.startswith(LAG_PREFIX):
             # Test lag member removal that deactivates mirror session
             self.remove_lag_members(parent_port, [phy_port])
+            lag_member_cnt -= 1
             self.dvs_mirror.verify_session_status(session_name, INACTIVE)
             self.asic_db.wait_for_n_keys(ASIC_MIRROR_SESSION_TABLE, 0)
 
             # Restore lag member that activates mirror session
             self.add_lag_members(parent_port, self.LAG_MEMBERS_UNDER_TEST[1:2])
+            lag_member_cnt += 1
+            self.asic_db.wait_for_n_keys(ASIC_LAG_MEMBER_TABLE, lag_member_cnt)
+            self.set_lag_member_status(parent_port, self.LAG_MEMBERS_UNDER_TEST[1], ENABLED)
             fv_dict_asic_db["SAI_MIRROR_SESSION_ATTR_MONITOR_PORT"] = dvs.asicdb.portnamemap[self.LAG_MEMBERS_UNDER_TEST[1]]
             fv_dict_state_db[MONITOR_PORT] = self.LAG_MEMBERS_UNDER_TEST[1]
             self.dvs_mirror.verify_session(dvs, session_name, fv_dict_asic_db, fv_dict_state_db)
 
             # Add lag member
             self.add_lag_members(parent_port, [phy_port])
+            lag_member_cnt += 1
+            self.asic_db.wait_for_n_keys(ASIC_LAG_MEMBER_TABLE, lag_member_cnt)
+            self.set_lag_member_status(parent_port, phy_port, ENABLED)
             # Monitor port stays unchanged
             self.dvs_mirror.verify_session(dvs, session_name, fv_dict_asic_db, fv_dict_state_db)
 
             # Test lag member removal that triggers monitor port update
             self.remove_lag_members(parent_port, self.LAG_MEMBERS_UNDER_TEST[1:2])
+            lag_member_cnt -= 1
             fv_dict_asic_db["SAI_MIRROR_SESSION_ATTR_MONITOR_PORT"] = phy_port_oid
             fv_dict_state_db[MONITOR_PORT] = phy_port
             self.dvs_mirror.verify_session(dvs, session_name, fv_dict_asic_db, fv_dict_state_db)
@@ -1560,7 +1580,8 @@ class TestSubPortIntf(object):
         if parent_port.startswith(LAG_PREFIX):
             # Remove lag member from lag parent port
             self.remove_lag_members(parent_port, [phy_port])
-            self.asic_db.wait_for_n_keys(ASIC_LAG_MEMBER_TABLE, 0)
+            lag_member_cnt -= 1
+            self.asic_db.wait_for_n_keys(ASIC_LAG_MEMBER_TABLE, lag_member_cnt)
             # Remove lag
             self.remove_lag(parent_port)
             self.asic_db.wait_for_n_keys(ASIC_LAG_TABLE, 0)
@@ -1601,6 +1622,7 @@ class TestSubPortIntf(object):
         if parent_port.startswith(LAG_PREFIX):
             self.add_lag_members(parent_port, [phy_port])
             self.asic_db.wait_for_n_keys(ASIC_LAG_MEMBER_TABLE, 1)
+            self.set_lag_member_status(parent_port, phy_port, ENABLED)
         self.create_sub_port_intf_profile(sub_port_intf_name)
         time.sleep(2)
         self.dvs_mirror.verify_session_status(session_name, INACTIVE)
@@ -1720,6 +1742,7 @@ class TestSubPortIntf(object):
                 # Add lag member
                 self.add_lag_members(parent_port, self.LAG_MEMBERS_UNDER_TEST[:1])
                 self.asic_db.wait_for_n_keys(ASIC_LAG_MEMBER_TABLE, 1)
+                self.set_lag_member_status(parent_port, self.LAG_MEMBERS_UNDER_TEST[0], ENABLED)
                 monitor_ports.append(self.LAG_MEMBERS_UNDER_TEST[0])
             self.create_sub_port_intf_profile(intf_name)
             rif_cnt += 1
