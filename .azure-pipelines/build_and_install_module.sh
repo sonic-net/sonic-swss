@@ -48,6 +48,8 @@ function build_and_install_kmodule()
     grep NET_TEAM .config.bk >> .config
     echo CONFIG_NET_VRF=m >> .config
     echo CONFIG_MACSEC=m >> .config
+    echo CONFIG_NET_VENDOR_MICROSOFT=y >> .config
+    echo CONFIG_MICROSOFT_MANA=m >> .config
     make VERSION=$VERSION PATCHLEVEL=$PATCHLEVEL SUBLEVEL=$SUBLEVEL EXTRAVERSION=-${EXTRAVERSION} LOCALVERSION=-${LOCALVERSION} modules_prepare
     make M=drivers/net/team
     mv drivers/net/Makefile drivers/net/Makefile.bak

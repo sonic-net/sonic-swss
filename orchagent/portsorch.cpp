@@ -266,6 +266,12 @@ static char* hostif_vlan_tag[] = {
     [SAI_HOSTIF_VLAN_TAG_KEEP]      = "SAI_HOSTIF_VLAN_TAG_KEEP",
     [SAI_HOSTIF_VLAN_TAG_ORIGINAL]  = "SAI_HOSTIF_VLAN_TAG_ORIGINAL"
 };
+
+static bool isValidPortTypeForLagMember(const Port& port)
+{
+    return (port.m_type == Port::Type::PHY || port.m_type == Port::Type::SYSTEM);
+}
+
 /*
  * Initialize PortsOrch
  * 0) If Gearbox is enabled, then initialize the external PHYs as defined in
@@ -380,7 +386,11 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to get CPU port, rv:%d", status);
-        throw runtime_error("PortsOrch initialization failure");
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            throw runtime_error("PortsOrch initialization failure");
+        }
     }
 
     m_cpuPort = Port("CPU", Port::CPU);
@@ -395,7 +405,11 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to get port number, rv:%d", status);
-        throw runtime_error("PortsOrch initialization failure");
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            throw runtime_error("PortsOrch initialization failure");
+        }
     }
 
     m_portCount = attr.value.u32;
@@ -413,7 +427,11 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to get port list, rv:%d", status);
-        throw runtime_error("PortsOrch initialization failure");
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            throw runtime_error("PortsOrch initialization failure");
+        }
     }
 
     /* Get port hardware lane info */
@@ -428,7 +446,11 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to get hardware lane list pid:%" PRIx64, port_list[i]);
-            throw runtime_error("PortsOrch initialization failure");
+            task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, status);
+            if (handle_status != task_process_status::task_success)
+            {
+                throw runtime_error("PortsOrch initialization failure");
+            }
         }
 
         set<int> tmp_lane_set;
@@ -459,7 +481,11 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to get default 1Q bridge and/or default VLAN, rv:%d", status);
-        throw runtime_error("PortsOrch initialization failure");
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            throw runtime_error("PortsOrch initialization failure");
+        }
     }
 
     m_default1QBridge = attrs[0].value.oid;
@@ -508,7 +534,11 @@ void PortsOrch::removeDefaultVlanMembers()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to get VLAN member list in default VLAN, rv:%d", status);
-        throw runtime_error("PortsOrch initialization failure");
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_VLAN, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            throw runtime_error("PortsOrch initialization failure");
+        }
     }
 
     /* Remove VLAN members in default VLAN */
@@ -542,7 +572,11 @@ void PortsOrch::removeDefaultBridgePorts()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to get bridge port list in default 1Q bridge, rv:%d", status);
-        throw runtime_error("PortsOrch initialization failure");
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_BRIDGE, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            throw runtime_error("PortsOrch initialization failure");
+        }
     }
 
     auto bridge_port_count = attr.value.objlist.count;
@@ -557,7 +591,11 @@ void PortsOrch::removeDefaultBridgePorts()
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to get bridge port type, rv:%d", status);
-            throw runtime_error("PortsOrch initialization failure");
+            task_process_status handle_status = handleSaiGetStatus(SAI_API_BRIDGE, status);
+            if (handle_status != task_process_status::task_success)
+            {
+                throw runtime_error("PortsOrch initialization failure");
+            }
         }
         if (attr.value.s32 == SAI_BRIDGE_PORT_TYPE_PORT)
         {
@@ -952,7 +990,11 @@ bool PortsOrch::getPortAdminStatus(sai_object_id_t id, bool &up)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to get admin status for port pid:%" PRIx64, id);
-        return false;
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            return false;
+        }
     }
 
     up = attr.value.booldata;
@@ -1722,7 +1764,7 @@ void PortsOrch::getPortSupportedSpeeds(const std::string& alias, sai_object_id_t
         }
 
         // if our guess was wrong, retry with the correct value
-        speeds.resize(attr.value.u32list.count); 
+        speeds.resize(attr.value.u32list.count);
     }
 
     if (status == SAI_STATUS_SUCCESS)
@@ -1925,9 +1967,19 @@ bool PortsOrch::getPortSpeed(sai_object_id_t id, sai_uint32_t &speed)
     status = sai_port_api->get_port_attribute(id, 1, &attr);
 
     if (status == SAI_STATUS_SUCCESS)
+    {
         speed = attr.value.u32;
+    }
+    else
+    {
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            return false;
+        }
+    }
 
-    return status == SAI_STATUS_SUCCESS;
+    return true;
 }
 
 bool PortsOrch::setPortAdvSpeeds(sai_object_id_t port_id, std::vector<sai_uint32_t>& speed_list)
@@ -1994,7 +2046,11 @@ bool PortsOrch::getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uin
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to get queue type and index for queue %" PRIu64 " rv:%d", queue_id, status);
-        return false;
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_QUEUE, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            return false;
+        }
     }
 
     switch (attr[0].value.s32)
@@ -2193,7 +2249,7 @@ sai_status_t PortsOrch::removePort(sai_object_id_t port_id)
 
     Port port;
 
-    /* 
+    /*
      * Make sure to bring down admin state.
      * SET would have replaced with DEL
      */
@@ -2234,11 +2290,6 @@ string PortsOrch::getPriorityGroupDropPacketsFlexCounterTableKey(string key)
 bool PortsOrch::initPort(const string &alias, const string &role, const int index, const set<int> &lane_set)
 {
     SWSS_LOG_ENTER();
-
-    if (role == "Rec" || role == "Inb")
-    {
-        return doProcessRecircPort(alias, role, lane_set, SET_COMMAND);
-    }
 
     /* Determine if the lane combination exists in switch */
     if (m_portListLaneMap.find(lane_set) != m_portListLaneMap.end())
@@ -2293,6 +2344,11 @@ bool PortsOrch::initPort(const string &alias, const string &role, const int inde
                 notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
 
                 m_portList[alias].m_init = true;
+
+                if (role == "Rec" || role == "Inb")
+                {
+                    m_recircPortRole[alias] = role;
+                }
 
                 SWSS_LOG_NOTICE("Initialized port %s", alias.c_str());
             }
@@ -2575,26 +2631,23 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 {
                     an_str = fvValue(i);
                 }
-
                 /* Set advertised speeds */
-                if (fvField(i) == "adv_speeds")
+                else if (fvField(i) == "adv_speeds")
                 {
                     adv_speeds_str = fvValue(i);
                 }
-
                 /* Set interface type */
-                if (fvField(i) == "interface_type")
+                else if (fvField(i) == "interface_type")
                 {
                     interface_type_str = fvValue(i);
                 }
-
                 /* Set advertised interface type */
-                if (fvField(i) == "adv_interface_types")
+                else if (fvField(i) == "adv_interface_types")
                 {
                     adv_interface_types_str = fvValue(i);
                 }
                 /* Set port serdes Pre-emphasis */
-                if (fvField(i) == "preemphasis")
+                else if (fvField(i) == "preemphasis")
                 {
                     getPortSerdesVal(fvValue(i), attr_val);
                     serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_PREEMPHASIS, attr_val));
@@ -2756,16 +2809,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
             }
             else
             {
-                /* Skip configuring recirc port for now because the current SAI implementation of some vendors
-                 * have limiited support for recirc port. This check can be removed once SAI implementation
-                 * is enhanced/changed in the future.
-                 */
-                if (m_recircPortRole.find(alias) != m_recircPortRole.end())
-                {
-                    it = consumer.m_toSync.erase(it);
-                    continue;
-                }
-
                 if (!an_str.empty())
                 {
                     if (autoneg_mode_map.find(an_str) == autoneg_mode_map.end())
@@ -2775,7 +2818,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         it = consumer.m_toSync.erase(it);
                         continue;
                     }
-                    
+
                     an = autoneg_mode_map[an_str];
                     if (an != p.m_autoneg)
                     {
@@ -2841,7 +2884,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             it++;
                             continue;
                         }
- 
+
                         SWSS_LOG_NOTICE("Set port %s speed from %u to %u", alias.c_str(), p.m_speed, speed);
                         p.m_speed = speed;
                         m_portList[alias] = p;
@@ -2882,7 +2925,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         auto ori_adv_speeds = swss::join(',', p.m_adv_speeds.begin(), p.m_adv_speeds.end());
                         if (!setPortAdvSpeeds(p.m_port_id, adv_speeds))
                         {
-                            
+
                             SWSS_LOG_ERROR("Failed to set port %s advertised speed from %s to %s", alias.c_str(),
                                                                                                    ori_adv_speeds.c_str(),
                                                                                                    adv_speeds_str.c_str());
@@ -3676,6 +3719,15 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
             continue;
         }
 
+        /* Fail if a port type is not a valid type for being a LAG member port.
+         * Erase invalid entry, no need to retry in this case. */
+        if (!isValidPortTypeForLagMember(port))
+        {
+            SWSS_LOG_ERROR("LAG member port has to be of type PHY or SYSTEM");
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+
         if (table_name == CHASSIS_APP_LAG_MEMBER_TABLE_NAME)
         {
             int32_t lag_switch_id = lag.m_system_lag_info.switch_id;
@@ -3709,8 +3761,12 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
 
             if (lag.m_members.find(port_alias) == lag.m_members.end())
             {
-                /* Assert the port doesn't belong to any LAG already */
-                assert(!port.m_lag_id && !port.m_lag_member_id);
+                if (port.m_lag_member_id != SAI_NULL_OBJECT_ID)
+                {
+                    SWSS_LOG_INFO("Port %s is already a LAG member", port.m_alias.c_str());
+                    it++;
+                    continue;
+                }
 
                 if (!addLagMember(lag, port, (status == "enabled")))
                 {
@@ -3860,7 +3916,11 @@ void PortsOrch::initializeQueues(Port &port)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to get number of queues for port %s rv:%d", port.m_alias.c_str(), status);
-        throw runtime_error("PortsOrch initialization failure.");
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            throw runtime_error("PortsOrch initialization failure.");
+        }
     }
     SWSS_LOG_INFO("Get %d queues for port %s", attr.value.u32, port.m_alias.c_str());
 
@@ -3880,7 +3940,11 @@ void PortsOrch::initializeQueues(Port &port)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to get queue list for port %s rv:%d", port.m_alias.c_str(), status);
-        throw runtime_error("PortsOrch initialization failure.");
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            throw runtime_error("PortsOrch initialization failure.");
+        }
     }
 
     SWSS_LOG_INFO("Get queues for port %s", port.m_alias.c_str());
@@ -3896,7 +3960,11 @@ void PortsOrch::initializePriorityGroups(Port &port)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to get number of priority groups for port %s rv:%d", port.m_alias.c_str(), status);
-        throw runtime_error("PortsOrch initialization failure.");
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            throw runtime_error("PortsOrch initialization failure.");
+        }
     }
     SWSS_LOG_INFO("Get %d priority groups for port %s", attr.value.u32, port.m_alias.c_str());
 
@@ -3917,7 +3985,11 @@ void PortsOrch::initializePriorityGroups(Port &port)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Fail to get priority group list for port %s rv:%d", port.m_alias.c_str(), status);
-        throw runtime_error("PortsOrch initialization failure.");
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            throw runtime_error("PortsOrch initialization failure.");
+        }
     }
     SWSS_LOG_INFO("Get priority groups for port %s", port.m_alias.c_str());
 }
@@ -5087,7 +5159,8 @@ void PortsOrch::generatePortCounterMap()
     auto port_counter_stats = generateCounterStats(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP);
     for (const auto& it: m_portList)
     {
-        if (it.first == "CPU")
+        // Set counter stats only for PHY ports to ensure syncd will not try to query the counter statistics from the HW for non-PHY ports.
+        if (it.second.m_type != Port::Type::PHY)
         {
             continue;
         }
@@ -5107,6 +5180,11 @@ void PortsOrch::generatePortBufferDropCounterMap()
     auto port_buffer_drop_stats = generateCounterStats(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP);
     for (const auto& it: m_portList)
     {
+        // Set counter stats only for PHY ports to ensure syncd will not try to query the counter statistics from the HW for non-PHY ports.
+        if (it.second.m_type != Port::Type::PHY)
+        {
+            continue;
+        }
         port_buffer_drop_stat_manager.setCounterIdList(it.second.m_port_id, CounterType::PORT, port_buffer_drop_stats);
     }
 
@@ -5407,7 +5485,11 @@ bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id,
     {
         SWSS_LOG_ERROR("Failed to get port attr serdes id %d to port pid:0x%" PRIx64,
                        port_attr.id, port_id);
-        return false;
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            return false;
+        }
     }
 
     if (port_attr.value.oid != SAI_NULL_OBJECT_ID)
@@ -5504,7 +5586,7 @@ void PortsOrch::getPortSerdesVal(const std::string& val_str,
     }
 }
 
-bool PortsOrch::getPortAdvSpeedsVal(const std::string &val_str, 
+bool PortsOrch::getPortAdvSpeedsVal(const std::string &val_str,
                                     std::vector<uint32_t> &speed_values)
 {
     SWSS_LOG_ENTER();
@@ -5518,7 +5600,7 @@ bool PortsOrch::getPortAdvSpeedsVal(const std::string &val_str,
     std::string speed_str;
     std::istringstream iss(val_str);
 
-    try 
+    try
     {
         while (std::getline(iss, speed_str, ','))
         {
@@ -5535,31 +5617,31 @@ bool PortsOrch::getPortAdvSpeedsVal(const std::string &val_str,
     return true;
 }
 
-bool PortsOrch::getPortInterfaceTypeVal(const std::string &s, 
+bool PortsOrch::getPortInterfaceTypeVal(const std::string &s,
                                         sai_port_interface_type_t &interface_type)
 {
     SWSS_LOG_ENTER();
 
     auto iter = interface_type_map_for_an.find(s);
-    if (iter != interface_type_map_for_an.end()) 
+    if (iter != interface_type_map_for_an.end())
     {
         interface_type = interface_type_map_for_an[s];
         return true;
     }
-    else 
+    else
     {
         const std::string &validInterfaceTypes = getValidInterfaceTypes();
-        SWSS_LOG_ERROR("Failed to parse interface_type value %s, valid interface type includes: %s", 
+        SWSS_LOG_ERROR("Failed to parse interface_type value %s, valid interface type includes: %s",
                        s.c_str(), validInterfaceTypes.c_str());
         return false;
     }
 }
 
-bool PortsOrch::getPortAdvInterfaceTypesVal(const std::string &val_str, 
+bool PortsOrch::getPortAdvInterfaceTypesVal(const std::string &val_str,
                                             std::vector<uint32_t> &type_values)
 {
     SWSS_LOG_ENTER();
-    if (val_str == "all") 
+    if (val_str == "all")
     {
         return true;
     }
@@ -5574,7 +5656,7 @@ bool PortsOrch::getPortAdvInterfaceTypesVal(const std::string &val_str,
         valid = getPortInterfaceTypeVal(type_str, interface_type);
         if (!valid) {
             const std::string &validInterfaceTypes = getValidInterfaceTypes();
-            SWSS_LOG_ERROR("Failed to parse adv_interface_types value %s, valid interface type includes: %s", 
+            SWSS_LOG_ERROR("Failed to parse adv_interface_types value %s, valid interface type includes: %s",
                            val_str.c_str(), validInterfaceTypes.c_str());
             return false;
         }
@@ -5690,6 +5772,9 @@ bool PortsOrch::initGearboxPort(Port &port)
             }
 
             sai_deserialize_object_id(phyOidStr, phyOid);
+
+            SWSS_LOG_NOTICE("BOX: Gearbox port %s assigned phyOid 0x%" PRIx64, port.m_alias.c_str(), phyOid);
+            port.m_switch_id = phyOid;
 
             /* Create SYSTEM-SIDE port */
             attrs.clear();
@@ -5856,6 +5941,7 @@ bool PortsOrch::initGearboxPort(Port &port)
 
             SWSS_LOG_NOTICE("BOX: Connected Gearbox ports; system-side:0x%" PRIx64 " to line-side:0x%" PRIx64, systemPort, linePort);
             m_gearboxPortListLaneMap[port.m_port_id] = make_tuple(systemPort, linePort);
+            port.m_line_side_id = linePort;
         }
     }
 
@@ -5897,7 +5983,11 @@ bool PortsOrch::getSystemPorts()
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to get system port list, rv:%d", status);
-            return false;
+            task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
+            if (handle_status != task_process_status::task_success)
+            {
+                return false;
+            }
         }
 
         uint32_t spcnt = attr.value.objlist.count;
@@ -5909,7 +5999,11 @@ bool PortsOrch::getSystemPorts()
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to get system port config info spid:%" PRIx64, system_port_list[i]);
-                return false;
+                task_process_status handle_status = handleSaiGetStatus(SAI_API_SYSTEM_PORT, status);
+                if (handle_status != task_process_status::task_success)
+                {
+                    return false;
+                }
             }
 
             SWSS_LOG_NOTICE("SystemPort(0x%" PRIx64 ") - port_id:%u, switch_id:%u, core:%u, core_port:%u, speed:%u, voqs:%u",
@@ -5943,80 +6037,6 @@ bool PortsOrch::getRecircPort(Port &port, string role)
     }
     SWSS_LOG_ERROR("Failed to find recirc port with role %s", role.c_str());
     return false;
-}
-
-bool PortsOrch::doProcessRecircPort(string alias, string role, set<int> lane_set, string op)
-{
-    SWSS_LOG_ENTER();
-
-    if (op == SET_COMMAND)
-    {
-        if (m_recircPortRole.find(alias) != m_recircPortRole.end())
-        {
-            SWSS_LOG_DEBUG("Recirc port %s already added", alias.c_str());
-            return true;
-        }
-
-        /* Find pid of recirc port */ 
-        sai_object_id_t port_id = SAI_NULL_OBJECT_ID;
-        if (m_portListLaneMap.find(lane_set) != m_portListLaneMap.end())
-        {
-            port_id = m_portListLaneMap[lane_set];
-        }
-
-        if (port_id == SAI_NULL_OBJECT_ID)
-        {
-            SWSS_LOG_ERROR("Failed to find port id for recirc port %s", alias.c_str());
-            return false;
-        }
-
-        Port p(alias, Port::PHY);
-        p.m_port_id = port_id;
-        p.m_init = true;
-        m_recircPortRole[alias] = role;
-        setPort(alias, p);
-
-        string lane_str = "";
-        for (auto lane : lane_set)
-        {
-            lane_str += to_string(lane) + " ";
-        }
-        SWSS_LOG_NOTICE("Added recirc port %s, pid:%" PRIx64 " lanes:%s",
-                        alias.c_str(), port_id, lane_str.c_str());
-
-        /* Create host intf for recirc port */
-        if(addHostIntfs(p, p.m_alias, p.m_hif_id))
-        {
-            SWSS_LOG_NOTICE("Created host intf for recycle port %s", p.m_alias.c_str());
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Failed to Create host intf for recirc port %s", p.m_alias.c_str());
-        }
-
-        if(setHostIntfsOperStatus(p, true))
-        {
-            SWSS_LOG_NOTICE("Set host intf oper status UP for recirc port %s", p.m_alias.c_str());
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Failed to set host intf oper status for recirc port %s", p.m_alias.c_str());
-        }
-
-        PortUpdate update = { p, true };
-        notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
-        return true;
-    }
-    else if (op == DEL_COMMAND)
-    {
-        SWSS_LOG_ERROR("Delete recirc port is not supported.");
-        return false;
-    }
-    else
-    {
-        SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
-        return false;
-    }
 }
 
 bool PortsOrch::addSystemPorts()
@@ -6092,7 +6112,11 @@ bool PortsOrch::addSystemPorts()
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to get system port config info spid:%" PRIx64, system_port_oid);
-                continue;
+                task_process_status handle_status = handleSaiGetStatus(SAI_API_SYSTEM_PORT, status);
+                if (handle_status != task_process_status::task_success)
+                {
+                    continue;
+                }
             }
 
             //Create or update system port and add to the port list.
@@ -6111,7 +6135,11 @@ bool PortsOrch::addSystemPorts()
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("Failed to get local port oid of local system port spid:%" PRIx64, system_port_oid);
-                    continue;
+                    task_process_status handle_status = handleSaiGetStatus(SAI_API_SYSTEM_PORT, status);
+                    if (handle_status != task_process_status::task_success)
+                    {
+                        continue;
+                    }
                 }
 
                 //System port for local port. Update the system port info in the existing physical port

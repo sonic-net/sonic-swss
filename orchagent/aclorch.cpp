@@ -1225,13 +1225,6 @@ bool AclRuleMirror::create()
         SWSS_LOG_THROW("Failed to get mirror session state for session %s", m_sessionName.c_str());
     }
 
-    // Increase session reference count regardless of state to deny
-    // attempt to remove mirror session with attached ACL rules.
-    if (!m_pMirrorOrch->increaseRefCount(m_sessionName))
-    {
-        SWSS_LOG_THROW("Failed to increase mirror session reference count for session %s", m_sessionName.c_str());
-    }
-
     if (!state)
     {
         return true;
@@ -1252,6 +1245,11 @@ bool AclRuleMirror::create()
     if (!AclRule::create())
     {
         return false;
+    }
+
+    if (!m_pMirrorOrch->increaseRefCount(m_sessionName))
+    {
+        SWSS_LOG_THROW("Failed to increase mirror session reference count for session %s", m_sessionName.c_str());
     }
 
     m_state = true;
@@ -2311,7 +2309,11 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     else
     {
         SWSS_LOG_ERROR("Failed to get ACL entry priority min/max values, rv:%d", status);
-        throw "AclOrch initialization failure";
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            throw "AclOrch initialization failure";
+        }
     }
 
     queryAclActionCapability();

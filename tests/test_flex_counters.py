@@ -73,9 +73,11 @@ class TestFlexCounters(object):
             oid = counter_entry[1]
             self.wait_for_id_list(stat, name, oid)
 
-    def verify_cpu_interface_not_in_db(self, stat):
-        cpu = self.flex_db.db_connection.hgetall("FLEX_COUNTER_TABLE:" + stat + ":" + CPU_PORT_OID)
-        assert cpu.size() == 0, "FLEX_COUNTER_TABLE:" + stat + ":" + CPU_PORT_OID + " - CPU port exist in DB"
+    def verify_only_phy_ports_created(self):
+        port_counters_keys = self.counters_db.db_connection.hgetall(PORT_MAP)
+        port_counters_stat_keys = self.flex_db.get_keys("FLEX_COUNTER_TABLE:" + PORT_STAT)
+        for port_stat in port_counters_stat_keys:
+            assert port_stat in dict(port_counters_keys.items()).values(), "Non PHY port created on PORT_STAT_COUNTER group: {}".format(port_stat)
 
     def enable_flex_counter_group(self, group, map):
         group_stats_entry = {"FLEX_COUNTER_STATUS": "enable"}
@@ -104,7 +106,7 @@ class TestFlexCounters(object):
         self.verify_flex_counters_populated(counter_map, counter_stat)
 
         if counter_type == "port_counter":
-            self.verify_cpu_interface_not_in_db(counter_stat)
+            self.verify_only_phy_ports_created()
 
         if counter_type == "rif_counter":
             self.config_db.db_connection.hdel('INTERFACE|Ethernet0|192.168.0.1/24', "NULL")

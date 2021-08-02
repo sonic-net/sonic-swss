@@ -86,6 +86,7 @@ void BufferMgr::readPgProfileLookupFile(string file)
 task_process_status BufferMgr::doCableTask(string port, string cable_length)
 {
     m_cableLenLookup[port] = cable_length;
+    SWSS_LOG_INFO("Cable length set to %s for port %s", m_cableLenLookup[port].c_str(), port.c_str());
     return task_process_status::task_success;
 }
 
@@ -120,10 +121,11 @@ Create/update two tables: profile (in m_cfgBufferProfileTable) and port buffer (
         }
     }
 */
-task_process_status BufferMgr::doSpeedUpdateTask(string port, string speed)
+task_process_status BufferMgr::doSpeedUpdateTask(string port)
 {
     vector<FieldValueTuple> fvVector;
     string cable;
+    string speed;
 
     if (m_cableLenLookup.count(port) == 0)
     {
@@ -132,7 +134,13 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, string speed)
     }
 
     cable = m_cableLenLookup[port];
+    if (cable == "0m")
+    {
+        SWSS_LOG_NOTICE("Not creating/updating PG profile for port %s. Cable length is set to %s", port.c_str(), cable.c_str());
+        return task_process_status::task_success;
+    }
 
+    speed = m_speedLookup[port];
     if (m_pgProfileLookup.count(speed) == 0 || m_pgProfileLookup[speed].count(cable) == 0)
     {
         SWSS_LOG_ERROR("Unable to create/update PG profile for port %s. No PG profile configured for speed %s and cable length %s",
@@ -368,11 +376,18 @@ void BufferMgr::doTask(Consumer &consumer)
                     // receive and cache cable length table
                     task_status = doCableTask(fvField(i), fvValue(i));
                 }
-                // In case of PORT table update, Buffer Manager is interested in speed update only
-                if (m_pgfile_processed && table_name == CFG_PORT_TABLE_NAME && fvField(i) == "speed")
+                if (m_pgfile_processed && table_name == CFG_PORT_TABLE_NAME && (fvField(i) == "speed" || fvField(i) == "admin_status"))
                 {
-                    // create/update profile for port
-                    task_status = doSpeedUpdateTask(port, fvValue(i));
+                    if (fvField(i) == "speed")
+                    {
+                        m_speedLookup[port] = fvValue(i);
+                    }
+                    
+                    if (m_speedLookup.count(port) != 0)
+                    {
+                        // create/update profile for port
+                        task_status = doSpeedUpdateTask(port);
+                    }
                 }
                 if (task_status != task_process_status::task_success)
                 {

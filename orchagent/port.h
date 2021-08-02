@@ -143,6 +143,7 @@ public:
     std::vector<uint32_t> m_adv_speeds;
     sai_port_interface_type_t m_interface_type;
     std::vector<uint32_t> m_adv_interface_types;
+    bool      m_mpls = false;
 
     /*
      * Following two bit vectors are used to lock
@@ -161,6 +162,9 @@ public:
     sai_object_id_t  m_system_port_oid = 0;
     SystemPortInfo   m_system_port_info;
     SystemLagInfo    m_system_lag_info;
+
+    sai_object_id_t  m_switch_id = 0;
+    sai_object_id_t  m_line_side_id = 0;
 
     bool m_fec_cfg = false;
     bool m_an_cfg = false;

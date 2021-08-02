@@ -19,6 +19,7 @@ using namespace swss;
 #define VXLAN_IF_NAME_PREFIX    "Brvxlan"
 #define VNET_PREFIX             "Vnet"
 #define VRF_PREFIX              "Vrf"
+#define MGMT_VRF_PREFIX         "mgmt"
 
 #ifndef ETH_ALEN
 #define ETH_ALEN 6
@@ -625,7 +626,17 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
          */
         if (memcmp(vrf, VRF_PREFIX, strlen(VRF_PREFIX)))
         {
-            SWSS_LOG_ERROR("Invalid VRF name %s (ifindex %u)", vrf, rtnl_route_get_table(route_obj));
+            if(memcmp(vrf, MGMT_VRF_PREFIX, strlen(MGMT_VRF_PREFIX)))
+            {
+                SWSS_LOG_ERROR("Invalid VRF name %s (ifindex %u)", vrf, rtnl_route_get_table(route_obj));
+            }
+            else
+            {
+                dip = rtnl_route_get_dst(route_obj);
+                nl_addr2str(dip, destipprefix, MAX_ADDR_SIZE);
+                SWSS_LOG_INFO("Skip routes for Mgmt VRF name %s (ifindex %u) prefix: %s", vrf,
+                        rtnl_route_get_table(route_obj), destipprefix);
+            }
             return;
         }
         memcpy(destipprefix, vrf, strlen(vrf));
@@ -700,7 +711,6 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
     /* Get nexthop lists */
     string nexthops = getNextHopGw(route_obj);
     string ifnames = getNextHopIf(route_obj);
-    string weights = getNextHopWt(route_obj);
 
     vector<string> alsv = tokenize(ifnames, ',');
     for (auto alias : alsv)
@@ -723,11 +733,6 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
 
     fvVector.push_back(nh);
     fvVector.push_back(idx);
-    if (!weights.empty())
-    {
-        FieldValueTuple wt("weight", weights);
-        fvVector.push_back(wt);
-    }
 
     if (!warmRestartInProgress)
     {
@@ -959,39 +964,6 @@ string RouteSync::getNextHopIf(struct rtnl_route *route_obj)
         }
 
         result += if_name;
-
-        if (i + 1 < rtnl_route_get_nnexthops(route_obj))
-        {
-            result += string(",");
-        }
-    }
-
-    return result;
-}
-
-/*
- * Get next hop weights
- * @arg route_obj     route object
- *
- * Return concatenation of interface names: wt0 + "," + wt1 + .... + "," + wtN
- */
-string RouteSync::getNextHopWt(struct rtnl_route *route_obj)
-{
-    string result = "";
-
-    for (int i = 0; i < rtnl_route_get_nnexthops(route_obj); i++)
-    {
-        struct rtnl_nexthop *nexthop = rtnl_route_nexthop_n(route_obj, i);
-        /* Get the weight of next hop */
-        uint8_t weight = rtnl_route_nh_get_weight(nexthop);
-        if (weight)
-        {
-            result += to_string(weight + 1);
-        }
-        else
-        {
-            return "";
-        }
 
         if (i + 1 < rtnl_route_get_nnexthops(route_obj))
         {
