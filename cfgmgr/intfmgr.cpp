@@ -744,7 +744,7 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
         FieldValueTuple f("family", ip_prefix.isV4() ? IPV4_NAME : IPV6_NAME);
 
         // Don't send ipv4 link local config to AppDB and Orchagent
-        if ((ip_prefix.isV4() == false) or (ip_prefix.getIp().getAddrScope() != IpAddress::AddrScope::LINK_SCOPE))
+        if ((ip_prefix.isV4() == false) || (ip_prefix.getIp().getAddrScope() != IpAddress::AddrScope::LINK_SCOPE))
         {
             FieldValueTuple s("scope", "global");
             fvVector.push_back(s);
@@ -758,7 +758,7 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
         setIntfIp(alias, "del", ip_prefix);
 
         // Don't send ipv4 link local config to AppDB and Orchagent
-        if ((ip_prefix.isV4() == false) or (ip_prefix.getIp().getAddrScope() != IpAddress::AddrScope::LINK_SCOPE))
+        if ((ip_prefix.isV4() == false) || (ip_prefix.getIp().getAddrScope() != IpAddress::AddrScope::LINK_SCOPE))
         {
             m_appIntfTableProducer.del(appKey);
             m_stateIntfTable.del(keys[0] + state_db_key_delimiter + keys[1]);
