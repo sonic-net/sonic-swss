@@ -4246,7 +4246,7 @@ bool PortsOrch::addBridgePort(Port &port)
     SWSS_LOG_NOTICE("Add bridge port %s to default 1Q bridge", port.m_alias.c_str());
 
     PortUpdate update = { port, true };
-    notify(SUBJECT_TYPE_BRIDGE_PORT_CHANGE, static_cast<void *>(&update))
+    notify(SUBJECT_TYPE_BRIDGE_PORT_CHANGE, static_cast<void *>(&update));
 
     return true;
 }
