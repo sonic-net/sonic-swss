@@ -1679,6 +1679,27 @@ class TestSubPortIntf(object):
             self.set_parent_port_oper_status(dvs, parent_port, UP)
         self.dvs_mirror.verify_session(dvs, session_name, fv_dict_asic_db, fv_dict_state_db)
 
+        # Test neighbor mac change
+        self.add_neigh_appl_db(sub_port_intf_name, self.IPV4_NEXT_HOP_UNDER_TEST, "02:04:06:08:10:12")
+        fv_dict_asic_db["SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS"] = "02:04:06:08:10:12"
+        fv_dict_state_db[DST_MAC] = "02:04:06:08:10:12"
+        self.dvs_mirror.verify_session(dvs, session_name, fv_dict_asic_db, fv_dict_state_db)
+
+        # Restore original neighbor mac
+        self.add_neigh_appl_db(sub_port_intf_name, self.IPV4_NEXT_HOP_UNDER_TEST, dst_mac)
+        fv_dict_asic_db["SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS"] = dst_mac
+        fv_dict_state_db[DST_MAC] = dst_mac
+        self.dvs_mirror.verify_session(dvs, session_name, fv_dict_asic_db, fv_dict_state_db)
+
+        # Test neighbor mac removal that deactivates session
+        self.remove_neigh_appl_db(sub_port_intf_name, self.IPV4_NEXT_HOP_UNDER_TEST)
+        self.dvs_mirror.verify_session_status(session_name, INACTIVE)
+        self.asic_db.wait_for_n_keys(ASIC_MIRROR_SESSION_TABLE, 0)
+
+        # Test neighbor mac add that activates session
+        self.add_neigh_appl_db(sub_port_intf_name, self.IPV4_NEXT_HOP_UNDER_TEST, dst_mac)
+        self.dvs_mirror.verify_session(dvs, session_name, fv_dict_asic_db, fv_dict_state_db)
+
         # Remove mirror session
         marker = dvs.add_log_marker()
         self.dvs_mirror.remove_mirror_session(session_name)
