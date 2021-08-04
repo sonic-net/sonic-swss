@@ -64,19 +64,12 @@ public:
         return &m_fdbStateTable;
     }
 
-    SubscriberStateTable *getMclagRemoteFdbStateTable()
-    {
-        return &m_mclagRemoteFdbStateTable;
-    }
-
     SubscriberStateTable *getCfgEvpnNvoTable()
     {
         return &m_cfgEvpnNvoTable;
     }
 
     void processStateFdb();
-
-    void processStateMclagRemoteFdb();
 
     void processCfgEvpnNvo();
 
@@ -88,7 +81,6 @@ private:
     ProducerStateTable m_fdbTable;
     ProducerStateTable m_imetTable;
     SubscriberStateTable m_fdbStateTable;
-    SubscriberStateTable m_mclagRemoteFdbStateTable;
     AppRestartAssist  *m_AppRestartAssist;
     SubscriberStateTable m_cfgEvpnNvoTable;
 
@@ -97,9 +89,7 @@ private:
         std::string port_name;
         short type;/*dynamic or static*/
     };
-    std::unordered_map<std::string, m_local_fdb_info> m_fdb_mac;
-
-    std::unordered_map<std::string, m_local_fdb_info> m_mclag_remote_fdb_mac;
+    std::unordered_map<std::string, m_local_fdb_info> m_fdb_mac; 
 
     void macDelVxlanEntry(std::string auxkey, struct m_fdb_info *info);
 
@@ -112,12 +102,6 @@ private:
     void updateAllLocalMac();
 
     void macRefreshStateDB(int vlan, std::string kmac);
-
-    void updateMclagRemoteMac(struct m_fdb_info *info);
-
-    void updateMclagRemoteMacPort(int ifindex, int vlan, std::string mac);
-
-    void macUpdateMclagRemoteCache(struct m_fdb_info *info);
 
     bool checkImetExist(std::string key, uint32_t vni);
 

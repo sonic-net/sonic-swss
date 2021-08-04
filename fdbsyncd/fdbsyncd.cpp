@@ -86,7 +86,6 @@ int main(int argc, char **argv)
             netlink.dumpRequest(RTM_GETNEIGH);
 
             s.addSelectable(sync.getFdbStateTable());
-            s.addSelectable(sync.getMclagRemoteFdbStateTable());
             s.addSelectable(sync.getCfgEvpnNvoTable());
             while (true)
             {
@@ -95,10 +94,6 @@ int main(int argc, char **argv)
                 if (temps == (Selectable *)sync.getFdbStateTable())
                 {
                     sync.processStateFdb();
-                }
-                else if (temps == (Selectable *)sync.getMclagRemoteFdbStateTable())
-                {
-                    sync.processStateMclagRemoteFdb();
                 }
                 else if (temps == (Selectable *)sync.getCfgEvpnNvoTable())
                 {
