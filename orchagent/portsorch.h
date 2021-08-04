@@ -222,7 +222,7 @@ private:
     unordered_map<sai_object_id_t, int> m_portOidToIndex;
     map<string, uint32_t> m_port_ref_count;
     unordered_set<string> m_pendingPortSet;
-    uint32_t max_flood_control_types = 4;
+    const uint32_t max_flood_control_types = 4;
     set<sai_vlan_flood_control_type_t> uuc_sup_flood_control_type;
     set<sai_vlan_flood_control_type_t> bc_sup_flood_control_type;
     map<string, uint32_t> m_bridge_port_ref_count;

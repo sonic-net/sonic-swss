@@ -35,6 +35,10 @@ typedef enum
 #define IS_TUNNELMAP_SET_VRF(x) ((x)& (1<<TUNNEL_MAP_T_VIRTUAL_ROUTER))
 #define IS_TUNNELMAP_SET_BRIDGE(x) ((x)& (1<<TUNNEL_MAP_T_BRIDGE))
 
+#define LOCAL_TUNNEL_PORT_PREFIX "Port_SRC_VTEP_"
+#define EVPN_TUNNEL_PORT_PREFIX  "Port_EVPN_"
+#define EVPN_TUNNEL_NAME_PREFIX  "EVPN_"
+
 typedef enum
 {
     TNL_CREATION_SRC_CLI,

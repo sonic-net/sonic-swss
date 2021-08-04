@@ -909,8 +909,7 @@ void VxlanTunnel::deletePendingSIPTunnel()
    VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
    bool dip_tunnels_used  = tunnel_orch->dipTunnelsUsed();
 
-   if (((dip_tunnels_used && getDipTunnelCnt() == 0) ||
-        !dip_tunnels_used ) && del_tnl_hw_pending)
+   if ((!dip_tunnels_used || getDipTunnelCnt() == 0) && del_tnl_hw_pending)
    {
        uint8_t mapper_list=0;
 
@@ -1071,7 +1070,7 @@ void VxlanTunnel::updateRemoteEndPointIpRef(const std::string remote_vtep, bool 
     {
         if (it == tnl_users_.end())
         {
-            memset(&tnl_refcnts,0,sizeof(tunnel_refcnt_t));
+            memset(&tnl_refcnts, 0, sizeof(tunnel_refcnt_t));
             tnl_refcnts.ip_refcnt++;
             tnl_users_[remote_vtep] = tnl_refcnts;
         }
@@ -1637,11 +1636,11 @@ std::string VxlanTunnelOrch::getTunnelPortName(const std::string& vtep, bool loc
     std::string tunnelPortName;
     if (local)
     {
-        tunnelPortName = "Port_SRC_VTEP_" + vtep;
+        tunnelPortName = LOCAL_TUNNEL_PORT_PREFIX + vtep;
     }
     else
     {
-        tunnelPortName = "Port_EVPN_" + vtep;
+        tunnelPortName = EVPN_TUNNEL_PORT_PREFIX + vtep;
     }
     return tunnelPortName;
 }
@@ -1649,14 +1648,14 @@ std::string VxlanTunnelOrch::getTunnelPortName(const std::string& vtep, bool loc
 bool VxlanTunnelOrch::isSrcVtepTunnel(Port& tunnelPort)
 {
     string tunnel_port_name = tunnelPort.m_alias;
-    string prefix = "Port_SRC_VTEP_";
+    string prefix = LOCAL_TUNNEL_PORT_PREFIX;
     return (tunnel_port_name.compare(0, prefix.length(), prefix) == 0);
 }
 
 
 void VxlanTunnelOrch::getTunnelNameFromDIP(const string& dip, string& tunnel_name)
 {
-    tunnel_name = "EVPN_" + dip;
+    tunnel_name = EVPN_TUNNEL_NAME_PREFIX + dip;
     return;
 }
 
@@ -1673,7 +1672,7 @@ void VxlanTunnelOrch::getTunnelNameFromPort(string& tunnel_portname, string& tun
 void VxlanTunnelOrch:: getTunnelDIPFromPort(Port& tunnelPort, string& remote_vtep)
 {
     remote_vtep = tunnelPort.m_alias;
-    remote_vtep.erase(0,sizeof("Port_EVPN_")-1);
+    remote_vtep.erase(0,sizeof(EVPN_TUNNEL_PORT_PREFIX)-1);
 }
 
 
@@ -1766,7 +1765,7 @@ bool VxlanTunnel::isTunnelReferenced()
     if (!ret)
     {
         SWSS_LOG_ERROR("Get port failed for source vtep %s", port_tunnel_name.c_str());
-	return false;
+        return false;
     }
 
     if (tunnelPort.m_fdb_count != 0)
