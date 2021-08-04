@@ -71,7 +71,7 @@ class TestNextHopGroup(object):
             assert fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"] == nhgid
 
             # verify weight attributes not in asic db
-            assert fvs.get("SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT") == None
+            assert fvs.get("SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT") is None
 
         # Remove route 2.2.2.0/24
         ps._del(rtprefix)
@@ -107,7 +107,7 @@ class TestNextHopGroup(object):
             assert fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"] == nhgid
 
             # verify weight attributes not in asic db
-            assert fvs.get("SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT") == None
+            assert fvs.get("SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT") is None
 
         # Remove route 2.2.2.0/24
         ps._del(rtprefix)
@@ -158,8 +158,8 @@ class TestNextHopGroup(object):
                                           ("weight", "20,30,40")])
         ps.set(rtprefix2, fvs)
 
-        # check if route was propagated to ASIC DB
-        rtkeys = dvs_route.check_asicdb_route_entries([rtprefix2])
+        # wait for route to be programmed
+        time.sleep(1)
 
         keys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP")
 
