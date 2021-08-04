@@ -60,7 +60,7 @@ class TestMirror(object):
     def add_neighbor(self, interface, ip, mac):
         tbl = swsscommon.ProducerStateTable(self.pdb, "NEIGH_TABLE")
         fvs = swsscommon.FieldValuePairs([("neigh", mac),
-                                          ("family", "IPv4")])
+                                          ("family", "IPv4" if "." in ip else "IPv6")])
         tbl.set(interface + ":" + ip, fvs)
         time.sleep(1)
 
