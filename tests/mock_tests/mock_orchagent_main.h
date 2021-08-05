@@ -15,6 +15,8 @@
 #include "vxlanorch.h"
 #include "policerorch.h"
 #include "fgnhgorch.h"
+#include "flexcounterorch.h"
+#include "directory.h"
 
 extern int gBatchSize;
 extern bool gSwssRecord;
@@ -42,6 +44,7 @@ extern FdbOrch *gFdbOrch;
 extern MirrorOrch *gMirrorOrch;
 extern BufferOrch *gBufferOrch;
 extern VRFOrch *gVrfOrch;
+extern Directory<Orch*> gDirectory;
 
 extern sai_acl_api_t *sai_acl_api;
 extern sai_switch_api_t *sai_switch_api;

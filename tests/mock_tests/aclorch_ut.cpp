@@ -20,6 +20,7 @@ extern sai_port_api_t *sai_port_api;
 extern sai_vlan_api_t *sai_vlan_api;
 extern sai_bridge_api_t *sai_bridge_api;
 extern sai_route_api_t *sai_route_api;
+extern sai_mpls_api_t *sai_mpls_api;
 extern sai_next_hop_group_api_t* sai_next_hop_group_api;
 extern string gMySwitchType;
 
@@ -265,6 +266,7 @@ namespace aclorch_test
             sai_api_query(SAI_API_PORT, (void **)&sai_port_api);
             sai_api_query(SAI_API_VLAN, (void **)&sai_vlan_api);
             sai_api_query(SAI_API_ROUTE, (void **)&sai_route_api);
+            sai_api_query(SAI_API_MPLS, (void **)&sai_mpls_api);
             sai_api_query(SAI_API_ACL, (void **)&sai_acl_api);
             sai_api_query(SAI_API_NEXT_HOP_GROUP, (void **)&sai_next_hop_group_api);
 
@@ -317,7 +319,7 @@ namespace aclorch_test
             };
 
             ASSERT_EQ(gPortsOrch, nullptr);
-            gPortsOrch = new PortsOrch(m_app_db.get(), ports_tables, m_chassis_app_db.get());
+            gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
 
             ASSERT_EQ(gCrmOrch, nullptr);
             gCrmOrch = new CrmOrch(m_config_db.get(), CFG_CRM_TABLE_NAME);
@@ -328,16 +330,18 @@ namespace aclorch_test
             ASSERT_EQ(gIntfsOrch, nullptr);
             gIntfsOrch = new IntfsOrch(m_app_db.get(), APP_INTF_TABLE_NAME, gVrfOrch, m_chassis_app_db.get());
 
-            TableConnector applDbFdb(m_app_db.get(), APP_FDB_TABLE_NAME);
-            TableConnector stateDbFdb(m_state_db.get(), STATE_FDB_TABLE_NAME);
+            const int fdborch_pri = 20;
 
             vector<table_name_with_pri_t> app_fdb_tables = {
                 { APP_FDB_TABLE_NAME,        FdbOrch::fdborch_pri},
-                { APP_VXLAN_FDB_TABLE_NAME,  FdbOrch::fdborch_pri}
+                { APP_VXLAN_FDB_TABLE_NAME,  FdbOrch::fdborch_pri},
+                { APP_MCLAG_FDB_TABLE_NAME,  fdborch_pri}
             };
-
+            
+            TableConnector stateDbFdb(m_state_db.get(), STATE_FDB_TABLE_NAME);
+            TableConnector stateMclagDbFdb(m_state_db.get(), STATE_MCLAG_REMOTE_FDB_TABLE_NAME);
             ASSERT_EQ(gFdbOrch, nullptr);
-            gFdbOrch = new FdbOrch(m_app_db.get(), app_fdb_tables, stateDbFdb, gPortsOrch);
+            gFdbOrch = new FdbOrch(m_app_db.get(), app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch);
 
             ASSERT_EQ(gNeighOrch, nullptr);
             gNeighOrch = new NeighOrch(m_app_db.get(), APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch, m_chassis_app_db.get());
@@ -353,7 +357,12 @@ namespace aclorch_test
             gFgNhgOrch = new FgNhgOrch(m_config_db.get(), m_app_db.get(), m_state_db.get(), fgnhg_tables, gNeighOrch, gIntfsOrch, gVrfOrch);
 
             ASSERT_EQ(gRouteOrch, nullptr);
-            gRouteOrch = new RouteOrch(m_app_db.get(), APP_ROUTE_TABLE_NAME, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch);
+            const int routeorch_pri = 5;
+            vector<table_name_with_pri_t> route_tables = {
+                { APP_ROUTE_TABLE_NAME,        routeorch_pri },
+                { APP_LABEL_ROUTE_TABLE_NAME,  routeorch_pri }
+            };
+            gRouteOrch = new RouteOrch(m_app_db.get(), route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch);
 
             PolicerOrch *policer_orch = new PolicerOrch(m_config_db.get(), "POLICER");
 
@@ -408,6 +417,7 @@ namespace aclorch_test
             sai_vlan_api = nullptr;
             sai_bridge_api = nullptr;
             sai_route_api = nullptr;
+            sai_mpls_api = nullptr;
         }
 
         shared_ptr<MockAclOrch> createAclOrch()

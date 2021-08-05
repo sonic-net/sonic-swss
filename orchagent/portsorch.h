@@ -13,6 +13,7 @@
 #include "gearboxutils.h"
 #include "saihelper.h"
 #include "lagid.h"
+#include "flexcounterorch.h"
 
 
 #define FCS_LEN 4
@@ -74,7 +75,7 @@ struct VlanMemberUpdate
 class PortsOrch : public Orch, public Subject
 {
 public:
-    PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, DBConnector *chassisAppDb);
+    PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames, DBConnector *chassisAppDb);
 
     bool allPortsReady();
     bool isInitDone();
@@ -125,6 +126,8 @@ public:
 
     void generateQueueMap();
     void generatePriorityGroupMap();
+    void generatePortCounterMap();
+    void generatePortBufferDropCounterMap();
 
     void refreshPortStatus();
     bool removeAclTableGroup(const Port &p);
@@ -147,6 +150,8 @@ public:
     bool isInbandPort(const string &alias);
     bool setVoqInbandIntf(string &alias, string &type);
 
+    bool getRecircPort(Port &p, string role);
+
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_counterLagTable;
@@ -162,6 +167,7 @@ private:
     unique_ptr<Table> m_stateBufferMaximumValueTable;
     unique_ptr<ProducerTable> m_flexCounterTable;
     unique_ptr<ProducerTable> m_flexCounterGroupTable;
+    Table m_portStateTable;
 
     std::string getQueueWatermarkFlexCounterTableKey(std::string s);
     std::string getPriorityGroupWatermarkFlexCounterTableKey(std::string s);
@@ -208,7 +214,7 @@ private:
     port_config_state_t m_portConfigState = PORT_CONFIG_MISSING;
     sai_uint32_t m_portCount;
     map<set<int>, sai_object_id_t> m_portListLaneMap;
-    map<set<int>, tuple<string, uint32_t, int, string, int>> m_lanesAliasSpeedMap;
+    map<set<int>, tuple<string, uint32_t, int, string, int, string>> m_lanesAliasSpeedMap;
     map<string, Port> m_portList;
     unordered_map<sai_object_id_t, int> m_portOidToIndex;
     map<string, uint32_t> m_port_ref_count;
@@ -246,6 +252,7 @@ private:
 
     bool addLag(string lag, uint32_t spa_id, int32_t switch_id);
     bool removeLag(Port lag);
+    bool setLagTpid(sai_object_id_t id, sai_uint16_t tpid);
     bool addLagMember(Port &lag, Port &port, bool enableForwarding);
     bool removeLagMember(Port &lag, Port &port);
     bool setCollectionOnLagMember(Port &lagMember, bool enableCollection);
@@ -253,12 +260,13 @@ private:
 
     bool addPort(const set<int> &lane_set, uint32_t speed, int an=0, string fec="");
     sai_status_t removePort(sai_object_id_t port_id);
-    bool initPort(const string &alias, const int index, const set<int> &lane_set);
+    bool initPort(const string &alias, const string &role, const int index, const set<int> &lane_set);
     void deInitPort(string alias, sai_object_id_t port_id);
 
     bool setPortAdminStatus(Port &port, bool up);
     bool getPortAdminStatus(sai_object_id_t id, bool& up);
     bool setPortMtu(sai_object_id_t id, sai_uint32_t mtu);
+    bool setPortTpid(sai_object_id_t id, sai_uint16_t tpid);
     bool setPortPvid (Port &port, sai_uint32_t pvid);
     bool getPortPvid(Port &port, sai_uint32_t &pvid);
     bool setPortFec(Port &port, sai_port_fec_mode_t mode);
@@ -268,12 +276,14 @@ private:
     bool setBridgePortAdminStatus(sai_object_id_t id, bool up);
 
     bool isSpeedSupported(const std::string& alias, sai_object_id_t port_id, sai_uint32_t speed);
+    void getPortSupportedSpeeds(const std::string& alias, sai_object_id_t port_id, PortSupportedSpeeds &supported_speeds);
+    void initPortSupportedSpeeds(const std::string& alias, sai_object_id_t port_id);
     bool setPortSpeed(Port &port, sai_uint32_t speed);
     bool getPortSpeed(sai_object_id_t id, sai_uint32_t &speed);
     bool setGearboxPortsAttr(Port &port, sai_port_attr_t id, void *value);
     bool setGearboxPortAttr(Port &port, dest_port_type_t port_type, sai_port_attr_t id, void *value);
 
-    bool setPortAdvSpeed(sai_object_id_t port_id, sai_uint32_t speed);
+    bool setPortAdvSpeeds(sai_object_id_t port_id, std::vector<sai_uint32_t>& speed_list);
 
     bool getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uint8_t &index);
 
@@ -283,13 +293,24 @@ private:
     bool m_isPriorityGroupMapGenerated = false;
     void generatePriorityGroupMapPerPort(const Port& port);
 
+    bool m_isPortCounterMapGenerated = false;
+    bool m_isPortBufferDropCounterMapGenerated = false;
+
     bool setPortAutoNeg(sai_object_id_t id, int an);
     bool setPortFecMode(sai_object_id_t id, int fec);
+    bool setPortInterfaceType(sai_object_id_t id, sai_port_interface_type_t interface_type);
+    bool setPortAdvInterfaceTypes(sai_object_id_t id, std::vector<uint32_t> &interface_types);
 
     bool getPortOperStatus(const Port& port, sai_port_oper_status_t& status) const;
     void updatePortOperStatus(Port &port, sai_port_oper_status_t status);
 
+    bool getPortOperSpeed(const Port& port, sai_uint32_t& speed) const;
+    void updateDbPortOperSpeed(Port &port, sai_uint32_t speed);
+
     void getPortSerdesVal(const std::string& s, std::vector<uint32_t> &lane_values);
+    bool getPortAdvSpeedsVal(const std::string &s, std::vector<uint32_t> &speed_values);
+    bool getPortInterfaceTypeVal(const std::string &s, sai_port_interface_type_t &interface_type);
+    bool getPortAdvInterfaceTypesVal(const std::string &s, std::vector<uint32_t> &type_values);
 
     bool setPortSerdesAttribute(sai_object_id_t port_id,
                                 std::map<sai_port_serdes_attr_t, std::vector<uint32_t>> &serdes_attr);
@@ -301,7 +322,9 @@ private:
                                 sai_acl_bind_point_type_t &sai_acl_bind_type);
     void initGearbox();
     bool initGearboxPort(Port &port);
-    
+
+    map<string, string> m_recircPortRole;
+
     //map key is tuple of <attached_switch_id, core_index, core_port_index>
     map<tuple<int, int, int>, sai_object_id_t> m_systemPortOidMap;
     sai_uint32_t m_systemPortCount;
@@ -314,6 +337,8 @@ private:
     void voqSyncAddLagMember(Port &lag, Port &port);
     void voqSyncDelLagMember(Port &lag, Port &port);
     unique_ptr<LagIdAllocator> m_lagIdAllocator;
+
+    std::unordered_set<std::string> generateCounterStats(const string& type);
 
 };
 #endif /* SWSS_PORTSORCH_H */

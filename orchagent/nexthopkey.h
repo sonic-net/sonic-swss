@@ -3,7 +3,9 @@
 
 #include "ipaddress.h"
 #include "tokenize.h"
+#include "label.h"
 
+#define LABELSTACK_DELIMITER '+'
 #define NH_DELIMITER '@'
 #define NHG_DELIMITER ','
 #define VRF_PREFIX "Vrf"
@@ -15,20 +17,27 @@ struct NextHopKey
     string              alias;          // incoming interface alias
     uint32_t            vni;            // Encap VNI overlay nexthop
     MacAddress          mac_address;    // Overlay Nexthop MAC.
+    LabelStack          label_stack;    // MPLS label stack
 
     NextHopKey() = default;
-    NextHopKey(const std::string &ipstr, const std::string &alias) : ip_address(ipstr), alias(alias), vni(0), mac_address() {}
-    NextHopKey(const IpAddress &ip, const std::string &alias) : ip_address(ip), alias(alias), vni(0), mac_address() {}
-    NextHopKey(const std::string &str)
+    NextHopKey(const std::string &str, const std::string &alias) :
+        alias(alias), vni(0), mac_address()
+    {
+        std::string ip_str = parseMplsNextHop(str);
+        ip_address = ip_str;
+    }
+    NextHopKey(const IpAddress &ip, const std::string &alias) :
+        ip_address(ip), alias(alias), vni(0), mac_address() {}
+    NextHopKey(const std::string &str) :
+        vni(0), mac_address()
     {
         if (str.find(NHG_DELIMITER) != string::npos)
         {
             std::string err = "Error converting " + str + " to NextHop";
             throw std::invalid_argument(err);
         }
-        auto keys = tokenize(str, NH_DELIMITER);
-        vni = 0;
-        mac_address = MacAddress();
+        std::string ip_str = parseMplsNextHop(str);
+        auto keys = tokenize(ip_str, NH_DELIMITER);
         if (keys.size() == 1)
         {
             ip_address = keys[0];
@@ -56,7 +65,8 @@ struct NextHopKey
             std::string err = "Error converting " + str + " to NextHop";
             throw std::invalid_argument(err);
         }
-        auto keys = tokenize(str, NH_DELIMITER);
+        std::string ip_str = parseMplsNextHop(str);
+        auto keys = tokenize(ip_str, NH_DELIMITER);
         if (keys.size() != 4)
         {
             std::string err = "Error converting " + str + " to NextHop";
@@ -70,23 +80,30 @@ struct NextHopKey
 
     const std::string to_string() const
     {
-        return ip_address.to_string() + NH_DELIMITER + alias;
+        std::string str = formatMplsNextHop();
+        str += ip_address.to_string() + NH_DELIMITER + alias;
+        return str;
     }
 
     const std::string to_string(bool overlay_nh) const
     {
-        std::string s_vni = std::to_string(vni);
-        return ip_address.to_string() + NH_DELIMITER + alias + NH_DELIMITER + s_vni + NH_DELIMITER + mac_address.to_string();
+        std::string str = formatMplsNextHop();
+        str += (ip_address.to_string() + NH_DELIMITER + alias + NH_DELIMITER +
+                std::to_string(vni) + NH_DELIMITER + mac_address.to_string());
+        return str;
     }
 
     bool operator<(const NextHopKey &o) const
     {
-        return tie(ip_address, alias, vni, mac_address) < tie(o.ip_address, o.alias, o.vni, o.mac_address);
+        return tie(ip_address, alias, label_stack, vni, mac_address) <
+            tie(o.ip_address, o.alias, o.label_stack, o.vni, o.mac_address);
     }
 
     bool operator==(const NextHopKey &o) const
     {
-        return (ip_address == o.ip_address) && (alias == o.alias) && (vni == o.vni) && (mac_address == o.mac_address);
+        return (ip_address == o.ip_address) && (alias == o.alias) &&
+            (label_stack == o.label_stack) &&
+            (vni == o.vni) && (mac_address == o.mac_address);
     }
 
     bool operator!=(const NextHopKey &o) const
@@ -96,7 +113,53 @@ struct NextHopKey
 
     bool isIntfNextHop() const
     {
-        return (ip_address.getV4Addr() == 0);
+        return (ip_address.isZero());
+    }
+
+    bool isMplsNextHop() const
+    {
+        return (!label_stack.empty());
+    }
+
+    std::string parseMplsNextHop(const std::string& str)
+    {
+        // parseMplsNextHop initializes MPLS-related member data of the NextHopKey
+        //   based on content of the input param str.
+        //   label_stack may be updated.
+        std::string ip_str;
+        auto keys = tokenize(str, LABELSTACK_DELIMITER);
+        if (keys.size() == 1)
+        {
+            // No MPLS info to parse
+            ip_str = str;
+        }
+        else if (keys.size() == 2)
+        {
+            // Expected MPLS format = "<outsegtype><labelstack>+<non-mpls-str>"
+            // key[0] = <outsegtype> = "swap" | "push"
+            // key[0] = <labelstack> = "<label0>/<label1>/../<labelN>"
+            // key[1] = <non-mpls-str> = returned to caller and not parsed here
+            // Example = "push10100/10101+10.0.0.3@Ethernet4"
+            label_stack = LabelStack(keys[0]);
+            ip_str = keys[1];
+        }
+        else
+        {
+            // Malformed string
+            std::string err = "Error converting " + str + " to MPLS NextHop";
+            throw std::invalid_argument(err);
+        }
+        return ip_str;
+    }
+
+    std::string formatMplsNextHop() const
+    {
+        std::string str;
+        if (isMplsNextHop())
+        {
+            label_stack.to_string() + LABELSTACK_DELIMITER;
+        }
+        return str;
     }
 };
 

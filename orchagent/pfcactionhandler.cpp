@@ -121,7 +121,7 @@ PfcWdActionHandler::PfcWdQueueStats PfcWdActionHandler::getQueueStats(shared_ptr
 
     if (!countersTable->get(queueIdStr, fieldValues))
     {
-        return move(stats);
+        return stats;
     }
 
     for (const auto& fv : fieldValues)
@@ -175,7 +175,7 @@ PfcWdActionHandler::PfcWdQueueStats PfcWdActionHandler::getQueueStats(shared_ptr
         }
     }
 
-    return move(stats);
+    return stats;
 }
 
 void PfcWdActionHandler::initWdCounters(shared_ptr<Table> countersTable, const string &queueIdStr)

@@ -232,7 +232,7 @@ bool Dot1pToTcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple 
     sai_qos_map_list_t dot1p_map_list;
 
     // Allocated resources are freed in freeAttribResources() call
-    dot1p_map_list.list = new sai_qos_map_t[kfvFieldsValues(tuple).size()];
+    dot1p_map_list.list = new sai_qos_map_t[kfvFieldsValues(tuple).size()]();
     int i = 0;
     for (const auto &fv : kfvFieldsValues(tuple))
     {
@@ -933,7 +933,11 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
         if (SAI_STATUS_SUCCESS != sai_status)
         {
             SWSS_LOG_ERROR("Failed to get number of scheduler groups for port:%s", port.m_alias.c_str());
-            return SAI_NULL_OBJECT_ID;
+            task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, sai_status);
+            if (handle_status != task_process_status::task_success)
+            {
+                return SAI_NULL_OBJECT_ID;
+            }
         }
 
         /* Get total groups list on the port */
@@ -947,7 +951,11 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
         if (SAI_STATUS_SUCCESS != sai_status)
         {
             SWSS_LOG_ERROR("Failed to get scheduler group list for port:%s", port.m_alias.c_str());
-            return SAI_NULL_OBJECT_ID;
+            task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, sai_status);
+            if (handle_status != task_process_status::task_success)
+            {
+                return SAI_NULL_OBJECT_ID;
+            }
         }
 
         m_scheduler_group_port_info[port.m_port_id] = {
@@ -969,7 +977,11 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
             if (SAI_STATUS_SUCCESS != sai_status)
             {
                 SWSS_LOG_ERROR("Failed to get child count for scheduler group:0x%" PRIx64 " of port:%s", group_id, port.m_alias.c_str());
-                return SAI_NULL_OBJECT_ID;
+                task_process_status handle_status = handleSaiGetStatus(SAI_API_SCHEDULER_GROUP, sai_status);
+                if (handle_status != task_process_status::task_success)
+                {
+                    return SAI_NULL_OBJECT_ID;
+                }
             }
 
             uint32_t child_count = attr.value.u32;
@@ -988,7 +1000,11 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
             if (SAI_STATUS_SUCCESS != sai_status)
             {
                 SWSS_LOG_ERROR("Failed to get child list for scheduler group:0x%" PRIx64 " of port:%s", group_id, port.m_alias.c_str());
-                return SAI_NULL_OBJECT_ID;
+                task_process_status handle_status = handleSaiGetStatus(SAI_API_SCHEDULER_GROUP, sai_status);
+                if (handle_status != task_process_status::task_success)
+                {
+                    return SAI_NULL_OBJECT_ID;
+                }
             }
 
             m_scheduler_group_port_info[port.m_port_id].child_groups[ii] = std::move(child_groups);
