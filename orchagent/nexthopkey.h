@@ -4,6 +4,7 @@
 #include "ipaddress.h"
 #include "tokenize.h"
 #include "label.h"
+#include "intfsorch.h"
 
 #define LABELSTACK_DELIMITER '+'
 #define NH_DELIMITER '@'
@@ -160,9 +161,15 @@ struct NextHopKey
         std::string str;
         if (isMplsNextHop())
         {
-            label_stack.to_string() + LABELSTACK_DELIMITER;
+            str = label_stack.to_string() + LABELSTACK_DELIMITER;
         }
         return str;
+    }
+
+    // Method to get the underlying IP/interface pair for the next hop.
+    NextHopKey ipKey() const
+    {
+        return NextHopKey(ip_address, alias);
     }
 };
 

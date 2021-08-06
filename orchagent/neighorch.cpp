@@ -7,6 +7,7 @@
 #include "directory.h"
 #include "muxorch.h"
 #include "subscriberstatetable.h"
+#include "nhgorch.h"
 
 extern sai_neighbor_api_t*         sai_neighbor_api;
 extern sai_next_hop_api_t*         sai_next_hop_api;
@@ -15,6 +16,7 @@ extern PortsOrch *gPortsOrch;
 extern sai_object_id_t gSwitchId;
 extern CrmOrch *gCrmOrch;
 extern RouteOrch *gRouteOrch;
+extern NhgOrch *gNhgOrch;
 extern FgNhgOrch *gFgNhgOrch;
 extern Directory<Orch*> gDirectory;
 extern string gMySwitchType;
@@ -322,6 +324,7 @@ bool NeighOrch::setNextHopFlag(const NextHopKey &nexthop, const uint32_t nh_flag
     {
         case NHFLAGS_IFDOWN:
             rc = gRouteOrch->invalidnexthopinNextHopGroup(nexthop, count);
+            rc &= gNhgOrch->invalidateNextHop(nexthop);
             break;
         default:
             assert(0);
@@ -351,6 +354,7 @@ bool NeighOrch::clearNextHopFlag(const NextHopKey &nexthop, const uint32_t nh_fl
     {
         case NHFLAGS_IFDOWN:
             rc = gRouteOrch->validnexthopinNextHopGroup(nexthop, count);
+            rc &= gNhgOrch->validateNextHop(nexthop);
             break;
         default:
             assert(0);

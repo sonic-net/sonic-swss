@@ -362,7 +362,7 @@ namespace aclorch_test
                 { APP_ROUTE_TABLE_NAME,        routeorch_pri },
                 { APP_LABEL_ROUTE_TABLE_NAME,  routeorch_pri }
             };
-            gRouteOrch = new RouteOrch(m_app_db.get(), route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch);
+            gRouteOrch = new RouteOrch(m_app_db.get(), route_tables, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch);
 
             PolicerOrch *policer_orch = new PolicerOrch(m_config_db.get(), "POLICER");
 

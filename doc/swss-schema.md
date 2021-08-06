@@ -159,8 +159,30 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     ;Status: Mandatory
     key           = ROUTE_TABLE:prefix
     nexthop       = *prefix, ;IP addresses separated “,” (empty indicates no gateway)
-    intf          = ifindex? PORT_TABLE.key  ; zero or more separated by “,” (zero indicates no interface)
+    ifname        = ifindex? PORT_TABLE.key  ; zero or more separated by “,” (zero indicates no interface)
     blackhole     = BIT ; Set to 1 if this route is a blackhole (or null0)
+    weight        = weight_list              ; List of weights.
+    nexthop_group = string ; index within the NEXTHOP_GROUP_TABLE, used instead of nexthop and intf fields
+
+---------------------------------------------
+
+###### LABEL_ROUTE_TABLE
+; Defines schema for MPLS label route table attributes
+key           = LABEL_ROUTE_TABLE:mpls_label ; MPLS label
+; field       = value
+nexthop       = STRING                   ; Comma-separated list of nexthops.
+ifname        = STRING                   ; Comma-separated list of interfaces.
+weight        = STRING                   ; Comma-separated list of weights.
+nexthop_group = string ; index within the NEXTHOP_GROUP_TABLE, used instead of nexthop and intf fields
+
+---------------------------------------------
+### NEXTHOP_GROUP_TABLE
+    ;Stores a list of groups of one or more next hops
+    ;Status: Mandatory
+    key           = NEXTHOP_GROUP_TABLE:string ; arbitrary index for the next hop group
+    nexthop       = *prefix, ;IP addresses separated “,” (empty indicates no gateway)
+    ifname        = ifindex? PORT_TABLE.key  ; zero or more separated by “,” (zero indicates no interface)
+    weight        = weight_list              ; List of weights.
 
 ---------------------------------------------
 ### NEIGH_TABLE
