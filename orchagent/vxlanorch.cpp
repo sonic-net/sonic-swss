@@ -15,6 +15,7 @@
 #include "swssnet.h"
 #include "warm_restart.h"
 #include "tokenize.h"
+#include "converter.h"
 
 /* Global variables */
 extern sai_object_id_t gSwitchId;
@@ -1821,7 +1822,7 @@ bool VxlanTunnelMapOrch::addOperation(const Request& request)
     }
 
     auto vni_id  = static_cast<sai_uint32_t>(request.getAttrUint("vni"));
-    if (vni_id >= 1<<24)
+    if (vni_id >= MAX_VNI_ID)
     {
         SWSS_LOG_ERROR("Vxlan tunnel map vni id is too big: %d", vni_id);
         return true;
@@ -1954,7 +1955,7 @@ bool VxlanTunnelMapOrch::delOperation(const Request& request)
       auto port_tunnel_name = tunnel_orch->getTunnelPortName(src_vtep, true);
       bool ret;
 
-      ret = gPortsOrch->getPort(port_tunnel_name,tunnelPort);
+      ret = gPortsOrch->getPort(port_tunnel_name, tunnelPort);
       // If there are Dynamic DIP Tunnels referring to this SIP Tunnel 
       // then mark it as pending for delete. 
       if (!tunnel_obj->isTunnelReferenced())
@@ -2030,7 +2031,7 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
     }
 
     auto vni_id  = static_cast<sai_uint32_t>(request.getAttrUint("vni"));
-    if (vni_id >= 1<<24)
+    if (vni_id >= MAX_VNI_ID)
     {
         SWSS_LOG_ERROR("Vxlan vni id is too big: %d", vni_id);
         return true;
@@ -2164,7 +2165,7 @@ bool EvpnRemoteVnip2pOrch::addOperation(const Request& request)
     sai_vlan_id_t vlan_id = (sai_vlan_id_t) stoi(vlan_name.substr(4));
 
     auto vni_id  = static_cast<sai_uint32_t>(request.getAttrUint("vni"));
-    if (vni_id >= 1<<24)
+    if (vni_id >= MAX_VNI_ID)
     {
         SWSS_LOG_ERROR("Vxlan tunnel map vni id is too big: %d", vni_id);
         return true;
@@ -2233,7 +2234,7 @@ bool EvpnRemoteVnip2pOrch::delOperation(const Request& request)
     sai_vlan_id_t vlan_id = (sai_vlan_id_t)stoi(vlan_name.substr(4));
 
     auto vni_id  = static_cast<sai_uint32_t>(request.getAttrUint("vni"));
-    if (vni_id >= 1<<24)
+    if (vni_id >= MAX_VNI_ID)
     {
         SWSS_LOG_ERROR("Vxlan tunnel map vni id is too big: %d", vni_id);
         return true;
@@ -2305,10 +2306,10 @@ bool EvpnRemoteVnip2mpOrch::addOperation(const Request& request)
 
     // Extract VLAN and VNI
     auto vlan_name = request.getKeyString(0);
-    sai_vlan_id_t vlan_id = (sai_vlan_id_t) stoi(vlan_name.substr(4));
+    sai_vlan_id_t vlan_id = to_uint<sai_vlan_id_t>(vlan_name.substr(4), MIN_VLAN_ID, MAX_VLAN_ID);
 
     auto vni_id  = static_cast<sai_uint32_t>(request.getAttrUint("vni"));
-    if (vni_id >= 1<<24)
+    if (vni_id >= MAX_VNI_ID)
     {
         SWSS_LOG_ERROR("Vxlan tunnel map vni id is too big: %d", vni_id);
         return true;
@@ -2369,10 +2370,10 @@ bool EvpnRemoteVnip2mpOrch::delOperation(const Request& request)
 
     // Extract VLAN and VNI
     auto vlan_name = request.getKeyString(0);
-    sai_vlan_id_t vlan_id = (sai_vlan_id_t)stoi(vlan_name.substr(4));
+    sai_vlan_id_t vlan_id = to_uint<sai_vlan_id_t>(vlan_name.substr(4), MIN_VLAN_ID, MAX_VLAN_ID);
 
     auto vni_id  = static_cast<sai_uint32_t>(request.getAttrUint("vni"));
-    if (vni_id >= 1<<24)
+    if (vni_id >= MAX_VNI_ID)
     {
         SWSS_LOG_ERROR("Vxlan tunnel map vni id is too big: %d", vni_id);
         return true;
@@ -2388,7 +2389,7 @@ bool EvpnRemoteVnip2mpOrch::delOperation(const Request& request)
     if (!vtep_ptr)
     {
         SWSS_LOG_WARN("Remote VNI add: VTEP not found. remote=%s vid=%d",
-                      end_point_ip.c_str(),vlan_id);
+                      end_point_ip.c_str(), vlan_id);
         return true;
     }
 

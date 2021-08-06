@@ -39,7 +39,6 @@ class VxlanEvpnHelper(object):
         tbl =  swsscommon.Table(db, table)
         return set(tbl.getKeys())
 
-
     def get_created_entry(self, db, table, existed_entries):
         tbl =  swsscommon.Table(db, table)
         entries = set(tbl.getKeys())
@@ -84,7 +83,6 @@ class VxlanEvpnHelper(object):
         tbl =  swsscommon.Table(db, table)
         keys = tbl.getKeys()
         retkey = list()
-        #assert key in keys, "The desired key is not presented"
 
         for key in keys:
             status, fvs = tbl.get(key)
@@ -108,22 +106,6 @@ class VxlanEvpnHelper(object):
         tbl =  swsscommon.Table(db, table)
         keys = tbl.getKeys()
         assert key not in keys, "The desired key is not removed"
-
-
-'''
-    def entries(self, db, table):
-        tbl =  swsscommon.Table(self, db, table)
-        return set(tbl.getKeys())
-
-    def get_default_vr_id(self, dvs):
-        db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-        table = 'ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER'
-        tbl =  swsscommon.Table(db, table)
-        keys = tbl.getKeys()
-        assert len(keys) == 1, "Wrong number of virtual routers found"
-
-        return keys[0]
-'''
 
 class VxlanTunnel(object):
 
@@ -187,7 +169,7 @@ class VxlanTunnel(object):
 
     def remove_evpn_nvo(self, dvs, nvoname):
         conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-        self.helper.delete_entry_tbl(conf_db,"VXLAN_EVPN_NVO", nvoname,)
+        self.helper.delete_entry_tbl(conf_db,"VXLAN_EVPN_NVO", nvoname)
 
     def create_vxlan_tunnel(self, dvs, name, src_ip, dst_ip = '0.0.0.0', skip_dst_ip=True):
         conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
@@ -238,7 +220,7 @@ class VxlanTunnel(object):
         # create the VXLAN tunnel Term entry in Config DB
         self.helper.delete_entry_tbl(
             conf_db,
-            "VXLAN_TUNNEL", tnl_name,
+            "VXLAN_TUNNEL", tnl_name
         )
 
     def remove_vxlan_tunnel_map(self, dvs, tnl_name, map_name,vni_id, vlan_id):
@@ -252,7 +234,7 @@ class VxlanTunnel(object):
         # create the VXLAN tunnel Term entry in Config DB
         self.helper.delete_entry_tbl(
             conf_db,
-            "VXLAN_TUNNEL_MAP", "%s|%s" % (tnl_name, map_name),
+            "VXLAN_TUNNEL_MAP", "%s|%s" % (tnl_name, map_name)
         )
 
     def remove_evpn_remote_vni(self, dvs, vlan_id, remote_vtep ):
@@ -305,7 +287,7 @@ class VxlanTunnel(object):
             ],
     )
 
-    def create_vrf_routes(self, dvs, prefix, vrf_name, endpoint, ifname, mac="", vni=0):
+    def create_vrf_route(self, dvs, prefix, vrf_name, endpoint, ifname, mac="", vni=0):
         app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
 
         attrs = [
@@ -327,14 +309,14 @@ class VxlanTunnel(object):
 
         time.sleep(2)
 
-    def delete_vrf_routes(self, dvs, prefix, vrf_name):
+    def delete_vrf_route(self, dvs, prefix, vrf_name):
         app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
 
         self.helper.delete_entry_pst(app_db, "ROUTE_TABLE", "%s:%s" % (vrf_name, prefix))
 
         time.sleep(2)
 
-    def create_vrf_routes_ecmp(self, dvs, prefix, vrf_name, ecmp_nexthop_attributes):
+    def create_vrf_route_ecmp(self, dvs, prefix, vrf_name, ecmp_nexthop_attributes):
         app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
 
         self.helper.create_entry_pst(
@@ -479,7 +461,6 @@ class VxlanTunnel(object):
         if self.switch_mac is None:
             self.switch_mac = self.get_switch_mac(dvs)
 
-
     def check_vxlan_tunnel_map_entry_delete(self, dvs, tunnel_name, vidlist, vnilist):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
@@ -514,8 +495,7 @@ class VxlanTunnel(object):
             iplinkcmd = "ip link show type vxlan dev " + tunnel_name + "-" + vidlist[x]
             (exitcode, out) = dvs.runcmd(iplinkcmd)
             assert exitcode == 0, "Kernel device not created"
-            
-   
+
     def check_vxlan_sip_tunnel_delete(self, dvs, tunnel_name, sip):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
         app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
@@ -758,8 +738,6 @@ class VxlanTunnel(object):
         status, fvs = tbl.get(self.vlan_id_map[vlan_name])
 
         print(fvs)
-        #assert 'SAI_VLAN_ATTR_UNKNOWN_UNICAST_FLOOD_CONTROL_TYPE' in fvs, "Unknown unicast flood control type not set"
-        #assert 'SAI_VLAN_ATTR_BROADCAST_FLOOD_CONTROL_TYPE' in fvs, "Broadcast flood control type not set"
 
         uuc_flood_type = None
         bc_flood_type = None

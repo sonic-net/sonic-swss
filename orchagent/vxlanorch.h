@@ -39,6 +39,11 @@ typedef enum
 #define EVPN_TUNNEL_PORT_PREFIX  "Port_EVPN_"
 #define EVPN_TUNNEL_NAME_PREFIX  "EVPN_"
 
+#define MIN_VLAN_ID 1
+#define MAX_VLAN_ID 4095
+
+#define MAX_VNI_ID (1<<24)
+
 typedef enum
 {
     TNL_CREATION_SRC_CLI,
@@ -175,7 +180,7 @@ public:
         return ids_.tunnel_term_id;
     }
 
-    IpAddress getSrcIP()
+    const IpAddress getSrcIP()
     {
         return src_ip_;
     }
