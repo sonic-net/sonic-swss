@@ -1,10 +1,7 @@
 from swsscommon import swsscommon
 import time
 import json
-import random
 from pytest import *
-from pprint import pprint
-
        
 class VxlanEvpnHelper(object):
     def create_entry(self, tbl, key, pairs):
@@ -72,8 +69,6 @@ class VxlanEvpnHelper(object):
 
         assert len(fvs) >= len(expected_attributes), "Incorrect attributes"
 
-        attr_keys = {entry[0] for entry in fvs}
-
         for name, value in fvs:
             if name in expected_attributes:
                 assert expected_attributes[name] == value, "Wrong value %s for the attribute %s = %s" % \
@@ -89,8 +84,6 @@ class VxlanEvpnHelper(object):
             assert status, "Got an error when get a key"
 
             assert len(fvs) >= len(expected_attributes), "Incorrect attributes"
-
-            attr_keys = {entry[0] for entry in fvs}
 
             num_match = 0
             for name, value in fvs:
@@ -226,12 +219,7 @@ class VxlanTunnel(object):
     def remove_vxlan_tunnel_map(self, dvs, tnl_name, map_name,vni_id, vlan_id):
         conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
-        attrs = [
-                ("vni", vni_id),
-                ("vlan", vlan_id),
-        ]
-
-        # create the VXLAN tunnel Term entry in Config DB
+        # Remove the VXLAN tunnel map entry in Config DB
         self.helper.delete_entry_tbl(
             conf_db,
             "VXLAN_TUNNEL_MAP", "%s|%s" % (tnl_name, map_name)
@@ -772,7 +760,6 @@ class VxlanTunnel(object):
         
     def check_vxlan_tunnel_entry(self, dvs, tunnel_name, vnet_name, vni_id):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-        app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
 
         time.sleep(2)
 
@@ -808,7 +795,6 @@ class VxlanTunnel(object):
 
     def check_vxlan_tunnel_vrf_map_entry(self, dvs, tunnel_name, vrf_name, vni_id):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-        app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
 
         if (self.tunnel_map_map.get(tunnel_name) is None):
             tunnel_map_id = self.helper.get_created_entries(asic_db, self.ASIC_TUNNEL_MAP, self.tunnel_map_ids, 4)

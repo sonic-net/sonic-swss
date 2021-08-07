@@ -1,6 +1,4 @@
 from swsscommon import swsscommon
-import time
-import json
 import random
 import pytest
 from pprint import pprint

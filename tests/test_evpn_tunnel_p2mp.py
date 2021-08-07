@@ -1,9 +1,3 @@
-from swsscommon import swsscommon
-import time
-import json
-import random
-import pytest
-from pprint import pprint
 from evpn_tunnel import VxlanTunnel
 
 DVS_FAKE_PLATFORM = "mellanox"
