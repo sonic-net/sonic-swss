@@ -324,7 +324,6 @@ private:
     bool initGearboxPort(Port &port);
 
     map<string, string> m_recircPortRole;
-    bool doProcessRecircPort(string alias, string role, set<int> laneSet, string op);
 
     //map key is tuple of <attached_switch_id, core_index, core_port_index>
     map<tuple<int, int, int>, sai_object_id_t> m_systemPortOidMap;

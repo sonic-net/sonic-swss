@@ -191,7 +191,7 @@ bool NeighOrch::addNextHop(const NextHopKey &nh)
     }
 
     NextHopKey nexthop(nh);
-    if (m_intfsOrch->isRemoteSystemPortIntf(nexthop.alias))
+    if (m_intfsOrch->isRemoteSystemPortIntf(nh.alias))
     {
         //For remote system ports kernel nexthops are always on inband. Change the key
         Port inbp;
@@ -202,7 +202,7 @@ bool NeighOrch::addNextHop(const NextHopKey &nh)
     }
 
     assert(!hasNextHop(nexthop));
-    sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(nexthop.alias);
+    sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(nh.alias);
 
     vector<sai_attribute_t> next_hop_attrs;
 
@@ -670,6 +670,19 @@ void NeighOrch::doTask(Consumer &consumer)
         }
 
         IpAddress ip_address(key.substr(found+1));
+
+        /* Verify Ipv4 LinkLocal and skip neighbor entry added for RFC5549 */
+        if ((ip_address.getAddrScope() == IpAddress::LINK_SCOPE) && (ip_address.isV4()))
+        {
+            /* Check if this prefix is not a configured ip, if so allow */
+            IpPrefix ipll_prefix(ip_address.getV4Addr(), 16);
+            if (!m_intfsOrch->isPrefixSubnet (ipll_prefix, alias))
+            {
+                SWSS_LOG_NOTICE("Skip IPv4LL neighbor %s, Intf:%s op: %s ", ip_address.to_string().c_str(), alias.c_str(), op.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+        }
 
         NeighborEntry neighbor_entry = { ip_address, alias };
 
@@ -1547,7 +1560,11 @@ void NeighOrch::voqSyncAddNeigh(string &alias, IpAddress &ip_address, const MacA
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to get neighbor attribute for %s on %s, rv:%d", ip_address.to_string().c_str(), alias.c_str(), status);
-        return;
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_NEIGHBOR, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            return;
+        }
     }
 
     if (!attr.value.u32)

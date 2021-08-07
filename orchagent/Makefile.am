@@ -65,6 +65,8 @@ orchagent_SOURCES = \
             chassisorch.cpp \
             debugcounterorch.cpp \
             natorch.cpp \
+            mlagorch.cpp \
+            isolationgrouporch.cpp \
             muxorch.cpp \
             macsecorch.cpp \
             lagid.cpp 
