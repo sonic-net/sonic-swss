@@ -94,6 +94,12 @@ typedef struct {
     std::string cable_length;
     std::string mtu;
     std::string gearbox_model;
+
+    bool auto_neg;
+    std::string effective_speed;
+    std::string adv_speeds;
+    std::string supported_speeds;
+
     long lane_count;
 } port_info_t;
 
@@ -145,6 +151,7 @@ private:
     // PORT and CABLE_LENGTH table and caches
     Table m_cfgPortTable;
     Table m_cfgCableLenTable;
+    Table m_statePortTable;
     // m_portInfoLookup
     // key: port name
     // updated only when a port's speed and cable length updated
@@ -223,6 +230,7 @@ private:
     {
         return !value.empty() && value != "0";
     }
+    std::string getMaxSpeedFromList(std::string speedList);
 
     // APPL_DB table operations
     void updateBufferPoolToDb(const std::string &name, const buffer_pool_t &pool);
@@ -230,6 +238,7 @@ private:
     void updateBufferPgToDb(const std::string &key, const std::string &profile, bool add);
 
     // Meta flows
+    bool needRefreshPortDueToEffectiveSpeed(port_info_t &portInfo, std::string &portName);
     void calculateHeadroomSize(buffer_profile_t &headroom);
     void checkSharedBufferPoolSize(bool force_update_during_initialization);
     void recalculateSharedBufferPool();
@@ -251,6 +260,7 @@ private:
     task_process_status handleBufferMaxParam(KeyOpFieldsValuesTuple &t);
     task_process_status handleDefaultLossLessBufferParam(KeyOpFieldsValuesTuple &t);
     task_process_status handleCableLenTable(KeyOpFieldsValuesTuple &t);
+    task_process_status handlePortStateTable(KeyOpFieldsValuesTuple &t);
     task_process_status handlePortTable(KeyOpFieldsValuesTuple &t);
     task_process_status handleBufferPoolTable(KeyOpFieldsValuesTuple &t);
     task_process_status handleBufferProfileTable(KeyOpFieldsValuesTuple &t);

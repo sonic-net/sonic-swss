@@ -180,7 +180,8 @@ int main(int argc, char **argv)
                 TableConnector(&cfgDb, CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME),
                 TableConnector(&cfgDb, CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME),
                 TableConnector(&cfgDb, CFG_DEFAULT_LOSSLESS_BUFFER_PARAMETER),
-                TableConnector(&stateDb, STATE_BUFFER_MAXIMUM_VALUE_TABLE)
+                TableConnector(&stateDb, STATE_BUFFER_MAXIMUM_VALUE_TABLE),
+                TableConnector(&stateDb, STATE_PORT_TABLE_NAME)
             };
             cfgOrchList.emplace_back(new BufferMgrDynamic(&cfgDb, &stateDb, &applDb, buffer_table_connectors, db_items_ptr));
         }

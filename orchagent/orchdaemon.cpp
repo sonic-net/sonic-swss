@@ -40,6 +40,8 @@ BufferOrch *gBufferOrch;
 SwitchOrch *gSwitchOrch;
 Directory<Orch*> gDirectory;
 NatOrch *gNatOrch;
+MlagOrch *gMlagOrch;
+IsoGrpOrch *gIsoGrpOrch;
 MACsecOrch *gMacsecOrch;
 
 bool gIsNatSupported = false;
@@ -105,13 +107,15 @@ bool OrchDaemon::init()
 
     vector<table_name_with_pri_t> app_fdb_tables = {
         { APP_FDB_TABLE_NAME,        FdbOrch::fdborch_pri},
-        { APP_VXLAN_FDB_TABLE_NAME,  FdbOrch::fdborch_pri}
+        { APP_VXLAN_FDB_TABLE_NAME,  FdbOrch::fdborch_pri},
+        { APP_MCLAG_FDB_TABLE_NAME,  FdbOrch::fdborch_pri}
     };
 
     gCrmOrch = new CrmOrch(m_configDb, CFG_CRM_TABLE_NAME);
     gPortsOrch = new PortsOrch(m_applDb, m_stateDb, ports_tables, m_chassisAppDb);
     TableConnector stateDbFdb(m_stateDb, STATE_FDB_TABLE_NAME);
-    gFdbOrch = new FdbOrch(m_applDb, app_fdb_tables, stateDbFdb, gPortsOrch);
+    TableConnector stateMclagDbFdb(m_stateDb, STATE_MCLAG_REMOTE_FDB_TABLE_NAME);
+    gFdbOrch = new FdbOrch(m_applDb, app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch);
 
     vector<string> vnet_tables = {
             APP_VNET_RT_TABLE_NAME,
@@ -326,6 +330,19 @@ bool OrchDaemon::init()
     }
     gAclOrch = new AclOrch(acl_table_connectors, gSwitchOrch, gPortsOrch, gMirrorOrch, gNeighOrch, gRouteOrch, dtel_orch);
 
+    vector<string> mlag_tables = {
+        { CFG_MCLAG_TABLE_NAME },
+        { CFG_MCLAG_INTF_TABLE_NAME }
+    };
+    gMlagOrch = new MlagOrch(m_configDb, mlag_tables);
+
+    TableConnector appDbIsoGrpTbl(m_applDb, APP_ISOLATION_GROUP_TABLE_NAME);
+    vector<TableConnector> iso_grp_tbl_ctrs = {
+        appDbIsoGrpTbl
+    };
+
+    gIsoGrpOrch = new IsoGrpOrch(iso_grp_tbl_ctrs);
+
     m_orchList.push_back(gFdbOrch);
     m_orchList.push_back(gMirrorOrch);
     m_orchList.push_back(gAclOrch);
@@ -353,6 +370,8 @@ bool OrchDaemon::init()
     m_orchList.push_back(vnet_orch);
     m_orchList.push_back(vnet_rt_orch);
     m_orchList.push_back(gNatOrch);
+    m_orchList.push_back(gMlagOrch);
+    m_orchList.push_back(gIsoGrpOrch);
     m_orchList.push_back(gFgNhgOrch);
     m_orchList.push_back(mux_orch);
     m_orchList.push_back(mux_cb_orch);
@@ -371,7 +390,11 @@ bool OrchDaemon::init()
         CFG_FLEX_COUNTER_TABLE_NAME
     };
 
-    m_orchList.push_back(new FlexCounterOrch(m_configDb, flex_counter_tables));
+    auto* flexCounterOrch = new FlexCounterOrch(m_configDb, flex_counter_tables);
+    m_orchList.push_back(flexCounterOrch);
+
+    gDirectory.set(flexCounterOrch);
+    gDirectory.set(gPortsOrch);
 
     vector<string> pfc_wd_tables = {
         CFG_PFC_WD_TABLE_NAME

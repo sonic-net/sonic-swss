@@ -88,7 +88,11 @@ int FabricPortsOrch::getFabricPortList()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to get fabric port number, rv:%d", status);
-        return FABRIC_PORT_ERROR;
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            return FABRIC_PORT_ERROR;
+        }
     }
     m_fabricPortCount = attr.value.u32;
     SWSS_LOG_NOTICE("Get %d fabric ports", m_fabricPortCount);
@@ -101,7 +105,11 @@ int FabricPortsOrch::getFabricPortList()
     status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        throw runtime_error("FabricPortsOrch get port list failure");
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            throw runtime_error("FabricPortsOrch get port list failure");
+        }
     }
 
     for (i = 0; i < m_fabricPortCount; i++)
@@ -113,7 +121,11 @@ int FabricPortsOrch::getFabricPortList()
         status = sai_port_api->get_port_attribute(fabric_port_list[i], 1, &attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            throw runtime_error("FabricPortsOrch get port lane failure");
+            task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, status);
+            if (handle_status != task_process_status::task_success)
+            {
+                throw runtime_error("FabricPortsOrch get port lane failure");
+            }
         }
         int lane = attr.value.u32list.list[0];
         m_fabricLanePortMap[lane] = fabric_port_list[i];
@@ -198,7 +210,11 @@ void FabricPortsOrch::updateFabricPortState()
         {
             // Port may not be ready for query
             SWSS_LOG_ERROR("Failed to get fabric port (%d) status, rv:%d", lane, status);
-            return;
+            task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, status);
+            if (handle_status != task_process_status::task_success)
+            {
+                return;
+            }
         }
 
         if (m_portStatus.find(lane) != m_portStatus.end() &&
@@ -215,7 +231,11 @@ void FabricPortsOrch::updateFabricPortState()
             status = sai_port_api->get_port_attribute(port, 1, &attr);
             if (status != SAI_STATUS_SUCCESS)
             {
-                throw runtime_error("FabricPortsOrch get remote id failure");
+                task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, status);
+                if (handle_status != task_process_status::task_success)
+                {
+                    throw runtime_error("FabricPortsOrch get remote id failure");
+                }
             }
             remote_peer = attr.value.u32;
 
@@ -223,7 +243,11 @@ void FabricPortsOrch::updateFabricPortState()
             status = sai_port_api->get_port_attribute(port, 1, &attr);
             if (status != SAI_STATUS_SUCCESS)
             {
-                throw runtime_error("FabricPortsOrch get remote port index failure");
+                task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, status);
+                if (handle_status != task_process_status::task_success)
+                {
+                    throw runtime_error("FabricPortsOrch get remote port index failure");
+                }
             }
             remote_port = attr.value.u32;
         }

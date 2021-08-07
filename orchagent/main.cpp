@@ -86,11 +86,11 @@ void usage()
     cout << "    -b batch_size: set consumer table pop operation batch size (default 128)" << endl;
     cout << "    -m MAC: set switch MAC address" << endl;
     cout << "    -i INST_ID: set the ASIC instance_id in multi-asic platform" << endl;
-    cout << "    -s: enable synchronous mode (deprecated, use -z)" << endl;
-    cout << "    -z: redis communication mode (redis_async|redis_sync|zmq_sync), default: redis_async" << endl;
+    cout << "    -s enable synchronous mode (deprecated, use -z)" << endl;
+    cout << "    -z redis communication mode (redis_async|redis_sync|zmq_sync), default: redis_async" << endl;
     cout << "    -f swss_rec_filename: swss record log filename(default 'swss.rec')" << endl;
     cout << "    -j sairedis_rec_filename: sairedis record log filename(default sairedis.rec)" << endl;
-    cout << "    -k max bulk size in bulk mode (default 1000)";
+    cout << "    -k max bulk size in bulk mode (default 1000)" << endl;
 }
 
 void sighup_handler(int signo)

@@ -127,15 +127,15 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
     IpPrefix linklocal_prefix = getLinkLocalEui64Addr();
 
     addLinkLocalRouteToMe(gVirtualRouterId, linklocal_prefix);
+    SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu", linklocal_prefix.to_string().c_str());
 
     /* Add fe80::/10 subnet route to forward all link-local packets
      * destined to us, to CPU */
     IpPrefix default_link_local_prefix("fe80::/10");
 
     addLinkLocalRouteToMe(gVirtualRouterId, default_link_local_prefix);
+    SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu", default_link_local_prefix.to_string().c_str());
 
-    /* TODO: Add the link-local fe80::/10 route to cpu in every VRF created from
-     * vrforch::addOperation. */
 }
 
 std::string RouteOrch::getLinkLocalEui64Addr(void)
@@ -203,6 +203,27 @@ void RouteOrch::addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal
     gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
 
     SWSS_LOG_NOTICE("Created link local ipv6 route  %s to cpu", linklocal_prefix.to_string().c_str());
+}
+
+void RouteOrch::delLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix)
+{
+    sai_route_entry_t unicast_route_entry;
+    unicast_route_entry.switch_id = gSwitchId;
+    unicast_route_entry.vr_id = vrf_id;
+    copy(unicast_route_entry.destination, linklocal_prefix);
+    subnet(unicast_route_entry.destination, unicast_route_entry.destination);
+
+    sai_status_t status = sai_route_api->remove_route_entry(&unicast_route_entry);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to delete link local ipv6 route %s to cpu, rv:%d",
+                       linklocal_prefix.getIp().to_string().c_str(), status);
+        return;
+    }
+
+    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+
+    SWSS_LOG_NOTICE("Deleted link local ipv6 route  %s to cpu", linklocal_prefix.to_string().c_str());
 }
 
 bool RouteOrch::hasNextHopGroup(const NextHopGroupKey& nexthops) const

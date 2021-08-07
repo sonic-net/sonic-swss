@@ -1964,6 +1964,236 @@ class TestRouterInterface(object):
                 assert False
 
 
+    def create_ipv6_link_local(self, interface):
+        if interface.startswith("PortChannel"):
+            tbl_name = "PORTCHANNEL_INTERFACE"
+        elif interface.startswith("Vlan"):
+            tbl_name = "VLAN_INTERFACE"
+        else:
+            tbl_name = "INTERFACE"
+
+        fvs = swsscommon.FieldValuePairs([("ipv6_use_link_local_only", "enable")])
+        tbl = swsscommon.Table(self.cdb, tbl_name)
+        tbl.set(interface, fvs)
+        time.sleep(1)
+
+    def remove_ipv6_link_local(self, interface):
+        if interface.startswith("PortChannel"):
+            tbl_name = "PORTCHANNEL_INTERFACE"
+        elif interface.startswith("Vlan"):
+            tbl_name = "VLAN_INTERFACE"
+        else:
+            tbl_name = "INTERFACE"
+        tbl = swsscommon.Table(self.cdb, tbl_name)
+        tbl._del(interface)
+        time.sleep(1)
+
+    def test_InterfaceIpv6LinkLocalOnly(self, dvs, testlog):
+        # Check enable/disable ipv6-link-local mode for physical interface
+        self.setup_db(dvs)
+
+        # create ipv6 link local interface
+        self.create_ipv6_link_local("Ethernet8")
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
+        (status, fvs) = tbl.get("Ethernet8")
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "ipv6_use_link_local_only":
+                ipv6_link_local_found = True
+                assert fv[1] == "enable"
+
+        assert ipv6_link_local_found
+
+        # bring up interface
+        self.set_admin_status(dvs, "Ethernet8", "up")
+
+        # check ASIC router interface database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
+        intf_entries = tbl.getKeys()
+        # one loopback router interface one port based router interface
+        assert len(intf_entries) == 2
+
+        for key in intf_entries:
+            (status, fvs) = tbl.get(key)
+            assert status == True
+            # a port based router interface has five field/value tuples
+            if len(fvs) >= 5:
+                for fv in fvs:
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_TYPE":
+                        assert fv[1] == "SAI_ROUTER_INTERFACE_TYPE_PORT"
+                    # the default MTU without any configuration is 9100
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_MTU":
+                        assert fv[1] == "9100"
+
+        # remove ipv6 link local interface
+        self.remove_ipv6_link_local("Ethernet8")
+
+        # bring down interface
+        self.set_admin_status(dvs, "Ethernet8", "down")
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Ethernet8")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
+
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
+        intf_entries = tbl.getKeys()
+        for entry in intf_entries:
+            assert entry[0] != "Ethernet8"
+
+        # check ASIC router interface database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
+        intf_entries = tbl.getKeys()
+        # one loopback router interface
+        assert len(intf_entries) == 1
+
+    def test_LagInterfaceIpv6LinkLocalOnly(self, dvs, testlog):
+        # Check enable/disable ipv6-link-local mode for lag interface
+        self.setup_db(dvs)
+
+        # create port channel
+        self.create_port_channel("PortChannel001")
+
+        # bring up interface
+        self.set_admin_status(dvs, "PortChannel001", "up")
+
+        # create ipv6 link local interface
+        self.create_ipv6_link_local("PortChannel001")
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
+        (status, fvs) = tbl.get("PortChannel001")
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "ipv6_use_link_local_only":
+                ipv6_link_local_found = True
+                assert fv[1] == "enable"
+
+        assert ipv6_link_local_found
+
+        # check ASIC router interface database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
+        intf_entries = tbl.getKeys()
+        # one loopback router interface one port based router interface
+        assert len(intf_entries) == 2
+
+        for key in intf_entries:
+            (status, fvs) = tbl.get(key)
+            assert status == True
+            # a port based router interface has five field/value tuples
+            if len(fvs) >= 5:
+                for fv in fvs:
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_TYPE":
+                        assert fv[1] == "SAI_ROUTER_INTERFACE_TYPE_PORT"
+                    # the default MTU without any configuration is 9100
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_MTU":
+                        assert fv[1] == "9100"
+
+        # remove ipv6 link local interface
+        self.remove_ipv6_link_local("PortChannel001")
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:PortChannel001")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
+
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
+        intf_entries = tbl.getKeys()
+        for entry in intf_entries:
+            assert entry[0] != "PortChannel001"
+
+        # check ASIC router interface database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
+        intf_entries = tbl.getKeys()
+        # one loopback router interface
+        assert len(intf_entries) == 1
+
+        # remove port channel
+        self.remove_port_channel("PortChannel001")
+
+
+    def test_VLanInterfaceIpv6LinkLocalOnly(self, dvs, testlog):
+        # Check enable/disable ipv6-link-local mode for vlan interface
+        self.setup_db(dvs)
+
+        # create vlan
+        self.create_vlan("10")
+
+        # add vlan member
+        self.create_vlan_member("10", "Ethernet0")
+
+        # bring up interface
+        self.set_admin_status(dvs, "Ethernet0", "up")
+        self.set_admin_status(dvs, "Vlan10", "up")
+
+        # create ipv6 link local interface
+        self.create_ipv6_link_local("Vlan10")
+
+        # check asic database and get vlan_oid
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        vlan_entries = [k for k in tbl.getKeys() if k != dvs.asicdb.default_vlan_id]
+        assert len(vlan_entries) == 1
+        vlan_oid = vlan_entries[0]
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
+        (status, fvs) = tbl.get("Vlan10")
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "ipv6_use_link_local_only":
+                ipv6_link_local_found = True
+                assert fv[1] == "enable"
+
+        assert ipv6_link_local_found
+
+        # check ASIC router interface database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
+        intf_entries = tbl.getKeys()
+        # one loopback router interface one vlan router interface
+        assert len(intf_entries) == 2
+
+        for key in intf_entries:
+            (status, fvs) = tbl.get(key)
+            assert status == True
+            if len(fvs) >= 5:
+                for fv in fvs:
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_TYPE":
+                        assert fv[1] == "SAI_ROUTER_INTERFACE_TYPE_VLAN"
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_VLAN_ID":
+                        assert fv[1] == vlan_oid
+
+
+        # remove ipv6 link local interface
+        self.remove_ipv6_link_local("Vlan10")
+
+        # remove vlan member
+        self.remove_vlan_member("10", "Ethernet0")
+
+        # remove vlan
+        self.remove_vlan("10")
+
+        # bring down interface
+        self.set_admin_status(dvs, "Ethernet0", "down")
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Vlan10")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
+
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
+        intf_entries = tbl.getKeys()
+        for entry in intf_entries:
+            assert entry[0] != "Vlan10"
+
+        # check ASIC router interface database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
+        intf_entries = tbl.getKeys()
+        # one loopback router interface
+        assert len(intf_entries) == 1
+
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():
