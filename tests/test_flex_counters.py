@@ -91,7 +91,6 @@ class TestFlexCounters(object):
     def verify_tunnel_type_vxlan(self, name_map, type_map):
         counters_keys = self.counters_db.db_connection.hgetall(name_map)
         for counter_entry in counters_keys.items():
-            name = counter_entry[0]
             oid = counter_entry[1]
             fvs = self.counters_db.get_entry(type_map, "")
             assert fvs != {}
