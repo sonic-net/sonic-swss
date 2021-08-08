@@ -60,7 +60,6 @@ enum MCLAG_DOMAIN_CFG_ATTR_BMAP_FLAGS {
  */
 #define MCLAG_MAX_MSG_LEN 4096
 #define MCLAG_MAX_SEND_MSG_LEN 4096
-#define MSG_BATCH_SIZE 256
 
 typedef struct mclag_msg_hdr_t_ {
     /*
