@@ -1621,6 +1621,7 @@ def manage_dvs(request) -> str:
             # between modules to ensure a consistent start state
             #dvs.restart()
             dvs.runcmd("supervisorctl reload")
+            dvs.check_services_ready(timeout=60)
 
         return dvs
 
