@@ -32,6 +32,8 @@
 #include "debugcounterorch.h"
 #include "directory.h"
 #include "natorch.h"
+#include "isolationgrouporch.h"
+#include "mlagorch.h"
 #include "muxorch.h"
 #include "macsecorch.h"
 

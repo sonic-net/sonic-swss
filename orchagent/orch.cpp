@@ -536,7 +536,7 @@ void Orch::logfileReopen()
      * empty file here.
      */
 
-    gRecordOfs.open(gRecordFile);
+    gRecordOfs.open(gRecordFile, std::ofstream::out | std::ofstream::app);
 
     if (!gRecordOfs.is_open())
     {
