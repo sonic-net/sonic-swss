@@ -3291,7 +3291,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 {
                     bHasTCPFlag = true;
                 }
-                if (attr_name == MATCH_IP_PROTOCOL)
+                if (attr_name == MATCH_IP_PROTOCOL || attr_name == MATCH_NEXT_HEADER)
                 {
                     bHasIPProtocol = true;
                 }
@@ -3314,11 +3314,20 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                     break;
                 }
             }
-            // If acl rule is to match TCP_FLAGS, and IP_PROTOCOL is not set
-            // we set IP_PROTOCOL to 6 to match TCP explicitly
+            // If acl rule is to match TCP_FLAGS, and IP_PROTOCOL(NEXT_HEADER) is not set
+            // we set IP_PROTOCOL(NEXT_HEADER) to 6 to match TCP explicitly
             if (bHasTCPFlag && !bHasIPProtocol)
             {
-                string attr_name = MATCH_IP_PROTOCOL;
+                string attr_name;
+                if (type == ACL_TABLE_MIRRORV6 || type == ACL_TABLE_L3V6)
+                {
+                    attr_name = MATCH_NEXT_HEADER;
+                }
+                else
+                {
+                    attr_name = MATCH_IP_PROTOCOL;
+
+                }
                 string attr_value = std::to_string(TCP_PROTOCOL_NUM);
                 if (newRule->validateAddMatch(attr_name, attr_value))
                 {
