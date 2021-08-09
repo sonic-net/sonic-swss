@@ -12,6 +12,7 @@
 #include "vrforch.h"
 #include "vxlanorch.h"
 #include "directory.h"
+#include "routeorch.h"
 
 using namespace std;
 using namespace swss;
@@ -20,6 +21,7 @@ extern sai_virtual_router_api_t* sai_virtual_router_api;
 extern sai_object_id_t gSwitchId;
 extern Directory<Orch*> gDirectory;
 extern PortsOrch*       gPortsOrch;
+extern RouteOrch*       gRouteOrch;
 
 bool VRFOrch::addOperation(const Request& request)
 {
