@@ -97,7 +97,7 @@ class TestAcl:
             "SAI_ACL_ENTRY_ATTR_FIELD_TCP_FLAGS":
                 dvs_acl.get_simple_qualifier_comparator("7&mask:0x3f"),
             "SAI_ACL_ENTRY_ATTR_FIELD_IP_PROTOCOL":
-            dvs_acl.get_simple_qualifier_comparator("6&mask:0xff")
+                dvs_acl.get_simple_qualifier_comparator("6&mask:0xff")
         }
         dvs_acl.create_acl_rule(L3_TABLE_NAME, L3_RULE_NAME, config_qualifiers)
         dvs_acl.verify_acl_rule(expected_sai_qualifiers)
@@ -115,7 +115,7 @@ class TestAcl:
         dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
         dvs_acl.verify_no_acl_rules()
 
-    def test_V6AclRuleNextHeaderAppendedForTCPFlags(self, dvs_acl, l3_acl_table):
+    def test_V6AclRuleNextHeaderAppendedForTCPFlags(self, dvs_acl, l3v6_acl_table):
         """
         Verify next heder (6) will be appended for IPv6 ACL rules matching TCP_FLAGS
         """
@@ -124,7 +124,7 @@ class TestAcl:
             "SAI_ACL_ENTRY_ATTR_FIELD_TCP_FLAGS":
                 dvs_acl.get_simple_qualifier_comparator("7&mask:0x3f"),
             "SAI_ACL_ENTRY_ATTR_FIELD_IPV6_NEXT_HEADER":
-            dvs_acl.get_simple_qualifier_comparator("6&mask:0xff")
+                dvs_acl.get_simple_qualifier_comparator("6&mask:0xff")
         }
 
         dvs_acl.create_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME, config_qualifiers)
