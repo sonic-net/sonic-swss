@@ -122,7 +122,7 @@ static void wpa_cli_commands(
     }
     if (!network_id.empty())
     {
-        wpa_cli_commands(ostream, "set_network", port_name);
+        wpa_cli_commands(ostream, "set_network", network_id);
     }
     wpa_cli_commands(ostream, args...);
 }
@@ -294,8 +294,33 @@ bool MACsecMgr::MACsecProfile::update(const TaskArgs & ta)
     }
 
     // The following fields are necessary
-    return GetValue(ta, cipher_suite)
-        && GetValue(ta, primary_cak)
+    std::string macsec_cipher_suite;
+    if (!GetValue(ta, macsec_cipher_suite))
+    {
+        return false;
+    }
+    if (boost::iequals(macsec_cipher_suite, "GCM-AES-128"))
+    {
+        cipher_suite = MACSEC_CIPHER_SUITE::GCM_AES_128;
+    }
+    else if (boost::iequals(macsec_cipher_suite, "GCM-AES-256"))
+    {
+        cipher_suite = MACSEC_CIPHER_SUITE::GCM_AES_256;
+    }
+    else if (boost::iequals(macsec_cipher_suite, "GCM-AES-XPN-128"))
+    {
+        cipher_suite = MACSEC_CIPHER_SUITE::GCM_AES_XPN_128;
+    }
+    else if (boost::iequals(macsec_cipher_suite, "GCM-AES-XPN-256"))
+    {
+        cipher_suite = MACSEC_CIPHER_SUITE::GCM_AES_XPN_256;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Unknow Cipher Suite %s", macsec_cipher_suite.c_str());
+        return false;
+    }
+    return GetValue(ta, primary_cak)
         && GetValue(ta, primary_ckn);
 }
 
@@ -664,6 +689,13 @@ bool MACsecMgr::configureMACsec(
             network_id,
             "macsec_integ_only",
             (profile.policy == MACsecProfile::Policy::INTEGRITY_ONLY ? 1 : 0));
+
+        wpa_cli_exec_and_check(
+            session.sock,
+            port_name,
+            network_id,
+            "macsec_ciphersuite",
+            static_cast<std::uint32_t>(profile.cipher_suite));
 
         wpa_cli_exec_and_check(
             session.sock,

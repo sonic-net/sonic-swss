@@ -17,6 +17,13 @@ namespace swss {
 class MACsecMgr : public Orch
 {
 public:
+    enum MACSEC_CIPHER_SUITE
+    {
+        GCM_AES_128,
+        GCM_AES_256,
+        GCM_AES_XPN_128,
+        GCM_AES_XPN_256,
+    };
     using Orch::doTask;
     MACsecMgr(DBConnector *cfgDb, DBConnector *stateDb, const std::vector<std::string> &tableNames);
     ~MACsecMgr();
@@ -28,7 +35,7 @@ public:
     struct MACsecProfile
     {
         std::uint32_t       priority;
-        std::string         cipher_suite;
+        MACSEC_CIPHER_SUITE cipher_suite;
         std::string         primary_cak;
         std::string         primary_ckn;
         std::string         fallback_cak;
