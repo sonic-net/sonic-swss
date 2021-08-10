@@ -1586,7 +1586,7 @@ def manage_dvs(request) -> str:
     buffer_model = request.config.getoption("--buffer_model")
     force_recreate = request.config.getoption("--force-recreate-dvs")
     dvs = None
-    curr_fake_platform = None
+    curr_fake_platform = None # lgtm[py/unused-local-variable]
 
     if using_persistent_dvs and force_recreate:
         pytest.fail("Options --dvsname and --force-recreate-dvs are mutually exclusive")
