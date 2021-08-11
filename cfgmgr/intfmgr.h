@@ -34,7 +34,7 @@ private:
 
     bool doIntfGeneralTask(const std::vector<std::string>& keys, std::vector<FieldValueTuple> data, const std::string& op);
     bool doIntfAddrTask(const std::vector<std::string>& keys, const std::vector<FieldValueTuple>& data, const std::string& op);
-    bool doSubIntfHostIntfUpdateTask(const std::vector<std::string>& keys, const std::vector<FieldValueTuple>& data, const std::string& op);
+    bool doHostSubIntfUpdateTask(const std::vector<std::string>& keys, const std::vector<FieldValueTuple>& data, const std::string& op);
     void doTask(Consumer &consumer);
 
     bool isIntfStateOk(const std::string &alias);

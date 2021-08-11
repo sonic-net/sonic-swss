@@ -449,7 +449,7 @@ bool IntfMgr::isIntfStateOk(const string &alias)
     return false;
 }
 
-bool IntfMgr::doSubIntfHostIntfUpdateTask(const vector<string> &keys,
+bool IntfMgr::doHostSubIntfUpdateTask(const vector<string> &keys,
         const vector<FieldValueTuple> &fvTuples,
         const string &op)
 {
@@ -835,7 +835,7 @@ void IntfMgr::doTask(Consumer &consumer)
             if ((table_name == CFG_PORT_TABLE_NAME)
                     || (table_name == CFG_LAG_TABLE_NAME))
             {
-                if (!doSubIntfHostIntfUpdateTask(keys, data, op))
+                if (!doHostSubIntfUpdateTask(keys, data, op))
                 {
                     it++;
                 }
