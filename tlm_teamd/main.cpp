@@ -108,9 +108,9 @@ int main()
             else if (res == swss::Select::TIMEOUT)
             {
                 teamdctl_mgr.process_add_queue();
-                // When get_dumps API is triggered per TIMEOUT interval as done here, 
-                // there is a possible race condition on lag resource removal and the error
-                // will be reproted incorrectly. So set the param to_retry = true.
+                // In the case of lag removal, there is a scenario where the select::TIMEOUT
+		// occurs, it triggers get_dumps incorrectly for resource which was in process of 
+		// getting deleted. The fix here is to retry and check if this is a real failure.
                 values_store.update(teamdctl_mgr.get_dumps(true));
             }
             else

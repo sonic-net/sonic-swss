@@ -8,8 +8,8 @@
 #define MAX_RETRY 3
 
 /// Store the last errored lag name and the retry count.
-static std::string last_errored_lag_name= std::string("");
-static int no_of_retry = 0;
+std::string last_errored_lag_name = std::string("");
+int no_of_retry = 0;
 
 ///
 /// Custom function for libteamdctl logger. IT is empty to prevent libteamdctl to spam us with the error messages
@@ -143,7 +143,8 @@ bool TeamdCtlMgr::remove_lag(const std::string & lag_name)
         SWSS_LOG_WARN("The LAG '%s' hasn't been added. Can't remove it", lag_name.c_str());
     }
 
-    // If this lag interface errored last time, clear it
+    // If this lag interface errored last time, clear it here.
+    // This is needed as here in this remove API, we do m_handlers.erase(lag_name).
     if ((lag_name.compare(last_errored_lag_name) == 0) && (no_of_retry != 0))
     {
         SWSS_LOG_NOTICE("The LAG '%s' had errored while getting dump, clearing it", lag_name.c_str());
