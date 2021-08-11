@@ -483,7 +483,7 @@ bool IntfMgr::doHostSubIntfUpdateTask(const vector<string> &keys,
                 }
                 catch (const std::runtime_error &e)
                 {
-                    SWSS_LOG_NOTICE("Sub interface ip link set mtu failure. Runtime error: %s", e.what());
+                    SWSS_LOG_NOTICE("Sub interface ip link set mtu %s failure. Runtime error: %s", mtu.c_str(), e.what());
                     return false;
                 }
             }
