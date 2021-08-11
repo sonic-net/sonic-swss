@@ -1271,7 +1271,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
 
     attrs.push_back(attr);
 
-    if ((fdbData.origin == FDB_ORIGIN_VXLAN_ADVERTIZED) || (fdbData.origin == FDB_ORIGIN_MCLAG_ADVERTIZED))
+    if (((fdbData.origin == FDB_ORIGIN_VXLAN_ADVERTIZED) || (fdbData.origin == FDB_ORIGIN_MCLAG_ADVERTIZED))
             && (fdbData.type == "dynamic"))
     {
         attr.id = SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE;
