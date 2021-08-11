@@ -266,11 +266,10 @@ void BufferOrch::generateBufferPoolWatermarkCounterIdList(void)
         }
 
         // Check whether shared headroom pool water mark is supported
-        status = sai_buffer_api->get_buffer_pool_stats_ext(
+        status = sai_buffer_api->get_buffer_pool_stats(
                 it.second.m_saiObjectId,
                 size,
                 reinterpret_cast<const sai_stat_id_t *>(bufferSharedHeadroomPoolWatermarkStatIds.data()),
-                SAI_STATS_MODE_READ,
                 counterData.data());
         if (SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) || SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status)
             || status == SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED)
