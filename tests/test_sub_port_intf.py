@@ -138,6 +138,9 @@ class TestSubPortIntf(object):
         self.asic_db.wait_for_n_keys(ASIC_HOSTIF_TABLE, hostif_cnt + 1)
         dvs.asicdb._generate_oid_to_interface_mapping()
 
+        (ec, out) = dvs.runcmd(['bash', '-c', "ip link set {} mtu {}".format(port_name, self.port_fvs[port_name]["mtu"])])
+        assert ec == 0
+
         for key, fvs in self.buf_pg_fvs.items():
             if port_name in key:
                 self.config_db.create_entry("BUFFER_PG", key, fvs)
