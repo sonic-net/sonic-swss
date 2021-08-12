@@ -54,10 +54,6 @@ jobs:
       sudo apt-get install -y libzmq5 libzmq3-dev
       sudo apt-get install -qq -y \
           libhiredis-dev \
-          libnl-3-dev \
-          libnl-genl-3-dev \
-          libnl-route-3-dev \
-          libnl-nf-3-dev \
           swig3.0
       sudo apt-get install -y libdbus-1-3
       sudo apt-get install -y libteam-dev \
@@ -83,6 +79,23 @@ jobs:
       runBranch: 'refs/heads/master'
     displayName: "Download sonic sairedis deb packages"
   - script: |
+      git clone https://github.com/Azure/sonic-buildimage sonic-buildimage.libnl3; pushd sonic-buildimage.libnl3/src/libnl3
+      git clone https://github.com/thom311/libnl libnl3-3.5.0; pushd libnl3-3.5.0; git checkout tags/libnl3_5_0
+      git apply ../patch/0001-mpls-encap-accessors.patch
+      git apply ../patch/0002-mpls-remove-nl_addr_valid.patch
+      ln -s ../debian debian
+      fakeroot dpkg-buildpackage -us -uc -b -j$(nproc)
+      popd; popd
+    displayName: "Compile libnl3"
+  - script: |
+      sudo dpkg -i s/sonic-buildimage.libnl3/src/libnl3/libnl-3-200_*.deb
+      sudo dpkg -i s/sonic-buildimage.libnl3/src/libnl3/libnl-3-dev_*.deb
+      sudo dpkg -i s/sonic-buildimage.libnl3/src/libnl3/libnl-genl-3-200_*.deb
+      sudo dpkg -i s/sonic-buildimage.libnl3/src/libnl3/libnl-genl-3-dev_*.deb
+      sudo dpkg -i s/sonic-buildimage.libnl3/src/libnl3/libnl-route-3-200_*.deb
+      sudo dpkg -i s/sonic-buildimage.libnl3/src/libnl3/libnl-route-3-dev_*.deb
+      sudo dpkg -i s/sonic-buildimage.libnl3/src/libnl3/libnl-nf-3-200_*.deb
+      sudo dpkg -i s/sonic-buildimage.libnl3/src/libnl3/libnl-nf-3-dev_*.deb
       sudo dpkg -i ${{ parameters.swss_common_artifact_name }}/libswsscommon_1.0.0_${{ parameters.arch }}.deb
       sudo dpkg -i ${{ parameters.swss_common_artifact_name }}/libswsscommon-dev_1.0.0_${{ parameters.arch }}.deb
       sudo dpkg -i ${{ parameters.sairedis_artifact_name }}/libsaivs_*.deb
@@ -93,7 +106,7 @@ jobs:
       sudo dpkg -i ${{ parameters.sairedis_artifact_name }}/libsaimetadata-dev_*.deb
       sudo dpkg -i ${{ parameters.sairedis_artifact_name }}/syncd-vs_*.deb
     workingDirectory: $(Pipeline.Workspace)
-    displayName: "Install sonic swss common and sairedis"
+    displayName: "Install libnl3, sonic swss common and sairedis"
   - checkout: self
     submodules: true
   - script: |
