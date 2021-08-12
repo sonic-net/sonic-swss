@@ -463,6 +463,7 @@ bool IntfMgr::doHostSubIntfUpdateTask(const vector<string> &keys,
         {
             return false;
         }
+        SWSS_LOG_NOTICE("do host sub interface task, op: set");
 
         string mtu = "";
         for (const auto &fv : fvTuples)
@@ -486,6 +487,7 @@ bool IntfMgr::doHostSubIntfUpdateTask(const vector<string> &keys,
                     SWSS_LOG_NOTICE("Sub interface ip link set mtu %s failure. Runtime error: %s", mtu.c_str(), e.what());
                     return false;
                 }
+                SWSS_LOG_NOTICE("Sub interface %s ip link set mtu %s succeeded", alias.c_str(), mtu.c_str());
             }
         }
     }
