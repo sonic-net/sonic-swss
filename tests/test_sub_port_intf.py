@@ -37,6 +37,8 @@ VRF_NAME = "vrf_name"
 
 ETHERNET_PREFIX = "Ethernet"
 LAG_PREFIX = "PortChannel"
+VRF_PREFIX = "Vrf"
+VNET_PREFIX = "Vnet"
 
 VLAN_SUB_INTERFACE_SEPARATOR = "."
 APPL_DB_SEPARATOR = ":"
