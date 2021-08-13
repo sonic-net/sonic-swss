@@ -19,8 +19,9 @@ public:
 
 private:
     ProducerStateTable m_appIntfTableProducer;
-    Table m_cfgIntfTable, m_cfgVlanIntfTable, m_cfgLagIntfTable, m_cfgLoopbackIntfTable;
+    Table m_cfgIntfTable, m_cfgVlanIntfTable, m_cfgLagIntfTable, m_cfgLoopbackIntfTable, m_cfgSubIntfTable;
     Table m_statePortTable, m_stateLagTable, m_stateVlanTable, m_stateVrfTable, m_stateIntfTable;
+    Table m_appPortTable, m_appLagTable;
 
     std::unordered_set<std::string> m_subIntfList;
     std::unordered_map<std::string, std::unordered_set<std::string>> m_portSubIntfSet;

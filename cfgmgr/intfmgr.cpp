@@ -29,12 +29,15 @@ IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         m_cfgVlanIntfTable(cfgDb, CFG_VLAN_INTF_TABLE_NAME),
         m_cfgLagIntfTable(cfgDb, CFG_LAG_INTF_TABLE_NAME),
         m_cfgLoopbackIntfTable(cfgDb, CFG_LOOPBACK_INTERFACE_TABLE_NAME),
+        m_cfgSubIntfTable(cfgDb, CFG_VLAN_SUB_INTF_TABLE_NAME),
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
         m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME),
         m_stateVlanTable(stateDb, STATE_VLAN_TABLE_NAME),
         m_stateVrfTable(stateDb, STATE_VRF_TABLE_NAME),
         m_stateIntfTable(stateDb, STATE_INTERFACE_TABLE_NAME),
-        m_appIntfTableProducer(appDb, APP_INTF_TABLE_NAME)
+        m_appIntfTableProducer(appDb, APP_INTF_TABLE_NAME),
+        m_appPortTable(appDb, APP_PORT_TABLE_NAME),
+        m_appLagTable(appDb, APP_LAG_TABLE_NAME)
 {
     if (!WarmStart::isWarmStart())
     {
@@ -466,11 +469,16 @@ bool IntfMgr::doHostSubIntfUpdateTask(const vector<string> &keys,
         SWSS_LOG_NOTICE("do host sub interface task, op: set");
 
         string mtu = "";
+        string parentAdminStatus = "";
         for (const auto &fv : fvTuples)
         {
             if (fvField(fv) == "mtu")
             {
                 mtu = fvValue(fv);
+            }
+            else if (fvField(fv) == "admin_status")
+            {
+                parentAdminStatus = fvValue(fv);
             }
         }
 
@@ -488,6 +496,54 @@ bool IntfMgr::doHostSubIntfUpdateTask(const vector<string> &keys,
                     return false;
                 }
                 SWSS_LOG_NOTICE("Sub interface %s ip link set mtu %s succeeded", alias.c_str(), mtu.c_str());
+            }
+        }
+
+        if (parentAdminStatus == "up")
+        {
+            string parentAdminStatusAppDb;
+            if (!parentAlias.compare(0, strlen(LAG_PREFIX), LAG_PREFIX))
+            {
+                m_appLagTable.hget(parentAlias, "admin_status", parentAdminStatusAppDb);
+            }
+            else
+            {
+                m_appPortTable.hget(parentAlias, "admin_status", parentAdminStatusAppDb);
+            }
+            if (parentAdminStatusAppDb != parentAdminStatus)
+            {
+                // Parent port admin status has not yet been synced from config db to appl db, which
+                // indicates that parent port admin status at kernel has not yet been updated from
+                // down to up by portmgrd.
+                return false;
+            }
+
+            for (const auto &alias : m_portSubIntfSet[parentAlias])
+            {
+                string adminStatus;
+                if (!m_cfgSubIntfTable.hget(alias, "admin_status", adminStatus))
+                {
+                    adminStatus = "up";
+                }
+                SWSS_LOG_NOTICE("Parent %s admin %s, sub interface %s admin %s",
+                        parentAlias.c_str(),
+                        parentAdminStatus.c_str(),
+                        alias.c_str(),
+                        adminStatus.c_str());
+
+                if (adminStatus == "down")
+                {
+                    try
+                    {
+                        setHostSubIntfAdminStatus(alias, adminStatus);
+                    }
+                    catch (const std::runtime_error &e)
+                    {
+                        SWSS_LOG_NOTICE("Sub interface ip link set admin status %s failure. Runtime error: %s", adminStatus.c_str(), e.what());
+                        return false;
+                    }
+                    SWSS_LOG_NOTICE("Sub interface %s ip link set admin status %s succeeded", alias.c_str(), adminStatus.c_str());
+                }
             }
         }
     }
