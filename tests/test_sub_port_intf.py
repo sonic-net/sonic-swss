@@ -904,6 +904,11 @@ class TestSubPortIntf(object):
                 self.remove_vxlan_tunnel(self.TUNNEL_UNDER_TEST)
                 self.app_db.wait_for_n_keys(ASIC_TUNNEL_TABLE, 0)
 
+        # Remove lag
+        if parent_port.startswith(LAG_PREFIX):
+            self.remove_lag(parent_port)
+            self.asic_db.wait_for_n_keys(ASIC_LAG_TABLE, 0)
+
     def test_sub_port_intf_parent_port_admin_status_change(self, dvs):
         self.connect_dbs(dvs)
 

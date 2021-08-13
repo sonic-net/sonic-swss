@@ -466,7 +466,6 @@ bool IntfMgr::doHostSubIntfUpdateTask(const vector<string> &keys,
         {
             return false;
         }
-        SWSS_LOG_NOTICE("do host sub interface task, op: set");
 
         string mtu = "";
         string parentAdminStatus = "";
@@ -492,10 +491,10 @@ bool IntfMgr::doHostSubIntfUpdateTask(const vector<string> &keys,
                 }
                 catch (const std::runtime_error &e)
                 {
-                    SWSS_LOG_NOTICE("Sub interface ip link set mtu %s failure. Runtime error: %s", mtu.c_str(), e.what());
+                    SWSS_LOG_DEBUG("Sub interface ip link set mtu %s failure. Runtime error: %s", mtu.c_str(), e.what());
                     return false;
                 }
-                SWSS_LOG_NOTICE("Sub interface %s ip link set mtu %s succeeded", alias.c_str(), mtu.c_str());
+                SWSS_LOG_INFO("Sub interface %s ip link set mtu %s succeeded", alias.c_str(), mtu.c_str());
             }
         }
 
@@ -525,11 +524,6 @@ bool IntfMgr::doHostSubIntfUpdateTask(const vector<string> &keys,
                 {
                     adminStatus = "up";
                 }
-                SWSS_LOG_NOTICE("Parent %s admin %s, sub interface %s admin %s",
-                        parentAlias.c_str(),
-                        parentAdminStatus.c_str(),
-                        alias.c_str(),
-                        adminStatus.c_str());
 
                 if (adminStatus == "down")
                 {
@@ -539,10 +533,10 @@ bool IntfMgr::doHostSubIntfUpdateTask(const vector<string> &keys,
                     }
                     catch (const std::runtime_error &e)
                     {
-                        SWSS_LOG_NOTICE("Sub interface ip link set admin status %s failure. Runtime error: %s", adminStatus.c_str(), e.what());
+                        SWSS_LOG_DEBUG("Sub interface ip link set admin status %s failure. Runtime error: %s", adminStatus.c_str(), e.what());
                         return false;
                     }
-                    SWSS_LOG_NOTICE("Sub interface %s ip link set admin status %s succeeded", alias.c_str(), adminStatus.c_str());
+                    SWSS_LOG_INFO("Sub interface %s ip link set admin status %s succeeded", alias.c_str(), adminStatus.c_str());
                 }
             }
         }
