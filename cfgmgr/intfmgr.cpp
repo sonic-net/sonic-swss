@@ -466,7 +466,6 @@ bool IntfMgr::doHostSubIntfUpdateTask(const vector<string> &keys,
         {
             return false;
         }
-        SWSS_LOG_NOTICE("do host sub interface task, op: set");
 
         string parentAdminStatus = "";
         for (const auto &fv : fvTuples)
@@ -503,11 +502,6 @@ bool IntfMgr::doHostSubIntfUpdateTask(const vector<string> &keys,
                 {
                     adminStatus = "up";
                 }
-                SWSS_LOG_NOTICE("Parent %s admin %s, sub interface %s admin %s",
-                        parentAlias.c_str(),
-                        parentAdminStatus.c_str(),
-                        alias.c_str(),
-                        adminStatus.c_str());
 
                 if (adminStatus == "down")
                 {
@@ -517,10 +511,10 @@ bool IntfMgr::doHostSubIntfUpdateTask(const vector<string> &keys,
                     }
                     catch (const std::runtime_error &e)
                     {
-                        SWSS_LOG_NOTICE("Sub interface ip link set admin status %s failure. Runtime error: %s", adminStatus.c_str(), e.what());
+                        SWSS_LOG_DEBUG("Sub interface ip link set admin status %s failure. Runtime error: %s", adminStatus.c_str(), e.what());
                         return false;
                     }
-                    SWSS_LOG_NOTICE("Sub interface %s ip link set admin status %s succeeded", alias.c_str(), adminStatus.c_str());
+                    SWSS_LOG_INFO("Sub interface %s ip link set admin status %s succeeded", alias.c_str(), adminStatus.c_str());
                 }
             }
         }
