@@ -1,4 +1,5 @@
 """test_speed.py verifies that speed is set on interfaces and buffer manager behavies correctly on speed change."""
+import pytest
 
 
 class TestSpeedSet:
