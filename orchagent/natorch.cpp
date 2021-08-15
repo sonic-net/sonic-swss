@@ -2667,7 +2667,6 @@ void NatOrch::doNatTableTask(Consumer& consumer)
         string key = kfvKey(t);
         string op = kfvOp(t);
         vector<string> keys = tokenize(key, ':');
-        IpAddress global_address;
         /* Example : APPL_DB
          * NAT_TABLE:65.55.45.1
          *     translated_ip: 10.0.0.1 
@@ -2808,7 +2807,6 @@ void NatOrch::doTwiceNatTableTask(Consumer& consumer)
         string key = kfvKey(t);
         string op = kfvOp(t);
         vector<string> keys = tokenize(key, ':');
-        IpAddress global_address;
         /* Example : APPL_DB
          * NAT_TWICE_TABLE:91.91.91.91:65.55.45.1
          *     translated_src_ip: 14.14.14.14
@@ -3020,7 +3018,6 @@ void NatOrch::doDnatPoolTableTask(Consumer& consumer)
         string key = kfvKey(t);
         string op = kfvOp(t);
         vector<string> keys = tokenize(key, ':');
-        IpAddress global_address;
         /* Example : APPL_DB
          * NAT_DNAT_POOL_TABLE:65.55.45.1
          *     NULL: NULL

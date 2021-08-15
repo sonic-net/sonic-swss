@@ -179,7 +179,11 @@ void CoppOrch::initDefaultTrapGroup()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to get default trap group, rv:%d", status);
-        throw "CoppOrch initialization failure";
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            throw "CoppOrch initialization failure";
+        }
     }
 
     SWSS_LOG_INFO("Get default trap group");
