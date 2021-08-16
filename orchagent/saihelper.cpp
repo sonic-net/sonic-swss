@@ -67,6 +67,7 @@ sai_isolation_group_api_t*  sai_isolation_group_api;
 sai_system_port_api_t*      sai_system_port_api;
 sai_macsec_api_t*           sai_macsec_api;
 sai_l2mc_group_api_t*       sai_l2mc_group_api;
+sai_bfd_api_t*              sai_bfd_api;
 
 extern sai_object_id_t gSwitchId;
 extern bool gSairedisRecord;
@@ -191,6 +192,7 @@ void initSaiApi()
     sai_api_query(SAI_API_SYSTEM_PORT,          (void **)&sai_system_port_api);
     sai_api_query(SAI_API_MACSEC,               (void **)&sai_macsec_api);
     sai_api_query(SAI_API_L2MC_GROUP,           (void **)&sai_l2mc_group_api);
+    sai_api_query(SAI_API_BFD,                  (void **)&sai_bfd_api);
 
     sai_log_set(SAI_API_SWITCH,                 SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_BRIDGE,                 SAI_LOG_LEVEL_NOTICE);
@@ -224,6 +226,7 @@ void initSaiApi()
     sai_log_set(SAI_API_SYSTEM_PORT,            SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_MACSEC,                 SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_L2MC_GROUP,             SAI_LOG_LEVEL_NOTICE);
+    sai_log_set(SAI_API_BFD,                    SAI_LOG_LEVEL_NOTICE);
 }
 
 void initSaiRedis(const string &record_location, const std::string &record_filename)
