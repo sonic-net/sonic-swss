@@ -38,6 +38,7 @@ unordered_map<string, string> flexCounterGroupMap =
     {"RIF", RIF_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"RIF_RATES", RIF_RATE_COUNTER_FLEX_COUNTER_GROUP},
     {"DEBUG_COUNTER", DEBUG_COUNTER_FLEX_COUNTER_GROUP},
+    {"FLEX_COUNTER_DELAY", "FLEX_COUNTER_DELAY"}
 };
 
 
@@ -107,6 +108,10 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     // which is automatically satisfied upon the creation of the orch object that requires
                     // the syncd flex counter polling service
                     // This postponement is introduced by design to accelerate the initialization process
+                    if (m_delay_flex_counters)
+                    {
+                        continue;
+                    }
                     if(gPortsOrch && (value == "enable"))
                     {
                         if(key == PORT_KEY)
@@ -143,6 +148,10 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     vector<FieldValueTuple> fieldValues;
                     fieldValues.emplace_back(FLEX_COUNTER_STATUS_FIELD, value);
                     m_flexCounterGroupTable->set(flexCounterGroupMap[key], fieldValues);
+                }
+                else if(field == FLEX_COUNTER_DELAY_STATUS_FIELD)
+                {
+                    m_delay_flex_counters = value == "true";
                 }
                 else
                 {
