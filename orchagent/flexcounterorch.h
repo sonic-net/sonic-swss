@@ -21,7 +21,6 @@ public:
 private:
     std::shared_ptr<swss::DBConnector> m_flexCounterDb = nullptr;
     std::shared_ptr<swss::ProducerTable> m_flexCounterGroupTable = nullptr;
-    bool m_delay_flex_counters = true;
     bool m_port_counter_enabled = false;
     bool m_port_buffer_drop_counter_enabled = false;
 };

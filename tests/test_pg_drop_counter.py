@@ -74,13 +74,9 @@ class TestPGDropCounter(object):
         self.config_db.delete_entry("FLEX_COUNTER_TABLE", "PG_DROP")
         self.config_db.delete_entry("FLEX_COUNTER_TABLE", "PG_WATERMARK")
 
-    def disable_flex_counters_delay():
-        delay_indication_entry = {"FLEX_COUNTER_DELAY_STATUS": "false"}
-        self.config_db.create_entry("FLEX_COUNTER_TABLE", "FLEX_COUNTER_DELAY", delay_indication_entry)
 
     def test_pg_drop_counters(self, dvs):
         self.setup_dbs(dvs)
-        self.disable_flex_counters_delay()
         self.pgs = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP")
         try:
             self.set_up_flex_counter()

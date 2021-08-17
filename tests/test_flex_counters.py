@@ -84,10 +84,6 @@ class TestFlexCounters(object):
         self.config_db.create_entry("FLEX_COUNTER_TABLE", group, group_stats_entry)
         self.wait_for_table(map)
 
-    def disable_flex_counters_delay():
-        delay_indication_entry = {"FLEX_COUNTER_DELAY_STATUS": "false"}
-        self.config_db.create_entry("FLEX_COUNTER_TABLE", "FLEX_COUNTER_DELAY", delay_indication_entry)
-
     @pytest.mark.parametrize("counter_type", counter_type_dict.keys())
     def test_flex_counters(self, dvs, counter_type):
         """
@@ -96,7 +92,6 @@ class TestFlexCounters(object):
         For some counter types the MAPS on COUNTERS DB will be created as well after enabling the counter group, this will be also verified on this test.
         """
         self.setup_dbs(dvs)
-        self.disable_flex_counters_delay()
         counter_key = counter_type_dict[counter_type][0]
         counter_stat = counter_type_dict[counter_type][1]
         counter_map = counter_type_dict[counter_type][2]

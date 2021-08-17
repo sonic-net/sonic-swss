@@ -149,12 +149,7 @@ class TestWatermark(object):
         self.config_db.delete_entry("FLEX_COUNTER_TABLE", "QUEUE_WATERMARK")
         self.config_db.delete_entry("FLEX_COUNTER_TABLE", "BUFFER_POOL_WATERMARK")
 
-    def disable_flex_counters_delay():
-        delay_indication_entry = {"FLEX_COUNTER_DELAY_STATUS": "false"}
-        self.config_db.create_entry("FLEX_COUNTER_TABLE", "FLEX_COUNTER_DELAY", delay_indication_entry)
-
     def set_up(self, dvs):
-        self.disable_flex_counters_delay()
         self.qs = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_QUEUE")
         self.pgs = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP")
         self.buffers = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_POOL")
