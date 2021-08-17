@@ -50,10 +50,8 @@ class TestPortDPBLag(object):
         p.verify_app_db()
         p.verify_asic_db()
 
-        # 10. Remove PortChannel0001 and verify that its removed.
+        # 10. Remove PortChannel0001
         self.dvs_lag.remove_port_channel(lag)        
-        time.sleep(30)
-        self.dvs_lag.get_and_verify_port_channel(0)
 
 
 # Add Dummy always-pass test at end as workaroud
