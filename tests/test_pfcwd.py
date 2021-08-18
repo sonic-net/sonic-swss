@@ -20,11 +20,12 @@ DVS_FAKE_PLATFORM = "mellanox"
 
 
 def setPortPfc(dvs, port_name, pfc_queues):
-    cfg_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-    port_qos_tbl = swsscommon.Table(cfg_db, 'PORT_QOS_MAP')
+    cfg_db = dvs.get_config_db()
 
-    fvs = swsscommon.FieldValuePairs([('pfc_enable', ",".join(str(q) for q in pfc_queues))])
-    port_qos_tbl.set(port_name, fvs)
+    if pfc_queues:
+        cfg_db.create_entry('PORT_QOS_MAP', port_name, {'pfc_enable': ','.join(str(q) for q in pfc_queues)})
+    else:
+        cfg_db.delete_entry('PORT_QOS_MAP', port_name)
 
 
 def getPortOid(dvs, port_name):
@@ -39,11 +40,9 @@ def getPortOid(dvs, port_name):
 
 
 def setPortPfcAsym(dvs, port_name, pfc_asym):
-    cfg_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    cfg_db = dvs.get_config_db()
 
-    port_tbl = swsscommon.Table(cfg_db, 'PORT')
-    fvs = swsscommon.FieldValuePairs([('pfc_asym', pfc_asym)])
-    port_tbl.set(port_name, fvs)
+    cfg_db.update_entry('PORT', port_name, {'pfc_asym': pfc_asym})
 
 
 def startPfcWd(dvs, port_name):
@@ -165,6 +164,12 @@ class TestPfcWd:
 
         # Verify that PFC WD was started for all PFC priorities
         verifyPfcWdCountersList(dvs, port_oid)
+
+        # Disable asymmetric PFC
+        setPortPfcAsym(dvs, port_name, 'off')
+
+        # Remove default PFC
+        setPortPfc(dvs, port_name, [])
 
 
 #
