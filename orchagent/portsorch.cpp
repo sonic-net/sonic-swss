@@ -4812,6 +4812,8 @@ bool PortsOrch::addLagMember(Port &lag, Port &port, bool enableForwarding)
         }
     }
 
+    increasePortRefCount(port.m_alias);
+
     LagMemberUpdate update = { lag, port, true };
     notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));
 
@@ -4857,6 +4859,9 @@ bool PortsOrch::removeLagMember(Port &lag, Port &port)
             return false;
         }
     }
+
+    decreasePortRefCount(port.m_alias);
+
     LagMemberUpdate update = { lag, port, false };
     notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));
 

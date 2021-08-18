@@ -44,7 +44,9 @@ class TestNextHopGroup(object):
 
         dvs_route.check_asicdb_deleted_route_entries([rtprefix])
 
-        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.3,10.0.0.5"), ("ifname", "Ethernet0,Ethernet4,Ethernet8")])
+        # nexthop group without weight
+        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.3,10.0.0.5"),
+                                          ("ifname", "Ethernet0,Ethernet4,Ethernet8")])
         ps.set(rtprefix, fvs)
 
         # check if route was propagated to ASIC DB
@@ -67,6 +69,112 @@ class TestNextHopGroup(object):
             fvs = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER", k)
 
             assert fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"] == nhgid
+
+            # verify weight attributes not in asic db
+            assert fvs.get("SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT") is None
+
+        # Remove route 2.2.2.0/24
+        ps._del(rtprefix)
+
+        # Wait for route 2.2.2.0/24 to be removed
+        dvs_route.check_asicdb_deleted_route_entries([rtprefix])
+
+        # Negative test with nexthops with incomplete weight info
+        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.3,10.0.0.5"),
+                                          ("ifname", "Ethernet0,Ethernet4,Ethernet8"),
+                                          ("weight", "10,30")])
+        ps.set(rtprefix, fvs)
+
+        # check if route was propagated to ASIC DB
+        rtkeys = dvs_route.check_asicdb_route_entries([rtprefix])
+
+        # assert the route points to next hop group
+        fvs = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY", rtkeys[0])
+
+        nhgid = fvs["SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID"]
+
+        fvs = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP", nhgid)
+
+        assert bool(fvs)
+
+        keys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER")
+
+        assert len(keys) == 3
+
+        for k in keys:
+            fvs = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER", k)
+
+            assert fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"] == nhgid
+
+            # verify weight attributes not in asic db
+            assert fvs.get("SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT") is None
+
+        # Remove route 2.2.2.0/24
+        ps._del(rtprefix)
+
+        # Wait for route 2.2.2.0/24 to be removed
+        dvs_route.check_asicdb_deleted_route_entries([rtprefix])
+
+        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.3,10.0.0.5"),
+                                          ("ifname", "Ethernet0,Ethernet4,Ethernet8"),
+                                          ("weight", "10,30,50")])
+        ps.set(rtprefix, fvs)
+
+        # check if route was propagated to ASIC DB
+        rtkeys = dvs_route.check_asicdb_route_entries([rtprefix])
+
+        # assert the route points to next hop group
+        fvs = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY", rtkeys[0])
+
+        nhgid = fvs["SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID"]
+
+        fvs = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP", nhgid)
+
+        assert bool(fvs)
+
+        keys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER")
+
+        assert len(keys) == 3
+
+        for k in keys:
+            fvs = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER", k)
+
+            assert fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"] == nhgid
+
+            # verify weight attributes in asic db
+            nhid = fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID"]
+            weight = fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT"]
+
+            fvs = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", nhid)
+            nhip = fvs["SAI_NEXT_HOP_ATTR_IP"].split('.')
+            expected_weight = int(nhip[3]) * 10
+
+            assert int(weight) == expected_weight
+
+        rtprefix2 = "3.3.3.0/24"
+
+        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.3,10.0.0.5"),
+                                          ("ifname", "Ethernet0,Ethernet4,Ethernet8"),
+                                          ("weight", "20,30,40")])
+        ps.set(rtprefix2, fvs)
+
+        # wait for route to be programmed
+        time.sleep(1)
+
+        keys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP")
+
+        assert len(keys) == 2
+
+        keys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER")
+
+        assert len(keys) == 6
+
+        # Remove route 3.3.3.0/24
+        ps._del(rtprefix2)
+
+        # Wait for route 3.3.3.0/24 to be removed
+        dvs_route.check_asicdb_deleted_route_entries([rtprefix2])
+
 
         # bring links down one-by-one
         for i in [0, 1, 2]:

@@ -354,6 +354,20 @@ def create_vxlan_tunnel(dvs, name, src_ip):
     )
 
 
+def create_vxlan_tunnel_map(dvs, tunnel_name, tunnel_map_entry_name, vlan, vni_id):
+    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+
+    # create the VXLAN tunnel map entry in Config DB
+    create_entry_tbl(
+        conf_db,
+        "VXLAN_TUNNEL_MAP", '|', "%s|%s" % (tunnel_name, tunnel_map_entry_name),
+        [
+            ("vni",  vni_id),
+            ("vlan", vlan),
+        ],
+    )
+
+
 def get_lo(dvs):
     asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
     vr_id = get_default_vr_id(dvs)
@@ -451,25 +465,37 @@ class VnetVxlanVrfTunnel(object):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
         global loopback_id, def_vr_id
 
-        tunnel_map_id  = get_created_entries(asic_db, self.ASIC_TUNNEL_MAP, self.tunnel_map_ids, 2)
+        tunnel_map_id  = get_created_entries(asic_db, self.ASIC_TUNNEL_MAP, self.tunnel_map_ids, 4)
         tunnel_id      = get_created_entry(asic_db, self.ASIC_TUNNEL_TABLE, self.tunnel_ids)
         tunnel_term_id = get_created_entry(asic_db, self.ASIC_TUNNEL_TERM_ENTRY, self.tunnel_term_ids)
 
         # check that the vxlan tunnel termination are there
-        assert how_many_entries_exist(asic_db, self.ASIC_TUNNEL_MAP) == (len(self.tunnel_map_ids) + 2), "The TUNNEL_MAP wasn't created"
+        assert how_many_entries_exist(asic_db, self.ASIC_TUNNEL_MAP) == (len(self.tunnel_map_ids) + 4), "The TUNNEL_MAP wasn't created"
         assert how_many_entries_exist(asic_db, self.ASIC_TUNNEL_MAP_ENTRY) == len(self.tunnel_map_entry_ids), "The TUNNEL_MAP_ENTRY is created"
         assert how_many_entries_exist(asic_db, self.ASIC_TUNNEL_TABLE) == (len(self.tunnel_ids) + 1), "The TUNNEL wasn't created"
         assert how_many_entries_exist(asic_db, self.ASIC_TUNNEL_TERM_ENTRY) == (len(self.tunnel_term_ids) + 1), "The TUNNEL_TERM_TABLE_ENTRY wasm't created"
 
-        check_object(asic_db, self.ASIC_TUNNEL_MAP, tunnel_map_id[0],
+        check_object(asic_db, self.ASIC_TUNNEL_MAP, tunnel_map_id[2],
                         {
                             'SAI_TUNNEL_MAP_ATTR_TYPE': 'SAI_TUNNEL_MAP_TYPE_VNI_TO_VIRTUAL_ROUTER_ID',
                         }
                 )
 
-        check_object(asic_db, self.ASIC_TUNNEL_MAP, tunnel_map_id[1],
+        check_object(asic_db, self.ASIC_TUNNEL_MAP, tunnel_map_id[3],
                         {
                             'SAI_TUNNEL_MAP_ATTR_TYPE': 'SAI_TUNNEL_MAP_TYPE_VIRTUAL_ROUTER_ID_TO_VNI',
+                        }
+                )
+
+        check_object(asic_db, self.ASIC_TUNNEL_MAP, tunnel_map_id[0],
+                        {
+                            'SAI_TUNNEL_MAP_ATTR_TYPE': 'SAI_TUNNEL_MAP_TYPE_VNI_TO_VLAN_ID',
+                        }
+                    )
+
+        check_object(asic_db, self.ASIC_TUNNEL_MAP, tunnel_map_id[1],
+                        {
+                            'SAI_TUNNEL_MAP_ATTR_TYPE': 'SAI_TUNNEL_MAP_TYPE_VLAN_ID_TO_VNI',
                         }
                 )
 
@@ -477,8 +503,8 @@ class VnetVxlanVrfTunnel(object):
                     {
                         'SAI_TUNNEL_ATTR_TYPE': 'SAI_TUNNEL_TYPE_VXLAN',
                         'SAI_TUNNEL_ATTR_UNDERLAY_INTERFACE': loopback_id,
-                        'SAI_TUNNEL_ATTR_DECAP_MAPPERS': '1:%s' % tunnel_map_id[0],
-                        'SAI_TUNNEL_ATTR_ENCAP_MAPPERS': '1:%s' % tunnel_map_id[1],
+                        'SAI_TUNNEL_ATTR_DECAP_MAPPERS': '2:%s,%s' % (tunnel_map_id[0], tunnel_map_id[2]),
+                        'SAI_TUNNEL_ATTR_ENCAP_MAPPERS': '2:%s,%s' % (tunnel_map_id[1], tunnel_map_id[3]),
                         'SAI_TUNNEL_ATTR_ENCAP_SRC_IP': src_ip,
                     }
                 )
@@ -506,7 +532,7 @@ class VnetVxlanVrfTunnel(object):
         time.sleep(2)
 
         if (self.tunnel_map_map.get(tunnel_name) is None):
-            tunnel_map_id = get_created_entries(asic_db, self.ASIC_TUNNEL_MAP, self.tunnel_map_ids, 2)
+            tunnel_map_id = get_created_entries(asic_db, self.ASIC_TUNNEL_MAP, self.tunnel_map_ids, 4)
         else:
             tunnel_map_id = self.tunnel_map_map[tunnel_name]
 
@@ -518,7 +544,7 @@ class VnetVxlanVrfTunnel(object):
         check_object(asic_db, self.ASIC_TUNNEL_MAP_ENTRY, tunnel_map_entry_id[0],
             {
                 'SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP_TYPE': 'SAI_TUNNEL_MAP_TYPE_VIRTUAL_ROUTER_ID_TO_VNI',
-                'SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP': tunnel_map_id[1],
+                'SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP': tunnel_map_id[3],
                 'SAI_TUNNEL_MAP_ENTRY_ATTR_VIRTUAL_ROUTER_ID_KEY': self.vr_map[vnet_name].get('ing'),
                 'SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_VALUE': vni_id,
             }
@@ -527,7 +553,7 @@ class VnetVxlanVrfTunnel(object):
         check_object(asic_db, self.ASIC_TUNNEL_MAP_ENTRY, tunnel_map_entry_id[1],
             {
                 'SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP_TYPE': 'SAI_TUNNEL_MAP_TYPE_VNI_TO_VIRTUAL_ROUTER_ID',
-                'SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP': tunnel_map_id[0],
+                'SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP': tunnel_map_id[2],
                 'SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_KEY': vni_id,
                 'SAI_TUNNEL_MAP_ENTRY_ATTR_VIRTUAL_ROUTER_ID_VALUE': self.vr_map[vnet_name].get('egr'),
             }
@@ -1079,6 +1105,25 @@ class TestVnetOrch(object):
 
         vnet_obj.check_default_vnet_entry(dvs, 'Vnet_5')
         vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet_5', '4789')
+
+    '''
+    Test 6 - Test VxLAN tunnel with multiple maps
+    '''
+    def test_vnet_vxlan_multi_map(self, dvs, testlog):
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_v4'
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, '10.1.0.32')
+        create_vnet_entry(dvs, 'Vnet1', tunnel_name, '10001', "")
+
+        vnet_obj.check_vnet_entry(dvs, 'Vnet1')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet1', '10001')
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '10.1.0.32')
+
+        create_vxlan_tunnel_map(dvs, tunnel_name, 'map_1', 'Vlan1000', '1000')
 
 
 # Add Dummy always-pass test at end as workaroud

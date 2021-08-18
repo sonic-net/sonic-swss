@@ -31,6 +31,20 @@ public:
         }
     }
 
+    NextHopGroupKey(const std::string &nexthops, const std::string &weights)
+    {
+        m_overlay_nexthops = false;
+        std::vector<std::string> nhv = tokenize(nexthops, NHG_DELIMITER);
+        std::vector<std::string> wtv = tokenize(weights, NHG_DELIMITER);
+        bool set_weight = wtv.size() == nhv.size();
+        for (uint32_t i = 0; i < nhv.size(); i++)
+        {
+            NextHopKey nh(nhv[i]);
+            nh.weight = set_weight? (uint32_t)std::stoi(wtv[i]) : 0;
+            m_nexthops.insert(nh);
+        }
+    }
+
     inline const std::set<NextHopKey> &getNextHops() const
     {
         return m_nexthops;
@@ -43,12 +57,45 @@ public:
 
     inline bool operator<(const NextHopGroupKey &o) const
     {
-        return m_nexthops < o.m_nexthops;
+        if (m_nexthops < o.m_nexthops)
+        {
+            return true;
+        }
+        else if (m_nexthops == o.m_nexthops)
+        {
+            auto it1 = m_nexthops.begin();
+            for (auto& it2 : o.m_nexthops)
+            {
+                if (it1->weight < it2.weight)
+                {
+                    return true;
+                }
+                else if(it1->weight > it2.weight)
+                {
+                    return false;
+                }
+                it1++;
+            }
+        }
+        return false;
     }
 
     inline bool operator==(const NextHopGroupKey &o) const
     {
-        return m_nexthops == o.m_nexthops;
+        if (m_nexthops != o.m_nexthops)
+        {
+            return false;
+        }
+        auto it1 = m_nexthops.begin();
+        for (auto& it2 : o.m_nexthops)
+        {
+            if (it2.weight != it1->weight)
+            {
+                return false;
+            }
+            it1++;
+        }
+        return true;
     }
 
     inline bool operator!=(const NextHopGroupKey &o) const
