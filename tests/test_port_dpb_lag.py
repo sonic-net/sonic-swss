@@ -41,6 +41,15 @@ class TestPortDPBLag(object):
 
         # 8. Verify that port is removed from ASIC DB
         assert(p.not_exists_in_asic_db() == True) 
+        
+        # 9. Re-create port Ethernet0 and verify that it is
+        #    present in CONFIG, APPL, and ASIC DBs
+        p.write_to_config_db()
+        time.sleep(2)
+
+        # 10. Remove PortChannel0001 and verify that its removed.
+        self.dvs_lag.remove_port_channel(lag)        
+        self.dvs_lag.get_and_verify_port_channel(0) 
 
 
 # Add Dummy always-pass test at end as workaroud
