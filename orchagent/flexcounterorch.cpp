@@ -87,6 +87,7 @@ void FlexCounterOrch::doTask(Consumer &consumer)
         if (op == SET_COMMAND)
         {
             auto it = std::find(std::begin(data), std::end(data), FieldValueTuple(FLEX_COUNTER_DELAY_STATUS_FIELD, "true"));
+
             if (it != data.end())
             {
                 continue;
@@ -149,6 +150,9 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     fieldValues.emplace_back(FLEX_COUNTER_STATUS_FIELD, value);
                     m_flexCounterGroupTable->set(flexCounterGroupMap[key], fieldValues);
                 }
+                // This field is ignored since it is being used before getting into this loop.
+                // If it is exist and the value is 'true' we need to skip the iteration in order to delay the counter creation.
+                // The field will clear out and counter will be created when enable_counters script is called.
                 else if(field == FLEX_COUNTER_DELAY_STATUS_FIELD)
                 {}
                 else
