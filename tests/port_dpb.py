@@ -63,6 +63,8 @@ class Port():
         return self._speed
     
     def get_admin_status(self):
+        if self._admin_status is None:
+            return "up"
         return self._admin_status
 
     def get_alias(self):
