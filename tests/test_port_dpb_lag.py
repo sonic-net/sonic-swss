@@ -45,7 +45,9 @@ class TestPortDPBLag(object):
         # 9. Re-create port Ethernet0 and verify that it is
         #    present in CONFIG, APPL, and ASIC DBs
         p.write_to_config_db()
-        time.sleep(2)
+        p.verify_config_db()
+        p.verify_app_db()
+        p.verify_asic_db()
 
         # 10. Remove PortChannel0001 and verify that its removed.
         self.dvs_lag.remove_port_channel(lag)        
