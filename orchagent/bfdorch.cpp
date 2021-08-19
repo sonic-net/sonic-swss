@@ -1,3 +1,9 @@
+/*
+ * TODO: Add support for additional parameters
+ *       make set and del separate functions
+ *       add support for set operation
+ */
+
 #include "bfdorch.h"
 #include "converter.h"
 #include "swssnet.h"
@@ -73,6 +79,8 @@ void BfdOrch::doTask(Consumer &consumer)
             uint32_t rx_interval = BFD_SESSION_DEFAULT_RX_INTERVAL;
             uint8_t multiplier = BFD_SESSION_DEFAULT_DETECT_MULTIPLIER;
             bool multihop = false;
+            MacAddress dst_mac;
+            bool dst_mac_provided = false;
 
             sai_attribute_t attr;
             vector<sai_attribute_t> attrs;
@@ -100,16 +108,17 @@ void BfdOrch::doTask(Consumer &consumer)
                     }
                     bfd_session_type = session_type_map.at(value);
                 }
+                else if (fvField(i) == "dst_mac")
+                {
+                    dst_mac = MacAddress(value);
+                    dst_mac_provided = true;
+                }
                 else
                     SWSS_LOG_ERROR("Unsupported BFD attribute %s\n", fvField(i).c_str());
             }
 
             attr.id = SAI_BFD_SESSION_ATTR_TYPE;
             attr.value.s32 = bfd_session_type;
-            attrs.emplace_back(attr);
-
-            attr.id = SAI_BFD_SESSION_ATTR_VIRTUAL_ROUTER;
-            attr.value.oid = gVirtualRouterId;
             attrs.emplace_back(attr);
 
             attr.id = SAI_BFD_SESSION_ATTR_LOCAL_DISCRIMINATOR;
@@ -161,6 +170,10 @@ void BfdOrch::doTask(Consumer &consumer)
 
             if (alias != "default")
             {
+                attr.id = SAI_BFD_SESSION_ATTR_HW_LOOKUP_VALID;
+                attr.value.booldata = false;
+                attrs.emplace_back(attr);
+
                 Port port;
                 if (!gPortsOrch->getPort(alias, port))
                 {
@@ -168,18 +181,53 @@ void BfdOrch::doTask(Consumer &consumer)
                     it++;
                     continue;
                 }
+
                 attr.id = SAI_BFD_SESSION_ATTR_PORT;
                 attr.value.oid = port.m_port_id;
                 attrs.emplace_back(attr);
+
+                attr.id = SAI_BFD_SESSION_ATTR_SRC_MAC_ADDRESS;
+                memcpy(attr.value.mac, port.m_mac.getMac(), sizeof(sai_mac_t));
+                attrs.emplace_back(attr);
+
+                if (!dst_mac_provided)
+                {
+                    SWSS_LOG_ERROR("Failed to create BFD session %s: \
+                            destination MAC address required when hardware lookup not valid", key.c_str());
+                    it++;
+                    continue;
+                }
+
+                attr.id = SAI_BFD_SESSION_ATTR_DST_MAC_ADDRESS;
+                memcpy(attr.value.mac, dst_mac.getMac(), sizeof(sai_mac_t));
+                attrs.emplace_back(attr);
+            }
+            else
+            {
+                attr.id = SAI_BFD_SESSION_ATTR_VIRTUAL_ROUTER;
+                attr.value.oid = gVirtualRouterId;
+                attrs.emplace_back(attr);
+
+                if (dst_mac_provided)
+                {
+                    SWSS_LOG_ERROR("Failed to create BFD session %s: \
+                            destination MAC address not supported when hardware lookup valid", key.c_str());
+                    it++;
+                    continue;
+                }
             }
 
             sai_object_id_t bfd_session_id = SAI_NULL_OBJECT_ID;
             sai_status_t status = sai_bfd_api->create_bfd_session(&bfd_session_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
             if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("Failed to create bfd session");
-                it++;
-                continue;
+                SWSS_LOG_ERROR("Failed to create bfd session %s, rv:%d", key.c_str(), status);
+                task_process_status handle_status = handleSaiCreateStatus(SAI_API_BFD, status);
+                if (!parseHandleSaiStatusFailure(handle_status))
+                {
+                    it++;
+                    continue;
+                }
             }
 
             bfd_session_map[key] = bfd_session_id;
@@ -197,9 +245,13 @@ void BfdOrch::doTask(Consumer &consumer)
             sai_status_t status = sai_bfd_api->remove_bfd_session(bfd_session_id);
             if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("Failed to remove bfd session");
-                it++;
-                continue;
+                SWSS_LOG_ERROR("Failed to remove bfd session %s, rv:%d", key.c_str(), status);
+                task_process_status handle_status = handleSaiRemoveStatus(SAI_API_BFD, status);
+                if (!parseHandleSaiStatusFailure(handle_status))
+                {
+                    it++;
+                    continue;
+                }
             }
 
             bfd_session_map.erase(key);
