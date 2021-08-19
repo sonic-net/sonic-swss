@@ -1833,7 +1833,6 @@ bool PortsOrch::setGearboxPortAttr(Port &port, dest_port_type_t port_type, sai_p
                             return false;
                     }
 
-                    // Gearbox expects speed per lane
                     speed = *static_cast<sai_int32_t*>(value);
                     if (isSpeedSupported(port.m_alias, dest_port_id, speed))
                     {
