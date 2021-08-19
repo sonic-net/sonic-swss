@@ -298,19 +298,6 @@ class TestAcl:
         dvs_acl.remove_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME)
         dvs_acl.verify_no_acl_rules()
 
-    def test_V6AclRuleTCPFlags(self, dvs_acl, l3v6_acl_table):
-        config_qualifiers = {"TCP_FLAGS": "0x07/0x3f"}
-        expected_sai_qualifiers = {
-            "SAI_ACL_ENTRY_ATTR_FIELD_TCP_FLAGS":
-                dvs_acl.get_simple_qualifier_comparator("7&mask:0x3f")
-        }
-
-        dvs_acl.create_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME, config_qualifiers)
-        dvs_acl.verify_acl_rule(expected_sai_qualifiers)
-
-        dvs_acl.remove_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME)
-        dvs_acl.verify_no_acl_rules()
-
     def test_V6AclRuleL4SrcPortRange(self, dvs_acl, l3v6_acl_table):
         config_qualifiers = {"L4_SRC_PORT_RANGE": "1-100"}
         expected_sai_qualifiers = {
