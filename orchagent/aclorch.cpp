@@ -766,6 +766,11 @@ bool AclRule::enableCounter()
 {
     SWSS_LOG_ENTER();
 
+    if (m_counterOid != SAI_NULL_OBJECT_ID)
+    {
+        return true;
+    }
+
     if (m_ruleOid == SAI_NULL_OBJECT_ID)
     {
         SWSS_LOG_ERROR("ACL rule %s doesn't exist in ACL table %s", m_id.c_str(), m_tableId.c_str());
@@ -787,6 +792,7 @@ bool AclRule::enableCounter()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to enable counter for ACL rule %s in ACL table %s", m_id.c_str(), m_tableId.c_str());
+        removeCounter();
         return false;
     }
 
@@ -796,6 +802,11 @@ bool AclRule::enableCounter()
 bool AclRule::disableCounter()
 {
     SWSS_LOG_ENTER();
+
+    if (m_counterOid == SAI_NULL_OBJECT_ID)
+    {
+        return true;
+    }
 
     if (m_ruleOid == SAI_NULL_OBJECT_ID)
     {
