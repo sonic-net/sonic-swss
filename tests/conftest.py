@@ -1623,7 +1623,7 @@ def manage_dvs(request) -> str:
             # If not re-creating the DVS, reload supervisor
             # between modules to ensure a consistent start state
             dvs.runcmd("supervisorctl reload")
-            dvs.check_services_ready(timeout=60)
+            dvs.check_services_ready(timeout=120)
 
         return dvs
 
