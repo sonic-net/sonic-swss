@@ -35,6 +35,8 @@ extern CrmOrch *gCrmOrch;
 #define MIN_VLAN_ID 1    // 0 is a reserved VLAN ID
 #define MAX_VLAN_ID 4095 // 4096 is a reserved VLAN ID
 
+const int TCP_PROTOCOL_NUM = 6; // TCP protocol number
+
 acl_rule_attr_lookup_t aclMatchLookup =
 {
     { MATCH_IN_PORTS,          SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS },
@@ -645,7 +647,7 @@ void AclRule::updateInPorts()
     attr.id = SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS;
     attr.value = m_matches[SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS];
     attr.value.aclfield.enable = true;
-    
+
     status = sai_acl_api->set_acl_entry_attribute(m_ruleOid, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -1378,14 +1380,14 @@ bool AclTable::create()
         attr.id = SAI_ACL_TABLE_ATTR_ACL_STAGE;
         attr.value.s32 = (stage == ACL_STAGE_INGRESS) ? SAI_ACL_STAGE_INGRESS : SAI_ACL_STAGE_EGRESS;
         table_attrs.push_back(attr);
-        
+
         if (stage == ACL_STAGE_INGRESS)
         {
             attr.id = SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS;
             attr.value.booldata = true;
             table_attrs.push_back(attr);
         }
-        
+
         sai_status_t status = sai_acl_api->create_acl_table(&m_oid, gSwitchId, (uint32_t)table_attrs.size(), table_attrs.data());
 
         if (status == SAI_STATUS_SUCCESS)
@@ -2985,11 +2987,11 @@ AclRule* AclOrch::getAclRule(string table_id, string rule_id)
 bool AclOrch::updateAclRule(string table_id, string rule_id, string attr_name, void *data, bool oper)
 {
     SWSS_LOG_ENTER();
-    
+
     sai_object_id_t table_oid = getTableById(table_id);
     string attr_value;
 
-    if (table_oid == SAI_NULL_OBJECT_ID) 
+    if (table_oid == SAI_NULL_OBJECT_ID)
     {
         SWSS_LOG_ERROR("Failed to update ACL rule in ACL table %s. Table doesn't exist", table_id.c_str());
         return false;
@@ -3002,29 +3004,29 @@ bool AclOrch::updateAclRule(string table_id, string rule_id, string attr_name, v
         return false;
     }
 
-    switch (aclMatchLookup[attr_name]) 
+    switch (aclMatchLookup[attr_name])
     {
         case SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS:
         {
             sai_object_id_t port_oid = *(sai_object_id_t *)data;
             vector<sai_object_id_t> in_ports = rule_it->second->getInPorts();
 
-            if (oper == RULE_OPER_ADD) 
+            if (oper == RULE_OPER_ADD)
             {
                 in_ports.push_back(port_oid);
-            } 
-            else 
+            }
+            else
             {
                 for (auto port_iter = in_ports.begin(); port_iter != in_ports.end(); port_iter++)
                 {
-                    if (*port_iter == port_oid) 
+                    if (*port_iter == port_oid)
                     {
                         in_ports.erase(port_iter);
                         break;
                     }
                 }
             }
-            
+
             for (const auto& port_iter: in_ports)
             {
                 Port p;
@@ -3277,14 +3279,22 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 it = consumer.m_toSync.erase(it);
                 return;
             }
-
+            bool bHasTCPFlag = false;
+            bool bHasIPProtocol = false;
             for (const auto& itr : kfvFieldsValues(t))
             {
                 string attr_name = to_upper(fvField(itr));
                 string attr_value = fvValue(itr);
 
                 SWSS_LOG_INFO("ATTRIBUTE: %s %s", attr_name.c_str(), attr_value.c_str());
-
+                if (attr_name == MATCH_TCP_FLAGS)
+                {
+                    bHasTCPFlag = true;
+                }
+                if (attr_name == MATCH_IP_PROTOCOL || attr_name == MATCH_NEXT_HEADER)
+                {
+                    bHasIPProtocol = true;
+                }
                 if (newRule->validateAddPriority(attr_name, attr_value))
                 {
                     SWSS_LOG_INFO("Added priority attribute");
@@ -3302,6 +3312,30 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                     SWSS_LOG_ERROR("Unknown or invalid rule attribute '%s : %s'", attr_name.c_str(), attr_value.c_str());
                     bAllAttributesOk = false;
                     break;
+                }
+            }
+            // If acl rule is to match TCP_FLAGS, and IP_PROTOCOL(NEXT_HEADER) is not set
+            // we set IP_PROTOCOL(NEXT_HEADER) to 6 to match TCP explicitly
+            if (bHasTCPFlag && !bHasIPProtocol)
+            {
+                string attr_name;
+                if (type == ACL_TABLE_MIRRORV6 || type == ACL_TABLE_L3V6)
+                {
+                    attr_name = MATCH_NEXT_HEADER;
+                }
+                else
+                {
+                    attr_name = MATCH_IP_PROTOCOL;
+
+                }
+                string attr_value = std::to_string(TCP_PROTOCOL_NUM);
+                if (newRule->validateAddMatch(attr_name, attr_value))
+                {
+                    SWSS_LOG_INFO("Automatically added match attribute '%s : %s'", attr_name.c_str(), attr_value.c_str());
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Failed to add attribute '%s : %s'", attr_name.c_str(), attr_value.c_str());
                 }
             }
 
