@@ -1,6 +1,8 @@
 #include "bfdorch.h"
 #include "converter.h"
 #include "swssnet.h"
+#include "notifier.h"
+#include "sai_serialize.h"
 
 using namespace std;
 using namespace swss;
@@ -22,10 +24,34 @@ const map<string, sai_bfd_session_type_t> session_type_map =
     {"async_passive",       SAI_BFD_SESSION_TYPE_ASYNC_PASSIVE}
 };
 
+const map<sai_bfd_session_type_t, string> session_type_loopup =
+{
+    {SAI_BFD_SESSION_TYPE_DEMAND_ACTIVE,    "demand_active"},
+    {SAI_BFD_SESSION_TYPE_DEMAND_PASSIVE,   "demand_passive"},
+    {SAI_BFD_SESSION_TYPE_ASYNC_ACTIVE,     "async_active"},
+    {SAI_BFD_SESSION_TYPE_ASYNC_PASSIVE,    "async_passive"}
+};
+
+const map<sai_bfd_session_state_t, string> session_state_loopup =
+{
+    {SAI_BFD_SESSION_STATE_ADMIN_DOWN,  "Admin_Down"},
+    {SAI_BFD_SESSION_STATE_DOWN,        "Down"},
+    {SAI_BFD_SESSION_STATE_INIT,        "Init"},
+    {SAI_BFD_SESSION_STATE_UP,          "Up"}
+};
+
 BfdOrch::BfdOrch(DBConnector *db, string tableName):
     Orch(db, tableName)
 {
     SWSS_LOG_ENTER();
+
+    m_state_db = shared_ptr<DBConnector>(new DBConnector("STATE_DB", 0));
+    m_stateBfdSessionTable = unique_ptr<Table>(new Table(m_state_db.get(), STATE_BFD_SESSION_TABLE));
+
+    DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
+    m_bfdStateNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
+    auto bfdStateNotificatier = new Notifier(m_bfdStateNotificationConsumer, this, "BFD_STATE_NOTIFICATIONS");
+    Orch::addExecutor(bfdStateNotificatier);
 }
 
 BfdOrch::~BfdOrch(void)
@@ -71,6 +97,43 @@ void BfdOrch::doTask(Consumer &consumer)
     }
 }
 
+void BfdOrch::doTask(NotificationConsumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    std::string op;
+    std::string data;
+    std::vector<swss::FieldValueTuple> values;
+
+    consumer.pop(op, data, values);
+
+    if (&consumer != m_bfdStateNotificationConsumer)
+    {
+        return;
+    }
+
+    if (op == "bfd_session_state_change")
+    {
+        uint32_t count;
+        sai_bfd_session_state_notification_t *bfdSessionState = nullptr;
+
+        sai_deserialize_bfd_session_state_ntf(data, count, &bfdSessionState);
+
+        for (uint32_t i = 0; i < count; i++)
+        {
+            sai_object_id_t id = bfdSessionState[i].bfd_session_id;
+            sai_bfd_session_state_t state = bfdSessionState[i].session_state;
+
+            SWSS_LOG_NOTICE("Get bfd session state change notification id:%" PRIx64 " state:%d", id, state);
+
+            auto key = bfd_session_lookup[id];
+            m_stateBfdSessionTable->hset(key, "state", session_state_loopup.at(state));
+        }
+
+        sai_deserialize_free_bfd_session_state_ntf(count, bfdSessionState);
+    }
+}
+
 bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple>& data)
 {
     if (bfd_session_map.find(key) != bfd_session_map.end())
@@ -101,6 +164,7 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
 
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
+    vector<FieldValueTuple> fvVector;
 
     for (auto i : data)
     {
@@ -137,6 +201,7 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     attr.id = SAI_BFD_SESSION_ATTR_TYPE;
     attr.value.s32 = bfd_session_type;
     attrs.emplace_back(attr);
+    fvVector.emplace_back("type", session_type_loopup.at(bfd_session_type));
 
     attr.id = SAI_BFD_SESSION_ATTR_LOCAL_DISCRIMINATOR;
     attr.value.u32 = bfd_gen_id();
@@ -161,6 +226,7 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     attr.id = SAI_BFD_SESSION_ATTR_SRC_IP_ADDRESS;
     copy(attr.value.ipaddr, src_ip);
     attrs.emplace_back(attr);
+    fvVector.emplace_back("local_addr", src_ip.to_string());
 
     attr.id = SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS;
     copy(attr.value.ipaddr, peer_address);
@@ -169,20 +235,28 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     attr.id = SAI_BFD_SESSION_ATTR_MIN_TX;
     attr.value.u32 = tx_interval * 1000;
     attrs.emplace_back(attr);
+    fvVector.emplace_back("tx_interval", to_string(tx_interval));
 
     attr.id = SAI_BFD_SESSION_ATTR_MIN_RX;
     attr.value.u32 = rx_interval * 1000;
     attrs.emplace_back(attr);
+    fvVector.emplace_back("rx_interval", to_string(rx_interval));
 
     attr.id = SAI_BFD_SESSION_ATTR_MULTIPLIER;
     attr.value.u8 = multiplier;
     attrs.emplace_back(attr);
+    fvVector.emplace_back("multiplier", to_string(multiplier));
 
     if (multihop)
     {
         attr.id = SAI_BFD_SESSION_ATTR_MULTIHOP;
         attr.value.booldata = true;
         attrs.emplace_back(attr);
+        fvVector.emplace_back("multihop", "true");
+    }
+    else
+    {
+        fvVector.emplace_back("multihop", "false");
     }
 
     if (alias != "default")
@@ -231,6 +305,8 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
         }
     }
 
+    fvVector.emplace_back("state", session_state_loopup.at(SAI_BFD_SESSION_STATE_DOWN));
+
     sai_object_id_t bfd_session_id = SAI_NULL_OBJECT_ID;
     sai_status_t status = sai_bfd_api->create_bfd_session(&bfd_session_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
@@ -243,7 +319,10 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
         }
     }
 
+    const string state_db_key = alias + state_db_key_delimiter + peer_address.to_string();
+    m_stateBfdSessionTable->set(state_db_key, fvVector);
     bfd_session_map[key] = bfd_session_id;
+    bfd_session_lookup[bfd_session_id] = state_db_key;
 
     return true;
 }
@@ -268,7 +347,9 @@ bool BfdOrch::remove_bfd_session(const string& key)
         }
     }
 
+    m_stateBfdSessionTable->del(bfd_session_lookup[bfd_session_id]);
     bfd_session_map.erase(key);
+    bfd_session_lookup.erase(bfd_session_id);
 
     return true;
 }
