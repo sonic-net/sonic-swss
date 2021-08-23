@@ -1,9 +1,3 @@
-/*
- * TODO: Add support for additional parameters
- *       make set and del separate functions
- *       add support for set operation
- */
-
 #include "bfdorch.h"
 #include "converter.h"
 #include "swssnet.h"
@@ -11,8 +5,8 @@
 using namespace std;
 using namespace swss;
 
-#define BFD_SESSION_DEFAULT_TX_INTERVAL 1000 * 1000
-#define BFD_SESSION_DEFAULT_RX_INTERVAL 1000 * 1000
+#define BFD_SESSION_DEFAULT_TX_INTERVAL 1000
+#define BFD_SESSION_DEFAULT_RX_INTERVAL 1000
 #define BFD_SESSION_DEFAULT_DETECT_MULTIPLIER 3
 
 extern sai_bfd_api_t*       sai_bfd_api;
@@ -85,7 +79,7 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
         return true;
     }
 
-    size_t found = key.find(':');
+    size_t found = key.find(delimiter);
     if (found == string::npos)
     {
         SWSS_LOG_ERROR("Failed to parse key %s", key.c_str());
@@ -281,17 +275,17 @@ bool BfdOrch::remove_bfd_session(const string& key)
 
 uint32_t BfdOrch::bfd_gen_id(void)
 {
-	static uint32_t session_id = 1;
-	return (session_id++);
+    static uint32_t session_id = 1;
+    return (session_id++);
 }
 
 uint32_t BfdOrch::bfd_src_port(void)
 {
-	static uint32_t port = BFD_SRCPORTINIT;
+    static uint32_t port = BFD_SRCPORTINIT;
     if (port >= BFD_SRCPORTMAX)
     {
         port = BFD_SRCPORTINIT;
     }
 
-	return (port++);
+    return (port++);
 }
