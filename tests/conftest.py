@@ -438,7 +438,7 @@ class DockerVirtualSwitch:
             self.destroy()
             raise
 
-    def check_services_ready(self, timeout=30) -> None:
+    def check_services_ready(self, timeout=300) -> None:
         """Check if all processes in the DVS are ready."""
         service_polling_config = PollingConfig(1, timeout, strict=True)
 
@@ -1622,8 +1622,11 @@ def manage_dvs(request) -> str:
         else:
             # If not re-creating the DVS, reload supervisor
             # between modules to ensure a consistent start state
+            if dvs.appldb:
+                del dvs.appldb
+
             dvs.runcmd("supervisorctl reload")
-            dvs.check_services_ready(timeout=240)
+            dvs.check_ready_status_and_init_db()
 
         return dvs
 
