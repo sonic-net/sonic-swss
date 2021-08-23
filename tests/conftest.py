@@ -1622,7 +1622,7 @@ def manage_dvs(request) -> str:
         else:
             # If not re-creating the DVS, reload supervisor
             # between modules to ensure a consistent start state
-            if dvs.appldb:
+            if getattr(dvs, 'appldb', False):
                 del dvs.appldb
 
             dvs.runcmd("supervisorctl reload")
