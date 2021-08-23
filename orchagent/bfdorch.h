@@ -22,7 +22,6 @@ private:
     uint32_t bfd_src_port(void);
 
     std::map<std::string, sai_object_id_t> bfd_session_map;
-    IntfsOrch *m_intfsOrch;
 };
 
 #endif /* SWSS_BFDORCH_H */
