@@ -15,6 +15,9 @@ public:
     virtual ~BfdOrch(void);
 
 private:
+    bool create_bfd_session(const string& key, const vector<FieldValueTuple>& data);
+    bool remove_bfd_session(const string& key);
+
     uint32_t bfd_gen_id(void);
     uint32_t bfd_src_port(void);
 
