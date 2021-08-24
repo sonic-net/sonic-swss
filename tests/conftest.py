@@ -431,6 +431,18 @@ class DockerVirtualSwitch:
 
         self.servers = []
 
+    def reload_and_wait_until_ready(self):
+        self.runcmd('supervisorctl reload')
+        try:
+            self.check_services_ready()
+        except AssertionError:
+            # Sometimes the start.sh script will exit early withou
+            # actually starting the rest of the services. 
+            # If this happens, manually run start.sh then wait again
+            # for everything to startup
+            self.runcmd('supervisorctl start.sh')
+        self.check_services_ready(timeout=60)
+
     def check_ready_status_and_init_db(self) -> None:
         try:
             # temp fix: remove them once they are moved to vs start.sh
@@ -453,7 +465,7 @@ class DockerVirtualSwitch:
             self.destroy()
             raise
 
-    def check_services_ready(self, timeout=300) -> None:
+    def check_services_ready(self, timeout=30) -> None:
         """Check if all processes in the DVS are ready."""
         service_polling_config = PollingConfig(1, timeout, strict=True)
 
@@ -472,9 +484,9 @@ class DockerVirtualSwitch:
 
             for pname in self.alld:
                 if process_status.get(pname, None) != "RUNNING":
-                    return (False, None)
+                    return (False, process_status)
 
-            return (process_status.get("start.sh", None) == "EXITED", None)
+            return (process_status.get("start.sh", None) == "EXITED", process_status)
 
         wait_for_result(_polling_function, service_polling_config)
 
@@ -1641,8 +1653,7 @@ def manage_dvs(request) -> str:
                 del dvs.appldb
 
             dvs.destroy_servers()
-            dvs.net_cleanup()
-            dvs.runcmd("supervisorctl reload")
+            dvs.reload_and_wait_until_ready()
             dvs.check_ready_status_and_init_db()
             dvs.create_servers()
 
