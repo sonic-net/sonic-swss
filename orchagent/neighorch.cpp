@@ -32,7 +32,7 @@ NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch,
     SWSS_LOG_ENTER();
 
     m_fdbOrch->attach(this);
-    
+
     if(gMySwitchType == "voq")
     {
         //Add subscriber to process VOQ system neigh
@@ -428,11 +428,9 @@ bool NeighOrch::removeNextHop(const IpAddress &ipAddress, const string &alias)
         nexthop.alias = inbp.m_alias;
     }
 
-    assert(hasNextHop(nexthop));
-
     gFgNhgOrch->invalidNextHopInNextHopGroup(nexthop);
 
-    if (m_syncdNextHops[nexthop].ref_count > 0)
+    if (m_syncdNextHops.at(nexthop).ref_count > 0)
     {
         SWSS_LOG_ERROR("Failed to remove still referenced next hop %s on %s",
                        ipAddress.to_string().c_str(), alias.c_str());
@@ -459,20 +457,18 @@ bool NeighOrch::removeMplsNextHop(const NextHopKey& nh)
         nexthop.alias = inbp.m_alias;
     }
 
-    assert(hasNextHop(nexthop));
-
     SWSS_LOG_INFO("Removing next hop %s", nexthop.to_string().c_str());
 
     gFgNhgOrch->invalidNextHopInNextHopGroup(nexthop);
 
-    if (m_syncdNextHops[nexthop].ref_count > 0)
+    if (m_syncdNextHops.at(nexthop).ref_count > 0)
     {
         SWSS_LOG_ERROR("Failed to remove still referenced next hop %s",
                        nexthop.to_string().c_str());
         return false;
     }
 
-    sai_object_id_t next_hop_id = m_syncdNextHops[nexthop].next_hop_id;
+    sai_object_id_t next_hop_id = m_syncdNextHops.at(nexthop).next_hop_id;
     sai_status_t status = sai_next_hop_api->remove_next_hop(next_hop_id);
 
     /*
@@ -516,9 +512,7 @@ bool NeighOrch::removeOverlayNextHop(const NextHopKey &nexthop)
 {
     SWSS_LOG_ENTER();
 
-    assert(hasNextHop(nexthop));
-
-    if (m_syncdNextHops[nexthop].ref_count > 0)
+    if (m_syncdNextHops.at(nexthop).ref_count > 0)
     {
         SWSS_LOG_ERROR("Failed to remove still referenced next hop %s on %s",
                    nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
@@ -541,8 +535,6 @@ sai_object_id_t NeighOrch::getLocalNextHopId(const NextHopKey& nexthop)
 
 sai_object_id_t NeighOrch::getNextHopId(const NextHopKey &nexthop)
 {
-    assert(hasNextHop(nexthop));
-
     /*
      * The nexthop id could be varying depending on the use-case
      * For e.g, a route could have a direct neighbor but may require
@@ -554,13 +546,12 @@ sai_object_id_t NeighOrch::getNextHopId(const NextHopKey &nexthop)
     {
         return nhid;
     }
-    return m_syncdNextHops[nexthop].next_hop_id;
+    return m_syncdNextHops.at(nexthop).next_hop_id;
 }
 
 int NeighOrch::getNextHopRefCount(const NextHopKey &nexthop)
 {
-    assert(hasNextHop(nexthop));
-    return m_syncdNextHops[nexthop].ref_count;
+    return m_syncdNextHops.at(nexthop).ref_count;
 }
 
 void NeighOrch::increaseNextHopRefCount(const NextHopKey &nexthop, uint32_t count)
@@ -1024,7 +1015,7 @@ bool NeighOrch::removeNeighbor(const NeighborEntry &neighborEntry, bool disable)
 
     NeighborUpdate update = { neighborEntry, MacAddress(), false };
     notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
-    
+
     if(gMySwitchType == "voq")
     {
         //Sync the neighbor to delete from the CHASSIS_APP_DB
@@ -1298,7 +1289,7 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
                         // the owner asic's mac is not readily avaiable here, the owner asic mac is derived from
                         // the switch id and lower 5 bytes of asic mac which is assumed to be same for all asics
                         // in the VS system.
-                        // Therefore to make VOQ chassis systems work in VS platform based setups like the setups 
+                        // Therefore to make VOQ chassis systems work in VS platform based setups like the setups
                         // using KVMs, it is required that all asics have same base mac in the format given below
                         // <lower 5 bytes of mac same for all asics>:<6th byte = switch_id>
 
