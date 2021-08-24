@@ -124,7 +124,7 @@ void BfdOrch::doTask(NotificationConsumer &consumer)
             sai_object_id_t id = bfdSessionState[i].bfd_session_id;
             sai_bfd_session_state_t state = bfdSessionState[i].session_state;
 
-            SWSS_LOG_NOTICE("Get bfd session state change notification id:%" PRIx64 " state:%d", id, state);
+            SWSS_LOG_INFO("Get bfd session state change notification id:%" PRIx64 " state:%d", id, state);
 
             auto key = bfd_session_lookup[id];
             m_stateBfdSessionTable->hset(key, "state", session_state_loopup.at(state));
