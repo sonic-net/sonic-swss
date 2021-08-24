@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tarfile
 import io
+import logging
 
 from typing import Dict, Tuple
 from datetime import datetime
@@ -26,6 +27,8 @@ from dvslib import dvs_mirror
 from dvslib import dvs_policer
 
 from buffer_model import enable_dynamic_buffer
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_DVS_NAME = "sonic-swss-test-dvs"
 
@@ -198,6 +201,9 @@ class VirtualServer:
             ensure_system(f"nsenter -t {pid} -n ip link set arp off dev {self.pifname}")
             ensure_system(f"nsenter -t {pid} -n sysctl -w net.ipv6.conf.{self.pifname}.disable_ipv6=1")
 
+    def __repr__(self):
+        return f'<VirtualServer> {self.nsname}'
+
     def kill_all_processes(self) -> None:
         pids = subprocess.check_output(f"ip netns pids {self.nsname}", shell=True).decode("utf-8")
         if pids:
@@ -345,9 +351,7 @@ class DockerVirtualSwitch:
 
             # create virtual server
             self.servers = []
-            for i in range(NUM_PORTS):
-                server = VirtualServer(self.ctn_sw.name, self.ctn_sw_pid, i)
-                self.servers.append(server)
+            self.create_servers()
 
             if self.vct:
                 self.vct_connect(newctnname)
@@ -398,15 +402,20 @@ class DockerVirtualSwitch:
         if buffer_model == 'dynamic':
             enable_dynamic_buffer(self.get_config_db(), self.runcmd)
 
+    def create_servers(self):
+        for i in range(NUM_PORTS):
+            server = VirtualServer(self.ctn_sw.name, self.ctn_sw_pid, i)
+            self.servers.append(server)
+            
+
     def destroy(self) -> None:
-        if self.appldb:
+        if getattr(self, 'appldb', False):
             del self.appldb
 
         # In case persistent dvs was used removed all the extra server link
         # that were created
         if self.persistent:
-            for s in self.servers:
-                s.destroy()
+            self.destroy_servers()
 
         # persistent and clean-up flag are mutually exclusive
         elif self.cleanup:
@@ -415,6 +424,12 @@ class DockerVirtualSwitch:
             os.system(f"rm -rf {self.mount}")
             for s in self.servers:
                 s.destroy()
+
+    def destroy_servers(self):
+        for s in self.servers:
+            s.destroy()
+
+        self.servers = []
 
     def check_ready_status_and_init_db(self) -> None:
         try:
@@ -1625,8 +1640,11 @@ def manage_dvs(request) -> str:
             if getattr(dvs, 'appldb', False):
                 del dvs.appldb
 
+            dvs.destroy_servers()
+            dvs.net_cleanup()
             dvs.runcmd("supervisorctl reload")
             dvs.check_ready_status_and_init_db()
+            dvs.create_servers()
 
         return dvs
 
