@@ -35,7 +35,12 @@ extraction:
       - git apply ../patch/0002-mpls-remove-nl_addr_valid.patch
       - ln -s ../debian debian
       - fakeroot dpkg-buildpackage -us -uc -b
-      - popd
+      - popd; popd
+      - git clone https://github.com/Azure/sonic-swss-common; pushd sonic-swss-common; ./autogen.sh; fakeroot dpkg-buildpackage -us -uc -b; popd
+      - dpkg-deb -x libswsscommon_1.0.0_amd64.deb $LGTM_WORKSPACE
+      - dpkg-deb -x libswsscommon-dev_1.0.0_amd64.deb $LGTM_WORKSPACE
+      - git clone --recursive https://github.com/Azure/sonic-sairedis; pushd sonic-sairedis; ./autogen.sh; DEB_BUILD_OPTIONS=nocheck SWSS_COMMON_INC="$LGTM_WORKSPACE/usr/include" SWSS_COMMON_LIB="$LGTM_WORKSPACE/usr/lib/x86_64-linux-gnu" fakeroot debian/rules binary-syncd-vs; popd
+      - pushd sonic-buildimage/src/libnl3/
       - dpkg-deb -x libnl-3-200_3.5.0-1_amd64.deb $LGTM_WORKSPACE
       - dpkg-deb -x libnl-3-dev_3.5.0-1_amd64.deb $LGTM_WORKSPACE
       - dpkg-deb -x libnl-genl-3-200_3.5.0-1_amd64.deb $LGTM_WORKSPACE
@@ -45,10 +50,6 @@ extraction:
       - dpkg-deb -x libnl-nf-3-200_3.5.0-1_amd64.deb $LGTM_WORKSPACE
       - dpkg-deb -x libnl-nf-3-dev_3.5.0-1_amd64.deb $LGTM_WORKSPACE
       - popd
-      - git clone https://github.com/Azure/sonic-swss-common; pushd sonic-swss-common; ./autogen.sh; fakeroot dpkg-buildpackage -us -uc -b; popd
-      - dpkg-deb -x libswsscommon_1.0.0_amd64.deb $LGTM_WORKSPACE
-      - dpkg-deb -x libswsscommon-dev_1.0.0_amd64.deb $LGTM_WORKSPACE
-      - git clone --recursive https://github.com/Azure/sonic-sairedis; pushd sonic-sairedis; ./autogen.sh; DEB_BUILD_OPTIONS=nocheck SWSS_COMMON_INC="$LGTM_WORKSPACE/usr/include" SWSS_COMMON_LIB="$LGTM_WORKSPACE/usr/lib/x86_64-linux-gnu" fakeroot debian/rules binary-syncd-vs; popd
       - dpkg-deb -x libsairedis_1.0.0_amd64.deb $LGTM_WORKSPACE
       - dpkg-deb -x libsairedis-dev_1.0.0_amd64.deb $LGTM_WORKSPACE
       - dpkg-deb -x libsaimetadata_1.0.0_amd64.deb $LGTM_WORKSPACE
