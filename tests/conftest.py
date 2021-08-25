@@ -30,8 +30,6 @@ from buffer_model import enable_dynamic_buffer
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_DVS_NAME = "sonic-swss-test-dvs"
-
 # FIXME: For the sake of stabilizing the PR pipeline we currently assume there are 32 front-panel
 # ports in the system (much like the rest of the test suite). This should be adjusted to accomodate
 # a dynamic number of ports. GitHub Issue: Azure/sonic-swss#1384.
