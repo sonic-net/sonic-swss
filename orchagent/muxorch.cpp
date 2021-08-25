@@ -1300,7 +1300,17 @@ void MuxCableOrch::updateMuxMetricState(string portName, string muxState, bool s
     char buf[256];
     std::strftime(buf, 256, "%Y-%b-%d %H:%M:%S.", &now_tm);
 
-    string time = string(buf) + to_string(micros);
+    /*
+     * Prepend '0's for 6 point precision
+     */
+    const int precision = 6;
+    auto ms = to_string(micros);
+    if (ms.length() < precision)
+    {
+        ms.insert(ms.begin(), precision - ms.length(), '0');
+    }
+
+    string time = string(buf) + ms;
 
     mux_metric_table_.hset(portName, msg, time);
 }

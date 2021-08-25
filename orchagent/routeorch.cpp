@@ -127,15 +127,15 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
     IpPrefix linklocal_prefix = getLinkLocalEui64Addr();
 
     addLinkLocalRouteToMe(gVirtualRouterId, linklocal_prefix);
+    SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu", linklocal_prefix.to_string().c_str());
 
     /* Add fe80::/10 subnet route to forward all link-local packets
      * destined to us, to CPU */
     IpPrefix default_link_local_prefix("fe80::/10");
 
     addLinkLocalRouteToMe(gVirtualRouterId, default_link_local_prefix);
+    SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu", default_link_local_prefix.to_string().c_str());
 
-    /* TODO: Add the link-local fe80::/10 route to cpu in every VRF created from
-     * vrforch::addOperation. */
 }
 
 std::string RouteOrch::getLinkLocalEui64Addr(void)
@@ -203,6 +203,27 @@ void RouteOrch::addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal
     gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
 
     SWSS_LOG_NOTICE("Created link local ipv6 route  %s to cpu", linklocal_prefix.to_string().c_str());
+}
+
+void RouteOrch::delLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix)
+{
+    sai_route_entry_t unicast_route_entry;
+    unicast_route_entry.switch_id = gSwitchId;
+    unicast_route_entry.vr_id = vrf_id;
+    copy(unicast_route_entry.destination, linklocal_prefix);
+    subnet(unicast_route_entry.destination, unicast_route_entry.destination);
+
+    sai_status_t status = sai_route_api->remove_route_entry(&unicast_route_entry);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to delete link local ipv6 route %s to cpu, rv:%d",
+                       linklocal_prefix.getIp().to_string().c_str(), status);
+        return;
+    }
+
+    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+
+    SWSS_LOG_NOTICE("Deleted link local ipv6 route  %s to cpu", linklocal_prefix.to_string().c_str());
 }
 
 bool RouteOrch::hasNextHopGroup(const NextHopGroupKey& nexthops) const
@@ -317,6 +338,9 @@ bool RouteOrch::validnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t& 
         vector<sai_attribute_t> nhgm_attrs;
         sai_attribute_t nhgm_attr;
 
+        /* get updated nhkey with possible weight */
+        auto nhkey = nhopgroup->first.getNextHops().find(nexthop);
+
         nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID;
         nhgm_attr.value.oid = nhopgroup->second.next_hop_group_id;
         nhgm_attrs.push_back(nhgm_attr);
@@ -324,6 +348,13 @@ bool RouteOrch::validnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t& 
         nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
         nhgm_attr.value.oid = m_neighOrch->getNextHopId(nexthop);
         nhgm_attrs.push_back(nhgm_attr);
+
+        if (nhkey->weight)
+        {
+            nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT;
+            nhgm_attr.value.s32 = nhkey->weight;
+            nhgm_attrs.push_back(nhgm_attr);
+        }
 
         status = sai_next_hop_group_api->create_next_hop_group_member(&nexthop_id, gSwitchId,
                                                                       (uint32_t)nhgm_attrs.size(),
@@ -523,6 +554,7 @@ void RouteOrch::doTask(Consumer& consumer)
                 string mpls_nhs;
                 string vni_labels;
                 string remote_macs;
+                string weights;
                 bool& excp_intfs_flag = ctx.excp_intfs_flag;
                 bool overlay_nh = false;
                 bool blackhole = false;
@@ -548,6 +580,9 @@ void RouteOrch::doTask(Consumer& consumer)
 
                     if (fvField(i) == "blackhole")
                         blackhole = fvValue(i) == "true";
+
+                    if (fvField(i) == "weight")
+                        weights = fvValue(i);
                 }
 
                 vector<string> ipv = tokenize(ips, ',');
@@ -636,7 +671,7 @@ void RouteOrch::doTask(Consumer& consumer)
                         nhg_str += ipv[i] + NH_DELIMITER + alsv[i];
                     }
 
-                    nhg = NextHopGroupKey(nhg_str);
+                    nhg = NextHopGroupKey(nhg_str, weights);
 
                 }
                 else
@@ -1104,6 +1139,7 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
     for (size_t i = 0; i < npid_count; i++)
     {
         auto nhid = next_hop_ids[i];
+        auto weight = nhopgroup_members_set[nhid].weight;
 
         // Create a next hop group member
         vector<sai_attribute_t> nhgm_attrs;
@@ -1116,6 +1152,13 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
         nhgm_attr.value.oid = nhid;
         nhgm_attrs.push_back(nhgm_attr);
+
+        if (weight)
+        {
+            nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT;
+            nhgm_attr.value.s32 = weight;
+            nhgm_attrs.push_back(nhgm_attr);
+        }
 
         gNextHopGroupMemberBulker.create_entry(&nhgm_ids[i],
                                                  (uint32_t)nhgm_attrs.size(),

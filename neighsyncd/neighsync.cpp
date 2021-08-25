@@ -13,13 +13,17 @@
 
 #include "neighsync.h"
 #include "warm_restart.h"
+#include <algorithm>
 
 using namespace std;
 using namespace swss;
 
-NeighSync::NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb) :
+NeighSync::NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector *cfgDb) :
     m_neighTable(pipelineAppDB, APP_NEIGH_TABLE_NAME),
-    m_stateNeighRestoreTable(stateDb, STATE_NEIGH_RESTORE_TABLE_NAME)
+    m_stateNeighRestoreTable(stateDb, STATE_NEIGH_RESTORE_TABLE_NAME),
+    m_cfgInterfaceTable(cfgDb, CFG_INTF_TABLE_NAME),
+    m_cfgLagInterfaceTable(cfgDb, CFG_LAG_INTF_TABLE_NAME),
+    m_cfgVlanInterfaceTable(cfgDb, CFG_VLAN_INTF_TABLE_NAME)
 {
     m_AppRestartAssist = new AppRestartAssist(pipelineAppDB, "neighsyncd", "swss", DEFAULT_NEIGHSYNC_WARMSTART_TIMER);
     if (m_AppRestartAssist)
@@ -57,6 +61,7 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     struct rtnl_neigh *neigh = (struct rtnl_neigh *)obj;
     string key;
     string family;
+    string intfName;
 
     if ((nlmsg_type != RTM_NEWNEIGH) && (nlmsg_type != RTM_GETNEIGH) &&
         (nlmsg_type != RTM_DELNEIGH))
@@ -70,12 +75,18 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
         return;
 
     key+= LinkCache::getInstance().ifindexToName(rtnl_neigh_get_ifindex(neigh));
+    intfName = key;
     key+= ":";
 
     nl_addr2str(rtnl_neigh_get_dst(neigh), ipStr, MAX_ADDR_SIZE);
-    /* Ignore IPv6 link-local addresses as neighbors */
+    /* Ignore IPv6 link-local addresses as neighbors, if ipv6 link local mode is disabled */
     if (family == IPV6_NAME && IN6_IS_ADDR_LINKLOCAL(nl_addr_get_binary_addr(rtnl_neigh_get_dst(neigh))))
-        return;
+    {
+        if (isLinkLocalEnabled(intfName) == false)
+        {
+            return;
+        }
+    }
     /* Ignore IPv6 multicast link-local addresses as neighbors */
     if (family == IPV6_NAME && IN6_IS_ADDR_MC_LINKLOCAL(nl_addr_get_binary_addr(rtnl_neigh_get_dst(neigh))))
         return;
@@ -123,4 +134,53 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
         }
         m_neighTable.set(key, fvVector);
     }
+}
+
+/* To check the ipv6 link local is enabled on a given port */
+bool NeighSync::isLinkLocalEnabled(const string &port)
+{
+    vector<FieldValueTuple> values;
+
+    if (!port.compare(0, strlen("Vlan"), "Vlan"))
+    {
+        if (!m_cfgVlanInterfaceTable.get(port, values))
+        {
+            SWSS_LOG_INFO("IPv6 Link local is not enabled on %s", port.c_str());
+            return false;
+        }
+    }
+    else if (!port.compare(0, strlen("PortChannel"), "PortChannel"))
+    {
+        if (!m_cfgLagInterfaceTable.get(port, values))
+        {
+            SWSS_LOG_INFO("IPv6 Link local is not enabled on %s", port.c_str());
+            return false;
+        }
+    }
+    else if (!port.compare(0, strlen("Ethernet"), "Ethernet"))
+    {
+        if (!m_cfgInterfaceTable.get(port, values))
+        {
+            SWSS_LOG_INFO("IPv6 Link local is not enabled on %s", port.c_str());
+            return false;
+        }
+    }
+    else
+    {
+        SWSS_LOG_INFO("IPv6 Link local is not supported for %s ", port.c_str());
+        return false;
+    }
+
+    auto it = std::find_if(values.begin(), values.end(), [](const FieldValueTuple& t){ return t.first == "ipv6_use_link_local_only";});
+    if (it != values.end())
+    {
+        if (it->second == "enable")
+        {
+            SWSS_LOG_INFO("IPv6 Link local is enabled on %s", port.c_str());
+            return true;
+        }
+    }
+
+    SWSS_LOG_INFO("IPv6 Link local is not enabled on %s", port.c_str());
+    return false;
 }

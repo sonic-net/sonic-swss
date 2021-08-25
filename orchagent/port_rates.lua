@@ -79,15 +79,16 @@ for i = 1, n do
             redis.call('HSET', state_table, 'INIT_DONE', 'DONE')
         end
     else
-        -- Set old COUNTERS values
-        redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'SAI_PORT_STAT_IF_IN_UCAST_PKTS_last', in_ucast_pkts)
-        redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'SAI_PORT_STAT_IF_IN_NON_UCAST_PKTS_last', in_non_ucast_pkts)
-        redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'SAI_PORT_STAT_IF_OUT_UCAST_PKTS_last', out_ucast_pkts)
-        redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'SAI_PORT_STAT_IF_OUT_NON_UCAST_PKTS_last', out_non_ucast_pkts)
-        redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'SAI_PORT_STAT_IF_IN_OCTETS_last', in_octets)
-        redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'SAI_PORT_STAT_IF_OUT_OCTETS_last', out_octets)
         redis.call('HSET', state_table, 'INIT_DONE', 'COUNTERS_LAST')
     end
+
+    -- Set old COUNTERS values
+    redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'SAI_PORT_STAT_IF_IN_UCAST_PKTS_last', in_ucast_pkts)
+    redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'SAI_PORT_STAT_IF_IN_NON_UCAST_PKTS_last', in_non_ucast_pkts)
+    redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'SAI_PORT_STAT_IF_OUT_UCAST_PKTS_last', out_ucast_pkts)
+    redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'SAI_PORT_STAT_IF_OUT_NON_UCAST_PKTS_last', out_non_ucast_pkts)
+    redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'SAI_PORT_STAT_IF_IN_OCTETS_last', in_octets)
+    redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'SAI_PORT_STAT_IF_OUT_OCTETS_last', out_octets)
 end
 
 return logtable

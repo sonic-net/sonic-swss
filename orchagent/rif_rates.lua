@@ -11,7 +11,7 @@ local function logit(msg)
 end
 
 local counters_db = ARGV[1]
-local counters_table_name = ARGV[2] 
+local counters_table_name = ARGV[2]
 local rates_table_name = "RATES"
 
 -- Get configuration
@@ -43,7 +43,7 @@ for i = 1, n do
         local in_pkts_last = redis.call('HGET', rates_table_name .. ':' .. KEYS[i], 'SAI_ROUTER_INTERFACE_STAT_IN_PACKETS_last')
         local out_octets_last = redis.call('HGET', rates_table_name .. ':' .. KEYS[i], 'SAI_ROUTER_INTERFACE_STAT_OUT_OCTETS_last')
         local out_pkts_last = redis.call('HGET', rates_table_name .. ':' .. KEYS[i], 'SAI_ROUTER_INTERFACE_STAT_OUT_PACKETS_last')
-        
+
         -- Calculate new rates values
         local rx_bps_new = (in_octets - in_octets_last) / delta * 1000
         local tx_bps_new = (out_octets - out_octets_last) / delta * 1000
@@ -61,7 +61,7 @@ for i = 1, n do
             redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'RX_BPS', alpha*rx_bps_new + one_minus_alpha*rx_bps_old)
             redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'RX_PPS', alpha*rx_pps_new + one_minus_alpha*rx_pps_old)
             redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'TX_BPS', alpha*tx_bps_new + one_minus_alpha*tx_bps_old)
-            redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'TX_PPS', alpha*tx_pps_new + one_minus_alpha*tx_pps_old)   
+            redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'TX_PPS', alpha*tx_pps_new + one_minus_alpha*tx_pps_old)
         else
             -- Store unsmoothed initial rates values in DB
             redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'RX_BPS', rx_bps_new)
@@ -69,15 +69,16 @@ for i = 1, n do
             redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'TX_BPS', tx_bps_new)
             redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'TX_PPS', tx_pps_new)
             redis.call('HSET', state_table, 'INIT_DONE', 'DONE')
-        end        
+        end
     else
-        -- Set old COUNTERS values
-        redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'SAI_ROUTER_INTERFACE_STAT_IN_OCTETS_last', in_octets)
-        redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'SAI_ROUTER_INTERFACE_STAT_IN_PACKETS_last', in_pkts)
-        redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'SAI_ROUTER_INTERFACE_STAT_OUT_OCTETS_last', out_octets)
-        redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'SAI_ROUTER_INTERFACE_STAT_OUT_PACKETS_last', out_pkts)      
         redis.call('HSET', state_table, 'INIT_DONE', 'COUNTERS_LAST')
     end
+
+    -- Set old COUNTERS values
+    redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'SAI_ROUTER_INTERFACE_STAT_IN_OCTETS_last', in_octets)
+    redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'SAI_ROUTER_INTERFACE_STAT_IN_PACKETS_last', in_pkts)
+    redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'SAI_ROUTER_INTERFACE_STAT_OUT_OCTETS_last', out_octets)
+    redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'SAI_ROUTER_INTERFACE_STAT_OUT_PACKETS_last', out_pkts)
 end
 
 return logtable
