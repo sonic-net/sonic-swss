@@ -438,7 +438,7 @@ class DockerVirtualSwitch:
             # actually starting the rest of the services. 
             # If this happens, manually run start.sh then wait again
             # for everything to startup
-            self.runcmd('supervisorctl start.sh')
+            self.runcmd('supervisorctl start start.sh')
         self.check_services_ready(timeout=60)
 
     def check_ready_status_and_init_db(self) -> None:
