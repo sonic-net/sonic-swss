@@ -34,7 +34,6 @@ class DropCounter : public DebugCounter
 
         static std::unordered_set<std::string> getSupportedDropReasons(sai_debug_counter_attr_t drop_reason_type);
         static std::string serializeSupportedDropReasons(std::unordered_set<std::string> drop_reasons);
-        static std::unordered_set<std::string> getSupportedCounterTypes();
         static uint64_t getSupportedDebugCounterAmounts(sai_debug_counter_type_t counter_type);
 
     private:
