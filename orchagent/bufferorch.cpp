@@ -31,6 +31,12 @@ static const vector<sai_buffer_pool_stat_t> bufferSharedHeadroomPoolWatermarkSta
     SAI_BUFFER_POOL_STAT_XOFF_ROOM_WATERMARK_BYTES
 };
 
+static const vector<sai_buffer_pool_stat_t> bufferPoolAllWatermarkStatIds =
+{
+    SAI_BUFFER_POOL_STAT_WATERMARK_BYTES,
+    SAI_BUFFER_POOL_STAT_XOFF_ROOM_WATERMARK_BYTES
+};
+
 type_map BufferOrch::m_buffer_type_maps = {
     {APP_BUFFER_POOL_TABLE_NAME, new object_reference_map()},
     {APP_BUFFER_PROFILE_TABLE_NAME, new object_reference_map()},
@@ -254,17 +260,7 @@ void BufferOrch::generateBufferPoolWatermarkCounterIdList(void)
     vector<uint64_t> counterData(size);
     for (const auto &it : *(m_buffer_type_maps[APP_BUFFER_POOL_TABLE_NAME]))
     {
-        sai_status_t status = sai_buffer_api->clear_buffer_pool_stats(
-                it.second.m_saiObjectId,
-                static_cast<uint32_t>(bufferPoolWatermarkStatIds.size()),
-                reinterpret_cast<const sai_stat_id_t *>(bufferPoolWatermarkStatIds.data()));
-        if (SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) || SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status)
-            || status == SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED)
-        {
-            SWSS_LOG_NOTICE("Clear watermark failed on %s, rv: %s", it.first.c_str(), sai_serialize_status(status).c_str());
-            noWmClrCapability |= bitMask;
-        }
-
+        sai_status_t status;
         // Check whether shared headroom pool water mark is supported
         status = sai_buffer_api->get_buffer_pool_stats(
                 it.second.m_saiObjectId,
@@ -276,6 +272,19 @@ void BufferOrch::generateBufferPoolWatermarkCounterIdList(void)
         {
             SWSS_LOG_NOTICE("Read shared headroom pool watermark failed on %s, rv: %s", it.first.c_str(), sai_serialize_status(status).c_str());
             noShpWmRdCapability |= bitMask;
+        }
+
+        const auto &watermarkStatIds = (noShpWmRdCapability & bitMask) ? bufferPoolAllWatermarkStatIds : bufferPoolWatermarkStatIds;
+
+        status = sai_buffer_api->clear_buffer_pool_stats(
+                it.second.m_saiObjectId,
+                static_cast<uint32_t>(watermarkStatIds.size()),
+                reinterpret_cast<const sai_stat_id_t *>(watermarkStatIds.data()));
+        if (SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) || SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status)
+            || status == SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED)
+        {
+            SWSS_LOG_NOTICE("Clear watermark failed on %s, rv: %s", it.first.c_str(), sai_serialize_status(status).c_str());
+            noWmClrCapability |= bitMask;
         }
 
         bitMask <<= 1;
