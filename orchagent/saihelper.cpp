@@ -67,6 +67,7 @@ sai_isolation_group_api_t*  sai_isolation_group_api;
 sai_system_port_api_t*      sai_system_port_api;
 sai_macsec_api_t*           sai_macsec_api;
 sai_l2mc_group_api_t*       sai_l2mc_group_api;
+sai_counter_api_t*          sai_counter_api;
 
 extern sai_object_id_t gSwitchId;
 extern bool gSairedisRecord;
@@ -83,15 +84,15 @@ static map<string, sai_switch_hardware_access_bus_t> hardware_access_map =
 
 map<string, string> gProfileMap;
 
-sai_status_t mdio_read(uint64_t platform_context, 
-  uint32_t mdio_addr, uint32_t reg_addr, 
+sai_status_t mdio_read(uint64_t platform_context,
+  uint32_t mdio_addr, uint32_t reg_addr,
   uint32_t number_of_registers, uint32_t *data)
 {
     return SAI_STATUS_NOT_IMPLEMENTED;
 }
 
-sai_status_t mdio_write(uint64_t platform_context, 
-  uint32_t mdio_addr, uint32_t reg_addr, 
+sai_status_t mdio_write(uint64_t platform_context,
+  uint32_t mdio_addr, uint32_t reg_addr,
   uint32_t number_of_registers, uint32_t *data)
 {
     return SAI_STATUS_NOT_IMPLEMENTED;
@@ -191,6 +192,7 @@ void initSaiApi()
     sai_api_query(SAI_API_SYSTEM_PORT,          (void **)&sai_system_port_api);
     sai_api_query(SAI_API_MACSEC,               (void **)&sai_macsec_api);
     sai_api_query(SAI_API_L2MC_GROUP,           (void **)&sai_l2mc_group_api);
+    sai_api_query(SAI_API_COUNTER,              (void **)&sai_counter_api);
 
     sai_log_set(SAI_API_SWITCH,                 SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_BRIDGE,                 SAI_LOG_LEVEL_NOTICE);
@@ -224,6 +226,7 @@ void initSaiApi()
     sai_log_set(SAI_API_SYSTEM_PORT,            SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_MACSEC,                 SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_L2MC_GROUP,             SAI_LOG_LEVEL_NOTICE);
+    sai_log_set(SAI_API_COUNTER,                SAI_LOG_LEVEL_NOTICE);
 }
 
 void initSaiRedis(const string &record_location, const std::string &record_filename)
@@ -446,8 +449,8 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
     {
         SWSS_LOG_ERROR("BOX: Failed to get firmware major version:%d rtn:%d", phy->phy_id, status);
         return status;
-    } 
-    else 
+    }
+    else
     {
         phy->firmware_major_version = string(attr.value.chardata);
     }

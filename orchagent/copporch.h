@@ -3,7 +3,16 @@
 
 #include <map>
 #include <set>
+#include <memory>
+#include "dbconnector.h"
 #include "orch.h"
+#include "flex_counter_manager.h"
+#include "producertable.h"
+#include "table.h"
+
+using namespace swss;
+
+#define HOSTIF_TRAP_COUNTER_FLEX_COUNTER_GROUP "HOSTIF_TRAP_FLOW_COUNTER"
 
 // trap fields
 const std::string copp_trap_id_list                = "trap_ids";
@@ -33,6 +42,7 @@ struct copp_trap_objects
 {
     sai_object_id_t trap_obj;
     sai_object_id_t trap_group_obj;
+    sai_hostif_trap_type_t trap_type;
 };
 
 /* TrapGroupPolicerTable: trap group ID, policer ID */
@@ -45,11 +55,15 @@ typedef std::map<sai_object_id_t, sai_object_id_t> TrapGroupHostIfMap;
 typedef std::map<sai_hostif_trap_type_t, sai_object_id_t> TrapIdHostIfTableMap;
 /* Trap group to trap ID attributes */
 typedef std::map<std::string, TrapIdAttribs> TrapGroupTrapIdAttribs;
+/* Trap OID to trap name*/
+typedef std::map<sai_object_id_t, std::string> TrapIdNameMap;
 
 class CoppOrch : public Orch
 {
 public:
     CoppOrch(swss::DBConnector* db, std::string tableName);
+    void generateHostIfTrapCounterIdList();
+    void clearHostIfTrapCounterIdList();
 protected:
     object_map m_trap_group_map;
 
@@ -59,10 +73,21 @@ protected:
     TrapGroupHostIfMap m_trap_group_hostif_map;
     TrapIdHostIfTableMap m_trapid_hostif_table_map;
     TrapGroupTrapIdAttribs m_trap_group_trap_id_attrs;
+    TrapIdNameMap m_trap_id_name_map;
+
+    std::shared_ptr<DBConnector> m_counter_db;
+    std::shared_ptr<DBConnector> m_flex_db;
+    std::unique_ptr<Table> m_counter_table;
+    std::unique_ptr<ProducerTable> m_flex_counter_group_table;
+
+    FlexCounterManager m_trap_counter_manager;
+
+    bool m_trap_rate_plugin_loaded = false;
 
     void initDefaultHostIntfTable();
     void initDefaultTrapGroup();
     void initDefaultTrapIds();
+    void initTrapRatePlugin();
 
     task_process_status processCoppRule(Consumer& consumer);
     bool isValidList(std::vector<std::string> &trap_id_list, std::vector<std::string> &all_items) const;
@@ -98,6 +123,11 @@ protected:
                                   std::vector<sai_attribute_t> &genetlink_attribs);
 
     bool trapGroupUpdatePolicer (std::string trap_group_name, std::vector<sai_attribute_t> &policer_attribs);
+
+    bool removeTrap(sai_object_id_t hostif_trap_id);
+
+    bool bindTrapCounter(sai_object_id_t hostif_trap_id, sai_hostif_trap_type_t trap_type);
+    void unbindTrapCounter(sai_object_id_t hostif_trap_id);
 
     virtual void doTask(Consumer& consumer);
 };
