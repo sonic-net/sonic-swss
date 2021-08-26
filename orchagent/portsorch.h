@@ -119,8 +119,8 @@ public:
     bool bindUnbindAclTableGroup(Port &port,
                                  bool ingress,
                                  bool bind);
-    bool getPortPfc(sai_object_id_t portId, uint8_t *pfc_bitmask);
-    bool setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask);
+    bool getPortPfc(sai_object_id_t portId, uint8_t *pfc_tx_bitmask, uint8_t *pfc_rx_bitmask);
+    bool setPortPfc(sai_object_id_t portId, uint8_t pfc_tx_bitmask, uint8_t pfc_rx_bitmask);
 
     void generateQueueMap();
     void generatePriorityGroupMap();

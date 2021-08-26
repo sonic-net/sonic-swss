@@ -974,7 +974,7 @@ bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t mode)
     return true;
 }
 
-bool PortsOrch::getPortPfc(sai_object_id_t portId, uint8_t *pfc_bitmask)
+bool PortsOrch::getPortPfc(sai_object_id_t portId, uint8_t *pfc_tx_bitmask, uint8_t *pfc_rx_bitmask)
 {
     SWSS_LOG_ENTER();
 
@@ -986,12 +986,13 @@ bool PortsOrch::getPortPfc(sai_object_id_t portId, uint8_t *pfc_bitmask)
         return false;
     }
 
-    *pfc_bitmask = p.m_pfc_bitmask;
+    *pfc_tx_bitmask = p.m_pfc_info.pfc_tx_bitmask;
+    *pfc_rx_bitmask = p.m_pfc_info.pfc_rx_bitmask;
 
     return true;
 }
 
-bool PortsOrch::setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask)
+bool PortsOrch::setPortPfc(sai_object_id_t portId, uint8_t pfc_tx_bitmask, uint8_t pfc_rx_bitmask)
 {
     SWSS_LOG_ENTER();
 
@@ -1004,38 +1005,72 @@ bool PortsOrch::setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask)
         return false;
     }
 
-    if (p.m_pfc_asym == SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_COMBINED)
+    if (p.m_pfc_info.pfc_mode == SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_COMBINED)
     {
+        if (pfc_tx_bitmask != pfc_rx_bitmask)
+        {
+            SWSS_LOG_ERROR("Cannot set unequal Tx 0x%x and Rx 0x%x PFC bitmasks "
+                "for the port 0x%" PRIx64 " with disabled \"asymmetric\" PFC mode",
+                pfc_tx_bitmask, pfc_rx_bitmask, portId);
+            return false;
+        }
+
         attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL;
+        attr.value.u8 = pfc_tx_bitmask;
+
+        sai_status_t status = sai_port_api->set_port_attribute(portId, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set PFC bitmask 0x%x for the port 0x%" PRIx64 " (rc:%d)",
+                attr.value.u8, portId, status);
+            task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
+        }
     }
-    else if (p.m_pfc_asym == SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_SEPARATE)
+    else if (p.m_pfc_info.pfc_mode == SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_SEPARATE)
     {
         attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL_TX;
+        attr.value.u8 = pfc_tx_bitmask;
+
+        sai_status_t status = sai_port_api->set_port_attribute(portId, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set Tx PFC bitmask 0x%x for the port 0x%" PRIx64 " (rc:%d)",
+                attr.value.u8, portId, status);
+            task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
+        }
+
+        attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL_RX;
+        attr.value.u8 = pfc_rx_bitmask;
+
+        status = sai_port_api->set_port_attribute(portId, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set Rx PFC bitmask 0x%x for the port 0x%" PRIx64 " (rc:%d)",
+                attr.value.u8, portId, status);
+            task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
+        }
     }
     else
     {
-        SWSS_LOG_ERROR("Incorrect asymmetric PFC mode: %u", p.m_pfc_asym);
+        SWSS_LOG_ERROR("Incorrect PFC mode %u for the port 0x%" PRIx64, p.m_pfc_info.pfc_mode, portId);
         return false;
     }
 
-    attr.value.u8 = pfc_bitmask;
-
-    sai_status_t status = sai_port_api->set_port_attribute(portId, &attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to set PFC 0x%x to port id 0x%" PRIx64 " (rc:%d)", attr.value.u8, portId, status);
-        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
-    }
-
-    if (p.m_pfc_bitmask != pfc_bitmask)
-    {
-        p.m_pfc_bitmask = pfc_bitmask;
-        m_portList[p.m_alias] = p;
-    }
+    p.m_pfc_info.pfc_tx_bitmask = pfc_tx_bitmask;
+    p.m_pfc_info.pfc_rx_bitmask = pfc_rx_bitmask;
+    m_portList[p.m_alias] = p;
 
     return true;
 }
@@ -1045,37 +1080,46 @@ bool PortsOrch::setPortPfcAsym(Port &port, string pfc_asym)
     SWSS_LOG_ENTER();
 
     sai_attribute_t attr;
-    uint8_t pfc = 0;
+    uint8_t pfc_tx_bitmask = 0;
+    uint8_t pfc_rx_bitmask = 0;
 
-    if (!getPortPfc(port.m_port_id, &pfc))
-    {
-        return false;
-    }
-
-    auto found = pfc_asym_map.find(pfc_asym);
-    if (found == pfc_asym_map.end())
+    if (pfc_asym_map.find(pfc_asym) == pfc_asym_map.end())
     {
         SWSS_LOG_ERROR("Incorrect asymmetric PFC mode: %s", pfc_asym.c_str());
         return false;
     }
 
-    auto new_pfc_asym = found->second;
-    if (port.m_pfc_asym == new_pfc_asym)
+    if (port.m_pfc_info.pfc_mode == pfc_asym_map[pfc_asym])
     {
-        SWSS_LOG_NOTICE("Already set asymmetric PFC mode: %s", pfc_asym.c_str());
+        SWSS_LOG_NOTICE("Asymmetric PFC mode is already set to \"%s\" for the port 0x%" PRIx64,
+            pfc_asym.c_str(), port.m_port_id);
         return true;
     }
 
-    port.m_pfc_asym = new_pfc_asym;
+    if (!getPortPfc(port.m_port_id, &pfc_tx_bitmask, &pfc_rx_bitmask))
+    {
+        return false;
+    }
+
+    if (pfc_asym_map[pfc_asym] == SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_SEPARATE)
+    {
+        pfc_rx_bitmask = static_cast<uint8_t>(0xff);
+    }
+    else
+    {
+        pfc_rx_bitmask = pfc_tx_bitmask;
+    }
+
+    port.m_pfc_info.pfc_mode = pfc_asym_map[pfc_asym];
     m_portList[port.m_alias] = port;
 
     attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL_MODE;
-    attr.value.s32 = (int32_t) port.m_pfc_asym;
+    attr.value.s32 = static_cast<int32_t>(port.m_pfc_info.pfc_mode);
 
     sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to set PFC mode %d to port id 0x%" PRIx64 " (rc:%d)", port.m_pfc_asym, port.m_port_id, status);
+        SWSS_LOG_ERROR("Failed to set PFC mode %d for port 0x%" PRIx64 " (rc:%d)", port.m_pfc_info.pfc_mode, port.m_port_id, status);
         task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
         if (handle_status != task_success)
         {
@@ -1083,29 +1127,12 @@ bool PortsOrch::setPortPfcAsym(Port &port, string pfc_asym)
         }
     }
 
-    if (!setPortPfc(port.m_port_id, pfc))
+    if (!setPortPfc(port.m_port_id, pfc_tx_bitmask, pfc_rx_bitmask))
     {
         return false;
     }
 
-    if (port.m_pfc_asym == SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_SEPARATE)
-    {
-        attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL_RX;
-        attr.value.u8 = static_cast<uint8_t>(0xff);
-
-        sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Failed to set RX PFC 0x%x to port id 0x%" PRIx64 " (rc:%d)", attr.value.u8, port.m_port_id, status);
-            task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
-            if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
-        }
-    }
-
-    SWSS_LOG_INFO("Set asymmetric PFC %s to port id 0x%" PRIx64, pfc_asym.c_str(), port.m_port_id);
+    SWSS_LOG_INFO("Set asymmetric PFC mode to \"%s\" for the port id 0x%" PRIx64, pfc_asym.c_str(), port.m_port_id);
 
     return true;
 }

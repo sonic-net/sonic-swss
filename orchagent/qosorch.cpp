@@ -1377,7 +1377,7 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
 
         if (pfc_enable)
         {
-            if (!gPortsOrch->setPortPfc(port.m_port_id, pfc_enable))
+            if (!gPortsOrch->setPortPfc(port.m_port_id, pfc_enable, pfc_enable))
             {
                 SWSS_LOG_ERROR("Failed to apply PFC bits 0x%x to port %s", pfc_enable, port_name.c_str());
             }
