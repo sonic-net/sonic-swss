@@ -250,7 +250,7 @@ void BufferOrch::generateBufferPoolWatermarkCounterIdList(void)
     // Some platforms do not support buffer pool watermark clear operation on a particular pool
     // Invoke the SAI clear_stats API per pool to query the capability from the API call return status
     // Some platforms do not support shared headroom pool watermark read operation on a particular pool
-    // Invoke the SAI get_buffer_pool_stats_ext API per pool to query the capability from the API call return status.
+    // Invoke the SAI get_buffer_pool_stats API per pool to query the capability from the API call return status.
     // We use bit mask to mark the clear watermark capability of each buffer pool. We use an unsigned int to place hold
     // these bits. This assumes the total number of buffer pools to be no greater than 32, which should satisfy all use cases.
     unsigned int noWmClrCapability = 0;
@@ -274,7 +274,7 @@ void BufferOrch::generateBufferPoolWatermarkCounterIdList(void)
             noShpWmRdCapability |= bitMask;
         }
 
-        const auto &watermarkStatIds = (noShpWmRdCapability & bitMask) ? bufferPoolAllWatermarkStatIds : bufferPoolWatermarkStatIds;
+        const auto &watermarkStatIds = (noShpWmRdCapability & bitMask) ? bufferPoolWatermarkStatIds : bufferPoolAllWatermarkStatIds;
 
         status = sai_buffer_api->clear_buffer_pool_stats(
                 it.second.m_saiObjectId,
@@ -324,13 +324,9 @@ void BufferOrch::generateBufferPoolWatermarkCounterIdList(void)
                 stats_mode = STATS_MODE_READ;
             }
             fvTuples.emplace_back(STATS_MODE_FIELD, stats_mode);
+        }
 
-            m_flexCounterTable->set(key, fvTuples);
-        }
-        else
-        {
-            m_flexCounterTable->set(key, fvTuples);
-        }
+        m_flexCounterTable->set(key, fvTuples);
 
         bitMask <<= 1;
     }
