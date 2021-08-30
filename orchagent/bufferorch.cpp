@@ -228,23 +228,23 @@ void BufferOrch::generateBufferPoolWatermarkCounterIdList(void)
     }
 
     // Detokenize the SAI watermark stats to a string, separated by comma
-    string statListPoolOnly;
+    string statListBufferPoolOnly;
     for (const auto &it : bufferPoolWatermarkStatIds)
     {
-        statListPoolOnly += (sai_serialize_buffer_pool_stat(it) + list_item_delimiter);
+        statListBufferPoolOnly += (sai_serialize_buffer_pool_stat(it) + list_item_delimiter);
     }
-    string statListPoolAndShp = statListPoolOnly;
+    string statListBufferPoolAndSharedHeadroomPool = statListBufferPoolOnly;
     for (const auto &it : bufferSharedHeadroomPoolWatermarkStatIds)
     {
-        statListPoolAndShp += (sai_serialize_buffer_pool_stat(it) + list_item_delimiter);
+        statListBufferPoolAndSharedHeadroomPool += (sai_serialize_buffer_pool_stat(it) + list_item_delimiter);
     }
-    if (!statListPoolOnly.empty())
+    if (!statListBufferPoolOnly.empty())
     {
-        statListPoolOnly.pop_back();
+        statListBufferPoolOnly.pop_back();
     }
-    if (!statListPoolAndShp.empty())
+    if (!statListBufferPoolAndSharedHeadroomPool.empty())
     {
-        statListPoolAndShp.pop_back();
+        statListBufferPoolAndSharedHeadroomPool.pop_back();
     }
 
     // Some platforms do not support buffer pool watermark clear operation on a particular pool
@@ -254,7 +254,7 @@ void BufferOrch::generateBufferPoolWatermarkCounterIdList(void)
     // We use bit mask to mark the clear watermark capability of each buffer pool. We use an unsigned int to place hold
     // these bits. This assumes the total number of buffer pools to be no greater than 32, which should satisfy all use cases.
     unsigned int noWmClrCapability = 0;
-    unsigned int noShpWmRdCapability = 0;
+    unsigned int noSharedHeadroomPoolWmRdCapability = 0;
     unsigned int bitMask = 1;
     uint32_t size = static_cast<uint32_t>(bufferSharedHeadroomPoolWatermarkStatIds.size());
     vector<uint64_t> counterData(size);
@@ -271,10 +271,10 @@ void BufferOrch::generateBufferPoolWatermarkCounterIdList(void)
             || status == SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED)
         {
             SWSS_LOG_NOTICE("Read shared headroom pool watermark failed on %s, rv: %s", it.first.c_str(), sai_serialize_status(status).c_str());
-            noShpWmRdCapability |= bitMask;
+            noSharedHeadroomPoolWmRdCapability |= bitMask;
         }
 
-        const auto &watermarkStatIds = (noShpWmRdCapability & bitMask) ? bufferPoolWatermarkStatIds : bufferPoolAllWatermarkStatIds;
+        const auto &watermarkStatIds = (noSharedHeadroomPoolWmRdCapability & bitMask) ? bufferPoolWatermarkStatIds : bufferPoolAllWatermarkStatIds;
 
         status = sai_buffer_api->clear_buffer_pool_stats(
                 it.second.m_saiObjectId,
@@ -307,13 +307,13 @@ void BufferOrch::generateBufferPoolWatermarkCounterIdList(void)
         string key = BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP ":" + sai_serialize_object_id(it.second.m_saiObjectId);
         fvTuples.clear();
 
-        if (noShpWmRdCapability & bitMask)
+        if (noSharedHeadroomPoolWmRdCapability & bitMask)
         {
-            fvTuples.emplace_back(BUFFER_POOL_COUNTER_ID_LIST, statListPoolOnly);
+            fvTuples.emplace_back(BUFFER_POOL_COUNTER_ID_LIST, statListBufferPoolOnly);
         }
         else
         {
-            fvTuples.emplace_back(BUFFER_POOL_COUNTER_ID_LIST, statListPoolAndShp);
+            fvTuples.emplace_back(BUFFER_POOL_COUNTER_ID_LIST, statListBufferPoolAndSharedHeadroomPool);
         }
 
         if (noWmClrCapability)
