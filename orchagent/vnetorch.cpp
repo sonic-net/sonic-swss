@@ -922,6 +922,8 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                 removeNextHopGroup(nhg);
             }
         }
+        syncd_tunnel_routes_.erase(ipPrefix);
+
         vrf_obj->removeRoute(ipPrefix);
     }
     else
