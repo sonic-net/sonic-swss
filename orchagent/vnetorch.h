@@ -283,6 +283,9 @@ struct VNetNextHopObserverEntry
 /* NextHopObserverTable: Destination IP address, next hop observer entry */
 typedef std::map<IpAddress, VNetNextHopObserverEntry> VNetNextHopObserverTable;
 
+typedef std::map<NextHopGroupKey, NextHopGroupInfo> VNetNextHopGroupInfoTable;
+typedef std::map<IpPrefix, NextHopGroupKey> VNetTunnelTable;
+
 class VNetRouteOrch : public Orch2, public Subject
 {
 public:
@@ -304,10 +307,10 @@ private:
     bool handleRoutes(const Request&);
     bool handleTunnel(const Request&);
 
-    bool hasNextHopGroup(const NextHopGroupKey&) const;
-    sai_object_id_t getNextHopGroupId(const NextHopGroupKey&);
-    bool addNextHopGroup(const NextHopGroupKey&, VNetVrfObject *vrf_obj);
-    bool removeNextHopGroup(const NextHopGroupKey&);
+    bool hasNextHopGroup(const string&, const NextHopGroupKey&);
+    sai_object_id_t getNextHopGroupId(const string&, const NextHopGroupKey&);
+    bool addNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj);
+    bool removeNextHopGroup(const string&, const NextHopGroupKey&);
 
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op);
@@ -321,8 +324,8 @@ private:
 
     VNetRouteTable syncd_routes_;
     VNetNextHopObserverTable next_hop_observers_;
-    std::map<NextHopGroupKey, NextHopGroupInfo> syncd_nexthop_groups_;
-    std::map<IpPrefix, NextHopGroupKey> syncd_tunnel_routes_;
+    std::map<std::string, VNetNextHopGroupInfoTable> syncd_nexthop_groups_;
+    std::map<std::string, VNetTunnelTable> syncd_tunnel_routes_;
 };
 
 class VNetCfgRouteOrch : public Orch

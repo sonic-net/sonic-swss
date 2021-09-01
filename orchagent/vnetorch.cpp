@@ -644,22 +644,22 @@ VNetRouteOrch::VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOr
     handler_map_.insert(handler_pair(APP_VNET_RT_TUNNEL_TABLE_NAME, &VNetRouteOrch::handleTunnel));
 }
 
-bool VNetRouteOrch::hasNextHopGroup(const NextHopGroupKey& nexthops) const
+bool VNetRouteOrch::hasNextHopGroup(const string& vnet, const NextHopGroupKey& nexthops)
 {
-    return syncd_nexthop_groups_.find(nexthops) != syncd_nexthop_groups_.end();
+    return syncd_nexthop_groups_[vnet].find(nexthops) != syncd_nexthop_groups_[vnet].end();
 }
 
-sai_object_id_t VNetRouteOrch::getNextHopGroupId(const NextHopGroupKey& nexthops)
+sai_object_id_t VNetRouteOrch::getNextHopGroupId(const string& vnet, const NextHopGroupKey& nexthops)
 {
-    assert(hasNextHopGroup(nexthops));
-    return syncd_nexthop_groups_[nexthops].next_hop_group_id;
+    assert(hasNextHopGroup(vnet, nexthops));
+    return syncd_nexthop_groups_[vnet][nexthops].next_hop_group_id;
 }
 
-bool VNetRouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops, VNetVrfObject *vrf_obj)
+bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &nexthops, VNetVrfObject *vrf_obj)
 {
     SWSS_LOG_ENTER();
 
-    assert(!hasNextHopGroup(nexthops));
+    assert(!hasNextHopGroup(vnet, nexthops));
 
     if (!gRouteOrch->checkNextHopGroupCount())
     {
@@ -744,20 +744,20 @@ bool VNetRouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops, VNetVrfObje
      * count will increase once the route is successfully syncd.
      */
     next_hop_group_entry.ref_count = 0;
-    syncd_nexthop_groups_[nexthops] = next_hop_group_entry;
+    syncd_nexthop_groups_[vnet][nexthops] = next_hop_group_entry;
 
     return true;
 }
 
-bool VNetRouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops)
+bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey &nexthops)
 {
     SWSS_LOG_ENTER();
 
     sai_object_id_t next_hop_group_id;
-    auto next_hop_group_entry = syncd_nexthop_groups_.find(nexthops);
+    auto next_hop_group_entry = syncd_nexthop_groups_[vnet].find(nexthops);
     sai_status_t status;
 
-    assert(next_hop_group_entry != syncd_nexthop_groups_.end());
+    assert(next_hop_group_entry != syncd_nexthop_groups_[vnet].end());
 
     if (next_hop_group_entry->second.ref_count != 0)
     {
@@ -792,7 +792,7 @@ bool VNetRouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops)
     gRouteOrch->decreaseNextHopGroupCount();
     gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
 
-    syncd_nexthop_groups_.erase(nexthops);
+    syncd_nexthop_groups_[vnet].erase(nexthops);
 
     return true;
 }
@@ -847,51 +847,51 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         else
         {
             /* Check if there is already an existing next hop group */
-            if (!hasNextHopGroup(nexthops))
+            if (!hasNextHopGroup(vnet, nexthops))
             {
                 /* Try to create a new next hop group */
-                if (!addNextHopGroup(nexthops, vrf_obj))
+                if (!addNextHopGroup(vnet, nexthops, vrf_obj))
                 {
                     SWSS_LOG_ERROR("Failed to create next hop group %s", nexthops.to_string().c_str());
                     return false;
                 }
             }
 
-            nh_id = syncd_nexthop_groups_[nexthops].next_hop_group_id;
+            nh_id = syncd_nexthop_groups_[vnet][nexthops].next_hop_group_id;
         }
 
-        auto it_route = syncd_tunnel_routes_.find(ipPrefix);
+        auto it_route = syncd_tunnel_routes_[vnet].find(ipPrefix);
         for (auto vr_id : vr_set)
         {
-            bool route_status = (it_route == syncd_tunnel_routes_.end()) ? add_route(vr_id, pfx, nh_id) : update_route(vr_id, pfx, nh_id);
+            bool route_status = (it_route == syncd_tunnel_routes_[vnet].end()) ? add_route(vr_id, pfx, nh_id) : update_route(vr_id, pfx, nh_id);
             if (!route_status)
             {
                 SWSS_LOG_ERROR("Route add/update failed for %s, vr_id '0x%" PRIx64, ipPrefix.to_string().c_str(), vr_id);
                 /* Clean up the newly created next hop group entry */
                 if (nexthops.getSize() > 1)
                 {
-                    removeNextHopGroup(nexthops);
+                    removeNextHopGroup(vnet, nexthops);
                 }
                 return false;
             }
         }
 
-        if (it_route != syncd_tunnel_routes_.end())
+        if (it_route != syncd_tunnel_routes_[vnet].end())
         {
             NextHopGroupKey nhg = it_route->second;
             if (nhg.getSize() > 1)
             {
-                if(--syncd_nexthop_groups_[nhg].ref_count == 0)
+                if(--syncd_nexthop_groups_[vnet][nhg].ref_count == 0)
                 {
-                    removeNextHopGroup(nhg);
+                    removeNextHopGroup(vnet, nhg);
                 }
             }
         }
 
-        syncd_tunnel_routes_[ipPrefix] = nexthops;
+        syncd_tunnel_routes_[vnet][ipPrefix] = nexthops;
         if (nexthops.getSize() > 1)
         {
-            syncd_nexthop_groups_[nexthops].ref_count++;
+            syncd_nexthop_groups_[vnet][nexthops].ref_count++;
         }
         vrf_obj->addRoute(ipPrefix, nexthops);
     }
@@ -906,8 +906,8 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             }
         }
 
-        auto it_route = syncd_tunnel_routes_.find(ipPrefix);
-        if (it_route == syncd_tunnel_routes_.end())
+        auto it_route = syncd_tunnel_routes_[vnet].find(ipPrefix);
+        if (it_route == syncd_tunnel_routes_[vnet].end())
         {
             SWSS_LOG_INFO("Failed to find tunnel route entry, prefix %s\n",
                 ipPrefix.to_string().c_str());
@@ -917,12 +917,12 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         NextHopGroupKey nhg = it_route->second;
         if (nhg.getSize() > 1)
         {
-            if(--syncd_nexthop_groups_[nhg].ref_count == 0)
+            if(--syncd_nexthop_groups_[vnet][nhg].ref_count == 0)
             {
-                removeNextHopGroup(nhg);
+                removeNextHopGroup(vnet, nhg);
             }
         }
-        syncd_tunnel_routes_.erase(ipPrefix);
+        syncd_tunnel_routes_[vnet].erase(ipPrefix);
 
         vrf_obj->removeRoute(ipPrefix);
     }
