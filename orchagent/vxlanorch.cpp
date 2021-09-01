@@ -908,7 +908,7 @@ bool VxlanTunnel::createTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src,
 void VxlanTunnel::deletePendingSIPTunnel()
 {
    VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
-   bool dip_tunnels_used  = tunnel_orch->dipTunnelsUsed();
+   bool dip_tunnels_used  = tunnel_orch->isDipTunnelsSupported();
 
    if ((!dip_tunnels_used || getDipTunnelCnt() == 0) && del_tnl_hw_pending)
    {
@@ -1480,7 +1480,7 @@ bool  VxlanTunnelOrch::addTunnelUser(const std::string remote_vtep, uint32_t vni
         return false;
     }
 
-    if (!dipTunnelsUsed() && usr == TUNNEL_USER_IP)
+    if (!isDipTunnelsSupported())
     {
         vtep_ptr->updateRemoteEndPointIpRef(remote_vtep, true);
         return true;
@@ -1512,9 +1512,7 @@ bool  VxlanTunnelOrch::delTunnelUser(const std::string remote_vtep, uint32_t vni
 {
     if (TUNNEL_USER_MAC == usr) return true;
 
-    auto port_tunnel_name = getTunnelPortName(remote_vtep);
     EvpnNvoOrch* evpn_orch = gDirectory.get<EvpnNvoOrch*>();
-
     auto vtep_ptr = evpn_orch->getEVPNVtep();
 
     if (!vtep_ptr) 
@@ -1525,11 +1523,13 @@ bool  VxlanTunnelOrch::delTunnelUser(const std::string remote_vtep, uint32_t vni
     }
 
     Port tunnelPort;
-    gPortsOrch->getPort(port_tunnel_name,tunnelPort);
     bool ret;
+    string port_tunnel_name;
 
-    if (!dipTunnelsUsed())
+    if (!isDipTunnelsSupported())
     {
+        port_tunnel_name = getTunnelPortName(vtep_ptr->getSrcIP().to_string(), true);
+        gPortsOrch->getPort(port_tunnel_name,tunnelPort);
         vtep_ptr->updateRemoteEndPointIpRef(remote_vtep, false);
         if (vtep_ptr->del_tnl_hw_pending && !vtep_ptr->isTunnelReferenced())
         {
@@ -1546,6 +1546,8 @@ bool  VxlanTunnelOrch::delTunnelUser(const std::string remote_vtep, uint32_t vni
         return true;
     }
 
+    port_tunnel_name = getTunnelPortName(remote_vtep);
+    gPortsOrch->getPort(port_tunnel_name,tunnelPort);
     if ((vtep_ptr->getDipTunnelRefCnt(remote_vtep) == 1) &&
        tunnelPort.m_fdb_count == 0)
     {
@@ -1584,7 +1586,8 @@ void VxlanTunnelOrch::deleteTunnelPort(Port &tunnelPort)
         return;
     }
 
-    if (isSrcVtepTunnel(tunnelPort)) 
+    /* P2MP scenario where P2MP tunnel port is used for FDB learning */
+    if (!isDipTunnelsSupported())
     {
         if (vtep_ptr->del_tnl_hw_pending && !vtep_ptr->isTunnelReferenced())
         {
@@ -1645,14 +1648,6 @@ std::string VxlanTunnelOrch::getTunnelPortName(const std::string& vtep, bool loc
     }
     return tunnelPortName;
 }
-
-bool VxlanTunnelOrch::isSrcVtepTunnel(Port& tunnelPort)
-{
-    string tunnel_port_name = tunnelPort.m_alias;
-    string prefix = LOCAL_TUNNEL_PORT_PREFIX;
-    return (tunnel_port_name.compare(0, prefix.length(), prefix) == 0);
-}
-
 
 void VxlanTunnelOrch::getTunnelNameFromDIP(const string& dip, string& tunnel_name)
 {
@@ -1760,7 +1755,7 @@ bool VxlanTunnel::isTunnelReferenced()
     auto port_tunnel_name = tunnel_orch->getTunnelPortName(src_vtep, true);
     bool ret;
     Port tunnelPort;
-    bool dip_tunnels_used = tunnel_orch->dipTunnelsUsed();
+    bool dip_tunnels_used = tunnel_orch->isDipTunnelsSupported();
 
     ret = gPortsOrch->getPort(port_tunnel_name, tunnelPort);
     if (!ret)
@@ -1769,10 +1764,6 @@ bool VxlanTunnel::isTunnelReferenced()
         return false;
     }
 
-    if (tunnelPort.m_fdb_count != 0)
-    {
-        return true;
-    }
 
     if (dip_tunnels_used)
     {
@@ -1780,6 +1771,10 @@ bool VxlanTunnel::isTunnelReferenced()
     }
     else
     {
+        if (tunnelPort.m_fdb_count != 0)
+        {
+	    return true;
+        }
         /* Bridge port will have reference since on IMET routes reception L2MC group member
            would be created with end point IP and the P2MP tunnel bridge port */
 
@@ -1983,7 +1978,7 @@ bool VxlanTunnelMapOrch::delOperation(const Request& request)
       else
       {
           tunnel_obj->del_tnl_hw_pending = true;
-          if (tunnel_orch->dipTunnelsUsed())
+          if (tunnel_orch->isDipTunnelsSupported())
           {
               SWSS_LOG_WARN("Postponing the SIP Tunnel HW deletion DIP Tunnel count = %d",
                           tunnel_obj->getDipTunnelCnt());

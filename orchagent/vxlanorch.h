@@ -42,7 +42,7 @@ typedef enum
 #define MIN_VLAN_ID 1
 #define MAX_VLAN_ID 4095
 
-#define MAX_VNI_ID (1<<24)
+#define MAX_VNI_ID 16777215
 
 typedef enum
 {
@@ -256,9 +256,9 @@ typedef std::map<IpAddress, VxlanTunnel*> VTEPTable;
 class VxlanTunnelOrch : public Orch2
 {
 public:
-    VxlanTunnelOrch(DBConnector *statedb, DBConnector *db, const std::string& tableName, bool dipTunnelsSupported) :
+    VxlanTunnelOrch(DBConnector *statedb, DBConnector *db, const std::string& tableName, bool isP2pTunnelsSupported) :
                     Orch2(db, tableName, request_),
-                    m_stateVxlanTable(statedb, STATE_VXLAN_TUNNEL_TABLE_NAME), dip_tunnels_used(dipTunnelsSupported)
+                    m_stateVxlanTable(statedb, STATE_VXLAN_TUNNEL_TABLE_NAME), is_dip_tunnel_supported(isP2pTunnelsSupported)
     {}
 
 
@@ -326,7 +326,6 @@ public:
     void addRemoveStateTableEntry(const string, IpAddress&, IpAddress&, tunnel_creation_src_t, bool);
 
     std::string getTunnelPortName(const std::string& vtep, bool local=false);
-    bool isSrcVtepTunnel(Port& tunnelPort);
     void getTunnelNameFromDIP(const string& dip, string& tunnel_name);
     void getTunnelNameFromPort(string& tunnel_portname, string& tunnel_name);
     void getTunnelDIPFromPort(Port& tunnelPort, string& remote_vtep);
@@ -354,9 +353,9 @@ public:
         vxlan_vni_vlan_map_table_.erase(vni);
     }
 
-    bool dipTunnelsUsed(void)
+    bool isDipTunnelsSupported(void)
     {
-        return dip_tunnels_used;
+        return is_dip_tunnel_supported;
     }
 
 
@@ -369,7 +368,7 @@ private:
     VxlanVniVlanMapTable vxlan_vni_vlan_map_table_;
     VTEPTable vtep_table_;
     Table m_stateVxlanTable;
-    bool dip_tunnels_used;
+    bool is_dip_tunnel_supported;
 };
 
 const request_description_t vxlan_tunnel_map_request_description = {

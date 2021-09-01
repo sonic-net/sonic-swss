@@ -768,7 +768,7 @@ void FdbOrch::doTask(Consumer& consumer)
             {
                 VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
 
-                if (tunnel_orch->dipTunnelsUsed())
+                if (tunnel_orch->isDipTunnelsSupported())
                 {
                     if(!remote_ip.length())
                     {
