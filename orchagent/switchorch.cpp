@@ -26,6 +26,12 @@ const map<string, sai_switch_attr_t> switch_attribute_map =
     {"vxlan_router_mac",                    SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC}
 };
 
+const map<string, sai_switch_tunnel_attr_t> switch_tunnel_attribute_map =
+{
+    {"vxlan_sport", SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT},
+    {"vxlan_mask",  SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_MASK}
+};
+
 const map<string, sai_packet_action_t> packet_action_map =
 {
     {"drop",    SAI_PACKET_ACTION_DROP},
@@ -49,6 +55,29 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
     querySwitchTpidCapability();
     auto executorT = new ExecutableTimer(m_sensorsPollerTimer, this, "ASIC_SENSORS_POLL_TIMER");
     Orch::addExecutor(executorT);
+
+    vector<sai_attribute_t> attrs;
+    sai_attribute_t attr;
+    sai_status_t status;
+
+    attr.id = SAI_SWITCH_TUNNEL_ATTR_TUNNEL_TYPE;
+    attr.value.s32 = SAI_TUNNEL_TYPE_VXLAN;
+    attrs.push_back(attr);
+    attr.id = SAI_SWITCH_TUNNEL_ATTR_TUNNEL_VXLAN_UDP_SPORT_MODE;
+    attr.value.s32 = SAI_TUNNEL_VXLAN_UDP_SPORT_MODE_EPHEMERAL;
+    attrs.push_back(attr);
+
+    status = sai_switch_api->create_switch_tunnel(&switch_tunnel_id, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create switch_tunnel object");
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_SWITCH, status);
+        if (handle_status != task_success)
+        {
+            throw runtime_error("SwitchOrch initialization failure");
+        }
+    }
 }
 
 void SwitchOrch::doCfgSensorsTableTask(Consumer &consumer)
@@ -127,6 +156,55 @@ void SwitchOrch::doCfgSensorsTableTask(Consumer &consumer)
     }
 }
 
+
+sai_status_t SwitchOrch::setSwitchTunnelVxlanParams(swss::FieldValueTuple &val)
+{
+    auto attribute = fvField(val);
+    auto value = fvValue(val);
+    sai_attribute_t attr;
+    sai_status_t status;
+
+    if (!m_vxlanSportUserModeEnabled)
+    {
+        // Enable Vxlan src port range feauture
+        attr.id = SAI_SWITCH_TUNNEL_ATTR_TUNNEL_VXLAN_UDP_SPORT_MODE;
+        attr.value.s32 = SAI_TUNNEL_VXLAN_UDP_SPORT_MODE_USER_DEFINED;
+        status = sai_switch_api->set_switch_tunnel_attribute(switch_tunnel_id, &attr);
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set SAI_TUNNEL_VXLAN_UDP_SPORT_MODE_USER_DEFINED  src port mode rv:%d",  status);
+            return status;
+        }
+
+        m_vxlanSportUserModeEnabled = true;
+    }
+
+    attr.id = switch_tunnel_attribute_map.at(attribute);
+    switch (attr.id)
+    {
+        case SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT:
+            attr.value.u16 = to_uint<uint16_t>(value);
+            break;
+        case SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_MASK:
+            attr.value.u8 = to_uint<uint8_t>(value);
+            break;
+        default:
+            SWSS_LOG_ERROR("Invalid switch tunnel attribute id %d", attr.id);
+            return SAI_STATUS_SUCCESS;
+    }
+
+    status  = sai_switch_api->set_switch_tunnel_attribute(switch_tunnel_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set tunnnel switch attribute %s to %s, rv:%d", attribute.c_str(), value.c_str(), status);
+        return status;
+    }
+
+    SWSS_LOG_NOTICE("Set switch attribute %s to %s", attribute.c_str(), value.c_str());
+    return SAI_STATUS_SUCCESS;
+}
+
 void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -136,19 +214,31 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
     {
         auto t = it->second;
         auto op = kfvOp(t);
+        bool retry = false;
 
         if (op == SET_COMMAND)
         {
-            bool retry = false;
-
             for (auto i : kfvFieldsValues(t))
             {
                 auto attribute = fvField(i);
 
                 if (switch_attribute_map.find(attribute) == switch_attribute_map.end())
                 {
-                    SWSS_LOG_ERROR("Unsupported switch attribute %s", attribute.c_str());
-                    break;
+                    // Check additionally 'switch_tunnel_attribute_map' for Switch Tunnel
+                    if (switch_tunnel_attribute_map.find(attribute) == switch_tunnel_attribute_map.end())
+                    {
+                        SWSS_LOG_ERROR("Unsupported switch attribute %s", attribute.c_str());
+                        break;
+                    }
+
+                    auto status = setSwitchTunnelVxlanParams(i);
+                    if ((status != SAI_STATUS_SUCCESS) && (handleSaiSetStatus(SAI_API_SWITCH, status) == task_need_retry))
+                    {
+                        retry = true;
+                        break;
+                    }
+
+                    continue;
                 }
 
                 auto value = fvValue(i);
