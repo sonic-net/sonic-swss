@@ -707,12 +707,11 @@ class TestMirror(object):
         time.sleep(1)
 
 
-    def test_AclBindMirror(self, dvs, testlog):
+    def _test_AclBindMirror(self, dvs, testlog, create_seq_test=False):
         """
         This test tests ACL associated with mirror session with DSCP value
         The DSCP value is tested on both with mask and without mask
         """
-        self.setup_db(dvs)
 
         session = "MIRROR_SESSION"
         acl_table = "MIRROR_TABLE"
@@ -722,16 +721,18 @@ class TestMirror(object):
         self.set_interface_status("Ethernet32", "up")
         self.add_ip_address("Ethernet32", "20.0.0.0/31")
         self.add_neighbor("Ethernet32", "20.0.0.1", "02:04:06:08:10:12")
-        self.add_route(dvs, "4.4.4.4", "20.0.0.1")
+        if create_seq_test == False:
+            self.add_route(dvs, "4.4.4.4", "20.0.0.1")
 
         # create mirror session
         self.create_mirror_session(session, "3.3.3.3", "4.4.4.4", "0x6558", "8", "100", "0")
-        assert self.get_mirror_session_state(session)["status"] == "active"
+        assert self.get_mirror_session_state(session)["status"] == ("active" if create_seq_test == False else "inactive")
 
-        # assert mirror session in asic database
+        # check mirror session in asic database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
-        assert len(tbl.getKeys()) == 1
-        mirror_session_oid = tbl.getKeys()[0]
+        assert len(tbl.getKeys()) == (1 if create_seq_test == False else 0)
+        if create_seq_test == False:
+            mirror_session_oid = tbl.getKeys()[0]
 
         # create acl table
         self.create_acl_table(acl_table, ["Ethernet0", "Ethernet4"])
@@ -739,10 +740,25 @@ class TestMirror(object):
         # create acl rule with dscp value 48
         self.create_mirror_acl_dscp_rule(acl_table, acl_rule, "48", session)
 
-        # assert acl rule is created
+        # acl rule creation check
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
         rule_entries = [k for k in tbl.getKeys() if k not in dvs.asicdb.default_acl_entries]
-        assert len(rule_entries) == 1
+        assert len(rule_entries) == (1 if create_seq_test == False else 0)
+
+        if create_seq_test == True:
+            self.add_route(dvs, "4.4.4.4", "20.0.0.1")
+
+            assert self.get_mirror_session_state(session)["status"] == "active"
+
+            # assert mirror session in asic database
+            tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
+            assert len(tbl.getKeys()) == 1
+            mirror_session_oid = tbl.getKeys()[0]
+
+            # assert acl rule is created
+            tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
+            rule_entries = [k for k in tbl.getKeys() if k not in dvs.asicdb.default_acl_entries]
+            assert len(rule_entries) == 1
 
         (status, fvs) = tbl.get(rule_entries[0])
         assert status == True
@@ -789,3 +805,16 @@ class TestMirror(object):
         self.remove_neighbor("Ethernet32", "20.0.0.1")
         self.remove_ip_address("Ethernet32", "20.0.0.0/31")
         self.set_interface_status("Ethernet32", "down")
+
+    def test_AclBindMirror(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        self._test_AclBindMirror(dvs, testlog)
+        self._test_AclBindMirror(dvs, testlog, create_seq_test=True)
+
+
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass
+
