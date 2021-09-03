@@ -194,7 +194,7 @@ public:
 
     bool deleteMapperHw(uint8_t mapper_list, tunnel_map_use_t map_src);
     bool createMapperHw(uint8_t mapper_list, tunnel_map_use_t map_src);
-    bool createTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src, bool with_term = true);
+    bool createTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src, bool with_term = true, sai_uint8_t encap_ttl=0);
     bool deleteTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src, bool with_term = true);
     void deletePendingSIPTunnel();
     void increment_spurious_imr_add(const std::string remote_vtep);

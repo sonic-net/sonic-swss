@@ -219,7 +219,7 @@ public:
 
     sai_object_id_t *get_port_id()
     {
-        if(m_port_id == nullptr)
+        if (m_port_id == nullptr)
         {
             auto port = get_port();
             if (port == nullptr)
@@ -2231,7 +2231,9 @@ bool MACsecOrch::createMACsecACLDataEntry(
     if (sci_in_sectag)
     {
         attr.id = SAI_ACL_ENTRY_ATTR_FIELD_MACSEC_SCI;
-        attr.value.u64 = sci;
+        attr.value.aclfield.enable = true;
+        attr.value.aclfield.mask.u64 = 0xFFFFFFFFFFFFFFFF;
+        attr.value.aclfield.data.u64 = sci;
         attrs.push_back(attr);
     }
 
