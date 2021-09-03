@@ -896,9 +896,3 @@ class TestMirror(object):
         self._test_AclBindMirror(dvs, testlog)
         self._test_AclBindMirror(dvs, testlog, create_seq_test=True)
 
-
-# Add Dummy always-pass test at end as workaroud
-# for issue when Flaky fail on final test it invokes module tear-down before retrying
-def test_nonflaky_dummy():
-    pass
-
