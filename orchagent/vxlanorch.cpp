@@ -966,7 +966,7 @@ void VxlanTunnel::increment_spurious_imr_del(const std::string remote_vtep)
     }
 }
 
-int VxlanTunnel::getDipTunnelRefCnt(const std::string remote_vtep)
+int VxlanTunnel::getRemoteEndPointRefCnt(const std::string remote_vtep)
 {
     tunnel_refcnt_t tnl_refcnts;
 
@@ -982,7 +982,7 @@ int VxlanTunnel::getDipTunnelRefCnt(const std::string remote_vtep)
     }
 }
 
-int VxlanTunnel::getDipTunnelIMRRefCnt(const std::string remote_vtep)
+int VxlanTunnel::getRemoteEndPointIMRRefCnt(const std::string remote_vtep)
 {
     tunnel_refcnt_t tnl_refcnts;
 
@@ -1014,7 +1014,7 @@ int VxlanTunnel::getRemoteEndPointIPRefCnt(const std::string remote_vtep)
     }
 }
 
-void VxlanTunnel::updateDipTunnelRefCnt(bool inc, tunnel_refcnt_t& tnl_refcnts, 
+void VxlanTunnel::updateRemoteEndPointRefCnt(bool inc, tunnel_refcnt_t& tnl_refcnts,
                                         tunnel_user_t usr)
 {
     switch(usr)
@@ -1116,7 +1116,7 @@ bool VxlanTunnel::createDynamicDIPTunnel(const std::string dip, tunnel_user_t us
         tunnel_orch->addTunnel(tunnel_name,dip_tunnel);
 
         memset(&tnl_refcnts,0,sizeof(tunnel_refcnt_t));
-        updateDipTunnelRefCnt(true,tnl_refcnts,usr);
+        updateRemoteEndPointRefCnt(true,tnl_refcnts,usr);
         tnl_users_[dip] = tnl_refcnts;
 
         TUNNELMAP_SET_VLAN(mapper_list);
@@ -1127,7 +1127,7 @@ bool VxlanTunnel::createDynamicDIPTunnel(const std::string dip, tunnel_user_t us
     else 
     {
         tnl_refcnts = it->second;
-        updateDipTunnelRefCnt(true,tnl_refcnts,usr);
+        updateRemoteEndPointRefCnt(true,tnl_refcnts,usr);
         tnl_users_[dip] = tnl_refcnts;
     }
 
@@ -1151,7 +1151,7 @@ bool VxlanTunnel::deleteDynamicDIPTunnel(const std::string dip, tunnel_user_t us
  
         if (update_refcnt)
         {
-            updateDipTunnelRefCnt(false,tnl_refcnts,usr);
+            updateRemoteEndPointRefCnt(false,tnl_refcnts,usr);
             tnl_users_[dip] = tnl_refcnts;
         }
  
@@ -1492,7 +1492,7 @@ bool  VxlanTunnelOrch::addTunnelUser(const std::string remote_vtep, uint32_t vni
     dip_tunnel = getVxlanTunnel(tunnel_name);
 
     SWSS_LOG_NOTICE("diprefcnt for remote %s = %d",
-                     remote_vtep.c_str(), vtep_ptr->getDipTunnelRefCnt(remote_vtep));
+                     remote_vtep.c_str(), vtep_ptr->getRemoteEndPointRefCnt(remote_vtep));
 
     if (!getTunnelPort(remote_vtep, tunport))
     {
@@ -1548,7 +1548,7 @@ bool  VxlanTunnelOrch::delTunnelUser(const std::string remote_vtep, uint32_t vni
 
     port_tunnel_name = getTunnelPortName(remote_vtep);
     gPortsOrch->getPort(port_tunnel_name,tunnelPort);
-    if ((vtep_ptr->getDipTunnelRefCnt(remote_vtep) == 1) &&
+    if ((vtep_ptr->getRemoteEndPointRefCnt(remote_vtep) == 1) &&
        tunnelPort.m_fdb_count == 0)
     {
         ret = gPortsOrch->removeBridgePort(tunnelPort);
@@ -1564,7 +1564,7 @@ bool  VxlanTunnelOrch::delTunnelUser(const std::string remote_vtep, uint32_t vni
 
     vtep_ptr->deleteDynamicDIPTunnel(remote_vtep, usr);
     SWSS_LOG_NOTICE("diprefcnt for remote %s = %d",
-                     remote_vtep.c_str(), vtep_ptr->getDipTunnelRefCnt(remote_vtep));
+                     remote_vtep.c_str(), vtep_ptr->getRemoteEndPointRefCnt(remote_vtep));
 
     vtep_ptr->deletePendingSIPTunnel();
 
@@ -1606,7 +1606,7 @@ void VxlanTunnelOrch::deleteTunnelPort(Port &tunnelPort)
     getTunnelDIPFromPort(tunnelPort, remote_vtep);
 
     //If there are IMR/IP routes to the remote VTEP then ignore this call
-    refcnt = vtep_ptr->getDipTunnelRefCnt(remote_vtep);
+    refcnt = vtep_ptr->getRemoteEndPointRefCnt(remote_vtep);
     if (refcnt > 0)
     {
         SWSS_LOG_INFO("Tunnel bridge port not removed. remote = %s refcnt = %d", 
@@ -1627,7 +1627,7 @@ void VxlanTunnelOrch::deleteTunnelPort(Port &tunnelPort)
     // Remove DIP Tunnel HW 
     vtep_ptr->deleteDynamicDIPTunnel(remote_vtep, TUNNEL_USER_IMR, false);
     SWSS_LOG_NOTICE("diprefcnt for remote %s = %d",
-                    remote_vtep.c_str(), vtep_ptr->getDipTunnelRefCnt(remote_vtep));
+                    remote_vtep.c_str(), vtep_ptr->getRemoteEndPointRefCnt(remote_vtep));
     // Remove SIP Tunnel HW which might be pending on delete
     vtep_ptr->deletePendingSIPTunnel();
 
@@ -2279,7 +2279,7 @@ bool EvpnRemoteVnip2pOrch::delOperation(const Request& request)
     }
 
     SWSS_LOG_INFO("imrcount=%d fdbcount=%d ",
-                   vtep_ptr->getDipTunnelIMRRefCnt(remote_vtep), 
+                   vtep_ptr->getRemoteEndPointIMRRefCnt(remote_vtep),
                    tunnelPort.m_fdb_count );
 
     ret = tunnel_orch->delTunnelUser(remote_vtep, vni_id, vlan_id, TUNNEL_USER_IMR);

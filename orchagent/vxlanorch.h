@@ -199,10 +199,10 @@ public:
     void deletePendingSIPTunnel();
     void increment_spurious_imr_add(const std::string remote_vtep);
     void increment_spurious_imr_del(const std::string remote_vtep);
-    void updateDipTunnelRefCnt(bool , tunnel_refcnt_t& , tunnel_user_t );
+    void updateRemoteEndPointRefCnt(bool , tunnel_refcnt_t& , tunnel_user_t );
     // Total Routes using the DIP tunnel. 
-    int getDipTunnelRefCnt(const std::string);
-    int getDipTunnelIMRRefCnt(const std::string);
+    int getRemoteEndPointRefCnt(const std::string);
+    int getRemoteEndPointIMRRefCnt(const std::string);
     int getRemoteEndPointIPRefCnt(const std::string);
     // Total DIP tunnels associated with this SIP tunnel.
     int getDipTunnelCnt();

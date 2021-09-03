@@ -117,7 +117,7 @@ private:
     void updateVlanMember(const VlanMemberUpdate&);
     void updatePortOperState(const PortOperStateUpdate&);
 
-    bool addFdbEntry(const FdbEntry&, const string&, FdbData fdbData, bool check_vlan_member=true);
+    bool addFdbEntry(const FdbEntry&, const string&, FdbData fdbData);
     void deleteFdbEntryFromSavedFDB(const MacAddress &mac, const unsigned short &vlanId, FdbOrigin origin, const string portName="");
 
     bool storeFdbEntryState(const FdbUpdate& update);

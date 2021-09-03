@@ -762,7 +762,6 @@ void FdbOrch::doTask(Consumer& consumer)
 
             /* FDB type is either dynamic or static */
             assert(type == "dynamic" || type == "dynamic_local" || type == "static" );
-            bool check_vlan_member = true;
 
             if(origin == FDB_ORIGIN_VXLAN_ADVERTIZED)
             {
@@ -781,7 +780,6 @@ void FdbOrch::doTask(Consumer& consumer)
                 {
                     EvpnNvoOrch* evpn_nvo_orch = gDirectory.get<EvpnNvoOrch*>();
                     VxlanTunnel* sip_tunnel = evpn_nvo_orch->getEVPNVtep();
-                    check_vlan_member = false;
                     if (sip_tunnel == NULL)
                     {
                         it = consumer.m_toSync.erase(it);
@@ -799,7 +797,7 @@ void FdbOrch::doTask(Consumer& consumer)
             fdbData.remote_ip = remote_ip;
             fdbData.esi = esi;
             fdbData.vni = vni;
-            if (addFdbEntry(entry, port, fdbData, check_vlan_member))
+            if (addFdbEntry(entry, port, fdbData))
             {
                 if (origin == FDB_ORIGIN_MCLAG_ADVERTIZED)
                 {
@@ -821,6 +819,7 @@ void FdbOrch::doTask(Consumer& consumer)
                     }
                     port = tunnel_orch->getTunnelPortName(remote_ip);
                 }
+                it = consumer.m_toSync.erase(it);
             }
             else
                 it++;
@@ -1135,10 +1134,13 @@ void FdbOrch::updateVlanMember(const VlanMemberUpdate& update)
 }
 
 bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
-        FdbData fdbData, bool check_vlan_member)
+        FdbData fdbData)
 {
     Port vlan;
     Port port;
+    string end_point_ip = "";
+
+    VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
 
     SWSS_LOG_ENTER();
     SWSS_LOG_INFO("mac=%s bv_id=0x%" PRIx64 " port_name=%s type=%s origin=%d remote_ip=%s",
@@ -1160,8 +1162,14 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
         return true;
     }
 
+    /* Assign end point IP only in SIP tunnel scenario since Port + IP address
+       needed to uniquely identify Vlan member */
+    if (!tunnel_orch->isDipTunnelsSupported())
+    {
+        end_point_ip = fdbData.remote_ip;
+    }
     /* Retry until port is member of vlan*/
-    if (check_vlan_member && vlan.m_members.find(port_name) == vlan.m_members.end())
+    if (!m_portsOrch->isVlanMember(vlan, port, end_point_ip))
     {
         SWSS_LOG_INFO("Saving a fdb entry until port %s becomes vlan %s member", port_name.c_str(), vlan.m_alias.c_str());
         saved_fdb_entries[port_name].push_back({entry.mac,
