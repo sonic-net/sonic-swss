@@ -3,6 +3,7 @@ import random
 import pytest
 from pprint import pprint
 from evpn_tunnel import VxlanTunnel,VxlanEvpnHelper
+import time
 
 class TestL3Vxlan(object):
 
@@ -87,6 +88,7 @@ class TestL3Vxlan(object):
         print ("\tTesting SIP Tunnel Deletion")
         vxlan_obj.remove_vxlan_tunnel(dvs, tunnel_name)
         vxlan_obj.remove_evpn_nvo(dvs, 'nvo1')
+        time.sleep(2)
         vxlan_obj.check_vxlan_sip_tunnel_delete(dvs, tunnel_name, '6.6.6.6')
         vxlan_obj.remove_vlan(dvs, "100")
 
@@ -184,6 +186,7 @@ class TestL3Vxlan(object):
         print ("\tTesting SIP Tunnel Deletion")
         vxlan_obj.remove_vxlan_tunnel(dvs, tunnel_name)
         vxlan_obj.remove_evpn_nvo(dvs, 'nvo1')
+        time.sleep(2)
         vxlan_obj.check_vxlan_sip_tunnel_delete(dvs, tunnel_name, '6.6.6.6')
         vxlan_obj.remove_vrf(dvs, "Vrf-RED")
         vxlan_obj.remove_vlan_member(dvs, "100", "Ethernet24")
@@ -389,6 +392,7 @@ class TestL3Vxlan(object):
         print ("\tTesting SIP Tunnel Deletion")
         vxlan_obj.remove_vxlan_tunnel(dvs, tunnel_name)
         vxlan_obj.remove_evpn_nvo(dvs, 'nvo1')
+        time.sleep(2)
         vxlan_obj.check_vxlan_sip_tunnel_delete(dvs, tunnel_name, '6.6.6.6')
         vxlan_obj.remove_vrf(dvs, "Vrf-RED")
         vxlan_obj.remove_vlan_member(dvs, "100", "Ethernet24")
@@ -596,6 +600,7 @@ class TestL3Vxlan(object):
         print ("\tTesting SIP Tunnel Deletion")
         vxlan_obj.remove_vxlan_tunnel(dvs, tunnel_name)
         vxlan_obj.remove_evpn_nvo(dvs, 'nvo1')
+        time.sleep(2)
         vxlan_obj.check_vxlan_sip_tunnel_delete(dvs, tunnel_name, '6.6.6.6')
         vxlan_obj.remove_vrf(dvs, "Vrf-RED")
         vxlan_obj.remove_vlan_member(dvs, "100", "Ethernet24")

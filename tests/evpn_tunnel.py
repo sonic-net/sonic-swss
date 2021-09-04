@@ -83,7 +83,8 @@ class VxlanEvpnHelper(object):
             status, fvs = tbl.get(key)
             assert status, "Got an error when get a key"
 
-            assert len(fvs) >= len(expected_attributes), "Incorrect attributes"
+            if len(fvs) < len(expected_attributes):
+                continue
 
             num_match = 0
             for name, value in fvs:
