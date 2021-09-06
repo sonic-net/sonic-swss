@@ -428,9 +428,17 @@ bool NeighOrch::removeNextHop(const IpAddress &ipAddress, const string &alias)
         nexthop.alias = inbp.m_alias;
     }
 
+    // If the next hop does not exist, log an error as the code is wrongly trying to remove a NH and return true as it
+    // can be considered that the NH does not exist anymore.
+    if (!hasNextHop(nexthop))
+    {
+        SWSS_LOG_ERROR("Trying to remove next hop %s which does not exist", nexthop.to_string().c_str());
+        return true;
+    }
+
     gFgNhgOrch->invalidNextHopInNextHopGroup(nexthop);
 
-    if (m_syncdNextHops.at(nexthop).ref_count > 0)
+    if (m_syncdNextHops[nexthop].ref_count > 0)
     {
         SWSS_LOG_ERROR("Failed to remove still referenced next hop %s on %s",
                        ipAddress.to_string().c_str(), alias.c_str());
@@ -457,18 +465,26 @@ bool NeighOrch::removeMplsNextHop(const NextHopKey& nh)
         nexthop.alias = inbp.m_alias;
     }
 
+    // If the next hop does not exist, log an error as the code is wrongly trying to remove a NH and return true as it
+    // can be considered that the NH does not exist anymore.
+    if (!hasNextHop(nexthop))
+    {
+        SWSS_LOG_ERROR("Trying to remove next hop %s which does not exist", nexthop.to_string().c_str());
+        return true;
+    }
+
     SWSS_LOG_INFO("Removing next hop %s", nexthop.to_string().c_str());
 
     gFgNhgOrch->invalidNextHopInNextHopGroup(nexthop);
 
-    if (m_syncdNextHops.at(nexthop).ref_count > 0)
+    if (m_syncdNextHops[nexthop].ref_count > 0)
     {
         SWSS_LOG_ERROR("Failed to remove still referenced next hop %s",
                        nexthop.to_string().c_str());
         return false;
     }
 
-    sai_object_id_t next_hop_id = m_syncdNextHops.at(nexthop).next_hop_id;
+    sai_object_id_t next_hop_id = m_syncdNextHops[nexthop].next_hop_id;
     sai_status_t status = sai_next_hop_api->remove_next_hop(next_hop_id);
 
     /*
@@ -512,7 +528,15 @@ bool NeighOrch::removeOverlayNextHop(const NextHopKey &nexthop)
 {
     SWSS_LOG_ENTER();
 
-    if (m_syncdNextHops.at(nexthop).ref_count > 0)
+    // If the next hop does not exist, log an error as the code is wrongly trying to remove a NH and return true as it
+    // can be considered that the NH does not exist anymore.
+    if (!hasNextHop(nexthop))
+    {
+        SWSS_LOG_ERROR("Trying to remove next hop %s which does not exist", nexthop.to_string().c_str());
+        return true;
+    }
+
+    if (m_syncdNextHops[nexthop].ref_count > 0)
     {
         SWSS_LOG_ERROR("Failed to remove still referenced next hop %s on %s",
                    nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
@@ -535,6 +559,14 @@ sai_object_id_t NeighOrch::getLocalNextHopId(const NextHopKey& nexthop)
 
 sai_object_id_t NeighOrch::getNextHopId(const NextHopKey &nexthop)
 {
+    // If the next hop does not exist, log an error as the code is wrongly trying to get the NH ID of a next hop that
+    // does not exist and return SAI_NULL_OBJECT_ID.
+    if (!hasNextHop(nexthop))
+    {
+        SWSS_LOG_ERROR("Trying to get next hop ID of %s which does not exist", nexthop.to_string().c_str());
+        return SAI_NULL_OBJECT_ID;
+    }
+
     /*
      * The nexthop id could be varying depending on the use-case
      * For e.g, a route could have a direct neighbor but may require
@@ -546,12 +578,19 @@ sai_object_id_t NeighOrch::getNextHopId(const NextHopKey &nexthop)
     {
         return nhid;
     }
-    return m_syncdNextHops.at(nexthop).next_hop_id;
+    return m_syncdNextHops[nexthop].next_hop_id;
 }
 
 int NeighOrch::getNextHopRefCount(const NextHopKey &nexthop)
 {
-    return m_syncdNextHops.at(nexthop).ref_count;
+    // If the next hop does not exist, log an error as the code is wrongly trying to get the ref count of a next hop
+    // that does not exist and return 0.
+    if (!hasNextHop(nexthop))
+    {
+        SWSS_LOG_ERROR("Trying to get next hop %s ref count which does not exist", nexthop.to_string().c_str());
+        return 0;
+    }
+    return m_syncdNextHops[nexthop].ref_count;
 }
 
 void NeighOrch::increaseNextHopRefCount(const NextHopKey &nexthop, uint32_t count)
