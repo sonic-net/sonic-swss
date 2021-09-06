@@ -1842,9 +1842,7 @@ bool PortsOrch::setGearboxPortAttr(Port &port, dest_port_type_t port_type, sai_p
     sai_object_id_t dest_port_id;
     sai_attribute_t attr;
     string speed_attr;
-    uint32_t lane_speed = 0;
     sai_uint32_t speed = 0;
-    uint32_t lanes = 0;
 
     SWSS_LOG_ENTER();
 
@@ -1868,36 +1866,29 @@ bool PortsOrch::setGearboxPortAttr(Port &port, dest_port_type_t port_type, sai_p
                     switch (port_type)
                     {
                         case PHY_PORT_TYPE:
-                            lanes = static_cast<uint32_t>(m_gearboxInterfaceMap[port.m_index].system_lanes.size());
                             speed_attr = "system_speed";
                             break;
                         case LINE_PORT_TYPE:
-                            lanes = static_cast<uint32_t>(m_gearboxInterfaceMap[port.m_index].line_lanes.size());
                             speed_attr = "line_speed";
                             break;
                         default:
                             return false;
                     }
 
-                    // Gearbox expects speed per lane
                     speed = *static_cast<sai_int32_t*>(value);
-                    if (speed % lanes == 0)
-                    {
-                        lane_speed = speed / lanes;
-                    }
-                    if (isSpeedSupported(port.m_alias, dest_port_id, lane_speed))
+                    if (isSpeedSupported(port.m_alias, dest_port_id, speed))
                     {
                         // Gearbox may not implement speed check, so
                         // invalidate speed if it doesn't make sense.
-                        if (to_string(lane_speed).size() < 5)
+                        if (to_string(speed).size() < 5)
                         {
-                            lane_speed = 0;
+                            speed = 0;
                         }
 
                         attr.id = SAI_PORT_ATTR_SPEED;
-                        attr.value.u32 = lane_speed;
+                        attr.value.u32 = speed;
                     }
-                    SWSS_LOG_NOTICE("BOX: Set %s lane %s %d", port.m_alias.c_str(), speed_attr.c_str(), lane_speed);
+                    SWSS_LOG_NOTICE("BOX: Set %s lane %s %d", port.m_alias.c_str(), speed_attr.c_str(), speed);
                     break;
                 default:
                     return false;
@@ -1909,8 +1900,8 @@ bool PortsOrch::setGearboxPortAttr(Port &port, dest_port_type_t port_type, sai_p
                 if (id == SAI_PORT_ATTR_SPEED)
                 {
                     string key = "phy:"+to_string(m_gearboxInterfaceMap[port.m_index].phy_id)+":ports:"+to_string(port.m_index);
-                    m_gearboxTable->hset(key, speed_attr, to_string(lane_speed));
-                    SWSS_LOG_NOTICE("BOX: Updated APPL_DB key:%s %s %d", key.c_str(), speed_attr.c_str(), lane_speed);
+                    m_gearboxTable->hset(key, speed_attr, to_string(speed));
+                    SWSS_LOG_NOTICE("BOX: Updated APPL_DB key:%s %s %d", key.c_str(), speed_attr.c_str(), speed);
                 }
             }
             else
@@ -4812,6 +4803,8 @@ bool PortsOrch::addLagMember(Port &lag, Port &port, bool enableForwarding)
         }
     }
 
+    increasePortRefCount(port.m_alias);
+
     LagMemberUpdate update = { lag, port, true };
     notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));
 
@@ -4857,6 +4850,9 @@ bool PortsOrch::removeLagMember(Port &lag, Port &port)
             return false;
         }
     }
+
+    decreasePortRefCount(port.m_alias);
+
     LagMemberUpdate update = { lag, port, false };
     notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));
 
@@ -5790,8 +5786,19 @@ bool PortsOrch::initGearboxPort(Port &port)
             attr.value.booldata = port.m_admin_state_up;
             attrs.push_back(attr);
 
+            attr.id = SAI_PORT_ATTR_HW_LANE_LIST;
+            lanes.assign(m_gearboxInterfaceMap[port.m_index].system_lanes.begin(), m_gearboxInterfaceMap[port.m_index].system_lanes.end());
+            attr.value.u32list.list = lanes.data();
+            attr.value.u32list.count = static_cast<uint32_t>(lanes.size());
+            attrs.push_back(attr);
+
+            for (uint32_t i = 0; i < attr.value.u32list.count; i++)
+            {
+                SWSS_LOG_DEBUG("BOX: list[%d] = %d", i, attr.value.u32list.list[i]);
+            }
+
             attr.id = SAI_PORT_ATTR_SPEED;
-            attr.value.u32 = (uint32_t) m_gearboxPortMap[port.m_index].system_speed;
+            attr.value.u32 = (uint32_t) m_gearboxPortMap[port.m_index].system_speed * (uint32_t) lanes.size();
             if (isSpeedSupported(port.m_alias, port.m_port_id, attr.value.u32))
             {
                 attrs.push_back(attr);
@@ -5812,17 +5819,6 @@ bool PortsOrch::initGearboxPort(Port &port)
             attr.id = SAI_PORT_ATTR_LINK_TRAINING_ENABLE;
             attr.value.booldata = m_gearboxPortMap[port.m_index].system_training;
             attrs.push_back(attr);
-
-            attr.id = SAI_PORT_ATTR_HW_LANE_LIST;
-            lanes.assign(m_gearboxInterfaceMap[port.m_index].system_lanes.begin(), m_gearboxInterfaceMap[port.m_index].system_lanes.end());
-            attr.value.u32list.list = lanes.data();
-            attr.value.u32list.count = static_cast<uint32_t>(lanes.size());
-            attrs.push_back(attr);
-
-            for (uint32_t i = 0; i < attr.value.u32list.count; i++)
-            {
-                SWSS_LOG_DEBUG("BOX: list[%d] = %d", i, attr.value.u32list.list[i]);
-            }
 
             status = sai_port_api->create_port(&systemPort, phyOid, static_cast<uint32_t>(attrs.size()), attrs.data());
             if (status != SAI_STATUS_SUCCESS)
@@ -5845,8 +5841,19 @@ bool PortsOrch::initGearboxPort(Port &port)
             attr.value.booldata = port.m_admin_state_up;
             attrs.push_back(attr);
 
+            attr.id = SAI_PORT_ATTR_HW_LANE_LIST;
+            lanes.assign(m_gearboxInterfaceMap[port.m_index].line_lanes.begin(), m_gearboxInterfaceMap[port.m_index].line_lanes.end());
+            attr.value.u32list.list = lanes.data();
+            attr.value.u32list.count = static_cast<uint32_t>(lanes.size());
+            attrs.push_back(attr);
+
+            for (uint32_t i = 0; i < attr.value.u32list.count; i++)
+            {
+                SWSS_LOG_DEBUG("BOX: list[%d] = %d", i, attr.value.u32list.list[i]);
+            }
+
             attr.id = SAI_PORT_ATTR_SPEED;
-            attr.value.u32 = (uint32_t) m_gearboxPortMap[port.m_index].line_speed;
+            attr.value.u32 = (uint32_t) m_gearboxPortMap[port.m_index].line_speed * (uint32_t) lanes.size();
             if (isSpeedSupported(port.m_alias, port.m_port_id, attr.value.u32))
             {
                 attrs.push_back(attr);
@@ -5899,17 +5906,6 @@ bool PortsOrch::initGearboxPort(Port &port)
             attr.id = SAI_PORT_ATTR_ADVERTISED_MEDIA_TYPE;
             attr.value.u32 = media_type_map[m_gearboxPortMap[port.m_index].line_adver_media_type];
             attrs.push_back(attr);
-
-            attr.id = SAI_PORT_ATTR_HW_LANE_LIST;
-            lanes.assign(m_gearboxInterfaceMap[port.m_index].line_lanes.begin(), m_gearboxInterfaceMap[port.m_index].line_lanes.end());
-            attr.value.u32list.list = lanes.data();
-            attr.value.u32list.count = static_cast<uint32_t>(lanes.size());
-            attrs.push_back(attr);
-
-            for (uint32_t i = 0; i < attr.value.u32list.count; i++)
-            {
-                SWSS_LOG_DEBUG("BOX: list[%d] = %d", i, attr.value.u32list.list[i]);
-            }
 
             status = sai_port_api->create_port(&linePort, phyOid, static_cast<uint32_t>(attrs.size()), attrs.data());
             if (status != SAI_STATUS_SUCCESS)

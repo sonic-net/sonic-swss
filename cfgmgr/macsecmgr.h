@@ -28,7 +28,13 @@ public:
     struct MACsecProfile
     {
         std::uint32_t       priority;
-        std::string         cipher_suite;
+        enum CipherSuite
+        {
+            GCM_AES_128,
+            GCM_AES_256,
+            GCM_AES_XPN_128,
+            GCM_AES_XPN_256,
+        }                   cipher_suite;
         std::string         primary_cak;
         std::string         primary_ckn;
         std::string         fallback_cak;

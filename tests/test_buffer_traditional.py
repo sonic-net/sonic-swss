@@ -73,11 +73,15 @@ class TestBuffer(object):
         orig_cable_len = None
         orig_speed = None
         try:
-            dvs.runcmd("config interface startup {}".format(self.INTF))
-            self.orig_profiles = self.get_asic_buf_profile()
             # get orig cable length and speed
             fvs = self.config_db.get_entry("CABLE_LENGTH", "AZURE")
             orig_cable_len = fvs[self.INTF]
+            if orig_cable_len == "0m":
+                fvs[self.INTF] = "300m"
+                cable_len_before_test = "300m"
+                self.config_db.update_entry("CABLE_LENGTH", "AZURE", fvs)
+            else:
+                cable_len_before_test = orig_cable_len
             fvs = self.config_db.get_entry("PORT", self.INTF)
             orig_speed = fvs["speed"]
 
@@ -87,9 +91,15 @@ class TestBuffer(object):
                 test_speed = "100000"
             test_cable_len = "0m"
 
+            dvs.runcmd("config interface startup {}".format(self.INTF))
+            # Make sure the buffer PG has been created
+            orig_lossless_profile = "pg_lossless_{}_{}_profile".format(orig_speed, cable_len_before_test)
+            self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", orig_lossless_profile)
+            self.orig_profiles = self.get_asic_buf_profile()
+
             # check if the lossless profile for the test speed is already present
             fvs = dict()
-            new_lossless_profile = "pg_lossless_{}_{}_profile".format(test_speed, orig_cable_len)
+            new_lossless_profile = "pg_lossless_{}_{}_profile".format(test_speed, cable_len_before_test)
             fvs = self.app_db.get_entry("BUFFER_PROFILE_TABLE", new_lossless_profile)
             if len(fvs):
                 profile_exp_cnt_diff = 0
@@ -109,15 +119,14 @@ class TestBuffer(object):
             self.app_db.wait_for_deleted_entry("BUFFER_PROFILE_TABLE", test_lossless_profile)
 
             # buffer pgs should still point to the original buffer profile
-            orig_lossless_profile = "pg_lossless_{}_{}_profile".format(orig_speed, orig_cable_len)
             self.app_db.wait_for_field_match("BUFFER_PG_TABLE", self.INTF + ":3-4", {"profile": "[BUFFER_PROFILE_TABLE:{}]".format(orig_lossless_profile)})
             fvs = dict()
             for pg in self.pg_name_map:
                 fvs["SAI_INGRESS_PRIORITY_GROUP_ATTR_BUFFER_PROFILE"] = self.buf_pg_profile[pg]
                 self.asic_db.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP", self.pg_name_map[pg], fvs)
 
-            # change cable length to 'orig_cable_len'
-            self.change_cable_len(orig_cable_len)
+            # change cable length to 'cable_len_before_test'
+            self.change_cable_len(cable_len_before_test)
 
             # change intf speed to 'test_speed'
             dvs.runcmd("config interface speed {} {}".format(self.INTF, test_speed))
