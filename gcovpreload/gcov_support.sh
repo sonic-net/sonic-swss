@@ -55,6 +55,8 @@ verify_info_file()
 list_lcov_path()
 {
     local find_gcda_file
+    local find_gcno_file
+    local gcdastr=".gcda"
     local gcda_dir=$1
 
     echo ${gcda_dir}
@@ -63,6 +65,15 @@ list_lcov_path()
     echo "Start searching .gcda files..."
     exec 4>$TMP_FILE
     find_gcda_file=`find ${gcda_dir} -name *.gcda`
+    echo "Start rm unused gcno files for speed up"
+    find_gcno_file=`find ${gcda_dir} -name *.gcno`
+    for line in ${find_gcno_file}
+    do
+        temp_gcda=${line/.gcno/$gcdastr}
+        if [ ! -f ${temp_gcda} ]; then
+            rm ${line}
+        fi
+    done
 
     echo ${find_gcda_file}
     RESULT=${find_gcda_file}
@@ -99,6 +110,12 @@ lcov_genhtml_report()
         fi
         popd
     done < ${gcda_file_range}/gcda_dir_list.txt
+}
+
+rm_unused_gcno()
+{
+    cur_dir = $1/
+
 }
 
 # generate html reports for all eligible submodules

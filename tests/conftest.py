@@ -19,6 +19,7 @@ from swsscommon import swsscommon
 from dvslib.dvs_database import DVSDatabase
 from dvslib.dvs_common import PollingConfig, wait_for_result
 from dvslib.dvs_acl import DVSAcl
+from dvslib.dvs_pbh import DVSPbh
 from dvslib.dvs_route import DVSRoute
 from dvslib import dvs_vlan
 from dvslib import dvs_lag
@@ -26,8 +27,6 @@ from dvslib import dvs_mirror
 from dvslib import dvs_policer
 
 from buffer_model import enable_dynamic_buffer
-
-DEFAULT_DVS_NAME = "sonic-swss-test-dvs"
 
 # FIXME: For the sake of stabilizing the PR pipeline we currently assume there are 32 front-panel
 # ports in the system (much like the rest of the test suite). This should be adjusted to accomodate
@@ -54,12 +53,6 @@ def pytest_addoption(parser):
                      action="store_true",
                      default=False,
                      help="Force tests to run in persistent DVS containers with <32 ports")
-
-    parser.addoption("--force-recreate-dvs",
-                     action="store_true",
-                     default=False,
-                     help="Force the DVS container to be recreated between each test module. Mutually exclusive with --dvsname")
-
 
     parser.addoption("--keeptb",
                      action="store_true",
@@ -1563,14 +1556,8 @@ class DockerVirtualChassisTopology:
         print("vct verifications passed ? %s" % (ret1 and ret2))
         return ret1 and ret2
 
-@pytest.fixture(scope="session")
-def manage_dvs(request) -> str:
-    """
-    Main fixture to manage the lifecycle of the DVS (Docker Virtual Switch) for testing
-    Returns:
-        (func) update_dvs function which can be called on a per-module basis
-               to handle re-creating the DVS if necessary
-    """
+@pytest.yield_fixture(scope="module")
+def dvs(request) -> DockerVirtualSwitch:
     if sys.version_info[0] < 3:
         raise NameError("Python 2 is not supported, please install python 3")
 
@@ -1578,56 +1565,17 @@ def manage_dvs(request) -> str:
         raise NameError("Cannot install kernel team module, please install a generic kernel")
 
     name = request.config.getoption("--dvsname")
-    using_persistent_dvs = name is not None
     forcedvs = request.config.getoption("--forcedvs")
     keeptb = request.config.getoption("--keeptb")
     imgname = request.config.getoption("--imgname")
     max_cpu = request.config.getoption("--max_cpu")
     buffer_model = request.config.getoption("--buffer_model")
-    force_recreate = request.config.getoption("--force-recreate-dvs")
-    dvs = None
-    curr_fake_platform = None # lgtm[py/unused-local-variable]
+    fakeplatform = getattr(request.module, "DVS_FAKE_PLATFORM", None)
+    log_path = name if name else request.module.__name__
 
-    if using_persistent_dvs and force_recreate:
-        pytest.fail("Options --dvsname and --force-recreate-dvs are mutually exclusive")
+    dvs = DockerVirtualSwitch(name, imgname, keeptb, fakeplatform, log_path, max_cpu, forcedvs, buffer_model = buffer_model)
 
-    def update_dvs(log_path, new_fake_platform=None):
-        """
-        Decides whether or not to create a new DVS
-        Create a new the DVS in the following cases:
-        1. CLI option `--force-recreate-dvs` was specified (recreate for every module)
-        2. The fake_platform has changed (this can only be set at container creation,
-           so it is necessary to spin up a new DVS)
-        3. No DVS currently exists (i.e. first time startup)
-        Otherwise, restart the existing DVS (to get to a clean state)
-        Returns:
-            (DockerVirtualSwitch) a DVS object
-        """
-        nonlocal curr_fake_platform, dvs
-        if force_recreate or \
-           new_fake_platform != curr_fake_platform or \
-           dvs is None:
-
-            if dvs is not None:
-                dvs.get_logs()
-                dvs.destroy()
-
-            dvs = DockerVirtualSwitch(name, imgname, keeptb, new_fake_platform, log_path, max_cpu, forcedvs, buffer_model = buffer_model)
-
-            curr_fake_platform = new_fake_platform
-
-        else:
-            # If not re-creating the DVS, restart it
-            # between modules to ensure a consistent start state
-            #dvs.restart()
-            dvs.runcmd("supervisorctl reload")
-            dvs.check_services_ready(timeout=60)
-
-        return dvs
-
-    yield update_dvs
-
-
+    yield dvs
 
     dvs.get_logs()
     dvs.destroy()
@@ -1636,14 +1584,6 @@ def manage_dvs(request) -> str:
     if dvs.persistent:
         dvs.runcmd("mv /etc/sonic/config_db.json.orig /etc/sonic/config_db.json")
         dvs.ctn_restart()
-
-@pytest.yield_fixture(scope="module")
-def dvs(request, manage_dvs) -> DockerVirtualSwitch:
-    fakeplatform = getattr(request.module, "DVS_FAKE_PLATFORM", None)
-    name = request.config.getoption("--dvsname")
-    log_path = name if name else request.module.__name__
-
-    return manage_dvs(log_path, fakeplatform)
 
 @pytest.yield_fixture(scope="module")
 def vct(request):
@@ -1666,9 +1606,9 @@ def vct(request):
 
 @pytest.yield_fixture
 def testlog(request, dvs):
-    dvs.runcmd(f"logger === start test {request.node.name} ===")
+    dvs.runcmd(f"logger -t pytest === start test {request.node.nodeid} ===")
     yield testlog
-    dvs.runcmd(f"logger === finish test {request.node.name} ===")
+    dvs.runcmd(f"logger -t pytest === finish test {request.node.nodeid} ===")
 
 ################# DVSLIB module manager fixtures #############################
 @pytest.fixture(scope="class")
@@ -1677,6 +1617,13 @@ def dvs_acl(request, dvs) -> DVSAcl:
                   dvs.get_config_db(),
                   dvs.get_state_db(),
                   dvs.get_counters_db())
+
+
+@pytest.fixture(scope="class")
+def dvs_pbh(request, dvs) -> DVSPbh:
+    return DVSPbh(dvs.get_asic_db(),
+                  dvs.get_config_db())
+
 
 @pytest.fixture(scope="class")
 def dvs_route(request, dvs) -> DVSRoute:
