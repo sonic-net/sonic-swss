@@ -5252,22 +5252,8 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
                 sai_uint32_t speed;
                 if (getPortOperSpeed(port, speed))
                 {
-                    if (speed != 0) 
-                    {
-                        SWSS_LOG_NOTICE("%s oper speed is %d", port.m_alias.c_str(), speed);
-                        updateDbPortOperSpeed(port, speed);
-                    }
-                    else 
-                    {
-                        // Port operational status is up, but operational speed is 0. It could be a valid case because
-                        // port UP event is an aync event, the valid flow could be:
-                        //    1. port UP event comes
-                        //    2. SONiC gets the UP event and starts to process the event
-                        //    3. port goes down due to any reason
-                        //    4. SONiC reads the oper speed, and gets a 0 because oper_state is down.
-                        // And it could also be a bug. So, we log a warning here.
-                        SWSS_LOG_WARN("Port %s operational speed is 0 when operational status is up", port.m_alias.c_str());
-                    }
+                    SWSS_LOG_NOTICE("%s oper speed is %d", port.m_alias.c_str(), speed);
+                    updateDbPortOperSpeed(port, speed);
                 }
             }
 
@@ -5376,21 +5362,8 @@ void PortsOrch::refreshPortStatus()
             sai_uint32_t speed;
             if (getPortOperSpeed(port, speed))
             {
-                if (speed != 0)
-                {
-                    SWSS_LOG_INFO("%s oper speed is %d", port.m_alias.c_str(), speed);
-                    updateDbPortOperSpeed(port, speed);
-                }
-                else
-                {
-                    // Port operational status is up, but operational speed is 0. It could be a valid case because
-                    // port state can change during two SAI calls:
-                    //    1. getPortOperStatus returns UP
-                    //    2. port goes down due to any reason
-                    //    3. getPortOperSpeed gets speed value 0
-                    // And it could also be a bug. So, we log a warning here.
-                    SWSS_LOG_WARN("Port %s operational speed is 0 when operational status is up", port.m_alias.c_str());
-                }
+                SWSS_LOG_INFO("%s oper speed is %d", port.m_alias.c_str(), speed);
+                updateDbPortOperSpeed(port, speed);
             }
         }
     }
@@ -5440,6 +5413,18 @@ bool PortsOrch::getPortOperSpeed(const Port& port, sai_uint32_t& speed) const
     }
 
     speed = static_cast<sai_uint32_t>(attr.value.u32);
+
+    if (speed == 0)
+    {
+        // Port operational status is up, but operational speed is 0. It could be a valid case because
+        // port state can change during two SAI calls:
+        //    1. getPortOperStatus returns UP
+        //    2. port goes down due to any reason
+        //    3. getPortOperSpeed gets speed value 0
+        // And it could also be a bug. So, we log a warning here.
+        SWSS_LOG_WARN("Port %s operational speed is 0", port.m_alias.c_str());
+        return false;
+    }
 
     return true;
 }
