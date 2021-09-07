@@ -427,8 +427,6 @@ class DockerVirtualSwitch:
         for s in self.servers:
             s.destroy()
 
-        self.servers = []
-
     def reload_and_wait_until_ready(self):
         self.runcmd('supervisorctl reload')
         try:
@@ -1645,15 +1643,11 @@ def manage_dvs(request) -> str:
             curr_fake_platform = new_fake_platform
 
         else:
-            # If not re-creating the DVS, reload supervisor
+            # First generated GCDA files for GCov
+            dvs.runcmd('killall5 -15')
+            # If not re-creating the DVS, restart container
             # between modules to ensure a consistent start state
-            if getattr(dvs, 'appldb', False):
-                del dvs.appldb
-
-            dvs.destroy_servers()
-            dvs.reload_and_wait_until_ready()
-            dvs.check_ready_status_and_init_db()
-            dvs.create_servers()
+            dvs.restart()
 
         return dvs
 
