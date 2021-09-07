@@ -420,24 +420,11 @@ class DockerVirtualSwitch:
             self.ctn.remove(force=True)
             self.ctn_sw.remove(force=True)
             os.system(f"rm -rf {self.mount}")
-            for s in self.servers:
-                s.destroy()
+            self.destroy_servers()
 
     def destroy_servers(self):
         for s in self.servers:
             s.destroy()
-
-    def reload_and_wait_until_ready(self):
-        self.runcmd('supervisorctl reload')
-        try:
-            self.check_services_ready()
-        except AssertionError:
-            # Sometimes the start.sh script will exit early withou
-            # actually starting the rest of the services. 
-            # If this happens, manually run start.sh then wait again
-            # for everything to startup
-            self.runcmd('supervisorctl start start.sh')
-        self.check_services_ready(timeout=60)
 
     def check_ready_status_and_init_db(self) -> None:
         try:
