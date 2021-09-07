@@ -1630,7 +1630,7 @@ def manage_dvs(request) -> str:
             curr_fake_platform = new_fake_platform
 
         else:
-            # First generated GCDA files for GCov
+            # First generate GCDA files for GCov
             dvs.runcmd('killall5 -15')
             # If not re-creating the DVS, restart container
             # between modules to ensure a consistent start state
