@@ -84,9 +84,9 @@ jobs:
       popd
       sudo cp -rf $(Build.ArtifactStagingDirectory)/sonic-gcov ./
       pushd sonic-gcov
-      sudo chmod +x gcov_support.sh
-      sudo ./gcov_support.sh generate
-      sudo ./gcov_support.sh merge_container_info $(Build.ArtifactStagingDirectory)
+      sudo chmod +x ./tests/gcov_support.sh
+      sudo ./tests/gcov_support.sh generate
+      sudo ./tests/gcov_support.sh merge_container_info $(Build.ArtifactStagingDirectory)
       sudo cp -rf gcov_output $(Build.ArtifactStagingDirectory)
       ls -lh $(Build.ArtifactStagingDirectory)
       popd

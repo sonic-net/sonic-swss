@@ -365,9 +365,9 @@ gcov_support_collect_gcno()
         ${tar_command}
         # temporarily using fixed dir
         cp gcno_$submodule_name.tar.gz ${work_dir}/debian/$submodule_name/tmp/gcov
-        cp gcov_support.sh ${work_dir}/debian/$submodule_name/tmp/gcov
-        cp gcov_support.sh ${work_dir}/tests
-        cp lcov_cobertura.py ${work_dir}/debian/$submodule_name/tmp/gcov
+        cp ./tests/gcov_support.sh ${work_dir}/debian/$submodule_name/tmp/gcov
+        cp ./tests/gcov_support.sh ${work_dir}/tests
+        cp ./gcovpreload/lcov_cobertura.py ${work_dir}/debian/$submodule_name/tmp/gcov
         mkdir -p ${work_dir}/debian/$submodule_name/usr
         mkdir -p ${work_dir}/debian/$submodule_name/usr/lib
         cp ./gcovpreload/libgcovpreload.so ${work_dir}/debian/$submodule_name/usr/lib

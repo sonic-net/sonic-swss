@@ -36,7 +36,7 @@ override_dh_auto_install:
 	dh_auto_install --destdir=debian/swss
 ifeq ($(ENABLE_GCOV), y)
 	mkdir -p debian/swss/tmp/gcov
-	sh ./gcov_support.sh collect swss
+	sh ./tests/gcov_support.sh collect swss
 endif
 
 override_dh_strip:
