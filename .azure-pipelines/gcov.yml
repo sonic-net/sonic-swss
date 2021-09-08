@@ -81,6 +81,7 @@ jobs:
       pushd ./s/
       sudo tar -zcvf swss.tar.gz ./*
       ls -lh ./*
+      cp ./gcovpreload/lcov_cobertura.py $(Build.ArtifactStagingDirectory)/
       cp ./tests/gcov_support.sh $(Build.ArtifactStagingDirectory)/sonic-gcov
       sudo cp -rf swss.tar.gz $(Build.ArtifactStagingDirectory)/sonic-gcov
       popd
