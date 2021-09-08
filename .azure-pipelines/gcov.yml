@@ -80,13 +80,16 @@ jobs:
       sudo apt-get install -y dotnet-sdk-5.0
       pushd ./s/
       sudo tar -zcvf swss.tar.gz ./*
+      ls -lh ./*
+      cp ./tests/gcov_support.sh $(Build.ArtifactStagingDirectory)/sonic-gcov
       sudo cp -rf swss.tar.gz $(Build.ArtifactStagingDirectory)/sonic-gcov
       popd
       sudo cp -rf $(Build.ArtifactStagingDirectory)/sonic-gcov ./
       pushd sonic-gcov
-      sudo chmod +x ./tests/gcov_support.sh
-      sudo ./tests/gcov_support.sh generate
-      sudo ./tests/gcov_support.sh merge_container_info $(Build.ArtifactStagingDirectory)
+      ls -lh ./*
+      sudo chmod +x ./gcov_support.sh
+      sudo ./gcov_support.sh generate
+      sudo ./gcov_support.sh merge_container_info $(Build.ArtifactStagingDirectory)
       sudo cp -rf gcov_output $(Build.ArtifactStagingDirectory)
       ls -lh $(Build.ArtifactStagingDirectory)
       popd
