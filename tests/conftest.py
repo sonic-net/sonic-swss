@@ -385,13 +385,7 @@ class DockerVirtualSwitch:
         self.redis_sock = os.path.join(self.mount, "redis.sock")
         self.redis_chassis_sock = os.path.join(self.mount, "redis_chassis.sock")
 
-        # DB wrappers are declared here, lazy-loaded in the tests
-        self.app_db = None
-        self.asic_db = None
-        self.counters_db = None
-        self.config_db = None
-        self.flex_db = None
-        self.state_db = None
+        self.reset_dbs()
 
         # Make sure everything is up and running before turning over control to the caller
         self.check_ready_status_and_init_db()
@@ -405,6 +399,14 @@ class DockerVirtualSwitch:
             server = VirtualServer(self.ctn_sw.name, self.ctn_sw_pid, i)
             self.servers.append(server)
             
+    def reset_dbs(self):
+        # DB wrappers are declared here, lazy-loaded in the tests
+        self.app_db = None
+        self.asic_db = None
+        self.counters_db = None
+        self.config_db = None
+        self.flex_db = None
+        self.state_db = None
 
     def destroy(self) -> None:
         if getattr(self, 'appldb', False):
@@ -439,6 +441,7 @@ class DockerVirtualSwitch:
             # Initialize the databases.
             self.init_asic_db_validator()
             self.init_appl_db_validator()
+            self.reset_dbs()
 
             # Verify that SWSS has finished initializing.
             self.check_swss_ready()
