@@ -2,12 +2,16 @@
 #include "directory.h"
 #undef private
 
+#include "json.h"
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
 #include "mock_table.h"
+#include "notifier.h"
 #include "pfcactionhandler.h"
 
 #include <sstream>
+
+extern redisReply *mockReply;
 
 namespace portsorch_test
 {
@@ -21,6 +25,7 @@ namespace portsorch_test
         shared_ptr<swss::DBConnector> m_state_db;
         shared_ptr<swss::DBConnector> m_counters_db;
         shared_ptr<swss::DBConnector> m_chassis_app_db;
+        shared_ptr<swss::DBConnector> m_asic_db;
 
         PortsOrchTest()
         {
@@ -35,6 +40,8 @@ namespace portsorch_test
                 "STATE_DB", 0);
             m_chassis_app_db = make_shared<swss::DBConnector>(
                 "CHASSIS_APP_DB", 0);
+            m_asic_db = make_shared<swss::DBConnector>(
+                "ASIC_DB", 0);
         }
 
         virtual void SetUp() override
@@ -71,12 +78,37 @@ namespace portsorch_test
 
             ASSERT_EQ(gBufferOrch, nullptr);
             gBufferOrch = new BufferOrch(m_app_db.get(), m_config_db.get(), m_state_db.get(), buffer_tables);
+
+            ASSERT_EQ(gIntfsOrch, nullptr);
+            gIntfsOrch = new IntfsOrch(m_app_db.get(), APP_INTF_TABLE_NAME, gVrfOrch, m_chassis_app_db.get());
+
+            const int fdborch_pri = 20;
+
+            vector<table_name_with_pri_t> app_fdb_tables = {
+                { APP_FDB_TABLE_NAME,        FdbOrch::fdborch_pri},
+                { APP_VXLAN_FDB_TABLE_NAME,  FdbOrch::fdborch_pri},
+                { APP_MCLAG_FDB_TABLE_NAME,  fdborch_pri}
+            };
+
+            TableConnector stateDbFdb(m_state_db.get(), STATE_FDB_TABLE_NAME);
+            TableConnector stateMclagDbFdb(m_state_db.get(), STATE_MCLAG_REMOTE_FDB_TABLE_NAME);
+            ASSERT_EQ(gFdbOrch, nullptr);
+            gFdbOrch = new FdbOrch(m_app_db.get(), app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch);
+
+            ASSERT_EQ(gNeighOrch, nullptr);
+            gNeighOrch = new NeighOrch(m_app_db.get(), APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch, m_chassis_app_db.get());
         }
 
         virtual void TearDown() override
         {
             ::testing_db::reset();
 
+            delete gNeighOrch;
+            gNeighOrch = nullptr;
+            delete gFdbOrch;
+            gFdbOrch = nullptr;
+            delete gIntfsOrch;
+            gIntfsOrch = nullptr;
             delete gPortsOrch;
             gPortsOrch = nullptr;
             delete gBufferOrch;
@@ -527,6 +559,119 @@ namespace portsorch_test
 
         // verify there was no SAI call executed.
         ASSERT_FALSE(lagMemberCreateCalled);
+    }
+
+    /*
+    * The scope of this test is a negative test which verify that:
+    * if port operational status is up but operational speed is 0, the port speed should not be
+    * updated to DB.
+    */
+    TEST_F(PortsOrchTest, PortOperStatusIsUpAndOperSpeedIsZero)
+    {   
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        // Populate port table with SAI ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone, PortInitDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+        // Apply configuration : create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // Get first port, expect the oper status is not UP
+        Port port;
+        gPortsOrch->getPort("Ethernet0", port);
+        ASSERT_TRUE(port.m_oper_status != SAI_PORT_OPER_STATUS_UP);
+        
+        // save original api since we will spy
+        auto orig_port_api = sai_port_api;
+        sai_port_api = new sai_port_api_t();
+        memcpy(sai_port_api, orig_port_api, sizeof(*sai_port_api));
+
+        // mock SAI API sai_port_api->get_port_attribute
+        auto portSpy = SpyOn<SAI_API_PORT, SAI_OBJECT_TYPE_PORT>(&sai_port_api->get_port_attribute);
+        portSpy->callFake([&](sai_object_id_t oid, uint32_t count, sai_attribute_t * attrs) -> sai_status_t {
+                if (attrs[0].id == SAI_PORT_ATTR_OPER_STATUS)
+                {
+                    attrs[0].value.u32 = (uint32_t)SAI_PORT_OPER_STATUS_UP;
+                }
+                else if (attrs[0].id == SAI_PORT_ATTR_OPER_SPEED)
+                {
+                    // Return 0 for port operational speed
+                    attrs[0].value.u32 = 0;
+                }
+                
+                return (sai_status_t)SAI_STATUS_SUCCESS;
+            }
+        );
+
+        auto exec = static_cast<Notifier *>(gPortsOrch->getExecutor("PORT_STATUS_NOTIFICATIONS"));
+        auto consumer = exec->getNotificationConsumer();
+        
+        // mock a redis reply for notification, it notifies that Ehernet0 is going to up
+        mockReply = (redisReply *)calloc(sizeof(redisReply), 1);
+        mockReply->type = REDIS_REPLY_ARRAY;
+        mockReply->elements = 3; // REDIS_PUBLISH_MESSAGE_ELEMNTS
+        mockReply->element = (redisReply **)calloc(sizeof(redisReply *), mockReply->elements);
+        mockReply->element[2] = (redisReply *)calloc(sizeof(redisReply), 1);
+        mockReply->element[2]->type = REDIS_REPLY_STRING;
+        sai_port_oper_status_notification_t port_oper_status;
+        port_oper_status.port_id = port.m_port_id;
+        port_oper_status.port_state = SAI_PORT_OPER_STATUS_UP;
+        std::string data = sai_serialize_port_oper_status_ntf(1, &port_oper_status);
+        std::vector<FieldValueTuple> notifyValues;
+        FieldValueTuple opdata("port_state_change", data);
+        notifyValues.push_back(opdata);
+        std::string msg = swss::JSon::buildJson(notifyValues);
+        mockReply->element[2]->str = (char*)calloc(1, msg.length() + 1);
+        memcpy(mockReply->element[2]->str, msg.c_str(), msg.length());
+
+        // trigger the notification
+        consumer->readData();
+        gPortsOrch->doTask(*consumer);
+        mockReply = nullptr; 
+
+        gPortsOrch->getPort("Ethernet0", port);
+        ASSERT_TRUE(port.m_oper_status == SAI_PORT_OPER_STATUS_UP);
+
+        std::vector<FieldValueTuple> values;
+        portTable.get("Ethernet0", values);
+        for (auto &valueTuple : values)
+        {
+            if (fvField(valueTuple) == "speed")
+            {
+                ASSERT_TRUE(fvValue(valueTuple) != "0");
+            }
+        }
+
+        gPortsOrch->refreshPortStatus();
+        for (const auto &it : ports)
+        {
+            gPortsOrch->getPort(it.first, port);
+            ASSERT_TRUE(port.m_oper_status == SAI_PORT_OPER_STATUS_UP);
+
+            std::vector<FieldValueTuple> values;
+            portTable.get(it.first, values);
+            for (auto &valueTuple : values)
+            {
+                if (fvField(valueTuple) == "speed")
+                {
+                    ASSERT_TRUE(fvValue(valueTuple) != "0");
+                }
+            }
+        }
+
+        sai_port_api = orig_port_api;
     }
 
     /*

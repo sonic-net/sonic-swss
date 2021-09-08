@@ -125,6 +125,7 @@ void RouteOrch::doLabelTask(Consumer& consumer)
                 string aliases;
                 string mpls_nhs;
                 uint8_t& pop_count = ctx.pop_count;
+                string weights;
                 bool& excp_intfs_flag = ctx.excp_intfs_flag;
                 bool blackhole = false;
 
@@ -144,6 +145,9 @@ void RouteOrch::doLabelTask(Consumer& consumer)
 
                     if (fvField(i) == "blackhole")
                         blackhole = fvValue(i) == "true";
+
+                    if (fvField(i) == "weight")
+                        weights = fvValue(i);
                 }
                 vector<string> ipv = tokenize(ips, ',');
                 vector<string> alsv = tokenize(aliases, ',');
@@ -220,7 +224,7 @@ void RouteOrch::doLabelTask(Consumer& consumer)
                         nhg_str += ipv[i] + NH_DELIMITER + alsv[i];
                     }
 
-                    nhg = NextHopGroupKey(nhg_str);
+                    nhg = NextHopGroupKey(nhg_str, weights);
                 }
 
                 if (nhg.getSize() == 1 && nhg.hasIntfNextHop())

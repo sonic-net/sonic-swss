@@ -53,10 +53,10 @@ for i = 1, n do
         local out_octets_last = redis.call('HGET', rates_table_name .. ':' .. KEYS[i], 'SAI_PORT_STAT_IF_OUT_OCTETS_last')
 
         -- Calculate new rates values
-        local rx_bps_new = (in_octets - in_octets_last)/delta
-        local tx_bps_new = (out_octets - out_octets_last)/delta
-        local rx_pps_new = ((in_ucast_pkts + in_non_ucast_pkts) - (in_ucast_pkts_last + in_non_ucast_pkts_last))/delta
-        local tx_pps_new = ((out_ucast_pkts + out_non_ucast_pkts) - (out_ucast_pkts_last + out_non_ucast_pkts_last))/delta
+        local rx_bps_new = (in_octets - in_octets_last) / delta * 1000
+        local tx_bps_new = (out_octets - out_octets_last) / delta * 1000
+        local rx_pps_new = ((in_ucast_pkts + in_non_ucast_pkts) - (in_ucast_pkts_last + in_non_ucast_pkts_last)) / delta * 1000
+        local tx_pps_new = ((out_ucast_pkts + out_non_ucast_pkts) - (out_ucast_pkts_last + out_non_ucast_pkts_last)) / delta * 1000
 
         if initialized == "DONE" then
             -- Get old rates values
