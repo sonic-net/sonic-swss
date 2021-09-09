@@ -90,6 +90,7 @@ void FlexCounterOrch::doTask(Consumer &consumer)
 
             if (it != data.end())
             {
+                consumer.m_toSync.erase(it++);
                 continue;
             }
             for (auto valuePair:data)
