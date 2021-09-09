@@ -86,9 +86,9 @@ void FlexCounterOrch::doTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            auto it = std::find(std::begin(data), std::end(data), FieldValueTuple(FLEX_COUNTER_DELAY_STATUS_FIELD, "true"));
+            auto delay_it = std::find(std::begin(data), std::end(data), FieldValueTuple(FLEX_COUNTER_DELAY_STATUS_FIELD, "true"));
 
-            if (it != data.end())
+            if (delay_it != data.end())
             {
                 consumer.m_toSync.erase(it++);
                 continue;
