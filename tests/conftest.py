@@ -19,6 +19,7 @@ from swsscommon import swsscommon
 from dvslib.dvs_database import DVSDatabase
 from dvslib.dvs_common import PollingConfig, wait_for_result
 from dvslib.dvs_acl import DVSAcl
+from dvslib.dvs_pbh import DVSPbh
 from dvslib.dvs_route import DVSRoute
 from dvslib import dvs_vlan
 from dvslib import dvs_lag
@@ -1605,9 +1606,9 @@ def vct(request):
 
 @pytest.yield_fixture
 def testlog(request, dvs):
-    dvs.runcmd(f"logger === start test {request.node.name} ===")
+    dvs.runcmd(f"logger -t pytest === start test {request.node.nodeid} ===")
     yield testlog
-    dvs.runcmd(f"logger === finish test {request.node.name} ===")
+    dvs.runcmd(f"logger -t pytest === finish test {request.node.nodeid} ===")
 
 ################# DVSLIB module manager fixtures #############################
 @pytest.fixture(scope="class")
@@ -1616,6 +1617,13 @@ def dvs_acl(request, dvs) -> DVSAcl:
                   dvs.get_config_db(),
                   dvs.get_state_db(),
                   dvs.get_counters_db())
+
+
+@pytest.fixture(scope="class")
+def dvs_pbh(request, dvs) -> DVSPbh:
+    return DVSPbh(dvs.get_asic_db(),
+                  dvs.get_config_db())
+
 
 @pytest.fixture(scope="class")
 def dvs_route(request, dvs) -> DVSRoute:

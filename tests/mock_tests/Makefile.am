@@ -50,6 +50,10 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/mirrororch.cpp \
                 $(top_srcdir)/orchagent/fdborch.cpp \
                 $(top_srcdir)/orchagent/aclorch.cpp \
+                $(top_srcdir)/orchagent/pbh/pbhcnt.cpp \
+                $(top_srcdir)/orchagent/pbh/pbhmgr.cpp \
+                $(top_srcdir)/orchagent/pbh/pbhrule.cpp \
+                $(top_srcdir)/orchagent/pbhorch.cpp \
                 $(top_srcdir)/orchagent/saihelper.cpp \
                 $(top_srcdir)/orchagent/switchorch.cpp \
                 $(top_srcdir)/orchagent/pfcwdorch.cpp \

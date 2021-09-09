@@ -54,7 +54,8 @@ typedef enum
     ACL_TABLE_DTEL_DROP_WATCHLIST,
     ACL_TABLE_MCLAG,
     ACL_TABLE_MUX,
-    ACL_TABLE_DROP
+    ACL_TABLE_DROP,
+    ACL_TABLE_PBH
 } acl_table_type_t;
 
 typedef std::unordered_map<std::string, acl_table_type_t> acl_table_type_lookup_t;
