@@ -110,11 +110,11 @@ struct RouteBulkContext
     sai_object_id_t                     vrf_id;
     IpPrefix                            ip_prefix;
     bool                                excp_intfs_flag;
-    // is_temp will track if the NhgOrch's owned NHG is temporary or not
-    bool                                is_temp;
+    // using_temp_nhg will track if the NhgOrch's owned NHG is temporary or not
+    bool                                using_temp_nhg;
 
     RouteBulkContext()
-        : excp_intfs_flag(false), is_temp(false)
+        : excp_intfs_flag(false), using_temp_nhg(false)
     {
     }
 
@@ -129,7 +129,7 @@ struct RouteBulkContext
         nhg.clear();
         excp_intfs_flag = false;
         vrf_id = SAI_NULL_OBJECT_ID;
-        is_temp = false;
+        using_temp_nhg = false;
     }
 };
 
@@ -143,11 +143,11 @@ struct LabelRouteBulkContext
     Label                               label;
     bool                                excp_intfs_flag;
     uint8_t                             pop_count;
-    // is_temp will track if the NhgOrch's owned NHG is temporary or not
-    bool                                is_temp;
+    // using_temp_nhg will track if the NhgOrch's owned NHG is temporary or not
+    bool                                using_temp_nhg;
 
     LabelRouteBulkContext()
-        : excp_intfs_flag(false), is_temp(false)
+        : excp_intfs_flag(false), using_temp_nhg(false)
     {
     }
 

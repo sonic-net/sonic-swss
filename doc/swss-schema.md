@@ -160,6 +160,7 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     key           = ROUTE_TABLE:prefix
     nexthop       = *prefix, ;IP addresses separated “,” (empty indicates no gateway)
     ifname        = ifindex? PORT_TABLE.key  ; zero or more separated by “,” (zero indicates no interface)
+    mpls_nh       = STRING                   ; Comma-separated list of MPLS NH info.
     blackhole     = BIT ; Set to 1 if this route is a blackhole (or null0)
     weight        = weight_list              ; List of weights.
     nexthop_group = string ; index within the NEXTHOP_GROUP_TABLE, used instead of nexthop and intf fields
@@ -167,13 +168,16 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
 ---------------------------------------------
 
 ###### LABEL_ROUTE_TABLE
-; Defines schema for MPLS label route table attributes
-key           = LABEL_ROUTE_TABLE:mpls_label ; MPLS label
-; field       = value
-nexthop       = STRING                   ; Comma-separated list of nexthops.
-ifname        = STRING                   ; Comma-separated list of interfaces.
-weight        = STRING                   ; Comma-separated list of weights.
-nexthop_group = string ; index within the NEXTHOP_GROUP_TABLE, used instead of nexthop and intf fields
+    ; Defines schema for MPLS label route table attributes
+    key           = LABEL_ROUTE_TABLE:mpls_label ; MPLS label
+    ; field       = value
+    nexthop       = STRING                   ; Comma-separated list of nexthops.
+    ifname        = STRING                   ; Comma-separated list of interfaces.
+    mpls_nh       = STRING                   ; Comma-separated list of MPLS NH info.
+    mpls_pop      = STRING                   ; Number of ingress MPLS labels to POP
+    weight        = STRING                   ; Comma-separated list of weights.
+    blackhole     = BIT ; Set to 1 if this route is a blackhole (or null0)
+    nexthop_group = string ; index within the NEXTHOP_GROUP_TABLE, used instead of nexthop and intf fields
 
 ---------------------------------------------
 ### NEXTHOP_GROUP_TABLE
@@ -182,6 +186,7 @@ nexthop_group = string ; index within the NEXTHOP_GROUP_TABLE, used instead of n
     key           = NEXTHOP_GROUP_TABLE:string ; arbitrary index for the next hop group
     nexthop       = *prefix, ;IP addresses separated “,” (empty indicates no gateway)
     ifname        = ifindex? PORT_TABLE.key  ; zero or more separated by “,” (zero indicates no interface)
+    mpls_nh       = STRING                   ; Comma-separated list of MPLS NH info.
     weight        = weight_list              ; List of weights.
 
 ---------------------------------------------

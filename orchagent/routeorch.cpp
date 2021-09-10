@@ -23,10 +23,6 @@ extern NhgOrch *gNhgOrch;
 
 extern size_t gMaxBulkSize;
 
-/* Default maximum number of next hop groups */
-#define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
-#define DEFAULT_MAX_ECMP_GROUP_SIZE     32
-
 RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch) :
         gRouteBulker(sai_route_api, gMaxBulkSize),
         gLabelRouteBulker(sai_mpls_api, gMaxBulkSize),
@@ -516,8 +512,6 @@ void RouteOrch::doTask(Consumer& consumer)
 
             if (op == SET_COMMAND)
             {
-                SWSS_LOG_DEBUG("Set operation");
-
                 string ips;
                 string aliases;
                 string mpls_nhs;
@@ -558,22 +552,13 @@ void RouteOrch::doTask(Consumer& consumer)
                         nhg_index = fvValue(i);
                 }
 
-                SWSS_LOG_INFO("Route %s has nexthop_group: %s, ips: %s, "
-                                "MPLS nhs: %s, aliases: %s",
-                                ip_prefix.to_string().c_str(),
-                                nhg_index.c_str(),
-                                ips.c_str(),
-                                mpls_nhs.c_str(),
-                                aliases.c_str());
-
                 /*
                  * A route should not fill both nexthop_group and ips /
                  * aliases.
                  */
                 if (!nhg_index.empty() && (!ips.empty() || !aliases.empty()))
                 {
-                    SWSS_LOG_ERROR("Route %s has both nexthop_group and ips/aliases",
-                                    key.c_str());
+                    SWSS_LOG_ERROR("Route %s has both nexthop_group and ips/aliases", key.c_str());
                     it = consumer.m_toSync.erase(it);
                     continue;
                 }
@@ -699,12 +684,11 @@ void RouteOrch::doTask(Consumer& consumer)
                     {
                         const NextHopGroup& nh_group = gNhgOrch->getNhg(nhg_index);
                         ctx.nhg = nh_group.getKey();
-                        ctx.is_temp = nh_group.isTemp();
+                        ctx.using_temp_nhg = nh_group.isTemp();
                     }
                     catch (const std::out_of_range& e)
                     {
-                        SWSS_LOG_ERROR("Next hop group %s does not exist",
-                                        nhg_index.c_str());
+                        SWSS_LOG_ERROR("Next hop group %s does not exist", nhg_index.c_str());
                         ++it;
                         continue;
                     }
@@ -755,7 +739,7 @@ void RouteOrch::doTask(Consumer& consumer)
                 else if (m_syncdRoutes.find(vrf_id) == m_syncdRoutes.end() ||
                     m_syncdRoutes.at(vrf_id).find(ip_prefix) == m_syncdRoutes.at(vrf_id).end() ||
                     m_syncdRoutes.at(vrf_id).at(ip_prefix) != RouteNhg(nhg, ctx.nhg_index) ||
-                    ctx.is_temp)
+                    ctx.using_temp_nhg)
                 {
                     if (addRoute(ctx, nhg))
                         it = consumer.m_toSync.erase(it);
@@ -779,8 +763,6 @@ void RouteOrch::doTask(Consumer& consumer)
             }
             else if (op == DEL_COMMAND)
             {
-                SWSS_LOG_DEBUG("Delete operation");
-
                 if (removeRoute(ctx))
                     it = consumer.m_toSync.erase(it);
                 else
@@ -850,7 +832,7 @@ void RouteOrch::doTask(Consumer& consumer)
                 else if (m_syncdRoutes.find(vrf_id) == m_syncdRoutes.end() ||
                          m_syncdRoutes.at(vrf_id).find(ip_prefix) == m_syncdRoutes.at(vrf_id).end() ||
                          m_syncdRoutes.at(vrf_id).at(ip_prefix) != RouteNhg(nhg, ctx.nhg_index) ||
-                         ctx.is_temp)
+                         ctx.using_temp_nhg)
                 {
                     if (addRoutePost(ctx, nhg))
                         it_prev = consumer.m_toSync.erase(it_prev);
@@ -1092,8 +1074,8 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
 
     if (gNhgOrch->getNhgCount() >= gNhgOrch->getMaxNhgCount())
     {
-        SWSS_LOG_WARN("Reached maximum next hop groups of %u",
-                        gNhgOrch->getMaxNhgCount());
+        SWSS_LOG_DEBUG("Failed to create new next hop group. \
+                        Reaching maximum number of next hop groups.");
         return false;
     }
 
@@ -1120,7 +1102,7 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         }
         else
         {
-            SWSS_LOG_WARN("Failed to get next hop %s in %s",
+            SWSS_LOG_INFO("Failed to get next hop %s in %s",
                     it.to_string().c_str(), nexthops.to_string().c_str());
             return false;
         }
@@ -1672,8 +1654,6 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
     }
     else
     {
-        SWSS_LOG_DEBUG("Next hop group is owned by NhgOrch with index %s",
-                        ctx.nhg_index.c_str());
         try
         {
             const NextHopGroup& nhg = gNhgOrch->getNhg(ctx.nhg_index);
@@ -1681,8 +1661,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
         }
         catch(const std::out_of_range& e)
         {
-            SWSS_LOG_WARN("Next hop group key %s does not exist",
-                            ctx.nhg_index.c_str());
+            SWSS_LOG_WARN("Next hop group key %s does not exist", ctx.nhg_index.c_str());
             return false;
         }
     }
@@ -1763,10 +1742,6 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
         }
     }
 
-    SWSS_LOG_NOTICE("Added route %s with next hop(s) %s",
-                    ipPrefix.to_string().c_str(),
-                    nextHops.to_string().c_str());
-
     return false;
 }
 
@@ -1787,8 +1762,6 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         return false;
     }
 
-    SWSS_LOG_DEBUG("Checking next hop group %s", nextHops.to_string().c_str());
-
     if (m_fgNhgOrch->isRouteFineGrained(vrf_id, ipPrefix, nextHops))
     {
         /* Route is pointing to Fine Grained ECMP nexthop group */
@@ -1797,7 +1770,6 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
     /* Check that the next hop group is not owned by NhgOrch. */
     else if (ctx.nhg_index.empty())
     {
-        SWSS_LOG_DEBUG("Next hop group is not owned by NhgOrch");
         if (nextHops.getSize() == 0)
         {
             /* The route is pointing to a blackhole */
@@ -1844,12 +1816,9 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
     }
     else
     {
-        SWSS_LOG_DEBUG("NhgOrch owns the next hop group with index %s",
-                        ctx.nhg_index.c_str());
         if (!gNhgOrch->hasNhg(ctx.nhg_index))
         {
-            SWSS_LOG_WARN("Failed to get next hop group with index %s",
-                            ctx.nhg_index.c_str());
+            SWSS_LOG_WARN("Failed to get next hop group with index %s", ctx.nhg_index.c_str());
             return false;
         }
     }
@@ -2060,7 +2029,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
      * in order to keep trying to update the route in case the NHG is updated,
      * which will update the SAI ID of the group as well.
      */
-    return !ctx.is_temp;
+    return !ctx.using_temp_nhg;
 }
 
 bool RouteOrch::removeRoute(RouteBulkContext& ctx)

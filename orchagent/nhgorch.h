@@ -3,6 +3,10 @@
 #include "orch.h"
 #include "nexthopgroupkey.h"
 
+/* Default maximum number of next hop groups */
+#define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
+#define DEFAULT_MAX_ECMP_GROUP_SIZE     32
+
 class NextHopGroupMember
 {
 public:
@@ -31,9 +35,9 @@ public:
     /* Update member's weight and update the SAI attribute as well. */
     bool updateWeight(uint32_t weight);
 
-    /* Sync / Desync. */
+    /* Sync / Delete. */
     void sync(sai_object_id_t gm_id);
-    void desync();
+    void delete();
 
     /* Getters / Setters. */
     inline const NextHopKey& getNhKey() const { return m_nh_key; }
@@ -48,8 +52,7 @@ public:
     /* Convert member's details to string. */
     std::string to_string() const
     {
-        return m_nh_key.to_string() +
-                ", SAI ID: " + std::to_string(m_gm_id);
+        return m_nh_key.to_string() + ", SAI ID: " + std::to_string(m_gm_id);
     }
 
 private:
@@ -75,28 +78,30 @@ public:
     NextHopGroup& operator=(NextHopGroup&& nhg);
 
     /* Destructor. */
-    virtual ~NextHopGroup() { desync(); }
+    virtual ~NextHopGroup() { delete(); }
 
     /* Sync the group, creating the group's and members SAI IDs. */
     bool sync();
 
-    /* Desync the group, reseting the group's and members SAI IDs.  */
-    bool desync();
+    /* Delete the group, reseting the group's and members SAI IDs.  */
+    bool delete();
 
     /*
      * Update the group based on a new next hop group key.  This will also
-     * perform any sync / desync necessary.
+     * perform any sync / delete necessary.
      */
     bool update(const NextHopGroupKey& nhg_key);
 
     /* Check if the group contains the given next hop. */
-    inline bool hasNextHop(const NextHopKey& nh_key) const {
-                            return m_members.find(nh_key) != m_members.end(); }
+    inline bool hasNextHop(const NextHopKey& nh_key) const
+    {
+        return m_members.find(nh_key) != m_members.end();
+    }
 
     /* Validate a next hop in the group, syncing it. */
     bool validateNextHop(const NextHopKey& nh_key);
 
-    /* Invalidate a next hop in the group, desyncing it. */
+    /* Invalidate a next hop in the group, deleteing it. */
     bool invalidateNextHop(const NextHopKey& nh_key);
 
     /* Increment the number of existing groups. */
@@ -145,11 +150,10 @@ private:
     bool syncMembers(const std::set<NextHopKey>& nh_keys);
 
     /* Remove group's members the SAI API from the given keys. */
-    bool desyncMembers(const std::set<NextHopKey>& nh_keys);
+    bool deleteMembers(const std::set<NextHopKey>& nh_keys);
 
     /* Create the attributes vector for a next hop group member. */
-    vector<sai_attribute_t> createNhgmAttrs(
-                                        const NextHopGroupMember& nhgm) const;
+    vector<sai_attribute_t> createNhgmAttrs(const NextHopGroupMember& nhgm) const;
 };
 
 /*
@@ -192,23 +196,23 @@ public:
 
     /* Check if the next hop group given by it's index exists. */
     inline bool hasNhg(const std::string& index) const
-        { return m_syncdNextHopGroups.find(index) !=
-                                                m_syncdNextHopGroups.end(); }
+    {
+        return m_syncdNextHopGroups.find(index) != m_syncdNextHopGroups.end();
+    }
 
     /*
      * Get the next hop group given by it's index.  If the index does not exist
      * in map, a std::out_of_range exception will be thrown.
      */
     inline const NextHopGroup& getNhg(const std::string& index) const
-                        { return *m_syncdNextHopGroups.at(index).nhg; }
+                                { return *m_syncdNextHopGroups.at(index).nhg; }
 
     /* Add a temporary next hop group when resources are exhausted. */
     NextHopGroup createTempNhg(const NextHopGroupKey& nhg_key);
 
     /* Getters / Setters. */
     inline unsigned int getMaxNhgCount() const { return m_maxNhgCount; }
-    static inline unsigned int getNhgCount()
-                                        { return NextHopGroup::getCount(); }
+    static inline unsigned int getNhgCount() { return NextHopGroup::getCount(); }
 
     /* Validate / Invalidate a next hop. */
     bool validateNextHop(const NextHopKey& nh_key);

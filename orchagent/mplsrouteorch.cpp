@@ -123,8 +123,6 @@ void RouteOrch::doLabelTask(Consumer& consumer)
 
             if (op == SET_COMMAND)
             {
-                SWSS_LOG_DEBUG("Set operation");
-
                 string ips;
                 string aliases;
                 string mpls_nhs;
@@ -157,14 +155,6 @@ void RouteOrch::doLabelTask(Consumer& consumer)
                     if (fvField(i) == "nexthop_group")
                         nhg_index = fvValue(i);
                 }
-
-                SWSS_LOG_INFO("Label route %u has nexthop_group: %s, ips: %s, "
-                              "MPLS NHs: %s, aliases: %s",
-                                    label,
-                                    nhg_index.c_str(),
-                                    ips.c_str(),
-                                    mpls_nhs.c_str(),
-                                    aliases.c_str());
 
                 /*
                  * A route should not fill both nexthop_group and ips /
@@ -265,12 +255,11 @@ void RouteOrch::doLabelTask(Consumer& consumer)
                     {
                         const NextHopGroup& nh_group = gNhgOrch->getNhg(nhg_index);
                         ctx.nhg = nh_group.getKey();
-                        ctx.is_temp = nh_group.isTemp();
+                        ctx.using_temp_nhg = nh_group.isTemp();
                     }
                     catch (const std::out_of_range& e)
                     {
-                        SWSS_LOG_ERROR("Next hop group %s does not exist",
-                                        nhg_index.c_str());
+                        SWSS_LOG_ERROR("Next hop group %s does not exist", nhg_index.c_str());
                         ++it;
                         continue;
                     }
@@ -303,7 +292,7 @@ void RouteOrch::doLabelTask(Consumer& consumer)
                 else if (m_syncdLabelRoutes.find(vrf_id) == m_syncdLabelRoutes.end() ||
                          m_syncdLabelRoutes.at(vrf_id).find(label) == m_syncdLabelRoutes.at(vrf_id).end() ||
                          m_syncdLabelRoutes.at(vrf_id).at(label) != RouteNhg(nhg, nhg_index) ||
-                         ctx.is_temp)
+                         ctx.using_temp_nhg)
                 {
                     if (addLabelRoute(ctx, nhg))
                         it = consumer.m_toSync.erase(it);
@@ -328,7 +317,6 @@ void RouteOrch::doLabelTask(Consumer& consumer)
             else if (op == DEL_COMMAND)
             {
                 /* Cannot locate the route or remove succeed */
-                SWSS_LOG_DEBUG("Delete operation");
                 if (removeLabelRoute(ctx))
                     it = consumer.m_toSync.erase(it);
                 else
@@ -398,7 +386,7 @@ void RouteOrch::doLabelTask(Consumer& consumer)
                 else if (m_syncdLabelRoutes.find(vrf_id) == m_syncdLabelRoutes.end() ||
                          m_syncdLabelRoutes.at(vrf_id).find(label) == m_syncdLabelRoutes.at(vrf_id).end() ||
                          m_syncdLabelRoutes.at(vrf_id).at(label) != RouteNhg(nhg, ctx.nhg_index) ||
-                         ctx.is_temp)
+                         ctx.using_temp_nhg)
                 {
                     if (addLabelRoutePost(ctx, nhg))
                         it_prev = consumer.m_toSync.erase(it_prev);
@@ -445,8 +433,7 @@ void RouteOrch::addTempLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroup
          */
         if (!m_neighOrch->hasNextHop(it->ipKey()))
         {
-            SWSS_LOG_INFO("Failed to get next hop %s for %u",
-                   (*it).to_string().c_str(), label);
+            SWSS_LOG_INFO("Failed to get next hop %s for %u", (*it).to_string().c_str(), label);
             it = next_hop_set.erase(it);
         }
         else
@@ -474,10 +461,6 @@ bool RouteOrch::addLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroupKey 
 
     sai_object_id_t& vrf_id = ctx.vrf_id;
     Label& label = ctx.label;
-
-    SWSS_LOG_NOTICE("Adding route for label %u with next hop(s) %s",
-                    label,
-                    nextHops.to_string().c_str());
 
     /* next_hop_id indicates the next hop id or next hop group id of this route */
     sai_object_id_t next_hop_id;
@@ -521,7 +504,7 @@ bool RouteOrch::addLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroupKey 
                 }
                 /* See if there is an IP neighbor nexthop */
                 else if (nexthop.isMplsNextHop() &&
-                         m_neighOrch->hasNextHop(NextHopKey(nexthop.ip_address, nexthop.alias)))
+                         m_neighOrch->hasNextHop(nexthop.ipKey()))
                 {
                     m_neighOrch->addNextHop(nexthop);
                     next_hop_id = m_neighOrch->getNextHopId(nexthop);
@@ -547,7 +530,8 @@ bool RouteOrch::addLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroupKey 
 
                     /* If the current next hop is part of the next hop group to sync,
                      * then return false and no need to add another temporary route. */
-                    if (it_route != m_syncdLabelRoutes.at(vrf_id).end() && it_route->second.nhg_key.getSize() == 1)
+                    if (it_route != m_syncdLabelRoutes.at(vrf_id).end() &&
+                        it_route->second.nhg_key.getSize() == 1)
                     {
                         const NextHopKey& nexthop = *it_route->second.nhg_key.getNextHops().begin();
                         if (nextHops.contains(nexthop))
@@ -570,8 +554,7 @@ bool RouteOrch::addLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroupKey 
     }
     else
     {
-        SWSS_LOG_DEBUG("Next hop group is owned by NhgOrch with index %s",
-                        ctx.nhg_index.c_str());
+        SWSS_LOG_DEBUG("Next hop group is owned by NhgOrch with index %s", ctx.nhg_index.c_str());
         try
         {
             const NextHopGroup& nhg = gNhgOrch->getNhg(ctx.nhg_index);
@@ -579,8 +562,7 @@ bool RouteOrch::addLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroupKey 
         }
         catch(const std::out_of_range& e)
         {
-            SWSS_LOG_WARN("Next hop group key %s does not exist",
-                            ctx.nhg_index.c_str());
+            SWSS_LOG_WARN("Next hop group key %s does not exist", ctx.nhg_index.c_str());
             return false;
         }
     }
@@ -726,12 +708,10 @@ bool RouteOrch::addLabelRoutePost(const LabelRouteBulkContext& ctx, const NextHo
     }
     else
     {
-        SWSS_LOG_DEBUG("NhgOrch owns the next hop group with index %s",
-                        ctx.nhg_index.c_str());
+        SWSS_LOG_DEBUG("NhgOrch owns the next hop group with index %s", ctx.nhg_index.c_str());
         if (!gNhgOrch->hasNhg(ctx.nhg_index))
         {
-            SWSS_LOG_WARN("Failed to get next hop group with index %s",
-                            ctx.nhg_index.c_str());
+            SWSS_LOG_WARN("Failed to get next hop group with index %s", ctx.nhg_index.c_str());
             return false;
         }
     }
@@ -934,7 +914,7 @@ bool RouteOrch::removeLabelRoutePost(const LabelRouteBulkContext& ctx)
          */
         else if (it_route->second.nhg_key.getSize() == 1)
         {
-            NextHopKey nexthop(it_route->second.nhg_key.to_string());
+            const NextHopKey& nexthop = *it_route->second.nhg_key.getNextHops().begin();
             if (nexthop.isMplsNextHop() &&
                 (m_neighOrch->getNextHopRefCount(nexthop) == 0))
             {
