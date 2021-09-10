@@ -1448,7 +1448,7 @@ void RouteOrch::addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextH
          * a labeled one, which are created by RouteOrch or NhgOrch if the IP
          * next hop exists.
          */
-        if (!m_neighOrch->hasNextHop(it->ipKey()))
+        if (!m_neighOrch->isNeighborResolved(*it))
         {
             SWSS_LOG_INFO("Failed to get next hop %s for %s",
                    (*it).to_string().c_str(), ipPrefix.to_string().c_str());
@@ -1555,7 +1555,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                 }
                 /* See if there is an IP neighbor nexthop */
                 else if (nexthop.isMplsNextHop() &&
-                         m_neighOrch->hasNextHop(nexthop.ipKey()))
+                         m_neighOrch->isNeighborResolved(nexthop))
                 {
                     m_neighOrch->addNextHop(nexthop);
                     next_hop_id = m_neighOrch->getNextHopId(nexthop);

@@ -35,9 +35,9 @@ public:
     /* Update member's weight and update the SAI attribute as well. */
     bool updateWeight(uint32_t weight);
 
-    /* Sync / Delete. */
+    /* Sync / Remove. */
     void sync(sai_object_id_t gm_id);
-    void delete();
+    void remove();
 
     /* Getters / Setters. */
     inline const NextHopKey& getNhKey() const { return m_nh_key; }
@@ -78,17 +78,17 @@ public:
     NextHopGroup& operator=(NextHopGroup&& nhg);
 
     /* Destructor. */
-    virtual ~NextHopGroup() { delete(); }
+    virtual ~NextHopGroup() { remove(); }
 
     /* Sync the group, creating the group's and members SAI IDs. */
     bool sync();
 
-    /* Delete the group, reseting the group's and members SAI IDs.  */
-    bool delete();
+    /* Remove the group, reseting the group's and members SAI IDs.  */
+    bool remove();
 
     /*
      * Update the group based on a new next hop group key.  This will also
-     * perform any sync / delete necessary.
+     * perform any sync / remove necessary.
      */
     bool update(const NextHopGroupKey& nhg_key);
 
@@ -101,7 +101,7 @@ public:
     /* Validate a next hop in the group, syncing it. */
     bool validateNextHop(const NextHopKey& nh_key);
 
-    /* Invalidate a next hop in the group, deleteing it. */
+    /* Invalidate a next hop in the group, removing it. */
     bool invalidateNextHop(const NextHopKey& nh_key);
 
     /* Increment the number of existing groups. */
@@ -150,7 +150,7 @@ private:
     bool syncMembers(const std::set<NextHopKey>& nh_keys);
 
     /* Remove group's members the SAI API from the given keys. */
-    bool deleteMembers(const std::set<NextHopKey>& nh_keys);
+    bool removeMembers(const std::set<NextHopKey>& nh_keys);
 
     /* Create the attributes vector for a next hop group member. */
     vector<sai_attribute_t> createNhgmAttrs(const NextHopGroupMember& nhgm) const;
@@ -160,7 +160,7 @@ private:
  * Structure describing a next hop group which NhgOrch owns.  Beside having a
  * unique pointer to that next hop group, we also want to keep a ref count so
  * NhgOrch knows how many other objects reference the next hop group in order
- * not to delete them while still being referenced.
+ * not to remove them while still being referenced.
  */
 struct NhgEntry
 {

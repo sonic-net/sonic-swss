@@ -431,7 +431,7 @@ void RouteOrch::addTempLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroup
          * a labeled one, which are created by RouteOrch or NhgOrch if the IP
          * next hop exists.
          */
-        if (!m_neighOrch->hasNextHop(it->ipKey()))
+        if (!m_neighOrch->isNeighborResolved(*it))
         {
             SWSS_LOG_INFO("Failed to get next hop %s for %u", (*it).to_string().c_str(), label);
             it = next_hop_set.erase(it);

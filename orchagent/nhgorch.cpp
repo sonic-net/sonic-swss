@@ -298,12 +298,12 @@ void NhgOrch::doTask(Consumer& consumer)
                 SWSS_LOG_WARN("Unable to remove group %s which is referenced", index.c_str());
                 success = false;
             }
-            /* Else, if the group is no more referenced, delete it. */
+            /* Else, if the group is no more referenced, remove it. */
             else
             {
                 const auto& nhg = nhg_it->second.nhg;
 
-                success = nhg->delete();
+                success = nhg->remove();
 
                 if (success)
                 {
@@ -372,7 +372,7 @@ bool NhgOrch::validateNextHop(const NextHopKey& nh_key)
 
 /*
  * Purpose:     Invalidate a next hop for any groups containing it.
- * Description: Iterate through the next hop groups and delete the next hop
+ * Description: Iterate through the next hop groups and remove the next hop
  *              from those that contain it.
  * Params:      IN  nh_key - The next hop to invalidate.
  * Returns:     true, if the next hop was successfully invalidatedd from all
@@ -393,7 +393,7 @@ bool NhgOrch::invalidateNextHop(const NextHopKey& nh_key)
 
         if (nhg->hasNextHop(nh_key))
         {
-            /* If the delete fails, exit right away. */
+            /* If the remove fails, exit right away. */
             if (!nhg->invalidateNextHop(nh_key))
             {
                 SWSS_LOG_WARN("Failed to invalidate next hop %s from group %s",
@@ -462,7 +462,7 @@ sai_object_id_t NextHopGroupMember::getNhId() const
      * after the object is created and would never create the labeled next hop
      * afterwards.
      */
-    else if (isLabeled() && gNeighOrch->hasNextHop(m_nh_key.ipKey()))
+    else if (isLabeled() && gNeighOrch->isNeighborResolved(m_nh_key))
     {
         gNeighOrch->addNextHop(m_nh_key);
         nh_id = gNeighOrch->getNextHopId(m_nh_key);
@@ -537,18 +537,18 @@ void NextHopGroupMember::sync(sai_object_id_t gm_id)
 }
 
 /*
- * Purpose:     Delete the group member, resetting it's SAI ID.
+ * Purpose:     Remove the group member, resetting it's SAI ID.
  * Description: Reset the group member's SAI ID and decrement the appropriate
  *              ref counters.
  * Params:      None.
  * Returns:     Nothing.
  */
-void NextHopGroupMember::delete()
+void NextHopGroupMember::remove()
 {
     SWSS_LOG_ENTER();
 
     /*
-     * If the member is already deleted, exit so we don't decrement the ref
+     * If the member is already removed, exit so we don't decrement the ref
      * counters more than once.
      */
     if (!isSynced())
@@ -563,7 +563,7 @@ void NextHopGroupMember::delete()
 
 /*
  * Purpose:     Destructor.
- * Description: Assert the group member is deleted and remove the labeled
+ * Description: Assert the group member is removed and remove the labeled
  *              next hop from NeighOrch if it is unreferenced.
  * Params:      None.
  * Returns:     Nothing.
@@ -573,15 +573,15 @@ NextHopGroupMember::~NextHopGroupMember()
     SWSS_LOG_ENTER();
 
     /*
-     * The group member should be deleted from its group before destroying it.
+     * The group member should be removed from its group before destroying it.
      */
     assert(!isSynced());
 
     /*
-     * If the labeled next hop is unreferenced, delete it from NeighOrch as
+     * If the labeled next hop is unreferenced, remove it from NeighOrch as
      * NhgOrch and RouteOrch are the ones controlling it's lifetime.  They both
      * watch over these labeled next hops, so it doesn't matter who created
-     * them as they're both doing the same checks before deleting a labeled
+     * them as they're both doing the same checks before removing a labeled
      * next hop.
      */
     if (isLabeled() &&
@@ -759,7 +759,7 @@ NextHopGroup NhgOrch::createTempNhg(const NextHopGroupKey& nhg_key)
          * the group might contain labeled NHs which we should create if their
          * IP next hop does exist.
          */
-        if (gNeighOrch->hasNextHop(nh_key.ipKey()))
+        if (gNeighOrch->isNeighborResolved(nh_key))
         {
             valid_nhs.push_back(nh_key);
         }
@@ -785,37 +785,37 @@ NextHopGroup NhgOrch::createTempNhg(const NextHopGroupKey& nhg_key)
 }
 
 /*
- * Purpose:     Delete the next hop group.
+ * Purpose:     Remove the next hop group.
  * Description: Reset the group's SAI ID.  If the group has more than one
- *              members, delete the members and the group.
+ *              members, remove the members and the group.
  * Params:      None.
  * Returns:     true, if the operation was successful;
  *              false, otherwise
  */
-bool NextHopGroup::delete()
+bool NextHopGroup::remove()
 {
     SWSS_LOG_ENTER();
 
-    /* If the group is already deleted, there is nothing to be done. */
+    /* If the group is already removed, there is nothing to be done. */
     if (!isSynced())
     {
         return true;
     }
 
     /*
-     * If the group has more than one members, delete it's members, then the
+     * If the group has more than one members, remove it's members, then the
      * group.
      */
     if (m_members.size() > 1)
     {
-        /* Delete group's members. If we failed to delete the members, exit. */
-        if (!deleteMembers(m_key.getNextHops()))
+        /* Remove group's members. If we failed to remove the members, exit. */
+        if (!removeMembers(m_key.getNextHops()))
         {
-            SWSS_LOG_ERROR("Failed to delete group %s members", to_string().c_str());
+            SWSS_LOG_ERROR("Failed to remove group %s members", to_string().c_str());
             return false;
         }
 
-        /* Delete the group. */
+        /* Remove the group. */
         sai_status_t status = sai_next_hop_group_api->
                                             remove_next_hop_group(m_id);
 
@@ -930,13 +930,13 @@ bool NextHopGroup::syncMembers(const std::set<NextHopKey>& nh_keys)
     return success;
 }
 /*
- * Purpose:     Delete the given group's members over the SAI API.
- * Description: Go through the given members and delete them.
- * Params:      IN  nh_keys - The next hop keys of the members to delete.
+ * Purpose:     Remove the given group's members over the SAI API.
+ * Description: Go through the given members and remove them.
+ * Params:      IN  nh_keys - The next hop keys of the members to remove.
  * Returns:     true, if the operation was successful;
  *              false, otherwise
  */
-bool NextHopGroup::deleteMembers(const std::set<NextHopKey>& nh_keys)
+bool NextHopGroup::removeMembers(const std::set<NextHopKey>& nh_keys)
 {
     SWSS_LOG_ENTER();
 
@@ -947,10 +947,10 @@ bool NextHopGroup::deleteMembers(const std::set<NextHopKey>& nh_keys)
                                     sai_next_hop_group_api, gSwitchId, gMaxBulkSize);
 
     /*
-     * Iterate through the given group members add them to be deleted.
+     * Iterate through the given group members add them to be removed.
      *
-     * Keep track of the SAI delete statuses in case one of them returns an
-     * error.  We assume that deletion should always succeed.  If for some
+     * Keep track of the SAI remove statuses in case one of them returns an
+     * error.  We assume that removal should always succeed.  If for some
      * reason it doesn't, there's nothing we can do, but we'll log an error
      * later.
      */
@@ -981,7 +981,7 @@ bool NextHopGroup::deleteMembers(const std::set<NextHopKey>& nh_keys)
     {
         if (status.second == SAI_STATUS_SUCCESS)
         {
-            m_members.at(status.first).delete();
+            m_members.at(status.first).remove();
         }
         else
         {
@@ -1073,14 +1073,14 @@ bool NextHopGroup::update(const NextHopGroupKey& nhg_key)
             }
         }
 
-        /* Delete the removed members. */
-        if (!deleteMembers(removed_nh_keys))
+        /* Remove the removed members. */
+        if (!removeMembers(removed_nh_keys))
         {
-            SWSS_LOG_WARN("Failed to delete members from group %s", to_string().c_str());
+            SWSS_LOG_WARN("Failed to remove members from group %s", to_string().c_str());
             return false;
         }
 
-        /* Remove the deleted members. */
+        /* Remove the removed members. */
         for (const auto& nh_key : removed_nh_keys)
         {
             m_members.erase(nh_key);
@@ -1184,5 +1184,5 @@ bool NextHopGroup::invalidateNextHop(const NextHopKey& nh_key)
         return true;
     }
 
-    return deleteMembers({nh_key});
+    return removeMembers({nh_key});
 }

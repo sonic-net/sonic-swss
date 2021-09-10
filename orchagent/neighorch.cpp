@@ -34,7 +34,7 @@ NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch,
     SWSS_LOG_ENTER();
 
     m_fdbOrch->attach(this);
-    
+
     if(gMySwitchType == "voq")
     {
         //Add subscriber to process VOQ system neigh
@@ -169,6 +169,16 @@ bool NeighOrch::hasNextHop(const NextHopKey &nexthop)
     }
 
     return m_syncdNextHops.find(nexthop) != m_syncdNextHops.end();
+}
+
+// Check if the underlying neighbor is resolved for a given next hop key.
+bool NeighOrch::isNeighborResolved(const NextHopKey &nexthop)
+{
+    // Extract the IP address and interface from the next hop key, and check if the next hop
+    // for just that pair exists.
+    NextHopKey base_nexthop = NextHopKey(nexthop.ip_address, nexthop.alias);
+
+    return hasNextHop(base_nexthop);
 }
 
 bool NeighOrch::addNextHop(const NextHopKey &nh)
@@ -1028,7 +1038,7 @@ bool NeighOrch::removeNeighbor(const NeighborEntry &neighborEntry, bool disable)
 
     NeighborUpdate update = { neighborEntry, MacAddress(), false };
     notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
-    
+
     if(gMySwitchType == "voq")
     {
         //Sync the neighbor to delete from the CHASSIS_APP_DB
@@ -1302,7 +1312,7 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
                         // the owner asic's mac is not readily avaiable here, the owner asic mac is derived from
                         // the switch id and lower 5 bytes of asic mac which is assumed to be same for all asics
                         // in the VS system.
-                        // Therefore to make VOQ chassis systems work in VS platform based setups like the setups 
+                        // Therefore to make VOQ chassis systems work in VS platform based setups like the setups
                         // using KVMs, it is required that all asics have same base mac in the format given below
                         // <lower 5 bytes of mac same for all asics>:<6th byte = switch_id>
 
