@@ -141,6 +141,79 @@ class TestNeighbor(object):
         intf_entries = tbl.getKeys()
         assert len(intf_entries) == 0
 
+    def test_NeighborAddRemoveIpv6LinkLocal(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        fvs = swsscommon.FieldValuePairs([("global_ipv6_link_local_neighbors", "enable")])
+        tbl = swsscommon.Table(self.cdb, "DEVICE_METADATA")
+        tbl.set("localhost", fvs)
+        time.sleep(1)
+
+        # bring up interface
+        # NOTE: For IPv6, only when the interface is up will the netlink message
+        # get generated.
+        self.set_admin_status("Ethernet8", "up")
+
+        # create interface and get rif_oid
+        rif_oid = self.create_l3_intf("Ethernet8", "")
+
+        # assign IP to interface
+        self.add_ip_address("Ethernet8", "2000::1/64")
+
+        # add neighbor
+        self.add_neighbor("Ethernet8", "fe80::201:2ff:fe03:405", "00:01:02:03:04:05")
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "NEIGH_TABLE:Ethernet8")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 1
+        assert intf_entries[0] == "fe80::201:2ff:fe03:405"
+        (status, fvs) = tbl.get(intf_entries[0])
+        assert status == True
+        assert len(fvs) == 2
+        for fv in fvs:
+            if fv[0] == "neigh":
+                assert fv[1] == "00:01:02:03:04:05"
+            elif fv[0] == "family":
+                assert fv[1] == "IPv6"
+            else:
+                assert False
+
+        # check ASIC neighbor database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 1
+        route = json.loads(intf_entries[0])
+        assert route["ip"] == "fe80::201:2ff:fe03:405"
+        assert route["rif"] == rif_oid
+
+        (status, fvs) = tbl.get(intf_entries[0])
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS":
+                assert fv[1] == "00:01:02:03:04:05"
+
+        # remove neighbor
+        self.remove_neighbor("Ethernet8", "fe80::201:2ff:fe03:405")
+
+        # remove IP from interface
+        self.remove_ip_address("Ethernet8", "2000::1/64")
+
+        # remove interface
+        self.remove_l3_intf("Ethernet8")
+
+        # bring down interface
+        self.set_admin_status("Ethernet8", "down")
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "NEIGH_TABLE:Ethernet8")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
+
+        # check ASIC neighbor database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
 
     def test_NeighborAddRemoveIpv4(self, dvs, testlog):
         self.setup_db(dvs)

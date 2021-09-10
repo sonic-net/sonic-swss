@@ -23,7 +23,8 @@ NeighSync::NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConne
     m_stateNeighRestoreTable(stateDb, STATE_NEIGH_RESTORE_TABLE_NAME),
     m_cfgInterfaceTable(cfgDb, CFG_INTF_TABLE_NAME),
     m_cfgLagInterfaceTable(cfgDb, CFG_LAG_INTF_TABLE_NAME),
-    m_cfgVlanInterfaceTable(cfgDb, CFG_VLAN_INTF_TABLE_NAME)
+    m_cfgVlanInterfaceTable(cfgDb, CFG_VLAN_INTF_TABLE_NAME),
+    m_cfgDeviceMetadataTable(cfgDb, CFG_DEVICE_METADATA_TABLE_NAME)
 {
     m_AppRestartAssist = new AppRestartAssist(pipelineAppDB, "neighsyncd", "swss", DEFAULT_NEIGHSYNC_WARMSTART_TIMER);
     if (m_AppRestartAssist)
@@ -136,10 +137,24 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     }
 }
 
-/* To check the ipv6 link local is enabled on a given port */
+/* To check the ipv6 link local is enabled globally or on a given port */
 bool NeighSync::isLinkLocalEnabled(const string &port)
 {
     vector<FieldValueTuple> values;
+
+    if(m_cfgDeviceMetadataTable.get("localhost", values))
+    {
+        auto it = std::find_if(values.begin(), values.end(), [](const FieldValueTuple &t)
+                               { return t.first == "global_ipv6_link_local_neighbors"; });
+        if (it != values.end())
+        {
+            if (it->second == "enable")
+            {
+                SWSS_LOG_INFO("IPv6 Link local neighbors are enabled globally");
+                return true;
+            }
+        }
+    }
 
     if (!port.compare(0, strlen("Vlan"), "Vlan"))
     {
