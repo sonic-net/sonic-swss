@@ -33,23 +33,36 @@ for i = 1, n do
     logit(initialized)
 
     -- Get new COUNTERS values
-    local in_octets = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'SAI_TUNNEL_STAT_IN_OCTETS')
-    local in_pkts = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'SAI_TUNNEL_STAT_IN_PACKETS')
-    local out_octets = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'SAI_TUNNEL_STAT_OUT_OCTETS')
-    local out_pkts = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'SAI_TUNNEL_STAT_OUT_PACKETS')
+    local in_octets = 0
+    local in_packets = 0
+    local out_octets = 0
+    local out_packets = 0
+
+    if redis.call('HEXISTS', counters_table_name .. ':' .. KEYS[i], 'SAI_TUNNEL_STAT_IN_OCTETS') == 1 then
+        in_octets = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'SAI_TUNNEL_STAT_IN_OCTETS')
+    end
+    if redis.call('HEXISTS', counters_table_name .. ':' .. KEYS[i], 'SAI_TUNNEL_STAT_IN_PACKETS') == 1 then
+        in_packets = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'SAI_TUNNEL_STAT_IN_PACKETS')
+    end
+    if redis.call('HEXISTS', counters_table_name .. ':' .. KEYS[i], 'SAI_TUNNEL_STAT_OUT_OCTETS') == 1 then
+        out_octets = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'SAI_TUNNEL_STAT_OUT_OCTETS')
+    end
+    if redis.call('HEXISTS', counters_table_name .. ':' .. KEYS[i], 'SAI_TUNNEL_STAT_OUT_PACKETS') == 1 then
+        out_packets = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'SAI_TUNNEL_STAT_OUT_PACKETS')
+    end
 
     if initialized == "DONE" or initialized == "COUNTERS_LAST" then
         -- Get old COUNTERS values
         local in_octets_last = redis.call('HGET', rates_table_name .. ':' .. KEYS[i], 'SAI_TUNNEL_STAT_IN_OCTETS_last')
-        local in_pkts_last = redis.call('HGET', rates_table_name .. ':' .. KEYS[i], 'SAI_TUNNEL_STAT_IN_PACKETS_last')
+        local in_packets_last = redis.call('HGET', rates_table_name .. ':' .. KEYS[i], 'SAI_TUNNEL_STAT_IN_PACKETS_last')
         local out_octets_last = redis.call('HGET', rates_table_name .. ':' .. KEYS[i], 'SAI_TUNNEL_STAT_OUT_OCTETS_last')
-        local out_pkts_last = redis.call('HGET', rates_table_name .. ':' .. KEYS[i], 'SAI_TUNNEL_STAT_OUT_PACKETS_last')
+        local out_packets_last = redis.call('HGET', rates_table_name .. ':' .. KEYS[i], 'SAI_TUNNEL_STAT_OUT_PACKETS_last')
         
         -- Calculate new rates values
         local rx_bps_new = (in_octets - in_octets_last)*sec_to_ms/delta
         local tx_bps_new = (out_octets - out_octets_last)*sec_to_ms/delta
-        local rx_pps_new = (in_pkts - in_pkts_last)*sec_to_ms/delta
-        local tx_pps_new = (out_pkts - out_pkts_last)*sec_to_ms/delta
+        local rx_pps_new = (in_packets - in_packets_last)*sec_to_ms/delta
+        local tx_pps_new = (out_packets - out_packets_last)*sec_to_ms/delta
 
         if initialized == "DONE" then
             -- Get old rates values
@@ -77,9 +90,9 @@ for i = 1, n do
 
     -- Set old COUNTERS values
     redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'SAI_TUNNEL_STAT_IN_OCTETS_last', in_octets)
-    redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'SAI_TUNNEL_STAT_IN_PACKETS_last', in_pkts)
+    redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'SAI_TUNNEL_STAT_IN_PACKETS_last', in_packets)
     redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'SAI_TUNNEL_STAT_OUT_OCTETS_last', out_octets)
-    redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'SAI_TUNNEL_STAT_OUT_PACKETS_last', out_pkts)      
+    redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'SAI_TUNNEL_STAT_OUT_PACKETS_last', out_packets)
 end
 
 return logtable

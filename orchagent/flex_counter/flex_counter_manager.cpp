@@ -39,7 +39,7 @@ const unordered_map<CounterType, string> FlexCounterManager::counter_id_field_lo
     { CounterType::PORT,            PORT_COUNTER_ID_LIST },
     { CounterType::QUEUE,           QUEUE_COUNTER_ID_LIST },
     { CounterType::MACSEC_SA_ATTR,  MACSEC_SA_ATTR_ID_LIST },
-    { CounterType::TUNNEL,          TUNNEL_ATTR_ID_LIST },
+    { CounterType::TUNNEL,          TUNNEL_COUNTER_ID_LIST },
 };
 
 FlexManagerDirectory g_FlexManagerDirectory;
