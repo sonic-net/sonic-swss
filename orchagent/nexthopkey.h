@@ -165,12 +165,6 @@ struct NextHopKey
         }
         return str;
     }
-
-    // Method to get the underlying IP/interface pair for the next hop.
-    NextHopKey ipKey() const
-    {
-        return NextHopKey(ip_address, alias);
-    }
 };
 
 #endif /* SWSS_NEXTHOPKEY_H */
