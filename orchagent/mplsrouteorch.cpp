@@ -504,7 +504,7 @@ bool RouteOrch::addLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroupKey 
                 }
                 /* See if there is an IP neighbor nexthop */
                 else if (nexthop.isMplsNextHop() &&
-                         m_neighOrch->hasNextHop(nexthop.ipKey()))
+                         m_neighOrch->isNeighborResolved(nexthop))
                 {
                     m_neighOrch->addNextHop(nexthop);
                     next_hop_id = m_neighOrch->getNextHopId(nexthop);
