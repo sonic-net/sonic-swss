@@ -36,7 +36,7 @@ local state_db = "6"
 local ret = {}
 
 -- pause quanta should be taken for each operating speed is defined in IEEE 802.3 31B.3.7
--- the key of table pause_quanta_per_speed is operating speed at Gb/s
+-- the key of table pause_quanta_per_speed is operating speed at Mb/s
 -- the value of table pause_quanta_per_speed is the number of pause_quanta
 local pause_quanta_per_speed = {}
 pause_quanta_per_speed[400000] = 905
@@ -49,11 +49,8 @@ pause_quanta_per_speed[10000] = 67
 pause_quanta_per_speed[1000] = 2
 pause_quanta_per_speed[100] = 1
 
--- if failed to get an pause_quanta from the table, then take a default one.
+-- Get pause_quanta from the pause_quanta_per_speed table
 local pause_quanta = pause_quanta_per_speed[port_speed]
-if pause_quanta == nil then
-    pause_quanta = 60
-end
 
 if gearbox_delay == nil then
     gearbox_delay = 0
@@ -74,6 +71,10 @@ for i = 1, #asic_table_content, 2 do
     end
     if asic_table_content[i] == "mac_phy_delay" then
         mac_phy_delay = tonumber(asic_table_content[i+1]) * 1024
+    end
+    -- If failed to get pause_quanta from the table, then use the default peer_response_time stored in state_db
+    if asic_table_content[i] == "peer_response_time" and  pause_quanta == nil then
+        peer_response_time = tonumber(asic_table_content[i+1]) * 1024
     end
 end
 
@@ -141,9 +142,13 @@ else
     bytes_on_gearbox = port_speed * gearbox_delay / (8 * 1024)
 end
 
-peer_response_time = (pause_quanta) * 512 / (1024 * 8)
+-- If successfully get pause_quanta from the table, then calculate peer_response_time from it
+if pause_quanta ~= nil then
+    peer_response_time = (pause_quanta) * 512 / 8
+end
+
 bytes_on_cable = 2 * cable_length * port_speed * 1000000000 / speed_of_light / (8 * 1024)
-propagation_delay = port_mtu + bytes_on_cable + 2 * bytes_on_gearbox + mac_phy_delay + peer_response_time * 1024
+propagation_delay = port_mtu + bytes_on_cable + 2 * bytes_on_gearbox + mac_phy_delay + peer_response_time
 
 -- Calculate the xoff and xon and then round up at 1024 bytes
 xoff_value = lossless_mtu + propagation_delay * cell_occupancy
