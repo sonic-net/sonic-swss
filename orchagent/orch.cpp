@@ -330,7 +330,42 @@ bool Orch::parseReference(type_map &type_maps, string &ref_in, const string &typ
     if ((ref_in[0] == ref_start) || (ref_in[ref_in.size()-1] == ref_end))
     {
         SWSS_LOG_ERROR("malformed reference:%s. Must not be surrounded by [ ]\n", ref_in.c_str());
-        return false;
+        /* 
+         * Accepting old format until sonic-buildimage changes merged, swss tests depends on
+         * generate qos configs which are with old format. If we skip the old format 
+         * isPortAllReady() will fail whcih is set ready by checking buffer config exists in CONFIG_DB are
+         * applied to ASIC_DB or not. 
+         * Due to this All swss test cases are failing.
+         * This to avoid test case failures until merge happens.
+         * 
+         */
+        if (ref_in.size() == 2)
+        {
+            // value set by user is "[]"
+            // Deem it as a valid format
+            // clear both type_name and object_name
+            // as an indication to the caller that
+            // such a case has been encountered
+            //      type_name.clear();
+            object_name.clear();
+            return true;
+        }
+        string ref_content = ref_in.substr(1, ref_in.size() - 2);
+        vector<string> tokens;
+        tokens = tokenize(ref_content, delimiter);
+        if (tokens.size() != 2)
+        {
+            tokens = tokenize(ref_content, config_db_key_delimiter);
+            if (tokens.size() != 2)
+            {
+                SWSS_LOG_ERROR("malformed reference:%s. Must contain 2 tokens\n", ref_content.c_str());
+                return false;
+            }
+        }
+        object_name = tokens[1];
+        SWSS_LOG_ERROR("parsed: type_name:%s, object_name:%s", type_name.c_str(), object_name.c_str());
+
+        return true;
     }
     auto type_it = type_maps.find(type_name);
     if (type_it == type_maps.end())

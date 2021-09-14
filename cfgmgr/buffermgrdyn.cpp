@@ -214,13 +214,6 @@ string BufferMgrDynamic::parseObjectNameFromKey(const string &key, size_t pos = 
     return keys[pos];
 }
 
-// For string "[foo]", returns "foo"
-string BufferMgrDynamic::parseObjectNameFromReference(const string &reference)
-{
-    auto objName = reference.substr(1, reference.size() - 2);
-    return parseObjectNameFromKey(objName, 1);
-}
-
 string BufferMgrDynamic::getDynamicProfileName(const string &speed, const string &cable, const string &mtu, const string &threshold, const string &gearbox_model, long lane_count)
 {
     string buffer_profile_key;

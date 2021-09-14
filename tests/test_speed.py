@@ -72,7 +72,7 @@ class TestSpeedSet:
                 expected_pg_table = "Ethernet{}|3-4".format(i * 4)
                 assert expected_pg_table in pg_tables
 
-                expected_fields = {"profile": "{}".format(expected_new_profile_name)}
+                expected_fields = {"profile": expected_new_profile_name}
                 cdb.wait_for_field_match("BUFFER_PG", expected_pg_table, expected_fields)
 
 
