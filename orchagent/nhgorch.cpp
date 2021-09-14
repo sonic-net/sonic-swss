@@ -467,6 +467,10 @@ sai_object_id_t NextHopGroupMember::getNhId() const
         gNeighOrch->addNextHop(m_nh_key);
         nh_id = gNeighOrch->getNextHopId(m_nh_key);
     }
+    else
+    {
+        gNeighOrch->resolveNeighbor(m_nh_key);
+    }
 
     return nh_id;
 }
