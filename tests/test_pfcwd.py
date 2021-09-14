@@ -146,30 +146,31 @@ class TestPfcWd:
     Verifies that PFC WD starts for all priorities in case of Asymmetric PFC is enabled
     '''
     def test_PfcWdAsym(self, dvs, testlog):
+        try:
+            port_name = 'Ethernet0'
+            pfc_queues = [ 3, 4 ]
 
-        port_name = 'Ethernet0'
-        pfc_queues = [ 3, 4 ]
+            # Configure default PFC
+            setPortPfc(dvs, port_name, pfc_queues)
 
-        # Configure default PFC
-        setPortPfc(dvs, port_name, pfc_queues)
+            # Get SAI object ID for the interface
+            port_oid = getPortOid(dvs, port_name)
 
-        # Get SAI object ID for the interface
-        port_oid = getPortOid(dvs, port_name)
+            # Enable asymmetric PFC
+            setPortPfcAsym(dvs, port_name, 'on')
 
-        # Enable asymmetric PFC
-        setPortPfcAsym(dvs, port_name, 'on')
+            # Start PFCWD
+            startPfcWd(dvs, port_name)
 
-        # Start PFCWD
-        startPfcWd(dvs, port_name)
+            # Verify that PFC WD was started for all PFC priorities
+            verifyPfcWdCountersList(dvs, port_oid)
 
-        # Verify that PFC WD was started for all PFC priorities
-        verifyPfcWdCountersList(dvs, port_oid)
+        finally:
+            # Disable asymmetric PFC
+            setPortPfcAsym(dvs, port_name, 'off')
 
-        # Disable asymmetric PFC
-        setPortPfcAsym(dvs, port_name, 'off')
-
-        # Remove default PFC
-        setPortPfc(dvs, port_name, [])
+            # Remove default PFC
+            setPortPfc(dvs, port_name, [])
 
 
 #

@@ -402,6 +402,7 @@ PfcWdLossyHandler::PfcWdLossyHandler(sai_object_id_t port, sai_object_id_t queue
     }
 
     pfcRxMask = static_cast<uint8_t>(pfcRxMask & ~(1 << queueId));
+    pfcTxMask = static_cast<uint8_t>(pfcTxMask & ~(1 << queueId));
 
     if (!gPortsOrch->setPortPfc(port, pfcTxMask, pfcRxMask))
     {
@@ -422,6 +423,7 @@ PfcWdLossyHandler::~PfcWdLossyHandler(void)
     }
 
     pfcRxMask = static_cast<uint8_t>(pfcRxMask | (1 << getQueueId()));
+    pfcTxMask = static_cast<uint8_t>(pfcTxMask | (1 << getQueueId()));
 
     if (!gPortsOrch->setPortPfc(getPort(), pfcTxMask, pfcRxMask))
     {
