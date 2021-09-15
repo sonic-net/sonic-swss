@@ -2013,16 +2013,8 @@ bool PortsOrch::setPortAdvInterfaceTypes(sai_object_id_t port_id, std::vector<ui
     attr.value.u32list.count = static_cast<uint32_t>(interface_types.size());
 
     status = sai_port_api->set_port_attribute(port_id, &attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
-    }
 
-    return true;
+    return status == SAI_STATUS_SUCCESS;
 }
 
 bool PortsOrch::getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uint8_t &index)
@@ -2836,7 +2828,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         else
                         {
                             SWSS_LOG_ERROR("Failed to set port %s AN from %d to %d", alias.c_str(), p.m_autoneg, an);
-                            it++;
+                            it = consumer.m_toSync.erase(it);
                             continue;
                         }
                     }
@@ -2872,7 +2864,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         if (!setPortSpeed(p, speed))
                         {
                             SWSS_LOG_ERROR("Failed to set port %s speed from %u to %u", alias.c_str(), p.m_speed, speed);
-                            it++;
+                            it = consumer.m_toSync.erase(it);
                             continue;
                         }
 
@@ -2920,7 +2912,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             SWSS_LOG_ERROR("Failed to set port %s advertised speed from %s to %s", alias.c_str(),
                                                                                                    ori_adv_speeds.c_str(),
                                                                                                    adv_speeds_str.c_str());
-                            it++;
+                            it = consumer.m_toSync.erase(it);
                             continue;
                         }
                         SWSS_LOG_NOTICE("Set port %s advertised speed from %s to %s", alias.c_str(),
@@ -2960,7 +2952,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         if (!setPortInterfaceType(p.m_port_id, interface_type))
                         {
                             SWSS_LOG_ERROR("Failed to set port %s interface type to %s", alias.c_str(), interface_type_str.c_str());
-                            it++;
+                            it = consumer.m_toSync.erase(it);
                             continue;
                         }
 
@@ -2999,7 +2991,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         if (!setPortAdvInterfaceTypes(p.m_port_id, adv_interface_types))
                         {
                             SWSS_LOG_ERROR("Failed to set port %s advertised interface type to %s", alias.c_str(), adv_interface_types_str.c_str());
-                            it++;
+                            it = consumer.m_toSync.erase(it);
                             continue;
                         }
 
