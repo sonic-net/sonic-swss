@@ -749,6 +749,10 @@ void IntfsOrch::doTask(Consumer &consumer)
             {
                 inband_type = value;
             }
+            else if (field == "vlan")
+            {
+                vlan = value;
+            }
         }
 
         if (alias == "eth0" || alias == "docker0")
@@ -818,7 +822,7 @@ void IntfsOrch::doTask(Consumer &consumer)
             {
                 if (!ip_prefix_in_key && isSubIntf)
                 {
-                    if (!gPortsOrch->addSubPort(port, alias, adminUp, mtu))
+                    if (!gPortsOrch->addSubPort(port, alias, vlan, adminUp, mtu))
                     {
                         it++;
                         continue;

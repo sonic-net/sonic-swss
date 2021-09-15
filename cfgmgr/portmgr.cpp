@@ -35,6 +35,7 @@ bool PortMgr::setPortMtu(const string &alias, const string &mtu)
     fvs.push_back(fv);
     m_appPortTable.set(alias, fvs);
 
+    m_statePortTable.set(alias, fvs);
     return true;
 }
 
@@ -67,6 +68,7 @@ bool PortMgr::setPortAdminStatus(const string &alias, const bool up)
     fvs.push_back(fv);
     m_appPortTable.set(alias, fvs);
 
+    m_statePortTable.set(alias, fvs);
     return true;
 }
 

@@ -132,7 +132,7 @@ public:
     void refreshPortStatus();
     bool removeAclTableGroup(const Port &p);
 
-    bool addSubPort(Port &port, const string &alias, const bool &adminUp = true, const uint32_t &mtu = 0);
+    bool addSubPort(Port &port, const string &alias, const string &vlan, const bool &adminUp = true, const uint32_t &mtu = 0);
     bool removeSubPort(const string &alias);
     bool updateL3VniStatus(uint16_t vlan_id, bool status);
     void getLagMember(Port &lag, vector<Port> &portv);
