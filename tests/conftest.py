@@ -427,6 +427,7 @@ class DockerVirtualSwitch:
     def destroy_servers(self):
         for s in self.servers:
             s.destroy()
+        self.servers = []
 
     def check_ready_status_and_init_db(self) -> None:
         try:
@@ -1637,6 +1638,9 @@ def manage_dvs(request) -> str:
             dvs.runcmd('killall5 -15')
             # If not re-creating the DVS, restart container
             # between modules to ensure a consistent start state
+            dvs.net_cleanup()
+            dvs.destroy_servers()
+            dvs.create_servers()
             dvs.restart()
 
         return dvs
