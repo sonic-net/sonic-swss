@@ -3685,6 +3685,11 @@ bool AclOrch::processAclTablePorts(string portList, AclTable &aclTable)
 
 bool AclOrch::isAclTableTypeUpdated(acl_table_type_t table_type, AclTable &t)
 {
+    if (m_isCombinedMirrorV6Table && (table_type == ACL_TABLE_MIRROR || table_type == ACL_TABLE_MIRRORV6))
+    {
+        // ACL_TABLE_MIRRORV6 and ACL_TABLE_MIRROR should be treated as same type in combined scenario
+        return !(t.type == ACL_TABLE_MIRROR || t.type == ACL_TABLE_MIRRORV6);
+    }
     return (table_type != t.type);
 }
 
