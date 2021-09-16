@@ -1089,7 +1089,6 @@ class TestNextHopGroup(object):
 
         # Create a temporary next hop groups
         nhg_index, binary = create_temp_nhg()
-        nhg_id = self.get_nhg_id(nhg_index, dvs)
 
         # Update the route to point to the temporary group
         fvs = swsscommon.FieldValuePairs([('nexthop_group', nhg_index)])
@@ -1103,7 +1102,6 @@ class TestNextHopGroup(object):
 
         # Create a temporary next hop groups
         nhg_index, binary = create_temp_nhg()
-        nhg_id = self.get_nhg_id(nhg_index, dvs)
 
         # Update the route to point to the temporary group
         fvs = swsscommon.FieldValuePairs([('nexthop_group', nhg_index)])
