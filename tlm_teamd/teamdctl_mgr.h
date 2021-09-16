@@ -28,6 +28,7 @@ private:
 
     std::unordered_map<std::string, struct teamdctl*> m_handlers;
     std::unordered_map<std::string, int> m_lags_to_add;
+    std::unordered_map<std::string, int> m_lags_err_retry;
 
     const int max_attempts_to_add = 10;
 };

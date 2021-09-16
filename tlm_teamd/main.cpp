@@ -109,8 +109,8 @@ int main()
             {
                 teamdctl_mgr.process_add_queue();
                 // In the case of lag removal, there is a scenario where the select::TIMEOUT
-		// occurs, it triggers get_dumps incorrectly for resource which was in process of 
-		// getting deleted. The fix here is to retry and check if this is a real failure.
+                // occurs, it triggers get_dumps incorrectly for resource which was in process of 
+                // getting deleted. The fix here is to retry and check if this is a real failure.
                 values_store.update(teamdctl_mgr.get_dumps(true));
             }
             else

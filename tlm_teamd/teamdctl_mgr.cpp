@@ -7,10 +7,6 @@
 
 #define MAX_RETRY 3
 
-/// Store the last errored lag name and the retry count.
-std::string last_errored_lag_name = std::string("");
-int no_of_retry = 0;
-
 ///
 /// Custom function for libteamdctl logger. IT is empty to prevent libteamdctl to spam us with the error messages
 /// @param tdc teamdctl descriptor
@@ -143,13 +139,12 @@ bool TeamdCtlMgr::remove_lag(const std::string & lag_name)
         SWSS_LOG_WARN("The LAG '%s' hasn't been added. Can't remove it", lag_name.c_str());
     }
 
-    // If this lag interface errored last time, clear it here.
+    // If this lag interface errored last time, remove the entry.
     // This is needed as here in this remove API, we do m_handlers.erase(lag_name).
-    if ((lag_name.compare(last_errored_lag_name) == 0) && (no_of_retry != 0))
+    if (m_lags_err_retry.find(lag_name) != m_lags_err_retry.end())
     {
-        SWSS_LOG_NOTICE("The LAG '%s' had errored while getting dump, clearing it", lag_name.c_str());
-        last_errored_lag_name.clear();
-        no_of_retry = 0;
+        SWSS_LOG_NOTICE("The LAG '%s' had errored while getting dump, removing it", lag_name.c_str());
+        m_lags_err_retry.erase(lag_name);
     }
 
     return true;
@@ -196,12 +191,11 @@ TeamdCtlDump TeamdCtlMgr::get_dump(const std::string & lag_name, bool to_retry)
         {
             res = { true, std::string(dump) };
 
-            // If this lag interface errored last time, clear it as we are good now.
-            if (lag_name.compare(last_errored_lag_name) == 0)
+            // If this lag interface errored last time, remove the entry
+            if (m_lags_err_retry.find(lag_name) != m_lags_err_retry.end())
             {
-                SWSS_LOG_NOTICE("The LAG '%s' had errored in get_dump earlier, clearing it", lag_name.c_str());
-                last_errored_lag_name.clear();
-                no_of_retry = 0;
+                SWSS_LOG_NOTICE("The LAG '%s' had errored in get_dump earlier, removing it", lag_name.c_str());
+                m_lags_err_retry.erase(lag_name);
             }
         }
         else
@@ -209,22 +203,21 @@ TeamdCtlDump TeamdCtlMgr::get_dump(const std::string & lag_name, bool to_retry)
             // In case of failure and retry flag is set, check if it fails for MAX_RETRY times.
             if (to_retry)
             {
-                if (lag_name.compare(last_errored_lag_name) == 0)
+                if (m_lags_err_retry.find(lag_name) != m_lags_err_retry.end())
                 {
-                    if (no_of_retry == MAX_RETRY)
+                    if (m_lags_err_retry[lag_name] == MAX_RETRY)
                     {
                         SWSS_LOG_ERROR("Can't get dump for LAG '%s'. Skipping", lag_name.c_str());
-                        last_errored_lag_name.clear();
-                        no_of_retry = 0;
+                        m_lags_err_retry.erase(lag_name);
                     }
                     else
-                        no_of_retry++;
+                        m_lags_err_retry[lag_name]++;
                 }
                 else
                 {
+
                     // This time a different lag interface errored out.
-                    last_errored_lag_name = lag_name;
-                    no_of_retry = 1;
+		    m_lags_err_retry[lag_name] = 1;
                 }
             }
             else
