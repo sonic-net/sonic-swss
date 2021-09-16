@@ -2282,6 +2282,11 @@ bool PortsOrch::initPort(const string &alias, const string &role, const int inde
 {
     SWSS_LOG_ENTER();
 
+    if (role == "Rec" || role == "Inb")
+    {
+        return doProcessRecircPort(alias, role, lane_set, SET_COMMAND);
+    }
+
     /* Determine if the lane combination exists in switch */
     if (m_portListLaneMap.find(lane_set) != m_portListLaneMap.end())
     {
@@ -2335,11 +2340,6 @@ bool PortsOrch::initPort(const string &alias, const string &role, const int inde
                 notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
 
                 m_portList[alias].m_init = true;
-
-                if (role == "Rec" || role == "Inb")
-                {
-                    m_recircPortRole[alias] = role;
-                }
 
                 SWSS_LOG_NOTICE("Initialized port %s", alias.c_str());
             }
@@ -2800,6 +2800,16 @@ void PortsOrch::doPortTask(Consumer &consumer)
             }
             else
             {
+                /* Skip configuring recirc port for now because the current SAI implementation of some vendors
+                 * have limiited support for recirc port. This check can be removed once SAI implementation
+                 * is enhanced/changed in the future.
+                 */
+                if (m_recircPortRole.find(alias) != m_recircPortRole.end())
+                {
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+
                 if (!an_str.empty())
                 {
                     if (autoneg_mode_map.find(an_str) == autoneg_mode_map.end())
@@ -6052,6 +6062,80 @@ bool PortsOrch::getRecircPort(Port &port, string role)
     }
     SWSS_LOG_ERROR("Failed to find recirc port with role %s", role.c_str());
     return false;
+}
+
+bool PortsOrch::doProcessRecircPort(string alias, string role, set<int> lane_set, string op)
+{
+    SWSS_LOG_ENTER();
+
+    if (op == SET_COMMAND)
+    {
+        if (m_recircPortRole.find(alias) != m_recircPortRole.end())
+        {
+            SWSS_LOG_DEBUG("Recirc port %s already added", alias.c_str());
+            return true;
+        }
+
+        /* Find pid of recirc port */ 
+        sai_object_id_t port_id = SAI_NULL_OBJECT_ID;
+        if (m_portListLaneMap.find(lane_set) != m_portListLaneMap.end())
+        {
+            port_id = m_portListLaneMap[lane_set];
+        }
+
+        if (port_id == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_ERROR("Failed to find port id for recirc port %s", alias.c_str());
+            return false;
+        }
+
+        Port p(alias, Port::PHY);
+        p.m_port_id = port_id;
+        p.m_init = true;
+        m_recircPortRole[alias] = role;
+        setPort(alias, p);
+
+        string lane_str = "";
+        for (auto lane : lane_set)
+        {
+            lane_str += to_string(lane) + " ";
+        }
+        SWSS_LOG_NOTICE("Added recirc port %s, pid:%" PRIx64 " lanes:%s",
+                        alias.c_str(), port_id, lane_str.c_str());
+
+        /* Create host intf for recirc port */
+        if(addHostIntfs(p, p.m_alias, p.m_hif_id))
+        {
+            SWSS_LOG_NOTICE("Created host intf for recycle port %s", p.m_alias.c_str());
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to Create host intf for recirc port %s", p.m_alias.c_str());
+        }
+
+        if(setHostIntfsOperStatus(p, true))
+        {
+            SWSS_LOG_NOTICE("Set host intf oper status UP for recirc port %s", p.m_alias.c_str());
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to set host intf oper status for recirc port %s", p.m_alias.c_str());
+        }
+
+        PortUpdate update = { p, true };
+        notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
+        return true;
+    }
+    else if (op == DEL_COMMAND)
+    {
+        SWSS_LOG_ERROR("Delete recirc port is not supported.");
+        return false;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
+        return false;
+    }
 }
 
 bool PortsOrch::addSystemPorts()
