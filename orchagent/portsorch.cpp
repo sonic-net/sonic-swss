@@ -2013,8 +2013,24 @@ bool PortsOrch::setPortAdvInterfaceTypes(sai_object_id_t port_id, std::vector<ui
     attr.value.u32list.count = static_cast<uint32_t>(interface_types.size());
 
     status = sai_port_api->set_port_attribute(port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        if (status == SAI_STATUS_INVALID_ATTR_VALUE_0)
+        {
+            // ERROR log will be printed by caller
+            return false;
+        }
+        else
+        {
+            task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
+        }
+    }
 
-    return status == SAI_STATUS_SUCCESS;
+    return true;
 }
 
 bool PortsOrch::getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uint8_t &index)
