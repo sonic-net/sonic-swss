@@ -6,6 +6,8 @@
 #include <sstream>
 #include <set>
 #include <vector>
+#include <unordered_map>
+#include <unordered_set>
 
 typedef enum _request_types_t
 {
