@@ -64,7 +64,7 @@ class Port():
     
     def get_admin_status(self):
         if self._admin_status is None:
-            return "up"
+            return "down"
         return self._admin_status
 
     def get_alias(self):
