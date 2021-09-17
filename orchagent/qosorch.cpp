@@ -1310,6 +1310,7 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
     string op = kfvOp(tuple);
 
     sai_uint8_t pfc_enable = 0;
+    bool have_pfc = false;
     map<sai_port_attr_t, pair<string, sai_object_id_t>> update_list;
     for (auto it = kfvFieldsValues(tuple).begin(); it != kfvFieldsValues(tuple).end(); it++)
     {
@@ -1339,6 +1340,7 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
                 sai_uint8_t q_val = (uint8_t)stoi(q_ind);
                 pfc_enable |= (uint8_t)(1 << q_val);
             }
+            have_pfc = true;
         }
     }
 
@@ -1375,7 +1377,7 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
             SWSS_LOG_INFO("Applied %s to port %s", it->second.first.c_str(), port_name.c_str());
         }
 
-        if (pfc_enable)
+        if (have_pfc)
         {
             if (!gPortsOrch->setPortPfc(port.m_port_id, pfc_enable))
             {
