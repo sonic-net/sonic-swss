@@ -2925,11 +2925,11 @@ void PortsOrch::doPortTask(Consumer &consumer)
                                                                                                    adv_speeds_str.c_str());
                             if (status == task_need_retry)
                             {
-                                it = consumer.m_toSync.erase(it);
+                                it++;
                             }
                             else
                             {
-                                it++;
+                                it = consumer.m_toSync.erase(it);
                             }
                             continue;
                         }
