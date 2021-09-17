@@ -154,10 +154,12 @@ public:
 
 private:
     unique_ptr<Table> m_counterTable;
+    unique_ptr<Table> m_counterSysPortTable;
     unique_ptr<Table> m_counterLagTable;
     unique_ptr<Table> m_portTable;
     unique_ptr<Table> m_gearboxTable;
     unique_ptr<Table> m_queueTable;
+    unique_ptr<Table> m_voqTable;
     unique_ptr<Table> m_queuePortTable;
     unique_ptr<Table> m_queueIndexTable;
     unique_ptr<Table> m_queueTypeTable;
@@ -241,6 +243,7 @@ private:
     void initializePriorityGroups(Port &port);
     void initializePortMaximumHeadroom(Port &port);
     void initializeQueues(Port &port);
+    void initializeVoqs(Port &port);
 
     bool addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id);
     bool setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip);
@@ -288,7 +291,7 @@ private:
     bool getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uint8_t &index);
 
     bool m_isQueueMapGenerated = false;
-    void generateQueueMapPerPort(const Port& port);
+    void generateQueueMapPerPort(const Port& port, bool voq);
 
     bool m_isPriorityGroupMapGenerated = false;
     void generatePriorityGroupMapPerPort(const Port& port);
