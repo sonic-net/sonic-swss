@@ -748,16 +748,36 @@ task_process_status Orch::handleSaiSetStatus(sai_api_t api, sai_status_t status,
      *          in each orch.
      *       3. Take the type of sai api into consideration.
      */
-    switch (status)
+    if (status == SAI_STATUS_SUCCESS)
     {
-        case SAI_STATUS_SUCCESS:
-            SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiSetStatus");
-            return task_success;
+        SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiSetStatus");
+        return task_success;
+    }
+
+    switch (api)
+    {
+        case SAI_API_PORT:
+            switch (status)
+            {
+                case SAI_STATUS_INVALID_ATTR_VALUE_0:
+                    /*
+                     * If user gives an invalid attribute value, no need to retry or exit orchagent, just fail the current task
+                     * and let user correct the configuration.
+                     */
+                    SWSS_LOG_ERROR("Encountered SAI_STATUS_INVALID_ATTR_VALUE_0 in set operation, task failed, SAI API: %s, status: %s",
+                            sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+                    return task_failed;
+                default:
+                    SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
+                            sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+                    exit(EXIT_FAILURE);
+            }
         default:
             SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
                         sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
             exit(EXIT_FAILURE);
     }
+
     return task_need_retry;
 }
 
