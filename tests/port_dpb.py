@@ -150,7 +150,8 @@ class Port():
         fvs_dict = self.get_fvs_dict(fvs)
         self.set_alias(fvs_dict['alias'])
         self.set_speed(int(fvs_dict['speed']))
-        self.set_admin_status(fvs_dict['admin_status'])
+        if 'admin_status' in fvs_dict:
+            self.set_admin_status(fvs_dict['admin_status'])
         self.set_lanes(list(fvs_dict['lanes'].split(",")))
         self.set_index(int(fvs_dict['index']))
 
