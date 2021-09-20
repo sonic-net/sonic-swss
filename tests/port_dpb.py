@@ -13,7 +13,6 @@ class Port():
             self._port_num = int(re.compile(r'(\d+)$').search(self._name).group(1))
         self._alias = None
         self._speed = None
-        self._admin_status = None
         self._lanes = []
         self._index = None
         self._lanes_db_str = None
@@ -36,9 +35,6 @@ class Port():
     def set_speed(self, speed):
         self._speed = speed
         
-    def set_admin_status(self, admin_status):
-        self._admin_status = admin_status
-
     def set_alias(self, alias):
         self._alias = alias
 
@@ -61,11 +57,6 @@ class Port():
 
     def get_speed(self):
         return self._speed
-    
-    def get_admin_status(self):
-        if self._admin_status is None:
-            return "down"
-        return self._admin_status
 
     def get_alias(self):
         return self._alias
@@ -150,8 +141,6 @@ class Port():
         fvs_dict = self.get_fvs_dict(fvs)
         self.set_alias(fvs_dict['alias'])
         self.set_speed(int(fvs_dict['speed']))
-        if 'admin_status' in fvs_dict:
-            self.set_admin_status(fvs_dict['admin_status'])
         self.set_lanes(list(fvs_dict['lanes'].split(",")))
         self.set_index(int(fvs_dict['index']))
 
@@ -164,7 +153,6 @@ class Port():
         fvs = swsscommon.FieldValuePairs([("alias", alias_str),
                                           ("lanes", lanes_str),
                                           ("speed", speed_str),
-                                          ("admin_status", admin_status),
                                           ("index", index_str)])
         self._cfg_db_ptbl.set(self.get_name(), fvs)
         time.sleep(2)
