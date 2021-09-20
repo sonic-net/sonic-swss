@@ -20,7 +20,8 @@ class TestPortDPBLag(object):
 
         # 2. Add Ethernet0 to PortChannel0001.
         self.dvs_lag.create_port_channel_member(lag, p.get_name())
-        time.sleep(2)
+        dvs.set_interface_status("PortChannel0001", "up")
+        dvs.set_interface_status("Ethernet0", "up")
 
         # 3. Add log marker to syslog
         marker = dvs.add_log_marker()
