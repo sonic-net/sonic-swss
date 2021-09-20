@@ -34,7 +34,7 @@ class Port():
 
     def set_speed(self, speed):
         self._speed = speed
-        
+
     def set_alias(self, alias):
         self._alias = alias
 
@@ -149,7 +149,6 @@ class Port():
         index_str = str(self.get_index())
         alias_str = self.get_alias()
         speed_str = str(self.get_speed())
-        admin_status = self.get_admin_status()
         fvs = swsscommon.FieldValuePairs([("alias", alias_str),
                                           ("lanes", lanes_str),
                                           ("speed", speed_str),
