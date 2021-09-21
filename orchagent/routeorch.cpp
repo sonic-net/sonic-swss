@@ -1317,47 +1317,87 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops)
     return true;
 }
 
+void RouteOrch::addNextHopRoute(const NextHopKey& nextHop, const RouteKey& routeKey)
+{
+    auto it = m_nextHops.find((nextHop));
+
+    if (it != m_nextHops.end())
+    {
+        if (it->second.find(routeKey) != it->second.end())
+        {
+            SWSS_LOG_INFO("Route already present in nh table %s",
+                          routeKey.prefix.to_string().c_str());
+            return;
+        }
+
+        it->second.insert(routeKey);
+    }
+    else
+    {
+        set<RouteKey> routes;
+        routes.insert(routeKey);
+        m_nextHops.insert(make_pair(nextHop, routes));
+    }
+}
+
+void RouteOrch::removeNextHopRoute(const NextHopKey& nextHop, const RouteKey& routeKey)
+{
+    auto it = m_nextHops.find((nextHop));
+
+    if (it != m_nextHops.end())
+    {
+        if (it->second.find(routeKey) == it->second.end())
+        {
+            SWSS_LOG_INFO("Route not present in nh table %s",
+                          routeKey.prefix.to_string().c_str());
+            return;
+        }
+
+        it->second.erase(routeKey);
+        if (it->second.empty())
+        {
+            m_nextHops.erase(nextHop);
+        }
+    }
+}
+
 bool RouteOrch::updateNextHopRoutes(const NextHopKey& nextHop, uint32_t& numRoutes)
 {
     numRoutes = 0;
+    auto it = m_nextHops.find((nextHop));
+
+    if (it == m_nextHops.end())
+    {
+        SWSS_LOG_INFO("No routes found for NH %s", nextHop.ip_address.to_string().c_str());
+        return true;
+    }
+
     sai_route_entry_t route_entry;
     sai_attribute_t route_attr;
     sai_object_id_t next_hop_id;
 
-    for (auto rt_table : m_syncdRoutes)
+    auto rt = it->second.begin();
+    while(rt != it->second.end())
     {
-        for (auto rt_entry : rt_table.second)
+        SWSS_LOG_INFO("Updating route %s", (*rt).prefix.to_string().c_str());
+        next_hop_id = m_neighOrch->getNextHopId(nextHop);
+
+        route_entry.vr_id = (*rt).vrf_id;
+        route_entry.switch_id = gSwitchId;
+        copy(route_entry.destination, (*rt).prefix);
+
+        route_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+        route_attr.value.oid = next_hop_id;
+
+        sai_status_t status = sai_route_api->set_route_entry_attribute(&route_entry, &route_attr);
+        if (status != SAI_STATUS_SUCCESS)
         {
-            // Skip routes with ecmp nexthops
-            if (rt_entry.second.getSize() > 1)
-            {
-                continue;
-            }
-
-            if (rt_entry.second.contains(nextHop))
-            {
-                SWSS_LOG_INFO("Updating route %s during nexthop status change",
-                               rt_entry.first.to_string().c_str());
-                next_hop_id = m_neighOrch->getNextHopId(nextHop);
-
-                route_entry.vr_id = rt_table.first;
-                route_entry.switch_id = gSwitchId;
-                copy(route_entry.destination, rt_entry.first);
-
-                route_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
-                route_attr.value.oid = next_hop_id;
-
-                sai_status_t status = sai_route_api->set_route_entry_attribute(&route_entry, &route_attr);
-                if (status != SAI_STATUS_SUCCESS)
-                {
-                    SWSS_LOG_ERROR("Failed to update route %s, rv:%d",
-                                    rt_entry.first.to_string().c_str(), status);
-                    return false;
-                }
-
-                ++numRoutes;
-            }
+            SWSS_LOG_ERROR("Failed to update route %s, rv:%d", (*rt).prefix.to_string().c_str(), status);
+            return false;
         }
+
+        ++numRoutes;
+        ++rt;
     }
 
     return true;
@@ -1856,6 +1896,12 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
                 SWSS_LOG_NOTICE("Update overlay Nexthop %s", ol_nextHops.to_string().c_str());
                 m_bulkNhgReducedRefCnt.emplace(ol_nextHops, vrf_id);
             }
+            else if (ol_nextHops.getSize() == 1)
+            {
+                RouteKey r_key = { vrf_id, ipPrefix };
+                auto nexthop = NextHopKey(ol_nextHops.to_string());
+                removeNextHopRoute(nexthop, r_key);
+            }
         }
 
         if (blackhole)
@@ -1876,6 +1922,16 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
 
         SWSS_LOG_INFO("Post set route %s with next hop(s) %s",
                 ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
+    }
+
+    if (nextHops.getSize() == 1)
+    {
+        RouteKey r_key = { vrf_id, ipPrefix };
+        auto nexthop = NextHopKey(nextHops.to_string());
+        if (!nexthop.ip_address.isZero())
+        {
+            addNextHopRoute(nexthop, r_key);
+        }
     }
 
     m_syncdRoutes[vrf_id][ipPrefix] = nextHops;
@@ -2048,6 +2104,12 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
             {
                 m_neighOrch->removeMplsNextHop(nexthop);
             }
+        }
+        else if (ol_nextHops.getSize() == 1)
+        {
+            RouteKey r_key = { vrf_id, ipPrefix };
+            auto nexthop = NextHopKey(ol_nextHops.to_string());
+            removeNextHopRoute(nexthop, r_key);
         }
     }
 
