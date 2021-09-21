@@ -26,10 +26,10 @@ extraction:
       - graphviz
       - autoconf-archive
     after_prepare:
-      - git clone https://github.com/Azure/sonic-swss-common; pushd sonic-swss-common; git checkout origin/202012; ./autogen.sh; fakeroot dpkg-buildpackage -us -uc -b; popd
+      - git clone https://github.com/Azure/sonic-swss-common -b 202012 ; pushd sonic-swss-common; ./autogen.sh; fakeroot dpkg-buildpackage -us -uc -b; popd
       - dpkg-deb -x libswsscommon_1.0.0_amd64.deb $LGTM_WORKSPACE
       - dpkg-deb -x libswsscommon-dev_1.0.0_amd64.deb $LGTM_WORKSPACE
-      - git clone --recursive https://github.com/Azure/sonic-sairedis; pushd sonic-sairedis; git checkout origin/202012; ./autogen.sh; DEB_BUILD_OPTIONS=nocheck SWSS_COMMON_INC="$LGTM_WORKSPACE/usr/include" SWSS_COMMON_LIB="$LGTM_WORKSPACE/usr/lib/x86_64-linux-gnu" fakeroot debian/rules binary-syncd-vs; popd
+      - git clone --recursive https://github.com/Azure/sonic-sairedis -b 202012 ; pushd sonic-sairedis; ./autogen.sh; DEB_BUILD_OPTIONS=nocheck SWSS_COMMON_INC="$LGTM_WORKSPACE/usr/include" SWSS_COMMON_LIB="$LGTM_WORKSPACE/usr/lib/x86_64-linux-gnu" fakeroot debian/rules binary-syncd-vs; popd
       - dpkg-deb -vx libsairedis_1.0.0_amd64.deb $LGTM_WORKSPACE
       - dpkg-deb -vx libsairedis-dev_1.0.0_amd64.deb $LGTM_WORKSPACE
       - dpkg-deb -vx libsaimetadata_1.0.0_amd64.deb $LGTM_WORKSPACE
