@@ -748,7 +748,6 @@ void RouteOrch::doTask(Consumer& consumer)
                 }
                 else
                 {
-                    SWSS_LOG_INFO("Route %s is duplicate entry", key.c_str());
                     /* Duplicate entry */
                     it = consumer.m_toSync.erase(it);
                 }

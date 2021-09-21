@@ -1028,6 +1028,13 @@ bool NextHopGroup::update(const NextHopGroupKey& nhg_key)
     if ((nhg_key.getSize() == 1) || (m_members.size() == 1) || !isSynced())
     {
         bool was_synced = isSynced();
+
+        /*
+         * The previous NHG is going to be destroyed as a consequence of the
+         * move assignment oprator being invoked on a temporary object. The
+         * destructor will be invoked right after the evaluation of the line
+         * below.
+         */
         *this = NextHopGroup(nhg_key);
 
         /* Sync the group only if it was synced before. */
