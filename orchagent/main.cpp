@@ -34,6 +34,7 @@ using namespace std;
 using namespace swss;
 
 
+
 extern sai_switch_api_t *sai_switch_api;
 extern sai_router_interface_api_t *sai_router_intfs_api;
 
