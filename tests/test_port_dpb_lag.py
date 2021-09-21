@@ -11,6 +11,7 @@ class TestPortDPBLag(object):
         assert num.strip() >= str(expected_cnt)
 
     def test_dependency(self, dvs):
+        dvs.setup_db()
         lag = "0001"
         p = Port(dvs, "Ethernet0")
         p.sync_from_config_db()
