@@ -39,5 +39,5 @@ extraction:
       command:
       - ./autogen.sh
       - ls -al $LGTM_WORKSPACE/usr/include/sai || true ; ls -al /usr/include/sai || true
-      - find / -name sai.h -ls
+      - find / -name sai.h -ls || true
       - ./configure --prefix=/usr --with-extra-inc=$LGTM_WORKSPACE/usr/include --with-extra-lib=$LGTM_WORKSPACE/usr/lib/x86_64-linux-gnu
