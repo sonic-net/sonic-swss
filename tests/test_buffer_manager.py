@@ -46,27 +46,34 @@ class TestBufferManager(object):
         port = 'Ethernet0'
         pg = port + '|3-4'
 
-        # At the beginning the port are admin down on VM. Make sure no lossless PG exists
-        assert not self.buffer_pg_table.get(pg)[0]
-
-        # Startup the port. The lossless PG should be created according to speed and cable length
-        dvs.runcmd('config interface startup {}'.format(port))
-
-        cable_length = self.cable_lengths.get(port)
         port_info = self.make_dict(self.port_table.get(port))
-        speed = port_info.get('speed')
+        if 'up' == port_info.get('admin_status'):
+            # By default, all ports should be admin down on VM.
+            # However, in case the port under test was admin up before the test, we just shut down it.
+            dvs.runcmd('config interface shutdown {}'.format(port))
+            time.sleep(1)
 
-        expected_profile_name = 'pg_lossless_{}_{}_profile'.format(speed, cable_length)
-        buffer_profile_info = self.make_dict(self.buffer_profile_table.get(expected_profile_name))
-        buffer_pg_info = self.make_dict(self.buffer_pg_table.get(pg))
-        assert buffer_pg_info['profile'] == '[BUFFER_PROFILE|{}]'.format(expected_profile_name)
-
-        self.load_pg_profile_lookup(dvs)
-        expected_profile_info = self.profile_lookup_info[(speed, cable_length)]
-        expected_profile_info['pool'] = '[BUFFER_POOL|ingress_lossless_pool]'
-        assert buffer_profile_info == expected_profile_info
-
-        # Shutdown the port. The lossless PG should be removed
-        dvs.runcmd('config interface shutdown {}'.format(port))
-        time.sleep(1)
+        # Make sure no lossless PG exists on an admin down port
         assert not self.buffer_pg_table.get(pg)[0]
+
+        try:
+            # Startup the port. The lossless PG should be created according to speed and cable length
+            dvs.runcmd('config interface startup {}'.format(port))
+
+            cable_length = self.cable_lengths.get(port)
+            speed = port_info.get('speed')
+
+            expected_profile_name = 'pg_lossless_{}_{}_profile'.format(speed, cable_length)
+            buffer_profile_info = self.make_dict(self.buffer_profile_table.get(expected_profile_name))
+            buffer_pg_info = self.make_dict(self.buffer_pg_table.get(pg))
+            assert buffer_pg_info['profile'] == '[BUFFER_PROFILE|{}]'.format(expected_profile_name)
+
+            self.load_pg_profile_lookup(dvs)
+            expected_profile_info = self.profile_lookup_info[(speed, cable_length)]
+            expected_profile_info['pool'] = '[BUFFER_POOL|ingress_lossless_pool]'
+            assert buffer_profile_info == expected_profile_info
+        finally:
+            # Shutdown the port. The lossless PG should be removed
+            dvs.runcmd('config interface shutdown {}'.format(port))
+            time.sleep(1)
+            assert not self.buffer_pg_table.get(pg)[0]

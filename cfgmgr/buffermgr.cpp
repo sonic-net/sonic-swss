@@ -247,10 +247,6 @@ void BufferMgr::doTask(Consumer &consumer)
                 for (auto i : kfvFieldsValues(t))
                 {
                     task_status = doCableTask(fvField(i), fvValue(i));
-                    if (task_status != task_process_status::task_success)
-                    {
-                        break;
-                    }
                 }
             }
             else if (m_pgfile_processed && table_name == CFG_PORT_TABLE_NAME)
