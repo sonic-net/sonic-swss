@@ -126,8 +126,13 @@ void BfdOrch::doTask(NotificationConsumer &consumer)
 
             SWSS_LOG_INFO("Get bfd session state change notification id:%" PRIx64 " state:%d", id, state);
 
-            auto key = bfd_session_lookup[id];
-            m_stateBfdSessionTable->hset(key, "state", session_state_loopup.at(state));
+            if (state != bfd_session_lookup[id].state)
+            {
+                auto key = bfd_session_lookup[id].peer;
+                m_stateBfdSessionTable->hset(key, "state", session_state_loopup.at(state));
+
+                bfd_session_lookup[id].state = state;
+            }
         }
 
         sai_deserialize_free_bfd_session_state_ntf(count, bfdSessionState);
@@ -161,6 +166,7 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     bool multihop = false;
     MacAddress dst_mac;
     bool dst_mac_provided = false;
+    bool src_ip_provided = false;
 
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
@@ -179,7 +185,10 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
         else if (fvField(i) == "multihop")
             multihop = (value == "true") ? true : false;
         else if (fvField(i) == "local_addr")
+        {
             src_ip = IpAddress(value);
+            src_ip_provided = true;
+        }
         else if (fvField(i) == "type")
         {
             if (session_type_map.find(value) == session_type_map.end())
@@ -223,6 +232,11 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     attr.value.u8 = src_ip.isV4() ? 4 : 6;
     attrs.emplace_back(attr);
 
+    if (!src_ip_provided)
+    {
+        SWSS_LOG_ERROR("Failed to create BFD session %s because source IP is not provided", key.c_str());
+        return false;
+    }
     attr.id = SAI_BFD_SESSION_ATTR_SRC_IP_ADDRESS;
     copy(attr.value.ipaddr, src_ip);
     attrs.emplace_back(attr);
@@ -322,7 +336,7 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     const string state_db_key = alias + state_db_key_delimiter + peer_address.to_string();
     m_stateBfdSessionTable->set(state_db_key, fvVector);
     bfd_session_map[key] = bfd_session_id;
-    bfd_session_lookup[bfd_session_id] = state_db_key;
+    bfd_session_lookup[bfd_session_id] = {state_db_key, SAI_BFD_SESSION_STATE_DOWN};
 
     return true;
 }
@@ -347,7 +361,7 @@ bool BfdOrch::remove_bfd_session(const string& key)
         }
     }
 
-    m_stateBfdSessionTable->del(bfd_session_lookup[bfd_session_id]);
+    m_stateBfdSessionTable->del(bfd_session_lookup[bfd_session_id].peer);
     bfd_session_map.erase(key);
     bfd_session_lookup.erase(bfd_session_id);
 

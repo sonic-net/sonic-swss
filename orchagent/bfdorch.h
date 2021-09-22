@@ -7,6 +7,12 @@
 #define BFD_SRCPORTINIT 49152
 #define BFD_SRCPORTMAX 65536
 
+struct BfdUpdate
+{
+    std::string peer;
+    sai_bfd_session_state_t state;
+};
+
 class BfdOrch: public Orch
 {
 public:
@@ -23,7 +29,7 @@ private:
     uint32_t bfd_src_port(void);
 
     std::map<std::string, sai_object_id_t> bfd_session_map;
-    std::map<sai_object_id_t, std::string> bfd_session_lookup;
+    std::map<sai_object_id_t, BfdUpdate> bfd_session_lookup;
 
     shared_ptr<DBConnector> m_state_db;
     unique_ptr<Table> m_stateBfdSessionTable;
