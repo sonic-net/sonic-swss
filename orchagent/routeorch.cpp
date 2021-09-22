@@ -1396,7 +1396,7 @@ bool RouteOrch::updateNextHopRoutes(const NextHopKey& nextHop, uint32_t& numRout
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to update route %s, rv:%d", (*rt).prefix.to_string().c_str(), status);
-            task_process_status handle_status = handleSaiCreateStatus(SAI_API_ROUTE, status);
+            task_process_status handle_status = handleSaiSetStatus(SAI_API_ROUTE, status);
             if (handle_status != task_success)
             {
                 return parseHandleSaiStatusFailure(handle_status);
