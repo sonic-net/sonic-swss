@@ -468,6 +468,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
         SWSS_LOG_NOTICE("Get port with lanes pid:%" PRIx64 " lanes:%s", port_list[i], tmp_lane_str.c_str());
         m_portListLaneMap[tmp_lane_set] = port_list[i];
+        m_availablePortSet.insert(tmp_lane_set);
     }
 
     /* Get default 1Q bridge and default VLAN */
@@ -2737,6 +2738,20 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 for (auto it = m_lanesAliasSpeedMap.begin(); it != m_lanesAliasSpeedMap.end();)
                 {
+                    if (m_availablePortSet.find(it->first) == m_availablePortSet.end())
+                    {
+                        string tmp_lane_str = "";
+                        for (auto s : it->first)
+                        {
+                            tmp_lane_str += to_string(s) + " ";
+                        }
+                        tmp_lane_str = tmp_lane_str.substr(0, tmp_lane_str.size() - 1);
+
+                        SWSS_LOG_WARN("The lane set %s isn't available in ASIC", tmp_lane_str.c_str());
+                        it++;
+                        continue;
+                    }
+
                     if (m_portListLaneMap.find(it->first) == m_portListLaneMap.end())
                     {
                         if (!addPort(it->first, get<1>(it->second), get<2>(it->second), get<3>(it->second)))

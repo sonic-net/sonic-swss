@@ -213,8 +213,11 @@ private:
 
     port_config_state_t m_portConfigState = PORT_CONFIG_MISSING;
     sai_uint32_t m_portCount;
+    // m_portListLaneMap is the current enabled port list
     map<set<int>, sai_object_id_t> m_portListLaneMap;
     map<set<int>, tuple<string, uint32_t, int, string, int, string>> m_lanesAliasSpeedMap;
+    // m_availablePortSet is the available port list read from ASIC by SAI
+    set<set<int>> m_availablePortSet;
     map<string, Port> m_portList;
     unordered_map<sai_object_id_t, int> m_portOidToIndex;
     map<string, uint32_t> m_port_ref_count;
