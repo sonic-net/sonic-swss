@@ -1348,8 +1348,7 @@ void RouteOrch::removeNextHopRoute(const NextHopKey& nextHop, const RouteKey& ro
     {
         if (it->second.find(routeKey) == it->second.end())
         {
-            SWSS_LOG_INFO("Route not present in nh table %s",
-                          routeKey.prefix.to_string().c_str());
+            SWSS_LOG_INFO("Route not present in nh table %s", routeKey.prefix.to_string().c_str());
             return;
         }
 
@@ -1358,6 +1357,10 @@ void RouteOrch::removeNextHopRoute(const NextHopKey& nextHop, const RouteKey& ro
         {
             m_nextHops.erase(nextHop);
         }
+    }
+    else
+    {
+        SWSS_LOG_INFO("Nexthop %s not found in nexthop table", nextHop.to_string().c_str());
     }
 }
 
@@ -1393,7 +1396,11 @@ bool RouteOrch::updateNextHopRoutes(const NextHopKey& nextHop, uint32_t& numRout
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to update route %s, rv:%d", (*rt).prefix.to_string().c_str(), status);
-            return false;
+            task_process_status handle_status = handleSaiCreateStatus(SAI_API_ROUTE, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
 
         ++numRoutes;
