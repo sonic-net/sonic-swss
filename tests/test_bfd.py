@@ -408,7 +408,7 @@ class TestBfd(object):
         }
         self.check_asic_bfd_session_value(session3, expected_adb_values)
 
-        # Check STATE_DB entry related to the BFD session
+        # Check STATE_DB entry related to the BFD session 3
         key_state_db3 = "default|2000::2"
         expected_sdb_values3 = {"state": "Down", "type": "demand_active", "local_addr" : "2000::1", "tx_interval" :"1000",
                                         "rx_interval" : "1000", "multiplier" : "3", "multihop": "false"}
@@ -434,7 +434,7 @@ class TestBfd(object):
         }
         self.check_asic_bfd_session_value(session4, expected_adb_values)
 
-        # Check STATE_DB entry related to the BFD session
+        # Check STATE_DB entry related to the BFD session 4
         key_state_db4 = "default|3000::2"
         expected_sdb_values4 = {"state": "Down", "type": "async_active", "local_addr" : "3000::1", "tx_interval" :"1000",
                                         "rx_interval" : "1000", "multiplier" : "3", "multihop": "false"}
