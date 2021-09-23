@@ -56,12 +56,14 @@ sai_wred_api_t*             sai_wred_api;
 sai_qos_map_api_t*          sai_qos_map_api;
 sai_buffer_api_t*           sai_buffer_api;
 sai_acl_api_t*              sai_acl_api;
+sai_hash_api_t*             sai_hash_api;
 sai_mirror_api_t*           sai_mirror_api;
 sai_fdb_api_t*              sai_fdb_api;
 sai_dtel_api_t*             sai_dtel_api;
 sai_samplepacket_api_t*     sai_samplepacket_api;
 sai_debug_counter_api_t*    sai_debug_counter_api;
 sai_nat_api_t*              sai_nat_api;
+sai_isolation_group_api_t*  sai_isolation_group_api;
 sai_system_port_api_t*      sai_system_port_api;
 sai_macsec_api_t*           sai_macsec_api;
 
@@ -179,10 +181,12 @@ void initSaiApi()
     sai_api_query(SAI_API_BUFFER,               (void **)&sai_buffer_api);
     sai_api_query(SAI_API_SCHEDULER_GROUP,      (void **)&sai_scheduler_group_api);
     sai_api_query(SAI_API_ACL,                  (void **)&sai_acl_api);
+    sai_api_query(SAI_API_HASH,                 (void **)&sai_hash_api);
     sai_api_query(SAI_API_DTEL,                 (void **)&sai_dtel_api);
     sai_api_query(SAI_API_SAMPLEPACKET,         (void **)&sai_samplepacket_api);
     sai_api_query(SAI_API_DEBUG_COUNTER,        (void **)&sai_debug_counter_api);
     sai_api_query(SAI_API_NAT,                  (void **)&sai_nat_api);
+    sai_api_query(SAI_API_ISOLATION_GROUP,      (void **)&sai_isolation_group_api);
     sai_api_query(SAI_API_SYSTEM_PORT,          (void **)&sai_system_port_api);
     sai_api_query(SAI_API_MACSEC,               (void **)&sai_macsec_api);
 
@@ -210,6 +214,7 @@ void initSaiApi()
     sai_log_set(SAI_API_BUFFER,                 SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_SCHEDULER_GROUP,        SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_ACL,                    SAI_LOG_LEVEL_NOTICE);
+    sai_log_set(SAI_API_HASH,                   SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_DTEL,                   SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_SAMPLEPACKET,           SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_DEBUG_COUNTER,          SAI_LOG_LEVEL_NOTICE);
@@ -418,7 +423,7 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
 
     /* Must be last Attribute */
     attr.id = SAI_REDIS_SWITCH_ATTR_CONTEXT;
-    attr.value.u64 = phy->phy_id;
+    attr.value.u64 = phy->context_id;
     attrs.push_back(attr);
 
     status = sai_switch_api->create_switch(&phyOid, (uint32_t)attrs.size(), attrs.data());

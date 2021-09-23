@@ -488,7 +488,11 @@ void CrmOrch::getResAvailableCounters()
                         break;
                     }
                     SWSS_LOG_ERROR("Failed to get switch attribute %u , rv:%d", attr.id, status);
-                    break;
+                    task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
+                    if (handle_status != task_process_status::task_success)
+                    {
+                        break;
+                    }
                 }
 
                 res.second.countersMap[CRM_COUNTERS_TABLE_KEY].availableCounter = attr.value.u32;
@@ -517,7 +521,11 @@ void CrmOrch::getResAvailableCounters()
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("Failed to get switch attribute %u , rv:%d", attr.id, status);
-                    break;
+                    task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
+                    if (handle_status != task_process_status::task_success)
+                    {
+                        break;
+                    }
                 }
 
                 for (uint32_t i = 0; i < attr.value.aclresource.count; i++)
@@ -557,6 +565,16 @@ void CrmOrch::getResAvailableCounters()
                 sai_status_t status = sai_object_type_get_availability(gSwitchId, objType, 0, nullptr, &availCount);
                 if (status != SAI_STATUS_SUCCESS)
                 {
+                    if ((status == SAI_STATUS_NOT_SUPPORTED) ||
+                        (status == SAI_STATUS_NOT_IMPLEMENTED) ||
+                        SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
+                        SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status))
+                    {
+                        // mark unsupported resources
+                        res.second.resStatus = CrmResourceStatus::CRM_RES_NOT_SUPPORTED;
+                        SWSS_LOG_NOTICE("CRM Resource %s not supported", crmResTypeNameMap.at(res.first).c_str());
+                        break;
+                    }
                     SWSS_LOG_ERROR("Failed to get availability for object_type %u , rv:%d", objType, status);
                     break;
                 }
@@ -577,6 +595,16 @@ void CrmOrch::getResAvailableCounters()
                 sai_status_t status = sai_object_type_get_availability(gSwitchId, objType, 1, &attr, &availCount);
                 if (status != SAI_STATUS_SUCCESS)
                 {
+                    if ((status == SAI_STATUS_NOT_SUPPORTED) ||
+                        (status == SAI_STATUS_NOT_IMPLEMENTED) ||
+                        SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
+                        SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status))
+                    {
+                        // mark unsupported resources
+                        res.second.resStatus = CrmResourceStatus::CRM_RES_NOT_SUPPORTED;
+                        SWSS_LOG_NOTICE("CRM Resource %s not supported", crmResTypeNameMap.at(res.first).c_str());
+                        break;
+                    }
                     SWSS_LOG_ERROR("Failed to get availability for object_type %u , rv:%d", objType, status);
                     break;
                 }

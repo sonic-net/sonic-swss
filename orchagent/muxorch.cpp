@@ -394,15 +394,14 @@ void MuxCable::setState(string new_state)
     SWSS_LOG_NOTICE("[%s] Set MUX state from %s to %s", mux_name_.c_str(),
                      muxStateValToString.at(state_).c_str(), new_state.c_str());
 
-    // Update HW Mux cable state anyways
-    mux_cb_orch_->updateMuxState(mux_name_, new_state);
-
     MuxState ns = muxStateStringToVal.at(new_state);
 
     auto it = muxStateTransition.find(make_pair(state_, ns));
 
     if (it ==  muxStateTransition.end())
     {
+        // Update HW Mux cable state anyways
+        mux_cb_orch_->updateMuxState(mux_name_, new_state);
         SWSS_LOG_ERROR("State transition from %s to %s is not-handled ",
                         muxStateValToString.at(state_).c_str(), new_state.c_str());
         return;
@@ -430,6 +429,7 @@ void MuxCable::setState(string new_state)
     st_chg_failed_ = false;
     SWSS_LOG_INFO("Changed state to %s", new_state.c_str());
 
+    mux_cb_orch_->updateMuxState(mux_name_, new_state);
     return;
 }
 
@@ -1300,7 +1300,17 @@ void MuxCableOrch::updateMuxMetricState(string portName, string muxState, bool s
     char buf[256];
     std::strftime(buf, 256, "%Y-%b-%d %H:%M:%S.", &now_tm);
 
-    string time = string(buf) + to_string(micros);
+    /*
+     * Prepend '0's for 6 point precision
+     */
+    const int precision = 6;
+    auto ms = to_string(micros);
+    if (ms.length() < precision)
+    {
+        ms.insert(ms.begin(), precision - ms.length(), '0');
+    }
+
+    string time = string(buf) + ms;
 
     mux_metric_table_.hset(portName, msg, time);
 }

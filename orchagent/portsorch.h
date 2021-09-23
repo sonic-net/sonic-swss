@@ -13,6 +13,7 @@
 #include "gearboxutils.h"
 #include "saihelper.h"
 #include "lagid.h"
+#include "flexcounterorch.h"
 
 
 #define FCS_LEN 4
@@ -125,6 +126,8 @@ public:
 
     void generateQueueMap();
     void generatePriorityGroupMap();
+    void generatePortCounterMap();
+    void generatePortBufferDropCounterMap();
 
     void refreshPortStatus();
     bool removeAclTableGroup(const Port &p);
@@ -275,12 +278,12 @@ private:
     bool isSpeedSupported(const std::string& alias, sai_object_id_t port_id, sai_uint32_t speed);
     void getPortSupportedSpeeds(const std::string& alias, sai_object_id_t port_id, PortSupportedSpeeds &supported_speeds);
     void initPortSupportedSpeeds(const std::string& alias, sai_object_id_t port_id);
-    bool setPortSpeed(Port &port, sai_uint32_t speed);
+    task_process_status setPortSpeed(Port &port, sai_uint32_t speed);
     bool getPortSpeed(sai_object_id_t id, sai_uint32_t &speed);
     bool setGearboxPortsAttr(Port &port, sai_port_attr_t id, void *value);
     bool setGearboxPortAttr(Port &port, dest_port_type_t port_type, sai_port_attr_t id, void *value);
 
-    bool setPortAdvSpeeds(sai_object_id_t port_id, std::vector<sai_uint32_t>& speed_list);
+    task_process_status setPortAdvSpeeds(sai_object_id_t port_id, std::vector<sai_uint32_t>& speed_list);
 
     bool getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uint8_t &index);
 
@@ -290,10 +293,13 @@ private:
     bool m_isPriorityGroupMapGenerated = false;
     void generatePriorityGroupMapPerPort(const Port& port);
 
-    bool setPortAutoNeg(sai_object_id_t id, int an);
+    bool m_isPortCounterMapGenerated = false;
+    bool m_isPortBufferDropCounterMapGenerated = false;
+
+    task_process_status setPortAutoNeg(sai_object_id_t id, int an);
     bool setPortFecMode(sai_object_id_t id, int fec);
-    bool setPortInterfaceType(sai_object_id_t id, sai_port_interface_type_t interface_type);
-    bool setPortAdvInterfaceTypes(sai_object_id_t id, std::vector<uint32_t> &interface_types);
+    task_process_status setPortInterfaceType(sai_object_id_t id, sai_port_interface_type_t interface_type);
+    task_process_status setPortAdvInterfaceTypes(sai_object_id_t id, std::vector<uint32_t> &interface_types);
 
     bool getPortOperStatus(const Port& port, sai_port_oper_status_t& status) const;
     void updatePortOperStatus(Port &port, sai_port_oper_status_t status);
@@ -318,7 +324,6 @@ private:
     bool initGearboxPort(Port &port);
 
     map<string, string> m_recircPortRole;
-    bool doProcessRecircPort(string alias, string role, set<int> laneSet, string op);
 
     //map key is tuple of <attached_switch_id, core_index, core_port_index>
     map<tuple<int, int, int>, sai_object_id_t> m_systemPortOidMap;
@@ -332,6 +337,8 @@ private:
     void voqSyncAddLagMember(Port &lag, Port &port);
     void voqSyncDelLagMember(Port &lag, Port &port);
     unique_ptr<LagIdAllocator> m_lagIdAllocator;
+
+    std::unordered_set<std::string> generateCounterStats(const string& type);
 
 };
 #endif /* SWSS_PORTSORCH_H */

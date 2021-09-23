@@ -31,14 +31,9 @@ constexpr bool DEFAULT_ENABLE_ENCRYPT = true;
 constexpr bool DEFAULT_SCI_IN_SECTAG = false;
 constexpr sai_macsec_cipher_suite_t DEFAULT_CIPHER_SUITE = SAI_MACSEC_CIPHER_SUITE_GCM_AES_128;
 
-static const std::vector<std::string> macsec_egress_sa_attrs =
+static const std::vector<std::string> macsec_sa_attrs =
     {
-        "SAI_MACSEC_SA_ATTR_XPN",
-};
-
-static const std::vector<std::string> macsec_ingress_sa_attrs =
-    {
-        "SAI_MACSEC_SA_ATTR_MINIMUM_XPN",
+        "SAI_MACSEC_SA_ATTR_CURRENT_XPN",
 };
 
 template <typename T, typename... Args>
@@ -224,7 +219,7 @@ public:
 
     sai_object_id_t *get_port_id()
     {
-        if(m_port_id == nullptr)
+        if (m_port_id == nullptr)
         {
             auto port = get_port();
             if (port == nullptr)
@@ -854,15 +849,20 @@ bool MACsecOrch::initMACsecObject(sai_object_id_t switch_id)
     attrs.clear();
     attr.id = SAI_MACSEC_ATTR_SCI_IN_INGRESS_MACSEC_ACL;
     attrs.push_back(attr);
-    if (sai_macsec_api->get_macsec_attribute(
-            macsec_obj.first->second.m_ingress_id,
-            static_cast<uint32_t>(attrs.size()),
-            attrs.data()) != SAI_STATUS_SUCCESS)
+    status = sai_macsec_api->get_macsec_attribute(
+                    macsec_obj.first->second.m_ingress_id,
+                    static_cast<uint32_t>(attrs.size()),
+                    attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_WARN(
             "Cannot get MACsec attribution SAI_MACSEC_ATTR_SCI_IN_INGRESS_MACSEC_ACL at the switch 0x%" PRIx64,
             switch_id);
-        return false;
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_MACSEC, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            return false;
+        }
     }
     macsec_obj.first->second.m_sci_in_ingress_macsec_acl = attrs.front().value.booldata;
 
@@ -1738,16 +1738,15 @@ task_process_status MACsecOrch::createMACsecSA(
         sc->m_sa_ids.erase(an);
     });
 
+    installCounter(CounterType::MACSEC_SA_ATTR, port_sci_an, sc->m_sa_ids[an], macsec_sa_attrs);
     std::vector<FieldValueTuple> fvVector;
     fvVector.emplace_back("state", "ok");
     if (direction == SAI_MACSEC_DIRECTION_EGRESS)
     {
-        installCounter(CounterType::MACSEC_SA_ATTR, port_sci_an, sc->m_sa_ids[an], macsec_egress_sa_attrs);
         m_state_macsec_egress_sa.set(swss::join('|', port_name, sci, an), fvVector);
     }
     else
     {
-        installCounter(CounterType::MACSEC_SA_ATTR, port_sci_an, sc->m_sa_ids[an], macsec_ingress_sa_attrs);
         m_state_macsec_ingress_sa.set(swss::join('|', port_name, sci, an), fvVector);
     }
 
@@ -2232,7 +2231,9 @@ bool MACsecOrch::createMACsecACLDataEntry(
     if (sci_in_sectag)
     {
         attr.id = SAI_ACL_ENTRY_ATTR_FIELD_MACSEC_SCI;
-        attr.value.u64 = sci;
+        attr.value.aclfield.enable = true;
+        attr.value.aclfield.mask.u64 = 0xFFFFFFFFFFFFFFFF;
+        attr.value.aclfield.data.u64 = sci;
         attrs.push_back(attr);
     }
 

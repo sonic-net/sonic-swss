@@ -10,7 +10,8 @@ enum FdbOrigin
     FDB_ORIGIN_INVALID = 0,
     FDB_ORIGIN_LEARN = 1,
     FDB_ORIGIN_PROVISIONED = 2,
-    FDB_ORIGIN_VXLAN_ADVERTIZED = 4
+    FDB_ORIGIN_VXLAN_ADVERTIZED = 4,
+    FDB_ORIGIN_MCLAG_ADVERTIZED = 8
 };
 
 struct FdbEntry
@@ -80,7 +81,8 @@ class FdbOrch: public Orch, public Subject, public Observer
 {
 public:
 
-    FdbOrch(DBConnector* applDbConnector, vector<table_name_with_pri_t> appFdbTables, TableConnector stateDbFdbConnector, PortsOrch *port);
+    FdbOrch(DBConnector* applDbConnector, vector<table_name_with_pri_t> appFdbTables,
+                TableConnector stateDbFdbConnector, TableConnector stateDbMclagFdbConnector, PortsOrch *port);
 
     ~FdbOrch()
     {
@@ -105,6 +107,7 @@ private:
     fdb_entries_by_port_t saved_fdb_entries;
     vector<Table*> m_appTables;
     Table m_fdbStateTable;
+    Table m_mclagFdbStateTable;
     NotificationConsumer* m_flushNotificationsConsumer;
     NotificationConsumer* m_fdbNotificationConsumer;
 

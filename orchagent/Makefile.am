@@ -1,4 +1,9 @@
-INCLUDES = -I $(top_srcdir)/lib -I $(top_srcdir) -I $(top_srcdir)/warmrestart -I flex_counter -I debug_counter
+INCLUDES = -I $(top_srcdir)/lib \
+           -I $(top_srcdir) \
+           -I $(top_srcdir)/warmrestart \
+           -I flex_counter \
+           -I debug_counter \
+           -I pbh
 
 CFLAGS_SAI = -I /usr/include/sai
 
@@ -46,6 +51,10 @@ orchagent_SOURCES = \
             mirrororch.cpp \
             fdborch.cpp \
             aclorch.cpp \
+            pbh/pbhcnt.cpp \
+            pbh/pbhmgr.cpp \
+            pbh/pbhrule.cpp \
+            pbhorch.cpp \
             saihelper.cpp \
             switchorch.cpp \
             pfcwdorch.cpp \
@@ -64,6 +73,8 @@ orchagent_SOURCES = \
             chassisorch.cpp \
             debugcounterorch.cpp \
             natorch.cpp \
+            mlagorch.cpp \
+            isolationgrouporch.cpp \
             muxorch.cpp \
             macsecorch.cpp \
             lagid.cpp 

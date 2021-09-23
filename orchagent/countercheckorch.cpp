@@ -164,7 +164,7 @@ PfcFrameCounters CounterCheckOrch::getPfcFrameCounters(sai_object_id_t portId)
 
     if (!m_countersTable->get(sai_serialize_object_id(portId), fieldValues))
     {
-        return move(counters);
+        return counters;
     }
 
     for (const auto& fv : fieldValues)
@@ -182,7 +182,7 @@ PfcFrameCounters CounterCheckOrch::getPfcFrameCounters(sai_object_id_t portId)
         }
     }
 
-    return move(counters);
+    return counters;
 }
 
 QueueMcCounters CounterCheckOrch::getQueueMcCounters(
@@ -218,9 +218,8 @@ QueueMcCounters CounterCheckOrch::getQueueMcCounters(
         counters.push_back(pkts);
     }
 
-    return move(counters);
+    return counters;
 }
-
 
 void CounterCheckOrch::addPort(const Port& port)
 {
