@@ -235,7 +235,7 @@ void FdbSync::processStateMclagRemoteFdb()
             }
         }
 
-        if (op != "SET" && macCheckSrcDB(&info) == false)
+        if (op != "SET" && macCheckMclagDB(&info) == false)
         {
             continue;
         }
@@ -267,6 +267,18 @@ bool FdbSync::macCheckSrcDB(struct m_fdb_info *info)
     if (m_fdb_mac.find(key) != m_fdb_mac.end())
     {
         SWSS_LOG_INFO("DEL_KEY %s ", key.c_str());
+        return true;
+    }
+
+    return false;
+}
+
+bool FdbSync::macCheckMclagDB(struct m_fdb_info *info)
+{
+    string key = info->vid + ":" + info->mac;
+    if (m_mclag_remote_fdb_mac.find(key) != m_mclag_remote_fdb_mac.end())
+    {
+        SWSS_LOG_NOTICE("macCheckMlagDB DEL_KEY %s ", key.c_str());
         return true;
     }
 
