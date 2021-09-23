@@ -28,6 +28,9 @@ extern "C" {
 
 #define VNID_NONE               0xFFFFFFFF
 
+// Default inter-packet gap(IPG) is 96 which is recommended by IEEE 802.3
+#define DEFAULT_IPG             96
+
 namespace swss {
 
 struct VlanMemberEntry
@@ -144,6 +147,7 @@ public:
     sai_port_interface_type_t m_interface_type;
     std::vector<uint32_t> m_adv_interface_types;
     bool      m_mpls = false;
+    uint32_t  m_ipg = DEFAULT_IPG;
 
     /*
      * Following two bit vectors are used to lock

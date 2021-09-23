@@ -322,6 +322,7 @@ private:
                                 sai_acl_bind_point_type_t &sai_acl_bind_type);
     void initGearbox();
     bool initGearboxPort(Port &port);
+    const gearbox_phy_t* getGearboxPhy(const Port &port);
 
     map<string, string> m_recircPortRole;
 

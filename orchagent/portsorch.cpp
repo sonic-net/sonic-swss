@@ -5963,6 +5963,24 @@ bool PortsOrch::initGearboxPort(Port &port)
     return true;
 }
 
+const gearbox_phy_t* PortsOrch::getGearboxPhy(const Port &port)
+{
+    auto gearbox_interface = m_gearboxInterfaceMap.find(port.m_index);
+    if (gearbox_interface == m_gearboxInterfaceMap.end())
+    {
+        return nullptr;
+    }
+
+    auto phy = m_gearboxPhyMap.find(gearbox_interface->second.phy_id);
+    if (phy == m_gearboxPhyMap.end())
+    {
+        SWSS_LOG_ERROR("Gearbox Phy %d dones't exist", gearbox_interface->second.phy_id);
+        return nullptr;
+    }
+
+    return &phy->second;
+}
+
 bool PortsOrch::getSystemPorts()
 {
     sai_status_t status;
