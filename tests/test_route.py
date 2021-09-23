@@ -124,6 +124,7 @@ class TestRoute(TestRouteBase):
         self.create_l3_intf("Ethernet4", "")
 
         # set ip address
+        # set ip address
         self.add_ip_address("Ethernet0", "10.0.0.0/31")
         self.add_ip_address("Ethernet4", "10.0.0.2/31")
 
