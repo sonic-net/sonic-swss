@@ -9,6 +9,7 @@
 #include "macaddress.h"
 #include "orch.h"
 #include "request_parser.h"
+#include "routeorch.h"
 #include "vrforch.h"
 #include "vxlanorch.h"
 #include "directory.h"
@@ -20,6 +21,7 @@ extern sai_virtual_router_api_t* sai_virtual_router_api;
 extern sai_object_id_t gSwitchId;
 extern Directory<Orch*> gDirectory;
 extern PortsOrch*       gPortsOrch;
+extern RouteOrch *gRouteOrch;
 
 bool VRFOrch::addOperation(const Request& request)
 {
@@ -115,6 +117,8 @@ bool VRFOrch::addOperation(const Request& request)
         }
         m_stateVrfObjectTable.hset(vrf_name, "state", "ok");
         SWSS_LOG_NOTICE("VRF '%s' was added", vrf_name.c_str());
+
+	gRouteOrch->addLinkLocalRouteToMe(router_id, gRouteOrch->getLinkLocalEui64Addr());
     }
     else
     {
