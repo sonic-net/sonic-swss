@@ -32,9 +32,7 @@ NhgOrch::NhgOrch(DBConnector *db, string tableName) :
     sai_attribute_t attr;
     attr.id = SAI_SWITCH_ATTR_NUMBER_OF_ECMP_GROUPS;
 
-    sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId,
-                                                               1,
-                                                               &attr);
+    sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
 
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -64,8 +62,7 @@ NhgOrch::NhgOrch(DBConnector *db, string tableName) :
 
     /* Set switch's next hop group capacity. */
     vector<FieldValueTuple> fvTuple;
-    fvTuple.emplace_back("MAX_NEXTHOP_GROUP_COUNT",
-                         to_string(m_maxNhgCount));
+    fvTuple.emplace_back("MAX_NEXTHOP_GROUP_COUNT", to_string(m_maxNhgCount));
     gSwitchOrch->set_switch_capability(fvTuple);
 
     SWSS_LOG_NOTICE("Maximum number of ECMP groups supported is %d", m_maxNhgCount);
@@ -98,7 +95,7 @@ void NhgOrch::doTask(Consumer& consumer)
         string index = kfvKey(t);
         string op = kfvOp(t);
 
-        bool success = true;
+        bool success = false;
         const auto& nhg_it = m_syncdNextHopGroups.find(index);
 
         if (op == SET_COMMAND)
@@ -157,36 +154,28 @@ void NhgOrch::doTask(Consumer& consumer)
                 */
                 if ((nhg_key.getSize() > 1) && (NextHopGroup::getCount() >= m_maxNhgCount))
                 {
-                    SWSS_LOG_WARN("Next hop group count reached its limit.");
+                    SWSS_LOG_DEBUG("Next hop group count reached its limit.");
 
                     try
                     {
-                        auto nhg = std::make_unique<NextHopGroup>(
-                                                    createTempNhg(nhg_key));
+                        auto nhg = std::make_unique<NextHopGroup>(createTempNhg(nhg_key));
                         if (nhg->sync())
                         {
-                            m_syncdNextHopGroups.emplace(index,
-                                                    NhgEntry(std::move(nhg)));
+                            m_syncdNextHopGroups.emplace(index, NhgEntry(std::move(nhg)));
                         }
                         else
                         {
-                            SWSS_LOG_WARN("Failed to sync temporary NHG %s with %s",
+                            SWSS_LOG_INFO("Failed to sync temporary NHG %s with %s",
                                 index.c_str(),
                                 nhg_key.to_string().c_str());
                         }
                     }
                     catch (const std::exception& e)
                     {
-                        SWSS_LOG_WARN("Got exception: %s while adding temp group %s",
+                        SWSS_LOG_INFO("Got exception: %s while adding temp group %s",
                             e.what(),
                             nhg_key.to_string().c_str());
                     }
-
-                    /*
-                     * We set the success to false so we keep trying to update
-                     * this group in order to sync the whole group.
-                     */
-                    success = false;
                 }
                 else
                 {
@@ -195,8 +184,7 @@ void NhgOrch::doTask(Consumer& consumer)
 
                     if (success)
                     {
-                        m_syncdNextHopGroups.emplace(index,
-                                                    NhgEntry(std::move(nhg)));
+                        m_syncdNextHopGroups.emplace(index, NhgEntry(std::move(nhg)));
                     }
                 }
             }
@@ -216,10 +204,9 @@ void NhgOrch::doTask(Consumer& consumer)
                     ((nhg_key.getSize() == 1) || (nhg_ptr->getSize() == 1)) &&
                     (nhg_it->second.ref_count > 0))
                 {
-                    SWSS_LOG_WARN("Next hop group %s update would change SAI "
+                    SWSS_LOG_INFO("Next hop group %s update would change SAI "
                                   "ID while referenced, so not performed",
                                   index.c_str());
-                    success = false;
                 }
                 /*
                  * If the update would mandate promoting a temporary next hop
@@ -235,7 +222,8 @@ void NhgOrch::doTask(Consumer& consumer)
                      * If the group was updated in such way that the previously
                      * chosen next hop does not represent the new group key,
                      * update the temporary group to choose a new next hop from
-                     * the new key.
+                     * the new key.  Otherwise, this will be a no-op as we have
+                     * to wait for resources in order to promote the group.
                      */
                     if (!nhg_key.contains(nhg_ptr->getKey()))
                     {
@@ -256,25 +244,18 @@ void NhgOrch::doTask(Consumer& consumer)
                             }
                             else
                             {
-                                SWSS_LOG_WARN("Failed to sync updated temp NHG %s with %s",
+                                SWSS_LOG_INFO("Failed to sync updated temp NHG %s with %s",
                                   index.c_str(),
                                   nhg_key.to_string().c_str());
                             }
                         }
                         catch (const std::exception& e)
                         {
-                            SWSS_LOG_WARN("Got exception: %s while adding temp group %s",
+                            SWSS_LOG_INFO("Got exception: %s while adding temp group %s",
                                 e.what(),
                                 nhg_key.to_string().c_str());
                         }
                     }
-
-                    /*
-                     * Because the resources are exhausted, we have to keep
-                     * trying to update the temporary group until we can
-                     * promote it to a fully functional group.
-                     */
-                    success = false;
                 }
                 /* Common update, when all the requirements are met. */
                 else
@@ -288,15 +269,14 @@ void NhgOrch::doTask(Consumer& consumer)
             /* If the group does not exist, do nothing. */
             if (nhg_it == m_syncdNextHopGroups.end())
             {
-                SWSS_LOG_WARN("Unable to find group with key %s to remove", index.c_str());
+                SWSS_LOG_INFO("Unable to find group with key %s to remove", index.c_str());
                 /* Mark the operation as successful to consume it. */
                 success = true;
             }
             /* If the group does exist, but it's still referenced, skip. */
             else if (nhg_it->second.ref_count > 0)
             {
-                SWSS_LOG_WARN("Unable to remove group %s which is referenced", index.c_str());
-                success = false;
+                SWSS_LOG_INFO("Unable to remove group %s which is referenced", index.c_str());
             }
             /* Else, if the group is no more referenced, remove it. */
             else
@@ -513,8 +493,7 @@ bool NextHopGroupMember::updateWeight(uint32_t weight)
         nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT;
         nhgm_attr.value.s32 = m_nh_key.weight;
 
-        sai_status_t status = sai_next_hop_group_api->
-                set_next_hop_group_member_attribute(m_gm_id, &nhgm_attr);
+        sai_status_t status = sai_next_hop_group_api->set_next_hop_group_member_attribute(m_gm_id, &nhgm_attr);
         success = status == SAI_STATUS_SUCCESS;
     }
 
@@ -859,8 +838,7 @@ bool NextHopGroup::syncMembers(const std::set<NextHopKey>& nh_keys)
     /* This method should not be called for groups with only one NH. */
     assert(m_members.size() > 1);
 
-    ObjectBulker<sai_next_hop_group_api_t> nextHopGroupMemberBulker(
-                                sai_next_hop_group_api, gSwitchId, gMaxBulkSize);
+    ObjectBulker<sai_next_hop_group_api_t> nextHopGroupMemberBulker(sai_next_hop_group_api, gSwitchId, gMaxBulkSize);
 
     /*
      * Iterate over the given next hops.
@@ -966,8 +944,7 @@ bool NextHopGroup::removeMembers(const std::set<NextHopKey>& nh_keys)
 
         if (nhgm.isSynced())
         {
-            nextHopGroupMemberBulker.remove_entry(&statuses[nh_key],
-                                                    nhgm.getGmId());
+            nextHopGroupMemberBulker.remove_entry(&statuses[nh_key], nhgm.getGmId());
         }
     }
 
@@ -1124,8 +1101,7 @@ bool NextHopGroup::update(const NextHopGroupKey& nhg_key)
  * Params:      IN  nhgm - The next hop group member.
  * Returns:     The attributes vector for the given next hop.
  */
-vector<sai_attribute_t> NextHopGroup::createNhgmAttrs(
-                                        const NextHopGroupMember& nhgm) const
+vector<sai_attribute_t> NextHopGroup::createNhgmAttrs(const NextHopGroupMember& nhgm) const
 {
     SWSS_LOG_ENTER();
 

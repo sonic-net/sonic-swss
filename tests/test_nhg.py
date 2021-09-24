@@ -25,7 +25,6 @@ class TestNextHopGroup(object):
 
     def get_inseg_id(self, label, dvs):
         for k in dvs.get_asic_db().get_keys(self.ASIC_INSEG_STR):
-            print(json.loads(k))
             if json.loads(k)['label'] == label:
                 return k
 
