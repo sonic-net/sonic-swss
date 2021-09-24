@@ -118,7 +118,17 @@ bool VRFOrch::addOperation(const Request& request)
         m_stateVrfObjectTable.hset(vrf_name, "state", "ok");
         SWSS_LOG_NOTICE("VRF '%s' was added", vrf_name.c_str());
 
-	gRouteOrch->addLinkLocalRouteToMe(router_id, gRouteOrch->getLinkLocalEui64Addr());
+        IpPrefix linklocal_prefix = gRouteOrch->getLinkLocalEui64Addr();
+
+        gRouteOrch->addLinkLocalRouteToMe(router_id, linklocal_prefix);
+        SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu for VRF %s", linklocal_prefix.to_string().c_str(), vrf_name.c_str());
+
+        /* Add fe80::/10 subnet route to forward all link-local packets
+         * destined to us, to CPU */
+        IpPrefix default_link_local_prefix("fe80::/10");
+
+        gRouteOrch->addLinkLocalRouteToMe(router_id, default_link_local_prefix);
+        SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu for VRF %s", default_link_local_prefix.to_string().c_str(), vrf_name.c_str());
     }
     else
     {
