@@ -298,29 +298,6 @@ class TestMuxTunnelBase(object):
 
         self.check_nexthop_in_asic_db(asicdb, rtkeys[0])
 
-        # Check route set flow and changing nexthop
-        self.set_mux_state(appdb, "Ethernet4", "active")
-
-        ps = swsscommon.ProducerStateTable(pdb.db_connection, "ROUTE_TABLE")
-        fvs = swsscommon.FieldValuePairs([("nexthop", self.SERV2_IPV4), ("ifname", "Vlan1000")])
-        ps.set(rtprefix, fvs)
-
-        # Check if route was propagated to ASIC DB
-        rtkeys = dvs_route.check_asicdb_route_entries([rtprefix])
-
-        # Change Mux status for Ethernet0 and expect no change to replaced route
-        self.set_mux_state(appdb, "Ethernet0", "standby")
-        self.check_nexthop_in_asic_db(asicdb, rtkeys[0])
-
-        self.set_mux_state(appdb, "Ethernet4", "standby")
-        self.check_nexthop_in_asic_db(asicdb, rtkeys[0], True)
-
-        # Delete the route
-        ps._del(rtprefix)
-
-        self.set_mux_state(appdb, "Ethernet4", "active")
-        dvs_route.check_asicdb_deleted_route_entries([rtprefix])
-
         # Test ECMP routes
 
         self.set_mux_state(appdb, "Ethernet0", "active")
