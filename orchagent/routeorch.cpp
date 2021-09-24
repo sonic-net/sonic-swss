@@ -2111,11 +2111,8 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
             {
                 m_neighOrch->removeMplsNextHop(nexthop);
             }
-        }
-        else if (ol_nextHops.getSize() == 1)
-        {
+
             RouteKey r_key = { vrf_id, ipPrefix };
-            auto nexthop = NextHopKey(ol_nextHops.to_string());
             removeNextHopRoute(nexthop, r_key);
         }
     }
