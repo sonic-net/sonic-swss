@@ -930,12 +930,14 @@ class TestRoutePerf(TestRouteBase):
 
         dvs.servers[1].runcmd("ip address add 10.0.0.3/31 dev eth0")
         dvs.servers[1].runcmd("ip route add default via 10.0.0.2")
+        time.sleep(2)
 
         fieldValues = [{"nexthop": "10.0.0.1", "ifname": "Ethernet0"}, {"nexthop": "10.0.0.3", "ifname": "Ethernet4"}]
 
         # get neighbor and arp entry
         dvs.servers[0].runcmd("ping -c 1 10.0.0.3")
         dvs.servers[1].runcmd("ping -c 1 10.0.0.1")
+        time.sleep(2)
 
         # get number of routes before adding new routes
         startNumRoutes = len(self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"))
