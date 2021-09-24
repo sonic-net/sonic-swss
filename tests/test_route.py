@@ -906,6 +906,7 @@ class TestRoutePerf(TestRouteBase):
         self.setup_db(dvs)
         self.clear_srv_config(dvs)
         numRoutes = 5000   # number of routes to add/remove
+        
 
         # generate ip prefixes of routes
         prefixes = []
