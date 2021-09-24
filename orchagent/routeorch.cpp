@@ -1931,7 +1931,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
                 ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
     }
 
-    if (nextHops.getSize() == 1)
+    if (nextHops.getSize() == 1 && !nextHops.is_overlay_nexthop())
     {
         RouteKey r_key = { vrf_id, ipPrefix };
         auto nexthop = NextHopKey(nextHops.to_string());
