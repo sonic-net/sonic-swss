@@ -460,7 +460,7 @@ private:
 
     MACsecOrch::MACsecSC                *m_macsec_sc;
     sai_object_id_t                     *m_macsec_sa;
-    gearbox_phy_t*                      *m_gearbox_phy;
+    gearbox_phy_t                       *m_gearbox_phy;
 };
 
 /* MACsec Orchagent */
@@ -1248,7 +1248,7 @@ bool MACsecOrch::deleteMACsecPort(
         if (!adjustIPG(port, DEFAULT_IPG))
         {
             SWSS_LOG_WARN("Cannot set IPG %u to at the port %s", DEFAULT_IPG, port_name.c_str());
-            return &= false;
+            result &= false;
         }
     }
 
