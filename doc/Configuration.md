@@ -343,13 +343,13 @@ When the system is running in traditional buffer model, profiles needs to explic
 {
 "BUFFER_PG": {
     "Ethernet0|3-4": {
-        "profile": "[BUFFER_PROFILE|pg_lossless_40000_5m_profile]"
+        "profile": "pg_lossless_40000_5m_profile"
     },
     "Ethernet1|3-4": {
-        "profile": "[BUFFER_PROFILE|pg_lossless_40000_5m_profile]"
+        "profile": "pg_lossless_40000_5m_profile"
     },
     "Ethernet2|3-4": {
-        "profile": "[BUFFER_PROFILE|pg_lossless_40000_5m_profile]"
+        "profile": "pg_lossless_40000_5m_profile"
     }
   }
 }
@@ -371,7 +371,7 @@ When the system is running in dynamic buffer model, profiles can be:
         "profile": "NULL"
     },
     "Ethernet2|3-4": {
-        "profile": "[BUFFER_PROFILE|static_profile]"
+        "profile": "static_profile"
     }
   }
 }
@@ -437,17 +437,17 @@ When the system is running in dynamic buffer model, the size of some of the buff
 "BUFFER_PROFILE": {
     "egress_lossless_profile": {
         "static_th": "3995680",
-        "pool": "[BUFFER_POOL|egress_lossless_pool]",
+        "pool": "egress_lossless_pool",
         "size": "1518"
     },
     "egress_lossy_profile": {
         "dynamic_th": "3",
-        "pool": "[BUFFER_POOL|egress_lossy_pool]",
+        "pool": "egress_lossy_pool",
         "size": "1518"
     },
     "ingress_lossy_profile": {
         "dynamic_th": "3",
-        "pool": "[BUFFER_POOL|ingress_lossless_pool]",
+        "pool": "ingress_lossless_pool",
         "size": "0"
     },
     "pg_lossless_40000_5m_profile": {
@@ -455,7 +455,7 @@ When the system is running in dynamic buffer model, the size of some of the buff
         "dynamic_th": "-3",
         "xon": "2288",
         "xoff": "66560",
-        "pool": "[BUFFER_POOL|ingress_lossless_pool]",
+        "pool": "ingress_lossless_pool",
         "size": "1248"
     },
     "pg_lossless_40000_40m_profile": {
@@ -463,7 +463,7 @@ When the system is running in dynamic buffer model, the size of some of the buff
         "dynamic_th": "-3",
         "xon": "2288",
         "xoff": "71552",
-        "pool": "[BUFFER_POOL|ingress_lossless_pool]",
+        "pool": "ingress_lossless_pool",
         "size": "1248"
     }
   }
@@ -491,13 +491,13 @@ This kind of profiles will be handled by buffer manager and won't be applied to 
 {
 "BUFFER_QUEUE": {
     "Ethernet50,Ethernet52,Ethernet54,Ethernet56|0-2": {
-        "profile": "[BUFFER_PROFILE|egress_lossy_profile]"
+        "profile": "egress_lossy_profile"
     },
     "Ethernet50,Ethernet52,Ethernet54,Ethernet56|3-4": {
-        "profile": "[BUFFER_PROFILE|egress_lossless_profile]"
+        "profile": "egress_lossless_profile"
     },
     "Ethernet50,Ethernet52,Ethernet54,Ethernet56|5-6": {
-        "profile": "[BUFFER_PROFILE|egress_lossy_profile]"
+        "profile": "egress_lossy_profile"
     }
   }
 }
@@ -1104,12 +1104,12 @@ name as object key and member list as attribute.
 {
 "PORT_QOS_MAP": {
     "Ethernet50,Ethernet52,Ethernet54,Ethernet56": {
-        "tc_to_pg_map": "[TC_TO_PRIORITY_GROUP_MAP|AZURE]", 
-        "tc_to_queue_map": "[TC_TO_QUEUE_MAP|AZURE]", 
+        "tc_to_pg_map": "AZURE", 
+        "tc_to_queue_map": "AZURE", 
         "pfc_enable": "3,4", 
-        "pfc_to_queue_map": "[MAP_PFC_PRIORITY_TO_QUEUE|AZURE]", 
-        "dscp_to_tc_map": "[DSCP_TO_TC_MAP|AZURE]",
-        "scheduler": "[SCHEDULER|scheduler.port]"
+        "pfc_to_queue_map": "AZURE", 
+        "dscp_to_tc_map": "AZURE",
+        "scheduler": "scheduler.port"
     }
   }
 }  
@@ -1120,14 +1120,14 @@ name as object key and member list as attribute.
 {
 "QUEUE": {
 	"Ethernet56|4": {
-        "wred_profile": "[WRED_PROFILE|AZURE_LOSSLESS]", 
-        "scheduler": "[SCHEDULER|scheduler.1]"
+        "wred_profile": "AZURE_LOSSLESS", 
+        "scheduler": "scheduler.1"
     }, 
     "Ethernet56|5": {
-        "scheduler": "[SCHEDULER|scheduler.0]"
+        "scheduler": "scheduler.0"
     }, 
     "Ethernet56|6": {
-        "scheduler": "[SCHEDULER|scheduler.0]"
+        "scheduler": "scheduler.0"
     }
   }
 }

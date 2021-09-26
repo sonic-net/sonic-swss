@@ -107,7 +107,7 @@ Create/update two tables: profile (in m_cfgBufferProfileTable) and port buffer (
 
     "BUFFER_PROFILE": {
         "pg_lossless_100G_300m_profile": {
-            "pool":"[BUFFER_POOL_TABLE:ingress_lossless_pool]",
+            "pool":"ingress_lossless_pool",
             "xon":"18432",
             "xon_offset":"2496",
             "xoff":"165888",
@@ -117,7 +117,7 @@ Create/update two tables: profile (in m_cfgBufferProfileTable) and port buffer (
     }
     "BUFFER_PG" :{
         Ethernet44|3-4": {
-            "profile" : "[BUFFER_PROFILE:pg_lossless_100000_300m_profile]"
+            "profile" : "pg_lossless_100000_300m_profile"
         }
     }
 */
@@ -168,11 +168,8 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
 
         // profile threshold field name
         mode += "_th";
-        string pg_pool_reference = string(CFG_BUFFER_POOL_TABLE_NAME) +
-                                   m_cfgBufferProfileTable.getTableNameSeparator() +
-                                   INGRESS_LOSSLESS_PG_POOL_NAME;
 
-        fvVector.push_back(make_pair("pool", "[" + pg_pool_reference + "]"));
+        fvVector.push_back(make_pair("pool", INGRESS_LOSSLESS_PG_POOL_NAME));
         fvVector.push_back(make_pair("xon", m_pgProfileLookup[speed][cable].xon));
         if (m_pgProfileLookup[speed][cable].xon_offset.length() > 0) {
             fvVector.push_back(make_pair("xon_offset",
@@ -192,11 +189,7 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
 
     string buffer_pg_key = port + m_cfgBufferPgTable.getTableNameSeparator() + LOSSLESS_PGS;
 
-    string profile_ref = string("[") +
-                         CFG_BUFFER_PROFILE_TABLE_NAME +
-                         m_cfgBufferPgTable.getTableNameSeparator() +
-                         buffer_profile_key +
-                         "]";
+    string profile_ref = buffer_profile_key;
 
     /* Check if PG Mapping is already then log message and return. */
     m_cfgBufferPgTable.get(buffer_pg_key, fvVector);
@@ -222,32 +215,6 @@ void BufferMgr::transformSeperator(string &name)
     size_t pos;
     while ((pos = name.find("|")) != string::npos)
         name.replace(pos, 1, ":");
-}
-
-void BufferMgr::transformReference(string &name)
-{
-    auto references = tokenize(name, list_item_delimiter);
-    int ref_index = 0;
-
-    name = "";
-
-    for (auto &reference : references)
-    {
-        if (ref_index != 0)
-            name += list_item_delimiter;
-        ref_index ++;
-
-        auto keys = tokenize(reference, config_db_key_delimiter);
-        int key_index = 0;
-        for (auto &key : keys)
-        {
-            if (key_index == 0)
-                name += key + "_TABLE";
-            else
-                name += delimiter + key;
-            key_index ++;
-        }
-    }
 }
 
 /*
@@ -292,14 +259,6 @@ void BufferMgr::doBufferTableTask(Consumer &consumer, ProducerStateTable &applTa
 
             for (auto i : kfvFieldsValues(t))
             {
-                SWSS_LOG_INFO("Inserting field %s value %s", fvField(i).c_str(), fvValue(i).c_str());
-                //transform the separator in values from "|" to ":"
-                if (fvField(i) == "pool")
-                    transformReference(fvValue(i));
-                if (fvField(i) == "profile")
-                    transformReference(fvValue(i));
-                if (fvField(i) == "profile_list")
-                    transformReference(fvValue(i));
                 fvVector.emplace_back(FieldValueTuple(fvField(i), fvValue(i)));
                 SWSS_LOG_INFO("Inserting field %s value %s", fvField(i).c_str(), fvValue(i).c_str());
             }
