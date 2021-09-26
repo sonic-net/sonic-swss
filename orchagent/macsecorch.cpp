@@ -460,7 +460,7 @@ private:
 
     MACsecOrch::MACsecSC                *m_macsec_sc;
     sai_object_id_t                     *m_macsec_sa;
-    gearbox_phy_t                       *m_gearbox_phy;
+    const gearbox_phy_t                 *m_gearbox_phy;
 };
 
 /* MACsec Orchagent */
