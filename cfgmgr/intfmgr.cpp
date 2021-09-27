@@ -29,12 +29,15 @@ IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         m_cfgVlanIntfTable(cfgDb, CFG_VLAN_INTF_TABLE_NAME),
         m_cfgLagIntfTable(cfgDb, CFG_LAG_INTF_TABLE_NAME),
         m_cfgLoopbackIntfTable(cfgDb, CFG_LOOPBACK_INTERFACE_TABLE_NAME),
+        m_cfgSubIntfTable(cfgDb, CFG_VLAN_SUB_INTF_TABLE_NAME),
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
         m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME),
         m_stateVlanTable(stateDb, STATE_VLAN_TABLE_NAME),
         m_stateVrfTable(stateDb, STATE_VRF_TABLE_NAME),
         m_stateIntfTable(stateDb, STATE_INTERFACE_TABLE_NAME),
-        m_appIntfTableProducer(appDb, APP_INTF_TABLE_NAME)
+        m_appIntfTableProducer(appDb, APP_INTF_TABLE_NAME),
+        m_appPortTable(appDb, APP_PORT_TABLE_NAME),
+        m_appLagTable(appDb, APP_LAG_TABLE_NAME)
 {
     if (!WarmStart::isWarmStart())
     {
@@ -449,6 +452,107 @@ bool IntfMgr::isIntfStateOk(const string &alias)
     return false;
 }
 
+bool IntfMgr::doHostSubIntfUpdateTask(const vector<string> &keys,
+        const vector<FieldValueTuple> &fvTuples,
+        const string &op)
+{
+    SWSS_LOG_ENTER();
+
+    string parentAlias(keys[0]);
+
+    if (op == SET_COMMAND)
+    {
+        if (!isIntfStateOk(parentAlias))
+        {
+            return false;
+        }
+
+        string mtu = "";
+        string parentAdminStatus = "";
+        for (const auto &fv : fvTuples)
+        {
+            if (fvField(fv) == "mtu")
+            {
+                mtu = fvValue(fv);
+            }
+            else if (fvField(fv) == "admin_status")
+            {
+                parentAdminStatus = fvValue(fv);
+            }
+        }
+
+        if (!mtu.empty())
+        {
+            for (const auto &alias : m_portSubIntfSet[parentAlias])
+            {
+                try
+                {
+                    setHostSubIntfMtu(alias, mtu);
+                }
+                catch (const std::runtime_error &e)
+                {
+                    SWSS_LOG_DEBUG("Sub interface ip link set mtu %s failure. Runtime error: %s", mtu.c_str(), e.what());
+                    return false;
+                }
+                SWSS_LOG_INFO("Sub interface %s ip link set mtu %s succeeded", alias.c_str(), mtu.c_str());
+            }
+        }
+
+        if (parentAdminStatus == "up")
+        {
+            string parentAdminStatusAppDb;
+            if (!parentAlias.compare(0, strlen(LAG_PREFIX), LAG_PREFIX))
+            {
+                m_appLagTable.hget(parentAlias, "admin_status", parentAdminStatusAppDb);
+            }
+            else
+            {
+                m_appPortTable.hget(parentAlias, "admin_status", parentAdminStatusAppDb);
+            }
+            if (parentAdminStatusAppDb != parentAdminStatus)
+            {
+                // Parent port admin status has not yet been synced from config db to appl db, which
+                // indicates that parent port admin status at kernel has not yet been updated from
+                // down to up by portmgrd.
+                return false;
+            }
+
+            for (const auto &alias : m_portSubIntfSet[parentAlias])
+            {
+                string adminStatus;
+                if (!m_cfgSubIntfTable.hget(alias, "admin_status", adminStatus))
+                {
+                    adminStatus = "up";
+                }
+
+                if (adminStatus == "down")
+                {
+                    try
+                    {
+                        setHostSubIntfAdminStatus(alias, adminStatus);
+                    }
+                    catch (const std::runtime_error &e)
+                    {
+                        SWSS_LOG_DEBUG("Sub interface ip link set admin status %s failure. Runtime error: %s", adminStatus.c_str(), e.what());
+                        return false;
+                    }
+                    SWSS_LOG_INFO("Sub interface %s ip link set admin status %s succeeded", alias.c_str(), adminStatus.c_str());
+                }
+            }
+        }
+    }
+    else if (op == DEL_COMMAND)
+    {
+        m_portSubIntfSet.erase(parentAlias);
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Unknown operation: %s", op.c_str());
+    }
+
+    return true;
+}
+
 bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         vector<FieldValueTuple> data,
         const string& op)
@@ -591,25 +695,15 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
                 }
 
                 m_subIntfList.insert(alias);
+                m_portSubIntfSet[parentAlias].insert(alias);
             }
 
             if (!mtu.empty())
             {
-                try
-                {
-                    setHostSubIntfMtu(alias, mtu);
-                }
-                catch (const std::runtime_error &e)
-                {
-                    SWSS_LOG_NOTICE("Sub interface ip link set mtu failure. Runtime error: %s", e.what());
-                    return false;
-                }
+                SWSS_LOG_NOTICE("Sub interface inherits parent port mtu. User mtu %s ignored", mtu.c_str());
             }
-            else
-            {
-                FieldValueTuple fvTuple("mtu", MTU_INHERITANCE);
-                data.push_back(fvTuple);
-            }
+            FieldValueTuple fvTuple("mtu", MTU_INHERITANCE);
+            data.push_back(fvTuple);
 
             if (adminStatus.empty())
             {
@@ -701,6 +795,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         {
             removeHostSubIntf(alias);
             m_subIntfList.erase(alias);
+            m_portSubIntfSet[parentAlias].erase(alias);
 
             removeSubIntfState(alias);
         }
@@ -789,7 +884,21 @@ void IntfMgr::doTask(Consumer &consumer)
 
         if (keys.size() == 1)
         {
-            if((table_name == CFG_VOQ_INBAND_INTERFACE_TABLE_NAME) &&
+            if ((table_name == CFG_PORT_TABLE_NAME)
+                    || (table_name == CFG_LAG_TABLE_NAME))
+            {
+                if (!doHostSubIntfUpdateTask(keys, data, op))
+                {
+                    it++;
+                }
+                else
+                {
+                    it = consumer.m_toSync.erase(it);
+                }
+                continue;
+            }
+
+            if ((table_name == CFG_VOQ_INBAND_INTERFACE_TABLE_NAME) &&
                     (op == SET_COMMAND))
             {
                 //No further processing needed. Just relay to orchagent
@@ -799,6 +908,7 @@ void IntfMgr::doTask(Consumer &consumer)
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
+
             if (!doIntfGeneralTask(keys, data, op))
             {
                 it++;
