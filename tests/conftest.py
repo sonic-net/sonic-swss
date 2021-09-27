@@ -91,8 +91,8 @@ def random_string(size=4, chars=string.ascii_uppercase + string.digits):
 
 
 class AsicDbValidator(DVSDatabase):
-    def __init__(self, db_id: int, connector: str):
-        DVSDatabase.__init__(self, db_id, connector)
+    def __init__(self):
+        DVSDatabase.__init__(self, "ASIC_DB")
         self._wait_for_asic_db_to_initialize()
         self._populate_default_asic_db_values()
         self._generate_oid_to_interface_mapping()
@@ -147,8 +147,8 @@ class AsicDbValidator(DVSDatabase):
 class ApplDbValidator(DVSDatabase):
     NEIGH_TABLE = "NEIGH_TABLE"
 
-    def __init__(self, db_id: int, connector: str):
-        DVSDatabase.__init__(self, db_id, connector)
+    def __init__(self):
+        DVSDatabase.__init__(self, "APPL_DB")
 
     def __del__(self):
         # Make sure no neighbors on physical interfaces
@@ -223,12 +223,12 @@ class VirtualServer:
         return subprocess.check_output(f"ip netns exec {self.nsname} {cmd}", shell=True).decode("utf-8")
 
 class DockerVirtualSwitch:
-    APPL_DB_ID = 0
-    ASIC_DB_ID = 1
-    COUNTERS_DB_ID = 2
-    CONFIG_DB_ID = 4
-    FLEX_COUNTER_DB_ID = 5
-    STATE_DB_ID = 6
+    APPL_DB_ID = "APPL_DB"
+    ASIC_DB_ID = "ASIC_DB"
+    COUNTERS_DB_ID = "COUNTERS_DB"
+    CONFIG_DB_ID = "CONFIG_DB"
+    FLEX_COUNTER_DB_ID = "FLEX_COUNTER_DB"
+    STATE_DB_ID = "STATE_DB"
 
     # FIXME: Should be broken up into helper methods in a later PR.
     def __init__(
@@ -377,6 +377,18 @@ class DockerVirtualSwitch:
         self.redis_sock = os.path.join(self.mount, "redis.sock")
         self.redis_chassis_sock = os.path.join(self.mount, "redis_chassis.sock")
 
+        # Initialize the database configuration
+        with open("/var/run/redis/sonic-db/database_config.json") as f:
+            db_conf = json.load(f)
+
+        db_conf["INSTANCES"]["redis"]["unix_socket_path"] = self.redis_sock
+        vs_db_conf_file = f"/tmp/database_config-{self.pid}.json"
+
+        with open(vs_db_conf_file, "w") as f:
+            json.dump(db_conf, f)
+
+        swsscommon.SonicDBConfig.initialize(vs_db_conf_file)
+
         # DB wrappers are declared here, lazy-loaded in the tests
         self.app_db = None
         self.asic_db = None
@@ -458,10 +470,10 @@ class DockerVirtualSwitch:
         wait_for_result(_polling_function, service_polling_config)
 
     def init_asic_db_validator(self) -> None:
-        self.asicdb = AsicDbValidator(self.ASIC_DB_ID, self.redis_sock)
+        self.asicdb = AsicDbValidator()
 
     def init_appl_db_validator(self) -> None:
-        self.appldb = ApplDbValidator(self.APPL_DB_ID, self.redis_sock)
+        self.appldb = ApplDbValidator()
 
     def check_swss_ready(self, timeout: int = 300) -> None:
         """Verify that SWSS is ready to receive inputs.
@@ -1162,7 +1174,7 @@ class DockerVirtualSwitch:
     # that implementation. Save it for a follow-up PR.
     def get_app_db(self) -> ApplDbValidator:
         if not self.app_db:
-            self.app_db = DVSDatabase(self.APPL_DB_ID, self.redis_sock)
+            self.app_db = DVSDatabase(self.APPL_DB_ID)
 
         return self.app_db
 
@@ -1170,7 +1182,7 @@ class DockerVirtualSwitch:
     # that implementation. Save it for a follow-up PR.
     def get_asic_db(self) -> AsicDbValidator:
         if not self.asic_db:
-            db = DVSDatabase(self.ASIC_DB_ID, self.redis_sock)
+            db = DVSDatabase(self.ASIC_DB_ID)
             db.default_acl_tables = self.asicdb.default_acl_tables
             db.default_acl_entries = self.asicdb.default_acl_entries
             db.default_copp_policers = self.asicdb.default_copp_policers
@@ -1184,25 +1196,25 @@ class DockerVirtualSwitch:
 
     def get_counters_db(self) -> DVSDatabase:
         if not self.counters_db:
-            self.counters_db = DVSDatabase(self.COUNTERS_DB_ID, self.redis_sock)
+            self.counters_db = DVSDatabase(self.COUNTERS_DB_ID)
 
         return self.counters_db
 
     def get_config_db(self) -> DVSDatabase:
         if not self.config_db:
-            self.config_db = DVSDatabase(self.CONFIG_DB_ID, self.redis_sock)
+            self.config_db = DVSDatabase(self.CONFIG_DB_ID)
 
         return self.config_db
 
     def get_flex_db(self) -> DVSDatabase:
         if not self.flex_db:
-            self.flex_db = DVSDatabase(self.FLEX_COUNTER_DB_ID, self.redis_sock)
+            self.flex_db = DVSDatabase(self.FLEX_COUNTER_DB_ID)
 
         return self.flex_db
 
     def get_state_db(self) -> DVSDatabase:
         if not self.state_db:
-            self.state_db = DVSDatabase(self.STATE_DB_ID, self.redis_sock)
+            self.state_db = DVSDatabase(self.STATE_DB_ID)
 
         return self.state_db
 
