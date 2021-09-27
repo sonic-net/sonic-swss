@@ -1,12 +1,12 @@
 -- KEYS - queue IDs
 -- ARGV[1] - counters db index
 -- ARGV[2] - counters table name
--- ARGV[3] - poll time interval
+-- ARGV[3] - poll time interval (milliseconds)
 -- return queue Ids that satisfy criteria
 
 local counters_db = ARGV[1]
 local counters_table_name = ARGV[2]
-local poll_time = tonumber(ARGV[3])
+local poll_time = tonumber(ARGV[3]) * 1000
 
 local rets = {}
 
@@ -75,7 +75,7 @@ for i = n, 1, -1 do
                     --     redis.call('HSET', counters_table_name .. ':' .. KEYS[i], 'K7_debug_3', 'YES')
 
 
-                    if (occupancy_bytes > 0 and packets - packets_last == 0 and pfc_rx_packets - pfc_rx_packets_last > 0) or
+                    if (occupancy_bytes > 0 and packets - packets_last == 0 and pfc_rx_packets - pfc_rx_packets_last > 0 and (pfc_duration - pfc_duration_last) > poll_time * 0.8) or
                         -- DEBUG CODE START. Uncomment to enable
                         (debug_storm == "enabled") or
                         -- DEBUG CODE END.

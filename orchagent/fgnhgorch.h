@@ -30,6 +30,7 @@ struct FGNextHopGroupEntry
     BankFGNextHopGroupMap   syncd_fgnhg_map;        // Map of (bank) -> (nexthops) -> (index in nhopgroup_members)
     NextHopGroupKey         nhg_key;                // Full next hop group key
     InactiveBankMapsToBank  inactive_to_active_map; // Maps an inactive bank to an active one in terms of hash bkts
+    bool                    points_to_rif;          // Flag to identify that route is currently pointing to a rif
 };
 
 struct FGNextHopInfo
@@ -104,7 +105,7 @@ public:
     bool syncdContainsFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix);
     bool validNextHopInNextHopGroup(const NextHopKey&);
     bool invalidNextHopInNextHopGroup(const NextHopKey&);
-    bool setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops, sai_object_id_t &next_hop_id, bool &prevNhgWasFineGrained);
+    bool setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops, sai_object_id_t &next_hop_id, bool &isNextHopIdChanged);
     bool removeFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix);
 
     // warm reboot support
@@ -150,10 +151,10 @@ private:
     void setStateDbRouteEntry(const IpPrefix&, uint32_t index, NextHopKey nextHop);
     bool writeHashBucketChange(FGNextHopGroupEntry *syncd_fg_route_entry, uint32_t index, sai_object_id_t nh_oid,
                     const IpPrefix &ipPrefix, NextHopKey nextHop);
+    bool modifyRoutesNextHopId(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, sai_object_id_t next_hop_id);
     bool createFineGrainedNextHopGroup(FGNextHopGroupEntry &syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
                     const NextHopGroupKey &nextHops);
     bool removeFineGrainedNextHopGroup(FGNextHopGroupEntry *syncd_fg_route_entry);
-
     vector<FieldValueTuple> generateRouteTableFromNhgKey(NextHopGroupKey nhg);
     void cleanupIpInLinkToIpMap(const string &link, const IpAddress &ip, FgNhgEntry &fgNhg_entry);
 
