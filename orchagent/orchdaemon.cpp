@@ -13,7 +13,6 @@
 using namespace std;
 using namespace swss;
 
-/* select() function timeout retry time */
 #define SELECT_TIMEOUT 1000
 #define PFC_WD_POLL_MSECS 100
 
