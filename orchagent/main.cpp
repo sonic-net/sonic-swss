@@ -292,11 +292,6 @@ int main(int argc, char **argv)
         attrs.push_back(attr);
     }
 
-    /* Must be last Attribute */
-    attr.id = SAI_REDIS_SWITCH_ATTR_CONTEXT;
-    attr.value.u64 = gSwitchId;
-    attrs.push_back(attr);
-
     // SAI_REDIS_SWITCH_ATTR_SYNC_MODE attribute only setBuffer and g_syncMode to true
     // since it is not using ASIC_DB, we can execute it before create_switch
     // when g_syncMode is set to true here, create_switch will wait the response from syncd
@@ -320,6 +315,11 @@ int main(int argc, char **argv)
         attr.value.s8list.list = (int8_t *)const_cast<char *>(gAsicInstance.c_str());
         attrs.push_back(attr);
     }
+
+    /* Must be last Attribute */
+    attr.id = SAI_REDIS_SWITCH_ATTR_CONTEXT;
+    attr.value.u64 = gSwitchId;
+    attrs.push_back(attr);
 
     status = sai_switch_api->create_switch(&gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
