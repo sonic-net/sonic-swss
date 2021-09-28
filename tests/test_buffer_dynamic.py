@@ -141,7 +141,6 @@ class TestBufferMgrDyn(object):
         cable_lengths['Ethernet0'] = cable_length
         self.config_db.update_entry('CABLE_LENGTH', 'AZURE', cable_lengths)
 
-    @pytest.mark.skip("Skip to be removed after sonic-buildimage changes get merged")
     def test_changeSpeed(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -193,7 +192,6 @@ class TestBufferMgrDyn(object):
         # Shutdown interface
         dvs.runcmd('config interface shutdown Ethernet0')
 
-    @pytest.mark.skip("Skip to be removed after sonic-buildimage changes get merged")
     def test_changeCableLen(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -244,7 +242,6 @@ class TestBufferMgrDyn(object):
         # Shutdown interface
         dvs.runcmd('config interface shutdown Ethernet0')
 
-    @pytest.mark.skip("Skip to be removed after sonic-buildimage changes get merged")
     def test_MultipleLosslessPg(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -292,7 +289,6 @@ class TestBufferMgrDyn(object):
         # Shutdown interface
         dvs.runcmd('config interface shutdown Ethernet0')
 
-    @pytest.mark.skip("Skip to be removed after sonic-buildimage changes get merged")
     def test_headroomOverride(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -376,7 +372,6 @@ class TestBufferMgrDyn(object):
         # Shutdown interface
         dvs.runcmd('config interface shutdown Ethernet0')
 
-    @pytest.mark.skip("Skip to be removed after sonic-buildimage changes get merged")
     def test_mtuUpdate(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -411,7 +406,6 @@ class TestBufferMgrDyn(object):
         # Shutdown interface
         dvs.runcmd('config interface shutdown Ethernet0')
 
-    @pytest.mark.skip("Skip to be removed after sonic-buildimage changes get merged")
     def test_nonDefaultAlpha(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -454,7 +448,6 @@ class TestBufferMgrDyn(object):
         # Shutdown interface
         dvs.runcmd('config interface shutdown Ethernet0')
 
-    @pytest.mark.skip("Skip to be removed after sonic-buildimage changes get merged")
     def test_sharedHeadroomPool(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -553,7 +546,6 @@ class TestBufferMgrDyn(object):
         # Shutdown interface
         dvs.runcmd('config interface shutdown Ethernet0')
 
-    @pytest.mark.skip("Skip to be removed after sonic-buildimage changes get merged")
     def test_shutdownPort(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -597,7 +589,6 @@ class TestBufferMgrDyn(object):
         # Shutdown interface
         dvs.runcmd("config interface shutdown Ethernet0")
 
-    @pytest.mark.skip("Skip to be removed after sonic-buildimage changes get merged")
     def test_autoNegPort(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -623,11 +614,11 @@ class TestBufferMgrDyn(object):
         self.app_db.wait_for_entry("BUFFER_PG_TABLE", "Ethernet0:3-4")
         self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", expectedProfile)
         self.check_new_profile_in_asic_db(dvs, expectedProfile)
-        self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "[BUFFER_PROFILE_TABLE:{}]".format(expectedProfile)})
+        self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": expectedProfile})
 
         # Configure another lossless PG on the interface
         self.config_db.update_entry('BUFFER_PG', 'Ethernet0|6', {'profile': 'NULL'})
-        self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:6", {"profile": "[BUFFER_PROFILE_TABLE:{}]".format(expectedProfile)})
+        self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:6", {"profile": expectedProfile})
 
         # Disable port auto negotiation
         dvs.runcmd('config interface autoneg Ethernet0 disabled')
@@ -636,8 +627,8 @@ class TestBufferMgrDyn(object):
         expectedProfile = self.make_lossless_profile_name(self.originalSpeed, self.originalCableLen)
         self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", expectedProfile)
         self.check_new_profile_in_asic_db(dvs, expectedProfile)
-        self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "[BUFFER_PROFILE_TABLE:{}]".format(expectedProfile)})
-        self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:6", {"profile": "[BUFFER_PROFILE_TABLE:{}]".format(expectedProfile)})
+        self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": expectedProfile})
+        self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:6", {"profile": expectedProfile})
 
         # Remove lossless PGs on the interface
         self.config_db.delete_entry('BUFFER_PG', 'Ethernet0|3-4')
