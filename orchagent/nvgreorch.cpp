@@ -32,13 +32,14 @@ static sai_object_id_t create_tunnel_map(uint32_t sai_map)
     return tunnel_map_id;
 }
 
-void NvgreTunnel::createTunnelMapCapabilities()
+static void remove_tunnel_map(sai_object_id_t tunnel_map_id)
 {
-    for (uint32_t i = 0; i < nvgreEncapTunnelMap.size(); i++)
-        tunnel_ids_.tunnel_encap_id[i] = create_tunnel_map(nvgreEncapTunnelMap[i]);
+    sai_status_t status = sai_tunnel_api->remove_tunnel_map(tunnel_map_id);
 
-    for (uint32_t i = 0; i < nvgreDecapTunnelMap.size(); i++)
-        tunnel_ids_.tunnel_decap_id[i] = create_tunnel_map(nvgreDecapTunnelMap[i]);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        throw std::runtime_error("Can't remove a tunnel map object");
+    }
 }
 
 static sai_object_id_t create_tunnel(struct tunnel_sai_ids_t* ids, sai_ip_address_t *src_ip)
@@ -110,6 +111,40 @@ static sai_object_id_t create_tunnel(struct tunnel_sai_ids_t* ids, sai_ip_addres
     return tunnel_id;
 }
 
+static void remove_tunnel(sai_object_id_t tunnel_id)
+{
+    if (tunnel_id != SAI_NULL_OBJECT_ID)
+    {
+        sai_status_t status = sai_tunnel_api->remove_tunnel(tunnel_id);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            throw std::runtime_error("Can't remove a tunnel object");
+        }
+    }
+    else
+    {
+        SWSS_LOG_DEBUG("Tunnel id is NULL.");
+    }
+}
+
+void NvgreTunnel::createTunnelMapCapabilities()
+{
+    for (uint32_t i = 0; i < nvgreEncapTunnelMap.size(); ++i)
+        tunnel_ids_.tunnel_encap_id[i] = create_tunnel_map(nvgreEncapTunnelMap[i]);
+
+    for (uint32_t i = 0; i < nvgreDecapTunnelMap.size(); ++i)
+        tunnel_ids_.tunnel_decap_id[i] = create_tunnel_map(nvgreDecapTunnelMap[i]);
+}
+
+void NvgreTunnel::removeTunnelMapCapabilities()
+{
+    for (uint32_t i = 0; i < nvgreEncapTunnelMap.size(); ++i)
+        remove_tunnel_map(tunnel_ids_.tunnel_encap_id[i]);
+
+    for (uint32_t i = 0; i < nvgreDecapTunnelMap.size(); ++i)
+        remove_tunnel_map(tunnel_ids_.tunnel_decap_id[i]);
+}
+
 void NvgreTunnel::createTunnel()
 {
     try {
@@ -120,19 +155,38 @@ void NvgreTunnel::createTunnel()
     }
     catch (const std::runtime_error& error)
     {
-        SWSS_LOG_ERROR("Error creating tunnel %s: %s", tunnel_name_.c_str(), error.what());
+        SWSS_LOG_ERROR("Error while creating tunnel %s: %s", tunnel_name_.c_str(), error.what());
     }
-
 
     SWSS_LOG_NOTICE("Nvgre tunnel '%s' was created", tunnel_name_.c_str());
 }
 
+void NvgreTunnel::removeTunnel()
+{
+    try
+    {
+        remove_tunnel(tunnel_ids_.tunnel_id);
+    }
+    catch(const std::runtime_error& error)
+    {
+        SWSS_LOG_ERROR("Error while removing tunnel entry. Tunnel: %s. Error: %s", tunnel_name_.c_str(), error.what());
+    }
+
+    SWSS_LOG_NOTICE("Nvgre tunnel '%s' was removed", tunnel_name_.c_str());
+}
+
 NvgreTunnel::NvgreTunnel(std::string tunnelName, IpAddress srcIp) :
-                tunnel_name_(tunnelName),
-                src_ip_(srcIp)
+                         tunnel_name_(tunnelName),
+                         src_ip_(srcIp)
 {
     createTunnelMapCapabilities();
     createTunnel();
+}
+
+NvgreTunnel::~NvgreTunnel()
+{
+    removeTunnelMapCapabilities();
+    removeTunnel();
 }
 
 bool NvgreTunnelOrch::addOperation(const Request& request)
@@ -150,14 +204,26 @@ bool NvgreTunnelOrch::addOperation(const Request& request)
 
     nvgre_tunnel_table_[tunnel_name] = std::unique_ptr<NvgreTunnel>(new NvgreTunnel(tunnel_name, src_ip));
 
-    SWSS_LOG_NOTICE("Vxlan tunnel '%s' was added", tunnel_name.c_str());
+    SWSS_LOG_NOTICE("Nvgre tunnel '%s' was added", tunnel_name.c_str());
+
     return true;
 }
 
 bool NvgreTunnelOrch::delOperation(const Request& request)
 {
     SWSS_LOG_ENTER();
-    SWSS_LOG_WARN("DEL operation is not implemented");
+
+    const auto& tunnel_name = request.getKeyString(0);
+
+    if (!isTunnelExists(tunnel_name))
+    {
+        SWSS_LOG_ERROR("Nvgre tunnel '%s' doesn't exist", tunnel_name.c_str());
+        return true;
+    }
+
+    nvgre_tunnel_table_.erase(tunnel_name);
+
+    SWSS_LOG_NOTICE("Nvgre tunnel '%s' was removed", tunnel_name.c_str());
 
     return true;
 }

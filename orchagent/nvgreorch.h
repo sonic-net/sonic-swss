@@ -39,14 +39,15 @@ class NvgreTunnel
 {
 public:
     NvgreTunnel(std::string tunnelName, IpAddress srcIp);
-    ~NvgreTunnel(){ }
+    ~NvgreTunnel();
 
 private:
     void createTunnelMapCapabilities();
+    void removeTunnelMapCapabilities();
+
     void createTunnel();
-    // create structure to hold tunnel_id, encap, decap mappers
-    // create methods to add encap and decap mappers tu structure
-    // create method to add tunnel to structure
+    void removeTunnel();
+
     std::string tunnel_name_;
     IpAddress src_ip_;
     tunnel_sai_ids_t tunnel_ids_ = {{0}, {0}, 0};
