@@ -28,7 +28,7 @@ extern "C" {
 
 #define VNID_NONE               0xFFFFFFFF
 
-// Default inter-packet gap(IPG) is 96 which is recommended by IEEE 802.3
+// The default inter-packet gap(IPG) is 96 bits which is recommended by IEEE 802.3
 #define DEFAULT_IPG             96
 
 namespace swss {

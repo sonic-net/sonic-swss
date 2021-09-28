@@ -1045,9 +1045,9 @@ bool MACsecOrch::createMACsecPort(
 
     if (phy)
     {
-        if (!adjustIPG(port, phy->macsec_ipg))
+        if (!adjustIPG(port, phy->ipg))
         {
-            SWSS_LOG_WARN("Cannot set IPG %u to at the port %s", phy->macsec_ipg, port_name.c_str());
+            SWSS_LOG_WARN("Cannot set IPG %u to at the port %s", phy->ipg, port_name.c_str());
             return false;
         }
     }
