@@ -236,7 +236,7 @@ class DockerVirtualSwitch:
         name: str = None,
         imgname: str = None,
         keeptb: bool = False,
-        fakeplatform: str = None,
+        hwsku: str = None,
         log_path: str = None,
         max_cpu: int = 2,
         forcedvs: bool = None,
@@ -350,7 +350,7 @@ class DockerVirtualSwitch:
             self.mount = f"/var/run/redis-vs/{self.ctn_sw.name}"
             ensure_system(f"mkdir -p {self.mount}")
 
-            self.environment = [f"fake_platform={fakeplatform}"] if fakeplatform else []
+            self.environment = [f"HWSKU={hwsku}"] if hwsku else []
 
             kwargs = {}
             if newctnname:
@@ -1217,7 +1217,7 @@ class DockerVirtualChassisTopology:
         namespace=None,
         imgname=None,
         keeptb=False,
-        fakeplatform=None,
+        hwsku=None,
         log_path=None,
         max_cpu=2,
         forcedvs=None,
@@ -1226,7 +1226,7 @@ class DockerVirtualChassisTopology:
         self.ns = namespace
         self.chassbr = "br4chs"
         self.keeptb = keeptb
-        self.fakeplatform = fakeplatform
+        self.hwsku = hwsku
         self.topoFile = topoFile
         self.imgname = imgname
         self.ctninfo = {}
@@ -1285,7 +1285,7 @@ class DockerVirtualChassisTopology:
         for ctn in docker.from_env().containers.list():
             if ctn.name.endswith(suffix):
                 self.dvss[ctn.name] = DockerVirtualSwitch(ctn.name, self.imgname, self.keeptb,
-                                                          self.fakeplatform, log_path=ctn.name,
+                                                          self.hwsku, log_path=ctn.name,
                                                           max_cpu=self.max_cpu, forcedvs=self.forcedvs,
                                                           vct=self)
         if self.chassbr is None and len(self.dvss) > 0:
@@ -1403,7 +1403,7 @@ class DockerVirtualChassisTopology:
             if ctnname not in self.dvss:
                 self.dvss[ctnname] = DockerVirtualSwitch(name=None, imgname=self.imgname,
                                                          keeptb=self.keeptb,
-                                                         fakeplatform=self.fakeplatform,
+                                                         hwsku=self.hwsku,
                                                          log_path=self.log_path,
                                                          max_cpu=self.max_cpu,
                                                          forcedvs=self.forcedvs,
@@ -1570,10 +1570,10 @@ def dvs(request) -> DockerVirtualSwitch:
     imgname = request.config.getoption("--imgname")
     max_cpu = request.config.getoption("--max_cpu")
     buffer_model = request.config.getoption("--buffer_model")
-    fakeplatform = getattr(request.module, "DVS_FAKE_PLATFORM", None)
+    hwsku = getattr(request.module, "DVS_HWSKU", None)
     log_path = name if name else request.module.__name__
 
-    dvs = DockerVirtualSwitch(name, imgname, keeptb, fakeplatform, log_path, max_cpu, forcedvs, buffer_model = buffer_model)
+    dvs = DockerVirtualSwitch(name, imgname, keeptb, hwsku, log_path, max_cpu, forcedvs, buffer_model = buffer_model)
 
     yield dvs
 
@@ -1594,11 +1594,11 @@ def vct(request):
     imgname = request.config.getoption("--imgname")
     max_cpu = request.config.getoption("--max_cpu")
     log_path = vctns if vctns else request.module.__name__
-    fakeplatform = getattr(request.module, "DVS_FAKE_PLATFORM", None)
+    hwsku = getattr(request.module, "DVS_HWSKU", None)
     if not topo:
         # use ecmp topology as default
         topo = "virtual_chassis/chassis_with_ecmp_neighbors.json"
-    vct = DockerVirtualChassisTopology(vctns, imgname, keeptb, fakeplatform, log_path, max_cpu,
+    vct = DockerVirtualChassisTopology(vctns, imgname, keeptb, hwsku, log_path, max_cpu,
                                        forcedvs, topo)
     yield vct
     vct.get_logs(request.module.__name__)
