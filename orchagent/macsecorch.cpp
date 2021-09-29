@@ -1045,7 +1045,7 @@ bool MACsecOrch::createMACsecPort(
 
     if (phy)
     {
-        if (!adjustIPG(port, phy->ipg))
+        if (phy->ipg != 0 && !adjustIPG(port, phy->ipg))
         {
             SWSS_LOG_WARN("Cannot set IPG %u to at the port %s", phy->ipg, port_name.c_str());
             return false;
@@ -1245,7 +1245,7 @@ bool MACsecOrch::deleteMACsecPort(
 
     if (phy)
     {
-        if (!adjustIPG(port, DEFAULT_IPG))
+        if (phy->ipg != 0 && !adjustIPG(port, DEFAULT_IPG))
         {
             SWSS_LOG_WARN("Cannot set IPG %u to at the port %s", DEFAULT_IPG, port_name.c_str());
             result &= false;
