@@ -396,7 +396,7 @@ class DockerVirtualSwitch:
         for i in range(NUM_PORTS):
             server = VirtualServer(self.ctn_sw.name, self.ctn_sw_pid, i)
             self.servers.append(server)
-
+            
     def reset_dbs(self):
         # DB wrappers are declared here, lazy-loaded in the tests
         self.app_db = None
@@ -404,7 +404,8 @@ class DockerVirtualSwitch:
         self.counters_db = None
         self.config_db = None
         self.flex_db = None
-        self.state_db = None            
+        self.state_db = None
+
 
     def destroy(self) -> None:
         if getattr(self, 'appldb', False):
@@ -425,7 +426,7 @@ class DockerVirtualSwitch:
     def destroy_servers(self):
         for s in self.servers:
             s.destroy()
-            self.servers = []
+        self.servers = []
 
     def check_ready_status_and_init_db(self) -> None:
         try:
@@ -1576,6 +1577,7 @@ class DockerVirtualChassisTopology:
 def manage_dvs(request) -> str:
     """
     Main fixture to manage the lifecycle of the DVS (Docker Virtual Switch) for testing
+
     Returns:
         (func) update_dvs function which can be called on a per-module basis
                to handle re-creating the DVS if necessary
@@ -1603,11 +1605,13 @@ def manage_dvs(request) -> str:
     def update_dvs(log_path, new_fake_platform=None):
         """
         Decides whether or not to create a new DVS
+
         Create a new the DVS in the following cases:
         1. CLI option `--force-recreate-dvs` was specified (recreate for every module)
         2. The fake_platform has changed (this can only be set at container creation,
            so it is necessary to spin up a new DVS)
         3. No DVS currently exists (i.e. first time startup)
+
         Otherwise, restart the existing DVS (to get to a clean state)
         Returns:
             (DockerVirtualSwitch) a DVS object

@@ -202,32 +202,6 @@ void BufferMgrDynamic::transformSeperator(string &name)
         name.replace(pos, 1, ":");
 }
 
-void BufferMgrDynamic::transformReference(string &name)
-{
-    auto references = tokenize(name, list_item_delimiter);
-    int ref_index = 0;
-
-    name = "";
-
-    for (auto &reference : references)
-    {
-        if (ref_index != 0)
-            name += list_item_delimiter;
-        ref_index ++;
-
-        auto keys = tokenize(reference, config_db_key_delimiter);
-        int key_index = 0;
-        for (auto &key : keys)
-        {
-            if (key_index == 0)
-                name += key + "_TABLE";
-            else
-                name += delimiter + key;
-            key_index ++;
-        }
-    }
-}
-
 // For string "TABLE_NAME|objectname", returns "objectname"
 string BufferMgrDynamic::parseObjectNameFromKey(const string &key, size_t pos = 0)
 {
@@ -238,13 +212,6 @@ string BufferMgrDynamic::parseObjectNameFromKey(const string &key, size_t pos = 
         return string();
     }
     return keys[pos];
-}
-
-// For string "[foo]", returns "foo"
-string BufferMgrDynamic::parseObjectNameFromReference(const string &reference)
-{
-    auto objName = reference.substr(1, reference.size() - 2);
-    return parseObjectNameFromKey(objName, 1);
 }
 
 string BufferMgrDynamic::getDynamicProfileName(const string &speed, const string &cable, const string &mtu, const string &threshold, const string &gearbox_model, long lane_count)
@@ -619,9 +586,6 @@ void BufferMgrDynamic::updateBufferProfileToDb(const string &name, const buffer_
 
     // profile threshold field name
     mode += "_th";
-    string pg_pool_reference = string(APP_BUFFER_POOL_TABLE_NAME) +
-        m_applBufferProfileTable.getTableNameSeparator() +
-        INGRESS_LOSSLESS_PG_POOL_NAME;
 
     fvVector.emplace_back("xon", profile.xon);
     if (!profile.xon_offset.empty()) {
@@ -629,7 +593,7 @@ void BufferMgrDynamic::updateBufferProfileToDb(const string &name, const buffer_
     }
     fvVector.emplace_back("xoff", profile.xoff);
     fvVector.emplace_back("size", profile.size);
-    fvVector.emplace_back("pool", "[" + pg_pool_reference + "]");
+    fvVector.emplace_back("pool", INGRESS_LOSSLESS_PG_POOL_NAME);
     fvVector.emplace_back(mode, profile.threshold);
 
     m_applBufferProfileTable.set(name, fvVector);
@@ -646,15 +610,7 @@ void BufferMgrDynamic::updateBufferPgToDb(const string &key, const string &profi
 
         fvVector.clear();
 
-        string profile_ref = string("[") +
-            APP_BUFFER_PROFILE_TABLE_NAME +
-            m_applBufferPgTable.getTableNameSeparator() +
-            profile +
-            "]";
-
-        fvVector.clear();
- 
-        fvVector.push_back(make_pair("profile", profile_ref));
+        fvVector.push_back(make_pair("profile", profile));
         m_applBufferPgTable.set(key, fvVector);
     }
     else
@@ -1779,8 +1735,7 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
             {
                 if (!value.empty())
                 {
-                    transformReference(value);
-                    auto poolName = parseObjectNameFromReference(value);
+                    auto poolName = value;
                     if (poolName.empty())
                     {
                         SWSS_LOG_ERROR("BUFFER_PROFILE: Invalid format of reference to pool: %s", value.c_str());
@@ -1953,8 +1908,7 @@ task_process_status BufferMgrDynamic::handleOneBufferPgEntry(const string &key, 
             {
                 // Headroom override
                 pureDynamic = false;
-                transformReference(value);
-                string profileName = parseObjectNameFromReference(value);
+                string profileName = value;
                 if (profileName.empty())
                 {
                     SWSS_LOG_ERROR("BUFFER_PG: Invalid format of reference to profile: %s", value.c_str());
@@ -2170,12 +2124,6 @@ task_process_status BufferMgrDynamic::doBufferTableTask(KeyOpFieldsValuesTuple &
         for (auto i : kfvFieldsValues(tuple))
         {
             // Transform the separator in values from "|" to ":"
-            if (fvField(i) == "pool")
-                transformReference(fvValue(i));
-            if (fvField(i) == "profile")
-                transformReference(fvValue(i));
-            if (fvField(i) == "profile_list")
-                transformReference(fvValue(i));
             fvVector.emplace_back(fvField(i), fvValue(i));
             SWSS_LOG_INFO("Inserting field %s value %s", fvField(i).c_str(), fvValue(i).c_str());
         }

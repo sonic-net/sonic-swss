@@ -1919,7 +1919,7 @@ bool PortsOrch::setGearboxPortAttr(Port &port, dest_port_type_t port_type, sai_p
     return true;
 }
 
-bool PortsOrch::setPortSpeed(Port &port, sai_uint32_t speed)
+task_process_status PortsOrch::setPortSpeed(Port &port, sai_uint32_t speed)
 {
     sai_attribute_t attr;
     sai_status_t status;
@@ -1932,15 +1932,11 @@ bool PortsOrch::setPortSpeed(Port &port, sai_uint32_t speed)
     status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
+        return handleSaiSetStatus(SAI_API_PORT, status);
     }
 
     setGearboxPortsAttr(port, SAI_PORT_ATTR_SPEED, &speed);
-    return true;
+    return task_success;
 }
 
 bool PortsOrch::getPortSpeed(sai_object_id_t id, sai_uint32_t &speed)
@@ -1973,7 +1969,7 @@ bool PortsOrch::getPortSpeed(sai_object_id_t id, sai_uint32_t &speed)
     return true;
 }
 
-bool PortsOrch::setPortAdvSpeeds(sai_object_id_t port_id, std::vector<sai_uint32_t>& speed_list)
+task_process_status PortsOrch::setPortAdvSpeeds(sai_object_id_t port_id, std::vector<sai_uint32_t>& speed_list)
 {
     SWSS_LOG_ENTER();
     sai_attribute_t attr;
@@ -1984,11 +1980,15 @@ bool PortsOrch::setPortAdvSpeeds(sai_object_id_t port_id, std::vector<sai_uint32
     attr.value.u32list.count = static_cast<uint32_t>(speed_list.size());
 
     status = sai_port_api->set_port_attribute(port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        return handleSaiSetStatus(SAI_API_PORT, status);
+    }
 
-    return status == SAI_STATUS_SUCCESS;
+    return task_success;
 }
 
-bool PortsOrch::setPortInterfaceType(sai_object_id_t port_id, sai_port_interface_type_t interface_type)
+task_process_status PortsOrch::setPortInterfaceType(sai_object_id_t port_id, sai_port_interface_type_t interface_type)
 {
     SWSS_LOG_ENTER();
     sai_attribute_t attr;
@@ -1998,11 +1998,15 @@ bool PortsOrch::setPortInterfaceType(sai_object_id_t port_id, sai_port_interface
     attr.value.u32 = static_cast<uint32_t>(interface_type);
 
     status = sai_port_api->set_port_attribute(port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        return handleSaiSetStatus(SAI_API_PORT, status);
+    }
 
-    return status == SAI_STATUS_SUCCESS;
+    return task_success;
 }
 
-bool PortsOrch::setPortAdvInterfaceTypes(sai_object_id_t port_id, std::vector<uint32_t> &interface_types)
+task_process_status PortsOrch::setPortAdvInterfaceTypes(sai_object_id_t port_id, std::vector<uint32_t> &interface_types)
 {
     SWSS_LOG_ENTER();
     sai_attribute_t attr;
@@ -2015,14 +2019,10 @@ bool PortsOrch::setPortAdvInterfaceTypes(sai_object_id_t port_id, std::vector<ui
     status = sai_port_api->set_port_attribute(port_id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
+        return handleSaiSetStatus(SAI_API_PORT, status);
     }
 
-    return true;
+    return task_success;
 }
 
 bool PortsOrch::getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uint8_t &index)
@@ -2065,33 +2065,22 @@ bool PortsOrch::getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uin
     return true;
 }
 
-bool PortsOrch::setPortAutoNeg(sai_object_id_t id, int an)
+task_process_status PortsOrch::setPortAutoNeg(sai_object_id_t id, int an)
 {
     SWSS_LOG_ENTER();
 
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_AUTO_NEG_MODE;
-    switch(an) {
-      case 1:
-        attr.value.booldata = true;
-        break;
-      default:
-        attr.value.booldata = false;
-        break;
-    }
+    attr.value.booldata = (an == 1 ? true : false);
 
     sai_status_t status = sai_port_api->set_port_attribute(id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set AutoNeg %u to port pid:%" PRIx64, attr.value.booldata, id);
-        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
+        return handleSaiSetStatus(SAI_API_PORT, status);
     }
     SWSS_LOG_INFO("Set AutoNeg %u to port pid:%" PRIx64, attr.value.booldata, id);
-    return true;
+    return task_success;
 }
 
 bool PortsOrch::setHostIntfsOperStatus(const Port& port, bool isUp) const
@@ -2827,18 +2816,23 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             m_portList[alias] = p;
                         }
 
-                        if (setPortAutoNeg(p.m_port_id, an))
-                        {
-                            SWSS_LOG_NOTICE("Set port %s AutoNeg from %d to %d", alias.c_str(), p.m_autoneg, an);
-                            p.m_autoneg = an;
-                            m_portList[alias] = p;
-                        }
-                        else
+                        auto status = setPortAutoNeg(p.m_port_id, an);
+                        if (status != task_success)
                         {
                             SWSS_LOG_ERROR("Failed to set port %s AN from %d to %d", alias.c_str(), p.m_autoneg, an);
-                            it++;
+                            if (status == task_need_retry)
+                            {
+                                it++;
+                            }
+                            else
+                            {
+                                it = consumer.m_toSync.erase(it);
+                            }
                             continue;
                         }
+                        SWSS_LOG_NOTICE("Set port %s AutoNeg from %d to %d", alias.c_str(), p.m_autoneg, an);
+                        p.m_autoneg = an;
+                        m_portList[alias] = p;
                     }
                 }
 
@@ -2869,10 +2863,18 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             m_portList[alias] = p;
                         }
 
-                        if (!setPortSpeed(p, speed))
+                        auto status = setPortSpeed(p, speed);
+                        if (status != task_success)
                         {
                             SWSS_LOG_ERROR("Failed to set port %s speed from %u to %u", alias.c_str(), p.m_speed, speed);
-                            it++;
+                            if (status == task_need_retry)
+                            {
+                                it++;
+                            }
+                            else
+                            {
+                                it = consumer.m_toSync.erase(it);
+                            }
                             continue;
                         }
 
@@ -2914,13 +2916,21 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         }
 
                         auto ori_adv_speeds = swss::join(',', p.m_adv_speeds.begin(), p.m_adv_speeds.end());
-                        if (!setPortAdvSpeeds(p.m_port_id, adv_speeds))
+                        auto status = setPortAdvSpeeds(p.m_port_id, adv_speeds);
+                        if (status != task_success)
                         {
 
                             SWSS_LOG_ERROR("Failed to set port %s advertised speed from %s to %s", alias.c_str(),
                                                                                                    ori_adv_speeds.c_str(),
                                                                                                    adv_speeds_str.c_str());
-                            it++;
+                            if (status == task_need_retry)
+                            {
+                                it++;
+                            }
+                            else
+                            {
+                                it = consumer.m_toSync.erase(it);
+                            }
                             continue;
                         }
                         SWSS_LOG_NOTICE("Set port %s advertised speed from %s to %s", alias.c_str(),
@@ -2957,10 +2967,18 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             m_portList[alias] = p;
                         }
 
-                        if (!setPortInterfaceType(p.m_port_id, interface_type))
+                        auto status = setPortInterfaceType(p.m_port_id, interface_type);
+                        if (status != task_success)
                         {
                             SWSS_LOG_ERROR("Failed to set port %s interface type to %s", alias.c_str(), interface_type_str.c_str());
-                            it++;
+                            if (status == task_need_retry)
+                            {
+                                it++;
+                            }
+                            else
+                            {
+                                it = consumer.m_toSync.erase(it);
+                            }
                             continue;
                         }
 
@@ -2996,10 +3014,18 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             m_portList[alias] = p;
                         }
 
-                        if (!setPortAdvInterfaceTypes(p.m_port_id, adv_interface_types))
+                        auto status = setPortAdvInterfaceTypes(p.m_port_id, adv_interface_types);
+                        if (status != task_success)
                         {
                             SWSS_LOG_ERROR("Failed to set port %s advertised interface type to %s", alias.c_str(), adv_interface_types_str.c_str());
-                            it++;
+                            if (status == task_need_retry)
+                            {
+                                it++;
+                            }
+                            else
+                            {
+                                it = consumer.m_toSync.erase(it);
+                            }
                             continue;
                         }
 
@@ -5404,6 +5430,18 @@ bool PortsOrch::getPortOperSpeed(const Port& port, sai_uint32_t& speed) const
     }
 
     speed = static_cast<sai_uint32_t>(attr.value.u32);
+
+    if (speed == 0)
+    {
+        // Port operational status is up, but operational speed is 0. It could be a valid case because
+        // port state can change during two SAI calls:
+        //    1. getPortOperStatus returns UP
+        //    2. port goes down due to any reason
+        //    3. getPortOperSpeed gets speed value 0
+        // And it could also be a bug. So, we log a warning here.
+        SWSS_LOG_WARN("Port %s operational speed is 0", port.m_alias.c_str());
+        return false;
+    }
 
     return true;
 }
