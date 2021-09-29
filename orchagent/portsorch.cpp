@@ -457,7 +457,6 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         for (j = 0; j < attr.value.u32list.count; j++)
         {
             tmp_lane_set.insert(attr.value.u32list.list[j]);
-            m_availableLanes.insert(attr.value.u32list.list[j]);
         }
 
         string tmp_lane_str = "";
@@ -469,6 +468,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
         SWSS_LOG_NOTICE("Get port with lanes pid:%" PRIx64 " lanes:%s", port_list[i], tmp_lane_str.c_str());
         m_portListLaneMap[tmp_lane_set] = port_list[i];
+        m_availablePortSet.insert(tmp_lane_set);
     }
 
     /* Get default 1Q bridge and default VLAN */
@@ -2738,16 +2738,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 for (auto it = m_lanesAliasSpeedMap.begin(); it != m_lanesAliasSpeedMap.end();)
                 {
-                    bool lane_set_is_available = true;
-                    for (auto lane: it->first)
-                    {
-                        if (m_availableLanes.find(lane) == m_availableLanes.end())
-                        {
-                            lane_set_is_available = false;
-                            break;
-                        }
-                    }
-                    if (!lane_set_is_available)
+                    if (m_availablePortSet.find(it->first) == m_availablePortSet.end())
                     {
                         string tmp_lane_str = "";
                         for (auto s : it->first)
