@@ -3,7 +3,7 @@ import time
 
 from swsscommon import swsscommon
 
-DVS_FAKE_PLATFORM = "broadcom"
+DVS_HWSKU = "Force10-S6000"
 
 
 class TestMirror(object):
