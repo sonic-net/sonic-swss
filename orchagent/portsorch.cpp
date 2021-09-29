@@ -2747,7 +2747,10 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                     if (!initPort(get<0>(it->second), get<5>(it->second), get<4>(it->second), it->first))
                     {
-                        throw runtime_error("PortsOrch initialization failure.");
+                        SWSS_LOG_ERROR("Initialize port %s failure", get<0>(it->second).c_str());
+
+                        it++;
+                        continue;
                     }
 
                     initPortSupportedSpeeds(get<0>(it->second), m_portListLaneMap[it->first]);
