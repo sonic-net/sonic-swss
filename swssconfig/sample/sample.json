@@ -18,8 +18,8 @@
 		},
 		{
 			"QOS_TABLE:PORT_TABLE:ETHERNET4": {
-				"dscp_to_tc_map" : "[DSCP_TO_TC_MAP_TABLE:AZURE]",
-				"tc_to_queue_map": "[TC_TO_QUEUE_MAP_TABLE:AZURE]"		
+				"dscp_to_tc_map" : "AZURE",
+				"tc_to_queue_map": "AZURE"		
 			},
 			"OP": "SET"		
 		},
@@ -46,8 +46,8 @@
 		},
 		{
 			"QUEUE_TABLE:ETHERNET4:1" : {
-				"scheduler"		:	"[SCHEDULER_TABLE:BEST_EFFORT]",
-				"wred_profile"	: 	"[WRED_PROFILE_TABLE:AZURE]"
+				"scheduler"		:	"BEST_EFFORT",
+				"wred_profile"	: 	"AZURE"
 			},
 			"OP": "SET"
 		}

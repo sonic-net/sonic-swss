@@ -222,9 +222,7 @@ private:
     // Tool functions to parse keys and references
     std::string getPgPoolMode();
     void transformSeperator(std::string &name);
-    void transformReference(std::string &name);
     std::string parseObjectNameFromKey(const std::string &key, size_t pos/* = 1*/);
-    std::string parseObjectNameFromReference(const std::string &reference);
     std::string getDynamicProfileName(const std::string &speed, const std::string &cable, const std::string &mtu, const std::string &threshold, const std::string &gearbox_model, long lane_count);
     inline bool isNonZero(const std::string &value) const
     {
