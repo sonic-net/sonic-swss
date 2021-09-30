@@ -42,11 +42,17 @@ public:
     ~NvgreTunnel();
 
 private:
-    void createTunnelMapCapabilities();
-    void removeTunnelMapCapabilities();
+    void createTunnelMappers();
+    void removeTunnelMappers();
 
     void createTunnel();
     void removeTunnel();
+
+    sai_object_id_t sai_create_tunnel_map(sai_tunnel_map_type_t sai_tunnel_map_type);
+    void sai_remove_tunnel_map(sai_object_id_t tunnel_map_id);
+
+    sai_object_id_t sai_create_tunnel(struct tunnel_sai_ids_t* ids, sai_ip_address_t *src_ip);
+    void sai_remove_tunnel(sai_object_id_t tunnel_id);
 
     std::string tunnel_name_;
     IpAddress src_ip_;

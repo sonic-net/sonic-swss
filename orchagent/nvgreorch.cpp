@@ -7,7 +7,7 @@
 extern sai_object_id_t gSwitchId;
 extern sai_tunnel_api_t *sai_tunnel_api;
 
-static sai_object_id_t create_tunnel_map(sai_tunnel_map_type_t sai_tunnel_map_type)
+sai_object_id_t NvgreTunnel::sai_create_tunnel_map(sai_tunnel_map_type_t sai_tunnel_map_type)
 {
     sai_attribute_t attr;
     std::vector<sai_attribute_t> tunnel_map_attrs;
@@ -32,7 +32,7 @@ static sai_object_id_t create_tunnel_map(sai_tunnel_map_type_t sai_tunnel_map_ty
     return tunnel_map_id;
 }
 
-static void remove_tunnel_map(sai_object_id_t tunnel_map_id)
+void NvgreTunnel::sai_remove_tunnel_map(sai_object_id_t tunnel_map_id)
 {
     sai_status_t status = sai_tunnel_api->remove_tunnel_map(tunnel_map_id);
 
@@ -42,7 +42,7 @@ static void remove_tunnel_map(sai_object_id_t tunnel_map_id)
     }
 }
 
-static sai_object_id_t create_tunnel(struct tunnel_sai_ids_t* ids, sai_ip_address_t *src_ip)
+sai_object_id_t NvgreTunnel::sai_create_tunnel(struct tunnel_sai_ids_t* ids, sai_ip_address_t *src_ip)
 {
     sai_attribute_t attr;
     std::vector<sai_attribute_t> tunnel_attrs;
@@ -105,38 +105,31 @@ static sai_object_id_t create_tunnel(struct tunnel_sai_ids_t* ids, sai_ip_addres
     return tunnel_id;
 }
 
-static void remove_tunnel(sai_object_id_t tunnel_id)
+void NvgreTunnel::sai_remove_tunnel(sai_object_id_t tunnel_id)
 {
-    if (tunnel_id != SAI_NULL_OBJECT_ID)
+    sai_status_t status = sai_tunnel_api->remove_tunnel(tunnel_id);
+    if (status != SAI_STATUS_SUCCESS)
     {
-        sai_status_t status = sai_tunnel_api->remove_tunnel(tunnel_id);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            throw std::runtime_error("Can't remove a tunnel object");
-        }
-    }
-    else
-    {
-        SWSS_LOG_DEBUG("Tunnel id is NULL.");
+        throw std::runtime_error("Can't remove a tunnel object");
     }
 }
 
-void NvgreTunnel::createTunnelMapCapabilities()
+void NvgreTunnel::createTunnelMappers()
 {
     for (auto map_value : nvgreEncapTunnelMap)
-        tunnel_ids_.tunnel_encap_id.push_back(create_tunnel_map(map_value));
+        tunnel_ids_.tunnel_encap_id.push_back(sai_create_tunnel_map(map_value));
 
     for (auto map_value : nvgreDecapTunnelMap)
-        tunnel_ids_.tunnel_decap_id.push_back(create_tunnel_map(map_value));
+        tunnel_ids_.tunnel_decap_id.push_back(sai_create_tunnel_map(map_value));
 }
 
-void NvgreTunnel::removeTunnelMapCapabilities()
+void NvgreTunnel::removeTunnelMappers()
 {
     for (auto map_id : tunnel_ids_.tunnel_encap_id)
-        remove_tunnel_map(map_id);
+        sai_remove_tunnel_map(map_id);
 
     for (auto map_id : tunnel_ids_.tunnel_decap_id)
-        remove_tunnel_map(map_id);
+        sai_remove_tunnel_map(map_id);
 }
 
 void NvgreTunnel::createTunnel()
@@ -145,42 +138,43 @@ void NvgreTunnel::createTunnel()
         sai_ip_address_t ip_addr;
         swss::copy(ip_addr, src_ip_);
 
-        tunnel_ids_.tunnel_id = create_tunnel(&tunnel_ids_, &ip_addr);
+        tunnel_ids_.tunnel_id = sai_create_tunnel(&tunnel_ids_, &ip_addr);
     }
     catch (const std::runtime_error& error)
     {
         SWSS_LOG_ERROR("Error while creating tunnel %s: %s", tunnel_name_.c_str(), error.what());
     }
 
-    SWSS_LOG_NOTICE("NVGRE tunnel '%s' was created", tunnel_name_.c_str());
+    SWSS_LOG_INFO("NVGRE tunnel '%s' was created", tunnel_name_.c_str());
 }
 
 void NvgreTunnel::removeTunnel()
 {
     try
     {
-        remove_tunnel(tunnel_ids_.tunnel_id);
+        sai_remove_tunnel(tunnel_ids_.tunnel_id);
     }
     catch(const std::runtime_error& error)
     {
         SWSS_LOG_ERROR("Error while removing tunnel entry. Tunnel: %s. Error: %s", tunnel_name_.c_str(), error.what());
     }
 
-    SWSS_LOG_NOTICE("Nvgre tunnel '%s' was removed", tunnel_name_.c_str());
+    SWSS_LOG_INFO("NVGRE tunnel '%s' was removed", tunnel_name_.c_str());
 }
 
 NvgreTunnel::NvgreTunnel(std::string tunnelName, IpAddress srcIp) :
                          tunnel_name_(tunnelName),
                          src_ip_(srcIp)
 {
-    createTunnelMapCapabilities();
+    createTunnelMappers();
     createTunnel();
 }
 
 NvgreTunnel::~NvgreTunnel()
 {
-    removeTunnelMapCapabilities();
     removeTunnel();
+    removeTunnelMappers();
+
     fill(tunnel_ids_.tunnel_decap_id.begin(), tunnel_ids_.tunnel_decap_id.end(), SAI_NULL_OBJECT_ID);
     fill(tunnel_ids_.tunnel_encap_id.begin(), tunnel_ids_.tunnel_encap_id.end(), SAI_NULL_OBJECT_ID);
     tunnel_ids_.tunnel_id = SAI_NULL_OBJECT_ID;
@@ -201,7 +195,7 @@ bool NvgreTunnelOrch::addOperation(const Request& request)
 
     nvgre_tunnel_table_[tunnel_name] = std::unique_ptr<NvgreTunnel>(new NvgreTunnel(tunnel_name, src_ip));
 
-    SWSS_LOG_NOTICE("Nvgre tunnel '%s' was added", tunnel_name.c_str());
+    SWSS_LOG_INFO("NVGRE tunnel '%s' was added", tunnel_name.c_str());
 
     return true;
 }
@@ -214,13 +208,13 @@ bool NvgreTunnelOrch::delOperation(const Request& request)
 
     if (!isTunnelExists(tunnel_name))
     {
-        SWSS_LOG_ERROR("Nvgre tunnel '%s' doesn't exist", tunnel_name.c_str());
+        SWSS_LOG_ERROR("NVGRE tunnel '%s' doesn't exist", tunnel_name.c_str());
         return true;
     }
 
     nvgre_tunnel_table_.erase(tunnel_name);
 
-    SWSS_LOG_NOTICE("Nvgre tunnel '%s' was removed", tunnel_name.c_str());
+    SWSS_LOG_INFO("NVGRE tunnel '%s' was removed", tunnel_name.c_str());
 
     return true;
 }
