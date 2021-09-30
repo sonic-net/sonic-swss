@@ -19,6 +19,7 @@ from swsscommon import swsscommon
 from dvslib.dvs_database import DVSDatabase
 from dvslib.dvs_common import PollingConfig, wait_for_result
 from dvslib.dvs_acl import DVSAcl
+from dvslib.dvs_pbh import DVSPbh
 from dvslib.dvs_route import DVSRoute
 from dvslib import dvs_vlan
 from dvslib import dvs_lag
@@ -26,7 +27,6 @@ from dvslib import dvs_mirror
 from dvslib import dvs_policer
 
 from buffer_model import enable_dynamic_buffer
-
 
 # FIXME: For the sake of stabilizing the PR pipeline we currently assume there are 32 front-panel
 # ports in the system (much like the rest of the test suite). This should be adjusted to accomodate
@@ -406,7 +406,6 @@ class DockerVirtualSwitch:
         self.flex_db = None
         self.state_db = None
 
-
     def destroy(self) -> None:
         if getattr(self, 'appldb', False):
             del self.appldb
@@ -484,6 +483,7 @@ class DockerVirtualSwitch:
 
     def check_swss_ready(self, timeout: int = 300) -> None:
         """Verify that SWSS is ready to receive inputs.
+
         Almost every part of orchagent depends on ports being created and initialized
         before they can proceed with their processing. If we start the tests after orchagent
         has started running but before it has had time to initialize all the ports, then the
@@ -549,6 +549,7 @@ class DockerVirtualSwitch:
 
     def net_interface_count(self) -> int:
         """Get the interface count in persistent DVS Container.
+
         Returns:
             The interface count, or 0 if the value is not found or some error occurs.
         """
@@ -1613,6 +1614,7 @@ def manage_dvs(request) -> str:
         3. No DVS currently exists (i.e. first time startup)
 
         Otherwise, restart the existing DVS (to get to a clean state)
+
         Returns:
             (DockerVirtualSwitch) a DVS object
         """
@@ -1679,9 +1681,9 @@ def vct(request):
 
 @pytest.yield_fixture
 def testlog(request, dvs):
-    dvs.runcmd(f"logger === start test {request.node.name} ===")
+    dvs.runcmd(f"logger -t pytest === start test {request.node.nodeid} ===")
     yield testlog
-    dvs.runcmd(f"logger === finish test {request.node.name} ===")
+    dvs.runcmd(f"logger -t pytest === finish test {request.node.nodeid} ===")
 
 ################# DVSLIB module manager fixtures #############################
 @pytest.fixture(scope="class")
@@ -1690,6 +1692,13 @@ def dvs_acl(request, dvs) -> DVSAcl:
                   dvs.get_config_db(),
                   dvs.get_state_db(),
                   dvs.get_counters_db())
+
+
+@pytest.fixture(scope="class")
+def dvs_pbh(request, dvs) -> DVSPbh:
+    return DVSPbh(dvs.get_asic_db(),
+                  dvs.get_config_db())
+
 
 @pytest.fixture(scope="class")
 def dvs_route(request, dvs) -> DVSRoute:
