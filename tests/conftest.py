@@ -244,7 +244,7 @@ class DockerVirtualSwitch:
         name: str = None,
         imgname: str = None,
         keeptb: bool = False,
-        fakeplatform: str = None,
+        env: list = [],
         log_path: str = None,
         max_cpu: int = 2,
         forcedvs: bool = None,
@@ -356,8 +356,6 @@ class DockerVirtualSwitch:
             self.mount = f"/var/run/redis-vs/{self.ctn_sw.name}"
             ensure_system(f"mkdir -p {self.mount}")
 
-            self.environment = [f"fake_platform={fakeplatform}"] if fakeplatform else []
-
             kwargs = {}
             if newctnname:
                 kwargs["name"] = newctnname
@@ -372,7 +370,7 @@ class DockerVirtualSwitch:
             self.ctn = self.client.containers.run(imgname,
                                                   privileged=True,
                                                   detach=True,
-                                                  environment=self.environment,
+                                                  environment=env,
                                                   network_mode=f"container:{self.ctn_sw.name}",
                                                   cpu_count=max_cpu,
                                                   **kwargs)
@@ -1235,7 +1233,7 @@ class DockerVirtualChassisTopology:
         namespace=None,
         imgname=None,
         keeptb=False,
-        fakeplatform=None,
+        env=[],
         log_path=None,
         max_cpu=2,
         forcedvs=None,
@@ -1244,7 +1242,7 @@ class DockerVirtualChassisTopology:
         self.ns = namespace
         self.chassbr = "br4chs"
         self.keeptb = keeptb
-        self.fakeplatform = fakeplatform
+        self.env = env
         self.topoFile = topoFile
         self.imgname = imgname
         self.ctninfo = {}
@@ -1303,7 +1301,7 @@ class DockerVirtualChassisTopology:
         for ctn in docker.from_env().containers.list():
             if ctn.name.endswith(suffix):
                 self.dvss[ctn.name] = DockerVirtualSwitch(ctn.name, self.imgname, self.keeptb,
-                                                          self.fakeplatform, log_path=ctn.name,
+                                                          self.env, log_path=ctn.name,
                                                           max_cpu=self.max_cpu, forcedvs=self.forcedvs,
                                                           vct=self)
         if self.chassbr is None and len(self.dvss) > 0:
@@ -1421,7 +1419,7 @@ class DockerVirtualChassisTopology:
             if ctnname not in self.dvss:
                 self.dvss[ctnname] = DockerVirtualSwitch(name=None, imgname=self.imgname,
                                                          keeptb=self.keeptb,
-                                                         fakeplatform=self.fakeplatform,
+                                                         env=self.env,
                                                          log_path=self.log_path,
                                                          max_cpu=self.max_cpu,
                                                          forcedvs=self.forcedvs,
@@ -1598,18 +1596,18 @@ def manage_dvs(request) -> str:
     buffer_model = request.config.getoption("--buffer_model")
     force_recreate = request.config.getoption("--force-recreate-dvs")
     dvs = None
-    curr_fake_platform = None   # lgtm[py/unused-local-variable]
+    curr_dvs_env = [] # lgtm[py/unused-local-variable]
 
     if using_persistent_dvs and force_recreate:
         pytest.fail("Options --dvsname and --force-recreate-dvs are mutually exclusive")
 
-    def update_dvs(log_path, new_fake_platform=None):
+    def update_dvs(log_path, new_dvs_env=[]):
         """
         Decides whether or not to create a new DVS
 
         Create a new the DVS in the following cases:
         1. CLI option `--force-recreate-dvs` was specified (recreate for every module)
-        2. The fake_platform has changed (this can only be set at container creation,
+        2. The dvs_env has changed (this can only be set at container creation,
            so it is necessary to spin up a new DVS)
         3. No DVS currently exists (i.e. first time startup)
 
@@ -1618,18 +1616,18 @@ def manage_dvs(request) -> str:
         Returns:
             (DockerVirtualSwitch) a DVS object
         """
-        nonlocal curr_fake_platform, dvs
+        nonlocal curr_dvs_env, dvs
         if force_recreate or \
-           new_fake_platform != curr_fake_platform or \
+           new_dvs_env != curr_dvs_env or \
            dvs is None:
 
             if dvs is not None:
                 dvs.get_logs()
                 dvs.destroy()
 
-            dvs = DockerVirtualSwitch(name, imgname, keeptb, new_fake_platform, log_path, max_cpu, forcedvs, buffer_model = buffer_model)
+            dvs = DockerVirtualSwitch(name, imgname, keeptb, new_dvs_env, log_path, max_cpu, forcedvs, buffer_model = buffer_model)
 
-            curr_fake_platform = new_fake_platform
+            curr_dvs_env = new_dvs_env
 
         else:
             # First generate GCDA files for GCov
@@ -1654,11 +1652,11 @@ def manage_dvs(request) -> str:
 
 @pytest.yield_fixture(scope="module")
 def dvs(request, manage_dvs) -> DockerVirtualSwitch:
-    fakeplatform = getattr(request.module, "DVS_FAKE_PLATFORM", None)
+    dvs_env = getattr(request.module, "DVS_ENV", [])
     name = request.config.getoption("--dvsname")
     log_path = name if name else request.module.__name__
 
-    return manage_dvs(log_path, fakeplatform)
+    return manage_dvs(log_path, dvs_env)
 
 @pytest.yield_fixture(scope="module")
 def vct(request):
@@ -1669,11 +1667,11 @@ def vct(request):
     imgname = request.config.getoption("--imgname")
     max_cpu = request.config.getoption("--max_cpu")
     log_path = vctns if vctns else request.module.__name__
-    fakeplatform = getattr(request.module, "DVS_FAKE_PLATFORM", None)
+    dvs_env = getattr(request.module, "DVS_ENV", [])
     if not topo:
         # use ecmp topology as default
         topo = "virtual_chassis/chassis_with_ecmp_neighbors.json"
-    vct = DockerVirtualChassisTopology(vctns, imgname, keeptb, fakeplatform, log_path, max_cpu,
+    vct = DockerVirtualChassisTopology(vctns, imgname, keeptb, dvs_env, log_path, max_cpu,
                                        forcedvs, topo)
     yield vct
     vct.get_logs(request.module.__name__)

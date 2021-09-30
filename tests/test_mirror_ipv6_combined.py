@@ -3,7 +3,7 @@ import time
 
 from swsscommon import swsscommon
 
-DVS_FAKE_PLATFORM = "broadcom"
+DVS_ENV = ["fake_platform=broadcom"]
 
 
 class TestMirror(object):
