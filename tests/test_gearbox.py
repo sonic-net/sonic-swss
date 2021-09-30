@@ -13,7 +13,7 @@ class Gearbox(object):
     def __init__(self, dvs):
         db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         t = swsscommon.Table(db, "_GEARBOX_TABLE")
-        assert t
+        assert len(t.getKeys()) > 0
         sr = t.getTableNameSeparator()
 
         # "_GEARBOX_TABLE:phy:1"

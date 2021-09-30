@@ -1596,18 +1596,18 @@ def manage_dvs(request) -> str:
     buffer_model = request.config.getoption("--buffer_model")
     force_recreate = request.config.getoption("--force-recreate-dvs")
     dvs = None
-    curr_fake_platform = None   # lgtm[py/unused-local-variable]
+    curr_dvs_env = [] # lgtm[py/unused-local-variable]
 
     if using_persistent_dvs and force_recreate:
         pytest.fail("Options --dvsname and --force-recreate-dvs are mutually exclusive")
 
-    def update_dvs(log_path, dvs_env=[]):
+    def update_dvs(log_path, new_dvs_env=[]):
         """
         Decides whether or not to create a new DVS
 
         Create a new the DVS in the following cases:
         1. CLI option `--force-recreate-dvs` was specified (recreate for every module)
-        2. The fake_platform has changed (this can only be set at container creation,
+        2. The dvs_env has changed (this can only be set at container creation,
            so it is necessary to spin up a new DVS)
         3. No DVS currently exists (i.e. first time startup)
 
@@ -1616,20 +1616,18 @@ def manage_dvs(request) -> str:
         Returns:
             (DockerVirtualSwitch) a DVS object
         """
-        nonlocal curr_fake_platform, dvs
-        v = [v for k, v in map(lambda x: x.split('='), dvs_env) if 'fake_platform' == k]
-        new_fake_platform = v[0] if v else None
+        nonlocal curr_dvs_env, dvs
         if force_recreate or \
-           new_fake_platform != curr_fake_platform or \
+           new_dvs_env != curr_dvs_env or \
            dvs is None:
 
             if dvs is not None:
                 dvs.get_logs()
                 dvs.destroy()
 
-            dvs = DockerVirtualSwitch(name, imgname, keeptb, dvs_env, log_path, max_cpu, forcedvs, buffer_model = buffer_model)
+            dvs = DockerVirtualSwitch(name, imgname, keeptb, new_dvs_env, log_path, max_cpu, forcedvs, buffer_model = buffer_model)
 
-            curr_fake_platform = new_fake_platform
+            curr_dvs_env = new_dvs_env
 
         else:
             # First generate GCDA files for GCov
