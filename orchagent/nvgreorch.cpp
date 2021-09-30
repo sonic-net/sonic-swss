@@ -7,6 +7,12 @@
 extern sai_object_id_t gSwitchId;
 extern sai_tunnel_api_t *sai_tunnel_api;
 
+/** @brief Creates tunnel mapper in SAI.
+ *
+ *  @param sai_tunnel_map_type SAI tunnel map type e.g. VSID_TO_VLAN
+ *
+ *  @return Tunnel map SAI identifier.
+ */
 sai_object_id_t NvgreTunnel::sai_create_tunnel_map(sai_tunnel_map_type_t sai_tunnel_map_type)
 {
     sai_attribute_t attr;
@@ -27,11 +33,27 @@ sai_object_id_t NvgreTunnel::sai_create_tunnel_map(sai_tunnel_map_type_t sai_tun
     if (status != SAI_STATUS_SUCCESS)
     {
         throw std::runtime_error("Can't create tunnel map object");
+        /*
+        // FIXME: need to update SAI version in order to support the code bellow
+
+        SWSS_LOG_ERROR("Failed to create NVGRE tunnel mapper = %u, SAI status = %d", sai_tunnel_map_type, status);
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_TUNNEL, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+        */
     }
 
     return tunnel_map_id;
 }
 
+/** @brief Removes tunnel mapper in SAI.
+ *
+ *  @param sai_tunnel_map_type SAI tunnel map identifier.
+ *
+ *  @return void.
+ */
 void NvgreTunnel::sai_remove_tunnel_map(sai_object_id_t tunnel_map_id)
 {
     sai_status_t status = sai_tunnel_api->remove_tunnel_map(tunnel_map_id);
@@ -42,6 +64,14 @@ void NvgreTunnel::sai_remove_tunnel_map(sai_object_id_t tunnel_map_id)
     }
 }
 
+
+/** @brief Creates tunnel in SAI.
+ *
+ *  @param ids Pointer to structure where stored tunnel and tunnel mappers identifiers.
+ *  @param src_ip Pointer to source IP address.
+ *
+ *  @return SAI tunnel identifier.
+ */
 sai_object_id_t NvgreTunnel::sai_create_tunnel(struct tunnel_sai_ids_t* ids, sai_ip_address_t *src_ip)
 {
     sai_attribute_t attr;
@@ -105,6 +135,12 @@ sai_object_id_t NvgreTunnel::sai_create_tunnel(struct tunnel_sai_ids_t* ids, sai
     return tunnel_id;
 }
 
+/** @brief Removes tunnel in SAI.
+ *
+ *  @param tunnel_id Pointer to tunnel identifier.
+ *
+ *  @return void.
+ */
 void NvgreTunnel::sai_remove_tunnel(sai_object_id_t tunnel_id)
 {
     sai_status_t status = sai_tunnel_api->remove_tunnel(tunnel_id);
