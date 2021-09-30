@@ -7,13 +7,13 @@
 extern sai_object_id_t gSwitchId;
 extern sai_tunnel_api_t *sai_tunnel_api;
 
-static sai_object_id_t create_tunnel_map(uint32_t sai_map)
+static sai_object_id_t create_tunnel_map(sai_tunnel_map_type_t sai_tunnel_map_type)
 {
     sai_attribute_t attr;
     std::vector<sai_attribute_t> tunnel_map_attrs;
 
     attr.id = SAI_TUNNEL_MAP_ATTR_TYPE;
-    attr.value.s32 = sai_map;
+    attr.value.u32 = sai_tunnel_map_type;
 
     tunnel_map_attrs.push_back(attr);
 
@@ -48,37 +48,35 @@ static sai_object_id_t create_tunnel(struct tunnel_sai_ids_t* ids, sai_ip_addres
     std::vector<sai_attribute_t> tunnel_attrs;
 
     attr.id = SAI_TUNNEL_ATTR_TYPE;
-    //CHANGE type
+    // # FIXME: CHANGE type
     attr.value.s32 = SAI_TUNNEL_TYPE_VXLAN;
     tunnel_attrs.push_back(attr);
 
     sai_object_id_t decap_map_list[MAP_SIZE+1];
-    uint8_t num_decap_map=0;
+    uint8_t num_decap_map = 0;
 
-    for (uint32_t i = 0; i < nvgreDecapTunnelMap.size(); i++)
+    for (auto map_id : ids->tunnel_decap_id)
     {
-        if (ids->tunnel_decap_id[i] != SAI_NULL_OBJECT_ID)
+        if (map_id != SAI_NULL_OBJECT_ID)
         {
-            decap_map_list[num_decap_map] = ids->tunnel_decap_id[i];
-            SWSS_LOG_INFO("create_tunnel:maplist[%d]=0x%" PRIx64 "", num_decap_map, decap_map_list[num_decap_map]);
+            decap_map_list[num_decap_map] = map_id;
             num_decap_map++;
         }
     }
-      
+
     attr.id = SAI_TUNNEL_ATTR_DECAP_MAPPERS;
     attr.value.objlist.count = num_decap_map;
     attr.value.objlist.list = decap_map_list;
     tunnel_attrs.push_back(attr);
 
     sai_object_id_t encap_map_list[MAP_SIZE+1];
-    uint8_t num_encap_map=0;
+    uint8_t num_encap_map = 0;
 
-    for (uint32_t i = 0; i < nvgreEncapTunnelMap.size(); i++)
+    for (auto map_id : ids->tunnel_encap_id)
     {
-        if (ids->tunnel_encap_id[i] != SAI_NULL_OBJECT_ID)
+        if (map_id != SAI_NULL_OBJECT_ID)
         {
-            encap_map_list[num_encap_map] = ids->tunnel_encap_id[i];
-            SWSS_LOG_NOTICE("create_tunnel:encapmaplist[%d]=0x%" PRIx64 "", num_encap_map, encap_map_list[num_encap_map]);
+            encap_map_list[num_decap_map] = map_id;
             num_encap_map++;
         }
     }
@@ -88,13 +86,9 @@ static sai_object_id_t create_tunnel(struct tunnel_sai_ids_t* ids, sai_ip_addres
     attr.value.objlist.list = encap_map_list;
     tunnel_attrs.push_back(attr);
 
-    // source ip check if it is not NULL
-    if (src_ip != nullptr)
-    {
-        attr.id = SAI_TUNNEL_ATTR_ENCAP_SRC_IP;
-        attr.value.ipaddr = *src_ip;
-        tunnel_attrs.push_back(attr);
-    }
+    attr.id = SAI_TUNNEL_ATTR_ENCAP_SRC_IP;
+    attr.value.ipaddr = *src_ip;
+    tunnel_attrs.push_back(attr);
 
     sai_object_id_t tunnel_id;
     sai_status_t status = sai_tunnel_api->create_tunnel(
@@ -129,20 +123,20 @@ static void remove_tunnel(sai_object_id_t tunnel_id)
 
 void NvgreTunnel::createTunnelMapCapabilities()
 {
-    for (uint32_t i = 0; i < nvgreEncapTunnelMap.size(); ++i)
-        tunnel_ids_.tunnel_encap_id[i] = create_tunnel_map(nvgreEncapTunnelMap[i]);
+    for (auto map_value : nvgreEncapTunnelMap)
+        tunnel_ids_.tunnel_encap_id.push_back(create_tunnel_map(map_value));
 
-    for (uint32_t i = 0; i < nvgreDecapTunnelMap.size(); ++i)
-        tunnel_ids_.tunnel_decap_id[i] = create_tunnel_map(nvgreDecapTunnelMap[i]);
+    for (auto map_value : nvgreDecapTunnelMap)
+        tunnel_ids_.tunnel_decap_id.push_back(create_tunnel_map(map_value));
 }
 
 void NvgreTunnel::removeTunnelMapCapabilities()
 {
-    for (uint32_t i = 0; i < nvgreEncapTunnelMap.size(); ++i)
-        remove_tunnel_map(tunnel_ids_.tunnel_encap_id[i]);
+    for (auto map_id : tunnel_ids_.tunnel_encap_id)
+        remove_tunnel_map(map_id);
 
-    for (uint32_t i = 0; i < nvgreDecapTunnelMap.size(); ++i)
-        remove_tunnel_map(tunnel_ids_.tunnel_decap_id[i]);
+    for (auto map_id : tunnel_ids_.tunnel_decap_id)
+        remove_tunnel_map(map_id);
 }
 
 void NvgreTunnel::createTunnel()
@@ -158,7 +152,7 @@ void NvgreTunnel::createTunnel()
         SWSS_LOG_ERROR("Error while creating tunnel %s: %s", tunnel_name_.c_str(), error.what());
     }
 
-    SWSS_LOG_NOTICE("Nvgre tunnel '%s' was created", tunnel_name_.c_str());
+    SWSS_LOG_NOTICE("NVGRE tunnel '%s' was created", tunnel_name_.c_str());
 }
 
 void NvgreTunnel::removeTunnel()
@@ -187,6 +181,9 @@ NvgreTunnel::~NvgreTunnel()
 {
     removeTunnelMapCapabilities();
     removeTunnel();
+    fill(tunnel_ids_.tunnel_decap_id.begin(), tunnel_ids_.tunnel_decap_id.end(), SAI_NULL_OBJECT_ID);
+    fill(tunnel_ids_.tunnel_encap_id.begin(), tunnel_ids_.tunnel_encap_id.end(), SAI_NULL_OBJECT_ID);
+    tunnel_ids_.tunnel_id = SAI_NULL_OBJECT_ID;
 }
 
 bool NvgreTunnelOrch::addOperation(const Request& request)

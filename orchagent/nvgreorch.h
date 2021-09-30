@@ -10,20 +10,20 @@
 
 const int MAP_SIZE = 2;
 
-const std::array<uint32_t, MAP_SIZE> nvgreEncapTunnelMap = {
+const std::vector<sai_tunnel_map_type_t> nvgreEncapTunnelMap = {
     SAI_TUNNEL_MAP_TYPE_VLAN_ID_TO_VNI,
     SAI_TUNNEL_MAP_TYPE_BRIDGE_IF_TO_VNI
 };
 
-const std::array<uint32_t, MAP_SIZE> nvgreDecapTunnelMap = {
+const std::vector<sai_tunnel_map_type_t> nvgreDecapTunnelMap = {
     SAI_TUNNEL_MAP_TYPE_VNI_TO_VLAN_ID,
     SAI_TUNNEL_MAP_TYPE_VNI_TO_BRIDGE_IF
 };
 
 struct tunnel_sai_ids_t
 {
-    sai_object_id_t tunnel_encap_id[MAP_SIZE+1];
-    sai_object_id_t tunnel_decap_id[MAP_SIZE+1];
+    std::vector<sai_object_id_t> tunnel_encap_id;
+    std::vector<sai_object_id_t> tunnel_decap_id;
     sai_object_id_t tunnel_id;
 };
 
@@ -50,7 +50,11 @@ private:
 
     std::string tunnel_name_;
     IpAddress src_ip_;
-    tunnel_sai_ids_t tunnel_ids_ = {{0}, {0}, 0};
+    tunnel_sai_ids_t tunnel_ids_ = {
+        { std::vector<sai_object_id_t>(MAP_SIZE, SAI_NULL_OBJECT_ID) },
+        { std::vector<sai_object_id_t>(MAP_SIZE, SAI_NULL_OBJECT_ID) },
+        SAI_NULL_OBJECT_ID
+    };
 };
 
 typedef std::map<std::string, std::unique_ptr<NvgreTunnel>> NvgreTunnelTable;
