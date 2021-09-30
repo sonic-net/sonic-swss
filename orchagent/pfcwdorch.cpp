@@ -40,6 +40,11 @@ PfcWdOrch<DropHandler, ForwardHandler>::PfcWdOrch(DBConnector *db, vector<string
     m_platform(getenv("platform") ? getenv("platform") : "")
 {
     SWSS_LOG_ENTER();
+    if (m_platform == "")
+    {
+        SWSS_LOG_ERROR("Platform environment variable is not defined");
+        return;
+    }
 }
 
 
@@ -220,7 +225,7 @@ task_process_status PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const st
                     SWSS_LOG_ERROR("Invalid PFC Watchdog action %s", value.c_str());
                     return task_process_status::task_invalid_entry;
                 }
-                if ((m_platform == SILICON_ONE_PLATFORM_SUBSTRING) && (action == PfcWdAction::PFC_WD_ACTION_FORWARD)) {
+                if ((m_platform == CISCO_8000_PLATFORM_SUBSTRING) && (action == PfcWdAction::PFC_WD_ACTION_FORWARD)) {
                     SWSS_LOG_ERROR("Unsupported action %s for platform %s", value.c_str(), m_platform.c_str());
                     return task_process_status::task_invalid_entry;
                 }
@@ -665,7 +670,7 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
     string detectSha, restoreSha;
     string detectPluginName = "pfc_detect_" + this->m_platform + ".lua";
     string restorePluginName;
-    if (this->m_platform == SILICON_ONE_PLATFORM_SUBSTRING) {
+    if (this->m_platform == CISCO_8000_PLATFORM_SUBSTRING) {
         restorePluginName = "pfc_restore_" + this->m_platform + ".lua";
     } else {
         restorePluginName = "pfc_restore.lua";

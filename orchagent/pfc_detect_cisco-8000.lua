@@ -6,7 +6,6 @@
 
 local counters_db = ARGV[1]
 local counters_table_name = ARGV[2]
-local poll_time = tonumber(ARGV[3])
 local poll_time = tonumber(ARGV[3]) * 1000
 
 local rets = {}
