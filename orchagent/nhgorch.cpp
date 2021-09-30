@@ -1,5 +1,4 @@
 #include "nhgorch.h"
-#include "switchorch.h"
 #include "neighorch.h"
 #include "crmorch.h"
 #include "routeorch.h"
@@ -12,7 +11,6 @@ extern sai_object_id_t gSwitchId;
 extern PortsOrch *gPortsOrch;
 extern CrmOrch *gCrmOrch;
 extern NeighOrch *gNeighOrch;
-extern SwitchOrch *gSwitchOrch;
 extern RouteOrch *gRouteOrch;
 
 extern size_t gMaxBulkSize;
@@ -27,45 +25,6 @@ NhgOrch::NhgOrch(DBConnector *db, string tableName) :
     Orch(db, tableName)
 {
     SWSS_LOG_ENTER();
-
-    /* Get the switch's maximum next hop group capacity. */
-    sai_attribute_t attr;
-    attr.id = SAI_SWITCH_ATTR_NUMBER_OF_ECMP_GROUPS;
-
-    sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
-
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_WARN("Failed to get switch attribute number of ECMP groups. \
-                       Use default value. rv:%d", status);
-        m_maxNhgCount = DEFAULT_NUMBER_OF_ECMP_GROUPS;
-    }
-    else
-    {
-        m_maxNhgCount = attr.value.s32;
-
-        /*
-         * ASIC specific workaround to re-calculate maximum ECMP groups
-         * according to diferent ECMP mode used.
-         *
-         * On Mellanox platform, the maximum ECMP groups returned is the value
-         * under the condition that the ECMP group size is 1. Deviding this
-         * number by DEFAULT_MAX_ECMP_GROUP_SIZE gets the maximum number of
-         * ECMP groups when the maximum ECMP group size is 32.
-         */
-        char *platform = getenv("platform");
-        if (platform && strstr(platform, MLNX_PLATFORM_SUBSTRING))
-        {
-            m_maxNhgCount /= DEFAULT_MAX_ECMP_GROUP_SIZE;
-        }
-    }
-
-    /* Set switch's next hop group capacity. */
-    vector<FieldValueTuple> fvTuple;
-    fvTuple.emplace_back("MAX_NEXTHOP_GROUP_COUNT", to_string(m_maxNhgCount));
-    gSwitchOrch->set_switch_capability(fvTuple);
-
-    SWSS_LOG_NOTICE("Maximum number of ECMP groups supported is %d", m_maxNhgCount);
 }
 
 /*
@@ -152,7 +111,8 @@ void NhgOrch::doTask(Consumer& consumer)
                 * to be kept in the sync list so we keep trying to create the
                 * actual group when there are enough resources.
                 */
-                if ((nhg_key.getSize() > 1) && (NextHopGroup::getCount() >= m_maxNhgCount))
+                if ((nhg_key.getSize() > 1) &&
+                    (gRouteOrch->getNhgCount() + NextHopGroup::getCount() >= gRouteOrch->getMaxNhgCount()))
                 {
                     SWSS_LOG_DEBUG("Next hop group count reached its limit.");
 
@@ -216,7 +176,7 @@ void NhgOrch::doTask(Consumer& consumer)
                  */
                 else if (nhg_ptr->isTemp() &&
                          (nhg_key.getSize() > 1) &&
-                         (NextHopGroup::getCount() >= m_maxNhgCount))
+                         (gRouteOrch->getNhgCount() + NextHopGroup::getCount() >= gRouteOrch->getMaxNhgCount()))
                 {
                     /*
                      * If the group was updated in such way that the previously

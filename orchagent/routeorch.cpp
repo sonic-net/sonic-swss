@@ -23,18 +23,55 @@ extern NhgOrch *gNhgOrch;
 
 extern size_t gMaxBulkSize;
 
-RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch) :
+RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch) :
         gRouteBulker(sai_route_api, gMaxBulkSize),
         gLabelRouteBulker(sai_mpls_api, gMaxBulkSize),
         gNextHopGroupMemberBulker(sai_next_hop_group_api, gSwitchId, gMaxBulkSize),
         Orch(db, tableNames),
+        m_switchOrch(switchOrch),
         m_neighOrch(neighOrch),
         m_intfsOrch(intfsOrch),
         m_vrfOrch(vrfOrch),
         m_fgNhgOrch(fgNhgOrch),
+        m_nextHopGroupCount(0),
         m_resync(false)
 {
     SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    attr.id = SAI_SWITCH_ATTR_NUMBER_OF_ECMP_GROUPS;
+
+    sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Failed to get switch attribute number of ECMP groups. \
+                       Use default value. rv:%d", status);
+        m_maxNextHopGroupCount = DEFAULT_NUMBER_OF_ECMP_GROUPS;
+    }
+    else
+    {
+        m_maxNextHopGroupCount = attr.value.s32;
+
+        /*
+         * ASIC specific workaround to re-calculate maximum ECMP groups
+         * according to different ECMP mode used.
+         *
+         * On Mellanox platform, the maximum ECMP groups returned is the value
+         * under the condition that the ECMP group size is 1. Dividing this
+         * number by DEFAULT_MAX_ECMP_GROUP_SIZE gets the maximum number of
+         * ECMP groups when the maximum ECMP group size is 32.
+         */
+        char *platform = getenv("platform");
+        if (platform && strstr(platform, MLNX_PLATFORM_SUBSTRING))
+        {
+            m_maxNextHopGroupCount /= DEFAULT_MAX_ECMP_GROUP_SIZE;
+        }
+    }
+    vector<FieldValueTuple> fvTuple;
+    fvTuple.emplace_back("MAX_NEXTHOP_GROUP_COUNT", to_string(m_maxNextHopGroupCount));
+    m_switchOrch->set_switch_capability(fvTuple);
+
+    SWSS_LOG_NOTICE("Maximum number of ECMP groups supported is %d", m_maxNextHopGroupCount);
 
     IpPrefix default_ip_prefix("0.0.0.0/0");
 
@@ -44,12 +81,10 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
     copy(unicast_route_entry.destination, default_ip_prefix);
     subnet(unicast_route_entry.destination, unicast_route_entry.destination);
 
-    sai_attribute_t attr;
     attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
     attr.value.s32 = SAI_PACKET_ACTION_DROP;
 
-    sai_status_t status = sai_route_api->create_route_entry(
-                                            &unicast_route_entry, 1, &attr);
+    status = sai_route_api->create_route_entry(&unicast_route_entry, 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create IPv4 default route with packet action drop");
@@ -752,7 +787,7 @@ void RouteOrch::doTask(Consumer& consumer)
 
                 // If already exhaust the nexthop groups, and there are pending removing routes in bulker,
                 // flush the bulker and possibly collect some released nexthop groups
-                if (gNhgOrch->getNhgCount() >= gNhgOrch->getMaxNhgCount() &&
+                if (m_nextHopGroupCount + gNhgOrch->getNhgCount() >= m_maxNextHopGroupCount &&
                     gRouteBulker.removing_entries_count() > 0)
                 {
                     break;
@@ -1014,7 +1049,7 @@ bool RouteOrch::createFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id
 {
     SWSS_LOG_ENTER();
 
-    if (gNhgOrch->getNhgCount() >= gNhgOrch->getMaxNhgCount())
+    if (m_nextHopGroupCount + gNhgOrch->getNhgCount() >= m_maxNextHopGroupCount)
     {
         SWSS_LOG_DEBUG("Failed to create new next hop group. \
                 Reaching maximum number of next hop groups.");
@@ -1036,7 +1071,7 @@ bool RouteOrch::createFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id
     }
 
     gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
-    gNhgOrch->incNhgCount();
+    m_nextHopGroupCount++;
 
     return true;
 }
@@ -1058,7 +1093,7 @@ bool RouteOrch::removeFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id
     }
 
     gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
-    gNhgOrch->decNhgCount();
+    m_nextHopGroupCount--;
 
     return true;
 }
@@ -1069,7 +1104,7 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
 
     assert(!hasNextHopGroup(nexthops));
 
-    if (gNhgOrch->getNhgCount() >= gNhgOrch->getMaxNhgCount())
+    if (m_nextHopGroupCount + gNhgOrch->getNhgCount() >= m_maxNextHopGroupCount)
     {
         SWSS_LOG_DEBUG("Failed to create new next hop group. \
                         Reaching maximum number of next hop groups.");
@@ -1144,7 +1179,7 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         }
     }
 
-    gNhgOrch->incNhgCount();
+    m_nextHopGroupCount++;
     SWSS_LOG_NOTICE("Create next hop group %s", nexthops.to_string().c_str());
 
     gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
@@ -1298,7 +1333,7 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops)
         }
     }
 
-    gNhgOrch->decNhgCount();
+    m_nextHopGroupCount--;
     gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
 
     set<NextHopKey> next_hop_set = nexthops.getNextHops();
