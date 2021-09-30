@@ -104,15 +104,13 @@ void NhgOrch::doTask(Consumer& consumer)
             if (nhg_it == m_syncdNextHopGroups.end())
             {
                 /*
-                * If we'd have to create a SAI object for the group, and we
-                * already reached the limit, we're going to create a temporary
+                * If we've reached the NHG limit, we're going to create a temporary
                 * group, represented by one of it's NH only until we have
                 * enough resources to sync the whole group.  The item is going
                 * to be kept in the sync list so we keep trying to create the
                 * actual group when there are enough resources.
                 */
-                if ((nhg_key.getSize() > 1) &&
-                    (gRouteOrch->getNhgCount() + NextHopGroup::getCount() >= gRouteOrch->getMaxNhgCount()))
+                if (gRouteOrch->getNhgCount() + NextHopGroup::getCount() >= gRouteOrch->getMaxNhgCount())
                 {
                     SWSS_LOG_DEBUG("Next hop group count reached its limit.");
 
@@ -139,7 +137,7 @@ void NhgOrch::doTask(Consumer& consumer)
                 }
                 else
                 {
-                    auto nhg = std::make_unique<NextHopGroup>(nhg_key);
+                    auto nhg = std::make_unique<NextHopGroup>(nhg_key, false);
                     success = nhg->sync();
 
                     if (success)
@@ -154,29 +152,13 @@ void NhgOrch::doTask(Consumer& consumer)
                 const auto& nhg_ptr = nhg_it->second.nhg;
 
                 /*
-                 * A NHG update should never change the SAI ID of the NHG if it
-                 * is still referenced by some other objects, as they would not
-                 * be notified about this change.  The only exception to this
-                 * rule is for the temporary NHGs, as the referencing objects
-                 * will keep querying the NhgOrch for any SAI ID updates.
-                 */
-                if (!nhg_ptr->isTemp() &&
-                    ((nhg_key.getSize() == 1) || (nhg_ptr->getSize() == 1)) &&
-                    (nhg_it->second.ref_count > 0))
-                {
-                    SWSS_LOG_INFO("Next hop group %s update would change SAI "
-                                  "ID while referenced, so not performed",
-                                  index.c_str());
-                }
-                /*
                  * If the update would mandate promoting a temporary next hop
                  * group to a multiple next hops group and we do not have the
                  * resources yet, we have to skip it until we have enough
                  * resources.
                  */
-                else if (nhg_ptr->isTemp() &&
-                         (nhg_key.getSize() > 1) &&
-                         (gRouteOrch->getNhgCount() + NextHopGroup::getCount() >= gRouteOrch->getMaxNhgCount()))
+                if (nhg_ptr->isTemp() &&
+                    (gRouteOrch->getNhgCount() + NextHopGroup::getCount() >= gRouteOrch->getMaxNhgCount()))
                 {
                     /*
                      * If the group was updated in such way that the previously
@@ -541,10 +523,10 @@ NextHopGroupMember::~NextHopGroupMember()
  * Params:      IN  key - The next hop group's key.
  * Returns:     Nothing.
  */
-NextHopGroup::NextHopGroup(const NextHopGroupKey& key) :
+NextHopGroup::NextHopGroup(const NextHopGroupKey& key, bool is_temp) :
     m_key(key),
     m_id(SAI_NULL_OBJECT_ID),
-    m_is_temp(false)
+    m_is_temp(is_temp)
 {
     SWSS_LOG_ENTER();
 
@@ -612,10 +594,10 @@ bool NextHopGroup::sync()
     }
 
     /*
-     * If the group has only one member, the group ID will be the member's NH
+     * If the group is temporary, the group ID will be the only member's NH
      * ID.
      */
-    if (m_members.size() == 1)
+    if (m_is_temp)
     {
         const NextHopGroupMember& nhgm = m_members.begin()->second;
         sai_object_id_t nhid = nhgm.getNhId();
@@ -630,7 +612,6 @@ bool NextHopGroup::sync()
             m_id = nhid;
         }
     }
-    /* If the key contains more than one NH, create a group. */
     else
     {
         /* Assert the group is not empty. */
@@ -721,8 +702,7 @@ NextHopGroup NhgOrch::createTempNhg(const NextHopGroupKey& nhg_key)
     advance(it, rand() % valid_nhs.size());
 
     /* Create the temporary group. */
-    NextHopGroup nhg(NextHopGroupKey(it->to_string()));
-    nhg.setTemp(true);
+    NextHopGroup nhg(NextHopGroupKey(it->to_string()), true);
 
     return nhg;
 }
@@ -739,41 +719,37 @@ bool NextHopGroup::remove()
 {
     SWSS_LOG_ENTER();
 
-    /* If the group is already removed, there is nothing to be done. */
-    if (!isSynced())
+    /*  If the group is already removed, or is temporary, there is nothing to be done -
+     *  just reset the ID.
+     */
+    if (!isSynced() || m_is_temp)
     {
+        m_id = SAI_NULL_OBJECT_ID;
         return true;
     }
 
-    /*
-     * If the group has more than one members, remove it's members, then the
-     * group.
-     */
-    if (m_members.size() > 1)
+    /* Remove group's members. If we failed to remove the members, exit. */
+    if (!removeMembers(m_key.getNextHops()))
     {
-        /* Remove group's members. If we failed to remove the members, exit. */
-        if (!removeMembers(m_key.getNextHops()))
-        {
-            SWSS_LOG_ERROR("Failed to remove group %s members", to_string().c_str());
-            return false;
-        }
-
-        /* Remove the group. */
-        sai_status_t status = sai_next_hop_group_api->
-                                            remove_next_hop_group(m_id);
-
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Failed to remove next hop group %s, rv: %d",
-                            m_key.to_string().c_str(), status);
-            return false;
-        }
-
-        /* If the operation is successful, release the resources. */
-        gCrmOrch->decCrmResUsedCounter(
-                                CrmResourceType::CRM_NEXTHOP_GROUP);
-        --m_count;
+        SWSS_LOG_ERROR("Failed to remove group %s members", to_string().c_str());
+        return false;
     }
+
+    /* Remove the group. */
+    sai_status_t status = sai_next_hop_group_api->
+                                        remove_next_hop_group(m_id);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove next hop group %s, rv: %d",
+                        m_key.to_string().c_str(), status);
+        return false;
+    }
+
+    /* If the operation is successful, release the resources. */
+    gCrmOrch->decCrmResUsedCounter(
+                            CrmResourceType::CRM_NEXTHOP_GROUP);
+    --m_count;
 
     /* Reset the group ID. */
     m_id = SAI_NULL_OBJECT_ID;
@@ -794,9 +770,6 @@ bool NextHopGroup::remove()
 bool NextHopGroup::syncMembers(const std::set<NextHopKey>& nh_keys)
 {
     SWSS_LOG_ENTER();
-
-    /* This method should not be called for groups with only one NH. */
-    assert(m_members.size() > 1);
 
     ObjectBulker<sai_next_hop_group_api_t> nextHopGroupMemberBulker(sai_next_hop_group_api, gSwitchId, gMaxBulkSize);
 
@@ -882,9 +855,6 @@ bool NextHopGroup::removeMembers(const std::set<NextHopKey>& nh_keys)
 {
     SWSS_LOG_ENTER();
 
-    /* This method should not be called for groups with only one NH. */
-    assert(m_members.size() > 1);
-
     ObjectBulker<sai_next_hop_group_api_t> nextHopGroupMemberBulker(
                                     sai_next_hop_group_api, gSwitchId, gMaxBulkSize);
 
@@ -950,39 +920,20 @@ bool NextHopGroup::update(const NextHopGroupKey& nhg_key)
 {
     SWSS_LOG_ENTER();
 
-    /*
-     * There are three cases where the SAI ID of the NHG will change:
-     *  - changing a single next hop group to another single next hop group
-     *  - changing a single next hop group to a multiple next hop group
-     *  - changing a multiple next hop group to a single next hop group
-     *
-     * For these kind of updates, we can simply swap the existing group with
-     * the updated group, as we have no way of preserving the existing SAI ID.
-     *
-     * Also, we can perform the same operation if the group is not synced at
-     * all.
-     */
-    if ((nhg_key.getSize() == 1) || (m_members.size() == 1) || !isSynced())
+    /* If we are converting a temporary NHG into a permanent one, just create a new NHG. */
+    if (m_is_temp)
     {
-        bool was_synced = isSynced();
-
         /*
          * The previous NHG is going to be destroyed as a consequence of the
          * move assignment oprator being invoked on a temporary object. The
          * destructor will be invoked right after the evaluation of the line
          * below.
          */
-        *this = NextHopGroup(nhg_key);
+        *this = NextHopGroup(nhg_key, false);
 
         /* Sync the group only if it was synced before. */
-        return (was_synced ? sync() : true);
+        return sync();
     }
-    /*
-     * If we are updating a multiple next hop group to another multiple next
-     * hop group, we can preserve it's SAI ID by only updating it's members.
-     * This way, any objects referencing the SAI ID of this object will
-     * continue to work.
-     */
     else
     {
         /* Update the key. */
@@ -1097,16 +1048,6 @@ bool NextHopGroup::validateNextHop(const NextHopKey& nh_key)
 {
     SWSS_LOG_ENTER();
 
-    /*
-     * If the group has only one member, there is nothing to be done.  The
-     * member is only a reference to the next hop owned by NeighOrch, so it is
-     * not for us to take any decisions regarding those.
-     */
-    if (m_members.size() == 1)
-    {
-        return true;
-    }
-
     return syncMembers({nh_key});
 }
 
@@ -1120,16 +1061,6 @@ bool NextHopGroup::validateNextHop(const NextHopKey& nh_key)
 bool NextHopGroup::invalidateNextHop(const NextHopKey& nh_key)
 {
     SWSS_LOG_ENTER();
-
-    /*
-     * If the group has only one member, there is nothing to be done.  The
-     * member is only a reference to the next hop owned by NeighOrch, so it is
-     * not for us to take any decisions regarding those.
-     */
-    if (m_members.size() == 1)
-    {
-        return true;
-    }
 
     return removeMembers({nh_key});
 }

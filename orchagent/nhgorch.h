@@ -73,7 +73,7 @@ class NextHopGroup
 {
 public:
     /* Constructors. */
-    explicit NextHopGroup(const NextHopGroupKey& key);
+    explicit NextHopGroup(const NextHopGroupKey& key, bool is_temp);
     NextHopGroup(NextHopGroup&& nhg);
     NextHopGroup& operator=(NextHopGroup&& nhg);
 
@@ -115,7 +115,6 @@ public:
     inline sai_object_id_t getId() const { return m_id; }
     static inline unsigned int getCount() { return m_count; }
     inline bool isTemp() const { return m_is_temp; }
-    inline void setTemp(bool is_temp) { m_is_temp = is_temp; }
     inline bool isSynced() const { return m_id != SAI_NULL_OBJECT_ID; }
     inline size_t getSize() const { return m_members.size(); }
 
