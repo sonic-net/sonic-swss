@@ -988,8 +988,6 @@ class TestNextHopGroup(object):
         # Save the number of group members
         binary_count = binary.count('1')
 
-        dvs.runcmd('swssloglevel -c orchagent -l DEBUG')
-
         # Update the temporary group with a different number of members
         while True:
             r += 1
@@ -1493,8 +1491,7 @@ class TestNextHopGroup(object):
         rt_ps.set('2.2.2.0/24', fvs)
         asic_db.wait_for_n_keys(self.ASIC_RT_STR, asic_routes_count + 1)
 
-        # Update the NHG to a single next hop - should fail as it is being
-        # referenced
+        # Update the NHG to a single next hop
         nhgid = self.get_nhg_id('group1', dvs)
         fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1'), ("ifname", "Ethernet0")])
         nhg_ps.set("group1", fvs)
@@ -1504,9 +1501,6 @@ class TestNextHopGroup(object):
         # Remove route 2.2.2.0/24
         rt_ps._del("2.2.2.0/24")
         asic_db.wait_for_n_keys(self.ASIC_RT_STR, asic_routes_count)
-
-        # The group is not referenced anymore, so it should be updated
-        assert nhgid != self.get_nhg_id('group1', dvs)
 
         # Remove group1
         nhg_ps._del("group1")

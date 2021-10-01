@@ -12,6 +12,7 @@ extern PortsOrch *gPortsOrch;
 extern CrmOrch *gCrmOrch;
 extern NeighOrch *gNeighOrch;
 extern RouteOrch *gRouteOrch;
+extern NhgOrch *gNhgOrch;
 
 extern size_t gMaxBulkSize;
 
@@ -197,6 +198,24 @@ void NhgOrch::doTask(Consumer& consumer)
                                 e.what(),
                                 nhg_key.to_string().c_str());
                         }
+                    }
+                }
+                /*
+                 * If the group is temporary but can now be promoted, create and sync a new group for
+                 * the desired next hops.
+                 */
+                else if (nhg_ptr->isTemp())
+                {
+                    auto nhg = std::make_unique<NextHopGroup>(nhg_key, false);
+                    success = nhg->sync();
+
+                    if (success)
+                    {
+                        /*
+                         * Placing the new group in the map will replace the temporary group, causing
+                         * it to be removed and freed.
+                         */
+                        nhg_it->second.nhg = std::move(nhg);
                     }
                 }
                 /* Common update, when all the requirements are met. */
@@ -636,7 +655,12 @@ bool NextHopGroup::sync()
         {
             SWSS_LOG_ERROR("Failed to create next hop group %s, rv:%d",
                             m_key.to_string().c_str(), status);
-            return false;
+
+            task_process_status handle_status = gNhgOrch->handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, status);
+            if (handle_status != task_success)
+            {
+                return gNhgOrch->parseHandleSaiStatusFailure(handle_status);
+            }
         }
 
         /* Increment the amount of programmed next hop groups. */
@@ -743,7 +767,12 @@ bool NextHopGroup::remove()
     {
         SWSS_LOG_ERROR("Failed to remove next hop group %s, rv: %d",
                         m_key.to_string().c_str(), status);
-        return false;
+
+        task_process_status handle_status = gNhgOrch->handleSaiRemoveStatus(SAI_API_NEXT_HOP_GROUP, status);
+        if (handle_status != task_success)
+        {
+            return gNhgOrch->parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     /* If the operation is successful, release the resources. */
@@ -920,90 +949,73 @@ bool NextHopGroup::update(const NextHopGroupKey& nhg_key)
 {
     SWSS_LOG_ENTER();
 
-    /* If we are converting a temporary NHG into a permanent one, just create a new NHG. */
-    if (m_is_temp)
+    /* Update the key. */
+    m_key = nhg_key;
+
+    std::set<NextHopKey> new_nh_keys = nhg_key.getNextHops();
+    std::set<NextHopKey> removed_nh_keys;
+
+    /* Mark the members that need to be removed. */
+    for (auto& mbr_it : m_members)
     {
-        /*
-         * The previous NHG is going to be destroyed as a consequence of the
-         * move assignment oprator being invoked on a temporary object. The
-         * destructor will be invoked right after the evaluation of the line
-         * below.
-         */
-        *this = NextHopGroup(nhg_key, false);
+        const NextHopKey& nh_key = mbr_it.first;
 
-        /* Sync the group only if it was synced before. */
-        return sync();
+        /* Look for the existing member inside the new ones. */
+        const auto& new_nh_key_it = new_nh_keys.find(nh_key);
+
+        /* If the member is not found, then it needs to be removed. */
+        if (new_nh_key_it == new_nh_keys.end())
+        {
+            removed_nh_keys.insert(nh_key);
+        }
+        /* If the member is updated, update it's weight. */
+        else
+        {
+            if (!mbr_it.second.updateWeight(new_nh_key_it->weight))
+            {
+                SWSS_LOG_WARN("Failed to update member %s weight", nh_key.to_string().c_str());
+                return false;
+            }
+
+            /*
+             * Erase the member from the new members list as it already
+             * exists.
+             */
+            new_nh_keys.erase(new_nh_key_it);
+        }
     }
-    else
+
+    /* Remove the removed members. */
+    if (!removeMembers(removed_nh_keys))
     {
-        /* Update the key. */
-        m_key = nhg_key;
-
-        std::set<NextHopKey> new_nh_keys = nhg_key.getNextHops();
-        std::set<NextHopKey> removed_nh_keys;
-
-        /* Mark the members that need to be removed. */
-        for (auto& mbr_it : m_members)
-        {
-            const NextHopKey& nh_key = mbr_it.first;
-
-            /* Look for the existing member inside the new ones. */
-            const auto& new_nh_key_it = new_nh_keys.find(nh_key);
-
-            /* If the member is not found, then it needs to be removed. */
-            if (new_nh_key_it == new_nh_keys.end())
-            {
-                removed_nh_keys.insert(nh_key);
-            }
-            /* If the member is updated, update it's weight. */
-            else
-            {
-                if (!mbr_it.second.updateWeight(new_nh_key_it->weight))
-                {
-                    SWSS_LOG_WARN("Failed to update member %s weight", nh_key.to_string().c_str());
-                    return false;
-                }
-
-                /*
-                 * Erase the member from the new members list as it already
-                 * exists.
-                 */
-                new_nh_keys.erase(new_nh_key_it);
-            }
-        }
-
-        /* Remove the removed members. */
-        if (!removeMembers(removed_nh_keys))
-        {
-            SWSS_LOG_WARN("Failed to remove members from group %s", to_string().c_str());
-            return false;
-        }
-
-        /* Remove the removed members. */
-        for (const auto& nh_key : removed_nh_keys)
-        {
-            m_members.erase(nh_key);
-        }
-
-        /* Add any new members to the group. */
-        for (const auto& it : new_nh_keys)
-        {
-            m_members.emplace(it, NextHopGroupMember(it));
-        }
-
-        /*
-         * Sync all the members of the group.  We sync all of them because
-         * there may be previous members that were not successfully synced
-         * before the update, so we must make sure we sync those as well.
-         */
-        if (!syncMembers(m_key.getNextHops()))
-        {
-            SWSS_LOG_WARN("Failed to sync new members for group %s", to_string().c_str());
-            return false;
-        }
-
-        return true;
+        SWSS_LOG_WARN("Failed to remove members from group %s", to_string().c_str());
+        return false;
     }
+
+    /* Remove the removed members. */
+    for (const auto& nh_key : removed_nh_keys)
+    {
+        m_members.erase(nh_key);
+    }
+
+    /* Add any new members to the group. */
+    for (const auto& it : new_nh_keys)
+    {
+        m_members.emplace(it, NextHopGroupMember(it));
+    }
+
+    /*
+     * Sync all the members of the group.  We sync all of them because
+     * there may be previous members that were not successfully synced
+     * before the update, so we must make sure we sync those as well.
+     */
+    if (!syncMembers(m_key.getNextHops()))
+    {
+        SWSS_LOG_WARN("Failed to sync new members for group %s", to_string().c_str());
+        return false;
+    }
+
+    return true;
 }
 
 /*

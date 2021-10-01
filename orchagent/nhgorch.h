@@ -229,6 +229,14 @@ public:
     void incNhgRefCount(const std::string& index);
     void decNhgRefCount(const std::string& index);
 
+    /* Handling SAI status*/
+    task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, void *context = nullptr)
+        { return Orch::handleSaiCreateStatus(api, status, context); }
+    task_process_status handleSaiRemoveStatus(sai_api_t api, sai_status_t status, void *context = nullptr)
+        { return Orch::handleSaiRemoveStatus(api, status, context); }
+    bool parseHandleSaiStatusFailure(task_process_status status)
+        { return Orch::parseHandleSaiStatusFailure(status); }
+
 private:
 
     /*
