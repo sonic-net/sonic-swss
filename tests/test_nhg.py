@@ -188,7 +188,7 @@ class TestNextHopGroupExhaust(TestNextHopGroupBase):
         # Test scenario:
         # - create a NHG and assert a NHG object doesn't get added to ASIC DB
         # - delete a NHG and assert the newly created one is created in ASIC DB and its SAI ID changed
-        def test_temporary_group_promotion():
+        def temporary_group_promotion_test():
             # Add a new next hop group - it should create a temporary one instead
             prev_nhgs = self.asic_db.get_keys(self.ASIC_NHG_STR)
             nhg_index, _ = create_temp_nhg()
@@ -221,7 +221,7 @@ class TestNextHopGroupExhaust(TestNextHopGroupBase):
 
         # Test scenario:
         # - update an existing NHG and assert the update is performed
-        def test_group_update():
+        def group_update_test():
             # Update a group
             binary = self.gen_valid_binary()
             nhg_fvs = self.gen_nhg_fvs(binary)
@@ -239,7 +239,7 @@ class TestNextHopGroupExhaust(TestNextHopGroupBase):
 
         # Test scenario:
         # - create and delete a NHG while the ASIC DB is full and assert nothing changes
-        def test_create_delete_temporary():
+        def create_delete_temporary_test():
             # Create a new temporary group
             nhg_index, _ = create_temp_nhg()
             time.sleep(1)
@@ -257,7 +257,7 @@ class TestNextHopGroupExhaust(TestNextHopGroupBase):
         # - create a temporary NHG
         # - update the NHG with a different number of members
         # - delete a NHG and assert the new one is added and it has the updated number of members
-        def test_update_temporary_group():
+        def update_temporary_group_test():
             # Create a new temporary group
             nhg_index, binary = create_temp_nhg()
 
@@ -294,7 +294,7 @@ class TestNextHopGroupExhaust(TestNextHopGroupBase):
         # - create a temporary NHG and update the route to point to it, asserting the route's SAI NHG ID changes
         # - update the temporary NHG to contain completely different members and assert the SAI ID changes
         # - delete a NHG and assert the temporary NHG is promoted and its SAI ID also changes
-        def test_route_nhg_update():
+        def route_nhg_update_test():
             # Add a route
             nhg_index = gen_nhg_index(self.first_valid_nhg)
             rt_fvs = swsscommon.FieldValuePairs([('nexthop_group', nhg_index)])
@@ -369,7 +369,7 @@ class TestNextHopGroupExhaust(TestNextHopGroupBase):
         # Test scenario:
         # - create a temporary NHG containing labeled NHs and assert a new NH is added to represent the group
         # - delete a NHG and assert the temporary NHG is promoted and all its NHs are added
-        def test_labeled_nhg_temporary_promotion():
+        def labeled_nhg_temporary_promotion_test():
             # Create a next hop group that contains labeled NHs that do not exist
             # in NeighOrch
             self.asic_nhs_count = len(self.asic_db.get_keys(self.ASIC_NHS_STR))
@@ -398,7 +398,7 @@ class TestNextHopGroupExhaust(TestNextHopGroupBase):
         # Test scenario:
         # - update route to own its NHG and assert no new NHG is added
         # - remove a NHG and assert the temporary NHG is promoted and added to ASIC DB
-        def test_back_compatibility():
+        def back_compatibility_test():
             # Update the route with a RouteOrch's owned NHG
             binary = self.gen_valid_binary()
             nhg_fvs = self.gen_nhg_fvs(binary)
@@ -421,7 +421,7 @@ class TestNextHopGroupExhaust(TestNextHopGroupBase):
         # - update the NHG to all invalid NHs again and assert the update is not performed and thus it has the same SAI
         #   ID
         # - delete the temporary NHG
-        def test_invalid_temporary():
+        def invalid_temporary_test():
             # Create a temporary NHG that contains only NHs that do not exist
             nhg_fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.21,10.0.0.23'),
                                                     ('ifname', 'Ethernet40,Ethernet44')])
@@ -474,14 +474,14 @@ class TestNextHopGroupExhaust(TestNextHopGroupBase):
             self.nhg_count += 1
         self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.MAX_ECMP_COUNT)
 
-        test_temporary_group_promotion()
-        test_group_update()
-        test_create_delete_temporary()
-        test_update_temporary_group()
-        test_route_nhg_update()
-        test_labeled_nhg_temporary_promotion()
-        test_back_compatibility()
-        test_invalid_temporary()
+        temporary_group_promotion_test()
+        group_update_test()
+        create_delete_temporary_test()
+        update_temporary_group_test()
+        route_nhg_update_test()
+        labeled_nhg_temporary_promotion_test()
+        back_compatibility_test()
+        invalid_temporary_test()
 
         # Cleanup
 
@@ -865,7 +865,7 @@ class TestNextHopGroup(TestNextHopGroupBase):
         # - remove the weights from the first NHG and change the labels, leaving one NH unlabeled; assert one NH is
         #   deleted
         # - delete the first NHG and perform cleanup
-        def test_mainline_labeled_nhs():
+        def mainline_labeled_nhs_test():
             # Add a group containing labeled weighted NHs
             fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'),
                                             ('mpls_nh', 'push1,push3'),
@@ -954,7 +954,7 @@ class TestNextHopGroup(TestNextHopGroupBase):
         # - update the NHG by changing the first NH's label and assert a new NH is created
         # - remove the route and assert that only one (now unreferenced) NH is removed
         # - remove the NHG and perform cleanup
-        def test_routeorch_nhgorch_interop():
+        def routeorch_nhgorch_interop_test():
             # Create a route with labeled NHs
             fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'),
                                             ('mpls_nh', 'push1,push3'),
@@ -1007,13 +1007,13 @@ class TestNextHopGroup(TestNextHopGroupBase):
 
         self.init_test(dvs, 2)
 
-        test_mainline_labeled_nhs()
-        test_routeorch_nhgorch_interop()
+        mainline_labeled_nhs_test()
+        routeorch_nhgorch_interop_test()
 
     def test_nhgorch_excp_group_cases(self, dvs, testlog):
         # Test scenario:
         # - remove a NHG that does not exist and assert the number of NHGs in ASIC DB remains the same
-        def test_remove_inexistent_nhg():
+        def remove_inexistent_nhg_test():
             # Remove a group that does not exist
             self.nhg_ps._del("group1")
             time.sleep(1)
@@ -1022,7 +1022,7 @@ class TestNextHopGroup(TestNextHopGroupBase):
         # Test scenario:
         # - create a NHG with a member which does not exist and assert no NHG is created
         # - update the NHG to contain all valid members and assert the NHG is created and it has 2 members
-        def test_nhg_members_validation():
+        def nhg_members_validation_test():
             # Create a next hop group with a member that does not exist - should fail
             fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3,10.0.0.63'),
                                             ("ifname", "Ethernet0,Ethernet4,Ethernet124")])
@@ -1048,7 +1048,7 @@ class TestNextHopGroup(TestNextHopGroupBase):
         # - create a new NHG and assert it and its members are being created
         # - update the route to point to the new NHG and assert the first NHG is now deleted as it's not referenced
         #   anymore
-        def test_remove_referenced_nhg():
+        def remove_referenced_nhg_test():
         # Add a route referencing the new group
             fvs = swsscommon.FieldValuePairs([('nexthop_group', 'group1')])
             self.rt_ps.set('2.2.2.0/24', fvs)
@@ -1081,7 +1081,7 @@ class TestNextHopGroup(TestNextHopGroupBase):
         # - update the route created in `test_remove_referenced_nhg` to own the NHG with the same details as the
         #   previous one and assert a new NHG and 2 new NHGMs are added
         # - update the route to point back to the original NHG and assert the routeOrch's owned NHG is deleted
-        def test_routeorch_nhgorch_interop():
+        def routeorch_nhgorch_interop_test():
             rt_id = self.get_route_id('2.2.2.0/24')
             assert rt_id is not None
 
@@ -1113,7 +1113,7 @@ class TestNextHopGroup(TestNextHopGroupBase):
         # Test scenario:
         # - create a new NHG with the same details as the previous NHG and assert a new NHG and 2 new NHGMs are created
         # - update the route to point to the new NHG and assert its SAI NHG ID changes
-        def test_identical_nhgs():
+        def identical_nhgs_test():
             rt_id = self.get_route_id('2.2.2.0/24')
             assert rt_id is not None
 
@@ -1135,7 +1135,7 @@ class TestNextHopGroup(TestNextHopGroupBase):
 
         # Test scenario:
         # - create a route referencing a NHG that does not exist and assert it is not created
-        def test_create_route_inexistent_nhg():
+        def create_route_inexistent_nhg_test():
             # Add a route with a NHG that does not exist
             fvs = swsscommon.FieldValuePairs([('nexthop_group', 'group3')])
             self.rt_ps.set('2.2.3.0/24', fvs)
@@ -1147,12 +1147,12 @@ class TestNextHopGroup(TestNextHopGroupBase):
 
         self.init_test(dvs, 3)
 
-        test_remove_inexistent_nhg()
-        test_nhg_members_validation()
-        test_remove_referenced_nhg()
-        test_routeorch_nhgorch_interop()
-        test_identical_nhgs()
-        test_create_route_inexistent_nhg()
+        remove_inexistent_nhg_test()
+        nhg_members_validation_test()
+        remove_referenced_nhg_test()
+        routeorch_nhgorch_interop_test()
+        identical_nhgs_test()
+        create_route_inexistent_nhg_test()
 
         # Cleanup
 
@@ -1169,7 +1169,7 @@ class TestNextHopGroup(TestNextHopGroupBase):
     def test_nhgorch_nh_group(self, dvs, testlog):
         # Test scenario:
         # - create NHG 'group1' and assert it is being added to ASIC DB along with its members
-        def test_create_nhg():
+        def create_nhg_test():
             # create next hop group in APPL DB
             fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3,10.0.0.5'),
                                             ("ifname", "Ethernet0,Ethernet4,Ethernet8")])
@@ -1186,7 +1186,7 @@ class TestNextHopGroup(TestNextHopGroupBase):
         # Test scenario:
         # - create a route pointing to `group1` and assert it is being added to ASIC DB and pointing to its SAI ID
         # - delete the route and assert it is being removed
-        def test_create_route_nhg():
+        def create_route_nhg_test():
             # create route in APPL DB
             fvs = swsscommon.FieldValuePairs([("nexthop_group", "group1")])
             self.rt_ps.set("2.2.2.0/24", fvs)
@@ -1209,7 +1209,7 @@ class TestNextHopGroup(TestNextHopGroupBase):
         # - bring the links down one by one and assert the group1's members are subsequently removed and the group
         #   still exists
         # - bring the liks up one by one and assert the group1's members are subsequently added back
-        def test_link_flap():
+        def link_flap_test():
             # bring links down one-by-one
             for i in [0, 1, 2]:
                 self.flap_intf(i, 'down')
@@ -1231,7 +1231,7 @@ class TestNextHopGroup(TestNextHopGroupBase):
         #   assert it'll only have a member added in ASIC DB
         # - bring the link back up and assert the missing 2 members of `group1` and `group2` are added
         # - remove `group2` and assert it and its members are removed
-        def test_validate_invalidate_group_member():
+        def validate_invalidate_group_member_test():
             # Bring an interface down
             self.flap_intf(1, 'down')
 
@@ -1275,7 +1275,7 @@ class TestNextHopGroup(TestNextHopGroupBase):
         # - update `group1` to contain the invalid NH and assert it remains only with the unremoved members
         # - configure the invalid NH's interface and assert `group2` gets created and `group1`'s NH is added
         # - delete `group` and assert it is being removed
-        def test_inexistent_group_member():
+        def inexistent_group_member_test():
             # Create group2 with a NH that does not exist
             fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.3,10.0.0.63'),
                                             ("ifname", "Ethernet4,Ethernet124")])
@@ -1315,7 +1315,7 @@ class TestNextHopGroup(TestNextHopGroupBase):
         # - update `group1` to have 4 members and assert they are all added
         # - update `group1` to have only 1 member and assert the other 3 are removed
         # - update `group1` to have 2 members and assert a new one is added
-        def test_update_nhgm_count():
+        def update_nhgm_count_test():
             # Update the NHG, adding two new members
             fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3,10.0.0.5,10.0.0.7'),
                                             ("ifname", "Ethernet0,Ethernet4,Ethernet8,Ethernet12")])
@@ -1337,12 +1337,12 @@ class TestNextHopGroup(TestNextHopGroupBase):
 
         self.init_test(dvs, 4)
 
-        test_create_nhg()
-        test_create_route_nhg()
-        test_link_flap()
-        test_validate_invalidate_group_member()
-        test_inexistent_group_member()
-        test_update_nhgm_count()
+        create_nhg_test()
+        create_route_nhg_test()
+        link_flap_test()
+        validate_invalidate_group_member_test()
+        inexistent_group_member_test()
+        update_nhgm_count_test()
 
         # Cleanup
 
