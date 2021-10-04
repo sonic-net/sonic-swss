@@ -37,6 +37,7 @@
 #include "mlagorch.h"
 #include "muxorch.h"
 #include "macsecorch.h"
+#include "srv6orch.h"
 
 using namespace swss;
 

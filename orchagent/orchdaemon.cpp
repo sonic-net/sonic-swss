@@ -43,6 +43,7 @@ NatOrch *gNatOrch;
 MlagOrch *gMlagOrch;
 IsoGrpOrch *gIsoGrpOrch;
 MACsecOrch *gMacsecOrch;
+Srv6Orch *gSrv6Orch;
 
 bool gIsNatSupported = false;
 
@@ -158,12 +159,19 @@ bool OrchDaemon::init()
     gFgNhgOrch = new FgNhgOrch(m_configDb, m_applDb, m_stateDb, fgnhg_tables, gNeighOrch, gIntfsOrch, vrf_orch);
     gDirectory.set(gFgNhgOrch);
 
+    vector<string> srv6_tables = {
+        APP_SRV6_SID_LIST_TABLE_NAME,
+        APP_SRV6_MY_SID_TABLE_NAME
+    };
+    gSrv6Orch = new Srv6Orch(m_applDb, srv6_tables, gSwitchOrch, vrf_orch, gNeighOrch);
+    gDirectory.set(gSrv6Orch);
+
     const int routeorch_pri = 5;
     vector<table_name_with_pri_t> route_tables = {
         { APP_ROUTE_TABLE_NAME,        routeorch_pri },
         { APP_LABEL_ROUTE_TABLE_NAME,  routeorch_pri }
     };
-    gRouteOrch = new RouteOrch(m_applDb, route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch);
+    gRouteOrch = new RouteOrch(m_applDb, route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch, gSrv6Orch);
 
     CoppOrch  *copp_orch  = new CoppOrch(m_applDb, APP_COPP_TABLE_NAME);
     TunnelDecapOrch *tunnel_decap_orch = new TunnelDecapOrch(m_applDb, APP_TUNNEL_DECAP_TABLE_NAME);
@@ -297,7 +305,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gIntfsOrch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, wm_orch, policer_orch, sflow_orch, debug_counter_orch, gMacsecOrch};
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gIntfsOrch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, wm_orch, policer_orch, sflow_orch, debug_counter_orch, gMacsecOrch, gSrv6Orch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)

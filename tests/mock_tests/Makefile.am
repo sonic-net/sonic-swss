@@ -76,6 +76,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/mlagorch.cpp \
                 $(top_srcdir)/orchagent/isolationgrouporch.cpp \
                 $(top_srcdir)/orchagent/macsecorch.cpp \
+                $(top_srcdir)/orchagent/srv6orch.cpp \
                 $(top_srcdir)/orchagent/lagid.cpp 
 
 tests_SOURCES += $(FLEX_CTR_DIR)/flex_counter_manager.cpp $(FLEX_CTR_DIR)/flex_counter_stat_manager.cpp

@@ -78,6 +78,7 @@ public:
     bool delInbandNeighbor(string alias, IpAddress ip_address);
 
     void resolveNeighbor(const NeighborEntry &);
+    void updateSrv6Nexthop(const NextHopKey &, const sai_object_id_t &);
 
 private:
     PortsOrch *m_portsOrch;

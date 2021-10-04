@@ -7,6 +7,7 @@
 #include "intfsorch.h"
 #include "neighorch.h"
 #include "vxlanorch.h"
+#include "srv6orch.h"
 
 #include "ipaddress.h"
 #include "ipaddresses.h"
@@ -137,7 +138,7 @@ struct LabelRouteBulkContext
 class RouteOrch : public Orch, public Subject
 {
 public:
-    RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch);
+    RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch);
 
     bool hasNextHopGroup(const NextHopGroupKey&) const;
     sai_object_id_t getNextHopGroupId(const NextHopGroupKey&);
@@ -178,6 +179,7 @@ private:
     IntfsOrch *m_intfsOrch;
     VRFOrch *m_vrfOrch;
     FgNhgOrch *m_fgNhgOrch;
+    Srv6Orch *m_srv6Orch;
 
     int m_nextHopGroupCount;
     int m_maxNextHopGroupCount;
