@@ -23,6 +23,10 @@ extern NhgOrch *gNhgOrch;
 
 extern size_t gMaxBulkSize;
 
+/* Default maximum number of next hop groups */
+#define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
+#define DEFAULT_MAX_ECMP_GROUP_SIZE     32
+
 RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch) :
         gRouteBulker(sai_route_api, gMaxBulkSize),
         gLabelRouteBulker(sai_mpls_api, gMaxBulkSize),
@@ -1675,7 +1679,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                 /* Failed to create the next hop group and check if a temporary route is needed */
 
                 /* If the current next hop is part of the next hop group to sync,
-                    * then return false and no need to add another temporary route. */
+                 * then return false and no need to add another temporary route. */
                 if (it_route != m_syncdRoutes.at(vrf_id).end() && it_route->second.nhg_key.getSize() == 1)
                 {
                     const NextHopKey& nexthop = *it_route->second.nhg_key.getNextHops().begin();
@@ -1686,8 +1690,8 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                 }
 
                 /* Add a temporary route when a next hop group cannot be added,
-                    * and there is no temporary route right now or the current temporary
-                    * route is not pointing to a member of the next hop group to sync. */
+                 * and there is no temporary route right now or the current temporary
+                 * route is not pointing to a member of the next hop group to sync. */
                 addTempRoute(ctx, nextHops);
                 /* Return false since the original route is not successfully added */
                 return false;
@@ -1842,8 +1846,6 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
     {
         if (!hasNextHopGroup(nextHops))
         {
-            SWSS_LOG_DEBUG("Next hop group is temporary, represented by %s",
-                            ctx.tmp_next_hop.to_string().c_str());
             // Previous added an temporary route
             auto& tmp_next_hop = ctx.tmp_next_hop;
             addRoutePost(ctx, tmp_next_hop);
@@ -2190,8 +2192,13 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
         /* Delete Fine Grained nhg if the revmoved route pointed to it */
         m_fgNhgOrch->removeFgNhg(vrf_id, ipPrefix);
     }
-    /* Check that the next hop group is not owned by NhgOrch. */
-    else if (it_route->second.nhg_index.empty())
+    /* Check if the next hop group is not owned by NhgOrch. */
+    else if (!it_route->second.nhg_index.empty())
+    {
+        gNhgOrch->decNhgRefCount(it_route->second.nhg_index);
+    }
+    /* The NHG is owned by RouteOrch */
+    else
     {
         auto ol_nextHops = it_route->second.nhg_key;
 
@@ -2223,11 +2230,6 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
                 m_neighOrch->removeMplsNextHop(nexthop);
             }
         }
-    }
-    /* The NHG is owned by NhgOrch */
-    else
-    {
-        gNhgOrch->decNhgRefCount(it_route->second.nhg_index);
     }
 
     SWSS_LOG_INFO("Remove route %s with next hop(s) %s",

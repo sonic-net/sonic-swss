@@ -3,10 +3,6 @@
 #include "orch.h"
 #include "nexthopgroupkey.h"
 
-/* Default maximum number of next hop groups */
-#define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
-#define DEFAULT_MAX_ECMP_GROUP_SIZE     32
-
 class NextHopGroupMember
 {
 public:

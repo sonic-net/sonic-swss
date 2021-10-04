@@ -612,7 +612,6 @@ class TestNextHopGroupExhaust(TestNextHopGroupBase):
         route_count = 0
         self.r = 0
         while route_count < self.MAX_ECMP_COUNT:
-            binary = self.gen_valid_binary()
             route_ipprefix = gen_ipprefix(route_count)
             self.rt_ps._del(route_ipprefix)
             route_count += 1
