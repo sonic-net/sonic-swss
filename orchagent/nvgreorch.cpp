@@ -4,7 +4,9 @@
 #include "request_parser.h"
 #include "swssnet.h"
 
-extern sai_object_id_t gSwitchId;
+//extern Directory<Orch*> gDirectory;
+extern PortsOrch*       gPortsOrch;
+extern sai_object_id_t  gSwitchId;
 extern sai_tunnel_api_t *sai_tunnel_api;
 
 /** @brief Creates tunnel mapper in SAI.
@@ -258,11 +260,46 @@ bool NvgreTunnelOrch::delOperation(const Request& request)
 bool NvgreTunnelMapOrch::addOperation(const Request& request)
 {
     SWSS_LOG_ENTER();
-    SWSS_LOG_WARN("ADD operation is not implemented");
 
-    // createNvgreTunnelMap
-    // NvgreTunnelOrch::getTunnelObj()
-    // set mappers to TunnelObj // update cache
+    /*
+    auto tunnel_name = request.getKeyString(0);
+    NvgreTunnelOrch* tunnel_orch = gDirectory.get<NvgreTunnelOrch*>();
+
+    if (!tunnel_orch->isTunnelExists(tunnel_name))
+    {
+        SWSS_LOG_WARN("NVGRE tunnel '%s' doesn't exist", tunnel_name.c_str());
+        return false;
+    }
+
+    auto tunnel_obj = tunnel_orch->getNvgreTunnel(tunnel_name);
+    const auto full_tunnel_map_entry_name = request.getFullKey();
+
+    if (tunnel_obj->isTunnelMapExists(full_tunnel_map_entry_name))
+    {
+        SWSS_LOG_WARN("NVGRE tunnel map '%s' already exist",
+                      full_tunnel_map_entry_name.c_str());
+        return true;
+    }
+
+    sai_vlan_id_t vlan_id = (sai_vlan_id_t)request.getAttrVlan("vlan");
+    Port tempPort;
+
+    if (!gPortsOrch->getVlanByVlanId(vlan_id, tempPort))
+    {
+        SWSS_LOG_WARN("VLAN ID doesn't exist: %d", vlan_id);
+        return false;
+    }
+
+    // check if it can be assigned by garbage value
+    auto vsid = static_cast<sai_uint32_t>(request.getAttrUint("vsid"));
+    if (vsid >= 1<<24)
+    {
+        SWSS_LOG_WARN("VSID is too big: %d", vsid);
+        return true;
+    }
+
+    // create inside NvgreTunnel class sai methon and usual method to add tunnel_map_entry
+    */
 
     return true;
 }

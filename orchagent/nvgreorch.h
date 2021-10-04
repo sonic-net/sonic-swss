@@ -27,6 +27,13 @@ struct tunnel_sai_ids_t
     sai_object_id_t tunnel_id;
 };
 
+typedef struct nvgre_tunnel_map_entry_s
+{
+   sai_object_id_t map_entry_id;
+   uint32_t        vlan_id;
+   uint32_t        vsid_id;
+} nvgre_tunnel_map_entry_t;
+
 const request_description_t nvgre_tunnel_request_description = {
             { REQ_T_STRING },
             {
@@ -34,6 +41,8 @@ const request_description_t nvgre_tunnel_request_description = {
             },
             { "src_ip" }
 };
+
+typedef std::map<std::string, nvgre_tunnel_map_entry_t> NvgreTunnelMapTable;
 
 class NvgreTunnel
 {
@@ -61,6 +70,16 @@ private:
         { std::vector<sai_object_id_t>(MAP_SIZE, SAI_NULL_OBJECT_ID) },
         SAI_NULL_OBJECT_ID
     };
+
+    bool isTunnelMapExists(const std::string& name) const
+    {
+        return nvgre_tunnel_map_table_.find(name) != std::end(nvgre_tunnel_map_table_);
+    }
+
+    //sai_object_id_t sai_create_tunnel_map_entry(sai_object_id_t tunnel_map_id, sai_uint32_t vsid, sai_uint16_t vlan_id);
+    //void sai_remove_tunnel_map_entry(sai_object_id_t obj_id);
+
+    NvgreTunnelMapTable nvgre_tunnel_map_table_;
 };
 
 typedef std::map<std::string, std::unique_ptr<NvgreTunnel>> NvgreTunnelTable;
@@ -78,14 +97,19 @@ public:
                     Orch2(db, tableName, request_)
     { }
 
+private:
+    virtual bool addOperation(const Request& request);
+    virtual bool delOperation(const Request& request);
+
     bool isTunnelExists(const std::string& tunnelName) const
     {
         return nvgre_tunnel_table_.find(tunnelName) != std::end(nvgre_tunnel_table_);
     }
 
-private:
-    virtual bool addOperation(const Request& request);
-    virtual bool delOperation(const Request& request);
+    NvgreTunnel* getNvgreTunnel(const std::string& tunnelName)
+    {
+        return nvgre_tunnel_table_.at(tunnelName).get();
+    }
 
     NvgreTunnelRequest request_;
     NvgreTunnelTable nvgre_tunnel_table_;
