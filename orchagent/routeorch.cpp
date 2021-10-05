@@ -1148,8 +1148,7 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         if (m_neighOrch->isNextHopFlagSet(it, NHFLAGS_IFDOWN))
         {
             SWSS_LOG_INFO("Interface down for NH %s, skip this NH", it.to_string().c_str());
-            //HACK: NO COMMIT;
-            //continue;
+            continue;
         }
 
         next_hop_ids.push_back(next_hop_id);
@@ -1301,8 +1300,7 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops)
             SWSS_LOG_WARN("NHFLAGS_IFDOWN set for next hop group member %s with next_hop_id %" PRIx64,
                            nhop->first.to_string().c_str(), nhop->second);
             nhop = nhgm.erase(nhop);
-            //continue;
-            //HACK: NO COMMIT;
+            continue;
         }
 
         next_hop_ids.push_back(nhop->second);
