@@ -89,7 +89,8 @@ orchagent_SOURCES = \
             macsecorch.cpp \
             lagid.cpp \
             bfdorch.cpp \
-            srv6orch.cpp
+            srv6orch.cpp \
+            response_publisher.cpp
 
 orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp
 orchagent_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.cpp
