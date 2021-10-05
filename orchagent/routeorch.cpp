@@ -1660,10 +1660,10 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
             if(srv6_nh)
             {
                 sai_object_id_t temp_nh_id;
-                SWSS_LOG_NOTICE("ECMP SRV6 NH: create srv6 nexthops %s", nextHops.to_string(overlay_nh, srv6_nh).c_str());
+                SWSS_LOG_NOTICE("ECMP SRV6 NH: create srv6 nexthops %s", nextHops.to_string().c_str());
                 if(!m_srv6Orch->srv6Nexthops(nextHops, temp_nh_id))
                 {
-                    SWSS_LOG_ERROR("Failed to create SRV6 nexthops for %s", nextHops.to_string(overlay_nh, srv6_nh).c_str());
+                    SWSS_LOG_ERROR("Failed to create SRV6 nexthops for %s", nextHops.to_string().c_str());
                     return false;
                 }
             }
@@ -1687,7 +1687,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                             next_hop_id = m_neighOrch->addTunnelNextHop(nextHop);
                             if (next_hop_id == SAI_NULL_OBJECT_ID)
                             {
-                                SWSS_LOG_ERROR("Failed to create Tunnel Nexthop %s", nextHop.to_string(overlay_nh).c_str());
+                                SWSS_LOG_ERROR("Failed to create Tunnel Nexthop %s", nextHop.to_string(overlay_nh, srv6_nh).c_str());
                                 return false;
                             }
                         }
