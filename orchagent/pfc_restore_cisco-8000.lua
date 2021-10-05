@@ -40,10 +40,10 @@ for i = n, 1, -1 do
         local queue_pause_status = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'SAI_QUEUE_ATTR_PAUSE_STATUS')
 
         if (queue_pause_status == 'false')
-            -- DEBUG CODE START. Uncomment to enable
-            and (debug_storm ~= "enabled")
-            -- DEBUG CODE END.
-            then
+        -- DEBUG CODE START. Uncomment to enable
+        and (debug_storm ~= "enabled")
+        -- DEBUG CODE END.
+        then
             if time_left <= 0 then
                 redis.call('PUBLISH', 'PFC_WD_ACTION', '["' .. KEYS[i] .. '","restore"]')
                 time_left = restoration_time
