@@ -7,6 +7,54 @@ import pytest
 @pytest.mark.usefixtures('dvs_mirror_manager')
 @pytest.mark.usefixtures('dvs_policer_manager')
 class TestMirror(object):
+
+    def check_syslog(self, dvs, marker, log, expected_cnt):
+        (ec, out) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \'%s\' | wc -l" % (marker, log)])
+        assert out.strip() == str(expected_cnt)
+
+    
+    def test_PortMirrorQueue(self, dvs, testlog):
+        """
+        This test covers valid and invalid values of the queue parameter.  All sessions have source & dest port.
+        Operation flow:
+        1. Create mirror session with queue 0, verify session becomes active and error not written to log.
+        2. Create mirror session with queue max valid value, verify session becomes active and error not written to log.
+        3. Create mirror session with queue max valid value + 1, verify session doesnt get created and error written to log.
+        Due to lag in table operations, verify_no_mirror is necessary at the end of each step, to ensure cleanup before next step.
+        """
+
+        session = "TEST_SESSION"
+        dst_port = "Ethernet16"
+        src_ports = "Ethernet12"
+                
+        # Simulate SAI max number of traffic classes
+        dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_QOS_MAX_NUMBER_OF_TRAFFIC_CLASSES', '15')
+        
+        # Sub Test 1
+        marker = dvs.add_log_marker()
+        self.dvs_mirror.create_span_session(session, dst_port, src_ports, direction="BOTH", queue="0")
+        self.dvs_mirror.verify_session_status(session)
+        self.dvs_mirror.remove_mirror_session(session)
+        self.dvs_mirror.verify_no_mirror()
+        self.check_syslog(dvs, marker, "Failed to get valid queue 0", 0)
+
+        # Sub Test 2
+        marker = dvs.add_log_marker()
+        self.dvs_mirror.create_span_session(session, dst_port, src_ports, direction="RX", queue="14")
+        self.dvs_mirror.verify_session_status(session)
+        self.dvs_mirror.remove_mirror_session(session)
+        self.dvs_mirror.verify_no_mirror()
+        self.check_syslog(dvs, marker, "Failed to get valid queue 14", 0)
+
+        # Sub Test 3
+        marker = dvs.add_log_marker()
+        self.dvs_mirror.create_span_session(session, dst_port, src_ports, direction="TX", queue="15")
+        self.dvs_mirror.verify_session_status(session, expected=0)
+        self.dvs_mirror.remove_mirror_session(session)
+        self.dvs_mirror.verify_no_mirror()
+        self.check_syslog(dvs, marker, "Failed to get valid queue 15", 1)
+        
+
     def test_PortMirrorAddRemove(self, dvs, testlog):
         """
         This test covers the basic SPAN mirror session creation and removal operations
@@ -469,7 +517,6 @@ class TestMirror(object):
         self.dvs_lag.remove_port_channel("008")
         self.dvs_lag.get_and_verify_port_channel(0)
         self.dvs_vlan.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG", 0)
-
 
 
 # Add Dummy always-pass test at end as workaroud
