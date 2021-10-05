@@ -9,25 +9,10 @@
 #include "portsorch.h"
 
 typedef enum {
-    VLAN = 0,
-    BRIDGE = 1,
-    MAP_TYPE_MAX = 2
+    MAP_T_VLAN = 0,
+    MAP_T_BRIDGE = 1,
+    MAP_T_MAX = 2
 } map_type_t;
-
-const std::vector<map_type_t> mapTypes = {
-    VLAN,
-    BRIDGE
-};
-
-const std::map<map_type_t, sai_tunnel_map_type_t> nvgreEncapTunnelMap = {
-    { VLAN, SAI_TUNNEL_MAP_TYPE_VLAN_ID_TO_VNI },
-    { BRIDGE, SAI_TUNNEL_MAP_TYPE_BRIDGE_IF_TO_VNI }
-};
-
-const std::map<map_type_t, sai_tunnel_map_type_t> nvgreDecapTunnelMap = {
-    { VLAN, SAI_TUNNEL_MAP_TYPE_VNI_TO_VLAN_ID },
-    { BRIDGE, SAI_TUNNEL_MAP_TYPE_VNI_TO_BRIDGE_IF }
-};
 
 struct tunnel_sai_ids_t
 {
@@ -64,6 +49,19 @@ public:
         return nvgre_tunnel_map_table_.find(name) != std::end(nvgre_tunnel_map_table_);
     }
 
+    sai_object_id_t getDecapMapId(map_type_t type) const
+    {
+        return tunnel_ids_.tunnel_decap_id.at(type);
+    }
+
+    sai_object_id_t getEncapMapId(map_type_t type) const
+    {
+        return tunnel_ids_.tunnel_encap_id.at(type);
+    }
+
+    //FIXME default value the same in 2 places SAI_NULL
+    void addDecapMapperEntry(map_type_t map_type, uint32_t vsid, sai_vlan_id_t vlan_id, std::string tunnel_map_entry_name, sai_object_id_t obj=SAI_NULL_OBJECT_ID);
+
 private:
     void createTunnelMappers();
     void removeTunnelMappers();
@@ -76,6 +74,8 @@ private:
 
     sai_object_id_t sai_create_tunnel(struct tunnel_sai_ids_t* ids, sai_ip_address_t *src_ip);
     void sai_remove_tunnel(sai_object_id_t tunnel_id);
+
+    sai_object_id_t sai_create_tunnel_map_entry(sai_tunnel_map_type_t tunnel_map_type, sai_object_id_t tunnel_map_id, sai_uint32_t vsid, sai_vlan_id_t vlan_id, sai_object_id_t obj_id=SAI_NULL_OBJECT_ID, bool encap=false);
 
     std::string tunnel_name_;
     IpAddress src_ip_;

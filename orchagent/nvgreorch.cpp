@@ -10,6 +10,31 @@ extern PortsOrch*       gPortsOrch;
 extern sai_object_id_t  gSwitchId;
 extern sai_tunnel_api_t *sai_tunnel_api;
 
+static const std::vector<map_type_t> mapTypes = {
+    MAP_T_VLAN,
+    MAP_T_BRIDGE
+};
+
+static const std::map<map_type_t, sai_tunnel_map_type_t> nvgreEncapTunnelMap = {
+    { MAP_T_VLAN, SAI_TUNNEL_MAP_TYPE_VLAN_ID_TO_VNI },
+    { MAP_T_BRIDGE, SAI_TUNNEL_MAP_TYPE_BRIDGE_IF_TO_VNI }
+};
+
+static const std::map<map_type_t, sai_tunnel_map_type_t> nvgreDecapTunnelMap = {
+    { MAP_T_VLAN, SAI_TUNNEL_MAP_TYPE_VNI_TO_VLAN_ID },
+    { MAP_T_BRIDGE, SAI_TUNNEL_MAP_TYPE_VNI_TO_BRIDGE_IF }
+};
+
+static inline sai_tunnel_map_type_t get_encap_tunnel_mapper(map_type_t map)
+{
+    return nvgreEncapTunnelMap.at(map);
+}
+
+static inline sai_tunnel_map_type_t get_decap_tunnel_mapper(map_type_t map)
+{
+    return nvgreDecapTunnelMap.at(map);
+}
+
 /** @brief Creates tunnel mapper in SAI.
  *
  *  @param sai_tunnel_map_type SAI tunnel map type e.g. VSID_TO_VLAN
@@ -86,7 +111,7 @@ sai_object_id_t NvgreTunnel::sai_create_tunnel(struct tunnel_sai_ids_t* ids, sai
     tunnel_attrs.push_back(attr);
 
     // think about it
-    sai_object_id_t decap_map_list[MAP_TYPE_MAX+1];
+    sai_object_id_t decap_map_list[MAP_T_MAX+1];
     uint8_t num_decap_map = 0;
 
     for (auto _map : mapTypes)
@@ -100,7 +125,7 @@ sai_object_id_t NvgreTunnel::sai_create_tunnel(struct tunnel_sai_ids_t* ids, sai
     attr.value.objlist.list = decap_map_list;
     tunnel_attrs.push_back(attr);
 
-    sai_object_id_t encap_map_list[MAP_TYPE_MAX+1];
+    sai_object_id_t encap_map_list[MAP_T_MAX+1];
     uint8_t num_encap_map = 0;
 
     for (auto _map : mapTypes)
@@ -155,7 +180,7 @@ void NvgreTunnel::createTunnelMappers()
         tunnel_ids_.tunnel_encap_id.insert(
             make_pair(
                 _map,
-                sai_create_tunnel_map(nvgreEncapTunnelMap.at(_map))
+                sai_create_tunnel_map(get_encap_tunnel_mapper(_map))
             )
         );
     }
@@ -165,7 +190,7 @@ void NvgreTunnel::createTunnelMappers()
         tunnel_ids_.tunnel_decap_id.insert(
             make_pair(
                 _map,
-                sai_create_tunnel_map(nvgreEncapTunnelMap.at(_map))
+                sai_create_tunnel_map(get_decap_tunnel_mapper(_map))
             )
         );
     }
@@ -267,14 +292,77 @@ bool NvgreTunnelOrch::delOperation(const Request& request)
     return true;
 }
 
-/*
-sai_object_id_t NvgreTunnel::addDecapMapperEntry(sai_object_id_t obj, uint32_t vni, tunnel_map_type_t type)
+sai_object_id_t NvgreTunnel::sai_create_tunnel_map_entry(
+    sai_tunnel_map_type_t tunnel_map_type,
+    sai_object_id_t tunnel_map_id,
+    sai_uint32_t vsid,
+    sai_vlan_id_t vlan_id,
+    sai_object_id_t obj_id,
+    bool encap
+    )
 {
-    const auto decap_id = getDecapMapId(type);
-    const auto map_t = tunnel_map_type(type,false);
-    return create_tunnel_map_entry(map_t, decap_id, vni, 0, obj);
+    sai_attribute_t attr;
+    sai_object_id_t tunnel_map_entry_id;
+    std::vector<sai_attribute_t> tunnel_map_entry_attrs;
+
+    attr.id = SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP_TYPE;
+    attr.value.u32 = tunnel_map_type;
+    tunnel_map_entry_attrs.push_back(attr);
+
+    attr.id = SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP;
+    attr.value.oid = tunnel_map_id;
+    tunnel_map_entry_attrs.push_back(attr);
+
+    //FIXME
+    attr.id = (encap)? SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_KEY : SAI_TUNNEL_MAP_ENTRY_ATTR_VLAN_ID_VALUE ;
+    if (obj_id != SAI_NULL_OBJECT_ID)
+    {
+        attr.value.oid = obj_id;
+    }
+    else
+    {
+        attr.value.u16 = vlan_id;
+    }
+
+    tunnel_map_entry_attrs.push_back(attr);
+
+    //FIXME
+    attr.id = (encap)? SAI_TUNNEL_MAP_ENTRY_ATTR_VLAN_ID_KEY : SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_VALUE ;
+    attr.value.u32 = vsid;
+    tunnel_map_entry_attrs.push_back(attr);
+
+    sai_status_t status = sai_tunnel_api->create_tunnel_map_entry(&tunnel_map_entry_id, gSwitchId,
+                                            static_cast<uint32_t> (tunnel_map_entry_attrs.size()),
+                                            tunnel_map_entry_attrs.data());
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        throw std::runtime_error("Can't create a tunnel map entry object");
+    }
+
+    return tunnel_map_entry_id;
 }
-*/
+
+
+void NvgreTunnel::addDecapMapperEntry(
+    map_type_t map_type,
+    uint32_t vsid,
+    sai_vlan_id_t vlan_id,
+    std::string tunnel_map_entry_name,
+    sai_object_id_t obj
+    )
+{
+    // TODO: think about names
+    const auto decap_id = getDecapMapId(map_type);
+    const auto tunnel_map = get_decap_tunnel_mapper(map_type);
+
+    auto tunnel_map_entry_id = sai_create_tunnel_map_entry(tunnel_map, decap_id, vsid, vlan_id, obj);
+
+    nvgre_tunnel_map_table_[tunnel_map_entry_name].map_entry_id = tunnel_map_entry_id;
+    nvgre_tunnel_map_table_[tunnel_map_entry_name].vlan_id = vlan_id;
+    nvgre_tunnel_map_table_[tunnel_map_entry_name].vsid = vsid;
+}
+
 
 bool NvgreTunnelMapOrch::addOperation(const Request& request)
 {
@@ -317,14 +405,7 @@ bool NvgreTunnelMapOrch::addOperation(const Request& request)
     }
 
     // create inside NvgreTunnel class sai methon and usual method to add tunnel_map_entry
-
-    /*
-    tunnel_obj->addDecapMapperEntry(
-        VNI_TO_VLAN_ID,
-        vsid,
-        vlan_id
-    )
-    */
+    tunnel_obj->addDecapMapperEntry(MAP_T_VLAN, vsid, vlan_id, full_tunnel_map_entry_name);
 
     return true;
 }
