@@ -33,6 +33,7 @@ NeighOrch *gNeighOrch;
 RouteOrch *gRouteOrch;
 FgNhgOrch *gFgNhgOrch;
 AclOrch *gAclOrch;
+PbhOrch *gPbhOrch;
 MirrorOrch *gMirrorOrch;
 CrmOrch *gCrmOrch;
 BufferOrch *gBufferOrch;
@@ -343,9 +344,28 @@ bool OrchDaemon::init()
 
     gIsoGrpOrch = new IsoGrpOrch(iso_grp_tbl_ctrs);
 
+    //
+    // Policy Based Hashing (PBH) orchestrator
+    //
+
+    TableConnector cfgDbPbhTable(m_configDb, CFG_PBH_TABLE_TABLE_NAME);
+    TableConnector cfgDbPbhRuleTable(m_configDb, CFG_PBH_RULE_TABLE_NAME);
+    TableConnector cfgDbPbhHashTable(m_configDb, CFG_PBH_HASH_TABLE_NAME);
+    TableConnector cfgDbPbhHashFieldTable(m_configDb, CFG_PBH_HASH_FIELD_TABLE_NAME);
+
+    vector<TableConnector> pbhTableConnectorList = {
+        cfgDbPbhTable,
+        cfgDbPbhRuleTable,
+        cfgDbPbhHashTable,
+        cfgDbPbhHashFieldTable
+    };
+
+    gPbhOrch = new PbhOrch(pbhTableConnectorList, gAclOrch, gPortsOrch);
+
     m_orchList.push_back(gFdbOrch);
     m_orchList.push_back(gMirrorOrch);
     m_orchList.push_back(gAclOrch);
+    m_orchList.push_back(gPbhOrch);
     m_orchList.push_back(chassis_frontend_orch);
     m_orchList.push_back(vrf_orch);
     m_orchList.push_back(vxlan_tunnel_orch);

@@ -35,9 +35,9 @@ Stores information for physical switch ports managed by the switch chip. Ports t
     Example:
     127.0.0.1:6379> hgetall PORT_TABLE:ETHERNET4
     1) "dscp_to_tc_map"
-    2) "[DSCP_TO_TC_MAP_TABLE:AZURE]"
+    2) "AZURE"
     3) "tc_to_queue_map"
-    4) "[TC_TO_QUEUE_MAP_TABLE:AZURE]"
+    4) "AZURE"
 
 ---------------------------------------------
 ### INTF_TABLE
@@ -209,9 +209,9 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     Example:
     127.0.0.1:6379> hgetall QUEUE_TABLE:ETHERNET4:1
     1) "scheduler"
-    2) "[SCHEDULER_TABLE:BEST_EFFORT]"
+    2) "BEST_EFFORT"
     3) "wred_profile"
-    4) "[WRED_PROFILE_TABLE:AZURE]"
+    4) "AZURE"
 
 ---------------------------------------------
 ### TC\_TO\_QUEUE\_MAP\_TABLE

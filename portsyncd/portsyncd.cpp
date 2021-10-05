@@ -43,7 +43,7 @@ void usage()
 }
 
 void handlePortConfigFile(ProducerStateTable &p, string file, bool warm);
-bool handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, bool warm);
+void handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, bool warm);
 void handleVlanIntfFile(string file);
 void handlePortConfig(ProducerStateTable &p, map<string, KeyOpFieldsValuesTuple> &port_cfg_map);
 void checkPortInitDone(DBConnector *appl_db);
@@ -86,11 +86,7 @@ int main(int argc, char **argv)
         netlink.dumpRequest(RTM_GETLINK);
         cout << "Listen to link messages..." << endl;
 
-        if (!handlePortConfigFromConfigDB(p, cfgDb, warm))
-        {
-            SWSS_LOG_NOTICE("ConfigDB does not have port information, "
-                            "however ports can be added later on, continuing...");
-        }
+        handlePortConfigFromConfigDB(p, cfgDb, warm);
 
         LinkSync sync(&appl_db, &state_db);
         NetDispatcher::getInstance().registerMessageHandler(RTM_NEWLINK, &sync);
@@ -191,7 +187,7 @@ static void notifyPortConfigDone(ProducerStateTable &p)
     p.set("PortConfigDone", attrs);
 }
 
-bool handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, bool warm)
+void handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, bool warm)
 {
     SWSS_LOG_ENTER();
 
@@ -204,8 +200,8 @@ bool handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, boo
 
     if (keys.empty())
     {
-        cout << "No port configuration in ConfigDB" << endl;
-        return false;
+        SWSS_LOG_NOTICE("ConfigDB does not have port information, "
+                        "however ports can be added later on, continuing...");
     }
 
     for ( auto &k : keys )
@@ -228,7 +224,6 @@ bool handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, boo
         notifyPortConfigDone(p);
     }
 
-    return true;
 }
 
 void handlePortConfig(ProducerStateTable &p, map<string, KeyOpFieldsValuesTuple> &port_cfg_map)

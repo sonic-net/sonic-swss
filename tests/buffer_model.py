@@ -69,7 +69,7 @@ def disable_dynamic_buffer(config_db, cmd_runner):
         pgs = config_db.get_keys('BUFFER_PG')
         for key in pgs:
             pg = config_db.get_entry('BUFFER_PG', key)
-            if pg['profile'] != '[BUFFER_PROFILE|ingress_lossy_profile]':
+            if pg['profile'] != 'ingress_lossy_profile':
                 config_db.delete_entry('BUFFER_PG', key)
 
         # Remove all the non-default profiles

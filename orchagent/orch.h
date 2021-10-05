@@ -224,10 +224,10 @@ protected:
 
     static void logfileReopen();
     std::string dumpTuple(Consumer &consumer, const swss::KeyOpFieldsValuesTuple &tuple);
-    ref_resolve_status resolveFieldRefValue(type_map&, const std::string&, swss::KeyOpFieldsValuesTuple&, sai_object_id_t&, std::string&);
+    ref_resolve_status resolveFieldRefValue(type_map&, const std::string&, const std::string&, swss::KeyOpFieldsValuesTuple&, sai_object_id_t&, std::string&);
     bool parseIndexRange(const std::string &input, sai_uint32_t &range_low, sai_uint32_t &range_high);
-    bool parseReference(type_map &type_maps, std::string &ref, std::string &table_name, std::string &object_name);
-    ref_resolve_status resolveFieldRefArray(type_map&, const std::string&, swss::KeyOpFieldsValuesTuple&, std::vector<sai_object_id_t>&, std::string&);
+    bool parseReference(type_map &type_maps, std::string &ref, const std::string &table_name, std::string &object_name);
+    ref_resolve_status resolveFieldRefArray(type_map&, const std::string&, const std::string&, swss::KeyOpFieldsValuesTuple&, std::vector<sai_object_id_t>&, std::string&);
     void setObjectReference(type_map&, const std::string&, const std::string&, const std::string&, const std::string&);
     void removeObject(type_map&, const std::string&, const std::string&);
     bool isObjectBeingReferenced(type_map&, const std::string&, const std::string&);
