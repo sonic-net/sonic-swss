@@ -50,7 +50,9 @@
 #endif /* INET_ADDRSTRLEN */
 
 #define MAX_L_PORT_NAME 20
+
 #define BRCM_PLATFORM_SUBSTRING "broadcom"
+#define BFN_PLATFORM_SUBSTRING  "barefoot"
 
 using namespace std;
 
