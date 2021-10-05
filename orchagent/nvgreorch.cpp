@@ -3,8 +3,9 @@
 #include "nvgreorch.h"
 #include "request_parser.h"
 #include "swssnet.h"
+#include "directory.h"
 
-//extern Directory<Orch*> gDirectory;
+extern Directory<Orch*> gDirectory;
 extern PortsOrch*       gPortsOrch;
 extern sai_object_id_t  gSwitchId;
 extern sai_tunnel_api_t *sai_tunnel_api;
@@ -84,16 +85,14 @@ sai_object_id_t NvgreTunnel::sai_create_tunnel(struct tunnel_sai_ids_t* ids, sai
     attr.value.s32 = SAI_TUNNEL_TYPE_VXLAN;
     tunnel_attrs.push_back(attr);
 
-    sai_object_id_t decap_map_list[MAP_SIZE+1];
+    // think about it
+    sai_object_id_t decap_map_list[MAP_TYPE_MAX+1];
     uint8_t num_decap_map = 0;
 
-    for (auto map_id : ids->tunnel_decap_id)
+    for (auto _map : mapTypes)
     {
-        if (map_id != SAI_NULL_OBJECT_ID)
-        {
-            decap_map_list[num_decap_map] = map_id;
-            num_decap_map++;
-        }
+        decap_map_list[num_decap_map] = ids->tunnel_decap_id.at(_map);
+        num_decap_map++;
     }
 
     attr.id = SAI_TUNNEL_ATTR_DECAP_MAPPERS;
@@ -101,16 +100,13 @@ sai_object_id_t NvgreTunnel::sai_create_tunnel(struct tunnel_sai_ids_t* ids, sai
     attr.value.objlist.list = decap_map_list;
     tunnel_attrs.push_back(attr);
 
-    sai_object_id_t encap_map_list[MAP_SIZE+1];
+    sai_object_id_t encap_map_list[MAP_TYPE_MAX+1];
     uint8_t num_encap_map = 0;
 
-    for (auto map_id : ids->tunnel_encap_id)
+    for (auto _map : mapTypes)
     {
-        if (map_id != SAI_NULL_OBJECT_ID)
-        {
-            encap_map_list[num_decap_map] = map_id;
-            num_encap_map++;
-        }
+        encap_map_list[num_encap_map] = ids->tunnel_encap_id.at(_map);
+        num_encap_map++;
     }
 
     attr.id = SAI_TUNNEL_ATTR_ENCAP_MAPPERS;
@@ -154,20 +150,34 @@ void NvgreTunnel::sai_remove_tunnel(sai_object_id_t tunnel_id)
 
 void NvgreTunnel::createTunnelMappers()
 {
-    for (auto map_value : nvgreEncapTunnelMap)
-        tunnel_ids_.tunnel_encap_id.push_back(sai_create_tunnel_map(map_value));
+    for (auto _map : mapTypes)
+    {
+        tunnel_ids_.tunnel_encap_id.insert(
+            make_pair(
+                _map,
+                sai_create_tunnel_map(nvgreEncapTunnelMap.at(_map))
+            )
+        );
+    }
 
-    for (auto map_value : nvgreDecapTunnelMap)
-        tunnel_ids_.tunnel_decap_id.push_back(sai_create_tunnel_map(map_value));
+    for (auto _map : mapTypes)
+    {
+        tunnel_ids_.tunnel_decap_id.insert(
+            make_pair(
+                _map,
+                sai_create_tunnel_map(nvgreEncapTunnelMap.at(_map))
+            )
+        );
+    }
 }
 
 void NvgreTunnel::removeTunnelMappers()
 {
-    for (auto map_id : tunnel_ids_.tunnel_encap_id)
-        sai_remove_tunnel_map(map_id);
+    for (auto _map : mapTypes)
+        sai_remove_tunnel_map(tunnel_ids_.tunnel_encap_id.at(_map));
 
-    for (auto map_id : tunnel_ids_.tunnel_decap_id)
-        sai_remove_tunnel_map(map_id);
+    for (auto _map : mapTypes)
+        sai_remove_tunnel_map(tunnel_ids_.tunnel_decap_id.at(_map));
 }
 
 void NvgreTunnel::createTunnel()
@@ -213,8 +223,8 @@ NvgreTunnel::~NvgreTunnel()
     removeTunnel();
     removeTunnelMappers();
 
-    fill(tunnel_ids_.tunnel_decap_id.begin(), tunnel_ids_.tunnel_decap_id.end(), SAI_NULL_OBJECT_ID);
-    fill(tunnel_ids_.tunnel_encap_id.begin(), tunnel_ids_.tunnel_encap_id.end(), SAI_NULL_OBJECT_ID);
+    tunnel_ids_.tunnel_encap_id.clear();
+    tunnel_ids_.tunnel_decap_id.clear();
     tunnel_ids_.tunnel_id = SAI_NULL_OBJECT_ID;
 }
 
@@ -257,11 +267,19 @@ bool NvgreTunnelOrch::delOperation(const Request& request)
     return true;
 }
 
+/*
+sai_object_id_t NvgreTunnel::addDecapMapperEntry(sai_object_id_t obj, uint32_t vni, tunnel_map_type_t type)
+{
+    const auto decap_id = getDecapMapId(type);
+    const auto map_t = tunnel_map_type(type,false);
+    return create_tunnel_map_entry(map_t, decap_id, vni, 0, obj);
+}
+*/
+
 bool NvgreTunnelMapOrch::addOperation(const Request& request)
 {
     SWSS_LOG_ENTER();
 
-    /*
     auto tunnel_name = request.getKeyString(0);
     NvgreTunnelOrch* tunnel_orch = gDirectory.get<NvgreTunnelOrch*>();
 
@@ -299,6 +317,13 @@ bool NvgreTunnelMapOrch::addOperation(const Request& request)
     }
 
     // create inside NvgreTunnel class sai methon and usual method to add tunnel_map_entry
+
+    /*
+    tunnel_obj->addDecapMapperEntry(
+        VNI_TO_VLAN_ID,
+        vsid,
+        vlan_id
+    )
     */
 
     return true;

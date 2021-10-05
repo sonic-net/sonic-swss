@@ -8,22 +8,31 @@
 // without include portorch compile error ???
 #include "portsorch.h"
 
-const int MAP_SIZE = 2;
+typedef enum {
+    VLAN = 0,
+    BRIDGE = 1,
+    MAP_TYPE_MAX = 2
+} map_type_t;
 
-const std::vector<sai_tunnel_map_type_t> nvgreEncapTunnelMap = {
-    SAI_TUNNEL_MAP_TYPE_VLAN_ID_TO_VNI,
-    SAI_TUNNEL_MAP_TYPE_BRIDGE_IF_TO_VNI
+const std::vector<map_type_t> mapTypes = {
+    VLAN,
+    BRIDGE
 };
 
-const std::vector<sai_tunnel_map_type_t> nvgreDecapTunnelMap = {
-    SAI_TUNNEL_MAP_TYPE_VNI_TO_VLAN_ID,
-    SAI_TUNNEL_MAP_TYPE_VNI_TO_BRIDGE_IF
+const std::map<map_type_t, sai_tunnel_map_type_t> nvgreEncapTunnelMap = {
+    { VLAN, SAI_TUNNEL_MAP_TYPE_VLAN_ID_TO_VNI },
+    { BRIDGE, SAI_TUNNEL_MAP_TYPE_BRIDGE_IF_TO_VNI }
+};
+
+const std::map<map_type_t, sai_tunnel_map_type_t> nvgreDecapTunnelMap = {
+    { VLAN, SAI_TUNNEL_MAP_TYPE_VNI_TO_VLAN_ID },
+    { BRIDGE, SAI_TUNNEL_MAP_TYPE_VNI_TO_BRIDGE_IF }
 };
 
 struct tunnel_sai_ids_t
 {
-    std::vector<sai_object_id_t> tunnel_encap_id;
-    std::vector<sai_object_id_t> tunnel_decap_id;
+    std::map<map_type_t, sai_object_id_t> tunnel_encap_id;
+    std::map<map_type_t, sai_object_id_t> tunnel_decap_id;
     sai_object_id_t tunnel_id;
 };
 
@@ -31,7 +40,7 @@ typedef struct nvgre_tunnel_map_entry_s
 {
    sai_object_id_t map_entry_id;
    uint32_t        vlan_id;
-   uint32_t        vsid_id;
+   uint32_t        vsid;
 } nvgre_tunnel_map_entry_t;
 
 const request_description_t nvgre_tunnel_request_description = {
@@ -50,6 +59,11 @@ public:
     NvgreTunnel(std::string tunnelName, IpAddress srcIp);
     ~NvgreTunnel();
 
+    bool isTunnelMapExists(const std::string& name) const
+    {
+        return nvgre_tunnel_map_table_.find(name) != std::end(nvgre_tunnel_map_table_);
+    }
+
 private:
     void createTunnelMappers();
     void removeTunnelMappers();
@@ -65,19 +79,7 @@ private:
 
     std::string tunnel_name_;
     IpAddress src_ip_;
-    tunnel_sai_ids_t tunnel_ids_ = {
-        { std::vector<sai_object_id_t>(MAP_SIZE, SAI_NULL_OBJECT_ID) },
-        { std::vector<sai_object_id_t>(MAP_SIZE, SAI_NULL_OBJECT_ID) },
-        SAI_NULL_OBJECT_ID
-    };
-
-    bool isTunnelMapExists(const std::string& name) const
-    {
-        return nvgre_tunnel_map_table_.find(name) != std::end(nvgre_tunnel_map_table_);
-    }
-
-    //sai_object_id_t sai_create_tunnel_map_entry(sai_object_id_t tunnel_map_id, sai_uint32_t vsid, sai_uint16_t vlan_id);
-    //void sai_remove_tunnel_map_entry(sai_object_id_t obj_id);
+    tunnel_sai_ids_t tunnel_ids_;
 
     NvgreTunnelMapTable nvgre_tunnel_map_table_;
 };
@@ -97,10 +99,6 @@ public:
                     Orch2(db, tableName, request_)
     { }
 
-private:
-    virtual bool addOperation(const Request& request);
-    virtual bool delOperation(const Request& request);
-
     bool isTunnelExists(const std::string& tunnelName) const
     {
         return nvgre_tunnel_table_.find(tunnelName) != std::end(nvgre_tunnel_table_);
@@ -110,6 +108,10 @@ private:
     {
         return nvgre_tunnel_table_.at(tunnelName).get();
     }
+
+private:
+    virtual bool addOperation(const Request& request);
+    virtual bool delOperation(const Request& request);
 
     NvgreTunnelRequest request_;
     NvgreTunnelTable nvgre_tunnel_table_;
