@@ -95,14 +95,14 @@ jobs:
       runBranch: 'refs/heads/master'
     displayName: "Download sonic buildimage deb packages"
   - script: |
-      sudo dpkg -i libnl-3-200_3.5.0-1_${{ parameters.arch }}.deb
-      sudo dpkg -i libnl-3-dev_3.5.0-1_${{ parameters.arch }}.deb
-      sudo dpkg -i libnl-genl-3-200_3.5.0-1_${{ parameters.arch }}.deb
-      sudo dpkg -i libnl-genl-3-dev_3.5.0-1_${{ parameters.arch }}.deb
-      sudo dpkg -i libnl-route-3-200_3.5.0-1_${{ parameters.arch }}.deb
-      sudo dpkg -i libnl-route-3-dev_3.5.0-1_${{ parameters.arch }}.deb
-      sudo dpkg -i libnl-nf-3-200_3.5.0-1_${{ parameters.arch }}.deb
-      sudo dpkg -i libnl-nf-3-dev_3.5.0-1_${{ parameters.arch }}.deb
+      sudo dpkg -i libnl-3-200_*_${{ parameters.arch }}.deb
+      sudo dpkg -i libnl-3-dev_*_${{ parameters.arch }}.deb
+      sudo dpkg -i libnl-genl-3-200_*_${{ parameters.arch }}.deb
+      sudo dpkg -i libnl-genl-3-dev_*_${{ parameters.arch }}.deb
+      sudo dpkg -i libnl-route-3-200_*_${{ parameters.arch }}.deb
+      sudo dpkg -i libnl-route-3-dev_*_${{ parameters.arch }}.deb
+      sudo dpkg -i libnl-nf-3-200_*_${{ parameters.arch }}.deb
+      sudo dpkg -i libnl-nf-3-dev_*_${{ parameters.arch }}.deb
       sudo dpkg -i libswsscommon_1.0.0_${{ parameters.arch }}.deb
       sudo dpkg -i libswsscommon-dev_1.0.0_${{ parameters.arch }}.deb
       sudo dpkg -i libsaivs_*.deb
