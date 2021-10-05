@@ -20,7 +20,7 @@ extern RouteOrch *gRouteOrch;
 
 void Srv6Orch::srv6TunnelUpdateNexthops(const string srv6_source, const NextHopKey nhkey, bool insert)
 {
-    if(insert)
+    if (insert)
     {
         srv6_tunnel_table_[srv6_source].nexthops.insert(nhkey);
     }
@@ -43,7 +43,7 @@ bool Srv6Orch::createSrv6Tunnel(const string srv6_source)
     sai_status_t status;
     sai_object_id_t tunnel_id;
 
-    if(srv6_tunnel_table_.find(srv6_source) != srv6_tunnel_table_.end())
+    if (srv6_tunnel_table_.find(srv6_source) != srv6_tunnel_table_.end())
     {
         SWSS_LOG_INFO("Tunnel exists for the source %s", srv6_source.c_str());
         return true;
@@ -66,7 +66,7 @@ bool Srv6Orch::createSrv6Tunnel(const string srv6_source)
     tunnel_attrs.push_back(attr);
 
     status = sai_tunnel_api->create_tunnel(&tunnel_id, gSwitchId, (uint32_t)tunnel_attrs.size(), tunnel_attrs.data());
-    if(status != SAI_STATUS_SUCCESS)
+    if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create tunnel for %s", srv6_source.c_str());
         return false;
@@ -78,7 +78,7 @@ bool Srv6Orch::createSrv6Tunnel(const string srv6_source)
 bool Srv6Orch::srv6NexthopExists(const NextHopKey &nhKey)
 {
     SWSS_LOG_ENTER();
-    if(srv6_nexthop_table_.find(nhKey) != srv6_nexthop_table_.end())
+    if (srv6_nexthop_table_.find(nhKey) != srv6_nexthop_table_.end())
     {
         return true;
     }
@@ -91,6 +91,7 @@ bool Srv6Orch::srv6NexthopExists(const NextHopKey &nhKey)
 bool Srv6Orch::removeSrv6Nexthops(const NextHopGroupKey &nhg)
 {
     SWSS_LOG_ENTER();
+
     for (auto &sr_nh : nhg.getNextHops())
     {
         string srv6_source, segname;
@@ -99,10 +100,10 @@ bool Srv6Orch::removeSrv6Nexthops(const NextHopGroupKey &nhg)
         segname = sr_nh.srv6_segment;
 
         SWSS_LOG_NOTICE("SRV6 Nexthop %s refcount %d", sr_nh.to_string(false,true).c_str(), m_neighOrch->getNextHopRefCount(sr_nh));
-        if(m_neighOrch->getNextHopRefCount(sr_nh) == 0)
+        if (m_neighOrch->getNextHopRefCount(sr_nh) == 0)
         {
             status = sai_next_hop_api->remove_next_hop(srv6_nexthop_table_[sr_nh]);
-            if(status != SAI_STATUS_SUCCESS)
+            if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to remove SRV6 nexthop %s", sr_nh.to_string(false,true).c_str());
                 return false;
@@ -124,10 +125,10 @@ bool Srv6Orch::removeSrv6Nexthops(const NextHopGroupKey &nhg)
         }
 
         size_t tunnel_nhs = srv6TunnelNexthopSize(srv6_source);
-        if(tunnel_nhs == 0)
+        if (tunnel_nhs == 0)
         {
             status = sai_tunnel_api->remove_tunnel(srv6_tunnel_table_[srv6_source].tunnel_object_id);
-            if(status != SAI_STATUS_SUCCESS)
+            if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to remove SRV6 tunnel object for source %s", srv6_source.c_str());
                 return false;
@@ -148,7 +149,7 @@ bool Srv6Orch::createSrv6Nexthop(const NextHopKey &nh)
     string srv6_segment = nh.srv6_segment;
     string srv6_source = nh.srv6_source;
 
-    if(srv6NexthopExists(nh))
+    if (srv6NexthopExists(nh))
     {
         SWSS_LOG_INFO("SRV6 nexthop already created for %s", nh.to_string(false,true).c_str());
         return true;
@@ -156,13 +157,13 @@ bool Srv6Orch::createSrv6Nexthop(const NextHopKey &nh)
     sai_object_id_t srv6_object_id = sid_table_[srv6_segment].sid_object_id;
     sai_object_id_t srv6_tunnel_id = srv6_tunnel_table_[srv6_source].tunnel_object_id;
 
-    if(srv6_object_id == SAI_NULL_OBJECT_ID)
+    if (srv6_object_id == SAI_NULL_OBJECT_ID)
     {
         SWSS_LOG_ERROR("segment object doesn't exist for segment %s", srv6_segment.c_str());
         return false;
     }
 
-    if(srv6_tunnel_id == SAI_NULL_OBJECT_ID)
+    if (srv6_tunnel_id == SAI_NULL_OBJECT_ID)
     {
         SWSS_LOG_ERROR("tunnel object doesn't exist for source %s", srv6_source.c_str());
         return false;
@@ -188,7 +189,7 @@ bool Srv6Orch::createSrv6Nexthop(const NextHopKey &nh)
     status = sai_next_hop_api->create_next_hop(&nexthop_id, gSwitchId,
                                                 (uint32_t)nh_attrs.size(),
                                                 nh_attrs.data());
-    if(status != SAI_STATUS_SUCCESS)
+    if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("FAiled to create srv6 nexthop for %s", nh.to_string(false,true).c_str());
         return false;
@@ -207,21 +208,21 @@ bool Srv6Orch::srv6Nexthops(const NextHopGroupKey &nhgKey, sai_object_id_t &next
     string srv6_source;
     string srv6_segment;
 
-    for(auto nh : nexthops)
+    for (auto nh : nexthops)
     {
         srv6_source = nh.srv6_source;
-        if(!createSrv6Tunnel(srv6_source))
+        if (!createSrv6Tunnel(srv6_source))
         {
             SWSS_LOG_ERROR("Failed to create tunnel for source %s", srv6_source.c_str());
         }
-        if(!createSrv6Nexthop(nh))
+        if (!createSrv6Nexthop(nh))
         {
             SWSS_LOG_ERROR("Failed to create SRV6 nexthop %s", nh.to_string(false,true).c_str());
             return false;
         }
     }
 
-    if(nhgKey.getSize() == 1)
+    if (nhgKey.getSize() == 1)
     {
         NextHopKey nhkey(nhgKey.to_string(), false, true);
         nexthop_id = srv6_nexthop_table_[nhkey];
@@ -237,7 +238,7 @@ bool Srv6Orch::createUpdateSidList(const string sid_name, const string sid_list)
     vector<string>sid_ips = tokenize(sid_list, SID_LIST_DELIMITER);
     sai_object_id_t segment_oid;
     segment_list.count = (uint32_t)sid_ips.size();
-    if(segment_list.count == 0)
+    if (segment_list.count == 0)
     {
         SWSS_LOG_ERROR("segment list count is zero, skip");
         return true;
@@ -245,7 +246,8 @@ bool Srv6Orch::createUpdateSidList(const string sid_name, const string sid_list)
     SWSS_LOG_INFO("Segment count %d", segment_list.count);
     segment_list.list = new sai_ip6_t[segment_list.count];
     uint32_t index = 0;
-    for(string ip_str : sid_ips)
+
+    for (string ip_str : sid_ips)
     {
         IpPrefix ip(ip_str);
         SWSS_LOG_INFO("Segment %s, count %d", ip.to_string().c_str(), segment_list.count);
@@ -253,7 +255,7 @@ bool Srv6Orch::createUpdateSidList(const string sid_name, const string sid_list)
     }
     sai_attribute_t attr;
     sai_status_t status;
-    if(!exists)
+    if (!exists)
     {
         // create sidlist object
         SWSS_LOG_INFO("Create SID list");
@@ -267,7 +269,7 @@ bool Srv6Orch::createUpdateSidList(const string sid_name, const string sid_list)
         attr.value.s32 = SAI_SRV6_SIDLIST_TYPE_ENCAPS_RED;
         attributes.push_back(attr);
         status = sai_srv6_api->create_srv6_sidlist(&segment_oid, gSwitchId, (uint32_t) attributes.size(), attributes.data());
-        if(status != SAI_STATUS_SUCCESS)
+        if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create srv6 sidlist object, rv %d", status);
             return false;
@@ -283,7 +285,7 @@ bool Srv6Orch::createUpdateSidList(const string sid_name, const string sid_list)
         attr.value.segmentlist.count = segment_list.count;
         segment_oid = (sid_table_.find(sid_name)->second).sid_object_id;
         status = sai_srv6_api->set_srv6_sidlist_attribute(segment_oid, &attr);
-        if(status != SAI_STATUS_SUCCESS)
+        if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to set srv6 sidlist object with new segments, rv %d", status);
             return false;
@@ -311,7 +313,7 @@ bool Srv6Orch::deleteSidList(const string sid_name)
     }
     SWSS_LOG_INFO("Remove sid list, segname %s", sid_name.c_str());
     status = sai_srv6_api->remove_srv6_sidlist(sid_table_[sid_name].sid_object_id);
-    if(status != SAI_STATUS_SUCCESS)
+    if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to delete SRV6 sidlist object for %s", sid_name.c_str());
         return false;
@@ -327,23 +329,23 @@ void Srv6Orch::doTaskSidTable(const KeyOpFieldsValuesTuple & tuple)
     string op = kfvOp(tuple);
     string sid_list;
 
-    for(auto i : kfvFieldsValues(tuple))
+    for (auto i : kfvFieldsValues(tuple))
     {
-        if(fvField(i) == "path")
+        if (fvField(i) == "path")
         {
           sid_list = fvValue(i);
         }
     }
-    if(op == SET_COMMAND)
+    if (op == SET_COMMAND)
     {
-        if(!createUpdateSidList(sid_name, sid_list))
+        if (!createUpdateSidList(sid_name, sid_list))
         {
           SWSS_LOG_ERROR("Failed to process sid %s", sid_name.c_str());
         }
     }
-    else if(op == DEL_COMMAND)
+    else if (op == DEL_COMMAND)
     {
-        if(!deleteSidList(sid_name))
+        if (!deleteSidList(sid_name))
         {
             SWSS_LOG_ERROR("Failed to delete sid %s", sid_name.c_str());
         }
@@ -354,7 +356,7 @@ void Srv6Orch::doTaskSidTable(const KeyOpFieldsValuesTuple & tuple)
 
 bool Srv6Orch::mySidExists(string my_sid_string)
 {
-    if(srv6_my_sid_table_.find(my_sid_string) != srv6_my_sid_table_.end())
+    if (srv6_my_sid_table_.find(my_sid_string) != srv6_my_sid_table_.end())
     {
         return true;
     }
@@ -364,54 +366,54 @@ bool Srv6Orch::mySidExists(string my_sid_string)
 bool Srv6Orch::sidEntryEndpointBehavior(string action, sai_my_sid_entry_endpoint_behavior_t &end_behavior,
                                         sai_my_sid_entry_endpoint_behavior_flavor_t &end_flavor)
 {
-    if(action == "end")
+    if (action == "end")
     {
         end_behavior = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_E;
         end_flavor = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD;
     }
-    else if(action == "end.x")
+    else if (action == "end.x")
     {
         end_behavior = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_X;
         end_flavor = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD;
     }
-    else if(action == "end.t")
+    else if (action == "end.t")
     {
         end_behavior = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_T;
         end_flavor = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD;
     }
-    else if(action == "end.dx6")
+    else if (action == "end.dx6")
     {
         end_behavior = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DX6;
     }
-    else if(action == "end.dx4")
+    else if (action == "end.dx4")
     {
         end_behavior = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DX4;
     }
-    else if(action == "end.dt4")
+    else if (action == "end.dt4")
     {
         end_behavior = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT4;
     }
-    else if(action == "end.dt6")
+    else if (action == "end.dt6")
     {
         end_behavior = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT6;
     }
-    else if(action == "end.dt46")
+    else if (action == "end.dt46")
     {
         end_behavior = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT46;
     }
-    else if(action == "end.b6.encaps")
+    else if (action == "end.b6.encaps")
     {
         end_behavior = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_B6_ENCAPS;
     }
-    else if(action == "end.b6.encaps.red")
+    else if (action == "end.b6.encaps.red")
     {
         end_behavior = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_B6_ENCAPS_RED;
     }
-    else if(action == "end.b6.insert")
+    else if (action == "end.b6.insert")
     {
         end_behavior = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_B6_INSERT;
     }
-    else if(action == "end.b6.insert.red")
+    else if (action == "end.b6.insert.red")
     {
         end_behavior = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_B6_INSERT_RED;
     }
@@ -425,10 +427,10 @@ bool Srv6Orch::sidEntryEndpointBehavior(string action, sai_my_sid_entry_endpoint
 
 bool Srv6Orch::mySidVrfRequired(const sai_my_sid_entry_endpoint_behavior_t end_behavior)
 {
-    if(end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_T ||
-       end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT4 ||
-       end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT6 ||
-       end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT46)
+    if (end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_T ||
+        end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT4 ||
+        end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT6 ||
+        end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT46)
     {
       return true;
     }
@@ -437,9 +439,9 @@ bool Srv6Orch::mySidVrfRequired(const sai_my_sid_entry_endpoint_behavior_t end_b
 
 bool Srv6Orch::mySidXConnectNexthopRequired(const sai_my_sid_entry_endpoint_behavior_t end_behavior)
 {
-    if(end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_X ||
-       end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DX4 ||
-       end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DX6)
+    if (end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_X ||
+        end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DX4 ||
+        end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DX6)
     {
       return true;
     }
@@ -458,13 +460,13 @@ bool Srv6Orch::mySidUpdateNexthop(string my_sid_string, bool ecmp, NextHopKey nh
     my_sid_entry = srv6_my_sid_table_[my_sid_string].entry;
 
     SWSS_LOG_NOTICE("Update mysid %s SAI object with forward and NH 0x%lx", my_sid_string.c_str(), nh);
-    if(sai_srv6_api->set_my_sid_entry_attribute(&my_sid_entry, &attr) == SAI_STATUS_SUCCESS)
+    if (sai_srv6_api->set_my_sid_entry_attribute(&my_sid_entry, &attr) == SAI_STATUS_SUCCESS)
     {
         attr.id = SAI_MY_SID_ENTRY_ATTR_PACKET_ACTION;
         attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
-        if(sai_srv6_api->set_my_sid_entry_attribute(&my_sid_entry, &attr) == SAI_STATUS_SUCCESS)
+        if (sai_srv6_api->set_my_sid_entry_attribute(&my_sid_entry, &attr) == SAI_STATUS_SUCCESS)
         {
-            if(ecmp)
+            if (ecmp)
             {
               gRouteOrch->increaseNextHopRefCount(nhgkey);
             }
@@ -493,18 +495,19 @@ void Srv6Orch::updateMySidEntries(const NeighborUpdate update)
     NextHopGroupKey nhgkey;
     SWSS_LOG_INFO("Received nhop update notification for NH %s", nhkey.to_string().c_str());
     SWSS_LOG_INFO("Total mysid nh map is %ld", srv6_my_sid_nexthop_table_.size());
-    if(srv6_my_sid_nexthop_table_.find(nhkey) != srv6_my_sid_nexthop_table_.end())
+    if (srv6_my_sid_nexthop_table_.find(nhkey) != srv6_my_sid_nexthop_table_.end())
     {
         auto sid_iter = srv6_my_sid_nexthop_table_[nhkey];
-        for(auto mysid = sid_iter.begin(); mysid != sid_iter.end(); mysid++)
+
+        for (auto mysid = sid_iter.begin(); mysid != sid_iter.end(); mysid++)
         {
             SWSS_LOG_NOTICE("Update mysid %s with nhkey %s",(*mysid).c_str(), nhkey.to_string().c_str());
-            if(!mySidExists(*mysid))
+            if (!mySidExists(*mysid))
             {
                 srv6_my_sid_nexthop_table_[nhkey].erase(*mysid);
                 continue;
             }
-            if(!mySidUpdateNexthop(*mysid, false, nhkey, nhgkey))
+            if (!mySidUpdateNexthop(*mysid, false, nhkey, nhgkey))
             {
                 SWSS_LOG_ERROR("Failed to update mysid %s with nhkey %s",(*mysid).c_str(), nhkey.to_string().c_str());
             }
@@ -514,21 +517,22 @@ void Srv6Orch::updateMySidEntries(const NeighborUpdate update)
 
     // iterate over ECMP map and update Nexthops
     SWSS_LOG_INFO("Total mysid nhg map is %ld", srv6_my_sid_nexthop_group_table_.size());
-    for(auto iter = srv6_my_sid_nexthop_group_table_.begin(); iter != srv6_my_sid_nexthop_group_table_.end();)
+
+    for (auto iter = srv6_my_sid_nexthop_group_table_.begin(); iter != srv6_my_sid_nexthop_group_table_.end();)
     {
         nhgkey = iter->first;
         SWSS_LOG_INFO("Check Nhgkey %s for NH key %s", nhgkey.to_string().c_str(), nhkey.to_string().c_str());
         // If NextHopGroup contains the nexthop, update all MY_SID entries with ECMP group.
-        if(!nhgkey.contains(nhkey))
+        if (!nhgkey.contains(nhkey))
         {
             iter++;
             continue;
         }
         SWSS_LOG_INFO("NHG key %s contains NH key %s", nhgkey.to_string().c_str(), nhkey.to_string().c_str());
-        if(!gRouteOrch->hasNextHopGroup(nhgkey))
+        if (!gRouteOrch->hasNextHopGroup(nhgkey))
         {
             SWSS_LOG_INFO("NHG doesn't exist, create NHG %s", nhgkey.to_string().c_str());
-            if(!gRouteOrch->addNextHopGroup(nhgkey))
+            if (!gRouteOrch->addNextHopGroup(nhgkey))
             {
                 iter++;
                 continue;
@@ -538,7 +542,7 @@ void Srv6Orch::updateMySidEntries(const NeighborUpdate update)
         {
             SWSS_LOG_INFO("NHG %s exists in map", nhgkey.to_string().c_str());
             sai_object_id_t nhg_id = gRouteOrch->getNextHopGroupId(nhgkey);
-            if(nhg_id == SAI_NULL_OBJECT_ID)
+            if (nhg_id == SAI_NULL_OBJECT_ID)
             {
                 SWSS_LOG_INFO("NHG %s handle null, return", nhgkey.to_string().c_str());
                 iter++;
@@ -547,15 +551,16 @@ void Srv6Orch::updateMySidEntries(const NeighborUpdate update)
         }
         SWSS_LOG_INFO("NHG exists for %s, 0x%lx", nhgkey.to_string().c_str(), gRouteOrch->getNextHopGroupId(nhgkey));
         auto sid_iter = iter->second;
-        for(auto mysid = sid_iter.begin(); mysid != sid_iter.end(); mysid++)
+
+        for (auto mysid = sid_iter.begin(); mysid != sid_iter.end(); mysid++)
         {
             SWSS_LOG_NOTICE("Update mysid %s with nhgkey %s",(*mysid).c_str(), nhgkey.to_string().c_str());
-            if(!mySidExists(*mysid))
+            if (!mySidExists(*mysid))
             {
                 srv6_my_sid_nexthop_group_table_[nhgkey].erase(mysid);
                 continue;
             }
-            if(!mySidUpdateNexthop(*mysid, true, nhkey, nhgkey))
+            if (!mySidUpdateNexthop(*mysid, true, nhkey, nhgkey))
             {
                 SWSS_LOG_ERROR("Failed to update mysid %s with nhkey %s",(*mysid).c_str(), nhgkey.to_string().c_str());
             }
@@ -569,7 +574,7 @@ void Srv6Orch::update(SubjectType type, void *ctx)
     SWSS_LOG_ENTER();
     assert(ctx);
 
-    if(type == SUBJECT_TYPE_NEIGH_CHANGE)
+    if (type == SUBJECT_TYPE_NEIGH_CHANGE)
     {
         NeighborUpdate *update = static_cast<NeighborUpdate *>(ctx);
         SWSS_LOG_NOTICE("Neighbor change notification");
@@ -594,7 +599,7 @@ bool Srv6Orch::mySidXConnectNexthop(string my_sid_string, string nexthop_string,
     // Nexthop string: <ipaddress>@<interface>,<ipaddress>@<interface>....
     vector<string> nhg_vector = tokenize(nexthop_string, NHG_DELIMITER);
     sai_object_id_t nexthop_id = SAI_NULL_OBJECT_ID;
-    if(nhg_vector.size() == 1)
+    if (nhg_vector.size() == 1)
     {
         SWSS_LOG_NOTICE("Single nexthop %s in my_sid", nhg_vector[0].c_str());
         auto keys = tokenize(nhg_vector[0], NH_DELIMITER);
@@ -602,7 +607,7 @@ bool Srv6Orch::mySidXConnectNexthop(string my_sid_string, string nexthop_string,
         NextHopKey nhkey = NextHopKey(nhg_vector[0]);
         SWSS_LOG_NOTICE("NH IP %s, interface %s", nhkey.ip_address.to_string().c_str(), nhkey.alias.c_str());
         nexthop_id = m_neighOrch->getNextHopId(nhkey);
-        if(nexthop_id == SAI_NULL_OBJECT_ID)
+        if (nexthop_id == SAI_NULL_OBJECT_ID)
         {
             SWSS_LOG_NOTICE("Nexthop doesn't exist for nh %s", nhkey.to_string().c_str());
             mySidNexthopMapUpdate(my_sid_string, nhkey);
@@ -625,18 +630,18 @@ bool Srv6Orch::mySidXConnectNexthop(string my_sid_string, string nexthop_string,
         SWSS_LOG_NOTICE("Create nexthopgroup");
 
         NextHopGroupKey nhgkey(nexthop_string);
-        if(!gRouteOrch->hasNextHopGroup(nhgkey))
+        if (!gRouteOrch->hasNextHopGroup(nhgkey))
         {
-            if(!gRouteOrch->addNextHopGroup(nhgkey))
+            if (!gRouteOrch->addNextHopGroup(nhgkey))
             {
                 nexthop_id = SAI_NULL_OBJECT_ID;
                 SWSS_LOG_INFO("Failed to create nexthop group %s. NHG exists %s", nhgkey.to_string().c_str(),
                     gRouteOrch->hasNextHopGroup(nhgkey) ? "Yes" : "No");
 
                 // Resolve the nexthops in ECMP group if it doesn't exist
-                for(auto it : nhgkey.getNextHops())
+                for (auto it : nhgkey.getNextHops())
                 {
-                    if(!m_neighOrch->hasNextHop(it))
+                    if (!m_neighOrch->hasNextHop(it))
                     {
                         m_neighOrch->resolveNeighbor(it);
                     }
@@ -647,7 +652,7 @@ bool Srv6Orch::mySidXConnectNexthop(string my_sid_string, string nexthop_string,
             }
         }
         nexthop_id = gRouteOrch->getNextHopGroupId(nhgkey);
-        if(nexthop_id == SAI_NULL_OBJECT_ID)
+        if (nexthop_id == SAI_NULL_OBJECT_ID)
         {
             SWSS_LOG_ERROR("Nexthop group object for key %s is invalid", nhgkey.to_string().c_str());
             return false;
@@ -671,13 +676,13 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
     sai_my_sid_entry_endpoint_behavior_flavor_t end_flavor = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD;
 
     bool entry_exists = false;
-    if(mySidExists(key_string))
+    if (mySidExists(key_string))
     {
         entry_exists = true;
     }
 
     sai_my_sid_entry_t my_sid_entry;
-    if(!entry_exists)
+    if (!entry_exists)
     {
         vector<string>keys = tokenize(my_sid_string, MY_SID_KEY_DELIMITER);
 
@@ -703,7 +708,7 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
       my_sid_string.c_str(), end_action.c_str(), dt_vrf.c_str(),my_sid_entry.locator_block_len, my_sid_entry.locator_node_len,
       my_sid_entry.function_len, my_sid_entry.args_len, dt_vrf.c_str());
 
-    if(sidEntryEndpointBehavior(end_action, end_behavior, end_flavor) != true)
+    if (sidEntryEndpointBehavior(end_action, end_behavior, end_flavor) != true)
     {
         SWSS_LOG_ERROR("Invalid my_sid action %s", end_action.c_str());
         return false;
@@ -711,11 +716,11 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
     sai_attribute_t vrf_attr;
     bool vrf_update = false;
     bool nh_update = false;
-    if(mySidVrfRequired(end_behavior))
+    if (mySidVrfRequired(end_behavior))
     {
         sai_object_id_t dt_vrf_id;
         SWSS_LOG_NOTICE("DT VRF name %s", dt_vrf.c_str());
-        if(m_vrfOrch->isVRFexists(dt_vrf))
+        if (m_vrfOrch->isVRFexists(dt_vrf))
         {
             SWSS_LOG_NOTICE("VRF %s exists in DB", dt_vrf.c_str());
             dt_vrf_id = m_vrfOrch->getVRFid(dt_vrf);
@@ -737,10 +742,10 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
         vrf_update = true;
     }
     sai_attribute_t nh_attr;
-    if(mySidXConnectNexthopRequired(end_behavior))
+    if (mySidXConnectNexthopRequired(end_behavior))
     {
         sai_object_id_t nh_id = SAI_NULL_OBJECT_ID;
-        if(mySidXConnectNexthop(key_string, nexthop, nh_id))
+        if (mySidXConnectNexthop(key_string, nexthop, nh_id))
         {
             nh_attr.id = SAI_MY_SID_ENTRY_ATTR_NEXT_HOP_ID;
             nh_attr.value.oid = nh_id;
@@ -764,10 +769,10 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
     attributes.push_back(attr);
 
     sai_status_t status = SAI_STATUS_SUCCESS;
-    if(!entry_exists)
+    if (!entry_exists)
     {
         status = sai_srv6_api->create_my_sid_entry(&my_sid_entry, (uint32_t) attributes.size(), attributes.data());
-        if(status != SAI_STATUS_SUCCESS)
+        if (status != SAI_STATUS_SUCCESS)
         {
           SWSS_LOG_ERROR("Failed to create my_sid entry %s, rv %d", key_string.c_str(), status);
           return false;
@@ -775,7 +780,7 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
     }
     else
     {
-        if(vrf_update)
+        if (vrf_update)
         {
             status = sai_srv6_api->set_my_sid_entry_attribute(&my_sid_entry, &vrf_attr);
             if(status != SAI_STATUS_SUCCESS)
@@ -785,10 +790,10 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
             }
         }
 
-        if(nh_update)
+        if (nh_update)
         {
             status = sai_srv6_api->set_my_sid_entry_attribute(&my_sid_entry, &nh_attr);
-            if(status != SAI_STATUS_SUCCESS)
+            if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to update Nexthop to my_sid_entry %s, rv %d", key_string.c_str(), status);
                 return false;
@@ -803,7 +808,7 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
 bool Srv6Orch::deleteMysidEntry(const string my_sid_string)
 {
     sai_status_t status = SAI_STATUS_SUCCESS;
-    if(!mySidExists(my_sid_string))
+    if (!mySidExists(my_sid_string))
     {
         SWSS_LOG_ERROR("My_sid_entry doesn't exist for %s", my_sid_string.c_str());
         return false;
@@ -813,7 +818,7 @@ bool Srv6Orch::deleteMysidEntry(const string my_sid_string)
     NextHopKey nhkey;
     NextHopGroupKey nhgkey;
 
-    if(srv6_my_sid_table_[my_sid_string].ecmp)
+    if (srv6_my_sid_table_[my_sid_string].ecmp)
     {
         nhgkey = srv6_my_sid_table_[my_sid_string].nhgkey;
     }
@@ -824,20 +829,20 @@ bool Srv6Orch::deleteMysidEntry(const string my_sid_string)
 
     SWSS_LOG_NOTICE("MySid Delete: sid %s", my_sid_string.c_str());
     status = sai_srv6_api->remove_my_sid_entry(&my_sid_entry);
-    if(status != SAI_STATUS_SUCCESS)
+    if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to delete my_sid entry rv %d", status);
         return false;
     }
-    if(srv6_my_sid_table_[my_sid_string].ecmp)
+    if (srv6_my_sid_table_[my_sid_string].ecmp)
     {
-        if(gRouteOrch->hasNextHopGroup(nhgkey))
+        if (gRouteOrch->hasNextHopGroup(nhgkey))
         {
             gRouteOrch->decreaseNextHopRefCount(nhgkey);
         }
         SWSS_LOG_INFO("Mysid %s uses ecmp, remove NHG: refcount zero %s", my_sid_string.c_str(),
           gRouteOrch->isRefCounterZero(nhgkey) ? "Yes" : "No");
-        if(gRouteOrch->isRefCounterZero(nhgkey))
+        if (gRouteOrch->isRefCounterZero(nhgkey))
         {
             if(gRouteOrch->removeNextHopGroup(nhgkey))
             {
@@ -851,7 +856,7 @@ bool Srv6Orch::deleteMysidEntry(const string my_sid_string)
     }
     else
     {
-        if(m_neighOrch->hasNextHop(nhkey))
+        if (m_neighOrch->hasNextHop(nhkey))
         {
             SWSS_LOG_INFO("SRV6 Mysid Nexthop refcount %d", m_neighOrch->getNextHopRefCount(nhkey));
             m_neighOrch->decreaseNextHopRefCount(nhkey, 1);
@@ -869,7 +874,8 @@ void Srv6Orch::doTaskMySidTable(const KeyOpFieldsValuesTuple & tuple)
 
     //Key for mySid : block_len:node_len:function_len:args_len:sid-ip
     string keyString = kfvKey(tuple);
-    for(auto i : kfvFieldsValues(tuple))
+
+    for (auto i : kfvFieldsValues(tuple))
     {
         if (fvField(i) == "action")
         {
@@ -884,7 +890,7 @@ void Srv6Orch::doTaskMySidTable(const KeyOpFieldsValuesTuple & tuple)
           nexthop = fvValue(i);
         }
     }
-    if(op == SET_COMMAND)
+    if (op == SET_COMMAND)
     {
         if(!createUpdateMysidEntry(keyString, dt_vrf, end_action, nexthop))
         {
@@ -915,11 +921,11 @@ void Srv6Orch::doTask(Consumer &consumer)
     {
         auto t = it->second;
         SWSS_LOG_INFO("table name : %s",table_name.c_str());
-        if(table_name == APP_SRV6_SID_LIST_TABLE_NAME)
+        if (table_name == APP_SRV6_SID_LIST_TABLE_NAME)
         {
             doTaskSidTable(t);
         }
-        else if(table_name == APP_SRV6_MY_SID_TABLE_NAME)
+        else if (table_name == APP_SRV6_MY_SID_TABLE_NAME)
         {
             doTaskMySidTable(t);
         }
