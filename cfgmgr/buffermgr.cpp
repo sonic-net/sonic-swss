@@ -30,6 +30,7 @@ BufferMgr::BufferMgr(DBConnector *cfgDb, DBConnector *applDb, string pg_lookup_f
         m_applBufferEgressProfileListTable(applDb, APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME)
 {
     readPgProfileLookupFile(pg_lookup_file);
+    dynamic_buffer_model = false;
 }
 
 //# speed, cable, size,    xon,  xoff, threshold,  xon_offset
@@ -314,12 +315,62 @@ void BufferMgr::doBufferTableTask(Consumer &consumer, ProducerStateTable &applTa
     }
 }
 
+void BufferMgr::doBufferMetaTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple t = it->second;
+        string key = kfvKey(t);
+
+        string op = kfvOp(t);
+        if (op == SET_COMMAND)
+        {
+            vector<FieldValueTuple> fvVector;
+
+            for (auto i : kfvFieldsValues(t))
+            {
+                if (fvField(i) == "buffer_model")
+                {
+                    if (fvValue(i) == "dynamic")
+                    {
+                        dynamic_buffer_model = true;
+                    }
+                    else
+                    {
+                        dynamic_buffer_model = false;
+                    }
+                    break;
+                }
+            }
+        }
+        else if (op == DEL_COMMAND)
+        {
+            dynamic_buffer_model = false;
+        }
+        it = consumer.m_toSync.erase(it);
+    }
+}
+
 void BufferMgr::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
     string table_name = consumer.getTableName();
 
+    if (table_name == CFG_DEVICE_METADATA_TABLE_NAME)
+    {
+        doBufferMetaTask(consumer);
+        return;
+    }
+
+    if (dynamic_buffer_model)
+    {
+         SWSS_LOG_DEBUG("Dynamic buffer model enabled. Skipping further processing");
+         return;
+    }
     if (table_name == CFG_BUFFER_POOL_TABLE_NAME)
     {
         doBufferTableTask(consumer, m_applBufferPoolTable);
