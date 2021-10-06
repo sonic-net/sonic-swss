@@ -5,6 +5,7 @@
 #include "logger.h"
 #include "srv6orch.h"
 #include "sai_serialize.h"
+#include "crmorch.h"
 
 using namespace std;
 using namespace swss;
@@ -17,6 +18,7 @@ extern sai_tunnel_api_t* sai_tunnel_api;
 extern sai_next_hop_api_t* sai_next_hop_api;
 
 extern RouteOrch *gRouteOrch;
+extern CrmOrch *gCrmOrch;
 
 void Srv6Orch::srv6TunnelUpdateNexthops(const string srv6_source, const NextHopKey nhkey, bool insert)
 {
@@ -777,6 +779,7 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
           SWSS_LOG_ERROR("Failed to create my_sid entry %s, rv %d", key_string.c_str(), status);
           return false;
         }
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_SRV6_MY_SID_ENTRY);
     }
     else
     {
@@ -834,6 +837,7 @@ bool Srv6Orch::deleteMysidEntry(const string my_sid_string)
         SWSS_LOG_ERROR("Failed to delete my_sid entry rv %d", status);
         return false;
     }
+    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_SRV6_MY_SID_ENTRY);
     if (srv6_my_sid_table_[my_sid_string].ecmp)
     {
         if (gRouteOrch->hasNextHopGroup(nhgkey))

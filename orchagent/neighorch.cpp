@@ -1697,13 +1697,13 @@ void NeighOrch::updateSrv6Nexthop(const NextHopKey &nh, const sai_object_id_t &n
         next_hop_entry.next_hop_id = nh_id;
         next_hop_entry.ref_count = 0;
         next_hop_entry.nh_flags = 0;
-        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
         m_syncdNextHops[nh] = next_hop_entry;
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_SRV6_NEXTHOP);
     }
     else
     {
         assert(m_syncdNextHops[nh].ref_count == 0);
-        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_SRV6_NEXTHOP);
         m_syncdNextHops.erase(nh);
     }
 }
