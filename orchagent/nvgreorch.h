@@ -24,7 +24,7 @@ typedef struct nvgre_tunnel_map_entry_s
 {
    sai_object_id_t map_entry_id;
    //TODO fix the types
-   uint32_t        vlan_id;
+   sai_vlan_id_t   vlan_id;
    uint32_t        vsid;
 } nvgre_tunnel_map_entry_t;
 
@@ -76,10 +76,10 @@ public:
 
     //TODO add getters for others private members
 
-    //FIXME default value the same in 2 places SAI_NULL
     bool addDecapMapperEntry(map_type_t map_type, uint32_t vsid, sai_vlan_id_t vlan_id, std::string tunnel_map_entry_name, sai_object_id_t obj=SAI_NULL_OBJECT_ID);
     bool addEncapMapperEntry(map_type_t map_type, uint32_t vsid, sai_vlan_id_t vlan_id, std::string tunnel_map_entry_name, sai_object_id_t obj=SAI_NULL_OBJECT_ID);
 
+    // do wee need 2 methods for decap and encap
     bool delDecapMapperEntry(std::string tunnel_map_entry_name);
 
 private:

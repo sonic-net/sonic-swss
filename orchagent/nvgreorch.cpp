@@ -463,7 +463,7 @@ bool NvgreTunnelMapOrch::addOperation(const Request& request)
         return true;
     }
 
-    sai_vlan_id_t vlan_id = (sai_vlan_id_t)request.getAttrVlan("vlan");
+    sai_vlan_id_t vlan_id = (sai_vlan_id_t) request.getAttrVlan("vlan");
     Port tempPort;
 
     if (!gPortsOrch->getVlanByVlanId(vlan_id, tempPort))
@@ -503,7 +503,7 @@ void NvgreTunnel::sai_remove_tunnel_map_entry(sai_object_id_t obj_id)
 
 bool NvgreTunnel::delDecapMapperEntry(std::string tunnel_map_entry_name)
 {
-    auto tunnel_map_entry_id = nvgre_tunnel_map_table_[tunnel_map_entry_name].map_entry_id;
+    auto tunnel_map_entry_id = getMapEntryId(tunnel_map_entry_name);
 
     try
     {
