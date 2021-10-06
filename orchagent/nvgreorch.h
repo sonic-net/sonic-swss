@@ -23,6 +23,7 @@ struct tunnel_sai_ids_t
 typedef struct nvgre_tunnel_map_entry_s
 {
    sai_object_id_t map_entry_id;
+   //TODO fix the types
    uint32_t        vlan_id;
    uint32_t        vsid;
 } nvgre_tunnel_map_entry_t;
@@ -58,9 +59,28 @@ public:
         return tunnel_ids_.tunnel_encap_id.at(type);
     }
 
+    sai_object_id_t getMapEntryId(std::string tunnel_map_entry_name)
+    {
+        return nvgre_tunnel_map_table_.at(tunnel_map_entry_name).map_entry_id;
+    }
+
+    sai_object_id_t getMapEntryVlanId(std::string tunnel_map_entry_name)
+    {
+        return nvgre_tunnel_map_table_.at(tunnel_map_entry_name).vlan_id;
+    }
+
+    sai_object_id_t getMapEntryVsid(std::string tunnel_map_entry_name)
+    {
+        return nvgre_tunnel_map_table_.at(tunnel_map_entry_name).vsid;
+    }
+
+    //TODO add getters for others private members
+
     //FIXME default value the same in 2 places SAI_NULL
     bool addDecapMapperEntry(map_type_t map_type, uint32_t vsid, sai_vlan_id_t vlan_id, std::string tunnel_map_entry_name, sai_object_id_t obj=SAI_NULL_OBJECT_ID);
     bool addEncapMapperEntry(map_type_t map_type, uint32_t vsid, sai_vlan_id_t vlan_id, std::string tunnel_map_entry_name, sai_object_id_t obj=SAI_NULL_OBJECT_ID);
+
+    bool delDecapMapperEntry(std::string tunnel_map_entry_name);
 
 private:
     void createTunnelMappers();
@@ -76,6 +96,7 @@ private:
     void sai_remove_tunnel(sai_object_id_t tunnel_id);
 
     sai_object_id_t sai_create_tunnel_map_entry(map_type_t map_type, sai_uint32_t vsid, sai_vlan_id_t vlan_id, sai_object_id_t obj_id, bool encap=false);
+    void sai_remove_tunnel_map_entry(sai_object_id_t obj_id);
 
     std::string tunnel_name_;
     IpAddress src_ip_;

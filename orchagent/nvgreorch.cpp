@@ -472,7 +472,6 @@ bool NvgreTunnelMapOrch::addOperation(const Request& request)
         return false;
     }
 
-    // check if it can be assigned by garbage value
     auto vsid = static_cast<sai_uint32_t>(request.getAttrUint("vsid"));
     if (vsid >= 1<<24)
     {
@@ -486,10 +485,80 @@ bool NvgreTunnelMapOrch::addOperation(const Request& request)
     return true;
 }
 
+void NvgreTunnel::sai_remove_tunnel_map_entry(sai_object_id_t obj_id)
+{
+    sai_status_t status = SAI_STATUS_SUCCESS;
+
+    if (obj_id != SAI_NULL_OBJECT_ID)
+    {
+        status = sai_tunnel_api->remove_tunnel_map_entry(obj_id);
+    }
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        //FIXME
+        throw std::runtime_error("Can't delete a tunnel map entry object");
+    }
+}
+
+bool NvgreTunnel::delDecapMapperEntry(std::string tunnel_map_entry_name)
+{
+    auto tunnel_map_entry_id = nvgre_tunnel_map_table_[tunnel_map_entry_name].map_entry_id;
+
+    try
+    {
+        sai_remove_tunnel_map_entry(tunnel_map_entry_id);
+    }
+    catch (const std::runtime_error& error)
+    {
+        SWSS_LOG_ERROR("Error while removing decap tunnel map %s: %s",
+            tunnel_map_entry_name.c_str(), error.what());
+        return false;
+    }
+
+    nvgre_tunnel_map_table_.erase(tunnel_map_entry_name);
+
+    SWSS_LOG_INFO("NVGRE decap tunnel map entry '%s' for tunnel '%s' was removed",
+        tunnel_map_entry_name.c_str(), tunnel_name_.c_str());
+
+    return true;
+}
+
 bool NvgreTunnelMapOrch::delOperation(const Request& request)
 {
     SWSS_LOG_ENTER();
-    SWSS_LOG_WARN("DEL operation is not implemented");
+
+    const auto& tunnel_name = request.getKeyString(0);
+    NvgreTunnelOrch* tunnel_orch = gDirectory.get<NvgreTunnelOrch*>();
+    auto tunnel_obj = tunnel_orch->getNvgreTunnel(tunnel_name);
+    const auto& full_tunnel_map_entry_name = request.getFullKey();
+
+    if (!tunnel_obj->isTunnelMapExists(full_tunnel_map_entry_name))
+    {
+        SWSS_LOG_WARN("NVGRE tunnel map '%s' does not exist",
+            full_tunnel_map_entry_name.c_str());
+        return true;
+    }
+
+    Port vlanPort;
+    // add seters and getters for struct bellow
+    auto vlan_id = (sai_vlan_id_t) tunnel_obj->getMapEntryVlanId(full_tunnel_map_entry_name);
+
+    if (!gPortsOrch->getVlanByVlanId(vlan_id, vlanPort))
+    {
+        SWSS_LOG_ERROR("VLAN ID does not exist: %d", vlan_id);
+        return true;
+    }
+
+    if (!tunnel_obj->delDecapMapperEntry(full_tunnel_map_entry_name))
+        return false;
+
+    // why this check after call above
+    if (!tunnel_orch->isTunnelExists(tunnel_name))
+    {
+        SWSS_LOG_WARN("NVGRE tunnel '%s' doesn't exist", tunnel_name.c_str());
+        return false;
+    }
 
     return true;
 }
