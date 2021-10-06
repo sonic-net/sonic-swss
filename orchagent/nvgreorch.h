@@ -75,7 +75,7 @@ private:
     sai_object_id_t sai_create_tunnel(struct tunnel_sai_ids_t* ids, sai_ip_address_t *src_ip);
     void sai_remove_tunnel(sai_object_id_t tunnel_id);
 
-    sai_object_id_t sai_create_tunnel_map_entry(sai_tunnel_map_type_t tunnel_map_type, sai_object_id_t tunnel_map_id, sai_uint32_t vsid, sai_vlan_id_t vlan_id, sai_object_id_t obj_id=SAI_NULL_OBJECT_ID, bool encap=false);
+    sai_object_id_t sai_create_tunnel_map_entry(map_type_t map_type, sai_uint32_t vsid, sai_vlan_id_t vlan_id, sai_object_id_t obj_id=SAI_NULL_OBJECT_ID, bool encap=false);
 
     std::string tunnel_name_;
     IpAddress src_ip_;
