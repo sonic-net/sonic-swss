@@ -308,8 +308,6 @@ bool NvgreTunnelOrch::addOperation(const Request& request)
 
     nvgre_tunnel_table_[tunnel_name] = std::unique_ptr<NvgreTunnel>(new NvgreTunnel(tunnel_name, src_ip));
 
-    SWSS_LOG_INFO("NVGRE tunnel '%s' was added", tunnel_name.c_str());
-
     return true;
 }
 
@@ -383,7 +381,7 @@ sai_object_id_t NvgreTunnel::sai_create_tunnel_map_entry(
 }
 
 
-void NvgreTunnel::addDecapMapperEntry(
+bool NvgreTunnel::addDecapMapperEntry(
     map_type_t map_type,
     uint32_t vsid,
     sai_vlan_id_t vlan_id,
@@ -391,13 +389,54 @@ void NvgreTunnel::addDecapMapperEntry(
     sai_object_id_t obj
     )
 {
-    //TODO think about default values for obj
-    // add try catch
-    auto tunnel_map_entry_id = sai_create_tunnel_map_entry(map_type, vsid, vlan_id, obj);
+    try
+    {
+        auto tunnel_map_entry_id = sai_create_tunnel_map_entry(map_type, vsid, vlan_id, obj);
 
-    nvgre_tunnel_map_table_[tunnel_map_entry_name].map_entry_id = tunnel_map_entry_id;
-    nvgre_tunnel_map_table_[tunnel_map_entry_name].vlan_id = vlan_id;
-    nvgre_tunnel_map_table_[tunnel_map_entry_name].vsid = vsid;
+        nvgre_tunnel_map_table_[tunnel_map_entry_name].map_entry_id = tunnel_map_entry_id;
+        nvgre_tunnel_map_table_[tunnel_map_entry_name].vlan_id = vlan_id;
+        nvgre_tunnel_map_table_[tunnel_map_entry_name].vsid = vsid;
+    }
+    catch(const std::runtime_error& error)
+    {
+        SWSS_LOG_ERROR("Error while adding decap tunnel map entry. Tunnel: %s. Entry: %s. Error: %s",
+            tunnel_name_.c_str(), tunnel_map_entry_name.c_str(), error.what());
+        return false;
+    }
+
+    SWSS_LOG_INFO("NVGRE decap tunnel map entry '%s' for tunnel '%s' was created",
+        tunnel_map_entry_name.c_str(), tunnel_name_.c_str());
+
+    return true;
+}
+
+bool NvgreTunnel::addEncapMapperEntry(
+    map_type_t map_type,
+    uint32_t vsid,
+    sai_vlan_id_t vlan_id,
+    std::string tunnel_map_entry_name,
+    sai_object_id_t obj
+    )
+{
+    try
+    {
+        auto tunnel_map_entry_id = sai_create_tunnel_map_entry(map_type, vsid, vlan_id, obj, true);
+
+        nvgre_tunnel_map_table_[tunnel_map_entry_name].map_entry_id = tunnel_map_entry_id;
+        nvgre_tunnel_map_table_[tunnel_map_entry_name].vlan_id = vlan_id;
+        nvgre_tunnel_map_table_[tunnel_map_entry_name].vsid = vsid;
+    }
+    catch(const std::runtime_error& error)
+    {
+        SWSS_LOG_ERROR("Error while adding encap tunnel map entry. Tunnel: %s. Entry: %s. Error: %s",
+            tunnel_name_.c_str(), tunnel_map_entry_name.c_str(), error.what());
+        return false;
+    }
+
+    SWSS_LOG_INFO("NVGRE encap tunnel map entry '%s' for tunnel '%s' was created",
+        tunnel_map_entry_name.c_str(), tunnel_name_.c_str());
+
+    return true;
 }
 
 
@@ -441,8 +480,8 @@ bool NvgreTunnelMapOrch::addOperation(const Request& request)
         return true;
     }
 
-    // create inside NvgreTunnel class sai methon and usual method to add tunnel_map_entry
-    tunnel_obj->addDecapMapperEntry(MAP_T_VLAN, vsid, vlan_id, full_tunnel_map_entry_name);
+    if (!tunnel_obj->addDecapMapperEntry(MAP_T_VLAN, vsid, vlan_id, full_tunnel_map_entry_name))
+        return false;
 
     return true;
 }
