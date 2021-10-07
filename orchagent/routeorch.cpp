@@ -2229,10 +2229,10 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
             {
                 m_neighOrch->removeMplsNextHop(nexthop);
             }
-        }
 
-        RouteKey r_key = { vrf_id, ipPrefix };
-        removeNextHopRoute(nexthop, r_key);
+            RouteKey r_key = { vrf_id, ipPrefix };
+            removeNextHopRoute(nexthop, r_key);
+        }
     }
 
     SWSS_LOG_INFO("Remove route %s with next hop(s) %s",
