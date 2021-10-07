@@ -183,6 +183,12 @@ class VirtualServer:
                 f"ip netns exec {self.nsname} ip link add {self.nsname[0:12]}"
                 f" type veth peer name {self.pifname}"
             )
+
+            # ensure self.pifname is not already an interface in the DVS net namespace
+            rc, _ = subprocess.getstatusoutput(f"nsenter -t {pid} -n ip link show | grep '{self.pifname}@'")
+            if not rc:
+                ensure_system(f"nsenter -t {pid} -n ip link delete {self.pifname}")
+
             ensure_system(f"ip netns exec {self.nsname} ip link set {self.pifname} netns {pid}")
 
             # bring up link in the virtual server
