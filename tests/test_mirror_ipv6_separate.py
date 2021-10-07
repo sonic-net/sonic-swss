@@ -3,7 +3,7 @@ import time
 
 from swsscommon import swsscommon
 
-DVS_ENV = ["fake_platform=mellanox"]
+DVS_FAKE_PLATFORM = "mellanox"
 
 
 class TestMirror(object):
