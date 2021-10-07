@@ -47,17 +47,12 @@ def pytest_addoption(parser):
     parser.addoption("--dvsname",
                      action="store",
                      default=None,
-                     help="Name of a persistent DVS container to run the tests with. Mutually exclusive with --force-recreate-dvs")
+                     help="Name of a persistent DVS container to run the tests with")
 
     parser.addoption("--forcedvs",
                      action="store_true",
                      default=False,
                      help="Force tests to run in persistent DVS containers with <32 ports")
-
-    parser.addoption("--force-recreate-dvs",
-                     action="store_true",
-                     default=False,
-                     help="Force the DVS container to be recreated between each test module. Mutually exclusive with --dvsname")
 
     parser.addoption("--keeptb",
                      action="store_true",
@@ -196,9 +191,6 @@ class VirtualServer:
             # disable arp, so no neigh on physical interfaces
             ensure_system(f"nsenter -t {pid} -n ip link set arp off dev {self.pifname}")
             ensure_system(f"nsenter -t {pid} -n sysctl -w net.ipv6.conf.{self.pifname}.disable_ipv6=1")
-
-    def __repr__(self):
-        return f'<VirtualServer> {self.nsname}'
 
     def kill_all_processes(self) -> None:
         pids = subprocess.check_output(f"ip netns pids {self.nsname}", shell=True).decode("utf-8")
@@ -347,7 +339,9 @@ class DockerVirtualSwitch:
 
             # create virtual server
             self.servers = []
-            self.create_servers()
+            for i in range(NUM_PORTS):
+                server = VirtualServer(self.ctn_sw.name, self.ctn_sw_pid, i)
+                self.servers.append(server)
 
             if self.vct:
                 self.vct_connect(newctnname)
@@ -381,21 +375,6 @@ class DockerVirtualSwitch:
         self.redis_sock = os.path.join(self.mount, "redis.sock")
         self.redis_chassis_sock = os.path.join(self.mount, "redis_chassis.sock")
 
-        self.reset_dbs()
-
-        # Make sure everything is up and running before turning over control to the caller
-        self.check_ready_status_and_init_db()
-
-        # Switch buffer model to dynamic if necessary
-        if buffer_model == 'dynamic':
-            enable_dynamic_buffer(self.get_config_db(), self.runcmd)
-
-    def create_servers(self):
-        for i in range(NUM_PORTS):
-            server = VirtualServer(self.ctn_sw.name, self.ctn_sw_pid, i)
-            self.servers.append(server)
-            
-    def reset_dbs(self):
         # DB wrappers are declared here, lazy-loaded in the tests
         self.app_db = None
         self.asic_db = None
@@ -404,26 +383,30 @@ class DockerVirtualSwitch:
         self.flex_db = None
         self.state_db = None
 
+        # Make sure everything is up and running before turning over control to the caller
+        self.check_ready_status_and_init_db()
+
+        # Switch buffer model to dynamic if necessary
+        if buffer_model == 'dynamic':
+            enable_dynamic_buffer(self.get_config_db(), self.runcmd)
+
     def destroy(self) -> None:
-        if getattr(self, 'appldb', False):
+        if self.appldb:
             del self.appldb
 
         # In case persistent dvs was used removed all the extra server link
         # that were created
         if self.persistent:
-            self.destroy_servers()
+            for s in self.servers:
+                s.destroy()
 
         # persistent and clean-up flag are mutually exclusive
         elif self.cleanup:
             self.ctn.remove(force=True)
             self.ctn_sw.remove(force=True)
             os.system(f"rm -rf {self.mount}")
-            self.destroy_servers()
-
-    def destroy_servers(self):
-        for s in self.servers:
-            s.destroy()
-        self.servers = []
+            for s in self.servers:
+                s.destroy()
 
     def check_ready_status_and_init_db(self) -> None:
         try:
@@ -438,7 +421,6 @@ class DockerVirtualSwitch:
             # Initialize the databases.
             self.init_asic_db_validator()
             self.init_appl_db_validator()
-            self.reset_dbs()
 
             # Verify that SWSS has finished initializing.
             self.check_swss_ready()
@@ -467,9 +449,9 @@ class DockerVirtualSwitch:
 
             for pname in self.alld:
                 if process_status.get(pname, None) != "RUNNING":
-                    return (False, process_status)
+                    return (False, None)
 
-            return (process_status.get("start.sh", None) == "EXITED", process_status)
+            return (process_status.get("start.sh", None) == "EXITED", None)
 
         wait_for_result(_polling_function, service_polling_config)
 
@@ -1572,15 +1554,8 @@ class DockerVirtualChassisTopology:
         print("vct verifications passed ? %s" % (ret1 and ret2))
         return ret1 and ret2
 
-@pytest.fixture(scope="session")
-def manage_dvs(request) -> str:
-    """
-    Main fixture to manage the lifecycle of the DVS (Docker Virtual Switch) for testing
-
-    Returns:
-        (func) update_dvs function which can be called on a per-module basis
-               to handle re-creating the DVS if necessary
-    """
+@pytest.yield_fixture(scope="module")
+def dvs(request) -> DockerVirtualSwitch:
     if sys.version_info[0] < 3:
         raise NameError("Python 2 is not supported, please install python 3")
 
@@ -1588,75 +1563,25 @@ def manage_dvs(request) -> str:
         raise NameError("Cannot install kernel team module, please install a generic kernel")
 
     name = request.config.getoption("--dvsname")
-    using_persistent_dvs = name is not None
     forcedvs = request.config.getoption("--forcedvs")
     keeptb = request.config.getoption("--keeptb")
     imgname = request.config.getoption("--imgname")
     max_cpu = request.config.getoption("--max_cpu")
     buffer_model = request.config.getoption("--buffer_model")
-    force_recreate = request.config.getoption("--force-recreate-dvs")
-    dvs = None
-    curr_dvs_env = [] # lgtm[py/unused-local-variable]
+    fakeplatform = getattr(request.module, "DVS_FAKE_PLATFORM", None)
+    log_path = name if name else request.module.__name__
 
-    if using_persistent_dvs and force_recreate:
-        pytest.fail("Options --dvsname and --force-recreate-dvs are mutually exclusive")
+    dvs = DockerVirtualSwitch(name, imgname, keeptb, fakeplatform, log_path, max_cpu, forcedvs, buffer_model = buffer_model)
 
-    def update_dvs(log_path, new_dvs_env=[]):
-        """
-        Decides whether or not to create a new DVS
-
-        Create a new the DVS in the following cases:
-        1. CLI option `--force-recreate-dvs` was specified (recreate for every module)
-        2. The dvs_env has changed (this can only be set at container creation,
-           so it is necessary to spin up a new DVS)
-        3. No DVS currently exists (i.e. first time startup)
-
-        Otherwise, restart the existing DVS (to get to a clean state)
-
-        Returns:
-            (DockerVirtualSwitch) a DVS object
-        """
-        nonlocal curr_dvs_env, dvs
-        if force_recreate or \
-           new_dvs_env != curr_dvs_env or \
-           dvs is None:
-
-            if dvs is not None:
-                dvs.get_logs()
-                dvs.destroy()
-
-            dvs = DockerVirtualSwitch(name, imgname, keeptb, new_dvs_env, log_path, max_cpu, forcedvs, buffer_model = buffer_model)
-
-            curr_dvs_env = new_dvs_env
-
-        else:
-            # First generate GCDA files for GCov
-            dvs.runcmd('killall5 -15')
-            # If not re-creating the DVS, restart container
-            # between modules to ensure a consistent start state
-            dvs.net_cleanup()
-            dvs.destroy_servers()
-            dvs.create_servers()
-            dvs.restart()
-
-        return dvs
-
-    yield update_dvs
+    yield dvs
 
     dvs.get_logs()
     dvs.destroy()
 
+    # restore original config db
     if dvs.persistent:
         dvs.runcmd("mv /etc/sonic/config_db.json.orig /etc/sonic/config_db.json")
         dvs.ctn_restart()
-
-@pytest.yield_fixture(scope="module")
-def dvs(request, manage_dvs) -> DockerVirtualSwitch:
-    dvs_env = getattr(request.module, "DVS_ENV", [])
-    name = request.config.getoption("--dvsname")
-    log_path = name if name else request.module.__name__
-
-    return manage_dvs(log_path, dvs_env)
 
 @pytest.yield_fixture(scope="module")
 def vct(request):
