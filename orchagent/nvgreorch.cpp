@@ -10,7 +10,7 @@ extern PortsOrch*       gPortsOrch;
 extern sai_object_id_t  gSwitchId;
 extern sai_tunnel_api_t *sai_tunnel_api;
 
-static const std::vector<map_type_t> mapTypes = {
+static const std::vector<map_type_t> nvgreMapTypes = {
     MAP_T_VLAN,
     MAP_T_BRIDGE
 };
@@ -140,7 +140,7 @@ void NvgreTunnel::sai_remove_tunnel_map(sai_object_id_t tunnel_map_id)
  *
  *  @return SAI tunnel identifier.
  */
-sai_object_id_t NvgreTunnel::sai_create_tunnel(struct tunnel_sai_ids_t* ids, sai_ip_address_t *src_ip)
+sai_object_id_t NvgreTunnel::sai_create_tunnel(struct tunnel_sai_ids_t &ids, const sai_ip_address_t &src_ip)
 {
     sai_attribute_t attr;
     std::vector<sai_attribute_t> tunnel_attrs;
@@ -151,12 +151,12 @@ sai_object_id_t NvgreTunnel::sai_create_tunnel(struct tunnel_sai_ids_t* ids, sai
     tunnel_attrs.push_back(attr);
 
     // think about it
-    sai_object_id_t decap_map_list[MAP_T_MAX+1];
+    sai_object_id_t decap_map_list[MAP_T_MAX];
     uint8_t num_decap_map = 0;
 
-    for (auto _map : mapTypes)
+    for (auto _map : nvgreMapTypes)
     {
-        decap_map_list[num_decap_map] = ids->tunnel_decap_id.at(_map);
+        decap_map_list[num_decap_map] = ids.tunnel_decap_id.at(_map);
         num_decap_map++;
     }
 
@@ -165,12 +165,12 @@ sai_object_id_t NvgreTunnel::sai_create_tunnel(struct tunnel_sai_ids_t* ids, sai
     attr.value.objlist.list = decap_map_list;
     tunnel_attrs.push_back(attr);
 
-    sai_object_id_t encap_map_list[MAP_T_MAX+1];
+    sai_object_id_t encap_map_list[MAP_T_MAX];
     uint8_t num_encap_map = 0;
 
-    for (auto _map : mapTypes)
+    for (auto _map : nvgreMapTypes)
     {
-        encap_map_list[num_encap_map] = ids->tunnel_encap_id.at(_map);
+        encap_map_list[num_encap_map] = ids.tunnel_encap_id.at(_map);
         num_encap_map++;
     }
 
@@ -180,7 +180,7 @@ sai_object_id_t NvgreTunnel::sai_create_tunnel(struct tunnel_sai_ids_t* ids, sai
     tunnel_attrs.push_back(attr);
 
     attr.id = SAI_TUNNEL_ATTR_ENCAP_SRC_IP;
-    attr.value.ipaddr = *src_ip;
+    attr.value.ipaddr = src_ip;
     tunnel_attrs.push_back(attr);
 
     sai_object_id_t tunnel_id;
@@ -213,45 +213,42 @@ void NvgreTunnel::sai_remove_tunnel(sai_object_id_t tunnel_id)
     }
 }
 
-void NvgreTunnel::createTunnelMappers()
+void NvgreTunnel::createNvgreMappers()
 {
-    for (auto _map : mapTypes)
+    for (auto _map : nvgreMapTypes)
     {
         tunnel_ids_.tunnel_encap_id.insert(
-            make_pair(
-                _map,
-                sai_create_tunnel_map(get_encap_tunnel_mapper(_map))
-            )
+            make_pair(_map, sai_create_tunnel_map(get_encap_tunnel_mapper(_map)))
         );
     }
 
-    for (auto _map : mapTypes)
+    for (auto _map : nvgreMapTypes)
     {
         tunnel_ids_.tunnel_decap_id.insert(
-            make_pair(
-                _map,
-                sai_create_tunnel_map(get_decap_tunnel_mapper(_map))
-            )
+            make_pair(_map, sai_create_tunnel_map(get_decap_tunnel_mapper(_map)))
         );
     }
 }
 
-void NvgreTunnel::removeTunnelMappers()
+void NvgreTunnel::removeNvgreMappers()
 {
-    for (auto _map : mapTypes)
+    for (auto _map : nvgreMapTypes)
         sai_remove_tunnel_map(tunnel_ids_.tunnel_encap_id.at(_map));
 
-    for (auto _map : mapTypes)
+    for (auto _map : nvgreMapTypes)
         sai_remove_tunnel_map(tunnel_ids_.tunnel_decap_id.at(_map));
+
+    tunnel_ids_.tunnel_encap_id.clear();
+    tunnel_ids_.tunnel_decap_id.clear();
 }
 
-void NvgreTunnel::createTunnel()
+void NvgreTunnel::createNvgreTunnel()
 {
     try {
         sai_ip_address_t ip_addr;
         swss::copy(ip_addr, src_ip_);
 
-        tunnel_ids_.tunnel_id = sai_create_tunnel(&tunnel_ids_, &ip_addr);
+        tunnel_ids_.tunnel_id = sai_create_tunnel(tunnel_ids_, ip_addr);
     }
     catch (const std::runtime_error& error)
     {
@@ -261,7 +258,7 @@ void NvgreTunnel::createTunnel()
     SWSS_LOG_INFO("NVGRE tunnel '%s' was created", tunnel_name_.c_str());
 }
 
-void NvgreTunnel::removeTunnel()
+void NvgreTunnel::removeNvgreTunnel()
 {
     try
     {
@@ -273,24 +270,22 @@ void NvgreTunnel::removeTunnel()
     }
 
     SWSS_LOG_INFO("NVGRE tunnel '%s' was removed", tunnel_name_.c_str());
+
+    tunnel_ids_.tunnel_id = SAI_NULL_OBJECT_ID;
 }
 
 NvgreTunnel::NvgreTunnel(std::string tunnelName, IpAddress srcIp) :
                          tunnel_name_(tunnelName),
                          src_ip_(srcIp)
 {
-    createTunnelMappers();
-    createTunnel();
+    createNvgreMappers();
+    createNvgreTunnel();
 }
 
 NvgreTunnel::~NvgreTunnel()
 {
-    removeTunnel();
-    removeTunnelMappers();
-
-    tunnel_ids_.tunnel_encap_id.clear();
-    tunnel_ids_.tunnel_decap_id.clear();
-    tunnel_ids_.tunnel_id = SAI_NULL_OBJECT_ID;
+    removeNvgreTunnel();
+    removeNvgreMappers();
 }
 
 bool NvgreTunnelOrch::addOperation(const Request& request)
@@ -336,8 +331,7 @@ sai_object_id_t NvgreTunnel::sai_create_tunnel_map_entry(
     sai_uint32_t vsid,
     sai_vlan_id_t vlan_id,
     sai_object_id_t obj_id,
-    bool encap
-    )
+    bool encap)
 {
     sai_attribute_t attr;
     sai_object_id_t tunnel_map_entry_id;
@@ -386,8 +380,7 @@ bool NvgreTunnel::addDecapMapperEntry(
     uint32_t vsid,
     sai_vlan_id_t vlan_id,
     std::string tunnel_map_entry_name,
-    sai_object_id_t obj
-    )
+    sai_object_id_t obj)
 {
     try
     {
