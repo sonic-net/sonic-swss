@@ -154,7 +154,7 @@ sai_object_id_t NvgreTunnel::sai_create_tunnel(struct tunnel_sai_ids_t &ids, con
     sai_object_id_t decap_map_list[MAP_T_MAX];
     uint8_t num_decap_map = 0;
 
-    for (auto _map : nvgreMapTypes)
+    for (auto map_type : nvgreMapTypes)
     {
         decap_map_list[num_decap_map] = ids.tunnel_decap_id.at(_map);
         num_decap_map++;
@@ -168,7 +168,7 @@ sai_object_id_t NvgreTunnel::sai_create_tunnel(struct tunnel_sai_ids_t &ids, con
     sai_object_id_t encap_map_list[MAP_T_MAX];
     uint8_t num_encap_map = 0;
 
-    for (auto _map : nvgreMapTypes)
+    for (auto map_type : nvgreMapTypes)
     {
         encap_map_list[num_encap_map] = ids.tunnel_encap_id.at(_map);
         num_encap_map++;
@@ -215,14 +215,14 @@ void NvgreTunnel::sai_remove_tunnel(sai_object_id_t tunnel_id)
 
 void NvgreTunnel::createNvgreMappers()
 {
-    for (auto _map : nvgreMapTypes)
+    for (auto map_type : nvgreMapTypes)
     {
         tunnel_ids_.tunnel_encap_id.insert(
             make_pair(_map, sai_create_tunnel_map(get_encap_tunnel_mapper(_map)))
         );
     }
 
-    for (auto _map : nvgreMapTypes)
+    for (auto map_type : nvgreMapTypes)
     {
         tunnel_ids_.tunnel_decap_id.insert(
             make_pair(_map, sai_create_tunnel_map(get_decap_tunnel_mapper(_map)))
@@ -232,10 +232,10 @@ void NvgreTunnel::createNvgreMappers()
 
 void NvgreTunnel::removeNvgreMappers()
 {
-    for (auto _map : nvgreMapTypes)
+    for (auto map_type : nvgreMapTypes)
         sai_remove_tunnel_map(tunnel_ids_.tunnel_encap_id.at(_map));
 
-    for (auto _map : nvgreMapTypes)
+    for (auto map_type : nvgreMapTypes)
         sai_remove_tunnel_map(tunnel_ids_.tunnel_decap_id.at(_map));
 
     tunnel_ids_.tunnel_encap_id.clear();
