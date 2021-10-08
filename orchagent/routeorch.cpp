@@ -2201,9 +2201,9 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
     else
     {
         /*
-        * Decrease the reference count only when the route is pointing to a next hop.
-        */
-        decreaseNextHopRefCount(ol_nextHops);
+         * Decrease the reference count only when the route is pointing to a next hop.
+         */
+        decreaseNextHopRefCount(it_route->second.nhg_key);
 
         auto ol_nextHops = it_route->second.nhg_key;
 
@@ -2218,9 +2218,9 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
             m_bulkNhgReducedRefCnt.emplace(ol_nextHops, vrf_id);
         }
         /*
-            * Additionally check if the NH has label and its ref count == 0, then
-            * remove the label next hop.
-            */
+         * Additionally check if the NH has label and its ref count == 0, then
+         * remove the label next hop.
+         */
         else if (it_route->second.nhg_key.getSize() == 1)
         {
             const NextHopKey& nexthop = *it_route->second.nhg_key.getNextHops().begin();
