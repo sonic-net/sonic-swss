@@ -1402,8 +1402,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
             fvs.push_back(FieldValueTuple("type", "dynamic"));
         else
             fvs.push_back(FieldValueTuple("type", fdbData.type));
-        if(fdbData.origin != FDB_ORIGIN_MCLAG_ADVERTIZED ||
-            fdbData.type == "dynamic_local")
+        if (fdbData.origin != FDB_ORIGIN_MCLAG_ADVERTIZED || fdbData.type == "dynamic_local")
         {
             m_fdbStateTable.set(key, fvs);
         }
