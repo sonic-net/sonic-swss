@@ -2200,17 +2200,17 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
     /* The NHG is owned by RouteOrch */
     else
     {
-        auto ol_nextHops = it_route->second.nhg_key;
-
         /*
         * Decrease the reference count only when the route is pointing to a next hop.
         */
         decreaseNextHopRefCount(ol_nextHops);
 
-        if (ol_nextHops.getSize() > 1
-            && m_syncdNextHopGroups[ol_nextHops].ref_count == 0)
+        auto ol_nextHops = it_route->second.nhg_key;
+
+        if (it_route->second.nhg_key.getSize() > 1
+            && m_syncdNextHopGroups[it_route->second.nhg_key].ref_count == 0)
         {
-            m_bulkNhgReducedRefCnt.emplace(ol_nextHops, 0);
+            m_bulkNhgReducedRefCnt.emplace(it_route->second.nhg_key, 0);
         }
         else if (ol_nextHops.is_overlay_nexthop())
         {
@@ -2221,7 +2221,7 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
             * Additionally check if the NH has label and its ref count == 0, then
             * remove the label next hop.
             */
-        else if (ol_nextHops.getSize() == 1)
+        else if (it_route->second.nhg_key.getSize() == 1)
         {
             const NextHopKey& nexthop = *it_route->second.nhg_key.getNextHops().begin();
             if (nexthop.isMplsNextHop() &&
