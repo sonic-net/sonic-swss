@@ -219,6 +219,82 @@ void PfcWdActionHandler::updateWdCounters(const string& queueIdStr, const PfcWdQ
     m_countersTable->set(queueIdStr, resultFvValues);
 }
 
+PfcWdSaiDlrInitHandler::PfcWdSaiDlrInitHandler(sai_object_id_t port, sai_object_id_t queue,
+                                               uint8_t queueId, shared_ptr<Table> countersTable):
+    PfcWdActionHandler(port, queue, queueId, countersTable)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    attr.id = SAI_QUEUE_ATTR_PFC_DLR_INIT;
+    attr.value.booldata = true;
+
+    // Set DLR init to true to start PFC deadlock recovery
+    sai_status_t status = sai_queue_api->set_queue_attribute(queue, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set PFC DLR INIT on port 0x%" PRIx64 " queue 0x%" PRIx64
+                       " queueId %d : %d",
+                       port, queue, queueId, status);
+        return;
+    }
+}
+
+PfcWdSaiDlrInitHandler::~PfcWdSaiDlrInitHandler(void)
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_id_t port = getPort();
+    sai_object_id_t queue = getQueue();
+    uint8_t queueId = getQueueId();
+
+    sai_attribute_t attr;
+    attr.id = SAI_QUEUE_ATTR_PFC_DLR_INIT;
+    attr.value.booldata = false;
+
+    // Set DLR init to false to stop PFC deadlock recovery
+    sai_status_t status = sai_queue_api->set_queue_attribute(getQueue(), &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to clear PFC DLR INIT on port 0x%" PRIx64 " queue 0x%" PRIx64
+                       " queueId %d : %d", port, queue, queueId, status);
+        return;
+    }
+}
+
+bool PfcWdSaiDlrInitHandler::getHwCounters(PfcWdHwStats& counters)
+{
+    SWSS_LOG_ENTER();
+
+    static const vector<sai_stat_id_t> queueStatIds =
+    {
+        SAI_QUEUE_STAT_PACKETS,
+        SAI_QUEUE_STAT_DROPPED_PACKETS,
+    };
+
+    vector<uint64_t> queueStats;
+    queueStats.resize(queueStatIds.size());
+
+    sai_status_t status = sai_queue_api->get_queue_stats(
+            getQueue(),
+            static_cast<uint32_t>(queueStatIds.size()),
+            queueStatIds.data(),
+            queueStats.data());
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to fetch queue 0x%" PRIx64 " stats: %d", getQueue(), status);
+        return false;
+    }
+
+    counters.txPkt = queueStats[0];
+    counters.txDropPkt = queueStats[1];
+    counters.rxPkt = 0;
+    counters.rxDropPkt = 0;
+
+    return true;
+}
+
 PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
         uint8_t queueId, shared_ptr<Table> countersTable):
     PfcWdLossyHandler(port, queue, queueId, countersTable)
