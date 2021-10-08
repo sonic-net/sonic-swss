@@ -16,6 +16,8 @@ extraction:
       - libnl-genl-3-dev
       - libnl-route-3-dev
       - libnl-nf-3-dev
+      - libnl-cli-3-dev
+      - libhiredis0.14
       - swig3.0
       - libpython2.7-dev
       - libgtest-dev
