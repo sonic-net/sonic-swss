@@ -16,11 +16,14 @@
 #include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <signal.h>
+#include <unistd.h>
 
 
 using namespace std;
 using namespace swss;
 
+#define TEAMD_CLEANUP_PID_WAIT_INTERVAL 1
+#define TEAMD_CLEANUP_PID_NUM_RETRIES 15
 
 TeamMgr::TeamMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
         const vector<TableConnector> &tables) :
@@ -117,48 +120,40 @@ void TeamMgr::cleanTeamProcesses()
     SWSS_LOG_ENTER();
     SWSS_LOG_NOTICE("Cleaning up LAGs during shutdown...");
 
-    std::unordered_map<std::string, pid_t> aliasPidMap;
+    std::stringstream clean_cmd;
+    std::stringstream check_cmd;
+    std::string res;
+    uint8_t num_tries = 0;
+    unsigned long num_pids = 0;
 
-    for (const auto& alias: m_lagList)
+    clean_cmd << "cat /var/run/teamd/*.pid | xargs kill -TERM";
+    EXEC_WITH_ERROR_THROW(clean_cmd.str(), res);
+    SWSS_LOG_NOTICE("Executed the cleanup command. Waiting for cleanup complete");
+    check_cmd << "ps -ef | grep \"[P]ortChannel\" | wc -l";
+
+    while (num_tries < TEAMD_CLEANUP_PID_NUM_RETRIES)
     {
-        std::string res;
-        pid_t pid;
+        EXEC_WITH_ERROR_THROW(check_cmd.str(), res);
+        num_pids = (std::stoul(res, nullptr, 10));
 
+        if (num_pids == 0)
         {
-            std::stringstream cmd;
-            cmd << "cat " << shellquote("/var/run/teamd/" + alias + ".pid");
-            EXEC_WITH_ERROR_THROW(cmd.str(), res);
-
-            pid = static_cast<pid_t>(std::stoul(res, nullptr, 10));
-            aliasPidMap[alias] = pid;
-
-            SWSS_LOG_INFO("Read port channel %s pid %d", alias.c_str(), pid);
+            break;
         }
 
-        {
-            std::stringstream cmd;
-            cmd << "kill -TERM " << pid;
-            EXEC_WITH_ERROR_THROW(cmd.str(), res);
-
-            SWSS_LOG_INFO("Sent SIGTERM to port channel %s pid %d", alias.c_str(), pid);
-        }
+        SWSS_LOG_NOTICE("Waiting for %lu processes to be cleaned up", num_pids);
+        sleep(TEAMD_CLEANUP_PID_WAIT_INTERVAL);
+        num_tries++;
     }
 
-    for (const auto& cit: aliasPidMap)
+    if (num_tries < TEAMD_CLEANUP_PID_NUM_RETRIES)
     {
-        const auto &alias = cit.first;
-        const auto &pid = cit.second;
-
-        std::stringstream cmd;
-        std::string res;
-
-        SWSS_LOG_NOTICE("Waiting for port channel %s pid %d to stop...", alias.c_str(), pid);
-
-        cmd << "tail -f --pid=" << pid << " /dev/null";
-        EXEC_WITH_ERROR_THROW(cmd.str(), res);
+        SWSS_LOG_NOTICE("LAGs cleanup is done");
     }
-
-    SWSS_LOG_NOTICE("LAGs cleanup is done");
+    else
+    {
+        SWSS_LOG_WARN("LAGs cleanup incomplete. Num Process to be cleaned %lu", num_pids);
+    }
 }
 
 void TeamMgr::doLagTask(Consumer &consumer)
