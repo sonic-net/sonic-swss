@@ -440,7 +440,8 @@ private:
                                           m_macsec_port(nullptr),
                                           m_acl_table(nullptr),
                                           m_macsec_sc(nullptr),
-                                          m_macsec_sa(nullptr)
+                                          m_macsec_sa(nullptr),
+                                          m_gearbox_phy(nullptr)
     {
     }
 
@@ -1043,11 +1044,16 @@ bool MACsecOrch::createMACsecPort(
             SAI_MACSEC_DIRECTION_INGRESS);
     });
 
-    if (phy)
+    if (phy && phy->macsec_ipg != 0)
     {
-        if (phy->ipg != 0 && !adjustIPG(port, phy->ipg))
+        if (!m_port_orch->getPortIPG(port.m_port_id, macsec_port.m_original_ipg))
         {
-            SWSS_LOG_WARN("Cannot set IPG %u to at the port %s", phy->ipg, port_name.c_str());
+            SWSS_LOG_WARN("Cannot get Port IPG at the port %s", port_name.c_str());
+            return false;
+        }
+        if (!m_port_orch->setPortIPG(port.m_port_id, phy->macsec_ipg))
+        {
+            SWSS_LOG_WARN("Cannot set MACsec IPG to %u at the port %s", phy->macsec_ipg, port_name.c_str());
             return false;
         }
     }
@@ -1243,11 +1249,11 @@ bool MACsecOrch::deleteMACsecPort(
         result &= false;
     }
 
-    if (phy)
+    if (phy && phy->macsec_ipg != 0)
     {
-        if (phy->ipg != 0 && !adjustIPG(port, DEFAULT_IPG))
+        if (!m_port_orch->setPortIPG(port.m_port_id, macsec_port.m_original_ipg))
         {
-            SWSS_LOG_WARN("Cannot set IPG %u to at the port %s", DEFAULT_IPG, port_name.c_str());
+            SWSS_LOG_WARN("Cannot set MACsec IPG to %u at the port %s", macsec_port.m_original_ipg, port_name.c_str());
             result &= false;
         }
     }
@@ -1268,27 +1274,6 @@ bool MACsecOrch::deleteMACsecPort(sai_object_id_t macsec_port_id)
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
-    return true;
-}
-
-bool MACsecOrch::adjustIPG(Port &port, sai_uint32_t ipg)
-{
-    sai_attribute_t attr;
-    attr.id = SAI_PORT_ATTR_IPG;
-    attr.value.u32 = ipg;
-
-    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
-
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
-    }
-    port.m_ipg = static_cast<uint32_t>(ipg);
-
     return true;
 }
 

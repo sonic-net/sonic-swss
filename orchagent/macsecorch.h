@@ -94,6 +94,7 @@ private:
         bool                                m_enable_encrypt;
         bool                                m_sci_in_sectag;
         bool                                m_enable;
+        uint32_t                            m_original_ipg;
     };
     struct MACsecObject
     {
@@ -133,8 +134,6 @@ private:
         Port &port,
         const gearbox_phy_t* phy);
     bool deleteMACsecPort(sai_object_id_t macsec_port_id);
-
-    bool adjustIPG(Port &port, sai_uint32_t ipg);
 
     /* MACsec Flow */
     bool createMACsecFlow(
