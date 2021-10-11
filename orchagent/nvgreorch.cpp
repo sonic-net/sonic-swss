@@ -1,5 +1,4 @@
 #include "orch.h"
-//#include "sai.h"
 #include "nvgreorch.h"
 #include "request_parser.h"
 #include "swssnet.h"
@@ -149,7 +148,6 @@ sai_object_id_t NvgreTunnel::sai_create_tunnel(struct tunnel_sai_ids_t &ids, con
     attr.value.s32 = SAI_TUNNEL_TYPE_VXLAN;
     tunnel_attrs.push_back(attr);
 
-    // think about it
     sai_object_id_t decap_map_list[MAP_T_MAX];
     uint8_t num_decap_map = 0;
 
