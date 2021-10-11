@@ -3,6 +3,7 @@
 
 #include "orch.h"
 #include "intfsorch.h"
+#include "vrforch.h"
 
 #define BFD_SRCPORTINIT 49152
 #define BFD_SRCPORTMAX 65536

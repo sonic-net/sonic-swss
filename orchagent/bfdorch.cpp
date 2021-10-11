@@ -3,6 +3,7 @@
 #include "swssnet.h"
 #include "notifier.h"
 #include "sai_serialize.h"
+#include "directory.h"
 
 using namespace std;
 using namespace swss;
@@ -15,6 +16,7 @@ extern sai_bfd_api_t*       sai_bfd_api;
 extern sai_object_id_t      gSwitchId;
 extern sai_object_id_t      gVirtualRouterId;
 extern PortsOrch*           gPortsOrch;
+extern Directory<Orch*>     gDirectory;
 
 const map<string, sai_bfd_session_type_t> session_type_map =
 {
@@ -147,15 +149,23 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
         return true;
     }
 
-    size_t found = key.find(delimiter);
-    if (found == string::npos)
+    size_t found_vrf = key.find(delimiter);
+    if (found_vrf == string::npos)
     {
-        SWSS_LOG_ERROR("Failed to parse key %s", key.c_str());
+        SWSS_LOG_ERROR("Failed to parse key %s, no vrf is given", key.c_str());
         return false;
     }
 
-    string alias = key.substr(0, found);
-    IpAddress peer_address(key.substr(found+1));
+    size_t found_ifname = key.find(delimiter, found_vrf + 1);
+    if (found_ifname == string::npos)
+    {
+        SWSS_LOG_ERROR("Failed to parse key %s, no ifname is given", key.c_str());
+        return false;
+    }
+
+    string vrf_name = key.substr(0, found_vrf);
+    string alias = key.substr(found_vrf + 1, found_ifname - found_vrf - 1);
+    IpAddress peer_address(key.substr(found_ifname + 1));
 
     sai_bfd_session_type_t bfd_session_type = SAI_BFD_SESSION_TYPE_ASYNC_ACTIVE;
     sai_bfd_encapsulation_type_t encapsulation_type = SAI_BFD_ENCAPSULATION_TYPE_NONE;
@@ -301,6 +311,13 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
             return false;
         }
 
+        if (vrf_name != "default")
+        {
+            SWSS_LOG_ERROR("Failed to create BFD session %s: vrf is not supported when hardware lookup not valid",
+                            key.c_str());
+            return false;
+        }
+
         attr.id = SAI_BFD_SESSION_ATTR_DST_MAC_ADDRESS;
         memcpy(attr.value.mac, dst_mac.getMac(), sizeof(sai_mac_t));
         attrs.emplace_back(attr);
@@ -308,7 +325,16 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     else
     {
         attr.id = SAI_BFD_SESSION_ATTR_VIRTUAL_ROUTER;
-        attr.value.oid = gVirtualRouterId;
+        if (vrf_name == "default")
+        {
+            attr.value.oid = gVirtualRouterId;
+        }
+        else
+        {
+            VRFOrch* vrf_orch = gDirectory.get<VRFOrch*>();
+            attr.value.oid = vrf_orch->getVRFid(vrf_name);
+        }
+
         attrs.emplace_back(attr);
 
         if (dst_mac_provided)
@@ -333,7 +359,7 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
         }
     }
 
-    const string state_db_key = alias + state_db_key_delimiter + peer_address.to_string();
+    const string state_db_key = vrf_name + state_db_key_delimiter + alias + state_db_key_delimiter + peer_address.to_string();
     m_stateBfdSessionTable->set(state_db_key, fvVector);
     bfd_session_map[key] = bfd_session_id;
     bfd_session_lookup[bfd_session_id] = {state_db_key, SAI_BFD_SESSION_STATE_DOWN};

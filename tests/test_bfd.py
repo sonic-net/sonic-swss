@@ -50,7 +50,7 @@ class TestBfd(object):
 
         # Create BFD session
         fieldValues = {"local_addr": "10.0.0.1"}
-        self.create_bfd_session("default:10.0.0.2", fieldValues)
+        self.create_bfd_session("default:default:10.0.0.2", fieldValues)
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", len(bfdSessions) + 1)
 
         # Checked created BFD session in ASIC_DB
@@ -69,7 +69,7 @@ class TestBfd(object):
         # Check STATE_DB entry related to the BFD session
         expected_sdb_values = {"state": "Down", "type": "async_active", "local_addr" : "10.0.0.1", "tx_interval" :"1000",
                                         "rx_interval" : "1000", "multiplier" : "3", "multihop": "false"}
-        self.check_state_bfd_session_value("default|10.0.0.2", expected_sdb_values)
+        self.check_state_bfd_session_value("default|default|10.0.0.2", expected_sdb_values)
 
         # Send BFD session state notification to update BFD session state
         self.update_bfd_session_state(dvs, session, "Up")
@@ -77,10 +77,10 @@ class TestBfd(object):
 
         # Confirm BFD session state in STATE_DB is updated as expected 
         expected_sdb_values["state"] = "Up"
-        self.check_state_bfd_session_value("default|10.0.0.2", expected_sdb_values)
+        self.check_state_bfd_session_value("default|default|10.0.0.2", expected_sdb_values)
 
         # Remove the BFD session
-        self.remove_bfd_session("default:10.0.0.2")
+        self.remove_bfd_session("default:default:10.0.0.2")
         self.adb.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", session)
 
     def test_addRemoveBfdSession_ipv6(self, dvs):
@@ -90,7 +90,7 @@ class TestBfd(object):
 
         # Create BFD session
         fieldValues = {"local_addr": "2000::1"}
-        self.create_bfd_session("default:2000::2", fieldValues)
+        self.create_bfd_session("default:default:2000::2", fieldValues)
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", len(bfdSessions) + 1)
 
         # Checked created BFD session in ASIC_DB
@@ -109,7 +109,7 @@ class TestBfd(object):
         # Check STATE_DB entry related to the BFD session
         expected_sdb_values = {"state": "Down", "type": "async_active", "local_addr" : "2000::1", "tx_interval" :"1000",
                                         "rx_interval" : "1000", "multiplier" : "3", "multihop": "false"}
-        self.check_state_bfd_session_value("default|2000::2", expected_sdb_values)
+        self.check_state_bfd_session_value("default|default|2000::2", expected_sdb_values)
 
         # Send BFD session state notification to update BFD session state
         self.update_bfd_session_state(dvs, session, "Init")
@@ -117,10 +117,10 @@ class TestBfd(object):
 
         # Confirm BFD session state in STATE_DB is updated as expected 
         expected_sdb_values["state"] = "Init"
-        self.check_state_bfd_session_value("default|2000::2", expected_sdb_values)
+        self.check_state_bfd_session_value("default|default|2000::2", expected_sdb_values)
 
         # Remove the BFD session
-        self.remove_bfd_session("default:2000::2")
+        self.remove_bfd_session("default:default:2000::2")
         self.adb.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", session)
 
     def test_addRemoveBfdSession_interface(self, dvs):
@@ -130,7 +130,7 @@ class TestBfd(object):
 
         # Create BFD session
         fieldValues = {"local_addr": "10.0.0.1", "dst_mac": "00:02:03:04:05:06"}
-        self.create_bfd_session("Ethernet0:10.0.0.2", fieldValues)
+        self.create_bfd_session("default:Ethernet0:10.0.0.2", fieldValues)
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", len(bfdSessions) + 1)
 
         # Checked created BFD session in ASIC_DB
@@ -151,7 +151,7 @@ class TestBfd(object):
         # Check STATE_DB entry related to the BFD session
         expected_sdb_values = {"state": "Down", "type": "async_active", "local_addr" : "10.0.0.1", "tx_interval" :"1000",
                                         "rx_interval" : "1000", "multiplier" : "3", "multihop": "false"}
-        self.check_state_bfd_session_value("Ethernet0|10.0.0.2", expected_sdb_values)
+        self.check_state_bfd_session_value("default|Ethernet0|10.0.0.2", expected_sdb_values)
 
         # Send BFD session state notification to update BFD session state
         self.update_bfd_session_state(dvs, session, "Down")
@@ -159,10 +159,10 @@ class TestBfd(object):
 
         # Confirm BFD session state in STATE_DB is updated as expected 
         expected_sdb_values["state"] = "Down"
-        self.check_state_bfd_session_value("Ethernet0|10.0.0.2", expected_sdb_values)
+        self.check_state_bfd_session_value("default|Ethernet0|10.0.0.2", expected_sdb_values)
 
         # Remove the BFD session
-        self.remove_bfd_session("Ethernet0:10.0.0.2")
+        self.remove_bfd_session("default:Ethernet0:10.0.0.2")
         self.adb.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", session)
 
     def test_addRemoveBfdSession_txrx_interval(self, dvs):
@@ -172,7 +172,7 @@ class TestBfd(object):
 
         # Create BFD session
         fieldValues = {"local_addr": "10.0.0.1", "tx_interval": "300", "rx_interval": "500"}
-        self.create_bfd_session("default:10.0.0.2", fieldValues)
+        self.create_bfd_session("default:default:10.0.0.2", fieldValues)
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", len(bfdSessions) + 1)
 
         # Checked created BFD session in ASIC_DB
@@ -193,7 +193,7 @@ class TestBfd(object):
         # Check STATE_DB entry related to the BFD session
         expected_sdb_values = {"state": "Down", "type": "async_active", "local_addr" : "10.0.0.1", "tx_interval" :"300",
                                         "rx_interval" : "500", "multiplier" : "3", "multihop": "false"}
-        self.check_state_bfd_session_value("default|10.0.0.2", expected_sdb_values)
+        self.check_state_bfd_session_value("default|default|10.0.0.2", expected_sdb_values)
 
         # Send BFD session state notification to update BFD session state
         self.update_bfd_session_state(dvs, session, "Admin_Down")
@@ -201,10 +201,10 @@ class TestBfd(object):
 
         # Confirm BFD session state in STATE_DB is updated as expected 
         expected_sdb_values["state"] = "Admin_Down"
-        self.check_state_bfd_session_value("default|10.0.0.2", expected_sdb_values)
+        self.check_state_bfd_session_value("default|default|10.0.0.2", expected_sdb_values)
 
         # Remove the BFD session
-        self.remove_bfd_session("default:10.0.0.2")
+        self.remove_bfd_session("default:default:10.0.0.2")
         self.adb.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", session)
 
     def test_addRemoveBfdSession_multiplier(self, dvs):
@@ -214,7 +214,7 @@ class TestBfd(object):
 
         # Create BFD session
         fieldValues = {"local_addr": "10.0.0.1", "multiplier": "5"}
-        self.create_bfd_session("default:10.0.0.2", fieldValues)
+        self.create_bfd_session("default:default:10.0.0.2", fieldValues)
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", len(bfdSessions) + 1)
 
         # Checked created BFD session in ASIC_DB
@@ -234,7 +234,7 @@ class TestBfd(object):
         # Check STATE_DB entry related to the BFD session
         expected_sdb_values = {"state": "Down", "type": "async_active", "local_addr" : "10.0.0.1", "tx_interval" :"1000",
                                         "rx_interval" : "1000", "multiplier" : "5", "multihop": "false"}
-        self.check_state_bfd_session_value("default|10.0.0.2", expected_sdb_values)
+        self.check_state_bfd_session_value("default|default|10.0.0.2", expected_sdb_values)
 
         # Send BFD session state notification to update BFD session state
         self.update_bfd_session_state(dvs, session, "Up")
@@ -242,10 +242,10 @@ class TestBfd(object):
 
         # Confirm BFD session state in STATE_DB is updated as expected 
         expected_sdb_values["state"] = "Up"
-        self.check_state_bfd_session_value("default|10.0.0.2", expected_sdb_values)
+        self.check_state_bfd_session_value("default|default|10.0.0.2", expected_sdb_values)
 
         # Remove the BFD session
-        self.remove_bfd_session("default:10.0.0.2")
+        self.remove_bfd_session("default:default:10.0.0.2")
         self.adb.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", session)
 
     def test_addRemoveBfdSession_multihop(self, dvs):
@@ -255,7 +255,7 @@ class TestBfd(object):
 
         # Create BFD session
         fieldValues = {"local_addr": "10.0.0.1", "multihop": "true"}
-        self.create_bfd_session("default:10.0.0.2", fieldValues)
+        self.create_bfd_session("default:default:10.0.0.2", fieldValues)
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", len(bfdSessions) + 1)
 
         # Checked created BFD session in ASIC_DB
@@ -275,7 +275,7 @@ class TestBfd(object):
         # Check STATE_DB entry related to the BFD session
         expected_sdb_values = {"state": "Down", "type": "async_active", "local_addr" : "10.0.0.1", "tx_interval" :"1000",
                                         "rx_interval" : "1000", "multiplier" : "3", "multihop": "true"}
-        self.check_state_bfd_session_value("default|10.0.0.2", expected_sdb_values)
+        self.check_state_bfd_session_value("default|default|10.0.0.2", expected_sdb_values)
 
         # Send BFD session state notification to update BFD session state
         self.update_bfd_session_state(dvs, session, "Up")
@@ -283,10 +283,10 @@ class TestBfd(object):
 
         # Confirm BFD session state in STATE_DB is updated as expected 
         expected_sdb_values["state"] = "Up"
-        self.check_state_bfd_session_value("default|10.0.0.2", expected_sdb_values)
+        self.check_state_bfd_session_value("default|default|10.0.0.2", expected_sdb_values)
 
         # Remove the BFD session
-        self.remove_bfd_session("default:10.0.0.2")
+        self.remove_bfd_session("default:default:10.0.0.2")
         self.adb.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", session)
 
     def test_addRemoveBfdSession_type(self, dvs):
@@ -296,7 +296,7 @@ class TestBfd(object):
 
         # Create BFD session
         fieldValues = {"local_addr": "10.0.0.1", "type": "demand_active"}
-        self.create_bfd_session("default:10.0.0.2", fieldValues)
+        self.create_bfd_session("default:default:10.0.0.2", fieldValues)
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", len(bfdSessions) + 1)
 
         # Checked created BFD session in ASIC_DB
@@ -315,7 +315,7 @@ class TestBfd(object):
         # Check STATE_DB entry related to the BFD session
         expected_sdb_values = {"state": "Down", "type": "demand_active", "local_addr" : "10.0.0.1", "tx_interval" :"1000",
                                         "rx_interval" : "1000", "multiplier" : "3", "multihop": "false"}
-        self.check_state_bfd_session_value("default|10.0.0.2", expected_sdb_values)
+        self.check_state_bfd_session_value("default|default|10.0.0.2", expected_sdb_values)
 
         # Send BFD session state notification to update BFD session state
         self.update_bfd_session_state(dvs, session, "Up")
@@ -323,10 +323,10 @@ class TestBfd(object):
 
         # Confirm BFD session state in STATE_DB is updated as expected 
         expected_sdb_values["state"] = "Up"
-        self.check_state_bfd_session_value("default|10.0.0.2", expected_sdb_values)
+        self.check_state_bfd_session_value("default|default|10.0.0.2", expected_sdb_values)
 
         # Remove the BFD session
-        self.remove_bfd_session("default:10.0.0.2")
+        self.remove_bfd_session("default:default:10.0.0.2")
         self.adb.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", session)
 
     def test_multipleBfdSessions(self, dvs):
@@ -335,7 +335,7 @@ class TestBfd(object):
         bfdSessions = self.get_exist_bfd_session()
 
         # Create BFD session 1
-        key1 = "default:10.0.0.2"
+        key1 = "default:default:10.0.0.2"
         fieldValues = {"local_addr": "10.0.0.1"}
         self.create_bfd_session(key1, fieldValues)
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", len(bfdSessions) + 1)
@@ -355,13 +355,13 @@ class TestBfd(object):
         self.check_asic_bfd_session_value(session1, expected_adb_values)
 
         # Check STATE_DB entry related to the BFD session 1
-        key_state_db1 = "default|10.0.0.2"
+        key_state_db1 = "default|default|10.0.0.2"
         expected_sdb_values1 = {"state": "Down", "type": "async_active", "local_addr" : "10.0.0.1", "tx_interval" :"1000",
                                         "rx_interval" : "1000", "multiplier" : "3", "multihop": "false"}
         self.check_state_bfd_session_value(key_state_db1, expected_sdb_values1)
 
         # Create BFD session 2
-        key2 = "default:10.0.1.2"
+        key2 = "default:default:10.0.1.2"
         fieldValues = {"local_addr": "10.0.0.1", "tx_interval": "300", "rx_interval": "500"}
         self.create_bfd_session(key2, fieldValues)
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", len(bfdSessions) + 1)
@@ -383,13 +383,13 @@ class TestBfd(object):
         self.check_asic_bfd_session_value(session2, expected_adb_values)
 
         # Check STATE_DB entry related to the BFD session 2
-        key_state_db2 = "default|10.0.1.2"
+        key_state_db2 = "default|default|10.0.1.2"
         expected_sdb_values2 = {"state": "Down", "type": "async_active", "local_addr" : "10.0.0.1", "tx_interval" :"300",
                                         "rx_interval" : "500", "multiplier" : "3", "multihop": "false"}
         self.check_state_bfd_session_value(key_state_db2, expected_sdb_values2)
 
         # Create BFD session 3
-        key3 = "default:2000::2"
+        key3 = "default:default:2000::2"
         fieldValues = {"local_addr": "2000::1", "type": "demand_active"}
         self.create_bfd_session(key3, fieldValues)
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", len(bfdSessions) + 1)
@@ -409,13 +409,13 @@ class TestBfd(object):
         self.check_asic_bfd_session_value(session3, expected_adb_values)
 
         # Check STATE_DB entry related to the BFD session 3
-        key_state_db3 = "default|2000::2"
+        key_state_db3 = "default|default|2000::2"
         expected_sdb_values3 = {"state": "Down", "type": "demand_active", "local_addr" : "2000::1", "tx_interval" :"1000",
                                         "rx_interval" : "1000", "multiplier" : "3", "multihop": "false"}
         self.check_state_bfd_session_value(key_state_db3, expected_sdb_values3)
 
         # Create BFD session 4
-        key4 = "default:3000::2"
+        key4 = "default:default:3000::2"
         fieldValues = {"local_addr": "3000::1"}
         self.create_bfd_session(key4, fieldValues)
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", len(bfdSessions) + 1)
@@ -435,7 +435,7 @@ class TestBfd(object):
         self.check_asic_bfd_session_value(session4, expected_adb_values)
 
         # Check STATE_DB entry related to the BFD session 4
-        key_state_db4 = "default|3000::2"
+        key_state_db4 = "default|default|3000::2"
         expected_sdb_values4 = {"state": "Down", "type": "async_active", "local_addr" : "3000::1", "tx_interval" :"1000",
                                         "rx_interval" : "1000", "multiplier" : "3", "multihop": "false"}
         self.check_state_bfd_session_value(key_state_db4, expected_sdb_values4)
