@@ -20,7 +20,7 @@ static const std::map<map_type_t, sai_tunnel_map_type_t> nvgreEncapTunnelMap = {
     { MAP_T_BRIDGE, SAI_TUNNEL_MAP_TYPE_BRIDGE_IF_TO_VNI }
 };
 
-static inline sai_tunnel_map_type_t get_encap_tunnel_mapper(map_type_t map)
+static inline sai_tunnel_map_type_t get_encap_nvgre_mapper(map_type_t map)
 {
     return nvgreEncapTunnelMap.at(map);
 }
@@ -30,7 +30,7 @@ static const std::map<map_type_t, sai_tunnel_map_type_t> nvgreDecapTunnelMap = {
     { MAP_T_BRIDGE, SAI_TUNNEL_MAP_TYPE_VNI_TO_BRIDGE_IF }
 };
 
-static inline sai_tunnel_map_type_t get_decap_tunnel_mapper(map_type_t map)
+static inline sai_tunnel_map_type_t get_decap_nvgre_mapper(map_type_t map)
 {
     return nvgreDecapTunnelMap.at(map);
 }
@@ -45,12 +45,12 @@ static const map<map_type_t, std::pair<sai_tunnel_map_entry_attr_t, sai_tunnel_m
     }
 };
 
-static inline sai_tunnel_map_entry_attr_t get_encap_tunnel_map_key(map_type_t map)
+static inline sai_tunnel_map_entry_attr_t get_encap_nvgre_map_key(map_type_t map)
 {
     return nvgreEncapTunnelMapKeyVal.at(map).first;
 }
 
-static inline sai_tunnel_map_entry_attr_t get_encap_tunnel_map_val(map_type_t map)
+static inline sai_tunnel_map_entry_attr_t get_encap_nvgre_map_val(map_type_t map)
 {
     return nvgreEncapTunnelMapKeyVal.at(map).second;
 }
@@ -65,12 +65,12 @@ static const map<map_type_t, std::pair<sai_tunnel_map_entry_attr_t, sai_tunnel_m
     }
 };
 
-static inline sai_tunnel_map_entry_attr_t get_decap_tunnel_map_key(map_type_t map)
+static inline sai_tunnel_map_entry_attr_t get_decap_nvgre_map_key(map_type_t map)
 {
     return nvgreDecapTunnelMapKeyVal.at(map).first;
 }
 
-static inline sai_tunnel_map_entry_attr_t get_decap_tunnel_map_val(map_type_t map)
+static inline sai_tunnel_map_entry_attr_t get_decap_nvgre_map_val(map_type_t map)
 {
     return nvgreDecapTunnelMapKeyVal.at(map).second;
 }
@@ -156,7 +156,7 @@ sai_object_id_t NvgreTunnel::sai_create_tunnel(struct tunnel_sai_ids_t &ids, con
 
     for (auto map_type : nvgreMapTypes)
     {
-        decap_map_list[num_decap_map] = ids.tunnel_decap_id.at(_map);
+        decap_map_list[num_decap_map] = ids.tunnel_decap_id.at(map_type);
         num_decap_map++;
     }
 
@@ -170,7 +170,7 @@ sai_object_id_t NvgreTunnel::sai_create_tunnel(struct tunnel_sai_ids_t &ids, con
 
     for (auto map_type : nvgreMapTypes)
     {
-        encap_map_list[num_encap_map] = ids.tunnel_encap_id.at(_map);
+        encap_map_list[num_encap_map] = ids.tunnel_encap_id.at(map_type);
         num_encap_map++;
     }
 
@@ -218,14 +218,14 @@ void NvgreTunnel::createNvgreMappers()
     for (auto map_type : nvgreMapTypes)
     {
         tunnel_ids_.tunnel_encap_id.insert(
-            make_pair(_map, sai_create_tunnel_map(get_encap_tunnel_mapper(_map)))
+            make_pair(map_type, sai_create_tunnel_map(get_encap_nvgre_mapper(map_type)))
         );
     }
 
     for (auto map_type : nvgreMapTypes)
     {
         tunnel_ids_.tunnel_decap_id.insert(
-            make_pair(_map, sai_create_tunnel_map(get_decap_tunnel_mapper(_map)))
+            make_pair(map_type, sai_create_tunnel_map(get_decap_nvgre_mapper(map_type)))
         );
     }
 }
@@ -233,10 +233,10 @@ void NvgreTunnel::createNvgreMappers()
 void NvgreTunnel::removeNvgreMappers()
 {
     for (auto map_type : nvgreMapTypes)
-        sai_remove_tunnel_map(tunnel_ids_.tunnel_encap_id.at(_map));
+        sai_remove_tunnel_map(tunnel_ids_.tunnel_encap_id.at(map_type));
 
     for (auto map_type : nvgreMapTypes)
-        sai_remove_tunnel_map(tunnel_ids_.tunnel_decap_id.at(_map));
+        sai_remove_tunnel_map(tunnel_ids_.tunnel_decap_id.at(map_type));
 
     tunnel_ids_.tunnel_encap_id.clear();
     tunnel_ids_.tunnel_decap_id.clear();
@@ -338,14 +338,14 @@ sai_object_id_t NvgreTunnel::sai_create_tunnel_map_entry(
     std::vector<sai_attribute_t> tunnel_map_entry_attrs;
 
     attr.id = SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP_TYPE;
-    attr.value.u32 = (encap) ? get_encap_tunnel_mapper(map_type) : get_decap_tunnel_mapper(map_type);
+    attr.value.u32 = (encap) ? get_encap_nvgre_mapper(map_type) : get_decap_nvgre_mapper(map_type);
     tunnel_map_entry_attrs.push_back(attr);
 
     attr.id = SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP;
     attr.value.oid = (encap) ? getEncapMapId(map_type) : getDecapMapId(map_type);
     tunnel_map_entry_attrs.push_back(attr);
 
-    attr.id = (encap) ? get_encap_tunnel_map_key(map_type) : get_decap_tunnel_map_val(map_type);
+    attr.id = (encap) ? get_encap_nvgre_map_key(map_type) : get_decap_nvgre_map_val(map_type);
     if (obj_id != SAI_NULL_OBJECT_ID)
     {
         attr.value.oid = obj_id;
@@ -357,7 +357,7 @@ sai_object_id_t NvgreTunnel::sai_create_tunnel_map_entry(
 
     tunnel_map_entry_attrs.push_back(attr);
 
-    attr.id = (encap) ? get_encap_tunnel_map_val(map_type) : get_decap_tunnel_map_key(map_type);
+    attr.id = (encap) ? get_encap_nvgre_map_val(map_type) : get_decap_nvgre_map_key(map_type);
     attr.value.u32 = vsid;
     tunnel_map_entry_attrs.push_back(attr);
 
