@@ -5,6 +5,8 @@
 #include "swssnet.h"
 #include "directory.h"
 
+#define NVGRE_VSID_MAX_VALUE 16777214
+
 extern Directory<Orch*> gDirectory;
 extern PortsOrch*       gPortsOrch;
 extern sai_object_id_t  gSwitchId;
@@ -424,7 +426,7 @@ bool NvgreTunnelMapOrch::addOperation(const Request& request)
     }
 
     auto vsid = static_cast<sai_uint32_t>(request.getAttrUint("vsid"));
-    if (vsid >= 1<<24)
+    if (vsid > NVGRE_VSID_MAX_VALUE)
     {
         SWSS_LOG_WARN("VSID is invalid: %d", vsid);
         return true;
@@ -454,7 +456,7 @@ void NvgreTunnel::sai_remove_tunnel_map_entry(sai_object_id_t obj_id)
     }
 }
 
-bool NvgreTunnel::delDecapMapperEntry(std::string tunnel_map_entry_name)
+bool NvgreTunnel::delMapperEntry(std::string tunnel_map_entry_name)
 {
     auto tunnel_map_entry_id = getMapEntryId(tunnel_map_entry_name);
 
@@ -471,7 +473,7 @@ bool NvgreTunnel::delDecapMapperEntry(std::string tunnel_map_entry_name)
 
     nvgre_tunnel_map_table_.erase(tunnel_map_entry_name);
 
-    SWSS_LOG_INFO("NVGRE decap tunnel map entry '%s' for tunnel '%s' was removed",
+    SWSS_LOG_INFO("NVGRE tunnel map entry '%s' for tunnel '%s' was removed",
         tunnel_map_entry_name.c_str(), tunnel_name_.c_str());
 
     return true;
@@ -499,7 +501,7 @@ bool NvgreTunnelMapOrch::delOperation(const Request& request)
         return true;
     }
 
-    if (!tunnel_obj->delDecapMapperEntry(full_tunnel_map_entry_name))
+    if (!tunnel_obj->delMapperEntry(full_tunnel_map_entry_name))
     {
         return true;
     }

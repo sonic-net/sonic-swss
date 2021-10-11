@@ -74,13 +74,10 @@ public:
         return nvgre_tunnel_map_table_.at(tunnel_map_entry_name).vsid;
     }
 
-    //TODO add getters for others private members
-
     bool addDecapMapperEntry(map_type_t map_type, uint32_t vsid, sai_vlan_id_t vlan_id, std::string tunnel_map_entry_name, sai_object_id_t obj=SAI_NULL_OBJECT_ID);
     bool addEncapMapperEntry(map_type_t map_type, uint32_t vsid, sai_vlan_id_t vlan_id, std::string tunnel_map_entry_name, sai_object_id_t obj=SAI_NULL_OBJECT_ID);
 
-    // do wee need 2 methods for decap and encap
-    bool delDecapMapperEntry(std::string tunnel_map_entry_name);
+    bool delMapperEntry(std::string tunnel_map_entry_name);
 
 private:
     void createNvgreMappers();
