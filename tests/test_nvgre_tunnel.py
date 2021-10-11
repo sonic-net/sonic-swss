@@ -34,6 +34,11 @@ def get_created_entry(db, table, existed_entries):
     return new_entries[0]
 
 
+def how_many_entries_exist(db, table):
+    tbl =  swsscommon.Table(db, table)
+    return len(tbl.getKeys())
+
+
 def check_object(db, table, key, expected_attributes):
     tbl =  swsscommon.Table(db, table)
     keys = tbl.getKeys()
@@ -81,6 +86,28 @@ def create_vlan(dvs, vlan_name, vlan_ids):
     return
 
 
+def create_nvgre_tunnel(dvs, name, src_ip, tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids):
+    asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+
+    # check the source information
+    assert how_many_entries_exist(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP") == len(tunnel_map_ids), "The initial state is incorrect"
+    assert how_many_entries_exist(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY") == len(tunnel_map_entry_ids), "The initial state is incorrect"
+    assert how_many_entries_exist(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL") == len(tunnel_ids), "The initial state is incorrect"
+    assert how_many_entries_exist(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY") == len(tunnel_term_ids), "The initial state is incorrect"
+
+    attrs = [
+        ("src_ip", src_ip),
+    ]
+
+    # create the VXLAN tunnel Term entry in Config DB
+    create_entry_tbl(
+        conf_db,
+        "NVGRE_TUNNEL", '|', name,
+        attrs,
+    )
+
+
 class TestNvgreTunnel(object):
 
     def test_nvgre(self, dvs, testlog):
@@ -92,6 +119,12 @@ class TestNvgreTunnel(object):
         vlan_ids             = get_exist_entries(dvs, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
 
         create_vlan(dvs, "Vlan50", vlan_ids)
+
+        create_nvgre_tunnel(
+            dvs, 'tunnel_1', '10.0.0.1',
+            tunnel_map_ids, tunnel_map_entry_ids,
+            tunnel_ids, tunnel_term_ids
+        )
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
