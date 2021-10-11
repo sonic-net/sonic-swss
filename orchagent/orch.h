@@ -220,6 +220,13 @@ public:
     static void recordTuple(Consumer &consumer, const swss::KeyOpFieldsValuesTuple &tuple);
 
     void dumpPendingTasks(std::vector<std::string> &ts);
+
+    /* Handling SAI status*/
+    virtual task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
+    virtual task_process_status handleSaiSetStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
+    virtual task_process_status handleSaiRemoveStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
+    virtual task_process_status handleSaiGetStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
+    bool parseHandleSaiStatusFailure(task_process_status status);
 protected:
     ConsumerMap m_consumerMap;
 

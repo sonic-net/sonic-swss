@@ -1,5 +1,5 @@
 #include "orch.h"
-#include "sai.h"
+//#include "sai.h"
 #include "nvgreorch.h"
 #include "request_parser.h"
 #include "swssnet.h"
@@ -102,17 +102,14 @@ sai_object_id_t NvgreTunnel::sai_create_tunnel_map(sai_tunnel_map_type_t sai_tun
                           );
     if (status != SAI_STATUS_SUCCESS)
     {
-        throw std::runtime_error("Can't create tunnel map object");
-        /*
-        // FIXME: need to update SAI version in order to support the code bellow
+        NvgreTunnelOrch* tunnel_map_orch = gDirectory.get<NvgreTunnelOrch*>();
 
         SWSS_LOG_ERROR("Failed to create NVGRE tunnel mapper = %u, SAI status = %d", sai_tunnel_map_type, status);
-        task_process_status handle_status = handleSaiSetStatus(SAI_API_TUNNEL, status);
+        task_process_status handle_status = tunnel_map_orch->handleSaiSetStatus(SAI_API_TUNNEL, status);
         if (handle_status != task_success)
         {
-            return parseHandleSaiStatusFailure(handle_status);
+            return tunnel_map_orch->parseHandleSaiStatusFailure(handle_status);
         }
-        */
     }
 
     return tunnel_map_id;
