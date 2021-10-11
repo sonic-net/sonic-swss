@@ -23,7 +23,6 @@ struct tunnel_sai_ids_t
 typedef struct nvgre_tunnel_map_entry_s
 {
    sai_object_id_t map_entry_id;
-   //TODO fix the types
    sai_vlan_id_t   vlan_id;
    uint32_t        vsid;
 } nvgre_tunnel_map_entry_t;
@@ -74,8 +73,7 @@ public:
         return nvgre_tunnel_map_table_.at(tunnel_map_entry_name).vsid;
     }
 
-    bool addDecapMapperEntry(map_type_t map_type, uint32_t vsid, sai_vlan_id_t vlan_id, std::string tunnel_map_entry_name, sai_object_id_t obj=SAI_NULL_OBJECT_ID);
-    bool addEncapMapperEntry(map_type_t map_type, uint32_t vsid, sai_vlan_id_t vlan_id, std::string tunnel_map_entry_name, sai_object_id_t obj=SAI_NULL_OBJECT_ID);
+    bool addDecapMapperEntry(map_type_t map_type, uint32_t vsid, sai_vlan_id_t vlan_id, std::string tunnel_map_entry_name, sai_object_id_t bridge_obj=SAI_NULL_OBJECT_ID);
 
     bool delMapperEntry(std::string tunnel_map_entry_name);
 
@@ -92,7 +90,7 @@ private:
     sai_object_id_t sai_create_tunnel(struct tunnel_sai_ids_t &ids, const sai_ip_address_t &src_ip);
     void sai_remove_tunnel(sai_object_id_t tunnel_id);
 
-    sai_object_id_t sai_create_tunnel_map_entry(map_type_t map_type, sai_uint32_t vsid, sai_vlan_id_t vlan_id, sai_object_id_t obj_id, bool encap=false);
+    sai_object_id_t sai_create_tunnel_map_entry(map_type_t map_type, sai_uint32_t vsid, sai_vlan_id_t vlan_id, sai_object_id_t bridge_obj_id, bool encap=false);
     void sai_remove_tunnel_map_entry(sai_object_id_t obj_id);
 
     std::string tunnel_name_;

@@ -325,12 +325,21 @@ bool NvgreTunnelOrch::delOperation(const Request& request)
     return true;
 }
 
+/** @brief Creates tunnel map entry in SAI.
+ *
+ *  @param map_type      map type - VLAN or BRIDGE.
+ *  @param vsid          Virtual Subnet ID value.
+ *  @param vlan_id       VLAN ID value.
+ *  @param bridge_obj_id SAI bridge object.
+ *  @param encap         encapsulation flag.
+ *
+ *  @return SAI tunnel map entry ID.
+ */
 sai_object_id_t NvgreTunnel::sai_create_tunnel_map_entry(
     map_type_t map_type,
-    // maybe there are dedicated sai type as for vlan
     sai_uint32_t vsid,
     sai_vlan_id_t vlan_id,
-    sai_object_id_t obj_id,
+    sai_object_id_t bridge_obj_id,
     bool encap)
 {
     sai_attribute_t attr;
@@ -346,9 +355,9 @@ sai_object_id_t NvgreTunnel::sai_create_tunnel_map_entry(
     tunnel_map_entry_attrs.push_back(attr);
 
     attr.id = (encap) ? get_encap_nvgre_map_key(map_type) : get_decap_nvgre_map_val(map_type);
-    if (obj_id != SAI_NULL_OBJECT_ID)
+    if (bridge_obj_id != SAI_NULL_OBJECT_ID)
     {
-        attr.value.oid = obj_id;
+        attr.value.oid = bridge_obj_id;
     }
     else
     {
@@ -380,9 +389,9 @@ bool NvgreTunnel::addDecapMapperEntry(
     uint32_t vsid,
     sai_vlan_id_t vlan_id,
     std::string tunnel_map_entry_name,
-    sai_object_id_t obj)
+    sai_object_id_t bridge_obj)
 {
-    auto tunnel_map_entry_id = sai_create_tunnel_map_entry(map_type, vsid, vlan_id, obj);
+    auto tunnel_map_entry_id = sai_create_tunnel_map_entry(map_type, vsid, vlan_id, bridge_obj);
 
     nvgre_tunnel_map_table_[tunnel_map_entry_name].map_entry_id = tunnel_map_entry_id;
     nvgre_tunnel_map_table_[tunnel_map_entry_name].vlan_id = vlan_id;
@@ -440,6 +449,12 @@ bool NvgreTunnelMapOrch::addOperation(const Request& request)
     return true;
 }
 
+/** @brief Removes tunnel map entry in SAI.
+ *
+ *  @param obj_id SAI tunnel map identifier.
+ *
+ *  @return void.
+ */
 void NvgreTunnel::sai_remove_tunnel_map_entry(sai_object_id_t obj_id)
 {
     sai_status_t status = SAI_STATUS_SUCCESS;
