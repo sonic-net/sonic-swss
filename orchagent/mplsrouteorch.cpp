@@ -474,87 +474,8 @@ bool RouteOrch::addLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroupKey 
 
     auto it_route = m_syncdLabelRoutes.at(vrf_id).find(label);
 
-    if (ctx.nhg_index.empty())
+    if (!ctx.nhg_index.empty())
     {
-        if (nextHops.getSize() == 0)
-        {
-            /* The route is pointing to a blackhole */
-            blackhole = true;
-        }
-        /* The route is pointing to a next hop */
-        else if (nextHops.getSize() == 1)
-        {
-            const NextHopKey& nexthop = *nextHops.getNextHops().begin();
-            if (nexthop.isIntfNextHop())
-            {
-                next_hop_id = m_intfsOrch->getRouterIntfsId(nexthop.alias);
-                /* rif is not created yet */
-                if (next_hop_id == SAI_NULL_OBJECT_ID)
-                {
-                    SWSS_LOG_INFO("Failed to get next hop %s for %u",
-                            nextHops.to_string().c_str(), label);
-                    return false;
-                }
-            }
-            else
-            {
-                if (m_neighOrch->hasNextHop(nexthop))
-                {
-                    next_hop_id = m_neighOrch->getNextHopId(nexthop);
-                }
-                /* See if there is an IP neighbor nexthop */
-                else if (nexthop.isMplsNextHop() &&
-                         m_neighOrch->isNeighborResolved(nexthop))
-                {
-                    m_neighOrch->addNextHop(nexthop);
-                    next_hop_id = m_neighOrch->getNextHopId(nexthop);
-                }
-                else
-                {
-                    SWSS_LOG_INFO("Failed to get next hop %s for %u",
-                            nextHops.to_string().c_str(), label);
-                    return false;
-                }
-            }
-        }
-        /* The route is pointing to a next hop group */
-        else
-        {
-            /* Check if there is already an existing next hop group */
-            if (!hasNextHopGroup(nextHops))
-            {
-                /* Try to create a new next hop group */
-                if (!addNextHopGroup(nextHops))
-                {
-                    /* Failed to create the next hop group and check if a temporary route is needed */
-
-                    /* If the current next hop is part of the next hop group to sync,
-                     * then return false and no need to add another temporary route. */
-                    if (it_route != m_syncdLabelRoutes.at(vrf_id).end() &&
-                        it_route->second.nhg_key.getSize() == 1)
-                    {
-                        const NextHopKey& nexthop = *it_route->second.nhg_key.getNextHops().begin();
-                        if (nextHops.contains(nexthop))
-                        {
-                            return false;
-                        }
-                    }
-
-                    /* Add a temporary route when a next hop group cannot be added,
-                     * and there is no temporary route right now or the current temporary
-                     * route is not pointing to a member of the next hop group to sync. */
-                    addTempLabelRoute(ctx, nextHops);
-                    /* Return false since the original route is not successfully added */
-                    return false;
-                }
-            }
-
-            next_hop_id = m_syncdNextHopGroups[nextHops].next_hop_group_id;
-        }
-    }
-    else
-    {
-        SWSS_LOG_DEBUG("Next hop group is owned by NhgOrch with index %s", ctx.nhg_index.c_str());
         try
         {
             const NextHopGroup& nhg = gNhgOrch->getNhg(ctx.nhg_index);
@@ -565,6 +486,81 @@ bool RouteOrch::addLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroupKey 
             SWSS_LOG_WARN("Next hop group key %s does not exist", ctx.nhg_index.c_str());
             return false;
         }
+    }
+    else if (nextHops.getSize() == 0)
+    {
+        /* The route is pointing to a blackhole */
+        blackhole = true;
+    }
+    /* The route is pointing to a next hop */
+    else if (nextHops.getSize() == 1)
+    {
+        const NextHopKey& nexthop = *nextHops.getNextHops().begin();
+        if (nexthop.isIntfNextHop())
+        {
+            next_hop_id = m_intfsOrch->getRouterIntfsId(nexthop.alias);
+            /* rif is not created yet */
+            if (next_hop_id == SAI_NULL_OBJECT_ID)
+            {
+                SWSS_LOG_INFO("Failed to get next hop %s for %u",
+                        nextHops.to_string().c_str(), label);
+                return false;
+            }
+        }
+        else
+        {
+            if (m_neighOrch->hasNextHop(nexthop))
+            {
+                next_hop_id = m_neighOrch->getNextHopId(nexthop);
+            }
+            /* See if there is an IP neighbor nexthop */
+            else if (nexthop.isMplsNextHop() &&
+                     m_neighOrch->isNeighborResolved(nexthop))
+            {
+                m_neighOrch->addNextHop(nexthop);
+                next_hop_id = m_neighOrch->getNextHopId(nexthop);
+            }
+            else
+            {
+                SWSS_LOG_INFO("Failed to get next hop %s for %u",
+                        nextHops.to_string().c_str(), label);
+                return false;
+            }
+        }
+    }
+    /* The route is pointing to a next hop group */
+    else
+    {
+        /* Check if there is already an existing next hop group */
+        if (!hasNextHopGroup(nextHops))
+        {
+            /* Try to create a new next hop group */
+            if (!addNextHopGroup(nextHops))
+            {
+                /* Failed to create the next hop group and check if a temporary route is needed */
+
+                /* If the current next hop is part of the next hop group to sync,
+                 * then return false and no need to add another temporary route. */
+                if (it_route != m_syncdLabelRoutes.at(vrf_id).end() &&
+                    it_route->second.nhg_key.getSize() == 1)
+                {
+                    const NextHopKey& nexthop = *it_route->second.nhg_key.getNextHops().begin();
+                    if (nextHops.contains(nexthop))
+                    {
+                        return false;
+                    }
+                }
+
+                /* Add a temporary route when a next hop group cannot be added,
+                 * and there is no temporary route right now or the current temporary
+                 * route is not pointing to a member of the next hop group to sync. */
+                addTempLabelRoute(ctx, nextHops);
+                /* Return false since the original route is not successfully added */
+                return false;
+            }
+        }
+
+        next_hop_id = m_syncdNextHopGroups[nextHops].next_hop_group_id;
     }
 
     /* Sync the inseg entry */
@@ -661,57 +657,53 @@ bool RouteOrch::addLabelRoutePost(const LabelRouteBulkContext& ctx, const NextHo
     sai_object_id_t next_hop_id;
 
     /* Check that the next hop group is not owned by NhgOrch. */
-    if (ctx.nhg_index.empty())
+    if (!ctx.nhg_index.empty())
     {
-        if (nextHops.getSize() == 0)
+        if (!gNhgOrch->hasNhg(ctx.nhg_index))
         {
-            /* The route is pointing to a blackhole */
-            blackhole = true;
+            SWSS_LOG_WARN("Failed to get next hop group with index %s", ctx.nhg_index.c_str());
+            return false;
         }
-        /* The route is pointing to a next hop */
-        else if (nextHops.getSize() == 1)
+    }
+    else if (nextHops.getSize() == 0)
+    {
+        /* The route is pointing to a blackhole */
+        blackhole = true;
+    }
+    /* The route is pointing to a next hop */
+    else if (nextHops.getSize() == 1)
+    {
+        const NextHopKey& nexthop = *nextHops.getNextHops().begin();
+        if (nexthop.isIntfNextHop())
         {
-            const NextHopKey& nexthop = *nextHops.getNextHops().begin();
-            if (nexthop.isIntfNextHop())
-            {
 
-                next_hop_id = m_intfsOrch->getRouterIntfsId(nexthop.alias);
-                /* rif is not created yet */
-                if (next_hop_id == SAI_NULL_OBJECT_ID)
-                {
-                    SWSS_LOG_INFO("Failed to get next hop %s for label %u",
-                                  nextHops.to_string().c_str(), label);
-                    return false;
-                }
-            }
-            else
+            next_hop_id = m_intfsOrch->getRouterIntfsId(nexthop.alias);
+            /* rif is not created yet */
+            if (next_hop_id == SAI_NULL_OBJECT_ID)
             {
-                if (!m_neighOrch->hasNextHop(nexthop))
-                {
-                    SWSS_LOG_INFO("Failed to get next hop %s for label %u",
-                                  nextHops.to_string().c_str(), label);
-                    return false;
-                }
+                SWSS_LOG_INFO("Failed to get next hop %s for label %u",
+                              nextHops.to_string().c_str(), label);
+                return false;
             }
         }
-        /* The route is pointing to a next hop group */
-        else if (nextHops.getSize() > 1)
+        else
         {
-            if (!hasNextHopGroup(nextHops))
+            if (!m_neighOrch->hasNextHop(nexthop))
             {
-                // Previous added an temporary route
-                auto& tmp_next_hop = ctx.tmp_next_hop;
-                addLabelRoutePost(ctx, tmp_next_hop);
+                SWSS_LOG_INFO("Failed to get next hop %s for label %u",
+                              nextHops.to_string().c_str(), label);
                 return false;
             }
         }
     }
-    else
+    /* The route is pointing to a next hop group */
+    else if (nextHops.getSize() > 1)
     {
-        SWSS_LOG_DEBUG("NhgOrch owns the next hop group with index %s", ctx.nhg_index.c_str());
-        if (!gNhgOrch->hasNhg(ctx.nhg_index))
+        if (!hasNextHopGroup(nextHops))
         {
-            SWSS_LOG_WARN("Failed to get next hop group with index %s", ctx.nhg_index.c_str());
+            // Previous added an temporary route
+            auto& tmp_next_hop = ctx.tmp_next_hop;
+            addLabelRoutePost(ctx, tmp_next_hop);
             return false;
         }
     }
