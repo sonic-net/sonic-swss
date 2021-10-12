@@ -537,6 +537,17 @@ bool RouteOrch::addLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroupKey 
             /* Try to create a new next hop group */
             if (!addNextHopGroup(nextHops))
             {
+                for (auto it = nextHops.getNextHops().begin(); it != nextHops.getNextHops().end(); ++it)
+                {
+                    const NextHopKey& nextHop = *it;
+                    if (!m_neighOrch->hasNextHop(nextHop))
+                    {
+                        SWSS_LOG_INFO("Failed to get next hop %s in %s, resolving neighbor",
+                                      nextHop.to_string().c_str(), nextHops.to_string().c_str());
+                        m_neighOrch->resolveNeighbor(nextHop);
+                    }
+                }
+
                 /* Failed to create the next hop group and check if a temporary route is needed */
 
                 /* If the current next hop is part of the next hop group to sync,
