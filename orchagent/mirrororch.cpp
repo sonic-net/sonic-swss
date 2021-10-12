@@ -38,7 +38,10 @@
 #define MIRROR_SESSION_DSCP_SHIFT       2
 #define MIRROR_SESSION_DSCP_MIN         0
 #define MIRROR_SESSION_DSCP_MAX         63
-#define MIRROR_SESSION_DEFAULT_NUM_TC   15
+
+// 15 is a typical value, but if vendor's SAI does not supply the maximum value,
+// allow all 8-bit numbers, effectively cancelling validation by orchagent.
+#define MIRROR_SESSION_DEFAULT_NUM_TC   255
 
 extern sai_switch_api_t *sai_switch_api;
 extern sai_mirror_api_t *sai_mirror_api;
