@@ -4508,6 +4508,84 @@ bool PortsOrch::getVlanByVlanId(sai_vlan_id_t vlan_id, Port &vlan)
     return false;
 }
 
+bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, string end_point_ip)
+{
+    SWSS_LOG_ENTER();
+
+    if (!end_point_ip.empty())
+    {
+        if ((uuc_sup_flood_control_type.find(SAI_VLAN_FLOOD_CONTROL_TYPE_COMBINED)
+             == uuc_sup_flood_control_type.end()) ||
+            (bc_sup_flood_control_type.find(SAI_VLAN_FLOOD_CONTROL_TYPE_COMBINED)
+             == bc_sup_flood_control_type.end()))
+        {
+            SWSS_LOG_ERROR("Flood group with end point ip is not supported");
+            return false;
+        }
+        return addVlanFloodGroups(vlan, port, end_point_ip);
+    }
+
+    sai_attribute_t attr;
+    vector<sai_attribute_t> attrs;
+
+    attr.id = SAI_VLAN_MEMBER_ATTR_VLAN_ID;
+    attr.value.oid = vlan.m_vlan_info.vlan_oid;
+    attrs.push_back(attr);
+
+    attr.id = SAI_VLAN_MEMBER_ATTR_BRIDGE_PORT_ID;
+    attr.value.oid = port.m_bridge_port_id;
+    attrs.push_back(attr);
+
+
+    sai_vlan_tagging_mode_t sai_tagging_mode = SAI_VLAN_TAGGING_MODE_TAGGED;
+    attr.id = SAI_VLAN_MEMBER_ATTR_VLAN_TAGGING_MODE;
+    if (tagging_mode == "untagged")
+        sai_tagging_mode = SAI_VLAN_TAGGING_MODE_UNTAGGED;
+    else if (tagging_mode == "tagged")
+        sai_tagging_mode = SAI_VLAN_TAGGING_MODE_TAGGED;
+    else if (tagging_mode == "priority_tagged")
+        sai_tagging_mode = SAI_VLAN_TAGGING_MODE_PRIORITY_TAGGED;
+    else assert(false);
+    attr.value.s32 = sai_tagging_mode;
+    attrs.push_back(attr);
+
+    sai_object_id_t vlan_member_id;
+    sai_status_t status = sai_vlan_api->create_vlan_member(&vlan_member_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to add member %s to VLAN %s vid:%hu pid:%" PRIx64,
+                port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_info.vlan_id, port.m_port_id);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_VLAN, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+    SWSS_LOG_NOTICE("Add member %s to VLAN %s vid:%hu pid%" PRIx64,
+            port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_info.vlan_id, port.m_port_id);
+
+    /* Use untagged VLAN as pvid of the member port */
+    if (sai_tagging_mode == SAI_VLAN_TAGGING_MODE_UNTAGGED)
+    {
+        if(!setPortPvid(port, vlan.m_vlan_info.vlan_id))
+        {
+            return false;
+        }
+    }
+
+    /* a physical port may join multiple vlans */
+    VlanMemberEntry vme = {vlan_member_id, sai_tagging_mode};
+    port.m_vlan_members[vlan.m_vlan_info.vlan_id] = vme;
+    m_portList[port.m_alias] = port;
+    vlan.m_members.insert(port.m_alias);
+    m_portList[vlan.m_alias] = vlan;
+
+    VlanMemberUpdate update = { vlan, port, true };
+    notify(SUBJECT_TYPE_VLAN_MEMBER_CHANGE, static_cast<void *>(&update));
+
+    return true;
+}
+
 bool PortsOrch::addVlanFloodGroups(Port &vlan, Port &port, string end_point_ip)
 {
     SWSS_LOG_ENTER();
@@ -4628,83 +4706,6 @@ bool PortsOrch::addVlanFloodGroups(Port &vlan, Port &port, string end_point_ip)
     return true;
 }
 
-bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, string end_point_ip)
-{
-    SWSS_LOG_ENTER();
-
-    if (!end_point_ip.empty())
-    {
-        if ((uuc_sup_flood_control_type.find(SAI_VLAN_FLOOD_CONTROL_TYPE_COMBINED)
-             == uuc_sup_flood_control_type.end()) ||
-            (bc_sup_flood_control_type.find(SAI_VLAN_FLOOD_CONTROL_TYPE_COMBINED)
-             == bc_sup_flood_control_type.end()))
-        {
-            SWSS_LOG_ERROR("Flood group with end point ip is not supported");
-            return false;
-        }
-        return addVlanFloodGroups(vlan, port, end_point_ip);
-    }
-
-    sai_attribute_t attr;
-    vector<sai_attribute_t> attrs;
-
-    attr.id = SAI_VLAN_MEMBER_ATTR_VLAN_ID;
-    attr.value.oid = vlan.m_vlan_info.vlan_oid;
-    attrs.push_back(attr);
-
-    attr.id = SAI_VLAN_MEMBER_ATTR_BRIDGE_PORT_ID;
-    attr.value.oid = port.m_bridge_port_id;
-    attrs.push_back(attr);
-
-
-    sai_vlan_tagging_mode_t sai_tagging_mode = SAI_VLAN_TAGGING_MODE_TAGGED;
-    attr.id = SAI_VLAN_MEMBER_ATTR_VLAN_TAGGING_MODE;
-    if (tagging_mode == "untagged")
-        sai_tagging_mode = SAI_VLAN_TAGGING_MODE_UNTAGGED;
-    else if (tagging_mode == "tagged")
-        sai_tagging_mode = SAI_VLAN_TAGGING_MODE_TAGGED;
-    else if (tagging_mode == "priority_tagged")
-        sai_tagging_mode = SAI_VLAN_TAGGING_MODE_PRIORITY_TAGGED;
-    else assert(false);
-    attr.value.s32 = sai_tagging_mode;
-    attrs.push_back(attr);
-
-    sai_object_id_t vlan_member_id;
-    sai_status_t status = sai_vlan_api->create_vlan_member(&vlan_member_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to add member %s to VLAN %s vid:%hu pid:%" PRIx64,
-                port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_info.vlan_id, port.m_port_id);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_VLAN, status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
-    }
-    SWSS_LOG_NOTICE("Add member %s to VLAN %s vid:%hu pid%" PRIx64,
-            port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_info.vlan_id, port.m_port_id);
-
-    /* Use untagged VLAN as pvid of the member port */
-    if (sai_tagging_mode == SAI_VLAN_TAGGING_MODE_UNTAGGED)
-    {
-        if(!setPortPvid(port, vlan.m_vlan_info.vlan_id))
-        {
-            return false;
-        }
-    }
-
-    /* a physical port may join multiple vlans */
-    VlanMemberEntry vme = {vlan_member_id, sai_tagging_mode};
-    port.m_vlan_members[vlan.m_vlan_info.vlan_id] = vme;
-    m_portList[port.m_alias] = port;
-    vlan.m_members.insert(port.m_alias);
-    m_portList[vlan.m_alias] = vlan;
-
-    VlanMemberUpdate update = { vlan, port, true };
-    notify(SUBJECT_TYPE_VLAN_MEMBER_CHANGE, static_cast<void *>(&update));
-
-    return true;
-}
 
 bool PortsOrch::removeVlanEndPointIp(Port &vlan, Port &port, string end_point_ip)
 {

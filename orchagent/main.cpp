@@ -643,7 +643,6 @@ int main(int argc, char **argv)
         orchDaemon = make_shared<FabricOrchDaemon>(&appl_db, &config_db, &state_db, chassis_app_db.get()); 
     }
 
-
     if (!orchDaemon->init())
     {
         SWSS_LOG_ERROR("Failed to initialize orchestration daemon");
