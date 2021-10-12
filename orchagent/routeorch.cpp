@@ -1595,7 +1595,6 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                 return false;
             }
         }
-        /* IP neighbor is not yet resolved */
         else
         {
             if (m_neighOrch->hasNextHop(nexthop))
