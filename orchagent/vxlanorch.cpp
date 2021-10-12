@@ -5,7 +5,9 @@
 #include <unordered_set>
 #include <stdexcept>
 #include <inttypes.h>
+extern "C" {
 #include "sai.h"
+}
 #include "macaddress.h"
 #include "ipaddress.h"
 #include "orch.h"
@@ -1196,6 +1198,38 @@ bool VxlanTunnel::deleteDynamicDIPTunnel(const std::string dip, tunnel_user_t us
 }
 
 //------------------- VxlanTunnelOrch Implementation --------------------------//
+
+VxlanTunnelOrch::VxlanTunnelOrch(DBConnector *statedb, DBConnector *db, const std::string& tableName) :
+                                 Orch2(db, tableName, request_),
+                                 m_stateVxlanTable(statedb, STATE_VXLAN_TUNNEL_TABLE_NAME)
+{
+    uint32_t max_tunnel_modes = 2;
+    vector<int32_t>  tunnel_peer_modes(max_tunnel_modes, 0);
+    sai_s32_list_t values;
+    values.count = max_tunnel_modes;
+    values.list = tunnel_peer_modes.data();
+    sai_status_t status;
+
+    status = sai_query_attribute_enum_values_capability(gSwitchId, SAI_OBJECT_TYPE_TUNNEL,
+                                                        SAI_TUNNEL_ATTR_PEER_MODE, &values);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Unable to get supported tunnel peer modes. Defaulting to P2P");
+        is_dip_tunnel_supported = true;
+    }
+    else
+    {
+        is_dip_tunnel_supported = false;
+        for (uint32_t idx = 0; idx < values.count; idx++)
+        {
+            if (values.list[idx] == SAI_TUNNEL_PEER_MODE_P2P)
+            {
+                is_dip_tunnel_supported = true;
+                break;
+            }
+        }
+    }
+}
 
 sai_object_id_t
 VxlanTunnelOrch::createNextHopTunnel(string tunnelName, IpAddress& ipAddr, 

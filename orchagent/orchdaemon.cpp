@@ -20,7 +20,6 @@ using namespace swss;
 extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
 extern bool                        gSaiRedisLogRotate;
-extern bool                        gP2PTunnelSupported;
 
 extern void syncd_apply_view();
 /*
@@ -179,7 +178,7 @@ bool OrchDaemon::init()
     gDirectory.set(evpn_nvo_orch);
 
     VxlanTunnelOrch *vxlan_tunnel_orch = new VxlanTunnelOrch(m_stateDb, m_applDb,
-                                                             APP_VXLAN_TUNNEL_TABLE_NAME, gP2PTunnelSupported);
+                                                             APP_VXLAN_TUNNEL_TABLE_NAME);
     gDirectory.set(vxlan_tunnel_orch);
 
     vector<string> qos_tables = {
@@ -372,7 +371,7 @@ bool OrchDaemon::init()
     m_orchList.push_back(evpn_nvo_orch);
     m_orchList.push_back(vxlan_tunnel_map_orch);
 
-    if (gP2PTunnelSupported)
+    if (vxlan_tunnel_orch->isDipTunnelsSupported())
     {
         EvpnRemoteVnip2pOrch* evpn_remote_vni_orch = new EvpnRemoteVnip2pOrch(m_applDb, APP_VXLAN_REMOTE_VNI_TABLE_NAME);
         gDirectory.set(evpn_remote_vni_orch);

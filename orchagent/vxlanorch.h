@@ -256,11 +256,7 @@ typedef std::map<IpAddress, VxlanTunnel*> VTEPTable;
 class VxlanTunnelOrch : public Orch2
 {
 public:
-    VxlanTunnelOrch(DBConnector *statedb, DBConnector *db, const std::string& tableName, bool isP2pTunnelsSupported) :
-                    Orch2(db, tableName, request_),
-                    m_stateVxlanTable(statedb, STATE_VXLAN_TUNNEL_TABLE_NAME), is_dip_tunnel_supported(isP2pTunnelsSupported)
-    {}
-
+    VxlanTunnelOrch(DBConnector *statedb, DBConnector *db, const std::string& tableName);
 
     bool isTunnelExists(const std::string& tunnelName) const
     {

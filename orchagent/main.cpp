@@ -46,7 +46,6 @@ sai_object_id_t gUnderlayIfId;
 sai_object_id_t gSwitchId = SAI_NULL_OBJECT_ID;
 MacAddress gMacAddress;
 MacAddress gVxlanMacAddress;
-bool       gP2PTunnelSupported;
 
 extern size_t gMaxBulkSize;
 
@@ -644,31 +643,6 @@ int main(int argc, char **argv)
         orchDaemon = make_shared<FabricOrchDaemon>(&appl_db, &config_db, &state_db, chassis_app_db.get()); 
     }
 
-    uint32_t max_tunnel_modes = 2;
-    vector<int32_t>  tunnel_peer_modes(max_tunnel_modes, 0);
-    sai_s32_list_t values;
-    values.count = max_tunnel_modes;
-    values.list = tunnel_peer_modes.data();
-
-    status = sai_query_attribute_enum_values_capability(gSwitchId, SAI_OBJECT_TYPE_TUNNEL,
-                                                        SAI_TUNNEL_ATTR_PEER_MODE, &values);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_WARN("Unable to get supported tunnel peer modes. Defaulting to P2P");
-        gP2PTunnelSupported = true;
-    }
-    else
-    {
-        gP2PTunnelSupported = false;
-        for (uint32_t idx = 0; idx < values.count; idx++)
-        {
-            if (values.list[idx] == SAI_TUNNEL_PEER_MODE_P2P)
-            {
-                gP2PTunnelSupported = true;
-                break;
-            }
-        }
-    }
 
     if (!orchDaemon->init())
     {

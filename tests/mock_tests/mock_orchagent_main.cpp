@@ -19,7 +19,6 @@ bool gSairedisRecord = true;
 bool gSwssRecord = true;
 bool gLogRotate = false;
 bool gSaiRedisLogRotate = false;
-bool gP2PTunnelSupported = true;
 ofstream gRecordOfs;
 string gRecordFile;
 string gMySwitchType = "switch";

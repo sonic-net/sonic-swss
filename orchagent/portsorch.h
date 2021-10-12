@@ -146,7 +146,6 @@ public:
     bool removeVlanMember(Port &vlan, Port &port, string end_point_ip = "");
     bool isVlanMember(Port &vlan, Port &port, string end_point_ip = "");
     bool addVlanFloodGroups(Port &vlan, Port &port, string end_point_ip);
-    bool createVlanMember(Port &vlan, Port &port, sai_vlan_tagging_mode_t &sai_tagging_mode, sai_object_id_t &vlan_member_id);
     bool removeVlanEndPointIp(Port &vlan, Port &port, string end_point_ip);
     void increaseBridgePortRefCount(Port &port);
     void decreaseBridgePortRefCount(Port &port);
