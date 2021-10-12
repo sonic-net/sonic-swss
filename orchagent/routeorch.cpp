@@ -1610,7 +1610,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                 m_neighOrch->addNextHop(nexthop);
                 next_hop_id = m_neighOrch->getNextHopId(nexthop);
             }
-             /* IP neighbor is not yet resolved */
+            /* IP neighbor is not yet resolved */
             else
             {
                 if(overlay_nh)
