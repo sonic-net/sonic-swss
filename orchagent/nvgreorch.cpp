@@ -17,8 +17,8 @@ static const std::vector<map_type_t> nvgreMapTypes = {
 };
 
 static const std::map<map_type_t, sai_tunnel_map_type_t> nvgreEncapTunnelMap = {
-    { MAP_T_VLAN, SAI_TUNNEL_MAP_TYPE_VLAN_ID_TO_VNI },
-    { MAP_T_BRIDGE, SAI_TUNNEL_MAP_TYPE_BRIDGE_IF_TO_VNI }
+    { MAP_T_VLAN, SAI_TUNNEL_MAP_TYPE_VLAN_ID_TO_VSID },
+    { MAP_T_BRIDGE, SAI_TUNNEL_MAP_TYPE_BRIDGE_IF_TO_VSID }
 };
 
 static inline sai_tunnel_map_type_t get_encap_nvgre_mapper(map_type_t map)
@@ -27,8 +27,8 @@ static inline sai_tunnel_map_type_t get_encap_nvgre_mapper(map_type_t map)
 }
 
 static const std::map<map_type_t, sai_tunnel_map_type_t> nvgreDecapTunnelMap = {
-    { MAP_T_VLAN, SAI_TUNNEL_MAP_TYPE_VNI_TO_VLAN_ID },
-    { MAP_T_BRIDGE, SAI_TUNNEL_MAP_TYPE_VNI_TO_BRIDGE_IF }
+    { MAP_T_VLAN, SAI_TUNNEL_MAP_TYPE_VSID_TO_VLAN_ID },
+    { MAP_T_BRIDGE, SAI_TUNNEL_MAP_TYPE_VSID_TO_BRIDGE_IF }
 };
 
 static inline sai_tunnel_map_type_t get_decap_nvgre_mapper(map_type_t map)
@@ -39,10 +39,10 @@ static inline sai_tunnel_map_type_t get_decap_nvgre_mapper(map_type_t map)
 static const map<map_type_t, std::pair<sai_tunnel_map_entry_attr_t, sai_tunnel_map_entry_attr_t>> nvgreEncapTunnelMapKeyVal =
 {
     { MAP_T_VLAN,
-        { SAI_TUNNEL_MAP_ENTRY_ATTR_VLAN_ID_KEY, SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_VALUE }
+        { SAI_TUNNEL_MAP_ENTRY_ATTR_VLAN_ID_KEY, SAI_TUNNEL_MAP_ENTRY_ATTR_VSID_ID_VALUE }
     },
     { MAP_T_BRIDGE,
-        { SAI_TUNNEL_MAP_ENTRY_ATTR_BRIDGE_ID_KEY, SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_VALUE }
+        { SAI_TUNNEL_MAP_ENTRY_ATTR_BRIDGE_ID_KEY, SAI_TUNNEL_MAP_ENTRY_ATTR_VSID_ID_VALUE }
     }
 };
 
@@ -59,10 +59,10 @@ static inline sai_tunnel_map_entry_attr_t get_encap_nvgre_map_val(map_type_t map
 static const map<map_type_t, std::pair<sai_tunnel_map_entry_attr_t, sai_tunnel_map_entry_attr_t>> nvgreDecapTunnelMapKeyVal =
 {
     { MAP_T_VLAN,
-        { SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_KEY, SAI_TUNNEL_MAP_ENTRY_ATTR_VLAN_ID_VALUE }
+        { SAI_TUNNEL_MAP_ENTRY_ATTR_VSID_ID_KEY, SAI_TUNNEL_MAP_ENTRY_ATTR_VLAN_ID_VALUE }
     },
     { MAP_T_BRIDGE,
-        { SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_KEY, SAI_TUNNEL_MAP_ENTRY_ATTR_BRIDGE_ID_VALUE }
+        { SAI_TUNNEL_MAP_ENTRY_ATTR_VSID_ID_KEY, SAI_TUNNEL_MAP_ENTRY_ATTR_BRIDGE_ID_VALUE }
     }
 };
 
@@ -101,17 +101,7 @@ sai_object_id_t NvgreTunnel::sai_create_tunnel_map(sai_tunnel_map_type_t sai_tun
                           );
     if (status != SAI_STATUS_SUCCESS)
     {
-        throw std::runtime_error("Can't create tunnel map object");
-        /*
-        // FIXME: need to update SAI version in order to support the code bellow
-
-        SWSS_LOG_ERROR("Failed to create NVGRE tunnel mapper = %u, SAI status = %d", sai_tunnel_map_type, status);
-        task_process_status handle_status = handleSaiSetStatus(SAI_API_TUNNEL, status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
-        */
+        throw std::runtime_error("Can't create the NVGRE tunnel map object");
     }
 
     return tunnel_map_id;
@@ -129,7 +119,7 @@ void NvgreTunnel::sai_remove_tunnel_map(sai_object_id_t tunnel_map_id)
 
     if (status != SAI_STATUS_SUCCESS)
     {
-        throw std::runtime_error("Can't remove a tunnel map object");
+        throw std::runtime_error("Can't remove the NVGRE tunnel map object");
     }
 }
 
@@ -147,8 +137,7 @@ sai_object_id_t NvgreTunnel::sai_create_tunnel(struct tunnel_sai_ids_t &ids, con
     std::vector<sai_attribute_t> tunnel_attrs;
 
     attr.id = SAI_TUNNEL_ATTR_TYPE;
-    // # FIXME: CHANGE type
-    attr.value.s32 = SAI_TUNNEL_TYPE_VXLAN;
+    attr.value.s32 = SAI_TUNNEL_TYPE_NVGRE;
     tunnel_attrs.push_back(attr);
 
     sai_object_id_t decap_map_list[MAP_T_MAX];
@@ -192,7 +181,7 @@ sai_object_id_t NvgreTunnel::sai_create_tunnel(struct tunnel_sai_ids_t &ids, con
                           );
     if (status != SAI_STATUS_SUCCESS)
     {
-        throw std::runtime_error("Can't create a tunnel object");
+        throw std::runtime_error("Can't create the NVGRE tunnel object");
     }
 
     return tunnel_id;
@@ -209,7 +198,7 @@ void NvgreTunnel::sai_remove_tunnel(sai_object_id_t tunnel_id)
     sai_status_t status = sai_tunnel_api->remove_tunnel(tunnel_id);
     if (status != SAI_STATUS_SUCCESS)
     {
-        throw std::runtime_error("Can't remove a tunnel object");
+        throw std::runtime_error("Can't remove the NVGRE tunnel object");
     }
 }
 
@@ -374,8 +363,7 @@ sai_object_id_t NvgreTunnel::sai_create_tunnel_map_entry(
 
     if (status != SAI_STATUS_SUCCESS)
     {
-        // FIXME
-        throw std::runtime_error("Can't create a tunnel map entry object");
+        throw std::runtime_error("Can't create the NVGRE tunnel map entry object");
     }
 
     return tunnel_map_entry_id;
@@ -464,8 +452,7 @@ void NvgreTunnel::sai_remove_tunnel_map_entry(sai_object_id_t obj_id)
 
     if (status != SAI_STATUS_SUCCESS)
     {
-        //FIXME
-        throw std::runtime_error("Can't delete a tunnel map entry object");
+        throw std::runtime_error("Can't delete the NVGRE tunnel map entry object");
     }
 }
 
