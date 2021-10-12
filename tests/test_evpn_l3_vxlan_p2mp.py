@@ -2,7 +2,7 @@ from swsscommon import swsscommon
 from evpn_tunnel import VxlanTunnel,VxlanEvpnHelper
 import time
 
-DVS_FAKE_PLATFORM = "mellanox"
+DVS_ENV = ["fake_platform=mellanox"]
 
 class TestL3VxlanP2MP(object):
 

@@ -1,6 +1,6 @@
 from evpn_tunnel import VxlanTunnel
 
-DVS_FAKE_PLATFORM = "mellanox"
+DVS_ENV = ["fake_platform=mellanox"]
 
 class TestVxlanOrchP2MP(object):
 

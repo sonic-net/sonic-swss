@@ -5,6 +5,8 @@ from pprint import pprint
 from evpn_tunnel import VxlanTunnel,VxlanEvpnHelper
 import time
 
+DVS_ENV = ["fake_platform=broadcom"]
+
 class TestL3Vxlan(object):
 
     def get_vxlan_obj(self):
