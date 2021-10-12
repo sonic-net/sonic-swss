@@ -3,7 +3,7 @@ import time
 
 from swsscommon import swsscommon
 
-DVS_HWSKU = "Force10-S6000"
+DVS_ENV = ["HWSKU=Force10-S6000"]
 
 
 class TestMirror(object):

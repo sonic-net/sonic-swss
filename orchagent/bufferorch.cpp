@@ -23,16 +23,6 @@ extern sai_object_id_t gSwitchId;
 
 static const vector<sai_buffer_pool_stat_t> bufferPoolWatermarkStatIds =
 {
-    SAI_BUFFER_POOL_STAT_WATERMARK_BYTES
-};
-
-static const vector<sai_buffer_pool_stat_t> bufferSharedHeadroomPoolWatermarkStatIds =
-{
-    SAI_BUFFER_POOL_STAT_XOFF_ROOM_WATERMARK_BYTES
-};
-
-static const vector<sai_buffer_pool_stat_t> bufferPoolAllWatermarkStatIds =
-{
     SAI_BUFFER_POOL_STAT_WATERMARK_BYTES,
     SAI_BUFFER_POOL_STAT_XOFF_ROOM_WATERMARK_BYTES
 };
@@ -44,6 +34,12 @@ type_map BufferOrch::m_buffer_type_maps = {
     {APP_BUFFER_PG_TABLE_NAME, new object_reference_map()},
     {APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, new object_reference_map()},
     {APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, new object_reference_map()}
+};
+
+map<string, string> buffer_to_ref_table_map = {
+    {buffer_pool_field_name, APP_BUFFER_POOL_TABLE_NAME},
+    {buffer_profile_field_name, APP_BUFFER_PROFILE_TABLE_NAME},
+    {buffer_profile_list_field_name, APP_BUFFER_PROFILE_TABLE_NAME}
 };
 
 BufferOrch::BufferOrch(DBConnector *applDb, DBConnector *confDb, DBConnector *stateDb, vector<string> &tableNames) :
@@ -228,60 +224,29 @@ void BufferOrch::generateBufferPoolWatermarkCounterIdList(void)
     }
 
     // Detokenize the SAI watermark stats to a string, separated by comma
-    string statListBufferPoolOnly;
+    string statList;
     for (const auto &it : bufferPoolWatermarkStatIds)
     {
-        statListBufferPoolOnly += (sai_serialize_buffer_pool_stat(it) + list_item_delimiter);
+        statList += (sai_serialize_buffer_pool_stat(it) + list_item_delimiter);
     }
-    string statListBufferPoolAndSharedHeadroomPool = statListBufferPoolOnly;
-    for (const auto &it : bufferSharedHeadroomPoolWatermarkStatIds)
+    if (!statList.empty())
     {
-        statListBufferPoolAndSharedHeadroomPool += (sai_serialize_buffer_pool_stat(it) + list_item_delimiter);
-    }
-    if (!statListBufferPoolOnly.empty())
-    {
-        statListBufferPoolOnly.pop_back();
-    }
-    if (!statListBufferPoolAndSharedHeadroomPool.empty())
-    {
-        statListBufferPoolAndSharedHeadroomPool.pop_back();
+        statList.pop_back();
     }
 
     // Some platforms do not support buffer pool watermark clear operation on a particular pool
     // Invoke the SAI clear_stats API per pool to query the capability from the API call return status
-    // Some platforms do not support shared headroom pool watermark read operation on a particular pool
-    // Invoke the SAI get_buffer_pool_stats API per pool to query the capability from the API call return status.
     // We use bit mask to mark the clear watermark capability of each buffer pool. We use an unsigned int to place hold
     // these bits. This assumes the total number of buffer pools to be no greater than 32, which should satisfy all use cases.
     unsigned int noWmClrCapability = 0;
-    unsigned int noSharedHeadroomPoolWmRdCapability = 0;
     unsigned int bitMask = 1;
-    uint32_t size = static_cast<uint32_t>(bufferSharedHeadroomPoolWatermarkStatIds.size());
-    vector<uint64_t> counterData(size);
     for (const auto &it : *(m_buffer_type_maps[APP_BUFFER_POOL_TABLE_NAME]))
     {
-        sai_status_t status;
-        // Check whether shared headroom pool water mark is supported
-        status = sai_buffer_api->get_buffer_pool_stats(
+        sai_status_t status = sai_buffer_api->clear_buffer_pool_stats(
                 it.second.m_saiObjectId,
-                size,
-                reinterpret_cast<const sai_stat_id_t *>(bufferSharedHeadroomPoolWatermarkStatIds.data()),
-                counterData.data());
-        if (SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) || SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status)
-            || status == SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED)
-        {
-            SWSS_LOG_NOTICE("Read shared headroom pool watermark failed on %s, rv: %s", it.first.c_str(), sai_serialize_status(status).c_str());
-            noSharedHeadroomPoolWmRdCapability |= bitMask;
-        }
-
-        const auto &watermarkStatIds = (noSharedHeadroomPoolWmRdCapability & bitMask) ? bufferPoolWatermarkStatIds : bufferPoolAllWatermarkStatIds;
-
-        status = sai_buffer_api->clear_buffer_pool_stats(
-                it.second.m_saiObjectId,
-                static_cast<uint32_t>(watermarkStatIds.size()),
-                reinterpret_cast<const sai_stat_id_t *>(watermarkStatIds.data()));
-        if (SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) || SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status)
-            || status == SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED)
+                static_cast<uint32_t>(bufferPoolWatermarkStatIds.size()),
+                reinterpret_cast<const sai_stat_id_t *>(bufferPoolWatermarkStatIds.data()));
+        if (status ==  SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED)
         {
             SWSS_LOG_NOTICE("Clear watermark failed on %s, rv: %s", it.first.c_str(), sai_serialize_status(status).c_str());
             noWmClrCapability |= bitMask;
@@ -300,21 +265,11 @@ void BufferOrch::generateBufferPoolWatermarkCounterIdList(void)
 
     // Push buffer pool watermark COUNTER_ID_LIST to FLEX_COUNTER_TABLE on a per buffer pool basis
     vector<FieldValueTuple> fvTuples;
-
+    fvTuples.emplace_back(BUFFER_POOL_COUNTER_ID_LIST, statList);
     bitMask = 1;
     for (const auto &it : *(m_buffer_type_maps[APP_BUFFER_POOL_TABLE_NAME]))
     {
         string key = BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP ":" + sai_serialize_object_id(it.second.m_saiObjectId);
-        fvTuples.clear();
-
-        if (noSharedHeadroomPoolWmRdCapability & bitMask)
-        {
-            fvTuples.emplace_back(BUFFER_POOL_COUNTER_ID_LIST, statListBufferPoolOnly);
-        }
-        else
-        {
-            fvTuples.emplace_back(BUFFER_POOL_COUNTER_ID_LIST, statListBufferPoolAndSharedHeadroomPool);
-        }
 
         if (noWmClrCapability)
         {
@@ -324,11 +279,15 @@ void BufferOrch::generateBufferPoolWatermarkCounterIdList(void)
                 stats_mode = STATS_MODE_READ;
             }
             fvTuples.emplace_back(STATS_MODE_FIELD, stats_mode);
+
+            m_flexCounterTable->set(key, fvTuples);
+            fvTuples.pop_back();
+            bitMask <<= 1;
         }
-
-        m_flexCounterTable->set(key, fvTuples);
-
-        bitMask <<= 1;
+        else
+        {
+            m_flexCounterTable->set(key, fvTuples);
+        }
     }
 
     m_isBufferPoolWatermarkCounterIdListGenerated = true;
@@ -562,7 +521,9 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
                 }
 
                 sai_object_id_t sai_pool;
-                ref_resolve_status resolve_result = resolveFieldRefValue(m_buffer_type_maps, buffer_pool_field_name, tuple, sai_pool, pool_name);
+                ref_resolve_status resolve_result = resolveFieldRefValue(m_buffer_type_maps, buffer_pool_field_name,
+                                                    buffer_to_ref_table_map.at(buffer_pool_field_name),
+                                                    tuple, sai_pool, pool_name);
                 if (ref_resolve_status::success != resolve_result)
                 {
                     if(ref_resolve_status::not_resolved == resolve_result)
@@ -754,7 +715,9 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
 
     if (op == SET_COMMAND)
     {
-        ref_resolve_status resolve_result = resolveFieldRefValue(m_buffer_type_maps, buffer_profile_field_name, tuple, sai_buffer_profile, buffer_profile_name);
+        ref_resolve_status resolve_result = resolveFieldRefValue(m_buffer_type_maps, buffer_profile_field_name,
+                                            buffer_to_ref_table_map.at(buffer_profile_field_name), tuple,
+                                            sai_buffer_profile, buffer_profile_name);
         if (ref_resolve_status::success != resolve_result)
         {
             if (ref_resolve_status::not_resolved == resolve_result)
@@ -877,7 +840,9 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
 
     if (op == SET_COMMAND)
     {
-        ref_resolve_status  resolve_result = resolveFieldRefValue(m_buffer_type_maps, buffer_profile_field_name, tuple, sai_buffer_profile, buffer_profile_name);
+        ref_resolve_status  resolve_result = resolveFieldRefValue(m_buffer_type_maps, buffer_profile_field_name,
+                                             buffer_to_ref_table_map.at(buffer_profile_field_name), tuple, 
+                                             sai_buffer_profile, buffer_profile_name);
         if (ref_resolve_status::success != resolve_result)
         {
             if (ref_resolve_status::not_resolved == resolve_result)
@@ -981,7 +946,7 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
 }
 
 /*
-Input sample:"[BUFFER_PROFILE_TABLE:i_port.profile0],[BUFFER_PROFILE_TABLE:i_port.profile1]"
+Input sample:"i_port.profile0,i_port.profile1"
 */
 task_process_status BufferOrch::processIngressBufferProfileList(KeyOpFieldsValuesTuple &tuple)
 {
@@ -996,7 +961,9 @@ task_process_status BufferOrch::processIngressBufferProfileList(KeyOpFieldsValue
     vector<sai_object_id_t> profile_list;
 
     string profile_name_list;
-    ref_resolve_status resolve_status = resolveFieldRefArray(m_buffer_type_maps, buffer_profile_list_field_name, tuple, profile_list, profile_name_list);
+    ref_resolve_status resolve_status = resolveFieldRefArray(m_buffer_type_maps, buffer_profile_list_field_name,
+                                        buffer_to_ref_table_map.at(buffer_profile_list_field_name), tuple,
+                                        profile_list, profile_name_list);
     if (ref_resolve_status::success != resolve_status)
     {
         if(ref_resolve_status::not_resolved == resolve_status)
@@ -1037,7 +1004,7 @@ task_process_status BufferOrch::processIngressBufferProfileList(KeyOpFieldsValue
 }
 
 /*
-Input sample:"[BUFFER_PROFILE_TABLE:e_port.profile0],[BUFFER_PROFILE_TABLE:e_port.profile1]"
+Input sample:"e_port.profile0,e_port.profile1"
 */
 task_process_status BufferOrch::processEgressBufferProfileList(KeyOpFieldsValuesTuple &tuple)
 {
@@ -1050,7 +1017,9 @@ task_process_status BufferOrch::processEgressBufferProfileList(KeyOpFieldsValues
     vector<sai_object_id_t> profile_list;
 
     string profile_name_list;
-    ref_resolve_status resolve_status = resolveFieldRefArray(m_buffer_type_maps, buffer_profile_list_field_name, tuple, profile_list, profile_name_list);
+    ref_resolve_status resolve_status = resolveFieldRefArray(m_buffer_type_maps, buffer_profile_list_field_name,
+                                        buffer_to_ref_table_map.at(buffer_profile_list_field_name), tuple,
+                                        profile_list, profile_name_list);
     if (ref_resolve_status::success != resolve_status)
     {
         if(ref_resolve_status::not_resolved == resolve_status)

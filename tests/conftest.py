@@ -47,12 +47,17 @@ def pytest_addoption(parser):
     parser.addoption("--dvsname",
                      action="store",
                      default=None,
-                     help="Name of a persistent DVS container to run the tests with")
+                     help="Name of a persistent DVS container to run the tests with. Mutually exclusive with --force-recreate-dvs")
 
     parser.addoption("--forcedvs",
                      action="store_true",
                      default=False,
                      help="Force tests to run in persistent DVS containers with <32 ports")
+
+    parser.addoption("--force-recreate-dvs",
+                     action="store_true",
+                     default=False,
+                     help="Force the DVS container to be recreated between each test module. Mutually exclusive with --dvsname")
 
     parser.addoption("--keeptb",
                      action="store_true",
@@ -178,6 +183,12 @@ class VirtualServer:
                 f"ip netns exec {self.nsname} ip link add {self.nsname[0:12]}"
                 f" type veth peer name {self.pifname}"
             )
+
+            # ensure self.pifname is not already an interface in the DVS net namespace
+            rc, _ = subprocess.getstatusoutput(f"nsenter -t {pid} -n ip link show | grep '{self.pifname}@'")
+            if not rc:
+                ensure_system(f"nsenter -t {pid} -n ip link delete {self.pifname}")
+
             ensure_system(f"ip netns exec {self.nsname} ip link set {self.pifname} netns {pid}")
 
             # bring up link in the virtual server
@@ -191,6 +202,9 @@ class VirtualServer:
             # disable arp, so no neigh on physical interfaces
             ensure_system(f"nsenter -t {pid} -n ip link set arp off dev {self.pifname}")
             ensure_system(f"nsenter -t {pid} -n sysctl -w net.ipv6.conf.{self.pifname}.disable_ipv6=1")
+
+    def __repr__(self):
+        return f'<VirtualServer> {self.nsname}'
 
     def kill_all_processes(self) -> None:
         pids = subprocess.check_output(f"ip netns pids {self.nsname}", shell=True).decode("utf-8")
@@ -236,7 +250,7 @@ class DockerVirtualSwitch:
         name: str = None,
         imgname: str = None,
         keeptb: bool = False,
-        hwsku: str = None,
+        env: list = [],
         log_path: str = None,
         max_cpu: int = 2,
         forcedvs: bool = None,
@@ -339,9 +353,7 @@ class DockerVirtualSwitch:
 
             # create virtual server
             self.servers = []
-            for i in range(NUM_PORTS):
-                server = VirtualServer(self.ctn_sw.name, self.ctn_sw_pid, i)
-                self.servers.append(server)
+            self.create_servers()
 
             if self.vct:
                 self.vct_connect(newctnname)
@@ -349,8 +361,6 @@ class DockerVirtualSwitch:
             # mount redis to base to unique directory
             self.mount = f"/var/run/redis-vs/{self.ctn_sw.name}"
             ensure_system(f"mkdir -p {self.mount}")
-
-            self.environment = [f"HWSKU={hwsku}"] if hwsku else []
 
             kwargs = {}
             if newctnname:
@@ -366,7 +376,7 @@ class DockerVirtualSwitch:
             self.ctn = self.client.containers.run(imgname,
                                                   privileged=True,
                                                   detach=True,
-                                                  environment=self.environment,
+                                                  environment=env,
                                                   network_mode=f"container:{self.ctn_sw.name}",
                                                   cpu_count=max_cpu,
                                                   **kwargs)
@@ -377,13 +387,7 @@ class DockerVirtualSwitch:
         self.redis_sock = os.path.join(self.mount, "redis.sock")
         self.redis_chassis_sock = os.path.join(self.mount, "redis_chassis.sock")
 
-        # DB wrappers are declared here, lazy-loaded in the tests
-        self.app_db = None
-        self.asic_db = None
-        self.counters_db = None
-        self.config_db = None
-        self.flex_db = None
-        self.state_db = None
+        self.reset_dbs()
 
         # Make sure everything is up and running before turning over control to the caller
         self.check_ready_status_and_init_db()
@@ -392,23 +396,40 @@ class DockerVirtualSwitch:
         if buffer_model == 'dynamic':
             enable_dynamic_buffer(self.get_config_db(), self.runcmd)
 
+    def create_servers(self):
+        for i in range(NUM_PORTS):
+            server = VirtualServer(self.ctn_sw.name, self.ctn_sw_pid, i)
+            self.servers.append(server)
+            
+    def reset_dbs(self):
+        # DB wrappers are declared here, lazy-loaded in the tests
+        self.app_db = None
+        self.asic_db = None
+        self.counters_db = None
+        self.config_db = None
+        self.flex_db = None
+        self.state_db = None
+
     def destroy(self) -> None:
-        if self.appldb:
+        if getattr(self, 'appldb', False):
             del self.appldb
 
         # In case persistent dvs was used removed all the extra server link
         # that were created
         if self.persistent:
-            for s in self.servers:
-                s.destroy()
+            self.destroy_servers()
 
         # persistent and clean-up flag are mutually exclusive
         elif self.cleanup:
             self.ctn.remove(force=True)
             self.ctn_sw.remove(force=True)
             os.system(f"rm -rf {self.mount}")
-            for s in self.servers:
-                s.destroy()
+            self.destroy_servers()
+
+    def destroy_servers(self):
+        for s in self.servers:
+            s.destroy()
+        self.servers = []
 
     def check_ready_status_and_init_db(self) -> None:
         try:
@@ -423,6 +444,7 @@ class DockerVirtualSwitch:
             # Initialize the databases.
             self.init_asic_db_validator()
             self.init_appl_db_validator()
+            self.reset_dbs()
 
             # Verify that SWSS has finished initializing.
             self.check_swss_ready()
@@ -451,9 +473,9 @@ class DockerVirtualSwitch:
 
             for pname in self.alld:
                 if process_status.get(pname, None) != "RUNNING":
-                    return (False, None)
+                    return (False, process_status)
 
-            return (process_status.get("start.sh", None) == "EXITED", None)
+            return (process_status.get("start.sh", None) == "EXITED", process_status)
 
         wait_for_result(_polling_function, service_polling_config)
 
@@ -1217,7 +1239,7 @@ class DockerVirtualChassisTopology:
         namespace=None,
         imgname=None,
         keeptb=False,
-        hwsku=None,
+        env=[],
         log_path=None,
         max_cpu=2,
         forcedvs=None,
@@ -1226,7 +1248,7 @@ class DockerVirtualChassisTopology:
         self.ns = namespace
         self.chassbr = "br4chs"
         self.keeptb = keeptb
-        self.hwsku = hwsku
+        self.env = env
         self.topoFile = topoFile
         self.imgname = imgname
         self.ctninfo = {}
@@ -1285,7 +1307,7 @@ class DockerVirtualChassisTopology:
         for ctn in docker.from_env().containers.list():
             if ctn.name.endswith(suffix):
                 self.dvss[ctn.name] = DockerVirtualSwitch(ctn.name, self.imgname, self.keeptb,
-                                                          self.hwsku, log_path=ctn.name,
+                                                          self.env, log_path=ctn.name,
                                                           max_cpu=self.max_cpu, forcedvs=self.forcedvs,
                                                           vct=self)
         if self.chassbr is None and len(self.dvss) > 0:
@@ -1403,7 +1425,7 @@ class DockerVirtualChassisTopology:
             if ctnname not in self.dvss:
                 self.dvss[ctnname] = DockerVirtualSwitch(name=None, imgname=self.imgname,
                                                          keeptb=self.keeptb,
-                                                         hwsku=self.hwsku,
+                                                         env=self.env,
                                                          log_path=self.log_path,
                                                          max_cpu=self.max_cpu,
                                                          forcedvs=self.forcedvs,
@@ -1556,8 +1578,15 @@ class DockerVirtualChassisTopology:
         print("vct verifications passed ? %s" % (ret1 and ret2))
         return ret1 and ret2
 
-@pytest.yield_fixture(scope="module")
-def dvs(request) -> DockerVirtualSwitch:
+@pytest.fixture(scope="session")
+def manage_dvs(request) -> str:
+    """
+    Main fixture to manage the lifecycle of the DVS (Docker Virtual Switch) for testing
+
+    Returns:
+        (func) update_dvs function which can be called on a per-module basis
+               to handle re-creating the DVS if necessary
+    """
     if sys.version_info[0] < 3:
         raise NameError("Python 2 is not supported, please install python 3")
 
@@ -1565,25 +1594,75 @@ def dvs(request) -> DockerVirtualSwitch:
         raise NameError("Cannot install kernel team module, please install a generic kernel")
 
     name = request.config.getoption("--dvsname")
+    using_persistent_dvs = name is not None
     forcedvs = request.config.getoption("--forcedvs")
     keeptb = request.config.getoption("--keeptb")
     imgname = request.config.getoption("--imgname")
     max_cpu = request.config.getoption("--max_cpu")
     buffer_model = request.config.getoption("--buffer_model")
-    hwsku = getattr(request.module, "DVS_HWSKU", None)
-    log_path = name if name else request.module.__name__
+    force_recreate = request.config.getoption("--force-recreate-dvs")
+    dvs = None
+    curr_dvs_env = [] # lgtm[py/unused-local-variable]
 
-    dvs = DockerVirtualSwitch(name, imgname, keeptb, hwsku, log_path, max_cpu, forcedvs, buffer_model = buffer_model)
+    if using_persistent_dvs and force_recreate:
+        pytest.fail("Options --dvsname and --force-recreate-dvs are mutually exclusive")
 
-    yield dvs
+    def update_dvs(log_path, new_dvs_env=[]):
+        """
+        Decides whether or not to create a new DVS
+
+        Create a new the DVS in the following cases:
+        1. CLI option `--force-recreate-dvs` was specified (recreate for every module)
+        2. The dvs_env has changed (this can only be set at container creation,
+           so it is necessary to spin up a new DVS)
+        3. No DVS currently exists (i.e. first time startup)
+
+        Otherwise, restart the existing DVS (to get to a clean state)
+
+        Returns:
+            (DockerVirtualSwitch) a DVS object
+        """
+        nonlocal curr_dvs_env, dvs
+        if force_recreate or \
+           new_dvs_env != curr_dvs_env or \
+           dvs is None:
+
+            if dvs is not None:
+                dvs.get_logs()
+                dvs.destroy()
+
+            dvs = DockerVirtualSwitch(name, imgname, keeptb, new_dvs_env, log_path, max_cpu, forcedvs, buffer_model = buffer_model)
+
+            curr_dvs_env = new_dvs_env
+
+        else:
+            # First generate GCDA files for GCov
+            dvs.runcmd('killall5 -15')
+            # If not re-creating the DVS, restart container
+            # between modules to ensure a consistent start state
+            dvs.net_cleanup()
+            dvs.destroy_servers()
+            dvs.create_servers()
+            dvs.restart()
+
+        return dvs
+
+    yield update_dvs
 
     dvs.get_logs()
     dvs.destroy()
 
-    # restore original config db
     if dvs.persistent:
         dvs.runcmd("mv /etc/sonic/config_db.json.orig /etc/sonic/config_db.json")
         dvs.ctn_restart()
+
+@pytest.yield_fixture(scope="module")
+def dvs(request, manage_dvs) -> DockerVirtualSwitch:
+    dvs_env = getattr(request.module, "DVS_ENV", [])
+    name = request.config.getoption("--dvsname")
+    log_path = name if name else request.module.__name__
+
+    return manage_dvs(log_path, dvs_env)
 
 @pytest.yield_fixture(scope="module")
 def vct(request):
@@ -1594,11 +1673,11 @@ def vct(request):
     imgname = request.config.getoption("--imgname")
     max_cpu = request.config.getoption("--max_cpu")
     log_path = vctns if vctns else request.module.__name__
-    hwsku = getattr(request.module, "DVS_HWSKU", None)
+    dvs_env = getattr(request.module, "DVS_ENV", [])
     if not topo:
         # use ecmp topology as default
         topo = "virtual_chassis/chassis_with_ecmp_neighbors.json"
-    vct = DockerVirtualChassisTopology(vctns, imgname, keeptb, hwsku, log_path, max_cpu,
+    vct = DockerVirtualChassisTopology(vctns, imgname, keeptb, dvs_env, log_path, max_cpu,
                                        forcedvs, topo)
     yield vct
     vct.get_logs(request.module.__name__)

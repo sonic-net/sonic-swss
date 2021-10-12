@@ -3,7 +3,7 @@ import time
 
 from swsscommon import swsscommon
 
-DVS_HWSKU = "Mellanox-SN2700"
+DVS_ENV = ["HWSKU=Mellanox-SN2700"]
 
 
 class TestMirror(object):
