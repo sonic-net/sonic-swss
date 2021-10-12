@@ -513,13 +513,15 @@ bool RouteOrch::addLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroupKey 
             {
                 next_hop_id = m_neighOrch->getNextHopId(nexthop);
             }
-            /* See if there is an IP neighbor nexthop */
+            /* For non-existent MPLS NH, check if IP neighbor NH exists */
             else if (nexthop.isMplsNextHop() &&
                      m_neighOrch->isNeighborResolved(nexthop))
             {
+                /* since IP neighbor NH exists, neighbor is resolved, add MPLS NH */
                 m_neighOrch->addNextHop(nexthop);
                 next_hop_id = m_neighOrch->getNextHopId(nexthop);
             }
+            /* IP neighbor is not yet resolved */
             else
             {
                 SWSS_LOG_INFO("Failed to get next hop %s for %u",
