@@ -708,7 +708,7 @@ bool RouteOrch::addLabelRoutePost(const LabelRouteBulkContext& ctx, const NextHo
         }
     }
     /* The route is pointing to a next hop group */
-    else if (nextHops.getSize() > 1)
+    else
     {
         if (!hasNextHopGroup(nextHops))
         {
@@ -747,8 +747,8 @@ bool RouteOrch::addLabelRoutePost(const LabelRouteBulkContext& ctx, const NextHo
             gNhgOrch->incNhgRefCount(ctx.nhg_index);
         }
 
-        SWSS_LOG_INFO("Create label route %u with next hop(s) %s",
-                label, nextHops.to_string().c_str());
+        SWSS_LOG_INFO("Post create label %u with next hop(s) %s",
+                      label, nextHops.to_string().c_str());
     }
     else
     {
@@ -825,7 +825,7 @@ bool RouteOrch::addLabelRoutePost(const LabelRouteBulkContext& ctx, const NextHo
         }
 
         SWSS_LOG_INFO("Post set label %u with next hop(s) %s",
-                label, nextHops.to_string().c_str());
+                      label, nextHops.to_string().c_str());
     }
 
     m_syncdLabelRoutes[vrf_id][label] = RouteNhg(nextHops, ctx.nhg_index);
