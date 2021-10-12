@@ -931,7 +931,7 @@ bool RouteOrch::removeLabelRoutePost(const LabelRouteBulkContext& ctx)
     }
 
     SWSS_LOG_INFO("Remove label route %u with next hop(s) %s",
-            label, it_route->second.nhg_key.to_string().c_str());
+                  label, it_route->second.nhg_key.to_string().c_str());
 
     it_route_table->second.erase(label);
 
