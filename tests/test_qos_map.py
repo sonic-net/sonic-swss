@@ -18,8 +18,22 @@ DOT1P_TO_TC_MAP = {
     "7": "7",
 }
 
+CFG_EXP_TO_TC_MAP_TABLE_NAME =  "EXP_TO_TC_MAP"
+CFG_EXP_TO_TC_MAP_KEY = "AZURE_EXP"
+EXP_TO_TC_MAP = {
+    "0": "0",
+    "1": "4",
+    "2": "1",
+    "3": "3",
+    "4": "5",
+    "5": "2",
+    "6": "7",
+    "7": "6",
+}
+
 CFG_PORT_QOS_MAP_TABLE_NAME =  "PORT_QOS_MAP"
-CFG_PORT_QOS_MAP_FIELD = "dot1p_to_tc_map"
+CFG_PORT_QOS_DOT1P_MAP_FIELD = "dot1p_to_tc_map"
+CFG_PORT_QOS_EXP_MAP_FIELD = "exp_to_tc_map"
 CFG_PORT_TABLE_NAME = "PORT"
 
 
@@ -63,7 +77,7 @@ class TestDot1p(object):
 
     def apply_dot1p_profile_on_all_ports(self):
         tbl = swsscommon.Table(self.config_db, CFG_PORT_QOS_MAP_TABLE_NAME)
-        fvs = swsscommon.FieldValuePairs([(CFG_PORT_QOS_MAP_FIELD, CFG_DOT1P_TO_TC_MAP_KEY)])
+        fvs = swsscommon.FieldValuePairs([(CFG_PORT_QOS_DOT1P_MAP_FIELD, CFG_DOT1P_TO_TC_MAP_KEY)])
         ports = swsscommon.Table(self.config_db, CFG_PORT_TABLE_NAME).getKeys()
         for port in ports:
             tbl.set(port, fvs)
@@ -99,6 +113,89 @@ class TestDot1p(object):
 
             for fv in fvs:
                 if fv[0] == "SAI_PORT_ATTR_QOS_DOT1P_TO_TC_MAP":
+                    cnt += 1
+                    assert fv[1] == oid
+
+        port_cnt = len(swsscommon.Table(self.config_db, CFG_PORT_TABLE_NAME).getKeys())
+        assert port_cnt == cnt
+
+
+class TestExp(object):
+    def connect_dbs(self, dvs):
+        self.asic_db = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        self.config_db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+
+
+    def create_exp_profile(self):
+        tbl = swsscommon.Table(self.config_db, CFG_EXP_TO_TC_MAP_TABLE_NAME)
+        fvs = swsscommon.FieldValuePairs(list(EXP_TO_TC_MAP.items()))
+        tbl.set(CFG_EXP_TO_TC_MAP_KEY, fvs)
+        time.sleep(1)
+
+
+    def find_exp_profile(self):
+        found = False
+        exp_tc_map_raw = None
+        exp_tc_map_key = None
+        tbl = swsscommon.Table(self.asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_QOS_MAP")
+        keys = tbl.getKeys()
+        for key in keys:
+            (status, fvs) = tbl.get(key)
+            assert status == True
+
+            for fv in fvs:
+                if fv[0] == "SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST":
+                    exp_tc_map_raw = fv[1]
+                elif fv[0] == "SAI_QOS_MAP_ATTR_TYPE" and fv[1] == "SAI_QOS_MAP_TYPE_MPLS_EXP_TO_TC":
+                    exp_tc_map_key = key
+                    found = True
+
+            if found:
+                break
+
+        assert found == True
+
+        return (key, exp_tc_map_raw)
+
+
+    def apply_exp_profile_on_all_ports(self):
+        tbl = swsscommon.Table(self.config_db, CFG_PORT_QOS_MAP_TABLE_NAME)
+        fvs = swsscommon.FieldValuePairs([(CFG_PORT_QOS_EXP_MAP_FIELD, CFG_EXP_TO_TC_MAP_KEY)])
+        ports = swsscommon.Table(self.config_db, CFG_PORT_TABLE_NAME).getKeys()
+        for port in ports:
+            tbl.set(port, fvs)
+
+        time.sleep(1)
+
+
+    def test_exp_cfg(self, dvs):
+        self.connect_dbs(dvs)
+        self.create_exp_profile()
+        oid, exp_tc_map_raw = self.find_exp_profile()
+
+        exp_tc_map = json.loads(exp_tc_map_raw);
+        for exp2tc in exp_tc_map['list']:
+            exp = str(exp2tc['key']['exp'])
+            tc = str(exp2tc['value']['tc'])
+            assert tc == EXP_TO_TC_MAP[exp]
+
+
+    def test_port_exp(self, dvs):
+        self.connect_dbs(dvs)
+        self.create_exp_profile()
+        oid, exp_tc_map_raw = self.find_exp_profile()
+
+        self.apply_exp_profile_on_all_ports()
+
+        cnt = 0
+        tbl = swsscommon.Table(self.asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
+        keys = tbl.getKeys()
+        for key in keys:
+            (status, fvs) = tbl.get(key)
+            assert status == True
+
+            for fv in fvs:
+                if fv[0] == "SAI_PORT_ATTR_QOS_EXP_TO_TC_MAP":
                     cnt += 1
                     assert fv[1] == oid
 

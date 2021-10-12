@@ -742,6 +742,26 @@ instance is supported in SONiC.
 
 ```
 
+
+### EXP_TO_TC_MAP
+```
+{
+"EXP_TO_TC_MAP": {
+    "AZURE": {
+        "0": "0",
+        "1": "1",
+        "2": "1",
+        "3": "2",
+        "4": "2",
+        "5": "3",
+        "6": "3",
+        "7": "4"
+    }
+  }
+}
+
+```
+
 ### FLEX_COUNTER_TABLE
 
 ```

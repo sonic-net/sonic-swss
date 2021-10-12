@@ -8,6 +8,7 @@
 #include "portsorch.h"
 
 const string dscp_to_tc_field_name              = "dscp_to_tc_map";
+const string exp_to_tc_field_name               = "exp_to_tc_map";
 const string dot1p_to_tc_field_name             = "dot1p_to_tc_map";
 const string pfc_to_pg_map_name                 = "pfc_to_pg_map";
 const string pfc_to_queue_map_name              = "pfc_to_queue_map";
@@ -64,6 +65,13 @@ public:
 };
 
 class DscpToTcMapHandler : public QosMapHandler
+{
+public:
+    bool convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes) override;
+    sai_object_id_t addQosItem(const vector<sai_attribute_t> &attributes) override;
+};
+
+class ExpToTcMapHandler : public QosMapHandler
 {
 public:
     bool convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes) override;
@@ -137,6 +145,7 @@ private:
     void initTableHandlers();
 
     task_process_status handleDscpToTcTable(Consumer& consumer);
+    task_process_status handleExpToTcTable(Consumer& consumer);
     task_process_status handleDot1pToTcTable(Consumer& consumer);
     task_process_status handlePfcPrioToPgTable(Consumer& consumer);
     task_process_status handlePfcToQueueTable(Consumer& consumer);
