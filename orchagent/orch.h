@@ -48,7 +48,8 @@ typedef enum
     task_invalid_entry,
     task_failed,
     task_need_retry,
-    task_ignore
+    task_ignore,
+    task_duplicated
 } task_process_status;
 
 typedef std::map<std::string, sai_object_id_t> object_map;
@@ -181,8 +182,6 @@ public:
     // Prepare for warm start if Redis contains valid input data
     // otherwise fallback to cold start
     virtual bool bake();
-    // Clean up the state set in bake()
-    virtual bool postBake();
 
     /* Iterate all consumers in m_consumerMap and run doTask(Consumer) */
     virtual void doTask();

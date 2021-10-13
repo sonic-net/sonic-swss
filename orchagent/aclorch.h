@@ -419,6 +419,8 @@ public:
 
     static sai_acl_action_type_t getAclActionFromAclEntry(sai_acl_entry_attr_t attr);
 
+    using Orch::doTask;  // Allow access to the basic doTask
+
 private:
     SwitchOrch *m_switchOrch;
     void doTask(Consumer &consumer);
