@@ -3,9 +3,6 @@ import time
 
 from swsscommon import swsscommon
 
-DVS_ENV = ["HWSKU=Force10-S6000"]
-
-
 class TestMirror(object):
     def setup_db(self, dvs):
         self.pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
