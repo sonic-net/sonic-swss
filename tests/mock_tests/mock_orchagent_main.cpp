@@ -22,7 +22,6 @@ bool gSaiRedisLogRotate = false;
 ofstream gRecordOfs;
 string gRecordFile;
 
-MirrorOrch *gMirrorOrch;
 VRFOrch *gVrfOrch;
 
 void syncd_apply_view() {}
