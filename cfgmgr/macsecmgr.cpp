@@ -712,6 +712,16 @@ bool MACsecMgr::configureMACsec(
             "mka_priority",
             profile.priority);
 
+        if (profile.rekey_period)
+        {
+            wpa_cli_exec_and_check(
+                session.sock,
+                port_name,
+                network_id,
+                "macsec_rekey_period",
+                profile.rekey_period);
+        }
+
         wpa_cli_exec_and_check(
             session.sock,
             port_name,
