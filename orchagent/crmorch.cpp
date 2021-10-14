@@ -91,7 +91,7 @@ const map<string, CrmResourceType> crmThreshTypeResMap =
     { "dnat_entry_threshold_type", CrmResourceType::CRM_DNAT_ENTRY },
     { "mpls_inseg_threshold_type", CrmResourceType::CRM_MPLS_INSEG },
     { "mpls_nexthop_threshold_type", CrmResourceType::CRM_MPLS_NEXTHOP },
-    { "my_sid_entry_threshold_type", CrmResourceType::CRM_SRV6_MY_SID_ENTRY },
+    { "srv6_my_sid_entry_threshold_type", CrmResourceType::CRM_SRV6_MY_SID_ENTRY },
     { "srv6_nexthop_threshold_type", CrmResourceType::CRM_SRV6_NEXTHOP },
 };
 
@@ -115,7 +115,7 @@ const map<string, CrmResourceType> crmThreshLowResMap =
     {"dnat_entry_low_threshold", CrmResourceType::CRM_DNAT_ENTRY },
     {"mpls_inseg_low_threshold", CrmResourceType::CRM_MPLS_INSEG },
     {"mpls_nexthop_low_threshold", CrmResourceType::CRM_MPLS_NEXTHOP },
-    {"my_sid_entry_low_threshold", CrmResourceType::CRM_SRV6_MY_SID_ENTRY },
+    {"srv6_my_sid_entry_low_threshold", CrmResourceType::CRM_SRV6_MY_SID_ENTRY },
     {"srv6_nexthop_low_threshold", CrmResourceType::CRM_SRV6_NEXTHOP },
 };
 
@@ -139,7 +139,7 @@ const map<string, CrmResourceType> crmThreshHighResMap =
     {"dnat_entry_high_threshold", CrmResourceType::CRM_DNAT_ENTRY },
     {"mpls_inseg_high_threshold", CrmResourceType::CRM_MPLS_INSEG },
     {"mpls_nexthop_high_threshold", CrmResourceType::CRM_MPLS_NEXTHOP },
-    {"my_sid_entry_high_threshold", CrmResourceType::CRM_SRV6_MY_SID_ENTRY },
+    {"srv6_my_sid_entry_high_threshold", CrmResourceType::CRM_SRV6_MY_SID_ENTRY },
     {"srv6_nexthop_high_threshold", CrmResourceType::CRM_SRV6_NEXTHOP },
 };
 
@@ -170,7 +170,7 @@ const map<string, CrmResourceType> crmAvailCntsTableMap =
     { "crm_stats_dnat_entry_available", CrmResourceType::CRM_DNAT_ENTRY },
     { "crm_stats_mpls_inseg_available", CrmResourceType::CRM_MPLS_INSEG },
     { "crm_stats_mpls_nexthop_available", CrmResourceType::CRM_MPLS_NEXTHOP },
-    { "crm_stats_my_sid_entry_available", CrmResourceType::CRM_SRV6_MY_SID_ENTRY },
+    { "crm_stats_srv6_my_sid_entry_available", CrmResourceType::CRM_SRV6_MY_SID_ENTRY },
     { "crm_stats_srv6_nexthop_available", CrmResourceType::CRM_SRV6_NEXTHOP },
 };
 
@@ -194,7 +194,7 @@ const map<string, CrmResourceType> crmUsedCntsTableMap =
     { "crm_stats_dnat_entry_used", CrmResourceType::CRM_DNAT_ENTRY },
     { "crm_stats_mpls_inseg_used", CrmResourceType::CRM_MPLS_INSEG },
     { "crm_stats_mpls_nexthop_used", CrmResourceType::CRM_MPLS_NEXTHOP },
-    { "crm_stats_my_sid_entry_used", CrmResourceType::CRM_SRV6_MY_SID_ENTRY },
+    { "crm_stats_srv6_my_sid_entry_used", CrmResourceType::CRM_SRV6_MY_SID_ENTRY },
     { "crm_stats_srv6_nexthop_used", CrmResourceType::CRM_SRV6_NEXTHOP },
 };
 
