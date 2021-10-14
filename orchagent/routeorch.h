@@ -205,6 +205,10 @@ public:
 
     unsigned int getNhgCount() { return m_nextHopGroupCount; }
     unsigned int getMaxNhgCount() { return m_maxNextHopGroupCount; }
+    
+    void increaseNextHopGroupCount();
+    void decreaseNextHopGroupCount();
+    bool checkNextHopGroupCount();
 
 private:
     SwitchOrch *m_switchOrch;

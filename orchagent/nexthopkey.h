@@ -82,6 +82,8 @@ struct NextHopKey
         weight = 0;
     }
 
+    NextHopKey(const IpAddress &ip, const MacAddress &mac, const uint32_t &vni, bool overlay_nh) : ip_address(ip), alias(""), vni(vni), mac_address(mac){}
+
     const std::string to_string() const
     {
         std::string str = formatMplsNextHop();

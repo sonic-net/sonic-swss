@@ -6,6 +6,7 @@ import pytest
 
 from swsscommon import swsscommon
 from pprint import pprint
+from dvslib.dvs_common import wait_for_result
 
 
 def create_entry(tbl, key, pairs):
@@ -139,7 +140,11 @@ def delete_vnet_local_routes(dvs, prefix, vnet_name):
     time.sleep(2)
 
 
-def create_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0):
+def create_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor=""):
+    set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac=mac, vni=vni, ep_monitor=ep_monitor)
+
+
+def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor=""):
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
     attrs = [
@@ -152,11 +157,12 @@ def create_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0):
     if mac:
         attrs.append(('mac_address', mac))
 
-    create_entry_tbl(
-        conf_db,
-        "VNET_ROUTE_TUNNEL", '|', "%s|%s" % (vnet_name, prefix),
-        attrs,
-    )
+    if ep_monitor:
+        attrs.append(('endpoint_monitor', ep_monitor))
+
+    tbl = swsscommon.Table(conf_db, "VNET_ROUTE_TUNNEL")
+    fvs = swsscommon.FieldValuePairs(attrs)
+    tbl.set("%s|%s" % (vnet_name, prefix), fvs)
 
     time.sleep(2)
 
@@ -429,7 +435,9 @@ class VnetVxlanVrfTunnel(object):
     ASIC_VRF_TABLE          = "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER"
     ASIC_ROUTE_ENTRY        = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"
     ASIC_NEXT_HOP           = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP"
-    ASIC_VLAN_TABLE          = "ASIC_STATE:SAI_OBJECT_TYPE_VLAN"
+    ASIC_VLAN_TABLE         = "ASIC_STATE:SAI_OBJECT_TYPE_VLAN"
+    ASIC_NEXT_HOP_GROUP     = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP"
+    ASIC_NEXT_HOP_GROUP_MEMBER  = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER"
 
     tunnel_map_ids       = set()
     tunnel_map_entry_ids = set()
@@ -440,6 +448,7 @@ class VnetVxlanVrfTunnel(object):
     vnet_vr_ids          = set()
     vr_map               = {}
     nh_ids               = {}
+    nhg_ids              = {}
 
     def fetch_exist_entries(self, dvs):
         self.vnet_vr_ids = get_exist_entries(dvs, self.ASIC_VRF_TABLE)
@@ -450,6 +459,7 @@ class VnetVxlanVrfTunnel(object):
         self.rifs = get_exist_entries(dvs, self.ASIC_RIF_TABLE)
         self.routes = get_exist_entries(dvs, self.ASIC_ROUTE_ENTRY)
         self.nhops = get_exist_entries(dvs, self.ASIC_NEXT_HOP)
+        self.nhgs = get_exist_entries(dvs, self.ASIC_NEXT_HOP_GROUP)
 
         global loopback_id, def_vr_id, switch_mac
         if not loopback_id:
@@ -670,7 +680,7 @@ class VnetVxlanVrfTunnel(object):
         # TODO: Implement for VRF VNET
         return True
 
-    def check_vnet_routes(self, dvs, name, endpoint, tunnel, mac="", vni=0):
+    def check_vnet_routes(self, dvs, name, endpoint, tunnel, mac="", vni=0, route_ids=""):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
         vr_ids = self.vnet_route_ids(dvs, name)
@@ -697,7 +707,10 @@ class VnetVxlanVrfTunnel(object):
             self.nhops.add(new_nh)
 
         check_object(asic_db, self.ASIC_NEXT_HOP, new_nh, expected_attr)
-        new_route = get_created_entries(asic_db, self.ASIC_ROUTE_ENTRY, self.routes, count)
+        if not route_ids:
+            new_route = get_created_entries(asic_db, self.ASIC_ROUTE_ENTRY, self.routes, count)
+        else:
+            new_route = route_ids
 
         #Check if the route is in expected VRF
         asic_vrs = set()
@@ -714,8 +727,107 @@ class VnetVxlanVrfTunnel(object):
 
         self.routes.update(new_route)
 
-    def check_del_vnet_routes(self, dvs, name):
+        return new_route
+
+    def serialize_endpoint_group(self, endpoints):
+        endpoints.sort()
+        return ",".join(endpoints)
+
+    def check_next_hop_group_member(self, dvs, nhg, expected_endpoint, expected_attrs):
+        expected_endpoint_str = self.serialize_endpoint_group(expected_endpoint)
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        tbl_nhgm =  swsscommon.Table(asic_db, self.ASIC_NEXT_HOP_GROUP_MEMBER)
+        tbl_nh =  swsscommon.Table(asic_db, self.ASIC_NEXT_HOP)
+        entries = set(tbl_nhgm.getKeys())
+        endpoints = []
+        for entry in entries:
+            status, fvs = tbl_nhgm.get(entry)
+            fvs = dict(fvs)
+            assert status, "Got an error when get a key"
+            if fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"] == nhg:
+                nh_key = fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID"]
+                status, nh_fvs = tbl_nh.get(nh_key)
+                nh_fvs = dict(nh_fvs)
+                assert status, "Got an error when get a key"
+                endpoint = nh_fvs["SAI_NEXT_HOP_ATTR_IP"]
+                endpoints.append(endpoint)
+                assert endpoint in expected_attrs
+                check_object(asic_db, self.ASIC_NEXT_HOP, nh_key, expected_attrs[endpoint])
+
+        assert self.serialize_endpoint_group(endpoints) == expected_endpoint_str
+
+    def check_vnet_ecmp_routes(self, dvs, name, endpoints, tunnel, mac=[], vni=[], route_ids=[], nhg=""):
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        endpoint_str = name + "|" + self.serialize_endpoint_group(endpoints)
+
+        vr_ids = self.vnet_route_ids(dvs, name)
+        count = len(vr_ids)
+
+        expected_attrs = {}
+        for idx, endpoint in enumerate(endpoints):
+            expected_attr = {
+                        "SAI_NEXT_HOP_ATTR_TYPE": "SAI_NEXT_HOP_TYPE_TUNNEL_ENCAP",
+                        "SAI_NEXT_HOP_ATTR_IP": endpoint,
+                        "SAI_NEXT_HOP_ATTR_TUNNEL_ID": self.tunnel[tunnel],
+                    }
+            if vni and vni[idx]:
+                expected_attr.update({'SAI_NEXT_HOP_ATTR_TUNNEL_VNI': vni[idx]})
+            if mac and mac[idx]:
+                expected_attr.update({'SAI_NEXT_HOP_ATTR_TUNNEL_MAC': mac[idx]})
+            expected_attrs[endpoint] = expected_attr
+
+        if nhg:
+            new_nhg = nhg
+        elif endpoint_str in self.nhg_ids:
+            new_nhg = self.nhg_ids[endpoint_str]
+        else:
+            new_nhg = get_created_entry(asic_db, self.ASIC_NEXT_HOP_GROUP, self.nhgs)
+            self.nhg_ids[endpoint_str] = new_nhg
+            self.nhgs.add(new_nhg)
+
+
+        # Check routes in ingress VRF
+        expected_nhg_attr = {
+                        "SAI_NEXT_HOP_GROUP_ATTR_TYPE": "SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP",
+                    }
+        check_object(asic_db, self.ASIC_NEXT_HOP_GROUP, new_nhg, expected_nhg_attr)
+
+        # Check nexthop group member
+        self.check_next_hop_group_member(dvs, new_nhg, endpoints, expected_attrs)
+
+        if route_ids:
+            new_route = route_ids
+        else:
+            new_route = get_created_entries(asic_db, self.ASIC_ROUTE_ENTRY, self.routes, count)
+
+        #Check if the route is in expected VRF
+        asic_vrs = set()
+        for idx in range(count):
+            check_object(asic_db, self.ASIC_ROUTE_ENTRY, new_route[idx],
+                        {
+                            "SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID": new_nhg,
+                        }
+                    )
+            rt_key = json.loads(new_route[idx])
+            asic_vrs.add(rt_key['vr'])
+
+        assert asic_vrs == vr_ids
+
+        self.routes.update(new_route)
+
+        return new_route, new_nhg
+
+    def check_del_vnet_routes(self, dvs, name, prefixes=[]):
         # TODO: Implement for VRF VNET
+
+        def _access_function():
+            route_entries = get_exist_entries(dvs, self.ASIC_ROUTE_ENTRY)
+            route_prefixes = [json.loads(route_entry)["dest"] for route_entry in route_entries]
+            return (all(prefix not in route_prefixes for prefix in prefixes), None)
+
+        if prefixes:
+            wait_for_result(_access_function)
+
         return True
 
 
@@ -790,7 +902,7 @@ class TestVnetOrch(object):
         vnet_obj.check_del_vnet_routes(dvs, 'Vnet_2001')
 
         delete_vnet_routes(dvs, "100.100.1.1/32", 'Vnet_2000')
-        vnet_obj.check_del_vnet_routes(dvs, 'Vnet_2001')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet_2000')
 
         delete_phy_interface(dvs, "Ethernet4", "100.102.1.1/24")
         vnet_obj.check_del_router_interface(dvs, "Ethernet4")
@@ -1124,6 +1236,118 @@ class TestVnetOrch(object):
         vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '10.1.0.32')
 
         create_vxlan_tunnel_map(dvs, tunnel_name, 'map_1', 'Vlan1000', '1000')
+
+    '''
+    Test 7 - Test for vnet tunnel routes with ECMP nexthop group
+    '''
+    def test_vnet_orch_7(self, dvs, testlog):
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_7'
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, '7.7.7.7')
+        create_vnet_entry(dvs, 'Vnet7', tunnel_name, '10007', "")
+
+        vnet_obj.check_vnet_entry(dvs, 'Vnet7')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet7', '10007')
+
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '7.7.7.7')
+
+        # Create an ECMP tunnel route
+        vnet_obj.fetch_exist_entries(dvs)
+        create_vnet_routes(dvs, "100.100.1.1/32", 'Vnet7', '7.0.0.1,7.0.0.2,7.0.0.3')
+        route1, nhg1_1 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet7', ['7.0.0.1', '7.0.0.2', '7.0.0.3'], tunnel_name)
+
+        # Set the tunnel route to another nexthop group
+        set_vnet_routes(dvs, "100.100.1.1/32", 'Vnet7', '7.0.0.1,7.0.0.2,7.0.0.3,7.0.0.4')
+        route1, nhg1_2 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet7', ['7.0.0.1', '7.0.0.2', '7.0.0.3', '7.0.0.4'], tunnel_name, route_ids=route1)
+
+        # Check the previous nexthop group is removed
+        vnet_obj.fetch_exist_entries(dvs)
+        assert nhg1_1 not in vnet_obj.nhgs
+
+        # Create another tunnel route to the same set of endpoints
+        create_vnet_routes(dvs, "100.100.2.1/32", 'Vnet7', '7.0.0.1,7.0.0.2,7.0.0.3,7.0.0.4')
+        route2, nhg2_1 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet7', ['7.0.0.1', '7.0.0.2', '7.0.0.3', '7.0.0.4'], tunnel_name)
+
+        assert nhg2_1 == nhg1_2
+
+        # Remove one of the tunnel routes
+        delete_vnet_routes(dvs, "100.100.1.1/32", 'Vnet7')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet7', ["100.100.1.1/32"])
+
+        # Check the nexthop group still exists
+        vnet_obj.fetch_exist_entries(dvs)
+        assert nhg1_2 in vnet_obj.nhgs
+
+        # Remove the other tunnel route
+        delete_vnet_routes(dvs, "100.100.2.1/32", 'Vnet7')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet7', ["100.100.2.1/32"])
+
+        # Check the nexthop group is removed
+        vnet_obj.fetch_exist_entries(dvs)
+        assert nhg2_1 not in vnet_obj.nhgs
+
+        delete_vnet_entry(dvs, 'Vnet7')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet7')
+
+    '''
+    Test 8 - Test for ipv6 vnet tunnel routes with ECMP nexthop group
+    '''
+    def test_vnet_orch_8(self, dvs, testlog):
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_8'
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, 'fd:8::32')
+        create_vnet_entry(dvs, 'Vnet8', tunnel_name, '10008', "")
+
+        vnet_obj.check_vnet_entry(dvs, 'Vnet8')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet8', '10008')
+
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, 'fd:8::32')
+
+        # Create an ECMP tunnel route
+        vnet_obj.fetch_exist_entries(dvs)
+        create_vnet_routes(dvs, "fd:8:10::32/128", 'Vnet8', 'fd:8:1::1,fd:8:1::2,fd:8:1::3')
+        route1, nhg1_1 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet8', ['fd:8:1::1', 'fd:8:1::2', 'fd:8:1::3'], tunnel_name)
+
+        # Set the tunnel route to another nexthop group
+        set_vnet_routes(dvs, "fd:8:10::32/128", 'Vnet8', 'fd:8:1::1,fd:8:1::2,fd:8:1::3,fd:8:1::4')
+        route1, nhg1_2 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet8', ['fd:8:1::1', 'fd:8:1::2', 'fd:8:1::3', 'fd:8:1::4'], tunnel_name, route_ids=route1)
+
+        # Check the previous nexthop group is removed
+        vnet_obj.fetch_exist_entries(dvs)
+        assert nhg1_1 not in vnet_obj.nhgs
+
+        # Create another tunnel route to the same set of endpoints
+        create_vnet_routes(dvs, "fd:8:20::32/128", 'Vnet8', 'fd:8:1::1,fd:8:1::2,fd:8:1::3,fd:8:1::4')
+        route2, nhg2_1 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet8', ['fd:8:1::1', 'fd:8:1::2', 'fd:8:1::3', 'fd:8:1::4'], tunnel_name)
+
+        assert nhg2_1 == nhg1_2
+
+        # Remove one of the tunnel routes
+        delete_vnet_routes(dvs, "fd:8:10::32/128", 'Vnet8')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet8', ["fd:8:10::32/128"])
+
+        # Check the nexthop group still exists
+        vnet_obj.fetch_exist_entries(dvs)
+        assert nhg1_2 in vnet_obj.nhgs
+
+        # Remove the other tunnel route
+        delete_vnet_routes(dvs, "fd:8:20::32/128", 'Vnet8')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet8', ["fd:8:20::32/128"])
+
+        # Check the nexthop group is removed
+        vnet_obj.fetch_exist_entries(dvs)
+        assert nhg2_1 not in vnet_obj.nhgs
+
+        delete_vnet_entry(dvs, 'Vnet8')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet8')
 
 
 # Add Dummy always-pass test at end as workaroud

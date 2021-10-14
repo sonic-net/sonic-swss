@@ -12,6 +12,8 @@
 #include "ipaddresses.h"
 #include "producerstatetable.h"
 #include "observer.h"
+#include "intfsorch.h"
+#include "nexthopgroupkey.h"
 
 #define VNET_BITMAP_SIZE 32
 #define VNET_TUNNEL_SIZE 40960
@@ -66,11 +68,11 @@ public:
     VNetRequest() : Request(vnet_request_description, ':') { }
 };
 
-struct tunnelEndpoint
+struct NextHopGroupInfo
 {
-    IpAddress ip;
-    MacAddress mac;
-    uint32_t vni;
+    sai_object_id_t                         next_hop_group_id;      // next hop group id (null for single nexthop)
+    int                                     ref_count;              // reference count
+    std::map<NextHopKey, sai_object_id_t>   active_members;         // active nexthops and nexthop group member id (null for single nexthop)
 };
 
 class VNetObject
@@ -125,7 +127,7 @@ struct nextHop
     string ifname;
 };
 
-typedef std::map<IpPrefix, tunnelEndpoint> TunnelRoutes;
+typedef std::map<IpPrefix, NextHopGroupKey> TunnelRoutes;
 typedef std::map<IpPrefix, nextHop> RouteMap;
 
 class VNetVrfObject : public VNetObject
@@ -165,7 +167,7 @@ public:
 
     bool updateObj(vector<sai_attribute_t>&);
 
-    bool addRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp);
+    bool addRoute(IpPrefix& ipPrefix, NextHopGroupKey& nexthops);
     bool addRoute(IpPrefix& ipPrefix, nextHop& nh);
     bool removeRoute(IpPrefix& ipPrefix);
 
@@ -173,8 +175,8 @@ public:
     bool getRouteNextHop(IpPrefix& ipPrefix, nextHop& nh);
     bool hasRoute(IpPrefix& ipPrefix);
 
-    sai_object_id_t getTunnelNextHop(tunnelEndpoint& endp);
-    bool removeTunnelNextHop(tunnelEndpoint& endp);
+    sai_object_id_t getTunnelNextHop(NextHopKey& nh);
+    bool removeTunnelNextHop(NextHopKey& nh);
     void increaseNextHopRefCount(const nextHop&);
     void decreaseNextHopRefCount(const nextHop&);
 
@@ -246,11 +248,12 @@ private:
 const request_description_t vnet_route_description = {
     { REQ_T_STRING, REQ_T_IP_PREFIX },
     {
-        { "endpoint",    REQ_T_IP },
-        { "ifname",      REQ_T_STRING },
-        { "nexthop",     REQ_T_STRING },
-        { "vni",         REQ_T_UINT },
-        { "mac_address", REQ_T_MAC_ADDRESS },
+        { "endpoint",               REQ_T_IP_LIST },
+        { "ifname",                 REQ_T_STRING },
+        { "nexthop",                REQ_T_STRING },
+        { "vni",                    REQ_T_UINT_LIST },
+        { "mac_address",            REQ_T_MAC_ADDRESS_LIST },
+        { "endpoint_monitor",       REQ_T_IP_LIST },
     },
     { }
 };
@@ -281,6 +284,9 @@ struct VNetNextHopObserverEntry
 /* NextHopObserverTable: Destination IP address, next hop observer entry */
 typedef std::map<IpAddress, VNetNextHopObserverEntry> VNetNextHopObserverTable;
 
+typedef std::map<NextHopGroupKey, NextHopGroupInfo> VNetNextHopGroupInfoTable;
+typedef std::map<IpPrefix, NextHopGroupKey> VNetTunnelRouteTable;
+
 class VNetRouteOrch : public Orch2, public Subject
 {
 public:
@@ -302,8 +308,13 @@ private:
     bool handleRoutes(const Request&);
     bool handleTunnel(const Request&);
 
+    bool hasNextHopGroup(const string&, const NextHopGroupKey&);
+    sai_object_id_t getNextHopGroupId(const string&, const NextHopGroupKey&);
+    bool addNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj);
+    bool removeNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj);
+
     template<typename T>
-    bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, tunnelEndpoint& endp, string& op);
+    bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op);
 
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, nextHop& nh, string& op);
@@ -314,6 +325,8 @@ private:
 
     VNetRouteTable syncd_routes_;
     VNetNextHopObserverTable next_hop_observers_;
+    std::map<std::string, VNetNextHopGroupInfoTable> syncd_nexthop_groups_;
+    std::map<std::string, VNetTunnelRouteTable> syncd_tunnel_routes_;
 };
 
 class VNetCfgRouteOrch : public Orch
