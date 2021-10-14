@@ -405,10 +405,6 @@ def test_mclagFdb_remote_move_peer_node(dvs, testlog):
 
     assert ok, str(extra)
 
-    (exitcode, output) = dvs.runcmd(['sh', '-c', "bridge fdb show  | grep " + "3C:85:99:5E:00:01" + " | wc -l"])
-    num = int(output.strip())
-    assert num == 1
-
     # Move remote MAC in MCLAG_FDB_TABLE to PortChannel0006
     create_entry_pst(
         dvs.pdb,
@@ -428,7 +424,7 @@ def test_mclagFdb_remote_move_peer_node(dvs, testlog):
                      ("SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE", "true")]
     )
 
-    assert ok, str(extra)
+    assert ok, str(extra) 
 
     #delete the remote FDB and Verify
     delete_entry_pst(
