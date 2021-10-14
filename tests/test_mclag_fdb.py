@@ -515,7 +515,7 @@ def test_mclagFdb_remote_to_local(dvs, testlog):
         "MCLAG_FDB_TABLE", "Vlan200:3C:85:99:5E:00:01",
         [
             ("port", "PortChannel0005"),
-            ("type", "local_dynamic"),
+            ("type", "dynamic_local"),
         ]
     )
 
