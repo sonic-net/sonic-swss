@@ -483,7 +483,70 @@ def test_mclagFdb_static_mac_dynamic_move_reject(dvs, testlog):
         "MCLAG_FDB_TABLE", "Vlan200:3C:85:99:5E:00:01",
     )
 
-# Test-12 Verify cleanup of the basic config.
+# Test-12 Verify remote peer interface shut down, local sync mac change from static to dynamic and save to state db.
+
+@pytest.mark.dev_sanity
+def test_mclagFdb_remote_to_local(dvs, testlog):
+    dvs.setup_db()
+    # create FDB entry in APP_DB MCLAG_FDB_TABLE
+    create_entry_pst(
+        dvs.pdb,
+        "MCLAG_FDB_TABLE", "Vlan200:3C:85:99:5E:00:01",
+        [
+            ("port", "PortChannel0005"),
+            ("type", "dynamic"),
+        ]
+    )
+
+    # check that the FDB entry was inserted into ASIC DB
+    assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 1, "The MCLAG fdb entry not inserted to ASIC"
+
+    ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+            [("mac", "3C:85:99:5E:00:01"), ("bvid", str(dvs.getVlanOid("200")))],
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC"),
+                     ("SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE", "true")]
+    )
+
+    assert ok, str(extra)
+
+    # simulate remote peer link interface down, fdb convert to local dynamic
+    create_entry_pst(
+        dvs.pdb,
+        "MCLAG_FDB_TABLE", "Vlan200:3C:85:99:5E:00:01",
+        [
+            ("port", "PortChannel0005"),
+            ("type", "local_dynamic"),
+        ]
+    )
+
+    time.sleep(2)
+
+    # check that the FDB entry was inserted into ASIC DB
+    assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 1, "The MCLAG fdb entry not inserted to ASIC"
+
+    # local fdb has no ALLOW MOVE attribute
+    ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+            [("mac", "3C:85:99:5E:00:01"), ("bvid", str(dvs.getVlanOid("200")))],
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_DYNAMIC")]
+    )
+
+    assert ok, str(extra)
+
+    # check that the FDB entry was inserted into state DB, this will guarantee kernel fdb entry work fine
+    assert how_many_entries_exist(dvs.adb, "FDB_TABLE") == 1, "The local dynamic fdb not inserted in state db"
+
+    # remove app db fdb entry, but this will not remove asic db
+    delete_entry_pst(
+        dvs.pdb,
+        "MCLAG_FDB_TABLE", "Vlan200:3C:85:99:5E:00:01",
+    )
+
+    #remove local dynamic asic fdb entry by remove vlan member indirectly
+    dvs.remove_vlan_member("200", "PortChannel0005")
+    dvs.create_vlan_member("200", "PortChannel0005")
+
+
+# Test-13 Verify cleanup of the basic config.
 
 @pytest.mark.dev_sanity
 def test_mclagFdb_basic_config_del(dvs, testlog):
