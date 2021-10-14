@@ -1,6 +1,4 @@
 """Utilities for interacting with ACLs when writing VS tests."""
-from typing import Callable, Dict, List
-
 
 class DVSAcl:
     """Manage ACL tables and rules on the virtual switch."""
@@ -45,11 +43,11 @@ class DVSAcl:
 
     def create_acl_table(
             self,
-            table_name: str,
-            table_type: str,
-            ports: List[str],
-            stage: str = None
-    ) -> None:
+            table_name,
+            table_type,
+            ports,
+            stage = None
+    ):
         """Create a new ACL table in Config DB.
 
         Args:
@@ -71,9 +69,9 @@ class DVSAcl:
 
     def create_control_plane_acl_table(
             self,
-            table_name: str,
-            services: List[str]
-    ) -> None:
+            table_name,
+            services
+    ):
         """Create a new Control Plane ACL table in Config DB.
 
         Args:
@@ -88,7 +86,7 @@ class DVSAcl:
 
         self.config_db.create_entry(self.CDB_ACL_TABLE_NAME, table_name, table_attrs)
 
-    def update_acl_table_port_list(self, table_name: str, ports: List[str]) -> None:
+    def update_acl_table_port_list(self, table_name, ports):
         """Update the port binding list for a given ACL table.
 
         Args:
@@ -98,7 +96,7 @@ class DVSAcl:
         table_attrs = {"ports": ",".join(ports)}
         self.config_db.update_entry(self.CDB_ACL_TABLE_NAME, table_name, table_attrs)
 
-    def remove_acl_table(self, table_name: str) -> None:
+    def remove_acl_table(self, table_name):
         """Remove an ACL table from Config DB.
 
         Args:
@@ -106,7 +104,7 @@ class DVSAcl:
         """
         self.config_db.delete_entry(self.CDB_ACL_TABLE_NAME, table_name)
 
-    def get_acl_table_ids(self, expected: int) -> List[str]:
+    def get_acl_table_ids(self, expected):
         """Get all of the ACL table IDs in ASIC DB.
 
         This method will wait for the expected number of tables to exist, or fail.
@@ -126,7 +124,7 @@ class DVSAcl:
 
         return acl_tables
 
-    def verify_acl_table_count(self, expected: int) -> None:
+    def verify_acl_table_count(self, expected):
         """Verify that some number of tables exists in ASIC DB.
 
         This method will wait for the expected number of tables to exist, or fail.
@@ -136,7 +134,7 @@ class DVSAcl:
         """
         self.get_acl_table_ids(expected)
 
-    def get_acl_table_group_ids(self, expected: int) -> List[str]:
+    def get_acl_table_group_ids(self, expected):
         """Get all of the ACL group IDs in ASIC DB.
 
         This method will wait for the expected number of groups to exist, or fail.
@@ -151,7 +149,7 @@ class DVSAcl:
         return acl_table_groups
 
     # FIXME: This method currently assumes only ingress xor egress tables exist.
-    def verify_acl_table_groups(self, expected: int, stage: str = "ingress") -> None:
+    def verify_acl_table_groups(self, expected, stage = "ingress"):
         """Verify that the expected ACL table groups exist in ASIC DB.
 
         This method will wait for the expected number of groups to exist, or fail.
@@ -174,7 +172,7 @@ class DVSAcl:
                 else:
                     assert False
 
-    def verify_acl_table_group_members(self, acl_table_id: str, acl_table_group_ids: str, num_tables: int) -> None:
+    def verify_acl_table_group_members(self, acl_table_id, acl_table_group_ids, num_tables):
         """Verify that the expected ACL table group members exist in ASIC DB.
 
         Args:
@@ -198,11 +196,11 @@ class DVSAcl:
 
     def verify_acl_table_port_binding(
             self,
-            acl_table_id: str,
-            bind_ports: List[str],
-            num_tables: int,
-            stage: str = "ingress"
-    ) -> None:
+            acl_table_id,
+            bind_ports,
+            num_tables,
+            stage = "ingress"
+    ):
         """Verify that the ACL table has been bound to the given list of ports.
 
         Args:
@@ -229,12 +227,12 @@ class DVSAcl:
 
     def create_acl_rule(
             self,
-            table_name: str,
-            rule_name: str,
-            qualifiers: Dict[str, str],
-            action: str = "FORWARD",
-            priority: str = "2020"
-    ) -> None:
+            table_name,
+            rule_name,
+            qualifiers,
+            action = "FORWARD",
+            priority = "2020"
+    ):
         """Create a new ACL rule in the given table.
 
         Args:
@@ -256,13 +254,13 @@ class DVSAcl:
 
     def create_redirect_acl_rule(
             self,
-            table_name: str,
-            rule_name: str,
-            qualifiers: Dict[str, str],
-            intf: str,
-            ip: str = None,
-            priority: str = "2020"
-    ) -> None:
+            table_name,
+            rule_name,
+            qualifiers,
+            intf,
+            ip = None,
+            priority = "2020"
+    ):
         """Create a new ACL redirect rule in the given table.
 
         Args:
@@ -274,7 +272,7 @@ class DVSAcl:
             priority: The priority of the rule.
         """
         if ip:
-            redirect_action = f"{ip}@{intf}"
+            redirect_action = "{}@{}".format(ip, intf)
         else:
             redirect_action = intf
 
@@ -290,13 +288,13 @@ class DVSAcl:
 
     def create_mirror_acl_rule(
             self,
-            table_name: str,
-            rule_name: str,
-            qualifiers: Dict[str, str],
-            session_name: str,
-            stage: str = None,
-            priority: str = "2020"
-    ) -> None:
+            table_name,
+            rule_name,
+            qualifiers,
+            session_name,
+            stage = None,
+            priority = "2020"
+    ):
         """Create a new ACL mirror rule in the given table.
 
         Args:
@@ -322,7 +320,7 @@ class DVSAcl:
 
         self.config_db.create_entry("ACL_RULE", "{}|{}".format(table_name, rule_name), fvs)
 
-    def remove_acl_rule(self, table_name: str, rule_name: str) -> None:
+    def remove_acl_rule(self, table_name, rule_name):
         """Remove the ACL rule from the table.
 
         Args:
@@ -331,12 +329,12 @@ class DVSAcl:
         """
         self.config_db.delete_entry("ACL_RULE", "{}|{}".format(table_name, rule_name))
 
-    def verify_acl_rule_count(self, expected: int) -> None:
+    def verify_acl_rule_count(self, expected):
         """Verify that there are N rules in the ASIC DB."""
         num_keys = len(self.asic_db.default_acl_entries)
         self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", num_keys + expected)
 
-    def verify_no_acl_rules(self) -> None:
+    def verify_no_acl_rules(self):
         """Verify that there are no ACL rules in the ASIC DB."""
         num_keys = len(self.asic_db.default_acl_entries)
         keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", num_keys)
@@ -344,11 +342,11 @@ class DVSAcl:
 
     def verify_acl_rule(
             self,
-            sai_qualifiers: Dict[str, str],
-            action: str = "FORWARD",
-            priority: str = "2020",
-            acl_rule_id: str = None
-    ) -> None:
+            sai_qualifiers,
+            action = "FORWARD",
+            priority = "2020",
+            acl_rule_id = None
+    ):
         """Verify that an ACL rule has the correct ASIC DB representation.
 
         Args:
@@ -367,11 +365,11 @@ class DVSAcl:
 
     def verify_redirect_acl_rule(
             self,
-            sai_qualifiers: Dict[str, str],
-            expected_destination: str,
-            priority: str = "2020",
+            sai_qualifiers,
+            expected_destination,
+            priority = "2020",
             acl_rule_id=None
-    ) -> None:
+    ):
         """Verify that an ACL redirect rule has the correct ASIC DB representation.
 
         Args:
@@ -391,12 +389,12 @@ class DVSAcl:
 
     def verify_mirror_acl_rule(
             self,
-            sai_qualifiers: Dict[str, str],
-            session_oid: str,
-            stage: str = "ingress",
-            priority: str = "2020",
-            acl_rule_id: str = None
-    ) -> None:
+            sai_qualifiers,
+            session_oid,
+            stage = "ingress",
+            priority = "2020",
+            acl_rule_id = None
+    ):
         """Verify that an ACL mirror rule has the correct ASIC DB representation.
 
         Args:
@@ -416,10 +414,10 @@ class DVSAcl:
 
     def verify_acl_rule_set(
             self,
-            priorities: List[str],
-            in_actions: Dict[str, str],
-            expected: Dict[str, Dict[str, str]]
-    ) -> None:
+            priorities,
+            in_actions,
+            expected
+    ):
         """Verify that a set of rules with PACKET_ACTIONs have the correct ASIC DB representation.
 
         Args:
@@ -438,7 +436,7 @@ class DVSAcl:
             self.verify_acl_rule(expected[priority], in_actions[priority], priority, entry)
 
     # FIXME: This `get_x_comparator` abstraction is a bit clunky, we should try to improve this later.
-    def get_simple_qualifier_comparator(self, expected_qualifier: str) -> Callable[[str], bool]:
+    def get_simple_qualifier_comparator(self, expected_qualifier):
         """Generate a method that compares if a given SAI qualifer matches `expected_qualifier`.
 
         Args:
@@ -452,7 +450,7 @@ class DVSAcl:
 
         return _match_qualifier
 
-    def get_port_list_comparator(self, expected_ports: List[str]) -> Callable[[str], bool]:
+    def get_port_list_comparator(self, expected_ports):
         """Generate a method that compares if a list of SAI ports matches the ports from `expected_ports`.
 
         Args:
@@ -472,7 +470,7 @@ class DVSAcl:
 
         return _match_port_list
 
-    def get_acl_range_comparator(self, expected_type: str, expected_ports: str) -> Callable[[str], bool]:
+    def get_acl_range_comparator(self, expected_type, expected_ports):
         """Generate a method that compares if a SAI range object matches the range from `expected ports`.
 
         Args:
@@ -497,7 +495,7 @@ class DVSAcl:
 
         return _match_acl_range
 
-    def _get_acl_rule_id(self) -> str:
+    def _get_acl_rule_id(self):
         num_keys = len(self.asic_db.default_acl_entries) + 1
         keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", num_keys)
 
@@ -506,10 +504,11 @@ class DVSAcl:
 
     def _check_acl_entry_base(
             self,
-            entry: Dict[str, str],
-            qualifiers: Dict[str, str],
-            action: str, priority: str
-    ) -> None:
+            entry,
+            qualifiers,
+            action,
+            priority
+    ):
         acl_table_id = self.get_acl_table_ids(1)[0]
 
         for k, v in entry.items():
@@ -532,13 +531,13 @@ class DVSAcl:
             else:
                 assert False
 
-    def _check_acl_entry_packet_action(self, entry: Dict[str, str], action: str) -> None:
+    def _check_acl_entry_packet_action(self, entry, action):
         assert "SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION" in entry
         assert self.ADB_PACKET_ACTION_LOOKUP.get(action, None) == entry["SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION"]
 
-    def _check_acl_entry_redirect_action(self, entry: Dict[str, str], expected_destination: str) -> None:
+    def _check_acl_entry_redirect_action(self, entry, expected_destination):
         assert entry.get("SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT", None) == expected_destination
 
-    def _check_acl_entry_mirror_action(self, entry: Dict[str, str], session_oid: str, stage: str) -> None:
+    def _check_acl_entry_mirror_action(self, entry, session_oid, stage):
         assert stage in self.ADB_MIRROR_ACTION_LOOKUP
         assert entry.get(self.ADB_MIRROR_ACTION_LOOKUP[stage]) == session_oid

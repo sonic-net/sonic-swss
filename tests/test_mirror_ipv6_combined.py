@@ -180,6 +180,7 @@ class TestMirror(object):
             "SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6",
             "SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_TYPE",
             "SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_CODE",
+            "SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID"
         ]
 
         expected_sai_list_attributes = [

@@ -185,15 +185,14 @@ class BaseTestAcl(object):
                 assert False
 
     def create_redirect_action_acl_rule(self, table_name, rule_name, qualifiers, intf, priority="2020"):
-        fvs = {
-            "priority": priority,
-            "REDIRECT_ACTION": intf
-        }
-
-        for k, v in qualifiers.items():
-            fvs[k] = v
-
-        self.config_db.create_entry("ACL_RULE", "{}|{}".format(table_name, rule_name), fvs)
+        tbl = swsscommon.Table(self.cdb, "ACL_RULE")
+        fvs = swsscommon.FieldValuePairs([
+            ("priority", priority),
+            ("REDIRECT_ACTION", intf),
+            qualifiers
+        ])
+        tbl.set(table_name + "|" + rule_name, fvs)
+        time.sleep(1)
 
 
 class TestAcl(BaseTestAcl):
@@ -1384,9 +1383,9 @@ class TestAcl(BaseTestAcl):
     def test_AclRedirectRule(self, dvs):        
         dvs.setup_db()
         self.setup_db(dvs)
-
         # Bring up an IP interface with a neighbor
         dvs.set_interface_status("Ethernet4", "up")
+        time.sleep(1)
         dvs.add_ip_address("Ethernet4", "10.0.0.1/24")
         dvs.add_neighbor("Ethernet4", "10.0.0.2", "00:01:02:03:04:05")
 
@@ -1406,7 +1405,8 @@ class TestAcl(BaseTestAcl):
                                         ("L4_SRC_PORT", "65000"),
                                         ("PACKET_ACTION", "REDIRECT:10.0.0.2@Ethernet4")])
         tbl.set("test_acl_table|redirect_rule", fvs)
-        
+
+        time.sleep(1)
         # check acl table in asic db
         atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
         keys = atbl.getKeys()
@@ -1434,7 +1434,7 @@ class TestAcl(BaseTestAcl):
                 assert False
 
         # remove acl rule
-        tbl = swsscommon.Table(self.cdb, "ACL_TABLE")
+        tbl = swsscommon.Table(self.cdb, "ACL_RULE")
         tbl._del("test_acl_table|redirect_rule")
 
         time.sleep(1)
@@ -1442,8 +1442,8 @@ class TestAcl(BaseTestAcl):
         (status, fvs) = atbl.get(acl_entry[0])
         assert status == False
 
-        config_qualifiers = {"L4_SRC_PORT": "65000"}
-        self.dvs_acl.create_redirect_action_acl_rule("test_acl_table", "redirect_action_rule", config_qualifiers, intf="Ethernet4", priority="20")
+        config_qualifiers = ("L4_SRC_PORT", "65000")
+        self.create_redirect_action_acl_rule("test_acl_table", "redirect_action_rule", config_qualifiers, intf="10.0.0.2@Ethernet4", priority="20")
         keys = atbl.getKeys()
 
         acl_entry = [k for k in keys if k not in dvs.asicdb.default_acl_entries]
@@ -1480,7 +1480,7 @@ class TestAcl(BaseTestAcl):
         time.sleep(1)
 
         keys = atbl.getKeys()
-        assert len(keys) >= 1
+        assert len(keys) == 0
 
         # remove neighbor
         dvs.remove_neighbor("Ethernet4", "10.0.0.2")

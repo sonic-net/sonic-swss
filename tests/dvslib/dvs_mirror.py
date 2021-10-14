@@ -13,8 +13,6 @@ class DVSMirror(object):
 
         if src_ports:
             mirror_entry["src_port"] = src_ports
-        # set direction without source port to uncover any swss issues.
-        mirror_entry["direction"] = direction
 
         if queue:
             mirror_entry["queue"] = queue
@@ -30,7 +28,6 @@ class DVSMirror(object):
             "dscp": dscp,
             "ttl": ttl,
             "queue": queue,
-            "direction": direction
         }
 
         if policer:
