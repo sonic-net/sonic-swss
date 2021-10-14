@@ -1392,7 +1392,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
 
     string key = "Vlan" + to_string(vlan.m_vlan_info.vlan_id) + ":" + entry.mac.to_string();
 
-    if (dbData.origin != FDB_ORIGIN_VXLAN_ADVERTIZED)
+    if (fdbData.origin != FDB_ORIGIN_VXLAN_ADVERTIZED)
     {
         /* State-DB is updated only for Local Mac addresses */
         // Write to StateDb
