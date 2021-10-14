@@ -119,7 +119,7 @@ class TestBuffer(object):
             self.app_db.wait_for_deleted_entry("BUFFER_PROFILE_TABLE", test_lossless_profile)
 
             # buffer pgs should still point to the original buffer profile
-            self.app_db.wait_for_field_match("BUFFER_PG_TABLE", self.INTF + ":3-4", {"profile": "[BUFFER_PROFILE_TABLE:{}]".format(orig_lossless_profile)})
+            self.app_db.wait_for_field_match("BUFFER_PG_TABLE", self.INTF + ":3-4", {"profile": orig_lossless_profile})
             fvs = dict()
             for pg in self.pg_name_map:
                 fvs["SAI_INGRESS_PRIORITY_GROUP_ATTR_BUFFER_PROFILE"] = self.buf_pg_profile[pg]
