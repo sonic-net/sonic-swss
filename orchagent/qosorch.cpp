@@ -1392,7 +1392,12 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
             SWSS_LOG_INFO("Applied %s to port %s", it->second.first.c_str(), port_name.c_str());
         }
 
-        if (pfc_enable)
+        sai_uint8_t old_pfc_enable = 0;
+        if (!gPortsOrch->getPortPfc(port.m_port_id, &old_pfc_enable)) {
+            SWSS_LOG_ERROR("Failed to retrieve PFC bits on port %s", port_name.c_str());
+        }
+
+        if (pfc_enable || old_pfc_enable)
         {
             if (!gPortsOrch->setPortPfc(port.m_port_id, pfc_enable))
             {
