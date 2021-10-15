@@ -23,18 +23,22 @@ using namespace swss;
 
 #define LOOPBACK_DEFAULT_MTU_STR "65536"
 
+extern MacAddress gMacAddress;
+
 IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
         m_cfgIntfTable(cfgDb, CFG_INTF_TABLE_NAME),
         m_cfgVlanIntfTable(cfgDb, CFG_VLAN_INTF_TABLE_NAME),
         m_cfgLagIntfTable(cfgDb, CFG_LAG_INTF_TABLE_NAME),
         m_cfgLoopbackIntfTable(cfgDb, CFG_LOOPBACK_INTERFACE_TABLE_NAME),
+        m_cfgSagTable(cfgDb, CFG_SAG_TABLE_NAME),
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
         m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME),
         m_stateVlanTable(stateDb, STATE_VLAN_TABLE_NAME),
         m_stateVrfTable(stateDb, STATE_VRF_TABLE_NAME),
         m_stateIntfTable(stateDb, STATE_INTERFACE_TABLE_NAME),
-        m_appIntfTableProducer(appDb, APP_INTF_TABLE_NAME)
+        m_appIntfTableProducer(appDb, APP_INTF_TABLE_NAME),
+        m_appSagTableProducer(appDb, APP_SAG_TABLE_NAME)
 {
     if (!WarmStart::isWarmStart())
     {
@@ -477,6 +481,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
     string grat_arp = "";
     string mpls = "";
     string ipv6_link_local_mode = "";
+    string sag = "";
 
     for (auto idx : data)
     {
@@ -514,6 +519,10 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         else if (field == "ipv6_use_link_local_only")
         {
             ipv6_link_local_mode = value;
+        }
+        else if (field == "static_anycast_gateway")
+        {
+            sag = value;
         }
     }
 
@@ -643,8 +652,55 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         }
         else
         {
-            FieldValueTuple fvTuple("mac_addr", MacAddress().to_string());
-            data.push_back(fvTuple);
+            if (!sag.empty())
+            {
+                // only VLAN interface can set static anycast gateway
+                if (!alias.compare(0, strlen(VLAN_PREFIX), VLAN_PREFIX))
+                {
+                    vector<FieldValueTuple> fvs;
+                    string gwmac = "";
+                    if (m_cfgSagTable.get("GLOBAL", fvs))
+                    {
+                        for (auto idx: fvs)
+                        {
+                            const auto &field = fvField(idx);
+                            const auto &value = fvValue(idx);
+
+                            if (field == "gwmac")
+                            {
+                                gwmac = value;
+                            }
+                        }
+                    }
+
+                    if (!gwmac.empty())
+                    {
+                        if (sag == "true")
+                        {
+                            setHostSubIntfAdminStatus(alias, "down");
+                            setIntfMac(alias, gwmac);
+                            setHostSubIntfAdminStatus(alias, "up");
+
+                            FieldValueTuple fvTuple("mac_addr", MacAddress(gwmac).to_string());
+                            data.push_back(fvTuple);
+                        }
+                        else if (sag == "false")
+                        {
+                            setHostSubIntfAdminStatus(alias, "down");
+                            setIntfMac(alias, gMacAddress.to_string());
+                            setHostSubIntfAdminStatus(alias, "up");
+
+                            FieldValueTuple fvTuple("mac_addr", MacAddress().to_string());
+                            data.push_back(fvTuple);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                FieldValueTuple fvTuple("mac_addr", MacAddress().to_string());
+                data.push_back(fvTuple);
+            }
         }
 
         if (!proxy_arp.empty())
@@ -772,6 +828,37 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
     return true;
 }
 
+void IntfMgr::doSagTask(const vector<string>& keys,
+        const vector<FieldValueTuple> &data,
+        const string& op)
+{
+    SWSS_LOG_ENTER();
+
+    string mac = "";
+    for (auto idx : data)
+    {
+        const auto &field = fvField(idx);
+        const auto &value = fvValue(idx);
+
+        if (field == "gwmac")
+        {
+            mac = value;
+        }
+    }
+
+    vector<FieldValueTuple> fvAppSag;
+    if (op == SET_COMMAND)
+    {
+        FieldValueTuple gwmac("gwmac", MacAddress(mac).to_string());
+        fvAppSag.push_back(gwmac);
+        m_appSagTableProducer.set("GLOBAL", fvAppSag);
+    }
+    else if (op == DEL_COMMAND)
+    {
+        m_appSagTableProducer.del("GLOBAL");
+    }
+}
+
 void IntfMgr::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -799,6 +886,14 @@ void IntfMgr::doTask(Consumer &consumer)
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
+
+            if (table_name == CFG_SAG_TABLE_NAME)
+            {
+                doSagTask(keys, data, op);
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
             if (!doIntfGeneralTask(keys, data, op))
             {
                 it++;

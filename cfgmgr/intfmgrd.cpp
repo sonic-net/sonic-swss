@@ -1,6 +1,7 @@
 #include <unistd.h>
 #include <vector>
 #include <mutex>
+#include <algorithm>
 #include "dbconnector.h"
 #include "select.h"
 #include "exec.h"
@@ -31,6 +32,7 @@ ofstream gRecordOfs;
 string gRecordFile;
 /* Global database mutex */
 mutex gDbMutex;
+MacAddress gMacAddress;
 
 int main(int argc, char **argv)
 {
@@ -48,6 +50,7 @@ int main(int argc, char **argv)
             CFG_LOOPBACK_INTERFACE_TABLE_NAME,
             CFG_VLAN_SUB_INTF_TABLE_NAME,
             CFG_VOQ_INBAND_INTERFACE_TABLE_NAME,
+            CFG_SAG_TABLE_NAME,
         };
 
         DBConnector cfgDb("CONFIG_DB", 0);
@@ -67,6 +70,15 @@ int main(int argc, char **argv)
         {
             s.addSelectables(o->getSelectables());
         }
+
+        Table table(&cfgDb, "DEVICE_METADATA");
+        std::vector<FieldValueTuple> ovalues;
+        table.get("localhost", ovalues);
+        auto it = std::find_if(ovalues.begin(), ovalues.end(), [](const FieldValueTuple& t){ return t.first == "mac";} );
+        if (it == ovalues.end()) {
+            throw runtime_error("couldn't find MAC address of the device from config DB");
+        }
+        gMacAddress = MacAddress(it->second);
 
         SWSS_LOG_NOTICE("starting main loop");
         while (true)

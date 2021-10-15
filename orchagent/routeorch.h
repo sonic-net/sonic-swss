@@ -154,7 +154,7 @@ public:
 
     void addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);
     void delLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);
-    std::string getLinkLocalEui64Addr(void);
+    std::string getLinkLocalEui64Addr(const MacAddress &mac);
 
 private:
     SwitchOrch *m_switchOrch;

@@ -124,7 +124,7 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
      * Hence add a single /128 route entry for the link-local interface
      * address pointing to the CPU port.
      */
-    IpPrefix linklocal_prefix = getLinkLocalEui64Addr();
+    IpPrefix linklocal_prefix = getLinkLocalEui64Addr(gMacAddress);
 
     addLinkLocalRouteToMe(gVirtualRouterId, linklocal_prefix);
     SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu", linklocal_prefix.to_string().c_str());
@@ -138,12 +138,12 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
 
 }
 
-std::string RouteOrch::getLinkLocalEui64Addr(void)
+std::string RouteOrch::getLinkLocalEui64Addr(const MacAddress &mac)
 {
     SWSS_LOG_ENTER();
 
     string        ip_prefix;
-    const uint8_t *gmac = gMacAddress.getMac();
+    const uint8_t *gmac = mac.getMac();
 
     uint8_t        eui64_interface_id[EUI64_INTF_ID_LEN];
     char           ipv6_ll_addr[INET6_ADDRSTRLEN] = {0};
@@ -1434,7 +1434,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
         /* We get 3 return values from setFgNhg:
          * 1. success/failure: on addition/modification of nexthop group/members
          * 2. next_hop_id: passed as a param to fn, used for sai route creation
-         * 3. prevNhgWasFineGrained: passed as a param to fn, used to determine transitions 
+         * 3. prevNhgWasFineGrained: passed as a param to fn, used to determine transitions
          * between regular and FG ECMP, this is an optimization to prevent multiple lookups */
         if (!m_fgNhgOrch->setFgNhg(vrf_id, ipPrefix, nextHops, next_hop_id, prevNhgWasFineGrained))
         {
@@ -1629,11 +1629,11 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
 
         if (curNhgIsFineGrained && prevNhgWasFineGrained)
         {
-            /* Don't change route entry if the route is previously fine grained and new nhg is also fine grained. 
+            /* Don't change route entry if the route is previously fine grained and new nhg is also fine grained.
              * We already modifed sai nhg objs as part of setFgNhg to account for nhg change. */
             object_statuses.emplace_back(SAI_STATUS_SUCCESS);
         }
-        else 
+        else
         {
             route_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
             route_attr.value.oid = next_hop_id;
