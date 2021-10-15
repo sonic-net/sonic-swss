@@ -761,8 +761,8 @@ void RouteOrch::doTask(Consumer& consumer)
                 {
                     try
                     {
-                        const NextHopGroup& nh_group = gNhgOrch->getNhg(nhg_index);
-                        nhg = nh_group.getKey();
+                        const auto &nh_group = gNhgOrch->getNhg(nhg_index);
+                        nhg = nh_group.getNhgKey();
                         ctx.using_temp_nhg = nh_group.isTemp();
                     }
                     catch (const std::out_of_range& e)
@@ -831,7 +831,7 @@ void RouteOrch::doTask(Consumer& consumer)
 
                 // If already exhaust the nexthop groups, and there are pending removing routes in bulker,
                 // flush the bulker and possibly collect some released nexthop groups
-                if (m_nextHopGroupCount + gNhgOrch->getNhgCount() >= m_maxNextHopGroupCount &&
+                if (m_nextHopGroupCount + gNhgOrch->getSyncedNhgCount() >= m_maxNextHopGroupCount &&
                     gRouteBulker.removing_entries_count() > 0)
                 {
                     break;
@@ -1107,7 +1107,7 @@ bool RouteOrch::createFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id
 {
     SWSS_LOG_ENTER();
 
-    if (m_nextHopGroupCount + gNhgOrch->getNhgCount() >= m_maxNextHopGroupCount)
+    if (m_nextHopGroupCount + gNhgOrch->getSyncedNhgCount() >= m_maxNextHopGroupCount)
     {
         SWSS_LOG_DEBUG("Failed to create new next hop group. \
                 Reaching maximum number of next hop groups.");
@@ -1162,7 +1162,7 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
 
     assert(!hasNextHopGroup(nexthops));
 
-    if (m_nextHopGroupCount + gNhgOrch->getNhgCount() >= m_maxNextHopGroupCount)
+    if (m_nextHopGroupCount + gNhgOrch->getSyncedNhgCount() >= m_maxNextHopGroupCount)
     {
         SWSS_LOG_DEBUG("Failed to create new next hop group. \
                         Reaching maximum number of next hop groups.");
@@ -1630,7 +1630,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
     {
         try
         {
-            const NextHopGroup& nhg = gNhgOrch->getNhg(ctx.nhg_index);
+            const auto &nhg = gNhgOrch->getNhg(ctx.nhg_index);
             next_hop_id = nhg.getId();
         }
         catch(const std::out_of_range& e)

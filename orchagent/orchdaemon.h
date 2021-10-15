@@ -12,6 +12,7 @@
 #include "neighorch.h"
 #include "routeorch.h"
 #include "nhgorch.h"
+#include "nhgmaporch.h"
 #include "copporch.h"
 #include "tunneldecaporch.h"
 #include "qosorch.h"

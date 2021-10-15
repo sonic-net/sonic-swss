@@ -195,6 +195,28 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     weight        = weight_list              ; List of weights.
 
 ---------------------------------------------
+### CLASS_BASED_NEXT_HOP_GROUP_TABLE
+    ;Stores a list of groups of one or more next hop groups used for class based forwarding
+    ;Status: Mandatory
+    key           = CLASS_BASED_NEXT_HOP_GROUP_TABLE:string ; arbitrary index for the next hop group
+    members       = NEXT_HOP_GROUP_TABLE.key ; one or more separated by ","
+    selection_map = FC_TO_NHG_INDEX_MAP_TABLE.key ; the NHG map to use for this CBF NHG
+
+---------------------------------------------
+### FC_TO_NHG_INDEX_MAP_TABLE
+    ; FC to Next hop group index map
+    key                    = "FC_TO_NHG_INDEX_MAP_TABLE:"name
+    fc_num = 1*DIGIT ;value
+    nh_index  = 1*DIGIT;  index of NH inside NH group
+
+    Example:
+    127.0.0.1:6379> hgetall "FC_TO_NHG_INDEX_MAP_TABLE:AZURE"
+     1) "0" ;fc_num
+     2) "0" ;nhg_index
+     3) "1"
+     4) "0"
+
+---------------------------------------------
 ### NEIGH_TABLE
     ; Stores the neighbors or next hop IP address and output port or
     ; interface for routes
@@ -320,6 +342,41 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
      8) "7"
      9) "4"
     10) "8"
+
+### DSCP_TO_FC_TABLE_NAME
+    ; dscp to FC map
+    ;SAI mapping - qos_map object with SAI_QOS_MAP_ATTR_TYPE == sai_qos_map_type_t::SAI_QOS_MAP_TYPE_DSCP_TO_FORWARDING_CLASS
+    key        = "DSCP_TO_FC_MAP_TABLE:"name
+    ;field       value
+    dscp_value = 1*DIGIT
+    fc_value   = 1*DIGIT
+
+    Example:
+    127.0.0.1:6379> hgetall "DSCP_TO_FC_MAP_TABLE:AZURE"
+     1) "0" ;dscp
+     2) "1" ;fc
+     3) "1"
+     4) "1"
+     5) "2"
+     6) "3"
+     7)
+---------------------------------------------
+### EXP_TO_FC_MAP_TABLE
+    ; dscp to FC map
+    ;SAI mapping - qos_map object with SAI_QOS_MAP_ATTR_TYPE == sai_qos_map_type_t::SAI_QOS_MAP_TYPE_MPLS_EXP_TO_FORWARDING_CLASS
+    key            = "EXP_TO_FC_MAP_TABLE:"name
+    ;field           value
+    mpls_exp_value = 1*DIGIT
+    fc_value       = 1*DIGIT
+
+    Example:
+    127.0.0.1:6379> hgetall "EXP_TO_FC_MAP_TABLE:AZURE"
+     1) "0" ;mpls_exp
+     2) "1" ;fc
+     3) "1"
+     4) "1"
+     5) "2"
+     6) "3"
 
 ---------------------------------------------
 ### SCHEDULER_TABLE

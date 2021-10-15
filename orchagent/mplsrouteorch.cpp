@@ -253,8 +253,8 @@ void RouteOrch::doLabelTask(Consumer& consumer)
                 {
                     try
                     {
-                        const NextHopGroup& nh_group = gNhgOrch->getNhg(nhg_index);
-                        ctx.nhg = nh_group.getKey();
+                        const auto &nh_group = gNhgOrch->getNhg(nhg_index);
+                        ctx.nhg = nh_group.getNhgKey();
                         ctx.using_temp_nhg = nh_group.isTemp();
                     }
                     catch (const std::out_of_range& e)
@@ -308,7 +308,7 @@ void RouteOrch::doLabelTask(Consumer& consumer)
 
                 // If already exhaust the nexthop groups, and there are pending removing routes in bulker,
                 // flush the bulker and possibly collect some released nexthop groups
-                if (gNhgOrch->getNhgCount() >= gNhgOrch->getMaxNhgCount() &&
+                if (m_nextHopGroupCount + gNhgOrch->getSyncedNhgCount() >= m_maxNextHopGroupCount &&
                     gLabelRouteBulker.removing_entries_count() > 0)
                 {
                     break;
@@ -478,7 +478,7 @@ bool RouteOrch::addLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroupKey 
     {
         try
         {
-            const NextHopGroup& nhg = gNhgOrch->getNhg(ctx.nhg_index);
+            const auto &nhg = gNhgOrch->getNhg(ctx.nhg_index);
             next_hop_id = nhg.getId();
         }
         catch(const std::out_of_range& e)
