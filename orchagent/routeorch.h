@@ -41,6 +41,30 @@ struct NextHopUpdate
     NextHopGroupKey nexthopGroup;
 };
 
+/*
+ * Structure describing the next hop group used by a route.  As the next hop
+ * groups can either be owned by RouteOrch or by NhgOrch, we have to keep track
+ * of the next hop group index, as it is the one telling us which one owns it.
+ */
+struct RouteNhg
+{
+    NextHopGroupKey nhg_key;
+
+    /*
+     * Index of the next hop group used.  Filled only if referencing a
+     * NhgOrch's owned next hop group.
+     */
+    std::string nhg_index;
+
+    RouteNhg() = default;
+    RouteNhg(const NextHopGroupKey& key, const std::string& index) :
+        nhg_key(key), nhg_index(index) {}
+
+    bool operator==(const RouteNhg& rnhg)
+       { return ((nhg_key == rnhg.nhg_key) && (nhg_index == rnhg.nhg_index)); }
+    bool operator!=(const RouteNhg& rnhg) { return !(*this == rnhg); }
+};
+
 struct NextHopObserverEntry;
 
 /* Route destination key for a nexthop */
@@ -58,11 +82,11 @@ struct RouteKey
 /* NextHopGroupTable: NextHopGroupKey, NextHopGroupEntry */
 typedef std::map<NextHopGroupKey, NextHopGroupEntry> NextHopGroupTable;
 /* RouteTable: destination network, NextHopGroupKey */
-typedef std::map<IpPrefix, NextHopGroupKey> RouteTable;
+typedef std::map<IpPrefix, RouteNhg> RouteTable;
 /* RouteTables: vrf_id, RouteTable */
 typedef std::map<sai_object_id_t, RouteTable> RouteTables;
 /* LabelRouteTable: destination label, next hop address(es) */
-typedef std::map<Label, NextHopGroupKey> LabelRouteTable;
+typedef std::map<Label, RouteNhg> LabelRouteTable;
 /* LabelRouteTables: vrf_id, LabelRouteTable */
 typedef std::map<sai_object_id_t, LabelRouteTable> LabelRouteTables;
 /* Host: vrf_id, IpAddress */
@@ -83,12 +107,15 @@ struct RouteBulkContext
     std::deque<sai_status_t>            object_statuses;    // Bulk statuses
     NextHopGroupKey                     tmp_next_hop;       // Temporary next hop
     NextHopGroupKey                     nhg;
+    std::string                         nhg_index;
     sai_object_id_t                     vrf_id;
     IpPrefix                            ip_prefix;
     bool                                excp_intfs_flag;
+    // using_temp_nhg will track if the NhgOrch's owned NHG is temporary or not
+    bool                                using_temp_nhg;
 
     RouteBulkContext()
-        : excp_intfs_flag(false)
+        : excp_intfs_flag(false), using_temp_nhg(false)
     {
     }
 
@@ -103,6 +130,7 @@ struct RouteBulkContext
         nhg.clear();
         excp_intfs_flag = false;
         vrf_id = SAI_NULL_OBJECT_ID;
+        using_temp_nhg = false;
     }
 };
 
@@ -111,13 +139,16 @@ struct LabelRouteBulkContext
     std::deque<sai_status_t>            object_statuses;    // Bulk statuses
     NextHopGroupKey                     tmp_next_hop;       // Temporary next hop
     NextHopGroupKey                     nhg;
+    std::string                         nhg_index;
     sai_object_id_t                     vrf_id;
     Label                               label;
     bool                                excp_intfs_flag;
     uint8_t                             pop_count;
+    // using_temp_nhg will track if the NhgOrch's owned NHG is temporary or not
+    bool                                using_temp_nhg;
 
     LabelRouteBulkContext()
-        : excp_intfs_flag(false)
+        : excp_intfs_flag(false), using_temp_nhg(false)
     {
     }
 
@@ -173,6 +204,9 @@ public:
     void delLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);
     std::string getLinkLocalEui64Addr(void);
 
+    unsigned int getNhgCount() { return m_nextHopGroupCount; }
+    unsigned int getMaxNhgCount() { return m_maxNextHopGroupCount; }
+
 private:
     SwitchOrch *m_switchOrch;
     NeighOrch *m_neighOrch;
@@ -181,8 +215,8 @@ private:
     FgNhgOrch *m_fgNhgOrch;
     Srv6Orch *m_srv6Orch;
 
-    int m_nextHopGroupCount;
-    int m_maxNextHopGroupCount;
+    unsigned int m_nextHopGroupCount;
+    unsigned int m_maxNextHopGroupCount;
     bool m_resync;
 
     RouteTables m_syncdRoutes;

@@ -49,6 +49,7 @@ public:
     ~NeighOrch();
 
     bool hasNextHop(const NextHopKey&);
+    bool isNeighborResolved(const NextHopKey&);
     bool addNextHop(const NextHopKey&);
     bool removeMplsNextHop(const NextHopKey&);
 

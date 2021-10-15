@@ -705,6 +705,23 @@ task_process_status Orch::handleSaiCreateStatus(sai_api_t api, sai_status_t stat
                     exit(EXIT_FAILURE);
             }
             break;
+        case SAI_API_HOSTIF:
+            switch (status)
+            {
+                case SAI_STATUS_SUCCESS:
+                    return task_success;
+                case SAI_STATUS_FAILURE:
+                    /*
+                     * Host interface maybe failed due to lane not available.
+                     * In some scenarios, like SONiC virtual machine, the invalid lane may be not enabled by VM configuration,
+                     * So just ignore the failure and report an error log.
+                     */
+                    return task_ignore;
+                default:
+                    SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
+                                sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+                    exit(EXIT_FAILURE);
+            }
         default:
             switch (status)
             {
