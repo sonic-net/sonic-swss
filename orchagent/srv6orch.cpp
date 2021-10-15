@@ -110,7 +110,8 @@ bool Srv6Orch::removeSrv6Nexthops(const NextHopGroupKey &nhg)
                 SWSS_LOG_ERROR("Failed to remove SRV6 nexthop %s", sr_nh.to_string(false,true).c_str());
                 return false;
             }
-            // Update NH ref_count of SID list
+
+            /* Update nexthop in SID table after deleting the nexthop */
             SWSS_LOG_NOTICE("Seg %s nexthop refcount %ld",
                       segname.c_str(),
                       sid_table_[segname].nexthops.size());
@@ -120,7 +121,8 @@ bool Srv6Orch::removeSrv6Nexthops(const NextHopGroupKey &nhg)
             }
             m_neighOrch->updateSrv6Nexthop(sr_nh, 0);
             srv6_nexthop_table_.erase(sr_nh);
-            // Delete NH from the tunnel map.
+
+            /* Delete NH from the tunnel map */
             SWSS_LOG_INFO("Delete NH %s from tunnel map",
                 sr_nh.to_string(false, true).c_str());
             srv6TunnelUpdateNexthops(srv6_source, sr_nh, false);
@@ -259,7 +261,7 @@ bool Srv6Orch::createUpdateSidList(const string sid_name, const string sid_list)
     sai_status_t status;
     if (!exists)
     {
-        // create sidlist object
+        /* Create sidlist object with list of ipv6 prefixes */
         SWSS_LOG_INFO("Create SID list");
         vector<sai_attribute_t> attributes;
         attr.id = SAI_SRV6_SIDLIST_ATTR_SEGMENT_LIST;
@@ -281,7 +283,8 @@ bool Srv6Orch::createUpdateSidList(const string sid_name, const string sid_list)
     else
     {
         SWSS_LOG_INFO("Set SID list");
-        // Update sidlist object with new set of ipv6 addresses
+
+        /* Update sidlist object with new set of ipv6 addresses */
         attr.id = SAI_SRV6_SIDLIST_ATTR_SEGMENT_LIST;
         attr.value.segmentlist.list = segment_list.list;
         attr.value.segmentlist.count = segment_list.count;
@@ -517,14 +520,15 @@ void Srv6Orch::updateMySidEntries(const NeighborUpdate update)
         srv6_my_sid_nexthop_table_.erase(nhkey);
     }
 
-    // iterate over ECMP map and update Nexthops
+    /* Iterate over ECMP map and update Nexthops */
     SWSS_LOG_INFO("Total mysid nhg map is %ld", srv6_my_sid_nexthop_group_table_.size());
 
     for (auto iter = srv6_my_sid_nexthop_group_table_.begin(); iter != srv6_my_sid_nexthop_group_table_.end();)
     {
         nhgkey = iter->first;
         SWSS_LOG_INFO("Check Nhgkey %s for NH key %s", nhgkey.to_string().c_str(), nhkey.to_string().c_str());
-        // If NextHopGroup contains the nexthop, update all MY_SID entries with ECMP group.
+
+        /* If NextHopGroup contains the nexthop, update all MY_SID entries with ECMP group. */
         if (!nhgkey.contains(nhkey))
         {
             iter++;
@@ -586,19 +590,18 @@ void Srv6Orch::update(SubjectType type, void *ctx)
 
 void Srv6Orch::mySidNexthopMapUpdate(string my_sid_string, NextHopKey nhkey)
 {
-    // cache my_sid entries for the future nexthop update.
+    /* Cache my_sid entries for the future nexthop update. */
     srv6_my_sid_nexthop_table_[nhkey].insert(my_sid_string);
 }
 
 void Srv6Orch::mySidNexthopGroupMapUpdate(string my_sid_string, NextHopGroupKey nhgkey)
 {
-    // cache my_sid entries for the future nexthop update.
+    /* Cache my_sid entries for the future nexthop update. */
     srv6_my_sid_nexthop_group_table_[nhgkey].insert(my_sid_string);
 }
 
 bool Srv6Orch::mySidXConnectNexthop(string my_sid_string, string nexthop_string, sai_object_id_t &nh_oid)
 {
-    // Nexthop string: <ipaddress>@<interface>,<ipaddress>@<interface>....
     vector<string> nhg_vector = tokenize(nexthop_string, NHG_DELIMITER);
     sai_object_id_t nexthop_id = SAI_NULL_OBJECT_ID;
     if (nhg_vector.size() == 1)
@@ -613,7 +616,8 @@ bool Srv6Orch::mySidXConnectNexthop(string my_sid_string, string nexthop_string,
         {
             SWSS_LOG_NOTICE("Nexthop doesn't exist for nh %s", nhkey.to_string().c_str());
             mySidNexthopMapUpdate(my_sid_string, nhkey);
-            //Resolve the nexthop if it doesn't exist.
+
+            /* Resolve the nexthop if it doesn't exist. */
             m_neighOrch->resolveNeighbor(nhkey);
             nh_oid = SAI_NULL_OBJECT_ID;
             return false;
@@ -640,7 +644,7 @@ bool Srv6Orch::mySidXConnectNexthop(string my_sid_string, string nexthop_string,
                 SWSS_LOG_INFO("Failed to create nexthop group %s. NHG exists %s", nhgkey.to_string().c_str(),
                     gRouteOrch->hasNextHopGroup(nhgkey) ? "Yes" : "No");
 
-                // Resolve the nexthops in ECMP group if it doesn't exist
+                /* Resolve the nexthops in ECMP group if it doesn't exist */
                 for (auto it : nhgkey.getNextHops())
                 {
                     if (!m_neighOrch->hasNextHop(it))
@@ -876,7 +880,7 @@ void Srv6Orch::doTaskMySidTable(const KeyOpFieldsValuesTuple & tuple)
     string op = kfvOp(tuple);
     string end_action, dt_vrf, nexthop;
 
-    //Key for mySid : block_len:node_len:function_len:args_len:sid-ip
+    /* Key for mySid : block_len:node_len:function_len:args_len:sid-ip */
     string keyString = kfvKey(tuple);
 
     for (auto i : kfvFieldsValues(tuple))
