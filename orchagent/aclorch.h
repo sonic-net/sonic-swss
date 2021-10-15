@@ -411,6 +411,8 @@ public:
     bool m_isCombinedMirrorV6Table = true;
     map<acl_table_type_t, bool> m_mirrorTableCapabilities;
 
+    using Orch::doTask;  // Allow access to the basic doTask
+
 private:
     void doTask(Consumer &consumer);
     void doAclTableTask(Consumer &consumer);

@@ -29,6 +29,7 @@ IntfsOrch *gIntfsOrch;
 NeighOrch *gNeighOrch;
 RouteOrch *gRouteOrch;
 AclOrch *gAclOrch;
+MirrorOrch *gMirrorOrch;
 CrmOrch *gCrmOrch;
 BufferOrch *gBufferOrch;
 SwitchOrch *gSwitchOrch;
@@ -124,7 +125,7 @@ bool OrchDaemon::init()
 
     TableConnector stateDbMirrorSession(m_stateDb, STATE_MIRROR_SESSION_TABLE_NAME);
     TableConnector confDbMirrorSession(m_configDb, CFG_MIRROR_SESSION_TABLE_NAME);
-    MirrorOrch *mirror_orch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, policer_orch);
+    gMirrorOrch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, policer_orch);
 
     TableConnector confDbAclTable(m_configDb, CFG_ACL_TABLE_NAME);
     TableConnector confDbAclRuleTable(m_configDb, CFG_ACL_RULE_TABLE_NAME);
@@ -191,10 +192,10 @@ bool OrchDaemon::init()
         m_orchList.push_back(dtel_orch);
     }
     TableConnector stateDbSwitchTable(m_stateDb, "SWITCH_CAPABILITY");
-    gAclOrch = new AclOrch(acl_table_connectors, stateDbSwitchTable, gPortsOrch, mirror_orch, gNeighOrch, gRouteOrch, dtel_orch);
+    gAclOrch = new AclOrch(acl_table_connectors, stateDbSwitchTable, gPortsOrch, gMirrorOrch, gNeighOrch, gRouteOrch, dtel_orch);
 
     m_orchList.push_back(gFdbOrch);
-    m_orchList.push_back(mirror_orch);
+    m_orchList.push_back(gMirrorOrch);
     m_orchList.push_back(gAclOrch);
     m_orchList.push_back(vnet_orch);
     m_orchList.push_back(vnet_rt_orch);
@@ -486,18 +487,24 @@ bool OrchDaemon::warmRestoreAndSyncUp()
 
     for (auto it = 0; it < 4; it++)
     {
-        SWSS_LOG_DEBUG("The current iteration is %d", it);
+        SWSS_LOG_DEBUG("The current doTask iteration is %d", it);
 
         for (Orch *o : m_orchList)
         {
+            if (o == gMirrorOrch) {
+                SWSS_LOG_DEBUG("Skipping mirror processing until the end");
+                continue;
+            }
+
             o->doTask();
         }
     }
 
-    for (Orch *o : m_orchList)
-    {
-        o->postBake();
-    }
+    // MirrorOrch depends on everything else being settled before it can run,
+    // and mirror ACL rules depend on MirrorOrch, so run these two at the end
+    // after the rest of the data has been processed.
+    gMirrorOrch->doTask();
+    gAclOrch->doTask();
 
     /*
      * At this point, all the pre-existing data should have been processed properly, and

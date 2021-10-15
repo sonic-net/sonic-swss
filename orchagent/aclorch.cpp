@@ -993,11 +993,6 @@ bool AclRuleMirror::validateAddAction(string attr_name, string attr_value)
         return false;
     }
 
-    if (!m_pMirrorOrch->sessionExists(attr_value))
-    {
-        return false;
-    }
-
     m_sessionName = attr_value;
 
     return true;
@@ -1083,6 +1078,14 @@ bool AclRuleMirror::create()
     sai_attribute_value_t value;
     bool state = false;
     sai_object_id_t oid = SAI_NULL_OBJECT_ID;
+
+    SWSS_LOG_NOTICE("Creating mirror rule %s", m_sessionName.c_str());
+
+    if (!m_pMirrorOrch->sessionExists(m_sessionName))
+    {
+        SWSS_LOG_ERROR("Mirror rule references mirror session \"%s\" that does not exist yet", m_sessionName.c_str());
+        return false;
+    }
 
     if (!m_pMirrorOrch->getSessionStatus(m_sessionName, state))
     {
@@ -2536,7 +2539,16 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
             }
 
 
-            newRule = AclRule::makeShared(type, this, m_mirrorOrch, m_dTelOrch, rule_id, table_id, t);
+            try
+            {
+                newRule = AclRule::makeShared(type, this, m_mirrorOrch, m_dTelOrch, rule_id, table_id, t);
+            }
+            catch (exception &e)
+            {
+                SWSS_LOG_ERROR("Error while creating ACL rule %s: %s", rule_id.c_str(), e.what());
+                it = consumer.m_toSync.erase(it);
+                return;
+            }
 
             for (const auto& itr : kfvFieldsValues(t))
             {
