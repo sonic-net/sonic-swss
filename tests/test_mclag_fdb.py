@@ -533,7 +533,7 @@ def test_mclagFdb_remote_to_local(dvs, testlog):
     assert ok, str(extra)
 
     # check that the FDB entry was inserted into state DB, this will guarantee kernel fdb entry work fine
-    assert how_many_entries_exist(dvs.adb, "FDB_TABLE") == 1, "The local dynamic fdb not inserted in state db"
+    assert how_many_entries_exist(dvs.sdb, "FDB_TABLE") == 1, "The local dynamic fdb not inserted in state db"
 
     # remove app db fdb entry, but this will not remove asic db
     delete_entry_pst(
