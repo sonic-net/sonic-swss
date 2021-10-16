@@ -154,7 +154,7 @@ struct AclRuleCounters
 class AclRule
 {
 public:
-    AclRule(AclOrch *m_pAclOrch, string rule, string table, acl_table_type_t type, bool createCounter = true);
+    AclRule(AclOrch *pAclOrch, string rule, string table, acl_table_type_t type, bool createCounter = true);
     virtual bool validateAddPriority(string attr_name, string attr_value);
     virtual bool validateAddMatch(string attr_name, string attr_value);
     virtual bool validateAddAction(string attr_name, string attr_value);
@@ -170,6 +170,9 @@ public:
     virtual bool remove();
     virtual void update(SubjectType, void *) = 0;
     virtual void updateInPorts();
+
+    virtual bool enableCounter();
+    virtual bool disableCounter();
     virtual AclRuleCounters getCounters();
 
     string getId()
@@ -316,40 +319,24 @@ public:
     bool validate();
 };
 
-class AclTable {
-    sai_object_id_t m_oid;
-    AclOrch *m_pAclOrch;
+class AclTable
+{
 public:
-    string id;
-    string description;
-    acl_table_type_t type;
-    acl_stage_type_t stage;
+    AclTable(AclOrch *pAclOrch, string id) noexcept;
+    AclTable(AclOrch *pAclOrch) noexcept;
 
-    // Map port oid to group member oid
-    std::map<sai_object_id_t, sai_object_id_t> ports;
-    // Map rule name to rule data
-    map<string, shared_ptr<AclRule>> rules;
-    // Set to store the ACL table port alias
-    set<string> portSet;
-    // Set to store the not configured ACL table port alias
-    set<string> pendingPortSet;
-
-    AclTable()
-        : m_pAclOrch(NULL)
-        , type(ACL_TABLE_UNKNOWN)
-        , m_oid(SAI_NULL_OBJECT_ID)
-        , stage(ACL_STAGE_INGRESS)
-    {}
-
-    AclTable(AclOrch *aclOrch)
-        : m_pAclOrch(aclOrch)
-        , type(ACL_TABLE_UNKNOWN)
-        , m_oid(SAI_NULL_OBJECT_ID)
-        , stage(ACL_STAGE_INGRESS)
-    {}
+    AclTable() = default;
+    ~AclTable() = default;
 
     sai_object_id_t getOid() { return m_oid; }
     string getId() { return id; }
+
+    void setDescription(const string &value) { description = value; }
+    const string& getDescription() const { return description; }
+
+    bool validateAddType(const acl_table_type_t &value);
+    bool validateAddStage(const acl_stage_type_t &value);
+    bool validateAddPorts(const unordered_set<string> &value);
     bool validate();
     bool create();
 
@@ -373,6 +360,26 @@ public:
     bool clear();
     // Update table subject to changes
     void update(SubjectType, void *);
+
+public:
+    string id;
+    string description;
+
+    acl_table_type_t type = ACL_TABLE_UNKNOWN;
+    acl_stage_type_t stage = ACL_STAGE_INGRESS;
+
+    // Map port oid to group member oid
+    std::map<sai_object_id_t, sai_object_id_t> ports;
+    // Map rule name to rule data
+    map<string, shared_ptr<AclRule>> rules;
+    // Set to store the ACL table port alias
+    set<string> portSet;
+    // Set to store the not configured ACL table port alias
+    set<string> pendingPortSet;
+
+private:
+    sai_object_id_t m_oid = SAI_NULL_OBJECT_ID;
+    AclOrch *m_pAclOrch = nullptr;
 };
 
 class AclOrch : public Orch, public Observer
@@ -405,12 +412,15 @@ public:
     bool addAclTable(AclTable &aclTable);
     bool removeAclTable(string table_id);
     bool updateAclTable(AclTable &currentTable, AclTable &newTable);
+    bool updateAclTable(string table_id, AclTable &table);
     bool addAclRule(shared_ptr<AclRule> aclRule, string table_id);
     bool removeAclRule(string table_id, string rule_id);
     bool updateAclRule(string table_id, string rule_id, string attr_name, void *data, bool oper);
+    bool updateAclRule(string table_id, string rule_id, bool enableCounter);
     AclRule* getAclRule(string table_id, string rule_id);
 
     bool isCombinedMirrorV6Table();
+    bool isAclMirrorTableSupported(acl_table_type_t type) const;
     bool isAclActionSupported(acl_stage_type_t stage, sai_acl_action_type_t action) const;
     bool isAclActionEnumValueSupported(sai_acl_action_type_t action, sai_acl_action_parameter_t param) const;
 

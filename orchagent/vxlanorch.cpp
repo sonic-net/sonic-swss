@@ -884,7 +884,7 @@ bool VxlanTunnel::deleteTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src,
 //Creation of SAI Tunnel Object with multiple mapper types
 
 bool VxlanTunnel::createTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src, 
-                                                                  bool with_term)
+                                                                  bool with_term, sai_uint8_t encap_ttl)
 {
     bool p2p = false;
 
@@ -905,7 +905,7 @@ bool VxlanTunnel::createTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src,
             SWSS_LOG_WARN("creation src = %d",src_creation_);
         }
 
-        ids_.tunnel_id = create_tunnel(&ids_, &ips, ip, gUnderlayIfId, p2p);
+        ids_.tunnel_id = create_tunnel(&ids_, &ips, ip, gUnderlayIfId, p2p, encap_ttl);
 
         if (ids_.tunnel_id != SAI_NULL_OBJECT_ID)
         {
@@ -1366,11 +1366,16 @@ bool VxlanTunnelOrch::createVxlanTunnelMap(string tunnelName, tunnel_map_type_t 
     {
         if (map == TUNNEL_MAP_T_VIRTUAL_ROUTER)
         {
-            tunnel_obj->createTunnel(MAP_T::VRID_TO_VNI, MAP_T::VNI_TO_VRID, encap_ttl);
+            uint8_t mapper_list = 0;
+            TUNNELMAP_SET_VLAN(mapper_list);
+            TUNNELMAP_SET_VRF(mapper_list);
+            tunnel_obj->createTunnelHw(mapper_list, TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP , true, encap_ttl);
         }
         else if (map == TUNNEL_MAP_T_BRIDGE)
         {
-            tunnel_obj->createTunnel(MAP_T::BRIDGE_TO_VNI, MAP_T::VNI_TO_BRIDGE, encap_ttl);
+            uint8_t mapper_list = 0;
+            TUNNELMAP_SET_BRIDGE(mapper_list);
+            tunnel_obj->createTunnelHw(mapper_list,  TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP, true, encap_ttl);
         }
     }
 

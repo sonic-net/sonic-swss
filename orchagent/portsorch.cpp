@@ -1842,9 +1842,7 @@ bool PortsOrch::setGearboxPortAttr(Port &port, dest_port_type_t port_type, sai_p
     sai_object_id_t dest_port_id;
     sai_attribute_t attr;
     string speed_attr;
-    uint32_t lane_speed = 0;
     sai_uint32_t speed = 0;
-    uint32_t lanes = 0;
 
     SWSS_LOG_ENTER();
 
@@ -1868,36 +1866,29 @@ bool PortsOrch::setGearboxPortAttr(Port &port, dest_port_type_t port_type, sai_p
                     switch (port_type)
                     {
                         case PHY_PORT_TYPE:
-                            lanes = static_cast<uint32_t>(m_gearboxInterfaceMap[port.m_index].system_lanes.size());
                             speed_attr = "system_speed";
                             break;
                         case LINE_PORT_TYPE:
-                            lanes = static_cast<uint32_t>(m_gearboxInterfaceMap[port.m_index].line_lanes.size());
                             speed_attr = "line_speed";
                             break;
                         default:
                             return false;
                     }
 
-                    // Gearbox expects speed per lane
                     speed = *static_cast<sai_int32_t*>(value);
-                    if (speed % lanes == 0)
-                    {
-                        lane_speed = speed / lanes;
-                    }
-                    if (isSpeedSupported(port.m_alias, dest_port_id, lane_speed))
+                    if (isSpeedSupported(port.m_alias, dest_port_id, speed))
                     {
                         // Gearbox may not implement speed check, so
                         // invalidate speed if it doesn't make sense.
-                        if (to_string(lane_speed).size() < 5)
+                        if (to_string(speed).size() < 5)
                         {
-                            lane_speed = 0;
+                            speed = 0;
                         }
 
                         attr.id = SAI_PORT_ATTR_SPEED;
-                        attr.value.u32 = lane_speed;
+                        attr.value.u32 = speed;
                     }
-                    SWSS_LOG_NOTICE("BOX: Set %s lane %s %d", port.m_alias.c_str(), speed_attr.c_str(), lane_speed);
+                    SWSS_LOG_NOTICE("BOX: Set %s lane %s %d", port.m_alias.c_str(), speed_attr.c_str(), speed);
                     break;
                 default:
                     return false;
@@ -1909,8 +1900,8 @@ bool PortsOrch::setGearboxPortAttr(Port &port, dest_port_type_t port_type, sai_p
                 if (id == SAI_PORT_ATTR_SPEED)
                 {
                     string key = "phy:"+to_string(m_gearboxInterfaceMap[port.m_index].phy_id)+":ports:"+to_string(port.m_index);
-                    m_gearboxTable->hset(key, speed_attr, to_string(lane_speed));
-                    SWSS_LOG_NOTICE("BOX: Updated APPL_DB key:%s %s %d", key.c_str(), speed_attr.c_str(), lane_speed);
+                    m_gearboxTable->hset(key, speed_attr, to_string(speed));
+                    SWSS_LOG_NOTICE("BOX: Updated APPL_DB key:%s %s %d", key.c_str(), speed_attr.c_str(), speed);
                 }
             }
             else
@@ -1928,7 +1919,7 @@ bool PortsOrch::setGearboxPortAttr(Port &port, dest_port_type_t port_type, sai_p
     return true;
 }
 
-bool PortsOrch::setPortSpeed(Port &port, sai_uint32_t speed)
+task_process_status PortsOrch::setPortSpeed(Port &port, sai_uint32_t speed)
 {
     sai_attribute_t attr;
     sai_status_t status;
@@ -1941,15 +1932,11 @@ bool PortsOrch::setPortSpeed(Port &port, sai_uint32_t speed)
     status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
+        return handleSaiSetStatus(SAI_API_PORT, status);
     }
 
     setGearboxPortsAttr(port, SAI_PORT_ATTR_SPEED, &speed);
-    return true;
+    return task_success;
 }
 
 bool PortsOrch::getPortSpeed(sai_object_id_t id, sai_uint32_t &speed)
@@ -1982,7 +1969,7 @@ bool PortsOrch::getPortSpeed(sai_object_id_t id, sai_uint32_t &speed)
     return true;
 }
 
-bool PortsOrch::setPortAdvSpeeds(sai_object_id_t port_id, std::vector<sai_uint32_t>& speed_list)
+task_process_status PortsOrch::setPortAdvSpeeds(sai_object_id_t port_id, std::vector<sai_uint32_t>& speed_list)
 {
     SWSS_LOG_ENTER();
     sai_attribute_t attr;
@@ -1993,11 +1980,15 @@ bool PortsOrch::setPortAdvSpeeds(sai_object_id_t port_id, std::vector<sai_uint32
     attr.value.u32list.count = static_cast<uint32_t>(speed_list.size());
 
     status = sai_port_api->set_port_attribute(port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        return handleSaiSetStatus(SAI_API_PORT, status);
+    }
 
-    return status == SAI_STATUS_SUCCESS;
+    return task_success;
 }
 
-bool PortsOrch::setPortInterfaceType(sai_object_id_t port_id, sai_port_interface_type_t interface_type)
+task_process_status PortsOrch::setPortInterfaceType(sai_object_id_t port_id, sai_port_interface_type_t interface_type)
 {
     SWSS_LOG_ENTER();
     sai_attribute_t attr;
@@ -2007,11 +1998,15 @@ bool PortsOrch::setPortInterfaceType(sai_object_id_t port_id, sai_port_interface
     attr.value.u32 = static_cast<uint32_t>(interface_type);
 
     status = sai_port_api->set_port_attribute(port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        return handleSaiSetStatus(SAI_API_PORT, status);
+    }
 
-    return status == SAI_STATUS_SUCCESS;
+    return task_success;
 }
 
-bool PortsOrch::setPortAdvInterfaceTypes(sai_object_id_t port_id, std::vector<uint32_t> &interface_types)
+task_process_status PortsOrch::setPortAdvInterfaceTypes(sai_object_id_t port_id, std::vector<uint32_t> &interface_types)
 {
     SWSS_LOG_ENTER();
     sai_attribute_t attr;
@@ -2024,14 +2019,10 @@ bool PortsOrch::setPortAdvInterfaceTypes(sai_object_id_t port_id, std::vector<ui
     status = sai_port_api->set_port_attribute(port_id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
+        return handleSaiSetStatus(SAI_API_PORT, status);
     }
 
-    return true;
+    return task_success;
 }
 
 bool PortsOrch::getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uint8_t &index)
@@ -2074,33 +2065,22 @@ bool PortsOrch::getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uin
     return true;
 }
 
-bool PortsOrch::setPortAutoNeg(sai_object_id_t id, int an)
+task_process_status PortsOrch::setPortAutoNeg(sai_object_id_t id, int an)
 {
     SWSS_LOG_ENTER();
 
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_AUTO_NEG_MODE;
-    switch(an) {
-      case 1:
-        attr.value.booldata = true;
-        break;
-      default:
-        attr.value.booldata = false;
-        break;
-    }
+    attr.value.booldata = (an == 1 ? true : false);
 
     sai_status_t status = sai_port_api->set_port_attribute(id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set AutoNeg %u to port pid:%" PRIx64, attr.value.booldata, id);
-        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
+        return handleSaiSetStatus(SAI_API_PORT, status);
     }
     SWSS_LOG_INFO("Set AutoNeg %u to port pid:%" PRIx64, attr.value.booldata, id);
-    return true;
+    return task_success;
 }
 
 bool PortsOrch::setHostIntfsOperStatus(const Port& port, bool isUp) const
@@ -2767,7 +2747,9 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                     if (!initPort(get<0>(it->second), get<5>(it->second), get<4>(it->second), it->first))
                     {
-                        throw runtime_error("PortsOrch initialization failure.");
+                        // Failure has been recorded in initPort
+                        it++;
+                        continue;
                     }
 
                     initPortSupportedSpeeds(get<0>(it->second), m_portListLaneMap[it->first]);
@@ -2836,18 +2818,23 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             m_portList[alias] = p;
                         }
 
-                        if (setPortAutoNeg(p.m_port_id, an))
-                        {
-                            SWSS_LOG_NOTICE("Set port %s AutoNeg from %d to %d", alias.c_str(), p.m_autoneg, an);
-                            p.m_autoneg = an;
-                            m_portList[alias] = p;
-                        }
-                        else
+                        auto status = setPortAutoNeg(p.m_port_id, an);
+                        if (status != task_success)
                         {
                             SWSS_LOG_ERROR("Failed to set port %s AN from %d to %d", alias.c_str(), p.m_autoneg, an);
-                            it++;
+                            if (status == task_need_retry)
+                            {
+                                it++;
+                            }
+                            else
+                            {
+                                it = consumer.m_toSync.erase(it);
+                            }
                             continue;
                         }
+                        SWSS_LOG_NOTICE("Set port %s AutoNeg from %d to %d", alias.c_str(), p.m_autoneg, an);
+                        p.m_autoneg = an;
+                        m_portList[alias] = p;
                     }
                 }
 
@@ -2878,10 +2865,18 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             m_portList[alias] = p;
                         }
 
-                        if (!setPortSpeed(p, speed))
+                        auto status = setPortSpeed(p, speed);
+                        if (status != task_success)
                         {
                             SWSS_LOG_ERROR("Failed to set port %s speed from %u to %u", alias.c_str(), p.m_speed, speed);
-                            it++;
+                            if (status == task_need_retry)
+                            {
+                                it++;
+                            }
+                            else
+                            {
+                                it = consumer.m_toSync.erase(it);
+                            }
                             continue;
                         }
 
@@ -2923,13 +2918,21 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         }
 
                         auto ori_adv_speeds = swss::join(',', p.m_adv_speeds.begin(), p.m_adv_speeds.end());
-                        if (!setPortAdvSpeeds(p.m_port_id, adv_speeds))
+                        auto status = setPortAdvSpeeds(p.m_port_id, adv_speeds);
+                        if (status != task_success)
                         {
 
                             SWSS_LOG_ERROR("Failed to set port %s advertised speed from %s to %s", alias.c_str(),
                                                                                                    ori_adv_speeds.c_str(),
                                                                                                    adv_speeds_str.c_str());
-                            it++;
+                            if (status == task_need_retry)
+                            {
+                                it++;
+                            }
+                            else
+                            {
+                                it = consumer.m_toSync.erase(it);
+                            }
                             continue;
                         }
                         SWSS_LOG_NOTICE("Set port %s advertised speed from %s to %s", alias.c_str(),
@@ -2966,10 +2969,18 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             m_portList[alias] = p;
                         }
 
-                        if (!setPortInterfaceType(p.m_port_id, interface_type))
+                        auto status = setPortInterfaceType(p.m_port_id, interface_type);
+                        if (status != task_success)
                         {
                             SWSS_LOG_ERROR("Failed to set port %s interface type to %s", alias.c_str(), interface_type_str.c_str());
-                            it++;
+                            if (status == task_need_retry)
+                            {
+                                it++;
+                            }
+                            else
+                            {
+                                it = consumer.m_toSync.erase(it);
+                            }
                             continue;
                         }
 
@@ -3005,10 +3016,18 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             m_portList[alias] = p;
                         }
 
-                        if (!setPortAdvInterfaceTypes(p.m_port_id, adv_interface_types))
+                        auto status = setPortAdvInterfaceTypes(p.m_port_id, adv_interface_types);
+                        if (status != task_success)
                         {
                             SWSS_LOG_ERROR("Failed to set port %s advertised interface type to %s", alias.c_str(), adv_interface_types_str.c_str());
-                            it++;
+                            if (status == task_need_retry)
+                            {
+                                it++;
+                            }
+                            else
+                            {
+                                it = consumer.m_toSync.erase(it);
+                            }
                             continue;
                         }
 
@@ -4812,6 +4831,8 @@ bool PortsOrch::addLagMember(Port &lag, Port &port, bool enableForwarding)
         }
     }
 
+    increasePortRefCount(port.m_alias);
+
     LagMemberUpdate update = { lag, port, true };
     notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));
 
@@ -4857,6 +4878,9 @@ bool PortsOrch::removeLagMember(Port &lag, Port &port)
             return false;
         }
     }
+
+    decreasePortRefCount(port.m_alias);
+
     LagMemberUpdate update = { lag, port, false };
     notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));
 
@@ -5409,6 +5433,18 @@ bool PortsOrch::getPortOperSpeed(const Port& port, sai_uint32_t& speed) const
 
     speed = static_cast<sai_uint32_t>(attr.value.u32);
 
+    if (speed == 0)
+    {
+        // Port operational status is up, but operational speed is 0. It could be a valid case because
+        // port state can change during two SAI calls:
+        //    1. getPortOperStatus returns UP
+        //    2. port goes down due to any reason
+        //    3. getPortOperSpeed gets speed value 0
+        // And it could also be a bug. So, we log a warning here.
+        SWSS_LOG_WARN("Port %s operational speed is 0", port.m_alias.c_str());
+        return false;
+    }
+
     return true;
 }
 
@@ -5790,8 +5826,19 @@ bool PortsOrch::initGearboxPort(Port &port)
             attr.value.booldata = port.m_admin_state_up;
             attrs.push_back(attr);
 
+            attr.id = SAI_PORT_ATTR_HW_LANE_LIST;
+            lanes.assign(m_gearboxInterfaceMap[port.m_index].system_lanes.begin(), m_gearboxInterfaceMap[port.m_index].system_lanes.end());
+            attr.value.u32list.list = lanes.data();
+            attr.value.u32list.count = static_cast<uint32_t>(lanes.size());
+            attrs.push_back(attr);
+
+            for (uint32_t i = 0; i < attr.value.u32list.count; i++)
+            {
+                SWSS_LOG_DEBUG("BOX: list[%d] = %d", i, attr.value.u32list.list[i]);
+            }
+
             attr.id = SAI_PORT_ATTR_SPEED;
-            attr.value.u32 = (uint32_t) m_gearboxPortMap[port.m_index].system_speed;
+            attr.value.u32 = (uint32_t) m_gearboxPortMap[port.m_index].system_speed * (uint32_t) lanes.size();
             if (isSpeedSupported(port.m_alias, port.m_port_id, attr.value.u32))
             {
                 attrs.push_back(attr);
@@ -5812,17 +5859,6 @@ bool PortsOrch::initGearboxPort(Port &port)
             attr.id = SAI_PORT_ATTR_LINK_TRAINING_ENABLE;
             attr.value.booldata = m_gearboxPortMap[port.m_index].system_training;
             attrs.push_back(attr);
-
-            attr.id = SAI_PORT_ATTR_HW_LANE_LIST;
-            lanes.assign(m_gearboxInterfaceMap[port.m_index].system_lanes.begin(), m_gearboxInterfaceMap[port.m_index].system_lanes.end());
-            attr.value.u32list.list = lanes.data();
-            attr.value.u32list.count = static_cast<uint32_t>(lanes.size());
-            attrs.push_back(attr);
-
-            for (uint32_t i = 0; i < attr.value.u32list.count; i++)
-            {
-                SWSS_LOG_DEBUG("BOX: list[%d] = %d", i, attr.value.u32list.list[i]);
-            }
 
             status = sai_port_api->create_port(&systemPort, phyOid, static_cast<uint32_t>(attrs.size()), attrs.data());
             if (status != SAI_STATUS_SUCCESS)
@@ -5845,8 +5881,19 @@ bool PortsOrch::initGearboxPort(Port &port)
             attr.value.booldata = port.m_admin_state_up;
             attrs.push_back(attr);
 
+            attr.id = SAI_PORT_ATTR_HW_LANE_LIST;
+            lanes.assign(m_gearboxInterfaceMap[port.m_index].line_lanes.begin(), m_gearboxInterfaceMap[port.m_index].line_lanes.end());
+            attr.value.u32list.list = lanes.data();
+            attr.value.u32list.count = static_cast<uint32_t>(lanes.size());
+            attrs.push_back(attr);
+
+            for (uint32_t i = 0; i < attr.value.u32list.count; i++)
+            {
+                SWSS_LOG_DEBUG("BOX: list[%d] = %d", i, attr.value.u32list.list[i]);
+            }
+
             attr.id = SAI_PORT_ATTR_SPEED;
-            attr.value.u32 = (uint32_t) m_gearboxPortMap[port.m_index].line_speed;
+            attr.value.u32 = (uint32_t) m_gearboxPortMap[port.m_index].line_speed * (uint32_t) lanes.size();
             if (isSpeedSupported(port.m_alias, port.m_port_id, attr.value.u32))
             {
                 attrs.push_back(attr);
@@ -5899,17 +5946,6 @@ bool PortsOrch::initGearboxPort(Port &port)
             attr.id = SAI_PORT_ATTR_ADVERTISED_MEDIA_TYPE;
             attr.value.u32 = media_type_map[m_gearboxPortMap[port.m_index].line_adver_media_type];
             attrs.push_back(attr);
-
-            attr.id = SAI_PORT_ATTR_HW_LANE_LIST;
-            lanes.assign(m_gearboxInterfaceMap[port.m_index].line_lanes.begin(), m_gearboxInterfaceMap[port.m_index].line_lanes.end());
-            attr.value.u32list.list = lanes.data();
-            attr.value.u32list.count = static_cast<uint32_t>(lanes.size());
-            attrs.push_back(attr);
-
-            for (uint32_t i = 0; i < attr.value.u32list.count; i++)
-            {
-                SWSS_LOG_DEBUG("BOX: list[%d] = %d", i, attr.value.u32list.list[i]);
-            }
 
             status = sai_port_api->create_port(&linePort, phyOid, static_cast<uint32_t>(attrs.size()), attrs.data());
             if (status != SAI_STATUS_SUCCESS)

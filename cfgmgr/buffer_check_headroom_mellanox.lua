@@ -91,11 +91,11 @@ end
 table.insert(debuginfo, 'debug:other overhead:' .. accumulative_size)
 local pg_keys = redis.call('KEYS', 'BUFFER_PG_TABLE:' .. port .. ':*')
 for i = 1, #pg_keys do
-    local profile = string.sub(redis.call('HGET', pg_keys[i], 'profile'), 2, -2)
+    local profile = redis.call('HGET', pg_keys[i], 'profile')
     local current_profile_size
-    if profile ~= 'BUFFER_PROFILE_TABLE:ingress_lossy_profile' and (no_input_pg or new_pg ~= pg_keys[i]) then
+    if profile ~= 'ingress_lossy_profile' and (no_input_pg or new_pg ~= pg_keys[i]) then
         if profile ~= input_profile_name and not no_input_pg then
-            local referenced_profile = redis.call('HGETALL', profile)
+            local referenced_profile = redis.call('HGETALL', 'BUFFER_PROFILE_TABLE:' .. profile)
             for j = 1, #referenced_profile, 2 do
                 if referenced_profile[j] == 'size' then
                     current_profile_size = tonumber(referenced_profile[j+1])

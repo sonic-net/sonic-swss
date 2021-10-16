@@ -61,7 +61,6 @@ private:
     void doBufferTableTask(Consumer &consumer, ProducerStateTable &applTable);
 
     void transformSeperator(std::string &name);
-    void transformReference(std::string &name);
 
     void doTask(Consumer &consumer);
 };

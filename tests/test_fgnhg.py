@@ -20,6 +20,7 @@ ASIC_ROUTE_TB = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"
 ASIC_NHG = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP"
 ASIC_NHG_MEMB = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER"
 ASIC_NH_TB = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP"
+ASIC_RIF = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE"
 
 def create_entry(db, table, key, pairs):
     db.create_entry(table, key, pairs)
@@ -77,6 +78,33 @@ def validate_asic_nhg_fine_grained_ecmp(asic_db, ipprefix, size):
 
     _, result = wait_for_result(_access_function,
         failure_message="Fine Grained ECMP route not found")
+    return result
+
+def validate_asic_nhg_router_interface(asic_db, ipprefix):
+    def _access_function():
+        false_ret = (False, '')
+        keys = asic_db.get_keys(ASIC_ROUTE_TB)
+        key = ''
+        route_exists = False
+        for k in keys:
+            rt_key = json.loads(k)
+            if rt_key['dest'] == ipprefix:
+                route_exists = True
+                key = k
+        if not route_exists:
+            return false_ret
+
+        fvs = asic_db.get_entry(ASIC_ROUTE_TB, key)
+        if not fvs:
+            return false_ret
+
+        rifid = fvs.get("SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID")
+        fvs = asic_db.get_entry(ASIC_RIF, rifid)
+        if not fvs:
+            return false_ret
+
+        return (True, rifid)
+    _, result = wait_for_result(_access_function, failure_message="Route pointing to RIF not found")
     return result
 
 def validate_asic_nhg_regular_ecmp(asic_db, ipprefix):
@@ -338,8 +366,9 @@ def fine_grained_ecmp_base_test(dvs, match_mode):
             found_route = True
             break
 
-    # Since we didn't populate ARP yet, the route shouldn't be programmed
-    assert (found_route == False)
+    # Since we didn't populate ARP yet, route should point to RIF for kernel arp resolution to occur
+    assert (found_route == True)
+    validate_asic_nhg_router_interface(asic_db, fg_nhg_prefix)
 
     asic_nh_count = len(asic_db.get_keys(ASIC_NH_TB))
     dvs.runcmd("arp -s 10.0.0.1 00:00:00:00:00:01")
@@ -484,6 +513,9 @@ def fine_grained_ecmp_base_test(dvs, match_mode):
     # bring all links up one by one
     startup_link(dvs, app_db, 3)
     startup_link(dvs, app_db, 4)
+    asic_db.wait_for_n_keys(ASIC_NHG_MEMB, bucket_size)
+    nhgid = validate_asic_nhg_fine_grained_ecmp(asic_db, fg_nhg_prefix, bucket_size)
+    nh_oid_map = get_nh_oid_map(asic_db)
     nh_memb_exp_count = {"10.0.0.7":30,"10.0.0.9":30}
     validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
                             fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
