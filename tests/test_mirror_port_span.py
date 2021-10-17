@@ -21,15 +21,15 @@ class TestMirror(object):
         2. Create mirror session with queue max valid value, verify session becomes active and error not written to log.
         3. Create mirror session with queue max valid value + 1, verify session doesnt get created and error written to log.
         Due to lag in table operations, verify_no_mirror is necessary at the end of each step, to ensure cleanup before next step.
+        Note that since orchagent caches max valid value during initialization, this test cannot simulate a value from SAI, e.g.
+        by calling setReadOnlyAttr, because orchagent has already completed initialization and would never read the simulated value.
+        Therefore, the default value must be used, MIRROR_SESSION_DEFAULT_NUM_TC which is defined in mirrororch.cpp as 255.
         """
 
         session = "TEST_SESSION"
         dst_port = "Ethernet16"
         src_ports = "Ethernet12"
                 
-        # Simulate SAI max number of traffic classes
-        dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_QOS_MAX_NUMBER_OF_TRAFFIC_CLASSES', '15')
-        
         # Sub Test 1
         marker = dvs.add_log_marker()
         self.dvs_mirror.create_span_session(session, dst_port, src_ports, direction="BOTH", queue="0")
@@ -40,19 +40,19 @@ class TestMirror(object):
 
         # Sub Test 2
         marker = dvs.add_log_marker()
-        self.dvs_mirror.create_span_session(session, dst_port, src_ports, direction="RX", queue="14")
+        self.dvs_mirror.create_span_session(session, dst_port, src_ports, direction="RX", queue="254")
         self.dvs_mirror.verify_session_status(session)
         self.dvs_mirror.remove_mirror_session(session)
         self.dvs_mirror.verify_no_mirror()
-        self.check_syslog(dvs, marker, "Failed to get valid queue 14", 0)
+        self.check_syslog(dvs, marker, "Failed to get valid queue 254", 0)
 
         # Sub Test 3
         marker = dvs.add_log_marker()
-        self.dvs_mirror.create_span_session(session, dst_port, src_ports, direction="TX", queue="15")
+        self.dvs_mirror.create_span_session(session, dst_port, src_ports, direction="TX", queue="255")
         self.dvs_mirror.verify_session_status(session, expected=0)
         self.dvs_mirror.remove_mirror_session(session)
         self.dvs_mirror.verify_no_mirror()
-        self.check_syslog(dvs, marker, "Failed to get valid queue 15", 1)
+        self.check_syslog(dvs, marker, "Failed to get valid queue 255", 1)
         
 
     def test_PortMirrorAddRemove(self, dvs, testlog):
