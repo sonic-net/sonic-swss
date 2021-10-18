@@ -56,7 +56,7 @@ typedef std::map<sai_hostif_trap_type_t, sai_object_id_t> TrapIdHostIfTableMap;
 /* Trap group to trap ID attributes */
 typedef std::map<std::string, TrapIdAttribs> TrapGroupTrapIdAttribs;
 /* Trap OID to trap name*/
-typedef std::map<sai_object_id_t, std::string> TrapIdNameMap;
+typedef std::map<sai_object_id_t, std::string> TrapObjectTrapNameMap;
 
 class CoppOrch : public Orch
 {
@@ -73,7 +73,7 @@ protected:
     TrapGroupHostIfMap m_trap_group_hostif_map;
     TrapIdHostIfTableMap m_trapid_hostif_table_map;
     TrapGroupTrapIdAttribs m_trap_group_trap_id_attrs;
-    TrapIdNameMap m_trap_id_name_map;
+    TrapObjectTrapNameMap m_trap_obj_name_map;
 
     std::shared_ptr<DBConnector> m_counter_db;
     std::shared_ptr<DBConnector> m_flex_db;

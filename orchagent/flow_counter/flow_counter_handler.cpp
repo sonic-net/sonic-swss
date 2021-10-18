@@ -40,7 +40,7 @@ bool FlowCounterHandler::removeGenericCounter(sai_object_id_t counter_id)
     return true;
 }
 
-void FlowCounterHandler::getGenericCounterIdList(std::unordered_set<std::string>& counter_stats)
+void FlowCounterHandler::getGenericCounterStatIdList(std::unordered_set<std::string>& counter_stats)
 {
     for (const auto& it: generic_counter_stat_ids)
     {

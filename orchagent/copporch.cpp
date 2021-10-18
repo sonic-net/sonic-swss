@@ -1156,7 +1156,7 @@ bool CoppOrch::bindTrapCounter(sai_object_id_t hostif_trap_id, sai_hostif_trap_t
         return false;
     }
 
-    if (m_trap_id_name_map.count(hostif_trap_id) > 0)
+    if (m_trap_obj_name_map.count(hostif_trap_id) > 0)
     {
         return true;
     }
@@ -1190,16 +1190,16 @@ bool CoppOrch::bindTrapCounter(sai_object_id_t hostif_trap_id, sai_hostif_trap_t
 
     // Update FLEX_COUNTER table
     std::unordered_set<std::string> counter_stats;
-    FlowCounterHandler::getGenericCounterIdList(counter_stats);
+    FlowCounterHandler::getGenericCounterStatIdList(counter_stats);
     m_trap_counter_manager.setCounterIdList(counter_id, CounterType::HOSTIF_TRAP, counter_stats);
-    m_trap_id_name_map.emplace(hostif_trap_id, trap_name);
+    m_trap_obj_name_map.emplace(hostif_trap_id, trap_name);
     return true;
 }
 
 void CoppOrch::unbindTrapCounter(sai_object_id_t hostif_trap_id)
 {
-    auto iter = m_trap_id_name_map.find(hostif_trap_id);
-    if (iter == m_trap_id_name_map.end())
+    auto iter = m_trap_obj_name_map.find(hostif_trap_id);
+    if (iter == m_trap_obj_name_map.end())
     {
         return;
     }
@@ -1212,7 +1212,7 @@ void CoppOrch::unbindTrapCounter(sai_object_id_t hostif_trap_id)
     sai_deserialize_object_id(counter_oid_str, counter_id);
     m_trap_counter_manager.clearCounterIdList(counter_id);
 
-    // Remmove trap from COUNTERS_TRAP_NAME_MAP
+    // Remove trap from COUNTERS_TRAP_NAME_MAP
     m_counter_table->hdel("", iter->second);
 
     // Unbind generic counter to trap
@@ -1228,7 +1228,7 @@ void CoppOrch::unbindTrapCounter(sai_object_id_t hostif_trap_id)
     // Remove generic counter
     FlowCounterHandler::removeGenericCounter(counter_id);
 
-    m_trap_id_name_map.erase(iter);
+    m_trap_obj_name_map.erase(iter);
 }
 
 void CoppOrch::generateHostIfTrapCounterIdList()
