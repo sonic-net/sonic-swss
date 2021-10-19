@@ -641,6 +641,87 @@ class TestMplsRoute(TestMplsBase):
 
         self.teardown_mpls(dvs)
 
+    def test_RouteAddRemoveMplsRouteResolveNeigh(self, dvs, testlog):
+        if not self.mpls_appdb_mode():
+            dvs.runcmd("modprobe mpls_router")
+            dvs.runcmd("modprobe mpls_iptunnel")
+            dvs.runcmd("sysctl -w net.mpls.platform_labels=1000")
+
+        self.setup_db(dvs)
+
+        self.clear_srv_config(dvs)
+
+        # create mpls interface
+        self.create_mpls_intf("Ethernet0")
+        self.create_mpls_intf("Ethernet4")
+
+        # set ip address
+        self.add_ip_address("Ethernet0", "10.0.0.0/31")
+        self.add_ip_address("Ethernet4", "10.0.0.2/31")
+
+        # bring up interface
+        self.set_admin_status("Ethernet0", "up")
+        self.set_admin_status("Ethernet4", "up")
+
+        # set ip address and default route
+        dvs.servers[0].runcmd("ip address add 10.0.0.1/31 dev eth0")
+        dvs.servers[0].runcmd("ip route add default via 10.0.0.0")
+
+        dvs.servers[1].runcmd("ip address add 10.0.0.3/31 dev eth0")
+        dvs.servers[1].runcmd("ip route add default via 10.0.0.2")
+        time.sleep(2)
+
+        # add route entries
+        label = "100"
+        label2 = "200"
+        if self.mpls_appdb_mode():
+            fieldValues = {"nexthop": "10.0.0.1", "ifname": "Ethernet0", "mpls_nh": "swap101", "mpls_pop": "1"}
+            self.create_inseg_entry(label, fieldValues)
+            fieldValues = {"nexthop": "10.0.0.1,10.0.0.3", "ifname": "Ethernet0,Ethernet4", "mpls_nh": "swap201,swap202", "mpls_pop": "1"}
+            self.create_inseg_entry(label2, fieldValues)
+        else:
+            dvs.runcmd("ip -f mpls route add 100 nexthop as 101 via inet 10.0.0.1 dev Ethernet0")
+            dvs.runcmd("ip -f mpls route add 200 nexthop as 201 via inet 10.0.0.1 dev Ethernet0 nexthop as 202 via inet 10.0.0.3 dev Ethernet4")
+
+        # check application database
+        self.pdb.wait_for_entry("LABEL_ROUTE_TABLE", label)
+        self.pdb.wait_for_entry("LABEL_ROUTE_TABLE", label2)
+
+        # check neighbor got resolved and removed from NEIGH_RESOLVE_TABLE
+        self.pdb.wait_for_deleted_entry("NEIGH_RESOLVE_TABLE", "Ethernet0:10.0.0.1")
+        self.pdb.wait_for_deleted_entry("NEIGH_RESOLVE_TABLE", "Ethernet4:10.0.0.3")
+
+        # check ASIC inseg database
+        self.check_inseg_entries(True, [label])
+        self.check_inseg_nexthop(label, "SAI_NEXT_HOP_TYPE_MPLS", "10.0.0.1", "SAI_OUTSEG_TYPE_SWAP", "1:101")
+        self.check_inseg_entries(True, [label2])
+        self.check_inseg_nexthop_group(label2, 2)
+        self.check_nexthop(True, "SAI_NEXT_HOP_TYPE_MPLS", "10.0.0.1", "SAI_OUTSEG_TYPE_SWAP", "1:201")
+        self.check_nexthop(True, "SAI_NEXT_HOP_TYPE_MPLS", "10.0.0.3", "SAI_OUTSEG_TYPE_SWAP", "1:202")
+        nhg = self.get_inseg_nexthop(label)
+
+        # remove inseg entry
+        if self.mpls_appdb_mode():
+            self.remove_inseg_entry(label)
+            self.remove_inseg_entry(label2)
+        else:
+            dvs.runcmd("ip -f mpls route del 100 nexthop as 101 via inet 10.0.0.1 dev Ethernet0")
+            dvs.runcmd("ip -f mpls route del 200 nexthop as 201 via inet 10.0.0.1 dev Ethernet0 nexthop as 202 via inet 10.0.0.3 dev Ethernet4")
+
+        # check application database
+        self.pdb.wait_for_deleted_entry("LABEL_ROUTE_TABLE", label)
+        self.pdb.wait_for_deleted_entry("LABEL_ROUTE_TABLE", label2)
+
+        # check ASIC route database
+        self.check_inseg_entries(False, [label])
+        self.check_inseg_entries(False, [label2])
+        self.check_nexthop_group(False, nhg)
+        self.check_nexthop(False, "SAI_NEXT_HOP_TYPE_MPLS", "10.0.0.1", "SAI_OUTSEG_TYPE_SWAP", "1:101")
+        self.check_nexthop(False, "SAI_NEXT_HOP_TYPE_MPLS", "10.0.0.1", "SAI_OUTSEG_TYPE_SWAP", "1:201")
+        self.check_nexthop(False, "SAI_NEXT_HOP_TYPE_MPLS", "10.0.0.3", "SAI_OUTSEG_TYPE_SWAP", "1:202")
+
+        self.teardown_mpls(dvs)
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():
