@@ -237,7 +237,7 @@ bool VlanMgr::removeHostVlanMember(int vlan_id, const string &port_alias)
 
     // The command should be generated as:
     // /bin/bash -c '/sbin/bridge vlan del vid {{vlan_id}} dev {{port_alias}} &&
-    //               ( /sbin/bridge vlan show dev {{port_alias}} | /bin/grep -q None;
+    //               ( /sbin/bridge vlan show dev {{port_alias}} | /bin/grep -q -v {{port_alias}};
     //               ret=$?; if [ $ret -eq 0 ]; then
     //               /sbin/ip link set {{port_alias}} nomaster;
     //               elif [ $ret -eq 1 ]; then exit 0;
@@ -247,7 +247,7 @@ bool VlanMgr::removeHostVlanMember(int vlan_id, const string &port_alias)
     ostringstream cmds, inner;
     inner << BRIDGE_CMD " vlan del vid " + std::to_string(vlan_id) + " dev " << shellquote(port_alias) << " && ( "
       BRIDGE_CMD " vlan show dev " << shellquote(port_alias) << " | "
-      GREP_CMD " -q None; ret=$?; if [ $ret -eq 0 ]; then "
+      GREP_CMD " -q -v " << shellquote(port_alias) << "; ret=$?; if [ $ret -eq 0 ]; then "
       IP_CMD " link set " << shellquote(port_alias) << " nomaster; "
       "elif [ $ret -eq 1 ]; then exit 0; "
       "else exit $ret; fi )";
