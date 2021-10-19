@@ -152,6 +152,11 @@ public:
 
     bool getRecircPort(Port &p, string role);
 
+    const gearbox_phy_t* getGearboxPhy(const Port &port);
+
+    bool getPortIPG(sai_object_id_t port_id, uint32_t &ipg);
+    bool setPortIPG(sai_object_id_t port_id, uint32_t ipg);
+
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_counterLagTable;

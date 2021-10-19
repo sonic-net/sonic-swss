@@ -5991,6 +5991,65 @@ bool PortsOrch::initGearboxPort(Port &port)
     return true;
 }
 
+const gearbox_phy_t* PortsOrch::getGearboxPhy(const Port &port)
+{
+    auto gearbox_interface = m_gearboxInterfaceMap.find(port.m_index);
+    if (gearbox_interface == m_gearboxInterfaceMap.end())
+    {
+        return nullptr;
+    }
+
+    auto phy = m_gearboxPhyMap.find(gearbox_interface->second.phy_id);
+    if (phy == m_gearboxPhyMap.end())
+    {
+        SWSS_LOG_ERROR("Gearbox Phy %d dones't exist", gearbox_interface->second.phy_id);
+        return nullptr;
+    }
+
+    return &phy->second;
+}
+
+bool PortsOrch::getPortIPG(sai_object_id_t port_id, uint32_t &ipg)
+{
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_IPG;
+
+    sai_status_t status = sai_port_api->get_port_attribute(port_id, 1, &attr);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    ipg = attr.value.u32;
+
+    return true;
+}
+
+bool PortsOrch::setPortIPG(sai_object_id_t port_id, uint32_t ipg)
+{
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_IPG;
+    attr.value.u32 = ipg;
+
+    sai_status_t status = sai_port_api->set_port_attribute(port_id, &attr);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    return true;
+}
+
 bool PortsOrch::getSystemPorts()
 {
     sai_status_t status;
