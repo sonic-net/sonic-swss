@@ -704,6 +704,36 @@ void RouteOrch::doTask(Consumer& consumer)
                     {
                         nhg = NextHopGroupKey();
                     }
+                    else if (srv6_nh == true)
+                    {
+                        string ip;
+                        if (ipv.empty())
+                        {
+                            ip = "0.0.0.0";
+                        }
+                        else
+                        {
+                            ip = ipv[0];
+                        }
+                        nhg_str = ip + NH_DELIMITER + srv6_segv[0] + NH_DELIMITER + srv6_src[0];
+
+                        SWSS_LOG_NOTICE("SRV6 segment size: %ld", srv6_segv.size());
+                        for (uint32_t i = 1; i < srv6_segv.size(); i++)
+                        {
+                            if (ipv.empty()) {
+                                ip = "0.0.0.0";
+                                nhg_str += NHG_DELIMITER + ip;
+                            }
+                            else
+                            {
+                                nhg_str += NHG_DELIMITER + ipv[i];
+                            }
+                            nhg_str += NH_DELIMITER + srv6_segv[i];
+                            nhg_str += NH_DELIMITER + srv6_src[i];
+                        }
+                        nhg = NextHopGroupKey(nhg_str, overlay_nh, srv6_nh);
+                        SWSS_LOG_NOTICE("SRV6 route %s with nhg size %ld", nhg.to_string().c_str(), nhg.getSize());
+                    }
                     else if (overlay_nh == false && srv6_nh == false)
                     {
                         for (uint32_t i = 0; i < ipv.size(); i++)
@@ -730,38 +760,8 @@ void RouteOrch::doTask(Consumer& consumer)
                             nhg_str += ipv[i] + NH_DELIMITER + "vni" + alsv[i] + NH_DELIMITER + vni_labelv[i] + NH_DELIMITER + rmacv[i];
                         }
 
-                        nhg = NextHopGroupKey(nhg_str, overlay_nh);
+                        nhg = NextHopGroupKey(nhg_str, overlay_nh, srv6_nh);
                     }
-                }
-                else if (srv6_nh == true)
-                {
-                    string ip;
-                    if (ipv.empty())
-                    {
-                        ip = "0.0.0.0";
-                    }
-                    else
-                    {
-                        ip = ipv[0];
-                    }
-                    nhg_str = ip + NH_DELIMITER + srv6_segv[0] + NH_DELIMITER + srv6_src[0];
-
-                    SWSS_LOG_NOTICE("SRV6 segment size: %ld", srv6_segv.size());
-                    for (uint32_t i = 1; i < srv6_segv.size(); i++)
-                    {
-                        if (ipv.empty()) {
-                            ip = "0.0.0.0";
-                            nhg_str += NHG_DELIMITER + ip;
-                        }
-                        else
-                        {
-                            nhg_str += NHG_DELIMITER + ipv[i];
-                        }
-                        nhg_str += NH_DELIMITER + srv6_segv[i];
-                        nhg_str += NH_DELIMITER + srv6_src[i];
-                    }
-                    nhg = NextHopGroupKey(nhg_str, overlay_nh, srv6_nh);
-                    SWSS_LOG_NOTICE("SRV6 route %s with nhg size %ld", nhg.to_string().c_str(), nhg.getSize());
                 }
                 else
                 {
@@ -2333,7 +2333,7 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
             else if (nexthop.isSrv6NextHop() &&
                     (m_neighOrch->getNextHopRefCount(nexthop) == 0))
             {
-                m_srv6Orch->removeSrv6Nexthops(it_route->second);
+                m_srv6Orch->removeSrv6Nexthops(it_route->second.nhg_key);
             }
 
             RouteKey r_key = { vrf_id, ipPrefix };
