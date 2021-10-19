@@ -3,10 +3,12 @@
 #include "nhg/cbfnhghandler.h"
 #include "nhg/nhghandler.h"
 #include "vector"
+#include "portsorch.h"
 #include "routeorch.h"
 
 using namespace std;
 
+extern PortsOrch *gPortsOrch;
 extern RouteOrch *gRouteOrch;
 
 /*
@@ -19,8 +21,11 @@ public:
     /*
      * Constructor.
      */
-    NhgOrch(DBConnector *db, const vector<string> &table_names);
-
+    NhgOrch(DBConnector *db, const vector<string> &table_names) :
+        Orch(db, table_names)
+    {
+        SWSS_LOG_ENTER();
+    }
     /* Check if the next hop group given by it's index exists. */
     inline bool hasNhg(const std::string& index) const
     {
@@ -54,8 +59,32 @@ public:
     inline void decSyncedNhgCount() { NhgBase::decSyncedCount(); }
 
     /* Increase / Decrease ref count for a NHG given by it's index. */
-    void incNhgRefCount(const std::string& index);
-    void decNhgRefCount(const std::string& index);
+    void incNhgRefCount(const std::string& index)
+    {
+        SWSS_LOG_ENTER();
+
+        if (nhgHandler.hasNhg(index))
+        {
+            nhgHandler.incNhgRefCount(index);
+        }
+        else
+        {
+            cbfNhgHandler.incNhgRefCount(index);
+        }
+    }
+    void decNhgRefCount(const std::string& index)
+    {
+        SWSS_LOG_ENTER();
+
+        if (nhgHandler.hasNhg(index))
+        {
+            nhgHandler.decNhgRefCount(index);
+        }
+        else
+        {
+            cbfNhgHandler.decNhgRefCount(index);
+        }
+    }
 
     /* Handling SAI status*/
     task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, void *context = nullptr)
@@ -72,5 +101,24 @@ public:
     CbfNhgHandler cbfNhgHandler;
 private:
 
-    void doTask(Consumer& consumer);
+    void doTask(Consumer& consumer)
+    {
+        SWSS_LOG_ENTER();
+
+        if (!gPortsOrch->allPortsReady())
+        {
+            return;
+        }
+
+        string table_name = consumer.getTableName();
+
+        if (table_name == APP_NEXTHOP_GROUP_TABLE_NAME)
+        {
+            nhgHandler.doTask(consumer);
+        }
+        else if (table_name == APP_CLASS_BASED_NEXT_HOP_GROUP_TABLE_NAME)
+        {
+            cbfNhgHandler.doTask(consumer);
+        }
+    }
 };
