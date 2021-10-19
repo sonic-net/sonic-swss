@@ -5,6 +5,8 @@ import time
 import json
 import pytest
 
+
+
 # Get restore count of all processes supporting warm restart
 def swss_get_RestoreCount(dvs, state_db):
     restore_count = {}
@@ -124,6 +126,8 @@ def test_PortSyncdWarmRestart(dvs, testlog):
     fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
     intf_tbl.set("Ethernet16|11.0.0.1/29", fvs)
     intf_tbl.set("Ethernet20|11.0.0.9/29", fvs)
+    intf_tbl.set("Ethernet16", fvs)
+    intf_tbl.set("Ethernet20", fvs)
     dvs.runcmd("ifconfig Ethernet16 up")
     dvs.runcmd("ifconfig Ethernet20 up")
 
@@ -190,6 +194,8 @@ def test_PortSyncdWarmRestart(dvs, testlog):
 
     intf_tbl._del("Ethernet16|11.0.0.1/29")
     intf_tbl._del("Ethernet20|11.0.0.9/29")
+    intf_tbl._del("Ethernet16")
+    intf_tbl._del("Ethernet20")
     time.sleep(2)
 
 
@@ -248,6 +254,8 @@ def test_VlanMgrdWarmRestart(dvs, testlog):
     fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
     intf_tbl.set("Vlan16|11.0.0.1/29", fvs)
     intf_tbl.set("Vlan20|11.0.0.9/29", fvs)
+    intf_tbl.set("Vlan16", fvs)
+    intf_tbl.set("Vlan20", fvs)
     dvs.runcmd("ifconfig Vlan16 up")
     dvs.runcmd("ifconfig Vlan20 up")
 
@@ -303,6 +311,10 @@ def test_VlanMgrdWarmRestart(dvs, testlog):
 
     intf_tbl._del("Vlan16|11.0.0.1/29")
     intf_tbl._del("Vlan20|11.0.0.9/29")
+    intf_tbl._del("Vlan16")
+    intf_tbl._del("Vlan20")
+    del_entry_tbl(conf_db, "VLAN_MEMBER", "Vlan16|Ethernet16")
+    del_entry_tbl(conf_db, "VLAN_MEMBER", "Vlan20|Ethernet20")
     time.sleep(2)
 
 def stop_neighsyncd(dvs):
@@ -407,6 +419,10 @@ def test_swss_neighbor_syncup(dvs, testlog):
     intf_tbl.set("{}|28.0.0.9/24".format(intfs[1]), fvs)
     intf_tbl.set("{}|2400::1/64".format(intfs[0]), fvs)
     intf_tbl.set("{}|2800::1/64".format(intfs[1]), fvs)
+    intf_tbl.set("{}".format(intfs[0]), fvs)
+    intf_tbl.set("{}".format(intfs[1]), fvs)
+    intf_tbl.set("{}".format(intfs[0]), fvs)
+    intf_tbl.set("{}".format(intfs[1]), fvs)
     dvs.runcmd("ifconfig {} up".format(intfs[0]))
     dvs.runcmd("ifconfig {} up".format(intfs[1]))
 
@@ -731,10 +747,18 @@ def test_swss_neighbor_syncup(dvs, testlog):
     # check restore Count
     swss_app_check_RestoreCount_single(state_db, restore_count, "neighsyncd")
 
+    # post-cleanup
+    dvs.runcmd("ip -s neigh flush all")
+    dvs.runcmd("ip -6 -s neigh flush all")
+
     intf_tbl._del("{}|24.0.0.1/24".format(intfs[0]))
     intf_tbl._del("{}|28.0.0.9/24".format(intfs[1]))
     intf_tbl._del("{}|2400::1/64".format(intfs[0]))
     intf_tbl._del("{}|2800::1/64".format(intfs[1]))
+    intf_tbl._del("{}".format(intfs[0]))
+    intf_tbl._del("{}".format(intfs[1]))
+    intf_tbl._del("{}".format(intfs[0]))
+    intf_tbl._del("{}".format(intfs[1]))
     time.sleep(2)
 
 
@@ -1654,11 +1678,13 @@ def test_system_warmreboot_neighbor_syncup(dvs, testlog):
         # bring servers' interface up, save the macs
         dvs.runcmd("sysctl -w net.ipv4.neigh.Ethernet{}.base_reachable_time_ms=1800000".format(i*4))
         dvs.runcmd("sysctl -w net.ipv6.neigh.Ethernet{}.base_reachable_time_ms=1800000".format(i*4))
-        dvs.runcmd("sysctl -w net.ipv4.neigh.Ethernet{}.gc_stale_time=180".format(i*4))
-        dvs.runcmd("sysctl -w net.ipv6.neigh.Ethernet{}.gc_stale_time=180".format(i*4))
+        dvs.runcmd("sysctl -w net.ipv4.neigh.Ethernet{}.gc_stale_time=600".format(i*4))
+        dvs.runcmd("sysctl -w net.ipv6.neigh.Ethernet{}.gc_stale_time=600".format(i*4))
         dvs.runcmd("ip addr flush dev Ethernet{}".format(i*4))
         intf_tbl.set("Ethernet{}|{}.0.0.1/24".format(i*4, i*4), fvs)
         intf_tbl.set("Ethernet{}|{}00::1/64".format(i*4, i*4), fvs)
+        intf_tbl.set("Ethernet{}".format(i*4, i*4), fvs)
+        intf_tbl.set("Ethernet{}".format(i*4, i*4), fvs)
         dvs.runcmd("ip link set Ethernet{} up".format(i*4, i*4))
         dvs.servers[i].runcmd("ip link set up dev eth0")
         dvs.servers[i].runcmd("ip addr flush dev eth0")
@@ -1893,4 +1919,150 @@ def test_system_warmreboot_neighbor_syncup(dvs, testlog):
     for i in range(8, 8+NUM_INTF):
         intf_tbl._del("Ethernet{}|{}.0.0.1/24".format(i*4, i*4))
         intf_tbl._del("Ethernet{}|{}00::1/64".format(i*4, i*4))
+        intf_tbl._del("Ethernet{}".format(i*4, i*4))
+        intf_tbl._del("Ethernet{}".format(i*4, i*4))
+    
+    flush_neigh_entries(dvs)
+
+@pytest.fixture(scope="module")
+def setup_erspan_neighbors(dvs):
+    dvs.setup_db()
+
+    dvs.set_interface_status("Ethernet12", "up")
+    dvs.set_interface_status("Ethernet16", "up")
+    dvs.set_interface_status("Ethernet20", "up")
+
+    dvs.add_ip_address("Ethernet12", "10.0.0.0/31")
+    dvs.add_ip_address("Ethernet16", "11.0.0.0/31")
+    dvs.add_ip_address("Ethernet20", "12.0.0.0/31")
+
+    dvs.add_neighbor("Ethernet12", "10.0.0.1", "02:04:06:08:10:12")
+    dvs.add_neighbor("Ethernet16", "11.0.0.1", "03:04:06:08:10:12")
+    dvs.add_neighbor("Ethernet20", "12.0.0.1", "04:04:06:08:10:12")
+
+    dvs.add_route("2.2.2.2", "10.0.0.1")
+
+    yield
+
+    dvs.remove_route("2.2.2.2")
+
+    dvs.remove_neighbor("Ethernet12", "10.0.0.1")
+    dvs.remove_neighbor("Ethernet16", "11.0.0.1")
+    dvs.remove_neighbor("Ethernet20", "12.0.0.1")
+
+    dvs.remove_ip_address("Ethernet12", "10.0.0.0/31")
+    dvs.remove_ip_address("Ethernet16", "11.0.0.0/31")
+    dvs.remove_ip_address("Ethernet20", "12.0.0.1/31")
+
+    dvs.set_interface_status("Ethernet12", "down")
+    dvs.set_interface_status("Ethernet16", "down")
+    dvs.set_interface_status("Ethernet20", "down")
+
+def test_MirrorSessionWarmReboot(dvs, dvs_mirror_manager, setup_erspan_neighbors):
+    dvs_mirror = dvs_mirror_manager
+
+    dvs.setup_db()
+
+    # Setup the mirror session
+    dvs_mirror.create_erspan_session("test_session", "1.1.1.1", "2.2.2.2", "0x6558", "8", "100", "0")
+
+    # Verify the monitor port
+    state_db = dvs.get_state_db()
+    state_db.wait_for_field_match("MIRROR_SESSION_TABLE", "test_session", {"monitor_port": "Ethernet12"})
+
+    # Setup ECMP routes to the session destination
+    dvs.change_route_ecmp("2.2.2.2", ["12.0.0.1", "11.0.0.1", "10.0.0.1"])
+
+    # Monitor port should not change b/c routes are ECMP
+    state_db.wait_for_field_match("MIRROR_SESSION_TABLE", "test_session", {"monitor_port": "Ethernet12"})
+
+    dvs.runcmd("config warm_restart enable swss")
+    dvs.stop_swss()
+    dvs.start_swss()
+
+    dvs.check_swss_ready()
+
+    # Monitor port should not change b/c destination is frozen
+    state_db.wait_for_field_match("MIRROR_SESSION_TABLE", "test_session", {"monitor_port": "Ethernet12"})
+
+    dvs_mirror.remove_mirror_session("test_session")
+
+    # Revert the route back to the fixture-defined route
+    dvs.change_route("2.2.2.2", "10.0.0.1")
+
+    # Reset for test cases after this one
+    dvs.stop_swss()
+    dvs.start_swss()
+    dvs.check_swss_ready()
+
+
+def test_EverflowWarmReboot(dvs, dvs_acl, dvs_mirror_manager, dvs_policer_manager, setup_erspan_neighbors):
+    dvs_policer = dvs_policer_manager
+    dvs_mirror = dvs_mirror_manager
+    # Setup the policer
+    dvs_policer.create_policer("test_policer")
+    dvs_policer.verify_policer("test_policer")
+
+    # Setup the mirror session
+    dvs_mirror.create_erspan_session("test_session", "1.1.1.1", "2.2.2.2", "0x6558", "8", "100", "0", policer="test_policer")
+
+    state_db = dvs.get_state_db()
+    state_db.wait_for_field_match("MIRROR_SESSION_TABLE", "test_session", {"status": "active"})
+
+    # Create the mirror table
+    dvs_acl.create_acl_table("EVERFLOW_TEST", "MIRROR", ["Ethernet12"])
+
+
+    # TODO: The standard methods for counting ACL tables and ACL rules break down after warm reboot b/c the OIDs
+    # of the default tables change. We also can't just re-initialize the default value b/c we've added another
+    # table and rule that aren't part of the base device config. We should come up with a way to handle warm reboot
+    # changes more gracefully to make it easier for future tests.
+    asic_db = dvs.get_asic_db()
+    asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE", 1 + len(asic_db.default_acl_tables))
+
+    # Create a mirror rule
+    dvs_acl.create_mirror_acl_rule("EVERFLOW_TEST", "TEST_RULE", {"SRC_IP": "20.0.0.2"}, "test_session")
+    asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", 1 + len(asic_db.default_acl_entries))
+
+    # Execute the warm reboot
+    dvs.runcmd("config warm_restart enable swss")
+    dvs.stop_swss()
+    dvs.start_swss()
+
+    # Make sure the system is stable
+    dvs.check_swss_ready()
+
+    # Verify that the ASIC DB is intact
+    dvs_policer.verify_policer("test_policer")
+    state_db.wait_for_field_match("MIRROR_SESSION_TABLE", "test_session", {"status": "active"})
+
+    asic_db = dvs.get_asic_db()
+    asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE", 1 + len(asic_db.default_acl_tables))
+    asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", 1 + len(asic_db.default_acl_entries))
+
+    # Clean up
+    dvs_acl.remove_acl_rule("EVERFLOW_TEST", "TEST_RULE")
+    asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", len(asic_db.default_acl_entries))
+
+    dvs_acl.remove_acl_table("EVERFLOW_TEST")
+    asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE", len(asic_db.default_acl_tables))
+
+    dvs_mirror.remove_mirror_session("test_session")
+    dvs_mirror.verify_no_mirror()
+
+    dvs_policer.remove_policer("test_policer")
+    dvs_policer.verify_no_policer()
+
+    # Reset for test cases after this one
+    dvs.stop_swss()
+    dvs.start_swss()
+    dvs.check_swss_ready()
+
+
+
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass
+
 
