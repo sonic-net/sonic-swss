@@ -1,8 +1,8 @@
 #include "nhghandler.h"
 #include "nhgorch.h"
 #include "neighorch.h"
-#include "routeorch.h"
 #include "crmorch.h"
+#include "routeorch.h"
 #include "bulker.h"
 #include "logger.h"
 #include "swssnet.h"
@@ -41,7 +41,7 @@ void NhgHandler::doTask(Consumer& consumer)
         string op = kfvOp(t);
 
         bool success = false;
-        const auto& nhg_it = m_syncedNextHopGroups.find(index);
+        const auto& nhg_it = m_syncdNextHopGroups.find(index);
 
         if (op == SET_COMMAND)
         {
@@ -87,7 +87,7 @@ void NhgHandler::doTask(Consumer& consumer)
             NextHopGroupKey nhg_key = NextHopGroupKey(nhg_str, weights);
 
             /* If the group does not exist, create one. */
-            if (nhg_it == m_syncedNextHopGroups.end())
+            if (nhg_it == m_syncdNextHopGroups.end())
             {
                 /*
                 * If we've reached the NHG limit, we're going to create a temporary
@@ -102,10 +102,10 @@ void NhgHandler::doTask(Consumer& consumer)
 
                     try
                     {
-                        auto nhg = createTempNhg(nhg_key);
-                        if (nhg.sync())
+                        auto nhg = std::make_unique<Nhg>(createTempNhg(nhg_key));
+                        if (nhg->sync())
                         {
-                            m_syncedNextHopGroups.emplace(index, NhgEntry<Nhg>(std::move(nhg)));
+                            m_syncdNextHopGroups.emplace(index, NhgEntry<Nhg>(std::move(nhg)));
                         }
                         else
                         {
@@ -123,19 +123,19 @@ void NhgHandler::doTask(Consumer& consumer)
                 }
                 else
                 {
-                    auto nhg = Nhg(nhg_key, false);
-                    success = nhg.sync();
+                    auto nhg = std::make_unique<Nhg>(nhg_key, false);
+                    success = nhg->sync();
 
                     if (success)
                     {
-                        m_syncedNextHopGroups.emplace(index, NhgEntry<Nhg>(std::move(nhg)));
+                        m_syncdNextHopGroups.emplace(index, NhgEntry<Nhg>(std::move(nhg)));
                     }
                 }
             }
             /* If the group exists, update it. */
             else
             {
-                auto& nhg = nhg_it->second.nhg;
+                const auto& nhg_ptr = nhg_it->second.nhg;
 
                 /*
                  * If the update would mandate promoting a temporary next hop
@@ -143,7 +143,7 @@ void NhgHandler::doTask(Consumer& consumer)
                  * resources yet, we have to skip it until we have enough
                  * resources.
                  */
-                if (nhg.isTemp() &&
+                if (nhg_ptr->isTemp() &&
                     (gRouteOrch->getNhgCount() + Nhg::getSyncedCount() >= gRouteOrch->getMaxNhgCount()))
                 {
                     /*
@@ -153,12 +153,12 @@ void NhgHandler::doTask(Consumer& consumer)
                      * the new key.  Otherwise, this will be a no-op as we have
                      * to wait for resources in order to promote the group.
                      */
-                    if (!nhg_key.contains(nhg.getKey()))
+                    if (!nhg_key.contains(nhg_ptr->getKey()))
                     {
                         try
                         {
                             /* Create the new temporary next hop group. */
-                            auto new_nhg = createTempNhg(nhg_key);
+                            auto new_nhg = std::make_unique<Nhg>(createTempNhg(nhg_key));
 
                             /*
                             * If we successfully sync the new group, update
@@ -166,7 +166,7 @@ void NhgHandler::doTask(Consumer& consumer)
                             * don't mess up the reference counter, as other
                             * objects may already reference it.
                             */
-                            if (new_nhg.sync())
+                            if (new_nhg->sync())
                             {
                                 nhg_it->second.nhg = std::move(new_nhg);
                             }
@@ -189,10 +189,10 @@ void NhgHandler::doTask(Consumer& consumer)
                  * If the group is temporary but can now be promoted, create and sync a new group for
                  * the desired next hops.
                  */
-                else if (nhg.isTemp())
+                else if (nhg_ptr->isTemp())
                 {
-                    auto nhg = Nhg(nhg_key, false);
-                    success = nhg.sync();
+                    auto nhg = std::make_unique<Nhg>(nhg_key, false);
+                    success = nhg->sync();
 
                     if (success)
                     {
@@ -206,7 +206,7 @@ void NhgHandler::doTask(Consumer& consumer)
                 /* Common update, when all the requirements are met. */
                 else
                 {
-                    success = nhg.update(nhg_key);
+                    success = nhg_ptr->update(nhg_key);
                 }
             }
         }
@@ -225,7 +225,7 @@ void NhgHandler::doTask(Consumer& consumer)
                 success = true;
             }
             /* If the group does not exist, do nothing. */
-            else if (nhg_it == m_syncedNextHopGroups.end())
+            else if (nhg_it == m_syncdNextHopGroups.end())
             {
                 SWSS_LOG_INFO("Unable to find group with key %s to remove", index.c_str());
                 /* Mark the operation as successful to consume it. */
@@ -239,19 +239,19 @@ void NhgHandler::doTask(Consumer& consumer)
             /* Else, if the group is no more referenced, remove it. */
             else
             {
-                auto& nhg = nhg_it->second.nhg;
+                const auto& nhg = nhg_it->second.nhg;
 
-                success = nhg.remove();
+                success = nhg->remove();
 
                 if (success)
                 {
-                    m_syncedNextHopGroups.erase(nhg_it);
+                    m_syncdNextHopGroups.erase(nhg_it);
                 }
             }
         }
         else
         {
-            SWSS_LOG_WARN("Unknown operation type %s", op.c_str());
+            SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
             /* Mark the operation as successful to consume it. */
             success = true;
         }
@@ -285,17 +285,17 @@ bool NhgHandler::validateNextHop(const NextHopKey& nh_key)
      * Iterate through all groups and validate the next hop in those who
      * contain it.
      */
-    for (auto& it : m_syncedNextHopGroups)
+    for (auto& it : m_syncdNextHopGroups)
     {
         auto& nhg = it.second.nhg;
 
-        if (nhg.hasMember(nh_key))
+        if (nhg->hasMember(nh_key))
         {
             /*
              * If sync fails, exit right away, as we expect it to be due to a
              * raeson for which any other future validations will fail too.
              */
-            if (!nhg.validateNextHop(nh_key))
+            if (!nhg->validateNextHop(nh_key))
             {
                 SWSS_LOG_ERROR("Failed to validate next hop %s in group %s",
                                 nh_key.to_string().c_str(),
@@ -325,14 +325,14 @@ bool NhgHandler::invalidateNextHop(const NextHopKey& nh_key)
      * Iterate through all groups and invalidate the next hop from those who
      * contain it.
      */
-    for (auto& it : m_syncedNextHopGroups)
+    for (auto& it : m_syncdNextHopGroups)
     {
         auto& nhg = it.second.nhg;
 
-        if (nhg.hasMember(nh_key))
+        if (nhg->hasMember(nh_key))
         {
             /* If the remove fails, exit right away. */
-            if (!nhg.invalidateNextHop(nh_key))
+            if (!nhg->invalidateNextHop(nh_key))
             {
                 SWSS_LOG_WARN("Failed to invalidate next hop %s from group %s",
                                 nh_key.to_string().c_str(),
@@ -538,6 +538,7 @@ bool Nhg::sync()
         else
         {
             m_id = nhid;
+            gNeighOrch->increaseNextHopRefCount(nhgm.getKey());
         }
     }
     else
@@ -576,7 +577,7 @@ bool Nhg::sync()
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
 
         /* Increment the number of synced NHGs. */
-        ++m_syncedCount;
+        ++m_syncdCount;
 
         /*
         * Try creating the next hop group's members over SAI.
@@ -655,7 +656,13 @@ bool Nhg::remove()
     //  If the group is temporary, there is nothing to be done - just reset the ID.
     if (m_is_temp)
     {
-        m_id = SAI_NULL_OBJECT_ID;
+        if (m_id != SAI_NULL_OBJECT_ID)
+        {
+            m_id = SAI_NULL_OBJECT_ID;
+
+            const WeightedNhgMember& nhgm = m_members.begin()->second;
+            gNeighOrch->decreaseNextHopRefCount(nhgm.getKey());
+        }
         return true;
     }
 

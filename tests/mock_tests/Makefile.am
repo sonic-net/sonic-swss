@@ -39,9 +39,10 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/routeorch.cpp \
                 $(top_srcdir)/orchagent/mplsrouteorch.cpp \
                 $(top_srcdir)/orchagent/fgnhgorch.cpp \
-                $(top_srcdir)/orchagent/nhgbase.cpp \
-                $(top_srcdir)/orchagent/nhghandler.cpp \
-                $(top_srcdir)/orchagent/cbfnhghandler.cpp \
+                $(top_srcdir)/orchagent/nhgorch.cpp \
+                $(top_srcdir)/orchagent/nhg/nhgbase.cpp \
+                $(top_srcdir)/orchagent/nhg/nhghandler.cpp \
+                $(top_srcdir)/orchagent/nhg/cbfnhghandler.cpp \
                 $(top_srcdir)/orchagent/nhgmaporch.cpp \
                 $(top_srcdir)/orchagent/neighorch.cpp \
                 $(top_srcdir)/orchagent/intfsorch.cpp \

@@ -28,8 +28,6 @@ NhgMapOrch::NhgMapOrch(swss::DBConnector *db, const string &table_name) : Orch(d
         SWSS_LOG_WARN("Switch does not support NHG maps");
         m_max_nhg_map_count = 0;
     }
-
-    SWSS_LOG_INFO("Maximum number of NHG maps: %lu", m_max_nhg_map_count);
 }
 
 void NhgMapOrch::doTask(Consumer &consumer)

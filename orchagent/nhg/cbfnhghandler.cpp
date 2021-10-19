@@ -43,7 +43,7 @@ void CbfNhgHandler::doTask(Consumer& consumer)
         string op = kfvOp(t);
 
         bool success;
-        const auto &cbf_nhg_it = m_syncedNextHopGroups.find(index);
+        const auto &cbf_nhg_it = m_syncdNextHopGroups.find(index);
 
         if (op == SET_COMMAND)
         {
@@ -81,7 +81,7 @@ void CbfNhgHandler::doTask(Consumer& consumer)
             /*
              * If the CBF group does not exist, create it.
              */
-            if (cbf_nhg_it == m_syncedNextHopGroups.end())
+            if (cbf_nhg_it == m_syncdNextHopGroups.end())
             {
                 /*
                  * If we reached the NHG limit, postpone the creation.
@@ -93,8 +93,8 @@ void CbfNhgHandler::doTask(Consumer& consumer)
                 }
                 else
                 {
-                    auto cbf_nhg = CbfNhg(index, p.second, selection_map);
-                    success = cbf_nhg.sync();
+                    auto cbf_nhg = std::make_unique<CbfNhg>(index, p.second, selection_map);
+                    success = cbf_nhg->sync();
 
                     if (success)
                     {
@@ -102,12 +102,12 @@ void CbfNhgHandler::doTask(Consumer& consumer)
                          * If the CBF NHG contains temporary NHGs as members,
                          * we have to keep checking for updates.
                          */
-                        if (cbf_nhg.hasTemps())
+                        if (cbf_nhg->hasTemps())
                         {
                             success = false;
                         }
 
-                        m_syncedNextHopGroups.emplace(index, NhgEntry<CbfNhg>(move(cbf_nhg)));
+                        m_syncdNextHopGroups.emplace(index, NhgEntry<CbfNhg>(move(cbf_nhg)));
                     }
                 }
             }
@@ -116,13 +116,13 @@ void CbfNhgHandler::doTask(Consumer& consumer)
              */
             else
             {
-                success = cbf_nhg_it->second.nhg.update(p.second, selection_map);
+                success = cbf_nhg_it->second.nhg->update(p.second, selection_map);
 
                 /*
                  * If the CBF NHG has temporary NHGs synced, we need to keep
                  * checking this group in case they are promoted.
                  */
-                if (cbf_nhg_it->second.nhg.hasTemps())
+                if (cbf_nhg_it->second.nhg->hasTemps())
                 {
                     success = false;
                 }
@@ -143,7 +143,7 @@ void CbfNhgHandler::doTask(Consumer& consumer)
                 success = true;
             }
             /* If the group doesn't exist, do nothing. */
-            else if (cbf_nhg_it == m_syncedNextHopGroups.end())
+            else if (cbf_nhg_it == m_syncdNextHopGroups.end())
             {
                 SWSS_LOG_WARN("Deleting inexistent CBF NHG %s", index.c_str());
                 /*
@@ -161,11 +161,11 @@ void CbfNhgHandler::doTask(Consumer& consumer)
             /* Otherwise, delete it. */
             else
             {
-                success = cbf_nhg_it->second.nhg.remove();
+                success = cbf_nhg_it->second.nhg->remove();
 
                 if (success)
                 {
-                    m_syncedNextHopGroups.erase(cbf_nhg_it);
+                    m_syncdNextHopGroups.erase(cbf_nhg_it);
                 }
             }
         }

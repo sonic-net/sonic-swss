@@ -21,8 +21,6 @@ extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
 extern bool                        gSaiRedisLogRotate;
 
-unsigned NhgOrch::m_maxNhgCount = 0;
-
 extern void syncd_apply_view();
 /*
  * Global orch daemon variables
@@ -176,8 +174,8 @@ bool OrchDaemon::init()
         { APP_ROUTE_TABLE_NAME,        routeorch_pri },
         { APP_LABEL_ROUTE_TABLE_NAME,  routeorch_pri }
     };
-    gNhgOrch = new NhgOrch(m_applDb, {APP_NEXTHOP_GROUP_TABLE_NAME, APP_CLASS_BASED_NEXT_HOP_GROUP_TABLE_NAME});
     gRouteOrch = new RouteOrch(m_applDb, route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch, gSrv6Orch);
+    gNhgOrch = new NhgOrch(m_applDb, {APP_NEXTHOP_GROUP_TABLE_NAME, APP_CLASS_BASED_NEXT_HOP_GROUP_TABLE_NAME});
 
     CoppOrch  *copp_orch  = new CoppOrch(m_applDb, APP_COPP_TABLE_NAME);
     TunnelDecapOrch *tunnel_decap_orch = new TunnelDecapOrch(m_applDb, APP_TUNNEL_DECAP_TABLE_NAME);

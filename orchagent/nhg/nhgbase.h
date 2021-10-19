@@ -49,7 +49,7 @@ public:
      */
     inline sai_object_id_t getId() const { SWSS_LOG_ENTER(); return m_id; }
     static inline unsigned getSyncedCount()
-                                    { SWSS_LOG_ENTER(); return m_syncedCount; }
+                                    { SWSS_LOG_ENTER(); return m_syncdCount; }
 
     /*
      * Check if the next hop group is synced or not.
@@ -67,7 +67,7 @@ public:
     virtual NextHopGroupKey getNhgKey() const = 0;
 
     /* Increment the number of existing groups. */
-    static inline void incSyncedCount() { SWSS_LOG_ENTER(); ++m_syncedCount; }
+    static inline void incSyncedCount() { SWSS_LOG_ENTER(); ++m_syncdCount; }
 
     /* Decrement the number of existing groups. */
     static void decSyncedCount();
@@ -83,7 +83,7 @@ protected:
      * decremented when an object is removed.  This will also account for the
      * groups created by RouteOrch.
      */
-    static unsigned m_syncedCount;
+    static unsigned m_syncdCount;
 };
 
 /*
@@ -116,17 +116,6 @@ public:
     NhgMember(const NhgMember&) = delete;
     void operator=(const NhgMember&) = delete;
 
-    virtual ~NhgMember()
-    {
-        SWSS_LOG_ENTER();
-
-        if (isSynced())
-        {
-            SWSS_LOG_ERROR("Deleting next hop group member which is still synced");
-            assert(false);
-        }
-    }
-
     /*
      * Sync the NHG member, setting its SAI ID.
      */
@@ -134,16 +123,8 @@ public:
     {
         SWSS_LOG_ENTER();
 
-        /*
-            * The SAI ID should be updated from invalid to something valid.
-            */
-        if ((m_id != SAI_NULL_OBJECT_ID) || (gm_id == SAI_NULL_OBJECT_ID))
-        {
-            SWSS_LOG_ERROR("Setting invalid SAI ID %lu to next hop group "
-                            "membeer %s, with current SAI ID %lu",
-                            gm_id, to_string().c_str(), m_id);
-            throw logic_error("Invalid SAI ID assigned to next hop group member");
-        }
+        /* The SAI ID should be updated from invalid to something valid. */
+        assert((m_gm_id == SAI_NULL_OBJECT_ID) && (gm_id != SAI_NULL_OBJECT_ID));
 
         m_id = gm_id;
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
@@ -388,22 +369,24 @@ protected:
 };
 
 /*
- * Structure describing a next hop group which NhgHandler owns.  Beside having
- * a next hop group, we also want to keep a ref count so we don't delete
- * objects that are still referenced.
+ * Structure describing a next hop group which NhgOrch owns.  Beside having a
+ * unique pointer to that next hop group, we also want to keep a ref count so
+ * NhgOrch knows how many other objects reference the next hop group in order
+ * not to remove them while still being referenced.
  */
 template <typename NhgClass>
 struct NhgEntry
 {
-    /* The next hop group object in this entry. */
-    NhgClass nhg;
+    /* Pointer to the next hop group.  NhgOrch is the sole owner of it. */
+    std::unique_ptr<NhgClass> nhg;
 
     /* Number of external objects referencing this next hop group. */
     unsigned ref_count;
 
     NhgEntry() = default;
-    explicit NhgEntry(NhgClass&& _nhg, unsigned int _ref_count = 0) :
-                nhg(move(_nhg)), ref_count(_ref_count) { SWSS_LOG_ENTER(); }
+    explicit NhgEntry(std::unique_ptr<NhgClass>&& _nhg,
+                      unsigned int _ref_count = 0) :
+        nhg(std::move(_nhg)), ref_count(_ref_count) {}
 };
 
 /*
@@ -419,7 +402,7 @@ public:
     inline bool hasNhg(const string &index) const
     {
         SWSS_LOG_ENTER();
-        return m_syncedNextHopGroups.find(index) != m_syncedNextHopGroups.end();
+        return m_syncdNextHopGroups.find(index) != m_syncdNextHopGroups.end();
     }
 
     /*
@@ -427,14 +410,14 @@ public:
      * exist in the map, a out_of_range eexception will be thrown.
      */
     inline const NhgClass& getNhg(const string &index) const
-                    { SWSS_LOG_ENTER(); return m_syncedNextHopGroups.at(index).nhg; }
+                                { return *m_syncdNextHopGroups.at(index).nhg; }
 
     /* Increase the ref count for a NHG given by it's index. */
     void incNhgRefCount(const string& index)
     {
         SWSS_LOG_ENTER();
 
-        auto& nhg_entry = m_syncedNextHopGroups.at(index);
+        auto& nhg_entry = m_syncdNextHopGroups.at(index);
         ++nhg_entry.ref_count;
     }
 
@@ -443,17 +426,10 @@ public:
     {
         SWSS_LOG_ENTER();
 
-        auto& nhg_entry = m_syncedNextHopGroups.at(index);
+        auto& nhg_entry = m_syncdNextHopGroups.at(index);
 
         /* Sanity check so we don't overflow. */
-        if (nhg_entry.ref_count == 0)
-        {
-            SWSS_LOG_ERROR("Trying to decrement next hop group %s reference "
-                            "count while none are left.",
-                            nhg_entry.nhg.to_string().c_str());
-            throw logic_error("Decreasing ref count which is already 0");
-        }
-
+        assert(nhg_entry.ref_count > 0);
         --nhg_entry.ref_count;
     }
 
@@ -461,5 +437,5 @@ protected:
     /*
      * Map of synced next hop groups.
      */
-    unordered_map<string, NhgEntry<NhgClass>> m_syncedNextHopGroups;
+    unordered_map<string, NhgEntry<NhgClass>> m_syncdNextHopGroups;
 };
