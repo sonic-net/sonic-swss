@@ -29,6 +29,8 @@ extern PortsOrch*       gPortsOrch;
 extern sai_object_id_t  gUnderlayIfId;
 extern FlexManagerDirectory g_FlexManagerDirectory;
 
+#define FLEX_COUNTER_UPD_INTERVAL 1
+
 const map<MAP_T, uint32_t> vxlanTunnelMap =
 {
     { MAP_T::VNI_TO_VLAN_ID, SAI_TUNNEL_MAP_TYPE_VNI_TO_VLAN_ID },
@@ -1190,6 +1192,7 @@ VxlanTunnelOrch::VxlanTunnelOrch(DBConnector *statedb, DBConnector *db, const st
     FieldValueTuple fv;
     string tunnel_rate_plugin = "tunnel_rates.lua";
     m_counter_db = shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
+    m_asic_db = shared_ptr<DBConnector>(new DBConnector("ASIC_DB", 0));
     try
     {
         string tunnel_rate_script = swss::loadLuaScript(tunnel_rate_plugin);
@@ -1207,28 +1210,53 @@ VxlanTunnelOrch::VxlanTunnelOrch(DBConnector *statedb, DBConnector *db, const st
     m_tunnelNameTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_TUNNEL_NAME_MAP));
     m_tunnelTypeTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_TUNNEL_TYPE_MAP));
 
+    m_vidToRidTable = unique_ptr<Table>(new Table(m_asic_db.get(), "VIDTORID"));
 
+    auto intervT = timespec { .tv_sec = FLEX_COUNTER_UPD_INTERVAL , .tv_nsec = 0 };
+    m_FlexCounterUpdTimer = new SelectableTimer(intervT);
+    auto executorT = new ExecutableTimer(m_FlexCounterUpdTimer, this, "FLEX_COUNTER_UPD_TIMER");
+    Orch::addExecutor(executorT);
+
+}
+
+void VxlanTunnelOrch::doTask(SelectableTimer &timer)
+{
+    SWSS_LOG_ENTER();
+
+    SWSS_LOG_DEBUG("Registering %" PRId64 " new tunnels", m_pendingAddToFlexCntr.size());
+    for (auto it = m_pendingAddToFlexCntr.begin(); it != m_pendingAddToFlexCntr.end(); )
+    {
+        string value;
+        const auto id = sai_serialize_object_id(it->first);
+
+        if (m_vidToRidTable->hget("", id, value))
+        {
+            SWSS_LOG_INFO("Registering %s, id %s", it->second.c_str(), id.c_str());
+            vector<FieldValueTuple> tunnelNameFvs;
+            vector<FieldValueTuple> tunnelTypeFvs;
+            string type = "SAI_TUNNEL_TYPE_VXLAN";
+
+            tunnelNameFvs.emplace_back(it->second, id);
+            tunnelTypeFvs.emplace_back(id, type);
+
+            m_tunnelNameTable->set("", tunnelNameFvs);
+            m_tunnelTypeTable->set("", tunnelTypeFvs);
+            auto tunnel_stats = generateTunnelCounterStats();
+
+            tunnel_stat_manager->setCounterIdList(it->first, CounterType::TUNNEL,
+                                                  tunnel_stats);
+            it = m_pendingAddToFlexCntr.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
 }
 
 void VxlanTunnelOrch::addTunnelToFlexCounter(sai_object_id_t oid, const string &name)
 {
-    SWSS_LOG_ENTER();
-    string type = "SAI_TUNNEL_TYPE_VXLAN";
-
-    string sai_oid = sai_serialize_object_id(oid);
-    vector<FieldValueTuple> tunnelNameFvs;
-    vector<FieldValueTuple> tunnelTypeFvs;
-
-    tunnelNameFvs.emplace_back(name, sai_oid);
-    tunnelTypeFvs.emplace_back(sai_oid, type);
-
-    m_tunnelNameTable->set("", tunnelNameFvs);
-    m_tunnelTypeTable->set("", tunnelTypeFvs);
-
-    auto tunnel_stats = generateTunnelCounterStats();
-    tunnel_stat_manager->setCounterIdList(oid, CounterType::TUNNEL,
-                                          tunnel_stats);
-    SWSS_LOG_DEBUG("Registered tunnel %s to Flex counter", name.c_str());
+    m_pendingAddToFlexCntr[oid] = name;
 }
 
 void VxlanTunnelOrch::removeTunnelFromFlexCounter(sai_object_id_t oid, const string &name)
@@ -1238,6 +1266,12 @@ void VxlanTunnelOrch::removeTunnelFromFlexCounter(sai_object_id_t oid, const str
     if (oid == SAI_NULL_OBJECT_ID)
     {
         SWSS_LOG_WARN("Not removing NULL OID to flex for tunnel %s", name.c_str());
+        return;
+    }
+
+    if (m_pendingAddToFlexCntr.find(oid) != m_pendingAddToFlexCntr.end())
+    {
+        m_pendingAddToFlexCntr.erase(oid);
         return;
     }
 
@@ -1267,14 +1301,7 @@ void VxlanTunnelOrch::generateTunnelCounterMap()
         return;
     }
 
-    for (const auto& it: vxlan_tunnel_table_)
-    {
-        auto tunnel_id = it.second.get()->getTunnelId();
-        if (tunnel_id != SAI_NULL_OBJECT_ID)
-        {
-            addTunnelToFlexCounter(it.second.get()->getTunnelId(), it.second.get()->getTunnelName());
-        }
-    }
+    m_FlexCounterUpdTimer->start();
 
     m_isTunnelCounterMapGenerated = true;
 }

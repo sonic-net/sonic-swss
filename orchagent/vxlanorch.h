@@ -7,6 +7,7 @@
 #include "request_parser.h"
 #include "portsorch.h"
 #include "vrforch.h"
+#include "timer.h"
 
 enum class MAP_T
 {
@@ -345,18 +346,23 @@ public:
 private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
+    void doTask(swss::SelectableTimer&);
 
     VxlanTunnelTable vxlan_tunnel_table_;
     VxlanTunnelRequest request_;
     VxlanVniVlanMapTable vxlan_vni_vlan_map_table_;
     VTEPTable vtep_table_;
     Table m_stateVxlanTable;
+    std::map<sai_object_id_t, std::string> m_pendingAddToFlexCntr;
     FlexCounterManager vxlan_tunnel_stat_manager;
     bool m_isTunnelCounterMapGenerated = false;
     FlexCounterManager *tunnel_stat_manager;
     unique_ptr<Table> m_tunnelNameTable;
     unique_ptr<Table> m_tunnelTypeTable;
+    unique_ptr<Table> m_vidToRidTable;
     shared_ptr<DBConnector> m_counter_db;
+    shared_ptr<DBConnector> m_asic_db;
+    SelectableTimer* m_FlexCounterUpdTimer = nullptr;
 };
 
 const request_description_t vxlan_tunnel_map_request_description = {
