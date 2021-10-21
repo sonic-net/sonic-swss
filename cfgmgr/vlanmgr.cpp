@@ -238,22 +238,26 @@ bool VlanMgr::removeHostVlanMember(int vlan_id, const string &port_alias)
     // The command should be generated as:
     // /bin/bash -c '/sbin/bridge vlan del vid {{vlan_id}} dev {{port_alias}} &&
     //               ( vlanShow=$(/sbin/bridge vlan show dev {{port_alias}});
+    //               ret=$?;
+    //               if [ $ret -eq 0 ]; then
     //               if (! echo "$vlanShow" | grep -q {{port_alias}})
     //                 || (echo "$vlanShow" | grep -q None$)
     //                 || (echo "$vlanShow" | grep -q {{port_alias}}$); then
     //               /sbin/ip link set {{port_alias}} nomaster;
-    //               elif [ $ret -eq 1 ]; then exit 0;
+    //               fi;
     //               else exit $ret; fi )'
 
     // When port is not member of any VLAN, it shall be detached from Dot1Q bridge!
     ostringstream cmds, inner;
     inner << BRIDGE_CMD " vlan del vid " + std::to_string(vlan_id) + " dev " << shellquote(port_alias) << " && ( "
       "vlanShow=$(" BRIDGE_CMD " vlan show dev " << shellquote(port_alias) << "); "
+      "ret=$?; "
+      "if [ $ret -eq 0 ]; then"
       "if (! echo \"$vlanShow\" | " GREP_CMD " -q " << shellquote(port_alias) << ") "
       " || (echo \"$vlanShow\" | " GREP_CMD " -q None$) "
       " || (echo \"$vlanShow\" | " GREP_CMD " -q " << shellquote(port_alias) << "$); then "
       IP_CMD " link set " << shellquote(port_alias) << " nomaster; "
-      "elif [ $ret -eq 1 ]; then exit 0; "
+      "fi; "
       "else exit $ret; fi )";
     cmds << BASH_CMD " -c " << shellquote(inner.str());
 
