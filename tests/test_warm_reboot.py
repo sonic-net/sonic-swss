@@ -1683,8 +1683,8 @@ def test_system_warmreboot_neighbor_syncup(dvs, testlog):
         dvs.runcmd("ip addr flush dev Ethernet{}".format(i*4))
         intf_tbl.set("Ethernet{}|{}.0.0.1/24".format(i*4, i*4), fvs)
         intf_tbl.set("Ethernet{}|{}00::1/64".format(i*4, i*4), fvs)
-        intf_tbl.set("Ethernet{}".format(i*4, i*4), fvs)
-        intf_tbl.set("Ethernet{}".format(i*4, i*4), fvs)
+        intf_tbl.set("Ethernet{}".format(i*4), fvs)
+        intf_tbl.set("Ethernet{}".format(i*4), fvs)
         dvs.runcmd("ip link set Ethernet{} up".format(i*4, i*4))
         dvs.servers[i].runcmd("ip link set up dev eth0")
         dvs.servers[i].runcmd("ip addr flush dev eth0")
@@ -1919,8 +1919,8 @@ def test_system_warmreboot_neighbor_syncup(dvs, testlog):
     for i in range(8, 8+NUM_INTF):
         intf_tbl._del("Ethernet{}|{}.0.0.1/24".format(i*4, i*4))
         intf_tbl._del("Ethernet{}|{}00::1/64".format(i*4, i*4))
-        intf_tbl._del("Ethernet{}".format(i*4, i*4))
-        intf_tbl._del("Ethernet{}".format(i*4, i*4))
+        intf_tbl._del("Ethernet{}".format(i*4))
+        intf_tbl._del("Ethernet{}".format(i*4))
     
     flush_neigh_entries(dvs)
 
