@@ -46,7 +46,6 @@ typedef enum
 #define MAX_VLAN_ID 4095
 
 #define MAX_VNI_ID 16777215
->>>>>>> upstream/master
 
 typedef enum
 {
