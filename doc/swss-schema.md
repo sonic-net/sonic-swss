@@ -164,6 +164,8 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     blackhole     = BIT ; Set to 1 if this route is a blackhole (or null0)
     weight        = weight_list              ; List of weights.
     nexthop_group = string ; index within the NEXTHOP_GROUP_TABLE, used instead of nexthop and intf fields
+    segment       = string ; SRV6 segment name
+    seg_src       = string ; ipv6 address for SRV6 tunnel source
 
 ---------------------------------------------
 
@@ -199,6 +201,21 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     key           = prefix PORT_TABLE.name / VLAN_INTF_TABLE.name / LAG_INTF_TABLE.name = macaddress ; (may be empty)
     neigh         = 12HEXDIG         ;  mac address of the neighbor
     family        = "IPv4" / "IPv6"  ; address family
+
+---------------------------------------------
+### SRV6_SID_LIST_TABLE
+    ; Stores IPV6 prefixes for a SRV6 segment name
+    key           = ROUTE_TABLE:segment ; SRV6 segment name
+    ; field       = value
+    path          = STRING              ; Comma-separated list of IPV6 prefixes for a SRV6 segment
+
+---------------------------------------------
+### SRV6_MY_SID_TABLE
+    ; Stores SRV6 MY_SID table entries and associated actions
+    key           = STRING ; SRV6 MY_SID prefix string
+    ; field       = value
+    action        = STRING ; MY_SID actions like "end", "end.dt46"
+    vrf           = STRING ; VRF string for END.DT46 or END.DT4 or END.DT6
 
 ---------------------------------------------
 ### FDB_TABLE
