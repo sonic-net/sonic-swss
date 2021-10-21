@@ -671,7 +671,7 @@ class TestMplsRoute(TestMplsBase):
         dvs.servers[1].runcmd("ip route add default via 10.0.0.2")
         time.sleep(2)
 
-        # add route entries
+        # add route entries. The neighbor entries for 10.0.0.1 and 10.0.0.3 are not yet resolved, so will trigger an ARP request
         label = "100"
         label2 = "200"
         if self.mpls_appdb_mode():
