@@ -38,6 +38,15 @@ typedef enum
 
 #define TUNNEL_STAT_COUNTER_FLEX_COUNTER_GROUP "TUNNEL_STAT_COUNTER"
 #define TUNNEL_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS 1000
+#define LOCAL_TUNNEL_PORT_PREFIX "Port_SRC_VTEP_"
+#define EVPN_TUNNEL_PORT_PREFIX  "Port_EVPN_"
+#define EVPN_TUNNEL_NAME_PREFIX  "EVPN_"
+
+#define MIN_VLAN_ID 1
+#define MAX_VLAN_ID 4095
+
+#define MAX_VNI_ID 16777215
+>>>>>>> upstream/master
 
 typedef enum
 {
@@ -175,6 +184,10 @@ public:
         return ids_.tunnel_term_id;
     }
 
+    const IpAddress getSrcIP()
+    {
+        return src_ip_;
+    }
 
     void updateNextHop(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni, sai_object_id_t nhId);
     bool removeNextHop(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni);
@@ -190,15 +203,17 @@ public:
     void deletePendingSIPTunnel();
     void increment_spurious_imr_add(const std::string remote_vtep);
     void increment_spurious_imr_del(const std::string remote_vtep);
-    void updateDipTunnelRefCnt(bool , tunnel_refcnt_t& , tunnel_user_t );
+    void updateRemoteEndPointRefCnt(bool , tunnel_refcnt_t& , tunnel_user_t );
     // Total Routes using the DIP tunnel. 
-    int getDipTunnelRefCnt(const std::string);
-    int getDipTunnelIMRRefCnt(const std::string);
-    int getDipTunnelIPRefCnt(const std::string);
+    int getRemoteEndPointRefCnt(const std::string);
+    int getRemoteEndPointIMRRefCnt(const std::string);
+    int getRemoteEndPointIPRefCnt(const std::string);
     // Total DIP tunnels associated with this SIP tunnel.
     int getDipTunnelCnt();
     bool createDynamicDIPTunnel(const string dip, tunnel_user_t usr);
     bool deleteDynamicDIPTunnel(const string dip, tunnel_user_t usr, bool update_refcnt = true);
+    bool isTunnelReferenced(void);
+    void updateRemoteEndPointIpRef(const std::string remote_vtep, bool inc);
     uint32_t vlan_vrf_vni_count = 0;
     bool del_tnl_hw_pending = false;
 
@@ -296,7 +311,7 @@ public:
     bool
     removeNextHopTunnel(string tunnelName, IpAddress& ipAddr, MacAddress macAddress, uint32_t vni=0);
 
-    bool getTunnelPort(const std::string& remote_vtep,Port& tunnelPort);
+    bool getTunnelPort(const std::string& vtep,Port& tunnelPort, bool local=false);
 
     bool addTunnelUser(string remote_vtep, uint32_t vni_id,
                        uint32_t vlan, tunnel_user_t usr,
@@ -310,7 +325,7 @@ public:
 
     void addRemoveStateTableEntry(const string, IpAddress&, IpAddress&, tunnel_creation_src_t, bool);
 
-    std::string getTunnelPortName(const std::string& remote_vtep);
+    std::string getTunnelPortName(const std::string& vtep, bool local=false);
     void getTunnelNameFromDIP(const string& dip, string& tunnel_name);
     void getTunnelNameFromPort(string& tunnel_portname, string& tunnel_name);
     void getTunnelDIPFromPort(Port& tunnelPort, string& remote_vtep);
@@ -342,6 +357,11 @@ public:
     void generateTunnelCounterMap();
     void addTunnelToFlexCounter(sai_object_id_t oid, const std::string &name);
     void removeTunnelFromFlexCounter(sai_object_id_t oid, const std::string &name);
+    bool isDipTunnelsSupported(void)
+    {
+        return is_dip_tunnel_supported;
+    }
+
 
 private:
     virtual bool addOperation(const Request& request);
@@ -363,6 +383,7 @@ private:
     shared_ptr<DBConnector> m_counter_db;
     shared_ptr<DBConnector> m_asic_db;
     SelectableTimer* m_FlexCounterUpdTimer = nullptr;
+    bool is_dip_tunnel_supported;
 };
 
 const request_description_t vxlan_tunnel_map_request_description = {
@@ -459,10 +480,23 @@ public:
     EvpnRemoteVniRequest() : Request(evpn_remote_vni_request_description, ':') { }
 };
 
-class EvpnRemoteVniOrch : public Orch2
+class EvpnRemoteVnip2pOrch : public Orch2
 {
 public:
-    EvpnRemoteVniOrch(DBConnector *db, const std::string& tableName) : Orch2(db, tableName, request_) { }
+    EvpnRemoteVnip2pOrch(DBConnector *db, const std::string& tableName) : Orch2(db, tableName, request_) { }
+
+
+private:
+    virtual bool addOperation(const Request& request);
+    virtual bool delOperation(const Request& request);
+
+    EvpnRemoteVniRequest request_;
+};
+
+class EvpnRemoteVnip2mpOrch : public Orch2
+{
+public:
+    EvpnRemoteVnip2mpOrch(DBConnector *db, const std::string& tableName) : Orch2(db, tableName, request_) { }
 
 
 private:
