@@ -743,10 +743,10 @@ instance is supported in SONiC.
 ```
 
 
-### EXP_TO_TC_MAP
+### MPLS_TC_TO_TC_MAP
 ```
 {
-"EXP_TO_TC_MAP": {
+"MPLS_TC_TO_TC_MAP": {
     "AZURE": {
         "0": "0",
         "1": "1",

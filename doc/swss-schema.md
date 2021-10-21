@@ -31,7 +31,7 @@ Stores information for physical switch ports managed by the switch chip. Ports t
     ;QOS Mappings
     map_dscp_to_tc      = ref_hash_key_reference
     map_tc_to_queue     = ref_hash_key_reference
-    map_exp_to_tc       = ref_hash_key_reference
+    map_mpls_tc_to_tc   = ref_hash_key_reference
 
     Example:
     127.0.0.1:6379> hgetall PORT_TABLE:ETHERNET4
@@ -39,7 +39,7 @@ Stores information for physical switch ports managed by the switch chip. Ports t
     2) "AZURE"
     3) "tc_to_queue_map"
     4) "AZURE"
-    5) "exp_to_tc_map"
+    5) "mpls_tc_to_tc_map"
     6) "AZURE"
 
 ---------------------------------------------
@@ -283,17 +283,17 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     10) "8"
 
 ---------------------------------------------
-### EXP\_TO\_TC\_MAP\_TABLE
-    ; exp to TC map
+### MPLS\_TC\_TO\_TC\_MAP\_TABLE
+    ; MPLS TC to TC map
     ;SAI mapping - qos_map object with SAI_QOS_MAP_ATTR_TYPE == sai_qos_map_type_t::SAI_QOS_MAP_EXP_TO_TC
-    key        = "EXP_TO_TC_MAP_TABLE:"name
+    key        = "MPLS_TC_TO_TC_MAP_TABLE:"name
     ;field    value
-    exp_value = 1*DIGIT
+    mpls_tc_value = 1*DIGIT
     tc_value   = 1*DIGIT
 
     Example:
-    127.0.0.1:6379> hgetall "EXP_TO_TC_MAP_TABLE:AZURE"
-     1) "0" ;exp
+    127.0.0.1:6379> hgetall "MPLS_TC_TO_TC_MAP_TABLE:AZURE"
+     1) "0" ;mpls_tc
      2) "3" ;tc
      3) "1"
      4) "5"
