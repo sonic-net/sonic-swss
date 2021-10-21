@@ -1,12 +1,12 @@
 -- KEYS - queue IDs
 -- ARGV[1] - counters db index
 -- ARGV[2] - counters table name
--- ARGV[3] - poll time interval
+-- ARGV[3] - poll time interval (milliseconds)
 -- return queue Ids that satisfy criteria
 
 local counters_db = ARGV[1]
 local counters_table_name = ARGV[2]
-local poll_time = tonumber(ARGV[3])
+local poll_time = tonumber(ARGV[3]) * 1000
 
 local rets = {}
 

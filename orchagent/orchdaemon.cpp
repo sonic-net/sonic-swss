@@ -31,8 +31,10 @@ FdbOrch *gFdbOrch;
 IntfsOrch *gIntfsOrch;
 NeighOrch *gNeighOrch;
 RouteOrch *gRouteOrch;
+NhgOrch *gNhgOrch;
 FgNhgOrch *gFgNhgOrch;
 AclOrch *gAclOrch;
+PbhOrch *gPbhOrch;
 MirrorOrch *gMirrorOrch;
 CrmOrch *gCrmOrch;
 BufferOrch *gBufferOrch;
@@ -168,6 +170,7 @@ bool OrchDaemon::init()
         { APP_LABEL_ROUTE_TABLE_NAME,  routeorch_pri }
     };
     gRouteOrch = new RouteOrch(m_applDb, route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch);
+    gNhgOrch = new NhgOrch(m_applDb, APP_NEXTHOP_GROUP_TABLE_NAME);
 
     CoppOrch  *copp_orch  = new CoppOrch(m_applDb, APP_COPP_TABLE_NAME);
     TunnelDecapOrch *tunnel_decap_orch = new TunnelDecapOrch(m_applDb, APP_TUNNEL_DECAP_TABLE_NAME);
@@ -179,8 +182,6 @@ bool OrchDaemon::init()
     VxlanVrfMapOrch *vxlan_vrf_orch = new VxlanVrfMapOrch(m_applDb, APP_VXLAN_VRF_TABLE_NAME);
     gDirectory.set(vxlan_vrf_orch);
 
-    EvpnRemoteVniOrch* evpn_remote_vni_orch = new EvpnRemoteVniOrch(m_applDb, APP_VXLAN_REMOTE_VNI_TABLE_NAME);
-    gDirectory.set(evpn_remote_vni_orch);
 
     EvpnNvoOrch* evpn_nvo_orch = new EvpnNvoOrch(m_applDb, APP_VXLAN_EVPN_NVO_TABLE_NAME);
     gDirectory.set(evpn_nvo_orch);
@@ -301,7 +302,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gIntfsOrch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, wm_orch, policer_orch, sflow_orch, debug_counter_orch, gMacsecOrch};
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gIntfsOrch, gNeighOrch, gNhgOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, wm_orch, policer_orch, sflow_orch, debug_counter_orch, gMacsecOrch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
@@ -348,15 +349,47 @@ bool OrchDaemon::init()
 
     gIsoGrpOrch = new IsoGrpOrch(iso_grp_tbl_ctrs);
 
+    //
+    // Policy Based Hashing (PBH) orchestrator
+    //
+
+    TableConnector cfgDbPbhTable(m_configDb, CFG_PBH_TABLE_TABLE_NAME);
+    TableConnector cfgDbPbhRuleTable(m_configDb, CFG_PBH_RULE_TABLE_NAME);
+    TableConnector cfgDbPbhHashTable(m_configDb, CFG_PBH_HASH_TABLE_NAME);
+    TableConnector cfgDbPbhHashFieldTable(m_configDb, CFG_PBH_HASH_FIELD_TABLE_NAME);
+
+    vector<TableConnector> pbhTableConnectorList = {
+        cfgDbPbhTable,
+        cfgDbPbhRuleTable,
+        cfgDbPbhHashTable,
+        cfgDbPbhHashFieldTable
+    };
+
+    gPbhOrch = new PbhOrch(pbhTableConnectorList, gAclOrch, gPortsOrch);
+
     m_orchList.push_back(gFdbOrch);
     m_orchList.push_back(gMirrorOrch);
     m_orchList.push_back(gAclOrch);
+    m_orchList.push_back(gPbhOrch);
     m_orchList.push_back(chassis_frontend_orch);
     m_orchList.push_back(vrf_orch);
     m_orchList.push_back(vxlan_tunnel_orch);
     m_orchList.push_back(evpn_nvo_orch);
     m_orchList.push_back(vxlan_tunnel_map_orch);
-    m_orchList.push_back(evpn_remote_vni_orch);
+
+    if (vxlan_tunnel_orch->isDipTunnelsSupported())
+    {
+        EvpnRemoteVnip2pOrch* evpn_remote_vni_orch = new EvpnRemoteVnip2pOrch(m_applDb, APP_VXLAN_REMOTE_VNI_TABLE_NAME);
+        gDirectory.set(evpn_remote_vni_orch);
+        m_orchList.push_back(evpn_remote_vni_orch);
+    }
+    else
+    {
+        EvpnRemoteVnip2mpOrch* evpn_remote_vni_orch = new EvpnRemoteVnip2mpOrch(m_applDb, APP_VXLAN_REMOTE_VNI_TABLE_NAME);
+        gDirectory.set(evpn_remote_vni_orch);
+        m_orchList.push_back(evpn_remote_vni_orch);
+    }
+
     m_orchList.push_back(vxlan_vrf_orch);
     m_orchList.push_back(cfg_vnet_rt_orch);
     m_orchList.push_back(vnet_orch);
@@ -519,6 +552,27 @@ bool OrchDaemon::init()
         };
 
         m_orchList.push_back(new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
+                    m_configDb,
+                    pfc_wd_tables,
+                    portStatIds,
+                    queueStatIds,
+                    queueAttrIds,
+                    PFC_WD_POLL_MSECS));
+    } else if (platform == CISCO_8000_PLATFORM_SUBSTRING)
+    {
+        static const vector<sai_port_stat_t> portStatIds;
+
+        static const vector<sai_queue_stat_t> queueStatIds =
+        {
+            SAI_QUEUE_STAT_PACKETS,
+        };
+
+        static const vector<sai_queue_attr_t> queueAttrIds =
+        {
+            SAI_QUEUE_ATTR_PAUSE_STATUS,
+        };
+
+        m_orchList.push_back(new PfcWdSwOrch<PfcWdSaiDlrInitHandler, PfcWdActionHandler>(
                     m_configDb,
                     pfc_wd_tables,
                     portStatIds,
