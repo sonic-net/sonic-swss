@@ -1292,7 +1292,6 @@ void VxlanTunnelOrch::doTask(SelectableTimer &timer)
 {
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_DEBUG("Registering %" PRId64 " new tunnels", m_pendingAddToFlexCntr.size());
     for (auto it = m_pendingAddToFlexCntr.begin(); it != m_pendingAddToFlexCntr.end(); )
     {
         string value;
