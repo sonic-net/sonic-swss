@@ -170,10 +170,10 @@ class TestCbf(object):
         ]
 
         for fvs in maps:
-            dscp_ps.set('AZURE', swsscommon.FieldValuePairs([fvs]))
+            self.dscp_ps.set('AZURE', swsscommon.FieldValuePairs([fvs]))
             time.sleep(1)
-            assert(asic_qos_map_count == len(asic_db.get_keys('ASIC_STATE:SAI_OBJECT_TYPE_QOS_MAP')))
-            dscp_ps._del("AZURE")
+            assert(self.asic_qos_map_count == len(self.asic_db.get_keys('ASIC_STATE:SAI_OBJECT_TYPE_QOS_MAP')))
+            self.dscp_ps._del("AZURE")
 
         # Delete a map that does not exist.  Nothing should happen
         self.dscp_ps._del("AZURE")
@@ -211,10 +211,10 @@ class TestCbf(object):
         ]
 
         for fvs in maps:
-            exp_ps.set('AZURE', swsscommon.FieldValuePairs([fvs]))
+            self.exp_ps.set('AZURE', swsscommon.FieldValuePairs([fvs]))
             time.sleep(1)
-            assert(asic_qos_map_count == len(asic_db.get_keys('ASIC_STATE:SAI_OBJECT_TYPE_QOS_MAP')))
-            exp_ps._del("AZURE")
+            assert(self.asic_qos_map_count == len(self.asic_db.get_keys('ASIC_STATE:SAI_OBJECT_TYPE_QOS_MAP')))
+            self.exp_ps._del("AZURE")
 
         # Update the map with valid values
         exp_map = [(str(i), str(i + 10)) for i in range(0, 8)]
