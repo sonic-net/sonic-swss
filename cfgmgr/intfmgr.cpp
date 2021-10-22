@@ -466,7 +466,7 @@ void IntfMgr::delIpv6LinkLocalNeigh(const string &alias)
             if (keys.size() == 2)
             {
                 IpAddress ipAddress(keys[1]);
-                if ((ipAddress.isV4() == false) && (ipAddress.getAddrScope() == IpAddress::AddrScope::LINK_SCOPE))
+                if (ipAddress.getAddrScope() == IpAddress::AddrScope::LINK_SCOPE)
                 {
                     m_neighTableProducer.del(neighKey);
                     SWSS_LOG_INFO("Deleted ipv6 link local neighbor - %s", keys[1].c_str());
