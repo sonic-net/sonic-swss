@@ -7,6 +7,7 @@
 #include "tokenize.h"
 #include "shellcmd.h"
 #include "warm_restart.h"
+#include <swss/redisutility.h>
 
 using namespace std;
 using namespace swss;
