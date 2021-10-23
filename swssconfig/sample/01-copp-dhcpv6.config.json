@@ -1,0 +1,11 @@
+[
+    {
+        "COPP_TABLE:trap.group.dhcpv6": {
+            "trap_ids": "dhcpv6",
+            "trap_action":"trap",
+            "trap_priority":"4",
+            "queue": "4"
+        },
+        "OP": "SET"
+    }
+]
