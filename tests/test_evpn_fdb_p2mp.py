@@ -2,14 +2,15 @@ from swsscommon import swsscommon
 import time
 from evpn_tunnel import VxlanTunnel,VxlanEvpnHelper
 
-DVS_ENV = ["fake_platform=broadcom"]
+DVS_ENV = ["fake_platform=mellanox"]
 
-def get_vxlan_p2p_tunnel_bp(db, remote_ip):
+def get_vxlan_p2mp_tunnel_bp(db, src_ip):
     tnl_id = None
     bp = None
-    print("remote_ip = " + remote_ip)
+    print("src_ip = " + src_ip)
     attributes = [("SAI_TUNNEL_ATTR_TYPE", "SAI_TUNNEL_TYPE_VXLAN"),
-             ("SAI_TUNNEL_ATTR_ENCAP_DST_IP", remote_ip)
+             ("SAI_TUNNEL_ATTR_PEER_MODE", "SAI_TUNNEL_PEER_MODE_P2MP"),
+             ("SAI_TUNNEL_ATTR_ENCAP_SRC_IP", src_ip)
             ]
     tbl = swsscommon.Table(db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL")
     keys = tbl.getKeys()
@@ -48,7 +49,7 @@ def get_vxlan_p2p_tunnel_bp(db, remote_ip):
     return bp
                     
 
-def test_evpnFdb(dvs, testlog):
+def test_evpnFdbP2MP(dvs, testlog):
     vxlan_obj = VxlanTunnel()
     helper = VxlanEvpnHelper()
     dvs.setup_db()
@@ -64,7 +65,6 @@ def test_evpnFdb(dvs, testlog):
 
     # create vlan
     print("Creating Vlan3")
-    #dvs.runcmd("config vlan add 3")
     dvs.create_vlan("3")
     time.sleep(2)
 
@@ -81,7 +81,6 @@ def test_evpnFdb(dvs, testlog):
     vm_before = helper.how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
 
     print("Making Ethernet0 as a member of Vlan3")
-    #dvs.runcmd("config vlan member add 3 Ethernet0")
     dvs.create_vlan_member("3", "Ethernet0")
     time.sleep(2)
 
@@ -102,16 +101,13 @@ def test_evpnFdb(dvs, testlog):
     vxlan_obj.create_vxlan_tunnel(dvs, source_tnl_name, source_tnl_ip)
     time.sleep(1)
 
-
     nvo_name = "evpn_nvo"
     vxlan_obj.create_evpn_nvo(dvs, nvo_name, source_tnl_name)
     time.sleep(1)
 
-
     map_name_vlan_3 = "map_3_3"
     vxlan_obj.create_vxlan_tunnel_map(dvs, source_tnl_name, map_name_vlan_3, "3", "Vlan3")
     time.sleep(1)
-
 
     remote_ip_6 = "6.6.6.6"
     vxlan_obj.create_evpn_remote_vni(dvs, "Vlan3", remote_ip_6, "3")
@@ -133,7 +129,7 @@ def test_evpnFdb(dvs, testlog):
     )
     time.sleep(1)
 
-    tnl_bp_oid_6 = get_vxlan_p2p_tunnel_bp(dvs.adb, remote_ip_6)
+    tnl_bp_oid_6 = get_vxlan_p2mp_tunnel_bp(dvs.adb, source_tnl_ip)
 
     # check that the FDB entry is inserted into ASIC DB
     ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
@@ -187,7 +183,6 @@ def test_evpnFdb(dvs, testlog):
     )
 
     time.sleep(1)
-    #raw_input("Check ASIC_DB.........")
 
     # check that the FDB entry was added in ASIC DB
     ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
@@ -272,8 +267,6 @@ def test_evpnFdb(dvs, testlog):
     assert ok, str(extra)
     print("EVPN Sticky FDB Vlan3:"+mac.lower()+":"+remote_ip_6+" is created in ASIC-DB")
 
-    #raw_input("Check ASIC_DB.........")
-
     #UT-8 Evpn Mac add from remote when tunnels are already created
     mac = "52:54:00:25:06:E9"
     print("Creating Evpn FDB Vlan3:"+mac.lower()+":6.6.6.6 in APP-DB")
@@ -287,8 +280,6 @@ def test_evpnFdb(dvs, testlog):
         ]
     )
     time.sleep(1)
-
-    #raw_input("Check ASIC_DB.........")
 
     # check that the FDB entry is inserted into ASIC DB
     ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
@@ -304,7 +295,7 @@ def test_evpnFdb(dvs, testlog):
 
     time.sleep(1)
 
-    tnl_bp_oid_8 = get_vxlan_p2p_tunnel_bp(dvs.adb, remote_ip_8)
+    tnl_bp_oid_8 = get_vxlan_p2mp_tunnel_bp(dvs.adb, source_tnl_ip)
 
     print("Creating Evpn FDB Vlan3:"+mac.lower()+":8.8.8.8 in APP-DB")
     helper.create_entry_pst(
@@ -317,8 +308,6 @@ def test_evpnFdb(dvs, testlog):
         ]
     )
     time.sleep(1)
-
-    #raw_input("Check ASIC_DB.........")
 
     # check that the FDB entry is inserted into ASIC DB
     ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
@@ -346,8 +335,6 @@ def test_evpnFdb(dvs, testlog):
 
     time.sleep(2)
 
-    #raw_input("Check ASIC_DB.........")
-
     print("Creating FDB Vlan3:52-54-00-25-06-E9:Ethernet0 in ASIC-DB")
     helper.create_entry_tbl(
         dvs.adb,
@@ -364,8 +351,6 @@ def test_evpnFdb(dvs, testlog):
     ntf.send("fdb_event", ntf_data, fvp)
 
     time.sleep(2)
-
-    #raw_input("Check ASIC_DB.........")
 
     # check that the FDB entry was added in ASIC DB
     ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
