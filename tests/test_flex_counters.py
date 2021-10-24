@@ -380,19 +380,10 @@ class TestFlexCounters(object):
         # save all the oids of the pg drop counters            
         oid_list = []
         counters_queue_map = self.counters_db.get_entry("COUNTERS_QUEUE_NAME_MAP", "")
-        
-        i = 0
-        while True:
-            if '%s:%d' % (PORT, i) in counters_queue_map:
-                oid_list.append(counters_queue_map['%s:%d' % (PORT, i)])
-                i += 1 
-            else:
-                break
-
-        # verify that counters exists on flex counter
-        for oid in oid_list: 
-            fields = self.flex_db.get_entry("FLEX_COUNTER_TABLE", counter_stat + ":%s" % oid)
-            assert len(fields) == 1
+        for key, oid in counters_queue_map.items():
+            if PORT in key:
+                fields = self.flex_db.get_entry("FLEX_COUNTER_TABLE", counter_stat + ":%s" % oid)
+                assert len(fields) == 1
 
         # get port oid
         port_oid = self.counters_db.get_entry(PORT_MAP, "")[PORT]
@@ -406,19 +397,12 @@ class TestFlexCounters(object):
             fields = self.flex_db.get_entry("FLEX_COUNTER_TABLE", counter_stat + ":%s" % oid)
             assert len(fields) == 0
         
-        # verify that port counter maps were removed
+        # verify that port counter maps were removed from counters db
         oid_list = []
         counters_queue_map = self.counters_db.get_entry("COUNTERS_QUEUE_NAME_MAP", "")
-        
-        i = 0
-        while True:
-            if '%s:%d' % (PORT, i) in counters_queue_map:
-                oid_list.append(counters_queue_map['%s:%d' % (PORT, i)])
-                i += 1 
-            else:
-                break
-        assert oid_list == []
-            
+        for key in counters_queue_map.keys():
+            if PORT in key:
+                assert False
         
         # add port and wait until the port is added on asic db
         num_of_keys_without_port = len(dvs.get_asic_db().get_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT"))
@@ -431,16 +415,8 @@ class TestFlexCounters(object):
         # verify queue counters were added
         oid_list = []
         counters_queue_map = self.counters_db.get_entry("COUNTERS_QUEUE_NAME_MAP", "")
-        
-        while True:
-            if '%s:%d' % (PORT, i) in counters_queue_map:
-                oid_list.append(counters_queue_map['%s:%d' % (PORT, i)])
-                i += 1 
-            else:
-                break
-        assert len(oid_list) > 0
 
-        # verify that counters exists on flex counter
-        for oid in oid_list: 
-            fields = self.flex_db.get_entry("FLEX_COUNTER_TABLE", counter_stat + ":%s" % oid)
-            assert len(fields) == 1
+        for key, oid in counters_queue_map.items():
+            if PORT in key:
+                fields = self.flex_db.get_entry("FLEX_COUNTER_TABLE", counter_stat + ":%s" % oid)
+                assert len(fields) == 1

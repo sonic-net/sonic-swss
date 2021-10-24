@@ -10,6 +10,7 @@ from swsscommon import swsscommon
 pg_drop_attr = "SAI_INGRESS_PRIORITY_GROUP_STAT_DROPPED_PACKETS"
 
 PORT = "Ethernet0"
+
 @pytest.mark.usefixtures('dvs_port_manager')
 class TestPGDropCounter(object):
     DEFAULT_POLL_INTERVAL = 10
@@ -82,7 +83,6 @@ class TestPGDropCounter(object):
         try:
             self.set_up_flex_counter()
 
-
             self.populate_asic(dvs, "0")
             time.sleep(self.DEFAULT_POLL_INTERVAL)
             self.verify_value(dvs, self.pgs, pg_drop_attr, "0")
@@ -104,7 +104,7 @@ class TestPGDropCounter(object):
             # configure pg drop flex counter
             self.set_up_flex_counter()
 
-            # receive Ethernet0 info
+            # receive port info
             fvs = self.config_db.get_entry("PORT", PORT)
             assert len(fvs) > 0
         
@@ -117,7 +117,7 @@ class TestPGDropCounter(object):
                 assert len(fields) == 1
 
             # remove port
-            port_oid = self.counters_db.get_entry("COUNTERS_PORT_NAME_MAP", "")["Ethernet0"]
+            port_oid = self.counters_db.get_entry("COUNTERS_PORT_NAME_MAP", "")[PORT]
             self.dvs_port.remove_port(PORT)
             dvs.get_asic_db().wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid)
         

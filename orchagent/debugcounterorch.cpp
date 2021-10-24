@@ -48,9 +48,7 @@ void DebugCounterOrch::update(SubjectType type, void *cntx)
 {
     SWSS_LOG_ENTER();
 
-
     if (type == SUBJECT_TYPE_PORT_CHANGE) {
-
         if (!cntx) {
             SWSS_LOG_ERROR("cntx is NULL");
             return;

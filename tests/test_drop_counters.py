@@ -1,6 +1,5 @@
 import time
 import pytest
-import redis
 
 from swsscommon import swsscommon
 
