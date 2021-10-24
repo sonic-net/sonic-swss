@@ -5,6 +5,7 @@
 #include "tokenize.h"
 #include "warm_restart.h"
 #include "portmgr.h"
+#include <swss/redisutility.h>
 
 #include <algorithm>
 #include <iostream>
@@ -67,6 +68,13 @@ bool TeamMgr::isPortStateOk(const string &alias)
     vector<FieldValueTuple> temp;
 
     if (!m_statePortTable.get(alias, temp))
+    {
+        SWSS_LOG_INFO("Port %s is not ready", alias.c_str());
+        return false;
+    }
+
+    auto state_opt = swss::fvsGetValue(temp, "state", true);
+    if (!state_opt)
     {
         SWSS_LOG_INFO("Port %s is not ready", alias.c_str());
         return false;

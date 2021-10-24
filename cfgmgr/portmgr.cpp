@@ -6,6 +6,7 @@
 #include "portmgr.h"
 #include "exec.h"
 #include "shellcmd.h"
+#include <swss/redisutility.h>
 
 using namespace std;
 using namespace swss;
@@ -87,6 +88,12 @@ bool PortMgr::isPortStateOk(const string &alias)
 
     if (m_statePortTable.get(alias, temp))
     {
+        auto state_opt = swss::fvsGetValue(temp, "state", true);
+        if (!state_opt)
+        {
+            return false;
+        }
+
         SWSS_LOG_INFO("Port %s is ready", alias.c_str());
         return true;
     }

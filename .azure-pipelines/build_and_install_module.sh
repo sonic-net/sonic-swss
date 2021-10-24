@@ -50,6 +50,7 @@ function build_and_install_kmodule()
     echo CONFIG_MACSEC=m >> .config
     echo CONFIG_NET_VENDOR_MICROSOFT=y >> .config
     echo CONFIG_MICROSOFT_MANA=m >> .config
+    echo CONFIG_SYSTEM_REVOCATION_LIST=n >> .config
     make VERSION=$VERSION PATCHLEVEL=$PATCHLEVEL SUBLEVEL=$SUBLEVEL EXTRAVERSION=-${EXTRAVERSION} LOCALVERSION=-${LOCALVERSION} modules_prepare
     make M=drivers/net/team
     mv drivers/net/Makefile drivers/net/Makefile.bak
