@@ -74,12 +74,24 @@ class TestPGDropCounter(object):
         self.config_db.delete_entry("FLEX_COUNTER_TABLE", "PG_DROP")
         self.config_db.delete_entry("FLEX_COUNTER_TABLE", "PG_WATERMARK")
 
-
+    def remove_port(self, config_db, port):
+        config_db.hdel("CABLE_LENGTH|AZURE", port)
+        ethernet0_bufferpg_keys = config_db.keys("BUFFER_PG|%s|*"%port)
+        for key in ethernet0_bufferpg_keys:
+            config_db._del(key)
+        ethernet0_bufferqueue_keys = config_db.keys("BUFFER_QUEUE|%s|*"%port)
+        for key in ethernet0_bufferqueue_keys:
+            config_db._del(key)
+        config_db._del("BREAKOUT_CFG|%s"%port)
+        port_table = swsscommon.Table(config_db, "PORT")
+        port_table._del(port)
+        
     def test_pg_drop_counters(self, dvs):
         self.setup_dbs(dvs)
         self.pgs = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP")
         try:
             self.set_up_flex_counter()
+
 
             self.populate_asic(dvs, "0")
             time.sleep(self.DEFAULT_POLL_INTERVAL)
@@ -92,5 +104,56 @@ class TestPGDropCounter(object):
             self.populate_asic(dvs, "123")
             time.sleep(self.DEFAULT_POLL_INTERVAL)
             self.verify_value(dvs, self.pgs, pg_drop_attr, "123")
+        finally:
+            self.clear_flex_counter()
+
+    def test_pg_drop_counter_port_add_remove(self, dvs):
+        self.setup_dbs(dvs)
+
+        try:
+            # configure pg drop flex counter
+            self.set_up_flex_counter()
+            time.sleep(5)
+
+            # receive Ethernet0 info
+            config_db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+            port_table = swsscommon.Table(config_db, "PORT")
+            (status, fvs) = port_table.get("Ethernet0")      
+            assert status == True
+              
+              
+            # save all the oids of the pg drop counters            
+            cnt_r = redis.Redis(unix_socket_path=dvs.redis_sock, db=swsscommon.COUNTERS_DB,
+                    encoding="utf-8", decode_responses=True)
+              
+            oid_list = []
+            for priority in range(0,7):
+                oid_list.append(cnt_r.hget("COUNTERS_PG_NAME_MAP", "Ethernet0:%d"%priority))
+      
+                # verify that counters exists on flex counter
+                fields = self.flex_db.get_entry("FLEX_COUNTER_TABLE", "PG_WATERMARK_STAT_COUNTER:%s"%oid_list[-1])
+                assert len(fields) == 1
+
+            # remove port Ethernet0
+            self.remove_port(config_db, "Ethernet0")
+            time.sleep(3)
+              
+            # verify counters were removed from flex counter table
+            for oid in oid_list:
+                fields = self.flex_db.get_entry("FLEX_COUNTER_TABLE", "PG_WATERMARK_STAT_COUNTER:%s"%oid)
+                assert len(fields) == 0
+              
+            # add port Ethernet 0 
+            port_table.set("Ethernet0", fvs)
+            time.sleep(3)
+            
+            # verify counter was added
+            for priority in range(0,7):
+                oid = cnt_r.hget("COUNTERS_PG_NAME_MAP", "Ethernet0:%d"%priority)
+      
+                # verify that counters exists on flex counter
+                fields = self.flex_db.get_entry("FLEX_COUNTER_TABLE", "PG_WATERMARK_STAT_COUNTER:%s"%oid)
+                assert len(fields) == 1
+            
         finally:
             self.clear_flex_counter()

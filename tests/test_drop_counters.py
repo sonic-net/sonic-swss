@@ -1,5 +1,6 @@
 import time
 import pytest
+import redis
 
 from swsscommon import swsscommon
 
@@ -654,6 +655,89 @@ class TestDropCounters(object):
         # Cleanup for the next test.
         self.delete_drop_counter(name)
         self.remove_drop_reason(name, reason1)
+        
+    def getPortOid(self, dvs, port_name):
+        cnt_r = redis.Redis(unix_socket_path=dvs.redis_sock, db=swsscommon.COUNTERS_DB,
+                            encoding="utf-8", decode_responses=True)
+        return cnt_r.hget("COUNTERS_PORT_NAME_MAP", port_name);
+    
+    def test_add_remove_port(self, dvs, testlog):
+         
+        """
+            This test verifies that debug counters are removed when we remove a port 
+            and debug counters are added each time we add ports (if debug counter is enabled)
+        """
+        self.setup_db(dvs)
+         
+        # save ethernet0 info
+        cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "PORT")
+        (status, fvs) = tbl.get("Ethernet0")      
+        assert status == True
+ 
+        # get counter oid
+        oid = self.getPortOid(dvs, "Ethernet0")
+
+        # verifies debug coutner dont exist for ethernet0
+        flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
+        status, fields = flex_counter_table.get(oid)
+        assert len(fields) == 0
+ 
+        # add debug counters
+        name1 = 'DEBUG_0'
+        reason1 = 'L3_ANY'
+ 
+        name2 = 'DEBUG_1'
+        reason2 = 'L2_ANY'
+ 
+        self.create_drop_counter(name1, PORT_INGRESS_DROPS)
+        self.add_drop_reason(name1, reason1)
+  
+        self.create_drop_counter(name2, PORT_EGRESS_DROPS)
+        self.add_drop_reason(name2, reason2)
+         
+        time.sleep(5)
+ 
+        # verifies debug coutner exist for ethernet0
+        flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
+        status, fields = flex_counter_table.get(oid)
+        assert status == True
+        assert len(fields) == 1
+         
+        # remove Ethernet0 port
+        cdb.hdel("CABLE_LENGTH|AZURE", "Ethernet0")
+        ethernet0_bufferpg_keys = cdb.keys("BUFFER_PG|Ethernet0|*")
+        for key in ethernet0_bufferpg_keys:
+            cdb._del(key)
+        ethernet0_bufferqueue_keys = cdb.keys("BUFFER_QUEUE|Ethernet0|*")
+        for key in ethernet0_bufferqueue_keys:
+            cdb._del(key)
+        cdb._del("BREAKOUT_CFG|Ethernet0")
+        tbl._del("Ethernet0")
+        time.sleep(5)
+        
+        # verify that debug counter were removed
+        status, fields = flex_counter_table.get(oid)
+        assert len(fields) == 0
+ 
+        # add Ethernet0
+        tbl.set("Ethernet0", fvs)
+        time.sleep(5)
+         
+        # verifies that debug counters were added for ethernet0
+        oid = self.getPortOid(dvs, "Ethernet0")
+         
+        status, fields = flex_counter_table.get(oid)
+        assert status == True
+        assert len(fields) == 1
+        
+        # Cleanup for the next test.
+        self.delete_drop_counter(name1)
+        self.remove_drop_reason(name1, reason1)
+        
+        self.delete_drop_counter(name2)
+        self.remove_drop_reason(name2, reason2)
+        
 
     def test_createAndDeleteMultipleCounters(self, dvs, testlog):
         """

@@ -2378,6 +2378,18 @@ bool PortsOrch::initPort(const string &alias, const string &role, const int inde
                     port_buffer_drop_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, port_buffer_drop_stats);
                 }
 
+                /* add pg counters */
+                if (m_isPriorityGroupMapGenerated) {
+                    generatePriorityGroupMapPerPort(p);
+                }
+
+                /* add queue port counters */
+                if (m_isQueueMapGenerated) {
+                    generateQueueMapPerPort(p);
+                }
+
+                /* debug counters will be added during the SUBJECT_TYPE_PORT_CHANGE notify */
+
                 PortUpdate update = { p, true };
                 notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
 
@@ -2410,8 +2422,13 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
 {
     SWSS_LOG_ENTER();
 
-    Port p(alias, Port::PHY);
-    p.m_port_id = port_id;
+    Port p;
+
+    if (!getPort(port_id, p))
+    {
+        SWSS_LOG_ERROR("Failed to get port object for port id 0x%" PRIx64, port_id);
+        return;
+    }
 
     /* remove port from flex_counter_table for updating counters  */
     auto flex_counters_orch = gDirectory.get<FlexCounterOrch*>();
@@ -2425,9 +2442,18 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
         port_buffer_drop_stat_manager.clearCounterIdList(p.m_port_id);
     }
 
+    /* remove pg port counters */
+    if (m_isPriorityGroupMapGenerated) {
+        removePriorityGroupMapPerPort(p);
+    }
+
+    /* remove queue port counters */
+    if (m_isQueueMapGenerated) {
+        removeQueueMapPerPort(p);
+    }
 
     /* remove port name map from counter table */
-    m_counter_db->hdel(COUNTERS_PORT_NAME_MAP, alias);
+    m_counterTable->hdel("", alias);
 
     /* Remove the associated port serdes attribute */
     removePortSerdesAttribute(p.m_port_id);
@@ -2435,7 +2461,6 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
     m_portList[alias].m_init = false;
     SWSS_LOG_NOTICE("De-Initialized port %s", alias.c_str());
 }
-
 
 bool PortsOrch::bake()
 {
@@ -3305,7 +3330,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 {
                     throw runtime_error("Remove hostif for the port failed");
                 }
-
                 Port p;
                 if (getPort(port_id, p))
                 {
@@ -5398,6 +5422,55 @@ void PortsOrch::generateQueueMap()
     m_isQueueMapGenerated = true;
 }
 
+void PortsOrch::removeQueueMapPerPort(const Port& port)
+{
+    /* Create the Queue map in the Counter DB */
+    /* Add stat counters to flex_counter */
+    vector<string> queueVector;
+    vector<string> queuePortVector;
+    vector<string> queueIndexVector;
+    vector<string> queueTypeVector;
+
+    for (size_t queueIndex = 0; queueIndex < port.m_queue_ids.size(); ++queueIndex)
+    {
+        std::ostringstream name;
+        name << port.m_alias << ":" << queueIndex;
+
+        const auto id = sai_serialize_object_id(port.m_queue_ids[queueIndex]);
+
+        queueVector.emplace_back(name.str());
+        queuePortVector.emplace_back(id);
+
+        string queueType;
+        uint8_t queueRealIndex = 0;
+        if (getQueueTypeAndIndex(port.m_queue_ids[queueIndex], queueType, queueRealIndex))
+        {
+            queueTypeVector.emplace_back(id);
+            queueIndexVector.emplace_back(id);
+        }
+
+        // Install a flex counter for this queue to track stats
+        std::unordered_set<string> counter_stats;
+        for (const auto& it: queue_stat_ids)
+        {
+            counter_stats.emplace(sai_serialize_queue_stat(it));
+        }
+        queue_stat_manager.clearCounterIdList(port.m_queue_ids[queueIndex]);
+
+        /* add watermark queue counters */
+        string key = getQueueWatermarkFlexCounterTableKey(id);
+
+        m_flexCounterTable->del(key);
+    }
+
+    m_counter_db->hdel(COUNTERS_QUEUE_NAME_MAP, queueVector);
+    m_counter_db->hdel(COUNTERS_QUEUE_PORT_MAP, queuePortVector);
+    m_counter_db->hdel(COUNTERS_QUEUE_INDEX_MAP, queueIndexVector);
+    m_counter_db->hdel(COUNTERS_QUEUE_TYPE_MAP, queueTypeVector);
+
+    CounterCheckOrch::getInstance().removePort(port);
+}
+
 void PortsOrch::generateQueueMapPerPort(const Port& port)
 {
     /* Create the Queue map in the Counter DB */
@@ -5474,6 +5547,41 @@ void PortsOrch::generatePriorityGroupMap()
     }
 
     m_isPriorityGroupMapGenerated = true;
+}
+
+void PortsOrch::removePriorityGroupMapPerPort(const Port& port)
+{
+    /* Create the PG map in the Counter DB */
+    /* Add stat counters to flex_counter */
+    vector<string> pgVector;
+    vector<string> pgPortVector;
+    vector<string> pgIndexVector;
+
+    for (size_t pgIndex = 0; pgIndex < port.m_priority_group_ids.size(); ++pgIndex)
+    {
+        std::ostringstream name;
+        name << port.m_alias << ":" << pgIndex;
+
+        const auto id = sai_serialize_object_id(port.m_priority_group_ids[pgIndex]);
+
+        pgVector.emplace_back(name.str());
+        pgPortVector.emplace_back(id);
+        pgIndexVector.emplace_back(id);
+
+        string key = getPriorityGroupWatermarkFlexCounterTableKey(id);
+
+        m_flexCounterTable->del(key);
+
+        key = getPriorityGroupDropPacketsFlexCounterTableKey(id);
+        /* Add dropped packets counters to flex_counter */
+        m_flexCounterTable->del(key);
+    }
+
+    m_counter_db->hdel(COUNTERS_PG_NAME_MAP, pgVector);
+    m_counter_db->hdel(COUNTERS_PG_PORT_MAP, pgPortVector);
+    m_counter_db->hdel(COUNTERS_PG_INDEX_MAP, pgIndexVector);
+
+    CounterCheckOrch::getInstance().removePort(port);
 }
 
 void PortsOrch::generatePriorityGroupMapPerPort(const Port& port)
@@ -5615,7 +5723,8 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
 
             if (!getPort(id, port))
             {
-                SWSS_LOG_ERROR("Failed to get port object for port id 0x%" PRIx64, id);
+                /* consider changing it to notice */
+                SWSS_LOG_ERROR("Failed to get port object for port id 0x%" PRIx64 " - its ok to ignore this message if this port was just removed", id);
                 continue;
             }
 
@@ -5633,7 +5742,7 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
                     updateDbPortOperSpeed(port, 0);
                 }
             }
-            
+
             /* update m_portList */
             m_portList[port.m_alias] = port;
         }
