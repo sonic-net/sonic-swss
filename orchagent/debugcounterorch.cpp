@@ -48,9 +48,14 @@ void DebugCounterOrch::update(SubjectType type, void *cntx)
 {
     SWSS_LOG_ENTER();
 
-    assert(cntx);
 
     if (type == SUBJECT_TYPE_PORT_CHANGE) {
+
+        if (!cntx) {
+            SWSS_LOG_ERROR("cntx is NULL");
+            return;
+        }
+
         PortUpdate *update = static_cast<PortUpdate *>(cntx);
         Port &port = update->port;
 
@@ -644,11 +649,11 @@ void DebugCounterOrch::addPortDebugCounter(sai_object_id_t port_id)
 
     SWSS_LOG_NOTICE("add debug counter for port 0x%" PRIu64 , port_id);
 
-    for (auto it = debug_counters.begin(); it != debug_counters.end(); it++) {
-        DebugCounter *counter = dynamic_cast<DebugCounter*>(it->second.get());
-        string counter_type = counter->getCounterType();
-        string counter_stat = counter->getDebugCounterSAIStat();
-        CounterType flex_counter_type = getFlexCounterType(counter_type);
+    for (const auto& debug_counter: debug_counters) {
+        DebugCounter *counter = debug_counter.second.get();
+        auto counter_type = counter->getCounterType();
+        auto counter_stat = counter->getDebugCounterSAIStat();
+        auto flex_counter_type = getFlexCounterType(counter_type);
 
         if (flex_counter_type == CounterType::PORT_DEBUG){
             flex_counter_manager.addFlexCounterStat(
@@ -665,12 +670,12 @@ void DebugCounterOrch::removePortDebugCounter(sai_object_id_t port_id)
 
     SWSS_LOG_NOTICE("remove debug counter for port 0x%" PRIu64 , port_id);
 
-    for (auto it = debug_counters.begin(); it != debug_counters.end(); it++) {
-        DebugCounter *counter = dynamic_cast<DebugCounter*>(it->second.get());
+    for (const auto& debug_counter: debug_counters) {
+        DebugCounter *counter = debug_counter.second.get();
 
-        string counter_type = counter->getCounterType();
-        string counter_stat = counter->getDebugCounterSAIStat();
-        CounterType flex_counter_type = getFlexCounterType(counter_type);
+        auto counter_type = counter->getCounterType();
+        auto counter_stat = counter->getDebugCounterSAIStat();
+        auto flex_counter_type = getFlexCounterType(counter_type);
 
         if (flex_counter_type == CounterType::PORT_DEBUG){
             flex_counter_manager.removeFlexCounterStat(

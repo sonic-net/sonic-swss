@@ -5,6 +5,7 @@ from swsscommon import swsscommon
 
 NUMBER_OF_RETRIES         =   10
 CPU_PORT_OID              = "0x0"
+PORT                      = "Ethernet0"
 
 counter_group_meta = {
     'port_counter': {
@@ -62,6 +63,7 @@ counter_group_meta = {
     }
 }
 
+@pytest.mark.usefixtures('dvs_port_manager')
 class TestFlexCounters(object):
 
     def setup_dbs(self, dvs):
@@ -362,84 +364,83 @@ class TestFlexCounters(object):
 
         self.set_flex_counter_group_status(meta_data['key'], meta_data['group_name'], 'disable')
 
-    def remove_port(self, config_db, port):
-        config_db.delete_entry("CABLE_LENGTH|AZURE", "")
-        ethernet0_bufferpg_keys = config_db.get_keys("BUFFER_PG|%s"%port)
-        for key in ethernet0_bufferpg_keys:
-            config_db.delete_entry("BUFFER_PG|Ethernet0|%s"%key, "")
-        ethernet0_bufferqueue_keys = config_db.get_keys("BUFFER_QUEUE|%s"%port)
-        for key in ethernet0_bufferqueue_keys:
-            config_db.delete_entry("BUFFER_QUEUE|Ethernet0|%s"%key, "")
-        config_db.delete_entry("BREAKOUT_CFG|%s"%port, "")
-        config_db.delete_entry("INTERFACE|%s"%port, "")
-        config_db.delete_entry("PORT", port)
-               
     def test_add_remove_ports(self, dvs):
         self.setup_dbs(dvs)
         
         # set flex counter
-        counter_key = counter_type_dict['queue_counter'][0]
-        counter_stat = counter_type_dict['queue_counter'][1]
-        counter_map = counter_type_dict['queue_counter'][2]
-        self.enable_flex_counter_group(counter_key, counter_map)
-        time.sleep(3)
-        
-        # receive Ethernet0 info
-        fvs = self.config_db.get_entry("PORT", "Ethernet0")
+        counter_key = counter_group_meta['queue_counter']['key']
+        counter_stat = counter_group_meta['queue_counter']['group_name']
+        counter_map = counter_group_meta['queue_counter']['name_map']
+        self.set_flex_counter_group_status(counter_key, counter_map)
+
+        # receive port info
+        fvs = self.config_db.get_entry("PORT", PORT)
         assert len(fvs) > 0
         
         # save all the oids of the pg drop counters            
         oid_list = []
-        counters_queue_map = self.counters_db.get_entry("COUNTERS_QUEUE_NAME_MAP","")
+        counters_queue_map = self.counters_db.get_entry("COUNTERS_QUEUE_NAME_MAP", "")
         
-        for i in range(0,100):
-            if 'Ethernet0:%d'%i in counters_queue_map:
-                oid_list.append(counters_queue_map['Ethernet0:%d'%i])
+        i = 0
+        while True:
+            if '%s:%d' % (PORT, i) in counters_queue_map:
+                oid_list.append(counters_queue_map['%s:%d' % (PORT, i)])
+                i += 1 
             else:
                 break
 
         # verify that counters exists on flex counter
-        for oid in oid_list:   
-            fields = self.flex_db.get_entry("FLEX_COUNTER_TABLE", counter_stat + ":%s"%oid)
+        for oid in oid_list: 
+            fields = self.flex_db.get_entry("FLEX_COUNTER_TABLE", counter_stat + ":%s" % oid)
             assert len(fields) == 1
 
-        # remove port Ethernet0
-        self.remove_port(self.config_db, "Ethernet0")
-        time.sleep(3)
-        
+        # get port oid
+        port_oid = self.counters_db.get_entry(PORT_MAP, "")[PORT]
+
+        # remove port and verify that it was removed properly
+        self.dvs_port.remove_port(PORT)
+        dvs.get_asic_db().wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid)
         
         # verify counters were removed from flex counter table
         for oid in oid_list:
-            fields = self.flex_db.get_entry("FLEX_COUNTER_TABLE", counter_stat + ":%s"%oid)
+            fields = self.flex_db.get_entry("FLEX_COUNTER_TABLE", counter_stat + ":%s" % oid)
             assert len(fields) == 0
         
-        # verify that Ethernet0 counter maps were removed
+        # verify that port counter maps were removed
         oid_list = []
-        counters_queue_map = self.counters_db.get_entry("COUNTERS_QUEUE_NAME_MAP","")
+        counters_queue_map = self.counters_db.get_entry("COUNTERS_QUEUE_NAME_MAP", "")
         
-        for i in range(0,100):
-            if 'Ethernet0:%d'%i in counters_queue_map:
-                oid_list.append(counters_queue_map['Ethernet0:%d'%i])
+        i = 0
+        while True:
+            if '%s:%d' % (PORT, i) in counters_queue_map:
+                oid_list.append(counters_queue_map['%s:%d' % (PORT, i)])
+                i += 1 
             else:
                 break
         assert oid_list == []
-        
             
-        # add port Ethernet 0 
-        self.config_db.create_entry("PORT","Ethernet0",fvs)
-        time.sleep(3)
         
-        # verify counter was added
+        # add port and wait until the port is added on asic db
+        num_of_keys_without_port = len(dvs.get_asic_db().get_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT"))
+        
+        self.config_db.create_entry("PORT", PORT, fvs)
+        
+        dvs.get_asic_db().wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT", num_of_keys_without_port + 1)
+        dvs.get_counters_db().wait_for_fields("COUNTERS_QUEUE_NAME_MAP", "", ["%s:0"%(PORT)])
+        
+        # verify queue counters were added
         oid_list = []
-        counters_queue_map = self.counters_db.get_entry("COUNTERS_QUEUE_NAME_MAP","")
+        counters_queue_map = self.counters_db.get_entry("COUNTERS_QUEUE_NAME_MAP", "")
         
-        for i in range(0,100):
-            if 'Ethernet0:%d'%i in counters_queue_map:
-                oid_list.append(counters_queue_map['Ethernet0:%d'%i])
+        while True:
+            if '%s:%d' % (PORT, i) in counters_queue_map:
+                oid_list.append(counters_queue_map['%s:%d' % (PORT, i)])
+                i += 1 
             else:
                 break
+        assert len(oid_list) > 0
 
         # verify that counters exists on flex counter
-        for oid in oid_list:   
-            fields = self.flex_db.get_entry("FLEX_COUNTER_TABLE", counter_stat + ":%s"%oid)
+        for oid in oid_list: 
+            fields = self.flex_db.get_entry("FLEX_COUNTER_TABLE", counter_stat + ":%s" % oid)
             assert len(fields) == 1

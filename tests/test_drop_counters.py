@@ -12,7 +12,7 @@ SWITCH_EGRESS_DROPS = 'SWITCH_EGRESS_DROPS'
 
 # Debug Counter Table
 DEBUG_COUNTER_TABLE = 'DEBUG_COUNTER'
-DROP_REASON_TABLE =   'DEBUG_COUNTER_DROP_REASON'
+DROP_REASON_TABLE = 'DEBUG_COUNTER_DROP_REASON'
 
 # Debug Counter Capability Table
 CAPABILITIES_TABLE = 'DEBUG_COUNTER_CAPABILITIES'
@@ -55,16 +55,22 @@ ASIC_COUNTER_SWITCH_OUT_TYPE = 'SAI_DEBUG_COUNTER_TYPE_SWITCH_OUT_DROP_REASONS'
 EXPECTED_ASIC_FIELDS = [ASIC_COUNTER_TYPE_FIELD, ASIC_COUNTER_INGRESS_REASON_LIST_FIELD, ASIC_COUNTER_EGRESS_REASON_LIST_FIELD]
 EXPECTED_NUM_ASIC_FIELDS = 2
 
+# port to be add and removed
+PORT = "Ethernet0"
+PORT_TABLE_NAME = "PORT"
 
+@pytest.mark.usefixtures('dvs_port_manager')
 # FIXME: It is really annoying to have to re-run tests due to inconsistent timing, should
 # implement some sort of polling interface for checking ASIC/flex counter tables after
 # applying changes to config DB
 class TestDropCounters(object):
+
     def setup_db(self, dvs):
         self.asic_db = swsscommon.DBConnector(1, dvs.redis_sock, 0)
         self.config_db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
         self.flex_db = swsscommon.DBConnector(5, dvs.redis_sock, 0)
         self.state_db = swsscommon.DBConnector(6, dvs.redis_sock, 0)
+        self.counters_db = swsscommon.DBConnector(2, dvs.redis_sock, 0)
 
     def genericGetAndAssert(self, table, key):
         status, fields = table.get(key)
@@ -157,30 +163,30 @@ class TestDropCounters(object):
             correct values.
         """
         self.setup_db(dvs)
-
+  
         # Check that the capabilities table 1) exists and 2) has been populated
         # for each type of counter
         capabilities_table = swsscommon.Table(self.state_db, CAPABILITIES_TABLE)
         counter_types = capabilities_table.getKeys()
         assert len(counter_types) == len(SUPPORTED_COUNTER_TYPES)
-
+  
         # Check that the data for each counter type is consistent
         for counter_type in SUPPORTED_COUNTER_TYPES:
             assert counter_type in counter_types
-
+  
             # By definiton, each capability entry should contain exactly the same fields
             counter_capabilities = self.genericGetAndAssert(capabilities_table, counter_type)
             assert len(counter_capabilities) == len(SUPPORTED_COUNTER_CAPABILITIES)
-
+  
             # Check that the values of each field actually match the
             # capabilities currently defined in the virtual switch
             for capability in counter_capabilities:
                 assert len(capability) == 2
                 capability_name = capability[0]
                 capability_contents = capability[1]
-
+  
                 assert capability_name in SUPPORTED_COUNTER_CAPABILITIES
-
+  
                 if capability_name == CAP_COUNT:
                     assert int(capability_contents) == 3
                 elif capability_name == CAP_REASONS and counter_type in INGRESS_COUNTER_TYPES:
@@ -189,7 +195,7 @@ class TestDropCounters(object):
                     assert len(capability_contents.split(',')) == 2
                 else:
                     assert False
-
+  
     def test_flexCounterGroupInitialized(self, dvs, testlog):
         """
             This test verifies that DebugCounterOrch has succesfully
@@ -197,51 +203,51 @@ class TestDropCounters(object):
         """
         self.setup_db(dvs)
         self.checkFlexCounterGroup()
-
+   
     def test_createAndRemoveDropCounterBasic(self, dvs, testlog):
         """
             This test verifies that a drop counter can succesfully be
             created and deleted.
         """
         self.setup_db(dvs)
-
+   
         asic_state_table = swsscommon.Table(self.asic_db, ASIC_STATE_TABLE)
         flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
-
+   
         name = 'TEST'
         reason = 'L3_ANY'
-
+   
         self.create_drop_counter(name, PORT_INGRESS_DROPS)
-
+   
         # Because no reasons have been added to the counter yet, nothing should
         # be put in ASIC DB and the flex counters should not start polling yet.
         assert len(asic_state_table.getKeys()) == 0
         assert len(flex_counter_table.getKeys()) == 0
-
+   
         self.add_drop_reason(name, reason)
         time.sleep(3)
-
+   
         # Verify that the flex counters have been created to poll the new
         # counter.
         self.checkFlexState([PORT_STAT_BASE], PORT_DEBUG_COUNTER_LIST)
-
+   
         # Verify that the drop counter has been added to ASIC DB with the
         # correct reason added.
         asic_keys = asic_state_table.getKeys()
         assert len(asic_keys) == 1
         assert self.checkASICState(asic_keys[0], ASIC_COUNTER_PORT_IN_TYPE, [reason])
-
+   
         self.delete_drop_counter(name)
         time.sleep(3)
-
+   
         # Verify that the counter has been removed from ASIC DB and the flex
         # counters have been torn down.
         assert len(asic_state_table.getKeys()) == 0
         assert len(flex_counter_table.getKeys()) == 0
-
+   
         # Cleanup for the next test.
         self.remove_drop_reason(name, reason)
-
+   
     def test_createAndRemoveDropCounterReversed(self, dvs, testlog):
         """
             This test verifies that a drop counter can succesfully be created
@@ -249,436 +255,436 @@ class TestDropCounters(object):
             created.
         """
         self.setup_db(dvs)
-
+   
         asic_state_table = swsscommon.Table(self.asic_db, ASIC_STATE_TABLE)
         flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
-
+   
         name = 'TEST'
         reason = 'L3_ANY'
-
+   
         self.add_drop_reason(name, reason)
-
+   
         # Because the actual counter has not been created yet, nothing should
         # be put in ASIC DB and the flex counters should not start polling yet.
         assert len(asic_state_table.getKeys()) == 0
         assert len(flex_counter_table.getKeys()) == 0
-
+   
         self.create_drop_counter(name, PORT_INGRESS_DROPS)
         time.sleep(3)
-
+   
         # Verify that the flex counters have been created to poll the new
         # counter.
         self.checkFlexState([PORT_STAT_BASE], PORT_DEBUG_COUNTER_LIST)
-
+   
         # Verify that the drop counter has been added to ASIC DB with the
         # correct reason added.
         asic_keys = asic_state_table.getKeys()
         assert len(asic_keys) == 1
         assert self.checkASICState(asic_keys[0], ASIC_COUNTER_PORT_IN_TYPE, [reason])
-
+   
         self.delete_drop_counter(name)
         time.sleep(3)
-
+   
         # Verify that the counter has been removed from ASIC DB and the flex
         # counters have been torn down.
         assert len(asic_state_table.getKeys()) == 0
         assert len(flex_counter_table.getKeys()) == 0
-
+   
         # Cleanup for the next test.
         self.remove_drop_reason(name, reason)
-
+   
     def test_createCounterWithInvalidCounterType(self, dvs, testlog):
         """
             This test verifies that the state of the system is unaffected
             when an invalid counter type is passed to CONFIG DB.
         """
         self.setup_db(dvs)
-
+   
         asic_state_table = swsscommon.Table(self.asic_db, ASIC_STATE_TABLE)
         flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
-
+   
         name = 'BAD_CTR'
         reason = 'L3_ANY'
-
+   
         self.create_drop_counter(name, 'THIS_IS_DEFINITELY_NOT_A_VALID_COUNTER_TYPE')
         self.add_drop_reason(name, reason)
         time.sleep(3)
-
+   
         # Verify that nothing has been added to ASIC DB and no flex counters
         # were created.
         assert len(asic_state_table.getKeys()) == 0
         assert len(flex_counter_table.getKeys()) == 0
-
+   
         # Cleanup for the next test.
         self.delete_drop_counter(name)
         self.remove_drop_reason(name, reason)
-
+   
     def test_createCounterWithInvalidDropReason(self, dvs, testlog):
         """
             This test verifies that the state of the system is unaffected
             when an invalid drop reason is passed to CONFIG DB.
         """
         self.setup_db(dvs)
-
+   
         asic_state_table = swsscommon.Table(self.asic_db, ASIC_STATE_TABLE)
         flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
-
+   
         name = 'BAD_CTR'
         reason = 'THIS_IS_DEFINITELY_NOT_A_VALID_DROP_REASON'
-
+   
         self.create_drop_counter(name, SWITCH_INGRESS_DROPS)
         self.add_drop_reason(name, reason)
         time.sleep(3)
-
+   
         # Verify that nothing has been added to ASIC DB and no flex counters
         # were created.
         assert len(asic_state_table.getKeys()) == 0
         assert len(flex_counter_table.getKeys()) == 0
-
+   
         # Cleanup for the next test.
         self.delete_drop_counter(name)
         self.remove_drop_reason(name, reason)
-
+   
     def test_addReasonToInitializedCounter(self, dvs, testlog):
         """
             This test verifies that a drop reason can be added to a counter
             that has already been initialized.
         """
         self.setup_db(dvs)
-
+   
         asic_state_table = swsscommon.Table(self.asic_db, ASIC_STATE_TABLE)
         flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
-
+   
         name = 'ADD_TEST'
         reason1 = 'L3_ANY'
-
+   
         self.create_drop_counter(name, SWITCH_INGRESS_DROPS)
         self.add_drop_reason(name, reason1)
         time.sleep(3)
-
+   
         # Verify that a counter has been created. We will verify the state of
         # the counter in the next step.
         assert len(asic_state_table.getKeys()) == 1
         self.checkFlexState([SWITCH_STAT_BASE], SWITCH_DEBUG_COUNTER_LIST)
-
+   
         reason2 = 'ACL_ANY'
         self.add_drop_reason(name, reason2)
         time.sleep(3)
-
+   
         # Verify that the drop counter has been added to ASIC DB, including the
         # reason that was added.
         asic_keys = asic_state_table.getKeys()
         assert len(asic_keys) == 1
         assert self.checkASICState(asic_keys[0], ASIC_COUNTER_SWITCH_IN_TYPE, [reason1, reason2])
-
+   
         # Cleanup for the next test.
         self.delete_drop_counter(name)
         self.remove_drop_reason(name, reason1)
         self.remove_drop_reason(name, reason2)
-
+   
     def test_removeReasonFromInitializedCounter(self, dvs, testlog):
         """
             This test verifies that a drop reason can be removed from a counter
             that has already been initialized without deleting the counter.
         """
         self.setup_db(dvs)
-
+   
         asic_state_table = swsscommon.Table(self.asic_db, ASIC_STATE_TABLE)
         flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
-
+   
         name = 'ADD_TEST'
         reason1 = 'L3_ANY'
         reason2 = 'ACL_ANY'
-
+   
         self.create_drop_counter(name, SWITCH_INGRESS_DROPS)
         self.add_drop_reason(name, reason1)
         self.add_drop_reason(name, reason2)
         time.sleep(3)
-
+   
         # Verify that a counter has been created. We will verify the state of
         # the counter in the next step.
         assert len(asic_state_table.getKeys()) == 1
         self.checkFlexState([SWITCH_STAT_BASE], SWITCH_DEBUG_COUNTER_LIST)
-
+   
         self.remove_drop_reason(name, reason2)
         time.sleep(3)
-
+   
         # Verify that the drop counter has been added to ASIC DB, excluding the
         # reason that was removed.
         asic_keys = asic_state_table.getKeys()
         assert len(asic_keys) == 1
         assert self.checkASICState(asic_keys[0], ASIC_COUNTER_SWITCH_IN_TYPE, [reason1])
-
+   
         # Cleanup for the next test.
         self.delete_drop_counter(name)
         self.remove_drop_reason(name, reason1)
-
+   
     def test_removeAllDropReasons(self, dvs, testlog):
         """
             This test verifies that it is not possible to remove all drop
             reasons from a drop counter.
         """
         self.setup_db(dvs)
-
+   
         asic_state_table = swsscommon.Table(self.asic_db, ASIC_STATE_TABLE)
         flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
-
+   
         name = 'ADD_TEST'
         reason1 = 'L3_ANY'
-
+   
         self.create_drop_counter(name, SWITCH_INGRESS_DROPS)
         self.add_drop_reason(name, reason1)
         time.sleep(3)
-
+   
         # Verify that a counter has been created. We will verify the state of
         # the counter in the next step.
         assert len(asic_state_table.getKeys()) == 1
         self.checkFlexState([SWITCH_STAT_BASE], SWITCH_DEBUG_COUNTER_LIST)
-
+   
         self.remove_drop_reason(name, reason1)
         time.sleep(3)
-
+   
         # Verify that the drop counter has been added to ASIC DB, including the
         # last reason that we attempted to remove.
         asic_keys = asic_state_table.getKeys()
         assert len(asic_keys) == 1
         assert self.checkASICState(asic_keys[0], ASIC_COUNTER_SWITCH_IN_TYPE, [reason1])
-
+   
         # Cleanup for the next test.
         self.delete_drop_counter(name)
-
+   
     def test_addDropReasonMultipleTimes(self, dvs, testlog):
         """
             This test verifies that the same drop reason can be added multiple
             times without affecting the system.
         """
         self.setup_db(dvs)
-
+   
         asic_state_table = swsscommon.Table(self.asic_db, ASIC_STATE_TABLE)
         flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
-
+   
         name = 'ADD_TEST'
         reason1 = 'L3_ANY'
-
+   
         self.create_drop_counter(name, SWITCH_INGRESS_DROPS)
         self.add_drop_reason(name, reason1)
         time.sleep(3)
-
+   
         # Verify that a counter has been created. We will verify the state of
         # the counter in the next step.
         assert len(asic_state_table.getKeys()) == 1
         self.checkFlexState([SWITCH_STAT_BASE], SWITCH_DEBUG_COUNTER_LIST)
-
+   
         reason2 = 'ACL_ANY'
         self.add_drop_reason(name, reason2)
         time.sleep(3)
-
+   
         # Verify that the drop counter has been added to ASIC DB, including the
         # reason that was added.
         asic_keys = asic_state_table.getKeys()
         assert len(asic_keys) == 1
         assert self.checkASICState(asic_keys[0], ASIC_COUNTER_SWITCH_IN_TYPE, [reason1, reason2])
-
+   
         self.add_drop_reason(name, reason2)
         time.sleep(3)
-
+   
         # Verify that the ASIC state is the same as before adding the redundant
         # drop reason.
         asic_keys = asic_state_table.getKeys()
         assert len(asic_keys) == 1
         assert self.checkASICState(asic_keys[0], ASIC_COUNTER_SWITCH_IN_TYPE, [reason1, reason2])
-
+   
         # Cleanup for the next test.
         self.delete_drop_counter(name)
         self.remove_drop_reason(name, reason1)
         self.remove_drop_reason(name, reason2)
-
+   
     def test_addInvalidDropReason(self, dvs, testlog):
         """
             This test verifies that adding a drop reason to a counter that is
             not recognized will not affect the system.
         """
         self.setup_db(dvs)
-
+   
         asic_state_table = swsscommon.Table(self.asic_db, ASIC_STATE_TABLE)
         flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
-
+   
         name = 'ADD_TEST'
         reason1 = 'L3_ANY'
-
+   
         self.create_drop_counter(name, SWITCH_INGRESS_DROPS)
         self.add_drop_reason(name, reason1)
         time.sleep(3)
-
+   
         # Verify that a counter has been created. We will verify the state of
         # the counter in the next step.
         assert len(asic_state_table.getKeys()) == 1
         self.checkFlexState([SWITCH_STAT_BASE], SWITCH_DEBUG_COUNTER_LIST)
-
+   
         reason2 = 'ACL_ANY'
         self.add_drop_reason(name, reason2)
         time.sleep(3)
-
+   
         # Verify that the drop counter has been added to ASIC DB, including the
         # reason that was added.
         asic_keys = asic_state_table.getKeys()
         assert len(asic_keys) == 1
         assert self.checkASICState(asic_keys[0], ASIC_COUNTER_SWITCH_IN_TYPE, [reason1, reason2])
-
+   
         dummy_reason = 'ZOBOOMBAFOO'
         self.add_drop_reason(name, dummy_reason)
         time.sleep(3)
-
+   
         # Verify that the ASIC state is the same as before adding the invalid
         # drop reason.
         asic_keys = asic_state_table.getKeys()
         assert len(asic_keys) == 1
         assert self.checkASICState(asic_keys[0], ASIC_COUNTER_SWITCH_IN_TYPE, [reason1, reason2])
-
+   
         # Cleanup for the next test.
         self.delete_drop_counter(name)
         self.remove_drop_reason(name, reason1)
         self.remove_drop_reason(name, reason2)
-
+   
     def test_removeDropReasonMultipleTimes(self, dvs, testlog):
         """
             This test verifies that removing a drop reason multiple times will
             not affect the system.
         """
         self.setup_db(dvs)
-
+   
         asic_state_table = swsscommon.Table(self.asic_db, ASIC_STATE_TABLE)
         flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
-
+   
         name = 'ADD_TEST'
         reason1 = 'L3_ANY'
         reason2 = 'ACL_ANY'
-
+   
         self.create_drop_counter(name, SWITCH_INGRESS_DROPS)
         self.add_drop_reason(name, reason1)
         self.add_drop_reason(name, reason2)
         time.sleep(3)
-
+   
         # Verify that a counter has been created. We will verify the state of
         # the counter in the next step.
         assert len(asic_state_table.getKeys()) == 1
         self.checkFlexState([SWITCH_STAT_BASE], SWITCH_DEBUG_COUNTER_LIST)
-
+   
         self.remove_drop_reason(name, reason2)
         time.sleep(3)
-
+   
         # Verify that the drop counter has been added to ASIC DB, excluding the
         # reason that was removed.
         asic_keys = asic_state_table.getKeys()
         assert len(asic_keys) == 1
         assert self.checkASICState(asic_keys[0], ASIC_COUNTER_SWITCH_IN_TYPE, [reason1])
-
+   
         self.remove_drop_reason(name, reason2)
         time.sleep(3)
-
+   
         # Verify that the ASIC state is the same as before the redundant
         # remove operation.
         asic_keys = asic_state_table.getKeys()
         assert len(asic_keys) == 1
         assert self.checkASICState(asic_keys[0], ASIC_COUNTER_SWITCH_IN_TYPE, [reason1])
-
+   
         # Cleanup for the next test.
         self.delete_drop_counter(name)
         self.remove_drop_reason(name, reason1)
-
+   
     def test_removeNonexistentDropReason(self, dvs, testlog):
         """
             This test verifies that removing a drop reason that does not exist
             on the device will not affect the system.
         """
         self.setup_db(dvs)
-
+   
         asic_state_table = swsscommon.Table(self.asic_db, ASIC_STATE_TABLE)
         flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
-
+   
         name = 'ADD_TEST'
         reason1 = 'L3_ANY'
         reason2 = 'ACL_ANY'
-
+   
         self.create_drop_counter(name, SWITCH_INGRESS_DROPS)
         self.add_drop_reason(name, reason1)
         time.sleep(3)
-
+   
         # Verify the counter has been created and is in the correct state.
         asic_keys = asic_state_table.getKeys()
         assert len(asic_keys) == 1
         assert self.checkASICState(asic_keys[0], ASIC_COUNTER_SWITCH_IN_TYPE, [reason1])
-
+   
         self.remove_drop_reason(name, reason2)
         time.sleep(3)
-
+   
         # Verify that the ASIC state is unchanged after the nonexistent remove.
         asic_keys = asic_state_table.getKeys()
         assert len(asic_keys) == 1
         assert self.checkASICState(asic_keys[0], ASIC_COUNTER_SWITCH_IN_TYPE, [reason1])
-
+   
         # Cleanup for the next test.
         self.delete_drop_counter(name)
         self.remove_drop_reason(name, reason1)
-
+   
     def test_removeInvalidDropReason(self, dvs, testlog):
         """
             This test verifies that removing a drop reason that is not recognized
             will not affect the system.
         """
         self.setup_db(dvs)
-
+   
         asic_state_table = swsscommon.Table(self.asic_db, ASIC_STATE_TABLE)
         flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
-
+   
         name = 'ADD_TEST'
         reason1 = 'L3_ANY'
         bogus_reason = 'LIVE_LAUGH_LOVE'
-
+   
         self.create_drop_counter(name, SWITCH_INGRESS_DROPS)
         self.add_drop_reason(name, reason1)
         time.sleep(3)
-
+   
         # Verify the counter has been created and is in the correct state.
         asic_keys = asic_state_table.getKeys()
         assert len(asic_keys) == 1
         assert self.checkASICState(asic_keys[0], ASIC_COUNTER_SWITCH_IN_TYPE, [reason1])
-
+   
         self.remove_drop_reason(name, bogus_reason)
         time.sleep(3)
-
+   
         # Verify that the ASIC state is unchanged after the bad remove.
         asic_keys = asic_state_table.getKeys()
         assert len(asic_keys) == 1
         assert self.checkASICState(asic_keys[0], ASIC_COUNTER_SWITCH_IN_TYPE, [reason1])
-
+   
         # Cleanup for the next test.
         self.delete_drop_counter(name)
         self.remove_drop_reason(name, reason1)
-        
+    
     def getPortOid(self, dvs, port_name):
-        cnt_r = redis.Redis(unix_socket_path=dvs.redis_sock, db=swsscommon.COUNTERS_DB,
-                            encoding="utf-8", decode_responses=True)
-        return cnt_r.hget("COUNTERS_PORT_NAME_MAP", port_name);
+        port_name_map = swsscommon.Table(self.counters_db, "COUNTERS_PORT_NAME_MAP")
+        status, returned_value = port_name_map.hget("", port_name);
+        assert status == True
+        return returned_value
     
     def test_add_remove_port(self, dvs, testlog):
-         
         """
             This test verifies that debug counters are removed when we remove a port 
             and debug counters are added each time we add ports (if debug counter is enabled)
         """
         self.setup_db(dvs)
          
-        # save ethernet0 info
+        # save port info
         cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        tbl = swsscommon.Table(cdb, "PORT")
-        (status, fvs) = tbl.get("Ethernet0")      
+        tbl = swsscommon.Table(cdb, PORT_TABLE_NAME)
+        (status, fvs) = tbl.get(PORT)      
         assert status == True
  
         # get counter oid
-        oid = self.getPortOid(dvs, "Ethernet0")
+        oid = self.getPortOid(dvs, PORT)
 
-        # verifies debug coutner dont exist for ethernet0
+        # verifies debug coutner dont exist for port
         flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
         status, fields = flex_counter_table.get(oid)
         assert len(fields) == 0
@@ -686,47 +692,38 @@ class TestDropCounters(object):
         # add debug counters
         name1 = 'DEBUG_0'
         reason1 = 'L3_ANY'
- 
         name2 = 'DEBUG_1'
         reason2 = 'L2_ANY'
- 
+        
         self.create_drop_counter(name1, PORT_INGRESS_DROPS)
         self.add_drop_reason(name1, reason1)
-  
+        
         self.create_drop_counter(name2, PORT_EGRESS_DROPS)
         self.add_drop_reason(name2, reason2)
-         
-        time.sleep(5)
+        time.sleep(3)
  
-        # verifies debug coutner exist for ethernet0
+        # verifies debug counter exist for port
         flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
         status, fields = flex_counter_table.get(oid)
         assert status == True
         assert len(fields) == 1
          
-        # remove Ethernet0 port
-        cdb.hdel("CABLE_LENGTH|AZURE", "Ethernet0")
-        ethernet0_bufferpg_keys = cdb.keys("BUFFER_PG|Ethernet0|*")
-        for key in ethernet0_bufferpg_keys:
-            cdb._del(key)
-        ethernet0_bufferqueue_keys = cdb.keys("BUFFER_QUEUE|Ethernet0|*")
-        for key in ethernet0_bufferqueue_keys:
-            cdb._del(key)
-        cdb._del("BREAKOUT_CFG|Ethernet0")
-        tbl._del("Ethernet0")
-        time.sleep(5)
-        
+        # remove port and wait until it was removed from ASIC DB
+        self.dvs_port.remove_port(PORT)
+        dvs.get_asic_db().wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_PORT", oid)
+
         # verify that debug counter were removed
         status, fields = flex_counter_table.get(oid)
         assert len(fields) == 0
  
-        # add Ethernet0
-        tbl.set("Ethernet0", fvs)
-        time.sleep(5)
-         
-        # verifies that debug counters were added for ethernet0
-        oid = self.getPortOid(dvs, "Ethernet0")
-         
+        # add port and wait until the port is added on asic db
+        num_of_keys_without_port = len(dvs.get_asic_db().get_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT"))
+        tbl.set(PORT, fvs)
+        dvs.get_asic_db().wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT", num_of_keys_without_port + 1)
+        dvs.get_counters_db().wait_for_fields("COUNTERS_PORT_NAME_MAP", "", [PORT])
+        
+        # verifies that debug counters were added for port
+        oid = self.getPortOid(dvs, PORT)
         status, fields = flex_counter_table.get(oid)
         assert status == True
         assert len(fields) == 1
@@ -737,7 +734,6 @@ class TestDropCounters(object):
         
         self.delete_drop_counter(name2)
         self.remove_drop_reason(name2, reason2)
-        
 
     def test_createAndDeleteMultipleCounters(self, dvs, testlog):
         """
@@ -745,47 +741,47 @@ class TestDropCounters(object):
             at the same time works correctly.
         """
         self.setup_db(dvs)
-
+ 
         asic_state_table = swsscommon.Table(self.asic_db, ASIC_STATE_TABLE)
         flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
-
+ 
         name1 = 'DEBUG_0'
         reason1 = 'L3_ANY'
-
+ 
         name2 = 'DEBUG_1'
         reason2 = 'ACL_ANY'
-
+ 
         self.create_drop_counter(name1, PORT_INGRESS_DROPS)
         self.add_drop_reason(name1, reason1)
-
+ 
         self.create_drop_counter(name2, PORT_INGRESS_DROPS)
         self.add_drop_reason(name2, reason2)
-
+ 
         time.sleep(5)
-
+ 
         # Verify that the flex counters are correctly tracking two different
         # drop counters.
         self.checkFlexState([PORT_STAT_BASE, PORT_STAT_INDEX_1], PORT_DEBUG_COUNTER_LIST)
-
+ 
         # Verify that there are two entries in the ASIC DB, one for each counter.
         asic_keys = asic_state_table.getKeys()
         assert len(asic_keys) == 2
         for key in asic_keys:
             assert (self.checkASICState(key, ASIC_COUNTER_PORT_IN_TYPE, [reason1]) or self.checkASICState(key, ASIC_COUNTER_PORT_IN_TYPE, [reason2]))
-
+ 
         self.delete_drop_counter(name2)
         self.remove_drop_reason(name2, reason2)
         time.sleep(3)
-
+ 
         # Verify that the flex counters are tracking ONE drop counter after
         # the update.
         self.checkFlexState([PORT_STAT_BASE], PORT_DEBUG_COUNTER_LIST)
-
+ 
         # Verify that there is ONE entry in the ASIC DB after the update.
         asic_keys = asic_state_table.getKeys()
         assert len(asic_keys) == 1
         assert self.checkASICState(asic_keys[0], ASIC_COUNTER_PORT_IN_TYPE, [reason1])
-
+ 
         # Cleanup for the next test.
         self.delete_drop_counter(name1)
         self.remove_drop_reason(name1, reason1)

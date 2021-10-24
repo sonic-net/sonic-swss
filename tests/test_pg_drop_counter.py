@@ -9,6 +9,8 @@ from swsscommon import swsscommon
 
 pg_drop_attr = "SAI_INGRESS_PRIORITY_GROUP_STAT_DROPPED_PACKETS"
 
+PORT = "Ethernet0"
+@pytest.mark.usefixtures('dvs_port_manager')
 class TestPGDropCounter(object):
     DEFAULT_POLL_INTERVAL = 10
     pgs = {}
@@ -73,18 +75,6 @@ class TestPGDropCounter(object):
 
         self.config_db.delete_entry("FLEX_COUNTER_TABLE", "PG_DROP")
         self.config_db.delete_entry("FLEX_COUNTER_TABLE", "PG_WATERMARK")
-
-    def remove_port(self, config_db, port):
-        config_db.hdel("CABLE_LENGTH|AZURE", port)
-        ethernet0_bufferpg_keys = config_db.keys("BUFFER_PG|%s|*"%port)
-        for key in ethernet0_bufferpg_keys:
-            config_db._del(key)
-        ethernet0_bufferqueue_keys = config_db.keys("BUFFER_QUEUE|%s|*"%port)
-        for key in ethernet0_bufferqueue_keys:
-            config_db._del(key)
-        config_db._del("BREAKOUT_CFG|%s"%port)
-        port_table = swsscommon.Table(config_db, "PORT")
-        port_table._del(port)
         
     def test_pg_drop_counters(self, dvs):
         self.setup_dbs(dvs)
@@ -113,43 +103,38 @@ class TestPGDropCounter(object):
         try:
             # configure pg drop flex counter
             self.set_up_flex_counter()
-            time.sleep(5)
 
             # receive Ethernet0 info
-            config_db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-            port_table = swsscommon.Table(config_db, "PORT")
-            (status, fvs) = port_table.get("Ethernet0")      
-            assert status == True
-              
-              
+            fvs = self.config_db.get_entry("PORT", PORT)
+            assert len(fvs) > 0
+        
             # save all the oids of the pg drop counters            
-            cnt_r = redis.Redis(unix_socket_path=dvs.redis_sock, db=swsscommon.COUNTERS_DB,
-                    encoding="utf-8", decode_responses=True)
-              
             oid_list = []
             for priority in range(0,7):
-                oid_list.append(cnt_r.hget("COUNTERS_PG_NAME_MAP", "Ethernet0:%d"%priority))
-      
+                oid_list.append(dvs.get_counters_db().get_entry("COUNTERS_PG_NAME_MAP", "")["%s:%d"%(PORT, priority)])
                 # verify that counters exists on flex counter
                 fields = self.flex_db.get_entry("FLEX_COUNTER_TABLE", "PG_WATERMARK_STAT_COUNTER:%s"%oid_list[-1])
                 assert len(fields) == 1
 
-            # remove port Ethernet0
-            self.remove_port(config_db, "Ethernet0")
-            time.sleep(3)
-              
+            # remove port
+            port_oid = self.counters_db.get_entry("COUNTERS_PORT_NAME_MAP", "")["Ethernet0"]
+            self.dvs_port.remove_port(PORT)
+            dvs.get_asic_db().wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid)
+        
             # verify counters were removed from flex counter table
             for oid in oid_list:
                 fields = self.flex_db.get_entry("FLEX_COUNTER_TABLE", "PG_WATERMARK_STAT_COUNTER:%s"%oid)
                 assert len(fields) == 0
               
-            # add port Ethernet 0 
-            port_table.set("Ethernet0", fvs)
-            time.sleep(3)
+            # add port and wait until the port is added on asic db
+            num_of_keys_without_port = len(dvs.get_asic_db().get_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT"))
+            self.config_db.create_entry("PORT", PORT, fvs)
+            dvs.get_asic_db().wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT", num_of_keys_without_port + 1)
+            dvs.get_counters_db().wait_for_fields("COUNTERS_PG_NAME_MAP", "", ["%s:0"%(PORT)])
             
             # verify counter was added
             for priority in range(0,7):
-                oid = cnt_r.hget("COUNTERS_PG_NAME_MAP", "Ethernet0:%d"%priority)
+                oid = dvs.get_counters_db().get_entry("COUNTERS_PG_NAME_MAP", "")["%s:%d"%(PORT, priority)]
       
                 # verify that counters exists on flex counter
                 fields = self.flex_db.get_entry("FLEX_COUNTER_TABLE", "PG_WATERMARK_STAT_COUNTER:%s"%oid)

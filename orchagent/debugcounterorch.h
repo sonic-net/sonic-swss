@@ -18,11 +18,11 @@ extern "C" {
 
 #define DEBUG_COUNTER_FLEX_COUNTER_GROUP "DEBUG_COUNTER"
 
-typedef std::unordered_map<std::string, std::unique_ptr<DebugCounter>> DebugCounterMap;
+using DebugCounterMap = std::unordered_map<std::string, std::unique_ptr<DebugCounter>>;
 
 // DebugCounterOrch is an orchestrator for managing debug counters. It handles
 // the creation, deletion, and modification of debug counters.
-class DebugCounterOrch: public Orch, public Subject, public Observer
+class DebugCounterOrch: public Orch, public Observer
 {
 public:
     DebugCounterOrch(swss::DBConnector *db, const std::vector<std::string>& table_names, int poll_interval);

@@ -2378,17 +2378,15 @@ bool PortsOrch::initPort(const string &alias, const string &role, const int inde
                     port_buffer_drop_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, port_buffer_drop_stats);
                 }
 
-                /* add pg counters */
+                /* when a port is added and priority group map counter is enabled --> we need to add pg counter for it */
                 if (m_isPriorityGroupMapGenerated) {
                     generatePriorityGroupMapPerPort(p);
                 }
 
-                /* add queue port counters */
+                /* when a port is added and queue map counter is enabled --> we need to add queue map counter for it */
                 if (m_isQueueMapGenerated) {
                     generateQueueMapPerPort(p);
                 }
-
-                /* debug counters will be added during the SUBJECT_TYPE_PORT_CHANGE notify */
 
                 PortUpdate update = { p, true };
                 notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
@@ -3330,6 +3328,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 {
                     throw runtime_error("Remove hostif for the port failed");
                 }
+
                 Port p;
                 if (getPort(port_id, p))
                 {
@@ -5424,8 +5423,7 @@ void PortsOrch::generateQueueMap()
 
 void PortsOrch::removeQueueMapPerPort(const Port& port)
 {
-    /* Create the Queue map in the Counter DB */
-    /* Add stat counters to flex_counter */
+    /* Remove the Queue map in the Counter DB */
     vector<string> queueVector;
     vector<string> queuePortVector;
     vector<string> queueIndexVector;
@@ -5448,8 +5446,17 @@ void PortsOrch::removeQueueMapPerPort(const Port& port)
             queueTypeVector.emplace_back(id);
             queueIndexVector.emplace_back(id);
         }
+    }
 
-        // Install a flex counter for this queue to track stats
+    m_counter_db->hdel(COUNTERS_QUEUE_NAME_MAP, queueVector);
+    m_counter_db->hdel(COUNTERS_QUEUE_PORT_MAP, queuePortVector);
+    m_counter_db->hdel(COUNTERS_QUEUE_INDEX_MAP, queueIndexVector);
+    m_counter_db->hdel(COUNTERS_QUEUE_TYPE_MAP, queueTypeVector);
+
+    for (size_t queueIndex = 0; queueIndex < port.m_queue_ids.size(); ++queueIndex)
+    {
+        const auto id = sai_serialize_object_id(port.m_queue_ids[queueIndex]);
+
         std::unordered_set<string> counter_stats;
         for (const auto& it: queue_stat_ids)
         {
@@ -5457,16 +5464,11 @@ void PortsOrch::removeQueueMapPerPort(const Port& port)
         }
         queue_stat_manager.clearCounterIdList(port.m_queue_ids[queueIndex]);
 
-        /* add watermark queue counters */
+        /* remove watermark queue counters */
         string key = getQueueWatermarkFlexCounterTableKey(id);
 
         m_flexCounterTable->del(key);
     }
-
-    m_counter_db->hdel(COUNTERS_QUEUE_NAME_MAP, queueVector);
-    m_counter_db->hdel(COUNTERS_QUEUE_PORT_MAP, queuePortVector);
-    m_counter_db->hdel(COUNTERS_QUEUE_INDEX_MAP, queueIndexVector);
-    m_counter_db->hdel(COUNTERS_QUEUE_TYPE_MAP, queueTypeVector);
 
     CounterCheckOrch::getInstance().removePort(port);
 }
@@ -5551,8 +5553,7 @@ void PortsOrch::generatePriorityGroupMap()
 
 void PortsOrch::removePriorityGroupMapPerPort(const Port& port)
 {
-    /* Create the PG map in the Counter DB */
-    /* Add stat counters to flex_counter */
+    /* Remove the PG map in the Counter DB */
     vector<string> pgVector;
     vector<string> pgPortVector;
     vector<string> pgIndexVector;
@@ -5567,19 +5568,23 @@ void PortsOrch::removePriorityGroupMapPerPort(const Port& port)
         pgVector.emplace_back(name.str());
         pgPortVector.emplace_back(id);
         pgIndexVector.emplace_back(id);
-
-        string key = getPriorityGroupWatermarkFlexCounterTableKey(id);
-
-        m_flexCounterTable->del(key);
-
-        key = getPriorityGroupDropPacketsFlexCounterTableKey(id);
-        /* Add dropped packets counters to flex_counter */
-        m_flexCounterTable->del(key);
     }
 
     m_counter_db->hdel(COUNTERS_PG_NAME_MAP, pgVector);
     m_counter_db->hdel(COUNTERS_PG_PORT_MAP, pgPortVector);
     m_counter_db->hdel(COUNTERS_PG_INDEX_MAP, pgIndexVector);
+
+    for (size_t pgIndex = 0; pgIndex < port.m_priority_group_ids.size(); ++pgIndex)
+    {
+        const auto id = sai_serialize_object_id(port.m_priority_group_ids[pgIndex]);
+        string key = getPriorityGroupWatermarkFlexCounterTableKey(id);
+
+        m_flexCounterTable->del(key);
+
+        key = getPriorityGroupDropPacketsFlexCounterTableKey(id);
+        /* remove dropped packets counters to flex_counter */
+        m_flexCounterTable->del(key);
+    }
 
     CounterCheckOrch::getInstance().removePort(port);
 }
