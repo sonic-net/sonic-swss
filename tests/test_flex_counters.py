@@ -3,6 +3,7 @@ import pytest
 
 from swsscommon import swsscommon
 
+TUNNEL_TYPE_MAP           =   "COUNTERS_TUNNEL_TYPE_MAP"
 NUMBER_OF_RETRIES         =   10
 CPU_PORT_OID              = "0x0"
 PORT                      = "Ethernet0"
@@ -126,6 +127,15 @@ class TestFlexCounters(object):
     def verify_no_flex_counters_tables(self, counter_stat):
         counters_stat_keys = self.flex_db.get_keys("FLEX_COUNTER_TABLE:" + counter_stat)
         assert len(counters_stat_keys) == 0, "FLEX_COUNTER_TABLE:" + str(counter_stat) + " tables exist before enabling the flex counter group"
+
+    def verify_no_flex_counters_tables_after_delete(self, counter_stat):
+        for retry in range(NUMBER_OF_RETRIES):
+            counters_stat_keys = self.flex_db.get_keys("FLEX_COUNTER_TABLE:" + counter_stat + ":")
+            if len(counters_stat_keys) == 0:
+                return
+            else:
+                time.sleep(1)
+        assert False, "FLEX_COUNTER_TABLE:" + str(counter_stat) + " tables exist after removing the entries"
 
     def verify_flex_counters_populated(self, map, stat):
         counters_keys = self.counters_db.db_connection.hgetall(map)
@@ -364,6 +374,13 @@ class TestFlexCounters(object):
 
         self.set_flex_counter_group_status(meta_data['key'], meta_data['group_name'], 'disable')
 
+        if counter_type == "vxlan_tunnel_counter":
+            self.verify_tunnel_type_vxlan(counter_map, TUNNEL_TYPE_MAP)
+            self.config_db.delete_entry("VLAN","Vlan10")
+            self.config_db.delete_entry("VLAN_TUNNEL","vtep1")
+            self.config_db.delete_entry("VLAN_TUNNEL_MAP","vtep1|map_100_Vlan10")
+            self.verify_no_flex_counters_tables_after_delete(counter_stat)
+            
     def test_add_remove_ports(self, dvs):
         self.setup_dbs(dvs)
         
@@ -382,8 +399,10 @@ class TestFlexCounters(object):
         counters_queue_map = self.counters_db.get_entry("COUNTERS_QUEUE_NAME_MAP", "")
         for key, oid in counters_queue_map.items():
             if PORT in key:
+                oid_list.append(oid)
                 fields = self.flex_db.get_entry("FLEX_COUNTER_TABLE", counter_stat + ":%s" % oid)
                 assert len(fields) == 1
+        oid_list_len = len(oid_list)
 
         # get port oid
         port_oid = self.counters_db.get_entry(PORT_MAP, "")[PORT]
@@ -398,7 +417,6 @@ class TestFlexCounters(object):
             assert len(fields) == 0
         
         # verify that port counter maps were removed from counters db
-        oid_list = []
         counters_queue_map = self.counters_db.get_entry("COUNTERS_QUEUE_NAME_MAP", "")
         for key in counters_queue_map.keys():
             if PORT in key:
@@ -418,5 +436,8 @@ class TestFlexCounters(object):
 
         for key, oid in counters_queue_map.items():
             if PORT in key:
+                oid_list.append(oid)
                 fields = self.flex_db.get_entry("FLEX_COUNTER_TABLE", counter_stat + ":%s" % oid)
                 assert len(fields) == 1
+        # the number of the oids needs to be the same as the original number of oids (before removing a port and adding)
+        assert oid_list_len == len(oid_list)
