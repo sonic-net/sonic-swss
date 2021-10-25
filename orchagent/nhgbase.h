@@ -95,17 +95,17 @@ class NhgMember
 {
 public:
     explicit NhgMember(const Key &key) :
-        m_key(key), m_id(SAI_NULL_OBJECT_ID) { SWSS_LOG_ENTER(); }
+        m_key(key), m_gm_id(SAI_NULL_OBJECT_ID) { SWSS_LOG_ENTER(); }
 
-    NhgMember(NhgMember &&nhgm) : m_key(move(nhgm.m_key)), m_id(nhgm.m_id)
-        { SWSS_LOG_ENTER(); nhgm.m_id = SAI_NULL_OBJECT_ID; }
+    NhgMember(NhgMember &&nhgm) : m_key(move(nhgm.m_key)), m_gm_id(nhgm.m_gm_id)
+        { SWSS_LOG_ENTER(); nhgm.m_gm_id = SAI_NULL_OBJECT_ID; }
 
     NhgMember& operator=(NhgMember &&nhgm)
     {
         SWSS_LOG_ENTER();
 
         swap(m_key, nhgm.m_key);
-        swap(m_id, nhgm.m_id);
+        swap(m_gm_id, nhgm.m_gm_id);
 
         return *this;
     }
@@ -126,7 +126,7 @@ public:
         /* The SAI ID should be updated from invalid to something valid. */
         assert((m_gm_id == SAI_NULL_OBJECT_ID) && (gm_id != SAI_NULL_OBJECT_ID));
 
-        m_id = gm_id;
+        m_gm_id = gm_id;
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
     }
 
@@ -145,7 +145,7 @@ public:
             return;
         }
 
-        m_id = SAI_NULL_OBJECT_ID;
+        m_gm_id = SAI_NULL_OBJECT_ID;
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
     }
 
@@ -153,12 +153,12 @@ public:
      * Getters.
      */
     inline Key getKey() const { return m_key; }
-    inline sai_object_id_t getId() const { return m_id; }
+    inline sai_object_id_t getId() const { return m_gm_id; }
 
     /*
      * Check whether the group is synced.
      */
-    inline bool isSynced() const { return m_id != SAI_NULL_OBJECT_ID; }
+    inline bool isSynced() const { return m_gm_id != SAI_NULL_OBJECT_ID; }
 
     /*
      * Get a string form of the member.
@@ -174,7 +174,7 @@ protected:
     /*
      * The SAI ID of this NHG member.
      */
-    sai_object_id_t m_id;
+    sai_object_id_t m_gm_id;
 };
 
 /*
@@ -390,10 +390,10 @@ struct NhgEntry
 };
 
 /*
- * Class providing the common functionality shared by all NhgHandler classes.
+ * Class providing the common functionality shared by all NhgOrch classes.
  */
 template <typename NhgClass>
-class NhgHandlerCommon
+class NhgOrchCommon
 {
 public:
     /*

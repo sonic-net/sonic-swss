@@ -1,4 +1,3 @@
-#include "nhghandler.h"
 #include "nhgorch.h"
 #include "neighorch.h"
 #include "crmorch.h"
@@ -18,6 +17,12 @@ extern size_t gMaxBulkSize;
 extern sai_next_hop_group_api_t* sai_next_hop_group_api;
 extern sai_next_hop_api_t*         sai_next_hop_api;
 
+NhgOrch::NhgOrch(DBConnector *db, string tableName) :
+    Orch(db, tableName)
+{
+    SWSS_LOG_ENTER();
+}
+
 /*
  * Purpose:     Perform the operations requested by APPL_DB users.
  * Description: Iterate over the untreated operations list and resolve them.
@@ -27,9 +32,14 @@ extern sai_next_hop_api_t*         sai_next_hop_api;
  * Params:      IN  consumer - The cosumer object.
  * Returns:     Nothing.
  */
-void NhgHandler::doTask(Consumer& consumer)
+void NhgOrch::doTask(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
+
+    if (!gPortsOrch->allPortsReady())
+    {
+        return;
+    }
 
     auto it = consumer.m_toSync.begin();
 
@@ -96,16 +106,16 @@ void NhgHandler::doTask(Consumer& consumer)
                 * to be kept in the sync list so we keep trying to create the
                 * actual group when there are enough resources.
                 */
-                if (gRouteOrch->getNhgCount() + Nhg::getSyncedCount() >= gRouteOrch->getMaxNhgCount())
+                if (gRouteOrch->getNhgCount() + NextHopGroup::getSyncedCount() >= gRouteOrch->getMaxNhgCount())
                 {
                     SWSS_LOG_DEBUG("Next hop group count reached its limit.");
 
                     try
                     {
-                        auto nhg = std::make_unique<Nhg>(createTempNhg(nhg_key));
+                        auto nhg = std::make_unique<NextHopGroup>(createTempNhg(nhg_key));
                         if (nhg->sync())
                         {
-                            m_syncdNextHopGroups.emplace(index, NhgEntry<Nhg>(std::move(nhg)));
+                            m_syncdNextHopGroups.emplace(index, NhgEntry<NextHopGroup>(std::move(nhg)));
                         }
                         else
                         {
@@ -123,12 +133,12 @@ void NhgHandler::doTask(Consumer& consumer)
                 }
                 else
                 {
-                    auto nhg = std::make_unique<Nhg>(nhg_key, false);
+                    auto nhg = std::make_unique<NextHopGroup>(nhg_key, false);
                     success = nhg->sync();
 
                     if (success)
                     {
-                        m_syncdNextHopGroups.emplace(index, NhgEntry<Nhg>(std::move(nhg)));
+                        m_syncdNextHopGroups.emplace(index, NhgEntry<NextHopGroup>(std::move(nhg)));
                     }
                 }
             }
@@ -144,7 +154,7 @@ void NhgHandler::doTask(Consumer& consumer)
                  * resources.
                  */
                 if (nhg_ptr->isTemp() &&
-                    (gRouteOrch->getNhgCount() + Nhg::getSyncedCount() >= gRouteOrch->getMaxNhgCount()))
+                    (gRouteOrch->getNhgCount() + NextHopGroup::getSyncedCount() >= gRouteOrch->getMaxNhgCount()))
                 {
                     /*
                      * If the group was updated in such way that the previously
@@ -158,7 +168,7 @@ void NhgHandler::doTask(Consumer& consumer)
                         try
                         {
                             /* Create the new temporary next hop group. */
-                            auto new_nhg = std::make_unique<Nhg>(createTempNhg(nhg_key));
+                            auto new_nhg = std::make_unique<NextHopGroup>(createTempNhg(nhg_key));
 
                             /*
                             * If we successfully sync the new group, update
@@ -191,7 +201,7 @@ void NhgHandler::doTask(Consumer& consumer)
                  */
                 else if (nhg_ptr->isTemp())
                 {
-                    auto nhg = std::make_unique<Nhg>(nhg_key, false);
+                    auto nhg = std::make_unique<NextHopGroup>(nhg_key, false);
                     success = nhg->sync();
 
                     if (success)
@@ -277,7 +287,7 @@ void NhgHandler::doTask(Consumer& consumer)
  *              containing groups;
  *              false, otherwise.
  */
-bool NhgHandler::validateNextHop(const NextHopKey& nh_key)
+bool NhgOrch::validateNextHop(const NextHopKey& nh_key)
 {
     SWSS_LOG_ENTER();
 
@@ -317,7 +327,7 @@ bool NhgHandler::validateNextHop(const NextHopKey& nh_key)
  *              containing groups;
  *              false, otherwise.
  */
-bool NhgHandler::invalidateNextHop(const NextHopKey& nh_key)
+bool NhgOrch::invalidateNextHop(const NextHopKey& nh_key)
 {
     SWSS_LOG_ENTER();
 
@@ -346,13 +356,53 @@ bool NhgHandler::invalidateNextHop(const NextHopKey& nh_key)
 }
 
 /*
+ * Purpose:     Increase the ref count for a next hop group.
+ * Description: Increment the ref count for a next hop group by 1.
+ * Params:      IN  index - The index of the next hop group.
+ * Returns:     Nothing.
+ */
+void NhgOrch::incNhgRefCount(const std::string& index)
+{
+    SWSS_LOG_ENTER();
+
+    try
+    {
+        NhgOrchCommon::incNhgRefCount(index);
+    }
+    catch(const std::out_of_range &e)
+    {
+        gCbfNhgOrch->incNhgRefCount(index);
+    }
+}
+
+/*
+ * Purpose:     Decrease the ref count for a next hop group.
+ * Description: Decrement the ref count for a next hop group by 1.
+ * Params:      IN  index - The index of the next hop group.
+ * Returns:     Nothing.
+ */
+void NhgOrch::decNhgRefCount(const std::string& index)
+{
+    SWSS_LOG_ENTER();
+
+    try
+    {
+        NhgOrchCommon::decNhgRefCount(index);
+    }
+    catch(const std::out_of_range &e)
+    {
+        gCbfNhgOrch->decNhgRefCount(index);
+    }
+}
+
+/*
  * Purpose:     Get the next hop ID of the member.
  * Description: Get the SAI ID of the next hop from NeighOrch.
  * Params:      None.
  * Returns:     The SAI ID of the next hop, or SAI_NULL_OBJECT_ID if the next
  *              hop is not valid.
  */
-sai_object_id_t WeightedNhgMember::getNhId() const
+sai_object_id_t NextHopGroupMember::getNhId() const
 {
     SWSS_LOG_ENTER();
 
@@ -390,7 +440,7 @@ sai_object_id_t WeightedNhgMember::getNhId() const
  * Returns:     true, if the operation was successful;
  *              false, otherwise.
  */
-bool WeightedNhgMember::updateWeight(uint32_t weight)
+bool NextHopGroupMember::updateWeight(uint32_t weight)
 {
     SWSS_LOG_ENTER();
 
@@ -404,7 +454,7 @@ bool WeightedNhgMember::updateWeight(uint32_t weight)
         nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT;
         nhgm_attr.value.s32 = m_key.weight;
 
-        sai_status_t status = sai_next_hop_group_api->set_next_hop_group_member_attribute(m_id, &nhgm_attr);
+        sai_status_t status = sai_next_hop_group_api->set_next_hop_group_member_attribute(m_gm_id, &nhgm_attr);
         success = status == SAI_STATUS_SUCCESS;
     }
 
@@ -418,7 +468,7 @@ bool WeightedNhgMember::updateWeight(uint32_t weight)
  * Params:      IN  gm_id - The group member SAI ID to set.
  * Returns:     Nothing.
  */
-void WeightedNhgMember::sync(sai_object_id_t gm_id)
+void NextHopGroupMember::sync(sai_object_id_t gm_id)
 {
     SWSS_LOG_ENTER();
 
@@ -433,7 +483,7 @@ void WeightedNhgMember::sync(sai_object_id_t gm_id)
  * Params:      None.
  * Returns:     Nothing.
  */
-void WeightedNhgMember::remove()
+void NextHopGroupMember::remove()
 {
     SWSS_LOG_ENTER();
 
@@ -448,7 +498,7 @@ void WeightedNhgMember::remove()
  * Params:      None.
  * Returns:     Nothing.
  */
-WeightedNhgMember::~WeightedNhgMember()
+NextHopGroupMember::~NextHopGroupMember()
 {
     SWSS_LOG_ENTER();
 
@@ -473,14 +523,14 @@ WeightedNhgMember::~WeightedNhgMember()
  * Params:      IN  key - The next hop group's key.
  * Returns:     Nothing.
  */
-Nhg::Nhg(const NextHopGroupKey& key, bool is_temp) : NhgCommon(key), m_is_temp(is_temp)
+NextHopGroup::NextHopGroup(const NextHopGroupKey& key, bool is_temp) : NhgCommon(key), m_is_temp(is_temp)
 {
     SWSS_LOG_ENTER();
 
     /* Parse the key and create the members. */
-    for (const auto &it : m_key.getNextHops())
+    for (const auto& it : m_key.getNextHops())
     {
-        m_members.emplace(it, WeightedNhgMember(it));
+        m_members.emplace(it, NextHopGroupMember(it));
     }
 }
 
@@ -490,7 +540,7 @@ Nhg::Nhg(const NextHopGroupKey& key, bool is_temp) : NhgCommon(key), m_is_temp(i
  * Params:      IN  nhg - The rvalue object to swap with.
  * Returns:     Referene to this object.
  */
-Nhg& Nhg::operator=(Nhg&& nhg)
+NextHopGroup& NextHopGroup::operator=(NextHopGroup&& nhg)
 {
     SWSS_LOG_ENTER();
 
@@ -511,7 +561,7 @@ Nhg& Nhg::operator=(Nhg&& nhg)
  * Returns:     true, if the operation was successful;
  *              false, otherwise.
  */
-bool Nhg::sync()
+bool NextHopGroup::sync()
 {
     SWSS_LOG_ENTER();
 
@@ -527,7 +577,7 @@ bool Nhg::sync()
      */
     if (m_is_temp)
     {
-        const WeightedNhgMember& nhgm = m_members.begin()->second;
+        const NextHopGroupMember& nhgm = m_members.begin()->second;
         sai_object_id_t nhid = nhgm.getNhId();
 
         if (nhid == SAI_NULL_OBJECT_ID)
@@ -603,7 +653,7 @@ bool Nhg::sync()
  * Params:      IN  index   - The CP index of the next hop group.
  * Returns:     The created temporary next hop group.
  */
-Nhg NhgHandler::createTempNhg(const NextHopGroupKey& nhg_key)
+NextHopGroup NhgOrch::createTempNhg(const NextHopGroupKey& nhg_key)
 {
     SWSS_LOG_ENTER();
 
@@ -636,7 +686,7 @@ Nhg NhgHandler::createTempNhg(const NextHopGroupKey& nhg_key)
     advance(it, rand() % valid_nhs.size());
 
     /* Create the temporary group. */
-    Nhg nhg(NextHopGroupKey(it->to_string()), true);
+    NextHopGroup nhg(NextHopGroupKey(it->to_string()), true);
 
     return nhg;
 }
@@ -649,7 +699,7 @@ Nhg NhgHandler::createTempNhg(const NextHopGroupKey& nhg_key)
  * Returns:     true, if the operation was successful;
  *              false, otherwise
  */
-bool Nhg::remove()
+bool NextHopGroup::remove()
 {
     SWSS_LOG_ENTER();
 
@@ -660,7 +710,7 @@ bool Nhg::remove()
         {
             m_id = SAI_NULL_OBJECT_ID;
 
-            const WeightedNhgMember& nhgm = m_members.begin()->second;
+            const NextHopGroupMember& nhgm = m_members.begin()->second;
             gNeighOrch->decreaseNextHopRefCount(nhgm.getKey());
         }
         return true;
@@ -679,7 +729,7 @@ bool Nhg::remove()
  * Returns:     true, if the members were added succesfully;
  *              false, otherwise.
  */
-bool Nhg::syncMembers(const std::set<NextHopKey>& nh_keys)
+bool NextHopGroup::syncMembers(const std::set<NextHopKey>& nh_keys)
 {
     SWSS_LOG_ENTER();
 
@@ -696,7 +746,7 @@ bool Nhg::syncMembers(const std::set<NextHopKey>& nh_keys)
 
     for (const auto& nh_key : nh_keys)
     {
-        WeightedNhgMember& nhgm = m_members.at(nh_key);
+        NextHopGroupMember& nhgm = m_members.at(nh_key);
 
         /* If the member is already synced, continue. */
         if (nhgm.isSynced())
@@ -768,7 +818,7 @@ bool Nhg::syncMembers(const std::set<NextHopKey>& nh_keys)
  * Returns:     true, if the operation was successful;
  *              false, otherwise.
  */
-bool Nhg::update(const NextHopGroupKey& nhg_key)
+bool NextHopGroup::update(const NextHopGroupKey& nhg_key)
 {
     SWSS_LOG_ENTER();
 
@@ -824,7 +874,7 @@ bool Nhg::update(const NextHopGroupKey& nhg_key)
     /* Add any new members to the group. */
     for (const auto& it : new_nh_keys)
     {
-        m_members.emplace(it, WeightedNhgMember(it));
+        m_members.emplace(it, NextHopGroupMember(it));
     }
 
     /*
@@ -847,7 +897,7 @@ bool Nhg::update(const NextHopGroupKey& nhg_key)
  * Params:      IN  nhgm - The next hop group member.
  * Returns:     The attributes vector for the given next hop.
  */
-vector<sai_attribute_t> Nhg::createNhgmAttrs(const WeightedNhgMember& nhgm) const
+vector<sai_attribute_t> NextHopGroup::createNhgmAttrs(const NextHopGroupMember& nhgm) const
 {
     SWSS_LOG_ENTER();
 
@@ -879,7 +929,7 @@ vector<sai_attribute_t> Nhg::createNhgmAttrs(const WeightedNhgMember& nhgm) cons
  * Returns:     true, if the operation was successful;
  *              false, otherwise.
  */
-bool Nhg::validateNextHop(const NextHopKey& nh_key)
+bool NextHopGroup::validateNextHop(const NextHopKey& nh_key)
 {
     SWSS_LOG_ENTER();
 
@@ -893,7 +943,7 @@ bool Nhg::validateNextHop(const NextHopKey& nh_key)
  * Returns:     true, if the operation was successful;
  *              false, otherwise.
  */
-bool Nhg::invalidateNextHop(const NextHopKey& nh_key)
+bool NextHopGroup::invalidateNextHop(const NextHopKey& nh_key)
 {
     SWSS_LOG_ENTER();
 

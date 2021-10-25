@@ -1,7 +1,6 @@
 #pragma once
 
 #include "nhgbase.h"
-#include "nhghandler.h"
 
 using namespace std;
 
@@ -86,11 +85,16 @@ private:
     bool hasSameMembers(const vector<string> &members) const;
 };
 
-class CbfNhgHandler : public NhgHandlerCommon<CbfNhg>
+class CbfNhgOrch : public Orch, public NhgOrchCommon<CbfNhg>
 {
 public:
-    void doTask(Consumer &consumer);
+    /*
+     * Constructor.
+     */
+    CbfNhgOrch(DBConnector *db, string tableName);
 
 private:
     static pair<bool, vector<string>> getMembers(const string &members);
+
+    void doTask(Consumer &consumer);
 };

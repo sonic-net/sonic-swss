@@ -1,4 +1,4 @@
-#include "cbfnhghandler.h"
+#include "cbfnhgorch.h"
 #include "crmorch.h"
 #include "bulker.h"
 #include "tokenize.h"
@@ -17,6 +17,12 @@ extern sai_next_hop_group_api_t* sai_next_hop_group_api;
 
 extern size_t gMaxBulkSize;
 
+CbfNhgOrch::CbfNhgOrch(DBConnector *db, string tableName) :
+    Orch(db, tableName)
+{
+    SWSS_LOG_ENTER();
+}
+
 /*
  * Purpose:     Perform the operations requested by APPL_DB users.
  *
@@ -29,9 +35,14 @@ extern size_t gMaxBulkSize;
  *
  * Returns:     Nothing.
  */
-void CbfNhgHandler::doTask(Consumer& consumer)
+void CbfNhgOrch::doTask(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
+
+    if (!gPortsOrch->allPortsReady())
+    {
+        return;
+    }
 
     auto it = consumer.m_toSync.begin();
 
@@ -198,7 +209,7 @@ void CbfNhgHandler::doTask(Consumer& consumer)
  *            valid or not
  *          - the second element is a vector of members
  */
-pair<bool, vector<string>> CbfNhgHandler::getMembers(const string &members)
+pair<bool, vector<string>> CbfNhgOrch::getMembers(const string &members)
 {
     SWSS_LOG_ENTER();
 
@@ -536,7 +547,7 @@ bool CbfNhg::update(const vector<string> &members, const string &selection_map)
             return false;
         }
 
-        auto status = sai_next_hop_group_api->set_next_hop_group_attribute( m_id, &nhg_attr);
+        auto status = sai_next_hop_group_api->set_next_hop_group_attribute(m_id, &nhg_attr);
 
         if (status != SAI_STATUS_SUCCESS)
         {
@@ -599,14 +610,14 @@ bool CbfNhg::syncMembers(const set<string> &members)
         /*
          * Check if the group exists in NhgOrch.
          */
-        if (!gNhgOrch->nhgHandler.hasNhg(key))
+        if (!gNhgOrch->hasNhg(key))
         {
             SWSS_LOG_ERROR("Next hop group %s in CBF next hop group %s does "
                             "not exist", key.c_str(), m_key.c_str());
             return false;
         }
 
-        const auto &nhg = gNhgOrch->nhgHandler.getNhg(key);
+        const auto &nhg = gNhgOrch->getNhg(key);
 
         /*
          * Check if the group is synced.
@@ -714,7 +725,7 @@ void CbfNhgMember::sync(sai_object_id_t gm_id)
     SWSS_LOG_ENTER();
 
     NhgMember::sync(gm_id);
-    gNhgOrch->nhgHandler.incNhgRefCount(m_key);
+    gNhgOrch->incNhgRefCount(m_key);
 }
 
 /*
@@ -746,7 +757,7 @@ bool CbfNhgMember::updateNhAttr()
     /*
      * Set the attribute over SAI.
      */
-    auto status = sai_next_hop_group_api->set_next_hop_group_member_attribute(m_id, &attr);
+    auto status = sai_next_hop_group_api->set_next_hop_group_member_attribute(m_gm_id, &attr);
 
     return status == SAI_STATUS_SUCCESS;
 }
@@ -764,7 +775,7 @@ void CbfNhgMember::remove()
     SWSS_LOG_ENTER();
 
     NhgMember::remove();
-    gNhgOrch->nhgHandler.decNhgRefCount(m_key);
+    gNhgOrch->decNhgRefCount(m_key);
 }
 
 /*
