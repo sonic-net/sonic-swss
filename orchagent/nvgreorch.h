@@ -87,7 +87,7 @@ private:
     sai_object_id_t sai_create_tunnel_map(sai_tunnel_map_type_t sai_tunnel_map_type);
     void sai_remove_tunnel_map(sai_object_id_t tunnel_map_id);
 
-    sai_object_id_t sai_create_tunnel(struct tunnel_sai_ids_t &ids, const sai_ip_address_t &src_ip);
+    sai_object_id_t sai_create_tunnel(struct tunnel_sai_ids_t &ids, const sai_ip_address_t &src_ip, sai_object_id_t underlay_rif);
     void sai_remove_tunnel(sai_object_id_t tunnel_id);
 
     sai_object_id_t sai_create_tunnel_map_entry(map_type_t map_type, sai_uint32_t vsid, sai_vlan_id_t vlan_id, sai_object_id_t bridge_obj_id, bool encap=false);

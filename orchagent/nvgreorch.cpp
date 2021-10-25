@@ -10,6 +10,7 @@ extern Directory<Orch*> gDirectory;
 extern PortsOrch*       gPortsOrch;
 extern sai_object_id_t  gSwitchId;
 extern sai_tunnel_api_t *sai_tunnel_api;
+extern sai_object_id_t  gUnderlayIfId;
 
 static const std::vector<map_type_t> nvgreMapTypes = {
     MAP_T_VLAN,
@@ -17,8 +18,8 @@ static const std::vector<map_type_t> nvgreMapTypes = {
 };
 
 static const std::map<map_type_t, sai_tunnel_map_type_t> nvgreEncapTunnelMap = {
-    { MAP_T_VLAN, SAI_TUNNEL_MAP_TYPE_VLAN_ID_TO_VSID },
-    { MAP_T_BRIDGE, SAI_TUNNEL_MAP_TYPE_BRIDGE_IF_TO_VSID }
+    { MAP_T_VLAN, SAI_TUNNEL_MAP_TYPE_VLAN_ID_TO_VNI },
+    { MAP_T_BRIDGE, SAI_TUNNEL_MAP_TYPE_BRIDGE_IF_TO_VNI }
 };
 
 static inline sai_tunnel_map_type_t get_encap_nvgre_mapper(map_type_t map)
@@ -27,8 +28,8 @@ static inline sai_tunnel_map_type_t get_encap_nvgre_mapper(map_type_t map)
 }
 
 static const std::map<map_type_t, sai_tunnel_map_type_t> nvgreDecapTunnelMap = {
-    { MAP_T_VLAN, SAI_TUNNEL_MAP_TYPE_VSID_TO_VLAN_ID },
-    { MAP_T_BRIDGE, SAI_TUNNEL_MAP_TYPE_VSID_TO_BRIDGE_IF }
+    { MAP_T_VLAN, SAI_TUNNEL_MAP_TYPE_VNI_TO_VLAN_ID },
+    { MAP_T_BRIDGE, SAI_TUNNEL_MAP_TYPE_VNI_TO_BRIDGE_IF }
 };
 
 static inline sai_tunnel_map_type_t get_decap_nvgre_mapper(map_type_t map)
@@ -39,10 +40,10 @@ static inline sai_tunnel_map_type_t get_decap_nvgre_mapper(map_type_t map)
 static const map<map_type_t, std::pair<sai_tunnel_map_entry_attr_t, sai_tunnel_map_entry_attr_t>> nvgreEncapTunnelMapKeyVal =
 {
     { MAP_T_VLAN,
-        { SAI_TUNNEL_MAP_ENTRY_ATTR_VLAN_ID_KEY, SAI_TUNNEL_MAP_ENTRY_ATTR_VSID_ID_VALUE }
+        { SAI_TUNNEL_MAP_ENTRY_ATTR_VLAN_ID_KEY, SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_VALUE }
     },
     { MAP_T_BRIDGE,
-        { SAI_TUNNEL_MAP_ENTRY_ATTR_BRIDGE_ID_KEY, SAI_TUNNEL_MAP_ENTRY_ATTR_VSID_ID_VALUE }
+        { SAI_TUNNEL_MAP_ENTRY_ATTR_BRIDGE_ID_KEY, SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_VALUE }
     }
 };
 
@@ -59,10 +60,10 @@ static inline sai_tunnel_map_entry_attr_t get_encap_nvgre_map_val(map_type_t map
 static const map<map_type_t, std::pair<sai_tunnel_map_entry_attr_t, sai_tunnel_map_entry_attr_t>> nvgreDecapTunnelMapKeyVal =
 {
     { MAP_T_VLAN,
-        { SAI_TUNNEL_MAP_ENTRY_ATTR_VSID_ID_KEY, SAI_TUNNEL_MAP_ENTRY_ATTR_VLAN_ID_VALUE }
+        { SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_KEY, SAI_TUNNEL_MAP_ENTRY_ATTR_VLAN_ID_VALUE }
     },
     { MAP_T_BRIDGE,
-        { SAI_TUNNEL_MAP_ENTRY_ATTR_VSID_ID_KEY, SAI_TUNNEL_MAP_ENTRY_ATTR_BRIDGE_ID_VALUE }
+        { SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_KEY, SAI_TUNNEL_MAP_ENTRY_ATTR_BRIDGE_ID_VALUE }
     }
 };
 
@@ -131,13 +132,17 @@ void NvgreTunnel::sai_remove_tunnel_map(sai_object_id_t tunnel_map_id)
  *
  *  @return SAI tunnel identifier.
  */
-sai_object_id_t NvgreTunnel::sai_create_tunnel(struct tunnel_sai_ids_t &ids, const sai_ip_address_t &src_ip)
+sai_object_id_t NvgreTunnel::sai_create_tunnel(struct tunnel_sai_ids_t &ids, const sai_ip_address_t &src_ip, sai_object_id_t underlay_rif)
 {
     sai_attribute_t attr;
     std::vector<sai_attribute_t> tunnel_attrs;
 
     attr.id = SAI_TUNNEL_ATTR_TYPE;
-    attr.value.s32 = SAI_TUNNEL_TYPE_NVGRE;
+    attr.value.s32 = SAI_TUNNEL_TYPE_VXLAN;
+    tunnel_attrs.push_back(attr);
+
+    attr.id = SAI_TUNNEL_ATTR_UNDERLAY_INTERFACE;
+    attr.value.oid = underlay_rif;
     tunnel_attrs.push_back(attr);
 
     sai_object_id_t decap_map_list[MAP_T_MAX];
@@ -240,7 +245,7 @@ void NvgreTunnel::createNvgreTunnel()
     sai_ip_address_t ip_addr;
     swss::copy(ip_addr, src_ip_);
 
-    tunnel_ids_.tunnel_id = sai_create_tunnel(tunnel_ids_, ip_addr);
+    tunnel_ids_.tunnel_id = sai_create_tunnel(tunnel_ids_, ip_addr, gUnderlayIfId);
 
     SWSS_LOG_INFO("NVGRE tunnel '%s' was created", tunnel_name_.c_str());
 }
