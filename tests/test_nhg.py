@@ -93,7 +93,7 @@ class TestNextHopGroupBase(object):
         # If the CBF NHG can't be created, the provided NHG map index is invalid
         try:
             self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, asic_nhgs_count + 2)
-        except:
+        except Exception as e:
             # Remove the added NHGs
             cbf_nhg_ps._del('testcbfnhg')
             nhg_ps._del('testnhg')

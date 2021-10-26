@@ -152,9 +152,6 @@ class TestCbf(object):
         fvs = self.asic_db.get_entry(self.ASIC_QOS_MAP_STR, dscp_map_id)
         assert(fvs.get("SAI_QOS_MAP_ATTR_TYPE") == "SAI_QOS_MAP_TYPE_DSCP_TO_FORWARDING_CLASS")
 
-        # Apply port configuration
-        # self.port_qos_map_profile_test('dscp_to_fc_map', swsscommon.CFG_DSCP_TO_FC_MAP_TABLE_NAME, 'SAI_PORT_ATTR_QOS_DSCP_TO_FORWARDING_CLASS_MAP')
-
         # Delete the map
         self.dscp_ps._del("AZURE")
         self.asic_db.wait_for_deleted_entry(self.ASIC_QOS_MAP_STR, dscp_map_id)
