@@ -10,11 +10,6 @@ from pprint import pprint
 
 NVGRE_TUNNEL = 'NVGRE_TUNNEL'
 NVGRE_TUNNEL_MAP = 'NVGRE_TUNNEL_MAP'
-NVGRE_TUNNEL_NAME = 'tunnel_1'
-NVGRE_TUNNEL_MAP_ENTRY_NAME = 'entry_1'
-NVGRE_VSID = '850'
-VLAN_ID = '500'
-VALID_IP_ADDR = '10.0.0.1'
 
 
 SAI_OBJECT_TYPE_TUNNEL = 'ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL'
@@ -87,6 +82,7 @@ def get_lo(dvs):
 
 
 def check_object(db, table, key, expected_attributes):
+    import pdb; pdb.set_trace()
     tbl =  swsscommon.Table(db, table)
     keys = tbl.getKeys()
     assert key in keys, "The desired key is not presented"
@@ -135,7 +131,7 @@ def check_nvgre_tunnel(dvs, src_ip, tunnel_ids, tunnel_map_ids, loopback_id):
     assert how_many_entries_exist(asic_db, SAI_OBJECT_TYPE_TUNNEL) == len(tunnel_ids) + 1, 'NVGRE Tunnel was not created'
     assert how_many_entries_exist(asic_db, SAI_OBJECT_TYPE_TUNNEL_MAP) == len(tunnel_map_ids) + 4, 'NVGRE Tunnel mappers was not created'
 
-    check_object(asic_db, SAI_OBJECT_TYPE_TUNNEL_MAP, tunnel_map_id[0], { 'SAI_TUNNEL_MAP_ATTR_TYPE': 'SAI_TUNNEL_MAP_TYPE_VLAN_ID_TO_VNI' })
+    check_object(asic_db, SAI_OBJECT_TYPE_TUNNEL_MAP, tunnel_map_id[0], { 'SAI_TUNNEL_MAP_ATTR_TYPE': 'SAI_TUNNEL_MAP_TYPE_VLAN_ID_TO_VSID' })
 
     encapstr = '2:' + tunnel_map_id[0] + ',' + tunnel_map_id[1]
     decapstr = '2:' + tunnel_map_id[2] + ',' + tunnel_map_id[3]
@@ -143,7 +139,7 @@ def check_nvgre_tunnel(dvs, src_ip, tunnel_ids, tunnel_map_ids, loopback_id):
     # TODO: change types to NVGRE
     check_object(asic_db, SAI_OBJECT_TYPE_TUNNEL, tunnel_id,
         {
-            'SAI_TUNNEL_ATTR_TYPE': 'SAI_TUNNEL_TYPE_VXLAN',
+            'SAI_TUNNEL_ATTR_TYPE': 'SAI_TUNNEL_TYPE_NVGRE',
             'SAI_TUNNEL_ATTR_UNDERLAY_INTERFACE': loopback_id,
             'SAI_TUNNEL_ATTR_DECAP_MAPPERS': decapstr,
             'SAI_TUNNEL_ATTR_ENCAP_MAPPERS': encapstr,
@@ -166,7 +162,7 @@ def create_nvgre_tunnel_entry(dvs, tunnel_name, tunnel_map_entry_name, vlan_id, 
         NVGRE_TUNNEL_MAP, '|', '%s|%s' % (tunnel_name, tunnel_map_entry_name),
         [
             ('vsid', vsid),
-            ('vlan', vlan_id),
+            ('vlan', 'Vlan{}'.format(vlan_id)),
         ],
     )
 
@@ -175,10 +171,10 @@ def create_nvgre_tunnel_entry(dvs, tunnel_name, tunnel_map_entry_name, vlan_id, 
 
     check_object(asic_db, SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY, tunnel_map_entry_id,
         {
-            'SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP_TYPE': 'SAI_TUNNEL_MAP_TYPE_VNI_TO_VLAN_ID',
+            'SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP_TYPE': 'SAI_TUNNEL_MAP_TYPE_VSID_TO_VLAN_ID',
             'SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP': tunnel_map_id[2],
-            'SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_KEY': vsid,
-            'SAI_TUNNEL_MAP_ENTRY_ATTR_VLAN_ID_VALUE': vlan_id,
+            'SAI_TUNNEL_MAP_ENTRY_ATTR_VSID_ID_KEY': vsid,
+            'SAI_TUNNEL_MAP_ENTRY_ATTR_VLAN_ID_VALUE': vlan_id
         }
     )
 
@@ -202,10 +198,10 @@ class TestNvgreTunnel(object):
             tunnel_map_ids = set()
             loopback_id = get_lo(dvs)
 
-            create_nvgre_tunnel(dvs, NVGRE_TUNNEL_NAME, VALID_IP_ADDR, tunnel_ids, tunnel_map_ids)
-            check_nvgre_tunnel(dvs, VALID_IP_ADDR, tunnel_ids, tunnel_map_ids, loopback_id)
+            create_nvgre_tunnel(dvs, 'tunnel_1', '10.0.0.1', tunnel_ids, tunnel_map_ids)
+            check_nvgre_tunnel(dvs, '10.0.0.1', tunnel_ids, tunnel_map_ids, loopback_id)
         finally:
-            remove_nvgre_tunnel(dvs, NVGRE_TUNNEL_NAME, tunnel_ids, tunnel_map_ids)
+            remove_nvgre_tunnel(dvs, 'tunnel_1', tunnel_ids, tunnel_map_ids)
 
 
     def test_nvgre_create_tunnel_map_entry(self, dvs, testlog):
@@ -214,14 +210,16 @@ class TestNvgreTunnel(object):
             tunnel_map_ids = set()
             tunnel_map_entry_ids = set()
             loopback_id = get_lo(dvs)
+            vlan_id = '500'
+            vsid = '850'
 
-            self.dvs_vlan.create_vlan(VLAN_ID)
-            create_nvgre_tunnel(dvs, NVGRE_TUNNEL_NAME, VALID_IP_ADDR, tunnel_ids, tunnel_map_ids)
-            create_nvgre_tunnel_entry(dvs, NVGRE_TUNNEL_NAME, NVGRE_TUNNEL_MAP_ENTRY_NAME, VLAN_ID, NVGRE_VSID, tunnel_map_ids, tunnel_map_entry_ids)
+            self.dvs_vlan.create_vlan(vlan_id)
+            create_nvgre_tunnel(dvs, 'tunnel_1', '10.0.0.1', tunnel_ids, tunnel_map_ids)
+            create_nvgre_tunnel_entry(dvs, 'tunnel_1', 'entry_1', vlan_id, vsid, tunnel_map_ids, tunnel_map_entry_ids)
         finally:
-            remove_nvgre_tunnel_map_entry(dvs, NVGRE_TUNNEL_NAME, NVGRE_TUNNEL_MAP_ENTRY_NAME, tunnel_map_entry_ids)
-            remove_nvgre_tunnel(dvs, NVGRE_TUNNEL_NAME, tunnel_ids, tunnel_map_ids)
-            self.dvs_vlan.remove_vlan(VLAN_ID)
+            remove_nvgre_tunnel_map_entry(dvs, 'tunnel_1', 'entry_1', tunnel_map_entry_ids)
+            remove_nvgre_tunnel(dvs, 'tunnel_1', tunnel_ids, tunnel_map_ids)
+            self.dvs_vlan.remove_vlan(vlan_id)
 
 
 # Add Dummy always-pass test at end as workaroud
