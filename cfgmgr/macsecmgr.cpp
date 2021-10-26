@@ -718,7 +718,7 @@ bool MACsecMgr::configureMACsec(
                 session.sock,
                 port_name,
                 network_id,
-                "macsec_rekey_period",
+                "mka_rekey_period",
                 profile.rekey_period);
         }
 
