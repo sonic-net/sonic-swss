@@ -70,7 +70,20 @@ struct NextHopKey
             std::string err = "Error converting " + str + " to NextHop";
             throw std::invalid_argument(err);
         }
-        if (overlay_nh == true)
+        if (srv6_nh == true)
+        {
+            vni = 0;
+            auto keys = tokenize(str, NH_DELIMITER);
+            if (keys.size() != 3)
+            {
+                std::string err = "Error converting " + str + " to Nexthop";
+                throw std::invalid_argument(err);
+            }
+            ip_address = keys[0];
+            srv6_segment = keys[1];
+            srv6_source = keys[2];
+        }
+        else
         {
             std::string ip_str = parseMplsNextHop(str);
             auto keys = tokenize(ip_str, NH_DELIMITER);
@@ -85,19 +98,6 @@ struct NextHopKey
             mac_address = keys[3];
             weight = 0;
         }
-        else if (srv6_nh == true)
-        {
-            vni = 0;
-            auto keys = tokenize(str, NH_DELIMITER);
-            if (keys.size() != 3)
-            {
-                std::string err = "Error converting " + str + " to Nexthop";
-                throw std::invalid_argument(err);
-            }
-            ip_address = keys[0];
-            srv6_segment = keys[1];
-            srv6_source = keys[2];
-        }
     }
 
     const std::string to_string() const
@@ -109,22 +109,14 @@ struct NextHopKey
 
     const std::string to_string(bool overlay_nh, bool srv6_nh) const
     {
-        if (overlay_nh)
-        {
-            std::string str = formatMplsNextHop();
-            str += (ip_address.to_string() + NH_DELIMITER + alias + NH_DELIMITER +
-                    std::to_string(vni) + NH_DELIMITER + mac_address.to_string());
-            return str;
-        }
-        else if (srv6_nh)
+        if (srv6_nh)
         {
             return ip_address.to_string() + NH_DELIMITER + srv6_segment + NH_DELIMITER + srv6_source;
         }
-        else
-        {
-            std::string err = "Invalid nexthop type";
-            throw std::invalid_argument(err);
-        }
+        std::string str = formatMplsNextHop();
+        str += (ip_address.to_string() + NH_DELIMITER + alias + NH_DELIMITER +
+                std::to_string(vni) + NH_DELIMITER + mac_address.to_string());
+        return str;
     }
 
     bool operator<(const NextHopKey &o) const
