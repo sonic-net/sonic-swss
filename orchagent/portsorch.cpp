@@ -127,6 +127,7 @@ static map<string, sai_port_interface_type_t> interface_type_map =
 // Interface type map used for auto negotiation
 static map<string, sai_port_interface_type_t> interface_type_map_for_an =
 {
+    { "none", SAI_PORT_INTERFACE_TYPE_NONE },
     { "cr", SAI_PORT_INTERFACE_TYPE_CR },
     { "cr2", SAI_PORT_INTERFACE_TYPE_CR2 },
     { "cr4", SAI_PORT_INTERFACE_TYPE_CR4 },
