@@ -142,15 +142,25 @@ public:
     bool removeTunnel(Port tunnel);
     bool addBridgePort(Port &port);
     bool removeBridgePort(Port &port);
-    bool addVlanMember(Port &vlan, Port &port, string& tagging_mode);
-    bool removeVlanMember(Port &vlan, Port &port);
-    bool isVlanMember(Port &vlan, Port &port);
+    bool addVlanMember(Port &vlan, Port &port, string& tagging_mode, string end_point_ip = "");
+    bool removeVlanMember(Port &vlan, Port &port, string end_point_ip = "");
+    bool isVlanMember(Port &vlan, Port &port, string end_point_ip = "");
+    bool addVlanFloodGroups(Port &vlan, Port &port, string end_point_ip);
+    bool removeVlanEndPointIp(Port &vlan, Port &port, string end_point_ip);
+    void increaseBridgePortRefCount(Port &port);
+    void decreaseBridgePortRefCount(Port &port);
+    bool getBridgePortReferenceCount(Port &port);
 
     string m_inbandPortName = "";
     bool isInbandPort(const string &alias);
     bool setVoqInbandIntf(string &alias, string &type);
 
     bool getRecircPort(Port &p, string role);
+
+    const gearbox_phy_t* getGearboxPhy(const Port &port);
+
+    bool getPortIPG(sai_object_id_t port_id, uint32_t &ipg);
+    bool setPortIPG(sai_object_id_t port_id, uint32_t ipg);
 
 private:
     unique_ptr<Table> m_counterTable;
@@ -219,6 +229,10 @@ private:
     unordered_map<sai_object_id_t, int> m_portOidToIndex;
     map<string, uint32_t> m_port_ref_count;
     unordered_set<string> m_pendingPortSet;
+    const uint32_t max_flood_control_types = 4;
+    set<sai_vlan_flood_control_type_t> uuc_sup_flood_control_type;
+    set<sai_vlan_flood_control_type_t> bc_sup_flood_control_type;
+    map<string, uint32_t> m_bridge_port_ref_count;
 
     NotificationConsumer* m_portStatusNotificationConsumer;
 

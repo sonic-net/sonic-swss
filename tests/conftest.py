@@ -835,9 +835,10 @@ class DockerVirtualSwitch:
             status, data = tbl.get(key)
             assert status
             values = dict(data)
-            iface_id = values["SAI_BRIDGE_PORT_ATTR_PORT_ID"]
-            iface_name = port_id_2_iface[iface_id]
-            iface_2_bridge_port_id[iface_name] = key
+            if "SAI_BRIDGE_PORT_ATTR_PORT_ID" in values:
+                iface_id = values["SAI_BRIDGE_PORT_ATTR_PORT_ID"]
+                iface_name = port_id_2_iface[iface_id]
+                iface_2_bridge_port_id[iface_name] = key
 
         return iface_2_bridge_port_id
 
