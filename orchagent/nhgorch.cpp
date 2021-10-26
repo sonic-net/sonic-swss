@@ -588,7 +588,6 @@ bool NextHopGroup::sync()
         else
         {
             m_id = nhid;
-            gNeighOrch->increaseNextHopRefCount(nhgm.getKey());
         }
     }
     else
@@ -706,13 +705,7 @@ bool NextHopGroup::remove()
     //  If the group is temporary, there is nothing to be done - just reset the ID.
     if (m_is_temp)
     {
-        if (m_id != SAI_NULL_OBJECT_ID)
-        {
-            m_id = SAI_NULL_OBJECT_ID;
-
-            const NextHopGroupMember& nhgm = m_members.begin()->second;
-            gNeighOrch->decreaseNextHopRefCount(nhgm.getKey());
-        }
+        m_id = SAI_NULL_OBJECT_ID;
         return true;
     }
 
