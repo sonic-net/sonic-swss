@@ -206,6 +206,8 @@ public:
     unsigned int getNhgCount() { return m_nextHopGroupCount; }
     unsigned int getMaxNhgCount() { return m_maxNextHopGroupCount; }
 
+    void updateDefRouteState(string ip, bool add=false);
+
 private:
     SwitchOrch *m_switchOrch;
     NeighOrch *m_neighOrch;
@@ -216,6 +218,9 @@ private:
     unsigned int m_nextHopGroupCount;
     unsigned int m_maxNextHopGroupCount;
     bool m_resync;
+
+    shared_ptr<DBConnector> m_stateDb;
+    unique_ptr<swss::Table> m_stateDefaultRouteTb;
 
     RouteTables m_syncdRoutes;
     LabelRouteTables m_syncdLabelRoutes;
