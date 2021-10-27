@@ -289,9 +289,10 @@ private:
 
     bool setBridgePortAdminStatus(sai_object_id_t id, bool up);
 
-    bool isSpeedSupported(const std::string& alias, sai_object_id_t port_id, sai_uint32_t speed);
     void getPortSupportedSpeeds(const std::string& alias, sai_object_id_t port_id, PortSupportedSpeeds &supported_speeds);
+    const PortSupportedSpeeds& getSupportedSpeed(const std::string& alias, sai_object_id_t port_id);
     void initPortSupportedSpeeds(const std::string& alias, sai_object_id_t port_id);
+    bool isSpeedSupported(const std::string& alias, sai_object_id_t port_id, sai_uint32_t speed);
     task_process_status setPortSpeed(Port &port, sai_uint32_t speed);
     bool getPortSpeed(sai_object_id_t id, sai_uint32_t &speed);
     bool setGearboxPortsAttr(Port &port, sai_port_attr_t id, void *value);
