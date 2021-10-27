@@ -129,7 +129,6 @@ class TestCbf(object):
 
         # Set switch FC capability to 63
         dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_MAX_NUMBER_OF_FORWARDING_CLASSES', '63')
-        time.sleep(1)
 
     def get_qos_id(self):
         diff = set(self.asic_db.get_keys(self.ASIC_QOS_MAP_STR)) - set(self.asic_qos_map_ids)
@@ -142,7 +141,7 @@ class TestCbf(object):
         # Create a DSCP_TO_FC map
         dscp_map = [(str(i), str(i)) for i in range(0, 64)]
         self.dscp_ps.set("AZURE", swsscommon.FieldValuePairs(dscp_map))
-        time.sleep(2)
+        time.sleep(1)
 
         self.asic_db.wait_for_n_keys(self.ASIC_QOS_MAP_STR, self.asic_qos_map_count + 1)
 
@@ -185,7 +184,7 @@ class TestCbf(object):
         # Create a EXP_TO_FC map
         exp_map = [(str(i), str(i)) for i in range(0, 8)]
         self.exp_ps.set("AZURE", swsscommon.FieldValuePairs(exp_map))
-        time.sleep(2)
+        time.sleep(1)
 
         self.asic_db.wait_for_n_keys(self.ASIC_QOS_MAP_STR, self.asic_qos_map_count + 1)
 
@@ -237,7 +236,7 @@ class TestCbf(object):
         # Create a DSCP_TO_FC map
         dscp_map = [(str(i), str(i)) for i in range(0, 64)]
         self.dscp_ps.set("AZURE", swsscommon.FieldValuePairs(dscp_map))
-        time.sleep(2)
+        time.sleep(1)
         self.asic_db.wait_for_n_keys(self.ASIC_QOS_MAP_STR, self.asic_qos_map_count + 1)
         dscp_map_id = self.get_qos_id()
         self.asic_qos_map_ids = self.asic_db.get_keys(self.ASIC_QOS_MAP_STR)
