@@ -118,15 +118,6 @@ public:
     sai_object_id_t     m_tunnel_id = 0;
     sai_object_id_t     m_ingress_acl_table_group_id = 0;
     sai_object_id_t     m_egress_acl_table_group_id = 0;
-    /* there can be a large number of vlan members
-     * which will cause performance impact, as
-     * getPort copies the whole structure. 
-     * Performance issue are seen during mac event 
-     * processing with large number of vlans on a 
-     * port. Large data should not be added to this
-     * structure.
-     */
-    //vlan_members_t      m_vlan_members;
     sai_object_id_t     m_parent_port_id = 0;
     uint32_t            m_dependency_bitmap = 0;
     sai_port_oper_status_t m_oper_status = SAI_PORT_OPER_STATUS_UNKNOWN;

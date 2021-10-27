@@ -613,8 +613,11 @@ bool PortsOrch::getPort(sai_object_id_t id, Port &port)
 
     auto itr = portOidToName.find(id);
     if (itr == portOidToName.end())
+    {
         return false;
-    else {
+    }
+    else
+    {
         getPort(itr->second, port);
         return true;
 	}
@@ -3888,7 +3891,7 @@ bool PortsOrch::addVlan(string vlan_alias)
         }
     }
 
-    SWSS_LOG_NOTICE("Create an empty VLAN %s vid:%hu vlan_oid 0x%lx", vlan_alias.c_str(), vlan_id, (long unsigned int)vlan_oid);
+    SWSS_LOG_NOTICE("Create an empty VLAN %s vid:%hu vlan_oid:%" PRIx64, vlan_alias.c_str(), vlan_id, (long unsigned int)vlan_oid);
 
     Port vlan(vlan_alias, Port::VLAN);
     vlan.m_vlan_info.vlan_oid = vlan_oid;
