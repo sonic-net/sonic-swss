@@ -252,7 +252,7 @@ bool VlanMgr::removeHostVlanMember(int vlan_id, const string &port_alias)
     inner << BRIDGE_CMD " vlan del vid " + std::to_string(vlan_id) + " dev " << shellquote(port_alias) << " && ( "
       "vlanShow=$(" BRIDGE_CMD " vlan show dev " << shellquote(port_alias) << "); "
       "ret=$?; "
-      "if [ $ret -eq 0 ]; then"
+      "if [ $ret -eq 0 ]; then "
       "if (! echo \"$vlanShow\" | " GREP_CMD " -q " << shellquote(port_alias) << ") "
       " || (echo \"$vlanShow\" | " GREP_CMD " -q None$) "
       " || (echo \"$vlanShow\" | " GREP_CMD " -q " << shellquote(port_alias) << "$); then "
