@@ -598,6 +598,49 @@ class TestMplsRoute(TestMplsBase):
 
         self.teardown_mpls(dvs)
 
+    def test_RouteUnresolvedMplsRouteSwap(self, dvs, testlog):
+        self.setup_mpls(dvs, False)
+
+        # add route entry
+        label = "200"
+        if self.mpls_appdb_mode():
+            fieldValues = {"nexthop": "10.0.0.1", "ifname": "Ethernet0", "mpls_nh": "swap201", "mpls_pop": "1"}
+            self.create_inseg_entry(label, fieldValues)
+        else:
+            # dvs.runcmd("ip -f mpls route add 200 as 201 via inet 10.0.0.1 dev Ethernet0")
+            dvs.runcmd("vtysh -c \"configure terminal\" -c \"mpls lsp 200 10.0.0.1 201\"")
+
+        # check application database
+        self.pdb.wait_for_entry("LABEL_ROUTE_TABLE", label)
+
+        # check ASIC inseg database. inseg with unresolved NH should not be present.
+        self.check_inseg_entries(False, [label])
+        self.check_nexthop(False, "SAI_NEXT_HOP_TYPE_MPLS", "10.0.0.1", "SAI_OUTSEG_TYPE_SWAP", "1:201")
+
+        # now resolve the NH
+        dvs.servers[0].runcmd("ping -c 1 10.0.0.3")
+        dvs.servers[2].runcmd("ping -c 1 10.0.0.3")
+
+        # check ASIC inseg database
+        self.check_inseg_entries(True, [label])
+        self.check_inseg_nexthop(label, "SAI_NEXT_HOP_TYPE_MPLS", "10.0.0.1", "SAI_OUTSEG_TYPE_SWAP", "1:201")
+
+        # remove route entry
+        if self.mpls_appdb_mode():
+            self.remove_inseg_entry(label)
+        else:
+            # dvs.runcmd("ip -f mpls route del 200 as 201 via inet 10.0.0.1 dev Ethernet0")
+            dvs.runcmd("vtysh -c \"configure terminal\" -c \"no mpls lsp 200 10.0.0.1 201\"")
+
+        # check application database
+        self.pdb.wait_for_deleted_entry("LABEL_ROUTE_TABLE", label)
+
+        # check ASIC inseg database
+        self.check_inseg_entries(False, [label])
+        self.check_nexthop(False, "SAI_NEXT_HOP_TYPE_MPLS", "10.0.0.1", "SAI_OUTSEG_TYPE_SWAP", "1:201")
+
+        self.teardown_mpls(dvs)
+
     def test_RouteAddRemoveMplsRouteResolveNeigh(self, dvs, testlog):
         if not self.mpls_appdb_mode():
             dvs.runcmd("modprobe mpls_router")
