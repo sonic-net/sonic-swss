@@ -9,6 +9,7 @@
 #include "flex_counter_manager.h"
 #include "producertable.h"
 #include "table.h"
+#include "selectabletimer.h"
 
 using namespace swss;
 
@@ -74,15 +75,20 @@ protected:
     TrapIdHostIfTableMap m_trapid_hostif_table_map;
     TrapGroupTrapIdAttribs m_trap_group_trap_id_attrs;
     TrapObjectTrapNameMap m_trap_obj_name_map;
+    std::map<sai_object_id_t, std::string> m_pendingAddToFlexCntr;
 
     std::shared_ptr<DBConnector> m_counter_db;
     std::shared_ptr<DBConnector> m_flex_db;
+    std::shared_ptr<DBConnector> m_asic_db;
     std::unique_ptr<Table> m_counter_table;
+    std::unique_ptr<Table> m_vidToRidTable;
     std::unique_ptr<ProducerTable> m_flex_counter_group_table;
 
     FlexCounterManager m_trap_counter_manager;
 
     bool m_trap_rate_plugin_loaded = false;
+
+    SelectableTimer* m_FlexCounterUpdTimer = nullptr;
 
     void initDefaultHostIntfTable();
     void initDefaultTrapGroup();
@@ -107,7 +113,7 @@ protected:
                                  std::vector<sai_hostif_trap_type_t> &add_trap_ids,
                                  std::vector<sai_hostif_trap_type_t> &rem_trap_ids);
 
-    void getTrapIdsFromTrapGroup (sai_object_id_t trap_group_obj, 
+    void getTrapIdsFromTrapGroup (sai_object_id_t trap_group_obj,
                                   std::vector<sai_hostif_trap_type_t> &trap_ids);
 
     bool trapGroupProcessTrapIdChange (std::string trap_group_name,
@@ -130,6 +136,7 @@ protected:
     void unbindTrapCounter(sai_object_id_t hostif_trap_id);
 
     virtual void doTask(Consumer& consumer);
+    void doTask(swss::SelectableTimer&) override;
 };
 #endif /* SWSS_COPPORCH_H */
 
