@@ -31,6 +31,11 @@ class DVSAcl:
         "egress": "SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_EGRESS"
     }
 
+    ADB_PORTCHANNEL_ATTR_LOOKUP = {
+        "ingress": "SAI_LAG_ATTR_INGRESS_ACL",
+        "egress": "SAI_LAG_ATTR_EGRESS_ACL"
+    }
+
     ADB_PORT_ATTR_LOOKUP = {
         "ingress": "SAI_PORT_ATTR_INGRESS_ACL",
         "egress": "SAI_PORT_ATTR_EGRESS_ACL"
@@ -61,7 +66,7 @@ class DVSAcl:
         table_attrs = {
             "policy_desc": table_name,
             "type": table_type,
-            "ports": ",".join(ports)
+            "ports@": ",".join(ports)
         }
 
         if stage:
@@ -95,7 +100,7 @@ class DVSAcl:
             table_name: The name of the ACL table to update.
             ports: The new list of ports to bind to the ACL table.
         """
-        table_attrs = {"ports": ",".join(ports)}
+        table_attrs = {"ports@": ",".join(ports)}
         self.config_db.update_entry(self.CDB_ACL_TABLE_NAME, table_name, table_attrs)
 
     def remove_acl_table(self, table_name: str) -> None:
@@ -195,6 +200,37 @@ class DVSAcl:
                 member_groups.append(group_id)
 
         assert set(member_groups) == set(acl_table_group_ids)
+
+    def verify_acl_table_portchannel_binding(
+            self,
+            acl_table_id: str,
+            bind_portchannels: List[str],
+            num_tables: int,
+            stage: str = "ingress"
+    ) -> None:
+        """Verify that the ACL table has been bound to the given list of portchannels.
+
+        Args:
+            acl_table_id: The ACL table that is being checked.
+            bind_portchannels: The portchannels that should be bound to the given ACL table.
+            num_tables: The total number of ACL tables in ASIC DB.
+            stage: The stage of the ACL table that was created.
+        """
+        acl_table_group_ids = self.asic_db.wait_for_n_keys(self.ADB_ACL_GROUP_TABLE_NAME, len(bind_portchannels))
+
+        portchannel_groups = []
+        for portchannel in bind_portchannels:
+            portchannel_oid = self.counters_db.get_entry("COUNTERS_LAG_NAME_MAP", "").get(portchannel)
+            fvs = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_LAG", portchannel_oid)
+
+            acl_table_group_id = fvs.pop(self.ADB_PORTCHANNEL_ATTR_LOOKUP[stage], None)
+            assert acl_table_group_id in acl_table_group_ids
+            portchannel_groups.append(acl_table_group_id)
+
+        assert len(portchannel_groups) == len(bind_portchannels)
+        assert set(portchannel_groups) == set(acl_table_group_ids)
+
+        self.verify_acl_table_group_members(acl_table_id, acl_table_group_ids, num_tables)
 
     def verify_acl_table_port_binding(
             self,

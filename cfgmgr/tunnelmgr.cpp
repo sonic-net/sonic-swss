@@ -64,10 +64,21 @@ static int cmdIpTunnelRouteAdd(const std::string& pfx, std::string & res)
     // ip route add/replace {{ip prefix}} dev {{tunnel intf}}
     // Replace route if route already exists
     ostringstream cmd;
-    cmd << IP_CMD " route replace "
-        << shellquote(pfx)
-        << " dev "
-        << TUNIF;
+    if (IpPrefix(pfx).isV4())
+    {
+        cmd << IP_CMD " route replace "
+            << shellquote(pfx)
+            << " dev "
+            << TUNIF;
+    }
+    else
+    {
+        cmd << IP_CMD " -6 route replace "
+            << shellquote(pfx)
+            << " dev "
+            << TUNIF;
+    }
+
     return swss::exec(cmd.str(), res);
 }
 
@@ -75,10 +86,21 @@ static int cmdIpTunnelRouteDel(const std::string& pfx, std::string & res)
 {
     // ip route del {{ip prefix}} dev {{tunnel intf}}
     ostringstream cmd;
-    cmd << IP_CMD " route del "
-        << shellquote(pfx)
-        << " dev "
-        << TUNIF;
+    if (IpPrefix(pfx).isV4())
+    {
+        cmd << IP_CMD " route del "
+            << shellquote(pfx)
+            << " dev "
+            << TUNIF;
+    }
+    else
+    {
+        cmd << IP_CMD " -6 route del "
+            << shellquote(pfx)
+            << " dev "
+            << TUNIF;
+    }
+
     return swss::exec(cmd.str(), res);
 }
 

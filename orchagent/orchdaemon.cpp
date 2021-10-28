@@ -26,21 +26,29 @@ extern void syncd_apply_view();
  * Global orch daemon variables
  */
 PortsOrch *gPortsOrch;
+FabricPortsOrch *gFabricPortsOrch;
 FdbOrch *gFdbOrch;
 IntfsOrch *gIntfsOrch;
 NeighOrch *gNeighOrch;
 RouteOrch *gRouteOrch;
+NhgOrch *gNhgOrch;
 FgNhgOrch *gFgNhgOrch;
 AclOrch *gAclOrch;
+PbhOrch *gPbhOrch;
 MirrorOrch *gMirrorOrch;
 CrmOrch *gCrmOrch;
 BufferOrch *gBufferOrch;
 SwitchOrch *gSwitchOrch;
 Directory<Orch*> gDirectory;
 NatOrch *gNatOrch;
+MlagOrch *gMlagOrch;
+IsoGrpOrch *gIsoGrpOrch;
 MACsecOrch *gMacsecOrch;
 
 bool gIsNatSupported = false;
+
+#define DEFAULT_MAX_BULK_SIZE 1000
+size_t gMaxBulkSize = DEFAULT_MAX_BULK_SIZE;
 
 OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb, DBConnector *chassisAppDb) :
         m_applDb(applDb),
@@ -49,6 +57,7 @@ OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *
         m_chassisAppDb(chassisAppDb)
 {
     SWSS_LOG_ENTER();
+    m_select = new Select();
 }
 
 OrchDaemon::~OrchDaemon()
@@ -68,6 +77,7 @@ OrchDaemon::~OrchDaemon()
     for(; it != m_orchList.rend(); ++it) {
         delete(*it);
     }
+    delete m_select;
 }
 
 bool OrchDaemon::init()
@@ -98,13 +108,15 @@ bool OrchDaemon::init()
 
     vector<table_name_with_pri_t> app_fdb_tables = {
         { APP_FDB_TABLE_NAME,        FdbOrch::fdborch_pri},
-        { APP_VXLAN_FDB_TABLE_NAME,  FdbOrch::fdborch_pri}
+        { APP_VXLAN_FDB_TABLE_NAME,  FdbOrch::fdborch_pri},
+        { APP_MCLAG_FDB_TABLE_NAME,  FdbOrch::fdborch_pri}
     };
 
     gCrmOrch = new CrmOrch(m_configDb, CFG_CRM_TABLE_NAME);
-    gPortsOrch = new PortsOrch(m_applDb, ports_tables, m_chassisAppDb);
+    gPortsOrch = new PortsOrch(m_applDb, m_stateDb, ports_tables, m_chassisAppDb);
     TableConnector stateDbFdb(m_stateDb, STATE_FDB_TABLE_NAME);
-    gFdbOrch = new FdbOrch(m_applDb, app_fdb_tables, stateDbFdb, gPortsOrch);
+    TableConnector stateMclagDbFdb(m_stateDb, STATE_MCLAG_REMOTE_FDB_TABLE_NAME);
+    gFdbOrch = new FdbOrch(m_applDb, app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch);
 
     vector<string> vnet_tables = {
             APP_VNET_RT_TABLE_NAME,
@@ -146,7 +158,14 @@ bool OrchDaemon::init()
 
     gFgNhgOrch = new FgNhgOrch(m_configDb, m_applDb, m_stateDb, fgnhg_tables, gNeighOrch, gIntfsOrch, vrf_orch);
     gDirectory.set(gFgNhgOrch);
-    gRouteOrch = new RouteOrch(m_applDb, APP_ROUTE_TABLE_NAME, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch);
+
+    const int routeorch_pri = 5;
+    vector<table_name_with_pri_t> route_tables = {
+        { APP_ROUTE_TABLE_NAME,        routeorch_pri },
+        { APP_LABEL_ROUTE_TABLE_NAME,  routeorch_pri }
+    };
+    gRouteOrch = new RouteOrch(m_applDb, route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch);
+    gNhgOrch = new NhgOrch(m_applDb, APP_NEXTHOP_GROUP_TABLE_NAME);
 
     CoppOrch  *copp_orch  = new CoppOrch(m_applDb, APP_COPP_TABLE_NAME);
     TunnelDecapOrch *tunnel_decap_orch = new TunnelDecapOrch(m_applDb, APP_TUNNEL_DECAP_TABLE_NAME);
@@ -158,8 +177,6 @@ bool OrchDaemon::init()
     VxlanVrfMapOrch *vxlan_vrf_orch = new VxlanVrfMapOrch(m_applDb, APP_VXLAN_VRF_TABLE_NAME);
     gDirectory.set(vxlan_vrf_orch);
 
-    EvpnRemoteVniOrch* evpn_remote_vni_orch = new EvpnRemoteVniOrch(m_applDb, APP_VXLAN_REMOTE_VNI_TABLE_NAME);
-    gDirectory.set(evpn_remote_vni_orch);
 
     EvpnNvoOrch* evpn_nvo_orch = new EvpnNvoOrch(m_applDb, APP_VXLAN_EVPN_NVO_TABLE_NAME);
     gDirectory.set(evpn_nvo_orch);
@@ -256,7 +273,7 @@ bool OrchDaemon::init()
     MuxOrch *mux_orch = new MuxOrch(m_configDb, mux_tables, tunnel_decap_orch, gNeighOrch, gFdbOrch);
     gDirectory.set(mux_orch);
 
-    MuxCableOrch *mux_cb_orch = new MuxCableOrch(m_applDb, APP_MUX_CABLE_TABLE_NAME);
+    MuxCableOrch *mux_cb_orch = new MuxCableOrch(m_applDb, m_stateDb, APP_MUX_CABLE_TABLE_NAME);
     gDirectory.set(mux_cb_orch);
 
     MuxStateOrch *mux_st_orch = new MuxStateOrch(m_stateDb, STATE_HW_MUX_CABLE_TABLE_NAME);
@@ -271,7 +288,7 @@ bool OrchDaemon::init()
     };
 
     gMacsecOrch = new MACsecOrch(m_applDb, m_stateDb, macsec_app_tables, gPortsOrch);
-  
+
     /*
      * The order of the orch list is important for state restore of warm start and
      * the queued processing in m_toSync map after gPortsOrch->allPortsReady() is set.
@@ -280,7 +297,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gIntfsOrch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, wm_orch, policer_orch, sflow_orch, debug_counter_orch, gMacsecOrch};
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gIntfsOrch, gNeighOrch, gNhgOrch, gRouteOrch, copp_orch, qos_orch, wm_orch, policer_orch, tunnel_decap_orch, sflow_orch, debug_counter_orch, gMacsecOrch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
@@ -314,32 +331,90 @@ bool OrchDaemon::init()
     }
     gAclOrch = new AclOrch(acl_table_connectors, gSwitchOrch, gPortsOrch, gMirrorOrch, gNeighOrch, gRouteOrch, dtel_orch);
 
+    vector<string> mlag_tables = {
+        { CFG_MCLAG_TABLE_NAME },
+        { CFG_MCLAG_INTF_TABLE_NAME }
+    };
+    gMlagOrch = new MlagOrch(m_configDb, mlag_tables);
+
+    TableConnector appDbIsoGrpTbl(m_applDb, APP_ISOLATION_GROUP_TABLE_NAME);
+    vector<TableConnector> iso_grp_tbl_ctrs = {
+        appDbIsoGrpTbl
+    };
+
+    gIsoGrpOrch = new IsoGrpOrch(iso_grp_tbl_ctrs);
+
+    //
+    // Policy Based Hashing (PBH) orchestrator
+    //
+
+    TableConnector cfgDbPbhTable(m_configDb, CFG_PBH_TABLE_TABLE_NAME);
+    TableConnector cfgDbPbhRuleTable(m_configDb, CFG_PBH_RULE_TABLE_NAME);
+    TableConnector cfgDbPbhHashTable(m_configDb, CFG_PBH_HASH_TABLE_NAME);
+    TableConnector cfgDbPbhHashFieldTable(m_configDb, CFG_PBH_HASH_FIELD_TABLE_NAME);
+
+    vector<TableConnector> pbhTableConnectorList = {
+        cfgDbPbhTable,
+        cfgDbPbhRuleTable,
+        cfgDbPbhHashTable,
+        cfgDbPbhHashFieldTable
+    };
+
+    gPbhOrch = new PbhOrch(pbhTableConnectorList, gAclOrch, gPortsOrch);
+
     m_orchList.push_back(gFdbOrch);
     m_orchList.push_back(gMirrorOrch);
     m_orchList.push_back(gAclOrch);
+    m_orchList.push_back(gPbhOrch);
     m_orchList.push_back(chassis_frontend_orch);
     m_orchList.push_back(vrf_orch);
     m_orchList.push_back(vxlan_tunnel_orch);
     m_orchList.push_back(evpn_nvo_orch);
     m_orchList.push_back(vxlan_tunnel_map_orch);
-    m_orchList.push_back(evpn_remote_vni_orch);
+
+    if (vxlan_tunnel_orch->isDipTunnelsSupported())
+    {
+        EvpnRemoteVnip2pOrch* evpn_remote_vni_orch = new EvpnRemoteVnip2pOrch(m_applDb, APP_VXLAN_REMOTE_VNI_TABLE_NAME);
+        gDirectory.set(evpn_remote_vni_orch);
+        m_orchList.push_back(evpn_remote_vni_orch);
+    }
+    else
+    {
+        EvpnRemoteVnip2mpOrch* evpn_remote_vni_orch = new EvpnRemoteVnip2mpOrch(m_applDb, APP_VXLAN_REMOTE_VNI_TABLE_NAME);
+        gDirectory.set(evpn_remote_vni_orch);
+        m_orchList.push_back(evpn_remote_vni_orch);
+    }
+
     m_orchList.push_back(vxlan_vrf_orch);
     m_orchList.push_back(cfg_vnet_rt_orch);
     m_orchList.push_back(vnet_orch);
     m_orchList.push_back(vnet_rt_orch);
     m_orchList.push_back(gNatOrch);
+    m_orchList.push_back(gMlagOrch);
+    m_orchList.push_back(gIsoGrpOrch);
     m_orchList.push_back(gFgNhgOrch);
     m_orchList.push_back(mux_orch);
     m_orchList.push_back(mux_cb_orch);
     m_orchList.push_back(mux_st_orch);
 
-    m_select = new Select();
+    if (m_fabricEnabled)
+    {
+        vector<table_name_with_pri_t> fabric_port_tables = {
+           // empty for now
+        };
+        gFabricPortsOrch = new FabricPortsOrch(m_applDb, fabric_port_tables);
+        m_orchList.push_back(gFabricPortsOrch);
+    }
 
     vector<string> flex_counter_tables = {
         CFG_FLEX_COUNTER_TABLE_NAME
     };
 
-    m_orchList.push_back(new FlexCounterOrch(m_configDb, flex_counter_tables));
+    auto* flexCounterOrch = new FlexCounterOrch(m_configDb, flex_counter_tables);
+    m_orchList.push_back(flexCounterOrch);
+
+    gDirectory.set(flexCounterOrch);
+    gDirectory.set(gPortsOrch);
 
     vector<string> pfc_wd_tables = {
         CFG_PFC_WD_TABLE_NAME
@@ -478,6 +553,27 @@ bool OrchDaemon::init()
                     queueStatIds,
                     queueAttrIds,
                     PFC_WD_POLL_MSECS));
+    } else if (platform == CISCO_8000_PLATFORM_SUBSTRING)
+    {
+        static const vector<sai_port_stat_t> portStatIds;
+
+        static const vector<sai_queue_stat_t> queueStatIds =
+        {
+            SAI_QUEUE_STAT_PACKETS,
+        };
+
+        static const vector<sai_queue_attr_t> queueAttrIds =
+        {
+            SAI_QUEUE_ATTR_PAUSE_STATUS,
+        };
+
+        m_orchList.push_back(new PfcWdSwOrch<PfcWdSaiDlrInitHandler, PfcWdActionHandler>(
+                    m_configDb,
+                    pfc_wd_tables,
+                    portStatIds,
+                    queueStatIds,
+                    queueAttrIds,
+                    PFC_WD_POLL_MSECS));
     }
 
     m_orchList.push_back(&CounterCheckOrch::getInstance(m_configDb));
@@ -570,7 +666,7 @@ void OrchDaemon::start()
          * Not doing this under Select::TIMEOUT condition because of
          * the existence of finer granularity ExecutableTimer with select
          */
-        if (gSwitchOrch->checkRestartReady())
+        if (gSwitchOrch && gSwitchOrch->checkRestartReady())
         {
             bool ret = warmRestartCheck();
             if (ret)
@@ -583,10 +679,13 @@ void OrchDaemon::start()
                     gSwitchOrch->setAgingFDB(0);
 
                     // Disable FDB learning on all bridge ports
-                    for (auto& pair: gPortsOrch->getAllPorts())
+                    if (gPortsOrch)
                     {
-                        auto& port = pair.second;
-                        gPortsOrch->setBridgePortLearningFDB(port, SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE);
+                        for (auto& pair: gPortsOrch->getAllPorts())
+                        {
+                            auto& port = pair.second;
+                            gPortsOrch->setBridgePortLearningFDB(port, SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE);
+                        }
                     }
 
                     // Flush sairedis's redis pipeline
@@ -743,4 +842,37 @@ bool OrchDaemon::warmRestartCheck()
     SWSS_LOG_NOTICE("Restart check result: %s", data.c_str());
     gSwitchOrch->restartCheckReply(op,  data, values);
     return ret;
+}
+
+void OrchDaemon::addOrchList(Orch *o)
+{
+    m_orchList.push_back(o);
+}
+
+FabricOrchDaemon::FabricOrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb, DBConnector *chassisAppDb) :
+    OrchDaemon(applDb, configDb, stateDb, chassisAppDb),
+    m_applDb(applDb),
+    m_configDb(configDb)
+{
+    SWSS_LOG_ENTER();
+    SWSS_LOG_NOTICE("FabricOrchDaemon starting...");
+}
+
+bool FabricOrchDaemon::init()
+{
+    SWSS_LOG_ENTER();
+    SWSS_LOG_NOTICE("FabricOrchDaemon init");
+
+    vector<table_name_with_pri_t> fabric_port_tables = {
+        // empty for now, I don't consume anything yet
+    };
+    gFabricPortsOrch = new FabricPortsOrch(m_applDb, fabric_port_tables);
+    addOrchList(gFabricPortsOrch);
+
+    vector<string> flex_counter_tables = {
+        CFG_FLEX_COUNTER_TABLE_NAME
+    };
+    addOrchList(new FlexCounterOrch(m_configDb, flex_counter_tables));
+
+    return true;
 }

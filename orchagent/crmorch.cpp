@@ -40,7 +40,9 @@ const map<CrmResourceType, string> crmResTypeNameMap =
     { CrmResourceType::CRM_FDB_ENTRY, "FDB_ENTRY" },
     { CrmResourceType::CRM_IPMC_ENTRY, "IPMC_ENTRY" },
     { CrmResourceType::CRM_SNAT_ENTRY, "SNAT_ENTRY" },
-    { CrmResourceType::CRM_DNAT_ENTRY, "DNAT_ENTRY" }
+    { CrmResourceType::CRM_DNAT_ENTRY, "DNAT_ENTRY" },
+    { CrmResourceType::CRM_MPLS_INSEG, "MPLS_INSEG" },
+    { CrmResourceType::CRM_MPLS_NEXTHOP, "MPLS_NEXTHOP" },
 };
 
 const map<CrmResourceType, uint32_t> crmResSaiAvailAttrMap =
@@ -60,7 +62,9 @@ const map<CrmResourceType, uint32_t> crmResSaiAvailAttrMap =
     { CrmResourceType::CRM_FDB_ENTRY, SAI_SWITCH_ATTR_AVAILABLE_FDB_ENTRY },
     { CrmResourceType::CRM_IPMC_ENTRY, SAI_SWITCH_ATTR_AVAILABLE_IPMC_ENTRY},
     { CrmResourceType::CRM_SNAT_ENTRY, SAI_SWITCH_ATTR_AVAILABLE_SNAT_ENTRY },
-    { CrmResourceType::CRM_DNAT_ENTRY, SAI_SWITCH_ATTR_AVAILABLE_DNAT_ENTRY }
+    { CrmResourceType::CRM_DNAT_ENTRY, SAI_SWITCH_ATTR_AVAILABLE_DNAT_ENTRY },
+    { CrmResourceType::CRM_MPLS_INSEG, SAI_OBJECT_TYPE_INSEG_ENTRY },
+    { CrmResourceType::CRM_MPLS_NEXTHOP, SAI_OBJECT_TYPE_NEXT_HOP },
 };
 
 const map<string, CrmResourceType> crmThreshTypeResMap =
@@ -80,7 +84,9 @@ const map<string, CrmResourceType> crmThreshTypeResMap =
     { "fdb_entry_threshold_type", CrmResourceType::CRM_FDB_ENTRY },
     { "ipmc_entry_threshold_type", CrmResourceType::CRM_IPMC_ENTRY },
     { "snat_entry_threshold_type", CrmResourceType::CRM_SNAT_ENTRY },
-    { "dnat_entry_threshold_type", CrmResourceType::CRM_DNAT_ENTRY }
+    { "dnat_entry_threshold_type", CrmResourceType::CRM_DNAT_ENTRY },
+    { "mpls_inseg_threshold_type", CrmResourceType::CRM_MPLS_INSEG },
+    { "mpls_nexthop_threshold_type", CrmResourceType::CRM_MPLS_NEXTHOP },
 };
 
 const map<string, CrmResourceType> crmThreshLowResMap =
@@ -100,7 +106,9 @@ const map<string, CrmResourceType> crmThreshLowResMap =
     {"fdb_entry_low_threshold", CrmResourceType::CRM_FDB_ENTRY },
     {"ipmc_entry_low_threshold", CrmResourceType::CRM_IPMC_ENTRY },
     {"snat_entry_low_threshold", CrmResourceType::CRM_SNAT_ENTRY },
-    {"dnat_entry_low_threshold", CrmResourceType::CRM_DNAT_ENTRY }
+    {"dnat_entry_low_threshold", CrmResourceType::CRM_DNAT_ENTRY },
+    {"mpls_inseg_low_threshold", CrmResourceType::CRM_MPLS_INSEG },
+    {"mpls_nexthop_low_threshold", CrmResourceType::CRM_MPLS_NEXTHOP },
 };
 
 const map<string, CrmResourceType> crmThreshHighResMap =
@@ -120,7 +128,9 @@ const map<string, CrmResourceType> crmThreshHighResMap =
     {"fdb_entry_high_threshold", CrmResourceType::CRM_FDB_ENTRY },
     {"ipmc_entry_high_threshold", CrmResourceType::CRM_IPMC_ENTRY },
     {"snat_entry_high_threshold", CrmResourceType::CRM_SNAT_ENTRY },
-    {"dnat_entry_high_threshold", CrmResourceType::CRM_DNAT_ENTRY }
+    {"dnat_entry_high_threshold", CrmResourceType::CRM_DNAT_ENTRY },
+    {"mpls_inseg_high_threshold", CrmResourceType::CRM_MPLS_INSEG },
+    {"mpls_nexthop_high_threshold", CrmResourceType::CRM_MPLS_NEXTHOP },
 };
 
 const map<string, CrmThresholdType> crmThreshTypeMap =
@@ -147,7 +157,9 @@ const map<string, CrmResourceType> crmAvailCntsTableMap =
     { "crm_stats_fdb_entry_available", CrmResourceType::CRM_FDB_ENTRY },
     { "crm_stats_ipmc_entry_available", CrmResourceType::CRM_IPMC_ENTRY },
     { "crm_stats_snat_entry_available", CrmResourceType::CRM_SNAT_ENTRY },
-    { "crm_stats_dnat_entry_available", CrmResourceType::CRM_DNAT_ENTRY }
+    { "crm_stats_dnat_entry_available", CrmResourceType::CRM_DNAT_ENTRY },
+    { "crm_stats_mpls_inseg_available", CrmResourceType::CRM_MPLS_INSEG },
+    { "crm_stats_mpls_nexthop_available", CrmResourceType::CRM_MPLS_NEXTHOP },
 };
 
 const map<string, CrmResourceType> crmUsedCntsTableMap =
@@ -167,7 +179,9 @@ const map<string, CrmResourceType> crmUsedCntsTableMap =
     { "crm_stats_fdb_entry_used", CrmResourceType::CRM_FDB_ENTRY },
     { "crm_stats_ipmc_entry_used", CrmResourceType::CRM_IPMC_ENTRY },
     { "crm_stats_snat_entry_used", CrmResourceType::CRM_SNAT_ENTRY },
-    { "crm_stats_dnat_entry_used", CrmResourceType::CRM_DNAT_ENTRY }
+    { "crm_stats_dnat_entry_used", CrmResourceType::CRM_DNAT_ENTRY },
+    { "crm_stats_mpls_inseg_used", CrmResourceType::CRM_MPLS_INSEG },
+    { "crm_stats_mpls_nexthop_used", CrmResourceType::CRM_MPLS_NEXTHOP },
 };
 
 CrmOrch::CrmOrch(DBConnector *db, string tableName):
@@ -442,31 +456,31 @@ void CrmOrch::getResAvailableCounters()
             continue;
         }
 
-        sai_attribute_t attr;
-        attr.id = crmResSaiAvailAttrMap.at(res.first);
-
-        switch (attr.id)
+        switch (res.first)
         {
-            case SAI_SWITCH_ATTR_AVAILABLE_IPV4_ROUTE_ENTRY:
-            case SAI_SWITCH_ATTR_AVAILABLE_IPV6_ROUTE_ENTRY:
-            case SAI_SWITCH_ATTR_AVAILABLE_IPV4_NEXTHOP_ENTRY:
-            case SAI_SWITCH_ATTR_AVAILABLE_IPV6_NEXTHOP_ENTRY:
-            case SAI_SWITCH_ATTR_AVAILABLE_IPV4_NEIGHBOR_ENTRY:
-            case SAI_SWITCH_ATTR_AVAILABLE_IPV6_NEIGHBOR_ENTRY:
-            case SAI_SWITCH_ATTR_AVAILABLE_NEXT_HOP_GROUP_MEMBER_ENTRY:
-            case SAI_SWITCH_ATTR_AVAILABLE_NEXT_HOP_GROUP_ENTRY:
-            case SAI_SWITCH_ATTR_AVAILABLE_FDB_ENTRY:
-            case SAI_SWITCH_ATTR_AVAILABLE_IPMC_ENTRY:
-            case SAI_SWITCH_ATTR_AVAILABLE_SNAT_ENTRY:
-            case SAI_SWITCH_ATTR_AVAILABLE_DNAT_ENTRY:
+            case CrmResourceType::CRM_IPV4_ROUTE:
+            case CrmResourceType::CRM_IPV6_ROUTE:
+            case CrmResourceType::CRM_IPV4_NEXTHOP:
+            case CrmResourceType::CRM_IPV6_NEXTHOP:
+            case CrmResourceType::CRM_IPV4_NEIGHBOR:
+            case CrmResourceType::CRM_IPV6_NEIGHBOR:
+            case CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER:
+            case CrmResourceType::CRM_NEXTHOP_GROUP:
+            case CrmResourceType::CRM_FDB_ENTRY:
+            case CrmResourceType::CRM_IPMC_ENTRY:
+            case CrmResourceType::CRM_SNAT_ENTRY:
+            case CrmResourceType::CRM_DNAT_ENTRY:
             {
+                sai_attribute_t attr;
+                attr.id = crmResSaiAvailAttrMap.at(res.first);
+
                 sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
-                    if((status == SAI_STATUS_NOT_SUPPORTED) ||
-                       (status == SAI_STATUS_NOT_IMPLEMENTED) ||
-                       SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
-                       SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status))
+                    if ((status == SAI_STATUS_NOT_SUPPORTED) ||
+                        (status == SAI_STATUS_NOT_IMPLEMENTED) ||
+                        SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
+                        SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status))
                     {
                         // mark unsupported resources
                         res.second.resStatus = CrmResourceStatus::CRM_RES_NOT_SUPPORTED;
@@ -474,7 +488,11 @@ void CrmOrch::getResAvailableCounters()
                         break;
                     }
                     SWSS_LOG_ERROR("Failed to get switch attribute %u , rv:%d", attr.id, status);
-                    break;
+                    task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
+                    if (handle_status != task_process_status::task_success)
+                    {
+                        break;
+                    }
                 }
 
                 res.second.countersMap[CRM_COUNTERS_TABLE_KEY].availableCounter = attr.value.u32;
@@ -482,9 +500,12 @@ void CrmOrch::getResAvailableCounters()
                 break;
             }
 
-            case SAI_SWITCH_ATTR_AVAILABLE_ACL_TABLE:
-            case SAI_SWITCH_ATTR_AVAILABLE_ACL_TABLE_GROUP:
+            case CrmResourceType::CRM_ACL_TABLE:
+            case CrmResourceType::CRM_ACL_GROUP:
             {
+                sai_attribute_t attr;
+                attr.id = crmResSaiAvailAttrMap.at(res.first);
+
                 vector<sai_acl_resource_t> resources(CRM_ACL_RESOURCE_COUNT);
 
                 attr.value.aclresource.count = CRM_ACL_RESOURCE_COUNT;
@@ -500,7 +521,11 @@ void CrmOrch::getResAvailableCounters()
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("Failed to get switch attribute %u , rv:%d", attr.id, status);
-                    break;
+                    task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
+                    if (handle_status != task_process_status::task_success)
+                    {
+                        break;
+                    }
                 }
 
                 for (uint32_t i = 0; i < attr.value.aclresource.count; i++)
@@ -512,9 +537,12 @@ void CrmOrch::getResAvailableCounters()
                 break;
             }
 
-            case SAI_ACL_TABLE_ATTR_AVAILABLE_ACL_ENTRY:
-            case SAI_ACL_TABLE_ATTR_AVAILABLE_ACL_COUNTER:
+            case CrmResourceType::CRM_ACL_ENTRY:
+            case CrmResourceType::CRM_ACL_COUNTER:
             {
+                sai_attribute_t attr;
+                attr.id = crmResSaiAvailAttrMap.at(res.first);
+
                 for (auto &cnt : res.second.countersMap)
                 {
                     sai_status_t status = sai_acl_api->get_acl_table_attribute(cnt.second.id, 1, &attr);
@@ -530,8 +558,64 @@ void CrmOrch::getResAvailableCounters()
                 break;
             }
 
+            case CrmResourceType::CRM_MPLS_INSEG:
+            {
+                sai_object_type_t objType = static_cast<sai_object_type_t>(crmResSaiAvailAttrMap.at(res.first));
+                uint64_t availCount = 0;
+                sai_status_t status = sai_object_type_get_availability(gSwitchId, objType, 0, nullptr, &availCount);
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    if ((status == SAI_STATUS_NOT_SUPPORTED) ||
+                        (status == SAI_STATUS_NOT_IMPLEMENTED) ||
+                        SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
+                        SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status))
+                    {
+                        // mark unsupported resources
+                        res.second.resStatus = CrmResourceStatus::CRM_RES_NOT_SUPPORTED;
+                        SWSS_LOG_NOTICE("CRM Resource %s not supported", crmResTypeNameMap.at(res.first).c_str());
+                        break;
+                    }
+                    SWSS_LOG_ERROR("Failed to get availability for object_type %u , rv:%d", objType, status);
+                    break;
+                }
+
+                res.second.countersMap[CRM_COUNTERS_TABLE_KEY].availableCounter = static_cast<uint32_t>(availCount);
+
+                break;
+            }
+
+            case CrmResourceType::CRM_MPLS_NEXTHOP:
+            {
+                sai_object_type_t objType = static_cast<sai_object_type_t>(crmResSaiAvailAttrMap.at(res.first));
+                sai_attribute_t attr;
+                uint64_t availCount = 0;
+
+                attr.id = SAI_NEXT_HOP_ATTR_TYPE;
+                attr.value.s32 = SAI_NEXT_HOP_TYPE_MPLS;
+                sai_status_t status = sai_object_type_get_availability(gSwitchId, objType, 1, &attr, &availCount);
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    if ((status == SAI_STATUS_NOT_SUPPORTED) ||
+                        (status == SAI_STATUS_NOT_IMPLEMENTED) ||
+                        SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
+                        SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status))
+                    {
+                        // mark unsupported resources
+                        res.second.resStatus = CrmResourceStatus::CRM_RES_NOT_SUPPORTED;
+                        SWSS_LOG_NOTICE("CRM Resource %s not supported", crmResTypeNameMap.at(res.first).c_str());
+                        break;
+                    }
+                    SWSS_LOG_ERROR("Failed to get availability for object_type %u , rv:%d", objType, status);
+                    break;
+                }
+
+                res.second.countersMap[CRM_COUNTERS_TABLE_KEY].availableCounter = static_cast<uint32_t>(availCount);
+
+                break;
+            }
+
             default:
-                SWSS_LOG_ERROR("Failed to get CRM attribute %u. Unknown attribute.\n", attr.id);
+                SWSS_LOG_ERROR("Failed to get CRM resource type %u. Unknown resource type.\n", static_cast<uint32_t>(res.first));
                 return;
         }
     }

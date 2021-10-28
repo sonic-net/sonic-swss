@@ -53,6 +53,7 @@ typedef struct {
     std::string cable_length;
     std::string port_mtu;
     std::string gearbox_model;
+    long lane_count;
 
     // APPL_DB.BUFFER_PROFILE fields
     std::string name;
@@ -79,12 +80,12 @@ typedef struct {
 } buffer_pg_t;
 
 typedef enum {
+    // Port is admin down. All PGs programmed to APPL_DB should be removed from the port
+    PORT_ADMIN_DOWN,
     // Port is under initializing, which means its info hasn't been comprehensive for calculating headroom
     PORT_INITIALIZING,
     // All necessary information for calculating headroom is ready
-    PORT_READY,
-    // Port is admin down. All PGs programmed to APPL_DB should be removed from the port
-    PORT_ADMIN_DOWN
+    PORT_READY
 } port_state_t;
 
 typedef struct {
@@ -93,7 +94,13 @@ typedef struct {
     std::string cable_length;
     std::string mtu;
     std::string gearbox_model;
-//    std::string profile_name;
+
+    bool auto_neg;
+    std::string effective_speed;
+    std::string adv_speeds;
+    std::string supported_speeds;
+
+    long lane_count;
 } port_info_t;
 
 //TODO:
@@ -129,6 +136,8 @@ private:
     typedef std::map<std::string, buffer_table_handler> buffer_table_handler_map;
     typedef std::pair<std::string, buffer_table_handler> buffer_handler_pair;
 
+    std::string m_platform;
+
     buffer_table_handler_map m_bufferTableHandlerMap;
 
     bool m_portInitDone;
@@ -142,6 +151,7 @@ private:
     // PORT and CABLE_LENGTH table and caches
     Table m_cfgPortTable;
     Table m_cfgCableLenTable;
+    Table m_statePortTable;
     // m_portInfoLookup
     // key: port name
     // updated only when a port's speed and cable length updated
@@ -212,14 +222,13 @@ private:
     // Tool functions to parse keys and references
     std::string getPgPoolMode();
     void transformSeperator(std::string &name);
-    void transformReference(std::string &name);
     std::string parseObjectNameFromKey(const std::string &key, size_t pos/* = 1*/);
-    std::string parseObjectNameFromReference(const std::string &reference);
-    std::string getDynamicProfileName(const std::string &speed, const std::string &cable, const std::string &mtu, const std::string &threshold, const std::string &gearbox_model);
+    std::string getDynamicProfileName(const std::string &speed, const std::string &cable, const std::string &mtu, const std::string &threshold, const std::string &gearbox_model, long lane_count);
     inline bool isNonZero(const std::string &value) const
     {
         return !value.empty() && value != "0";
     }
+    std::string getMaxSpeedFromList(std::string speedList);
 
     // APPL_DB table operations
     void updateBufferPoolToDb(const std::string &name, const buffer_pool_t &pool);
@@ -227,17 +236,18 @@ private:
     void updateBufferPgToDb(const std::string &key, const std::string &profile, bool add);
 
     // Meta flows
+    bool needRefreshPortDueToEffectiveSpeed(port_info_t &portInfo, std::string &portName);
     void calculateHeadroomSize(buffer_profile_t &headroom);
-    void checkSharedBufferPoolSize();
+    void checkSharedBufferPoolSize(bool force_update_during_initialization);
     void recalculateSharedBufferPool();
-    task_process_status allocateProfile(const std::string &speed, const std::string &cable, const std::string &mtu, const std::string &threshold, const std::string &gearbox_model, std::string &profile_name);
+    task_process_status allocateProfile(const std::string &speed, const std::string &cable, const std::string &mtu, const std::string &threshold, const std::string &gearbox_model, long lane_count, std::string &profile_name);
     void releaseProfile(const std::string &profile_name);
     bool isHeadroomResourceValid(const std::string &port, const buffer_profile_t &profile, const std::string &new_pg);
     void refreshSharedHeadroomPool(bool enable_state_updated_by_ratio, bool enable_state_updated_by_size);
 
     // Main flows
     task_process_status removeAllPgsFromPort(const std::string &port);
-    task_process_status refreshPriorityGroupsForPort(const std::string &port, const std::string &speed, const std::string &cable_length, const std::string &mtu, const std::string &exactly_matched_key);
+    task_process_status refreshPgsForPort(const std::string &port, const std::string &speed, const std::string &cable_length, const std::string &mtu, const std::string &exactly_matched_key);
     task_process_status doUpdatePgTask(const std::string &pg_key, const std::string &port);
     task_process_status doRemovePgTask(const std::string &pg_key, const std::string &port);
     task_process_status doAdminStatusTask(const std::string port, const std::string adminStatus);
@@ -248,6 +258,7 @@ private:
     task_process_status handleBufferMaxParam(KeyOpFieldsValuesTuple &t);
     task_process_status handleDefaultLossLessBufferParam(KeyOpFieldsValuesTuple &t);
     task_process_status handleCableLenTable(KeyOpFieldsValuesTuple &t);
+    task_process_status handlePortStateTable(KeyOpFieldsValuesTuple &t);
     task_process_status handlePortTable(KeyOpFieldsValuesTuple &t);
     task_process_status handleBufferPoolTable(KeyOpFieldsValuesTuple &t);
     task_process_status handleBufferProfileTable(KeyOpFieldsValuesTuple &t);

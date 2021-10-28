@@ -2,7 +2,6 @@ import pytest
 from swsscommon import swsscommon
 from dvslib.dvs_database import DVSDatabase
 import ast
-import time
 
 class TestVirtualChassis(object):
 
@@ -26,6 +25,39 @@ class TestVirtualChassis(object):
                 chassis_app_db.db_connection.set("SYSTEM_LAG_ID_END", "2")
                 break
             
+    def config_inbandif_port(self, vct, ibport):
+        """This function configures port type inband interface in each linecard"""
+
+        dvss = vct.dvss
+        for name in dvss.keys():
+            dvs = dvss[name]
+            # Get the config info
+            config_db = dvs.get_config_db()
+            metatbl = config_db.get_entry("DEVICE_METADATA", "localhost")
+
+            cfg_switch_type = metatbl.get("switch_type")
+
+            # Configure only for line cards
+            if cfg_switch_type == "voq":
+                dvs.runcmd(f"config interface startup {ibport}")
+                config_db.create_entry("VOQ_INBAND_INTERFACE", f"{ibport}", {"inband_type": "port"})
+                
+    def del_inbandif_port(self, vct, ibport):
+        """This function deletes existing port type inband interface"""
+
+        dvss = vct.dvss
+        for name in dvss.keys():
+            dvs = dvss[name]
+            # Get the config info
+            config_db = dvs.get_config_db()
+            metatbl = config_db.get_entry("DEVICE_METADATA", "localhost")
+
+            cfg_switch_type = metatbl.get("switch_type")
+
+            # Applicable only for line cards
+            if cfg_switch_type == "voq":
+                config_db.delete_entry("VOQ_INBAND_INTERFACE", f"{ibport}")
+                
     def test_connectivity(self, vct):
         if vct is None:
             return
@@ -104,6 +136,7 @@ class TestVirtualChassis(object):
                 spcfg = ast.literal_eval(value)
                 assert spcfg['count'] == sp_count, "Number of systems ports configured is invalid"
 
+    @pytest.mark.skip(reason="This test is not stable enough")
     def test_chassis_app_db_sync(self, vct):
         """Test chassis app db syncing.
 
@@ -180,17 +213,36 @@ class TestVirtualChassis(object):
                     # Remote system ports's switch id should not match local switch id
                     assert spcfginfo["attached_switch_id"] != lc_switch_id, "RIF system port with wrong switch_id"
 
+    @pytest.mark.skip(reason="This test is not stable enough")
     def test_chassis_system_neigh(self, vct):
-        """Test neigh record creation and syncing to chassis app db.
+        """Test neigh record create/delete and syncing to chassis app db.
 
         This test validates that:
            (i)   Local neighbor entry is created with encap index
            (ii)  Local neighbor is synced to chassis ap db with assigned encap index
-           TODO: (iii) Remote neighbor entry is created in ASIC_DB with received encap index
+           (iii) Remote neighbor entry is created in ASIC_DB with received encap index
+           (iv)  Local neighbor entry is deleted when neighbor is deleted
+           (v)   Local neighbor delete is synced to chassis ap db
+           (vi)  Remote neighbor entry is cleared in ASIC_DB
         """
         
         if vct is None:
             return
+
+        # We use Ethernet0 as inband port in each line card. In real hardware, this will be a
+        # special port used for inband. For testing purpose, we need port record and rif record
+        # for the inband interface and valid kernel interface. Since Ethernet0 is already 
+        # setup, the port record, rif record and kernel interface already exist. So we use it
+        # for testing
+        inband_port = "Ethernet0"
+
+        # Configure port type inband interface
+        self.config_inbandif_port(vct, inband_port)
+
+        # Test neighbor on Ethernet4 since Ethernet0 is used as Inband port
+        test_neigh_dev = "Ethernet4"
+        test_neigh_ip = "10.8.104.3"
+        test_neigh_mac = "00:01:02:03:04:05"
 
         dvss = vct.dvss
         print("name {}".format(dvss.keys()))
@@ -210,7 +262,7 @@ class TestVirtualChassis(object):
 
                     # Add a static neighbor
                     _, res = dvs.runcmd(['sh', "-c", "ip neigh show"])
-                    _, res = dvs.runcmd(['sh', "-c", "ip neigh add 10.8.101.2 lladdr 00:01:02:03:04:05 dev Ethernet0"])
+                    _, res = dvs.runcmd(['sh', "-c", f"ip neigh add {test_neigh_ip} lladdr {test_neigh_mac} dev {test_neigh_dev}"])
                     assert res == "", "Error configuring static neigh"
 
                     asic_db = dvs.get_asic_db()
@@ -222,11 +274,14 @@ class TestVirtualChassis(object):
                     test_neigh = ""
                     for nkey in neighkeys:
                         ne = ast.literal_eval(nkey)
-                        if ne['ip'] == '10.8.101.2':
+                        if ne['ip'] == test_neigh_ip:
                             test_neigh = nkey
                             break
 
                     assert test_neigh != "", "Neigh not found in ASIC_DB"
+
+                    # Preserve test neigh asic db key for delete verification later
+                    test_neigh_asic_db_key = test_neigh
 
                     # Check for presence of encap index, retrieve and store it for sync verification
                     test_neigh_entry = asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY", test_neigh)
@@ -252,11 +307,14 @@ class TestVirtualChassis(object):
                 for sysnk in sysneighkeys:
                     sysnk_tok = sysnk.split("|")
                     assert len(sysnk_tok) == 3, "Invalid system neigh key in chassis app db"
-                    if sysnk_tok[2] == "10.8.101.2":
+                    if sysnk_tok[2] == test_neigh_ip:
                         test_sysneigh = sysnk
                         break
 
                 assert test_sysneigh != "", "Neigh is not sync-ed to chassis app db"
+
+                # Preserve test sys neigh chassis app db key for delete verification later
+                test_sysneigh_chassis_app_db_key = test_sysneigh
 
                 test_sysneigh_entry = chassis_app_db.get_entry("SYSTEM_NEIGH", test_sysneigh)
                 sys_neigh_encap_index = test_sysneigh_entry.get("encap_index")
@@ -265,7 +323,154 @@ class TestVirtualChassis(object):
                 assert encap_index == sys_neigh_encap_index, "Encap index not sync-ed correctly"
 
                 break
+
+        # Verify programming of remote neighbor in asic db and programming of static route and static
+        # neigh in the kernel for the remote neighbor. The neighbor created in linecard 1  will be a 
+        # remote neighbor in other linecards. Verity existence of the test neighbor in  linecards other 
+        # than linecard 1
+        for name in dvss.keys():
+            dvs = dvss[name]
+
+            config_db = dvs.get_config_db()
+            metatbl = config_db.get_entry("DEVICE_METADATA", "localhost")
+
+            cfg_switch_type = metatbl.get("switch_type")
+
+            # Neighbor record verifiation done in line card
+            if cfg_switch_type == "voq":    
+                lc_switch_id = metatbl.get("switch_id")
+                assert lc_switch_id != "", "Got error in getting switch_id from CONFIG_DB DEVICE_METADATA"
+                if lc_switch_id != "0":
+                    # Linecard other than linecard 1
+                    asic_db = dvs.get_asic_db()
+                    asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY", 1)
+                    neighkeys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY")
+                    assert len(neighkeys), "No neigh entries in ASIC_DB"
+                    
+                    # Check for presence of the remote neighbor in ASIC_DB
+                    remote_neigh = ""
+                    for nkey in neighkeys:
+                        ne = ast.literal_eval(nkey)
+                        if ne['ip'] == test_neigh_ip:
+                            remote_neigh = nkey
+                            break
+                        
+                    assert remote_neigh != "", "Remote neigh not found in ASIC_DB"
+
+                    # Preserve remote neigh asic db neigh key for delete verification later
+                    test_remote_neigh_asic_db_key = remote_neigh
+                    
+                    # Check for kernel entries
+
+                    _, output = dvs.runcmd("ip neigh show")
+                    assert f"{test_neigh_ip} dev {inband_port}" in output, "Kernel neigh not found for remote neighbor"
+
+                    _, output = dvs.runcmd("ip route show")
+                    assert f"{test_neigh_ip} dev {inband_port} scope link" in output, "Kernel route not found for remote neighbor"
+                   
+                    # Check for ASIC_DB entries. 
+
+                    # Check for presence of encap index, retrieve and store it for sync verification
+                    remote_neigh_entry = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY", remote_neigh)
+                    
+                    # Validate encap index
+                    remote_encap_index = remote_neigh_entry.get("SAI_NEIGHBOR_ENTRY_ATTR_ENCAP_INDEX")
+                    assert remote_encap_index != "", "VOQ encap index is not programmed for remote neigh in ASIC_DB"
+                    assert remote_encap_index == encap_index, "Encap index of remote neigh mismatch with allocated encap index"
+                    
+                    # Validate MAC
+                    mac = remote_neigh_entry.get("SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS")
+                    assert mac != "", "MAC address is not programmed for remote neigh in ASIC_DB"
+                    assert mac == test_neigh_mac, "Encap index of remote neigh mismatch with allocated encap index"
+                    
+                    # Check for other mandatory attributes
+                    # For remote neighbor, encap index must be imposed. So impose_index must be "true"
+                    impose_index = remote_neigh_entry.get("SAI_NEIGHBOR_ENTRY_ATTR_ENCAP_IMPOSE_INDEX")
+                    assert impose_index != "", "Impose index attribute is not programmed for remote neigh in ASIC_DB"
+                    assert impose_index == "true", "Impose index attribute is false for remote neigh"
+                   
+                    # For remote neighbors, is_local must be "false" 
+                    is_local = remote_neigh_entry.get("SAI_NEIGHBOR_ENTRY_ATTR_IS_LOCAL")
+                    assert is_local != "", "is_local attribute is not programmed for remote neigh in ASIC_DB"
+                    assert is_local == "false", "is_local attribute is true for remote neigh"
+                    
+                    break
+
+        # Verify system neighbor delete and clearing
+        for name in dvss.keys():
+            dvs = dvss[name]
+
+            config_db = dvs.get_config_db()
+            metatbl = config_db.get_entry("DEVICE_METADATA", "localhost")
+
+            cfg_switch_type = metatbl.get("switch_type")
+
+            # Neighbor record verifiation done in line card
+            if cfg_switch_type == "voq":    
+                lc_switch_id = metatbl.get("switch_id")
+                assert lc_switch_id != "", "Got error in getting switch_id from CONFIG_DB DEVICE_METADATA"
+                if lc_switch_id == "0":
+
+                    # Delete the static neighbor neighbor
+                    _, res = dvs.runcmd(['sh', "-c", f"ip neigh del {test_neigh_ip} dev {test_neigh_dev}"])
+                    assert res == "", "Error deleting static neigh"
+
+                    # Check for presence of the neighbor in ASIC_DB. The deleted neighbor should
+                    # not be present in the asic db
+                    asic_db = dvs.get_asic_db()
+                    neighkeys = asic_db.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY", test_neigh_asic_db_key)
+                    assert len(neighkeys) == 0, "Stale neigh entry found in ASIC_DB"
+
+                    break
+                    
+        # Verify syncing of neighbor record delete in chassis app db
+        dvss = vct.dvss
+        for name in dvss.keys():
+            if name.startswith("supervisor"):
+                dvs = dvss[name]
+                chassis_app_db = DVSDatabase(swsscommon.CHASSIS_APP_DB, dvs.redis_chassis_sock)
+                sysneighkeys = chassis_app_db.wait_for_deleted_entry("SYSTEM_NEIGH", test_sysneigh_chassis_app_db_key)
+                assert len(sysneighkeys) == 0, "Stale neigh entry in chassis app db"
+
+                break
+            
+        # Verify clearing of remote neighbor in non-owner linecard
+        dvss = vct.dvss
+        for name in dvss.keys():
+            dvs = dvss[name]
+
+            config_db = dvs.get_config_db()
+            metatbl = config_db.get_entry("DEVICE_METADATA", "localhost")
+
+            cfg_switch_type = metatbl.get("switch_type")
+
+            # Neighbor record verifiation done in line card
+            if cfg_switch_type == "voq":    
+                lc_switch_id = metatbl.get("switch_id")
+                assert lc_switch_id != "", "Got error in getting switch_id from CONFIG_DB DEVICE_METADATA"
+                if lc_switch_id != "0":
+                    # Linecard other than linecard 1
+
+                    # Check for presence of the remote neighbor in ASIC_DB. The remote neighbor corresponding
+                    # to the deleted static neigbor should not be present
+                    asic_db = dvs.get_asic_db()
+                    neighkeys = asic_db.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY", test_remote_neigh_asic_db_key)
+                    assert len(neighkeys) == 0, "Stale remote neigh in ASIC_DB"
+                    
+                    # Check for kernel entries. Kernel entries (neigh and route) should have been removed
+
+                    _, output = dvs.runcmd("ip neigh show")
+                    assert f"{test_neigh_ip} dev {inband_port}" not in output, "Kernel neigh of remote neighbor not removed"
+
+                    _, output = dvs.runcmd("ip route show")
+                    assert f"{test_neigh_ip} dev {inband_port} scope link" not in output, "Kernel route of remote neighbor not removed"
+                    
+                    break
+
+        # Cleanup inband if configuration
+        self.del_inbandif_port(vct, inband_port)
         
+    @pytest.mark.skip(reason="This test is not stable enough")
     def test_chassis_system_lag(self, vct):
         """Test PortChannel in VOQ based chassis systems.
         
@@ -321,17 +526,9 @@ class TestVirtualChassis(object):
                     fvs = swsscommon.FieldValuePairs([("admin", "up"), ("mtu", "9100")])
                     psTbl_lag.set(f"{test_lag1_name}", fvs)
                     
-                    time.sleep(1)
-
-                    # Add port channel member
-                    fvs = swsscommon.FieldValuePairs([("status", "enabled")])
-                    psTbl_lagMember.set(f"{test_lag1_name}:{test_lag1_member}", fvs)
-                    
-                    time.sleep(1)
-                    
                     # Verify creation of the PorChannel with voq system port aggregator id in asic db
                     asic_db = dvs.get_asic_db()
-                    lagkeys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG")
+                    lagkeys = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG", 1)
                     assert len(lagkeys) == 1, "The LAG entry for configured PortChannel is not available in asic db"
                     
                     # Check for the presence of voq system port aggregate id attribute
@@ -339,8 +536,12 @@ class TestVirtualChassis(object):
                     spa_id = lag_entry.get("SAI_LAG_ATTR_SYSTEM_PORT_AGGREGATE_ID")
                     assert spa_id != "", "VOQ System port aggregate id not present for the LAG"
                     
+                    # Add port channel member
+                    fvs = swsscommon.FieldValuePairs([("status", "enabled")])
+                    psTbl_lagMember.set(f"{test_lag1_name}:{test_lag1_member}", fvs)
+                    
                     # Check for presence of lag member added
-                    lagmemberkeys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER")
+                    lagmemberkeys = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER", 1)
                     assert len(lagmemberkeys) == 1, "The LAG member for configured PortChannel is not available in asic db"
                     
                     break
@@ -350,7 +551,7 @@ class TestVirtualChassis(object):
             if name.startswith("supervisor"):
                 dvs = dvss[name]
                 chassis_app_db = DVSDatabase(swsscommon.CHASSIS_APP_DB, dvs.redis_chassis_sock)
-                syslagkeys = chassis_app_db.get_keys("SYSTEM_LAG_TABLE")
+                syslagkeys = chassis_app_db.wait_for_n_keys("SYSTEM_LAG_TABLE", 1)
                 assert len(syslagkeys) == 1, "System lag entry is not available in chassis app db"
                
                 # system lag alias (key) should be unique across chassis. To ensure such uniqueness,
@@ -365,7 +566,7 @@ class TestVirtualChassis(object):
                 # This id must be same as the id allocated in owner linecard.
                 assert remote_lag_id == spa_id, "System lag id in chassis app db is not same as allocated lag id"
                     
-                syslagmemberkeys = chassis_app_db.get_keys("SYSTEM_LAG_MEMBER_TABLE")
+                syslagmemberkeys = chassis_app_db.wait_for_n_keys("SYSTEM_LAG_MEMBER_TABLE", 1)
                 assert len(syslagmemberkeys) == 1, "No system lag member entries in chassis app db"
                 
                 break
@@ -387,7 +588,7 @@ class TestVirtualChassis(object):
                 if lc_switch_id != "0":
                     # Linecard other than linecard 1 (owner line card)
                     asic_db = dvs.get_asic_db()
-                    remotesyslagkeys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG")
+                    remotesyslagkeys = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG", 1)
                     assert len(remotesyslagkeys) == 1, "No remote system lag entries in ASIC_DB"
                     
                     remotesyslag_entry = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_LAG", remotesyslagkeys[0])
@@ -396,7 +597,7 @@ class TestVirtualChassis(object):
                     assert remote_lag_id == spa_id, "Remote system lag programmed with wrong lag id"
                     
                     # Verify remote system lag has system port as member
-                    lagmemberkeys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER")
+                    lagmemberkeys = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER", 1)
                     assert len(lagmemberkeys) == 1, "The LAG member for remote system lag is not available in asic db"
                     
                     remotelagmember_entry = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER", lagmemberkeys[0])
@@ -453,11 +654,9 @@ class TestVirtualChassis(object):
                     fvs = swsscommon.FieldValuePairs([("admin", "up"), ("mtu", "9100")])
                     psTbl_lag.set(f"{test_lag2_name}", fvs)
                     
-                    time.sleep(1)
-
                     # Verify creation of the PorChannels with voq system port aggregator id in asic db
                     asic_db = dvs.get_asic_db()
-                    lagkeys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG")
+                    lagkeys = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG", 2)
                     assert len(lagkeys) == 2, "Two configured LAG entries are not available in asic db"
                     
                     # Check for the presence of voq system port aggregate id attribute for 2 LAGs
@@ -539,19 +738,29 @@ class TestVirtualChassis(object):
                     psTbl_lag = swsscommon.ProducerStateTable(app_db, "LAG_TABLE")
                     psTbl_lagMember = swsscommon.ProducerStateTable(app_db, "LAG_MEMBER_TABLE")
 
+                    # Make sure presence of 2 port channels before deleting
+                    asic_db = dvs.get_asic_db()
+                    lagkeys = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG", 2)
+                    assert len(lagkeys) == 2, "Expected 2 PortChannels are not available"
+
+                    # Make sure presence of total of 1 lag member added in test_lag1_name
+                    # No lag member added in test_lag2_name
+                    lagmemberkeys = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER", 1)
+                    assert len(lagmemberkeys) == 1, "Expected 1 LAG members are not available"
+
                     # Delete port channel member of PortChannel test_lag1_name
                     psTbl_lagMember.delete(f"{test_lag1_name}:{test_lag1_member}")
 
-                    time.sleep(1)
+                    # Verify the lag member is removed from asic db
+                    lagmemberkeys = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER", 0)
+                    assert len(lagmemberkeys) == 0, "Deleted LAG member is not removed from asic db"
 
                     # Delete PortChannel test_lag1_name
                     psTbl_lag.delete(f"{test_lag1_name}")
                     
-                    time.sleep(1)
-
                     # Verify deletion of the PorChannel
                     asic_db = dvs.get_asic_db()
-                    lagkeys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG")
+                    lagkeys = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG", 1)
                     assert len(lagkeys) == 1, "Two LAG entries in asic db even after deleting a PortChannel"
 
                     # Create PortChannel test_lag3_name. This should be addedd successfully since deleting 
@@ -559,12 +768,10 @@ class TestVirtualChassis(object):
                     fvs = swsscommon.FieldValuePairs([("admin", "up"), ("mtu", "9100")])
                     psTbl_lag.set(f"{test_lag3_name}", fvs)
 
-                    time.sleep(1)
-
                     # Verify creation of the additional PortChannel after making space for more 
                     # PortChannels by deleting some PortChannels
                     asic_db = dvs.get_asic_db()
-                    lagkeys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG")
+                    lagkeys = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG", 2)
                     assert len(lagkeys) == 2, "Two configured LAG entries are not available in asic db"
                     
                     # Check for the presence of voq system port aggregate id attribute for 2 LAGs
@@ -582,11 +789,9 @@ class TestVirtualChassis(object):
                     
                     psTbl_lag.delete(f"{test_lag3_name}")
 
-                    time.sleep(1)
-
                     # Verify deletion of all PortChannels
                     asic_db = dvs.get_asic_db()
-                    lagkeys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG")
+                    lagkeys = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG", 0)
                     assert len(lagkeys) == 0, "LAG entries in asic db even after deleting all PortChannels"
                     
                     break
@@ -596,10 +801,10 @@ class TestVirtualChassis(object):
             if name.startswith("supervisor"):
                 dvs = dvss[name]
                 chassis_app_db = DVSDatabase(swsscommon.CHASSIS_APP_DB, dvs.redis_chassis_sock)
-                syslagkeys = chassis_app_db.get_keys("SYSTEM_LAG_TABLE")
+                syslagkeys = chassis_app_db.wait_for_n_keys("SYSTEM_LAG_TABLE", 0)
                 assert len(syslagkeys) == 0, "Stale system lag entries in chassis app db"
                     
-                syslagmemberkeys = chassis_app_db.get_keys("SYSTEM_LAG_MEMBER_TABLE")
+                syslagmemberkeys = chassis_app_db.wait_for_n_keys("SYSTEM_LAG_MEMBER_TABLE", 0)
                 assert len(syslagmemberkeys) == 0, "Stale system lag member entries in chassis app db"
                 
                 break
@@ -621,11 +826,11 @@ class TestVirtualChassis(object):
                 if lc_switch_id != "0":
                     # Linecard other than linecard 1 (owner line card)
                     asic_db = dvs.get_asic_db()
-                    remotesyslagkeys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG")
+                    remotesyslagkeys = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG", 0)
                     assert len(remotesyslagkeys) == 0, "Stale remote system lag entries in asic db"
                     
                     # Verify cleaning of system lag members
-                    lagmemberkeys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER")
+                    lagmemberkeys = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER", 0)
                     assert len(lagmemberkeys) == 0, "Stale system lag member entries in asic db"
                     
                     break

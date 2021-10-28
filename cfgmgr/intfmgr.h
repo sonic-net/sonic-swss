@@ -29,6 +29,7 @@ private:
     void setIntfIp(const std::string &alias, const std::string &opCmd, const IpPrefix &ipPrefix);
     void setIntfVrf(const std::string &alias, const std::string &vrfName);
     void setIntfMac(const std::string &alias, const std::string &macAddr);
+    bool setIntfMpls(const std::string &alias, const std::string &mpls);
 
     bool doIntfGeneralTask(const std::vector<std::string>& keys, std::vector<FieldValueTuple> data, const std::string& op);
     bool doIntfAddrTask(const std::vector<std::string>& keys, const std::vector<FieldValueTuple>& data, const std::string& op);
@@ -39,6 +40,7 @@ private:
     bool isIntfChangeVrf(const std::string &alias, const std::string &vrfName);
     int getIntfIpCount(const std::string &alias);
     void buildIntfReplayList(void);
+    void setWarmReplayDoneState();
 
     void addLoopbackIntf(const std::string &alias);
     void delLoopbackIntf(const std::string &alias);
@@ -53,6 +55,8 @@ private:
 
     bool setIntfProxyArp(const std::string &alias, const std::string &proxy_arp);
     bool setIntfGratArp(const std::string &alias, const std::string &grat_arp);
+
+    bool m_replayDone {false};
 };
 
 }

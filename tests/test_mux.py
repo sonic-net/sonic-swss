@@ -59,6 +59,7 @@ class TestMuxTunnelBase(object):
         fvs = {"NULL": "NULL"}
         confdb.create_entry("VLAN_INTERFACE", "Vlan1000", fvs)
         confdb.create_entry("VLAN_INTERFACE", "Vlan1000|192.168.0.1/24", fvs)
+        confdb.create_entry("VLAN_INTERFACE", "Vlan1000|fc02:1000::1/64", fvs)
 
         dvs.runcmd("config interface startup Ethernet0")
         dvs.runcmd("config interface startup Ethernet4")
@@ -297,6 +298,29 @@ class TestMuxTunnelBase(object):
 
         self.check_nexthop_in_asic_db(asicdb, rtkeys[0])
 
+        # Check route set flow and changing nexthop
+        self.set_mux_state(appdb, "Ethernet4", "active")
+
+        ps = swsscommon.ProducerStateTable(pdb.db_connection, "ROUTE_TABLE")
+        fvs = swsscommon.FieldValuePairs([("nexthop", self.SERV2_IPV4), ("ifname", "Vlan1000")])
+        ps.set(rtprefix, fvs)
+
+        # Check if route was propagated to ASIC DB
+        rtkeys = dvs_route.check_asicdb_route_entries([rtprefix])
+
+        # Change Mux status for Ethernet0 and expect no change to replaced route
+        self.set_mux_state(appdb, "Ethernet0", "standby")
+        self.check_nexthop_in_asic_db(asicdb, rtkeys[0])
+
+        self.set_mux_state(appdb, "Ethernet4", "standby")
+        self.check_nexthop_in_asic_db(asicdb, rtkeys[0], True)
+
+        # Delete the route
+        ps._del(rtprefix)
+
+        self.set_mux_state(appdb, "Ethernet4", "active")
+        dvs_route.check_asicdb_deleted_route_entries([rtprefix])
+
         # Test ECMP routes
 
         self.set_mux_state(appdb, "Ethernet0", "active")
@@ -334,6 +358,44 @@ class TestMuxTunnelBase(object):
         self.set_mux_state(appdb, "Ethernet4", "active")
         self.check_nexthop_group_in_asic_db(asicdb, rtkeys[0])
 
+        ps._del(rtprefix)
+
+        # Test IPv6 ECMP routes and start with standby config
+        self.set_mux_state(appdb, "Ethernet0", "standby")
+        self.set_mux_state(appdb, "Ethernet4", "standby")
+
+        rtprefix = "2020::/64"
+
+        dvs_route.check_asicdb_deleted_route_entries([rtprefix])
+
+        ps = swsscommon.ProducerStateTable(pdb.db_connection, "ROUTE_TABLE")
+
+        fvs = swsscommon.FieldValuePairs([("nexthop", self.SERV1_IPV6 + "," + self.SERV2_IPV6), ("ifname", "tun0,tun0")])
+
+        ps.set(rtprefix, fvs)
+
+        # Check if route was propagated to ASIC DB
+        rtkeys = dvs_route.check_asicdb_route_entries([rtprefix])
+
+        # Check for nexthop group and validate nexthop group member in asic db
+        self.check_nexthop_group_in_asic_db(asicdb, rtkeys[0], 2)
+
+        # Step: 1 - Change one NH to active and verify ecmp route
+        self.set_mux_state(appdb, "Ethernet0", "active")
+        self.check_nexthop_group_in_asic_db(asicdb, rtkeys[0], 1)
+
+        # Step: 2 - Change the other NH to active and verify ecmp route
+        self.set_mux_state(appdb, "Ethernet4", "active")
+        self.check_nexthop_group_in_asic_db(asicdb, rtkeys[0])
+
+        # Step: 3 - Change one NH to back to standby and verify ecmp route
+        self.set_mux_state(appdb, "Ethernet0", "standby")
+        self.check_nexthop_group_in_asic_db(asicdb, rtkeys[0], 1)
+
+        # Step: 4 - Change the other NH to standby and verify ecmp route
+        self.set_mux_state(appdb, "Ethernet4", "standby")
+        self.check_nexthop_group_in_asic_db(asicdb, rtkeys[0], 2)
+
 
     def get_expected_sai_qualifiers(self, portlist, dvs_acl):
         expected_sai_qualifiers = {
@@ -370,6 +432,75 @@ class TestMuxTunnelBase(object):
         # Set last mux port to active, verify ACL rule is deleted
         self.set_mux_state(appdb, "Ethernet4", "active")
         dvs_acl.verify_no_acl_rules()
+
+        # Set unknown state and verify the behavior as standby
+        self.set_mux_state(appdb, "Ethernet0", "unknown")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet0"], dvs_acl)
+        dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
+
+        # Verify change while setting unknown from active
+        self.set_mux_state(appdb, "Ethernet4", "unknown")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet0","Ethernet4"], dvs_acl)
+        dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
+
+        self.set_mux_state(appdb, "Ethernet0", "active")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet4"], dvs_acl)
+        dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
+
+        self.set_mux_state(appdb, "Ethernet0", "standby")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet0","Ethernet4"], dvs_acl)
+        dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
+
+        # Verify no change while setting unknown from standby
+        self.set_mux_state(appdb, "Ethernet0", "unknown")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet0","Ethernet4"], dvs_acl)
+        dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
+
+
+    def create_and_test_metrics(self, appdb, statedb, dvs):
+
+        # Set to active and test attributes for start and end time
+        self.set_mux_state(appdb, "Ethernet0", "active")
+        keys = statedb.get_keys("MUX_METRICS_TABLE")
+        assert len(keys) != 0
+
+        for key in keys:
+            if key != "Ethernet0":
+                continue
+            fvs = statedb.get_entry("MUX_METRICS_TABLE", key)
+            assert fvs != {}
+
+            start = end = False
+            for f,v in fvs.items():
+                if f == "orch_switch_active_start":
+                    start = True
+                elif f == "orch_switch_active_end":
+                    end = True
+
+            assert start
+            assert end
+
+        # Set to standby and test attributes for start and end time
+        self.set_mux_state(appdb, "Ethernet0", "standby")
+
+        keys = statedb.get_keys("MUX_METRICS_TABLE")
+        assert len(keys) != 0
+
+        for key in keys:
+            if key != "Ethernet0":
+                continue
+            fvs = statedb.get_entry("MUX_METRICS_TABLE", key)
+            assert fvs != {}
+
+            start = end = False
+            for f,v in fvs.items():
+                if f == "orch_switch_standby_start":
+                    start = True
+                elif f == "orch_switch_standby_end":
+                    end = True
+
+            assert start
+            assert end
 
 
     def check_interface_exists_in_asicdb(self, asicdb, sai_oid):
@@ -604,12 +735,20 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
 
     def test_acl(self, dvs, dvs_acl, testlog):
-        """ test Route entries and mux state change """
+        """ test acl and mux state change """
 
         appdb  = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         asicdb = dvs.get_asic_db()
 
         self.create_and_test_acl(appdb, asicdb, dvs, dvs_acl)
+
+    def test_mux_metrics(self, dvs, testlog):
+        """ test metrics for mux state change """
+
+        appdb  = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        statedb = dvs.get_state_db()
+
+        self.create_and_test_metrics(appdb, statedb, dvs)
 
 
 # Add Dummy always-pass test at end as workaroud

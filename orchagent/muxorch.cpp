@@ -5,6 +5,9 @@
 #include <unordered_set>
 #include <stdexcept>
 #include <inttypes.h>
+#include <math.h>
+#include <chrono>
+#include <time.h>
 
 #include "sai.h"
 #include "ipaddress.h"
@@ -73,6 +76,7 @@ const map <string, MuxState> muxStateStringToVal =
 {
     { "active", MuxState::MUX_STATE_ACTIVE },
     { "standby", MuxState::MUX_STATE_STANDBY },
+    { "unknown", MuxState::MUX_STATE_STANDBY },
     { "init", MuxState::MUX_STATE_INIT },
     { "failed", MuxState::MUX_STATE_FAILED },
     { "pending", MuxState::MUX_STATE_PENDING },
@@ -391,19 +395,23 @@ void MuxCable::setState(string new_state)
     SWSS_LOG_NOTICE("[%s] Set MUX state from %s to %s", mux_name_.c_str(),
                      muxStateValToString.at(state_).c_str(), new_state.c_str());
 
-    // Update HW Mux cable state anyways
-    mux_cb_orch_->updateMuxState(mux_name_, new_state);
-
     MuxState ns = muxStateStringToVal.at(new_state);
+
+    /* Update new_state to handle unknown state */
+    new_state = muxStateValToString.at(ns);
 
     auto it = muxStateTransition.find(make_pair(state_, ns));
 
     if (it ==  muxStateTransition.end())
     {
+        // Update HW Mux cable state anyways
+        mux_cb_orch_->updateMuxState(mux_name_, new_state);
         SWSS_LOG_ERROR("State transition from %s to %s is not-handled ",
                         muxStateValToString.at(state_).c_str(), new_state.c_str());
         return;
     }
+
+    mux_cb_orch_->updateMuxMetricState(mux_name_, new_state, true);
 
     MuxState state = state_;
     state_ = ns;
@@ -419,10 +427,13 @@ void MuxCable::setState(string new_state)
         throw std::runtime_error("Failed to handle state transition");
     }
 
+    mux_cb_orch_->updateMuxMetricState(mux_name_, new_state, false);
+
     st_chg_in_progress_ = false;
     st_chg_failed_ = false;
     SWSS_LOG_INFO("Changed state to %s", new_state.c_str());
 
+    mux_cb_orch_->updateMuxState(mux_name_, new_state);
     return;
 }
 
@@ -1261,9 +1272,10 @@ bool MuxOrch::delOperation(const Request& request)
     return true;
 }
 
-MuxCableOrch::MuxCableOrch(DBConnector *db, const std::string& tableName):
+MuxCableOrch::MuxCableOrch(DBConnector *db, DBConnector *sdb, const std::string& tableName):
               Orch2(db, tableName, request_),
-              app_tunnel_route_table_(db, APP_TUNNEL_ROUTE_TABLE_NAME)
+              app_tunnel_route_table_(db, APP_TUNNEL_ROUTE_TABLE_NAME),
+              mux_metric_table_(sdb, STATE_MUX_METRICS_TABLE_NAME)
 {
     mux_table_ = unique_ptr<Table>(new Table(db, APP_HW_MUX_CABLE_TABLE_NAME));
 }
@@ -1276,14 +1288,39 @@ void MuxCableOrch::updateMuxState(string portName, string muxState)
     mux_table_->set(portName, tuples);
 }
 
-void MuxCableOrch::addTunnelRoute(const NextHopKey &nhKey)
+void MuxCableOrch::updateMuxMetricState(string portName, string muxState, bool start)
 {
-    if (!nhKey.ip_address.isV4())
+    string msg = "orch_switch_" + muxState;
+    msg += start? "_start": "_end";
+
+    auto now  = std::chrono::system_clock::now();
+    auto now_t = std::chrono::system_clock::to_time_t(now);
+    auto dur = now - std::chrono::system_clock::from_time_t(now_t);
+    auto micros = std::chrono::duration_cast<std::chrono::microseconds>(dur).count();
+
+    std::tm now_tm;
+    gmtime_r(&now_t, &now_tm);
+
+    char buf[256];
+    std::strftime(buf, 256, "%Y-%b-%d %H:%M:%S.", &now_tm);
+
+    /*
+     * Prepend '0's for 6 point precision
+     */
+    const int precision = 6;
+    auto ms = to_string(micros);
+    if (ms.length() < precision)
     {
-        SWSS_LOG_INFO("IPv6 tunnel route add '%s' - (Not Implemented)", nhKey.ip_address.to_string().c_str());
-        return;
+        ms.insert(ms.begin(), precision - ms.length(), '0');
     }
 
+    string time = string(buf) + ms;
+
+    mux_metric_table_.hset(portName, msg, time);
+}
+
+void MuxCableOrch::addTunnelRoute(const NextHopKey &nhKey)
+{
     vector<FieldValueTuple> data;
     string key, alias = nhKey.alias;
 
@@ -1299,12 +1336,6 @@ void MuxCableOrch::addTunnelRoute(const NextHopKey &nhKey)
 
 void MuxCableOrch::removeTunnelRoute(const NextHopKey &nhKey)
 {
-    if (!nhKey.ip_address.isV4())
-    {
-        SWSS_LOG_INFO("IPv6 tunnel route remove '%s' - (Not Implemented)", nhKey.ip_address.to_string().c_str());
-        return;
-    }
-
     string key, alias = nhKey.alias;
 
     IpPrefix pfx = nhKey.ip_address.to_string();
@@ -1361,7 +1392,7 @@ MuxStateOrch::MuxStateOrch(DBConnector *db, const std::string& tableName) :
               Orch2(db, tableName, request_),
               mux_state_table_(db, STATE_MUX_CABLE_TABLE_NAME)
 {
-     SWSS_LOG_ENTER();
+    SWSS_LOG_ENTER();
 }
 
 void MuxStateOrch::updateMuxState(string portName, string muxState)

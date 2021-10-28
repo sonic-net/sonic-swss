@@ -46,6 +46,7 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
     Orch::addExecutor(restartCheckNotifier);
 
     initSensorsTable();
+    querySwitchTpidCapability();
     auto executorT = new ExecutableTimer(m_sensorsPollerTimer, this, "ASIC_SENSORS_POLL_TIMER");
     Orch::addExecutor(executorT);
 }
@@ -431,14 +432,15 @@ void SwitchOrch::initSensorsTable()
             m_numTempSensors = attr.value.u8;
             m_numTempSensorsInitialized = true;
         }
-        else if (status ==  SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED)
+        else if (SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) || SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status)
+                 || status ==  SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED)
         {
             m_numTempSensorsInitialized = true;
             SWSS_LOG_INFO("ASIC sensors : SAI_SWITCH_ATTR_MAX_NUMBER_OF_TEMP_SENSORS is not supported");
         }
         else
         {
-            SWSS_LOG_ERROR("ASIC sensors : failed to get SAI_SWITCH_ATTR_MAX_NUMBER_OF_TEMP_SENSORS: %d", status);
+            SWSS_LOG_ERROR("ASIC sensors : failed to get SAI_SWITCH_ATTR_MAX_NUMBER_OF_TEMP_SENSORS: 0x%x", status);
         }
     }
 
@@ -484,4 +486,57 @@ void SwitchOrch::initSensorsTable()
 void SwitchOrch::set_switch_capability(const std::vector<FieldValueTuple>& values)
 {
      m_switchTable.set("switch", values);
+}
+
+void SwitchOrch::querySwitchTpidCapability()
+{
+    SWSS_LOG_ENTER();
+    // Check if SAI is capable of handling TPID config and store result in StateDB switch capability table
+    {
+        vector<FieldValueTuple> fvVector;
+        sai_status_t status = SAI_STATUS_SUCCESS;
+        sai_attr_capability_t capability;
+
+        // Check if SAI is capable of handling TPID for Port
+        status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_PORT, SAI_PORT_ATTR_TPID, &capability);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Could not query port TPID capability %d", status);
+            // Since pre-req of TPID support requires querry capability failed, it means TPID not supported
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_TPID_CAPABLE, "false");
+        }
+        else
+        {
+            if (capability.set_implemented)
+            {
+                fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_TPID_CAPABLE, "true");
+            }
+            else
+            {
+                fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_TPID_CAPABLE, "false");
+            }
+            SWSS_LOG_NOTICE("port TPID capability %d", capability.set_implemented);
+        }
+        // Check if SAI is capable of handling TPID for LAG
+        status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_LAG, SAI_LAG_ATTR_TPID, &capability);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Could not query LAG TPID capability %d", status);
+            // Since pre-req of TPID support requires querry capability failed, it means TPID not supported
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_LAG_TPID_CAPABLE, "false");
+        }
+        else
+        {
+            if (capability.set_implemented)
+            {
+                fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_LAG_TPID_CAPABLE, "true");
+            }
+            else
+            {
+                fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_LAG_TPID_CAPABLE, "false");
+            }
+            SWSS_LOG_NOTICE("LAG TPID capability %d", capability.set_implemented);
+        }
+        set_switch_capability(fvVector);
+    }
 }

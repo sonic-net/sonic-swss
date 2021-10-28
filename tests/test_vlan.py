@@ -419,6 +419,22 @@ class TestVlan(object):
         self.dvs_vlan.remove_vlan(vlan)
         self.dvs_vlan.get_and_verify_vlan_ids(0)
 
+    def test_VlanHostIf(self, dvs):
+
+        vlan = "2"
+        hostif_name = "MonVlan2"
+
+        self.dvs_vlan.create_vlan(vlan)
+        vlan_oid = self.dvs_vlan.get_and_verify_vlan_ids(1)[0]
+        self.dvs_vlan.verify_vlan(vlan_oid, vlan)
+
+        self.dvs_vlan.create_vlan_hostif(vlan, hostif_name)
+        hostif_oid = self.dvs_vlan.get_and_verify_vlan_hostif_ids(len(dvs.asic_db.hostif_name_map))
+        self.dvs_vlan.verify_vlan_hostif(hostif_name, hostif_oid, vlan_oid)
+
+        self.dvs_vlan.remove_vlan(vlan)
+        self.dvs_vlan.get_and_verify_vlan_ids(0)
+        self.dvs_vlan.get_and_verify_vlan_hostif_ids(len(dvs.asic_db.hostif_name_map) - 1)
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying

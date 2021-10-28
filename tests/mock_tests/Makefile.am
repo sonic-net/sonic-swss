@@ -37,10 +37,13 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/orch.cpp \
                 $(top_srcdir)/orchagent/notifications.cpp \
                 $(top_srcdir)/orchagent/routeorch.cpp \
+                $(top_srcdir)/orchagent/mplsrouteorch.cpp \
                 $(top_srcdir)/orchagent/fgnhgorch.cpp \
+                $(top_srcdir)/orchagent/nhgorch.cpp \
                 $(top_srcdir)/orchagent/neighorch.cpp \
                 $(top_srcdir)/orchagent/intfsorch.cpp \
                 $(top_srcdir)/orchagent/portsorch.cpp \
+                $(top_srcdir)/orchagent/fabricportsorch.cpp \
                 $(top_srcdir)/orchagent/copporch.cpp \
                 $(top_srcdir)/orchagent/tunneldecaporch.cpp \
                 $(top_srcdir)/orchagent/qosorch.cpp \
@@ -48,6 +51,10 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/mirrororch.cpp \
                 $(top_srcdir)/orchagent/fdborch.cpp \
                 $(top_srcdir)/orchagent/aclorch.cpp \
+                $(top_srcdir)/orchagent/pbh/pbhcnt.cpp \
+                $(top_srcdir)/orchagent/pbh/pbhmgr.cpp \
+                $(top_srcdir)/orchagent/pbh/pbhrule.cpp \
+                $(top_srcdir)/orchagent/pbhorch.cpp \
                 $(top_srcdir)/orchagent/saihelper.cpp \
                 $(top_srcdir)/orchagent/switchorch.cpp \
                 $(top_srcdir)/orchagent/pfcwdorch.cpp \
@@ -67,6 +74,8 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/debugcounterorch.cpp \
                 $(top_srcdir)/orchagent/natorch.cpp \
                 $(top_srcdir)/orchagent/muxorch.cpp \
+                $(top_srcdir)/orchagent/mlagorch.cpp \
+                $(top_srcdir)/orchagent/isolationgrouporch.cpp \
                 $(top_srcdir)/orchagent/macsecorch.cpp \
                 $(top_srcdir)/orchagent/lagid.cpp 
 
