@@ -8,6 +8,7 @@
 #include "set"
 #include "orch.h"
 #include "crmorch.h"
+#include "routeorch.h"
 #include "nexthopgroupkey.h"
 #include "bulker.h"
 
@@ -16,6 +17,7 @@ using namespace std;
 extern sai_object_id_t gSwitchId;
 
 extern CrmOrch *gCrmOrch;
+extern RouteOrch *gRouteOrch;
 
 extern sai_next_hop_group_api_t* sai_next_hop_group_api;
 extern size_t gMaxBulkSize;
@@ -393,9 +395,14 @@ struct NhgEntry
  * Class providing the common functionality shared by all NhgOrch classes.
  */
 template <typename NhgClass>
-class NhgOrchCommon
+class NhgOrchCommon : public Orch
 {
 public:
+    /*
+     * Constructor.
+     */
+    NhgOrchCommon(DBConnector *db, string tableName) : Orch(db, tableName) {}
+
     /*
      * Check if the given next hop group index exists.
      */
@@ -432,6 +439,22 @@ public:
         assert(nhg_entry.ref_count > 0);
         --nhg_entry.ref_count;
     }
+
+    /* Getters / Setters. */
+    static inline unsigned getSyncedNhgCount() { return NhgBase::getSyncedCount(); }
+
+    /* Increase / Decrease the number of synced next hop groups. */
+    inline void incSyncedNhgCount()
+    {
+        assert(gRouteOrch->getNhgCount() + NhgBase::getSyncedCount() < gRouteOrch->getMaxNhgCount());
+        NhgBase::incSyncedCount();
+    }
+    inline void decSyncedNhgCount() { NhgBase::decSyncedCount(); }
+
+    /* Handling SAI status*/
+    using Orch::handleSaiCreateStatus;
+    using Orch::handleSaiRemoveStatus;
+    using Orch::parseHandleSaiStatusFailure;
 
 protected:
     /*

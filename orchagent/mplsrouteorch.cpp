@@ -8,12 +8,14 @@
 #include "crmorch.h"
 #include "nhgorch.h"
 #include "directory.h"
+#include "cbf/cbfnhgorch.h"
 
 extern sai_object_id_t gVirtualRouterId;
 extern sai_object_id_t gSwitchId;
 
 extern CrmOrch *gCrmOrch;
 extern NhgOrch *gNhgOrch;
+extern CbfNhgOrch *gCbfNhgOrch;
 
 void RouteOrch::doLabelTask(Consumer& consumer)
 {
@@ -251,18 +253,25 @@ void RouteOrch::doLabelTask(Consumer& consumer)
                 }
                 else
                 {
-                    try
+                    const NhgBase *nh_group;
+
+                    if (gNhgOrch->hasNhg(nhg_index))
                     {
-                        const auto &nh_group = gNhgOrch->getNhg(nhg_index);
-                        ctx.nhg = nh_group.getNhgKey();
-                        ctx.using_temp_nhg = nh_group.isTemp();
+                        nh_group = &gNhgOrch->getNhg(nhg_index);
                     }
-                    catch (const std::out_of_range& e)
+                    else if (gCbfNhgOrch->hasNhg(nhg_index))
+                    {
+                        nh_group = &gCbfNhgOrch->getNhg(nhg_index);
+                    }
+                    else
                     {
                         SWSS_LOG_ERROR("Next hop group %s does not exist", nhg_index.c_str());
                         ++it;
                         continue;
                     }
+
+                    ctx.nhg = nh_group->getNhgKey();
+                    ctx.using_temp_nhg = nh_group->isTemp();
                 }
 
                 NextHopGroupKey& nhg = ctx.nhg;
@@ -308,7 +317,7 @@ void RouteOrch::doLabelTask(Consumer& consumer)
 
                 // If already exhaust the nexthop groups, and there are pending removing routes in bulker,
                 // flush the bulker and possibly collect some released nexthop groups
-                if (m_nextHopGroupCount + gNhgOrch->getSyncedNhgCount() >= m_maxNextHopGroupCount &&
+                if (m_nextHopGroupCount + NhgOrch::getSyncedNhgCount() >= m_maxNextHopGroupCount &&
                     gLabelRouteBulker.removing_entries_count() > 0)
                 {
                     break;
@@ -476,16 +485,23 @@ bool RouteOrch::addLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroupKey 
 
     if (!ctx.nhg_index.empty())
     {
-        try
+        const NhgBase *nhg;
+
+        if (gNhgOrch->hasNhg(ctx.nhg_index))
         {
-            const auto &nhg = gNhgOrch->getNhg(ctx.nhg_index);
-            next_hop_id = nhg.getId();
+            nhg = &gNhgOrch->getNhg(ctx.nhg_index);
         }
-        catch(const std::out_of_range& e)
+        else if (gCbfNhgOrch->hasNhg(ctx.nhg_index))
+        {
+            nhg = &gCbfNhgOrch->getNhg(ctx.nhg_index);
+        }
+        else
         {
             SWSS_LOG_WARN("Next hop group key %s does not exist", ctx.nhg_index.c_str());
             return false;
         }
+
+        next_hop_id = nhg->getId();
     }
     else if (nextHops.getSize() == 0)
     {
@@ -673,7 +689,7 @@ bool RouteOrch::addLabelRoutePost(const LabelRouteBulkContext& ctx, const NextHo
     /* Check that the next hop group is not owned by NhgOrch. */
     if (!ctx.nhg_index.empty())
     {
-        if (!gNhgOrch->hasNhg(ctx.nhg_index))
+        if (!gNhgOrch->hasNhg(ctx.nhg_index) && !gCbfNhgOrch->hasNhg(ctx.nhg_index))
         {
             SWSS_LOG_WARN("Failed to get next hop group with index %s", ctx.nhg_index.c_str());
             return false;
@@ -745,9 +761,13 @@ bool RouteOrch::addLabelRoutePost(const LabelRouteBulkContext& ctx, const NextHo
         {
             increaseNextHopRefCount(nextHops);
         }
-        else
+        else if (gNhgOrch->hasNhg(ctx.nhg_index))
         {
             gNhgOrch->incNhgRefCount(ctx.nhg_index);
+        }
+        else
+        {
+            gCbfNhgOrch->incNhgRefCount(ctx.nhg_index);
         }
 
         SWSS_LOG_INFO("Post create label %u with next hop(s) %s",
@@ -795,10 +815,14 @@ bool RouteOrch::addLabelRoutePost(const LabelRouteBulkContext& ctx, const NextHo
                 m_bulkNhgReducedRefCnt.emplace(it_route->second.nhg_key, 0);
             }
         }
+        /* The next hop group is owned by (Cbf)NhgOrch. */
+        else if (gNhgOrch->hasNhg(it_route->second.nhg_index))
+        {
+            gNhgOrch->decNhgRefCount(it_route->second.nhg_index);
+        }
         else
         {
-            /* The next hop group is owned by NeighOrch. */
-            gNhgOrch->decNhgRefCount(it_route->second.nhg_index);
+            gCbfNhgOrch->decNhgRefCount(it_route->second.nhg_index);
         }
 
         /* Increase the ref_count for the next hop (group) entry */
@@ -806,9 +830,13 @@ bool RouteOrch::addLabelRoutePost(const LabelRouteBulkContext& ctx, const NextHo
         {
             increaseNextHopRefCount(nextHops);
         }
-        else
+        else if (gNhgOrch->hasNhg(ctx.nhg_index))
         {
             gNhgOrch->incNhgRefCount(ctx.nhg_index);
+        }
+        else
+        {
+            gCbfNhgOrch->incNhgRefCount(ctx.nhg_index);
         }
 
         if (blackhole)
@@ -928,9 +956,13 @@ bool RouteOrch::removeLabelRoutePost(const LabelRouteBulkContext& ctx)
             }
         }
     }
-    else
+    else if (gNhgOrch->hasNhg(it_route->second.nhg_index))
     {
         gNhgOrch->decNhgRefCount(it_route->second.nhg_index);
+    }
+    else
+    {
+        gCbfNhgOrch->decNhgRefCount(it_route->second.nhg_index);
     }
 
     SWSS_LOG_INFO("Remove label route %u with next hop(s) %s",

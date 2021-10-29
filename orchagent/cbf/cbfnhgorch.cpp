@@ -9,6 +9,7 @@
 extern sai_object_id_t gSwitchId;
 
 extern NhgOrch *gNhgOrch;
+extern CbfNhgOrch *gCbfNhgOrch;
 extern CrmOrch *gCrmOrch;
 extern NhgMapOrch *gNhgMapOrch;
 extern RouteOrch *gRouteOrch;
@@ -17,8 +18,7 @@ extern sai_next_hop_group_api_t* sai_next_hop_group_api;
 
 extern size_t gMaxBulkSize;
 
-CbfNhgOrch::CbfNhgOrch(DBConnector *db, string tableName) :
-    Orch(db, tableName)
+CbfNhgOrch::CbfNhgOrch(DBConnector *db, string tableName) : NhgOrchCommon(db, tableName)
 {
     SWSS_LOG_ENTER();
 }
@@ -331,10 +331,10 @@ bool CbfNhg::sync()
         SWSS_LOG_ERROR("Failed to create CBF next hop group %s, rv %d",
                         m_key.c_str(),
                         status);
-        task_process_status handle_status = gNhgOrch->handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, status);
+        task_process_status handle_status = gCbfNhgOrch->handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, status);
         if (handle_status != task_success)
         {
-            return gNhgOrch->parseHandleSaiStatusFailure(handle_status);
+            return gCbfNhgOrch->parseHandleSaiStatusFailure(handle_status);
         }
     }
 

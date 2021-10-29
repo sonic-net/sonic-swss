@@ -17,8 +17,7 @@ extern size_t gMaxBulkSize;
 extern sai_next_hop_group_api_t* sai_next_hop_group_api;
 extern sai_next_hop_api_t*         sai_next_hop_api;
 
-NhgOrch::NhgOrch(DBConnector *db, string tableName) :
-    Orch(db, tableName)
+NhgOrch::NhgOrch(DBConnector *db, string tableName) : NhgOrchCommon(db, tableName)
 {
     SWSS_LOG_ENTER();
 }
@@ -353,46 +352,6 @@ bool NhgOrch::invalidateNextHop(const NextHopKey& nh_key)
     }
 
     return true;
-}
-
-/*
- * Purpose:     Increase the ref count for a next hop group.
- * Description: Increment the ref count for a next hop group by 1.
- * Params:      IN  index - The index of the next hop group.
- * Returns:     Nothing.
- */
-void NhgOrch::incNhgRefCount(const std::string& index)
-{
-    SWSS_LOG_ENTER();
-
-    try
-    {
-        NhgOrchCommon::incNhgRefCount(index);
-    }
-    catch(const std::out_of_range &e)
-    {
-        gCbfNhgOrch->incNhgRefCount(index);
-    }
-}
-
-/*
- * Purpose:     Decrease the ref count for a next hop group.
- * Description: Decrement the ref count for a next hop group by 1.
- * Params:      IN  index - The index of the next hop group.
- * Returns:     Nothing.
- */
-void NhgOrch::decNhgRefCount(const std::string& index)
-{
-    SWSS_LOG_ENTER();
-
-    try
-    {
-        NhgOrchCommon::decNhgRefCount(index);
-    }
-    catch(const std::out_of_range &e)
-    {
-        gCbfNhgOrch->decNhgRefCount(index);
-    }
 }
 
 /*

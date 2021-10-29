@@ -85,7 +85,7 @@ private:
     bool hasSameMembers(const vector<string> &members) const;
 };
 
-class CbfNhgOrch : public Orch, public NhgOrchCommon<CbfNhg>
+class CbfNhgOrch : public NhgOrchCommon<CbfNhg>
 {
 public:
     /*
@@ -96,5 +96,5 @@ public:
 private:
     static pair<bool, vector<string>> getMembers(const string &members);
 
-    void doTask(Consumer &consumer);
+    void doTask(Consumer &consumer) override;
 };

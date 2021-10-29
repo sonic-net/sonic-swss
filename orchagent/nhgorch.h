@@ -9,7 +9,6 @@ using namespace std;
 
 extern PortsOrch *gPortsOrch;
 extern RouteOrch *gRouteOrch;
-extern CbfNhgOrch *gCbfNhgOrch;
 
 class NextHopGroupMember : public NhgMember<NextHopKey>
 {
@@ -108,7 +107,7 @@ private:
  * Next Hop Group Orchestrator class that handles NEXTHOP_GROUP_TABLE
  * updates.
  */
-class NhgOrch : public NhgOrchCommon<NextHopGroup>, public Orch
+class NhgOrch : public NhgOrchCommon<NextHopGroup>
 {
 public:
     /*
@@ -116,57 +115,13 @@ public:
      */
     NhgOrch(DBConnector *db, string tableName);
 
-    /* Check if the next hop group given by it's index exists. */
-    inline bool hasNhg(const std::string& index) const
-    {
-        return NhgOrchCommon::hasNhg(index) || gCbfNhgOrch->hasNhg(index);
-    }
-
-    /*
-     * Get the next hop group with the given index.
-     */
-    inline const NhgBase& getNhg(const std::string &index) const
-    {
-        try
-        {
-            return NhgOrchCommon::getNhg(index);
-        }
-        catch(const std::out_of_range &e)
-        {
-            return gCbfNhgOrch->getNhg(index);
-        }
-    }
-
     /* Add a temporary next hop group when resources are exhausted. */
     NextHopGroup createTempNhg(const NextHopGroupKey& nhg_key);
-
-    /* Getters / Setters. */
-    static inline unsigned getSyncedNhgCount() { return NhgBase::getSyncedCount(); }
-
-    /* Increase / Decrease the number of synced next hop groups. */
-    inline void incSyncedNhgCount()
-    {
-        assert(gRouteOrch->getNhgCount() + NhgBase::getSyncedCount() < gRouteOrch->getMaxNhgCount());
-        NhgBase::incSyncedCount();
-    }
-    inline void decSyncedNhgCount() { NhgBase::decSyncedCount(); }
-
-    /* Increase / Decrease ref count for a NHG given by it's index. */
-    void incNhgRefCount(const std::string& index);
-    void decNhgRefCount(const std::string& index);
 
     /* Validate / Invalidate a next hop. */
     bool validateNextHop(const NextHopKey& nh_key);
     bool invalidateNextHop(const NextHopKey& nh_key);
 
-    /* Handling SAI status*/
-    task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, void *context = nullptr)
-        { return Orch::handleSaiCreateStatus(api, status, context); }
-    task_process_status handleSaiRemoveStatus(sai_api_t api, sai_status_t status, void *context = nullptr)
-        { return Orch::handleSaiRemoveStatus(api, status, context); }
-    bool parseHandleSaiStatusFailure(task_process_status status)
-        { return Orch::parseHandleSaiStatusFailure(status); }
 private:
-
-    void doTask(Consumer& consumer);
+    void doTask(Consumer& consumer) override;
 };

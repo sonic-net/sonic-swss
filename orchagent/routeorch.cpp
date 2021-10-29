@@ -3,6 +3,7 @@
 #include <algorithm>
 #include "routeorch.h"
 #include "nhgorch.h"
+#include "cbf/cbfnhgorch.h"
 #include "logger.h"
 #include "swssnet.h"
 #include "crmorch.h"
@@ -20,6 +21,7 @@ extern PortsOrch *gPortsOrch;
 extern CrmOrch *gCrmOrch;
 extern Directory<Orch*> gDirectory;
 extern NhgOrch *gNhgOrch;
+extern CbfNhgOrch *gCbfNhgOrch;
 
 extern size_t gMaxBulkSize;
 
@@ -759,18 +761,25 @@ void RouteOrch::doTask(Consumer& consumer)
                 }
                 else
                 {
-                    try
+                    const NhgBase *nh_group;
+
+                    if (gNhgOrch->hasNhg(nhg_index))
                     {
-                        const auto &nh_group = gNhgOrch->getNhg(nhg_index);
-                        nhg = nh_group.getNhgKey();
-                        ctx.using_temp_nhg = nh_group.isTemp();
+                        nh_group = &gNhgOrch->getNhg(nhg_index);
                     }
-                    catch (const std::out_of_range& e)
+                    else if (gCbfNhgOrch->hasNhg(nhg_index))
+                    {
+                        nh_group = &gCbfNhgOrch->getNhg(nhg_index);
+                    }
+                    else
                     {
                         SWSS_LOG_ERROR("Next hop group %s does not exist", nhg_index.c_str());
                         ++it;
                         continue;
                     }
+
+                    nhg = nh_group->getNhgKey();
+                    ctx.using_temp_nhg = nh_group->isTemp();
                 }
 
                 if (nhg.getSize() == 1 && nhg.hasIntfNextHop())
@@ -831,7 +840,7 @@ void RouteOrch::doTask(Consumer& consumer)
 
                 // If already exhaust the nexthop groups, and there are pending removing routes in bulker,
                 // flush the bulker and possibly collect some released nexthop groups
-                if (m_nextHopGroupCount + gNhgOrch->getSyncedNhgCount() >= m_maxNextHopGroupCount &&
+                if (m_nextHopGroupCount + NhgOrch::getSyncedNhgCount() >= m_maxNextHopGroupCount &&
                     gRouteBulker.removing_entries_count() > 0)
                 {
                     break;
@@ -1107,7 +1116,7 @@ bool RouteOrch::createFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id
 {
     SWSS_LOG_ENTER();
 
-    if (m_nextHopGroupCount + gNhgOrch->getSyncedNhgCount() >= m_maxNextHopGroupCount)
+    if (m_nextHopGroupCount + NhgOrch::getSyncedNhgCount() >= m_maxNextHopGroupCount)
     {
         SWSS_LOG_DEBUG("Failed to create new next hop group. \
                 Reaching maximum number of next hop groups.");
@@ -1162,7 +1171,7 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
 
     assert(!hasNextHopGroup(nexthops));
 
-    if (m_nextHopGroupCount + gNhgOrch->getSyncedNhgCount() >= m_maxNextHopGroupCount)
+    if (m_nextHopGroupCount + NhgOrch::getSyncedNhgCount() >= m_maxNextHopGroupCount)
     {
         SWSS_LOG_DEBUG("Failed to create new next hop group. \
                         Reaching maximum number of next hop groups.");
@@ -1628,16 +1637,23 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
     /* NhgOrch owns the NHG */
     else if (!ctx.nhg_index.empty())
     {
-        try
+        const NhgBase *nhg;
+
+        if (gNhgOrch->hasNhg(ctx.nhg_index))
         {
-            const auto &nhg = gNhgOrch->getNhg(ctx.nhg_index);
-            next_hop_id = nhg.getId();
+            nhg = &gNhgOrch->getNhg(ctx.nhg_index);
         }
-        catch(const std::out_of_range& e)
+        else if (gCbfNhgOrch->hasNhg(ctx.nhg_index))
+        {
+            nhg = &gCbfNhgOrch->getNhg(ctx.nhg_index);
+        }
+        else
         {
             SWSS_LOG_INFO("Next hop group key %s does not exist", ctx.nhg_index.c_str());
             return false;
         }
+
+        next_hop_id = nhg->getId();
     }
     /* RouteOrch owns the NHG */
     else if (nextHops.getSize() == 0)
@@ -1898,7 +1914,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
     /* NhgOrch owns the NHG. */
     else if (!ctx.nhg_index.empty())
     {
-        if (!gNhgOrch->hasNhg(ctx.nhg_index))
+        if (!gNhgOrch->hasNhg(ctx.nhg_index) && !gCbfNhgOrch->hasNhg(ctx.nhg_index))
         {
             SWSS_LOG_INFO("Failed to get next hop group with index %s", ctx.nhg_index.c_str());
             return false;
@@ -2028,9 +2044,13 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         {
             increaseNextHopRefCount(nextHops);
         }
-        else
+        else if (gNhgOrch->hasNhg(ctx.nhg_index))
         {
             gNhgOrch->incNhgRefCount(ctx.nhg_index);
+        }
+        else
+        {
+            gCbfNhgOrch->incNhgRefCount(ctx.nhg_index);
         }
 
         SWSS_LOG_INFO("Post create route %s with next hop(s) %s",
@@ -2099,10 +2119,14 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
                 removeNextHopRoute(nexthop, r_key);
             }
         }
+        /* The next hop group is owned by (Cbf)NhgOrch. */
+        else if (gNhgOrch->hasNhg(it_route->second.nhg_index))
+        {
+            gNhgOrch->decNhgRefCount(it_route->second.nhg_index);
+        }
         else
         {
-            /* The next hop group is owned by NhgOrch. */
-            gNhgOrch->decNhgRefCount(it_route->second.nhg_index);
+            gCbfNhgOrch->decNhgRefCount(it_route->second.nhg_index);
         }
 
         if (blackhole)
@@ -2126,9 +2150,13 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
             /* Increase the ref_count for the next hop (group) entry */
             increaseNextHopRefCount(nextHops);
         }
-        else
+        else if (gNhgOrch->hasNhg(ctx.nhg_index))
         {
             gNhgOrch->incNhgRefCount(ctx.nhg_index);
+        }
+        else
+        {
+            gCbfNhgOrch->incNhgRefCount(ctx.nhg_index);
         }
 
         SWSS_LOG_INFO("Post set route %s with next hop(s) %s",
@@ -2293,7 +2321,14 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
     /* Check if the next hop group is not owned by NhgOrch. */
     else if (!it_route->second.nhg_index.empty())
     {
-        gNhgOrch->decNhgRefCount(it_route->second.nhg_index);
+        if (gNhgOrch->hasNhg(it_route->second.nhg_index))
+        {
+            gNhgOrch->decNhgRefCount(it_route->second.nhg_index);
+        }
+        else
+        {
+            gCbfNhgOrch->decNhgRefCount(it_route->second.nhg_index);
+        }
     }
     /* The NHG is owned by RouteOrch */
     else
