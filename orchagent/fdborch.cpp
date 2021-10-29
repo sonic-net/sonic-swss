@@ -868,9 +868,6 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
     Port port;
     Port vlanPort;
 
-    Port vlan;
-    Port port;
-
     consumer.pop(op, data, values);
 
     if (&consumer == m_flushNotificationsConsumer)
