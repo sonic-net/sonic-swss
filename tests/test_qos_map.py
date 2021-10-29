@@ -1,6 +1,4 @@
-import pytest
 import json
-import sys
 import time
 
 from swsscommon import swsscommon
@@ -53,7 +51,6 @@ class TestDot1p(object):
     def find_dot1p_profile(self):
         found = False
         dot1p_tc_map_raw = None
-        dot1p_tc_map_key = None
         tbl = swsscommon.Table(self.asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_QOS_MAP")
         keys = tbl.getKeys()
         for key in keys:
@@ -64,7 +61,6 @@ class TestDot1p(object):
                 if fv[0] == "SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST":
                     dot1p_tc_map_raw = fv[1]
                 elif fv[0] == "SAI_QOS_MAP_ATTR_TYPE" and fv[1] == "SAI_QOS_MAP_TYPE_DOT1P_TO_TC":
-                    dot1p_tc_map_key = key
                     found = True
 
             if found:
@@ -88,7 +84,7 @@ class TestDot1p(object):
     def test_dot1p_cfg(self, dvs):
         self.connect_dbs(dvs)
         self.create_dot1p_profile()
-        oid, dot1p_tc_map_raw = self.find_dot1p_profile()
+        _, dot1p_tc_map_raw = self.find_dot1p_profile()
 
         dot1p_tc_map = json.loads(dot1p_tc_map_raw);
         for dot1p2tc in dot1p_tc_map['list']:
@@ -100,7 +96,7 @@ class TestDot1p(object):
     def test_port_dot1p(self, dvs):
         self.connect_dbs(dvs)
         self.create_dot1p_profile()
-        oid, dot1p_tc_map_raw = self.find_dot1p_profile()
+        oid, _ = self.find_dot1p_profile()
 
         self.apply_dot1p_profile_on_all_ports()
 
@@ -136,7 +132,6 @@ class TestMplsTc(object):
     def find_mpls_tc_profile(self):
         found = False
         mpls_tc_tc_map_raw = None
-        mpls_tc_tc_map_key = None
         tbl = swsscommon.Table(self.asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_QOS_MAP")
         keys = tbl.getKeys()
         for key in keys:
@@ -147,7 +142,6 @@ class TestMplsTc(object):
                 if fv[0] == "SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST":
                     mpls_tc_tc_map_raw = fv[1]
                 elif fv[0] == "SAI_QOS_MAP_ATTR_TYPE" and fv[1] == "SAI_QOS_MAP_TYPE_MPLS_EXP_TO_TC":
-                    mpls_tc_tc_map_key = key
                     found = True
 
             if found:
@@ -171,9 +165,9 @@ class TestMplsTc(object):
     def test_mpls_tc_cfg(self, dvs):
         self.connect_dbs(dvs)
         self.create_mpls_tc_profile()
-        oid, mpls_tc_tc_map_raw = self.find_mpls_tc_profile()
+        _, mpls_tc_tc_map_raw = self.find_mpls_tc_profile()
 
-        mpls_tc_tc_map = json.loads(mpls_tc_tc_map_raw);
+        mpls_tc_tc_map = json.loads(mpls_tc_tc_map_raw)
         for mplstc2tc in mpls_tc_tc_map['list']:
             mpls_tc = str(mplstc2tc['key']['exp'])
             tc = str(mplstc2tc['value']['tc'])
@@ -183,7 +177,7 @@ class TestMplsTc(object):
     def test_port_mpls_tc(self, dvs):
         self.connect_dbs(dvs)
         self.create_mpls_tc_profile()
-        oid, mpls_tc_tc_map_raw = self.find_mpls_tc_profile()
+        oid, _ = self.find_mpls_tc_profile()
 
         self.apply_mpls_tc_profile_on_all_ports()
 
