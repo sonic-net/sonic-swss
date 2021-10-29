@@ -4,17 +4,13 @@ import random
 import time
 import pytest
 
+
 from swsscommon import swsscommon
 from pprint import pprint
 
 
 NVGRE_TUNNEL = 'NVGRE_TUNNEL'
 NVGRE_TUNNEL_MAP = 'NVGRE_TUNNEL_MAP'
-NVGRE_TUNNEL_NAME = 'tunnel_1'
-NVGRE_TUNNEL_MAP_ENTRY_NAME = 'entry_1'
-NVGRE_VSID = '850'
-VLAN_ID = '500'
-VALID_IP_ADDR = '10.0.0.1'
 
 
 SAI_OBJECT_TYPE_TUNNEL = 'ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL'
@@ -43,7 +39,6 @@ def get_all_created_entries(db, table, existed_entries):
     tbl =  swsscommon.Table(db, table)
     entries = set(tbl.getKeys())
     new_entries = list(entries - existed_entries)
-    # TODO: fix msg
     assert len(new_entries) >= 0, "DB entries was't created"
     new_entries.sort()
     return new_entries
@@ -67,14 +62,6 @@ def get_created_entry(db, table, existed_entries):
     new_entries = list(entries - existed_entries)
     assert len(new_entries) == 1, "Wrong number of created entries."
     return new_entries[0]
-
-
-def get_created_entry_mapid(db, table, existed_entries):
-    tbl =  swsscommon.Table(db, table)
-    entries = set(tbl.getKeys())
-    new_entries = list(entries - existed_entries)
-    new_entries.sort()
-    return new_entries
 
 
 def how_many_entries_exist(db, table):
