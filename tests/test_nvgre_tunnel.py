@@ -145,15 +145,14 @@ class NvgreTunnel(object):
         assert how_many_entries_exist(asic_db, SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY) == len(self.tunnel_map_entry_ids), "The TUNNEL_MAP_ENTRY is created too early"
         assert how_many_entries_exist(asic_db, SAI_OBJECT_TYPE_TUNNEL) == (len(self.tunnel_ids) + 1), "The TUNNEL wasn't created"
 
-        check_object(asic_db, SAI_OBJECT_TYPE_TUNNEL_MAP, tunnel_map_ids[0], { 'SAI_TUNNEL_MAP_ATTR_TYPE': 'SAI_TUNNEL_MAP_TYPE_VLAN_ID_TO_VNI' })
-        check_object(asic_db, SAI_OBJECT_TYPE_TUNNEL_MAP, tunnel_map_ids[1], { 'SAI_TUNNEL_MAP_ATTR_TYPE': 'SAI_TUNNEL_MAP_TYPE_BRIDGE_IF_TO_VNI' })
-        check_object(asic_db, SAI_OBJECT_TYPE_TUNNEL_MAP, tunnel_map_ids[2], { 'SAI_TUNNEL_MAP_ATTR_TYPE': 'SAI_TUNNEL_MAP_TYPE_VNI_TO_VLAN_ID' })
-        check_object(asic_db, SAI_OBJECT_TYPE_TUNNEL_MAP, tunnel_map_ids[3], { 'SAI_TUNNEL_MAP_ATTR_TYPE': 'SAI_TUNNEL_MAP_TYPE_VNI_TO_BRIDGE_IF' })
+        check_object(asic_db, SAI_OBJECT_TYPE_TUNNEL_MAP, tunnel_map_ids[0], { 'SAI_TUNNEL_MAP_ATTR_TYPE': 'SAI_TUNNEL_MAP_TYPE_VLAN_ID_TO_VSID' })
+        check_object(asic_db, SAI_OBJECT_TYPE_TUNNEL_MAP, tunnel_map_ids[1], { 'SAI_TUNNEL_MAP_ATTR_TYPE': 'SAI_TUNNEL_MAP_TYPE_BRIDGE_IF_TO_VSID' })
+        check_object(asic_db, SAI_OBJECT_TYPE_TUNNEL_MAP, tunnel_map_ids[2], { 'SAI_TUNNEL_MAP_ATTR_TYPE': 'SAI_TUNNEL_MAP_TYPE_VSID_TO_VLAN_ID' })
+        check_object(asic_db, SAI_OBJECT_TYPE_TUNNEL_MAP, tunnel_map_ids[3], { 'SAI_TUNNEL_MAP_ATTR_TYPE': 'SAI_TUNNEL_MAP_TYPE_VSID_TO_BRIDGE_IF' })
 
-        # TODO: change types to NVGRE
         check_object(asic_db, SAI_OBJECT_TYPE_TUNNEL, tunnel_id,
             {
-                'SAI_TUNNEL_ATTR_TYPE': 'SAI_TUNNEL_TYPE_VXLAN',
+                'SAI_TUNNEL_ATTR_TYPE': 'SAI_TUNNEL_TYPE_NVGRE',
                 'SAI_TUNNEL_ATTR_UNDERLAY_INTERFACE': loopback_id,
                 'SAI_TUNNEL_ATTR_DECAP_MAPPERS': f'2:{tunnel_map_ids[2]},{tunnel_map_ids[3]}',
                 'SAI_TUNNEL_ATTR_ENCAP_MAPPERS': f'2:{tunnel_map_ids[0]},{tunnel_map_ids[1]}',
@@ -215,9 +214,9 @@ class NvgreTunnel(object):
 
         check_object(asic_db, SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY, tunnel_map_entry_id[0],
             {
-                'SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP_TYPE': 'SAI_TUNNEL_MAP_TYPE_VNI_TO_VLAN_ID',
+                'SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP_TYPE': 'SAI_TUNNEL_MAP_TYPE_VSID_TO_VLAN_ID',
                 'SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP': tunnel_map_ids[2],
-                'SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_KEY': vsid,
+                'SAI_TUNNEL_MAP_ENTRY_ATTR_VSID_ID_KEY': vsid,
                 'SAI_TUNNEL_MAP_ENTRY_ATTR_VLAN_ID_VALUE': vlan_id,
             }
         )
