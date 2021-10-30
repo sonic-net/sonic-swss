@@ -76,6 +76,7 @@ const map <string, MuxState> muxStateStringToVal =
 {
     { "active", MuxState::MUX_STATE_ACTIVE },
     { "standby", MuxState::MUX_STATE_STANDBY },
+    { "unknown", MuxState::MUX_STATE_STANDBY },
     { "init", MuxState::MUX_STATE_INIT },
     { "failed", MuxState::MUX_STATE_FAILED },
     { "pending", MuxState::MUX_STATE_PENDING },
@@ -395,6 +396,9 @@ void MuxCable::setState(string new_state)
                      muxStateValToString.at(state_).c_str(), new_state.c_str());
 
     MuxState ns = muxStateStringToVal.at(new_state);
+
+    /* Update new_state to handle unknown state */
+    new_state = muxStateValToString.at(ns);
 
     auto it = muxStateTransition.find(make_pair(state_, ns));
 
