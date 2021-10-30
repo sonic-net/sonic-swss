@@ -178,6 +178,20 @@ public:
     void increaseNextHopRefCount(const nextHop&);
     void decreaseNextHopRefCount(const nextHop&);
 
+    void increaseVnetRefCount()
+    {
+        ref_count++;
+    }
+    void decreaseVnetRefCount()
+    {
+        if(ref_count > 0)
+            ref_count--;
+    }
+    int getRefCount()
+    {
+        return ref_count;
+    }
+
     ~VNetVrfObject();
 
 private:
@@ -186,6 +200,7 @@ private:
 
     TunnelRoutes tunnels_;
     RouteMap routes_;
+    int ref_count;
 };
 
 typedef std::unique_ptr<VNetObject> VNetObject_T;

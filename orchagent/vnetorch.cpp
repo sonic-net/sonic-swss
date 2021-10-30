@@ -114,6 +114,7 @@ bool VNetVrfObject::createObj(vector<sai_attribute_t>& attrs)
         }
     }
 
+    ref_count = 0;
     SWSS_LOG_INFO("VNET '%s' router object created ", vnet_name_.c_str());
     return true;
 }
@@ -357,6 +358,18 @@ bool VNetOrch::setIntf(const string& alias, const string name, const IpPrefix *p
         auto *vnet_obj = getTypePtr<VNetVrfObject>(name);
         sai_object_id_t vrf_id = vnet_obj->getVRidIngress();
 
+        if (!prefix )
+        {
+            if (gIntfsOrch->setIntf(alias, vrf_id, prefix, adminUp, mtu))
+            {
+                vnet_obj->increaseVnetRefCount();
+                return true;
+            }
+            else
+            {
+                return false;
+            }
+        }
         return gIntfsOrch->setIntf(alias, vrf_id, prefix, adminUp, mtu);
     }
 
@@ -378,6 +391,18 @@ bool VNetOrch::delIntf(const string& alias, const string name, const IpPrefix *p
         auto *vnet_obj = getTypePtr<VNetVrfObject>(name);
         sai_object_id_t vrf_id = vnet_obj->getVRidIngress();
 
+        if (!prefix )
+        {
+            if (gIntfsOrch->removeIntf(alias, vrf_id, prefix))
+            {
+                vnet_obj->decreaseVnetRefCount();
+                return true;
+            }
+            else
+            {
+                return false;
+            }
+        }
         return gIntfsOrch->removeIntf(alias, vrf_id, prefix);
     }
 
@@ -521,6 +546,12 @@ bool VNetOrch::delOperation(const Request& request)
             if (vrf_obj->getRouteCount())
             {
                 SWSS_LOG_ERROR("VNET '%s': Routes are still present", vnet_name.c_str());
+                return false;
+            }
+
+            if (vrf_obj->getRefCount())
+            {
+                SWSS_LOG_ERROR("VNET '%s': Interfaces are still present", vnet_name.c_str());
                 return false;
             }
 
