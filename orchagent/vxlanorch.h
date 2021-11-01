@@ -7,6 +7,7 @@
 #include "request_parser.h"
 #include "portsorch.h"
 #include "vrforch.h"
+#include "timer.h"
 
 enum class MAP_T
 {
@@ -34,6 +35,9 @@ typedef enum
 #define IS_TUNNELMAP_SET_VLAN(x) ((x)& (1<<TUNNEL_MAP_T_VLAN))
 #define IS_TUNNELMAP_SET_VRF(x) ((x)& (1<<TUNNEL_MAP_T_VIRTUAL_ROUTER))
 #define IS_TUNNELMAP_SET_BRIDGE(x) ((x)& (1<<TUNNEL_MAP_T_BRIDGE))
+
+#define TUNNEL_STAT_COUNTER_FLEX_COUNTER_GROUP "TUNNEL_STAT_COUNTER"
+#define TUNNEL_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS 10000
 
 typedef enum
 {
@@ -245,11 +249,7 @@ typedef std::map<IpAddress, VxlanTunnel*> VTEPTable;
 class VxlanTunnelOrch : public Orch2
 {
 public:
-    VxlanTunnelOrch(DBConnector *statedb, DBConnector *db, const std::string& tableName) :
-                    Orch2(db, tableName, request_),
-                    m_stateVxlanTable(statedb, STATE_VXLAN_TUNNEL_TABLE_NAME)
-    {}
-
+    VxlanTunnelOrch(DBConnector *statedb, DBConnector *db, const std::string& tableName);
 
     bool isTunnelExists(const std::string& tunnelName) const
     {
@@ -342,17 +342,32 @@ public:
         vxlan_vni_vlan_map_table_.erase(vni);
     }
 
+    unordered_set<string> generateTunnelCounterStats();
+    void generateTunnelCounterMap();
+    void addTunnelToFlexCounter(sai_object_id_t oid, const std::string &name);
+    void removeTunnelFromFlexCounter(sai_object_id_t oid, const std::string &name);
 
 
 private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
+    void doTask(swss::SelectableTimer&);
 
     VxlanTunnelTable vxlan_tunnel_table_;
     VxlanTunnelRequest request_;
     VxlanVniVlanMapTable vxlan_vni_vlan_map_table_;
     VTEPTable vtep_table_;
     Table m_stateVxlanTable;
+    std::map<sai_object_id_t, std::string> m_pendingAddToFlexCntr;
+    FlexCounterManager vxlan_tunnel_stat_manager;
+    bool m_isTunnelCounterMapGenerated = false;
+    FlexCounterManager *tunnel_stat_manager;
+    unique_ptr<Table> m_tunnelNameTable;
+    unique_ptr<Table> m_tunnelTypeTable;
+    unique_ptr<Table> m_vidToRidTable;
+    shared_ptr<DBConnector> m_counter_db;
+    shared_ptr<DBConnector> m_asic_db;
+    SelectableTimer* m_FlexCounterUpdTimer = nullptr;
 };
 
 const request_description_t vxlan_tunnel_map_request_description = {

@@ -7,12 +7,14 @@
 #include "bufferorch.h"
 #include "flexcounterorch.h"
 #include "debugcounterorch.h"
+#include "directory.h"
 
 extern sai_port_api_t *sai_port_api;
 
 extern PortsOrch *gPortsOrch;
 extern IntfsOrch *gIntfsOrch;
 extern BufferOrch *gBufferOrch;
+extern Directory<Orch*> gDirectory;
 
 #define BUFFER_POOL_WATERMARK_KEY   "BUFFER_POOL_WATERMARK"
 #define PORT_KEY                    "PORT"
@@ -20,6 +22,7 @@ extern BufferOrch *gBufferOrch;
 #define QUEUE_KEY                   "QUEUE"
 #define PG_WATERMARK_KEY            "PG_WATERMARK"
 #define RIF_KEY                     "RIF"
+#define TUNNEL_KEY                  "TUNNEL"
 
 unordered_map<string, string> flexCounterGroupMap =
 {
@@ -35,6 +38,7 @@ unordered_map<string, string> flexCounterGroupMap =
     {"RIF", RIF_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"RIF_RATES", RIF_RATE_COUNTER_FLEX_COUNTER_GROUP},
     {"DEBUG_COUNTER", DEBUG_COUNTER_FLEX_COUNTER_GROUP},
+    {"TUNNEL", TUNNEL_STAT_COUNTER_FLEX_COUNTER_GROUP},
 };
 
 
@@ -55,6 +59,8 @@ FlexCounterOrch::~FlexCounterOrch(void)
 void FlexCounterOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
+
+    VxlanTunnelOrch* vxlan_tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
 
     if (!gPortsOrch->allPortsReady())
     {
@@ -129,7 +135,10 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     {
                         gBufferOrch->generateBufferPoolWatermarkCounterIdList();
                     }
-
+                    if (vxlan_tunnel_orch && (key== TUNNEL_KEY) && (value == "enable"))
+                    {
+                        vxlan_tunnel_orch->generateTunnelCounterMap();
+                    }
                     vector<FieldValueTuple> fieldValues;
                     fieldValues.emplace_back(FLEX_COUNTER_STATUS_FIELD, value);
                     m_flexCounterGroupTable->set(flexCounterGroupMap[key], fieldValues);
