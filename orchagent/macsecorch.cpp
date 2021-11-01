@@ -2283,14 +2283,6 @@ bool MACsecOrch::createMACsecACLDataEntry(
     attr.value.aclaction.parameter.s32 = SAI_PACKET_ACTION_DROP;
     attr.value.aclaction.enable = true;
     attrs.push_back(attr);
-    if (sci_in_sectag)
-    {
-        attr.id = SAI_ACL_ENTRY_ATTR_FIELD_MACSEC_SCI;
-        attr.value.aclfield.enable = true;
-        attr.value.aclfield.mask.u64 = 0xFFFFFFFFFFFFFFFF;
-        attr.value.aclfield.data.u64 = sci;
-        attrs.push_back(attr);
-    }
 
     sai_status_t status = sai_acl_api->create_acl_entry(
                                 &entry_id,
