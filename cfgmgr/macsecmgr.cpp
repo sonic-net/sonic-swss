@@ -148,7 +148,7 @@ static void wpa_cli_commands(
     }
     if (!network_id.empty())
     {
-        wpa_cli_commands(ostream, "set_network", port_name);
+        wpa_cli_commands(ostream, "set_network", network_id);
     }
     wpa_cli_commands(ostream, args...);
 }
