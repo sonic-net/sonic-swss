@@ -866,10 +866,14 @@ vector<sai_attribute_t> NextHopGroup::createNhgmAttrs(const NextHopGroupMember& 
     nhgm_attr.value.oid = nhgm.getNhId();
     nhgm_attrs.push_back(nhgm_attr);
 
-    /* Fill in the wright. */
-    nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT;
-    nhgm_attr.value.s32 = nhgm.getWeight();
-    nhgm_attrs.push_back(nhgm_attr);
+    /* Fill in the weight if set. */
+    auto weight  = nhgm.getWeight();
+    if (weight != 0)
+    {
+        nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT;
+        nhgm_attr.value.s32 = weight;
+        nhgm_attrs.push_back(nhgm_attr);
+    }
 
     return nhgm_attrs;
 }
