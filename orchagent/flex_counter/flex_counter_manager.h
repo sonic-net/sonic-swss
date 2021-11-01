@@ -51,11 +51,19 @@ class FlexCounterManager
         FlexCounterManager()
         {}
 
+        FlexCounterManager(
+                const std::string& db_name,
+                const std::string& group_name,
+                const StatsMode stats_mode,
+                const uint polling_interval,
+                const bool enabled);
+
         FlexCounterManager(const FlexCounterManager&) = delete;
         FlexCounterManager& operator=(const FlexCounterManager&) = delete;
         virtual ~FlexCounterManager();
 
         void updateGroupPollingInterval(const uint polling_interval);
+        void updatePortPlugin(const std::string& portRateSha);
         void enableFlexCounterGroup();
         void disableFlexCounterGroup();
 

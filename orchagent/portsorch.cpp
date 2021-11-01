@@ -297,6 +297,9 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         Orch(db, tableNames),
         m_portStateTable(stateDb, STATE_PORT_TABLE_NAME),
         port_stat_manager(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
+        gb_port_stat_manager("GB_FLEX_COUNTER_DB",
+                PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ,
+                PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         port_buffer_drop_stat_manager(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS, false),
         queue_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false)
 {
@@ -370,6 +373,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         fieldValues.emplace_back(POLL_INTERVAL_FIELD, PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS);
         fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
         m_flexCounterGroupTable->set(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
+        gb_port_stat_manager.updatePortPlugin(portRateSha);
 
         fieldValues.clear();
         fieldValues.emplace_back(POLL_INTERVAL_FIELD, PG_DROP_FLEX_STAT_COUNTER_POLL_MSECS);
@@ -676,6 +680,11 @@ bool PortsOrch::isInitDone()
 bool PortsOrch::isConfigDone()
 {
     return m_portConfigState == PORT_CONFIG_DONE;
+}
+
+bool PortsOrch::isGearboxEnabled()
+{
+    return m_gearboxEnabled;
 }
 
 /* Use this method to retrieve the desired port if the destination port is a Gearbox port.
@@ -2371,6 +2380,10 @@ bool PortsOrch::initPort(const string &alias, const string &role, const int inde
                 {
                     auto port_counter_stats = generateCounterStats(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP);
                     port_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, port_counter_stats);
+                    if (p.m_system_side_id)
+                        gb_port_stat_manager.setCounterIdList(p.m_system_side_id, CounterType::PORT, port_counter_stats);
+                    if (p.m_line_side_id)
+                        gb_port_stat_manager.setCounterIdList(p.m_line_side_id, CounterType::PORT, port_counter_stats);
                 }
                 if (flex_counters_orch->getPortBufferDropCountersState())
                 {
@@ -5561,6 +5574,10 @@ void PortsOrch::generatePortCounterMap()
             continue;
         }
         port_stat_manager.setCounterIdList(it.second.m_port_id, CounterType::PORT, port_counter_stats);
+        if (it.second.m_system_side_id)
+            gb_port_stat_manager.setCounterIdList(it.second.m_system_side_id, CounterType::PORT, port_counter_stats);
+        if (it.second.m_line_side_id)
+            gb_port_stat_manager.setCounterIdList(it.second.m_line_side_id, CounterType::PORT, port_counter_stats);
     }
 
     m_isPortCounterMapGenerated = true;
@@ -5666,6 +5683,7 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
     if (port.m_type == Port::PHY)
     {
         updateDbPortOperStatus(port, status);
+        updateGearboxPortOperStatus(port);
     }
     port.m_oper_status = status;
 
@@ -6148,6 +6166,9 @@ void PortsOrch::initGearbox()
         SWSS_LOG_NOTICE("BOX: m_gearboxInterfaceMap size = %d.", (int) m_gearboxInterfaceMap.size());
         SWSS_LOG_NOTICE("BOX: m_gearboxLaneMap size      = %d.", (int) m_gearboxLaneMap.size());
         SWSS_LOG_NOTICE("BOX: m_gearboxPortMap size      = %d.", (int) m_gearboxPortMap.size());
+
+        m_gb_counter_db = shared_ptr<DBConnector>(new DBConnector("GB_COUNTERS_DB", 0));
+        m_gbcounterTable = unique_ptr<Table>(new Table(m_gb_counter_db.get(), COUNTERS_PORT_NAME_MAP));
     }
 }
 
@@ -6246,6 +6267,7 @@ bool PortsOrch::initGearboxPort(Port &port)
             }
             SWSS_LOG_NOTICE("BOX: Created Gearbox system-side port 0x%" PRIx64 " for alias:%s index:%d",
                     systemPort, port.m_alias.c_str(), port.m_index);
+            port.m_system_side_id = systemPort;
 
             /* Create LINE-SIDE port */
             attrs.clear();
@@ -6358,6 +6380,15 @@ bool PortsOrch::initGearboxPort(Port &port)
             SWSS_LOG_NOTICE("BOX: Connected Gearbox ports; system-side:0x%" PRIx64 " to line-side:0x%" PRIx64, systemPort, linePort);
             m_gearboxPortListLaneMap[port.m_port_id] = make_tuple(systemPort, linePort);
             port.m_line_side_id = linePort;
+
+            /* Add gearbox system/line port name map to counter table */
+            FieldValueTuple tuple(port.m_alias + "_system", sai_serialize_object_id(systemPort));
+            vector<FieldValueTuple> fields;
+            fields.push_back(tuple);
+            m_gbcounterTable->set("", fields);
+
+            fields[0] = FieldValueTuple(port.m_alias + "_line", sai_serialize_object_id(linePort));
+            m_gbcounterTable->set("", fields);
         }
     }
 
@@ -6791,4 +6822,59 @@ std::unordered_set<std::string> PortsOrch::generateCounterStats(const string& ty
         }
     }
     return counter_stats;
+}
+
+void PortsOrch::setGearboxFlexCounterStatus(bool enabled)
+{
+    if (enabled)
+    {
+        gb_port_stat_manager.enableFlexCounterGroup();
+    }
+    else
+    {
+        gb_port_stat_manager.disableFlexCounterGroup();
+    }
+}
+
+void PortsOrch::updateGearboxPortOperStatus(const Port& port)
+{
+    if (!isGearboxEnabled())
+        return;
+
+    SWSS_LOG_NOTICE("BOX: port %s, system_side_id:0x%" PRIx64 "line_side_id:0x%" PRIx64,
+            port.m_alias.c_str(), port.m_system_side_id, port.m_line_side_id);
+
+    if (!port.m_system_side_id || !port.m_line_side_id)
+        return;
+
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_OPER_STATUS;
+    sai_status_t ret = sai_port_api->get_port_attribute(port.m_system_side_id, 1, &attr);
+    if (ret != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get system_oper_status for %s", port.m_alias.c_str());
+    }
+    else
+    {
+        sai_port_oper_status_t oper = static_cast<sai_port_oper_status_t>(attr.value.u32);
+        vector<FieldValueTuple> tuples;
+        FieldValueTuple tuple("system_oper_status", oper_status_strings.at(oper));
+        tuples.push_back(tuple);
+        m_portTable->set(port.m_alias, tuples);
+    }
+
+    attr.id = SAI_PORT_ATTR_OPER_STATUS;
+    ret = sai_port_api->get_port_attribute(port.m_line_side_id, 1, &attr);
+    if (ret != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get line_oper_status for %s", port.m_alias.c_str());
+    }
+    else
+    {
+        sai_port_oper_status_t oper = static_cast<sai_port_oper_status_t>(attr.value.u32);
+        vector<FieldValueTuple> tuples;
+        FieldValueTuple tuple("line_oper_status", oper_status_strings.at(oper));
+        tuples.push_back(tuple);
+        m_portTable->set(port.m_alias, tuples);
+    }
 }
