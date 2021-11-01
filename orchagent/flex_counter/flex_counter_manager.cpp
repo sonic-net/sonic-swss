@@ -61,6 +61,29 @@ FlexCounterManager::FlexCounterManager(
     SWSS_LOG_DEBUG("Initialized flex counter group '%s'.", group_name.c_str());
 }
 
+FlexCounterManager::FlexCounterManager(
+        const string& db_name,
+        const string& group_name,
+        const StatsMode stats_mode,
+        const uint polling_interval,
+        const bool enabled) :
+    group_name(group_name),
+    stats_mode(stats_mode),
+    polling_interval(polling_interval),
+    enabled(enabled),
+    flex_counter_db(new DBConnector(db_name, 0)),
+    flex_counter_group_table(new ProducerTable(flex_counter_db.get(),
+                FLEX_COUNTER_GROUP_TABLE)),
+    flex_counter_table(new ProducerTable(flex_counter_db.get(),
+                FLEX_COUNTER_TABLE))
+{
+    SWSS_LOG_ENTER();
+
+    applyGroupConfiguration();
+
+    SWSS_LOG_DEBUG("Initialized flex counter group '%s'.", group_name.c_str());
+}
+
 FlexCounterManager::~FlexCounterManager()
 {
     SWSS_LOG_ENTER();
@@ -102,6 +125,21 @@ void FlexCounterManager::updateGroupPollingInterval(
 
     SWSS_LOG_DEBUG("Set polling interval for flex counter group '%s' to %d ms.",
             group_name.c_str(), polling_interval);
+}
+
+void FlexCounterManager::updatePortPlugin(
+        const std::string& portRateSha)
+{
+    SWSS_LOG_ENTER();
+
+    vector<FieldValueTuple> field_values =
+    {
+        FieldValueTuple(PORT_PLUGIN_FIELD, portRateSha)
+    };
+    flex_counter_group_table->set(group_name, field_values);
+
+    SWSS_LOG_DEBUG("Set port rate for flex counter group '%s' to %s.",
+            group_name.c_str(), portRateSha.c_str());
 }
 
 // enableFlexCounterGroup will do nothing if the flex counter group is already

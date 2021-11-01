@@ -80,6 +80,7 @@ public:
     bool allPortsReady();
     bool isInitDone();
     bool isConfigDone();
+    bool isGearboxEnabled();
     bool isPortAdminUp(const string &alias);
 
     map<string, Port>& getAllPorts();
@@ -162,6 +163,9 @@ public:
     bool getPortIPG(sai_object_id_t port_id, uint32_t &ipg);
     bool setPortIPG(sai_object_id_t port_id, uint32_t ipg);
 
+    void setGearboxFlexCounterStatus(bool enabled);
+    void updateGearboxPortOperStatus(const Port& port);
+
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_counterLagTable;
@@ -191,6 +195,10 @@ private:
     FlexCounterManager port_stat_manager;
     FlexCounterManager port_buffer_drop_stat_manager;
     FlexCounterManager queue_stat_manager;
+
+    FlexCounterManager gb_port_stat_manager;
+    shared_ptr<DBConnector> m_gb_counter_db;
+    unique_ptr<Table> m_gbcounterTable;
 
     std::map<sai_object_id_t, PortSupportedSpeeds> m_portSupportedSpeeds;
 
