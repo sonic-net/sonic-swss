@@ -129,12 +129,14 @@ void BfdOrch::doTask(NotificationConsumer &consumer)
             sai_object_id_t id = bfdSessionState[i].bfd_session_id;
             sai_bfd_session_state_t state = bfdSessionState[i].session_state;
 
-            SWSS_LOG_NOTICE("Get bfd session state change notification id:%" PRIx64 " state:%d", id, state);
+            SWSS_LOG_INFO("Get BFD session state change notification id:%" PRIx64 " state: %s", id, session_state_loopup.at(state).c_str());
 
             if (state != bfd_session_lookup[id].state)
             {
                 auto key = bfd_session_lookup[id].peer;
                 m_stateBfdSessionTable.hset(key, "state", session_state_loopup.at(state));
+
+                SWSS_LOG_NOTICE("Updated BFD session state for %s to %s", key.c_str(), session_state_loopup.at(state).c_str());
 
                 BfdUpdate update;
                 update.peer = key;
