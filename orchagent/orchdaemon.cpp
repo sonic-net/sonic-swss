@@ -290,8 +290,9 @@ bool OrchDaemon::init()
     };
 
     gMacsecOrch = new MACsecOrch(m_applDb, m_stateDb, macsec_app_tables, gPortsOrch);
-  
-    gBfdOrch = new BfdOrch(m_applDb, APP_BFD_SESSION_TABLE_NAME);
+
+    TableConnector stateDbBfdSessionTable(m_stateDb, STATE_BFD_SESSION_TABLE);
+    gBfdOrch = new BfdOrch(m_applDb, APP_BFD_SESSION_TABLE_NAME, stateDbBfdSessionTable);
 
     /*
      * The order of the orch list is important for state restore of warm start and

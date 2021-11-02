@@ -2,11 +2,7 @@
 #define SWSS_BFDORCH_H
 
 #include "orch.h"
-#include "intfsorch.h"
-#include "vrforch.h"
-
-#define BFD_SRCPORTINIT 49152
-#define BFD_SRCPORTMAX 65536
+#include "observer.h"
 
 struct BfdUpdate
 {
@@ -14,17 +10,18 @@ struct BfdUpdate
     sai_bfd_session_state_t state;
 };
 
-class BfdOrch: public Orch
+class BfdOrch: public Orch, public Subject
 {
 public:
     void doTask(Consumer &consumer);
-    void doTask(NotificationConsumer &consumer);
-    BfdOrch(swss::DBConnector *db, std::string tableName);
+    void doTask(swss::NotificationConsumer &consumer);
+    BfdOrch(swss::DBConnector *db, std::string tableName, TableConnector stateDbBfdSessionTable);
     virtual ~BfdOrch(void);
 
 private:
-    bool create_bfd_session(const string& key, const vector<FieldValueTuple>& data);
-    bool remove_bfd_session(const string& key);
+    bool create_bfd_session(const std::string& key, const std::vector<swss::FieldValueTuple>& data);
+    bool remove_bfd_session(const std::string& key);
+    std::string get_state_db_key(const std::string& vrf_name, const std::string& alias, const swss::IpAddress& peer_address);
 
     uint32_t bfd_gen_id(void);
     uint32_t bfd_src_port(void);
@@ -32,10 +29,9 @@ private:
     std::map<std::string, sai_object_id_t> bfd_session_map;
     std::map<sai_object_id_t, BfdUpdate> bfd_session_lookup;
 
-    shared_ptr<DBConnector> m_state_db;
-    unique_ptr<Table> m_stateBfdSessionTable;
+    swss::Table m_stateBfdSessionTable;
 
-    NotificationConsumer* m_bfdStateNotificationConsumer;
+    swss::NotificationConsumer* m_bfdStateNotificationConsumer;
 };
 
 #endif /* SWSS_BFDORCH_H */

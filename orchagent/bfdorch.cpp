@@ -1,4 +1,6 @@
 #include "bfdorch.h"
+#include "intfsorch.h"
+#include "vrforch.h"
 #include "converter.h"
 #include "swssnet.h"
 #include "notifier.h"
@@ -11,6 +13,9 @@ using namespace swss;
 #define BFD_SESSION_DEFAULT_TX_INTERVAL 1000
 #define BFD_SESSION_DEFAULT_RX_INTERVAL 1000
 #define BFD_SESSION_DEFAULT_DETECT_MULTIPLIER 3
+#define BFD_SESSION_MILLISECOND_TO_MICROSECOND 1000
+#define BFD_SRCPORTINIT 49152
+#define BFD_SRCPORTMAX 65536
 
 extern sai_bfd_api_t*       sai_bfd_api;
 extern sai_object_id_t      gSwitchId;
@@ -42,13 +47,11 @@ const map<sai_bfd_session_state_t, string> session_state_loopup =
     {SAI_BFD_SESSION_STATE_UP,          "Up"}
 };
 
-BfdOrch::BfdOrch(DBConnector *db, string tableName):
-    Orch(db, tableName)
+BfdOrch::BfdOrch(DBConnector *db, string tableName, TableConnector stateDbBfdSessionTable):
+    Orch(db, tableName),
+    m_stateBfdSessionTable(stateDbBfdSessionTable.first, stateDbBfdSessionTable.second)
 {
     SWSS_LOG_ENTER();
-
-    m_state_db = shared_ptr<DBConnector>(new DBConnector("STATE_DB", 0));
-    m_stateBfdSessionTable = unique_ptr<Table>(new Table(m_state_db.get(), STATE_BFD_SESSION_TABLE));
 
     DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
     m_bfdStateNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
@@ -126,12 +129,17 @@ void BfdOrch::doTask(NotificationConsumer &consumer)
             sai_object_id_t id = bfdSessionState[i].bfd_session_id;
             sai_bfd_session_state_t state = bfdSessionState[i].session_state;
 
-            SWSS_LOG_INFO("Get bfd session state change notification id:%" PRIx64 " state:%d", id, state);
+            SWSS_LOG_NOTICE("Get bfd session state change notification id:%" PRIx64 " state:%d", id, state);
 
             if (state != bfd_session_lookup[id].state)
             {
                 auto key = bfd_session_lookup[id].peer;
-                m_stateBfdSessionTable->hset(key, "state", session_state_loopup.at(state));
+                m_stateBfdSessionTable.hset(key, "state", session_state_loopup.at(state));
+
+                BfdUpdate update;
+                update.peer = key;
+                update.state = state;
+                notify(SUBJECT_TYPE_BFD_SESSION_STATE_CHANGE, static_cast<void *>(&update));
 
                 bfd_session_lookup[id].state = state;
             }
@@ -153,14 +161,14 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     if (found_vrf == string::npos)
     {
         SWSS_LOG_ERROR("Failed to parse key %s, no vrf is given", key.c_str());
-        return false;
+        return true;
     }
 
     size_t found_ifname = key.find(delimiter, found_vrf + 1);
     if (found_ifname == string::npos)
     {
         SWSS_LOG_ERROR("Failed to parse key %s, no ifname is given", key.c_str());
-        return false;
+        return true;
     }
 
     string vrf_name = key.substr(0, found_vrf);
@@ -187,13 +195,21 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
         auto value = fvValue(i);
 
         if (fvField(i) == "tx_interval")
+        {
             tx_interval = to_uint<uint32_t>(value);
+        }
         else if (fvField(i) == "rx_interval")
+        {
             rx_interval = to_uint<uint32_t>(value);
+        }
         else if (fvField(i) == "multiplier")
+        {
             multiplier = to_uint<uint8_t>(value);
+        }
         else if (fvField(i) == "multihop")
+        {
             multihop = (value == "true") ? true : false;
+        }
         else if (fvField(i) == "local_addr")
         {
             src_ip = IpAddress(value);
@@ -215,6 +231,12 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
         }
         else
             SWSS_LOG_ERROR("Unsupported BFD attribute %s\n", fvField(i).c_str());
+    }
+
+    if (!src_ip_provided)
+    {
+        SWSS_LOG_ERROR("Failed to create BFD session %s because source IP is not provided", key.c_str());
+        return true;
     }
 
     attr.id = SAI_BFD_SESSION_ATTR_TYPE;
@@ -242,11 +264,6 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     attr.value.u8 = src_ip.isV4() ? 4 : 6;
     attrs.emplace_back(attr);
 
-    if (!src_ip_provided)
-    {
-        SWSS_LOG_ERROR("Failed to create BFD session %s because source IP is not provided", key.c_str());
-        return false;
-    }
     attr.id = SAI_BFD_SESSION_ATTR_SRC_IP_ADDRESS;
     copy(attr.value.ipaddr, src_ip);
     attrs.emplace_back(attr);
@@ -257,12 +274,12 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     attrs.emplace_back(attr);
 
     attr.id = SAI_BFD_SESSION_ATTR_MIN_TX;
-    attr.value.u32 = tx_interval * 1000;
+    attr.value.u32 = tx_interval * BFD_SESSION_MILLISECOND_TO_MICROSECOND;
     attrs.emplace_back(attr);
     fvVector.emplace_back("tx_interval", to_string(tx_interval));
 
     attr.id = SAI_BFD_SESSION_ATTR_MIN_RX;
-    attr.value.u32 = rx_interval * 1000;
+    attr.value.u32 = rx_interval * BFD_SESSION_MILLISECOND_TO_MICROSECOND;
     attrs.emplace_back(attr);
     fvVector.emplace_back("rx_interval", to_string(rx_interval));
 
@@ -285,16 +302,30 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
 
     if (alias != "default")
     {
-        attr.id = SAI_BFD_SESSION_ATTR_HW_LOOKUP_VALID;
-        attr.value.booldata = false;
-        attrs.emplace_back(attr);
-
         Port port;
         if (!gPortsOrch->getPort(alias, port))
         {
             SWSS_LOG_ERROR("Failed to locate port %s", alias.c_str());
-            return false;
+            return true;
         }
+
+        if (!dst_mac_provided)
+        {
+            SWSS_LOG_ERROR("Failed to create BFD session %s: destination MAC address required when hardware lookup not valid",
+                            key.c_str());
+            return true;
+        }
+
+        if (vrf_name != "default")
+        {
+            SWSS_LOG_ERROR("Failed to create BFD session %s: vrf is not supported when hardware lookup not valid",
+                            key.c_str());
+            return true;
+        }
+
+        attr.id = SAI_BFD_SESSION_ATTR_HW_LOOKUP_VALID;
+        attr.value.booldata = false;
+        attrs.emplace_back(attr);
 
         attr.id = SAI_BFD_SESSION_ATTR_PORT;
         attr.value.oid = port.m_port_id;
@@ -304,26 +335,19 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
         memcpy(attr.value.mac, port.m_mac.getMac(), sizeof(sai_mac_t));
         attrs.emplace_back(attr);
 
-        if (!dst_mac_provided)
-        {
-            SWSS_LOG_ERROR("Failed to create BFD session %s: destination MAC address required when hardware lookup not valid",
-                            key.c_str());
-            return false;
-        }
-
-        if (vrf_name != "default")
-        {
-            SWSS_LOG_ERROR("Failed to create BFD session %s: vrf is not supported when hardware lookup not valid",
-                            key.c_str());
-            return false;
-        }
-
         attr.id = SAI_BFD_SESSION_ATTR_DST_MAC_ADDRESS;
         memcpy(attr.value.mac, dst_mac.getMac(), sizeof(sai_mac_t));
         attrs.emplace_back(attr);
     }
     else
     {
+        if (dst_mac_provided)
+        {
+            SWSS_LOG_ERROR("Failed to create BFD session %s: destination MAC address not supported when hardware lookup valid",
+                            key.c_str());
+            return true;
+        }
+
         attr.id = SAI_BFD_SESSION_ATTR_VIRTUAL_ROUTER;
         if (vrf_name == "default")
         {
@@ -336,13 +360,6 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
         }
 
         attrs.emplace_back(attr);
-
-        if (dst_mac_provided)
-        {
-            SWSS_LOG_ERROR("Failed to create BFD session %s: destination MAC address not supported when hardware lookup valid",
-                            key.c_str());
-            return false;
-        }
     }
 
     fvVector.emplace_back("state", session_state_loopup.at(SAI_BFD_SESSION_STATE_DOWN));
@@ -353,16 +370,21 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     {
         SWSS_LOG_ERROR("Failed to create bfd session %s, rv:%d", key.c_str(), status);
         task_process_status handle_status = handleSaiCreateStatus(SAI_API_BFD, status);
-        if (!parseHandleSaiStatusFailure(handle_status))
+        if (handle_status != task_success)
         {
-            return false;
+            return parseHandleSaiStatusFailure(handle_status);
         }
     }
 
-    const string state_db_key = vrf_name + state_db_key_delimiter + alias + state_db_key_delimiter + peer_address.to_string();
-    m_stateBfdSessionTable->set(state_db_key, fvVector);
+    const string state_db_key = get_state_db_key(vrf_name, alias, peer_address);
+    m_stateBfdSessionTable.set(state_db_key, fvVector);
     bfd_session_map[key] = bfd_session_id;
     bfd_session_lookup[bfd_session_id] = {state_db_key, SAI_BFD_SESSION_STATE_DOWN};
+
+    BfdUpdate update;
+    update.peer = state_db_key;
+    update.state = SAI_BFD_SESSION_STATE_DOWN;
+    notify(SUBJECT_TYPE_BFD_SESSION_STATE_CHANGE, static_cast<void *>(&update));
 
     return true;
 }
@@ -381,17 +403,22 @@ bool BfdOrch::remove_bfd_session(const string& key)
     {
         SWSS_LOG_ERROR("Failed to remove bfd session %s, rv:%d", key.c_str(), status);
         task_process_status handle_status = handleSaiRemoveStatus(SAI_API_BFD, status);
-        if (!parseHandleSaiStatusFailure(handle_status))
+        if (handle_status != task_success)
         {
-            return false;
+            return parseHandleSaiStatusFailure(handle_status);
         }
     }
 
-    m_stateBfdSessionTable->del(bfd_session_lookup[bfd_session_id].peer);
+    m_stateBfdSessionTable.del(bfd_session_lookup[bfd_session_id].peer);
     bfd_session_map.erase(key);
     bfd_session_lookup.erase(bfd_session_id);
 
     return true;
+}
+
+string BfdOrch::get_state_db_key(const string& vrf_name, const string& alias, const IpAddress& peer_address)
+{
+    return vrf_name + state_db_key_delimiter + alias + state_db_key_delimiter + peer_address.to_string();
 }
 
 uint32_t BfdOrch::bfd_gen_id(void)
