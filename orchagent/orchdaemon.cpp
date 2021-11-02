@@ -291,7 +291,7 @@ bool OrchDaemon::init()
 
     gMacsecOrch = new MACsecOrch(m_applDb, m_stateDb, macsec_app_tables, gPortsOrch);
 
-    TableConnector stateDbBfdSessionTable(m_stateDb, STATE_BFD_SESSION_TABLE);
+    TableConnector stateDbBfdSessionTable(m_stateDb, STATE_BFD_SESSION_TABLE_NAME);
     gBfdOrch = new BfdOrch(m_applDb, APP_BFD_SESSION_TABLE_NAME, stateDbBfdSessionTable);
 
     /*
