@@ -6,20 +6,28 @@
 #include "producerstatetable.h"
 #include "tokenize.h"
 #include "ipprefix.h"
+#include "timer.h"
 #include "buffermgr.h"
 #include "exec.h"
 #include "shellcmd.h"
+#include "warm_restart.h"
 
 using namespace std;
 using namespace swss;
 
-BufferMgr::BufferMgr(DBConnector *cfgDb, DBConnector *stateDb, string pg_lookup_file, const vector<string> &tableNames) :
+BufferMgr::BufferMgr(DBConnector *cfgDb, DBConnector *applDb, string pg_lookup_file, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
         m_cfgPortTable(cfgDb, CFG_PORT_TABLE_NAME),
         m_cfgCableLenTable(cfgDb, CFG_PORT_CABLE_LEN_TABLE_NAME),
         m_cfgBufferProfileTable(cfgDb, CFG_BUFFER_PROFILE_TABLE_NAME),
         m_cfgBufferPgTable(cfgDb, CFG_BUFFER_PG_TABLE_NAME),
-        m_cfgLosslessPgPoolTable(cfgDb, CFG_BUFFER_POOL_TABLE_NAME)
+        m_cfgLosslessPgPoolTable(cfgDb, CFG_BUFFER_POOL_TABLE_NAME),
+        m_applBufferPoolTable(applDb, APP_BUFFER_POOL_TABLE_NAME),
+        m_applBufferProfileTable(applDb, APP_BUFFER_PROFILE_TABLE_NAME),
+        m_applBufferPgTable(applDb, APP_BUFFER_PG_TABLE_NAME),
+        m_applBufferQueueTable(applDb, APP_BUFFER_QUEUE_TABLE_NAME),
+        m_applBufferIngressProfileListTable(applDb, APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME),
+        m_applBufferEgressProfileListTable(applDb, APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME)
 {
     readPgProfileLookupFile(pg_lookup_file);
 }
@@ -78,6 +86,7 @@ void BufferMgr::readPgProfileLookupFile(string file)
 task_process_status BufferMgr::doCableTask(string port, string cable_length)
 {
     m_cableLenLookup[port] = cable_length;
+    SWSS_LOG_INFO("Cable length set to %s for port %s", m_cableLenLookup[port].c_str(), port.c_str());
     return task_process_status::task_success;
 }
 
@@ -112,10 +121,11 @@ Create/update two tables: profile (in m_cfgBufferProfileTable) and port buffer (
         }
     }
 */
-task_process_status BufferMgr::doSpeedUpdateTask(string port, string speed)
+task_process_status BufferMgr::doSpeedUpdateTask(string port)
 {
     vector<FieldValueTuple> fvVector;
     string cable;
+    string speed;
 
     if (m_cableLenLookup.count(port) == 0)
     {
@@ -124,7 +134,13 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, string speed)
     }
 
     cable = m_cableLenLookup[port];
+    if (cable == "0m")
+    {
+        SWSS_LOG_NOTICE("Not creating/updating PG profile for port %s. Cable length is set to %s", port.c_str(), cable.c_str());
+        return task_process_status::task_success;
+    }
 
+    speed = m_speedLookup[port];
     if (m_pgProfileLookup.count(speed) == 0 || m_pgProfileLookup[speed].count(cable) == 0)
     {
         SWSS_LOG_ERROR("Unable to create/update PG profile for port %s. No PG profile configured for speed %s and cable length %s",
@@ -183,9 +199,8 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, string speed)
                          "]";
 
     /* Check if PG Mapping is already then log message and return. */
-
     m_cfgBufferPgTable.get(buffer_pg_key, fvVector);
-    
+
     for (auto& prop : fvVector)
     {
         if ((fvField(prop) == "profile") && (profile_ref == fvValue(prop)))
@@ -194,12 +209,109 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, string speed)
             return task_process_status::task_success;
         }
     }
-    
+
     fvVector.clear();
- 
+
     fvVector.push_back(make_pair("profile", profile_ref));
     m_cfgBufferPgTable.set(buffer_pg_key, fvVector);
     return task_process_status::task_success;
+}
+
+void BufferMgr::transformSeperator(string &name)
+{
+    size_t pos;
+    while ((pos = name.find("|")) != string::npos)
+        name.replace(pos, 1, ":");
+}
+
+void BufferMgr::transformReference(string &name)
+{
+    auto references = tokenize(name, list_item_delimiter);
+    int ref_index = 0;
+
+    name = "";
+
+    for (auto &reference : references)
+    {
+        if (ref_index != 0)
+            name += list_item_delimiter;
+        ref_index ++;
+
+        auto keys = tokenize(reference, config_db_key_delimiter);
+        int key_index = 0;
+        for (auto &key : keys)
+        {
+            if (key_index == 0)
+                name += key + "_TABLE";
+            else
+                name += delimiter + key;
+            key_index ++;
+        }
+    }
+}
+
+/*
+ * This function copies the data from tables in CONFIG_DB to APPL_DB.
+ * With dynamically buffer calculation supported, the following tables
+ * will be moved to APPL_DB from CONFIG_DB because the CONFIG_DB contains
+ * configured entries only while APPL_DB contains dynamically generated entries
+ *  - BUFFER_POOL
+ *  - BUFFER_PROFILE
+ *  - BUFFER_PG
+ * The following tables have to be moved to APPL_DB because they reference
+ * some entries that have been moved to APPL_DB
+ *  - BUFFER_QUEUE
+ *  - BUFFER_PORT_INGRESS_PROFILE_LIST
+ *  - BUFFER_PORT_EGRESS_PROFILE_LIST   
+ * One thing we need to handle is to transform the separator from | to :
+ * The following items contain separator:
+ *  - keys of each item
+ *  - pool in BUFFER_PROFILE
+ *  - profile in BUFFER_PG
+ *  - profile_list in BUFFER_PORT_INGRESS_PROFILE_LIST and BUFFER_PORT_EGRESS_PROFILE_LIST
+ */
+void BufferMgr::doBufferTableTask(Consumer &consumer, ProducerStateTable &applTable)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple t = it->second;
+        string key = kfvKey(t);
+
+        //transform the separator in key from "|" to ":"
+        transformSeperator(key);
+
+        string op = kfvOp(t);
+        if (op == SET_COMMAND)
+        {
+            vector<FieldValueTuple> fvVector;
+
+            SWSS_LOG_INFO("Inserting entry %s from CONFIG_DB to APPL_DB", key.c_str());
+
+            for (auto i : kfvFieldsValues(t))
+            {
+                SWSS_LOG_INFO("Inserting field %s value %s", fvField(i).c_str(), fvValue(i).c_str());
+                //transform the separator in values from "|" to ":"
+                if (fvField(i) == "pool")
+                    transformReference(fvValue(i));
+                if (fvField(i) == "profile")
+                    transformReference(fvValue(i));
+                if (fvField(i) == "profile_list")
+                    transformReference(fvValue(i));
+                fvVector.emplace_back(FieldValueTuple(fvField(i), fvValue(i)));
+                SWSS_LOG_INFO("Inserting field %s value %s", fvField(i).c_str(), fvValue(i).c_str());
+            }
+            applTable.set(key, fvVector);
+        }
+        else if (op == DEL_COMMAND)
+        {
+            SWSS_LOG_INFO("Removing entry %s from APPL_DB", key.c_str());
+            applTable.del(key);
+        }
+        it = consumer.m_toSync.erase(it);
+    }
 }
 
 void BufferMgr::doTask(Consumer &consumer)
@@ -207,6 +319,42 @@ void BufferMgr::doTask(Consumer &consumer)
     SWSS_LOG_ENTER();
 
     string table_name = consumer.getTableName();
+
+    if (table_name == CFG_BUFFER_POOL_TABLE_NAME)
+    {
+        doBufferTableTask(consumer, m_applBufferPoolTable);
+        return;
+    }
+
+    if (table_name == CFG_BUFFER_PROFILE_TABLE_NAME)
+    {
+        doBufferTableTask(consumer, m_applBufferProfileTable);
+        return;
+    }
+
+    if (table_name == CFG_BUFFER_PG_TABLE_NAME)
+    {
+        doBufferTableTask(consumer, m_applBufferPgTable);
+        return;
+    }
+
+    if (table_name == CFG_BUFFER_QUEUE_TABLE_NAME)
+    {
+        doBufferTableTask(consumer, m_applBufferQueueTable);
+        return;
+    }
+
+    if (table_name == CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME)
+    {
+        doBufferTableTask(consumer, m_applBufferIngressProfileListTable);
+        return;
+    }
+
+    if (table_name == CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME)
+    {
+        doBufferTableTask(consumer, m_applBufferEgressProfileListTable);
+        return;
+    }
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
@@ -228,11 +376,18 @@ void BufferMgr::doTask(Consumer &consumer)
                     // receive and cache cable length table
                     task_status = doCableTask(fvField(i), fvValue(i));
                 }
-                // In case of PORT table update, Buffer Manager is interested in speed update only
-                if (m_pgfile_processed && table_name == CFG_PORT_TABLE_NAME && fvField(i) == "speed")
+                if (m_pgfile_processed && table_name == CFG_PORT_TABLE_NAME && (fvField(i) == "speed" || fvField(i) == "admin_status"))
                 {
-                    // create/update profile for port
-                    task_status = doSpeedUpdateTask(port, fvValue(i));
+                    if (fvField(i) == "speed")
+                    {
+                        m_speedLookup[port] = fvValue(i);
+                    }
+                    
+                    if (m_speedLookup.count(port) != 0)
+                    {
+                        // create/update profile for port
+                        task_status = doSpeedUpdateTask(port);
+                    }
                 }
                 if (task_status != task_process_status::task_success)
                 {

@@ -121,7 +121,7 @@ PfcWdActionHandler::PfcWdQueueStats PfcWdActionHandler::getQueueStats(shared_ptr
 
     if (!countersTable->get(queueIdStr, fieldValues))
     {
-        return move(stats);
+        return stats;
     }
 
     for (const auto& fv : fieldValues)
@@ -175,7 +175,7 @@ PfcWdActionHandler::PfcWdQueueStats PfcWdActionHandler::getQueueStats(shared_ptr
         }
     }
 
-    return move(stats);
+    return stats;
 }
 
 void PfcWdActionHandler::initWdCounters(shared_ptr<Table> countersTable, const string &queueIdStr)
@@ -225,35 +225,46 @@ PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
 {
     SWSS_LOG_ENTER();
 
-    acl_table_type_t table_type = ACL_TABLE_PFCWD;
+    acl_table_type_t table_type;
 
-    // There is one handler instance per queue ID
     string queuestr = to_string(queueId);
-    m_strIngressTable = "IngressTable_PfcWdAclHandler_" + queuestr;
-    m_strEgressTable = "EgressTable_PfcWdAclHandler_" + queuestr;
     m_strRule = "Rule_PfcWdAclHandler_" + queuestr;
 
+    // Ingress table/rule creation
+    table_type = ACL_TABLE_DROP;
+    m_strIngressTable = INGRESS_TABLE_DROP;
     auto found = m_aclTables.find(m_strIngressTable);
     if (found == m_aclTables.end())
     {
         // First time of handling PFC for this queue, create ACL table, and bind
         createPfcAclTable(port, m_strIngressTable, true);
         shared_ptr<AclRulePfcwd> newRule = make_shared<AclRulePfcwd>(gAclOrch, m_strRule, m_strIngressTable, table_type);
-        createPfcAclRule(newRule, queueId, m_strIngressTable);
+        createPfcAclRule(newRule, queueId, m_strIngressTable, port);
     }
     else
     {
-        // Otherwise just bind ACL table with the port
-        found->second.bind(port);
+        AclRule* rule = gAclOrch->getAclRule(m_strIngressTable, m_strRule);
+        if (rule == nullptr)
+        {
+            shared_ptr<AclRulePfcwd> newRule = make_shared<AclRulePfcwd>(gAclOrch, m_strRule, m_strIngressTable, table_type);
+            createPfcAclRule(newRule, queueId, m_strIngressTable, port);
+        } 
+        else 
+        {
+            gAclOrch->updateAclRule(m_strIngressTable, m_strRule, MATCH_IN_PORTS, &port, RULE_OPER_ADD);
+        }
     }
 
+    // Egress table/rule creation
+    table_type = ACL_TABLE_PFCWD;
+    m_strEgressTable = "EgressTable_PfcWdAclHandler_" + queuestr;
     found = m_aclTables.find(m_strEgressTable);
     if (found == m_aclTables.end())
     {
         // First time of handling PFC for this queue, create ACL table, and bind
         createPfcAclTable(port, m_strEgressTable, false);
         shared_ptr<AclRulePfcwd> newRule = make_shared<AclRulePfcwd>(gAclOrch, m_strRule, m_strEgressTable, table_type);
-        createPfcAclRule(newRule, queueId, m_strEgressTable);
+        createPfcAclRule(newRule, queueId, m_strEgressTable, port);
     }
     else
     {
@@ -266,11 +277,26 @@ PfcWdAclHandler::~PfcWdAclHandler(void)
 {
     SWSS_LOG_ENTER();
 
-    auto found = m_aclTables.find(m_strIngressTable);
-    found->second.unbind(getPort());
+    AclRule* rule = gAclOrch->getAclRule(m_strIngressTable, m_strRule);
+    if (rule == nullptr)
+    {
+        SWSS_LOG_THROW("ACL Rule does not exist for rule %s", m_strRule.c_str());
+    }
 
-    found = m_aclTables.find(m_strEgressTable);
-    found->second.unbind(getPort());
+    vector<sai_object_id_t> port_set = rule->getInPorts();
+    sai_object_id_t port = getPort();
+
+    if ((port_set.size() == 1) && (port_set[0] == port))
+    {
+        gAclOrch->removeAclRule(m_strIngressTable, m_strRule);
+    }
+    else 
+    {
+        gAclOrch->updateAclRule(m_strIngressTable, m_strRule, MATCH_IN_PORTS, &port, RULE_OPER_DELETE);
+    } 
+
+    auto found = m_aclTables.find(m_strEgressTable);
+    found->second.unbind(port);
 }
 
 void PfcWdAclHandler::clear()
@@ -295,14 +321,34 @@ void PfcWdAclHandler::createPfcAclTable(sai_object_id_t port, string strTable, b
     assert(inserted.second);
 
     AclTable& aclTable = inserted.first->second;
-    aclTable.type = ACL_TABLE_PFCWD;
+
+    sai_object_id_t table_oid = gAclOrch->getTableById(strTable);
+    if (ingress && table_oid != SAI_NULL_OBJECT_ID)
+    {
+        // DROP ACL table is already created
+        SWSS_LOG_NOTICE("ACL table %s exists, reuse the same", strTable.c_str());
+        aclTable = *(gAclOrch->getTableByOid(table_oid));
+        return;
+    }
+
     aclTable.link(port);
     aclTable.id = strTable;
-    aclTable.stage = ingress ? ACL_STAGE_INGRESS : ACL_STAGE_EGRESS;
+
+    if (ingress) 
+    {
+        aclTable.type = ACL_TABLE_DROP;
+        aclTable.stage = ACL_STAGE_INGRESS;
+    } 
+    else 
+    {
+        aclTable.type = ACL_TABLE_PFCWD;
+        aclTable.stage = ACL_STAGE_EGRESS;
+    }
+    
     gAclOrch->addAclTable(aclTable);
 }
 
-void PfcWdAclHandler::createPfcAclRule(shared_ptr<AclRulePfcwd> rule, uint8_t queueId, string strTable)
+void PfcWdAclHandler::createPfcAclRule(shared_ptr<AclRulePfcwd> rule, uint8_t queueId, string strTable, sai_object_id_t portOid)
 {
     SWSS_LOG_ENTER();
 
@@ -315,6 +361,22 @@ void PfcWdAclHandler::createPfcAclRule(shared_ptr<AclRulePfcwd> rule, uint8_t qu
     attr_name = MATCH_TC;
     attr_value = to_string(queueId);
     rule->validateAddMatch(attr_name, attr_value);
+
+    // Add MATCH_IN_PORTS as match criteria for ingress table
+    if (strTable == INGRESS_TABLE_DROP) 
+    {
+        Port p;
+        attr_name = MATCH_IN_PORTS;
+
+        if (!gPortsOrch->getPort(portOid, p))
+        {
+            SWSS_LOG_ERROR("Failed to get port structure from port oid 0x%" PRIx64, portOid);
+            return;
+        }
+
+        attr_value = p.m_alias;
+        rule->validateAddMatch(attr_name, attr_value);
+    }
 
     attr_name = ACTION_PACKET_ACTION;
     attr_value = PACKET_ACTION_DROP;
@@ -523,10 +585,25 @@ PfcWdZeroBufferHandler::~PfcWdZeroBufferHandler(void)
         return;
     }
 
-    sai_object_id_t pg = portInstance.m_priority_group_ids[size_t(getQueueId())];
+    auto idx = size_t(getQueueId());
+    sai_object_id_t pg = portInstance.m_priority_group_ids[idx];
+    sai_object_id_t pending_profile_id = portInstance.m_priority_group_pending_profile[idx];
 
     attr.id = SAI_INGRESS_PRIORITY_GROUP_ATTR_BUFFER_PROFILE;
-    attr.value.oid = m_originalPgBufferProfile;
+
+    if (pending_profile_id != SAI_NULL_OBJECT_ID)
+    {
+        attr.value.oid = pending_profile_id;
+        SWSS_LOG_NOTICE("Priority group %zd on port %s has been restored to pending profile 0x%" PRIx64,
+                        idx, portInstance.m_alias.c_str(), pending_profile_id);
+        portInstance.m_priority_group_pending_profile[idx] = SAI_NULL_OBJECT_ID;
+    }
+    else
+    {
+        attr.value.oid = m_originalPgBufferProfile;
+        SWSS_LOG_NOTICE("Priority group %zd on port %s has been restored to original profile 0x%" PRIx64,
+                        idx, portInstance.m_alias.c_str(), m_originalPgBufferProfile);
+    }
 
     // Set our zero buffer profile
     status = sai_buffer_api->set_ingress_priority_group_attribute(pg, &attr);
@@ -562,7 +639,7 @@ PfcWdZeroBufferHandler::ZeroBufferProfile::~ZeroBufferProfile(void)
 {
     SWSS_LOG_ENTER();
 
-    // Destory ingress and egress prifiles and pools
+    // Destroy ingress and egress profiles and pools
     destroyZeroBufferProfile(true);
     destroyZeroBufferProfile(false);
 }

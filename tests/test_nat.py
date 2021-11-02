@@ -1,5 +1,12 @@
 import time
 
+from dvslib.dvs_common import wait_for_result
+
+L3_TABLE_TYPE = "L3"
+L3_TABLE_NAME = "L3_TEST"
+L3_BIND_PORTS = ["Ethernet0"]
+L3_RULE_NAME = "L3_TEST_RULE"
+
 class TestNat(object):
     def setup_db(self, dvs):
         self.app_db = dvs.get_app_db()
@@ -94,11 +101,13 @@ class TestNat(object):
             "entry_type": "static"
         }
 
-        #check the entry in asic db
-        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 2)
-
+        #check the entry in asic db, 3 keys = SNAT, DNAT and DNAT_Pool
+        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 3)
         for key in keys:
-            assert "\"dst_ip\":\"67.66.65.1\"" in key or "\"src_ip\":\"18.18.18.2\"" in key
+            if (key.find("dst_ip:67.66.65.1")) or (key.find("src_ip:18.18.18.2")):
+                assert True
+            else:
+                assert False
 
     def test_DelNatStaticEntry(self, dvs, testlog):
         # initialize
@@ -114,7 +123,7 @@ class TestNat(object):
         self.app_db.wait_for_n_keys("NAT_TABLE", 0)
 
         #check the entry is not there in asic db
-        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 0)
+        self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 0)
 
     def test_AddNaPtStaticEntry(self, dvs, testlog):
         # initialize
@@ -140,12 +149,12 @@ class TestNat(object):
 
         assert fvs == {"translated_ip": "18.18.18.2", "translated_l4_port": "180", "nat_type": "dnat", "entry_type": "static"}
 
-        #check the entry in asic db
-        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 2)
+        #check the entry in asic db, 3 keys = SNAT, DNAT and DNAT_Pool
+        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 3)
         for key in keys:
-            if "\"dst_ip\":\"67.66.65.1\"" in key and "\"l4_dst_port\":\"670\"" in key:
+            if (key.find("dst_ip:67.66.65.1")) and (key.find("key.l4_dst_port:670")):
                 assert True
-            elif "\"src_ip\":\"18.18.18.2\"" in key or "\"l4_src_port\":\"180\"" in key:
+            if (key.find("src_ip:18.18.18.2")) or (key.find("key.l4_src_port:180")):
                 assert True
             else:
                 assert False
@@ -196,10 +205,13 @@ class TestNat(object):
         fvs = self.app_db.wait_for_entry("NAT_TWICE_TABLE", "18.18.18.2:18.18.18.1")
         assert fvs == {"translated_src_ip": "67.66.65.1", "translated_dst_ip": "67.66.65.2", "entry_type": "static"}
 
-        #check the entry in asic db
-        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 2)
+        #check the entry in asic db, 4 keys = SNAT, DNAT and 2 DNAT_Pools
+        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 4)
         for key in keys:
-            assert "\"dst_ip\":\"67.66.65.1\"" in key or "\"src_ip\":\"18.18.18.2\"" in key
+            if (key.find("dst_ip:18.18.18.1")) or (key.find("src_ip:18.18.18.2")):
+                assert True
+            else:
+                assert False
 
     def test_DelTwiceNatStaticEntry(self, dvs, testlog):
         # initialize
@@ -248,12 +260,12 @@ class TestNat(object):
         fvs = self.app_db.wait_for_entry("NAPT_TWICE_TABLE", "UDP:18.18.18.2:182:18.18.18.1:181")
         assert fvs == {"translated_src_ip": "67.66.65.1", "translated_src_l4_port": "660", "translated_dst_ip": "67.66.65.2", "translated_dst_l4_port": "670", "entry_type": "static"}
 
-        #check the entry in asic db
-        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 2)
+        #check the entry in asic db, 4 keys = SNAT, DNAT and 2 DNAT_Pools
+        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 4)
         for key in keys:
-            if "\"src_ip\":\"18.18.18.2\"" in key or "\"l4_src_port\":\"182\"" in key:
+            if (key.find("src_ip:18.18.18.2")) or (key.find("l4_src_port:182")):
                 assert True
-            elif "\"dst_ip\":\"67.66.65.1\"" in key or "\"l4_dst_port\":\"660\"" in key:
+            if (key.find("dst_ip:18.18.18.1")) or (key.find("l4_dst_port:181")):
                 assert True
             else:
                 assert False
@@ -275,5 +287,146 @@ class TestNat(object):
         #check the entry is not there in asic db
         self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 0)
 
+    def test_VerifyConntrackTimeoutForNatEntry(self, dvs, testlog):
+        # get neighbor and arp entry
+        dvs.servers[0].runcmd("ping -c 1 18.18.18.2")
+
+        # add a static nat entry
+        dvs.runcmd("config nat add static basic 67.66.65.1 18.18.18.2")
+
+        # check the conntrack timeout for static entry
+        def _check_conntrack_for_static_entry():
+            output = dvs.runcmd("conntrack -j -L -s 18.18.18.2 -p udp -q 67.66.65.1")
+            if len(output) != 2:
+                return (False, None)
+
+            conntrack_list = list(output[1].split(" "))
+
+            src_exists = "src=18.18.18.2" in conntrack_list
+            dst_exists = "dst=67.66.65.1" in conntrack_list
+            proto_exists = "udp" in conntrack_list
+
+            if not src_exists or not dst_exists or not proto_exists:
+                return (False, None)
+
+            proto_index = conntrack_list.index("udp")
+
+            if int(conntrack_list[proto_index + 7]) > 432000 or int(conntrack_list[proto_index + 7]) < 431900:
+                return (False, None)
+
+            return (True, None)
+
+        wait_for_result(_check_conntrack_for_static_entry)
+
+        # delete a static nat entry
+        dvs.runcmd("config nat remove static basic 67.66.65.1 18.18.18.2")
+
+    def test_DoNotNatAclAction(self, dvs_acl, testlog):
+
+        # Creating the ACL Table
+        dvs_acl.create_acl_table(L3_TABLE_NAME, L3_TABLE_TYPE, L3_BIND_PORTS, stage="ingress")
+
+        acl_table_id = dvs_acl.get_acl_table_ids(1)[0]
+        acl_table_group_ids = dvs_acl.get_acl_table_group_ids(len(L3_BIND_PORTS))
+
+        dvs_acl.verify_acl_table_group_members(acl_table_id, acl_table_group_ids, 1)
+        dvs_acl.verify_acl_table_port_binding(acl_table_id, L3_BIND_PORTS, 1)
+
+        # Create a ACL Rule with "do_not_nat" packet action
+        config_qualifiers = {"SRC_IP": "14.1.0.1/32"}
+        dvs_acl.create_acl_rule(L3_TABLE_NAME, L3_RULE_NAME, config_qualifiers, action="DO_NOT_NAT", priority="97")
+
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP": dvs_acl.get_simple_qualifier_comparator("14.1.0.1&mask:255.255.255.255")
+        }
+
+        dvs_acl.verify_nat_acl_rule(expected_sai_qualifiers, priority="97")
+
+        # Deleting the ACL Rule
+        dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
+        dvs_acl.verify_no_acl_rules()
+
+        # Deleting the ACL Table
+        dvs_acl.remove_acl_table(L3_TABLE_NAME)
+        dvs_acl.verify_acl_table_count(0)
+
+    def test_CrmSnatAndDnatEntryUsedCount(self, dvs, testlog):
+        # initialize
+        self.setup_db(dvs)
+
+        # get neighbor and arp entry
+        dvs.servers[0].runcmd("ping -c 1 18.18.18.2")
+
+        # set pooling interval to 1
+        dvs.runcmd("crm config polling interval 1")
+
+        dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_SNAT_ENTRY', '1000')
+        dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_DNAT_ENTRY', '1000')
+
+        time.sleep(2)
+
+        # get snat counters
+        used_snat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_snat_entry_used')
+        avail_snat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_snat_entry_available')
+
+        # get dnat counters
+        used_dnat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_dnat_entry_used')
+        avail_dnat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_dnat_entry_available')
+
+        # add a static nat entry
+        dvs.runcmd("config nat add static basic 67.66.65.1 18.18.18.2")
+
+        #check the entry in asic db, 3 keys = SNAT, DNAT and DNAT_Pool
+        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 3)
+        for key in keys:
+            if (key.find("dst_ip:67.66.65.1")) or (key.find("src_ip:18.18.18.2")):
+                assert True
+            else:
+                assert False
+
+        dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_SNAT_ENTRY', '999')
+        dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_DNAT_ENTRY', '999')
+
+        time.sleep(2)
+
+        # get snat counters
+        new_used_snat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_snat_entry_used')
+        new_avail_snat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_snat_entry_available')
+
+        # get dnat counters
+        new_used_dnat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_dnat_entry_used')
+        new_avail_dnat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_dnat_entry_available')
+
+        assert new_used_snat_counter - used_snat_counter == 1
+        assert avail_snat_counter - new_avail_snat_counter == 1
+        assert new_used_dnat_counter - used_dnat_counter == 1
+        assert avail_dnat_counter - new_avail_dnat_counter == 1
+
+        # delete a static nat entry
+        dvs.runcmd("config nat remove static basic 67.66.65.1 18.18.18.2")
+
+        dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_SNAT_ENTRY', '1000')
+        dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_DNAT_ENTRY', '1000')
+
+        time.sleep(2)
+
+        # get snat counters
+        new_used_snat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_snat_entry_used')
+        new_avail_snat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_snat_entry_available')
+
+        # get dnat counters
+        new_used_dnat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_dnat_entry_used')
+        new_avail_dnat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_dnat_entry_available')
+
+        assert new_used_snat_counter == used_snat_counter
+        assert new_avail_snat_counter == avail_snat_counter
+        assert new_used_dnat_counter == used_dnat_counter
+        assert new_avail_dnat_counter == avail_dnat_counter
+
         # clear interfaces
         self.clear_interfaces(dvs)
+
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass

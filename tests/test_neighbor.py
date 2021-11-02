@@ -390,3 +390,31 @@ class TestNeighbor(object):
             current_neigh_entries_cnt = len(tbl.getKeys())
             dec_neigh_entries_cnt = (old_neigh_entries_cnt - current_neigh_entries_cnt)
             assert dec_neigh_entries_cnt == 1
+
+    def test_FlushResolveNeighborIpv6(self, dvs, testlog):
+        appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        prod_state_tbl = swsscommon.ProducerStateTable(appl_db, swsscommon.APP_NEIGH_RESOLVE_TABLE_NAME)
+        fvs = swsscommon.FieldValuePairs([("mac", "52:54:00:25:06:E9")])
+
+        prod_state_tbl.set("Vlan2:2000:1::1", fvs)
+        time.sleep(2)
+
+        (exitcode, output) = dvs.runcmd(['sh', '-c', "supervisorctl status nbrmgrd | awk '{print $2}'"])
+        assert output == "RUNNING\n"
+
+    def test_FlushResolveNeighborIpv4(self, dvs, testlog):
+        appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        prod_state_tbl = swsscommon.ProducerStateTable(appl_db, swsscommon.APP_NEIGH_RESOLVE_TABLE_NAME)
+        fvs = swsscommon.FieldValuePairs([("mac", "52:54:00:25:06:E9")])
+
+        prod_state_tbl.set("Vlan2:192.168.10.1", fvs)
+        time.sleep(2)
+
+        (exitcode, output) = dvs.runcmd(['sh', '-c', "supervisorctl status nbrmgrd | awk '{print $2}'"])
+        assert output == "RUNNING\n"
+
+
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass

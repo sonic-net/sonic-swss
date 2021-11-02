@@ -1,19 +1,22 @@
-INCLUDES = -I $(top_srcdir) -I $(top_srcdir)/warmrestart -I flex_counter -I debug_counter
+INCLUDES = -I $(top_srcdir)/lib -I $(top_srcdir) -I $(top_srcdir)/warmrestart -I flex_counter -I debug_counter
 
 CFLAGS_SAI = -I /usr/include/sai
 
 swssdir = $(datadir)/swss
 
 dist_swss_DATA = \
+		 rif_rates.lua \
 		 pfc_detect_innovium.lua  \
 		 pfc_detect_mellanox.lua  \
 		 pfc_detect_broadcom.lua \
 		 pfc_detect_barefoot.lua \
 		 pfc_detect_nephos.lua \
 		 pfc_restore.lua \
+		 port_rates.lua \
 		 watermark_queue.lua \
 		 watermark_pg.lua \
-		 watermark_bufferpool.lua
+		 watermark_bufferpool.lua \
+		 lagids.lua
 
 bin_PROGRAMS = orchagent routeresync orchagent_restart_check
 
@@ -25,13 +28,17 @@ endif
 
 orchagent_SOURCES = \
             main.cpp \
+            $(top_srcdir)/lib/gearboxutils.cpp \
             orchdaemon.cpp \
             orch.cpp \
             notifications.cpp \
             routeorch.cpp \
+            mplsrouteorch.cpp \
             neighorch.cpp \
             intfsorch.cpp \
             portsorch.cpp \
+            fabricportsorch.cpp \
+            fgnhgorch.cpp \
             copporch.cpp \
             tunneldecaporch.cpp \
             qosorch.cpp \
@@ -56,14 +63,19 @@ orchagent_SOURCES = \
             sfloworch.cpp \
             chassisorch.cpp \
             debugcounterorch.cpp \
-            natorch.cpp
+            natorch.cpp \
+            mlagorch.cpp \
+            isolationgrouporch.cpp \
+            muxorch.cpp \
+            macsecorch.cpp \
+            lagid.cpp 
 
 orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp
 orchagent_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.cpp
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 orchagent_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
-orchagent_LDADD = -lnl-3 -lnl-route-3 -lpthread -lsairedis -lswsscommon -lsaimeta -lsaimetadata
+orchagent_LDADD = -lnl-3 -lnl-route-3 -lpthread -lsairedis -lsaimeta -lsaimetadata -lswsscommon -lzmq
 
 routeresync_SOURCES = routeresync.cpp
 routeresync_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)

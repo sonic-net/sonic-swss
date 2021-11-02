@@ -8,25 +8,9 @@ local counters_db = ARGV[1]
 local counters_table_name = ARGV[2]
 local poll_time = tonumber(ARGV[3])
 
-local asic_db = "1"
-local asic_db_port_table = "ASIC_STATE:SAI_OBJECT_TYPE_PORT"
-
-local quanta_size = 512
-
 local rets = {}
 
 redis.call('SELECT', counters_db)
-
-local function port_speed_get(port_id)
-    redis.call('SELECT', asic_db)
-    local port_speed = redis.call('HGET', asic_db_port_table .. ':' .. port_id, 'SAI_PORT_ATTR_SPEED')
-    redis.call('SELECT', counters_db)
-    return tonumber(port_speed)
-end
-
-local function quantatous(quanta, port_id)
-    return quanta * quanta_size / port_speed_get(port_id)
-end
 
 -- Iterate through each queue
 local n = table.getn(KEYS)
@@ -53,7 +37,7 @@ for i = n, 1, -1 do
             local queue_index = redis.call('HGET', 'COUNTERS_QUEUE_INDEX_MAP', KEYS[i])
             local port_id = redis.call('HGET', 'COUNTERS_QUEUE_PORT_MAP', KEYS[i])
             local pfc_rx_pkt_key = 'SAI_PORT_STAT_PFC_' .. queue_index .. '_RX_PKTS'
-            local pfc_duration_key = 'SAI_PORT_STAT_PFC_' .. queue_index .. '_RX_PAUSE_DURATION'
+            local pfc_duration_key = 'SAI_PORT_STAT_PFC_' .. queue_index .. '_RX_PAUSE_DURATION_US'
 
             -- Get all counters
             local occupancy_bytes = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES')
@@ -79,7 +63,7 @@ for i = n, 1, -1 do
                     packets_last = tonumber(packets_last)
                     pfc_rx_packets_last = tonumber(pfc_rx_packets_last)
                     pfc_duration_last = tonumber(pfc_duration_last)
-                    local storm_condition = ((quantatous(pfc_duration, port_id) - quantatous(pfc_duration_last, port_id)) > poll_time * 0.8)
+                    local storm_condition = (pfc_duration - pfc_duration_last) > (poll_time * 0.8)
 
                     -- Check actual condition of queue being in PFC storm
                     if (occupancy_bytes > 0 and packets - packets_last == 0 and pfc_rx_packets - pfc_rx_packets_last > 0) or

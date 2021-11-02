@@ -29,7 +29,7 @@ AppRestartAssist::AppRestartAssist(RedisPipeline *pipelineAppDB, const std::stri
 
     /*
      * set the default timer value.
-     * If the application instance privides timer value, use it if valid.
+     * If the application instance provides timer value, use it if valid.
      * Use the class default one if none is provided by application.
      */
     if (defaultWarmStartTimerValue > MAXIMUM_WARMRESTART_TIMER_VALUE)
@@ -79,7 +79,10 @@ void AppRestartAssist::registerAppTable(const std::string &tableName, ProducerSt
     m_psTables[tableName]  = psTable;
 
     // Clear the producerstate table to make sure no pending data for the AppTable
-    psTable->clear();
+    if (m_warmStartInProgress)
+    {
+        psTable->clear();
+    }
     m_appTables[tableName] = new Table(m_pipeLine, tableName, false);
 }
 
@@ -112,6 +115,16 @@ AppRestartAssist::cache_state_t AppRestartAssist::getCacheEntryState(const std::
         }
     }
     throw std::logic_error("cache entry state is invalid");
+}
+
+void AppRestartAssist::appDataReplayed()
+{
+    WarmStart::setWarmStartState(m_appName, WarmStart::REPLAYED);
+}
+
+void AppRestartAssist::warmStartDisabled()
+{
+    WarmStart::setWarmStartState(m_appName, WarmStart::WSDISABLED);
 }
 
 // Read table(s) from APPDB and append stale flag then insert to cachemap
@@ -150,7 +163,7 @@ void AppRestartAssist::readTablesToMap()
     }
     return;
 }
- 
+
 /*
  * Check and insert to CacheMap Logic:
  * if delete_key:
@@ -215,7 +228,7 @@ void AppRestartAssist::insertToMap(string tableName, string key, vector<FieldVal
 
 /*
  * Reconcile logic:
- *  iterate throught the cache map
+ *  iterate through the cache map
  *  if the entry has "SAME" flag, do nothing
  *  if has "STALE/DELETE" flag, delete it from appDB.
  *  else if "NEW" flag,  add it to appDB
@@ -269,6 +282,13 @@ void AppRestartAssist::reconcile()
     WarmStart::setWarmStartState(m_appName, WarmStart::RECONCILED);
     m_warmStartInProgress = false;
     return;
+}
+
+// set the reconcile interval
+void AppRestartAssist::setReconcileInterval(uint32_t time)
+{
+    m_reconcileTimer = time;
+    m_warmStartTimer.setInterval(timespec{m_reconcileTimer, 0});
 }
 
 // start the timer, take Select class "s" to add the timer.

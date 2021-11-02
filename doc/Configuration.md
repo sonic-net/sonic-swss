@@ -17,21 +17,25 @@ Table of Contents
          * [Cable length](#cable-length)  
          * [COPP_TABLE](#copp_table)  
          * [CRM](#crm)  
-         * [Data Plane L3 Interfaces](#data-plane-l3-interfaces)   
+         * [Data Plane L3 Interfaces](#data-plane-l3-interfaces)  
+         * [DEFAULT_LOSSLESS_BUFFER_PARAMETER](#DEFAULT_LOSSLESS_BUFFER_PARAMETER)  
          * [Device Metadata](#device-metadata)  
          * [Device neighbor metada](#device-neighbor-metada)  
          * [DSCP_TO_TC_MAP](#dscp_to_tc_map)  
          * [FLEX_COUNTER_TABLE](#flex_counter_table)  
          * [L2 Neighbors](#l2-neighbors)  
          * [Loopback Interface](#loopback-interface)  
+         * [LOSSLESS_TRAFFIC_PATTERN](#LOSSLESS_TRAFFIC_PATTERN)  
          * [Management Interface](#management-interface)  
          * [Management port](#management-port)  
          * [Management VRF](#management-vrf)  
          * [MAP_PFC_PRIORITY_TO_QUEUE](#map_pfc_priority_to_queue)  
+         * [NTP Global Configuration](#ntp-global-configuration)  
          * [NTP and SYSLOG servers](#ntp-and-syslog-servers)  
          * [Port](#port)   
          * [Port Channel](#port-channel)  
          * [Portchannel member](#portchannel-member)  
+         * [Scheduler](#scheduler)  
          * [Port QoS Map](#port-qos-map)  
          * [Queue](#queue)  
          * [Tacplus Server](#tacplus-server)    
@@ -333,6 +337,8 @@ group name and IP ranges in **BGP_PEER_RANGE** table.
 
 ### BUFFER_PG
 
+When the system is running in traditional buffer model, profiles needs to explicitly configured:
+
 ```
 {
 "BUFFER_PG": {
@@ -350,7 +356,31 @@ group name and IP ranges in **BGP_PEER_RANGE** table.
 
 ```
 
+When the system is running in dynamic buffer model, profiles can be:
+
+ - either calculated dynamically according to ports' configuration and just configured as "NULL";
+ - or configured explicitly.
+
+```
+{
+"BUFFER_PG": {
+    "Ethernet0|3-4": {
+        "profile": "NULL"
+    },
+    "Ethernet1|3-4": {
+        "profile": "NULL"
+    },
+    "Ethernet2|3-4": {
+        "profile": "[BUFFER_PROFILE|static_profile]"
+    }
+  }
+}
+
+```
+
 ### Buffer pool
+
+When the system is running in traditional buffer model, the size of all of the buffer pools and xoff of ingress_lossless_pool need to be configured explicitly.
 
 ```
 {
@@ -370,6 +400,29 @@ group name and IP ranges in **BGP_PEER_RANGE** table.
         "type": "ingress",
         "mode": "dynamic",
         "size": "10875072"
+    }
+  }
+}
+
+```
+
+When the system is running in dynamic buffer model, the size of some of the buffer pools can be omitted and will be dynamically calculated.
+
+```
+{
+"BUFFER_POOL": {
+    "egress_lossless_pool": {
+        "type": "egress",
+        "mode": "static",
+        "size": "15982720"
+    },
+    "egress_lossy_pool": {
+        "type": "egress",
+        "mode": "dynamic",
+    },
+    "ingress_lossless_pool": {
+        "type": "ingress",
+        "mode": "dynamic",
     }
   }
 }
@@ -418,6 +471,19 @@ group name and IP ranges in **BGP_PEER_RANGE** table.
 
 ```
 
+When the system is running in dynamic buffer model and the headroom_type is dynamic, only dynamic_th needs to be configured and rest of fields can be omitted.
+This kind of profiles will be handled by buffer manager and won't be applied to SAI.
+
+```
+{
+  {
+    "non_default_dynamic_th_profile": {
+        "dynamic_th": 1,
+        "headroom_type": "dynamic"
+    }
+  }
+}
+```
 
 ### Buffer queue
 
@@ -538,7 +604,16 @@ group name and IP ranges in **BGP_PEER_RANGE** table.
         "ipv4_neighbor_low_threshold": "70",
         "acl_group_threshold_type": "percentage",
         "ipv4_nexthop_high_threshold": "85",
-        "ipv6_route_threshold_type": "percentage"
+        "ipv6_route_threshold_type": "percentage",
+        "snat_entry_threshold_type": "percentage",
+        "snat_entry_high_threshold": "85",
+        "snat_entry_low_threshold": "70",
+        "dnat_entry_threshold_type": "percentage",
+        "dnat_entry_high_threshold": "85",
+        "dnat_entry_low_threshold": "70",
+        "ipmc_entry_threshold_type": "percentage",
+        "ipmc_entry_high_threshold": "85",
+        "ipmc_entry_low_threshold": "70"
     }
   }
 }
@@ -578,6 +653,21 @@ attributes.
 ```
 
 
+### DEFAULT_LOSSLESS_BUFFER_PARAMETER
+
+This table stores the default lossless buffer parameters for dynamic buffer calculation.
+
+```
+{
+    "DEFAULT_LOSSLESS_BUFFER_PARAMETER": {
+        "AZURE": {
+            "default_dynamic_th": "0",
+            "over_subscribe_ratio": "2"
+        }
+    }
+}
+```
+
 ### Device Metadata
 
 The **DEVICE_METADATA** table contains only one object named
@@ -599,7 +689,8 @@ instance is supported in SONiC.
         "default_pfcwd_status": "disable",
         "bgp_asn": "65100",
         "deployment_id": "1",
-        "type": "ToRRouter"
+        "type": "ToRRouter",
+        "buffer_model": "traditional"
     }
   }
 }
@@ -736,6 +827,22 @@ interface objects.
 
 ```
 
+### LOSSLESS_TRAFFIC_PATTERN
+
+The LOSSLESS_TRAFFIC_PATTERN table stores parameters related to
+lossless traffic for dynamic buffer calculation
+
+```
+{
+    "LOSSLESS_TRAFFIC_PATTERN": {
+        "AZURE": {
+            "mtu": "1024",
+            "small_packet_percentage": "100"
+        }
+    }
+}
+```
+
 ### Management Interface
 
 Management interfaces are defined in **MGMT_INTERFACE** table. Object
@@ -809,7 +916,48 @@ instead of data network.
   }
 }
 ```
+### NTP Global Configuration
 
+These configuration options are used to modify the way that
+ntp binds to the ports on the switch and which port it uses to
+make ntp update requests from.
+
+***NTP VRF***
+
+If this option is set to `default` then ntp will run within the default vrf
+**when the management vrf is enabled**. If the mgmt vrf is enabled and this value is
+not set to default then ntp will run within the mgmt vrf.
+
+This option **has no effect** if the mgmt vrf is not enabled.
+
+```
+{
+"NTP": {
+    "global": {
+        "vrf": "default"
+        }
+    }
+}
+```
+
+
+***NTP Source Port***
+
+This option sets the port which ntp will choose to send time update requests from by.  
+
+NOTE: If a Loopback interface is defined on the switch ntp will choose this by default, so this setting
+is **required** if the switch has a Loopback interface and the ntp peer does not have defined routes
+for that address.
+ 
+```
+{
+"NTP": {
+    "global": {
+        "src_intf": "Ethernet1"
+        }
+    }
+}
+```
 
 ### NTP and SYSLOG servers
 
@@ -924,6 +1072,30 @@ name as object key and member list as attribute.
     "PortChannel0004|Ethernet56": {}
   }
 }
+
+```
+### Scheduler
+
+```
+{
+"SCHEDULER": {
+    "scheduler.0": {
+        "type": "STRICT"
+    },
+    "scheduler.1": {
+        "type": "WRR"
+        "weight": "1",
+        "meter_type": "bytes",
+        "pir": "1250000000",
+        "pbs": "8192"
+    },
+    "scheduler.port": {
+        "meter_type": "bytes",
+        "pir": "1000000000",
+        "pbs": "8192"
+    }
+  }
+}
 ```
 
 ### Port QoS Map
@@ -936,7 +1108,8 @@ name as object key and member list as attribute.
         "tc_to_queue_map": "[TC_TO_QUEUE_MAP|AZURE]", 
         "pfc_enable": "3,4", 
         "pfc_to_queue_map": "[MAP_PFC_PRIORITY_TO_QUEUE|AZURE]", 
-        "dscp_to_tc_map": "[DSCP_TO_TC_MAP|AZURE]"
+        "dscp_to_tc_map": "[DSCP_TO_TC_MAP|AZURE]",
+        "scheduler": "[SCHEDULER|scheduler.port]"
     }
   }
 }  
@@ -1146,6 +1319,39 @@ The packet action could be:
         "red_drop_probability": "5"
     }
   }
+}
+```
+
+### BREAKOUT_CFG
+
+This table is introduced as part of Dynamic Port Breakout(DPB) feature.
+It shows the current breakout mode of all ports(root ports).
+The list of root ports, all possible breakout modes, and default breakout modes
+ are obtained/derived from platform.json and hwsku.json files.
+
+```
+"BREAKOUT_CFG": {
+    "Ethernet0": {
+        "brkout_mode": "4x25G[10G]"
+    },
+    "Ethernet4": {
+        "brkout_mode": "4x25G[10G]"
+    },
+    "Ethernet8": {
+        "brkout_mode": "4x25G[10G]"
+    },
+
+        ......
+
+    "Ethernet116": {
+        "brkout_mode": "2x50G"
+    },
+    "Ethernet120": {
+        "brkout_mode": "2x50G"
+    },
+    "Ethernet124": {
+        "brkout_mode": "2x50G"
+    }
 }
 ```
 

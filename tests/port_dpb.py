@@ -1,5 +1,4 @@
 from swsscommon import swsscommon
-import redis
 import time
 import os
 import pytest
@@ -26,7 +25,8 @@ class Port():
         self._app_db_ptbl = swsscommon.Table(self._app_db, swsscommon.APP_PORT_TABLE_NAME)
         self._asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
         self._asic_db_ptbl = swsscommon.Table(self._asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
-        self._counters_db = redis.Redis(unix_socket_path=self._dvs.redis_sock, db=swsscommon.COUNTERS_DB)
+        self._counters_db = dvs.get_counters_db()
+        self._dvs_asic_db = dvs.get_asic_db()
 
     def set_name(self, name):
         self._name = name
@@ -86,7 +86,7 @@ class Port():
         return self._oid
 
     def print_port(self):
-        print "Port: %s Lanes: %s Speed: %d, Index: %d"%(self._name, self._lanes, self._speed, self._index)
+        print("Port: %s Lanes: %s Speed: %d, Index: %d"%(self._name, self._lanes, self._speed, self._index))
 
     def port_merge(self, child_ports):
         child_ports.sort(key=lambda x: x.get_port_num())
@@ -110,7 +110,7 @@ class Port():
         child_port_list = []
         port_num = self.get_port_num()
         num_lanes = len(self._lanes)
-        offset = num_lanes/child_ports;
+        offset = num_lanes//child_ports
         lanes_per_child = offset
         for i in range(child_ports):
             child_port_num = port_num + (i * offset)
@@ -119,7 +119,7 @@ class Port():
             child_port_lanes = []
             for j in range(lanes_per_child):
                 child_port_lanes.append(self._lanes[(i*offset)+j])
-            child_port_speed = self._speed/child_ports
+            child_port_speed = self._speed//child_ports
             child_port_index = self._index
 
             child_port = Port(self._dvs, child_port_name)
@@ -171,14 +171,32 @@ class Port():
         return status
 
     def sync_oid(self):
-        self._oid = self._counters_db.hget("COUNTERS_PORT_NAME_MAP", self.get_name())
+        fvs = dict(self._counters_db.get_entry("COUNTERS_PORT_NAME_MAP", ""))
+        try:
+            self._oid = fvs[self.get_name()]
+        except KeyError:
+            self._oid = None
 
+    """
+        Expectation of the caller is that the port does exist in ASIC DB.
+    """
     def exists_in_asic_db(self):
         self.sync_oid()
         if self._oid is None:
             return False
         (status, _) = self._asic_db_ptbl.get(self._oid)
         return status
+
+    """
+        Expectation of the caller is that the port does NOT exists in ASIC DB.
+    """
+    def not_exists_in_asic_db(self):
+        self.sync_oid()
+        if self._oid is None:
+            return True
+
+        result = self._dvs_asic_db.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_PORT", self._oid)
+        return (not bool(result))
 
     def verify_config_db(self):
         (status, fvs) = self._cfg_db_ptbl.get(self.get_name())
@@ -203,11 +221,12 @@ class Port():
         (status, fvs) = self._asic_db_ptbl.get(self.get_oid())
         assert(status == True)
         fvs_dict = self.get_fvs_dict(fvs)
-        if (fvs_dict.has_key("SAI_PORT_ATTR_HW_LANE_LIST")):
+        if "SAI_PORT_ATTR_HW_LANE_LIST" in fvs_dict:
             assert(fvs_dict['SAI_PORT_ATTR_HW_LANE_LIST'] == self.get_lanes_asic_db_str())
         assert(fvs_dict['SAI_PORT_ATTR_SPEED'] == str(self.get_speed()))
 
 class DPB():
+    MAX_LANES = 4
     def breakin(self, dvs, port_names):
         child_ports = []
         for pname in port_names:
@@ -295,3 +314,74 @@ class DPB():
             p.verify_app_db()
             time.sleep(1)
             p.verify_asic_db()
+
+    def verify_port_breakout_mode(self, dvs, port_name, breakout_mode):
+        dvs.get_config_db().wait_for_field_match("BREAKOUT_CFG", port_name, {"brkout_mode": breakout_mode})
+
+    """
+    Examples:
+    --------------------------------------------------------------------------------------
+    | Root Port | Breakout Mode     | Lanes | Child Ports                                |
+    --------------------------------------------------------------------------------------
+    | Ethernet0 | 4x25G(10G)        | 4     | Ethernet0, Ethernet1, Ethernet2, Ethernet3 |
+    --------------------------------------------------------------------------------------
+    | Ethernet0 | 2x50G             | 4     | Ethernet0, Ethernet2                       |
+    --------------------------------------------------------------------------------------
+    | Ethernet0 | 1x100G(40G)       | 4     | Ethernet0                                  |
+    --------------------------------------------------------------------------------------
+  **| Ethernet0 | 2x25G(2)+1x50G(2) | 4     | Ethernet0, Ethernet1, Ethernet2            |
+    --------------------------------------------------------------------------------------
+  **| Ethernet0 | 1x50G(2)+2x25G(2) | 4     | Ethernet0, Ethernet2, Ethernet3           |
+    --------------------------------------------------------------------------------------
+    ** --> Asymmetric breakout modes
+    For symmetric breakout modes, this method directly calls _get_child_ports(),
+    and for asymmetric breakout modes, it breaks the mode with '+' as delimiter
+    and calls _get_child_ports() for each term while accumulating the result.
+    """
+    def get_child_ports(self, root_port, breakout_mode):
+        if '+' not in breakout_mode:
+            return self._get_child_ports(root_port, breakout_mode, self.MAX_LANES)
+
+        modes = breakout_mode.split('+')
+        child_ports = []
+        root_port_num = int(root_port.split('Ethernet')[1])
+        for mode in modes:
+            lanes = int(mode.split('(')[1].split(')')[0])
+            mode = mode.split('(')[0]
+            child_ports = child_ports + self._get_child_ports(root_port, mode, lanes)
+            root_port_num = root_port_num + lanes
+            root_port = 'Ethernet' + str(root_port_num)
+
+        return child_ports
+
+    """
+    Examples:
+    -----------------------------------------------------------------------------------
+    | Root Port | Breakout Mode | Lanes |  Child Ports                                |
+    -----------------------------------------------------------------------------------
+    | Ethernet0 | 4x25G(10G)    | 4     |  Ethernet0, Ethernet1, Ethernet2, Ethernet3 |
+    -----------------------------------------------------------------------------------
+    | Ethernet0 | 2x50G         | 4     |  Ethernet0, Ethernet2                       |
+    -----------------------------------------------------------------------------------
+    | Ethernet0 | 1x100G(40G)   | 4     |  Ethernet0                                  |
+    -----------------------------------------------------------------------------------
+   *| Ethernet0 | 2x25G(2)      | 2     |  Ethernet0, Ethernet1                       |
+    -----------------------------------------------------------------------------------
+   *| Ethernet2 | 1x50G(2)      | 2     |  Ethernet2                                  |
+    -----------------------------------------------------------------------------------
+   *| Ethernet0 | 1x50G(2)      | 2     |  Ethernet0                                  |
+    -----------------------------------------------------------------------------------
+   *| Ethernet2 | 2x25G(2)      | 2     |  Ethernet2, Ethernet3                       |
+    -----------------------------------------------------------------------------------
+    * -> Breakout modes in these cases are a term of asymmetric breakout modes. Please
+         refer above method
+    """
+    def _get_child_ports(self, root_port, breakout_mode, lanes):
+        count = int(breakout_mode.split('x')[0])
+        port = int(root_port.split('Ethernet')[1])
+
+        child_ports = []
+        jump = int(lanes/count)
+        for i in range(0, lanes, jump):
+            child_ports.append('Ethernet{}'.format(port+i))
+        return child_ports

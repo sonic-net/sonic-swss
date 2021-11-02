@@ -21,8 +21,11 @@ bool gLogRotate = false;
 bool gSaiRedisLogRotate = false;
 ofstream gRecordOfs;
 string gRecordFile;
+string gMySwitchType = "switch";
+int32_t gVoqMySwitchId = 0;
+string gMyHostName = "Linecard1";
+string gMyAsicName = "Asic0";
 
-MirrorOrch *gMirrorOrch;
 VRFOrch *gVrfOrch;
 
 void syncd_apply_view() {}

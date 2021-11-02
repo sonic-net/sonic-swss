@@ -80,7 +80,8 @@ struct DTelQueueReportEntry
 
     DTelQueueReportEntry() :
         queueReportOid(0),
-        q_ind(0)
+        q_ind(0),
+        queueOid(0)
     {
     }
 };

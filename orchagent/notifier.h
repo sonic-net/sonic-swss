@@ -1,3 +1,5 @@
+#pragma once
+
 #include "orch.h"
 
 class Notifier : public Executor {

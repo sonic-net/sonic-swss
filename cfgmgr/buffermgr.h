@@ -13,6 +13,8 @@ namespace swss {
 #define INGRESS_LOSSLESS_PG_POOL_NAME "ingress_lossless_pool"
 #define LOSSLESS_PGS "3-4"
 
+#define BUFFERMGR_TIMER_PERIOD 10
+
 typedef struct{
     std::string size;
     std::string xon;
@@ -25,11 +27,12 @@ typedef std::map<std::string, pg_profile_t> speed_map_t;
 typedef std::map<std::string, speed_map_t> pg_profile_lookup_t;
 
 typedef std::map<std::string, std::string> port_cable_length_t;
+typedef std::map<std::string, std::string> port_speed_t;
 
 class BufferMgr : public Orch
 {
 public:
-    BufferMgr(DBConnector *cfgDb, DBConnector *stateDb, std::string pg_lookup_file, const std::vector<std::string> &tableNames);
+    BufferMgr(DBConnector *cfgDb, DBConnector *applDb, std::string pg_lookup_file, const std::vector<std::string> &tableNames);
     using Orch::doTask;
 
 private:
@@ -38,14 +41,27 @@ private:
     Table m_cfgBufferProfileTable;
     Table m_cfgBufferPgTable;
     Table m_cfgLosslessPgPoolTable;
+
+    ProducerStateTable m_applBufferProfileTable;
+    ProducerStateTable m_applBufferPgTable;
+    ProducerStateTable m_applBufferPoolTable;
+    ProducerStateTable m_applBufferQueueTable;
+    ProducerStateTable m_applBufferIngressProfileListTable;
+    ProducerStateTable m_applBufferEgressProfileListTable;
+
     bool m_pgfile_processed;
 
     pg_profile_lookup_t m_pgProfileLookup;
     port_cable_length_t m_cableLenLookup;
+    port_speed_t m_speedLookup;
     std::string getPgPoolMode();
     void readPgProfileLookupFile(std::string);
     task_process_status doCableTask(std::string port, std::string cable_length);
-    task_process_status doSpeedUpdateTask(std::string port, std::string speed);
+    task_process_status doSpeedUpdateTask(std::string port);
+    void doBufferTableTask(Consumer &consumer, ProducerStateTable &applTable);
+
+    void transformSeperator(std::string &name);
+    void transformReference(std::string &name);
 
     void doTask(Consumer &consumer);
 };

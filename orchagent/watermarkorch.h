@@ -35,7 +35,7 @@ public:
     void handleFcConfigUpdate(const std::string &key, const std::vector<swss::FieldValueTuple> &fvt);
 
     void clearSingleWm(swss::Table *table, std::string wm_name, std::vector<sai_object_id_t> &obj_ids);
-    void clearSingleWm(swss::Table *table, std::string wm_name, const object_map &nameOidMap);
+    void clearSingleWm(swss::Table *table, std::string wm_name, const object_reference_map &nameOidMap);
 
     std::shared_ptr<swss::Table> getCountersTable(void)
     {
@@ -68,6 +68,7 @@ private:
 
     std::vector<sai_object_id_t> m_unicast_queue_ids;
     std::vector<sai_object_id_t> m_multicast_queue_ids;
+    std::vector<sai_object_id_t> m_all_queue_ids;
     std::vector<sai_object_id_t> m_pg_ids;
 };
 

@@ -103,7 +103,7 @@ class TestMirror(object):
 
         # check asic database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_POLICER")
-        policer_entries = tbl.getKeys()
+        policer_entries = [p for p in tbl.getKeys() if p not in dvs.asicdb.default_copp_policers]
         assert len(policer_entries) == 1
         policer_oid = policer_entries[0]
 
@@ -238,3 +238,9 @@ class TestMirror(object):
 
         # remove policer
         self.remove_policer(policer)
+
+
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass

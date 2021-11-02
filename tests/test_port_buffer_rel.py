@@ -34,3 +34,9 @@ class TestPortBuffer(object):
                     num_set += 1
         # make sure that state is set for all "num_ports" ports
         assert num_set == num_ports, "Not all ports are up"
+
+
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass

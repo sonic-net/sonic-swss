@@ -1,0 +1,178 @@
+{
+  "lanes": [
+    {
+      "index": 30,
+      "local_lane_id": 0,
+      "system_side": false,
+      "tx_polarity": 0,
+      "rx_polarity": 0,
+      "line_tx_lanemap": 3,
+      "line_rx_lanemap": 3,
+      "line_to_system_lanemap": 38,
+      "mdio_addr": "0x1001"
+    },
+    {
+      "index": 31,
+      "system_side": false,
+      "local_lane_id": 1,
+      "line_tx_lanemap": 2,
+      "tx_polarity": 0,
+      "line_rx_lanemap": 2,
+      "rx_polarity": 0,
+      "line_to_system_lanemap": 38,
+      "mdio_addr": "0x1002"
+    },
+    {
+      "index": 32,
+      "system_side": false,
+      "local_lane_id": 2,
+      "line_tx_lanemap": 1,
+      "tx_polarity": 1,
+      "line_rx_lanemap": 1,
+      "rx_polarity": 0,
+      "line_to_system_lanemap": 39,
+      "mdio_addr": "0x1003"
+    },
+    {
+      "index": 33,
+      "system_side": false,
+      "local_lane_id": 3,
+      "line_tx_lanemap": 0,
+      "tx_polarity": 1,
+      "line_rx_lanemap": 0,
+      "rx_polarity": 0,
+      "line_to_system_lanemap": 39,
+      "mdio_addr": "0x1004"
+    },
+    {
+      "index": 34,
+      "system_side": false,
+      "local_lane_id": 4,
+      "line_tx_lanemap": 0,
+      "tx_polarity": 0,
+      "line_rx_lanemap": 0,
+      "rx_polarity": 1,
+      "line_to_system_lanemap": 40,
+      "mdio_addr": "0x1005"
+    },  
+    {
+      "index": 35,
+      "system_side": false,
+      "local_lane_id": 5,
+      "line_tx_lanemap": 1,
+      "tx_polarity": 0,
+      "line_rx_lanemap": 1,
+      "rx_polarity": 1,
+      "line_to_system_lanemap": 40,
+      "mdio_addr": "0x1006"
+    },
+    {
+      "index": 36,
+      "system_side": false,
+      "local_lane_id": 6,
+      "line_tx_lanemap": 2,
+      "tx_polarity": 0,
+      "line_rx_lanemap": 2,
+      "rx_polarity": 1,
+      "line_to_system_lanemap": 41,
+      "mdio_addr": "0x1007"
+    },
+    {
+      "index": 37,
+      "system_side": false,
+      "local_lane_id": 7,
+      "line_tx_lanemap": 3,
+      "tx_polarity": 0,
+      "line_rx_lanemap": 3,
+      "rx_polarity": 1,
+      "line_to_system_lanemap": 41,
+      "mdio_addr": "0x1008"
+    },
+    {
+      "index": 38,
+      "system_side": true,
+      "local_lane_id": 0,
+      "tx_polarity": 0,
+      "rx_polarity": 0,
+      "line_tx_lanemap": 0,
+      "line_rx_lanemap": 0,
+      "line_to_system_lanemap": 0,
+      "mdio_addr": "0x1009"
+    },
+    {
+      "index": 39,
+      "system_side": true,
+      "local_lane_id": 1,
+      "tx_polarity": 0,
+      "rx_polarity": 0,
+      "line_tx_lanemap": 0,
+      "line_rx_lanemap": 0,
+      "line_to_system_lanemap": 0,
+      "mdio_addr": "0x1010"
+    },
+    {
+      "index": 40,
+      "system_side": true,
+      "local_lane_id": 2,
+      "tx_polarity": 0,
+      "rx_polarity": 0,
+      "line_tx_lanemap": 0,
+      "line_rx_lanemap": 0,
+      "line_to_system_lanemap": 0,
+      "mdio_addr": "0x1011"
+    },
+    {
+      "index": 41,
+      "system_side": true,
+      "local_lane_id": 3,
+      "tx_polarity": 0,
+      "rx_polarity": 0,
+      "line_tx_lanemap": 0,
+      "line_rx_lanemap": 0,
+      "line_to_system_lanemap": 0,
+      "mdio_addr": "0x1012"
+    }
+  ],
+  "ports": [
+    {
+      "index": 0,
+      "mdio_addr": "0x2000",
+      "system_fec": "none",
+      "system_auto_neg": true,
+      "system_loopback": "none",
+      "line_speed": 50000,
+      "line_fec": "none",
+      "line_auto_neg": true,
+      "line_media_type": "copper",
+      "line_intf_type": "none",
+      "line_loopback": "none",
+      "line_training": false,
+      "line_adver_speed": [],
+      "line_adver_fec": [],
+      "line_adver_auto_neg": false,
+      "line_adver_asym_pause": false,
+      "line_adver_media_type": "copper"
+    },
+    {
+      "index": 1,
+      "mdio_addr": "0x2001",
+      "system_speed": 25000,
+      "system_fec": "none",
+      "system_auto_neg": true,
+      "system_loopback": "none",
+      "system_training": false,
+      "line_speed": 50000,
+      "line_fec": "none",
+      "line_auto_neg": true,
+      "line_media_type": "fiber",
+      "line_intf_type": "none",
+      "line_loopback": "none",
+      "line_training": false,
+      "line_adver_speed": [],
+      "line_adver_fec": [],
+      "line_adver_auto_neg": false,
+      "line_adver_asym_pause": false,
+      "line_adver_media_type": "fiber"
+    }
+  ]
+}

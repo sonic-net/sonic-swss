@@ -21,8 +21,10 @@
 #include "logger.h"
 #include <map>
 #include "select.h"
+#include "logger.h"
 #include "netdispatcher.h"
 #include "mclagsyncd/mclaglink.h"
+#include "schema.h"
 #include <set>
 
 using namespace std;
@@ -31,46 +33,35 @@ using namespace swss;
 int main(int argc, char **argv)
 {
     swss::Logger::linkToDbNative("mclagsyncd");
-    DBConnector appl_db("APPL_DB", 0);
-    DBConnector asic_db("ASIC_DB", 0);
-    DBConnector counters_db("COUNTERS_DB", 0);
-    ProducerStateTable port_tbl(&appl_db, APP_PORT_TABLE_NAME);
-    ProducerStateTable lag_tbl(&appl_db, APP_LAG_TABLE_NAME);
-    ProducerStateTable tnl_tbl(&appl_db, APP_VXLAN_TUNNEL_TABLE_NAME);
-    ProducerStateTable intf_tbl(&appl_db, APP_INTF_TABLE_NAME);
-    ProducerStateTable fdb_tbl(&appl_db, APP_FDB_TABLE_NAME);
-    ProducerStateTable acl_table_tbl(&appl_db, APP_ACL_TABLE_TABLE_NAME);
-    ProducerStateTable acl_rule_tbl(&appl_db, APP_ACL_RULE_TABLE_NAME);
-    RedisClient redisClient_to_asicDb(&asic_db);
-    RedisClient redisClient_to_countersDb(&counters_db);
-    map <string, string> isolate;
-    RedisPipeline pipeline(&appl_db);
-    set <mclag_fdb> old_fdb;
 
+    DBConnector appl_db("APPL_DB", 0);
+    RedisPipeline pipeline(&appl_db);
+
+    DBConnector config_db("CONFIG_DB", 0);
+    SubscriberStateTable mclag_cfg_tbl(&config_db, CFG_MCLAG_TABLE_NAME);
+
+    map <string, string> learn_mode;
     while (1)
     {
         try
         {
-            MclagLink mclag;
             Select s;
+            MclagLink mclag(&s);
 
-            mclag.p_port_tbl = &port_tbl;
-            mclag.p_lag_tbl = &lag_tbl;
-            mclag.p_tnl_tbl = &tnl_tbl;
-            mclag.p_intf_tbl = &intf_tbl;
-            mclag.p_fdb_tbl = &fdb_tbl;
-            mclag.p_acl_table_tbl = &acl_table_tbl;
-            mclag.p_acl_rule_tbl = &acl_rule_tbl;
-            mclag.p_appl_db = &appl_db;
-            mclag.p_redisClient_to_asic = &redisClient_to_asicDb;
-            mclag.p_redisClient_to_counters = &redisClient_to_countersDb;
-            mclag.p_old_fdb = &old_fdb;
+            mclag.mclagsyncdFetchSystemMacFromConfigdb();
 
             cout << "Waiting for connection..." << endl;
             mclag.accept();
             cout << "Connected!" << endl;
 
+            mclag.mclagsyncdFetchMclagConfigFromConfigdb();
+            mclag.mclagsyncdFetchMclagInterfaceConfigFromConfigdb();
+
             s.addSelectable(&mclag);
+
+            //add mclag domain config table to selectable
+            s.addSelectable(&mclag_cfg_tbl);
+            SWSS_LOG_NOTICE("MCLagSYNCD Adding mclag_cfg_tbl to selectables");
 
             while (true)
             {
@@ -78,8 +69,44 @@ int main(int argc, char **argv)
 
                 /* Reading MCLAG messages forever (and calling "readData" to read them) */
                 s.select(&temps);
-                pipeline.flush();
-                SWSS_LOG_DEBUG("Pipeline flushed");
+
+
+                if(temps == (Selectable *)mclag.getStateFdbTable())
+                {
+                    SWSS_LOG_INFO(" MCLAGSYNCD Matching state_fdb_tbl selectable");
+                    mclag.processStateFdb((SubscriberStateTable *)temps);
+                }
+                else if ( temps == (Selectable *)&mclag_cfg_tbl ) //Reading MCLAG Domain Config Table
+                {
+                    SWSS_LOG_DEBUG("MCLAGSYNCD processing mclag_cfg_tbl notifications");
+                    std::deque<KeyOpFieldsValuesTuple> entries;
+                    mclag_cfg_tbl.pops(entries);
+                    mclag.processMclagDomainCfg(entries);
+                }
+                else if ( temps == (Selectable *)mclag.getMclagIntfCfgTable() )  //Reading MCLAG Interface Config Table 
+                {
+                    SWSS_LOG_DEBUG("MCLAGSYNCD processing mclag_intf_cfg_tbl notifications");
+                    std::deque<KeyOpFieldsValuesTuple> entries;
+                    mclag.getMclagIntfCfgTable()->pops(entries);
+                    mclag.mclagsyncdSendMclagIfaceCfg(entries);
+                }
+                else if (temps == (Selectable *)mclag.getMclagUniqueCfgTable())  //Reading MCLAG Unique IP Config Table
+                {
+                    SWSS_LOG_DEBUG("MCLAGSYNCD processing mclag_unique_ip_cfg_tbl notifications");
+                    std::deque<KeyOpFieldsValuesTuple> entries;
+                    mclag.getMclagUniqueCfgTable()->pops(entries);
+                    mclag.mclagsyncdSendMclagUniqueIpCfg(entries);
+                }
+                else if (temps == (Selectable *)mclag.getStateVlanMemberTable())
+                {
+                    SWSS_LOG_INFO(" MCLAGSYNCD Matching vlan Member selectable");
+                    mclag.processStateVlanMember((SubscriberStateTable *)temps);
+                }
+                else
+                {
+                    pipeline.flush();
+                    SWSS_LOG_DEBUG("Pipeline flushed");
+                }
             }
         }
         catch (MclagLink::MclagConnectionClosedException &e)
@@ -88,11 +115,12 @@ int main(int argc, char **argv)
         }
         catch (const exception& e)
         {
-            cout << "Exception \"" << e.what() << "\" had been thrown in deamon" << endl;
+            cout << "Exception \"" << e.what() << "\" had been thrown in daemon" << endl;
             return 0;
         }
     }
 
     return 1;
 }
+
 

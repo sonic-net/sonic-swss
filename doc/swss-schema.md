@@ -256,23 +256,48 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
 ### SCHEDULER_TABLE
     ; Scheduler table
     ; SAI mapping - saicheduler.h
-    key      = "SCHEDULER_TABLE":name
-    ; field     value
-    type     = "DWRR"/"WRR"/"PRIORITY"
-    weight   = 1*DIGIT
-    priority = 1*DIGIT
+    key        = "SCHEDULER_TABLE":name
+    ; field      value
+    type       = "DWRR"/"WRR"/"STRICT"
+    weight     = 2*DIGIT
+    priority   = 1*DIGIT
+    meter_type = "packets"/"bytes"
+    cir        = 1*11 DIGIT  ; guaranteed rate in pps or bytes/sec
+    cbs        = 1*11 DIGIT  ; guaranteed burst size in packets or bytes
+    pir        = 1*11 DIGIT  ; max rate in pps or bytes/sec
+    pbs        = 1*11 DIGIT  ; max burst size in packets or bytes
 
     Example:
     127.0.0.1:6379> hgetall SCHEDULER_TABLE:BEST_EFFORT
-    1) "type"
-    2) "PRIORITY"
-    3) "priority"
-    4) "7"
+     1) "type"
+     2) "PRIORITY"
+     3) "priority"
+     4) "7"
+     5) "meter_type"
+     6) "bytes"
+     7) "cir"
+     8) "1000000000"
+     9) "cbs"
+    10) "8192"
+    11) "pir"
+    12) "1250000000"
+    13) "pbs"
+    14) "8192"
     127.0.0.1:6379> hgetall SCHEDULER_TABLE:SCAVENGER
-    1) "type"
-    2) "DWRR"
-    3) "weight"
-    4) "35"
+     1) "type"
+     2) "DWRR"
+     3) "weight"
+     4) "35"
+     5) "meter_type"
+     6) "bytes"
+     7) "cir"
+     8) "1000000000"
+     9) "cbs"
+    10) "8192"
+    11) "pir"
+    12) "1250000000"
+    13) "pbs"
+    14) "8192"
 
 ---------------------------------------------
 ### WRED\_PROFILE\_TABLE
@@ -595,6 +620,10 @@ Stores information about mirror sessions and their properties.
     ttl       = h8                    ; Session TTL
     queue     = h8                    ; Session output queue
     policer   = policer_name          ; Session policer name
+    dst_port  = PORT_TABLE|ifname     ; Session destination PORT
+    src_port  = PORT_TABLE|ifname     ; Session source PORT/LAG list
+    direction = "RX"/"TX"/"BOTH"      ; Session direction
+    type      = "SPAN"/"ERSPAN"       ; Session type. Default is ERSPAN
 
     ;value annotations
     mirror_session_name = 1*255VCHAR
@@ -623,6 +652,37 @@ Example:
         }
     ]
 
+    [
+        {
+            "MIRROR_SESSION_TABLE:session_2": {
+                "src_ip": "1.1.1.1",
+                "dst_ip": "2.2.2.2",
+                "gre_type": "0x6558",
+                "dscp": "50",
+                "ttl": "64",
+                "queue": "0"
+                "src_port": "Ethernet0,PortChannel001"
+                "direction": "BOTH"
+                "type": "ERSPAN"
+            },
+            "OP": "SET"
+        }
+    ]
+
+    [
+        {
+            "MIRROR_SESSION_TABLE:session_3": {
+                "type": "SPAN"
+                "dst_port": "Ethernet0"
+                "src_port": "Ethernet4,PortChannel002"
+                "direction": "BOTH"
+            },
+            "OP": "SET"
+        }
+    ]
+
+
+
 Equivalent RedisDB entry:
 
     127.0.0.1:6379> KEYS *MIRROR*
@@ -631,7 +691,7 @@ Equivalent RedisDB entry:
      1) "src_ip"
      2) "1.1.1.1"
      3) "dst_ip"
-     4) "2.2.2.2
+     4) "2.2.2.2"
      5) "gre_type"
      6) "0x6558"
      7) "dscp"
@@ -641,6 +701,39 @@ Equivalent RedisDB entry:
     11) "queue"
     12) "0"
 
+    127.0.0.1:6379> KEYS *MIRROR*
+    1) "MIRROR_SESSION_TABLE:session_2"
+    127.0.0.1:6379> HGETALL MIRROR_SESSION_TABLE:session_2
+     1) "src_ip"
+     2) "1.1.1.1"
+     3) "dst_ip"
+     4) "2.2.2.2"
+     5) "gre_type"
+     6) "0x6558"
+     7) "dscp"
+     8) "50"
+     9) "ttl"
+    10) "64"
+    11) "queue"
+    12) "0"
+    13) "src_port"
+    14) "Ethernet0,PortChannel001"
+    15) "direction"
+    16) "BOTH"
+    17) "type"
+    18) "ERSPAN"
+
+    127.0.0.1:6379> KEYS *MIRROR*
+    1) "MIRROR_SESSION_TABLE:session_1"
+    127.0.0.1:6379> HGETALL MIRROR_SESSION_TABLE:session_3i
+    1) "type"
+    2) "SPAN"
+    3) "dst_port"
+    4) "Ethernet0"
+    5) "src_port"
+    6) "Ethernet4,PortChannel002"
+    7) "direction"
+    8) "RX"
 ---------------------------------------------
 
 ### POLICER_TABLE
@@ -709,6 +802,59 @@ packet_action = "drop" | "forward" | "copy" | "copy_cancel" | "trap" | "log" | "
     ;field                       value
     nexthop                    = IP             ; Nexthop IP address (Optional)
     ifname                     = ifname         ; Interface name
+
+### BUFFER_POOL_TABLE
+    ;Stores buffer pools
+
+    key             = BUFFER_POOL_TABLE:poolname    ; The poolname can be one of ingress_lossless_pool, ingress_lossy_pool, egress_lossless_pool, and egress_lossy_pool or other used-defined pools.
+    mode            = "dynamic" / "static"          ; Whether the pool uses dynamic threshold or static threshold.
+    type            = "ingress" / "egress"          ; Whether the pool serves for ingress or egress traffic
+    size            = 1*10DIGIT                     ; The size of the shared buffer pool
+    xoff            = 1*10DIGIT                     ; The size of the shared headroom pool. Available only for ingress_lossless_pool.
+
+### BUFFER_PROFILE_TABLE
+    ;Stores buffer profiles
+
+    key             = BUFFER_PROFILE_TABLE:profilename      ; profile name can be predefined or dynamically generated with name convention "pg_lossless_<speed>_<cable_length>_profile"
+    pool            = reference to BUFFER_POOL_TABLE object
+    xon             = 1*6DIGIT                              ; The xon threshold. The switch stops sending PFC frame when the buffer occupancy drops to this threshold.
+    xon_offset      = 1*6DIGIT                              ; The xon offset. If both xon and xon_offset have been defined, the switch stops sending PFC frame
+                                                            ; when the buffer occupancy drops to xon or size of buffer pool size minus xon_offset, whichever is larger.
+    xoff            = 1*6DIGIT                              ; The xoff threshold. The switch starts sending PFC frame when the buffer occupancy rises to this threshold.
+    size            = 1*6DIGIT                              ; The reserved size of the PG or queue referencing this buffer profile.
+    dynamic_th      = 1*2DIGIT                              ; For dynamic pools, representing the proportion of currently available memory in the pool the PG or queue can occupy.
+                                                            ; It is calculated as:
+                                                            ;     alpha = 2 ^ dynamic_th;
+                                                            ;     proportion = alpha / (1 + alpha)
+    static_th       = 1*10DIGIT                             ; For static pools, representing the threshold in bytes the PG or queue can occupy.
+
+### BUFFER_PG_TABLE
+    ;Stores buffer PG (priority-groups)
+
+    key            = BUFFER_PG_TABLE:port_name:pg               ; The pg consists of a single number representing a single priority or two numbers connected by a dash representing a range of priorities.
+                                                                ; By default, PG 0 for lossy traffic and PG 3-4 for lossless traffic.
+    profile        = reference to BUFFER_PROFILE_TABLE object
+
+### BUFFER_QUEUE_TABLE
+    ;Stores buffer queue
+
+    key            = BUFFER_QUEUE_TABLE:port_name:queue         ; The queue consists of a single number representing a single priority or two numbers connected by a dash representing a range of priorities.
+                                                                ; By default, queue 0-2 and 5-6 for lossy traffic and queue 3-4 for lossless traffic
+    profile        = reference to BUFFER_PROFILE_TABLE object
+
+### BUFFER_PORT_INGRESS_PROFILE_LIST_TABLE
+    ;Stores per port buffer threshold on ingress side
+
+    key            = BUFFER_PORT_INGRESS_PROFILE_LIST_TABLE:port_name
+    profile_list   = a list of references to BUFFER_PROFILE_TABLE object    ; Typically, for each ingress buffer pools there should be a buffer profile referencing the pool in the list.
+                                                                            ; For example, if there are two ingress buffer pools in the system, ingress_lossless_pool and ingress_lossy_pool,
+                                                                            ; there should be two profiles in the list: ingress_lossless_profile and ingress_lossy_profile
+
+### BUFFER_PORT_EGRESS_PROFILE_LIST_TABLE
+    ;Stores per port buffer threshold on egress side
+
+    key            = BUFFER_PORT_EGRESS_PROFILE_LIST_TABLE:port_name
+    profile_list   = a list of references to BUFFER_PROFILE_TABLE object    ; Similar to profile_list in BUFFER_PORT_INGRESS_PROFILE_LIST_TABLE but on egress side.
 
 ## Configuration DB schema
 
@@ -901,6 +1047,14 @@ Stores information for physical switch ports managed by the switch chip. Ports t
     key                 = VRF_OBJECT_TABLE|vrf_name ; vrf_name start with 'Vrf' prefix
     state               = "ok"                      ; vrf entry exist in orchagent
 
+### BUFFER_MAX_PARAM_TABLE
+    ;Available only when the switch is running in dynamic buffer model
+    ;Stores the maximum available buffer on a global or per-port basis
+
+    key                 = BUFFER_MAX_PARAM_TABLE|ifname  ; The maximum headroom of the port. The ifname should be the name of a physical port.
+                          BUFFER_MAX_PARAM_TABLE|global  ; The maximum available of the system.
+    mmu_size            = 1*10DIGIT                      ; The maximum available of the system. Available only when the key is "global".
+    max_headroom_size   = 1*10DIGIT                      ; The maximum headroom of the port. Available only when the key is ifname.
 
 ## Configuration files
 What configuration files should we have?  Do apps, orch agent each need separate files?

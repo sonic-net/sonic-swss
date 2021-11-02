@@ -55,23 +55,20 @@ string    gRecordFile;
 mutex     gDbMutex;
 NatMgr    *natmgr = NULL;
 
+NotificationConsumer   *timeoutNotificationsConsumer = NULL;
+NotificationConsumer   *flushNotificationsConsumer = NULL;
+
 std::shared_ptr<swss::NotificationProducer> cleanupNotifier;
 
 void sigterm_handler(int signo)
 {
     int ret = 0;
     std::string res;
-    const std::string iptablesFlushNat          = "iptables -t nat -F";
     const std::string conntrackFlush            = "conntrack -F";
 
     SWSS_LOG_NOTICE("Got SIGTERM");
 
-    /*If there are any iptables and conntrack entries, clean them */
-    ret = swss::exec(iptablesFlushNat, res);
-    if (ret)
-    {
-        SWSS_LOG_ERROR("Command '%s' failed with rc %d", iptablesFlushNat.c_str(), ret);
-    }
+    /*If there are any conntrack entries, clean them */
     ret = swss::exec(conntrackFlush, res);
     if (ret)
     {
@@ -90,6 +87,10 @@ void sigterm_handler(int signo)
     
     if (natmgr)
     {
+        natmgr->removeStaticNatIptables();
+        natmgr->removeStaticNaptIptables();
+        natmgr->removeDynamicNatRules();
+
         natmgr->cleanupMangleIpTables();
         natmgr->cleanupPoolIpTable();
     }
@@ -142,6 +143,12 @@ int main(int argc, char **argv)
             s.addSelectables(o->getSelectables());
         }
 
+        timeoutNotificationsConsumer = new NotificationConsumer(&appDb, "SETTIMEOUTNAT");
+        s.addSelectable(timeoutNotificationsConsumer);
+
+        flushNotificationsConsumer = new NotificationConsumer(&appDb, "FLUSHNATENTRIES");
+        s.addSelectable(flushNotificationsConsumer);
+
         SWSS_LOG_NOTICE("starting main loop");
         while (true)
         {
@@ -154,6 +161,29 @@ int main(int argc, char **argv)
                 SWSS_LOG_NOTICE("Error: %s!", strerror(errno));
                 continue;
             }
+
+            if (sel == timeoutNotificationsConsumer)
+            {
+               std::string op;
+               std::string data;
+               std::vector<swss::FieldValueTuple> values;
+
+               timeoutNotificationsConsumer->pop(op, data, values);
+               natmgr->timeoutNotifications(op, data);
+               continue;
+            }
+
+            if (sel == flushNotificationsConsumer)
+            {
+               std::string op;
+               std::string data;
+               std::vector<swss::FieldValueTuple> values;
+
+               flushNotificationsConsumer->pop(op, data, values);
+               natmgr->flushNotifications(op, data);
+               continue;
+            }
+
             if (ret == Select::TIMEOUT)
             {
                 natmgr->doTask();

@@ -19,11 +19,16 @@ using namespace swss;
 #define VNET_PREFIX         "Vnet"
 #define MTU_INHERITANCE     "0"
 #define VRF_PREFIX          "Vrf"
+#define VRF_MGMT            "mgmt"
 
 #define LOOPBACK_DEFAULT_MTU_STR "65536"
 
 IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
+        m_cfgIntfTable(cfgDb, CFG_INTF_TABLE_NAME),
+        m_cfgVlanIntfTable(cfgDb, CFG_VLAN_INTF_TABLE_NAME),
+        m_cfgLagIntfTable(cfgDb, CFG_LAG_INTF_TABLE_NAME),
+        m_cfgLoopbackIntfTable(cfgDb, CFG_LOOPBACK_INTERFACE_TABLE_NAME),
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
         m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME),
         m_stateVlanTable(stateDb, STATE_VLAN_TABLE_NAME),
@@ -34,6 +39,16 @@ IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
     if (!WarmStart::isWarmStart())
     {
         flushLoopbackIntfs();
+        WarmStart::setWarmStartState("intfmgrd", WarmStart::WSDISABLED);
+    }
+    else
+    {
+        //Build the interface list to be replayed to Kernel
+        buildIntfReplayList();
+        if (m_pendingReplayIntfList.empty())
+        {
+            setWarmReplayDoneState();
+        }
     }
 }
 
@@ -98,6 +113,33 @@ void IntfMgr::setIntfVrf(const string &alias, const string &vrfName)
     {
         SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
     }
+}
+
+bool IntfMgr::setIntfMpls(const string &alias, const string& mpls)
+{
+    stringstream cmd;
+    string res;
+
+    if (mpls == "enable")
+    {
+        cmd << "sysctl -w net.mpls.conf." << alias << ".input=1";
+    }
+    else if ((mpls == "disable") || mpls.empty())
+    {
+        cmd << "sysctl -w net.mpls.conf." << alias << ".input=0";
+    }
+    else
+    {
+        SWSS_LOG_ERROR("MPLS state is invalid: \"%s\"", mpls.c_str());
+        return false;
+    }
+    int ret = swss::exec(cmd.str(), res);
+    // Don't return error unless MPLS is explicitly set
+    if (ret && !mpls.empty())
+    {
+        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
+    }
+    return true;
 }
 
 void IntfMgr::addLoopbackIntf(const string &alias)
@@ -170,6 +212,34 @@ int IntfMgr::getIntfIpCount(const string &alias)
     }
 
     return std::stoi(res);
+}
+
+void IntfMgr::buildIntfReplayList(void)
+{
+    vector<string> intfList;
+
+    m_cfgIntfTable.getKeys(intfList);
+    std::copy( intfList.begin(), intfList.end(), std::inserter( m_pendingReplayIntfList, m_pendingReplayIntfList.end() ) );
+
+    m_cfgLoopbackIntfTable.getKeys(intfList);
+    std::copy( intfList.begin(), intfList.end(), std::inserter( m_pendingReplayIntfList, m_pendingReplayIntfList.end() ) );
+
+    m_cfgVlanIntfTable.getKeys(intfList);
+    std::copy( intfList.begin(), intfList.end(), std::inserter( m_pendingReplayIntfList, m_pendingReplayIntfList.end() ) );
+
+    m_cfgLagIntfTable.getKeys(intfList);
+    std::copy( intfList.begin(), intfList.end(), std::inserter( m_pendingReplayIntfList, m_pendingReplayIntfList.end() ) );
+
+    SWSS_LOG_INFO("Found %d Total Intfs to be replayed", (int)m_pendingReplayIntfList.size() );
+}
+
+void IntfMgr::setWarmReplayDoneState()
+{
+    m_replayDone = true;
+    WarmStart::setWarmStartState("intfmgrd", WarmStart::REPLAYED);
+    // There is no operation to be performed for intfmgr reconcillation
+    // Hence mark it reconciled right away
+    WarmStart::setWarmStartState("intfmgrd", WarmStart::RECONCILED);
 }
 
 bool IntfMgr::isIntfCreated(const string &alias)
@@ -272,6 +342,36 @@ void IntfMgr::removeSubIntfState(const string &alias)
     }
 }
 
+bool IntfMgr::setIntfGratArp(const string &alias, const string &grat_arp)
+{
+    /*
+     * Enable gratuitous ARP by accepting unsolicited ARP replies
+     */
+    stringstream cmd;
+    string res;
+    string garp_enabled;
+
+    if (grat_arp == "enabled")
+    {
+        garp_enabled = "1";
+    }
+    else if (grat_arp == "disabled")
+    {
+        garp_enabled = "0";
+    }
+    else
+    {
+        SWSS_LOG_ERROR("GARP state is invalid: \"%s\"", grat_arp.c_str());
+        return false;
+    }
+
+    cmd << ECHO_CMD << " " << garp_enabled << " > /proc/sys/net/ipv4/conf/" << alias << "/arp_accept";
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+
+    SWSS_LOG_INFO("ARP accept set to \"%s\" on interface \"%s\"",  grat_arp.c_str(), alias.c_str());
+    return true;
+}
+
 bool IntfMgr::setIntfProxyArp(const string &alias, const string &proxy_arp)
 {
     stringstream cmd;
@@ -327,7 +427,8 @@ bool IntfMgr::isIntfStateOk(const string &alias)
             return true;
         }
     }
-    else if (!alias.compare(0, strlen(VRF_PREFIX), VRF_PREFIX))
+    else if ((!alias.compare(0, strlen(VRF_PREFIX), VRF_PREFIX)) ||
+            (alias == VRF_MGMT))
     {
         if (m_stateVrfTable.get(alias, temp))
         {
@@ -356,16 +457,15 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
 
     string alias(keys[0]);
     string vlanId;
-    string subIntfAlias;
+    string parentAlias;
     size_t found = alias.find(VLAN_SUB_INTERFACE_SEPARATOR);
     if (found != string::npos)
     {
         // This is a sub interface
-        // subIntfAlias holds the complete sub interface name
-        // while alias becomes the parent interface
-        subIntfAlias = alias;
+        // alias holds the complete sub interface name
+        // while parentAlias holds the parent port name
         vlanId = alias.substr(found + 1);
-        alias = alias.substr(0, found);
+        parentAlias = alias.substr(0, found);
     }
     bool is_lo = !alias.compare(0, strlen(LOOPBACK_PREFIX), LOOPBACK_PREFIX);
     string mac = "";
@@ -374,6 +474,9 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
     string adminStatus = "";
     string nat_zone = "";
     string proxy_arp = "";
+    string grat_arp = "";
+    string mpls = "";
+    string ipv6_link_local_mode = "";
 
     for (auto idx : data)
     {
@@ -396,16 +499,27 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         {
             proxy_arp = value;
         }
-
-        if (field == "nat_zone")
+        else if (field == "grat_arp")
+        {
+            grat_arp = value;
+        }
+        else if (field == "mpls")
+        {
+            mpls = value;
+        }
+        else if (field == "nat_zone")
         {
             nat_zone = value;
+        }
+        else if (field == "ipv6_use_link_local_only")
+        {
+            ipv6_link_local_mode = value;
         }
     }
 
     if (op == SET_COMMAND)
     {
-        if (!isIntfStateOk(alias))
+        if (!isIntfStateOk(parentAlias.empty() ? alias : parentAlias))
         {
             SWSS_LOG_DEBUG("Interface is not ready, skipping %s", alias.c_str());
             return false;
@@ -426,7 +540,12 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
 
         if (is_lo)
         {
-            addLoopbackIntf(alias);
+            if (m_loopbackIntfList.find(alias) == m_loopbackIntfList.end())
+            {
+                addLoopbackIntf(alias);
+                m_loopbackIntfList.insert(alias);
+                SWSS_LOG_INFO("Added %s loopback interface", alias.c_str());
+            }
         }
         else
         {
@@ -436,6 +555,80 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
                 FieldValueTuple fvTuple("nat_zone", nat_zone);
                 data.push_back(fvTuple);
             }
+
+            /* Set mpls */
+            if (!setIntfMpls(alias, mpls))
+            {
+                SWSS_LOG_ERROR("Failed to set MPLS to \"%s\" for the \"%s\" interface", mpls.c_str(), alias.c_str());
+                return false;
+            }
+            if (!mpls.empty())
+            {
+                FieldValueTuple fvTuple("mpls", mpls);
+                data.push_back(fvTuple);
+            }
+
+            /* Set ipv6 mode */
+            if (!ipv6_link_local_mode.empty())
+            {
+                FieldValueTuple fvTuple("ipv6_use_link_local_only", ipv6_link_local_mode);
+                data.push_back(fvTuple);
+            }
+        }
+
+        if (!parentAlias.empty())
+        {
+            if (m_subIntfList.find(alias) == m_subIntfList.end())
+            {
+                try
+                {
+                    addHostSubIntf(parentAlias, alias, vlanId);
+                }
+                catch (const std::runtime_error &e)
+                {
+                    SWSS_LOG_NOTICE("Sub interface ip link add failure. Runtime error: %s", e.what());
+                    return false;
+                }
+
+                m_subIntfList.insert(alias);
+            }
+
+            if (!mtu.empty())
+            {
+                try
+                {
+                    setHostSubIntfMtu(alias, mtu);
+                }
+                catch (const std::runtime_error &e)
+                {
+                    SWSS_LOG_NOTICE("Sub interface ip link set mtu failure. Runtime error: %s", e.what());
+                    return false;
+                }
+            }
+            else
+            {
+                FieldValueTuple fvTuple("mtu", MTU_INHERITANCE);
+                data.push_back(fvTuple);
+            }
+
+            if (adminStatus.empty())
+            {
+                adminStatus = "up";
+                FieldValueTuple fvTuple("admin_status", adminStatus);
+                data.push_back(fvTuple);
+            }
+            try
+            {
+                setHostSubIntfAdminStatus(alias, adminStatus);
+            }
+            catch (const std::runtime_error &e)
+            {
+                SWSS_LOG_NOTICE("Sub interface ip link set admin status %s failure. Runtime error: %s", adminStatus.c_str(), e.what());
+                return false;
+            }
+
+            // set STATE_DB port state
+            setSubIntfStateOk(alias);
         }
 
         if (!vrf_name.empty())
@@ -469,67 +662,28 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
             }
         }
 
-        if (!subIntfAlias.empty())
+        if (!grat_arp.empty())
         {
-            if (m_subIntfList.find(subIntfAlias) == m_subIntfList.end())
+            if (!setIntfGratArp(alias, grat_arp))
             {
-                try
-                {
-                    addHostSubIntf(alias, subIntfAlias, vlanId);
-                }
-                catch (const std::runtime_error &e)
-                {
-                    SWSS_LOG_NOTICE("Sub interface ip link add failure. Runtime error: %s", e.what());
-                    return false;
-                }
-
-                m_subIntfList.insert(subIntfAlias);
-            }
-
-            if (!mtu.empty())
-            {
-                try
-                {
-                    setHostSubIntfMtu(subIntfAlias, mtu);
-                }
-                catch (const std::runtime_error &e)
-                {
-                    SWSS_LOG_NOTICE("Sub interface ip link set mtu failure. Runtime error: %s", e.what());
-                    return false;
-                }
-            }
-            else
-            {
-                FieldValueTuple fvTuple("mtu", MTU_INHERITANCE);
-                data.push_back(fvTuple);
-            }
-
-            if (adminStatus.empty())
-            {
-                adminStatus = "up";
-                FieldValueTuple fvTuple("admin_status", adminStatus);
-                data.push_back(fvTuple);
-            }
-            try
-            {
-                setHostSubIntfAdminStatus(subIntfAlias, adminStatus);
-            }
-            catch (const std::runtime_error &e)
-            {
-                SWSS_LOG_NOTICE("Sub interface ip link set admin status %s failure. Runtime error: %s", adminStatus.c_str(), e.what());
+                SWSS_LOG_ERROR("Failed to set ARP accept to \"%s\" state for the \"%s\" interface", grat_arp.c_str(), alias.c_str());
                 return false;
             }
 
-            // set STATE_DB port state
-            setSubIntfStateOk(subIntfAlias);
+            if (!alias.compare(0, strlen(VLAN_PREFIX), VLAN_PREFIX))
+            {
+                FieldValueTuple fvTuple("grat_arp", grat_arp);
+                data.push_back(fvTuple);
+            }
         }
-        m_appIntfTableProducer.set(subIntfAlias.empty() ? alias : subIntfAlias, data);
-        m_stateIntfTable.hset(subIntfAlias.empty() ? alias : subIntfAlias, "vrf", vrf_name);
+
+        m_appIntfTableProducer.set(alias, data);
+        m_stateIntfTable.hset(alias, "vrf", vrf_name);
     }
     else if (op == DEL_COMMAND)
     {
         /* make sure all ip addresses associated with interface are removed, otherwise these ip address would
-           be set with global vrf and it may cause ip address confliction. */
+           be set with global vrf and it may cause ip address conflict. */
         if (getIntfIpCount(alias))
         {
             return false;
@@ -540,18 +694,19 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         if (is_lo)
         {
             delLoopbackIntf(alias);
+            m_loopbackIntfList.erase(alias);
         }
 
-        if (!subIntfAlias.empty())
+        if (!parentAlias.empty())
         {
-            removeHostSubIntf(subIntfAlias);
-            m_subIntfList.erase(subIntfAlias);
+            removeHostSubIntf(alias);
+            m_subIntfList.erase(alias);
 
-            removeSubIntfState(subIntfAlias);
+            removeSubIntfState(alias);
         }
 
-        m_appIntfTableProducer.del(subIntfAlias.empty() ? alias : subIntfAlias);
-        m_stateIntfTable.del(subIntfAlias.empty() ? alias : subIntfAlias);
+        m_appIntfTableProducer.del(alias);
+        m_stateIntfTable.del(alias);
     }
     else
     {
@@ -587,19 +742,27 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
 
         std::vector<FieldValueTuple> fvVector;
         FieldValueTuple f("family", ip_prefix.isV4() ? IPV4_NAME : IPV6_NAME);
-        FieldValueTuple s("scope", "global");
-        fvVector.push_back(s);
-        fvVector.push_back(f);
 
-        m_appIntfTableProducer.set(appKey, fvVector);
-        m_stateIntfTable.hset(keys[0] + state_db_key_delimiter + keys[1], "state", "ok");
+        // Don't send ipv4 link local config to AppDB and Orchagent
+        if ((ip_prefix.isV4() == false) || (ip_prefix.getIp().getAddrScope() != IpAddress::AddrScope::LINK_SCOPE))
+        {
+            FieldValueTuple s("scope", "global");
+            fvVector.push_back(s);
+            fvVector.push_back(f);
+            m_appIntfTableProducer.set(appKey, fvVector);
+            m_stateIntfTable.hset(keys[0] + state_db_key_delimiter + keys[1], "state", "ok");
+        }
     }
     else if (op == DEL_COMMAND)
     {
         setIntfIp(alias, "del", ip_prefix);
 
-        m_appIntfTableProducer.del(appKey);
-        m_stateIntfTable.del(keys[0] + state_db_key_delimiter + keys[1]);
+        // Don't send ipv4 link local config to AppDB and Orchagent
+        if ((ip_prefix.isV4() == false) || (ip_prefix.getIp().getAddrScope() != IpAddress::AddrScope::LINK_SCOPE))
+        {
+            m_appIntfTableProducer.del(appKey);
+            m_stateIntfTable.del(keys[0] + state_db_key_delimiter + keys[1]);
+        }
     }
     else
     {
@@ -613,6 +776,8 @@ void IntfMgr::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
+    string table_name = consumer.getTableName();
+
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
@@ -624,10 +789,25 @@ void IntfMgr::doTask(Consumer &consumer)
 
         if (keys.size() == 1)
         {
+            if((table_name == CFG_VOQ_INBAND_INTERFACE_TABLE_NAME) &&
+                    (op == SET_COMMAND))
+            {
+                //No further processing needed. Just relay to orchagent
+                m_appIntfTableProducer.set(keys[0], data);
+                m_stateIntfTable.hset(keys[0], "vrf", "");
+
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
             if (!doIntfGeneralTask(keys, data, op))
             {
                 it++;
                 continue;
+            }
+            else
+            {
+                //Entry programmed, remove it from pending list if present
+                m_pendingReplayIntfList.erase(keys[0]);
             }
         }
         else if (keys.size() == 2)
@@ -637,6 +817,11 @@ void IntfMgr::doTask(Consumer &consumer)
                 it++;
                 continue;
             }
+            else
+            {
+                //Entry programmed, remove it from pending list if present
+                m_pendingReplayIntfList.erase(keys[0] + config_db_key_delimiter + keys[1] );
+            }
         }
         else
         {
@@ -644,5 +829,10 @@ void IntfMgr::doTask(Consumer &consumer)
         }
 
         it = consumer.m_toSync.erase(it);
+    }
+
+    if (!m_replayDone && WarmStart::isWarmStart() && m_pendingReplayIntfList.empty() )
+    {
+        setWarmReplayDoneState();
     }
 }

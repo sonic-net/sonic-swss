@@ -23,6 +23,7 @@ Install dependencies:
 
     sudo apt-get install redis-server -t trusty
     sudo apt-get install libhiredis0.13 -t trusty
+    sudo apt-get install libzmq5 libzmq3-dev
     
 Install building dependencies:
 

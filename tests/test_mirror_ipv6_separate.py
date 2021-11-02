@@ -1,8 +1,5 @@
 # This test suite covers the functionality of mirror feature in SwSS
-import platform
-import pytest
 import time
-from distutils.version import StrictVersion
 
 from swsscommon import swsscommon
 
@@ -172,6 +169,7 @@ class TestMirror(object):
             "SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS",
             "SAI_ACL_TABLE_ATTR_FIELD_DSCP",
             "SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE",
+            "SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID",
             "SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS",
         ]
 
@@ -230,7 +228,7 @@ class TestMirror(object):
         # dscp mirror tables.
         expected_sai_attributes = [
             "SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE",
-            "SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL",
+            "SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER",
             "SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6",
             "SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6",
             "SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_TYPE",
@@ -239,6 +237,7 @@ class TestMirror(object):
             "SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT",
             "SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS",
             "SAI_ACL_TABLE_ATTR_FIELD_DSCP",
+            "SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID"
         ]
 
         expected_sai_list_attributes = [
@@ -284,7 +283,7 @@ class TestMirror(object):
         self.create_acl_table(ingress_table, ports, "MIRROR")
 
         # Check that the table has been created
-        table_ids = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE", 
+        table_ids = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE",
                                             len(asic_db.default_acl_tables) + 1)
         table_entries = [oid for oid in table_ids if oid not in asic_db.default_acl_tables]
         original_entry = table_entries[0]
@@ -293,7 +292,7 @@ class TestMirror(object):
         self.create_acl_table(duplicate_ingress_table, ports, "MIRROR")
 
         # Check that there is still only one table, and that it is the original table
-        table_ids = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE", 
+        table_ids = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE",
                                             len(asic_db.default_acl_tables) + 1)
         table_entries = [oid for oid in table_ids if oid not in asic_db.default_acl_tables]
         assert table_entries[0] == original_entry
@@ -305,14 +304,14 @@ class TestMirror(object):
         self.create_acl_table(egress_table, ports, "MIRROR", "egress")
 
         # Check that there are two tables
-        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE", 
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE",
                                 len(asic_db.default_acl_tables) + 2)
 
         # Attempt to create another MIRROR table with egress ACLs
         self.create_acl_table(duplicate_egress_table, ports, "MIRROR", "egress")
 
         # Check that there are still only two tables
-        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE", 
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE",
                                 len(asic_db.default_acl_tables) + 2)
 
         self.remove_acl_table(ingress_table)
@@ -663,3 +662,9 @@ class TestMirror(object):
         self.set_interface_status("Ethernet32", "down")
 
 
+
+
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass

@@ -10,7 +10,6 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
-#include <fstream>
 #include <thread>
 
 #include <net/if.h>
@@ -18,7 +17,6 @@
 #include <sys/stat.h>
 #include <signal.h>
 
-#define PID_FILE_PATH "/var/run/teamd/"
 
 using namespace std;
 using namespace swss;
@@ -115,75 +113,14 @@ void TeamMgr::doTask(Consumer &consumer)
 }
 
 
-pid_t TeamMgr::getTeamPid(const string &alias)
+void TeamMgr::cleanTeamProcesses()
 {
-    SWSS_LOG_ENTER();
-    pid_t pid = 0;
-
-    string file = string(PID_FILE_PATH) + alias + string(".pid");
-    ifstream infile(file);
-    if (!infile.is_open())
-    {
-        SWSS_LOG_WARN("The LAG PID file: %s is not readable", file.c_str());
-        return 0;
-    }
-
-    string line;
-    getline(infile, line);
-    if (line.empty())
-    {
-        SWSS_LOG_WARN("The LAG PID file: %s is empty", file.c_str());
-    }
-    else 
-    {
-        /*Store the PID value */
-        pid = stoi(line, nullptr, 10);
-    }
-
-    /* Close the file and return */
-    infile.close();
-
-    return pid;
-}
-
-
-void TeamMgr::addLagPid(const string &alias)
-{
-    SWSS_LOG_ENTER();
-    m_lagPIDList[alias] = getTeamPid(alias);
-}
-
-void TeamMgr::removeLagPid(const string &alias)
-{
-    SWSS_LOG_ENTER();
-    m_lagPIDList.erase(alias);
-}
-
-void TeamMgr::cleanTeamProcesses(int signo)
-{
-    pid_t pid = 0;
-
     SWSS_LOG_ENTER();
     SWSS_LOG_NOTICE("Cleaning up LAGs during shutdown...");
     for (const auto& it: m_lagList)
     {
-        pid = m_lagPIDList[it];
-        if(!pid) {
-            SWSS_LOG_WARN("Invalid PID found for LaG %s ", it.c_str());
-
-            /* Try to get the PID again */
-            pid = getTeamPid(it);
-        }
-
-        if(pid > 0)
-        {
-            SWSS_LOG_INFO("Sending TERM Signal to (PID: %d) for LaG %s ", pid, it.c_str());
-            kill(pid, signo);
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Can't send TERM signal to LAG %s. PID wasn't found", it.c_str());
-        }
+        //This will call team -k kill -t <teamdevicename> which internally send SIGTERM 
+        removeLag(it);
     }
 
     return;
@@ -208,6 +145,7 @@ void TeamMgr::doLagTask(Consumer &consumer)
             string admin_status = DEFAULT_ADMIN_STATUS_STR;
             string mtu = DEFAULT_MTU_STR;
             string learn_mode;
+            string tpid;
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -241,6 +179,11 @@ void TeamMgr::doLagTask(Consumer &consumer)
                     SWSS_LOG_INFO("Get learn_mode %s",
                             learn_mode.c_str());
                 }
+                else if (fvField(i) == "tpid")
+                {
+                    tpid = fvValue(i);
+                    SWSS_LOG_INFO("Get TPID %s", tpid.c_str());
+                 }
             }
 
             if (m_lagList.find(alias) == m_lagList.end())
@@ -252,7 +195,6 @@ void TeamMgr::doLagTask(Consumer &consumer)
                 }
 
                 m_lagList.insert(alias);
-                addLagPid(alias);
             }
 
             setLagAdminStatus(alias, admin_status);
@@ -262,6 +204,11 @@ void TeamMgr::doLagTask(Consumer &consumer)
                 setLagLearnMode(alias, learn_mode);
                 SWSS_LOG_NOTICE("Configure %s MAC learn mode to %s", alias.c_str(), learn_mode.c_str());
             }
+            if (!tpid.empty())
+            {
+                setLagTpid(alias, tpid);
+                SWSS_LOG_NOTICE("Configure %s TPID to %s", alias.c_str(), tpid.c_str());
+            }
         }
         else if (op == DEL_COMMAND)
         {
@@ -269,7 +216,6 @@ void TeamMgr::doLagTask(Consumer &consumer)
             {
                 removeLag(alias);
                 m_lagList.erase(alias);
-                removeLagPid(alias);
             }
         }
 
@@ -460,6 +406,21 @@ bool TeamMgr::setLagMtu(const string &alias, const string &mtu)
     return true;
 }
 
+bool TeamMgr::setLagTpid(const string &alias, const string &tpid)
+{
+    SWSS_LOG_ENTER();
+
+    vector<FieldValueTuple> fvs;
+    FieldValueTuple fv("tpid", tpid);
+    fvs.push_back(fv);
+    m_appLagTable.set(alias, fvs);
+
+    SWSS_LOG_NOTICE("Set port channel %s TPID to %s", alias.c_str(), tpid.c_str());
+
+    return true;
+}
+
+
 bool TeamMgr::setLagLearnMode(const string &alias, const string &learn_mode)
 {
     // Set the port MAC learn mode in application database
@@ -569,6 +530,52 @@ bool TeamMgr::removeLag(const string &alias)
     return true;
 }
 
+// Port-channel names are in the pattern of "PortChannel####"
+// 
+// The LACP key could be generated in 3 ways based on the value in config DB:
+//      1. "auto" - LACP key is extracted from the port-channel name and is set to be the number at the end of the port-channel name
+//                  We are adding 1 at the beginning to avoid LACP key collisions between similar LACP keys e.g. PortChannel10 and PortChannel010.
+//      2. n -      LACP key will be n.
+//      3. "" -     LACP key will be 0 - exists for backward compatibility.
+uint16_t TeamMgr::generateLacpKey(const string& lag)
+{
+    vector <FieldValueTuple> fvs;
+    m_cfgLagTable.get(lag, fvs);
+
+    auto it = find_if(fvs.begin(), fvs.end(), [](const FieldValueTuple& fv)
+    {
+        return fv.first == "lacp_key";
+    });
+    string lacp_key;
+    if (it != fvs.end())
+    {
+        lacp_key = it->second;
+        if (!lacp_key.empty())
+        {
+            try
+            {
+                if (lacp_key == "auto")
+                {
+                    return static_cast<uint16_t>(std::stoul("1" + lag.substr(lag.find_first_of("0123456789"))));
+                }
+                else
+                {
+                    return static_cast<uint16_t>(std::stoul(lacp_key));
+                }
+            }
+            catch (const std::exception& e)
+            {
+                SWSS_LOG_THROW("Failed to parse LACP key %s for port channel %s", lacp_key.c_str(), lag.c_str());
+            }
+        }
+        else
+        {
+            return 0;
+        }
+    }
+    return 0;
+}
+
 // Once a port is enslaved into a port channel, the port's MTU will
 // be inherited from the master's MTU while the port's admin status
 // will still be controlled separately.
@@ -585,11 +592,17 @@ task_process_status TeamMgr::addLagMember(const string &lag, const string &membe
 
     stringstream cmd;
     string res;
+    uint16_t keyId = generateLacpKey(lag);
 
     // Set admin down LAG member (required by teamd) and enslave it
     // ip link set dev <member> down;
+    // teamdctl <port_channel_name> port config update <member> { "lacp_key": <lacp_key>, "link_watch": { "name": "ethtool" } };
     // teamdctl <port_channel_name> port add <member>;
     cmd << IP_CMD << " link set dev " << shellquote(member) << " down; ";
+    cmd << TEAMDCTL_CMD << " " << shellquote(lag) << " port config update " << shellquote(member)
+        << " '{\"lacp_key\":"
+        << keyId
+        << ",\"link_watch\": {\"name\": \"ethtool\"} }'; ";
     cmd << TEAMDCTL_CMD << " " << shellquote(lag) << " port add " << shellquote(member);
 
     if (exec(cmd.str(), res) != 0)

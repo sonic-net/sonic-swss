@@ -8,7 +8,6 @@
 #include "redisapi.h"
 #include "select.h"
 #include "notifier.h"
-#include "redisclient.h"
 #include "schema.h"
 #include "subscriberstatetable.h"
 
@@ -59,7 +58,7 @@ void PfcWdOrch<DropHandler, ForwardHandler>::doTask(Consumer& consumer)
         return;
     }
 
-    if ((consumer.getDbId() == CONFIG_DB) && (consumer.getTableName() == CFG_PFC_WD_TABLE_NAME))
+    if ((consumer.getDbName() == "CONFIG_DB") && (consumer.getTableName() == CFG_PFC_WD_TABLE_NAME))
     {
         auto it = consumer.m_toSync.begin();
         while (it != consumer.m_toSync.end())
@@ -178,8 +177,7 @@ task_process_status PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const st
     uint32_t detectionTime = 0;
     uint32_t restorationTime = 0;
     // According to requirements, drop action is default
-    PfcWdAction action = PfcWdAction::PFC_WD_ACTION_DROP;
-
+    PfcWdAction action = PfcWdAction::PFC_WD_ACTION_DROP; 
     Port port;
     if (!gPortsOrch->getPort(key, port))
     {
@@ -306,7 +304,7 @@ task_process_status PfcWdSwOrch<DropHandler, ForwardHandler>::createEntry(const 
             }
             else if (field == BIG_RED_SWITCH_FIELD)
             {
-                SWSS_LOG_NOTICE("Recieve brs mode set, %s", value.c_str());
+                SWSS_LOG_NOTICE("Receive brs mode set, %s", value.c_str());
                 setBigRedSwitchMode(value);
             }
         }
@@ -346,7 +344,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::disableBigRedSwitchMode()
     SWSS_LOG_ENTER();
 
     m_bigRedSwitchFlag = false;
-    // Disable pfcwdaction hanlder on each queue if exists.
+    // Disable pfcwdaction handler on each queue if exists.
     for (auto &entry : m_brsEntryMap)
     {
 
@@ -364,9 +362,8 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::disableBigRedSwitchMode()
         }
 
         auto queueId = entry.first;
-        RedisClient redisClient(this->getCountersDb().get());
         string countersKey = this->getCountersTable()->getTableName() + this->getCountersTable()->getTableNameSeparator() + sai_serialize_object_id(queueId);
-        redisClient.hdel(countersKey, "BIG_RED_SWITCH_MODE");
+        this->getCountersDb()->hdel(countersKey, "BIG_RED_SWITCH_MODE");
     }
 
     m_brsEntryMap.clear();
@@ -424,7 +421,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
         }
     }
 
-    // Create pfcwdaction hanlder on all the ports.
+    // Create pfcwdaction handler on all the ports.
     for (auto & it: allPorts)
     {
         Port port = it.second;
@@ -633,9 +630,8 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::unregisterFromWdDb(const Port& po
         m_entryMap.erase(queueId);
 
         // Clean up
-        RedisClient redisClient(this->getCountersDb().get());
         string countersKey = this->getCountersTable()->getTableName() + this->getCountersTable()->getTableNameSeparator() + sai_serialize_object_id(queueId);
-        redisClient.hdel(countersKey, {"PFC_WD_DETECTION_TIME", "PFC_WD_RESTORATION_TIME", "PFC_WD_ACTION", "PFC_WD_STATUS"});
+        this->getCountersDb()->hdel(countersKey, {"PFC_WD_DETECTION_TIME", "PFC_WD_RESTORATION_TIME", "PFC_WD_ACTION", "PFC_WD_STATUS"});
     }
 
 }
@@ -657,8 +653,7 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
     c_queueAttrIds(queueAttrIds),
     m_pollInterval(pollInterval),
     m_applDb(make_shared<DBConnector>("APPL_DB", 0)),
-    m_applTable(make_shared<Table>(m_applDb.get(), APP_PFC_WD_TABLE_NAME "_INSTORM")),
-    m_applDbRedisClient(m_applDb.get())
+    m_applTable(make_shared<Table>(m_applDb.get(), APP_PFC_WD_TABLE_NAME "_INSTORM"))
 {
     SWSS_LOG_ENTER();
 
@@ -761,7 +756,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(Consumer& consumer)
         return;
     }
 
-    if ((consumer.getDbId() == APPL_DB) && (consumer.getTableName() == APP_PFC_WD_TABLE_NAME))
+    if ((consumer.getDbName() == "APPL_DB") && (consumer.getTableName() == APP_PFC_WD_TABLE_NAME))
     {
         auto it = consumer.m_toSync.begin();
         while (it != consumer.m_toSync.end())
@@ -911,7 +906,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
 
     if (m_bigRedSwitchFlag)
     {
-        SWSS_LOG_NOTICE("Big_RED_SWITCH mode is on, ingore syncd pfc watchdog notification");
+        SWSS_LOG_NOTICE("Big_RED_SWITCH mode is on, ignore syncd pfc watchdog notification");
     }
     else if (event == "storm")
     {
@@ -934,7 +929,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
                 entry->second.handler->initCounters();
                 // Log storm event to APPL_DB for warm-reboot purpose
                 string key = m_applTable->getTableName() + m_applTable->getTableNameSeparator() + entry->second.portAlias;
-                m_applDbRedisClient.hset(key, to_string(entry->second.index), PFC_WD_IN_STORM);
+                m_applDb->hset(key, to_string(entry->second.index), PFC_WD_IN_STORM);
             }
         }
         else if (entry->second.action == PfcWdAction::PFC_WD_ACTION_DROP)
@@ -956,7 +951,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
                 entry->second.handler->initCounters();
                 // Log storm event to APPL_DB for warm-reboot purpose
                 string key = m_applTable->getTableName() + m_applTable->getTableNameSeparator() + entry->second.portAlias;
-                m_applDbRedisClient.hset(key, to_string(entry->second.index), PFC_WD_IN_STORM);
+                m_applDb->hset(key, to_string(entry->second.index), PFC_WD_IN_STORM);
             }
         }
         else if (entry->second.action == PfcWdAction::PFC_WD_ACTION_FORWARD)
@@ -978,7 +973,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
                 entry->second.handler->initCounters();
                 // Log storm event to APPL_DB for warm-reboot purpose
                 string key = m_applTable->getTableName() + m_applTable->getTableNameSeparator() + entry->second.portAlias;
-                m_applDbRedisClient.hset(key, to_string(entry->second.index), PFC_WD_IN_STORM);
+                m_applDb->hset(key, to_string(entry->second.index), PFC_WD_IN_STORM);
             }
         }
         else
@@ -1002,7 +997,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
             entry->second.handler = nullptr;
             // Remove storm status in APPL_DB for warm-reboot purpose
             string key = m_applTable->getTableName() + m_applTable->getTableNameSeparator() + entry->second.portAlias;
-            m_applDbRedisClient.hdel(key, to_string(entry->second.index));
+            m_applDb->hdel(key, to_string(entry->second.index));
         }
     }
     else
@@ -1019,8 +1014,6 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::bake()
 {
     // clean all *_last and *_LEFT fields in COUNTERS_TABLE
     // to allow warm-reboot pfc detect & restore state machine to enter the same init state as cold-reboot
-    RedisClient redisClient(this->getCountersDb().get());
-
     vector<string> cKeys;
     this->getCountersTable()->getKeys(cKeys);
     for (const auto &key : cKeys)
@@ -1037,7 +1030,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::bake()
         }
         if (!wLasts.empty())
         {
-            redisClient.hdel(
+            this->getCountersDb()->hdel(
                 this->getCountersTable()->getTableName()
                 + this->getCountersTable()->getTableNameSeparator()
                 + key,

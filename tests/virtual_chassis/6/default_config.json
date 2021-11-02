@@ -1,0 +1,16 @@
+{
+    "DEVICE_METADATA": {
+        "localhost": {
+            "hostname" : "R3"
+        }
+    },
+    "INTERFACE": {
+        "Ethernet0": {},
+        "Ethernet0|10.8.103.2/24": {}
+    },
+    "PORT": {
+        "Ethernet0": {
+            "admin_status": "up"
+        }
+    }
+}

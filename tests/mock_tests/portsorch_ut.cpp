@@ -1,3 +1,7 @@
+#define private public // make Directory::m_values available to clean it.
+#include "directory.h"
+#undef private
+
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
 #include "mock_table.h"
@@ -16,6 +20,7 @@ namespace portsorch_test
         shared_ptr<swss::DBConnector> m_config_db;
         shared_ptr<swss::DBConnector> m_state_db;
         shared_ptr<swss::DBConnector> m_counters_db;
+        shared_ptr<swss::DBConnector> m_chassis_app_db;
 
         PortsOrchTest()
         {
@@ -28,22 +33,58 @@ namespace portsorch_test
                 "CONFIG_DB", 0);
             m_state_db = make_shared<swss::DBConnector>(
                 "STATE_DB", 0);
+            m_chassis_app_db = make_shared<swss::DBConnector>(
+                "CHASSIS_APP_DB", 0);
         }
 
         virtual void SetUp() override
         {
             ::testing_db::reset();
+
+            // Create dependencies ...
+
+            const int portsorch_base_pri = 40;
+
+            vector<table_name_with_pri_t> ports_tables = {
+                { APP_PORT_TABLE_NAME, portsorch_base_pri + 5 },
+                { APP_VLAN_TABLE_NAME, portsorch_base_pri + 2 },
+                { APP_VLAN_MEMBER_TABLE_NAME, portsorch_base_pri },
+                { APP_LAG_TABLE_NAME, portsorch_base_pri + 4 },
+                { APP_LAG_MEMBER_TABLE_NAME, portsorch_base_pri }
+            };
+
+            ASSERT_EQ(gPortsOrch, nullptr);
+
+            vector<string> flex_counter_tables = {
+                CFG_FLEX_COUNTER_TABLE_NAME
+            };
+            auto* flexCounterOrch = new FlexCounterOrch(m_config_db.get(), flex_counter_tables);
+            gDirectory.set(flexCounterOrch);
+
+            gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
+            vector<string> buffer_tables = { APP_BUFFER_POOL_TABLE_NAME,
+                                             APP_BUFFER_PROFILE_TABLE_NAME,
+                                             APP_BUFFER_QUEUE_TABLE_NAME,
+                                             APP_BUFFER_PG_TABLE_NAME,
+                                             APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME,
+                                             APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME };
+
+            ASSERT_EQ(gBufferOrch, nullptr);
+            gBufferOrch = new BufferOrch(m_app_db.get(), m_config_db.get(), m_state_db.get(), buffer_tables);
         }
 
         virtual void TearDown() override
         {
             ::testing_db::reset();
+
             delete gPortsOrch;
             gPortsOrch = nullptr;
             delete gBufferOrch;
             gBufferOrch = nullptr;
-        }
 
+            // clear orchs saved in directory
+            gDirectory.m_values.clear();
+        }
         static void SetUpTestCase()
         {
             // Init switch and create dependencies
@@ -89,14 +130,16 @@ namespace portsorch_test
 
             ut_helper::uninitSaiApi();
         }
+
     };
 
     TEST_F(PortsOrchTest, PortReadinessColdBoot)
     {
         Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
-        Table pgTable = Table(m_config_db.get(), CFG_BUFFER_PG_TABLE_NAME);
-        Table profileTable = Table(m_config_db.get(), CFG_BUFFER_PROFILE_TABLE_NAME);
-        Table poolTable = Table(m_config_db.get(), CFG_BUFFER_POOL_TABLE_NAME);
+        Table pgTable = Table(m_app_db.get(), APP_BUFFER_PG_TABLE_NAME);
+        Table pgTableCfg = Table(m_config_db.get(), CFG_BUFFER_PG_TABLE_NAME);
+        Table profileTable = Table(m_app_db.get(), APP_BUFFER_PROFILE_TABLE_NAME);
+        Table poolTable = Table(m_app_db.get(), APP_BUFFER_POOL_TABLE_NAME);
 
         // Get SAI default ports to populate DB
 
@@ -112,7 +155,7 @@ namespace portsorch_test
             });
 
         // Create test buffer profile
-        profileTable.set("test_profile", { { "pool", "[BUFFER_POOL|test_pool]" },
+        profileTable.set("test_profile", { { "pool", "[BUFFER_POOL_TABLE:test_pool]" },
                                            { "xon", "14832" },
                                            { "xoff", "14832" },
                                            { "size", "35000" },
@@ -121,34 +164,22 @@ namespace portsorch_test
         // Apply profile on PGs 3-4 all ports
         for (const auto &it : ports)
         {
-            std::ostringstream oss;
-            oss << it.first << "|3-4";
-            pgTable.set(oss.str(), { { "profile", "[BUFFER_PROFILE|test_profile]" } });
+            std::ostringstream ossAppl, ossCfg;
+            ossAppl << it.first << ":3-4";
+            pgTable.set(ossAppl.str(), { { "profile", "[BUFFER_PROFILE_TABLE:test_profile]" } });
+            ossCfg << it.first << "|3-4";
+            pgTableCfg.set(ossCfg.str(), { { "profile", "[BUFFER_PROFILE|test_profile]" } });
         }
 
-        // Create dependencies ...
+        // Recreate buffer orch to read populated data
+        vector<string> buffer_tables = { APP_BUFFER_POOL_TABLE_NAME,
+                                         APP_BUFFER_PROFILE_TABLE_NAME,
+                                         APP_BUFFER_QUEUE_TABLE_NAME,
+                                         APP_BUFFER_PG_TABLE_NAME,
+                                         APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME,
+                                         APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME };
 
-        const int portsorch_base_pri = 40;
-
-        vector<table_name_with_pri_t> ports_tables = {
-            { APP_PORT_TABLE_NAME, portsorch_base_pri + 5 },
-            { APP_VLAN_TABLE_NAME, portsorch_base_pri + 2 },
-            { APP_VLAN_MEMBER_TABLE_NAME, portsorch_base_pri },
-            { APP_LAG_TABLE_NAME, portsorch_base_pri + 4 },
-            { APP_LAG_MEMBER_TABLE_NAME, portsorch_base_pri }
-        };
-
-        ASSERT_EQ(gPortsOrch, nullptr);
-        gPortsOrch = new PortsOrch(m_app_db.get(), ports_tables);
-        vector<string> buffer_tables = { CFG_BUFFER_POOL_TABLE_NAME,
-                                         CFG_BUFFER_PROFILE_TABLE_NAME,
-                                         CFG_BUFFER_QUEUE_TABLE_NAME,
-                                         CFG_BUFFER_PG_TABLE_NAME,
-                                         CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME,
-                                         CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME };
-
-        ASSERT_EQ(gBufferOrch, nullptr);
-        gBufferOrch = new BufferOrch(m_config_db.get(), buffer_tables);
+        gBufferOrch = new BufferOrch(m_app_db.get(), m_config_db.get(), m_state_db.get(), buffer_tables);
 
         // Populate pot table with SAI ports
         for (const auto &it : ports)
@@ -210,11 +241,10 @@ namespace portsorch_test
 
     TEST_F(PortsOrchTest, PortReadinessWarmBoot)
     {
-
         Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
-        Table pgTable = Table(m_config_db.get(), CFG_BUFFER_PG_TABLE_NAME);
-        Table profileTable = Table(m_config_db.get(), CFG_BUFFER_PROFILE_TABLE_NAME);
-        Table poolTable = Table(m_config_db.get(), CFG_BUFFER_POOL_TABLE_NAME);
+        Table pgTable = Table(m_app_db.get(), APP_BUFFER_PG_TABLE_NAME);
+        Table profileTable = Table(m_app_db.get(), APP_BUFFER_PROFILE_TABLE_NAME);
+        Table poolTable = Table(m_app_db.get(), APP_BUFFER_POOL_TABLE_NAME);
 
         // Get SAI default ports to populate DB
 
@@ -230,7 +260,7 @@ namespace portsorch_test
             });
 
         // Create test buffer profile
-        profileTable.set("test_profile", { { "pool", "[BUFFER_POOL|test_pool]" },
+        profileTable.set("test_profile", { { "pool", "[BUFFER_POOL_TABLE:test_pool]" },
                                            { "xon", "14832" },
                                            { "xoff", "14832" },
                                            { "size", "35000" },
@@ -240,8 +270,8 @@ namespace portsorch_test
         for (const auto &it : ports)
         {
             std::ostringstream oss;
-            oss << it.first << "|3-4";
-            pgTable.set(oss.str(), { { "profile", "[BUFFER_PROFILE|test_profile]" } });
+            oss << it.first << ":3-4";
+            pgTable.set(oss.str(), { { "profile", "[BUFFER_PROFILE_TABLE:test_profile]" } });
         }
 
         // Populate pot table with SAI ports
@@ -254,30 +284,6 @@ namespace portsorch_test
 
         portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
         portTable.set("PortInitDone", { { "lanes", "0" } });
-
-        // Create dependencies ...
-
-        const int portsorch_base_pri = 40;
-
-        vector<table_name_with_pri_t> ports_tables = {
-            { APP_PORT_TABLE_NAME, portsorch_base_pri + 5 },
-            { APP_VLAN_TABLE_NAME, portsorch_base_pri + 2 },
-            { APP_VLAN_MEMBER_TABLE_NAME, portsorch_base_pri },
-            { APP_LAG_TABLE_NAME, portsorch_base_pri + 4 },
-            { APP_LAG_MEMBER_TABLE_NAME, portsorch_base_pri }
-        };
-
-        ASSERT_EQ(gPortsOrch, nullptr);
-        gPortsOrch = new PortsOrch(m_app_db.get(), ports_tables);
-        vector<string> buffer_tables = { CFG_BUFFER_POOL_TABLE_NAME,
-                                         CFG_BUFFER_PROFILE_TABLE_NAME,
-                                         CFG_BUFFER_QUEUE_TABLE_NAME,
-                                         CFG_BUFFER_PG_TABLE_NAME,
-                                         CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME,
-                                         CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME };
-
-        ASSERT_EQ(gBufferOrch, nullptr);
-        gBufferOrch = new BufferOrch(m_config_db.get(), buffer_tables);
 
         // warm start, bake fill refill consumer
 
@@ -318,36 +324,12 @@ namespace portsorch_test
     TEST_F(PortsOrchTest, PfcZeroBufferHandlerLocksPortPgAndQueue)
     {
         Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
-        Table pgTable = Table(m_config_db.get(), CFG_BUFFER_PG_TABLE_NAME);
-        Table profileTable = Table(m_config_db.get(), CFG_BUFFER_PROFILE_TABLE_NAME);
-        Table poolTable = Table(m_config_db.get(), CFG_BUFFER_POOL_TABLE_NAME);
+        Table pgTable = Table(m_app_db.get(), APP_BUFFER_PG_TABLE_NAME);
+        Table profileTable = Table(m_app_db.get(), APP_BUFFER_PROFILE_TABLE_NAME);
+        Table poolTable = Table(m_app_db.get(), APP_BUFFER_POOL_TABLE_NAME);
 
         // Get SAI default ports to populate DB
         auto ports = ut_helper::getInitialSaiPorts();
-
-        // Create dependencies ...
-
-        const int portsorch_base_pri = 40;
-
-        vector<table_name_with_pri_t> ports_tables = {
-            { APP_PORT_TABLE_NAME, portsorch_base_pri + 5 },
-            { APP_VLAN_TABLE_NAME, portsorch_base_pri + 2 },
-            { APP_VLAN_MEMBER_TABLE_NAME, portsorch_base_pri },
-            { APP_LAG_TABLE_NAME, portsorch_base_pri + 4 },
-            { APP_LAG_MEMBER_TABLE_NAME, portsorch_base_pri }
-        };
-
-        ASSERT_EQ(gPortsOrch, nullptr);
-        gPortsOrch = new PortsOrch(m_app_db.get(), ports_tables);
-        vector<string> buffer_tables = { CFG_BUFFER_POOL_TABLE_NAME,
-                                         CFG_BUFFER_PROFILE_TABLE_NAME,
-                                         CFG_BUFFER_QUEUE_TABLE_NAME,
-                                         CFG_BUFFER_PG_TABLE_NAME,
-                                         CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME,
-                                         CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME };
-
-        ASSERT_EQ(gBufferOrch, nullptr);
-        gBufferOrch = new BufferOrch(m_config_db.get(), buffer_tables);
 
         // Populate port table with SAI ports
         for (const auto &it : ports)
@@ -396,7 +378,7 @@ namespace portsorch_test
             });
 
         // Create test buffer profile
-        profileTable.set("test_profile", { { "pool", "[BUFFER_POOL|test_pool]" },
+        profileTable.set("test_profile", { { "pool", "[BUFFER_POOL_TABLE:test_pool]" },
                                            { "xon", "14832" },
                                            { "xoff", "14832" },
                                            { "size", "35000" },
@@ -406,8 +388,8 @@ namespace portsorch_test
         for (const auto &it : ports)
         {
             std::ostringstream oss;
-            oss << it.first << "|3-4";
-            pgTable.set(oss.str(), { { "profile", "[BUFFER_PROFILE|test_profile]" } });
+            oss << it.first << ":3-4";
+            pgTable.set(oss.str(), { { "profile", "[BUFFER_PROFILE_TABLE:test_profile]" } });
         }
         gBufferOrch->addExistingData(&pgTable);
         gBufferOrch->addExistingData(&poolTable);
@@ -416,21 +398,135 @@ namespace portsorch_test
         // process pool, profile and PGs
         static_cast<Orch *>(gBufferOrch)->doTask();
 
-        auto pgConsumer = static_cast<Consumer*>(gBufferOrch->getExecutor(CFG_BUFFER_PG_TABLE_NAME));
+        // Port should have been updated by BufferOrch->doTask
+        gPortsOrch->getPort("Ethernet0", port);
+        auto profile_id = (*BufferOrch::m_buffer_type_maps["BUFFER_PROFILE_TABLE"])[string("test_profile")].m_saiObjectId;
+        ASSERT_TRUE(profile_id != SAI_NULL_OBJECT_ID);
+        ASSERT_TRUE(port.m_priority_group_pending_profile[3] == profile_id);
+        ASSERT_TRUE(port.m_priority_group_pending_profile[4] == SAI_NULL_OBJECT_ID);
+
+        auto pgConsumer = static_cast<Consumer*>(gBufferOrch->getExecutor(APP_BUFFER_PG_TABLE_NAME));
         pgConsumer->dumpPendingTasks(ts);
-        ASSERT_FALSE(ts.empty()); // PG is skipped
+        ASSERT_TRUE(ts.empty()); // PG is stored in m_priority_group_pending_profile
         ts.clear();
 
         // release zero buffer drop handler
         dropHandler.reset();
 
+        // re-fetch the port
+        gPortsOrch->getPort("Ethernet0", port);
+
+        // pending profile should be cleared
+        ASSERT_TRUE(port.m_priority_group_pending_profile[3] == SAI_NULL_OBJECT_ID);
+        ASSERT_TRUE(port.m_priority_group_pending_profile[4] == SAI_NULL_OBJECT_ID);
+
         // process PGs
         static_cast<Orch *>(gBufferOrch)->doTask();
 
-        pgConsumer = static_cast<Consumer*>(gBufferOrch->getExecutor(CFG_BUFFER_PG_TABLE_NAME));
+        pgConsumer = static_cast<Consumer*>(gBufferOrch->getExecutor(APP_BUFFER_PG_TABLE_NAME));
         pgConsumer->dumpPendingTasks(ts);
-        ASSERT_TRUE(ts.empty()); // PG should be proceesed now
+        ASSERT_TRUE(ts.empty()); // PG should be processed now
         ts.clear();
+    }
+
+    /* This test checks that a LAG member validation happens on orchagent level
+     * and no SAI call is executed in case a port requested to be a LAG member
+     * is already a LAG member.
+     */
+    TEST_F(PortsOrchTest, LagMemberDoesNotCallSAIApiWhenPortIsAlreadyALagMember)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table lagTable = Table(m_app_db.get(), APP_LAG_TABLE_NAME);
+        Table lagMemberTable = Table(m_app_db.get(), APP_LAG_MEMBER_TABLE_NAME);
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        /*
+         * Next we will prepare some configuration data to be consumed by PortsOrch
+         * 32 Ports, 2 LAGs, 1 port is LAG member.
+         */
+
+        // Populate pot table with SAI ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { } });
+
+        lagTable.set("PortChannel999",
+            {
+                {"admin_status", "up"},
+                {"mtu", "9100"}
+            }
+        );
+        lagTable.set("PortChannel0001",
+            {
+                {"admin_status", "up"},
+                {"mtu", "9100"}
+            }
+        );
+        lagMemberTable.set(
+            std::string("PortChannel999") + lagMemberTable.getTableNameSeparator() + ports.begin()->first,
+            { {"status", "enabled"} });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+        gPortsOrch->addExistingData(&lagTable);
+        gPortsOrch->addExistingData(&lagMemberTable);
+
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // check LAG, VLAN tasks were processed
+        // port table may require one more doTask iteration
+        for (auto tableName: {APP_LAG_TABLE_NAME, APP_LAG_MEMBER_TABLE_NAME})
+        {
+            vector<string> ts;
+            auto exec = gPortsOrch->getExecutor(tableName);
+            auto consumer = static_cast<Consumer*>(exec);
+            ts.clear();
+            consumer->dumpPendingTasks(ts);
+            ASSERT_TRUE(ts.empty());
+        }
+
+        // Set first port as a LAG member while this port is still a member of different LAG.
+        lagMemberTable.set(
+            std::string("PortChannel0001") + lagMemberTable.getTableNameSeparator() + ports.begin()->first,
+            { {"status", "enabled"} });
+
+        // save original api since we will spy
+        auto orig_lag_api = sai_lag_api;
+        sai_lag_api = new sai_lag_api_t();
+        memcpy(sai_lag_api, orig_lag_api, sizeof(*sai_lag_api));
+
+        bool lagMemberCreateCalled = false;
+
+        auto lagSpy = SpyOn<SAI_API_LAG, SAI_OBJECT_TYPE_LAG_MEMBER>(&sai_lag_api->create_lag_member);
+        lagSpy->callFake([&](sai_object_id_t *oid, sai_object_id_t swoid, uint32_t count, const sai_attribute_t * attrs) -> sai_status_t
+            {
+                lagMemberCreateCalled = true;
+                return orig_lag_api->create_lag_member(oid, swoid, count, attrs);
+            }
+        );
+
+        gPortsOrch->addExistingData(&lagMemberTable);
+
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        sai_lag_api = orig_lag_api;
+
+        // verify there is a pending task to do.
+        vector<string> ts;
+        auto exec = gPortsOrch->getExecutor(APP_LAG_MEMBER_TABLE_NAME);
+        auto consumer = static_cast<Consumer*>(exec);
+        ts.clear();
+        consumer->dumpPendingTasks(ts);
+        ASSERT_FALSE(ts.empty());
+
+        // verify there was no SAI call executed.
+        ASSERT_FALSE(lagMemberCreateCalled);
     }
 
     /*
@@ -447,7 +543,6 @@ namespace portsorch_test
     */
     TEST_F(PortsOrchTest, LagMemberIsCreatedBeforeOtherObjectsAreCreatedOnLag)
     {
-
         Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
         Table lagTable = Table(m_app_db.get(), APP_LAG_TABLE_NAME);
         Table lagMemberTable = Table(m_app_db.get(), APP_LAG_MEMBER_TABLE_NAME);
@@ -456,29 +551,6 @@ namespace portsorch_test
 
         // Get SAI default ports to populate DB
         auto ports = ut_helper::getInitialSaiPorts();
-
-        // Create dependencies ...
-        const int portsorch_base_pri = 40;
-
-        vector<table_name_with_pri_t> ports_tables = {
-            { APP_PORT_TABLE_NAME, portsorch_base_pri + 5 },
-            { APP_VLAN_TABLE_NAME, portsorch_base_pri + 2 },
-            { APP_VLAN_MEMBER_TABLE_NAME, portsorch_base_pri },
-            { APP_LAG_TABLE_NAME, portsorch_base_pri + 4 },
-            { APP_LAG_MEMBER_TABLE_NAME, portsorch_base_pri }
-        };
-
-        ASSERT_EQ(gPortsOrch, nullptr);
-        gPortsOrch = new PortsOrch(m_app_db.get(), ports_tables);
-        vector<string> buffer_tables = { CFG_BUFFER_POOL_TABLE_NAME,
-                                         CFG_BUFFER_PROFILE_TABLE_NAME,
-                                         CFG_BUFFER_QUEUE_TABLE_NAME,
-                                         CFG_BUFFER_PG_TABLE_NAME,
-                                         CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME,
-                                         CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME };
-
-        ASSERT_EQ(gBufferOrch, nullptr);
-        gBufferOrch = new BufferOrch(m_config_db.get(), buffer_tables);
 
         /*
          * Next we will prepare some configuration data to be consumed by PortsOrch
@@ -554,7 +626,7 @@ namespace portsorch_test
 
         vector<string> ts;
 
-        // check LAG, VLAN tasks were proceesed
+        // check LAG, VLAN tasks were processed
         // port table may require one more doTask iteration
         for (auto tableName: {
                 APP_LAG_TABLE_NAME,
@@ -571,5 +643,4 @@ namespace portsorch_test
 
         ASSERT_FALSE(bridgePortCalledBeforeLagMember); // bridge port created on lag before lag member was created
     }
-
 }

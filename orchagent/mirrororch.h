@@ -18,6 +18,12 @@
 #include <map>
 #include <inttypes.h>
 
+#define MIRROR_RX_DIRECTION      "RX"
+#define MIRROR_TX_DIRECTION      "TX"
+#define MIRROR_BOTH_DIRECTION    "BOTH"
+#define MIRROR_SESSION_SPAN      "SPAN"
+#define MIRROR_SESSION_ERSPAN    "ERSPAN"
+
 /*
  * Contains session data specified by user in config file
  * and data required for MAC address and port resolution
@@ -32,6 +38,10 @@ struct MirrorEntry
     uint8_t ttl;
     uint8_t queue;
     string policer;
+    string dst_port;
+    string src_port;
+    string direction;
+    string type;
 
     struct
     {
@@ -70,13 +80,14 @@ public:
                PortsOrch *portOrch, RouteOrch *routeOrch, NeighOrch *neighOrch, FdbOrch *fdbOrch, PolicerOrch *policerOrch);
 
     bool bake() override;
-    bool postBake() override;
     void update(SubjectType, void *);
     bool sessionExists(const string&);
     bool getSessionStatus(const string&, bool&);
     bool getSessionOid(const string&, sai_object_id_t&);
     bool increaseRefCount(const string&);
     bool decreaseRefCount(const string&);
+
+    using Orch::doTask;  // Allow access to the basic doTask
 
 private:
     PortsOrch *m_portsOrch;
@@ -91,9 +102,7 @@ private:
     // session_name -> VLAN | monitor_port_alias | next_hop_ip
     map<string, string> m_recoverySessionMap;
 
-    bool m_freeze = false;
-
-    void createEntry(const string&, const vector<FieldValueTuple>&);
+    task_process_status createEntry(const string&, const vector<FieldValueTuple>&);
     task_process_status deleteEntry(const string&);
 
     bool activateSession(const string&, MirrorEntry&);
@@ -117,6 +126,13 @@ private:
     void updateFdb(const FdbUpdate&);
     void updateLagMember(const LagMemberUpdate&);
     void updateVlanMember(const VlanMemberUpdate&);
+
+    bool checkPortExistsInSrcPortList(const string& port, const string& srcPortList);
+    bool validateSrcPortList(const string& srcPort);
+    bool validateDstPort(const string& dstPort);
+    bool setUnsetPortMirror(Port port, bool ingress, bool set,
+                                    sai_object_id_t sessionId);
+    bool configurePortMirrorSession(const string&, MirrorEntry&, bool enable);
 
     void doTask(Consumer& consumer);
 };

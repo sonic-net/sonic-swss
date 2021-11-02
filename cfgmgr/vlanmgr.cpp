@@ -29,12 +29,34 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         m_stateVlanTable(stateDb, STATE_VLAN_TABLE_NAME),
         m_stateVlanMemberTable(stateDb, STATE_VLAN_MEMBER_TABLE_NAME),
         m_appVlanTableProducer(appDb, APP_VLAN_TABLE_NAME),
-        m_appVlanMemberTableProducer(appDb, APP_VLAN_MEMBER_TABLE_NAME)
+        m_appVlanMemberTableProducer(appDb, APP_VLAN_MEMBER_TABLE_NAME),
+        replayDone(false)
 {
     SWSS_LOG_ENTER();
 
     if (WarmStart::isWarmStart())
     {
+        vector<string> vlanKeys, vlanMemberKeys;
+
+        /* cache all vlan and vlan member config */
+        m_cfgVlanTable.getKeys(vlanKeys);
+        m_cfgVlanMemberTable.getKeys(vlanMemberKeys);
+        for (auto k : vlanKeys)
+        {
+            m_vlanReplay.insert(k);
+        }
+        for (auto k : vlanMemberKeys)
+        {
+            m_vlanMemberReplay.insert(k);
+        }
+        if (m_vlanReplay.empty())
+        {
+            replayDone = true;
+            WarmStart::setWarmStartState("vlanmgrd", WarmStart::REPLAYED);
+            SWSS_LOG_NOTICE("vlanmgr warmstart state set to REPLAYED");
+            WarmStart::setWarmStartState("vlanmgrd", WarmStart::RECONCILED);
+            SWSS_LOG_NOTICE("vlanmgr warmstart state set to RECONCILED");
+        }
         const std::string cmds = std::string("")
           + IP_CMD + " link show " + DOT1Q_BRIDGE_NAME + " 2>/dev/null";
 
@@ -51,15 +73,19 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
     // The command should be generated as:
     // /bin/bash -c "/sbin/ip link del Bridge 2>/dev/null ;
     //               /sbin/ip link add Bridge up type bridge &&
+    //               /sbin/ip link set Bridge mtu {{ mtu_size }} &&
+    //               /sbin/ip link set Bridge address {{gMacAddress}} &&
     //               /sbin/bridge vlan del vid 1 dev Bridge self;
     //               /sbin/ip link del dummy 2>/dev/null;
     //               /sbin/ip link add dummy type dummy &&
-    //               sbin/ip link set dummy master Bridge"
+    //               /sbin/ip link set dummy master Bridge"
 
     const std::string cmds = std::string("")
       + BASH_CMD + " -c \""
       + IP_CMD + " link del " + DOT1Q_BRIDGE_NAME + " 2>/dev/null; "
       + IP_CMD + " link add " + DOT1Q_BRIDGE_NAME + " up type bridge && "
+      + IP_CMD + " link set " + DOT1Q_BRIDGE_NAME + " mtu " + DEFAULT_MTU_STR + " && "
+      + IP_CMD + " link set " + DOT1Q_BRIDGE_NAME + " address " + gMacAddress.to_string() + " && "
       + BRIDGE_CMD + " vlan del vid " + DEFAULT_VLAN_ID + " dev " + DOT1Q_BRIDGE_NAME + " self; "
       + IP_CMD + " link del dev dummy 2>/dev/null; "
       + IP_CMD + " link add dummy type dummy && "
@@ -163,6 +189,22 @@ bool VlanMgr::setHostVlanMtu(int vlan_id, uint32_t mtu)
     return false;
 }
 
+bool VlanMgr::setHostVlanMac(int vlan_id, const string &mac)
+{
+    SWSS_LOG_ENTER();
+
+    // The command should be generated as:
+    // /sbin/ip link set Vlan{{vlan_id}} address {{mac}}
+    ostringstream cmds;
+    cmds << IP_CMD " link set " VLAN_PREFIX + std::to_string(vlan_id) + " address " << shellquote(mac) << " && "
+            IP_CMD " link set " DOT1Q_BRIDGE_NAME " address " << shellquote(mac);
+
+    std::string res;
+    EXEC_WITH_ERROR_THROW(cmds.str(), res);
+
+    return true;
+}
+
 bool VlanMgr::addHostVlanMember(int vlan_id, const string &port_alias, const string& tagging_mode)
 {
     SWSS_LOG_ENTER();
@@ -264,6 +306,8 @@ void VlanMgr::doVlanTask(Consumer &consumer)
         {
             string admin_status;
             string mtu = DEFAULT_MTU_STR;
+            string mac = gMacAddress.to_string();
+            string hostif_name = "";
             vector<FieldValueTuple> fvVector;
             string members;
 
@@ -278,6 +322,7 @@ void VlanMgr::doVlanTask(Consumer &consumer)
             if (isVlanStateOk(key) && m_vlans.find(key) == m_vlans.end())
             {
                 m_vlans.insert(key);
+                m_vlanReplay.erase(kfvKey(t));
                 it = consumer.m_toSync.erase(it);
                 SWSS_LOG_DEBUG("%s already created", kfvKey(t).c_str());
                 continue;
@@ -288,6 +333,7 @@ void VlanMgr::doVlanTask(Consumer &consumer)
             {
                 addHostVlan(vlan_id);
             }
+            m_vlanReplay.erase(kfvKey(t));
 
             /* set up host env .... */
             for (auto i : kfvFieldsValues(t))
@@ -313,6 +359,15 @@ void VlanMgr::doVlanTask(Consumer &consumer)
                 else if (fvField(i) == "members@") {
                     members = fvValue(i);
                 }
+                else if (fvField(i) == "mac")
+                {
+                    mac = fvValue(i);
+                    setHostVlanMac(vlan_id, mac);
+                }
+                else if (fvField(i) == "host_ifname")
+                {
+                    hostif_name = fvValue(i);
+                }
             }
             /* fvVector should not be empty */
             if (fvVector.empty())
@@ -323,6 +378,12 @@ void VlanMgr::doVlanTask(Consumer &consumer)
 
             FieldValueTuple m("mtu", mtu);
             fvVector.push_back(m);
+
+            FieldValueTuple mc("mac", mac);
+            fvVector.push_back(mc);
+
+            FieldValueTuple hostif_name_fvt("host_ifname", hostif_name);
+            fvVector.push_back(hostif_name_fvt);
 
             m_appVlanTableProducer.set(key, fvVector);
             m_vlans.insert(key);
@@ -365,6 +426,16 @@ void VlanMgr::doVlanTask(Consumer &consumer)
             SWSS_LOG_DEBUG("%s", (dumpTuple(consumer, t)).c_str());
             it = consumer.m_toSync.erase(it);
         }
+    }
+    if (!replayDone && m_vlanReplay.empty() &&
+        m_vlanMemberReplay.empty() &&
+        WarmStart::isWarmStart())
+    {
+        replayDone = true;
+        WarmStart::setWarmStartState("vlanmgrd", WarmStart::REPLAYED);
+        SWSS_LOG_NOTICE("vlanmgr warmstart state set to REPLAYED");
+        WarmStart::setWarmStartState("vlanmgrd", WarmStart::RECONCILED);
+        SWSS_LOG_NOTICE("vlanmgr warmstart state set to RECONCILED");
     }
 }
 
@@ -508,6 +579,7 @@ void VlanMgr::doVlanMemberTask(Consumer &consumer)
              if (isVlanMemberStateOk(kfvKey(t)))
              {
                 SWSS_LOG_DEBUG("%s already set", kfvKey(t).c_str());
+                m_vlanMemberReplay.erase(kfvKey(t));
                 it = consumer.m_toSync.erase(it);
                 continue;
              }
@@ -549,6 +621,8 @@ void VlanMgr::doVlanMemberTask(Consumer &consumer)
                 FieldValueTuple s("state", "ok");
                 fvVector.push_back(s);
                 m_stateVlanMemberTable.set(kfvKey(t), fvVector);
+
+                m_vlanMemberReplay.erase(kfvKey(t));
             }
         }
         else if (op == DEL_COMMAND)
@@ -574,6 +648,16 @@ void VlanMgr::doVlanMemberTask(Consumer &consumer)
         }
         /* Other than the case of member port/lag is not ready, no retry will be performed */
         it = consumer.m_toSync.erase(it);
+    }
+    if (!replayDone && m_vlanMemberReplay.empty() &&
+        WarmStart::isWarmStart())
+    {
+        replayDone = true;
+        WarmStart::setWarmStartState("vlanmgrd", WarmStart::REPLAYED);
+        SWSS_LOG_NOTICE("vlanmgr warmstart state set to REPLAYED");
+        WarmStart::setWarmStartState("vlanmgrd", WarmStart::RECONCILED);
+        SWSS_LOG_NOTICE("vlanmgr warmstart state set to RECONCILED");
+
     }
 }
 

@@ -60,16 +60,47 @@ void Request::parseKey(const KeyOpFieldsValuesTuple& request)
 
     // split the key by separator
     std::vector<std::string> key_items;
-    size_t f_position = 0;
-    size_t e_position = full_key_.find(key_separator_);
-    while (e_position != std::string::npos)
+    size_t key_item_start = 0;
+    size_t key_item_end = full_key_.find(key_separator_);
+    while (key_item_end != std::string::npos)
     {
-        key_items.push_back(full_key_.substr(f_position, e_position - f_position));
-        f_position = e_position + 1;
-        e_position = full_key_.find(key_separator_, f_position);
+        key_items.push_back(full_key_.substr(key_item_start, key_item_end - key_item_start));
+        key_item_start = key_item_end + 1;
+        key_item_end = full_key_.find(key_separator_, key_item_start);
     }
-    key_items.push_back(full_key_.substr(f_position, full_key_.length()));
+    key_items.push_back(full_key_.substr(key_item_start, full_key_.length()));
 
+    /*
+     * Attempt to parse an IPv6 address only if the following conditions are met:
+     * - The key separator is ":" 
+     *     - The above logic will already correctly parse IPv6 addresses using other key separators
+     *     - Special consideration is only needed for ":" key separators since IPv6 addresses also use ":" as the field separator
+     * - The number of parsed key items exceeds the number of expected key items
+     *     - If we have too many key items and the last key item is supposed to be an IP or prefix, there is a chance that it was an 
+     *       IPv6 address that got segmented during parsing
+     *     - The above logic will always break an IPv6 address into at least 2 parts, so if an IPv6 address has been parsed incorrectly it will
+     *       always increase the number of key items
+     * - The last key item is an IP address or prefix
+     *     - This runs under the assumption that an IPv6 address, if present, will always be the last key item
+     */
+    if (key_separator_ == ':' and 
+        key_items.size() > number_of_key_items_ and 
+        (request_description_.key_item_types.back() == REQ_T_IP or request_description_.key_item_types.back() == REQ_T_IP_PREFIX))
+    {
+        // Remove key_items so that key_items.size() is correct, then assemble the removed items into an IPv6 address
+        std::vector<std::string> ip_addr_groups(--key_items.begin() + number_of_key_items_, key_items.end());
+        key_items.erase(--key_items.begin() + number_of_key_items_, key_items.end());
+
+        std::string ip_string;
+
+        for (const auto &i : ip_addr_groups)
+        {
+            ip_string += i + ":";
+        }
+        ip_string.pop_back(); // remove extra ":" from end of string
+
+        key_items.push_back(ip_string);
+    }
     if (key_items.size() != number_of_key_items_)
     {
         throw std::invalid_argument(std::string("Wrong number of key items. Expected ")
@@ -147,11 +178,23 @@ void Request::parseAttrs(const KeyOpFieldsValuesTuple& request)
             case REQ_T_IP:
                 attr_item_ip_[fvField(*i)] = parseIpAddress(fvValue(*i));
                 break;
+            case REQ_T_IP_PREFIX:
+                attr_item_ip_prefix_[fvField(*i)] = parseIpPrefix(fvValue(*i));
+                break;
             case REQ_T_UINT:
                 attr_item_uint_[fvField(*i)] = parseUint(fvValue(*i));
                 break;
             case REQ_T_SET:
                 attr_item_set_[fvField(*i)] = parseSet(fvValue(*i));
+                break;
+            case REQ_T_MAC_ADDRESS_LIST:
+                attr_item_mac_addresses_list_[fvField(*i)] = parseMacAddressList(fvValue(*i));
+                break;
+            case REQ_T_IP_LIST:
+                attr_item_ip_list_[fvField(*i)] = parseIpAddressList(fvValue(*i));
+                break;
+            case REQ_T_UINT_LIST:
+                attr_item_uint_list_[fvField(*i)] = parseUintList(fvValue(*i));
                 break;
             default:
                 throw std::logic_error(std::string("Not implemented attribute type parser for attribute:") + fvField(*i));
@@ -317,4 +360,71 @@ sai_packet_action_t Request::parsePacketAction(const std::string& str)
     }
 
     return found->second;
+}
+
+vector<IpAddress> Request::parseIpAddressList(const std::string& str)
+{
+    try
+    {
+        vector<IpAddress> addrs;
+        string substr;
+        std::istringstream iss(str);
+        while (getline(iss, substr, ','))
+        {
+            IpAddress addr(substr);
+            addrs.emplace_back(addr);
+        }
+        return addrs;
+    }
+    catch (std::invalid_argument& _)
+    {
+        throw std::invalid_argument(std::string("Invalid ip address list: ") + str);
+    }
+}
+
+vector<MacAddress> Request::parseMacAddressList(const std::string& str)
+{
+    try
+    {
+        vector<MacAddress> addrs;
+        string substr;
+        std::istringstream iss(str);
+        while (getline(iss, substr, ','))
+        {
+            uint8_t mac[ETHER_ADDR_LEN];
+            if (!MacAddress::parseMacString(substr, mac))
+            {
+                throw std::invalid_argument(std::string("Invalid mac address: ") + str);
+            }
+            addrs.emplace_back(MacAddress(mac));
+        }
+        return addrs;
+    }
+    catch (std::invalid_argument& _)
+    {
+        throw std::invalid_argument(std::string("Invalid mac address list: ") + str);
+    }
+}
+
+vector<uint64_t> Request::parseUintList(const std::string& str)
+{
+    try
+    {
+        vector<uint64_t> res;
+        string substr;
+        std::istringstream iss(str);
+        while (getline(iss, substr, ','))
+        {
+            res.emplace_back(std::stoul(substr));
+        }
+        return res;
+    }
+    catch (std::invalid_argument& _)
+    {
+        throw std::invalid_argument(std::string("Invalid unsigned integer list: ") + str);
+    }
+    catch(std::out_of_range& _)
+    {
+        throw std::invalid_argument(std::string("Out of range unsigned integer: ") + str);
+    }
 }

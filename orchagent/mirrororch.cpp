@@ -27,6 +27,10 @@
 #define MIRROR_SESSION_ROUTE_PREFIX         "route_prefix"
 #define MIRROR_SESSION_VLAN_ID              "vlan_id"
 #define MIRROR_SESSION_POLICER              "policer"
+#define MIRROR_SESSION_SRC_PORT             "src_port"
+#define MIRROR_SESSION_DST_PORT             "dst_port"
+#define MIRROR_SESSION_DIRECTION            "direction"
+#define MIRROR_SESSION_TYPE                 "type"
 
 #define MIRROR_SESSION_DEFAULT_VLAN_PRI 0
 #define MIRROR_SESSION_DEFAULT_VLAN_CFI 0
@@ -36,9 +40,11 @@
 #define MIRROR_SESSION_DSCP_MAX         63
 
 extern sai_mirror_api_t *sai_mirror_api;
+extern sai_port_api_t *sai_port_api;
 
 extern sai_object_id_t  gSwitchId;
 extern PortsOrch*       gPortsOrch;
+extern string           gMySwitchType;
 
 using namespace std::rel_ops;
 
@@ -59,8 +65,9 @@ MirrorEntry::MirrorEntry(const string& platform) :
         greType = 0x88be;
     }
 
+    string alias = "";
     nexthopInfo.prefix = IpPrefix("0.0.0.0/0");
-    nexthopInfo.nexthop = NextHopKey("0.0.0.0", "");
+    nexthopInfo.nexthop = NextHopKey("0.0.0.0", alias);
 }
 
 MirrorOrch::MirrorOrch(TableConnector stateDbConnector, TableConnector confDbConnector,
@@ -81,9 +88,6 @@ MirrorOrch::MirrorOrch(TableConnector stateDbConnector, TableConnector confDbCon
 bool MirrorOrch::bake()
 {
     SWSS_LOG_ENTER();
-
-    // Freeze the route update during orchagent restoration
-    m_freeze = true;
 
     deque<KeyOpFieldsValuesTuple> entries;
     vector<string> keys;
@@ -123,27 +127,10 @@ bool MirrorOrch::bake()
                     key, monitor_port + state_db_key_delimiter + next_hop_ip);
         }
 
-	removeSessionState(key);
+        removeSessionState(key);
     }
 
     return Orch::bake();
-}
-
-bool MirrorOrch::postBake()
-{
-    SWSS_LOG_ENTER();
-
-    SWSS_LOG_NOTICE("Start MirrorOrch post-baking");
-
-    // Unfreeze the route update
-    m_freeze = false;
-
-    Orch::doTask();
-
-    // Clean up the recovery cache
-    m_recoverySessionMap.clear();
-
-    return Orch::postBake();
 }
 
 void MirrorOrch::update(SubjectType type, void *cntx)
@@ -260,7 +247,82 @@ bool MirrorOrch::decreaseRefCount(const string& name)
     return true;
 }
 
-void MirrorOrch::createEntry(const string& key, const vector<FieldValueTuple>& data)
+bool MirrorOrch::validateDstPort(const string& dstPort)
+{
+    Port port;
+    if (!m_portsOrch->getPort(dstPort, port))
+    {
+        SWSS_LOG_ERROR("Not supported port %s type %d", dstPort.c_str(), port.m_type);
+        return false;
+    }
+    if (port.m_type != Port::PHY)
+    {
+        SWSS_LOG_ERROR("Not supported port %s", dstPort.c_str());
+        return false;
+    }
+    return true;
+}
+
+bool MirrorOrch::checkPortExistsInSrcPortList(const string& port, const string& srcPortList)
+{
+    auto ports = tokenize(srcPortList, ',');
+    if (ports.size() != 0)
+    {
+        for (auto alias : ports)
+        {
+            if(port == alias)
+            {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+bool MirrorOrch::validateSrcPortList(const string& srcPortList)
+{
+    auto ports = tokenize(srcPortList, ',');
+
+    if (ports.size() != 0)
+    {
+        for (auto alias : ports)
+        {
+            Port port;
+            if (!gPortsOrch->getPort(alias, port))
+            {
+                SWSS_LOG_ERROR("Failed to locate Port/LAG %s", alias.c_str());
+                return false;
+            }
+
+            if(!(port.m_type == Port::PHY || port.m_type == Port::LAG))
+            {
+                SWSS_LOG_ERROR("Not supported port %s", alias.c_str());
+                return false;
+            }
+
+            // Check if the ports in LAG are part of source port list
+            if (port.m_type == Port::LAG)
+            {
+                vector<Port> portv;
+                m_portsOrch->getLagMember(port, portv);
+                for (const auto p : portv)
+                {
+                    if (checkPortExistsInSrcPortList(p.m_alias, srcPortList))
+                    {
+                        SWSS_LOG_ERROR("Port %s in LAG %s is also part of src_port config %s",
+                                  p.m_alias.c_str(), port.m_alias.c_str(), srcPortList.c_str());
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+
+    return true;
+}
+
+task_process_status MirrorOrch::createEntry(const string& key, const vector<FieldValueTuple>& data)
 {
     SWSS_LOG_ENTER();
 
@@ -269,7 +331,7 @@ void MirrorOrch::createEntry(const string& key, const vector<FieldValueTuple>& d
     {
         SWSS_LOG_NOTICE("Failed to create session, session %s already exists",
                 key.c_str());
-        return;
+        return task_process_status::task_duplicated;
     }
 
     string platform = getenv("platform") ? getenv("platform") : "";
@@ -283,8 +345,8 @@ void MirrorOrch::createEntry(const string& key, const vector<FieldValueTuple>& d
                 entry.srcIp = fvValue(i);
                 if (!entry.srcIp.isV4())
                 {
-                    SWSS_LOG_ERROR("Unsupported version of sessions %s source IP address\n", key.c_str());
-                    return;
+                    SWSS_LOG_ERROR("Unsupported version of sessions %s source IP address", key.c_str());
+                    return task_process_status::task_invalid_entry;
                 }
             }
             else if (fvField(i) == MIRROR_SESSION_DST_IP)
@@ -292,8 +354,8 @@ void MirrorOrch::createEntry(const string& key, const vector<FieldValueTuple>& d
                 entry.dstIp = fvValue(i);
                 if (!entry.dstIp.isV4())
                 {
-                    SWSS_LOG_ERROR("Unsupported version of sessions %s destination IP address\n", key.c_str());
-                    return;
+                    SWSS_LOG_ERROR("Unsupported version of sessions %s destination IP address", key.c_str());
+                    return task_process_status::task_invalid_entry;
                 }
             }
             else if (fvField(i) == MIRROR_SESSION_GRE_TYPE)
@@ -318,27 +380,59 @@ void MirrorOrch::createEntry(const string& key, const vector<FieldValueTuple>& d
                 {
                     SWSS_LOG_ERROR("Failed to get policer %s",
                             fvValue(i).c_str());
-                    return;
+                    return task_process_status::task_need_retry;
                 }
 
                 m_policerOrch->increaseRefCount(fvValue(i));
                 entry.policer = fvValue(i);
             }
+            else if (fvField(i) == MIRROR_SESSION_SRC_PORT)
+            {
+                if (!validateSrcPortList(fvValue(i)))
+                {
+                    SWSS_LOG_ERROR("Failed to get valid source port list %s", fvValue(i).c_str());
+                    return task_process_status::task_invalid_entry;
+                }
+                entry.src_port = fvValue(i);
+            }
+            else if (fvField(i) == MIRROR_SESSION_DST_PORT)
+            {
+                if (!validateDstPort(fvValue(i)))
+                {
+                    SWSS_LOG_ERROR("Failed to get valid destination port %s", fvValue(i).c_str());
+                    return task_process_status::task_invalid_entry;
+                }
+                entry.dst_port = fvValue(i);
+            }
+            else if (fvField(i) == MIRROR_SESSION_DIRECTION)
+            {
+                if (!(fvValue(i) == MIRROR_RX_DIRECTION || fvValue(i) == MIRROR_TX_DIRECTION
+                        || fvValue(i) == MIRROR_BOTH_DIRECTION))
+                {
+                    SWSS_LOG_ERROR("Failed to get valid direction %s", fvValue(i).c_str());
+                    return task_process_status::task_invalid_entry;
+                }
+                entry.direction = fvValue(i);
+            }
+            else if (fvField(i) == MIRROR_SESSION_TYPE)
+            {
+                entry.type = fvValue(i);
+            }
             else
             {
-                SWSS_LOG_ERROR("Failed to parse session %s configuration. Unknown attribute %s.\n", key.c_str(), fvField(i).c_str());
-                return;
+                SWSS_LOG_ERROR("Failed to parse session %s configuration. Unknown attribute %s", key.c_str(), fvField(i).c_str());
+                return task_process_status::task_invalid_entry;
             }
         }
         catch (const exception& e)
         {
             SWSS_LOG_ERROR("Failed to parse session %s attribute %s error: %s.", key.c_str(), fvField(i).c_str(), e.what());
-            return;
+            return task_process_status::task_invalid_entry;
         }
         catch (...)
         {
             SWSS_LOG_ERROR("Failed to parse session %s attribute %s. Unknown error has been occurred", key.c_str(), fvField(i).c_str());
-            return;
+            return task_process_status::task_failed;
         }
     }
 
@@ -348,8 +442,18 @@ void MirrorOrch::createEntry(const string& key, const vector<FieldValueTuple>& d
 
     setSessionState(key, entry);
 
-    // Attach the destination IP to the routeOrch
-    m_routeOrch->attach(this, entry.dstIp);
+    if (entry.type == MIRROR_SESSION_SPAN && !entry.dst_port.empty())
+    {
+        auto &session1 = m_syncdMirrors.find(key)->second;
+        activateSession(key, session1);
+    }
+    else
+    {
+        // Attach the destination IP to the routeOrch
+        m_routeOrch->attach(this, entry.dstIp);
+    }
+
+    return task_process_status::task_success;
 }
 
 task_process_status MirrorOrch::deleteEntry(const string& name)
@@ -375,12 +479,16 @@ task_process_status MirrorOrch::deleteEntry(const string& name)
 
     if (session.status)
     {
-        m_routeOrch->detach(this, session.dstIp);
         if (!deactivateSession(name, session))
         {
             SWSS_LOG_ERROR("Failed to remove mirror session %s", name.c_str());
             return task_process_status::task_failed;
         }
+    }
+
+    if (session.type != MIRROR_SESSION_SPAN)
+    {
+        m_routeOrch->detach(this, session.dstIp);
     }
 
     if (!session.policer.empty())
@@ -507,7 +615,7 @@ bool MirrorOrch::getNeighborInfo(const string& name, MirrorEntry& session)
             }
             else
             {
-                // Get the firt member of the LAG
+                // Get the first member of the LAG
                 Port member;
                 string first_member_alias = *session.neighborInfo.port.m_members.begin();
                 m_portsOrch->getPort(first_member_alias, member);
@@ -553,6 +661,10 @@ bool MirrorOrch::getNeighborInfo(const string& name, MirrorEntry& session)
                 }
             }
 
+            return true;
+        }
+        case Port::SYSTEM:
+        {
             return true;
         }
         default:
@@ -613,6 +725,105 @@ bool MirrorOrch::updateSession(const string& name, MirrorEntry& session)
     return ret;
 }
 
+bool MirrorOrch::setUnsetPortMirror(Port port,
+                                    bool ingress,
+                                    bool set,
+                                    sai_object_id_t sessionId)
+{
+    sai_status_t status;
+    sai_attribute_t port_attr;
+    port_attr.id = ingress ? SAI_PORT_ATTR_INGRESS_MIRROR_SESSION:
+                           SAI_PORT_ATTR_EGRESS_MIRROR_SESSION;
+    if (set)
+    {
+        port_attr.value.objlist.count = 1;
+        port_attr.value.objlist.list = reinterpret_cast<sai_object_id_t *>(calloc(port_attr.value.objlist.count, sizeof(sai_object_id_t)));
+        port_attr.value.objlist.list[0] = sessionId;
+    }
+    else
+    {
+        port_attr.value.objlist.count = 0;
+    }
+
+    if (port.m_type == Port::LAG)
+    {
+        vector<Port> portv;
+        m_portsOrch->getLagMember(port, portv);
+        for (const auto p : portv)
+        {
+            if (p.m_type != Port::PHY)
+            {
+                SWSS_LOG_ERROR("Failed to locate port %s", p.m_alias.c_str());
+                return false;
+            }
+            status = sai_port_api->set_port_attribute(p.m_port_id, &port_attr);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to configure %s session on port %s: %s, status %d, sessionId %lx",
+                                ingress ? "RX" : "TX", port.m_alias.c_str(),
+                                p.m_alias.c_str(), status, sessionId);
+                task_process_status handle_status =  handleSaiSetStatus(SAI_API_PORT, status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
+            }
+        }
+    }
+    else if (port.m_type == Port::PHY)
+    {
+        status = sai_port_api->set_port_attribute(port.m_port_id, &port_attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to configure %s session on port %s, status %d, sessionId %lx",
+                            ingress ? "RX" : "TX", port.m_alias.c_str(), status, sessionId);
+            task_process_status handle_status =  handleSaiSetStatus(SAI_API_PORT, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
+        }
+    }
+    return true;
+}
+
+bool MirrorOrch::configurePortMirrorSession(const string& name, MirrorEntry& session, bool set)
+{
+    auto ports = tokenize(session.src_port, ',');
+    if (ports.size() != 0)
+    {
+        for (auto alias : ports)
+        {
+            Port port;
+            if (!gPortsOrch->getPort(alias, port))
+            {
+                SWSS_LOG_ERROR("Failed to locate port/LAG %s", alias.c_str());
+                return false;
+            }
+            if (session.direction == MIRROR_RX_DIRECTION  || session.direction == MIRROR_BOTH_DIRECTION)
+            {
+                if (!setUnsetPortMirror(port, true, set, session.sessionId))
+                {
+                    SWSS_LOG_ERROR("Failed to configure mirror session %s port %s",
+                        name.c_str(), port.m_alias.c_str());
+                    return false;
+                }
+            }
+            if (session.direction == MIRROR_TX_DIRECTION || session.direction == MIRROR_BOTH_DIRECTION)
+            {
+                if (!setUnsetPortMirror(port, false, set, session.sessionId))
+                {
+                    SWSS_LOG_ERROR("Failed to configure mirror session %s port %s",
+                        name.c_str(), port.m_alias.c_str());
+                    return false;
+                }
+            }
+        }
+    }
+
+    return true;
+}
+
 bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
 {
     SWSS_LOG_ENTER();
@@ -632,82 +843,124 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
         attrs.push_back(attr);
     }
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_MONITOR_PORT;
-    attr.value.oid = session.neighborInfo.portId;
-    attrs.push_back(attr);
-
-    attr.id = SAI_MIRROR_SESSION_ATTR_TYPE;
-    attr.value.s32 = SAI_MIRROR_SESSION_TYPE_ENHANCED_REMOTE;
-    attrs.push_back(attr);
-
-    // Add the VLAN header when the packet is sent out from a VLAN
-    if (session.neighborInfo.port.m_type == Port::VLAN)
+    if (session.type == MIRROR_SESSION_SPAN)
     {
-        attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_HEADER_VALID;
-        attr.value.booldata = true;
+        Port dst_port;
+        if (!m_portsOrch->getPort(session.dst_port, dst_port))
+        {
+            SWSS_LOG_ERROR("Failed to locate Port/LAG %s", session.dst_port.c_str());
+            return false;
+        }
+
+        attr.id = SAI_MIRROR_SESSION_ATTR_MONITOR_PORT;
+        attr.value.oid = dst_port.m_port_id;
         attrs.push_back(attr);
 
-        attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_TPID;
-        attr.value.u16 = ETH_P_8021Q;
-        attrs.push_back(attr);
-
-        attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_ID;
-        attr.value.u16 = session.neighborInfo.port.m_vlan_info.vlan_id;
-        attrs.push_back(attr);
-
-        attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_PRI;
-        attr.value.u8 = MIRROR_SESSION_DEFAULT_VLAN_PRI;
-        attrs.push_back(attr);
-
-        attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_CFI;
-        attr.value.u8 = MIRROR_SESSION_DEFAULT_VLAN_CFI;
+        attr.id = SAI_MIRROR_SESSION_ATTR_TYPE;
+        attr.value.oid = SAI_MIRROR_SESSION_TYPE_LOCAL;
         attrs.push_back(attr);
     }
+    else
+    {
+        attr.id = SAI_MIRROR_SESSION_ATTR_MONITOR_PORT;
+        // Set monitor port to recirc port in voq switch.
+        if (gMySwitchType == "voq")
+        {
+            Port recirc_port;
+            if (!m_portsOrch->getRecircPort(recirc_port, "Rec"))
+            {
+                SWSS_LOG_ERROR("Failed to get recirc prot");
+                return false;
+            }
+            attr.value.oid = recirc_port.m_port_id;
+        }
+        else
+        {
+            attr.value.oid = session.neighborInfo.portId;
+        }
+        attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_ERSPAN_ENCAPSULATION_TYPE;
-    attr.value.s32 = SAI_ERSPAN_ENCAPSULATION_TYPE_MIRROR_L3_GRE_TUNNEL;
-    attrs.push_back(attr);
+        attr.id = SAI_MIRROR_SESSION_ATTR_TYPE;
+        attr.value.s32 = SAI_MIRROR_SESSION_TYPE_ENHANCED_REMOTE;
+        attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_IPHDR_VERSION;
-    attr.value.u8 = MIRROR_SESSION_DEFAULT_IP_HDR_VER;
-    attrs.push_back(attr);
+        // Add the VLAN header when the packet is sent out from a VLAN
+        if (session.neighborInfo.port.m_type == Port::VLAN)
+        {
+            attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_HEADER_VALID;
+            attr.value.booldata = true;
+            attrs.push_back(attr);
 
-    // TOS value format is the following:
-    // DSCP 6 bits | ECN 2 bits
-    attr.id = SAI_MIRROR_SESSION_ATTR_TOS;
-    attr.value.u16 = (uint16_t)(session.dscp << MIRROR_SESSION_DSCP_SHIFT);
-    attrs.push_back(attr);
+            attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_TPID;
+            attr.value.u16 = ETH_P_8021Q;
+            attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_TTL;
-    attr.value.u8 = session.ttl;
-    attrs.push_back(attr);
+            attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_ID;
+            attr.value.u16 = session.neighborInfo.port.m_vlan_info.vlan_id;
+            attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_SRC_IP_ADDRESS;
-    copy(attr.value.ipaddr, session.srcIp);
-    attrs.push_back(attr);
+            attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_PRI;
+            attr.value.u8 = MIRROR_SESSION_DEFAULT_VLAN_PRI;
+            attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_DST_IP_ADDRESS;
-    copy(attr.value.ipaddr, session.dstIp);
-    attrs.push_back(attr);
+            attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_CFI;
+            attr.value.u8 = MIRROR_SESSION_DEFAULT_VLAN_CFI;
+            attrs.push_back(attr);
+        }
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_SRC_MAC_ADDRESS;
-    memcpy(attr.value.mac, gMacAddress.getMac(), sizeof(sai_mac_t));
-    attrs.push_back(attr);
+        attr.id = SAI_MIRROR_SESSION_ATTR_ERSPAN_ENCAPSULATION_TYPE;
+        attr.value.s32 = SAI_ERSPAN_ENCAPSULATION_TYPE_MIRROR_L3_GRE_TUNNEL;
+        attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS;
-    memcpy(attr.value.mac, session.neighborInfo.mac.getMac(), sizeof(sai_mac_t));
-    attrs.push_back(attr);
+        attr.id = SAI_MIRROR_SESSION_ATTR_IPHDR_VERSION;
+        attr.value.u8 = MIRROR_SESSION_DEFAULT_IP_HDR_VER;
+        attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_GRE_PROTOCOL_TYPE;
-    attr.value.u16 = session.greType;
-    attrs.push_back(attr);
+        // TOS value format is the following:
+        // DSCP 6 bits | ECN 2 bits
+        attr.id = SAI_MIRROR_SESSION_ATTR_TOS;
+        attr.value.u16 = (uint16_t)(session.dscp << MIRROR_SESSION_DSCP_SHIFT);
+        attrs.push_back(attr);
+
+        attr.id = SAI_MIRROR_SESSION_ATTR_TTL;
+        attr.value.u8 = session.ttl;
+        attrs.push_back(attr);
+
+        attr.id = SAI_MIRROR_SESSION_ATTR_SRC_IP_ADDRESS;
+        copy(attr.value.ipaddr, session.srcIp);
+        attrs.push_back(attr);
+
+        attr.id = SAI_MIRROR_SESSION_ATTR_DST_IP_ADDRESS;
+        copy(attr.value.ipaddr, session.dstIp);
+        attrs.push_back(attr);
+
+        attr.id = SAI_MIRROR_SESSION_ATTR_SRC_MAC_ADDRESS;
+        memcpy(attr.value.mac, gMacAddress.getMac(), sizeof(sai_mac_t));
+        attrs.push_back(attr);
+
+        attr.id = SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS;
+        // Use router mac as mirror dst mac in voq switch.
+        if (gMySwitchType == "voq")
+        {
+            memcpy(attr.value.mac, gMacAddress.getMac(), sizeof(sai_mac_t));
+        }
+        else
+        {
+            memcpy(attr.value.mac, session.neighborInfo.mac.getMac(), sizeof(sai_mac_t));
+        }
+        attrs.push_back(attr);
+
+        attr.id = SAI_MIRROR_SESSION_ATTR_GRE_PROTOCOL_TYPE;
+        attr.value.u16 = session.greType;
+        attrs.push_back(attr);
+    }
 
     if (!session.policer.empty())
     {
         sai_object_id_t oid = SAI_NULL_OBJECT_ID;
         if (!m_policerOrch->getPolicerOid(session.policer, oid))
         {
-            SWSS_LOG_ERROR("Faield to get policer %s", session.policer.c_str());
+            SWSS_LOG_ERROR("Failed to get policer %s", session.policer.c_str());
             return false;
         }
 
@@ -720,13 +973,29 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
         create_mirror_session(&session.sessionId, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to activate mirroring session %s\n", name.c_str());
+        SWSS_LOG_ERROR("Failed to activate mirroring session %s", name.c_str());
         session.status = false;
 
-        return false;
+        task_process_status handle_status =  handleSaiCreateStatus(SAI_API_MIRROR, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     session.status = true;
+
+    if (!session.src_port.empty() && !session.direction.empty())
+    {
+        status = configurePortMirrorSession(name, session, true);
+        if (status == false)
+        {
+            SWSS_LOG_ERROR("Failed to activate port mirror session %s", name.c_str());
+            session.status = false;
+            return false;
+        }
+    }
+
     setSessionState(name, session);
 
     MirrorSessionUpdate update = { name, true };
@@ -740,18 +1009,33 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
 bool MirrorOrch::deactivateSession(const string& name, MirrorEntry& session)
 {
     SWSS_LOG_ENTER();
+    sai_status_t status;
 
     assert(session.status);
 
     MirrorSessionUpdate update = { name, false };
     notify(SUBJECT_TYPE_MIRROR_SESSION_CHANGE, static_cast<void *>(&update));
 
-    sai_status_t status = sai_mirror_api->
-        remove_mirror_session(session.sessionId);
+    if (!session.src_port.empty() && !session.direction.empty())
+    {
+        status = configurePortMirrorSession(name, session, false);
+        if (status == false)
+        {
+            SWSS_LOG_ERROR("Failed to deactivate port mirror session %s", name.c_str());
+            return false;
+        }
+    }
+
+    status = sai_mirror_api->remove_mirror_session(session.sessionId);
+
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to deactivate mirroring session %s\n", name.c_str());
-        return false;
+        SWSS_LOG_ERROR("Failed to deactivate mirroring session %s", name.c_str());
+        task_process_status handle_status =  handleSaiRemoveStatus(SAI_API_MIRROR, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     session.status = false;
@@ -779,7 +1063,11 @@ bool MirrorOrch::updateSessionDstMac(const string& name, MirrorEntry& session)
     {
         SWSS_LOG_ERROR("Failed to update mirror session %s destination MAC to %s, rv:%d",
                 name.c_str(), session.neighborInfo.mac.to_string().c_str(), status);
-        return false;
+        task_process_status handle_status =  handleSaiSetStatus(SAI_API_MIRROR, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Update mirror session %s destination MAC to %s",
@@ -809,7 +1097,11 @@ bool MirrorOrch::updateSessionDstPort(const string& name, MirrorEntry& session)
     {
         SWSS_LOG_ERROR("Failed to update mirror session %s monitor port to %s, rv:%d",
                 name.c_str(), port.m_alias.c_str(), status);
-        return false;
+        task_process_status handle_status =  handleSaiSetStatus(SAI_API_MIRROR, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Update mirror session %s monitor port to %s",
@@ -866,7 +1158,11 @@ bool MirrorOrch::updateSessionType(const string& name, MirrorEntry& session)
         {
             SWSS_LOG_ERROR("Failed to update mirror session %s VLAN to %s, rv:%d",
                     name.c_str(), session.neighborInfo.port.m_alias.c_str(), status);
-            return false;
+            task_process_status handle_status =  handleSaiSetStatus(SAI_API_MIRROR, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
     }
 
@@ -946,8 +1242,16 @@ void MirrorOrch::updateNextHop(const NextHopUpdate& update)
         }
         else
         {
-            session.nexthopInfo.nexthop = NextHopKey("0.0.0.0", "");
+            string alias = "";
+            session.nexthopInfo.nexthop = NextHopKey("0.0.0.0", alias);
         }
+
+        // Update State DB Nexthop
+        setSessionState(name, session, MIRROR_SESSION_NEXT_HOP_IP);
+
+        SWSS_LOG_NOTICE("Updated mirror session state db %s nexthop to %s",
+                        name.c_str(), session.nexthopInfo.nexthop.to_string().c_str());
+
 
         // Resolve the neighbor of the new next hop
         updateSession(name, session);
@@ -981,7 +1285,7 @@ void MirrorOrch::updateNeighbor(const NeighborUpdate& update)
 }
 
 // The function is called when SUBJECT_TYPE_FDB_CHANGE is received.
-// This function will handle the case when new FDB enty is learned/added in the VLAN,
+// This function will handle the case when new FDB entry is learned/added in the VLAN,
 // or when the old FDB entry gets removed. Only when the neighbor is VLAN will the case
 // be handled.
 void MirrorOrch::updateFdb(const FdbUpdate& update)
@@ -996,7 +1300,7 @@ void MirrorOrch::updateFdb(const FdbUpdate& update)
         // Check the following three conditions:
         // 1) mirror session is pointing to a VLAN
         // 2) the VLAN matches the FDB notification VLAN ID
-        // 3) the destination MAC matches the FDB notifaction MAC
+        // 3) the destination MAC matches the FDB notification MAC
         if (session.neighborInfo.port.m_type != Port::VLAN ||
                 session.neighborInfo.port.m_vlan_info.vlan_oid != update.entry.bv_id ||
                 session.neighborInfo.mac != update.entry.mac)
@@ -1026,7 +1330,7 @@ void MirrorOrch::updateFdb(const FdbUpdate& update)
                 activateSession(name, session);
             }
         }
-        // Remvoe the monitor port
+        // Remove the monitor port
         else
         {
             deactivateSession(name, session);
@@ -1043,6 +1347,26 @@ void MirrorOrch::updateLagMember(const LagMemberUpdate& update)
     {
         const auto& name = it->first;
         auto& session = it->second;
+
+        // Check the following conditions:
+        // 1) Session is active
+        // 2) LAG is part of mirror session source ports.
+        // 3) Member port is not part of session source ports.
+        // if the above condition matches then set/unset mirror configuration to new member port.
+        if (session.status &&
+            !session.src_port.empty() &&
+            session.src_port.find(update.lag.m_alias.c_str()) != std::string::npos &&
+            !checkPortExistsInSrcPortList(update.member.m_alias, session.src_port))
+        {
+            if (session.direction == MIRROR_RX_DIRECTION  || session.direction == MIRROR_BOTH_DIRECTION)
+            {
+                setUnsetPortMirror(update.member, true, update.add, session.sessionId);
+            }
+            if (session.direction == MIRROR_TX_DIRECTION || session.direction == MIRROR_BOTH_DIRECTION)
+            {
+                setUnsetPortMirror(update.member, false, update.add, session.sessionId);
+            }
+        }
 
         // Check the following two conditions:
         // 1) the neighbor is LAG
@@ -1074,7 +1398,10 @@ void MirrorOrch::updateLagMember(const LagMemberUpdate& update)
             // If LAG is empty, deactivate session
             if (update.lag.m_members.empty())
             {
-                deactivateSession(name, session);
+                if (session.status)
+                {
+                    deactivateSession(name, session);
+                }
                 session.neighborInfo.portId = SAI_OBJECT_TYPE_NULL;
             }
             // Switch to a new member of the LAG
@@ -1128,11 +1455,6 @@ void MirrorOrch::doTask(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (m_freeze)
-    {
-        return;
-    }
-
     if (!gPortsOrch->allPortsReady())
     {
         return;
@@ -1145,26 +1467,32 @@ void MirrorOrch::doTask(Consumer& consumer)
 
         string key = kfvKey(t);
         string op = kfvOp(t);
+        task_process_status task_status = task_process_status::task_failed;
 
         if (op == SET_COMMAND)
         {
-            createEntry(key, kfvFieldsValues(t));
+            task_status = createEntry(key, kfvFieldsValues(t));
         }
         else if (op == DEL_COMMAND)
         {
-            auto task_status = deleteEntry(key);
-            // Specifically retry the task when asked
-            if (task_status == task_process_status::task_need_retry)
-            {
-                it++;
-                continue;
-            }
+            task_status = deleteEntry(key);
         }
         else
         {
             SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
         }
 
-        consumer.m_toSync.erase(it++);
+        // Specifically retry the task when asked
+        if (task_status == task_process_status::task_need_retry)
+        {
+            it++;
+        }
+        else
+        {
+            consumer.m_toSync.erase(it++);
+        }
     }
+
+    // Clear any recovery state that might be leftover from warm reboot
+    m_recoverySessionMap.clear();
 }

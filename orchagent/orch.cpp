@@ -10,6 +10,7 @@
 #include "tokenize.h"
 #include "logger.h"
 #include "consumerstatetable.h"
+#include "sai_serialize.h"
 
 using namespace swss;
 
@@ -103,7 +104,7 @@ void Consumer::addToSync(const KeyOpFieldsValuesTuple &entry)
     {
         /*
         * Now we are trying to add the key-value with SET.
-        * We maintain maximun two values per key.
+        * We maintain maximum two values per key.
         * In case there is one key-value, it should be DEL or SET
         * In case there are two key-value pairs, it should be DEL then SET
         * The code logic is following:
@@ -299,13 +300,6 @@ bool Orch::bake()
     return true;
 }
 
-bool Orch::postBake()
-{
-    SWSS_LOG_ENTER();
-
-    return true;
-}
-
 /*
 - Validates reference has proper format which is [table_name:object_name]
 - validates table_name exists
@@ -326,7 +320,7 @@ bool Orch::parseReference(type_map &type_maps, string &ref_in, string &type_name
         SWSS_LOG_ERROR("invalid reference received:%s\n", ref_in.c_str());
         return false;
     }
-    if ((ref_in[0] != ref_start) && (ref_in[ref_in.size()-1] != ref_end))
+    if ((ref_in[0] != ref_start) || (ref_in[ref_in.size()-1] != ref_end))
     {
         SWSS_LOG_ERROR("malformed reference:%s. Must be surrounded by [ ]\n", ref_in.c_str());
         return false;
@@ -377,7 +371,8 @@ ref_resolve_status Orch::resolveFieldRefValue(
     type_map &type_maps,
     const string &field_name,
     KeyOpFieldsValuesTuple &tuple,
-    sai_object_id_t &sai_object)
+    sai_object_id_t &sai_object,
+    string &referenced_object_name)
 {
     SWSS_LOG_ENTER();
 
@@ -401,7 +396,8 @@ ref_resolve_status Orch::resolveFieldRefValue(
             {
                 return ref_resolve_status::empty;
             }
-            sai_object = (*(type_maps[ref_type_name]))[object_name];
+            sai_object = (*(type_maps[ref_type_name]))[object_name].m_saiObjectId;
+            referenced_object_name = ref_type_name + delimiter + object_name;
             hit = true;
         }
     }
@@ -409,7 +405,102 @@ ref_resolve_status Orch::resolveFieldRefValue(
     {
         return ref_resolve_status::field_not_found;
     }
+
     return ref_resolve_status::success;
+}
+
+void Orch::removeMeFromObjsReferencedByMe(
+    type_map &type_maps,
+    const string &table,
+    const string &obj_name,
+    const string &field,
+    const string &old_referenced_obj_name)
+{
+    vector<string> objects = tokenize(old_referenced_obj_name, list_item_delimiter);
+    for (auto &obj : objects)
+    {
+        // obj_name references token
+        auto tokens = tokenize(obj, delimiter);
+        auto &referenced_table = tokens[0];
+        auto &ref_obj_name = tokens[1];
+        auto &old_referenced_obj = (*type_maps[referenced_table])[ref_obj_name];
+        old_referenced_obj.m_objsDependingOnMe.erase(obj_name);
+        SWSS_LOG_INFO("Obj %s.%s Field %s: Remove reference to %s %s (now %s)",
+                      table.c_str(), obj_name.c_str(), field.c_str(),
+                      referenced_table.c_str(), ref_obj_name.c_str(),
+                      to_string(old_referenced_obj.m_objsDependingOnMe.size()).c_str());
+    }
+}
+
+void Orch::setObjectReference(
+    type_map &type_maps,
+    const string &table,
+    const string &obj_name,
+    const string &field,
+    const string &referenced_obj)
+{
+    auto &obj = (*type_maps[table])[obj_name];
+    auto field_ref = obj.m_objsReferencingByMe.find(field);
+
+    if (field_ref != obj.m_objsReferencingByMe.end())
+        removeMeFromObjsReferencedByMe(type_maps, table, obj_name, field, field_ref->second);
+
+    obj.m_objsReferencingByMe[field] = referenced_obj;
+
+    // Add the reference to the new object being referenced
+    vector<string> objs = tokenize(referenced_obj, list_item_delimiter);
+    for (auto &obj : objs)
+    {
+        auto tokens = tokenize(obj, delimiter);
+        auto &referenced_table = tokens[0];
+        auto &referenced_obj_name = tokens[1];
+        auto &new_obj_being_referenced = (*type_maps[referenced_table])[referenced_obj_name];
+        new_obj_being_referenced.m_objsDependingOnMe.insert(obj_name);
+        SWSS_LOG_INFO("Obj %s.%s Field %s: Add reference to %s %s (now %s)",
+                      table.c_str(), obj_name.c_str(), field.c_str(),
+                      referenced_table.c_str(), referenced_obj_name.c_str(),
+                      to_string(new_obj_being_referenced.m_objsDependingOnMe.size()).c_str());
+    }
+}
+
+void Orch::removeObject(
+    type_map &type_maps,
+    const string &table,
+    const string &obj_name)
+{
+    auto &obj = (*type_maps[table])[obj_name];
+
+    for (auto field_ref : obj.m_objsReferencingByMe)
+    {
+        removeMeFromObjsReferencedByMe(type_maps, table, obj_name, field_ref.first, field_ref.second);
+    }
+
+    // Update the field store
+    (*type_maps[table]).erase(obj_name);
+    SWSS_LOG_INFO("Obj %s:%s is removed from store", table.c_str(), obj_name.c_str());
+}
+
+bool Orch::isObjectBeingReferenced(
+    type_map &type_maps,
+    const string &table,
+    const string &obj_name)
+{
+    return !(*type_maps[table])[obj_name].m_objsDependingOnMe.empty();
+}
+
+string Orch::objectReferenceInfo(
+    type_map &type_maps,
+    const string &table,
+    const string &obj_name)
+{
+    auto &objsDependingSet = (*type_maps[table])[obj_name].m_objsDependingOnMe;
+    for (auto &depObjName : objsDependingSet)
+    {
+        string hint = table + " " + obj_name + " one object: " + depObjName;
+        hint += " reference count: " + to_string(objsDependingSet.size());
+        return hint;
+    }
+    return "reference count: 0";
 }
 
 void Orch::doTask()
@@ -441,11 +532,11 @@ void Orch::logfileReopen()
 
     /*
      * On log rotate we will use the same file name, we are assuming that
-     * logrotate deamon move filename to filename.1 and we will create new
+     * logrotate daemon move filename to filename.1 and we will create new
      * empty file here.
      */
 
-    gRecordOfs.open(gRecordFile);
+    gRecordOfs.open(gRecordFile, std::ofstream::out | std::ofstream::app);
 
     if (!gRecordOfs.is_open())
     {
@@ -478,7 +569,8 @@ ref_resolve_status Orch::resolveFieldRefArray(
     type_map &type_maps,
     const string &field_name,
     KeyOpFieldsValuesTuple &tuple,
-    vector<sai_object_id_t> &sai_object_arr)
+    vector<sai_object_id_t> &sai_object_arr,
+    string &object_name_list)
 {
     // example: [BUFFER_PROFILE_TABLE:e_port.profile0],[BUFFER_PROFILE_TABLE:e_port.profile1]
     SWSS_LOG_ENTER();
@@ -511,9 +603,12 @@ ref_resolve_status Orch::resolveFieldRefArray(
                     SWSS_LOG_ERROR("Failed to parse profile reference:%s\n", list_items[ind].c_str());
                     return ref_resolve_status::not_resolved;
                 }
-                sai_object_id_t sai_obj = (*(type_maps[ref_type_name]))[object_name];
+                sai_object_id_t sai_obj = (*(type_maps[ref_type_name]))[object_name].m_saiObjectId;
                 SWSS_LOG_DEBUG("Resolved to sai_object:0x%" PRIx64 ", type:%s, name:%s", sai_obj, ref_type_name.c_str(), object_name.c_str());
                 sai_object_arr.push_back(sai_obj);
+                if (!object_name_list.empty())
+                    object_name_list += list_item_delimiter;
+                object_name_list += ref_type_name + delimiter + object_name;
             }
             count++;
         }
@@ -543,7 +638,7 @@ bool Orch::parseIndexRange(const string &input, sai_uint32_t &range_low, sai_uin
         range_high = (uint32_t)stoul(range_values[1]);
         if (range_low >= range_high)
         {
-            SWSS_LOG_ERROR("malformed index range in:%s. left value must be less than righ value.\n", input.c_str());
+            SWSS_LOG_ERROR("malformed index range in:%s. left value must be less than right value.\n", input.c_str());
             return false;
         }
     }
@@ -557,7 +652,7 @@ bool Orch::parseIndexRange(const string &input, sai_uint32_t &range_low, sai_uin
 
 void Orch::addConsumer(DBConnector *db, string tableName, int pri)
 {
-    if (db->getDbId() == CONFIG_DB || db->getDbId() == STATE_DB)
+    if (db->getDbId() == CONFIG_DB || db->getDbId() == STATE_DB || db->getDbId() == CHASSIS_APP_DB)
     {
         addExecutor(new Consumer(new SubscriberStateTable(db, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, pri), this, tableName));
     }
@@ -589,6 +684,156 @@ Executor *Orch::getExecutor(string executorName)
     }
 
     return NULL;
+}
+
+task_process_status Orch::handleSaiCreateStatus(sai_api_t api, sai_status_t status, void *context)
+{
+    /*
+     * This function aims to provide coarse handling of failures in sairedis create
+     * operation (i.e., notify users by throwing excepions when failures happen).
+     * Return value: task_success - Handled the status successfully. No need to retry this SAI operation.
+     *               task_need_retry - Cannot handle the status. Need to retry the SAI operation.
+     *               task_failed - Failed to handle the status but another attempt is unlikely to resolve the failure.
+     * TODO: 1. Add general handling logic for specific statuses (e.g., SAI_STATUS_ITEM_ALREADY_EXISTS)
+     *       2. Develop fine-grain failure handling mechanisms and replace this coarse handling
+     *          in each orch.
+     *       3. Take the type of sai api into consideration.
+     */
+    switch (api)
+    {
+        case SAI_API_FDB:
+            switch (status)
+            {
+                case SAI_STATUS_SUCCESS:
+                    SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiCreateStatus");
+                    return task_success;
+                case SAI_STATUS_ITEM_ALREADY_EXISTS:
+                    /*
+                     *  In FDB creation, there are scenarios where the hardware learns an FDB entry before orchagent.
+                     *  In such cases, the FDB SAI creation would report the status of SAI_STATUS_ITEM_ALREADY_EXISTS,
+                     *  and orchagent should ignore the error and treat it as entry was explicitly created.
+                     */
+                    return task_success;
+                default:
+                    SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
+                                sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+                    exit(EXIT_FAILURE);
+            }
+            break;
+        default:
+            switch (status)
+            {
+                case SAI_STATUS_SUCCESS:
+                    SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiCreateStatus");
+                    return task_success;
+                default:
+                    SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
+                                sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+                    exit(EXIT_FAILURE);
+            }
+    }
+    return task_need_retry;
+}
+
+task_process_status Orch::handleSaiSetStatus(sai_api_t api, sai_status_t status, void *context)
+{
+    /*
+     * This function aims to provide coarse handling of failures in sairedis set
+     * operation (i.e., notify users by throwing excepions when failures happen).
+     * Return value: task_success - Handled the status successfully. No need to retry this SAI operation.
+     *               task_need_retry - Cannot handle the status. Need to retry the SAI operation.
+     *               task_failed - Failed to handle the status but another attempt is unlikely to resolve the failure.
+     * TODO: 1. Add general handling logic for specific statuses
+     *       2. Develop fine-grain failure handling mechanisms and replace this coarse handling
+     *          in each orch.
+     *       3. Take the type of sai api into consideration.
+     */
+    switch (status)
+    {
+        case SAI_STATUS_SUCCESS:
+            SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiSetStatus");
+            return task_success;
+        default:
+            SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
+                        sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+            exit(EXIT_FAILURE);
+    }
+    return task_need_retry;
+}
+
+task_process_status Orch::handleSaiRemoveStatus(sai_api_t api, sai_status_t status, void *context)
+{
+    /*
+     * This function aims to provide coarse handling of failures in sairedis remove
+     * operation (i.e., notify users by throwing excepions when failures happen).
+     * Return value: task_success - Handled the status successfully. No need to retry this SAI operation.
+     *               task_need_retry - Cannot handle the status. Need to retry the SAI operation.
+     *               task_failed - Failed to handle the status but another attempt is unlikely to resolve the failure.
+     * TODO: 1. Add general handling logic for specific statuses (e.g., SAI_STATUS_OBJECT_IN_USE,
+     *          SAI_STATUS_ITEM_NOT_FOUND)
+     *       2. Develop fine-grain failure handling mechanisms and replace this coarse handling
+     *          in each orch.
+     *       3. Take the type of sai api into consideration.
+     */
+    switch (status)
+    {
+        case SAI_STATUS_SUCCESS:
+            SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiRemoveStatus");
+            return task_success;
+        default:
+            SWSS_LOG_ERROR("Encountered failure in remove operation, exiting orchagent, SAI API: %s, status: %s",
+                        sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+            exit(EXIT_FAILURE);
+    }
+    return task_need_retry;
+}
+
+task_process_status Orch::handleSaiGetStatus(sai_api_t api, sai_status_t status, void *context)
+{
+    /*
+     * This function aims to provide coarse handling of failures in sairedis get
+     * operation (i.e., notify users by throwing excepions when failures happen).
+     * Return value: task_success - Handled the status successfully. No need to retry this SAI operation.
+     *               task_need_retry - Cannot handle the status. Need to retry the SAI operation.
+     *               task_failed - Failed to handle the status but another attempt is unlikely to resolve the failure.
+     * TODO: 1. Add general handling logic for specific statuses
+     *       2. Develop fine-grain failure handling mechanisms and replace this coarse handling
+     *          in each orch.
+     *       3. Take the type of sai api into consideration.
+     */
+    switch (status)
+    {
+        case SAI_STATUS_SUCCESS:
+            SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiGetStatus");
+            return task_success;
+        case SAI_STATUS_NOT_IMPLEMENTED:
+            SWSS_LOG_ERROR("Encountered failure in get operation due to the function is not implemented, exiting orchagent, SAI API: %s",
+                        sai_serialize_api(api).c_str());
+            throw std::logic_error("SAI get function not implemented");
+        default:
+            SWSS_LOG_ERROR("Encountered failure in get operation, SAI API: %s, status: %s",
+                        sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+    }
+    return task_failed;
+}
+
+bool Orch::parseHandleSaiStatusFailure(task_process_status status)
+{
+    /*
+     * This function parses task process status from SAI failure handling function to whether a retry is needed.
+     * Return value: true - no retry is needed.
+     *               false - retry is needed.
+     */
+    switch (status)
+    {
+        case task_need_retry:
+            return false;
+        case task_failed:
+            return true;
+        default:
+            SWSS_LOG_WARN("task_process_status %d is not expected in parseHandleSaiStatusFailure", status);
+    }
+    return true;
 }
 
 void Orch2::doTask(Consumer &consumer)

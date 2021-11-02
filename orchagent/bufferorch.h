@@ -7,7 +7,6 @@
 #include "orch.h"
 #include "portsorch.h"
 #include "redisapi.h"
-#include "redisclient.h"
 
 #define BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "BUFFER_POOL_WATERMARK_STAT_COUNTER"
 
@@ -26,34 +25,37 @@ const string buffer_static_th_field_name    = "static_th";
 const string buffer_profile_field_name      = "profile";
 const string buffer_value_ingress           = "ingress";
 const string buffer_value_egress            = "egress";
+const string buffer_value_both              = "both";
 const string buffer_profile_list_field_name = "profile_list";
+const string buffer_headroom_type_field_name= "headroom_type";
 
 class BufferOrch : public Orch
 {
 public:
-    BufferOrch(DBConnector *db, vector<string> &tableNames);
+    BufferOrch(DBConnector *applDb, DBConnector *confDb, DBConnector *stateDb, vector<string> &tableNames);
     bool isPortReady(const std::string& port_name) const;
     static type_map m_buffer_type_maps;
     void generateBufferPoolWatermarkCounterIdList(void);
-    const object_map &getBufferPoolNameOidMap(void);
+    const object_reference_map &getBufferPoolNameOidMap(void);
 
 private:
-    typedef task_process_status (BufferOrch::*buffer_table_handler)(Consumer& consumer);
+    typedef task_process_status (BufferOrch::*buffer_table_handler)(KeyOpFieldsValuesTuple &tuple);
     typedef map<string, buffer_table_handler> buffer_table_handler_map;
     typedef pair<string, buffer_table_handler> buffer_handler_pair;
 
     void doTask() override;
     virtual void doTask(Consumer& consumer);
     void initTableHandlers();
-    void initBufferReadyLists(DBConnector *db);
-    void initBufferReadyList(Table& table);
+    void initBufferReadyLists(DBConnector *confDb, DBConnector *applDb);
+    void initBufferReadyList(Table& table, bool isConfigDb);
     void initFlexCounterGroupTable(void);
-    task_process_status processBufferPool(Consumer &consumer);
-    task_process_status processBufferProfile(Consumer &consumer);
-    task_process_status processQueue(Consumer &consumer);
-    task_process_status processPriorityGroup(Consumer &consumer);
-    task_process_status processIngressBufferProfileList(Consumer &consumer);
-    task_process_status processEgressBufferProfileList(Consumer &consumer);
+    void initBufferConstants();
+    task_process_status processBufferPool(KeyOpFieldsValuesTuple &tuple);
+    task_process_status processBufferProfile(KeyOpFieldsValuesTuple &tuple);
+    task_process_status processQueue(KeyOpFieldsValuesTuple &tuple);
+    task_process_status processPriorityGroup(KeyOpFieldsValuesTuple &tuple);
+    task_process_status processIngressBufferProfileList(KeyOpFieldsValuesTuple &tuple);
+    task_process_status processEgressBufferProfileList(KeyOpFieldsValuesTuple &tuple);
 
     buffer_table_handler_map m_bufferHandlerMap;
     std::unordered_map<std::string, bool> m_ready_list;
@@ -63,8 +65,9 @@ private:
     unique_ptr<ProducerTable> m_flexCounterGroupTable;
     unique_ptr<ProducerTable> m_flexCounterTable;
 
+    Table m_stateBufferMaximumValueTable;
+
     unique_ptr<DBConnector> m_countersDb;
-    RedisClient m_countersDbRedisClient;
 
     bool m_isBufferPoolWatermarkCounterIdListGenerated = false;
 };

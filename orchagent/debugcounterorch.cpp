@@ -163,7 +163,7 @@ void DebugCounterOrch::doTask(Consumer& consumer)
                 ++it;
                 break;
             case task_process_status::task_failed:
-                SWSS_LOG_ERROR("Failed to process debug counters '%s' task, error(s) occured during execution", op.c_str());
+                SWSS_LOG_ERROR("Failed to process debug counters '%s' task, error(s) occurred during execution", op.c_str());
                 consumer.m_toSync.erase(it++);
                 break;
             default:
@@ -183,6 +183,7 @@ void DebugCounterOrch::publishDropCounterCapabilities()
 {
     supported_ingress_drop_reasons = DropCounter::getSupportedDropReasons(SAI_DEBUG_COUNTER_ATTR_IN_DROP_REASON_LIST);
     supported_egress_drop_reasons  = DropCounter::getSupportedDropReasons(SAI_DEBUG_COUNTER_ATTR_OUT_DROP_REASON_LIST);
+    supported_counter_types        = DropCounter::getSupportedCounterTypes();
 
     string ingress_drop_reason_str = DropCounter::serializeSupportedDropReasons(supported_ingress_drop_reasons);
     string egress_drop_reason_str = DropCounter::serializeSupportedDropReasons(supported_egress_drop_reasons);
@@ -190,6 +191,12 @@ void DebugCounterOrch::publishDropCounterCapabilities()
     for (auto const &counter_type : DebugCounter::getDebugCounterTypeLookup())
     {
         string drop_reasons;
+
+        if (!supported_counter_types.count(counter_type.first))
+        {
+            continue;
+        }
+
         if (counter_type.first == PORT_INGRESS_DROPS || counter_type.first == SWITCH_INGRESS_DROPS)
         {
             drop_reasons = ingress_drop_reason_str;
@@ -212,8 +219,6 @@ void DebugCounterOrch::publishDropCounterCapabilities()
         {
             continue;
         }
-
-        supported_counter_types.emplace(counter_type.first);
 
         vector<FieldValueTuple> fieldValues;
         fieldValues.push_back(FieldValueTuple("count", num_counters));
@@ -255,7 +260,7 @@ task_process_status DebugCounterOrch::installDebugCounter(const string& counter_
     addFreeCounter(counter_name, counter_type);
     reconcileFreeDropCounters(counter_name);
 
-    SWSS_LOG_NOTICE("Succesfully created drop counter %s", counter_name.c_str());
+    SWSS_LOG_NOTICE("Successfully created drop counter %s", counter_name.c_str());
     return task_process_status::task_success;
 }
 
@@ -294,7 +299,7 @@ task_process_status DebugCounterOrch::uninstallDebugCounter(const string& counte
         m_counterNameToSwitchStatMap->hdel("", counter_name);
     }
 
-    SWSS_LOG_NOTICE("Succesfully deleted drop counter %s", counter_name.c_str());
+    SWSS_LOG_NOTICE("Successfully deleted drop counter %s", counter_name.c_str());
     return task_process_status::task_success;
 }
 
@@ -322,9 +327,9 @@ task_process_status DebugCounterOrch::addDropReason(const string& counter_name, 
         // are received before the create counter update, we keep track of reasons
         // we've seen in the free_drop_reasons table.
         addFreeDropReason(counter_name, drop_reason);
-        reconcileFreeDropCounters(counter_name);
+        SWSS_LOG_NOTICE("Added drop reason %s to drop counter %s", drop_reason.c_str(), counter_name.c_str());
 
-        SWSS_LOG_NOTICE("Succesfully created drop counter %s", counter_name.c_str());
+        reconcileFreeDropCounters(counter_name);
         return task_process_status::task_success;
     }
 
@@ -451,7 +456,7 @@ void DebugCounterOrch::reconcileFreeDropCounters(const string& counter_name)
         createDropCounter(counter_name, counter_it->second, reasons_it->second);
         free_drop_counters.erase(counter_it);
         free_drop_reasons.erase(reasons_it);
-        SWSS_LOG_NOTICE("Succesfully created new drop counter %s", counter_name.c_str());
+        SWSS_LOG_NOTICE("Successfully matched drop reasons to counter %s", counter_name.c_str());
     }
 }
 

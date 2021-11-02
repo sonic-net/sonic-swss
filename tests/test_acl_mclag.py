@@ -197,3 +197,9 @@ class TestMclagAcl(object):
         # check acl in asic db
         acl_table_id = self.get_acl_table_id(dvs)
         assert acl_table_id is None
+
+
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass

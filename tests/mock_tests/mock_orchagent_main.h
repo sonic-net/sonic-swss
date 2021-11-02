@@ -14,6 +14,9 @@
 #include "vnetorch.h"
 #include "vxlanorch.h"
 #include "policerorch.h"
+#include "fgnhgorch.h"
+#include "flexcounterorch.h"
+#include "directory.h"
 
 extern int gBatchSize;
 extern bool gSwssRecord;
@@ -33,6 +36,7 @@ extern sai_object_id_t gUnderlayIfId;
 extern SwitchOrch *gSwitchOrch;
 extern CrmOrch *gCrmOrch;
 extern PortsOrch *gPortsOrch;
+extern FgNhgOrch *gFgNhgOrch;
 extern RouteOrch *gRouteOrch;
 extern IntfsOrch *gIntfsOrch;
 extern NeighOrch *gNeighOrch;
@@ -40,6 +44,7 @@ extern FdbOrch *gFdbOrch;
 extern MirrorOrch *gMirrorOrch;
 extern BufferOrch *gBufferOrch;
 extern VRFOrch *gVrfOrch;
+extern Directory<Orch*> gDirectory;
 
 extern sai_acl_api_t *sai_acl_api;
 extern sai_switch_api_t *sai_switch_api;

@@ -49,20 +49,26 @@ map<string, sai_port_attr_t> qos_to_attr_map = {
     {tc_to_queue_field_name, SAI_PORT_ATTR_QOS_TC_TO_QUEUE_MAP},
     {tc_to_pg_map_field_name, SAI_PORT_ATTR_QOS_TC_TO_PRIORITY_GROUP_MAP},
     {pfc_to_pg_map_name, SAI_PORT_ATTR_QOS_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP},
-    {pfc_to_queue_map_name, SAI_PORT_ATTR_QOS_PFC_PRIORITY_TO_QUEUE_MAP}
+    {pfc_to_queue_map_name, SAI_PORT_ATTR_QOS_PFC_PRIORITY_TO_QUEUE_MAP},
+    {scheduler_field_name, SAI_PORT_ATTR_QOS_SCHEDULER_PROFILE_ID}
+};
+
+map<string, sai_meter_type_t> scheduler_meter_map = {
+    {"packets", SAI_METER_TYPE_PACKETS},
+    {"bytes", SAI_METER_TYPE_BYTES}
 };
 
 type_map QosOrch::m_qos_maps = {
-    {CFG_DSCP_TO_TC_MAP_TABLE_NAME, new object_map()},
-    {CFG_DOT1P_TO_TC_MAP_TABLE_NAME, new object_map()},
-    {CFG_TC_TO_QUEUE_MAP_TABLE_NAME, new object_map()},
-    {CFG_SCHEDULER_TABLE_NAME, new object_map()},
-    {CFG_WRED_PROFILE_TABLE_NAME, new object_map()},
-    {CFG_PORT_QOS_MAP_TABLE_NAME, new object_map()},
-    {CFG_QUEUE_TABLE_NAME, new object_map()},
-    {CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME, new object_map()},
-    {CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME, new object_map()},
-    {CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME, new object_map()}
+    {CFG_DSCP_TO_TC_MAP_TABLE_NAME, new object_reference_map()},
+    {CFG_DOT1P_TO_TC_MAP_TABLE_NAME, new object_reference_map()},
+    {CFG_TC_TO_QUEUE_MAP_TABLE_NAME, new object_reference_map()},
+    {CFG_SCHEDULER_TABLE_NAME, new object_reference_map()},
+    {CFG_WRED_PROFILE_TABLE_NAME, new object_reference_map()},
+    {CFG_PORT_QOS_MAP_TABLE_NAME, new object_reference_map()},
+    {CFG_QUEUE_TABLE_NAME, new object_reference_map()},
+    {CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME, new object_reference_map()},
+    {CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME, new object_reference_map()},
+    {CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME, new object_reference_map()}
 };
 
 task_process_status QosMapHandler::processWorkItem(Consumer& consumer)
@@ -78,7 +84,7 @@ task_process_status QosMapHandler::processWorkItem(Consumer& consumer)
 
     if (QosOrch::getTypeMap()[qos_map_type_name]->find(qos_object_name) != QosOrch::getTypeMap()[qos_map_type_name]->end())
     {
-        sai_object = (*(QosOrch::getTypeMap()[qos_map_type_name]))[qos_object_name];
+        sai_object = (*(QosOrch::getTypeMap()[qos_map_type_name]))[qos_object_name].m_saiObjectId;
     }
     if (op == SET_COMMAND)
     {
@@ -106,7 +112,7 @@ task_process_status QosMapHandler::processWorkItem(Consumer& consumer)
                 freeAttribResources(attributes);
                 return task_process_status::task_failed;
             }
-            (*(QosOrch::getTypeMap()[qos_map_type_name]))[qos_object_name] = sai_object;
+            (*(QosOrch::getTypeMap()[qos_map_type_name]))[qos_object_name].m_saiObjectId = sai_object;
             SWSS_LOG_NOTICE("Created [%s:%s]", qos_map_type_name.c_str(), qos_object_name.c_str());
         }
         freeAttribResources(attributes);
@@ -226,7 +232,7 @@ bool Dot1pToTcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple 
     sai_qos_map_list_t dot1p_map_list;
 
     // Allocated resources are freed in freeAttribResources() call
-    dot1p_map_list.list = new sai_qos_map_t[kfvFieldsValues(tuple).size()];
+    dot1p_map_list.list = new sai_qos_map_t[kfvFieldsValues(tuple).size()]();
     int i = 0;
     for (const auto &fv : kfvFieldsValues(tuple))
     {
@@ -462,7 +468,7 @@ bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tupl
             attribs.push_back(attr);
         }
         else {
-            SWSS_LOG_ERROR("Unkonwn wred profile field:%s", fvField(*i).c_str());
+            SWSS_LOG_ERROR("Unknown wred profile field:%s", fvField(*i).c_str());
             return false;
         }
     }
@@ -768,7 +774,7 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
 
     if (m_qos_maps[qos_map_type_name]->find(qos_object_name) != m_qos_maps[qos_map_type_name]->end())
     {
-        sai_object = (*(m_qos_maps[qos_map_type_name]))[qos_object_name];
+        sai_object = (*(m_qos_maps[qos_map_type_name]))[qos_object_name].m_saiObjectId;
         if (sai_object == SAI_NULL_OBJECT_ID)
         {
             SWSS_LOG_ERROR("Error sai_object must exist for key %s", qos_object_name.c_str());
@@ -810,31 +816,38 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
             }
             else if (fvField(*i) == scheduler_priority_field_name)
             {
-                // TODO: The meaning is to be able to adjus priority of the given scheduler group.
+                // TODO: The meaning is to be able to adjust priority of the given scheduler group.
                 // However currently SAI model does not provide such ability.
+            }
+            else if (fvField(*i) == scheduler_meter_type_field_name)
+            {
+                sai_meter_type_t meter_value = scheduler_meter_map.at(fvValue(*i));
+                attr.id = SAI_SCHEDULER_ATTR_METER_TYPE;
+                attr.value.s32 = meter_value;
+                sai_attr_list.push_back(attr);
             }
             else if (fvField(*i) == scheduler_min_bandwidth_rate_field_name)
             {
                 attr.id = SAI_SCHEDULER_ATTR_MIN_BANDWIDTH_RATE;
-                attr.value.u64 = stoul(fvValue(*i));
+                attr.value.u64 = stoull(fvValue(*i));
                 sai_attr_list.push_back(attr);
             }
             else if (fvField(*i) == scheduler_min_bandwidth_burst_rate_field_name)
             {
                 attr.id = SAI_SCHEDULER_ATTR_MIN_BANDWIDTH_BURST_RATE;
-                attr.value.u64 = stoul(fvValue(*i));
+                attr.value.u64 = stoull(fvValue(*i));
                 sai_attr_list.push_back(attr);
             }
             else if (fvField(*i) == scheduler_max_bandwidth_rate_field_name)
             {
                 attr.id = SAI_SCHEDULER_ATTR_MAX_BANDWIDTH_RATE;
-                attr.value.u64 = stoul(fvValue(*i));
+                attr.value.u64 = stoull(fvValue(*i));
                 sai_attr_list.push_back(attr);
             }
             else if (fvField(*i) == scheduler_max_bandwidth_burst_rate_field_name)
             {
                 attr.id = SAI_SCHEDULER_ATTR_MAX_BANDWIDTH_BURST_RATE;
-                attr.value.u64 = stoul(fvValue(*i));
+                attr.value.u64 = stoull(fvValue(*i));
                 sai_attr_list.push_back(attr);
             }
             else {
@@ -851,7 +864,11 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
                 if (sai_status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("fail to set scheduler attribute, id:%d", attr.id);
-                    return task_process_status::task_failed;
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_SCHEDULER, sai_status);
+                    if (handle_status != task_process_status::task_success)
+                    {
+                        return handle_status;
+                    }
                 }
             }
         }
@@ -862,10 +879,14 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
             {
                 SWSS_LOG_ERROR("Failed to create scheduler profile [%s:%s], rv:%d",
                                qos_map_type_name.c_str(), qos_object_name.c_str(), sai_status);
-                return task_process_status::task_failed;
+                task_process_status handle_status = handleSaiCreateStatus(SAI_API_SCHEDULER, sai_status);
+                if (handle_status != task_process_status::task_success)
+                {
+                    return handle_status;
+                }
             }
             SWSS_LOG_NOTICE("Created [%s:%s]", qos_map_type_name.c_str(), qos_object_name.c_str());
-            (*(m_qos_maps[qos_map_type_name]))[qos_object_name] = sai_object;
+            (*(m_qos_maps[qos_map_type_name]))[qos_object_name].m_saiObjectId = sai_object;
         }
     }
     else if (op == DEL_COMMAND)
@@ -879,7 +900,11 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
         if (SAI_STATUS_SUCCESS != sai_status)
         {
             SWSS_LOG_ERROR("Failed to remove scheduler profile. db name:%s sai object:%" PRIx64, qos_object_name.c_str(), sai_object);
-            return task_process_status::task_failed;
+            task_process_status handle_status = handleSaiRemoveStatus(SAI_API_SCHEDULER, sai_status);
+            if (handle_status != task_process_status::task_success)
+            {
+                return handle_status;
+            }
         }
         auto it_to_delete = (m_qos_maps[qos_map_type_name])->find(qos_object_name);
         (m_qos_maps[qos_map_type_name])->erase(it_to_delete);
@@ -908,7 +933,11 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
         if (SAI_STATUS_SUCCESS != sai_status)
         {
             SWSS_LOG_ERROR("Failed to get number of scheduler groups for port:%s", port.m_alias.c_str());
-            return SAI_NULL_OBJECT_ID;
+            task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, sai_status);
+            if (handle_status != task_process_status::task_success)
+            {
+                return SAI_NULL_OBJECT_ID;
+            }
         }
 
         /* Get total groups list on the port */
@@ -922,7 +951,11 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
         if (SAI_STATUS_SUCCESS != sai_status)
         {
             SWSS_LOG_ERROR("Failed to get scheduler group list for port:%s", port.m_alias.c_str());
-            return SAI_NULL_OBJECT_ID;
+            task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, sai_status);
+            if (handle_status != task_process_status::task_success)
+            {
+                return SAI_NULL_OBJECT_ID;
+            }
         }
 
         m_scheduler_group_port_info[port.m_port_id] = {
@@ -944,7 +977,11 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
             if (SAI_STATUS_SUCCESS != sai_status)
             {
                 SWSS_LOG_ERROR("Failed to get child count for scheduler group:0x%" PRIx64 " of port:%s", group_id, port.m_alias.c_str());
-                return SAI_NULL_OBJECT_ID;
+                task_process_status handle_status = handleSaiGetStatus(SAI_API_SCHEDULER_GROUP, sai_status);
+                if (handle_status != task_process_status::task_success)
+                {
+                    return SAI_NULL_OBJECT_ID;
+                }
             }
 
             uint32_t child_count = attr.value.u32;
@@ -963,7 +1000,11 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
             if (SAI_STATUS_SUCCESS != sai_status)
             {
                 SWSS_LOG_ERROR("Failed to get child list for scheduler group:0x%" PRIx64 " of port:%s", group_id, port.m_alias.c_str());
-                return SAI_NULL_OBJECT_ID;
+                task_process_status handle_status = handleSaiGetStatus(SAI_API_SCHEDULER_GROUP, sai_status);
+                if (handle_status != task_process_status::task_success)
+                {
+                    return SAI_NULL_OBJECT_ID;
+                }
             }
 
             m_scheduler_group_port_info[port.m_port_id].child_groups[ii] = std::move(child_groups);
@@ -1011,7 +1052,11 @@ bool QosOrch::applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, 
     if (SAI_STATUS_SUCCESS != sai_status)
     {
         SWSS_LOG_ERROR("Failed applying scheduler profile:0x%" PRIx64 " to scheduler group:0x%" PRIx64 ", port:%s", scheduler_profile_id, group_id, port.m_alias.c_str());
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_SCHEDULER_GROUP, sai_status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_DEBUG("port:%s, scheduler_profile_id:0x%" PRIx64 " applied to scheduler group:0x%" PRIx64, port.m_alias.c_str(), scheduler_profile_id, group_id);
@@ -1039,7 +1084,11 @@ bool QosOrch::applyWredProfileToQueue(Port &port, size_t queue_ind, sai_object_i
     if (sai_status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set queue attribute:%d", sai_status);
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_QUEUE, sai_status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     return true;
 }
@@ -1088,7 +1137,8 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer)
             queue_ind = ind;
             SWSS_LOG_DEBUG("processing queue:%zd", queue_ind);
             sai_object_id_t sai_scheduler_profile;
-            resolve_result = resolveFieldRefValue(m_qos_maps, scheduler_field_name, tuple, sai_scheduler_profile);
+            string scheduler_profile_name;
+            resolve_result = resolveFieldRefValue(m_qos_maps, scheduler_field_name, tuple, sai_scheduler_profile, scheduler_profile_name);
             if (ref_resolve_status::success == resolve_result)
             {
                 if (op == SET_COMMAND)
@@ -1124,7 +1174,8 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer)
             }
 
             sai_object_id_t sai_wred_profile;
-            resolve_result = resolveFieldRefValue(m_qos_maps, wred_profile_field_name, tuple, sai_wred_profile);
+            string wred_profile_name;
+            resolve_result = resolveFieldRefValue(m_qos_maps, wred_profile_field_name, tuple, sai_wred_profile, wred_profile_name);
             if (ref_resolve_status::success == resolve_result)
             {
                 if (op == SET_COMMAND)
@@ -1191,7 +1242,11 @@ bool QosOrch::applyMapToPort(Port &port, sai_attr_id_t attr_id, sai_object_id_t 
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed setting sai object:%" PRIx64 " for port:%s, status:%d", map_id, port.m_alias.c_str(), status);
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     return true;
 }
@@ -1206,8 +1261,9 @@ task_process_status QosOrch::ResolveMapAndApplyToPort(
     SWSS_LOG_ENTER();
 
     sai_object_id_t sai_object = SAI_NULL_OBJECT_ID;
+    string object_name;
     bool result;
-    ref_resolve_status resolve_result = resolveFieldRefValue(m_qos_maps, field_name, tuple, sai_object);
+    ref_resolve_status resolve_result = resolveFieldRefValue(m_qos_maps, field_name, tuple, sai_object, object_name);
     if (ref_resolve_status::success == resolve_result)
     {
         if (op == SET_COMMAND)
@@ -1261,8 +1317,9 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
         if (qos_to_attr_map.find(fvField(*it)) != qos_to_attr_map.end())
         {
             sai_object_id_t id;
+            string object_name;
             string map_type_name = fvField(*it), map_name = fvValue(*it);
-            ref_resolve_status status = resolveFieldRefValue(m_qos_maps, map_type_name, tuple, id);
+            ref_resolve_status status = resolveFieldRefValue(m_qos_maps, map_type_name, tuple, id, object_name);
 
             if (status != ref_resolve_status::success)
             {
@@ -1309,7 +1366,11 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
             {
                 SWSS_LOG_ERROR("Failed to apply %s to port %s, rv:%d",
                                it->second.first.c_str(), port_name.c_str(), status);
-                return task_process_status::task_invalid_entry;
+                task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+                if (handle_status != task_process_status::task_success)
+                {
+                    return task_process_status::task_invalid_entry;
+                }
             }
             SWSS_LOG_INFO("Applied %s to port %s", it->second.first.c_str(), port_name.c_str());
         }

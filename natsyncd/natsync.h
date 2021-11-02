@@ -19,6 +19,7 @@
 
 #include "dbconnector.h"
 #include "producerstatetable.h"
+#include "notificationproducer.h"
 #include "netmsg.h"
 #include "warmRestartAssist.h"
 #include "ipaddress.h"
@@ -43,6 +44,7 @@ class NatSync : public NetMsg
 {
 public:
     NatSync(RedisPipeline *pipelineAppDB, DBConnector *appDb, DBConnector *stateDb, NfNetlink *nfnl);
+    ~NatSync();
 
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
 
@@ -63,6 +65,8 @@ private:
     bool        matchingSnaptEntryExists(const naptEntry &entry);
     bool        matchingDnaptEntryExists(const naptEntry &entry);
     int         addNatEntry(struct nfnl_ct *ct, struct naptEntry &entry, bool addFlag);
+
+    std::shared_ptr<swss::NotificationProducer> setTimeoutNotifier;
 
     ProducerStateTable m_natTable;
     ProducerStateTable m_naptTable;

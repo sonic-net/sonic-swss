@@ -214,6 +214,8 @@ task_process_status PolicerOrch::handlePolicerTable(Consumer& consumer)
         {
             auto field = to_upper(fvField(*i));
             auto value = to_upper(fvValue(*i));
+            // Mark the operation as an 'update', if the policer exists.
+            bool update = m_syncdPolicers.find(key) != m_syncdPolicers.end();
 
             SWSS_LOG_DEBUG("attribute: %s value: %s", field.c_str(), value.c_str());
 

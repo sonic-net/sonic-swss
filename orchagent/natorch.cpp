@@ -26,7 +26,9 @@
 #include "natorch.h"
 #include "notifier.h"
 #include "sai_serialize.h"
+#include "crmorch.h"
 
+extern CrmOrch            *gCrmOrch;
 extern PortsOrch          *gPortsOrch;
 extern sai_object_id_t     gSwitchId;
 extern sai_switch_api_t   *sai_switch_api;
@@ -51,8 +53,6 @@ NatOrch::NatOrch(DBConnector *appDb, DBConnector *stateDb, vector<table_name_wit
          m_countersTwiceNatTable(&m_countersDb, COUNTERS_TWICE_NAT_TABLE),
          m_countersTwiceNaptTable(&m_countersDb, COUNTERS_TWICE_NAPT_TABLE),
          m_countersGlobalNatTable(&m_countersDb, COUNTERS_GLOBAL_NAT_TABLE),
-         m_stateWarmRestartEnableTable(stateDb, STATE_WARM_RESTART_ENABLE_TABLE_NAME),
-         m_stateWarmRestartTable(stateDb, STATE_WARM_RESTART_TABLE_NAME),
          m_natQueryTable(appDb, APP_NAT_TABLE_NAME),
          m_naptQueryTable(appDb, APP_NAPT_TABLE_NAME),
          m_twiceNatQueryTable(appDb, APP_NAT_TWICE_TABLE_NAME),
@@ -80,8 +80,8 @@ NatOrch::NatOrch(DBConnector *appDb, DBConnector *stateDb, vector<table_name_wit
 
     /* Add NAT notifications support from APPL_DB */
     SWSS_LOG_INFO("Add NAT notifications support from APPL_DB ");
-    m_flushNotificationsConsumer = new NotificationConsumer(appDb, "FLUSHNATREQUEST");
-    auto flushNotifier = new Notifier(m_flushNotificationsConsumer, this, "FLUSHNATREQUEST");
+    m_flushNotificationsConsumer = new NotificationConsumer(appDb, "FLUSHNATSTATISTICS");
+    auto flushNotifier = new Notifier(m_flushNotificationsConsumer, this, "FLUSHNATSTATISTICS");
     Orch::addExecutor(flushNotifier);
 
     SWSS_LOG_INFO("Add REDIS DB cleanup notification support");
@@ -95,6 +95,13 @@ NatOrch::NatOrch(DBConnector *appDb, DBConnector *stateDb, vector<table_name_wit
     m_natQueryTimer = new SelectableTimer(interval);
     auto executor   = new ExecutableTimer(m_natQueryTimer, this, "NAT_HITBIT_N_CNTRS_QUERY_TIMER");
     Orch::addExecutor(executor);
+
+    /* Start the timer to send notifications to set conntrack entry every 1 day */
+    SWSS_LOG_INFO("Start the Timeout Timer ");
+    auto timeout_interval      = timespec { .tv_sec = NAT_CONNTRACK_TIMEOUT_PERIOD, .tv_nsec = 0 };
+    m_natTimeoutTimer = new SelectableTimer(timeout_interval);
+    auto timeout_executor   = new ExecutableTimer(m_natTimeoutTimer, this, "NAT_CONNTRACK_TIMEOUT_TIMER");
+    Orch::addExecutor(timeout_executor);
 
     /* Get the Maximum supported SNAT entries */
     SWSS_LOG_INFO("Get the Maximum supported SNAT entries");
@@ -127,6 +134,7 @@ NatOrch::NatOrch(DBConnector *appDb, DBConnector *stateDb, vector<table_name_wit
     values.push_back(s);
     m_countersGlobalNatTable.set(key, values);
 
+    setTimeoutNotifier = std::make_shared<NotificationProducer>(appDb, "SETTIMEOUTNAT");
 #ifdef DEBUG_FRAMEWORK
     /*Register with debug framework*/
     this->m_dbgCompName = "natorch";
@@ -731,7 +739,7 @@ bool NatOrch::addHwDnatEntry(const IpAddress &ip_address)
 {
     uint32_t        attr_count;
     sai_nat_entry_t dnat_entry;
-    sai_attribute_t nat_entry_attr[5];
+    sai_attribute_t nat_entry_attr[4];
     sai_status_t    status;
 
     SWSS_LOG_ENTER();
@@ -747,23 +755,22 @@ bool NatOrch::addHwDnatEntry(const IpAddress &ip_address)
 
     memset(nat_entry_attr, 0, sizeof(nat_entry_attr));
 
-    nat_entry_attr[0].id = SAI_NAT_ENTRY_ATTR_NAT_TYPE;
-    nat_entry_attr[0].value.u32 = SAI_NAT_TYPE_DESTINATION_NAT;
-    nat_entry_attr[1].id = SAI_NAT_ENTRY_ATTR_DST_IP;
-    nat_entry_attr[1].value.u32 = entry.translated_ip.getV4Addr();
-    nat_entry_attr[2].id = SAI_NAT_ENTRY_ATTR_DST_IP_MASK;
-    nat_entry_attr[2].value.u32 = 0xffffffff;
-    nat_entry_attr[3].id = SAI_NAT_ENTRY_ATTR_ENABLE_PACKET_COUNT;
+    nat_entry_attr[0].id = SAI_NAT_ENTRY_ATTR_DST_IP;
+    nat_entry_attr[0].value.u32 = entry.translated_ip.getV4Addr();
+    nat_entry_attr[1].id = SAI_NAT_ENTRY_ATTR_DST_IP_MASK;
+    nat_entry_attr[1].value.u32 = 0xffffffff;
+    nat_entry_attr[2].id = SAI_NAT_ENTRY_ATTR_ENABLE_PACKET_COUNT;
+    nat_entry_attr[2].value.booldata = true;
+    nat_entry_attr[3].id = SAI_NAT_ENTRY_ATTR_ENABLE_BYTE_COUNT;
     nat_entry_attr[3].value.booldata = true;
-    nat_entry_attr[4].id = SAI_NAT_ENTRY_ATTR_ENABLE_BYTE_COUNT;
-    nat_entry_attr[4].value.booldata = true;
 
-    attr_count = 5;
+    attr_count = 4;
 
     memset(&dnat_entry, 0, sizeof(dnat_entry));
 
     dnat_entry.vr_id = gVirtualRouterId;
     dnat_entry.switch_id = gSwitchId;
+    dnat_entry.nat_type = SAI_NAT_TYPE_DESTINATION_NAT;
     dnat_entry.data.key.dst_ip = ip_address.getV4Addr();
     dnat_entry.data.mask.dst_ip = 0xffffffff;
 
@@ -773,7 +780,11 @@ bool NatOrch::addHwDnatEntry(const IpAddress &ip_address)
         SWSS_LOG_ERROR("Failed to create %s DNAT NAT entry with ip %s and it's translated ip %s",
                        entry.entry_type.c_str(), ip_address.to_string().c_str(), entry.translated_ip.to_string().c_str());
 
-        return false;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NAT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Created %s DNAT NAT entry with ip %s and it's translated ip %s",
@@ -781,6 +792,7 @@ bool NatOrch::addHwDnatEntry(const IpAddress &ip_address)
 
     updateNatCounters(ip_address, 0, 0);
     m_natEntries[ip_address].addedToHw = true; 
+    gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_DNAT_ENTRY);
 
     if (entry.entry_type == "static")
     {
@@ -804,7 +816,7 @@ bool NatOrch::addHwDnaptEntry(const NaptEntryKey &key)
 {
     uint32_t        attr_count;
     sai_nat_entry_t dnat_entry;
-    sai_attribute_t nat_entry_attr[6];
+    sai_attribute_t nat_entry_attr[5];
     uint8_t         ip_protocol = ((key.prototype == "TCP") ? IPPROTO_TCP : IPPROTO_UDP);
     sai_status_t    status;
 
@@ -823,25 +835,24 @@ bool NatOrch::addHwDnaptEntry(const NaptEntryKey &key)
 
     memset(nat_entry_attr, 0, sizeof(nat_entry_attr));
 
-    nat_entry_attr[0].id = SAI_NAT_ENTRY_ATTR_NAT_TYPE;
-    nat_entry_attr[0].value.u32 = SAI_NAT_TYPE_DESTINATION_NAT;
-    nat_entry_attr[1].id = SAI_NAT_ENTRY_ATTR_DST_IP;
-    nat_entry_attr[2].id = SAI_NAT_ENTRY_ATTR_DST_IP_MASK;
-    nat_entry_attr[3].id = SAI_NAT_ENTRY_ATTR_L4_DST_PORT;
-    nat_entry_attr[1].value.u32 = entry.translated_ip.getV4Addr();
-    nat_entry_attr[2].value.u32 = 0xffffffff;
-    nat_entry_attr[3].value.u16 = (uint16_t)(entry.translated_l4_port);
-    nat_entry_attr[4].id = SAI_NAT_ENTRY_ATTR_ENABLE_PACKET_COUNT;
+    nat_entry_attr[0].id = SAI_NAT_ENTRY_ATTR_DST_IP;
+    nat_entry_attr[1].id = SAI_NAT_ENTRY_ATTR_DST_IP_MASK;
+    nat_entry_attr[2].id = SAI_NAT_ENTRY_ATTR_L4_DST_PORT;
+    nat_entry_attr[0].value.u32 = entry.translated_ip.getV4Addr();
+    nat_entry_attr[1].value.u32 = 0xffffffff;
+    nat_entry_attr[2].value.u16 = (uint16_t)(entry.translated_l4_port);
+    nat_entry_attr[3].id = SAI_NAT_ENTRY_ATTR_ENABLE_PACKET_COUNT;
+    nat_entry_attr[3].value.booldata = true;
+    nat_entry_attr[4].id = SAI_NAT_ENTRY_ATTR_ENABLE_BYTE_COUNT;
     nat_entry_attr[4].value.booldata = true;
-    nat_entry_attr[5].id = SAI_NAT_ENTRY_ATTR_ENABLE_BYTE_COUNT;
-    nat_entry_attr[5].value.booldata = true;
 
-    attr_count = 6;
+    attr_count = 5;
 
     memset(&dnat_entry, 0, sizeof(dnat_entry));
 
     dnat_entry.vr_id = gVirtualRouterId;
     dnat_entry.switch_id = gSwitchId;
+    dnat_entry.nat_type = SAI_NAT_TYPE_DESTINATION_NAT;
     dnat_entry.data.key.dst_ip = key.ip_address.getV4Addr();
     dnat_entry.data.key.l4_dst_port = (uint16_t)(key.l4_port);
     dnat_entry.data.mask.dst_ip = 0xffffffff;
@@ -855,7 +866,11 @@ bool NatOrch::addHwDnaptEntry(const NaptEntryKey &key)
         SWSS_LOG_ERROR("Failed to create %s DNAT NAPT entry with ip %s, port %d, prototype %s and it's translated ip %s, translated port %d",
                        entry.entry_type.c_str(), key.ip_address.to_string().c_str(), key.l4_port, key.prototype.c_str(),
                        entry.translated_ip.to_string().c_str(), entry.translated_l4_port);
-        return false;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NAT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Created %s DNAT NAPT entry with ip %s, port %d, prototype %s and it's translated ip %s, translated port %d",
@@ -864,6 +879,7 @@ bool NatOrch::addHwDnaptEntry(const NaptEntryKey &key)
 
     m_naptEntries[key].addedToHw = true;
     updateNaptCounters(key.prototype.c_str(), key.ip_address, key.l4_port, 0, 0);
+    gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_DNAT_ENTRY);
 
     if (entry.entry_type == "static")
     {
@@ -914,6 +930,7 @@ bool NatOrch::removeHwDnatEntry(const IpAddress &dstIp)
 
     dnat_entry.vr_id = gVirtualRouterId;
     dnat_entry.switch_id = gSwitchId;
+    dnat_entry.nat_type = SAI_NAT_TYPE_DESTINATION_NAT;
     dnat_entry.data.key.dst_ip = dstIp.getV4Addr();
     dnat_entry.data.mask.dst_ip = 0xffffffff;
 
@@ -923,13 +940,18 @@ bool NatOrch::removeHwDnatEntry(const IpAddress &dstIp)
         SWSS_LOG_INFO("Failed to remove %s DNAT NAT entry with ip %s and it's translated ip %s",
                       entry.entry_type.c_str(), dstIp.to_string().c_str(), entry.translated_ip.to_string().c_str());
 
-        return false;
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NAT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Removed %s DNAT NAT entry with ip %s and it's translated ip %s",
                     entry.entry_type.c_str(), dstIp.to_string().c_str(), entry.translated_ip.to_string().c_str());
   
     deleteNatCounters(dstIp);
+    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_DNAT_ENTRY);
 
     if (entry.entry_type == "static")
     {
@@ -996,6 +1018,7 @@ bool NatOrch::removeHwTwiceNatEntry(const TwiceNatEntryKey &key)
 
     dbl_nat_entry.vr_id = gVirtualRouterId;
     dbl_nat_entry.switch_id = gSwitchId;
+    dbl_nat_entry.nat_type = SAI_NAT_TYPE_DOUBLE_NAT;
     dbl_nat_entry.data.key.src_ip = key.src_ip.getV4Addr();
     dbl_nat_entry.data.mask.src_ip = 0xffffffff;
     dbl_nat_entry.data.key.dst_ip = key.dst_ip.getV4Addr();
@@ -1008,7 +1031,11 @@ bool NatOrch::removeHwTwiceNatEntry(const TwiceNatEntryKey &key)
         SWSS_LOG_INFO("Failed to remove Twice NAT entry with src-ip %s, dst-ip %s",
                       key.src_ip.to_string().c_str(), key.dst_ip.to_string().c_str());
 
-        return false;
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NAT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     SWSS_LOG_NOTICE("Removed Twice NAT entry with src-ip %s, dst-ip %s",
                     key.src_ip.to_string().c_str(), key.dst_ip.to_string().c_str());
@@ -1088,6 +1115,7 @@ bool NatOrch::removeHwDnaptEntry(const NaptEntryKey &key)
 
     dnat_entry.vr_id = gVirtualRouterId;
     dnat_entry.switch_id = gSwitchId;
+    dnat_entry.nat_type = SAI_NAT_TYPE_DESTINATION_NAT;
     dnat_entry.data.key.dst_ip = key.ip_address.getV4Addr();
     dnat_entry.data.key.l4_dst_port = (uint16_t)(key.l4_port);
     dnat_entry.data.mask.dst_ip = 0xffffffff;
@@ -1103,7 +1131,11 @@ bool NatOrch::removeHwDnaptEntry(const NaptEntryKey &key)
                       entry.translated_ip.to_string().c_str(), entry.translated_l4_port);
 
 
-        return false;
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NAT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Removed %s DNAT NAPT entry with ip %s, port %d, prototype %s and it's translated ip %s, translated port %d",
@@ -1111,6 +1143,7 @@ bool NatOrch::removeHwDnaptEntry(const NaptEntryKey &key)
                     entry.translated_ip.to_string().c_str(), entry.translated_l4_port);
 
     deleteNaptCounters(key.prototype.c_str(), key.ip_address, key.l4_port);
+    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_DNAT_ENTRY);
 
     if (entry.entry_type == "static")
     {
@@ -1180,6 +1213,7 @@ bool NatOrch::removeHwTwiceNaptEntry(const TwiceNaptEntryKey &key)
 
     dbl_nat_entry.vr_id = gVirtualRouterId;
     dbl_nat_entry.switch_id = gSwitchId;
+    dbl_nat_entry.nat_type = SAI_NAT_TYPE_DOUBLE_NAT;
     dbl_nat_entry.data.key.src_ip = key.src_ip.getV4Addr();
     dbl_nat_entry.data.mask.src_ip = 0xffffffff;
     dbl_nat_entry.data.key.l4_src_port = (uint16_t)(key.src_l4_port);
@@ -1197,7 +1231,11 @@ bool NatOrch::removeHwTwiceNaptEntry(const TwiceNaptEntryKey &key)
         SWSS_LOG_INFO("Failed to remove Twice NAPT entry with prototype %s, src-ip %s, src port %d, dst-ip %s, dst port %d",
                        key.prototype.c_str(), key.src_ip.to_string().c_str(), key.src_l4_port,
                        key.dst_ip.to_string().c_str(), key.dst_l4_port);
-        return false;
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NAT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Removed Twice NAPT entry with prototype %s, src-ip %s, src port %d, dst-ip %s, dst port %d",
@@ -1250,33 +1288,38 @@ bool NatOrch::addHwSnatEntry(const IpAddress &ip_address)
 {
     uint32_t        attr_count;
     sai_nat_entry_t snat_entry;
-    sai_attribute_t nat_entry_attr[5];
+    sai_attribute_t nat_entry_attr[4];
     sai_status_t    status;
+    struct timespec  time_now;
 
     SWSS_LOG_ENTER();
     SWSS_LOG_INFO("Create SNAT entry for ip %s", ip_address.to_string().c_str());
+
+    if (clock_gettime (CLOCK_MONOTONIC, &time_now) < 0)
+    {
+        return false;
+    }
 
     NatEntryValue entry = m_natEntries[ip_address];
 
     memset(nat_entry_attr, 0, sizeof(nat_entry_attr));
 
-    nat_entry_attr[0].id = SAI_NAT_ENTRY_ATTR_NAT_TYPE;
-    nat_entry_attr[0].value.u32 = SAI_NAT_TYPE_SOURCE_NAT;
-    nat_entry_attr[1].id = SAI_NAT_ENTRY_ATTR_SRC_IP;
-    nat_entry_attr[1].value.u32 = entry.translated_ip.getV4Addr();
-    nat_entry_attr[2].id = SAI_NAT_ENTRY_ATTR_SRC_IP_MASK;
-    nat_entry_attr[2].value.u32 = 0xffffffff;
-    nat_entry_attr[3].id = SAI_NAT_ENTRY_ATTR_ENABLE_PACKET_COUNT;
+    nat_entry_attr[0].id = SAI_NAT_ENTRY_ATTR_SRC_IP;
+    nat_entry_attr[0].value.u32 = entry.translated_ip.getV4Addr();
+    nat_entry_attr[1].id = SAI_NAT_ENTRY_ATTR_SRC_IP_MASK;
+    nat_entry_attr[1].value.u32 = 0xffffffff;
+    nat_entry_attr[2].id = SAI_NAT_ENTRY_ATTR_ENABLE_PACKET_COUNT;
+    nat_entry_attr[2].value.booldata = true;
+    nat_entry_attr[3].id = SAI_NAT_ENTRY_ATTR_ENABLE_BYTE_COUNT;
     nat_entry_attr[3].value.booldata = true;
-    nat_entry_attr[4].id = SAI_NAT_ENTRY_ATTR_ENABLE_BYTE_COUNT;
-    nat_entry_attr[4].value.booldata = true;
 
-    attr_count = 5;
+    attr_count = 4;
 
     memset(&snat_entry, 0, sizeof(snat_entry));
 
     snat_entry.vr_id = gVirtualRouterId;
     snat_entry.switch_id = gSwitchId;
+    snat_entry.nat_type = SAI_NAT_TYPE_SOURCE_NAT;
     snat_entry.data.key.src_ip = ip_address.getV4Addr();
     snat_entry.data.mask.src_ip = 0xffffffff;
 
@@ -1286,7 +1329,11 @@ bool NatOrch::addHwSnatEntry(const IpAddress &ip_address)
         SWSS_LOG_ERROR("Failed to create %s SNAT NAT entry with ip %s and it's translated ip %s",
                        entry.entry_type.c_str(), ip_address.to_string().c_str(), entry.translated_ip.to_string().c_str());
 
-        return true;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NAT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Created %s SNAT NAT entry with ip %s and it's translated ip %s",
@@ -1294,6 +1341,8 @@ bool NatOrch::addHwSnatEntry(const IpAddress &ip_address)
 
     updateNatCounters(ip_address, 0, 0);
     m_natEntries[ip_address].addedToHw = true;
+    m_natEntries[ip_address].activeTime = time_now.tv_sec;
+    gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_SNAT_ENTRY);
 
     if (entry.entry_type == "static")
     {
@@ -1315,38 +1364,43 @@ bool NatOrch::addHwTwiceNatEntry(const TwiceNatEntryKey &key)
 {
     uint32_t        attr_count;
     sai_nat_entry_t dbl_nat_entry;
-    sai_attribute_t nat_entry_attr[8];
+    sai_attribute_t nat_entry_attr[6];
 
     sai_status_t    status;
+    struct timespec  time_now;
 
     SWSS_LOG_ENTER();
     SWSS_LOG_INFO("Create Twice NAT entry for src ip %s, dst ip %s", key.src_ip.to_string().c_str(), key.dst_ip.to_string().c_str());
+
+    if (clock_gettime (CLOCK_MONOTONIC, &time_now) < 0)
+    {
+        return false;
+    }
 
     TwiceNatEntryValue value = m_twiceNatEntries[key];
 
     memset(nat_entry_attr, 0, sizeof(nat_entry_attr));
 
-    nat_entry_attr[0].id = SAI_NAT_ENTRY_ATTR_NAT_TYPE;
-    nat_entry_attr[0].value.u32 = SAI_NAT_TYPE_DOUBLE_NAT;
-    nat_entry_attr[1].id = SAI_NAT_ENTRY_ATTR_SRC_IP;
-    nat_entry_attr[1].value.u32 = value.translated_src_ip.getV4Addr();
-    nat_entry_attr[2].id = SAI_NAT_ENTRY_ATTR_SRC_IP_MASK;
-    nat_entry_attr[2].value.u32 = 0xffffffff;
-    nat_entry_attr[3].id = SAI_NAT_ENTRY_ATTR_DST_IP;
-    nat_entry_attr[3].value.u32 = value.translated_dst_ip.getV4Addr();
-    nat_entry_attr[4].id = SAI_NAT_ENTRY_ATTR_DST_IP_MASK;
-    nat_entry_attr[4].value.u32 = 0xffffffff;
-    nat_entry_attr[5].id = SAI_NAT_ENTRY_ATTR_ENABLE_PACKET_COUNT;
+    nat_entry_attr[0].id = SAI_NAT_ENTRY_ATTR_SRC_IP;
+    nat_entry_attr[0].value.u32 = value.translated_src_ip.getV4Addr();
+    nat_entry_attr[1].id = SAI_NAT_ENTRY_ATTR_SRC_IP_MASK;
+    nat_entry_attr[1].value.u32 = 0xffffffff;
+    nat_entry_attr[2].id = SAI_NAT_ENTRY_ATTR_DST_IP;
+    nat_entry_attr[2].value.u32 = value.translated_dst_ip.getV4Addr();
+    nat_entry_attr[3].id = SAI_NAT_ENTRY_ATTR_DST_IP_MASK;
+    nat_entry_attr[3].value.u32 = 0xffffffff;
+    nat_entry_attr[4].id = SAI_NAT_ENTRY_ATTR_ENABLE_PACKET_COUNT;
+    nat_entry_attr[4].value.booldata = true;
+    nat_entry_attr[5].id = SAI_NAT_ENTRY_ATTR_ENABLE_BYTE_COUNT;
     nat_entry_attr[5].value.booldata = true;
-    nat_entry_attr[6].id = SAI_NAT_ENTRY_ATTR_ENABLE_BYTE_COUNT;
-    nat_entry_attr[6].value.booldata = true;
 
-    attr_count = 7;
+    attr_count = 6;
 
     memset(&dbl_nat_entry, 0, sizeof(dbl_nat_entry));
 
     dbl_nat_entry.vr_id = gVirtualRouterId;
     dbl_nat_entry.switch_id = gSwitchId;
+    dbl_nat_entry.nat_type = SAI_NAT_TYPE_DOUBLE_NAT;
     dbl_nat_entry.data.key.src_ip = key.src_ip.getV4Addr();
     dbl_nat_entry.data.mask.src_ip = 0xffffffff;
     dbl_nat_entry.data.key.dst_ip = key.dst_ip.getV4Addr();
@@ -1360,7 +1414,11 @@ bool NatOrch::addHwTwiceNatEntry(const TwiceNatEntryKey &key)
                        value.entry_type.c_str(), key.src_ip.to_string().c_str(), key.dst_ip.to_string().c_str(),
                        value.translated_src_ip.to_string().c_str(), value.translated_dst_ip.to_string().c_str());
 
-        return true;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NAT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Created %s Twice NAT entry with src ip %s, dst ip %s, translated src ip %s, translated dst ip %s",
@@ -1369,6 +1427,7 @@ bool NatOrch::addHwTwiceNatEntry(const TwiceNatEntryKey &key)
 
     updateTwiceNatCounters(key, 0, 0);
     m_twiceNatEntries[key].addedToHw = true; 
+    m_twiceNatEntries[key].activeTime = time_now.tv_sec;
 
     totalDnatEntries++;
     updateDnatCounters(totalDnatEntries);
@@ -1397,37 +1456,42 @@ bool NatOrch::addHwSnaptEntry(const NaptEntryKey &keyEntry)
 {
     uint32_t        attr_count;
     sai_nat_entry_t snat_entry;
-    sai_attribute_t nat_entry_attr[6];
+    sai_attribute_t nat_entry_attr[5];
     uint8_t         ip_protocol = ((keyEntry.prototype == "TCP") ? IPPROTO_TCP : IPPROTO_UDP);
     sai_status_t    status;
+    struct timespec  time_now;
 
     SWSS_LOG_ENTER();
     SWSS_LOG_INFO("Create SNAPT entry for proto %s, src-ip %s, l4-port %d",
                    keyEntry.prototype.c_str(), keyEntry.ip_address.to_string().c_str(), keyEntry.l4_port);
 
+    if (clock_gettime (CLOCK_MONOTONIC, &time_now) < 0)
+    {
+        return false;
+    }
+
     NaptEntryValue entry = m_naptEntries[keyEntry];
 
     memset(nat_entry_attr, 0, sizeof(nat_entry_attr));
 
-    nat_entry_attr[0].id = SAI_NAT_ENTRY_ATTR_NAT_TYPE;
-    nat_entry_attr[0].value.u32 = SAI_NAT_TYPE_SOURCE_NAT;
-    nat_entry_attr[1].id = SAI_NAT_ENTRY_ATTR_SRC_IP;
-    nat_entry_attr[1].value.u32 = entry.translated_ip.getV4Addr();
-    nat_entry_attr[2].id = SAI_NAT_ENTRY_ATTR_SRC_IP_MASK;
-    nat_entry_attr[2].value.u32 = 0xffffffff;
-    nat_entry_attr[3].id = SAI_NAT_ENTRY_ATTR_L4_SRC_PORT;
-    nat_entry_attr[3].value.u16 = (uint16_t)(entry.translated_l4_port);
-    nat_entry_attr[4].id = SAI_NAT_ENTRY_ATTR_ENABLE_PACKET_COUNT;
+    nat_entry_attr[0].id = SAI_NAT_ENTRY_ATTR_SRC_IP;
+    nat_entry_attr[0].value.u32 = entry.translated_ip.getV4Addr();
+    nat_entry_attr[1].id = SAI_NAT_ENTRY_ATTR_SRC_IP_MASK;
+    nat_entry_attr[1].value.u32 = 0xffffffff;
+    nat_entry_attr[2].id = SAI_NAT_ENTRY_ATTR_L4_SRC_PORT;
+    nat_entry_attr[2].value.u16 = (uint16_t)(entry.translated_l4_port);
+    nat_entry_attr[3].id = SAI_NAT_ENTRY_ATTR_ENABLE_PACKET_COUNT;
+    nat_entry_attr[3].value.booldata = true;
+    nat_entry_attr[4].id = SAI_NAT_ENTRY_ATTR_ENABLE_BYTE_COUNT;
     nat_entry_attr[4].value.booldata = true;
-    nat_entry_attr[5].id = SAI_NAT_ENTRY_ATTR_ENABLE_BYTE_COUNT;
-    nat_entry_attr[5].value.booldata = true;
 
-    attr_count = 6;
+    attr_count = 5;
 
     memset(&snat_entry, 0, sizeof(snat_entry));
 
     snat_entry.vr_id = gVirtualRouterId;
     snat_entry.switch_id = gSwitchId;
+    snat_entry.nat_type = SAI_NAT_TYPE_SOURCE_NAT;
     snat_entry.data.key.src_ip = keyEntry.ip_address.getV4Addr();
     snat_entry.data.key.l4_src_port = (uint16_t)(keyEntry.l4_port);
     snat_entry.data.mask.src_ip = 0xffffffff;
@@ -1442,7 +1506,11 @@ bool NatOrch::addHwSnaptEntry(const NaptEntryKey &keyEntry)
                        entry.entry_type.c_str(), keyEntry.ip_address.to_string().c_str(), keyEntry.l4_port, keyEntry.prototype.c_str(),
                        entry.translated_ip.to_string().c_str(), entry.translated_l4_port);
 
-        return true;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NAT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
      }
 
      SWSS_LOG_NOTICE("Created %s SNAT NAPT entry with ip %s, port %d, prototype %s and it's translated ip %s, translated port %d",
@@ -1450,7 +1518,10 @@ bool NatOrch::addHwSnaptEntry(const NaptEntryKey &keyEntry)
                      entry.translated_ip.to_string().c_str(), entry.translated_l4_port);
 
      m_naptEntries[keyEntry].addedToHw = true;
+     m_naptEntries[keyEntry].activeTime = time_now.tv_sec;
+
      updateNaptCounters(keyEntry.prototype.c_str(), keyEntry.ip_address, keyEntry.l4_port, 0, 0);
+     gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_SNAT_ENTRY);
 
      if (entry.entry_type == "static")
      {
@@ -1472,44 +1543,49 @@ bool NatOrch::addHwTwiceNaptEntry(const TwiceNaptEntryKey &key)
 {
     uint32_t        attr_count;
     sai_nat_entry_t dbl_nat_entry;
-    sai_attribute_t nat_entry_attr[10];
+    sai_attribute_t nat_entry_attr[8];
     uint8_t         protoType = ((key.prototype == "TCP") ? IPPROTO_TCP : IPPROTO_UDP);
     sai_status_t    status;
+    struct timespec  time_now;
 
     SWSS_LOG_ENTER();
     SWSS_LOG_INFO("Create Twice SNAPT entry for proto %s, src-ip %s, src port %d, dst-ip %s, dst port %d",
                    key.prototype.c_str(), key.src_ip.to_string().c_str(), key.src_l4_port,
                    key.dst_ip.to_string().c_str(), key.dst_l4_port);
 
+    if (clock_gettime (CLOCK_MONOTONIC, &time_now) < 0)
+    {
+        return false;
+    }
+
     TwiceNaptEntryValue value = m_twiceNaptEntries[key];
 
     memset(nat_entry_attr, 0, sizeof(nat_entry_attr));
 
-    nat_entry_attr[0].id = SAI_NAT_ENTRY_ATTR_NAT_TYPE;
-    nat_entry_attr[0].value.u32 = SAI_NAT_TYPE_DOUBLE_NAT;
-    nat_entry_attr[1].id = SAI_NAT_ENTRY_ATTR_SRC_IP;
-    nat_entry_attr[1].value.u32 = value.translated_src_ip.getV4Addr();
-    nat_entry_attr[2].id = SAI_NAT_ENTRY_ATTR_SRC_IP_MASK;
-    nat_entry_attr[2].value.u32 = 0xffffffff;
-    nat_entry_attr[3].id = SAI_NAT_ENTRY_ATTR_L4_SRC_PORT;
-    nat_entry_attr[3].value.u16 = (uint16_t)(value.translated_src_l4_port);
-    nat_entry_attr[4].id = SAI_NAT_ENTRY_ATTR_DST_IP;
-    nat_entry_attr[4].value.u32 = value.translated_dst_ip.getV4Addr();
-    nat_entry_attr[5].id = SAI_NAT_ENTRY_ATTR_DST_IP_MASK;
-    nat_entry_attr[5].value.u32 = 0xffffffff;
-    nat_entry_attr[6].id = SAI_NAT_ENTRY_ATTR_L4_DST_PORT;
-    nat_entry_attr[6].value.u16 = (uint16_t)(value.translated_dst_l4_port);
-    nat_entry_attr[7].id = SAI_NAT_ENTRY_ATTR_ENABLE_PACKET_COUNT;
+    nat_entry_attr[0].id = SAI_NAT_ENTRY_ATTR_SRC_IP;
+    nat_entry_attr[0].value.u32 = value.translated_src_ip.getV4Addr();
+    nat_entry_attr[1].id = SAI_NAT_ENTRY_ATTR_SRC_IP_MASK;
+    nat_entry_attr[1].value.u32 = 0xffffffff;
+    nat_entry_attr[2].id = SAI_NAT_ENTRY_ATTR_L4_SRC_PORT;
+    nat_entry_attr[2].value.u16 = (uint16_t)(value.translated_src_l4_port);
+    nat_entry_attr[3].id = SAI_NAT_ENTRY_ATTR_DST_IP;
+    nat_entry_attr[3].value.u32 = value.translated_dst_ip.getV4Addr();
+    nat_entry_attr[4].id = SAI_NAT_ENTRY_ATTR_DST_IP_MASK;
+    nat_entry_attr[4].value.u32 = 0xffffffff;
+    nat_entry_attr[5].id = SAI_NAT_ENTRY_ATTR_L4_DST_PORT;
+    nat_entry_attr[5].value.u16 = (uint16_t)(value.translated_dst_l4_port);
+    nat_entry_attr[6].id = SAI_NAT_ENTRY_ATTR_ENABLE_PACKET_COUNT;
+    nat_entry_attr[6].value.booldata = true;
+    nat_entry_attr[7].id = SAI_NAT_ENTRY_ATTR_ENABLE_BYTE_COUNT;
     nat_entry_attr[7].value.booldata = true;
-    nat_entry_attr[8].id = SAI_NAT_ENTRY_ATTR_ENABLE_BYTE_COUNT;
-    nat_entry_attr[8].value.booldata = true;
 
-    attr_count = 9;
+    attr_count = 8;
 
     memset(&dbl_nat_entry, 0, sizeof(dbl_nat_entry));
 
     dbl_nat_entry.vr_id = gVirtualRouterId;
     dbl_nat_entry.switch_id = gSwitchId;
+    dbl_nat_entry.nat_type = SAI_NAT_TYPE_DOUBLE_NAT;
     dbl_nat_entry.data.key.src_ip = key.src_ip.getV4Addr();
     dbl_nat_entry.data.mask.src_ip = 0xffffffff;
     dbl_nat_entry.data.key.l4_src_port = (uint16_t)(key.src_l4_port);
@@ -1530,7 +1606,11 @@ bool NatOrch::addHwTwiceNaptEntry(const TwiceNaptEntryKey &key)
                        key.dst_l4_port, key.prototype.c_str(), value.translated_src_ip.to_string().c_str(), value.translated_src_l4_port,
                        value.translated_dst_ip.to_string().c_str(), value.translated_dst_l4_port);
 
-        return true;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NAT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
      }
 
 
@@ -1542,6 +1622,7 @@ bool NatOrch::addHwTwiceNaptEntry(const TwiceNaptEntryKey &key)
 
      updateTwiceNaptCounters(key, 0, 0);
      m_twiceNaptEntries[key].addedToHw = true;
+     m_twiceNaptEntries[key].activeTime = time_now.tv_sec;
 
      totalDnatEntries++;
      updateDnatCounters(totalDnatEntries);
@@ -1580,6 +1661,7 @@ bool NatOrch::removeHwSnatEntry(const IpAddress &ip_address)
 
     snat_entry.vr_id = gVirtualRouterId;
     snat_entry.switch_id = gSwitchId;
+    snat_entry.nat_type = SAI_NAT_TYPE_SOURCE_NAT;
     snat_entry.data.key.src_ip = ip_address.getV4Addr();
     snat_entry.data.mask.src_ip = 0xffffffff;
 
@@ -1596,6 +1678,7 @@ bool NatOrch::removeHwSnatEntry(const IpAddress &ip_address)
     }
     deleteNatCounters(ip_address);
     m_natEntries.erase(ip_address);
+    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_SNAT_ENTRY);
 
     if (entry.entry_type == "static")
     {
@@ -1663,6 +1746,7 @@ bool NatOrch::removeHwSnaptEntry(const NaptEntryKey &keyEntry)
 
     snat_entry.vr_id = gVirtualRouterId;
     snat_entry.switch_id = gSwitchId;
+    snat_entry.nat_type = SAI_NAT_TYPE_SOURCE_NAT;
     snat_entry.data.key.src_ip = keyEntry.ip_address.getV4Addr();
     snat_entry.data.key.l4_src_port = (uint16_t)(keyEntry.l4_port);
     snat_entry.data.mask.src_ip = 0xffffffff;
@@ -1685,6 +1769,7 @@ bool NatOrch::removeHwSnaptEntry(const NaptEntryKey &keyEntry)
     }
     deleteNaptCounters(keyEntry.prototype.c_str(), keyEntry.ip_address, keyEntry.l4_port);
     m_naptEntries.erase(keyEntry);
+    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_SNAT_ENTRY);
 
     if (entry.entry_type == "static")
     {
@@ -1727,6 +1812,98 @@ bool NatOrch::removeHwSnaptEntry(const NaptEntryKey &keyEntry)
     return true;
 }
 
+// Add the DNAT Pool entry to the hardware
+bool NatOrch::addHwDnatPoolEntry(const IpAddress &ip_address)
+{
+    uint32_t        attr_count;
+    sai_nat_entry_t dnat_pool_entry;
+    sai_attribute_t nat_entry_attr[1];
+    sai_status_t    status;
+
+    SWSS_LOG_ENTER();
+
+    if (!isNatEnabled())
+    {
+        SWSS_LOG_WARN("NAT Feature is not yet enabled, skipped adding DNAT Pool entry with ip %s", ip_address.to_string().c_str());
+        return true;
+    }
+
+    SWSS_LOG_INFO("Create DNAT Pool entry for ip %s", ip_address.to_string().c_str());
+
+    memset(nat_entry_attr, 0, sizeof(nat_entry_attr));
+    attr_count = 0;
+
+    memset(&dnat_pool_entry, 0, sizeof(dnat_pool_entry));
+
+    dnat_pool_entry.vr_id = gVirtualRouterId;
+    dnat_pool_entry.switch_id = gSwitchId;
+    dnat_pool_entry.nat_type = SAI_NAT_TYPE_DESTINATION_NAT_POOL;
+    dnat_pool_entry.data.key.dst_ip = ip_address.getV4Addr();
+    dnat_pool_entry.data.mask.dst_ip = 0xffffffff;
+
+    status = sai_nat_api->create_nat_entry(&dnat_pool_entry, attr_count, nat_entry_attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create DNAT Pool entry with ip %s", ip_address.to_string().c_str());
+
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NAT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    SWSS_LOG_NOTICE("Created DNAT Pool entry with ip %s", ip_address.to_string().c_str());
+
+    return true;
+}
+
+// Remove the DNAT Pool entry from the hardware
+bool NatOrch::removeHwDnatPoolEntry(const IpAddress &dstIp)
+{
+    sai_nat_entry_t dnat_pool_entry;
+    sai_status_t    status;
+
+    SWSS_LOG_ENTER();
+    SWSS_LOG_INFO("Deleting DNAT Pool entry ip %s from hardware", dstIp.to_string().c_str());
+
+    memset(&dnat_pool_entry, 0, sizeof(dnat_pool_entry));
+
+    dnat_pool_entry.vr_id = gVirtualRouterId;
+    dnat_pool_entry.switch_id = gSwitchId;
+    dnat_pool_entry.nat_type = SAI_NAT_TYPE_DESTINATION_NAT_POOL;
+    dnat_pool_entry.data.key.dst_ip = dstIp.getV4Addr();
+    dnat_pool_entry.data.mask.dst_ip = 0xffffffff;
+
+    status = sai_nat_api->remove_nat_entry(&dnat_pool_entry);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_INFO("Failed to remove DNAT Pool entry with ip %s", dstIp.to_string().c_str());
+
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NAT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    SWSS_LOG_NOTICE("Removed DNAT Pool entry with ip %s", dstIp.to_string().c_str());
+
+    return true;
+}
+
+void NatOrch::addAllDnatPoolEntries()
+{
+    SWSS_LOG_ENTER();
+
+    DnatPoolEntry::iterator dnatPoolIter = m_dnatPoolEntries.begin();
+    while (dnatPoolIter != m_dnatPoolEntries.end())
+    {
+        addHwDnatPoolEntry((*dnatPoolIter));
+        dnatPoolIter++;
+    }
+}
+
 bool NatOrch::addNatEntry(const IpAddress &ip_address, const NatEntryValue &entry)
 {
     SWSS_LOG_ENTER();
@@ -1747,14 +1924,14 @@ bool NatOrch::addNatEntry(const IpAddress &ip_address, const NatEntryValue &entr
        {
             SWSS_LOG_INFO("Reached the max allowed NAT entries in the hardware, dropping new SNAT translation with ip %s and translated ip %s",
                            ip_address.to_string().c_str(), entry.translated_ip.to_string().c_str());
-            deleteConnTrackEntry(ip_address);
+            std::vector<FieldValueTuple> fvVector;
+            std::string natKey = ip_address.to_string();
+            setTimeoutNotifier->send("AGEOUT-SINGLE-NAT", natKey, fvVector);
             return true;
         }
 
         m_natEntries[ip_address] = entry;
         m_natEntries[ip_address].addedToHw = false;
-
-        updateConnTrackTimeout(ip_address);
     }
     else
     { 
@@ -1861,14 +2038,14 @@ bool NatOrch::addTwiceNatEntry(const TwiceNatEntryKey &key, const TwiceNatEntryV
        {
             SWSS_LOG_INFO("Reached the max allowed NAT entries in the hardware, dropping new Twice NAT translation with src ip %s, dst ip %s and translated src ip %s, dst ip %s",
                            key.src_ip.to_string().c_str(), key.dst_ip.to_string().c_str(), value.translated_src_ip.to_string().c_str(), value.translated_dst_ip.to_string().c_str());
-            deleteConnTrackEntry(key);
+            std::vector<FieldValueTuple> fvVector;
+            std::string twiceNatKey = (key.src_ip.to_string() + ":" + key.dst_ip.to_string());
+            setTimeoutNotifier->send("AGEOUT-TWICE-NAT", twiceNatKey, fvVector);
             return true;
         }
     }
     m_twiceNatEntries[key]           = value;
     m_twiceNatEntries[key].addedToHw = false;
-
-    updateConnTrackTimeout(key);
 
     if (!isNatEnabled())
     {
@@ -1977,14 +2154,14 @@ bool NatOrch::addNaptEntry(const NaptEntryKey &keyEntry, const NaptEntryValue &e
             SWSS_LOG_INFO("Reached the max allowed NAT entries in the hardware, dropping new SNAPT translation with ip %s, port %d, prototype %s, translated ip %s, translated port %d",
                           keyEntry.ip_address.to_string().c_str(), keyEntry.l4_port,
                           keyEntry.prototype.c_str(), entry.translated_ip.to_string().c_str(), entry.translated_l4_port);
-            deleteConnTrackEntry(keyEntry);
+            std::vector<FieldValueTuple> fvVector;
+            std::string naptKey = (keyEntry.prototype + ":" + keyEntry.ip_address.to_string() + ":" + to_string(keyEntry.l4_port));
+            setTimeoutNotifier->send("AGEOUT-SINGLE-NAPT", naptKey, fvVector);
             return true;
         }
 
         m_naptEntries[keyEntry] = entry;
         m_naptEntries[keyEntry].addedToHw = false;
-
-        updateConnTrackTimeout(keyEntry);
     }
     else
     {
@@ -2145,14 +2322,15 @@ bool NatOrch::addTwiceNaptEntry(const TwiceNaptEntryKey &key, const TwiceNaptEnt
             SWSS_LOG_INFO("Reached the max allowed NAT entries in the hardware, dropping new Twice SNAPT translation with src ip %s, src port %d, prototype %s, \
                            dst ip %s, dst port %d",
                           key.src_ip.to_string().c_str(), key.src_l4_port, key.prototype.c_str(), key.dst_ip.to_string().c_str(), key.dst_l4_port);
-            deleteConnTrackEntry(key);
+            std::vector<FieldValueTuple> fvVector;
+            std::string twiceNaptKey = (key.prototype + ":" + key.src_ip.to_string() + ":" + to_string(key.src_l4_port) +
+                                       ":" + key.dst_ip.to_string() + ":" + to_string(key.dst_l4_port));
+            setTimeoutNotifier->send("AGEOUT-TWICE-NAPT", twiceNaptKey, fvVector);
             return true;
         }
     }
     m_twiceNaptEntries[key]           = value;
     m_twiceNaptEntries[key].addedToHw = false;
-
-    updateConnTrackTimeout(key);
 
     if (!isNatEnabled())
     {
@@ -2213,22 +2391,6 @@ bool NatOrch::isNatEnabled(void)
     }
 
     return false;
-}
-
-void NatOrch::flushAllNatEntries(void)
-{
-    std::string res;
-    const std::string cmds = std::string("") + CONNTRACK + FLUSH;
-    int ret = swss::exec(cmds, res);
-
-    if (ret)
-    {
-        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmds.c_str(), ret);
-    }
-    else
-    {
-        SWSS_LOG_INFO("Cleared the All NAT Entries");
-    }
 }
 
 void NatOrch::clearAllDnatEntries(void)
@@ -2410,29 +2572,6 @@ void NatOrch::cleanupAppDbEntries(void)
     }
 }
 
-bool NatOrch::warmBootingInProgress(void)
-{
-    std::string value;
-
-    m_stateWarmRestartEnableTable.hget("system", "enable", value);
-    if (value == "true")
-    {
-        SWSS_LOG_INFO("Warm reboot enabled");
-        m_stateWarmRestartTable.hget("natsyncd", "state", value);
-        if (value != "reconciled")
-        {
-            SWSS_LOG_NOTICE("Nat conntrack state reconciliation not completed yet");
-            return true;
-        }
-        return false;
-    }
-    else
-    {
-        SWSS_LOG_INFO("Warm reboot not enabled");
-    }
-    return false;
-}
-
 void NatOrch::enableNatFeature(void)
 {
     sai_status_t     status;
@@ -2461,31 +2600,26 @@ void NatOrch::enableNatFeature(void)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to enable NAT: %d", status);
+        handleSaiSetStatus(SAI_API_SWITCH, status);
     }
 
     SWSS_LOG_INFO("NAT Query timer start ");
     m_natQueryTimer->start();
+
+    SWSS_LOG_INFO("NAT Timeout timer start ");
+    m_natTimeoutTimer->start();
 
     if (gNhTrackingSupported == true)
     {
         SWSS_LOG_INFO("Attach to Neighbor Orch ");
         m_neighOrch->attach(this);
     }
-    if (! warmBootingInProgress())
-    {
-        SWSS_LOG_NOTICE("Not warm rebooting, so clearing all conntrack Entries on nat feature enable");
-        flushAllNatEntries();
-    }
+
+    SWSS_LOG_INFO("Adding DNAT Pool Entries ");
+    addAllDnatPoolEntries();
 
     SWSS_LOG_INFO("Adding NAT Entries ");
     addAllNatEntries();
-
-    if (! warmBootingInProgress())
-    {
-        SWSS_LOG_NOTICE("Not warm rebooting, so adding static conntrack Entries");
-        addAllStaticConntrackEntries();
-    }
-
 }
 
 void NatOrch::disableNatFeature(void)
@@ -2505,19 +2639,20 @@ void NatOrch::disableNatFeature(void)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to disable NAT: %d", status);
+        handleSaiSetStatus(SAI_API_SWITCH, status);
     }
 
     SWSS_LOG_INFO("NAT Query timer stop ");
     m_natQueryTimer->stop();
+
+    SWSS_LOG_INFO("NAT Timeout timer stop ");
+    m_natTimeoutTimer->stop();
 
     if (gNhTrackingSupported == true)
     {
         SWSS_LOG_INFO("Detach to Neighbor Orch ");
         m_neighOrch->detach(this);
     }
-
-    SWSS_LOG_INFO("Clear all dynamic NAT Entries ");
-    flushAllNatEntries();
 
     SWSS_LOG_INFO("Clear all DNAT Entries ");
     clearAllDnatEntries();    
@@ -2532,7 +2667,6 @@ void NatOrch::doNatTableTask(Consumer& consumer)
         string key = kfvKey(t);
         string op = kfvOp(t);
         vector<string> keys = tokenize(key, ':');
-        IpAddress global_address;
         /* Example : APPL_DB
          * NAT_TABLE:65.55.45.1
          *     translated_ip: 10.0.0.1 
@@ -2673,7 +2807,6 @@ void NatOrch::doTwiceNatTableTask(Consumer& consumer)
         string key = kfvKey(t);
         string op = kfvOp(t);
         vector<string> keys = tokenize(key, ':');
-        IpAddress global_address;
         /* Example : APPL_DB
          * NAT_TWICE_TABLE:91.91.91.91:65.55.45.1
          *     translated_src_ip: 14.14.14.14
@@ -2859,23 +2992,85 @@ void NatOrch::doNatGlobalTableTask(Consumer& consumer)
             else if (fvField(i) == "nat_tcp_timeout")
             {
                 tcp_timeout = stoi(fvValue(i));
-                updateConnTrackTimeout("tcp");
             }
             else if (fvField(i) == "nat_udp_timeout")
             {
                 udp_timeout = stoi(fvValue(i));
-                updateConnTrackTimeout("udp");
             }
             else if (fvField(i) == "nat_timeout")
             {
                 timeout = stoi(fvValue(i));
-                updateConnTrackTimeout("all");
             }
         }
 
         SWSS_LOG_INFO("Global Values - Admin mode - %s, TCP - %d, UDP - %d and Both - %d", admin_mode.c_str(), tcp_timeout, udp_timeout, timeout);
 
         it = consumer.m_toSync.erase(it);
+    }
+}
+
+void NatOrch::doDnatPoolTableTask(Consumer& consumer)
+{
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple t = it->second;
+        string key = kfvKey(t);
+        string op = kfvOp(t);
+        vector<string> keys = tokenize(key, ':');
+        /* Example : APPL_DB
+         * NAT_DNAT_POOL_TABLE:65.55.45.1
+         *     NULL: NULL
+         */
+
+        /* Ensure the key size is 1 otherwise ignore */
+        if (keys.size() != 1)
+        {
+            SWSS_LOG_ERROR("Invalid key size, skipping %s", key.c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+
+        IpAddress ip_address = IpAddress(key);
+
+        if (op == SET_COMMAND)
+        {
+
+            if (m_dnatPoolEntries.find(ip_address) != m_dnatPoolEntries.end())
+            {
+                SWSS_LOG_INFO("DNAT Pool entry found for ip %s", ip_address.to_string().c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+            
+            m_dnatPoolEntries.insert(ip_address);
+
+            if (addHwDnatPoolEntry(ip_address))
+                it = consumer.m_toSync.erase(it);
+            else
+                it++;
+        }
+        else if (op == DEL_COMMAND)
+        {
+            if (m_dnatPoolEntries.find(ip_address) == m_dnatPoolEntries.end())
+            {
+                SWSS_LOG_INFO("DNAT Pool entry isn't found for ip %s", ip_address.to_string().c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
+            m_dnatPoolEntries.erase(ip_address);
+
+            if (removeHwDnatPoolEntry(ip_address))
+                it = consumer.m_toSync.erase(it);
+            else
+                it++;
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
+            it = consumer.m_toSync.erase(it);
+        }
     }
 }
 
@@ -2912,6 +3107,11 @@ void NatOrch::doTask(Consumer& consumer)
         SWSS_LOG_INFO("Received APP_NAT_GLOBAL_TABLE_NAME update");
         doNatGlobalTableTask(consumer);
     }
+    else if (table_name == APP_NAT_DNAT_POOL_TABLE_NAME)
+    {
+        SWSS_LOG_INFO("Received APP_NAT_DNAT_POOL_TABLE_NAME update");
+        doDnatPoolTableTask(consumer);
+    }
     else
     {
         SWSS_LOG_INFO("Received unknown NAT Table - %s notification", table_name.c_str());
@@ -2940,11 +3140,23 @@ void NatOrch::doTask(SelectableTimer &timer)
 {
     SWSS_LOG_ENTER();
 
-    if (((natTimerTickCntr++) % NAT_HITBIT_QUERY_MULTIPLE) == 0)
+    if (timer.getFd() == m_natQueryTimer->getFd())
     {
-        queryHitBits();
+        if (((natTimerTickCntr++) % NAT_HITBIT_QUERY_MULTIPLE) == 0)
+        {
+            queryHitBits();
+        }
+        queryCounters();
     }
-    queryCounters();
+    else if (timer.getFd() == m_natTimeoutTimer->getFd())
+    {
+        SWSS_LOG_INFO("Received NatTimeoutTimer");
+        updateAllConntrackEntries();
+    }
+    else
+    {
+        SWSS_LOG_INFO("Received unknown timer");
+    }
 }
 
 void NatOrch::queryCounters(void)
@@ -3133,54 +3345,6 @@ void NatOrch::clearCounters(void)
     }
 }
 
-void NatOrch::addAllStaticConntrackEntries(void)
-{
-    SWSS_LOG_ENTER();
-
-    NatEntry::iterator natIter = m_natEntries.begin();
-    while (natIter != m_natEntries.end())
-    {
-        if (((*natIter).second.entry_type == "static") and
-            ((*natIter).second.addedToHw == true) and
-            ((*natIter).second.nat_type == "snat"))
-        {
-            addConnTrackEntry((*natIter).first);
-        }
-        natIter++;
-    }
-    NaptEntry::iterator naptIter = m_naptEntries.begin();
-    while (naptIter != m_naptEntries.end())
-    {
-        if (((*naptIter).second.entry_type == "static") and
-            ((*naptIter).second.addedToHw == true) and
-            ((*naptIter).second.nat_type == "snat"))
-        {
-            addConnTrackEntry((*naptIter).first);
-        }
-        naptIter++;
-    }
-    TwiceNatEntry::iterator twiceNatIter = m_twiceNatEntries.begin();
-    while (twiceNatIter != m_twiceNatEntries.end())
-    {
-        if (((*twiceNatIter).second.entry_type == "static") and
-            ((*twiceNatIter).second.addedToHw == true))
-        {
-            addConnTrackEntry((*twiceNatIter).first);
-        }
-        twiceNatIter++;
-    }
-    TwiceNaptEntry::iterator twiceNaptIter = m_twiceNaptEntries.begin();
-    while (twiceNaptIter != m_twiceNaptEntries.end())
-    {
-        if (((*twiceNaptIter).second.entry_type == "static") and
-            ((*twiceNaptIter).second.addedToHw == true))
-        {
-            addConnTrackEntry((*twiceNaptIter).first);
-        }
-        twiceNaptIter++;
-    }
-}
-
 void NatOrch::queryHitBits(void)
 {
     SWSS_LOG_ENTER();
@@ -3195,15 +3359,27 @@ void NatOrch::queryHitBits(void)
 
     /* Remove the NAT entries that are aged out.
      * Query the NAT entries for their activity in the hardware
-     * and update the aging timeout. */
+     * and update the active timeout. */
     NatEntry::iterator natIter = m_natEntries.begin();
     while (natIter != m_natEntries.end())
     {
         if (checkIfNatEntryIsActive(natIter, time_now.tv_sec))
         {
-            /* Since the entry is active in the hardware, reset
-             * the expiry time for the conntrack entry in the kernel. */
-            updateConnTrackTimeout(natIter->first);
+            /* Since the entry is active in the hardware, reset the active time */
+            natIter->second.activeTime = time_now.tv_sec;
+        }
+        else
+        {
+            if ((natIter->second.nat_type == "snat") and (natIter->second.addedToHw == true) and
+                (natIter->second.entry_type != "static"))
+            {
+                if (time_now.tv_sec - natIter->second.activeTime >= timeout)
+                {
+                    std::vector<FieldValueTuple> fvVector;
+                    std::string key = natIter->first.to_string();
+                    setTimeoutNotifier->send("AGEOUT-SINGLE-NAT", key, fvVector);
+                }
+            } 
         }
         queried_entries++;
         natIter++;
@@ -3211,15 +3387,28 @@ void NatOrch::queryHitBits(void)
 
     /* Remove the NAPT entries that are aged out.
      * Query the NAPT entries for their activity in the hardware
-     * and update the aging timeout. */
+     * and update the active timeout. */
     NaptEntry::iterator naptIter = m_naptEntries.begin();
     while (naptIter != m_naptEntries.end())
     {
         if (checkIfNaptEntryIsActive(naptIter, time_now.tv_sec))
         {
-            /* Since the entry is active in the hardware, reset
-             * the expiry time for the conntrack entry in the kernel. */
-            updateConnTrackTimeout(naptIter->first);
+            /* Since the entry is active in the hardware, reset the active time */
+            naptIter->second.activeTime = time_now.tv_sec;
+        }
+        else
+        {
+            if ((naptIter->second.nat_type == "snat") and (naptIter->second.addedToHw == true) and
+                (naptIter->second.entry_type != "static"))
+            {
+                int timeout = naptIter->first.prototype == string("TCP") ? tcp_timeout : udp_timeout;
+                if (time_now.tv_sec - naptIter->second.activeTime >= timeout)
+                {
+                    std::vector<FieldValueTuple> fvVector;
+                    std::string key = (naptIter->first.prototype + ":" + naptIter->first.ip_address.to_string() + ":" + to_string(naptIter->first.l4_port));
+                    setTimeoutNotifier->send("AGEOUT-SINGLE-NAPT", key, fvVector);
+                }
+            }
         }
         queried_entries++;
         naptIter++;
@@ -3227,15 +3416,27 @@ void NatOrch::queryHitBits(void)
 
     /* Remove the Twice NAT entries that are aged out.
      * Query the Twice NAT entries for their activity in the hardware
-     * and update the aging timeout. */
+     * and update the active timeout. */
     TwiceNatEntry::iterator twiceNatIter = m_twiceNatEntries.begin();
     while (twiceNatIter != m_twiceNatEntries.end())
     {
         if (checkIfTwiceNatEntryIsActive(twiceNatIter, time_now.tv_sec))
         {
-            /* Since the entry is active in the hardware, reset
-             * the expiry time for the conntrack entry in the kernel. */
-            updateConnTrackTimeout(twiceNatIter->first);
+            /* Since the entry is active in the hardware, reset the active time */
+            twiceNatIter->second.activeTime = time_now.tv_sec;
+        }
+        else
+        {
+            if ((twiceNatIter->second.addedToHw == true) and
+                (twiceNatIter->second.entry_type != "static"))
+            {
+                if (time_now.tv_sec - twiceNatIter->second.activeTime >= timeout)
+                {
+                    std::vector<FieldValueTuple> fvVector;
+                    std::string key = (twiceNatIter->first.src_ip.to_string() + ":" + twiceNatIter->first.dst_ip.to_string());
+                    setTimeoutNotifier->send("AGEOUT-TWICE-NAT", key, fvVector);
+                }
+            }
         }
         queried_entries++;
         twiceNatIter++;
@@ -3243,15 +3444,29 @@ void NatOrch::queryHitBits(void)
 
     /* Remove the Twice NAPT entries that are aged out.
      * Query the Twice NAPT entries for their activity in the hardware
-     * and update the aging timeout. */
+     * and update the active timeout. */
     TwiceNaptEntry::iterator twiceNaptIter = m_twiceNaptEntries.begin();
     while (twiceNaptIter != m_twiceNaptEntries.end())
     {
         if (checkIfTwiceNaptEntryIsActive(twiceNaptIter, time_now.tv_sec))
         {
-            /* Since the entry is active in the hardware, reset
-             * the expiry time for the conntrack entry in the kernel. */
-            updateConnTrackTimeout(twiceNaptIter->first);
+            /* Since the entry is active in the hardware, reset the active time */
+            twiceNaptIter->second.activeTime = time_now.tv_sec;
+        }
+        else
+        {
+            if ((twiceNaptIter->second.addedToHw == true) and
+                (twiceNaptIter->second.entry_type != "static"))
+            {
+                int timeout = twiceNaptIter->first.prototype == string("TCP") ? tcp_timeout : udp_timeout;
+                if (time_now.tv_sec - twiceNaptIter->second.activeTime >= timeout)
+                {
+                    std::vector<FieldValueTuple> fvVector;
+                    std::string key = (twiceNaptIter->first.prototype + ":" + twiceNaptIter->first.src_ip.to_string() + ":" + to_string(twiceNaptIter->first.src_l4_port) + 
+                                       ":" + twiceNaptIter->first.dst_ip.to_string() + ":" + to_string(twiceNaptIter->first.dst_l4_port));
+                    setTimeoutNotifier->send("AGEOUT-TWICE-NAPT", key, fvVector);
+                }
+            }
         }
         queried_entries++;
         twiceNaptIter++;
@@ -3266,6 +3481,70 @@ void NatOrch::queryHitBits(void)
     {
         SWSS_LOG_DEBUG("Time spent in querying hardware hit-bits for %u NAT/NAPT entries = %lu secs, %lu msecs",
                        queried_entries, time_spent.tv_sec, (time_spent.tv_nsec / 1000000UL));
+    }
+}
+
+void NatOrch::updateAllConntrackEntries(void)
+{
+    SWSS_LOG_ENTER();
+
+    /* Send notifications for the Single NAT entries to set timeout */
+    NatEntry::iterator natIter = m_natEntries.begin();
+    while (natIter != m_natEntries.end())
+    {
+
+        if ((natIter->second.nat_type == "snat") and (natIter->second.addedToHw == true) and
+            (natIter->second.entry_type != "static"))
+        {
+            SWSS_LOG_ERROR("Update %s NAT entry [ip %s]", natIter->second.nat_type.c_str(), natIter->first.to_string().c_str());
+            std::vector<FieldValueTuple> fvVector;
+            std::string key = natIter->first.to_string();
+            setTimeoutNotifier->send("SET-SINGLE-NAT", key, fvVector);
+        }
+        natIter++;
+    }
+
+    /* Send notifications for the Single NAPT entries to set timeout */
+    NaptEntry::iterator naptIter = m_naptEntries.begin();
+    while (naptIter != m_naptEntries.end())
+    {
+        if ((naptIter->second.nat_type == "snat") and (naptIter->second.addedToHw == true) and
+            (naptIter->second.entry_type != "static"))
+        {
+            std::vector<FieldValueTuple> fvVector;
+            std::string key = (naptIter->first.prototype + ":" + naptIter->first.ip_address.to_string() + ":" + to_string(naptIter->first.l4_port));
+            setTimeoutNotifier->send("SET-SINGLE-NAPT", key, fvVector);
+        }
+        naptIter++;
+    }
+
+    /* Send notifications for the Twice NAT entries to set timeout */
+    TwiceNatEntry::iterator twiceNatIter = m_twiceNatEntries.begin();
+    while (twiceNatIter != m_twiceNatEntries.end())
+    {
+        if ((twiceNatIter->second.addedToHw == true) and
+            (twiceNatIter->second.entry_type != "static"))
+        {
+            std::vector<FieldValueTuple> fvVector;
+            std::string key = (twiceNatIter->first.src_ip.to_string() + ":" + twiceNatIter->first.dst_ip.to_string());
+            setTimeoutNotifier->send("SET-TWICE-NAT", key, fvVector);
+        }
+        twiceNatIter++;
+    }
+   
+    /* Send notifications for the Twice NAPT entries to set timeout */
+    TwiceNaptEntry::iterator twiceNaptIter = m_twiceNaptEntries.begin();
+    while (twiceNaptIter != m_twiceNaptEntries.end())
+    {
+        if ((twiceNaptIter->second.addedToHw == true) and
+            (twiceNaptIter->second.entry_type != "static"))
+        {
+            std::vector<FieldValueTuple> fvVector;
+            std::string key = (twiceNaptIter->first.prototype + ":" + twiceNaptIter->first.src_ip.to_string() + ":" + to_string(twiceNaptIter->first.src_l4_port) +
+                               ":" + twiceNaptIter->first.dst_ip.to_string() + ":" + to_string(twiceNaptIter->first.dst_l4_port));
+            setTimeoutNotifier->send("SET-TWICE-NAPT", key, fvVector);
+        }
+        twiceNaptIter++;
     }
 }
 
@@ -3298,11 +3577,13 @@ bool NatOrch::getNatCounters(const NatEntry::iterator &iter)
 
     if (entry.nat_type == "dnat")
     {
+        nat_entry.nat_type = SAI_NAT_TYPE_DESTINATION_NAT;
         nat_entry.data.key.dst_ip = ipAddr.getV4Addr();   
         nat_entry.data.mask.dst_ip = 0xffffffff;
     }
     else
     {
+        nat_entry.nat_type = SAI_NAT_TYPE_SOURCE_NAT;
         nat_entry.data.key.src_ip = ipAddr.getV4Addr();
         nat_entry.data.mask.src_ip = 0xffffffff;
     }
@@ -3368,6 +3649,7 @@ bool NatOrch::getTwiceNatCounters(const TwiceNatEntry::iterator &iter)
 
     dbl_nat_entry.vr_id = gVirtualRouterId;
     dbl_nat_entry.switch_id = gSwitchId;
+    dbl_nat_entry.nat_type = SAI_NAT_TYPE_DOUBLE_NAT;
     dbl_nat_entry.data.key.src_ip = key.src_ip.getV4Addr();
     dbl_nat_entry.data.mask.src_ip = 0xffffffff;
     dbl_nat_entry.data.key.dst_ip = key.dst_ip.getV4Addr();
@@ -3420,11 +3702,13 @@ bool NatOrch::setNatCounters(const NatEntry::iterator &iter)
 
     if (entry.nat_type == "dnat")
     {
+        nat_entry.nat_type = SAI_NAT_TYPE_DESTINATION_NAT;
         nat_entry.data.key.dst_ip = ipAddr.getV4Addr();
         nat_entry.data.mask.dst_ip = 0xffffffff;
     }
     else
     {
+        nat_entry.nat_type = SAI_NAT_TYPE_SOURCE_NAT;
         nat_entry.data.key.src_ip = ipAddr.getV4Addr();
         nat_entry.data.mask.src_ip = 0xffffffff;
     }
@@ -3436,6 +3720,7 @@ bool NatOrch::setNatCounters(const NatEntry::iterator &iter)
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to clear packet counter for SNAT entry [src-ip %s]", ipAddr.to_string().c_str());
+            handleSaiSetStatus(SAI_API_NAT, status);
         }
     }
     else if (entry.nat_type == "dnat")
@@ -3443,6 +3728,7 @@ bool NatOrch::setNatCounters(const NatEntry::iterator &iter)
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to clear packet counter for DNAT entry [dst-ip %s]", ipAddr.to_string().c_str());
+            handleSaiSetStatus(SAI_API_NAT, status);
         }
     }
 
@@ -3453,6 +3739,7 @@ bool NatOrch::setNatCounters(const NatEntry::iterator &iter)
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to clear byte counter for SNAT entry [src-ip %s]", ipAddr.to_string().c_str());
+            handleSaiSetStatus(SAI_API_NAT, status);
         }
     }
     else if (entry.nat_type == "dnat")
@@ -3460,6 +3747,7 @@ bool NatOrch::setNatCounters(const NatEntry::iterator &iter)
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to clear byte counter for DNAT entry [dst-ip %s]", ipAddr.to_string().c_str());
+            handleSaiSetStatus(SAI_API_NAT, status);
         }
     }
     /* Update the Counter values in the database */
@@ -3499,6 +3787,7 @@ bool NatOrch::getNaptCounters(const NaptEntry::iterator &iter)
 
     if (entry.nat_type == "dnat")
     {
+        nat_entry.nat_type = SAI_NAT_TYPE_DESTINATION_NAT;
         nat_entry.data.key.dst_ip      = naptKey.ip_address.getV4Addr();
         nat_entry.data.key.l4_dst_port = (uint16_t)(naptKey.l4_port);
         nat_entry.data.mask.dst_ip      = 0xffffffff;
@@ -3506,6 +3795,7 @@ bool NatOrch::getNaptCounters(const NaptEntry::iterator &iter)
     }
     else if (entry.nat_type == "snat")
     {
+        nat_entry.nat_type = SAI_NAT_TYPE_SOURCE_NAT;
         nat_entry.data.key.src_ip      = naptKey.ip_address.getV4Addr();
         nat_entry.data.key.l4_src_port = (uint16_t)(naptKey.l4_port);
         nat_entry.data.mask.src_ip      = 0xffffffff;
@@ -3581,6 +3871,7 @@ bool NatOrch::getTwiceNaptCounters(const TwiceNaptEntry::iterator &iter)
 
     dbl_nat_entry.vr_id = gVirtualRouterId;
     dbl_nat_entry.switch_id = gSwitchId;
+    dbl_nat_entry.nat_type = SAI_NAT_TYPE_DOUBLE_NAT;
     dbl_nat_entry.data.key.src_ip = key.src_ip.getV4Addr();
     dbl_nat_entry.data.mask.src_ip = 0xffffffff;
     dbl_nat_entry.data.key.l4_src_port = (uint16_t)(key.src_l4_port);
@@ -3641,6 +3932,7 @@ bool NatOrch::setNaptCounters(const NaptEntry::iterator &iter)
 
     if (entry.nat_type == "dnat")
     {
+        nat_entry.nat_type = SAI_NAT_TYPE_DESTINATION_NAT;
         nat_entry.data.key.dst_ip      = naptKey.ip_address.getV4Addr();
         nat_entry.data.key.l4_dst_port = (uint16_t)(naptKey.l4_port);
         nat_entry.data.mask.dst_ip      = 0xffffffff;
@@ -3648,6 +3940,7 @@ bool NatOrch::setNaptCounters(const NaptEntry::iterator &iter)
     }
     else if (entry.nat_type == "snat")
     {
+        nat_entry.nat_type = SAI_NAT_TYPE_SOURCE_NAT;
         nat_entry.data.key.src_ip      = naptKey.ip_address.getV4Addr();
         nat_entry.data.key.l4_src_port = (uint16_t)(naptKey.l4_port);
         nat_entry.data.mask.src_ip      = 0xffffffff;
@@ -3665,6 +3958,7 @@ bool NatOrch::setNaptCounters(const NaptEntry::iterator &iter)
         {
             SWSS_LOG_ERROR("Failed to clear packet counter for SNAPT entry for [proto %s, src-ip %s, src-port %d",
                            naptKey.prototype.c_str(), naptKey.ip_address.to_string().c_str(), naptKey.l4_port);
+            handleSaiSetStatus(SAI_API_NAT, status);
         }
     }
     else if (entry.nat_type == "dnat")
@@ -3673,6 +3967,7 @@ bool NatOrch::setNaptCounters(const NaptEntry::iterator &iter)
         {
             SWSS_LOG_ERROR("Failed to clear packet counter for DNAPT entry for [proto %s, dst-ip %s, dst-port %d]",
                            naptKey.prototype.c_str(), naptKey.ip_address.to_string().c_str(), naptKey.l4_port);
+            handleSaiSetStatus(SAI_API_NAT, status);
         }
     }
 
@@ -3684,6 +3979,7 @@ bool NatOrch::setNaptCounters(const NaptEntry::iterator &iter)
         {
             SWSS_LOG_ERROR("Failed to clear byte counter for SNAPT entry for [proto %s, src-ip %s, src-port %d",
                            naptKey.prototype.c_str(), naptKey.ip_address.to_string().c_str(), naptKey.l4_port);
+            handleSaiSetStatus(SAI_API_NAT, status);
         }
     }
     else if (entry.nat_type == "dnat")
@@ -3692,6 +3988,7 @@ bool NatOrch::setNaptCounters(const NaptEntry::iterator &iter)
         {
             SWSS_LOG_ERROR("Failed to clear byte counter for DNAPT entry for [proto %s, dst-ip %s, dst-port %d]",
                            naptKey.prototype.c_str(), naptKey.ip_address.to_string().c_str(), naptKey.l4_port);
+            handleSaiSetStatus(SAI_API_NAT, status);
         }
     }
 
@@ -3727,6 +4024,7 @@ bool NatOrch::setTwiceNatCounters(const TwiceNatEntry::iterator &iter)
 
     dbl_nat_entry.vr_id = gVirtualRouterId;
     dbl_nat_entry.switch_id = gSwitchId;
+    dbl_nat_entry.nat_type = SAI_NAT_TYPE_DOUBLE_NAT;
     dbl_nat_entry.data.key.src_ip = key.src_ip.getV4Addr();
     dbl_nat_entry.data.mask.src_ip = 0xffffffff;
     dbl_nat_entry.data.key.dst_ip = key.dst_ip.getV4Addr();
@@ -3738,6 +4036,7 @@ bool NatOrch::setTwiceNatCounters(const TwiceNatEntry::iterator &iter)
     {
         SWSS_LOG_ERROR("Failed to clear packet counters for Twice NAT entry [src-ip %s, dst-ip %s]",
                         key.src_ip.to_string().c_str(), key.dst_ip.to_string().c_str());
+        handleSaiSetStatus(SAI_API_NAT, status);
     }
 
     status = sai_nat_api->set_nat_entry_attribute(&dbl_nat_entry, &nat_entry_attr_byte);
@@ -3746,6 +4045,7 @@ bool NatOrch::setTwiceNatCounters(const TwiceNatEntry::iterator &iter)
     {
         SWSS_LOG_ERROR("Failed to clear byte counters for Twice NAT entry [src-ip %s, dst-ip %s]",
                         key.src_ip.to_string().c_str(), key.dst_ip.to_string().c_str());
+        handleSaiSetStatus(SAI_API_NAT, status);
     }
 
     /* Update the Counter values in the database */
@@ -3781,6 +4081,7 @@ bool NatOrch::setTwiceNaptCounters(const TwiceNaptEntry::iterator &iter)
 
     dbl_nat_entry.vr_id = gVirtualRouterId;
     dbl_nat_entry.switch_id = gSwitchId;
+    dbl_nat_entry.nat_type = SAI_NAT_TYPE_DOUBLE_NAT;
     dbl_nat_entry.data.key.src_ip = key.src_ip.getV4Addr();
     dbl_nat_entry.data.mask.src_ip = 0xffffffff;
     dbl_nat_entry.data.key.l4_src_port = (uint16_t)(key.src_l4_port);
@@ -3798,6 +4099,7 @@ bool NatOrch::setTwiceNaptCounters(const TwiceNaptEntry::iterator &iter)
     {
         SWSS_LOG_ERROR("Failed to clear packet counters for Twice NAPT entry [src-ip %s, src port %d, dst-ip %s, dst port %d]",
                         key.src_ip.to_string().c_str(), key.src_l4_port, key.dst_ip.to_string().c_str(), key.dst_l4_port);
+        handleSaiSetStatus(SAI_API_NAT, status);
     }
 
     status = sai_nat_api->set_nat_entry_attribute(&dbl_nat_entry, &nat_entry_attr_byte);
@@ -3806,88 +4108,13 @@ bool NatOrch::setTwiceNaptCounters(const TwiceNaptEntry::iterator &iter)
     {
         SWSS_LOG_ERROR("Failed to clear byte counters for Twice NAPT entry [src-ip %s, src port %d, dst-ip %s, dst port %d]",
                         key.src_ip.to_string().c_str(), key.src_l4_port, key.dst_ip.to_string().c_str(), key.dst_l4_port);
+        handleSaiSetStatus(SAI_API_NAT, status);
     }
 
     /* Update the Counter values in the database */
     updateTwiceNaptCounters(key, nat_translations_pkts, nat_translations_bytes);
 
     return 0;
-}
-
-void NatOrch::deleteConnTrackEntry(const IpAddress &ipAddr)
-{
-    std::string res;
-    std::string cmds = std::string("") + CONNTRACK + DELETE;
-
-    cmds += (" -s " + ipAddr.to_string());
-    int ret = swss::exec(cmds, res);
-
-    if (ret)
-    {
-        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmds.c_str(), ret);
-    }
-    else
-    {
-        SWSS_LOG_INFO("Deleted the NAT conntrack entry");
-    }
-}
-
-void NatOrch::deleteConnTrackEntry(const NaptEntryKey &key)
-{
-    std::string res;
-    std::string prototype = ((key.prototype == string("TCP")) ? "tcp" : "udp");
-    std::string cmds = std::string("") + CONNTRACK + DELETE;
-
-    cmds += (" -s " + key.ip_address.to_string() + " -p " + prototype + " --orig-port-src " + to_string(key.l4_port));
-    int ret = swss::exec(cmds, res);
-
-    if (ret)
-    {
-        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmds.c_str(), ret);
-    }
-    else
-    {
-        SWSS_LOG_INFO("Deleted the NAPT conntrack entry");
-    }
-}
-
-void NatOrch::deleteConnTrackEntry(const TwiceNatEntryKey &key)
-{
-    std::string res;
-    std::string cmds = std::string("") + CONNTRACK + DELETE;
-
-    cmds += (" -s " + key.src_ip.to_string());
-    cmds += (" -d " + key.dst_ip.to_string());
-    int ret = swss::exec(cmds, res);
-
-    if (ret)
-    {
-        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmds.c_str(), ret);
-    }
-    else
-    {
-        SWSS_LOG_INFO("Deleted the Twice NAT conntrack entry");
-    }
-}
-
-void NatOrch::deleteConnTrackEntry(const TwiceNaptEntryKey &key)
-{
-    std::string res;
-    std::string prototype = ((key.prototype == string("TCP")) ? "tcp" : "udp");
-    std::string cmds = std::string("") + CONNTRACK + DELETE;
-
-    cmds += (" -s " + key.src_ip.to_string() + " -p " + prototype + " --orig-port-src " + to_string(key.src_l4_port));
-    cmds += (" -d " + key.dst_ip.to_string() + " --orig-port-dst " + to_string(key.dst_l4_port));
-    int ret = swss::exec(cmds, res);
-
-    if (ret)
-    {
-        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmds.c_str(), ret);
-    }
-    else
-    {
-        SWSS_LOG_INFO("Deleted the Twice NAPT conntrack entry");
-    }
 }
 
 void NatOrch::updateNatCounters(const IpAddress &ipAddr,
@@ -4018,6 +4245,7 @@ bool NatOrch::checkIfNatEntryIsActive(const NatEntry::iterator &iter, time_t now
 
     snat_entry.vr_id                 = gVirtualRouterId;
     snat_entry.switch_id             = gSwitchId;
+    snat_entry.nat_type              = SAI_NAT_TYPE_SOURCE_NAT;
     srcIp     = ipAddr;
     snat_entry.data.key.src_ip   = srcIp.getV4Addr();
     snat_entry.data.mask.src_ip  = 0xffffffff;
@@ -4050,6 +4278,7 @@ bool NatOrch::checkIfNatEntryIsActive(const NatEntry::iterator &iter, time_t now
 
             dnat_entry.vr_id             = gVirtualRouterId;
             dnat_entry.switch_id         = gSwitchId;
+            dnat_entry.nat_type          = SAI_NAT_TYPE_DESTINATION_NAT;
             dnat_entry.data.key.dst_ip   = entry.translated_ip.getV4Addr();
             dnat_entry.data.mask.dst_ip  = 0xffffffff;
 
@@ -4112,6 +4341,7 @@ bool NatOrch::checkIfNaptEntryIsActive(const NaptEntry::iterator &iter, time_t n
 
     snat_entry.vr_id                 = gVirtualRouterId;
     snat_entry.switch_id             = gSwitchId;
+    snat_entry.nat_type              = SAI_NAT_TYPE_SOURCE_NAT;
 
     srcIp     = naptKey.ip_address;
     srcPort   = (uint16_t)(naptKey.l4_port);
@@ -4156,6 +4386,7 @@ bool NatOrch::checkIfNaptEntryIsActive(const NaptEntry::iterator &iter, time_t n
 
             dnat_entry.vr_id                 = gVirtualRouterId;
             dnat_entry.switch_id             = gSwitchId;
+            dnat_entry.nat_type              = SAI_NAT_TYPE_DESTINATION_NAT;
 
             dnat_entry.data.key.dst_ip       = entry.translated_ip.getV4Addr();
             dnat_entry.data.key.l4_dst_port  = (uint16_t)(entry.translated_l4_port);
@@ -4215,6 +4446,7 @@ bool NatOrch::checkIfTwiceNatEntryIsActive(const TwiceNatEntry::iterator &iter, 
 
     dbl_nat_entry.vr_id = gVirtualRouterId;
     dbl_nat_entry.switch_id = gSwitchId;
+    dbl_nat_entry.nat_type = SAI_NAT_TYPE_DOUBLE_NAT;
     dbl_nat_entry.data.key.src_ip = key.src_ip.getV4Addr();
     dbl_nat_entry.data.mask.src_ip = 0xffffffff;
     dbl_nat_entry.data.key.dst_ip = key.dst_ip.getV4Addr();
@@ -4269,6 +4501,7 @@ bool NatOrch::checkIfTwiceNaptEntryIsActive(const TwiceNaptEntry::iterator &iter
 
     dbl_nat_entry.vr_id = gVirtualRouterId;
     dbl_nat_entry.switch_id = gSwitchId;
+    dbl_nat_entry.nat_type = SAI_NAT_TYPE_DOUBLE_NAT;
     dbl_nat_entry.data.key.src_ip = key.src_ip.getV4Addr();
     dbl_nat_entry.data.mask.src_ip = 0xffffffff;
     dbl_nat_entry.data.key.l4_src_port = (uint16_t)(key.src_l4_port);
@@ -4295,230 +4528,6 @@ bool NatOrch::checkIfTwiceNaptEntryIsActive(const TwiceNaptEntry::iterator &iter
     return 0;
 }
 
-void NatOrch::updateConnTrackTimeout(string prototype)
-{
-    if (prototype == "all")
-    {
-        NatEntry::iterator natIter = m_natEntries.begin();
-        while (natIter != m_natEntries.end())
-        {
-            if (((*natIter).second.addedToHw == true) and
-                ((*natIter).second.nat_type == "snat"))
-            {
-                updateConnTrackTimeout((*natIter).first); 
-            }
-            natIter++;
-        }
-        TwiceNatEntry::iterator tnatIter = m_twiceNatEntries.begin();
-        while (tnatIter != m_twiceNatEntries.end())
-        {
-            if ((*tnatIter).second.addedToHw == true)
-            {
-                updateConnTrackTimeout((*tnatIter).first); 
-            }
-            tnatIter++;
-        }
-    }
-    else
-    {
-        std::string res;
-        std::string cmds = std::string("") + CONNTRACK + UPDATE;
-        int timeout = ((prototype == "tcp") ? tcp_timeout : udp_timeout);
-
-        cmds += (" -p " + prototype + " -t " + to_string(timeout) + REDIRECT_TO_DEV_NULL);
-        swss::exec(cmds, res);
-
-        SWSS_LOG_INFO("Updated the %s NAT conntrack entries timeout to %d", prototype.c_str(), timeout);
-    }
-}
-
-void NatOrch::updateConnTrackTimeout(const IpAddress &sourceIpAddr)
-{
-    std::string res;
-    std::string cmds = std::string("") + CONNTRACK + UPDATE;
-
-    cmds += (" -s " + sourceIpAddr.to_string() + " -t " + to_string(timeout) + REDIRECT_TO_DEV_NULL);
-    int ret = swss::exec(cmds, res);
-
-    if (ret)
-    {
-        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmds.c_str(), ret);
-    }
-    else
-    {
-        SWSS_LOG_INFO("Updated the active NAT conntrack entry with src-ip %s, timeout %u",
-                      sourceIpAddr.to_string().c_str(), timeout);
-    }
-}
-
-void NatOrch::updateConnTrackTimeout(const NaptEntryKey &entry)
-{
-    uint8_t     protoType   = ((entry.prototype == string("TCP")) ? IPPROTO_TCP : IPPROTO_UDP);
-
-    std::string res;
-    std::string prototype = ((entry.prototype == string("TCP")) ? "tcp" : "udp");
-    int timeout = ((protoType == IPPROTO_TCP) ? tcp_timeout : udp_timeout);
-    std::string cmds = std::string("") + CONNTRACK + UPDATE;
-
-    cmds += (" -s " + entry.ip_address.to_string() + " -p " + prototype + " --orig-port-src " + to_string(entry.l4_port) + " -t " + to_string(timeout) + REDIRECT_TO_DEV_NULL);
-    int ret = swss::exec(cmds, res);
-
-    if (ret)
-    {
-        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmds.c_str(), ret);
-    }
-    else
-    {
-        SWSS_LOG_INFO("Updated active NAPT conntrack entry with protocol %s, src-ip %s, src-port %d, timeout %u",
-                       entry.prototype.c_str(), entry.ip_address.to_string().c_str(),
-                       entry.l4_port, ((protoType == IPPROTO_TCP) ? tcp_timeout : udp_timeout));
-    }
-}
-
-void NatOrch::updateConnTrackTimeout(const TwiceNatEntryKey &entry)
-{
-    std::string res;
-    std::string cmd = std::string("") + CONNTRACK + UPDATE;
-
-    TwiceNatEntryValue value = m_twiceNatEntries[entry];
-
-    cmd += (" -s " + entry.src_ip.to_string() + " -d " + entry.dst_ip.to_string() + " -t " + std::to_string(timeout) + REDIRECT_TO_DEV_NULL);
- 
-    swss::exec(cmd, res);
-
-    SWSS_LOG_INFO("Updated active Twice NAT conntrack entry with src-ip %s, dst-ip %s, timeout %u",
-                  entry.src_ip.to_string().c_str(), entry.dst_ip.to_string().c_str(), timeout);
-}
-
-void NatOrch::updateConnTrackTimeout(const TwiceNaptEntryKey &entry)
-{
-    uint8_t     protoType   = ((entry.prototype == string("TCP")) ? IPPROTO_TCP : IPPROTO_UDP);
-
-    std::string res;
-    std::string prototype = ((entry.prototype == string("TCP")) ? "tcp" : "udp");
-    int timeout = ((protoType == IPPROTO_TCP) ? tcp_timeout : udp_timeout);
-    std::string cmd = std::string("") + CONNTRACK + UPDATE;
-
-    TwiceNaptEntryValue value = m_twiceNaptEntries[entry];
-
-    cmd += (" -s " + entry.src_ip.to_string() + " -p " + prototype + " --orig-port-src " + to_string(entry.src_l4_port) + 
-            " -d " + entry.dst_ip.to_string() + " --orig-port-dst " + std::to_string(entry.dst_l4_port) +  
-            " -t " + std::to_string(timeout) + REDIRECT_TO_DEV_NULL);
-
-    swss::exec(cmd, res);
-
-    SWSS_LOG_INFO("Updated active Twice NAPT conntrack entry with protocol %s, src-ip %s, src-port %d, dst-ip %s, dst-port %d, timeout %u",
-                  entry.prototype.c_str(), entry.src_ip.to_string().c_str(), entry.src_l4_port,
-                  entry.dst_ip.to_string().c_str(), entry.dst_l4_port, ((protoType == IPPROTO_TCP) ? tcp_timeout : udp_timeout));
-}
-
-void NatOrch::addConnTrackEntry(const IpAddress &ipAddr)
-{
-    std::string res;
-    std::string cmds = std::string("") + CONNTRACK + ADD;
-    NatEntryValue entry = m_natEntries[ipAddr];
-
-    cmds += (" -n " + entry.translated_ip.to_string() + ":1 -g 127.0.0.1:127" + " -p udp -t " + to_string(timeout) +
-             " --src " + ipAddr.to_string() + " --sport 1 --dst 127.0.0.1 --dport 127 -u ASSURED ");
-    int ret = swss::exec(cmds, res);
-
-    if (ret)
-    {
-        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmds.c_str(), ret);
-    }
-    else
-    {
-        SWSS_LOG_INFO("Added static NAT conntrack entry with src-ip %s, timeout %u",
-                      ipAddr.to_string().c_str(), timeout);
-    }
-}
-
-void NatOrch::addConnTrackEntry(const NaptEntryKey &keyEntry)
-{
-    std::string cmds = std::string("") + CONNTRACK + ADD;
-    std::string res, prototype, state;
-    int timeout = 0;
-    NaptEntryValue entry = m_naptEntries[keyEntry];
-
-    if (keyEntry.prototype == string("TCP"))
-    {
-        prototype = "tcp";
-        timeout = tcp_timeout;
-        state = " --state ESTABLISHED ";
-    }
-    else
-    {
-        prototype = "udp";
-        timeout = udp_timeout;
-        state = "";
-    }
-
-    cmds += (" -n " + entry.translated_ip.to_string() + ":" + to_string(entry.translated_l4_port) + " -g 127.0.0.1:127" + " -p " + prototype + " -t " + to_string(timeout) +
-             " --src " + keyEntry.ip_address.to_string() + " --sport " + to_string(keyEntry.l4_port) + " --dst 127.0.0.1 --dport 127 -u ASSURED " + state);
-    int ret = swss::exec(cmds, res);
-
-    if (ret)
-    {
-        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmds.c_str(), ret);
-    }
-    else
-    {
-        SWSS_LOG_INFO("Added static NAPT conntrack entry with protocol %s, src-ip %s, src-port %d, timeout %u",
-                      keyEntry.prototype.c_str(), keyEntry.ip_address.to_string().c_str(),
-                      keyEntry.l4_port, (keyEntry.prototype == string("TCP") ? tcp_timeout : udp_timeout));
-    }
-}
-
-void NatOrch::addConnTrackEntry(const TwiceNatEntryKey &keyEntry)
-{
-    std::string res;
-    std::string cmds = std::string("") + CONNTRACK + ADD;
-    TwiceNatEntryValue entry = m_twiceNatEntries[keyEntry];
-
-    cmds += (" -n " + entry.translated_src_ip.to_string() + ":1" + " -g " + entry.translated_dst_ip.to_string() + 
-             ":1" +  " -p udp" + " -t " + to_string(timeout) +
-             " --src " + keyEntry.src_ip.to_string() + " --sport 1" + " --dst " + keyEntry.dst_ip.to_string() +
-             " --dport 1" + " -u ASSURED " + REDIRECT_TO_DEV_NULL);
-
-    swss::exec(cmds, res);
-
-    SWSS_LOG_INFO("Added Static Twice NAT conntrack entry with src-ip %s, dst-ip %s, timeout %u",
-                  keyEntry.src_ip.to_string().c_str(), keyEntry.dst_ip.to_string().c_str(), timeout);
-}
-
-void NatOrch::addConnTrackEntry(const TwiceNaptEntryKey &keyEntry)
-{
-    std::string cmds = std::string("") + CONNTRACK + ADD;
-    std::string res, prototype, state;
-    int timeout = 0;
-    TwiceNaptEntryValue entry = m_twiceNaptEntries[keyEntry];
-
-    if (keyEntry.prototype == string("TCP"))
-    {
-        prototype = "tcp";
-        timeout = tcp_timeout;
-        state = " --state ESTABLISHED ";
-    }
-    else
-    {
-        prototype = "udp";
-        timeout = udp_timeout;
-        state = "";
-    }
-
-    cmds += (" -n " + entry.translated_src_ip.to_string() + ":" + to_string(entry.translated_src_l4_port) + " -g " + entry.translated_dst_ip.to_string() + 
-             ":" + to_string(entry.translated_dst_l4_port) +  " -p " + prototype + " -t " + to_string(timeout) +
-             " --src " + keyEntry.src_ip.to_string() + " --sport " + to_string(keyEntry.src_l4_port) + " --dst " + keyEntry.dst_ip.to_string() +
-             " --dport " + to_string(keyEntry.dst_l4_port) + " -u ASSURED " + state + REDIRECT_TO_DEV_NULL);
-
-    swss::exec(cmds, res);
-
-    SWSS_LOG_INFO("Added static Twice NAPT conntrack entry with protocol %s, src-ip %s, src-port %d, dst-ip %s, dst-port %d, timeout %u",
-                  keyEntry.prototype.c_str(), keyEntry.src_ip.to_string().c_str(), keyEntry.src_l4_port,
-                  keyEntry.dst_ip.to_string().c_str(), keyEntry.dst_l4_port, (keyEntry.prototype == string("TCP") ? tcp_timeout : udp_timeout));
-
-}
-
 void NatOrch::doTask(NotificationConsumer& consumer)
 {
     SWSS_LOG_ENTER();
@@ -4533,13 +4542,7 @@ void NatOrch::doTask(NotificationConsumer& consumer)
 
     if (&consumer == m_flushNotificationsConsumer)
     {
-        if ((op == "ENTRIES") and (data == "ALL"))
-        {
-            SWSS_LOG_INFO("Received All Entries notification");
-            flushAllNatEntries();
-            addAllStaticConntrackEntries();
-        }
-        else if ((op == "STATISTICS") and (data == "ALL"))
+        if ((op == "STATISTICS") and (data == "ALL"))
         {
             SWSS_LOG_INFO("Received All Statistics notification");
             clearCounters();

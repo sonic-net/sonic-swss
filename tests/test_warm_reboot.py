@@ -46,7 +46,7 @@ def swss_check_RestoreCount(dvs, state_db, restore_count):
             if fv[0] == "restore_count":
                 assert int(fv[1]) == restore_count[key] + 1
             elif fv[0] == "state":
-                assert fv[1] == "reconciled"
+                assert fv[1] == "reconciled" or fv[1] == "disabled"
 
 def check_port_oper_status(appl_db, port_name, state):
     portTbl = swsscommon.Table(appl_db, swsscommon.APP_PORT_TABLE_NAME)
@@ -76,7 +76,8 @@ def swss_app_check_RestoreCount_single(state_db, restore_count, name):
             if fv[0] == "restore_count":
                 assert int(fv[1]) == restore_count[key] + 1
             elif fv[0] == "state":
-                assert fv[1] == "reconciled"
+                assert fv[1] == "reconciled" or fv[1] == "disabled"
+    return status, fvs
 
 def swss_app_check_warmstart_state(state_db, name, state):
     warmtbl = swsscommon.Table(state_db, swsscommon.STATE_WARM_RESTART_TABLE_NAME)
@@ -136,9 +137,11 @@ def check_neighsyncd_timer(dvs, timer_value):
     assert num.strip() == timer_value
 
 def check_redis_neigh_entries(dvs, neigh_tbl, number):
-    (exitcode, lb_output) = dvs.runcmd(['sh', '-c', "redis-cli keys NEIGH_TABLE:lo* | grep NEI | wc -l"])
-    lb_num = int(lb_output.strip())
-    assert len(neigh_tbl.getKeys()) == number + lb_num
+    # check application database and get neighbor table
+    appl_db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+    lo_entrytbl = swsscommon.Table(appl_db, "NEIGH_TABLE:lo")
+    lo_entries = lo_entrytbl.getKeys()
+    assert len(neigh_tbl.getKeys()) == number + len(lo_entries)
 
 def check_kernel_reachable_neigh_num(dvs, number):
     (exitcode, output) = dvs.runcmd(['sh', '-c', "ip neigh show nud reachable| grep -v 'dev lo' | wc -l"])
@@ -208,31 +211,31 @@ def setup_initial_neighbors(dvs):
     for i in range(8, 8+NUM_INTF):
         for j in range(NUM_NEIGH_PER_INTF):
             dvs.servers[i].runcmd("ip addr add {}.0.0.{}/24 dev eth0".format(i*4, j+2))
-            dvs.servers[i].runcmd("ip -6 addr add {}00::{}/64 dev eth0".format(i*4,j+2))
+            dvs.servers[i].runcmd("ip -6 addr add {}00::{}/64 dev eth0".format(i*4, j+2))
 
     time.sleep(1)
 
     for i in range(8, 8+NUM_INTF):
         for j in range(NUM_NEIGH_PER_INTF):
-            dvs.runcmd(['sh', '-c', "ping -c 1 -W 0 -q {}.0.0.{} > /dev/null 2>&1".format(i*4,j+2)])
-            dvs.runcmd(['sh', '-c', "ping6 -c 1 -W 0 -q {}00::{} > /dev/null 2>&1".format(i*4,j+2)])
+            dvs.runcmd(['sh', '-c', "ping -c 1 -W 0 -q {}.0.0.{} > /dev/null 2>&1".format(i*4, j+2)])
+            dvs.runcmd(['sh', '-c', "ping6 -c 1 -W 0 -q {}00::{} > /dev/null 2>&1".format(i*4, j+2)])
 
 # Del half of the ips and a new half of the ips
 # note: the first ipv4 can not be deleted only
 def del_and_add_neighbors(dvs):
     for i in range(8, 8+NUM_INTF):
-        for j in range(NUM_NEIGH_PER_INTF/2):
-            dvs.servers[i].runcmd("ip addr del {}.0.0.{}/24 dev eth0".format(i*4, j+NUM_NEIGH_PER_INTF/2+2))
-            dvs.servers[i].runcmd("ip -6 addr del {}00::{}/64 dev eth0".format(i*4,j+NUM_NEIGH_PER_INTF/2+2))
+        for j in range(NUM_NEIGH_PER_INTF//2):
+            dvs.servers[i].runcmd("ip addr del {}.0.0.{}/24 dev eth0".format(i*4, j+NUM_NEIGH_PER_INTF//2+2))
+            dvs.servers[i].runcmd("ip -6 addr del {}00::{}/64 dev eth0".format(i*4, j+NUM_NEIGH_PER_INTF//2+2))
             dvs.servers[i].runcmd("ip addr add {}.0.0.{}/24 dev eth0".format(i*4, j+NUM_NEIGH_PER_INTF+2))
-            dvs.servers[i].runcmd("ip -6 addr add {}00::{}/64 dev eth0".format(i*4,j+NUM_NEIGH_PER_INTF+2))
+            dvs.servers[i].runcmd("ip -6 addr add {}00::{}/64 dev eth0".format(i*4, j+NUM_NEIGH_PER_INTF+2))
 
 #ping new IPs
 def ping_new_ips(dvs):
     for i in range(8, 8+NUM_INTF):
-        for j in range(NUM_NEIGH_PER_INTF/2):
-            dvs.runcmd(['sh', '-c', "ping -c 1 -W 0 -q {}.0.0.{} > /dev/null 2>&1".format(i*4,j+NUM_NEIGH_PER_INTF+2)])
-            dvs.runcmd(['sh', '-c', "ping6 -c 1 -W 0 -q {}00::{} > /dev/null 2>&1".format(i*4,j+NUM_NEIGH_PER_INTF+2)])
+        for j in range(NUM_NEIGH_PER_INTF//2):
+            dvs.runcmd(['sh', '-c', "ping -c 1 -W 0 -q {}.0.0.{} > /dev/null 2>&1".format(i*4, j+NUM_NEIGH_PER_INTF+2)])
+            dvs.runcmd(['sh', '-c', "ping6 -c 1 -W 0 -q {}00::{} > /dev/null 2>&1".format(i*4, j+NUM_NEIGH_PER_INTF+2)])
 
 
 class TestWarmReboot(object):
@@ -443,6 +446,28 @@ class TestWarmReboot(object):
         intf_tbl._del("Vlan20")
         time.sleep(2)
 
+    def test_IntfMgrdWarmRestartNoInterfaces(self, dvs, testlog):
+        """ Tests that intfmgrd reaches reconciled state when
+        there are no interfaces in configuration. """
+
+        state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+        restore_count = swss_get_RestoreCount(dvs, state_db)
+
+        dvs.runcmd("config warm_restart enable swss")
+        dvs.runcmd("supervisorctl restart intfmgrd")
+
+        reached_desired_state = False
+        retries = 10
+        delay = 2
+        for _ in range(retries):
+            ok, fvs = swss_app_check_RestoreCount_single(state_db, restore_count, "intfmgrd")
+            if ok and dict(fvs)["state"] == "reconciled":
+                reached_desired_state = True
+                break
+            time.sleep(delay)
+
+        assert reached_desired_state, "intfmgrd haven't reached desired state 'reconciled', after {} sec it was {}".format(retries * delay, dict(fvs)["state"])
+
     def test_swss_neighbor_syncup(self, dvs, testlog):
 
         appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
@@ -487,10 +512,10 @@ class TestWarmReboot(object):
         macs = ["00:00:00:00:24:02", "00:00:00:00:24:03", "00:00:00:00:28:02", "00:00:00:00:28:03"]
 
         for i in range(len(ips)):
-            dvs.runcmd("ip neigh add {} dev {} lladdr {} nud reachable".format(ips[i], intfs[i/2], macs[i]))
+            dvs.runcmd("ip neigh add {} dev {} lladdr {} nud reachable".format(ips[i], intfs[i//2], macs[i]))
 
         for i in range(len(v6ips)):
-            dvs.runcmd("ip -6 neigh add {} dev {} lladdr {} nud reachable".format(v6ips[i], intfs[i/2], macs[i]))
+            dvs.runcmd("ip -6 neigh add {} dev {} lladdr {} nud reachable".format(v6ips[i], intfs[i//2], macs[i]))
 
         time.sleep(1)
 
@@ -499,7 +524,7 @@ class TestWarmReboot(object):
         tbl = swsscommon.Table(db, "NEIGH_TABLE")
 
         for i in range(len(ips)):
-            (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], ips[i]))
+            (status, fvs) = tbl.get("{}:{}".format(intfs[i//2], ips[i]))
             assert status == True
 
             for v in fvs:
@@ -509,7 +534,7 @@ class TestWarmReboot(object):
                     assert v[1] == "IPv4"
 
         for i in range(len(v6ips)):
-            (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], v6ips[i]))
+            (status, fvs) = tbl.get("{}:{}".format(intfs[i//2], v6ips[i]))
             assert status == True
 
             for v in fvs:
@@ -538,7 +563,7 @@ class TestWarmReboot(object):
 
         # Check the neighbor entries are still in appDB correctly
         for i in range(len(ips)):
-            (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], ips[i]))
+            (status, fvs) = tbl.get("{}:{}".format(intfs[i//2], ips[i]))
             assert status == True
 
             for v in fvs:
@@ -548,7 +573,7 @@ class TestWarmReboot(object):
                     assert v[1] == "IPv4"
 
         for i in range(len(v6ips)):
-            (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], v6ips[i]))
+            (status, fvs) = tbl.get("{}:{}".format(intfs[i//2], v6ips[i]))
             assert status == True
 
             for v in fvs:
@@ -585,10 +610,10 @@ class TestWarmReboot(object):
 
         # delete even nummber of ipv4/ipv6 neighbor entries from each interface
         for i in range(0, len(ips), 2):
-            dvs.runcmd("ip neigh del {} dev {}".format(ips[i], intfs[i/2]))
+            dvs.runcmd("ip neigh del {} dev {}".format(ips[i], intfs[i//2]))
 
         for i in range(0, len(v6ips), 2):
-            dvs.runcmd("ip -6 neigh del {} dev {}".format(v6ips[i], intfs[i/2]))
+            dvs.runcmd("ip -6 neigh del {} dev {}".format(v6ips[i], intfs[i//2]))
 
         # start neighsyncd again
         start_neighsyncd(dvs)
@@ -597,7 +622,7 @@ class TestWarmReboot(object):
 
         # check ipv4 and ipv6 neighbors
         for i in range(len(ips)):
-            (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], ips[i]))
+            (status, fvs) = tbl.get("{}:{}".format(intfs[i//2], ips[i]))
             #should not see deleted neighbor entries
             if i % 2 == 0:
                 assert status == False
@@ -613,7 +638,7 @@ class TestWarmReboot(object):
                     assert v[1] == "IPv4"
 
         for i in range(len(v6ips)):
-            (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], v6ips[i]))
+            (status, fvs) = tbl.get("{}:{}".format(intfs[i//2], v6ips[i]))
             #should not see deleted neighbor entries
             if i % 2 == 0:
                 assert status == False
@@ -660,19 +685,19 @@ class TestWarmReboot(object):
         # use "change" if neighbor is in FAILED state
         for i in range(0, len(ips), 2):
             (rc, output) = dvs.runcmd(['sh', '-c', "ip -4 neigh | grep {}".format(ips[i])])
-            print output
+            print(output)
             if output:
-                dvs.runcmd("ip neigh change {} dev {} lladdr {} nud reachable".format(ips[i], intfs[i/2], macs[i]))
+                dvs.runcmd("ip neigh change {} dev {} lladdr {} nud reachable".format(ips[i], intfs[i//2], macs[i]))
             else:
-                dvs.runcmd("ip neigh add {} dev {} lladdr {} nud reachable".format(ips[i], intfs[i/2], macs[i]))
+                dvs.runcmd("ip neigh add {} dev {} lladdr {} nud reachable".format(ips[i], intfs[i//2], macs[i]))
 
         for i in range(0, len(v6ips), 2):
             (rc, output) = dvs.runcmd(['sh', '-c', "ip -6 neigh | grep {}".format(v6ips[i])])
-            print output
+            print(output)
             if output:
-                dvs.runcmd("ip -6 neigh change {} dev {} lladdr {} nud reachable".format(v6ips[i], intfs[i/2], macs[i]))
+                dvs.runcmd("ip -6 neigh change {} dev {} lladdr {} nud reachable".format(v6ips[i], intfs[i//2], macs[i]))
             else:
-                dvs.runcmd("ip -6 neigh add {} dev {} lladdr {} nud reachable".format(v6ips[i], intfs[i/2], macs[i]))
+                dvs.runcmd("ip -6 neigh add {} dev {} lladdr {} nud reachable".format(v6ips[i], intfs[i//2], macs[i]))
 
         # start neighsyncd again
         start_neighsyncd(dvs)
@@ -684,7 +709,7 @@ class TestWarmReboot(object):
 
         # check ipv4 and ipv6 neighbors, should see all neighbors
         for i in range(len(ips)):
-            (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], ips[i]))
+            (status, fvs) = tbl.get("{}:{}".format(intfs[i//2], ips[i]))
             assert status == True
             for v in fvs:
                 if v[0] == "neigh":
@@ -693,7 +718,7 @@ class TestWarmReboot(object):
                     assert v[1] == "IPv4"
 
         for i in range(len(v6ips)):
-            (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], v6ips[i]))
+            (status, fvs) = tbl.get("{}:{}".format(intfs[i//2], v6ips[i]))
             assert status == True
             for v in fvs:
                 if v[0] == "neigh":
@@ -739,15 +764,15 @@ class TestWarmReboot(object):
 
         for i in range(len(ips)):
             if i % 2 == 0:
-                dvs.runcmd("ip neigh change {} dev {} lladdr {} nud reachable".format(ips[i], intfs[i/2], newmacs[i]))
+                dvs.runcmd("ip neigh change {} dev {} lladdr {} nud reachable".format(ips[i], intfs[i//2], newmacs[i]))
             else:
-                dvs.runcmd("ip neigh del {} dev {}".format(ips[i], intfs[i/2]))
+                dvs.runcmd("ip neigh del {} dev {}".format(ips[i], intfs[i//2]))
 
         for i in range(len(v6ips)):
             if i % 2 == 0:
-                dvs.runcmd("ip -6 neigh change {} dev {} lladdr {} nud reachable".format(v6ips[i], intfs[i/2], newmacs[i]))
+                dvs.runcmd("ip -6 neigh change {} dev {} lladdr {} nud reachable".format(v6ips[i], intfs[i//2], newmacs[i]))
             else:
-                dvs.runcmd("ip -6 neigh del {} dev {}".format(v6ips[i], intfs[i/2]))
+                dvs.runcmd("ip -6 neigh del {} dev {}".format(v6ips[i], intfs[i//2]))
 
         # start neighsyncd again
         start_neighsyncd(dvs)
@@ -764,7 +789,7 @@ class TestWarmReboot(object):
         # check ipv4 and ipv6 neighbors, should see all neighbors with updated info
         for i in range(len(ips)):
             if i % 2 == 0:
-                (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], ips[i]))
+                (status, fvs) = tbl.get("{}:{}".format(intfs[i//2], ips[i]))
                 assert status == True
                 for v in fvs:
                     if v[0] == "neigh":
@@ -772,12 +797,12 @@ class TestWarmReboot(object):
                     if v[0] == "family":
                         assert v[1] == "IPv4"
             else:
-                (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], ips[i]))
+                (status, fvs) = tbl.get("{}:{}".format(intfs[i//2], ips[i]))
                 assert status == False
 
         for i in range(len(v6ips)):
             if i % 2 == 0:
-                (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], v6ips[i]))
+                (status, fvs) = tbl.get("{}:{}".format(intfs[i//2], v6ips[i]))
                 assert status == True
                 for v in fvs:
                     if v[0] == "neigh":
@@ -785,7 +810,7 @@ class TestWarmReboot(object):
                     if v[0] == "family":
                         assert v[1] == "IPv6"
             else:
-                (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], v6ips[i]))
+                (status, fvs) = tbl.get("{}:{}".format(intfs[i//2], v6ips[i]))
                 assert status == False
 
         time.sleep(2)
@@ -844,11 +869,13 @@ class TestWarmReboot(object):
         appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         ps = swsscommon.ProducerStateTable(appl_db, swsscommon.APP_ROUTE_TABLE_NAME)
         fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1"), ("ifname", "Ethernet0")])
-
         ps.set("2.2.2.0/24", fvs)
 
+        fvs = swsscommon.FieldValuePairs([("nexthop","20.0.0.1"), ("ifname", "Ethernet0")])
+        ps.set("3.3.3.0/24", fvs)
+
         time.sleep(1)
-        # Should fail, since neighbor for next 10.0.0.1 has not been not resolved yet
+        # Should fail, since neighbor for next 20.0.0.1 has not been not resolved yet
         (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check")
         assert result == "RESTARTCHECK failed\n"
 
@@ -857,8 +884,8 @@ class TestWarmReboot(object):
         (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check -n -s -w 500")
         assert result == "RESTARTCHECK succeeded\n"
 
-        # get neighbor and arp entry
-        dvs.servers[1].runcmd("ping -c 1 10.0.0.1")
+        # Remove unfinished routes
+        ps._del("3.3.3.0/24")
 
         time.sleep(1)
         (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check")
@@ -994,9 +1021,9 @@ class TestWarmReboot(object):
         # appDB port table operation
         orchStateCount = 0
         for message in pubsubMessages:
-            print message
+            print(message)
             key = message['channel'].split(':', 1)[1]
-            print key
+            print(key)
             if message['data'] != 'hset' and message['data'] != 'del':
                 continue
             if key.find(swsscommon.APP_PORT_TABLE_NAME)==0:
@@ -1148,7 +1175,7 @@ class TestWarmReboot(object):
         time.sleep(5)
 
         # Verify FSM
-        swss_app_check_warmstart_state(state_db, "bgp", "")
+        swss_app_check_warmstart_state(state_db, "bgp", "disabled")
 
         # Verify that multiple changes are seen in swss and sairedis logs as there's
         # no warm-reboot logic in place.
@@ -1781,6 +1808,24 @@ class TestWarmReboot(object):
         (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
         assert len(addobjs) == 0 and len(delobjs) == 0
 
+        #
+        # Remove route entries so they don't interfere with later tests
+        #
+        dvs.runcmd("ip route del 192.168.1.100/32")
+        dvs.runcmd("ip route del 192.168.1.200/32")
+        dvs.runcmd("ip route del 192.168.1.230/32")
+        dvs.runcmd("ip route del 192.168.1.1/32")
+        dvs.runcmd("ip route del 192.168.1.2/32")
+        dvs.runcmd("ip route del 192.168.1.3/32")
+        dvs.runcmd("ip route del 192.168.100.0/24")
+        dvs.runcmd("ip -6 route del fc00:11:11::1/128")
+        dvs.runcmd("ip -6 route del fc00:12:12::1/128")
+        dvs.runcmd("ip -6 route del fc00:13:13::1/128")
+        dvs.runcmd("ip -6 route del fc00:1:1::1/128")
+        dvs.runcmd("ip -6 route del fc00:2:2::1/128")
+        dvs.runcmd("ip -6 route del fc00:3:3::1/128")
+        time.sleep(5)
+
         intf_tbl._del("{}|111.0.0.1/24".format(intfs[0]))
         intf_tbl._del("{}|1110::1/64".format(intfs[0]))
         intf_tbl._del("{}|122.0.0.1/24".format(intfs[1]))
@@ -1795,10 +1840,7 @@ class TestWarmReboot(object):
         intf_tbl._del("{}".format(intfs[2]))
         time.sleep(2)
 
-    # FIXME: This test is extremely unstable and requires several retries
-    # for it to pass - we need to stabilize this test before putting it back
-    # into the pipeline.
-    @pytest.mark.xfail(reason="test case is unstable")
+    @pytest.mark.xfail(reason="Test unstable, blocking PR builds")
     def test_system_warmreboot_neighbor_syncup(self, dvs, testlog):
 
         appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
@@ -1950,11 +1992,11 @@ class TestWarmReboot(object):
         # should finish the store within 10 seconds
         time.sleep(10)
 
-        check_kernel_reachable_v4_neigh_num(dvs, NUM_OF_NEIGHS/2)
-        check_kernel_reachable_v6_neigh_num(dvs, NUM_OF_NEIGHS/2)
+        check_kernel_reachable_v4_neigh_num(dvs, NUM_OF_NEIGHS//2)
+        check_kernel_reachable_v6_neigh_num(dvs, NUM_OF_NEIGHS//2)
 
-        check_kernel_stale_v4_neigh_num(dvs, NUM_OF_NEIGHS/2)
-        check_kernel_stale_v6_neigh_num(dvs, NUM_OF_NEIGHS/2)
+        check_kernel_stale_v4_neigh_num(dvs, NUM_OF_NEIGHS//2)
+        check_kernel_stale_v6_neigh_num(dvs, NUM_OF_NEIGHS//2)
 
         # check syslog and sairedis.rec file for activities
         check_syslog_for_neighbor_entry(dvs, marker, 0, 0, "ipv4")
@@ -1975,10 +2017,7 @@ class TestWarmReboot(object):
         check_kernel_reachable_v4_neigh_num(dvs, NUM_OF_NEIGHS)
         check_kernel_reachable_v6_neigh_num(dvs, NUM_OF_NEIGHS)
 
-        check_kernel_stale_v4_neigh_num(dvs, NUM_OF_NEIGHS/2)
-        check_kernel_stale_v6_neigh_num(dvs, NUM_OF_NEIGHS/2)
-
-        check_redis_neigh_entries(dvs, tbl, 2*(NUM_OF_NEIGHS+NUM_OF_NEIGHS/2))
+        check_redis_neigh_entries(dvs, tbl, 2*(NUM_OF_NEIGHS+NUM_OF_NEIGHS//2))
 
         (nadd, ndel) = dvs.CountSubscribedObjects(pubsub)
         assert nadd == NUM_OF_NEIGHS #ipv4 and ipv6
@@ -1986,9 +2025,9 @@ class TestWarmReboot(object):
 
         # Remove stale entries manually
         for i in range(8, 8+NUM_INTF):
-            for j in range(NUM_NEIGH_PER_INTF/2):
-                dvs.runcmd(['sh', '-c', "ip neigh del {}.0.0.{} dev Ethernet{}".format(i*4,j+NUM_NEIGH_PER_INTF/2+2, i*4)])
-                dvs.runcmd(['sh', '-c', "ip -6 neigh del {}00::{} dev Ethernet{}".format(i*4,j+NUM_NEIGH_PER_INTF/2+2, i*4)])
+            for j in range(NUM_NEIGH_PER_INTF//2):
+                dvs.runcmd(['sh', '-c', "ip neigh del {}.0.0.{} dev Ethernet{}".format(i*4, j+NUM_NEIGH_PER_INTF//2+2, i*4)])
+                dvs.runcmd(['sh', '-c', "ip -6 neigh del {}00::{} dev Ethernet{}".format(i*4, j+NUM_NEIGH_PER_INTF//2+2, i*4)])
 
         time.sleep(5)
 
@@ -2028,26 +2067,25 @@ class TestWarmReboot(object):
         check_kernel_reachable_neigh_num(dvs, 0)
 
         # bring down half of the links
-        for i in range(8, 8+NUM_INTF/2):
+        for i in range(8, 8+NUM_INTF//2):
             dvs.runcmd("ip link set down dev Ethernet{}".format(i*4))
 
         # start neighsyncd and restore_neighbors
-        marker = dvs.add_log_marker()
         start_neighsyncd(dvs)
         start_restore_neighbors(dvs)
 
         # restore for up interfaces should be done within 10 seconds
         time.sleep(10)
 
-        check_kernel_reachable_v4_neigh_num(dvs, NUM_OF_NEIGHS/2)
-        check_kernel_reachable_v6_neigh_num(dvs, NUM_OF_NEIGHS/2)
+        check_kernel_reachable_v4_neigh_num(dvs, NUM_OF_NEIGHS//2)
+        check_kernel_reachable_v6_neigh_num(dvs, NUM_OF_NEIGHS//2)
 
         restoretbl = swsscommon.Table(state_db, swsscommon.STATE_NEIGH_RESTORE_TABLE_NAME)
 
         # waited 10 above already
         i = 10
         while (not kernel_restore_neighs_done(restoretbl)):
-            print "Waiting for kernel neighbors restore process done: {} seconds".format(i)
+            print("Waiting for kernel neighbors restore process done: {} seconds".format(i))
             time.sleep(10)
             i += 10
 
@@ -2055,8 +2093,8 @@ class TestWarmReboot(object):
 
 
         # check syslog and sairedis.rec file for activities
-        check_syslog_for_neighbor_entry(dvs, marker, 0, NUM_OF_NEIGHS/2, "ipv4")
-        check_syslog_for_neighbor_entry(dvs, marker, 0, NUM_OF_NEIGHS/2, "ipv6")
+        #check_syslog_for_neighbor_entry(dvs, marker, 0, NUM_OF_NEIGHS//2, "ipv4")
+        #check_syslog_for_neighbor_entry(dvs, marker, 0, NUM_OF_NEIGHS//2, "ipv6")
         (nadd, ndel) = dvs.CountSubscribedObjects(pubsub)
         assert nadd == 0
         assert ndel == NUM_OF_NEIGHS
@@ -2195,3 +2233,140 @@ class TestWarmReboot(object):
         dvs.servers[0].runcmd("ifconfig eth0 0")
         dvs.servers[1].runcmd("ifconfig eth0 0")
         time.sleep(2)
+
+    @pytest.fixture(scope="class")
+    def setup_erspan_neighbors(self, dvs):
+        dvs.setup_db()
+
+        dvs.set_interface_status("Ethernet12", "up")
+        dvs.set_interface_status("Ethernet16", "up")
+        dvs.set_interface_status("Ethernet20", "up")
+
+        dvs.add_ip_address("Ethernet12", "10.0.0.0/31")
+        dvs.add_ip_address("Ethernet16", "11.0.0.0/31")
+        dvs.add_ip_address("Ethernet20", "12.0.0.0/31")
+
+        dvs.add_neighbor("Ethernet12", "10.0.0.1", "02:04:06:08:10:12")
+        dvs.add_neighbor("Ethernet16", "11.0.0.1", "03:04:06:08:10:12")
+        dvs.add_neighbor("Ethernet20", "12.0.0.1", "04:04:06:08:10:12")
+
+        dvs.add_route("2.2.2.2", "10.0.0.1")
+
+        yield
+
+        dvs.remove_route("2.2.2.2")
+
+        dvs.remove_neighbor("Ethernet12", "10.0.0.1")
+        dvs.remove_neighbor("Ethernet16", "11.0.0.1")
+        dvs.remove_neighbor("Ethernet20", "12.0.0.1")
+
+        dvs.remove_ip_address("Ethernet12", "10.0.0.0/31")
+        dvs.remove_ip_address("Ethernet16", "11.0.0.0/31")
+        dvs.remove_ip_address("Ethernet20", "12.0.0.1/31")
+
+        dvs.set_interface_status("Ethernet12", "down")
+        dvs.set_interface_status("Ethernet16", "down")
+        dvs.set_interface_status("Ethernet20", "down")
+
+    @pytest.mark.usefixtures("dvs_mirror_manager", "setup_erspan_neighbors")
+    def test_MirrorSessionWarmReboot(self, dvs):
+        dvs.setup_db()
+
+        # Setup the mirror session
+        self.dvs_mirror.create_erspan_session("test_session", "1.1.1.1", "2.2.2.2", "0x6558", "8", "100", "0")
+
+        # Verify the monitor port
+        state_db = dvs.get_state_db()
+        state_db.wait_for_field_match("MIRROR_SESSION_TABLE", "test_session", {"monitor_port": "Ethernet12"})
+
+        # Setup ECMP routes to the session destination
+        dvs.change_route_ecmp("2.2.2.2", ["12.0.0.1", "11.0.0.1", "10.0.0.1"])
+
+        # Monitor port should not change b/c routes are ECMP
+        state_db.wait_for_field_match("MIRROR_SESSION_TABLE", "test_session", {"monitor_port": "Ethernet12"})
+
+        dvs.runcmd("config warm_restart enable swss")
+        dvs.stop_swss()
+        dvs.start_swss()
+
+        dvs.check_swss_ready()
+
+        # Monitor port should not change b/c destination is frozen
+        state_db.wait_for_field_match("MIRROR_SESSION_TABLE", "test_session", {"monitor_port": "Ethernet12"})
+
+        self.dvs_mirror.remove_mirror_session("test_session")
+
+        # Revert the route back to the fixture-defined route
+        dvs.change_route("2.2.2.2", "10.0.0.1")
+
+        # Reset for test cases after this one
+        dvs.stop_swss()
+        dvs.start_swss()
+        dvs.check_swss_ready()
+
+    @pytest.mark.usefixtures("dvs_mirror_manager", "dvs_policer_manager", "setup_erspan_neighbors")
+    def test_EverflowWarmReboot(self, dvs, dvs_acl):
+        # Setup the policer
+        self.dvs_policer.create_policer("test_policer")
+        self.dvs_policer.verify_policer("test_policer")
+
+        # Setup the mirror session
+        self.dvs_mirror.create_erspan_session("test_session", "1.1.1.1", "2.2.2.2", "0x6558", "8", "100", "0", policer="test_policer")
+
+        state_db = dvs.get_state_db()
+        state_db.wait_for_field_match("MIRROR_SESSION_TABLE", "test_session", {"status": "active"})
+
+        # Create the mirror table
+        dvs_acl.create_acl_table("EVERFLOW_TEST", "MIRROR", ["Ethernet12"])
+
+
+        # TODO: The standard methods for counting ACL tables and ACL rules break down after warm reboot b/c the OIDs
+        # of the default tables change. We also can't just re-initialize the default value b/c we've added another
+        # table and rule that aren't part of the base device config. We should come up with a way to handle warm reboot
+        # changes more gracefully to make it easier for future tests.
+        asic_db = dvs.get_asic_db()
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE", 1 + len(asic_db.default_acl_tables))
+
+        # Create a mirror rule
+        dvs_acl.create_mirror_acl_rule("EVERFLOW_TEST", "TEST_RULE", {"SRC_IP": "20.0.0.2"}, "test_session")
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", 1 + len(asic_db.default_acl_entries))
+
+        # Execute the warm reboot
+        dvs.runcmd("config warm_restart enable swss")
+        dvs.stop_swss()
+        dvs.start_swss()
+
+        # Make sure the system is stable
+        dvs.check_swss_ready()
+
+        # Verify that the ASIC DB is intact
+        self.dvs_policer.verify_policer("test_policer")
+        state_db.wait_for_field_match("MIRROR_SESSION_TABLE", "test_session", {"status": "active"})
+
+        asic_db = dvs.get_asic_db()
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE", 1 + len(asic_db.default_acl_tables))
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", 1 + len(asic_db.default_acl_entries))
+
+        # Clean up
+        dvs_acl.remove_acl_rule("EVERFLOW_TEST", "TEST_RULE")
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", len(asic_db.default_acl_entries))
+
+        dvs_acl.remove_acl_table("EVERFLOW_TEST")
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE", len(asic_db.default_acl_tables))
+
+        self.dvs_mirror.remove_mirror_session("test_session")
+        self.dvs_mirror.verify_no_mirror()
+
+        self.dvs_policer.remove_policer("test_policer")
+        self.dvs_policer.verify_no_policer()
+
+        # Reset for test cases after this one
+        dvs.stop_swss()
+        dvs.start_swss()
+        dvs.check_swss_ready()
+
+
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass
