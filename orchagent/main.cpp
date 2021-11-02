@@ -81,6 +81,7 @@ int32_t gVoqMaxCores = 0;
 uint32_t gCfgSystemPorts = 0;
 string gMyHostName = "";
 string gMyAsicName = "";
+uint64_t gSyncdResponseTimeout = ( 35 * SAI_REDIS_DEFAULT_SYNC_OPERATION_RESPONSE_TIMEOUT);
 
 void usage()
 {
@@ -574,6 +575,29 @@ int main(int argc, char **argv)
     attr.value.u64 = gSwitchId;
     attrs.push_back(attr);
 
+
+    char *platform = getenv("platform");
+    if (platform && strstr(platform, BRCM_PLATFORM_SUBSTRING))
+    {
+        /* We set this long timeout in order for orchagent to wait enough time for
+         * response from syncd. It is needed since switch create takes more time
+         * than default time to create switch if there are lots of front panel ports
+         * and systems ports to initialize
+         */
+        attr.id = SAI_REDIS_SWITCH_ATTR_SYNC_OPERATION_RESPONSE_TIMEOUT;
+        attr.value.u64 = gSyncdResponseTimeout;
+        status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Failed to set SAI REDIS response timeout");
+        }
+        else
+        {
+            SWSS_LOG_NOTICE("SAI REDIS response timeout set successfully to %" PRIu64 " ", attr.value.u64);
+        }
+    }
+
     status = sai_switch_api->create_switch(&gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -582,6 +606,22 @@ int main(int argc, char **argv)
     }
     SWSS_LOG_NOTICE("Create a switch, id:%" PRIu64, gSwitchId);
 
+    if (platform && strstr(platform, BRCM_PLATFORM_SUBSTRING))
+    {
+        /* Set syncd response timeout back to the default value */
+        attr.id = SAI_REDIS_SWITCH_ATTR_SYNC_OPERATION_RESPONSE_TIMEOUT;
+        attr.value.u64 = SAI_REDIS_DEFAULT_SYNC_OPERATION_RESPONSE_TIMEOUT;
+        status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Failed to set SAI REDIS response timeout to default");
+        }
+        else
+        {
+            SWSS_LOG_NOTICE("SAI REDIS response timeout set successfully to default: %" PRIu64 " ", attr.value.u64);
+        }
+    }
 
     if (gMySwitchType != "fabric")
     {
