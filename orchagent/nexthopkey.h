@@ -4,6 +4,7 @@
 #include "ipaddress.h"
 #include "tokenize.h"
 #include "label.h"
+#include "intfsorch.h"
 
 #define LABELSTACK_DELIMITER '+'
 #define NH_DELIMITER '@'
@@ -18,16 +19,17 @@ struct NextHopKey
     uint32_t            vni;            // Encap VNI overlay nexthop
     MacAddress          mac_address;    // Overlay Nexthop MAC.
     LabelStack          label_stack;    // MPLS label stack
+    uint32_t            weight;         // NH weight for NHGs
 
-    NextHopKey() = default;
+    NextHopKey() : weight(0) {}
     NextHopKey(const std::string &str, const std::string &alias) :
-        alias(alias), vni(0), mac_address()
+        alias(alias), vni(0), mac_address(), weight(0)
     {
         std::string ip_str = parseMplsNextHop(str);
         ip_address = ip_str;
     }
     NextHopKey(const IpAddress &ip, const std::string &alias) :
-        ip_address(ip), alias(alias), vni(0), mac_address() {}
+        ip_address(ip), alias(alias), vni(0), mac_address(), weight(0) {}
     NextHopKey(const std::string &str) :
         vni(0), mac_address()
     {
@@ -57,6 +59,7 @@ struct NextHopKey
             std::string err = "Error converting " + str + " to NextHop";
             throw std::invalid_argument(err);
         }
+        weight = 0;
     }
     NextHopKey(const std::string &str, bool overlay_nh)
     {
@@ -76,6 +79,7 @@ struct NextHopKey
         alias = keys[1];
         vni = static_cast<uint32_t>(std::stoul(keys[2]));
         mac_address = keys[3];
+        weight = 0;
     }
 
     const std::string to_string() const
@@ -157,7 +161,7 @@ struct NextHopKey
         std::string str;
         if (isMplsNextHop())
         {
-            label_stack.to_string() + LABELSTACK_DELIMITER;
+            str = label_stack.to_string() + LABELSTACK_DELIMITER;
         }
         return str;
     }

@@ -102,34 +102,34 @@ def gen_sci(macsec_system_identifier: str, macsec_port_identifier: int) -> str:
 
 
 def gen_sc_key(
-        seperator: str,
+        separator: str,
         port_name: str,
         macsec_system_identifier: str,
         macsec_port_identifier: int) -> str:
     sci = gen_sci(macsec_system_identifier, macsec_port_identifier)
     key = "{}{}{}".format(
         port_name,
-        seperator,
+        separator,
         sci)
     return key
 
 
 def gen_sa_key(
-        seperator: str,
+        separator: str,
         port_name: str,
         macsec_system_identifier: str,
         macsec_port_identifier: int,
         an: int):
     sc_key = gen_sc_key(
-        seperator,
+        separator,
         port_name,
         macsec_system_identifier,
         macsec_port_identifier)
-    key = "{}{}{}".format(sc_key, seperator, an)
+    key = "{}{}{}".format(sc_key, separator, an)
     return key
 
 
-def macsec_sc(seperator: str = AppDBTable.SEPARATOR):
+def macsec_sc(separator: str = AppDBTable.SEPARATOR):
     def inner(func: typing.Callable) -> typing.Callable:
         @functools.wraps(func)
         def wrap_func(
@@ -140,7 +140,7 @@ def macsec_sc(seperator: str = AppDBTable.SEPARATOR):
                 *args,
                 **kwargs) -> typing.Any:
             key = gen_sc_key(
-                seperator,
+                separator,
                 port_name,
                 macsec_system_identifier,
                 macsec_port_identifier)
@@ -149,7 +149,7 @@ def macsec_sc(seperator: str = AppDBTable.SEPARATOR):
     return inner
 
 
-def macsec_sa(seperator: str = AppDBTable.SEPARATOR):
+def macsec_sa(separator: str = AppDBTable.SEPARATOR):
     def inner(func: typing.Callable) -> typing.Callable:
         @functools.wraps(func)
         def wrap_func(
@@ -161,7 +161,7 @@ def macsec_sa(seperator: str = AppDBTable.SEPARATOR):
                 *args,
                 **kwargs) -> typing.Any:
             key = gen_sa_key(
-                seperator,
+                separator,
                 port_name,
                 macsec_system_identifier,
                 macsec_port_identifier,
@@ -216,8 +216,8 @@ class WPASupplicantMock(object):
         self.app_port_table[port_name] = {"enable": True}
 
     @macsec_sc()
-    def create_receive_sc(self, sci: str, ssci: int):
-        self.app_receive_sc_table[sci] = {"ssci": ssci}
+    def create_receive_sc(self, sci: str):
+        self.app_receive_sc_table[sci] = {"NULL": "NULL"}
         self.state_receive_sc_table.wait(sci)
 
     @macsec_sc()
@@ -226,8 +226,8 @@ class WPASupplicantMock(object):
         self.state_receive_sc_table.wait_delete(sci)
 
     @macsec_sc()
-    def create_transmit_sc(self, sci: str, ssci: int):
-        self.app_transmit_sc_table[sci] = {"sci": sci, "encoding_an": 0}
+    def create_transmit_sc(self, sci: str):
+        self.app_transmit_sc_table[sci] = {"encoding_an": 0}
         self.state_transmit_sc_table.wait(sci)
 
     @macsec_sc()
@@ -240,6 +240,7 @@ class WPASupplicantMock(object):
             sak: str,
             auth_key: str,
             lowest_acceptable_pn: int,
+            ssci: int,
             salt: str) -> bool:
         # Check SAK is hex string
         int(sak, 16)
@@ -268,17 +269,20 @@ class WPASupplicantMock(object):
             sak: str,
             auth_key: str,
             lowest_acceptable_pn: int,
+            ssci: int,
             salt: str):
         assert(
             self.check_valid_sa_parameter(
                 sak,
                 auth_key,
                 lowest_acceptable_pn,
+                ssci,
                 salt),
             "Wrong parameter to MACsec receive SA")
         self.app_receive_sa_table[sai] = {
             "active": False, "sak": sak, "auth_key": auth_key,
-            "lowest_acceptable_pn": lowest_acceptable_pn, "salt": salt}
+            "lowest_acceptable_pn": lowest_acceptable_pn,
+            "ssci": ssci, "salt": salt}
 
     @macsec_sa()
     def delete_receive_sa(self, sai: str):
@@ -298,17 +302,19 @@ class WPASupplicantMock(object):
             sak: str,
             auth_key: str,
             init_pn: int,
+            ssci: int,
             salt: str):
         assert(
             self.check_valid_sa_parameter(
                 sak,
                 auth_key,
                 init_pn,
+                ssci,
                 salt),
             "Wrong parameter to MACsec receive SA")
         self.app_transmit_sa_table[sai] = {
             "sak": sak, "auth_key": auth_key,
-            "next_pn": init_pn, "salt": salt}
+            "next_pn": init_pn, "ssci": ssci, "salt": salt}
 
     @macsec_sa()
     def delete_transmit_sa(self, sai: str):
@@ -388,8 +394,7 @@ class TestMACsec(object):
             wpa: WPASupplicantMock,
             port_name: str,
             local_mac_address: str,
-            macsec_port_identifier: int,
-            ssci: int):
+            macsec_port_identifier: int):
         wpa.init_macsec_port(port_name)
         wpa.config_macsec_port(port_name, {"enable_protect": True})
         wpa.config_macsec_port(port_name, {"enable_encrypt": True})
@@ -403,8 +408,7 @@ class TestMACsec(object):
         wpa.create_transmit_sc(
             port_name,
             local_mac_address,
-            macsec_port_identifier,
-            ssci)
+            macsec_port_identifier)
 
     def establish_macsec(
             self,
@@ -422,8 +426,7 @@ class TestMACsec(object):
         wpa.create_receive_sc(
             port_name,
             peer_mac_address,
-            macsec_port_identifier,
-            ssci)
+            macsec_port_identifier)
         wpa.create_receive_sa(
             port_name,
             peer_mac_address,
@@ -432,6 +435,7 @@ class TestMACsec(object):
             sak,
             auth_key,
             packet_number,
+            ssci,
             salt)
         wpa.create_transmit_sa(
             port_name,
@@ -441,6 +445,7 @@ class TestMACsec(object):
             sak,
             auth_key,
             packet_number,
+            ssci,
             salt)
         wpa.set_enable_receive_sa(
             port_name,
@@ -468,6 +473,7 @@ class TestMACsec(object):
             sak: str,
             packet_number: int,
             auth_key: str,
+            ssci: int,
             salt: str):
         wpa.create_receive_sa(
             port_name,
@@ -477,6 +483,7 @@ class TestMACsec(object):
             sak,
             auth_key,
             packet_number,
+            ssci,
             salt)
         wpa.create_transmit_sa(
             port_name,
@@ -486,6 +493,7 @@ class TestMACsec(object):
             sak,
             auth_key,
             packet_number,
+            ssci,
             salt)
         wpa.set_enable_receive_sa(
             port_name,
@@ -606,8 +614,7 @@ class TestMACsec(object):
             wpa,
             port_name,
             local_mac_address,
-            macsec_port_identifier,
-            ssci)
+            macsec_port_identifier)
         self.establish_macsec(
             wpa,
             port_name,
@@ -654,6 +661,7 @@ class TestMACsec(object):
             sak,
             packet_number,
             auth_key,
+            ssci,
             salt)
         assert(
             inspector.get_macsec_sa(

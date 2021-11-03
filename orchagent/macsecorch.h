@@ -94,6 +94,7 @@ private:
         bool                                m_enable_encrypt;
         bool                                m_sci_in_sectag;
         bool                                m_enable;
+        uint32_t                            m_original_ipg;
     };
     struct MACsecObject
     {
@@ -115,11 +116,13 @@ private:
         const std::string &port_name,
         const TaskArgs & port_attr,
         const MACsecObject &macsec_obj,
-        sai_object_id_t line_port_id,
-        sai_object_id_t switch_id);
+        sai_object_id_t port_id,
+        sai_object_id_t switch_id,
+        Port &port,
+        const gearbox_phy_t* phy);
     bool createMACsecPort(
         sai_object_id_t &macsec_port_id,
-        sai_object_id_t line_port_id,
+        sai_object_id_t port_id,
         sai_object_id_t switch_id,
         sai_macsec_direction_t direction);
     bool updateMACsecPort(MACsecPort &macsec_port, const TaskArgs & port_attr);
@@ -127,7 +130,9 @@ private:
         const MACsecPort &macsec_port,
         const std::string &port_name,
         const MACsecObject &macsec_obj,
-        sai_object_id_t line_port_id);
+        sai_object_id_t port_id,
+        Port &port,
+        const gearbox_phy_t* phy);
     bool deleteMACsecPort(sai_object_id_t macsec_port_id);
 
     /* MACsec Flow */

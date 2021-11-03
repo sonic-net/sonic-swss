@@ -9,6 +9,7 @@
 #include "bufferorch.h"
 #include "flexcounterorch.h"
 #include "debugcounterorch.h"
+#include "directory.h"
 
 extern sai_port_api_t *sai_port_api;
 
@@ -16,6 +17,7 @@ extern PortsOrch *gPortsOrch;
 extern FabricPortsOrch *gFabricPortsOrch;
 extern IntfsOrch *gIntfsOrch;
 extern BufferOrch *gBufferOrch;
+extern Directory<Orch*> gDirectory;
 
 #define BUFFER_POOL_WATERMARK_KEY   "BUFFER_POOL_WATERMARK"
 #define PORT_KEY                    "PORT"
@@ -23,6 +25,7 @@ extern BufferOrch *gBufferOrch;
 #define QUEUE_KEY                   "QUEUE"
 #define PG_WATERMARK_KEY            "PG_WATERMARK"
 #define RIF_KEY                     "RIF"
+#define TUNNEL_KEY                  "TUNNEL"
 
 unordered_map<string, string> flexCounterGroupMap =
 {
@@ -38,6 +41,7 @@ unordered_map<string, string> flexCounterGroupMap =
     {"RIF", RIF_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"RIF_RATES", RIF_RATE_COUNTER_FLEX_COUNTER_GROUP},
     {"DEBUG_COUNTER", DEBUG_COUNTER_FLEX_COUNTER_GROUP},
+    {"TUNNEL", TUNNEL_STAT_COUNTER_FLEX_COUNTER_GROUP},
 };
 
 
@@ -58,6 +62,7 @@ void FlexCounterOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
+    VxlanTunnelOrch* vxlan_tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
     if (gPortsOrch && !gPortsOrch->allPortsReady())
     {
         return;
@@ -86,6 +91,13 @@ void FlexCounterOrch::doTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
+            auto itDelay = std::find(std::begin(data), std::end(data), FieldValueTuple(FLEX_COUNTER_DELAY_STATUS_FIELD, "true"));
+
+            if (itDelay != data.end())
+            {
+                consumer.m_toSync.erase(it++);
+                continue;
+            }
             for (auto valuePair:data)
             {
                 const auto &field = fvField(valuePair);
@@ -140,9 +152,19 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     {
                         gFabricPortsOrch->generateQueueStats();
                     }
+                    if (vxlan_tunnel_orch && (key== TUNNEL_KEY) && (value == "enable"))
+                    {
+                        vxlan_tunnel_orch->generateTunnelCounterMap();
+                    }
                     vector<FieldValueTuple> fieldValues;
                     fieldValues.emplace_back(FLEX_COUNTER_STATUS_FIELD, value);
                     m_flexCounterGroupTable->set(flexCounterGroupMap[key], fieldValues);
+                }
+                else if(field == FLEX_COUNTER_DELAY_STATUS_FIELD)
+                {
+                    // This field is ignored since it is being used before getting into this loop.
+                    // If it is exist and the value is 'true' we need to skip the iteration in order to delay the counter creation.
+                    // The field will clear out and counter will be created when enable_counters script is called.
                 }
                 else
                 {
