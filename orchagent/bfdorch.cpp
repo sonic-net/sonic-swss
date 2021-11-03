@@ -31,7 +31,7 @@ const map<string, sai_bfd_session_type_t> session_type_map =
     {"async_passive",       SAI_BFD_SESSION_TYPE_ASYNC_PASSIVE}
 };
 
-const map<sai_bfd_session_type_t, string> session_type_loopup =
+const map<sai_bfd_session_type_t, string> session_type_lookup =
 {
     {SAI_BFD_SESSION_TYPE_DEMAND_ACTIVE,    "demand_active"},
     {SAI_BFD_SESSION_TYPE_DEMAND_PASSIVE,   "demand_passive"},
@@ -39,7 +39,7 @@ const map<sai_bfd_session_type_t, string> session_type_loopup =
     {SAI_BFD_SESSION_TYPE_ASYNC_PASSIVE,    "async_passive"}
 };
 
-const map<sai_bfd_session_state_t, string> session_state_loopup =
+const map<sai_bfd_session_state_t, string> session_state_lookup =
 {
     {SAI_BFD_SESSION_STATE_ADMIN_DOWN,  "Admin_Down"},
     {SAI_BFD_SESSION_STATE_DOWN,        "Down"},
@@ -129,14 +129,15 @@ void BfdOrch::doTask(NotificationConsumer &consumer)
             sai_object_id_t id = bfdSessionState[i].bfd_session_id;
             sai_bfd_session_state_t state = bfdSessionState[i].session_state;
 
-            SWSS_LOG_INFO("Get BFD session state change notification id:%" PRIx64 " state: %s", id, session_state_loopup.at(state).c_str());
+            SWSS_LOG_INFO("Get BFD session state change notification id:%" PRIx64 " state: %s", id, session_state_lookup.at(state).c_str());
 
             if (state != bfd_session_lookup[id].state)
             {
                 auto key = bfd_session_lookup[id].peer;
-                m_stateBfdSessionTable.hset(key, "state", session_state_loopup.at(state));
+                m_stateBfdSessionTable.hset(key, "state", session_state_lookup.at(state));
 
-                SWSS_LOG_NOTICE("Updated BFD session state for %s to %s", key.c_str(), session_state_loopup.at(state).c_str());
+                SWSS_LOG_NOTICE("BFD session state for %s changed from %s to %s", key.c_str(),
+                            session_state_lookup.at(bfd_session_lookup[id].state).c_str(), session_state_lookup.at(state).c_str());
 
                 BfdUpdate update;
                 update.peer = key;
@@ -244,7 +245,7 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     attr.id = SAI_BFD_SESSION_ATTR_TYPE;
     attr.value.s32 = bfd_session_type;
     attrs.emplace_back(attr);
-    fvVector.emplace_back("type", session_type_loopup.at(bfd_session_type));
+    fvVector.emplace_back("type", session_type_lookup.at(bfd_session_type));
 
     attr.id = SAI_BFD_SESSION_ATTR_LOCAL_DISCRIMINATOR;
     attr.value.u32 = bfd_gen_id();
@@ -308,7 +309,7 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
         if (!gPortsOrch->getPort(alias, port))
         {
             SWSS_LOG_ERROR("Failed to locate port %s", alias.c_str());
-            return true;
+            return false;
         }
 
         if (!dst_mac_provided)
@@ -364,7 +365,7 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
         attrs.emplace_back(attr);
     }
 
-    fvVector.emplace_back("state", session_state_loopup.at(SAI_BFD_SESSION_STATE_DOWN));
+    fvVector.emplace_back("state", session_state_lookup.at(SAI_BFD_SESSION_STATE_DOWN));
 
     sai_object_id_t bfd_session_id = SAI_NULL_OBJECT_ID;
     sai_status_t status = sai_bfd_api->create_bfd_session(&bfd_session_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
