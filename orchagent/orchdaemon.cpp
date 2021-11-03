@@ -641,7 +641,7 @@ void OrchDaemon::start()
 
         auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(tend - tstart);
 
-        if (diff >= SELECT_TIMEOUT)
+        if (diff.count() >= SELECT_TIMEOUT)
         {
             tstart = std::chrono::high_resolution_clock::now();
 
