@@ -169,7 +169,7 @@ class TestMplsTc(object):
 
         mpls_tc_tc_map = json.loads(mpls_tc_tc_map_raw)
         for mplstc2tc in mpls_tc_tc_map['list']:
-            mpls_tc = str(mplstc2tc['key']['exp'])
+            mpls_tc = str(mplstc2tc['key']['mpls_exp'])
             tc = str(mplstc2tc['value']['tc'])
             assert tc == MPLS_TC_TO_TC_MAP[mpls_tc]
 
@@ -189,7 +189,7 @@ class TestMplsTc(object):
             assert status == True
 
             for fv in fvs:
-                if fv[0] == "SAI_PORT_ATTR_QOS_EXP_TO_TC_MAP":
+                if fv[0] == "SAI_PORT_ATTR_QOS_MPLS_EXP_TO_TC_MAP":
                     cnt += 1
                     assert fv[1] == oid
 
