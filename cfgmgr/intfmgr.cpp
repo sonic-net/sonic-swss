@@ -672,7 +672,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
                             const auto &field = fvField(idx);
                             const auto &value = fvValue(idx);
 
-                            if (field == "gwmac")
+                            if (field == "gateway_mac")
                             {
                                 gwmac = value;
                             }
@@ -846,7 +846,7 @@ void IntfMgr::doSagTask(const vector<string>& keys,
         const auto &field = fvField(idx);
         const auto &value = fvValue(idx);
 
-        if (field == "gwmac")
+        if (field == "gateway_mac")
         {
             mac = value;
         }
@@ -855,7 +855,7 @@ void IntfMgr::doSagTask(const vector<string>& keys,
     vector<FieldValueTuple> fvAppSag;
     if (op == SET_COMMAND)
     {
-        FieldValueTuple gwmac("gwmac", MacAddress(mac).to_string());
+        FieldValueTuple gwmac("gateway_mac", MacAddress(mac).to_string());
         fvAppSag.push_back(gwmac);
         m_appSagTableProducer.set("GLOBAL", fvAppSag);
     }

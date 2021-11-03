@@ -1083,7 +1083,7 @@ void IntfsOrch::doSagTask(vector<FieldValueTuple> data, const string& op)
             const auto &field = fvField(idx);
             const auto &value = fvValue(idx);
             SWSS_LOG_NOTICE("process key %s, value %s", field.c_str(), value.c_str());
-            if (field == "gwmac")
+            if (field == "gateway_mac")
             {
                 sag_mac_str = value;
             }
