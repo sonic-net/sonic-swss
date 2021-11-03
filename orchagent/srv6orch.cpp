@@ -112,7 +112,7 @@ bool Srv6Orch::removeSrv6Nexthops(const NextHopGroupKey &nhg)
             }
 
             /* Update nexthop in SID table after deleting the nexthop */
-            SWSS_LOG_NOTICE("Seg %s nexthop refcount %ld",
+            SWSS_LOG_NOTICE("Seg %s nexthop refcount %zu",
                       segname.c_str(),
                       sid_table_[segname].nexthops.size());
             if (sid_table_[segname].nexthops.find(sr_nh) != sid_table_[segname].nexthops.end())
@@ -141,7 +141,7 @@ bool Srv6Orch::removeSrv6Nexthops(const NextHopGroupKey &nhg)
         }
         else
         {
-            SWSS_LOG_INFO("Nexthops referencing this tunnel object %s: %ld", srv6_source.c_str(),tunnel_nhs);
+            SWSS_LOG_INFO("Nexthops referencing this tunnel object %s: %zu", srv6_source.c_str(),tunnel_nhs);
         }
     }
     return true;
@@ -312,7 +312,7 @@ bool Srv6Orch::deleteSidList(const string sid_name)
 
     if (sid_table_[sid_name].nexthops.size() > 1)
     {
-        SWSS_LOG_NOTICE("segment object %s referenced by other nexthops: count %ld, not deleting",
+        SWSS_LOG_NOTICE("segment object %s referenced by other nexthops: count %zu, not deleting",
                       sid_name.c_str(), sid_table_[sid_name].nexthops.size());
         return false;
     }
@@ -504,7 +504,6 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
               SWSS_LOG_ERROR("VRF object not created for DT VRF %s", dt_vrf.c_str());
               return false;
             }
-            SWSS_LOG_NOTICE("DT VRF Object 0x%lx", dt_vrf_id);
         }
         else
         {
