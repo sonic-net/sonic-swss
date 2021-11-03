@@ -1173,14 +1173,6 @@ class TestNextHopGroup(TestNextHopGroupBase):
             self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 2)
             self.asic_db.wait_for_n_keys(self.ASIC_NHS_STR, self.asic_nhs_count + 1)
 
-            # Assert the weights of the NHGMs are the expected ones
-            nhgm_ids = self.get_nhgm_ids('group1')
-            weights = []
-            for nhgm_id in nhgm_ids:
-                fvs = self.asic_db.get_entry(self.ASIC_NHGM_STR, nhgm_id)
-                weights.append(fvs['SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT'])
-            assert weights == ['0', '0']
-
             # Delete group1
             self.nhg_ps._del('group1')
 
