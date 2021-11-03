@@ -50,6 +50,7 @@ traps_to_trap_type = {
         "bgp": "SAI_HOSTIF_TRAP_TYPE_BGP",
         "dhcpv6": "SAI_HOSTIF_TRAP_TYPE_DHCPV6",
         "ospfv6": "SAI_HOSTIF_TRAP_TYPE_OSPFV6",
+        "isis": "SAI_HOSTIF_TRAP_TYPE_ISIS",
         "vrrpv6": "SAI_HOSTIF_TRAP_TYPE_VRRPV6",
         "bgpv6": "SAI_HOSTIF_TRAP_TYPE_BGPV6",
         "neigh_discovery": "SAI_HOSTIF_TRAP_TYPE_IPV6_NEIGHBOR_DISCOVERY",
@@ -67,7 +68,10 @@ traps_to_trap_type = {
         "bfd": "SAI_HOSTIF_TRAP_TYPE_BFD",
         "bfdv6": "SAI_HOSTIF_TRAP_TYPE_BFDV6",
         "src_nat_miss": "SAI_HOSTIF_TRAP_TYPE_SNAT_MISS",
-        "dest_nat_miss": "SAI_HOSTIF_TRAP_TYPE_DNAT_MISS"
+        "dest_nat_miss": "SAI_HOSTIF_TRAP_TYPE_DNAT_MISS",
+        "ldp": "SAI_HOSTIF_TRAP_TYPE_LDP",
+        "bfd_micro": "SAI_HOSTIF_TRAP_TYPE_BFD_MICRO",
+        "bfdv6_micro": "SAI_HOSTIF_TRAP_TYPE_BFDV6_MICRO"
         }
 
 copp_group_default = {
@@ -201,12 +205,12 @@ class TestCopp(object):
         self.feature_tbl.set("sflow", fvs)
         time.sleep(2)
 
-   
+
     def validate_policer(self, policer_oid, field, value):
         (status, fvs) = self.policer_atbl.get(policer_oid)
         assert status == True
         attr = field_to_sai_attr[field]
-        
+
         attr_value = value
         if field == "mode":
             attr_value = policer_mode_map[value]
@@ -218,7 +222,7 @@ class TestCopp(object):
         for fv in fvs:
             if (fv[0] == attr):
                 assert attr_value == fv[1]
-                
+
     def validate_trap_group(self, trap_oid, trap_group):
         (status, trap_fvs) = self.trap_atbl.get(trap_oid)
         assert status == True
@@ -244,11 +248,11 @@ class TestCopp(object):
                     policer_oid = fv[1]
                 elif fv[0] == "SAI_HOSTIF_TRAP_GROUP_ATTR_QUEUE":
                     queue = fv[1]
-                
+
         for keys in trap_group:
             obj_type = field_to_sai_obj_type[keys]
             if obj_type == "SAI_OBJECT_TYPE_POLICER":
-                assert policer_oid != "" 
+                assert policer_oid != ""
                 assert policer_oid != "oid:0x0"
                 self.validate_policer(policer_oid, keys, trap_group[keys])
 
@@ -267,7 +271,7 @@ class TestCopp(object):
                     assert trap_priority == trap_group[keys]
 
             elif obj_type == "SAI_OBJECT_TYPE_HOSTIF":
-                host_tbl_keys = self.hostiftbl_atbl.getKeys();
+                host_tbl_keys = self.hostiftbl_atbl.getKeys()
                 host_tbl_key = None
                 for host_tbl_entry in host_tbl_keys:
                     (status, fvs) = self.hostiftbl_atbl.get(host_tbl_entry)
@@ -334,7 +338,7 @@ class TestCopp(object):
             if "sample_packet" not in trap_ids:
                 continue
             trap_group = copp_trap[traps]
-            trap_found = False 
+            trap_found = False
             trap_type = traps_to_trap_type["sample_packet"]
             for key in trap_keys:
                 (status, fvs) = self.trap_atbl.get(key)
@@ -498,8 +502,8 @@ class TestCopp(object):
     def test_new_trap_add(self, dvs, testlog):
         self.setup_copp(dvs)
         global copp_trap
-        traps = "eapol"
-        fvs = swsscommon.FieldValuePairs([("trap_group", "queue1_group2"),("trap_ids", "eapol")])
+        traps = "eapol,isis,bfd_micro,bfdv6_micro,ldp"
+        fvs = swsscommon.FieldValuePairs([("trap_group", "queue1_group2"),("trap_ids", traps)])
         self.trap_ctbl.set(traps, fvs)
         copp_trap[traps] = copp_group_queue1_group2
         time.sleep(2)
@@ -527,8 +531,8 @@ class TestCopp(object):
     def test_new_trap_del(self, dvs, testlog):
         self.setup_copp(dvs)
         global copp_trap
-        traps = "eapol"
-        fvs = swsscommon.FieldValuePairs([("trap_group", "queue1_group2"),("trap_ids", "eapol")])
+        traps = "eapol,isis,bfd_micro,bfdv6_micro,ldp"
+        fvs = swsscommon.FieldValuePairs([("trap_group", "queue1_group2"),("trap_ids", traps)])
         self.trap_ctbl.set(traps, fvs)
         copp_trap[traps] = copp_group_queue1_group2
         time.sleep(2)

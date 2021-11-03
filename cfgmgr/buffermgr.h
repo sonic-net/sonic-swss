@@ -50,6 +50,7 @@ private:
     ProducerStateTable m_applBufferEgressProfileListTable;
 
     bool m_pgfile_processed;
+    bool dynamic_buffer_model;
 
     pg_profile_lookup_t m_pgProfileLookup;
     port_cable_length_t m_cableLenLookup;
@@ -63,6 +64,7 @@ private:
     void transformSeperator(std::string &name);
 
     void doTask(Consumer &consumer);
+    void doBufferMetaTask(Consumer &consumer);
 };
 
 }

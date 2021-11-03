@@ -38,11 +38,17 @@ struct VlanMemberEntry
 
 typedef std::map<sai_vlan_id_t, VlanMemberEntry> vlan_members_t;
 
+typedef std::map<std::string, sai_object_id_t> endpoint_ip_l2mc_group_member_map_t;
+
 struct VlanInfo
 {
     sai_object_id_t     vlan_oid = 0;
     sai_vlan_id_t       vlan_id = 0;
     sai_object_id_t     host_intf_id = SAI_NULL_OBJECT_ID;
+    sai_vlan_flood_control_type_t uuc_flood_type = SAI_VLAN_FLOOD_CONTROL_TYPE_ALL;
+    sai_vlan_flood_control_type_t bc_flood_type = SAI_VLAN_FLOOD_CONTROL_TYPE_ALL;
+    sai_object_id_t    l2mc_group_id = SAI_NULL_OBJECT_ID;
+    endpoint_ip_l2mc_group_member_map_t l2mc_members;
 };
 
 struct SystemPortInfo

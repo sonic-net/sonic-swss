@@ -5,6 +5,7 @@
 #include "tokenize.h"
 #include "warm_restart.h"
 #include "portmgr.h"
+#include <swss/redisutility.h>
 
 #include <algorithm>
 #include <iostream>
@@ -72,6 +73,13 @@ bool TeamMgr::isPortStateOk(const string &alias)
         return false;
     }
 
+    auto state_opt = swss::fvsGetValue(temp, "state", true);
+    if (!state_opt)
+    {
+        SWSS_LOG_INFO("Port %s is not ready", alias.c_str());
+        return false;
+    }
+
     return true;
 }
 
@@ -124,23 +132,44 @@ void TeamMgr::cleanTeamProcesses()
         std::string res;
         pid_t pid;
 
+        try
         {
             std::stringstream cmd;
             cmd << "cat " << shellquote("/var/run/teamd/" + alias + ".pid");
             EXEC_WITH_ERROR_THROW(cmd.str(), res);
+        }
+        catch (const std::exception &e)
+        {
+            // Handle Warm/Fast reboot scenario
+            SWSS_LOG_NOTICE("Skipping non-existent port channel %s pid...", alias.c_str());
+            continue;
+        }
 
+        try
+        {
             pid = static_cast<pid_t>(std::stoul(res, nullptr, 10));
             aliasPidMap[alias] = pid;
 
             SWSS_LOG_INFO("Read port channel %s pid %d", alias.c_str(), pid);
         }
+        catch (const std::exception &e)
+        {
+            SWSS_LOG_ERROR("Failed to read port channel %s pid: %s", alias.c_str(), e.what());
+            continue;
+        }
 
+        try
         {
             std::stringstream cmd;
             cmd << "kill -TERM " << pid;
             EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
-            SWSS_LOG_INFO("Sent SIGTERM to port channel %s pid %d", alias.c_str(), pid);
+            SWSS_LOG_NOTICE("Sent SIGTERM to port channel %s pid %d", alias.c_str(), pid);
+        }
+        catch (const std::exception &e)
+        {
+            SWSS_LOG_ERROR("Failed to send SIGTERM to port channel %s pid %d: %s", alias.c_str(), pid, e.what());
+            aliasPidMap.erase(alias);
         }
     }
 
