@@ -717,7 +717,6 @@ void RouteOrch::doTask(Consumer& consumer)
                         }
                         nhg_str = ip + NH_DELIMITER + srv6_segv[0] + NH_DELIMITER + srv6_src[0];
 
-                        SWSS_LOG_NOTICE("SRV6 segment size: %d", srv6_segv.size());
                         for (uint32_t i = 1; i < srv6_segv.size(); i++)
                         {
                             if (ipv.empty()) {
@@ -732,7 +731,7 @@ void RouteOrch::doTask(Consumer& consumer)
                             nhg_str += NH_DELIMITER + srv6_src[i];
                         }
                         nhg = NextHopGroupKey(nhg_str, overlay_nh, srv6_nh);
-                        SWSS_LOG_NOTICE("SRV6 route %s with nhg size %d", nhg.to_string().c_str(), nhg.getSize());
+                        SWSS_LOG_NOTICE("SRV6 route with nhg %s", nhg.to_string().c_str());
                     }
                     else if (overlay_nh == false && srv6_nh == false)
                     {
