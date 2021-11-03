@@ -431,7 +431,7 @@ task_process_status PolicerOrch::handlePortStormControlTable(Consumer& consumer)
 
         if (op == SET_COMMAND)
         {
-            // Mark the opeartion as an 'update', if the policer exists.
+            // Mark the operation as an 'update', if the policer exists.
             bool update = m_syncdPolicers.find(storm_policer_name) != m_syncdPolicers.end();
             vector <sai_attribute_t> attrs;
             bool cir = false;
@@ -716,7 +716,7 @@ void PolicerOrch::update(SubjectType type, void *cntx)
                     SWSS_LOG_NOTICE("Del port %s", port.m_alias.c_str());
                     if (!handlePhyDelete(port))
                     {
-                        SWSS_LOG_INFO("Unable to handle QoS Mapping during port delete %s",
+                        SWSS_LOG_INFO("Unable to handle storm-control policer cleanup during port delete %s",
                                 port.m_alias.c_str());
                     }
                 }
