@@ -189,6 +189,10 @@ std::map<int, gearbox_phy_t> GearboxUtils::loadPhyMap(Table *gearboxTable)
                 {
                     phy.context_id = std::stoi(val.second);
                 }
+                else if (val.first == "macsec_ipg")
+                {
+                    phy.macsec_ipg = std::stoi(val.second);
+                }
             }
             gearboxPhyMap[phy.phy_id] = phy;
         }

@@ -760,18 +760,33 @@ void FdbOrch::doTask(Consumer& consumer)
                 }
             }
 
+            /* FDB type is either dynamic or static */
             assert(type == "dynamic" || type == "dynamic_local" || type == "static" );
 
             if(origin == FDB_ORIGIN_VXLAN_ADVERTIZED)
             {
                 VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
 
-                if(!remote_ip.length())
+                if (tunnel_orch->isDipTunnelsSupported())
                 {
-                    it = consumer.m_toSync.erase(it);
-                    continue;
+                    if(!remote_ip.length())
+                    {
+                        it = consumer.m_toSync.erase(it);
+                        continue;
+                    }
+                    port = tunnel_orch->getTunnelPortName(remote_ip);
                 }
-                port = tunnel_orch->getTunnelPortName(remote_ip);
+                else
+                {
+                    EvpnNvoOrch* evpn_nvo_orch = gDirectory.get<EvpnNvoOrch*>();
+                    VxlanTunnel* sip_tunnel = evpn_nvo_orch->getEVPNVtep();
+                    if (sip_tunnel == NULL)
+                    {
+                        it = consumer.m_toSync.erase(it);
+                        continue;
+                    }
+                    port = tunnel_orch->getTunnelPortName(sip_tunnel->getSrcIP().to_string(), true);
+                }
             }
 
 
@@ -804,8 +819,6 @@ void FdbOrch::doTask(Consumer& consumer)
                     }
                     port = tunnel_orch->getTunnelPortName(remote_ip);
                 }
-
-
                 it = consumer.m_toSync.erase(it);
             }
             else
@@ -1125,11 +1138,14 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
 {
     Port vlan;
     Port port;
+    string end_point_ip = "";
+
+    VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
 
     SWSS_LOG_ENTER();
-    SWSS_LOG_INFO("mac=%s bv_id=0x%" PRIx64 " port_name=%s type=%s origin=%d",
+    SWSS_LOG_INFO("mac=%s bv_id=0x%" PRIx64 " port_name=%s type=%s origin=%d remote_ip=%s",
             entry.mac.to_string().c_str(), entry.bv_id, port_name.c_str(),
-            fdbData.type.c_str(), fdbData.origin);
+            fdbData.type.c_str(), fdbData.origin, fdbData.remote_ip.c_str());
 
     if (!m_portsOrch->getPort(entry.bv_id, vlan))
     {
@@ -1146,8 +1162,14 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
         return true;
     }
 
+    /* Assign end point IP only in SIP tunnel scenario since Port + IP address
+       needed to uniquely identify Vlan member */
+    if (!tunnel_orch->isDipTunnelsSupported())
+    {
+        end_point_ip = fdbData.remote_ip;
+    }
     /* Retry until port is member of vlan*/
-    if (vlan.m_members.find(port_name) == vlan.m_members.end())
+    if (!m_portsOrch->isVlanMember(vlan, port, end_point_ip))
     {
         SWSS_LOG_INFO("Saving a fdb entry until port %s becomes vlan %s member", port_name.c_str(), vlan.m_alias.c_str());
         saved_fdb_entries[port_name].push_back({entry.mac,
@@ -1163,6 +1185,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
 
     Port oldPort;
     string oldType;
+    string oldRemoteIp;
     FdbOrigin oldOrigin = FDB_ORIGIN_INVALID ;
     bool macUpdate = false;
 
@@ -1172,6 +1195,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
         /* get existing port and type */
         oldType = it->second.type;
         oldOrigin = it->second.origin;
+        oldRemoteIp = it->second.remote_ip;
 
         if (!m_portsOrch->getPortByBridgePortId(it->second.bridge_port_id, oldPort))
         {
@@ -1179,12 +1203,13 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
             return false;
         }
 
-        if ((oldOrigin == fdbData.origin) && (oldType == fdbData.type) && (port.m_bridge_port_id == it->second.bridge_port_id))
+        if ((oldOrigin == fdbData.origin) && (oldType == fdbData.type) && (port.m_bridge_port_id == it->second.bridge_port_id)
+            && (oldRemoteIp == fdbData.remote_ip))
         {
             /* Duplicate Mac */
-            SWSS_LOG_INFO("FdbOrch: mac=%s %s port=%s type=%s origin=%d is duplicate", entry.mac.to_string().c_str(),
+            SWSS_LOG_INFO("FdbOrch: mac=%s %s port=%s type=%s origin=%d  remote_ip=%s is duplicate", entry.mac.to_string().c_str(),
                     vlan.m_alias.c_str(), port_name.c_str(),
-                    fdbData.type.c_str(), fdbData.origin);
+                    fdbData.type.c_str(), fdbData.origin, fdbData.remote_ip.c_str());
             return true;
         }
         else if (fdbData.origin != oldOrigin)
@@ -1271,8 +1296,8 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
 
     attrs.push_back(attr);
 
-    if ((fdbData.origin == FDB_ORIGIN_VXLAN_ADVERTIZED) || (fdbData.origin == FDB_ORIGIN_MCLAG_ADVERTIZED)
-            || (fdbData.type == "dynamic"))
+    if (((fdbData.origin == FDB_ORIGIN_VXLAN_ADVERTIZED) || (fdbData.origin == FDB_ORIGIN_MCLAG_ADVERTIZED))
+            && (fdbData.type == "dynamic"))
     {
         attr.id = SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE;
         attr.value.booldata = true;

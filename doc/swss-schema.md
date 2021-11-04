@@ -35,9 +35,9 @@ Stores information for physical switch ports managed by the switch chip. Ports t
     Example:
     127.0.0.1:6379> hgetall PORT_TABLE:ETHERNET4
     1) "dscp_to_tc_map"
-    2) "[DSCP_TO_TC_MAP_TABLE:AZURE]"
+    2) "AZURE"
     3) "tc_to_queue_map"
-    4) "[TC_TO_QUEUE_MAP_TABLE:AZURE]"
+    4) "AZURE"
 
 ---------------------------------------------
 ### INTF_TABLE
@@ -159,8 +159,35 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     ;Status: Mandatory
     key           = ROUTE_TABLE:prefix
     nexthop       = *prefix, ;IP addresses separated “,” (empty indicates no gateway)
-    intf          = ifindex? PORT_TABLE.key  ; zero or more separated by “,” (zero indicates no interface)
+    ifname        = ifindex? PORT_TABLE.key  ; zero or more separated by “,” (zero indicates no interface)
+    mpls_nh       = STRING                   ; Comma-separated list of MPLS NH info.
     blackhole     = BIT ; Set to 1 if this route is a blackhole (or null0)
+    weight        = weight_list              ; List of weights.
+    nexthop_group = string ; index within the NEXTHOP_GROUP_TABLE, used instead of nexthop and intf fields
+
+---------------------------------------------
+
+###### LABEL_ROUTE_TABLE
+    ; Defines schema for MPLS label route table attributes
+    key           = LABEL_ROUTE_TABLE:mpls_label ; MPLS label
+    ; field       = value
+    nexthop       = STRING                   ; Comma-separated list of nexthops.
+    ifname        = STRING                   ; Comma-separated list of interfaces.
+    mpls_nh       = STRING                   ; Comma-separated list of MPLS NH info.
+    mpls_pop      = STRING                   ; Number of ingress MPLS labels to POP
+    weight        = STRING                   ; Comma-separated list of weights.
+    blackhole     = BIT ; Set to 1 if this route is a blackhole (or null0)
+    nexthop_group = string ; index within the NEXTHOP_GROUP_TABLE, used instead of nexthop and intf fields
+
+---------------------------------------------
+### NEXTHOP_GROUP_TABLE
+    ;Stores a list of groups of one or more next hops
+    ;Status: Mandatory
+    key           = NEXTHOP_GROUP_TABLE:string ; arbitrary index for the next hop group
+    nexthop       = *prefix, ;IP addresses separated “,” (empty indicates no gateway)
+    ifname        = ifindex? PORT_TABLE.key  ; zero or more separated by “,” (zero indicates no interface)
+    mpls_nh       = STRING                   ; Comma-separated list of MPLS NH info.
+    weight        = weight_list              ; List of weights.
 
 ---------------------------------------------
 ### NEIGH_TABLE
@@ -209,9 +236,9 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     Example:
     127.0.0.1:6379> hgetall QUEUE_TABLE:ETHERNET4:1
     1) "scheduler"
-    2) "[SCHEDULER_TABLE:BEST_EFFORT]"
+    2) "BEST_EFFORT"
     3) "wred_profile"
-    4) "[WRED_PROFILE_TABLE:AZURE]"
+    4) "AZURE"
 
 ---------------------------------------------
 ### TC\_TO\_QUEUE\_MAP\_TABLE

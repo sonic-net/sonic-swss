@@ -36,9 +36,15 @@ template <typename DropHandler, typename ForwardHandler>
 PfcWdOrch<DropHandler, ForwardHandler>::PfcWdOrch(DBConnector *db, vector<string> &tableNames):
     Orch(db, tableNames),
     m_countersDb(new DBConnector("COUNTERS_DB", 0)),
-    m_countersTable(new Table(m_countersDb.get(), COUNTERS_TABLE))
+    m_countersTable(new Table(m_countersDb.get(), COUNTERS_TABLE)),
+    m_platform(getenv("platform") ? getenv("platform") : "")
 {
     SWSS_LOG_ENTER();
+    if (m_platform == "")
+    {
+        SWSS_LOG_ERROR("Platform environment variable is not defined");
+        return;
+    }
 }
 
 
@@ -217,6 +223,10 @@ task_process_status PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const st
                 if (action == PfcWdAction::PFC_WD_ACTION_UNKNOWN)
                 {
                     SWSS_LOG_ERROR("Invalid PFC Watchdog action %s", value.c_str());
+                    return task_process_status::task_invalid_entry;
+                }
+                if ((m_platform == CISCO_8000_PLATFORM_SUBSTRING) && (action == PfcWdAction::PFC_WD_ACTION_FORWARD)) {
+                    SWSS_LOG_ERROR("Unsupported action %s for platform %s", value.c_str(), m_platform.c_str());
                     return task_process_status::task_invalid_entry;
                 }
             }
@@ -657,16 +667,14 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
 {
     SWSS_LOG_ENTER();
 
-    string platform = getenv("platform") ? getenv("platform") : "";
-    if (platform == "")
-    {
-        SWSS_LOG_ERROR("Platform environment variable is not defined");
-        return;
-    }
-
     string detectSha, restoreSha;
-    string detectPluginName = "pfc_detect_" + platform + ".lua";
-    string restorePluginName = "pfc_restore.lua";
+    string detectPluginName = "pfc_detect_" + this->m_platform + ".lua";
+    string restorePluginName;
+    if (this->m_platform == CISCO_8000_PLATFORM_SUBSTRING) {
+        restorePluginName = "pfc_restore_" + this->m_platform + ".lua";
+    } else {
+        restorePluginName = "pfc_restore.lua";
+    }
 
     try
     {
@@ -1056,3 +1064,4 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::bake()
 // Trick to keep member functions in a separate file
 template class PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>;
 template class PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>;
+template class PfcWdSwOrch<PfcWdSaiDlrInitHandler, PfcWdActionHandler>;

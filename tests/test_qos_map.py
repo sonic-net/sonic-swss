@@ -63,7 +63,7 @@ class TestDot1p(object):
 
     def apply_dot1p_profile_on_all_ports(self):
         tbl = swsscommon.Table(self.config_db, CFG_PORT_QOS_MAP_TABLE_NAME)
-        fvs = swsscommon.FieldValuePairs([(CFG_PORT_QOS_MAP_FIELD, "[" + CFG_DOT1P_TO_TC_MAP_TABLE_NAME + "|" + CFG_DOT1P_TO_TC_MAP_KEY + "]")])
+        fvs = swsscommon.FieldValuePairs([(CFG_PORT_QOS_MAP_FIELD, CFG_DOT1P_TO_TC_MAP_KEY)])
         ports = swsscommon.Table(self.config_db, CFG_PORT_TABLE_NAME).getKeys()
         for port in ports:
             tbl.set(port, fvs)
