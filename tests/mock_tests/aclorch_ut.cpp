@@ -364,7 +364,7 @@ namespace aclorch_test
             };
             gRouteOrch = new RouteOrch(m_app_db.get(), route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch);
 
-            PolicerOrch *policer_orch = new PolicerOrch(m_config_db.get(), "POLICER");
+            PolicerOrch *policer_orch = new PolicerOrch(m_config_db.get(), "POLICER", gPortsOrch);
 
             TableConnector stateDbMirrorSession(m_state_db.get(), STATE_MIRROR_SESSION_TABLE_NAME);
             TableConnector confDbMirrorSession(m_config_db.get(), CFG_MIRROR_SESSION_TABLE_NAME);
