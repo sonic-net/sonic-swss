@@ -7,7 +7,8 @@ extern sai_switch_api_t *sai_switch_api;
 
 uint64_t NhgMapOrch::m_max_nhg_map_count = 0;
 
-NhgMapEntry::NhgMapEntry(sai_object_id_t _id, uint32_t _ref_count) : id(_id), ref_count(_ref_count)
+NhgMapEntry::NhgMapEntry(sai_object_id_t _id, uint32_t _ref_count, int _largest_nh_index) :
+    id(_id), ref_count(_ref_count), largest_nh_index(_largest_nh_index)
 {
     SWSS_LOG_ENTER();
 }
@@ -68,15 +69,21 @@ void NhgMapOrch::doTask(Consumer &consumer)
             else
             {
                 /*
-                * Create the SAI map.
+                * Create the SAI map.  Also track the largest index referenced by the map as we do.
                 */
                 auto *fc_map = new sai_map_t[p.second.size()];
                 uint32_t ii = 0;
+                int largest_nh_index = 0;
 
                 for (const auto &fc_nh_idx : p.second)
                 {
                     fc_map[ii].key = fc_nh_idx.first;
                     fc_map[ii++].value = fc_nh_idx.second;
+
+                    if (fc_nh_idx.second > largest_nh_index)
+                    {
+                        largest_nh_index = fc_nh_idx.second;
+                    }
                 }
 
                 sai_map_list_t fc_map_list;
@@ -130,7 +137,8 @@ void NhgMapOrch::doTask(Consumer &consumer)
                         else
                         {
                             assert(nhg_map_id != SAI_NULL_OBJECT_ID);
-                            m_syncdMaps.emplace(move(index), nhg_map_id);
+                            NhgMapEntry entry(nhg_map_id, 0, largest_nh_index);
+                            m_syncdMaps.emplace(move(index), entry);
                         }
                     }
                 }
@@ -237,6 +245,18 @@ sai_object_id_t NhgMapOrch::getMapId(const string &index) const
     auto it = m_syncdMaps.find(index);
 
     return it == m_syncdMaps.end() ? SAI_NULL_OBJECT_ID : it->second.id;
+}
+
+/*
+ * Return the largest NH index used by the map indexed by "index".  If it  does not exist, return 0.
+ */
+int NhgMapOrch::getLargestNhIndex(const string &index) const
+{
+    SWSS_LOG_ENTER();
+
+    auto it = m_syncdMaps.find(index);
+
+    return it == m_syncdMaps.end() ? 0 : it->second.largest_nh_index;
 }
 
 /*

@@ -314,7 +314,13 @@ bool CbfNhg::sync()
 
     if (nhg_attr.value.oid == SAI_NULL_OBJECT_ID)
     {
-        SWSS_LOG_WARN("FC to NHG map index %s does not exist", m_selection_map.c_str());
+        SWSS_LOG_ERROR("FC to NHG map index %s does not exist", m_selection_map.c_str());
+        return false;
+    }
+
+    if ((unsigned int)gNhgMapOrch->getLargestNhIndex(m_selection_map) > m_members.size())
+    {
+        SWSS_LOG_ERROR("FC to NHG map references more NHG members than exist in group %s", m_key.c_str());
         return false;
     }
 
@@ -523,6 +529,13 @@ bool CbfNhg::update(const vector<string> &members, const string &selection_map)
         for (const auto &member : members)
         {
             m_members.emplace(member, CbfNhgMember(member, index++));
+        }
+
+        if ((unsigned int)gNhgMapOrch->getLargestNhIndex(m_selection_map) > m_members.size())
+        {
+            SWSS_LOG_ERROR("FC to NHG map references more NHG members than exist in group %s",
+                           m_key.c_str());
+            return false;
         }
 
         /* Sync the new members. */

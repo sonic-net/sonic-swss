@@ -17,7 +17,10 @@ struct NhgMapEntry
     /* Number of external objects referencing this next hop group map. */
     uint32_t ref_count;
 
-    explicit NhgMapEntry(sai_object_id_t id, uint32_t _ref_count = 0);
+    /* The largest group index referenced by the map. */
+    int largest_nh_index;
+
+    explicit NhgMapEntry(sai_object_id_t id, uint32_t _ref_count, int _largest_nh_index);
 };
 
 class NhgMapOrch : public Orch
@@ -31,6 +34,7 @@ public:
      * Return the SAI ID for the map indexed by "index".  If it  does not exist, return SAI_NULL_OBJECT_ID.
     */
     sai_object_id_t getMapId(const string &key) const;
+    int getLargestNhIndex(const string &key) const;
 
     /*
      * Increase / Decrease reference counter for a map.
