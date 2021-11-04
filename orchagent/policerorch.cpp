@@ -214,8 +214,6 @@ task_process_status PolicerOrch::handlePolicerTable(Consumer& consumer)
         {
             auto field = to_upper(fvField(*i));
             auto value = to_upper(fvValue(*i));
-            // Mark the operation as an 'update', if the policer exists.
-            bool update = m_syncdPolicers.find(key) != m_syncdPolicers.end();
 
             SWSS_LOG_DEBUG("attribute: %s value: %s", field.c_str(), value.c_str());
 
@@ -536,15 +534,10 @@ task_process_status PolicerOrch::handlePortStormControlTable(Consumer& consumer)
 
                 // The update operation has limitations that it could only update
                 // the rate and the size accordingly.
-                // SR_TCM: CIR, CBS, PBS
-                // TR_TCM: CIR, CBS, PIR, PBS
                 // STORM_CONTROL: CIR, CBS
                 for (auto & attr: attrs)
                 {
-                    if (attr.id != SAI_POLICER_ATTR_CBS &&
-                            attr.id != SAI_POLICER_ATTR_CIR &&
-                            attr.id != SAI_POLICER_ATTR_PBS &&
-                            attr.id != SAI_POLICER_ATTR_PIR)
+                    if (attr.id != SAI_POLICER_ATTR_CIR)
                     {
                         continue;
                     }
@@ -673,7 +666,7 @@ bool PolicerOrch::handlePhyDelete(Port &port)
                     storm_policer_name.c_str(), port.m_alias.c_str());
             if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_NOTICE("Failed to remove policer %s from port %s", 
+                SWSS_LOG_ERROR("Failed to remove policer %s from port %s", 
                         storm_policer_name.c_str(), port.m_alias.c_str());
             }
             status = sai_policer_api->remove_policer(
@@ -682,7 +675,7 @@ bool PolicerOrch::handlePhyDelete(Port &port)
                     storm_policer_name.c_str(), port.m_alias.c_str());
             if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_NOTICE("Failed to delete policer %s created for port %s", 
+                SWSS_LOG_ERROR("Failed to delete policer %s created for port %s", 
                         storm_policer_name.c_str(), port.m_alias.c_str());
             }
             m_syncdPolicers.erase(storm_policer_name);
