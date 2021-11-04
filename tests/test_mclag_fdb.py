@@ -455,6 +455,7 @@ def test_mclagFdb_static_mac_dynamic_move_reject(dvs, testlog):
 
     # check that the static FDB entry was inserted into ASIC DB
     assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 1, "The MCLAG fdb entry not inserted to ASIC"
+
     ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
             [("mac", "3C:85:99:5E:00:01"), ("bvid", str(dvs.getVlanOid("200")))],
                     [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC")]
