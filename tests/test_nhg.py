@@ -1814,17 +1814,10 @@ class TestCbfNextHopGroup(TestNextHopGroupBase):
             nhgm_ids = self.get_nhgm_ids('cbfgroup1')
             nhg_id = self.get_nhg_id('cbfgroup1')
             old_map = self.asic_db.get_entry(self.ASIC_NHG_STR, nhg_id)['SAI_NEXT_HOP_GROUP_ATTR_SELECTION_MAP']
-            fvs = swsscommon.FieldValuePairs([('members', 'group2'), ('selection_map', 'cbfnhgmap1')])
+            fvs = swsscommon.FieldValuePairs([('members', 'group2,group3'), ('selection_map', 'cbfnhgmap1')])
             self.cbf_nhg_ps.set('cbfgroup1', fvs)
             self.asic_db.wait_for_deleted_keys(self.ASIC_NHGM_STR, nhgm_ids)
-            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 4)
-            nhgm_id = self.get_nhgm_ids('cbfgroup1')[0]
-            self.asic_db.wait_for_field_match(self.ASIC_NHGM_STR,
-                                        nhgm_id,
-                                        {'SAI_NEXT_HOP_GROUP_MEMBER_ATTR_INDEX': '0'})
-            self.asic_db.wait_for_field_negative_match(self.ASIC_NHG_STR,
-                                                        nhg_id,
-                                                        {'SAI_NEXT_HOP_GROUP_ATTR_SELECTION_MAP': old_map})
+            self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 5)
 
             # Delete the route
             self.rt_ps._del('2.2.2.0/24')
@@ -1836,9 +1829,14 @@ class TestCbfNextHopGroup(TestNextHopGroupBase):
         # - try updating the CBF NHG with a member that doesn't exist and assert the CBF NHG's
         # - create the missing NHG and assert the CBF NHG's member also gets created
         def update_cbf_nhg_inexistent_member_test():
+            # Create an FC to NH index selection map that references just 1 group member
+            fvs = swsscommon.FieldValuePairs([('0', '0')])
+            self.fc_to_nhg_ps.set('cbfnhgmap4', fvs)
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_MAP_STR, self.asic_nhg_maps_count + 3)
+
             # Update the CBF NHG referencing an NHG that doesn't exist. In the end, create the NHG and
             # make sure everything works fine.
-            fvs = swsscommon.FieldValuePairs([('members', 'group2'), ('selection_map', 'cbfnhgmap1')])
+            fvs = swsscommon.FieldValuePairs([('members', 'group2'), ('selection_map', 'cbfnhgmap4')])
             self.cbf_nhg_ps.set('cbfgroup1', fvs)
             time.sleep(1)
             self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count)
@@ -1860,11 +1858,23 @@ class TestCbfNextHopGroup(TestNextHopGroupBase):
             self.cbf_nhg_ps.set('cbfgroup1', fvs)
             time.sleep(1)
             assert(self.asic_db.get_entry(self.ASIC_NHG_STR, nhg_id)['SAI_NEXT_HOP_GROUP_ATTR_SELECTION_MAP'] == smap_id)
-            fvs = swsscommon.FieldValuePairs([('members', 'group2'), ('selection_map', 'cbfnhgmap2')])
+            fvs = swsscommon.FieldValuePairs([('members', 'group2'), ('selection_map', 'cbfnhgmap4')])
             self.cbf_nhg_ps.set('cbfgroup1', fvs)
-            self.asic_db.wait_for_field_negative_match(self.ASIC_NHG_STR,
-                                                    nhg_id,
-                                                    {'SAI_NEXT_HOP_GROUP_ATTR_SELECTION_MAP': smap_id})
+
+        # Test scenario:
+        # - create a NHG that points to a map that refers to more members than the group has
+        def create_cbf_invalid_nhg_map_test():
+            # Create an FC to NH index selection map that references 3 group members
+            fvs = swsscommon.FieldValuePairs([('0', '1'), ('1', '0'), ('2', '2')])
+            self.fc_to_nhg_ps.set('cbfnhgmap3', fvs)
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_MAP_STR, self.asic_nhg_maps_count + 2)
+
+            # Create a group that references this map. It doesn't get created.
+            fvs = swsscommon.FieldValuePairs([('members', 'group3,group2'),
+                                                ('selection_map', 'cbfnhgmap3')])
+            self.cbf_nhg_ps.set('cbfgroup3', fvs)
+            time.sleep(1)
+            assert(not self.nhg_exists('cbfgroup3'))
 
         self.init_test(dvs, 4)
 
@@ -1875,6 +1885,7 @@ class TestCbfNextHopGroup(TestNextHopGroupBase):
         delete_referenced_cbf_nhg_test()
         create_route_inexistent_cbf_nhg_test()
         update_deleting_cbf_nhg_test()
+        create_cbf_invalid_nhg_map_test()
 
         # Delete the NHGs
         self.cbf_nhg_ps._del('cbfgroup1')
@@ -1899,6 +1910,8 @@ class TestCbfNextHopGroup(TestNextHopGroupBase):
         # Delete the NHG maps
         self.fc_to_nhg_ps._del('cbfnhgmap1')
         self.fc_to_nhg_ps._del('cbfnhgmap2')
+        self.fc_to_nhg_ps._del('cbfnhgmap3')
+        self.fc_to_nhg_ps._del('cbfnhgmap4')
         self.asic_db.wait_for_n_keys(self.ASIC_NHG_MAP_STR, self.asic_nhg_maps_count)
 
         # Coverage testing: Delete inexistent CBF NHG
