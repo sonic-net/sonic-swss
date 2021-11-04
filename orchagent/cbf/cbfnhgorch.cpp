@@ -556,7 +556,7 @@ bool CbfNhg::update(const vector<string> &members, const string &selection_map)
 
         if (nhg_attr.value.oid == SAI_NULL_OBJECT_ID)
         {
-            SWSS_LOG_WARN("NHG map %s does not exist", selection_map.c_str());
+            SWSS_LOG_ERROR("NHG map %s does not exist", selection_map.c_str());
             return false;
         }
 
