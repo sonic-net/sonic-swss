@@ -17,7 +17,7 @@ stages:
       arch: amd64
       sonic_slave: sonic-slave-buster
       buildimage_artifact_name: sonic-buildimage.vs
-      buildimage_pipeline: 1
+      buildimage_pipeline: 142
       swss_common_artifact_name: sonic-swss-common
       sairedis_artifact_name: sonic-sairedis
       artifact_name: sonic-swss
