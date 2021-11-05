@@ -744,7 +744,7 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
     }
     else if (op == DEL_COMMAND)
     {
-        auto &typemap = (*m_buffer_type_maps[APP_BUFFER_PG_TABLE_NAME]);
+        auto &typemap = (*m_buffer_type_maps[APP_BUFFER_QUEUE_TABLE_NAME]);
         if (typemap.find(key) == typemap.end())
         {
             SWSS_LOG_INFO("%s doesn't not exist, don't need to notfiy SAI", key.c_str());
