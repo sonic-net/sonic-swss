@@ -713,7 +713,8 @@ void RouteOrch::doTask(Consumer& consumer)
                         }
                         else
                         {
-                            ip = ipv[0];
+                            SWSS_LOG_ERROR("For SRV6 nexthop ipv should be empty");
+                            continue;
                         }
                         nhg_str = ip + NH_DELIMITER + srv6_segv[0] + NH_DELIMITER + srv6_src[0];
 
@@ -723,17 +724,13 @@ void RouteOrch::doTask(Consumer& consumer)
                                 ip = "0.0.0.0";
                                 nhg_str += NHG_DELIMITER + ip;
                             }
-                            else
-                            {
-                                nhg_str += NHG_DELIMITER + ipv[i];
-                            }
                             nhg_str += NH_DELIMITER + srv6_segv[i];
                             nhg_str += NH_DELIMITER + srv6_src[i];
                         }
                         nhg = NextHopGroupKey(nhg_str, overlay_nh, srv6_nh);
                         SWSS_LOG_NOTICE("SRV6 route with nhg %s", nhg.to_string().c_str());
                     }
-                    else if (overlay_nh == false && srv6_nh == false)
+                    else if (overlay_nh == false)
                     {
                         for (uint32_t i = 0; i < ipv.size(); i++)
                         {

@@ -74,6 +74,7 @@ struct NextHopKey
         {
             weight = 0;
             vni = 0;
+            weight = 0;
             auto keys = tokenize(str, NH_DELIMITER);
             if (keys.size() != 3)
             {
