@@ -55,29 +55,6 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
     querySwitchTpidCapability();
     auto executorT = new ExecutableTimer(m_sensorsPollerTimer, this, "ASIC_SENSORS_POLL_TIMER");
     Orch::addExecutor(executorT);
-
-    vector<sai_attribute_t> attrs;
-    sai_attribute_t attr;
-    sai_status_t status;
-
-    attr.id = SAI_SWITCH_TUNNEL_ATTR_TUNNEL_TYPE;
-    attr.value.s32 = SAI_TUNNEL_TYPE_VXLAN;
-    attrs.push_back(attr);
-    attr.id = SAI_SWITCH_TUNNEL_ATTR_TUNNEL_VXLAN_UDP_SPORT_MODE;
-    attr.value.s32 = SAI_TUNNEL_VXLAN_UDP_SPORT_MODE_EPHEMERAL;
-    attrs.push_back(attr);
-
-    status = sai_switch_api->create_switch_tunnel(&switch_tunnel_id, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
-
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to create switch_tunnel object");
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_SWITCH, status);
-        if (handle_status != task_success)
-        {
-            throw runtime_error("SwitchOrch initialization failure");
-        }
-    }
 }
 
 void SwitchOrch::doCfgSensorsTableTask(Consumer &consumer)
@@ -166,14 +143,20 @@ sai_status_t SwitchOrch::setSwitchTunnelVxlanParams(swss::FieldValueTuple &val)
 
     if (!m_vxlanSportUserModeEnabled)
     {
-        // Enable Vxlan src port range feauture
+        // Enable Vxlan src port range feature
+        vector<sai_attribute_t> attrs;
+        attr.id = SAI_SWITCH_TUNNEL_ATTR_TUNNEL_TYPE;
+        attr.value.s32 = SAI_TUNNEL_TYPE_VXLAN;
+        attrs.push_back(attr);
         attr.id = SAI_SWITCH_TUNNEL_ATTR_TUNNEL_VXLAN_UDP_SPORT_MODE;
         attr.value.s32 = SAI_TUNNEL_VXLAN_UDP_SPORT_MODE_USER_DEFINED;
-        status = sai_switch_api->set_switch_tunnel_attribute(switch_tunnel_id, &attr);
+        attrs.push_back(attr);
+
+        status = sai_switch_api->create_switch_tunnel(&m_switchTunnelId, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
 
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to set SAI_TUNNEL_VXLAN_UDP_SPORT_MODE_USER_DEFINED  src port mode rv:%d",  status);
+            SWSS_LOG_ERROR("Failed to create switch_tunnel object, rv:%d",  status);
             return status;
         }
 
@@ -194,7 +177,7 @@ sai_status_t SwitchOrch::setSwitchTunnelVxlanParams(swss::FieldValueTuple &val)
             return SAI_STATUS_SUCCESS;
     }
 
-    status  = sai_switch_api->set_switch_tunnel_attribute(switch_tunnel_id, &attr);
+    status  = sai_switch_api->set_switch_tunnel_attribute(m_switchTunnelId, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set tunnnel switch attribute %s to %s, rv:%d", attribute.c_str(), value.c_str(), status);

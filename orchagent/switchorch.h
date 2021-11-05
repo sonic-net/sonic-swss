@@ -41,7 +41,7 @@ private:
     void doTask(swss::NotificationConsumer& consumer);
     swss::DBConnector *m_db;
     swss::Table m_switchTable;
-    sai_object_id_t switch_tunnel_id;
+    sai_object_id_t m_switchTunnelId;
 
     // ASIC temperature sensors
     std::shared_ptr<swss::DBConnector> m_stateDb = nullptr;
