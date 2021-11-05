@@ -206,7 +206,6 @@ public:
     unsigned int getNhgCount() { return m_nextHopGroupCount; }
     unsigned int getMaxNhgCount() { return m_maxNextHopGroupCount; }
 
-
 private:
     SwitchOrch *m_switchOrch;
     NeighOrch *m_neighOrch;

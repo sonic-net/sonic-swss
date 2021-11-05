@@ -80,7 +80,6 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
     m_stateDb = shared_ptr<DBConnector>(new DBConnector("STATE_DB", 0));
     m_stateDefaultRouteTb = unique_ptr<swss::Table>(new Table(m_stateDb.get(), STATE_DEFAULT_ROUTE_TABLE_NAME));
 
-
     IpPrefix default_ip_prefix("0.0.0.0/0");
     updateDefRouteState("0.0.0.0/0");
 
