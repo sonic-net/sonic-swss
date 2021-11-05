@@ -206,7 +206,6 @@ public:
     unsigned int getNhgCount() { return m_nextHopGroupCount; }
     unsigned int getMaxNhgCount() { return m_maxNextHopGroupCount; }
 
-    void updateDefRouteState(string ip, bool add=false);
 
 private:
     SwitchOrch *m_switchOrch;
@@ -247,6 +246,8 @@ private:
     bool removeLabelRoute(LabelRouteBulkContext& ctx);
     bool addLabelRoutePost(const LabelRouteBulkContext& ctx, const NextHopGroupKey &nextHops);
     bool removeLabelRoutePost(const LabelRouteBulkContext& ctx);
+
+    void updateDefRouteState(string ip, bool add=false);
 
     void doTask(Consumer& consumer);
     void doLabelTask(Consumer& consumer);
