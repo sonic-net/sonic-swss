@@ -2436,7 +2436,8 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
             platform == BFN_PLATFORM_SUBSTRING  ||
             platform == MRVL_PLATFORM_SUBSTRING ||
             platform == INVM_PLATFORM_SUBSTRING ||
-            platform == NPS_PLATFORM_SUBSTRING)
+            platform == NPS_PLATFORM_SUBSTRING ||
+            platform == VS_PLATFORM_SUBSTRING)
     {
         m_mirrorTableCapabilities =
         {
@@ -2459,19 +2460,17 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     SWSS_LOG_NOTICE("    ACL_TABLE_MIRRORV6: %s",
             m_mirrorTableCapabilities[ACL_TABLE_MIRRORV6] ? "yes" : "no");
 
-    // In Broadcom platform, V4 and V6 rules are stored in the same table
-    if (platform == BRCM_PLATFORM_SUBSTRING ||
-        platform == NPS_PLATFORM_SUBSTRING  ||
-        platform == BFN_PLATFORM_SUBSTRING  ||
-        platform == INVM_PLATFORM_SUBSTRING) {
+    // In Mellanox platform, V4 and V6 rules are stored in different tables
+    if (platform == MLNX_PLATFORM_SUBSTRING ||
+        platform == MRVL_PLATFORM_SUBSTRING)
+    {
+        m_isCombinedMirrorV6Table = false;
+    }
+    else
+    {
         m_isCombinedMirrorV6Table = true;
     }
 
-    // In Mellanox platform, V4 and V6 rules are stored in different tables
-    if (platform == MLNX_PLATFORM_SUBSTRING ||
-        platform == MRVL_PLATFORM_SUBSTRING) {
-        m_isCombinedMirrorV6Table = false;
-    }
 
     // Store the capabilities in state database
     // TODO: Move this part of the code into syncd

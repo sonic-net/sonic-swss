@@ -526,6 +526,7 @@ bool RouteOrch::addLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroupKey 
             {
                 SWSS_LOG_INFO("Failed to get next hop %s for %u",
                         nextHops.to_string().c_str(), label);
+                m_neighOrch->resolveNeighbor(nexthop);
                 return false;
             }
         }

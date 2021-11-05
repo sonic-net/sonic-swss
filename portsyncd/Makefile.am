@@ -14,3 +14,6 @@ portsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
 portsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
 portsyncd_LDADD = -lnl-3 -lnl-route-3 -lswsscommon
 
+if GCOV_ENABLED
+portsyncd_LDADD += -lgcovpreload
+endif
