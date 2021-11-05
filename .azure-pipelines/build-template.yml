@@ -26,7 +26,6 @@ parameters:
 
 - name: buildimage_pipeline
   type: number
-  default: 1
 
 - name: sairedis_artifact_name
   type: string
@@ -38,6 +37,10 @@ parameters:
   type: string
 
 - name: archive_pytests
+  type: boolean
+  default: false
+
+- name: archive_gcov
   type: boolean
   default: false
 
@@ -56,6 +59,9 @@ jobs:
     image: sonicdev-microsoft.azurecr.io:443/${{ parameters.sonic_slave }}:latest
 
   steps:
+  - checkout: self
+    clean: true
+    submodules: true
   - script: |
       sudo apt-get install -y libhiredis0.14 libhiredis-dev
       sudo apt-get install -y libzmq5 libzmq3-dev
@@ -75,6 +81,7 @@ jobs:
       artifact: ${{ parameters.swss_common_artifact_name }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/master'
+      path: '$(Build.SourcesDirectory)/${{ parameters.swss_common_artifact_name }}'
     displayName: "Download sonic swss common deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
@@ -84,6 +91,7 @@ jobs:
       artifact: ${{ parameters.sairedis_artifact_name }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/master'
+      path: '$(Build.SourcesDirectory)/${{ parameters.sairedis_artifact_name }}'
     displayName: "Download sonic sairedis deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
@@ -93,8 +101,10 @@ jobs:
       artifact: ${{ parameters.buildimage_artifact_name }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/master'
+      path: '$(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}'
     displayName: "Download sonic buildimage deb packages"
   - script: |
+      cd $(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}
       sudo dpkg -i target/debs/buster/libnl-3-200_*.deb
       sudo dpkg -i target/debs/buster/libnl-3-dev_*.deb
       sudo dpkg -i target/debs/buster/libnl-genl-3-200_*.deb
@@ -103,8 +113,10 @@ jobs:
       sudo dpkg -i target/debs/buster/libnl-route-3-dev_*.deb
       sudo dpkg -i target/debs/buster/libnl-nf-3-200_*.deb
       sudo dpkg -i target/debs/buster/libnl-nf-3-dev_*.deb
+      cd $(Build.SourcesDirectory)/${{ parameters.swss_common_artifact_name }}
       sudo dpkg -i libswsscommon_1.0.0_${{ parameters.arch }}.deb
       sudo dpkg -i libswsscommon-dev_1.0.0_${{ parameters.arch }}.deb
+      cd $(Build.SourcesDirectory)/${{ parameters.sairedis_artifact_name }}
       sudo dpkg -i libsaivs_*.deb
       sudo dpkg -i libsaivs-dev_*.deb
       sudo dpkg -i libsairedis_*.deb
@@ -114,12 +126,13 @@ jobs:
       sudo dpkg -i syncd-vs_*.deb
     workingDirectory: $(Pipeline.Workspace)
     displayName: "Install libnl3, sonic swss common and sairedis"
-  - checkout: self
-    submodules: true
   - script: |
       set -x
       tar czf pytest.tgz tests
       cp -r pytest.tgz $(Build.ArtifactStagingDirectory)/
+      if [ '${{ parameters.archive_gcov }}' == True ]; then
+         export ENABLE_GCOV=y
+      fi
       ./autogen.sh
       dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
     displayName: "Compile sonic swss"

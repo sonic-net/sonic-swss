@@ -14,3 +14,6 @@ fdbsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(COV_CFLAGS)
 fdbsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(COV_CFLAGS)
 fdbsyncd_LDADD = -lnl-3 -lnl-route-3 -lswsscommon $(COV_LDFLAGS)
 
+if GCOV_ENABLED
+fdbsyncd_LDADD += -lgcovpreload
+endif

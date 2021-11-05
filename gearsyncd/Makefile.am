@@ -12,4 +12,8 @@ gearsyncd_SOURCES = $(top_srcdir)/lib/gearboxutils.cpp gearsyncd.cpp gearparserb
 
 gearsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(COV_CFLAGS) $(ASAN_CFLAGS)
 
-gearsyncd_LDADD = -lnl-3 -lnl-route-3 -lswsscommon $(COV_LDFLAGS) $(ASAN_LDFLAGS) 
+gearsyncd_LDADD = -lnl-3 -lnl-route-3 -lswsscommon $(COV_LDFLAGS) $(ASAN_LDFLAGS)
+
+if GCOV_ENABLED
+gearsyncd_LDADD += -lgcovpreload
+endif
