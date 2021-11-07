@@ -365,9 +365,9 @@ namespace aclorch_test
             gRouteOrch = new RouteOrch(m_app_db.get(), route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch);
 
             vector<TableConnector> policer_tables = {
-                TableConnector(m_configDb, CFG_POLICER_TABLE_NAME),
-                TableConnector(m_configDb, CFG_PORT_STORM_CONTROL_TABLE_NAME),
-                TableConnector(m_applDb, APP_POLICER_TABLE_NAME)
+                TableConnector(m_config_db.get(), CFG_POLICER_TABLE_NAME),
+                TableConnector(m_config_db.get(), CFG_PORT_STORM_CONTROL_TABLE_NAME),
+                TableConnector(m_app_db.get, APP_POLICER_TABLE_NAME)
             };
             PolicerOrch *policer_orch = new PolicerOrch(policer_tables, gPortsOrch);
 
