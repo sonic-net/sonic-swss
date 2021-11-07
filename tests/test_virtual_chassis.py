@@ -603,7 +603,6 @@ class TestVirtualChassis(object):
                     
                     break
 
-    @pytest.mark.skip(reason="This test is not stable enough")
     def test_chassis_system_lag_id_allocator_table_full(self, vct):
         """Test lag id allocator table full.
         
@@ -681,7 +680,6 @@ class TestVirtualChassis(object):
                     
                     break
 
-    @pytest.mark.skip(reason="This test is not stable enough")
     def test_chassis_system_lag_id_allocator_del_id(self, vct):
         """Test lag id allocator's release id and re-use id processing.
         
