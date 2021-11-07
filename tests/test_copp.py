@@ -147,17 +147,18 @@ copp_group_queue5_group1 = {
 	"trap_action": "trap",
 	"trap_priority": "5"
 }
+
 copp_trap = {
-        "bgp,bgpv6": copp_group_queue4_group1,
-        "lacp": copp_group_queue4_group1,
-        "arp_req,arp_resp,neigh_discovery":copp_group_queue4_group2,
-        "lldp":copp_group_queue4_group3,
-        "dhcp,dhcpv6":copp_group_queue4_group3,
-        "udld":copp_group_queue4_group3,
-        "ip2me":copp_group_queue1_group1,
-        "src_nat_miss,dest_nat_miss": copp_group_queue1_group2,
-        "sample_packet": copp_group_queue2_group1,
-        "ttl_error": copp_group_default
+        "bgp": ["bgp;bgpv6", copp_group_queue4_group1],
+        "lacp": ["lacp", copp_group_queue4_group1, "always_enabled"],
+        "arp": ["arp_req;arp_resp;neigh_discovery", copp_group_queue4_group2, "always_enabled"],
+        "lldp": ["lldp", copp_group_queue4_group3],
+        "dhcp": ["dhcp;dhcpv6", copp_group_queue4_group3],
+        "udld": ["udld", copp_group_queue4_group3, "always_enabled"],
+        "ip2me": ["ip2me", copp_group_queue1_group1, "always_enabled"],
+        "nat": ["src_nat_miss;dest_nat_miss", copp_group_queue1_group2],
+        "sflow": ["sample_packet", copp_group_queue2_group1],
+        "ttl": ["ttl_error", copp_group_default]
 }
 
 disabled_traps = ["sample_packet"]
@@ -197,16 +198,16 @@ class TestCopp(object):
         self.trap_ctbl = swsscommon.Table(self.cdb, "COPP_TRAP")
         self.trap_group_ctbl = swsscommon.Table(self.cdb, "COPP_GROUP")
         self.feature_tbl = swsscommon.Table(self.cdb, "FEATURE")
-        fvs = swsscommon.FieldValuePairs([("state", "disbled")])
+        fvs = swsscommon.FieldValuePairs([("state", "disabled")])
         self.feature_tbl.set("sflow", fvs)
         time.sleep(2)
 
-   
+
     def validate_policer(self, policer_oid, field, value):
         (status, fvs) = self.policer_atbl.get(policer_oid)
         assert status == True
         attr = field_to_sai_attr[field]
-        
+
         attr_value = value
         if field == "mode":
             attr_value = policer_mode_map[value]
@@ -218,7 +219,7 @@ class TestCopp(object):
         for fv in fvs:
             if (fv[0] == attr):
                 assert attr_value == fv[1]
-                
+
     def validate_trap_group(self, trap_oid, trap_group):
         (status, trap_fvs) = self.trap_atbl.get(trap_oid)
         assert status == True
@@ -244,11 +245,11 @@ class TestCopp(object):
                     policer_oid = fv[1]
                 elif fv[0] == "SAI_HOSTIF_TRAP_GROUP_ATTR_QUEUE":
                     queue = fv[1]
-                
+
         for keys in trap_group:
             obj_type = field_to_sai_obj_type[keys]
             if obj_type == "SAI_OBJECT_TYPE_POLICER":
-                assert policer_oid != "" 
+                assert policer_oid != ""
                 assert policer_oid != "oid:0x0"
                 self.validate_policer(policer_oid, keys, trap_group[keys])
 
@@ -302,8 +303,12 @@ class TestCopp(object):
         self.setup_copp(dvs)
         trap_keys = self.trap_atbl.getKeys()
         for traps in copp_trap:
-            trap_ids = traps.split(",")
-            trap_group = copp_trap[traps]
+            trap_info = copp_trap[traps]
+            trap_ids = trap_info[0].split(";")
+            trap_group = trap_info[1]
+            always_enabled = False
+            if len(trap_info) > 2:
+                always_enabled = True
             for trap_id in trap_ids:
                 trap_type = traps_to_trap_type[trap_id]
                 trap_found = False
@@ -321,6 +326,7 @@ class TestCopp(object):
                 if trap_id not in disabled_traps:
                     assert trap_found == True
 
+
     def test_restricted_trap_sflow(self, dvs, testlog):
         self.setup_copp(dvs)
         fvs = swsscommon.FieldValuePairs([("state", "enabled")])
@@ -330,11 +336,15 @@ class TestCopp(object):
 
         trap_keys = self.trap_atbl.getKeys()
         for traps in copp_trap:
-            trap_ids = traps.split(",")
+            trap_info = copp_trap[traps]
+            trap_ids = trap_info[0].split(";")
+            trap_group = trap_info[1]
+            always_enabled = False
+            if len(trap_info) > 2:
+                always_enabled = True
             if "sample_packet" not in trap_ids:
                 continue
-            trap_group = copp_trap[traps]
-            trap_found = False 
+            trap_found = False
             trap_type = traps_to_trap_type["sample_packet"]
             for key in trap_keys:
                 (status, fvs) = self.trap_atbl.get(key)
@@ -359,10 +369,14 @@ class TestCopp(object):
 
         trap_keys = self.trap_atbl.getKeys()
         for traps in copp_trap:
-            if copp_trap[traps] != copp_group_queue4_group2:
+            trap_info = copp_trap[traps]
+            trap_ids = trap_info[0].split(";")
+            trap_group = trap_info[1]
+            always_enabled = False
+            if len(trap_info) > 2:
+                always_enabled = True
+            if trap_group != copp_group_queue4_group2:
                 continue
-            trap_ids = traps.split(",")
-            trap_group = copp_trap[traps]
             for trap_id in trap_ids:
                 trap_type = traps_to_trap_type[trap_id]
                 trap_found = False
@@ -386,12 +400,19 @@ class TestCopp(object):
         traps = "bgp,bgpv6"
         fvs = swsscommon.FieldValuePairs([("trap_group", "queue1_group1")])
         self.trap_ctbl.set("bgp", fvs)
-        copp_trap[traps] = copp_group_queue1_group1
+
+        for c_trap in copp_trap:
+            trap_info = copp_trap[c_trap]
+            ids = trap_info[0].replace(';', ',')
+            if traps == ids:
+                break
+
+        trap_info[1] = copp_group_queue1_group1
         time.sleep(2)
 
         trap_keys = self.trap_atbl.getKeys()
         trap_ids = traps.split(",")
-        trap_group = copp_trap[traps]
+        trap_group = trap_info[1]
         for trap_id in trap_ids:
             trap_type = traps_to_trap_type[trap_id]
             trap_found = False
@@ -419,8 +440,14 @@ class TestCopp(object):
 
         old_traps = "bgp,bgpv6"
         trap_keys = self.trap_atbl.getKeys()
+        for c_trap in copp_trap:
+            trap_info = copp_trap[c_trap]
+            ids = trap_info[0].replace(';', ',')
+            if old_traps == ids:
+                break
+
         trap_ids = old_traps.split(",")
-        trap_group = copp_trap[old_traps]
+        trap_group = trap_info[1]
         for trap_id in trap_ids:
             trap_type = traps_to_trap_type[trap_id]
             trap_found = False
@@ -447,7 +474,7 @@ class TestCopp(object):
 
         trap_keys = self.trap_atbl.getKeys()
         trap_ids = traps.split(",")
-        trap_group = copp_trap[traps]
+        trap_group = trap_info[1]
         for trap_id in trap_ids:
             trap_type = traps_to_trap_type[trap_id]
             trap_found = False
@@ -474,10 +501,11 @@ class TestCopp(object):
 
         trap_keys = self.trap_atbl.getKeys()
         for traps in copp_trap:
-            if copp_trap[traps] != copp_group_queue4_group1:
+            trap_info = copp_trap[traps]
+            if trap_info[1] != copp_group_queue4_group1:
                 continue
-            trap_ids = traps.split(",")
-            trap_group = copp_trap[traps]
+            trap_ids = trap_info[0].split(";")
+            trap_group = trap_info[1]
             for trap_id in trap_ids:
                 trap_type = traps_to_trap_type[trap_id]
                 trap_found = False
@@ -495,18 +523,21 @@ class TestCopp(object):
                 if trap_id not in disabled_traps:
                     assert trap_found == True
 
+
     def test_new_trap_add(self, dvs, testlog):
         self.setup_copp(dvs)
         global copp_trap
         traps = "eapol"
-        fvs = swsscommon.FieldValuePairs([("trap_group", "queue1_group2"),("trap_ids", "eapol")])
+        fvs = swsscommon.FieldValuePairs([("trap_group", "queue1_group2"),("trap_ids", "eapol"), ("always_enabled", "true")])
         self.trap_ctbl.set(traps, fvs)
-        copp_trap[traps] = copp_group_queue1_group2
+
+
+        copp_trap["eapol"] = [traps, copp_group_queue1_group2, "always_enabled"]
         time.sleep(2)
 
         trap_keys = self.trap_atbl.getKeys()
         trap_ids = traps.split(",")
-        trap_group = copp_trap[traps]
+        trap_group = copp_group_queue1_group2
         for trap_id in trap_ids:
             trap_type = traps_to_trap_type[trap_id]
             trap_found = False
@@ -530,13 +561,19 @@ class TestCopp(object):
         traps = "eapol"
         fvs = swsscommon.FieldValuePairs([("trap_group", "queue1_group2"),("trap_ids", "eapol")])
         self.trap_ctbl.set(traps, fvs)
-        copp_trap[traps] = copp_group_queue1_group2
+        for c_trap in copp_trap:
+            trap_info = copp_trap[c_trap]
+            ids = trap_info[0].replace(';', ',')
+            if traps == ids:
+                break
+
+        trap_info[1] = copp_group_queue1_group2
         time.sleep(2)
 
         self.trap_ctbl._del(traps)
         time.sleep(2)
         trap_ids = traps.split(",")
-        trap_group = copp_trap[traps]
+        trap_group = trap_info[1]
         trap_keys = self.trap_atbl.getKeys()
         for trap_id in trap_ids:
             trap_type = traps_to_trap_type[trap_id]
@@ -566,12 +603,17 @@ class TestCopp(object):
         traps = "igmp_v1_report"
         t_fvs = swsscommon.FieldValuePairs([("trap_group", "queue5_group1"),("trap_ids", "igmp_v1_report")])
         self.trap_ctbl.set(traps, t_fvs)
-        copp_trap[traps] = copp_group_queue5_group1
+        for c_trap in copp_trap:
+            trap_info = copp_trap[c_trap]
+            ids = trap_info[0].replace(';', ',')
+            if traps == ids:
+                break
+        trap_info[1] = copp_group_queue5_group1
         time.sleep(2)
 
         trap_keys = self.trap_atbl.getKeys()
         trap_ids = traps.split(",")
-        trap_group = copp_trap[traps]
+        trap_group = trap_info[1]
         for trap_id in trap_ids:
             trap_type = traps_to_trap_type[trap_id]
             trap_found = False
@@ -600,14 +642,19 @@ class TestCopp(object):
         traps = "igmp_v1_report"
         t_fvs = swsscommon.FieldValuePairs([("trap_group", "queue5_group1"),("trap_ids", "igmp_v1_report")])
         self.trap_ctbl.set(traps, t_fvs)
-        copp_trap[traps] = copp_group_queue5_group1
+        for c_trap in copp_trap:
+            trap_info = copp_trap[c_trap]
+            ids = trap_info[0].replace(';', ',')
+            if traps == ids:
+                break
+        trap_info[1] = copp_group_queue5_group1
 
         self.trap_group_ctbl._del("queue5_group1")
         time.sleep(2)
 
         trap_keys = self.trap_atbl.getKeys()
         trap_ids = traps.split(",")
-        trap_group = copp_trap[traps]
+        trap_group = trap_info[1]
         for trap_id in trap_ids:
             trap_type = traps_to_trap_type[trap_id]
             trap_found = False
@@ -639,10 +686,11 @@ class TestCopp(object):
 
         trap_keys = self.trap_atbl.getKeys()
         for traps in copp_trap:
-            if copp_trap[traps] != copp_group_queue1_group1:
+            trap_info = copp_trap[traps]
+            if trap_info[1] != copp_group_queue1_group1:
                 continue
-            trap_ids = traps.split(",")
-            trap_group = copp_trap[traps]
+            trap_ids = trap_info[0].split(";")
+            trap_group = trap_info[1]
             for trap_id in trap_ids:
                 trap_type = traps_to_trap_type[trap_id]
                 trap_found = False
@@ -671,7 +719,7 @@ class TestCopp(object):
         self.trap_ctbl._del("ip2me")
         time.sleep(2)
         trap_ids = traps.split(",")
-        trap_group = copp_trap["ip2me"]
+        trap_group = copp_trap["ip2me"][1]
         trap_keys = self.trap_atbl.getKeys()
         for trap_id in trap_ids:
             trap_type = traps_to_trap_type[trap_id]
@@ -701,7 +749,7 @@ class TestCopp(object):
         time.sleep(2)
 
         trap_id = "ip2me"
-        trap_group = copp_trap["ip2me"]
+        trap_group = copp_trap["ip2me"][1]
         trap_keys = self.trap_atbl.getKeys()
         trap_type = traps_to_trap_type[trap_id]
         trap_found = False
@@ -736,3 +784,58 @@ class TestCopp(object):
                 self.validate_trap_group(key,trap_group)
                 break
         assert trap_found == True
+
+
+    def test_disabled_feature_always_enabled_trap(self, dvs, testlog):
+        self.setup_copp(dvs)
+        fvs = swsscommon.FieldValuePairs([("trap_ids", "bgp,bgpv6"), ("trap_group", "queue4_group1"), ("always_enabled", "true")])
+        self.trap_ctbl.set("bgp", fvs)
+        fvs = swsscommon.FieldValuePairs([("state", "disabled")])
+        self.feature_tbl.set("bgp", fvs)
+
+        time.sleep(2)
+        global copp_trap
+
+        trap_keys = self.trap_atbl.getKeys()
+        for traps in copp_trap:
+            trap_info = copp_trap[traps]
+            trap_ids = trap_info[0].split(";")
+            trap_group = trap_info[1]
+
+            if "bgp" not in trap_ids:
+                continue
+
+            trap_found = False
+            trap_type = traps_to_trap_type["bgp"]
+            for key in trap_keys:
+                (status, fvs) = self.trap_atbl.get(key)
+                assert status == True
+                for fv in fvs:
+                    if fv[0] == "SAI_HOSTIF_TRAP_ATTR_TRAP_TYPE":
+                        if fv[1] == trap_type:
+                            trap_found = True
+                if trap_found:
+                    self.validate_trap_group(key,trap_group)
+                    break
+            assert trap_found == True
+
+        # change always_enabled to be false and check the trap is not installed:
+        fvs = swsscommon.FieldValuePairs([("trap_ids", "bgp,bgpv6"), ("trap_group", "queue4_group1"), ("always_enabled", "false")])
+        self.trap_ctbl.set("bgp", fvs)
+        time.sleep(2)
+
+        table_found = True
+        for key in trap_keys:
+            (status, fvs) = self.trap_atbl.get(key)
+            if status == False:
+                table_found = False
+
+        # teardown
+        fvs = swsscommon.FieldValuePairs([("trap_ids", "bgp,bgpv6"), ("trap_group", "queue4_group1")])
+        self.trap_ctbl.set("bgp", fvs)
+        fvs = swsscommon.FieldValuePairs([("state", "enabled")])
+        self.feature_tbl.set("bgp", fvs)
+
+        assert table_found == False
+
+
