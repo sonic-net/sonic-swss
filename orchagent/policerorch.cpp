@@ -556,7 +556,7 @@ task_process_status PolicerOrch::handlePortStormControlTable(Consumer& consumer)
 
             if(update)
             {
-                SWSS_LOG_NOTICE("update storm-control policer %s id:%ld", storm_policer_name.c_str(),policer_id);
+                SWSS_LOG_NOTICE("update storm-control policer %s", storm_policer_name.c_str());
             }
             port_attr.value.oid = policer_id;
 
