@@ -43,7 +43,7 @@ class TestStormControl(object):
         tbl._del(key)
         time.sleep(1)
 
-    def test_add_bcast_storm(self,dvs,testlog):
+    def test_bcast_storm(self,dvs,testlog):
         self.setup_db(dvs)
 
         if_name = "Ethernet0"
@@ -52,67 +52,29 @@ class TestStormControl(object):
         #Orchagent converts the value to CIR as below and programs the ASIC DB
         #kbps_value * 1000 / 8
         kbps_value = 1000000
-
         self.add_storm_control_on_interface(dvs,if_name,storm_type,kbps_value)
+        self.del_storm_control(dvs,if_name,storm_type)
 
-    def test_add_uucast_storm(self,dvs,testlog):
+    def del_storm_control(self, dvs, if_name, storm_type)
         self.setup_db(dvs)
-
-        if_name = "Ethernet0"
-        storm_type = "unknown-unicast"
-        #User input is Kbps
-        #Orchagent converts the value to CIR as below and programs the ASIC DB
-        #kbps_value * 1000 / 8
-        kbps_value = 1000000
-
-        self.add_storm_control_on_interface(dvs,if_name,storm_type,kbps_value)
-
-    def test_add_umcast_storm(self,dvs,testlog):
-        self.setup_db(dvs)
-
-        if_name = "Ethernet0"
-        storm_type = "unknown-multicast"
-        #User input is Kbps
-        #Orchagent converts the value to CIR as below and programs the ASIC DB
-        #kbps_value * 1000 / 8
-        kbps_value = 1000000
-
-        self.add_storm_control_on_interface(dvs,if_name,storm_type,kbps_value)
-
-    def test_del_bcast_storm(self,dvs,testlog):
-        #Proceeding with assumption that storm-control is already enabled on interface
-        self.setup_db(dvs)
-
-        if_name = "Ethernet0"
-        storm_type = "broadcast"
-
         port_oid = dvs.asicdb.portnamemap[if_name]
-
-        atbl = swsscommon.Table(self.adb,"ASIC_STATE:SAI_OBJECT_TYPE_PORT")
+        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
         status, fvs = atbl.get(dvs.asicdb.portnamemap[if_name])
         assert status == True
-        print ("\nPort field value pairs before delete")
-        print (fvs)
 
         policer_oid = 0
-
         for fv in fvs:
             if fv[0] == "SAI_PORT_ATTR_BROADCAST_STORM_CONTROL_POLICER_ID":
                 policer_oid = fv[1]
 
-        ###### DELETE ######
-
         self.delete_storm_session(if_name, storm_type)
-        tbl = swsscommon.Table(self.cdb,"PORT_STORM_CONTROL")
+        tbl = swsscommon.Table(self.cdb, "PORT_STORM_CONTROL")
         (status,fvs) = tbl.get(if_name+"|"+storm_type)
-
         assert status == False
 
         atbl = swsscommon.Table(self.adb,"ASIC_STATE:SAI_OBJECT_TYPE_PORT")
         status, fvs = atbl.get(dvs.asicdb.portnamemap[if_name])
         assert status == True
-        print ("Port field value pairs after delete")
-        print (fvs)
 
         for fv in fvs:
             if fv[0] == "SAI_PORT_ATTR_BROADCAST_STORM_CONTROL_POLICER_ID":
@@ -123,97 +85,31 @@ class TestStormControl(object):
             status, fvs = atbl.get(policer_oid)
             assert status == False
 
-    def test_del_uucast_storm(self,dvs,testlog):
-        #Proceeding with assumption that storm-control is already enabled on interface
+    def test_uucast_storm(self,dvs,testlog):
         self.setup_db(dvs)
 
         if_name = "Ethernet0"
         storm_type = "unknown-unicast"
+        #User input is Kbps
+        #Orchagent converts the value to CIR as below and programs the ASIC DB
+        #kbps_value * 1000 / 8
+        kbps_value = 1000000
 
-        port_oid = dvs.asicdb.portnamemap[if_name]
+        self.add_storm_control_on_interface(dvs,if_name,storm_type,kbps_value)
+        self.del_storm_control(dvs,if_name,storm_type)
 
-        atbl = swsscommon.Table(self.adb,"ASIC_STATE:SAI_OBJECT_TYPE_PORT")
-        status, fvs = atbl.get(dvs.asicdb.portnamemap[if_name])
-        assert status == True
-        print ("\nport field value pairs before delete")
-        print (fvs)
-
-        policer_oid = 0
-
-        for fv in fvs:
-            if fv[0] == "SAI_PORT_ATTR_FLOOD_STORM_CONTROL_POLICER_ID":
-                policer_oid = fv[1]
-
-        ###### DELETE ######
-
-        self.delete_storm_session(if_name, storm_type)
-        tbl = swsscommon.Table(self.cdb,"PORT_STORM_CONTROL")
-        (status,fvs) = tbl.get(if_name+"|"+storm_type)
-
-        assert status == False
-
-        atbl = swsscommon.Table(self.adb,"ASIC_STATE:SAI_OBJECT_TYPE_PORT")
-        status, fvs = atbl.get(dvs.asicdb.portnamemap[if_name])
-        assert status == True
-        print ("Port field value pairs after delete")
-        print (fvs)
-
-        for fv in fvs:
-            if fv[0] == "SAI_PORT_ATTR_FLOOD_STORM_CONTROL_POLICER_ID":
-                assert fv[1] == "oid:0x0"
-
-        if policer_oid != 0:
-            atbl = swsscommon.Table(self.adb,"ASIC_STATE:SAI_OBJECT_TYPE_POLICER")
-            status, fvs = atbl.get(policer_oid)
-            assert status == False
-
-    def test_del_umcast_storm(self,dvs,testlog):
-        #Proceeding with assumption that storm-control is already enabled on interface
+    def test_umcast_storm(self,dvs,testlog):
         self.setup_db(dvs)
 
         if_name = "Ethernet0"
         storm_type = "unknown-multicast"
+        #User input is Kbps
+        #Orchagent converts the value to CIR as below and programs the ASIC DB
+        #kbps_value * 1000 / 8
+        kbps_value = 1000000
 
-        port_oid = dvs.asicdb.portnamemap[if_name]
-
-        atbl = swsscommon.Table(self.adb,"ASIC_STATE:SAI_OBJECT_TYPE_PORT")
-        status, fvs = atbl.get(dvs.asicdb.portnamemap[if_name])
-        assert status == True
-        print ("\nPort field value pairs before delete")
-        print (fvs)
-
-        policer_oid = 0
-
-        for fv in fvs:
-            if fv[0] == "SAI_PORT_ATTR_MULTICAST_STORM_CONTROL_POLICER_ID":
-                policer_oid = fv[1]
-
-        print ("policer OID")
-        print (policer_oid)
-
-
-        ###### DELETE ######
-
-        self.delete_storm_session(if_name, storm_type)
-        tbl = swsscommon.Table(self.cdb,"PORT_STORM_CONTROL")
-        (status,fvs) = tbl.get(if_name+"|"+storm_type)
-
-        assert status == False
-
-        atbl = swsscommon.Table(self.adb,"ASIC_STATE:SAI_OBJECT_TYPE_PORT")
-        status, fvs = atbl.get(dvs.asicdb.portnamemap[if_name])
-        assert status == True
-        print ("Port field value pairs after delete")
-        print (fvs)
-
-        for fv in fvs:
-            if fv[0] == "SAI_PORT_ATTR_MULTICAST_STORM_CONTROL_POLICER_ID":
-                assert fv[1] == "oid:0x0"
-
-        if policer_oid != 0:
-            atbl = swsscommon.Table(self.adb,"ASIC_STATE:SAI_OBJECT_TYPE_POLICER")
-            status, fvs = atbl.get(policer_oid)
-            assert status == False
+        self.add_storm_control_on_interface(dvs,if_name,storm_type,kbps_value)
+        self.del_storm_control(dvs,if_name,storm_type)
 
     def get_port_attr_for_storm_type(self,storm_type):
         port_attr = ""
@@ -227,12 +123,7 @@ class TestStormControl(object):
         return port_attr
 
     def check_storm_control_on_interface(self,dvs,if_name,storm_type,kbps_value):
-        print ("interface")
-        print (if_name)
-        print ("storm_type")
-        print (storm_type)
-        print ("kbps_value")
-        print (kbps_value)
+        print ("interface {} storm_type {} kbps {}".format(if_name,storm_type, kbps_value))
         tbl = swsscommon.Table(self.cdb,"PORT_STORM_CONTROL")
         (status,fvs) = tbl.get(if_name+"|"+storm_type)
 
@@ -244,8 +135,6 @@ class TestStormControl(object):
         atbl = swsscommon.Table(self.adb,"ASIC_STATE:SAI_OBJECT_TYPE_PORT")
         status, fvs = atbl.get(dvs.asicdb.portnamemap[if_name])
         assert status == True
-        print ("\nPort field-value pairs")
-        print (fvs)
 
         policer_oid = 0
 
@@ -260,8 +149,6 @@ class TestStormControl(object):
             atbl = swsscommon.Table(self.adb,"ASIC_STATE:SAI_OBJECT_TYPE_POLICER")
             status, fvs = atbl.get(policer_oid)
             assert status == True
-            print ("POlicer parameters")
-            print (fvs)
 
         bps = 0
 
@@ -271,19 +158,13 @@ class TestStormControl(object):
 
         #Retrieved value of bps from ASIC_DB is converted back to user input kbps
         kbps = int(bps) / int(1000) * 8
-        print ("Kbps value")
-        print (kbps)
+        print ("Kbps value {}".format(kbps))
 
         assert str(kbps) == str(kbps_value)
 
 
     def add_storm_control_on_interface(self,dvs,if_name,storm_type,kbps_value):
-        print ("interface")
-        print (if_name)
-        print ("storm_type")
-        print (storm_type)
-        print ("kbps_value")
-        print (kbps_value)
+        print ("interface {} storm_type {} kbps {}".format(if_name,storm_type,kbps_value))
         self.add_storm_session(if_name, storm_type, kbps_value)
         self.check_storm_control_on_interface(dvs,if_name,storm_type,kbps_value)
 
@@ -295,6 +176,9 @@ class TestStormControl(object):
             self.add_storm_control_on_interface(dvs,key,"broadcast",1000000)
             self.add_storm_control_on_interface(dvs,key,"unknown-unicast",2000000)
             self.add_storm_control_on_interface(dvs,key,"unknown-multicast",3000000)
+            self.del_storm_control(dvs,key,"broadcast")
+            self.del_storm_control(dvs,key,"unknown-unicast")
+            self.del_storm_control(dvs,key,"unknown-multicast")
 
     def test_warm_restart_all_interfaces(self,dvs,testlog):
         self.setup_db(dvs)
@@ -350,13 +234,11 @@ class TestStormControl(object):
             #Cleanup syslog
             dvs.runcmd(['sh', '-c', "echo 0 > /var/log/syslog"])
             time.sleep(1)
-            print ("storm type: "+storm_type+" kbps value: "+str(kbps_value))
+            print ("storm type: {} kbps value: {}".format(storm_type,kbps_value))
             #Add storm entry to config DB directly
             self.add_storm_session(lag_name,storm_type,kbps_value)
             tbl = swsscommon.Table(self.cdb,"PORT_STORM_CONTROL")
             (status,fvs) = tbl.get(lag_name+"|"+storm_type)
-            print ("config DB table content ")
-            print (fvs)
             assert status == True
             assert len(fvs) > 0
             time.sleep(1)
@@ -392,13 +274,11 @@ class TestStormControl(object):
             #Cleanup syslog
             dvs.runcmd(['sh', '-c', "echo 0 > /var/log/syslog"])
             time.sleep(1)
-            print ("storm type: "+storm_type+" kbps value: "+str(kbps_value))
+            print ("storm type: {} kbps value: {}".format(storm_type,kbps_value))
             #Add storm entry to config DB directly
             self.add_storm_session(vlan_name,storm_type,kbps_value)
             tbl = swsscommon.Table(self.cdb,"PORT_STORM_CONTROL")
             (status,fvs) = tbl.get(vlan_name+"|"+storm_type)
-            print ("config DB table content ")
-            print (fvs)
             assert status == True
             assert len(fvs) > 0
             time.sleep(1)
