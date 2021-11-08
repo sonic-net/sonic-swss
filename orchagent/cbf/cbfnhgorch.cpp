@@ -308,6 +308,12 @@ bool CbfNhg::sync()
     nhg_attr.value.u32 = static_cast<sai_uint32_t>(m_members.size());
     nhg_attrs.push_back(move(nhg_attr));
 
+    if (nhg_attr.value.u32 > gNhgMapOrch->getMaxFcVal)
+    {
+        /* If there are more members than FCs then this may be an error, as some members won't be used. */
+        SWSS_LOG_WARN("More CBF NHG members configured than supported Forwarding Classes");
+    }
+
     /* Add the selection map to the attributes. */
     nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_SELECTION_MAP;
     nhg_attr.value.oid = gNhgMapOrch->getMapId(m_selection_map);

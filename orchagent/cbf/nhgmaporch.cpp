@@ -1,11 +1,14 @@
 #include "nhgmaporch.h"
 #include "climits"
+#include "crmorch.h"
 
 extern sai_object_id_t gSwitchId;
 extern sai_next_hop_group_api_t* sai_next_hop_group_api;
 extern sai_switch_api_t *sai_switch_api;
+extern CrmOrch *gCrmOrch;
 
 uint64_t NhgMapOrch::m_max_nhg_map_count = 0;
+
 
 NhgMapEntry::NhgMapEntry(sai_object_id_t _id, uint32_t _ref_count, int _largest_nh_index) :
     id(_id), ref_count(_ref_count), largest_nh_index(_largest_nh_index)
@@ -139,6 +142,8 @@ void NhgMapOrch::doTask(Consumer &consumer)
                             assert(nhg_map_id != SAI_NULL_OBJECT_ID);
                             NhgMapEntry entry(nhg_map_id, 0, largest_nh_index);
                             m_syncdMaps.emplace(move(index), entry);
+
+                            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MAP);
                         }
                     }
                 }
@@ -203,6 +208,7 @@ void NhgMapOrch::doTask(Consumer &consumer)
                 if (status == SAI_STATUS_SUCCESS)
                 {
                     m_syncdMaps.erase(fc_map_it);
+                    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MAP);
                 }
                 else
                 {
