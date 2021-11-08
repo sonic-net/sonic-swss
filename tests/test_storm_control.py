@@ -55,7 +55,7 @@ class TestStormControl(object):
         self.add_storm_control_on_interface(dvs,if_name,storm_type,kbps_value)
         self.del_storm_control(dvs,if_name,storm_type)
 
-    def del_storm_control(self, dvs, if_name, storm_type)
+    def del_storm_control(self, dvs, if_name, storm_type):
         self.setup_db(dvs)
         port_oid = dvs.asicdb.portnamemap[if_name]
         atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
