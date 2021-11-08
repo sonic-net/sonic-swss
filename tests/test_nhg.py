@@ -1812,7 +1812,6 @@ class TestCbfNextHopGroup(TestNextHopGroupBase):
 
             # Update the CBF group
             nhgm_ids = self.get_nhgm_ids('cbfgroup1')
-            nhg_id = self.get_nhg_id('cbfgroup1')
             fvs = swsscommon.FieldValuePairs([('members', 'group2,group3'), ('selection_map', 'cbfnhgmap1')])
             self.cbf_nhg_ps.set('cbfgroup1', fvs)
             self.asic_db.wait_for_deleted_keys(self.ASIC_NHGM_STR, nhgm_ids)
