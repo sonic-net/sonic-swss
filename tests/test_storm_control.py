@@ -157,7 +157,7 @@ class TestStormControl(object):
                 bps = fv[1]
 
         #Retrieved value of bps from ASIC_DB is converted back to user input kbps
-        kbps = int(bps) / int(1000) * 8
+        kbps = int(int(bps) / int(1000) * 8)
         print ("Kbps value {}".format(kbps))
 
         assert str(kbps) == str(kbps_value)
