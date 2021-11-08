@@ -728,13 +728,16 @@ task_process_status Orch::handleSaiCreateStatus(sai_api_t api, sai_status_t stat
                 case SAI_STATUS_SUCCESS:
                     SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiCreateStatus");
                     return task_success;
+                case SAI_STATUS_INSUFFICIENT_RESOURCES:
+                    SWSS_LOG_INFO("SAI API: %s returned status: %s",
+                                  sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+                    return task_need_retry;
                 default:
                     SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
                                 sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
                     exit(EXIT_FAILURE);
             }
     }
-    return task_need_retry;
 }
 
 task_process_status Orch::handleSaiSetStatus(sai_api_t api, sai_status_t status, void *context)
