@@ -1330,6 +1330,12 @@ class TestVnetOrch(object):
 
         assert nhg2_1 == nhg1_2
 
+        # Create another tunnel route with ipv4 prefix to the same set of endpoints
+        create_vnet_routes(dvs, "8.0.0.0/24", 'Vnet8', 'fd:8:1::1,fd:8:1::2,fd:8:1::3,fd:8:1::4')
+        route3, nhg3_1 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet8', ['fd:8:1::1', 'fd:8:1::2', 'fd:8:1::3', 'fd:8:1::4'], tunnel_name)
+
+        assert nhg3_1 == nhg1_2
+
         # Remove one of the tunnel routes
         delete_vnet_routes(dvs, "fd:8:10::32/128", 'Vnet8')
         vnet_obj.check_del_vnet_routes(dvs, 'Vnet8', ["fd:8:10::32/128"])
@@ -1338,9 +1344,13 @@ class TestVnetOrch(object):
         vnet_obj.fetch_exist_entries(dvs)
         assert nhg1_2 in vnet_obj.nhgs
 
-        # Remove the other tunnel route
+        # Remove tunnel route 2
         delete_vnet_routes(dvs, "fd:8:20::32/128", 'Vnet8')
         vnet_obj.check_del_vnet_routes(dvs, 'Vnet8', ["fd:8:20::32/128"])
+
+        # Remove tunnel route 3
+        delete_vnet_routes(dvs, "8.0.0.0/24", 'Vnet8')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet8', ["8.0.0.0/24"])
 
         # Check the nexthop group is removed
         vnet_obj.fetch_exist_entries(dvs)

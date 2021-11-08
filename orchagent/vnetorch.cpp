@@ -835,7 +835,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
     if (op == SET_COMMAND)
     {
         sai_object_id_t nh_id;
-        /* The route in pointing to one single endpoint */
+        /* The route is pointing to one single endpoint */
         if (!hasNextHopGroup(vnet, nexthops))
         {
             if (nexthops.getSize() == 1)
@@ -847,7 +847,8 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                 next_hop_group_entry.active_members[nexthop] = SAI_NULL_OBJECT_ID;
                 syncd_nexthop_groups_[vnet][nexthops] = next_hop_group_entry;
             }
-            else {
+            else
+            {
                 if (!addNextHopGroup(vnet, nexthops, vrf_obj))
                 {
                     SWSS_LOG_ERROR("Failed to create next hop group %s", nexthops.to_string().c_str());
@@ -885,6 +886,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
 
         if (it_route != syncd_tunnel_routes_[vnet].end())
         {
+            // In case of updating an existing route, decrease the reference count for the previous nexthop group
             NextHopGroupKey nhg = it_route->second;
             if(--syncd_nexthop_groups_[vnet][nhg].ref_count == 0)
             {
@@ -947,10 +949,6 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         }
 
         vrf_obj->removeRoute(ipPrefix);
-    }
-    else
-    {
-        SWSS_LOG_ERROR("Unknown operation");
     }
 
     return true;
