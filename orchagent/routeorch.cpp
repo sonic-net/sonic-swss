@@ -720,10 +720,7 @@ void RouteOrch::doTask(Consumer& consumer)
 
                         for (uint32_t i = 1; i < srv6_segv.size(); i++)
                         {
-                            if (ipv.empty()) {
-                                ip = "0.0.0.0";
-                                nhg_str += NHG_DELIMITER + ip;
-                            }
+                            nhg_str += NHG_DELIMITER + ip;
                             nhg_str += NH_DELIMITER + srv6_segv[i];
                             nhg_str += NH_DELIMITER + srv6_src[i];
                         }
