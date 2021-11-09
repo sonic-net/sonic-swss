@@ -112,7 +112,7 @@ bool Srv6Orch::removeSrv6Nexthops(const NextHopGroupKey &nhg)
             }
 
             /* Update nexthop in SID table after deleting the nexthop */
-            SWSS_LOG_NOTICE("Seg %s nexthop refcount %zu",
+            SWSS_LOG_INFO("Seg %s nexthop refcount %zu",
                       segname.c_str(),
                       sid_table_[segname].nexthops.size());
             if (sid_table_[segname].nexthops.find(sr_nh) != sid_table_[segname].nexthops.end())
@@ -481,7 +481,7 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
         my_sid_entry = srv6_my_sid_table_[key_string].entry;
     }
 
-    SWSS_LOG_NOTICE("MySid: sid %s, action %s, vrf %s, block %d, node %d, func %d, arg %d dt_vrf %s",
+    SWSS_LOG_INFO("MySid: sid %s, action %s, vrf %s, block %d, node %d, func %d, arg %d dt_vrf %s",
       my_sid_string.c_str(), end_action.c_str(), dt_vrf.c_str(),my_sid_entry.locator_block_len, my_sid_entry.locator_node_len,
       my_sid_entry.function_len, my_sid_entry.args_len, dt_vrf.c_str());
 
@@ -495,10 +495,10 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
     if (mySidVrfRequired(end_behavior))
     {
         sai_object_id_t dt_vrf_id;
-        SWSS_LOG_NOTICE("DT VRF name %s", dt_vrf.c_str());
+        SWSS_LOG_INFO("DT VRF name %s", dt_vrf.c_str());
         if (m_vrfOrch->isVRFexists(dt_vrf))
         {
-            SWSS_LOG_NOTICE("VRF %s exists in DB", dt_vrf.c_str());
+            SWSS_LOG_INFO("VRF %s exists in DB", dt_vrf.c_str());
             dt_vrf_id = m_vrfOrch->getVRFid(dt_vrf);
             if(dt_vrf_id == SAI_NULL_OBJECT_ID)
             {
@@ -547,7 +547,7 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
             }
         }
     }
-    SWSS_LOG_NOTICE("Store keystring %s in cache", key_string.c_str());
+    SWSS_LOG_INFO("Store keystring %s in cache", key_string.c_str());
     if(vrf_update)
     {
         m_vrfOrch->increaseVrfRefCount(dt_vrf);
