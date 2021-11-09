@@ -89,6 +89,7 @@ class TestNextHopGroupBase(object):
         # Add a CBF NHG pointing to the given map
         fvs = swsscommon.FieldValuePairs([('members', 'testnhg'), ('selection_map', nhg_map_index)])
         cbf_nhg_ps.set('testcbfnhg', fvs)
+        time.sleep(1)
 
         # If the CBF NHG can't be created, the provided NHG map index is invalid
         try:
