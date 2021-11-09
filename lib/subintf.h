@@ -14,7 +14,7 @@ namespace swss {
 			bool isShortName() const;
 
         private:
-            std::string alias;
+			std::string alias;
 			std::string subIfIdx;
 			std::string parentIf;
 			std::string parentIfShortName;
