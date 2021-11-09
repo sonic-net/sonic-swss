@@ -207,6 +207,9 @@ class TestStormControl(object):
             self.check_storm_control_on_interface(dvs,key,"broadcast",1000000)
             self.check_storm_control_on_interface(dvs,key,"unknown-unicast",2000000)
             self.check_storm_control_on_interface(dvs,key,"unknown-multicast",3000000)
+            self.del_storm_control(dvs,key,"broadcast")
+            self.del_storm_control(dvs,key,"unknown-unicast")
+            self.del_storm_control(dvs,key,"unknown-multicast")
 
     def test_add_storm_lag_interface(self,dvs,testlog):
         self.setup_db(dvs)
