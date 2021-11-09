@@ -116,6 +116,7 @@ task_process_status QosMapHandler::processWorkItem(Consumer& consumer)
         vector<sai_attribute_t> attributes;
         if (!convertFieldValuesToAttributes(tuple, attributes))
         {
+            freeAttribResources(attributes);
             return task_process_status::task_invalid_entry;
         }
         if (SAI_NULL_OBJECT_ID != sai_object)

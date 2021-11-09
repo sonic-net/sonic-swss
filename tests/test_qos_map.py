@@ -152,6 +152,19 @@ class TestCbf(object):
         fvs = self.asic_db.get_entry(self.ASIC_QOS_MAP_STR, dscp_map_id)
         assert(fvs.get("SAI_QOS_MAP_ATTR_TYPE") == "SAI_QOS_MAP_TYPE_DSCP_TO_FORWARDING_CLASS")
 
+        # Modify the map
+        dscp_map = [(str(i), '0') for i in range(0, 64)]
+        self.dscp_ps.set("AZURE", swsscommon.FieldValuePairs(dscp_map))
+        time.sleep(1)
+
+        # Assert the expected values
+        fvs = self.asic_db.get_entry(self.ASIC_QOS_MAP_STR, dscp_map_id)
+        sai_dscp_map = json.loads(fvs.get("SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST"))
+
+        for dscp2fc in sai_dscp_map['list']:
+            fc = str(dscp2fc['value']['fc'])
+            assert fc == '0'
+
         # Delete the map
         self.dscp_ps._del("AZURE")
         self.asic_db.wait_for_deleted_entry(self.ASIC_QOS_MAP_STR, dscp_map_id)
@@ -192,6 +205,19 @@ class TestCbf(object):
         # Assert the expected values
         fvs = self.asic_db.get_entry(self.ASIC_QOS_MAP_STR, exp_map_id)
         assert(fvs.get("SAI_QOS_MAP_ATTR_TYPE") == "SAI_QOS_MAP_TYPE_MPLS_EXP_TO_FORWARDING_CLASS")
+
+        # Modify the map
+        exp_map = [(str(i), '0') for i in range(0, 8)]
+        self.exp_ps.set("AZURE", swsscommon.FieldValuePairs(exp_map))
+        time.sleep(1)
+
+        # Assert the expected values
+        fvs = self.asic_db.get_entry(self.ASIC_QOS_MAP_STR, exp_map_id)
+        sai_exp_map = json.loads(fvs.get("SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST"))
+
+        for exp2fc in sai_exp_map['list']:
+            fc = str(exp2fc['value']['fc'])
+            assert fc == '0'
 
         # Delete the map
         self.exp_ps._del("AZURE")
