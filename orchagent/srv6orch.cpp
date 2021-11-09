@@ -195,7 +195,7 @@ bool Srv6Orch::createSrv6Nexthop(const NextHopKey &nh)
                                                 nh_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("FAiled to create srv6 nexthop for %s", nh.to_string(false,true).c_str());
+        SWSS_LOG_ERROR("Failed to create srv6 nexthop for %s", nh.to_string(false,true).c_str());
         return false;
     }
     m_neighOrch->updateSrv6Nexthop(nh, nexthop_id);
@@ -218,6 +218,7 @@ bool Srv6Orch::srv6Nexthops(const NextHopGroupKey &nhgKey, sai_object_id_t &next
         if (!createSrv6Tunnel(srv6_source))
         {
             SWSS_LOG_ERROR("Failed to create tunnel for source %s", srv6_source.c_str());
+            return false;
         }
         if (!createSrv6Nexthop(nh))
         {

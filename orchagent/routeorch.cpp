@@ -590,10 +590,10 @@ void RouteOrch::doTask(Consumer& consumer)
 
                     if (fvField(i) == "weight")
                         weights = fvValue(i);
-                  
+
                     if (fvField(i) == "nexthop_group")
                         nhg_index = fvValue(i);
-                  
+
                     if (fvField(i) == "segment") {
                         srv6_segments = fvValue(i);
                         srv6_nh = true;
@@ -714,6 +714,7 @@ void RouteOrch::doTask(Consumer& consumer)
                         else
                         {
                             SWSS_LOG_ERROR("For SRV6 nexthop ipv should be empty");
+                            it = consumer.m_toSync.erase(it);
                             continue;
                         }
                         nhg_str = ip + NH_DELIMITER + srv6_segv[0] + NH_DELIMITER + srv6_src[0];
@@ -725,7 +726,7 @@ void RouteOrch::doTask(Consumer& consumer)
                             nhg_str += NH_DELIMITER + srv6_src[i];
                         }
                         nhg = NextHopGroupKey(nhg_str, overlay_nh, srv6_nh);
-                        SWSS_LOG_NOTICE("SRV6 route with nhg %s", nhg.to_string().c_str());
+                        SWSS_LOG_INFO("SRV6 route with nhg %s", nhg.to_string().c_str());
                     }
                     else if (overlay_nh == false)
                     {
@@ -938,7 +939,6 @@ void RouteOrch::doTask(Consumer& consumer)
                 {
                     if(m_syncdNextHopGroups[it_nhg.first].ref_count == 0)
                     {
-                      SWSS_LOG_NOTICE("Remove NHG in doTask");
                       removeNextHopGroup(it_nhg.first);
                     }
                     else
@@ -1434,7 +1434,7 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops)
         }
         else
         {
-            SWSS_LOG_NOTICE("Remove ECMP Srv6 nexthops %s", nexthops.to_string().c_str());
+            SWSS_LOG_INFO("Remove ECMP Srv6 nexthops %s", nexthops.to_string().c_str());
         }
     }
 
@@ -1704,7 +1704,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                 }
                 else if (srv6_nh)
                 {
-                    SWSS_LOG_NOTICE("Single NH: create srv6 nexthop %s", nextHops.to_string().c_str());
+                    SWSS_LOG_INFO("Single NH: create srv6 nexthop %s", nextHops.to_string().c_str());
                     if (!m_srv6Orch->srv6Nexthops(nextHops, next_hop_id))
                     {
                         SWSS_LOG_ERROR("Failed to create SRV6 nexthop %s", nextHops.to_string().c_str());
@@ -1730,7 +1730,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
             if(srv6_nh)
             {
                 sai_object_id_t temp_nh_id;
-                SWSS_LOG_NOTICE("ECMP SRV6 NH: create srv6 nexthops %s", nextHops.to_string().c_str());
+                SWSS_LOG_INFO("ECMP SRV6 NH: create srv6 nexthops %s", nextHops.to_string().c_str());
                 if(!m_srv6Orch->srv6Nexthops(nextHops, temp_nh_id))
                 {
                     SWSS_LOG_ERROR("Failed to create SRV6 nexthops for %s", nextHops.to_string().c_str());
