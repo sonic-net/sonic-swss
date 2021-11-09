@@ -750,7 +750,7 @@ bool PortsOrch::getPort(sai_object_id_t id, Port &port)
     {
         getPort(itr->second, port);
         return true;
-	}
+    }
 
     return false;
 }
@@ -791,8 +791,11 @@ bool PortsOrch::getPortByBridgePortId(sai_object_id_t bridge_port_id, Port &port
 
     auto itr = portOidToName.find(bridge_port_id);
     if (itr == portOidToName.end())
+    {
         return false;
-    else {
+    }
+    else
+    {
         getPort(itr->second, port);
         return true;
     }
