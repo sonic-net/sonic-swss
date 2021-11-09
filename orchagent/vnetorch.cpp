@@ -1320,8 +1320,8 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     SWSS_LOG_ENTER();
 
     vector<IpAddress> ip_list;
-    vector<MacAddress> mac_list;
-    vector<uint64_t> vni_list;
+    vector<string> mac_list;
+    vector<string> vni_list;
 
     for (const auto& name: request.getAttrFieldNames())
     {
@@ -1331,11 +1331,13 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         }
         else if (name == "vni")
         {
-            vni_list = request.getAttrUintList(name);
+            string vni_str = request.getAttrString(name);
+            vni_list = tokenize(vni_str, ',');
         }
         else if (name == "mac_address")
         {
-            mac_list = request.getAttrMacAddressList(name);
+            string mac_str = request.getAttrString(name);
+            mac_list = tokenize(mac_str, ',');
         }
         else
         {
@@ -1369,14 +1371,14 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         IpAddress ip = ip_list[idx_ip];
         MacAddress mac;
         uint32_t vni = 0;
-        if (!vni_list.empty())
+        if (!vni_list.empty() && vni_list[idx_ip] != "")
         {
-            vni = static_cast<uint32_t>(vni_list[idx_ip]);
+            vni = (uint32_t)stoul(vni_list[idx_ip]);
         }
 
-        if (!mac_list.empty())
+        if (!mac_list.empty() && mac_list[idx_ip] != "")
         {
-            mac = mac_list[idx_ip];
+            mac = MacAddress(mac_list[idx_ip]);
         }
 
         NextHopKey nh(ip, mac, vni, true);

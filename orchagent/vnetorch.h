@@ -250,9 +250,9 @@ const request_description_t vnet_route_description = {
         { "endpoint",               REQ_T_IP_LIST },
         { "ifname",                 REQ_T_STRING },
         { "nexthop",                REQ_T_STRING },
-        { "vni",                    REQ_T_UINT_LIST },
-        { "mac_address",            REQ_T_MAC_ADDRESS_LIST },
-        { "endpoint_monitor",       REQ_T_IP_LIST },
+        { "vni",                    REQ_T_STRING },
+        { "mac_address",            REQ_T_STRING },
+        { "endpoint_monitor",       REQ_T_STRING },
     },
     { }
 };
