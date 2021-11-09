@@ -92,13 +92,13 @@ jobs:
       sudo dpkg -i libswsscommon_1.0.0_${{ parameters.arch }}.deb
       sudo dpkg -i libswsscommon-dev_1.0.0_${{ parameters.arch }}.deb
       cd $(Build.SourcesDirectory)/${{ parameters.sairedis_artifact_name }}
-      sudo dpkg -i libsaivs_*.deb
-      sudo dpkg -i libsaivs-dev_*.deb
-      sudo dpkg -i libsairedis_*.deb
-      sudo dpkg -i libsairedis-dev_*.deb
-      sudo dpkg -i libsaimetadata_*.deb
-      sudo dpkg -i libsaimetadata-dev_*.deb
-      sudo dpkg -i syncd-vs_*.deb
+      sudo dpkg -i libsaivs_*${{ parameters.arch }}.deb
+      sudo dpkg -i libsaivs-dev_*${{ parameters.arch }}.deb
+      sudo dpkg -i libsairedis_*${{ parameters.arch }}.deb
+      sudo dpkg -i libsairedis-dev_*${{ parameters.arch }}.deb
+      sudo dpkg -i libsaimetadata_*${{ parameters.arch }}.deb
+      sudo dpkg -i libsaimetadata-dev_*${{ parameters.arch }}.deb
+      sudo dpkg -i syncd-vs_*${{ parameters.arch }}.deb
     workingDirectory: $(Pipeline.Workspace)
     displayName: "Install sonic swss common and sairedis"
   - script: |
