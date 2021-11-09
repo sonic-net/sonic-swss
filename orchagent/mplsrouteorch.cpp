@@ -520,8 +520,14 @@ bool RouteOrch::addLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroupKey 
                      m_neighOrch->isNeighborResolved(nexthop))
             {
                 /* since IP neighbor NH exists, neighbor is resolved, add MPLS NH */
-                m_neighOrch->addNextHop(nexthop);
-                next_hop_id = m_neighOrch->getNextHopId(nexthop);
+                if (m_neighOrch->addNextHop(nexthop))
+                {
+                    next_hop_id = m_neighOrch->getNextHopId(nexthop);
+                }
+                else
+                {
+                    return false;
+                }
             }
             /* IP neighbor is not yet resolved */
             else
