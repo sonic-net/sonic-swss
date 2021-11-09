@@ -116,7 +116,6 @@ task_process_status QosMapHandler::processWorkItem(Consumer& consumer)
         vector<sai_attribute_t> attributes;
         if (!convertFieldValuesToAttributes(tuple, attributes))
         {
-            freeAttribResources(attributes);
             return task_process_status::task_invalid_entry;
         }
         if (SAI_NULL_OBJECT_ID != sai_object)
@@ -825,11 +824,13 @@ bool DscpToFcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
             if (value < 0)
             {
                 SWSS_LOG_ERROR("DSCP value %d is negative", value);
+                delete[] list_attr.value.qosmap.list;
                 return false;
             }
             else if (value > DSCP_MAX_VAL)
             {
                 SWSS_LOG_ERROR("DSCP value %d is greater than max value %d", value, DSCP_MAX_VAL);
+                delete[] list_attr.value.qosmap.list;
                 return false;
             }
             list_attr.value.qosmap.list[ind].key.dscp = static_cast<sai_uint8_t>(value);
@@ -838,6 +839,7 @@ bool DscpToFcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
             if ((value < 0) || (value > max_fc_val))
             {
                 SWSS_LOG_ERROR("FC value %d is either negative, or bigger than max value %d", value, max_fc_val);
+                delete[] list_attr.value.qosmap.list;
                 return false;
             }
             list_attr.value.qosmap.list[ind].value.fc = static_cast<sai_uint8_t>(value);
@@ -849,6 +851,7 @@ bool DscpToFcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
         catch(const invalid_argument& e)
         {
             SWSS_LOG_ERROR("Got exception during conversion: %s", e.what());
+            delete[] list_attr.value.qosmap.list;
             return false;
         }
     }
@@ -914,11 +917,13 @@ bool ExpToFcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &t
             if (value < 0)
             {
                 SWSS_LOG_ERROR("EXP value %d is negative", value);
+                delete[] list_attr.value.qosmap.list;
                 return false;
             }
             else if (value > EXP_MAX_VAL)
             {
                 SWSS_LOG_ERROR("EXP value %d is greater than max value %d", value, EXP_MAX_VAL);
+                delete[] list_attr.value.qosmap.list;
                 return false;
             }
             list_attr.value.qosmap.list[ind].key.mpls_exp = static_cast<sai_uint8_t>(value);
@@ -927,6 +932,7 @@ bool ExpToFcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &t
             if ((value < 0) || (value > max_fc_val))
             {
                 SWSS_LOG_ERROR("FC value %d is either negative, or bigger than max value %hu", value, max_fc_val);
+                delete[] list_attr.value.qosmap.list;
                 return false;
             }
             list_attr.value.qosmap.list[ind].value.fc = static_cast<sai_uint8_t>(value);
@@ -938,6 +944,7 @@ bool ExpToFcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &t
         catch(const invalid_argument& e)
         {
             SWSS_LOG_ERROR("Got exception during conversion: %s", e.what());
+            delete[] list_attr.value.qosmap.list;
             return false;
         }
     }
