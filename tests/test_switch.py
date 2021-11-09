@@ -40,14 +40,16 @@ def check_object(db, table, key, expected_attributes):
                                                (value, name, expected_attributes[name])
 
 
-def vxlan_switch_test(dvs, oid, port, mac):
+def vxlan_switch_test(dvs, oid, port, mac, mask, sport):
     app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
     create_entry_pst(
         app_db,
         "SWITCH_TABLE", ':', "switch",
         [
             ("vxlan_port", port),
-            ("vxlan_router_mac", mac)
+            ("vxlan_router_mac", mac),
+            ("vxlan_mask", mask),
+            ("vxlan_sport", sport),
         ],
     )
     time.sleep(2)
@@ -57,6 +59,8 @@ def vxlan_switch_test(dvs, oid, port, mac):
         {
             'SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT': port,
             'SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC': mac,
+            'SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT_MASK': mask,
+            'SAI_SWITCH_TUNNEL_ATTR_VXLAN_UDP_SPORT': sport,
         }
     )
 
@@ -67,10 +71,9 @@ class TestSwitch(object):
     '''
     def test_switch_attribute(self, dvs, testlog):
         switch_oid = get_exist_entry(dvs, "ASIC_STATE:SAI_OBJECT_TYPE_SWITCH")
+        vxlan_switch_test(dvs, switch_oid, "12345", "00:01:02:03:04:05", "20", "54321")
 
-        vxlan_switch_test(dvs, switch_oid, "12345", "00:01:02:03:04:05")
-
-        vxlan_switch_test(dvs, switch_oid, "56789", "00:0A:0B:0C:0D:0E")
+        vxlan_switch_test(dvs, switch_oid, "56789", "00:0A:0B:0C:0D:0E", "15", "56789")
 
 
 # Add Dummy always-pass test at end as workaroud

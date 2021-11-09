@@ -98,3 +98,9 @@ routeresync_LDADD = -lswsscommon
 orchagent_restart_check_SOURCES = orchagent_restart_check.cpp
 orchagent_restart_check_CPPFLAGS = $(DBGFLAGS) $(AM_CPPFLAGS) $(CFLAGS_COMMON)
 orchagent_restart_check_LDADD = -lhiredis -lswsscommon -lpthread
+
+if GCOV_ENABLED
+orchagent_LDADD += -lgcovpreload
+routeresync_LDADD += -lgcovpreload
+orchagent_restart_check_LDADD += -lgcovpreload
+endif

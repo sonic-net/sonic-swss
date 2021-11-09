@@ -45,6 +45,7 @@ enum {
 // field_name is what is expected in CONFIG_DB PORT_QOS_MAP table
 map<string, sai_port_attr_t> qos_to_attr_map = {
     {dscp_to_tc_field_name, SAI_PORT_ATTR_QOS_DSCP_TO_TC_MAP},
+    {mpls_tc_to_tc_field_name, SAI_PORT_ATTR_QOS_MPLS_EXP_TO_TC_MAP},
     {dot1p_to_tc_field_name, SAI_PORT_ATTR_QOS_DOT1P_TO_TC_MAP},
     {tc_to_queue_field_name, SAI_PORT_ATTR_QOS_TC_TO_QUEUE_MAP},
     {tc_to_pg_map_field_name, SAI_PORT_ATTR_QOS_TC_TO_PRIORITY_GROUP_MAP},
@@ -60,6 +61,7 @@ map<string, sai_meter_type_t> scheduler_meter_map = {
 
 type_map QosOrch::m_qos_maps = {
     {CFG_DSCP_TO_TC_MAP_TABLE_NAME, new object_reference_map()},
+    {CFG_MPLS_TC_TO_TC_MAP_TABLE_NAME, new object_reference_map()},
     {CFG_DOT1P_TO_TC_MAP_TABLE_NAME, new object_reference_map()},
     {CFG_TC_TO_QUEUE_MAP_TABLE_NAME, new object_reference_map()},
     {CFG_SCHEDULER_TABLE_NAME, new object_reference_map()},
@@ -73,6 +75,7 @@ type_map QosOrch::m_qos_maps = {
 
 map<string, string> qos_to_ref_table_map = {
     {dscp_to_tc_field_name, CFG_DSCP_TO_TC_MAP_TABLE_NAME},
+    {mpls_tc_to_tc_field_name, CFG_MPLS_TC_TO_TC_MAP_TABLE_NAME},
     {dot1p_to_tc_field_name, CFG_DOT1P_TO_TC_MAP_TABLE_NAME},
     {tc_to_queue_field_name, CFG_TC_TO_QUEUE_MAP_TABLE_NAME},
     {tc_to_pg_map_field_name, CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME},
@@ -236,6 +239,61 @@ task_process_status QosOrch::handleDscpToTcTable(Consumer& consumer)
     SWSS_LOG_ENTER();
     DscpToTcMapHandler dscp_tc_handler;
     return dscp_tc_handler.processWorkItem(consumer);
+}
+
+bool MplsTcToTcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes)
+{
+    SWSS_LOG_ENTER();
+    sai_attribute_t list_attr;
+    sai_qos_map_list_t exp_map_list;
+    exp_map_list.count = (uint32_t)kfvFieldsValues(tuple).size();
+    exp_map_list.list = new sai_qos_map_t[exp_map_list.count]();
+    uint32_t ind = 0;
+    for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++, ind++)
+    {
+        exp_map_list.list[ind].key.mpls_exp = (uint8_t)stoi(fvField(*i));
+        exp_map_list.list[ind].value.tc = (uint8_t)stoi(fvValue(*i));
+        SWSS_LOG_DEBUG("key.exp:%d, value.tc:%d", exp_map_list.list[ind].key.mpls_exp, exp_map_list.list[ind].value.tc);
+    }
+    list_attr.id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;
+    list_attr.value.qosmap.count = exp_map_list.count;
+    list_attr.value.qosmap.list = exp_map_list.list;
+    attributes.push_back(list_attr);
+    return true;
+}
+
+sai_object_id_t MplsTcToTcMapHandler::addQosItem(const vector<sai_attribute_t> &attributes)
+{
+    SWSS_LOG_ENTER();
+    sai_status_t sai_status;
+    sai_object_id_t sai_object;
+    vector<sai_attribute_t> qos_map_attrs;
+
+    sai_attribute_t qos_map_attr;
+    qos_map_attr.id = SAI_QOS_MAP_ATTR_TYPE;
+    qos_map_attr.value.u32 = SAI_QOS_MAP_TYPE_MPLS_EXP_TO_TC;
+    qos_map_attrs.push_back(qos_map_attr);
+
+    qos_map_attr.id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;
+    qos_map_attr.value.qosmap.count = attributes[0].value.qosmap.count;
+    qos_map_attr.value.qosmap.list = attributes[0].value.qosmap.list;
+    qos_map_attrs.push_back(qos_map_attr);
+
+    sai_status = sai_qos_map_api->create_qos_map(&sai_object, gSwitchId, (uint32_t)qos_map_attrs.size(), qos_map_attrs.data());
+    if (SAI_STATUS_SUCCESS != sai_status)
+    {
+        SWSS_LOG_ERROR("Failed to create exp_to_tc map. status:%d", sai_status);
+        return SAI_NULL_OBJECT_ID;
+    }
+    SWSS_LOG_DEBUG("created QosMap object:%" PRIx64, sai_object);
+    return sai_object;
+}
+
+task_process_status QosOrch::handleMplsTcToTcTable(Consumer& consumer)
+{
+    SWSS_LOG_ENTER();
+    MplsTcToTcMapHandler mpls_tc_to_tc_handler;
+    return mpls_tc_to_tc_handler.processWorkItem(consumer);
 }
 
 bool Dot1pToTcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes)
@@ -760,6 +818,7 @@ void QosOrch::initTableHandlers()
 {
     SWSS_LOG_ENTER();
     m_qos_handler_map.insert(qos_handler_pair(CFG_DSCP_TO_TC_MAP_TABLE_NAME, &QosOrch::handleDscpToTcTable));
+    m_qos_handler_map.insert(qos_handler_pair(CFG_MPLS_TC_TO_TC_MAP_TABLE_NAME, &QosOrch::handleMplsTcToTcTable));
     m_qos_handler_map.insert(qos_handler_pair(CFG_DOT1P_TO_TC_MAP_TABLE_NAME, &QosOrch::handleDot1pToTcTable));
     m_qos_handler_map.insert(qos_handler_pair(CFG_TC_TO_QUEUE_MAP_TABLE_NAME, &QosOrch::handleTcToQueueTable));
     m_qos_handler_map.insert(qos_handler_pair(CFG_SCHEDULER_TABLE_NAME, &QosOrch::handleSchedulerTable));

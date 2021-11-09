@@ -187,6 +187,7 @@ bool OrchDaemon::init()
         CFG_TC_TO_QUEUE_MAP_TABLE_NAME,
         CFG_SCHEDULER_TABLE_NAME,
         CFG_DSCP_TO_TC_MAP_TABLE_NAME,
+        CFG_MPLS_TC_TO_TC_MAP_TABLE_NAME,
         CFG_DOT1P_TO_TC_MAP_TABLE_NAME,
         CFG_QUEUE_TABLE_NAME,
         CFG_PORT_QOS_MAP_TABLE_NAME,
@@ -303,7 +304,8 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gIntfsOrch, gNeighOrch, gNhgOrch, gRouteOrch, copp_orch, qos_orch, wm_orch, gPolicerOrch, tunnel_decap_orch, sflow_orch, debug_counter_orch, gMacsecOrch};
+
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, mux_orch, mux_cb_orch, gIntfsOrch, gNeighOrch, gNhgOrch, gRouteOrch, copp_orch, qos_orch, wm_orch, gPolicerOrch, tunnel_decap_orch, sflow_orch, debug_counter_orch, gMacsecOrch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
@@ -399,8 +401,6 @@ bool OrchDaemon::init()
     m_orchList.push_back(gMlagOrch);
     m_orchList.push_back(gIsoGrpOrch);
     m_orchList.push_back(gFgNhgOrch);
-    m_orchList.push_back(mux_orch);
-    m_orchList.push_back(mux_cb_orch);
     m_orchList.push_back(mux_st_orch);
 
     if (m_fabricEnabled)

@@ -2,8 +2,6 @@ from swsscommon import swsscommon
 import time
 from evpn_tunnel import VxlanTunnel,VxlanEvpnHelper
 
-DVS_ENV = ["fake_platform=broadcom"]
-
 def get_vxlan_p2p_tunnel_bp(db, remote_ip):
     tnl_id = None
     bp = None

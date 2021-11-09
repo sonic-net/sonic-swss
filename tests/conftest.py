@@ -187,7 +187,15 @@ class VirtualServer:
             # ensure self.pifname is not already an interface in the DVS net namespace
             rc, _ = subprocess.getstatusoutput(f"nsenter -t {pid} -n ip link show | grep '{self.pifname}@'")
             if not rc:
-                ensure_system(f"nsenter -t {pid} -n ip link delete {self.pifname}")
+                try:
+                    ensure_system(f"nsenter -t {pid} -n ip link delete {self.pifname}")
+                except RuntimeError as e:
+                    # Occasionally self.pifname will get deleted between us checking for its existence
+                    # and us deleting it ourselves. In this case we can continue normally
+                    if "cannot find device" in str(e).lower():
+                        pass
+                    else:
+                        raise e
 
             ensure_system(f"ip netns exec {self.nsname} ip link set {self.pifname} netns {pid}")
 
