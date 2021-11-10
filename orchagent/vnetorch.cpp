@@ -1346,7 +1346,7 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         }
     }
 
-    if (!vni_list.empty() && vni_list.size() != ip_list.size())
+    if (vni_list.size() > 1 && vni_list.size() != ip_list.size())
     {
         SWSS_LOG_ERROR("VNI size of %zu does not match endpoint size of %zu", vni_list.size(), ip_list.size());
         return false;
@@ -1371,7 +1371,11 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         IpAddress ip = ip_list[idx_ip];
         MacAddress mac;
         uint32_t vni = 0;
-        if (!vni_list.empty() && vni_list[idx_ip] != "")
+        if (vni_list.size() == 1 && vni_list[0] != "")
+        {
+            vni = (uint32_t)stoul(vni_list[0]);
+        }
+        else if (vni_list.size() > 1 && vni_list[idx_ip] != "")
         {
             vni = (uint32_t)stoul(vni_list[idx_ip]);
         }
