@@ -81,8 +81,9 @@ orchagent_SOURCES = \
             isolationgrouporch.cpp \
             muxorch.cpp \
             macsecorch.cpp \
-            srv6orch.cpp \
-            lagid.cpp 
+            lagid.cpp \
+            bfdorch.cpp \
+            srv6orch.cpp
 
 orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp
 orchagent_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.cpp
