@@ -63,7 +63,6 @@ class Srv6Orch : public Orch
           m_sidTable(applDb, APP_SRV6_SID_LIST_TABLE_NAME),
           m_mysidTable(applDb, APP_SRV6_MY_SID_TABLE_NAME)
         {
-          //m_neighOrch->attach(this);
         }
         ~Srv6Orch()
         {

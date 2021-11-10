@@ -41,7 +41,6 @@
 #include "bfdorch.h"
 #include "srv6orch.h"
 
-
 using namespace swss;
 
 class OrchDaemon

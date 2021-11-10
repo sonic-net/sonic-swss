@@ -34,8 +34,7 @@ public:
                 m_nexthops.insert(nh);
             }
         }
-
-        if (srv6_nh)
+        else if (srv6_nh)
         {
             m_overlay_nexthops = false;
             m_srv6_nexthops = true;
