@@ -2061,6 +2061,7 @@ class TestCbfNextHopGroup(TestNextHopGroupBase):
             self.fc_to_nhg_ps.set('cbfnhgmap512', fvs)
             time.sleep(1)
             assert(not self.nhg_map_exists('cbfnhgmap512'))
+            time.sleep(1)
 
             # Delete an existing NHG map. The pending NHG map should now be created
             del_nhg_map_index = nhg_maps.pop(0)
