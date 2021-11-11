@@ -2186,3 +2186,17 @@ bool RouteOrch::removeOverlayNextHops(sai_object_id_t vrf_id, const NextHopGroup
     return true;
 }
 
+void RouteOrch::increaseNextHopGroupCount()
+{
+    m_nextHopGroupCount ++;
+}
+
+void RouteOrch::decreaseNextHopGroupCount()
+{
+    m_nextHopGroupCount --;
+}
+
+bool RouteOrch::checkNextHopGroupCount()
+{
+    return m_nextHopGroupCount < m_maxNextHopGroupCount;
+}

@@ -137,6 +137,10 @@ public:
     bool createFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id, vector<sai_attribute_t> &nhg_attrs);
     bool removeFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id);
 
+    void increaseNextHopGroupCount();
+    void decreaseNextHopGroupCount();
+    bool checkNextHopGroupCount();
+
 private:
     SwitchOrch *m_switchOrch;
     NeighOrch *m_neighOrch;

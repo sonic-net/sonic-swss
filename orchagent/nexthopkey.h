@@ -68,6 +68,8 @@ struct NextHopKey
         mac_address = keys[3];
     }
 
+    NextHopKey(const IpAddress &ip, const MacAddress &mac, const uint32_t &vni, bool overlay_nh) : ip_address(ip), alias(""), vni(vni), mac_address(mac){}
+
     const std::string to_string() const
     {
         return ip_address.to_string() + NH_DELIMITER + alias;
