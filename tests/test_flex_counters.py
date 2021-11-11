@@ -8,6 +8,7 @@ RIF_KEY                   =   "RIF"
 BUFFER_POOL_WATERMARK_KEY =   "BUFFER_POOL_WATERMARK"
 PORT_BUFFER_DROP_KEY      =   "PORT_BUFFER_DROP"
 PG_WATERMARK_KEY          =   "PG_WATERMARK"
+ACL_KEY                   =   "ACL"
 TUNNEL_KEY                =   "TUNNEL"
 
 # Counter stats on FlexCountersDB
@@ -17,6 +18,7 @@ RIF_STAT                   =   "RIF_STAT_COUNTER"
 BUFFER_POOL_WATERMARK_STAT =   "BUFFER_POOL_WATERMARK_STAT_COUNTER"
 PORT_BUFFER_DROP_STAT      =   "PORT_BUFFER_DROP_STAT"
 PG_WATERMARK_STAT          =   "PG_WATERMARK_STAT_COUNTER"
+ACL_STAT                   =   "ACL_STAT_COUNTER"
 TUNNEL_STAT                =   "TUNNEL_STAT_COUNTER"
 
 # Counter maps on CountersDB
@@ -26,6 +28,7 @@ RIF_MAP                   =   "COUNTERS_RIF_NAME_MAP"
 BUFFER_POOL_WATERMARK_MAP =   "COUNTERS_BUFFER_POOL_NAME_MAP"
 PORT_BUFFER_DROP_MAP      =   "COUNTERS_PORT_NAME_MAP"
 PG_WATERMARK_MAP          =   "COUNTERS_PG_NAME_MAP"
+ACL_MAP                   =   "ACL_COUNTER_RULE_MAP"
 TUNNEL_MAP                =   "COUNTERS_TUNNEL_NAME_MAP"
 
 TUNNEL_TYPE_MAP           =   "COUNTERS_TUNNEL_TYPE_MAP"
@@ -38,6 +41,7 @@ counter_type_dict = {"port_counter":[PORT_KEY, PORT_STAT, PORT_MAP],
                      "buffer_pool_watermark_counter":[BUFFER_POOL_WATERMARK_KEY, BUFFER_POOL_WATERMARK_STAT, BUFFER_POOL_WATERMARK_MAP],
                      "port_buffer_drop_counter":[PORT_BUFFER_DROP_KEY, PORT_BUFFER_DROP_STAT, PORT_BUFFER_DROP_MAP],
                      "pg_watermark_counter":[PG_WATERMARK_KEY, PG_WATERMARK_STAT, PG_WATERMARK_MAP],
+                     "acl_counter":[ACL_KEY, ACL_STAT, ACL_MAP],
                      "vxlan_tunnel_counter":[TUNNEL_KEY, TUNNEL_STAT, TUNNEL_MAP]}
 
 
@@ -124,6 +128,21 @@ class TestFlexCounters(object):
         if counter_type == "rif_counter":
             self.config_db.db_connection.hset('INTERFACE|Ethernet0', "NULL", "NULL")
             self.config_db.db_connection.hset('INTERFACE|Ethernet0|192.168.0.1/24', "NULL", "NULL")
+        elif counter_type == "acl_counter":
+            self.config_db.create_entry('ACL_TABLE', 'DATAACL',
+                {
+                    'STAGE': 'INGRESS',
+                    'PORTS': 'Ethernet0',
+                    'TYPE': 'L3'
+                }
+            )
+            self.config_db.create_entry('ACL_RULE', 'DATAACL|RULE0',
+                {
+                    'ETHER_TYPE': '2048',
+                    'PACKET_ACTION': 'FORWARD',
+                    'PRIORITY': '9999'
+                }
+            )
 
         if counter_type == "vxlan_tunnel_counter":
             self.config_db.db_connection.hset("VLAN|Vlan10", "vlanid", "10")
@@ -136,11 +155,12 @@ class TestFlexCounters(object):
 
         if counter_type == "port_counter":
             self.verify_only_phy_ports_created()
-
-        if counter_type == "rif_counter":
+        elif counter_type == "rif_counter":
             self.config_db.db_connection.hdel('INTERFACE|Ethernet0|192.168.0.1/24', "NULL")
-
-        if counter_type == "vxlan_tunnel_counter":
+        elif counter_type == "acl_counter":
+            self.config_db.delete_entry('ACL_RULE', 'DATAACL|RULE0')
+            self.config_db.delete_entry('ACL_TABLE', 'DATAACL')
+        elif counter_type == "vxlan_tunnel_counter":
             self.verify_tunnel_type_vxlan(counter_map, TUNNEL_TYPE_MAP)
             self.config_db.delete_entry("VLAN","Vlan10")
             self.config_db.delete_entry("VLAN_TUNNEL","vtep1")
