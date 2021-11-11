@@ -1769,17 +1769,17 @@ class TestCbfNextHopGroup(TestNextHopGroupBase):
         def delete_referenced_cbf_nhg_test():
             # Create a route pointing to the CBF NHG
             fvs = swsscommon.FieldValuePairs([('nexthop_group', 'cbfgroup1')])
-            self.rt_ps.set('2.2.2.0/24', fvs)
-            self.asic_db.wait_for_n_keys(self.ASIC_RT_STR, self.asic_rts_count + 1)
+            self.lr_ps.set('10', fvs)
+            self.asic_db.wait_for_n_keys(self.ASIC_INSEG_STR, self.asic_insgs_count + 1)
 
             # Try deleting the CBF NHG - should not work
             self.cbf_nhg_ps._del('cbfgroup1')
             time.sleep(1)
             assert(self.nhg_exists('cbfgroup1'))
 
-            # Delete the route - the CBF NHG should also get deleted
-            self.rt_ps._del('2.2.2.0/24')
-            self.asic_db.wait_for_n_keys(self.ASIC_RT_STR, self.asic_rts_count)
+            # Delete the label route - the CBF NHG should also get deleted
+            self.lr_ps._del('10')
+            self.asic_db.wait_for_n_keys(self.ASIC_INSEG_STR, self.asic_insgs_count)
             self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 2)
             self.asic_db.wait_for_n_keys(self.ASIC_NHGM_STR, self.asic_nhgms_count + 3)
 
@@ -1920,8 +1920,21 @@ class TestCbfNextHopGroup(TestNextHopGroupBase):
 
         # Test scenario:
         # - create a NHG map and assert the expected details
+        # - update the map
         # - delete the map
         def mainline_nhg_map_test():
+            # Create two non-CBF NHGs
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3,10.0.0.5'),
+                                            ("ifname", "Ethernet0,Ethernet4,Ethernet8")])
+            self.nhg_ps.set("group1", fvs)
+
+            fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'),
+                                                ('ifname', 'Ethernet0,Ethernet4')])
+            self.nhg_ps.set('group2', fvs)
+
+            # Wait for the groups to appear in ASIC DB
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 2)
+
             # Create an FC to NH index map
             fvs = swsscommon.FieldValuePairs([('0', '0')])
             self.fc_to_nhg_ps.set('cbfnhgmap1', fvs)
@@ -1935,6 +1948,27 @@ class TestCbfNextHopGroup(TestNextHopGroupBase):
                                         nhg_map_id,
                                         {'SAI_NEXT_HOP_GROUP_MAP_ATTR_TYPE': 'SAI_NEXT_HOP_GROUP_MAP_TYPE_FORWARDING_CLASS_TO_INDEX',
                                         'SAI_NEXT_HOP_GROUP_MAP_ATTR_MAP_TO_VALUE_LIST': '{\"count\":1,\"list\":[{\"key\":0,\"value\":0}]}'})
+
+            # Create a CBF next hop group
+            fvs = swsscommon.FieldValuePairs([('members', 'group1,group2'),
+                                        ('selection_map', 'cbfnhgmap1')])
+            self.cbf_nhg_ps.set('cbfgroup1', fvs)
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 3)
+
+            # Update the map.
+            fvs = swsscommon.FieldValuePairs([('0', '0'), ('1', '1')])
+            self.fc_to_nhg_ps.set('cbfnhgmap1', fvs)
+
+            self.asic_db.wait_for_field_match(self.ASIC_NHG_MAP_STR,
+                                        nhg_map_id,
+                                        {'SAI_NEXT_HOP_GROUP_MAP_ATTR_TYPE': 'SAI_NEXT_HOP_GROUP_MAP_TYPE_FORWARDING_CLASS_TO_INDEX',
+                                        'SAI_NEXT_HOP_GROUP_MAP_ATTR_MAP_TO_VALUE_LIST': '{\"count\":2,\"list\":[{\"key\":1,\"value\":1},{\"key\":0,\"value\":0}]}'})
+
+            # Delete the group
+            self.cbf_nhg_ps._del('cbfgroup1')
+            self.nhg_ps._del("group1")
+            self.nhg_ps._del("group2")
+            self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count)
 
             # Delete the map
             self.fc_to_nhg_ps._del('cbfnhgmap1')

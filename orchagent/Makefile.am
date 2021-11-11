@@ -42,10 +42,9 @@ orchagent_SOURCES = \
             orch.cpp \
             notifications.cpp \
             nhgorch.cpp \
-            cbf/nhgbase.cpp \
-            cbf/nhghandler.cpp \
-            cbf/cbfnhghandler.cpp  \
-            nhgmaporch.cpp \
+            nhgbase.cpp \
+            cbf/cbfnhgorch.cpp  \
+            cbf/nhgmaporch.cpp \
             routeorch.cpp \
             mplsrouteorch.cpp \
             neighorch.cpp \
