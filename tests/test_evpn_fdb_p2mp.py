@@ -2,7 +2,7 @@ from swsscommon import swsscommon
 import time
 from evpn_tunnel import VxlanTunnel,VxlanEvpnHelper
 
-DVS_ENV = ["fake_platform=mellanox"]
+DVS_ENV = ["HWSKU=Mellanox-SN2700"]
 
 def get_vxlan_p2mp_tunnel_bp(db, src_ip):
     tnl_id = None

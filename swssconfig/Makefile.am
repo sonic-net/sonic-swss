@@ -19,3 +19,8 @@ swssplayer_SOURCES = swssplayer.cpp
 swssplayer_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
 swssplayer_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
 swssplayer_LDADD = -lswsscommon
+
+if GCOV_ENABLED
+swssconfig_LDADD += -lgcovpreload
+swssplayer_LDADD += -lgcovpreload
+endif

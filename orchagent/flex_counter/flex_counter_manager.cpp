@@ -41,6 +41,7 @@ const unordered_map<CounterType, string> FlexCounterManager::counter_id_field_lo
     { CounterType::MACSEC_SA_ATTR,  MACSEC_SA_ATTR_ID_LIST },
     { CounterType::MACSEC_SA,       MACSEC_SA_COUNTER_ID_LIST },
     { CounterType::MACSEC_FLOW,     MACSEC_FLOW_COUNTER_ID_LIST },
+    { CounterType::ACL_COUNTER,     ACL_COUNTER_ATTR_ID_LIST },
     { CounterType::TUNNEL,          TUNNEL_COUNTER_ID_LIST },
 };
 

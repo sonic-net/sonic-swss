@@ -28,6 +28,7 @@ enum class CounterType
     MACSEC_SA_ATTR,
     MACSEC_SA,
     MACSEC_FLOW,
+    ACL_COUNTER,
     TUNNEL,
 };
 
