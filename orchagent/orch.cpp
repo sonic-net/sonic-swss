@@ -123,14 +123,7 @@ void Consumer::addToSync(const KeyOpFieldsValuesTuple &entry)
         }
         if (iter == ret.second)
         {
-            if(getTableName() == "VLAN_MEMBER_TABLE")
-            {
-                m_toSync.erase(key);
-            }
-            else
-            {
-                m_toSync.emplace(key, entry);
-            }
+            m_toSync.emplace(key, entry);
         }
         else
         {
