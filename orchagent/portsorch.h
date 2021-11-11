@@ -232,7 +232,7 @@ private:
      * retrieval of Port/VLAN from object ID for events
      * coming from SAI
      */
-    unordered_map<sai_object_id_t, string> portOidToName;
+    unordered_map<sai_object_id_t, string> saiOidToAlias;
     unordered_map<sai_object_id_t, int> m_portOidToIndex;
     map<string, uint32_t> m_port_ref_count;
     unordered_set<string> m_pendingPortSet;
