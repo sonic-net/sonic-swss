@@ -44,7 +44,7 @@ local function iterate_all_items(all_items, check_lossless)
             if not profile_name then
                 return 1
             end
-            profile_name = string.sub(profile_name, 2, -2)
+            profile_name = "BUFFER_PROFILE_TABLE:" .. profile_name
             local profile_ref_count = profiles[profile_name]
             if profile_ref_count == nil then
                 -- Indicate an error in case the referenced profile hasn't been inserted or has been removed

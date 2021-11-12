@@ -298,6 +298,29 @@ class TestMuxTunnelBase(object):
 
         self.check_nexthop_in_asic_db(asicdb, rtkeys[0])
 
+        # Check route set flow and changing nexthop
+        self.set_mux_state(appdb, "Ethernet4", "active")
+
+        ps = swsscommon.ProducerStateTable(pdb.db_connection, "ROUTE_TABLE")
+        fvs = swsscommon.FieldValuePairs([("nexthop", self.SERV2_IPV4), ("ifname", "Vlan1000")])
+        ps.set(rtprefix, fvs)
+
+        # Check if route was propagated to ASIC DB
+        rtkeys = dvs_route.check_asicdb_route_entries([rtprefix])
+
+        # Change Mux status for Ethernet0 and expect no change to replaced route
+        self.set_mux_state(appdb, "Ethernet0", "standby")
+        self.check_nexthop_in_asic_db(asicdb, rtkeys[0])
+
+        self.set_mux_state(appdb, "Ethernet4", "standby")
+        self.check_nexthop_in_asic_db(asicdb, rtkeys[0], True)
+
+        # Delete the route
+        ps._del(rtprefix)
+
+        self.set_mux_state(appdb, "Ethernet4", "active")
+        dvs_route.check_asicdb_deleted_route_entries([rtprefix])
+
         # Test ECMP routes
 
         self.set_mux_state(appdb, "Ethernet0", "active")
@@ -409,6 +432,30 @@ class TestMuxTunnelBase(object):
         # Set last mux port to active, verify ACL rule is deleted
         self.set_mux_state(appdb, "Ethernet4", "active")
         dvs_acl.verify_no_acl_rules()
+
+        # Set unknown state and verify the behavior as standby
+        self.set_mux_state(appdb, "Ethernet0", "unknown")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet0"], dvs_acl)
+        dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
+
+        # Verify change while setting unknown from active
+        self.set_mux_state(appdb, "Ethernet4", "unknown")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet0","Ethernet4"], dvs_acl)
+        dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
+
+        self.set_mux_state(appdb, "Ethernet0", "active")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet4"], dvs_acl)
+        dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
+
+        self.set_mux_state(appdb, "Ethernet0", "standby")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet0","Ethernet4"], dvs_acl)
+        dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
+
+        # Verify no change while setting unknown from standby
+        self.set_mux_state(appdb, "Ethernet0", "unknown")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet0","Ethernet4"], dvs_acl)
+        dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
+
 
     def create_and_test_metrics(self, appdb, statedb, dvs):
 

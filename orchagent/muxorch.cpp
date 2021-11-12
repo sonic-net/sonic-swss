@@ -76,6 +76,7 @@ const map <string, MuxState> muxStateStringToVal =
 {
     { "active", MuxState::MUX_STATE_ACTIVE },
     { "standby", MuxState::MUX_STATE_STANDBY },
+    { "unknown", MuxState::MUX_STATE_STANDBY },
     { "init", MuxState::MUX_STATE_INIT },
     { "failed", MuxState::MUX_STATE_FAILED },
     { "pending", MuxState::MUX_STATE_PENDING },
@@ -325,6 +326,9 @@ MuxCable::MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress 
     state_machine_handlers_.insert(handler_pair(MUX_STATE_STANDBY_ACTIVE, &MuxCable::stateActive));
     state_machine_handlers_.insert(handler_pair(MUX_STATE_INIT_STANDBY, &MuxCable::stateStandby));
     state_machine_handlers_.insert(handler_pair(MUX_STATE_ACTIVE_STANDBY, &MuxCable::stateStandby));
+
+    /* Set initial state to "standby" */
+    stateStandby();
 }
 
 bool MuxCable::stateInitActive()
@@ -394,15 +398,17 @@ void MuxCable::setState(string new_state)
     SWSS_LOG_NOTICE("[%s] Set MUX state from %s to %s", mux_name_.c_str(),
                      muxStateValToString.at(state_).c_str(), new_state.c_str());
 
-    // Update HW Mux cable state anyways
-    mux_cb_orch_->updateMuxState(mux_name_, new_state);
-
     MuxState ns = muxStateStringToVal.at(new_state);
+
+    /* Update new_state to handle unknown state */
+    new_state = muxStateValToString.at(ns);
 
     auto it = muxStateTransition.find(make_pair(state_, ns));
 
     if (it ==  muxStateTransition.end())
     {
+        // Update HW Mux cable state anyways
+        mux_cb_orch_->updateMuxState(mux_name_, new_state);
         SWSS_LOG_ERROR("State transition from %s to %s is not-handled ",
                         muxStateValToString.at(state_).c_str(), new_state.c_str());
         return;
@@ -430,6 +436,7 @@ void MuxCable::setState(string new_state)
     st_chg_failed_ = false;
     SWSS_LOG_INFO("Changed state to %s", new_state.c_str());
 
+    mux_cb_orch_->updateMuxState(mux_name_, new_state);
     return;
 }
 

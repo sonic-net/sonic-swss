@@ -10,6 +10,7 @@
 #include "macaddress.h"
 #include "warm_restart.h"
 #include "subscriberstatetable.h"
+#include <swss/redisutility.h>
 #include "subintf.h"
 
 using namespace std;
@@ -592,6 +593,11 @@ bool IntfMgr::isIntfStateOk(const string &alias)
     }
     else if (m_statePortTable.get(alias, temp))
     {
+        auto state_opt = swss::fvsGetValue(temp, "state", true);
+        if (!state_opt)
+        {
+            return false;
+        }
         SWSS_LOG_DEBUG("Port %s is ready", alias.c_str());
         return true;
     }

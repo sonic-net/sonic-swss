@@ -187,7 +187,7 @@ namespace portsorch_test
             });
 
         // Create test buffer profile
-        profileTable.set("test_profile", { { "pool", "[BUFFER_POOL_TABLE:test_pool]" },
+        profileTable.set("test_profile", { { "pool", "test_pool" },
                                            { "xon", "14832" },
                                            { "xoff", "14832" },
                                            { "size", "35000" },
@@ -198,9 +198,9 @@ namespace portsorch_test
         {
             std::ostringstream ossAppl, ossCfg;
             ossAppl << it.first << ":3-4";
-            pgTable.set(ossAppl.str(), { { "profile", "[BUFFER_PROFILE_TABLE:test_profile]" } });
+            pgTable.set(ossAppl.str(), { { "profile", "test_profile" } });
             ossCfg << it.first << "|3-4";
-            pgTableCfg.set(ossCfg.str(), { { "profile", "[BUFFER_PROFILE|test_profile]" } });
+            pgTableCfg.set(ossCfg.str(), { { "profile", "test_profile" } });
         }
 
         // Recreate buffer orch to read populated data
@@ -292,7 +292,7 @@ namespace portsorch_test
             });
 
         // Create test buffer profile
-        profileTable.set("test_profile", { { "pool", "[BUFFER_POOL_TABLE:test_pool]" },
+        profileTable.set("test_profile", { { "pool", "test_pool" },
                                            { "xon", "14832" },
                                            { "xoff", "14832" },
                                            { "size", "35000" },
@@ -303,7 +303,7 @@ namespace portsorch_test
         {
             std::ostringstream oss;
             oss << it.first << ":3-4";
-            pgTable.set(oss.str(), { { "profile", "[BUFFER_PROFILE_TABLE:test_profile]" } });
+            pgTable.set(oss.str(), { { "profile", "test_profile" } });
         }
 
         // Populate pot table with SAI ports
@@ -410,7 +410,7 @@ namespace portsorch_test
             });
 
         // Create test buffer profile
-        profileTable.set("test_profile", { { "pool", "[BUFFER_POOL_TABLE:test_pool]" },
+        profileTable.set("test_profile", { { "pool", "test_pool" },
                                            { "xon", "14832" },
                                            { "xoff", "14832" },
                                            { "size", "35000" },
@@ -421,7 +421,7 @@ namespace portsorch_test
         {
             std::ostringstream oss;
             oss << it.first << ":3-4";
-            pgTable.set(oss.str(), { { "profile", "[BUFFER_PROFILE_TABLE:test_profile]" } });
+            pgTable.set(oss.str(), { { "profile", "test_profile" } });
         }
         gBufferOrch->addExistingData(&pgTable);
         gBufferOrch->addExistingData(&poolTable);

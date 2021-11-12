@@ -39,6 +39,11 @@
 #define MIRROR_SESSION_DSCP_MIN         0
 #define MIRROR_SESSION_DSCP_MAX         63
 
+// 15 is a typical value, but if vendor's SAI does not supply the maximum value,
+// allow all 8-bit numbers, effectively cancelling validation by orchagent.
+#define MIRROR_SESSION_DEFAULT_NUM_TC   255
+
+extern sai_switch_api_t *sai_switch_api;
 extern sai_mirror_api_t *sai_mirror_api;
 extern sai_port_api_t *sai_port_api;
 
@@ -80,9 +85,26 @@ MirrorOrch::MirrorOrch(TableConnector stateDbConnector, TableConnector confDbCon
         m_policerOrch(policerOrch),
         m_mirrorTable(stateDbConnector.first, stateDbConnector.second)
 {
+    sai_status_t status;
+    sai_attribute_t attr;
+
     m_portsOrch->attach(this);
     m_neighOrch->attach(this);
     m_fdbOrch->attach(this);
+
+    // Retrieve the number of valid values for queue, starting at 0
+    attr.id = SAI_SWITCH_ATTR_QOS_MAX_NUMBER_OF_TRAFFIC_CLASSES;
+    status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Failed to get switch attribute number of traffic classes. \
+                       Use default value. rv:%d", status);
+        m_maxNumTC = MIRROR_SESSION_DEFAULT_NUM_TC;
+    }
+    else
+    {
+        m_maxNumTC = attr.value.u8;
+    }
 }
 
 bool MirrorOrch::bake()
@@ -373,6 +395,11 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
             else if (fvField(i) == MIRROR_SESSION_QUEUE)
             {
                 entry.queue = to_uint<uint8_t>(fvValue(i));
+                if (entry.queue >= m_maxNumTC)
+                {
+                    SWSS_LOG_ERROR("Failed to get valid queue %s", fvValue(i).c_str());
+                    return task_process_status::task_invalid_entry;
+                }
             }
             else if (fvField(i) == MIRROR_SESSION_POLICER)
             {

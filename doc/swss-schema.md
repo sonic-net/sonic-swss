@@ -31,13 +31,16 @@ Stores information for physical switch ports managed by the switch chip. Ports t
     ;QOS Mappings
     map_dscp_to_tc      = ref_hash_key_reference
     map_tc_to_queue     = ref_hash_key_reference
+    map_mpls_tc_to_tc   = ref_hash_key_reference
 
     Example:
     127.0.0.1:6379> hgetall PORT_TABLE:ETHERNET4
     1) "dscp_to_tc_map"
-    2) "[DSCP_TO_TC_MAP_TABLE:AZURE]"
+    2) "AZURE"
     3) "tc_to_queue_map"
-    4) "[TC_TO_QUEUE_MAP_TABLE:AZURE]"
+    4) "AZURE"
+    5) "mpls_tc_to_tc_map"
+    6) "AZURE"
 
 ---------------------------------------------
 ### INTF_TABLE
@@ -159,8 +162,37 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     ;Status: Mandatory
     key           = ROUTE_TABLE:prefix
     nexthop       = *prefix, ;IP addresses separated “,” (empty indicates no gateway)
-    intf          = ifindex? PORT_TABLE.key  ; zero or more separated by “,” (zero indicates no interface)
+    ifname        = ifindex? PORT_TABLE.key  ; zero or more separated by “,” (zero indicates no interface)
+    mpls_nh       = STRING                   ; Comma-separated list of MPLS NH info.
     blackhole     = BIT ; Set to 1 if this route is a blackhole (or null0)
+    weight        = weight_list              ; List of weights.
+    nexthop_group = string ; index within the NEXTHOP_GROUP_TABLE, used instead of nexthop and intf fields
+    segment       = string ; SRV6 segment name
+    seg_src       = string ; ipv6 address for SRV6 tunnel source
+
+---------------------------------------------
+
+###### LABEL_ROUTE_TABLE
+    ; Defines schema for MPLS label route table attributes
+    key           = LABEL_ROUTE_TABLE:mpls_label ; MPLS label
+    ; field       = value
+    nexthop       = STRING                   ; Comma-separated list of nexthops.
+    ifname        = STRING                   ; Comma-separated list of interfaces.
+    mpls_nh       = STRING                   ; Comma-separated list of MPLS NH info.
+    mpls_pop      = STRING                   ; Number of ingress MPLS labels to POP
+    weight        = STRING                   ; Comma-separated list of weights.
+    blackhole     = BIT ; Set to 1 if this route is a blackhole (or null0)
+    nexthop_group = string ; index within the NEXTHOP_GROUP_TABLE, used instead of nexthop and intf fields
+
+---------------------------------------------
+### NEXTHOP_GROUP_TABLE
+    ;Stores a list of groups of one or more next hops
+    ;Status: Mandatory
+    key           = NEXTHOP_GROUP_TABLE:string ; arbitrary index for the next hop group
+    nexthop       = *prefix, ;IP addresses separated “,” (empty indicates no gateway)
+    ifname        = ifindex? PORT_TABLE.key  ; zero or more separated by “,” (zero indicates no interface)
+    mpls_nh       = STRING                   ; Comma-separated list of MPLS NH info.
+    weight        = weight_list              ; List of weights.
 
 ---------------------------------------------
 ### NEIGH_TABLE
@@ -172,6 +204,21 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     key           = prefix PORT_TABLE.name / VLAN_INTF_TABLE.name / LAG_INTF_TABLE.name = macaddress ; (may be empty)
     neigh         = 12HEXDIG         ;  mac address of the neighbor
     family        = "IPv4" / "IPv6"  ; address family
+
+---------------------------------------------
+### SRV6_SID_LIST_TABLE
+    ; Stores IPV6 prefixes for a SRV6 segment name
+    key           = ROUTE_TABLE:segment ; SRV6 segment name
+    ; field       = value
+    path          = STRING              ; Comma-separated list of IPV6 prefixes for a SRV6 segment
+
+---------------------------------------------
+### SRV6_MY_SID_TABLE
+    ; Stores SRV6 MY_SID table entries and associated actions
+    key           = STRING ; SRV6 MY_SID prefix string
+    ; field       = value
+    action        = STRING ; MY_SID actions like "end", "end.dt46"
+    vrf           = STRING ; VRF string for END.DT46 or END.DT4 or END.DT6
 
 ---------------------------------------------
 ### FDB_TABLE
@@ -209,9 +256,9 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     Example:
     127.0.0.1:6379> hgetall QUEUE_TABLE:ETHERNET4:1
     1) "scheduler"
-    2) "[SCHEDULER_TABLE:BEST_EFFORT]"
+    2) "BEST_EFFORT"
     3) "wred_profile"
-    4) "[WRED_PROFILE_TABLE:AZURE]"
+    4) "AZURE"
 
 ---------------------------------------------
 ### TC\_TO\_QUEUE\_MAP\_TABLE
@@ -250,6 +297,28 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
      7) "8"
      8) "7"
      9) "9"
+    10) "8"
+
+---------------------------------------------
+### MPLS\_TC\_TO\_TC\_MAP\_TABLE
+    ; MPLS TC to TC map
+    ;SAI mapping - qos_map object with SAI_QOS_MAP_ATTR_TYPE == sai_qos_map_type_t::SAI_QOS_MAP_EXP_TO_TC
+    key        = "MPLS_TC_TO_TC_MAP_TABLE:"name
+    ;field    value
+    mpls_tc_value = 1*DIGIT
+    tc_value   = 1*DIGIT
+
+    Example:
+    127.0.0.1:6379> hgetall "MPLS_TC_TO_TC_MAP_TABLE:AZURE"
+     1) "0" ;mpls_tc
+     2) "3" ;tc
+     3) "1"
+     4) "5"
+     5) "2"
+     6) "5"
+     7) "3"
+     8) "7"
+     9) "4"
     10) "8"
 
 ---------------------------------------------
