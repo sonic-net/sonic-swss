@@ -993,27 +993,27 @@ class DockerVirtualSwitch:
 
         return exists, extra_info
 
-    # deps: fdb_update, fdb
+    # deps: fdb_update, fdb, sub port intf
     def create_vlan(self, vlan):
         tbl = swsscommon.Table(self.cdb, "VLAN")
         fvs = swsscommon.FieldValuePairs([("vlanid", vlan)])
         tbl.set("Vlan" + vlan, fvs)
         time.sleep(1)
 
-    # deps: fdb_update, fdb
+    # deps: fdb_update, fdb, sub port intf
     def remove_vlan(self, vlan):
         tbl = swsscommon.Table(self.cdb, "VLAN")
         tbl._del("Vlan" + vlan)
         time.sleep(1)
 
-    # deps: fdb_update, fdb
+    # deps: fdb_update, fdb, sub port intf
     def create_vlan_member(self, vlan, interface):
         tbl = swsscommon.Table(self.cdb, "VLAN_MEMBER")
         fvs = swsscommon.FieldValuePairs([("tagging_mode", "untagged")])
         tbl.set("Vlan" + vlan + "|" + interface, fvs)
         time.sleep(1)
 
-    # deps: fdb_update, fdb
+    # deps: fdb_update, fdb, sub port intf
     def remove_vlan_member(self, vlan, interface):
         tbl = swsscommon.Table(self.cdb, "VLAN_MEMBER")
         tbl._del("Vlan" + vlan + "|" + interface)
@@ -1026,7 +1026,7 @@ class DockerVirtualSwitch:
         tbl.set("Vlan" + vlan + "|" + interface, fvs)
         time.sleep(1)
 
-    # deps: fdb_update, fdb, mirror_port_erspan, mirror_port_span, vlan
+    # deps: fdb_update, fdb, mirror_port_erspan, mirror_port_span, vlan, sub port intf
     def set_interface_status(self, interface, admin_status):
         if interface.startswith("PortChannel"):
             tbl_name = "PORTCHANNEL"
@@ -1056,7 +1056,7 @@ class DockerVirtualSwitch:
         tbl.set(interface + "|" + ip, fvs)
         time.sleep(1)
 
-    # deps: acl, fdb_update, fdb, mirror_port_erspan, vlan
+    # deps: acl, fdb_update, fdb, mirror_port_erspan, vlan, sub port intf
     def remove_ip_address(self, interface, ip):
         if interface.startswith("PortChannel"):
             tbl_name = "PORTCHANNEL_INTERFACE"
@@ -1115,12 +1115,12 @@ class DockerVirtualSwitch:
         self.runcmd("ip route change " + prefix + cmd)
         time.sleep(1)
 
-    # deps: acl, mirror_port_erspan
+    # deps: acl, mirror_port_erspan, sub port intf
     def remove_route(self, prefix):
         self.runcmd("ip route del " + prefix)
         time.sleep(1)
 
-    # deps: mirror_port_erspan
+    # deps: mirror_port_erspan, sub port intf
     def create_fdb(self, vlan, mac, interface):
         tbl = swsscommon.ProducerStateTable(self.pdb, "FDB_TABLE")
         fvs = swsscommon.FieldValuePairs([("port", interface),

@@ -1,5 +1,6 @@
 import json
 import time
+import pytest
 
 from dvslib.dvs_common import wait_for_result
 from swsscommon import swsscommon
@@ -20,6 +21,8 @@ APP_INTF_TABLE_NAME = "INTF_TABLE"
 APP_ROUTE_TABLE_NAME = "ROUTE_TABLE"
 APP_PORT_TABLE_NAME = "PORT_TABLE"
 APP_LAG_TABLE_NAME = "LAG_TABLE"
+APP_LAG_MEMBER_TABLE_NAME = "LAG_MEMBER_TABLE"
+APP_NEIGH_TABLE_NAME = "NEIGH_TABLE"
 
 ASIC_RIF_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE"
 ASIC_ROUTE_ENTRY_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"
@@ -31,15 +34,34 @@ ASIC_HOSTIF_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF"
 ASIC_VIRTUAL_ROUTER_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER"
 ASIC_PORT_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_PORT"
 ASIC_LAG_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_LAG"
+ASIC_MIRROR_SESSION_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION"
+ASIC_VLAN_MEMBER_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER"
+ASIC_VLAN_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_VLAN"
+ASIC_FDB_ENTRY_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY"
 
 ADMIN_STATUS = "admin_status"
+UP = "up"
+DOWN = "down"
 VRF_NAME = "vrf_name"
+ENABLED = "enabled"
+DISABLED = "disabled"
 
 ETHERNET_PREFIX = "Ethernet"
 LAG_PREFIX = "PortChannel"
+VLAN_PREFIX = "Vlan"
 
 VLAN_SUB_INTERFACE_SEPARATOR = "."
 APPL_DB_SEPARATOR = ":"
+
+INACTIVE = "inactive"
+ACTIVE = "active"
+TPID_802_1Q = "0x8100"
+STATUS = "status"
+MONITOR_PORT = "monitor_port"
+DST_MAC = "dst_mac"
+ROUTE_PREFIX = "route_prefix"
+VLAN_ID = "vlan_id"
+NEXT_HOP_IP = "next_hop_ip"
 
 
 class TestSubPortIntf(object):
@@ -50,6 +72,7 @@ class TestSubPortIntf(object):
     IPV4_ADDR_UNDER_TEST = "10.0.0.33/31"
     IPV4_TOME_UNDER_TEST = "10.0.0.33/32"
     IPV4_SUBNET_UNDER_TEST = "10.0.0.32/31"
+    IPV4_NEXT_HOP_UNDER_TEST = "10.0.0.32"
 
     IPV6_ADDR_UNDER_TEST = "fc00::41/126"
     IPV6_TOME_UNDER_TEST = "fc00::41/128"
@@ -63,6 +86,8 @@ class TestSubPortIntf(object):
         self.config_db = dvs.get_config_db()
         self.state_db = dvs.get_state_db()
         dvs.setup_db()
+
+        self.src_mac = dvs.runcmd("bash -c \"ip link show eth0 | grep ether | awk '{print $2}'\"")[1].strip().upper()
 
         self.default_vrf_oid = self.get_default_vrf_oid()
 
@@ -153,6 +178,12 @@ class TestSubPortIntf(object):
             key = "{}|{}".format(lag, member)
             self.config_db.create_entry(CFG_LAG_MEMBER_TABLE_NAME, key, fvs)
 
+    def set_lag_member_status(self, lag, member, status):
+        fvs = swsscommon.FieldValuePairs([(STATUS, status)])
+
+        tbl = swsscommon.ProducerStateTable(self.app_db.db_connection, APP_LAG_MEMBER_TABLE_NAME)
+        tbl.set("{}:{}".format(lag, member), fvs)
+
     def create_sub_port_intf_profile_appl_db(self, sub_port_intf_name, admin_status, vrf_name=None):
         pairs = [
             (ADMIN_STATUS, admin_status),
@@ -180,6 +211,16 @@ class TestSubPortIntf(object):
 
         tbl = swsscommon.ProducerStateTable(self.app_db.db_connection, APP_INTF_TABLE_NAME)
         tbl.set(sub_port_intf_name + APPL_DB_SEPARATOR + ip_addr, fvs)
+
+    def add_neigh_appl_db(self, intf_name, ip_addr, mac_addr):
+        pairs = [
+            ("neigh", mac_addr),
+            ("family", "IPv4" if "." in ip_addr else "IPv6"),
+        ]
+        fvs = swsscommon.FieldValuePairs(pairs)
+
+        tbl = swsscommon.ProducerStateTable(self.app_db.db_connection, APP_NEIGH_TABLE_NAME)
+        tbl.set(intf_name + APPL_DB_SEPARATOR + ip_addr, fvs)
 
     def add_route_appl_db(self, ip_prefix, nhop_ips, ifnames, vrf_name=None):
         fvs = swsscommon.FieldValuePairs([("nexthop", ",".join(nhop_ips)), ("ifname", ",".join(ifnames))])
@@ -247,6 +288,10 @@ class TestSubPortIntf(object):
     def remove_sub_port_intf_ip_addr_appl_db(self, sub_port_intf_name, ip_addr):
         tbl = swsscommon.ProducerStateTable(self.app_db.db_connection, APP_INTF_TABLE_NAME)
         tbl._del(sub_port_intf_name + APPL_DB_SEPARATOR + ip_addr)
+
+    def remove_neigh_appl_db(self, intf_name, ip_addr):
+        tbl = swsscommon.ProducerStateTable(self.app_db.db_connection, APP_NEIGH_TABLE_NAME)
+        tbl._del(intf_name + APPL_DB_SEPARATOR + ip_addr)
 
     def remove_route_appl_db(self, ip_prefix, vrf_name=None):
         tbl = swsscommon.ProducerStateTable(self.app_db.db_connection, APP_ROUTE_TABLE_NAME)
@@ -1388,6 +1433,662 @@ class TestSubPortIntf(object):
         self._test_sub_port_intf_oper_down_with_pending_neigh_route_tasks(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST, vrf_name=self.VRF_UNDER_TEST)
         self._test_sub_port_intf_oper_down_with_pending_neigh_route_tasks(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST,
                                                                           create_intf_on_parent_port=True, vrf_name=self.VRF_UNDER_TEST)
+
+    def check_syslog(self, dvs, marker, log, expected_cnt):
+        (ec, out) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \'%s\' | wc -l" % (marker, log)])
+        assert out.strip() == str(expected_cnt)
+
+    def _test_sub_port_intf_mirror(self, dvs, sub_port_intf_name):
+        session_name = "TEST_SESSION"
+        src_ip = "1.1.1.1"
+        dst_ip = "2.2.2.2"
+        gre_type= "0x6558"
+        dscp = "8"
+        ttl = "100"
+        queue = "0"
+        marker = dvs.add_log_marker()
+        self.dvs_mirror.create_erspan_session(session_name, src_ip, dst_ip, gre_type, dscp, ttl, queue)
+        self.dvs_mirror.verify_session_status(session_name, INACTIVE)
+        self.check_syslog(dvs, marker, "Attached next hop observer .* for destination IP {}".format(dst_ip), 1)
+
+        substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
+        parent_port = substrs[0]
+        vlan_id = substrs[1]
+        parent_port_idx = self.get_parent_port_index(parent_port)
+        dst_mac = "00:00:00:{:02d}:{}:01".format(parent_port_idx, vlan_id)
+        if parent_port.startswith(ETHERNET_PREFIX):
+            phy_port = parent_port
+        else:
+            assert parent_port.startswith(LAG_PREFIX)
+            phy_port = self.LAG_MEMBERS_UNDER_TEST[0]
+            lag_member_cnt = 0
+        phy_port_oid = dvs.asicdb.portnamemap[phy_port]
+
+        self.set_parent_port_admin_status(dvs, parent_port, UP)
+        if parent_port.startswith(LAG_PREFIX):
+            self.add_lag_members(parent_port, [phy_port])
+            lag_member_cnt += 1
+            self.asic_db.wait_for_n_keys(ASIC_LAG_MEMBER_TABLE, lag_member_cnt)
+            self.set_lag_member_status(parent_port, phy_port, ENABLED)
+        self.create_sub_port_intf_profile(sub_port_intf_name)
+        time.sleep(2)
+        self.dvs_mirror.verify_session_status(session_name, INACTIVE)
+
+        self.add_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV4_ADDR_UNDER_TEST)
+        time.sleep(2)
+        self.dvs_mirror.verify_session_status(session_name, INACTIVE)
+
+        self.add_neigh_appl_db(sub_port_intf_name, self.IPV4_NEXT_HOP_UNDER_TEST, dst_mac)
+        time.sleep(2)
+        self.dvs_mirror.verify_session_status(session_name, INACTIVE)
+
+        ip_prefix = "2.2.2.0/24"
+        self.add_route_appl_db(ip_prefix, [self.IPV4_NEXT_HOP_UNDER_TEST], [sub_port_intf_name])
+
+        fv_dict_asic_db = {
+            "SAI_MIRROR_SESSION_ATTR_MONITOR_PORT": phy_port_oid,
+            "SAI_MIRROR_SESSION_ATTR_TYPE": "SAI_MIRROR_SESSION_TYPE_ENHANCED_REMOTE",
+            "SAI_MIRROR_SESSION_ATTR_ERSPAN_ENCAPSULATION_TYPE": "SAI_ERSPAN_ENCAPSULATION_TYPE_MIRROR_L3_GRE_TUNNEL",
+            "SAI_MIRROR_SESSION_ATTR_IPHDR_VERSION": "4",
+            "SAI_MIRROR_SESSION_ATTR_TOS": "{}".format(int(dscp) << 2),
+            "SAI_MIRROR_SESSION_ATTR_TTL": ttl,
+            "SAI_MIRROR_SESSION_ATTR_SRC_IP_ADDRESS": src_ip,
+            "SAI_MIRROR_SESSION_ATTR_DST_IP_ADDRESS": dst_ip,
+            "SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS": dst_mac,
+            "SAI_MIRROR_SESSION_ATTR_SRC_MAC_ADDRESS": self.src_mac,
+            "SAI_MIRROR_SESSION_ATTR_GRE_PROTOCOL_TYPE": "{}".format(int(gre_type, 0)),
+            "SAI_MIRROR_SESSION_ATTR_VLAN_HEADER_VALID": "true",
+            "SAI_MIRROR_SESSION_ATTR_VLAN_TPID": "{}".format(int(TPID_802_1Q, 0)),
+            "SAI_MIRROR_SESSION_ATTR_VLAN_ID": vlan_id,
+            "SAI_MIRROR_SESSION_ATTR_VLAN_PRI": "0",
+            "SAI_MIRROR_SESSION_ATTR_VLAN_CFI": "0",
+        }
+        fv_dict_state_db = {
+            STATUS: ACTIVE,
+            MONITOR_PORT: phy_port,
+            DST_MAC: dst_mac,
+            ROUTE_PREFIX: ip_prefix,
+            VLAN_ID: vlan_id,
+            NEXT_HOP_IP: "{}@{}".format(self.IPV4_NEXT_HOP_UNDER_TEST, sub_port_intf_name),
+        }
+        self.dvs_mirror.verify_session(dvs, session_name, fv_dict_asic_db, fv_dict_state_db)
+
+        # Test ip prefix removal
+        self.remove_route_appl_db(ip_prefix)
+        self.dvs_mirror.verify_session_status(session_name, INACTIVE)
+        self.asic_db.wait_for_n_keys(ASIC_MIRROR_SESSION_TABLE, 0)
+
+        # Restore ip prefix
+        self.add_route_appl_db(ip_prefix, [self.IPV4_NEXT_HOP_UNDER_TEST], [sub_port_intf_name])
+        self.dvs_mirror.verify_session(dvs, session_name, fv_dict_asic_db, fv_dict_state_db)
+
+        # Test neighbor mac change
+        self.add_neigh_appl_db(sub_port_intf_name, self.IPV4_NEXT_HOP_UNDER_TEST, "02:04:06:08:10:12")
+        fv_dict_asic_db["SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS"] = "02:04:06:08:10:12"
+        fv_dict_state_db[DST_MAC] = "02:04:06:08:10:12"
+        self.dvs_mirror.verify_session(dvs, session_name, fv_dict_asic_db, fv_dict_state_db)
+
+        # Restore neighbor mac
+        self.add_neigh_appl_db(sub_port_intf_name, self.IPV4_NEXT_HOP_UNDER_TEST, dst_mac)
+        fv_dict_asic_db["SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS"] = dst_mac
+        fv_dict_state_db[DST_MAC] = dst_mac
+        self.dvs_mirror.verify_session(dvs, session_name, fv_dict_asic_db, fv_dict_state_db)
+
+        if parent_port.startswith(LAG_PREFIX):
+            # Test lag member removal that deactivates mirror session
+            self.remove_lag_members(parent_port, [phy_port])
+            lag_member_cnt -= 1
+            self.dvs_mirror.verify_session_status(session_name, INACTIVE)
+            self.asic_db.wait_for_n_keys(ASIC_MIRROR_SESSION_TABLE, 0)
+
+            # Restore lag member that activates mirror session
+            self.add_lag_members(parent_port, self.LAG_MEMBERS_UNDER_TEST[1:2])
+            lag_member_cnt += 1
+            self.asic_db.wait_for_n_keys(ASIC_LAG_MEMBER_TABLE, lag_member_cnt)
+            self.set_lag_member_status(parent_port, self.LAG_MEMBERS_UNDER_TEST[1], ENABLED)
+            fv_dict_asic_db["SAI_MIRROR_SESSION_ATTR_MONITOR_PORT"] = dvs.asicdb.portnamemap[self.LAG_MEMBERS_UNDER_TEST[1]]
+            fv_dict_state_db[MONITOR_PORT] = self.LAG_MEMBERS_UNDER_TEST[1]
+            self.dvs_mirror.verify_session(dvs, session_name, fv_dict_asic_db, fv_dict_state_db)
+
+            # Add lag member
+            self.add_lag_members(parent_port, [phy_port])
+            lag_member_cnt += 1
+            self.asic_db.wait_for_n_keys(ASIC_LAG_MEMBER_TABLE, lag_member_cnt)
+            self.set_lag_member_status(parent_port, phy_port, ENABLED)
+            # Monitor port stays unchanged
+            self.dvs_mirror.verify_session(dvs, session_name, fv_dict_asic_db, fv_dict_state_db)
+
+            # Test lag member removal that triggers monitor port update
+            self.remove_lag_members(parent_port, self.LAG_MEMBERS_UNDER_TEST[1:2])
+            lag_member_cnt -= 1
+            fv_dict_asic_db["SAI_MIRROR_SESSION_ATTR_MONITOR_PORT"] = phy_port_oid
+            fv_dict_state_db[MONITOR_PORT] = phy_port
+            self.dvs_mirror.verify_session(dvs, session_name, fv_dict_asic_db, fv_dict_state_db)
+
+        # Test mirror session removal
+        marker = dvs.add_log_marker()
+        self.dvs_mirror.remove_mirror_session(session_name)
+        self.dvs_mirror.verify_no_mirror()
+        self.check_syslog(dvs, marker, "Detached next hop observer for destination IP {}".format(dst_ip), 1)
+
+        # Clean up
+        self.remove_route_appl_db(ip_prefix)
+        self.remove_neigh_appl_db(sub_port_intf_name, "10.0.0.32")
+        self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV4_ADDR_UNDER_TEST)
+        self.remove_sub_port_intf_profile(sub_port_intf_name)
+
+        if parent_port.startswith(LAG_PREFIX):
+            # Remove lag member from lag parent port
+            self.remove_lag_members(parent_port, [phy_port])
+            lag_member_cnt -= 1
+            self.asic_db.wait_for_n_keys(ASIC_LAG_MEMBER_TABLE, lag_member_cnt)
+            # Remove lag
+            self.remove_lag(parent_port)
+            self.asic_db.wait_for_n_keys(ASIC_LAG_TABLE, 0)
+
+    @pytest.mark.usefixtures('dvs_mirror_manager')
+    def test_sub_port_intf_mirror(self, dvs):
+        self.connect_dbs(dvs)
+
+        self._test_sub_port_intf_mirror(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST)
+        self._test_sub_port_intf_mirror(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST)
+
+    def _test_sub_port_intf_mirror_dest_direct_subnet(self, dvs, sub_port_intf_name):
+        session_name = "TEST_SESSION"
+        src_ip = "1.1.1.1"
+        dst_ip = self.IPV4_NEXT_HOP_UNDER_TEST
+        gre_type= "0x6558"
+        dscp = "8"
+        ttl = "100"
+        queue = "0"
+        marker = dvs.add_log_marker()
+        self.dvs_mirror.create_erspan_session(session_name, src_ip, dst_ip, gre_type, dscp, ttl, queue)
+        self.dvs_mirror.verify_session_status(session_name, INACTIVE)
+        self.check_syslog(dvs, marker, "Attached next hop observer .* for destination IP {}".format(dst_ip), 1)
+
+        substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
+        parent_port = substrs[0]
+        vlan_id = substrs[1]
+        parent_port_idx = self.get_parent_port_index(parent_port)
+        dst_mac = "00:00:00:{:02d}:{}:01".format(parent_port_idx, vlan_id)
+        if parent_port.startswith(ETHERNET_PREFIX):
+            phy_port = parent_port
+        else:
+            assert parent_port.startswith(LAG_PREFIX)
+            phy_port = self.LAG_MEMBERS_UNDER_TEST[0]
+        phy_port_oid = dvs.asicdb.portnamemap[phy_port]
+
+        self.set_parent_port_admin_status(dvs, parent_port, UP)
+        if parent_port.startswith(LAG_PREFIX):
+            self.add_lag_members(parent_port, [phy_port])
+            self.asic_db.wait_for_n_keys(ASIC_LAG_MEMBER_TABLE, 1)
+            self.set_lag_member_status(parent_port, phy_port, ENABLED)
+        self.create_sub_port_intf_profile(sub_port_intf_name)
+        time.sleep(2)
+        self.dvs_mirror.verify_session_status(session_name, INACTIVE)
+
+        self.add_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV4_ADDR_UNDER_TEST)
+        time.sleep(2)
+        self.dvs_mirror.verify_session_status(session_name, INACTIVE)
+
+        self.add_neigh_appl_db(sub_port_intf_name, self.IPV4_NEXT_HOP_UNDER_TEST, dst_mac)
+
+        fv_dict_asic_db = {
+            "SAI_MIRROR_SESSION_ATTR_MONITOR_PORT": phy_port_oid,
+            "SAI_MIRROR_SESSION_ATTR_TYPE": "SAI_MIRROR_SESSION_TYPE_ENHANCED_REMOTE",
+            "SAI_MIRROR_SESSION_ATTR_ERSPAN_ENCAPSULATION_TYPE": "SAI_ERSPAN_ENCAPSULATION_TYPE_MIRROR_L3_GRE_TUNNEL",
+            "SAI_MIRROR_SESSION_ATTR_IPHDR_VERSION": "4",
+            "SAI_MIRROR_SESSION_ATTR_TOS": "{}".format(int(dscp) << 2),
+            "SAI_MIRROR_SESSION_ATTR_TTL": ttl,
+            "SAI_MIRROR_SESSION_ATTR_SRC_IP_ADDRESS": src_ip,
+            "SAI_MIRROR_SESSION_ATTR_DST_IP_ADDRESS": dst_ip,
+            "SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS": dst_mac,
+            "SAI_MIRROR_SESSION_ATTR_SRC_MAC_ADDRESS": self.src_mac,
+            "SAI_MIRROR_SESSION_ATTR_GRE_PROTOCOL_TYPE": "{}".format(int(gre_type, 0)),
+            "SAI_MIRROR_SESSION_ATTR_VLAN_HEADER_VALID": "true",
+            "SAI_MIRROR_SESSION_ATTR_VLAN_TPID": "{}".format(int(TPID_802_1Q, 0)),
+            "SAI_MIRROR_SESSION_ATTR_VLAN_ID": vlan_id,
+            "SAI_MIRROR_SESSION_ATTR_VLAN_PRI": "0",
+            "SAI_MIRROR_SESSION_ATTR_VLAN_CFI": "0",
+        }
+        fv_dict_state_db = {
+            STATUS: ACTIVE,
+            MONITOR_PORT: phy_port,
+            DST_MAC: dst_mac,
+            ROUTE_PREFIX: self.IPV4_SUBNET_UNDER_TEST,
+            VLAN_ID: vlan_id,
+            NEXT_HOP_IP: "{}@{}".format("0.0.0.0", sub_port_intf_name),
+        }
+        self.dvs_mirror.verify_session(dvs, session_name, fv_dict_asic_db, fv_dict_state_db)
+
+        if parent_port.startswith(ETHERNET_PREFIX):
+            # Mimic host interface oper status down that causes frr to withdraw
+            # directly connected subnet prefix
+            self.remove_route_appl_db(self.IPV4_SUBNET_UNDER_TEST)
+        else:
+            # Oper down lag
+            self.set_parent_port_oper_status(dvs, parent_port, DOWN)
+        self.dvs_mirror.verify_session_status(session_name, INACTIVE)
+        self.asic_db.wait_for_n_keys(ASIC_MIRROR_SESSION_TABLE, 0)
+
+        if parent_port.startswith(ETHERNET_PREFIX):
+            # Mimic host interface oper status up
+            self.add_route_appl_db(self.IPV4_SUBNET_UNDER_TEST, ["0.0.0.0"], [sub_port_intf_name])
+        else:
+            # Oper up lag
+            self.set_parent_port_oper_status(dvs, parent_port, UP)
+        self.dvs_mirror.verify_session(dvs, session_name, fv_dict_asic_db, fv_dict_state_db)
+
+        # Test neighbor mac change
+        self.add_neigh_appl_db(sub_port_intf_name, self.IPV4_NEXT_HOP_UNDER_TEST, "02:04:06:08:10:12")
+        fv_dict_asic_db["SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS"] = "02:04:06:08:10:12"
+        fv_dict_state_db[DST_MAC] = "02:04:06:08:10:12"
+        self.dvs_mirror.verify_session(dvs, session_name, fv_dict_asic_db, fv_dict_state_db)
+
+        # Restore original neighbor mac
+        self.add_neigh_appl_db(sub_port_intf_name, self.IPV4_NEXT_HOP_UNDER_TEST, dst_mac)
+        fv_dict_asic_db["SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS"] = dst_mac
+        fv_dict_state_db[DST_MAC] = dst_mac
+        self.dvs_mirror.verify_session(dvs, session_name, fv_dict_asic_db, fv_dict_state_db)
+
+        # Test neighbor mac removal that deactivates session
+        self.remove_neigh_appl_db(sub_port_intf_name, self.IPV4_NEXT_HOP_UNDER_TEST)
+        self.dvs_mirror.verify_session_status(session_name, INACTIVE)
+        self.asic_db.wait_for_n_keys(ASIC_MIRROR_SESSION_TABLE, 0)
+
+        # Test neighbor mac add that activates session
+        self.add_neigh_appl_db(sub_port_intf_name, self.IPV4_NEXT_HOP_UNDER_TEST, dst_mac)
+        self.dvs_mirror.verify_session(dvs, session_name, fv_dict_asic_db, fv_dict_state_db)
+
+        # Remove mirror session
+        marker = dvs.add_log_marker()
+        self.dvs_mirror.remove_mirror_session(session_name)
+        self.dvs_mirror.verify_no_mirror()
+        self.check_syslog(dvs, marker, "Detached next hop observer for destination IP {}".format(dst_ip), 1)
+
+        # Clean up
+        self.remove_neigh_appl_db(sub_port_intf_name, self.IPV4_NEXT_HOP_UNDER_TEST)
+        self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV4_ADDR_UNDER_TEST)
+        self.remove_sub_port_intf_profile(sub_port_intf_name)
+
+        if parent_port.startswith(LAG_PREFIX):
+            # Remove lag member from lag parent port
+            self.remove_lag_members(parent_port, [phy_port])
+            self.asic_db.wait_for_n_keys(ASIC_LAG_MEMBER_TABLE, 0)
+            # Remove lag
+            self.remove_lag(parent_port)
+            self.asic_db.wait_for_n_keys(ASIC_LAG_TABLE, 0)
+
+    @pytest.mark.usefixtures('dvs_mirror_manager')
+    def test_sub_port_intf_mirror_dest_direct_subnet(self, dvs):
+        self.connect_dbs(dvs)
+
+        self._test_sub_port_intf_mirror_dest_direct_subnet(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST)
+        self._test_sub_port_intf_mirror_dest_direct_subnet(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST)
+
+    def create_mirror_router_intfs(self, dvs):
+        ifnames = []
+        monitor_ports = []
+        ip_addrs = []
+        nhop_ips = []
+        dst_macs = []
+        vlan_ids = []
+
+        rif_cnt = len(self.asic_db.get_keys(ASIC_RIF_TABLE))
+        nhop_cnt = len(self.asic_db.get_keys(ASIC_NEXT_HOP_TABLE))
+        vlan_cnt = len(self.asic_db.get_keys(ASIC_VLAN_TABLE))
+        vlan_member_cnt = len(self.asic_db.get_keys(ASIC_VLAN_MEMBER_TABLE))
+        fdb_cnt = len(self.asic_db.get_keys(ASIC_FDB_ENTRY_TABLE))
+
+        sub_port_intf_names = [
+            self.SUB_PORT_INTERFACE_UNDER_TEST,
+            self.LAG_SUB_PORT_INTERFACE_UNDER_TEST,
+            self.SUB_PORT_INTERFACE_UNDER_TEST.split(VLAN_SUB_INTERFACE_SEPARATOR)[0] + VLAN_SUB_INTERFACE_SEPARATOR
+                + self.LAG_SUB_PORT_INTERFACE_UNDER_TEST.split(VLAN_SUB_INTERFACE_SEPARATOR)[1],
+            self.LAG_SUB_PORT_INTERFACE_UNDER_TEST.split(VLAN_SUB_INTERFACE_SEPARATOR)[0] + VLAN_SUB_INTERFACE_SEPARATOR
+                + self.SUB_PORT_INTERFACE_UNDER_TEST.split(VLAN_SUB_INTERFACE_SEPARATOR)[1],
+        ]
+        for intf_name in sub_port_intf_names:
+            ifnames.append(intf_name)
+
+            substrs = intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
+            parent_port = substrs[0]
+            vlan_id = int(substrs[1])
+            vlan_ids.append("{}".format(vlan_id))
+
+            self.set_parent_port_admin_status(dvs, parent_port, UP)
+            if parent_port.startswith(ETHERNET_PREFIX):
+                monitor_ports.append(parent_port)
+            else:
+                # Add lag member
+                self.add_lag_members(parent_port, self.LAG_MEMBERS_UNDER_TEST[:1])
+                self.asic_db.wait_for_n_keys(ASIC_LAG_MEMBER_TABLE, 1)
+                self.set_lag_member_status(parent_port, self.LAG_MEMBERS_UNDER_TEST[0], ENABLED)
+                monitor_ports.append(self.LAG_MEMBERS_UNDER_TEST[0])
+            self.create_sub_port_intf_profile(intf_name)
+            rif_cnt += 1
+            self.asic_db.wait_for_n_keys(ASIC_RIF_TABLE, rif_cnt)
+
+            parent_port_idx = self.get_parent_port_index(parent_port)
+            ip_addr = "10.{}.{}.0/31".format(parent_port_idx, vlan_id)
+            self.add_sub_port_intf_ip_addr(intf_name, ip_addr)
+            ip_addrs.append(ip_addr)
+
+            nhop_ip = "10.{}.{}.1".format(parent_port_idx, vlan_id)
+            dst_mac = "00:00:00:{:02d}:{:02d}:01".format(parent_port_idx, vlan_id)
+            self.add_neigh_appl_db(intf_name, nhop_ip, dst_mac)
+            nhop_cnt += 1
+            self.asic_db.wait_for_n_keys(ASIC_NEXT_HOP_TABLE, nhop_cnt)
+            nhop_ips.append(nhop_ip)
+            dst_macs.append(dst_mac)
+
+        intf_names = [
+            self.SUB_PORT_INTERFACE_UNDER_TEST.split(VLAN_SUB_INTERFACE_SEPARATOR)[0],
+            self.LAG_SUB_PORT_INTERFACE_UNDER_TEST.split(VLAN_SUB_INTERFACE_SEPARATOR)[0],
+            VLAN_PREFIX + self.SUB_PORT_INTERFACE_UNDER_TEST.split(VLAN_SUB_INTERFACE_SEPARATOR)[1],
+            VLAN_PREFIX + self.LAG_SUB_PORT_INTERFACE_UNDER_TEST.split(VLAN_SUB_INTERFACE_SEPARATOR)[1],
+        ]
+        vlan_member_idx = 76
+        for intf_name in intf_names:
+            ifnames.append(intf_name)
+
+            port_idx = 0
+            vlan_id = 0
+            if intf_name.startswith(VLAN_PREFIX):
+                vlan_id = int(intf_name[len(VLAN_PREFIX):])
+                # Add vlan
+                dvs.create_vlan("{}".format(vlan_id))
+                vlan_cnt += 1
+                self.asic_db.wait_for_n_keys(ASIC_VLAN_TABLE, vlan_cnt)
+                # Add vlan member
+                vlan_member = "{}{}".format(ETHERNET_PREFIX, vlan_member_idx)
+                dvs.create_vlan_member("{}".format(vlan_id), vlan_member)
+                vlan_member_cnt += 1
+                self.asic_db.wait_for_n_keys(ASIC_VLAN_MEMBER_TABLE, vlan_member_cnt)
+
+                dvs.set_interface_status(intf_name, UP)
+                monitor_ports.append(vlan_member)
+                vlan_member_idx += 4
+            else:
+                port_idx = self.get_parent_port_index(intf_name)
+                if intf_name.startswith(ETHERNET_PREFIX):
+                    monitor_ports.append(intf_name)
+                else:
+                    monitor_ports.append(self.LAG_MEMBERS_UNDER_TEST[0])
+            vlan_ids.append("{}".format(vlan_id))
+
+            ip_addr = "10.{}.{}.0/{}".format(port_idx, vlan_id, 28 if intf_name.startswith(VLAN_PREFIX) else 31)
+            dvs.add_ip_address(intf_name, ip_addr)
+            rif_cnt += 1
+            self.asic_db.wait_for_n_keys(ASIC_RIF_TABLE, rif_cnt)
+            ip_addrs.append(ip_addr)
+
+            nhop_ip = "10.{}.{}.1".format(port_idx, vlan_id)
+            dst_mac = "00:00:00:{:02d}:{:02d}:01".format(port_idx, vlan_id)
+            if intf_name.startswith(VLAN_PREFIX):
+                # Add fdb entry to vlan
+                dvs.create_fdb("{}".format(vlan_id), dst_mac.replace(":", "-"), vlan_member)
+                fdb_cnt += 1
+                self.asic_db.wait_for_n_keys(ASIC_FDB_ENTRY_TABLE, fdb_cnt)
+            self.add_neigh_appl_db(intf_name, nhop_ip, dst_mac)
+            nhop_cnt += 1
+            self.asic_db.wait_for_n_keys(ASIC_NEXT_HOP_TABLE, nhop_cnt)
+            nhop_ips.append(nhop_ip)
+            dst_macs.append(dst_mac)
+
+        return (ifnames, monitor_ports, ip_addrs, nhop_ips, dst_macs, vlan_ids)
+
+    def remove_mirror_router_intfs(self, dvs, ifnames, monitor_ports, ip_addrs, nhop_ips, dst_macs, vlan_ids):
+        intf_cnt = len(ifnames)
+
+        nhop_cnt = len(self.asic_db.get_keys(ASIC_NEXT_HOP_TABLE))
+        rif_cnt = len(self.asic_db.get_keys(ASIC_RIF_TABLE))
+        for i in range(0, intf_cnt):
+            self.remove_neigh_appl_db(ifnames[i], nhop_ips[i])
+            self.asic_db.wait_for_n_keys(ASIC_NEXT_HOP_TABLE, nhop_cnt - 1 - i)
+
+            if VLAN_SUB_INTERFACE_SEPARATOR in ifnames[i]:
+                self.remove_sub_port_intf_ip_addr(ifnames[i], ip_addrs[i])
+                self.remove_sub_port_intf_profile(ifnames[i])
+            else:
+                dvs.remove_ip_address(ifnames[i], ip_addrs[i])
+            self.asic_db.wait_for_n_keys(ASIC_RIF_TABLE, rif_cnt - 1 - i)
+
+        self.remove_lag_members(self.LAG_SUB_PORT_INTERFACE_UNDER_TEST.split(VLAN_SUB_INTERFACE_SEPARATOR)[0], self.LAG_MEMBERS_UNDER_TEST[:1])
+        self.remove_lag(self.LAG_SUB_PORT_INTERFACE_UNDER_TEST.split(VLAN_SUB_INTERFACE_SEPARATOR)[0])
+        self.asic_db.wait_for_n_keys(ASIC_LAG_MEMBER_TABLE, 0)
+        self.asic_db.wait_for_n_keys(ASIC_LAG_TABLE, 0)
+
+        vlan_cnt = len(self.asic_db.get_keys(ASIC_VLAN_TABLE))
+        vlan_member_cnt = len(self.asic_db.get_keys(ASIC_VLAN_MEMBER_TABLE))
+        fdb_cnt = len(self.asic_db.get_keys(ASIC_FDB_ENTRY_TABLE))
+        for i in range(0, intf_cnt):
+            if ifnames[i].startswith(VLAN_PREFIX):
+                # Remove fdb entry
+                dvs.remove_fdb(vlan_ids[i], dst_macs[i].replace(":", "-"))
+                fdb_cnt -= 1
+                self.asic_db.wait_for_n_keys(ASIC_FDB_ENTRY_TABLE, fdb_cnt)
+
+                dvs.remove_vlan_member(vlan_ids[i], monitor_ports[i])
+                vlan_member_cnt -= 1
+                self.asic_db.wait_for_n_keys(ASIC_VLAN_MEMBER_TABLE, vlan_member_cnt)
+
+                dvs.remove_vlan(vlan_ids[i])
+                vlan_cnt -= 1
+                self.asic_db.wait_for_n_keys(ASIC_VLAN_TABLE, vlan_cnt)
+
+    def _test_sub_port_intf_mirror_nhg_change(self, dvs, sub_port_intf_name):
+        session_name = "TEST_SESSION"
+        src_ip = "1.1.1.1"
+        dst_ip = "2.2.2.2"
+        gre_type= "0x6558"
+        dscp = "8"
+        ttl = "100"
+        queue = "0"
+        marker = dvs.add_log_marker()
+        self.dvs_mirror.create_erspan_session(session_name, src_ip, dst_ip, gre_type, dscp, ttl, queue)
+        self.dvs_mirror.verify_session_status(session_name, INACTIVE)
+        self.check_syslog(dvs, marker, "Attached next hop observer .* for destination IP {}".format(dst_ip), 1)
+
+        # Create router interfaces for nhg change test
+        (ifnames, monitor_ports, ip_addrs, nhop_ips, dst_macs, vlan_ids) = self.create_mirror_router_intfs(dvs)
+
+        intf_cnt = len(ifnames)
+        sub_port_intf_idx = ifnames.index(sub_port_intf_name)
+
+        ip_prefix = "2.2.2.0/24"
+        self.add_route_appl_db(ip_prefix, [nhop_ips[sub_port_intf_idx]], [sub_port_intf_name])
+        fv_dict_asic_db = {
+            "SAI_MIRROR_SESSION_ATTR_MONITOR_PORT": dvs.asicdb.portnamemap[monitor_ports[sub_port_intf_idx]],
+            "SAI_MIRROR_SESSION_ATTR_TYPE": "SAI_MIRROR_SESSION_TYPE_ENHANCED_REMOTE",
+            "SAI_MIRROR_SESSION_ATTR_ERSPAN_ENCAPSULATION_TYPE": "SAI_ERSPAN_ENCAPSULATION_TYPE_MIRROR_L3_GRE_TUNNEL",
+            "SAI_MIRROR_SESSION_ATTR_IPHDR_VERSION": "4",
+            "SAI_MIRROR_SESSION_ATTR_TOS": "{}".format(int(dscp) << 2),
+            "SAI_MIRROR_SESSION_ATTR_TTL": ttl,
+            "SAI_MIRROR_SESSION_ATTR_SRC_IP_ADDRESS": src_ip,
+            "SAI_MIRROR_SESSION_ATTR_DST_IP_ADDRESS": dst_ip,
+            "SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS": dst_macs[sub_port_intf_idx],
+            "SAI_MIRROR_SESSION_ATTR_SRC_MAC_ADDRESS": self.src_mac,
+            "SAI_MIRROR_SESSION_ATTR_GRE_PROTOCOL_TYPE": "{}".format(int(gre_type, 0)),
+            "SAI_MIRROR_SESSION_ATTR_VLAN_HEADER_VALID": "true",
+            "SAI_MIRROR_SESSION_ATTR_VLAN_TPID": "{}".format(int(TPID_802_1Q, 0)),
+            "SAI_MIRROR_SESSION_ATTR_VLAN_ID": vlan_ids[sub_port_intf_idx],
+            "SAI_MIRROR_SESSION_ATTR_VLAN_PRI": "0",
+            "SAI_MIRROR_SESSION_ATTR_VLAN_CFI": "0",
+        }
+        fv_dict_state_db = {
+            STATUS: ACTIVE,
+            MONITOR_PORT: monitor_ports[sub_port_intf_idx],
+            DST_MAC: dst_macs[sub_port_intf_idx],
+            ROUTE_PREFIX: ip_prefix,
+            VLAN_ID: vlan_ids[sub_port_intf_idx],
+            NEXT_HOP_IP: "{}@{}".format(nhop_ips[sub_port_intf_idx], sub_port_intf_name),
+        }
+        self.dvs_mirror.verify_session(dvs, session_name, fv_dict_asic_db, fv_dict_state_db)
+
+        for i in range(0, intf_cnt):
+            if ifnames[i] == sub_port_intf_name:
+                continue
+
+            # Add next hop object i to next hop group
+            self.add_route_appl_db(ip_prefix, [nhop_ips[sub_port_intf_idx], nhop_ips[i]], [sub_port_intf_name, ifnames[i]])
+            time.sleep(2)
+            self.dvs_mirror.verify_session(dvs, session_name, fv_dict_asic_db, fv_dict_state_db)
+
+            # Remove next hop object on sub port interface from next hop group
+            self.add_route_appl_db(ip_prefix, [nhop_ips[i]], [ifnames[i]])
+
+            fv_dict_asic_db["SAI_MIRROR_SESSION_ATTR_MONITOR_PORT"] = dvs.asicdb.portnamemap[monitor_ports[i]]
+            fv_dict_asic_db["SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS"] = dst_macs[i]
+            fv_dict_asic_db["SAI_MIRROR_SESSION_ATTR_VLAN_HEADER_VALID"] = "false" if int(vlan_ids[i]) == 0 else "true"
+            if int(vlan_ids[i]) != 0:
+                fv_dict_asic_db["SAI_MIRROR_SESSION_ATTR_VLAN_ID"] = vlan_ids[i]
+
+            fv_dict_state_db[MONITOR_PORT] = monitor_ports[i]
+            fv_dict_state_db[DST_MAC] = dst_macs[i]
+            fv_dict_state_db[VLAN_ID] = vlan_ids[i]
+            fv_dict_state_db[NEXT_HOP_IP] = "{}@{}".format(nhop_ips[i], ifnames[i])
+            self.dvs_mirror.verify_session(dvs, session_name, fv_dict_asic_db, fv_dict_state_db)
+
+            # Restore next hop object on sub port interface
+            self.add_route_appl_db(ip_prefix, [nhop_ips[sub_port_intf_idx], nhop_ips[i]], [sub_port_intf_name, ifnames[i]])
+            time.sleep(2)
+            self.dvs_mirror.verify_session(dvs, session_name, fv_dict_asic_db, fv_dict_state_db)
+
+            # Remove next hop object i from next hop group
+            self.add_route_appl_db(ip_prefix, [nhop_ips[sub_port_intf_idx]], [sub_port_intf_name])
+
+            fv_dict_asic_db["SAI_MIRROR_SESSION_ATTR_MONITOR_PORT"] = dvs.asicdb.portnamemap[monitor_ports[sub_port_intf_idx]]
+            fv_dict_asic_db["SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS"] = dst_macs[sub_port_intf_idx]
+            fv_dict_asic_db["SAI_MIRROR_SESSION_ATTR_VLAN_HEADER_VALID"] = "true"
+            fv_dict_asic_db["SAI_MIRROR_SESSION_ATTR_VLAN_ID"] = vlan_ids[sub_port_intf_idx]
+
+            fv_dict_state_db[MONITOR_PORT] = monitor_ports[sub_port_intf_idx]
+            fv_dict_state_db[DST_MAC] = dst_macs[sub_port_intf_idx]
+            fv_dict_state_db[VLAN_ID] = vlan_ids[sub_port_intf_idx]
+            fv_dict_state_db[NEXT_HOP_IP] = "{}@{}".format(nhop_ips[sub_port_intf_idx], sub_port_intf_name)
+            self.dvs_mirror.verify_session(dvs, session_name, fv_dict_asic_db, fv_dict_state_db)
+
+        # Remove mirror session
+        marker = dvs.add_log_marker()
+        self.dvs_mirror.remove_mirror_session(session_name)
+        self.dvs_mirror.verify_no_mirror()
+        self.check_syslog(dvs, marker, "Detached next hop observer for destination IP {}".format(dst_ip), 1)
+
+        # Clean up
+        self.remove_route_appl_db(ip_prefix)
+        self.remove_mirror_router_intfs(dvs, ifnames, monitor_ports, ip_addrs, nhop_ips, dst_macs, vlan_ids)
+
+    @pytest.mark.usefixtures('dvs_mirror_manager')
+    def test_sub_port_intf_mirror_nhg_change(self, dvs):
+        self.connect_dbs(dvs)
+
+        self._test_sub_port_intf_mirror_nhg_change(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST)
+        self._test_sub_port_intf_mirror_nhg_change(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST)
+
+    def _test_sub_port_intf_mirror_lpm_change(self, dvs, sub_port_intf_name):
+        session_name = "TEST_SESSION"
+        src_ip = "1.1.1.1"
+        dst_ip = "2.2.2.2"
+        gre_type= "0x6558"
+        dscp = "8"
+        ttl = "100"
+        queue = "0"
+        marker = dvs.add_log_marker()
+        self.dvs_mirror.create_erspan_session(session_name, src_ip, dst_ip, gre_type, dscp, ttl, queue)
+        self.dvs_mirror.verify_session_status(session_name, INACTIVE)
+        self.check_syslog(dvs, marker, "Attached next hop observer .* for destination IP {}".format(dst_ip), 1)
+
+        # Create router interfaces for lpm change test
+        (ifnames, monitor_ports, ip_addrs, nhop_ips, dst_macs, vlan_ids) = self.create_mirror_router_intfs(dvs)
+
+        intf_cnt = len(ifnames)
+        sub_port_intf_idx = ifnames.index(sub_port_intf_name)
+
+        ip_prefix = "2.2.2.0/24"
+        self.add_route_appl_db(ip_prefix, [nhop_ips[sub_port_intf_idx]], [sub_port_intf_name])
+        fv_dict_asic_db = {
+            "SAI_MIRROR_SESSION_ATTR_MONITOR_PORT": dvs.asicdb.portnamemap[monitor_ports[sub_port_intf_idx]],
+            "SAI_MIRROR_SESSION_ATTR_TYPE": "SAI_MIRROR_SESSION_TYPE_ENHANCED_REMOTE",
+            "SAI_MIRROR_SESSION_ATTR_ERSPAN_ENCAPSULATION_TYPE": "SAI_ERSPAN_ENCAPSULATION_TYPE_MIRROR_L3_GRE_TUNNEL",
+            "SAI_MIRROR_SESSION_ATTR_IPHDR_VERSION": "4",
+            "SAI_MIRROR_SESSION_ATTR_TOS": "{}".format(int(dscp) << 2),
+            "SAI_MIRROR_SESSION_ATTR_TTL": ttl,
+            "SAI_MIRROR_SESSION_ATTR_SRC_IP_ADDRESS": src_ip,
+            "SAI_MIRROR_SESSION_ATTR_DST_IP_ADDRESS": dst_ip,
+            "SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS": dst_macs[sub_port_intf_idx],
+            "SAI_MIRROR_SESSION_ATTR_SRC_MAC_ADDRESS": self.src_mac,
+            "SAI_MIRROR_SESSION_ATTR_GRE_PROTOCOL_TYPE": "{}".format(int(gre_type, 0)),
+            "SAI_MIRROR_SESSION_ATTR_VLAN_HEADER_VALID": "true",
+            "SAI_MIRROR_SESSION_ATTR_VLAN_TPID": "{}".format(int(TPID_802_1Q, 0)),
+            "SAI_MIRROR_SESSION_ATTR_VLAN_ID": vlan_ids[sub_port_intf_idx],
+            "SAI_MIRROR_SESSION_ATTR_VLAN_PRI": "0",
+            "SAI_MIRROR_SESSION_ATTR_VLAN_CFI": "0",
+        }
+        fv_dict_state_db = {
+            STATUS: ACTIVE,
+            MONITOR_PORT: monitor_ports[sub_port_intf_idx],
+            DST_MAC: dst_macs[sub_port_intf_idx],
+            ROUTE_PREFIX: ip_prefix,
+            VLAN_ID: vlan_ids[sub_port_intf_idx],
+            NEXT_HOP_IP: "{}@{}".format(nhop_ips[sub_port_intf_idx], sub_port_intf_name),
+        }
+        self.dvs_mirror.verify_session(dvs, session_name, fv_dict_asic_db, fv_dict_state_db)
+
+        for i in range(0, intf_cnt):
+            if ifnames[i] == sub_port_intf_name:
+                continue
+
+            # Lpm points to next hop object i
+            ip_prefix = "2.2.2.0/28"
+            self.add_route_appl_db(ip_prefix, [nhop_ips[i]], [ifnames[i]])
+
+            fv_dict_asic_db["SAI_MIRROR_SESSION_ATTR_MONITOR_PORT"] = dvs.asicdb.portnamemap[monitor_ports[i]]
+            fv_dict_asic_db["SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS"] = dst_macs[i]
+            fv_dict_asic_db["SAI_MIRROR_SESSION_ATTR_VLAN_HEADER_VALID"] = "false" if int(vlan_ids[i]) == 0 else "true"
+            if int(vlan_ids[i]) != 0:
+                fv_dict_asic_db["SAI_MIRROR_SESSION_ATTR_VLAN_ID"] = vlan_ids[i]
+
+            fv_dict_state_db[MONITOR_PORT] = monitor_ports[i]
+            fv_dict_state_db[DST_MAC] = dst_macs[i]
+            fv_dict_state_db[ROUTE_PREFIX] = ip_prefix
+            fv_dict_state_db[VLAN_ID] = vlan_ids[i]
+            fv_dict_state_db[NEXT_HOP_IP] = "{}@{}".format(nhop_ips[i], ifnames[i])
+            self.dvs_mirror.verify_session(dvs, session_name, fv_dict_asic_db, fv_dict_state_db)
+
+            # Remove lpm pointing to next hop object i
+            # This restores lpm pointing to next hop object on sub port interface
+            self.remove_route_appl_db(ip_prefix)
+
+            fv_dict_asic_db["SAI_MIRROR_SESSION_ATTR_MONITOR_PORT"] = dvs.asicdb.portnamemap[monitor_ports[sub_port_intf_idx]]
+            fv_dict_asic_db["SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS"] = dst_macs[sub_port_intf_idx]
+            fv_dict_asic_db["SAI_MIRROR_SESSION_ATTR_VLAN_HEADER_VALID"] = "true"
+            fv_dict_asic_db["SAI_MIRROR_SESSION_ATTR_VLAN_ID"] = vlan_ids[sub_port_intf_idx]
+
+            fv_dict_state_db[MONITOR_PORT] = monitor_ports[sub_port_intf_idx]
+            fv_dict_state_db[DST_MAC] = dst_macs[sub_port_intf_idx]
+            ip_prefix = "2.2.2.0/24"
+            fv_dict_state_db[ROUTE_PREFIX] = ip_prefix
+            fv_dict_state_db[VLAN_ID] = vlan_ids[sub_port_intf_idx]
+            fv_dict_state_db[NEXT_HOP_IP] = "{}@{}".format(nhop_ips[sub_port_intf_idx], sub_port_intf_name)
+            self.dvs_mirror.verify_session(dvs, session_name, fv_dict_asic_db, fv_dict_state_db)
+
+        # Remove mirror session
+        marker = dvs.add_log_marker()
+        self.dvs_mirror.remove_mirror_session(session_name)
+        self.dvs_mirror.verify_no_mirror()
+        self.check_syslog(dvs, marker, "Detached next hop observer for destination IP {}".format(dst_ip), 1)
+
+        # Clean up
+        self.remove_route_appl_db(ip_prefix)
+        self.remove_mirror_router_intfs(dvs, ifnames, monitor_ports, ip_addrs, nhop_ips, dst_macs, vlan_ids)
+
+    @pytest.mark.usefixtures('dvs_mirror_manager')
+    def test_sub_port_intf_mirror_lpm_change(self, dvs):
+        self.connect_dbs(dvs)
+
+        self._test_sub_port_intf_mirror_lpm_change(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST)
+        self._test_sub_port_intf_mirror_lpm_change(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST)
 
 
 # Add Dummy always-pass test at end as workaroud

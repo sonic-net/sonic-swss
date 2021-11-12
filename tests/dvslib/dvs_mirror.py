@@ -30,7 +30,6 @@ class DVSMirror(object):
             "dscp": dscp,
             "ttl": ttl,
             "queue": queue,
-            "direction": direction
         }
 
         if policer:
@@ -38,6 +37,9 @@ class DVSMirror(object):
 
         if src_ports:
             mirror_entry["src_port"] = src_ports
+
+        if direction:
+            mirror_entry["direction"] = direction
 
         self.config_db.create_entry("MIRROR_SESSION", name, mirror_entry)
 
@@ -79,7 +81,8 @@ class DVSMirror(object):
             entry = dvs.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_POLICER", policer_oid)
             assert entry["SAI_POLICER_ATTR_CIR"] == cir
             
-    def verify_session(self, dvs, name, asic_db=None, state_db=None, dst_oid=None, src_ports=None, direction="BOTH", policer=None, expected = 1, asic_size=None):
+    def verify_session(self, dvs, name, asic_db=None, state_db=None, dst_oid=None,
+                       src_ports=None, direction="BOTH", policer=None, expected=1, asic_size=None):
         member_ids = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION", expected)
         session_oid=member_ids[0]
         # with multiple sessions, match on dst_oid to get session_oid
@@ -96,4 +99,3 @@ class DVSMirror(object):
             self.verify_session_policer(dvs, entry["SAI_MIRROR_SESSION_ATTR_POLICER"], cir)
         if src_ports:
             self.verify_port_mirror_config(dvs, src_ports, direction, session_oid=session_oid)
-
