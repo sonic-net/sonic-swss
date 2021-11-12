@@ -9,6 +9,7 @@
 #include "bufferorch.h"
 #include "flexcounterorch.h"
 #include "debugcounterorch.h"
+#include "directory.h"
 
 extern sai_port_api_t *sai_port_api;
 
@@ -16,6 +17,7 @@ extern PortsOrch *gPortsOrch;
 extern FabricPortsOrch *gFabricPortsOrch;
 extern IntfsOrch *gIntfsOrch;
 extern BufferOrch *gBufferOrch;
+extern Directory<Orch*> gDirectory;
 
 #define BUFFER_POOL_WATERMARK_KEY   "BUFFER_POOL_WATERMARK"
 #define PORT_KEY                    "PORT"
@@ -23,12 +25,14 @@ extern BufferOrch *gBufferOrch;
 #define QUEUE_KEY                   "QUEUE"
 #define PG_WATERMARK_KEY            "PG_WATERMARK"
 #define RIF_KEY                     "RIF"
+#define ACL_KEY                     "ACL"
+#define TUNNEL_KEY                  "TUNNEL"
 
 unordered_map<string, string> flexCounterGroupMap =
 {
     {"PORT", PORT_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"PORT_RATES", PORT_RATE_COUNTER_FLEX_COUNTER_GROUP},
-    {"PORT_BUFFER_DROP", PORT_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {"PORT_BUFFER_DROP", PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP},
     {"QUEUE", QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"PFCWD", PFC_WD_FLEX_COUNTER_GROUP},
     {"QUEUE_WATERMARK", QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP},
@@ -38,6 +42,8 @@ unordered_map<string, string> flexCounterGroupMap =
     {"RIF", RIF_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"RIF_RATES", RIF_RATE_COUNTER_FLEX_COUNTER_GROUP},
     {"DEBUG_COUNTER", DEBUG_COUNTER_FLEX_COUNTER_GROUP},
+    {"ACL", ACL_COUNTER_FLEX_COUNTER_GROUP},
+    {"TUNNEL", TUNNEL_STAT_COUNTER_FLEX_COUNTER_GROUP},
 };
 
 
@@ -58,6 +64,7 @@ void FlexCounterOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
+    VxlanTunnelOrch* vxlan_tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
     if (gPortsOrch && !gPortsOrch->allPortsReady())
     {
         return;
@@ -146,6 +153,10 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     if (gFabricPortsOrch)
                     {
                         gFabricPortsOrch->generateQueueStats();
+                    }
+                    if (vxlan_tunnel_orch && (key== TUNNEL_KEY) && (value == "enable"))
+                    {
+                        vxlan_tunnel_orch->generateTunnelCounterMap();
                     }
                     vector<FieldValueTuple> fieldValues;
                     fieldValues.emplace_back(FLEX_COUNTER_STATUS_FIELD, value);

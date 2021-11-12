@@ -4,8 +4,6 @@ import pytest
 from pprint import pprint
 from evpn_tunnel import VxlanTunnel
 
-DVS_ENV = ["fake_platform=broadcom"]
-
 class TestVxlanOrch(object):
 
     def get_vxlan_obj(self):
