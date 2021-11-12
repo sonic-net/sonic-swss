@@ -57,7 +57,7 @@ private:
     void delLoopbackIntf(const std::string &alias);
     void flushLoopbackIntfs(void);
 
-    std::string getPortAdminStatus(const std::string &alias);
+    std::string getIntfAdminStatus(const std::string &alias);
     std::string getPortMtu(const std::string &alias);
     void addHostSubIntf(const std::string&intf, const std::string &subIntf, const std::string &vlan);
     std::string setHostSubIntfMtu(const std::string &alias, const std::string &configMtu, const std::string &parentMtu);

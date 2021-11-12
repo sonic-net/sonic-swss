@@ -662,6 +662,7 @@ void IntfsOrch::doTask(Consumer &consumer)
         string proxy_arp = "";
         string inband_type = "";
         bool mpls = false;
+        string vlan = "";
 
         for (auto idx : data)
         {

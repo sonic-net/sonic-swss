@@ -10,7 +10,7 @@
 #include "macaddress.h"
 #include "warm_restart.h"
 #include "subscriberstatetable.h"
-#include "ifcommon.h"
+#include "subintf.h"
 
 using namespace std;
 using namespace swss;
@@ -24,7 +24,7 @@ using namespace swss;
 #define VRF_MGMT            "mgmt"
 
 #define LOOPBACK_DEFAULT_MTU_STR "65536"
-#define PORT_MTU_DEFAULT    9100
+#define DEFAULT_MTU_STR 9100
 
 IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
@@ -40,15 +40,20 @@ IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         m_appIntfTableProducer(appDb, APP_INTF_TABLE_NAME),
         m_appLagTable(appDb, APP_LAG_TABLE_NAME)
 {
-    auto subscriberAppTable = new swss::SubscriberStateTable(appDb,
+    /*auto subscriberAppTable = new swss::SubscriberStateTable(appDb,
             APP_LAG_TABLE_NAME, TableConsumable::DEFAULT_POP_BATCH_SIZE, 100);
     auto appConsumer = new Consumer(subscriberAppTable, this, APP_LAG_TABLE_NAME);
-    Orch::addExecutor(appConsumer);
+    Orch::addExecutor(appConsumer);*/
 
     auto subscriberStateTable = new swss::SubscriberStateTable(stateDb,
-            STATE_PORT_TABLE_NAME, TableConsumable::DEFAULT_POP_BATCH_SIZE, 200);
+            STATE_PORT_TABLE_NAME, TableConsumable::DEFAULT_POP_BATCH_SIZE, 100);
     auto stateConsumer = new Consumer(subscriberStateTable, this, STATE_PORT_TABLE_NAME);
     Orch::addExecutor(stateConsumer);
+
+    auto subscriberStateLagTable = new swss::SubscriberStateTable(stateDb,
+            STATE_LAG_TABLE_NAME, TableConsumable::DEFAULT_POP_BATCH_SIZE, 200);
+    auto stateLagConsumer = new Consumer(subscriberStateLagTable, this, STATE_LAG_TABLE_NAME);
+    Orch::addExecutor(stateLagConsumer);
 
     if (!WarmStart::isWarmStart())
     {
@@ -302,7 +307,7 @@ void IntfMgr::addHostSubIntf(const string&intf, const string &subIntf, const str
 }
 
 
-std::string IntfMgr::getPortAdminStatus(const string &alias)
+std::string IntfMgr::getIntfAdminStatus(const string &alias)
 {
     Table *portTable;
     if (!alias.compare(0, strlen("Eth"), "Eth"))
@@ -362,7 +367,7 @@ std::string IntfMgr::getPortMtu(const string &alias)
         }
     }
     if (mtu.empty())
-        mtu = std::to_string(PORT_MTU_DEFAULT);
+        mtu = std::to_string(DEFAULT_MTU_STR);
     return mtu;
 }
 
@@ -376,7 +381,13 @@ void IntfMgr::updateSubIntfMtu(const string &alias, const string &mtu)
         if (subIf.parentIntf() == alias)
         {
             std::vector<FieldValueTuple> fvVector;
-            string subintf_mtu = setHostSubIntfMtu(intf, m_subIntfList[intf].mtu, mtu);
+
+            string subif_config_mtu = m_subIntfList[intf].mtu;
+            if (subif_config_mtu == MTU_INHERITANCE || subif_config_mtu.empty())
+                subif_config_mtu = std::to_string(DEFAULT_MTU_STR);
+
+            string subintf_mtu = setHostSubIntfMtu(intf, subif_config_mtu, mtu);
+
             FieldValueTuple fvTuple("mtu", subintf_mtu);
             fvVector.push_back(fvTuple);
             m_appIntfTableProducer.set(intf, fvVector);
@@ -399,6 +410,7 @@ std::string IntfMgr::setHostSubIntfMtu(const string &alias, const string &config
     {
         subifMtu = parentMtu;
     }
+    SWSS_LOG_INFO("subintf %s active mtu: %s", alias.c_str(), subifMtu.c_str());
     cmd << IP_CMD " link set " << shellquote(alias) << " mtu " << shellquote(subifMtu);
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
@@ -436,6 +448,7 @@ std::string IntfMgr::setHostSubIntfAdminStatus(const string &alias, const string
 
     if (parentAdmin == "up" || configAdmin == "down")
     {
+        SWSS_LOG_INFO("subintf %s admin_status: %s", alias.c_str(), configAdmin.c_str());
         cmd << IP_CMD " link set " << shellquote(alias) << " " << shellquote(configAdmin);
         EXEC_WITH_ERROR_THROW(cmd.str(), res);
         return configAdmin;
@@ -790,7 +803,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
             }
             try
             {
-                string parentAdmin = getPortAdminStatus(subIf.parentIntf());
+                string parentAdmin = getIntfAdminStatus(subIf.parentIntf());
                 string subintf_admin = setHostSubIntfAdminStatus(alias, adminStatus, parentAdmin);
                 m_subIntfList[alias].currAdminStatus = subintf_admin;
                 FieldValueTuple fvTuple("admin_status", adminStatus);
@@ -960,7 +973,7 @@ void IntfMgr::doTask(Consumer &consumer)
     while (it != consumer.m_toSync.end())
     {
         KeyOpFieldsValuesTuple t = it->second;
-        if ((table_name == STATE_PORT_TABLE_NAME) || (table_name == APP_LAG_TABLE_NAME))
+        if ((table_name == STATE_PORT_TABLE_NAME) || (table_name == STATE_LAG_TABLE_NAME))
         {
             doPortTableTask(kfvKey(t), kfvFieldsValues(t), kfvOp(t));
         }

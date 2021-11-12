@@ -5,6 +5,7 @@
 #include "gearboxutils.h"
 #include "vxlanorch.h"
 #include "directory.h"
+#include "subintf.h"
 
 #include <inttypes.h>
 #include <cassert>
@@ -31,7 +32,6 @@
 #include "fdborch.h"
 #include "stringutility.h"
 #include "subscriberstatetable.h"
-#include "ifcommon.h"
 
 extern sai_switch_api_t *sai_switch_api;
 extern sai_bridge_api_t *sai_bridge_api;

@@ -33,6 +33,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 mock_redisreply.cpp \
                 bulker_ut.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
+                $(top_srcdir)/lib/subintf.cpp \
                 $(top_srcdir)/orchagent/orchdaemon.cpp \
                 $(top_srcdir)/orchagent/orch.cpp \
                 $(top_srcdir)/orchagent/notifications.cpp \
