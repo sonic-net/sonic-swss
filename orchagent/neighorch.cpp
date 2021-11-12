@@ -602,9 +602,20 @@ bool NeighOrch::getNeighborEntry(const NextHopKey &nexthop, NeighborEntry &neigh
         return false;
     }
 
+    bool check_alias = true;
+    Port inbp;
+    if (gPortsOrch->getInbandPort(inbp) && nexthop.alias == inbp.m_alias)
+    {
+        // The nexthop is a system neighbor if it's on inband port.
+        // Skip checking alias because the neighbor alias in m_syncdNeighbors for
+        // system neighbors is system intf, instead of inband port.
+        check_alias = false;
+    }
+
     for (const auto &entry : m_syncdNeighbors)
     {
-        if (entry.first.ip_address == nexthop.ip_address && entry.first.alias == nexthop.alias)
+        if (entry.first.ip_address == nexthop.ip_address &&
+            ((check_alias && entry.first.alias == nexthop.alias) || !check_alias))
         {
             neighborEntry = entry.first;
             macAddress = entry.second.mac;
@@ -620,7 +631,25 @@ bool NeighOrch::getNeighborEntry(const IpAddress &ipAddress, NeighborEntry &neig
     string alias = m_intfsOrch->getRouterIntfsAlias(ipAddress);
     if (alias.empty())
     {
-        return false;
+        Port inbp;
+        if (gPortsOrch->getInbandPort(inbp))
+        {
+            // Check if this is a system neighbor.
+            for (const auto &entry : m_syncdNeighbors)
+            {
+                if (entry.first.ip_address == ipAddress)
+                {
+                    //For system ports kernel nexthops are always on inband.
+                    alias = inbp.m_alias;
+                    break;
+                }
+            }
+        }
+
+        if (alias.empty())
+        {
+            return false;
+        }
     }
 
     NextHopKey nexthop(ipAddress, alias);
