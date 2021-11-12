@@ -27,7 +27,7 @@ extern size_t gMaxBulkSize;
 #define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
 #define DEFAULT_MAX_ECMP_GROUP_SIZE     32
 
-RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch) :
+RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch) :
         gRouteBulker(sai_route_api, gMaxBulkSize),
         gLabelRouteBulker(sai_mpls_api, gMaxBulkSize),
         gNextHopGroupMemberBulker(sai_next_hop_group_api, gSwitchId, gMaxBulkSize),
@@ -38,6 +38,7 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
         m_vrfOrch(vrfOrch),
         m_fgNhgOrch(fgNhgOrch),
         m_nextHopGroupCount(0),
+        m_srv6Orch(srv6Orch),
         m_resync(false)
 {
     SWSS_LOG_ENTER();
@@ -561,6 +562,9 @@ void RouteOrch::doTask(Consumer& consumer)
                 bool& excp_intfs_flag = ctx.excp_intfs_flag;
                 bool overlay_nh = false;
                 bool blackhole = false;
+                string srv6_segments;
+                string srv6_source;
+                bool srv6_nh = false;
 
                 for (auto i : kfvFieldsValues(t))
                 {
@@ -589,6 +593,14 @@ void RouteOrch::doTask(Consumer& consumer)
 
                     if (fvField(i) == "nexthop_group")
                         nhg_index = fvValue(i);
+
+                    if (fvField(i) == "segment") {
+                        srv6_segments = fvValue(i);
+                        srv6_nh = true;
+                    }
+
+                    if (fvField(i) == "seg_src")
+                        srv6_source = fvValue(i);
                 }
 
                 /*
@@ -615,6 +627,8 @@ void RouteOrch::doTask(Consumer& consumer)
                 vector<string> vni_labelv;
                 vector<string> rmacv;
                 NextHopGroupKey& nhg = ctx.nhg;
+                vector<string> srv6_segv;
+                vector<string> srv6_src;
 
                 /* Check if the next hop group is owned by the NhgOrch. */
                 if (nhg_index.empty())
@@ -624,6 +638,8 @@ void RouteOrch::doTask(Consumer& consumer)
                     mpls_nhv = tokenize(mpls_nhs, ',');
                     vni_labelv = tokenize(vni_labels, ',');
                     rmacv = tokenize(remote_macs, ',');
+                    srv6_segv = tokenize(srv6_segments, ',');
+                    srv6_src = tokenize(srv6_source, ',');
 
                     /*
                     * For backward compatibility, adjust ip string from old format to
@@ -632,7 +648,7 @@ void RouteOrch::doTask(Consumer& consumer)
 
                     /* Resize the ip vector to match ifname vector
                     * as tokenize(",", ',') will miss the last empty segment. */
-                    if (alsv.size() == 0 && !blackhole)
+                    if (alsv.size() == 0 && !blackhole && !srv6_nh)
                     {
                         SWSS_LOG_WARN("Skip the route %s, for it has an empty ifname field.", key.c_str());
                         it = consumer.m_toSync.erase(it);
@@ -688,6 +704,30 @@ void RouteOrch::doTask(Consumer& consumer)
                     {
                         nhg = NextHopGroupKey();
                     }
+                    else if (srv6_nh == true)
+                    {
+                        string ip;
+                        if (ipv.empty())
+                        {
+                            ip = "0.0.0.0";
+                        }
+                        else
+                        {
+                            SWSS_LOG_ERROR("For SRV6 nexthop ipv should be empty");
+                            it = consumer.m_toSync.erase(it);
+                            continue;
+                        }
+                        nhg_str = ip + NH_DELIMITER + srv6_segv[0] + NH_DELIMITER + srv6_src[0];
+
+                        for (uint32_t i = 1; i < srv6_segv.size(); i++)
+                        {
+                            nhg_str += NHG_DELIMITER + ip;
+                            nhg_str += NH_DELIMITER + srv6_segv[i];
+                            nhg_str += NH_DELIMITER + srv6_src[i];
+                        }
+                        nhg = NextHopGroupKey(nhg_str, overlay_nh, srv6_nh);
+                        SWSS_LOG_INFO("SRV6 route with nhg %s", nhg.to_string().c_str());
+                    }
                     else if (overlay_nh == false)
                     {
                         for (uint32_t i = 0; i < ipv.size(); i++)
@@ -714,7 +754,7 @@ void RouteOrch::doTask(Consumer& consumer)
                             nhg_str += ipv[i] + NH_DELIMITER + "vni" + alsv[i] + NH_DELIMITER + vni_labelv[i] + NH_DELIMITER + rmacv[i];
                         }
 
-                        nhg = NextHopGroupKey(nhg_str, overlay_nh);
+                        nhg = NextHopGroupKey(nhg_str, overlay_nh, srv6_nh);
                     }
                 }
                 else
@@ -892,6 +932,20 @@ void RouteOrch::doTask(Consumer& consumer)
             if (it_nhg.first.is_overlay_nexthop() && it_nhg.second != 0)
             {
                 removeOverlayNextHops(it_nhg.second, it_nhg.first);
+            }
+            else if (it_nhg.first.is_srv6_nexthop())
+            {
+                if(it_nhg.first.getSize() > 1)
+                {
+                    if(m_syncdNextHopGroups[it_nhg.first].ref_count == 0)
+                    {
+                      removeNextHopGroup(it_nhg.first);
+                    }
+                    else
+                    {
+                      SWSS_LOG_ERROR("SRV6 ECMP %s REF count is not zero", it_nhg.first.to_string().c_str());
+                    }
+                }
             }
             else if (m_syncdNextHopGroups[it_nhg.first].ref_count == 0)
             {
@@ -1145,6 +1199,7 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         // skip next hop group member create for neighbor from down port
         if (m_neighOrch->isNextHopFlagSet(it, NHFLAGS_IFDOWN))
         {
+            SWSS_LOG_INFO("Interface down for NH %s, skip this NH", it.to_string().c_str());
             continue;
         }
 
@@ -1276,6 +1331,7 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops)
     auto next_hop_group_entry = m_syncdNextHopGroups.find(nexthops);
     sai_status_t status;
     bool overlay_nh = nexthops.is_overlay_nexthop();
+    bool srv6_nh = nexthops.is_srv6_nexthop();
 
     assert(next_hop_group_entry != m_syncdNextHopGroups.end());
 
@@ -1344,8 +1400,7 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops)
     for (auto it : next_hop_set)
     {
         m_neighOrch->decreaseNextHopRefCount(it);
-
-        if (overlay_nh && !m_neighOrch->getNextHopRefCount(it))
+        if (overlay_nh && !srv6_nh && !m_neighOrch->getNextHopRefCount(it))
         {
             if(!m_neighOrch->removeTunnelNextHop(it))
             {
@@ -1355,11 +1410,11 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops)
             {
                 m_neighOrch->removeOverlayNextHop(it);
                 SWSS_LOG_INFO("Tunnel Nexthop %s delete success", nexthops.to_string().c_str());
-                SWSS_LOG_INFO("delete remote vtep %s", it.to_string(true).c_str());
+                SWSS_LOG_INFO("delete remote vtep %s", it.to_string(overlay_nh, srv6_nh).c_str());
                 status = deleteRemoteVtep(SAI_NULL_OBJECT_ID, it);
                 if (status == false)
                 {
-                    SWSS_LOG_ERROR("Failed to delete remote vtep %s ecmp", it.to_string(true).c_str());
+                    SWSS_LOG_ERROR("Failed to delete remote vtep %s ecmp", it.to_string(overlay_nh, srv6_nh).c_str());
                 }
             }
         }
@@ -1370,6 +1425,19 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops)
             m_neighOrch->removeMplsNextHop(it);
         }
     }
+
+    if (srv6_nh)
+    {
+        if (!m_srv6Orch->removeSrv6Nexthops(nexthops))
+        {
+            SWSS_LOG_ERROR("Failed to remove Srv6 Nexthop %s", nexthops.to_string().c_str());
+        }
+        else
+        {
+            SWSS_LOG_INFO("Remove ECMP Srv6 nexthops %s", nexthops.to_string().c_str());
+        }
+    }
+
     m_syncdNextHopGroups.erase(nexthops);
 
     return true;
@@ -1523,6 +1591,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
     bool curNhgIsFineGrained = false;
     bool isFineGrainedNextHopIdChanged = false;
     bool blackhole = false;
+    bool srv6_nh = false;
 
     if (m_syncdRoutes.find(vrf_id) == m_syncdRoutes.end())
     {
@@ -1533,6 +1602,11 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
     if (nextHops.is_overlay_nexthop())
     {
         overlay_nh = true;
+    }
+
+    if (nextHops.is_srv6_nexthop())
+    {
+        srv6_nh = true;
     }
 
     auto it_route = m_syncdRoutes.at(vrf_id).find(ipPrefix);
@@ -1612,19 +1686,28 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
             /* IP neighbor is not yet resolved */
             else
             {
-                if(overlay_nh)
+                if(overlay_nh && !srv6_nh)
                 {
-                    SWSS_LOG_INFO("create remote vtep %s", nexthop.to_string(overlay_nh).c_str());
+                    SWSS_LOG_INFO("create remote vtep %s", nexthop.to_string(overlay_nh, srv6_nh).c_str());
                     status = createRemoteVtep(vrf_id, nexthop);
                     if (status == false)
                     {
-                        SWSS_LOG_ERROR("Failed to create remote vtep %s", nexthop.to_string(overlay_nh).c_str());
+                        SWSS_LOG_ERROR("Failed to create remote vtep %s", nexthop.to_string(overlay_nh, srv6_nh).c_str());
                         return false;
                     }
                     next_hop_id = m_neighOrch->addTunnelNextHop(nexthop);
                     if (next_hop_id == SAI_NULL_OBJECT_ID)
                     {
-                        SWSS_LOG_ERROR("Failed to create Tunnel Nexthop %s", nexthop.to_string(overlay_nh).c_str());
+                        SWSS_LOG_ERROR("Failed to create Tunnel Nexthop %s", nexthop.to_string(overlay_nh, srv6_nh).c_str());
+                        return false;
+                    }
+                }
+                else if (srv6_nh)
+                {
+                    SWSS_LOG_INFO("Single NH: create srv6 nexthop %s", nextHops.to_string().c_str());
+                    if (!m_srv6Orch->srv6Nexthops(nextHops, next_hop_id))
+                    {
+                        SWSS_LOG_ERROR("Failed to create SRV6 nexthop %s", nextHops.to_string().c_str());
                         return false;
                     }
                 }
@@ -1644,6 +1727,16 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
         /* Check if there is already an existing next hop group */
         if (!hasNextHopGroup(nextHops))
         {
+            if(srv6_nh)
+            {
+                sai_object_id_t temp_nh_id;
+                SWSS_LOG_INFO("ECMP SRV6 NH: create srv6 nexthops %s", nextHops.to_string().c_str());
+                if(!m_srv6Orch->srv6Nexthops(nextHops, temp_nh_id))
+                {
+                    SWSS_LOG_ERROR("Failed to create SRV6 nexthops for %s", nextHops.to_string().c_str());
+                    return false;
+                }
+            }
             /* Try to create a new next hop group */
             if (!addNextHopGroup(nextHops))
             {
@@ -1654,17 +1747,17 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                     {
                         if(overlay_nh)
                         {
-                            SWSS_LOG_INFO("create remote vtep %s ecmp", nextHop.to_string(overlay_nh).c_str());
+                            SWSS_LOG_INFO("create remote vtep %s ecmp", nextHop.to_string(overlay_nh, srv6_nh).c_str());
                             status = createRemoteVtep(vrf_id, nextHop);
                             if (status == false)
                             {
-                                SWSS_LOG_ERROR("Failed to create remote vtep %s ecmp", nextHop.to_string(overlay_nh).c_str());
+                                SWSS_LOG_ERROR("Failed to create remote vtep %s ecmp", nextHop.to_string(overlay_nh, srv6_nh).c_str());
                                 return false;
                             }
                             next_hop_id = m_neighOrch->addTunnelNextHop(nextHop);
                             if (next_hop_id == SAI_NULL_OBJECT_ID)
                             {
-                                SWSS_LOG_ERROR("Failed to create Tunnel Nexthop %s", nextHop.to_string(overlay_nh).c_str());
+                                SWSS_LOG_ERROR("Failed to create Tunnel Nexthop %s", nextHop.to_string(overlay_nh, srv6_nh).c_str());
                                 return false;
                             }
                         }
@@ -1995,6 +2088,10 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
                 SWSS_LOG_NOTICE("Update overlay Nexthop %s", ol_nextHops.to_string().c_str());
                 m_bulkNhgReducedRefCnt.emplace(ol_nextHops, vrf_id);
             }
+            else if (ol_nextHops.is_srv6_nexthop())
+            {
+                m_srv6Orch->removeSrv6Nexthops(ol_nextHops);
+            }
             else if (ol_nextHops.getSize() == 1)
             {
                 RouteKey r_key = { vrf_id, ipPrefix };
@@ -2038,7 +2135,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
                 ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
     }
 
-    if (ctx.nhg_index.empty() && nextHops.getSize() == 1 && !nextHops.is_overlay_nexthop())
+    if (ctx.nhg_index.empty() && nextHops.getSize() == 1 && !nextHops.is_overlay_nexthop() && !nextHops.is_srv6_nexthop())
     {
         RouteKey r_key = { vrf_id, ipPrefix };
         auto nexthop = NextHopKey(nextHops.to_string());
@@ -2230,6 +2327,11 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
             {
                 m_neighOrch->removeMplsNextHop(nexthop);
             }
+            else if (nexthop.isSrv6NextHop() &&
+                    (m_neighOrch->getNextHopRefCount(nexthop) == 0))
+            {
+                m_srv6Orch->removeSrv6Nexthops(it_route->second.nhg_key);
+            }
 
             RouteKey r_key = { vrf_id, ipPrefix };
             removeNextHopRoute(nexthop, r_key);
@@ -2322,11 +2424,11 @@ bool RouteOrch::removeOverlayNextHops(sai_object_id_t vrf_id, const NextHopGroup
             {
                 m_neighOrch->removeOverlayNextHop(tunnel_nh);
                 SWSS_LOG_INFO("Tunnel Nexthop %s delete success", ol_nextHops.to_string().c_str());
-                SWSS_LOG_INFO("delete remote vtep %s", tunnel_nh.to_string(true).c_str());
+                SWSS_LOG_INFO("delete remote vtep %s", tunnel_nh.to_string(true, false).c_str());
                 status = deleteRemoteVtep(vrf_id, tunnel_nh);
                 if (status == false)
                 {
-                    SWSS_LOG_ERROR("Failed to delete remote vtep %s ecmp", tunnel_nh.to_string(true).c_str());
+                    SWSS_LOG_ERROR("Failed to delete remote vtep %s ecmp", tunnel_nh.to_string(true, false).c_str());
                     return false;
                 }
             }
@@ -2334,4 +2436,19 @@ bool RouteOrch::removeOverlayNextHops(sai_object_id_t vrf_id, const NextHopGroup
     }
 
     return true;
+}
+
+void RouteOrch::increaseNextHopGroupCount()
+{
+    m_nextHopGroupCount ++;
+}
+
+void RouteOrch::decreaseNextHopGroupCount()
+{
+    m_nextHopGroupCount --;
+}
+
+bool RouteOrch::checkNextHopGroupCount()
+{
+    return m_nextHopGroupCount < m_maxNextHopGroupCount;
 }

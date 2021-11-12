@@ -54,6 +54,13 @@ counter_group_meta = {
         'pre_test': 'pre_vxlan_tunnel_counter_test',
         'post_test':  'post_vxlan_tunnel_counter_test',
     },
+    'acl_counter': {
+        'key': 'ACL',
+        'group_name': 'ACL_STAT_COUNTER',
+        'name_map': 'ACL_COUNTER_RULE_MAP',
+        'pre_test': 'pre_acl_tunnel_counter_test',
+        'post_test':  'post_vxlan_tunnel_counter_test',
+    }
 }
 
 
@@ -202,6 +209,22 @@ class TestFlexCounters(object):
         self.config_db.db_connection.hset("VXLAN_TUNNEL_MAP|vtep1|map_100_Vlan10", "vlan", "Vlan10")
         self.config_db.db_connection.hset("VXLAN_TUNNEL_MAP|vtep1|map_100_Vlan10", "vni", "100")
 
+    def pre_acl_tunnel_counter_test(self, meta_data):
+        self.config_db.create_entry('ACL_TABLE', 'DATAACL',
+            {
+                'STAGE': 'INGRESS',
+                'PORTS': 'Ethernet0',
+                'TYPE': 'L3'
+            }
+        )
+        self.config_db.create_entry('ACL_RULE', 'DATAACL|RULE0',
+            {
+                'ETHER_TYPE': '2048',
+                'PACKET_ACTION': 'FORWARD',
+                'PRIORITY': '9999'
+            }
+        )
+
     def post_rif_counter_test(self, meta_data):
         self.config_db.db_connection.hdel('INTERFACE|Ethernet0|192.168.0.1/24', "NULL")
 
@@ -230,6 +253,10 @@ class TestFlexCounters(object):
         self.config_db.delete_entry("VLAN_TUNNEL","vtep1")
         self.config_db.delete_entry("VLAN_TUNNEL_MAP","vtep1|map_100_Vlan10")
         self.verify_no_flex_counters_tables_after_delete(meta_data['group_name'])
+
+    def post_acl_tunnel_counter_test(self, meta_data):
+        self.config_db.delete_entry('ACL_RULE', 'DATAACL|RULE0')
+        self.config_db.delete_entry('ACL_TABLE', 'DATAACL')
 
     def test_add_remove_trap(self, dvs):
         """Test steps:

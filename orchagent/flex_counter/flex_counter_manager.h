@@ -26,6 +26,7 @@ enum class CounterType
     PORT_DEBUG,
     SWITCH_DEBUG,
     MACSEC_SA_ATTR,
+    ACL_COUNTER,
     TUNNEL,
     HOSTIF_TRAP,
 };

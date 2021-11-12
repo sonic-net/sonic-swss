@@ -43,6 +43,8 @@ const map<CrmResourceType, string> crmResTypeNameMap =
     { CrmResourceType::CRM_DNAT_ENTRY, "DNAT_ENTRY" },
     { CrmResourceType::CRM_MPLS_INSEG, "MPLS_INSEG" },
     { CrmResourceType::CRM_MPLS_NEXTHOP, "MPLS_NEXTHOP" },
+    { CrmResourceType::CRM_SRV6_MY_SID_ENTRY, "SRV6_MY_SID_ENTRY" },
+    { CrmResourceType::CRM_SRV6_NEXTHOP, "SRV6_NEXTHOP" },
 };
 
 const map<CrmResourceType, uint32_t> crmResSaiAvailAttrMap =
@@ -64,7 +66,9 @@ const map<CrmResourceType, uint32_t> crmResSaiAvailAttrMap =
     { CrmResourceType::CRM_SNAT_ENTRY, SAI_SWITCH_ATTR_AVAILABLE_SNAT_ENTRY },
     { CrmResourceType::CRM_DNAT_ENTRY, SAI_SWITCH_ATTR_AVAILABLE_DNAT_ENTRY },
     { CrmResourceType::CRM_MPLS_INSEG, SAI_OBJECT_TYPE_INSEG_ENTRY },
-    { CrmResourceType::CRM_MPLS_NEXTHOP, SAI_OBJECT_TYPE_NEXT_HOP },
+    { CrmResourceType::CRM_MPLS_NEXTHOP, SAI_SWITCH_ATTR_AVAILABLE_IPV4_NEXTHOP_ENTRY },
+    { CrmResourceType::CRM_SRV6_MY_SID_ENTRY, SAI_OBJECT_TYPE_MY_SID_ENTRY },
+    { CrmResourceType::CRM_SRV6_NEXTHOP, SAI_SWITCH_ATTR_AVAILABLE_IPV6_NEXTHOP_ENTRY },
 };
 
 const map<string, CrmResourceType> crmThreshTypeResMap =
@@ -87,6 +91,8 @@ const map<string, CrmResourceType> crmThreshTypeResMap =
     { "dnat_entry_threshold_type", CrmResourceType::CRM_DNAT_ENTRY },
     { "mpls_inseg_threshold_type", CrmResourceType::CRM_MPLS_INSEG },
     { "mpls_nexthop_threshold_type", CrmResourceType::CRM_MPLS_NEXTHOP },
+    { "srv6_my_sid_entry_threshold_type", CrmResourceType::CRM_SRV6_MY_SID_ENTRY },
+    { "srv6_nexthop_threshold_type", CrmResourceType::CRM_SRV6_NEXTHOP },
 };
 
 const map<string, CrmResourceType> crmThreshLowResMap =
@@ -109,6 +115,8 @@ const map<string, CrmResourceType> crmThreshLowResMap =
     {"dnat_entry_low_threshold", CrmResourceType::CRM_DNAT_ENTRY },
     {"mpls_inseg_low_threshold", CrmResourceType::CRM_MPLS_INSEG },
     {"mpls_nexthop_low_threshold", CrmResourceType::CRM_MPLS_NEXTHOP },
+    {"srv6_my_sid_entry_low_threshold", CrmResourceType::CRM_SRV6_MY_SID_ENTRY },
+    {"srv6_nexthop_low_threshold", CrmResourceType::CRM_SRV6_NEXTHOP },
 };
 
 const map<string, CrmResourceType> crmThreshHighResMap =
@@ -131,6 +139,8 @@ const map<string, CrmResourceType> crmThreshHighResMap =
     {"dnat_entry_high_threshold", CrmResourceType::CRM_DNAT_ENTRY },
     {"mpls_inseg_high_threshold", CrmResourceType::CRM_MPLS_INSEG },
     {"mpls_nexthop_high_threshold", CrmResourceType::CRM_MPLS_NEXTHOP },
+    {"srv6_my_sid_entry_high_threshold", CrmResourceType::CRM_SRV6_MY_SID_ENTRY },
+    {"srv6_nexthop_high_threshold", CrmResourceType::CRM_SRV6_NEXTHOP },
 };
 
 const map<string, CrmThresholdType> crmThreshTypeMap =
@@ -160,6 +170,8 @@ const map<string, CrmResourceType> crmAvailCntsTableMap =
     { "crm_stats_dnat_entry_available", CrmResourceType::CRM_DNAT_ENTRY },
     { "crm_stats_mpls_inseg_available", CrmResourceType::CRM_MPLS_INSEG },
     { "crm_stats_mpls_nexthop_available", CrmResourceType::CRM_MPLS_NEXTHOP },
+    { "crm_stats_srv6_my_sid_entry_available", CrmResourceType::CRM_SRV6_MY_SID_ENTRY },
+    { "crm_stats_srv6_nexthop_available", CrmResourceType::CRM_SRV6_NEXTHOP },
 };
 
 const map<string, CrmResourceType> crmUsedCntsTableMap =
@@ -182,6 +194,8 @@ const map<string, CrmResourceType> crmUsedCntsTableMap =
     { "crm_stats_dnat_entry_used", CrmResourceType::CRM_DNAT_ENTRY },
     { "crm_stats_mpls_inseg_used", CrmResourceType::CRM_MPLS_INSEG },
     { "crm_stats_mpls_nexthop_used", CrmResourceType::CRM_MPLS_NEXTHOP },
+    { "crm_stats_srv6_my_sid_entry_used", CrmResourceType::CRM_SRV6_MY_SID_ENTRY },
+    { "crm_stats_srv6_nexthop_used", CrmResourceType::CRM_SRV6_NEXTHOP },
 };
 
 CrmOrch::CrmOrch(DBConnector *db, string tableName):
@@ -592,6 +606,62 @@ void CrmOrch::getResAvailableCounters()
 
                 attr.id = SAI_NEXT_HOP_ATTR_TYPE;
                 attr.value.s32 = SAI_NEXT_HOP_TYPE_MPLS;
+                sai_status_t status = sai_object_type_get_availability(gSwitchId, objType, 1, &attr, &availCount);
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    if ((status == SAI_STATUS_NOT_SUPPORTED) ||
+                        (status == SAI_STATUS_NOT_IMPLEMENTED) ||
+                        SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
+                        SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status))
+                    {
+                        // mark unsupported resources
+                        res.second.resStatus = CrmResourceStatus::CRM_RES_NOT_SUPPORTED;
+                        SWSS_LOG_NOTICE("CRM Resource %s not supported", crmResTypeNameMap.at(res.first).c_str());
+                        break;
+                    }
+                    SWSS_LOG_ERROR("Failed to get availability for object_type %u , rv:%d", objType, status);
+                    break;
+                }
+
+                res.second.countersMap[CRM_COUNTERS_TABLE_KEY].availableCounter = static_cast<uint32_t>(availCount);
+
+                break;
+            }
+
+            case CrmResourceType::CRM_SRV6_MY_SID_ENTRY:
+            {
+                sai_object_type_t objType = static_cast<sai_object_type_t>(crmResSaiAvailAttrMap.at(res.first));
+                uint64_t availCount = 0;
+                sai_status_t status = sai_object_type_get_availability(gSwitchId, objType, 0, nullptr, &availCount);
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    if ((status == SAI_STATUS_NOT_SUPPORTED) ||
+                        (status == SAI_STATUS_NOT_IMPLEMENTED) ||
+                        SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
+                        SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status))
+                    {
+                        // mark unsupported resources
+                        res.second.resStatus = CrmResourceStatus::CRM_RES_NOT_SUPPORTED;
+                        SWSS_LOG_NOTICE("CRM Resource %s not supported", crmResTypeNameMap.at(res.first).c_str());
+                        break;
+                    }
+                    SWSS_LOG_ERROR("Failed to get availability for object_type %u , rv:%d", objType, status);
+                    break;
+                }
+
+                res.second.countersMap[CRM_COUNTERS_TABLE_KEY].availableCounter = static_cast<uint32_t>(availCount);
+
+                break;
+            }
+
+            case CrmResourceType::CRM_SRV6_NEXTHOP:
+            {
+                sai_object_type_t objType = static_cast<sai_object_type_t>(crmResSaiAvailAttrMap.at(res.first));
+                sai_attribute_t attr;
+                uint64_t availCount = 0;
+
+                attr.id = SAI_NEXT_HOP_ATTR_TYPE;
+                attr.value.s32 = SAI_NEXT_HOP_TYPE_SRV6_SIDLIST;
                 sai_status_t status = sai_object_type_get_availability(gSwitchId, objType, 1, &attr, &availCount);
                 if (status != SAI_STATUS_SUCCESS)
                 {
