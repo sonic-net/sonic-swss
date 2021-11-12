@@ -41,11 +41,6 @@ IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         m_appIntfTableProducer(appDb, APP_INTF_TABLE_NAME),
         m_appLagTable(appDb, APP_LAG_TABLE_NAME)
 {
-    /*auto subscriberAppTable = new swss::SubscriberStateTable(appDb,
-            APP_LAG_TABLE_NAME, TableConsumable::DEFAULT_POP_BATCH_SIZE, 100);
-    auto appConsumer = new Consumer(subscriberAppTable, this, APP_LAG_TABLE_NAME);
-    Orch::addExecutor(appConsumer);*/
-
     auto subscriberStateTable = new swss::SubscriberStateTable(stateDb,
             STATE_PORT_TABLE_NAME, TableConsumable::DEFAULT_POP_BATCH_SIZE, 100);
     auto stateConsumer = new Consumer(subscriberStateTable, this, STATE_PORT_TABLE_NAME);
@@ -340,7 +335,7 @@ std::string IntfMgr::getIntfAdminStatus(const string &alias)
     return admin;
 }
 
-std::string IntfMgr::getPortMtu(const string &alias)
+std::string IntfMgr::getIntfMtu(const string &alias)
 {
     Table *portTable;
     if (!alias.compare(0, strlen("Eth"), "Eth"))
@@ -368,7 +363,9 @@ std::string IntfMgr::getPortMtu(const string &alias)
         }
     }
     if (mtu.empty())
+    {
         mtu = std::to_string(DEFAULT_MTU_STR);
+    }
     return mtu;
 }
 
@@ -396,20 +393,20 @@ void IntfMgr::updateSubIntfMtu(const string &alias, const string &mtu)
     }
 }
 
-std::string IntfMgr::setHostSubIntfMtu(const string &alias, const string &configMtu, const string &parentMtu)
+std::string IntfMgr::setHostSubIntfMtu(const string &alias, const string &mtu, const string &parent_mtu)
 {
     stringstream cmd;
     string res;
 
-    string subifMtu = configMtu;
+    string subifMtu = mtu;
     subIntf subIf(alias);
 
-    int pmtu = (uint32_t)stoul(parentMtu);
-    int cmtu = (uint32_t)stoul(configMtu);
+    int pmtu = (uint32_t)stoul(parent_mtu);
+    int cmtu = (uint32_t)stoul(mtu);
 
     if (pmtu < cmtu)
     {
-        subifMtu = parentMtu;
+        subifMtu = parent_mtu;
     }
     SWSS_LOG_INFO("subintf %s active mtu: %s", alias.c_str(), subifMtu.c_str());
     cmd << IP_CMD " link set " << shellquote(alias) << " mtu " << shellquote(subifMtu);
@@ -427,8 +424,7 @@ void IntfMgr::updateSubIntfAdminStatus(const string &alias, const string &admin)
         subIntf subIf(intf);
         if (subIf.parentIntf() == alias)
         {
-            /*Avoid duplicate parent admin UP event when parent goes down
-             * This avoids intfmgrd carsh due to duplicate port up event when parent is actually going admin down*/
+            /*  Avoid duplicate interface admin UP event. */
             string curr_admin = m_subIntfList[intf].currAdminStatus;
             if (curr_admin == "up" && curr_admin == admin)
                 continue;
@@ -442,17 +438,17 @@ void IntfMgr::updateSubIntfAdminStatus(const string &alias, const string &admin)
     }
 }
 
-std::string IntfMgr::setHostSubIntfAdminStatus(const string &alias, const string &configAdmin, const string &parentAdmin)
+std::string IntfMgr::setHostSubIntfAdminStatus(const string &alias, const string &admin_status, const string &parent_admin_status)
 {
     stringstream cmd;
     string res;
 
-    if (parentAdmin == "up" || configAdmin == "down")
+    if (parent_admin_status == "up" || admin_status == "down")
     {
-        SWSS_LOG_INFO("subintf %s admin_status: %s", alias.c_str(), configAdmin.c_str());
-        cmd << IP_CMD " link set " << shellquote(alias) << " " << shellquote(configAdmin);
+        SWSS_LOG_INFO("subintf %s admin_status: %s", alias.c_str(), admin_status.c_str());
+        cmd << IP_CMD " link set " << shellquote(alias) << " " << shellquote(admin_status);
         EXEC_WITH_ERROR_THROW(cmd.str(), res);
-        return configAdmin;
+        return admin_status;
     }
     else
     {
@@ -780,7 +776,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
                 string subintf_mtu;
                 try
                 {
-                    string parentMtu = getPortMtu(subIf.parentIntf());
+                    string parentMtu = getIntfMtu(subIf.parentIntf());
                     subintf_mtu = setHostSubIntfMtu(alias, mtu, parentMtu);
                     FieldValueTuple fvTuple("mtu", mtu);
                     std::remove(data.begin(), data.end(), fvTuple);
@@ -985,50 +981,50 @@ void IntfMgr::doTask(Consumer &consumer)
         }
         else
         {
-        vector<string> keys = tokenize(kfvKey(t), config_db_key_delimiter);
-        const vector<FieldValueTuple>& data = kfvFieldsValues(t);
-        string op = kfvOp(t);
+            vector<string> keys = tokenize(kfvKey(t), config_db_key_delimiter);
+            const vector<FieldValueTuple>& data = kfvFieldsValues(t);
+            string op = kfvOp(t);
 
-        if (keys.size() == 1)
-        {
-            if((table_name == CFG_VOQ_INBAND_INTERFACE_TABLE_NAME) &&
-                    (op == SET_COMMAND))
+            if (keys.size() == 1)
             {
-                //No further processing needed. Just relay to orchagent
-                m_appIntfTableProducer.set(keys[0], data);
-                m_stateIntfTable.hset(keys[0], "vrf", "");
+                if((table_name == CFG_VOQ_INBAND_INTERFACE_TABLE_NAME) &&
+                        (op == SET_COMMAND))
+                {
+                    //No further processing needed. Just relay to orchagent
+                    m_appIntfTableProducer.set(keys[0], data);
+                    m_stateIntfTable.hset(keys[0], "vrf", "");
 
-                it = consumer.m_toSync.erase(it);
-                continue;
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+                if (!doIntfGeneralTask(keys, data, op))
+                {
+                    it++;
+                    continue;
+                }
+                else
+                {
+                    //Entry programmed, remove it from pending list if present
+                    m_pendingReplayIntfList.erase(keys[0]);
+                }
             }
-            if (!doIntfGeneralTask(keys, data, op))
+            else if (keys.size() == 2)
             {
-                it++;
-                continue;
+                if (!doIntfAddrTask(keys, data, op))
+                {
+                    it++;
+                    continue;
+                }
+                else
+                {
+                    //Entry programmed, remove it from pending list if present
+                    m_pendingReplayIntfList.erase(keys[0] + config_db_key_delimiter + keys[1] );
+                }
             }
             else
             {
-                //Entry programmed, remove it from pending list if present
-                m_pendingReplayIntfList.erase(keys[0]);
+                SWSS_LOG_ERROR("Invalid key %s", kfvKey(t).c_str());
             }
-        }
-        else if (keys.size() == 2)
-        {
-            if (!doIntfAddrTask(keys, data, op))
-            {
-                it++;
-                continue;
-            }
-            else
-            {
-                //Entry programmed, remove it from pending list if present
-                m_pendingReplayIntfList.erase(keys[0] + config_db_key_delimiter + keys[1] );
-            }
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Invalid key %s", kfvKey(t).c_str());
-        }
         }
 
         it = consumer.m_toSync.erase(it);

@@ -58,10 +58,10 @@ private:
     void flushLoopbackIntfs(void);
 
     std::string getIntfAdminStatus(const std::string &alias);
-    std::string getPortMtu(const std::string &alias);
+    std::string getIntfMtu(const std::string &alias);
     void addHostSubIntf(const std::string&intf, const std::string &subIntf, const std::string &vlan);
-    std::string setHostSubIntfMtu(const std::string &alias, const std::string &configMtu, const std::string &parentMtu);
-    std::string setHostSubIntfAdminStatus(const std::string &alias, const std::string &configAdmin, const std::string &parentAdmin);
+    std::string setHostSubIntfMtu(const std::string &alias, const std::string &mtu, const std::string &parent_mtu);
+    std::string setHostSubIntfAdminStatus(const std::string &alias, const std::string &admin_status, const std::string &parent_admin_status);
     void removeHostSubIntf(const std::string &subIntf);
     void setSubIntfStateOk(const std::string &alias);
     void removeSubIntfState(const std::string &alias);

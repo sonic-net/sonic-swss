@@ -837,7 +837,6 @@ bool PortsOrch::addSubPort(Port &port, const string &alias, const string &vlan, 
         return false;
     }
     subIntf subIf(alias);
-    string subport = subIf.longName();
     string parentAlias = subIf.parentIntf();
     sai_vlan_id_t vlan_id;
     try
