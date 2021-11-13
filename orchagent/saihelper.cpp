@@ -57,6 +57,7 @@ sai_qos_map_api_t*          sai_qos_map_api;
 sai_buffer_api_t*           sai_buffer_api;
 sai_acl_api_t*              sai_acl_api;
 sai_hash_api_t*             sai_hash_api;
+sai_udf_api_t*              sai_udf_api;
 sai_mirror_api_t*           sai_mirror_api;
 sai_fdb_api_t*              sai_fdb_api;
 sai_dtel_api_t*             sai_dtel_api;
@@ -186,6 +187,7 @@ void initSaiApi()
     sai_api_query(SAI_API_SCHEDULER_GROUP,      (void **)&sai_scheduler_group_api);
     sai_api_query(SAI_API_ACL,                  (void **)&sai_acl_api);
     sai_api_query(SAI_API_HASH,                 (void **)&sai_hash_api);
+    sai_api_query(SAI_API_UDF,                  (void **)&sai_udf_api);
     sai_api_query(SAI_API_DTEL,                 (void **)&sai_dtel_api);
     sai_api_query(SAI_API_SAMPLEPACKET,         (void **)&sai_samplepacket_api);
     sai_api_query(SAI_API_DEBUG_COUNTER,        (void **)&sai_debug_counter_api);
@@ -223,6 +225,7 @@ void initSaiApi()
     sai_log_set(SAI_API_SCHEDULER_GROUP,        SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_ACL,                    SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_HASH,                   SAI_LOG_LEVEL_NOTICE);
+    sai_log_set(SAI_API_UDF,                    SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_DTEL,                   SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_SAMPLEPACKET,           SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_DEBUG_COUNTER,          SAI_LOG_LEVEL_NOTICE);
