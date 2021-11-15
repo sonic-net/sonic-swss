@@ -21,7 +21,7 @@ public:
     }
 
     /* ip_string|if_alias|vni|router_mac separated by ',' */
-    NextHopGroupKey(const std::string &nexthops, bool overlay_nh, bool srv6_nh)
+    NextHopGroupKey(const std::string &nexthops, bool overlay_nh, bool srv6_nh = false)
     {
         if (overlay_nh)
         {

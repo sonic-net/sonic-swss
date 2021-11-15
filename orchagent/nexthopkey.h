@@ -63,7 +63,7 @@ struct NextHopKey
         }
         weight = 0;
     }
-    NextHopKey(const std::string &str, bool overlay_nh, bool srv6_nh)
+    NextHopKey(const std::string &str, bool overlay_nh, bool srv6_nh = false)
     {
         if (str.find(NHG_DELIMITER) != string::npos)
         {
