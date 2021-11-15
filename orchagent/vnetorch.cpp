@@ -39,6 +39,7 @@ extern NeighOrch *gNeighOrch;
 extern CrmOrch *gCrmOrch;
 extern RouteOrch *gRouteOrch;
 extern MacAddress gVxlanMacAddress;
+extern BfdOrch *gBfdOrch;
 
 /*
  * VRF Modeling and VNetVrf class definitions
@@ -558,9 +559,14 @@ static bool del_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx)
     route_entry.destination = ip_pfx;
 
     sai_status_t status = sai_route_api->remove_route_entry(&route_entry);
-    if (status != SAI_STATUS_SUCCESS)
+    if (status == SAI_STATUS_ITEM_NOT_FOUND || status == SAI_STATUS_INVALID_PARAMETER)
     {
-        SWSS_LOG_ERROR("SAI Failed to remove route");
+        SWSS_LOG_INFO("Unable to remove route since route is already removed");
+        return true;
+    }
+    else if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("SAI Failed to remove route, rv: %d", status);
         return false;
     }
 
@@ -630,12 +636,17 @@ static bool update_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_obj
 }
 
 VNetRouteOrch::VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOrch *vnetOrch)
-                                  : Orch2(db, tableNames, request_), vnet_orch_(vnetOrch)
+                                  : Orch2(db, tableNames, request_), vnet_orch_(vnetOrch), m_bfdSessionProducer(db, APP_BFD_SESSION_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
 
     handler_map_.insert(handler_pair(APP_VNET_RT_TABLE_NAME, &VNetRouteOrch::handleRoutes));
     handler_map_.insert(handler_pair(APP_VNET_RT_TUNNEL_TABLE_NAME, &VNetRouteOrch::handleTunnel));
+
+    m_state_db = shared_ptr<DBConnector>(new DBConnector("STATE_DB", 0));
+    m_stateVnetRtTunnelTable = unique_ptr<Table>(new Table(m_state_db.get(), STATE_VNET_RT_TUNNEL_TABLE_NAME));
+
+    gBfdOrch->attach(this);
 }
 
 bool VNetRouteOrch::hasNextHopGroup(const string& vnet, const NextHopGroupKey& nexthops)
@@ -667,6 +678,10 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
 
     for (auto it : next_hop_set)
     {
+        if (nexthop_info_[vnet].find(it.ip_address) != nexthop_info_[vnet].end() && nexthop_info_[vnet][it.ip_address].bfd_state != SAI_BFD_SESSION_STATE_UP)
+        {
+            continue;
+        }
         sai_object_id_t next_hop_id = vrf_obj->getTunnelNextHop(it);
         next_hop_ids.push_back(next_hop_id);
         nhopgroup_members_set[next_hop_id] = it;
@@ -797,7 +812,8 @@ bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey
 
 template<>
 bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipPrefix,
-                                               NextHopGroupKey& nexthops, string& op)
+                                               NextHopGroupKey& nexthops, string& op, 
+                                               bool temp_change, const map<NextHopKey, IpAddress>& monitors)
 {
     SWSS_LOG_ENTER();
 
@@ -838,6 +854,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         /* The route is pointing to one single endpoint */
         if (!hasNextHopGroup(vnet, nexthops))
         {
+            setEndpointMonitor(vnet, monitors, nexthops);
             if (nexthops.getSize() == 1)
             {
                 NextHopKey nexthop(nexthops.to_string(), true);
@@ -851,6 +868,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             {
                 if (!addNextHopGroup(vnet, nexthops, vrf_obj))
                 {
+                    delEndpointMonitor(vnet, nexthops);
                     SWSS_LOG_ERROR("Failed to create next hop group %s", nexthops.to_string().c_str());
                     return false;
                 }
@@ -863,13 +881,32 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         {
             bool route_status = true;
 
-            if (it_route == syncd_tunnel_routes_[vnet].end())
+            // Remove route if the nexthop group has no active endpoint
+            if (syncd_nexthop_groups_[vnet][nexthops].active_members.empty())
             {
-                route_status = add_route(vr_id, pfx, nh_id);
+                if (it_route != syncd_tunnel_routes_[vnet].end())
+                {
+                    del_route(vr_id, pfx);
+                }
             }
             else
             {
-                route_status = update_route(vr_id, pfx, nh_id);
+                if (it_route == syncd_tunnel_routes_[vnet].end() || temp_change)
+                {
+                    route_status = add_route(vr_id, pfx, nh_id);
+                }
+                else
+                {
+                    NextHopGroupKey nhg = it_route->second;
+                    if (syncd_nexthop_groups_[vnet][nhg].active_members.empty())
+                    {
+                        route_status = add_route(vr_id, pfx, nh_id);
+                    } 
+                    else 
+                    {
+                        route_status = update_route(vr_id, pfx, nh_id);
+                    }
+                }
             }
 
             if (!route_status)
@@ -882,6 +919,11 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                 }
                 return false;
             }
+        }
+
+        if (temp_change)
+        {
+            return true;
         }
 
         if (it_route != syncd_tunnel_routes_[vnet].end())
@@ -900,13 +942,22 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                     NextHopKey nexthop(nhg.to_string(), true);
                     vrf_obj->removeTunnelNextHop(nexthop);
                 }
+                delEndpointMonitor(vnet, nhg);
+            }
+            else
+            {
+                syncd_nexthop_groups_[vnet][nhg].tunnel_routes.erase(ipPrefix);
             }
             vrf_obj->removeRoute(ipPrefix);
         }
 
+        syncd_nexthop_groups_[vnet][nexthops].tunnel_routes.insert(ipPrefix);
+
         syncd_tunnel_routes_[vnet][ipPrefix] = nexthops;
         syncd_nexthop_groups_[vnet][nexthops].ref_count++;
         vrf_obj->addRoute(ipPrefix, nexthops);
+
+        postRouteState(vnet, ipPrefix, nexthops);
     }
     else if (op == DEL_COMMAND)
     {
@@ -928,6 +979,11 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             }
         }
 
+        if (temp_change)
+        {
+            return true;
+        }
+
         if(--syncd_nexthop_groups_[vnet][nhg].ref_count == 0)
         {
             if (nhg.getSize() > 1)
@@ -940,6 +996,11 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                 NextHopKey nexthop(nhg.to_string(), true);
                 vrf_obj->removeTunnelNextHop(nexthop);
             }
+            delEndpointMonitor(vnet, nhg);
+        }
+        else
+        {
+            syncd_nexthop_groups_[vnet][nhg].tunnel_routes.erase(ipPrefix);
         }
 
         syncd_tunnel_routes_[vnet].erase(ipPrefix);
@@ -949,6 +1010,12 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         }
 
         vrf_obj->removeRoute(ipPrefix);
+
+        removeRouteState(vnet, ipPrefix);
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Unknown operation");
     }
 
     return true;
@@ -1315,6 +1382,316 @@ void VNetRouteOrch::delRoute(const IpPrefix& ipPrefix)
     syncd_routes_.erase(route_itr);
 }
 
+void VNetRouteOrch::createBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& monitor_addr)
+{
+    SWSS_LOG_ENTER();
+
+    IpAddress endpoint_addr = endpoint.ip_address;
+    if (nexthop_info_[vnet].find(endpoint_addr) != nexthop_info_[vnet].end())
+    {
+        SWSS_LOG_ERROR("BFD session for endpoint %s already exist", endpoint_addr.to_string().c_str());
+        return;
+    }
+
+    if (bfd_sessions_.find(monitor_addr) == bfd_sessions_.end())
+    {
+        vector<FieldValueTuple>    data;
+        string key = "default:default:" + monitor_addr.to_string();
+
+        auto tun_name = vnet_orch_->getTunnelName(vnet);
+        VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
+        auto tunnel_obj = vxlan_orch->getVxlanTunnel(tun_name);
+        IpAddress src_ip = tunnel_obj->getSrcIP();
+
+        FieldValueTuple fvTuple("local_addr", src_ip.to_string());
+        data.push_back(fvTuple);
+
+        m_bfdSessionProducer.set(key, data);
+
+        bfd_sessions_[monitor_addr].bfd_state = SAI_BFD_SESSION_STATE_DOWN;
+    }
+
+    BfdSessionInfo& bfd_info = bfd_sessions_[monitor_addr];
+    bfd_info.endpoints[vnet] = endpoint;
+    VNetNextHopInfo nexthop_info;
+    nexthop_info.monitor_addr = monitor_addr;
+    nexthop_info.bfd_state = bfd_info.bfd_state;
+    nexthop_info_[vnet][endpoint_addr] = nexthop_info;
+}
+
+void VNetRouteOrch::removeBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& monitor_addr)
+{
+    SWSS_LOG_ENTER();
+
+    IpAddress endpoint_addr = endpoint.ip_address;
+    if (nexthop_info_[vnet].find(endpoint_addr) == nexthop_info_[vnet].end())
+    {
+        SWSS_LOG_ERROR("BFD session for endpoint %s does not exist", endpoint_addr.to_string().c_str());
+    }
+    nexthop_info_[vnet].erase(endpoint_addr);
+
+    bfd_sessions_[monitor_addr].endpoints.erase(vnet);
+    if (bfd_sessions_[monitor_addr].endpoints.empty())
+    {
+        string key = "default:default:" + monitor_addr.to_string();
+
+        m_bfdSessionProducer.del(key);
+
+        bfd_sessions_.erase(monitor_addr);
+    }
+}
+
+void VNetRouteOrch::setEndpointMonitor(const string& vnet, const map<NextHopKey, IpAddress>& monitors, NextHopGroupKey& nexthops)
+{
+    SWSS_LOG_ENTER();
+
+    for (auto monitor : monitors)
+    {
+        NextHopKey nh = monitor.first;
+        IpAddress monitor_ip = monitor.second;
+        if (nexthop_info_[vnet].find(nh.ip_address) == nexthop_info_[vnet].end())
+        {
+            createBfdSession(vnet, nh, monitor_ip);
+        }
+
+        auto& nhgs = nexthop_info_[vnet][nh.ip_address].nhgs;
+        if (nhgs.find(nexthops) == nhgs.end())
+        {
+            nhgs.insert(nexthops);
+        }
+    }
+}
+
+void VNetRouteOrch::delEndpointMonitor(const string& vnet, NextHopGroupKey& nexthops)
+{
+    SWSS_LOG_ENTER();
+
+    std::set<NextHopKey> nhks = nexthops.getNextHops();
+    for (auto nhk: nhks)
+    {
+        IpAddress ip = nhk.ip_address;
+        if (nexthop_info_[vnet].find(ip) != nexthop_info_[vnet].end()) {
+            nexthop_info_[vnet][ip].nhgs.erase(nexthops);
+            if (nexthop_info_[vnet][ip].nhgs.empty())
+            {
+                removeBfdSession(vnet, nhk, nexthop_info_[vnet][ip].monitor_addr);
+            }
+        }
+    }
+}
+
+void VNetRouteOrch::postRouteState(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops)
+{
+    const string state_db_key = vnet + state_db_key_delimiter + ipPrefix.to_string();
+    vector<FieldValueTuple> fvVector;
+
+    NextHopGroupInfo& nhg_info = syncd_nexthop_groups_[vnet][nexthops];
+    string route_state = nhg_info.active_members.empty() ? "inactive" : "active";
+    string ep_str = "";
+    int idx_ep = 0;
+    for (auto nh_pair : nhg_info.active_members)
+    {
+        NextHopKey nh = nh_pair.first;
+        ep_str += idx_ep == 0 ? nh.ip_address.to_string() : "," + nh.ip_address.to_string();
+        idx_ep++;
+    }
+
+    fvVector.emplace_back("active_endpoints", ep_str);
+    fvVector.emplace_back("state", route_state);
+
+    m_stateVnetRtTunnelTable->set(state_db_key, fvVector);
+}
+
+void VNetRouteOrch::removeRouteState(const string& vnet, IpPrefix& ipPrefix)
+{
+    const string state_db_key = vnet + state_db_key_delimiter + ipPrefix.to_string();
+    m_stateVnetRtTunnelTable->del(state_db_key);
+}
+
+void VNetRouteOrch::update(SubjectType type, void *cntx)
+{
+    SWSS_LOG_ENTER();
+
+    assert(cntx);
+
+    switch(type) {
+    case SUBJECT_TYPE_BFD_SESSION_STATE_CHANGE:
+    {
+        BfdUpdate *update = static_cast<BfdUpdate *>(cntx);
+        updateVnetTunnel(*update);
+        break;
+    }
+    default:
+        // Received update in which we are not interested
+        // Ignore it
+        return;
+    }
+}
+
+void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
+{
+    SWSS_LOG_ENTER();
+
+    auto key = update.peer;
+    sai_bfd_session_state_t state = update.state;
+
+    size_t found_vrf = key.find(state_db_key_delimiter);
+    if (found_vrf == string::npos)
+    {
+        SWSS_LOG_ERROR("Failed to parse key %s, no vrf is given", key.c_str());
+        return;
+    }
+
+    size_t found_ifname = key.find(state_db_key_delimiter, found_vrf + 1);
+    if (found_ifname == string::npos)
+    {
+        SWSS_LOG_ERROR("Failed to parse key %s, no ifname is given", key.c_str());
+        return;
+    }
+
+    string vrf_name = key.substr(0, found_vrf);
+    string alias = key.substr(found_vrf + 1, found_ifname - found_vrf - 1);
+    IpAddress peer_address(key.substr(found_ifname + 1));
+
+    if (alias != "default" || vrf_name != "default")
+    {
+        return;
+    }
+
+    auto it_peer = bfd_sessions_.find(peer_address);
+
+    if (it_peer == bfd_sessions_.end()) {
+        SWSS_LOG_INFO("No endpoint for BFD peer %s", peer_address.to_string().c_str());
+        return;
+    }
+
+    BfdSessionInfo& bfd_info = it_peer->second;
+    bfd_info.bfd_state = state;
+
+    for (auto it = bfd_info.endpoints.begin(); it != bfd_info.endpoints.end(); it++)
+    {
+        string vnet = it->first;
+        NextHopKey endpoint = it->second;
+        auto *vrf_obj = vnet_orch_->getTypePtr<VNetVrfObject>(vnet);
+
+        if (syncd_nexthop_groups_.find(vnet) == syncd_nexthop_groups_.end())
+        {
+            SWSS_LOG_ERROR("Vnet %s not found", vnet.c_str());
+            return;
+        }
+
+        nexthop_info_[vnet][endpoint.ip_address].bfd_state = state;
+
+        for (auto nexthops : nexthop_info_[vnet][endpoint.ip_address].nhgs)
+        {
+            NextHopGroupInfo& nhg_info = syncd_nexthop_groups_[vnet][nexthops];
+            if (!(nexthops.contains(endpoint)))
+            {
+                SWSS_LOG_ERROR("Nexthop %s not found in nexthop group %s",
+                        endpoint.to_string().c_str(), nexthops.to_string().c_str());
+                continue;
+            }
+
+            if (state == SAI_BFD_SESSION_STATE_UP)
+            {
+                sai_object_id_t next_hop_group_member_id = SAI_NULL_OBJECT_ID;
+                if (nexthops.getSize() > 1)
+                {
+                    // Create a next hop group member
+                    vector<sai_attribute_t> nhgm_attrs;
+
+                    sai_attribute_t nhgm_attr;
+                    nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID;
+                    nhgm_attr.value.oid = nhg_info.next_hop_group_id;
+                    nhgm_attrs.push_back(nhgm_attr);
+
+                    nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
+                    nhgm_attr.value.oid = vrf_obj->getTunnelNextHop(endpoint);
+                    nhgm_attrs.push_back(nhgm_attr);
+
+                    sai_status_t status = sai_next_hop_group_api->create_next_hop_group_member(&next_hop_group_member_id,
+                                                                                gSwitchId,
+                                                                                (uint32_t)nhgm_attrs.size(),
+                                                                                nhgm_attrs.data());
+
+                    if (status != SAI_STATUS_SUCCESS)
+                    {
+                        SWSS_LOG_ERROR("Failed to add next hop member to group %" PRIx64 ": %d\n",
+                                    nhg_info.next_hop_group_id, status);
+                        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, status);
+                        if (handle_status != task_success)
+                        {
+                            continue;
+                        }
+                    }
+
+                    gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+                }
+
+                // Re-create routes when it was temporarily removed
+                if (nhg_info.active_members.empty())
+                {
+                    nhg_info.active_members[endpoint] = next_hop_group_member_id;
+                    if (vnet_orch_->isVnetExecVrf())
+                    {
+                        for (auto ip_pfx : syncd_nexthop_groups_[vnet][nexthops].tunnel_routes)
+                        {
+                            string op = SET_COMMAND;
+                            doRouteTask<VNetVrfObject>(vnet, ip_pfx, nexthops, op, true);
+                        }
+                    }
+                } else {
+                    nhg_info.active_members[endpoint] = next_hop_group_member_id;
+                }
+            }
+            else
+            {
+                if (nexthops.getSize() > 1 && nhg_info.active_members.find(endpoint) != nhg_info.active_members.end())
+                {
+                    sai_object_id_t nexthop_id = nhg_info.active_members[endpoint];
+                    sai_status_t status = sai_next_hop_group_api->remove_next_hop_group_member(nexthop_id);
+
+                    if (status != SAI_STATUS_SUCCESS)
+                    {
+                        SWSS_LOG_ERROR("Failed to remove next hop member %" PRIx64 " from group %" PRIx64 ": %d\n",
+                                nexthop_id, nhg_info.next_hop_group_id, status);
+                        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEXT_HOP_GROUP, status);
+                        if (handle_status != task_success)
+                        {
+                            continue;
+                        }
+                    }
+
+                    vrf_obj->removeTunnelNextHop(endpoint);
+
+                    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+                }
+
+                nhg_info.active_members.erase(endpoint);
+
+                // Remove routes when nexthop group has no active endpoint
+                if (nhg_info.active_members.empty())
+                {
+                    if (vnet_orch_->isVnetExecVrf())
+                    {
+                        for (auto ip_pfx : syncd_nexthop_groups_[vnet][nexthops].tunnel_routes)
+                        {
+                            string op = DEL_COMMAND;
+                            doRouteTask<VNetVrfObject>(vnet, ip_pfx, nexthops, op, true);
+                        }
+                    }
+                }
+            }
+
+            // Post configured in State DB
+            for (auto ip_pfx : syncd_nexthop_groups_[vnet][nexthops].tunnel_routes)
+            {
+                postRouteState(vnet, ip_pfx, nexthops);
+            }
+        }
+    }
+}
+
 bool VNetRouteOrch::handleTunnel(const Request& request)
 {
     SWSS_LOG_ENTER();
@@ -1322,6 +1699,7 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     vector<IpAddress> ip_list;
     vector<string> mac_list;
     vector<string> vni_list;
+    vector<IpAddress> monitor_list;
 
     for (const auto& name: request.getAttrFieldNames())
     {
@@ -1338,6 +1716,10 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         {
             string mac_str = request.getAttrString(name);
             mac_list = tokenize(mac_str, ',');
+        }
+        else if (name == "endpoint_monitor")
+        {
+            monitor_list = request.getAttrIPList(name);
         }
         else
         {
@@ -1358,6 +1740,12 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         return false;
     }
 
+    if (!monitor_list.empty() && monitor_list.size() != ip_list.size())
+    {
+        SWSS_LOG_ERROR("Peer monitor size of %zu does not match endpoint size of %zu", monitor_list.size(), ip_list.size());
+        return false;
+    }
+    
     const std::string& vnet_name = request.getKeyString(0);
     auto ip_pfx = request.getKeyIpPrefix(1);
     auto op = request.getOperation();
@@ -1366,6 +1754,7 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
                    op.c_str(), ip_pfx.to_string().c_str());
 
     NextHopGroupKey nhg("", true);
+    map<NextHopKey, IpAddress> monitors;
     for (size_t idx_ip = 0; idx_ip < ip_list.size(); idx_ip++)
     {
         IpAddress ip = ip_list[idx_ip];
@@ -1387,11 +1776,15 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
 
         NextHopKey nh(ip, mac, vni, true);
         nhg.add(nh);
+        if (!monitor_list.empty())
+        {
+            monitors[nh] = monitor_list[idx_ip];
+        }
     }
 
     if (vnet_orch_->isVnetExecVrf())
     {
-        return doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, nhg, op);
+        return doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, nhg, op, false, monitors);
     }
 
     return true;

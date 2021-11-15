@@ -13,6 +13,7 @@
 #include "producerstatetable.h"
 #include "observer.h"
 #include "nexthopgroupkey.h"
+#include "bfdorch.h"
 
 #define VNET_BITMAP_SIZE 32
 #define VNET_TUNNEL_SIZE 40960
@@ -72,6 +73,7 @@ struct NextHopGroupInfo
     sai_object_id_t                         next_hop_group_id;      // next hop group id (null for single nexthop)
     int                                     ref_count;              // reference count
     std::map<NextHopKey, sai_object_id_t>   active_members;         // active nexthops and nexthop group member id (null for single nexthop)
+    std::set<IpPrefix>                      tunnel_routes;
 };
 
 class VNetObject
@@ -252,7 +254,7 @@ const request_description_t vnet_route_description = {
         { "nexthop",                REQ_T_STRING },
         { "vni",                    REQ_T_STRING },
         { "mac_address",            REQ_T_STRING },
-        { "endpoint_monitor",       REQ_T_STRING },
+        { "endpoint_monitor",       REQ_T_IP_LIST },
     },
     { }
 };
@@ -283,10 +285,25 @@ struct VNetNextHopObserverEntry
 /* NextHopObserverTable: Destination IP address, next hop observer entry */
 typedef std::map<IpAddress, VNetNextHopObserverEntry> VNetNextHopObserverTable;
 
+struct VNetNextHopInfo
+{
+    IpAddress monitor_addr;
+    sai_bfd_session_state_t bfd_state;
+    std::set<NextHopGroupKey> nhgs;
+};
+
+struct BfdSessionInfo
+{
+    sai_bfd_session_state_t bfd_state;
+    std::map<std::string, NextHopKey> endpoints;
+};
+
 typedef std::map<NextHopGroupKey, NextHopGroupInfo> VNetNextHopGroupInfoTable;
 typedef std::map<IpPrefix, NextHopGroupKey> VNetTunnelRouteTable;
+typedef std::map<IpAddress, BfdSessionInfo> BfdSessionTable;
+typedef std::map<IpAddress, VNetNextHopInfo> VNetEndpointInfoTable;
 
-class VNetRouteOrch : public Orch2, public Subject
+class VNetRouteOrch : public Orch2, public Subject, public Observer
 {
 public:
     VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOrch *);
@@ -296,6 +313,8 @@ public:
 
     void attach(Observer* observer, const IpAddress& dstAddr);
     void detach(Observer* observer, const IpAddress& dstAddr);
+
+    void update(SubjectType, void *);
 
 private:
     virtual bool addOperation(const Request& request);
@@ -312,8 +331,18 @@ private:
     bool addNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj);
     bool removeNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj);
 
+    void createBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr);
+    void removeBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr);
+    void setEndpointMonitor(const string& vnet, const map<NextHopKey, IpAddress>& monitors, NextHopGroupKey& nexthops);
+    void delEndpointMonitor(const string& vnet, NextHopGroupKey& nexthops);
+    void postRouteState(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops);
+    void removeRouteState(const string& vnet, IpPrefix& ipPrefix);
+
+    void updateVnetTunnel(const BfdUpdate&);
+
     template<typename T>
-    bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op);
+    bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op,
+                    bool temp_change, const std::map<NextHopKey, IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
 
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, nextHop& nh, string& op);
@@ -326,6 +355,11 @@ private:
     VNetNextHopObserverTable next_hop_observers_;
     std::map<std::string, VNetNextHopGroupInfoTable> syncd_nexthop_groups_;
     std::map<std::string, VNetTunnelRouteTable> syncd_tunnel_routes_;
+    BfdSessionTable bfd_sessions_;
+    std::map<std::string, VNetEndpointInfoTable> nexthop_info_;
+    ProducerStateTable m_bfdSessionProducer;
+    shared_ptr<DBConnector> m_state_db;
+    unique_ptr<Table> m_stateVnetRtTunnelTable;
 };
 
 class VNetCfgRouteOrch : public Orch
