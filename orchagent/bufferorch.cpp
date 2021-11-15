@@ -18,7 +18,7 @@ extern sai_buffer_api_t *sai_buffer_api;
 extern PortsOrch *gPortsOrch;
 extern sai_object_id_t gSwitchId;
 
-#define BUFFER_POOL_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS  "10000"
+#define BUFFER_POOL_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS  "60000"
 
 
 static const vector<sai_buffer_pool_stat_t> bufferPoolWatermarkStatIds =
