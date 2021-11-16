@@ -991,7 +991,7 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
             if (scheduler_group_port_info.group_has_been_initialized[ii])
             {
                 // skip this iteration if it has been initialized which means there're no children in this group
-                SWSS_LOG_INFO("No child group for port %s group %lx, skip", port.m_alias.c_str(), group_id);
+                SWSS_LOG_INFO("No child group for port %s group 0x%" PRIx64 ", skip", port.m_alias.c_str(), group_id);
                 continue;
             }
 
@@ -1009,13 +1009,13 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
 
             uint32_t child_count = attr.value.u32;
 
-            SWSS_LOG_INFO("Port %s group %lx has been initialized with %u child group(s)", port.m_alias.c_str(), group_id, child_count);
+            SWSS_LOG_INFO("Port %s group 0x%" PRIx64 " has been initialized with %u child group(s)", port.m_alias.c_str(), group_id, child_count);
             scheduler_group_port_info.group_has_been_initialized[ii] = true;
 
             // skip this iteration if there're no children in this group
             if (child_count == 0)
             {
-                SWSS_LOG_INFO("No child group for port %s group %lx, skip", port.m_alias.c_str(), group_id);
+                SWSS_LOG_INFO("No child group for port %s group 0x%" PRIx64 ", skip", port.m_alias.c_str(), group_id);
                 continue;
             }
 
@@ -1039,10 +1039,8 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
 
         for (const auto& child_group_id: child_groups_per_group)
         {
-            SWSS_LOG_INFO("Check child group %lx for port %s group %lx", child_group_id, port.m_alias.c_str(), group_id);
             if (child_group_id == queue_id)
             {
-                SWSS_LOG_INFO("Found group id %lx for port %s queue %lx", group_id, port.m_alias.c_str(), queue_id);
                 return group_id;
             }
         }
