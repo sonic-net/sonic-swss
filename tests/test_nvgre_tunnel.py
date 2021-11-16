@@ -194,7 +194,7 @@ class NvgreTunnel(object):
             NVGRE_TUNNEL_MAP, '|', f'{tunnel_name}|{tunnel_map_entry_name}',
             [
                 ('vsid', vsid),
-                ('vlan', f'Vlan{vlan_id}'),
+                ('vlan_id', f'Vlan{vlan_id}'),
             ],
         )
         time.sleep(1)

@@ -137,9 +137,9 @@ const request_description_t nvgre_tunnel_map_request_description = {
             { REQ_T_STRING, REQ_T_STRING },
             {
                 { "vsid",  REQ_T_UINT },
-                { "vlan", REQ_T_VLAN },
+                { "vlan_id", REQ_T_VLAN },
             },
-            { "vsid", "vlan" }
+            { "vsid", "vlan_id" }
 };
 
 class NvgreTunnelMapRequest : public Request

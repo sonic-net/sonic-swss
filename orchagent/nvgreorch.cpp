@@ -416,7 +416,7 @@ bool NvgreTunnelMapOrch::addOperation(const Request& request)
         return true;
     }
 
-    sai_vlan_id_t vlan_id = (sai_vlan_id_t) request.getAttrVlan("vlan");
+    sai_vlan_id_t vlan_id = (sai_vlan_id_t) request.getAttrVlan("vlan_id");
     Port port;
 
     if (!gPortsOrch->getVlanByVlanId(vlan_id, port))
