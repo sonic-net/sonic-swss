@@ -22,6 +22,8 @@ end
 -- Initialize the accumulative size with 4096
 -- This is to absorb the possible deviation
 local accumulative_size = 4096
+-- Egress mirror size: 2 * maximum MTU (10k)
+local egress_mirror_size = 20*1024
 
 local appl_db = "0"
 local state_db = "6"
@@ -56,8 +58,9 @@ local pipeline_latency = tonumber(redis.call('HGET', asic_keys[1], 'pipeline_lat
 if is_port_with_8lanes(lanes) then
     -- The pipeline latency should be adjusted accordingly for ports with 2 buffer units
     pipeline_latency = pipeline_latency * 2 - 1
+    egress_mirror_size = egress_mirror_size * 2
 end
-accumulative_size = accumulative_size + 2 * pipeline_latency * 1024
+accumulative_size = accumulative_size + 2 * pipeline_latency * 1024 + egress_mirror_size
 
 -- Fetch all keys in BUFFER_PG according to the port
 redis.call('SELECT', appl_db)

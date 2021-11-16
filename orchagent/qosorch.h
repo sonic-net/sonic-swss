@@ -25,6 +25,8 @@ const string green_min_threshold_field_name     = "green_min_threshold";
 const string red_drop_probability_field_name    = "red_drop_probability";
 const string yellow_drop_probability_field_name = "yellow_drop_probability";
 const string green_drop_probability_field_name  = "green_drop_probability";
+const string dscp_to_fc_field_name              = "dscp_to_fc_map";
+const string exp_to_fc_field_name               = "exp_to_fc_map";
 
 const string wred_profile_field_name            = "wred_profile";
 const string wred_red_enable_field_name         = "wred_red_enable";
@@ -127,6 +129,20 @@ public:
     sai_object_id_t addQosItem(const vector<sai_attribute_t> &attributes);
 };
 
+class DscpToFcMapHandler : public QosMapHandler
+{
+public:
+    bool convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes) override;
+    sai_object_id_t addQosItem(const vector<sai_attribute_t> &attributes) override;
+};
+
+class ExpToFcMapHandler : public QosMapHandler
+{
+public:
+    bool convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes) override;
+    sai_object_id_t addQosItem(const vector<sai_attribute_t> &attributes) override;
+};
+
 class QosOrch : public Orch
 {
 public:
@@ -155,6 +171,8 @@ private:
     task_process_status handleSchedulerTable(Consumer& consumer);
     task_process_status handleQueueTable(Consumer& consumer);
     task_process_status handleWredProfileTable(Consumer& consumer);
+    task_process_status handleDscpToFcTable(Consumer& consumer);
+    task_process_status handleExpToFcTable(Consumer& consumer);
 
     sai_object_id_t getSchedulerGroup(const Port &port, const sai_object_id_t queue_id);
 

@@ -26,6 +26,8 @@
 
 typedef std::map<NextHopKey, sai_object_id_t> NextHopGroupMembers;
 
+struct NhgBase;
+
 struct NextHopGroupEntry
 {
     sai_object_id_t         next_hop_group_id;      // next hop group id
@@ -251,6 +253,10 @@ private:
 
     void doTask(Consumer& consumer);
     void doLabelTask(Consumer& consumer);
+
+    const NhgBase &getNhg(const std::string& nhg_index);
+    void incNhgRefCount(const std::string& nhg_index);
+    void decNhgRefCount(const std::string& nhg_index);
 };
 
 #endif /* SWSS_ROUTEORCH_H */

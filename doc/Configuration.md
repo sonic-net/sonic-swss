@@ -1129,6 +1129,8 @@ name as object key and member list as attribute.
         "pfc_enable": "3,4", 
         "pfc_to_queue_map": "AZURE", 
         "dscp_to_tc_map": "AZURE",
+        "dscp_to_fc_map": "AZURE",
+        "exp_to_fc_map": "AZURE",
         "scheduler": "scheduler.port"
     }
   }
