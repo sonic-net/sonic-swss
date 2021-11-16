@@ -2,6 +2,7 @@ import time
 import pytest
 from port_dpb import Port
 from port_dpb import DPB
+from swsscommon import swsscommon
 
 @pytest.mark.usefixtures('dpb_setup_fixture')
 @pytest.mark.usefixtures('dvs_lag_manager')
@@ -10,17 +11,39 @@ class TestPortDPBLag(object):
         (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \"%s\" | wc -l" % (marker, log)])
         assert num.strip() >= str(expected_cnt)
 
-    @pytest.mark.skip(reason="Failing. Under investigation")
+    def create_port_channel(self, dvs, channel):
+        tbl = swsscommon.ProducerStateTable(dvs.pdb, "LAG_TABLE")
+        fvs = swsscommon.FieldValuePairs([("admin", "up"), ("mtu", "9100")])
+        tbl.set("PortChannel" + channel, fvs)
+        time.sleep(1)
+
+    def remove_port_channel(self, dvs, channel):
+        tbl = swsscommon.ProducerStateTable(dvs.pdb, "LAG_TABLE")
+        tbl._del("PortChannel" + channel)
+        time.sleep(1)
+
+    def create_port_channel_member(self, dvs, channel, interface):
+        tbl = swsscommon.ProducerStateTable(dvs.pdb, "LAG_MEMBER_TABLE")
+        fvs = swsscommon.FieldValuePairs([("status", "enabled")])
+        tbl.set("PortChannel" + channel + ":" + interface, fvs)
+        time.sleep(1)
+
+    def remove_port_channel_member(self, dvs, channel, interface):
+        tbl = swsscommon.ProducerStateTable(dvs.pdb, "LAG_MEMBER_TABLE")
+        tbl._del("PortChannel" + channel + ":" + interface)
+        time.sleep(1)
+
     def test_dependency(self, dvs):
+        dvs.setup_db()
         lag = "0001"
         p = Port(dvs, "Ethernet0")
         p.sync_from_config_db()
 
         # 1. Create PortChannel0001.
-        self.dvs_lag.create_port_channel(lag)
+        self.create_port_channel(dvs, lag)
 
         # 2. Add Ethernet0 to PortChannel0001.
-        self.dvs_lag.create_port_channel_member(lag, p.get_name())
+        self.create_port_channel_member(dvs, lag, p.get_name())
         time.sleep(2)
 
         # 3. Add log marker to syslog
@@ -38,7 +61,7 @@ class TestPortDPBLag(object):
         assert(p.exists_in_asic_db() == True)
 
         # 7. Remove port from LAG
-        self.dvs_lag.remove_port_channel_member(lag, p.get_name())
+        self.remove_port_channel_member(dvs, lag, p.get_name())
 
         # 8. Verify that port is removed from ASIC DB
         assert(p.not_exists_in_asic_db() == True)
@@ -51,8 +74,7 @@ class TestPortDPBLag(object):
         p.verify_asic_db()
 
         # 10. Remove PortChannel0001 and verify that its removed.
-        self.dvs_lag.remove_port_channel(lag)        
-        time.sleep(30)
+        self.remove_port_channel(dvs, lag)
         self.dvs_lag.get_and_verify_port_channel(0)
 
 
