@@ -158,7 +158,6 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
                    lagName.c_str(), admin_state ? "up" : "down", oper_state ? "up" : "down", mtu);
 
     bool lag_update = true;
-    auto it = m_teamSelectables.find(lagName);
     /* Return when the team instance has already been tracked */
     if (m_teamSelectables.find(lagName) != m_teamSelectables.end())
     {
