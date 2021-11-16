@@ -177,7 +177,7 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up)
                     }
                     else
                     {
-                        SWSS_LOG_NOTICE("None default profile %s is configured on PG %s, won't reclaim buffer", fvValue(prop).c_str(), buffer_pg_key.c_str());
+                        SWSS_LOG_NOTICE("Not default profile %s is configured on PG %s, won't reclaim buffer", fvValue(prop).c_str(), buffer_pg_key.c_str());
                     }
                 }
             }
