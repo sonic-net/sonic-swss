@@ -128,6 +128,7 @@ static map<string, sai_port_interface_type_t> interface_type_map =
 // Interface type map used for auto negotiation
 static map<string, sai_port_interface_type_t> interface_type_map_for_an =
 {
+    { "none", SAI_PORT_INTERFACE_TYPE_NONE },
     { "cr", SAI_PORT_INTERFACE_TYPE_CR },
     { "cr2", SAI_PORT_INTERFACE_TYPE_CR2 },
     { "cr4", SAI_PORT_INTERFACE_TYPE_CR4 },
@@ -229,7 +230,10 @@ const vector<sai_port_stat_t> port_stat_ids =
     SAI_PORT_STAT_ETHER_STATS_JABBERS,
     SAI_PORT_STAT_ETHER_STATS_FRAGMENTS,
     SAI_PORT_STAT_ETHER_STATS_UNDERSIZE_PKTS,
-    SAI_PORT_STAT_IP_IN_RECEIVES
+    SAI_PORT_STAT_IP_IN_RECEIVES,
+    SAI_PORT_STAT_IF_IN_FEC_CORRECTABLE_FRAMES,
+    SAI_PORT_STAT_IF_IN_FEC_NOT_CORRECTABLE_FRAMES,
+    SAI_PORT_STAT_IF_IN_FEC_SYMBOL_ERRORS
 };
 
 const vector<sai_port_stat_t> port_buffer_drop_stat_ids =
@@ -2402,6 +2406,13 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
     {
         port_stat_manager.clearCounterIdList(p.m_port_id);
     }
+
+    if (flex_counters_orch->getPortBufferDropCountersState())
+    {
+        port_buffer_drop_stat_manager.clearCounterIdList(p.m_port_id);
+    }
+
+
     /* remove port name map from counter table */
     m_counter_db->hdel(COUNTERS_PORT_NAME_MAP, alias);
 
@@ -4654,7 +4665,7 @@ bool PortsOrch::addVlanFloodGroups(Port &vlan, Port &port, string end_point_ip)
     if (vlan.m_vlan_info.l2mc_group_id == SAI_NULL_OBJECT_ID)
     {
         status = sai_l2mc_group_api->create_l2mc_group(&l2mc_group_id, gSwitchId, 0, NULL);
-        if (status != SAI_STATUS_SUCCESS) 
+        if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create l2mc flood group");
             return false;
@@ -4668,7 +4679,7 @@ bool PortsOrch::addVlanFloodGroups(Port &vlan, Port &port, string end_point_ip)
             status = sai_vlan_api->set_vlan_attribute(vlan.m_vlan_info.vlan_oid, &attr);
             if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("Failed to set l2mc group %" PRIx64 
+                SWSS_LOG_ERROR("Failed to set l2mc group %" PRIx64
                                " to vlan %hu for unknown unicast flooding",
                                l2mc_group_id, vlan.m_vlan_info.vlan_id);
                 return false;
@@ -4683,7 +4694,7 @@ bool PortsOrch::addVlanFloodGroups(Port &vlan, Port &port, string end_point_ip)
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to set l2mc group %" PRIx64
-                               " to vlan %hu for broadcast flooding", 
+                               " to vlan %hu for broadcast flooding",
                                l2mc_group_id, vlan.m_vlan_info.vlan_id);
                 return false;
             }
@@ -4691,7 +4702,7 @@ bool PortsOrch::addVlanFloodGroups(Port &vlan, Port &port, string end_point_ip)
         vlan.m_vlan_info.l2mc_group_id = l2mc_group_id;
         m_portList[vlan.m_alias] = vlan;
     }
-        
+
     vector<sai_attribute_t> attrs;
     attr.id = SAI_L2MC_GROUP_MEMBER_ATTR_L2MC_GROUP_ID;
     attr.value.oid = vlan.m_vlan_info.l2mc_group_id;
@@ -4739,10 +4750,10 @@ bool PortsOrch::removeVlanEndPointIp(Port &vlan, Port &port, string end_point_ip
     SWSS_LOG_ENTER();
 
     sai_status_t status;
-    
+
     if(vlan.m_vlan_info.l2mc_members.find(end_point_ip) == vlan.m_vlan_info.l2mc_members.end())
     {
-        SWSS_LOG_NOTICE("End point ip %s is not part of vlan %hu", 
+        SWSS_LOG_NOTICE("End point ip %s is not part of vlan %hu",
                         end_point_ip.c_str(), vlan.m_vlan_info.vlan_id);
         return true;
     }
@@ -4758,7 +4769,7 @@ bool PortsOrch::removeVlanEndPointIp(Port &vlan, Port &port, string end_point_ip
     vlan.m_vlan_info.l2mc_members.erase(end_point_ip);
     sai_object_id_t l2mc_group_id = SAI_NULL_OBJECT_ID;
     sai_attribute_t attr;
-     
+
     if (vlan.m_vlan_info.l2mc_members.empty())
     {
         if (vlan.m_vlan_info.uuc_flood_type == SAI_VLAN_FLOOD_CONTROL_TYPE_COMBINED)
@@ -4769,7 +4780,7 @@ bool PortsOrch::removeVlanEndPointIp(Port &vlan, Port &port, string end_point_ip
             status = sai_vlan_api->set_vlan_attribute(vlan.m_vlan_info.vlan_oid, &attr);
             if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("Failed to set null l2mc group "  
+                SWSS_LOG_ERROR("Failed to set null l2mc group "
                                " to vlan %hu for unknown unicast flooding",
                                vlan.m_vlan_info.vlan_id);
                 return false;
@@ -4795,7 +4806,7 @@ bool PortsOrch::removeVlanEndPointIp(Port &vlan, Port &port, string end_point_ip
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to set null l2mc group "
-                               " to vlan %hu for broadcast flooding", 
+                               " to vlan %hu for broadcast flooding",
                                vlan.m_vlan_info.vlan_id);
                 return false;
             }

@@ -14,3 +14,6 @@ neighsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
 neighsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
 neighsyncd_LDADD = -lnl-3 -lnl-route-3 -lswsscommon
 
+if GCOV_ENABLED
+neighsyncd_LDADD += -lgcovpreload
+endif
