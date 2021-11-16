@@ -1015,7 +1015,6 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
             // skip this iteration if there're no children in this group
             if (child_count == 0)
             {
-                SWSS_LOG_INFO("No child group for port %s group 0x%" PRIx64 ", skip", port.m_alias.c_str(), group_id);
                 continue;
             }
 
