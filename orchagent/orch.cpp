@@ -671,7 +671,8 @@ unsigned long Orch::generateBitMapFromIdsStr(const string &idsStr)
  * Parse the idsMap and generate a vector which contains slices representing bits in idsMap
  * Args:
  *     idsMap: The bitmap of IDs. The LSB stands for ID 0.
- *     maxId: The maximum value of ID.
+ *     maxId: The (exclusive) upperbound of ID range.
+ *            Eg: if ID range is 0~7, maxId should be 8.
  * Return:
  *     A vector which contains slices representing bits in idsMap
  *
