@@ -2423,6 +2423,13 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
     {
         port_stat_manager.clearCounterIdList(p.m_port_id);
     }
+
+    if (flex_counters_orch->getPortBufferDropCountersState())
+    {
+        port_buffer_drop_stat_manager.clearCounterIdList(p.m_port_id);
+    }
+
+
     /* remove port name map from counter table */
     m_counter_db->hdel(COUNTERS_PORT_NAME_MAP, alias);
 

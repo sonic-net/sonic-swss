@@ -625,10 +625,26 @@ class TestCrm(object):
 
         old_table_used_counter = getCrmCounterValue(dvs, 'ACL_STATS:INGRESS:PORT', 'crm_stats_acl_table_used')
 
+        value = {
+            "count": 1,
+            "list": [
+                {
+                    "stage": "SAI_ACL_STAGE_INGRESS",
+                    "bind_point": "SAI_ACL_BIND_POINT_TYPE_PORT",
+                    "avail_num": "4294967295"
+                }
+            ]
+        }
+        dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_ACL_TABLE', json.dumps(value))
+        time.sleep(2)
+
+        marker = dvs.add_log_marker()
         # create ACL table
         ttbl = swsscommon.Table(db, "ACL_TABLE")
         fvs = swsscommon.FieldValuePairs([("policy_desc", "test"), ("type", "L3"), ("ports", ",".join(bind_ports))])
         ttbl.set("test", fvs)
+        time.sleep(2)
+        check_syslog(dvs, marker, "ACL_TABLE Exception occurred (div by Zero)", 1)
 
         # create ACL rule
         rtbl = swsscommon.Table(db, "ACL_RULE")

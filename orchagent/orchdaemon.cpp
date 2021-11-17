@@ -1,5 +1,6 @@
 #include <unistd.h>
 #include <unordered_map>
+#include <chrono>
 #include <limits.h>
 #include "orchdaemon.h"
 #include "logger.h"
@@ -32,6 +33,8 @@ IntfsOrch *gIntfsOrch;
 NeighOrch *gNeighOrch;
 RouteOrch *gRouteOrch;
 NhgOrch *gNhgOrch;
+NhgMapOrch *gNhgMapOrch;
+CbfNhgOrch *gCbfNhgOrch;
 FgNhgOrch *gFgNhgOrch;
 AclOrch *gAclOrch;
 PbhOrch *gPbhOrch;
@@ -176,6 +179,7 @@ bool OrchDaemon::init()
     };
     gRouteOrch = new RouteOrch(m_applDb, route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch, gSrv6Orch);
     gNhgOrch = new NhgOrch(m_applDb, APP_NEXTHOP_GROUP_TABLE_NAME);
+    gCbfNhgOrch = new CbfNhgOrch(m_applDb, APP_CLASS_BASED_NEXT_HOP_GROUP_TABLE_NAME);
 
     gCoppOrch = new CoppOrch(m_applDb, APP_COPP_TABLE_NAME);
     TunnelDecapOrch *tunnel_decap_orch = new TunnelDecapOrch(m_applDb, APP_TUNNEL_DECAP_TABLE_NAME);
@@ -203,7 +207,9 @@ bool OrchDaemon::init()
         CFG_WRED_PROFILE_TABLE_NAME,
         CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME,
         CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME,
-        CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME
+        CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME,
+        CFG_DSCP_TO_FC_MAP_TABLE_NAME,
+        CFG_EXP_TO_FC_MAP_TABLE_NAME
     };
     QosOrch *qos_orch = new QosOrch(m_configDb, qos_tables);
 
@@ -303,6 +309,8 @@ bool OrchDaemon::init()
     TableConnector stateDbBfdSessionTable(m_stateDb, STATE_BFD_SESSION_TABLE_NAME);
     gBfdOrch = new BfdOrch(m_applDb, APP_BFD_SESSION_TABLE_NAME, stateDbBfdSessionTable);
 
+    gNhgMapOrch = new NhgMapOrch(m_applDb, APP_FC_TO_NHG_INDEX_MAP_TABLE_NAME);
+
     /*
      * The order of the orch list is important for state restore of warm start and
      * the queued processing in m_toSync map after gPortsOrch->allPortsReady() is set.
@@ -311,7 +319,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, mux_orch, mux_cb_orch, gIntfsOrch, gNeighOrch, gNhgOrch, gRouteOrch, gCoppOrch, qos_orch, wm_orch, policer_orch, tunnel_decap_orch, sflow_orch, debug_counter_orch, gMacsecOrch, gBfdOrch, gSrv6Orch};
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, mux_orch, mux_cb_orch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gRouteOrch, gCoppOrch, qos_orch, wm_orch, policer_orch, tunnel_decap_orch, sflow_orch, debug_counter_orch, gMacsecOrch, gBfdOrch, gSrv6Orch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
@@ -639,12 +647,25 @@ void OrchDaemon::start()
         m_select->addSelectables(o->getSelectables());
     }
 
+    auto tstart = std::chrono::high_resolution_clock::now();
+
     while (true)
     {
         Selectable *s;
         int ret;
 
         ret = m_select->select(&s, SELECT_TIMEOUT);
+
+        auto tend = std::chrono::high_resolution_clock::now();
+
+        auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(tend - tstart);
+
+        if (diff.count() >= SELECT_TIMEOUT)
+        {
+            tstart = std::chrono::high_resolution_clock::now();
+
+            flush();
+        }
 
         if (ret == Select::ERROR)
         {

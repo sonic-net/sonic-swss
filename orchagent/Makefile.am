@@ -4,7 +4,8 @@ INCLUDES = -I $(top_srcdir)/lib \
            -I flex_counter \
            -I debug_counter \
            -I flow_counter \
-           -I pbh
+           -I pbh \
+           -I nhg
 
 CFLAGS_SAI = -I /usr/include/sai
 
@@ -43,6 +44,9 @@ orchagent_SOURCES = \
             orch.cpp \
             notifications.cpp \
             nhgorch.cpp \
+            nhgbase.cpp \
+            cbf/cbfnhgorch.cpp  \
+            cbf/nhgmaporch.cpp \
             routeorch.cpp \
             mplsrouteorch.cpp \
             neighorch.cpp \
