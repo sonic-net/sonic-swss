@@ -1851,7 +1851,7 @@ const PortSupportedSpeeds& PortsOrch::getSupportedSpeed(const std::string& alias
     if (!m_portSupportedSpeeds.count(port_id))
     {
     	PortSupportedSpeeds supported_speeds;
-    	getPortSupportedSpeeds(alias, port_id, &supported_speeds);
+    	getPortSupportedSpeeds(alias, port_id, supported_speeds);
     	m_portSupportedSpeeds[port_id] = supported_speeds;
     }
 
