@@ -684,7 +684,7 @@ set<string> Orch::generateIdListFromMap(unsigned long idsMap, sai_uint32_t maxId
     unsigned long currentIdMask = 1;
     bool started = false, needGenerateMap = false;
     sai_uint32_t lower, upper;
-    set<string> extraIdsToReclaim;
+    set<string> idStringList;
     for (sai_uint32_t id = 0; id <= maxId; id ++)
     {
         // currentIdMask represents the bit mask corresponding to id: (1<<id)
@@ -710,11 +710,11 @@ set<string> Orch::generateIdListFromMap(unsigned long idsMap, sai_uint32_t maxId
         {
             if (lower != upper)
             {
-                extraIdsToReclaim.insert(to_string(lower) + "-" + to_string(upper));
+                idStringList.insert(to_string(lower) + "-" + to_string(upper));
             }
             else
             {
-                extraIdsToReclaim.insert(to_string(lower));
+                idStringList.insert(to_string(lower));
             }
             needGenerateMap = false;
         }
@@ -722,7 +722,7 @@ set<string> Orch::generateIdListFromMap(unsigned long idsMap, sai_uint32_t maxId
         currentIdMask <<= 1;
     }
 
-    return extraIdsToReclaim;
+    return idStringList;
 }
 
 
