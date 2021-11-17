@@ -253,7 +253,6 @@ private:
 
     bool initializePort(Port &port);
     void initializePriorityGroups(Port &port);
-    void initializePortMaximumHeadroom(Port &port);
     void initializePortBufferMaximumParameters(Port &port);
     void initializeQueues(Port &port);
 

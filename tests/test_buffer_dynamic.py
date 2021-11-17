@@ -643,29 +643,30 @@ class TestBufferMgrDyn(object):
         self.counter_db = dvs.get_counters_db()
         self.flex_db = dvs.get_flex_db()
 
-        # Create a new pool
-        self.config_db.update_entry('BUFFER_POOL', 'ingress_test_pool', {'size': '0', 'mode': 'static', 'type': 'ingress'})
+        try:
+            # Create a new pool
+            self.config_db.update_entry('BUFFER_POOL', 'ingress_test_pool', {'size': '0', 'mode': 'static', 'type': 'ingress'})
 
-        # Whether counterpoll is enabled? Enable it if not.
-        flex_counter = self.config_db.get_entry("FLEX_COUNTER_TABLE", "BUFFER_POOL_WATERMARK")
-        counter_poll_disabled = (not flex_counter or flex_counter["FLEX_COUNTER_STATUS"] != 'enable')
-        if counter_poll_disabled:
-            self.config_db.update_entry("FLEX_COUNTER_TABLE", "BUFFER_POOL_WATERMARK", {"FLEX_COUNTER_STATUS": "enable"})
+            # Whether counterpoll is enabled? Enable it if not.
+            flex_counter = self.config_db.get_entry("FLEX_COUNTER_TABLE", "BUFFER_POOL_WATERMARK")
+            counter_poll_disabled = (not flex_counter or flex_counter["FLEX_COUNTER_STATUS"] != 'enable')
+            if counter_poll_disabled:
+                self.config_db.update_entry("FLEX_COUNTER_TABLE", "BUFFER_POOL_WATERMARK", {"FLEX_COUNTER_STATUS": "enable"})
 
-        # Check whether counter poll has been enabled
-        time.sleep(1)
-        poolmap = self.counter_db.wait_for_entry("COUNTERS_BUFFER_POOL_NAME_MAP", "")
-        assert poolmap["ingress_test_pool"]
-        self.flex_db.wait_for_entry("FLEX_COUNTER_TABLE", "BUFFER_POOL_WATERMARK_STAT_COUNTER:{}".format(poolmap["ingress_test_pool"]))
+            # Check whether counter poll has been enabled
+            time.sleep(1)
+            poolmap = self.counter_db.wait_for_entry("COUNTERS_BUFFER_POOL_NAME_MAP", "")
+            assert poolmap["ingress_test_pool"]
+            self.flex_db.wait_for_entry("FLEX_COUNTER_TABLE", "BUFFER_POOL_WATERMARK_STAT_COUNTER:{}".format(poolmap["ingress_test_pool"]))
 
-        self.config_db.delete_entry('BUFFER_POOL', 'ingress_test_pool')
-        oid_to_remove = poolmap.pop('ingress_test_pool')
-        self.counter_db.wait_for_field_match("COUNTERS_BUFFER_POOL_NAME_MAP", "", poolmap)
-        self.flex_db.wait_for_deleted_entry("FLEX_COUNTER_TABLE", "BUFFER_POOL_WATERMARK_STAT_COUNTER:{}".format(oid_to_remove))
-
-        # Clean up: disable counterpoll if it was disabled
-        if counter_poll_disabled:
-            self.config_db.delete_entry("FLEX_COUNTER_TABLE", "BUFFER_POOL_WATERMARK")
+            self.config_db.delete_entry('BUFFER_POOL', 'ingress_test_pool')
+            oid_to_remove = poolmap.pop('ingress_test_pool')
+            self.counter_db.wait_for_field_match("COUNTERS_BUFFER_POOL_NAME_MAP", "", poolmap)
+            self.flex_db.wait_for_deleted_entry("FLEX_COUNTER_TABLE", "BUFFER_POOL_WATERMARK_STAT_COUNTER:{}".format(oid_to_remove))
+        finally:
+            # Clean up: disable counterpoll if it was disabled
+            if counter_poll_disabled:
+                self.config_db.delete_entry("FLEX_COUNTER_TABLE", "BUFFER_POOL_WATERMARK")
 
     def test_bufferPortMaxParameter(self, dvs, testlog):
         self.setup_db(dvs)

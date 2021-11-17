@@ -647,7 +647,7 @@ bool Orch::parseIndexRange(const string &input, sai_uint32_t &range_low, sai_uin
  *
  * Example:
  *      Input idsMap: 3-4
- *      Return: 00001100b
+ *      Return: 00011000b
  */
 unsigned long Orch::generateBitMapFromIdsStr(const string &idsStr)
 {
