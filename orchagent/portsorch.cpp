@@ -1879,6 +1879,7 @@ bool PortsOrch::isSpeedSupported(const std::string& alias, sai_object_id_t port_
     // This method will return false if we get a list of supported speeds and the requested speed
     // is not supported
     // Otherwise the method will return true (even if did not receive list of supported speed)
+	initPortSupportedSpeeds(alias, port_id);
 
     const PortSupportedSpeeds &supp_speeds = getSupportedSpeed(alias, port_id);
     if (supp_speeds.size() == 0)
