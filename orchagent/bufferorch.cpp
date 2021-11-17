@@ -212,8 +212,11 @@ bool BufferOrch::isPortReady(const std::string& port_name) const
 
 void BufferOrch::clearBufferPoolWatermarkCounterIdList(const sai_object_id_t object_id)
 {
-    string key = BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP ":" + sai_serialize_object_id(object_id);
-    m_flexCounterTable->del(key);
+    if (m_isBufferPoolWatermarkCounterIdListGenerated)
+    {
+        string key = BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP ":" + sai_serialize_object_id(object_id);
+        m_flexCounterTable->del(key);
+    }
 }
 
 void BufferOrch::generateBufferPoolWatermarkCounterIdList(void)
