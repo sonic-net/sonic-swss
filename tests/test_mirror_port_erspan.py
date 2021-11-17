@@ -1,5 +1,6 @@
 # This test suite covers the functionality of mirror feature in SwSS
 import pytest
+import time
 
 @pytest.mark.usefixtures("testlog")
 @pytest.mark.usefixtures('dvs_vlan_manager')
@@ -488,6 +489,8 @@ class TestMirror(object):
         # remove mirror session
         self.dvs_mirror.remove_mirror_session(session)
         self.dvs_mirror.verify_no_mirror()
+
+        time.sleep(4)
 
     def test_LAGMirrorToERSPANLagAddRemove(self, dvs, testlog):
         """
