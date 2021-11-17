@@ -1,6 +1,5 @@
 # This test suite covers the functionality of mirror feature in SwSS
 import pytest
-import time
 
 @pytest.mark.usefixtures("testlog")
 @pytest.mark.usefixtures('dvs_vlan_manager')
@@ -490,7 +489,6 @@ class TestMirror(object):
         self.dvs_mirror.remove_mirror_session(session)
         self.dvs_mirror.verify_no_mirror()
 
-        time.sleep(4)
 
     def test_LAGMirrorToERSPANLagAddRemove(self, dvs, testlog):
         """
@@ -518,7 +516,7 @@ class TestMirror(object):
 
         # create port channel; create port channel member
         self.dvs_lag.create_port_channel("001")
-        self.dvs_vlan.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG", 1)
+        #self.dvs_vlan.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG", 1)
         self.dvs_lag.create_port_channel_member("001", src_port1)
         self.dvs_lag.create_port_channel_member("001", src_port2)
 
