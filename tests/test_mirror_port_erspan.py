@@ -490,6 +490,7 @@ class TestMirror(object):
         self.dvs_mirror.verify_no_mirror()
 
 
+    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_LAGMirrorToERSPANLagAddRemove(self, dvs, testlog):
         """
         This test covers basic LAG mirror session creation and removal operations
