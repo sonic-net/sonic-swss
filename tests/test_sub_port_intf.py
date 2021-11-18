@@ -36,10 +36,13 @@ ADMIN_STATUS = "admin_status"
 VRF_NAME = "vrf_name"
 
 ETHERNET_PREFIX = "Ethernet"
+SUBINTF_LAG_PREFIX = "Po"
 LAG_PREFIX = "PortChannel"
 
 VLAN_SUB_INTERFACE_SEPARATOR = "."
 APPL_DB_SEPARATOR = ":"
+
+ETHERNET_PORT_DEFAULT_MTU = "1500"
 
 
 class TestSubPortIntf(object):
@@ -81,7 +84,62 @@ class TestSubPortIntf(object):
             if phy_port in key:
                 self.buf_q_fvs[key] = self.config_db.get_entry("BUFFER_QUEUE", key)
 
+    def get_subintf_longname(self, port_name):
+        if port_name is None:
+            return None
+        sub_intf_sep_idx = port_name.find(VLAN_SUB_INTERFACE_SEPARATOR)
+        if sub_intf_sep_idx == -1:
+            return str(port_name)
+        parent_intf = port_name[:sub_intf_sep_idx]
+        sub_intf_idx = port_name[(sub_intf_sep_idx+1):]
+        if port_name.startswith("Eth"):
+            if port_name.startswith("Ethernet"):
+                intf_index=port_name[len("Ethernet"):sub_intf_sep_idx]
+            else:
+                intf_index=port_name[len("Eth"):sub_intf_sep_idx]
+            return "Ethernet"+intf_index+VLAN_SUB_INTERFACE_SEPARATOR+sub_intf_idx
+        elif port_name.startswith("Po"):
+            if port_name.startswith("PortChannel"):
+                intf_index=port_name[len("PortChannel"):sub_intf_sep_idx]
+            else:
+                intf_index=port_name[len("Po"):sub_intf_sep_idx]
+            return "PortChannel"+intf_index+VLAN_SUB_INTERFACE_SEPARATOR+sub_intf_idx
+        else:
+            return str(port_name)
+   
+    def get_port_longname(self, port_name):
+        if port_name is None:
+           return None
+
+        if VLAN_SUB_INTERFACE_SEPARATOR in port_name:
+           return self.get_subintf_longname(port_name)
+        else:
+            if port_name.startswith("Eth"):
+               if port_name.startswith("Ethernet"):
+                   return port_name
+               intf_index=port_name[len("Eth"):len(port_name)]
+               return "Ethernet"+intf_index
+            elif port_name.startswith("Po"):
+                 if port_name.startswith("PortChannel"):
+                     return port_name
+                 intf_index=port_name[len("Po"):len(port_name)]
+                 return "PortChannel"+intf_index
+            else:
+                 return port_name
+
+    def get_parent_port(self, port_name):
+        port = self.get_port_longname(port_name)
+        idx = port.find(VLAN_SUB_INTERFACE_SEPARATOR)
+        parent_port = ""
+        if port.startswith(ETHERNET_PREFIX):
+            parent_port = port[:idx]
+        else:
+            assert port.startswith(SUBINTF_LAG_PREFIX)
+            parent_port = port[:idx]
+        return parent_port
+
     def get_parent_port_index(self, port_name):
+        port_name = self.get_port_longname(port_name)
         if port_name.startswith(ETHERNET_PREFIX):
             idx = int(port_name[len(ETHERNET_PREFIX):])
         else:
@@ -94,7 +152,7 @@ class TestSubPortIntf(object):
             srv_idx = self.get_parent_port_index(port_name) // 4
             dvs.servers[srv_idx].runcmd("ip link set dev eth0 " + status)
         else:
-            assert port_name.startswith(LAG_PREFIX)
+            assert port_name.startswith(SUBINTF_LAG_PREFIX)
             dvs.runcmd("bash -c 'echo " + ("1" if status == "up" else "0") +
                        " > /sys/class/net/" + port_name + "/carrier'")
         time.sleep(1)
@@ -105,7 +163,7 @@ class TestSubPortIntf(object):
         if port_name.startswith(ETHERNET_PREFIX):
             tbl_name = CFG_PORT_TABLE_NAME
         else:
-            assert port_name.startswith(LAG_PREFIX)
+            assert port_name.startswith(SUBINTF_LAG_PREFIX)
             tbl_name = CFG_LAG_TABLE_NAME
         self.config_db.create_entry(tbl_name, port_name, fvs)
         time.sleep(1)
@@ -119,8 +177,28 @@ class TestSubPortIntf(object):
     def create_vrf(self, vrf_name):
         self.config_db.create_entry(CFG_VRF_TABLE_NAME, vrf_name, {"NULL": "NULL"})
 
+    def is_short_name(self, port_name):
+        idx = port_name.find(VLAN_SUB_INTERFACE_SEPARATOR)
+        parent_port = port_name[:idx]
+        is_short = False
+        if parent_port.startswith("Eth"):
+            if parent_port.startswith(ETHERNET_PREFIX):
+                is_short = False
+            else:
+                is_short = True
+        elif parent_port.startswith("Po"):
+            if parent_port.startswith("PortChannel"):
+                is_short = False
+            else:
+                is_short = True
+        return is_short
+
     def create_sub_port_intf_profile(self, sub_port_intf_name, vrf_name=None):
         fvs = {ADMIN_STATUS: "up"}
+        idx = sub_port_intf_name.find(VLAN_SUB_INTERFACE_SEPARATOR)
+        sub_port_idx = sub_port_intf_name[(idx+1):]
+        if self.is_short_name(sub_port_intf_name) == True:
+            fvs["vlan"] = sub_port_idx
         if vrf_name:
             fvs[VRF_NAME] = vrf_name
 
@@ -154,8 +232,12 @@ class TestSubPortIntf(object):
             self.config_db.create_entry(CFG_LAG_MEMBER_TABLE_NAME, key, fvs)
 
     def create_sub_port_intf_profile_appl_db(self, sub_port_intf_name, admin_status, vrf_name=None):
+        substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
+        parent_port = self.get_parent_port(sub_port_intf_name)
+        vlan_id = substrs[1]
         pairs = [
             (ADMIN_STATUS, admin_status),
+            ("vlan", vlan_id),
             ("mtu", "0"),
         ]
         if vrf_name:
@@ -210,7 +292,7 @@ class TestSubPortIntf(object):
                 if port_name in key:
                     self.config_db.delete_entry("BUFFER_QUEUE", key)
         else:
-            assert port_name.startswith(LAG_PREFIX)
+            assert port_name.startswith(SUBINTF_LAG_PREFIX)
             tbl_name = APP_LAG_TABLE_NAME
         tbl = swsscommon.ProducerStateTable(self.app_db.db_connection, tbl_name)
         tbl._del(port_name)
@@ -354,14 +436,14 @@ class TestSubPortIntf(object):
 
     def _test_sub_port_intf_creation(self, dvs, sub_port_intf_name, vrf_name=None):
         substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
-        parent_port = substrs[0]
+        parent_port = self.get_parent_port(sub_port_intf_name)
         vlan_id = substrs[1]
         if parent_port.startswith(ETHERNET_PREFIX):
             state_tbl_name = STATE_PORT_TABLE_NAME
             phy_ports = [parent_port]
             parent_port_oid = dvs.asicdb.portnamemap[parent_port]
         else:
-            assert parent_port.startswith(LAG_PREFIX)
+            assert parent_port.startswith(SUBINTF_LAG_PREFIX)
             state_tbl_name = STATE_LAG_TABLE_NAME
             phy_ports = self.LAG_MEMBERS_UNDER_TEST
             old_lag_oids = self.get_oids(ASIC_LAG_TABLE)
@@ -370,7 +452,7 @@ class TestSubPortIntf(object):
         old_rif_oids = self.get_oids(ASIC_RIF_TABLE)
 
         self.set_parent_port_admin_status(dvs, parent_port, "up")
-        if parent_port.startswith(LAG_PREFIX):
+        if parent_port.startswith(SUBINTF_LAG_PREFIX):
             parent_port_oid = self.get_newly_created_oid(ASIC_LAG_TABLE, old_lag_oids)
             # Add lag members to test physical port host interface vlan tag attribute
             self.add_lag_members(parent_port, self.LAG_MEMBERS_UNDER_TEST)
@@ -436,7 +518,7 @@ class TestSubPortIntf(object):
             self.remove_vrf(vrf_name)
             self.check_vrf_removal(vrf_oid)
 
-        if parent_port.startswith(LAG_PREFIX):
+        if parent_port.startswith(SUBINTF_LAG_PREFIX):
             # Remove lag members from lag parent port
             self.remove_lag_members(parent_port, self.LAG_MEMBERS_UNDER_TEST)
             self.asic_db.wait_for_n_keys(ASIC_LAG_MEMBER_TABLE, 0)
@@ -456,7 +538,7 @@ class TestSubPortIntf(object):
 
     def _test_sub_port_intf_add_ip_addrs(self, dvs, sub_port_intf_name, vrf_name=None):
         substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
-        parent_port = substrs[0]
+        parent_port = self.get_parent_port(sub_port_intf_name)
 
         vrf_oid = self.default_vrf_oid
         old_rif_oids = self.get_oids(ASIC_RIF_TABLE)
@@ -515,7 +597,7 @@ class TestSubPortIntf(object):
             self.check_vrf_removal(vrf_oid)
 
         # Remove lag
-        if parent_port.startswith(LAG_PREFIX):
+        if parent_port.startswith(SUBINTF_LAG_PREFIX):
             self.remove_lag(parent_port)
             self.asic_db.wait_for_n_keys(ASIC_LAG_TABLE, 0)
 
@@ -530,7 +612,7 @@ class TestSubPortIntf(object):
 
     def _test_sub_port_intf_appl_db_proc_seq(self, dvs, sub_port_intf_name, admin_up, vrf_name=None):
         substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
-        parent_port = substrs[0]
+        parent_port = self.get_parent_port(sub_port_intf_name)
         vlan_id = substrs[1]
 
         vrf_oid = self.default_vrf_oid
@@ -541,7 +623,7 @@ class TestSubPortIntf(object):
         if parent_port.startswith(ETHERNET_PREFIX):
             parent_port_oid = dvs.asicdb.portnamemap[parent_port]
         else:
-            assert parent_port.startswith(LAG_PREFIX)
+            assert parent_port.startswith(SUBINTF_LAG_PREFIX)
             parent_port_oid = self.get_newly_created_oid(ASIC_LAG_TABLE, old_lag_oids)
         if vrf_name:
             self.create_vrf(vrf_name)
@@ -581,7 +663,7 @@ class TestSubPortIntf(object):
             self.check_vrf_removal(vrf_oid)
 
         # Remove lag
-        if parent_port.startswith(LAG_PREFIX):
+        if parent_port.startswith(SUBINTF_LAG_PREFIX):
             self.remove_lag(parent_port)
             self.check_lag_removal(parent_port_oid)
 
@@ -603,6 +685,7 @@ class TestSubPortIntf(object):
     def _test_sub_port_intf_admin_status_change(self, dvs, sub_port_intf_name, vrf_name=None):
         substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
         parent_port = substrs[0]
+        parent_port = self.get_parent_port(sub_port_intf_name)
 
         vrf_oid = self.default_vrf_oid
         old_rif_oids = self.get_oids(ASIC_RIF_TABLE)
@@ -691,7 +774,7 @@ class TestSubPortIntf(object):
             self.check_vrf_removal(vrf_oid)
 
         # Remove lag
-        if parent_port.startswith(LAG_PREFIX):
+        if parent_port.startswith(SUBINTF_LAG_PREFIX):
             self.remove_lag(parent_port)
             self.asic_db.wait_for_n_keys(ASIC_LAG_TABLE, 0)
 
@@ -707,6 +790,7 @@ class TestSubPortIntf(object):
     def _test_sub_port_intf_remove_ip_addrs(self, dvs, sub_port_intf_name, vrf_name=None):
         substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
         parent_port = substrs[0]
+        parent_port = self.get_parent_port(sub_port_intf_name)
 
         old_rif_oids = self.get_oids(ASIC_RIF_TABLE)
 
@@ -766,7 +850,7 @@ class TestSubPortIntf(object):
             self.asic_db.wait_for_n_keys(ASIC_VIRTUAL_ROUTER_TABLE, 1)
 
         # Remove lag
-        if parent_port.startswith(LAG_PREFIX):
+        if parent_port.startswith(SUBINTF_LAG_PREFIX):
             self.remove_lag(parent_port)
             self.asic_db.wait_for_n_keys(ASIC_LAG_TABLE, 0)
 
@@ -782,6 +866,7 @@ class TestSubPortIntf(object):
     def _test_sub_port_intf_removal(self, dvs, sub_port_intf_name, removal_seq_test=False, vrf_name=None):
         substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
         parent_port = substrs[0]
+        parent_port = self.get_parent_port(sub_port_intf_name)
         vlan_id = substrs[1]
         if parent_port.startswith(ETHERNET_PREFIX):
             state_tbl_name = STATE_PORT_TABLE_NAME
@@ -789,7 +874,7 @@ class TestSubPortIntf(object):
             parent_port_oid = dvs.asicdb.portnamemap[parent_port]
             asic_tbl_name = ASIC_PORT_TABLE
         else:
-            assert parent_port.startswith(LAG_PREFIX)
+            assert parent_port.startswith(SUBINTF_LAG_PREFIX)
             state_tbl_name = STATE_LAG_TABLE_NAME
             phy_ports = self.LAG_MEMBERS_UNDER_TEST
             old_lag_oids = self.get_oids(ASIC_LAG_TABLE)
@@ -799,7 +884,7 @@ class TestSubPortIntf(object):
         old_rif_oids = self.get_oids(ASIC_RIF_TABLE)
 
         self.set_parent_port_admin_status(dvs, parent_port, "up")
-        if parent_port.startswith(LAG_PREFIX):
+        if parent_port.startswith(SUBINTF_LAG_PREFIX):
             parent_port_oid = self.get_newly_created_oid(ASIC_LAG_TABLE, old_lag_oids)
             if removal_seq_test == False:
                 # Add lag members to test physical port host interface vlan tag attribute
@@ -881,6 +966,10 @@ class TestSubPortIntf(object):
                 "SAI_ROUTER_INTERFACE_ATTR_PORT_ID": parent_port_oid,
             }
             rif_oid = self.get_newly_created_oid(ASIC_RIF_TABLE, old_rif_oids)
+            #If subintf mtu deleted, it inherits from parent 
+            if vrf_name == self.VRF_UNDER_TEST:
+                if parent_port.startswith(ETHERNET_PREFIX):
+                    fv_dict["SAI_ROUTER_INTERFACE_ATTR_MTU"] = ETHERNET_PORT_DEFAULT_MTU 
             self.check_sub_port_intf_fvs(self.asic_db, ASIC_RIF_TABLE, rif_oid, fv_dict)
         else:
             rif_oid = self.get_newly_created_oid(ASIC_RIF_TABLE, old_rif_oids)
@@ -964,6 +1053,7 @@ class TestSubPortIntf(object):
     def _test_sub_port_intf_mtu(self, dvs, sub_port_intf_name, vrf_name=None):
         substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
         parent_port = substrs[0]
+        parent_port = self.get_parent_port(sub_port_intf_name)
 
         vrf_oid = self.default_vrf_oid
         old_rif_oids = self.get_oids(ASIC_RIF_TABLE)
@@ -1007,7 +1097,7 @@ class TestSubPortIntf(object):
             self.check_vrf_removal(vrf_oid)
 
         # Remove lag
-        if parent_port.startswith(LAG_PREFIX):
+        if parent_port.startswith(SUBINTF_LAG_PREFIX):
             self.remove_lag(parent_port)
             self.asic_db.wait_for_n_keys(ASIC_LAG_TABLE, 0)
 
@@ -1126,13 +1216,14 @@ class TestSubPortIntf(object):
     def _test_sub_port_intf_nhg_accel(self, dvs, sub_port_intf_name, nhop_num=3, create_intf_on_parent_port=False, vrf_name=None):
         substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
         parent_port = substrs[0]
+        parent_port = self.get_parent_port(sub_port_intf_name)
         vlan_id = substrs[1]
         assert len(vlan_id) == 2
 
         if parent_port.startswith(ETHERNET_PREFIX):
             parent_port_prefix = ETHERNET_PREFIX
         else:
-            assert parent_port.startswith(LAG_PREFIX)
+            assert parent_port.startswith(SUBINTF_LAG_PREFIX)
             parent_port_prefix = LAG_PREFIX
         parent_port_idx_base = self.get_parent_port_index(parent_port)
 
@@ -1254,13 +1345,14 @@ class TestSubPortIntf(object):
                                                                      create_intf_on_parent_port=False, vrf_name=None):
         substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
         parent_port = substrs[0]
+        parent_port = self.get_parent_port(sub_port_intf_name)
         vlan_id = substrs[1]
         assert len(vlan_id) == 2
 
         if parent_port.startswith(ETHERNET_PREFIX):
             parent_port_prefix = ETHERNET_PREFIX
         else:
-            assert parent_port.startswith(LAG_PREFIX)
+            assert parent_port.startswith(SUBINTF_LAG_PREFIX)
             parent_port_prefix = LAG_PREFIX
         parent_port_idx_base = self.get_parent_port_index(parent_port)
 

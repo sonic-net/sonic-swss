@@ -18,6 +18,7 @@ using namespace swss;
 
 #define VLAN_PREFIX         "Vlan"
 #define LAG_PREFIX          "PortChannel"
+#define SUBINTF_LAG_PREFIX  "Po"
 #define LOOPBACK_PREFIX     "Loopback"
 #define VNET_PREFIX         "Vnet"
 #define MTU_INHERITANCE     "0"
@@ -469,7 +470,7 @@ void IntfMgr::setSubIntfStateOk(const string &alias)
 {
     vector<FieldValueTuple> fvTuples = {{"state", "ok"}};
 
-    if (!alias.compare(0, strlen(LAG_PREFIX), LAG_PREFIX))
+    if (!alias.compare(0, strlen(SUBINTF_LAG_PREFIX), SUBINTF_LAG_PREFIX))
     {
         m_stateLagTable.set(alias, fvTuples);
     }
@@ -482,7 +483,7 @@ void IntfMgr::setSubIntfStateOk(const string &alias)
 
 void IntfMgr::removeSubIntfState(const string &alias)
 {
-    if (!alias.compare(0, strlen(LAG_PREFIX), LAG_PREFIX))
+    if (!alias.compare(0, strlen(SUBINTF_LAG_PREFIX), SUBINTF_LAG_PREFIX))
     {
         m_stateLagTable.del(alias);
     }
@@ -600,6 +601,14 @@ bool IntfMgr::isIntfStateOk(const string &alias)
     else if (!alias.compare(0, strlen(LOOPBACK_PREFIX), LOOPBACK_PREFIX))
     {
         return true;
+    }
+    else if (!alias.compare(0, strlen(SUBINTF_LAG_PREFIX), SUBINTF_LAG_PREFIX))
+    {
+        if (m_stateLagTable.get(alias, temp))
+        {
+            SWSS_LOG_DEBUG("Lag %s is ready", alias.c_str());
+            return true;
+        }
     }
 
     return false;
