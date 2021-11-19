@@ -122,7 +122,7 @@ typedef std::map<std::string, std::string> gearbox_delay_t;
 class BufferMgrDynamic : public Orch
 {
 public:
-    BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBConnector *applDb, const std::vector<TableConnector> &tables, std::shared_ptr<std::vector<KeyOpFieldsValuesTuple>> gearboxInfo);
+    BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBConnector *applDb, const std::vector<TableConnector> &tables, std::shared_ptr<std::vector<KeyOpFieldsValuesTuple>> gearboxInfo, std::shared_ptr<std::vector<KeyOpFieldsValuesTuple>> zeroProfilesInfo);
     using Orch::doTask;
 
 private:
