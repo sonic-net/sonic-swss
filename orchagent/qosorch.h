@@ -189,6 +189,7 @@ private:
     {
         std::vector<sai_object_id_t> groups;
         std::vector<std::vector<sai_object_id_t>> child_groups;
+        std::vector<bool> group_has_been_initialized;
     };
 
     std::unordered_map<sai_object_id_t, SchedulerGroupPortInfo_t> m_scheduler_group_port_info;

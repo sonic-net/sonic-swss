@@ -1225,18 +1225,29 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
 
         m_scheduler_group_port_info[port.m_port_id] = {
             .groups = std::move(groups),
-            .child_groups = std::vector<std::vector<sai_object_id_t>>(groups_count)
+            .child_groups = std::vector<std::vector<sai_object_id_t>>(groups_count),
+            .group_has_been_initialized = std::vector<bool>(groups_count)
         };
-     }
+
+        SWSS_LOG_INFO("Port %s has been initialized with %u group(s)", port.m_alias.c_str(), groups_count);
+    }
 
     /* Lookup groups to which queue belongs */
-    const auto& groups = m_scheduler_group_port_info[port.m_port_id].groups;
+    auto& scheduler_group_port_info = m_scheduler_group_port_info[port.m_port_id];
+    const auto& groups = scheduler_group_port_info.groups;
     for (uint32_t ii = 0; ii < groups.size() ; ii++)
     {
         const auto& group_id = groups[ii];
-        const auto& child_groups_per_group = m_scheduler_group_port_info[port.m_port_id].child_groups[ii];
+        const auto& child_groups_per_group = scheduler_group_port_info.child_groups[ii];
         if (child_groups_per_group.empty())
         {
+            if (scheduler_group_port_info.group_has_been_initialized[ii])
+            {
+                // skip this iteration if it has been initialized which means there're no children in this group
+                SWSS_LOG_INFO("No child group for port %s group 0x%" PRIx64 ", skip", port.m_alias.c_str(), group_id);
+                continue;
+            }
+
             attr.id = SAI_SCHEDULER_GROUP_ATTR_CHILD_COUNT;//Number of queues/groups childs added to scheduler group
             sai_status = sai_scheduler_group_api->get_scheduler_group_attribute(group_id, 1, &attr);
             if (SAI_STATUS_SUCCESS != sai_status)
@@ -1250,7 +1261,9 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
             }
 
             uint32_t child_count = attr.value.u32;
-            vector<sai_object_id_t> child_groups(child_count);
+
+            SWSS_LOG_INFO("Port %s group 0x%" PRIx64 " has been initialized with %u child group(s)", port.m_alias.c_str(), group_id, child_count);
+            scheduler_group_port_info.group_has_been_initialized[ii] = true;
 
             // skip this iteration if there're no children in this group
             if (child_count == 0)
@@ -1258,6 +1271,7 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
                 continue;
             }
 
+            vector<sai_object_id_t> child_groups(child_count);
             attr.id = SAI_SCHEDULER_GROUP_ATTR_CHILD_LIST;
             attr.value.objlist.list = child_groups.data();
             attr.value.objlist.count = child_count;
@@ -1272,7 +1286,7 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
                 }
             }
 
-            m_scheduler_group_port_info[port.m_port_id].child_groups[ii] = std::move(child_groups);
+            scheduler_group_port_info.child_groups[ii] = std::move(child_groups);
         }
 
         for (const auto& child_group_id: child_groups_per_group)

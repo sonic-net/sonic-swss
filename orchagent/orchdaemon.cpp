@@ -1,5 +1,6 @@
 #include <unistd.h>
 #include <unordered_map>
+#include <chrono>
 #include <limits.h>
 #include "orchdaemon.h"
 #include "logger.h"
@@ -645,12 +646,25 @@ void OrchDaemon::start()
         m_select->addSelectables(o->getSelectables());
     }
 
+    auto tstart = std::chrono::high_resolution_clock::now();
+
     while (true)
     {
         Selectable *s;
         int ret;
 
         ret = m_select->select(&s, SELECT_TIMEOUT);
+
+        auto tend = std::chrono::high_resolution_clock::now();
+
+        auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(tend - tstart);
+
+        if (diff.count() >= SELECT_TIMEOUT)
+        {
+            tstart = std::chrono::high_resolution_clock::now();
+
+            flush();
+        }
 
         if (ret == Select::ERROR)
         {
