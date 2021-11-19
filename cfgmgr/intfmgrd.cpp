@@ -48,6 +48,8 @@ int main(int argc, char **argv)
             CFG_LOOPBACK_INTERFACE_TABLE_NAME,
             CFG_VLAN_SUB_INTF_TABLE_NAME,
             CFG_VOQ_INBAND_INTERFACE_TABLE_NAME,
+            CFG_PORT_TABLE_NAME,
+            CFG_LAG_TABLE_NAME,
         };
 
         DBConnector cfgDb("CONFIG_DB", 0);
