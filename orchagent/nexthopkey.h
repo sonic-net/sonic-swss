@@ -4,6 +4,7 @@
 #include "ipaddress.h"
 #include "tokenize.h"
 #include "label.h"
+#include "intfsorch.h"
 
 #define LABELSTACK_DELIMITER '+'
 #define NH_DELIMITER '@'
@@ -19,6 +20,8 @@ struct NextHopKey
     MacAddress          mac_address;    // Overlay Nexthop MAC.
     LabelStack          label_stack;    // MPLS label stack
     uint32_t            weight;         // NH weight for NHGs
+    string              srv6_segment;   // SRV6 segment string
+    string              srv6_source;    // SRV6 source address
 
     NextHopKey() : weight(0) {}
     NextHopKey(const std::string &str, const std::string &alias) :
@@ -60,26 +63,46 @@ struct NextHopKey
         }
         weight = 0;
     }
-    NextHopKey(const std::string &str, bool overlay_nh)
+    NextHopKey(const std::string &str, bool overlay_nh, bool srv6_nh = false)
     {
         if (str.find(NHG_DELIMITER) != string::npos)
         {
             std::string err = "Error converting " + str + " to NextHop";
             throw std::invalid_argument(err);
         }
-        std::string ip_str = parseMplsNextHop(str);
-        auto keys = tokenize(ip_str, NH_DELIMITER);
-        if (keys.size() != 4)
+        if (srv6_nh == true)
         {
-            std::string err = "Error converting " + str + " to NextHop";
-            throw std::invalid_argument(err);
+            weight = 0;
+            vni = 0;
+            weight = 0;
+            auto keys = tokenize(str, NH_DELIMITER);
+            if (keys.size() != 3)
+            {
+                std::string err = "Error converting " + str + " to Nexthop";
+                throw std::invalid_argument(err);
+            }
+            ip_address = keys[0];
+            srv6_segment = keys[1];
+            srv6_source = keys[2];
         }
-        ip_address = keys[0];
-        alias = keys[1];
-        vni = static_cast<uint32_t>(std::stoul(keys[2]));
-        mac_address = keys[3];
-        weight = 0;
+        else
+        {
+            std::string ip_str = parseMplsNextHop(str);
+            auto keys = tokenize(ip_str, NH_DELIMITER);
+            if (keys.size() != 4)
+            {
+                std::string err = "Error converting " + str + " to NextHop";
+                throw std::invalid_argument(err);
+            }
+            ip_address = keys[0];
+            alias = keys[1];
+            vni = static_cast<uint32_t>(std::stoul(keys[2]));
+            mac_address = keys[3];
+            weight = 0;
+        }
     }
+
+    NextHopKey(const IpAddress &ip, const MacAddress &mac, const uint32_t &vni, bool overlay_nh) : ip_address(ip), alias(""), vni(vni), mac_address(mac){}
 
     const std::string to_string() const
     {
@@ -88,8 +111,12 @@ struct NextHopKey
         return str;
     }
 
-    const std::string to_string(bool overlay_nh) const
+    const std::string to_string(bool overlay_nh, bool srv6_nh) const
     {
+        if (srv6_nh)
+        {
+            return ip_address.to_string() + NH_DELIMITER + srv6_segment + NH_DELIMITER + srv6_source;
+        }
         std::string str = formatMplsNextHop();
         str += (ip_address.to_string() + NH_DELIMITER + alias + NH_DELIMITER +
                 std::to_string(vni) + NH_DELIMITER + mac_address.to_string());
@@ -98,15 +125,16 @@ struct NextHopKey
 
     bool operator<(const NextHopKey &o) const
     {
-        return tie(ip_address, alias, label_stack, vni, mac_address) <
-            tie(o.ip_address, o.alias, o.label_stack, o.vni, o.mac_address);
+        return tie(ip_address, alias, label_stack, vni, mac_address, srv6_segment, srv6_source) <
+            tie(o.ip_address, o.alias, o.label_stack, o.vni, o.mac_address, o.srv6_segment, o.srv6_source);
     }
 
     bool operator==(const NextHopKey &o) const
     {
         return (ip_address == o.ip_address) && (alias == o.alias) &&
             (label_stack == o.label_stack) &&
-            (vni == o.vni) && (mac_address == o.mac_address);
+            (vni == o.vni) && (mac_address == o.mac_address) &&
+            (srv6_segment == o.srv6_segment) && (srv6_source == o.srv6_source);
     }
 
     bool operator!=(const NextHopKey &o) const
@@ -116,12 +144,17 @@ struct NextHopKey
 
     bool isIntfNextHop() const
     {
-        return (ip_address.isZero());
+        return (ip_address.isZero() && !isSrv6NextHop());
     }
 
     bool isMplsNextHop() const
     {
         return (!label_stack.empty());
+    }
+
+    bool isSrv6NextHop() const
+    {
+        return (srv6_segment != "");
     }
 
     std::string parseMplsNextHop(const std::string& str)
@@ -160,7 +193,7 @@ struct NextHopKey
         std::string str;
         if (isMplsNextHop())
         {
-            label_stack.to_string() + LABELSTACK_DELIMITER;
+            str = label_stack.to_string() + LABELSTACK_DELIMITER;
         }
         return str;
     }

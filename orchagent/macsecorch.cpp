@@ -19,7 +19,9 @@
 #define AVAILABLE_ACL_PRIORITIES_LIMITATION             (32)
 #define EAPOL_ETHER_TYPE                                (0x888e)
 #define MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS    (1000)
-#define COUNTERS_MACSEC_ATTR_GROUP                      "COUNTERS_MACSEC_ATTR"
+#define COUNTERS_MACSEC_SA_ATTR_GROUP                   "COUNTERS_MACSEC_SA_ATTR"
+#define COUNTERS_MACSEC_SA_GROUP                        "COUNTERS_MACSEC_SA"
+#define COUNTERS_MACSEC_FLOW_GROUP                      "COUNTERS_MACSEC_FLOW"
 
 extern sai_object_id_t   gSwitchId;
 extern sai_macsec_api_t *sai_macsec_api;
@@ -34,6 +36,62 @@ constexpr sai_macsec_cipher_suite_t DEFAULT_CIPHER_SUITE = SAI_MACSEC_CIPHER_SUI
 static const std::vector<std::string> macsec_sa_attrs =
     {
         "SAI_MACSEC_SA_ATTR_CURRENT_XPN",
+};
+static const std::vector<std::string> macsec_sa_ingress_stats =
+    {
+        "SAI_MACSEC_SA_STAT_OCTETS_ENCRYPTED",
+        "SAI_MACSEC_SA_STAT_OCTETS_PROTECTED",
+        "SAI_MACSEC_SA_STAT_IN_PKTS_UNCHECKED",
+        "SAI_MACSEC_SA_STAT_IN_PKTS_DELAYED",
+        "SAI_MACSEC_SA_STAT_IN_PKTS_LATE",
+        "SAI_MACSEC_SA_STAT_IN_PKTS_INVALID",
+        "SAI_MACSEC_SA_STAT_IN_PKTS_NOT_VALID",
+        "SAI_MACSEC_SA_STAT_IN_PKTS_NOT_USING_SA",
+        "SAI_MACSEC_SA_STAT_IN_PKTS_UNUSED_SA",
+        "SAI_MACSEC_SA_STAT_IN_PKTS_OK",
+};
+static const std::vector<std::string> macsec_sa_egress_stats =
+    {
+        "SAI_MACSEC_SA_STAT_OCTETS_ENCRYPTED",
+        "SAI_MACSEC_SA_STAT_OCTETS_PROTECTED",
+        "SAI_MACSEC_SA_STAT_OUT_PKTS_ENCRYPTED",
+        "SAI_MACSEC_SA_STAT_OUT_PKTS_PROTECTED",
+};
+static const std::vector<std::string> macsec_flow_ingress_stats =
+    {
+        "SAI_MACSEC_FLOW_STAT_OTHER_ERR",
+        "SAI_MACSEC_FLOW_STAT_OCTETS_UNCONTROLLED",
+        "SAI_MACSEC_FLOW_STAT_OCTETS_CONTROLLED",
+        "SAI_MACSEC_FLOW_STAT_UCAST_PKTS_UNCONTROLLED",
+        "SAI_MACSEC_FLOW_STAT_UCAST_PKTS_CONTROLLED",
+        "SAI_MACSEC_FLOW_STAT_MULTICAST_PKTS_UNCONTROLLED",
+        "SAI_MACSEC_FLOW_STAT_MULTICAST_PKTS_CONTROLLED",
+        "SAI_MACSEC_FLOW_STAT_BROADCAST_PKTS_UNCONTROLLED",
+        "SAI_MACSEC_FLOW_STAT_BROADCAST_PKTS_CONTROLLED",
+        "SAI_MACSEC_FLOW_STAT_CONTROL_PKTS",
+        "SAI_MACSEC_FLOW_STAT_PKTS_UNTAGGED",
+        "SAI_MACSEC_FLOW_STAT_IN_TAGGED_CONTROL_PKTS",
+        "SAI_MACSEC_FLOW_STAT_IN_PKTS_NO_TAG",
+        "SAI_MACSEC_FLOW_STAT_IN_PKTS_BAD_TAG",
+        "SAI_MACSEC_FLOW_STAT_IN_PKTS_NO_SCI",
+        "SAI_MACSEC_FLOW_STAT_IN_PKTS_UNKNOWN_SCI",
+        "SAI_MACSEC_FLOW_STAT_IN_PKTS_OVERRUN",
+};
+static const std::vector<std::string> macsec_flow_egress_stats =
+    {
+        "SAI_MACSEC_FLOW_STAT_OTHER_ERR",
+        "SAI_MACSEC_FLOW_STAT_OCTETS_UNCONTROLLED",
+        "SAI_MACSEC_FLOW_STAT_OCTETS_CONTROLLED",
+        "SAI_MACSEC_FLOW_STAT_OUT_OCTETS_COMMON",
+        "SAI_MACSEC_FLOW_STAT_UCAST_PKTS_UNCONTROLLED",
+        "SAI_MACSEC_FLOW_STAT_UCAST_PKTS_CONTROLLED",
+        "SAI_MACSEC_FLOW_STAT_MULTICAST_PKTS_UNCONTROLLED",
+        "SAI_MACSEC_FLOW_STAT_MULTICAST_PKTS_CONTROLLED",
+        "SAI_MACSEC_FLOW_STAT_BROADCAST_PKTS_UNCONTROLLED",
+        "SAI_MACSEC_FLOW_STAT_BROADCAST_PKTS_CONTROLLED",
+        "SAI_MACSEC_FLOW_STAT_CONTROL_PKTS",
+        "SAI_MACSEC_FLOW_STAT_PKTS_UNTAGGED",
+        "SAI_MACSEC_FLOW_STAT_OUT_PKTS_TOO_LONG",
 };
 
 template <typename T, typename... Args>
@@ -382,24 +440,27 @@ public:
         return m_macsec_sa;
     }
 
-private:
-    MACsecOrchContext(MACsecOrch *orch) : m_orch(orch),
-                                          m_port_name(nullptr),
-                                          m_direction(SAI_MACSEC_DIRECTION_EGRESS),
-                                          m_sci(nullptr),
-                                          m_an(nullptr),
-                                          m_port(nullptr),
-                                          m_macsec_obj(nullptr),
-                                          m_port_id(nullptr),
-                                          m_switch_id(nullptr),
-                                          m_macsec_port(nullptr),
-                                          m_acl_table(nullptr),
-                                          m_macsec_sc(nullptr),
-                                          m_macsec_sa(nullptr)
+    const gearbox_phy_t* get_gearbox_phy()
     {
+        if (m_gearbox_phy)
+        {
+            return m_gearbox_phy;
+        }
+        auto switch_id = get_switch_id();
+        if (switch_id == nullptr || get_port() == nullptr)
+        {
+            SWSS_LOG_ERROR("Switch/Port wasn't provided");
+            return nullptr;
+        }
+        if (*switch_id == gSwitchId)
+        {
+            return nullptr;
+        }
+        m_gearbox_phy = m_orch->m_port_orch->getGearboxPhy(*get_port());
+        return m_gearbox_phy;
     }
 
-    const Port *get_port()
+    Port *get_port()
     {
         if (m_port == nullptr)
         {
@@ -424,6 +485,24 @@ private:
         return m_port.get();
     }
 
+private:
+    MACsecOrchContext(MACsecOrch *orch) : m_orch(orch),
+                                          m_port_name(nullptr),
+                                          m_direction(SAI_MACSEC_DIRECTION_EGRESS),
+                                          m_sci(nullptr),
+                                          m_an(nullptr),
+                                          m_port(nullptr),
+                                          m_macsec_obj(nullptr),
+                                          m_port_id(nullptr),
+                                          m_switch_id(nullptr),
+                                          m_macsec_port(nullptr),
+                                          m_acl_table(nullptr),
+                                          m_macsec_sc(nullptr),
+                                          m_macsec_sa(nullptr),
+                                          m_gearbox_phy(nullptr)
+    {
+    }
+
     MACsecOrch                          *m_orch;
     std::shared_ptr<std::string>        m_port_name;
     sai_macsec_direction_t              m_direction;
@@ -440,6 +519,7 @@ private:
 
     MACsecOrch::MACsecSC                *m_macsec_sc;
     sai_object_id_t                     *m_macsec_sa;
+    const gearbox_phy_t                 *m_gearbox_phy;
 };
 
 /* MACsec Orchagent */
@@ -457,8 +537,20 @@ MACsecOrch::MACsecOrch(
                             m_state_macsec_ingress_sa(state_db, STATE_MACSEC_INGRESS_SA_TABLE_NAME),
                             m_counter_db("COUNTERS_DB", 0),
                             m_macsec_counters_map(&m_counter_db, COUNTERS_MACSEC_NAME_MAP),
-                            m_macsec_flex_counter_manager(
-                                COUNTERS_MACSEC_ATTR_GROUP,
+                            m_macsec_flow_tx_counters_map(&m_counter_db, COUNTERS_MACSEC_FLOW_TX_NAME_MAP),
+                            m_macsec_flow_rx_counters_map(&m_counter_db, COUNTERS_MACSEC_FLOW_RX_NAME_MAP),
+                            m_macsec_sa_tx_counters_map(&m_counter_db, COUNTERS_MACSEC_SA_TX_NAME_MAP),
+                            m_macsec_sa_rx_counters_map(&m_counter_db, COUNTERS_MACSEC_SA_RX_NAME_MAP),
+                            m_macsec_sa_attr_manager(
+                                COUNTERS_MACSEC_SA_ATTR_GROUP,
+                                StatsMode::READ,
+                                MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
+                            m_macsec_sa_stat_manager(
+                                COUNTERS_MACSEC_SA_GROUP,
+                                StatsMode::READ,
+                                MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
+                            m_macsec_flow_stat_manager(
+                                COUNTERS_MACSEC_FLOW_GROUP,
                                 StatsMode::READ,
                                 MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true)
 {
@@ -592,7 +684,9 @@ task_process_status MACsecOrch::taskUpdateMACsecPort(
                 port_attr,
                 *ctx.get_macsec_obj(),
                 *ctx.get_port_id(),
-                *ctx.get_switch_id()))
+                *ctx.get_switch_id(),
+                *ctx.get_port(),
+                ctx.get_gearbox_phy()))
         {
             return task_failed;
         }
@@ -602,7 +696,9 @@ task_process_status MACsecOrch::taskUpdateMACsecPort(
                 *macsec_port_itr->second,
                 port_name,
                 *ctx.get_macsec_obj(),
-                *ctx.get_port_id());
+                *ctx.get_port_id(),
+                *ctx.get_port(),
+                ctx.get_gearbox_phy());
         });
     }
     if (!updateMACsecPort(*ctx.get_macsec_port(), port_attr))
@@ -644,7 +740,9 @@ task_process_status MACsecOrch::taskDisableMACsecPort(
             *ctx.get_macsec_port(),
             port_name,
             *ctx.get_macsec_obj(),
-            *ctx.get_port_id()))
+            *ctx.get_port_id(),
+            *ctx.get_port(),
+            ctx.get_gearbox_phy()))
     {
         result = task_failed;
     }
@@ -906,8 +1004,10 @@ bool MACsecOrch::createMACsecPort(
     const std::string &port_name,
     const TaskArgs &port_attr,
     const MACsecObject &macsec_obj,
-    sai_object_id_t line_port_id,
-    sai_object_id_t switch_id)
+    sai_object_id_t port_id,
+    sai_object_id_t switch_id,
+    Port &port,
+    const gearbox_phy_t* phy)
 {
     SWSS_LOG_ENTER();
 
@@ -915,7 +1015,7 @@ bool MACsecOrch::createMACsecPort(
 
     if (!createMACsecPort(
             macsec_port.m_egress_port_id,
-            line_port_id,
+            port_id,
             switch_id,
             SAI_MACSEC_DIRECTION_EGRESS))
     {
@@ -929,7 +1029,7 @@ bool MACsecOrch::createMACsecPort(
 
     if (!createMACsecPort(
             macsec_port.m_ingress_port_id,
-            line_port_id,
+            port_id,
             switch_id,
             SAI_MACSEC_DIRECTION_INGRESS))
     {
@@ -982,7 +1082,7 @@ bool MACsecOrch::createMACsecPort(
 
     if (!initMACsecACLTable(
             macsec_port.m_egress_acl_table,
-            line_port_id,
+            port_id,
             switch_id,
             SAI_MACSEC_DIRECTION_EGRESS,
             macsec_port.m_sci_in_sectag))
@@ -990,16 +1090,16 @@ bool MACsecOrch::createMACsecPort(
         SWSS_LOG_WARN("Cannot init the ACL Table at the port %s.", port_name.c_str());
         return false;
     }
-    recover.add_action([this, &macsec_port, line_port_id]() {
+    recover.add_action([this, &macsec_port, port_id]() {
         this->deinitMACsecACLTable(
             macsec_port.m_egress_acl_table,
-            line_port_id,
+            port_id,
             SAI_MACSEC_DIRECTION_EGRESS);
     });
 
     if (!initMACsecACLTable(
             macsec_port.m_ingress_acl_table,
-            line_port_id,
+            port_id,
             switch_id,
             SAI_MACSEC_DIRECTION_INGRESS,
             macsec_port.m_sci_in_sectag))
@@ -1007,12 +1107,26 @@ bool MACsecOrch::createMACsecPort(
         SWSS_LOG_WARN("Cannot init the ACL Table at the port %s.", port_name.c_str());
         return false;
     }
-    recover.add_action([this, &macsec_port, line_port_id]() {
+    recover.add_action([this, &macsec_port, port_id]() {
         this->deinitMACsecACLTable(
             macsec_port.m_ingress_acl_table,
-            line_port_id,
+            port_id,
             SAI_MACSEC_DIRECTION_INGRESS);
     });
+
+    if (phy && phy->macsec_ipg != 0)
+    {
+        if (!m_port_orch->getPortIPG(port.m_port_id, macsec_port.m_original_ipg))
+        {
+            SWSS_LOG_WARN("Cannot get Port IPG at the port %s", port_name.c_str());
+            return false;
+        }
+        if (!m_port_orch->setPortIPG(port.m_port_id, phy->macsec_ipg))
+        {
+            SWSS_LOG_WARN("Cannot set MACsec IPG to %u at the port %s", phy->macsec_ipg, port_name.c_str());
+            return false;
+        }
+    }
 
     SWSS_LOG_NOTICE("MACsec port %s is created.", port_name.c_str());
 
@@ -1026,7 +1140,7 @@ bool MACsecOrch::createMACsecPort(
 
 bool MACsecOrch::createMACsecPort(
     sai_object_id_t &macsec_port_id,
-    sai_object_id_t line_port_id,
+    sai_object_id_t port_id,
     sai_object_id_t switch_id,
     sai_macsec_direction_t direction)
 {
@@ -1039,7 +1153,7 @@ bool MACsecOrch::createMACsecPort(
     attr.value.s32 = direction;
     attrs.push_back(attr);
     attr.id = SAI_MACSEC_PORT_ATTR_PORT_ID;
-    attr.value.oid = line_port_id;
+    attr.value.oid = port_id;
     attrs.push_back(attr);
     sai_status_t status = sai_macsec_api->create_macsec_port(
                                 &macsec_port_id,
@@ -1095,7 +1209,7 @@ bool MACsecOrch::updateMACsecPort(MACsecPort &macsec_port, const TaskArgs &port_
         }
         else
         {
-            SWSS_LOG_WARN("Unknow Cipher Suite %s", cipher_suite.c_str());
+            SWSS_LOG_WARN("Unknown Cipher Suite %s", cipher_suite.c_str());
             return false;
         }
     }
@@ -1141,7 +1255,9 @@ bool MACsecOrch::deleteMACsecPort(
     const MACsecPort &macsec_port,
     const std::string &port_name,
     const MACsecObject &macsec_obj,
-    sai_object_id_t line_port_id)
+    sai_object_id_t port_id,
+    Port &port,
+    const gearbox_phy_t* phy)
 {
     SWSS_LOG_ENTER();
 
@@ -1179,13 +1295,13 @@ bool MACsecOrch::deleteMACsecPort(
         }
     }
 
-    if (!deinitMACsecACLTable(macsec_port.m_ingress_acl_table, line_port_id, SAI_MACSEC_DIRECTION_INGRESS))
+    if (!deinitMACsecACLTable(macsec_port.m_ingress_acl_table, port_id, SAI_MACSEC_DIRECTION_INGRESS))
     {
         SWSS_LOG_WARN("Cannot deinit ingress ACL table at the port %s.", port_name.c_str());
         result &= false;
     }
 
-    if (!deinitMACsecACLTable(macsec_port.m_egress_acl_table, line_port_id, SAI_MACSEC_DIRECTION_EGRESS))
+    if (!deinitMACsecACLTable(macsec_port.m_egress_acl_table, port_id, SAI_MACSEC_DIRECTION_EGRESS))
     {
         SWSS_LOG_WARN("Cannot deinit egress ACL table at the port %s.", port_name.c_str());
         result &= false;
@@ -1201,6 +1317,15 @@ bool MACsecOrch::deleteMACsecPort(
     {
         SWSS_LOG_WARN("Cannot delete MACsec ingress port at the port %s", port_name.c_str());
         result &= false;
+    }
+
+    if (phy && phy->macsec_ipg != 0)
+    {
+        if (!m_port_orch->setPortIPG(port.m_port_id, macsec_port.m_original_ipg))
+        {
+            SWSS_LOG_WARN("Cannot set MACsec IPG to %u at the port %s", macsec_port.m_original_ipg, port_name.c_str());
+            result &= false;
+        }
     }
 
     m_state_macsec_port.del(port_name);
@@ -1738,15 +1863,17 @@ task_process_status MACsecOrch::createMACsecSA(
         sc->m_sa_ids.erase(an);
     });
 
-    installCounter(CounterType::MACSEC_SA_ATTR, port_sci_an, sc->m_sa_ids[an], macsec_sa_attrs);
+    installCounter(CounterType::MACSEC_SA_ATTR, direction, port_sci_an, sc->m_sa_ids[an], macsec_sa_attrs);
     std::vector<FieldValueTuple> fvVector;
     fvVector.emplace_back("state", "ok");
     if (direction == SAI_MACSEC_DIRECTION_EGRESS)
     {
+        installCounter(CounterType::MACSEC_SA, direction, port_sci_an, sc->m_sa_ids[an], macsec_sa_egress_stats);
         m_state_macsec_egress_sa.set(swss::join('|', port_name, sci, an), fvVector);
     }
     else
     {
+        installCounter(CounterType::MACSEC_SA, direction, port_sci_an, sc->m_sa_ids[an], macsec_sa_ingress_stats);
         m_state_macsec_ingress_sa.set(swss::join('|', port_name, sci, an), fvVector);
     }
 
@@ -1781,7 +1908,8 @@ task_process_status MACsecOrch::deleteMACsecSA(
 
     auto result = task_success;
 
-    uninstallCounter(port_sci_an, ctx.get_macsec_sc()->m_sa_ids[an]);
+    uninstallCounter(CounterType::MACSEC_SA_ATTR, direction, port_sci_an, ctx.get_macsec_sc()->m_sa_ids[an]);
+    uninstallCounter(CounterType::MACSEC_SA, direction, port_sci_an, ctx.get_macsec_sc()->m_sa_ids[an]);
     if (!deleteMACsecSA(ctx.get_macsec_sc()->m_sa_ids[an]))
     {
         SWSS_LOG_WARN("Cannot delete the MACsec SA %s.", port_sci_an.c_str());
@@ -1908,6 +2036,7 @@ bool MACsecOrch::deleteMACsecSA(sai_object_id_t sa_id)
 
 void MACsecOrch::installCounter(
     CounterType counter_type,
+    sai_macsec_direction_t direction,
     const std::string &obj_name,
     sai_object_id_t obj_id,
     const std::vector<std::string> &stats)
@@ -1915,21 +2044,77 @@ void MACsecOrch::installCounter(
     FieldValueTuple tuple(obj_name, sai_serialize_object_id(obj_id));
     vector<FieldValueTuple> fields;
     fields.push_back(tuple);
-    m_macsec_counters_map.set("", fields);
 
     std::unordered_set<std::string> counter_stats;
     for (const auto &stat : stats)
     {
         counter_stats.emplace(stat);
     }
-    m_macsec_flex_counter_manager.setCounterIdList(obj_id, counter_type, counter_stats);
+    switch(counter_type)
+    {
+        case CounterType::MACSEC_SA_ATTR:
+            m_macsec_sa_attr_manager.setCounterIdList(obj_id, counter_type, counter_stats);
+            m_macsec_counters_map.set("", fields);
+            break;
+
+        case CounterType::MACSEC_SA:
+            m_macsec_sa_stat_manager.setCounterIdList(obj_id, counter_type, counter_stats);
+            if (direction == SAI_MACSEC_DIRECTION_EGRESS)
+            {
+                m_macsec_sa_tx_counters_map.set("", fields);
+            }
+            else
+            {
+                m_macsec_sa_rx_counters_map.set("", fields);
+            }
+            break;
+
+        case CounterType::MACSEC_FLOW:
+            m_macsec_flow_stat_manager.setCounterIdList(obj_id, counter_type, counter_stats);
+            break;
+
+        default:
+            SWSS_LOG_ERROR("Failed to install unknown counter type %u.\n",
+                           static_cast<uint32_t>(counter_type));
+            break;
+    }
 }
 
-void MACsecOrch::uninstallCounter(const std::string &obj_name, sai_object_id_t obj_id)
+void MACsecOrch::uninstallCounter(
+    CounterType counter_type,
+    sai_macsec_direction_t direction,
+    const std::string &obj_name,
+    sai_object_id_t obj_id)
 {
-    m_macsec_flex_counter_manager.clearCounterIdList(obj_id);
+    switch(counter_type)
+    {
+        case CounterType::MACSEC_SA_ATTR:
+            m_macsec_sa_attr_manager.clearCounterIdList(obj_id);
+            m_counter_db.hdel(COUNTERS_MACSEC_NAME_MAP, obj_name);
+            break;
 
-    m_counter_db.hdel(COUNTERS_MACSEC_NAME_MAP, obj_name);
+        case CounterType::MACSEC_SA:
+            m_macsec_sa_stat_manager.clearCounterIdList(obj_id);
+            if (direction == SAI_MACSEC_DIRECTION_EGRESS)
+            {
+                m_counter_db.hdel(COUNTERS_MACSEC_SA_TX_NAME_MAP, obj_name);
+            }
+            else
+            {
+                m_counter_db.hdel(COUNTERS_MACSEC_SA_RX_NAME_MAP, obj_name);
+            }
+            break;
+
+        case CounterType::MACSEC_FLOW:
+            m_macsec_flow_stat_manager.clearCounterIdList(obj_id);
+            break;
+
+        default:
+            SWSS_LOG_ERROR("Failed to uninstall unknown counter type %u.\n",
+                           static_cast<uint32_t>(counter_type));
+            break;
+    }
+
 }
 
 bool MACsecOrch::initMACsecACLTable(

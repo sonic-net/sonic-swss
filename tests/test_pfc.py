@@ -101,7 +101,34 @@ class TestPfc(object):
         pfc = getPortAttr(dvs, port_oid, 'SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL')
         assert pfc == pfc_tx
 
+    def test_PfcUnconfig(self, dvs, testlog):
 
+        port_name = 'Ethernet0'
+        pfc_queues = [ 3, 4 ]
+
+        # Configure default PFC
+        setPortPfc(dvs, port_name, pfc_queues)
+
+        # Get SAI object ID for the interface
+        port_oid = getPortOid(dvs, port_name)
+
+        # Verify default PFC is set to configured value
+        pfc = getPortAttr(dvs, port_oid, 'SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL')
+        assert pfc == getBitMaskStr(pfc_queues)
+
+        # Configure PFC on single TC
+        pfc_queues = [ 3 ]
+        setPortPfc(dvs, port_name, pfc_queues)
+        # Verify default PFC is set to configured value
+        pfc = getPortAttr(dvs, port_oid, 'SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL')
+        assert pfc == getBitMaskStr(pfc_queues)
+
+        # Disable PFC on last TC
+        pfc_queues = [ ]
+        setPortPfc(dvs, port_name, pfc_queues)
+        # Verify default PFC is set to configured value
+        pfc = getPortAttr(dvs, port_oid, 'SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL')
+        assert pfc == getBitMaskStr(pfc_queues)
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying

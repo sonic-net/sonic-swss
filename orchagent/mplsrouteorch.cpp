@@ -6,12 +6,16 @@
 #include "swssnet.h"
 #include "converter.h"
 #include "crmorch.h"
+#include "nhgorch.h"
 #include "directory.h"
+#include "cbf/cbfnhgorch.h"
 
 extern sai_object_id_t gVirtualRouterId;
 extern sai_object_id_t gSwitchId;
 
 extern CrmOrch *gCrmOrch;
+extern NhgOrch *gNhgOrch;
+extern CbfNhgOrch *gCbfNhgOrch;
 
 void RouteOrch::doLabelTask(Consumer& consumer)
 {
@@ -128,6 +132,7 @@ void RouteOrch::doLabelTask(Consumer& consumer)
                 string weights;
                 bool& excp_intfs_flag = ctx.excp_intfs_flag;
                 bool blackhole = false;
+                string nhg_index;
 
                 for (auto i : kfvFieldsValues(t))
                 {
@@ -148,84 +153,121 @@ void RouteOrch::doLabelTask(Consumer& consumer)
 
                     if (fvField(i) == "weight")
                         weights = fvValue(i);
-                }
-                vector<string> ipv = tokenize(ips, ',');
-                vector<string> alsv = tokenize(aliases, ',');
-                vector<string> mpls_nhv = tokenize(mpls_nhs, ',');
 
-                /* Resize the ip vector to match ifname vector
-                 * as tokenize(",", ',') will miss the last empty segment. */
-                if (alsv.size() == 0 && !blackhole)
+                    if (fvField(i) == "nexthop_group")
+                        nhg_index = fvValue(i);
+                }
+
+                /*
+                 * A route should not fill both nexthop_group and ips /
+                 * aliases.
+                 */
+                if (!nhg_index.empty() && (!ips.empty() || !aliases.empty()))
                 {
-                    SWSS_LOG_WARN("Skip the route %s, for it has an empty ifname field.", key.c_str());
+                    SWSS_LOG_ERROR("Route %s has both nexthop_group and ips/aliases",
+                                    key.c_str());
                     it = consumer.m_toSync.erase(it);
                     continue;
                 }
-                else if (alsv.size() != ipv.size())
-                {
-                    SWSS_LOG_NOTICE("Route %s: resize ipv to match alsv, %zd -> %zd.", key.c_str(), ipv.size(), alsv.size());
-                    ipv.resize(alsv.size());
-                }
 
-                /* Set the empty ip(s) to zero
-                 * as IpAddress("") will construct a incorrect ip. */
-                for (auto &ip : ipv)
+                ctx.nhg_index = nhg_index;
+
+                vector<string> ipv;
+                vector<string> alsv;
+                vector<string> mpls_nhv;
+
+                /*
+                 * If the nexthop_group is empty, create the next hop group key
+                 * based on the IPs and aliases.  Otherwise, get the key from
+                 * the NhgOrch.
+                 */
+                if (nhg_index.empty())
                 {
-                    if (ip.empty())
+
+                    ipv = tokenize(ips, ',');
+                    alsv = tokenize(aliases, ',');
+                    mpls_nhv = tokenize(mpls_nhs, ',');
+
+                    /* Resize the ip vector to match ifname vector
+                     * as tokenize(",", ',') will miss the last empty segment. */
+                    if (alsv.size() == 0 && !blackhole)
                     {
-                        SWSS_LOG_NOTICE("Route %s: set the empty nexthop ip to zero.", key.c_str());
-                        ip = "0.0.0.0";
-                    }
-                }
-
-                for (auto alias : alsv)
-                {
-                    /* skip route to management, docker, loopback
-                     * TODO: for route to loopback interface, the proper
-                     * way is to create loopback interface and then create
-                     * route pointing to it, so that we can traps packets to
-                     * CPU */
-                    if (alias == "eth0" || alias == "docker0" ||
-                        alias == "lo" || !alias.compare(0, strlen(LOOPBACK_PREFIX), LOOPBACK_PREFIX))
-                    {
-                        excp_intfs_flag = true;
-                        break;
-                    }
-                }
-
-                // TODO: cannot trust m_portsOrch->getPortIdByAlias because sometimes alias is empty
-                if (excp_intfs_flag)
-                {
-                    /* If any existing routes are updated to point to the
-                     * above interfaces, remove them from the ASIC. */
-                    if (removeLabelRoute(ctx))
+                        SWSS_LOG_WARN("Skip the route %s, for it has an empty ifname field.", key.c_str());
                         it = consumer.m_toSync.erase(it);
+                        continue;
+                    }
+                    else if (alsv.size() != ipv.size())
+                    {
+                        SWSS_LOG_NOTICE("Route %s: resize ipv to match alsv, %zd -> %zd.", key.c_str(), ipv.size(), alsv.size());
+                        ipv.resize(alsv.size());
+                    }
+
+                    for (auto alias : alsv)
+                    {
+                        /* skip route to management, docker, loopback
+                         * TODO: for route to loopback interface, the proper
+                         * way is to create loopback interface and then create
+                         * route pointing to it, so that we can traps packets to
+                         * CPU */
+                        if (alias == "eth0" || alias == "docker0" ||
+                            alias == "lo" || !alias.compare(0, strlen(LOOPBACK_PREFIX), LOOPBACK_PREFIX))
+                        {
+                            excp_intfs_flag = true;
+                            break;
+                        }
+                    }
+
+                    // TODO: cannot trust m_portsOrch->getPortIdByAlias because sometimes alias is empty
+                    if (excp_intfs_flag)
+                    {
+                        /* If any existing routes are updated to point to the
+                         * above interfaces, remove them from the ASIC. */
+                        if (removeLabelRoute(ctx))
+                            it = consumer.m_toSync.erase(it);
+                        else
+                            it++;
+                        continue;
+                    }
+
+                    string nhg_str = "";
+                    NextHopGroupKey& nhg = ctx.nhg;
+
+                    if (blackhole)
+                    {
+                        nhg = NextHopGroupKey();
+                    }
                     else
-                        it++;
-                    continue;
-                }
+                    {
+                        for (uint32_t i = 0; i < ipv.size(); i++)
+                        {
+                            if (i) nhg_str += NHG_DELIMITER;
+                            if (!mpls_nhv.empty() && mpls_nhv[i] != "na")
+                            {
+                                nhg_str += mpls_nhv[i] + LABELSTACK_DELIMITER;
+                            }
+                            nhg_str += ipv[i] + NH_DELIMITER + alsv[i];
+                        }
 
-                string nhg_str = "";
-                NextHopGroupKey& nhg = ctx.nhg;
-
-                if (blackhole)
-                {
-                    nhg = NextHopGroupKey();
+                        nhg = NextHopGroupKey(nhg_str, weights);
+                    }
                 }
                 else
                 {
-                    for (uint32_t i = 0; i < ipv.size(); i++)
+                    try
                     {
-                        if (i) nhg_str += NHG_DELIMITER;
-                        if (!mpls_nhv.empty() && mpls_nhv[i] != "na")
-                        {
-                            nhg_str += mpls_nhv[i] + LABELSTACK_DELIMITER;
-                        }
-                        nhg_str += ipv[i] + NH_DELIMITER + alsv[i];
+                        const NhgBase& nh_group = getNhg(nhg_index);
+                        ctx.nhg = nh_group.getNhgKey();
+                        ctx.using_temp_nhg = nh_group.isTemp();
                     }
-
-                    nhg = NextHopGroupKey(nhg_str, weights);
+                    catch (const std::out_of_range& e)
+                    {
+                        SWSS_LOG_ERROR("Next hop group %s does not exist", nhg_index.c_str());
+                        ++it;
+                        continue;
+                    }
                 }
+
+                NextHopGroupKey& nhg = ctx.nhg;
 
                 if (nhg.getSize() == 1 && nhg.hasIntfNextHop())
                 {
@@ -251,7 +293,8 @@ void RouteOrch::doLabelTask(Consumer& consumer)
                 }
                 else if (m_syncdLabelRoutes.find(vrf_id) == m_syncdLabelRoutes.end() ||
                          m_syncdLabelRoutes.at(vrf_id).find(label) == m_syncdLabelRoutes.at(vrf_id).end() ||
-                         m_syncdLabelRoutes.at(vrf_id).at(label) != nhg)
+                         m_syncdLabelRoutes.at(vrf_id).at(label) != RouteNhg(nhg, nhg_index) ||
+                         ctx.using_temp_nhg)
                 {
                     if (addLabelRoute(ctx, nhg))
                         it = consumer.m_toSync.erase(it);
@@ -259,12 +302,15 @@ void RouteOrch::doLabelTask(Consumer& consumer)
                         it++;
                 }
                 else
+                {
                     /* Duplicate entry */
+                    SWSS_LOG_INFO("Route %s is duplicate entry", key.c_str());
                     it = consumer.m_toSync.erase(it);
+                }
 
                 // If already exhaust the nexthop groups, and there are pending removing routes in bulker,
                 // flush the bulker and possibly collect some released nexthop groups
-                if (m_nextHopGroupCount >= m_maxNextHopGroupCount &&
+                if (m_nextHopGroupCount + NhgOrch::getSyncedNhgCount() >= m_maxNextHopGroupCount &&
                     gLabelRouteBulker.removing_entries_count() > 0)
                 {
                     break;
@@ -341,7 +387,8 @@ void RouteOrch::doLabelTask(Consumer& consumer)
                 }
                 else if (m_syncdLabelRoutes.find(vrf_id) == m_syncdLabelRoutes.end() ||
                          m_syncdLabelRoutes.at(vrf_id).find(label) == m_syncdLabelRoutes.at(vrf_id).end() ||
-                         m_syncdLabelRoutes.at(vrf_id).at(label) != nhg)
+                         m_syncdLabelRoutes.at(vrf_id).at(label) != RouteNhg(nhg, ctx.nhg_index) ||
+                         ctx.using_temp_nhg)
                 {
                     if (addLabelRoutePost(ctx, nhg))
                         it_prev = consumer.m_toSync.erase(it_prev);
@@ -381,10 +428,14 @@ void RouteOrch::addTempLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroup
     /* Remove next hops that are not in m_syncdNextHops */
     for (auto it = next_hop_set.begin(); it != next_hop_set.end();)
     {
-        if (!m_neighOrch->hasNextHop(*it))
+        /*
+         * Check if the IP next hop exists in NeighOrch.  The next hop may be
+         * a labeled one, which are created by RouteOrch or NhgOrch if the IP
+         * next hop exists.
+         */
+        if (!m_neighOrch->isNeighborResolved(*it))
         {
-            SWSS_LOG_INFO("Failed to get next hop %s for %u",
-                   (*it).to_string().c_str(), label);
+            SWSS_LOG_INFO("Failed to get next hop %s for %u", (*it).to_string().c_str(), label);
             it = next_hop_set.erase(it);
         }
         else
@@ -425,7 +476,20 @@ bool RouteOrch::addLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroupKey 
 
     auto it_route = m_syncdLabelRoutes.at(vrf_id).find(label);
 
-    if (nextHops.getSize() == 0)
+    if (!ctx.nhg_index.empty())
+    {
+        try
+        {
+            const NhgBase& nhg = getNhg(ctx.nhg_index);
+            next_hop_id = nhg.getId();
+        }
+        catch(const std::out_of_range& e)
+        {
+            SWSS_LOG_WARN("Next hop group key %s does not exist", ctx.nhg_index.c_str());
+            return false;
+        }
+    }
+    else if (nextHops.getSize() == 0)
     {
         /* The route is pointing to a blackhole */
         blackhole = true;
@@ -453,17 +517,24 @@ bool RouteOrch::addLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroupKey 
             }
             /* For non-existent MPLS NH, check if IP neighbor NH exists */
             else if (nexthop.isMplsNextHop() &&
-                     m_neighOrch->hasNextHop(NextHopKey(nexthop.ip_address, nexthop.alias)))
+                     m_neighOrch->isNeighborResolved(nexthop))
             {
                 /* since IP neighbor NH exists, neighbor is resolved, add MPLS NH */
-                m_neighOrch->addNextHop(nexthop);
-                next_hop_id = m_neighOrch->getNextHopId(nexthop);
+                if (m_neighOrch->addNextHop(nexthop))
+                {
+                    next_hop_id = m_neighOrch->getNextHopId(nexthop);
+                }
+                else
+                {
+                    return false;
+                }
             }
             /* IP neighbor is not yet resolved */
             else
             {
                 SWSS_LOG_INFO("Failed to get next hop %s for %u",
                         nextHops.to_string().c_str(), label);
+                m_neighOrch->resolveNeighbor(nexthop);
                 return false;
             }
         }
@@ -492,9 +563,10 @@ bool RouteOrch::addLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroupKey 
 
                 /* If the current next hop is part of the next hop group to sync,
                  * then return false and no need to add another temporary route. */
-                if (it_route != m_syncdLabelRoutes.at(vrf_id).end() && it_route->second.getSize() == 1)
+                if (it_route != m_syncdLabelRoutes.at(vrf_id).end() &&
+                    it_route->second.nhg_key.getSize() == 1)
                 {
-                    const NextHopKey& nexthop = *it_route->second.getNextHops().begin();
+                    const NextHopKey& nexthop = *it_route->second.nhg_key.getNextHops().begin();
                     if (nextHops.contains(nexthop))
                     {
                         return false;
@@ -515,7 +587,6 @@ bool RouteOrch::addLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroupKey 
 
     /* Sync the inseg entry */
     sai_inseg_entry_t inseg_entry;
-    // route_entry.vr_id = vrf_id; No VRF support for MPLS?
     inseg_entry.switch_id = gSwitchId;
     inseg_entry.label = label;
 
@@ -559,7 +630,7 @@ bool RouteOrch::addLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroupKey 
     else
     {
         /* Set the packet action to forward when there was no next hop (dropped) */
-        if (it_route->second.getSize() == 0 && !blackhole)
+        if (it_route->second.nhg_key.getSize() == 0 && !blackhole)
         {
             inseg_attr.id = SAI_INSEG_ENTRY_ATTR_PACKET_ACTION;
             inseg_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
@@ -607,17 +678,27 @@ bool RouteOrch::addLabelRoutePost(const LabelRouteBulkContext& ctx, const NextHo
     /* next_hop_id indicates the next hop id or next hop group id of this route */
     sai_object_id_t next_hop_id;
 
-    if (nextHops.getSize() == 0)
+    /* Check that the next hop group is not owned by NhgOrch. */
+    if (!ctx.nhg_index.empty())
+    {
+        if (!gNhgOrch->hasNhg(ctx.nhg_index) && !gCbfNhgOrch->hasNhg(ctx.nhg_index))
+        {
+            SWSS_LOG_WARN("Failed to get next hop group with index %s", ctx.nhg_index.c_str());
+            return false;
+        }
+    }
+    else if (nextHops.getSize() == 0)
     {
         /* The route is pointing to a blackhole */
         blackhole = true;
     }
-    if (nextHops.getSize() == 1)
+    /* The route is pointing to a next hop */
+    else if (nextHops.getSize() == 1)
     {
-        /* The route is pointing to a next hop */
         const NextHopKey& nexthop = *nextHops.getNextHops().begin();
         if (nexthop.isIntfNextHop())
         {
+
             next_hop_id = m_intfsOrch->getRouterIntfsId(nexthop.alias);
             /* rif is not created yet */
             if (next_hop_id == SAI_NULL_OBJECT_ID)
@@ -668,7 +749,15 @@ bool RouteOrch::addLabelRoutePost(const LabelRouteBulkContext& ctx, const NextHo
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_MPLS_INSEG);
 
         /* Increase the ref_count for the next hop (group) entry */
-        increaseNextHopRefCount(nextHops);
+        if (ctx.nhg_index.empty())
+        {
+            increaseNextHopRefCount(nextHops);
+        }
+        else
+        {
+            incNhgRefCount(ctx.nhg_index);
+        }
+
         SWSS_LOG_INFO("Post create label %u with next hop(s) %s",
                       label, nextHops.to_string().c_str());
     }
@@ -677,7 +766,7 @@ bool RouteOrch::addLabelRoutePost(const LabelRouteBulkContext& ctx, const NextHo
         sai_status_t status;
 
         /* Set the packet action to forward when there was no next hop (dropped) and not pointing to blackhole */
-        if (it_route->second.getSize() == 0 && !blackhole)
+        if (it_route->second.nhg_key.getSize() == 0 && !blackhole)
         {
             status = *it_status++;
             if (status != SAI_STATUS_SUCCESS)
@@ -704,14 +793,30 @@ bool RouteOrch::addLabelRoutePost(const LabelRouteBulkContext& ctx, const NextHo
             }
         }
 
-        /* Increase the ref_count for the next hop (group) entry */
-        increaseNextHopRefCount(nextHops);
-
-        decreaseNextHopRefCount(it_route->second);
-        if (it_route->second.getSize() > 1
-            && m_syncdNextHopGroups[it_route->second].ref_count == 0)
+        /* Decrease the ref count for the previous next hop group. */
+        if (it_route->second.nhg_index.empty())
         {
-            m_bulkNhgReducedRefCnt.emplace(it_route->second, 0);
+            decreaseNextHopRefCount(it_route->second.nhg_key);
+            if (it_route->second.nhg_key.getSize() > 1
+                && m_syncdNextHopGroups[it_route->second.nhg_key].ref_count == 0)
+            {
+                m_bulkNhgReducedRefCnt.emplace(it_route->second.nhg_key, 0);
+            }
+        }
+        /* The next hop group is owned by (Cbf)NhgOrch. */
+        else
+        {
+            decNhgRefCount(it_route->second.nhg_index);
+        }
+
+        /* Increase the ref_count for the next hop (group) entry */
+        if (ctx.nhg_index.empty())
+        {
+            increaseNextHopRefCount(nextHops);
+        }
+        else
+        {
+            incNhgRefCount(ctx.nhg_index);
         }
 
         if (blackhole)
@@ -734,7 +839,7 @@ bool RouteOrch::addLabelRoutePost(const LabelRouteBulkContext& ctx, const NextHo
                       label, nextHops.to_string().c_str());
     }
 
-    m_syncdLabelRoutes[vrf_id][label] = nextHops;
+    m_syncdLabelRoutes[vrf_id][label] = RouteNhg(nextHops, ctx.nhg_index);
 
     return true;
 }
@@ -754,7 +859,6 @@ bool RouteOrch::removeLabelRoute(LabelRouteBulkContext& ctx)
     }
 
     sai_inseg_entry_t inseg_entry;
-    //inseg_entry.vr_id = vrf_id; No VRF support for MPLS
     inseg_entry.switch_id = gSwitchId;
     inseg_entry.label = label;
 
@@ -807,31 +911,38 @@ bool RouteOrch::removeLabelRoutePost(const LabelRouteBulkContext& ctx)
 
     gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_MPLS_INSEG);
 
-    /*
-     * Decrease the reference count only when the route is pointing to a next hop.
-     */
-    decreaseNextHopRefCount(it_route->second);
-    if (it_route->second.getSize() > 1
-        && m_syncdNextHopGroups[it_route->second].ref_count == 0)
+    if (it_route->second.nhg_index.empty())
     {
-        m_bulkNhgReducedRefCnt.emplace(it_route->second, 0);
-    }
-    /*
-     * Additionally check if the NH has label and its ref count == 0, then
-     * remove the label next hop.
-     */
-    else if (it_route->second.getSize() == 1)
-    {
-        const NextHopKey& nexthop = *it_route->second.getNextHops().begin();
-        if (nexthop.isMplsNextHop() &&
-            (m_neighOrch->getNextHopRefCount(nexthop) == 0))
+        /*
+         * Decrease the reference count only when the route is pointing to a next hop.
+         */
+        decreaseNextHopRefCount(it_route->second.nhg_key);
+        if (it_route->second.nhg_key.getSize() > 1
+            && m_syncdNextHopGroups[it_route->second.nhg_key].ref_count == 0)
         {
-            m_neighOrch->removeMplsNextHop(nexthop);
+            m_bulkNhgReducedRefCnt.emplace(it_route->second.nhg_key, 0);
+        }
+        /*
+         * Additionally check if the NH has label and its ref count == 0, then
+         * remove the label next hop.
+         */
+        else if (it_route->second.nhg_key.getSize() == 1)
+        {
+            const NextHopKey& nexthop = *it_route->second.nhg_key.getNextHops().begin();
+            if (nexthop.isMplsNextHop() &&
+                (m_neighOrch->getNextHopRefCount(nexthop) == 0))
+            {
+                m_neighOrch->removeMplsNextHop(nexthop);
+            }
         }
     }
+    else
+    {
+        decNhgRefCount(it_route->second.nhg_index);
+    }
 
-    SWSS_LOG_INFO("Remove label %u with next hop(s) %s",
-                  label, it_route->second.to_string().c_str());
+    SWSS_LOG_INFO("Remove label route %u with next hop(s) %s",
+                  label, it_route->second.nhg_key.to_string().c_str());
 
     it_route_table->second.erase(label);
 
