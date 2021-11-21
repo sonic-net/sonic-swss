@@ -165,13 +165,12 @@ class PfcWdZeroBufferHandler: public PfcWdLossyHandler
 
 // PFC queue that implements drop action by draining queue via SAI
 // attribute SAI_QUEUE_ATTR_PFC_DLR_INIT.
-class PfcWdSaiDlrInitHandler: public PfcWdActionHandler
+class PfcWdSaiDlrInitHandler: public PfcWdZeroBufferHandler
 {
     public:
         PfcWdSaiDlrInitHandler(sai_object_id_t port, sai_object_id_t queue,
                 uint8_t queueId, shared_ptr<Table> countersTable);
         virtual ~PfcWdSaiDlrInitHandler(void);
-        virtual bool getHwCounters(PfcWdHwStats& counters);
 };
 
 #endif
