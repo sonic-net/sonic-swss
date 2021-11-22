@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include "orch.h"
+#include "switchorch.h"
 #include "portsorch.h"
 
 const string dscp_to_tc_field_name              = "dscp_to_tc_map";
@@ -68,6 +69,8 @@ class DscpToTcMapHandler : public QosMapHandler
 public:
     bool convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes) override;
     sai_object_id_t addQosItem(const vector<sai_attribute_t> &attributes) override;
+protected:
+    void applyDscpToTcMapToSwitch(sai_attr_id_t attr_id, sai_object_id_t sai_dscp_to_tc_map);
 };
 
 class Dot1pToTcMapHandler : public QosMapHandler

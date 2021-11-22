@@ -486,3 +486,31 @@ void SwitchOrch::set_switch_capability(const std::vector<FieldValueTuple>& value
 {
      m_switchTable.set("switch", values);
 }
+
+bool SwitchOrch::querySwitchDscpToTcCapability(sai_object_type_t sai_object, sai_attr_id_t attr_id)
+{
+    SWSS_LOG_ENTER();
+
+    /* Check if SAI is capable of handling Switch level DSCP to TC QoS map */
+    vector<FieldValueTuple> fvVector;
+    sai_status_t status = SAI_STATUS_SUCCESS;
+    sai_attr_capability_t capability;
+
+    status = sai_query_attribute_capability(gSwitchId, sai_object, attr_id, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Could not query switch level DSCP to TC map %d", status);
+        return false;
+    }
+    else 
+    {
+        if (capability.set_implemented)
+        {
+            return true;
+        }
+        else 
+        {
+            return false;
+        }
+    }
+}
