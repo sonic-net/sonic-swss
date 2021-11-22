@@ -8,8 +8,6 @@
 
 extern sai_object_id_t gSwitchId;
 
-extern PortsOrch *gPortsOrch;
-extern CrmOrch *gCrmOrch;
 extern NeighOrch *gNeighOrch;
 extern RouteOrch *gRouteOrch;
 extern NhgOrch *gNhgOrch;
@@ -18,12 +16,8 @@ extern size_t gMaxBulkSize;
 
 extern sai_next_hop_group_api_t* sai_next_hop_group_api;
 extern sai_next_hop_api_t*         sai_next_hop_api;
-extern sai_switch_api_t*            sai_switch_api;
 
-unsigned int NextHopGroup::m_count = 0;
-
-NhgOrch::NhgOrch(DBConnector *db, string tableName) :
-    Orch(db, tableName)
+NhgOrch::NhgOrch(DBConnector *db, string tableName) : NhgOrchCommon(db, tableName)
 {
     SWSS_LOG_ENTER();
 }
@@ -111,7 +105,7 @@ void NhgOrch::doTask(Consumer& consumer)
                 * to be kept in the sync list so we keep trying to create the
                 * actual group when there are enough resources.
                 */
-                if (gRouteOrch->getNhgCount() + NextHopGroup::getCount() >= gRouteOrch->getMaxNhgCount())
+                if (gRouteOrch->getNhgCount() + NextHopGroup::getSyncedCount() >= gRouteOrch->getMaxNhgCount())
                 {
                     SWSS_LOG_DEBUG("Next hop group count reached its limit.");
 
@@ -120,7 +114,7 @@ void NhgOrch::doTask(Consumer& consumer)
                         auto nhg = std::make_unique<NextHopGroup>(createTempNhg(nhg_key));
                         if (nhg->sync())
                         {
-                            m_syncdNextHopGroups.emplace(index, NhgEntry(std::move(nhg)));
+                            m_syncdNextHopGroups.emplace(index, NhgEntry<NextHopGroup>(std::move(nhg)));
                         }
                         else
                         {
@@ -143,7 +137,7 @@ void NhgOrch::doTask(Consumer& consumer)
 
                     if (success)
                     {
-                        m_syncdNextHopGroups.emplace(index, NhgEntry(std::move(nhg)));
+                        m_syncdNextHopGroups.emplace(index, NhgEntry<NextHopGroup>(std::move(nhg)));
                     }
                 }
             }
@@ -159,7 +153,7 @@ void NhgOrch::doTask(Consumer& consumer)
                  * resources.
                  */
                 if (nhg_ptr->isTemp() &&
-                    (gRouteOrch->getNhgCount() + NextHopGroup::getCount() >= gRouteOrch->getMaxNhgCount()))
+                    (gRouteOrch->getNhgCount() + NextHopGroup::getSyncedCount() >= gRouteOrch->getMaxNhgCount()))
                 {
                     /*
                      * If the group was updated in such way that the previously
@@ -227,8 +221,20 @@ void NhgOrch::doTask(Consumer& consumer)
         }
         else if (op == DEL_COMMAND)
         {
+            /*
+             * If there is a pending SET after this DEL operation, skip the
+             * DEL operation to perform the update instead.  Otherwise, in the
+             * scenario where the DEL operation may be blocked by the ref
+             * counter, we'd end up deleting the object after the SET operation
+             * is performed, which would not reflect the desired state of the
+             * object.
+             */
+            if (consumer.m_toSync.count(it->first) > 1)
+            {
+                success = true;
+            }
             /* If the group does not exist, do nothing. */
-            if (nhg_it == m_syncdNextHopGroups.end())
+            else if (nhg_it == m_syncdNextHopGroups.end())
             {
                 SWSS_LOG_INFO("Unable to find group with key %s to remove", index.c_str());
                 /* Mark the operation as successful to consume it. */
@@ -292,7 +298,7 @@ bool NhgOrch::validateNextHop(const NextHopKey& nh_key)
     {
         auto& nhg = it.second.nhg;
 
-        if (nhg->hasNextHop(nh_key))
+        if (nhg->hasMember(nh_key))
         {
             /*
              * If sync fails, exit right away, as we expect it to be due to a
@@ -332,7 +338,7 @@ bool NhgOrch::invalidateNextHop(const NextHopKey& nh_key)
     {
         auto& nhg = it.second.nhg;
 
-        if (nhg->hasNextHop(nh_key))
+        if (nhg->hasMember(nh_key))
         {
             /* If the remove fails, exit right away. */
             if (!nhg->invalidateNextHop(nh_key))
@@ -349,37 +355,6 @@ bool NhgOrch::invalidateNextHop(const NextHopKey& nh_key)
 }
 
 /*
- * Purpose:     Increase the ref count for a next hop group.
- * Description: Increment the ref count for a next hop group by 1.
- * Params:      IN  index - The index of the next hop group.
- * Returns:     Nothing.
- */
-void NhgOrch::incNhgRefCount(const std::string& index)
-{
-    SWSS_LOG_ENTER();
-
-    NhgEntry& nhg_entry = m_syncdNextHopGroups.at(index);
-    ++nhg_entry.ref_count;
-}
-
-/*
- * Purpose:     Decrease the ref count for a next hop group.
- * Description: Decrement the ref count for a next hop group by 1.
- * Params:      IN  index - The index of the next hop group.
- * Returns:     Nothing.
- */
-void NhgOrch::decNhgRefCount(const std::string& index)
-{
-    SWSS_LOG_ENTER();
-
-    NhgEntry& nhg_entry = m_syncdNextHopGroups.at(index);
-
-    /* Sanity check so we don't overflow. */
-    assert(nhg_entry.ref_count > 0);
-    --nhg_entry.ref_count;
-}
-
-/*
  * Purpose:     Get the next hop ID of the member.
  * Description: Get the SAI ID of the next hop from NeighOrch.
  * Params:      None.
@@ -392,9 +367,9 @@ sai_object_id_t NextHopGroupMember::getNhId() const
 
     sai_object_id_t nh_id = SAI_NULL_OBJECT_ID;
 
-    if (gNeighOrch->hasNextHop(m_nh_key))
+    if (gNeighOrch->hasNextHop(m_key))
     {
-        nh_id = gNeighOrch->getNextHopId(m_nh_key);
+        nh_id = gNeighOrch->getNextHopId(m_key);
     }
     /*
      * If the next hop is labeled and the IP next hop exists, create the
@@ -403,33 +378,19 @@ sai_object_id_t NextHopGroupMember::getNhId() const
      * after the object is created and would never create the labeled next hop
      * afterwards.
      */
-    else if (isLabeled() && gNeighOrch->isNeighborResolved(m_nh_key))
+    else if (isLabeled() && gNeighOrch->isNeighborResolved(m_key))
     {
-        gNeighOrch->addNextHop(m_nh_key);
-        nh_id = gNeighOrch->getNextHopId(m_nh_key);
+        if (gNeighOrch->addNextHop(m_key))
+        {
+            nh_id = gNeighOrch->getNextHopId(m_key);
+        }
     }
     else
     {
-        gNeighOrch->resolveNeighbor(m_nh_key);
+        gNeighOrch->resolveNeighbor(m_key);
     }
 
     return nh_id;
-}
-
-/*
- * Purpose:     Move assignment operator.
- * Description: Perform member-wise swap.
- * Params:      IN  nhgm - The next hop group member to swap.
- * Returns:     Reference to this object.
- */
-NextHopGroupMember& NextHopGroupMember::operator=(NextHopGroupMember&& nhgm)
-{
-    SWSS_LOG_ENTER();
-
-    std::swap(m_nh_key, nhgm.m_nh_key);
-    std::swap(m_gm_id, nhgm.m_gm_id);
-
-    return *this;
 }
 
 /*
@@ -446,13 +407,13 @@ bool NextHopGroupMember::updateWeight(uint32_t weight)
 
     bool success = true;
 
-    m_nh_key.weight = weight;
+    m_key.weight = weight;
 
     if (isSynced())
     {
         sai_attribute_t nhgm_attr;
         nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT;
-        nhgm_attr.value.s32 = m_nh_key.weight;
+        nhgm_attr.value.s32 = m_key.weight;
 
         sai_status_t status = sai_next_hop_group_api->set_next_hop_group_member_attribute(m_gm_id, &nhgm_attr);
         success = status == SAI_STATUS_SUCCESS;
@@ -472,12 +433,8 @@ void NextHopGroupMember::sync(sai_object_id_t gm_id)
 {
     SWSS_LOG_ENTER();
 
-    /* The SAI ID should be updated from invalid to something valid. */
-    assert((m_gm_id == SAI_NULL_OBJECT_ID) && (gm_id != SAI_NULL_OBJECT_ID));
-
-    m_gm_id = gm_id;
-    gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
-    gNeighOrch->increaseNextHopRefCount(m_nh_key);
+    NhgMember::sync(gm_id);
+    gNeighOrch->increaseNextHopRefCount(m_key);
 }
 
 /*
@@ -491,18 +448,8 @@ void NextHopGroupMember::remove()
 {
     SWSS_LOG_ENTER();
 
-    /*
-     * If the member is already removed, exit so we don't decrement the ref
-     * counters more than once.
-     */
-    if (!isSynced())
-    {
-        return;
-    }
-
-    m_gm_id = SAI_NULL_OBJECT_ID;
-    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
-    gNeighOrch->decreaseNextHopRefCount(m_nh_key);
+    NhgMember::remove();
+    gNeighOrch->decreaseNextHopRefCount(m_key);
 }
 
 /*
@@ -517,11 +464,6 @@ NextHopGroupMember::~NextHopGroupMember()
     SWSS_LOG_ENTER();
 
     /*
-     * The group member should be removed from its group before destroying it.
-     */
-    assert(!isSynced());
-
-    /*
      * If the labeled next hop is unreferenced, remove it from NeighOrch as
      * NhgOrch and RouteOrch are the ones controlling it's lifetime.  They both
      * watch over these labeled next hops, so it doesn't matter who created
@@ -529,10 +471,10 @@ NextHopGroupMember::~NextHopGroupMember()
      * next hop.
      */
     if (isLabeled() &&
-        gNeighOrch->hasNextHop(m_nh_key) &&
-        (gNeighOrch->getNextHopRefCount(m_nh_key) == 0))
+        gNeighOrch->hasNextHop(m_key) &&
+        (gNeighOrch->getNextHopRefCount(m_key) == 0))
     {
-        gNeighOrch->removeMplsNextHop(m_nh_key);
+        gNeighOrch->removeMplsNextHop(m_key);
     }
 }
 
@@ -542,10 +484,7 @@ NextHopGroupMember::~NextHopGroupMember()
  * Params:      IN  key - The next hop group's key.
  * Returns:     Nothing.
  */
-NextHopGroup::NextHopGroup(const NextHopGroupKey& key, bool is_temp) :
-    m_key(key),
-    m_id(SAI_NULL_OBJECT_ID),
-    m_is_temp(is_temp)
+NextHopGroup::NextHopGroup(const NextHopGroupKey& key, bool is_temp) : NhgCommon(key), m_is_temp(is_temp)
 {
     SWSS_LOG_ENTER();
 
@@ -554,24 +493,6 @@ NextHopGroup::NextHopGroup(const NextHopGroupKey& key, bool is_temp) :
     {
         m_members.emplace(it, NextHopGroupMember(it));
     }
-}
-
-/*
- * Purpose:     Move constructor.
- * Description: Initialize the members by doing member-wise move construct.
- * Params:      IN  nhg - The rvalue object to initialize from.
- * Returns:     Nothing.
- */
-NextHopGroup::NextHopGroup(NextHopGroup&& nhg) :
-    m_key(std::move(nhg.m_key)),
-    m_id(std::move(nhg.m_id)),
-    m_members(std::move(nhg.m_members)),
-    m_is_temp(nhg.m_is_temp)
-{
-    SWSS_LOG_ENTER();
-
-    /* Invalidate the rvalue SAI ID. */
-    nhg.m_id = SAI_NULL_OBJECT_ID;
 }
 
 /*
@@ -584,10 +505,9 @@ NextHopGroup& NextHopGroup::operator=(NextHopGroup&& nhg)
 {
     SWSS_LOG_ENTER();
 
-    std::swap(m_key, nhg.m_key);
-    std::swap(m_id, nhg.m_id);
-    std::swap(m_members, nhg.m_members);
     m_is_temp = nhg.m_is_temp;
+
+    NhgCommon::operator=(std::move(nhg));
 
     return *this;
 }
@@ -623,7 +543,7 @@ bool NextHopGroup::sync()
 
         if (nhid == SAI_NULL_OBJECT_ID)
         {
-            SWSS_LOG_WARN("Next hop %s is not synced", nhgm.getNhKey().to_string().c_str());
+            SWSS_LOG_WARN("Next hop %s is not synced", nhgm.getKey().to_string().c_str());
             return false;
         }
         else
@@ -667,7 +587,7 @@ bool NextHopGroup::sync()
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
 
         /* Increment the number of synced NHGs. */
-        ++m_count;
+        ++m_syncdCount;
 
         /*
         * Try creating the next hop group's members over SAI.
@@ -743,47 +663,14 @@ bool NextHopGroup::remove()
 {
     SWSS_LOG_ENTER();
 
-    /*  If the group is already removed, or is temporary, there is nothing to be done -
-     *  just reset the ID.
-     */
-    if (!isSynced() || m_is_temp)
+    //  If the group is temporary, there is nothing to be done - just reset the ID.
+    if (m_is_temp)
     {
         m_id = SAI_NULL_OBJECT_ID;
         return true;
     }
 
-    /* Remove group's members. If we failed to remove the members, exit. */
-    if (!removeMembers(m_key.getNextHops()))
-    {
-        SWSS_LOG_ERROR("Failed to remove group %s members", to_string().c_str());
-        return false;
-    }
-
-    /* Remove the group. */
-    sai_status_t status = sai_next_hop_group_api->
-                                        remove_next_hop_group(m_id);
-
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to remove next hop group %s, rv: %d",
-                        m_key.to_string().c_str(), status);
-
-        task_process_status handle_status = gNhgOrch->handleSaiRemoveStatus(SAI_API_NEXT_HOP_GROUP, status);
-        if (handle_status != task_success)
-        {
-            return gNhgOrch->parseHandleSaiStatusFailure(handle_status);
-        }
-    }
-
-    /* If the operation is successful, release the resources. */
-    gCrmOrch->decCrmResUsedCounter(
-                            CrmResourceType::CRM_NEXTHOP_GROUP);
-    --m_count;
-
-    /* Reset the group ID. */
-    m_id = SAI_NULL_OBJECT_ID;
-
-    return true;
+    return NhgCommon::remove();
 }
 
 /*
@@ -816,7 +703,7 @@ bool NextHopGroup::syncMembers(const std::set<NextHopKey>& nh_keys)
         NextHopGroupMember& nhgm = m_members.at(nh_key);
 
         /* If the member is already synced, continue. */
-        if (nhgm.getGmId() != SAI_NULL_OBJECT_ID)
+        if (nhgm.isSynced())
         {
             continue;
         }
@@ -868,66 +755,6 @@ bool NextHopGroup::syncMembers(const std::set<NextHopKey>& nh_keys)
         else
         {
             m_members.at(mbr.first).sync(mbr.second);
-        }
-    }
-
-    return success;
-}
-/*
- * Purpose:     Remove the given group's members over the SAI API.
- * Description: Go through the given members and remove them.
- * Params:      IN  nh_keys - The next hop keys of the members to remove.
- * Returns:     true, if the operation was successful;
- *              false, otherwise
- */
-bool NextHopGroup::removeMembers(const std::set<NextHopKey>& nh_keys)
-{
-    SWSS_LOG_ENTER();
-
-    ObjectBulker<sai_next_hop_group_api_t> nextHopGroupMemberBulker(
-                                    sai_next_hop_group_api, gSwitchId, gMaxBulkSize);
-
-    /*
-     * Iterate through the given group members add them to be removed.
-     *
-     * Keep track of the SAI remove statuses in case one of them returns an
-     * error.  We assume that removal should always succeed.  If for some
-     * reason it doesn't, there's nothing we can do, but we'll log an error
-     * later.
-     */
-    std::map<NextHopKey, sai_status_t> statuses;
-
-    for (const auto& nh_key : nh_keys)
-    {
-        const NextHopGroupMember& nhgm = m_members.at(nh_key);
-
-        if (nhgm.isSynced())
-        {
-            nextHopGroupMemberBulker.remove_entry(&statuses[nh_key], nhgm.getGmId());
-        }
-    }
-
-    /* Flush the bulker to apply the changes. */
-    nextHopGroupMemberBulker.flush();
-
-    /*
-     * Iterate over the statuses map and check if the removal was successful.
-     * If it was, decrement the Crm counter and reset the member's ID.  If it
-     * wasn't, log an error message.
-     */
-    bool success = true;
-
-    for (const auto& status : statuses)
-    {
-        if (status.second == SAI_STATUS_SUCCESS)
-        {
-            m_members.at(status.first).remove();
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Could not remove next hop group member %s, rv: %d",
-                            status.first.to_string().c_str(), status.second);
-            success = false;
         }
     }
 
@@ -1041,10 +868,14 @@ vector<sai_attribute_t> NextHopGroup::createNhgmAttrs(const NextHopGroupMember& 
     nhgm_attr.value.oid = nhgm.getNhId();
     nhgm_attrs.push_back(nhgm_attr);
 
-    /* Fill in the wright. */
-    nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT;
-    nhgm_attr.value.s32 = nhgm.getWeight();
-    nhgm_attrs.push_back(nhgm_attr);
+    /* Fill in the weight if set. */
+    auto weight  = nhgm.getWeight();
+    if (weight != 0)
+    {
+        nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT;
+        nhgm_attr.value.s32 = weight;
+        nhgm_attrs.push_back(nhgm_attr);
+    }
 
     return nhgm_attrs;
 }
