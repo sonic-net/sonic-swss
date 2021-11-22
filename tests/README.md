@@ -103,10 +103,10 @@ For those developing new features for SWSS or the DVS framework, you might find 
     sudo pytest --dvsname=vs --forcedvs
     ```
 
-5. Additionally, if you need to simulate a specific hardware platform (e.g. Broadcom or Mellanox), you can add this environment variable when starting the DVS container. Note that this is not a precise 1-to-1 model, and dataplane behavior is not simulated by the DVS.
+5. Additionally, if you need to simulate a specific hardware platform (e.g. Broadcom or Mellanox), you can add this environment variable for hardware SKU when starting the DVS container. Note that this is not a precise 1-to-1 model, and dataplane behavior is not simulated by the DVS.
 
     ```
-    -e "fake_platform=mellanox"
+    -e "HWSKU=Mellanox-SN2700"
     ```
 
 ## Other useful test parameters

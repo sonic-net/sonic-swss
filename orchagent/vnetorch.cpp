@@ -20,6 +20,7 @@
 #include "intfsorch.h"
 #include "neighorch.h"
 #include "crmorch.h"
+#include "routeorch.h"
 
 extern sai_virtual_router_api_t* sai_virtual_router_api;
 extern sai_route_api_t* sai_route_api;
@@ -28,6 +29,7 @@ extern sai_router_interface_api_t* sai_router_intfs_api;
 extern sai_fdb_api_t* sai_fdb_api;
 extern sai_neighbor_api_t* sai_neighbor_api;
 extern sai_next_hop_api_t* sai_next_hop_api;
+extern sai_next_hop_group_api_t* sai_next_hop_group_api;
 extern sai_object_id_t gSwitchId;
 extern sai_object_id_t gVirtualRouterId;
 extern Directory<Orch*> gDirectory;
@@ -35,6 +37,7 @@ extern PortsOrch *gPortsOrch;
 extern IntfsOrch *gIntfsOrch;
 extern NeighOrch *gNeighOrch;
 extern CrmOrch *gCrmOrch;
+extern RouteOrch *gRouteOrch;
 extern MacAddress gVxlanMacAddress;
 
 /*
@@ -150,15 +153,18 @@ bool VNetVrfObject::hasRoute(IpPrefix& ipPrefix)
     return false;
 }
 
-bool VNetVrfObject::addRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp)
+bool VNetVrfObject::addRoute(IpPrefix& ipPrefix, NextHopGroupKey& nexthops)
 {
-    if (hasRoute(ipPrefix))
+    if (nexthops.is_overlay_nexthop())
     {
-        SWSS_LOG_INFO("VNET route '%s' exists", ipPrefix.to_string().c_str());
+        tunnels_[ipPrefix] = nexthops;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Input %s is not overlay nexthop group", nexthops.to_string().c_str());
         return false;
     }
 
-    tunnels_[ipPrefix] = endp;
     return true;
 }
 
@@ -237,8 +243,6 @@ bool VNetVrfObject::removeRoute(IpPrefix& ipPrefix)
 
     if (tunnels_.find(ipPrefix) != tunnels_.end())
     {
-        auto endp = tunnels_.at(ipPrefix);
-        removeTunnelNextHop(endp);
         tunnels_.erase(ipPrefix);
     }
     else
@@ -267,32 +271,32 @@ bool VNetVrfObject::getRouteNextHop(IpPrefix& ipPrefix, nextHop& nh)
     return true;
 }
 
-sai_object_id_t VNetVrfObject::getTunnelNextHop(tunnelEndpoint& endp)
+sai_object_id_t VNetVrfObject::getTunnelNextHop(NextHopKey& nh)
 {
     sai_object_id_t nh_id = SAI_NULL_OBJECT_ID;
     auto tun_name = getTunnelName();
 
     VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
 
-    nh_id = vxlan_orch->createNextHopTunnel(tun_name, endp.ip, endp.mac, endp.vni);
+    nh_id = vxlan_orch->createNextHopTunnel(tun_name, nh.ip_address, nh.mac_address, nh.vni);
     if (nh_id == SAI_NULL_OBJECT_ID)
     {
-        throw std::runtime_error("NH Tunnel create failed for " + vnet_name_ + " ip " + endp.ip.to_string());
+        throw std::runtime_error("NH Tunnel create failed for " + vnet_name_ + " ip " + nh.ip_address.to_string());
     }
 
     return nh_id;
 }
 
-bool VNetVrfObject::removeTunnelNextHop(tunnelEndpoint& endp)
+bool VNetVrfObject::removeTunnelNextHop(NextHopKey& nh)
 {
     auto tun_name = getTunnelName();
 
     VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
 
-    if (!vxlan_orch->removeNextHopTunnel(tun_name, endp.ip, endp.mac, endp.vni))
+    if (!vxlan_orch->removeNextHopTunnel(tun_name, nh.ip_address, nh.mac_address, nh.vni))
     {
         SWSS_LOG_ERROR("VNET %s Tunnel NextHop remove failed for '%s'",
-                        vnet_name_.c_str(), endp.ip.to_string().c_str());
+                        vnet_name_.c_str(), nh.ip_address.to_string().c_str());
         return false;
     }
 
@@ -603,6 +607,28 @@ static bool add_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_object
     return true;
 }
 
+static bool update_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_object_id_t nh_id)
+{
+    sai_route_entry_t route_entry;
+    route_entry.vr_id = vr_id;
+    route_entry.switch_id = gSwitchId;
+    route_entry.destination = ip_pfx;
+
+    sai_attribute_t route_attr;
+
+    route_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+    route_attr.value.oid = nh_id;
+
+    sai_status_t status = sai_route_api->set_route_entry_attribute(&route_entry, &route_attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("SAI failed to update route");
+        return false;
+    }
+
+    return true;
+}
+
 VNetRouteOrch::VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOrch *vnetOrch)
                                   : Orch2(db, tableNames, request_), vnet_orch_(vnetOrch)
 {
@@ -612,9 +638,166 @@ VNetRouteOrch::VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOr
     handler_map_.insert(handler_pair(APP_VNET_RT_TUNNEL_TABLE_NAME, &VNetRouteOrch::handleTunnel));
 }
 
+bool VNetRouteOrch::hasNextHopGroup(const string& vnet, const NextHopGroupKey& nexthops)
+{
+    return syncd_nexthop_groups_[vnet].find(nexthops) != syncd_nexthop_groups_[vnet].end();
+}
+
+sai_object_id_t VNetRouteOrch::getNextHopGroupId(const string& vnet, const NextHopGroupKey& nexthops)
+{
+    assert(hasNextHopGroup(vnet, nexthops));
+    return syncd_nexthop_groups_[vnet][nexthops].next_hop_group_id;
+}
+
+bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &nexthops, VNetVrfObject *vrf_obj)
+{
+    SWSS_LOG_ENTER();
+
+    assert(!hasNextHopGroup(vnet, nexthops));
+
+    if (!gRouteOrch->checkNextHopGroupCount())
+    {
+        SWSS_LOG_ERROR("Reached maximum number of next hop groups. Failed to create new next hop group.");
+        return false;
+    }
+
+    vector<sai_object_id_t> next_hop_ids;
+    set<NextHopKey> next_hop_set = nexthops.getNextHops();
+    std::map<sai_object_id_t, NextHopKey> nhopgroup_members_set;
+
+    for (auto it : next_hop_set)
+    {
+        sai_object_id_t next_hop_id = vrf_obj->getTunnelNextHop(it);
+        next_hop_ids.push_back(next_hop_id);
+        nhopgroup_members_set[next_hop_id] = it;
+    }
+
+    sai_attribute_t nhg_attr;
+    vector<sai_attribute_t> nhg_attrs;
+
+    nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_TYPE;
+    nhg_attr.value.s32 = SAI_NEXT_HOP_GROUP_TYPE_ECMP;
+    nhg_attrs.push_back(nhg_attr);
+
+    sai_object_id_t next_hop_group_id;
+    sai_status_t status = sai_next_hop_group_api->create_next_hop_group(&next_hop_group_id,
+                                                                        gSwitchId,
+                                                                        (uint32_t)nhg_attrs.size(),
+                                                                        nhg_attrs.data());
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create next hop group %s, rv:%d",
+                       nexthops.to_string().c_str(), status);
+        return false;
+    }
+
+    gRouteOrch->increaseNextHopGroupCount();
+    gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
+    SWSS_LOG_NOTICE("Create next hop group %s", nexthops.to_string().c_str());
+
+    NextHopGroupInfo next_hop_group_entry;
+    next_hop_group_entry.next_hop_group_id = next_hop_group_id;
+
+    for (auto nhid: next_hop_ids)
+    {
+        // Create a next hop group member
+        vector<sai_attribute_t> nhgm_attrs;
+
+        sai_attribute_t nhgm_attr;
+        nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID;
+        nhgm_attr.value.oid = next_hop_group_id;
+        nhgm_attrs.push_back(nhgm_attr);
+
+        nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
+        nhgm_attr.value.oid = nhid;
+        nhgm_attrs.push_back(nhgm_attr);
+
+        sai_object_id_t next_hop_group_member_id;
+        status = sai_next_hop_group_api->create_next_hop_group_member(&next_hop_group_member_id,
+                                                                    gSwitchId,
+                                                                    (uint32_t)nhgm_attrs.size(),
+                                                                    nhgm_attrs.data());
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create next hop group %" PRIx64 " member %" PRIx64 ": %d\n",
+                           next_hop_group_id, next_hop_group_member_id, status);
+            return false;
+        }
+
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+
+        // Save the membership into next hop structure
+        next_hop_group_entry.active_members[nhopgroup_members_set.find(nhid)->second] =
+                                                                next_hop_group_member_id;
+    }
+
+    /*
+     * Initialize the next hop group structure with ref_count as 0. This
+     * count will increase once the route is successfully syncd.
+     */
+    next_hop_group_entry.ref_count = 0;
+    syncd_nexthop_groups_[vnet][nexthops] = next_hop_group_entry;
+
+    return true;
+}
+
+bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey &nexthops, VNetVrfObject *vrf_obj)
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_id_t next_hop_group_id;
+    auto next_hop_group_entry = syncd_nexthop_groups_[vnet].find(nexthops);
+    sai_status_t status;
+
+    assert(next_hop_group_entry != syncd_nexthop_groups_[vnet].end());
+
+    if (next_hop_group_entry->second.ref_count != 0)
+    {
+        return true;
+    }
+
+    next_hop_group_id = next_hop_group_entry->second.next_hop_group_id;
+    SWSS_LOG_NOTICE("Delete next hop group %s", nexthops.to_string().c_str());
+
+    for (auto nhop = next_hop_group_entry->second.active_members.begin();
+         nhop != next_hop_group_entry->second.active_members.end();)
+    {
+        NextHopKey nexthop = nhop->first;
+
+        status = sai_next_hop_group_api->remove_next_hop_group_member(nhop->second);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove next hop group member %" PRIx64 ", rv:%d",
+                           nhop->second, status);
+            return false;
+        }
+
+        vrf_obj->removeTunnelNextHop(nexthop);
+
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+        nhop = next_hop_group_entry->second.active_members.erase(nhop);
+    }
+
+    status = sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove next hop group %" PRIx64 ", rv:%d", next_hop_group_id, status);
+        return false;
+    }
+
+    gRouteOrch->decreaseNextHopGroupCount();
+    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
+
+    syncd_nexthop_groups_[vnet].erase(nexthops);
+
+    return true;
+}
+
 template<>
 bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipPrefix,
-                                               tunnelEndpoint& endp, string& op)
+                                               NextHopGroupKey& nexthops, string& op)
 {
     SWSS_LOG_ENTER();
 
@@ -648,28 +831,123 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
     auto *vrf_obj = vnet_orch_->getTypePtr<VNetVrfObject>(vnet);
     sai_ip_prefix_t pfx;
     copy(pfx, ipPrefix);
-    sai_object_id_t nh_id = (op == SET_COMMAND)?vrf_obj->getTunnelNextHop(endp):SAI_NULL_OBJECT_ID;
-
-    for (auto vr_id : vr_set)
-    {
-        if (op == SET_COMMAND && !add_route(vr_id, pfx, nh_id))
-        {
-            SWSS_LOG_ERROR("Route add failed for %s, vr_id '0x%" PRIx64, ipPrefix.to_string().c_str(), vr_id);
-            return false;
-        }
-        else if (op == DEL_COMMAND && !del_route(vr_id, pfx))
-        {
-            SWSS_LOG_ERROR("Route del failed for %s, vr_id '0x%" PRIx64, ipPrefix.to_string().c_str(), vr_id);
-            return false;
-        }
-    }
 
     if (op == SET_COMMAND)
     {
-        vrf_obj->addRoute(ipPrefix, endp);
+        sai_object_id_t nh_id;
+        /* The route is pointing to one single endpoint */
+        if (!hasNextHopGroup(vnet, nexthops))
+        {
+            if (nexthops.getSize() == 1)
+            {
+                NextHopKey nexthop(nexthops.to_string(), true);
+                NextHopGroupInfo next_hop_group_entry;
+                next_hop_group_entry.next_hop_group_id = vrf_obj->getTunnelNextHop(nexthop);
+                next_hop_group_entry.ref_count = 0;
+                next_hop_group_entry.active_members[nexthop] = SAI_NULL_OBJECT_ID;
+                syncd_nexthop_groups_[vnet][nexthops] = next_hop_group_entry;
+            }
+            else
+            {
+                if (!addNextHopGroup(vnet, nexthops, vrf_obj))
+                {
+                    SWSS_LOG_ERROR("Failed to create next hop group %s", nexthops.to_string().c_str());
+                    return false;
+                }
+            }
+        }
+        nh_id = syncd_nexthop_groups_[vnet][nexthops].next_hop_group_id;
+
+        auto it_route = syncd_tunnel_routes_[vnet].find(ipPrefix);
+        for (auto vr_id : vr_set)
+        {
+            bool route_status = true;
+
+            if (it_route == syncd_tunnel_routes_[vnet].end())
+            {
+                route_status = add_route(vr_id, pfx, nh_id);
+            }
+            else
+            {
+                route_status = update_route(vr_id, pfx, nh_id);
+            }
+
+            if (!route_status)
+            {
+                SWSS_LOG_ERROR("Route add/update failed for %s, vr_id '0x%" PRIx64, ipPrefix.to_string().c_str(), vr_id);
+                /* Clean up the newly created next hop group entry */
+                if (nexthops.getSize() > 1)
+                {
+                    removeNextHopGroup(vnet, nexthops, vrf_obj);
+                }
+                return false;
+            }
+        }
+
+        if (it_route != syncd_tunnel_routes_[vnet].end())
+        {
+            // In case of updating an existing route, decrease the reference count for the previous nexthop group
+            NextHopGroupKey nhg = it_route->second;
+            if(--syncd_nexthop_groups_[vnet][nhg].ref_count == 0)
+            {
+                if (nexthops.getSize() > 1)
+                {
+                    removeNextHopGroup(vnet, nhg, vrf_obj);
+                }
+                else
+                {
+                    syncd_nexthop_groups_[vnet].erase(nhg);
+                    NextHopKey nexthop(nhg.to_string(), true);
+                    vrf_obj->removeTunnelNextHop(nexthop);
+                }
+            }
+            vrf_obj->removeRoute(ipPrefix);
+        }
+
+        syncd_tunnel_routes_[vnet][ipPrefix] = nexthops;
+        syncd_nexthop_groups_[vnet][nexthops].ref_count++;
+        vrf_obj->addRoute(ipPrefix, nexthops);
     }
-    else
+    else if (op == DEL_COMMAND)
     {
+        auto it_route = syncd_tunnel_routes_[vnet].find(ipPrefix);
+        if (it_route == syncd_tunnel_routes_[vnet].end())
+        {
+            SWSS_LOG_INFO("Failed to find tunnel route entry, prefix %s\n",
+                ipPrefix.to_string().c_str());
+            return true;
+        }
+        NextHopGroupKey nhg = it_route->second;
+
+        for (auto vr_id : vr_set)
+        {
+            if (!del_route(vr_id, pfx))
+            {
+                SWSS_LOG_ERROR("Route del failed for %s, vr_id '0x%" PRIx64, ipPrefix.to_string().c_str(), vr_id);
+                return false;
+            }
+        }
+
+        if(--syncd_nexthop_groups_[vnet][nhg].ref_count == 0)
+        {
+            if (nhg.getSize() > 1)
+            {
+                removeNextHopGroup(vnet, nhg, vrf_obj);
+            }
+            else
+            {
+                syncd_nexthop_groups_[vnet].erase(nhg);
+                NextHopKey nexthop(nhg.to_string(), true);
+                vrf_obj->removeTunnelNextHop(nexthop);
+            }
+        }
+
+        syncd_tunnel_routes_[vnet].erase(ipPrefix);
+        if (syncd_tunnel_routes_[vnet].empty())
+        {
+            syncd_tunnel_routes_.erase(vnet);
+        }
+
         vrf_obj->removeRoute(ipPrefix);
     }
 
@@ -1041,29 +1319,43 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
 {
     SWSS_LOG_ENTER();
 
-    IpAddress ip;
-    MacAddress mac;
-    uint32_t vni = 0;
+    vector<IpAddress> ip_list;
+    vector<string> mac_list;
+    vector<string> vni_list;
 
     for (const auto& name: request.getAttrFieldNames())
     {
         if (name == "endpoint")
         {
-            ip = request.getAttrIP(name);
+            ip_list = request.getAttrIPList(name);
         }
         else if (name == "vni")
         {
-            vni = static_cast<uint32_t>(request.getAttrUint(name));
+            string vni_str = request.getAttrString(name);
+            vni_list = tokenize(vni_str, ',');
         }
         else if (name == "mac_address")
         {
-            mac = request.getAttrMacAddress(name);
+            string mac_str = request.getAttrString(name);
+            mac_list = tokenize(mac_str, ',');
         }
         else
         {
             SWSS_LOG_INFO("Unknown attribute: %s", name.c_str());
             continue;
         }
+    }
+
+    if (vni_list.size() > 1 && vni_list.size() != ip_list.size())
+    {
+        SWSS_LOG_ERROR("VNI size of %zu does not match endpoint size of %zu", vni_list.size(), ip_list.size());
+        return false;
+    }
+
+    if (!mac_list.empty() && mac_list.size() != ip_list.size())
+    {
+        SWSS_LOG_ERROR("MAC address size of %zu does not match endpoint size of %zu", mac_list.size(), ip_list.size());
+        return false;
     }
 
     const std::string& vnet_name = request.getKeyString(0);
@@ -1073,11 +1365,33 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     SWSS_LOG_INFO("VNET-RT '%s' op '%s' for pfx %s", vnet_name.c_str(),
                    op.c_str(), ip_pfx.to_string().c_str());
 
-    tunnelEndpoint endp = { ip, mac, vni };
+    NextHopGroupKey nhg("", true);
+    for (size_t idx_ip = 0; idx_ip < ip_list.size(); idx_ip++)
+    {
+        IpAddress ip = ip_list[idx_ip];
+        MacAddress mac;
+        uint32_t vni = 0;
+        if (vni_list.size() == 1 && vni_list[0] != "")
+        {
+            vni = (uint32_t)stoul(vni_list[0]);
+        }
+        else if (vni_list.size() > 1 && vni_list[idx_ip] != "")
+        {
+            vni = (uint32_t)stoul(vni_list[idx_ip]);
+        }
+
+        if (!mac_list.empty() && mac_list[idx_ip] != "")
+        {
+            mac = MacAddress(mac_list[idx_ip]);
+        }
+
+        NextHopKey nh(ip, mac, vni, true);
+        nhg.add(nh);
+    }
 
     if (vnet_orch_->isVnetExecVrf())
     {
-        return doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, endp, op);
+        return doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, nhg, op);
     }
 
     return true;

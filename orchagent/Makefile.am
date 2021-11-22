@@ -3,7 +3,8 @@ INCLUDES = -I $(top_srcdir)/lib \
            -I $(top_srcdir)/warmrestart \
            -I flex_counter \
            -I debug_counter \
-           -I pbh
+           -I pbh \
+           -I nhg
 
 CFLAGS_SAI = -I /usr/include/sai
 
@@ -23,7 +24,8 @@ dist_swss_DATA = \
 		 watermark_queue.lua \
 		 watermark_pg.lua \
 		 watermark_bufferpool.lua \
-		 lagids.lua
+		 lagids.lua \
+		 tunnel_rates.lua
 
 bin_PROGRAMS = orchagent routeresync orchagent_restart_check
 
@@ -39,7 +41,10 @@ orchagent_SOURCES = \
             orchdaemon.cpp \
             orch.cpp \
             notifications.cpp \
-            nhgorch.cpp \ 
+            nhgorch.cpp \
+            nhgbase.cpp \
+            cbf/cbfnhgorch.cpp  \
+            cbf/nhgmaporch.cpp \
             routeorch.cpp \
             mplsrouteorch.cpp \
             neighorch.cpp \
@@ -80,7 +85,9 @@ orchagent_SOURCES = \
             isolationgrouporch.cpp \
             muxorch.cpp \
             macsecorch.cpp \
-            lagid.cpp 
+            lagid.cpp \
+            bfdorch.cpp \
+            srv6orch.cpp
 
 orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp
 orchagent_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.cpp
@@ -97,3 +104,9 @@ routeresync_LDADD = -lswsscommon
 orchagent_restart_check_SOURCES = orchagent_restart_check.cpp
 orchagent_restart_check_CPPFLAGS = $(DBGFLAGS) $(AM_CPPFLAGS) $(CFLAGS_COMMON)
 orchagent_restart_check_LDADD = -lhiredis -lswsscommon -lpthread
+
+if GCOV_ENABLED
+orchagent_LDADD += -lgcovpreload
+routeresync_LDADD += -lgcovpreload
+orchagent_restart_check_LDADD += -lgcovpreload
+endif
