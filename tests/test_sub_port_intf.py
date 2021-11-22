@@ -31,12 +31,16 @@ ASIC_HOSTIF_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF"
 ASIC_VIRTUAL_ROUTER_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER"
 ASIC_PORT_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_PORT"
 ASIC_LAG_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_LAG"
+ASIC_VLAN_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_VLAN"
+ASIC_VLAN_MEMBER_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER"
 
 ADMIN_STATUS = "admin_status"
+UP = "up"
 VRF_NAME = "vrf_name"
 
 ETHERNET_PREFIX = "Ethernet"
 LAG_PREFIX = "PortChannel"
+VLAN_PREFIX = "Vlan"
 
 VLAN_SUB_INTERFACE_SEPARATOR = "."
 APPL_DB_SEPARATOR = ":"
@@ -56,6 +60,9 @@ class TestSubPortIntf(object):
     IPV6_SUBNET_UNDER_TEST = "fc00::40/126"
 
     VRF_UNDER_TEST = "Vrf0"
+
+    LAG_UNDER_TEST = "PortChannel1"
+    VLAN_UNDER_TEST = "Vlan1000"
 
     def connect_dbs(self, dvs):
         self.app_db = dvs.get_app_db()
@@ -453,6 +460,97 @@ class TestSubPortIntf(object):
 
         self._test_sub_port_intf_creation(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST, self.VRF_UNDER_TEST)
         self._test_sub_port_intf_creation(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST, self.VRF_UNDER_TEST)
+
+    def _test_sub_port_intf_parent_misconfig(self, dvs, sub_port_intf_name, grand_port, vrf_name=None):
+        substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
+        parent_port = substrs[0]
+
+        vrf_oid = self.default_vrf_oid
+        rif_cnt = len(self.get_oids(ASIC_RIF_TABLE))
+
+        self.set_parent_port_admin_status(dvs, parent_port, UP)
+        if vrf_name:
+            self.create_vrf(vrf_name)
+            vrf_oid = self.get_newly_created_oid(ASIC_VIRTUAL_ROUTER_TABLE, [vrf_oid])
+
+        if grand_port.startswith(LAG_PREFIX):
+            assert parent_port.startswith(ETHERNET_PREFIX)
+            phy_ports = [parent_port]
+            # Create lag
+            self.set_parent_port_admin_status(dvs, grand_port, UP)
+            # Add parent physical port to lag
+            self.add_lag_members(grand_port, phy_ports)
+            self.asic_db.wait_for_n_keys(ASIC_LAG_MEMBER_TABLE, 1)
+        else:
+            assert grand_port.startswith(VLAN_PREFIX)
+            # Create vlan
+            vlan_cnt = len(self.asic_db.get_keys(ASIC_VLAN_TABLE))
+            vlan_id = int(grand_port[len(VLAN_PREFIX):])
+            dvs.create_vlan("{}".format(vlan_id))
+            vlan_cnt += 1
+            self.asic_db.wait_for_n_keys(ASIC_VLAN_TABLE, vlan_cnt)
+            # Add parent port to vlan
+            vlan_member_cnt = len(self.asic_db.get_keys(ASIC_VLAN_MEMBER_TABLE))
+            dvs.create_vlan_member("{}".format(vlan_id), parent_port)
+            vlan_member_cnt += 1
+            self.asic_db.wait_for_n_keys(ASIC_VLAN_MEMBER_TABLE, vlan_member_cnt)
+
+        # Test injecting sub port interface profile directly to APPL_DB
+        self.create_sub_port_intf_profile_appl_db(sub_port_intf_name, UP, vrf_name)
+        time.sleep(2)
+        # Verify no sub port router interface created in ASIC_DB
+        assert rif_cnt == len(self.get_oids(ASIC_RIF_TABLE))
+        self.remove_sub_port_intf_profile_appl_db(sub_port_intf_name)
+        self.check_sub_port_intf_key_removal(self.app_db, APP_INTF_TABLE_NAME, sub_port_intf_name)
+
+        # Test creating sub port interface profile from CONFIG_DB
+        self.create_sub_port_intf_profile(sub_port_intf_name, vrf_name)
+        time.sleep(2)
+        # Verify no sub port router interface created in ASIC_DB
+        assert rif_cnt == len(self.get_oids(ASIC_RIF_TABLE))
+        self.remove_sub_port_intf_profile(sub_port_intf_name)
+        self.check_sub_port_intf_key_removal(self.app_db, APP_INTF_TABLE_NAME, sub_port_intf_name)
+
+        # Clean up
+        if grand_port.startswith(LAG_PREFIX):
+            # Remove parent physical port from lag
+            self.remove_lag_members(grand_port, phy_ports)
+            self.asic_db.wait_for_n_keys(ASIC_LAG_MEMBER_TABLE, 0)
+
+            # Remove lag
+            self.remove_lag(grand_port)
+            self.asic_db.wait_for_n_keys(ASIC_LAG_TABLE, 0)
+        else:
+            # Remove parent port from vlan
+            dvs.remove_vlan_member("{}".format(vlan_id), parent_port)
+            vlan_member_cnt -= 1
+            self.asic_db.wait_for_n_keys(ASIC_VLAN_MEMBER_TABLE, vlan_member_cnt)
+
+            # Remove vlan
+            dvs.remove_vlan("{}".format(vlan_id))
+            vlan_cnt -= 1
+            self.asic_db.wait_for_n_keys(ASIC_VLAN_TABLE, vlan_cnt)
+
+        # Remove vrf if created
+        if vrf_name:
+            self.remove_vrf(vrf_name)
+            self.check_vrf_removal(vrf_oid)
+
+        # Remove lag
+        if parent_port.startswith(LAG_PREFIX):
+            self.remove_lag(parent_port)
+            self.asic_db.wait_for_n_keys(ASIC_LAG_TABLE, 0)
+
+    def test_sub_port_intf_parent_misconfig(self, dvs):
+        self.connect_dbs(dvs)
+
+        self._test_sub_port_intf_parent_misconfig(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST, self.LAG_UNDER_TEST)
+        self._test_sub_port_intf_parent_misconfig(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST, self.VLAN_UNDER_TEST)
+        self._test_sub_port_intf_parent_misconfig(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST, self.VLAN_UNDER_TEST)
+
+        self._test_sub_port_intf_parent_misconfig(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST, self.LAG_UNDER_TEST, self.VRF_UNDER_TEST)
+        self._test_sub_port_intf_parent_misconfig(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST, self.VLAN_UNDER_TEST, self.VRF_UNDER_TEST)
+        self._test_sub_port_intf_parent_misconfig(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST, self.VLAN_UNDER_TEST, self.VRF_UNDER_TEST)
 
     def _test_sub_port_intf_add_ip_addrs(self, dvs, sub_port_intf_name, vrf_name=None):
         substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)

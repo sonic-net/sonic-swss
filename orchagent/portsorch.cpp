@@ -848,6 +848,42 @@ bool PortsOrch::addSubPort(Port &port, const string &alias, const bool &adminUp,
     }
     Port &parentPort = it->second;
 
+    // Parent port role check
+    switch (parentPort.m_type)
+    {
+        case Port::PHY:
+            if (parentPort.m_lag_member_id != SAI_NULL_OBJECT_ID)
+            {
+                SWSS_LOG_INFO("Sub interface %s Port object creation failed: parent port %s is a LAG member",
+                        alias.c_str(), parentAlias.c_str());
+                return false;
+            }
+            // fall through
+        case Port::LAG:
+            if (parentPort.m_bridge_port_id != SAI_NULL_OBJECT_ID)
+            {
+                // Bridge port, if created, is of type port, which is associated with a .1Q bridge.
+                //
+                // This excludes the possibility of further creating a sub port as a bridge port on the physcal port
+                // or LAG because bridge port type sub port is associated with a .1D bridge, and a physical port
+                // or LAG cannot be associated with both a .1Q bridge and a .1D bridge at the same time.
+                //
+                // On the other hand, to create a sub port as a router interface, physical port or LAG cannot be
+                // acting as a bridge port at the same time, either.
+                //
+                // Thus, a non-NULL bridge port object id indicates the prohibition of a proper sub port usage on a
+                // physical port or LAG.
+                SWSS_LOG_INFO("Sub interface %s Port object creation failed: parent port %s is associated with a .1Q bridge",
+                        alias.c_str(), parentAlias.c_str());
+                return false;
+            }
+            break;
+        default:
+            SWSS_LOG_INFO("Sub interface %s Port object creation failed: "
+                    "parent port %s of invalid type (must be physical port or LAG)", alias.c_str(), parentAlias.c_str());
+            return false;
+    }
+
     Port p(alias, Port::SUBPORT);
 
     p.m_admin_state_up = adminUp;
@@ -871,8 +907,8 @@ bool PortsOrch::addSubPort(Port &port, const string &alias, const bool &adminUp,
             p.m_parent_port_id = parentPort.m_lag_id;
             break;
         default:
-            SWSS_LOG_ERROR("Sub interface %s Port object creation failed: \
-                    parent port %s of invalid type (must be physical port or LAG)", alias.c_str(), parentAlias.c_str());
+            SWSS_LOG_ERROR("Sub interface %s Port object creation failed: "
+                    "parent port %s of invalid type (must be physical port or LAG)", alias.c_str(), parentAlias.c_str());
             return false;
     }
     p.m_vlan_info.vlan_id = vlan_id;
