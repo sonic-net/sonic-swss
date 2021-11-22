@@ -585,7 +585,7 @@ ref_resolve_status Orch::resolveFieldRefArray(
             {
                 if (!parseReference(type_maps, list_items[ind], ref_type_name, object_name))
                 {
-                    SWSS_LOG_ERROR("Failed to parse profile reference:%s\n", list_items[ind].c_str());
+                    SWSS_LOG_NOTICE("Failed to parse profile reference:%s\n", list_items[ind].c_str());
                     return ref_resolve_status::not_resolved;
                 }
                 sai_object_id_t sai_obj = (*(type_maps[ref_type_name]))[object_name].m_saiObjectId;
@@ -632,6 +632,139 @@ bool Orch::parseIndexRange(const string &input, sai_uint32_t &range_low, sai_uin
         range_low = range_high = (uint32_t)stoul(input);
     }
     SWSS_LOG_DEBUG("resulting range:%d-%d", range_low, range_high);
+    return true;
+}
+
+/*
+ * generateBitMapFromIdsStr
+ *
+ * Generates the bit map representing the idsMap in string
+ * Args:
+ *      idsStr: The string representing the IDs.
+ *              Typically it's part of a key of BUFFER_QUEUE or BUFFER_PG, like "3-4" from "Ethernet0|3-4"
+ * Return:
+ *      idsMap: The bitmap of IDs. The LSB stands for ID 0.
+ *
+ * Example:
+ *      Input idsMap: 3-4
+ *      Return: 00011000b
+ */
+unsigned long Orch::generateBitMapFromIdsStr(const string &idsStr)
+{
+    sai_uint32_t lowerBound, upperBound;
+    unsigned long idsMap = 0;
+
+    if (!parseIndexRange(idsStr, lowerBound, upperBound))
+        return 0;
+
+    for (sai_uint32_t id = lowerBound; id <= upperBound; id ++)
+    {
+        idsMap |= (1 << id);
+    }
+
+    return idsMap;
+}
+
+/*
+ * generateIdListFromMap
+ *
+ * Parse the idsMap and generate a vector which contains slices representing bits in idsMap
+ * Args:
+ *     idsMap: The bitmap of IDs. The LSB stands for ID 0.
+ *     maxId: The (exclusive) upperbound of ID range.
+ *            Eg: if ID range is 0~7, maxId should be 8.
+ * Return:
+ *     A vector which contains slices representing bits in idsMap
+ *
+ * Example:
+ *     Input idsMap: 00100110b, maxId: 8
+ *     Return vector: ["1-2", "5"]
+ */
+set<string> Orch::generateIdListFromMap(unsigned long idsMap, sai_uint32_t maxId)
+{
+    unsigned long currentIdMask = 1;
+    bool started = false, needGenerateMap = false;
+    sai_uint32_t lower, upper;
+    set<string> idStringList;
+    for (sai_uint32_t id = 0; id <= maxId; id ++)
+    {
+        // currentIdMask represents the bit mask corresponding to id: (1<<id)
+        if (idsMap & currentIdMask)
+        {
+            if (!started)
+            {
+                started = true;
+                lower = id;
+            }
+        }
+        else
+        {
+            if (started)
+            {
+                started = false;
+                upper = id - 1;
+                needGenerateMap = true;
+            }
+        }
+
+        if (needGenerateMap)
+        {
+            if (lower != upper)
+            {
+                idStringList.insert(to_string(lower) + "-" + to_string(upper));
+            }
+            else
+            {
+                idStringList.insert(to_string(lower));
+            }
+            needGenerateMap = false;
+        }
+
+        currentIdMask <<= 1;
+    }
+
+    return idStringList;
+}
+
+
+/*
+ * isItemIdsMapContinuous
+ *
+ * Check whether the input idsMap is continuous.
+ * An idsMap is continuous means there is no "0"s between any two "1"s in the map.
+ * Args:
+ *     idsMap: The bitmap of IDs. The LSB stands for ID 0.
+ *     maxId: The maximum value of ID.
+ * Return:
+ *     Whether the idsMap is continous
+ *
+ * Example:
+ *     idsMaps like 00011100, 00001000, 00000000 are continuous
+ *     while 00110010 is not because there are 2 "0"s in bit 2, 3 surrounded by "1"s
+ */
+bool Orch::isItemIdsMapContinuous(unsigned long idsMap, sai_uint32_t maxId)
+{
+    unsigned long currentIdMask = 1;
+    bool isCurrentBitValid = false, hasValidBits = false, hasZeroAfterValidBit = false;
+
+    for (sai_uint32_t id = 0; id < maxId; id ++)
+    {
+        isCurrentBitValid = ((idsMap & currentIdMask) != 0);
+        if (isCurrentBitValid)
+        {
+            if (!hasValidBits)
+                hasValidBits = true;
+            if (hasZeroAfterValidBit)
+                return false;
+        }
+        else
+        {
+            if (hasValidBits && !hasZeroAfterValidBit)
+                hasZeroAfterValidBit = true;
+        }
+        currentIdMask <<= 1;
+    }
+
     return true;
 }
 

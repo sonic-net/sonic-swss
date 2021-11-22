@@ -154,6 +154,7 @@ public:
     string m_inbandPortName = "";
     bool isInbandPort(const string &alias);
     bool setVoqInbandIntf(string &alias, string &type);
+    bool getPortVlanMembers(Port &port, vlan_members_t &vlan_members);
 
     bool getRecircPort(Port &p, string role);
 
@@ -226,6 +227,12 @@ private:
     map<set<int>, sai_object_id_t> m_portListLaneMap;
     map<set<int>, tuple<string, uint32_t, int, string, int, string>> m_lanesAliasSpeedMap;
     map<string, Port> m_portList;
+    map<string, vlan_members_t> m_portVlanMember;
+    /* mapping from SAI object ID to Name for faster
+     * retrieval of Port/VLAN from object ID for events
+     * coming from SAI
+     */
+    unordered_map<sai_object_id_t, string> saiOidToAlias;
     unordered_map<sai_object_id_t, int> m_portOidToIndex;
     map<string, uint32_t> m_port_ref_count;
     unordered_set<string> m_pendingPortSet;
@@ -253,7 +260,7 @@ private:
 
     bool initializePort(Port &port);
     void initializePriorityGroups(Port &port);
-    void initializePortMaximumHeadroom(Port &port);
+    void initializePortBufferMaximumParameters(Port &port);
     void initializeQueues(Port &port);
 
     bool addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id);
