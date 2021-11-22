@@ -547,10 +547,13 @@ bool MACsecMgr::isPortStateOk(const std::string & port_name)
 
     std::vector<FieldValueTuple> temp;
     std::string state;
+    std::string oper_status;
 
     if (m_statePortTable.get(port_name, temp)
         && get_value(temp, "state", state)
-        && state == "ok")
+        && state == "ok"
+        && get_value(temp, "netdev_oper_status", oper_status)
+        && oper_status == "up")
     {
         SWSS_LOG_DEBUG("Port '%s' is ready", port_name.c_str());
         return true;

@@ -827,21 +827,21 @@ namespace aclorch_test
                     return false;
                 }
 
-                if (it->second.aclaction.enable != true)
+                if (it->second.getSaiAttr().value.aclaction.enable != true)
                 {
                     return false;
                 }
 
                 if (attr_value == PACKET_ACTION_FORWARD)
                 {
-                    if (it->second.aclaction.parameter.s32 != SAI_PACKET_ACTION_FORWARD)
+                    if (it->second.getSaiAttr().value.aclaction.parameter.s32 != SAI_PACKET_ACTION_FORWARD)
                     {
                         return false;
                     }
                 }
                 else if (attr_value == PACKET_ACTION_DROP)
                 {
-                    if (it->second.aclaction.parameter.s32 != SAI_PACKET_ACTION_DROP)
+                    if (it->second.getSaiAttr().value.aclaction.parameter.s32 != SAI_PACKET_ACTION_DROP)
                     {
                         return false;
                     }
@@ -874,14 +874,14 @@ namespace aclorch_test
                 }
 
                 char addr[20];
-                sai_serialize_ip4(addr, it_field->second.aclfield.data.ip4);
+                sai_serialize_ip4(addr, it_field->second.getSaiAttr().value.aclfield.data.ip4);
                 if (attr_value != addr)
                 {
                     return false;
                 }
 
                 char mask[20];
-                sai_serialize_ip4(mask, it_field->second.aclfield.mask.ip4);
+                sai_serialize_ip4(mask, it_field->second.getSaiAttr().value.aclfield.mask.ip4);
                 if (string(mask) != "255.255.255.255")
                 {
                     return false;
@@ -896,14 +896,14 @@ namespace aclorch_test
                 }
 
                 char addr[46];
-                sai_serialize_ip6(addr, it_field->second.aclfield.data.ip6);
+                sai_serialize_ip6(addr, it_field->second.getSaiAttr().value.aclfield.data.ip6);
                 if (attr_value != addr)
                 {
                     return false;
                 }
 
                 char mask[46];
-                sai_serialize_ip6(mask, it_field->second.aclfield.mask.ip6);
+                sai_serialize_ip6(mask, it_field->second.getSaiAttr().value.aclfield.mask.ip6);
                 if (string(mask) != "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff")
                 {
                     return false;
@@ -976,6 +976,25 @@ namespace aclorch_test
 
             return !aclEnable && aclOid == SAI_NULL_OBJECT_ID;
         }
+
+        string getAclRuleSaiAttribute(const AclRule& rule, sai_acl_entry_attr_t attrId)
+        {
+            sai_attribute_t attr{};
+            attr.id = attrId;
+            auto meta = sai_metadata_get_attr_metadata(SAI_OBJECT_TYPE_ACL_ENTRY, attrId);
+            if (!meta)
+            {
+                SWSS_LOG_THROW("SAI BUG: Failed to get attribute metadata for SAI_OBJECT_TYPE_ACL_ENTRY attribute id %d", attrId);
+            }
+
+            auto status = sai_acl_api->get_acl_entry_attribute(rule.m_ruleOid, 1, &attr);
+            EXPECT_TRUE(status == SAI_STATUS_SUCCESS);
+
+            auto actualSaiValue = sai_serialize_attr_value(*meta, attr);
+
+            return actualSaiValue;
+        }
+
     };
 
     map<string, string> AclOrchTest::gProfileMap;
@@ -1315,6 +1334,90 @@ namespace aclorch_test
 
         tableIt = orch->getAclTables().find(tableOid);
         ASSERT_EQ(tableIt, orch->getAclTables().end());
+    }
+
+    TEST_F(AclOrchTest, AclRuleUpdate)
+    {
+        string acl_table_id = "acl_table_1";
+        string acl_rule_id = "acl_rule_1";
+
+        auto orch = createAclOrch();
+
+        auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id,
+                SET_COMMAND,
+                { { ACL_TABLE_DESCRIPTION, "TEST" },
+                  { ACL_TABLE_TYPE, TABLE_TYPE_L3 },
+                  { ACL_TABLE_STAGE, STAGE_INGRESS },
+                  { ACL_TABLE_PORTS, "1,2" } } } });
+
+        orch->doAclTableTask(kvfAclTable);
+
+        // validate acl table ...
+
+        auto acl_table_oid = orch->getTableById(acl_table_id);
+        ASSERT_NE(acl_table_oid, SAI_NULL_OBJECT_ID);
+
+        const auto &acl_tables = orch->getAclTables();
+        auto it_table = acl_tables.find(acl_table_oid);
+        ASSERT_NE(it_table, acl_tables.end());
+
+        class AclRuleTest : public AclRuleL3
+        {
+        public:
+            AclRuleTest(AclOrch* orch, string rule, string table):
+                AclRuleL3(orch, rule, table, ACL_TABLE_L3, true)
+            {}
+
+            void setCounterEnabled(bool enabled)
+            {
+                m_createCounter = enabled;
+            }
+
+            void disableMatch(sai_acl_entry_attr_t attr)
+            {
+                m_matches.erase(attr);
+            }
+        };
+
+        auto rule = make_shared<AclRuleTest>(orch->m_aclOrch, acl_rule_id, acl_table_id);
+        ASSERT_TRUE(rule->validateAddPriority(RULE_PRIORITY, "800"));
+        ASSERT_TRUE(rule->validateAddMatch(MATCH_SRC_IP, "1.1.1.1/32"));
+        ASSERT_TRUE(rule->validateAddAction(ACTION_PACKET_ACTION, PACKET_ACTION_FORWARD));
+
+        ASSERT_TRUE(orch->m_aclOrch->addAclRule(rule, acl_table_id));
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "800");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP), "1.1.1.1&mask:255.255.255.255");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION), "SAI_PACKET_ACTION_FORWARD");
+
+        auto updatedRule = make_shared<AclRuleTest>(*rule);
+        ASSERT_TRUE(updatedRule->validateAddPriority(RULE_PRIORITY, "900"));
+        ASSERT_TRUE(updatedRule->validateAddMatch(MATCH_SRC_IP, "2.2.2.2/24"));
+        ASSERT_TRUE(updatedRule->validateAddMatch(MATCH_DST_IP, "3.3.3.3/24"));
+        ASSERT_TRUE(updatedRule->validateAddAction(ACTION_PACKET_ACTION, PACKET_ACTION_DROP));
+
+        ASSERT_TRUE(orch->m_aclOrch->updateAclRule(updatedRule));
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "900");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP), "2.2.2.2&mask:255.255.255.0");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_DST_IP), "3.3.3.3&mask:255.255.255.0");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION), "SAI_PACKET_ACTION_DROP");
+
+        auto updatedRule2 = make_shared<AclRuleTest>(*updatedRule);
+        updatedRule2->setCounterEnabled(false);
+        updatedRule2->disableMatch(SAI_ACL_ENTRY_ATTR_FIELD_DST_IP);
+        ASSERT_TRUE(orch->m_aclOrch->updateAclRule(updatedRule2));
+        ASSERT_TRUE(validateAclRuleCounter(*orch->m_aclOrch->getAclRule(acl_table_id, acl_rule_id), false));
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "900");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP), "2.2.2.2&mask:255.255.255.0");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_DST_IP), "disabled");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION), "SAI_PACKET_ACTION_DROP");
+
+        auto updatedRule3 = make_shared<AclRuleTest>(*updatedRule2);
+        updatedRule3->setCounterEnabled(true);
+        ASSERT_TRUE(orch->m_aclOrch->updateAclRule(updatedRule3));
+        ASSERT_TRUE(validateAclRuleCounter(*orch->m_aclOrch->getAclRule(acl_table_id, acl_rule_id), true));
+
+        ASSERT_TRUE(orch->m_aclOrch->removeAclRule(rule->getTableId(), rule->getId()));
     }
 
 } // namespace nsAclOrchTest

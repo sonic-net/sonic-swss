@@ -19,6 +19,8 @@
 
 #include "acltable.h"
 
+#include "saiattr.h"
+
 #define RULE_PRIORITY           "PRIORITY"
 #define MATCH_IN_PORTS          "IN_PORTS"
 #define MATCH_OUT_PORTS         "OUT_PORTS"
@@ -93,6 +95,7 @@
 #define ACL_COUNTER_FLEX_COUNTER_GROUP "ACL_STAT_COUNTER"
 
 typedef map<string, sai_acl_entry_attr_t> acl_rule_attr_lookup_t;
+typedef map<string, sai_acl_range_type_t> acl_range_type_lookup_t;
 typedef map<string, sai_acl_ip_type_t> acl_ip_type_lookup_t;
 typedef map<string, sai_acl_dtel_flow_op_t> acl_dtel_flow_op_type_lookup_t;
 typedef map<string, sai_packet_action_t> acl_packet_action_lookup_t;
@@ -101,6 +104,13 @@ typedef map<acl_stage_type_t, set<sai_acl_action_type_t>> acl_capabilities_t;
 typedef map<sai_acl_action_type_t, set<int32_t>> acl_action_enum_values_capabilities_t;
 
 class AclOrch;
+
+struct AclRangeConfig
+{
+    sai_acl_range_type_t rangeType;
+    uint32_t min;
+    uint32_t max;
+};
 
 class AclRange
 {
@@ -130,7 +140,7 @@ public:
     AclRule(AclOrch *pAclOrch, string rule, string table, acl_table_type_t type, bool createCounter = true);
     virtual bool validateAddPriority(string attr_name, string attr_value);
     virtual bool validateAddMatch(string attr_name, string attr_value);
-    virtual bool validateAddAction(string attr_name, string attr_value);
+    virtual bool validateAddAction(string attr_name, string attr_value) = 0;
     virtual bool validate() = 0;
     bool processIpType(string type, sai_uint32_t &ip_type);
     inline static void setRulePriorities(sai_uint32_t min, sai_uint32_t max)
@@ -140,8 +150,9 @@ public:
     }
 
     virtual bool create();
+    virtual bool update(const AclRule& updatedRule);
     virtual bool remove();
-    virtual void update(SubjectType, void *) = 0;
+    virtual void onUpdate(SubjectType, void *) = 0;
     virtual void updateInPorts();
 
     virtual bool enableCounter();
@@ -167,14 +178,11 @@ public:
         return m_counterOid;
     }
 
+    vector<sai_object_id_t> getInPorts() const;
+
     bool hasCounter() const
     {
         return getCounterOid() != SAI_NULL_OBJECT_ID;
-    }
-
-    vector<sai_object_id_t> getInPorts()
-    {
-        return m_inPorts;
     }
 
     static shared_ptr<AclRule> makeShared(acl_table_type_t type, AclOrch *acl, MirrorOrch *mirror, DTelOrch *dtel, const string& rule, const string& table, const KeyOpFieldsValuesTuple&);
@@ -186,6 +194,17 @@ protected:
     virtual bool removeCounter();
     virtual bool removeRanges();
     virtual bool removeRule();
+
+    virtual bool updatePriority(const AclRule& updatedRule);
+    virtual bool updateMatches(const AclRule& updatedRule);
+    virtual bool updateActions(const AclRule& updatedRule);
+    virtual bool updateCounter(const AclRule& updatedRule);
+
+    virtual bool setPriority(const sai_uint32_t &value);
+    virtual bool setAction(sai_acl_entry_attr_t actionId, sai_acl_action_data_t actionData);
+    virtual bool setMatch(sai_acl_entry_attr_t matchId, sai_acl_field_data_t matchData);
+
+    virtual bool setAttribute(sai_attribute_t attr);
 
     void decreaseNextHopRefCount();
 
@@ -201,13 +220,13 @@ protected:
     sai_object_id_t m_ruleOid;
     sai_object_id_t m_counterOid;
     uint32_t m_priority;
-    map <sai_acl_entry_attr_t, sai_attribute_value_t> m_matches;
-    map <sai_acl_entry_attr_t, sai_attribute_value_t> m_actions;
+    map <sai_acl_entry_attr_t, SaiAttrWrapper> m_actions;
+    map <sai_acl_entry_attr_t, SaiAttrWrapper> m_matches;
     string m_redirect_target_next_hop;
     string m_redirect_target_next_hop_group;
 
-    vector<sai_object_id_t> m_inPorts;
-    vector<sai_object_id_t> m_outPorts;
+    vector<AclRangeConfig> m_rangeConfig;
+    vector<AclRange*> m_ranges;
 
 private:
     bool m_createCounter;
@@ -221,7 +240,8 @@ public:
     bool validateAddAction(string attr_name, string attr_value);
     bool validateAddMatch(string attr_name, string attr_value);
     bool validate();
-    void update(SubjectType, void *);
+    void onUpdate(SubjectType, void *) override;
+
 protected:
     sai_object_id_t getRedirectObjectId(const string& redirect_param);
 };
@@ -256,11 +276,12 @@ public:
     bool validate();
     bool createRule();
     bool removeRule();
-    void update(SubjectType, void *);
+    void onUpdate(SubjectType, void *) override;
 
     bool activate();
     bool deactivate();
 
+    bool update(const AclRule& updatedRule) override;
 protected:
     bool m_state {false};
     string m_sessionName;
@@ -275,11 +296,12 @@ public:
     bool validate();
     bool createRule();
     bool removeRule();
-    void update(SubjectType, void *);
+    void onUpdate(SubjectType, void *) override;
 
     bool activate();
     bool deactivate();
 
+    bool update(const AclRule& updatedRule) override;
 protected:
     DTelOrch *m_pDTelOrch;
     string m_intSessionId;
@@ -293,8 +315,7 @@ public:
     AclRuleDTelDropWatchListEntry(AclOrch *m_pAclOrch, DTelOrch *m_pDTelOrch, string rule, string table, acl_table_type_t type);
     bool validateAddAction(string attr_name, string attr_value);
     bool validate();
-    void update(SubjectType, void *);
-
+    void onUpdate(SubjectType, void *) override;
 protected:
     DTelOrch *m_pDTelOrch;
 };
@@ -342,12 +363,14 @@ public:
     void unlink(sai_object_id_t portOid);
     // Add or overwrite a rule into the ACL table
     bool add(shared_ptr<AclRule> newRule);
+    // Update existing ACL rule
+    bool updateRule(shared_ptr<AclRule> updatedRule);
     // Remove a rule from the ACL table
     bool remove(string rule_id);
     // Remove all rules from the ACL table
     bool clear();
     // Update table subject to changes
-    void update(SubjectType, void *);
+    void onUpdate(SubjectType, void *);
 
 public:
     string id;
@@ -403,6 +426,7 @@ public:
     bool updateAclTable(string table_id, AclTable &table);
     bool addAclRule(shared_ptr<AclRule> aclRule, string table_id);
     bool removeAclRule(string table_id, string rule_id);
+    bool updateAclRule(shared_ptr<AclRule> updatedAclRule);
     bool updateAclRule(string table_id, string rule_id, string attr_name, void *data, bool oper);
     bool updateAclRule(string table_id, string rule_id, bool enableCounter);
     AclRule* getAclRule(string table_id, string rule_id);

@@ -63,7 +63,13 @@ private:
 
     DBConnector         m_counter_db;
     Table               m_macsec_counters_map;
-    FlexCounterManager  m_macsec_flex_counter_manager;
+    Table               m_macsec_flow_tx_counters_map;
+    Table               m_macsec_flow_rx_counters_map;
+    Table               m_macsec_sa_tx_counters_map;
+    Table               m_macsec_sa_rx_counters_map;
+    FlexCounterManager  m_macsec_sa_attr_manager;
+    FlexCounterManager  m_macsec_sa_stat_manager;
+    FlexCounterManager  m_macsec_flow_stat_manager;
 
     struct MACsecACLTable
     {
@@ -197,10 +203,15 @@ private:
     /* Counter */
     void installCounter(
         CounterType counter_type,
+        sai_macsec_direction_t direction,
         const std::string &obj_name,
         sai_object_id_t obj_id,
         const std::vector<std::string> &stats);
-    void uninstallCounter(const std::string &obj_name, sai_object_id_t obj_id);
+    void uninstallCounter(
+        CounterType counter_type,
+        sai_macsec_direction_t direction,
+        const std::string &obj_name,
+        sai_object_id_t obj_id);
 
     /* MACsec ACL */
     bool initMACsecACLTable(
