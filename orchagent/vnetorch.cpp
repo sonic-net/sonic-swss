@@ -1013,10 +1013,6 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
 
         removeRouteState(vnet, ipPrefix);
     }
-    else
-    {
-        SWSS_LOG_ERROR("Unknown operation");
-    }
 
     return true;
 }
