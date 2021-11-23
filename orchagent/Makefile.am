@@ -3,7 +3,6 @@ INCLUDES = -I $(top_srcdir)/lib \
            -I $(top_srcdir)/warmrestart \
            -I flex_counter \
            -I debug_counter \
-           -I flow_counter \
            -I pbh \
            -I nhg
 
@@ -91,9 +90,8 @@ orchagent_SOURCES = \
             bfdorch.cpp \
             srv6orch.cpp
 
-orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp
+orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp flex_counter/flow_counter_handler.cpp
 orchagent_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.cpp
-orchagent_SOURCES += flow_counter/flow_counter_handler.cpp
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 orchagent_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)

@@ -121,7 +121,7 @@ const string default_trap_group = "default";
 const vector<sai_hostif_trap_type_t> default_trap_ids = {
     SAI_HOSTIF_TRAP_TYPE_TTL_ERROR
 };
-const uint HOSTIF_TRAP_COUNTER_POLLING_INTERVAL_MS = 1000;
+const uint HOSTIF_TRAP_COUNTER_POLLING_INTERVAL_MS = 10000;
 
 CoppOrch::CoppOrch(DBConnector* db, string tableName) :
     Orch(db, tableName),
@@ -758,7 +758,7 @@ void CoppOrch::doTask(SelectableTimer &timer)
             SWSS_LOG_INFO("Registering %s, id %s", it->second.c_str(), id.c_str());
 
             std::unordered_set<std::string> counter_stats;
-            FlowCounterHandler::getGenericCounterIdList(counter_stats);
+            FlowCounterHandler::getGenericCounterStatIdList(counter_stats);
             m_trap_counter_manager.setCounterIdList(it->first, CounterType::HOSTIF_TRAP, counter_stats);
             it = m_pendingAddToFlexCntr.erase(it);
         }
