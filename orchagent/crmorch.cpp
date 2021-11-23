@@ -45,6 +45,7 @@ const map<CrmResourceType, string> crmResTypeNameMap =
     { CrmResourceType::CRM_MPLS_NEXTHOP, "MPLS_NEXTHOP" },
     { CrmResourceType::CRM_SRV6_MY_SID_ENTRY, "SRV6_MY_SID_ENTRY" },
     { CrmResourceType::CRM_SRV6_NEXTHOP, "SRV6_NEXTHOP" },
+    { CrmResourceType::CRM_NEXTHOP_GROUP_MAP, "NEXTHOP_GROUP_MAP" },
 };
 
 const map<CrmResourceType, uint32_t> crmResSaiAvailAttrMap =
@@ -69,6 +70,7 @@ const map<CrmResourceType, uint32_t> crmResSaiAvailAttrMap =
     { CrmResourceType::CRM_MPLS_NEXTHOP, SAI_SWITCH_ATTR_AVAILABLE_IPV4_NEXTHOP_ENTRY },
     { CrmResourceType::CRM_SRV6_MY_SID_ENTRY, SAI_OBJECT_TYPE_MY_SID_ENTRY },
     { CrmResourceType::CRM_SRV6_NEXTHOP, SAI_SWITCH_ATTR_AVAILABLE_IPV6_NEXTHOP_ENTRY },
+    { CrmResourceType::CRM_NEXTHOP_GROUP_MAP, SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MAP },
 };
 
 const map<string, CrmResourceType> crmThreshTypeResMap =
@@ -93,6 +95,7 @@ const map<string, CrmResourceType> crmThreshTypeResMap =
     { "mpls_nexthop_threshold_type", CrmResourceType::CRM_MPLS_NEXTHOP },
     { "srv6_my_sid_entry_threshold_type", CrmResourceType::CRM_SRV6_MY_SID_ENTRY },
     { "srv6_nexthop_threshold_type", CrmResourceType::CRM_SRV6_NEXTHOP },
+    { "nexthop_group_map_threshold_type", CrmResourceType::CRM_NEXTHOP_GROUP_MAP },
 };
 
 const map<string, CrmResourceType> crmThreshLowResMap =
@@ -117,6 +120,7 @@ const map<string, CrmResourceType> crmThreshLowResMap =
     {"mpls_nexthop_low_threshold", CrmResourceType::CRM_MPLS_NEXTHOP },
     {"srv6_my_sid_entry_low_threshold", CrmResourceType::CRM_SRV6_MY_SID_ENTRY },
     {"srv6_nexthop_low_threshold", CrmResourceType::CRM_SRV6_NEXTHOP },
+    {"nexthop_group_map_low_threshold", CrmResourceType::CRM_NEXTHOP_GROUP_MAP },
 };
 
 const map<string, CrmResourceType> crmThreshHighResMap =
@@ -141,6 +145,7 @@ const map<string, CrmResourceType> crmThreshHighResMap =
     {"mpls_nexthop_high_threshold", CrmResourceType::CRM_MPLS_NEXTHOP },
     {"srv6_my_sid_entry_high_threshold", CrmResourceType::CRM_SRV6_MY_SID_ENTRY },
     {"srv6_nexthop_high_threshold", CrmResourceType::CRM_SRV6_NEXTHOP },
+    {"nexthop_group_map_high_threshold", CrmResourceType::CRM_NEXTHOP_GROUP_MAP },
 };
 
 const map<string, CrmThresholdType> crmThreshTypeMap =
@@ -172,6 +177,7 @@ const map<string, CrmResourceType> crmAvailCntsTableMap =
     { "crm_stats_mpls_nexthop_available", CrmResourceType::CRM_MPLS_NEXTHOP },
     { "crm_stats_srv6_my_sid_entry_available", CrmResourceType::CRM_SRV6_MY_SID_ENTRY },
     { "crm_stats_srv6_nexthop_available", CrmResourceType::CRM_SRV6_NEXTHOP },
+    { "crm_stats_nexthop_group_map_available", CrmResourceType::CRM_NEXTHOP_GROUP_MAP },
 };
 
 const map<string, CrmResourceType> crmUsedCntsTableMap =
@@ -196,6 +202,7 @@ const map<string, CrmResourceType> crmUsedCntsTableMap =
     { "crm_stats_mpls_nexthop_used", CrmResourceType::CRM_MPLS_NEXTHOP },
     { "crm_stats_srv6_my_sid_entry_used", CrmResourceType::CRM_SRV6_MY_SID_ENTRY },
     { "crm_stats_srv6_nexthop_used", CrmResourceType::CRM_SRV6_NEXTHOP },
+    { "crm_stats_nexthop_group_map_used", CrmResourceType::CRM_NEXTHOP_GROUP_MAP },
 };
 
 CrmOrch::CrmOrch(DBConnector *db, string tableName):
@@ -573,6 +580,7 @@ void CrmOrch::getResAvailableCounters()
             }
 
             case CrmResourceType::CRM_MPLS_INSEG:
+            case CrmResourceType::CRM_NEXTHOP_GROUP_MAP:
             {
                 sai_object_type_t objType = static_cast<sai_object_type_t>(crmResSaiAvailAttrMap.at(res.first));
                 uint64_t availCount = 0;

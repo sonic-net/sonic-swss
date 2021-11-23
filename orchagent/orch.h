@@ -225,6 +225,9 @@ protected:
     static void logfileReopen();
     std::string dumpTuple(Consumer &consumer, const swss::KeyOpFieldsValuesTuple &tuple);
     ref_resolve_status resolveFieldRefValue(type_map&, const std::string&, const std::string&, swss::KeyOpFieldsValuesTuple&, sai_object_id_t&, std::string&);
+    std::set<std::string> generateIdListFromMap(unsigned long idsMap, sai_uint32_t maxId);
+    unsigned long generateBitMapFromIdsStr(const std::string &idsStr);
+    bool isItemIdsMapContinuous(unsigned long idsMap, sai_uint32_t maxId);
     bool parseIndexRange(const std::string &input, sai_uint32_t &range_low, sai_uint32_t &range_high);
     bool parseReference(type_map &type_maps, std::string &ref, const std::string &table_name, std::string &object_name);
     ref_resolve_status resolveFieldRefArray(type_map&, const std::string&, const std::string&, swss::KeyOpFieldsValuesTuple&, std::vector<sai_object_id_t>&, std::string&);

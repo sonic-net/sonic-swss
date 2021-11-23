@@ -15,6 +15,10 @@ extern "C" {
 #define ACL_TABLE_PORTS        "PORTS"
 #define ACL_TABLE_SERVICES     "SERVICES"
 
+#define ACL_TABLE_TYPE_MATCHES      "MATCHES"
+#define ACL_TABLE_TYPE_BPOINT_TYPES "BIND_POINTS"
+#define ACL_TABLE_TYPE_ACTIONS      "ACTIONS"
+
 #define STAGE_INGRESS  "INGRESS"
 #define STAGE_EGRESS   "EGRESS"
 
@@ -39,23 +43,3 @@ typedef enum
 } acl_stage_type_t;
 
 typedef std::unordered_map<std::string, acl_stage_type_t> acl_stage_type_lookup_t;
-
-typedef enum
-{
-    ACL_TABLE_UNKNOWN,
-    ACL_TABLE_L3,
-    ACL_TABLE_L3V6,
-    ACL_TABLE_MIRROR,
-    ACL_TABLE_MIRRORV6,
-    ACL_TABLE_MIRROR_DSCP,
-    ACL_TABLE_PFCWD,
-    ACL_TABLE_CTRLPLANE,
-    ACL_TABLE_DTEL_FLOW_WATCHLIST,
-    ACL_TABLE_DTEL_DROP_WATCHLIST,
-    ACL_TABLE_MCLAG,
-    ACL_TABLE_MUX,
-    ACL_TABLE_DROP,
-    ACL_TABLE_PBH
-} acl_table_type_t;
-
-typedef std::unordered_map<std::string, acl_table_type_t> acl_table_type_lookup_t;
