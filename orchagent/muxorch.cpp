@@ -129,6 +129,8 @@ static sai_status_t create_route(IpPrefix &pfx, sai_object_id_t nh)
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
     }
 
+    gRouteOrch->onAddOtherRouteEntry(gVirtualRouterId, pfx.getSubnet());
+
     SWSS_LOG_NOTICE("Created tunnel route to %s ", pfx.to_string().c_str());
     return status;
 }
@@ -157,6 +159,8 @@ static sai_status_t remove_route(IpPrefix &pfx)
     {
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
     }
+
+    gRouteOrch->onRemoveOtherRouteEntry(gVirtualRouterId, pfx.getSubnet());
 
     SWSS_LOG_NOTICE("Removed tunnel route to %s ", pfx.to_string().c_str());
     return status;

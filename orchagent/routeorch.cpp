@@ -1,13 +1,20 @@
 #include <assert.h>
 #include <inttypes.h>
 #include <algorithm>
+#include <sstream>
+#include <list>
 #include "routeorch.h"
 #include "nhgorch.h"
 #include "cbf/cbfnhgorch.h"
+#include "flexcounterorch.h"
+#include "vnetorch.h"
 #include "logger.h"
 #include "swssnet.h"
 #include "crmorch.h"
 #include "directory.h"
+#include "sai_serialize.h"
+#include "flow_counter_handler.h"
+#include "timer.h"
 
 extern sai_object_id_t gVirtualRouterId;
 extern sai_object_id_t gSwitchId;
@@ -26,8 +33,10 @@ extern CbfNhgOrch *gCbfNhgOrch;
 extern size_t gMaxBulkSize;
 
 /* Default maximum number of next hop groups */
-#define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
-#define DEFAULT_MAX_ECMP_GROUP_SIZE     32
+#define DEFAULT_NUMBER_OF_ECMP_GROUPS               128
+#define DEFAULT_MAX_ECMP_GROUP_SIZE                 32
+#define FLEX_COUNTER_UPD_INTERVAL                   1
+const uint ROUTE_FLOW_COUNTER_POLLING_INTERVAL_MS = 10000;
 
 RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch) :
         gRouteBulker(sai_route_api, gMaxBulkSize),
@@ -41,7 +50,13 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
         m_fgNhgOrch(fgNhgOrch),
         m_nextHopGroupCount(0),
         m_srv6Orch(srv6Orch),
-        m_resync(false)
+        m_resync(false),
+        mAsicDb(std::shared_ptr<DBConnector>(new DBConnector("ASIC_DB", 0))),
+        mCounterDb(std::shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0))),
+        mVidToRidTable(std::unique_ptr<Table>(new Table(mAsicDb.get(), "VIDTORID"))),
+        mPrefixToCounterTable(std::unique_ptr<Table>(new Table(mCounterDb.get(), COUNTERS_ROUTE_NAME_MAP))),
+        mPrefixToPatternTable(std::unique_ptr<Table>(new Table(mCounterDb.get(), COUNTERS_ROUTE_TO_PATTERN_MAP))),
+        mRouteFlowCounterMgr(ROUTE_FLOW_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, ROUTE_FLOW_COUNTER_POLLING_INTERVAL_MS, false)
 {
     SWSS_LOG_ENTER();
 
@@ -146,6 +161,10 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
     addLinkLocalRouteToMe(gVirtualRouterId, default_link_local_prefix);
     SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu", default_link_local_prefix.to_string().c_str());
 
+    auto intervT = timespec { .tv_sec = FLEX_COUNTER_UPD_INTERVAL , .tv_nsec = 0 };
+    mFlexCounterUpdTimer = new SelectableTimer(intervT);
+    auto executorT = new ExecutableTimer(mFlexCounterUpdTimer, this, "FLEX_COUNTER_UPD_TIMER");
+    Orch::addExecutor(executorT);
 }
 
 std::string RouteOrch::getLinkLocalEui64Addr(void)
@@ -212,6 +231,8 @@ void RouteOrch::addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal
 
     gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
 
+    onAddOtherRouteEntry(vrf_id, linklocal_prefix.getSubnet());
+
     SWSS_LOG_NOTICE("Created link local ipv6 route  %s to cpu", linklocal_prefix.to_string().c_str());
 }
 
@@ -232,6 +253,8 @@ void RouteOrch::delLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal
     }
 
     gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+
+    onRemoveOtherRouteEntry(vrf_id, linklocal_prefix.getSubnet());
 
     SWSS_LOG_NOTICE("Deleted link local ipv6 route  %s to cpu", linklocal_prefix.to_string().c_str());
 }
@@ -555,23 +578,10 @@ void RouteOrch::doTask(Consumer& consumer)
             sai_object_id_t& vrf_id = ctx.vrf_id;
             IpPrefix& ip_prefix = ctx.ip_prefix;
 
-            if (!key.compare(0, strlen(VRF_PREFIX), VRF_PREFIX))
+            if (!parseRouteKey(key, ':', vrf_id, ip_prefix))
             {
-                size_t found = key.find(':');
-                string vrf_name = key.substr(0, found);
-
-                if (!m_vrfOrch->isVRFexists(vrf_name))
-                {
-                    it++;
-                    continue;
-                }
-                vrf_id = m_vrfOrch->getVRFid(vrf_name);
-                ip_prefix = IpPrefix(key.substr(found+1));
-            }
-            else
-            {
-                vrf_id = gVirtualRouterId;
-                ip_prefix = IpPrefix(key);
+                it++;
+                continue;
             }
 
             if (op == SET_COMMAND)
@@ -955,6 +965,8 @@ void RouteOrch::doTask(Consumer& consumer)
                     it_prev++;
             }
         }
+
+        processRouteFlowCounterBinding();
 
         /* Remove next hop group if the reference count decreases to zero */
         for (auto& it_nhg : m_bulkNhgReducedRefCnt)
@@ -2212,6 +2224,11 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         updateDefRouteState(ipPrefix.to_string(), true);
     }
 
+    if (it_route == m_syncdRoutes.at(vrf_id).end())
+    {
+        cacheRouteForFlowCounter(vrf_id, ipPrefix, mPendingBindRoutes);
+    }
+
     m_syncdRoutes[vrf_id][ipPrefix] = RouteNhg(nextHops, ctx.nhg_index);
 
     notifyNextHopChangeObservers(vrf_id, ipPrefix, nextHops, true);
@@ -2419,6 +2436,7 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
     }
     else
     {
+        cacheRouteForFlowCounter(vrf_id, ipPrefix, mPendingUnbindRoutes);
         it_route_table->second.erase(ipPrefix);
 
         /* Notify about the route next hop removal */
@@ -2562,4 +2580,969 @@ void RouteOrch::decNhgRefCount(const std::string &nhg_index)
     {
         gCbfNhgOrch->decNhgRefCount(nhg_index);
     }
+}
+
+void RouteOrch::generateRouteFlowStats()
+{
+    SWSS_LOG_ENTER();
+    for (const auto &route_pattern : mRoutePatternSet)
+    {
+        createRouteFlowCounterByPattern(route_pattern, 0);
+    }
+}
+
+void RouteOrch::clearRouteFlowStats()
+{
+    SWSS_LOG_ENTER();
+    if (!mBoundRouteCounters.empty() || !mPendingAddToFlexCntr.empty())
+    {
+        std::list<RouteFlowCounterBulkContext> to_unbind;
+        for (auto &entry : mBoundRouteCounters)
+        {
+            const auto& route_pattern = entry.first;
+            for (auto &inner_entry : entry.second)
+            {
+                removeRouteFlowCounterFromDB(route_pattern.vrf_id, inner_entry.first, inner_entry.second);
+                bulkUnbindFlowCounters(route_pattern.vrf_id, inner_entry.second, inner_entry.first, to_unbind);
+            }
+        }
+
+        for (auto &entry : mPendingAddToFlexCntr)
+        {
+            const auto& route_pattern = entry.first;
+            for (auto &inner_entry : entry.second)
+            {
+                bulkUnbindFlowCounters(route_pattern.vrf_id, inner_entry.second, inner_entry.first, to_unbind);
+            }
+        }
+
+        flushUnbindFlowCounters(to_unbind);
+
+        mBoundRouteCounters.clear();
+        mPendingAddToFlexCntr.clear();
+    }
+
+    mUnboundRoutes.clear();
+}
+
+void RouteOrch::updateRoutePattern(const std::string &pattern, size_t max_match_count)
+{
+    SWSS_LOG_ENTER();
+    sai_object_id_t vrf_id;
+    IpPrefix ip_prefix;
+    std::string vrf_name;
+    if (!parseRouteKeyForRoutePattern(pattern, '|', vrf_id, ip_prefix, vrf_name))
+    {
+        vrf_id = SAI_NULL_OBJECT_ID;
+    }
+
+    auto insert_result = mRoutePatternSet.emplace(vrf_name, vrf_id, ip_prefix, max_match_count);
+    if (insert_result.second)
+    {
+        SWSS_LOG_NOTICE("Inserting route pattern %s, max match count is %lu", pattern.c_str(), max_match_count);
+        if (!validateRoutePattern(*insert_result.first))
+        {
+            mRoutePatternSet.erase(insert_result.first);
+            return;
+        }
+
+        createRouteFlowCounterByPattern(*insert_result.first, 0);
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("Updating route pattern %s max match count to %lu", pattern.c_str(), max_match_count);
+        RoutePattern &existing = const_cast<RoutePattern &>(*insert_result.first);
+        onRoutePatternMaxMatchCountChange(existing, max_match_count);
+    }
+}
+
+void RouteOrch::removeRoutePattern(const std::string& pattern)
+{
+    SWSS_LOG_ENTER();
+    sai_object_id_t vrf_id;
+    IpPrefix ip_prefix;
+    std::string vrf_name;
+    if (!parseRouteKeyForRoutePattern(pattern, '|', vrf_id, ip_prefix, vrf_name))
+    {
+        vrf_id = SAI_NULL_OBJECT_ID;
+    }
+
+    SWSS_LOG_NOTICE("Removing route pattern %s", pattern.c_str());
+    RoutePattern route_pattern(vrf_name, vrf_id, ip_prefix, 0);
+    auto iter = mRoutePatternSet.find(route_pattern);
+    if (iter == mRoutePatternSet.end())
+    {
+        // Should not go to this branch, just in case
+        SWSS_LOG_ERROR("Trying to remove route pattern %s, but it does not exist", pattern.c_str());
+        return;
+    }
+    mRoutePatternSet.erase(iter);
+
+    removeRoutePattern(route_pattern);
+}
+
+void RouteOrch::removeRoutePattern(const RoutePattern &route_pattern)
+{
+    auto unbound_iter = mUnboundRoutes.find(route_pattern);
+    if (unbound_iter != mUnboundRoutes.end())
+    {
+        mUnboundRoutes.erase(unbound_iter);
+    }
+
+    std::list<RouteFlowCounterBulkContext> to_unbind;
+    auto cache_iter = mBoundRouteCounters.find(route_pattern);
+    if (cache_iter != mBoundRouteCounters.end())
+    {
+        for (auto &entry : cache_iter->second)
+        {
+            removeRouteFlowCounterFromDB(route_pattern.vrf_id, entry.first, entry.second);
+            bulkUnbindFlowCounters(route_pattern.vrf_id, entry.second, entry.first, to_unbind);
+        }
+        mBoundRouteCounters.erase(cache_iter);
+        flushUnbindFlowCounters(to_unbind);
+        return;
+    }
+
+    auto pending_iter = mPendingAddToFlexCntr.find(route_pattern);
+    if (pending_iter != mPendingAddToFlexCntr.end())
+    {
+        for (auto &entry : pending_iter->second)
+        {
+            bulkUnbindFlowCounters(route_pattern.vrf_id, entry.second, entry.first, to_unbind);
+        }
+        mPendingAddToFlexCntr.erase(pending_iter);
+        flushUnbindFlowCounters(to_unbind);
+    }
+}
+
+void RouteOrch::onAddOtherRouteEntry(sai_object_id_t vrf_id, const IpPrefix& ip_prefix)
+{
+    auto iter = mOtherRouteEntries.find(vrf_id);
+    if (iter == mOtherRouteEntries.end())
+    {
+        mOtherRouteEntries.emplace(vrf_id, std::set<IpPrefix>({ip_prefix}));
+    }
+    else
+    {
+        iter->second.insert(ip_prefix);
+    }
+
+    if (!isRouteFlowCounterEnabled())
+    {
+        return;
+    }
+
+    if (mRoutePatternSet.empty())
+    {
+        return;
+    }
+
+    for (auto &route_pattern : mRoutePatternSet)
+    {
+        if (route_pattern.is_match(vrf_id, ip_prefix))
+        {
+            bindFlowCounter(route_pattern, vrf_id, ip_prefix);
+            break;
+        }
+    }
+}
+
+void RouteOrch::onRemoveOtherRouteEntry(sai_object_id_t vrf_id, const IpPrefix& ip_prefix)
+{
+    auto iter = mOtherRouteEntries.find(vrf_id);
+    if (iter != mOtherRouteEntries.end())
+    {
+        auto prefix_iter = iter->second.find(ip_prefix);
+        if (prefix_iter != iter->second.end())
+        {
+            iter->second.erase(prefix_iter);
+            if (iter->second.empty())
+            {
+                 mOtherRouteEntries.erase(iter);
+            }
+        }
+    }
+
+    if (!isRouteFlowCounterEnabled())
+    {
+        return;
+    }
+
+    if (mRoutePatternSet.empty())
+    {
+        return;
+    }
+
+    for (auto &route_pattern : mRoutePatternSet)
+    {
+        if (route_pattern.is_match(vrf_id, ip_prefix))
+        {
+            if (unbindFlowCounter(route_pattern, vrf_id, ip_prefix))
+            {
+                createRouteFlowCounterFromUnboundCacheByPattern(route_pattern, getRouteFlowCounterSizeByPattern(route_pattern));
+            }
+            break;
+        }
+    }
+}
+
+void RouteOrch::onAddVR(sai_object_id_t vrf_id)
+{
+    assert(vrf_id != gVirtualRouterId);
+    std::string vrf_name = m_vrfOrch->getVRFname(vrf_id);
+    if (vrf_name == "")
+    {
+        getVnetNameByVrfId(vrf_id, vrf_name);
+    }
+
+    if (vrf_name == "")
+    {
+        SWSS_LOG_WARN("Failed to get VRF name for vrf id %s", sai_serialize_object_id(vrf_id).c_str());
+    }
+
+    for (auto &route_pattern : mRoutePatternSet)
+    {
+        if (route_pattern.vrf_name == vrf_name)
+        {
+            RoutePattern &existing = const_cast<RoutePattern &>(route_pattern);
+            existing.vrf_id = vrf_id;
+            createRouteFlowCounterByPattern(existing, 0);
+        }
+    }
+}
+
+void RouteOrch::onRemoveVR(sai_object_id_t vrf_id)
+{
+    for (auto &route_pattern : mRoutePatternSet)
+    {
+        if (route_pattern.vrf_id == vrf_id)
+        {
+            SWSS_LOG_NOTICE("Removing route pattern %s and all related counters due to VRF %s has been removed", route_pattern.to_string().c_str(), route_pattern.vrf_name.c_str());
+            removeRoutePattern(route_pattern);
+            RoutePattern &existing = const_cast<RoutePattern &>(route_pattern);
+            existing.vrf_id = SAI_NULL_OBJECT_ID;
+        }
+    }
+}
+
+void RouteOrch::bindFlowCounter(const RoutePattern &route_pattern, sai_object_id_t vrf_id, const IpPrefix& ip_prefix)
+{
+    auto current_bound_count = getRouteFlowCounterSizeByPattern(route_pattern);
+    if (current_bound_count >= route_pattern.max_match_count)
+    {
+        addUnboundRoutesToCache(route_pattern, ip_prefix);
+        return;
+    }
+
+    sai_object_id_t counter_oid;
+    if (!FlowCounterHandler::createGenericCounter(counter_oid))
+    {
+        SWSS_LOG_ERROR("Failed to create generic counter");
+        return;
+    }
+
+    sai_route_entry_t route_entry;
+    route_entry.switch_id = gSwitchId;
+    route_entry.vr_id = route_pattern.vrf_id;
+    copy(route_entry.destination, ip_prefix);
+    sai_attribute_t attr;
+    attr.id = SAI_ROUTE_ENTRY_ATTR_COUNTER_ID;
+    attr.value.oid = counter_oid;
+
+    auto status = sai_route_api->set_route_entry_attribute(&route_entry, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        FlowCounterHandler::removeGenericCounter(counter_oid);
+        SWSS_LOG_WARN("Failed to bind route entry vrf=%s prefix=%s to flow counter", route_pattern.vrf_name.c_str(), ip_prefix.to_string().c_str());
+        return;
+    }
+
+    pendingUpdateFlexDb(route_pattern, ip_prefix, counter_oid);
+}
+
+bool RouteOrch::unbindFlowCounter(const RoutePattern &route_pattern, sai_object_id_t vrf_id, const IpPrefix& ip_prefix)
+{
+    auto unbound_iter = mUnboundRoutes.find(route_pattern);
+    if (unbound_iter != mUnboundRoutes.end())
+    {
+        auto iter_prefix = unbound_iter->second.find(ip_prefix);
+        if (iter_prefix != unbound_iter->second.end())
+        {
+            unbound_iter->second.erase(iter_prefix);
+            if (unbound_iter->second.empty())
+            {
+                mUnboundRoutes.erase(unbound_iter);
+            }
+            return false;
+        }
+    }
+
+    // Check if the entry is in mPendingAddToFlexCntr
+    sai_object_id_t counter_oid = SAI_NULL_OBJECT_ID;
+    auto pending_iter = mPendingAddToFlexCntr.find(route_pattern);
+    if (pending_iter != mPendingAddToFlexCntr.end())
+    {
+        auto iter_prefix = pending_iter->second.find(ip_prefix);
+        if (iter_prefix != pending_iter->second.end())
+        {
+            counter_oid = iter_prefix->second;
+            pending_iter->second.erase(iter_prefix);
+            if (pending_iter->second.empty())
+            {
+                mPendingAddToFlexCntr.erase(pending_iter);
+            }
+        }
+    }
+    else
+    {
+        // Check if the entry is in mBoundRouteCounters
+        auto cache_iter = mBoundRouteCounters.find(route_pattern);
+        if (cache_iter != mBoundRouteCounters.end())
+        {
+            auto iter_prefix = cache_iter->second.find(ip_prefix);
+            if (iter_prefix != cache_iter->second.end())
+            {
+                counter_oid = iter_prefix->second;
+                removeRouteFlowCounterFromDB(vrf_id, ip_prefix, counter_oid);
+                cache_iter->second.erase(iter_prefix);
+                if (cache_iter->second.empty())
+                {
+                    mBoundRouteCounters.erase(cache_iter);
+                }
+            }
+        }
+    }
+
+    // No need unbind because the route entry has been removed, just remove the generic counter
+    if (counter_oid != SAI_NULL_OBJECT_ID)
+    {
+        FlowCounterHandler::removeGenericCounter(counter_oid);
+        return true;
+    }
+
+    return false;
+}
+
+void RouteOrch::pendingUpdateFlexDb(const RoutePattern &route_pattern, const IpPrefix& ip_prefix, sai_object_id_t counter_oid)
+{
+    bool was_empty = mPendingAddToFlexCntr.empty();
+    insertOrUpdateRouterFlowCounterCache(route_pattern, ip_prefix, counter_oid, mPendingAddToFlexCntr);
+    if (was_empty)
+    {
+        mFlexCounterUpdTimer->start();
+    }
+}
+
+bool RouteOrch::validateRoutePattern(const RoutePattern &route_pattern) const
+{
+    SWSS_LOG_ENTER();
+
+    for (const auto& existing : mRoutePatternSet)
+    {
+        if (existing.is_overlap_with(route_pattern))
+        {
+            SWSS_LOG_ERROR("Configured route pattern %s is conflict with existing one %s", route_pattern.to_string().c_str(), existing.to_string().c_str());
+            return false;
+        }
+    }
+
+    return true;
+}
+
+size_t RouteOrch::getRouteFlowCounterSizeByPattern(const RoutePattern &route_pattern) const
+{
+    SWSS_LOG_ENTER();
+
+    auto cache_iter = mBoundRouteCounters.find(route_pattern);
+    auto cache_count = cache_iter == mBoundRouteCounters.end() ? 0 : cache_iter->second.size();
+    auto pending_iter = mPendingAddToFlexCntr.find(route_pattern);
+    auto pending_count = pending_iter == mPendingAddToFlexCntr.end() ? 0 : pending_iter->second.size();
+    return cache_count + pending_count;
+}
+
+void RouteOrch::createRouteFlowCounterByPattern(const RoutePattern &route_pattern, size_t current_bound_count)
+{
+    SWSS_LOG_ENTER();
+    if (!isRouteFlowCounterEnabled())
+    {
+        return;
+    }
+
+    std::list<RouteFlowCounterBulkContext> to_bind;
+    auto iter = m_syncdRoutes.find(route_pattern.vrf_id);
+    if (iter != m_syncdRoutes.end())
+    {
+        SWSS_LOG_NOTICE("Creating route flow counter for pattern %s", route_pattern.to_string().c_str());
+
+        for (auto &entry : iter->second)
+        {
+            createSingleRouteFlowCounterByPattern(route_pattern, entry.first, to_bind, current_bound_count);
+        }
+    }
+
+    auto other_iter = mOtherRouteEntries.find(route_pattern.vrf_id);
+    if (other_iter != mOtherRouteEntries.end())
+    {
+        SWSS_LOG_NOTICE("Creating route flow counter for pattern %s for other type route entries", route_pattern.to_string().c_str());
+
+        for (auto ip_prefix : other_iter->second)
+        {
+            createSingleRouteFlowCounterByPattern(route_pattern, ip_prefix, to_bind, current_bound_count);
+        }
+    }
+
+    flushBindFlowCounters(route_pattern, to_bind, current_bound_count);
+}
+
+void RouteOrch::createSingleRouteFlowCounterByPattern(
+    const RoutePattern &route_pattern,
+    const IpPrefix &ip_prefix,
+    std::list<RouteFlowCounterBulkContext> &to_bind,
+    size_t &current_bound_count)
+{
+    if (route_pattern.is_match(route_pattern.vrf_id, ip_prefix))
+    {
+        if (current_bound_count >= route_pattern.max_match_count)
+        {
+            SWSS_LOG_DEBUG("Adding other type route entry to unbound cache, current bound=%lu, max allowed=%lu", current_bound_count, route_pattern.max_match_count);
+            addUnboundRoutesToCache(route_pattern, ip_prefix);
+            return;
+        }
+
+        if (!bulkBindFlowCounters(route_pattern.vrf_id, ip_prefix, to_bind, current_bound_count))
+        {
+            SWSS_LOG_WARN("Failed to bind route flow counter, vrf=%s, ip_prefix=%s", sai_serialize_object_id(route_pattern.vrf_id).c_str(), ip_prefix.to_string().c_str());
+            return;
+        }
+
+        if (current_bound_count >= route_pattern.max_match_count)
+        {
+            flushBindFlowCounters(route_pattern, to_bind, current_bound_count);
+        }
+    }
+}
+
+void RouteOrch::createRouteFlowCounterFromUnboundCacheByPattern(const RoutePattern &route_pattern, size_t current_bound_count)
+{
+    SWSS_LOG_ENTER();
+
+    auto iter = mUnboundRoutes.find(route_pattern);
+    if (iter == mUnboundRoutes.end())
+    {
+        return;
+    }
+
+    std::list<RouteFlowCounterBulkContext> to_bind;
+
+    while(current_bound_count < route_pattern.max_match_count)
+    {
+        auto prefix_iter = iter->second.begin();
+        if (prefix_iter == iter->second.end())
+        {
+            break;
+        }
+
+        if (!bulkBindFlowCounters(route_pattern.vrf_id, *prefix_iter, to_bind, current_bound_count))
+        {
+            SWSS_LOG_WARN("Failed to bind route flow counter, vrf=%s, ip_prefix=%s", sai_serialize_object_id(route_pattern.vrf_id).c_str(), prefix_iter->to_string().c_str());
+            iter->second.erase(prefix_iter);
+            continue;
+        }
+
+        if (current_bound_count >= route_pattern.max_match_count)
+        {
+            flushBindFlowCounters(route_pattern, to_bind, current_bound_count);
+        }
+
+        iter->second.erase(prefix_iter);
+    }
+
+    if (iter->second.empty())
+    {
+        mUnboundRoutes.erase(iter);
+    }
+
+    flushBindFlowCounters(route_pattern, to_bind, current_bound_count);
+}
+
+void RouteOrch::removeRouteFlowCounterFromBoundCacheByPattern(const RoutePattern &route_pattern, size_t current_bound_count)
+{
+    auto pending_iter = mPendingAddToFlexCntr.find(route_pattern);
+    auto iter = mBoundRouteCounters.find(route_pattern);
+    if (iter == mBoundRouteCounters.end() && pending_iter == mPendingAddToFlexCntr.end())
+    {
+        return;
+    }
+
+    std::list<RouteFlowCounterBulkContext> to_unbind;
+    // Remove from pending cache first
+    if (pending_iter != mPendingAddToFlexCntr.end())
+    {
+        while(current_bound_count > route_pattern.max_match_count)
+        {
+            auto bound_iter = pending_iter->second.begin();
+            if (bound_iter == pending_iter->second.end())
+            {
+                break;
+            }
+            bulkUnbindFlowCounters(route_pattern.vrf_id, bound_iter->second, bound_iter->first, to_unbind);
+            pending_iter->second.erase(bound_iter);
+            --current_bound_count;
+        }
+    }
+
+    // Remove from bound cache
+    if (iter != mBoundRouteCounters.end())
+    {
+        while(current_bound_count > route_pattern.max_match_count)
+        {
+            auto bound_iter = iter->second.begin();
+            if (bound_iter == iter->second.end())
+            {
+                break;
+            }
+            removeRouteFlowCounterFromDB(route_pattern.vrf_id, bound_iter->first, bound_iter->second);
+            bulkUnbindFlowCounters(route_pattern.vrf_id, bound_iter->second, bound_iter->first, to_unbind);
+            iter->second.erase(bound_iter);
+            --current_bound_count;
+        }
+    }
+
+    for (auto &entry : to_unbind)
+    {
+        addUnboundRoutesToCache(route_pattern, entry.ip_prefix);
+    }
+    flushUnbindFlowCounters(to_unbind);
+}
+
+void RouteOrch::addUnboundRoutesToCache(const RoutePattern &route_pattern, const IpPrefix &ip_prefix)
+{
+    SWSS_LOG_ENTER();
+
+    auto iter = mUnboundRoutes.find(route_pattern);
+    if (iter == mUnboundRoutes.end())
+    {
+        mUnboundRoutes.emplace(route_pattern, std::set<IpPrefix>({ip_prefix}));
+    }
+    else
+    {
+        iter->second.insert(ip_prefix);
+    }
+}
+
+void RouteOrch::onRoutePatternMaxMatchCountChange(RoutePattern &route_pattern, size_t new_max_match_count)
+{
+    SWSS_LOG_ENTER();
+
+    if (route_pattern.max_match_count != new_max_match_count)
+    {
+        auto old_max_match_count = route_pattern.max_match_count;
+        route_pattern.max_match_count = new_max_match_count;
+
+        if (!isRouteFlowCounterEnabled())
+        {
+            return;
+        }
+
+        auto current_bound_count = getRouteFlowCounterSizeByPattern(route_pattern);
+        SWSS_LOG_NOTICE("Current bound route flow counter count is %lu, new limit is %lu, old limit is %lu", current_bound_count, new_max_match_count, old_max_match_count);
+        if (new_max_match_count > old_max_match_count)
+        {
+            if (current_bound_count == old_max_match_count)
+            {
+                createRouteFlowCounterFromUnboundCacheByPattern(route_pattern, current_bound_count);
+            }
+        }
+        else
+        {
+            if (current_bound_count > new_max_match_count)
+            {
+                removeRouteFlowCounterFromBoundCacheByPattern(route_pattern, current_bound_count);
+            }
+        }
+    }
+}
+
+void RouteOrch::getRouteFlowCounterNameMapKey(sai_object_id_t vrf_id, const IpPrefix& ip_prefix, std::string &key)
+{
+    SWSS_LOG_ENTER();
+    std::ostringstream oss;
+    if (gVirtualRouterId != vrf_id)
+    {
+        auto vrf_name = m_vrfOrch->getVRFname(vrf_id);
+        if (vrf_name == "")
+        {
+            getVnetNameByVrfId(vrf_id, vrf_name);
+        }
+
+        if (vrf_name != "")
+        {
+            oss << vrf_name;
+            oss << "|";
+        }
+        else
+        {
+            // Should not happen, just in case
+            SWSS_LOG_ERROR("Failed to get VRF/VNET name for vrf id %s", sai_serialize_object_id(vrf_id).c_str());
+        }
+    }
+    oss << ip_prefix.to_string();
+    key = oss.str();
+}
+
+void RouteOrch::doTask(SelectableTimer &timer)
+{
+    SWSS_LOG_ENTER();
+    SWSS_LOG_NOTICE("Add flex counters, pending in queue: %lu", mPendingAddToFlexCntr.size());
+    string value;
+    std::string nameMapKey;
+    std::string pattern;
+    vector<FieldValueTuple> prefixToCounterMap;
+    vector<FieldValueTuple> prefixToPatternMap;
+    for (auto it = mPendingAddToFlexCntr.begin(); it != mPendingAddToFlexCntr.end(); )
+    {
+        const auto& route_pattern = it->first;
+        auto vrf_id = route_pattern.vrf_id;
+
+        for(auto inner_iter = it->second.begin(); inner_iter != it->second.end(); )
+        {
+            const auto id = sai_serialize_object_id(inner_iter->second);
+            if (mVidToRidTable->hget("", id, value))
+            {
+                auto ip_prefix = inner_iter->first;
+                SWSS_LOG_INFO("Registering %s, id %s", ip_prefix.to_string().c_str(), id.c_str());
+
+                std::unordered_set<std::string> counter_stats;
+                FlowCounterHandler::getGenericCounterStatIdList(counter_stats);
+                mRouteFlowCounterMgr.setCounterIdList(inner_iter->second, CounterType::ROUTE_MATCH, counter_stats);
+
+                getRouteFlowCounterNameMapKey(vrf_id, ip_prefix, nameMapKey);
+                prefixToCounterMap.emplace_back(nameMapKey, id);
+
+                getRouteFlowCounterNameMapKey(vrf_id, route_pattern.ip_prefix, pattern);
+                prefixToPatternMap.emplace_back(nameMapKey, pattern);
+
+                insertOrUpdateRouterFlowCounterCache(route_pattern, ip_prefix, inner_iter->second, mBoundRouteCounters);
+                inner_iter = it->second.erase(inner_iter);
+            }
+            else
+            {
+                ++inner_iter;
+            }
+        }
+
+        if (it->second.empty())
+        {
+            it = mPendingAddToFlexCntr.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+
+    if (!prefixToCounterMap.empty())
+    {
+        mPrefixToCounterTable->set("", prefixToCounterMap);
+    }
+
+    if (!prefixToPatternMap.empty())
+    {
+        mPrefixToPatternTable->set("", prefixToPatternMap);
+    }
+
+    if (mPendingAddToFlexCntr.empty())
+    {
+        mFlexCounterUpdTimer->stop();
+    }
+}
+
+void RouteOrch::cacheRouteForFlowCounter(sai_object_id_t vrf_id, const IpPrefix& ip_prefix, RouterPatternToPrefixMap &cache)
+{
+    SWSS_LOG_ENTER();
+    if (mRoutePatternSet.empty())
+    {
+        return;
+    }
+
+    if (!isRouteFlowCounterEnabled())
+    {
+        return;
+    }
+
+    for (const auto &route_pattern : mRoutePatternSet)
+    {
+        if (route_pattern.is_match(vrf_id, ip_prefix))
+        {
+            auto iter = cache.find(route_pattern);
+            if (iter == cache.end())
+            {
+                cache.emplace(route_pattern, std::set<IpPrefix>({ip_prefix}));
+            }
+            else
+            {
+                iter->second.insert(ip_prefix);
+            }
+            break;
+        }
+    }
+}
+
+void RouteOrch::processRouteFlowCounterBinding()
+{
+    SWSS_LOG_ENTER();
+    if (mPendingUnbindRoutes.empty() && mPendingBindRoutes.empty())
+    {
+        return;
+    }
+
+    std::list<RouteFlowCounterBulkContext> to_unbind;
+
+    // If a route flow counter for a pattern is removed, there might be new room
+    // for unbound routes
+    std::set<RoutePattern> pending_fill;
+
+    for (auto &entry : mPendingUnbindRoutes)
+    {
+        const auto &route_pattern = entry.first;
+        auto vrf_id = route_pattern.vrf_id;
+        for (auto ip_prefix : entry.second)
+        {
+            // Check if the entry is in mPendingBindRoutes, if yes, remove it
+            auto pending_bind_iter = mPendingBindRoutes.find(route_pattern);
+            if (pending_bind_iter != mPendingBindRoutes.end())
+            {
+                auto iter_prefix = pending_bind_iter->second.find(ip_prefix);
+                if (iter_prefix != pending_bind_iter->second.end())
+                {
+                    pending_bind_iter->second.erase(iter_prefix);
+                    if (pending_bind_iter->second.empty())
+                    {
+                        mPendingBindRoutes.erase(pending_bind_iter);
+                    }
+                }
+            }
+
+            if (unbindFlowCounter(route_pattern, vrf_id, ip_prefix))
+            {
+                pending_fill.insert(route_pattern);
+            }
+        }
+    }
+
+    mPendingUnbindRoutes.clear();
+    SWSS_LOG_NOTICE("Pending fill route flow counter count = %lu", pending_fill.size());
+    for (const auto &route_pattern : pending_fill)
+    {
+        createRouteFlowCounterFromUnboundCacheByPattern(route_pattern, getRouteFlowCounterSizeByPattern(route_pattern));
+    }
+
+    std::list<RouteFlowCounterBulkContext> to_bind;
+    for (auto &entry : mPendingBindRoutes)
+    {
+        const auto& route_pattern = entry.first;
+        auto current_bound_count = getRouteFlowCounterSizeByPattern(route_pattern);
+        for (const auto &ip_prefix : entry.second)
+        {
+            createSingleRouteFlowCounterByPattern(route_pattern, ip_prefix, to_bind, current_bound_count);
+        }
+
+        flushBindFlowCounters(route_pattern, to_bind, current_bound_count);
+    }
+    mPendingBindRoutes.clear();
+}
+
+bool RouteOrch::bulkBindFlowCounters(
+    sai_object_id_t vrf_id,
+    const IpPrefix &ip_prefix,
+    std::list<RouteFlowCounterBulkContext> &to_bind,
+    size_t &current_bound_count)
+{
+    SWSS_LOG_ENTER();
+    sai_object_id_t counter_oid;
+    if (!FlowCounterHandler::createGenericCounter(counter_oid))
+    {
+        SWSS_LOG_ERROR("Failed to create generic counter");
+        return false;
+    }
+
+    sai_route_entry_t route_entry;
+    route_entry.vr_id = vrf_id;
+    route_entry.switch_id = gSwitchId;
+    copy(route_entry.destination, ip_prefix);
+
+    sai_attribute_t attr;
+    attr.id = SAI_ROUTE_ENTRY_ATTR_COUNTER_ID;
+    attr.value.oid = counter_oid;
+
+    to_bind.emplace_back(ip_prefix, counter_oid);
+    auto &ctx = to_bind.back();
+    gRouteBulker.set_entry_attribute(&ctx.bulk_status, &route_entry, &attr);
+    ++current_bound_count;
+    return true;
+}
+
+void RouteOrch::flushBindFlowCounters(const RoutePattern &route_pattern, std::list<RouteFlowCounterBulkContext> &to_bind, size_t &bound_count)
+{
+    SWSS_LOG_ENTER();
+    if (gRouteBulker.setting_entries_count() > 0)
+    {
+        gRouteBulker.flush();
+        for(auto &ctx : to_bind)
+        {
+            if (ctx.bulk_status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_WARN("Failed to bind generic counter to route entry %s, status=%s", ctx.ip_prefix.to_string().c_str(), sai_serialize_status(ctx.bulk_status).c_str());
+                FlowCounterHandler::removeGenericCounter(ctx.counter_oid);
+                --bound_count;
+            }
+            else
+            {
+                pendingUpdateFlexDb(route_pattern, ctx.ip_prefix, ctx.counter_oid);
+            }
+        }
+        to_bind.clear();
+    }
+}
+
+void RouteOrch::bulkUnbindFlowCounters(
+    sai_object_id_t vrf_id,
+    sai_object_id_t counter_oid,
+    const IpPrefix &ip_prefix,
+    std::list<RouteFlowCounterBulkContext> &to_unbind)
+{
+    SWSS_LOG_ENTER();
+    sai_route_entry_t route_entry;
+    route_entry.switch_id = gSwitchId;
+    route_entry.vr_id = vrf_id;
+    copy(route_entry.destination, ip_prefix);
+
+    sai_attribute_t attr;
+    attr.id = SAI_ROUTE_ENTRY_ATTR_COUNTER_ID;
+    attr.value.oid = SAI_NULL_OBJECT_ID;
+
+    to_unbind.emplace_back(ip_prefix, counter_oid);
+    auto &ctx = to_unbind.back();
+    gRouteBulker.set_entry_attribute(&ctx.bulk_status, &route_entry, &attr);
+}
+
+void RouteOrch::flushUnbindFlowCounters(std::list<RouteFlowCounterBulkContext> &to_unbind)
+{
+    SWSS_LOG_ENTER();
+    if (gRouteBulker.setting_entries_count() > 0)
+    {
+        gRouteBulker.flush();
+        for (auto &ctx : to_unbind)
+        {
+            FlowCounterHandler::removeGenericCounter(ctx.counter_oid);
+        }
+
+        to_unbind.clear();
+    }
+}
+
+void RouteOrch::removeRouteFlowCounterFromDB(sai_object_id_t vrf_id, const IpPrefix& ip_prefix, sai_object_id_t counter_oid)
+{
+    SWSS_LOG_ENTER();
+    std::string nameMapKey;
+    getRouteFlowCounterNameMapKey(vrf_id, ip_prefix, nameMapKey);
+    mPrefixToPatternTable->hdel("", nameMapKey);
+    mPrefixToCounterTable->hdel("", nameMapKey);
+    mRouteFlowCounterMgr.clearCounterIdList(counter_oid);
+}
+
+void RouteOrch::insertOrUpdateRouterFlowCounterCache(
+    const RoutePattern &route_pattern,
+    const IpPrefix &ip_prefix,
+    sai_object_id_t counter_oid,
+    RouterFlowCounterCache &cache)
+{
+    SWSS_LOG_ENTER();
+    auto iter = cache.find(route_pattern);
+    if (iter == cache.end())
+    {
+        cache.emplace(route_pattern, std::map<IpPrefix, sai_object_id_t>({{ip_prefix, counter_oid}}));
+    }
+    else
+    {
+        iter->second.emplace(ip_prefix, counter_oid);
+    }
+}
+
+bool RouteOrch::isRouteFlowCounterEnabled() const
+{
+    SWSS_LOG_ENTER();
+    FlexCounterOrch *flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
+    return flexCounterOrch && flexCounterOrch->getRouteFlowCountersState();
+}
+
+bool RouteOrch::parseRouteKey(const std::string &key, char sep, sai_object_id_t &vrf_id, IpPrefix &ip_prefix)
+{
+    if (!key.compare(0, strlen(VRF_PREFIX), VRF_PREFIX))
+    {
+        size_t found = key.find(sep);
+        string vrf_name = key.substr(0, found);
+
+        if (!m_vrfOrch->isVRFexists(vrf_name))
+        {
+            SWSS_LOG_ERROR("Invalid VRF name: %s", vrf_name.c_str());
+            return false;
+        }
+        vrf_id = m_vrfOrch->getVRFid(vrf_name);
+        ip_prefix = IpPrefix(key.substr(found+1));
+    }
+    else
+    {
+        vrf_id = gVirtualRouterId;
+        ip_prefix = IpPrefix(key);
+    }
+
+    return true;
+}
+
+bool RouteOrch::parseRouteKeyForRoutePattern(const std::string &key, char sep, sai_object_id_t &vrf_id, IpPrefix &ip_prefix, std::string &vrf_name)
+{
+    size_t found = key.find(sep);
+    if (found == std::string::npos)
+    {
+        vrf_id = gVirtualRouterId;
+        ip_prefix = IpPrefix(key);
+        vrf_name = "";
+    }
+    else
+    {
+        vrf_name = key.substr(0, found);
+        if (!key.compare(0, strlen(VRF_PREFIX), VRF_PREFIX) && m_vrfOrch->isVRFexists(vrf_name))
+        {
+            vrf_id = m_vrfOrch->getVRFid(vrf_name);
+        }
+        else
+        {
+            if (!getVrfIdByVnetName(vrf_name, vrf_id))
+            {
+                SWSS_LOG_NOTICE("VRF/VNET name %s is not resolved", vrf_name.c_str());
+                return false;
+            }
+        }
+
+        ip_prefix = IpPrefix(key.substr(found+1));
+    }
+
+    return true;
+}
+
+bool RouteOrch::getVrfIdByVnetName(const std::string& vnet_name, sai_object_id_t &vrf_id)
+{
+    auto *vnet_orch = gDirectory.get<VNetOrch*>();
+    assert(vnet_orch); // VnetOrch instance is created before RouteOrch
+
+    return vnet_orch->getVrfIdByVnetName(vnet_name, vrf_id);
+}
+
+bool RouteOrch::getVnetNameByVrfId(sai_object_id_t vrf_id, std::string& vnet_name)
+{
+    auto *vnet_orch = gDirectory.get<VNetOrch*>();
+    assert(vnet_orch); // VnetOrch instance is created before RouteOrch
+
+    return vnet_orch->getVnetNameByVrfId(vrf_id, vnet_name);
 }

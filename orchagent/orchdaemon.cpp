@@ -611,6 +611,13 @@ bool OrchDaemon::init()
     gP4Orch = new P4Orch(m_applDb, p4rt_tables, vrf_orch, gCoppOrch);
     m_orchList.push_back(gP4Orch);
 
+    static const  vector<string> route_pattern_tables = {
+        CFG_FLOW_COUNTER_ROUTE_PATTERN_TABLE,
+    };
+    auto *route_flow_counter_orch = new RouteFlowCounterOrch(m_configDb, route_pattern_tables);
+    m_orchList.push_back(route_flow_counter_orch);
+    gDirectory.set(route_flow_counter_orch);
+
     if (WarmStart::isWarmStart())
     {
         bool suc = warmRestoreAndSyncUp();

@@ -1272,6 +1272,8 @@ void IntfsOrch::addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix)
     {
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
     }
+
+    gRouteOrch->onAddOtherRouteEntry(vrf_id, IpPrefix(ip_prefix.getIp().to_string()));
 }
 
 void IntfsOrch::removeIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix)
@@ -1301,6 +1303,8 @@ void IntfsOrch::removeIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_pref
     {
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
     }
+
+    gRouteOrch->onRemoveOtherRouteEntry(vrf_id, IpPrefix(ip_prefix.getIp().to_string()));
 }
 
 void IntfsOrch::addDirectedBroadcast(const Port &port, const IpPrefix &ip_prefix)

@@ -10,6 +10,7 @@
 #include "debugcounterorch.h"
 #include "directory.h"
 #include "copporch.h"
+#include "routeorch.h"
 
 extern sai_port_api_t *sai_port_api;
 
@@ -19,6 +20,7 @@ extern IntfsOrch *gIntfsOrch;
 extern BufferOrch *gBufferOrch;
 extern Directory<Orch*> gDirectory;
 extern CoppOrch *gCoppOrch;
+extern RouteOrch *gRouteOrch;
 
 #define BUFFER_POOL_WATERMARK_KEY   "BUFFER_POOL_WATERMARK"
 #define PORT_KEY                    "PORT"
@@ -29,6 +31,7 @@ extern CoppOrch *gCoppOrch;
 #define ACL_KEY                     "ACL"
 #define TUNNEL_KEY                  "TUNNEL"
 #define FLOW_CNT_TRAP_KEY           "FLOW_CNT_TRAP"
+#define FLOW_CNT_ROUTE_KEY          "FLOW_CNT_ROUTE"
 
 unordered_map<string, string> flexCounterGroupMap =
 {
@@ -47,6 +50,7 @@ unordered_map<string, string> flexCounterGroupMap =
     {"ACL", ACL_COUNTER_FLEX_COUNTER_GROUP},
     {"TUNNEL", TUNNEL_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {FLOW_CNT_TRAP_KEY, HOSTIF_TRAP_COUNTER_FLEX_COUNTER_GROUP},
+    {FLOW_CNT_ROUTE_KEY, ROUTE_FLOW_COUNTER_FLEX_COUNTER_GROUP},
 };
 
 
@@ -173,6 +177,19 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                         {
                             gCoppOrch->clearHostIfTrapCounterIdList();
                             m_hostif_trap_counter_enabled = false;
+                        }
+                    }
+                    if (gRouteOrch && key == FLOW_CNT_ROUTE_KEY)
+                    {
+                        if (value == "enable" && !m_route_flow_counter_enabled)
+                        {
+                            m_route_flow_counter_enabled = true;
+                            gRouteOrch->generateRouteFlowStats();
+                        }
+                        else if (value == "disable" && m_route_flow_counter_enabled)
+                        {
+                            gRouteOrch->clearRouteFlowStats();
+                            m_route_flow_counter_enabled = false;
                         }
                     }
                     vector<FieldValueTuple> fieldValues;
