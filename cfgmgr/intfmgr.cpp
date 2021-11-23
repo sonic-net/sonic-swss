@@ -307,6 +307,7 @@ void IntfMgr::addHostSubIntf(const string&intf, const string &subIntf, const str
 std::string IntfMgr::getIntfAdminStatus(const string &alias)
 {
     Table *portTable;
+    string admin = "down";
     if (!alias.compare(0, strlen("Eth"), "Eth"))
     {
         portTable = &m_statePortTable;
@@ -317,10 +318,9 @@ std::string IntfMgr::getIntfAdminStatus(const string &alias)
     }
     else
     {
-        return "down";
+        return admin;
     }
 
-    string admin = "down";
     vector<FieldValueTuple> temp;
     portTable->get(alias, temp);
 
@@ -339,6 +339,7 @@ std::string IntfMgr::getIntfAdminStatus(const string &alias)
 std::string IntfMgr::getIntfMtu(const string &alias)
 {
     Table *portTable;
+    string mtu = "0";
     if (!alias.compare(0, strlen("Eth"), "Eth"))
     {
         portTable = &m_statePortTable;
@@ -349,11 +350,10 @@ std::string IntfMgr::getIntfMtu(const string &alias)
     }
     else
     {
-        return "0";
+        return mtu;
     }
     vector<FieldValueTuple> temp;
     portTable->get(alias, temp);
-    string mtu = "0";
     for (auto idx : temp)
     {
         const auto &field = fvField(idx);
@@ -428,7 +428,9 @@ void IntfMgr::updateSubIntfAdminStatus(const string &alias, const string &admin)
             /*  Avoid duplicate interface admin UP event. */
             string curr_admin = m_subIntfList[intf].currAdminStatus;
             if (curr_admin == "up" && curr_admin == admin)
+            {
                 continue;
+            }
             std::vector<FieldValueTuple> fvVector;
             string subintf_admin = setHostSubIntfAdminStatus(intf, m_subIntfList[intf].adminStatus, admin); 
             m_subIntfList[intf].currAdminStatus = subintf_admin;
@@ -624,9 +626,9 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
     string vlanId;
     string parentAlias;
     size_t found = alias.find(VLAN_SUB_INTERFACE_SEPARATOR);
-    subIntf subIf(alias);
     if (found != string::npos)
     {
+        subIntf subIf(alias);
         // alias holds the complete sub interface name
         // while parentAlias holds the parent port name
         /*Check if subinterface is valid and sub interface name length is < 15(IFNAMSIZ)*/
@@ -760,6 +762,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
 
         if (!parentAlias.empty())
         {
+            subIntf subIf(alias);
             if (m_subIntfList.find(alias) == m_subIntfList.end())
             {
                 if (vlanId == "0" || vlanId.empty())
