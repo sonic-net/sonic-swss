@@ -59,7 +59,7 @@ counter_group_meta = {
         'group_name': 'ACL_STAT_COUNTER',
         'name_map': 'ACL_COUNTER_RULE_MAP',
         'pre_test': 'pre_acl_tunnel_counter_test',
-        'post_test':  'post_vxlan_tunnel_counter_test',
+        'post_test':  'post_acl_tunnel_counter_test',
     }
 }
 
@@ -248,7 +248,7 @@ class TestFlexCounters(object):
         self.wait_for_table_empty(meta_data['name_map'])
 
     def post_vxlan_tunnel_counter_test(self, meta_data):
-        self.verify_tunnel_type_vxlan(meta_data['name_map'], TUNNEL_TYPE_MAP)
+        self.verify_tunnel_type_vxlan(meta_data, TUNNEL_TYPE_MAP)
         self.config_db.delete_entry("VLAN","Vlan10")
         self.config_db.delete_entry("VLAN_TUNNEL","vtep1")
         self.config_db.delete_entry("VLAN_TUNNEL_MAP","vtep1|map_100_Vlan10")
@@ -298,6 +298,7 @@ class TestFlexCounters(object):
                 time.sleep(1)
 
         assert oid, 'trap counter is not created for {}'.format(removed_trap)
+        self.wait_for_id_list(meta_data['group_name'], removed_trap, oid)
 
         app_copp_table = swsscommon.ProducerStateTable(self.app_db.db_connection, 'COPP_TABLE')
         app_copp_table.set(changed_group, [('trap_ids', ','.join(trap_ids))])
@@ -357,6 +358,8 @@ class TestFlexCounters(object):
                 time.sleep(1)
 
         assert found, 'Not all trap id found in name map'
+        for trap_id in trap_ids:
+            self.wait_for_id_list(meta_data['group_name'], trap_id, counters_keys[trap_id])
 
         app_copp_table = swsscommon.ProducerStateTable(self.app_db.db_connection, 'COPP_TABLE')
         app_copp_table._del(removed_group)
