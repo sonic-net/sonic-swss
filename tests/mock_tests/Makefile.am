@@ -33,6 +33,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 mock_redisreply.cpp \
                 bulker_ut.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
+                $(top_srcdir)/lib/subintf.cpp \
                 $(top_srcdir)/orchagent/orchdaemon.cpp \
                 $(top_srcdir)/orchagent/orch.cpp \
                 $(top_srcdir)/orchagent/notifications.cpp \
@@ -59,6 +60,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/pbh/pbhrule.cpp \
                 $(top_srcdir)/orchagent/pbhorch.cpp \
                 $(top_srcdir)/orchagent/saihelper.cpp \
+                $(top_srcdir)/orchagent/saiattr.cpp \
                 $(top_srcdir)/orchagent/switchorch.cpp \
                 $(top_srcdir)/orchagent/pfcwdorch.cpp \
                 $(top_srcdir)/orchagent/pfcactionhandler.cpp \

@@ -38,6 +38,7 @@ endif
 orchagent_SOURCES = \
             main.cpp \
             $(top_srcdir)/lib/gearboxutils.cpp \
+            $(top_srcdir)/lib/subintf.cpp \
             orchdaemon.cpp \
             orch.cpp \
             notifications.cpp \
@@ -64,6 +65,7 @@ orchagent_SOURCES = \
             pbh/pbhrule.cpp \
             pbhorch.cpp \
             saihelper.cpp \
+            saiattr.cpp \
             switchorch.cpp \
             pfcwdorch.cpp \
             pfcactionhandler.cpp \

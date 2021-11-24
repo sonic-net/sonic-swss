@@ -569,15 +569,37 @@ It's possible to create separate configuration files for different ASIC platform
 
 ----------------------------------------------
 
+### ACL\_TABLE\_TYPE
+Stores a definition of table - set of matches, actions and bind point types. ACL_TABLE references a key inside this table in "type" field.
+
+```
+key: ACL_TABLE_TYPE:name           ; key of the ACL table type entry. The name is arbitary name user chooses.
+; field         = value
+matches         = match-list       ; list of matches for this table, matches are same as in ACL_RULE table.
+actions         = action-list      ; list of actions for this table, actions are same as in ACL_RULE table.
+bind_points     = bind-points-list ; list of bind point types for this table.
+
+; values annotation
+match            = 1*64VCHAR
+match-list       = [1-max-matches]*match
+action           = 1*64VCHAR
+action-list      = [1-max-actions]*action
+bind-point       = port/lag
+bind-points-list = [1-max-bind-points]*bind-point
+```
+
 ### ACL\_TABLE
 Stores information about ACL tables on the switch.  Port names are defined in [port_config.ini](../portsyncd/port_config.ini).
 
     key           = ACL_TABLE:name          ; acl_table_name must be unique
     ;field        = value
     policy_desc   = 1*255VCHAR              ; name of the ACL policy table description
-    type          = "mirror"/"l3"/"l3v6"    ; type of acl table, every type of
+    type          = 1*255VCHAR              ; type of acl table, every type of
                                             ; table defines the match/action a
                                             ; specific set of match and actions.
+                                            ; There are pre-defined table types like
+                                            ; "MIRROR", "MIRRORV6", "MIRROR_DSCP",
+                                            ; "L3", "L3V6", "MCLAG", "PFCWD", "DROP".
     ports         = [0-max_ports]*port_name ; the ports to which this ACL
                                             ; table is applied, can be emtry
                                             ; value annotations
