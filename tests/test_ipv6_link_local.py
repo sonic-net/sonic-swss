@@ -54,17 +54,13 @@ class TestIPv6LinkLocal(object):
         dvs.servers[1].runcmd("ip -6 route add default via 2001::1")
         time.sleep(2)
 
-        neigh_before_entries = self.pdb.get_keys("NEIGH_TABLE")
-        print(neigh_before_entries)
-
         # get neighbor entry
         dvs.servers[0].runcmd("ping -6 -c 1 2001::2")
         time.sleep(2)
 
         # Neigh entries should contain Ipv6-link-local neighbors, should be 4
         neigh_entries = self.pdb.get_keys("NEIGH_TABLE")
-        print(neigh_entries)
-        assert ((len(neigh_entries) - len(neigh_before_entries)) == 4)
+        assert (len(neigh_entries) == 4)
 
         found_entry = False
         for key in neigh_entries:
@@ -84,7 +80,7 @@ class TestIPv6LinkLocal(object):
         # Neigh entries should not contain Ipv6-link-local neighbors, should be 2
         neigh_after_entries = self.pdb.get_keys("NEIGH_TABLE")
         print(neigh_after_entries)
-        assert ((len(neigh_entries) - len(neigh_after_entries)) == 2)
+        assert (len(neigh_after_entries) == 2)
 
         found_existing_entry = False
         for key in neigh_entries:
