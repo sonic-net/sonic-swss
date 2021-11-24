@@ -28,6 +28,7 @@ public:
     void restartCheckReply(const std::string &op, const std::string &data, std::vector<swss::FieldValueTuple> &values);
     bool setAgingFDB(uint32_t sec);
     void set_switch_capability(const std::vector<swss::FieldValueTuple>& values);
+    bool querySwitchDscpToTcCapability(sai_object_type_t sai_object, sai_attr_id_t attr_id);
 private:
     void doTask(Consumer &consumer);
     void doTask(swss::SelectableTimer &timer);

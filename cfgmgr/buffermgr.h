@@ -36,6 +36,8 @@ public:
     using Orch::doTask;
 
 private:
+    std::string m_platform;
+
     Table m_cfgPortTable;
     Table m_cfgCableLenTable;
     Table m_cfgBufferProfileTable;
@@ -58,7 +60,7 @@ private:
     std::string getPgPoolMode();
     void readPgProfileLookupFile(std::string);
     task_process_status doCableTask(std::string port, std::string cable_length);
-    task_process_status doSpeedUpdateTask(std::string port);
+    task_process_status doSpeedUpdateTask(std::string port, bool admin_up);
     void doBufferTableTask(Consumer &consumer, ProducerStateTable &applTable);
 
     void transformSeperator(std::string &name);

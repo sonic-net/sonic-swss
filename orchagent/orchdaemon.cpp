@@ -230,15 +230,19 @@ bool OrchDaemon::init()
     gMirrorOrch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, policer_orch);
 
     TableConnector confDbAclTable(m_configDb, CFG_ACL_TABLE_TABLE_NAME);
+    TableConnector confDbAclTableType(m_configDb, CFG_ACL_TABLE_TYPE_TABLE_NAME);
     TableConnector confDbAclRuleTable(m_configDb, CFG_ACL_RULE_TABLE_NAME);
     TableConnector appDbAclTable(m_applDb, APP_ACL_TABLE_TABLE_NAME);
+    TableConnector appDbAclTableType(m_applDb, APP_ACL_TABLE_TYPE_TABLE_NAME);
     TableConnector appDbAclRuleTable(m_applDb, APP_ACL_RULE_TABLE_NAME);
 
     vector<TableConnector> acl_table_connectors = {
+        confDbAclTableType,
         confDbAclTable,
         confDbAclRuleTable,
         appDbAclTable,
-        appDbAclRuleTable
+        appDbAclRuleTable,
+        appDbAclTableType,
     };
 
     vector<string> dtel_tables = {
@@ -351,7 +355,9 @@ bool OrchDaemon::init()
         dtel_orch = new DTelOrch(m_configDb, dtel_tables, gPortsOrch);
         m_orchList.push_back(dtel_orch);
     }
-    gAclOrch = new AclOrch(acl_table_connectors, gSwitchOrch, gPortsOrch, gMirrorOrch, gNeighOrch, gRouteOrch, dtel_orch);
+
+    gAclOrch = new AclOrch(acl_table_connectors, m_stateDb,
+        gSwitchOrch, gPortsOrch, gMirrorOrch, gNeighOrch, gRouteOrch, dtel_orch);
 
     vector<string> mlag_tables = {
         { CFG_MCLAG_TABLE_NAME },
