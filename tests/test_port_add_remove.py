@@ -131,6 +131,8 @@ class TestPortAddRemove(object):
         rc = dvs.servers[17].runcmd("ping -c 1 6.6.6.6")
         assert rc == 0
 
+        dvs.set_interface_status("Ethernet68", "down")
+        dvs.set_interface_status(PORT, "down")
         dvs.remove_vlan_member("6", "Ethernet68")
         dvs.remove_vlan_member("6", PORT)
         dvs.remove_vlan("6")
