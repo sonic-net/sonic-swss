@@ -9,12 +9,16 @@
 #include "shellcmd.h"
 #include "macaddress.h"
 #include "warm_restart.h"
+#include "subscriberstatetable.h"
+#include <swss/redisutility.h>
+#include "subintf.h"
 
 using namespace std;
 using namespace swss;
 
 #define VLAN_PREFIX         "Vlan"
 #define LAG_PREFIX          "PortChannel"
+#define SUBINTF_LAG_PREFIX  "Po"
 #define LOOPBACK_PREFIX     "Loopback"
 #define VNET_PREFIX         "Vnet"
 #define MTU_INHERITANCE     "0"
@@ -22,6 +26,7 @@ using namespace swss;
 #define VRF_MGMT            "mgmt"
 
 #define LOOPBACK_DEFAULT_MTU_STR "65536"
+#define DEFAULT_MTU_STR 9100
 
 IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
@@ -36,8 +41,19 @@ IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         m_stateIntfTable(stateDb, STATE_INTERFACE_TABLE_NAME),
         m_appIntfTableProducer(appDb, APP_INTF_TABLE_NAME),
         m_neighTable(appDb, APP_NEIGH_TABLE_NAME),
-        m_neighTableProducer(appDb, APP_NEIGH_TABLE_NAME)
+        m_neighTableProducer(appDb, APP_NEIGH_TABLE_NAME),
+        m_appLagTable(appDb, APP_LAG_TABLE_NAME)
 {
+    auto subscriberStateTable = new swss::SubscriberStateTable(stateDb,
+            STATE_PORT_TABLE_NAME, TableConsumable::DEFAULT_POP_BATCH_SIZE, 100);
+    auto stateConsumer = new Consumer(subscriberStateTable, this, STATE_PORT_TABLE_NAME);
+    Orch::addExecutor(stateConsumer);
+
+    auto subscriberStateLagTable = new swss::SubscriberStateTable(stateDb,
+            STATE_LAG_TABLE_NAME, TableConsumable::DEFAULT_POP_BATCH_SIZE, 200);
+    auto stateLagConsumer = new Consumer(subscriberStateLagTable, this, STATE_LAG_TABLE_NAME);
+    Orch::addExecutor(stateLagConsumer);
+
     if (!WarmStart::isWarmStart())
     {
         flushLoopbackIntfs();
@@ -289,22 +305,160 @@ void IntfMgr::addHostSubIntf(const string&intf, const string &subIntf, const str
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 }
 
-void IntfMgr::setHostSubIntfMtu(const string &subIntf, const string &mtu)
-{
-    stringstream cmd;
-    string res;
 
-    cmd << IP_CMD " link set " << shellquote(subIntf) << " mtu " << shellquote(mtu);
-    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+std::string IntfMgr::getIntfAdminStatus(const string &alias)
+{
+    Table *portTable;
+    string admin = "down";
+    if (!alias.compare(0, strlen("Eth"), "Eth"))
+    {
+        portTable = &m_statePortTable;
+    }
+    else if (!alias.compare(0, strlen("Po"), "Po"))
+    {
+        portTable = &m_appLagTable;
+    }
+    else
+    {
+        return admin;
+    }
+
+    vector<FieldValueTuple> temp;
+    portTable->get(alias, temp);
+
+    for (auto idx : temp)
+    {
+        const auto &field = fvField(idx);
+        const auto &value = fvValue(idx);
+        if (field == "admin_status")
+        {
+            admin = value;
+        }
+    }
+    return admin;
 }
 
-void IntfMgr::setHostSubIntfAdminStatus(const string &subIntf, const string &adminStatus)
+std::string IntfMgr::getIntfMtu(const string &alias)
+{
+    Table *portTable;
+    string mtu = "0";
+    if (!alias.compare(0, strlen("Eth"), "Eth"))
+    {
+        portTable = &m_statePortTable;
+    }
+    else if (!alias.compare(0, strlen("Po"), "Po"))
+    {
+        portTable = &m_appLagTable;
+    }
+    else
+    {
+        return mtu;
+    }
+    vector<FieldValueTuple> temp;
+    portTable->get(alias, temp);
+    for (auto idx : temp)
+    {
+        const auto &field = fvField(idx);
+        const auto &value = fvValue(idx);
+        if (field == "mtu")
+        {
+            mtu = value;
+        }
+    }
+    if (mtu.empty())
+    {
+        mtu = std::to_string(DEFAULT_MTU_STR);
+    }
+    return mtu;
+}
+
+void IntfMgr::updateSubIntfMtu(const string &alias, const string &mtu)
+{
+    string intf;
+    for (auto entry : m_subIntfList)
+    {
+        intf = entry.first;
+        subIntf subIf(intf);
+        if (subIf.parentIntf() == alias)
+        {
+            std::vector<FieldValueTuple> fvVector;
+
+            string subif_config_mtu = m_subIntfList[intf].mtu;
+            if (subif_config_mtu == MTU_INHERITANCE || subif_config_mtu.empty())
+                subif_config_mtu = std::to_string(DEFAULT_MTU_STR);
+
+            string subintf_mtu = setHostSubIntfMtu(intf, subif_config_mtu, mtu);
+
+            FieldValueTuple fvTuple("mtu", subintf_mtu);
+            fvVector.push_back(fvTuple);
+            m_appIntfTableProducer.set(intf, fvVector);
+        }
+    }
+}
+
+std::string IntfMgr::setHostSubIntfMtu(const string &alias, const string &mtu, const string &parent_mtu)
 {
     stringstream cmd;
     string res;
 
-    cmd << IP_CMD " link set " << shellquote(subIntf) << " " << shellquote(adminStatus);
+    string subifMtu = mtu;
+    subIntf subIf(alias);
+
+    int pmtu = (uint32_t)stoul(parent_mtu);
+    int cmtu = (uint32_t)stoul(mtu);
+
+    if (pmtu < cmtu)
+    {
+        subifMtu = parent_mtu;
+    }
+    SWSS_LOG_INFO("subintf %s active mtu: %s", alias.c_str(), subifMtu.c_str());
+    cmd << IP_CMD " link set " << shellquote(alias) << " mtu " << shellquote(subifMtu);
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
+
+    return subifMtu;
+}
+
+void IntfMgr::updateSubIntfAdminStatus(const string &alias, const string &admin)
+{
+    string intf;
+    for (auto entry : m_subIntfList)
+    {
+        intf = entry.first;
+        subIntf subIf(intf);
+        if (subIf.parentIntf() == alias)
+        {
+            /*  Avoid duplicate interface admin UP event. */
+            string curr_admin = m_subIntfList[intf].currAdminStatus;
+            if (curr_admin == "up" && curr_admin == admin)
+            {
+                continue;
+            }
+            std::vector<FieldValueTuple> fvVector;
+            string subintf_admin = setHostSubIntfAdminStatus(intf, m_subIntfList[intf].adminStatus, admin); 
+            m_subIntfList[intf].currAdminStatus = subintf_admin;
+            FieldValueTuple fvTuple("admin_status", subintf_admin);
+            fvVector.push_back(fvTuple);
+            m_appIntfTableProducer.set(intf, fvVector);
+        }
+    }
+}
+
+std::string IntfMgr::setHostSubIntfAdminStatus(const string &alias, const string &admin_status, const string &parent_admin_status)
+{
+    stringstream cmd;
+    string res;
+
+    if (parent_admin_status == "up" || admin_status == "down")
+    {
+        SWSS_LOG_INFO("subintf %s admin_status: %s", alias.c_str(), admin_status.c_str());
+        cmd << IP_CMD " link set " << shellquote(alias) << " " << shellquote(admin_status);
+        EXEC_WITH_ERROR_THROW(cmd.str(), res);
+        return admin_status;
+    }
+    else
+    {
+        return "down";
+    }
 }
 
 void IntfMgr::removeHostSubIntf(const string &subIntf)
@@ -320,7 +474,7 @@ void IntfMgr::setSubIntfStateOk(const string &alias)
 {
     vector<FieldValueTuple> fvTuples = {{"state", "ok"}};
 
-    if (!alias.compare(0, strlen(LAG_PREFIX), LAG_PREFIX))
+    if (!alias.compare(0, strlen(SUBINTF_LAG_PREFIX), SUBINTF_LAG_PREFIX))
     {
         m_stateLagTable.set(alias, fvTuples);
     }
@@ -333,7 +487,7 @@ void IntfMgr::setSubIntfStateOk(const string &alias)
 
 void IntfMgr::removeSubIntfState(const string &alias)
 {
-    if (!alias.compare(0, strlen(LAG_PREFIX), LAG_PREFIX))
+    if (!alias.compare(0, strlen(SUBINTF_LAG_PREFIX), SUBINTF_LAG_PREFIX))
     {
         m_stateLagTable.del(alias);
     }
@@ -440,12 +594,25 @@ bool IntfMgr::isIntfStateOk(const string &alias)
     }
     else if (m_statePortTable.get(alias, temp))
     {
+        auto state_opt = swss::fvsGetValue(temp, "state", true);
+        if (!state_opt)
+        {
+            return false;
+        }
         SWSS_LOG_DEBUG("Port %s is ready", alias.c_str());
         return true;
     }
     else if (!alias.compare(0, strlen(LOOPBACK_PREFIX), LOOPBACK_PREFIX))
     {
         return true;
+    }
+    else if (!alias.compare(0, strlen(SUBINTF_LAG_PREFIX), SUBINTF_LAG_PREFIX))
+    {
+        if (m_stateLagTable.get(alias, temp))
+        {
+            SWSS_LOG_DEBUG("Lag %s is ready", alias.c_str());
+            return true;
+        }
     }
 
     return false;
@@ -488,11 +655,24 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
     size_t found = alias.find(VLAN_SUB_INTERFACE_SEPARATOR);
     if (found != string::npos)
     {
-        // This is a sub interface
+        subIntf subIf(alias);
         // alias holds the complete sub interface name
         // while parentAlias holds the parent port name
-        vlanId = alias.substr(found + 1);
-        parentAlias = alias.substr(0, found);
+        /*Check if subinterface is valid and sub interface name length is < 15(IFNAMSIZ)*/
+        if (!subIf.isValid())
+        {
+            SWSS_LOG_ERROR("Invalid subnitf: %s", alias.c_str());
+            return true;
+        }
+        parentAlias = subIf.parentIntf();
+        int subIntfId = subIf.subIntfIdx();
+        /*If long name format, subinterface Id is vlanid */
+        if (!subIf.isShortName())
+        {
+            vlanId = std::to_string(subIntfId);
+            FieldValueTuple vlanTuple("vlan", vlanId);
+            data.push_back(vlanTuple);
+        }
     }
     bool is_lo = !alias.compare(0, strlen(LOOPBACK_PREFIX), LOOPBACK_PREFIX);
     string mac = "";
@@ -541,6 +721,10 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         else if (field == "ipv6_use_link_local_only")
         {
             ipv6_link_local_mode = value;
+        }
+        else if (field == "vlan")
+        {
+            vlanId = value;
         }
     }
 
@@ -616,8 +800,14 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
 
         if (!parentAlias.empty())
         {
+            subIntf subIf(alias);
             if (m_subIntfList.find(alias) == m_subIntfList.end())
             {
+                if (vlanId == "0" || vlanId.empty())
+                {
+                    SWSS_LOG_INFO("Vlan ID not configured for sub interface %s", alias.c_str());
+                    return false;
+                }
                 try
                 {
                     addHostSubIntf(parentAlias, alias, vlanId);
@@ -628,25 +818,33 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
                     return false;
                 }
 
-                m_subIntfList.insert(alias);
+                m_subIntfList[alias].vlanId = vlanId;
             }
 
             if (!mtu.empty())
             {
+                string subintf_mtu;
                 try
                 {
-                    setHostSubIntfMtu(alias, mtu);
+                    string parentMtu = getIntfMtu(subIf.parentIntf());
+                    subintf_mtu = setHostSubIntfMtu(alias, mtu, parentMtu);
+                    FieldValueTuple fvTuple("mtu", mtu);
+                    std::remove(data.begin(), data.end(), fvTuple);
+                    FieldValueTuple newMtuFvTuple("mtu", subintf_mtu);
+                    data.push_back(newMtuFvTuple);
                 }
                 catch (const std::runtime_error &e)
                 {
                     SWSS_LOG_NOTICE("Sub interface ip link set mtu failure. Runtime error: %s", e.what());
                     return false;
                 }
+                m_subIntfList[alias].mtu = mtu;
             }
             else
             {
                 FieldValueTuple fvTuple("mtu", MTU_INHERITANCE);
                 data.push_back(fvTuple);
+                m_subIntfList[alias].mtu = MTU_INHERITANCE;
             }
 
             if (adminStatus.empty())
@@ -657,13 +855,20 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
             }
             try
             {
-                setHostSubIntfAdminStatus(alias, adminStatus);
+                string parentAdmin = getIntfAdminStatus(subIf.parentIntf());
+                string subintf_admin = setHostSubIntfAdminStatus(alias, adminStatus, parentAdmin);
+                m_subIntfList[alias].currAdminStatus = subintf_admin;
+                FieldValueTuple fvTuple("admin_status", adminStatus);
+                std::remove(data.begin(), data.end(), fvTuple);
+                FieldValueTuple newAdminFvTuple("admin_status", subintf_admin);
+                data.push_back(newAdminFvTuple);
             }
             catch (const std::runtime_error &e)
             {
                 SWSS_LOG_NOTICE("Sub interface ip link set admin status %s failure. Runtime error: %s", adminStatus.c_str(), e.what());
                 return false;
             }
+            m_subIntfList[alias].adminStatus = adminStatus;
 
             // set STATE_DB port state
             setSubIntfStateOk(alias);
@@ -827,50 +1032,56 @@ void IntfMgr::doTask(Consumer &consumer)
     while (it != consumer.m_toSync.end())
     {
         KeyOpFieldsValuesTuple t = it->second;
-
-        vector<string> keys = tokenize(kfvKey(t), config_db_key_delimiter);
-        const vector<FieldValueTuple>& data = kfvFieldsValues(t);
-        string op = kfvOp(t);
-
-        if (keys.size() == 1)
+        if ((table_name == STATE_PORT_TABLE_NAME) || (table_name == STATE_LAG_TABLE_NAME))
         {
-            if((table_name == CFG_VOQ_INBAND_INTERFACE_TABLE_NAME) &&
-                    (op == SET_COMMAND))
-            {
-                //No further processing needed. Just relay to orchagent
-                m_appIntfTableProducer.set(keys[0], data);
-                m_stateIntfTable.hset(keys[0], "vrf", "");
-
-                it = consumer.m_toSync.erase(it);
-                continue;
-            }
-            if (!doIntfGeneralTask(keys, data, op))
-            {
-                it++;
-                continue;
-            }
-            else
-            {
-                //Entry programmed, remove it from pending list if present
-                m_pendingReplayIntfList.erase(keys[0]);
-            }
-        }
-        else if (keys.size() == 2)
-        {
-            if (!doIntfAddrTask(keys, data, op))
-            {
-                it++;
-                continue;
-            }
-            else
-            {
-                //Entry programmed, remove it from pending list if present
-                m_pendingReplayIntfList.erase(keys[0] + config_db_key_delimiter + keys[1] );
-            }
+            doPortTableTask(kfvKey(t), kfvFieldsValues(t), kfvOp(t));
         }
         else
         {
-            SWSS_LOG_ERROR("Invalid key %s", kfvKey(t).c_str());
+            vector<string> keys = tokenize(kfvKey(t), config_db_key_delimiter);
+            const vector<FieldValueTuple>& data = kfvFieldsValues(t);
+            string op = kfvOp(t);
+
+            if (keys.size() == 1)
+            {
+                if((table_name == CFG_VOQ_INBAND_INTERFACE_TABLE_NAME) &&
+                        (op == SET_COMMAND))
+                {
+                    //No further processing needed. Just relay to orchagent
+                    m_appIntfTableProducer.set(keys[0], data);
+                    m_stateIntfTable.hset(keys[0], "vrf", "");
+
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+                if (!doIntfGeneralTask(keys, data, op))
+                {
+                    it++;
+                    continue;
+                }
+                else
+                {
+                    //Entry programmed, remove it from pending list if present
+                    m_pendingReplayIntfList.erase(keys[0]);
+                }
+            }
+            else if (keys.size() == 2)
+            {
+                if (!doIntfAddrTask(keys, data, op))
+                {
+                    it++;
+                    continue;
+                }
+                else
+                {
+                    //Entry programmed, remove it from pending list if present
+                    m_pendingReplayIntfList.erase(keys[0] + config_db_key_delimiter + keys[1] );
+                }
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Invalid key %s", kfvKey(t).c_str());
+            }
         }
 
         it = consumer.m_toSync.erase(it);
@@ -879,5 +1090,28 @@ void IntfMgr::doTask(Consumer &consumer)
     if (!m_replayDone && WarmStart::isWarmStart() && m_pendingReplayIntfList.empty() )
     {
         setWarmReplayDoneState();
+    }
+}
+
+void IntfMgr::doPortTableTask(const string& key, vector<FieldValueTuple> data, string op)
+{
+    if (op == SET_COMMAND)
+    {
+        for (auto idx : data)
+        {
+            const auto &field = fvField(idx);
+            const auto &value = fvValue(idx);
+
+            if (field == "admin_status")
+            {
+                SWSS_LOG_INFO("Port %s Admin %s", key.c_str(), value.c_str());
+                updateSubIntfAdminStatus(key, value);
+            }
+            else if (field == "mtu")
+            {
+                SWSS_LOG_INFO("Port %s MTU %s", key.c_str(), value.c_str());
+                updateSubIntfMtu(key, value);
+            }
+        }
     }
 }

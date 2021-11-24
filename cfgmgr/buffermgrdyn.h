@@ -128,7 +128,7 @@ typedef std::map<std::string, std::string> gearbox_delay_t;
 class BufferMgrDynamic : public Orch
 {
 public:
-    BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBConnector *applDb, const std::vector<TableConnector> &tables, std::shared_ptr<std::vector<KeyOpFieldsValuesTuple>> gearboxInfo);
+    BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBConnector *applDb, const std::vector<TableConnector> &tables, std::shared_ptr<std::vector<KeyOpFieldsValuesTuple>> gearboxInfo, std::shared_ptr<std::vector<KeyOpFieldsValuesTuple>> zeroProfilesInfo);
     using Orch::doTask;
 
 private:
@@ -222,9 +222,7 @@ private:
     // Tool functions to parse keys and references
     std::string getPgPoolMode();
     void transformSeperator(std::string &name);
-    void transformReference(std::string &name);
     std::string parseObjectNameFromKey(const std::string &key, size_t pos/* = 1*/);
-    std::string parseObjectNameFromReference(const std::string &reference);
     std::string getDynamicProfileName(const std::string &speed, const std::string &cable, const std::string &mtu, const std::string &threshold, const std::string &gearbox_model, long lane_count);
     inline bool isNonZero(const std::string &value) const
     {

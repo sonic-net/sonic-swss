@@ -38,7 +38,7 @@ portmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 portmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 portmgrd_LDADD = $(COMMON_LIBS) $(SAIMETA_LIBS)
 
-intfmgrd_SOURCES = intfmgrd.cpp intfmgr.cpp $(top_srcdir)/orchagent/orch.cpp $(top_srcdir)/orchagent/request_parser.cpp shellcmd.h
+intfmgrd_SOURCES = intfmgrd.cpp intfmgr.cpp $(top_srcdir)/orchagent/orch.cpp $(top_srcdir)/orchagent/request_parser.cpp $(top_srcdir)/lib/subintf.cpp shellcmd.h
 intfmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 intfmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 intfmgrd_LDADD = $(COMMON_LIBS) $(SAIMETA_LIBS)
@@ -87,3 +87,20 @@ macsecmgrd_SOURCES = macsecmgrd.cpp macsecmgr.cpp $(top_srcdir)/orchagent/orch.c
 macsecmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 macsecmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 macsecmgrd_LDADD = $(COMMON_LIBS) $(SAIMETA_LIBS)
+
+if GCOV_ENABLED
+vlanmgrd_LDADD += -lgcovpreload
+teammgrd_LDADD += -lgcovpreload
+portmgrd_LDADD += -lgcovpreload
+intfmgrd_LDADD+= -lgcovpreload
+buffermgrd_LDADD += -lgcovpreload
+vrfmgrd_LDADD += -lgcovpreload
+nbrmgrd_LDADD += -lgcovpreload
+vxlanmgrd_LDADD += -lgcovpreload
+sflowmgrd_LDADD += -lgcovpreload
+natmgrd_LDADD += -lgcovpreload
+coppmgrd_LDADD += -lgcovpreload
+tunnelmgrd_LDADD += -lgcovpreload
+macsecmgrd_LDADD += -lgcovpreload
+endif
+

@@ -111,7 +111,7 @@ class PfcWdAclHandler: public PfcWdLossyHandler
         string m_strEgressTable;
         string m_strRule;
         void createPfcAclTable(sai_object_id_t port, string strTable, bool ingress);
-        void createPfcAclRule(shared_ptr<AclRulePfcwd> rule, uint8_t queueId, string strTable, sai_object_id_t port);
+        void createPfcAclRule(shared_ptr<AclRulePacket> rule, uint8_t queueId, string strTable, sai_object_id_t port);
         void updatePfcAclRule(shared_ptr<AclRule> rule, uint8_t queueId, string strTable, vector<sai_object_id_t> port);
 };
 
@@ -161,6 +161,17 @@ class PfcWdZeroBufferHandler: public PfcWdLossyHandler
 
         sai_object_id_t m_originalQueueBufferProfile = SAI_NULL_OBJECT_ID;
         sai_object_id_t m_originalPgBufferProfile = SAI_NULL_OBJECT_ID;
+};
+
+// PFC queue that implements drop action by draining queue via SAI
+// attribute SAI_QUEUE_ATTR_PFC_DLR_INIT.
+class PfcWdSaiDlrInitHandler: public PfcWdActionHandler
+{
+    public:
+        PfcWdSaiDlrInitHandler(sai_object_id_t port, sai_object_id_t queue,
+                uint8_t queueId, shared_ptr<Table> countersTable);
+        virtual ~PfcWdSaiDlrInitHandler(void);
+        virtual bool getHwCounters(PfcWdHwStats& counters);
 };
 
 #endif

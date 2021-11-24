@@ -28,6 +28,7 @@ public:
     void restartCheckReply(const std::string &op, const std::string &data, std::vector<swss::FieldValueTuple> &values);
     bool setAgingFDB(uint32_t sec);
     void set_switch_capability(const std::vector<swss::FieldValueTuple>& values);
+    bool querySwitchDscpToTcCapability(sai_object_type_t sai_object, sai_attr_id_t attr_id);
 private:
     void doTask(Consumer &consumer);
     void doTask(swss::SelectableTimer &timer);
@@ -35,11 +36,13 @@ private:
     void doAppSwitchTableTask(Consumer &consumer);
     void initSensorsTable();
     void querySwitchTpidCapability();
+    sai_status_t setSwitchTunnelVxlanParams(swss::FieldValueTuple &val);
 
     swss::NotificationConsumer* m_restartCheckNotificationConsumer;
     void doTask(swss::NotificationConsumer& consumer);
     swss::DBConnector *m_db;
     swss::Table m_switchTable;
+    sai_object_id_t m_switchTunnelId;
 
     // ASIC temperature sensors
     std::shared_ptr<swss::DBConnector> m_stateDb = nullptr;
@@ -52,6 +55,7 @@ private:
     bool m_numTempSensorsInitialized = false;
     bool m_sensorsMaxTempSupported = true;
     bool m_sensorsAvgTempSupported = true;
+    bool m_vxlanSportUserModeEnabled = false;
 
     // Information contained in the request from
     // external program for orchagent pre-shutdown state check

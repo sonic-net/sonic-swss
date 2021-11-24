@@ -182,6 +182,7 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
     unsigned int ifindex = rtnl_link_get_ifindex(link);
     int master = rtnl_link_get_master(link);
     char *type = rtnl_link_get_type(link);
+    unsigned int mtu = rtnl_link_get_mtu(link);
 
     if (type)
     {
@@ -251,10 +252,14 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
     {
         g_portSet.erase(key);
         FieldValueTuple tuple("state", "ok");
+        FieldValueTuple admin_status("admin_status", (admin ? "up" : "down"));
+        FieldValueTuple port_mtu("mtu", to_string(mtu));
         vector<FieldValueTuple> vector;
         vector.push_back(tuple);
         FieldValueTuple op("netdev_oper_status", oper ? "up" : "down");
         vector.push_back(op);
+        vector.push_back(admin_status);
+        vector.push_back(port_mtu);
         m_statePortTable.set(key, vector);
         SWSS_LOG_NOTICE("Publish %s(ok:%s) to state db", key.c_str(), oper ? "up" : "down");
     }
