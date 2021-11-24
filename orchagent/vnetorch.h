@@ -289,13 +289,14 @@ struct VNetNextHopInfo
 {
     IpAddress monitor_addr;
     sai_bfd_session_state_t bfd_state;
-    std::set<NextHopGroupKey> nhgs;
+    int ref_count;
 };
 
 struct BfdSessionInfo
 {
     sai_bfd_session_state_t bfd_state;
-    std::map<std::string, NextHopKey> endpoints;
+    std::string vnet;
+    NextHopKey endpoint;
 };
 
 typedef std::map<NextHopGroupKey, NextHopGroupInfo> VNetNextHopGroupInfoTable;
@@ -339,10 +340,11 @@ private:
     void removeRouteState(const string& vnet, IpPrefix& ipPrefix);
 
     void updateVnetTunnel(const BfdUpdate&);
+    bool updateTunnelRoute(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op);
 
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op,
-                    bool temp_change, const std::map<NextHopKey, IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
+                    const std::map<NextHopKey, IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
 
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, nextHop& nh, string& op);
