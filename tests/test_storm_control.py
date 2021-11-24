@@ -225,7 +225,7 @@ class TestStormControl(object):
 
         #click CLI verification
         for storm_type in storm_list:
-            dvs.runcmd("config interface storm-control "+storm_type+" add "+lag_name+" "+str(kbps_value))
+            dvs.runcmd("config interface storm-control add "+lag_name+" "+storm_type+" "+str(kbps_value))
             tbl = swsscommon.Table(self.cdb,"PORT_STORM_CONTROL")
             (status,fvs) = tbl.get(lag_name+"|"+storm_type)
             assert status == False
@@ -265,7 +265,7 @@ class TestStormControl(object):
 
         #click CLI verification 
         for storm_type in storm_list:
-            dvs.runcmd("config interface storm-control "+storm_type+" add Vlan"+str(vlan_id)+" "+str(kbps_value))
+            dvs.runcmd("config interface storm-control add Vlan"+str(vlan_id)+" "+storm_type+" "+str(kbps_value))
             tbl = swsscommon.Table(self.cdb,"PORT_STORM_CONTROL")
             (status,fvs) = tbl.get("Vlan"+str(vlan_id)+"|"+storm_type)
             assert status == False
