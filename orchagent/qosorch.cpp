@@ -808,7 +808,7 @@ bool DscpToFcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
 {
     SWSS_LOG_ENTER();
 
-    sai_uint8_t max_fc_val = NhgMapOrch::getMaxFcVal();
+    sai_uint8_t max_num_fcs = NhgMapOrch::getMaxNumFcs();
 
     sai_attribute_t list_attr;
     list_attr.id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;
@@ -835,10 +835,11 @@ bool DscpToFcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
             }
             list_attr.value.qosmap.list[ind].key.dscp = static_cast<sai_uint8_t>(value);
 
+            // FC value must be in range [0, max_num_fcs)
             value = stoi(fvValue(*i));
-            if ((value < 0) || (value > max_fc_val))
+            if ((value < 0) || (value >= max_num_fcs))
             {
-                SWSS_LOG_ERROR("FC value %d is either negative, or bigger than max value %d", value, max_fc_val);
+                SWSS_LOG_ERROR("FC value %d is either negative, or bigger than max value %d", value, max_num_fcs - 1);
                 delete[] list_attr.value.qosmap.list;
                 return false;
             }
@@ -901,7 +902,7 @@ bool ExpToFcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &t
 {
     SWSS_LOG_ENTER();
 
-    sai_uint8_t max_fc_val = NhgMapOrch::getMaxFcVal();
+    sai_uint8_t max_num_fcs = NhgMapOrch::getMaxNumFcs();
 
     sai_attribute_t list_attr;
     list_attr.id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;
@@ -928,10 +929,11 @@ bool ExpToFcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &t
             }
             list_attr.value.qosmap.list[ind].key.mpls_exp = static_cast<sai_uint8_t>(value);
 
+            // FC value must be in range [0, max_num_fcs)
             value = stoi(fvValue(*i));
-            if ((value < 0) || (value > max_fc_val))
+            if ((value < 0) || (value >= max_num_fcs))
             {
-                SWSS_LOG_ERROR("FC value %d is either negative, or bigger than max value %hu", value, max_fc_val);
+                SWSS_LOG_ERROR("FC value %d is either negative, or bigger than max value %hu", value, max_num_fcs - 1);
                 delete[] list_attr.value.qosmap.list;
                 return false;
             }
@@ -1660,7 +1662,7 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
         }
 
         sai_uint8_t old_pfc_enable = 0;
-        if (!gPortsOrch->getPortPfc(port.m_port_id, &old_pfc_enable)) 
+        if (!gPortsOrch->getPortPfc(port.m_port_id, &old_pfc_enable))
         {
             SWSS_LOG_ERROR("Failed to retrieve PFC bits on port %s", port_name.c_str());
         }
