@@ -303,7 +303,7 @@ sai_uint8_t NhgMapOrch::getMaxNumFcs()
     static int max_num_fcs = -1;
 
     /*
-     * Get the maximum value allowed for FC if it wasn't already initialized.
+     * Get the maximum number of FC classes if it wasn't already initialized.
      */
     if (max_num_fcs == -1)
     {
