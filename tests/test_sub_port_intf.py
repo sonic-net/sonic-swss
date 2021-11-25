@@ -228,22 +228,6 @@ class TestSubPortIntf(object):
                 is_short = True
         return is_short
 
-    def is_short_name(self, port_name):
-        idx = port_name.find(VLAN_SUB_INTERFACE_SEPARATOR)
-        parent_port = port_name[:idx]
-        is_short = False
-        if parent_port.startswith("Eth"):
-            if parent_port.startswith(ETHERNET_PREFIX):
-                is_short = False
-            else:
-                is_short = True
-        elif parent_port.startswith("Po"):
-            if parent_port.startswith("PortChannel"):
-                is_short = False
-            else:
-                is_short = True
-        return is_short
-
     def create_sub_port_intf_profile(self, sub_port_intf_name, vrf_name=None):
         fvs = {ADMIN_STATUS: "up"}
         idx = sub_port_intf_name.find(VLAN_SUB_INTERFACE_SEPARATOR)
