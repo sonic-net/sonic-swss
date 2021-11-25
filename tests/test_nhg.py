@@ -1980,7 +1980,7 @@ class TestCbfNextHopGroup(TestNextHopGroupBase):
             # Test validation errors
             nhg_maps = [
                 ('-1', '0'), # negative FC
-                ('64', '0'), # greater than max FC value
+                ('63', '0'), # greater than max FC value
                 ('a', '0'), # non-integer FC
                 ('0', '-1'), # negative NH index
                 ('0', 'a'), # non-integer NH index
