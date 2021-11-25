@@ -1483,11 +1483,6 @@ class TestVnetOrch(object):
         vnet_obj.check_vnet_entry(dvs, 'Vnet9')
         vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet9', '10009')
 
-        create_vnet_entry(dvs, 'Vnet9_2', tunnel_name, '10109', "")
-
-        vnet_obj.check_vnet_entry(dvs, 'Vnet9_2')
-        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet9_2', '10109')
-
         vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
 
         vnet_obj.fetch_exist_entries(dvs)
@@ -1523,20 +1518,12 @@ class TestVnetOrch(object):
         route2, nhg2_1 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet9', ['9.0.0.1', '9.0.0.5'], tunnel_name, route_ids=route2, nhg=nhg2_1)
         check_state_db_routes(dvs, 'Vnet9', "100.100.2.1/32", ['9.0.0.1', '9.0.0.5'])
 
-        # Create route3 in Vnet9_2
-        vnet_obj.fetch_exist_entries(dvs)
-        create_vnet_routes(dvs, "100.100.3.1/32", 'Vnet9_2', '9.0.0.1,9.0.0.2,9.0.0.3', ep_monitor='9.1.0.1,9.1.0.2,9.1.0.3')
-        route3, nhg3_1 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet9_2', ['9.0.0.1', '9.0.0.3'], tunnel_name)
-        check_state_db_routes(dvs, 'Vnet9_2', "100.100.3.1/32", ['9.0.0.1', '9.0.0.3'])
-
         # Update BFD state and check route nexthop
         update_bfd_session_state(dvs, '9.1.0.3', 'Down')
         time.sleep(2)
 
-        route3, nhg3_1 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet9_2', ['9.0.0.1'], tunnel_name, route_ids=route3, nhg=nhg3_1)
         route1, nhg1_1 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet9', ['9.0.0.1'], tunnel_name, route_ids=route1, nhg=nhg1_1)
         check_state_db_routes(dvs, 'Vnet9', "100.100.1.1/32", ['9.0.0.1'])
-        check_state_db_routes(dvs, 'Vnet9_2', "100.100.3.1/32", ['9.0.0.1'])
 
         # Set the route1 to a new group
         set_vnet_routes(dvs, "100.100.1.1/32", 'Vnet9', '9.0.0.1,9.0.0.2,9.0.0.3,9.0.0.4', ep_monitor='9.1.0.1,9.1.0.2,9.1.0.3,9.1.0.4')
@@ -1553,9 +1540,7 @@ class TestVnetOrch(object):
         update_bfd_session_state(dvs, '9.1.0.2', 'Up')
         time.sleep(2)
         route1, nhg1_2 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet9', ['9.0.0.1', '9.0.0.2', '9.0.0.4'], tunnel_name, route_ids=route1, nhg=nhg1_2)
-        route3, nhg3_1 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet9_2', ['9.0.0.1', '9.0.0.2'], tunnel_name, route_ids=route3, nhg=nhg3_1)
         check_state_db_routes(dvs, 'Vnet9', "100.100.1.1/32", ['9.0.0.1', '9.0.0.2', '9.0.0.4'])
-        check_state_db_routes(dvs, 'Vnet9_2', "100.100.3.1/32", ['9.0.0.1', '9.0.0.2'])
 
         # Set all endpoint to down state
         update_bfd_session_state(dvs, '9.1.0.1', 'Down')
@@ -1566,11 +1551,9 @@ class TestVnetOrch(object):
 
         # Confirm the tunnel route is updated in ASIC
         vnet_obj.check_del_vnet_routes(dvs, 'Vnet9', ["100.100.1.1/32"])
-        vnet_obj.check_del_vnet_routes(dvs, 'Vnet9_2', ["100.100.3.1/32"])
         route2, nhg2_1 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet9', ['9.0.0.5'], tunnel_name, route_ids=route2, nhg=nhg2_1)
         check_state_db_routes(dvs, 'Vnet9', "100.100.2.1/32", ['9.0.0.5'])
         check_state_db_routes(dvs, 'Vnet9', "100.100.1.1/32", [])
-        check_state_db_routes(dvs, 'Vnet9_2', "100.100.3.1/32", [])
 
         # Remove tunnel route2
         delete_vnet_routes(dvs, "100.100.2.1/32", 'Vnet9')
@@ -1590,31 +1573,15 @@ class TestVnetOrch(object):
         vnet_obj.check_del_vnet_routes(dvs, 'Vnet9', ["100.100.1.1/32"])
         check_remove_state_db_routes(dvs, 'Vnet9', "100.100.1.1/32")
 
-        # Check the BFD session specific to the endpoint group is removed while others exist
-        check_del_bfd_session(dvs, ['9.1.0.4', '9.1.0.5'])
-        check_bfd_session(dvs, ['9.1.0.1', '9.1.0.2', '9.1.0.3'])
-
         # Check the previous nexthop group is removed
         vnet_obj.fetch_exist_entries(dvs)
         assert nhg1_2 not in vnet_obj.nhgs
-
-        # Remove route3
-        delete_vnet_routes(dvs, "100.100.3.1/32", 'Vnet9_2')
-        vnet_obj.check_del_vnet_routes(dvs, 'Vnet9_2', ["100.100.3.1/32"])
-        check_remove_state_db_routes(dvs, 'Vnet9_2', "100.100.3.1/32")
-
-        # Check the corresponding nexthop group is removed
-        vnet_obj.fetch_exist_entries(dvs)
-        assert nhg3_1 not in vnet_obj.nhgs
 
         # Confirm the BFD sessions are removed
         check_del_bfd_session(dvs, ['9.1.0.1', '9.1.0.2', '9.1.0.3', '9.1.0.4', '9.1.0.5'])
 
         delete_vnet_entry(dvs, 'Vnet9')
         vnet_obj.check_del_vnet_entry(dvs, 'Vnet9')
-
-        delete_vnet_entry(dvs, 'Vnet9_2')
-        vnet_obj.check_del_vnet_entry(dvs, 'Vnet9_2')
 
 
     '''
@@ -1632,11 +1599,6 @@ class TestVnetOrch(object):
 
         vnet_obj.check_vnet_entry(dvs, 'Vnet10')
         vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet10', '10010')
-
-        create_vnet_entry(dvs, 'Vnet10_2', tunnel_name, '10110', "")
-
-        vnet_obj.check_vnet_entry(dvs, 'Vnet10_2')
-        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet10_2', '10110')
 
         vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, 'fd:10::32')
 
@@ -1673,31 +1635,20 @@ class TestVnetOrch(object):
         route2, nhg2_1 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet10', ['fd:10:1::1', 'fd:10:1::5'], tunnel_name, route_ids=route2, nhg=nhg2_1)
         check_state_db_routes(dvs, 'Vnet10', "fd:10:20::1/128", ['fd:10:1::1', 'fd:10:1::5'])
 
-        # Create route3 in Vnet10_2
-        vnet_obj.fetch_exist_entries(dvs)
-        create_vnet_routes(dvs, "fd:10:30::1/128", 'Vnet10_2', 'fd:10:1::1,fd:10:1::2,fd:10:1::3', ep_monitor='fd:10:2::1,fd:10:2::2,fd:10:2::3')
-        route3, nhg3_1 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet10_2', ['fd:10:1::1', 'fd:10:1::3'], tunnel_name)
-        check_state_db_routes(dvs, 'Vnet10_2', "fd:10:30::1/128", ['fd:10:1::1', 'fd:10:1::3'])
-
         # Update BFD state and check route nexthop
         update_bfd_session_state(dvs, 'fd:10:2::3', 'Down')
         update_bfd_session_state(dvs, 'fd:10:2::2', 'Up')
         time.sleep(2)
 
-        route3, nhg3_1 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet10_2', ['fd:10:1::1', 'fd:10:1::2'], tunnel_name, route_ids=route3, nhg=nhg3_1)
         route1, nhg1_1 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet10', ['fd:10:1::1', 'fd:10:1::2'], tunnel_name, route_ids=route1, nhg=nhg1_1)
         check_state_db_routes(dvs, 'Vnet10', "fd:10:10::1/128", ['fd:10:1::1', 'fd:10:1::2'])
-        check_state_db_routes(dvs, 'Vnet10_2', "fd:10:30::1/128", ['fd:10:1::1', 'fd:10:1::2'])
 
         # Set the route to a new group
         set_vnet_routes(dvs, "fd:10:10::1/128", 'Vnet10', 'fd:10:1::1,fd:10:1::2,fd:10:1::3,fd:10:1::4', ep_monitor='fd:10:2::1,fd:10:2::2,fd:10:2::3,fd:10:2::4')
         update_bfd_session_state(dvs, 'fd:10:2::4', 'Up')
         time.sleep(2)
         route1, nhg1_2 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet10', ['fd:10:1::1', 'fd:10:1::2', 'fd:10:1::4'], tunnel_name, route_ids=route1)
-        route3, nhg3_1 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet10_2', ['fd:10:1::1', 'fd:10:1::2'], tunnel_name, route_ids=route3, nhg=nhg3_1)
         check_state_db_routes(dvs, 'Vnet10', "fd:10:10::1/128", ['fd:10:1::1', 'fd:10:1::2', 'fd:10:1::4'])
-        check_state_db_routes(dvs, 'Vnet10_2', "fd:10:30::1/128", ['fd:10:1::1', 'fd:10:1::2'])
-
         # Check the previous nexthop group is removed
         vnet_obj.fetch_exist_entries(dvs)
         assert nhg1_1 not in vnet_obj.nhgs
@@ -1706,9 +1657,7 @@ class TestVnetOrch(object):
         update_bfd_session_state(dvs, 'fd:10:2::3', 'Up')
         time.sleep(2)
         route1, nhg1_2 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet10', ['fd:10:1::1', 'fd:10:1::2', 'fd:10:1::3', 'fd:10:1::4'], tunnel_name, route_ids=route1, nhg=nhg1_2)
-        route3, nhg3_1 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet10_2', ['fd:10:1::1', 'fd:10:1::2', 'fd:10:1::3'], tunnel_name, route_ids=route3, nhg=nhg3_1)
         check_state_db_routes(dvs, 'Vnet10', "fd:10:10::1/128", ['fd:10:1::1', 'fd:10:1::2', 'fd:10:1::3', 'fd:10:1::4'])
-        check_state_db_routes(dvs, 'Vnet10_2', "fd:10:30::1/128", ['fd:10:1::1', 'fd:10:1::2', 'fd:10:1::3'])
 
         # Set all endpoint to down state
         update_bfd_session_state(dvs, 'fd:10:2::1', 'Down')
@@ -1719,11 +1668,9 @@ class TestVnetOrch(object):
 
         # Confirm the tunnel route is updated in ASIC
         vnet_obj.check_del_vnet_routes(dvs, 'Vnet10', ["fd:10:10::1/128"])
-        vnet_obj.check_del_vnet_routes(dvs, 'Vnet10_2', ["fd:10:30::1/128"])
         route2, nhg2_1 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet10', ['fd:10:1::5'], tunnel_name, route_ids=route2, nhg=nhg2_1)
         check_state_db_routes(dvs, 'Vnet10', "fd:10:20::1/128", ['fd:10:1::5'])
         check_state_db_routes(dvs, 'Vnet10', "fd:10:10::1/128", [])
-        check_state_db_routes(dvs, 'Vnet10_2', "fd:10:30::1/128", [])
 
         # Remove tunnel route2
         delete_vnet_routes(dvs, "fd:10:20::1/128", 'Vnet10')
@@ -1737,15 +1684,6 @@ class TestVnetOrch(object):
         # Check the BFD session specific to the endpoint group is removed while others exist
         check_del_bfd_session(dvs, ['fd:10:2::5'])
         check_bfd_session(dvs, ['fd:10:2::1', 'fd:10:2::2', 'fd:10:2::3', 'fd:10:2::4'])
-
-        # Remove route3
-        delete_vnet_routes(dvs, "fd:10:30::1/128", 'Vnet10_2')
-        vnet_obj.check_del_vnet_routes(dvs, 'Vnet10_2', ["fd:10:30::1/128"])
-        check_remove_state_db_routes(dvs, 'Vnet10_2', "fd:10:30::1/128")
-
-        # Check the corresponding nexthop group is removed
-        vnet_obj.fetch_exist_entries(dvs)
-        assert nhg3_1 not in vnet_obj.nhgs
 
         # Check the BFD session specific to the endpoint group is removed while others exist
         check_del_bfd_session(dvs, ['fd:10:2::5'])
