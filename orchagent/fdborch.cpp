@@ -874,10 +874,6 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
     {
         if (op == "ALL")
         {
-            /*
-             * so far only support flush all the FDB entries
-             * flush per port and flush per vlan will be added later.
-             */
             status = sai_fdb_api->flush_fdb_entries(gSwitchId, 0, NULL);
             if (status != SAI_STATUS_SUCCESS)
             {
@@ -1080,7 +1076,9 @@ void FdbOrch::updatePortOperState(const PortOperStateUpdate& update)
 
         // Get BVID of each VLAN that this port is a member of
         // and call notifyObserversFDBFlush
-        for (const auto& vlan_member: p.m_vlan_members)
+        vlan_members_t vlan_members;
+        m_portsOrch->getPortVlanMembers(p, vlan_members);
+        for (const auto& vlan_member: vlan_members)
         {
             swss::Port vlan;
             string vlan_alias = VLAN_PREFIX + to_string(vlan_member.first);

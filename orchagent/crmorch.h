@@ -32,6 +32,7 @@ enum class CrmResourceType
     CRM_MPLS_NEXTHOP,
     CRM_SRV6_MY_SID_ENTRY,
     CRM_SRV6_NEXTHOP,
+    CRM_NEXTHOP_GROUP_MAP,
 };
 
 enum class CrmThresholdType

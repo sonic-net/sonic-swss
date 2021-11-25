@@ -11,6 +11,8 @@ CFG_PORT_TABLE_NAME = "PORT"
 CFG_LAG_TABLE_NAME = "PORTCHANNEL"
 CFG_LAG_MEMBER_TABLE_NAME = "PORTCHANNEL_MEMBER"
 CFG_VRF_TABLE_NAME = "VRF"
+CFG_VXLAN_TUNNEL_TABLE_NAME = "VXLAN_TUNNEL"
+CFG_VNET_TABLE_NAME = "VNET"
 
 STATE_PORT_TABLE_NAME = "PORT_TABLE"
 STATE_LAG_TABLE_NAME = "LAG_TABLE"
@@ -20,6 +22,7 @@ APP_INTF_TABLE_NAME = "INTF_TABLE"
 APP_ROUTE_TABLE_NAME = "ROUTE_TABLE"
 APP_PORT_TABLE_NAME = "PORT_TABLE"
 APP_LAG_TABLE_NAME = "LAG_TABLE"
+APP_VNET_TABLE_NAME = "VNET_TABLE"
 
 ASIC_RIF_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE"
 ASIC_ROUTE_ENTRY_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"
@@ -31,13 +34,21 @@ ASIC_HOSTIF_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF"
 ASIC_VIRTUAL_ROUTER_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER"
 ASIC_PORT_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_PORT"
 ASIC_LAG_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_LAG"
+ASIC_TUNNEL_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL"
 
 ADMIN_STATUS = "admin_status"
 VRF_NAME = "vrf_name"
+VNET_NAME = "vnet_name"
+SRC_IP = "src_ip"
+VXLAN_TUNNEL = "vxlan_tunnel"
+VNI = "vni"
+PEER_LIST = "peer_list"
 
 ETHERNET_PREFIX = "Ethernet"
 SUBINTF_LAG_PREFIX = "Po"
 LAG_PREFIX = "PortChannel"
+VRF_PREFIX = "Vrf"
+VNET_PREFIX = "Vnet"
 
 VLAN_SUB_INTERFACE_SEPARATOR = "."
 APPL_DB_SEPARATOR = ":"
@@ -59,6 +70,11 @@ class TestSubPortIntf(object):
     IPV6_SUBNET_UNDER_TEST = "fc00::40/126"
 
     VRF_UNDER_TEST = "Vrf0"
+
+    TUNNEL_UNDER_TEST = "Tunnel1"
+    VTEP_IP_UNDER_TEST = "1.1.1.1"
+    VNET_UNDER_TEST = "Vnet1000"
+    VNI_UNDER_TEST = "1000"
 
     def connect_dbs(self, dvs):
         self.app_db = dvs.get_app_db()
@@ -174,8 +190,43 @@ class TestSubPortIntf(object):
         else:
             self.set_parent_port_oper_status(dvs, port_name, "up")
 
+    def create_vxlan_tunnel(self, tunnel_name, vtep_ip):
+        fvs = {
+            SRC_IP: vtep_ip,
+        }
+        self.config_db.create_entry(CFG_VXLAN_TUNNEL_TABLE_NAME, tunnel_name, fvs)
+
+    def create_vnet(self, vnet_name, tunnel_name, vni, peer_list=""):
+        fvs = {
+            VXLAN_TUNNEL: tunnel_name,
+            VNI: vni,
+            PEER_LIST: peer_list,
+        }
+        self.config_db.create_entry(CFG_VNET_TABLE_NAME, vnet_name, fvs)
+
     def create_vrf(self, vrf_name):
-        self.config_db.create_entry(CFG_VRF_TABLE_NAME, vrf_name, {"NULL": "NULL"})
+        if vrf_name.startswith(VRF_PREFIX):
+            self.config_db.create_entry(CFG_VRF_TABLE_NAME, vrf_name, {"NULL": "NULL"})
+        else:
+            assert vrf_name.startswith(VNET_PREFIX)
+            self.create_vxlan_tunnel(self.TUNNEL_UNDER_TEST, self.VTEP_IP_UNDER_TEST)
+            self.create_vnet(vrf_name, self.TUNNEL_UNDER_TEST, self.VNI_UNDER_TEST)
+
+    def is_short_name(self, port_name):
+        idx = port_name.find(VLAN_SUB_INTERFACE_SEPARATOR)
+        parent_port = port_name[:idx]
+        is_short = False
+        if parent_port.startswith("Eth"):
+            if parent_port.startswith(ETHERNET_PREFIX):
+                is_short = False
+            else:
+                is_short = True
+        elif parent_port.startswith("Po"):
+            if parent_port.startswith("PortChannel"):
+                is_short = False
+            else:
+                is_short = True
+        return is_short
 
     def is_short_name(self, port_name):
         idx = port_name.find(VLAN_SUB_INTERFACE_SEPARATOR)
@@ -200,7 +251,7 @@ class TestSubPortIntf(object):
         if self.is_short_name(sub_port_intf_name) == True:
             fvs["vlan"] = sub_port_idx
         if vrf_name:
-            fvs[VRF_NAME] = vrf_name
+            fvs[VRF_NAME if vrf_name.startswith(VRF_PREFIX) else VNET_NAME] = vrf_name
 
         self.config_db.create_entry(CFG_VLAN_SUB_INTF_TABLE_NAME, sub_port_intf_name, fvs)
 
@@ -241,7 +292,7 @@ class TestSubPortIntf(object):
             ("mtu", "0"),
         ]
         if vrf_name:
-            pairs.append((VRF_NAME, vrf_name))
+            pairs.append((VRF_NAME if vrf_name.startswith(VRF_PREFIX) else VNET_NAME, vrf_name))
         fvs = swsscommon.FieldValuePairs(pairs)
 
         tbl = swsscommon.ProducerStateTable(self.app_db.db_connection, APP_INTF_TABLE_NAME)
@@ -274,8 +325,18 @@ class TestSubPortIntf(object):
 
         self.config_db.create_entry(CFG_VLAN_SUB_INTF_TABLE_NAME, sub_port_intf_name, fvs)
 
+    def remove_vxlan_tunnel(self, tunnel_name):
+        self.config_db.delete_entry(CFG_VXLAN_TUNNEL_TABLE_NAME, tunnel_name)
+
+    def remove_vnet(self, vnet_name):
+        self.config_db.delete_entry(CFG_VNET_TABLE_NAME, vnet_name)
+
     def remove_vrf(self, vrf_name):
-        self.config_db.delete_entry(CFG_VRF_TABLE_NAME, vrf_name)
+        if vrf_name.startswith(VRF_PREFIX):
+            self.config_db.delete_entry(CFG_VRF_TABLE_NAME, vrf_name)
+        else:
+            assert vrf_name.startswith(VNET_PREFIX)
+            self.remove_vnet(vrf_name)
 
     def check_vrf_removal(self, vrf_oid):
         self.asic_db.wait_for_deleted_keys(ASIC_VIRTUAL_ROUTER_TABLE, [vrf_oid])
@@ -380,17 +441,23 @@ class TestSubPortIntf(object):
     def check_sub_port_intf_fvs(self, db, table_name, key, fv_dict):
         db.wait_for_field_match(table_name, key, fv_dict)
 
-    def check_sub_port_intf_route_entries(self, vrf_oid=None):
+    def check_sub_port_intf_route_entries(self, vrf_oid=None, check_ipv6=True):
         expected_dests = [self.IPV4_TOME_UNDER_TEST,
                           self.IPV4_SUBNET_UNDER_TEST,
                           self.IPV6_TOME_UNDER_TEST,
                           self.IPV6_SUBNET_UNDER_TEST]
+        if not check_ipv6:
+            expected_dests.pop()
+            expected_dests.pop()
         if vrf_oid is None:
             vrf_oid = self.default_vrf_oid
         expected_vrf_oids = [vrf_oid,
                              vrf_oid,
                              vrf_oid,
                              vrf_oid]
+        if not check_ipv6:
+            expected_vrf_oids.pop()
+            expected_vrf_oids.pop()
 
         def _access_function():
             raw_route_entries = self.asic_db.get_keys(ASIC_ROUTE_ENTRY_TABLE)
@@ -485,7 +552,7 @@ class TestSubPortIntf(object):
             ADMIN_STATUS: "up",
         }
         if vrf_name:
-            fv_dict[VRF_NAME] = vrf_name
+            fv_dict[VRF_NAME if vrf_name.startswith(VRF_PREFIX) else VNET_NAME] = vrf_name
         self.check_sub_port_intf_fvs(self.app_db, APP_INTF_TABLE_NAME, sub_port_intf_name, fv_dict)
 
         # Verify that a sub port router interface entry is created in ASIC_DB
@@ -517,6 +584,9 @@ class TestSubPortIntf(object):
         if vrf_name:
             self.remove_vrf(vrf_name)
             self.check_vrf_removal(vrf_oid)
+            if vrf_name.startswith(VNET_PREFIX):
+                self.remove_vxlan_tunnel(self.TUNNEL_UNDER_TEST)
+                self.app_db.wait_for_n_keys(ASIC_TUNNEL_TABLE, 0)
 
         if parent_port.startswith(SUBINTF_LAG_PREFIX):
             # Remove lag members from lag parent port
@@ -536,6 +606,9 @@ class TestSubPortIntf(object):
         self._test_sub_port_intf_creation(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST, self.VRF_UNDER_TEST)
         self._test_sub_port_intf_creation(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST, self.VRF_UNDER_TEST)
 
+        self._test_sub_port_intf_creation(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST, self.VNET_UNDER_TEST)
+        self._test_sub_port_intf_creation(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST, self.VNET_UNDER_TEST)
+
     def _test_sub_port_intf_add_ip_addrs(self, dvs, sub_port_intf_name, vrf_name=None):
         substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
         parent_port = self.get_parent_port(sub_port_intf_name)
@@ -550,7 +623,8 @@ class TestSubPortIntf(object):
         self.create_sub_port_intf_profile(sub_port_intf_name, vrf_name)
 
         self.add_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV4_ADDR_UNDER_TEST)
-        self.add_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
+        if vrf_name is None or not vrf_name.startswith(VNET_PREFIX):
+            self.add_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
 
         rif_oid = self.get_newly_created_oid(ASIC_RIF_TABLE, old_rif_oids)
 
@@ -560,8 +634,9 @@ class TestSubPortIntf(object):
         }
         self.check_sub_port_intf_fvs(self.state_db, STATE_INTERFACE_TABLE_NAME,
                                      sub_port_intf_name + "|" + self.IPV4_ADDR_UNDER_TEST, fv_dict)
-        self.check_sub_port_intf_fvs(self.state_db, STATE_INTERFACE_TABLE_NAME,
-                                     sub_port_intf_name + "|" + self.IPV6_ADDR_UNDER_TEST, fv_dict)
+        if vrf_name is None or not vrf_name.startswith(VNET_PREFIX):
+            self.check_sub_port_intf_fvs(self.state_db, STATE_INTERFACE_TABLE_NAME,
+                                         sub_port_intf_name + "|" + self.IPV6_ADDR_UNDER_TEST, fv_dict)
 
         # Verify that ip address configuration is synced to APPL_DB INTF_TABLE by Intfmgrd
         fv_dict = {
@@ -570,22 +645,26 @@ class TestSubPortIntf(object):
         }
         self.check_sub_port_intf_fvs(self.app_db, APP_INTF_TABLE_NAME,
                                      sub_port_intf_name + ":" + self.IPV4_ADDR_UNDER_TEST, fv_dict)
-        fv_dict["family"] = "IPv6"
-        self.check_sub_port_intf_fvs(self.app_db, APP_INTF_TABLE_NAME,
-                                     sub_port_intf_name + ":" + self.IPV6_ADDR_UNDER_TEST, fv_dict)
+        if vrf_name is None or not vrf_name.startswith(VNET_PREFIX):
+            fv_dict["family"] = "IPv6"
+            self.check_sub_port_intf_fvs(self.app_db, APP_INTF_TABLE_NAME,
+                                         sub_port_intf_name + ":" + self.IPV6_ADDR_UNDER_TEST, fv_dict)
 
         # Verify that an IPv4 ip2me route entry is created in ASIC_DB
         # Verify that an IPv4 subnet route entry is created in ASIC_DB
-        # Verify that an IPv6 ip2me route entry is created in ASIC_DB
-        # Verify that an IPv6 subnet route entry is created in ASIC_DB
-        self.check_sub_port_intf_route_entries(vrf_oid)
+        # Verify that an IPv6 ip2me route entry is created in ASIC_DB for non-vnet case
+        # Verify that an IPv6 subnet route entry is created in ASIC_DB for non-vnet case
+        self.check_sub_port_intf_route_entries(vrf_oid, check_ipv6=True if vrf_name is None or not vrf_name.startswith(VNET_PREFIX) else False)
 
         # Remove IP addresses
+        ip_addrs = [
+            self.IPV4_ADDR_UNDER_TEST,
+        ]
         self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV4_ADDR_UNDER_TEST)
-        self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
-        self.check_sub_port_intf_ip_addr_removal(sub_port_intf_name,
-                                                 [self.IPV4_ADDR_UNDER_TEST,
-                                                  self.IPV6_ADDR_UNDER_TEST])
+        if vrf_name is None or not vrf_name.startswith(VNET_PREFIX):
+            ip_addrs.append(self.IPV6_ADDR_UNDER_TEST)
+            self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
+        self.check_sub_port_intf_ip_addr_removal(sub_port_intf_name, ip_addrs)
 
         # Remove a sub port interface
         self.remove_sub_port_intf_profile(sub_port_intf_name)
@@ -595,6 +674,9 @@ class TestSubPortIntf(object):
         if vrf_name:
             self.remove_vrf(vrf_name)
             self.check_vrf_removal(vrf_oid)
+            if vrf_name.startswith(VNET_PREFIX):
+                self.remove_vxlan_tunnel(self.TUNNEL_UNDER_TEST)
+                self.app_db.wait_for_n_keys(ASIC_TUNNEL_TABLE, 0)
 
         # Remove lag
         if parent_port.startswith(SUBINTF_LAG_PREFIX):
@@ -609,6 +691,9 @@ class TestSubPortIntf(object):
 
         self._test_sub_port_intf_add_ip_addrs(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST, self.VRF_UNDER_TEST)
         self._test_sub_port_intf_add_ip_addrs(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST, self.VRF_UNDER_TEST)
+
+        self._test_sub_port_intf_add_ip_addrs(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST, self.VNET_UNDER_TEST)
+        self._test_sub_port_intf_add_ip_addrs(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST, self.VNET_UNDER_TEST)
 
     def _test_sub_port_intf_appl_db_proc_seq(self, dvs, sub_port_intf_name, admin_up, vrf_name=None):
         substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
@@ -631,7 +716,8 @@ class TestSubPortIntf(object):
 
         # Create ip address configuration in APPL_DB before creating configuration for sub port interface itself
         self.add_sub_port_intf_ip_addr_appl_db(sub_port_intf_name, self.IPV4_ADDR_UNDER_TEST)
-        self.add_sub_port_intf_ip_addr_appl_db(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
+        if vrf_name is None or not vrf_name.startswith(VNET_PREFIX):
+            self.add_sub_port_intf_ip_addr_appl_db(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
         time.sleep(2)
 
         # Create sub port interface configuration in APPL_DB
@@ -652,7 +738,9 @@ class TestSubPortIntf(object):
 
         # Remove ip addresses from APPL_DB
         self.remove_sub_port_intf_ip_addr_appl_db(sub_port_intf_name, self.IPV4_ADDR_UNDER_TEST)
-        self.remove_sub_port_intf_ip_addr_appl_db(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
+        if vrf_name is None or not vrf_name.startswith(VNET_PREFIX):
+            self.remove_sub_port_intf_ip_addr_appl_db(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
+
         # Remove sub port interface from APPL_DB
         self.remove_sub_port_intf_profile_appl_db(sub_port_intf_name)
         self.check_sub_port_intf_profile_removal(rif_oid)
@@ -661,6 +749,9 @@ class TestSubPortIntf(object):
         if vrf_name:
             self.remove_vrf(vrf_name)
             self.check_vrf_removal(vrf_oid)
+            if vrf_name.startswith(VNET_PREFIX):
+                self.remove_vxlan_tunnel(self.TUNNEL_UNDER_TEST)
+                self.app_db.wait_for_n_keys(ASIC_TUNNEL_TABLE, 0)
 
         # Remove lag
         if parent_port.startswith(SUBINTF_LAG_PREFIX):
@@ -682,6 +773,12 @@ class TestSubPortIntf(object):
         self._test_sub_port_intf_appl_db_proc_seq(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST, admin_up=True, vrf_name=self.VRF_UNDER_TEST)
         self._test_sub_port_intf_appl_db_proc_seq(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST, admin_up=False, vrf_name=self.VRF_UNDER_TEST)
 
+        self._test_sub_port_intf_appl_db_proc_seq(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST, admin_up=True, vrf_name=self.VNET_UNDER_TEST)
+        self._test_sub_port_intf_appl_db_proc_seq(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST, admin_up=False, vrf_name=self.VNET_UNDER_TEST)
+
+        self._test_sub_port_intf_appl_db_proc_seq(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST, admin_up=True, vrf_name=self.VNET_UNDER_TEST)
+        self._test_sub_port_intf_appl_db_proc_seq(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST, admin_up=False, vrf_name=self.VNET_UNDER_TEST)
+
     def _test_sub_port_intf_admin_status_change(self, dvs, sub_port_intf_name, vrf_name=None):
         substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
         parent_port = substrs[0]
@@ -697,13 +794,14 @@ class TestSubPortIntf(object):
         self.create_sub_port_intf_profile(sub_port_intf_name, vrf_name)
 
         self.add_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV4_ADDR_UNDER_TEST)
-        self.add_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
+        if vrf_name is None or not vrf_name.startswith(VNET_PREFIX):
+            self.add_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
 
         fv_dict = {
             ADMIN_STATUS: "up",
         }
         if vrf_name:
-            fv_dict[VRF_NAME] = vrf_name
+            fv_dict[VRF_NAME if vrf_name.startswith(VRF_PREFIX) else VNET_NAME] = vrf_name
         self.check_sub_port_intf_fvs(self.app_db, APP_INTF_TABLE_NAME, sub_port_intf_name, fv_dict)
 
         fv_dict = {
@@ -723,7 +821,7 @@ class TestSubPortIntf(object):
             ADMIN_STATUS: "down",
         }
         if vrf_name:
-            fv_dict[VRF_NAME] = vrf_name
+            fv_dict[VRF_NAME if vrf_name.startswith(VRF_PREFIX) else VNET_NAME] = vrf_name
         self.check_sub_port_intf_fvs(self.app_db, APP_INTF_TABLE_NAME, sub_port_intf_name, fv_dict)
 
         # Verify that sub port router interface entry in ASIC_DB has the updated admin status
@@ -744,7 +842,7 @@ class TestSubPortIntf(object):
             ADMIN_STATUS: "up",
         }
         if vrf_name:
-            fv_dict[VRF_NAME] = vrf_name
+            fv_dict[VRF_NAME if vrf_name.startswith(VRF_PREFIX) else VNET_NAME] = vrf_name
         self.check_sub_port_intf_fvs(self.app_db, APP_INTF_TABLE_NAME, sub_port_intf_name, fv_dict)
 
         # Verify that sub port router interface entry in ASIC_DB has the updated admin status
@@ -758,11 +856,14 @@ class TestSubPortIntf(object):
         self.check_sub_port_intf_fvs(self.asic_db, ASIC_RIF_TABLE, rif_oid, fv_dict)
 
         # Remove IP addresses
+        ip_addrs = [
+            self.IPV4_ADDR_UNDER_TEST,
+        ]
         self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV4_ADDR_UNDER_TEST)
-        self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
-        self.check_sub_port_intf_ip_addr_removal(sub_port_intf_name,
-                                                 [self.IPV4_ADDR_UNDER_TEST,
-                                                  self.IPV6_ADDR_UNDER_TEST])
+        if vrf_name is None or not vrf_name.startswith(VNET_PREFIX):
+            ip_addrs.append(self.IPV6_ADDR_UNDER_TEST)
+            self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
+        self.check_sub_port_intf_ip_addr_removal(sub_port_intf_name, ip_addrs)
 
         # Remove a sub port interface
         self.remove_sub_port_intf_profile(sub_port_intf_name)
@@ -772,6 +873,9 @@ class TestSubPortIntf(object):
         if vrf_name:
             self.remove_vrf(vrf_name)
             self.check_vrf_removal(vrf_oid)
+            if vrf_name.startswith(VNET_PREFIX):
+                self.remove_vxlan_tunnel(self.TUNNEL_UNDER_TEST)
+                self.app_db.wait_for_n_keys(ASIC_TUNNEL_TABLE, 0)
 
         # Remove lag
         if parent_port.startswith(SUBINTF_LAG_PREFIX):
@@ -787,6 +891,9 @@ class TestSubPortIntf(object):
         self._test_sub_port_intf_admin_status_change(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST, self.VRF_UNDER_TEST)
         self._test_sub_port_intf_admin_status_change(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST, self.VRF_UNDER_TEST)
 
+        self._test_sub_port_intf_admin_status_change(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST, self.VNET_UNDER_TEST)
+        self._test_sub_port_intf_admin_status_change(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST, self.VNET_UNDER_TEST)
+
     def _test_sub_port_intf_remove_ip_addrs(self, dvs, sub_port_intf_name, vrf_name=None):
         substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
         parent_port = substrs[0]
@@ -801,7 +908,8 @@ class TestSubPortIntf(object):
         self.create_sub_port_intf_profile(sub_port_intf_name, vrf_name)
 
         self.add_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV4_ADDR_UNDER_TEST)
-        self.add_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
+        if vrf_name is None or not vrf_name.startswith(VNET_PREFIX):
+            self.add_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
 
         rif_oid = self.get_newly_created_oid(ASIC_RIF_TABLE, old_rif_oids)
 
@@ -821,21 +929,22 @@ class TestSubPortIntf(object):
         removed_route_entries = set([self.IPV4_TOME_UNDER_TEST, self.IPV4_SUBNET_UNDER_TEST])
         self.check_sub_port_intf_route_entries_removal(removed_route_entries)
 
-        # Remove IPv6 address
-        self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
+        # Remove IPv6 address for non-vnet cases
+        if vrf_name is None or not vrf_name.startswith(VNET_PREFIX):
+            self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
 
-        # Verify that IPv6 address state ok is removed from STATE_DB INTERFACE_TABLE by Intfmgrd
-        self.check_sub_port_intf_key_removal(self.state_db, STATE_INTERFACE_TABLE_NAME,
-                                             sub_port_intf_name + "|" + self.IPV6_ADDR_UNDER_TEST)
+            # Verify that IPv6 address state ok is removed from STATE_DB INTERFACE_TABLE by Intfmgrd
+            self.check_sub_port_intf_key_removal(self.state_db, STATE_INTERFACE_TABLE_NAME,
+                                                 sub_port_intf_name + "|" + self.IPV6_ADDR_UNDER_TEST)
 
-        # Verify that IPv6 address configuration is removed from APPL_DB INTF_TABLE by Intfmgrd
-        self.check_sub_port_intf_key_removal(self.app_db, APP_INTF_TABLE_NAME,
-                                             sub_port_intf_name + ":" + self.IPV6_ADDR_UNDER_TEST)
+            # Verify that IPv6 address configuration is removed from APPL_DB INTF_TABLE by Intfmgrd
+            self.check_sub_port_intf_key_removal(self.app_db, APP_INTF_TABLE_NAME,
+                                                 sub_port_intf_name + ":" + self.IPV6_ADDR_UNDER_TEST)
 
-        # Verify that IPv6 subnet route entry is removed from ASIC_DB
-        # Verify that IPv6 ip2me route entry is removed from ASIC_DB
-        removed_route_entries.update([self.IPV6_TOME_UNDER_TEST, self.IPV6_SUBNET_UNDER_TEST])
-        self.check_sub_port_intf_route_entries_removal(removed_route_entries)
+            # Verify that IPv6 subnet route entry is removed from ASIC_DB
+            # Verify that IPv6 ip2me route entry is removed from ASIC_DB
+            removed_route_entries.update([self.IPV6_TOME_UNDER_TEST, self.IPV6_SUBNET_UNDER_TEST])
+            self.check_sub_port_intf_route_entries_removal(removed_route_entries)
 
         # Verify that sub port router interface entry still exists in ASIC_DB
         self.check_sub_port_intf_key_existence(self.asic_db, ASIC_RIF_TABLE, rif_oid)
@@ -848,6 +957,9 @@ class TestSubPortIntf(object):
         if vrf_name:
             self.remove_vrf(vrf_name)
             self.asic_db.wait_for_n_keys(ASIC_VIRTUAL_ROUTER_TABLE, 1)
+            if vrf_name.startswith(VNET_PREFIX):
+                self.remove_vxlan_tunnel(self.TUNNEL_UNDER_TEST)
+                self.app_db.wait_for_n_keys(ASIC_TUNNEL_TABLE, 0)
 
         # Remove lag
         if parent_port.startswith(SUBINTF_LAG_PREFIX):
@@ -862,6 +974,9 @@ class TestSubPortIntf(object):
 
         self._test_sub_port_intf_remove_ip_addrs(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST, self.VRF_UNDER_TEST)
         self._test_sub_port_intf_remove_ip_addrs(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST, self.VRF_UNDER_TEST)
+
+        self._test_sub_port_intf_remove_ip_addrs(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST, self.VNET_UNDER_TEST)
+        self._test_sub_port_intf_remove_ip_addrs(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST, self.VNET_UNDER_TEST)
 
     def _test_sub_port_intf_removal(self, dvs, sub_port_intf_name, removal_seq_test=False, vrf_name=None):
         substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
@@ -896,7 +1011,8 @@ class TestSubPortIntf(object):
         self.create_sub_port_intf_profile(sub_port_intf_name, vrf_name)
 
         self.add_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV4_ADDR_UNDER_TEST)
-        self.add_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
+        if vrf_name is None or not vrf_name.startswith(VNET_PREFIX):
+            self.add_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
 
         fv_dict = {
             "state": "ok",
@@ -916,7 +1032,7 @@ class TestSubPortIntf(object):
             ADMIN_STATUS: "up",
         }
         if vrf_name:
-            fv_dict[VRF_NAME] = vrf_name
+            fv_dict[VRF_NAME if vrf_name.startswith(VRF_PREFIX) else VNET_NAME] = vrf_name
         self.check_sub_port_intf_fvs(self.app_db, APP_INTF_TABLE_NAME, sub_port_intf_name, fv_dict)
 
         if removal_seq_test == True:
@@ -952,7 +1068,7 @@ class TestSubPortIntf(object):
                 ADMIN_STATUS: "up",
             }
             if vrf_name:
-                fv_dict[VRF_NAME] = vrf_name
+                fv_dict[VRF_NAME if vrf_name.startswith(VRF_PREFIX) else VNET_NAME] = vrf_name
             self.check_sub_port_intf_fvs(self.app_db, APP_INTF_TABLE_NAME, sub_port_intf_name, fv_dict)
 
             # Verify that a sub port router interface entry persists in ASIC_DB
@@ -975,11 +1091,14 @@ class TestSubPortIntf(object):
             rif_oid = self.get_newly_created_oid(ASIC_RIF_TABLE, old_rif_oids)
 
         # Remove IP addresses
+        ip_addrs = [
+            self.IPV4_ADDR_UNDER_TEST,
+        ]
         self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV4_ADDR_UNDER_TEST)
-        self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
-        self.check_sub_port_intf_ip_addr_removal(sub_port_intf_name,
-                                                 [self.IPV4_ADDR_UNDER_TEST,
-                                                  self.IPV6_ADDR_UNDER_TEST])
+        if vrf_name is None or not vrf_name.startswith(VNET_PREFIX):
+            ip_addrs.append(self.IPV6_ADDR_UNDER_TEST)
+            self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
+        self.check_sub_port_intf_ip_addr_removal(sub_port_intf_name, ip_addrs)
 
         if removal_seq_test == False:
             # Remove a sub port interface
@@ -1020,6 +1139,9 @@ class TestSubPortIntf(object):
         if vrf_name:
             self.remove_vrf(vrf_name)
             self.asic_db.wait_for_n_keys(ASIC_VIRTUAL_ROUTER_TABLE, 1)
+            if vrf_name.startswith(VNET_PREFIX):
+                self.remove_vxlan_tunnel(self.TUNNEL_UNDER_TEST)
+                self.app_db.wait_for_n_keys(ASIC_TUNNEL_TABLE, 0)
 
         if parent_port.startswith(ETHERNET_PREFIX):
             if removal_seq_test == True:
@@ -1044,11 +1166,17 @@ class TestSubPortIntf(object):
         self._test_sub_port_intf_removal(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST, vrf_name=self.VRF_UNDER_TEST)
         self._test_sub_port_intf_removal(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST, vrf_name=self.VRF_UNDER_TEST)
 
+        self._test_sub_port_intf_removal(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST, vrf_name=self.VNET_UNDER_TEST)
+        self._test_sub_port_intf_removal(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST, vrf_name=self.VNET_UNDER_TEST)
+
         self._test_sub_port_intf_removal(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST, removal_seq_test=True)
         self._test_sub_port_intf_removal(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST, removal_seq_test=True)
 
         self._test_sub_port_intf_removal(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST, removal_seq_test=True, vrf_name=self.VRF_UNDER_TEST)
         self._test_sub_port_intf_removal(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST, removal_seq_test=True, vrf_name=self.VRF_UNDER_TEST)
+
+        self._test_sub_port_intf_removal(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST, removal_seq_test=True, vrf_name=self.VNET_UNDER_TEST)
+        self._test_sub_port_intf_removal(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST, removal_seq_test=True, vrf_name=self.VNET_UNDER_TEST)
 
     def _test_sub_port_intf_mtu(self, dvs, sub_port_intf_name, vrf_name=None):
         substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
@@ -1095,6 +1223,9 @@ class TestSubPortIntf(object):
         if vrf_name:
             self.remove_vrf(vrf_name)
             self.check_vrf_removal(vrf_oid)
+            if vrf_name.startswith(VNET_PREFIX):
+                self.remove_vxlan_tunnel(self.TUNNEL_UNDER_TEST)
+                self.app_db.wait_for_n_keys(ASIC_TUNNEL_TABLE, 0)
 
         # Remove lag
         if parent_port.startswith(SUBINTF_LAG_PREFIX):
@@ -1109,6 +1240,9 @@ class TestSubPortIntf(object):
 
         self._test_sub_port_intf_mtu(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST, self.VRF_UNDER_TEST)
         self._test_sub_port_intf_mtu(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST, self.VRF_UNDER_TEST)
+
+        self._test_sub_port_intf_mtu(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST, self.VNET_UNDER_TEST)
+        self._test_sub_port_intf_mtu(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST, self.VNET_UNDER_TEST)
 
     def create_nhg_router_intfs(self, dvs, parent_port_prefix, parent_port_idx_base, vlan_id, nhop_num, vrf_name=None):
         ifnames = []

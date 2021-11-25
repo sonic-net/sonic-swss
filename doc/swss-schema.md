@@ -195,6 +195,28 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     weight        = weight_list              ; List of weights.
 
 ---------------------------------------------
+### CLASS_BASED_NEXT_HOP_GROUP_TABLE
+    ;Stores a list of groups of one or more next hop groups used for class based forwarding
+    ;Status: Mandatory
+    key           = CLASS_BASED_NEXT_HOP_GROUP_TABLE:string ; arbitrary index for the next hop group
+    members       = NEXT_HOP_GROUP_TABLE.key ; one or more separated by ","
+    selection_map = FC_TO_NHG_INDEX_MAP_TABLE.key ; the NHG map to use for this CBF NHG
+
+---------------------------------------------
+### FC_TO_NHG_INDEX_MAP_TABLE
+    ; FC to Next hop group index map
+    key                    = "FC_TO_NHG_INDEX_MAP_TABLE:"name
+    fc_num = 1*DIGIT ;value
+    nh_index  = 1*DIGIT;  index of NH inside NH group
+
+    Example:
+    127.0.0.1:6379> hgetall "FC_TO_NHG_INDEX_MAP_TABLE:AZURE"
+     1) "0" ;fc_num
+     2) "0" ;nhg_index
+     3) "1"
+     4) "0"
+
+---------------------------------------------
 ### NEIGH_TABLE
     ; Stores the neighbors or next hop IP address and output port or
     ; interface for routes
@@ -320,6 +342,41 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
      8) "7"
      9) "4"
     10) "8"
+
+### DSCP_TO_FC_TABLE_NAME
+    ; dscp to FC map
+    ;SAI mapping - qos_map object with SAI_QOS_MAP_ATTR_TYPE == sai_qos_map_type_t::SAI_QOS_MAP_TYPE_DSCP_TO_FORWARDING_CLASS
+    key        = "DSCP_TO_FC_MAP_TABLE:"name
+    ;field       value
+    dscp_value = 1*DIGIT
+    fc_value   = 1*DIGIT
+
+    Example:
+    127.0.0.1:6379> hgetall "DSCP_TO_FC_MAP_TABLE:AZURE"
+     1) "0" ;dscp
+     2) "1" ;fc
+     3) "1"
+     4) "1"
+     5) "2"
+     6) "3"
+     7)
+---------------------------------------------
+### EXP_TO_FC_MAP_TABLE
+    ; dscp to FC map
+    ;SAI mapping - qos_map object with SAI_QOS_MAP_ATTR_TYPE == sai_qos_map_type_t::SAI_QOS_MAP_TYPE_MPLS_EXP_TO_FORWARDING_CLASS
+    key            = "EXP_TO_FC_MAP_TABLE:"name
+    ;field           value
+    mpls_exp_value = 1*DIGIT
+    fc_value       = 1*DIGIT
+
+    Example:
+    127.0.0.1:6379> hgetall "EXP_TO_FC_MAP_TABLE:AZURE"
+     1) "0" ;mpls_exp
+     2) "1" ;fc
+     3) "1"
+     4) "1"
+     5) "2"
+     6) "3"
 
 ---------------------------------------------
 ### SCHEDULER_TABLE
@@ -512,15 +569,37 @@ It's possible to create separate configuration files for different ASIC platform
 
 ----------------------------------------------
 
+### ACL\_TABLE\_TYPE
+Stores a definition of table - set of matches, actions and bind point types. ACL_TABLE references a key inside this table in "type" field.
+
+```
+key: ACL_TABLE_TYPE:name           ; key of the ACL table type entry. The name is arbitary name user chooses.
+; field         = value
+matches         = match-list       ; list of matches for this table, matches are same as in ACL_RULE table.
+actions         = action-list      ; list of actions for this table, actions are same as in ACL_RULE table.
+bind_points     = bind-points-list ; list of bind point types for this table.
+
+; values annotation
+match            = 1*64VCHAR
+match-list       = [1-max-matches]*match
+action           = 1*64VCHAR
+action-list      = [1-max-actions]*action
+bind-point       = port/lag
+bind-points-list = [1-max-bind-points]*bind-point
+```
+
 ### ACL\_TABLE
 Stores information about ACL tables on the switch.  Port names are defined in [port_config.ini](../portsyncd/port_config.ini).
 
     key           = ACL_TABLE:name          ; acl_table_name must be unique
     ;field        = value
     policy_desc   = 1*255VCHAR              ; name of the ACL policy table description
-    type          = "mirror"/"l3"/"l3v6"    ; type of acl table, every type of
+    type          = 1*255VCHAR              ; type of acl table, every type of
                                             ; table defines the match/action a
                                             ; specific set of match and actions.
+                                            ; There are pre-defined table types like
+                                            ; "MIRROR", "MIRRORV6", "MIRROR_DSCP",
+                                            ; "L3", "L3V6", "MCLAG", "PFCWD", "DROP".
     ports         = [0-max_ports]*port_name ; the ports to which this ACL
                                             ; table is applied, can be emtry
                                             ; value annotations
