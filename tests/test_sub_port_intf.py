@@ -1083,7 +1083,7 @@ class TestSubPortIntf(object):
             }
             rif_oid = self.get_newly_created_oid(ASIC_RIF_TABLE, old_rif_oids)
             #If subintf mtu deleted, it inherits from parent 
-            if vrf_name == self.VRF_UNDER_TEST:
+            if vrf_name == self.VRF_UNDER_TEST or vrf_name == self.VNET_UNDER_TEST:
                 if parent_port.startswith(ETHERNET_PREFIX):
                     fv_dict["SAI_ROUTER_INTERFACE_ATTR_MTU"] = ETHERNET_PORT_DEFAULT_MTU 
             self.check_sub_port_intf_fvs(self.asic_db, ASIC_RIF_TABLE, rif_oid, fv_dict)
