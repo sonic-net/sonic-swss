@@ -45,26 +45,6 @@ typedef enum
 } acl_stage_type_t;
 
 typedef std::unordered_map<std::string, acl_stage_type_t> acl_stage_type_lookup_t;
-
-typedef enum
-{
-    ACL_TABLE_UNKNOWN,
-    ACL_TABLE_L3,
-    ACL_TABLE_L3V6,
-    ACL_TABLE_MIRROR,
-    ACL_TABLE_MIRRORV6,
-    ACL_TABLE_MIRROR_DSCP,
-    ACL_TABLE_PFCWD,
-    ACL_TABLE_CTRLPLANE,
-    ACL_TABLE_DTEL_FLOW_WATCHLIST,
-    ACL_TABLE_DTEL_DROP_WATCHLIST,
-    ACL_TABLE_MCLAG,
-    ACL_TABLE_MUX,
-    ACL_TABLE_DROP,
-    ACL_TABLE_PBH
-} acl_table_type_t;
-
-typedef std::unordered_map<std::string, acl_table_type_t> acl_table_type_lookup_t;
 typedef std::map<std::string, sai_acl_stage_t> acl_stage_lookup_t;
 typedef std::map<sai_acl_stage_t, sai_switch_attr_t> acl_stage_to_switch_attr_lookup_t;
 
