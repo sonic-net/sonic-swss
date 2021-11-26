@@ -747,7 +747,6 @@ void CoppOrch::doTask(Consumer &consumer)
 void CoppOrch::doTask(SelectableTimer &timer)
 {
     SWSS_LOG_ENTER();
-    SWSS_LOG_DEBUG("Registering %" PRId64 " new trap counters", m_pendingAddToFlexCntr.size());
 
     string value;
     for (auto it = m_pendingAddToFlexCntr.begin(); it != m_pendingAddToFlexCntr.end(); )
