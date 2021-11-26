@@ -1,7 +1,6 @@
 """ Defines common P4RT utility functions."""
 from swsscommon import swsscommon
 
-import json
 import time
 
 

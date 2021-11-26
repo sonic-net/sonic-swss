@@ -1,6 +1,5 @@
 from swsscommon import swsscommon
 
-import time
 import pytest
 import json
 import util

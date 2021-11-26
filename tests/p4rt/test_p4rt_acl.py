@@ -1,9 +1,7 @@
 # Lint as: python3
 from swsscommon import swsscommon
 
-import time
 import pytest
-import json
 import util
 import acl
 

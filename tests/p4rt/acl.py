@@ -1,9 +1,7 @@
 # Lint as: python3
 from swsscommon import swsscommon
 
-import time
 import util
-import json
 
 INGRESS_STAGE = "SAI_ACL_STAGE_INGRESS"
 EGRESS_STAGE = "SAI_ACL_STAGE_EGRESS"
