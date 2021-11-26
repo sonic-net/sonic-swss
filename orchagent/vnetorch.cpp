@@ -885,7 +885,12 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             {
                 if (it_route != syncd_tunnel_routes_[vnet].end())
                 {
-                    del_route(vr_id, pfx);
+                    NextHopGroupKey nhg = it_route->second;
+                    // Remove route when updating from a nhg with active member to another nhg without
+                    if (!syncd_nexthop_groups_[vnet][nhg].active_members.empty())
+                    {
+                        del_route(vr_id, pfx);
+                    }
                 }
             }
             else
@@ -966,10 +971,14 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
 
         for (auto vr_id : vr_set)
         {
-            if (!del_route(vr_id, pfx))
+            // If an nhg has no active member, the route should already be removed
+            if (!syncd_nexthop_groups_[vnet][nhg].active_members.empty())
             {
-                SWSS_LOG_ERROR("Route del failed for %s, vr_id '0x%" PRIx64, ipPrefix.to_string().c_str(), vr_id);
-                return false;
+                if (!del_route(vr_id, pfx))
+                {
+                    SWSS_LOG_ERROR("Route del failed for %s, vr_id '0x%" PRIx64, ipPrefix.to_string().c_str(), vr_id);
+                    return false;
+                }
             }
         }
 
@@ -1721,17 +1730,20 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
                 gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
             }
 
-            nhg_info.active_members.erase(endpoint);
-
-            // Remove routes when nexthop group has no active endpoint
-            if (nhg_info.active_members.empty())
+            if (nhg_info.active_members.find(endpoint) != nhg_info.active_members.end())
             {
-                if (vnet_orch_->isVnetExecVrf())
+                nhg_info.active_members.erase(endpoint);
+
+                // Remove routes when nexthop group has no active endpoint
+                if (nhg_info.active_members.empty())
                 {
-                    for (auto ip_pfx : syncd_nexthop_groups_[vnet][nexthops].tunnel_routes)
+                    if (vnet_orch_->isVnetExecVrf())
                     {
-                        string op = DEL_COMMAND;
-                        updateTunnelRoute(vnet, ip_pfx, nexthops, op);
+                        for (auto ip_pfx : syncd_nexthop_groups_[vnet][nexthops].tunnel_routes)
+                        {
+                            string op = DEL_COMMAND;
+                            updateTunnelRoute(vnet, ip_pfx, nexthops, op);
+                        }
                     }
                 }
             }
