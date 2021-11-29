@@ -4,8 +4,10 @@
 #include <string>
 #include <unordered_set>
 #include <unordered_map>
+#include <utility>
 #include "dbconnector.h"
 #include "producertable.h"
+#include "table.h"
 #include <inttypes.h>
 
 extern "C" {
@@ -24,6 +26,10 @@ enum class CounterType
     PORT_DEBUG,
     SWITCH_DEBUG,
     MACSEC_SA_ATTR,
+    MACSEC_SA,
+    MACSEC_FLOW,
+    ACL_COUNTER,
+    TUNNEL,
 };
 
 // FlexCounterManager allows users to manage a group of flex counters.
@@ -38,7 +44,11 @@ class FlexCounterManager
                 const std::string& group_name,
                 const StatsMode stats_mode,
                 const uint polling_interval,
-                const bool enabled);
+                const bool enabled,
+                swss::FieldValueTuple fv_plugin = std::make_pair("",""));
+
+        FlexCounterManager() 
+        {}
 
         FlexCounterManager(
                 const std::string& db_name,
@@ -62,6 +72,26 @@ class FlexCounterManager
                 const std::unordered_set<std::string>& counter_stats);
         void clearCounterIdList(const sai_object_id_t object_id);
 
+        const std::string& getGroupName() const
+        {
+            return group_name;
+        }
+
+        const StatsMode& getStatsMode() const
+        {
+            return stats_mode;
+        }
+
+        const uint& getPollingInterval() const
+        {
+            return polling_interval;
+        }
+
+        const bool& getEnabled() const
+        {
+            return enabled;
+        }
+
     protected:
         void applyGroupConfiguration();
 
@@ -76,6 +106,7 @@ class FlexCounterManager
         StatsMode stats_mode;
         uint polling_interval;
         bool enabled;
+        swss::FieldValueTuple fv_plugin;
         std::unordered_set<sai_object_id_t> installed_counters;
 
         std::shared_ptr<swss::DBConnector> flex_counter_db = nullptr;
@@ -85,6 +116,16 @@ class FlexCounterManager
         static const std::unordered_map<StatsMode, std::string> stats_mode_lookup;
         static const std::unordered_map<bool, std::string> status_lookup;
         static const std::unordered_map<CounterType, std::string> counter_id_field_lookup;
+};
+
+class FlexManagerDirectory
+{
+    public:
+        FlexCounterManager* createFlexCounterManager(const std::string& group_name, const StatsMode stats_mode,
+                                                     const uint polling_interval, const bool enabled, 
+                                                     swss::FieldValueTuple fv_plugin = std::make_pair("",""));
+    private:
+        std::unordered_map<std::string, FlexCounterManager*>  m_managers;
 };
 
 #endif // ORCHAGENT_FLEX_COUNTER_MANAGER_H

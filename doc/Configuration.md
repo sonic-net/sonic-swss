@@ -286,6 +286,46 @@ and migration plan
 
 ```
 
+***ACL table type configuration example***
+```
+{
+    "ACL_TABLE_TYPE": {
+        "CUSTOM_L3": {
+            "MATCHES": [
+                "IN_PORTS",
+                "OUT_PORTS",
+                "SRC_IP"
+            ],
+            "ACTIONS": [
+                "PACKET_ACTION",
+                "MIRROR_INGRESS_ACTION"
+            ],
+            "BIND_POINTS": [
+                "PORT",
+                "LAG"
+            ]
+        }
+    },
+    "ACL_TABLE": {
+        "DATAACL": {
+            "STAGE": "INGRESS",
+            "TYPE": "CUSTOM_L3",
+            "PORTS": [
+                "Ethernet0",
+                "PortChannel1"
+            ]
+        }
+    },
+    "ACL_RULE": {
+        "DATAACL|RULE0": {
+            "PRIORITY": "999",
+            "PACKET_ACTION": "DROP",
+            "SRC_IP": "1.1.1.1/32",
+        }
+    }
+}
+```
+
 ### BGP Sessions
 
 BGP session configuration is defined in **BGP_NEIGHBOR** table. BGP
@@ -742,6 +782,26 @@ instance is supported in SONiC.
 
 ```
 
+
+### MPLS_TC_TO_TC_MAP
+```
+{
+"MPLS_TC_TO_TC_MAP": {
+    "AZURE": {
+        "0": "0",
+        "1": "1",
+        "2": "1",
+        "3": "2",
+        "4": "2",
+        "5": "3",
+        "6": "3",
+        "7": "4"
+    }
+  }
+}
+
+```
+
 ### FLEX_COUNTER_TABLE
 
 ```
@@ -1109,6 +1169,8 @@ name as object key and member list as attribute.
         "pfc_enable": "3,4", 
         "pfc_to_queue_map": "AZURE", 
         "dscp_to_tc_map": "AZURE",
+        "dscp_to_fc_map": "AZURE",
+        "exp_to_fc_map": "AZURE",
         "scheduler": "scheduler.port"
     }
   }

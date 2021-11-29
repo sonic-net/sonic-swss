@@ -1,5 +1,6 @@
 #include <unistd.h>
 #include <unordered_map>
+#include <chrono>
 #include <limits.h>
 #include "orchdaemon.h"
 #include "logger.h"
@@ -32,6 +33,8 @@ IntfsOrch *gIntfsOrch;
 NeighOrch *gNeighOrch;
 RouteOrch *gRouteOrch;
 NhgOrch *gNhgOrch;
+NhgMapOrch *gNhgMapOrch;
+CbfNhgOrch *gCbfNhgOrch;
 FgNhgOrch *gFgNhgOrch;
 AclOrch *gAclOrch;
 PbhOrch *gPbhOrch;
@@ -44,6 +47,8 @@ NatOrch *gNatOrch;
 MlagOrch *gMlagOrch;
 IsoGrpOrch *gIsoGrpOrch;
 MACsecOrch *gMacsecOrch;
+BfdOrch *gBfdOrch;
+Srv6Orch *gSrv6Orch;
 
 bool gIsNatSupported = false;
 
@@ -159,13 +164,21 @@ bool OrchDaemon::init()
     gFgNhgOrch = new FgNhgOrch(m_configDb, m_applDb, m_stateDb, fgnhg_tables, gNeighOrch, gIntfsOrch, vrf_orch);
     gDirectory.set(gFgNhgOrch);
 
+    vector<string> srv6_tables = {
+        APP_SRV6_SID_LIST_TABLE_NAME,
+        APP_SRV6_MY_SID_TABLE_NAME
+    };
+    gSrv6Orch = new Srv6Orch(m_applDb, srv6_tables, gSwitchOrch, vrf_orch, gNeighOrch);
+    gDirectory.set(gSrv6Orch);
+
     const int routeorch_pri = 5;
     vector<table_name_with_pri_t> route_tables = {
         { APP_ROUTE_TABLE_NAME,        routeorch_pri },
         { APP_LABEL_ROUTE_TABLE_NAME,  routeorch_pri }
     };
-    gRouteOrch = new RouteOrch(m_applDb, route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch);
+    gRouteOrch = new RouteOrch(m_applDb, route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch, gSrv6Orch);
     gNhgOrch = new NhgOrch(m_applDb, APP_NEXTHOP_GROUP_TABLE_NAME);
+    gCbfNhgOrch = new CbfNhgOrch(m_applDb, APP_CLASS_BASED_NEXT_HOP_GROUP_TABLE_NAME);
 
     CoppOrch  *copp_orch  = new CoppOrch(m_applDb, APP_COPP_TABLE_NAME);
     TunnelDecapOrch *tunnel_decap_orch = new TunnelDecapOrch(m_applDb, APP_TUNNEL_DECAP_TABLE_NAME);
@@ -186,13 +199,16 @@ bool OrchDaemon::init()
         CFG_TC_TO_QUEUE_MAP_TABLE_NAME,
         CFG_SCHEDULER_TABLE_NAME,
         CFG_DSCP_TO_TC_MAP_TABLE_NAME,
+        CFG_MPLS_TC_TO_TC_MAP_TABLE_NAME,
         CFG_DOT1P_TO_TC_MAP_TABLE_NAME,
         CFG_QUEUE_TABLE_NAME,
         CFG_PORT_QOS_MAP_TABLE_NAME,
         CFG_WRED_PROFILE_TABLE_NAME,
         CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME,
         CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME,
-        CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME
+        CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME,
+        CFG_DSCP_TO_FC_MAP_TABLE_NAME,
+        CFG_EXP_TO_FC_MAP_TABLE_NAME
     };
     QosOrch *qos_orch = new QosOrch(m_configDb, qos_tables);
 
@@ -213,15 +229,19 @@ bool OrchDaemon::init()
     gMirrorOrch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, policer_orch);
 
     TableConnector confDbAclTable(m_configDb, CFG_ACL_TABLE_TABLE_NAME);
+    TableConnector confDbAclTableType(m_configDb, CFG_ACL_TABLE_TYPE_TABLE_NAME);
     TableConnector confDbAclRuleTable(m_configDb, CFG_ACL_RULE_TABLE_NAME);
     TableConnector appDbAclTable(m_applDb, APP_ACL_TABLE_TABLE_NAME);
+    TableConnector appDbAclTableType(m_applDb, APP_ACL_TABLE_TYPE_TABLE_NAME);
     TableConnector appDbAclRuleTable(m_applDb, APP_ACL_RULE_TABLE_NAME);
 
     vector<TableConnector> acl_table_connectors = {
+        confDbAclTableType,
         confDbAclTable,
         confDbAclRuleTable,
         appDbAclTable,
-        appDbAclRuleTable
+        appDbAclRuleTable,
+        appDbAclTableType,
     };
 
     vector<string> dtel_tables = {
@@ -289,6 +309,11 @@ bool OrchDaemon::init()
 
     gMacsecOrch = new MACsecOrch(m_applDb, m_stateDb, macsec_app_tables, gPortsOrch);
 
+    TableConnector stateDbBfdSessionTable(m_stateDb, STATE_BFD_SESSION_TABLE_NAME);
+    gBfdOrch = new BfdOrch(m_applDb, APP_BFD_SESSION_TABLE_NAME, stateDbBfdSessionTable);
+
+    gNhgMapOrch = new NhgMapOrch(m_applDb, APP_FC_TO_NHG_INDEX_MAP_TABLE_NAME);
+
     /*
      * The order of the orch list is important for state restore of warm start and
      * the queued processing in m_toSync map after gPortsOrch->allPortsReady() is set.
@@ -297,7 +322,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gIntfsOrch, gNeighOrch, gNhgOrch, gRouteOrch, copp_orch, qos_orch, wm_orch, policer_orch, tunnel_decap_orch, sflow_orch, debug_counter_orch, gMacsecOrch};
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, mux_orch, mux_cb_orch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gRouteOrch, copp_orch, qos_orch, wm_orch, policer_orch, tunnel_decap_orch, sflow_orch, debug_counter_orch, gMacsecOrch, gBfdOrch, gSrv6Orch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
@@ -329,7 +354,9 @@ bool OrchDaemon::init()
         dtel_orch = new DTelOrch(m_configDb, dtel_tables, gPortsOrch);
         m_orchList.push_back(dtel_orch);
     }
-    gAclOrch = new AclOrch(acl_table_connectors, gSwitchOrch, gPortsOrch, gMirrorOrch, gNeighOrch, gRouteOrch, dtel_orch);
+
+    gAclOrch = new AclOrch(acl_table_connectors, m_stateDb,
+        gSwitchOrch, gPortsOrch, gMirrorOrch, gNeighOrch, gRouteOrch, dtel_orch);
 
     vector<string> mlag_tables = {
         { CFG_MCLAG_TABLE_NAME },
@@ -393,8 +420,6 @@ bool OrchDaemon::init()
     m_orchList.push_back(gMlagOrch);
     m_orchList.push_back(gIsoGrpOrch);
     m_orchList.push_back(gFgNhgOrch);
-    m_orchList.push_back(mux_orch);
-    m_orchList.push_back(mux_cb_orch);
     m_orchList.push_back(mux_st_orch);
 
     if (m_fabricEnabled)
@@ -627,12 +652,25 @@ void OrchDaemon::start()
         m_select->addSelectables(o->getSelectables());
     }
 
+    auto tstart = std::chrono::high_resolution_clock::now();
+
     while (true)
     {
         Selectable *s;
         int ret;
 
         ret = m_select->select(&s, SELECT_TIMEOUT);
+
+        auto tend = std::chrono::high_resolution_clock::now();
+
+        auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(tend - tstart);
+
+        if (diff.count() >= SELECT_TIMEOUT)
+        {
+            tstart = std::chrono::high_resolution_clock::now();
+
+            flush();
+        }
 
         if (ret == Select::ERROR)
         {

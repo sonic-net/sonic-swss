@@ -326,6 +326,9 @@ MuxCable::MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress 
     state_machine_handlers_.insert(handler_pair(MUX_STATE_STANDBY_ACTIVE, &MuxCable::stateActive));
     state_machine_handlers_.insert(handler_pair(MUX_STATE_INIT_STANDBY, &MuxCable::stateStandby));
     state_machine_handlers_.insert(handler_pair(MUX_STATE_ACTIVE_STANDBY, &MuxCable::stateStandby));
+
+    /* Set initial state to "standby" */
+    stateStandby();
 }
 
 bool MuxCable::stateInitActive()
@@ -706,7 +709,6 @@ MuxAclHandler::MuxAclHandler(sai_object_id_t port, string alias)
     SWSS_LOG_ENTER();
 
     // There is one handler instance per MUX port
-    acl_table_type_t table_type = ACL_TABLE_DROP;
     string table_name = MUX_ACL_TABLE_NAME;
     string rule_name = MUX_ACL_RULE_NAME;
 
@@ -720,8 +722,8 @@ MuxAclHandler::MuxAclHandler(sai_object_id_t port, string alias)
 
         // First time handling of Mux Table, create ACL table, and bind
         createMuxAclTable(port, table_name);
-        shared_ptr<AclRuleMux> newRule =
-                make_shared<AclRuleMux>(gAclOrch, rule_name, table_name, table_type);
+        shared_ptr<AclRulePacket> newRule =
+                make_shared<AclRulePacket>(gAclOrch, rule_name, table_name);
         createMuxAclRule(newRule, table_name);
     }
     else
@@ -731,8 +733,8 @@ MuxAclHandler::MuxAclHandler(sai_object_id_t port, string alias)
         AclRule* rule = gAclOrch->getAclRule(table_name, rule_name);
         if (rule == nullptr)
         {
-            shared_ptr<AclRuleMux> newRule =
-                    make_shared<AclRuleMux>(gAclOrch, rule_name, table_name, table_type);
+            shared_ptr<AclRulePacket> newRule =
+                    make_shared<AclRulePacket>(gAclOrch, rule_name, table_name);
             createMuxAclRule(newRule, table_name);
         }
         else
@@ -773,7 +775,7 @@ void MuxAclHandler::createMuxAclTable(sai_object_id_t port, string strTable)
 
     auto inserted = acl_table_.emplace(piecewise_construct,
                                        std::forward_as_tuple(strTable),
-                                       std::forward_as_tuple());
+                                       std::forward_as_tuple(gAclOrch, strTable));
 
     assert(inserted.second);
 
@@ -788,14 +790,15 @@ void MuxAclHandler::createMuxAclTable(sai_object_id_t port, string strTable)
         return;
     }
 
-    acl_table.type = ACL_TABLE_DROP;
-    acl_table.id = strTable;
-    acl_table.link(port);
+    auto dropType = gAclOrch->getAclTableType(TABLE_TYPE_DROP);
+    assert(dropType);
+    acl_table.validateAddType(*dropType);
     acl_table.stage = ACL_STAGE_INGRESS;
     gAclOrch->addAclTable(acl_table);
+    bindAllPorts(acl_table);
 }
 
-void MuxAclHandler::createMuxAclRule(shared_ptr<AclRuleMux> rule, string strTable)
+void MuxAclHandler::createMuxAclRule(shared_ptr<AclRulePacket> rule, string strTable)
 {
     SWSS_LOG_ENTER();
 
@@ -815,6 +818,24 @@ void MuxAclHandler::createMuxAclRule(shared_ptr<AclRuleMux> rule, string strTabl
     rule->validateAddAction(attr_name, attr_value);
 
     gAclOrch->addAclRule(rule, strTable);
+}
+
+void MuxAclHandler::bindAllPorts(AclTable &acl_table)
+{
+    SWSS_LOG_ENTER();
+
+    auto allPorts = gPortsOrch->getAllPorts();
+    for (auto &it: allPorts)
+    {
+        Port port = it.second;
+        if (port.m_type == Port::PHY)
+        {
+            SWSS_LOG_INFO("Binding port %" PRIx64 " to ACL table %s", port.m_port_id, acl_table.id.c_str());
+
+            acl_table.link(port.m_port_id);
+            acl_table.bind(port.m_port_id);
+        }
+    }
 }
 
 sai_object_id_t MuxOrch::createNextHopTunnel(std::string tunnelKey, swss::IpAddress& ipAddr)

@@ -180,7 +180,18 @@ bool PbhOrch::createPbhTable(const PbhTable &table)
 
     AclTable pbhTable(this->aclOrch, table.name);
 
-    if (!pbhTable.validateAddType(acl_table_type_t::ACL_TABLE_PBH))
+    static const auto pbhTableType = AclTableTypeBuilder()
+        .withBindPointType(SAI_ACL_BIND_POINT_TYPE_PORT)
+        .withBindPointType(SAI_ACL_BIND_POINT_TYPE_LAG)
+        .withMatch(std::make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_GRE_KEY))
+        .withMatch(std::make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE))
+        .withMatch(std::make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL))
+        .withMatch(std::make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER))
+        .withMatch(std::make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT))
+        .withMatch(std::make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_INNER_ETHER_TYPE))
+        .build();
+
+    if (!pbhTable.validateAddType(pbhTableType))
     {
         SWSS_LOG_ERROR("Failed to configure PBH table(%s) type", table.key.c_str());
         return false;

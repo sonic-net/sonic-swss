@@ -18,7 +18,7 @@ extern sai_buffer_api_t *sai_buffer_api;
 extern PortsOrch *gPortsOrch;
 extern sai_object_id_t gSwitchId;
 
-#define BUFFER_POOL_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS  "10000"
+#define BUFFER_POOL_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS  "60000"
 
 
 static const vector<sai_buffer_pool_stat_t> bufferPoolWatermarkStatIds =
@@ -208,6 +208,15 @@ bool BufferOrch::isPortReady(const std::string& port_name) const
     }
 
     return result;
+}
+
+void BufferOrch::clearBufferPoolWatermarkCounterIdList(const sai_object_id_t object_id)
+{
+    if (m_isBufferPoolWatermarkCounterIdListGenerated)
+    {
+        string key = BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP ":" + sai_serialize_object_id(object_id);
+        m_flexCounterTable->del(key);
+    }
 }
 
 void BufferOrch::generateBufferPoolWatermarkCounterIdList(void)
@@ -460,6 +469,7 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
 
         if (SAI_NULL_OBJECT_ID != sai_object)
         {
+            clearBufferPoolWatermarkCounterIdList(sai_object);
             sai_status = sai_buffer_api->remove_buffer_pool(sai_object);
             if (SAI_STATUS_SUCCESS != sai_status)
             {
@@ -699,6 +709,7 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
     string op = kfvOp(tuple);
     vector<string> tokens;
     sai_uint32_t range_low, range_high;
+    bool need_update_sai = true;
 
     SWSS_LOG_DEBUG("Processing:%s", key.c_str());
     tokens = tokenize(key, delimiter);
@@ -736,6 +747,12 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
     }
     else if (op == DEL_COMMAND)
     {
+        auto &typemap = (*m_buffer_type_maps[APP_BUFFER_QUEUE_TABLE_NAME]);
+        if (typemap.find(key) == typemap.end())
+        {
+            SWSS_LOG_INFO("%s doesn't not exist, don't need to notfiy SAI", key.c_str());
+            need_update_sai = false;
+        }
         sai_buffer_profile = SAI_NULL_OBJECT_ID;
         SWSS_LOG_NOTICE("Remove buffer queue %s", key.c_str());
         removeObject(m_buffer_type_maps, APP_BUFFER_QUEUE_TABLE_NAME, key);
@@ -760,7 +777,6 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
         }
         for (size_t ind = range_low; ind <= range_high; ind++)
         {
-            sai_object_id_t queue_id;
             SWSS_LOG_DEBUG("processing queue:%zd", ind);
             if (port.m_queue_ids.size() <= ind)
             {
@@ -772,16 +788,20 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
                 SWSS_LOG_WARN("Queue %zd on port %s is locked, will retry", ind, port_name.c_str());
                 return task_process_status::task_need_retry;
             }
-            queue_id = port.m_queue_ids[ind];
-            SWSS_LOG_DEBUG("Applying buffer profile:0x%" PRIx64 " to queue index:%zd, queue sai_id:0x%" PRIx64, sai_buffer_profile, ind, queue_id);
-            sai_status_t sai_status = sai_queue_api->set_queue_attribute(queue_id, &attr);
-            if (sai_status != SAI_STATUS_SUCCESS)
+            if (need_update_sai)
             {
-                SWSS_LOG_ERROR("Failed to set queue's buffer profile attribute, status:%d", sai_status);
-                task_process_status handle_status = handleSaiSetStatus(SAI_API_QUEUE, sai_status);
-                if (handle_status != task_process_status::task_success)
+                sai_object_id_t queue_id;
+                queue_id = port.m_queue_ids[ind];
+                SWSS_LOG_DEBUG("Applying buffer profile:0x%" PRIx64 " to queue index:%zd, queue sai_id:0x%" PRIx64, sai_buffer_profile, ind, queue_id);
+                sai_status_t sai_status = sai_queue_api->set_queue_attribute(queue_id, &attr);
+                if (sai_status != SAI_STATUS_SUCCESS)
                 {
-                    return handle_status;
+                    SWSS_LOG_ERROR("Failed to set queue's buffer profile attribute, status:%d", sai_status);
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_QUEUE, sai_status);
+                    if (handle_status != task_process_status::task_success)
+                    {
+                        return handle_status;
+                    }
                 }
             }
         }
@@ -823,6 +843,7 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
     string op = kfvOp(tuple);
     vector<string> tokens;
     sai_uint32_t range_low, range_high;
+    bool need_update_sai = true;
 
     SWSS_LOG_DEBUG("processing:%s", key.c_str());
     tokens = tokenize(key, delimiter);
@@ -861,6 +882,12 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
     }
     else if (op == DEL_COMMAND)
     {
+        auto &typemap = (*m_buffer_type_maps[APP_BUFFER_PG_TABLE_NAME]);
+        if (typemap.find(key) == typemap.end())
+        {
+            SWSS_LOG_INFO("%s doesn't not exist, don't need to notfiy SAI", key.c_str());
+            need_update_sai = false;
+        }
         sai_buffer_profile = SAI_NULL_OBJECT_ID;
         SWSS_LOG_NOTICE("Remove buffer PG %s", key.c_str());
         removeObject(m_buffer_type_maps, APP_BUFFER_PG_TABLE_NAME, key);
@@ -886,7 +913,6 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
         }
         for (size_t ind = range_low; ind <= range_high; ind++)
         {
-            sai_object_id_t pg_id;
             SWSS_LOG_DEBUG("processing pg:%zd", ind);
             if (port.m_priority_group_ids.size() <= ind)
             {
@@ -901,16 +927,20 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
             }
             else
             {
-                pg_id = port.m_priority_group_ids[ind];
-                SWSS_LOG_DEBUG("Applying buffer profile:0x%" PRIx64 " to port:%s pg index:%zd, pg sai_id:0x%" PRIx64, sai_buffer_profile, port_name.c_str(), ind, pg_id);
-                sai_status_t sai_status = sai_buffer_api->set_ingress_priority_group_attribute(pg_id, &attr);
-                if (sai_status != SAI_STATUS_SUCCESS)
+                if (need_update_sai)
                 {
-                    SWSS_LOG_ERROR("Failed to set port:%s pg:%zd buffer profile attribute, status:%d", port_name.c_str(), ind, sai_status);
-                    task_process_status handle_status = handleSaiSetStatus(SAI_API_BUFFER, sai_status);
-                    if (handle_status != task_process_status::task_success)
+                    sai_object_id_t pg_id;
+                    pg_id = port.m_priority_group_ids[ind];
+                    SWSS_LOG_DEBUG("Applying buffer profile:0x%" PRIx64 " to port:%s pg index:%zd, pg sai_id:0x%" PRIx64, sai_buffer_profile, port_name.c_str(), ind, pg_id);
+                    sai_status_t sai_status = sai_buffer_api->set_ingress_priority_group_attribute(pg_id, &attr);
+                    if (sai_status != SAI_STATUS_SUCCESS)
                     {
-                        return handle_status;
+                        SWSS_LOG_ERROR("Failed to set port:%s pg:%zd buffer profile attribute, status:%d", port_name.c_str(), ind, sai_status);
+                        task_process_status handle_status = handleSaiSetStatus(SAI_API_BUFFER, sai_status);
+                        if (handle_status != task_process_status::task_success)
+                        {
+                            return handle_status;
+                        }
                     }
                 }
             }

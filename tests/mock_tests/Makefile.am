@@ -32,14 +32,19 @@ tests_SOURCES = aclorch_ut.cpp \
                 mock_hiredis.cpp \
                 mock_redisreply.cpp \
                 bulker_ut.cpp \
+                fake_response_publisher.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
+                $(top_srcdir)/lib/subintf.cpp \
                 $(top_srcdir)/orchagent/orchdaemon.cpp \
                 $(top_srcdir)/orchagent/orch.cpp \
                 $(top_srcdir)/orchagent/notifications.cpp \
                 $(top_srcdir)/orchagent/routeorch.cpp \
                 $(top_srcdir)/orchagent/mplsrouteorch.cpp \
                 $(top_srcdir)/orchagent/fgnhgorch.cpp \
+                $(top_srcdir)/orchagent/nhgbase.cpp \
                 $(top_srcdir)/orchagent/nhgorch.cpp \
+                $(top_srcdir)/orchagent/cbf/cbfnhgorch.cpp \
+                $(top_srcdir)/orchagent/cbf/nhgmaporch.cpp \
                 $(top_srcdir)/orchagent/neighorch.cpp \
                 $(top_srcdir)/orchagent/intfsorch.cpp \
                 $(top_srcdir)/orchagent/portsorch.cpp \
@@ -56,6 +61,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/pbh/pbhrule.cpp \
                 $(top_srcdir)/orchagent/pbhorch.cpp \
                 $(top_srcdir)/orchagent/saihelper.cpp \
+                $(top_srcdir)/orchagent/saiattr.cpp \
                 $(top_srcdir)/orchagent/switchorch.cpp \
                 $(top_srcdir)/orchagent/pfcwdorch.cpp \
                 $(top_srcdir)/orchagent/pfcactionhandler.cpp \
@@ -77,7 +83,9 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/mlagorch.cpp \
                 $(top_srcdir)/orchagent/isolationgrouporch.cpp \
                 $(top_srcdir)/orchagent/macsecorch.cpp \
-                $(top_srcdir)/orchagent/lagid.cpp 
+                $(top_srcdir)/orchagent/lagid.cpp \
+                $(top_srcdir)/orchagent/bfdorch.cpp \
+                $(top_srcdir)/orchagent/srv6orch.cpp
 
 tests_SOURCES += $(FLEX_CTR_DIR)/flex_counter_manager.cpp $(FLEX_CTR_DIR)/flex_counter_stat_manager.cpp
 tests_SOURCES += $(DEBUG_CTR_DIR)/debug_counter.cpp $(DEBUG_CTR_DIR)/drop_counter.cpp
