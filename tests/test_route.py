@@ -164,6 +164,7 @@ class TestRoute(TestRouteBase):
 
         # add route entry
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"ip route 2.2.2.0/24 10.0.0.1\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"ip route 0.0.0.0/0 10.0.0.1\"")
 
         # check application database
         self.pdb.wait_for_entry("ROUTE_TABLE", "2.2.2.0/24")
@@ -176,6 +177,7 @@ class TestRoute(TestRouteBase):
 
         # remove route entry
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route 2.2.2.0/24 10.0.0.1\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route 0.0.0.0/0 10.0.0.1\"")
 
         # check application database
         self.pdb.wait_for_deleted_entry("ROUTE_TABLE", "2.2.2.0/24")
@@ -236,6 +238,7 @@ class TestRoute(TestRouteBase):
 
         # add route entry
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"ipv6 route 3000::0/64 2000::2\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"ipv6 route ::/0 2000::2\"")
 
         # check application database
         self.pdb.wait_for_entry("ROUTE_TABLE", "3000::/64")
@@ -248,6 +251,7 @@ class TestRoute(TestRouteBase):
 
         # remove route entry
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ipv6 route 3000::0/64 2000::2\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ipv6 route ::/0 2000::2\"")
 
         # check application database
         self.pdb.wait_for_deleted_entry("ROUTE_TABLE", "3000::/64")
