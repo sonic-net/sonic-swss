@@ -33,17 +33,22 @@ bool gSwssRecord = false;
 bool gLogRotate = false;
 ofstream gRecordOfs;
 string gRecordFile;
+bool gResponsePublisherRecord = false;
+bool gResponsePublisherLogRotate = false;
+ofstream gResponsePublisherRecordOfs;
+string gResponsePublisherRecordFile;
 /* Global database mutex */
 mutex gDbMutex;
 
 void usage()
 {
-    cout << "Usage: buffermgrd <-l pg_lookup.ini|-a asic_table.json [-p peripheral_table.json]>" << endl;
+    cout << "Usage: buffermgrd <-l pg_lookup.ini|-a asic_table.json [-p peripheral_table.json] [-z zero_profiles.json]>" << endl;
     cout << "       -l pg_lookup.ini: PG profile look up table file (mandatory for static mode)" << endl;
     cout << "           format: csv" << endl;
     cout << "           values: 'speed, cable, size, xon,  xoff, dynamic_threshold, xon_offset'" << endl;
     cout << "       -a asic_table.json: ASIC-specific parameters definition (mandatory for dynamic mode)" << endl;
-    cout << "       -p peripheral_table.json: Peripheral (eg. gearbox) parameters definition (mandatory for dynamic mode)" << endl;
+    cout << "       -p peripheral_table.json: Peripheral (eg. gearbox) parameters definition (optional for dynamic mode)" << endl;
+    cout << "       -z zero_profiles.json: Zero profiles definition for reclaiming unused buffers (optional for dynamic mode)" << endl;
 }
 
 void dump_db_item(KeyOpFieldsValuesTuple &db_item)
@@ -109,13 +114,13 @@ int main(int argc, char **argv)
     string pg_lookup_file = "";
     string asic_table_file = "";
     string peripherial_table_file = "";
-    string json_file = "";
+    string zero_profile_file = "";
     Logger::linkToDbNative("buffermgrd");
     SWSS_LOG_ENTER();
 
     SWSS_LOG_NOTICE("--- Starting buffermgrd ---");
 
-    while ((opt = getopt(argc, argv, "l:a:p:h")) != -1 )
+    while ((opt = getopt(argc, argv, "l:a:p:z:h")) != -1 )
     {
         switch (opt)
         {
@@ -131,6 +136,9 @@ int main(int argc, char **argv)
         case 'p':
             peripherial_table_file = optarg;
             break;
+        case 'z':
+            zero_profile_file = optarg;
+            break;
         default: /* '?' */
             usage();
             return EXIT_FAILURE;
@@ -141,7 +149,9 @@ int main(int argc, char **argv)
     {
         std::vector<Orch *> cfgOrchList;
         bool dynamicMode = false;
-        shared_ptr<vector<KeyOpFieldsValuesTuple>> db_items_ptr;
+        shared_ptr<vector<KeyOpFieldsValuesTuple>> asic_table_ptr = nullptr;
+        shared_ptr<vector<KeyOpFieldsValuesTuple>> peripherial_table_ptr = nullptr;
+        shared_ptr<vector<KeyOpFieldsValuesTuple>> zero_profiles_ptr = nullptr;
 
         DBConnector cfgDb("CONFIG_DB", 0);
         DBConnector stateDb("STATE_DB", 0);
@@ -150,18 +160,23 @@ int main(int argc, char **argv)
         if (!asic_table_file.empty())
         {
             // Load the json file containing the SWITCH_TABLE
-            db_items_ptr = load_json(asic_table_file);
-            if (nullptr != db_items_ptr)
+            asic_table_ptr = load_json(asic_table_file);
+            if (nullptr != asic_table_ptr)
             {
-                write_to_state_db(db_items_ptr);
-                db_items_ptr.reset();
+                write_to_state_db(asic_table_ptr);
 
                 if (!peripherial_table_file.empty())
                 {
                     //Load the json file containing the PERIPHERIAL_TABLE
-                    db_items_ptr = load_json(peripherial_table_file);
-                    if (nullptr != db_items_ptr)
-                        write_to_state_db(db_items_ptr);
+                    peripherial_table_ptr = load_json(peripherial_table_file);
+                    if (nullptr != peripherial_table_ptr)
+                        write_to_state_db(peripherial_table_ptr);
+                }
+
+                if (!zero_profile_file.empty())
+                {
+                    //Load the json file containing the zero profiles
+                    zero_profiles_ptr = load_json(zero_profile_file);
                 }
 
                 dynamicMode = true;
@@ -183,7 +198,7 @@ int main(int argc, char **argv)
                 TableConnector(&stateDb, STATE_BUFFER_MAXIMUM_VALUE_TABLE),
                 TableConnector(&stateDb, STATE_PORT_TABLE_NAME)
             };
-            cfgOrchList.emplace_back(new BufferMgrDynamic(&cfgDb, &stateDb, &applDb, buffer_table_connectors, db_items_ptr));
+            cfgOrchList.emplace_back(new BufferMgrDynamic(&cfgDb, &stateDb, &applDb, buffer_table_connectors, peripherial_table_ptr, zero_profiles_ptr));
         }
         else if (!pg_lookup_file.empty())
         {

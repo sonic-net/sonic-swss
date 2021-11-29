@@ -11,5 +11,6 @@ public:
     bool validateAddMatch(const sai_attribute_t &attr);
     bool validateAddAction(const sai_attribute_t &attr);
     bool validate() override;
-    void update(SubjectType, void *) override;
+    void onUpdate(SubjectType, void *) override;
+    bool validateAddAction(string attr_name, string attr_value) override;
 };

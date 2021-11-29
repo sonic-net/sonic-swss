@@ -38,6 +38,7 @@ endif
 orchagent_SOURCES = \
             main.cpp \
             $(top_srcdir)/lib/gearboxutils.cpp \
+            $(top_srcdir)/lib/subintf.cpp \
             orchdaemon.cpp \
             orch.cpp \
             notifications.cpp \
@@ -64,6 +65,7 @@ orchagent_SOURCES = \
             pbh/pbhrule.cpp \
             pbhorch.cpp \
             saihelper.cpp \
+            saiattr.cpp \
             switchorch.cpp \
             pfcwdorch.cpp \
             pfcactionhandler.cpp \
@@ -87,7 +89,8 @@ orchagent_SOURCES = \
             macsecorch.cpp \
             lagid.cpp \
             bfdorch.cpp \
-            srv6orch.cpp
+            srv6orch.cpp \
+            response_publisher.cpp
 
 orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp
 orchagent_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.cpp
