@@ -28,7 +28,7 @@ public:
     using Orch::doTask;
 
 private:
-    ProducerStateTable m_appIntfTableProducer, m_neighTableProducer;
+    ProducerStateTable m_appIntfTableProducer;
     Table m_cfgIntfTable, m_cfgVlanIntfTable, m_cfgLagIntfTable, m_cfgLoopbackIntfTable;
     Table m_statePortTable, m_stateLagTable, m_stateVlanTable, m_stateVrfTable, m_stateIntfTable, m_appLagTable;
     Table m_neighTable;

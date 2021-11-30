@@ -41,7 +41,6 @@ IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         m_stateIntfTable(stateDb, STATE_INTERFACE_TABLE_NAME),
         m_appIntfTableProducer(appDb, APP_INTF_TABLE_NAME),
         m_neighTable(appDb, APP_NEIGH_TABLE_NAME),
-        m_neighTableProducer(appDb, APP_NEIGH_TABLE_NAME),
         m_appLagTable(appDb, APP_LAG_TABLE_NAME)
 {
     auto subscriberStateTable = new swss::SubscriberStateTable(stateDb,
@@ -635,7 +634,11 @@ void IntfMgr::delIpv6LinkLocalNeigh(const string &alias)
                 IpAddress ipAddress(keys[1]);
                 if (ipAddress.getAddrScope() == IpAddress::AddrScope::LINK_SCOPE)
                 {
-                    m_neighTableProducer.del(neighKey);
+                    stringstream cmd;
+                    string res;
+
+                    cmd << IP_CMD << " neigh del dev " << keys[0] << " " << keys[1] ;
+                    swss::exec(cmd.str(), res);
                     SWSS_LOG_INFO("Deleted ipv6 link local neighbor - %s", keys[1].c_str());
                 }
             }
