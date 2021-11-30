@@ -228,7 +228,8 @@ bool OrchDaemon::init()
         TableConnector(m_configDb, CFG_PORT_STORM_CONTROL_TABLE_NAME)
     };
 
-    gPolicerOrch = new PolicerOrch(policer_tables, gPortsOrch);
+    TableConnector stateDbStorm(m_stateDb, STATE_BUM_STORM_CAPABILITY_NAME);
+    gPolicerOrch = new PolicerOrch(policer_tables, stateDbStorm, gPortsOrch);
 
     TableConnector stateDbMirrorSession(m_stateDb, STATE_MIRROR_SESSION_TABLE_NAME);
     TableConnector confDbMirrorSession(m_configDb, CFG_MIRROR_SESSION_TABLE_NAME);

@@ -29,7 +29,7 @@ typedef map<string, int> PolicerRefCountTable;
 class PolicerOrch : public Orch, public Observer
 {
 public:
-    PolicerOrch(vector<TableConnector> &tableNames, PortsOrch *portOrch);
+    PolicerOrch(vector<TableConnector> &tableNames, TableConnector stateDbStormConnector, PortsOrch *portOrch);
 
     bool policerExists(const string &name);
     bool getPolicerOid(const string &name, sai_object_id_t &oid);
@@ -47,12 +47,14 @@ private:
 
     PolicerTable m_syncdPolicers;
     PolicerRefCountTable m_policerRefCounts;
+    Table m_stormCapStateTable;
 
     typedef task_process_status (PolicerOrch::*policer_type_table_handler)(Consumer& consumer);
     typedef map<string, policer_type_table_handler> policer_type_table_handler_map;
     typedef pair<string, policer_type_table_handler> policer_type_table_handler_pair;
     policer_type_table_handler_map m_policer_type_table_handler_map;
     void initPolicerTypeTableHandlers();
+    void getStormCapability();
 
     bool isStormControlPolicer(string policer_name);
 };

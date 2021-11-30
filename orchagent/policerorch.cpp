@@ -122,11 +122,16 @@ bool PolicerOrch::decreaseRefCount(const string &name)
     return true;
 }
 
-PolicerOrch::PolicerOrch(vector<TableConnector> &tableNames, PortsOrch *portOrch) : Orch(tableNames), m_portsOrch(portOrch)
+PolicerOrch::PolicerOrch(vector<TableConnector> &tableNames, TableConnector stateDbStorm, PortsOrch *portOrch) : 
+    Orch(tableNames), 
+    m_stormCapStateTable(stateDbStorm.first, stateDbStorm.second),
+    m_portsOrch(portOrch)
 {
     SWSS_LOG_ENTER();
     initPolicerTypeTableHandlers();
     m_portsOrch->attach(this);
+    /*Retrieve Storm capability and update StateDB Table*/
+    getStormCapability();
 }
 
 void PolicerOrch::doTask(Consumer &consumer)
@@ -177,6 +182,87 @@ void PolicerOrch::doTask(Consumer &consumer)
                 it = consumer.m_toSync.erase(it);
                 break;
         }
+    }
+}
+
+void PolicerOrch::getStormCapability()
+{
+    SWSS_LOG_ENTER();
+    auto allPorts = gPortsOrch->getAllPorts();
+    sai_status_t status;
+    std::vector<FieldValueTuple> fvs;
+    string key;
+    sai_attr_capability_t values;
+
+    fvs.push_back(FieldValueTuple("storm-type",storm_broadcast));
+    fvs.push_back(FieldValueTuple("supported", "0"));
+    m_stormCapStateTable.set(storm_broadcast, fvs);
+    fvs.clear();
+    fvs.push_back(FieldValueTuple("storm-type",storm_unknown_unicast));
+    fvs.push_back(FieldValueTuple("supported", "0"));
+    fvs.clear();
+    m_stormCapStateTable.set(storm_unknown_unicast, fvs);
+    fvs.push_back(FieldValueTuple("storm-type",storm_unknown_mcast));
+    fvs.push_back(FieldValueTuple("supported", "0"));
+    m_stormCapStateTable.set(storm_unknown_mcast, fvs);
+    fvs.clear();
+    status = sai_query_attribute_capability(gSwitchId, 
+            SAI_OBJECT_TYPE_PORT, 
+            SAI_PORT_ATTR_FLOOD_STORM_CONTROL_POLICER_ID, 
+            &values);
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_DEBUG("Capability FLOOD_STORM_CONTROL: Create(%s) Set(%s) Get(%s)",
+                ((values.create_implemented)?"True":"False"),
+                ((values.set_implemented)?"True":"False"),
+                ((values.get_implemented)?"True":"False"));
+
+        fvs.push_back(FieldValueTuple("storm-type",storm_unknown_unicast));
+        fvs.push_back(FieldValueTuple("supported", "1"));
+        m_stormCapStateTable.set(storm_unknown_unicast, fvs);
+        fvs.clear();
+    }
+    else
+    {
+        SWSS_LOG_INFO("FLOOD Storm capability not supported");
+    }
+    status = sai_query_attribute_capability(gSwitchId, 
+            SAI_OBJECT_TYPE_PORT, 
+            SAI_PORT_ATTR_BROADCAST_STORM_CONTROL_POLICER_ID, 
+            &values);
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_DEBUG("Capability BROADCAST_STORM_CONTROL: Create(%s) Set(%s) Get(%s)",
+                ((values.create_implemented)?"True":"False"),
+                ((values.set_implemented)?"True":"False"),
+                ((values.get_implemented)?"True":"False"));
+        fvs.push_back(FieldValueTuple("storm-type",storm_broadcast));
+        fvs.push_back(FieldValueTuple("supported", "1"));
+        m_stormCapStateTable.set(storm_broadcast, fvs);
+        fvs.clear();
+    }
+    else
+    {
+        SWSS_LOG_INFO("BROADCAST Storm capability not supported");
+    }
+    status = sai_query_attribute_capability(gSwitchId, 
+            SAI_OBJECT_TYPE_PORT, 
+            SAI_PORT_ATTR_MULTICAST_STORM_CONTROL_POLICER_ID, 
+            &values);
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_DEBUG("Capability MULTICAST_STORM_CONTROL: Create(%s) Set(%s) Get(%s)",
+                ((values.create_implemented)?"True":"False"),
+                ((values.set_implemented)?"True":"False"),
+                ((values.get_implemented)?"True":"False"));
+        fvs.push_back(FieldValueTuple("storm-type",storm_unknown_mcast));
+        fvs.push_back(FieldValueTuple("supported", "1"));
+        m_stormCapStateTable.set(storm_broadcast, fvs);
+        fvs.clear();
+    }
+    else
+    {
+        SWSS_LOG_INFO("BROADCAST Storm capability not supported");
     }
 }
 
