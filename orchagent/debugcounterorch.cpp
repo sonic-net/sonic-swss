@@ -645,15 +645,17 @@ void DebugCounterOrch::addPortDebugCounter(sai_object_id_t port_id)
 {
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_NOTICE("add debug counter for port 0x%" PRIu64 , port_id);
+    SWSS_LOG_INFO("add debug counter for port 0x%" PRIu64 , port_id);
 
-    for (const auto& debug_counter: debug_counters) {
+    for (const auto& debug_counter: debug_counters)
+    {
         DebugCounter *counter = debug_counter.second.get();
         auto counter_type = counter->getCounterType();
         auto counter_stat = counter->getDebugCounterSAIStat();
         auto flex_counter_type = getFlexCounterType(counter_type);
 
-        if (flex_counter_type == CounterType::PORT_DEBUG){
+        if (flex_counter_type == CounterType::PORT_DEBUG)
+        {
             flex_counter_manager.addFlexCounterStat(
                 port_id,
                 flex_counter_type,
@@ -666,16 +668,18 @@ void DebugCounterOrch::removePortDebugCounter(sai_object_id_t port_id)
 {
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_NOTICE("remove debug counter for port 0x%" PRIu64 , port_id);
+    SWSS_LOG_INFO("remove debug counter for port 0x%" PRIu64 , port_id);
 
-    for (const auto& debug_counter: debug_counters) {
+    for (const auto& debug_counter: debug_counters)
+    {
         DebugCounter *counter = debug_counter.second.get();
 
         auto counter_type = counter->getCounterType();
         auto counter_stat = counter->getDebugCounterSAIStat();
         auto flex_counter_type = getFlexCounterType(counter_type);
 
-        if (flex_counter_type == CounterType::PORT_DEBUG){
+        if (flex_counter_type == CounterType::PORT_DEBUG)
+        {
             flex_counter_manager.removeFlexCounterStat(
                 port_id,
                 flex_counter_type,
