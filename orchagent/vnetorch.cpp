@@ -636,15 +636,15 @@ static bool update_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_obj
 }
 
 VNetRouteOrch::VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOrch *vnetOrch)
-                                  : Orch2(db, tableNames, request_), vnet_orch_(vnetOrch), m_bfdSessionProducer(db, APP_BFD_SESSION_TABLE_NAME)
+                                  : Orch2(db, tableNames, request_), vnet_orch_(vnetOrch), bfd_session_producer_(db, APP_BFD_SESSION_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
 
     handler_map_.insert(handler_pair(APP_VNET_RT_TABLE_NAME, &VNetRouteOrch::handleRoutes));
     handler_map_.insert(handler_pair(APP_VNET_RT_TUNNEL_TABLE_NAME, &VNetRouteOrch::handleTunnel));
 
-    m_state_db = shared_ptr<DBConnector>(new DBConnector("STATE_DB", 0));
-    m_stateVnetRtTunnelTable = unique_ptr<Table>(new Table(m_state_db.get(), STATE_VNET_RT_TUNNEL_TABLE_NAME));
+    state_db_ = shared_ptr<DBConnector>(new DBConnector("STATE_DB", 0));
+    state_vnet_rt_tunnel_table_ = unique_ptr<Table>(new Table(state_db_.get(), STATE_VNET_RT_TUNNEL_TABLE_NAME));
 
     gBfdOrch->attach(this);
 }
@@ -1476,7 +1476,7 @@ void VNetRouteOrch::createBfdSession(const string& vnet, const NextHopKey& endpo
         FieldValueTuple fvTuple("local_addr", src_ip.to_string());
         data.push_back(fvTuple);
 
-        m_bfdSessionProducer.set(key, data);
+        bfd_session_producer_.set(key, data);
 
         bfd_sessions_[monitor_addr].bfd_state = SAI_BFD_SESSION_STATE_DOWN;
     }
@@ -1504,7 +1504,7 @@ void VNetRouteOrch::removeBfdSession(const string& vnet, const NextHopKey& endpo
 
     string key = "default:default:" + monitor_addr.to_string();
 
-    m_bfdSessionProducer.del(key);
+    bfd_session_producer_.del(key);
 
     bfd_sessions_.erase(monitor_addr);
 }
@@ -1562,13 +1562,13 @@ void VNetRouteOrch::postRouteState(const string& vnet, IpPrefix& ipPrefix, NextH
     fvVector.emplace_back("active_endpoints", ep_str);
     fvVector.emplace_back("state", route_state);
 
-    m_stateVnetRtTunnelTable->set(state_db_key, fvVector);
+    state_vnet_rt_tunnel_table_->set(state_db_key, fvVector);
 }
 
 void VNetRouteOrch::removeRouteState(const string& vnet, IpPrefix& ipPrefix)
 {
     const string state_db_key = vnet + state_db_key_delimiter + ipPrefix.to_string();
-    m_stateVnetRtTunnelTable->del(state_db_key);
+    state_vnet_rt_tunnel_table_->del(state_db_key);
 }
 
 void VNetRouteOrch::update(SubjectType type, void *cntx)

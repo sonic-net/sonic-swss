@@ -359,9 +359,9 @@ private:
     std::map<std::string, VNetTunnelRouteTable> syncd_tunnel_routes_;
     BfdSessionTable bfd_sessions_;
     std::map<std::string, VNetEndpointInfoTable> nexthop_info_;
-    ProducerStateTable m_bfdSessionProducer;
-    shared_ptr<DBConnector> m_state_db;
-    unique_ptr<Table> m_stateVnetRtTunnelTable;
+    ProducerStateTable bfd_session_producer_;
+    shared_ptr<DBConnector> state_db_;
+    unique_ptr<Table> state_vnet_rt_tunnel_table_;
 };
 
 class VNetCfgRouteOrch : public Orch
