@@ -148,6 +148,9 @@ private:
     int m_maxNextHopGroupCount;
     bool m_resync;
 
+    shared_ptr<DBConnector> m_stateDb;
+    unique_ptr<swss::Table> m_stateDefaultRouteTb;
+
     RouteTables m_syncdRoutes;
     NextHopGroupTable m_syncdNextHopGroups;
     NextHopRouteTable m_nextHops;
@@ -167,6 +170,8 @@ private:
 
     std::string getLinkLocalEui64Addr(void);
     void        addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);
+
+    void updateDefRouteState(string ip, bool add=false);
 
     void doTask(Consumer& consumer);
 };
