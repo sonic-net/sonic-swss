@@ -25,7 +25,8 @@ dist_swss_DATA = \
 		 watermark_pg.lua \
 		 watermark_bufferpool.lua \
 		 lagids.lua \
-		 tunnel_rates.lua
+		 tunnel_rates.lua \
+		 trap_rates.lua
 
 bin_PROGRAMS = orchagent routeresync orchagent_restart_check
 
@@ -92,7 +93,7 @@ orchagent_SOURCES = \
             srv6orch.cpp \
             response_publisher.cpp
 
-orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp
+orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp flex_counter/flow_counter_handler.cpp
 orchagent_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.cpp
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)

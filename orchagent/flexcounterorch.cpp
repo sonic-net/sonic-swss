@@ -9,6 +9,7 @@
 #include "flexcounterorch.h"
 #include "debugcounterorch.h"
 #include "directory.h"
+#include "copporch.h"
 
 extern sai_port_api_t *sai_port_api;
 
@@ -17,6 +18,7 @@ extern FabricPortsOrch *gFabricPortsOrch;
 extern IntfsOrch *gIntfsOrch;
 extern BufferOrch *gBufferOrch;
 extern Directory<Orch*> gDirectory;
+extern CoppOrch *gCoppOrch;
 
 #define BUFFER_POOL_WATERMARK_KEY   "BUFFER_POOL_WATERMARK"
 #define PORT_KEY                    "PORT"
@@ -26,6 +28,7 @@ extern Directory<Orch*> gDirectory;
 #define RIF_KEY                     "RIF"
 #define ACL_KEY                     "ACL"
 #define TUNNEL_KEY                  "TUNNEL"
+#define FLOW_CNT_TRAP_KEY           "FLOW_CNT_TRAP"
 
 unordered_map<string, string> flexCounterGroupMap =
 {
@@ -43,6 +46,7 @@ unordered_map<string, string> flexCounterGroupMap =
     {"DEBUG_COUNTER", DEBUG_COUNTER_FLEX_COUNTER_GROUP},
     {"ACL", ACL_COUNTER_FLEX_COUNTER_GROUP},
     {"TUNNEL", TUNNEL_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {FLOW_CNT_TRAP_KEY, HOSTIF_TRAP_COUNTER_FLEX_COUNTER_GROUP},
 };
 
 
@@ -157,6 +161,19 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     if (vxlan_tunnel_orch && (key== TUNNEL_KEY) && (value == "enable"))
                     {
                         vxlan_tunnel_orch->generateTunnelCounterMap();
+                    }
+                    if (gCoppOrch && (key == FLOW_CNT_TRAP_KEY))
+                    {
+                        if (value == "enable")
+                        {
+                            m_hostif_trap_counter_enabled = true;
+                            gCoppOrch->generateHostIfTrapCounterIdList();
+                        }
+                        else if (value == "disable")
+                        {
+                            gCoppOrch->clearHostIfTrapCounterIdList();
+                            m_hostif_trap_counter_enabled = false;
+                        }
                     }
                     vector<FieldValueTuple> fieldValues;
                     fieldValues.emplace_back(FLEX_COUNTER_STATUS_FIELD, value);

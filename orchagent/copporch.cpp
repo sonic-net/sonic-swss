@@ -1,8 +1,14 @@
 #include "sai.h"
 #include "copporch.h"
 #include "portsorch.h"
+#include "flexcounterorch.h"
 #include "tokenize.h"
 #include "logger.h"
+#include "sai_serialize.h"
+#include "schema.h"
+#include "directory.h"
+#include "flow_counter_handler.h"
+#include "timer.h"
 
 #include <inttypes.h>
 #include <sstream>
@@ -18,7 +24,10 @@ extern sai_switch_api_t*    sai_switch_api;
 
 extern sai_object_id_t      gSwitchId;
 extern PortsOrch*           gPortsOrch;
+extern Directory<Orch*>     gDirectory;
 extern bool                 gIsNatSupported;
+
+#define FLEX_COUNTER_UPD_INTERVAL 1
 
 static map<string, sai_meter_type_t> policer_meter_map = {
     {"packets", SAI_METER_TYPE_PACKETS},
@@ -82,6 +91,21 @@ static map<string, sai_hostif_trap_type_t> trap_id_map = {
     {"bfdv6_micro", SAI_HOSTIF_TRAP_TYPE_BFDV6_MICRO}
 };
 
+
+std::string get_trap_name_by_type(sai_hostif_trap_type_t trap_type)
+{
+    static map<sai_hostif_trap_type_t, string> trap_name_to_id_map;
+    if (trap_name_to_id_map.empty())
+    {
+        for (const auto &kv : trap_id_map)
+        {
+            trap_name_to_id_map.emplace(kv.second, kv.first);
+        }
+    }
+
+    return trap_name_to_id_map.at(trap_type);
+}
+
 static map<string, sai_packet_action_t> packet_action_map = {
     {"drop", SAI_PACKET_ACTION_DROP},
     {"forward", SAI_PACKET_ACTION_FORWARD},
@@ -97,11 +121,23 @@ const string default_trap_group = "default";
 const vector<sai_hostif_trap_type_t> default_trap_ids = {
     SAI_HOSTIF_TRAP_TYPE_TTL_ERROR
 };
+const uint HOSTIF_TRAP_COUNTER_POLLING_INTERVAL_MS = 10000;
 
 CoppOrch::CoppOrch(DBConnector* db, string tableName) :
-    Orch(db, tableName)
+    Orch(db, tableName),
+    m_counter_db(std::shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0))),
+    m_flex_db(std::shared_ptr<DBConnector>(new DBConnector("FLEX_COUNTER_DB", 0))),
+    m_asic_db(std::shared_ptr<DBConnector>(new DBConnector("ASIC_DB", 0))),
+    m_counter_table(std::unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_TRAP_NAME_MAP))),
+    m_vidToRidTable(std::unique_ptr<Table>(new Table(m_asic_db.get(), "VIDTORID"))),
+    m_flex_counter_group_table(std::unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_GROUP_TABLE))),
+    m_trap_counter_manager(HOSTIF_TRAP_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, HOSTIF_TRAP_COUNTER_POLLING_INTERVAL_MS, false)
 {
     SWSS_LOG_ENTER();
+    auto intervT = timespec { .tv_sec = FLEX_COUNTER_UPD_INTERVAL , .tv_nsec = 0 };
+    m_FlexCounterUpdTimer = new SelectableTimer(intervT);
+    auto executorT = new ExecutableTimer(m_FlexCounterUpdTimer, this, "FLEX_COUNTER_UPD_TIMER");
+    Orch::addExecutor(executorT);
 
     initDefaultHostIntfTable();
     initDefaultTrapGroup();
@@ -321,6 +357,8 @@ bool CoppOrch::applyAttributesToTrapIds(sai_object_id_t trap_group_id,
         }
         m_syncdTrapIds[trap_id].trap_group_obj = trap_group_id;
         m_syncdTrapIds[trap_id].trap_obj = hostif_trap_id;
+        m_syncdTrapIds[trap_id].trap_type = trap_id;
+        bindTrapCounter(hostif_trap_id, trap_id);
     }
     return true;
 }
@@ -706,6 +744,35 @@ void CoppOrch::doTask(Consumer &consumer)
     }
 }
 
+void CoppOrch::doTask(SelectableTimer &timer)
+{
+    SWSS_LOG_ENTER();
+
+    string value;
+    for (auto it = m_pendingAddToFlexCntr.begin(); it != m_pendingAddToFlexCntr.end(); )
+    {
+        const auto id = sai_serialize_object_id(it->first);
+        if (m_vidToRidTable->hget("", id, value))
+        {
+            SWSS_LOG_INFO("Registering %s, id %s", it->second.c_str(), id.c_str());
+
+            std::unordered_set<std::string> counter_stats;
+            FlowCounterHandler::getGenericCounterStatIdList(counter_stats);
+            m_trap_counter_manager.setCounterIdList(it->first, CounterType::HOSTIF_TRAP, counter_stats);
+            it = m_pendingAddToFlexCntr.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+
+    if (m_pendingAddToFlexCntr.empty())
+    {
+        m_FlexCounterUpdTimer->stop();
+    }
+}
+
 void CoppOrch::getTrapAddandRemoveList(string trap_group_name,
                                        vector<sai_hostif_trap_type_t> &trap_ids,
                                        vector<sai_hostif_trap_type_t> &add_trap_ids,
@@ -777,17 +844,9 @@ bool CoppOrch::trapGroupProcessTrapIdChange (string trap_group_name,
         {
             if (m_syncdTrapIds.find(i)!= m_syncdTrapIds.end())
             {
-                sai_status_t sai_status = sai_hostif_api->remove_hostif_trap(
-                                                             m_syncdTrapIds[i].trap_obj);
-                if (sai_status != SAI_STATUS_SUCCESS)
+                if (!removeTrap(m_syncdTrapIds[i].trap_obj))
                 {
-                    SWSS_LOG_ERROR("Failed to remove trap object %" PRId64 "",
-                            m_syncdTrapIds[i].trap_obj);
-                    task_process_status handle_status = handleSaiRemoveStatus(SAI_API_HOSTIF, sai_status);
-                    if (handle_status != task_success)
-                    {
-                        return parseHandleSaiStatusFailure(handle_status);
-                    }
+                    return false;
                 }
             }
         }
@@ -830,17 +889,9 @@ bool CoppOrch::trapGroupProcessTrapIdChange (string trap_group_name,
                  */
                 if (m_syncdTrapIds[i].trap_group_obj ==  m_trap_group_map[trap_group_name])
                 {
-                    sai_status_t sai_status = sai_hostif_api->remove_hostif_trap(
-                                                                    m_syncdTrapIds[i].trap_obj);
-                    if (sai_status != SAI_STATUS_SUCCESS)
+                    if (!removeTrap(m_syncdTrapIds[i].trap_obj))
                     {
-                        SWSS_LOG_ERROR("Failed to remove trap object %" PRId64 "",
-                                       m_syncdTrapIds[i].trap_obj);
-                        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_HOSTIF, sai_status);
-                        if (handle_status != task_success)
-                        {
-                            return parseHandleSaiStatusFailure(handle_status);
-                        }
+                        return false;
                     }
                     m_syncdTrapIds.erase(i);
                 }
@@ -882,15 +933,9 @@ bool CoppOrch::processTrapGroupDel (string trap_group_name)
         if (it.second.trap_group_obj == m_trap_group_map[trap_group_name])
         {
             trap_ids_to_reset.push_back(it.first);
-            sai_status_t sai_status = sai_hostif_api->remove_hostif_trap(it.second.trap_obj);
-            if (sai_status != SAI_STATUS_SUCCESS)
+            if (!removeTrap(it.second.trap_obj))
             {
-                SWSS_LOG_ERROR("Failed to remove trap object %" PRId64 "", it.second.trap_obj);
-                task_process_status handle_status = handleSaiRemoveStatus(SAI_API_HOSTIF, sai_status);
-                if (handle_status != task_success)
-                {
-                    return parseHandleSaiStatusFailure(handle_status);
-                }
+                return false;
             }
         }
     }
@@ -1095,4 +1140,159 @@ bool CoppOrch::trapGroupUpdatePolicer (string trap_group_name,
         }
     }
     return true;
+}
+
+void CoppOrch::initTrapRatePlugin()
+{
+    if (m_trap_rate_plugin_loaded)
+    {
+        return;
+    }
+
+    std::string trapRatePluginName = "trap_rates.lua";
+    try
+    {
+        std::string trapLuaScript = swss::loadLuaScript(trapRatePluginName);
+        std::string trapSha = swss::loadRedisScript(m_counter_db.get(), trapLuaScript);
+
+        vector<FieldValueTuple> fieldValues;
+        fieldValues.emplace_back(FLOW_COUNTER_PLUGIN_FIELD, trapSha);
+        fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
+        m_flex_counter_group_table->set(HOSTIF_TRAP_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
+    }
+    catch (const runtime_error &e)
+    {
+        SWSS_LOG_ERROR("Trap flex counter groups were not set successfully: %s", e.what());
+    }
+    m_trap_rate_plugin_loaded = true;
+}
+
+bool CoppOrch::removeTrap(sai_object_id_t hostif_trap_id)
+{
+    unbindTrapCounter(hostif_trap_id);
+
+    sai_status_t sai_status = sai_hostif_api->remove_hostif_trap(hostif_trap_id);
+    if (sai_status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove trap object %" PRId64 "",
+                hostif_trap_id);
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_HOSTIF, sai_status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    return true;
+}
+
+bool CoppOrch::bindTrapCounter(sai_object_id_t hostif_trap_id, sai_hostif_trap_type_t trap_type)
+{
+    auto flex_counters_orch = gDirectory.get<FlexCounterOrch*>();
+
+    if (!flex_counters_orch || !flex_counters_orch->getHostIfTrapCounterState())
+    {
+        return false;
+    }
+
+    if (m_trap_obj_name_map.count(hostif_trap_id) > 0)
+    {
+        return true;
+    }
+
+    initTrapRatePlugin();
+
+    // Create generic counter
+    sai_object_id_t counter_id;
+    if (!FlowCounterHandler::createGenericCounter(counter_id))
+    {
+        return false;
+    }
+
+    // Bind generic counter to trap
+    sai_attribute_t trap_attr;
+    trap_attr.id = SAI_HOSTIF_TRAP_ATTR_COUNTER_ID;
+    trap_attr.value.oid = counter_id;
+    sai_status_t sai_status = sai_hostif_api->set_hostif_trap_attribute(hostif_trap_id, &trap_attr);
+    if (sai_status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Failed to bind trap %" PRId64 " to counter %" PRId64 "", hostif_trap_id, counter_id);
+        return false;
+    }
+
+    // Update COUNTERS_TRAP_NAME_MAP
+    auto trap_name = get_trap_name_by_type(trap_type);
+    vector<FieldValueTuple> nameMapFvs;
+    nameMapFvs.emplace_back(trap_name, sai_serialize_object_id(counter_id));
+    m_counter_table->set("", nameMapFvs);
+
+    auto was_empty = m_pendingAddToFlexCntr.empty();
+    m_pendingAddToFlexCntr[counter_id] = trap_name;
+
+    if (was_empty)
+    {
+        m_FlexCounterUpdTimer->start();
+    }
+
+    m_trap_obj_name_map.emplace(hostif_trap_id, trap_name);
+    return true;
+}
+
+void CoppOrch::unbindTrapCounter(sai_object_id_t hostif_trap_id)
+{
+    auto iter = m_trap_obj_name_map.find(hostif_trap_id);
+    if (iter == m_trap_obj_name_map.end())
+    {
+        return;
+    }
+
+    std::string counter_oid_str;
+    m_counter_table->hget("", iter->second, counter_oid_str);
+
+    // Clear FLEX_COUNTER table
+    sai_object_id_t counter_id;
+    sai_deserialize_object_id(counter_oid_str, counter_id);
+    auto update_iter = m_pendingAddToFlexCntr.find(counter_id);
+    if (update_iter == m_pendingAddToFlexCntr.end())
+    {
+        m_trap_counter_manager.clearCounterIdList(counter_id);
+    }
+    else
+    {
+        m_pendingAddToFlexCntr.erase(update_iter);
+    }
+
+    // Remove trap from COUNTERS_TRAP_NAME_MAP
+    m_counter_table->hdel("", iter->second);
+
+    // Unbind generic counter to trap
+    sai_attribute_t trap_attr;
+    trap_attr.id = SAI_HOSTIF_TRAP_ATTR_COUNTER_ID;
+    trap_attr.value.oid = SAI_NULL_OBJECT_ID;
+    sai_status_t sai_status = sai_hostif_api->set_hostif_trap_attribute(hostif_trap_id, &trap_attr);
+    if (sai_status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to unbind trap %" PRId64 " to counter %" PRId64 "", hostif_trap_id, counter_id);
+    }
+
+    // Remove generic counter
+    FlowCounterHandler::removeGenericCounter(counter_id);
+
+    m_trap_obj_name_map.erase(iter);
+}
+
+void CoppOrch::generateHostIfTrapCounterIdList()
+{
+    for (const auto &kv : m_syncdTrapIds)
+    {
+        bindTrapCounter(kv.second.trap_obj, kv.second.trap_type);
+    }
+}
+
+void CoppOrch::clearHostIfTrapCounterIdList()
+{
+    for (const auto &kv : m_syncdTrapIds)
+    {
+        unbindTrapCounter(kv.second.trap_obj);
+    }
 }
