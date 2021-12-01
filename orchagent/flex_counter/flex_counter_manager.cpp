@@ -43,6 +43,7 @@ const unordered_map<CounterType, string> FlexCounterManager::counter_id_field_lo
     { CounterType::MACSEC_FLOW,     MACSEC_FLOW_COUNTER_ID_LIST },
     { CounterType::ACL_COUNTER,     ACL_COUNTER_ATTR_ID_LIST },
     { CounterType::TUNNEL,          TUNNEL_COUNTER_ID_LIST },
+    { CounterType::HOSTIF_TRAP,     FLOW_COUNTER_ID_LIST },
 };
 
 FlexManagerDirectory g_FlexManagerDirectory;
@@ -57,19 +58,19 @@ FlexCounterManager *FlexManagerDirectory::createFlexCounterManager(const string&
     {
         if (stats_mode != m_managers[group_name]->getStatsMode())
         {
-            SWSS_LOG_ERROR("Stats mode mismatch with already created flex counter manager %s", 
+            SWSS_LOG_ERROR("Stats mode mismatch with already created flex counter manager %s",
                           group_name.c_str());
             return NULL;
         }
         if (polling_interval != m_managers[group_name]->getPollingInterval())
         {
-            SWSS_LOG_ERROR("Polling interval mismatch with already created flex counter manager %s", 
+            SWSS_LOG_ERROR("Polling interval mismatch with already created flex counter manager %s",
                           group_name.c_str());
             return NULL;
         }
         if (enabled != m_managers[group_name]->getEnabled())
         {
-            SWSS_LOG_ERROR("Enabled field mismatch with already created flex counter manager %s", 
+            SWSS_LOG_ERROR("Enabled field mismatch with already created flex counter manager %s",
                           group_name.c_str());
             return NULL;
         }
