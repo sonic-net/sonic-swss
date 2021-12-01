@@ -423,7 +423,7 @@ namespace aclorch_test
                 TableConnector(m_config_db.get(), CFG_POLICER_TABLE_NAME),
                 TableConnector(m_config_db.get(), CFG_PORT_STORM_CONTROL_TABLE_NAME)
             };
-            TableConnector stateDbStorm(m_stateDb, "BUM_STORM_CAPABILITY");
+            TableConnector stateDbStorm(m_state_db.get(), "BUM_STORM_CAPABILITY");
             PolicerOrch *policer_orch = new PolicerOrch(policer_tables, stateDbStorm, gPortsOrch);
 
             TableConnector stateDbMirrorSession(m_state_db.get(), STATE_MIRROR_SESSION_TABLE_NAME);
