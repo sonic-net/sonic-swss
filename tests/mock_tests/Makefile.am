@@ -1,5 +1,6 @@
 FLEX_CTR_DIR = $(top_srcdir)/orchagent/flex_counter
 DEBUG_CTR_DIR = $(top_srcdir)/orchagent/debug_counter
+P4_ORCH_DIR = $(top_srcdir)/orchagent/p4orch
 
 INCLUDES = -I $(FLEX_CTR_DIR) -I $(DEBUG_CTR_DIR) -I $(top_srcdir)/lib
 
@@ -89,6 +90,18 @@ tests_SOURCES = aclorch_ut.cpp \
 
 tests_SOURCES += $(FLEX_CTR_DIR)/flex_counter_manager.cpp $(FLEX_CTR_DIR)/flex_counter_stat_manager.cpp $(FLEX_CTR_DIR)/flow_counter_handler.cpp
 tests_SOURCES += $(DEBUG_CTR_DIR)/debug_counter.cpp $(DEBUG_CTR_DIR)/drop_counter.cpp
+tests_SOURCES += $(P4_ORCH_DIR)/p4orch.cpp \
+		 $(P4_ORCH_DIR)/p4orch_util.cpp \
+		 $(P4_ORCH_DIR)/p4oidmapper.cpp \
+		 $(P4_ORCH_DIR)/router_interface_manager.cpp \
+		 $(P4_ORCH_DIR)/neighbor_manager.cpp \
+		 $(P4_ORCH_DIR)/next_hop_manager.cpp \
+		 $(P4_ORCH_DIR)/route_manager.cpp \
+		 $(P4_ORCH_DIR)/acl_util.cpp \
+		 $(P4_ORCH_DIR)/acl_table_manager.cpp \
+		 $(P4_ORCH_DIR)/acl_rule_manager.cpp \
+		 $(P4_ORCH_DIR)/wcmp_manager.cpp \
+		 $(P4_ORCH_DIR)/mirror_session_manager.cpp
 
 tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) -I$(top_srcdir)/orchagent

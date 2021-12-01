@@ -1,5 +1,6 @@
 #pragma once
 
+#include "acltable.h"
 #include "orch.h"
 #include "timer.h"
 
@@ -29,6 +30,13 @@ public:
     bool setAgingFDB(uint32_t sec);
     void set_switch_capability(const std::vector<swss::FieldValueTuple>& values);
     bool querySwitchDscpToTcCapability(sai_object_type_t sai_object, sai_attr_id_t attr_id);
+
+    // Return reference to ACL group created for each stage and the bind point is
+    // the switch
+    const std::map<sai_acl_stage_t, sai_object_id_t> &getAclGroupOidsBindingToSwitch();
+    // Initialize the ACL groups bind to Switch
+    void initAclGroupsBindToSwitch();
+
 private:
     void doTask(Consumer &consumer);
     void doTask(swss::SelectableTimer &timer);
@@ -38,10 +46,20 @@ private:
     void querySwitchTpidCapability();
     sai_status_t setSwitchTunnelVxlanParams(swss::FieldValueTuple &val);
 
+    // Create the default ACL group for the given stage, bind point is
+    // SAI_ACL_BIND_POINT_TYPE_SWITCH and group type is
+    // SAI_ACL_TABLE_GROUP_TYPE_PARALLEL.
+    ReturnCode createAclGroup(const sai_acl_stage_t &group_stage, sai_object_id_t *acl_grp_oid);
+
+    // Bind the ACL group to switch for the given stage.
+    // Set the SAI_SWITCH_ATTR_{STAGE}_ACL with the group oid.
+    ReturnCode bindAclGroupToSwitch(const sai_acl_stage_t &group_stage, const sai_object_id_t &acl_grp_oid);
+
     swss::NotificationConsumer* m_restartCheckNotificationConsumer;
     void doTask(swss::NotificationConsumer& consumer);
     swss::DBConnector *m_db;
     swss::Table m_switchTable;
+    std::map<sai_acl_stage_t, sai_object_id_t> m_aclGroups;
     sai_object_id_t m_switchTunnelId;
 
     // ASIC temperature sensors

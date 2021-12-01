@@ -65,6 +65,16 @@ public:
     CoppOrch(swss::DBConnector* db, std::string tableName);
     void generateHostIfTrapCounterIdList();
     void clearHostIfTrapCounterIdList();
+
+    inline object_map getTrapGroupMap()
+    {
+        return m_trap_group_map;
+    }
+
+    inline TrapGroupHostIfMap getTrapGroupHostIfMap()
+    {
+        return m_trap_group_hostif_map;
+    }
 protected:
     object_map m_trap_group_map;
 

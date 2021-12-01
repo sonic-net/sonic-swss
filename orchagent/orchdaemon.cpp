@@ -49,6 +49,7 @@ MlagOrch *gMlagOrch;
 IsoGrpOrch *gIsoGrpOrch;
 MACsecOrch *gMacsecOrch;
 CoppOrch *gCoppOrch;
+P4Orch *gP4Orch;
 BfdOrch *gBfdOrch;
 Srv6Orch *gSrv6Orch;
 
@@ -92,6 +93,9 @@ bool OrchDaemon::init()
     SWSS_LOG_ENTER();
 
     string platform = getenv("platform") ? getenv("platform") : "";
+
+    gCrmOrch = new CrmOrch(m_configDb, CFG_CRM_TABLE_NAME);
+
     TableConnector stateDbSwitchTable(m_stateDb, "SWITCH_CAPABILITY");
     TableConnector app_switch_table(m_applDb, APP_SWITCH_TABLE_NAME);
     TableConnector conf_asic_sensors(m_configDb, CFG_ASIC_SENSORS_TABLE_NAME);
@@ -119,7 +123,6 @@ bool OrchDaemon::init()
         { APP_MCLAG_FDB_TABLE_NAME,  FdbOrch::fdborch_pri}
     };
 
-    gCrmOrch = new CrmOrch(m_configDb, CFG_CRM_TABLE_NAME);
     gPortsOrch = new PortsOrch(m_applDb, m_stateDb, ports_tables, m_chassisAppDb);
     TableConnector stateDbFdb(m_stateDb, STATE_FDB_TABLE_NAME);
     TableConnector stateMclagDbFdb(m_stateDb, STATE_MCLAG_REMOTE_FDB_TABLE_NAME);
@@ -609,6 +612,10 @@ bool OrchDaemon::init()
     }
 
     m_orchList.push_back(&CounterCheckOrch::getInstance(m_configDb));
+
+    vector<string> p4rt_tables = {APP_P4RT_TABLE_NAME};
+    gP4Orch = new P4Orch(m_applDb, p4rt_tables, vrf_orch, gCoppOrch);
+    m_orchList.push_back(gP4Orch);
 
     if (WarmStart::isWarmStart())
     {

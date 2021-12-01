@@ -2,17 +2,21 @@
 #include <inttypes.h>
 
 #include "switchorch.h"
+#include "crmorch.h"
 #include "converter.h"
 #include "notifier.h"
 #include "notificationproducer.h"
 #include "macaddress.h"
+#include "return_code.h"
 
 using namespace std;
 using namespace swss;
 
 extern sai_object_id_t gSwitchId;
 extern sai_switch_api_t *sai_switch_api;
+extern sai_acl_api_t *sai_acl_api;
 extern MacAddress gVxlanMacAddress;
+extern CrmOrch *gCrmOrch;
 
 const map<string, sai_switch_attr_t> switch_attribute_map =
 {
@@ -55,6 +59,92 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
     querySwitchTpidCapability();
     auto executorT = new ExecutableTimer(m_sensorsPollerTimer, this, "ASIC_SENSORS_POLL_TIMER");
     Orch::addExecutor(executorT);
+}
+
+void SwitchOrch::initAclGroupsBindToSwitch()
+{
+    // Create an ACL group per stage, INGRESS, EGRESS and PRE_INGRESS
+    for (auto stage_it : aclStageLookup)
+    {
+        sai_object_id_t group_oid;
+        auto status = createAclGroup(fvValue(stage_it), &group_oid);
+        if (!status.ok())
+        {
+            status.prepend("Failed to create ACL group for stage " + fvField(stage_it) + ": ");
+            SWSS_LOG_THROW("%s", status.message().c_str());
+        }
+        SWSS_LOG_NOTICE("Created ACL group for stage %s", fvField(stage_it).c_str());
+        m_aclGroups[fvValue(stage_it)] = group_oid;
+        status = bindAclGroupToSwitch(fvValue(stage_it), group_oid);
+        if (!status.ok())
+        {
+            status.prepend("Failed to bind ACL group to stage " + fvField(stage_it) + ": ");
+            SWSS_LOG_THROW("%s", status.message().c_str());
+        }
+    }
+}
+
+const std::map<sai_acl_stage_t, sai_object_id_t> &SwitchOrch::getAclGroupOidsBindingToSwitch()
+{
+    return m_aclGroups;
+}
+
+ReturnCode SwitchOrch::createAclGroup(const sai_acl_stage_t &group_stage, sai_object_id_t *acl_grp_oid)
+{
+    SWSS_LOG_ENTER();
+
+    std::vector<sai_attribute_t> acl_grp_attrs;
+    sai_attribute_t acl_grp_attr;
+    acl_grp_attr.id = SAI_ACL_TABLE_GROUP_ATTR_ACL_STAGE;
+    acl_grp_attr.value.s32 = group_stage;
+    acl_grp_attrs.push_back(acl_grp_attr);
+
+    acl_grp_attr.id = SAI_ACL_TABLE_GROUP_ATTR_TYPE;
+    acl_grp_attr.value.s32 = SAI_ACL_TABLE_GROUP_TYPE_PARALLEL;
+    acl_grp_attrs.push_back(acl_grp_attr);
+
+    acl_grp_attr.id = SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST;
+    std::vector<int32_t> bpoint_list;
+    bpoint_list.push_back(SAI_ACL_BIND_POINT_TYPE_SWITCH);
+    acl_grp_attr.value.s32list.count = (uint32_t)bpoint_list.size();
+    acl_grp_attr.value.s32list.list = bpoint_list.data();
+    acl_grp_attrs.push_back(acl_grp_attr);
+
+    CHECK_ERROR_AND_LOG_AND_RETURN(sai_acl_api->create_acl_table_group(
+                                       acl_grp_oid, gSwitchId, (uint32_t)acl_grp_attrs.size(), acl_grp_attrs.data()),
+                                   "Failed to create ACL group for stage " << group_stage);
+    if (group_stage == SAI_ACL_STAGE_INGRESS || group_stage == SAI_ACL_STAGE_PRE_INGRESS ||
+        group_stage == SAI_ACL_STAGE_EGRESS)
+    {
+        gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_GROUP, (sai_acl_stage_t)group_stage,
+                                       SAI_ACL_BIND_POINT_TYPE_SWITCH);
+    }
+    SWSS_LOG_INFO("Suceeded to create ACL group %s in stage %d ", sai_serialize_object_id(*acl_grp_oid).c_str(),
+                  group_stage);
+    return ReturnCode();
+}
+
+ReturnCode SwitchOrch::bindAclGroupToSwitch(const sai_acl_stage_t &group_stage, const sai_object_id_t &acl_grp_oid)
+{
+    SWSS_LOG_ENTER();
+
+    auto switch_attr_it = aclStageToSwitchAttrLookup.find(group_stage);
+    if (switch_attr_it == aclStageToSwitchAttrLookup.end())
+    {
+        LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                             << "Failed to set ACL group(" << acl_grp_oid << ") to the SWITCH bind point at stage "
+                             << group_stage);
+    }
+    sai_attribute_t attr;
+    attr.id = switch_attr_it->second;
+    attr.value.oid = acl_grp_oid;
+    auto sai_status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    if (sai_status != SAI_STATUS_SUCCESS)
+    {
+        LOG_ERROR_AND_RETURN(ReturnCode(sai_status) << "[SAI] Failed to set_switch_attribute with attribute.id="
+                                                    << attr.id << " and acl group oid=" << acl_grp_oid);
+    }
+    return ReturnCode();
 }
 
 void SwitchOrch::doCfgSensorsTableTask(Consumer &consumer)

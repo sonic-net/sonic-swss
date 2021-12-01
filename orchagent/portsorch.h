@@ -163,6 +163,8 @@ public:
     bool getPortIPG(sai_object_id_t port_id, uint32_t &ipg);
     bool setPortIPG(sai_object_id_t port_id, uint32_t ipg);
 
+    bool getPortOperStatus(const Port& port, sai_port_oper_status_t& status) const;
+
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_counterLagTable;
@@ -322,7 +324,6 @@ private:
     task_process_status setPortInterfaceType(sai_object_id_t id, sai_port_interface_type_t interface_type);
     task_process_status setPortAdvInterfaceTypes(sai_object_id_t id, std::vector<uint32_t> &interface_types);
 
-    bool getPortOperStatus(const Port& port, sai_port_oper_status_t& status) const;
     void updatePortOperStatus(Port &port, sai_port_oper_status_t status);
 
     bool getPortOperSpeed(const Port& port, sai_uint32_t& speed) const;
@@ -363,4 +364,3 @@ private:
 
 };
 #endif /* SWSS_PORTSORCH_H */
-

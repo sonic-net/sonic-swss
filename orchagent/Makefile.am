@@ -95,6 +95,18 @@ orchagent_SOURCES = \
 
 orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp flex_counter/flow_counter_handler.cpp
 orchagent_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.cpp
+orchagent_SOURCES += p4orch/p4orch.cpp \
+		     p4orch/p4orch_util.cpp \
+		     p4orch/p4oidmapper.cpp \
+		     p4orch/router_interface_manager.cpp \
+		     p4orch/neighbor_manager.cpp \
+		     p4orch/next_hop_manager.cpp \
+		     p4orch/route_manager.cpp \
+		     p4orch/acl_util.cpp \
+		     p4orch/acl_table_manager.cpp \
+		     p4orch/acl_rule_manager.cpp \
+		     p4orch/wcmp_manager.cpp \
+		     p4orch/mirror_session_manager.cpp
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 orchagent_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
