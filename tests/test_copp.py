@@ -840,6 +840,6 @@ class TestCopp(object):
         fvs = swsscommon.FieldValuePairs([("state", "enabled")])
         self.feature_tbl.set("bgp", fvs)
 
-        assert table_found == False
+        assert table_found == True
 
 
