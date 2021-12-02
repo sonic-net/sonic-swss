@@ -338,6 +338,8 @@ private:
     void delEndpointMonitor(const string& vnet, NextHopGroupKey& nexthops);
     void postRouteState(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops);
     void removeRouteState(const string& vnet, IpPrefix& ipPrefix);
+    void addRouteAdvertisement(IpPrefix& ipPrefix);
+    void removeRouteAdvertisement(IpPrefix& ipPrefix);
 
     void updateVnetTunnel(const BfdUpdate&);
     bool updateTunnelRoute(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op);
@@ -362,6 +364,7 @@ private:
     ProducerStateTable bfd_session_producer_;
     shared_ptr<DBConnector> state_db_;
     unique_ptr<Table> state_vnet_rt_tunnel_table_;
+    unique_ptr<Table> state_vnet_rt_adv_table_;
 };
 
 class VNetCfgRouteOrch : public Orch

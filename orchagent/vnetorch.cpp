@@ -645,6 +645,7 @@ VNetRouteOrch::VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOr
 
     state_db_ = shared_ptr<DBConnector>(new DBConnector("STATE_DB", 0));
     state_vnet_rt_tunnel_table_ = unique_ptr<Table>(new Table(state_db_.get(), STATE_VNET_RT_TUNNEL_TABLE_NAME));
+    state_vnet_rt_adv_table_ = unique_ptr<Table>(new Table(state_db_.get(), STATE_ADVERTISE_NETWORK_TABLE_NAME));
 
     gBfdOrch->attach(this);
 }
@@ -1563,12 +1564,36 @@ void VNetRouteOrch::postRouteState(const string& vnet, IpPrefix& ipPrefix, NextH
     fvVector.emplace_back("state", route_state);
 
     state_vnet_rt_tunnel_table_->set(state_db_key, fvVector);
+
+    if (route_state == "active")
+    {
+        addRouteAdvertisement(ipPrefix);
+    }
+    else
+    {
+        removeRouteAdvertisement(ipPrefix);
+    }
 }
 
 void VNetRouteOrch::removeRouteState(const string& vnet, IpPrefix& ipPrefix)
 {
     const string state_db_key = vnet + state_db_key_delimiter + ipPrefix.to_string();
     state_vnet_rt_tunnel_table_->del(state_db_key);
+    removeRouteAdvertisement(ipPrefix);
+}
+
+void VNetRouteOrch::addRouteAdvertisement(IpPrefix& ipPrefix)
+{
+    const string key = ipPrefix.to_string();
+    vector<FieldValueTuple> fvs;
+    fvs.push_back(FieldValueTuple("", ""));
+    state_vnet_rt_adv_table_->set(key, fvs);
+}
+
+void VNetRouteOrch::removeRouteAdvertisement(IpPrefix& ipPrefix)
+{
+    const string key = ipPrefix.to_string();
+    state_vnet_rt_adv_table_->del(key);
 }
 
 void VNetRouteOrch::update(SubjectType type, void *cntx)
