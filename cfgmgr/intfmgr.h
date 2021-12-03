@@ -9,6 +9,16 @@
 #include <string>
 #include <set>
 
+struct SubIntfInfo
+{
+    std::string vlanId;
+    std::string mtu;
+    std::string adminStatus;
+    std::string currAdminStatus;
+};
+
+typedef std::map<std::string, SubIntfInfo>             SubIntfMap;
+
 namespace swss {
 
 class IntfMgr : public Orch
@@ -20,11 +30,13 @@ public:
 private:
     ProducerStateTable m_appIntfTableProducer, m_appSagTableProducer;
     Table m_cfgIntfTable, m_cfgVlanIntfTable, m_cfgLagIntfTable, m_cfgLoopbackIntfTable, m_cfgSagTable;
-    Table m_statePortTable, m_stateLagTable, m_stateVlanTable, m_stateVrfTable, m_stateIntfTable;
+    Table m_statePortTable, m_stateLagTable, m_stateVlanTable, m_stateVrfTable, m_stateIntfTable, m_appLagTable;
+    Table m_neighTable;
 
-    std::set<std::string> m_subIntfList;
+    SubIntfMap m_subIntfList;
     std::set<std::string> m_loopbackIntfList;
     std::set<std::string> m_pendingReplayIntfList;
+    std::set<std::string> m_ipv6LinkLocalModeList;
 
     void setIntfIp(const std::string &alias, const std::string &opCmd, const IpPrefix &ipPrefix);
     void setIntfVrf(const std::string &alias, const std::string &vrfName);
@@ -35,6 +47,7 @@ private:
     bool doIntfAddrTask(const std::vector<std::string>& keys, const std::vector<FieldValueTuple>& data, const std::string& op);
     void doSagTask(const std::vector<std::string>& keys, const std::vector<FieldValueTuple>& data, const std::string& op);
     void doTask(Consumer &consumer);
+    void doPortTableTask(const std::string& key, std::vector<FieldValueTuple> data, std::string op);
 
     bool isIntfStateOk(const std::string &alias);
     bool isIntfCreated(const std::string &alias);
@@ -47,15 +60,21 @@ private:
     void delLoopbackIntf(const std::string &alias);
     void flushLoopbackIntfs(void);
 
+    std::string getIntfAdminStatus(const std::string &alias);
+    std::string getIntfMtu(const std::string &alias);
     void addHostSubIntf(const std::string&intf, const std::string &subIntf, const std::string &vlan);
-    void setHostSubIntfMtu(const std::string &subIntf, const std::string &mtu);
-    void setHostSubIntfAdminStatus(const std::string &subIntf, const std::string &admin_status);
+    std::string setHostSubIntfMtu(const std::string &alias, const std::string &mtu, const std::string &parent_mtu);
+    std::string setHostSubIntfAdminStatus(const std::string &alias, const std::string &admin_status, const std::string &parent_admin_status);
     void removeHostSubIntf(const std::string &subIntf);
     void setSubIntfStateOk(const std::string &alias);
     void removeSubIntfState(const std::string &alias);
+    void delIpv6LinkLocalNeigh(const std::string &alias);
 
     bool setIntfProxyArp(const std::string &alias, const std::string &proxy_arp);
     bool setIntfGratArp(const std::string &alias, const std::string &grat_arp);
+
+    void updateSubIntfAdminStatus(const std::string &alias, const std::string &admin);
+    void updateSubIntfMtu(const std::string &alias, const std::string &mtu);
 
     bool m_replayDone {false};
 };

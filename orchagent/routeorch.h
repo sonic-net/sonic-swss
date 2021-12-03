@@ -7,6 +7,7 @@
 #include "intfsorch.h"
 #include "neighorch.h"
 #include "vxlanorch.h"
+#include "srv6orch.h"
 
 #include "ipaddress.h"
 #include "ipaddresses.h"
@@ -24,6 +25,8 @@
 #define LOOPBACK_PREFIX     "Loopback"
 
 typedef std::map<NextHopKey, sai_object_id_t> NextHopGroupMembers;
+
+struct NhgBase;
 
 struct NextHopGroupEntry
 {
@@ -168,7 +171,7 @@ struct LabelRouteBulkContext
 class RouteOrch : public Orch, public Subject
 {
 public:
-    RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch);
+    RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch);
 
     bool hasNextHopGroup(const NextHopGroupKey&) const;
     sai_object_id_t getNextHopGroupId(const NextHopGroupKey&);
@@ -205,6 +208,10 @@ public:
 
     unsigned int getNhgCount() { return m_nextHopGroupCount; }
     unsigned int getMaxNhgCount() { return m_maxNextHopGroupCount; }
+    
+    void increaseNextHopGroupCount();
+    void decreaseNextHopGroupCount();
+    bool checkNextHopGroupCount();
 
 private:
     SwitchOrch *m_switchOrch;
@@ -212,10 +219,14 @@ private:
     IntfsOrch *m_intfsOrch;
     VRFOrch *m_vrfOrch;
     FgNhgOrch *m_fgNhgOrch;
+    Srv6Orch *m_srv6Orch;
 
     unsigned int m_nextHopGroupCount;
     unsigned int m_maxNextHopGroupCount;
     bool m_resync;
+
+    shared_ptr<DBConnector> m_stateDb;
+    unique_ptr<swss::Table> m_stateDefaultRouteTb;
 
     RouteTables m_syncdRoutes;
     LabelRouteTables m_syncdLabelRoutes;
@@ -243,8 +254,14 @@ private:
     bool addLabelRoutePost(const LabelRouteBulkContext& ctx, const NextHopGroupKey &nextHops);
     bool removeLabelRoutePost(const LabelRouteBulkContext& ctx);
 
+    void updateDefRouteState(string ip, bool add=false);
+
     void doTask(Consumer& consumer);
     void doLabelTask(Consumer& consumer);
+
+    const NhgBase &getNhg(const std::string& nhg_index);
+    void incNhgRefCount(const std::string& nhg_index);
+    void decNhgRefCount(const std::string& nhg_index);
 };
 
 #endif /* SWSS_ROUTEORCH_H */

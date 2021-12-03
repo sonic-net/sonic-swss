@@ -675,11 +675,13 @@ void IntfsOrch::doTask(Consumer &consumer)
         MacAddress mac;
 
         uint32_t mtu = 0;
-        bool adminUp = false;
+        bool adminUp;
+        bool adminStateChanged = false;
         uint32_t nat_zone_id = 0;
         string proxy_arp = "";
         string inband_type = "";
         bool mpls = false;
+        string vlan = "";
 
         for (auto idx : data)
         {
@@ -754,6 +756,7 @@ void IntfsOrch::doTask(Consumer &consumer)
                         SWSS_LOG_WARN("Sub interface %s unknown admin status %s", alias.c_str(), value.c_str());
                     }
                 }
+                adminStateChanged = true;
             }
             else if (field == "nat_zone")
             {
@@ -766,6 +769,10 @@ void IntfsOrch::doTask(Consumer &consumer)
             else if (field == "inband_type")
             {
                 inband_type = value;
+            }
+            else if (field == "vlan")
+            {
+                vlan = value;
             }
         }
 
@@ -836,7 +843,11 @@ void IntfsOrch::doTask(Consumer &consumer)
             {
                 if (!ip_prefix_in_key && isSubIntf)
                 {
-                    if (!gPortsOrch->addSubPort(port, alias, adminUp, mtu))
+                    if (adminStateChanged == false)
+                    {
+                        adminUp = port.m_admin_state_up;
+                    }
+                    if (!gPortsOrch->addSubPort(port, alias, vlan, adminUp, mtu))
                     {
                         it++;
                         continue;
@@ -876,6 +887,10 @@ void IntfsOrch::doTask(Consumer &consumer)
             }
             else
             {
+                if (adminStateChanged == false)
+                {
+                    adminUp = port.m_admin_state_up;
+                }
                 if (!setIntf(alias, vrf_id, ip_prefix_in_key ? &ip_prefix : nullptr, adminUp, mtu))
                 {
                     it++;

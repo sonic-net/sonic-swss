@@ -17,6 +17,12 @@ void on_port_state_change(uint32_t count, sai_port_oper_status_notification_t *d
     // which causes concurrency access to the DB
 }
 
+void on_bfd_session_state_change(uint32_t count, sai_bfd_session_state_notification_t *data)
+{
+    // don't use this event handler, because it runs by libsairedis in a separate thread
+    // which causes concurrency access to the DB
+}
+
 void on_switch_shutdown_request()
 {
     SWSS_LOG_ENTER();

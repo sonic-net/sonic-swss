@@ -9,6 +9,7 @@ extern RouteOrch *gRouteOrch;
 extern IntfsOrch *gIntfsOrch;
 extern NeighOrch *gNeighOrch;
 extern FgNhgOrch *gFgNhgOrch;
+extern Srv6Orch  *gSrv6Orch;
 
 extern FdbOrch *gFdbOrch;
 extern MirrorOrch *gMirrorOrch;
@@ -98,8 +99,25 @@ namespace aclorch_test
 
     TEST_F(AclTest, Create_L3_Acl_Table)
     {
-        AclTable acltable;
-        acltable.type = ACL_TABLE_L3;
+        AclTable acltable; /* this test shouldn't trigger a call to gAclOrch because it's nullptr */
+        AclTableTypeBuilder builder;
+        auto l3TableType = builder
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_PORT)
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_LAG)
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_SRC_IP))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DST_IP))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ICMP_TYPE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ICMP_CODE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS))
+            .withMatch(make_shared<AclTableRangeMatch>(set<sai_acl_range_type_t>({SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE, SAI_ACL_RANGE_TYPE_L4_DST_PORT_RANGE})))
+            .build();
+        acltable.type = l3TableType;
         auto res = createAclTable(acltable);
 
         ASSERT_TRUE(res->ret_val);
@@ -138,7 +156,7 @@ namespace aclorch_test
 
             vector<TableConnector> acl_table_connectors = { confDbAclTable, confDbAclRuleTable };
 
-            m_aclOrch = new AclOrch(acl_table_connectors, switchOrch, portsOrch, mirrorOrch,
+            m_aclOrch = new AclOrch(acl_table_connectors, state_db, switchOrch, portsOrch, mirrorOrch,
                                     neighOrch, routeOrch);
         }
 
@@ -150,6 +168,15 @@ namespace aclorch_test
         operator const AclOrch *() const
         {
             return m_aclOrch;
+        }
+
+        void doAclTableTypeTask(const deque<KeyOpFieldsValuesTuple> &entries)
+        {
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(config_db, CFG_ACL_TABLE_TYPE_TABLE_NAME, 1, 1), m_aclOrch, CFG_ACL_TABLE_TYPE_TABLE_NAME));
+
+            consumer->addToSync(entries);
+            static_cast<Orch *>(m_aclOrch)->doTask(*consumer);
         }
 
         void doAclTableTask(const deque<KeyOpFieldsValuesTuple> &entries)
@@ -173,6 +200,27 @@ namespace aclorch_test
         sai_object_id_t getTableById(const string &table_id)
         {
             return m_aclOrch->getTableById(table_id);
+        }
+
+        const AclRule* getAclRule(string tableName, string ruleName)
+        {
+            return m_aclOrch->getAclRule(tableName, ruleName);
+        }
+
+        const AclTable* getTableByOid(sai_object_id_t oid)
+        {
+            return m_aclOrch->getTableByOid(oid);
+        }
+
+        const AclTable* getAclTable(string tableName)
+        {
+            auto oid = m_aclOrch->getTableById(tableName);
+            return getTableByOid(oid);
+        }
+
+        const AclTableType* getAclTableType(string tableTypeName)
+        {
+            return m_aclOrch->getAclTableType(tableTypeName);
         }
 
         const map<sai_object_id_t, AclTable> &getAclTables() const
@@ -294,6 +342,9 @@ namespace aclorch_test
 
             gVirtualRouterId = attr.value.oid;
 
+            ASSERT_EQ(gCrmOrch, nullptr);
+            gCrmOrch = new CrmOrch(m_config_db.get(), CFG_CRM_TABLE_NAME);
+
             TableConnector stateDbSwitchTable(m_state_db.get(), "SWITCH_CAPABILITY");
             TableConnector conf_asic_sensors(m_config_db.get(), CFG_ASIC_SENSORS_TABLE_NAME);
             TableConnector app_switch_table(m_app_db.get(),  APP_SWITCH_TABLE_NAME);
@@ -320,9 +371,6 @@ namespace aclorch_test
 
             ASSERT_EQ(gPortsOrch, nullptr);
             gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
-
-            ASSERT_EQ(gCrmOrch, nullptr);
-            gCrmOrch = new CrmOrch(m_config_db.get(), CFG_CRM_TABLE_NAME);
 
             ASSERT_EQ(gVrfOrch, nullptr);
             gVrfOrch = new VRFOrch(m_app_db.get(), APP_VRF_TABLE_NAME, m_state_db.get(), STATE_VRF_OBJECT_TABLE_NAME);
@@ -361,13 +409,20 @@ namespace aclorch_test
             };
             gFgNhgOrch = new FgNhgOrch(m_config_db.get(), m_app_db.get(), m_state_db.get(), fgnhg_tables, gNeighOrch, gIntfsOrch, gVrfOrch);
 
+            ASSERT_EQ(gSrv6Orch, nullptr);
+            vector<string> srv6_tables = {
+                APP_SRV6_SID_LIST_TABLE_NAME,
+                APP_SRV6_MY_SID_TABLE_NAME
+            };
+            gSrv6Orch = new Srv6Orch(m_app_db.get(), srv6_tables, gSwitchOrch, gVrfOrch, gNeighOrch);
+
             ASSERT_EQ(gRouteOrch, nullptr);
             const int routeorch_pri = 5;
             vector<table_name_with_pri_t> route_tables = {
                 { APP_ROUTE_TABLE_NAME,        routeorch_pri },
                 { APP_LABEL_ROUTE_TABLE_NAME,  routeorch_pri }
             };
-            gRouteOrch = new RouteOrch(m_app_db.get(), route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch);
+            gRouteOrch = new RouteOrch(m_app_db.get(), route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch, gSrv6Orch);
 
             PolicerOrch *policer_orch = new PolicerOrch(m_config_db.get(), "POLICER");
 
@@ -409,6 +464,8 @@ namespace aclorch_test
             gPortsOrch = nullptr;
             delete gFgNhgOrch;
             gFgNhgOrch = nullptr;
+            delete gSrv6Orch;
+            gSrv6Orch = nullptr;
 
             auto status = sai_switch_api->remove_switch(gSwitchId);
             ASSERT_EQ(status, SAI_STATUS_SUCCESS);
@@ -443,24 +500,22 @@ namespace aclorch_test
             fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS", "true" });
             fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE", "2:SAI_ACL_RANGE_TYPE_L4_DST_PORT_RANGE,SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE" });
 
-            switch (acl_table.type)
+            if (acl_table.type.getName() == TABLE_TYPE_L3)
             {
-                case ACL_TABLE_L3:
-                    fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE", "true" });
-                    fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_SRC_IP", "true" });
-                    fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_DST_IP", "true" });
-                    fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL", "true" });
-                    break;
-
-                case ACL_TABLE_L3V6:
-                    fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6", "true" });
-                    fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6", "true" });
-                    fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER", "true" });
-                    break;
-
-                default:
-                    // We shouldn't get here. Will continue to add more test cases ...;
-                    ;
+                fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE", "true" });
+                fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_SRC_IP", "true" });
+                fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_DST_IP", "true" });
+                fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL", "true" });
+            }
+            else if (acl_table.type.getName() == TABLE_TYPE_L3V6)
+            {
+                fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6", "true" });
+                fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6", "true" });
+                fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER", "true" });
+            }
+            else
+            {
+                // We shouldn't get here. Will continue to add more test cases ...;
             }
 
             if (ACL_STAGE_INGRESS == acl_table.stage)
@@ -487,19 +542,17 @@ namespace aclorch_test
             fields.push_back({ "SAI_ACL_ENTRY_ATTR_ADMIN_STATE", "true" });
             fields.push_back({ "SAI_ACL_ENTRY_ATTR_ACTION_COUNTER", counter_id });
 
-            switch (acl_table.type)
+            if (acl_table.type.getName() == TABLE_TYPE_L3)
             {
-                case ACL_TABLE_L3:
-                    fields.push_back({ "SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP", "1.2.3.4&mask:255.255.255.255" });
-                    break;
-
-                case ACL_TABLE_L3V6:
-                    fields.push_back({ "SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6", "::1.2.3.4&mask:ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff" });
-                    break;
-
-                default:
-                    // We shouldn't get here. Will continue to add more test cases ...
-                    ;
+                fields.push_back({ "SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP", "1.2.3.4&mask:255.255.255.255" });
+            }
+            if (acl_table.type.getName() == TABLE_TYPE_L3V6)
+            {
+                fields.push_back({ "SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6", "::1.2.3.4&mask:ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff" });
+            }
+            else
+            {
+                // We shouldn't get here. Will continue to add more test cases ...
             }
 
             return shared_ptr<SaiAttributeList>(new SaiAttributeList(objecttype, fields, false));
@@ -564,13 +617,17 @@ namespace aclorch_test
             return true;
         }
 
-        bool validateAclTable(sai_object_id_t acl_table_oid, const AclTable &acl_table)
+        bool validateAclTable(sai_object_id_t acl_table_oid, const AclTable &acl_table, shared_ptr<SaiAttributeList> expAttrList = nullptr)
         {
             const sai_object_type_t objecttype = SAI_OBJECT_TYPE_ACL_TABLE;
-            auto exp_attrlist_2 = getAclTableAttributeList(objecttype, acl_table);
+            if (!expAttrList)
+            {
+                expAttrList = getAclTableAttributeList(objecttype, acl_table);
+
+            }
 
             {
-                auto &exp_attrlist = *exp_attrlist_2;
+                auto &exp_attrlist = *expAttrList;
 
                 vector<sai_attribute_t> act_attr;
 
@@ -636,23 +693,16 @@ namespace aclorch_test
             auto const &resourceMap = Portal::CrmOrchInternal::getResourceMap(crmOrch);
 
             // Verify the ACL tables
-            uint32_t crmAclTableBindingCount = 0;
+            size_t crmAclTableBindingCount = 0;
             for (auto const &kv: resourceMap.at(CrmResourceType::CRM_ACL_TABLE).countersMap)
             {
                 crmAclTableBindingCount += kv.second.usedCounter;
             }
 
-            uint32_t aclorchAclTableBindingCount = 0;
+            size_t aclorchAclTableBindingCount = 0;
             for (auto const &kv: Portal::AclOrchInternal::getAclTables(aclOrch))
             {
-                if (kv.second.type == ACL_TABLE_PFCWD)
-                {
-                    aclorchAclTableBindingCount += 1; // port binding only
-                }
-                else
-                {
-                    aclorchAclTableBindingCount += 2; // port + LAG binding
-                }
+                aclorchAclTableBindingCount += kv.second.type.getBindPointTypes().size();
             }
 
             if (crmAclTableBindingCount != aclorchAclTableBindingCount)
@@ -765,21 +815,7 @@ namespace aclorch_test
             {
                 if (fv.first == ACL_TABLE_TYPE)
                 {
-                    if (fv.second == TABLE_TYPE_L3)
-                    {
-                        if (acl_table.type != ACL_TABLE_L3)
-                        {
-                            return false;
-                        }
-                    }
-                    else if (fv.second == TABLE_TYPE_L3V6)
-                    {
-                        if (acl_table.type != ACL_TABLE_L3V6)
-                        {
-                            return false;
-                        }
-                    }
-                    else
+                    if (acl_table.type.getName() != fv.second)
                     {
                         return false;
                     }
@@ -822,21 +858,21 @@ namespace aclorch_test
                     return false;
                 }
 
-                if (it->second.aclaction.enable != true)
+                if (it->second.getSaiAttr().value.aclaction.enable != true)
                 {
                     return false;
                 }
 
                 if (attr_value == PACKET_ACTION_FORWARD)
                 {
-                    if (it->second.aclaction.parameter.s32 != SAI_PACKET_ACTION_FORWARD)
+                    if (it->second.getSaiAttr().value.aclaction.parameter.s32 != SAI_PACKET_ACTION_FORWARD)
                     {
                         return false;
                     }
                 }
                 else if (attr_value == PACKET_ACTION_DROP)
                 {
-                    if (it->second.aclaction.parameter.s32 != SAI_PACKET_ACTION_DROP)
+                    if (it->second.getSaiAttr().value.aclaction.parameter.s32 != SAI_PACKET_ACTION_DROP)
                     {
                         return false;
                     }
@@ -869,14 +905,14 @@ namespace aclorch_test
                 }
 
                 char addr[20];
-                sai_serialize_ip4(addr, it_field->second.aclfield.data.ip4);
+                sai_serialize_ip4(addr, it_field->second.getSaiAttr().value.aclfield.data.ip4);
                 if (attr_value != addr)
                 {
                     return false;
                 }
 
                 char mask[20];
-                sai_serialize_ip4(mask, it_field->second.aclfield.mask.ip4);
+                sai_serialize_ip4(mask, it_field->second.getSaiAttr().value.aclfield.mask.ip4);
                 if (string(mask) != "255.255.255.255")
                 {
                     return false;
@@ -891,14 +927,14 @@ namespace aclorch_test
                 }
 
                 char addr[46];
-                sai_serialize_ip6(addr, it_field->second.aclfield.data.ip6);
+                sai_serialize_ip6(addr, it_field->second.getSaiAttr().value.aclfield.data.ip6);
                 if (attr_value != addr)
                 {
                     return false;
                 }
 
                 char mask[46];
-                sai_serialize_ip6(mask, it_field->second.aclfield.mask.ip6);
+                sai_serialize_ip6(mask, it_field->second.getSaiAttr().value.aclfield.mask.ip6);
                 if (string(mask) != "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff")
                 {
                     return false;
@@ -971,6 +1007,25 @@ namespace aclorch_test
 
             return !aclEnable && aclOid == SAI_NULL_OBJECT_ID;
         }
+
+        string getAclRuleSaiAttribute(const AclRule& rule, sai_acl_entry_attr_t attrId)
+        {
+            sai_attribute_t attr{};
+            attr.id = attrId;
+            auto meta = sai_metadata_get_attr_metadata(SAI_OBJECT_TYPE_ACL_ENTRY, attrId);
+            if (!meta)
+            {
+                SWSS_LOG_THROW("SAI BUG: Failed to get attribute metadata for SAI_OBJECT_TYPE_ACL_ENTRY attribute id %d", attrId);
+            }
+
+            auto status = sai_acl_api->get_acl_entry_attribute(rule.m_ruleOid, 1, &attr);
+            EXPECT_TRUE(status == SAI_STATUS_SUCCESS);
+
+            auto actualSaiValue = sai_serialize_attr_value(*meta, attr);
+
+            return actualSaiValue;
+        }
+
     };
 
     map<string, string> AclOrchTest::gProfileMap;
@@ -1310,6 +1365,363 @@ namespace aclorch_test
 
         tableIt = orch->getAclTables().find(tableOid);
         ASSERT_EQ(tableIt, orch->getAclTables().end());
+    }
+
+    TEST_F(AclOrchTest, AclTableType_Configuration)
+    {
+        const string aclTableTypeName = "TEST_TYPE";
+        const string aclTableName = "TEST_TABLE";
+        const string aclRuleName = "TEST_RULE";
+
+        auto orch = createAclOrch();
+
+        auto tableKofvt = deque<KeyOpFieldsValuesTuple>(
+            {
+                {
+                    aclTableName,
+                    SET_COMMAND,
+                    {
+                        { ACL_TABLE_DESCRIPTION, "Test table" },
+                        { ACL_TABLE_TYPE, aclTableTypeName},
+                        { ACL_TABLE_STAGE, STAGE_INGRESS },
+                        { ACL_TABLE_PORTS, "1,2" }
+                    }
+                }
+            }
+        );
+
+        orch->doAclTableTask(tableKofvt);
+
+        // Table not created without table type
+        ASSERT_FALSE(orch->getAclTable(aclTableName));
+
+        orch->doAclTableTypeTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableTypeName,
+                        SET_COMMAND,
+                        {
+                            {
+                                ACL_TABLE_TYPE_MATCHES,
+                                string(MATCH_SRC_IP) +  comma + MATCH_ETHER_TYPE + comma + MATCH_L4_SRC_PORT_RANGE
+                            },
+                            {
+                                ACL_TABLE_TYPE_BPOINT_TYPES,
+                                string(BIND_POINT_TYPE_PORT) + comma + BIND_POINT_TYPE_PORTCHANNEL
+                            },
+                        }
+                    }
+                }
+            )
+        );
+
+        orch->doAclTableTask(tableKofvt);
+
+        // Table is created now
+        ASSERT_TRUE(orch->getAclTable(aclTableName));
+
+        auto fvs = vector<FieldValueTuple>{
+            { "SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST", "2:SAI_ACL_BIND_POINT_TYPE_PORT,SAI_ACL_BIND_POINT_TYPE_LAG" },
+            { "SAI_ACL_TABLE_ATTR_FIELD_SRC_IP", "true" },
+            { "SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE", "true" },
+            { "SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE", "1:SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE" },
+        };
+
+        ASSERT_TRUE(validateAclTable(
+            orch->getAclTable(aclTableName)->getOid(),
+            *orch->getAclTable(aclTableName),
+            make_shared<SaiAttributeList>(SAI_OBJECT_TYPE_ACL_TABLE, fvs, false))
+        );
+
+        orch->doAclRuleTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName + "|" + aclRuleName,
+                        SET_COMMAND,
+                        {
+                            { MATCH_SRC_IP, "1.1.1.1/32" },
+                            { MATCH_L4_DST_PORT_RANGE, "80..100" },
+                            { ACTION_PACKET_ACTION, PACKET_ACTION_DROP },
+                        }
+                    }
+                }
+            )
+        );
+
+        // L4_DST_PORT_RANGE is not in the table type
+        ASSERT_FALSE(orch->getAclRule(aclTableName, aclRuleName));
+
+        orch->doAclRuleTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName + "|" + aclRuleName,
+                        SET_COMMAND,
+                        {
+                            { MATCH_SRC_IP, "1.1.1.1/32" },
+                            { MATCH_DST_IP, "2.2.2.2/32" },
+                            { ACTION_PACKET_ACTION, PACKET_ACTION_DROP },
+                        }
+                    }
+                }
+            )
+        );
+
+        // DST_IP is not in the table type
+        ASSERT_FALSE(orch->getAclRule(aclTableName, aclRuleName));
+
+        orch->doAclRuleTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName + "|" + aclRuleName,
+                        SET_COMMAND,
+                        {
+                            { MATCH_SRC_IP, "1.1.1.1/32" },
+                            { ACTION_PACKET_ACTION, PACKET_ACTION_DROP },
+                        }
+                    }
+                }
+            )
+        );
+
+        // Now it is valid for this table.
+        ASSERT_TRUE(orch->getAclRule(aclTableName, aclRuleName));
+
+        orch->doAclRuleTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName + "|" + aclRuleName,
+                        DEL_COMMAND,
+                        {}
+                    }
+                }
+            )
+        );
+
+        ASSERT_FALSE(orch->getAclRule(aclTableName, aclRuleName));
+
+        orch->doAclTableTypeTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableTypeName,
+                        DEL_COMMAND,
+                        {}
+                    }
+                }
+            )
+        );
+
+        // Table still exists
+        ASSERT_TRUE(orch->getAclTable(aclTableName));
+        ASSERT_FALSE(orch->getAclTableType(aclTableTypeName));
+
+        orch->doAclTableTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName,
+                        DEL_COMMAND,
+                        {}
+                    }
+                }
+            )
+        );
+
+        // Table is removed
+        ASSERT_FALSE(orch->getAclTable(aclTableName));
+    }
+
+    TEST_F(AclOrchTest, AclTableType_ActionValidation)
+    {
+        const string aclTableTypeName = "TEST_TYPE";
+        const string aclTableName = "TEST_TABLE";
+        const string aclRuleName = "TEST_RULE";
+
+        auto orch = createAclOrch();
+
+        orch->doAclTableTypeTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableTypeName,
+                        SET_COMMAND,
+                        {
+                            {
+                                ACL_TABLE_TYPE_MATCHES,
+                                string(MATCH_ETHER_TYPE) + comma + MATCH_L4_SRC_PORT_RANGE + comma + MATCH_L4_DST_PORT_RANGE
+                            },
+                            {
+                                ACL_TABLE_TYPE_BPOINT_TYPES,
+                                BIND_POINT_TYPE_PORTCHANNEL
+                            },
+                            {
+                                ACL_TABLE_TYPE_ACTIONS,
+                                ACTION_MIRROR_INGRESS_ACTION
+                            }
+                        }
+                    }
+                }
+            )
+        );
+
+        orch->doAclTableTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName,
+                        SET_COMMAND,
+                        {
+                            { ACL_TABLE_DESCRIPTION, "Test table" },
+                            { ACL_TABLE_TYPE, aclTableTypeName},
+                            { ACL_TABLE_STAGE, STAGE_INGRESS },
+                            { ACL_TABLE_PORTS, "1,2" }
+                        }
+                    }
+                }
+            )
+        );
+
+        ASSERT_TRUE(orch->getAclTable(aclTableName));
+
+        auto fvs = vector<FieldValueTuple>{
+            { "SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST", "1:SAI_ACL_BIND_POINT_TYPE_LAG" },
+            { "SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE", "true" },
+            { "SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE", "2:SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE,SAI_ACL_RANGE_TYPE_L4_DST_PORT_RANGE" },
+            { "SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST", "1:SAI_ACL_ACTION_TYPE_MIRROR_INGRESS" },
+        };
+
+        ASSERT_TRUE(validateAclTable(
+            orch->getAclTable(aclTableName)->getOid(),
+            *orch->getAclTable(aclTableName),
+            make_shared<SaiAttributeList>(SAI_OBJECT_TYPE_ACL_TABLE, fvs, false))
+        );
+
+        orch->doAclRuleTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName + "|" + aclRuleName,
+                        SET_COMMAND,
+                        {
+                            { MATCH_ETHER_TYPE, "2048" },
+                            { ACTION_PACKET_ACTION, PACKET_ACTION_DROP },
+                        }
+                    }
+                }
+            )
+        );
+
+        // Packet action is not supported on this table
+        ASSERT_FALSE(orch->getAclRule(aclTableName, aclRuleName));
+
+        const auto testSessionName = "test_session";
+        gMirrorOrch->createEntry(testSessionName, {});
+        orch->doAclRuleTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName + "|" + aclRuleName,
+                        SET_COMMAND,
+                        {
+                            { MATCH_ETHER_TYPE, "2048" },
+                            { ACTION_MIRROR_INGRESS_ACTION, testSessionName },
+                        }
+                    }
+                }
+            )
+        );
+
+        // Mirror action is supported on this table
+        ASSERT_TRUE(orch->getAclRule(aclTableName, aclRuleName));
+    }
+
+    TEST_F(AclOrchTest, AclRuleUpdate)
+    {
+        string acl_table_id = "acl_table_1";
+        string acl_rule_id = "acl_rule_1";
+
+        auto orch = createAclOrch();
+
+        auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
+            { { acl_table_id,
+                SET_COMMAND,
+                { { ACL_TABLE_DESCRIPTION, "TEST" },
+                  { ACL_TABLE_TYPE, TABLE_TYPE_L3 },
+                  { ACL_TABLE_STAGE, STAGE_INGRESS },
+                  { ACL_TABLE_PORTS, "1,2" } } } });
+
+        orch->doAclTableTask(kvfAclTable);
+
+        // validate acl table ...
+
+        auto acl_table_oid = orch->getTableById(acl_table_id);
+        ASSERT_NE(acl_table_oid, SAI_NULL_OBJECT_ID);
+
+        const auto &acl_tables = orch->getAclTables();
+        auto it_table = acl_tables.find(acl_table_oid);
+        ASSERT_NE(it_table, acl_tables.end());
+
+        class AclRuleTest : public AclRulePacket
+        {
+        public:
+            AclRuleTest(AclOrch* orch, string rule, string table):
+                AclRulePacket(orch, rule, table, true)
+            {}
+
+            void setCounterEnabled(bool enabled)
+            {
+                m_createCounter = enabled;
+            }
+
+            void disableMatch(sai_acl_entry_attr_t attr)
+            {
+                m_matches.erase(attr);
+            }
+        };
+
+        auto rule = make_shared<AclRuleTest>(orch->m_aclOrch, acl_rule_id, acl_table_id);
+        ASSERT_TRUE(rule->validateAddPriority(RULE_PRIORITY, "800"));
+        ASSERT_TRUE(rule->validateAddMatch(MATCH_SRC_IP, "1.1.1.1/32"));
+        ASSERT_TRUE(rule->validateAddAction(ACTION_PACKET_ACTION, PACKET_ACTION_FORWARD));
+
+        ASSERT_TRUE(orch->m_aclOrch->addAclRule(rule, acl_table_id));
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "800");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP), "1.1.1.1&mask:255.255.255.255");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION), "SAI_PACKET_ACTION_FORWARD");
+
+        auto updatedRule = make_shared<AclRuleTest>(*rule);
+        ASSERT_TRUE(updatedRule->validateAddPriority(RULE_PRIORITY, "900"));
+        ASSERT_TRUE(updatedRule->validateAddMatch(MATCH_SRC_IP, "2.2.2.2/24"));
+        ASSERT_TRUE(updatedRule->validateAddMatch(MATCH_DST_IP, "3.3.3.3/24"));
+        ASSERT_TRUE(updatedRule->validateAddAction(ACTION_PACKET_ACTION, PACKET_ACTION_DROP));
+
+        ASSERT_TRUE(orch->m_aclOrch->updateAclRule(updatedRule));
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "900");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP), "2.2.2.2&mask:255.255.255.0");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_DST_IP), "3.3.3.3&mask:255.255.255.0");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION), "SAI_PACKET_ACTION_DROP");
+
+        auto updatedRule2 = make_shared<AclRuleTest>(*updatedRule);
+        updatedRule2->setCounterEnabled(false);
+        updatedRule2->disableMatch(SAI_ACL_ENTRY_ATTR_FIELD_DST_IP);
+        ASSERT_TRUE(orch->m_aclOrch->updateAclRule(updatedRule2));
+        ASSERT_TRUE(validateAclRuleCounter(*orch->m_aclOrch->getAclRule(acl_table_id, acl_rule_id), false));
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_PRIORITY), "900");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP), "2.2.2.2&mask:255.255.255.0");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_FIELD_DST_IP), "disabled");
+        ASSERT_EQ(getAclRuleSaiAttribute(*rule, SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION), "SAI_PACKET_ACTION_DROP");
+
+        auto updatedRule3 = make_shared<AclRuleTest>(*updatedRule2);
+        updatedRule3->setCounterEnabled(true);
+        ASSERT_TRUE(orch->m_aclOrch->updateAclRule(updatedRule3));
+        ASSERT_TRUE(validateAclRuleCounter(*orch->m_aclOrch->getAclRule(acl_table_id, acl_rule_id), true));
+
+        ASSERT_TRUE(orch->m_aclOrch->removeAclRule(rule->getTableId(), rule->getId()));
     }
 
 } // namespace nsAclOrchTest
