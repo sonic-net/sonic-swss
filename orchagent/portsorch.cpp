@@ -5,6 +5,7 @@
 #include "gearboxutils.h"
 #include "vxlanorch.h"
 #include "directory.h"
+#include "subintf.h"
 
 #include <inttypes.h>
 #include <cassert>
@@ -63,8 +64,8 @@ extern string gMyAsicName;
 #define PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS     1000
 #define PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS     60000
 #define QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   10000
-#define QUEUE_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS "10000"
-#define PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS    "10000"
+#define QUEUE_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS "60000"
+#define PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS    "60000"
 #define PG_DROP_FLEX_STAT_COUNTER_POLL_MSECS         "10000"
 #define PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS   "1000"
 
@@ -748,35 +749,15 @@ bool PortsOrch::getPort(sai_object_id_t id, Port &port)
 {
     SWSS_LOG_ENTER();
 
-    for (const auto& portIter: m_portList)
+    auto itr = saiOidToAlias.find(id);
+    if (itr == saiOidToAlias.end())
     {
-        switch (portIter.second.m_type)
-        {
-        case Port::PHY:
-        case Port::SYSTEM:
-            if(portIter.second.m_port_id == id)
-            {
-                port = portIter.second;
-                return true;
-            }
-            break;
-        case Port::LAG:
-            if(portIter.second.m_lag_id == id)
-            {
-                port = portIter.second;
-                return true;
-            }
-            break;
-        case Port::VLAN:
-            if (portIter.second.m_vlan_info.vlan_oid == id)
-            {
-                port = portIter.second;
-                return true;
-            }
-            break;
-        default:
-            continue;
-        }
+        return false;
+    }
+    else
+    {
+        getPort(itr->second, port);
+        return true;
     }
 
     return false;
@@ -816,19 +797,21 @@ bool PortsOrch::getPortByBridgePortId(sai_object_id_t bridge_port_id, Port &port
 {
     SWSS_LOG_ENTER();
 
-    for (auto &it: m_portList)
+    auto itr = saiOidToAlias.find(bridge_port_id);
+    if (itr == saiOidToAlias.end())
     {
-        if (it.second.m_bridge_port_id == bridge_port_id)
-        {
-            port = it.second;
-            return true;
-        }
+        return false;
+    }
+    else
+    {
+        getPort(itr->second, port);
+        return true;
     }
 
     return false;
 }
 
-bool PortsOrch::addSubPort(Port &port, const string &alias, const bool &adminUp, const uint32_t &mtu)
+bool PortsOrch::addSubPort(Port &port, const string &alias, const string &vlan, const bool &adminUp, const uint32_t &mtu)
 {
     SWSS_LOG_ENTER();
 
@@ -838,21 +821,21 @@ bool PortsOrch::addSubPort(Port &port, const string &alias, const bool &adminUp,
         SWSS_LOG_ERROR("%s is not a sub interface", alias.c_str());
         return false;
     }
-    string parentAlias = alias.substr(0, found);
-    string vlanId = alias.substr(found + 1);
+    subIntf subIf(alias);
+    string parentAlias = subIf.parentIntf();
     sai_vlan_id_t vlan_id;
     try
     {
-        vlan_id = static_cast<sai_vlan_id_t>(stoul(vlanId));
+        vlan_id = static_cast<sai_vlan_id_t>(stoul(vlan));
     }
     catch (const std::invalid_argument &e)
     {
-        SWSS_LOG_ERROR("Invalid argument %s to %s()", vlanId.c_str(), e.what());
+        SWSS_LOG_ERROR("Invalid argument %s to %s()", vlan.c_str(), e.what());
         return false;
     }
     catch (const std::out_of_range &e)
     {
-        SWSS_LOG_ERROR("Out of range argument %s to %s()", vlanId.c_str(), e.what());
+        SWSS_LOG_ERROR("Out of range argument %s to %s()", vlan.c_str(), e.what());
         return false;
     }
     if (vlan_id > MAX_VALID_VLAN_ID)
@@ -2364,6 +2347,7 @@ bool PortsOrch::initPort(const string &alias, const string &role, const int inde
 
                 /* Add port to port list */
                 m_portList[alias] = p;
+                saiOidToAlias[id] = alias;
                 m_port_ref_count[alias] = 0;
                 m_portOidToIndex[id] = index;
 
@@ -3564,7 +3548,7 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
             {
                 if (removeVlanMember(vlan, port))
                 {
-                    if (port.m_vlan_members.empty())
+                    if (m_portVlanMember[port.m_alias].empty())
                     {
                         removeBridgePort(port);
                     }
@@ -3667,7 +3651,6 @@ void PortsOrch::doLagTask(Consumer &consumer)
                 switch_id = -1;
             }
 
-            // Create a new LAG when the new alias comes
             if (m_portList.find(alias) == m_portList.end())
             {
                 if (!addLag(alias, lag_id, switch_id))
@@ -4133,9 +4116,10 @@ void PortsOrch::initializePriorityGroups(Port &port)
     SWSS_LOG_INFO("Get priority groups for port %s", port.m_alias.c_str());
 }
 
-void PortsOrch::initializePortMaximumHeadroom(Port &port)
+void PortsOrch::initializePortBufferMaximumParameters(Port &port)
 {
     sai_attribute_t attr;
+    vector<FieldValueTuple> fvVector;
 
     attr.id = SAI_PORT_ATTR_QOS_MAXIMUM_HEADROOM_SIZE;
 
@@ -4143,12 +4127,16 @@ void PortsOrch::initializePortMaximumHeadroom(Port &port)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_NOTICE("Unable to get the maximum headroom for port %s rv:%d, ignored", port.m_alias.c_str(), status);
-        return;
+    }
+    else
+    {
+        port.m_maximum_headroom = attr.value.u32;
+        fvVector.emplace_back("max_headroom_size", to_string(port.m_maximum_headroom));
     }
 
-    vector<FieldValueTuple> fvVector;
-    port.m_maximum_headroom = attr.value.u32;
-    fvVector.emplace_back("max_headroom_size", to_string(port.m_maximum_headroom));
+    fvVector.emplace_back("max_priority_groups", to_string(port.m_priority_group_ids.size()));
+    fvVector.emplace_back("max_queues", to_string(port.m_queue_ids.size()));
+
     m_stateBufferMaximumValueTable->set(port.m_alias, fvVector);
 }
 
@@ -4160,7 +4148,7 @@ bool PortsOrch::initializePort(Port &port)
 
     initializePriorityGroups(port);
     initializeQueues(port);
-    initializePortMaximumHeadroom(port);
+    initializePortBufferMaximumParameters(port);
 
     /* Create host interface */
     if (!addHostIntfs(port, port.m_alias, port.m_hif_id))
@@ -4382,6 +4370,7 @@ bool PortsOrch::addBridgePort(Port &port)
         return false;
     }
     m_portList[port.m_alias] = port;
+    saiOidToAlias[port.m_bridge_port_id] = port.m_alias;
     SWSS_LOG_NOTICE("Add bridge port %s to default 1Q bridge", port.m_alias.c_str());
 
     PortUpdate update = { port, true };
@@ -4438,6 +4427,7 @@ bool PortsOrch::removeBridgePort(Port &port)
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
+    saiOidToAlias.erase(port.m_bridge_port_id);
     port.m_bridge_port_id = SAI_NULL_OBJECT_ID;
 
     /* Remove bridge port */
@@ -4511,7 +4501,7 @@ bool PortsOrch::addVlan(string vlan_alias)
         }
     }
 
-    SWSS_LOG_NOTICE("Create an empty VLAN %s vid:%hu", vlan_alias.c_str(), vlan_id);
+    SWSS_LOG_NOTICE("Create an empty VLAN %s vid:%hu vlan_oid:%" PRIx64, vlan_alias.c_str(), vlan_id, vlan_oid);
 
     Port vlan(vlan_alias, Port::VLAN);
     vlan.m_vlan_info.vlan_oid = vlan_oid;
@@ -4521,6 +4511,7 @@ bool PortsOrch::addVlan(string vlan_alias)
     vlan.m_members = set<string>();
     m_portList[vlan_alias] = vlan;
     m_port_ref_count[vlan_alias] = 0;
+    saiOidToAlias[vlan_oid] =  vlan_alias;
 
     return true;
 }
@@ -4529,6 +4520,13 @@ bool PortsOrch::removeVlan(Port vlan)
 {
     SWSS_LOG_ENTER();
 
+    /* If there are still fdb entries associated with the VLAN,
+       return false for retry */
+    if (vlan.m_fdb_count > 0)
+    {
+        SWSS_LOG_NOTICE("VLAN %s still has assiciated FDB entries", vlan.m_alias.c_str());
+        return false;
+    }
     if (m_port_ref_count[vlan.m_alias] > 0)
     {
         SWSS_LOG_ERROR("Failed to remove ref count %d VLAN %s",
@@ -4576,6 +4574,7 @@ bool PortsOrch::removeVlan(Port vlan)
     SWSS_LOG_NOTICE("Remove VLAN %s vid:%hu", vlan.m_alias.c_str(),
             vlan.m_vlan_info.vlan_id);
 
+    saiOidToAlias.erase(vlan.m_vlan_info.vlan_oid);
     m_portList.erase(vlan.m_alias);
     m_port_ref_count.erase(vlan.m_alias);
 
@@ -4665,7 +4664,7 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, stri
 
     /* a physical port may join multiple vlans */
     VlanMemberEntry vme = {vlan_member_id, sai_tagging_mode};
-    port.m_vlan_members[vlan.m_vlan_info.vlan_id] = vme;
+    m_portVlanMember[port.m_alias][vlan.m_vlan_info.vlan_id] = vme;
     m_portList[port.m_alias] = port;
     vlan.m_members.insert(port.m_alias);
     m_portList[vlan.m_alias] = vlan;
@@ -4673,6 +4672,12 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode, stri
     VlanMemberUpdate update = { vlan, port, true };
     notify(SUBJECT_TYPE_VLAN_MEMBER_CHANGE, static_cast<void *>(&update));
 
+    return true;
+}
+
+bool PortsOrch::getPortVlanMembers(Port &port, vlan_members_t &vlan_members)
+{
+    vlan_members = m_portVlanMember[port.m_alias];
     return true;
 }
 
@@ -4895,10 +4900,10 @@ bool PortsOrch::removeVlanMember(Port &vlan, Port &port, string end_point_ip)
     }
     sai_object_id_t vlan_member_id;
     sai_vlan_tagging_mode_t sai_tagging_mode;
-    auto vlan_member = port.m_vlan_members.find(vlan.m_vlan_info.vlan_id);
+    auto vlan_member = m_portVlanMember[port.m_alias].find(vlan.m_vlan_info.vlan_id);
 
     /* Assert the port belongs to this VLAN */
-    assert (vlan_member != port.m_vlan_members.end());
+    assert (vlan_member != m_portVlanMember[port.m_alias].end());
     sai_tagging_mode = vlan_member->second.vlan_mode;
     vlan_member_id = vlan_member->second.vlan_member_id;
 
@@ -4913,7 +4918,11 @@ bool PortsOrch::removeVlanMember(Port &vlan, Port &port, string end_point_ip)
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
-    port.m_vlan_members.erase(vlan_member);
+    m_portVlanMember[port.m_alias].erase(vlan_member);
+    if (m_portVlanMember[port.m_alias].empty())
+    {
+        m_portVlanMember.erase(port.m_alias);
+    }
     SWSS_LOG_NOTICE("Remove member %s from VLAN %s lid:%hx vmid:%" PRIx64,
             port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_info.vlan_id, vlan_member_id);
 
@@ -4955,6 +4964,20 @@ bool PortsOrch::isVlanMember(Port &vlan, Port &port, string end_point_ip)
 bool PortsOrch::addLag(string lag_alias, uint32_t spa_id, int32_t switch_id)
 {
     SWSS_LOG_ENTER();
+
+    auto lagport = m_portList.find(lag_alias);
+    if (lagport != m_portList.end())
+    {
+        /* The deletion of bridgeport attached to the lag may still be 
+         * pending due to fdb entries still present on the lag. Wait
+         * until the cleanup is done.
+         */
+        if (m_portList[lag_alias].m_bridge_port_id != SAI_NULL_OBJECT_ID)
+        {
+            return false;
+        }
+        return true;
+    }
 
     vector<sai_attribute_t> lag_attrs;
     string system_lag_alias = lag_alias;
@@ -5007,6 +5030,7 @@ bool PortsOrch::addLag(string lag_alias, uint32_t spa_id, int32_t switch_id)
     lag.m_members = set<string>();
     m_portList[lag_alias] = lag;
     m_port_ref_count[lag_alias] = 0;
+    saiOidToAlias[lag_id] = lag_alias;
 
     PortUpdate update = { lag, true };
     notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
@@ -5055,9 +5079,14 @@ bool PortsOrch::removeLag(Port lag)
         SWSS_LOG_ERROR("Failed to remove non-empty LAG %s", lag.m_alias.c_str());
         return false;
     }
-    if (lag.m_vlan_members.size() > 0)
+    if (m_portVlanMember[lag.m_alias].size() > 0)
     {
         SWSS_LOG_ERROR("Failed to remove LAG %s, it is still in VLAN", lag.m_alias.c_str());
+        return false;
+    }
+
+    if (lag.m_bridge_port_id != SAI_NULL_OBJECT_ID)
+    {
         return false;
     }
 
@@ -5074,6 +5103,7 @@ bool PortsOrch::removeLag(Port lag)
 
     SWSS_LOG_NOTICE("Remove LAG %s lid:%" PRIx64, lag.m_alias.c_str(), lag.m_lag_id);
 
+    saiOidToAlias.erase(lag.m_lag_id);
     m_portList.erase(lag.m_alias);
     m_port_ref_count.erase(lag.m_alias);
 

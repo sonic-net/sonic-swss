@@ -26,8 +26,11 @@ enum class CounterType
     PORT_DEBUG,
     SWITCH_DEBUG,
     MACSEC_SA_ATTR,
+    MACSEC_SA,
+    MACSEC_FLOW,
     ACL_COUNTER,
     TUNNEL,
+    HOSTIF_TRAP,
 };
 
 // FlexCounterManager allows users to manage a group of flex counters.
@@ -45,7 +48,7 @@ class FlexCounterManager
                 const bool enabled,
                 swss::FieldValueTuple fv_plugin = std::make_pair("",""));
 
-        FlexCounterManager() 
+        FlexCounterManager()
         {}
 
         FlexCounterManager(const FlexCounterManager&) = delete;
@@ -112,7 +115,7 @@ class FlexManagerDirectory
 {
     public:
         FlexCounterManager* createFlexCounterManager(const std::string& group_name, const StatsMode stats_mode,
-                                                     const uint polling_interval, const bool enabled, 
+                                                     const uint polling_interval, const bool enabled,
                                                      swss::FieldValueTuple fv_plugin = std::make_pair("",""));
     private:
         std::unordered_map<std::string, FlexCounterManager*>  m_managers;

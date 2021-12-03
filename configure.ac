@@ -138,6 +138,7 @@ AC_CONFIG_FILES([
     swssconfig/Makefile
     cfgmgr/Makefile
     tests/Makefile
+    orchagent/p4orch/tests/Makefile
 ])
 
 # If no SAI library is installed, compile with SAIVS and run unit tests
