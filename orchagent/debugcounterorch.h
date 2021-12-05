@@ -52,10 +52,12 @@ private:
     CounterType getFlexCounterType(const std::string& counter_type) noexcept(false);
     void installDebugFlexCounters(
             const std::string& counter_type,
-            const std::string& counter_stat);
+            const std::string& counter_stat,
+            sai_object_id_t port_id = SAI_NULL_OBJECT_ID);
     void uninstallDebugFlexCounters(
             const std::string& counter_type,
-            const std::string& counter_stat);
+            const std::string& counter_stat,
+            sai_object_id_t port_id = SAI_NULL_OBJECT_ID);
     void addPortDebugCounter(sai_object_id_t port_id);
     void removePortDebugCounter(sai_object_id_t port_id);
 
