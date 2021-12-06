@@ -1918,6 +1918,8 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         updateDefRouteState(ipPrefix.to_string(), true);
     }
 
+    m_syncdRoutes[vrf_id][ipPrefix] = nextHops;
+
     notifyNextHopChangeObservers(vrf_id, ipPrefix, nextHops, true);
     return true;
 }
