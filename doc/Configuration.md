@@ -14,6 +14,8 @@ Table of Contents
          * [Buffer pool](#buffer-pool)  
          * [Buffer profile](#buffer-profile)  
          * [Buffer queue](#buffer-queue)  
+         * [Buffer port ingress profile list](#buffer-port-ingress-profile-list)  
+         * [Buffer port egress profile list](#buffer-port-egress-profile-list)  
          * [Cable length](#cable-length)  
          * [COPP_TABLE](#copp_table)  
          * [CRM](#crm)  
@@ -503,6 +505,43 @@ This kind of profiles will be handled by buffer manager and won't be applied to 
  
 ```
 
+### Buffer port ingress profile list
+
+```
+{
+"BUFFER_PORT_[BUFFER_PROFILE|INGRESS_PROFILE_LIST": {
+    "Ethernet50": {
+        "profile_list": "[BUFFER_PROFILE|ingress_lossy_profile],[BUFFER_PROFILE|ingress_lossless_profile]"
+    },
+    "Ethernet52": {
+        "profile_list": "[BUFFER_PROFILE|ingress_lossy_profile],[BUFFER_PROFILE|ingress_lossless_profile]"
+    },
+    "Ethernet56": {
+        "profile_list": "[BUFFER_PROFILE|ingress_lossy_profile],[BUFFER_PROFILE|ingress_lossless_profile]"
+    }
+  }
+}
+
+```
+
+### Buffer port egress profile list
+
+```
+{
+"BUFFER_PORT_EGRESS_PROFILE_LIST": {
+    "Ethernet50": {
+        "profile_list": "[BUFFER_PROFILE|egress_lossy_profile],[BUFFER_PROFILE|egress_lossless_profile]"
+    },
+    "Ethernet52": {
+        "profile_list": "[BUFFER_PROFILE|egress_lossy_profile],[BUFFER_PROFILE|egress_lossless_profile]"
+    },
+    "Ethernet56": {
+        "profile_list": "[BUFFER_PROFILE|egress_lossy_profile],[BUFFER_PROFILE|egress_lossless_profile]"
+    }
+  }
+}
+
+```
 
 ### Cable length
 
