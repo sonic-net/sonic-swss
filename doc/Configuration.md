@@ -510,7 +510,7 @@ This kind of profiles will be handled by buffer manager and won't be applied to 
 
 ```
 {
-"BUFFER_PORT_[BUFFER_PROFILE|INGRESS_PROFILE_LIST": {
+"BUFFER_PORT_INGRESS_PROFILE_LIST": {
     "Ethernet50": {
         "profile_list": "[BUFFER_PROFILE|ingress_lossy_profile],[BUFFER_PROFILE|ingress_lossless_profile]"
     },
