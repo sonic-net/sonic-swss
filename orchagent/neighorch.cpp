@@ -1541,10 +1541,6 @@ bool NeighOrch::addVoqEncapIndex(string &alias, IpAddress &ip, vector<sai_attrib
             attr.value.u32 = encap_index;
             neighbor_attrs.push_back(attr);
 
-            attr.id = SAI_NEIGHBOR_ENTRY_ATTR_ENCAP_IMPOSE_INDEX;
-            attr.value.booldata = true;
-            neighbor_attrs.push_back(attr);
-
             attr.id = SAI_NEIGHBOR_ENTRY_ATTR_IS_LOCAL;
             attr.value.booldata = false;
             neighbor_attrs.push_back(attr);
