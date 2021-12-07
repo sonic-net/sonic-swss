@@ -14,6 +14,8 @@ Table of Contents
          * [Buffer pool](#buffer-pool)  
          * [Buffer profile](#buffer-profile)  
          * [Buffer queue](#buffer-queue)  
+         * [Buffer port ingress profile list](#buffer-port-ingress-profile-list)  
+         * [Buffer port egress profile list](#buffer-port-egress-profile-list)  
          * [Cable length](#cable-length)  
          * [COPP_TABLE](#copp_table)  
          * [CRM](#crm)  
@@ -286,6 +288,46 @@ and migration plan
 
 ```
 
+***ACL table type configuration example***
+```
+{
+    "ACL_TABLE_TYPE": {
+        "CUSTOM_L3": {
+            "MATCHES": [
+                "IN_PORTS",
+                "OUT_PORTS",
+                "SRC_IP"
+            ],
+            "ACTIONS": [
+                "PACKET_ACTION",
+                "MIRROR_INGRESS_ACTION"
+            ],
+            "BIND_POINTS": [
+                "PORT",
+                "LAG"
+            ]
+        }
+    },
+    "ACL_TABLE": {
+        "DATAACL": {
+            "STAGE": "INGRESS",
+            "TYPE": "CUSTOM_L3",
+            "PORTS": [
+                "Ethernet0",
+                "PortChannel1"
+            ]
+        }
+    },
+    "ACL_RULE": {
+        "DATAACL|RULE0": {
+            "PRIORITY": "999",
+            "PACKET_ACTION": "DROP",
+            "SRC_IP": "1.1.1.1/32",
+        }
+    }
+}
+```
+
 ### BGP Sessions
 
 BGP session configuration is defined in **BGP_NEIGHBOR** table. BGP
@@ -504,6 +546,43 @@ This kind of profiles will be handled by buffer manager and won't be applied to 
  
 ```
 
+### Buffer port ingress profile list
+
+```
+{
+"BUFFER_PORT_INGRESS_PROFILE_LIST": {
+    "Ethernet50": {
+        "profile_list": "ingress_lossy_profile,ingress_lossless_profile"
+    },
+    "Ethernet52": {
+        "profile_list": "ingress_lossy_profile,ingress_lossless_profile"
+    },
+    "Ethernet56": {
+        "profile_list": "ingress_lossy_profile,ingress_lossless_profile"
+    }
+  }
+}
+
+```
+
+### Buffer port egress profile list
+
+```
+{
+"BUFFER_PORT_EGRESS_PROFILE_LIST": {
+    "Ethernet50": {
+        "profile_list": "egress_lossy_profile,egress_lossless_profile"
+    },
+    "Ethernet52": {
+        "profile_list": "egress_lossy_profile,egress_lossless_profile"
+    },
+    "Ethernet56": {
+        "profile_list": "egress_lossy_profile,egress_lossless_profile"
+    }
+  }
+}
+
+```
 
 ### Cable length
 

@@ -20,6 +20,7 @@ extern "C" {
 #include "notificationconsumer.h"
 #include "selectabletimer.h"
 #include "macaddress.h"
+#include "response_publisher.h"
 
 const char delimiter           = ':';
 const char list_item_delimiter = ',';
@@ -225,6 +226,9 @@ protected:
     static void logfileReopen();
     std::string dumpTuple(Consumer &consumer, const swss::KeyOpFieldsValuesTuple &tuple);
     ref_resolve_status resolveFieldRefValue(type_map&, const std::string&, const std::string&, swss::KeyOpFieldsValuesTuple&, sai_object_id_t&, std::string&);
+    std::set<std::string> generateIdListFromMap(unsigned long idsMap, sai_uint32_t maxId);
+    unsigned long generateBitMapFromIdsStr(const std::string &idsStr);
+    bool isItemIdsMapContinuous(unsigned long idsMap, sai_uint32_t maxId);
     bool parseIndexRange(const std::string &input, sai_uint32_t &range_low, sai_uint32_t &range_high);
     bool parseReference(type_map &type_maps, std::string &ref, const std::string &table_name, std::string &object_name);
     ref_resolve_status resolveFieldRefArray(type_map&, const std::string&, const std::string&, swss::KeyOpFieldsValuesTuple&, std::vector<sai_object_id_t>&, std::string&);
@@ -243,6 +247,8 @@ protected:
     virtual task_process_status handleSaiRemoveStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
     virtual task_process_status handleSaiGetStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
     bool parseHandleSaiStatusFailure(task_process_status status);
+
+    ResponsePublisher m_publisher;
 private:
     void removeMeFromObjsReferencedByMe(type_map &type_maps, const std::string &table, const std::string &obj_name, const std::string &field, const std::string &old_referenced_obj_name);
     void addConsumer(swss::DBConnector *db, std::string tableName, int pri = default_orch_pri);

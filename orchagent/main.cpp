@@ -13,6 +13,8 @@ extern "C" {
 #include <getopt.h>
 #include <unistd.h>
 #include <inttypes.h>
+#include <sstream>
+#include <stdexcept>
 #include <stdlib.h>
 #include <string.h>
 
@@ -54,8 +56,10 @@ int gBatchSize = DEFAULT_BATCH_SIZE;
 
 bool gSairedisRecord = true;
 bool gSwssRecord = true;
+bool gResponsePublisherRecord = false;
 bool gLogRotate = false;
 bool gSaiRedisLogRotate = false;
+bool gResponsePublisherLogRotate = false;
 bool gSyncMode = false;
 sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
 string gAsicInstance;
@@ -64,6 +68,12 @@ extern bool gIsNatSupported;
 
 ofstream gRecordOfs;
 string gRecordFile;
+ofstream gResponsePublisherRecordOfs;
+string gResponsePublisherRecordFile;
+
+#define SAIREDIS_RECORD_ENABLE 0x1
+#define SWSS_RECORD_ENABLE (0x1 << 1)
+#define RESPONSE_PUBLISHER_RECORD_ENABLE (0x1 << 2)
 
 string gMySwitchType = "";
 int32_t gVoqMySwitchId = -1;
@@ -77,10 +87,12 @@ void usage()
     cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-k bulk_size]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
+    cout << "                    Bit 0: sairedis.rec, Bit 1: swss.rec, Bit 2: responsepublisher.rec. For example:" << endl;
     cout << "                    0: do not record logs" << endl;
     cout << "                    1: record SAI call sequence as sairedis.rec" << endl;
     cout << "                    2: record SwSS task sequence as swss.rec" << endl;
     cout << "                    3: enable both above two records" << endl;
+    cout << "                    7: enable sairedis.rec, swss.rec and responsepublisher.rec" << endl;
     cout << "    -d record_location: set record logs folder location (default .)" << endl;
     cout << "    -b batch_size: set consumer table pop operation batch size (default 128)" << endl;
     cout << "    -m MAC: set switch MAC address" << endl;
@@ -99,6 +111,7 @@ void sighup_handler(int signo)
      */
     gLogRotate = true;
     gSaiRedisLogRotate = true;
+    gResponsePublisherLogRotate = true;
 }
 
 void syncd_apply_view()
@@ -115,7 +128,7 @@ void syncd_apply_view()
     {
         SWSS_LOG_ERROR("Failed to notify syncd APPLY_VIEW %d", status);
         exit(EXIT_FAILURE);
-    } 
+    }
 }
 
 /*
@@ -321,6 +334,8 @@ int main(int argc, char **argv)
     string record_location = ".";
     string swss_rec_filename = "swss.rec";
     string sairedis_rec_filename = "sairedis.rec";
+    string responsepublisher_rec_filename = "responsepublisher.rec";
+    int record_type = 3; // Only swss and sairedis recordings enabled by default.
 
     while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:")) != -1)
     {
@@ -346,24 +361,10 @@ int main(int argc, char **argv)
             gMacAddress = MacAddress(optarg);
             break;
         case 'r':
-            if (!strcmp(optarg, "0"))
-            {
-                gSairedisRecord = false;
-                gSwssRecord = false;
-            }
-            else if (!strcmp(optarg, "1"))
-            {
-                gSwssRecord = false;
-            }
-            else if (!strcmp(optarg, "2"))
-            {
-                gSairedisRecord = false;
-            }
-            else if (!strcmp(optarg, "3"))
-            {
-                continue; /* default behavior */
-            }
-            else
+            // Disable all recordings if atoi() fails i.e. returns 0 due to
+            // invalid command line argument.
+            record_type = atoi(optarg);
+            if (record_type < 0 || record_type > 7) 
             {
                 usage();
                 exit(EXIT_FAILURE);
@@ -434,6 +435,14 @@ int main(int argc, char **argv)
     attr.value.ptr = (void *)on_fdb_event;
     attrs.push_back(attr);
 
+    // Initialize recording parameters.
+    gSairedisRecord =
+        (record_type & SAIREDIS_RECORD_ENABLE) == SAIREDIS_RECORD_ENABLE;
+    gSwssRecord = (record_type & SWSS_RECORD_ENABLE) == SWSS_RECORD_ENABLE;
+    gResponsePublisherRecord =
+        (record_type & RESPONSE_PUBLISHER_RECORD_ENABLE) ==
+        RESPONSE_PUBLISHER_RECORD_ENABLE;
+
     /* Disable/enable SwSS recording */
     if (gSwssRecord)
     {
@@ -445,6 +454,24 @@ int main(int argc, char **argv)
             exit(EXIT_FAILURE);
         }
         gRecordOfs << getTimestamp() << "|recording started" << endl;
+    }
+
+    // Disable/Enable response publisher recording.
+    if (gResponsePublisherRecord) 
+    {
+        gResponsePublisherRecordFile = record_location + "/" + responsepublisher_rec_filename;
+        gResponsePublisherRecordOfs.open(gResponsePublisherRecordFile, std::ofstream::out | std::ofstream::app);
+        if (!gResponsePublisherRecordOfs.is_open())
+        {
+            SWSS_LOG_ERROR("Failed to open Response Publisher recording file %s",
+                    gResponsePublisherRecordFile.c_str());
+            gResponsePublisherRecord = false;
+        } 
+        else 
+        {
+            gResponsePublisherRecordOfs << getTimestamp() << "|recording started"
+                << endl;
+        }
     }
 
     attr.id = SAI_SWITCH_ATTR_PORT_STATE_CHANGE_NOTIFY;
@@ -644,7 +671,7 @@ int main(int argc, char **argv)
     }
     else
     {
-        orchDaemon = make_shared<FabricOrchDaemon>(&appl_db, &config_db, &state_db, chassis_app_db.get()); 
+        orchDaemon = make_shared<FabricOrchDaemon>(&appl_db, &config_db, &state_db, chassis_app_db.get());
     }
 
     if (!orchDaemon->init())
