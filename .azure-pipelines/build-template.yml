@@ -64,6 +64,11 @@ jobs:
           libteam5 \
           libteamdctl0
     displayName: "Install dependencies"
+  - script: |
+      ls -al $(Pipeline.Workspace)
+      rm -rf $(Pipeline.Workspace)/*.deb
+      ls -al $(Pipeline.Workspace)
+    displayName: "Clean workspace"
   - task: DownloadPipelineArtifact@2
     inputs:
       source: specific
