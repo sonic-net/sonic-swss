@@ -599,7 +599,7 @@ bool RouteOrch::addLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroupKey 
      * (group) id. The old next hop (group) is then not used and the reference
      * count will decrease by 1.
      */
-    if (it_route == m_syncdLabelRoutes.at(vrf_id).end())
+    if (it_route == m_syncdLabelRoutes.at(vrf_id).end() || gLabelRouteBulker.bulk_entry_pending_removal(inseg_entry))
     {
         vector<sai_attribute_t> inseg_attrs;
         if (blackhole)

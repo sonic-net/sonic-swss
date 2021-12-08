@@ -1827,7 +1827,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
      * (group) id. The old next hop (group) is then not used and the reference
      * count will decrease by 1.
      */
-    if (it_route == m_syncdRoutes.at(vrf_id).end())
+    if (it_route == m_syncdRoutes.at(vrf_id).end() || gRouteBulker.bulk_entry_pending_removal(route_entry))
     {
         if (blackhole)
         {
