@@ -247,6 +247,8 @@ void BufferMgrDynamic::loadZeroPoolAndProfiles()
                 else if (fvField(fv) == "ingress_zero_profile")
                 {
                     m_bufferZeroProfileName[BUFFER_PG] = parseObjectNameFromReference(fvValue(fv));
+                    if (m_bufferZeroProfileName[BUFFER_PG].empty())
+                        m_bufferZeroProfileName[BUFFER_PG] = fvValue(fv);
                 }
                 else if (fvField(fv) == "queues_to_apply_zero_profile")
                 {
@@ -255,6 +257,8 @@ void BufferMgrDynamic::loadZeroPoolAndProfiles()
                 else if (fvField(fv) == "egress_zero_profile")
                 {
                     m_bufferZeroProfileName[BUFFER_QUEUE] = parseObjectNameFromReference(fvValue(fv));
+                    if (m_bufferZeroProfileName[BUFFER_QUEUE].empty())
+                        m_bufferZeroProfileName[BUFFER_QUEUE] = fvValue(fv);
                 }
                 else if (fvField(fv) == "support_removing_buffer_items")
                 {
@@ -291,7 +295,9 @@ void BufferMgrDynamic::loadZeroPoolAndProfiles()
                 if (fvField(fv) == "pool")
                 {
                     auto &poolRef = fvValue(fv);
-                    const auto &poolName = parseObjectNameFromReference(poolRef);
+                    auto poolName = parseObjectNameFromReference(poolRef);
+                    if (poolName.empty())
+                        poolName = poolRef;
                     auto poolSearchRef = m_bufferPoolLookup.find(poolName);
                     if (poolSearchRef != m_bufferPoolLookup.end())
                     {
