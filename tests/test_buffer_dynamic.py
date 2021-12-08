@@ -589,9 +589,9 @@ class TestBufferMgrDyn(object):
         lossy_queue_reference_appl_db = '[BUFFER_PROFILE_TABLE:egress_lossy_profile]'
         lossless_queue_reference_appl_db = '[BUFFER_PROFILE_TABLE:egress_lossless_profile]'
 
-        lossy_pg_zero_reference = 'ingress_lossy_pg_zero_profile'
-        lossy_queue_zero_reference = 'egress_lossy_zero_profile'
-        lossless_queue_zero_reference = 'egress_lossless_zero_profile'
+        lossy_pg_zero_reference = '[BUFFER_PROFILE_TABLE:ingress_lossy_pg_zero_profile]'
+        lossy_queue_zero_reference = '[BUFFER_PROFILE_TABLE:egress_lossy_zero_profile]'
+        lossless_queue_zero_reference = '[BUFFER_PROFILE_TABLE:egress_lossless_zero_profile]'
 
         # Startup interface
         dvs.runcmd('config interface startup Ethernet0')
@@ -675,7 +675,7 @@ class TestBufferMgrDyn(object):
         self.app_db.wait_for_field_match("BUFFER_QUEUE_TABLE", "Ethernet0:3-4", {"profile": lossless_queue_reference_appl_db})
         self.app_db.wait_for_field_match("BUFFER_QUEUE_TABLE", "Ethernet0:5-6", {"profile": lossy_queue_reference_appl_db})
         self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:0", {"profile": lossy_pg_reference_appl_db})
-        self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": expectedProfile})
+        self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile + "]"})
         self.app_db.wait_for_deleted_entry("BUFFER_QUEUE_TABLE", "Ethernet0:7-{}".format(maximumQueues))
 
         # Remove lossless PG 3-4 on interface
@@ -683,6 +683,8 @@ class TestBufferMgrDyn(object):
 
         # Shutdown interface
         dvs.runcmd("config interface shutdown Ethernet0")
+
+        self.cleanup_db(dvs)
 
     def test_removeBufferPool(self, dvs, testlog):
         self.setup_db(dvs)
@@ -715,10 +717,14 @@ class TestBufferMgrDyn(object):
             if counter_poll_disabled:
                 self.config_db.delete_entry("FLEX_COUNTER_TABLE", "BUFFER_POOL_WATERMARK")
 
+        self.cleanup_db(dvs)
+
     def test_bufferPortMaxParameter(self, dvs, testlog):
         self.setup_db(dvs)
 
         # Check whether port's maximum parameter has been exposed to STATE_DB
         fvs = self.state_db.wait_for_entry("BUFFER_MAX_PARAM_TABLE", "Ethernet0")
         assert int(fvs["max_queues"]) and int(fvs["max_priority_groups"])
+
+        self.cleanup_db(dvs)
 
