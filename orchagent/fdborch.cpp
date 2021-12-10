@@ -433,13 +433,21 @@ void FdbOrch::update(sai_fdb_event_t        type,
         update.add = false;
         if (!update.port.m_alias.empty())
         {
-            update.port.m_fdb_count--;
-            m_portsOrch->setPort(update.port.m_alias, update.port);
+            if (update.port.m_fdb_count > 0)
+            {
+                update.port.m_fdb_count--;
+                m_portsOrch->setPort(update.port.m_alias, update.port);
+            }
         }
         if (!vlan.m_alias.empty())
         {
-            vlan.m_fdb_count--;
-            m_portsOrch->setPort(vlan.m_alias, vlan);
+            if (vlan.m_fdb_count > 0)
+            {
+                vlan.m_fdb_count--;
+                m_portsOrch->setPort(vlan.m_alias, vlan);
+            }
+            else
+                SWSS_LOG_ERROR("%s fdbcount is 0, can't remove, FDB %s", vlan.m_alias.c_str(), update.entry.mac.to_string().c_str());
         }
         storeFdbEntryState(update);
 
@@ -467,6 +475,8 @@ void FdbOrch::update(sai_fdb_event_t        type,
         {
              SWSS_LOG_WARN("FdbOrch MOVE notification: mac %s is not found in bv_id 0x%" PRIx64,
                     update.entry.mac.to_string().c_str(), entry->bv_id);
+             vlan.m_fdb_count++;
+             m_portsOrch->setPort(vlan.m_alias, vlan);
         }
         else if (!m_portsOrch->getPortByBridgePortId(existing_entry->second.bridge_port_id, port_old))
         {
