@@ -541,7 +541,7 @@ bool OrchDaemon::init()
                         PFC_WD_POLL_MSECS));
         }
     }
-    else if (platform == BRCM_PLATFORM_SUBSTRING)
+    else if ((platform == BRCM_PLATFORM_SUBSTRING) || (platform == VS_PLATFORM_SUBSTRING))
     {
         static const vector<sai_port_stat_t> portStatIds =
         {
