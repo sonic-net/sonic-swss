@@ -85,7 +85,6 @@ class TestPfcwdFunc(object):
         self.get_db_handle(dvs)
 
         self.test_ports = ["Ethernet0"]
-        pfc_queues = [3,4]
 
         self.setup_test(dvs)
         self.get_port_oids()
@@ -161,7 +160,6 @@ class TestPfcwdFunc(object):
         self.config_db.update_entry("CABLE_LEN", "AZURE", fvs)
 
     def start_pfcwd_on_ports(self, poll_interval="200", detection_time="200", restoration_time="200", action="drop"):
-        pfcwd_info = dict()
         pfcwd_info = {"POLL_INTERVAL": poll_interval}
         self.config_db.update_entry("PFC_WD", "GLOBAL", pfcwd_info)
 
