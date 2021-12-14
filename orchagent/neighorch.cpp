@@ -22,6 +22,8 @@ extern Directory<Orch*> gDirectory;
 extern string gMySwitchType;
 extern int32_t gVoqMySwitchId;
 
+#define MUX_TUNNEL "MuxTunnel0"
+
 const int neighorch_pri = 30;
 
 NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch, FdbOrch *fdbOrch, PortsOrch *portsOrch, DBConnector *chassisAppDb) :
@@ -728,6 +730,11 @@ void NeighOrch::doTask(Consumer &consumer)
             if (m_syncdNeighbors.find(neighbor_entry) == m_syncdNeighbors.end()
                     || m_syncdNeighbors[neighbor_entry].mac != mac_address)
             {
+                if (mac_address == MacAddress("00:00:00:00:00:00"))
+                {
+                    MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
+                    sai_object_id_t nexthop = mux_orch->createNextHopTunnel(MUX_TUNNEL, neighbor_entry.ip_address);
+                }
                 if (addNeighbor(neighbor_entry, mac_address))
                 {
                     it = consumer.m_toSync.erase(it);
