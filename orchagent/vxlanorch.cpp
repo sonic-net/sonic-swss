@@ -299,7 +299,7 @@ create_tunnel(
           num_map++;
       }
     }
-      
+
     attr.id = SAI_TUNNEL_ATTR_DECAP_MAPPERS;
     attr.value.objlist.count = num_map;
     attr.value.objlist.list = map_list;
@@ -1536,7 +1536,7 @@ bool VxlanTunnelOrch::removeVxlanTunnelMap(string tunnelName, uint32_t vni)
         return false;
     }
 
-    // Update the map count and if this is the last mapping entry 
+    // Update the map count and if this is the last mapping entry
     // make SAI calls to delete the tunnel and tunnel termination objects.
 
     tunnel_obj->vlan_vrf_vni_count--;
@@ -1730,6 +1730,7 @@ bool  VxlanTunnelOrch::delTunnelUser(const std::string remote_vtep, uint32_t vni
 
     port_tunnel_name = getTunnelPortName(remote_vtep);
     gPortsOrch->getPort(port_tunnel_name,tunnelPort);
+
     if ((vtep_ptr->getRemoteEndPointRefCnt(remote_vtep) == 1) &&
        tunnelPort.m_fdb_count == 0)
     {

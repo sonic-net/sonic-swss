@@ -65,7 +65,6 @@ bool FdbOrch::bake()
     return true;
 }
 
-
 bool FdbOrch::storeFdbEntryState(const FdbUpdate& update)
 {
     const FdbEntry& entry = update.entry;
