@@ -31,6 +31,10 @@ bool gSwssRecord = false;
 bool gLogRotate = false;
 ofstream gRecordOfs;
 string gRecordFile;
+bool gResponsePublisherRecord = false;
+bool gResponsePublisherLogRotate = false;
+ofstream gResponsePublisherRecordOfs;
+string gResponsePublisherRecordFile;
 /* Global database mutex */
 mutex gDbMutex;
 

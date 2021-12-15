@@ -11,6 +11,9 @@
 #include "intfsorch.h"
 #include "neighorch.h"
 #include "routeorch.h"
+#include "nhgorch.h"
+#include "cbf/cbfnhgorch.h"
+#include "cbf/nhgmaporch.h"
 #include "copporch.h"
 #include "tunneldecaporch.h"
 #include "qosorch.h"
@@ -18,6 +21,7 @@
 #include "mirrororch.h"
 #include "fdborch.h"
 #include "aclorch.h"
+#include "pbhorch.h"
 #include "pfcwdorch.h"
 #include "switchorch.h"
 #include "crmorch.h"
@@ -32,8 +36,13 @@
 #include "debugcounterorch.h"
 #include "directory.h"
 #include "natorch.h"
+#include "isolationgrouporch.h"
+#include "mlagorch.h"
 #include "muxorch.h"
 #include "macsecorch.h"
+#include "p4orch/p4orch.h"
+#include "bfdorch.h"
+#include "srv6orch.h"
 
 using namespace swss;
 

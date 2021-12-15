@@ -6,6 +6,7 @@ class DVSAcl:
     """Manage ACL tables and rules on the virtual switch."""
 
     CDB_ACL_TABLE_NAME = "ACL_TABLE"
+    CDB_ACL_TABLE_TYPE_NAME = "ACL_TABLE_TYPE"
 
     CDB_MIRROR_ACTION_LOOKUP = {
         "ingress": "MIRROR_INGRESS_ACTION",
@@ -31,6 +32,11 @@ class DVSAcl:
         "egress": "SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_EGRESS"
     }
 
+    ADB_PORTCHANNEL_ATTR_LOOKUP = {
+        "ingress": "SAI_LAG_ATTR_INGRESS_ACL",
+        "egress": "SAI_LAG_ATTR_EGRESS_ACL"
+    }
+
     ADB_PORT_ATTR_LOOKUP = {
         "ingress": "SAI_PORT_ATTR_INGRESS_ACL",
         "egress": "SAI_PORT_ATTR_EGRESS_ACL"
@@ -42,6 +48,26 @@ class DVSAcl:
         self.config_db = config_db
         self.state_db = state_db
         self.counters_db = counters_db
+
+    def create_acl_table_type(
+            self,
+            name: str,
+            matches: List[str],
+            bpoint_types: List[str]
+    ) -> None:
+        """Create a new ACL table type in Config DB.
+
+        Args:
+            name: The name for the new ACL table type.
+            matches: A list of matches to use in ACL table.
+            bpoint_types: A list of bind point types to use in ACL table.
+        """
+        table_type_attrs = {
+            "matches@": ",".join(matches),
+            "bind_points@": ",".join(bpoint_types)
+        }
+
+        self.config_db.create_entry(self.CDB_ACL_TABLE_TYPE_NAME, name, table_type_attrs)
 
     def create_acl_table(
             self,
@@ -105,6 +131,14 @@ class DVSAcl:
             table_name: The name of the ACL table to delete.
         """
         self.config_db.delete_entry(self.CDB_ACL_TABLE_NAME, table_name)
+
+    def remove_acl_table_type(self, name: str) -> None:
+        """Remove an ACL table type from Config DB.
+
+        Args:
+            name: The name of the ACL table type to delete.
+        """
+        self.config_db.delete_entry(self.CDB_ACL_TABLE_TYPE_NAME, name)
 
     def get_acl_table_ids(self, expected: int) -> List[str]:
         """Get all of the ACL table IDs in ASIC DB.
@@ -195,6 +229,37 @@ class DVSAcl:
                 member_groups.append(group_id)
 
         assert set(member_groups) == set(acl_table_group_ids)
+
+    def verify_acl_table_portchannel_binding(
+            self,
+            acl_table_id: str,
+            bind_portchannels: List[str],
+            num_tables: int,
+            stage: str = "ingress"
+    ) -> None:
+        """Verify that the ACL table has been bound to the given list of portchannels.
+
+        Args:
+            acl_table_id: The ACL table that is being checked.
+            bind_portchannels: The portchannels that should be bound to the given ACL table.
+            num_tables: The total number of ACL tables in ASIC DB.
+            stage: The stage of the ACL table that was created.
+        """
+        acl_table_group_ids = self.asic_db.wait_for_n_keys(self.ADB_ACL_GROUP_TABLE_NAME, len(bind_portchannels))
+
+        portchannel_groups = []
+        for portchannel in bind_portchannels:
+            portchannel_oid = self.counters_db.get_entry("COUNTERS_LAG_NAME_MAP", "").get(portchannel)
+            fvs = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_LAG", portchannel_oid)
+
+            acl_table_group_id = fvs.pop(self.ADB_PORTCHANNEL_ATTR_LOOKUP[stage], None)
+            assert acl_table_group_id in acl_table_group_ids
+            portchannel_groups.append(acl_table_group_id)
+
+        assert len(portchannel_groups) == len(bind_portchannels)
+        assert set(portchannel_groups) == set(acl_table_group_ids)
+
+        self.verify_acl_table_group_members(acl_table_id, acl_table_group_ids, num_tables)
 
     def verify_acl_table_port_binding(
             self,
@@ -391,6 +456,7 @@ class DVSAcl:
         fvs = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", acl_rule_id)
         self._check_acl_entry_base(fvs, sai_qualifiers, action, priority)
         self._check_acl_entry_packet_action(fvs, action)
+        self._check_acl_entry_counters_map(acl_rule_id)
 
     def verify_redirect_acl_rule(
             self,
@@ -415,6 +481,7 @@ class DVSAcl:
         fvs = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", acl_rule_id)
         self._check_acl_entry_base(fvs, sai_qualifiers, "REDIRECT", priority)
         self._check_acl_entry_redirect_action(fvs, expected_destination)
+        self._check_acl_entry_counters_map(acl_rule_id)
 
     def verify_nat_acl_rule(
             self,
@@ -435,6 +502,7 @@ class DVSAcl:
 
         fvs = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", acl_rule_id)
         self._check_acl_entry_base(fvs, sai_qualifiers, "DO_NOT_NAT", priority)
+        self._check_acl_entry_counters_map(acl_rule_id)
 
     def verify_mirror_acl_rule(
             self,
@@ -460,6 +528,7 @@ class DVSAcl:
         fvs = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", acl_rule_id)
         self._check_acl_entry_base(fvs, sai_qualifiers, "MIRROR", priority)
         self._check_acl_entry_mirror_action(fvs, session_oid, stage)
+        self._check_acl_entry_counters_map(acl_rule_id)
 
     def verify_acl_rule_set(
             self,
@@ -592,3 +661,12 @@ class DVSAcl:
     def _check_acl_entry_mirror_action(self, entry: Dict[str, str], session_oid: str, stage: str) -> None:
         assert stage in self.ADB_MIRROR_ACTION_LOOKUP
         assert entry.get(self.ADB_MIRROR_ACTION_LOOKUP[stage]) == session_oid
+
+    def _check_acl_entry_counters_map(self, acl_entry_oid: str):
+        entry = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", acl_entry_oid)
+        counter_oid = entry.get("SAI_ACL_ENTRY_ATTR_ACTION_COUNTER")
+        if counter_oid is None:
+            return
+        rule_to_counter_map = self.counters_db.get_entry("ACL_COUNTER_RULE_MAP", "")
+        counter_to_rule_map = {v: k for k, v in rule_to_counter_map.items()}
+        assert counter_oid in counter_to_rule_map

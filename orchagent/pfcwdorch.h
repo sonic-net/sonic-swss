@@ -52,6 +52,7 @@ public:
 
 protected:
     virtual bool startWdActionOnQueue(const string &event, sai_object_id_t queueId) = 0;
+    string m_platform = "";
 
 private:
 

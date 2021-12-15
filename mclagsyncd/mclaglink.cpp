@@ -334,7 +334,6 @@ void MclagLink::setPortIsolate(char *msg)
         acl_rule_attrs.push_back(ip_type_attr);
 
         string temp;
-        isolate_dst_port.insert(0, (const char*)cur, op_hdr->op_len);
         istringstream dst_ss(isolate_dst_port);
 
         isolate_dst_port.clear();

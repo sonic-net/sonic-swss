@@ -95,6 +95,8 @@ private:
     NeighOrch *m_neighOrch;
     FdbOrch *m_fdbOrch;
     PolicerOrch *m_policerOrch;
+    // Maximum number of traffic classes starting at 0, thus queue can be 0 - m_maxNumTC-1
+    uint8_t m_maxNumTC;
 
     Table m_mirrorTable;
 

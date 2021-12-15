@@ -7,6 +7,7 @@
 #include "directory.h"
 #include "muxorch.h"
 #include "subscriberstatetable.h"
+#include "nhgorch.h"
 
 extern sai_neighbor_api_t*         sai_neighbor_api;
 extern sai_next_hop_api_t*         sai_next_hop_api;
@@ -15,6 +16,7 @@ extern PortsOrch *gPortsOrch;
 extern sai_object_id_t gSwitchId;
 extern CrmOrch *gCrmOrch;
 extern RouteOrch *gRouteOrch;
+extern NhgOrch *gNhgOrch;
 extern FgNhgOrch *gFgNhgOrch;
 extern Directory<Orch*> gDirectory;
 extern string gMySwitchType;
@@ -32,7 +34,7 @@ NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch,
     SWSS_LOG_ENTER();
 
     m_fdbOrch->attach(this);
-    
+
     if(gMySwitchType == "voq")
     {
         //Add subscriber to process VOQ system neigh
@@ -169,6 +171,16 @@ bool NeighOrch::hasNextHop(const NextHopKey &nexthop)
     return m_syncdNextHops.find(nexthop) != m_syncdNextHops.end();
 }
 
+// Check if the underlying neighbor is resolved for a given next hop key.
+bool NeighOrch::isNeighborResolved(const NextHopKey &nexthop)
+{
+    // Extract the IP address and interface from the next hop key, and check if the next hop
+    // for just that pair exists.
+    NextHopKey base_nexthop = NextHopKey(nexthop.ip_address, nexthop.alias);
+
+    return hasNextHop(base_nexthop);
+}
+
 bool NeighOrch::addNextHop(const NextHopKey &nh)
 {
     SWSS_LOG_ENTER();
@@ -191,7 +203,7 @@ bool NeighOrch::addNextHop(const NextHopKey &nh)
     }
 
     NextHopKey nexthop(nh);
-    if (m_intfsOrch->isRemoteSystemPortIntf(nexthop.alias))
+    if (m_intfsOrch->isRemoteSystemPortIntf(nh.alias))
     {
         //For remote system ports kernel nexthops are always on inband. Change the key
         Port inbp;
@@ -202,7 +214,7 @@ bool NeighOrch::addNextHop(const NextHopKey &nh)
     }
 
     assert(!hasNextHop(nexthop));
-    sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(nexthop.alias);
+    sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(nh.alias);
 
     vector<sai_attribute_t> next_hop_attrs;
 
@@ -322,6 +334,7 @@ bool NeighOrch::setNextHopFlag(const NextHopKey &nexthop, const uint32_t nh_flag
     {
         case NHFLAGS_IFDOWN:
             rc = gRouteOrch->invalidnexthopinNextHopGroup(nexthop, count);
+            rc &= gNhgOrch->invalidateNextHop(nexthop);
             break;
         default:
             assert(0);
@@ -351,6 +364,7 @@ bool NeighOrch::clearNextHopFlag(const NextHopKey &nexthop, const uint32_t nh_fl
     {
         case NHFLAGS_IFDOWN:
             rc = gRouteOrch->validnexthopinNextHopGroup(nexthop, count);
+            rc &= gNhgOrch->validateNextHop(nexthop);
             break;
         default:
             assert(0);
@@ -670,6 +684,19 @@ void NeighOrch::doTask(Consumer &consumer)
         }
 
         IpAddress ip_address(key.substr(found+1));
+
+        /* Verify Ipv4 LinkLocal and skip neighbor entry added for RFC5549 */
+        if ((ip_address.getAddrScope() == IpAddress::LINK_SCOPE) && (ip_address.isV4()))
+        {
+            /* Check if this prefix is not a configured ip, if so allow */
+            IpPrefix ipll_prefix(ip_address.getV4Addr(), 16);
+            if (!m_intfsOrch->isPrefixSubnet (ipll_prefix, alias))
+            {
+                SWSS_LOG_NOTICE("Skip IPv4LL neighbor %s, Intf:%s op: %s ", ip_address.to_string().c_str(), alias.c_str(), op.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+        }
 
         NeighborEntry neighbor_entry = { ip_address, alias };
 
@@ -1011,7 +1038,7 @@ bool NeighOrch::removeNeighbor(const NeighborEntry &neighborEntry, bool disable)
 
     NeighborUpdate update = { neighborEntry, MacAddress(), false };
     notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
-    
+
     if(gMySwitchType == "voq")
     {
         //Sync the neighbor to delete from the CHASSIS_APP_DB
@@ -1285,7 +1312,7 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
                         // the owner asic's mac is not readily avaiable here, the owner asic mac is derived from
                         // the switch id and lower 5 bytes of asic mac which is assumed to be same for all asics
                         // in the VS system.
-                        // Therefore to make VOQ chassis systems work in VS platform based setups like the setups 
+                        // Therefore to make VOQ chassis systems work in VS platform based setups like the setups
                         // using KVMs, it is required that all asics have same base mac in the format given below
                         // <lower 5 bytes of mac same for all asics>:<6th byte = switch_id>
 
@@ -1674,4 +1701,23 @@ bool NeighOrch::updateVoqNeighborEncapIndex(const NeighborEntry &neighborEntry, 
     m_syncdNeighbors[neighborEntry].voq_encap_index = encap_index;
 
     return true;
+}
+
+void NeighOrch::updateSrv6Nexthop(const NextHopKey &nh, const sai_object_id_t &nh_id)
+{
+    if (nh_id != SAI_NULL_OBJECT_ID)
+    {
+        NextHopEntry next_hop_entry;
+        next_hop_entry.next_hop_id = nh_id;
+        next_hop_entry.ref_count = 0;
+        next_hop_entry.nh_flags = 0;
+        m_syncdNextHops[nh] = next_hop_entry;
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_SRV6_NEXTHOP);
+    }
+    else
+    {
+        assert(m_syncdNextHops[nh].ref_count == 0);
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_SRV6_NEXTHOP);
+        m_syncdNextHops.erase(nh);
+    }
 }

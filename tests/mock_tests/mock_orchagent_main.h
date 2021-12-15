@@ -61,3 +61,4 @@ extern sai_next_hop_api_t *sai_next_hop_api;
 extern sai_hostif_api_t *sai_hostif_api;
 extern sai_buffer_api_t *sai_buffer_api;
 extern sai_queue_api_t *sai_queue_api;
+extern sai_udf_api_t* sai_udf_api;
