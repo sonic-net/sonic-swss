@@ -1614,6 +1614,7 @@ bool VxlanTunnelOrch::delOperation(const Request& request)
     SWSS_LOG_ENTER();
 
     const auto& tunnel_name = request.getKeyString(0);
+    EvpnNvoOrch* evpn_orch = gDirectory.get<EvpnNvoOrch*>();
 
     if (!isTunnelExists(tunnel_name))
     {
@@ -1626,6 +1627,26 @@ bool VxlanTunnelOrch::delOperation(const Request& request)
     {
         SWSS_LOG_WARN("VTEP %s not deleted as hw delete is pending", tunnel_name.c_str());
         return false;
+    }
+
+    if (vtep_ptr == evpn_orch->getEVPNVtep())
+    {
+        for (auto it = vxlan_tunnel_table_.begin(); it != vxlan_tunnel_table_.end(); ++it)
+        {
+            if ((it->second.get() != vtep_ptr) || (it->second->getDipTunnelCnt() != 0)  )
+            {
+                SWSS_LOG_WARN("VTEP %s not deleted as there is user tuunel still in used", tunnel_name.c_str());
+                return false;
+            }
+        }
+
+        if (0 != vxlan_vni_vlan_map_table_.size() )
+        {
+            SWSS_LOG_WARN("VTEP %s not deleted as there is vlan vni map still in used", tunnel_name.c_str());
+            return false;
+        }
+
+        evpn_orch->delEVPNVtep();
     }
 
     vxlan_tunnel_table_.erase(tunnel_name);
@@ -2629,6 +2650,9 @@ bool EvpnNvoOrch::addOperation(const Request& request)
 
     source_vtep_ptr = tunnel_orch->getVxlanTunnel(vtep_name);
 
+    if (!source_vtep_ptr)
+        return false;
+
     SWSS_LOG_INFO("evpnnvo: %s vtep : %s \n",nvo_name.c_str(), vtep_name.c_str());
 
     return true;
@@ -2640,6 +2664,10 @@ bool EvpnNvoOrch::delOperation(const Request& request)
 
     auto nvo_name = request.getKeyString(0);
 
+    VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
+    auto tunnel_size = tunnel_orch->getVxlanTunnelSize();
+    auto vni_vlan_map_size = tunnel_orch->getVniVlanMapTableSize();
+
     if (!source_vtep_ptr) 
     {
         SWSS_LOG_WARN("NVO Delete failed as VTEP Ptr is NULL");
@@ -2649,6 +2677,18 @@ bool EvpnNvoOrch::delOperation(const Request& request)
     if (source_vtep_ptr->del_tnl_hw_pending)
     {
         SWSS_LOG_WARN("NVO not deleted as hw delete is pending");
+        return false;
+    }
+
+    if (tunnel_size != 0)
+    {
+        SWSS_LOG_WARN("NVO not deleted as there is user tuunel still in used");
+        return false;
+    }
+
+    if (vni_vlan_map_size != 0)
+    {
+        SWSS_LOG_WARN("NVO not deleted as there is vni vlan map still in used");
         return false;
     }
 
