@@ -453,6 +453,12 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
             return task_process_status::task_failed;
         }
     }
+    // Entry validation as a whole
+    if (entry.srcIp.getIp().family != entry.dstIp.getIp().family)
+    {
+        SWSS_LOG_ERROR("Address family of source and destination IPs is different");
+        return task_process_status::task_invalid_entry;
+    }
 
     m_syncdMirrors.emplace(key, entry);
 
