@@ -436,20 +436,12 @@ PfcWdLossyHandler::PfcWdLossyHandler(sai_object_id_t port, sai_object_id_t queue
 {
     SWSS_LOG_ENTER();
 
-    const char *env_plat = getenv("platform");
-    if (env_plat == nullptr) 
+    string platform = getenv("platform") ? getenv("platform") : "";
+    if (platform == CISCO_8000_PLATFORM_SUBSTRING)
     {
-        string platform("");
-    }
-    else
-    {
-        string platform(env_plat);
-        if (platform == CISCO_8000_PLATFORM_SUBSTRING)
-        {
-            SWSS_LOG_DEBUG("Skipping in constructor PfcWdLossyHandler for platform %s on port 0x%" PRIx64,
-                           platform.c_str(), port);
-            return;
-        }
+        SWSS_LOG_DEBUG("Skipping in constructor PfcWdLossyHandler for platform %s on port 0x%" PRIx64,
+                       platform.c_str(), port);
+        return;
     }
 
     uint8_t pfcMask = 0;
@@ -471,20 +463,12 @@ PfcWdLossyHandler::~PfcWdLossyHandler(void)
 {
     SWSS_LOG_ENTER();
 
-    const char *env_plat = getenv("platform");
-    if (env_plat == nullptr) 
+    string platform = getenv("platform") ? getenv("platform") : "";
+    if (platform == CISCO_8000_PLATFORM_SUBSTRING)
     {
-        string platform("");
-    }
-    else
-    {
-        string platform(env_plat);
-        if (platform == CISCO_8000_PLATFORM_SUBSTRING)
-        {
-            SWSS_LOG_DEBUG("Skipping in destructor PfcWdLossyHandler for platform %s on port 0x%" PRIx64,
+        SWSS_LOG_DEBUG("Skipping in destructor PfcWdLossyHandler for platform %s on port 0x%" PRIx64,
                        platform.c_str(), getPort());
-            return;
-        }
+        return;
     }
 
     uint8_t pfcMask = 0;
