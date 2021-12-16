@@ -6,7 +6,7 @@ from dvslib.dvs_common import PollingConfig
 PORT = "Ethernet64"
 
 """
-DELETE_CREATE_ITERATIONS defines the number of iteration of delete and create to ports,
+DELETE_CREATE_ITERATIONS defines the number of iteration of delete and create to  ports,
 we add different timeouts between delete/create to catch potential race condition that can lead to system crush.
 """
 DELETE_CREATE_ITERATIONS = 10
