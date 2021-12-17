@@ -18,6 +18,7 @@ struct tunnel_sai_ids_t
     std::map<map_type_t, sai_object_id_t> tunnel_encap_id;
     std::map<map_type_t, sai_object_id_t> tunnel_decap_id;
     sai_object_id_t tunnel_id;
+    sai_object_id_t tunnel_term_id;
 };
 
 typedef struct nvgre_tunnel_map_entry_s
@@ -89,6 +90,9 @@ private:
 
     sai_object_id_t sai_create_tunnel(struct tunnel_sai_ids_t &ids, const sai_ip_address_t &src_ip, sai_object_id_t underlay_rif);
     void sai_remove_tunnel(sai_object_id_t tunnel_id);
+
+    sai_object_id_t sai_create_tunnel_termination(sai_object_id_t tunnel_id, sai_ip_address_t &src_ip, sai_object_id_t default_vrid);
+    void sai_remove_tunnel_termination(sai_object_id_t tunnel_term_id);
 
     sai_object_id_t sai_create_tunnel_map_entry(map_type_t map_type, sai_uint32_t vsid, sai_vlan_id_t vlan_id, sai_object_id_t bridge_obj_id, bool encap=false);
     void sai_remove_tunnel_map_entry(sai_object_id_t obj_id);

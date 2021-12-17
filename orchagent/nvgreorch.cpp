@@ -9,8 +9,9 @@
 extern Directory<Orch*> gDirectory;
 extern PortsOrch*       gPortsOrch;
 extern sai_object_id_t  gSwitchId;
-extern sai_tunnel_api_t *sai_tunnel_api;
 extern sai_object_id_t  gUnderlayIfId;
+extern sai_object_id_t  gVirtualRouterId;
+extern sai_tunnel_api_t *sai_tunnel_api;
 
 static const std::vector<map_type_t> nvgreMapTypes = {
     MAP_T_VLAN,
@@ -207,6 +208,74 @@ void NvgreTunnel::sai_remove_tunnel(sai_object_id_t tunnel_id)
     }
 }
 
+/** @brief Creates tunnel termination in SAI.
+ *
+ *  @param tunnel_id Tunnel identifier.
+ *  @param src_ip Pointer to source IP address.
+ *  @param default_vrid Virtual router identifier.
+ *
+ *  @return SAI tunnel termination identifier.
+ */
+sai_object_id_t sai_create_tunnel_termination(sai_object_id_t tunnel_id, sai_ip_address_t &src_ip, sai_object_id_t default_vrid)
+{
+    sai_attribute_t attr;
+    std::vector<sai_attribute_t> tunnel_attrs;
+
+    attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TYPE;
+    //attr.value.s32 = SAI_TUNNEL_TERM_TABLE_ENTRY_TYPE_P2MP;
+    attr.value.s32 = SAI_TUNNEL_TERM_TABLE_ENTRY_TYPE_P2P;
+    tunnel_attrs.push_back(attr);
+
+    attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_SRC_IP;
+    attr.value.ipaddr = src_ip;
+    tunnel_attrs.push_back(attr);
+
+    // do we need vrid ???
+    attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_VR_ID;
+    attr.value.oid = default_vrid;
+    tunnel_attrs.push_back(attr);
+
+    attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TUNNEL_TYPE;
+    attr.value.s32 = SAI_TUNNEL_TYPE_NVGRE;
+    tunnel_attrs.push_back(attr);
+
+    // tunnel termination entry type in spec
+
+    // ???
+    attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID;
+    attr.value.oid = tunnel_id;
+    tunnel_attrs.push_back(attr);
+
+    sai_object_id_t tunnel_term_id;
+    sai_status_t status = sai_tunnel_api->create_tunnel_term_table_entry(
+                                &tunnel_term_id,
+                                gSwitchId,
+                                static_cast<uint32_t>(tunnel_attrs.size()),
+                                tunnel_attrs.data()
+                          );
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        throw std::runtime_error("Can't create a NVGRE tunnel term object");
+    }
+
+    return tunnel_term_id;
+}
+
+/** @brief Removes tunnel termination in SAI.
+ *
+ *  @param tunnel_id Pointer to tunnel termination identifier.
+ *
+ *  @return void.
+ */
+void sai_remove_tunnel_termination(sai_object_id_t tunnel_term_id)
+{
+    sai_status_t status = sai_tunnel_api->remove_tunnel_term_table_entry(tunnel_term_id);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        throw std::runtime_error("Can't remove a tunnel term object");
+    }
+}
+
 void NvgreTunnel::createNvgreMappers()
 {
     for (auto map_type : nvgreMapTypes)
@@ -246,6 +315,7 @@ void NvgreTunnel::createNvgreTunnel()
     swss::copy(ip_addr, src_ip_);
 
     tunnel_ids_.tunnel_id = sai_create_tunnel(tunnel_ids_, ip_addr, gUnderlayIfId);
+    tunnel_ids_.tunnel_term_id = sai_create_tunnel_termination(tunnel_ids_.tunnel_id, ip_addr, gVirtualRouterId);
 
     SWSS_LOG_INFO("NVGRE tunnel '%s' was created", tunnel_name_.c_str());
 }
@@ -255,6 +325,7 @@ void NvgreTunnel::removeNvgreTunnel()
     try
     {
         sai_remove_tunnel(tunnel_ids_.tunnel_id);
+        sai_remove_tunnel_termination(ids_.tunnel_term_id);
     }
     catch(const std::runtime_error& error)
     {
