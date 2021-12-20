@@ -294,6 +294,25 @@ CoppMgr::CoppMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
 
     mergeConfig(m_coppGroupInitCfg, group_cfg, group_cfg_keys, m_cfgCoppGroupTable);
 
+    std::set<std::string> warmStartAppTableKeys;
+
+    {
+        WarmStart::initialize("coppmgrd", "swss");
+        WarmStart::checkWarmStart("coppmgrd", "swss");
+
+        bool isWarmStart = WarmStart::isWarmStart();
+
+        if (isWarmStart)
+        {
+            std::vector<std::string> keys;
+            m_coppTable.getKeys(keys);
+            for (const auto& key : keys)
+            {
+                warmStartAppTableKeys.insert(key);
+            }
+        }
+    }
+
     for (auto i: group_cfg)
     {
         string trap_ids;
@@ -317,8 +336,16 @@ CoppMgr::CoppMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
 
         if (!trap_group_fvs.empty())
         {
-            m_appCoppTable.set(i.first, trap_group_fvs);
+            if (warmStartAppTableKeys.find(i.first) != warmStartAppTableKeys.end())
+            {
+                warmStartAppTableKeys.erase(i.first);
+            }
+            else
+            {
+                m_appCoppTable.set(i.first, trap_group_fvs);
+            }
         }
+
         setCoppGroupStateOk(i.first);
         auto g_cfg = std::find(group_cfg_keys.begin(), group_cfg_keys.end(), i.first);
         if (g_cfg != group_cfg_keys.end())
