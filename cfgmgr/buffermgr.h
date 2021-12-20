@@ -51,6 +51,8 @@ private:
     ProducerStateTable m_applBufferIngressProfileListTable;
     ProducerStateTable m_applBufferEgressProfileListTable;
 
+    std::map<std::string, std::set<std::string>> m_warmStartAppTableKeys;
+
     bool m_pgfile_processed;
     bool dynamic_buffer_model;
 
