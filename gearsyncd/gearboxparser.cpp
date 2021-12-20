@@ -151,6 +151,12 @@ bool GearboxParser::parse()
             val = phy["context_id"];
             attr = std::make_pair("context_id", std::to_string(val.get<int>()));
             attrs.push_back(attr);
+            if (phy.find("macsec_ipg") != phy.end())
+            {
+                val = phy["macsec_ipg"];
+                attr = std::make_pair("macsec_ipg", std::to_string(val.get<int>()));
+                attrs.push_back(attr);
+            }
             if (phy.find("hwinfo") == phy.end())
             {
                 SWSS_LOG_ERROR("missing 'hwinfo' field in 'phys' item %d in gearbox configuration", iter);
