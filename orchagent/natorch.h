@@ -176,6 +176,11 @@ struct DnatEntries
 
 typedef std::map<IpAddress, DnatEntries> DnatNhResolvCache;
 
+struct NatBulkContext
+{
+    std::deque<sai_status_t>    object_statuses;
+};
+
 class NatOrch: public Orch, public Subject, public Observer
 {
 public:
@@ -214,12 +219,14 @@ private:
     Table                   m_twiceNaptQueryTable;
     NotificationConsumer   *m_flushNotificationsConsumer;
     NotificationConsumer   *m_cleanupNotificationConsumer;
+    NotificationConsumer   *m_natNotificationConsumer;
     mutex                   m_natMutex;
     string                  m_dbgCompName;
     IpAddress               nullIpv4Addr;
     DnatPoolEntry           m_dnatPoolEntries;
 
     std::shared_ptr<NotificationProducer> setTimeoutNotifier;
+    EntityBulker<sai_nat_api_t>           gNatBulker;
 
     /* DNAT/DNAPT entry is cached, to delete and re-add it whenever the direct NextHop (connected neighbor)
      * or indirect NextHop (via route) to reach the DNAT IP is changed. */
@@ -252,42 +259,42 @@ private:
     void doNatGlobalTableTask(Consumer& consumer);
     void doDnatPoolTableTask(Consumer& consumer);
 
-    bool addNatEntry(const IpAddress &ip_address, const NatEntryValue &entry);
-    bool removeNatEntry(const IpAddress &ip_address);
-    bool addNaptEntry(const NaptEntryKey &keyEntry, const NaptEntryValue &entry);
-    bool removeNaptEntry(const NaptEntryKey &keyEntry);
+    bool addNatEntry(const IpAddress &ip_address, const NatEntryValue &entry, NatBulkContext &ctx);
+    bool removeNatEntry(const IpAddress &ip_address, NatBulkContext &ctx);
+    bool addNaptEntry(const NaptEntryKey &keyEntry, const NaptEntryValue &entryi, NatBulkContext &ctx);
+    bool removeNaptEntry(const NaptEntryKey &keyEntry, NatBulkContext &ctx);
 
-    bool addTwiceNatEntry(const TwiceNatEntryKey &key, const TwiceNatEntryValue &value);
-    bool removeTwiceNatEntry(const TwiceNatEntryKey &key);
-    bool addTwiceNaptEntry(const TwiceNaptEntryKey &key, const TwiceNaptEntryValue &value);
-    bool removeTwiceNaptEntry(const TwiceNaptEntryKey &key);
+    bool addTwiceNatEntry(const TwiceNatEntryKey &key, const TwiceNatEntryValue &value, NatBulkContext &ctx);
+    bool removeTwiceNatEntry(const TwiceNatEntryKey &key, NatBulkContext &ctx);
+    bool addTwiceNaptEntry(const TwiceNaptEntryKey &key, const TwiceNaptEntryValue &value, NatBulkContext &ctx);
+    bool removeTwiceNaptEntry(const TwiceNaptEntryKey &key, NatBulkContext &ctx);
 
     void updateNextHop(const NextHopUpdate& update);
     void updateNeighbor(const NeighborUpdate& update);
     bool isNextHopResolved(const NextHopUpdate &update);
     void addNhCacheDnatEntries(const IpAddress &nhIp, bool add);
-    void addDnatToNhCache(const IpAddress &translatedIp, const IpAddress &dstIp);
-    void removeDnatFromNhCache(const IpAddress &translatedIp, const IpAddress &dstIp);
-    void addDnaptToNhCache(const IpAddress &translatedIp, const NaptEntryKey &key);
-    void removeDnaptFromNhCache(const IpAddress &translatedIp, const NaptEntryKey &key);
-    void addTwiceNatToNhCache(const IpAddress &translatedIp, const TwiceNatEntryKey &key);
-    void addTwiceNaptToNhCache(const IpAddress &translatedIp, const TwiceNaptEntryKey &key);
-    void removeTwiceNatFromNhCache(const IpAddress &translatedIp, const TwiceNatEntryKey &key);
-    void removeTwiceNaptFromNhCache(const IpAddress &translatedIp, const TwiceNaptEntryKey &key);
-    bool addHwSnatEntry(const IpAddress &ip_address);
-    bool addHwSnaptEntry(const NaptEntryKey &key);
-    bool addHwTwiceNatEntry(const TwiceNatEntryKey &key);
-    bool addHwTwiceNaptEntry(const TwiceNaptEntryKey &key);
-    bool removeHwSnatEntry(const IpAddress &dstIp);
-    bool removeHwSnaptEntry(const NaptEntryKey &key);
-    bool removeHwTwiceNatEntry(const TwiceNatEntryKey &key);
-    bool removeHwTwiceNaptEntry(const TwiceNaptEntryKey &key);
-    bool addHwDnatEntry(const IpAddress &ip_address);
-    bool addHwDnaptEntry(const NaptEntryKey &key);
-    bool removeHwDnatEntry(const IpAddress &dstIp);
-    bool removeHwDnaptEntry(const NaptEntryKey &key);
-    bool addHwDnatPoolEntry(const IpAddress &dstIp);
-    bool removeHwDnatPoolEntry(const IpAddress &dstIp);
+    void addDnatToNhCache(const IpAddress &translatedIp, const IpAddress &dstIp, NatBulkContext &ctx);
+    void removeDnatFromNhCache(const IpAddress &translatedIp, const IpAddress &dstIp, NatBulkContext &ctx);
+    void addDnaptToNhCache(const IpAddress &translatedIp, const NaptEntryKey &key, NatBulkContext &ctx);
+    void removeDnaptFromNhCache(const IpAddress &translatedIp, const NaptEntryKey &key, NatBulkContext &ctx);
+    void addTwiceNatToNhCache(const IpAddress &translatedIp, const TwiceNatEntryKey &key, NatBulkContext &ctx);
+    void addTwiceNaptToNhCache(const IpAddress &translatedIp, const TwiceNaptEntryKey &key, NatBulkContext &ctx);
+    void removeTwiceNatFromNhCache(const IpAddress &translatedIp, const TwiceNatEntryKey &key, NatBulkContext &ctx);
+    void removeTwiceNaptFromNhCache(const IpAddress &translatedIp, const TwiceNaptEntryKey &key, NatBulkContext &ctx);
+    bool addHwSnatEntry(const IpAddress &ip_address, NatBulkContext &ctx);
+    bool addHwSnaptEntry(const NaptEntryKey &key, NatBulkContext &ctx);
+    bool addHwTwiceNatEntry(const TwiceNatEntryKey &key, NatBulkContext &ctx);
+    bool addHwTwiceNaptEntry(const TwiceNaptEntryKey &key, NatBulkContext &ctx);
+    bool removeHwSnatEntry(const IpAddress &dstIp, NatBulkContext &ctx);
+    bool removeHwSnaptEntry(const NaptEntryKey &key, NatBulkContext &ctx);
+    bool removeHwTwiceNatEntry(const TwiceNatEntryKey &key, NatBulkContext &ctx);
+    bool removeHwTwiceNaptEntry(const TwiceNaptEntryKey &key, NatBulkContext &ctx);
+    bool addHwDnatEntry(const IpAddress &ip_address, NatBulkContext &ctx);
+    bool addHwDnaptEntry(const NaptEntryKey &key, NatBulkContext &ctx);
+    bool removeHwDnatEntry(const IpAddress &dstIp, NatBulkContext &ctx);
+    bool removeHwDnaptEntry(const NaptEntryKey &key, NatBulkContext &ctx);
+    bool addHwDnatPoolEntry(const IpAddress &dstIp, NatBulkContext &ctx);
+    bool removeHwDnatPoolEntry(const IpAddress &dstIp, NatBulkContext &ctx);
 
     bool checkIfNatEntryIsActive(const NatEntry::iterator &iter, time_t now);
     bool checkIfNaptEntryIsActive(const NaptEntry::iterator &iter, time_t now);
@@ -301,6 +308,7 @@ private:
     void clearAllDnatEntries(void);
     void cleanupAppDbEntries(void);
     void clearCounters(void);
+    void queryNaptCounters(void);
     void queryCounters(void);
     void queryHitBits(void);
     bool isNatEnabled(void);
@@ -336,6 +344,8 @@ private:
                                  uint64_t nat_translations_pkts, uint64_t nat_translations_bytes);
 
     void updateAllConntrackEntries();
+    void processNotification(sai_nat_event_notification_data_t &natevent);
+
 };
 
 #endif /* SWSS_NATORCH_H */
