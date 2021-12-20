@@ -221,7 +221,7 @@ void PfcWdActionHandler::updateWdCounters(const string& queueIdStr, const PfcWdQ
 
 PfcWdSaiDlrInitHandler::PfcWdSaiDlrInitHandler(sai_object_id_t port, sai_object_id_t queue,
                                                uint8_t queueId, shared_ptr<Table> countersTable):
-    PfcWdActionHandler(port, queue, queueId, countersTable)
+    PfcWdZeroBufferHandler(port, queue, queueId, countersTable)
 {
     SWSS_LOG_ENTER();
 
@@ -260,39 +260,6 @@ PfcWdSaiDlrInitHandler::~PfcWdSaiDlrInitHandler(void)
                        " queueId %d : %d", port, queue, queueId, status);
         return;
     }
-}
-
-bool PfcWdSaiDlrInitHandler::getHwCounters(PfcWdHwStats& counters)
-{
-    SWSS_LOG_ENTER();
-
-    static const vector<sai_stat_id_t> queueStatIds =
-    {
-        SAI_QUEUE_STAT_PACKETS,
-        SAI_QUEUE_STAT_DROPPED_PACKETS,
-    };
-
-    vector<uint64_t> queueStats;
-    queueStats.resize(queueStatIds.size());
-
-    sai_status_t status = sai_queue_api->get_queue_stats(
-            getQueue(),
-            static_cast<uint32_t>(queueStatIds.size()),
-            queueStatIds.data(),
-            queueStats.data());
-
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to fetch queue 0x%" PRIx64 " stats: %d", getQueue(), status);
-        return false;
-    }
-
-    counters.txPkt = queueStats[0];
-    counters.txDropPkt = queueStats[1];
-    counters.rxPkt = 0;
-    counters.rxDropPkt = 0;
-
-    return true;
 }
 
 PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
@@ -472,6 +439,14 @@ PfcWdLossyHandler::PfcWdLossyHandler(sai_object_id_t port, sai_object_id_t queue
 {
     SWSS_LOG_ENTER();
 
+    string platform = getenv("platform") ? getenv("platform") : "";
+    if (platform == CISCO_8000_PLATFORM_SUBSTRING)
+    {
+        SWSS_LOG_DEBUG("Skipping in constructor PfcWdLossyHandler for platform %s on port 0x%" PRIx64,
+                       platform.c_str(), port);
+        return;
+    }
+
     uint8_t pfcMask = 0;
 
     if (!gPortsOrch->getPortPfc(port, &pfcMask))
@@ -490,6 +465,14 @@ PfcWdLossyHandler::PfcWdLossyHandler(sai_object_id_t port, sai_object_id_t queue
 PfcWdLossyHandler::~PfcWdLossyHandler(void)
 {
     SWSS_LOG_ENTER();
+
+    string platform = getenv("platform") ? getenv("platform") : "";
+    if (platform == CISCO_8000_PLATFORM_SUBSTRING)
+    {
+        SWSS_LOG_DEBUG("Skipping in destructor PfcWdLossyHandler for platform %s on port 0x%" PRIx64,
+                       platform.c_str(), getPort());
+        return;
+    }
 
     uint8_t pfcMask = 0;
 

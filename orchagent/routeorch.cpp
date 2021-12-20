@@ -1826,8 +1826,12 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
      * in m_syncdRoutes, then we need to update the route with a new next hop
      * (group) id. The old next hop (group) is then not used and the reference
      * count will decrease by 1.
+     *
+     * In case the entry is already pending removal in the bulk, it would be removed
+     * from m_syncdRoutes during the bulk call. Therefore, such entries need to be
+     * re-created rather than set attribute.
      */
-    if (it_route == m_syncdRoutes.at(vrf_id).end())
+    if (it_route == m_syncdRoutes.at(vrf_id).end() || gRouteBulker.bulk_entry_pending_removal(route_entry))
     {
         if (blackhole)
         {
