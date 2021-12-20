@@ -97,6 +97,7 @@ void sigterm_handler(int signo)
 
         natmgr->cleanupMangleIpTables();
         natmgr->cleanupPoolIpTable();
+        natmgr->disableNatFeature();
     }
 }
 
