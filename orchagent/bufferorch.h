@@ -45,9 +45,10 @@ private:
 
     void doTask() override;
     virtual void doTask(Consumer& consumer);
+    void clearBufferPoolWatermarkCounterIdList(const sai_object_id_t object_id);
     void initTableHandlers();
-    void initBufferReadyLists(DBConnector *db);
-    void initBufferReadyList(Table& table);
+    void initBufferReadyLists(DBConnector *confDb, DBConnector *applDb);
+    void initBufferReadyList(Table& table, bool isConfigDb);
     void initFlexCounterGroupTable(void);
     void initBufferConstants();
     task_process_status processBufferPool(KeyOpFieldsValuesTuple &tuple);

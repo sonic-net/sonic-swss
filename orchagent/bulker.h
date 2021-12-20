@@ -41,6 +41,13 @@ static inline bool operator==(const sai_route_entry_t& a, const sai_route_entry_
         ;
 }
 
+static inline bool operator==(const sai_inseg_entry_t& a, const sai_inseg_entry_t& b)
+{
+    return a.switch_id == b.switch_id
+        && a.label == b.label
+        ;
+}
+
 static inline std::size_t hash_value(const sai_ip_prefix_t& a)
 {
     size_t seed = 0;
@@ -82,6 +89,18 @@ namespace std
             boost::hash_combine(seed, a.switch_id);
             boost::hash_combine(seed, a.mac_address);
             boost::hash_combine(seed, a.bv_id);
+            return seed;
+        }
+    };
+
+    template <>
+    struct hash<sai_inseg_entry_t>
+    {
+        size_t operator()(const sai_inseg_entry_t& a) const noexcept
+        {
+            size_t seed = 0;
+            boost::hash_combine(seed, a.switch_id);
+            boost::hash_combine(seed, a.label);
             return seed;
         }
     };
@@ -149,6 +168,19 @@ struct SaiBulkerTraits<sai_next_hop_group_api_t>
     using bulk_remove_entry_fn = sai_bulk_object_remove_fn;
     // TODO: wait until available in SAI
     //using bulk_set_entry_attribute_fn = sai_bulk_object_set_attribute_fn;
+};
+
+template<>
+struct SaiBulkerTraits<sai_mpls_api_t>
+{
+    using entry_t = sai_inseg_entry_t;
+    using api_t = sai_mpls_api_t;
+    using create_entry_fn = sai_create_inseg_entry_fn;
+    using remove_entry_fn = sai_remove_inseg_entry_fn;
+    using set_entry_attribute_fn = sai_set_inseg_entry_attribute_fn;
+    using bulk_create_entry_fn = sai_bulk_create_inseg_entry_fn;
+    using bulk_remove_entry_fn = sai_bulk_remove_inseg_entry_fn;
+    using bulk_set_entry_attribute_fn = sai_bulk_set_inseg_entry_attribute_fn;
 };
 
 template <typename T>
@@ -382,6 +414,11 @@ public:
         return creating_entries.count(entry);
     }
 
+    bool bulk_entry_pending_removal(const Te& entry) const
+    {
+        return removing_entries.find(entry) != removing_entries.end();
+    }
+
 private:
     std::unordered_map<                                     // A map of
             Te,                                             // entry ->
@@ -548,6 +585,15 @@ inline EntityBulker<sai_fdb_api_t>::EntityBulker(sai_fdb_api_t *api, size_t max_
     remove_entries = api->remove_fdb_entries;
     set_entries_attribute = api->set_fdb_entries_attribute;
     */
+}
+
+template <>
+inline EntityBulker<sai_mpls_api_t>::EntityBulker(sai_mpls_api_t *api, size_t max_bulk_size) :
+    max_bulk_size(max_bulk_size)
+{
+    create_entries = api->create_inseg_entries;
+    remove_entries = api->remove_inseg_entries;
+    set_entries_attribute = api->set_inseg_entries_attribute;
 }
 
 template <typename T>

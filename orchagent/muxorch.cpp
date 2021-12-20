@@ -76,6 +76,7 @@ const map <string, MuxState> muxStateStringToVal =
 {
     { "active", MuxState::MUX_STATE_ACTIVE },
     { "standby", MuxState::MUX_STATE_STANDBY },
+    { "unknown", MuxState::MUX_STATE_STANDBY },
     { "init", MuxState::MUX_STATE_INIT },
     { "failed", MuxState::MUX_STATE_FAILED },
     { "pending", MuxState::MUX_STATE_PENDING },
@@ -325,6 +326,9 @@ MuxCable::MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress 
     state_machine_handlers_.insert(handler_pair(MUX_STATE_STANDBY_ACTIVE, &MuxCable::stateActive));
     state_machine_handlers_.insert(handler_pair(MUX_STATE_INIT_STANDBY, &MuxCable::stateStandby));
     state_machine_handlers_.insert(handler_pair(MUX_STATE_ACTIVE_STANDBY, &MuxCable::stateStandby));
+
+    /* Set initial state to "standby" */
+    stateStandby();
 }
 
 bool MuxCable::stateInitActive()
@@ -394,15 +398,17 @@ void MuxCable::setState(string new_state)
     SWSS_LOG_NOTICE("[%s] Set MUX state from %s to %s", mux_name_.c_str(),
                      muxStateValToString.at(state_).c_str(), new_state.c_str());
 
-    // Update HW Mux cable state anyways
-    mux_cb_orch_->updateMuxState(mux_name_, new_state);
-
     MuxState ns = muxStateStringToVal.at(new_state);
+
+    /* Update new_state to handle unknown state */
+    new_state = muxStateValToString.at(ns);
 
     auto it = muxStateTransition.find(make_pair(state_, ns));
 
     if (it ==  muxStateTransition.end())
     {
+        // Update HW Mux cable state anyways
+        mux_cb_orch_->updateMuxState(mux_name_, new_state);
         SWSS_LOG_ERROR("State transition from %s to %s is not-handled ",
                         muxStateValToString.at(state_).c_str(), new_state.c_str());
         return;
@@ -430,6 +436,7 @@ void MuxCable::setState(string new_state)
     st_chg_failed_ = false;
     SWSS_LOG_INFO("Changed state to %s", new_state.c_str());
 
+    mux_cb_orch_->updateMuxState(mux_name_, new_state);
     return;
 }
 
@@ -702,7 +709,6 @@ MuxAclHandler::MuxAclHandler(sai_object_id_t port, string alias)
     SWSS_LOG_ENTER();
 
     // There is one handler instance per MUX port
-    acl_table_type_t table_type = ACL_TABLE_DROP;
     string table_name = MUX_ACL_TABLE_NAME;
     string rule_name = MUX_ACL_RULE_NAME;
 
@@ -716,8 +722,8 @@ MuxAclHandler::MuxAclHandler(sai_object_id_t port, string alias)
 
         // First time handling of Mux Table, create ACL table, and bind
         createMuxAclTable(port, table_name);
-        shared_ptr<AclRuleMux> newRule =
-                make_shared<AclRuleMux>(gAclOrch, rule_name, table_name, table_type);
+        shared_ptr<AclRulePacket> newRule =
+                make_shared<AclRulePacket>(gAclOrch, rule_name, table_name);
         createMuxAclRule(newRule, table_name);
     }
     else
@@ -727,8 +733,8 @@ MuxAclHandler::MuxAclHandler(sai_object_id_t port, string alias)
         AclRule* rule = gAclOrch->getAclRule(table_name, rule_name);
         if (rule == nullptr)
         {
-            shared_ptr<AclRuleMux> newRule =
-                    make_shared<AclRuleMux>(gAclOrch, rule_name, table_name, table_type);
+            shared_ptr<AclRulePacket> newRule =
+                    make_shared<AclRulePacket>(gAclOrch, rule_name, table_name);
             createMuxAclRule(newRule, table_name);
         }
         else
@@ -769,7 +775,7 @@ void MuxAclHandler::createMuxAclTable(sai_object_id_t port, string strTable)
 
     auto inserted = acl_table_.emplace(piecewise_construct,
                                        std::forward_as_tuple(strTable),
-                                       std::forward_as_tuple());
+                                       std::forward_as_tuple(gAclOrch, strTable));
 
     assert(inserted.second);
 
@@ -784,14 +790,15 @@ void MuxAclHandler::createMuxAclTable(sai_object_id_t port, string strTable)
         return;
     }
 
-    acl_table.type = ACL_TABLE_DROP;
-    acl_table.id = strTable;
-    acl_table.link(port);
+    auto dropType = gAclOrch->getAclTableType(TABLE_TYPE_DROP);
+    assert(dropType);
+    acl_table.validateAddType(*dropType);
     acl_table.stage = ACL_STAGE_INGRESS;
     gAclOrch->addAclTable(acl_table);
+    bindAllPorts(acl_table);
 }
 
-void MuxAclHandler::createMuxAclRule(shared_ptr<AclRuleMux> rule, string strTable)
+void MuxAclHandler::createMuxAclRule(shared_ptr<AclRulePacket> rule, string strTable)
 {
     SWSS_LOG_ENTER();
 
@@ -811,6 +818,24 @@ void MuxAclHandler::createMuxAclRule(shared_ptr<AclRuleMux> rule, string strTabl
     rule->validateAddAction(attr_name, attr_value);
 
     gAclOrch->addAclRule(rule, strTable);
+}
+
+void MuxAclHandler::bindAllPorts(AclTable &acl_table)
+{
+    SWSS_LOG_ENTER();
+
+    auto allPorts = gPortsOrch->getAllPorts();
+    for (auto &it: allPorts)
+    {
+        Port port = it.second;
+        if (port.m_type == Port::PHY)
+        {
+            SWSS_LOG_INFO("Binding port %" PRIx64 " to ACL table %s", port.m_port_id, acl_table.id.c_str());
+
+            acl_table.link(port.m_port_id);
+            acl_table.bind(port.m_port_id);
+        }
+    }
 }
 
 sai_object_id_t MuxOrch::createNextHopTunnel(std::string tunnelKey, swss::IpAddress& ipAddr)
@@ -1300,7 +1325,17 @@ void MuxCableOrch::updateMuxMetricState(string portName, string muxState, bool s
     char buf[256];
     std::strftime(buf, 256, "%Y-%b-%d %H:%M:%S.", &now_tm);
 
-    string time = string(buf) + to_string(micros);
+    /*
+     * Prepend '0's for 6 point precision
+     */
+    const int precision = 6;
+    auto ms = to_string(micros);
+    if (ms.length() < precision)
+    {
+        ms.insert(ms.begin(), precision - ms.length(), '0');
+    }
+
+    string time = string(buf) + ms;
 
     mux_metric_table_.hset(portName, msg, time);
 }

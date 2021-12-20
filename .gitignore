@@ -32,6 +32,11 @@ stamp-h1
 **/Makefile
 autom4te.cache
 
+# Temp files #
+##############
+*~
+*.swp
+
 # Dependency Folder #
 #####################
 deps/
@@ -52,6 +57,8 @@ cfgmgr/vxlanmgrd
 cfgmgr/natmgrd
 cfgmgr/sflowmgrd
 cfgmgr/macsecmgrd
+cfgmgr/coppmgrd
+cfgmgr/tunnelmgrd
 fpmsyncd/fpmsyncd
 gearsyncd/gearsyncd
 mclagsyncd/mclagsyncd
@@ -68,6 +75,7 @@ tlm_teamd/tlm_teamd
 teamsyncd/teamsyncd
 tests/tests
 
+
 # Test Files #
 ##############
 tests/log
@@ -77,3 +85,5 @@ tests/mock_tests/tests.trs
 tests/test-suite.log
 tests/tests.log
 tests/tests.trs
+orchagent/p4orch/tests/**/*gcda
+orchagent/p4orch/tests/**/*gcno

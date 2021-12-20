@@ -3,6 +3,7 @@
 -- ARGV[2] - cable length
 -- ARGV[3] - port mtu
 -- ARGV[4] - gearbox delay
+-- ARGV[5] - lane count of the ports on which the profile will be applied
 
 -- parameters retried from databases:
 -- From CONFIG_DB.LOSSLESS_TRAFFIC_PATTERN
@@ -26,12 +27,30 @@ local port_speed = tonumber(ARGV[1])
 local cable_length = tonumber(string.sub(ARGV[2], 1, -2))
 local port_mtu = tonumber(ARGV[3])
 local gearbox_delay = tonumber(ARGV[4])
+local is_8lane = (ARGV[5] == "8")
 
 local appl_db = "0"
 local config_db = "4"
 local state_db = "6"
 
 local ret = {}
+
+-- pause quanta should be taken for each operating speed is defined in IEEE 802.3 31B.3.7
+-- the key of table pause_quanta_per_speed is operating speed at Mb/s
+-- the value of table pause_quanta_per_speed is the number of pause_quanta
+local pause_quanta_per_speed = {}
+pause_quanta_per_speed[400000] = 905
+pause_quanta_per_speed[200000] = 453
+pause_quanta_per_speed[100000] = 394
+pause_quanta_per_speed[50000] = 147
+pause_quanta_per_speed[40000] = 118
+pause_quanta_per_speed[25000] = 80
+pause_quanta_per_speed[10000] = 67
+pause_quanta_per_speed[1000] = 2
+pause_quanta_per_speed[100] = 1
+
+-- Get pause_quanta from the pause_quanta_per_speed table
+local pause_quanta = pause_quanta_per_speed[port_speed]
 
 if gearbox_delay == nil then
     gearbox_delay = 0
@@ -53,7 +72,8 @@ for i = 1, #asic_table_content, 2 do
     if asic_table_content[i] == "mac_phy_delay" then
         mac_phy_delay = tonumber(asic_table_content[i+1]) * 1024
     end
-    if asic_table_content[i] == "peer_response_time" then
+    -- If failed to get pause_quanta from the table, then use the default peer_response_time stored in state_db
+    if asic_table_content[i] == "peer_response_time" and  pause_quanta == nil then
         peer_response_time = tonumber(asic_table_content[i+1]) * 1024
     end
 end
@@ -100,9 +120,9 @@ local xon_value
 local headroom_size
 local speed_overhead
 
--- Adjustment for 400G
-if port_speed == 400000 then
-    pipeline_latency = 37 * 1024
+-- Adjustment for 8-lane port
+if is_8lane ~= nil and is_8lane then
+    pipeline_latency = pipeline_latency * 2 - 1024
     speed_overhead = port_mtu
 else
     speed_overhead = 0
@@ -120,6 +140,11 @@ if (gearbox_delay == 0) then
     bytes_on_gearbox = 0
 else
     bytes_on_gearbox = port_speed * gearbox_delay / (8 * 1024)
+end
+
+-- If successfully get pause_quanta from the table, then calculate peer_response_time from it
+if pause_quanta ~= nil then
+    peer_response_time = (pause_quanta) * 512 / 8
 end
 
 bytes_on_cable = 2 * cable_length * port_speed * 1000000000 / speed_of_light / (8 * 1024)

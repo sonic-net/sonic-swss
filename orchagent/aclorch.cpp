@@ -15,15 +15,12 @@
 using namespace std;
 using namespace swss;
 
-mutex AclOrch::m_countersMutex;
 map<acl_range_properties_t, AclRange*> AclRange::m_ranges;
-condition_variable AclOrch::m_sleepGuard;
-bool AclOrch::m_bCollectCounters = true;
 sai_uint32_t AclRule::m_minPriority = 0;
 sai_uint32_t AclRule::m_maxPriority = 0;
 
-swss::DBConnector AclOrch::m_db("COUNTERS_DB", 0);
-swss::Table AclOrch::m_countersTable(&m_db, "COUNTERS");
+swss::DBConnector AclOrch::m_countersDb("COUNTERS_DB", 0);
+swss::Table AclOrch::m_countersTable(&m_countersDb, "COUNTERS");
 
 extern sai_acl_api_t*    sai_acl_api;
 extern sai_port_api_t*   sai_port_api;
@@ -34,6 +31,15 @@ extern CrmOrch *gCrmOrch;
 
 #define MIN_VLAN_ID 1    // 0 is a reserved VLAN ID
 #define MAX_VLAN_ID 4095 // 4096 is a reserved VLAN ID
+
+#define STATE_DB_ACL_ACTION_FIELD_IS_ACTION_LIST_MANDATORY "is_action_list_mandatory"
+#define STATE_DB_ACL_ACTION_FIELD_ACTION_LIST              "action_list"
+#define COUNTERS_ACL_COUNTER_RULE_MAP "ACL_COUNTER_RULE_MAP"
+
+#define ACL_COUNTER_DEFAULT_POLLING_INTERVAL_MS 10000 // ms
+#define ACL_COUNTER_DEFAULT_ENABLED_STATE false
+
+const int TCP_PROTOCOL_NUM = 6; // TCP protocol number
 
 acl_rule_attr_lookup_t aclMatchLookup =
 {
@@ -57,13 +63,25 @@ acl_rule_attr_lookup_t aclMatchLookup =
     { MATCH_ICMP_CODE,         SAI_ACL_ENTRY_ATTR_FIELD_ICMP_CODE },
     { MATCH_ICMPV6_TYPE,       SAI_ACL_ENTRY_ATTR_FIELD_ICMPV6_TYPE },
     { MATCH_ICMPV6_CODE,       SAI_ACL_ENTRY_ATTR_FIELD_ICMPV6_CODE },
-    { MATCH_L4_SRC_PORT_RANGE, (sai_acl_entry_attr_t)SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE },
-    { MATCH_L4_DST_PORT_RANGE, (sai_acl_entry_attr_t)SAI_ACL_RANGE_TYPE_L4_DST_PORT_RANGE },
+    { MATCH_L4_SRC_PORT_RANGE, SAI_ACL_ENTRY_ATTR_FIELD_ACL_RANGE_TYPE },
+    { MATCH_L4_DST_PORT_RANGE, SAI_ACL_ENTRY_ATTR_FIELD_ACL_RANGE_TYPE },
     { MATCH_TUNNEL_VNI,        SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI },
     { MATCH_INNER_ETHER_TYPE,  SAI_ACL_ENTRY_ATTR_FIELD_INNER_ETHER_TYPE },
     { MATCH_INNER_IP_PROTOCOL, SAI_ACL_ENTRY_ATTR_FIELD_INNER_IP_PROTOCOL },
     { MATCH_INNER_L4_SRC_PORT, SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_SRC_PORT },
     { MATCH_INNER_L4_DST_PORT, SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_DST_PORT }
+};
+
+static acl_range_type_lookup_t aclRangeTypeLookup =
+{
+    { MATCH_L4_SRC_PORT_RANGE, SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE },
+    { MATCH_L4_DST_PORT_RANGE, SAI_ACL_RANGE_TYPE_L4_DST_PORT_RANGE },
+};
+
+static acl_bind_point_type_lookup_t aclBindPointTypeLookup =
+{
+    { BIND_POINT_TYPE_PORT,        SAI_ACL_BIND_POINT_TYPE_PORT },
+    { BIND_POINT_TYPE_PORTCHANNEL, SAI_ACL_BIND_POINT_TYPE_LAG  },
 };
 
 static acl_rule_attr_lookup_t aclL3ActionLookup =
@@ -103,20 +121,6 @@ static acl_dtel_flow_op_type_lookup_t aclDTelFlowOpTypeLookup =
     { DTEL_FLOW_OP_IOAM,               SAI_ACL_DTEL_FLOW_OP_IOAM }
 };
 
-static acl_table_type_lookup_t aclTableTypeLookUp =
-{
-    { TABLE_TYPE_L3,                    ACL_TABLE_L3 },
-    { TABLE_TYPE_L3V6,                  ACL_TABLE_L3V6 },
-    { TABLE_TYPE_MIRROR,                ACL_TABLE_MIRROR },
-    { TABLE_TYPE_MIRRORV6,              ACL_TABLE_MIRRORV6 },
-    { TABLE_TYPE_MIRROR_DSCP,           ACL_TABLE_MIRROR_DSCP },
-    { TABLE_TYPE_CTRLPLANE,             ACL_TABLE_CTRLPLANE },
-    { TABLE_TYPE_DTEL_FLOW_WATCHLIST,   ACL_TABLE_DTEL_FLOW_WATCHLIST },
-    { TABLE_TYPE_DTEL_DROP_WATCHLIST,   ACL_TABLE_DTEL_DROP_WATCHLIST },
-    { TABLE_TYPE_MCLAG,                 ACL_TABLE_MCLAG },
-    { TABLE_TYPE_DROP,                  ACL_TABLE_DROP }
-};
-
 static acl_stage_type_lookup_t aclStageLookUp =
 {
     {STAGE_INGRESS, ACL_STAGE_INGRESS },
@@ -127,16 +131,24 @@ static const acl_capabilities_t defaultAclActionsSupported =
 {
     {
         ACL_STAGE_INGRESS,
+        AclActionCapabilities
         {
-            SAI_ACL_ACTION_TYPE_PACKET_ACTION,
-            SAI_ACL_ACTION_TYPE_MIRROR_INGRESS,
-            SAI_ACL_ACTION_TYPE_NO_NAT
+            {
+                SAI_ACL_ACTION_TYPE_PACKET_ACTION,
+                SAI_ACL_ACTION_TYPE_MIRROR_INGRESS,
+                SAI_ACL_ACTION_TYPE_NO_NAT
+            },
+            false
         }
     },
     {
         ACL_STAGE_EGRESS,
+        AclActionCapabilities
         {
-            SAI_ACL_ACTION_TYPE_PACKET_ACTION
+            {
+                SAI_ACL_ACTION_TYPE_PACKET_ACTION
+            },
+            false
         }
     }
 };
@@ -155,18 +167,318 @@ static acl_ip_type_lookup_t aclIpTypeLookup =
     { IP_TYPE_ARP_REPLY,   SAI_ACL_IP_TYPE_ARP_REPLY }
 };
 
-AclRule::AclRule(AclOrch *aclOrch, string rule, string table, acl_table_type_t type, bool createCounter) :
-        m_pAclOrch(aclOrch),
-        m_id(rule),
-        m_tableId(table),
-        m_tableType(type),
-        m_tableOid(SAI_NULL_OBJECT_ID),
-        m_ruleOid(SAI_NULL_OBJECT_ID),
-        m_counterOid(SAI_NULL_OBJECT_ID),
-        m_priority(0),
-        m_createCounter(createCounter)
+static map<sai_acl_counter_attr_t, sai_acl_counter_attr_t> aclCounterLookup =
 {
-    m_tableOid = aclOrch->getTableById(m_tableId);
+    {SAI_ACL_COUNTER_ATTR_ENABLE_BYTE_COUNT,   SAI_ACL_COUNTER_ATTR_BYTES},
+    {SAI_ACL_COUNTER_ATTR_ENABLE_PACKET_COUNT, SAI_ACL_COUNTER_ATTR_PACKETS},
+};
+
+static sai_acl_table_attr_t AclEntryFieldToAclTableField(sai_acl_entry_attr_t attr)
+{
+    if (!IS_ATTR_ID_IN_RANGE(attr, ACL_ENTRY, FIELD))
+    {
+        SWSS_LOG_THROW("ACL entry attribute is not a in a range of SAI_ACL_ENTRY_ATTR_FIELD_* attribute: %d", attr);
+    }
+    return static_cast<sai_acl_table_attr_t>(SAI_ACL_TABLE_ATTR_FIELD_START + (attr - SAI_ACL_ENTRY_ATTR_FIELD_START));
+}
+
+static sai_acl_action_type_t AclEntryActionToAclAction(sai_acl_entry_attr_t attr)
+{
+    if (!IS_ATTR_ID_IN_RANGE(attr, ACL_ENTRY, ACTION))
+    {
+        SWSS_LOG_THROW("ACL entry attribute is not a in a range of SAI_ACL_ENTRY_ATTR_ACTION_* attribute: %d", attr);
+    }
+    return static_cast<sai_acl_action_type_t>(attr - SAI_ACL_ENTRY_ATTR_ACTION_START);
+}
+
+static string getAttributeIdName(sai_object_type_t objectType, sai_attr_id_t attr)
+{
+    const auto* meta = sai_metadata_get_attr_metadata(SAI_OBJECT_TYPE_ACL_ENTRY, attr);
+    if (!meta)
+    {
+        SWSS_LOG_THROW("Metadata null pointer returned by sai_metadata_get_attr_metadata");
+    }
+    return meta->attridname;
+}
+
+AclTableMatchInterface::AclTableMatchInterface(sai_acl_table_attr_t matchField):
+    m_matchField(matchField)
+{
+    if (!IS_ATTR_ID_IN_RANGE(m_matchField, ACL_TABLE, FIELD))
+    {
+        SWSS_LOG_THROW("Invalid match table attribute %d", m_matchField);
+    }
+}
+
+sai_acl_table_attr_t AclTableMatchInterface::getId() const
+{
+    return m_matchField;
+}
+
+AclTableMatch::AclTableMatch(sai_acl_table_attr_t matchField):
+    AclTableMatchInterface(matchField)
+{
+    const auto meta = sai_metadata_get_attr_metadata(SAI_OBJECT_TYPE_ACL_TABLE, getId());
+    if (!meta)
+    {
+        SWSS_LOG_THROW("Failed to get metadata for attribute for SAI_OBJECT_TYPE_ACL_TABLE: attribute %d", getId());
+    }
+
+    if (meta->attrvaluetype != SAI_ATTR_VALUE_TYPE_BOOL)
+    {
+        SWSS_LOG_THROW("This API does not allow to set match with a non boolean value type");
+    }
+}
+
+sai_attribute_t AclTableMatch::toSaiAttribute()
+{
+    return sai_attribute_t{
+        .id = getId(),
+        .value = {
+            .booldata = true,
+        },
+    };
+}
+
+bool AclTableMatch::validateAclRuleMatch(const AclRule& rule) const
+{
+    // no need to validate rule configuration
+    return true;
+}
+
+AclTableRangeMatch::AclTableRangeMatch(set<sai_acl_range_type_t> rangeTypes):
+    AclTableMatchInterface(SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE),
+    m_rangeList(rangeTypes.begin(), rangeTypes.end())
+{
+}
+
+sai_attribute_t AclTableRangeMatch::toSaiAttribute()
+{
+    return sai_attribute_t{
+        .id = getId(),
+        .value = {
+            .s32list = {
+                .count = static_cast<uint32_t>(m_rangeList.size()),
+                .list = m_rangeList.data(),
+            },
+        },
+    };
+}
+
+bool AclTableRangeMatch::validateAclRuleMatch(const AclRule& rule) const
+{
+    const auto& rangeConfig = rule.getRangeConfig();
+    for (const auto& range: rangeConfig)
+    {
+        if (find(m_rangeList.begin(), m_rangeList.end(), range.rangeType) == m_rangeList.end())
+        {
+            SWSS_LOG_ERROR("Range match %s is not supported on table %s",
+                sai_metadata_get_acl_range_type_name(range.rangeType), rule.getTableId().c_str());
+            return false;
+        }
+    }
+
+    return true;
+}
+
+string AclTableType::getName() const
+{
+    return m_name;
+}
+
+const set<sai_acl_bind_point_type_t>& AclTableType::getBindPointTypes() const
+{
+    return m_bpointTypes;
+}
+
+const map<sai_acl_table_attr_t, shared_ptr<AclTableMatchInterface>>& AclTableType::getMatches() const
+{
+    return m_matches;
+}
+
+const set<sai_acl_action_type_t>& AclTableType::getActions() const
+{
+    return m_aclAcitons;
+}
+
+AclTableTypeBuilder& AclTableTypeBuilder::withName(string name)
+{
+    m_tableType.m_name = name;
+    return *this;
+}
+
+AclTableTypeBuilder& AclTableTypeBuilder::withBindPointType(sai_acl_bind_point_type_t bpointType)
+{
+    m_tableType.m_bpointTypes.insert(bpointType);
+    return *this;
+}
+
+AclTableTypeBuilder& AclTableTypeBuilder::withMatch(shared_ptr<AclTableMatchInterface> match)
+{
+    m_tableType.m_matches.emplace(match->getId(), match);
+    return *this;
+}
+
+AclTableTypeBuilder& AclTableTypeBuilder::withAction(sai_acl_action_type_t action)
+{
+    m_tableType.m_aclAcitons.insert(action);
+    return *this;
+}
+
+AclTableType AclTableTypeBuilder::build()
+{
+    auto tableType = m_tableType;
+    m_tableType = AclTableType();
+    return tableType;
+}
+
+bool AclTableTypeParser::parse(const std::string& key,
+                               const vector<swss::FieldValueTuple>& fieldValues,
+                               AclTableTypeBuilder& builder)
+{
+    builder.withName(key);
+
+    for (const auto& fieldValue: fieldValues)
+    {
+        auto field = to_upper(fvField(fieldValue));
+        auto value = to_upper(fvValue(fieldValue));
+
+        SWSS_LOG_DEBUG("field %s, value %s", field.c_str(), value.c_str());
+
+        if (field == ACL_TABLE_TYPE_MATCHES)
+        {
+            if (!parseAclTableTypeMatches(value, builder))
+            {
+                return false;
+            }
+        }
+        else if (field == ACL_TABLE_TYPE_ACTIONS)
+        {
+            if (!parseAclTableTypeActions(value, builder))
+            {
+                return false;
+            }
+        }
+        else if (field == ACL_TABLE_TYPE_BPOINT_TYPES)
+        {
+            if (!parseAclTableTypeBindPointTypes(value, builder))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unknown field %s: value %s", field.c_str(), value.c_str());
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool AclTableTypeParser::parseAclTableTypeMatches(const std::string& value, AclTableTypeBuilder& builder)
+{
+    auto matches = tokenize(value, comma);
+    set<sai_acl_range_type_t> saiRangeTypes;
+
+    for (const auto& match: matches)
+    {
+        auto matchIt = aclMatchLookup.find(match);
+        auto rangeMatchIt = aclRangeTypeLookup.find(match);
+
+        if (rangeMatchIt != aclRangeTypeLookup.end())
+        {
+            auto rangeType = rangeMatchIt->second;
+            saiRangeTypes.insert(rangeType);
+        }
+        else if (matchIt != aclMatchLookup.end())
+        {
+            auto saiMatch = AclEntryFieldToAclTableField(matchIt->second);
+            builder.withMatch(make_unique<AclTableMatch>(saiMatch));
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unknown match %s", match.c_str());
+            return false;
+        }
+    }
+
+    if (!saiRangeTypes.empty())
+    {
+        builder.withMatch(make_unique<AclTableRangeMatch>(saiRangeTypes));
+    }
+
+    return true;
+}
+
+bool AclTableTypeParser::parseAclTableTypeActions(const std::string& value, AclTableTypeBuilder& builder)
+{
+    auto actions = tokenize(value, comma);
+    for (const auto& action: actions)
+    {
+        sai_acl_entry_attr_t saiActionAttr = SAI_ACL_ENTRY_ATTR_ACTION_END;
+
+        auto l3Action = aclL3ActionLookup.find(action);
+        auto mirrorAction = aclMirrorStageLookup.find(action);
+        auto dtelAction = aclDTelActionLookup.find(action);
+
+        if (l3Action != aclL3ActionLookup.end())
+        {
+            saiActionAttr = l3Action->second;
+        }
+        else if (mirrorAction != aclMirrorStageLookup.end())
+        {
+            saiActionAttr = mirrorAction->second;
+        }
+        else if (dtelAction != aclDTelActionLookup.end())
+        {
+            saiActionAttr = dtelAction->second;
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unknown action %s", action.c_str());
+            return false;
+        }
+
+        builder.withAction(AclEntryActionToAclAction(saiActionAttr));
+    }
+
+    return true;
+}
+
+bool AclTableTypeParser::parseAclTableTypeBindPointTypes(const std::string& value, AclTableTypeBuilder& builder)
+{
+    auto bpointTypes = tokenize(value, comma);
+    for (const auto& bpointType: bpointTypes)
+    {
+        auto bpointIt = aclBindPointTypeLookup.find(bpointType);
+        if (bpointIt == aclBindPointTypeLookup.end())
+        {
+            SWSS_LOG_ERROR("Unknown bind point %s", bpointType.c_str());
+            return false;
+        }
+
+        auto saiBpointType = bpointIt->second;
+        builder.withBindPointType(saiBpointType);
+    }
+
+    return true;
+}
+
+AclRule::AclRule(AclOrch *pAclOrch, string rule, string table, bool createCounter) :
+    m_pAclOrch(pAclOrch),
+    m_id(rule),
+    m_ruleOid(SAI_NULL_OBJECT_ID),
+    m_counterOid(SAI_NULL_OBJECT_ID),
+    m_priority(0),
+    m_createCounter(createCounter)
+{
+    auto tableOid = pAclOrch->getTableById(table);
+    m_pTable = pAclOrch->getTableByOid(tableOid);
+    if (!m_pTable)
+    {
+        SWSS_LOG_THROW("Failed to find ACL table %s. ACL table must exist at the time of creating AclRule", table.c_str());
+    }
 }
 
 bool AclRule::validateAddPriority(string attr_name, string attr_value)
@@ -177,12 +489,11 @@ bool AclRule::validateAddPriority(string attr_name, string attr_value)
     {
         char *endp = NULL;
         errno = 0;
-        m_priority = (uint32_t)strtol(attr_value.c_str(), &endp, 0);
+        auto priority = (uint32_t)strtol(attr_value.c_str(), &endp, 0);
         // check conversion was successful and the value is within the allowed range
         status = (errno == 0) &&
                  (endp == attr_value.c_str() + attr_value.size()) &&
-                 (m_priority >= m_minPriority) &&
-                 (m_priority <= m_maxPriority);
+                 setPriority(priority);
     }
 
     return status;
@@ -192,7 +503,11 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
 {
     SWSS_LOG_ENTER();
 
-    sai_attribute_value_t value;
+    sai_acl_field_data_t matchData{};
+    vector<sai_object_id_t> inPorts;
+    vector<sai_object_id_t> outPorts;
+
+    matchData.enable = true;
 
     try
     {
@@ -209,7 +524,6 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
                 return false;
             }
 
-            m_inPorts.clear();
             for (auto alias : ports)
             {
                 Port port;
@@ -225,11 +539,11 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
                     return false;
                 }
 
-                m_inPorts.push_back(port.m_port_id);
+                inPorts.push_back(port.m_port_id);
             }
 
-            value.aclfield.data.objlist.count = static_cast<uint32_t>(m_inPorts.size());
-            value.aclfield.data.objlist.list = m_inPorts.data();
+            matchData.data.objlist.count = static_cast<uint32_t>(inPorts.size());
+            matchData.data.objlist.list = inPorts.data();
         }
         else if (attr_name == MATCH_OUT_PORTS)
         {
@@ -240,7 +554,6 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
                 return false;
             }
 
-            m_outPorts.clear();
             for (auto alias : ports)
             {
                 Port port;
@@ -256,49 +569,49 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
                     return false;
                 }
 
-                m_outPorts.push_back(port.m_port_id);
+                outPorts.push_back(port.m_port_id);
             }
 
-            value.aclfield.data.objlist.count = static_cast<uint32_t>(m_outPorts.size());
-            value.aclfield.data.objlist.list = m_outPorts.data();
+            matchData.data.objlist.count = static_cast<uint32_t>(outPorts.size());
+            matchData.data.objlist.list = outPorts.data();
         }
         else if (attr_name == MATCH_IP_TYPE)
         {
-            if (!processIpType(attr_value, value.aclfield.data.u32))
+            if (!processIpType(attr_value, matchData.data.u32))
             {
                 SWSS_LOG_ERROR("Invalid IP type %s", attr_value.c_str());
                 return false;
             }
 
-            value.aclfield.mask.u32 = 0xFFFFFFFF;
+            matchData.mask.u32 = 0xFFFFFFFF;
         }
         else if (attr_name == MATCH_TCP_FLAGS)
         {
             // Support both exact value match and value/mask match
             auto flag_data = tokenize(attr_value, '/');
 
-            value.aclfield.data.u8 = to_uint<uint8_t>(flag_data[0], 0, 0x3F);
+            matchData.data.u8 = to_uint<uint8_t>(flag_data[0], 0, 0x3F);
 
             if (flag_data.size() == 2)
             {
-                value.aclfield.mask.u8 = to_uint<uint8_t>(flag_data[1], 0, 0x3F);
+                matchData.mask.u8 = to_uint<uint8_t>(flag_data[1], 0, 0x3F);
             }
             else
             {
-                value.aclfield.mask.u8 = 0x3F;
+                matchData.mask.u8 = 0x3F;
             }
         }
         else if (attr_name == MATCH_ETHER_TYPE || attr_name == MATCH_L4_SRC_PORT || attr_name == MATCH_L4_DST_PORT)
         {
-            value.aclfield.data.u16 = to_uint<uint16_t>(attr_value);
-            value.aclfield.mask.u16 = 0xFFFF;
+            matchData.data.u16 = to_uint<uint16_t>(attr_value);
+            matchData.mask.u16 = 0xFFFF;
         }
         else if (attr_name == MATCH_VLAN_ID)
         {
-            value.aclfield.data.u16 = to_uint<uint16_t>(attr_value);
-            value.aclfield.mask.u16 = 0xFFF;
+            matchData.data.u16 = to_uint<uint16_t>(attr_value);
+            matchData.mask.u16 = 0xFFF;
 
-            if (value.aclfield.data.u16 < MIN_VLAN_ID || value.aclfield.data.u16 > MAX_VLAN_ID)
+            if (matchData.data.u16 < MIN_VLAN_ID || matchData.data.u16 > MAX_VLAN_ID)
             {
                 SWSS_LOG_ERROR("Invalid VLAN ID: %s", attr_value.c_str());
                 return false;
@@ -309,21 +622,21 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
             /* Support both exact value match and value/mask match */
             auto dscp_data = tokenize(attr_value, '/');
 
-            value.aclfield.data.u8 = to_uint<uint8_t>(dscp_data[0], 0, 0x3F);
+            matchData.data.u8 = to_uint<uint8_t>(dscp_data[0], 0, 0x3F);
 
             if (dscp_data.size() == 2)
             {
-                value.aclfield.mask.u8 = to_uint<uint8_t>(dscp_data[1], 0, 0x3F);
+                matchData.mask.u8 = to_uint<uint8_t>(dscp_data[1], 0, 0x3F);
             }
             else
             {
-                value.aclfield.mask.u8 = 0x3F;
+                matchData.mask.u8 = 0x3F;
             }
         }
         else if (attr_name == MATCH_IP_PROTOCOL || attr_name == MATCH_NEXT_HEADER)
         {
-            value.aclfield.data.u8 = to_uint<uint8_t>(attr_value);
-            value.aclfield.mask.u8 = 0xFF;
+            matchData.data.u8 = to_uint<uint8_t>(attr_value);
+            matchData.mask.u8 = 0xFF;
         }
         else if (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP)
         {
@@ -334,8 +647,8 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
                 SWSS_LOG_ERROR("IP type is not v4 type");
                 return false;
             }
-            value.aclfield.data.ip4 = ip.getIp().getV4Addr();
-            value.aclfield.mask.ip4 = ip.getMask().getV4Addr();
+            matchData.data.ip4 = ip.getIp().getV4Addr();
+            matchData.mask.ip4 = ip.getMask().getV4Addr();
         }
         else if (attr_name == MATCH_SRC_IPV6 || attr_name == MATCH_DST_IPV6)
         {
@@ -345,52 +658,59 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
                 SWSS_LOG_ERROR("IP type is not v6 type");
                 return false;
             }
-            memcpy(value.aclfield.data.ip6, ip.getIp().getV6Addr(), 16);
-            memcpy(value.aclfield.mask.ip6, ip.getMask().getV6Addr(), 16);
+            memcpy(matchData.data.ip6, ip.getIp().getV6Addr(), 16);
+            memcpy(matchData.mask.ip6, ip.getMask().getV6Addr(), 16);
         }
         else if ((attr_name == MATCH_L4_SRC_PORT_RANGE) || (attr_name == MATCH_L4_DST_PORT_RANGE))
         {
-            if (sscanf(attr_value.c_str(), "%d-%d", &value.u32range.min, &value.u32range.max) != 2)
+            AclRangeConfig rangeConfig{};
+            if (sscanf(attr_value.c_str(), "%d-%d", &rangeConfig.min, &rangeConfig.max) != 2)
             {
                 SWSS_LOG_ERROR("Range parse error. Attribute: %s, value: %s", attr_name.c_str(), attr_value.c_str());
                 return false;
             }
 
+            rangeConfig.rangeType = aclRangeTypeLookup[attr_name];
+
             // check boundaries
-            if ((value.u32range.min > USHRT_MAX) ||
-                (value.u32range.max > USHRT_MAX) ||
-                (value.u32range.min > value.u32range.max))
+            if ((rangeConfig.min > USHRT_MAX) ||
+                (rangeConfig.max > USHRT_MAX) ||
+                (rangeConfig.min > rangeConfig.max))
             {
                 SWSS_LOG_ERROR("Range parse error. Invalid range value. Attribute: %s, value: %s", attr_name.c_str(), attr_value.c_str());
                 return false;
             }
+
+            m_rangeConfig.push_back(rangeConfig);
+
+            return m_pTable->validateAclRuleMatch(SAI_ACL_ENTRY_ATTR_FIELD_ACL_RANGE_TYPE, *this);
         }
         else if (attr_name == MATCH_TC)
         {
-            value.aclfield.data.u8 = to_uint<uint8_t>(attr_value);
-            value.aclfield.mask.u8 = 0xFF;
+            matchData.data.u8 = to_uint<uint8_t>(attr_value);
+            matchData.mask.u8 = 0xFF;
         }
         else if (attr_name == MATCH_ICMP_TYPE || attr_name == MATCH_ICMP_CODE ||
                 attr_name == MATCH_ICMPV6_TYPE || attr_name == MATCH_ICMPV6_CODE)
         {
-            value.aclfield.data.u8 = to_uint<uint8_t>(attr_value);
-            value.aclfield.mask.u8 = 0xFF;
+            matchData.data.u8 = to_uint<uint8_t>(attr_value);
+            matchData.mask.u8 = 0xFF;
         }
         else if (attr_name == MATCH_TUNNEL_VNI)
         {
-            value.aclfield.data.u32 = to_uint<uint32_t>(attr_value);
-            value.aclfield.mask.u32 = 0xFFFFFFFF;
+            matchData.data.u32 = to_uint<uint32_t>(attr_value);
+            matchData.mask.u32 = 0xFFFFFFFF;
         }
         else if (attr_name == MATCH_INNER_ETHER_TYPE || attr_name == MATCH_INNER_L4_SRC_PORT ||
             attr_name == MATCH_INNER_L4_DST_PORT)
         {
-            value.aclfield.data.u16 = to_uint<uint16_t>(attr_value);
-            value.aclfield.mask.u16 = 0xFFFF;
+            matchData.data.u16 = to_uint<uint16_t>(attr_value);
+            matchData.mask.u16 = 0xFFFF;
         }
         else if (attr_name == MATCH_INNER_IP_PROTOCOL)
         {
-            value.aclfield.data.u8 = to_uint<uint8_t>(attr_value);
-            value.aclfield.mask.u8 = 0xFF;
+            matchData.data.u8 = to_uint<uint8_t>(attr_value);
+            matchData.mask.u8 = 0xFF;
         }
     }
     catch (exception &e)
@@ -406,49 +726,14 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
 
     // TODO: For backwards compatibility, users can substitute IP_PROTOCOL for NEXT_HEADER.
     // This should be removed in a future release.
-    if ((m_tableType == ACL_TABLE_MIRRORV6 || m_tableType == ACL_TABLE_L3V6)
+    if ((m_pTable->type.getName() == TABLE_TYPE_MIRRORV6 || m_pTable->type.getName() == TABLE_TYPE_L3V6)
             && attr_name == MATCH_IP_PROTOCOL)
     {
         SWSS_LOG_WARN("Support for IP protocol on IPv6 tables will be removed in a future release, please switch to using NEXT_HEADER instead!");
         attr_name = MATCH_NEXT_HEADER;
     }
 
-    m_matches[aclMatchLookup[attr_name]] = value;
-
-    return true;
-}
-
-bool AclRule::validateAddAction(string attr_name, string attr_value)
-{
-    for (const auto& it: m_actions)
-    {
-        if (!AclRule::isActionSupported(it.first))
-        {
-            SWSS_LOG_ERROR("Action %s:%s is not supported by ASIC",
-                           attr_name.c_str(), attr_value.c_str());
-            return false;
-        }
-
-        // check if ACL action attribute entry parameter is an enum value
-        const auto* meta = sai_metadata_get_attr_metadata(SAI_OBJECT_TYPE_ACL_ENTRY, it.first);
-        if (meta == nullptr)
-        {
-            SWSS_LOG_THROW("Metadata null pointer returned by sai_metadata_get_attr_metadata for action %s",
-                           attr_name.c_str());
-        }
-        if (meta->isenum)
-        {
-            // if ACL action attribute requires enum value check if value is supported by the ASIC
-            if (!m_pAclOrch->isAclActionEnumValueSupported(AclOrch::getAclActionFromAclEntry(it.first),
-                                                           it.second.aclaction.parameter))
-            {
-                SWSS_LOG_ERROR("Action %s:%s is not supported by ASIC",
-                               attr_name.c_str(), attr_value.c_str());
-                return false;
-            }
-        }
-    }
-    return true;
+    return setMatch(aclMatchLookup[attr_name], matchData);
 }
 
 bool AclRule::processIpType(string type, sai_uint32_t &ip_type)
@@ -469,9 +754,24 @@ bool AclRule::processIpType(string type, sai_uint32_t &ip_type)
 
 bool AclRule::create()
 {
+    if (m_createCounter && !createCounter())
+    {
+        return false;
+    }
+
+    if (!createRule())
+    {
+        removeCounter();
+        return false;
+    }
+
+    return true;
+}
+
+bool AclRule::createRule()
+{
     SWSS_LOG_ENTER();
 
-    sai_object_id_t table_oid = m_pAclOrch->getTableById(m_tableId);
     vector<sai_attribute_t> rule_attrs;
     sai_object_id_t range_objects[2];
     sai_object_list_t range_object_list = {0, range_objects};
@@ -479,16 +779,9 @@ bool AclRule::create()
     sai_attribute_t attr;
     sai_status_t status;
 
-    if (m_createCounter && !createCounter())
-    {
-        return false;
-    }
-
-    SWSS_LOG_INFO("Created counter for the rule %s in table %s", m_id.c_str(), m_tableId.c_str());
-
     // store table oid this rule belongs to
     attr.id = SAI_ACL_ENTRY_ATTR_TABLE_ID;
-    attr.value.oid = table_oid;
+    attr.value.oid = m_pTable->getOid();
     rule_attrs.push_back(attr);
 
     attr.id = SAI_ACL_ENTRY_ATTR_PRIORITY;
@@ -508,50 +801,41 @@ bool AclRule::create()
         rule_attrs.push_back(attr);
     }
 
-    // store matches
-    for (auto it : m_matches)
+    if (!m_rangeConfig.empty())
     {
-        // collect ranges and add them later as a list
-        if (((sai_acl_range_type_t)it.first == SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE) ||
-            ((sai_acl_range_type_t)it.first == SAI_ACL_RANGE_TYPE_L4_DST_PORT_RANGE))
+        for (const auto& rangeConfig: m_rangeConfig)
         {
-            SWSS_LOG_INFO("Creating range object %u..%u", it.second.u32range.min, it.second.u32range.max);
+            SWSS_LOG_INFO("Creating range object %u..%u", rangeConfig.min, rangeConfig.max);
 
-            AclRange *range = AclRange::create((sai_acl_range_type_t)it.first, it.second.u32range.min, it.second.u32range.max);
+            AclRange *range = AclRange::create(rangeConfig.rangeType, rangeConfig.min, rangeConfig.max);
             if (!range)
             {
                 // release already created range if any
                 AclRange::remove(range_objects, range_object_list.count);
                 return false;
             }
-            else
-            {
-                range_objects[range_object_list.count++] = range->getOid();
-            }
-        }
-        else
-        {
-            attr.id = it.first;
-            attr.value = it.second;
-            attr.value.aclfield.enable = true;
-            rule_attrs.push_back(attr);
-        }
-    }
 
-    // store ranges if any
-    if (range_object_list.count > 0)
-    {
+            m_ranges.push_back(range);
+            range_objects[range_object_list.count++] = range->getOid();
+        }
+
         attr.id = SAI_ACL_ENTRY_ATTR_FIELD_ACL_RANGE_TYPE;
         attr.value.aclfield.enable = true;
         attr.value.aclfield.data.objlist = range_object_list;
         rule_attrs.push_back(attr);
     }
 
-    // store actions
-    for (auto it : m_actions)
+    // store matches
+    for (auto& it : m_matches)
     {
-        attr.id = it.first;
-        attr.value = it.second;
+        attr = it.second.getSaiAttr();
+        rule_attrs.push_back(attr);
+    }
+
+    // store actions
+    for (auto& it : m_actions)
+    {
+        attr = it.second.getSaiAttr();
         rule_attrs.push_back(attr);
     }
 
@@ -564,7 +848,7 @@ bool AclRule::create()
         decreaseNextHopRefCount();
     }
 
-    gCrmOrch->incCrmAclTableUsedCounter(CrmResourceType::CRM_ACL_ENTRY, m_tableOid);
+    gCrmOrch->incCrmAclTableUsedCounter(CrmResourceType::CRM_ACL_ENTRY, m_pTable->getOid());
 
     return (status == SAI_STATUS_SUCCESS);
 }
@@ -601,37 +885,45 @@ void AclRule::decreaseNextHopRefCount()
 
 bool AclRule::isActionSupported(sai_acl_entry_attr_t action) const
 {
-    auto action_type = AclOrch::getAclActionFromAclEntry(action);
-    const auto* pTable = m_pAclOrch->getTableByOid(m_tableOid);
-    if (pTable == nullptr)
-    {
-        SWSS_LOG_THROW("ACL table does not exist for oid %" PRIu64, m_tableOid);
-    }
-    return m_pAclOrch->isAclActionSupported(pTable->stage, action_type);
+    return m_pAclOrch->isAclActionSupported(m_pTable->stage, AclEntryActionToAclAction(action));
 }
 
-bool AclRule::remove()
+bool AclRule::removeRule()
 {
     SWSS_LOG_ENTER();
-    sai_status_t res;
 
-    if (sai_acl_api->remove_acl_entry(m_ruleOid) != SAI_STATUS_SUCCESS)
+    if (m_ruleOid == SAI_NULL_OBJECT_ID)
     {
-        SWSS_LOG_ERROR("Failed to delete ACL rule");
+        return true;
+    }
+
+    auto status = sai_acl_api->remove_acl_entry(m_ruleOid);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to delete ACL rule, status %s", sai_serialize_status(status).c_str());
         return false;
     }
 
-    gCrmOrch->decCrmAclTableUsedCounter(CrmResourceType::CRM_ACL_ENTRY, m_tableOid);
+    gCrmOrch->decCrmAclTableUsedCounter(CrmResourceType::CRM_ACL_ENTRY, m_pTable->getOid());
 
     m_ruleOid = SAI_NULL_OBJECT_ID;
 
     decreaseNextHopRefCount();
 
-    res = removeRanges();
-    if (m_createCounter)
+    return true;
+}
+
+bool AclRule::remove()
+{
+    SWSS_LOG_ENTER();
+
+    if (!removeRule())
     {
-        res &= removeCounter();
+        return false;
     }
+
+    auto res = removeRanges();
+    res &= removeCounter();
 
     return res;
 }
@@ -639,13 +931,11 @@ bool AclRule::remove()
 void AclRule::updateInPorts()
 {
     SWSS_LOG_ENTER();
-    sai_attribute_t attr;
     sai_status_t status;
 
-    attr.id = SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS;
-    attr.value = m_matches[SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS];
+    auto attr = m_matches[SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS].getSaiAttr();
     attr.value.aclfield.enable = true;
-    
+
     status = sai_acl_api->set_acl_entry_attribute(m_ruleOid, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -653,116 +943,434 @@ void AclRule::updateInPorts()
     }
 }
 
-AclRuleCounters AclRule::getCounters()
+bool AclRule::update(const AclRule& updatedRule)
 {
     SWSS_LOG_ENTER();
 
-    if (!m_createCounter)
+    if (!m_rangeConfig.empty() || !updatedRule.m_rangeConfig.empty())
     {
-        return AclRuleCounters();
+        SWSS_LOG_ERROR("Updating range matches is currently not implemented");
+        return false;
     }
 
-    sai_attribute_t counter_attr[2];
-    counter_attr[0].id = SAI_ACL_COUNTER_ATTR_PACKETS;
-    counter_attr[1].id = SAI_ACL_COUNTER_ATTR_BYTES;
-
-    if (sai_acl_api->get_acl_counter_attribute(m_counterOid, 2, counter_attr) != SAI_STATUS_SUCCESS)
+    if (!updateCounter(updatedRule))
     {
-        SWSS_LOG_ERROR("Failed to get counters for %s rule", m_id.c_str());
-        return AclRuleCounters();
+        return false;
     }
 
-    return AclRuleCounters(counter_attr[0].value.u64, counter_attr[1].value.u64);
+    if (!updatePriority(updatedRule))
+    {
+        return false;
+    }
+
+    if (!updateMatches(updatedRule))
+    {
+        return false;
+    }
+
+    if (!updateActions(updatedRule))
+    {
+        return false;
+    }
+
+    return true;
 }
 
-shared_ptr<AclRule> AclRule::makeShared(acl_table_type_t type, AclOrch *acl, MirrorOrch *mirror, DTelOrch *dtel, const string& rule, const string& table, const KeyOpFieldsValuesTuple& data)
+bool AclRule::updateCounter(const AclRule& updatedRule)
 {
-    string action;
-    bool action_found = false;
-    /* Find action configured by user. Based on action type create rule. */
-    for (const auto& itr : kfvFieldsValues(data))
+    if (updatedRule.m_createCounter)
     {
-        string attr_name = to_upper(fvField(itr));
-        string attr_value = fvValue(itr);
-        if (aclL3ActionLookup.find(attr_name) != aclL3ActionLookup.cend() ||
-            aclMirrorStageLookup.find(attr_name) != aclMirrorStageLookup.cend() ||
-            /* handle "MIRROR_ACTION" key without mirror stage specified for backward compatibility */
-            attr_name == ACTION_MIRROR_ACTION ||
-            aclDTelActionLookup.find(attr_name) != aclDTelActionLookup.cend())
+        if (!enableCounter())
         {
-            action_found = true;
-            action = attr_name;
-            break;
+            return false;
+        }
+    }
+    else
+    {
+        if (!disableCounter())
+        {
+            return false;
         }
     }
 
-    if (!action_found)
+    m_createCounter = updatedRule.m_createCounter;
+
+    return true;
+}
+
+bool AclRule::updatePriority(const AclRule& updatedRule)
+{
+    if (m_priority == updatedRule.m_priority)
+    {
+        return true;
+    }
+
+    sai_attribute_t attr {};
+    attr.id = SAI_ACL_ENTRY_ATTR_PRIORITY;
+    attr.value.s32 = updatedRule.m_priority;
+    if (!setAttribute(attr))
+    {
+        return false;
+    }
+
+    m_priority = updatedRule.m_priority;
+
+    return true;
+}
+
+bool AclRule::updateMatches(const AclRule& updatedRule)
+{
+    vector<pair<sai_acl_entry_attr_t, SaiAttrWrapper>> matchesUpdated;
+    vector<pair<sai_acl_entry_attr_t, SaiAttrWrapper>> matchesDisabled;
+
+    // Diff by value to get new matches and updated matches
+    // in a single set_difference pass.
+    set_difference(
+        updatedRule.m_matches.begin(),
+        updatedRule.m_matches.end(),
+        m_matches.begin(), m_matches.end(),
+        back_inserter(matchesUpdated)
+    );
+
+    // Diff by key only to get delete matches. Assuming that
+    // deleted matches mean setting a match attribute to disabled state.
+    set_difference(
+        m_matches.begin(), m_matches.end(),
+        updatedRule.m_matches.begin(),
+        updatedRule.m_matches.end(),
+        back_inserter(matchesDisabled),
+        [](auto& oldMatch, auto& newMatch)
+        {
+            return oldMatch.first < newMatch.first;
+        }
+    );
+
+    for (const auto& attrPair: matchesDisabled)
+    {
+        auto attr = attrPair.second.getSaiAttr();
+        attr.value.aclfield.enable = false;
+        if (!setAttribute(attr))
+        {
+            return false;
+        }
+        m_matches.erase(attrPair.first);
+    }
+
+    for (const auto& attrPair: matchesUpdated)
+    {
+        auto attr = attrPair.second.getSaiAttr();
+        if (!setAttribute(attr))
+        {
+            return false;
+        }
+        setMatch(attrPair.first, attr.value.aclfield);
+    }
+
+    return true;
+}
+
+bool AclRule::updateActions(const AclRule& updatedRule)
+{
+    vector<pair<sai_acl_entry_attr_t, SaiAttrWrapper>> actionsUpdated;
+    vector<pair<sai_acl_entry_attr_t, SaiAttrWrapper>> actionsDisabled;
+
+    // Diff by value to get new action and updated actions
+    // in a single set_difference pass.
+    set_difference(
+        updatedRule.m_actions.begin(),
+        updatedRule.m_actions.end(),
+        m_actions.begin(), m_actions.end(),
+        back_inserter(actionsUpdated)
+    );
+
+    // Diff by key only to get delete actions. Assuming that
+    // action matches mean setting a action attribute to disabled state.
+    set_difference(
+        m_actions.begin(), m_actions.end(),
+        updatedRule.m_actions.begin(),
+        updatedRule.m_actions.end(),
+        back_inserter(actionsDisabled),
+        [](auto& oldAction, auto& newAction)
+        {
+            return oldAction.first < newAction.first;
+        }
+    );
+
+    for (const auto& attrPair: actionsDisabled)
+    {
+        auto attr = attrPair.second.getSaiAttr();
+        attr.value.aclaction.enable = false;
+        if (!setAttribute(attr))
+        {
+            return false;
+        }
+        m_actions.erase(attrPair.first);
+    }
+
+    for (const auto& attrPair: actionsUpdated)
+    {
+        auto attr = attrPair.second.getSaiAttr();
+        if (!setAttribute(attr))
+        {
+            return false;
+        }
+        setAction(attrPair.first, attr.value.aclaction);
+    }
+
+    return true;
+}
+
+bool AclRule::setPriority(const sai_uint32_t &value)
+{
+    if (!(value >= m_minPriority && value <= m_maxPriority))
+    {
+        SWSS_LOG_ERROR("Priority value %d is out of supported priority range %d-%d",
+            value, m_minPriority, m_maxPriority);
+        return false;
+    }
+    m_priority = value;
+    return true;
+}
+
+bool AclRule::setAction(sai_acl_entry_attr_t actionId, sai_acl_action_data_t actionData)
+{
+    if (!isActionSupported(actionId))
+    {
+        SWSS_LOG_ERROR("Action attribute %s is not supported",
+            getAttributeIdName(SAI_OBJECT_TYPE_ACL_ENTRY, actionId).c_str());
+        return false;
+    }
+
+    // check if ACL action attribute entry parameter is an enum value
+    const auto* meta = sai_metadata_get_attr_metadata(SAI_OBJECT_TYPE_ACL_ENTRY, actionId);
+    if (meta == nullptr)
+    {
+        SWSS_LOG_THROW("Metadata null pointer returned by sai_metadata_get_attr_metadata for action %d", actionId);
+    }
+    if (meta->isenum)
+    {
+        // if ACL action attribute requires enum value check if value is supported by the ASIC
+        if (!m_pAclOrch->isAclActionEnumValueSupported(AclEntryActionToAclAction(actionId), actionData.parameter))
+        {
+            SWSS_LOG_ERROR("Action %s is not supported by ASIC",
+                getAttributeIdName(SAI_OBJECT_TYPE_ACL_ENTRY, actionId).c_str());
+            return false;
+        }
+    }
+
+    sai_attribute_t attr;
+    attr.id = actionId;
+    attr.value.aclaction = actionData;
+
+    m_actions[actionId] = SaiAttrWrapper(SAI_OBJECT_TYPE_ACL_ENTRY, attr);
+
+    if (!m_pTable->validateAclRuleAction(actionId, *this))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+bool AclRule::setMatch(sai_acl_entry_attr_t matchId, sai_acl_field_data_t matchData)
+{
+    sai_attribute_t attr;
+    attr.id = matchId;
+    attr.value.aclfield = matchData;
+
+    m_matches[matchId] = SaiAttrWrapper(SAI_OBJECT_TYPE_ACL_ENTRY, attr);
+
+    if (!m_pTable->validateAclRuleMatch(matchId, *this))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+bool AclRule::setAttribute(sai_attribute_t attr)
+{
+    auto meta = sai_metadata_get_attr_metadata(SAI_OBJECT_TYPE_ACL_ENTRY, attr.id);
+    if (!meta)
+    {
+        SWSS_LOG_THROW("Failed to get metadata for attribute id %d", attr.id);
+    }
+    auto status = sai_acl_api->set_acl_entry_attribute(m_ruleOid, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to update attribute %s on ACL rule %s in ACL table %s: %s",
+                        meta->attridname, getId().c_str(), getTableId().c_str(),
+                        sai_serialize_status(status).c_str());
+        return false;
+    }
+    SWSS_LOG_INFO("Successfully updated action attribute %s on ACL rule %s in ACL table %s",
+                   meta->attridname, getId().c_str(), getTableId().c_str());
+    return true;
+}
+
+vector<sai_object_id_t> AclRule::getInPorts() const
+{
+    vector<sai_object_id_t> inPorts;
+    auto it = m_matches.find(SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS);
+    if (it == m_matches.end())
+    {
+        return inPorts;
+    }
+    auto attr = it->second.getSaiAttr();
+    if (!attr.value.aclfield.enable)
+    {
+        return inPorts;
+    }
+    auto objlist = attr.value.aclfield.data.objlist;
+    inPorts = vector<sai_object_id_t>(objlist.list, objlist.list + objlist.count);
+    return inPorts;
+}
+
+string AclRule::getId() const
+{
+    return m_id;
+}
+
+string AclRule::getTableId() const
+{
+    return m_pTable->getId();
+}
+
+sai_object_id_t AclRule::getOid() const
+{
+    return m_ruleOid;
+}
+
+sai_object_id_t AclRule::getCounterOid() const
+{
+    return m_counterOid;
+}
+
+bool AclRule::hasCounter() const
+{
+    return getCounterOid() != SAI_NULL_OBJECT_ID;
+}
+
+const vector<AclRangeConfig>& AclRule::getRangeConfig() const
+{
+    return m_rangeConfig;
+}
+
+shared_ptr<AclRule> AclRule::makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOrch *dtel, const string& rule, const string& table, const KeyOpFieldsValuesTuple& data)
+{
+    shared_ptr<AclRule> aclRule;
+
+    for (const auto& itr: kfvFieldsValues(data))
+    {
+        auto action = to_upper(fvField(itr));
+        if (aclMirrorStageLookup.find(action) != aclMirrorStageLookup.cend() ||
+            action == ACTION_MIRROR_ACTION /* implicitly ingress in old schema */)
+        {
+            return make_shared<AclRuleMirror>(acl, mirror, rule, table);
+        }
+        else if (aclL3ActionLookup.find(action) != aclL3ActionLookup.cend())
+        {
+            return make_shared<AclRulePacket>(acl, rule, table);
+        }
+        else if (aclDTelFlowOpTypeLookup.find(action) != aclDTelFlowOpTypeLookup.cend())
+        {
+            if (!dtel)
+            {
+                throw runtime_error("DTel feature is not enabled. Watchlists cannot be configured");
+            }
+
+            if (action == ACTION_DTEL_DROP_REPORT_ENABLE ||
+                action == ACTION_DTEL_TAIL_DROP_REPORT_ENABLE ||
+                action == ACTION_DTEL_REPORT_ALL_PACKETS)
+            {
+                return make_shared<AclRuleDTelDropWatchListEntry>(acl, dtel, rule, table);
+            }
+            else
+            {
+                return make_shared<AclRuleDTelFlowWatchListEntry>(acl, dtel, rule, table);
+            }
+        }
+    }
+
+    if (!aclRule)
     {
         throw runtime_error("ACL rule action is not found in rule " + rule);
     }
 
-    if (type != ACL_TABLE_L3 &&
-        type != ACL_TABLE_L3V6 &&
-        type != ACL_TABLE_MIRROR &&
-        type != ACL_TABLE_MIRRORV6 &&
-        type != ACL_TABLE_MIRROR_DSCP &&
-        type != ACL_TABLE_DTEL_FLOW_WATCHLIST &&
-        type != ACL_TABLE_DTEL_DROP_WATCHLIST &&
-        type != ACL_TABLE_MCLAG &&
-        type != ACL_TABLE_DROP)
+    return aclRule;
+}
+
+bool AclRule::enableCounter()
+{
+    SWSS_LOG_ENTER();
+
+    if (m_counterOid != SAI_NULL_OBJECT_ID)
     {
-        throw runtime_error("Unknown table type");
+        return true;
     }
 
-    /* Mirror rules can exist in both tables */
-    if (aclMirrorStageLookup.find(action) != aclMirrorStageLookup.cend() ||
-        action == ACTION_MIRROR_ACTION /* implicitly ingress in old schema */)
+    if (m_ruleOid == SAI_NULL_OBJECT_ID)
     {
-        return make_shared<AclRuleMirror>(acl, mirror, rule, table, type);
-    }
-    /* L3 rules can exist only in L3 table */
-    else if (type == ACL_TABLE_L3)
-    {
-        return make_shared<AclRuleL3>(acl, rule, table, type);
-    }
-    /* L3V6 rules can exist only in L3V6 table */
-    else if (type == ACL_TABLE_L3V6)
-    {
-        return make_shared<AclRuleL3V6>(acl, rule, table, type);
-    }
-    /* Pfcwd rules can exist only in PFCWD table */
-    else if (type == ACL_TABLE_PFCWD)
-    {
-        return make_shared<AclRulePfcwd>(acl, rule, table, type);
-    }
-    else if (type == ACL_TABLE_DTEL_FLOW_WATCHLIST)
-    {
-        if (dtel)
-        {
-            return make_shared<AclRuleDTelFlowWatchListEntry>(acl, dtel, rule, table, type);
-        } else {
-            throw runtime_error("DTel feature is not enabled. Watchlists cannot be configured");
-        }
-    }
-    else if (type == ACL_TABLE_DTEL_DROP_WATCHLIST)
-    {
-        if (dtel)
-        {
-            return make_shared<AclRuleDTelDropWatchListEntry>(acl, dtel, rule, table, type);
-        } else {
-            throw runtime_error("DTel feature is not enabled. Watchlists cannot be configured");
-        }
-    }
-    else if (type == ACL_TABLE_MCLAG)
-    {
-        return make_shared<AclRuleMclag>(acl, rule, table, type);
-    }
-    else if (type == ACL_TABLE_DROP)
-    {
-        return make_shared<AclRulePfcwd>(acl, rule, table, type);
+        SWSS_LOG_ERROR("ACL rule %s doesn't exist in ACL table %s", m_id.c_str(), m_pTable->getId().c_str());
+        return false;
     }
 
-    throw runtime_error("Wrong combination of table type and action in rule " + rule);
+    if (!createCounter())
+    {
+        return false;
+    }
+
+    sai_attribute_t attr;
+
+    attr.id = SAI_ACL_ENTRY_ATTR_ACTION_COUNTER;
+    attr.value.aclaction.parameter.oid = m_counterOid;
+    attr.value.aclaction.enable = true;
+
+    sai_status_t status = sai_acl_api->set_acl_entry_attribute(m_ruleOid, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to enable counter for ACL rule %s in ACL table %s", m_id.c_str(), m_pTable->getId().c_str());
+        removeCounter();
+        return false;
+    }
+
+    return true;
+}
+
+bool AclRule::disableCounter()
+{
+    SWSS_LOG_ENTER();
+
+    if (m_counterOid == SAI_NULL_OBJECT_ID)
+    {
+        return true;
+    }
+
+    if (m_ruleOid == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("ACL rule %s doesn't exist in ACL table %s", m_id.c_str(), m_pTable->getId().c_str());
+        return false;
+    }
+
+    sai_attribute_t attr;
+
+    attr.id = SAI_ACL_ENTRY_ATTR_ACTION_COUNTER;
+    attr.value.aclaction.parameter.oid = SAI_NULL_OBJECT_ID;
+    attr.value.aclaction.enable = false;
+
+    sai_status_t status = sai_acl_api->set_acl_entry_attribute(m_ruleOid, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to disable counter for ACL rule %s in ACL table %s", m_id.c_str(), m_pTable->getId().c_str());
+        return false;
+    }
+
+    if (!removeCounter())
+    {
+        return false;
+    }
+
+    return true;
 }
 
 bool AclRule::createCounter()
@@ -772,25 +1380,31 @@ bool AclRule::createCounter()
     sai_attribute_t attr;
     vector<sai_attribute_t> counter_attrs;
 
+    if (m_counterOid != SAI_NULL_OBJECT_ID)
+    {
+        return true;
+    }
+
     attr.id = SAI_ACL_COUNTER_ATTR_TABLE_ID;
-    attr.value.oid = m_tableOid;
+    attr.value.oid = m_pTable->getOid();
     counter_attrs.push_back(attr);
 
-    attr.id = SAI_ACL_COUNTER_ATTR_ENABLE_BYTE_COUNT;
-    attr.value.booldata = true;
-    counter_attrs.push_back(attr);
-
-    attr.id = SAI_ACL_COUNTER_ATTR_ENABLE_PACKET_COUNT;
-    attr.value.booldata = true;
-    counter_attrs.push_back(attr);
+    for (const auto& counterAttrPair: aclCounterLookup)
+    {
+        tie(attr.id, std::ignore) = counterAttrPair;
+        attr.value.booldata = true;
+        counter_attrs.push_back(attr);
+    }
 
     if (sai_acl_api->create_acl_counter(&m_counterOid, gSwitchId, (uint32_t)counter_attrs.size(), counter_attrs.data()) != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create counter for the rule %s in table %s", m_id.c_str(), m_tableId.c_str());
+        SWSS_LOG_ERROR("Failed to create counter for the rule %s in table %s", m_id.c_str(), m_pTable->getId().c_str());
         return false;
     }
 
-    gCrmOrch->incCrmAclTableUsedCounter(CrmResourceType::CRM_ACL_COUNTER, m_tableOid);
+    gCrmOrch->incCrmAclTableUsedCounter(CrmResourceType::CRM_ACL_COUNTER, m_pTable->getOid());
+
+    SWSS_LOG_INFO("Created counter for the rule %s in table %s", m_id.c_str(), m_pTable->getId().c_str());
 
     return true;
 }
@@ -798,12 +1412,11 @@ bool AclRule::createCounter()
 bool AclRule::removeRanges()
 {
     SWSS_LOG_ENTER();
-    for (auto it : m_matches)
+    for (const auto& rangeConfig: m_rangeConfig)
     {
-        if (((sai_acl_range_type_t)it.first == SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE) ||
-            ((sai_acl_range_type_t)it.first == SAI_ACL_RANGE_TYPE_L4_DST_PORT_RANGE))
+        if (!AclRange::remove(rangeConfig.rangeType, rangeConfig.min, rangeConfig.max))
         {
-            return AclRange::remove((sai_acl_range_type_t)it.first, it.second.u32range.min, it.second.u32range.max);
+            return false;
         }
     }
     return true;
@@ -820,31 +1433,30 @@ bool AclRule::removeCounter()
 
     if (sai_acl_api->remove_acl_counter(m_counterOid) != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to remove ACL counter for rule %s in table %s", m_id.c_str(), m_tableId.c_str());
+        SWSS_LOG_ERROR("Failed to remove ACL counter for rule %s in table %s", m_id.c_str(), m_pTable->getId().c_str());
         return false;
     }
 
-    gCrmOrch->decCrmAclTableUsedCounter(CrmResourceType::CRM_ACL_COUNTER, m_tableOid);
-
-    SWSS_LOG_INFO("Removing record about the counter %" PRIx64 " from the DB", m_counterOid);
-    AclOrch::getCountersTable().del(getTableId() + ":" + getId());
+    gCrmOrch->decCrmAclTableUsedCounter(CrmResourceType::CRM_ACL_COUNTER, m_pTable->getOid());
 
     m_counterOid = SAI_NULL_OBJECT_ID;
+
+    SWSS_LOG_INFO("Removed counter for the rule %s in table %s", m_id.c_str(), m_pTable->getId().c_str());
 
     return true;
 }
 
-AclRuleL3::AclRuleL3(AclOrch *aclOrch, string rule, string table, acl_table_type_t type, bool createCounter) :
-        AclRule(aclOrch, rule, table, type, createCounter)
+AclRulePacket::AclRulePacket(AclOrch *aclOrch, string rule, string table, bool createCounter) :
+        AclRule(aclOrch, rule, table, createCounter)
 {
 }
 
-bool AclRuleL3::validateAddAction(string attr_name, string _attr_value)
+bool AclRulePacket::validateAddAction(string attr_name, string _attr_value)
 {
     SWSS_LOG_ENTER();
 
     string attr_value = to_upper(_attr_value);
-    sai_attribute_value_t value;
+    sai_acl_action_data_t actionData;
 
     auto action_str = attr_name;
 
@@ -853,7 +1465,7 @@ bool AclRuleL3::validateAddAction(string attr_name, string _attr_value)
         const auto it = aclPacketActionLookup.find(attr_value);
         if (it != aclPacketActionLookup.cend())
         {
-            value.aclaction.parameter.s32 = it->second;
+            actionData.parameter.s32 = it->second;
         }
         // handle PACKET_ACTION_REDIRECT in ACTION_PACKET_ACTION for backward compatibility
         else if (attr_value.find(PACKET_ACTION_REDIRECT) != string::npos)
@@ -880,14 +1492,14 @@ bool AclRuleL3::validateAddAction(string attr_name, string _attr_value)
             {
                 return false;
             }
-            value.aclaction.parameter.oid = param_id;
+            actionData.parameter.oid = param_id;
 
             action_str = ACTION_REDIRECT_ACTION;
         }
         // handle PACKET_ACTION_DO_NOT_NAT in ACTION_PACKET_ACTION
         else if (attr_value == PACKET_ACTION_DO_NOT_NAT)
         {
-            value.aclaction.parameter.booldata = true;
+            actionData.parameter.booldata = true;
             action_str = ACTION_DO_NOT_NAT_ACTION;
         }
         else
@@ -902,22 +1514,20 @@ bool AclRuleL3::validateAddAction(string attr_name, string _attr_value)
         {
             return false;
         }
-        value.aclaction.parameter.oid = param_id;
+        actionData.parameter.oid = param_id;
     }
     else
     {
         return false;
     }
 
-    value.aclaction.enable = true;
+    actionData.enable = true;
 
-    m_actions[aclL3ActionLookup[action_str]] = value;
-
-    return AclRule::validateAddAction(attr_name, attr_value);
+    return setAction(aclL3ActionLookup[action_str], actionData);
 }
 
 // This method should return sai attribute id of the redirect destination
-sai_object_id_t AclRuleL3::getRedirectObjectId(const string& redirect_value)
+sai_object_id_t AclRulePacket::getRedirectObjectId(const string& redirect_value)
 {
 
     string target = redirect_value;
@@ -990,40 +1600,11 @@ sai_object_id_t AclRuleL3::getRedirectObjectId(const string& redirect_value)
     return SAI_NULL_OBJECT_ID;
 }
 
-bool AclRuleL3::validateAddMatch(string attr_name, string attr_value)
-{
-    if (attr_name == MATCH_DSCP)
-    {
-        SWSS_LOG_ERROR("DSCP match is not supported for table type L3");
-        return false;
-    }
-
-    if (attr_name == MATCH_SRC_IPV6 || attr_name == MATCH_DST_IPV6)
-    {
-        SWSS_LOG_ERROR("IPv6 address match is not supported for table type L3");
-        return false;
-    }
-
-    if (attr_name == MATCH_ICMPV6_TYPE || attr_name == MATCH_ICMPV6_CODE)
-    {
-        SWSS_LOG_ERROR("ICMPv6 match is not supported for table type L3");
-        return false;
-    }
-
-    if (attr_name == MATCH_NEXT_HEADER)
-    {
-        SWSS_LOG_ERROR("IPv6 Next Header match is not supported for table type L3");
-        return false;
-    }
-
-    return AclRule::validateAddMatch(attr_name, attr_value);
-}
-
-bool AclRuleL3::validate()
+bool AclRulePacket::validate()
 {
     SWSS_LOG_ENTER();
 
-    if (m_matches.size() == 0 || m_actions.size() != 1)
+    if ((m_rangeConfig.empty() && m_matches.empty()) || m_actions.size() != 1)
     {
         return false;
     }
@@ -1031,72 +1612,13 @@ bool AclRuleL3::validate()
     return true;
 }
 
-void AclRuleL3::update(SubjectType, void *)
+void AclRulePacket::onUpdate(SubjectType, void *)
 {
     // Do nothing
 }
 
-AclRulePfcwd::AclRulePfcwd(AclOrch *aclOrch, string rule, string table, acl_table_type_t type, bool createCounter) :
-        AclRuleL3(aclOrch, rule, table, type, createCounter)
-{
-}
-
-bool AclRulePfcwd::validateAddMatch(string attr_name, string attr_value)
-{
-    return AclRule::validateAddMatch(attr_name, attr_value);
-}
-
-AclRuleMux::AclRuleMux(AclOrch *aclOrch, string rule, string table, acl_table_type_t type, bool createCounter) :
-        AclRuleL3(aclOrch, rule, table, type, createCounter)
-{
-}
-
-bool AclRuleMux::validateAddMatch(string attr_name, string attr_value)
-{
-    return AclRule::validateAddMatch(attr_name, attr_value);
-}
-
-AclRuleL3V6::AclRuleL3V6(AclOrch *aclOrch, string rule, string table, acl_table_type_t type) :
-        AclRuleL3(aclOrch, rule, table, type)
-{
-}
-
-
-bool AclRuleL3V6::validateAddMatch(string attr_name, string attr_value)
-{
-    if (attr_name == MATCH_DSCP)
-    {
-        SWSS_LOG_ERROR("DSCP match is not supported for table type L3V6");
-        return false;
-    }
-
-    if (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP)
-    {
-        SWSS_LOG_ERROR("IPv4 address match is not supported for table type L3V6");
-        return false;
-    }
-
-    if (attr_name == MATCH_ICMP_TYPE || attr_name == MATCH_ICMP_CODE)
-    {
-        SWSS_LOG_ERROR("ICMPv4 match is not supported for table type L3V6");
-        return false;
-    }
-
-    if (attr_name == MATCH_ETHER_TYPE)
-    {
-        SWSS_LOG_ERROR("Ethertype match is not supported for table type L3V6");
-        return false;
-    }
-
-    // TODO: For backwards compatibility, users can substitute IP_PROTOCOL for NEXT_HEADER.
-    // Should add a check for IP_PROTOCOL in a future release.
-
-    return AclRule::validateAddMatch(attr_name, attr_value);
-}
-
-
-AclRuleMirror::AclRuleMirror(AclOrch *aclOrch, MirrorOrch *mirror, string rule, string table, acl_table_type_t type) :
-        AclRule(aclOrch, rule, table, type),
+AclRuleMirror::AclRuleMirror(AclOrch *aclOrch, MirrorOrch *mirror, string rule, string table) :
+        AclRule(aclOrch, rule, table),
         m_state(false),
         m_pMirrorOrch(mirror)
 {
@@ -1126,80 +1648,14 @@ bool AclRuleMirror::validateAddAction(string attr_name, string attr_value)
     m_sessionName = attr_value;
 
     // insert placeholder value, we'll set the session oid in AclRuleMirror::create()
-    m_actions[action] = sai_attribute_value_t{};
-
-    return AclRule::validateAddAction(attr_name, attr_value);
-}
-
-bool AclRuleMirror::validateAddMatch(string attr_name, string attr_value)
-{
-    if ((m_tableType == ACL_TABLE_L3 || m_tableType == ACL_TABLE_L3V6)
-        && attr_name == MATCH_DSCP)
-    {
-        SWSS_LOG_ERROR("DSCP match is not supported for the table of type L3");
-        return false;
-    }
-
-    if ((m_tableType == ACL_TABLE_MIRROR_DSCP &&
-                aclMatchLookup.find(attr_name) != aclMatchLookup.end() &&
-                attr_name != MATCH_DSCP))
-    {
-        SWSS_LOG_ERROR("%s match is not supported for the table of type MIRROR_DSCP",
-                attr_name.c_str());
-        return false;
-    }
-
-    /*
-     * Type of Tables and Supported Match Types (Configuration)
-     * |---------------------------------------------------|
-     * |    Match Type     | TABLE_MIRROR | TABLE_MIRRORV6 |
-     * |---------------------------------------------------|
-     * | MATCH_SRC_IP      |      √       |                |
-     * | MATCH_DST_IP      |      √       |                |
-     * |---------------------------------------------------|
-     * | MATCH_ICMP_TYPE   |      √       |                |
-     * | MATCH_ICMP_CODE   |      √       |                |
-     * |---------------------------------------------------|
-     * | MATCH_ICMPV6_TYPE |              |       √        |
-     * | MATCH_ICMPV6_CODE |              |       √        |
-     * |---------------------------------------------------|
-     * | MATCH_SRC_IPV6    |              |       √        |
-     * | MATCH_DST_IPV6    |              |       √        |
-     * |---------------------------------------------------|
-     * | MARTCH_ETHERTYPE  |      √       |                |
-     * |---------------------------------------------------|
-     */
-
-    if (m_tableType == ACL_TABLE_MIRROR &&
-            (attr_name == MATCH_SRC_IPV6 || attr_name == MATCH_DST_IPV6 ||
-             attr_name == MATCH_ICMPV6_TYPE || attr_name == MATCH_ICMPV6_CODE ||
-             attr_name == MATCH_NEXT_HEADER))
-    {
-        SWSS_LOG_ERROR("%s match is not supported for the table of type MIRROR",
-                attr_name.c_str());
-        return false;
-    }
-
-    // TODO: For backwards compatibility, users can substitute IP_PROTOCOL for NEXT_HEADER.
-    // This check should be expanded to include IP_PROTOCOL in a future release.
-    if (m_tableType == ACL_TABLE_MIRRORV6 &&
-            (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP ||
-             attr_name == MATCH_ICMP_TYPE || attr_name == MATCH_ICMP_CODE ||
-             attr_name == MATCH_ETHER_TYPE))
-    {
-        SWSS_LOG_ERROR("%s match is not supported for the table of type MIRRORv6",
-                attr_name.c_str());
-        return false;
-    }
-
-    return AclRule::validateAddMatch(attr_name, attr_value);
+    return setAction(action, sai_acl_action_data_t{});
 }
 
 bool AclRuleMirror::validate()
 {
     SWSS_LOG_ENTER();
 
-    if (m_matches.size() == 0 || m_sessionName.empty())
+    if ((m_rangeConfig.empty() && m_matches.empty()) || m_sessionName.empty())
     {
         return false;
     }
@@ -1207,7 +1663,19 @@ bool AclRuleMirror::validate()
     return true;
 }
 
-bool AclRuleMirror::create()
+bool AclRuleMirror::createRule()
+{
+    SWSS_LOG_ENTER();
+
+    return activate();
+}
+
+bool AclRuleMirror::removeRule()
+{
+    return deactivate();
+}
+
+bool AclRuleMirror::activate()
 {
     SWSS_LOG_ENTER();
 
@@ -1225,13 +1693,6 @@ bool AclRuleMirror::create()
         SWSS_LOG_THROW("Failed to get mirror session state for session %s", m_sessionName.c_str());
     }
 
-    // Increase session reference count regardless of state to deny
-    // attempt to remove mirror session with attached ACL rules.
-    if (!m_pMirrorOrch->increaseRefCount(m_sessionName))
-    {
-        SWSS_LOG_THROW("Failed to increase mirror session reference count for session %s", m_sessionName.c_str());
-    }
-
     if (!state)
     {
         return true;
@@ -1244,36 +1705,46 @@ bool AclRuleMirror::create()
 
     for (auto& it: m_actions)
     {
-        it.second.aclaction.enable = true;
-        it.second.aclaction.parameter.objlist.list = &oid;
-        it.second.aclaction.parameter.objlist.count = 1;
+        auto attr = it.second.getSaiAttr();
+        attr.value.aclaction.enable = true;
+        attr.value.aclaction.parameter.objlist.list = &oid;
+        attr.value.aclaction.parameter.objlist.count = 1;
+        setAction(it.first, attr.value.aclaction);
     }
 
-    if (!AclRule::create())
+    if (!AclRule::createRule())
     {
         return false;
+    }
+
+    if (!m_pMirrorOrch->increaseRefCount(m_sessionName))
+    {
+        SWSS_LOG_THROW("Failed to increase mirror session reference count for session %s", m_sessionName.c_str());
     }
 
     m_state = true;
 
     return true;
+
 }
 
-bool AclRuleMirror::remove()
+bool AclRuleMirror::deactivate()
 {
+    SWSS_LOG_ENTER();
+
     if (!m_state)
     {
         return true;
     }
 
-    if (!AclRule::remove())
+    if (!AclRule::removeRule())
     {
         return false;
     }
 
     if (!m_pMirrorOrch->decreaseRefCount(m_sessionName))
     {
-        throw runtime_error("Failed to decrease mirror session reference count");
+        SWSS_LOG_THROW("Failed to decrease mirror session reference count for session %s", m_sessionName.c_str());
     }
 
     m_state = false;
@@ -1281,7 +1752,20 @@ bool AclRuleMirror::remove()
     return true;
 }
 
-void AclRuleMirror::update(SubjectType type, void *cntx)
+bool AclRuleMirror::update(const AclRule& rule)
+{
+    auto mirrorRule = dynamic_cast<const AclRuleMirror*>(&rule);
+    if (!mirrorRule)
+    {
+        SWSS_LOG_ERROR("Cannot update mirror rule with a rule of a different type");
+        return false;
+    }
+
+    SWSS_LOG_ERROR("Updating mirror rule is currently not implemented");
+    return false;
+}
+
+void AclRuleMirror::onUpdate(SubjectType type, void *cntx)
 {
     if (type != SUBJECT_TYPE_MIRROR_SESSION_CHANGE)
     {
@@ -1298,40 +1782,78 @@ void AclRuleMirror::update(SubjectType type, void *cntx)
     if (update->active)
     {
         SWSS_LOG_INFO("Activating mirroring ACL %s for session %s", m_id.c_str(), m_sessionName.c_str());
-        create();
+        activate();
     }
     else
     {
-        // Store counters before deactivating ACL rule
-        counters += AclRule::getCounters();
-
         SWSS_LOG_INFO("Deactivating mirroring ACL %s for session %s", m_id.c_str(), m_sessionName.c_str());
-        remove();
+        deactivate();
     }
 }
 
-AclRuleMclag::AclRuleMclag(AclOrch *aclOrch, string rule, string table, acl_table_type_t type, bool createCounter) :
-        AclRuleL3(aclOrch, rule, table, type, createCounter)
+AclTable::AclTable(AclOrch *pAclOrch, string id) noexcept : m_pAclOrch(pAclOrch), id(id)
 {
+
 }
 
-bool AclRuleMclag::validateAddMatch(string attr_name, string attr_value)
+AclTable::AclTable(AclOrch *pAclOrch) noexcept : m_pAclOrch(pAclOrch)
 {
-    if (attr_name != MATCH_IP_TYPE && attr_name != MATCH_OUT_PORTS)
-    {
-        return false;
-    }
 
-    return AclRule::validateAddMatch(attr_name, attr_value);
 }
 
-bool AclRuleMclag::validate()
+bool AclTable::validateAddType(const AclTableType &tableType)
 {
     SWSS_LOG_ENTER();
 
-    if (m_matches.size() == 0)
+    type = tableType;
+
+    return true;
+}
+
+bool AclTable::validateAddStage(const acl_stage_type_t &value)
+{
+    SWSS_LOG_ENTER();
+
+    if (value == ACL_STAGE_UNKNOWN)
     {
+        SWSS_LOG_ERROR("Failed to validate stage: unknown stage");
         return false;
+    }
+
+    stage = value;
+
+    return true;
+}
+
+bool AclTable::validateAddPorts(const unordered_set<string> &value)
+{
+    SWSS_LOG_ENTER();
+
+    for (const auto &itAlias: value)
+    {
+        Port port;
+        if (!gPortsOrch->getPort(itAlias, port))
+        {
+            SWSS_LOG_INFO(
+                "Add unready port %s to pending list for ACL table %s",
+                itAlias.c_str(), id.c_str()
+            );
+            pendingPortSet.emplace(itAlias);
+            continue;
+        }
+
+        sai_object_id_t bindPortOid;
+        if (!AclOrch::getAclBindPortId(port, bindPortOid))
+        {
+            SWSS_LOG_ERROR(
+                "Failed to get port %s bind port ID for ACL table %s",
+                itAlias.c_str(), id.c_str()
+            );
+            return false;
+        }
+
+        link(bindPortOid);
+        portSet.emplace(itAlias);
     }
 
     return true;
@@ -1339,11 +1861,76 @@ bool AclRuleMclag::validate()
 
 bool AclTable::validate()
 {
-    if (type == ACL_TABLE_CTRLPLANE)
+    if (type.getName() == TABLE_TYPE_CTRLPLANE)
+    {
         return true;
+    }
 
-    if (type == ACL_TABLE_UNKNOWN || stage == ACL_STAGE_UNKNOWN)
+    if (stage == ACL_STAGE_UNKNOWN)
+    {
         return false;
+    }
+
+    if (m_pAclOrch->isAclActionListMandatoryOnTableCreation(stage))
+    {
+        if (type.getActions().empty())
+        {
+            SWSS_LOG_ERROR("Action list for table %s is mandatory", id.c_str());
+            return false;
+        }
+    }
+
+    for (const auto& action: type.getActions())
+    {
+        if (!m_pAclOrch->isAclActionSupported(stage, action))
+        {
+            SWSS_LOG_ERROR("Action %s is not supported on table %s",
+                sai_metadata_get_acl_action_type_name(action), id.c_str());
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool AclTable::validateAclRuleMatch(sai_acl_entry_attr_t matchId, const AclRule& rule) const
+{
+    const auto& tableMatches = type.getMatches();
+    const auto tableMatchId = AclEntryFieldToAclTableField(matchId);
+    const auto tableMatchIt = tableMatches.find(tableMatchId);
+    if (tableMatchIt == tableMatches.end())
+    {
+        SWSS_LOG_ERROR("Match %s in rule %s is not supported by table %s",
+            getAttributeIdName(SAI_OBJECT_TYPE_ACL_ENTRY, matchId).c_str(),
+            rule.getId().c_str(), id.c_str());
+        return false;
+    }
+
+    const auto& tableMatchAttrObject = tableMatchIt->second;
+    if (!tableMatchAttrObject->validateAclRuleMatch(rule))
+    {
+        SWSS_LOG_ERROR("Match %s in rule configuration %s is invalid %s",
+            getAttributeIdName(SAI_OBJECT_TYPE_ACL_ENTRY, matchId).c_str(),
+            rule.getId().c_str(), id.c_str());
+        return false;
+    }
+
+    return true;
+}
+
+bool AclTable::validateAclRuleAction(sai_acl_entry_attr_t actionId, const AclRule& rule) const
+{
+    // This means ACL table can hold rules with any action.
+    if (!type.getActions().empty())
+    {
+        auto action = AclEntryActionToAclAction(actionId);
+        if (!type.getActions().count(action))
+        {
+            SWSS_LOG_ERROR("Action %s is not supported on table %s",
+                sai_metadata_get_acl_action_type_name(action), id.c_str());
+            return false;
+        }
+    }
 
     return true;
 }
@@ -1354,232 +1941,26 @@ bool AclTable::create()
 
     sai_attribute_t attr;
     vector<sai_attribute_t> table_attrs;
-    vector<int32_t> bpoint_list;
-
-    // PFC watch dog ACLs are only applied to port
-    if ((type == ACL_TABLE_PFCWD) || (type == ACL_TABLE_DROP))
-    {
-        bpoint_list = { SAI_ACL_BIND_POINT_TYPE_PORT };
-    }
-    else
-    {
-        bpoint_list = { SAI_ACL_BIND_POINT_TYPE_PORT, SAI_ACL_BIND_POINT_TYPE_LAG };
-    }
+    vector<int32_t> action_types_list {type.getActions().begin(), type.getActions().end()};
+    vector<int32_t> bpoint_list {type.getBindPointTypes().begin(), type.getBindPointTypes().end()};
 
     attr.id = SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST;
     attr.value.s32list.count = static_cast<uint32_t>(bpoint_list.size());
     attr.value.s32list.list = bpoint_list.data();
     table_attrs.push_back(attr);
 
-    if ((type == ACL_TABLE_PFCWD) || (type == ACL_TABLE_DROP))
+    for (const auto& matchPair: type.getMatches())
     {
-        attr.id = SAI_ACL_TABLE_ATTR_FIELD_TC;
-        attr.value.booldata = true;
-        table_attrs.push_back(attr);
-
-        attr.id = SAI_ACL_TABLE_ATTR_ACL_STAGE;
-        attr.value.s32 = (stage == ACL_STAGE_INGRESS) ? SAI_ACL_STAGE_INGRESS : SAI_ACL_STAGE_EGRESS;
-        table_attrs.push_back(attr);
-        
-        if (stage == ACL_STAGE_INGRESS)
-        {
-            attr.id = SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS;
-            attr.value.booldata = true;
-            table_attrs.push_back(attr);
-        }
-        
-        sai_status_t status = sai_acl_api->create_acl_table(&m_oid, gSwitchId, (uint32_t)table_attrs.size(), table_attrs.data());
-
-        if (status == SAI_STATUS_SUCCESS)
-        {
-            gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, (sai_acl_stage_t) attr.value.s32, SAI_ACL_BIND_POINT_TYPE_PORT);
-        }
-
-        return status == SAI_STATUS_SUCCESS;
+        table_attrs.push_back(matchPair.second->toSaiAttribute());
     }
 
-    if (type == ACL_TABLE_MIRROR_DSCP)
+    if (!action_types_list.empty())
     {
-        attr.id = SAI_ACL_TABLE_ATTR_FIELD_DSCP;
-        attr.value.booldata = true;
-        table_attrs.push_back(attr);
-
-        attr.id = SAI_ACL_TABLE_ATTR_ACL_STAGE;
-        attr.value.s32 = (stage == ACL_STAGE_INGRESS) ?
-                         SAI_ACL_STAGE_INGRESS : SAI_ACL_STAGE_EGRESS;
-        table_attrs.push_back(attr);
-
-        sai_status_t status = sai_acl_api->create_acl_table(
-                &m_oid, gSwitchId, (uint32_t)table_attrs.size(), table_attrs.data());
-
-        if (status == SAI_STATUS_SUCCESS)
-        {
-            gCrmOrch->incCrmAclUsedCounter(
-                    CrmResourceType::CRM_ACL_TABLE, (sai_acl_stage_t)attr.value.s32, SAI_ACL_BIND_POINT_TYPE_PORT);
-            gCrmOrch->incCrmAclUsedCounter(
-                    CrmResourceType::CRM_ACL_TABLE, (sai_acl_stage_t)attr.value.s32, SAI_ACL_BIND_POINT_TYPE_LAG);
-        }
-
-        return status == SAI_STATUS_SUCCESS;
-    }
-
-    if (type != ACL_TABLE_MIRRORV6 && type != ACL_TABLE_L3V6)
-    {
-        attr.id = SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE;
-        attr.value.booldata = true;
+        attr.id= SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST;
+        attr.value.s32list.count = static_cast<uint32_t>(action_types_list.size());
+        attr.value.s32list.list = action_types_list.data();
         table_attrs.push_back(attr);
     }
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID;
-    attr.value.booldata = true;
-    table_attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE;
-    attr.value.booldata = true;
-    table_attrs.push_back(attr);
-
-    /*
-     * Type of Tables and Supported Match Types (ASIC database)
-     * |------------------------------------------------------------------|
-     * |                   | TABLE_MIRROR | TABLE_MIRROR | TABLE_MIRRORV6 |
-     * |    Match Type     |----------------------------------------------|
-     * |                   |   combined   |          separated            |
-     * |------------------------------------------------------------------|
-     * | MATCH_SRC_IP      |      √       |      √       |                |
-     * | MATCH_DST_IP      |      √       |      √       |                |
-     * |------------------------------------------------------------------|
-     * | MATCH_ICMP_TYPE   |      √       |      √       |                |
-     * | MATCH_ICMP_CODE   |      √       |      √       |                |
-     * |------------------------------------------------------------------|
-     * | MATCH_SRC_IPV6    |      √       |              |       √        |
-     * | MATCH_DST_IPV6    |      √       |              |       √        |
-     * |------------------------------------------------------------------|
-     * | MATCH_ICMPV6_TYPE |      √       |              |       √        |
-     * | MATCH_ICMPV6_CODE |      √       |              |       √        |
-     * |------------------------------------------------------------------|
-     * | MATCH_IP_PROTOCOL |      √       |      √       |                |
-     * | MATCH_NEXT_HEADER |      √       |              |       √        |
-     * | -----------------------------------------------------------------|
-     * | MATCH_ETHERTYPE   |      √       |      √       |                |
-     * |------------------------------------------------------------------|
-     * | MATCH_IN_PORTS    |      √       |      √       |                |
-     * |------------------------------------------------------------------|
-     */
-
-    // FIXME: This section has become hard to maintain and should be refactored.
-    if (type == ACL_TABLE_MIRROR)
-    {
-        attr.id = SAI_ACL_TABLE_ATTR_FIELD_SRC_IP;
-        attr.value.booldata = true;
-        table_attrs.push_back(attr);
-
-        attr.id = SAI_ACL_TABLE_ATTR_FIELD_DST_IP;
-        attr.value.booldata = true;
-        table_attrs.push_back(attr);
-
-        attr.id = SAI_ACL_TABLE_ATTR_FIELD_ICMP_TYPE;
-        attr.value.booldata = true;
-        table_attrs.push_back(attr);
-
-        attr.id = SAI_ACL_TABLE_ATTR_FIELD_ICMP_CODE;
-        attr.value.booldata = true;
-        table_attrs.push_back(attr);
-
-        attr.id = SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL;
-        attr.value.booldata = true;
-        table_attrs.push_back(attr);
-
-        attr.id = SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS;
-        attr.value.booldata = true;
-        table_attrs.push_back(attr);
-
-        // If the switch supports v6 and requires one single table
-        if (m_pAclOrch->m_mirrorTableCapabilities[ACL_TABLE_MIRRORV6] &&
-                m_pAclOrch->m_isCombinedMirrorV6Table)
-        {
-            attr.id = SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6;
-            attr.value.booldata = true;
-            table_attrs.push_back(attr);
-
-            attr.id = SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6;
-            attr.value.booldata = true;
-            table_attrs.push_back(attr);
-
-            attr.id = SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_TYPE;
-            attr.value.booldata = true;
-            table_attrs.push_back(attr);
-
-            attr.id = SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_CODE;
-            attr.value.booldata = true;
-            table_attrs.push_back(attr);
-
-            attr.id = SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER;
-            attr.value.booldata = true;
-            table_attrs.push_back(attr);
-        }
-    }
-    else if (type == ACL_TABLE_L3V6 || type == ACL_TABLE_MIRRORV6) // v6 only
-    {
-        attr.id = SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6;
-        attr.value.booldata = true;
-        table_attrs.push_back(attr);
-
-        attr.id = SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6;
-        attr.value.booldata = true;
-        table_attrs.push_back(attr);
-
-        attr.id = SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_TYPE;
-        attr.value.booldata = true;
-        table_attrs.push_back(attr);
-
-        attr.id = SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_CODE;
-        attr.value.booldata = true;
-        table_attrs.push_back(attr);
-
-        attr.id = SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER;
-        attr.value.booldata = true;
-        table_attrs.push_back(attr);
-    }
-    else // v4 only
-    {
-        attr.id = SAI_ACL_TABLE_ATTR_FIELD_SRC_IP;
-        attr.value.booldata = true;
-        table_attrs.push_back(attr);
-
-        attr.id = SAI_ACL_TABLE_ATTR_FIELD_DST_IP;
-        attr.value.booldata = true;
-        table_attrs.push_back(attr);
-
-        attr.id = SAI_ACL_TABLE_ATTR_FIELD_ICMP_TYPE;
-        attr.value.booldata = true;
-        table_attrs.push_back(attr);
-
-        attr.id = SAI_ACL_TABLE_ATTR_FIELD_ICMP_CODE;
-        attr.value.booldata = true;
-        table_attrs.push_back(attr);
-
-        attr.id = SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL;
-        attr.value.booldata = true;
-        table_attrs.push_back(attr);
-    }
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT;
-    attr.value.booldata = true;
-    table_attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT;
-    attr.value.booldata = true;
-    table_attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS;
-    attr.value.booldata = true;
-    table_attrs.push_back(attr);
-
-    int32_t range_types_list[] = { SAI_ACL_RANGE_TYPE_L4_DST_PORT_RANGE, SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE };
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE;
-    attr.value.s32list.count = (uint32_t)(sizeof(range_types_list) / sizeof(range_types_list[0]));
-    attr.value.s32list.list = range_types_list;
-    table_attrs.push_back(attr);
 
     sai_acl_stage_t acl_stage;
     attr.id = SAI_ACL_TABLE_ATTR_ACL_STAGE;
@@ -1587,32 +1968,21 @@ bool AclTable::create()
     attr.value.s32 = acl_stage;
     table_attrs.push_back(attr);
 
-    if (type == ACL_TABLE_MIRROR || type == ACL_TABLE_MIRRORV6)
-    {
-        attr.id = SAI_ACL_TABLE_ATTR_FIELD_DSCP;
-        attr.value.booldata = true;
-        table_attrs.push_back(attr);
-    }
-
-    if (type == ACL_TABLE_MCLAG)
-    {
-        attr.id = SAI_ACL_TABLE_ATTR_FIELD_OUT_PORTS;
-        attr.value.booldata = true;
-        table_attrs.push_back(attr);
-    }
-
     sai_status_t status = sai_acl_api->create_acl_table(&m_oid, gSwitchId, (uint32_t)table_attrs.size(), table_attrs.data());
-
-    if (status == SAI_STATUS_SUCCESS)
+    if (status != SAI_STATUS_SUCCESS)
     {
-        gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, acl_stage, SAI_ACL_BIND_POINT_TYPE_PORT);
-        gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, acl_stage, SAI_ACL_BIND_POINT_TYPE_LAG);
+        return false;
     }
 
-    return status == SAI_STATUS_SUCCESS;
+    for (const auto& bpointType: type.getBindPointTypes())
+    {
+        gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, acl_stage, bpointType);
+    }
+
+    return true;
 }
 
-void AclTable::update(SubjectType type, void *cntx)
+void AclTable::onUpdate(SubjectType type, void *cntx)
 {
     SWSS_LOG_ENTER();
 
@@ -1800,6 +2170,36 @@ bool AclTable::remove(string rule_id)
     }
 }
 
+bool AclTable::updateRule(shared_ptr<AclRule> updatedRule)
+{
+    SWSS_LOG_ENTER();
+
+    if (!updatedRule)
+    {
+        return false;
+    }
+
+    auto ruleId = updatedRule->getId();
+    auto ruleIter = rules.find(ruleId);
+    if (ruleIter == rules.end())
+    {
+        SWSS_LOG_ERROR("Failed to update ACL rule %s as it does not exist in %s",
+                       ruleId.c_str(), id.c_str());
+        return false;
+    }
+
+    if (!ruleIter->second->update(*updatedRule))
+    {
+        SWSS_LOG_ERROR("Failed to update ACL rule %s in table %s",
+                       ruleId.c_str(), id.c_str());
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("Successfully updated ACL rule %s in table %s",
+                    ruleId.c_str(), id.c_str());
+    return true;
+}
+
 bool AclTable::clear()
 {
     SWSS_LOG_ENTER();
@@ -1819,20 +2219,8 @@ bool AclTable::clear()
     return true;
 }
 
-AclRuleCounters AclRuleMirror::getCounters()
-{
-    AclRuleCounters cnt(counters);
-
-    if (m_state)
-    {
-        cnt += AclRule::getCounters();
-    }
-
-    return cnt;
-}
-
-AclRuleDTelFlowWatchListEntry::AclRuleDTelFlowWatchListEntry(AclOrch *aclOrch, DTelOrch *dtel, string rule, string table, acl_table_type_t type) :
-        AclRule(aclOrch, rule, table, type),
+AclRuleDTelFlowWatchListEntry::AclRuleDTelFlowWatchListEntry(AclOrch *aclOrch, DTelOrch *dtel, string rule, string table) :
+        AclRule(aclOrch, rule, table),
         m_pDTelOrch(dtel)
 {
 }
@@ -1841,7 +2229,7 @@ bool AclRuleDTelFlowWatchListEntry::validateAddAction(string attr_name, string a
 {
     SWSS_LOG_ENTER();
 
-    sai_attribute_value_t value;
+    sai_acl_action_data_t actionData;
     string attr_value = to_upper(attr_val);
     sai_object_id_t session_oid;
 
@@ -1865,7 +2253,7 @@ bool AclRuleDTelFlowWatchListEntry::validateAddAction(string attr_name, string a
             return false;
         }
 
-        value.aclaction.parameter.s32 = it->second;
+        actionData.parameter.s32 = it->second;
 
         if (attr_value == DTEL_FLOW_OP_INT)
         {
@@ -1884,7 +2272,7 @@ bool AclRuleDTelFlowWatchListEntry::validateAddAction(string attr_name, string a
         bool ret = m_pDTelOrch->getINTSessionOid(attr_value, session_oid);
         if (ret)
         {
-            value.aclaction.parameter.oid = session_oid;
+            actionData.parameter.oid = session_oid;
 
             // Increase session reference count regardless of state to deny
             // attempt to remove INT session with attached ACL rules.
@@ -1903,22 +2291,20 @@ bool AclRuleDTelFlowWatchListEntry::validateAddAction(string attr_name, string a
 
     if (attr_name == ACTION_DTEL_FLOW_SAMPLE_PERCENT)
     {
-        value.aclaction.parameter.u8 = to_uint<uint8_t>(attr_value);
+        actionData.parameter.u8 = to_uint<uint8_t>(attr_value);
     }
 
-    value.aclaction.enable = true;
+    actionData.enable = true;
 
     if (attr_name == ACTION_DTEL_REPORT_ALL_PACKETS ||
         attr_name == ACTION_DTEL_DROP_REPORT_ENABLE ||
         attr_name == ACTION_DTEL_TAIL_DROP_REPORT_ENABLE)
     {
-        value.aclaction.parameter.booldata = (attr_value == DTEL_ENABLED) ? true : false;
-        value.aclaction.enable = (attr_value == DTEL_ENABLED) ? true : false;
+        actionData.parameter.booldata = (attr_value == DTEL_ENABLED) ? true : false;
+        actionData.enable = (attr_value == DTEL_ENABLED) ? true : false;
     }
 
-    m_actions[aclDTelActionLookup[attr_name]] = value;
-
-    return AclRule::validateAddAction(attr_name, attr_value);
+    return setAction(aclDTelActionLookup[attr_name], actionData);
 }
 
 bool AclRuleDTelFlowWatchListEntry::validate()
@@ -1930,7 +2316,7 @@ bool AclRuleDTelFlowWatchListEntry::validate()
         return false;
     }
 
-    if (m_matches.size() == 0 || m_actions.size() == 0)
+    if ((m_rangeConfig.empty() && m_matches.empty()) || m_actions.size() == 0)
     {
         return false;
     }
@@ -1938,7 +2324,19 @@ bool AclRuleDTelFlowWatchListEntry::validate()
     return true;
 }
 
-bool AclRuleDTelFlowWatchListEntry::create()
+bool AclRuleDTelFlowWatchListEntry::createRule()
+{
+    SWSS_LOG_ENTER();
+
+    return activate();
+}
+
+bool AclRuleDTelFlowWatchListEntry::removeRule()
+{
+    return deactivate();
+}
+
+bool AclRuleDTelFlowWatchListEntry::activate()
 {
     SWSS_LOG_ENTER();
 
@@ -1952,16 +2350,13 @@ bool AclRuleDTelFlowWatchListEntry::create()
         return true;
     }
 
-    if (!AclRule::create())
-    {
-        return false;
-    }
-
-    return true;
+    return AclRule::createRule();
 }
 
-bool AclRuleDTelFlowWatchListEntry::remove()
+bool AclRuleDTelFlowWatchListEntry::deactivate()
 {
+    SWSS_LOG_ENTER();
+
     if (!m_pDTelOrch)
     {
         return false;
@@ -1972,7 +2367,7 @@ bool AclRuleDTelFlowWatchListEntry::remove()
         return true;
     }
 
-    if (!AclRule::remove())
+    if (!AclRule::removeRule())
     {
         return false;
     }
@@ -1989,9 +2384,9 @@ bool AclRuleDTelFlowWatchListEntry::remove()
     return true;
 }
 
-void AclRuleDTelFlowWatchListEntry::update(SubjectType type, void *cntx)
+void AclRuleDTelFlowWatchListEntry::onUpdate(SubjectType type, void *cntx)
 {
-    sai_attribute_value_t value;
+    sai_acl_action_data_t actionData;
     sai_object_id_t session_oid = SAI_NULL_OBJECT_ID;
 
     if (!m_pDTelOrch)
@@ -2022,8 +2417,8 @@ void AclRuleDTelFlowWatchListEntry::update(SubjectType type, void *cntx)
             return;
         }
 
-        value.aclaction.enable = true;
-        value.aclaction.parameter.oid = session_oid;
+        actionData.enable = true;
+        actionData.parameter.oid = session_oid;
 
         // Increase session reference count regardless of state to deny
         // attempt to remove INT session with attached ACL rules.
@@ -2032,22 +2427,39 @@ void AclRuleDTelFlowWatchListEntry::update(SubjectType type, void *cntx)
             throw runtime_error("Failed to increase INT session reference count");
         }
 
-        m_actions[SAI_ACL_ENTRY_ATTR_ACTION_DTEL_INT_SESSION] = value;
+        if (!setAction(SAI_ACL_ENTRY_ATTR_ACTION_DTEL_INT_SESSION, actionData))
+        {
+            SWSS_LOG_ERROR("Failed to set action SAI_ACL_ENTRY_ATTR_ACTION_DTEL_INT_SESSION");
+            return;
+        }
 
         INT_session_valid = true;
 
-        create();
+        activate();
     }
     else
     {
         SWSS_LOG_INFO("Deactivating INT watchlist %s for session %s", m_id.c_str(), m_intSessionId.c_str());
-        remove();
+        deactivate();
         INT_session_valid = false;
     }
 }
 
-AclRuleDTelDropWatchListEntry::AclRuleDTelDropWatchListEntry(AclOrch *aclOrch, DTelOrch *dtel, string rule, string table, acl_table_type_t type) :
-        AclRule(aclOrch, rule, table, type),
+bool AclRuleDTelFlowWatchListEntry::update(const AclRule& rule)
+{
+    auto dtelDropWathcListRule = dynamic_cast<const AclRuleDTelFlowWatchListEntry*>(&rule);
+    if (!dtelDropWathcListRule)
+    {
+        SWSS_LOG_ERROR("Cannot update DTEL flow watch list rule with a rule of a different type");
+        return false;
+    }
+
+    SWSS_LOG_ERROR("Updating DTEL flow watch list rule is currently not implemented");
+    return false;
+}
+
+AclRuleDTelDropWatchListEntry::AclRuleDTelDropWatchListEntry(AclOrch *aclOrch, DTelOrch *dtel, string rule, string table) :
+        AclRule(aclOrch, rule, table),
         m_pDTelOrch(dtel)
 {
 }
@@ -2061,7 +2473,7 @@ bool AclRuleDTelDropWatchListEntry::validateAddAction(string attr_name, string a
         return false;
     }
 
-    sai_attribute_value_t value;
+    sai_acl_action_data_t actionData;
     string attr_value = to_upper(attr_val);
 
     if (attr_name != ACTION_DTEL_DROP_REPORT_ENABLE &&
@@ -2071,13 +2483,10 @@ bool AclRuleDTelDropWatchListEntry::validateAddAction(string attr_name, string a
         return false;
     }
 
+    actionData.parameter.booldata = (attr_value == DTEL_ENABLED) ? true : false;
+    actionData.enable = (attr_value == DTEL_ENABLED) ? true : false;
 
-    value.aclaction.parameter.booldata = (attr_value == DTEL_ENABLED) ? true : false;
-    value.aclaction.enable = (attr_value == DTEL_ENABLED) ? true : false;
-
-    m_actions[aclDTelActionLookup[attr_name]] = value;
-
-    return AclRule::validateAddAction(attr_name, attr_value);
+    return setAction(aclDTelActionLookup[attr_name], actionData);
 }
 
 bool AclRuleDTelDropWatchListEntry::validate()
@@ -2089,7 +2498,7 @@ bool AclRuleDTelDropWatchListEntry::validate()
         return false;
     }
 
-    if (m_matches.size() == 0 || m_actions.size() == 0)
+    if ((m_rangeConfig.empty() && m_matches.empty()) || m_actions.size() == 0)
     {
         return false;
     }
@@ -2097,7 +2506,7 @@ bool AclRuleDTelDropWatchListEntry::validate()
     return true;
 }
 
-void AclRuleDTelDropWatchListEntry::update(SubjectType, void *)
+void AclRuleDTelDropWatchListEntry::onUpdate(SubjectType, void *)
 {
     // Do nothing
 }
@@ -2241,42 +2650,41 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
             platform == BFN_PLATFORM_SUBSTRING  ||
             platform == MRVL_PLATFORM_SUBSTRING ||
             platform == INVM_PLATFORM_SUBSTRING ||
-            platform == NPS_PLATFORM_SUBSTRING)
+            platform == NPS_PLATFORM_SUBSTRING ||
+            platform == VS_PLATFORM_SUBSTRING)
     {
         m_mirrorTableCapabilities =
         {
-            { ACL_TABLE_MIRROR, true },
-            { ACL_TABLE_MIRRORV6, true },
+            { TABLE_TYPE_MIRROR, true },
+            { TABLE_TYPE_MIRRORV6, true },
         };
     }
     else
     {
         m_mirrorTableCapabilities =
         {
-            { ACL_TABLE_MIRROR, true },
-            { ACL_TABLE_MIRRORV6, false },
+            { TABLE_TYPE_MIRROR, true },
+            { TABLE_TYPE_MIRRORV6, false },
         };
     }
 
     SWSS_LOG_NOTICE("%s switch capability:", platform.c_str());
-    SWSS_LOG_NOTICE("    ACL_TABLE_MIRROR: %s",
-            m_mirrorTableCapabilities[ACL_TABLE_MIRROR] ? "yes" : "no");
-    SWSS_LOG_NOTICE("    ACL_TABLE_MIRRORV6: %s",
-            m_mirrorTableCapabilities[ACL_TABLE_MIRRORV6] ? "yes" : "no");
-
-    // In Broadcom platform, V4 and V6 rules are stored in the same table
-    if (platform == BRCM_PLATFORM_SUBSTRING ||
-        platform == NPS_PLATFORM_SUBSTRING  ||
-        platform == BFN_PLATFORM_SUBSTRING  ||
-        platform == INVM_PLATFORM_SUBSTRING) {
-        m_isCombinedMirrorV6Table = true;
-    }
+    SWSS_LOG_NOTICE("    TABLE_TYPE_MIRROR: %s",
+            m_mirrorTableCapabilities[TABLE_TYPE_MIRROR] ? "yes" : "no");
+    SWSS_LOG_NOTICE("    TABLE_TYPE_MIRRORV6: %s",
+            m_mirrorTableCapabilities[TABLE_TYPE_MIRRORV6] ? "yes" : "no");
 
     // In Mellanox platform, V4 and V6 rules are stored in different tables
     if (platform == MLNX_PLATFORM_SUBSTRING ||
-        platform == MRVL_PLATFORM_SUBSTRING) {
+        platform == MRVL_PLATFORM_SUBSTRING)
+    {
         m_isCombinedMirrorV6Table = false;
     }
+    else
+    {
+        m_isCombinedMirrorV6Table = true;
+    }
+
 
     // Store the capabilities in state database
     // TODO: Move this part of the code into syncd
@@ -2284,16 +2692,17 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     for (auto const& it : m_mirrorTableCapabilities)
     {
         string value = it.second ? "true" : "false";
-        switch (it.first)
+        if (it.first == TABLE_TYPE_MIRROR)
         {
-            case ACL_TABLE_MIRROR:
-                fvVector.emplace_back(TABLE_TYPE_MIRROR, value);
-                break;
-            case ACL_TABLE_MIRRORV6:
-                fvVector.emplace_back(TABLE_TYPE_MIRRORV6, value);
-                break;
-            default:
-                break;
+            fvVector.emplace_back(TABLE_TYPE_MIRROR, value);
+        }
+        else if (it.first == TABLE_TYPE_MIRRORV6)
+        {
+            fvVector.emplace_back(TABLE_TYPE_MIRRORV6, value);
+        }
+        else
+        {
+            // ignore
         }
     }
     m_switchOrch->set_switch_capability(fvVector);
@@ -2311,7 +2720,11 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     else
     {
         SWSS_LOG_ERROR("Failed to get ACL entry priority min/max values, rv:%d", status);
-        throw "AclOrch initialization failure";
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            throw "AclOrch initialization failure";
+        }
     }
 
     queryAclActionCapability();
@@ -2322,17 +2735,190 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
         m_mirrorV6TableId[stage] = "";
     }
 
+    initDefaultTableTypes();
+
     // Attach observers
     m_mirrorOrch->attach(this);
     gPortsOrch->attach(this);
+}
 
-    // Should be initialized last to guaranty that object is
-    // initialized before thread start.
-    auto interv = timespec { .tv_sec = COUNTERS_READ_INTERVAL, .tv_nsec = 0 };
-    auto timer = new SelectableTimer(interv);
-    auto executor = new ExecutableTimer(timer, this, "ACL_POLL_TIMER");
-    Orch::addExecutor(executor);
-    timer->start();
+void AclOrch::initDefaultTableTypes()
+{
+    SWSS_LOG_ENTER();
+
+    AclTableTypeBuilder builder;
+
+    addAclTableType(
+        builder.withName(TABLE_TYPE_L3)
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_PORT)
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_LAG)
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_SRC_IP))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DST_IP))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ICMP_TYPE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ICMP_CODE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS))
+            .withMatch(make_shared<AclTableRangeMatch>(set<sai_acl_range_type_t>{
+                {SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE, SAI_ACL_RANGE_TYPE_L4_DST_PORT_RANGE}}))
+            .build()
+    );
+
+    addAclTableType(
+        builder.withName(TABLE_TYPE_L3V6)
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_PORT)
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_LAG)
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_CODE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_TYPE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS))
+            .withMatch(make_shared<AclTableRangeMatch>(set<sai_acl_range_type_t>{
+                {SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE, SAI_ACL_RANGE_TYPE_L4_DST_PORT_RANGE}}))
+            .build()
+    );
+
+    addAclTableType(
+        builder.withName(TABLE_TYPE_MCLAG)
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_PORT)
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_LAG)
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_SRC_IP))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DST_IP))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ICMP_TYPE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ICMP_CODE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_OUT_PORTS))
+            .withMatch(make_shared<AclTableRangeMatch>(set<sai_acl_range_type_t>{
+                {SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE, SAI_ACL_RANGE_TYPE_L4_DST_PORT_RANGE}}))
+            .build()
+    );
+
+    addAclTableType(
+        builder.withName(TABLE_TYPE_PFCWD)
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_PORT)
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TC))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS))
+            .build()
+    );
+
+    addAclTableType(
+        builder.withName(TABLE_TYPE_DROP)
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_PORT)
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TC))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS))
+            .build()
+    );
+
+
+    /*
+     * Type of Tables and Supported Match Types (ASIC database)
+     * |------------------------------------------------------------------|
+     * |                   | TABLE_MIRROR | TABLE_MIRROR | TABLE_MIRRORV6 |
+     * |    Match Type     |----------------------------------------------|
+     * |                   |   combined   |          separated            |
+     * |------------------------------------------------------------------|
+     * | MATCH_SRC_IP      |      √       |      √       |                |
+     * | MATCH_DST_IP      |      √       |      √       |                |
+     * |------------------------------------------------------------------|
+     * | MATCH_ICMP_TYPE   |      √       |      √       |                |
+     * | MATCH_ICMP_CODE   |      √       |      √       |                |
+     * |------------------------------------------------------------------|
+     * | MATCH_SRC_IPV6    |      √       |              |       √        |
+     * | MATCH_DST_IPV6    |      √       |              |       √        |
+     * |------------------------------------------------------------------|
+     * | MATCH_ICMPV6_TYPE |      √       |              |       √        |
+     * | MATCH_ICMPV6_CODE |      √       |              |       √        |
+     * |------------------------------------------------------------------|
+     * | MATCH_IP_PROTOCOL |      √       |      √       |                |
+     * | MATCH_NEXT_HEADER |      √       |              |       √        |
+     * | -----------------------------------------------------------------|
+     * | MATCH_ETHERTYPE   |      √       |      √       |                |
+     * |------------------------------------------------------------------|
+     * | MATCH_IN_PORTS    |      √       |      √       |                |
+     * |------------------------------------------------------------------|
+     */
+
+    if (isAclMirrorV4Supported())
+    {
+        addAclTableType(
+            builder.withName(TABLE_TYPE_MIRROR_DSCP)
+                .withBindPointType(SAI_ACL_BIND_POINT_TYPE_PORT)
+                .withBindPointType(SAI_ACL_BIND_POINT_TYPE_LAG)
+                .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DSCP))
+                .build()
+        );
+
+        builder.withName(TABLE_TYPE_MIRROR)
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_PORT)
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_LAG)
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_SRC_IP))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DST_IP))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ICMP_TYPE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ICMP_CODE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DSCP))
+            .withMatch(make_shared<AclTableRangeMatch>(set<sai_acl_range_type_t>{
+                {SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE, SAI_ACL_RANGE_TYPE_L4_DST_PORT_RANGE}}));
+
+        if (isAclMirrorV6Supported() && isCombinedMirrorV6Table())
+        {
+            builder
+                .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6))
+                .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6))
+                .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_CODE))
+                .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_TYPE))
+                .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER));
+        }
+        addAclTableType(builder.build());
+    }
+
+    if (isAclMirrorV6Supported())
+    {
+        addAclTableType(
+            builder.withName(TABLE_TYPE_MIRRORV6)
+                .withBindPointType(SAI_ACL_BIND_POINT_TYPE_PORT)
+                .withBindPointType(SAI_ACL_BIND_POINT_TYPE_LAG)
+                .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID))
+                .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE))
+                .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6))
+                .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6))
+                .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_CODE))
+                .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_TYPE))
+                .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER))
+                .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT))
+                .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT))
+                .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS))
+                .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DSCP))
+                .withMatch(make_shared<AclTableRangeMatch>(set<sai_acl_range_type_t>{
+                    {SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE, SAI_ACL_RANGE_TYPE_L4_DST_PORT_RANGE}}))
+                .build()
+        );
+    }
+
+    // Placeholder for control plane tables
+    addAclTableType(builder.withName(TABLE_TYPE_CTRLPLANE).build());
 }
 
 void AclOrch::queryAclActionCapability()
@@ -2366,12 +2952,15 @@ void AclOrch::queryAclActionCapability()
                 SWSS_LOG_INFO("Supported %s action count %d:", stage_str,
                               attr.value.aclcapability.action_list.count);
 
+                auto& capabilities = m_aclCapabilities[stage];
+
                 for (size_t i = 0; i < static_cast<size_t>(attr.value.aclcapability.action_list.count); i++)
                 {
                     auto action = static_cast<sai_acl_action_type_t>(action_list[i]);
-                    m_aclCapabilities[stage].insert(action);
+                    capabilities.actionList.insert(action);
                     SWSS_LOG_INFO("    %s", sai_serialize_enum(action, &sai_metadata_enum_sai_acl_action_type_t).c_str());
                 }
+                capabilities.isActionListMandatoryOnTableCreation = attr.value.aclcapability.is_action_list_mandatory;
             }
             else
             {
@@ -2419,16 +3008,18 @@ void AclOrch::putAclActionCapabilityInDB(acl_stage_type_t stage)
     auto stage_str = (stage == ACL_STAGE_INGRESS ? STAGE_INGRESS : STAGE_EGRESS);
 
     auto field = std::string("ACL_ACTIONS") + '|' + stage_str;
-    auto& acl_action_set = m_aclCapabilities[stage];
+    auto& capabilities = m_aclCapabilities[stage];
+    auto& acl_action_set = capabilities.actionList;
 
     string delimiter;
     ostringstream acl_action_value_stream;
+    ostringstream is_action_list_mandatory_stream;
 
     for (const auto& action_map: {aclL3ActionLookup, aclMirrorStageLookup, aclDTelActionLookup})
     {
         for (const auto& it: action_map)
         {
-            auto saiAction = getAclActionFromAclEntry(it.second);
+            auto saiAction = AclEntryActionToAclAction(it.second);
             if (acl_action_set.find(saiAction) != acl_action_set.cend())
             {
                 acl_action_value_stream << delimiter << it.first;
@@ -2437,8 +3028,11 @@ void AclOrch::putAclActionCapabilityInDB(acl_stage_type_t stage)
         }
     }
 
-    fvVector.emplace_back(field, acl_action_value_stream.str());
-    m_switchOrch->set_switch_capability(fvVector);
+    is_action_list_mandatory_stream << boolalpha << capabilities.isActionListMandatoryOnTableCreation;
+
+    fvVector.emplace_back(STATE_DB_ACL_ACTION_FIELD_IS_ACTION_LIST_MANDATORY, is_action_list_mandatory_stream.str());
+    fvVector.emplace_back(STATE_DB_ACL_ACTION_FIELD_ACTION_LIST, acl_action_value_stream.str());
+    m_aclStageCapabilityTable.set(stage_str, fvVector);
 }
 
 void AclOrch::initDefaultAclActionCapabilities(acl_stage_type_t stage)
@@ -2447,9 +3041,9 @@ void AclOrch::initDefaultAclActionCapabilities(acl_stage_type_t stage)
 
     SWSS_LOG_INFO("Assumed %s %zu actions to be supported:",
             stage == ACL_STAGE_INGRESS ? STAGE_INGRESS : STAGE_EGRESS,
-            m_aclCapabilities[stage].size());
+            m_aclCapabilities[stage].actionList.size());
 
-    for (auto action: m_aclCapabilities[stage])
+    for (auto action: m_aclCapabilities[stage].actionList)
     {
         SWSS_LOG_INFO("    %s", sai_serialize_enum(action, &sai_metadata_enum_sai_acl_action_type_t).c_str());
     }
@@ -2464,7 +3058,7 @@ void AclOrch::queryAclActionAttrEnumValues(const string &action_name,
 {
     vector<FieldValueTuple> fvVector;
     auto acl_attr = ruleAttrLookupMap.at(action_name);
-    auto acl_action = getAclActionFromAclEntry(acl_attr);
+    auto acl_action = AclEntryActionToAclAction(acl_attr);
 
     /* if the action is not supported then no need to do secondary query for
      * supported values
@@ -2543,24 +3137,21 @@ void AclOrch::queryAclActionAttrEnumValues(const string &action_name,
     m_switchOrch->set_switch_capability(fvVector);
 }
 
-sai_acl_action_type_t AclOrch::getAclActionFromAclEntry(sai_acl_entry_attr_t attr)
-{
-    if (attr < SAI_ACL_ENTRY_ATTR_ACTION_START || attr > SAI_ACL_ENTRY_ATTR_ACTION_END)
-    {
-        SWSS_LOG_THROW("Invalid ACL entry attribute passed in: %d", attr);
-    }
-
-    return static_cast<sai_acl_action_type_t>(attr - SAI_ACL_ENTRY_ATTR_ACTION_START);
-};
-
-AclOrch::AclOrch(vector<TableConnector>& connectors, SwitchOrch *switchOrch,
+AclOrch::AclOrch(vector<TableConnector>& connectors, DBConnector* stateDb, SwitchOrch *switchOrch,
         PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch, DTelOrch *dtelOrch) :
         Orch(connectors),
+        m_aclStageCapabilityTable(stateDb, STATE_ACL_STAGE_CAPABILITY_TABLE_NAME),
         m_switchOrch(switchOrch),
         m_mirrorOrch(mirrorOrch),
         m_neighOrch(neighOrch),
         m_routeOrch(routeOrch),
-        m_dTelOrch(dtelOrch)
+        m_dTelOrch(dtelOrch),
+        m_flex_counter_manager(
+            ACL_COUNTER_FLEX_COUNTER_GROUP,
+            StatsMode::READ,
+            ACL_COUNTER_DEFAULT_POLLING_INTERVAL_MS,
+            ACL_COUNTER_DEFAULT_ENABLED_STATE
+        )
 {
     SWSS_LOG_ENTER();
 
@@ -2582,9 +3173,6 @@ AclOrch::~AclOrch()
         m_dTelOrch->detach(this);
     }
 
-    m_bCollectCounters = false;
-    m_sleepGuard.notify_all();
-
     deleteDTelWatchListTables();
 }
 
@@ -2599,21 +3187,19 @@ void AclOrch::update(SubjectType type, void *cntx)
         return;
     }
 
-    unique_lock<mutex> lock(m_countersMutex);
-
     // ACL table deals with port change
     // ACL rule deals with mirror session change and int session change
     for (auto& table : m_AclTables)
     {
         if (type == SUBJECT_TYPE_PORT_CHANGE)
         {
-            table.second.update(type, cntx);
+            table.second.onUpdate(type, cntx);
         }
         else
         {
             for (auto& rule : table.second.rules)
             {
-                rule.second->update(type, cntx);
+                rule.second->onUpdate(type, cntx);
             }
         }
     }
@@ -2632,13 +3218,15 @@ void AclOrch::doTask(Consumer &consumer)
 
     if (table_name == CFG_ACL_TABLE_TABLE_NAME || table_name == APP_ACL_TABLE_TABLE_NAME)
     {
-        unique_lock<mutex> lock(m_countersMutex);
         doAclTableTask(consumer);
     }
     else if (table_name == CFG_ACL_RULE_TABLE_NAME || table_name == APP_ACL_RULE_TABLE_NAME)
     {
-        unique_lock<mutex> lock(m_countersMutex);
         doAclRuleTask(consumer);
+    }
+    else if (table_name == CFG_ACL_TABLE_TYPE_TABLE_NAME || table_name == APP_ACL_TABLE_TYPE_TABLE_NAME)
+    {
+        doAclTableTypeTask(consumer);
     }
     else
     {
@@ -2769,12 +3357,32 @@ bool AclOrch::updateAclTable(AclTable &currentTable, AclTable &newTable)
     return true;
 }
 
+bool AclOrch::updateAclTable(string table_id, AclTable &table)
+{
+    SWSS_LOG_ENTER();
+
+    auto tableOid = getTableById(table_id);
+    if (tableOid == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("Failed to update ACL table %s: object doesn't exist", table_id.c_str());
+        return false;
+    }
+
+    if (!updateAclTable(m_AclTables.at(tableOid), table))
+    {
+        SWSS_LOG_ERROR("Failed to update ACL table %s", table_id.c_str());
+        return false;
+    }
+
+    return true;
+}
+
 bool AclOrch::addAclTable(AclTable &newTable)
 {
     SWSS_LOG_ENTER();
 
     string table_id = newTable.id;
-    if (newTable.type == ACL_TABLE_CTRLPLANE)
+    if (newTable.type.getName() == TABLE_TYPE_CTRLPLANE)
     {
         m_ctrlAclTables.emplace(table_id, newTable);
         SWSS_LOG_NOTICE("Created control plane ACL table %s", newTable.id.c_str());
@@ -2799,15 +3407,15 @@ bool AclOrch::addAclTable(AclTable &newTable)
         // If ACL table is new, check for the existence of current mirror tables
         // Note: only one table per mirror type can be created
         auto table_type = newTable.type;
-        if (table_type == ACL_TABLE_MIRROR || table_type == ACL_TABLE_MIRRORV6)
+        if (table_type.getName() == TABLE_TYPE_MIRROR || table_type.getName() == TABLE_TYPE_MIRRORV6)
         {
             string mirror_type;
-            if (table_type == ACL_TABLE_MIRROR && !m_mirrorTableId[table_stage].empty())
+            if (table_type.getName() == TABLE_TYPE_MIRROR && !m_mirrorTableId[table_stage].empty())
             {
                 mirror_type = TABLE_TYPE_MIRROR;
             }
 
-            if (table_type == ACL_TABLE_MIRRORV6 && !m_mirrorV6TableId[table_stage].empty())
+            if (table_type.getName() == TABLE_TYPE_MIRRORV6 && !m_mirrorV6TableId[table_stage].empty())
             {
                 mirror_type = TABLE_TYPE_MIRRORV6;
             }
@@ -2825,7 +3433,7 @@ bool AclOrch::addAclTable(AclTable &newTable)
     }
 
     // Check if a separate mirror table is needed or not based on the platform
-    if (newTable.type == ACL_TABLE_MIRROR || newTable.type == ACL_TABLE_MIRRORV6)
+    if (newTable.type.getName() == TABLE_TYPE_MIRROR || newTable.type.getName() == TABLE_TYPE_MIRRORV6)
     {
         if (m_isCombinedMirrorV6Table &&
                 (!m_mirrorTableId[table_stage].empty() ||
@@ -2859,11 +3467,11 @@ bool AclOrch::addAclTable(AclTable &newTable)
                 newTable.id.c_str(), table_oid);
 
         // Mark the existence of the mirror table
-        if (newTable.type == ACL_TABLE_MIRROR)
+        if (newTable.type.getName() == TABLE_TYPE_MIRROR)
         {
             m_mirrorTableId[table_stage] = table_id;
         }
-        else if (newTable.type == ACL_TABLE_MIRRORV6)
+        else if (newTable.type.getName() == TABLE_TYPE_MIRRORV6)
         {
             m_mirrorV6TableId[table_stage] = table_id;
         }
@@ -2898,11 +3506,9 @@ bool AclOrch::removeAclTable(string table_id)
         auto type = m_AclTables[table_oid].type;
 
         sai_acl_stage_t sai_stage = (stage == ACL_STAGE_INGRESS) ? SAI_ACL_STAGE_INGRESS : SAI_ACL_STAGE_EGRESS;
-        gCrmOrch->decCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, sai_stage, SAI_ACL_BIND_POINT_TYPE_PORT, table_oid);
-
-        if (type != ACL_TABLE_PFCWD)
+        for (const auto& bpointType: type.getBindPointTypes())
         {
-            gCrmOrch->decCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, sai_stage, SAI_ACL_BIND_POINT_TYPE_LAG, table_oid);
+            gCrmOrch->decCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, sai_stage, bpointType, table_oid);
         }
 
         SWSS_LOG_NOTICE("Successfully deleted ACL table %s", table_id.c_str());
@@ -2937,6 +3543,44 @@ bool AclOrch::removeAclTable(string table_id)
     }
 }
 
+bool AclOrch::addAclTableType(const AclTableType& tableType)
+{
+    SWSS_LOG_ENTER();
+
+    if (tableType.getName().empty())
+    {
+        SWSS_LOG_ERROR("Received table type without a name");
+        return false;
+    }
+
+    if (m_AclTableTypes.find(tableType.getName()) != m_AclTableTypes.end())
+    {
+        SWSS_LOG_ERROR("Table type %s already exists", tableType.getName().c_str());
+        return false;
+    }
+
+    m_AclTableTypes.emplace(tableType.getName(), tableType);
+    return true;
+}
+
+bool AclOrch::removeAclTableType(const string& tableTypeName)
+{
+    // It is Ok to remove table type that is in use by AclTable.
+    // AclTable holds a copy of AclTableType and there is no
+    // SAI object associated with AclTableType.
+    // So it is no harm to remove it without validation.
+    // The upper layer can although ensure that
+    // user does not remove table type that is referenced
+    // by an ACL table.
+    if (!m_AclTableTypes.erase(tableTypeName))
+    {
+        SWSS_LOG_ERROR("Unknown table type %s", tableTypeName.c_str());
+        return false;
+    }
+
+    return true;
+}
+
 bool AclOrch::addAclRule(shared_ptr<AclRule> newRule, string table_id)
 {
     sai_object_id_t table_oid = getTableById(table_id);
@@ -2946,7 +3590,17 @@ bool AclOrch::addAclRule(shared_ptr<AclRule> newRule, string table_id)
         return false;
     }
 
-    return m_AclTables[table_oid].add(newRule);
+    if (!m_AclTables[table_oid].add(newRule))
+    {
+        return false;
+    }
+
+    if (newRule->hasCounter())
+    {
+        registerFlexCounter(*newRule);
+    }
+
+    return true;
 }
 
 bool AclOrch::removeAclRule(string table_id, string rule_id)
@@ -2956,6 +3610,17 @@ bool AclOrch::removeAclRule(string table_id, string rule_id)
     {
         SWSS_LOG_WARN("Skip removing rule %s from ACL table %s. Table does not exist", rule_id.c_str(), table_id.c_str());
         return true;
+    }
+
+    auto rule = getAclRule(table_id, rule_id);
+    if (!rule)
+    {
+        return false;
+    }
+
+    if (rule->hasCounter())
+    {
+        deregisterFlexCounter(*rule);
     }
 
     return m_AclTables[table_oid].remove(rule_id);
@@ -2983,11 +3648,11 @@ AclRule* AclOrch::getAclRule(string table_id, string rule_id)
 bool AclOrch::updateAclRule(string table_id, string rule_id, string attr_name, void *data, bool oper)
 {
     SWSS_LOG_ENTER();
-    
+
     sai_object_id_t table_oid = getTableById(table_id);
     string attr_value;
 
-    if (table_oid == SAI_NULL_OBJECT_ID) 
+    if (table_oid == SAI_NULL_OBJECT_ID)
     {
         SWSS_LOG_ERROR("Failed to update ACL rule in ACL table %s. Table doesn't exist", table_id.c_str());
         return false;
@@ -3000,29 +3665,29 @@ bool AclOrch::updateAclRule(string table_id, string rule_id, string attr_name, v
         return false;
     }
 
-    switch (aclMatchLookup[attr_name]) 
+    switch (aclMatchLookup[attr_name])
     {
         case SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS:
         {
             sai_object_id_t port_oid = *(sai_object_id_t *)data;
             vector<sai_object_id_t> in_ports = rule_it->second->getInPorts();
 
-            if (oper == RULE_OPER_ADD) 
+            if (oper == RULE_OPER_ADD)
             {
                 in_ports.push_back(port_oid);
-            } 
-            else 
+            }
+            else
             {
                 for (auto port_iter = in_ports.begin(); port_iter != in_ports.end(); port_iter++)
                 {
-                    if (*port_iter == port_oid) 
+                    if (*port_iter == port_oid)
                     {
                         in_ports.erase(port_iter);
                         break;
                     }
                 }
             }
-            
+
             for (const auto& port_iter: in_ports)
             {
                 Port p;
@@ -3049,9 +3714,118 @@ bool AclOrch::updateAclRule(string table_id, string rule_id, string attr_name, v
     return true;
 }
 
+bool AclOrch::updateAclRule(string table_id, string rule_id, bool enableCounter)
+{
+    SWSS_LOG_ENTER();
+
+    auto tableOid = getTableById(table_id);
+    if (tableOid == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR(
+            "Failed to update ACL rule %s: ACL table %s doesn't exist",
+            rule_id.c_str(),
+            table_id.c_str()
+        );
+        return false;
+    }
+
+    const auto &cit = m_AclTables.at(tableOid).rules.find(rule_id);
+    if (cit == m_AclTables.at(tableOid).rules.cend())
+    {
+        SWSS_LOG_ERROR(
+            "Failed to update ACL rule %s in ACL table %s: object doesn't exist",
+            rule_id.c_str(),
+            table_id.c_str()
+        );
+        return false;
+    }
+
+    auto &rule = cit->second;
+
+    if (enableCounter)
+    {
+        if (!rule->enableCounter())
+        {
+            SWSS_LOG_ERROR(
+                "Failed to enable ACL counter for ACL rule %s in ACL table %s",
+                rule_id.c_str(),
+                table_id.c_str()
+            );
+            return false;
+        }
+
+        registerFlexCounter(*rule);
+        return true;
+    }
+
+    deregisterFlexCounter(*rule);
+    if (!rule->disableCounter())
+    {
+        SWSS_LOG_ERROR(
+            "Failed to disable ACL counter for ACL rule %s in ACL table %s",
+            rule_id.c_str(),
+            table_id.c_str()
+        );
+        return false;
+    }
+
+    return true;
+}
+
+bool AclOrch::updateAclRule(shared_ptr<AclRule> updatedRule)
+{
+    SWSS_LOG_ENTER();
+
+    auto tableId = updatedRule->getTableId();
+    sai_object_id_t tableOid = getTableById(tableId);
+    if (tableOid == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("Failed to add ACL rule in ACL table %s. Table doesn't exist", tableId.c_str());
+        return false;
+    }
+
+    if (!m_AclTables[tableOid].updateRule(updatedRule))
+    {
+        return false;
+    }
+
+    return true;
+}
+
 bool AclOrch::isCombinedMirrorV6Table()
 {
     return m_isCombinedMirrorV6Table;
+}
+
+bool AclOrch::isAclMirrorTableSupported(string type) const
+{
+    const auto &cit = m_mirrorTableCapabilities.find(type);
+    if (cit == m_mirrorTableCapabilities.cend())
+    {
+        return false;
+    }
+
+    return cit->second;
+}
+
+bool AclOrch::isAclMirrorV4Supported() const
+{
+    return isAclMirrorTableSupported(TABLE_TYPE_MIRROR);
+}
+
+bool AclOrch::isAclMirrorV6Supported() const
+{
+    return isAclMirrorTableSupported(TABLE_TYPE_MIRRORV6);
+}
+
+bool AclOrch::isAclActionListMandatoryOnTableCreation(acl_stage_type_t stage) const
+{
+    const auto& it = m_aclCapabilities.find(stage);
+    if (it == m_aclCapabilities.cend())
+    {
+        return false;
+    }
+    return it->second.isActionListMandatoryOnTableCreation;
 }
 
 bool AclOrch::isAclActionSupported(acl_stage_type_t stage, sai_acl_action_type_t action) const
@@ -3061,7 +3835,8 @@ bool AclOrch::isAclActionSupported(acl_stage_type_t stage, sai_acl_action_type_t
     {
         return false;
     }
-    return it->second.find(action) != it->second.cend();
+    const auto& actionCapability = it->second;
+    return actionCapability.actionList.find(action) != actionCapability.actionList.cend();
 }
 
 bool AclOrch::isAclActionEnumValueSupported(sai_acl_action_type_t action, sai_acl_action_parameter_t param) const
@@ -3092,6 +3867,7 @@ void AclOrch::doAclTableTask(Consumer &consumer)
         if (op == SET_COMMAND)
         {
             AclTable newTable(this);
+            string tableTypeName;
             bool bAllAttributesOk = true;
 
             newTable.id = table_id;
@@ -3109,7 +3885,7 @@ void AclOrch::doAclTableTask(Consumer &consumer)
                 }
                 else if (attr_name == ACL_TABLE_TYPE)
                 {
-                    if (!processAclTableType(attr_value, newTable.type))
+                    if (!processAclTableType(attr_value, tableTypeName))
                     {
                         SWSS_LOG_ERROR("Failed to process ACL table %s type",
                                 table_id.c_str());
@@ -3150,6 +3926,15 @@ void AclOrch::doAclTableTask(Consumer &consumer)
                 }
             }
 
+            auto tableType = getAclTableType(tableTypeName);
+            if (!tableType)
+            {
+                it++;
+                continue;
+            }
+
+            newTable.validateAddType(*tableType);
+
             // validate and create/update ACL Table
             if (bAllAttributesOk && newTable.validate())
             {
@@ -3159,7 +3944,7 @@ void AclOrch::doAclTableTask(Consumer &consumer)
 
                 sai_object_id_t table_oid = getTableById(table_id);
                 if (table_oid != SAI_NULL_OBJECT_ID &&
-                    !isAclTableTypeUpdated(newTable.type,
+                    !isAclTableTypeUpdated(newTable.type.getName(),
                                            m_AclTables[table_oid]) &&
                     !isAclTableStageUpdated(newTable.stage,
                                             m_AclTables[table_oid]))
@@ -3240,8 +4025,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
             sai_object_id_t table_oid = getTableById(table_id);
 
             /* ACL table is not yet created or ACL table is a control plane table */
-            /* TODO: Remove ACL_TABLE_UNKNOWN as a table with this type cannot be successfully created */
-            if (table_oid == SAI_NULL_OBJECT_ID || m_AclTables[table_oid].type == ACL_TABLE_UNKNOWN)
+            if (table_oid == SAI_NULL_OBJECT_ID)
             {
 
                 /* Skip the control plane rules */
@@ -3257,17 +4041,17 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 continue;
             }
 
-            auto type = m_AclTables[table_oid].type;
+            auto type = m_AclTables[table_oid].type.getName();
             auto stage = m_AclTables[table_oid].stage;
-            if (type == ACL_TABLE_MIRROR || type == ACL_TABLE_MIRRORV6)
+            if (type == TABLE_TYPE_MIRROR || type == TABLE_TYPE_MIRRORV6)
             {
-                type = table_id == m_mirrorTableId[stage] ? ACL_TABLE_MIRROR : ACL_TABLE_MIRRORV6;
+                type = table_id == m_mirrorTableId[stage] ? TABLE_TYPE_MIRROR : TABLE_TYPE_MIRRORV6;
             }
 
 
             try
             {
-                newRule = AclRule::makeShared(type, this, m_mirrorOrch, m_dTelOrch, rule_id, table_id, t);
+                newRule = AclRule::makeShared(this, m_mirrorOrch, m_dTelOrch, rule_id, table_id, t);
             }
             catch (exception &e)
             {
@@ -3275,14 +4059,22 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 it = consumer.m_toSync.erase(it);
                 return;
             }
-
+            bool bHasTCPFlag = false;
+            bool bHasIPProtocol = false;
             for (const auto& itr : kfvFieldsValues(t))
             {
                 string attr_name = to_upper(fvField(itr));
                 string attr_value = fvValue(itr);
 
                 SWSS_LOG_INFO("ATTRIBUTE: %s %s", attr_name.c_str(), attr_value.c_str());
-
+                if (attr_name == MATCH_TCP_FLAGS)
+                {
+                    bHasTCPFlag = true;
+                }
+                if (attr_name == MATCH_IP_PROTOCOL || attr_name == MATCH_NEXT_HEADER)
+                {
+                    bHasIPProtocol = true;
+                }
                 if (newRule->validateAddPriority(attr_name, attr_value))
                 {
                     SWSS_LOG_INFO("Added priority attribute");
@@ -3300,6 +4092,30 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                     SWSS_LOG_ERROR("Unknown or invalid rule attribute '%s : %s'", attr_name.c_str(), attr_value.c_str());
                     bAllAttributesOk = false;
                     break;
+                }
+            }
+            // If acl rule is to match TCP_FLAGS, and IP_PROTOCOL(NEXT_HEADER) is not set
+            // we set IP_PROTOCOL(NEXT_HEADER) to 6 to match TCP explicitly
+            if (bHasTCPFlag && !bHasIPProtocol)
+            {
+                string attr_name;
+                if (type == TABLE_TYPE_MIRRORV6 || type == TABLE_TYPE_L3V6)
+                {
+                    attr_name = MATCH_NEXT_HEADER;
+                }
+                else
+                {
+                    attr_name = MATCH_IP_PROTOCOL;
+
+                }
+                string attr_value = std::to_string(TCP_PROTOCOL_NUM);
+                if (newRule->validateAddMatch(attr_name, attr_value))
+                {
+                    SWSS_LOG_INFO("Automatically added match attribute '%s : %s'", attr_name.c_str(), attr_value.c_str());
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Failed to add attribute '%s : %s'", attr_name.c_str(), attr_value.c_str());
                 }
             }
 
@@ -3329,6 +4145,42 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
             it = consumer.m_toSync.erase(it);
             SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
         }
+    }
+}
+
+void AclOrch::doAclTableTypeTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        auto keyOpFieldValues = it->second;
+        auto key = kfvKey(keyOpFieldValues);
+        auto op = kfvOp(keyOpFieldValues);
+
+        if (op == SET_COMMAND)
+        {
+            AclTableTypeBuilder builder;
+            if (!AclTableTypeParser().parse(key, kfvFieldsValues(keyOpFieldValues), builder))
+            {
+                SWSS_LOG_ERROR("Failed to parse ACL table type configuration %s", key.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
+            addAclTableType(builder.build());
+        }
+        else if (op == DEL_COMMAND)
+        {
+            removeAclTableType(key);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
+        }
+
+        it = consumer.m_toSync.erase(it);
     }
 }
 
@@ -3365,34 +4217,26 @@ bool AclOrch::processAclTablePorts(string portList, AclTable &aclTable)
     return true;
 }
 
-bool AclOrch::isAclTableTypeUpdated(acl_table_type_t table_type, AclTable &t)
+bool AclOrch::isAclTableTypeUpdated(string table_type, AclTable &t)
 {
-    return (table_type != t.type);
+    if (m_isCombinedMirrorV6Table && (table_type == TABLE_TYPE_MIRROR || table_type == TABLE_TYPE_MIRRORV6))
+    {
+        // TABLE_TYPE_MIRRORV6 and TABLE_TYPE_MIRROR should be treated as same type in combined scenario
+        return !(t.type.getName() == TABLE_TYPE_MIRROR || t.type.getName() == TABLE_TYPE_MIRRORV6);
+    }
+    return (table_type != t.type.getName());
 }
 
-bool AclOrch::processAclTableType(string type, acl_table_type_t &table_type)
+bool AclOrch::processAclTableType(string type, string &out_table_type)
 {
     SWSS_LOG_ENTER();
 
-    auto iter = aclTableTypeLookUp.find(to_upper(type));
-
-    if (iter == aclTableTypeLookUp.end())
+    if (type.empty())
     {
         return false;
     }
 
-    table_type = iter->second;
-
-    // Mirror table check procedure
-    if (table_type == ACL_TABLE_MIRROR || table_type == ACL_TABLE_MIRRORV6)
-    {
-        // Check the switch capability
-        if (!m_mirrorTableCapabilities[table_type])
-        {
-            SWSS_LOG_ERROR("Mirror table type %s is not supported", type.c_str());
-            return false;
-        }
-    }
+    out_table_type = type;
 
     return true;
 }
@@ -3417,6 +4261,18 @@ bool AclOrch::processAclTableStage(string stage, acl_stage_type_t &acl_stage)
     acl_stage = iter->second;
 
     return true;
+}
+
+const AclTableType* AclOrch::getAclTableType(const string& tableTypeName) const
+{
+    auto it = m_AclTableTypes.find(to_upper(tableTypeName));
+    if (it == m_AclTableTypes.end())
+    {
+        SWSS_LOG_INFO("Failed to find ACL table type %s", tableTypeName.c_str());
+        return nullptr;
+    }
+
+    return &it->second;
 }
 
 sai_object_id_t AclOrch::getTableById(string table_id)
@@ -3501,30 +4357,6 @@ sai_status_t AclOrch::deleteUnbindAclTable(sai_object_id_t table_oid)
     return sai_acl_api->remove_acl_table(table_oid);
 }
 
-void AclOrch::doTask(SelectableTimer &timer)
-{
-    SWSS_LOG_ENTER();
-
-    for (auto& table_it : m_AclTables)
-    {
-        vector<swss::FieldValueTuple> values;
-
-        for (auto rule_it : table_it.second.rules)
-        {
-            AclRuleCounters cnt = rule_it.second->getCounters();
-
-            swss::FieldValueTuple fvtp("Packets", to_string(cnt.packets));
-            values.push_back(fvtp);
-            swss::FieldValueTuple fvtb("Bytes", to_string(cnt.bytes));
-            values.push_back(fvtb);
-
-            AclOrch::getCountersTable().set(rule_it.second->getTableId() + ":"
-                    + rule_it.second->getId(), values, "");
-        }
-        values.clear();
-    }
-}
-
 sai_status_t AclOrch::bindAclTable(AclTable &aclTable, bool bind)
 {
     SWSS_LOG_ENTER();
@@ -3544,220 +4376,97 @@ sai_status_t AclOrch::bindAclTable(AclTable &aclTable, bool bind)
     return status;
 }
 
-sai_status_t AclOrch::createDTelWatchListTables()
+void AclOrch::createDTelWatchListTables()
 {
     SWSS_LOG_ENTER();
 
-    AclTable flowWLTable, dropWLTable;
-    sai_object_id_t table_oid;
+    AclTableTypeBuilder builder;
 
-    sai_status_t status;
-    sai_attribute_t attr;
-    vector<sai_attribute_t> table_attrs;
+    AclTable flowWLTable(this, TABLE_TYPE_DTEL_FLOW_WATCHLIST);
+    AclTable dropWLTable(this, TABLE_TYPE_DTEL_DROP_WATCHLIST);
 
-    /* Create Flow watchlist ACL table */
+    flowWLTable.validateAddStage(ACL_STAGE_INGRESS);
+    flowWLTable.validateAddType(builder
+        .withBindPointType(SAI_ACL_BIND_POINT_TYPE_SWITCH)
+        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE))
+        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_SRC_IP))
+        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DST_IP))
+        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT))
+        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT))
+        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL))
+        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TUNNEL_VNI))
+        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_INNER_ETHER_TYPE))
+        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_INNER_SRC_IP))
+        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_INNER_DST_IP))
+        .withAction(SAI_ACL_ACTION_TYPE_ACL_DTEL_FLOW_OP)
+        .withAction(SAI_ACL_ACTION_TYPE_DTEL_INT_SESSION)
+        .withAction(SAI_ACL_ACTION_TYPE_DTEL_REPORT_ALL_PACKETS)
+        .withAction(SAI_ACL_ACTION_TYPE_DTEL_FLOW_SAMPLE_PERCENT)
+        .build()
+    );
+    flowWLTable.setDescription("Dataplane Telemetry Flow Watchlist table");
 
-    flowWLTable.id = TABLE_TYPE_DTEL_FLOW_WATCHLIST;
-    flowWLTable.type = ACL_TABLE_DTEL_FLOW_WATCHLIST;
-    flowWLTable.description = "Dataplane Telemetry Flow Watchlist table";
+    dropWLTable.validateAddStage(ACL_STAGE_INGRESS);
+    dropWLTable.validateAddType(builder
+        .withBindPointType(SAI_ACL_BIND_POINT_TYPE_SWITCH)
+        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE))
+        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_SRC_IP))
+        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DST_IP))
+        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT))
+        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT))
+        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL))
+        .withAction(SAI_ACL_ACTION_TYPE_DTEL_DROP_REPORT_ENABLE)
+        .withAction(SAI_ACL_ACTION_TYPE_DTEL_TAIL_DROP_REPORT_ENABLE)
+        .build()
+    );
+    dropWLTable.setDescription("Dataplane Telemetry Drop Watchlist table");
 
-    attr.id = SAI_ACL_TABLE_ATTR_ACL_STAGE;
-    attr.value.s32 = SAI_ACL_STAGE_INGRESS;
-    table_attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST;
-    vector<int32_t> bpoint_list;
-    bpoint_list.push_back(SAI_ACL_BIND_POINT_TYPE_SWITCH);
-    attr.value.s32list.count = 1;
-    attr.value.s32list.list = bpoint_list.data();
-    table_attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE;
-    attr.value.booldata = true;
-    table_attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_SRC_IP;
-    attr.value.booldata = true;
-    table_attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_DST_IP;
-    attr.value.booldata = true;
-    table_attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT;
-    attr.value.booldata = true;
-    table_attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT;
-    attr.value.booldata = true;
-    table_attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL;
-    attr.value.booldata = true;
-    table_attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_TUNNEL_VNI;
-    attr.value.booldata = true;
-    table_attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_INNER_ETHER_TYPE;
-    attr.value.booldata = true;
-    table_attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_INNER_SRC_IP;
-    attr.value.booldata = true;
-    table_attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_INNER_DST_IP;
-    attr.value.booldata = true;
-    table_attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST;
-    int32_t acl_action_list[4];
-    acl_action_list[0] = SAI_ACL_ACTION_TYPE_ACL_DTEL_FLOW_OP;
-    acl_action_list[1] = SAI_ACL_ACTION_TYPE_DTEL_INT_SESSION;
-    acl_action_list[2] = SAI_ACL_ACTION_TYPE_DTEL_REPORT_ALL_PACKETS;
-    acl_action_list[3] = SAI_ACL_ACTION_TYPE_DTEL_FLOW_SAMPLE_PERCENT;
-    attr.value.s32list.count = 4;
-    attr.value.s32list.list = acl_action_list;
-    table_attrs.push_back(attr);
-
-    status = sai_acl_api->create_acl_table(&table_oid, gSwitchId, (uint32_t)table_attrs.size(), table_attrs.data());
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to create table %s", flowWLTable.description.c_str());
-        if (handleSaiCreateStatus(SAI_API_ACL, status) != task_success)
-        {
-            return status;
-        }
-    }
-
-    gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, SAI_ACL_STAGE_INGRESS, SAI_ACL_BIND_POINT_TYPE_SWITCH);
-    m_AclTables[table_oid] = flowWLTable;
-    SWSS_LOG_INFO("Successfully created ACL table %s, oid: %" PRIx64, flowWLTable.description.c_str(), table_oid);
-
-    /* Create Drop watchlist ACL table */
-
-    table_attrs.clear();
-
-    dropWLTable.id = TABLE_TYPE_DTEL_DROP_WATCHLIST;
-    dropWLTable.type = ACL_TABLE_DTEL_DROP_WATCHLIST;
-    dropWLTable.description = "Dataplane Telemetry Drop Watchlist table";
-
-    attr.id = SAI_ACL_TABLE_ATTR_ACL_STAGE;
-    attr.value.s32 = SAI_ACL_STAGE_INGRESS;
-    table_attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST;
-    bpoint_list.clear();
-    bpoint_list.push_back(SAI_ACL_BIND_POINT_TYPE_SWITCH);
-    attr.value.s32list.count = 1;
-    attr.value.s32list.list = bpoint_list.data();
-    table_attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE;
-    attr.value.booldata = true;
-    table_attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_SRC_IP;
-    attr.value.booldata = true;
-    table_attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_DST_IP;
-    attr.value.booldata = true;
-    table_attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT;
-    attr.value.booldata = true;
-    table_attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT;
-    attr.value.booldata = true;
-    table_attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL;
-    attr.value.booldata = true;
-    table_attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST;
-    acl_action_list[0] = SAI_ACL_ACTION_TYPE_DTEL_DROP_REPORT_ENABLE;
-    acl_action_list[1] = SAI_ACL_ACTION_TYPE_DTEL_TAIL_DROP_REPORT_ENABLE;
-    attr.value.s32list.count = 2;
-    attr.value.s32list.list = acl_action_list;
-    table_attrs.push_back(attr);
-
-    status = sai_acl_api->create_acl_table(&table_oid, gSwitchId, (uint32_t)table_attrs.size(), table_attrs.data());
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to create table %s", dropWLTable.description.c_str());
-        if (handleSaiCreateStatus(SAI_API_ACL, status) != task_success)
-        {
-            return status;
-        }
-    }
-
-    gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, SAI_ACL_STAGE_INGRESS, SAI_ACL_BIND_POINT_TYPE_SWITCH);
-    m_AclTables[table_oid] = dropWLTable;
-    SWSS_LOG_INFO("Successfully created ACL table %s, oid: %" PRIx64, dropWLTable.description.c_str(), table_oid);
-
-    return SAI_STATUS_SUCCESS;
+    addAclTable(flowWLTable);
+    addAclTable(dropWLTable);
 }
 
-sai_status_t AclOrch::deleteDTelWatchListTables()
+void AclOrch::deleteDTelWatchListTables()
 {
     SWSS_LOG_ENTER();
 
-    AclTable flowWLTable(this), dropWLTable(this);
-    sai_object_id_t table_oid;
-    string table_id = TABLE_TYPE_DTEL_FLOW_WATCHLIST;
+    removeAclTable(TABLE_TYPE_DTEL_FLOW_WATCHLIST);
+    removeAclTable(TABLE_TYPE_DTEL_DROP_WATCHLIST);
+}
 
-    sai_status_t status;
+void AclOrch::registerFlexCounter(const AclRule& rule)
+{
+    SWSS_LOG_ENTER();
 
-    table_oid = getTableById(table_id);
+    auto ruleIdentifier = generateAclRuleIdentifierInCountersDb(rule);
+    auto counterOidStr = sai_serialize_object_id(rule.getCounterOid());
 
-    if (table_oid == SAI_NULL_OBJECT_ID)
+    unordered_set<string> serializedCounterStatAttrs;
+    for (const auto& counterAttrPair: aclCounterLookup)
     {
-        SWSS_LOG_INFO("Failed to find ACL table %s", table_id.c_str());
-        return SAI_STATUS_FAILURE;
-    }
-
-    status = sai_acl_api->remove_acl_table(table_oid);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to delete table %s", table_id.c_str());
-        if (handleSaiRemoveStatus(SAI_API_ACL, status) != task_success)
+        sai_acl_counter_attr_t id {};
+        tie(std::ignore, id) = counterAttrPair;
+        auto meta = sai_metadata_get_attr_metadata(SAI_OBJECT_TYPE_ACL_COUNTER, id);
+        if (!meta)
         {
-            return status;
+            SWSS_LOG_THROW("SAI Bug: Failed to get metadata of attribute %d for SAI_OBJECT_TYPE_ACL_COUNTER", id);
         }
+        serializedCounterStatAttrs.insert(sai_serialize_attr_id(*meta));
     }
 
-    gCrmOrch->decCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, SAI_ACL_STAGE_INGRESS, SAI_ACL_BIND_POINT_TYPE_SWITCH, table_oid);
-    m_AclTables.erase(table_oid);
+    m_flex_counter_manager.setCounterIdList(rule.getCounterOid(), CounterType::ACL_COUNTER, serializedCounterStatAttrs);
+    m_countersDb.hset(COUNTERS_ACL_COUNTER_RULE_MAP, ruleIdentifier, counterOidStr);
+}
 
-    table_id = TABLE_TYPE_DTEL_DROP_WATCHLIST;
+void AclOrch::deregisterFlexCounter(const AclRule& rule)
+{
+    auto ruleIdentifier = generateAclRuleIdentifierInCountersDb(rule);
+    m_countersDb.hdel(COUNTERS_ACL_COUNTER_RULE_MAP, rule.getId());
+    m_flex_counter_manager.clearCounterIdList(rule.getCounterOid());
+}
 
-    table_oid = getTableById(table_id);
-
-    if (table_oid == SAI_NULL_OBJECT_ID)
-    {
-        SWSS_LOG_INFO("Failed to find ACL table %s", table_id.c_str());
-        return SAI_STATUS_FAILURE;
-    }
-
-    status = sai_acl_api->remove_acl_table(table_oid);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to delete table %s", table_id.c_str());
-        if (handleSaiRemoveStatus(SAI_API_ACL, status) != task_success)
-        {
-            return status;
-        }
-    }
-
-    gCrmOrch->decCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, SAI_ACL_STAGE_INGRESS, SAI_ACL_BIND_POINT_TYPE_SWITCH, table_oid);
-    m_AclTables.erase(table_oid);
-
-    return SAI_STATUS_SUCCESS;
+string AclOrch::generateAclRuleIdentifierInCountersDb(const AclRule& rule) const
+{
+    return rule.getTableId() + m_countersTable.getTableNameSeparator() + rule.getId();
 }
 
 bool AclOrch::getAclBindPortId(Port &port, sai_object_id_t &port_id)

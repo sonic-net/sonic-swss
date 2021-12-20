@@ -45,6 +45,7 @@ sai_neighbor_api_t*         sai_neighbor_api;
 sai_next_hop_api_t*         sai_next_hop_api;
 sai_next_hop_group_api_t*   sai_next_hop_group_api;
 sai_route_api_t*            sai_route_api;
+sai_mpls_api_t*             sai_mpls_api;
 sai_lag_api_t*              sai_lag_api;
 sai_policer_api_t*          sai_policer_api;
 sai_tunnel_api_t*           sai_tunnel_api;
@@ -55,14 +56,21 @@ sai_wred_api_t*             sai_wred_api;
 sai_qos_map_api_t*          sai_qos_map_api;
 sai_buffer_api_t*           sai_buffer_api;
 sai_acl_api_t*              sai_acl_api;
+sai_hash_api_t*             sai_hash_api;
+sai_udf_api_t*              sai_udf_api;
 sai_mirror_api_t*           sai_mirror_api;
 sai_fdb_api_t*              sai_fdb_api;
 sai_dtel_api_t*             sai_dtel_api;
 sai_samplepacket_api_t*     sai_samplepacket_api;
 sai_debug_counter_api_t*    sai_debug_counter_api;
 sai_nat_api_t*              sai_nat_api;
+sai_isolation_group_api_t*  sai_isolation_group_api;
 sai_system_port_api_t*      sai_system_port_api;
 sai_macsec_api_t*           sai_macsec_api;
+sai_srv6_api_t**            sai_srv6_api;;
+sai_l2mc_group_api_t*       sai_l2mc_group_api;
+sai_counter_api_t*          sai_counter_api;
+sai_bfd_api_t*              sai_bfd_api;
 
 extern sai_object_id_t gSwitchId;
 extern bool gSairedisRecord;
@@ -79,15 +87,15 @@ static map<string, sai_switch_hardware_access_bus_t> hardware_access_map =
 
 map<string, string> gProfileMap;
 
-sai_status_t mdio_read(uint64_t platform_context, 
-  uint32_t mdio_addr, uint32_t reg_addr, 
+sai_status_t mdio_read(uint64_t platform_context,
+  uint32_t mdio_addr, uint32_t reg_addr,
   uint32_t number_of_registers, uint32_t *data)
 {
     return SAI_STATUS_NOT_IMPLEMENTED;
 }
 
-sai_status_t mdio_write(uint64_t platform_context, 
-  uint32_t mdio_addr, uint32_t reg_addr, 
+sai_status_t mdio_write(uint64_t platform_context,
+  uint32_t mdio_addr, uint32_t reg_addr,
   uint32_t number_of_registers, uint32_t *data)
 {
     return SAI_STATUS_NOT_IMPLEMENTED;
@@ -167,6 +175,7 @@ void initSaiApi()
     sai_api_query(SAI_API_NEXT_HOP,             (void **)&sai_next_hop_api);
     sai_api_query(SAI_API_NEXT_HOP_GROUP,       (void **)&sai_next_hop_group_api);
     sai_api_query(SAI_API_ROUTE,                (void **)&sai_route_api);
+    sai_api_query(SAI_API_MPLS,                 (void **)&sai_mpls_api);
     sai_api_query(SAI_API_LAG,                  (void **)&sai_lag_api);
     sai_api_query(SAI_API_POLICER,              (void **)&sai_policer_api);
     sai_api_query(SAI_API_TUNNEL,               (void **)&sai_tunnel_api);
@@ -177,12 +186,19 @@ void initSaiApi()
     sai_api_query(SAI_API_BUFFER,               (void **)&sai_buffer_api);
     sai_api_query(SAI_API_SCHEDULER_GROUP,      (void **)&sai_scheduler_group_api);
     sai_api_query(SAI_API_ACL,                  (void **)&sai_acl_api);
+    sai_api_query(SAI_API_HASH,                 (void **)&sai_hash_api);
+    sai_api_query(SAI_API_UDF,                  (void **)&sai_udf_api);
     sai_api_query(SAI_API_DTEL,                 (void **)&sai_dtel_api);
     sai_api_query(SAI_API_SAMPLEPACKET,         (void **)&sai_samplepacket_api);
     sai_api_query(SAI_API_DEBUG_COUNTER,        (void **)&sai_debug_counter_api);
     sai_api_query(SAI_API_NAT,                  (void **)&sai_nat_api);
+    sai_api_query(SAI_API_ISOLATION_GROUP,      (void **)&sai_isolation_group_api);
     sai_api_query(SAI_API_SYSTEM_PORT,          (void **)&sai_system_port_api);
     sai_api_query(SAI_API_MACSEC,               (void **)&sai_macsec_api);
+    sai_api_query(SAI_API_SRV6,                 (void **)&sai_srv6_api);
+    sai_api_query(SAI_API_L2MC_GROUP,           (void **)&sai_l2mc_group_api);
+    sai_api_query(SAI_API_COUNTER,              (void **)&sai_counter_api);
+    sai_api_query(SAI_API_BFD,                  (void **)&sai_bfd_api);
 
     sai_log_set(SAI_API_SWITCH,                 SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_BRIDGE,                 SAI_LOG_LEVEL_NOTICE);
@@ -197,6 +213,7 @@ void initSaiApi()
     sai_log_set(SAI_API_NEXT_HOP,               SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_NEXT_HOP_GROUP,         SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_ROUTE,                  SAI_LOG_LEVEL_NOTICE);
+    sai_log_set(SAI_API_MPLS,                   SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_LAG,                    SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_POLICER,                SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_TUNNEL,                 SAI_LOG_LEVEL_NOTICE);
@@ -207,12 +224,18 @@ void initSaiApi()
     sai_log_set(SAI_API_BUFFER,                 SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_SCHEDULER_GROUP,        SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_ACL,                    SAI_LOG_LEVEL_NOTICE);
+    sai_log_set(SAI_API_HASH,                   SAI_LOG_LEVEL_NOTICE);
+    sai_log_set(SAI_API_UDF,                    SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_DTEL,                   SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_SAMPLEPACKET,           SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_DEBUG_COUNTER,          SAI_LOG_LEVEL_NOTICE);
     sai_log_set((sai_api_t)SAI_API_NAT,         SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_SYSTEM_PORT,            SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_MACSEC,                 SAI_LOG_LEVEL_NOTICE);
+    sai_log_set(SAI_API_SRV6,                   SAI_LOG_LEVEL_NOTICE);
+    sai_log_set(SAI_API_L2MC_GROUP,             SAI_LOG_LEVEL_NOTICE);
+    sai_log_set(SAI_API_COUNTER,                SAI_LOG_LEVEL_NOTICE);
+    sai_log_set(SAI_API_BFD,                    SAI_LOG_LEVEL_NOTICE);
 }
 
 void initSaiRedis(const string &record_location, const std::string &record_filename)
@@ -415,7 +438,7 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
 
     /* Must be last Attribute */
     attr.id = SAI_REDIS_SWITCH_ATTR_CONTEXT;
-    attr.value.u64 = phy->phy_id;
+    attr.value.u64 = phy->context_id;
     attrs.push_back(attr);
 
     status = sai_switch_api->create_switch(&phyOid, (uint32_t)attrs.size(), attrs.data());
@@ -435,8 +458,8 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
     {
         SWSS_LOG_ERROR("BOX: Failed to get firmware major version:%d rtn:%d", phy->phy_id, status);
         return status;
-    } 
-    else 
+    }
+    else
     {
         phy->firmware_major_version = string(attr.value.chardata);
     }

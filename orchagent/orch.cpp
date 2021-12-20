@@ -1,6 +1,8 @@
 #include <fstream>
 #include <iostream>
 #include <inttypes.h>
+#include <sstream>
+#include <stdexcept>
 #include <sys/time.h>
 #include "timestamp.h"
 #include "orch.h"
@@ -197,9 +199,16 @@ size_t Consumer::refillToSync()
     auto subTable = dynamic_cast<SubscriberStateTable *>(consumerTable);
     if (subTable != NULL)
     {
-        std::deque<KeyOpFieldsValuesTuple> entries;
-        subTable->pops(entries);
-        return addToSync(entries);
+        size_t update_size = 0;
+        size_t total_size = 0;
+        do
+        {
+            std::deque<KeyOpFieldsValuesTuple> entries;
+            subTable->pops(entries);
+            update_size = addToSync(entries);
+            total_size += update_size;
+        } while (update_size != 0);
+        return total_size;
     }
     else
     {
@@ -215,10 +224,13 @@ void Consumer::execute()
 {
     SWSS_LOG_ENTER();
 
-    std::deque<KeyOpFieldsValuesTuple> entries;
-    getConsumerTable()->pops(entries);
-
-    addToSync(entries);
+    size_t update_size = 0;
+    do
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        getConsumerTable()->pops(entries);
+        update_size = addToSync(entries);
+    } while (update_size != 0);
 
     drain();
 }
@@ -301,7 +313,7 @@ bool Orch::bake()
 }
 
 /*
-- Validates reference has proper format which is [table_name:object_name]
+- Validates reference has proper format which is object_name
 - validates table_name exists
 - validates object with object_name exists
 
@@ -310,59 +322,42 @@ bool Orch::bake()
 - both type_name and object_name are cleared to empty strings as an
 - indication to the caller of the special case
 */
-bool Orch::parseReference(type_map &type_maps, string &ref_in, string &type_name, string &object_name)
+bool Orch::parseReference(type_map &type_maps, string &ref_in, const string &type_name, string &object_name)
 {
     SWSS_LOG_ENTER();
 
     SWSS_LOG_DEBUG("input:%s", ref_in.c_str());
-    if (ref_in.size() < 2)
+
+    if (ref_in.size() == 0)
     {
-        SWSS_LOG_ERROR("invalid reference received:%s\n", ref_in.c_str());
-        return false;
-    }
-    if ((ref_in[0] != ref_start) || (ref_in[ref_in.size()-1] != ref_end))
-    {
-        SWSS_LOG_ERROR("malformed reference:%s. Must be surrounded by [ ]\n", ref_in.c_str());
-        return false;
-    }
-    if (ref_in.size() == 2)
-    {
-        // value set by user is "[]"
+        // value set by user is ""
         // Deem it as a valid format
         // clear both type_name and object_name
         // as an indication to the caller that
         // such a case has been encountered
-        type_name.clear();
         object_name.clear();
         return true;
     }
-    string ref_content = ref_in.substr(1, ref_in.size() - 2);
-    vector<string> tokens;
-    tokens = tokenize(ref_content, delimiter);
-    if (tokens.size() != 2)
+
+    if ((ref_in[0] == ref_start) || (ref_in[ref_in.size()-1] == ref_end))
     {
-        tokens = tokenize(ref_content, config_db_key_delimiter);
-        if (tokens.size() != 2)
-        {
-            SWSS_LOG_ERROR("malformed reference:%s. Must contain 2 tokens\n", ref_content.c_str());
-            return false;
-        }
+        SWSS_LOG_ERROR("malformed reference:%s. Must not be surrounded by [ ]\n", ref_in.c_str());
+        return false;
     }
-    auto type_it = type_maps.find(tokens[0]);
+    auto type_it = type_maps.find(type_name);
     if (type_it == type_maps.end())
     {
-        SWSS_LOG_ERROR("not recognized type:%s\n", tokens[0].c_str());
+        SWSS_LOG_ERROR("not recognized type:%s\n", type_name.c_str());
         return false;
     }
-    auto obj_map = type_maps[tokens[0]];
-    auto obj_it = obj_map->find(tokens[1]);
+    auto obj_map = type_maps[type_name];
+    auto obj_it = obj_map->find(ref_in);
     if (obj_it == obj_map->end())
     {
-        SWSS_LOG_INFO("map:%s does not contain object with name:%s\n", tokens[0].c_str(), tokens[1].c_str());
+        SWSS_LOG_INFO("map:%s does not contain object with name:%s\n", type_name.c_str(), ref_in.c_str());
         return false;
     }
-    type_name = tokens[0];
-    object_name = tokens[1];
+    object_name = ref_in;
     SWSS_LOG_DEBUG("parsed: type_name:%s, object_name:%s", type_name.c_str(), object_name.c_str());
     return true;
 }
@@ -370,6 +365,7 @@ bool Orch::parseReference(type_map &type_maps, string &ref_in, string &type_name
 ref_resolve_status Orch::resolveFieldRefValue(
     type_map &type_maps,
     const string &field_name,
+    const string &ref_type_name,
     KeyOpFieldsValuesTuple &tuple,
     sai_object_id_t &sai_object,
     string &referenced_object_name)
@@ -387,7 +383,7 @@ ref_resolve_status Orch::resolveFieldRefValue(
                 SWSS_LOG_ERROR("Multiple same fields %s", field_name.c_str());
                 return ref_resolve_status::multiple_instances;
             }
-            string ref_type_name, object_name;
+            string object_name;
             if (!parseReference(type_maps, fvValue(*i), ref_type_name, object_name))
             {
                 return ref_resolve_status::not_resolved;
@@ -536,7 +532,7 @@ void Orch::logfileReopen()
      * empty file here.
      */
 
-    gRecordOfs.open(gRecordFile);
+    gRecordOfs.open(gRecordFile, std::ofstream::out | std::ofstream::app);
 
     if (!gRecordOfs.is_open())
     {
@@ -568,11 +564,12 @@ string Orch::dumpTuple(Consumer &consumer, const KeyOpFieldsValuesTuple &tuple)
 ref_resolve_status Orch::resolveFieldRefArray(
     type_map &type_maps,
     const string &field_name,
+    const string &ref_type_name,
     KeyOpFieldsValuesTuple &tuple,
     vector<sai_object_id_t> &sai_object_arr,
     string &object_name_list)
 {
-    // example: [BUFFER_PROFILE_TABLE:e_port.profile0],[BUFFER_PROFILE_TABLE:e_port.profile1]
+    // example: e_port.profile0,e_port.profile1
     SWSS_LOG_ENTER();
     size_t count = 0;
     sai_object_arr.clear();
@@ -585,7 +582,7 @@ ref_resolve_status Orch::resolveFieldRefArray(
                 SWSS_LOG_ERROR("Singleton field with name:%s must have only 1 instance, actual count:%zd\n", field_name.c_str(), count);
                 return ref_resolve_status::multiple_instances;
             }
-            string ref_type_name, object_name;
+            string object_name;
             string list = fvValue(*i);
             vector<string> list_items;
             if (list.find(list_item_delimiter) != string::npos)
@@ -600,7 +597,7 @@ ref_resolve_status Orch::resolveFieldRefArray(
             {
                 if (!parseReference(type_maps, list_items[ind], ref_type_name, object_name))
                 {
-                    SWSS_LOG_ERROR("Failed to parse profile reference:%s\n", list_items[ind].c_str());
+                    SWSS_LOG_NOTICE("Failed to parse profile reference:%s\n", list_items[ind].c_str());
                     return ref_resolve_status::not_resolved;
                 }
                 sai_object_id_t sai_obj = (*(type_maps[ref_type_name]))[object_name].m_saiObjectId;
@@ -647,6 +644,139 @@ bool Orch::parseIndexRange(const string &input, sai_uint32_t &range_low, sai_uin
         range_low = range_high = (uint32_t)stoul(input);
     }
     SWSS_LOG_DEBUG("resulting range:%d-%d", range_low, range_high);
+    return true;
+}
+
+/*
+ * generateBitMapFromIdsStr
+ *
+ * Generates the bit map representing the idsMap in string
+ * Args:
+ *      idsStr: The string representing the IDs.
+ *              Typically it's part of a key of BUFFER_QUEUE or BUFFER_PG, like "3-4" from "Ethernet0|3-4"
+ * Return:
+ *      idsMap: The bitmap of IDs. The LSB stands for ID 0.
+ *
+ * Example:
+ *      Input idsMap: 3-4
+ *      Return: 00011000b
+ */
+unsigned long Orch::generateBitMapFromIdsStr(const string &idsStr)
+{
+    sai_uint32_t lowerBound, upperBound;
+    unsigned long idsMap = 0;
+
+    if (!parseIndexRange(idsStr, lowerBound, upperBound))
+        return 0;
+
+    for (sai_uint32_t id = lowerBound; id <= upperBound; id ++)
+    {
+        idsMap |= (1 << id);
+    }
+
+    return idsMap;
+}
+
+/*
+ * generateIdListFromMap
+ *
+ * Parse the idsMap and generate a vector which contains slices representing bits in idsMap
+ * Args:
+ *     idsMap: The bitmap of IDs. The LSB stands for ID 0.
+ *     maxId: The (exclusive) upperbound of ID range.
+ *            Eg: if ID range is 0~7, maxId should be 8.
+ * Return:
+ *     A vector which contains slices representing bits in idsMap
+ *
+ * Example:
+ *     Input idsMap: 00100110b, maxId: 8
+ *     Return vector: ["1-2", "5"]
+ */
+set<string> Orch::generateIdListFromMap(unsigned long idsMap, sai_uint32_t maxId)
+{
+    unsigned long currentIdMask = 1;
+    bool started = false, needGenerateMap = false;
+    sai_uint32_t lower, upper;
+    set<string> idStringList;
+    for (sai_uint32_t id = 0; id <= maxId; id ++)
+    {
+        // currentIdMask represents the bit mask corresponding to id: (1<<id)
+        if (idsMap & currentIdMask)
+        {
+            if (!started)
+            {
+                started = true;
+                lower = id;
+            }
+        }
+        else
+        {
+            if (started)
+            {
+                started = false;
+                upper = id - 1;
+                needGenerateMap = true;
+            }
+        }
+
+        if (needGenerateMap)
+        {
+            if (lower != upper)
+            {
+                idStringList.insert(to_string(lower) + "-" + to_string(upper));
+            }
+            else
+            {
+                idStringList.insert(to_string(lower));
+            }
+            needGenerateMap = false;
+        }
+
+        currentIdMask <<= 1;
+    }
+
+    return idStringList;
+}
+
+
+/*
+ * isItemIdsMapContinuous
+ *
+ * Check whether the input idsMap is continuous.
+ * An idsMap is continuous means there is no "0"s between any two "1"s in the map.
+ * Args:
+ *     idsMap: The bitmap of IDs. The LSB stands for ID 0.
+ *     maxId: The maximum value of ID.
+ * Return:
+ *     Whether the idsMap is continous
+ *
+ * Example:
+ *     idsMaps like 00011100, 00001000, 00000000 are continuous
+ *     while 00110010 is not because there are 2 "0"s in bit 2, 3 surrounded by "1"s
+ */
+bool Orch::isItemIdsMapContinuous(unsigned long idsMap, sai_uint32_t maxId)
+{
+    unsigned long currentIdMask = 1;
+    bool isCurrentBitValid = false, hasValidBits = false, hasZeroAfterValidBit = false;
+
+    for (sai_uint32_t id = 0; id < maxId; id ++)
+    {
+        isCurrentBitValid = ((idsMap & currentIdMask) != 0);
+        if (isCurrentBitValid)
+        {
+            if (!hasValidBits)
+                hasValidBits = true;
+            if (hasZeroAfterValidBit)
+                return false;
+        }
+        else
+        {
+            if (hasValidBits && !hasZeroAfterValidBit)
+                hasZeroAfterValidBit = true;
+        }
+        currentIdMask <<= 1;
+    }
+
     return true;
 }
 
@@ -699,15 +829,55 @@ task_process_status Orch::handleSaiCreateStatus(sai_api_t api, sai_status_t stat
      *          in each orch.
      *       3. Take the type of sai api into consideration.
      */
-    switch (status)
+    switch (api)
     {
-        case SAI_STATUS_SUCCESS:
-            SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiCreateStatus");
-            return task_success;
+        case SAI_API_FDB:
+            switch (status)
+            {
+                case SAI_STATUS_SUCCESS:
+                    SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiCreateStatus");
+                    return task_success;
+                case SAI_STATUS_ITEM_ALREADY_EXISTS:
+                    /*
+                     *  In FDB creation, there are scenarios where the hardware learns an FDB entry before orchagent.
+                     *  In such cases, the FDB SAI creation would report the status of SAI_STATUS_ITEM_ALREADY_EXISTS,
+                     *  and orchagent should ignore the error and treat it as entry was explicitly created.
+                     */
+                    return task_success;
+                default:
+                    SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
+                                sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+                    exit(EXIT_FAILURE);
+            }
+            break;
+        case SAI_API_HOSTIF:
+            switch (status)
+            {
+                case SAI_STATUS_SUCCESS:
+                    return task_success;
+                case SAI_STATUS_FAILURE:
+                    /*
+                     * Host interface maybe failed due to lane not available.
+                     * In some scenarios, like SONiC virtual machine, the invalid lane may be not enabled by VM configuration,
+                     * So just ignore the failure and report an error log.
+                     */
+                    return task_ignore;
+                default:
+                    SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
+                                sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+                    exit(EXIT_FAILURE);
+            }
         default:
-            SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
-                        sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-            exit(EXIT_FAILURE);
+            switch (status)
+            {
+                case SAI_STATUS_SUCCESS:
+                    SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiCreateStatus");
+                    return task_success;
+                default:
+                    SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
+                                sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+                    exit(EXIT_FAILURE);
+            }
     }
     return task_need_retry;
 }
@@ -725,16 +895,36 @@ task_process_status Orch::handleSaiSetStatus(sai_api_t api, sai_status_t status,
      *          in each orch.
      *       3. Take the type of sai api into consideration.
      */
-    switch (status)
+    if (status == SAI_STATUS_SUCCESS)
     {
-        case SAI_STATUS_SUCCESS:
-            SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiSetStatus");
-            return task_success;
+        SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiSetStatus");
+        return task_success;
+    }
+
+    switch (api)
+    {
+        case SAI_API_PORT:
+            switch (status)
+            {
+                case SAI_STATUS_INVALID_ATTR_VALUE_0:
+                    /*
+                     * If user gives an invalid attribute value, no need to retry or exit orchagent, just fail the current task
+                     * and let user correct the configuration.
+                     */
+                    SWSS_LOG_ERROR("Encountered SAI_STATUS_INVALID_ATTR_VALUE_0 in set operation, task failed, SAI API: %s, status: %s",
+                            sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+                    return task_failed;
+                default:
+                    SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
+                            sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+                    exit(EXIT_FAILURE);
+            }
         default:
             SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
                         sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
             exit(EXIT_FAILURE);
     }
+
     return task_need_retry;
 }
 
@@ -763,6 +953,35 @@ task_process_status Orch::handleSaiRemoveStatus(sai_api_t api, sai_status_t stat
             exit(EXIT_FAILURE);
     }
     return task_need_retry;
+}
+
+task_process_status Orch::handleSaiGetStatus(sai_api_t api, sai_status_t status, void *context)
+{
+    /*
+     * This function aims to provide coarse handling of failures in sairedis get
+     * operation (i.e., notify users by throwing excepions when failures happen).
+     * Return value: task_success - Handled the status successfully. No need to retry this SAI operation.
+     *               task_need_retry - Cannot handle the status. Need to retry the SAI operation.
+     *               task_failed - Failed to handle the status but another attempt is unlikely to resolve the failure.
+     * TODO: 1. Add general handling logic for specific statuses
+     *       2. Develop fine-grain failure handling mechanisms and replace this coarse handling
+     *          in each orch.
+     *       3. Take the type of sai api into consideration.
+     */
+    switch (status)
+    {
+        case SAI_STATUS_SUCCESS:
+            SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiGetStatus");
+            return task_success;
+        case SAI_STATUS_NOT_IMPLEMENTED:
+            SWSS_LOG_ERROR("Encountered failure in get operation due to the function is not implemented, exiting orchagent, SAI API: %s",
+                        sai_serialize_api(api).c_str());
+            throw std::logic_error("SAI get function not implemented");
+        default:
+            SWSS_LOG_ERROR("Encountered failure in get operation, SAI API: %s, status: %s",
+                        sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+    }
+    return task_failed;
 }
 
 bool Orch::parseHandleSaiStatusFailure(task_process_status status)
@@ -840,4 +1059,3 @@ void Orch2::doTask(Consumer &consumer)
         }
     }
 }
-

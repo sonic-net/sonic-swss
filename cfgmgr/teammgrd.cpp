@@ -17,6 +17,10 @@ bool gSwssRecord = false;
 bool gLogRotate = false;
 ofstream gRecordOfs;
 string gRecordFile;
+bool gResponsePublisherRecord = false;
+bool gResponsePublisherLogRotate = false;
+ofstream gResponsePublisherRecordOfs;
+string gResponsePublisherRecordFile;
 
 bool received_sigterm = false;
 
@@ -66,7 +70,7 @@ int main(int argc, char **argv)
         }
 
         while (!received_sigterm)
-        {            
+        {
             Selectable *sel;
             int ret;
 
@@ -91,7 +95,8 @@ int main(int argc, char **argv)
     catch (const exception &e)
     {
         SWSS_LOG_ERROR("Runtime error: %s", e.what());
+        return EXIT_FAILURE;
     }
 
-    return -1;
+    return EXIT_SUCCESS;
 }
