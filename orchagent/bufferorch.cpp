@@ -958,17 +958,24 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
              * so we added a map that will help us to know what was the last command for this port and priority -
              * if the last command was set command then it is a modify command and we dont need to increase the buffer counter
              * all other cases (no last command exist or del command was the last command) it means that we need to increase the ref counter */
-            if (op == SET_COMMAND) {
-                if (pg_port_flags[port_name][ind] != SET_COMMAND) {
+            if (op == SET_COMMAND) 
+            {
+                if (pg_port_flags[port_name][ind] != SET_COMMAND) 
+                {
                     /* if the last operation was not "set" then it's create and not modify - need to increase ref counter */
                     gPortsOrch->increasePortRefCount(port_name);
                 }
-            } else if (op == DEL_COMMAND){
-                if (pg_port_flags[port_name][ind] == SET_COMMAND) {
+            } 
+            else if (op == DEL_COMMAND)
+            {
+                if (pg_port_flags[port_name][ind] == SET_COMMAND) 
+                {
                     /* we need to decrease ref counter only if the last operation was "SET_COMMAND" */
                     gPortsOrch->decreasePortRefCount(port_name);
                 }
-            } else {
+            } 
+            else 
+            {
                 SWSS_LOG_ERROR("operation value is not SET or DEL (op = %s)", op.c_str());
                 return task_process_status::task_invalid_entry;
             }
