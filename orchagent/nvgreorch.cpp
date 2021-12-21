@@ -319,8 +319,8 @@ void NvgreTunnel::removeNvgreTunnel()
 {
     try
     {
-        sai_remove_tunnel(tunnel_ids_.tunnel_id);
         sai_remove_tunnel_termination(tunnel_ids_.tunnel_term_id);
+        sai_remove_tunnel(tunnel_ids_.tunnel_id);
     }
     catch(const std::runtime_error& error)
     {
