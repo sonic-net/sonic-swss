@@ -159,6 +159,10 @@ private:
     typedef std::map<std::string, buffer_table_handler> buffer_table_handler_map;
     typedef std::pair<std::string, buffer_table_handler> buffer_handler_pair;
 
+    std::string     m_platform;             // vendor, e.g. "mellanox"
+    std::string     m_specific_platform;    // name of platform, e.g. "x86_64-mlnx_msn3420-r0"
+    unsigned int    m_model_number;         // model number extracted from specific platform, e.g. 3420
+
     buffer_table_handler_map m_bufferTableHandlerMap;
 
     typedef task_process_status (BufferMgrDynamic::*buffer_single_item_handler)(const std::string &key, const std::string &port, const KeyOpFieldsValuesTuple &tuple);
@@ -234,7 +238,7 @@ private:
 
     // Other tables
     Table m_cfgDefaultLosslessBufferParam;
-
+    Table m_cfgDeviceMetaDataTable;
     Table m_stateBufferMaximumTable;
 
     Table m_applPortTable;
