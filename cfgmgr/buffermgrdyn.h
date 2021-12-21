@@ -150,7 +150,10 @@ public:
     using Orch::doTask;
 
 private:
-    std::string m_platform;
+    std::string     m_platform;             // vendor, e.g. "mellanox"
+    std::string     m_specific_platform;    // name of platform, e.g. "x86_64-mlnx_msn3420-r0"
+    unsigned int    m_model_number;         // model number extracted from specific platform, e.g. 3420
+
     std::vector<buffer_direction_t> m_bufferDirections;
     const std::string m_bufferObjectNames[BUFFER_DIR_MAX];
     const std::string m_bufferDirectionNames[BUFFER_DIR_MAX];
@@ -158,10 +161,6 @@ private:
     typedef task_process_status (BufferMgrDynamic::*buffer_table_handler)(KeyOpFieldsValuesTuple &t);
     typedef std::map<std::string, buffer_table_handler> buffer_table_handler_map;
     typedef std::pair<std::string, buffer_table_handler> buffer_handler_pair;
-
-    std::string     m_platform;             // vendor, e.g. "mellanox"
-    std::string     m_specific_platform;    // name of platform, e.g. "x86_64-mlnx_msn3420-r0"
-    unsigned int    m_model_number;         // model number extracted from specific platform, e.g. 3420
 
     buffer_table_handler_map m_bufferTableHandlerMap;
 
