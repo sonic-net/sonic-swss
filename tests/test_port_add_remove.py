@@ -4,6 +4,7 @@ from dvslib.dvs_common import PollingConfig
 
 # the port to be removed and add
 PORT = "Ethernet64"
+SECOND_PORT = "Ethernet68"
 
 """
 DELETE_CREATE_ITERATIONS defines the number of iteration of delete and create to  ports,
@@ -97,6 +98,10 @@ class TestPortAddRemove(object):
             assert len(num) == num_of_ports-len(ports)
             
             # add port
+            """
+            DELETE_CREATE_ITERATIONS defines the number of iteration of delete and create to  ports,
+            we add different timeouts between delete/create to catch potential race condition that can lead to system crush.
+            """
             time.sleep(i%3)
             for key in ports:
                 config_db.create_entry("PORT", key, ports_info[key])
@@ -112,10 +117,10 @@ class TestPortAddRemove(object):
         dvs.setup_db()        
         dvs.create_vlan("6")
         dvs.create_vlan_member("6", PORT)
-        dvs.create_vlan_member("6", "Ethernet68")
+        dvs.create_vlan_member("6", SECOND_PORT)
         dvs.set_interface_status("Vlan6", "up")
         dvs.add_ip_address("Vlan6", "6.6.6.1/24")
-        dvs.set_interface_status("Ethernet68", "up")
+        dvs.set_interface_status(SECOND_PORT, "up")
         dvs.set_interface_status(PORT, "up")
         
         dvs.servers[16].runcmd("ifconfig eth0 6.6.6.6/24 up")
@@ -131,8 +136,8 @@ class TestPortAddRemove(object):
         rc = dvs.servers[17].runcmd("ping -c 1 6.6.6.6")
         assert rc == 0
 
-        dvs.set_interface_status("Ethernet68", "down")
+        dvs.set_interface_status(SECOND_PORT, "down")
         dvs.set_interface_status(PORT, "down")
-        dvs.remove_vlan_member("6", "Ethernet68")
+        dvs.remove_vlan_member("6", SECOND_PORT)
         dvs.remove_vlan_member("6", PORT)
         dvs.remove_vlan("6")
