@@ -48,8 +48,10 @@ void DebugCounterOrch::update(SubjectType type, void *cntx)
 {
     SWSS_LOG_ENTER();
 
-    if (type == SUBJECT_TYPE_PORT_CHANGE) {
-        if (!cntx) {
+    if (type == SUBJECT_TYPE_PORT_CHANGE) 
+    {
+        if (!cntx) 
+        {
             SWSS_LOG_ERROR("cntx is NULL");
             return;
         }
@@ -57,7 +59,8 @@ void DebugCounterOrch::update(SubjectType type, void *cntx)
         PortUpdate *update = static_cast<PortUpdate *>(cntx);
         Port &port = update->port;
 
-        if (update->add) {
+        if (update->add) 
+        {
             for (const auto& debug_counter: debug_counters)
             {
                 DebugCounter *counter = debug_counter.second.get();
@@ -69,7 +72,9 @@ void DebugCounterOrch::update(SubjectType type, void *cntx)
                     installDebugFlexCounters(counter_type, counter_stat, port.m_port_id);
                 }
             }
-        } else {
+        } 
+        else 
+        {
             for (const auto& debug_counter: debug_counters)
             {
                 DebugCounter *counter = debug_counter.second.get();
