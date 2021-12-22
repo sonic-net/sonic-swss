@@ -221,7 +221,7 @@ void PfcWdActionHandler::updateWdCounters(const string& queueIdStr, const PfcWdQ
 
 PfcWdSaiDlrInitHandler::PfcWdSaiDlrInitHandler(sai_object_id_t port, sai_object_id_t queue,
                                                uint8_t queueId, shared_ptr<Table> countersTable):
-    PfcWdActionHandler(port, queue, queueId, countersTable)
+    PfcWdZeroBufferHandler(port, queue, queueId, countersTable)
 {
     SWSS_LOG_ENTER();
 
@@ -262,59 +262,26 @@ PfcWdSaiDlrInitHandler::~PfcWdSaiDlrInitHandler(void)
     }
 }
 
-bool PfcWdSaiDlrInitHandler::getHwCounters(PfcWdHwStats& counters)
-{
-    SWSS_LOG_ENTER();
-
-    static const vector<sai_stat_id_t> queueStatIds =
-    {
-        SAI_QUEUE_STAT_PACKETS,
-        SAI_QUEUE_STAT_DROPPED_PACKETS,
-    };
-
-    vector<uint64_t> queueStats;
-    queueStats.resize(queueStatIds.size());
-
-    sai_status_t status = sai_queue_api->get_queue_stats(
-            getQueue(),
-            static_cast<uint32_t>(queueStatIds.size()),
-            queueStatIds.data(),
-            queueStats.data());
-
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to fetch queue 0x%" PRIx64 " stats: %d", getQueue(), status);
-        return false;
-    }
-
-    counters.txPkt = queueStats[0];
-    counters.txDropPkt = queueStats[1];
-    counters.rxPkt = 0;
-    counters.rxDropPkt = 0;
-
-    return true;
-}
-
 PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
         uint8_t queueId, shared_ptr<Table> countersTable):
     PfcWdLossyHandler(port, queue, queueId, countersTable)
 {
     SWSS_LOG_ENTER();
 
-    acl_table_type_t table_type;
+    string table_type;
 
     string queuestr = to_string(queueId);
     m_strRule = "Rule_PfcWdAclHandler_" + queuestr;
 
     // Ingress table/rule creation
-    table_type = ACL_TABLE_DROP;
+    table_type = TABLE_TYPE_DROP;
     m_strIngressTable = INGRESS_TABLE_DROP;
     auto found = m_aclTables.find(m_strIngressTable);
     if (found == m_aclTables.end())
     {
         // First time of handling PFC for this queue, create ACL table, and bind
         createPfcAclTable(port, m_strIngressTable, true);
-        shared_ptr<AclRulePfcwd> newRule = make_shared<AclRulePfcwd>(gAclOrch, m_strRule, m_strIngressTable, table_type);
+        shared_ptr<AclRulePacket> newRule = make_shared<AclRulePacket>(gAclOrch, m_strRule, m_strIngressTable);
         createPfcAclRule(newRule, queueId, m_strIngressTable, port);
     }
     else
@@ -322,7 +289,7 @@ PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
         AclRule* rule = gAclOrch->getAclRule(m_strIngressTable, m_strRule);
         if (rule == nullptr)
         {
-            shared_ptr<AclRulePfcwd> newRule = make_shared<AclRulePfcwd>(gAclOrch, m_strRule, m_strIngressTable, table_type);
+            shared_ptr<AclRulePacket> newRule = make_shared<AclRulePacket>(gAclOrch, m_strRule, m_strIngressTable);
             createPfcAclRule(newRule, queueId, m_strIngressTable, port);
         } 
         else 
@@ -332,14 +299,14 @@ PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
     }
 
     // Egress table/rule creation
-    table_type = ACL_TABLE_PFCWD;
+    table_type = TABLE_TYPE_PFCWD;
     m_strEgressTable = "EgressTable_PfcWdAclHandler_" + queuestr;
     found = m_aclTables.find(m_strEgressTable);
     if (found == m_aclTables.end())
     {
         // First time of handling PFC for this queue, create ACL table, and bind
         createPfcAclTable(port, m_strEgressTable, false);
-        shared_ptr<AclRulePfcwd> newRule = make_shared<AclRulePfcwd>(gAclOrch, m_strRule, m_strEgressTable, table_type);
+        shared_ptr<AclRulePacket> newRule = make_shared<AclRulePacket>(gAclOrch, m_strRule, m_strEgressTable);
         createPfcAclRule(newRule, queueId, m_strEgressTable, port);
     }
     else
@@ -392,7 +359,7 @@ void PfcWdAclHandler::createPfcAclTable(sai_object_id_t port, string strTable, b
 
     auto inserted = m_aclTables.emplace(piecewise_construct,
         std::forward_as_tuple(strTable),
-        std::forward_as_tuple());
+        std::forward_as_tuple(gAclOrch, strTable));
 
     assert(inserted.second);
 
@@ -408,23 +375,26 @@ void PfcWdAclHandler::createPfcAclTable(sai_object_id_t port, string strTable, b
     }
 
     aclTable.link(port);
-    aclTable.id = strTable;
 
     if (ingress) 
     {
-        aclTable.type = ACL_TABLE_DROP;
+        auto dropType = gAclOrch->getAclTableType(TABLE_TYPE_DROP);
+        assert(dropType);
+        aclTable.validateAddType(*dropType);
         aclTable.stage = ACL_STAGE_INGRESS;
     } 
     else 
     {
-        aclTable.type = ACL_TABLE_PFCWD;
+        auto pfcwdType = gAclOrch->getAclTableType(TABLE_TYPE_PFCWD);
+        assert(pfcwdType);
+        aclTable.validateAddType(*pfcwdType);
         aclTable.stage = ACL_STAGE_EGRESS;
     }
     
     gAclOrch->addAclTable(aclTable);
 }
 
-void PfcWdAclHandler::createPfcAclRule(shared_ptr<AclRulePfcwd> rule, uint8_t queueId, string strTable, sai_object_id_t portOid)
+void PfcWdAclHandler::createPfcAclRule(shared_ptr<AclRulePacket> rule, uint8_t queueId, string strTable, sai_object_id_t portOid)
 {
     SWSS_LOG_ENTER();
 
@@ -469,6 +439,14 @@ PfcWdLossyHandler::PfcWdLossyHandler(sai_object_id_t port, sai_object_id_t queue
 {
     SWSS_LOG_ENTER();
 
+    string platform = getenv("platform") ? getenv("platform") : "";
+    if (platform == CISCO_8000_PLATFORM_SUBSTRING)
+    {
+        SWSS_LOG_DEBUG("Skipping in constructor PfcWdLossyHandler for platform %s on port 0x%" PRIx64,
+                       platform.c_str(), port);
+        return;
+    }
+
     uint8_t pfcMask = 0;
 
     if (!gPortsOrch->getPortPfc(port, &pfcMask))
@@ -487,6 +465,14 @@ PfcWdLossyHandler::PfcWdLossyHandler(sai_object_id_t port, sai_object_id_t queue
 PfcWdLossyHandler::~PfcWdLossyHandler(void)
 {
     SWSS_LOG_ENTER();
+
+    string platform = getenv("platform") ? getenv("platform") : "";
+    if (platform == CISCO_8000_PLATFORM_SUBSTRING)
+    {
+        SWSS_LOG_DEBUG("Skipping in destructor PfcWdLossyHandler for platform %s on port 0x%" PRIx64,
+                       platform.c_str(), getPort());
+        return;
+    }
 
     uint8_t pfcMask = 0;
 

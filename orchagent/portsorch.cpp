@@ -5,6 +5,7 @@
 #include "gearboxutils.h"
 #include "vxlanorch.h"
 #include "directory.h"
+#include "subintf.h"
 
 #include <inttypes.h>
 #include <cassert>
@@ -807,7 +808,7 @@ bool PortsOrch::getPortByBridgePortId(sai_object_id_t bridge_port_id, Port &port
     return false;
 }
 
-bool PortsOrch::addSubPort(Port &port, const string &alias, const bool &adminUp, const uint32_t &mtu)
+bool PortsOrch::addSubPort(Port &port, const string &alias, const string &vlan, const bool &adminUp, const uint32_t &mtu)
 {
     SWSS_LOG_ENTER();
 
@@ -817,21 +818,21 @@ bool PortsOrch::addSubPort(Port &port, const string &alias, const bool &adminUp,
         SWSS_LOG_ERROR("%s is not a sub interface", alias.c_str());
         return false;
     }
-    string parentAlias = alias.substr(0, found);
-    string vlanId = alias.substr(found + 1);
+    subIntf subIf(alias);
+    string parentAlias = subIf.parentIntf();
     sai_vlan_id_t vlan_id;
     try
     {
-        vlan_id = static_cast<sai_vlan_id_t>(stoul(vlanId));
+        vlan_id = static_cast<sai_vlan_id_t>(stoul(vlan));
     }
     catch (const std::invalid_argument &e)
     {
-        SWSS_LOG_ERROR("Invalid argument %s to %s()", vlanId.c_str(), e.what());
+        SWSS_LOG_ERROR("Invalid argument %s to %s()", vlan.c_str(), e.what());
         return false;
     }
     catch (const std::out_of_range &e)
     {
-        SWSS_LOG_ERROR("Out of range argument %s to %s()", vlanId.c_str(), e.what());
+        SWSS_LOG_ERROR("Out of range argument %s to %s()", vlan.c_str(), e.what());
         return false;
     }
     if (vlan_id > MAX_VALID_VLAN_ID)

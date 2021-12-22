@@ -294,34 +294,34 @@ void NhgMapOrch::decRefCount(const string &index)
 }
 
 /*
- * Get the max FC value supported by the switch.
+ * Get the maximum number of FC classes supported by the switch.
  */
-sai_uint8_t NhgMapOrch::getMaxFcVal()
+sai_uint8_t NhgMapOrch::getMaxNumFcs()
 {
     SWSS_LOG_ENTER();
 
-    static int max_fc_val = -1;
+    static int max_num_fcs = -1;
 
     /*
-     * Get the maximum value allowed for FC if it wasn't already initialized.
+     * Get the maximum number of FC classes if it wasn't already initialized.
      */
-    if (max_fc_val == -1)
+    if (max_num_fcs == -1)
     {
         sai_attribute_t attr;
         attr.id = SAI_SWITCH_ATTR_MAX_NUMBER_OF_FORWARDING_CLASSES;
 
         if (sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr) == SAI_STATUS_SUCCESS)
         {
-            max_fc_val = attr.value.u8;
+            max_num_fcs = attr.value.u8;
         }
         else
         {
             SWSS_LOG_WARN("Switch does not support FCs");
-            max_fc_val = 0;
+            max_num_fcs = 0;
         }
     }
 
-    return static_cast<sai_uint8_t>(max_fc_val);
+    return static_cast<sai_uint8_t>(max_num_fcs);
 }
 
 /*
@@ -343,7 +343,7 @@ pair<bool, unordered_map<sai_uint32_t, sai_int32_t>> NhgMapOrch::getMap(const ve
     }
 
     unordered_map<sai_uint32_t, sai_int32_t> fc_map;
-    sai_uint8_t max_fc_val = getMaxFcVal();
+    sai_uint8_t max_num_fcs = getMaxNumFcs();
 
     /*
     * Create the map while validating that the values are positive
@@ -353,13 +353,13 @@ pair<bool, unordered_map<sai_uint32_t, sai_int32_t>> NhgMapOrch::getMap(const ve
         try
         {
             /*
-             * Check the FC value is valid.
+             * Check the FC value is valid. FC value must be in range [0, max_num_fcs).
              */
             auto fc = stoi(fvField(*it));
 
-            if ((fc < 0) || (fc > max_fc_val))
+            if ((fc < 0) || (fc >= max_num_fcs))
             {
-                SWSS_LOG_ERROR("FC value %d is either negative or greater than max value %d", fc, max_fc_val);
+                SWSS_LOG_ERROR("FC value %d is either negative or greater than max value %d", fc, max_num_fcs - 1);
                 success = false;
                 break;
             }

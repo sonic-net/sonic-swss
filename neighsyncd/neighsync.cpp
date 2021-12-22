@@ -82,7 +82,7 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     /* Ignore IPv6 link-local addresses as neighbors, if ipv6 link local mode is disabled */
     if (family == IPV6_NAME && IN6_IS_ADDR_LINKLOCAL(nl_addr_get_binary_addr(rtnl_neigh_get_dst(neigh))))
     {
-        if (isLinkLocalEnabled(intfName) == false)
+        if ((isLinkLocalEnabled(intfName) == false) && (nlmsg_type != RTM_DELNEIGH))
         {
             return;
         }

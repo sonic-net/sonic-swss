@@ -47,6 +47,8 @@ NatOrch *gNatOrch;
 MlagOrch *gMlagOrch;
 IsoGrpOrch *gIsoGrpOrch;
 MACsecOrch *gMacsecOrch;
+CoppOrch *gCoppOrch;
+P4Orch *gP4Orch;
 BfdOrch *gBfdOrch;
 Srv6Orch *gSrv6Orch;
 
@@ -90,6 +92,9 @@ bool OrchDaemon::init()
     SWSS_LOG_ENTER();
 
     string platform = getenv("platform") ? getenv("platform") : "";
+
+    gCrmOrch = new CrmOrch(m_configDb, CFG_CRM_TABLE_NAME);
+
     TableConnector stateDbSwitchTable(m_stateDb, "SWITCH_CAPABILITY");
     TableConnector app_switch_table(m_applDb, APP_SWITCH_TABLE_NAME);
     TableConnector conf_asic_sensors(m_configDb, CFG_ASIC_SENSORS_TABLE_NAME);
@@ -117,11 +122,12 @@ bool OrchDaemon::init()
         { APP_MCLAG_FDB_TABLE_NAME,  FdbOrch::fdborch_pri}
     };
 
-    gCrmOrch = new CrmOrch(m_configDb, CFG_CRM_TABLE_NAME);
     gPortsOrch = new PortsOrch(m_applDb, m_stateDb, ports_tables, m_chassisAppDb);
     TableConnector stateDbFdb(m_stateDb, STATE_FDB_TABLE_NAME);
     TableConnector stateMclagDbFdb(m_stateDb, STATE_MCLAG_REMOTE_FDB_TABLE_NAME);
     gFdbOrch = new FdbOrch(m_applDb, app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch);
+    TableConnector stateDbBfdSessionTable(m_stateDb, STATE_BFD_SESSION_TABLE_NAME);
+    gBfdOrch = new BfdOrch(m_applDb, APP_BFD_SESSION_TABLE_NAME, stateDbBfdSessionTable);
 
     vector<string> vnet_tables = {
             APP_VNET_RT_TABLE_NAME,
@@ -180,7 +186,7 @@ bool OrchDaemon::init()
     gNhgOrch = new NhgOrch(m_applDb, APP_NEXTHOP_GROUP_TABLE_NAME);
     gCbfNhgOrch = new CbfNhgOrch(m_applDb, APP_CLASS_BASED_NEXT_HOP_GROUP_TABLE_NAME);
 
-    CoppOrch  *copp_orch  = new CoppOrch(m_applDb, APP_COPP_TABLE_NAME);
+    gCoppOrch = new CoppOrch(m_applDb, APP_COPP_TABLE_NAME);
     TunnelDecapOrch *tunnel_decap_orch = new TunnelDecapOrch(m_applDb, APP_TUNNEL_DECAP_TABLE_NAME);
 
     VxlanTunnelOrch *vxlan_tunnel_orch = new VxlanTunnelOrch(m_stateDb, m_applDb, APP_VXLAN_TUNNEL_TABLE_NAME);
@@ -229,15 +235,19 @@ bool OrchDaemon::init()
     gMirrorOrch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, policer_orch);
 
     TableConnector confDbAclTable(m_configDb, CFG_ACL_TABLE_TABLE_NAME);
+    TableConnector confDbAclTableType(m_configDb, CFG_ACL_TABLE_TYPE_TABLE_NAME);
     TableConnector confDbAclRuleTable(m_configDb, CFG_ACL_RULE_TABLE_NAME);
     TableConnector appDbAclTable(m_applDb, APP_ACL_TABLE_TABLE_NAME);
+    TableConnector appDbAclTableType(m_applDb, APP_ACL_TABLE_TYPE_TABLE_NAME);
     TableConnector appDbAclRuleTable(m_applDb, APP_ACL_RULE_TABLE_NAME);
 
     vector<TableConnector> acl_table_connectors = {
+        confDbAclTableType,
         confDbAclTable,
         confDbAclRuleTable,
         appDbAclTable,
-        appDbAclRuleTable
+        appDbAclRuleTable,
+        appDbAclTableType,
     };
 
     vector<string> dtel_tables = {
@@ -305,9 +315,6 @@ bool OrchDaemon::init()
 
     gMacsecOrch = new MACsecOrch(m_applDb, m_stateDb, macsec_app_tables, gPortsOrch);
 
-    TableConnector stateDbBfdSessionTable(m_stateDb, STATE_BFD_SESSION_TABLE_NAME);
-    gBfdOrch = new BfdOrch(m_applDb, APP_BFD_SESSION_TABLE_NAME, stateDbBfdSessionTable);
-
     gNhgMapOrch = new NhgMapOrch(m_applDb, APP_FC_TO_NHG_INDEX_MAP_TABLE_NAME);
 
     /*
@@ -318,7 +325,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, mux_orch, mux_cb_orch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gRouteOrch, copp_orch, qos_orch, wm_orch, policer_orch, tunnel_decap_orch, sflow_orch, debug_counter_orch, gMacsecOrch, gBfdOrch, gSrv6Orch};
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, mux_orch, mux_cb_orch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gRouteOrch, gCoppOrch, qos_orch, wm_orch, policer_orch, tunnel_decap_orch, sflow_orch, debug_counter_orch, gMacsecOrch, gBfdOrch, gSrv6Orch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
@@ -350,7 +357,9 @@ bool OrchDaemon::init()
         dtel_orch = new DTelOrch(m_configDb, dtel_tables, gPortsOrch);
         m_orchList.push_back(dtel_orch);
     }
-    gAclOrch = new AclOrch(acl_table_connectors, gSwitchOrch, gPortsOrch, gMirrorOrch, gNeighOrch, gRouteOrch, dtel_orch);
+
+    gAclOrch = new AclOrch(acl_table_connectors, m_stateDb,
+        gSwitchOrch, gPortsOrch, gMirrorOrch, gNeighOrch, gRouteOrch, dtel_orch);
 
     vector<string> mlag_tables = {
         { CFG_MCLAG_TABLE_NAME },
@@ -596,6 +605,10 @@ bool OrchDaemon::init()
     }
 
     m_orchList.push_back(&CounterCheckOrch::getInstance(m_configDb));
+
+    vector<string> p4rt_tables = {APP_P4RT_TABLE_NAME};
+    gP4Orch = new P4Orch(m_applDb, p4rt_tables, vrf_orch, gCoppOrch);
+    m_orchList.push_back(gP4Orch);
 
     if (WarmStart::isWarmStart())
     {

@@ -43,7 +43,7 @@ public:
 
 private:
     void createMuxAclTable(sai_object_id_t port, string strTable);
-    void createMuxAclRule(shared_ptr<AclRuleMux> rule, string strTable);
+    void createMuxAclRule(shared_ptr<AclRulePacket> rule, string strTable);
     void bindAllPorts(AclTable &acl_table);
 
     // class shared dict: ACL table name -> ACL table
