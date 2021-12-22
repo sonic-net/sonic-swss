@@ -72,8 +72,6 @@ private:
     CoppTrapConfMap        m_coppTrapConfMap;
     CoppTrapIdTrapGroupMap m_coppTrapIdTrapGroupMap;
     CoppGroupFvs           m_coppGroupFvs;
-    std::set<std::string>  m_coppDisabledTraps;
-    std::set<std::string>  m_coppAlwaysEnabledTraps;
     CoppCfg                m_coppGroupInitCfg;
     CoppCfg                m_coppTrapInitCfg;
     CoppCfg                m_featuresCfgTable;
@@ -100,10 +98,12 @@ private:
                                  std::vector<FieldValueTuple> &modified_fvs);
     void parseInitFile(void);
     bool isTrapGroupInstalled(std::string key);
+    bool isFeatureEnabled(std::string feature);
     void mergeConfig(CoppCfg &init_cfg, CoppCfg &m_cfg, std::vector<std::string> &cfg_keys, Table &cfgTable);
 
     void removeTrap(std::string key);
     void addTrap(std::string trap_ids, std::string trap_group);
+
 
 };
 
