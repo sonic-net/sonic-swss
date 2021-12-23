@@ -790,6 +790,11 @@ void RouteOrch::doTask(Consumer& consumer)
                     }
                 }
 
+                sai_route_entry_t route_entry;
+                route_entry.vr_id = vrf_id;
+                route_entry.switch_id = gSwitchId;
+                copy(route_entry.destination, ip_prefix);
+
                 if (nhg.getSize() == 1 && nhg.hasIntfNextHop())
                 {
                     if (alsv[0] == "unknown")
@@ -833,6 +838,7 @@ void RouteOrch::doTask(Consumer& consumer)
                 else if (m_syncdRoutes.find(vrf_id) == m_syncdRoutes.end() ||
                     m_syncdRoutes.at(vrf_id).find(ip_prefix) == m_syncdRoutes.at(vrf_id).end() ||
                     m_syncdRoutes.at(vrf_id).at(ip_prefix) != RouteNhg(nhg, ctx.nhg_index) ||
+                    gRouteBulker.bulk_entry_pending_removal(route_entry) ||
                     ctx.using_temp_nhg)
                 {
                     if (addRoute(ctx, nhg))
@@ -1874,6 +1880,25 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
         }
         else
         {
+            if (!blackhole && vrf_id == gVirtualRouterId && ipPrefix.isDefaultRoute())
+            {
+                // Always set packet action for default route to avoid conflict settings
+                // in case a SET follows a DEL on the default route in the same bulk.
+                // - On DEL default route, the packet action will be set to DROP
+                // - On SET default route, as the default route has NOT been removed from m_syncdRoute
+                //   it calls SAI set_route_attributes instead of crate_route
+                //   However, packet action is called only when a route entry is created
+                //   This leads to conflict settings:
+                //   - packet action: DROP
+                //   - next hop: a valid next hop id
+                // To avoid this, we always set packet action for default route.
+                route_attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+                route_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+
+                object_statuses.emplace_back();
+                gRouteBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &route_attr);
+            }
+
             route_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
             route_attr.value.oid = next_hop_id;
 
