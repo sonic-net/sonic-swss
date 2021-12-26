@@ -737,6 +737,15 @@ class TestMACsec(object):
         macsec_info = inspector.get_macsec_port(macsec_port)
         assert("encrypt off" in macsec_info)
         assert("GCM-AES-256" in macsec_info)
+        self.deinit_macsec(
+            wpa,
+            inspector,
+            port_name,
+            macsec_port,
+            local_mac_address,
+            peer_mac_address,
+            macsec_port_identifier,
+            0)
 
 
 # Add Dummy always-pass test at end as workaroud
