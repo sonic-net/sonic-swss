@@ -12,15 +12,16 @@
 
 using namespace std;
 
+extern sai_switch_api_t *sai_switch_api;
 extern sai_port_api_t *sai_port_api;
 extern sai_queue_api_t *sai_queue_api;
 extern sai_scheduler_api_t *sai_scheduler_api;
 extern sai_wred_api_t *sai_wred_api;
 extern sai_qos_map_api_t *sai_qos_map_api;
 extern sai_scheduler_group_api_t *sai_scheduler_group_api;
-extern sai_switch_api_t *sai_switch_api;
 extern sai_acl_api_t* sai_acl_api;
 
+extern SwitchOrch *gSwitchOrch;
 extern PortsOrch *gPortsOrch;
 extern sai_object_id_t gSwitchId;
 extern CrmOrch *gCrmOrch;
@@ -192,6 +193,34 @@ bool DscpToTcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
     return true;
 }
 
+void DscpToTcMapHandler::applyDscpToTcMapToSwitch(sai_attr_id_t attr_id, sai_object_id_t map_id)
+{
+    SWSS_LOG_ENTER();
+    bool rv = true;
+
+    /* Query DSCP_TO_TC QoS map at switch capability */
+    rv = gSwitchOrch->querySwitchDscpToTcCapability(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP);
+    if (rv == false)
+    {
+        SWSS_LOG_ERROR("Switch level DSCP to TC QoS map configuration is not supported");
+        return;
+    }
+
+    /* Apply DSCP_TO_TC QoS map at switch */
+    sai_attribute_t attr;
+    attr.id = attr_id;
+    attr.value.oid = map_id;
+
+    sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to apply DSCP_TO_TC QoS map to switch rv:%d", status);
+        return;
+    }
+
+    SWSS_LOG_NOTICE("Applied DSCP_TO_TC QoS map to switch successfully");
+}
+
 sai_object_id_t DscpToTcMapHandler::addQosItem(const vector<sai_attribute_t> &attributes)
 {
     SWSS_LOG_ENTER();
@@ -216,6 +245,9 @@ sai_object_id_t DscpToTcMapHandler::addQosItem(const vector<sai_attribute_t> &at
         return SAI_NULL_OBJECT_ID;
     }
     SWSS_LOG_DEBUG("created QosMap object:%" PRIx64, sai_object);
+
+    applyDscpToTcMapToSwitch(SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP, sai_object);
+
     return sai_object;
 }
 
@@ -960,18 +992,29 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
 
         m_scheduler_group_port_info[port.m_port_id] = {
             .groups = std::move(groups),
-            .child_groups = std::vector<std::vector<sai_object_id_t>>(groups_count)
+            .child_groups = std::vector<std::vector<sai_object_id_t>>(groups_count),
+            .group_has_been_initialized = std::vector<bool>(groups_count)
         };
-     }
+
+        SWSS_LOG_INFO("Port %s has been initialized with %u group(s)", port.m_alias.c_str(), groups_count);
+    }
 
     /* Lookup groups to which queue belongs */
-    const auto& groups = m_scheduler_group_port_info[port.m_port_id].groups;
+    auto& scheduler_group_port_info = m_scheduler_group_port_info[port.m_port_id];
+    const auto& groups = scheduler_group_port_info.groups;
     for (uint32_t ii = 0; ii < groups.size() ; ii++)
     {
         const auto& group_id = groups[ii];
-        const auto& child_groups_per_group = m_scheduler_group_port_info[port.m_port_id].child_groups[ii];
+        const auto& child_groups_per_group = scheduler_group_port_info.child_groups[ii];
         if (child_groups_per_group.empty())
         {
+            if (scheduler_group_port_info.group_has_been_initialized[ii])
+            {
+                // skip this iteration if it has been initialized which means there're no children in this group
+                SWSS_LOG_INFO("No child group for port %s group 0x%" PRIx64 ", skip", port.m_alias.c_str(), group_id);
+                continue;
+            }
+
             attr.id = SAI_SCHEDULER_GROUP_ATTR_CHILD_COUNT;//Number of queues/groups childs added to scheduler group
             sai_status = sai_scheduler_group_api->get_scheduler_group_attribute(group_id, 1, &attr);
             if (SAI_STATUS_SUCCESS != sai_status)
@@ -985,7 +1028,9 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
             }
 
             uint32_t child_count = attr.value.u32;
-            vector<sai_object_id_t> child_groups(child_count);
+
+            SWSS_LOG_INFO("Port %s group 0x%" PRIx64 " has been initialized with %u child group(s)", port.m_alias.c_str(), group_id, child_count);
+            scheduler_group_port_info.group_has_been_initialized[ii] = true;
 
             // skip this iteration if there're no children in this group
             if (child_count == 0)
@@ -993,6 +1038,7 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
                 continue;
             }
 
+            vector<sai_object_id_t> child_groups(child_count);
             attr.id = SAI_SCHEDULER_GROUP_ATTR_CHILD_LIST;
             attr.value.objlist.list = child_groups.data();
             attr.value.objlist.count = child_count;
@@ -1007,7 +1053,7 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
                 }
             }
 
-            m_scheduler_group_port_info[port.m_port_id].child_groups[ii] = std::move(child_groups);
+            scheduler_group_port_info.child_groups[ii] = std::move(child_groups);
         }
 
         for (const auto& child_group_id: child_groups_per_group)
@@ -1375,7 +1421,13 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
             SWSS_LOG_INFO("Applied %s to port %s", it->second.first.c_str(), port_name.c_str());
         }
 
-        if (pfc_enable)
+        sai_uint8_t old_pfc_enable = 0;
+        if (!gPortsOrch->getPortPfc(port.m_port_id, &old_pfc_enable, &old_pfc_enable
+        {
+            SWSS_LOG_ERROR("Failed to retrieve PFC bits on port %s", port_name.c_str());
+        }
+
+        if (pfc_enable || old_pfc_enable)
         {
             if (!gPortsOrch->setPortPfc(port.m_port_id, pfc_enable, pfc_enable))
             {

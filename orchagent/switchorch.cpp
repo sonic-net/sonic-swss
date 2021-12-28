@@ -22,6 +22,7 @@ const map<string, sai_switch_attr_t> switch_attribute_map =
     {"ecmp_hash_seed",                      SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_SEED},
     {"lag_hash_seed",                       SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_SEED},
     {"fdb_aging_time",                      SAI_SWITCH_ATTR_FDB_AGING_TIME},
+    {"debug_shell_enable",                  SAI_SWITCH_ATTR_SWITCH_SHELL_ENABLE},
     {"vxlan_port",                          SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT},
     {"vxlan_router_mac",                    SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC}
 };
@@ -178,6 +179,10 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
 
                     case SAI_SWITCH_ATTR_FDB_AGING_TIME:
                         attr.value.u32 = to_uint<uint32_t>(value);
+                        break;
+
+                    case SAI_SWITCH_ATTR_SWITCH_SHELL_ENABLE:
+                        attr.value.booldata = to_uint<bool>(value);
                         break;
 
                     case SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT:
@@ -485,4 +490,32 @@ void SwitchOrch::initSensorsTable()
 void SwitchOrch::set_switch_capability(const std::vector<FieldValueTuple>& values)
 {
      m_switchTable.set("switch", values);
+}
+
+bool SwitchOrch::querySwitchDscpToTcCapability(sai_object_type_t sai_object, sai_attr_id_t attr_id)
+{
+    SWSS_LOG_ENTER();
+
+    /* Check if SAI is capable of handling Switch level DSCP to TC QoS map */
+    vector<FieldValueTuple> fvVector;
+    sai_status_t status = SAI_STATUS_SUCCESS;
+    sai_attr_capability_t capability;
+
+    status = sai_query_attribute_capability(gSwitchId, sai_object, attr_id, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Could not query switch level DSCP to TC map %d", status);
+        return false;
+    }
+    else 
+    {
+        if (capability.set_implemented)
+        {
+            return true;
+        }
+        else 
+        {
+            return false;
+        }
+    }
 }

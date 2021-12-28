@@ -219,6 +219,49 @@ void PfcWdActionHandler::updateWdCounters(const string& queueIdStr, const PfcWdQ
     m_countersTable->set(queueIdStr, resultFvValues);
 }
 
+PfcWdSaiDlrInitHandler::PfcWdSaiDlrInitHandler(sai_object_id_t port, sai_object_id_t queue,
+                                               uint8_t queueId, shared_ptr<Table> countersTable):
+    PfcWdZeroBufferHandler(port, queue, queueId, countersTable)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    attr.id = SAI_QUEUE_ATTR_PFC_DLR_INIT;
+    attr.value.booldata = true;
+
+    // Set DLR init to true to start PFC deadlock recovery
+    sai_status_t status = sai_queue_api->set_queue_attribute(queue, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set PFC DLR INIT on port 0x%" PRIx64 " queue 0x%" PRIx64
+                       " queueId %d : %d",
+                       port, queue, queueId, status);
+        return;
+    }
+}
+
+PfcWdSaiDlrInitHandler::~PfcWdSaiDlrInitHandler(void)
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_id_t port = getPort();
+    sai_object_id_t queue = getQueue();
+    uint8_t queueId = getQueueId();
+
+    sai_attribute_t attr;
+    attr.id = SAI_QUEUE_ATTR_PFC_DLR_INIT;
+    attr.value.booldata = false;
+
+    // Set DLR init to false to stop PFC deadlock recovery
+    sai_status_t status = sai_queue_api->set_queue_attribute(getQueue(), &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to clear PFC DLR INIT on port 0x%" PRIx64 " queue 0x%" PRIx64
+                       " queueId %d : %d", port, queue, queueId, status);
+        return;
+    }
+}
+
 PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
         uint8_t queueId, shared_ptr<Table> countersTable):
     PfcWdLossyHandler(port, queue, queueId, countersTable)
@@ -393,6 +436,14 @@ PfcWdLossyHandler::PfcWdLossyHandler(sai_object_id_t port, sai_object_id_t queue
 {
     SWSS_LOG_ENTER();
 
+    string platform = getenv("platform") ? getenv("platform") : "";
+    if (platform == CISCO_8000_PLATFORM_SUBSTRING)
+    {
+        SWSS_LOG_DEBUG("Skipping in constructor PfcWdLossyHandler for platform %s on port 0x%" PRIx64,
+                       platform.c_str(), port);
+        return;
+    }
+
     uint8_t pfcTxMask = 0;
     uint8_t pfcRxMask = 0;
 
@@ -413,6 +464,14 @@ PfcWdLossyHandler::PfcWdLossyHandler(sai_object_id_t port, sai_object_id_t queue
 PfcWdLossyHandler::~PfcWdLossyHandler(void)
 {
     SWSS_LOG_ENTER();
+
+    string platform = getenv("platform") ? getenv("platform") : "";
+    if (platform == CISCO_8000_PLATFORM_SUBSTRING)
+    {
+        SWSS_LOG_DEBUG("Skipping in destructor PfcWdLossyHandler for platform %s on port 0x%" PRIx64,
+                       platform.c_str(), getPort());
+        return;
+    }
 
     uint8_t pfcTxMask = 0;
     uint8_t pfcRxMask = 0;
@@ -712,7 +771,7 @@ void PfcWdZeroBufferHandler::ZeroBufferProfile::createZeroBufferProfile(bool ing
     attribs.push_back(attr);
 
     attr.id = SAI_BUFFER_PROFILE_ATTR_BUFFER_SIZE;
-    attr.value.u32 = 0;
+    attr.value.u64 = 0;
     attribs.push_back(attr);
 
     attr.id = SAI_BUFFER_PROFILE_ATTR_SHARED_DYNAMIC_TH;
