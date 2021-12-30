@@ -448,7 +448,7 @@ bool OrchDaemon::init()
         CFG_PFC_WD_TABLE_NAME
     };
 
-    if (platform == MLNX_PLATFORM_SUBSTRING)
+    if ((platform == MLNX_PLATFORM_SUBSTRING)  || (platform == VS_PLATFORM_SUBSTRING))
     {
 
         static const vector<sai_port_stat_t> portStatIds =
@@ -541,7 +541,7 @@ bool OrchDaemon::init()
                         PFC_WD_POLL_MSECS));
         }
     }
-    else if ((platform == BRCM_PLATFORM_SUBSTRING) || (platform == VS_PLATFORM_SUBSTRING))
+    else if (platform == BRCM_PLATFORM_SUBSTRING)
     {
         static const vector<sai_port_stat_t> portStatIds =
         {

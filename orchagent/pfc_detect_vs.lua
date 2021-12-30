@@ -21,6 +21,7 @@ for i = n, 1, -1 do
     local is_deadlock = false
     local pfc_wd_status = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'PFC_WD_STATUS')
     local pfc_wd_action = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'PFC_WD_ACTION')
+
     local big_red_switch_mode = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'BIG_RED_SWITCH_MODE')
     if not big_red_switch_mode and (pfc_wd_status == 'operational' or pfc_wd_action == 'alert') then
         local detection_time = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'PFC_WD_DETECTION_TIME')
@@ -35,43 +36,48 @@ for i = n, 1, -1 do
 
             local queue_index = redis.call('HGET', 'COUNTERS_QUEUE_INDEX_MAP', KEYS[i])
             local port_id = redis.call('HGET', 'COUNTERS_QUEUE_PORT_MAP', KEYS[i])
-
+            -- If there is no entry in COUNTERS_QUEUE_INDEX_MAP or COUNTERS_QUEUE_PORT_MAP then
+            -- it means KEYS[i] queue is inserted into FLEX COUNTER DB but the corresponding
+            -- maps haven't been updated yet.
             if queue_index and port_id then
                 local pfc_rx_pkt_key = 'SAI_PORT_STAT_PFC_' .. queue_index .. '_RX_PKTS'
-                local pfc_on2off_key = 'SAI_PORT_STAT_PFC_' .. queue_index .. '_ON2OFF_RX_PKTS'
+                local pfc_duration_key = 'SAI_PORT_STAT_PFC_' .. queue_index .. '_RX_PAUSE_DURATION_US'
 
                 -- Get all counters
                 local occupancy_bytes = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES')
                 local packets = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'SAI_QUEUE_STAT_PACKETS')
                 local pfc_rx_packets = redis.call('HGET', counters_table_name .. ':' .. port_id, pfc_rx_pkt_key)
-                local pfc_on2off = redis.call('HGET', counters_table_name .. ':' .. port_id, pfc_on2off_key)
-                local queue_pause_status = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'SAI_QUEUE_ATTR_PAUSE_STATUS')
+                local pfc_duration = redis.call('HGET', counters_table_name .. ':' .. port_id, pfc_duration_key)
 
-                if occupancy_bytes and packets and pfc_rx_packets and pfc_on2off and queue_pause_status then
+                if occupancy_bytes and packets and pfc_rx_packets and pfc_duration then
                     occupancy_bytes = tonumber(occupancy_bytes)
                     packets = tonumber(packets)
                     pfc_rx_packets = tonumber(pfc_rx_packets)
-                    pfc_on2off = tonumber(pfc_on2off)
+                    pfc_duration =  tonumber(pfc_duration)
 
                     local packets_last = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'SAI_QUEUE_STAT_PACKETS_last')
                     local pfc_rx_packets_last = redis.call('HGET', counters_table_name .. ':' .. port_id, pfc_rx_pkt_key .. '_last')
-                    local pfc_on2off_last = redis.call('HGET', counters_table_name .. ':' .. port_id, pfc_on2off_key .. '_last')
-                    local queue_pause_status_last = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'SAI_QUEUE_ATTR_PAUSE_STATUS_last')
-
+                    local pfc_duration_last = redis.call('HGET', counters_table_name .. ':' .. port_id, pfc_duration_key .. '_last')
                     -- DEBUG CODE START. Uncomment to enable
                     local debug_storm = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'DEBUG_STORM')
                     -- DEBUG CODE END.
 
                     -- If this is not a first run, then we have last values available
-                    if packets_last and pfc_rx_packets_last and pfc_on2off_last and queue_pause_status_last then
+                    if packets_last and pfc_rx_packets_last and pfc_duration_last then
                         packets_last = tonumber(packets_last)
                         pfc_rx_packets_last = tonumber(pfc_rx_packets_last)
-                        pfc_on2off_last = tonumber(pfc_on2off_last)
+                        pfc_duration_last = tonumber(pfc_duration_last)
+                        local storm_condition = (pfc_duration - pfc_duration_last) > (poll_time * 0.8)
 
                         -- Check actual condition of queue being in PFC storm
-                        if (pfc_rx_packets - pfc_rx_packets_last > 0 and pfc_on2off - pfc_on2off_last == 0 and queue_pause_status_last == 'true' and queue_pause_status == 'true') or
-                            (debug_storm == "enabled") then
+                        if (occupancy_bytes > 0 and packets - packets_last == 0 and pfc_rx_packets - pfc_rx_packets_last > 0) or
+                            -- DEBUG CODE START. Uncomment to enable
+                            (debug_storm == "enabled") or
+                            -- DEBUG CODE END.
+                            (occupancy_bytes == 0 and packets - packets_last == 0 and storm_condition) then
                             if time_left <= poll_time then
+                                redis.call('HDEL', counters_table_name .. ':' .. port_id, pfc_rx_pkt_key .. '_last')
+                                redis.call('HDEL', counters_table_name .. ':' .. port_id, pfc_duration_key .. '_last')
                                 redis.call('PUBLISH', 'PFC_WD_ACTION', '["' .. KEYS[i] .. '","storm"]')
                                 is_deadlock = true
                                 time_left = detection_time
@@ -87,11 +93,12 @@ for i = n, 1, -1 do
                     end
 
                     -- Save values for next run
-                    redis.call('HSET', counters_table_name .. ':' .. KEYS[i], 'SAI_QUEUE_ATTR_PAUSE_STATUS_last', queue_pause_status)
                     redis.call('HSET', counters_table_name .. ':' .. KEYS[i], 'SAI_QUEUE_STAT_PACKETS_last', packets)
                     redis.call('HSET', counters_table_name .. ':' .. KEYS[i], 'PFC_WD_DETECTION_TIME_LEFT', time_left)
-                    redis.call('HSET', counters_table_name .. ':' .. port_id, pfc_rx_pkt_key .. '_last', pfc_rx_packets)
-                    redis.call('HSET', counters_table_name .. ':' .. port_id, pfc_on2off_key .. '_last', pfc_on2off)
+                    if is_deadlock == false then
+                        redis.call('HSET', counters_table_name .. ':' .. port_id, pfc_rx_pkt_key .. '_last', pfc_rx_packets)
+                        redis.call('HSET', counters_table_name .. ':' .. port_id, pfc_duration_key .. '_last', pfc_duration)
+                    end
                 end
             end
         end
