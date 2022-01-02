@@ -4917,7 +4917,7 @@ bool PortsOrch::addLag(string lag_alias, uint32_t spa_id, int32_t switch_id)
     auto lagport = m_portList.find(lag_alias);
     if (lagport != m_portList.end())
     {
-        /* The deletion of bridgeport attached to the lag may still be 
+        /* The deletion of bridgeport attached to the lag may still be
          * pending due to fdb entries still present on the lag. Wait
          * until the cleanup is done.
          */
@@ -5363,7 +5363,7 @@ bool PortsOrch::removeTunnel(Port tunnel)
     return true;
 }
 
-void PortsOrch::generateQueueMap()
+void PortsOrch::generateQueueMap(map<string, FlexCounterQueueStates> queuesStateVector)
 {
     if (m_isQueueMapGenerated)
     {
@@ -5374,14 +5374,20 @@ void PortsOrch::generateQueueMap()
     {
         if (it.second.m_type == Port::PHY)
         {
-            generateQueueMapPerPort(it.second);
+            if (!queuesStateVector.count(it.second.m_alias))
+            {
+                auto maxQueueNumber = getNumberOfPortSupportedQueueCounters(it.second.m_alias);
+                FlexCounterQueueStates flexCounterQueueState(maxQueueNumber);
+                queuesStateVector.insert(make_pair(it.second.m_alias, flexCounterQueueState));
+            }
+            generateQueueMapPerPort(it.second, queuesStateVector.at(it.second.m_alias));
         }
     }
 
     m_isQueueMapGenerated = true;
 }
 
-void PortsOrch::generateQueueMapPerPort(const Port& port)
+void PortsOrch::generateQueueMapPerPort(const Port& port, FlexCounterQueueStates& queuesState)
 {
     /* Create the Queue map in the Counter DB */
     /* Add stat counters to flex_counter */
@@ -5397,16 +5403,20 @@ void PortsOrch::generateQueueMapPerPort(const Port& port)
 
         const auto id = sai_serialize_object_id(port.m_queue_ids[queueIndex]);
 
-        queueVector.emplace_back(name.str(), id);
-        queuePortVector.emplace_back(id, sai_serialize_object_id(port.m_port_id));
-
         string queueType;
         uint8_t queueRealIndex = 0;
         if (getQueueTypeAndIndex(port.m_queue_ids[queueIndex], queueType, queueRealIndex))
         {
+            if (!queuesState.isQueueCounterEnabled(queueRealIndex))
+            {
+                continue;
+            }
             queueTypeVector.emplace_back(id, queueType);
             queueIndexVector.emplace_back(id, to_string(queueRealIndex));
         }
+
+        queueVector.emplace_back(name.str(), id);
+        queuePortVector.emplace_back(id, sai_serialize_object_id(port.m_port_id));
 
         // Install a flex counter for this queue to track stats
         std::unordered_set<string> counter_stats;
@@ -5441,7 +5451,108 @@ void PortsOrch::generateQueueMapPerPort(const Port& port)
     CounterCheckOrch::getInstance().addPort(port);
 }
 
-void PortsOrch::generatePriorityGroupMap()
+void PortsOrch::createPortBufferQueueCounters(const Port &port, string queues)
+{
+    /* Create the Queue map in the Counter DB */
+    /* Add stat counters to flex_counter */
+    vector<FieldValueTuple> queueVector;
+    vector<FieldValueTuple> queuePortVector;
+    vector<FieldValueTuple> queueIndexVector;
+    vector<FieldValueTuple> queueTypeVector;
+
+    auto toks = tokenize(queues, '-');
+    auto startIndex = to_uint<uint32_t>(toks[0]);
+    auto endIndex = startIndex;
+    if (toks.size() > 1)
+    {
+        endIndex = to_uint<uint32_t>(toks[1]);
+    }
+
+    for (auto queueIndex = startIndex; queueIndex <= endIndex; queueIndex++)
+    {
+        std::ostringstream name;
+        name << port.m_alias << ":" << queueIndex;
+
+        const auto id = sai_serialize_object_id(port.m_queue_ids[queueIndex]);
+
+        string queueType;
+        uint8_t queueRealIndex = 0;
+        if (getQueueTypeAndIndex(port.m_queue_ids[queueIndex], queueType, queueRealIndex))
+        {
+            queueTypeVector.emplace_back(id, queueType);
+            queueIndexVector.emplace_back(id, to_string(queueRealIndex));
+        }
+
+        queueVector.emplace_back(name.str(), id);
+        queuePortVector.emplace_back(id, sai_serialize_object_id(port.m_port_id));
+
+        // Install a flex counter for this queue to track stats
+        std::unordered_set<string> counter_stats;
+        for (const auto& it: queue_stat_ids)
+        {
+            counter_stats.emplace(sai_serialize_queue_stat(it));
+        }
+        queue_stat_manager.setCounterIdList(port.m_queue_ids[queueIndex], CounterType::QUEUE, counter_stats);
+
+        /* add watermark queue counters */
+        string key = getQueueWatermarkFlexCounterTableKey(id);
+
+        string delimiter("");
+        std::ostringstream counters_stream;
+        for (const auto& it: queueWatermarkStatIds)
+        {
+            counters_stream << delimiter << sai_serialize_queue_stat(it);
+            delimiter = comma;
+        }
+
+        vector<FieldValueTuple> fieldValues;
+        fieldValues.emplace_back(QUEUE_COUNTER_ID_LIST, counters_stream.str());
+
+        m_flexCounterTable->set(key, fieldValues);
+    }
+
+    m_queueTable->set("", queueVector);
+    m_queuePortTable->set("", queuePortVector);
+    m_queueIndexTable->set("", queueIndexVector);
+    m_queueTypeTable->set("", queueTypeVector);
+
+    CounterCheckOrch::getInstance().addPort(port);
+}
+
+void PortsOrch::removePortBufferQueueCounters(const Port &port, string queues)
+{
+    /* Remove the Queues maps in the Counter DB */
+    /* Remove stat counters from flex_counter DB */
+    auto toks = tokenize(queues, '-');
+    auto startIndex = to_uint<uint32_t>(toks[0]);
+    auto endIndex = startIndex;
+    if (toks.size() > 1)
+    {
+        endIndex = to_uint<uint32_t>(toks[1]);
+    }
+
+    for (auto queueIndex = startIndex; queueIndex <= endIndex; queueIndex++)
+    {
+        std::ostringstream name;
+        name << port.m_alias << ":" << queueIndex;
+        const auto id = sai_serialize_object_id(port.m_queue_ids[queueIndex]);
+
+        /* Remove watermark queue counters */
+        string key = getQueueWatermarkFlexCounterTableKey(id);
+        m_flexCounterTable->del(key);
+
+        // Remove the flex counter for this queue
+        queue_stat_manager.clearCounterIdList(port.m_queue_ids[queueIndex]);
+
+        // Remove the queue counter from counters DB maps
+        m_queueTable->hdel("", name.str());
+        m_queuePortTable->hdel("", id);
+        m_queueIndexTable->hdel("", id);
+        m_queueTypeTable->hdel("", id);
+    }
+}
+
+void PortsOrch::generatePriorityGroupMap(map<string, FlexCounterPgStates> pgsStateVector)
 {
     if (m_isPriorityGroupMapGenerated)
     {
@@ -5452,14 +5563,20 @@ void PortsOrch::generatePriorityGroupMap()
     {
         if (it.second.m_type == Port::PHY)
         {
-            generatePriorityGroupMapPerPort(it.second);
+            if (!pgsStateVector.count(it.second.m_alias))
+            {
+                auto maxPgNumber = getNumberOfPortSupportedPgCounters(it.second.m_alias);
+                FlexCounterPgStates flexCounterPgState(maxPgNumber);
+                pgsStateVector.insert(make_pair(it.second.m_alias, flexCounterPgState));
+            }
+            generatePriorityGroupMapPerPort(it.second, pgsStateVector.at(it.second.m_alias));
         }
     }
 
     m_isPriorityGroupMapGenerated = true;
 }
 
-void PortsOrch::generatePriorityGroupMapPerPort(const Port& port)
+void PortsOrch::generatePriorityGroupMapPerPort(const Port& port, FlexCounterPgStates& pgsState)
 {
     /* Create the PG map in the Counter DB */
     /* Add stat counters to flex_counter */
@@ -5468,6 +5585,76 @@ void PortsOrch::generatePriorityGroupMapPerPort(const Port& port)
     vector<FieldValueTuple> pgIndexVector;
 
     for (size_t pgIndex = 0; pgIndex < port.m_priority_group_ids.size(); ++pgIndex)
+    {
+        if (!pgsState.isPgCounterEnabled(static_cast<uint32_t>(pgIndex)))
+        {
+            continue;
+        }
+        std::ostringstream name;
+        name << port.m_alias << ":" << pgIndex;
+
+        const auto id = sai_serialize_object_id(port.m_priority_group_ids[pgIndex]);
+
+        pgVector.emplace_back(name.str(), id);
+        pgPortVector.emplace_back(id, sai_serialize_object_id(port.m_port_id));
+        pgIndexVector.emplace_back(id, to_string(pgIndex));
+
+        string key = getPriorityGroupWatermarkFlexCounterTableKey(id);
+
+        std::string delimiter = "";
+        std::ostringstream counters_stream;
+        /* Add watermark counters to flex_counter */
+        for (const auto& it: ingressPriorityGroupWatermarkStatIds)
+        {
+            counters_stream << delimiter << sai_serialize_ingress_priority_group_stat(it);
+            delimiter = comma;
+        }
+
+        vector<FieldValueTuple> fieldValues;
+        fieldValues.emplace_back(PG_COUNTER_ID_LIST, counters_stream.str());
+        m_flexCounterTable->set(key, fieldValues);
+
+        delimiter = "";
+        std::ostringstream ingress_pg_drop_packets_counters_stream;
+        key = getPriorityGroupDropPacketsFlexCounterTableKey(id);
+        /* Add dropped packets counters to flex_counter */
+        for (const auto& it: ingressPriorityGroupDropStatIds)
+        {
+            ingress_pg_drop_packets_counters_stream << delimiter << sai_serialize_ingress_priority_group_stat(it);
+            if (delimiter.empty())
+            {
+                delimiter = comma;
+            }
+        }
+        fieldValues.clear();
+        fieldValues.emplace_back(PG_COUNTER_ID_LIST, ingress_pg_drop_packets_counters_stream.str());
+        m_flexCounterTable->set(key, fieldValues);
+    }
+
+    m_pgTable->set("", pgVector);
+    m_pgPortTable->set("", pgPortVector);
+    m_pgIndexTable->set("", pgIndexVector);
+
+    CounterCheckOrch::getInstance().addPort(port);
+}
+
+void PortsOrch::createPortBufferPgCounters(const Port& port, string pgs)
+{
+    /* Create the PG map in the Counter DB */
+    /* Add stat counters to flex_counter */
+    vector<FieldValueTuple> pgVector;
+    vector<FieldValueTuple> pgPortVector;
+    vector<FieldValueTuple> pgIndexVector;
+
+    auto toks = tokenize(pgs, '-');
+    auto startIndex = to_uint<uint32_t>(toks[0]);
+    auto endIndex = startIndex;
+    if (toks.size() > 1)
+    {
+        endIndex = to_uint<uint32_t>(toks[1]);
+    }
+
+    for (auto pgIndex = startIndex; pgIndex <= endIndex; pgIndex++)
     {
         std::ostringstream name;
         name << port.m_alias << ":" << pgIndex;
@@ -5517,6 +5704,39 @@ void PortsOrch::generatePriorityGroupMapPerPort(const Port& port)
     CounterCheckOrch::getInstance().addPort(port);
 }
 
+void PortsOrch::removePortBufferPgCounters(const Port& port, string pgs)
+{
+    /* Remove the Pgs maps in the Counter DB */
+    /* Remove stat counters from flex_counter DB */
+    auto toks = tokenize(pgs, '-');
+    auto startIndex = to_uint<uint32_t>(toks[0]);
+    auto endIndex = startIndex;
+    if (toks.size() > 1)
+    {
+        endIndex = to_uint<uint32_t>(toks[1]);
+    }
+
+    for (auto pgIndex = startIndex; pgIndex <= endIndex; pgIndex++)
+    {
+        std::ostringstream name;
+        name << port.m_alias << ":" << pgIndex;
+        const auto id = sai_serialize_object_id(port.m_priority_group_ids[pgIndex]);
+
+        /* Remove dropped packets counters from flex_counter */
+        string key = getPriorityGroupDropPacketsFlexCounterTableKey(id);
+        m_flexCounterTable->del(key);
+
+        /* Remove watermark counters from flex_counter */
+        key = getPriorityGroupWatermarkFlexCounterTableKey(id);
+        m_flexCounterTable->del(key);
+
+        // Remove the pg counter from counters DB maps
+        m_pgTable->hdel("", name.str());
+        m_pgPortTable->hdel("", id);
+        m_pgIndexTable->hdel("", id);
+    }
+}
+
 void PortsOrch::generatePortCounterMap()
 {
     if (m_isPortCounterMapGenerated)
@@ -5557,6 +5777,16 @@ void PortsOrch::generatePortBufferDropCounterMap()
     }
 
     m_isPortBufferDropCounterMapGenerated = true;
+}
+
+uint32_t PortsOrch::getNumberOfPortSupportedPgCounters(string port)
+{
+    return static_cast<uint32_t>(m_portList[port].m_priority_group_ids.size());
+}
+
+uint32_t PortsOrch::getNumberOfPortSupportedQueueCounters(string port)
+{
+    return static_cast<uint32_t>(m_portList[port].m_queue_ids.size());
 }
 
 void PortsOrch::doTask(NotificationConsumer &consumer)

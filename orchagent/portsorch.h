@@ -124,8 +124,16 @@ public:
     bool getPortPfc(sai_object_id_t portId, uint8_t *pfc_bitmask);
     bool setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask);
 
-    void generateQueueMap();
-    void generatePriorityGroupMap();
+    void generateQueueMap(map<string, FlexCounterQueueStates> queuesStateVector);
+    uint32_t getNumberOfPortSupportedQueueCounters(string port);
+    void createPortBufferQueueCounters(const Port &port, string queues);
+    void removePortBufferQueueCounters(const Port &port, string queues);
+
+    void generatePriorityGroupMap(map<string, FlexCounterPgStates> pgsStateVector);
+    uint32_t getNumberOfPortSupportedPgCounters(string port);
+    void createPortBufferPgCounters(const Port &port, string pgs);
+    void removePortBufferPgCounters(const Port& port, string pgs);
+
     void generatePortCounterMap();
     void generatePortBufferDropCounterMap();
 
@@ -311,11 +319,9 @@ private:
     bool getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uint8_t &index);
 
     bool m_isQueueMapGenerated = false;
-    void generateQueueMapPerPort(const Port& port);
-
+    void generateQueueMapPerPort(const Port& port, FlexCounterQueueStates& queuesState);
     bool m_isPriorityGroupMapGenerated = false;
-    void generatePriorityGroupMapPerPort(const Port& port);
-
+    void generatePriorityGroupMapPerPort(const Port& port, FlexCounterPgStates& pgsState);
     bool m_isPortCounterMapGenerated = false;
     bool m_isPortBufferDropCounterMapGenerated = false;
 
