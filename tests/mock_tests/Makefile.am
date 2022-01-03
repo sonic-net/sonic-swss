@@ -23,6 +23,7 @@ LDADD_GTEST = -L/usr/src/gtest
 
 tests_SOURCES = aclorch_ut.cpp \
                 portsorch_ut.cpp \
+                routeorch_ut.cpp \
                 saispy_ut.cpp \
                 consumer_ut.cpp \
                 ut_saihelper.cpp \

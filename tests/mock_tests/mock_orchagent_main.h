@@ -16,6 +16,9 @@
 #include "policerorch.h"
 #include "fgnhgorch.h"
 #include "flexcounterorch.h"
+#include "tunneldecaporch.h"
+#include "muxorch.h"
+#include "nhgorch.h"
 #include "directory.h"
 
 extern int gBatchSize;
@@ -44,6 +47,8 @@ extern FdbOrch *gFdbOrch;
 extern MirrorOrch *gMirrorOrch;
 extern BufferOrch *gBufferOrch;
 extern VRFOrch *gVrfOrch;
+extern NhgOrch *gNhgOrch;
+extern Srv6Orch  *gSrv6Orch;
 extern Directory<Orch*> gDirectory;
 
 extern sai_acl_api_t *sai_acl_api;
@@ -62,3 +67,4 @@ extern sai_hostif_api_t *sai_hostif_api;
 extern sai_buffer_api_t *sai_buffer_api;
 extern sai_queue_api_t *sai_queue_api;
 extern sai_udf_api_t* sai_udf_api;
+extern sai_mpls_api_t* sai_mpls_api;
