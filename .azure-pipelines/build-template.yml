@@ -9,9 +9,6 @@ parameters:
 
 - name: pool
   type: string
-  values:
-  - sonicbld
-  - default
   default: default
 
 - name: timeout
