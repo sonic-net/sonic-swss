@@ -32,36 +32,41 @@ for i = n, 1, -1 do
 
         local queue_index = redis.call('HGET', 'COUNTERS_QUEUE_INDEX_MAP', KEYS[i])
         local port_id = redis.call('HGET', 'COUNTERS_QUEUE_PORT_MAP', KEYS[i])
-        local pfc_rx_pkt_key = 'SAI_PORT_STAT_PFC_' .. queue_index .. '_RX_PKTS'
+        -- If there is no entry in COUNTERS_QUEUE_INDEX_MAP or COUNTERS_QUEUE_PORT_MAP then
+        -- it means KEYS[i] queue is inserted into FLEX COUNTER DB but the corresponding
+        -- maps haven't been updated yet.
+        if queue_index and port_id then
+            local pfc_rx_pkt_key = 'SAI_PORT_STAT_PFC_' .. queue_index .. '_RX_PKTS'
 
-        local pfc_rx_packets = tonumber(redis.call('HGET', counters_table_name .. ':' .. port_id, pfc_rx_pkt_key))
-        local pfc_rx_packets_last = redis.call('HGET', counters_table_name .. ':' .. port_id, pfc_rx_pkt_key .. '_last')
-        -- DEBUG CODE START. Uncomment to enable
-        local debug_storm = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'DEBUG_STORM')
-        -- DEBUG CODE END.
-        if pfc_rx_packets_last then
-            pfc_rx_packets_last = tonumber(pfc_rx_packets_last)
+            local pfc_rx_packets = tonumber(redis.call('HGET', counters_table_name .. ':' .. port_id, pfc_rx_pkt_key))
+            local pfc_rx_packets_last = redis.call('HGET', counters_table_name .. ':' .. port_id, pfc_rx_pkt_key .. '_last')
+            -- DEBUG CODE START. Uncomment to enable
+            local debug_storm = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'DEBUG_STORM')
+            -- DEBUG CODE END.
+            if pfc_rx_packets_last then
+                pfc_rx_packets_last = tonumber(pfc_rx_packets_last)
 
-            -- Check actual condition of queue being restored from PFC storm
-            if (pfc_rx_packets - pfc_rx_packets_last == 0)
-                -- DEBUG CODE START. Uncomment to enable
-                and (debug_storm ~= "enabled")
-                -- DEBUG CODE END.
-            then
-                if time_left <= poll_time then
-                    redis.call('PUBLISH', 'PFC_WD_ACTION', '["' .. KEYS[i] .. '","restore"]')
-                    time_left = restoration_time
+                -- Check actual condition of queue being restored from PFC storm
+                if (pfc_rx_packets - pfc_rx_packets_last == 0)
+                    -- DEBUG CODE START. Uncomment to enable
+                    and (debug_storm ~= "enabled")
+                    -- DEBUG CODE END.
+                then
+                    if time_left <= poll_time then
+                        redis.call('PUBLISH', 'PFC_WD_ACTION', '["' .. KEYS[i] .. '","restore"]')
+                        time_left = restoration_time
+                    else
+                        time_left = time_left - poll_time
+                    end
                 else
-                    time_left = time_left - poll_time
+                    time_left = restoration_time
                 end
-            else
-                time_left = restoration_time
             end
-        end
 
-        -- Save values for next run
-        redis.call('HSET', counters_table_name .. ':' .. KEYS[i], 'PFC_WD_RESTORATION_TIME_LEFT', time_left)
-        redis.call('HSET', counters_table_name .. ':' .. port_id, pfc_rx_pkt_key .. '_last', pfc_rx_packets)
+            -- Save values for next run
+            redis.call('HSET', counters_table_name .. ':' .. KEYS[i], 'PFC_WD_RESTORATION_TIME_LEFT', time_left)
+            redis.call('HSET', counters_table_name .. ':' .. port_id, pfc_rx_pkt_key .. '_last', pfc_rx_packets)
+        end
     end
 end
 
