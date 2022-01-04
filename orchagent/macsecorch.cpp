@@ -1190,7 +1190,7 @@ bool MACsecOrch::updateMACsecPort(MACsecPort &macsec_port, const TaskArgs &port_
                     sai_attribute_t attr;
                     attr.id = SAI_MACSEC_SC_ATTR_ENCRYPTION_ENABLE;
                     attr.value.booldata = macsec_port.m_enable_encrypt;
-                    return this->setMACsecSC(macsec_sc.m_sc_id, attr);
+                    return this->updateMACsecAttr(SAI_OBJECT_TYPE_MACSEC_SC, macsec_sc.m_sc_id, attr);
                 }))
         {
             return false;
@@ -1231,7 +1231,7 @@ bool MACsecOrch::updateMACsecPort(MACsecPort &macsec_port, const TaskArgs &port_
                     sai_attribute_t attr;
                     attr.id = SAI_MACSEC_SC_ATTR_MACSEC_CIPHER_SUITE;
                     attr.value.s32 = macsec_port.m_cipher_suite;
-                    return this->setMACsecSC(macsec_sc.m_sc_id, attr);
+                    return this->updateMACsecAttr(SAI_OBJECT_TYPE_MACSEC_SC, macsec_sc.m_sc_id, attr);
                 }))
         {
             return false;
@@ -1765,11 +1765,30 @@ bool MACsecOrch::deleteMACsecSC(sai_object_id_t sc_id)
     return true;
 }
 
-bool MACsecOrch::setMACsecSC(sai_object_id_t sc_id, const sai_attribute_t &attr)
+bool MACsecOrch::updateMACsecAttr(sai_object_type_t object_type, sai_object_id_t object_id, const sai_attribute_t &attr)
 {
     SWSS_LOG_ENTER();
 
-    sai_status_t status = sai_macsec_api->set_macsec_sc_attribute(sc_id, &attr);
+    sai_status_t status = SAI_STATUS_SUCCESS;
+
+    if (object_type == SAI_OBJECT_TYPE_MACSEC_PORT)
+    {
+        status = sai_macsec_api->set_macsec_port_attribute(object_id, &attr);
+    }
+    else if (object_type == SAI_OBJECT_TYPE_MACSEC_SC)
+    {
+        status = sai_macsec_api->set_macsec_sc_attribute(object_id, &attr);
+    }
+    else if (object_type == SAI_OBJECT_TYPE_MACSEC_SA)
+    {
+        status = sai_macsec_api->set_macsec_sa_attribute(object_id, &attr);
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Wrong type %s", sai_serialize_object_type(object_type).c_str());
+        return false;
+    }
+
     if (status != SAI_STATUS_SUCCESS)
     {
         task_process_status handle_status = handleSaiSetStatus(SAI_API_MACSEC, status);

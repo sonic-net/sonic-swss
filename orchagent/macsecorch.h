@@ -179,7 +179,8 @@ private:
         const std::string &port_sci,
         sai_macsec_direction_t direction);
     bool deleteMACsecSC(sai_object_id_t sc_id);
-    bool setMACsecSC(sai_object_id_t sc_id, const sai_attribute_t &attr);
+
+    bool updateMACsecAttr(sai_object_type_t object_type, sai_object_id_t object_id, const sai_attribute_t &attr);
 
     /* MACsec SA */
     task_process_status createMACsecSA(
