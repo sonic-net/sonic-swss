@@ -104,8 +104,8 @@ jobs:
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/master'
       path: '$(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}'
-      allowPartiallySucceededBuilds: true
-      allowFailedBuilds: true
+      allowPartiallySucceededBuilds: eq('${{ parameters.buildimage_artifact_name }}', 'sonic-buildimage.marvell-armhf')
+      allowFailedBuilds: eq('${{ parameters.buildimage_artifact_name }}', 'sonic-buildimage.marvell-armhf')
     displayName: "Download sonic buildimage deb packages"
   - script: |
       cd $(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}
