@@ -12,6 +12,7 @@
 #include "ipaddresses.h"
 #include "producerstatetable.h"
 #include "observer.h"
+#include "intfsorch.h"
 #include "nexthopgroupkey.h"
 
 #define VNET_BITMAP_SIZE 32
