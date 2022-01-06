@@ -3,7 +3,6 @@ import re
 import sys
 import time
 import json
-import pytest
 import ipaddress
 
 from swsscommon import swsscommon

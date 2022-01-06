@@ -257,7 +257,7 @@ void SwitchOrch::setSwitchNonSaiAttributes(swss::FieldValueTuple &val)
                         if (values.list[i] == SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP)
                         {
                             m_orderedEcmpEnable = true;
-                            fvVector.emplace_back(SWITCH_CAPABILITY_ORDERED_ECMP_CAPABLE, "true");
+                            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_ORDERED_ECMP_CAPABLE, "true");
                             set_switch_capability(fvVector);
                             SWSS_LOG_NOTICE("Ordered ECMP/Nexthop-Group is configured");
                             return;
@@ -267,7 +267,7 @@ void SwitchOrch::setSwitchNonSaiAttributes(swss::FieldValueTuple &val)
             }
         }
         m_orderedEcmpEnable = false;
-        fvVector.emplace_back(SWITCH_CAPABILITY_ORDERED_ECMP_CAPABLE, "false");
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_ORDERED_ECMP_CAPABLE, "false");
         set_switch_capability(fvVector);
         SWSS_LOG_NOTICE("Ordered ECMP/Nexthop-Group is not configured");
         return;
