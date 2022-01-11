@@ -733,7 +733,7 @@ void NeighOrch::doTask(Consumer &consumer)
                 if (mac_address == MacAddress("00:00:00:00:00:00"))
                 {
                     MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
-                    sai_object_id_t nexthop = mux_orch->createNextHopTunnel(MUX_TUNNEL, neighbor_entry.ip_address);
+                    mux_orch->createNextHopTunnel(MUX_TUNNEL, neighbor_entry.ip_address);
                 }
                 if (addNeighbor(neighbor_entry, mac_address))
                 {
