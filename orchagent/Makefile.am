@@ -18,6 +18,7 @@ dist_swss_DATA = \
 		 pfc_detect_barefoot.lua \
 		 pfc_detect_nephos.lua \
 		 pfc_detect_cisco-8000.lua \
+                 pfc_detect_vs.lua \
 		 pfc_restore.lua \
 		 pfc_restore_cisco-8000.lua \
 		 port_rates.lua \
