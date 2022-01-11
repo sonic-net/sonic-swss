@@ -396,7 +396,7 @@ bool VNetOrch::addOperation(const Request& request)
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
     set<string> peer_list = {};
-    bool peer = false, create = false;
+    bool peer = false, create = false, advertise_prefix = false;
     uint32_t vni=0;
     string tunnel;
     string scope;
@@ -427,6 +427,10 @@ bool VNetOrch::addOperation(const Request& request)
         {
             scope = request.getAttrString("scope");
         }
+        else if (name == "advertise_prefix")
+        {
+            advertise_prefix = request.getAttrBool("advertise_prefix");
+        }
         else
         {
             SWSS_LOG_INFO("Unknown attribute: %s", name.c_str());
@@ -453,7 +457,7 @@ bool VNetOrch::addOperation(const Request& request)
 
             if (it == std::end(vnet_table_))
             {
-                VNetInfo vnet_info = { tunnel, vni, peer_list, scope };
+                VNetInfo vnet_info = { tunnel, vni, peer_list, scope, advertise_prefix };
                 obj = createObject<VNetVrfObject>(vnet_name, vnet_info, attrs);
                 create = true;
 
@@ -645,6 +649,7 @@ VNetRouteOrch::VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOr
 
     state_db_ = shared_ptr<DBConnector>(new DBConnector("STATE_DB", 0));
     state_vnet_rt_tunnel_table_ = unique_ptr<Table>(new Table(state_db_.get(), STATE_VNET_RT_TUNNEL_TABLE_NAME));
+    state_vnet_rt_adv_table_ = unique_ptr<Table>(new Table(state_db_.get(), STATE_ADVERTISE_NETWORK_TABLE_NAME));
 
     gBfdOrch->attach(this);
 }
@@ -1563,12 +1568,39 @@ void VNetRouteOrch::postRouteState(const string& vnet, IpPrefix& ipPrefix, NextH
     fvVector.emplace_back("state", route_state);
 
     state_vnet_rt_tunnel_table_->set(state_db_key, fvVector);
+
+    if (vnet_orch_->getAdvertisePrefix(vnet))
+    {
+        if (route_state == "active")
+        {
+            addRouteAdvertisement(ipPrefix);
+        }
+        else
+        {
+            removeRouteAdvertisement(ipPrefix);
+        }
+    }
 }
 
 void VNetRouteOrch::removeRouteState(const string& vnet, IpPrefix& ipPrefix)
 {
     const string state_db_key = vnet + state_db_key_delimiter + ipPrefix.to_string();
     state_vnet_rt_tunnel_table_->del(state_db_key);
+    removeRouteAdvertisement(ipPrefix);
+}
+
+void VNetRouteOrch::addRouteAdvertisement(IpPrefix& ipPrefix)
+{
+    const string key = ipPrefix.to_string();
+    vector<FieldValueTuple> fvs;
+    fvs.push_back(FieldValueTuple("", ""));
+    state_vnet_rt_adv_table_->set(key, fvs);
+}
+
+void VNetRouteOrch::removeRouteAdvertisement(IpPrefix& ipPrefix)
+{
+    const string key = ipPrefix.to_string();
+    state_vnet_rt_adv_table_->del(key);
 }
 
 void VNetRouteOrch::update(SubjectType type, void *cntx)

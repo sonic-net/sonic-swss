@@ -23,7 +23,7 @@ class TestP4RTL3(object):
         self._p4rt_route_obj.set_up_databases(dvs)
         self._p4rt_wcmp_group_obj.set_up_databases(dvs)
         self.response_consumer = swsscommon.NotificationConsumer(
-            self._p4rt_route_obj.appl_db, "APPL_DB_P4RT_TABLE_RESPONSE_CHANNEL")
+            self._p4rt_route_obj.appl_state_db, "APPL_DB_P4RT_TABLE_RESPONSE_CHANNEL")
 
     def _set_vrf(self, dvs):
         # Create VRF.
