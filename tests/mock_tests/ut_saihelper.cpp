@@ -78,6 +78,7 @@ namespace ut_helper
         sai_api_query(SAI_API_HOSTIF, (void **)&sai_hostif_api);
         sai_api_query(SAI_API_BUFFER, (void **)&sai_buffer_api);
         sai_api_query(SAI_API_QUEUE, (void **)&sai_queue_api);
+        sai_api_query(SAI_API_MPLS, (void**)&sai_mpls_api);
 
         return SAI_STATUS_SUCCESS;
     }
