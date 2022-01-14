@@ -1219,8 +1219,6 @@ bool MuxOrch::handlePeerSwitch(const Request& request)
 
     if (op == SET_COMMAND)
     {
-        mux_peer_switch_ = peer_ip;
-
         // Create P2P tunnel when peer_ip is available.
         IpAddresses dst_ips = decap_orch_->getDstIpAddresses(MUX_TUNNEL);
         if (!dst_ips.getSize())
@@ -1233,6 +1231,7 @@ bool MuxOrch::handlePeerSwitch(const Request& request)
         auto it =  dst_ips.getIpAddresses().begin();
         const IpAddress& dst_ip = *it;
         mux_tunnel_id_ = create_tunnel(&peer_ip, &dst_ip);
+        mux_peer_switch_ = peer_ip;
         SWSS_LOG_NOTICE("Mux peer ip '%s' was added, peer name '%s'",
                          peer_ip.to_string().c_str(), peer_name.c_str());
     }
