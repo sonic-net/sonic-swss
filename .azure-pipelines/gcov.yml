@@ -76,9 +76,9 @@ jobs:
   - script: |
       set -x
       ls -lh
-      tar -zxvf sonic-gcov.tar.gz
-      cp -rf sonic-gcov $(Build.ArtifactStagingDirectory)
-      rm sonic-gcov.tar.gz
+      sudo tar -zxvf sonic-gcov.tar.gz
+      sudo cp -rf sonic-gcov $(Build.ArtifactStagingDirectory)
+      sudo rm sonic-gcov.tar.gz
       ls -lh
     workingDirectory: $(Pipeline.Workspace)
     displayName: "store sonic-gcov"
@@ -93,19 +93,19 @@ jobs:
       sudo apt-get update
       sudo apt-get install -y dotnet-sdk-5.0
       pushd ./s/
-      tar -zcvf swss.tar.gz ./*
+      sudo tar -zcvf swss.tar.gz ./*
       ls -lh ./*
       cp ./gcovpreload/lcov_cobertura.py $(Build.ArtifactStagingDirectory)/
       cp ./tests/gcov_support.sh $(Build.ArtifactStagingDirectory)/sonic-gcov
-      cp -rf swss.tar.gz $(Build.ArtifactStagingDirectory)/sonic-gcov
+      sudo cp -rf swss.tar.gz $(Build.ArtifactStagingDirectory)/sonic-gcov
       popd
-      cp -rf $(Build.ArtifactStagingDirectory)/sonic-gcov ./
+      sudo cp -rf $(Build.ArtifactStagingDirectory)/sonic-gcov ./
       pushd sonic-gcov
       ls -lh ./*
       sudo chmod +x ./gcov_support.sh
-      ./gcov_support.sh generate
-      ./gcov_support.sh merge_container_info $(Build.ArtifactStagingDirectory)
-      cp -rf gcov_output $(Build.ArtifactStagingDirectory)
+      sudo ./gcov_support.sh generate
+      sudo ./gcov_support.sh merge_container_info $(Build.ArtifactStagingDirectory)
+      sudo cp -rf gcov_output $(Build.ArtifactStagingDirectory)
       ls -lh $(Build.ArtifactStagingDirectory)
       popd
     workingDirectory: $(Pipeline.Workspace)
