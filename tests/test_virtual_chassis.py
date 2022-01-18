@@ -1,4 +1,3 @@
-import pytest
 from swsscommon import swsscommon
 from dvslib.dvs_database import DVSDatabase
 import ast
@@ -136,7 +135,6 @@ class TestVirtualChassis(object):
                 spcfg = ast.literal_eval(value)
                 assert spcfg['count'] == sp_count, "Number of systems ports configured is invalid"
 
-    @pytest.mark.skip(reason="This test is not stable enough")
     def test_chassis_app_db_sync(self, vct):
         """Test chassis app db syncing.
 
@@ -213,7 +211,6 @@ class TestVirtualChassis(object):
                     # Remote system ports's switch id should not match local switch id
                     assert spcfginfo["attached_switch_id"] != lc_switch_id, "RIF system port with wrong switch_id"
 
-    @pytest.mark.skip(reason="This test is not stable enough")
     def test_chassis_system_neigh(self, vct):
         """Test neigh record create/delete and syncing to chassis app db.
 
@@ -470,7 +467,6 @@ class TestVirtualChassis(object):
         # Cleanup inband if configuration
         self.del_inbandif_port(vct, inband_port)
         
-    @pytest.mark.skip(reason="This test is not stable enough")
     def test_chassis_system_lag(self, vct):
         """Test PortChannel in VOQ based chassis systems.
         
@@ -607,7 +603,6 @@ class TestVirtualChassis(object):
                     
                     break
 
-    @pytest.mark.skip(reason="This test is not stable enough")
     def test_chassis_system_lag_id_allocator_table_full(self, vct):
         """Test lag id allocator table full.
         
@@ -685,7 +680,6 @@ class TestVirtualChassis(object):
                     
                     break
 
-    @pytest.mark.skip(reason="This test is not stable enough")
     def test_chassis_system_lag_id_allocator_del_id(self, vct):
         """Test lag id allocator's release id and re-use id processing.
         

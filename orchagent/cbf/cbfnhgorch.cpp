@@ -308,7 +308,7 @@ bool CbfNhg::sync()
     nhg_attr.value.u32 = static_cast<sai_uint32_t>(m_members.size());
     nhg_attrs.push_back(move(nhg_attr));
 
-    if (nhg_attr.value.u32 > gNhgMapOrch->getMaxFcVal())
+    if (nhg_attr.value.u32 > gNhgMapOrch->getMaxNumFcs())
     {
         /* If there are more members than FCs then this may be an error, as some members won't be used. */
         SWSS_LOG_WARN("More CBF NHG members configured than supported Forwarding Classes");

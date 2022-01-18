@@ -28,11 +28,23 @@ local port_set_8lanes = {}
 local lossless_port_count = 0
 
 local function iterate_all_items(all_items, check_lossless)
+    -- Iterates all items in all_items, check the buffer profile each item referencing, and update reference count accordingly
+    -- Arguments:
+    --     all_items is a list, holding all keys in BUFFER_PORT_INGRESS_PROFILE_LIST or BUFFER_PORT_EGRESS_PROFILE_LIST table
+    --     format of keys: <port name>|<ID map>, like Ethernet0|3-4
+    -- Return:
+    --     0 successful
+    --     1 failure, typically caused by the items just updated are still pended in orchagent's queue
     table.sort(all_items)
     local lossless_ports = {}
     local port
     local fvpairs
     for i = 1, #all_items, 1 do
+        -- XXX_TABLE_KEY_SET or XXX_TABLE_DEL_SET existing means the orchagent hasn't handled all updates
+        -- In this case, the pool sizes are not calculated for now and will retry later
+        if string.sub(all_items[i], -4, -1) == "_SET" then
+            return 1
+        end
         -- Count the number of priorities or queues in each BUFFER_PG or BUFFER_QUEUE item
         -- For example, there are:
         --     3 queues in 'BUFFER_QUEUE_TABLE:Ethernet0:0-2'
@@ -73,6 +85,83 @@ local function iterate_all_items(all_items, check_lossless)
     return 0
 end
 
+local function iterate_profile_list(all_items)
+    -- Iterates all items in all_items, check the buffer profiles each item referencing, and update reference count accordingly
+    -- Arguments:
+    --     all_items is a list, holding all keys in BUFFER_PORT_INGRESS_PROFILE_LIST or BUFFER_PORT_EGRESS_PROFILE_LIST table
+    --     format of keys: <port name>
+    -- Return:
+    --     0 successful
+    --     1 failure, typically caused by the items just updated are still pended in orchagent's queue
+    local port
+    for i = 1, #all_items, 1 do
+        -- XXX_TABLE_KEY_SET or XXX_TABLE_DEL_SET existing means the orchagent hasn't handled all updates
+        -- In this case, the pool sizes are not calculated for now and will retry later
+        if string.sub(all_items[i], -4, -1) == "_SET" then
+            return 1
+        end
+        port = string.match(all_items[i], "Ethernet%d+")
+        local profile_list = redis.call('HGET', all_items[i], 'profile_list')
+        if not profile_list then
+            return 0
+        end
+        for profile_name in string.gmatch(profile_list, "([^,]+)") do
+            -- The format of profile_list is profile_name,profile_name
+            -- We need to handle each of the profile in the list
+            -- The ingress_lossy_profile is shared by both BUFFER_PG|<port>|0 and BUFFER_PORT_INGRESS_PROFILE_LIST
+            -- It occupies buffers in BUFFER_PG but not in BUFFER_PORT_INGRESS_PROFILE_LIST
+            -- To distinguish both cases, a new name "ingress_lossy_profile_list" is introduced to indicate
+            -- the profile is used by the profile list where its size should be zero.
+            profile_name = 'BUFFER_PROFILE_TABLE:' .. profile_name
+            if profile_name == 'BUFFER_PROFILE_TABLE:ingress_lossy_profile' then
+                profile_name = profile_name .. '_list'
+                if profiles[profile_name] == nil then
+                    profiles[profile_name] = 0
+                end
+            end
+            local profile_ref_count = profiles[profile_name]
+            if profile_ref_count == nil then
+                return 1
+            end
+            profiles[profile_name] = profile_ref_count + 1
+        end
+    end
+
+    return 0
+end
+
+local function fetch_buffer_pool_size_from_appldb()
+    local buffer_pools = {}
+    redis.call('SELECT', config_db)
+    local buffer_pool_keys = redis.call('KEYS', 'BUFFER_POOL|*')
+    local pool_name
+    for i = 1, #buffer_pool_keys, 1 do
+         local size = redis.call('HGET', buffer_pool_keys[i], 'size')
+         if not size then
+             pool_name = string.match(buffer_pool_keys[i], "BUFFER_POOL|([^%s]+)$")
+             table.insert(buffer_pools, pool_name)
+         end
+    end
+
+    redis.call('SELECT', appl_db)
+    buffer_pool_keys = redis.call('KEYS', 'BUFFER_POOL_TABLE:*')
+    local size
+    local xoff
+    local output
+    for i = 1, #buffer_pools, 1 do
+        size = redis.call('HGET', 'BUFFER_POOL_TABLE:' .. buffer_pools[i], 'size')
+        if not size then
+            size = "0"
+        end
+        xoff = redis.call('HGET', 'BUFFER_POOL_TABLE:' .. buffer_pools[i], 'xoff')
+        if not xoff then
+            table.insert(result, buffer_pools[i] .. ':' .. size)
+        else
+            table.insert(result, buffer_pools[i] .. ':' .. size .. ':' .. xoff)
+        end
+    end
+end
+
 -- Connect to CONFIG_DB
 redis.call('SELECT', config_db)
 
@@ -82,7 +171,10 @@ total_port = #ports_table
 
 -- Initialize the port_set_8lanes set
 local lanes
-local number_of_lanes
+local number_of_lanes = 0
+local admin_status
+local admin_up_port = 0
+local admin_up_8lanes_port = 0
 local port
 for i = 1, total_port, 1 do
     -- Load lanes from PORT table
@@ -99,13 +191,26 @@ for i = 1, total_port, 1 do
             port_set_8lanes[port] = false
         end
     end
+    admin_status = redis.call('HGET', ports_table[i], 'admin_status')
+    if admin_status == 'up' then
+        admin_up_port = admin_up_port + 1
+        if (number_of_lanes == 8) then
+            admin_up_8lanes_port = admin_up_8lanes_port + 1
+        end
+    end
+    number_of_lanes = 0
 end
 
 local egress_lossless_pool_size = redis.call('HGET', 'BUFFER_POOL|egress_lossless_pool', 'size')
 
 -- Whether shared headroom pool is enabled?
 local default_lossless_param_keys = redis.call('KEYS', 'DEFAULT_LOSSLESS_BUFFER_PARAMETER*')
-local over_subscribe_ratio = tonumber(redis.call('HGET', default_lossless_param_keys[1], 'over_subscribe_ratio'))
+local over_subscribe_ratio
+if #default_lossless_param_keys > 0 then
+    over_subscribe_ratio = tonumber(redis.call('HGET', default_lossless_param_keys[1], 'over_subscribe_ratio'))
+else
+    over_subscribe_ratio = 0
+end
 
 -- Fetch the shared headroom pool size
 local shp_size = tonumber(redis.call('HGET', 'BUFFER_POOL|ingress_lossless_pool', 'xoff'))
@@ -161,7 +266,18 @@ local fail_count = 0
 fail_count = fail_count + iterate_all_items(all_pgs, true)
 fail_count = fail_count + iterate_all_items(all_tcs, false)
 if fail_count > 0 then
-    return {}
+    fetch_buffer_pool_size_from_appldb()
+    return result
+end
+
+local all_ingress_profile_lists = redis.call('KEYS', 'BUFFER_PORT_INGRESS_PROFILE_LIST*')
+local all_egress_profile_lists = redis.call('KEYS', 'BUFFER_PORT_EGRESS_PROFILE_LIST*')
+
+fail_count = fail_count + iterate_profile_list(all_ingress_profile_lists)
+fail_count = fail_count + iterate_profile_list(all_egress_profile_lists)
+if fail_count > 0 then
+    fetch_buffer_pool_size_from_appldb()
+    return result
 end
 
 local statistics = {}
@@ -176,9 +292,6 @@ for name in pairs(profiles) do
         if size ~= nil then 
             if name == "BUFFER_PROFILE_TABLE:ingress_lossy_profile" then
                 size = size + lossypg_reserved
-            end
-            if name == "BUFFER_PROFILE_TABLE:egress_lossy_profile" then
-                profiles[name] = total_port
             end
             if size ~= 0 then
                 if shp_enabled and shp_size == 0 then
@@ -211,11 +324,11 @@ if shp_enabled then
 end
 
 -- Accumulate sizes for management PGs
-local accumulative_management_pg = (total_port - port_count_8lanes) * lossypg_reserved + port_count_8lanes * lossypg_reserved_8lanes
+local accumulative_management_pg = (admin_up_port - admin_up_8lanes_port) * lossypg_reserved + admin_up_8lanes_port * lossypg_reserved_8lanes
 accumulative_occupied_buffer = accumulative_occupied_buffer + accumulative_management_pg
 
 -- Accumulate sizes for egress mirror and management pool
-local accumulative_egress_mirror_overhead = total_port * egress_mirror_headroom
+local accumulative_egress_mirror_overhead = admin_up_port * egress_mirror_headroom
 accumulative_occupied_buffer = accumulative_occupied_buffer + accumulative_egress_mirror_overhead + mgmt_pool_size
 
 -- Switch to CONFIG_DB
@@ -295,5 +408,6 @@ table.insert(result, "debug:egress_mirror:" .. accumulative_egress_mirror_overhe
 table.insert(result, "debug:shp_enabled:" .. tostring(shp_enabled))
 table.insert(result, "debug:shp_size:" .. shp_size)
 table.insert(result, "debug:total port:" .. total_port .. " ports with 8 lanes:" .. port_count_8lanes)
+table.insert(result, "debug:admin up port:" .. admin_up_port .. " admin up ports with 8 lanes:" .. admin_up_8lanes_port)
 
 return result

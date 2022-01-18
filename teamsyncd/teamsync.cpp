@@ -157,11 +157,18 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
     SWSS_LOG_INFO("Add %s admin_status:%s oper_status:%s, mtu: %d",
                    lagName.c_str(), admin_state ? "up" : "down", oper_state ? "up" : "down", mtu);
 
+    bool lag_update = true;
     /* Return when the team instance has already been tracked */
     if (m_teamSelectables.find(lagName) != m_teamSelectables.end())
-        return;
+    {
+        auto tsync = m_teamSelectables[lagName];
+        if (tsync->admin_state == admin_state && tsync->mtu == mtu)
+            return;
+        tsync->admin_state = admin_state;
+        tsync->mtu = mtu;
+        lag_update = false;
+    }
 
-    fvVector.clear();
     FieldValueTuple s("state", "ok");
     fvVector.push_back(s);
     if (m_warmstart)
@@ -173,10 +180,13 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
         m_stateLagTable.set(lagName, fvVector);
     }
 
-    /* Create the team instance */
-    auto sync = make_shared<TeamPortSync>(lagName, ifindex, &m_lagMemberTable);
-    m_teamSelectables[lagName] = sync;
-    m_selectablesToAdd.insert(lagName);
+    if (lag_update)
+    {
+        /* Create the team instance */
+        auto sync = make_shared<TeamPortSync>(lagName, ifindex, &m_lagMemberTable);
+        m_teamSelectables[lagName] = sync;
+        m_selectablesToAdd.insert(lagName);
+    }
 }
 
 void TeamSync::removeLag(const string &lagName)

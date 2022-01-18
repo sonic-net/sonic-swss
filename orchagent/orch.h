@@ -20,6 +20,7 @@ extern "C" {
 #include "notificationconsumer.h"
 #include "selectabletimer.h"
 #include "macaddress.h"
+#include "response_publisher.h"
 
 const char delimiter           = ':';
 const char list_item_delimiter = ',';
@@ -246,6 +247,8 @@ protected:
     virtual task_process_status handleSaiRemoveStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
     virtual task_process_status handleSaiGetStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
     bool parseHandleSaiStatusFailure(task_process_status status);
+
+    ResponsePublisher m_publisher;
 private:
     void removeMeFromObjsReferencedByMe(type_map &type_maps, const std::string &table, const std::string &obj_name, const std::string &field, const std::string &old_referenced_obj_name);
     void addConsumer(swss::DBConnector *db, std::string tableName, int pri = default_orch_pri);

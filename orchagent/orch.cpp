@@ -1,6 +1,8 @@
 #include <fstream>
 #include <iostream>
 #include <inttypes.h>
+#include <sstream>
+#include <stdexcept>
 #include <sys/time.h>
 #include "timestamp.h"
 #include "orch.h"
@@ -197,9 +199,16 @@ size_t Consumer::refillToSync()
     auto subTable = dynamic_cast<SubscriberStateTable *>(consumerTable);
     if (subTable != NULL)
     {
-        std::deque<KeyOpFieldsValuesTuple> entries;
-        subTable->pops(entries);
-        return addToSync(entries);
+        size_t update_size = 0;
+        size_t total_size = 0;
+        do
+        {
+            std::deque<KeyOpFieldsValuesTuple> entries;
+            subTable->pops(entries);
+            update_size = addToSync(entries);
+            total_size += update_size;
+        } while (update_size != 0);
+        return total_size;
     }
     else
     {
@@ -215,10 +224,13 @@ void Consumer::execute()
 {
     SWSS_LOG_ENTER();
 
-    std::deque<KeyOpFieldsValuesTuple> entries;
-    getConsumerTable()->pops(entries);
-
-    addToSync(entries);
+    size_t update_size = 0;
+    do
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        getConsumerTable()->pops(entries);
+        update_size = addToSync(entries);
+    } while (update_size != 0);
 
     drain();
 }
@@ -1047,4 +1059,3 @@ void Orch2::doTask(Consumer &consumer)
         }
     }
 }
-

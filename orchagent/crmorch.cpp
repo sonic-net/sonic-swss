@@ -67,9 +67,9 @@ const map<CrmResourceType, uint32_t> crmResSaiAvailAttrMap =
     { CrmResourceType::CRM_SNAT_ENTRY, SAI_SWITCH_ATTR_AVAILABLE_SNAT_ENTRY },
     { CrmResourceType::CRM_DNAT_ENTRY, SAI_SWITCH_ATTR_AVAILABLE_DNAT_ENTRY },
     { CrmResourceType::CRM_MPLS_INSEG, SAI_OBJECT_TYPE_INSEG_ENTRY },
-    { CrmResourceType::CRM_MPLS_NEXTHOP, SAI_SWITCH_ATTR_AVAILABLE_IPV4_NEXTHOP_ENTRY },
+    { CrmResourceType::CRM_MPLS_NEXTHOP, SAI_OBJECT_TYPE_NEXT_HOP },
     { CrmResourceType::CRM_SRV6_MY_SID_ENTRY, SAI_OBJECT_TYPE_MY_SID_ENTRY },
-    { CrmResourceType::CRM_SRV6_NEXTHOP, SAI_SWITCH_ATTR_AVAILABLE_IPV6_NEXTHOP_ENTRY },
+    { CrmResourceType::CRM_SRV6_NEXTHOP, SAI_OBJECT_TYPE_NEXT_HOP },
     { CrmResourceType::CRM_NEXTHOP_GROUP_MAP, SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MAP },
 };
 
@@ -325,7 +325,6 @@ void CrmOrch::handleSetCommand(const string& key, const vector<FieldValueTuple>&
             else
             {
                 SWSS_LOG_ERROR("Failed to parse CRM %s configuration. Unknown attribute %s.\n", key.c_str(), field.c_str());
-                return;
             }
         }
         catch (const exception& e)

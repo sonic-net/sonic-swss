@@ -13,6 +13,7 @@
 #include "producerstatetable.h"
 #include "observer.h"
 #include "nexthopgroupkey.h"
+#include "bfdorch.h"
 
 #define VNET_BITMAP_SIZE 32
 #define VNET_TUNNEL_SIZE 40960
@@ -26,12 +27,13 @@ extern sai_object_id_t gVirtualRouterId;
 const request_description_t vnet_request_description = {
     { REQ_T_STRING },
     {
-        { "src_mac",       REQ_T_MAC_ADDRESS },
-        { "vxlan_tunnel",  REQ_T_STRING },
-        { "vni",           REQ_T_UINT },
-        { "peer_list",     REQ_T_SET },
-        { "guid",          REQ_T_STRING },
-        { "scope",         REQ_T_STRING },
+        { "src_mac",            REQ_T_MAC_ADDRESS },
+        { "vxlan_tunnel",       REQ_T_STRING },
+        { "vni",                REQ_T_UINT },
+        { "peer_list",          REQ_T_SET },
+        { "guid",               REQ_T_STRING },
+        { "scope",              REQ_T_STRING },
+        { "advertise_prefix",   REQ_T_BOOL},
     },
     { "vxlan_tunnel", "vni" } // mandatory attributes
 };
@@ -56,6 +58,7 @@ struct VNetInfo
     uint32_t vni;
     set<string> peers;
     string scope;
+    bool advertise_prefix;
 };
 
 typedef map<VR_TYPE, sai_object_id_t> vrid_list_t;
@@ -72,6 +75,7 @@ struct NextHopGroupInfo
     sai_object_id_t                         next_hop_group_id;      // next hop group id (null for single nexthop)
     int                                     ref_count;              // reference count
     std::map<NextHopKey, sai_object_id_t>   active_members;         // active nexthops and nexthop group member id (null for single nexthop)
+    std::set<IpPrefix>                      tunnel_routes;
 };
 
 class VNetObject
@@ -81,7 +85,8 @@ public:
                tunnel_(vnetInfo.tunnel),
                peer_list_(vnetInfo.peers),
                vni_(vnetInfo.vni),
-               scope_(vnetInfo.scope)
+               scope_(vnetInfo.scope),
+               advertise_prefix_(vnetInfo.advertise_prefix)
                { }
 
     virtual bool updateObj(vector<sai_attribute_t>&) = 0;
@@ -111,6 +116,11 @@ public:
         return scope_;
     }
 
+    bool getAdvertisePrefix() const
+    {
+        return advertise_prefix_;
+    }
+
     virtual ~VNetObject() noexcept(false) {};
 
 private:
@@ -118,6 +128,7 @@ private:
     string tunnel_;
     uint32_t vni_;
     string scope_;
+    bool advertise_prefix_;
 };
 
 struct nextHop
@@ -221,6 +232,11 @@ public:
         return vnet_table_.at(name)->getTunnelName();
     }
 
+    bool getAdvertisePrefix(const std::string& name) const
+    {
+        return vnet_table_.at(name)->getAdvertisePrefix();
+    }
+
     bool isVnetExecVrf() const
     {
         return (vnet_exec_ == VNET_EXEC::VNET_EXEC_VRF);
@@ -252,7 +268,7 @@ const request_description_t vnet_route_description = {
         { "nexthop",                REQ_T_STRING },
         { "vni",                    REQ_T_STRING },
         { "mac_address",            REQ_T_STRING },
-        { "endpoint_monitor",       REQ_T_STRING },
+        { "endpoint_monitor",       REQ_T_IP_LIST },
     },
     { }
 };
@@ -283,10 +299,26 @@ struct VNetNextHopObserverEntry
 /* NextHopObserverTable: Destination IP address, next hop observer entry */
 typedef std::map<IpAddress, VNetNextHopObserverEntry> VNetNextHopObserverTable;
 
+struct VNetNextHopInfo
+{
+    IpAddress monitor_addr;
+    sai_bfd_session_state_t bfd_state;
+    int ref_count;
+};
+
+struct BfdSessionInfo
+{
+    sai_bfd_session_state_t bfd_state;
+    std::string vnet;
+    NextHopKey endpoint;
+};
+
 typedef std::map<NextHopGroupKey, NextHopGroupInfo> VNetNextHopGroupInfoTable;
 typedef std::map<IpPrefix, NextHopGroupKey> VNetTunnelRouteTable;
+typedef std::map<IpAddress, BfdSessionInfo> BfdSessionTable;
+typedef std::map<IpAddress, VNetNextHopInfo> VNetEndpointInfoTable;
 
-class VNetRouteOrch : public Orch2, public Subject
+class VNetRouteOrch : public Orch2, public Subject, public Observer
 {
 public:
     VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOrch *);
@@ -296,6 +328,8 @@ public:
 
     void attach(Observer* observer, const IpAddress& dstAddr);
     void detach(Observer* observer, const IpAddress& dstAddr);
+
+    void update(SubjectType, void *);
 
 private:
     virtual bool addOperation(const Request& request);
@@ -312,8 +346,21 @@ private:
     bool addNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj);
     bool removeNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj);
 
+    void createBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr);
+    void removeBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr);
+    void setEndpointMonitor(const string& vnet, const map<NextHopKey, IpAddress>& monitors, NextHopGroupKey& nexthops);
+    void delEndpointMonitor(const string& vnet, NextHopGroupKey& nexthops);
+    void postRouteState(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops);
+    void removeRouteState(const string& vnet, IpPrefix& ipPrefix);
+    void addRouteAdvertisement(IpPrefix& ipPrefix);
+    void removeRouteAdvertisement(IpPrefix& ipPrefix);
+
+    void updateVnetTunnel(const BfdUpdate&);
+    bool updateTunnelRoute(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op);
+
     template<typename T>
-    bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op);
+    bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op,
+                    const std::map<NextHopKey, IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
 
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, nextHop& nh, string& op);
@@ -326,6 +373,12 @@ private:
     VNetNextHopObserverTable next_hop_observers_;
     std::map<std::string, VNetNextHopGroupInfoTable> syncd_nexthop_groups_;
     std::map<std::string, VNetTunnelRouteTable> syncd_tunnel_routes_;
+    BfdSessionTable bfd_sessions_;
+    std::map<std::string, VNetEndpointInfoTable> nexthop_info_;
+    ProducerStateTable bfd_session_producer_;
+    shared_ptr<DBConnector> state_db_;
+    unique_ptr<Table> state_vnet_rt_tunnel_table_;
+    unique_ptr<Table> state_vnet_rt_adv_table_;
 };
 
 class VNetCfgRouteOrch : public Orch
