@@ -2174,8 +2174,7 @@ bool PortsOrch::createVlanHostIntf(Port& vl, string hostif_name)
     attr.id = SAI_HOSTIF_ATTR_NAME;
     if (hostif_name.length() >= SAI_HOSTIF_NAME_SIZE)
     {
-        SWSS_LOG_ERROR("Host interface name is too long");
-        return false;
+        SWSS_LOG_WARN("Host interface name %s is too long and will be truncated to %d bytes", hostif_name.c_str(), SAI_HOSTIF_NAME_SIZE - 1);
     }
     strncpy(attr.value.chardata, hostif_name.c_str(), SAI_HOSTIF_NAME_SIZE);
     attr.value.chardata[SAI_HOSTIF_NAME_SIZE - 1] = '\0';
@@ -4192,6 +4191,11 @@ bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_int
 
     attr.id = SAI_HOSTIF_ATTR_NAME;
     strncpy((char *)&attr.value.chardata, alias.c_str(), SAI_HOSTIF_NAME_SIZE);
+    if (alias.length() >= SAI_HOSTIF_NAME_SIZE)
+    {
+        SWSS_LOG_WARN("Host interface name %s is too long and will be truncated to %d bytes", alias.c_str(), SAI_HOSTIF_NAME_SIZE - 1);
+    }
+    attr.value.chardata[SAI_HOSTIF_NAME_SIZE - 1] = '\0';
     attrs.push_back(attr);
 
     sai_status_t status = sai_hostif_api->create_hostif(&host_intfs_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
