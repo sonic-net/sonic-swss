@@ -291,7 +291,25 @@ bool DscpToTcMapHandler::removeQosItem(sai_object_id_t sai_object)
     SWSS_LOG_ENTER();
 
     if (sai_object == gQosOrch->m_globalDscpToTcMap)
-        applyDscpToTcMapToSwitch(SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP, SAI_NULL_OBJECT_ID);
+    {
+        // The current global dscp to tc map is about to be removed.
+        // Find another one to set to the switch or NULL in case this is the last one
+        const auto &dscpToTcObjects = (*QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME]);
+        bool found = false;
+        for (const auto &ref : dscpToTcObjects)
+        {
+            if (ref.second.m_saiObjectId == sai_object)
+                continue;
+            SWSS_LOG_NOTICE("Current global dscp_to_tc map is about to be removed, set it to %s %" PRIx64, ref.first.c_str(), ref.second.m_saiObjectId);
+            applyDscpToTcMapToSwitch(SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP, ref.second.m_saiObjectId);
+            found = true;
+            break;
+        }
+        if (!found)
+        {
+            applyDscpToTcMapToSwitch(SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP, SAI_NULL_OBJECT_ID);
+        }
+    }
 
     SWSS_LOG_DEBUG("Removing DscpToTcMap object:%" PRIx64, sai_object);
     sai_status_t sai_status = sai_qos_map_api->remove_qos_map(sai_object);

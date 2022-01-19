@@ -464,7 +464,7 @@ namespace qosorch_test
         ASSERT_EQ((*QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME]).count("AZURE"), 0);
         // Dependency of dscp_to_tc_map should be cleared
         CheckDependency(CFG_PORT_QOS_MAP_TABLE_NAME, "Ethernet0", "dscp_to_tc_map", CFG_DSCP_TO_TC_MAP_TABLE_NAME);
-        // Dependencies of other items were not touched
+        // Dependencies of other items are not touched
         CheckDependency(CFG_PORT_QOS_MAP_TABLE_NAME, "Ethernet0", "pfc_to_pg_map", CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME, "AZURE");
         CheckDependency(CFG_PORT_QOS_MAP_TABLE_NAME, "Ethernet0", "pfc_to_queue_map", CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME, "AZURE");
         CheckDependency(CFG_PORT_QOS_MAP_TABLE_NAME, "Ethernet0", "tc_to_pg_map", CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME, "AZURE");
@@ -487,7 +487,7 @@ namespace qosorch_test
         CheckDependency(CFG_QUEUE_TABLE_NAME, "Ethernet0|3", "scheduler", CFG_SCHEDULER_TABLE_NAME, "scheduler.1");
         CheckDependency(CFG_QUEUE_TABLE_NAME, "Ethernet0|3", "wred_profile", CFG_WRED_PROFILE_TABLE_NAME, "AZURE_LOSSLESS");
 
-        // Try removing scheduler from QUEUE table while it is still referenced
+        // Try removing scheduler from WRED_PROFILE table while it is still referenced
         RemoveItem(CFG_WRED_PROFILE_TABLE_NAME, "AZURE_LOSSLESS");
         auto current_sai_remove_wred_profile_count = sai_remove_wred_profile_count;
         static_cast<Orch *>(gQosOrch)->doTask();
@@ -726,7 +726,7 @@ namespace qosorch_test
         // Global dscp to tc map should not be cleared
         ASSERT_EQ((*QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME])["AZURE_1"].m_saiObjectId, switch_dscp_to_tc_map_id);
 
-        // Check other dependencies are not touched
+        // Make sure other dependencies are not touched
         CheckDependency(CFG_PORT_QOS_MAP_TABLE_NAME, "Ethernet0", "pfc_to_pg_map", CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME, "AZURE");
         CheckDependency(CFG_PORT_QOS_MAP_TABLE_NAME, "Ethernet0", "pfc_to_queue_map", CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME, "AZURE");
         CheckDependency(CFG_PORT_QOS_MAP_TABLE_NAME, "Ethernet0", "tc_to_pg_map", CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME, "AZURE");
@@ -757,5 +757,33 @@ namespace qosorch_test
         ASSERT_EQ((*QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME]).count("AZURE_1"), 0);
         // Global dscp to tc map should be cleared
         ASSERT_EQ((*QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME])["AZURE_1"].m_saiObjectId, SAI_NULL_OBJECT_ID);
+    }
+
+    TEST_F(QosOrchTest, QosOrchTestGlobalDscpToTcMap)
+    {
+        // Make sure dscp to tc map is correct
+        ASSERT_EQ((*QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME])["AZURE"].m_saiObjectId, switch_dscp_to_tc_map_id);
+
+        // Create a new dscp to tc map
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"AZURE_1", "SET",
+                           {
+                               {"1", "0"},
+                               {"0", "1"}
+                           }});
+
+        auto consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_DSCP_TO_TC_MAP_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+        // Drain DSCP_TO_TC_MAP table
+        static_cast<Orch *>(gQosOrch)->doTask();
+        ASSERT_EQ((*QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME])["AZURE_1"].m_saiObjectId, switch_dscp_to_tc_map_id);
+
+        entries.push_back({"AZURE_1", "DEL", {}});
+        consumer->addToSync(entries);
+        entries.clear();
+        // Drain DSCP_TO_TC_MAP table
+        static_cast<Orch *>(gQosOrch)->doTask();
+        ASSERT_EQ((*QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME])["AZURE"].m_saiObjectId, switch_dscp_to_tc_map_id);
     }
 }
