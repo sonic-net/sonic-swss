@@ -144,7 +144,7 @@ def test_mclagFdb_remote_dynamic_mac_add(dvs, testlog):
 
     assert ok, str(extra)
 
-    (exitcode, output) = dvs.runcmd(['sh', '-c', "bridge fdb show  | grep " + "3C:85:99:5E:00:01" + " | wc -l"])
+    (exitcode, output) = dvs.runcmd(['sh', '-c', "bridge fdb show  | grep " + "3C:85:99:5E:00:01".lower() + " | wc -l"])
     num = int(output.strip())
     assert num == 1
 
@@ -163,7 +163,7 @@ def test_mclagFdb_remote_dynamic_mac_delete(dvs, testlog):
     # check that the FDB entry was deleted from ASIC DB
     assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 0, "The MCLAG fdb entry not deleted"
 
-    (exitcode, output) = dvs.runcmd(['sh', '-c', "bridge fdb show  | grep " + "3C:85:99:5E:00:01" + " | wc -l"])
+    (exitcode, output) = dvs.runcmd(['sh', '-c', "bridge fdb show  | grep " + "3C:85:99:5E:00:01".lower() + " | wc -l"])
     assert output == ''
 
 
@@ -192,7 +192,7 @@ def test_mclagFdb_remote_static_mac_add(dvs, testlog):
 
     assert ok, str(extra)
 
-    (exitcode, output) = dvs.runcmd(['sh', '-c', "bridge fdb show  | grep " + "3C:85:99:5E:00:01" + " | wc -l"])
+    (exitcode, output) = dvs.runcmd(['sh', '-c', "bridge fdb show  | grep " + "3C:85:99:5E:00:01".lower() + " | wc -l"])
     num = int(output.strip())
     assert num == 1
 
@@ -211,7 +211,7 @@ def test_mclagFdb_remote_static_mac_del(dvs, testlog):
     # check that the FDB entry was deleted from ASIC DB
     assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 0, "The MCLAG static fdb entry not deleted"
 
-    (exitcode, output) = dvs.runcmd(['sh', '-c', "bridge fdb show  | grep " + "3C:85:99:5E:00:01" + " | wc -l"])
+    (exitcode, output) = dvs.runcmd(['sh', '-c', "bridge fdb show  | grep " + "3C:85:99:5E:00:01".lower() + " | wc -l"])
     assert output == ''
 
 
