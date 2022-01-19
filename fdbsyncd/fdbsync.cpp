@@ -278,7 +278,7 @@ bool FdbSync::macCheckMclagDB(struct m_fdb_info *info)
     string key = info->vid + ":" + info->mac;
     if (m_mclag_remote_fdb_mac.find(key) != m_mclag_remote_fdb_mac.end())
     {
-        SWSS_LOG_NOTICE("macCheckMlagDB DEL_KEY %s ", key.c_str());
+        SWSS_LOG_DEBUG("macCheckMlagDB DEL_KEY %s ", key.c_str());
         return true;
     }
 
