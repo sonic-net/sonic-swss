@@ -71,6 +71,10 @@ def how_many_entries_exist(db, table):
     tbl =  swsscommon.Table(db, table)
     return len(tbl.getKeys())
 
+def table_contain_key(db, table, key):
+    tbl =  swsscommon.Table(db, table)
+    return(key in tbl.get_keys(table))
+
 # Test-1 Verify basic config add
 
 @pytest.mark.dev_sanity
@@ -144,9 +148,8 @@ def test_mclagFdb_remote_dynamic_mac_add(dvs, testlog):
 
     assert ok, str(extra)
 
-    (exitcode, output) = dvs.runcmd(['sh', '-c', "bridge fdb show  | grep " + "3C:85:99:5E:00:01".lower() + " | wc -l"])
-    num = int(output.strip())
-    assert num == 1
+    assert how_many_entries_exist(dvs.sdb, "MCLAG_REMOTE_FDB_TABL") == 1, "The MCLAG fdb entry not inserted to STATE"
+    assert table_contain_key(dvs.sdb, "MCLAG_REMOTE_FDB_TABL", "Vlan200:3C:85:99:5E:00:01") == True, "The MCLAG fdb entry not found in STATE"
 
 # Test-3 Remote Dynamic MAC Delete
 
@@ -163,8 +166,8 @@ def test_mclagFdb_remote_dynamic_mac_delete(dvs, testlog):
     # check that the FDB entry was deleted from ASIC DB
     assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 0, "The MCLAG fdb entry not deleted"
 
-    (exitcode, output) = dvs.runcmd(['sh', '-c', "bridge fdb show  | grep " + "3C:85:99:5E:00:01".lower() + " | wc -l"])
-    assert output == ''
+    assert how_many_entries_exist(dvs.sdb, "MCLAG_REMOTE_FDB_TABL") == 0, "The MCLAG fdb entry not delete to STATE"
+    assert table_contain_key(dvs.sdb, "MCLAG_REMOTE_FDB_TABL", "Vlan200:3C:85:99:5E:00:01") == False, "The MCLAG fdb entry found in STATE"
 
 
 # Test-4 Remote Static MAC Add
@@ -192,9 +195,8 @@ def test_mclagFdb_remote_static_mac_add(dvs, testlog):
 
     assert ok, str(extra)
 
-    (exitcode, output) = dvs.runcmd(['sh', '-c', "bridge fdb show  | grep " + "3C:85:99:5E:00:01".lower() + " | wc -l"])
-    num = int(output.strip())
-    assert num == 1
+    assert how_many_entries_exist(dvs.sdb, "MCLAG_REMOTE_FDB_TABL") == 1, "The MCLAG fdb entry not inserted to STATE"
+    assert table_contain_key(dvs.sdb, "MCLAG_REMOTE_FDB_TABL", "Vlan200:3C:85:99:5E:00:01") == true, "The MCLAG fdb entry not found in STATE"
 
 # Test-5 Remote Static MAC Del
 
@@ -211,8 +213,8 @@ def test_mclagFdb_remote_static_mac_del(dvs, testlog):
     # check that the FDB entry was deleted from ASIC DB
     assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 0, "The MCLAG static fdb entry not deleted"
 
-    (exitcode, output) = dvs.runcmd(['sh', '-c', "bridge fdb show  | grep " + "3C:85:99:5E:00:01".lower() + " | wc -l"])
-    assert output == ''
+    assert how_many_entries_exist(dvs.sdb, "MCLAG_REMOTE_FDB_TABL") == 0, "The MCLAG fdb entry not delete to STATE"
+    assert table_contain_key(dvs.sdb, "MCLAG_REMOTE_FDB_TABL", "Vlan200:3C:85:99:5E:00:01") == False, "The MCLAG fdb entry found in STATE"
 
 
 # Test-6 Verify Remote to Local Move.
