@@ -40,7 +40,7 @@ extern CrmOrch *gCrmOrch;
 extern RouteOrch *gRouteOrch;
 extern MacAddress gVxlanMacAddress;
 extern BfdOrch *gBfdOrch;
-
+extern SwitchOrch *gSwitchOrch;
 /*
  * VRF Modeling and VNetVrf class definitions
  */
@@ -396,7 +396,7 @@ bool VNetOrch::addOperation(const Request& request)
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
     set<string> peer_list = {};
-    bool peer = false, create = false;
+    bool peer = false, create = false, advertise_prefix = false;
     uint32_t vni=0;
     string tunnel;
     string scope;
@@ -427,6 +427,10 @@ bool VNetOrch::addOperation(const Request& request)
         {
             scope = request.getAttrString("scope");
         }
+        else if (name == "advertise_prefix")
+        {
+            advertise_prefix = request.getAttrBool("advertise_prefix");
+        }
         else
         {
             SWSS_LOG_INFO("Unknown attribute: %s", name.c_str());
@@ -453,7 +457,7 @@ bool VNetOrch::addOperation(const Request& request)
 
             if (it == std::end(vnet_table_))
             {
-                VNetInfo vnet_info = { tunnel, vni, peer_list, scope };
+                VNetInfo vnet_info = { tunnel, vni, peer_list, scope, advertise_prefix };
                 obj = createObject<VNetVrfObject>(vnet_name, vnet_info, attrs);
                 create = true;
 
@@ -645,6 +649,7 @@ VNetRouteOrch::VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOr
 
     state_db_ = shared_ptr<DBConnector>(new DBConnector("STATE_DB", 0));
     state_vnet_rt_tunnel_table_ = unique_ptr<Table>(new Table(state_db_.get(), STATE_VNET_RT_TUNNEL_TABLE_NAME));
+    state_vnet_rt_adv_table_ = unique_ptr<Table>(new Table(state_db_.get(), STATE_ADVERTISE_NETWORK_TABLE_NAME));
 
     gBfdOrch->attach(this);
 }
@@ -675,9 +680,12 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
     vector<sai_object_id_t> next_hop_ids;
     set<NextHopKey> next_hop_set = nexthops.getNextHops();
     std::map<sai_object_id_t, NextHopKey> nhopgroup_members_set;
+    std::map<NextHopKey, uint32_t> nh_seq_id_in_nhgrp;
+    uint32_t seq_id = 0;
 
     for (auto it : next_hop_set)
     {
+        nh_seq_id_in_nhgrp[it] = ++seq_id;
         if (nexthop_info_[vnet].find(it.ip_address) != nexthop_info_[vnet].end() && nexthop_info_[vnet][it.ip_address].bfd_state != SAI_BFD_SESSION_STATE_UP)
         {
             continue;
@@ -691,7 +699,7 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
     vector<sai_attribute_t> nhg_attrs;
 
     nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_TYPE;
-    nhg_attr.value.s32 = SAI_NEXT_HOP_GROUP_TYPE_ECMP;
+    nhg_attr.value.s32 = gSwitchOrch->checkOrderedEcmpEnable() ? SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP : SAI_NEXT_HOP_GROUP_TYPE_ECMP;
     nhg_attrs.push_back(nhg_attr);
 
     sai_object_id_t next_hop_group_id;
@@ -727,6 +735,13 @@ bool VNetRouteOrch::addNextHopGroup(const string& vnet, const NextHopGroupKey &n
         nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
         nhgm_attr.value.oid = nhid;
         nhgm_attrs.push_back(nhgm_attr);
+
+        if (gSwitchOrch->checkOrderedEcmpEnable())
+        {
+            nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID;
+            nhgm_attr.value.u32 = nh_seq_id_in_nhgrp[nhopgroup_members_set.find(nhid)->second];
+            nhgm_attrs.push_back(nhgm_attr);
+        }
 
         sai_object_id_t next_hop_group_member_id;
         status = sai_next_hop_group_api->create_next_hop_group_member(&next_hop_group_member_id,
@@ -860,7 +875,10 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                 NextHopGroupInfo next_hop_group_entry;
                 next_hop_group_entry.next_hop_group_id = vrf_obj->getTunnelNextHop(nexthop);
                 next_hop_group_entry.ref_count = 0;
-                next_hop_group_entry.active_members[nexthop] = SAI_NULL_OBJECT_ID;
+                if (nexthop_info_[vnet].find(nexthop.ip_address) == nexthop_info_[vnet].end() || nexthop_info_[vnet][nexthop.ip_address].bfd_state == SAI_BFD_SESSION_STATE_UP)
+                {
+                    next_hop_group_entry.active_members[nexthop] = SAI_NULL_OBJECT_ID;
+                }
                 syncd_nexthop_groups_[vnet][nexthops] = next_hop_group_entry;
             }
             else
@@ -1563,12 +1581,39 @@ void VNetRouteOrch::postRouteState(const string& vnet, IpPrefix& ipPrefix, NextH
     fvVector.emplace_back("state", route_state);
 
     state_vnet_rt_tunnel_table_->set(state_db_key, fvVector);
+
+    if (vnet_orch_->getAdvertisePrefix(vnet))
+    {
+        if (route_state == "active")
+        {
+            addRouteAdvertisement(ipPrefix);
+        }
+        else
+        {
+            removeRouteAdvertisement(ipPrefix);
+        }
+    }
 }
 
 void VNetRouteOrch::removeRouteState(const string& vnet, IpPrefix& ipPrefix)
 {
     const string state_db_key = vnet + state_db_key_delimiter + ipPrefix.to_string();
     state_vnet_rt_tunnel_table_->del(state_db_key);
+    removeRouteAdvertisement(ipPrefix);
+}
+
+void VNetRouteOrch::addRouteAdvertisement(IpPrefix& ipPrefix)
+{
+    const string key = ipPrefix.to_string();
+    vector<FieldValueTuple> fvs;
+    fvs.push_back(FieldValueTuple("", ""));
+    state_vnet_rt_adv_table_->set(key, fvs);
+}
+
+void VNetRouteOrch::removeRouteAdvertisement(IpPrefix& ipPrefix)
+{
+    const string key = ipPrefix.to_string();
+    state_vnet_rt_adv_table_->del(key);
 }
 
 void VNetRouteOrch::update(SubjectType type, void *cntx)
@@ -1648,7 +1693,20 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
         NextHopGroupKey nexthops = nhg_info_pair.first;
         NextHopGroupInfo& nhg_info = nhg_info_pair.second;
 
-        if (!(nexthops.contains(endpoint)))
+        std::set<NextHopKey> next_hop_set = nexthops.getNextHops();
+        uint32_t seq_id = 0;
+        uint32_t nh_seq_id = 0;
+        for (auto nh: next_hop_set)
+        {
+            seq_id++;
+            if (nh == endpoint)
+            {
+                nh_seq_id = seq_id;
+                break;
+            }
+        }
+
+        if (!nh_seq_id)
         {
             continue;
         }
@@ -1669,6 +1727,13 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
                 nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
                 nhgm_attr.value.oid = vrf_obj->getTunnelNextHop(endpoint);
                 nhgm_attrs.push_back(nhgm_attr);
+
+                if (gSwitchOrch->checkOrderedEcmpEnable())
+                {
+                    nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID;
+                    nhgm_attr.value.u32 = nh_seq_id;
+                    nhgm_attrs.push_back(nhgm_attr);
+                }
 
                 sai_status_t status = sai_next_hop_group_api->create_next_hop_group_member(&next_hop_group_member_id,
                                                                                 gSwitchId,

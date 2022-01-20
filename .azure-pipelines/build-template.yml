@@ -96,6 +96,8 @@ jobs:
       path: '$(Build.SourcesDirectory)/${{ parameters.sairedis_artifact_name }}'
     displayName: "Download sonic sairedis deb packages"
   - task: DownloadPipelineArtifact@2
+    ${{ if eq(parameters.buildimage_pipeline, 141) }}:
+      continueOnError: True
     inputs:
       source: specific
       project: build
@@ -105,6 +107,24 @@ jobs:
       runBranch: 'refs/heads/master'
       path: '$(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}'
     displayName: "Download sonic buildimage deb packages"
+  - script: |
+      buildimage_artifact_downloaded=n
+      [ -d "$(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}/target" ] && buildimage_artifact_downloaded=y
+      echo "buildimage_artifact_downloaded=$buildimage_artifact_downloaded"
+      echo "##vso[task.setvariable variable=buildimage_artifact_downloaded]$buildimage_artifact_downloaded"
+    condition: eq(${{ parameters.buildimage_pipeline }}, 141)
+    displayName: "Check if sonic buildimage deb packages downloaded"
+  - task: DownloadPipelineArtifact@2
+    condition: and(eq(variables.buildimage_artifact_downloaded, 'n'), eq(${{ parameters.buildimage_pipeline }}, 141))
+    inputs:
+      source: specific
+      project: build
+      pipeline: ${{ parameters.buildimage_pipeline }}
+      artifact: 'sonic-buildimage.marvell-armhf1'
+      runVersion: specific
+      runId: 63911
+      path: '$(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}'
+    displayName: "Download sonic buildimage deb packages from 63911"
   - script: |
       cd $(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}
       sudo dpkg -i target/debs/buster/libnl-3-200_*.deb
