@@ -4917,7 +4917,7 @@ bool PortsOrch::addLag(string lag_alias, uint32_t spa_id, int32_t switch_id)
     auto lagport = m_portList.find(lag_alias);
     if (lagport != m_portList.end())
     {
-        /* The deletion of bridgeport attached to the lag may still be 
+        /* The deletion of bridgeport attached to the lag may still be
          * pending due to fdb entries still present on the lag. Wait
          * until the cleanup is done.
          */
@@ -5609,8 +5609,12 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
                 if (getPortOperSpeed(port, speed))
                 {
                     SWSS_LOG_NOTICE("%s oper speed is %d", port.m_alias.c_str(), speed);
-                    updateDbPortOperSpeed(port, speed);
+                    updatePortOperSpeedToStateDB(port, speed);
                 }
+            }
+            else
+            {
+                updatePortOperSpeedToStateDB(port, 0);
             }
 
             /* update m_portList */
@@ -5667,14 +5671,14 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
     notify(SUBJECT_TYPE_PORT_OPER_STATE_CHANGE, static_cast<void *>(&update));
 }
 
-void PortsOrch::updateDbPortOperSpeed(Port &port, sai_uint32_t speed)
+void PortsOrch::updatePortOperSpeedToStateDB(Port &port, sai_uint32_t speed)
 {
     SWSS_LOG_ENTER();
 
     vector<FieldValueTuple> tuples;
-    FieldValueTuple tuple("speed", to_string(speed));
-    tuples.push_back(tuple);
-    m_portTable->set(port.m_alias, tuples);
+    string speedStr = speed != 0 ? to_string(speed) : "N/A";
+    tuples.emplace_back(std::make_pair("speed", speedStr));
+    m_portStateTable.set(port.m_alias, tuples);
 
     // We don't set port.m_speed = speed here, because CONFIG_DB still hold the old
     // value. If we set it here, next time configure any attributes related port will
@@ -5719,7 +5723,11 @@ void PortsOrch::refreshPortStatus()
             if (getPortOperSpeed(port, speed))
             {
                 SWSS_LOG_INFO("%s oper speed is %d", port.m_alias.c_str(), speed);
-                updateDbPortOperSpeed(port, speed);
+                updatePortOperSpeedToStateDB(port, speed);
+            }
+            else
+            {
+                updatePortOperSpeedToStateDB(port, 0);
             }
         }
     }

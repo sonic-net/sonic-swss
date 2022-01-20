@@ -228,11 +228,6 @@ void handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, boo
 
 void handlePortConfig(ProducerStateTable &p, map<string, KeyOpFieldsValuesTuple> &port_cfg_map)
 {
-    string autoneg;
-    vector<FieldValueTuple> attrs;
-    vector<FieldValueTuple> autoneg_attrs;
-    vector<FieldValueTuple> force_attrs;
-
     auto it = port_cfg_map.begin();
     while (it != port_cfg_map.end())
     {
@@ -247,54 +242,7 @@ void handlePortConfig(ProducerStateTable &p, map<string, KeyOpFieldsValuesTuple>
             /* No support for port delete yet */
             if (op == SET_COMMAND)
             {
-                
-                for (auto i : values)
-                {
-                    auto field = fvField(i);
-                    if (field == "adv_speeds")
-                    {
-                        autoneg_attrs.push_back(i);
-                    }
-                    else if (field == "adv_interface_types")
-                    {
-                        autoneg_attrs.push_back(i);
-                    }
-                    else if (field == "speed")
-                    {
-                        force_attrs.push_back(i);
-                    }
-                    else if (field == "interface_type")
-                    {
-                        force_attrs.push_back(i);
-                    }
-                    else if (field == "autoneg")
-                    {
-                        autoneg = fvValue(i);
-                        attrs.push_back(i);
-                    }
-                    else 
-                    {
-                        attrs.push_back(i);
-                    }
-                }
-                if (autoneg == "on") // autoneg is on, only put adv_speeds and adv_interface_types to APPL_DB
-                {
-                    attrs.insert(attrs.end(), autoneg_attrs.begin(), autoneg_attrs.end());
-                }
-                else if (autoneg == "off") // autoneg is off, only put speed and interface_type to APPL_DB
-                {
-                    attrs.insert(attrs.end(), force_attrs.begin(), force_attrs.end());
-                }
-                else // autoneg is not configured, put all attributes to APPL_DB
-                {
-                    attrs.insert(attrs.end(), autoneg_attrs.begin(), autoneg_attrs.end());
-                    attrs.insert(attrs.end(), force_attrs.begin(), force_attrs.end());
-                }
-                p.set(key, attrs);
-                attrs.clear();
-                autoneg_attrs.clear();
-                force_attrs.clear();
-                autoneg.clear();
+                p.set(key, values);
             }
 
             it = port_cfg_map.erase(it);
