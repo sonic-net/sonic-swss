@@ -541,6 +541,7 @@ task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fal
          << "\"hwaddr\":\"" << mac_boot.to_string() << "\","
          << "\"runner\":{"
          << "\"active\":true,"
+         << "\"fast_rate\":true,"
          << "\"name\":\"lacp\"";
 
     if (min_links != 0)
@@ -595,7 +596,7 @@ bool TeamMgr::removeLag(const string &alias)
 }
 
 // Port-channel names are in the pattern of "PortChannel####"
-// 
+//
 // The LACP key could be generated in 3 ways based on the value in config DB:
 //      1. "auto" - LACP key is extracted from the port-channel name and is set to be the number at the end of the port-channel name
 //                  We are adding 1 at the beginning to avoid LACP key collisions between similar LACP keys e.g. PortChannel10 and PortChannel010.
