@@ -171,6 +171,10 @@ public:
         return ids_.tunnel_term_id;
     }
 
+    const IpAddress getSrcIP()
+    {
+        return src_ip_;
+    }
 
     void updateNextHop(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni, sai_object_id_t nhId);
     bool removeNextHop(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni);
