@@ -18,6 +18,7 @@
  *  Maintainer: Jim Jiang from nephos
  */
 #include <iostream>
+#include <signal.h>
 #include "logger.h"
 #include <map>
 #include "select.h"
@@ -27,11 +28,26 @@
 #include "schema.h"
 #include <set>
 
+#define SELECT_TIMEOUT 1000
+
 using namespace std;
 using namespace swss;
 
+bool gExit = false;
+
+void sigterm_handler(int signo)
+{
+    gExit = true;
+}
+
 int main(int argc, char **argv)
 {
+    if (signal(SIGTERM, sigterm_handler) == SIG_ERR)
+    {
+        SWSS_LOG_ERROR("failed to setup SIGTERM action");
+        exit(1);
+    }
+
     swss::Logger::linkToDbNative("mclagsyncd");
 
     DBConnector appl_db("APPL_DB", 0);
@@ -41,7 +57,7 @@ int main(int argc, char **argv)
     SubscriberStateTable mclag_cfg_tbl(&config_db, CFG_MCLAG_TABLE_NAME);
 
     map <string, string> learn_mode;
-    while (1)
+    while (!gExit)
     {
         try
         {
@@ -63,13 +79,12 @@ int main(int argc, char **argv)
             s.addSelectable(&mclag_cfg_tbl);
             SWSS_LOG_NOTICE("MCLagSYNCD Adding mclag_cfg_tbl to selectables");
 
-            while (true)
+            while (!gExit)
             {
                 Selectable *temps;
 
                 /* Reading MCLAG messages forever (and calling "readData" to read them) */
-                s.select(&temps);
-
+                s.select(&temps, SELECT_TIMEOUT);
 
                 if(temps == (Selectable *)mclag.getStateFdbTable())
                 {
@@ -83,7 +98,7 @@ int main(int argc, char **argv)
                     mclag_cfg_tbl.pops(entries);
                     mclag.processMclagDomainCfg(entries);
                 }
-                else if ( temps == (Selectable *)mclag.getMclagIntfCfgTable() )  //Reading MCLAG Interface Config Table 
+                else if ( temps == (Selectable *)mclag.getMclagIntfCfgTable() )  //Reading MCLAG Interface Config Table
                 {
                     SWSS_LOG_DEBUG("MCLAGSYNCD processing mclag_intf_cfg_tbl notifications");
                     std::deque<KeyOpFieldsValuesTuple> entries;
@@ -120,7 +135,7 @@ int main(int argc, char **argv)
         }
     }
 
-    return 1;
+    return 0;
 }
 
 

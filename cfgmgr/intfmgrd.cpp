@@ -1,6 +1,7 @@
 #include <unistd.h>
 #include <vector>
 #include <mutex>
+#include <signal.h>
 #include "dbconnector.h"
 #include "select.h"
 #include "exec.h"
@@ -24,6 +25,7 @@ using namespace swss;
  * Once Orch class refactoring is done, these global variables
  * should be removed from here.
  */
+bool gExit = false;
 int gBatchSize = 0;
 bool gSwssRecord = false;
 bool gLogRotate = false;
@@ -36,8 +38,19 @@ string gResponsePublisherRecordFile;
 /* Global database mutex */
 mutex gDbMutex;
 
+void sigterm_handler(int signo)
+{
+    gExit = true;
+}
+
 int main(int argc, char **argv)
 {
+    if (signal(SIGTERM, sigterm_handler) == SIG_ERR)
+    {
+        SWSS_LOG_ERROR("failed to setup SIGTERM action");
+        exit(1);
+    }
+
     Logger::linkToDbNative("intfmgrd");
     SWSS_LOG_ENTER();
 
@@ -73,7 +86,7 @@ int main(int argc, char **argv)
         }
 
         SWSS_LOG_NOTICE("starting main loop");
-        while (true)
+        while (!gExit)
         {
             Selectable *sel;
             int ret;
@@ -97,6 +110,8 @@ int main(int argc, char **argv)
     catch(const std::exception &e)
     {
         SWSS_LOG_ERROR("Runtime error: %s", e.what());
+        return -1;
     }
-    return -1;
+
+    return 0;
 }

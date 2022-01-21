@@ -10,9 +10,9 @@ endif
 
 natsyncd_SOURCES = natsyncd.cpp natsync.cpp $(top_srcdir)/warmrestart/warmRestartAssist.cpp
 
-natsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
-natsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
-natsyncd_LDADD = -lnl-3 -lnl-route-3 -lnl-nf-3 -lswsscommon
+natsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_ASAN)
+natsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_ASAN)
+natsyncd_LDADD = -lnl-3 -lnl-route-3 -lnl-nf-3 -lswsscommon $(LDFLAGS_ASAN)
 
 if GCOV_ENABLED
 natsyncd_LDADD += -lgcovpreload

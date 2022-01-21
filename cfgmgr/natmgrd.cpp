@@ -47,6 +47,7 @@ using namespace swss;
  * Once Orch class refactoring is done, these global variables
  * should be removed from here.
  */
+bool      gExit = false;
 int       gBatchSize = 0;
 bool      gSwssRecord = false;
 bool      gLogRotate = false;
@@ -64,7 +65,7 @@ NotificationConsumer   *flushNotificationsConsumer = NULL;
 
 std::shared_ptr<swss::NotificationProducer> cleanupNotifier;
 
-void sigterm_handler(int signo)
+void cleanup()
 {
     int ret = 0;
     std::string res;
@@ -88,7 +89,7 @@ void sigterm_handler(int signo)
 
         cleanupNotifier->send("nat_cleanup", "all", entry);
     }
-    
+
     if (natmgr)
     {
         natmgr->removeStaticNatIptables();
@@ -100,8 +101,19 @@ void sigterm_handler(int signo)
     }
 }
 
+void sigterm_handler(int signo)
+{
+    gExit = true;
+}
+
 int main(int argc, char **argv)
 {
+    if (signal(SIGTERM, sigterm_handler) == SIG_ERR)
+    {
+        SWSS_LOG_ERROR("failed to setup SIGTERM action handler");
+        exit(1);
+    }
+
     Logger::linkToDbNative("natmgrd");
     SWSS_LOG_ENTER();
 
@@ -129,16 +141,10 @@ int main(int argc, char **argv)
 
         cleanupNotifier = std::make_shared<swss::NotificationProducer>(&appDb, "NAT_DB_CLEANUP_NOTIFICATION");
 
-        if (signal(SIGTERM, sigterm_handler) == SIG_ERR)
-        {
-            SWSS_LOG_ERROR("failed to setup SIGTERM action handler");
-            exit(1);
-        }
-
         natmgr = new NatMgr(&cfgDb, &appDb, &stateDb, cfg_tables);
 
         natmgr->isPortInitDone(&appDb);
-        
+
         std::vector<Orch *> cfgOrchList = {natmgr};
 
         swss::Select s;
@@ -154,7 +160,7 @@ int main(int argc, char **argv)
         s.addSelectable(flushNotificationsConsumer);
 
         SWSS_LOG_NOTICE("starting main loop");
-        while (true)
+        while (!gExit)
         {
             Selectable *sel;
             int ret;
@@ -197,10 +203,12 @@ int main(int argc, char **argv)
             auto *c = (Executor *)sel;
             c->execute();
         }
+        cleanup();
     }
     catch(const std::exception &e)
     {
         SWSS_LOG_ERROR("Runtime error: %s", e.what());
+        return -1;
     }
-    return -1;
+    return 0;
 }

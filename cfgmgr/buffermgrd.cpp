@@ -1,6 +1,7 @@
 #include <unistd.h>
 #include <getopt.h>
 #include <vector>
+#include <signal.h>
 #include <mutex>
 #include "dbconnector.h"
 #include "select.h"
@@ -29,6 +30,7 @@ using json = nlohmann::json;
  * Once Orch class refactoring is done, these global variables
  * should be removed from here.
  */
+bool gExit = false;
 int gBatchSize = 0;
 bool gSwssRecord = false;
 bool gLogRotate = false;
@@ -109,6 +111,11 @@ shared_ptr<vector<KeyOpFieldsValuesTuple>> load_json(string file)
     }
 }
 
+void sigterm_handler(int signo)
+{
+    gExit = true;
+}
+
 int main(int argc, char **argv)
 {
     int opt;
@@ -118,6 +125,12 @@ int main(int argc, char **argv)
     string zero_profile_file = "";
     Logger::linkToDbNative("buffermgrd");
     SWSS_LOG_ENTER();
+
+    if (signal(SIGTERM, sigterm_handler) == SIG_ERR)
+    {
+        SWSS_LOG_ERROR("failed to setup SIGTERM action");
+        exit(1);
+    }
 
     SWSS_LOG_NOTICE("--- Starting buffermgrd ---");
 
@@ -234,7 +247,7 @@ int main(int argc, char **argv)
         }
 
         SWSS_LOG_NOTICE("starting main loop");
-        while (true)
+        while (!gExit)
         {
             Selectable *sel;
             int ret;
@@ -258,6 +271,7 @@ int main(int argc, char **argv)
     catch(const std::exception &e)
     {
         SWSS_LOG_ERROR("Runtime error: %s", e.what());
+        return -1;
     }
-    return -1;
+    return 0;
 }

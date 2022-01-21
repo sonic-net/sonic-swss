@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <chrono>
+#include <signal.h>
 #include "logger.h"
 #include "select.h"
 #include "netdispatcher.h"
@@ -9,11 +10,26 @@
 #include "fdbsyncd/fdbsync.h"
 #include "warm_restart.h"
 
+#define SELECT_TIMEOUT 1000
+
 using namespace std;
 using namespace swss;
 
+bool gExit = false;
+
+void sigterm_handler(int signo)
+{
+    gExit = true;
+}
+
 int main(int argc, char **argv)
 {
+    if (signal(SIGTERM, sigterm_handler) == SIG_ERR)
+    {
+        SWSS_LOG_ERROR("failed to setup SIGTERM action");
+        exit(1);
+    }
+
     Logger::linkToDbNative("fdbsyncd");
 
     DBConnector appDb(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
@@ -28,7 +44,7 @@ int main(int argc, char **argv)
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELNEIGH, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWLINK, &sync);
 
-    while (1)
+    while (!gExit)
     {
         try
         {
@@ -41,13 +57,13 @@ int main(int argc, char **argv)
             using namespace std::chrono;
 
             /*
-             * If WarmStart is enabled, restore the VXLAN-FDB and VNI 
+             * If WarmStart is enabled, restore the VXLAN-FDB and VNI
              * tables and start a reconcillation timer
              */
             if (sync.getRestartAssist()->isWarmStartInProgress())
             {
                 sync.getRestartAssist()->readTablesToMap();
-                
+
                 steady_clock::time_point starttime = steady_clock::now();
                 while (!sync.isIntfRestoreDone())
                 {
@@ -88,9 +104,9 @@ int main(int argc, char **argv)
             s.addSelectable(sync.getFdbStateTable());
             s.addSelectable(sync.getMclagRemoteFdbStateTable());
             s.addSelectable(sync.getCfgEvpnNvoTable());
-            while (true)
+            while (!gExit)
             {
-                s.select(&temps);
+                s.select(&temps, SELECT_TIMEOUT);
 
                 if (temps == (Selectable *)sync.getFdbStateTable())
                 {
@@ -157,5 +173,5 @@ int main(int argc, char **argv)
         }
     }
 
-    return 1;
+    return 0;
 }

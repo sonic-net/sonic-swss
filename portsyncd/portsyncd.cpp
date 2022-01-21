@@ -7,6 +7,7 @@
 #include <map>
 #include <list>
 #include <sys/stat.h>
+#include <signal.h>
 #include "dbconnector.h"
 #include "select.h"
 #include "netdispatcher.h"
@@ -22,6 +23,7 @@ using namespace swss;
 
 #define DEFAULT_SELECT_TIMEOUT 1000 /* ms */
 
+bool gExit = false;
 /*
  * This g_portSet contains all the front panel ports that the corresponding
  * host interfaces needed to be created. When this LinkSync class is
@@ -48,8 +50,19 @@ void handleVlanIntfFile(string file);
 void handlePortConfig(ProducerStateTable &p, map<string, KeyOpFieldsValuesTuple> &port_cfg_map);
 void checkPortInitDone(DBConnector *appl_db);
 
+void sigterm_handler(int signo)
+{
+    gExit = true;
+}
+
 int main(int argc, char **argv)
 {
+    if (signal(SIGTERM, sigterm_handler) == SIG_ERR)
+    {
+        SWSS_LOG_ERROR("failed to setup SIGTERM action");
+        exit(1);
+    }
+
     Logger::linkToDbNative("portsyncd");
     int opt;
     map<string, KeyOpFieldsValuesTuple> port_cfg_map;
@@ -95,7 +108,7 @@ int main(int argc, char **argv)
         s.addSelectable(&netlink);
         s.addSelectable(&portCfg);
 
-        while (true)
+        while (!gExit)
         {
             Selectable *temps;
             int ret;
@@ -176,7 +189,7 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    return 1;
+    return 0;
 }
 
 static void notifyPortConfigDone(ProducerStateTable &p)
@@ -247,7 +260,7 @@ void handlePortConfig(ProducerStateTable &p, map<string, KeyOpFieldsValuesTuple>
             /* No support for port delete yet */
             if (op == SET_COMMAND)
             {
-                
+
                 for (auto i : values)
                 {
                     auto field = fvField(i);
@@ -272,7 +285,7 @@ void handlePortConfig(ProducerStateTable &p, map<string, KeyOpFieldsValuesTuple>
                         autoneg = fvValue(i);
                         attrs.push_back(i);
                     }
-                    else 
+                    else
                     {
                         attrs.push_back(i);
                     }

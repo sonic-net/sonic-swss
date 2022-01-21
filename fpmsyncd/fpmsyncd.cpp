@@ -1,5 +1,6 @@
 #include <iostream>
 #include <inttypes.h>
+#include <signal.h>
 #include "logger.h"
 #include "select.h"
 #include "selectabletimer.h"
@@ -8,9 +9,12 @@
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/routesync.h"
 
+#define SELECT_TIMEOUT 1000
 
 using namespace std;
 using namespace swss;
+
+bool gExit = false;
 
 /*
  * Default warm-restart timer interval for routing-stack app. To be used only if
@@ -44,8 +48,19 @@ static bool eoiuFlagsSet(Table &bgpStateTable)
     return true;
 }
 
+void sigterm_handler(int signo)
+{
+    gExit = true;
+}
+
 int main(int argc, char **argv)
 {
+    if (signal(SIGTERM, sigterm_handler) == SIG_ERR)
+    {
+        SWSS_LOG_ERROR("failed to setup SIGTERM action");
+        exit(1);
+    }
+
     swss::Logger::linkToDbNative("fpmsyncd");
     DBConnector db("APPL_DB", 0);
     RedisPipeline pipeline(&db);
@@ -57,7 +72,7 @@ int main(int argc, char **argv)
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWROUTE, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELROUTE, &sync);
 
-    while (true)
+    while (!gExit)
     {
         try
         {
@@ -68,7 +83,7 @@ int main(int argc, char **argv)
             SelectableTimer eoiuCheckTimer(timespec{0, 0});
             // After eoiu flags are detected, start a hold timer before starting reconciliation.
             SelectableTimer eoiuHoldTimer(timespec{0, 0});
-           
+
             /*
              * Pipeline should be flushed right away to deal with state pending
              * from previous try/catch iterations.
@@ -115,12 +130,12 @@ int main(int argc, char **argv)
                 sync.m_warmStartHelper.setState(WarmStart::WSDISABLED);
             }
 
-            while (true)
+            while (!gExit)
             {
                 Selectable *temps;
 
                 /* Reading FPM messages forever (and calling "readMe" to read them) */
-                s.select(&temps);
+                s.select(&temps, SELECT_TIMEOUT);
 
                 /*
                  * Upon expiration of the warm-restart timer or eoiu Hold Timer, proceed to run the

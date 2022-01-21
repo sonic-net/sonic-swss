@@ -61,6 +61,7 @@ bool gLogRotate = false;
 bool gSaiRedisLogRotate = false;
 bool gResponsePublisherLogRotate = false;
 bool gSyncMode = false;
+bool gExit = false;
 sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
 string gAsicInstance;
 
@@ -112,6 +113,11 @@ void sighup_handler(int signo)
     gLogRotate = true;
     gSaiRedisLogRotate = true;
     gResponsePublisherLogRotate = true;
+}
+
+void sigterm_handler(int signo)
+{
+    gExit = true;
 }
 
 void syncd_apply_view()
@@ -328,6 +334,12 @@ int main(int argc, char **argv)
         exit(1);
     }
 
+    if (signal(SIGTERM, sigterm_handler) == SIG_ERR)
+    {
+        SWSS_LOG_ERROR("failed to setup SIGTERM action");
+        exit(1);
+    }
+
     int opt;
     sai_status_t status;
 
@@ -364,7 +376,7 @@ int main(int argc, char **argv)
             // Disable all recordings if atoi() fails i.e. returns 0 due to
             // invalid command line argument.
             record_type = atoi(optarg);
-            if (record_type < 0 || record_type > 7) 
+            if (record_type < 0 || record_type > 7)
             {
                 usage();
                 exit(EXIT_FAILURE);
@@ -457,7 +469,7 @@ int main(int argc, char **argv)
     }
 
     // Disable/Enable response publisher recording.
-    if (gResponsePublisherRecord) 
+    if (gResponsePublisherRecord)
     {
         gResponsePublisherRecordFile = record_location + "/" + responsepublisher_rec_filename;
         gResponsePublisherRecordOfs.open(gResponsePublisherRecordFile, std::ofstream::out | std::ofstream::app);
@@ -466,8 +478,8 @@ int main(int argc, char **argv)
             SWSS_LOG_ERROR("Failed to open Response Publisher recording file %s",
                     gResponsePublisherRecordFile.c_str());
             gResponsePublisherRecord = false;
-        } 
-        else 
+        }
+        else
         {
             gResponsePublisherRecordOfs << getTimestamp() << "|recording started"
                 << endl;

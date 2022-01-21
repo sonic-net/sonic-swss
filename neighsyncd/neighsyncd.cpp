@@ -2,17 +2,33 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <chrono>
+#include <signal.h>
 #include "logger.h"
 #include "select.h"
 #include "netdispatcher.h"
 #include "netlink.h"
 #include "neighsyncd/neighsync.h"
 
+#define SELECT_TIMEOUT 1000
+
 using namespace std;
 using namespace swss;
 
+bool gExit = false;
+
+void sigterm_handler(int signo)
+{
+    gExit = true;
+}
+
 int main(int argc, char **argv)
 {
+    if (signal(SIGTERM, sigterm_handler) == SIG_ERR)
+    {
+        SWSS_LOG_ERROR("failed to setup SIGTERM action");
+        exit(1);
+    }
+
     Logger::linkToDbNative("neighsyncd");
 
     DBConnector appDb("APPL_DB", 0);
@@ -25,7 +41,7 @@ int main(int argc, char **argv)
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWNEIGH, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELNEIGH, &sync);
 
-    while (1)
+    while (!gExit)
     {
         try
         {
@@ -67,10 +83,10 @@ int main(int argc, char **argv)
             netlink.dumpRequest(RTM_GETNEIGH);
 
             s.addSelectable(&netlink);
-            while (true)
+            while (!gExit)
             {
                 Selectable *temps;
-                s.select(&temps);
+                s.select(&temps, SELECT_TIMEOUT);
                 /*
                  * If warmstart is in progress, we check the reconcile timer,
                  * if timer expired, we stop the timer and start the reconcile process
@@ -92,5 +108,5 @@ int main(int argc, char **argv)
         }
     }
 
-    return 1;
+    return 0;
 }

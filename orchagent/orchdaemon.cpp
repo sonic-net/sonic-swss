@@ -21,6 +21,7 @@ using namespace swss;
 extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
 extern bool                        gSaiRedisLogRotate;
+extern bool                        gExit;
 
 extern void syncd_apply_view();
 /*
@@ -661,7 +662,7 @@ void OrchDaemon::start()
 
     auto tstart = std::chrono::high_resolution_clock::now();
 
-    while (true)
+    while (!gExit)
     {
         Selectable *s;
         int ret;

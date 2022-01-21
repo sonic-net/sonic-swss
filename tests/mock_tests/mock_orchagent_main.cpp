@@ -25,6 +25,7 @@ string gMySwitchType = "switch";
 int32_t gVoqMySwitchId = 0;
 string gMyHostName = "Linecard1";
 string gMyAsicName = "Asic0";
+bool gExit = false;
 
 VRFOrch *gVrfOrch;
 
