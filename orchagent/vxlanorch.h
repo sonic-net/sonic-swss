@@ -373,7 +373,6 @@ private:
     VTEPTable vtep_table_;
     Table m_stateVxlanTable;
     std::map<sai_object_id_t, std::string> m_pendingAddToFlexCntr;
-    FlexCounterManager vxlan_tunnel_stat_manager;
     bool m_isTunnelCounterMapGenerated = false;
     FlexCounterManager *tunnel_stat_manager;
     unique_ptr<Table> m_tunnelNameTable;
