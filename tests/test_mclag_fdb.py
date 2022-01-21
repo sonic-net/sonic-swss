@@ -150,6 +150,10 @@ def test_mclagFdb_remote_dynamic_mac_add(dvs, testlog):
 
     assert how_many_entries_exist(dvs.sdb, "MCLAG_REMOTE_FDB_TABL") == 1, "The MCLAG fdb entry not inserted to STATE"
     assert table_contain_key(dvs.sdb, "MCLAG_REMOTE_FDB_TABL", "Vlan200:3C:85:99:5E:00:01") == True, "The MCLAG fdb entry not found in STATE"
+    
+    (exitcode, output) = dvs.runcmd(['sh', '-c', "bridge fdb show  | grep " + "3C:85:99:5E:00:01".lower() + " | wc -l"])
+    num = int(output.strip())
+    assert num == 1
 
 # Test-3 Remote Dynamic MAC Delete
 
@@ -168,6 +172,9 @@ def test_mclagFdb_remote_dynamic_mac_delete(dvs, testlog):
 
     assert how_many_entries_exist(dvs.sdb, "MCLAG_REMOTE_FDB_TABL") == 0, "The MCLAG fdb entry not delete to STATE"
     assert table_contain_key(dvs.sdb, "MCLAG_REMOTE_FDB_TABL", "Vlan200:3C:85:99:5E:00:01") == False, "The MCLAG fdb entry found in STATE"
+    
+    (exitcode, output) = dvs.runcmd(['sh', '-c', "bridge fdb show  | grep " + "3C:85:99:5E:00:01".lower()])
+    assert output == ''
 
 
 # Test-4 Remote Static MAC Add
@@ -197,6 +204,10 @@ def test_mclagFdb_remote_static_mac_add(dvs, testlog):
 
     assert how_many_entries_exist(dvs.sdb, "MCLAG_REMOTE_FDB_TABL") == 1, "The MCLAG fdb entry not inserted to STATE"
     assert table_contain_key(dvs.sdb, "MCLAG_REMOTE_FDB_TABL", "Vlan200:3C:85:99:5E:00:01") == true, "The MCLAG fdb entry not found in STATE"
+    
+    (exitcode, output) = dvs.runcmd(['sh', '-c', "bridge fdb show  | grep " + "3C:85:99:5E:00:01".lower() + " | wc -l"])
+    num = int(output.strip())
+    assert num == 1
 
 # Test-5 Remote Static MAC Del
 
@@ -215,6 +226,9 @@ def test_mclagFdb_remote_static_mac_del(dvs, testlog):
 
     assert how_many_entries_exist(dvs.sdb, "MCLAG_REMOTE_FDB_TABL") == 0, "The MCLAG fdb entry not delete to STATE"
     assert table_contain_key(dvs.sdb, "MCLAG_REMOTE_FDB_TABL", "Vlan200:3C:85:99:5E:00:01") == False, "The MCLAG fdb entry found in STATE"
+    
+    (exitcode, output) = dvs.runcmd(['sh', '-c', "bridge fdb show  | grep " + "3C:85:99:5E:00:01".lower()])
+    assert output == ''
 
 
 # Test-6 Verify Remote to Local Move.
