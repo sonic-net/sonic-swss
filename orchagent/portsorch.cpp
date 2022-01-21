@@ -543,7 +543,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
     removeDefaultBridgePorts();
 
     /* Add port oper status notification support */
-    DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
+    shared_ptr<DBConnector> notificationsDb = make_shared<DBConnector>("ASIC_DB", 0);
     m_portStatusNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
     auto portStatusNotificatier = new Notifier(m_portStatusNotificationConsumer, this, "PORT_STATUS_NOTIFICATIONS");
     Orch::addExecutor(portStatusNotificatier);

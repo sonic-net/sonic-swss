@@ -68,7 +68,7 @@ typedef struct
 } referenced_object;
 
 typedef std::map<std::string, referenced_object> object_reference_map;
-typedef std::map<std::string, object_reference_map*> type_map;
+typedef std::map<std::string, std::shared_ptr<object_reference_map>> type_map;
 
 typedef std::map<std::string, sai_object_id_t> object_map;
 typedef std::pair<std::string, sai_object_id_t> object_map_pair;

@@ -48,7 +48,7 @@ const unordered_map<CounterType, string> FlexCounterManager::counter_id_field_lo
 
 FlexManagerDirectory g_FlexManagerDirectory;
 
-FlexCounterManager *FlexManagerDirectory::createFlexCounterManager(const string& group_name,
+shared_ptr<FlexCounterManager> FlexManagerDirectory::createFlexCounterManager(const string& group_name,
                                                                    const StatsMode stats_mode,
                                                                    const uint polling_interval,
                                                                    const bool enabled,
@@ -76,7 +76,7 @@ FlexCounterManager *FlexManagerDirectory::createFlexCounterManager(const string&
         }
         return m_managers[group_name];
     }
-    FlexCounterManager *fc_manager = new FlexCounterManager(group_name, stats_mode, polling_interval,
+    shared_ptr<FlexCounterManager> fc_manager = make_shared<FlexCounterManager>(group_name, stats_mode, polling_interval,
                                                             enabled, fv_plugin);
     m_managers[group_name] = fc_manager;
     return fc_manager;

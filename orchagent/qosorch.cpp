@@ -65,19 +65,19 @@ map<string, sai_meter_type_t> scheduler_meter_map = {
 };
 
 type_map QosOrch::m_qos_maps = {
-    {CFG_DSCP_TO_TC_MAP_TABLE_NAME, new object_reference_map()},
-    {CFG_MPLS_TC_TO_TC_MAP_TABLE_NAME, new object_reference_map()},
-    {CFG_DOT1P_TO_TC_MAP_TABLE_NAME, new object_reference_map()},
-    {CFG_TC_TO_QUEUE_MAP_TABLE_NAME, new object_reference_map()},
-    {CFG_SCHEDULER_TABLE_NAME, new object_reference_map()},
-    {CFG_WRED_PROFILE_TABLE_NAME, new object_reference_map()},
-    {CFG_PORT_QOS_MAP_TABLE_NAME, new object_reference_map()},
-    {CFG_QUEUE_TABLE_NAME, new object_reference_map()},
-    {CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME, new object_reference_map()},
-    {CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME, new object_reference_map()},
-    {CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME, new object_reference_map()},
-    {CFG_DSCP_TO_FC_MAP_TABLE_NAME, new object_reference_map()},
-    {CFG_EXP_TO_FC_MAP_TABLE_NAME, new object_reference_map()},
+    {CFG_DSCP_TO_TC_MAP_TABLE_NAME, make_shared<object_reference_map>()},
+    {CFG_MPLS_TC_TO_TC_MAP_TABLE_NAME, make_shared<object_reference_map>()},
+    {CFG_DOT1P_TO_TC_MAP_TABLE_NAME, make_shared<object_reference_map>()},
+    {CFG_TC_TO_QUEUE_MAP_TABLE_NAME, make_shared<object_reference_map>()},
+    {CFG_SCHEDULER_TABLE_NAME, make_shared<object_reference_map>()},
+    {CFG_WRED_PROFILE_TABLE_NAME, make_shared<object_reference_map>()},
+    {CFG_PORT_QOS_MAP_TABLE_NAME, make_shared<object_reference_map>()},
+    {CFG_QUEUE_TABLE_NAME, make_shared<object_reference_map>()},
+    {CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME, make_shared<object_reference_map>()},
+    {CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME, make_shared<object_reference_map>()},
+    {CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME, make_shared<object_reference_map>()},
+    {CFG_DSCP_TO_FC_MAP_TABLE_NAME, make_shared<object_reference_map>()},
+    {CFG_EXP_TO_FC_MAP_TABLE_NAME, make_shared<object_reference_map>()}
 };
 
 map<string, string> qos_to_ref_table_map = {

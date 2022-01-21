@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <utility>
 #include <inttypes.h>
+#include <memory>
 
 #include "logger.h"
 #include "tokenize.h"
@@ -34,7 +35,7 @@ FdbOrch::FdbOrch(DBConnector* applDbConnector, vector<table_name_with_pri_t> app
 {
     for(auto it: appFdbTables)
     {
-        m_appTables.push_back(new Table(applDbConnector, it.first));
+        m_appTables.push_back(make_shared<Table>(applDbConnector, it.first));
     }
 
     m_portsOrch->attach(this);
@@ -43,7 +44,7 @@ FdbOrch::FdbOrch(DBConnector* applDbConnector, vector<table_name_with_pri_t> app
     Orch::addExecutor(flushNotifier);
 
     /* Add FDB notifications support from ASIC */
-    DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
+    shared_ptr<DBConnector> notificationsDb = make_shared<DBConnector>("ASIC_DB", 0);
     m_fdbNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
     auto fdbNotifier = new Notifier(m_fdbNotificationConsumer, this, "FDB_NOTIFICATIONS");
     Orch::addExecutor(fdbNotifier);

@@ -105,7 +105,7 @@ private:
     PortsOrch *m_portsOrch;
     map<FdbEntry, FdbData> m_entries;
     fdb_entries_by_port_t saved_fdb_entries;
-    vector<Table*> m_appTables;
+    vector<shared_ptr<Table>> m_appTables;
     Table m_fdbStateTable;
     Table m_mclagFdbStateTable;
     NotificationConsumer* m_flushNotificationsConsumer;

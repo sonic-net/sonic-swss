@@ -28,12 +28,12 @@ static const vector<sai_buffer_pool_stat_t> bufferPoolWatermarkStatIds =
 };
 
 type_map BufferOrch::m_buffer_type_maps = {
-    {APP_BUFFER_POOL_TABLE_NAME, new object_reference_map()},
-    {APP_BUFFER_PROFILE_TABLE_NAME, new object_reference_map()},
-    {APP_BUFFER_QUEUE_TABLE_NAME, new object_reference_map()},
-    {APP_BUFFER_PG_TABLE_NAME, new object_reference_map()},
-    {APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, new object_reference_map()},
-    {APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, new object_reference_map()}
+    {APP_BUFFER_POOL_TABLE_NAME, make_shared<object_reference_map>()},
+    {APP_BUFFER_PROFILE_TABLE_NAME, make_shared<object_reference_map>()},
+    {APP_BUFFER_QUEUE_TABLE_NAME, make_shared<object_reference_map>()},
+    {APP_BUFFER_PG_TABLE_NAME, make_shared<object_reference_map>()},
+    {APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, make_shared<object_reference_map>()},
+    {APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, make_shared<object_reference_map>()}
 };
 
 map<string, string> buffer_to_ref_table_map = {

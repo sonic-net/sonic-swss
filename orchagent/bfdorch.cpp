@@ -53,7 +53,7 @@ BfdOrch::BfdOrch(DBConnector *db, string tableName, TableConnector stateDbBfdSes
 {
     SWSS_LOG_ENTER();
 
-    DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
+    shared_ptr<DBConnector> notificationsDb = make_shared<DBConnector>("ASIC_DB", 0);
     m_bfdStateNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
     auto bfdStateNotificatier = new Notifier(m_bfdStateNotificationConsumer, this, "BFD_STATE_NOTIFICATIONS");
     Orch::addExecutor(bfdStateNotificatier);

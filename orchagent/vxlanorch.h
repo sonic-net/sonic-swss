@@ -374,7 +374,7 @@ private:
     Table m_stateVxlanTable;
     std::map<sai_object_id_t, std::string> m_pendingAddToFlexCntr;
     bool m_isTunnelCounterMapGenerated = false;
-    FlexCounterManager *tunnel_stat_manager;
+    std::shared_ptr<FlexCounterManager> tunnel_stat_manager;
     unique_ptr<Table> m_tunnelNameTable;
     unique_ptr<Table> m_tunnelTypeTable;
     unique_ptr<Table> m_vidToRidTable;

@@ -62,8 +62,8 @@ P4Orch::P4Orch(swss::DBConnector *db, std::vector<std::string> tableNames, VRFOr
     m_aclCounterStatsTimer->start();
 
     // Add port state change notification handling support
-    swss::DBConnector notificationsDb("ASIC_DB", 0);
-    m_portStatusNotificationConsumer = new swss::NotificationConsumer(&notificationsDb, "NOTIFICATIONS");
+    shared_ptr<swss::DBConnector> notificationsDb = make_shared<swss::DBConnector>("ASIC_DB", 0);
+    m_portStatusNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
     auto portStatusNotifier = new Notifier(m_portStatusNotificationConsumer, this, "PORT_STATUS_NOTIFICATIONS");
     Orch::addExecutor(portStatusNotifier);
 }

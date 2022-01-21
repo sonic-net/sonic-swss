@@ -5,6 +5,7 @@
 #include <unordered_set>
 #include <unordered_map>
 #include <utility>
+#include <memory>
 #include "dbconnector.h"
 #include "producertable.h"
 #include "table.h"
@@ -114,11 +115,11 @@ class FlexCounterManager
 class FlexManagerDirectory
 {
     public:
-        FlexCounterManager* createFlexCounterManager(const std::string& group_name, const StatsMode stats_mode,
+        std::shared_ptr<FlexCounterManager> createFlexCounterManager(const std::string& group_name, const StatsMode stats_mode,
                                                      const uint polling_interval, const bool enabled,
                                                      swss::FieldValueTuple fv_plugin = std::make_pair("",""));
     private:
-        std::unordered_map<std::string, FlexCounterManager*>  m_managers;
+        std::unordered_map<std::string, std::shared_ptr<FlexCounterManager>>  m_managers;
 };
 
 #endif // ORCHAGENT_FLEX_COUNTER_MANAGER_H
