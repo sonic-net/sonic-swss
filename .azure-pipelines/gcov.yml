@@ -109,6 +109,8 @@ jobs:
       mkdir -p $(System.DefaultWorkingDirectory)/gcov
       sudo cp -rf $(Build.ArtifactStagingDirectory)/gcov_output/AllMergeReport/* $(System.DefaultWorkingDirectory)/gcov/
       ls -lh $(Build.ArtifactStagingDirectory)
+      ls -lh $(Build.ArtifactStagingDirectory)/gcov_output/AllMergeReport
+      ls -lh $(System.DefaultWorkingDirectory)/gcov
       popd
     workingDirectory: $(Pipeline.Workspace)
     displayName: "generate gcov reports"
