@@ -1272,7 +1272,7 @@ shared_ptr<AclRule> AclRule::makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOr
         {
             return make_shared<AclRulePacket>(acl, rule, table);
         }
-        else if (aclDTelFlowOpTypeLookup.find(action) != aclDTelFlowOpTypeLookup.cend())
+        else if (aclDTelActionLookup.find(action) != aclDTelActionLookup.cend())
         {
             if (!dtel)
             {
@@ -4402,6 +4402,8 @@ void AclOrch::createDTelWatchListTables()
         .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_INNER_DST_IP))
         .withAction(SAI_ACL_ACTION_TYPE_ACL_DTEL_FLOW_OP)
         .withAction(SAI_ACL_ACTION_TYPE_DTEL_INT_SESSION)
+        .withAction(SAI_ACL_ACTION_TYPE_DTEL_DROP_REPORT_ENABLE)
+        .withAction(SAI_ACL_ACTION_TYPE_DTEL_TAIL_DROP_REPORT_ENABLE)
         .withAction(SAI_ACL_ACTION_TYPE_DTEL_REPORT_ALL_PACKETS)
         .withAction(SAI_ACL_ACTION_TYPE_DTEL_FLOW_SAMPLE_PERCENT)
         .build()
@@ -4419,6 +4421,7 @@ void AclOrch::createDTelWatchListTables()
         .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL))
         .withAction(SAI_ACL_ACTION_TYPE_DTEL_DROP_REPORT_ENABLE)
         .withAction(SAI_ACL_ACTION_TYPE_DTEL_TAIL_DROP_REPORT_ENABLE)
+        .withAction(SAI_ACL_ACTION_TYPE_DTEL_REPORT_ALL_PACKETS)
         .build()
     );
     dropWLTable.setDescription("Dataplane Telemetry Drop Watchlist table");
