@@ -80,6 +80,7 @@ jobs:
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/202106'
       allowPartiallySucceededBuilds: true
+      allowFailedBuilds: true
     displayName: "Download sonic swss common deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
