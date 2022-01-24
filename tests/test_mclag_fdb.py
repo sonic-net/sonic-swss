@@ -73,7 +73,7 @@ def how_many_entries_exist(db, table):
 
 def table_contain_key(db, table, key):
     tbl =  swsscommon.Table(db, table)
-    return(key in tbl.get_keys(table))
+    return(key in tbl.getKeys())
 
 # Test-1 Verify basic config add
 
