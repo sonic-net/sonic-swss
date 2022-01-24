@@ -210,6 +210,7 @@ void TeamMgr::doLagTask(Consumer &consumer)
             string mtu = DEFAULT_MTU_STR;
             string learn_mode;
             string tpid;
+            string lacp_rate;
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -247,12 +248,17 @@ void TeamMgr::doLagTask(Consumer &consumer)
                 {
                     tpid = fvValue(i);
                     SWSS_LOG_INFO("Get TPID %s", tpid.c_str());
-                 }
+                }
+                else if (fvField(i) == "lacp_rate")
+                {
+                    lacp_rate = fvValue(i);
+                    SWSS_LOG_INFO("Get lacp_rate `%s`", lacp_rate.c_str());
+                }
             }
 
             if (m_lagList.find(alias) == m_lagList.end())
             {
-                if (addLag(alias, min_links, fallback) == task_need_retry)
+                if (addLag(alias, min_links, fallback, lacp_rate) == task_need_retry)
                 {
                     it++;
                     continue;
@@ -496,7 +502,7 @@ bool TeamMgr::setLagLearnMode(const string &alias, const string &learn_mode)
     return true;
 }
 
-task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fallback)
+task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fallback, const string &lacp_rate)
 {
     SWSS_LOG_ENTER();
 
@@ -541,7 +547,6 @@ task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fal
          << "\"hwaddr\":\"" << mac_boot.to_string() << "\","
          << "\"runner\":{"
          << "\"active\":true,"
-         << "\"fast_rate\":true,"
          << "\"name\":\"lacp\"";
 
     if (min_links != 0)
@@ -552,6 +557,11 @@ task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fal
     if (fallback)
     {
         conf << ",\"fallback\":true";
+    }
+
+    if (lacp_rate == "fast")
+    {
+        conf << ",\"fast_rate\":true";
     }
 
     conf << "}}'";
