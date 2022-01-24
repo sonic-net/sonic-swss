@@ -51,6 +51,8 @@ jobs:
       artifact: ${{ parameters.sairedis_artifact_name }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/202106'
+      allowPartiallySucceededBuilds: true
+      allowFailedBuilds: true
     displayName: "Download sonic sairedis deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:

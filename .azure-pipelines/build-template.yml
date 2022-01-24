@@ -90,6 +90,8 @@ jobs:
       artifact: ${{ parameters.sairedis_artifact_name }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/202106'
+      allowPartiallySucceededBuilds: true
+      allowFailedBuilds: true
     displayName: "Download sonic sairedis deb packages"
   - script: |
       sudo dpkg -i libswsscommon_1.0.0_${{ parameters.arch }}.deb
