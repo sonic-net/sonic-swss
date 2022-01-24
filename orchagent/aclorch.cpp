@@ -336,6 +336,10 @@ bool AclTableTypeParser::parse(const std::string& key,
                                const vector<swss::FieldValueTuple>& fieldValues,
                                AclTableTypeBuilder& builder)
 {
+    int i = 0;
+    if (i == 1) {
+        i = 0;
+    }
     builder.withName(key);
 
     for (const auto& fieldValue: fieldValues)
