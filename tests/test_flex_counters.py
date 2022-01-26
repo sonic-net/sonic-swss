@@ -237,12 +237,12 @@ class TestFlexCounters(object):
 
     def pre_route_flow_counter_test(self, meta_data):
         dvs = meta_data['dvs']
-        self.config_db.create_entry('FLOW_COUNTER_ROUTE_PATTERN_TABLE', '1.1.0.0/16',
+        self.config_db.create_entry('FLOW_COUNTER_ROUTE_PATTERN', '1.1.0.0/16',
             {
                 'max_match_count': '30'
             }
         )
-        self.config_db.create_entry('FLOW_COUNTER_ROUTE_PATTERN_TABLE', '2000::/64',
+        self.config_db.create_entry('FLOW_COUNTER_ROUTE_PATTERN', '2000::/64',
             {
                 'max_match_count': '30'
             }
@@ -308,7 +308,7 @@ class TestFlexCounters(object):
         v4_name_map_key = '1.1.1.0/24'
         counter_oid = self.counters_db.db_connection.hget(meta_data['name_map'], v4_name_map_key)
         assert counter_oid
-        self.config_db.delete_entry('FLOW_COUNTER_ROUTE_PATTERN_TABLE', '1.1.0.0/16')
+        self.config_db.delete_entry('FLOW_COUNTER_ROUTE_PATTERN', '1.1.0.0/16')
         self.wait_for_id_list_remove(meta_data['group_name'], v4_name_map_key, counter_oid)
         counter_oid = self.counters_db.db_connection.hget(meta_data['name_map'], v4_name_map_key)
         assert not counter_oid
@@ -337,7 +337,7 @@ class TestFlexCounters(object):
         self.set_admin_status("Ethernet4", "down")
         dvs.servers[1].runcmd("ip -6 route del default dev eth0")
         dvs.servers[1].runcmd("ip -6 address del 2001::2/64 dev eth0")
-        self.config_db.delete_entry('FLOW_COUNTER_ROUTE_PATTERN_TABLE', '2000::/64')
+        self.config_db.delete_entry('FLOW_COUNTER_ROUTE_PATTERN', '2000::/64')
 
     def test_add_remove_trap(self, dvs):
         """Test steps:
@@ -456,7 +456,7 @@ class TestFlexCounters(object):
 
     def test_update_route_pattern(self, dvs):
         self.setup_dbs(dvs)
-        self.config_db.create_entry('FLOW_COUNTER_ROUTE_PATTERN_TABLE', '1.1.0.0/16',
+        self.config_db.create_entry('FLOW_COUNTER_ROUTE_PATTERN', '1.1.0.0/16',
             {
                 'max_match_count': '30'
             }
@@ -487,14 +487,14 @@ class TestFlexCounters(object):
         assert not self.counters_db.db_connection.hget(meta_data['name_map'], '2.2.2.0/24')
         assert not self.counters_db.db_connection.hget(ROUTE_TO_PATTERN_MAP, '2.2.2.0/24')
 
-        self.config_db.delete_entry('FLOW_COUNTER_ROUTE_PATTERN_TABLE', '1.1.0.0/16')
+        self.config_db.delete_entry('FLOW_COUNTER_ROUTE_PATTERN', '1.1.0.0/16')
         self.wait_for_id_list_remove(meta_data['group_name'], '1.1.1.0/24', counter_oid)
         self.wait_for_table_empty(meta_data['name_map'])
         self.wait_for_table_empty(ROUTE_TO_PATTERN_MAP)
         assert not self.counters_db.db_connection.hget(meta_data['name_map'], '1.1.1.0/24')
         assert not self.counters_db.db_connection.hget(ROUTE_TO_PATTERN_MAP, '1.1.1.0/24')
 
-        self.config_db.create_entry('FLOW_COUNTER_ROUTE_PATTERN_TABLE', '2.2.0.0/16',
+        self.config_db.create_entry('FLOW_COUNTER_ROUTE_PATTERN', '2.2.0.0/16',
             {
                 'max_match_count': '30'
             }
@@ -509,7 +509,7 @@ class TestFlexCounters(object):
         self.wait_for_table_empty(meta_data['name_map'])
         self.wait_for_table_empty(ROUTE_TO_PATTERN_MAP)
 
-        self.config_db.delete_entry('FLOW_COUNTER_ROUTE_PATTERN_TABLE', '2.2.0.0/16')
+        self.config_db.delete_entry('FLOW_COUNTER_ROUTE_PATTERN', '2.2.0.0/16')
         self.remove_route_entry('1.1.1.0/24')
         self.remove_route_entry('2.2.2.0/24')
 
@@ -533,7 +533,7 @@ class TestFlexCounters(object):
 
     def test_add_remove_route_flow_counter(self, dvs):
         self.setup_dbs(dvs)
-        self.config_db.create_entry('FLOW_COUNTER_ROUTE_PATTERN_TABLE', '1.1.0.0/16',
+        self.config_db.create_entry('FLOW_COUNTER_ROUTE_PATTERN', '1.1.0.0/16',
             {
                 'max_match_count': '30'
             }
@@ -559,7 +559,7 @@ class TestFlexCounters(object):
         self.wait_for_table_empty(meta_data['name_map'])
         self.wait_for_table_empty(ROUTE_TO_PATTERN_MAP)
 
-        self.config_db.delete_entry('FLOW_COUNTER_ROUTE_PATTERN_TABLE', '1.1.0.0/16')
+        self.config_db.delete_entry('FLOW_COUNTER_ROUTE_PATTERN', '1.1.0.0/16')
         self.set_flex_counter_group_status(meta_data['key'], meta_data['group_name'], 'disable')
 
         # remove ip address
@@ -579,7 +579,7 @@ class TestFlexCounters(object):
 
     def test_router_flow_counter_max_match_count(self, dvs):
         self.setup_dbs(dvs)
-        self.config_db.create_entry('FLOW_COUNTER_ROUTE_PATTERN_TABLE', '1.1.0.0/16',
+        self.config_db.create_entry('FLOW_COUNTER_ROUTE_PATTERN', '1.1.0.0/16',
             {
                 'max_match_count': '1'
             }
@@ -606,7 +606,7 @@ class TestFlexCounters(object):
         counter_oid = self.counters_db.db_connection.hget(meta_data['name_map'], '1.1.1.0/24')
         self.wait_for_id_list(meta_data['group_name'], '1.1.1.0/24', counter_oid)
         assert not self.counters_db.db_connection.hget(meta_data['name_map'], '1.1.2.0/24')
-        self.config_db.update_entry('FLOW_COUNTER_ROUTE_PATTERN_TABLE', '1.1.0.0/16',
+        self.config_db.update_entry('FLOW_COUNTER_ROUTE_PATTERN', '1.1.0.0/16',
             {
                 'max_match_count': '2'
             }
@@ -620,7 +620,7 @@ class TestFlexCounters(object):
         assert counter_oid
         self.wait_for_id_list(meta_data['group_name'], '1.1.2.0/24', counter_oid)
 
-        self.config_db.update_entry('FLOW_COUNTER_ROUTE_PATTERN_TABLE', '1.1.0.0/16',
+        self.config_db.update_entry('FLOW_COUNTER_ROUTE_PATTERN', '1.1.0.0/16',
             {
                 'max_match_count': '1'
             }
@@ -673,7 +673,7 @@ class TestFlexCounters(object):
 
         dvs.servers[1].runcmd("ip route del default dev eth0")
         dvs.servers[1].runcmd("ip address del 10.0.0.3/31 dev eth0")
-        self.config_db.delete_entry('FLOW_COUNTER_ROUTE_PATTERN_TABLE', '1.1.0.0/16')
+        self.config_db.delete_entry('FLOW_COUNTER_ROUTE_PATTERN', '1.1.0.0/16')
 
     def create_l3_intf(self, interface, vrf_name):
         if len(vrf_name) == 0:
