@@ -89,6 +89,53 @@ class TestPortchannel(object):
         lagms = lagmtbl.getKeys()
         assert len(lagms) == 0
 
+    def test_Portchannel_lacp_rate(self, dvs, testlog):
+        portchannel_slow = ("PortChannel0003", "Ethernet16", 0)
+        portchannel_fast = ("PortChannel0004", "Ethernet20", 0)
+
+        self.cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+
+        # Create PortChannels
+        tbl = swsscommon.Table(self.cdb, "PORTCHANNEL")
+        fvs_base = [("admin_status", "up"), ("mtu", "9100"), ("oper_status", "up"), ("lacp_key", "auto")]
+
+        fvs_slow = swsscommon.FieldValuePairs(fvs_base + [("lacp_rate", "slow")])
+        tbl.set(portchannel_slow[0], fvs_slow)
+
+        fvs_fast = swsscommon.FieldValuePairs(fvs_base + [("lacp_rate", "fast")])
+        tbl.set(portchannel_fast[0], fvs_fast)
+        time.sleep(1)
+
+        # Add members to PortChannels
+        tbl = swsscommon.Table(self.cdb, "PORTCHANNEL_MEMBER")
+        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+
+        for portchannel in portchannel_slow, portchannel_fast:
+            tbl.set(portchannel[0] + "|" + portchannel[1], fvs)
+        time.sleep(1)
+
+        # test fast rate was not set on portchannel_slow
+        output = dvs.runcmd("teamdctl {} state dump".format(portchannel_slow[0]))[1]
+        port_state_dump = json.loads(output)
+        assert not port_state_dump["runner"]["fast_rate"]
+
+        # test fast rate was set on portchannel_fast
+        output = dvs.runcmd("teamdctl {} state dump".format(portchannel_fast[0]))[1]
+        port_state_dump = json.loads(output)
+        assert port_state_dump["runner"]["fast_rate"]
+
+        # remove PortChannel members
+        tbl = swsscommon.Table(self.cdb, "PORTCHANNEL_MEMBER")
+        for portchannel in portchannel_slow, portchannel_fast:
+            tbl._del(portchannel[0] + "|" + portchannel[1])
+        time.sleep(1)
+
+        # remove PortChannel
+        tbl = swsscommon.Table(self.cdb, "PORTCHANNEL")
+        for portchannel in portchannel_slow, portchannel_fast:
+            tbl._del(portchannel[0])
+        time.sleep(1)
+
     def test_Portchannel_lacpkey(self, dvs, testlog):
         portchannelNamesAuto = [("PortChannel001", "Ethernet0", 1001),
                             ("PortChannel002", "Ethernet4", 1002),
@@ -108,7 +155,7 @@ class TestPortchannel(object):
 
         for portchannel in portchannelNamesAuto:
             tbl.set(portchannel[0], fvs)
-            
+
         fvs_no_lacp_key = swsscommon.FieldValuePairs(
             [("admin_status", "up"), ("mtu", "9100"), ("oper_status", "up")])
         tbl.set(portchannelNames[0][0], fvs_no_lacp_key)
