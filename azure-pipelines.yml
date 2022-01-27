@@ -25,7 +25,8 @@ stages:
       archive_gcov: true
 
 - stage: BuildArm
-  dependsOn: []
+  dependsOn: Build
+  condition: succeeded('Build')
   jobs:
   - template: .azure-pipelines/build-template.yml
     parameters:
