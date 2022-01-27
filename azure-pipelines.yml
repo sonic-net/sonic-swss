@@ -6,7 +6,21 @@
 trigger:
   branches:
     include:
-      - "*"
+      - master
+      - 20????
+pr:
+  branches:
+    include:
+      - master
+      - 20????
+schedules:
+- cron: "0 0 * * 0"
+  displayName: Weekly Sunday build
+  branches:
+    include:
+      - master
+      - 20????
+  always: true
 
 stages:
 - stage: Build
@@ -16,14 +30,16 @@ stages:
     parameters:
       arch: amd64
       sonic_slave: sonic-slave-buster
+      buildimage_artifact_name: sonic-buildimage.vs
+      buildimage_pipeline: 142
       swss_common_artifact_name: sonic-swss-common
       sairedis_artifact_name: sonic-sairedis
       artifact_name: sonic-swss
       archive_pytests: true
+      archive_gcov: true
 
 - stage: BuildArm
-  dependsOn: Build
-  condition: succeeded('Build')
+  dependsOn: []
   jobs:
   - template: .azure-pipelines/build-template.yml
     parameters:
@@ -31,9 +47,12 @@ stages:
       timeout: 240
       pool: sonicbld-armhf
       sonic_slave: sonic-slave-buster-armhf
+      buildimage_artifact_name: sonic-buildimage.marvell-armhf
+      buildimage_pipeline: 141
       swss_common_artifact_name: sonic-swss-common.armhf
       sairedis_artifact_name: sonic-sairedis.armhf
       artifact_name: sonic-swss.armhf
+      archive_gcov: false
 
   - template: .azure-pipelines/build-template.yml
     parameters:
@@ -42,8 +61,11 @@ stages:
       pool: sonicbld-arm64
       sonic_slave: sonic-slave-buster-arm64
       swss_common_artifact_name: sonic-swss-common.arm64
+      buildimage_artifact_name: sonic-buildimage.centec-arm64
+      buildimage_pipeline: 140
       sairedis_artifact_name: sonic-sairedis.arm64
       artifact_name: sonic-swss.arm64
+      archive_gcov: false
 
 - stage: BuildDocker
   dependsOn: Build
@@ -63,3 +85,20 @@ stages:
   - template: .azure-pipelines/test-docker-sonic-vs-template.yml
     parameters:
       log_artifact_name: log
+      gcov_artifact_name: sonic-gcov
+      sonic_slave: sonic-slave-buster
+      archive_gcov: true
+
+- stage: Gcov
+  dependsOn: Test
+  condition: always()
+  jobs:
+  - template: .azure-pipelines/gcov.yml
+    parameters:
+      arch: amd64
+      sonic_slave: sonic-slave-buster
+      swss_common_artifact_name: sonic-swss-common
+      sairedis_artifact_name: sonic-sairedis
+      swss_artifact_name: sonic-swss
+      artifact_name: sonic-gcov
+      archive_gcov: true
