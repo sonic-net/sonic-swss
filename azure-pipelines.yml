@@ -6,7 +6,21 @@
 trigger:
   branches:
     include:
-      - "*"
+      - master
+      - 20????
+pr:
+  branches:
+    include:
+      - master
+      - 20????
+schedules:
+- cron: "0 0 * * 0"
+  displayName: Weekly Sunday build
+  branches:
+    include:
+      - master
+      - 20????
+  always: true
 
 stages:
 - stage: Build
@@ -25,8 +39,7 @@ stages:
       archive_gcov: true
 
 - stage: BuildArm
-  dependsOn: Build
-  condition: succeeded('Build')
+  dependsOn: []
   jobs:
   - template: .azure-pipelines/build-template.yml
     parameters:
