@@ -23,6 +23,12 @@ parameters:
 - name: sonic_slave
   type: string
 
+- name: buildimage_artifact_name
+  type: string
+
+- name: buildimage_pipeline
+  type: number
+
 - name: sairedis_artifact_name
   type: string
 
@@ -33,6 +39,10 @@ parameters:
   type: string
 
 - name: archive_pytests
+  type: boolean
+  default: false
+
+- name: archive_gcov
   type: boolean
   default: false
 
@@ -51,26 +61,27 @@ jobs:
     image: sonicdev-microsoft.azurecr.io:443/${{ parameters.sonic_slave }}:latest
 
   steps:
+  - checkout: self
+    clean: true
+    submodules: true
+  - script: |
+      if [[ "$(Build.Reason)" == "PullRequest" ]];then
+        echo "##vso[task.setvariable variable=sourceBranch]$(System.PullRequest.TargetBranch)"
+      else
+        echo "##vso[task.setvariable variable=sourceBranch]$(Build.SourceBranchName)"
+      fi
+    displayName: "Get correct artifact downloading branch"
   - script: |
       sudo apt-get install -y libhiredis0.14 libhiredis-dev
       sudo apt-get install -y libzmq5 libzmq3-dev
       sudo apt-get install -qq -y \
           libhiredis-dev \
-          libnl-3-dev \
-          libnl-genl-3-dev \
-          libnl-route-3-dev \
-          libnl-nf-3-dev \
           swig3.0
       sudo apt-get install -y libdbus-1-3
       sudo apt-get install -y libteam-dev \
           libteam5 \
           libteamdctl0
     displayName: "Install dependencies"
-  - script: |
-      ls -al $(Pipeline.Workspace)
-      rm -rf $(Pipeline.Workspace)/*.deb
-      ls -al $(Pipeline.Workspace)
-    displayName: "Clean workspace"
   - task: DownloadPipelineArtifact@2
     inputs:
       source: specific
@@ -78,7 +89,8 @@ jobs:
       pipeline: 9
       artifact: ${{ parameters.swss_common_artifact_name }}
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
+      runBranch: 'refs/heads/$(sourceBranch)'
+      path: '$(Build.SourcesDirectory)/${{ parameters.swss_common_artifact_name }}'
     displayName: "Download sonic swss common deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
@@ -87,11 +99,35 @@ jobs:
       pipeline: 12
       artifact: ${{ parameters.sairedis_artifact_name }}
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
+      runBranch: 'refs/heads/$(sourceBranch)'
+      path: '$(Build.SourcesDirectory)/${{ parameters.sairedis_artifact_name }}'
     displayName: "Download sonic sairedis deb packages"
+  - task: DownloadPipelineArtifact@2
+    inputs:
+      source: specific
+      project: build
+      allowFailedBuilds: true
+      pipeline: ${{ parameters.buildimage_pipeline }}
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/$(sourceBranch)'
+      path: '$(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}'
+      patterns: |
+        **/target/debs/**/libnl-3-200_*.deb
+        **/target/debs/**/libnl-3-dev_*.deb
+        **/target/debs/**/libnl-genl-3-200_*.deb
+        **/target/debs/**/libnl-genl-3-dev_*.deb
+        **/target/debs/**/libnl-route-3-200_*.deb
+        **/target/debs/**/libnl-route-3-dev_*.deb
+        **/target/debs/**/libnl-nf-3-200_*.deb
+        **/target/debs/**/libnl-nf-3-dev_*.deb
+    displayName: "Download sonic buildimage deb packages"
   - script: |
+      set -ex
+      sudo dpkg -i $(find $(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }} -name "*.deb")
+      cd $(Build.SourcesDirectory)/${{ parameters.swss_common_artifact_name }}
       sudo dpkg -i libswsscommon_1.0.0_${{ parameters.arch }}.deb
       sudo dpkg -i libswsscommon-dev_1.0.0_${{ parameters.arch }}.deb
+      cd $(Build.SourcesDirectory)/${{ parameters.sairedis_artifact_name }}
       sudo dpkg -i libsaivs_*.deb
       sudo dpkg -i libsaivs-dev_*.deb
       sudo dpkg -i libsairedis_*.deb
@@ -99,14 +135,14 @@ jobs:
       sudo dpkg -i libsaimetadata_*.deb
       sudo dpkg -i libsaimetadata-dev_*.deb
       sudo dpkg -i syncd-vs_*.deb
-    workingDirectory: $(Pipeline.Workspace)
-    displayName: "Install sonic swss common and sairedis"
-  - checkout: self
-    submodules: true
+    displayName: "Install libnl3, sonic swss common and sairedis"
   - script: |
-      set -x
+      set -ex
       tar czf pytest.tgz tests
       cp -r pytest.tgz $(Build.ArtifactStagingDirectory)/
+      if [ '${{ parameters.archive_gcov }}' == True ]; then
+         export ENABLE_GCOV=y
+      fi
       ./autogen.sh
       dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
     displayName: "Compile sonic swss"
