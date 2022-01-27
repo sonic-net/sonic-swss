@@ -34,6 +34,24 @@ class DVSDatabase:
         formatted_entry = swsscommon.FieldValuePairs(list(entry.items()))
         table.set(key, formatted_entry)
 
+    def set_entry(self, table_name: str, key: str, entry: Dict[str, str]) -> None:
+        """Set entry of an existing key in the specified table.
+
+        Args:
+            table_name: The name of the table.
+            key: The key that needs to be updated.
+            entry: A set of key-value pairs to be updated.
+        """
+        table = swsscommon.Table(self.db_connection, table_name)
+        (status, fv_pairs) = table.get(key)
+
+        formatted_entry = swsscommon.FieldValuePairs(list(entry.items()))
+        table.set(key, formatted_entry)
+
+        if status:
+            for f in [ k for k, v in dict(fv_pairs).items() if k not in entry.keys() ]:
+                table.hdel(key, f)
+
     def update_entry(self, table_name: str, key: str, entry: Dict[str, str]) -> None:
         """Update entry of an existing key in the specified table.
 
