@@ -87,20 +87,31 @@ jobs:
       source: specific
       project: build
       pipeline: 9
-      artifact: ${{ parameters.swss_common_artifact_name }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/$(sourceBranch)'
-      path: '$(Build.SourcesDirectory)/${{ parameters.swss_common_artifact_name }}'
+      allowFailedBuilds: true
+      path: '$(Build.SourcesDirectory)/sonic-swss-common.artifact'
+      patterns: |
+        **/libswsscommon_1.0.0_${{ parameters.arch }}.deb
+        **/libswsscommon-dev_1.0.0_${{ parameters.arch }}.deb
     displayName: "Download sonic swss common deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
       source: specific
       project: build
       pipeline: 12
-      artifact: ${{ parameters.sairedis_artifact_name }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/$(sourceBranch)'
-      path: '$(Build.SourcesDirectory)/${{ parameters.sairedis_artifact_name }}'
+      allowFailedBuilds: true
+      path: '$(Build.SourcesDirectory)/sonic-sairedis.artifact'
+      patterns: |
+        **/libsaivs_*.deb
+        **/libsaivs-dev_*.deb
+        **/libsairedis_*.deb
+        **/libsairedis-dev_*.deb
+        **/libsaimetadata_*.deb
+        **/libsaimetadata-dev_*.deb
+        **/syncd-vs_*.deb
     displayName: "Download sonic sairedis deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
@@ -110,7 +121,7 @@ jobs:
       pipeline: ${{ parameters.buildimage_pipeline }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/$(sourceBranch)'
-      path: '$(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}'
+      path: '$(Build.SourcesDirectory)/sonic-buildimage.vs.artifact'
       patterns: |
         **/target/debs/**/libnl-3-200_*.deb
         **/target/debs/**/libnl-3-dev_*.deb
@@ -123,18 +134,9 @@ jobs:
     displayName: "Download sonic buildimage deb packages"
   - script: |
       set -ex
-      sudo dpkg -i $(find $(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }} -name "*.deb")
-      cd $(Build.SourcesDirectory)/${{ parameters.swss_common_artifact_name }}
-      sudo dpkg -i libswsscommon_1.0.0_${{ parameters.arch }}.deb
-      sudo dpkg -i libswsscommon-dev_1.0.0_${{ parameters.arch }}.deb
-      cd $(Build.SourcesDirectory)/${{ parameters.sairedis_artifact_name }}
-      sudo dpkg -i libsaivs_*.deb
-      sudo dpkg -i libsaivs-dev_*.deb
-      sudo dpkg -i libsairedis_*.deb
-      sudo dpkg -i libsairedis-dev_*.deb
-      sudo dpkg -i libsaimetadata_*.deb
-      sudo dpkg -i libsaimetadata-dev_*.deb
-      sudo dpkg -i syncd-vs_*.deb
+      sudo dpkg -i $(find sonic-buildimage.vs.artifact -name "*.deb")
+      sudo dpkg -i $(find sonic-swss-common.artifact -name "*.deb")
+      sudo dpkg -i $(find sonic-sairedis.artifact -name "*.deb")
     displayName: "Install libnl3, sonic swss common and sairedis"
   - script: |
       set -ex
