@@ -65,6 +65,13 @@ jobs:
     clean: true
     submodules: true
   - script: |
+      if [[ "$(Build.Reason)" == "PullRequest" ]];then
+        echo "##vso[task.setvariable variable=sourceBranch]$(System.PullRequest.TargetBranch)"
+      else
+        echo "##vso[task.setvariable variable=sourceBranch]$(Build.SourceBranchName)"
+      fi
+    displayName: "Get correct artifact downloading branch"
+  - script: |
       sudo apt-get install -y libhiredis0.14 libhiredis-dev
       sudo apt-get install -y libzmq5 libzmq3-dev
       sudo apt-get install -qq -y \
@@ -82,7 +89,7 @@ jobs:
       pipeline: 9
       artifact: ${{ parameters.swss_common_artifact_name }}
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
+      runBranch: 'refs/heads/$(sourceBranch)'
       path: '$(Build.SourcesDirectory)/${{ parameters.swss_common_artifact_name }}'
     displayName: "Download sonic swss common deb packages"
   - task: DownloadPipelineArtifact@2
@@ -92,29 +99,31 @@ jobs:
       pipeline: 12
       artifact: ${{ parameters.sairedis_artifact_name }}
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
+      runBranch: 'refs/heads/$(sourceBranch)'
       path: '$(Build.SourcesDirectory)/${{ parameters.sairedis_artifact_name }}'
     displayName: "Download sonic sairedis deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
       source: specific
       project: build
+      allowFailedBuilds: true
       pipeline: ${{ parameters.buildimage_pipeline }}
-      artifact: ${{ parameters.buildimage_artifact_name }}
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
+      runBranch: 'refs/heads/$(sourceBranch)'
       path: '$(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}'
+      patterns: |
+        **/target/debs/**/libnl-3-200_*.deb
+        **/target/debs/**/libnl-3-dev_*.deb
+        **/target/debs/**/libnl-genl-3-200_*.deb
+        **/target/debs/**/libnl-genl-3-dev_*.deb
+        **/target/debs/**/libnl-route-3-200_*.deb
+        **/target/debs/**/libnl-route-3-dev_*.deb
+        **/target/debs/**/libnl-nf-3-200_*.deb
+        **/target/debs/**/libnl-nf-3-dev_*.deb
     displayName: "Download sonic buildimage deb packages"
   - script: |
-      cd $(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}
-      sudo dpkg -i target/debs/buster/libnl-3-200_*.deb
-      sudo dpkg -i target/debs/buster/libnl-3-dev_*.deb
-      sudo dpkg -i target/debs/buster/libnl-genl-3-200_*.deb
-      sudo dpkg -i target/debs/buster/libnl-genl-3-dev_*.deb
-      sudo dpkg -i target/debs/buster/libnl-route-3-200_*.deb
-      sudo dpkg -i target/debs/buster/libnl-route-3-dev_*.deb
-      sudo dpkg -i target/debs/buster/libnl-nf-3-200_*.deb
-      sudo dpkg -i target/debs/buster/libnl-nf-3-dev_*.deb
+      set -ex
+      sudo dpkg -i $(find $(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }} -name "*.deb")
       cd $(Build.SourcesDirectory)/${{ parameters.swss_common_artifact_name }}
       sudo dpkg -i libswsscommon_1.0.0_${{ parameters.arch }}.deb
       sudo dpkg -i libswsscommon-dev_1.0.0_${{ parameters.arch }}.deb
@@ -126,10 +135,9 @@ jobs:
       sudo dpkg -i libsaimetadata_*.deb
       sudo dpkg -i libsaimetadata-dev_*.deb
       sudo dpkg -i syncd-vs_*.deb
-    workingDirectory: $(Pipeline.Workspace)
     displayName: "Install libnl3, sonic swss common and sairedis"
   - script: |
-      set -x
+      set -ex
       tar czf pytest.tgz tests
       cp -r pytest.tgz $(Build.ArtifactStagingDirectory)/
       if [ '${{ parameters.archive_gcov }}' == True ]; then
