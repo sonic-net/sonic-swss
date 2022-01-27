@@ -92,7 +92,7 @@ jobs:
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/$(sourceBranch)'
       path: '$(Build.SourcesDirectory)/${{ parameters.swss_common_artifact_name }}'
-      allowPartiallySucceededBuilds: true
+      allowFailedBuilds: true
       patterns: |
         **/libswsscommon_1.0.0_${{ parameters.arch }}.deb
         **/libswsscommon-dev_1.0.0_${{ parameters.arch }}.deb
@@ -106,7 +106,7 @@ jobs:
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/$(sourceBranch)'
       path: '$(Build.SourcesDirectory)/${{ parameters.sairedis_artifact_name }}'
-      allowPartiallySucceededBuilds: true
+      allowFailedBuilds: true
       patterns: |
         **/libsaivs_*.deb
         **/libsaivs-dev_*.deb
@@ -124,7 +124,7 @@ jobs:
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/$(sourceBranch)'
       path: '$(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}'
-      allowPartiallySucceededBuilds: true
+      allowFailedBuilds: true
       patterns: |
         **/target/debs/**/libnl-3-200_*.deb
         **/target/debs/**/libnl-3-dev_*.deb
