@@ -24,7 +24,13 @@
 
 #define LOOPBACK_PREFIX     "Loopback"
 
-typedef std::map<NextHopKey, sai_object_id_t> NextHopGroupMembers;
+struct NextHopGroupMemberEntry
+{
+    sai_object_id_t  next_hop_id; // next hop sai oid
+    uint32_t         seq_id; // Sequence Id of nexthop in the group
+};
+
+typedef std::map<NextHopKey, NextHopGroupMemberEntry> NextHopGroupMembers;
 
 struct NhgBase;
 
@@ -225,6 +231,9 @@ private:
     unsigned int m_maxNextHopGroupCount;
     bool m_resync;
 
+    shared_ptr<DBConnector> m_stateDb;
+    unique_ptr<swss::Table> m_stateDefaultRouteTb;
+
     RouteTables m_syncdRoutes;
     LabelRouteTables m_syncdLabelRoutes;
     NextHopGroupTable m_syncdNextHopGroups;
@@ -250,6 +259,8 @@ private:
     bool removeLabelRoute(LabelRouteBulkContext& ctx);
     bool addLabelRoutePost(const LabelRouteBulkContext& ctx, const NextHopGroupKey &nextHops);
     bool removeLabelRoutePost(const LabelRouteBulkContext& ctx);
+
+    void updateDefRouteState(string ip, bool add=false);
 
     void doTask(Consumer& consumer);
     void doLabelTask(Consumer& consumer);

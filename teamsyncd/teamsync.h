@@ -43,6 +43,8 @@ public:
 
         /* member_name -> enabled|disabled */
         std::map<std::string, bool> m_lagMembers;
+        bool admin_state;
+        unsigned int mtu;
     protected:
         int onChange();
         static int teamdHandler(struct team_handle *th, void *arg,

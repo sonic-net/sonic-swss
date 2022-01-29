@@ -44,7 +44,7 @@ for i = n, 1, -1 do
         and (debug_storm ~= "enabled")
         -- DEBUG CODE END.
         then
-            if time_left <= 0 then
+            if time_left <= poll_time then
                 redis.call('PUBLISH', 'PFC_WD_ACTION', '["' .. KEYS[i] .. '","restore"]')
                 time_left = restoration_time
             else

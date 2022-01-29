@@ -132,7 +132,7 @@ public:
     void refreshPortStatus();
     bool removeAclTableGroup(const Port &p);
 
-    bool addSubPort(Port &port, const string &alias, const bool &adminUp = true, const uint32_t &mtu = 0);
+    bool addSubPort(Port &port, const string &alias, const string &vlan, const bool &adminUp = true, const uint32_t &mtu = 0);
     bool removeSubPort(const string &alias);
     bool updateL3VniStatus(uint16_t vlan_id, bool status);
     void getLagMember(Port &lag, vector<Port> &portv);
@@ -162,6 +162,8 @@ public:
 
     bool getPortIPG(sai_object_id_t port_id, uint32_t &ipg);
     bool setPortIPG(sai_object_id_t port_id, uint32_t ipg);
+
+    bool getPortOperStatus(const Port& port, sai_port_oper_status_t& status) const;
 
 private:
     unique_ptr<Table> m_counterTable;
@@ -322,7 +324,6 @@ private:
     task_process_status setPortInterfaceType(sai_object_id_t id, sai_port_interface_type_t interface_type);
     task_process_status setPortAdvInterfaceTypes(sai_object_id_t id, std::vector<uint32_t> &interface_types);
 
-    bool getPortOperStatus(const Port& port, sai_port_oper_status_t& status) const;
     void updatePortOperStatus(Port &port, sai_port_oper_status_t status);
 
     bool getPortOperSpeed(const Port& port, sai_uint32_t& speed) const;
@@ -363,4 +364,3 @@ private:
 
 };
 #endif /* SWSS_PORTSORCH_H */
-
