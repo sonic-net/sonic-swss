@@ -2302,7 +2302,7 @@ bool MACsecOrch::initMACsecACLTable(
             return false;
         }
         priority = *(acl_table.m_available_acl_priorities.rbegin());
-        acl_table.m_available_acl_priorities.erase(acl_table.m_available_acl_priorities.rbegin().base());
+        acl_table.m_available_acl_priorities.erase(std::prev(acl_table.m_available_acl_priorities.end()));
 
         TaskArgs values;
         if (!m_applPortTable.get(port_name, values))
@@ -2761,6 +2761,7 @@ bool MACsecOrch::createPFCEntry(
     attrs.push_back(attr);
     attr.id = SAI_ACL_ENTRY_ATTR_ADMIN_STATE;
     attr.value.booldata = true;
+    attrs.push_back(attr);
 
     sai_status_t status = sai_acl_api->create_acl_entry(
                                     &entry_id,
