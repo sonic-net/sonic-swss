@@ -247,6 +247,7 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up)
     fvVectorPg.clear();
 
     fvVectorPg.push_back(make_pair("profile", profile_ref));
+    SWSS_LOG_INFO("Setting buffer profile to PG %s", buffer_pg_key.c_str());
     m_cfgBufferPgTable.set(buffer_pg_key, fvVectorPg);
     return task_process_status::task_success;
 }
@@ -479,13 +480,11 @@ void BufferMgr::doTask(Consumer &consumer)
                 if (m_speedLookup.count(port) != 0)
                 {
                     // create/update profile for port
+                    SWSS_LOG_DEBUG("Port %s Speed %s admin status %d", port.c_str(), m_speedLookup[port].c_str(), admin_up);
                     task_status = doSpeedUpdateTask(port, admin_up);
+                    SWSS_LOG_DEBUG("Return code for doSpeedUpdateTask %d", task_status);
                 }
 
-                if (task_status != task_process_status::task_success)
-                {
-                    break;
-                }
             }
         }
 
