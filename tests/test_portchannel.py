@@ -89,7 +89,7 @@ class TestPortchannel(object):
         lagms = lagmtbl.getKeys()
         assert len(lagms) == 0
 
-    def test_Portchannel_lacp_rate(self, dvs, testlog):
+    def test_Portchannel_fast_rate(self, dvs, testlog):
         portchannel_slow = ("PortChannel0003", "Ethernet16", 0)
         portchannel_fast = ("PortChannel0004", "Ethernet20", 0)
 
@@ -99,10 +99,10 @@ class TestPortchannel(object):
         tbl = swsscommon.Table(self.cdb, "PORTCHANNEL")
         fvs_base = [("admin_status", "up"), ("mtu", "9100"), ("oper_status", "up"), ("lacp_key", "auto")]
 
-        fvs_slow = swsscommon.FieldValuePairs(fvs_base + [("lacp_rate", "slow")])
+        fvs_slow = swsscommon.FieldValuePairs(fvs_base + [("fast_rate", "false")])
         tbl.set(portchannel_slow[0], fvs_slow)
 
-        fvs_fast = swsscommon.FieldValuePairs(fvs_base + [("lacp_rate", "fast")])
+        fvs_fast = swsscommon.FieldValuePairs(fvs_base + [("fast_rate", "true")])
         tbl.set(portchannel_fast[0], fvs_fast)
         time.sleep(1)
 

@@ -206,11 +206,11 @@ void TeamMgr::doLagTask(Consumer &consumer)
         {
             int min_links = 0;
             bool fallback = false;
+            bool fast_rate;
             string admin_status = DEFAULT_ADMIN_STATUS_STR;
             string mtu = DEFAULT_MTU_STR;
             string learn_mode;
             string tpid;
-            string lacp_rate;
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -249,16 +249,17 @@ void TeamMgr::doLagTask(Consumer &consumer)
                     tpid = fvValue(i);
                     SWSS_LOG_INFO("Get TPID %s", tpid.c_str());
                 }
-                else if (fvField(i) == "lacp_rate")
+                else if (fvField(i) == "fast_rate")
                 {
-                    lacp_rate = fvValue(i);
-                    SWSS_LOG_INFO("Get lacp_rate `%s`", lacp_rate.c_str());
+                    fast_rate = fvValue(i) == "true";
+                    SWSS_LOG_INFO("Get fast_rate `%s`",
+                                  fast_rate ? "true" : "false");
                 }
             }
 
             if (m_lagList.find(alias) == m_lagList.end())
             {
-                if (addLag(alias, min_links, fallback, lacp_rate) == task_need_retry)
+                if (addLag(alias, min_links, fallback, fast_rate) == task_need_retry)
                 {
                     it++;
                     continue;
@@ -502,7 +503,7 @@ bool TeamMgr::setLagLearnMode(const string &alias, const string &learn_mode)
     return true;
 }
 
-task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fallback, const string &lacp_rate)
+task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fallback, bool fast_rate)
 {
     SWSS_LOG_ENTER();
 
@@ -559,7 +560,7 @@ task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fal
         conf << ",\"fallback\":true";
     }
 
-    if (lacp_rate == "fast")
+    if (fast_rate)
     {
         conf << ",\"fast_rate\":true";
     }
