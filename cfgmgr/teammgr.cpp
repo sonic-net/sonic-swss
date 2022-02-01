@@ -206,7 +206,7 @@ void TeamMgr::doLagTask(Consumer &consumer)
         {
             int min_links = 0;
             bool fallback = false;
-            bool fast_rate;
+            bool fast_rate = false;
             string admin_status = DEFAULT_ADMIN_STATUS_STR;
             string mtu = DEFAULT_MTU_STR;
             string learn_mode;
