@@ -1143,7 +1143,7 @@ name as object key and member list as attribute.
         "admin_status": "up",
         "mtu": "9100",
         "lacp_key": "auto",
-        "lacp_rate": "fast",
+        "fast_rate": "false",
         "members": [
             "Ethernet54"
         ]
@@ -1152,7 +1152,7 @@ name as object key and member list as attribute.
         "admin_status": "up",
         "mtu": "9100",
         "lacp_key": "auto",
-        "lacp_rate": "fast",
+        "fast_rate": "true",
         "members": [
             "Ethernet56"
         ],
