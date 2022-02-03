@@ -81,8 +81,6 @@ int32_t gVoqMaxCores = 0;
 uint32_t gCfgSystemPorts = 0;
 string gMyHostName = "";
 string gMyAsicName = "";
-uint64_t gSyncdRespTimeoutLC = ( 5 * SAI_REDIS_DEFAULT_SYNC_OPERATION_RESPONSE_TIMEOUT);
-uint64_t gSyncdRespTimeoutFab = ( 10 * SAI_REDIS_DEFAULT_SYNC_OPERATION_RESPONSE_TIMEOUT);
 
 void usage()
 {
@@ -576,10 +574,7 @@ int main(int argc, char **argv)
     attr.value.u64 = gSwitchId;
     attrs.push_back(attr);
 
-
-    char *platform = getenv("platform");
-    if (platform && strstr(platform, BRCM_PLATFORM_SUBSTRING) &&
-            (gMySwitchType == "voq" || gMySwitchType == "fabric"))
+    if (gMySwitchType == "voq" || gMySwitchType == "fabric")
     {
         /* We set this long timeout in order for orchagent to wait enough time for
          * response from syncd. It is needed since switch create takes more time
@@ -589,11 +584,11 @@ int main(int argc, char **argv)
 
         if (gMySwitchType == "voq")
         {
-            attr.value.u64 = gSyncdRespTimeoutLC;
+            attr.value.u64 = (5 * SAI_REDIS_DEFAULT_SYNC_OPERATION_RESPONSE_TIMEOUT);
         }
         else if (gMySwitchType == "fabric")
         {
-            attr.value.u64 = gSyncdRespTimeoutFab;
+            attr.value.u64 = (10 * SAI_REDIS_DEFAULT_SYNC_OPERATION_RESPONSE_TIMEOUT);
         }
 
         attr.id = SAI_REDIS_SWITCH_ATTR_SYNC_OPERATION_RESPONSE_TIMEOUT;
@@ -617,8 +612,7 @@ int main(int argc, char **argv)
     }
     SWSS_LOG_NOTICE("Create a switch, id:%" PRIu64, gSwitchId);
 
-    if (platform && strstr(platform, BRCM_PLATFORM_SUBSTRING) && 
-            (gMySwitchType == "voq" || gMySwitchType == "fabric"))
+    if (gMySwitchType == "voq" || gMySwitchType == "fabric")
     {
         /* Set syncd response timeout back to the default value */
         attr.id = SAI_REDIS_SWITCH_ATTR_SYNC_OPERATION_RESPONSE_TIMEOUT;
