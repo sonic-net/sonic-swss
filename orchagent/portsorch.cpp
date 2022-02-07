@@ -2451,7 +2451,7 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
     }
 
     /* remove port name map from counter table */
-    m_counterTable->hdel("", alias);
+    m_counterTable->del(alias);
 
     /* Remove the associated port serdes attribute */
     removePortSerdesAttribute(p.m_port_id);
@@ -5424,10 +5424,6 @@ void PortsOrch::generateQueueMap()
 void PortsOrch::removeQueueMapPerPort(const Port& port)
 {
     /* Remove the Queue map in the Counter DB */
-    vector<string> queueVector;
-    vector<string> queuePortVector;
-    vector<string> queueIndexVector;
-    vector<string> queueTypeVector;
 
     for (size_t queueIndex = 0; queueIndex < port.m_queue_ids.size(); ++queueIndex)
     {
@@ -5436,26 +5432,16 @@ void PortsOrch::removeQueueMapPerPort(const Port& port)
 
         const auto id = sai_serialize_object_id(port.m_queue_ids[queueIndex]);
 
-        queueVector.emplace_back(name.str());
-        queuePortVector.emplace_back(id);
+        m_queueTable->del(name.str());
+        m_queuePortTable->del(id);
 
         string queueType;
         uint8_t queueRealIndex = 0;
         if (getQueueTypeAndIndex(port.m_queue_ids[queueIndex], queueType, queueRealIndex))
         {
-            queueTypeVector.emplace_back(id);
-            queueIndexVector.emplace_back(id);
+            m_queueTypeTable->del(id);
+            m_queueIndexTable->del(id);
         }
-    }
-
-    m_queueTable->hdel("", queueVector);
-    m_queuePortTable->hdel("", queuePortVector);
-    m_queueIndexTable->hdel("", queueIndexVector);
-    m_queueTypeTable->hdel("", queueTypeVector);
-
-    for (size_t queueIndex = 0; queueIndex < port.m_queue_ids.size(); ++queueIndex)
-    {
-        const auto id = sai_serialize_object_id(port.m_queue_ids[queueIndex]);
 
         std::unordered_set<string> counter_stats;
         for (const auto& it: queue_stat_ids)
