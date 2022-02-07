@@ -5550,20 +5550,11 @@ void PortsOrch::removePriorityGroupMapPerPort(const Port& port)
         name << port.m_alias << ":" << pgIndex;
 
         const auto id = sai_serialize_object_id(port.m_priority_group_ids[pgIndex]);
-
-        pgVector.emplace_back(name.str());
-        pgPortVector.emplace_back(id);
-        pgIndexVector.emplace_back(id);
-    }
-
-    m_pgTable->hdel("", pgVector);
-    m_pgPortTable->hdel("", pgPortVector);
-    m_pgIndexTable->hdel("", pgIndexVector);
-
-    for (size_t pgIndex = 0; pgIndex < port.m_priority_group_ids.size(); ++pgIndex)
-    {
-        const auto id = sai_serialize_object_id(port.m_priority_group_ids[pgIndex]);
         string key = getPriorityGroupWatermarkFlexCounterTableKey(id);
+
+        m_pgTable->del(name.str());
+        m_pgPortTable->del(id);
+        m_pgIndexTable->del(id);
 
         m_flexCounterTable->del(key);
 
