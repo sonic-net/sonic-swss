@@ -1156,7 +1156,7 @@ MuxOrch::MuxOrch(DBConnector *db, const std::vector<std::string> &tables,
          neigh_orch_(neighOrch),
          fdb_orch_(fdbOrch)
 {
-    handler_map_.insert(handler_pair(CFG_MUX_CABLE_TABLE_NAME, &MuxOrch::handleMuxCfg));
+    handler_map_.insert(handler_pair(CFG_LINKMGR_CABLE_TABLE_NAME, &MuxOrch::handleMuxCfg));
     handler_map_.insert(handler_pair(CFG_PEER_SWITCH_TABLE_NAME, &MuxOrch::handlePeerSwitch));
 
     neigh_orch_->attach(this);

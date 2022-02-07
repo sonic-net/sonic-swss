@@ -209,7 +209,7 @@ namespace routeorch_test
 
             TunnelDecapOrch *tunnel_decap_orch = new TunnelDecapOrch(m_app_db.get(), APP_TUNNEL_DECAP_TABLE_NAME);
             vector<string> mux_tables = {
-                CFG_MUX_CABLE_TABLE_NAME,
+                CFG_LINKMGR_CABLE_TABLE_NAME,
                 CFG_PEER_SWITCH_TABLE_NAME
             };
             MuxOrch *mux_orch = new MuxOrch(m_config_db.get(), mux_tables, tunnel_decap_orch, gNeighOrch, gFdbOrch);

@@ -293,7 +293,7 @@ bool OrchDaemon::init()
     gNatOrch = new NatOrch(m_applDb, m_stateDb, nat_tables, gRouteOrch, gNeighOrch);
 
     vector<string> mux_tables = {
-        CFG_MUX_CABLE_TABLE_NAME,
+        CFG_LINKMGR_CABLE_TABLE_NAME,
         CFG_PEER_SWITCH_TABLE_NAME
     };
     MuxOrch *mux_orch = new MuxOrch(m_configDb, mux_tables, tunnel_decap_orch, gNeighOrch, gFdbOrch);
