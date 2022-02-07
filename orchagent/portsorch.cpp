@@ -5448,10 +5448,10 @@ void PortsOrch::removeQueueMapPerPort(const Port& port)
         }
     }
 
-    m_counter_db->hdel(COUNTERS_QUEUE_NAME_MAP, queueVector);
-    m_counter_db->hdel(COUNTERS_QUEUE_PORT_MAP, queuePortVector);
-    m_counter_db->hdel(COUNTERS_QUEUE_INDEX_MAP, queueIndexVector);
-    m_counter_db->hdel(COUNTERS_QUEUE_TYPE_MAP, queueTypeVector);
+    m_queueTable->hdel("", queueVector);
+    m_queuePortTable->hdel("", queuePortVector);
+    m_queueIndexTable->hdel("", queueIndexVector);
+    m_queueTypeTable->hdel("", queueTypeVector);
 
     for (size_t queueIndex = 0; queueIndex < port.m_queue_ids.size(); ++queueIndex)
     {
@@ -5570,9 +5570,9 @@ void PortsOrch::removePriorityGroupMapPerPort(const Port& port)
         pgIndexVector.emplace_back(id);
     }
 
-    m_counter_db->hdel(COUNTERS_PG_NAME_MAP, pgVector);
-    m_counter_db->hdel(COUNTERS_PG_PORT_MAP, pgPortVector);
-    m_counter_db->hdel(COUNTERS_PG_INDEX_MAP, pgIndexVector);
+    m_pgTable->hdel("", pgVector);
+    m_pgPortTable->hdel("", pgPortVector);
+    m_pgIndexTable->hdel("", pgIndexVector);
 
     for (size_t pgIndex = 0; pgIndex < port.m_priority_group_ids.size(); ++pgIndex)
     {
