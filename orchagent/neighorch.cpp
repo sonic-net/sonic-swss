@@ -968,7 +968,6 @@ bool NeighOrch::removeTunnelNextHop(const NextHopKey& nh)
 void NeighOrch::addZeroMacTunnelRoute(const NeighborEntry& entry, const MacAddress& mac) {
     SWSS_LOG_NOTICE("Creating tunnel route for neighbor %s", entry.ip_address.to_string().c_str());
     MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
-    NeighborEntry entry = NeighborEntry(entry.ip_address, entry.alias);
     NeighborUpdate update = {entry, mac, true};
     mux_orch->update(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
     m_syncdNeighbors[entry] = { mac, false };
