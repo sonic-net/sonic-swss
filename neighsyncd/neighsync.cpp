@@ -17,9 +17,10 @@
 using namespace std;
 using namespace swss;
 
-NeighSync::NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb) :
+NeighSync::NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector *cfgDb) :
     m_neighTable(pipelineAppDB, APP_NEIGH_TABLE_NAME),
-    m_stateNeighRestoreTable(stateDb, STATE_NEIGH_RESTORE_TABLE_NAME)
+    m_stateNeighRestoreTable(stateDb, STATE_NEIGH_RESTORE_TABLE_NAME),
+    m_cfgPeerSwitchTable(cfgDb, CFG_PEER_SWITCH_TABLE_NAME)
 {
     m_AppRestartAssist = new AppRestartAssist(pipelineAppDB, "neighsyncd", "swss", DEFAULT_NEIGHSYNC_WARMSTART_TIMER);
     if (m_AppRestartAssist)
@@ -87,14 +88,31 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
         return;
     }
 
+    std::vector<std::string> peerSwitchKeys;
     bool delete_key = false;
-    if ((nlmsg_type == RTM_DELNEIGH) || (state == NUD_INCOMPLETE) ||
-        (state == NUD_FAILED))
+    bool use_zero_mac = false;
+    m_cfgPeerSwitchTable.getKeys(peerSwitchKeys);
+    bool is_dualtor = peerSwitchKeys.size() > 0;
+    if (is_dualtor && (state == NUD_INCOMPLETE || state == NUD_FAILED))
+    {
+        SWSS_LOG_NOTICE("Unable to resolve %s, setting zero MAC", key.c_str());
+        use_zero_mac = true;
+    }
+    else if ((nlmsg_type == RTM_DELNEIGH) ||
+             (state == NUD_INCOMPLETE) || (state == NUD_FAILED))
     {
 	    delete_key = true;
     }
 
-    nl_addr2str(rtnl_neigh_get_lladdr(neigh), macStr, MAX_ADDR_SIZE);
+    if (use_zero_mac)
+    {
+        std::string zero_mac = "00:00:00:00:00:00";
+        strncpy(macStr, zero_mac.c_str(), zero_mac.length());
+    }
+    else
+    {
+        nl_addr2str(rtnl_neigh_get_lladdr(neigh), macStr, MAX_ADDR_SIZE);
+    }
 
     /* Ignore neighbor entries with Broadcast Mac - Trigger for directed broadcast */
     if (!delete_key && (MacAddress(macStr) == MacAddress("ff:ff:ff:ff:ff:ff")))

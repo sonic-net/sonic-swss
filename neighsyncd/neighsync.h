@@ -23,7 +23,7 @@ class NeighSync : public NetMsg
 public:
     enum { MAX_ADDR_SIZE = 64 };
 
-    NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb);
+    NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector *cfgDb);
     ~NeighSync();
 
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
@@ -36,7 +36,7 @@ public:
     }
 
 private:
-    Table m_stateNeighRestoreTable;
+    Table m_stateNeighRestoreTable, m_cfgPeerSwitchTable;
     ProducerStateTable m_neighTable;
     AppRestartAssist  *m_AppRestartAssist;
 };
