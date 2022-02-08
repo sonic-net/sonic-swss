@@ -10,8 +10,6 @@
 
 extern Directory<Orch*> gDirectory;
 extern RouteOrch *gRouteOrch;
-#define FLOW_COUNTER_ROUTE_KEY "route"
-#define FLOW_COUNTER_SUPPORT_FIELD "support"
 #define ROUTE_PATTERN_MAX_MATCH_COUNT_FIELD "max_match_count"
 #define ROUTE_PATTERN_DEFAULT_MAX_MATCH_COUNT 30
 
@@ -19,7 +17,6 @@ RouteFlowCounterOrch::RouteFlowCounterOrch(swss::DBConnector *db, const std::vec
 Orch(db, tableNames)
 {
     SWSS_LOG_ENTER();
-    initRouteFlowCounterCapability();
 }
 
 RouteFlowCounterOrch::~RouteFlowCounterOrch()
@@ -30,7 +27,7 @@ RouteFlowCounterOrch::~RouteFlowCounterOrch()
 void RouteFlowCounterOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
-    if (!gRouteOrch)
+    if (!gRouteOrch || !gRouteOrch->getRouteFlowCounterSupported())
     {
         return;
     }
@@ -61,7 +58,7 @@ void RouteFlowCounterOrch::doTask(Consumer &consumer)
                 }
             }
 
-            gRouteOrch->updateRoutePattern(key, maxMatchCount);
+            gRouteOrch->addRoutePattern(key, maxMatchCount);
         }
         else if (op == DEL_COMMAND)
         {
@@ -69,19 +66,4 @@ void RouteFlowCounterOrch::doTask(Consumer &consumer)
         }
         consumer.m_toSync.erase(it++);
     }
-}
-
-void RouteFlowCounterOrch::initRouteFlowCounterCapability()
-{
-    SWSS_LOG_ENTER();
-    bool support = FlowCounterHandler::queryRouteFlowCounterCapability();
-    if (!support)
-    {
-        SWSS_LOG_NOTICE("Route flow counter is not supported on this platform");
-    }
-    swss::DBConnector state_db("STATE_DB", 0);
-    swss::Table capability_table(&state_db, STATE_FLOW_COUNTER_CAPABILITY_TABLE_NAME);
-    std::vector<FieldValueTuple> fvs;
-    fvs.emplace_back(FLOW_COUNTER_SUPPORT_FIELD, support ? "true" : "false");
-    capability_table.set(FLOW_COUNTER_ROUTE_KEY, fvs);
 }

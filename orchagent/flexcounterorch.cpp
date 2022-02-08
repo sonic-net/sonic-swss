@@ -179,7 +179,7 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                             m_hostif_trap_counter_enabled = false;
                         }
                     }
-                    if (gRouteOrch && key == FLOW_CNT_ROUTE_KEY)
+                    if (gRouteOrch && gRouteOrch->getRouteFlowCounterSupported() && key == FLOW_CNT_ROUTE_KEY)
                     {
                         if (value == "enable" && !m_route_flow_counter_enabled)
                         {

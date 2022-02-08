@@ -278,7 +278,7 @@ typedef std::map<RoutePattern, std::map<IpPrefix, sai_object_id_t>> RouterFlowCo
 /* RoutePattern to prefix set */
 typedef std::map<RoutePattern, std::set<IpPrefix>> RouterPatternToPrefixMap;
 /* IP2ME, MUX, VNET route entries */
-typedef std::map<sai_object_id_t, std::set<IpPrefix>> OtherRouteEntryMap;
+typedef std::map<sai_object_id_t, std::set<IpPrefix>> MiscRouteEntryMap;
 
 class RouteOrch : public Orch, public Subject
 {
@@ -325,12 +325,13 @@ public:
     void decreaseNextHopGroupCount();
     bool checkNextHopGroupCount();
 
+    bool getRouteFlowCounterSupported() const { return mRouteFlowCounterSupported; }
     void generateRouteFlowStats();
     void clearRouteFlowStats();
-    void updateRoutePattern(const std::string &pattern, size_t);
+    void addRoutePattern(const std::string &pattern, size_t);
     void removeRoutePattern(const std::string &pattern);
-    void onAddOtherRouteEntry(sai_object_id_t vrf_id, const IpPrefix& ip_prefix);
-    void onRemoveOtherRouteEntry(sai_object_id_t vrf_id, const IpPrefix& ip_prefix);
+    void onAddMiscRouteEntry(sai_object_id_t vrf_id, const IpPrefix& ip_prefix);
+    void onRemoveMiscRouteEntry(sai_object_id_t vrf_id, const IpPrefix& ip_prefix);
     void onAddVR(sai_object_id_t vrf_id);
     void onRemoveVR(sai_object_id_t vrf_id);
 
@@ -369,6 +370,7 @@ private:
     std::unique_ptr<Table> mPrefixToCounterTable;
     std::unique_ptr<Table> mPrefixToPatternTable;
 
+    bool mRouteFlowCounterSupported = false;
     /* Route pattern set, store configured route patterns */
     RoutePatternSet mRoutePatternSet;
     /* Cache for those bound route flow counters*/
@@ -382,7 +384,7 @@ private:
     /* Cache for those newly removed routes which match pattern */
     RouterPatternToPrefixMap mPendingUnbindRoutes; // Used to cache newly added routes in doTask function
     /* IP2ME, MUX, VNET route entries */
-    OtherRouteEntryMap mOtherRouteEntries; // Save here for route flow counter
+    MiscRouteEntryMap mMiscRoutes; // Save here for route flow counter
     /* Flex counter manager for route flow counter */
     FlexCounterManager mRouteFlowCounterMgr;
     /* Timer to create flex counter and update counters DB */
@@ -410,6 +412,7 @@ private:
     void incNhgRefCount(const std::string& nhg_index);
     void decNhgRefCount(const std::string& nhg_index);
 
+    void initRouteFlowCounterCapability();
     void removeRoutePattern(const RoutePattern &route_pattern);
     void removeRouteFlowCounterFromDB(sai_object_id_t vrf_id, const IpPrefix& ip_prefix, sai_object_id_t counter_oid);
     void bindFlowCounter(const RoutePattern &route_pattern, sai_object_id_t vrf_id, const IpPrefix& ip_prefix);
