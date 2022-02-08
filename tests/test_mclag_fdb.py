@@ -176,7 +176,6 @@ def test_mclagFdb_remote_dynamic_mac_delete(dvs, testlog):
     (exitcode, output) = dvs.runcmd(['sh', '-c', "bridge fdb show  | grep " + "3C:85:99:5E:00:01".lower()])
     assert output == ''
 
-
 # Test-4 Remote Static MAC Add
 
 @pytest.mark.dev_sanity
