@@ -6,6 +6,7 @@
 #include "routeorch.h"
 #include "directory.h"
 #include "muxorch.h"
+#include "observer.h"
 
 extern sai_neighbor_api_t*         sai_neighbor_api;
 extern sai_next_hop_api_t*         sai_next_hop_api;
@@ -16,6 +17,8 @@ extern CrmOrch *gCrmOrch;
 extern RouteOrch *gRouteOrch;
 extern FgNhgOrch *gFgNhgOrch;
 extern Directory<Orch*> gDirectory;
+
+#define MUX_TUNNEL "MuxTunnel0"
 
 const int neighorch_pri = 30;
 
@@ -547,7 +550,15 @@ void NeighOrch::doTask(Consumer &consumer)
             if (m_syncdNeighbors.find(neighbor_entry) == m_syncdNeighbors.end()
                     || m_syncdNeighbors[neighbor_entry].mac != mac_address)
             {
-                if (addNeighbor(neighbor_entry, mac_address))
+                // only for unresolvable neighbors that are new
+                if (mac_address == MacAddress("00:00:00:00:00:00")) 
+                {
+                    if (m_syncdNeighbors.find(neighbor_entry) == m_syncdNeighbors.end()) {
+                        addZeroMacTunnelRoute(neighbor_entry, mac_address);
+                    }
+                    it = consumer.m_toSync.erase(it);
+                }
+                else if (addNeighbor(neighbor_entry, mac_address))
                 {
                     it = consumer.m_toSync.erase(it);
                 }
@@ -952,5 +963,14 @@ bool NeighOrch::removeTunnelNextHop(const NextHopKey& nh)
     SWSS_LOG_NOTICE("Removed Tunnel next hop %s, %s@%d@%s", tun_name.c_str(), nh.ip_address.to_string().c_str(),
             nh.vni, nh.mac_address.to_string().c_str());
     return true;
+}
+
+void NeighOrch::addZeroMacTunnelRoute(const NeighborEntry& entry, const MacAddress& mac) {
+    SWSS_LOG_NOTICE("Creating tunnel route for neighbor %s", entry.ip_address.to_string().c_str());
+    MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
+    NeighborEntry entry = NeighborEntry(entry.ip_address, entry.alias);
+    NeighborUpdate update = {entry, mac, true};
+    mux_orch->update(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
+    m_syncdNeighbors[entry] = { mac, false };
 }
 
