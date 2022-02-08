@@ -51,7 +51,7 @@ buffermgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
 vrfmgrd_SOURCES = vrfmgrd.cpp vrfmgr.cpp $(top_srcdir)/orchagent/orch.cpp $(top_srcdir)/orchagent/request_parser.cpp $(top_srcdir)/orchagent/response_publisher.cpp shellcmd.h
 vrfmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 vrfmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
-vrfmgrd_LDADD = $(COMMON_LIBS) $(SAIMETA_LIBS) $(LDFLAGS_ASAN)
+vrfmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
 
 nbrmgrd_SOURCES = nbrmgrd.cpp nbrmgr.cpp $(top_srcdir)/orchagent/orch.cpp $(top_srcdir)/orchagent/request_parser.cpp $(top_srcdir)/orchagent/response_publisher.cpp shellcmd.h
 nbrmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(LIBNL_CFLAGS) $(CFLAGS_ASAN)
