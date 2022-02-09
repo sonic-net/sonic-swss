@@ -1092,6 +1092,40 @@ attributes in those objects.
 }
 ```
 
+### Policer
+
+The below table defines the policer table.
+```
+{
+    "POLICER": {
+        "everflow_static_policer": {
+            "meter_type": "bytes",
+            "mode": "sr_tcm",
+            "cir": "12500000",
+            "cbs": "12500000",
+	    "pir": "17500000",
+            "pbs": "17500000",
+            "color": "aware",
+            "red_packet_action": "drop",
+	    "yellow_packet_action": "drop"
+	    "green_packet_action": "forward"
+       }
+    }
+}
+
+```
+Key to the table defines policer name Below are the fields
+meter_type - Mandatory field. Defines how the metering is done. values - bytes, packets
+mode - Mandatory field. Defines one of the three modes support. values - sr_tcm, tr_tcm, storm
+cir  - Committed information rate
+cbs - Committed burst size
+pir - Peak information rate
+pbs - Peak burst size
+color - Defines the color source for the policer. values - aware, blind
+red_packet_action - Defines the action to be taken for red color packets
+yellow_packet_action - Defines the action to be taken for yellow color packets
+green_packet_action - Defines the action to be taken for green color packets.
+
 ### Port
 
 In this table the physical port configurations are defined. Each object
