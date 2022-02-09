@@ -1095,7 +1095,7 @@ attributes in those objects.
 
 ### Policer
 
-Below is an example for the policer table configuration.
+Below is an example of the policer table configuration.
 ```
 {
     "POLICER": {
