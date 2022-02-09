@@ -14,6 +14,10 @@ jobs:
   pool: sonic-common
 
   steps:
+  - script: |
+      ls -A1 | xargs -I{} sudo rm -rf {}
+    displayName: "Clean workspace"
+  - checkout: self
   - task: DownloadPipelineArtifact@2
     inputs:
       artifact: docker-sonic-vs
