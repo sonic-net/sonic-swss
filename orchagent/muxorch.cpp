@@ -1031,7 +1031,8 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
         if (ptr->isIpInSubnet(update.entry.ip_address))
         {
             // if MAC is zero and the cable is active, take no action
-            if ((bool) update.mac || ptr->getState() == muxStateValToString.at(MuxState::MUX_STATE_STANDBY)) {
+            if (update.mac || ptr->getState() == muxStateValToString.at(MuxState::MUX_STATE_STANDBY))
+            {
                 ptr->updateNeighbor(update.entry, update.add);
             }
             return;
@@ -1046,13 +1047,15 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
     }
     else if (update.add)
     {
-        if (!update.mac) {
+        if (!update.mac)
+        {
             /* For neighbors that were previously resolvable but are now unresolvable,
              * we expect such neighbor entries to be deleted prior to a zero MAC update
              * arriving for that same neighbor.
              */
 
-            if (standalone_tunnel_neigh_it == standalone_tunnel_neighbors_.end()) {
+            if (standalone_tunnel_neigh_it == standalone_tunnel_neighbors_.end())
+            {
                 createStandaloneTunnelRoute(update.entry.ip_address);
             }
             /* If the MAC address in the neighbor entry is zero but the neighbor IP
@@ -1061,11 +1064,13 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
              */
             return;
         }
-        else {
+        else
+        {
             /* If the update operation for a neighbor contains a non-zero MAC, we must
              * make sure to remove any existing tunnel routes to prevent conflicts
              */
-            if (standalone_tunnel_neigh_it != standalone_tunnel_neighbors_.end()) {
+            if (standalone_tunnel_neigh_it != standalone_tunnel_neighbors_.end())
+            {
                 removeStandaloneTunnelRoute(update.entry.ip_address);
             }
         }
@@ -1091,7 +1096,8 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
             port = it->second;
             removeNexthop(update.entry);
         }
-        if (standalone_tunnel_neigh_it != standalone_tunnel_neighbors_.end()) {
+        if (standalone_tunnel_neigh_it != standalone_tunnel_neighbors_.end())
+        {
             removeStandaloneTunnelRoute(update.entry.ip_address);
         }
     }
@@ -1322,7 +1328,8 @@ bool MuxOrch::delOperation(const Request& request)
     return true;
 }
 
-void MuxOrch::createStandaloneTunnelRoute(IpAddress neighborIp) {
+void MuxOrch::createStandaloneTunnelRoute(IpAddress neighborIp)
+{
     SWSS_LOG_INFO("Creating standalone tunnel route for neighbor %s", neighborIp.to_string().c_str());
     sai_object_id_t tunnel_nexthop = getNextHopTunnelId(MUX_TUNNEL, mux_peer_switch_);
     IpPrefix pfx = neighborIp.to_string();
@@ -1330,7 +1337,8 @@ void MuxOrch::createStandaloneTunnelRoute(IpAddress neighborIp) {
     standalone_tunnel_neighbors_.insert(neighborIp);
 }
 
-void MuxOrch::removeStandaloneTunnelRoute(IpAddress neighborIp) {
+void MuxOrch::removeStandaloneTunnelRoute(IpAddress neighborIp)
+{
     SWSS_LOG_INFO("Removing standalone tunnel route for neighbor %s", neighborIp.to_string().c_str());
     IpPrefix pfx = neighborIp.to_string();
     remove_route(pfx);

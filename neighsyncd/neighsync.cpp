@@ -95,7 +95,7 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     bool is_dualtor = peerSwitchKeys.size() > 0;
     if (is_dualtor && (state == NUD_INCOMPLETE || state == NUD_FAILED))
     {
-        SWSS_LOG_NOTICE("Unable to resolve %s, setting zero MAC", key.c_str());
+        SWSS_LOG_INFO("Unable to resolve %s, setting zero MAC", key.c_str());
         use_zero_mac = true;
     }
     else if ((nlmsg_type == RTM_DELNEIGH) ||

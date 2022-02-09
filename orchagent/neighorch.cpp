@@ -551,9 +551,10 @@ void NeighOrch::doTask(Consumer &consumer)
                     || m_syncdNeighbors[neighbor_entry].mac != mac_address)
             {
                 // only for unresolvable neighbors that are new
-                if (mac_address == MacAddress("00:00:00:00:00:00")) 
+                if (!mac_address) 
                 {
-                    if (m_syncdNeighbors.find(neighbor_entry) == m_syncdNeighbors.end()) {
+                    if (m_syncdNeighbors.find(neighbor_entry) == m_syncdNeighbors.end())
+                    {
                         addZeroMacTunnelRoute(neighbor_entry, mac_address);
                     }
                     it = consumer.m_toSync.erase(it);
@@ -965,7 +966,8 @@ bool NeighOrch::removeTunnelNextHop(const NextHopKey& nh)
     return true;
 }
 
-void NeighOrch::addZeroMacTunnelRoute(const NeighborEntry& entry, const MacAddress& mac) {
+void NeighOrch::addZeroMacTunnelRoute(const NeighborEntry& entry, const MacAddress& mac)
+{
     SWSS_LOG_NOTICE("Creating tunnel route for neighbor %s", entry.ip_address.to_string().c_str());
     MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
     NeighborUpdate update = {entry, mac, true};
