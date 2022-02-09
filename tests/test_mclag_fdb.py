@@ -545,7 +545,6 @@ def test_mclagFdb_remote_to_local(dvs, testlog):
     dvs.remove_vlan_member("200", "PortChannel0005")
     dvs.create_vlan_member("200", "PortChannel0005")
 
-
 # Test-13 Verify cleanup of the basic config.
 
 @pytest.mark.dev_sanity
