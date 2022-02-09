@@ -198,7 +198,6 @@ def test_mclagFdb_remote_static_mac_add(dvs, testlog):
             [("mac", "3C:85:99:5E:00:01"), ("bvid", str(dvs.getVlanOid("200")))],
                     [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC")]
     )
-
     assert ok, str(extra)
 
     assert how_many_entries_exist(dvs.sdb, "MCLAG_REMOTE_FDB_TABLE") == 1, "The MCLAG fdb entry not inserted to STATE"
