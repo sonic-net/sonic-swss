@@ -422,8 +422,8 @@ int main(int argc, char **argv)
 
     SWSS_LOG_NOTICE("--- Starting Orchestration Agent ---");
     int i = 0;
-    if (argc < 0) {
-        i++; // uncoverable
+    if (i == 1) {
+        i = 0; // uncoverable
     }
 
     initSaiApi();
