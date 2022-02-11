@@ -1118,10 +1118,10 @@ Below is an example of the policer table configuration.
 Key to the table defines policer name Below are the fields
 -   meter_type - Mandatory field. Defines how the metering is done. values - bytes, packets
 -   mode - Mandatory field. Defines one of the three modes support. values - sr_tcm, tr_tcm, storm
--   cir  - Committed information rate
--   cbs - Committed burst size
--   pir - Peak information rate
--   pbs - Peak burst size
+-   cir  - Committed information rate bytes/sec or packets/sec based on meter_type
+-   cbs - Committed burst size in bytes or packets based on meter_type
+-   pir - Peak information rate in bytes/sec or packets/sec based on meter_type
+-   pbs - Peak burst size in bytes or packets based on meter_type
 -   color - Defines the color source for the policer. values - aware, blind
 -   red_packet_action - Defines the action to be taken for red color packets
 -   yellow_packet_action - Defines the action to be taken for yellow color packets
