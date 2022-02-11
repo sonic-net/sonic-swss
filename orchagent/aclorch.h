@@ -355,17 +355,6 @@ protected:
     bool INT_session_valid;
 };
 
-class AclRuleDTelDropWatchListEntry: public AclRule
-{
-public:
-    AclRuleDTelDropWatchListEntry(AclOrch *m_pAclOrch, DTelOrch *m_pDTelOrch, string rule, string table);
-    bool validateAddAction(string attr_name, string attr_value);
-    bool validate();
-    void onUpdate(SubjectType, void *) override;
-protected:
-    DTelOrch *m_pDTelOrch;
-};
-
 class AclTable
 {
 public:

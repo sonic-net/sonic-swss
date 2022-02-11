@@ -1279,16 +1279,7 @@ shared_ptr<AclRule> AclRule::makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOr
                 throw runtime_error("DTel feature is not enabled. Watchlists cannot be configured");
             }
 
-            if (action == ACTION_DTEL_DROP_REPORT_ENABLE ||
-                action == ACTION_DTEL_TAIL_DROP_REPORT_ENABLE ||
-                action == ACTION_DTEL_REPORT_ALL_PACKETS)
-            {
-                return make_shared<AclRuleDTelDropWatchListEntry>(acl, dtel, rule, table);
-            }
-            else
-            {
-                return make_shared<AclRuleDTelFlowWatchListEntry>(acl, dtel, rule, table);
-            }
+            return make_shared<AclRuleDTelFlowWatchListEntry>(acl, dtel, rule, table);
         }
     }
 
@@ -2447,8 +2438,8 @@ void AclRuleDTelFlowWatchListEntry::onUpdate(SubjectType type, void *cntx)
 
 bool AclRuleDTelFlowWatchListEntry::update(const AclRule& rule)
 {
-    auto dtelDropWathcListRule = dynamic_cast<const AclRuleDTelFlowWatchListEntry*>(&rule);
-    if (!dtelDropWathcListRule)
+    auto dtelFlowWatchListRule = dynamic_cast<const AclRuleDTelFlowWatchListEntry*>(&rule);
+    if (!dtelFlowWatchListRule)
     {
         SWSS_LOG_ERROR("Cannot update DTEL flow watch list rule with a rule of a different type");
         return false;
@@ -2456,59 +2447,6 @@ bool AclRuleDTelFlowWatchListEntry::update(const AclRule& rule)
 
     SWSS_LOG_ERROR("Updating DTEL flow watch list rule is currently not implemented");
     return false;
-}
-
-AclRuleDTelDropWatchListEntry::AclRuleDTelDropWatchListEntry(AclOrch *aclOrch, DTelOrch *dtel, string rule, string table) :
-        AclRule(aclOrch, rule, table),
-        m_pDTelOrch(dtel)
-{
-}
-
-bool AclRuleDTelDropWatchListEntry::validateAddAction(string attr_name, string attr_val)
-{
-    SWSS_LOG_ENTER();
-
-    if (!m_pDTelOrch)
-    {
-        return false;
-    }
-
-    sai_acl_action_data_t actionData;
-    string attr_value = to_upper(attr_val);
-
-    if (attr_name != ACTION_DTEL_DROP_REPORT_ENABLE &&
-        attr_name != ACTION_DTEL_TAIL_DROP_REPORT_ENABLE &&
-        attr_name != ACTION_DTEL_REPORT_ALL_PACKETS)
-    {
-        return false;
-    }
-
-    actionData.parameter.booldata = (attr_value == DTEL_ENABLED) ? true : false;
-    actionData.enable = (attr_value == DTEL_ENABLED) ? true : false;
-
-    return setAction(aclDTelActionLookup[attr_name], actionData);
-}
-
-bool AclRuleDTelDropWatchListEntry::validate()
-{
-    SWSS_LOG_ENTER();
-
-    if (!m_pDTelOrch)
-    {
-        return false;
-    }
-
-    if ((m_rangeConfig.empty() && m_matches.empty()) || m_actions.size() == 0)
-    {
-        return false;
-    }
-
-    return true;
-}
-
-void AclRuleDTelDropWatchListEntry::onUpdate(SubjectType, void *)
-{
-    // Do nothing
 }
 
 AclRange::AclRange(sai_acl_range_type_t type, sai_object_id_t oid, int min, int max):
@@ -4385,7 +4323,6 @@ void AclOrch::createDTelWatchListTables()
     AclTableTypeBuilder builder;
 
     AclTable flowWLTable(this, TABLE_TYPE_DTEL_FLOW_WATCHLIST);
-    AclTable dropWLTable(this, TABLE_TYPE_DTEL_DROP_WATCHLIST);
 
     flowWLTable.validateAddStage(ACL_STAGE_INGRESS);
     flowWLTable.validateAddType(builder
@@ -4410,24 +4347,7 @@ void AclOrch::createDTelWatchListTables()
     );
     flowWLTable.setDescription("Dataplane Telemetry Flow Watchlist table");
 
-    dropWLTable.validateAddStage(ACL_STAGE_INGRESS);
-    dropWLTable.validateAddType(builder
-        .withBindPointType(SAI_ACL_BIND_POINT_TYPE_SWITCH)
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE))
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_SRC_IP))
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DST_IP))
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT))
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT))
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL))
-        .withAction(SAI_ACL_ACTION_TYPE_DTEL_DROP_REPORT_ENABLE)
-        .withAction(SAI_ACL_ACTION_TYPE_DTEL_TAIL_DROP_REPORT_ENABLE)
-        .withAction(SAI_ACL_ACTION_TYPE_DTEL_REPORT_ALL_PACKETS)
-        .build()
-    );
-    dropWLTable.setDescription("Dataplane Telemetry Drop Watchlist table");
-
     addAclTable(flowWLTable);
-    addAclTable(dropWLTable);
 }
 
 void AclOrch::deleteDTelWatchListTables()
@@ -4435,7 +4355,6 @@ void AclOrch::deleteDTelWatchListTables()
     SWSS_LOG_ENTER();
 
     removeAclTable(TABLE_TYPE_DTEL_FLOW_WATCHLIST);
-    removeAclTable(TABLE_TYPE_DTEL_DROP_WATCHLIST);
 }
 
 void AclOrch::registerFlexCounter(const AclRule& rule)
