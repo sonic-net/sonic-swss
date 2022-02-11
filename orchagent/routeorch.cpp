@@ -2738,7 +2738,7 @@ void RouteOrch::removeRoutePattern(const RoutePattern &route_pattern)
     }
 }
 
-void RouteOrch::onAddMiscRouteEntry(sai_object_id_t vrf_id, const IpPrefix& ip_prefix)
+void RouteOrch::onAddMiscRouteEntry(sai_object_id_t vrf_id, const IpPrefix& ip_prefix, bool add_to_cache)
 {
     SWSS_LOG_ENTER();
     if (!mRouteFlowCounterSupported)
@@ -2746,14 +2746,17 @@ void RouteOrch::onAddMiscRouteEntry(sai_object_id_t vrf_id, const IpPrefix& ip_p
         return;
     }
 
-    auto iter = mMiscRoutes.find(vrf_id);
-    if (iter == mMiscRoutes.end())
+    if (add_to_cache)
     {
-        mMiscRoutes.emplace(vrf_id, std::set<IpPrefix>({ip_prefix}));
-    }
-    else
-    {
-        iter->second.insert(ip_prefix);
+        auto iter = mMiscRoutes.find(vrf_id);
+        if (iter == mMiscRoutes.end())
+        {
+            mMiscRoutes.emplace(vrf_id, std::set<IpPrefix>({ip_prefix}));
+        }
+        else
+        {
+            iter->second.insert(ip_prefix);
+        }
     }
 
     if (!isRouteFlowCounterEnabled())
@@ -2776,7 +2779,7 @@ void RouteOrch::onAddMiscRouteEntry(sai_object_id_t vrf_id, const IpPrefix& ip_p
     }
 }
 
-void RouteOrch::onRemoveMiscRouteEntry(sai_object_id_t vrf_id, const IpPrefix& ip_prefix)
+void RouteOrch::onRemoveMiscRouteEntry(sai_object_id_t vrf_id, const IpPrefix& ip_prefix, bool remove_from_cache)
 {
     SWSS_LOG_ENTER();
     if (!mRouteFlowCounterSupported)
@@ -2784,16 +2787,19 @@ void RouteOrch::onRemoveMiscRouteEntry(sai_object_id_t vrf_id, const IpPrefix& i
         return;
     }
 
-    auto iter = mMiscRoutes.find(vrf_id);
-    if (iter != mMiscRoutes.end())
+    if (remove_from_cache)
     {
-        auto prefix_iter = iter->second.find(ip_prefix);
-        if (prefix_iter != iter->second.end())
+        auto iter = mMiscRoutes.find(vrf_id);
+        if (iter != mMiscRoutes.end())
         {
-            iter->second.erase(prefix_iter);
-            if (iter->second.empty())
+            auto prefix_iter = iter->second.find(ip_prefix);
+            if (prefix_iter != iter->second.end())
             {
-                 mMiscRoutes.erase(iter);
+                iter->second.erase(prefix_iter);
+                if (iter->second.empty())
+                {
+                    mMiscRoutes.erase(iter);
+                }
             }
         }
     }
@@ -3039,6 +3045,8 @@ void RouteOrch::createRouteFlowCounterByPattern(const RoutePattern &route_patter
         }
     }
 
+    createRouteFlowCounterFromVnetRoutes(route_pattern, to_bind, current_bound_count);
+
     auto other_iter = mMiscRoutes.find(route_pattern.vrf_id);
     if (other_iter != mMiscRoutes.end())
     {
@@ -3082,6 +3090,30 @@ void RouteOrch::createSingleRouteFlowCounterByPattern(
         {
             flushBindFlowCounters(route_pattern, to_bind, current_bound_count);
         }
+    }
+}
+
+void RouteOrch::createRouteFlowCounterFromVnetRoutes(const RoutePattern &route_pattern, std::list<RouteFlowCounterBulkContext>& to_bind, size_t& current_bound_count)
+{
+    auto *vnet_orch = gDirectory.get<VNetOrch*>();
+    assert(vnet_orch); // VnetOrch instance is created before RouteOrch
+
+    if (!vnet_orch->isVnetExists(route_pattern.vrf_name))
+    {
+        return;
+    }
+
+    auto *vrf_obj = vnet_orch->getTypePtr<VNetVrfObject>(route_pattern.vrf_name);
+    const auto &route_map = vrf_obj->getRouteMap();
+    for (const auto &entry : route_map)
+    {
+        createSingleRouteFlowCounterByPattern(route_pattern, entry.first, to_bind, current_bound_count);
+    }
+
+    const auto &tunnel_routes = vrf_obj->getTunnelRoutes();
+    for (const auto &entry : tunnel_routes)
+    {
+        createSingleRouteFlowCounterByPattern(route_pattern, entry.first, to_bind, current_bound_count);
     }
 }
 

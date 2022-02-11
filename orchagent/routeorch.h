@@ -330,8 +330,8 @@ public:
     void clearRouteFlowStats();
     void addRoutePattern(const std::string &pattern, size_t);
     void removeRoutePattern(const std::string &pattern);
-    void onAddMiscRouteEntry(sai_object_id_t vrf_id, const IpPrefix& ip_prefix);
-    void onRemoveMiscRouteEntry(sai_object_id_t vrf_id, const IpPrefix& ip_prefix);
+    void onAddMiscRouteEntry(sai_object_id_t vrf_id, const IpPrefix& ip_prefix, bool add_to_cache = true);
+    void onRemoveMiscRouteEntry(sai_object_id_t vrf_id, const IpPrefix& ip_prefix, bool remove_from_cache = true);
     void onAddVR(sai_object_id_t vrf_id);
     void onRemoveVR(sai_object_id_t vrf_id);
 
@@ -446,6 +446,7 @@ private:
         const IpPrefix &ip_prefix,
         std::list<RouteFlowCounterBulkContext> &to_bind,
         size_t &current_bound_count);
+    void createRouteFlowCounterFromVnetRoutes(const RoutePattern &route_pattern, std::list<RouteFlowCounterBulkContext>& to_bind, size_t& current_bound_count);
     void createRouteFlowCounterFromUnboundCacheByPattern(const RoutePattern &route_pattern, size_t currentBoundCount);
     void removeRouteFlowCounterFromBoundCacheByPattern(const RoutePattern &route_pattern, size_t currentBoundCount);
     bool isRouteFlowCounterEnabled() const;

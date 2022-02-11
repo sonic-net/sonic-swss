@@ -619,7 +619,7 @@ static bool del_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, const IpPr
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
     }
 
-    gRouteOrch->onRemoveMiscRouteEntry(vr_id, ipPrefix);
+    gRouteOrch->onRemoveMiscRouteEntry(vr_id, ipPrefix, false);
 
     return true;
 }
@@ -652,7 +652,7 @@ static bool add_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_object
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
     }
 
-    gRouteOrch->onAddMiscRouteEntry(vr_id, ipPrefix);
+    gRouteOrch->onAddMiscRouteEntry(vr_id, ipPrefix, false);
 
     return true;
 }
