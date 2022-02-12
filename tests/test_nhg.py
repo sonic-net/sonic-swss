@@ -1931,6 +1931,9 @@ class TestCbfNextHopGroup(TestNextHopGroupBase):
             time.sleep(1)
             assert(not self.nhg_exists('cbfgroup3'))
 
+            # Cleanup
+            self.cbf_nhg_ps._del('cbfgroup3')
+
         self.init_test(dvs, 4)
 
         mainline_cbf_nhg_test()
