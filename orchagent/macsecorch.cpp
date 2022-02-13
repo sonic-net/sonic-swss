@@ -1183,6 +1183,18 @@ bool MACsecOrch::updateMACsecPort(MACsecPort &macsec_port, const TaskArgs &port_
     if (get_value(port_attr, "enable_encrypt", alpha_boolean))
     {
         macsec_port.m_enable_encrypt = alpha_boolean.operator bool();
+        if (!updateMACsecSCs(
+                macsec_port,
+                [&macsec_port, this](MACsecOrch::MACsecSC &macsec_sc)
+                {
+                    sai_attribute_t attr;
+                    attr.id = SAI_MACSEC_SC_ATTR_ENCRYPTION_ENABLE;
+                    attr.value.booldata = macsec_port.m_enable_encrypt;
+                    return this->updateMACsecAttr(SAI_OBJECT_TYPE_MACSEC_SC, macsec_sc.m_sc_id, attr);
+                }))
+        {
+            return false;
+        }
     }
     if (get_value(port_attr, "send_sci", alpha_boolean))
     {
@@ -1212,42 +1224,74 @@ bool MACsecOrch::updateMACsecPort(MACsecPort &macsec_port, const TaskArgs &port_
             SWSS_LOG_WARN("Unknown Cipher Suite %s", cipher_suite.c_str());
             return false;
         }
+        if (!updateMACsecSCs(
+                macsec_port,
+                [&macsec_port, this](MACsecOrch::MACsecSC &macsec_sc)
+                {
+                    sai_attribute_t attr;
+                    attr.id = SAI_MACSEC_SC_ATTR_MACSEC_CIPHER_SUITE;
+                    attr.value.s32 = macsec_port.m_cipher_suite;
+                    return this->updateMACsecAttr(SAI_OBJECT_TYPE_MACSEC_SC, macsec_sc.m_sc_id, attr);
+                }))
+        {
+            return false;
+        }
     }
     swss::AlphaBoolean enable = false;
     if (get_value(port_attr, "enable", enable) && enable.operator bool() != macsec_port.m_enable)
     {
-        std::vector<MACsecOrch::MACsecSC *> macsec_scs;
         macsec_port.m_enable = enable.operator bool();
-        for (auto &sc : macsec_port.m_egress_scs)
-        {
-            macsec_scs.push_back(&sc.second);
-        }
-        for (auto &sc : macsec_port.m_ingress_scs)
-        {
-            macsec_scs.push_back(&sc.second);
-        }
-        for (auto &macsec_sc : macsec_scs)
-        {
-            // Change the ACL entry action from packet action to MACsec flow
-            if (macsec_port.m_enable)
-            {
-                if (!setMACsecFlowActive(macsec_sc->m_entry_id, macsec_sc->m_flow_id, true))
+        if (!updateMACsecSCs(
+                macsec_port,
+                [&macsec_port, &recover, this](MACsecOrch::MACsecSC &macsec_sc)
                 {
-                    SWSS_LOG_WARN("Cannot change the ACL entry action from packet action to MACsec flow");
-                    return false;
-                }
-                auto entry_id = macsec_sc->m_entry_id;
-                auto flow_id = macsec_sc->m_flow_id;
-                recover.add_action([this, entry_id, flow_id]() { this->setMACsecFlowActive(entry_id, flow_id, false); });
-            }
-            else
-            {
-                setMACsecFlowActive(macsec_sc->m_entry_id, macsec_sc->m_flow_id, false);
-            }
+                    // Change the ACL entry action from packet action to MACsec flow
+                    if (macsec_port.m_enable)
+                    {
+                        if (!this->setMACsecFlowActive(macsec_sc.m_entry_id, macsec_sc.m_flow_id, true))
+                        {
+                            SWSS_LOG_WARN("Cannot change the ACL entry action from packet action to MACsec flow");
+                            return false;
+                        }
+                        auto entry_id = macsec_sc.m_entry_id;
+                        auto flow_id = macsec_sc.m_flow_id;
+                        recover.add_action([this, entry_id, flow_id]()
+                                           { this->setMACsecFlowActive(entry_id, flow_id, false); });
+                    }
+                    else
+                    {
+                        this->setMACsecFlowActive(macsec_sc.m_entry_id, macsec_sc.m_flow_id, false);
+                    }
+                    return true;
+                }))
+        {
+            return false;
         }
     }
 
     recover.clear();
+    return true;
+}
+
+bool MACsecOrch::updateMACsecSCs(MACsecPort &macsec_port, std::function<bool(MACsecOrch::MACsecSC &)> action)
+{
+    SWSS_LOG_ENTER();
+
+    for (auto &sc : macsec_port.m_egress_scs)
+    {
+        if (!action(sc.second))
+        {
+            return false;
+        }
+    }
+    for (auto &sc : macsec_port.m_ingress_scs)
+    {
+        if (!action(sc.second))
+        {
+            return false;
+        }
+    }
+
     return true;
 }
 
@@ -1718,6 +1762,42 @@ bool MACsecOrch::deleteMACsecSC(sai_object_id_t sc_id)
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
+    return true;
+}
+
+bool MACsecOrch::updateMACsecAttr(sai_object_type_t object_type, sai_object_id_t object_id, const sai_attribute_t &attr)
+{
+    SWSS_LOG_ENTER();
+
+    sai_status_t status = SAI_STATUS_SUCCESS;
+
+    if (object_type == SAI_OBJECT_TYPE_MACSEC_PORT)
+    {
+        status = sai_macsec_api->set_macsec_port_attribute(object_id, &attr);
+    }
+    else if (object_type == SAI_OBJECT_TYPE_MACSEC_SC)
+    {
+        status = sai_macsec_api->set_macsec_sc_attribute(object_id, &attr);
+    }
+    else if (object_type == SAI_OBJECT_TYPE_MACSEC_SA)
+    {
+        status = sai_macsec_api->set_macsec_sa_attribute(object_id, &attr);
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Wrong type %s", sai_serialize_object_type(object_type).c_str());
+        return false;
+    }
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_MACSEC, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
     return true;
 }
 

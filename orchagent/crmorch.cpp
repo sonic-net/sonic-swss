@@ -325,7 +325,6 @@ void CrmOrch::handleSetCommand(const string& key, const vector<FieldValueTuple>&
             else
             {
                 SWSS_LOG_ERROR("Failed to parse CRM %s configuration. Unknown attribute %s.\n", key.c_str(), field.c_str());
-                return;
             }
         }
         catch (const exception& e)
