@@ -97,6 +97,14 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     {
         SWSS_LOG_INFO("Unable to resolve %s, setting zero MAC", key.c_str());
         use_zero_mac = true;
+
+        // Unresolved neighbor deletion on dual ToR devices must be handled
+        // separately, otherwise delete_key is never set to true
+        // and neighorch is never able to remove the neighbor
+        if (nlmsg_type == RTM_DELNEIGH)
+        {
+            delete_key = true;
+        }
     }
     else if ((nlmsg_type == RTM_DELNEIGH) ||
              (state == NUD_INCOMPLETE) || (state == NUD_FAILED))
