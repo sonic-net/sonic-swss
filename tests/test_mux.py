@@ -5,7 +5,6 @@ import json
 from ipaddress import ip_network, ip_address, IPv4Address
 from swsscommon import swsscommon
 
-from dvslib.dvs_database import PollingConfig
 from mux_neigh_miss_tests import *
 
 def create_fvs(**kwargs):
@@ -967,7 +966,6 @@ class TestMuxTunnel(TestMuxTunnelBase):
         """ test acl and mux state change """
 
         appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-        asicdb = dvs.get_asic_db()
 
         self.create_and_test_acl(appdb, dvs_acl)
 
