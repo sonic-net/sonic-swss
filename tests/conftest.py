@@ -1529,7 +1529,7 @@ class DockerVirtualChassisTopology:
         return ret1 and ret2
 
 
-@pytest.yield_fixture(scope="module")
+@pytest.fixture(scope="module")
 def dvs(request) -> DockerVirtualSwitch:
     if sys.version_info[0] < 3:
         raise NameError("Python 2 is not supported, please install python 3")
@@ -1559,7 +1559,7 @@ def dvs(request) -> DockerVirtualSwitch:
         dvs.ctn_restart()
 
 
-@pytest.yield_fixture(scope="module")
+@pytest.fixture(scope="module")
 def vct(request):
     vctns = request.config.getoption("--vctns")
     topo = request.config.getoption("--topo")
@@ -1579,7 +1579,7 @@ def vct(request):
     vct.destroy()
 
 
-@pytest.yield_fixture
+@pytest.fixture
 def testlog(request, dvs):
     dvs.runcmd(f"logger === start test {request.node.name} ===")
     yield testlog
@@ -1602,13 +1602,13 @@ def dvs_route(request, dvs) -> DVSRoute:
 
 # FIXME: The rest of these also need to be reverted back to normal fixtures to
 # appease the linter.
-@pytest.yield_fixture(scope="class")
+@pytest.fixture(scope="class")
 def dvs_lag_manager(request, dvs):
     request.cls.dvs_lag = dvs_lag.DVSLag(dvs.get_asic_db(),
                                          dvs.get_config_db())
 
 
-@pytest.yield_fixture(scope="class")
+@pytest.fixture(scope="class")
 def dvs_vlan_manager(request, dvs):
     request.cls.dvs_vlan = dvs_vlan.DVSVlan(dvs.get_asic_db(),
                                             dvs.get_config_db(),
@@ -1617,7 +1617,7 @@ def dvs_vlan_manager(request, dvs):
                                             dvs.get_app_db())
 
 
-@pytest.yield_fixture(scope="class")
+@pytest.fixture(scope="class")
 def dvs_mirror_manager(request, dvs):
     request.cls.dvs_mirror = dvs_mirror.DVSMirror(dvs.get_asic_db(),
                                                   dvs.get_config_db(),
@@ -1626,7 +1626,7 @@ def dvs_mirror_manager(request, dvs):
                                                   dvs.get_app_db())
 
 
-@pytest.yield_fixture(scope="class")
+@pytest.fixture(scope="class")
 def dvs_policer_manager(request, dvs):
     request.cls.dvs_policer = dvs_policer.DVSPolicer(dvs.get_asic_db(),
                                                      dvs.get_config_db())
@@ -1647,7 +1647,7 @@ def remove_dpb_config_file(dvs):
     dvs.runcmd(cmd)
 
 
-@pytest.yield_fixture(scope="module")
+@pytest.fixture(scope="module")
 def dpb_setup_fixture(dvs):
     create_dpb_config_file(dvs)
     if dvs.vct is None:

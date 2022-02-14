@@ -12,7 +12,7 @@ L3V6_RULE_NAME = "L3V6_TEST_RULE"
 
 
 class TestAcl:
-    @pytest.yield_fixture
+    @pytest.fixture
     def l3_acl_table(self, dvs_acl):
         try:
             dvs_acl.create_acl_table(L3_TABLE_NAME, L3_TABLE_TYPE, L3_BIND_PORTS)
@@ -21,7 +21,7 @@ class TestAcl:
             dvs_acl.remove_acl_table(L3_TABLE_NAME)
             dvs_acl.verify_acl_table_count(0)
 
-    @pytest.yield_fixture
+    @pytest.fixture
     def l3v6_acl_table(self, dvs_acl):
         try:
             dvs_acl.create_acl_table(L3V6_TABLE_NAME,
@@ -32,7 +32,7 @@ class TestAcl:
             dvs_acl.remove_acl_table(L3V6_TABLE_NAME)
             dvs_acl.verify_acl_table_count(0)
 
-    @pytest.yield_fixture
+    @pytest.fixture
     def setup_teardown_neighbor(self, dvs):
         try:
             # NOTE: set_interface_status has a dependency on cdb within dvs,
