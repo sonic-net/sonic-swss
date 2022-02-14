@@ -150,7 +150,6 @@ def test_mclagFdb_remote_dynamic_mac_add(dvs, testlog):
 
     assert how_many_entries_exist(dvs.sdb, "MCLAG_REMOTE_FDB_TABLE") == 1, "The MCLAG fdb entry not inserted to STATE"
     assert table_contain_key(dvs.sdb, "MCLAG_REMOTE_FDB_TABLE", "Vlan200:3c:85:99:5e:00:01") == True, "The MCLAG fdb entry not found in STATE"
-    
     (exitcode, output) = dvs.runcmd(['sh', '-c', "bridge fdb show  | grep " + "3C:85:99:5E:00:01".lower() + " | wc -l"])
     num = int(output.strip())
     assert num == 1
