@@ -3024,11 +3024,6 @@ void RouteOrch::createRouteFlowCounterByPattern(const RoutePattern &route_patter
         return;
     }
 
-    if (current_bound_count == route_pattern.max_match_count)
-    {
-        return;
-    }
-
     std::list<RouteFlowCounterBulkContext> to_bind;
     auto iter = m_syncdRoutes.find(route_pattern.vrf_id);
     if (iter != m_syncdRoutes.end())
@@ -3037,10 +3032,6 @@ void RouteOrch::createRouteFlowCounterByPattern(const RoutePattern &route_patter
 
         for (auto &entry : iter->second)
         {
-            if (current_bound_count == route_pattern.max_match_count)
-            {
-                break;
-            }
             createSingleRouteFlowCounterByPattern(route_pattern, entry.first, to_bind, current_bound_count);
         }
     }
@@ -3054,10 +3045,6 @@ void RouteOrch::createRouteFlowCounterByPattern(const RoutePattern &route_patter
 
         for (auto ip_prefix : other_iter->second)
         {
-            if (current_bound_count == route_pattern.max_match_count)
-            {
-                break;
-            }
             createSingleRouteFlowCounterByPattern(route_pattern, ip_prefix, to_bind, current_bound_count);
         }
     }
