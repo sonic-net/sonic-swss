@@ -6,7 +6,6 @@
 #include "routeorch.h"
 #include "directory.h"
 #include "muxorch.h"
-#include "observer.h"
 
 extern sai_neighbor_api_t*         sai_neighbor_api;
 extern sai_next_hop_api_t*         sai_next_hop_api;
@@ -17,8 +16,6 @@ extern CrmOrch *gCrmOrch;
 extern RouteOrch *gRouteOrch;
 extern FgNhgOrch *gFgNhgOrch;
 extern Directory<Orch*> gDirectory;
-
-#define MUX_TUNNEL "MuxTunnel0"
 
 const int neighorch_pri = 30;
 
