@@ -21,7 +21,7 @@ MIRROR_BIND_PORTS = ["Ethernet0", "Ethernet4", "Ethernet8", "Ethernet12"]
 MIRROR_RULE_NAME = "MIRROR_TEST_RULE"
 
 class TestAcl:
-    @pytest.yield_fixture
+    @pytest.fixture
     def l3_acl_table(self, dvs_acl):
         try:
             dvs_acl.create_acl_table(L3_TABLE_NAME, L3_TABLE_TYPE, L3_BIND_PORTS)
@@ -30,7 +30,7 @@ class TestAcl:
             dvs_acl.remove_acl_table(L3_TABLE_NAME)
             dvs_acl.verify_acl_table_count(0)
 
-    @pytest.yield_fixture
+    @pytest.fixture
     def l3v6_acl_table(self, dvs_acl):
         try:
             dvs_acl.create_acl_table(L3V6_TABLE_NAME,
@@ -41,7 +41,7 @@ class TestAcl:
             dvs_acl.remove_acl_table(L3V6_TABLE_NAME)
             dvs_acl.verify_acl_table_count(0)
 
-    @pytest.yield_fixture
+    @pytest.fixture
     def mclag_acl_table(self, dvs_acl):
         try:
             dvs_acl.create_acl_table(MCLAG_TABLE_NAME, MCLAG_TABLE_TYPE, MCLAG_BIND_PORTS)
@@ -50,7 +50,7 @@ class TestAcl:
             dvs_acl.remove_acl_table(MCLAG_TABLE_NAME)
             dvs_acl.verify_acl_table_count(0)
 
-    @pytest.yield_fixture
+    @pytest.fixture
     def mirror_acl_table(self, dvs_acl):
         try:
             dvs_acl.create_acl_table(MIRROR_TABLE_NAME, MIRROR_TABLE_TYPE, MIRROR_BIND_PORTS)
@@ -59,7 +59,7 @@ class TestAcl:
             dvs_acl.remove_acl_table(MIRROR_TABLE_NAME)
             dvs_acl.verify_acl_table_count(0)
 
-    @pytest.yield_fixture
+    @pytest.fixture
     def setup_teardown_neighbor(self, dvs):
         try:
             # NOTE: set_interface_status has a dependency on cdb within dvs,
