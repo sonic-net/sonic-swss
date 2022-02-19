@@ -631,12 +631,6 @@ void NeighOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    int test_var = 0;
-    if (test_var == 1)
-    {
-        test_var = 0;
-    }
-
     if (!gPortsOrch->allPortsReady())
     {
         return;
