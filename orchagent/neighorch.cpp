@@ -637,11 +637,6 @@ void NeighOrch::doTask(Consumer &consumer)
         test_var = 0;
     }
 
-    if (test_var == 0)
-    {
-        test_var = 1;
-    }
-
     if (!gPortsOrch->allPortsReady())
     {
         return;
