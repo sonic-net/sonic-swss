@@ -2290,7 +2290,7 @@ sai_status_t PortsOrch::removePort(sai_object_id_t port_id)
     /* else : port is in default state or not yet created */
 
     /*
-     * Remove port serdes (if exists) before removing port since this is
+     * Remove port serdes (if exists) before removing port since this
      * reference is dependency.
      */
 
