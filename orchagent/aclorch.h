@@ -334,10 +334,10 @@ protected:
     MirrorOrch *m_pMirrorOrch {nullptr};
 };
 
-class AclRuleDTelFlowWatchListEntry: public AclRule
+class AclRuleDTelWatchListEntry: public AclRule
 {
 public:
-    AclRuleDTelFlowWatchListEntry(AclOrch *m_pAclOrch, DTelOrch *m_pDTelOrch, string rule, string table);
+    AclRuleDTelWatchListEntry(AclOrch *m_pAclOrch, DTelOrch *m_pDTelOrch, string rule, string table);
     bool validateAddAction(string attr_name, string attr_value);
     bool validate();
     bool createRule();

@@ -1279,7 +1279,7 @@ shared_ptr<AclRule> AclRule::makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOr
                 throw runtime_error("DTel feature is not enabled. Watchlists cannot be configured");
             }
 
-            return make_shared<AclRuleDTelFlowWatchListEntry>(acl, dtel, rule, table);
+            return make_shared<AclRuleDTelWatchListEntry>(acl, dtel, rule, table);
         }
     }
 
@@ -2210,13 +2210,13 @@ bool AclTable::clear()
     return true;
 }
 
-AclRuleDTelFlowWatchListEntry::AclRuleDTelFlowWatchListEntry(AclOrch *aclOrch, DTelOrch *dtel, string rule, string table) :
+AclRuleDTelWatchListEntry::AclRuleDTelWatchListEntry(AclOrch *aclOrch, DTelOrch *dtel, string rule, string table) :
         AclRule(aclOrch, rule, table),
         m_pDTelOrch(dtel)
 {
 }
 
-bool AclRuleDTelFlowWatchListEntry::validateAddAction(string attr_name, string attr_val)
+bool AclRuleDTelWatchListEntry::validateAddAction(string attr_name, string attr_val)
 {
     SWSS_LOG_ENTER();
 
@@ -2298,7 +2298,7 @@ bool AclRuleDTelFlowWatchListEntry::validateAddAction(string attr_name, string a
     return setAction(aclDTelActionLookup[attr_name], actionData);
 }
 
-bool AclRuleDTelFlowWatchListEntry::validate()
+bool AclRuleDTelWatchListEntry::validate()
 {
     SWSS_LOG_ENTER();
 
@@ -2315,19 +2315,19 @@ bool AclRuleDTelFlowWatchListEntry::validate()
     return true;
 }
 
-bool AclRuleDTelFlowWatchListEntry::createRule()
+bool AclRuleDTelWatchListEntry::createRule()
 {
     SWSS_LOG_ENTER();
 
     return activate();
 }
 
-bool AclRuleDTelFlowWatchListEntry::removeRule()
+bool AclRuleDTelWatchListEntry::removeRule()
 {
     return deactivate();
 }
 
-bool AclRuleDTelFlowWatchListEntry::activate()
+bool AclRuleDTelWatchListEntry::activate()
 {
     SWSS_LOG_ENTER();
 
@@ -2344,7 +2344,7 @@ bool AclRuleDTelFlowWatchListEntry::activate()
     return AclRule::createRule();
 }
 
-bool AclRuleDTelFlowWatchListEntry::deactivate()
+bool AclRuleDTelWatchListEntry::deactivate()
 {
     SWSS_LOG_ENTER();
 
@@ -2375,7 +2375,7 @@ bool AclRuleDTelFlowWatchListEntry::deactivate()
     return true;
 }
 
-void AclRuleDTelFlowWatchListEntry::onUpdate(SubjectType type, void *cntx)
+void AclRuleDTelWatchListEntry::onUpdate(SubjectType type, void *cntx)
 {
     sai_acl_action_data_t actionData;
     sai_object_id_t session_oid = SAI_NULL_OBJECT_ID;
@@ -2436,16 +2436,16 @@ void AclRuleDTelFlowWatchListEntry::onUpdate(SubjectType type, void *cntx)
     }
 }
 
-bool AclRuleDTelFlowWatchListEntry::update(const AclRule& rule)
+bool AclRuleDTelWatchListEntry::update(const AclRule& rule)
 {
-    auto dtelFlowWatchListRule = dynamic_cast<const AclRuleDTelFlowWatchListEntry*>(&rule);
-    if (!dtelFlowWatchListRule)
+    auto dtelWatchListRule = dynamic_cast<const AclRuleDTelWatchListEntry*>(&rule);
+    if (!dtelWatchListRule)
     {
-        SWSS_LOG_ERROR("Cannot update DTEL flow watch list rule with a rule of a different type");
+        SWSS_LOG_ERROR("Cannot update DTEL watch list rule with a rule of a different type");
         return false;
     }
 
-    SWSS_LOG_ERROR("Updating DTEL flow watch list rule is currently not implemented");
+    SWSS_LOG_ERROR("Updating DTEL watch list rule is currently not implemented");
     return false;
 }
 
@@ -4322,10 +4322,10 @@ void AclOrch::createDTelWatchListTables()
 
     AclTableTypeBuilder builder;
 
-    AclTable flowWLTable(this, TABLE_TYPE_DTEL_FLOW_WATCHLIST);
+    AclTable dtelWLTable(this, TABLE_TYPE_DTEL_FLOW_WATCHLIST);
 
-    flowWLTable.validateAddStage(ACL_STAGE_INGRESS);
-    flowWLTable.validateAddType(builder
+    dtelWLTable.validateAddStage(ACL_STAGE_INGRESS);
+    dtelWLTable.validateAddType(builder
         .withBindPointType(SAI_ACL_BIND_POINT_TYPE_SWITCH)
         .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE))
         .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_SRC_IP))
@@ -4345,9 +4345,9 @@ void AclOrch::createDTelWatchListTables()
         .withAction(SAI_ACL_ACTION_TYPE_DTEL_FLOW_SAMPLE_PERCENT)
         .build()
     );
-    flowWLTable.setDescription("Dataplane Telemetry Flow Watchlist table");
+    dtelWLTable.setDescription("Dataplane Telemetry Watchlist table");
 
-    addAclTable(flowWLTable);
+    addAclTable(dtelWLTable);
 }
 
 void AclOrch::deleteDTelWatchListTables()
