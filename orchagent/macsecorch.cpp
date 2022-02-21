@@ -13,6 +13,7 @@
 #include <stack>
 #include <memory>
 #include <typeinfo>
+#include <cstdint>
 
 /* Global Variables*/
 
@@ -831,7 +832,7 @@ task_process_status MACsecOrch::taskUpdateEgressSA(
                 attr.value.u64 = pn;
                 if (!this->updateMACsecAttr(SAI_OBJECT_TYPE_MACSEC_SA, *(ctx.get_macsec_sa()), attr))
                 {
-                    SWSS_LOG_WARN("Fail to update next pn (%llu) of egress MACsec SA %s", pn, port_sci_an.c_str());
+                    SWSS_LOG_WARN("Fail to update next pn (%" PRIu64 ") of egress MACsec SA %s", pn, port_sci_an.c_str());
                     return task_failed;
                 }
             }
@@ -892,7 +893,7 @@ task_process_status MACsecOrch::taskUpdateIngressSA(
                     attr.value.u64 = pn;
                     if (!this->updateMACsecAttr(SAI_OBJECT_TYPE_MACSEC_SA, *(ctx.get_macsec_sa()), attr))
                     {
-                        SWSS_LOG_WARN("Fail to update lowest acceptable PN (%llu) of ingress MACsec SA %s", pn, port_sci_an.c_str());
+                        SWSS_LOG_WARN("Fail to update lowest acceptable PN (%" PRIu64 ") of ingress MACsec SA %s", pn, port_sci_an.c_str());
                         return task_failed;
                     }
                 }
