@@ -265,6 +265,8 @@ bool FlexCounterOrch::bake()
 
 map<string, FlexCounterQueueStates> FlexCounterOrch::getQueueConfigurations()
 {
+    SWSS_LOG_ENTER();
+
     map<string, FlexCounterQueueStates> queuesStateVector;
     std::vector<std::string> portQueueKeys;
     m_bufferQueueConfigTable.getKeys(portQueueKeys);
@@ -317,6 +319,8 @@ map<string, FlexCounterQueueStates> FlexCounterOrch::getQueueConfigurations()
 
 map<string, FlexCounterPgStates> FlexCounterOrch::getPgConfigurations()
 {
+    SWSS_LOG_ENTER();
+
     map<string, FlexCounterPgStates> pgsStateVector;
     std::vector<std::string> portPgKeys;
     m_bufferPgConfigTable.getKeys(portPgKeys);
@@ -375,11 +379,13 @@ FlexCounterQueueStates::FlexCounterQueueStates(uint32_t maxQueueNumber)
 
 bool FlexCounterQueueStates::isQueueCounterEnabled(uint32_t index) const
 {
+    SWSS_LOG_ENTER();
     return m_queueStates[index];
 }
 
 void FlexCounterQueueStates::enableQueueCounters(uint32_t startIndex, uint32_t endIndex)
 {
+    SWSS_LOG_ENTER();
     for (uint32_t queueIndex = startIndex; queueIndex <= endIndex; queueIndex++)
     {
         enableQueueCounter(queueIndex);
@@ -388,6 +394,7 @@ void FlexCounterQueueStates::enableQueueCounters(uint32_t startIndex, uint32_t e
 
 void FlexCounterQueueStates::enableQueueCounter(uint32_t queueIndex)
 {
+    SWSS_LOG_ENTER();
     m_queueStates[queueIndex] = true;
 }
 
@@ -399,11 +406,13 @@ FlexCounterPgStates::FlexCounterPgStates(uint32_t maxPgNumber)
 
 bool FlexCounterPgStates::isPgCounterEnabled(uint32_t index) const
 {
+    SWSS_LOG_ENTER();
     return m_pgStates[index];
 }
 
 void FlexCounterPgStates::enablePgCounters(uint32_t startIndex, uint32_t endIndex)
 {
+    SWSS_LOG_ENTER();
     for (uint32_t pgIndex = startIndex; pgIndex <= endIndex; pgIndex++)
     {
         enablePgCounter(pgIndex);
@@ -412,5 +421,6 @@ void FlexCounterPgStates::enablePgCounters(uint32_t startIndex, uint32_t endInde
 
 void FlexCounterPgStates::enablePgCounter(uint32_t pgIndex)
 {
+    SWSS_LOG_ENTER();
     m_pgStates[pgIndex] = true;
 }

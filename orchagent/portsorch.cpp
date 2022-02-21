@@ -5463,6 +5463,8 @@ void PortsOrch::generateQueueMapPerPort(const Port& port, FlexCounterQueueStates
 
 void PortsOrch::createPortBufferQueueCounters(const Port &port, string queues)
 {
+    SWSS_LOG_ENTER();
+
     /* Create the Queue map in the Counter DB */
     /* Add stat counters to flex_counter */
     vector<FieldValueTuple> queueVector;
@@ -5531,6 +5533,8 @@ void PortsOrch::createPortBufferQueueCounters(const Port &port, string queues)
 
 void PortsOrch::removePortBufferQueueCounters(const Port &port, string queues)
 {
+    SWSS_LOG_ENTER();
+
     /* Remove the Queues maps in the Counter DB */
     /* Remove stat counters from flex_counter DB */
     auto toks = tokenize(queues, '-');
@@ -5650,6 +5654,8 @@ void PortsOrch::generatePriorityGroupMapPerPort(const Port& port, FlexCounterPgS
 
 void PortsOrch::createPortBufferPgCounters(const Port& port, string pgs)
 {
+    SWSS_LOG_ENTER();
+
     /* Create the PG map in the Counter DB */
     /* Add stat counters to flex_counter */
     vector<FieldValueTuple> pgVector;
@@ -5716,6 +5722,8 @@ void PortsOrch::createPortBufferPgCounters(const Port& port, string pgs)
 
 void PortsOrch::removePortBufferPgCounters(const Port& port, string pgs)
 {
+    SWSS_LOG_ENTER();
+
     /* Remove the Pgs maps in the Counter DB */
     /* Remove stat counters from flex_counter DB */
     auto toks = tokenize(pgs, '-');
