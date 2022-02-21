@@ -825,6 +825,7 @@ task_process_status MACsecOrch::taskUpdateEgressSA(
         {
             // The MACsec SA has enabled, update SA's attributes
             sai_uint64_t pn;
+
             if (get_value(sa_attr, "next_pn", pn))
             {
                 sai_attribute_t attr;
@@ -836,6 +837,8 @@ task_process_status MACsecOrch::taskUpdateEgressSA(
                     return task_failed;
                 }
             }
+
+            return task_success;
         }
     }
     return task_need_retry;
@@ -886,6 +889,7 @@ task_process_status MACsecOrch::taskUpdateIngressSA(
             else
             {
                 sai_uint64_t pn;
+
                 if (get_value(sa_attr, "lowest_acceptable_pn", pn))
                 {
                     sai_attribute_t attr;
@@ -897,6 +901,8 @@ task_process_status MACsecOrch::taskUpdateIngressSA(
                         return task_failed;
                     }
                 }
+
+                return task_success;
             }
         }
         else
