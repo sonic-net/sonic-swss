@@ -908,6 +908,8 @@ task_process_status MACsecOrch::taskUpdateIngressSA(
             return task_need_retry;
         }
     }
+
+    return task_success;
 }
 
 task_process_status MACsecOrch::taskDeleteIngressSA(
