@@ -189,9 +189,10 @@ namespace swss {
     typedef  std::tuple<std::string, std::string> vlan_mbr;
 
     class MclagLink : public Selectable {
-        
+
         private:
-            Select *m_select;
+            const int MSG_BATCH_SIZE;
+
             unsigned int m_bufSize;
             char *m_messageBuffer;
             char *m_messageBuffer_send;
@@ -202,11 +203,12 @@ namespace swss {
             int m_server_socket;
             int m_connection_socket;
 
+            Select *m_select;
+
             bool is_iccp_up = false;
             std::string m_system_mac;
             std::set<vlan_mbr> m_vlan_mbrship; //set of vlan,mbr tuples
 
-            const int MSG_BATCH_SIZE;
             std::map<std::string, std:: string> *p_learn;
 
             unique_ptr<DBConnector> p_state_db;

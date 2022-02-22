@@ -509,7 +509,12 @@ bool NbrMgr::addKernelRoute(string odev, IpAddress ip_addr)
     }
     else
     {
-        cmd = string("") + IP_CMD + " -6 route add " + ip_str + "/128 dev " + odev;
+        // In voq system, We need the static route to the remote neighbor and connected
+        // route to have the same metric to enable BGP to choose paths from routes learned
+        // via eBGP and iBGP over the internal inband port be part of same ecmp group.
+        // For v4 both the metrics (connected and static) are default 0 so we do not need
+        // to set the metric explicitly.
+        cmd = string("") + IP_CMD + " -6 route add " + ip_str + "/128 dev " + odev + " metric 256";
         SWSS_LOG_NOTICE("IPv6 Route Add cmd: %s",cmd.c_str());
     }
 

@@ -1931,6 +1931,9 @@ class TestCbfNextHopGroup(TestNextHopGroupBase):
             time.sleep(1)
             assert(not self.nhg_exists('cbfgroup3'))
 
+            # Cleanup
+            self.cbf_nhg_ps._del('cbfgroup3')
+
         self.init_test(dvs, 4)
 
         mainline_cbf_nhg_test()
@@ -2207,6 +2210,42 @@ class TestCbfNextHopGroup(TestNextHopGroupBase):
             self.fc_to_nhg_ps._del(nhg_maps.pop())
         self.asic_db.wait_for_n_keys(self.ASIC_NHG_MAP_STR, self.asic_nhg_maps_count)
 
+    # Test scenario:
+    # - Create a CBF NHG that has a member which is not yet synced. It shouldn't be synced.
+    # - Add the missing member and assert the CBF NHG is now synced.
+    def test_cbf_sync_before_member(self, dvs, testlog):
+        self.init_test(dvs, 2)
+
+        # Create an FC to NH index selection map
+        nhg_map = [(str(i), '0' if i < 4 else '1') for i in range(8)]
+        fvs = swsscommon.FieldValuePairs(nhg_map)
+        self.fc_to_nhg_ps.set('cbfnhgmap1', fvs)
+        self.asic_db.wait_for_n_keys(self.ASIC_NHG_MAP_STR, self.asic_nhg_maps_count + 1)
+
+        # Create a non-CBF NHG
+        fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'),
+                                            ('ifname', 'Ethernet0,Ethernet4')])
+        self.nhg_ps.set('group1', fvs)
+        self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
+
+        # Create a CBF NHG with a member that doesn't currently exist. Nothing should happen
+        fvs = swsscommon.FieldValuePairs([('members', 'group1,group2'),
+                                        ('selection_map', 'cbfnhgmap1')])
+        self.cbf_nhg_ps.set('cbfgroup1', fvs)
+        time.sleep(1)
+        assert(len(self.asic_db.get_keys(self.ASIC_NHG_STR)) == self.asic_nhgs_count + 1)
+
+        # Create the missing non-CBF NHG. This and the CBF NHG should be created.
+        fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'),
+                                        ("ifname", "Ethernet0,Ethernet4")])
+        self.nhg_ps.set("group2", fvs)
+        self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 3)
+
+        # Cleanup
+        self.nhg_ps._del('cbfgroup1')
+        self.nhg_ps._del('group1')
+        self.nhg_ps._del('group2')
+        self.nhg_ps._del('cbfnhgmap1')
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying

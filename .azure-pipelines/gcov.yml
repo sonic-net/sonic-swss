@@ -46,11 +46,24 @@ jobs:
     ${{ if eq(parameters.pool, 'default') }}:
       vmImage: 'ubuntu-20.04'
 
+  variables:
+    DIFF_COVER_CHECK_THRESHOLD: 0
+    DIFF_COVER_ENABLE: 'true'
+    DIFF_COVER_WORKING_DIRECTORY: $(System.DefaultWorkingDirectory)/gcov/
+
   container:
     image: sonicdev-microsoft.azurecr.io:443/${{ parameters.sonic_slave }}:latest
   
 
   steps:
+  - script: |
+        set -ex
+        # Install .NET CORE
+        curl -sSL https://packages.microsoft.com/keys/microsoft.asc | sudo apt-key add -
+        sudo apt-add-repository https://packages.microsoft.com/debian/10/prod
+        sudo apt-get update
+        sudo apt-get install -y dotnet-sdk-5.0
+    displayName: "Install .NET CORE"
   - script: |
       sudo apt-get install -y lcov
     displayName: "Install dependencies"
@@ -93,6 +106,8 @@ jobs:
       sudo ./gcov_support.sh generate
       sudo ./gcov_support.sh merge_container_info $(Build.ArtifactStagingDirectory)
       sudo cp -rf gcov_output $(Build.ArtifactStagingDirectory)
+      mkdir -p $(System.DefaultWorkingDirectory)/gcov
+      sudo cp -rf $(Build.ArtifactStagingDirectory)/gcov_output/AllMergeReport/* $(System.DefaultWorkingDirectory)/gcov/
       ls -lh $(Build.ArtifactStagingDirectory)
       popd
     workingDirectory: $(Pipeline.Workspace)

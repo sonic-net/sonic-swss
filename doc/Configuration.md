@@ -34,6 +34,7 @@ Table of Contents
          * [MAP_PFC_PRIORITY_TO_QUEUE](#map_pfc_priority_to_queue)  
          * [NTP Global Configuration](#ntp-global-configuration)  
          * [NTP and SYSLOG servers](#ntp-and-syslog-servers)  
+         * [Policer](#policer)   
          * [Port](#port)   
          * [Port Channel](#port-channel)  
          * [Portchannel member](#portchannel-member)  
@@ -1092,6 +1093,50 @@ attributes in those objects.
 }
 ```
 
+### Policer
+
+Below is an example of the policer table configuration.
+```
+{
+    "POLICER": {
+        "everflow_static_policer": {
+            "meter_type": "bytes",
+            "mode": "sr_tcm",
+            "cir": "12500000",
+            "cbs": "12500000",
+	    "pir": "17500000",
+            "pbs": "17500000",
+            "color": "aware",
+            "red_packet_action": "drop",
+	    "yellow_packet_action": "drop"
+	    "green_packet_action": "forward"
+       }
+    }
+}
+
+```
+Key to the table defines policer name Below are the fields
+-   meter_type - Mandatory field. Defines how the metering is done. values - bytes, packets
+-   mode - Mandatory field. Defines one of the three modes support. values - sr_tcm, tr_tcm, storm
+-   cir  - Committed information rate bytes/sec or packets/sec based on meter_type
+-   cbs - Committed burst size in bytes or packets based on meter_type
+-   pir - Peak information rate in bytes/sec or packets/sec based on meter_type
+-   pbs - Peak burst size in bytes or packets based on meter_type
+-   color - Defines the color source for the policer. values - aware, blind
+-   red_packet_action - Defines the action to be taken for red color packets
+-   yellow_packet_action - Defines the action to be taken for yellow color packets
+-   green_packet_action - Defines the action to be taken for green color packets.
+
+The packet action could be:
+
+-   'drop'
+-   'forward'
+-   'copy'
+-   'copy_cancel'
+-   'trap'
+-   'log'
+-   'deny'
+-   'transit'
 ### Port
 
 In this table the physical port configurations are defined. Each object

@@ -381,11 +381,6 @@ class TestVirtualChassis(object):
                     assert mac == test_neigh_mac, "Encap index of remote neigh mismatch with allocated encap index"
                     
                     # Check for other mandatory attributes
-                    # For remote neighbor, encap index must be imposed. So impose_index must be "true"
-                    impose_index = remote_neigh_entry.get("SAI_NEIGHBOR_ENTRY_ATTR_ENCAP_IMPOSE_INDEX")
-                    assert impose_index != "", "Impose index attribute is not programmed for remote neigh in ASIC_DB"
-                    assert impose_index == "true", "Impose index attribute is false for remote neigh"
-                   
                     # For remote neighbors, is_local must be "false" 
                     is_local = remote_neigh_entry.get("SAI_NEIGHBOR_ENTRY_ATTR_IS_LOCAL")
                     assert is_local != "", "is_local attribute is not programmed for remote neigh in ASIC_DB"

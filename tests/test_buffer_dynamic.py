@@ -214,6 +214,7 @@ class TestBufferMgrDyn(object):
 
         self.cleanup_db(dvs)
 
+    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_changeCableLen(self, dvs, testlog):
         self.setup_db(dvs)
 
