@@ -746,7 +746,7 @@ namespace qosorch_test
         entries.clear();
         static_cast<Orch *>(gQosOrch)->doTask();
         ASSERT_EQ(++current_sai_remove_qos_map_count, sai_remove_qos_map_count);
-        ASSERT_EQ((*QosOrch::getTypeMap()[CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME]).count("AZURE_1"), 0);
+        ASSERT_EQ((*QosOrch::getTypeMap()[CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME]).count("AZURE"), 0);
 
         entries.push_back({"AZURE_1", "DEL", {}});
         consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_DSCP_TO_TC_MAP_TABLE_NAME));
