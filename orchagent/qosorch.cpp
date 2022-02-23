@@ -668,7 +668,7 @@ bool WredMapHandler::removeQosItem(sai_object_id_t sai_object)
     sai_status = sai_wred_api->remove_wred(sai_object);
     if (SAI_STATUS_SUCCESS != sai_status)
     {
-        SWSS_LOG_ERROR("Failed to remove scheduler profile, status:%d", sai_status);
+        SWSS_LOG_ERROR("Failed to remove wred profile, status:%d", sai_status);
         return false;
     }
     return true;
@@ -1487,6 +1487,20 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer)
                 SWSS_LOG_ERROR("Resolving scheduler reference failed");
                 return task_process_status::task_failed;
             }
+            else
+            {
+                /* config qos clear */
+                if (op == DEL_COMMAND)
+                {
+                    result = applySchedulerToQueueSchedulerGroup(port, queue_ind, SAI_NULL_OBJECT_ID);
+                    if (!result)
+                    {
+                        SWSS_LOG_ERROR("Failed unbinding field:%s to port:%s, queue:%zd, line:%d",
+                                scheduler_field_name.c_str(), port.m_alias.c_str(), queue_ind, __LINE__);
+                        return task_process_status::task_failed;
+                    }
+                }
+            }
 
             sai_object_id_t sai_wred_profile;
             string wred_profile_name;
@@ -1539,6 +1553,20 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer)
                 {
                     SWSS_LOG_ERROR("Resolving wred reference failed");
                     return task_process_status::task_failed;
+                }
+            }
+            else
+            {
+                /* config qos clear */
+                if (op == DEL_COMMAND)
+                {
+                    result = applyWredProfileToQueue(port, queue_ind, SAI_NULL_OBJECT_ID);
+                    if (!result)
+                    {
+                        SWSS_LOG_ERROR("Failed unbinding field:%s from port:%s, queue:%zd, line:%d",
+                                wred_profile_field_name.c_str(), port.m_alias.c_str(), queue_ind, __LINE__);
+                        return task_process_status::task_failed;
+                    }
                 }
             }
         }
