@@ -1422,6 +1422,12 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer)
     vector<string> port_names;
 
     ref_resolve_status  resolve_result;
+
+    if((op != SET_COMMAND) && (op != DEL_COMMAND))
+    {
+        SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
+        return task_process_status::task_invalid_entry;
+    }
     // sample "QUEUE: {Ethernet4|0-1}"
     tokens = tokenize(key, config_db_key_delimiter);
     if (tokens.size() != 2)
@@ -1460,22 +1466,17 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer)
                 {
                     result = applySchedulerToQueueSchedulerGroup(port, queue_ind, sai_scheduler_profile);
                 }
-                else if (op == DEL_COMMAND)
+                else
                 {
                     // NOTE: The map is un-bound from the port. But the map itself still exists.
                     result = applySchedulerToQueueSchedulerGroup(port, queue_ind, SAI_NULL_OBJECT_ID);
-                }
-                else
-                {
-                    SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
-                    return task_process_status::task_invalid_entry;
                 }
                 if (!result)
                 {
                     SWSS_LOG_ERROR("Failed setting field:%s to port:%s, queue:%zd, line:%d", scheduler_field_name.c_str(), port.m_alias.c_str(), queue_ind, __LINE__);
                     return task_process_status::task_failed;
                 }
-                SWSS_LOG_DEBUG("Applied scheduler to port:%s", port_name.c_str());
+                SWSS_LOG_DEBUG("Applied scheduler to port:%s queue:%zd", port_name.c_str(), queue_ind);
             }
             else if (resolve_result != ref_resolve_status::field_not_found)
             {
@@ -1486,6 +1487,18 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer)
                 }
                 SWSS_LOG_ERROR("Resolving scheduler reference failed");
                 return task_process_status::task_failed;
+            }
+            else
+            {
+                /* config qos clear or SET/DEL with NULL:NULL or only key*/
+                result = applySchedulerToQueueSchedulerGroup(port, queue_ind, SAI_NULL_OBJECT_ID);
+                if (!result)
+                {
+                    SWSS_LOG_ERROR("Failed unbinding field:%s to port:%s, queue:%zd, line:%d",
+                    scheduler_field_name.c_str(), port.m_alias.c_str(), queue_ind, __LINE__);
+                    return task_process_status::task_failed;
+                }
+                SWSS_LOG_DEBUG("Removed scheduler to port:%s queue:%zd", port_name.c_str(), queue_ind);
             }
 
             sai_object_id_t sai_wred_profile;
@@ -1499,15 +1512,10 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer)
                 {
                     result = applyWredProfileToQueue(port, queue_ind, sai_wred_profile);
                 }
-                else if (op == DEL_COMMAND)
+                else
                 {
                     // NOTE: The map is un-bound from the port. But the map itself still exists.
                     result = applyWredProfileToQueue(port, queue_ind, SAI_NULL_OBJECT_ID);
-                }
-                else
-                {
-                    SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
-                    return task_process_status::task_invalid_entry;
                 }
                 if (!result)
                 {
