@@ -64,7 +64,6 @@ jobs:
       artifact: sonic-buildimage.vs
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/202106'
-      allowFailedBuilds: true
     displayName: "Download sonic buildimage"
   - script: |
       echo $(Build.DefinitionName).$(Build.BuildNumber)
