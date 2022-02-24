@@ -30,6 +30,24 @@
 
 namespace swss {
 
+static const std::set<std::string> tx_fir_strings =
+{
+    "system_tx_fir_pre1",
+    "system_tx_fir_pre2",
+    "system_tx_fir_pre3",
+    "system_tx_fir_post1",
+    "system_tx_fir_post2",
+    "system_tx_fir_post3",
+    "system_tx_fir_main",
+    "line_tx_fir_pre1",
+    "line_tx_fir_pre2",
+    "line_tx_fir_pre3",
+    "line_tx_fir_post1",
+    "line_tx_fir_post2",
+    "line_tx_fir_post3",
+    "line_tx_fir_main"
+};
+
 typedef struct
 {
     int phy_id;
@@ -54,6 +72,7 @@ typedef struct
     int phy_id;
     std::set<int> line_lanes;
     std::set<int> system_lanes;
+    std::map<std::string, std::string> tx_firs;
 } gearbox_interface_t;
 
 typedef struct

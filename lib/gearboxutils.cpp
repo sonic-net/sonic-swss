@@ -266,6 +266,11 @@ std::map<int, gearbox_interface_t> GearboxUtils::loadInterfaceMap(Table *gearbox
                         }
                     }
                 }
+                else if (tx_fir_strings.find(val.first) != tx_fir_strings.end())
+                {
+                    SWSS_LOG_DEBUG("Parsed key:%s, val:%s", val.first.c_str(), val.second.c_str());
+                    interface.tx_firs[val.first] = val.second;
+                }
             }
             gearboxInterfaceMap[interface.index] = interface;
         }

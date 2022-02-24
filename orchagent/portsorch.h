@@ -49,6 +49,28 @@ static const unordered_map<string, sai_port_oper_status_t> string_oper_status =
     { "not present", SAI_PORT_OPER_STATUS_NOT_PRESENT }
 };
 
+static const std::map<std::string, sai_port_serdes_attr_t> tx_fir_strings_system_side =
+{
+    {"system_tx_fir_pre1", SAI_PORT_SERDES_ATTR_TX_FIR_PRE1},
+    {"system_tx_fir_pre2", SAI_PORT_SERDES_ATTR_TX_FIR_PRE2},
+    {"system_tx_fir_pre3", SAI_PORT_SERDES_ATTR_TX_FIR_PRE3},
+    {"system_tx_fir_post1", SAI_PORT_SERDES_ATTR_TX_FIR_POST1},
+    {"system_tx_fir_post2", SAI_PORT_SERDES_ATTR_TX_FIR_POST2},
+    {"system_tx_fir_post3", SAI_PORT_SERDES_ATTR_TX_FIR_POST3},
+    {"system_tx_fir_main", SAI_PORT_SERDES_ATTR_TX_FIR_MAIN}
+};
+
+static const std::map<std::string, sai_port_serdes_attr_t> tx_fir_strings_line_side =
+{
+    {"line_tx_fir_pre1", SAI_PORT_SERDES_ATTR_TX_FIR_PRE1},
+    {"line_tx_fir_pre2", SAI_PORT_SERDES_ATTR_TX_FIR_PRE2},
+    {"line_tx_fir_pre3", SAI_PORT_SERDES_ATTR_TX_FIR_PRE3},
+    {"line_tx_fir_post1", SAI_PORT_SERDES_ATTR_TX_FIR_POST1},
+    {"line_tx_fir_post2", SAI_PORT_SERDES_ATTR_TX_FIR_POST2},
+    {"line_tx_fir_post3", SAI_PORT_SERDES_ATTR_TX_FIR_POST3},
+    {"line_tx_fir_main", SAI_PORT_SERDES_ATTR_TX_FIR_MAIN}
+};
+
 struct PortUpdate
 {
     Port port;
@@ -385,11 +407,12 @@ private:
     void refreshPortStateLinkTraining(const Port &port);
 
     void getPortSerdesVal(const std::string& s, std::vector<uint32_t> &lane_values);
+    void getPortSerdesValBase10(const std::string& s, std::vector<uint32_t> &lane_values);
     bool getPortAdvSpeedsVal(const std::string &s, std::vector<uint32_t> &speed_values);
     bool getPortInterfaceTypeVal(const std::string &s, sai_port_interface_type_t &interface_type);
     bool getPortAdvInterfaceTypesVal(const std::string &s, std::vector<uint32_t> &type_values);
 
-    bool setPortSerdesAttribute(sai_object_id_t port_id,
+    bool setPortSerdesAttribute(sai_object_id_t port_id, sai_object_id_t switch_id,
                                 std::map<sai_port_serdes_attr_t, std::vector<uint32_t>> &serdes_attr);
 
 

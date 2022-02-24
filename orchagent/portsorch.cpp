@@ -3765,7 +3765,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         p.m_preemphasis = serdes_attr;
                         m_portList[alias] = p;
                     }
-                    else if (setPortSerdesAttribute(p.m_port_id, serdes_attr))
+                    else if (setPortSerdesAttribute(p.m_port_id, gSwitchId, serdes_attr))
                     {
                         SWSS_LOG_NOTICE("Set port %s preemphasis is success", alias.c_str());
                         p.m_preemphasis = serdes_attr;
@@ -6686,7 +6686,7 @@ bool PortsOrch::removeAclTableGroup(const Port &p)
     return true;
 }
 
-bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id,
+bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id, sai_object_id_t switch_id,
                                        map<sai_port_serdes_attr_t, vector<uint32_t>> &serdes_attr)
 {
     SWSS_LOG_ENTER();
@@ -6738,7 +6738,7 @@ bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id,
         port_serdes_attr.value.u32list.list = it->second.data();
         attr_list.emplace_back(port_serdes_attr);
     }
-    status = sai_port_api->create_port_serdes(&port_serdes_id, gSwitchId,
+    status = sai_port_api->create_port_serdes(&port_serdes_id, switch_id,
                                               static_cast<uint32_t>(serdes_attr.size()+1),
                                               attr_list.data());
 
@@ -6800,6 +6800,22 @@ void PortsOrch::getPortSerdesVal(const std::string& val_str,
     while (std::getline(iss, lane_str, ','))
     {
         lane_val = (uint32_t)std::stoul(lane_str, NULL, 16);
+        lane_values.push_back(lane_val);
+    }
+}
+
+void PortsOrch::getPortSerdesValBase10(const std::string& val_str,
+                                       std::vector<uint32_t> &lane_values)
+{
+    SWSS_LOG_ENTER();
+
+    uint32_t lane_val;
+    std::string lane_str;
+    std::istringstream iss(val_str);
+
+    while (std::getline(iss, lane_str, ','))
+    {
+        lane_val = (uint32_t)std::stoul(lane_str, NULL, 10);
         lane_values.push_back(lane_val);
     }
 }
@@ -7175,6 +7191,50 @@ bool PortsOrch::initGearboxPort(Port &port)
 
             fields[0] = FieldValueTuple(port.m_alias + "_line", sai_serialize_object_id(linePort));
             m_gbcounterTable->set("", fields);
+
+            /* Set serdes tx taps on system and line side */
+            map<sai_port_serdes_attr_t, vector<uint32_t>> serdes_attr;
+            typedef pair<sai_port_serdes_attr_t, vector<uint32_t>> serdes_attr_pair;
+            vector<uint32_t> attr_val;
+            for (auto pair: tx_fir_strings_system_side) {
+                if (m_gearboxInterfaceMap[port.m_index].tx_firs.find(pair.first) != m_gearboxInterfaceMap[port.m_index].tx_firs.end() ) {
+                    attr_val.clear();
+                    getPortSerdesValBase10(m_gearboxInterfaceMap[port.m_index].tx_firs[pair.first], attr_val);
+                    serdes_attr.insert(serdes_attr_pair(pair.second, attr_val));
+                }
+            }
+            if (serdes_attr.size() != 0)
+            {
+                if (setPortSerdesAttribute(systemPort, phyOid, serdes_attr))
+                {
+                    SWSS_LOG_NOTICE("Set port %s system side preemphasis is success", port.m_alias.c_str());
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Failed to set port %s system side pre-emphasis", port.m_alias.c_str());
+                    return false;
+                }
+            }
+            serdes_attr.clear();
+            for (auto pair: tx_fir_strings_line_side) {
+                if (m_gearboxInterfaceMap[port.m_index].tx_firs.find(pair.first) != m_gearboxInterfaceMap[port.m_index].tx_firs.end() ) {
+                    attr_val.clear();
+                    getPortSerdesValBase10(m_gearboxInterfaceMap[port.m_index].tx_firs[pair.first], attr_val);
+                    serdes_attr.insert(serdes_attr_pair(pair.second, attr_val));
+                }
+            }
+            if (serdes_attr.size() != 0)
+            {
+                if (setPortSerdesAttribute(linePort, phyOid, serdes_attr))
+                {
+                    SWSS_LOG_NOTICE("Set port %s line side preemphasis is success", port.m_alias.c_str());
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Failed to set port %s line side pre-emphasis", port.m_alias.c_str());
+                    return false;
+                }
+            }
         }
     }
 
