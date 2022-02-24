@@ -64,7 +64,7 @@ jobs:
     displayName: "Download sonic buildimage"
   - script: |
       set -ex
-      ls ../
+      ls ../target
       echo $(Build.DefinitionName).$(Build.BuildNumber)
 
       docker load < ../target/docker-sonic-vs.gz
