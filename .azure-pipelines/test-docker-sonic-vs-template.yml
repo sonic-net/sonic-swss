@@ -28,6 +28,7 @@ jobs:
       artifact: sonic-swss-common.amd64.ubuntu20_04
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/202106'
+      allowFailedBuilds: true
     displayName: "Download sonic swss common deb packages"
 
   - script: |
