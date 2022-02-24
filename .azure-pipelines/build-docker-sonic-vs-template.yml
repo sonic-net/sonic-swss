@@ -60,10 +60,11 @@ jobs:
     inputs:
       source: specific
       project: build
-      pipeline: 1
+      pipeline: 142
       artifact: sonic-buildimage.vs
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/202106'
+      allowFailedBuilds: true
     displayName: "Download sonic buildimage"
   - script: |
       echo $(Build.DefinitionName).$(Build.BuildNumber)
