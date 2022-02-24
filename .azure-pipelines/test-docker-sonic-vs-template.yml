@@ -11,8 +11,7 @@ jobs:
   displayName: vstest
   timeoutInMinutes: ${{ parameters.timeout }}
 
-  pool:
-    vmImage: 'ubuntu-20.04'
+  pool: sonic-common
 
   steps:
   - task: DownloadPipelineArtifact@2
