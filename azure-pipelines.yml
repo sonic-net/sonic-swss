@@ -10,8 +10,6 @@ trigger:
 
 stages:
 - stage: BuildDocker
-  dependsOn: Build
-  condition: succeeded('Build')
   jobs:
   - template: .azure-pipelines/build-docker-sonic-vs-template.yml
     parameters:
