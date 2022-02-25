@@ -1,7 +1,7 @@
 parameters:
 - name: timeout
   type: number
-  default: 180
+  default: 240
 
 - name: log_artifact_name
   type: string
@@ -11,8 +11,7 @@ jobs:
   displayName: vstest
   timeoutInMinutes: ${{ parameters.timeout }}
 
-  pool:
-    vmImage: 'ubuntu-20.04'
+  pool: sonic-common
 
   steps:
   - task: DownloadPipelineArtifact@2
@@ -27,7 +26,8 @@ jobs:
       pipeline: 9
       artifact: sonic-swss-common.amd64.ubuntu20_04
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
+      runBranch: 'refs/heads/202106'
+      allowFailedBuilds: true
     displayName: "Download sonic swss common deb packages"
 
   - script: |
