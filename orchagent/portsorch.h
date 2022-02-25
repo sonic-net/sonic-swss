@@ -327,7 +327,7 @@ private:
     void updatePortOperStatus(Port &port, sai_port_oper_status_t status);
 
     bool getPortOperSpeed(const Port& port, sai_uint32_t& speed) const;
-    void updatePortOperSpeedToStateDB(Port &port, sai_uint32_t speed);
+    void updateDbPortOperSpeed(Port &port, sai_uint32_t speed);
 
     void getPortSerdesVal(const std::string& s, std::vector<uint32_t> &lane_values);
     bool getPortAdvSpeedsVal(const std::string &s, std::vector<uint32_t> &speed_values);

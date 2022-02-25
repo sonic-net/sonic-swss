@@ -5609,12 +5609,12 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
                 if (getPortOperSpeed(port, speed))
                 {
                     SWSS_LOG_NOTICE("%s oper speed is %d", port.m_alias.c_str(), speed);
-                    updatePortOperSpeedToStateDB(port, speed);
+                    updateDbPortOperSpeed(port, speed);
                 }
             }
             else
             {
-                updatePortOperSpeedToStateDB(port, 0);
+                updateDbPortOperSpeed(port, 0);
             }
 
             /* update m_portList */
@@ -5671,7 +5671,7 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
     notify(SUBJECT_TYPE_PORT_OPER_STATE_CHANGE, static_cast<void *>(&update));
 }
 
-void PortsOrch::updatePortOperSpeedToStateDB(Port &port, sai_uint32_t speed)
+void PortsOrch::updateDbPortOperSpeed(Port &port, sai_uint32_t speed)
 {
     SWSS_LOG_ENTER();
 
@@ -5723,11 +5723,11 @@ void PortsOrch::refreshPortStatus()
             if (getPortOperSpeed(port, speed))
             {
                 SWSS_LOG_INFO("%s oper speed is %d", port.m_alias.c_str(), speed);
-                updatePortOperSpeedToStateDB(port, speed);
+                updateDbPortOperSpeed(port, speed);
             }
             else
             {
-                updatePortOperSpeedToStateDB(port, 0);
+                updateDbPortOperSpeed(port, 0);
             }
         }
     }
