@@ -23,9 +23,6 @@ parameters:
 - name: sonic_slave
   type: string
 
-- name: buildimage_artifact_name
-  type: string
-
 - name: buildimage_pipeline
   type: number
 
@@ -65,6 +62,14 @@ jobs:
     clean: true
     submodules: true
   - script: |
+      sourceBranch=$(Build.SourceBranchName)
+      if [[ "$(Build.Reason)" == "PullRequest" ]];then
+        sourceBranch=$(System.PullRequest.TargetBranch)
+      fi
+      echo "Download artifact branch: $sourceBranch"
+      echo "##vso[task.setvariable variable=sourceBranch]$sourceBranch"
+    displayName: "Get correct artifact downloading branch"
+  - script: |
       sudo apt-get install -y libhiredis0.14 libhiredis-dev
       sudo apt-get install -y libzmq5 libzmq3-dev
       sudo apt-get install -qq -y \
@@ -82,8 +87,12 @@ jobs:
       pipeline: 9
       artifact: ${{ parameters.swss_common_artifact_name }}
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
+      runBranch: 'refs/heads/$(sourceBranch)'
       path: '$(Build.SourcesDirectory)/${{ parameters.swss_common_artifact_name }}'
+      allowFailedBuilds: true
+      patterns: |
+        **/libswsscommon_1.0.0_${{ parameters.arch }}.deb
+        **/libswsscommon-dev_1.0.0_${{ parameters.arch }}.deb
     displayName: "Download sonic swss common deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
@@ -92,76 +101,60 @@ jobs:
       pipeline: 12
       artifact: ${{ parameters.sairedis_artifact_name }}
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
+      runBranch: 'refs/heads/$(sourceBranch)'
       path: '$(Build.SourcesDirectory)/${{ parameters.sairedis_artifact_name }}'
+      allowFailedBuilds: true
+      patterns: |
+        **/libsaivs_*.deb
+        **/libsaivs-dev_*.deb
+        **/libsairedis_*.deb
+        **/libsairedis-dev_*.deb
+        **/libsaimetadata_*.deb
+        **/libsaimetadata-dev_*.deb
+        **/syncd-vs_*.deb
     displayName: "Download sonic sairedis deb packages"
   - task: DownloadPipelineArtifact@2
-    ${{ if eq(parameters.buildimage_pipeline, 141) }}:
-      continueOnError: True
     inputs:
       source: specific
       project: build
       pipeline: ${{ parameters.buildimage_pipeline }}
-      artifact: ${{ parameters.buildimage_artifact_name }}
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
-      path: '$(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}'
+      runBranch: 'refs/heads/$(sourceBranch)'
+      path: '$(Build.SourcesDirectory)/sonic-buildimage.vs'
+      allowFailedBuilds: true
+      patterns: |
+        **/target/debs/**/libnl-3-200_*.deb
+        **/target/debs/**/libnl-3-dev_*.deb
+        **/target/debs/**/libnl-genl-3-200_*.deb
+        **/target/debs/**/libnl-genl-3-dev_*.deb
+        **/target/debs/**/libnl-route-3-200_*.deb
+        **/target/debs/**/libnl-route-3-dev_*.deb
+        **/target/debs/**/libnl-nf-3-200_*.deb
+        **/target/debs/**/libnl-nf-3-dev_*.deb
     displayName: "Download sonic buildimage deb packages"
   - script: |
-      buildimage_artifact_downloaded=n
-      [ -d "$(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}/target" ] && buildimage_artifact_downloaded=y
-      echo "buildimage_artifact_downloaded=$buildimage_artifact_downloaded"
-      echo "##vso[task.setvariable variable=buildimage_artifact_downloaded]$buildimage_artifact_downloaded"
-    condition: eq(${{ parameters.buildimage_pipeline }}, 141)
-    displayName: "Check if sonic buildimage deb packages downloaded"
-  - task: DownloadPipelineArtifact@2
-    condition: and(eq(variables.buildimage_artifact_downloaded, 'n'), eq(${{ parameters.buildimage_pipeline }}, 141))
-    inputs:
-      source: specific
-      project: build
-      pipeline: ${{ parameters.buildimage_pipeline }}
-      artifact: 'sonic-buildimage.marvell-armhf1'
-      runVersion: specific
-      runId: 63911
-      path: '$(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}'
-    displayName: "Download sonic buildimage deb packages from 63911"
-  - script: |
-      cd $(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}
-      sudo dpkg -i target/debs/buster/libnl-3-200_*.deb
-      sudo dpkg -i target/debs/buster/libnl-3-dev_*.deb
-      sudo dpkg -i target/debs/buster/libnl-genl-3-200_*.deb
-      sudo dpkg -i target/debs/buster/libnl-genl-3-dev_*.deb
-      sudo dpkg -i target/debs/buster/libnl-route-3-200_*.deb
-      sudo dpkg -i target/debs/buster/libnl-route-3-dev_*.deb
-      sudo dpkg -i target/debs/buster/libnl-nf-3-200_*.deb
-      sudo dpkg -i target/debs/buster/libnl-nf-3-dev_*.deb
-      cd $(Build.SourcesDirectory)/${{ parameters.swss_common_artifact_name }}
-      sudo dpkg -i libswsscommon_1.0.0_${{ parameters.arch }}.deb
-      sudo dpkg -i libswsscommon-dev_1.0.0_${{ parameters.arch }}.deb
-      cd $(Build.SourcesDirectory)/${{ parameters.sairedis_artifact_name }}
-      sudo dpkg -i libsaivs_*.deb
-      sudo dpkg -i libsaivs-dev_*.deb
-      sudo dpkg -i libsairedis_*.deb
-      sudo dpkg -i libsairedis-dev_*.deb
-      sudo dpkg -i libsaimetadata_*.deb
-      sudo dpkg -i libsaimetadata-dev_*.deb
-      sudo dpkg -i syncd-vs_*.deb
-    workingDirectory: $(Pipeline.Workspace)
+      set -ex
+      sudo dpkg -i $(find sonic-buildimage.vs -name "*.deb")
+      sudo dpkg -i $(find ${{ parameters.swss_common_artifact_name }} -name "*.deb")
+      sudo dpkg -i $(find ${{ parameters.sairedis_artifact_name }} -name "*.deb")
     displayName: "Install libnl3, sonic swss common and sairedis"
   - script: |
-      set -x
+      set -ex
       tar czf pytest.tgz tests
-      cp -r pytest.tgz $(Build.ArtifactStagingDirectory)/
+      mkdir $(Build.ArtifactStagingDirectory)/pytest
+      cp -r pytest.tgz $(Build.ArtifactStagingDirectory)/pytest
       if [ '${{ parameters.archive_gcov }}' == True ]; then
          export ENABLE_GCOV=y
       fi
       ./autogen.sh
-      dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
+      mkdir $(Build.ArtifactStagingDirectory)/swss
+      dpkg-buildpackage -us -uc -b -j$(nproc)
+      cp ../*.deb $(Build.ArtifactStagingDirectory)/swss
     displayName: "Compile sonic swss"
-  - publish: $(System.DefaultWorkingDirectory)/
+  - publish: $(Build.ArtifactStagingDirectory)/swss
     artifact: ${{ parameters.artifact_name }}
     displayName: "Archive swss debian packages"
-  - publish: $(Build.ArtifactStagingDirectory)/
+  - publish: $(Build.ArtifactStagingDirectory)/pytest
     artifact: sonic-swss-pytests
     displayName: "Archive swss pytests"
     condition: eq('${{ parameters.archive_pytests }}', true)

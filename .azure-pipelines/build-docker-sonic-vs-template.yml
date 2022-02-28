@@ -32,6 +32,14 @@ jobs:
     vmImage: 'ubuntu-20.04'
 
   steps:
+  - script: |
+      sourceBranch=$(Build.SourceBranchName)
+      if [[ "$(Build.Reason)" == "PullRequest" ]];then
+        sourceBranch=$(System.PullRequest.TargetBranch)
+      fi
+      echo "Download artifact branch: $sourceBranch"
+      echo "##vso[task.setvariable variable=sourceBranch]$sourceBranch"
+    displayName: "Get correct artifact downloading branch"
   - task: DownloadPipelineArtifact@2
     inputs:
       source: specific
@@ -39,7 +47,13 @@ jobs:
       pipeline: 9
       artifact: ${{ parameters.swss_common_artifact_name }}
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
+      runBranch: 'refs/heads/$(sourceBranch)'
+      path: '$(Build.SourcesDirectory)/${{ parameters.swss_common_artifact_name }}'
+      allowFailedBuilds: true
+      patterns: |
+        **/libswsscommon_1.0.0_amd64.deb
+        **/python-swsscommon_1.0.0_amd64.deb
+        **/python3-swsscommon_1.0.0_amd64.deb
     displayName: "Download sonic swss common deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
@@ -48,29 +62,43 @@ jobs:
       pipeline: 12
       artifact: ${{ parameters.sairedis_artifact_name }}
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
+      runBranch: 'refs/heads/$(sourceBranch)'
+      path: '$(Build.SourcesDirectory)/${{ parameters.sairedis_artifact_name }}'
+      allowFailedBuilds: true
+      patterns: |
+        **/libsaimetadata_1.0.0_amd64.deb
+        **/libsairedis_1.0.0_amd64.deb
+        **/libsaivs_1.0.0_amd64.deb
+        **/syncd-vs_1.0.0_amd64.deb
     displayName: "Download sonic sairedis deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
       artifact: ${{ parameters.swss_artifact_name }}
+      path: '$(Build.SourcesDirectory)/swss'
+      patterns: |
+        **/swss_1.0.0_amd64.deb
     displayName: "Download sonic swss artifact"
   - task: DownloadPipelineArtifact@2
     inputs:
       source: specific
       project: build
       pipeline: 1
-      artifact: sonic-buildimage.vs
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
+      runBranch: 'refs/heads/$(sourceBranch)'
+      path: '$(Build.SourcesDirectory)/sonic-buildimage.vs'
+      allowFailedBuilds: true
+      patterns: |
+        **/docker-sonic-vs.gz
     displayName: "Download sonic buildimage"
   - script: |
+      set -ex
       echo $(Build.DefinitionName).$(Build.BuildNumber)
 
-      docker load < ../target/docker-sonic-vs.gz
+      docker load < $(find sonic-buildimage.vs -name "docker-sonic-vs.gz")
 
       mkdir -p .azure-pipelines/docker-sonic-vs/debs
 
-      cp -v ../*.deb .azure-pipelines/docker-sonic-vs/debs
+      cp -v $(find ${{ parameters.swss_common_artifact_name }} -name "*.deb") $(find ${{ parameters.sairedis_artifact_name }} -name "*.deb") $(find swss -name "*.deb") .azure-pipelines/docker-sonic-vs/debs
 
       pushd .azure-pipelines
 
