@@ -60,7 +60,6 @@ jobs:
   steps:
   - checkout: self
     clean: true
-    submodules: true
   - script: |
       sourceBranch=$(Build.SourceBranchName)
       if [[ "$(Build.Reason)" == "PullRequest" ]];then
