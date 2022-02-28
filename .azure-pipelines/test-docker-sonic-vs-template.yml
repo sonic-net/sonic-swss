@@ -25,12 +25,19 @@ jobs:
 
   steps:
   - script: |
-      ls -A1 | xargs -I{} sudo rm -rf {}
-    displayName: "Clean workspace"
+      sourceBranch=$(Build.SourceBranchName)
+      if [[ "$(Build.Reason)" == "PullRequest" ]];then
+        sourceBranch=$(System.PullRequest.TargetBranch)
+      fi
+      echo "Download artifact branch: $sourceBranch"
+      echo "##vso[task.setvariable variable=sourceBranch]$sourceBranch"
+    displayName: "Get correct artifact downloading branch"
   - checkout: self
+    clean: true
   - task: DownloadPipelineArtifact@2
     inputs:
       artifact: docker-sonic-vs
+      path: $(Build.SourcesDirectory)/sonic-vs
     displayName: "Download docker sonic vs image"
 
   - task: DownloadPipelineArtifact@2
@@ -40,16 +47,21 @@ jobs:
       pipeline: 9
       artifact: sonic-swss-common.amd64.ubuntu20_04
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
+      runBranch: 'refs/heads/$(sourceBranch)'
+      path: $(Build.SourcesDirectory)/swss-common
+      allowFailedBuilds: true
+      patterns: |
+        **/libswsscommon_1.0.0_amd64.deb
+        **/python3-swsscommon_1.0.0_amd64.deb
     displayName: "Download sonic swss common deb packages"
 
   - script: |
-      set -x
+      set -ex
       sudo .azure-pipelines/build_and_install_module.sh
 
       sudo apt-get install -y libhiredis0.14
-      sudo dpkg -i --force-confask,confnew ../libswsscommon_1.0.0_amd64.deb || apt-get install -f
-      sudo dpkg -i ../python3-swsscommon_1.0.0_amd64.deb
+      sudo dpkg -i --force-confask,confnew swss-common/libswsscommon_1.0.0_amd64.deb || apt-get install -f
+      sudo dpkg -i swss-common/python3-swsscommon_1.0.0_amd64.deb
 
       # install packages for vs test
       sudo apt-get install -y net-tools bridge-utils vlan
@@ -58,8 +70,8 @@ jobs:
     displayName: "Install dependencies"
 
   - script: |
-      set -x
-      sudo docker load -i ../docker-sonic-vs.gz
+      set -ex
+      sudo docker load -i sonic-vs/docker-sonic-vs.gz
       docker ps
       ip netns list
       uname -a
@@ -81,6 +93,7 @@ jobs:
     condition: always()
 
   - script: |
+      set -ex
       cp -r tests/log $(Build.ArtifactStagingDirectory)/
 
       if [ '${{ parameters.archive_gcov }}' == True ]; then
