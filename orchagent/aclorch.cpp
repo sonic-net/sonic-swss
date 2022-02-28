@@ -2882,7 +2882,9 @@ void AclOrch::initDefaultTableTypes()
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS))
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DSCP))
             .withMatch(make_shared<AclTableRangeMatch>(set<sai_acl_range_type_t>{
-                {SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE, SAI_ACL_RANGE_TYPE_L4_DST_PORT_RANGE}}));
+                {SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE, SAI_ACL_RANGE_TYPE_L4_DST_PORT_RANGE}}))
+            .withAction(SAI_ACL_ACTION_TYPE_MIRROR_INGRESS)
+            .withAction(SAI_ACL_ACTION_TYPE_COUNTER);
 
         if (isAclMirrorV6Supported() && isCombinedMirrorV6Table())
         {
@@ -2915,6 +2917,8 @@ void AclOrch::initDefaultTableTypes()
                 .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DSCP))
                 .withMatch(make_shared<AclTableRangeMatch>(set<sai_acl_range_type_t>{
                     {SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE, SAI_ACL_RANGE_TYPE_L4_DST_PORT_RANGE}}))
+                .withAction(SAI_ACL_ACTION_TYPE_MIRROR_INGRESS)
+                .withAction(SAI_ACL_ACTION_TYPE_COUNTER)
                 .build()
         );
     }
