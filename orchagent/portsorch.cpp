@@ -5611,12 +5611,12 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
                     SWSS_LOG_NOTICE("%s oper speed is %d", port.m_alias.c_str(), speed);
                     updateDbPortOperSpeed(port, speed);
                 }
+                else
+                {
+                    updateDbPortOperSpeed(port, 0);
+                }
             }
-            else
-            {
-                updateDbPortOperSpeed(port, 0);
-            }
-
+            
             /* update m_portList */
             m_portList[port.m_alias] = port;
         }
