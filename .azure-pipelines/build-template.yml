@@ -84,6 +84,7 @@ jobs:
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/master'
       path: '$(Build.SourcesDirectory)/${{ parameters.swss_common_artifact_name }}'
+      allowFailedBuilds: true
     displayName: "Download sonic swss common deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
@@ -94,6 +95,7 @@ jobs:
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/master'
       path: '$(Build.SourcesDirectory)/${{ parameters.sairedis_artifact_name }}'
+      allowFailedBuilds: true
     displayName: "Download sonic sairedis deb packages"
   - task: DownloadPipelineArtifact@2
     ${{ if eq(parameters.buildimage_pipeline, 141) }}:
