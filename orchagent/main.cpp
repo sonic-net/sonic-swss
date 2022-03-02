@@ -421,10 +421,6 @@ int main(int argc, char **argv)
     }
 
     SWSS_LOG_NOTICE("--- Starting Orchestration Agent ---");
-    int i = 0;
-    if (i == 1) {
-        i = 0; // uncoverable
-    }
 
     initSaiApi();
     initSaiRedis(record_location, sairedis_rec_filename);
