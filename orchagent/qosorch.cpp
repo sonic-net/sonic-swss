@@ -1628,6 +1628,8 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
     string op = kfvOp(tuple);
 
     sai_uint8_t pfc_enable = 0;
+    sai_uint8_t pfcwd_sw_enable = 0;
+    sai_uint8_t pfcwd_hw_enable = 0;
     map<sai_port_attr_t, pair<string, sai_object_id_t>> update_list;
     for (auto it = kfvFieldsValues(tuple).begin(); it != kfvFieldsValues(tuple).end(); it++)
     {
@@ -1648,14 +1650,28 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
             update_list[qos_to_attr_map[map_type_name]] = make_pair(map_name, id);
         }
 
-        if (fvField(*it) == pfc_enable_name)
+        else if (fvField(*it) == pfc_enable_name || fvField(*it) == pfcwd_sw_enable_name || fvField(*it) == pfcwd_hw_enable_name)
         {
+            sai_uint8_t bitmask = 0;
             vector<string> queue_indexes;
             queue_indexes = tokenize(fvValue(*it), list_item_delimiter);
             for(string q_ind : queue_indexes)
             {
                 sai_uint8_t q_val = (uint8_t)stoi(q_ind);
-                pfc_enable |= (uint8_t)(1 << q_val);
+                bitmask |= (uint8_t)(1 << q_val);
+            }
+
+            if (fvField(*it) == pfc_enable_name)
+            {
+                pfc_enable = bitmask;
+            }
+            else if (fvField(*it) == pfcwd_sw_enable_name)
+            {
+                pfcwd_sw_enable = bitmask;
+            }
+            else
+            {
+                pfcwd_hw_enable = bitmask;
             }
         }
     }
@@ -1708,6 +1724,10 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
 
             SWSS_LOG_INFO("Applied PFC bits 0x%x to port %s", pfc_enable, port_name.c_str());
         }
+
+        // Save pfd_wd bitmask unconditionally
+        gPortsOrch->setPortPfcWatchdogStatus(port.m_port_id, PFC_WD_SW, pfcwd_sw_enable);
+        gPortsOrch->setPortPfcWatchdogStatus(port.m_port_id, PFC_WD_HW, pfcwd_hw_enable);
     }
 
     SWSS_LOG_NOTICE("Applied QoS maps to ports");

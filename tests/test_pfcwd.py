@@ -147,10 +147,11 @@ class TestPfcwdFunc(object):
 
         return str(mask)
 
-    def set_ports_pfc(self, status='enable', pfc_queues=[3,4]):
+    def set_ports_pfc(self, status='enable', pfc_queues=[3,4], watchdog_type='software'):
+        keyname = 'pfcwd_sw_enable' if watchdog_type == 'software' else 'pfcwd_hw_enable'
         for port in self.test_ports:
             if 'enable' in status:
-                fvs = {'pfc_enable': ",".join([str(q) for q in pfc_queues])}
+                fvs = {keyname: ",".join([str(q) for q in pfc_queues])}
                 self.config_db.create_entry("PORT_QOS_MAP", port, fvs)
             else:
                 self.config_db.delete_entry("PORT_QOS_MAP", port)
@@ -212,11 +213,11 @@ class TestPfcwdFunc(object):
                 queue_name = port + ":" + str(queue)
                 self.counters_db.update_entry("COUNTERS", self.queue_oids[queue_name], fvs)
 
-    def test_pfcwd_single_queue(self, dvs, setup_teardown_test):
+    def test_pfcwd_software_single_queue(self, dvs, setup_teardown_test):
         try:
             # enable PFC on queues
             test_queues = [3, 4]
-            self.set_ports_pfc(pfc_queues=test_queues)
+            self.set_ports_pfc(pfc_queues=test_queues, watchdog_type='software')
 
             # verify in asic db
             self.verify_ports_pfc(test_queues)
@@ -253,11 +254,11 @@ class TestPfcwdFunc(object):
             self.reset_pfcwd_counters(storm_queue)
             self.stop_pfcwd_on_ports()
 
-    def test_pfcwd_multi_queue(self, dvs, setup_teardown_test):
+    def test_pfcwd_software_multi_queue(self, dvs, setup_teardown_test):
         try:
             # enable PFC on queues
             test_queues = [3, 4]
-            self.set_ports_pfc(pfc_queues=test_queues)
+            self.set_ports_pfc(pfc_queues=test_queues, watchdog_type='software')
 
             # verify in asic db
             self.verify_ports_pfc(test_queues)

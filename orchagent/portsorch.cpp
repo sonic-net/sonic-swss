@@ -1193,6 +1193,52 @@ bool PortsOrch::setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask)
     return true;
 }
 
+bool PortsOrch::setPortPfcWatchdogStatus(sai_object_id_t portId, PfcWatchDogType type, uint8_t pfcwd_bitmask)
+{
+    SWSS_LOG_ENTER();
+
+    Port p;
+
+    if (!getPort(portId, p))
+    {
+        SWSS_LOG_ERROR("Failed to get port object for port id 0x%" PRIx64, portId);
+        return false;
+    }
+    if (type == PFC_WD_SW)
+    {
+        p.m_pfcwd_sw_bitmask = pfcwd_bitmask;
+    }
+    else
+    {
+        p.m_pfcwd_hw_bitmask = pfcwd_bitmask;
+    }
+    
+    return true;
+}
+
+bool PortsOrch::getPortPfcWatchdogStatus(sai_object_id_t portId, PfcWatchDogType type, uint8_t *pfcwd_bitmask)
+{
+    SWSS_LOG_ENTER();
+
+    Port p;
+
+    if (!pfcwd_bitmask || !getPort(portId, p))
+    {
+        SWSS_LOG_ERROR("Failed to get port object for port id 0x%" PRIx64, portId);
+        return false;
+    }
+    if (type == PFC_WD_SW)
+    {
+        *pfcwd_bitmask = p.m_pfcwd_sw_bitmask;
+    }
+    else
+    {
+        *pfcwd_bitmask = p.m_pfcwd_hw_bitmask;
+    }
+    
+    return true;
+}
+
 bool PortsOrch::setPortPfcAsym(Port &port, string pfc_asym)
 {
     SWSS_LOG_ENTER();

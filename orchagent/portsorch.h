@@ -72,6 +72,11 @@ struct VlanMemberUpdate
     bool add;
 };
 
+enum PfcWatchDogType
+{
+    PFC_WD_SW = 0,  // PFC watchdog by software
+    PFC_WD_HW       // PFC watchdog by hardware
+};
 class PortsOrch : public Orch, public Subject
 {
 public:
@@ -123,6 +128,9 @@ public:
                                  bool bind);
     bool getPortPfc(sai_object_id_t portId, uint8_t *pfc_bitmask);
     bool setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask);
+
+    bool setPortPfcWatchdogStatus(sai_object_id_t portId, PfcWatchDogType type, uint8_t pfc_bitmask);
+    bool getPortPfcWatchdogStatus(sai_object_id_t portId, PfcWatchDogType type, uint8_t *pfc_bitmask);
 
     void generateQueueMap();
     void generatePriorityGroupMap();
