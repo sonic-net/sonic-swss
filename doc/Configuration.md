@@ -1048,7 +1048,7 @@ This option sets the port which ntp will choose to send time update requests fro
 NOTE: If a Loopback interface is defined on the switch ntp will choose this by default, so this setting
 is **required** if the switch has a Loopback interface and the ntp peer does not have defined routes
 for that address.
- 
+
 ```
 {
 "NTP": {
@@ -1497,6 +1497,29 @@ The list of root ports, all possible breakout modes, and default breakout modes
     },
     "Ethernet124": {
         "brkout_mode": "2x50G"
+    }
+}
+```
+
+### AAA
+
+The AAA table defined the method SONiC used for Authentication, Authorization and Accounting.
+The method could be:
+-   default
+-   local
+-   tacacs+
+-   radius
+
+```
+"AAA": {
+    "authentication": {
+       "login": "local"
+    },
+    "authorization": {
+       "login": "local"
+    },
+    "accounting": {
+       "login": "local"
     }
 }
 ```
