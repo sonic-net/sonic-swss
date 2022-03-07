@@ -151,7 +151,8 @@ class TestPfcwdFunc(object):
         keyname = 'pfcwd_sw_enable' if watchdog_type == 'software' else 'pfcwd_hw_enable'
         for port in self.test_ports:
             if 'enable' in status:
-                fvs = {keyname: ",".join([str(q) for q in pfc_queues])}
+                queues = ",".join([str(q) for q in pfc_queues])
+                fvs = {keyname: queues, 'pfc_enable': queues}
                 self.config_db.create_entry("PORT_QOS_MAP", port, fvs)
             else:
                 self.config_db.delete_entry("PORT_QOS_MAP", port)

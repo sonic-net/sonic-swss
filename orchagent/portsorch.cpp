@@ -1212,7 +1212,10 @@ bool PortsOrch::setPortPfcWatchdogStatus(sai_object_id_t portId, PfcWatchDogType
     {
         p.m_pfcwd_hw_bitmask = pfcwd_bitmask;
     }
-    
+
+    m_portList[p.m_alias] = p;
+
+    SWSS_LOG_INFO("Set PFC watchdog port id=0x%" PRIx64 ", bitmast=0x%x, type=%d", portId, pfcwd_bitmask, type);
     return true;
 }
 
