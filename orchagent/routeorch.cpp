@@ -457,6 +457,7 @@ bool RouteOrch::invalidnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t
 void RouteOrch::doTask(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
+    SWSS_LOG_NOTICE("Route orch doTask enter");
 
     if (!gPortsOrch->allPortsReady())
     {
@@ -464,6 +465,7 @@ void RouteOrch::doTask(Consumer& consumer)
     }
 
     string table_name = consumer.getTableName();
+    SWSS_LOG_NOTICE("Route orch doTask table %s", table_name.c_str());
 
     if (table_name == APP_LABEL_ROUTE_TABLE_NAME)
     {
@@ -491,6 +493,7 @@ void RouteOrch::doTask(Consumer& consumer)
 
             string key = kfvKey(t);
             string op = kfvOp(t);
+            SWSS_LOG_NOTICE("Route orch op %s for key %s", op.c_str(), key.c_str());
 
             auto rc = toBulk.emplace(std::piecewise_construct,
                     std::forward_as_tuple(key, op),
