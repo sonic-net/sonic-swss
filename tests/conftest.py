@@ -667,7 +667,7 @@ class DockerVirtualSwitch:
 
     # deps: warm_reboot
     def stop_zebra(self):
-        self.runcmd(['sh', '-c', 'pkill -9 zebra'])
+        self.runcmd(['sh', '-c', 'supervisorctl stop zebra'])
         time.sleep(1)
 
     # deps: warm_reboot
@@ -679,7 +679,7 @@ class DockerVirtualSwitch:
 
     # deps: warm_reboot
     def stop_fpmsyncd(self):
-        self.runcmd(['sh', '-c', 'pkill -x fpmsyncd'])
+        self.runcmd(['sh', '-c', 'supervisorctl stop fpmsyncd'])
         time.sleep(1)
 
     # deps: warm_reboot

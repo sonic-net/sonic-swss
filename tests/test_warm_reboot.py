@@ -117,13 +117,13 @@ def how_many_entries_exist(db, table):
     return len(tbl.getKeys())
 
 def stop_neighsyncd(dvs):
-    dvs.runcmd(['sh', '-c', 'pkill -x neighsyncd'])
+    dvs.runcmd(['sh', '-c', 'supervisorctl stop neighsyncd'])
 
 def start_neighsyncd(dvs):
     dvs.runcmd(['sh', '-c', 'supervisorctl start neighsyncd'])
 
 def stop_restore_neighbors(dvs):
-    dvs.runcmd(['sh', '-c', 'pkill -x restore_neighbors'])
+    dvs.runcmd(['sh', '-c', 'supervisorctl stop restore_neighbors'])
 
 def start_restore_neighbors(dvs):
     dvs.runcmd(['sh', '-c', 'supervisorctl start restore_neighbors'])
@@ -292,10 +292,8 @@ class TestWarmReboot(object):
         restore_count = swss_get_RestoreCount(dvs, state_db)
 
         # restart portsyncd
-        dvs.runcmd(['sh', '-c', 'pkill -x portsyncd'])
-
         pubsub = dvs.SubscribeAsicDbObject("SAI_OBJECT_TYPE")
-        dvs.runcmd(['sh', '-c', 'supervisorctl start portsyncd'])
+        dvs.runcmd(['sh', '-c', 'supervisorctl restart portsyncd'])
 
         (nadd, ndel) = dvs.CountSubscribedObjects(pubsub)
         assert nadd == 0
@@ -414,11 +412,9 @@ class TestWarmReboot(object):
 
         restore_count = swss_get_RestoreCount(dvs, state_db)
 
-        dvs.runcmd(['sh', '-c', 'pkill -x vlanmgrd'])
 
         pubsub = dvs.SubscribeAsicDbObject("SAI_OBJECT_TYPE")
-
-        dvs.runcmd(['sh', '-c', 'supervisorctl start vlanmgrd'])
+        dvs.runcmd(['sh', '-c', 'supervisorctl restart vlanmgrd'])
         time.sleep(2)
 
         (exitcode, bv_after) = dvs.runcmd("bridge vlan")
@@ -870,11 +866,13 @@ class TestWarmReboot(object):
         ps = swsscommon.ProducerStateTable(appl_db, swsscommon.APP_ROUTE_TABLE_NAME)
         fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1"), ("ifname", "Ethernet0")])
         ps.set("2.2.2.0/24", fvs)
+        # import pdb; pdb.set_trace()
 
         fvs = swsscommon.FieldValuePairs([("nexthop","20.0.0.1"), ("ifname", "Ethernet0")])
         ps.set("3.3.3.0/24", fvs)
 
         time.sleep(1)
+        # import pdb; pdb.set_trace()
         # Should fail, since neighbor for next 20.0.0.1 has not been not resolved yet
         (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check")
         assert result == "RESTARTCHECK failed\n"
@@ -2159,11 +2157,10 @@ class TestWarmReboot(object):
 
         (exitcode, vrf_before) = dvs.runcmd(['sh', '-c', "ip link show | grep Vrf"])
 
-        dvs.runcmd(['sh', '-c', 'pkill -x vrfmgrd'])
 
         pubsub = dvs.SubscribeAsicDbObject("SAI_OBJECT_TYPE")
 
-        dvs.runcmd(['sh', '-c', 'supervisorctl start vrfmgrd'])
+        dvs.runcmd(['sh', '-c', 'supervisorctl restart vrfmgrd'])
         time.sleep(2)
 
         # kernel vrf config should be kept the same
