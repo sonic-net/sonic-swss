@@ -1,8 +1,9 @@
 FLEX_CTR_DIR = $(top_srcdir)/orchagent/flex_counter
 DEBUG_CTR_DIR = $(top_srcdir)/orchagent/debug_counter
 P4_ORCH_DIR = $(top_srcdir)/orchagent/p4orch
+CFG_MGR_DIR = $(top_srcdir)/cfgmgr
 
-INCLUDES = -I $(FLEX_CTR_DIR) -I $(DEBUG_CTR_DIR) -I $(top_srcdir)/lib
+INCLUDES = -I $(FLEX_CTR_DIR) -I $(DEBUG_CTR_DIR) -I $(top_srcdir)/lib -I $(CFG_MGR_DIR)
 
 CFLAGS_SAI = -I /usr/include/sai
 
@@ -34,7 +35,10 @@ tests_SOURCES = aclorch_ut.cpp \
                 mock_table.cpp \
                 mock_hiredis.cpp \
                 mock_redisreply.cpp \
+                mock_shell_command.cpp \
                 bulker_ut.cpp \
+                config_cache_ut.cpp \
+                portmgr_ut.cpp \
                 fake_response_publisher.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/lib/subintf.cpp \
@@ -89,7 +93,9 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/lagid.cpp \
                 $(top_srcdir)/orchagent/bfdorch.cpp \
                 $(top_srcdir)/orchagent/srv6orch.cpp \
-                $(top_srcdir)/orchagent/nvgreorch.cpp
+                $(top_srcdir)/orchagent/nvgreorch.cpp \
+                $(top_srcdir)/cfgmgr/config_cache.cpp \
+                $(top_srcdir)/cfgmgr/portmgr.cpp
 
 tests_SOURCES += $(FLEX_CTR_DIR)/flex_counter_manager.cpp $(FLEX_CTR_DIR)/flex_counter_stat_manager.cpp $(FLEX_CTR_DIR)/flow_counter_handler.cpp
 tests_SOURCES += $(DEBUG_CTR_DIR)/debug_counter.cpp $(DEBUG_CTR_DIR)/drop_counter.cpp

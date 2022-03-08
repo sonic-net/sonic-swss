@@ -11,12 +11,18 @@
 using namespace std;
 using namespace swss;
 
+map<std::string, std::string> portDefaultConfig = {
+    {"mtu", DEFAULT_MTU_STR},
+    {"admin_status", DEFAULT_ADMIN_STATUS_STR}
+};
+
 PortMgr::PortMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
         m_cfgPortTable(cfgDb, CFG_PORT_TABLE_NAME),
         m_cfgLagMemberTable(cfgDb, CFG_LAG_MEMBER_TABLE_NAME),
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
-        m_appPortTable(appDb, APP_PORT_TABLE_NAME)
+        m_appPortTable(appDb, APP_PORT_TABLE_NAME),
+        m_configCache(std::bind(&PortMgr::onPortConfigChanged, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4))
 {
 }
 
@@ -31,28 +37,8 @@ bool PortMgr::setPortMtu(const string &alias, const string &mtu)
 
     // Set the port MTU in application database to update both
     // the port MTU and possibly the port based router interface MTU
-    vector<FieldValueTuple> fvs;
-    FieldValueTuple fv("mtu", mtu);
-    fvs.push_back(fv);
-    m_appPortTable.set(alias, fvs);
-
-    return true;
+    return writeConfigToAppDb(alias, "mtu", mtu);
 }
-
-bool PortMgr::setPortTpid(const string &alias, const string &tpid)
-{
-    stringstream cmd;
-    string res;
-
-    // Set the port TPID in application database to update port TPID
-    vector<FieldValueTuple> fvs;
-    FieldValueTuple fv("tpid", tpid);
-    fvs.push_back(fv);
-    m_appPortTable.set(alias, fvs);
-
-    return true;
-}
-
 
 bool PortMgr::setPortAdminStatus(const string &alias, const bool up)
 {
@@ -63,23 +49,7 @@ bool PortMgr::setPortAdminStatus(const string &alias, const bool up)
     cmd << IP_CMD << " link set dev " << shellquote(alias) << (up ? " up" : " down");
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
-    vector<FieldValueTuple> fvs;
-    FieldValueTuple fv("admin_status", (up ? "up" : "down"));
-    fvs.push_back(fv);
-    m_appPortTable.set(alias, fvs);
-
-    return true;
-}
-
-bool PortMgr::setPortLearnMode(const string &alias, const string &learn_mode)
-{
-    // Set the port MAC learn mode in application database
-    vector<FieldValueTuple> fvs;
-    FieldValueTuple fv("learn_mode", learn_mode);
-    fvs.push_back(fv);
-    m_appPortTable.set(alias, fvs);
-
-    return true;
+    return writeConfigToAppDb(alias, "admin_status", (up ? "up" : "down"));
 }
 
 bool PortMgr::isPortStateOk(const string &alias)
@@ -124,72 +94,60 @@ void PortMgr::doTask(Consumer &consumer)
                 continue;
             }
 
-            string admin_status, mtu, learn_mode, tpid;
-
-            bool configured = (m_portList.find(alias) != m_portList.end());
-
             /* If this is the first time we set port settings
              * assign default admin status and mtu
              */
-            if (!configured)
-            {
-                admin_status = DEFAULT_ADMIN_STATUS_STR;
-                mtu = DEFAULT_MTU_STR;
-
-                m_portList.insert(alias);
-            }
+            bool exist = m_configCache.exist(alias);
 
             for (auto i : kfvFieldsValues(t))
             {
-                if (fvField(i) == "mtu")
-                {
-                    mtu = fvValue(i);
-                }
-                else if (fvField(i) == "admin_status")
-                {
-                    admin_status = fvValue(i);
-                }
-                else if (fvField(i) == "learn_mode")
-                {
-                    learn_mode = fvValue(i);
-                }
-                else if (fvField(i) == "tpid")
-                {
-                    tpid = fvValue(i);
-                }
+                m_configCache.config(alias, fvField(i), fvValue(i));
             }
 
-            if (!mtu.empty())
+            if (!exist)
             {
-                setPortMtu(alias, mtu);
-                SWSS_LOG_NOTICE("Configure %s MTU to %s", alias.c_str(), mtu.c_str());
-            }
-
-            if (!admin_status.empty())
-            {
-                setPortAdminStatus(alias, admin_status == "up");
-                SWSS_LOG_NOTICE("Configure %s admin status to %s", alias.c_str(), admin_status.c_str());
-            }
-
-            if (!learn_mode.empty())
-            {
-                setPortLearnMode(alias, learn_mode);
-                SWSS_LOG_NOTICE("Configure %s MAC learn mode to %s", alias.c_str(), learn_mode.c_str());
-            }
-
-            if (!tpid.empty())
-            {
-                setPortTpid(alias, tpid);
-                SWSS_LOG_NOTICE("Configure %s TPID to %s", alias.c_str(), tpid.c_str());
+                // The port does not exist before, it means that it is the first time
+                // to configure this port, try to apply default configuration. Please
+                // not that applyDefault function will NOT override existing configuration
+                // with default value.
+                m_configCache.applyDefault(alias, portDefaultConfig);
             }
         }
         else if (op == DEL_COMMAND)
         {
             SWSS_LOG_NOTICE("Delete Port: %s", alias.c_str());
             m_appPortTable.del(alias);
-            m_portList.erase(alias);
+            m_configCache.remove(alias);
         }
 
         it = consumer.m_toSync.erase(it);
     }
+}
+
+void PortMgr::onPortConfigChanged(const std::string &alias, const std::string &field, const std::string &old_value, const std::string &new_value)
+{
+    if (field == "mtu")
+    {
+        setPortMtu(alias, new_value);
+    }
+    else if (field == "admin_status")
+    {
+        setPortAdminStatus(alias, new_value == "up");
+    }
+    else
+    {
+        writeConfigToAppDb(alias, field, new_value);
+    }
+
+    SWSS_LOG_NOTICE("Configure %s %s from %s to %s", alias.c_str(), field.c_str(), old_value.c_str(), new_value.c_str());
+}
+
+bool PortMgr::writeConfigToAppDb(const std::string &alias, const std::string &field, const std::string &value)
+{
+    vector<FieldValueTuple> fvs;
+    FieldValueTuple fv(field, value);
+    fvs.push_back(fv);
+    m_appPortTable.set(alias, fvs);
+
+    return true;
 }
