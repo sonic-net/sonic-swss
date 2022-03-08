@@ -32,6 +32,9 @@ parameters:
 - name: artifact_name
   type: string
 
+- name: syncd_vs_artifact
+  type: string
+
 - name: archive_pytests
   type: boolean
   default: false
@@ -99,6 +102,11 @@ jobs:
       runId: 63911
       path: '$(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}'
     displayName: "Download sonic buildimage deb packages from 63911"
+  - task: DownloadPipelineArtifact@2
+    condition: ne(${{ parameters.buildimage_pipeline }}, 142)
+    inputs:
+      artifact: ${{ parameters.syncd_vs_artifact }}
+      path: '$(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}/target/debs/buster'
   - script: |
       cd $(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}/target/debs/buster
       sudo dpkg -i libnl-3-200_*.deb
@@ -133,6 +141,10 @@ jobs:
   - publish: $(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}/target/debs/buster
     artifact: ${{ parameters.artifact_name }}
     displayName: "Archive swss debian packages"
+  - publish: $(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}/target/debs/buster/syncd-vs_*.deb
+    condition: eq(${{ parameters.buildimage_pipeline }}, 142)
+    artifact: ${{ parameters.syncd_vs_artifact }}
+    displayName: "Archive syncd VS package for ARM builds"
   - publish: $(Build.ArtifactStagingDirectory)/
     artifact: sonic-swss-pytests
     displayName: "Archive swss pytests"

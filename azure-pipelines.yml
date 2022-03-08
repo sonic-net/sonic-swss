@@ -19,6 +19,7 @@ stages:
       buildimage_artifact_name: sonic-buildimage.vs
       buildimage_pipeline: 142
       artifact_name: sonic-debs
+      syncd_vs_artifact: syncd-vs
       archive_pytests: true
       archive_gcov: true
 
@@ -34,6 +35,7 @@ stages:
       sonic_slave: sonic-slave-buster-armhf
       buildimage_artifact_name: sonic-buildimage.marvell-armhf
       buildimage_pipeline: 141
+      syncd_vs_artifact: syncd-vs
       artifact_name: sonic-swss.armhf
       archive_gcov: false
 
@@ -45,6 +47,7 @@ stages:
       sonic_slave: sonic-slave-buster-arm64
       buildimage_artifact_name: sonic-buildimage.centec-arm64
       buildimage_pipeline: 140
+      syncd_vs_artifact: syncd-vs
       artifact_name: sonic-swss.arm64
       archive_gcov: false
 
