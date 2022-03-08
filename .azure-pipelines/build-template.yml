@@ -123,16 +123,6 @@ jobs:
       path: '$(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}/target/debs/buster'
       patterns: syncd-vs_*.deb
     displayName: "Download syncd VS package for ARM builds"
-  - task: DownloadPipelineArtifact@2
-    condition: eq(${{ parameters.buildimage_pipeline }}, 142)
-    inputs:
-      source: specific
-      project: build
-      pipeline: 9
-      artifact: sonic-swss-common.amd64.ubuntu20_04
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
-    displayName: "Download sonic swss common deb packages"
   - script: |
       cd $(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}/target/debs/buster
       sudo dpkg -i libnl-3-200_*.deb
