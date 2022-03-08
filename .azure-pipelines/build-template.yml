@@ -107,6 +107,7 @@ jobs:
     inputs:
       artifact: ${{ parameters.syncd_vs_artifact }}
       path: '$(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}/target/debs/buster'
+      patterns: syncd-vs_*.deb
   - script: |
       cd $(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}/target/debs/buster
       sudo dpkg -i libnl-3-200_*.deb
@@ -141,10 +142,6 @@ jobs:
   - publish: $(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}/target/debs/buster
     artifact: ${{ parameters.artifact_name }}
     displayName: "Archive swss debian packages"
-  - publish: $(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}/target/debs/buster/syncd-vs_*.deb
-    condition: eq(${{ parameters.buildimage_pipeline }}, 142)
-    artifact: ${{ parameters.syncd_vs_artifact }}
-    displayName: "Archive syncd VS package for ARM builds"
   - publish: $(Build.ArtifactStagingDirectory)/
     artifact: sonic-swss-pytests
     displayName: "Archive swss pytests"
