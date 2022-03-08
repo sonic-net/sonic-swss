@@ -49,7 +49,6 @@ jobs:
       sudo dpkg -i libnl-genl-3-200_*.deb
       sudo dpkg -i libnl-route-3-200_*.deb
       sudo dpkg -i libnl-nf-3-200_*.deb
-      sudo dpkg -i libnl-nf-3-dev_*.deb
       sudo dpkg -i --force-confask,confnew libswsscommon_1.0.0_amd64.deb || sudo apt-get install -f
       sudo dpkg -i python3-swsscommon_1.0.0_amd64.deb
       popd
