@@ -29,12 +29,6 @@ parameters:
 - name: buildimage_pipeline
   type: number
 
-- name: sairedis_artifact_name
-  type: string
-
-- name: swss_common_artifact_name
-  type: string
-
 - name: artifact_name
   type: string
 
@@ -76,26 +70,6 @@ jobs:
           libteamdctl0
     displayName: "Install dependencies"
   - task: DownloadPipelineArtifact@2
-    inputs:
-      source: specific
-      project: build
-      pipeline: 9
-      artifact: ${{ parameters.swss_common_artifact_name }}
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
-      path: '$(Build.SourcesDirectory)/${{ parameters.swss_common_artifact_name }}'
-    displayName: "Download sonic swss common deb packages"
-  - task: DownloadPipelineArtifact@2
-    inputs:
-      source: specific
-      project: build
-      pipeline: 12
-      artifact: ${{ parameters.sairedis_artifact_name }}
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
-      path: '$(Build.SourcesDirectory)/${{ parameters.sairedis_artifact_name }}'
-    displayName: "Download sonic sairedis deb packages"
-  - task: DownloadPipelineArtifact@2
     ${{ if eq(parameters.buildimage_pipeline, 141) }}:
       continueOnError: True
     inputs:
@@ -126,19 +100,17 @@ jobs:
       path: '$(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}'
     displayName: "Download sonic buildimage deb packages from 63911"
   - script: |
-      cd $(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}
-      sudo dpkg -i target/debs/buster/libnl-3-200_*.deb
-      sudo dpkg -i target/debs/buster/libnl-3-dev_*.deb
-      sudo dpkg -i target/debs/buster/libnl-genl-3-200_*.deb
-      sudo dpkg -i target/debs/buster/libnl-genl-3-dev_*.deb
-      sudo dpkg -i target/debs/buster/libnl-route-3-200_*.deb
-      sudo dpkg -i target/debs/buster/libnl-route-3-dev_*.deb
-      sudo dpkg -i target/debs/buster/libnl-nf-3-200_*.deb
-      sudo dpkg -i target/debs/buster/libnl-nf-3-dev_*.deb
-      cd $(Build.SourcesDirectory)/${{ parameters.swss_common_artifact_name }}
+      cd $(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}/target/debs/buster
+      sudo dpkg -i libnl-3-200_*.deb
+      sudo dpkg -i libnl-3-dev_*.deb
+      sudo dpkg -i libnl-genl-3-200_*.deb
+      sudo dpkg -i libnl-genl-3-dev_*.deb
+      sudo dpkg -i libnl-route-3-200_*.deb
+      sudo dpkg -i libnl-route-3-dev_*.deb
+      sudo dpkg -i libnl-nf-3-200_*.deb
+      sudo dpkg -i libnl-nf-3-dev_*.deb
       sudo dpkg -i libswsscommon_1.0.0_${{ parameters.arch }}.deb
       sudo dpkg -i libswsscommon-dev_1.0.0_${{ parameters.arch }}.deb
-      cd $(Build.SourcesDirectory)/${{ parameters.sairedis_artifact_name }}
       sudo dpkg -i libsaivs_*.deb
       sudo dpkg -i libsaivs-dev_*.deb
       sudo dpkg -i libsairedis_*.deb
@@ -158,7 +130,7 @@ jobs:
       ./autogen.sh
       dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
     displayName: "Compile sonic swss"
-  - publish: $(System.DefaultWorkingDirectory)/
+  - publish: $(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}/target/debs/buster
     artifact: ${{ parameters.artifact_name }}
     displayName: "Archive swss debian packages"
   - publish: $(Build.ArtifactStagingDirectory)/

@@ -19,15 +19,6 @@ parameters:
 - name: sonic_slave
   type: string
 
-- name: sairedis_artifact_name
-  type: string
-
-- name: swss_common_artifact_name
-  type: string
-
-- name: swss_artifact_name
-  type: string
-
 - name: artifact_name
   type: string
 
