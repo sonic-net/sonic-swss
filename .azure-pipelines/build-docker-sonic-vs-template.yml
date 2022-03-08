@@ -43,7 +43,7 @@ jobs:
   - script: |
       echo $(Build.DefinitionName).$(Build.BuildNumber)
 
-      docker load < docker-sonic-vs.gz
+      docker load < ../docker-sonic-vs.gz
 
       mkdir -p .azure-pipelines/docker-sonic-vs/debs
 
