@@ -14,6 +14,9 @@ parameters:
 - name: swss_artifact_name
   type: string
 
+- name: docker_sonic_base_artifact
+  type: string
+
 - name: artifact_name
   type: string
 
@@ -32,10 +35,15 @@ jobs:
       artifact: ${{ parameters.swss_artifact_name }}
     displayName: "Download sonic swss artifact"
 
+  - task: DownloadPipelineArtifact@2
+    inputs:
+      artifact: ${{ parameters.docker_sonic_base_artifact }}
+    displayName: "Download base docker VS image"
+
   - script: |
       echo $(Build.DefinitionName).$(Build.BuildNumber)
 
-      docker load < ../target/docker-sonic-vs.gz
+      docker load < docker-sonic-vs.gz
 
       mkdir -p .azure-pipelines/docker-sonic-vs/debs
 
