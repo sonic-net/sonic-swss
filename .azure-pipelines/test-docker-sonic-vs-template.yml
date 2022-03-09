@@ -35,7 +35,12 @@ jobs:
 
   - task: DownloadPipelineArtifact@2
     inputs:
-      artifact: ${{ parameters.swss_artifact_name }}
+      source: specific
+      project: build
+      pipeline: 9
+      artifact: sonic-swss-common.amd64.ubuntu20_04
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/master'
     displayName: "Download sonic swss common deb packages"
 
   - script: |
@@ -45,7 +50,6 @@ jobs:
       sudo apt-get install -y libhiredis0.14
 
       pushd ../
-      sudo dpkg -i libnl-3-200_*.deb libnl-genl-3-200_*.deb libnl-nf-3-200_*.deb libnl-route-3-200_*.deb
       sudo dpkg -i --force-confask,confnew libswsscommon_1.0.0_amd64.deb || sudo apt-get install -f
       sudo dpkg -i python3-swsscommon_1.0.0_amd64.deb
       popd
