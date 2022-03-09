@@ -18,8 +18,9 @@ stages:
       sonic_slave: sonic-slave-buster
       buildimage_artifact_name: sonic-buildimage.vs
       buildimage_pipeline: 142
+      swss_common_artifact_name: sonic-swss-common
+      sairedis_artifact_name: sonic-sairedis
       artifact_name: sonic-swss
-      swss_common_artifact_name: sonic-swss-common.amd64.ubuntu20_04
       docker_sonic_base_artifact: docker-sonic-base
       archive_pytests: true
       archive_gcov: true
@@ -36,8 +37,9 @@ stages:
       sonic_slave: sonic-slave-buster-armhf
       buildimage_artifact_name: sonic-buildimage.marvell-armhf
       buildimage_pipeline: 141
-      artifact_name: sonic-swss.armhf
+      swss_common_artifact_name: sonic-swss-common.armhf
       sairedis_artifact_name: sonic-sairedis.armhf
+      artifact_name: sonic-swss.armhf
       archive_gcov: false
 
   - template: .azure-pipelines/build-template.yml
@@ -46,10 +48,11 @@ stages:
       timeout: 240
       pool: sonicbld-arm64
       sonic_slave: sonic-slave-buster-arm64
+      swss_common_artifact_name: sonic-swss-common.arm64
       buildimage_artifact_name: sonic-buildimage.centec-arm64
       buildimage_pipeline: 140
-      artifact_name: sonic-swss.arm64
       sairedis_artifact_name: sonic-sairedis.arm64
+      artifact_name: sonic-swss.arm64
       archive_gcov: false
 
 - stage: BuildDocker

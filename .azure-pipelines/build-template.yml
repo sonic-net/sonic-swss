@@ -34,7 +34,6 @@ parameters:
 
 - name: sairedis_artifact_name
   type: string
-  default: ''
 
 - name: docker_sonic_base_artifact
   type: string
@@ -42,7 +41,6 @@ parameters:
 
 - name: swss_common_artifact_name
   type: string
-  default: ''
 
 - name: archive_pytests
   type: boolean
@@ -81,6 +79,7 @@ jobs:
           libteam5 \
           libteamdctl0
     displayName: "Install dependencies"
+
   - task: DownloadPipelineArtifact@2
     ${{ if eq(parameters.buildimage_pipeline, 141) }}:
       continueOnError: True
@@ -93,9 +92,44 @@ jobs:
       runBranch: 'refs/heads/master'
       path: '$(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}'
       patterns: |
-        **/*.deb
+        **/buster/libnl*.deb
         **/docker-sonic-vs.gz
-    displayName: "Download sonic buildimage deb packages"
+    displayName: "Download sonic buildimage deb packages and docker VS image"
+
+  - task: DownloadPipelineArtifact@2
+    inputs:
+      source: specific
+      project: build
+      pipeline: 9
+      artifact: ${{ parameters.swss_common_artifact_name }}
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/master'
+      path: '$(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}/target/debs/buster'
+      patterns: |
+        libswsscommon_1.0.0_${{ parameters.arch }}.deb
+        libswsscommon-dev_1.0.0_${{ parameters.arch }}.deb
+    displayName: "Download sonic swss common deb packages"
+
+  - task: DownloadPipelineArtifact@2
+    condition: ne(${{ parameters.buildimage_pipeline }}, 142)
+    inputs:
+      source: specific
+      project: build
+      pipeline: 12
+      artifact: ${{ parameters.sairedis_artifact_name }}
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/master'
+      path: '$(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}/target/debs/buster'
+      patterns: |
+        libsaivs_*.deb
+        libsaivs-dev_*.deb
+        libsairedis_*.deb
+        libsairedis-dev_*.deb
+        libsaimetadata_*.deb
+        libsaimetadata-dev_*.deb
+        syncd-vs_*.deb
+    displayName: "Download sairedis artifacts"
+
   - script: |
       buildimage_artifact_downloaded=n
       [ -d "$(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}/target" ] && buildimage_artifact_downloaded=y
@@ -114,20 +148,11 @@ jobs:
       runId: 63911
       path: '$(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}'
     displayName: "Download sonic buildimage deb packages from 63911"
-  - task: DownloadPipelineArtifact@2
-    condition: ne(${{ parameters.buildimage_pipeline }}, 142)
-    inputs:
-      source: specific
-      project: build
-      pipeline: 12
-      artifact: ${{ parameters.sairedis_artifact_name }}
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
-      path: '$(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}/target/debs/buster'
-      patterns: syncd-vs_*.deb
-    displayName: "Download syncd VS package for ARM builds"
+
   - script: |
+      ls -l
       cd $(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}/target/debs/buster
+      ls -l
       sudo dpkg -i libnl-3-200_*.deb
       sudo dpkg -i libnl-3-dev_*.deb
       sudo dpkg -i libnl-genl-3-200_*.deb
@@ -147,6 +172,7 @@ jobs:
       sudo dpkg -i syncd-vs_*.deb
     workingDirectory: $(Pipeline.Workspace)
     displayName: "Install libnl3, sonic swss common and sairedis"
+
   - script: |
       set -x
       tar czf pytest.tgz tests
@@ -157,13 +183,16 @@ jobs:
       ./autogen.sh
       dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
     displayName: "Compile sonic swss"
+
   - publish: $(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}/target/debs/buster
     artifact: ${{ parameters.artifact_name }}
     displayName: "Archive swss debian packages"
+
   - publish: $(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}/target/docker-sonic-vs.gz
     condition: ne(length('${{ parameters.docker_sonic_base_artifact }}'), 0)
     artifact: ${{ parameters.docker_sonic_base_artifact }}
     displayName: "Archive base docker VS image"
+
   - publish: $(Build.ArtifactStagingDirectory)/
     artifact: sonic-swss-pytests
     displayName: "Archive swss pytests"
