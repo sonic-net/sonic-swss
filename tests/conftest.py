@@ -1157,6 +1157,44 @@ class DockerVirtualSwitch:
             if k[0] == counter:
                 return int(k[1])
 
+    def port_field_set(self, port, field, value):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "PORT")
+        fvs = swsscommon.FieldValuePairs([(field, value)])
+        tbl.set(port, fvs)
+        time.sleep(1)
+
+    def port_admin_set(self, port, status):
+        self.port_field_set(port, "admin_status", status)
+
+    def interface_ip_add(self, port, ip_address):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "INTERFACE")
+        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        tbl.set(port, fvs)
+        tbl.set(port + "|" + ip_address, fvs)
+        time.sleep(1)
+
+    def crm_poll_set(self, value):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "CRM")
+        fvs = swsscommon.FieldValuePairs([("polling_interval", value)])
+        tbl.set("Config", fvs)
+        time.sleep(1)
+
+    def clear_fdb(self):
+        adb = swsscommon.DBConnector(0, self.redis_sock, 0)
+        opdata = ["ALL", "ALL"]
+        msg = json.dumps(opdata,separators=(',',':'))
+        adb.publish('FLUSHFDBREQUEST', msg)
+
+    def warm_restart_swss(self, enable):
+        db = swsscommon.DBConnector(6, self.redis_sock, 0)
+
+        tbl = swsscommon.Table(db, "WARM_RESTART_ENABLE_TABLE")
+        fvs = swsscommon.FieldValuePairs([("enable",enable)])
+        tbl.set("swss", fvs)
+
     # deps: acl, crm, fdb
     def setReadOnlyAttr(self, obj, attr, val):
         db = swsscommon.DBConnector(swsscommon.ASIC_DB, self.redis_sock, 0)
