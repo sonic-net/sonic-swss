@@ -41,7 +41,7 @@ private:
     std::string m_peerIp;
 
     std::set<std::string> m_tunnelReplay;
-    bool replayDone;
+    bool replayDone = false;
 };
 
 }

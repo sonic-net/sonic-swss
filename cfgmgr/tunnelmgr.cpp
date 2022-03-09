@@ -211,9 +211,7 @@ void TunnelMgr::doTask(Consumer &consumer)
         }
     }
 
-    if (!replayDone &&
-        m_tunnelReplay.empty() &&
-        WarmStart::isWarmStart())
+    if (!replayDone && m_tunnelReplay.empty() && WarmStart::isWarmStart())
     {
         finalizeWarmReboot();
     }
