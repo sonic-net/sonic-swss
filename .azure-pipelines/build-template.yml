@@ -111,7 +111,6 @@ jobs:
     displayName: "Download sonic swss common deb packages"
 
   - task: DownloadPipelineArtifact@2
-    condition: ne(${{ parameters.buildimage_pipeline }}, 142)
     inputs:
       source: specific
       project: build
