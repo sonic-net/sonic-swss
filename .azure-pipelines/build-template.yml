@@ -183,6 +183,7 @@ jobs:
       fi
       ./autogen.sh
       dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
+      cp swss*.deb $(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}/target/debs/buster
     displayName: "Compile sonic swss"
 
   - publish: $(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}/target/debs/buster
