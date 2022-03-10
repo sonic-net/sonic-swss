@@ -1,6 +1,5 @@
 import time
 import os
-import pytest
 
 from swsscommon import swsscommon
 
@@ -269,7 +268,7 @@ class TestCopp(object):
                     assert trap_priority == trap_group[keys]
 
             elif obj_type == "SAI_OBJECT_TYPE_HOSTIF":
-                host_tbl_keys = self.hostiftbl_atbl.getKeys();
+                host_tbl_keys = self.hostiftbl_atbl.getKeys()
                 host_tbl_key = None
                 for host_tbl_entry in host_tbl_keys:
                     (status, fvs) = self.hostiftbl_atbl.get(host_tbl_entry)
@@ -300,7 +299,7 @@ class TestCopp(object):
                         if fv[0] == "SAI_HOSTIF_ATTR_NAME":
                             assert fv[1] == trap_group[keys]
 
-    @pytest.mark.skip("Skip to be removed after sonic-buildimage changes get merged")
+
     def test_defaults(self, dvs, testlog):
         self.setup_copp(dvs)
         trap_keys = self.trap_atbl.getKeys()
@@ -328,7 +327,7 @@ class TestCopp(object):
                 if trap_id not in disabled_traps:
                     assert trap_found == True
 
-    @pytest.mark.skip("Skip to be removed after sonic-buildimage changes get merged")
+
     def test_restricted_trap_sflow(self, dvs, testlog):
         self.setup_copp(dvs)
         fvs = swsscommon.FieldValuePairs([("state", "enabled")])
@@ -346,7 +345,6 @@ class TestCopp(object):
                 always_enabled = True
             if "sample_packet" not in trap_ids:
                 continue
-            trap_group = copp_trap[traps]
             trap_found = False
             trap_type = traps_to_trap_type["sample_packet"]
             for key in trap_keys:
@@ -362,7 +360,7 @@ class TestCopp(object):
             assert trap_found == True
 
 
-    @pytest.mark.skip("Skip to be removed after sonic-buildimage changes get merged")
+
     def test_policer_set(self, dvs, testlog):
         self.setup_copp(dvs)
         fvs = swsscommon.FieldValuePairs([("cbs", "900")])
@@ -398,7 +396,7 @@ class TestCopp(object):
                 if trap_id not in disabled_traps:
                     assert trap_found == True
 
-    @pytest.mark.skip("Skip to be removed after sonic-buildimage changes get merged")
+
     def test_trap_group_set(self, dvs, testlog):
         self.setup_copp(dvs)
         global copp_trap
@@ -435,7 +433,7 @@ class TestCopp(object):
             if trap_id not in disabled_traps:
                 assert trap_found == True
 
-    @pytest.mark.skip("Skip to be removed after sonic-buildimage changes get merged")
+
     def test_trap_ids_set(self, dvs, testlog):
         self.setup_copp(dvs)
         global copp_trap
@@ -497,7 +495,7 @@ class TestCopp(object):
                     break
             assert trap_found == True
 
-    @pytest.mark.skip("Skip to be removed after sonic-buildimage changes get merged")
+
     def test_trap_action_set(self, dvs, testlog):
         self.setup_copp(dvs)
         fvs = swsscommon.FieldValuePairs([("trap_action", "copy")])
@@ -530,12 +528,13 @@ class TestCopp(object):
                 if trap_id not in disabled_traps:
                     assert trap_found == True
 
-    @pytest.mark.skip("Skip to be removed after sonic-buildimage changes get merged")
+
     def test_new_trap_add(self, dvs, testlog):
         self.setup_copp(dvs)
         global copp_trap
         traps = "eapol"
         fvs = swsscommon.FieldValuePairs([("trap_group", "queue1_group2"),("trap_ids", traps),("always_enabled", "true")])
+        self.trap_ctbl.set(traps, fvs)
 
         copp_trap["eapol"] = [traps, copp_group_queue1_group2, "always_enabled"]
         time.sleep(2)
@@ -560,12 +559,12 @@ class TestCopp(object):
             if trap_id not in disabled_traps:
                 assert trap_found == True
 
-    @pytest.mark.skip("Skip to be removed after sonic-buildimage changes get merged")
+
     def test_new_trap_del(self, dvs, testlog):
         self.setup_copp(dvs)
         global copp_trap
         traps = "eapol"
-        fvs = swsscommon.FieldValuePairs([("trap_group", "queue1_group2"),("trap_ids", "eapol")])
+        fvs = swsscommon.FieldValuePairs([("trap_group", "queue1_group2"),("trap_ids", traps)])
         self.trap_ctbl.set(traps, fvs)
         for c_trap in copp_trap:
             trap_info = copp_trap[c_trap]
@@ -598,7 +597,7 @@ class TestCopp(object):
             if trap_id not in disabled_traps:
                 assert trap_found == False
 
-    @pytest.mark.skip("Skip to be removed after sonic-buildimage changes get merged")
+
     def test_new_trap_group_add(self, dvs, testlog):
         self.setup_copp(dvs)
         global copp_trap
@@ -638,7 +637,7 @@ class TestCopp(object):
             if trap_id not in disabled_traps:
                 assert trap_found == True
 
-    @pytest.mark.skip("Skip to be removed after sonic-buildimage changes get merged")
+
     def test_new_trap_group_del(self, dvs, testlog):
         self.setup_copp(dvs)
         global copp_trap
@@ -680,7 +679,7 @@ class TestCopp(object):
             if trap_id not in disabled_traps:
                 assert trap_found != True
 
-    @pytest.mark.skip("Skip to be removed after sonic-buildimage changes get merged")
+
     def test_override_trap_grp_cfg_del (self, dvs, testlog):
         self.setup_copp(dvs)
         global copp_trap
@@ -717,7 +716,7 @@ class TestCopp(object):
                 if trap_id not in disabled_traps:
                     assert trap_found == True
 
-    @pytest.mark.skip("Skip to be removed after sonic-buildimage changes get merged")
+
     def test_override_trap_cfg_del(self, dvs, testlog):
         self.setup_copp(dvs)
         global copp_trap
@@ -751,7 +750,7 @@ class TestCopp(object):
                 elif trap_id == "ssh":
                     assert trap_found == False
 
-    @pytest.mark.skip("Skip to be removed after sonic-buildimage changes get merged")
+
     def test_empty_trap_cfg(self, dvs, testlog):
         self.setup_copp(dvs)
         global copp_trap
