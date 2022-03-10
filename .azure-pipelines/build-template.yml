@@ -108,6 +108,8 @@ jobs:
       patterns: |
         libswsscommon_1.0.0_${{ parameters.arch }}.deb
         libswsscommon-dev_1.0.0_${{ parameters.arch }}.deb
+        python3-swsscommon_1.0.0_${{ parameters.arch }}.deb
+        python-swsscommon_1.0.0_${{ parameters.arch }}.deb
     displayName: "Download sonic swss common deb packages"
 
   - task: DownloadPipelineArtifact@2
