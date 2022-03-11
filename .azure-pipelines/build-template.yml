@@ -96,6 +96,25 @@ jobs:
         **/docker-sonic-vs.gz
     displayName: "Download sonic buildimage deb packages and docker VS image"
 
+  - script: |
+      buildimage_artifact_downloaded=n
+      [ -d "$(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}/target" ] && buildimage_artifact_downloaded=y
+      echo "buildimage_artifact_downloaded=$buildimage_artifact_downloaded"
+      echo "##vso[task.setvariable variable=buildimage_artifact_downloaded]$buildimage_artifact_downloaded"
+    condition: eq(${{ parameters.buildimage_pipeline }}, 141)
+    displayName: "Check if sonic buildimage deb packages downloaded"
+  - task: DownloadPipelineArtifact@2
+    condition: and(eq(variables.buildimage_artifact_downloaded, 'n'), eq(${{ parameters.buildimage_pipeline }}, 141))
+    inputs:
+      source: specific
+      project: build
+      pipeline: ${{ parameters.buildimage_pipeline }}
+      artifact: 'sonic-buildimage.marvell-armhf1'
+      runVersion: specific
+      runId: 63911
+      path: '$(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}'
+    displayName: "Download sonic buildimage deb packages from 63911"
+
   - task: DownloadPipelineArtifact@2
     inputs:
       source: specific
@@ -130,25 +149,6 @@ jobs:
         libsaimetadata-dev_*.deb
         syncd-vs_*.deb
     displayName: "Download sairedis artifacts"
-
-  - script: |
-      buildimage_artifact_downloaded=n
-      [ -d "$(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}/target" ] && buildimage_artifact_downloaded=y
-      echo "buildimage_artifact_downloaded=$buildimage_artifact_downloaded"
-      echo "##vso[task.setvariable variable=buildimage_artifact_downloaded]$buildimage_artifact_downloaded"
-    condition: eq(${{ parameters.buildimage_pipeline }}, 141)
-    displayName: "Check if sonic buildimage deb packages downloaded"
-  - task: DownloadPipelineArtifact@2
-    condition: and(eq(variables.buildimage_artifact_downloaded, 'n'), eq(${{ parameters.buildimage_pipeline }}, 141))
-    inputs:
-      source: specific
-      project: build
-      pipeline: ${{ parameters.buildimage_pipeline }}
-      artifact: 'sonic-buildimage.marvell-armhf1'
-      runVersion: specific
-      runId: 63911
-      path: '$(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}'
-    displayName: "Download sonic buildimage deb packages from 63911"
 
   - script: |
       ls -l
