@@ -1193,7 +1193,7 @@ bool PortsOrch::setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask)
     return true;
 }
 
-bool PortsOrch::setPortPfcWatchdogStatus(sai_object_id_t portId, PfcWatchDogType type, uint8_t pfcwd_bitmask)
+bool PortsOrch::setPortPfcWatchdogStatus(sai_object_id_t portId, uint8_t pfcwd_bitmask)
 {
     SWSS_LOG_ENTER();
 
@@ -1204,22 +1204,16 @@ bool PortsOrch::setPortPfcWatchdogStatus(sai_object_id_t portId, PfcWatchDogType
         SWSS_LOG_ERROR("Failed to get port object for port id 0x%" PRIx64, portId);
         return false;
     }
-    if (type == PFC_WD_SW)
-    {
-        p.m_pfcwd_sw_bitmask = pfcwd_bitmask;
-    }
-    else
-    {
-        p.m_pfcwd_hw_bitmask = pfcwd_bitmask;
-    }
-
+    
+    p.m_pfcwd_sw_bitmask = pfcwd_bitmask;
+   
     m_portList[p.m_alias] = p;
 
-    SWSS_LOG_INFO("Set PFC watchdog port id=0x%" PRIx64 ", bitmast=0x%x, type=%d", portId, pfcwd_bitmask, type);
+    SWSS_LOG_INFO("Set PFC watchdog port id=0x%" PRIx64 ", bitmast=0x%x", portId, pfcwd_bitmask);
     return true;
 }
 
-bool PortsOrch::getPortPfcWatchdogStatus(sai_object_id_t portId, PfcWatchDogType type, uint8_t *pfcwd_bitmask)
+bool PortsOrch::getPortPfcWatchdogStatus(sai_object_id_t portId, uint8_t *pfcwd_bitmask)
 {
     SWSS_LOG_ENTER();
 
@@ -1230,14 +1224,8 @@ bool PortsOrch::getPortPfcWatchdogStatus(sai_object_id_t portId, PfcWatchDogType
         SWSS_LOG_ERROR("Failed to get port object for port id 0x%" PRIx64, portId);
         return false;
     }
-    if (type == PFC_WD_SW)
-    {
-        *pfcwd_bitmask = p.m_pfcwd_sw_bitmask;
-    }
-    else
-    {
-        *pfcwd_bitmask = p.m_pfcwd_hw_bitmask;
-    }
+    
+    *pfcwd_bitmask = p.m_pfcwd_sw_bitmask;
     
     return true;
 }

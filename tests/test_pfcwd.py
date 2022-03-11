@@ -148,7 +148,7 @@ class TestPfcwdFunc(object):
         return str(mask)
 
     def set_ports_pfc(self, status='enable', pfc_queues=[3,4], watchdog_type='software'):
-        keyname = 'pfcwd_sw_enable' if watchdog_type == 'software' else 'pfcwd_hw_enable'
+        keyname = 'pfcwd_sw_enable'
         for port in self.test_ports:
             if 'enable' in status:
                 queues = ",".join([str(q) for q in pfc_queues])
