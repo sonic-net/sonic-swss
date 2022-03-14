@@ -211,7 +211,111 @@ class TestDtel(object):
                     assert False
 
         tbl._del("Ethernet0|0")
-    
+
+    def test_DtelFlowWatchlist(self, dvs, testlog):
+        self.db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        self.adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        self.table = "DTEL_FLOW_WATCHLIST"
+
+        fields_1=[("PRIORITY", "30"),
+                 ("ETHER_TYPE", "0x800"),
+                 ("L4_DST_PORT", "1674"),
+                 ("FLOW_OP", "POSTCARD"),
+                 ("REPORT_ALL_PACKETS", "FALSE"),
+                 ("DROP_REPORT_ENABLE", "TRUE"),
+                 ("TAIL_DROP_REPORT_ENABLE", "TRUE")]
+        fields_2=[("PRIORITY", "40"),
+                 ("ETHER_TYPE", "0x800"),
+                 ("L4_DST_PORT", "1674"),
+                 ("FLOW_OP", "POSTCARD"),
+                 ("REPORT_ALL_PACKETS", "TRUE"),
+                 ("DROP_REPORT_ENABLE", "FALSE"),
+                 ("TAIL_DROP_REPORT_ENABLE", "FALSE")]
+        fields_3=[("PRIORITY", "50"),
+                 ("ETHER_TYPE", "0x800"),
+                 ("L4_DST_PORT", "1674"),
+                 ("FLOW_OP", "POSTCARD"),
+                 ("REPORT_ALL_PACKETS", "TRUE")]
+        fields_4=[("PRIORITY", "60"),
+                 ("ETHER_TYPE", "0x800"),
+                 ("L4_DST_PORT", "1674"),
+                 ("REPORT_ALL_PACKETS", "TRUE"),
+                 ("DROP_REPORT_ENABLE", "TRUE"),
+                 ("TAIL_DROP_REPORT_ENABLE", "TRUE")]
+        fields_5=[("PRIORITY", "70"),
+                 ("ETHER_TYPE", "0x800"),
+                 ("L4_DST_PORT", "1674"),
+                 ("FLOW_OP", "NOP"),
+                 ("REPORT_ALL_PACKETS", "FALSE"),
+                 ("DROP_REPORT_ENABLE", "TRUE"),
+                 ("TAIL_DROP_REPORT_ENABLE", "TRUE")]
+        listfield = [fields_1, fields_2, fields_3, fields_4, fields_5]
+
+        for field in listfield:
+            k = listfield.index(field)
+            rule = "RULE-" + str(k)
+            self._create_dtel_acl_rule(self.table, rule, field)
+            self._check_dtel_acl_rule(dvs, rule)
+            self._remove_dtel_acl_rule(self.table, rule)
+
+    def _create_dtel_acl_rule(self, table, rule, field):
+        tbl = swsscommon.Table(self.db, "ACL_RULE")
+        fvs = swsscommon.FieldValuePairs(field)
+        tbl.set(table + "|" + rule, fvs)
+        time.sleep(1)
+
+    def _remove_dtel_acl_rule(self, table, rule):
+        tbl = swsscommon.Table(self.db, "ACL_RULE")
+        tbl._del(table + "|" + rule)
+        time.sleep(1)
+
+    def _check_dtel_acl_rule(self, dvs, rule):
+        time.sleep(1)
+        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
+        keys = atbl.getKeys()
+        acl_entry = [k for k in keys if k not in dvs.asicdb.default_acl_entries]
+        assert len(acl_entry) != 0
+        (status, fvs) = atbl.get(acl_entry[0])
+        value = dict(fvs)
+        assert status
+
+        if rule == "RULE-0":
+            assert value["SAI_ACL_ENTRY_ATTR_PRIORITY"] == "30"
+            assert value["SAI_ACL_ENTRY_ATTR_FIELD_ETHER_TYPE"] == "2048&mask:0xffff"
+            assert value["SAI_ACL_ENTRY_ATTR_FIELD_L4_DST_PORT"] == "1674&mask:0xffff"
+            assert value["SAI_ACL_ENTRY_ATTR_ACTION_ACL_DTEL_FLOW_OP"] == "SAI_ACL_DTEL_FLOW_OP_POSTCARD"
+            assert value["SAI_ACL_ENTRY_ATTR_ACTION_DTEL_REPORT_ALL_PACKETS"] == "disabled"
+            assert value["SAI_ACL_ENTRY_ATTR_ACTION_DTEL_DROP_REPORT_ENABLE"] == "true"
+            assert value["SAI_ACL_ENTRY_ATTR_ACTION_DTEL_TAIL_DROP_REPORT_ENABLE"] == "true"
+        elif rule == "RULE-1":
+            assert value["SAI_ACL_ENTRY_ATTR_PRIORITY"] == "40"
+            assert value["SAI_ACL_ENTRY_ATTR_FIELD_ETHER_TYPE"] == "2048&mask:0xffff"
+            assert value["SAI_ACL_ENTRY_ATTR_FIELD_L4_DST_PORT"] == "1674&mask:0xffff"
+            assert value["SAI_ACL_ENTRY_ATTR_ACTION_ACL_DTEL_FLOW_OP"] == "SAI_ACL_DTEL_FLOW_OP_POSTCARD"
+            assert value["SAI_ACL_ENTRY_ATTR_ACTION_DTEL_REPORT_ALL_PACKETS"] == "true"
+            assert value["SAI_ACL_ENTRY_ATTR_ACTION_DTEL_DROP_REPORT_ENABLE"] == "disabled"
+            assert value["SAI_ACL_ENTRY_ATTR_ACTION_DTEL_TAIL_DROP_REPORT_ENABLE"] == "disabled"
+        elif rule == "RULE-2":
+            assert value["SAI_ACL_ENTRY_ATTR_PRIORITY"] == "50"
+            assert value["SAI_ACL_ENTRY_ATTR_FIELD_ETHER_TYPE"] == "2048&mask:0xffff"
+            assert value["SAI_ACL_ENTRY_ATTR_FIELD_L4_DST_PORT"] == "1674&mask:0xffff"
+            assert value["SAI_ACL_ENTRY_ATTR_ACTION_ACL_DTEL_FLOW_OP"] == "SAI_ACL_DTEL_FLOW_OP_POSTCARD"
+            assert value["SAI_ACL_ENTRY_ATTR_ACTION_DTEL_REPORT_ALL_PACKETS"] == "true"
+        elif rule == "RULE-3":
+            assert value["SAI_ACL_ENTRY_ATTR_PRIORITY"] == "60"
+            assert value["SAI_ACL_ENTRY_ATTR_FIELD_ETHER_TYPE"] == "2048&mask:0xffff"
+            assert value["SAI_ACL_ENTRY_ATTR_FIELD_L4_DST_PORT"] == "1674&mask:0xffff"
+            assert value["SAI_ACL_ENTRY_ATTR_ACTION_DTEL_REPORT_ALL_PACKETS"] == "true"
+            assert value["SAI_ACL_ENTRY_ATTR_ACTION_DTEL_DROP_REPORT_ENABLE"] == "true"
+            assert value["SAI_ACL_ENTRY_ATTR_ACTION_DTEL_TAIL_DROP_REPORT_ENABLE"] == "true"
+        elif rule == "RULE-4":
+            assert value["SAI_ACL_ENTRY_ATTR_PRIORITY"] == "70"
+            assert value["SAI_ACL_ENTRY_ATTR_FIELD_ETHER_TYPE"] == "2048&mask:0xffff"
+            assert value["SAI_ACL_ENTRY_ATTR_FIELD_L4_DST_PORT"] == "1674&mask:0xffff"
+            assert value["SAI_ACL_ENTRY_ATTR_ACTION_ACL_DTEL_FLOW_OP"] == "SAI_ACL_DTEL_FLOW_OP_NOP"
+            assert value["SAI_ACL_ENTRY_ATTR_ACTION_DTEL_REPORT_ALL_PACKETS"] == "disabled"
+            assert value["SAI_ACL_ENTRY_ATTR_ACTION_DTEL_DROP_REPORT_ENABLE"] == "true"
+            assert value["SAI_ACL_ENTRY_ATTR_ACTION_DTEL_TAIL_DROP_REPORT_ENABLE"] == "true"
 
     def test_DtelEventAttribs(self, dvs, testlog):
     
