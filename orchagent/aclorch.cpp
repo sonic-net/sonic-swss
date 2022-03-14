@@ -3617,7 +3617,9 @@ bool AclOrch::removeAclRule(string table_id, string rule_id)
     auto rule = getAclRule(table_id, rule_id);
     if (!rule)
     {
-        return false;
+        SWSS_LOG_NOTICE("ACL rule [%s] in table [%s] already deleted",
+                        rule_id.c_str(), table_id.c_str());
+        return true;
     }
 
     if (rule->hasCounter())
