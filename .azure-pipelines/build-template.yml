@@ -122,9 +122,9 @@ jobs:
       pipeline: ${{ parameters.buildimage_pipeline }}
       artifact: 'sonic-buildimage.marvell-armhf1'
       runVersion: specific
-      runId: 63911
+      runId: 80637
       path: '$(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}'
-    displayName: "Download sonic buildimage deb packages from 63911"
+    displayName: "Download sonic buildimage deb packages from 80637"
   - script: |
       cd $(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}
       sudo dpkg -i target/debs/buster/libnl-3-200_*.deb
