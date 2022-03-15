@@ -13,6 +13,7 @@ class TestBuffer(object):
         self.counter_db = dvs.get_counters_db()
 
         # enable PG watermark
+        self.config_db.update_entry('BUFFER_PG', 'Ethernet0|3-4', {'profile': 'ingress_lossless_profile'})
         self.set_pg_wm_status('enable')
 
     def get_pg_oid(self, pg):
