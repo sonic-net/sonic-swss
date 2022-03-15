@@ -7,6 +7,10 @@
 #include "warm_restart.h"
 #include <signal.h>
 
+#if defined(ASAN_ENABLED)
+#include <sanitizer/lsan_interface.h>
+#endif
+
 using namespace std;
 using namespace swss;
 
@@ -26,6 +30,9 @@ bool received_sigterm = false;
 
 void sig_handler(int signo)
 {
+#if defined(ASAN_ENABLED)
+    __lsan_do_leak_check();
+#endif
     received_sigterm = true;
     return;
 }

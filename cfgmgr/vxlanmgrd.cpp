@@ -5,6 +5,7 @@
 #include <iostream>
 #include <mutex>
 #include <algorithm>
+#include <signal.h>
 #include "dbconnector.h"
 #include "select.h"
 #include "exec.h"
@@ -14,6 +15,10 @@
 #include "vxlanmgr.h"
 #include "shellcmd.h"
 #include "warm_restart.h"
+
+#if defined(ASAN_ENABLED)
+#include <sanitizer/lsan_interface.h>
+#endif
 
 using namespace std;
 using namespace swss;
@@ -42,11 +47,28 @@ string gResponsePublisherRecordFile;
 mutex gDbMutex;
 MacAddress gMacAddress;
 
+#if defined(ASAN_ENABLED)
+void sigterm_handler(int signo)
+{
+    __lsan_do_leak_check();
+    signal(signo, SIG_DFL);
+    raise(signo);
+}
+#endif
+
 int main(int argc, char **argv)
 {
     Logger::linkToDbNative("vxlanmgrd");
 
     SWSS_LOG_NOTICE("--- Starting vxlanmgrd ---");
+
+#if defined(ASAN_ENABLED)
+    if (signal(SIGTERM, sigterm_handler) == SIG_ERR)
+    {
+        SWSS_LOG_ERROR("failed to setup SIGTERM action");
+        exit(1);
+    }
+#endif
 
     try
     {

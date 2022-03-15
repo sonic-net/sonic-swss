@@ -17,6 +17,7 @@ extern "C" {
 #include <stdexcept>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
 
 #include <sys/time.h>
 #include "timestamp.h"
@@ -31,6 +32,10 @@ extern "C" {
 #include <signal.h>
 #include "warm_restart.h"
 #include "gearboxutils.h"
+
+#if defined(ASAN_ENABLED)
+#include <sanitizer/lsan_interface.h>
+#endif
 
 using namespace std;
 using namespace swss;
@@ -113,6 +118,15 @@ void sighup_handler(int signo)
     gSaiRedisLogRotate = true;
     gResponsePublisherLogRotate = true;
 }
+
+#if defined(ASAN_ENABLED)
+void sigterm_handler(int signo)
+{
+    __lsan_do_leak_check();
+    signal(signo, SIG_DFL);
+    raise(signo);
+}
+#endif
 
 void syncd_apply_view()
 {
@@ -318,6 +332,14 @@ int main(int argc, char **argv)
     swss::Logger::linkToDbNative("orchagent");
 
     SWSS_LOG_ENTER();
+
+#if defined(ASAN_ENABLED)
+    if (signal(SIGTERM, sigterm_handler) == SIG_ERR)
+    {
+        SWSS_LOG_ERROR("failed to setup SIGTERM action");
+        exit(1);
+    }
+#endif
 
     WarmStart::initialize("orchagent", "swss");
     WarmStart::checkWarmStart("orchagent", "swss");

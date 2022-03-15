@@ -33,6 +33,10 @@
 #include "shellcmd.h"
 #include "warm_restart.h"
 
+#if defined(ASAN_ENABLED)
+#include <sanitizer/lsan_interface.h>
+#endif
+
 using namespace std;
 using namespace swss;
 
@@ -98,6 +102,12 @@ void sigterm_handler(int signo)
         natmgr->cleanupMangleIpTables();
         natmgr->cleanupPoolIpTable();
     }
+
+#if defined(ASAN_ENABLED)
+    __lsan_do_leak_check();
+#endif
+    signal(signo, SIG_DFL);
+    raise(signo);
 }
 
 int main(int argc, char **argv)

@@ -5,12 +5,17 @@
 #include <iostream>
 #include <mutex>
 #include <algorithm>
+#include <signal.h>
 
 #include "dbconnector.h"
 #include "select.h"
 #include "exec.h"
 #include "schema.h"
 #include "tunnelmgr.h"
+
+#if defined(ASAN_ENABLED)
+#include <sanitizer/lsan_interface.h>
+#endif
 
 using namespace std;
 using namespace swss;
@@ -38,11 +43,28 @@ string gResponsePublisherRecordFile;
 /* Global database mutex */
 mutex gDbMutex;
 
+#if defined(ASAN_ENABLED)
+void sigterm_handler(int signo)
+{
+    __lsan_do_leak_check();
+    signal(signo, SIG_DFL);
+    raise(signo);
+}
+#endif
+
 int main(int argc, char **argv)
 {
     Logger::linkToDbNative("tunnelmgrd");
 
     SWSS_LOG_NOTICE("--- Starting Tunnelmgrd ---");
+
+#if defined(ASAN_ENABLED)
+    if (signal(SIGTERM, sigterm_handler) == SIG_ERR)
+    {
+        SWSS_LOG_ERROR("failed to setup SIGTERM action");
+        exit(1);
+    }
+#endif
 
     try
     {
