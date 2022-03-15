@@ -2367,6 +2367,7 @@ class TestWarmReboot(object):
 
     def test_TunnelMgrdWarmRestart(self, dvs):
         tunnel_name = "MuxTunnel0"
+        tunnel_table = "TUNNEL_DECAP_TABLE"
         tunnel_params = {
             "tunnel_type": "IPINIP",
             "dst_ip": "10.1.0.32",
@@ -2375,11 +2376,14 @@ class TestWarmReboot(object):
             "ttl_mode": "pipe"
         }
         
-        pubsub = dvs.SubscribeAppDbObject("TUNNEL_DECAP_TABLE")
+        pubsub = dvs.SubscribeAppDbObject(tunnel_table)
 
         dvs.runcmd("config warm_restart enable swss")
         config_db = dvs.get_config_db()
         config_db.create_entry("TUNNEL", tunnel_name, tunnel_params)
+
+        app_db = dvs.get_app_db()
+        app_db.wait_for_matching_keys(tunnel_table, [tunnel_name])
 
         nadd, ndel = dvs.CountSubscribedObjects(pubsub)
         assert nadd == len(tunnel_params)
