@@ -26,6 +26,7 @@ def crm_update(dvs, field, value):
     tbl = swsscommon.Table(cfg_db, "CRM")
     fvs = swsscommon.FieldValuePairs([(field, value)])
     tbl.set("Config", fvs)
+    time.sleep(1)
 
 class TestCrm(object):
     def test_CrmFdbEntry(self, dvs, testlog):
