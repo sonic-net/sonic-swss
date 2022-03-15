@@ -2661,7 +2661,7 @@ void RouteOrch::addRoutePattern(const std::string &pattern, size_t max_match_cou
     auto insert_result = mRoutePatternSet.emplace(vrf_name, vrf_id, ip_prefix, max_match_count);
     if (insert_result.second)
     {
-        SWSS_LOG_NOTICE("Inserting route pattern %s, max match count is %lu", pattern.c_str(), max_match_count);
+        SWSS_LOG_NOTICE("Inserting route pattern %s, max match count is %zu", pattern.c_str(), max_match_count);
         if (!validateRoutePattern(*insert_result.first))
         {
             mRoutePatternSet.erase(insert_result.first);
@@ -2672,7 +2672,7 @@ void RouteOrch::addRoutePattern(const std::string &pattern, size_t max_match_cou
     }
     else
     {
-        SWSS_LOG_NOTICE("Updating route pattern %s max match count to %lu", pattern.c_str(), max_match_count);
+        SWSS_LOG_NOTICE("Updating route pattern %s max match count to %zu", pattern.c_str(), max_match_count);
         RoutePattern &existing = const_cast<RoutePattern &>(*insert_result.first);
         onRoutePatternMaxMatchCountChange(existing, max_match_count);
     }
@@ -3062,7 +3062,7 @@ void RouteOrch::createSingleRouteFlowCounterByPattern(
     {
         if (current_bound_count == route_pattern.max_match_count)
         {
-            SWSS_LOG_DEBUG("Adding other type route entry to unbound cache, current bound=%lu, max allowed=%lu", current_bound_count, route_pattern.max_match_count);
+            SWSS_LOG_DEBUG("Adding other type route entry to unbound cache, current bound=%zu, max allowed=%zu", current_bound_count, route_pattern.max_match_count);
             addUnboundRoutesToCache(route_pattern, ip_prefix);
             return;
         }
@@ -3227,7 +3227,7 @@ void RouteOrch::onRoutePatternMaxMatchCountChange(RoutePattern &route_pattern, s
         }
 
         auto current_bound_count = getRouteFlowCounterSizeByPattern(route_pattern);
-        SWSS_LOG_NOTICE("Current bound route flow counter count is %lu, new limit is %lu, old limit is %lu", current_bound_count, new_max_match_count, old_max_match_count);
+        SWSS_LOG_NOTICE("Current bound route flow counter count is %zu, new limit is %zu, old limit is %zu", current_bound_count, new_max_match_count, old_max_match_count);
         if (new_max_match_count > old_max_match_count)
         {
             if (current_bound_count == old_max_match_count)
@@ -3275,7 +3275,7 @@ void RouteOrch::getRouteFlowCounterNameMapKey(sai_object_id_t vrf_id, const IpPr
 void RouteOrch::doTask(SelectableTimer &timer)
 {
     SWSS_LOG_ENTER();
-    SWSS_LOG_NOTICE("Add flex counters, pending in queue: %lu", mPendingAddToFlexCntr.size());
+    SWSS_LOG_NOTICE("Add flex counters, pending in queue: %zu", mPendingAddToFlexCntr.size());
     string value;
     std::string nameMapKey;
     std::string pattern;
@@ -3404,7 +3404,7 @@ void RouteOrch::processRouteFlowCounterBinding()
     }
 
     mPendingUnbindRoutes.clear();
-    SWSS_LOG_NOTICE("Pending fill route flow counter count = %lu", pending_fill.size());
+    SWSS_LOG_NOTICE("Pending fill route flow counter count = %zu", pending_fill.size());
     for (const auto &route_pattern : pending_fill)
     {
         createRouteFlowCounterFromUnboundCacheByPattern(route_pattern, getRouteFlowCounterSizeByPattern(route_pattern));
