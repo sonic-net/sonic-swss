@@ -25,6 +25,7 @@ private:
     std::set<std::string> m_subIntfList;
     std::set<std::string> m_loopbackIntfList;
     std::set<std::string> m_pendingReplayIntfList;
+    std::string mySwitchType;
 
     void setIntfIp(const std::string &alias, const std::string &opCmd, const IpPrefix &ipPrefix);
     void setIntfVrf(const std::string &alias, const std::string &vrfName);
