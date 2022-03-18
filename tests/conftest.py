@@ -1716,7 +1716,8 @@ def dvs_route(request, dvs) -> DVSRoute:
 @pytest.yield_fixture(scope="class")
 def dvs_lag_manager(request, dvs):
     request.cls.dvs_lag = dvs_lag.DVSLag(dvs.get_asic_db(),
-                                         dvs.get_config_db())
+                                         dvs.get_config_db(),
+                                         dvs.get_app_db())
 
 
 @pytest.yield_fixture(scope="class")

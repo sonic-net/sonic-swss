@@ -104,6 +104,9 @@ private:
     // session_name -> VLAN | monitor_port_alias | next_hop_ip
     map<string, string> m_recoverySessionMap;
 
+    shared_ptr<DBConnector> m_applDb = nullptr;
+    shared_ptr<Table> m_applLagMemberTable = nullptr;
+
     task_process_status createEntry(const string&, const vector<FieldValueTuple>&);
     task_process_status deleteEntry(const string&);
 
@@ -127,6 +130,7 @@ private:
     void updateNeighbor(const NeighborUpdate&);
     void updateFdb(const FdbUpdate&);
     void updateLagMember(const LagMemberUpdate&);
+    void updateLagMemberStatus(const LagMemberStatusUpdate&);
     void updateVlanMember(const VlanMemberUpdate&);
 
     bool checkPortExistsInSrcPortList(const string& port, const string& srcPortList);
@@ -135,6 +139,8 @@ private:
     bool setUnsetPortMirror(Port port, bool ingress, bool set,
                                     sai_object_id_t sessionId);
     bool configurePortMirrorSession(const string&, MirrorEntry&, bool enable);
+
+    bool selectEnabledLagMember(const Port &lag, Port &port);
 
     void doTask(Consumer& consumer);
 };
