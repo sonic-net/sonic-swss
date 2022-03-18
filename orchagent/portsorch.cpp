@@ -2406,12 +2406,47 @@ bool PortsOrch::initPort(const string &alias, const string &role, const int inde
     return true;
 }
 
+void PortsOrch::removeQueueMapPerPort(const Port& port)
+{
+    /* Delete the Queue map in the Counter DB
+     * FIXME : Remove flex_counter counter part of generateQueueMapPerPort
+     */
+    for (size_t queueIndex = 0; queueIndex < port.m_queue_ids.size(); ++queueIndex)
+    {
+        std::ostringstream name;
+        name << port.m_alias << ":" << queueIndex;
+
+        const auto id = sai_serialize_object_id(port.m_queue_ids[queueIndex]);
+
+        m_queueTable->hdel("", name.str(), id);
+        m_queuePortTable->hdel("", id, sai_serialize_object_id(port.m_port_id));
+
+        string queueType;
+        uint8_t queueRealIndex = 0;
+        if (getQueueTypeAndIndex(port.m_queue_ids[queueIndex], queueType, queueRealIndex))
+        {
+            m_queueTypeTable->hdel("", id, queueType);
+            m_queueIndexTable->hdel("", id, to_string(queueRealIndex)); 
+        }
+        SWSS_LOG_DEBUG("removeQueueMapPerPort: Port %s queueIndex %zu qid:%s", port.m_alias.c_str(), queueIndex, id.c_str());
+    }
+    CounterCheckOrch::getInstance().removePort(port);
+}
+
 void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
 {
     SWSS_LOG_ENTER();
 
-    Port p(alias, Port::PHY);
-    p.m_port_id = port_id;
+    Port p;
+
+    if(!getPort(alias, p))
+    {
+        SWSS_LOG_WARN("deInitPort: Port %s not found!", alias.c_str());
+        return;
+    }
+
+    /* remove queue port map associated to this port */
+    removeQueueMapPerPort(p);
 
     /* remove port from flex_counter_table for updating counters  */
     auto flex_counters_orch = gDirectory.get<FlexCounterOrch*>();
