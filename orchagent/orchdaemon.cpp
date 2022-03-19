@@ -201,6 +201,10 @@ bool OrchDaemon::init()
     EvpnNvoOrch* evpn_nvo_orch = new EvpnNvoOrch(m_applDb, APP_VXLAN_EVPN_NVO_TABLE_NAME);
     gDirectory.set(evpn_nvo_orch);
 
+    NvgreTunnelOrch *nvgre_tunnel_orch = new NvgreTunnelOrch(m_configDb, CFG_NVGRE_TUNNEL_TABLE_NAME);
+    gDirectory.set(nvgre_tunnel_orch);
+    NvgreTunnelMapOrch *nvgre_tunnel_map_orch = new NvgreTunnelMapOrch(m_configDb, CFG_NVGRE_TUNNEL_MAP_TABLE_NAME);
+    gDirectory.set(nvgre_tunnel_map_orch);
 
     vector<string> qos_tables = {
         CFG_TC_TO_QUEUE_MAP_TABLE_NAME,
@@ -425,6 +429,8 @@ bool OrchDaemon::init()
     m_orchList.push_back(gIsoGrpOrch);
     m_orchList.push_back(gFgNhgOrch);
     m_orchList.push_back(mux_st_orch);
+    m_orchList.push_back(nvgre_tunnel_orch);
+    m_orchList.push_back(nvgre_tunnel_map_orch);
 
     if (m_fabricEnabled)
     {

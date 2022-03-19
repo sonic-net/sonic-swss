@@ -33,11 +33,10 @@ ifeq ($(ENABLE_ASAN), y)
 endif
 
 ifeq ($(ENABLE_GCOV), y)
-	configure_opts += --enable-gcov
+	configure_opts += --enable-gcov CFLAGS="-g -O0" CXXFLAGS="-g -O0"
 endif
 
 override_dh_auto_configure:
-	$(info "override_dh_auto_configure called")
 	dh_auto_configure -- $(configure_opts)
 
 override_dh_auto_install:
