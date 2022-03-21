@@ -103,6 +103,14 @@ task_process_status QosMapHandler::processWorkItem(Consumer& consumer)
     SWSS_LOG_ENTER();
 
     sai_object_id_t sai_object = SAI_NULL_OBJECT_ID;
+    /*
+     ToDo:
+     As we are going to have more than one QosMap in type DSCP_TO_TC_MAP, TC_TO_PRIORITY_GROUP_MAP and TC_TO_QUEUE_MAP,
+     we need some mechanism to which one is switch level, and which one is for tunnel use only.
+     Two options now:
+     1. Hardcode the switch level map name
+     2. Always use the first map as switch level QoS map
+    */ 
     auto it = consumer.m_toSync.begin();
     KeyOpFieldsValuesTuple tuple = it->second;
     string qos_object_name = kfvKey(tuple);
