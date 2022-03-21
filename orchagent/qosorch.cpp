@@ -1657,6 +1657,18 @@ task_process_status QosOrch::ResolveMapAndApplyToPort(
 {
     SWSS_LOG_ENTER();
 
+    if (op == DEL_COMMAND)
+    {
+        // NOTE: The map is un-bound from the port. But the map itself still exists.
+        applyMapToPort(port, port_attr, SAI_NULL_OBJECT_ID);
+        return task_process_status::task_success;
+    }
+    else if (op != SET_COMMAND)
+    {
+        SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
+        return task_process_status::task_invalid_entry;
+    }
+
     sai_object_id_t sai_object = SAI_NULL_OBJECT_ID;
     string object_name;
     bool result;
@@ -1664,20 +1676,7 @@ task_process_status QosOrch::ResolveMapAndApplyToPort(
                            qos_to_ref_table_map.at(field_name), tuple, sai_object, object_name);
     if (ref_resolve_status::success == resolve_result)
     {
-        if (op == SET_COMMAND)
-        {
-            result = applyMapToPort(port, port_attr, sai_object);
-        }
-        else if (op == DEL_COMMAND)
-        {
-            // NOTE: The map is un-bound from the port. But the map itself still exists.
-            result = applyMapToPort(port, port_attr, SAI_NULL_OBJECT_ID);
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
-            return task_process_status::task_invalid_entry;
-        }
+        result = applyMapToPort(port, port_attr, sai_object);
         if (!result)
         {
             SWSS_LOG_ERROR("Failed setting field:%s to port:%s, line:%d", field_name.c_str(), port.m_alias.c_str(), __LINE__);
