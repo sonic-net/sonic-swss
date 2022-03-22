@@ -2289,6 +2289,13 @@ sai_status_t PortsOrch::removePort(sai_object_id_t port_id)
     }
     /* else : port is in default state or not yet created */
 
+    /*
+     * Remove port serdes (if exists) before removing port since this
+     * reference is dependency.
+     */
+
+    removePortSerdesAttribute(port_id);
+
     sai_status_t status = sai_port_api->remove_port(port_id);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -4927,7 +4934,7 @@ bool PortsOrch::addLag(string lag_alias, uint32_t spa_id, int32_t switch_id)
     auto lagport = m_portList.find(lag_alias);
     if (lagport != m_portList.end())
     {
-        /* The deletion of bridgeport attached to the lag may still be 
+        /* The deletion of bridgeport attached to the lag may still be
          * pending due to fdb entries still present on the lag. Wait
          * until the cleanup is done.
          */
@@ -5621,8 +5628,12 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
                     SWSS_LOG_NOTICE("%s oper speed is %d", port.m_alias.c_str(), speed);
                     updateDbPortOperSpeed(port, speed);
                 }
+                else
+                {
+                    updateDbPortOperSpeed(port, 0);
+                }
             }
-
+            
             /* update m_portList */
             m_portList[port.m_alias] = port;
         }
@@ -5682,9 +5693,9 @@ void PortsOrch::updateDbPortOperSpeed(Port &port, sai_uint32_t speed)
     SWSS_LOG_ENTER();
 
     vector<FieldValueTuple> tuples;
-    FieldValueTuple tuple("speed", to_string(speed));
-    tuples.push_back(tuple);
-    m_portTable->set(port.m_alias, tuples);
+    string speedStr = speed != 0 ? to_string(speed) : "N/A";
+    tuples.emplace_back(std::make_pair("speed", speedStr));
+    m_portStateTable.set(port.m_alias, tuples);
 
     // We don't set port.m_speed = speed here, because CONFIG_DB still hold the old
     // value. If we set it here, next time configure any attributes related port will
@@ -5730,6 +5741,10 @@ void PortsOrch::refreshPortStatus()
             {
                 SWSS_LOG_INFO("%s oper speed is %d", port.m_alias.c_str(), speed);
                 updateDbPortOperSpeed(port, speed);
+            }
+            else
+            {
+                updateDbPortOperSpeed(port, 0);
             }
         }
     }

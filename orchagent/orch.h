@@ -233,9 +233,11 @@ protected:
     bool parseReference(type_map &type_maps, std::string &ref, const std::string &table_name, std::string &object_name);
     ref_resolve_status resolveFieldRefArray(type_map&, const std::string&, const std::string&, swss::KeyOpFieldsValuesTuple&, std::vector<sai_object_id_t>&, std::string&);
     void setObjectReference(type_map&, const std::string&, const std::string&, const std::string&, const std::string&);
+    bool doesObjectExist(type_map&, const std::string&, const std::string&, const std::string&, std::string&);
     void removeObject(type_map&, const std::string&, const std::string&);
     bool isObjectBeingReferenced(type_map&, const std::string&, const std::string&);
     std::string objectReferenceInfo(type_map&, const std::string&, const std::string&);
+    void removeMeFromObjsReferencedByMe(type_map &type_maps, const std::string &table, const std::string &obj_name, const std::string &field, const std::string &old_referenced_obj_name, bool remove_field=true);
 
     /* Note: consumer will be owned by this class */
     void addExecutor(Executor* executor);
@@ -250,7 +252,6 @@ protected:
 
     ResponsePublisher m_publisher;
 private:
-    void removeMeFromObjsReferencedByMe(type_map &type_maps, const std::string &table, const std::string &obj_name, const std::string &field, const std::string &old_referenced_obj_name);
     void addConsumer(swss::DBConnector *db, std::string tableName, int pri = default_orch_pri);
 };
 
