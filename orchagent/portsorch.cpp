@@ -2451,7 +2451,7 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
     }
 
     /* remove port name map from counter table */
-    m_counterTable->del(alias);
+    m_counterTable->hdel("", alias);
 
     /* Remove the associated port serdes attribute */
     removePortSerdesAttribute(p.m_port_id);
@@ -5429,21 +5429,21 @@ void PortsOrch::removeQueueMapPerPort(const Port& port)
     {
         std::ostringstream name;
         name << port.m_alias << ":" << queueIndex;
+        std::unordered_set<string> counter_stats;
 
         const auto id = sai_serialize_object_id(port.m_queue_ids[queueIndex]);
 
-        m_queueTable->del(name.str());
-        m_queuePortTable->del(id);
+        m_queueTable->hdel("",name.str());
+        m_queuePortTable->hdel("",id);
 
         string queueType;
         uint8_t queueRealIndex = 0;
         if (getQueueTypeAndIndex(port.m_queue_ids[queueIndex], queueType, queueRealIndex))
         {
-            m_queueTypeTable->del(id);
-            m_queueIndexTable->del(id);
+            m_queueTypeTable->hdel("",id);
+            m_queueIndexTable->hdel("",id);
         }
 
-        std::unordered_set<string> counter_stats;
         for (const auto& it: queue_stat_ids)
         {
             counter_stats.emplace(sai_serialize_queue_stat(it));
@@ -5540,9 +5540,6 @@ void PortsOrch::generatePriorityGroupMap()
 void PortsOrch::removePriorityGroupMapPerPort(const Port& port)
 {
     /* Remove the PG map in the Counter DB */
-    vector<string> pgVector;
-    vector<string> pgPortVector;
-    vector<string> pgIndexVector;
 
     for (size_t pgIndex = 0; pgIndex < port.m_priority_group_ids.size(); ++pgIndex)
     {
@@ -5552,9 +5549,9 @@ void PortsOrch::removePriorityGroupMapPerPort(const Port& port)
         const auto id = sai_serialize_object_id(port.m_priority_group_ids[pgIndex]);
         string key = getPriorityGroupWatermarkFlexCounterTableKey(id);
 
-        m_pgTable->del(name.str());
-        m_pgPortTable->del(id);
-        m_pgIndexTable->del(id);
+        m_pgTable->hdel("",name.str());
+        m_pgPortTable->hdel("",id);
+        m_pgIndexTable->hdel("",id);
 
         m_flexCounterTable->del(key);
 
