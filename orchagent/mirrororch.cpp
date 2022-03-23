@@ -339,7 +339,7 @@ bool MirrorOrch::validateSrcPortList(const string& srcPortList)
                     }
                     portCount++;
                 }
-                if(!portCount)
+                if (!portCount)
                 {
                     SWSS_LOG_ERROR("Source LAG %s is empty. set mirror session to inactive",
                              port.m_alias.c_str());;
