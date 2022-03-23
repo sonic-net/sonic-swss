@@ -26,12 +26,15 @@ private:
     uint32_t bfd_gen_id(void);
     uint32_t bfd_src_port(void);
 
+    bool register_bfd_state_change_notification(void);
+
     std::map<std::string, sai_object_id_t> bfd_session_map;
     std::map<sai_object_id_t, BfdUpdate> bfd_session_lookup;
 
     swss::Table m_stateBfdSessionTable;
 
     swss::NotificationConsumer* m_bfdStateNotificationConsumer;
+    bool register_state_change_notif;
 };
 
 #endif /* SWSS_BFDORCH_H */

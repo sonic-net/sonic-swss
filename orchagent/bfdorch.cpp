@@ -6,6 +6,7 @@
 #include "notifier.h"
 #include "sai_serialize.h"
 #include "directory.h"
+#include "notifications.h"
 
 using namespace std;
 using namespace swss;
@@ -21,6 +22,7 @@ extern sai_bfd_api_t*       sai_bfd_api;
 extern sai_object_id_t      gSwitchId;
 extern sai_object_id_t      gVirtualRouterId;
 extern PortsOrch*           gPortsOrch;
+extern sai_switch_api_t*    sai_switch_api;
 extern Directory<Orch*>     gDirectory;
 
 const map<string, sai_bfd_session_type_t> session_type_map =
@@ -57,6 +59,7 @@ BfdOrch::BfdOrch(DBConnector *db, string tableName, TableConnector stateDbBfdSes
     m_bfdStateNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
     auto bfdStateNotificatier = new Notifier(m_bfdStateNotificationConsumer, this, "BFD_STATE_NOTIFICATIONS");
     Orch::addExecutor(bfdStateNotificatier);
+    register_state_change_notif = false;
 }
 
 BfdOrch::~BfdOrch(void)
@@ -152,8 +155,52 @@ void BfdOrch::doTask(NotificationConsumer &consumer)
     }
 }
 
+bool BfdOrch::register_bfd_state_change_notification(void)
+{
+    sai_attribute_t  attr;
+    sai_status_t status;
+    sai_attr_capability_t capability;
+
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_SWITCH, 
+                                            SAI_SWITCH_ATTR_BFD_SESSION_STATE_CHANGE_NOTIFY,
+                                            &capability);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Unable to query the BFD change notification capability");
+        return false;
+    }
+
+    if (!capability.set_implemented)
+    {
+        SWSS_LOG_ERROR("BFD register change notification not supported");
+        return false;
+    }
+
+    attr.id = SAI_SWITCH_ATTR_BFD_SESSION_STATE_CHANGE_NOTIFY;
+    attr.value.ptr = (void *)on_bfd_session_state_change;
+
+    status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to register BFD notification handler");
+        return false;
+    }
+    return true;
+}
+
 bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple>& data)
 {
+    if (!register_state_change_notif)
+    {
+        if (!register_bfd_state_change_notification())
+        {
+            SWSS_LOG_ERROR("BFD session for %s cannot be created", key.c_str());
+            return false;
+        }
+        register_state_change_notif = true;
+    }
     if (bfd_session_map.find(key) != bfd_session_map.end())
     {
         SWSS_LOG_ERROR("BFD session for %s already exists", key.c_str());
