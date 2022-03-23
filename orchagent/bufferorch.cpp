@@ -42,6 +42,9 @@ map<string, string> buffer_to_ref_table_map = {
     {buffer_profile_list_field_name, APP_BUFFER_PROFILE_TABLE_NAME}
 };
 
+std::map<string, std::map<size_t, string>> pg_port_flags;
+std::map<string, std::map<size_t, string>> queue_port_flags;
+
 BufferOrch::BufferOrch(DBConnector *applDb, DBConnector *confDb, DBConnector *stateDb, vector<string> &tableNames) :
     Orch(applDb, tableNames),
     m_flexCounterDb(new DBConnector("FLEX_COUNTER_DB", 0)),
@@ -949,6 +952,38 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
                     }
                 }
             }
+
+            /* when we apply buffer configuration we need to increase the ref counter of this port
+             * or decrease the ref counter for this port when we remove buffer cfg
+             * so for each priority cfg in each port we will increase/decrease the ref counter
+             * also we need to know when the set command is for creating a buffer cfg or modifying buffer cfg -
+             * we need to increase ref counter only on create flow.
+             * so we added a map that will help us to know what was the last command for this port and priority -
+             * if the last command was set command then it is a modify command and we dont need to increase the buffer counter
+             * all other cases (no last command exist or del command was the last command) it means that we need to increase the ref counter */
+            if (op == SET_COMMAND) 
+            {
+                if (queue_port_flags[port_name][ind] != SET_COMMAND) 
+                {
+                    /* if the last operation was not "set" then it's create and not modify - need to increase ref counter */
+                    gPortsOrch->increasePortRefCount(port_name);
+                }
+            } 
+            else if (op == DEL_COMMAND)
+            {
+                if (queue_port_flags[port_name][ind] == SET_COMMAND) {
+                    /* we need to decrease ref counter only if the last operation was "SET_COMMAND" */
+                    gPortsOrch->decreasePortRefCount(port_name);
+                }
+            } 
+            else 
+            {
+                SWSS_LOG_ERROR("operation value is not SET or DEL (op = %s)", op.c_str());
+                return task_process_status::task_invalid_entry;
+            }
+            /* save the last command (set or delete) */
+            queue_port_flags[port_name][ind] = op;
+
         }
     }
 
@@ -1007,7 +1042,7 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
     if (op == SET_COMMAND)
     {
         ref_resolve_status  resolve_result = resolveFieldRefValue(m_buffer_type_maps, buffer_profile_field_name,
-                                             buffer_to_ref_table_map.at(buffer_profile_field_name), tuple, 
+                                             buffer_to_ref_table_map.at(buffer_profile_field_name), tuple,
                                              sai_buffer_profile, buffer_profile_name);
         if (ref_resolve_status::success != resolve_result)
         {
@@ -1089,6 +1124,39 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
                     }
                 }
             }
+
+            /* when we apply buffer configuration we need to increase the ref counter of this port
+             * or decrease the ref counter for this port when we remove buffer cfg
+             * so for each priority cfg in each port we will increase/decrease the ref counter
+             * also we need to know when the set command is for creating a buffer cfg or modifying buffer cfg -
+             * we need to increase ref counter only on create flow.
+             * so we added a map that will help us to know what was the last command for this port and priority -
+             * if the last command was set command then it is a modify command and we dont need to increase the buffer counter
+             * all other cases (no last command exist or del command was the last command) it means that we need to increase the ref counter */
+            if (op == SET_COMMAND) 
+            {
+                if (pg_port_flags[port_name][ind] != SET_COMMAND) 
+                {
+                    /* if the last operation was not "set" then it's create and not modify - need to increase ref counter */
+                    gPortsOrch->increasePortRefCount(port_name);
+                }
+            } 
+            else if (op == DEL_COMMAND)
+            {
+                if (pg_port_flags[port_name][ind] == SET_COMMAND) 
+                {
+                    /* we need to decrease ref counter only if the last operation was "SET_COMMAND" */
+                    gPortsOrch->decreasePortRefCount(port_name);
+                }
+            } 
+            else 
+            {
+                SWSS_LOG_ERROR("operation value is not SET or DEL (op = %s)", op.c_str());
+                return task_process_status::task_invalid_entry;
+            }
+            /* save the last command (set or delete) */
+            pg_port_flags[port_name][ind] = op;
+
         }
         if (portUpdated)
         {
