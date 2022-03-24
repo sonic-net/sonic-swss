@@ -478,10 +478,6 @@ int main(int argc, char **argv)
     attr.value.ptr = (void *)on_port_state_change;
     attrs.push_back(attr);
 
-    attr.id = SAI_SWITCH_ATTR_BFD_SESSION_STATE_CHANGE_NOTIFY;
-    attr.value.ptr = (void *)on_bfd_session_state_change;
-    attrs.push_back(attr);
-
     attr.id = SAI_SWITCH_ATTR_SHUTDOWN_REQUEST_NOTIFY;
     attr.value.ptr = (void *)on_switch_shutdown_request;
     attrs.push_back(attr);
