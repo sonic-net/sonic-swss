@@ -971,7 +971,8 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
             } 
             else if (op == DEL_COMMAND)
             {
-                if (queue_port_flags[port_name][ind] == SET_COMMAND) {
+                if (queue_port_flags[port_name][ind] == SET_COMMAND) 
+		{
                     /* we need to decrease ref counter only if the last operation was "SET_COMMAND" */
                     gPortsOrch->decreasePortRefCount(port_name);
                 }
