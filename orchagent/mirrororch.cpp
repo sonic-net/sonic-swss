@@ -327,6 +327,7 @@ bool MirrorOrch::validateSrcPortList(const string& srcPortList)
             if (port.m_type == Port::LAG)
             {
                 vector<Port> portv;
+                int portCount = 0;
                 m_portsOrch->getLagMember(port, portv);
                 for (const auto p : portv)
                 {
@@ -336,6 +337,13 @@ bool MirrorOrch::validateSrcPortList(const string& srcPortList)
                                   p.m_alias.c_str(), port.m_alias.c_str(), srcPortList.c_str());
                         return false;
                     }
+                    portCount++;
+                }
+                if (!portCount)
+                {
+                    SWSS_LOG_ERROR("Source LAG %s is empty. set mirror session to inactive",
+                             port.m_alias.c_str());;
+                    return false;
                 }
             }
         }

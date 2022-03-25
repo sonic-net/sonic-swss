@@ -1328,7 +1328,7 @@ class TestP4RTL3(object):
         util.set_interface_status(dvs, if_name)
 
         # Execute the warm reboot.
-        dvs.runcmd("config warm_restart enable swss")
+        dvs.warm_restart_swss("true")
         dvs.stop_swss()
         dvs.start_swss()
 
