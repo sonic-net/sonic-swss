@@ -2723,16 +2723,8 @@ bool MACsecOrch::createPFCEntry(
 
     if (pfc_mode == PFC_MODE_BYPASS)
     {
-        if (direction == SAI_MACSEC_DIRECTION_EGRESS)
-        {
-            attrs.push_back(identifyPFC());
-            attrs.push_back(bypassPFC());
-        }
-        else
-        {
-            attrs.push_back(identifyPFC());
-            attrs.push_back(bypassPFC());
-        }
+        attrs.push_back(identifyPFC());
+        attrs.push_back(bypassPFC());
     }
     else if (pfc_mode == PFC_MODE_ENCRYPT)
     {
