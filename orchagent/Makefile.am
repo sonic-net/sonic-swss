@@ -49,7 +49,6 @@ orchagent_SOURCES = \
             cbf/cbfnhgorch.cpp  \
             cbf/nhgmaporch.cpp \
             routeorch.cpp \
-            routeflowcounterorch.cpp \
             mplsrouteorch.cpp \
             neighorch.cpp \
             intfsorch.cpp \
@@ -95,7 +94,7 @@ orchagent_SOURCES = \
             srv6orch.cpp \
             response_publisher.cpp
 
-orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp flex_counter/flow_counter_handler.cpp
+orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp flex_counter/flow_counter_handler.cpp flex_counter/flowcounterrouteorch.cpp
 orchagent_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.cpp
 orchagent_SOURCES += p4orch/p4orch.cpp \
 		     p4orch/p4orch_util.cpp \

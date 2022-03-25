@@ -12,6 +12,7 @@
 #include "swssnet.h"
 #include "tokenize.h"
 #include "routeorch.h"
+#include "flowcounterrouteorch.h"
 #include "crmorch.h"
 #include "bufferorch.h"
 #include "directory.h"
@@ -29,7 +30,7 @@ extern sai_vlan_api_t*              sai_vlan_api;
 
 extern sai_object_id_t gSwitchId;
 extern PortsOrch *gPortsOrch;
-extern RouteOrch *gRouteOrch;
+extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
 extern CrmOrch *gCrmOrch;
 extern BufferOrch *gBufferOrch;
 extern bool gIsNatSupported;
@@ -1273,7 +1274,7 @@ void IntfsOrch::addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix)
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
     }
 
-    gRouteOrch->onAddMiscRouteEntry(vrf_id, IpPrefix(ip_prefix.getIp().to_string()));
+    gFlowCounterRouteOrch->onAddMiscRouteEntry(vrf_id, IpPrefix(ip_prefix.getIp().to_string()));
 }
 
 void IntfsOrch::removeIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix)
@@ -1304,7 +1305,7 @@ void IntfsOrch::removeIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_pref
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
     }
 
-    gRouteOrch->onRemoveMiscRouteEntry(vrf_id, IpPrefix(ip_prefix.getIp().to_string()));
+    gFlowCounterRouteOrch->onRemoveMiscRouteEntry(vrf_id, IpPrefix(ip_prefix.getIp().to_string()));
 }
 
 void IntfsOrch::addDirectedBroadcast(const Port &port, const IpPrefix &ip_prefix)

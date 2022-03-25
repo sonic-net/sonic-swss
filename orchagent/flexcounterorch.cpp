@@ -11,6 +11,7 @@
 #include "directory.h"
 #include "copporch.h"
 #include "routeorch.h"
+#include "flowcounterrouteorch.h"
 
 extern sai_port_api_t *sai_port_api;
 
@@ -20,7 +21,7 @@ extern IntfsOrch *gIntfsOrch;
 extern BufferOrch *gBufferOrch;
 extern Directory<Orch*> gDirectory;
 extern CoppOrch *gCoppOrch;
-extern RouteOrch *gRouteOrch;
+extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
 
 #define BUFFER_POOL_WATERMARK_KEY   "BUFFER_POOL_WATERMARK"
 #define PORT_KEY                    "PORT"
@@ -179,16 +180,16 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                             m_hostif_trap_counter_enabled = false;
                         }
                     }
-                    if (gRouteOrch && gRouteOrch->getRouteFlowCounterSupported() && key == FLOW_CNT_ROUTE_KEY)
+                    if (gFlowCounterRouteOrch && gFlowCounterRouteOrch->getRouteFlowCounterSupported() && key == FLOW_CNT_ROUTE_KEY)
                     {
                         if (value == "enable" && !m_route_flow_counter_enabled)
                         {
                             m_route_flow_counter_enabled = true;
-                            gRouteOrch->generateRouteFlowStats();
+                            gFlowCounterRouteOrch->generateRouteFlowStats();
                         }
                         else if (value == "disable" && m_route_flow_counter_enabled)
                         {
-                            gRouteOrch->clearRouteFlowStats();
+                            gFlowCounterRouteOrch->clearRouteFlowStats();
                             m_route_flow_counter_enabled = false;
                         }
                     }
