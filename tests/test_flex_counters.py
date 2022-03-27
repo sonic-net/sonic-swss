@@ -374,13 +374,6 @@ class TestFlexCounters(object):
             assert trap_id not in counters_keys
 
         self.set_flex_counter_group_status(meta_data['key'], meta_data['group_name'], 'disable')
-
-        if counter_type == "vxlan_tunnel_counter":
-            self.verify_tunnel_type_vxlan(counter_map, TUNNEL_TYPE_MAP)
-            self.config_db.delete_entry("VLAN","Vlan10")
-            self.config_db.delete_entry("VLAN_TUNNEL","vtep1")
-            self.config_db.delete_entry("VLAN_TUNNEL_MAP","vtep1|map_100_Vlan10")
-            self.verify_no_flex_counters_tables_after_delete(counter_stat)
             
     def test_add_remove_ports(self, dvs):
         self.setup_dbs(dvs)
