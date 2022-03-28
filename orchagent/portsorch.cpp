@@ -2379,12 +2379,14 @@ bool PortsOrch::initPort(const string &alias, const string &role, const int inde
                 }
 
                 /* when a port is added and priority group map counter is enabled --> we need to add pg counter for it */
-                if (m_isPriorityGroupMapGenerated) {
+                if (m_isPriorityGroupMapGenerated)
+                {
                     generatePriorityGroupMapPerPort(p);
                 }
 
                 /* when a port is added and queue map counter is enabled --> we need to add queue map counter for it */
-                if (m_isQueueMapGenerated) {
+                if (m_isQueueMapGenerated)
+                {
                     generateQueueMapPerPort(p);
                 }
 
@@ -2441,12 +2443,14 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
     }
 
     /* remove pg port counters */
-    if (m_isPriorityGroupMapGenerated) {
+    if (m_isPriorityGroupMapGenerated)
+    {
         removePriorityGroupMapPerPort(p);
     }
 
     /* remove queue port counters */
-    if (m_isQueueMapGenerated) {
+    if (m_isQueueMapGenerated)
+    {
         removeQueueMapPerPort(p);
     }
 
