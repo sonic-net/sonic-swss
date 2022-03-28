@@ -28,6 +28,8 @@ const string yellow_drop_probability_field_name = "yellow_drop_probability";
 const string green_drop_probability_field_name  = "green_drop_probability";
 const string dscp_to_fc_field_name              = "dscp_to_fc_map";
 const string exp_to_fc_field_name               = "exp_to_fc_map";
+const string decap_dscp_to_tc_field_name        = "decap_dscp_to_tc_map";
+const string decap_tc_to_pg_field_name          = "decap_tc_to_pg_map";
 
 const string wred_profile_field_name            = "wred_profile";
 const string wred_red_enable_field_name         = "wred_red_enable";
@@ -147,6 +149,14 @@ public:
     sai_object_id_t addQosItem(const vector<sai_attribute_t> &attributes) override;
 };
 
+// Handler for TC_TO_DSCP_MAP
+class TcToDscpMapHandler : public QosMapHandler
+{
+public:
+    bool convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes) override;
+    sai_object_id_t addQosItem(const vector<sai_attribute_t> &attributes) override;
+};
+
 class QosOrch : public Orch
 {
 public:
@@ -177,6 +187,7 @@ private:
     task_process_status handleWredProfileTable(Consumer& consumer);
     task_process_status handleDscpToFcTable(Consumer& consumer);
     task_process_status handleExpToFcTable(Consumer& consumer);
+    task_process_status handleTcToDscpTable(Consumer& consumer);
 
     sai_object_id_t getSchedulerGroup(const Port &port, const sai_object_id_t queue_id);
 

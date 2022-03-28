@@ -23,6 +23,7 @@
 #include "aclorch.h"
 #include "routeorch.h"
 #include "fdborch.h"
+#include "qosorch.h"
 
 /* Global variables */
 extern Directory<Orch*> gDirectory;
@@ -79,6 +80,11 @@ const map <string, MuxState> muxStateStringToVal =
     { "init", MuxState::MUX_STATE_INIT },
     { "failed", MuxState::MUX_STATE_FAILED },
     { "pending", MuxState::MUX_STATE_PENDING },
+};
+
+const map<string, string> tunnel_qos_to_ref_table_map = {
+    {encap_tc_to_dscp_field_name, CFG_TC_TO_DSCP_MAP_TABLE_NAME},
+    {encap_tc_to_queue_field_name, CFG_TC_TO_QUEUE_MAP_TABLE_NAME}
 };
 
 static inline MuxStateChange mux_state_change (MuxState prev, MuxState curr)
@@ -1177,7 +1183,9 @@ MuxOrch::MuxOrch(DBConnector *db, const std::vector<std::string> &tables,
          Orch2(db, tables, request_),
          decap_orch_(decapOrch),
          neigh_orch_(neighOrch),
-         fdb_orch_(fdbOrch)
+         fdb_orch_(fdbOrch),
+         cfgTunnelTable_(db, CFG_TUNNEL_TABLE_NAME)
+         
 {
     handler_map_.insert(handler_pair(CFG_MUX_CABLE_TABLE_NAME, &MuxOrch::handleMuxCfg));
     handler_map_.insert(handler_pair(CFG_PEER_SWITCH_TABLE_NAME, &MuxOrch::handlePeerSwitch));
@@ -1231,6 +1239,46 @@ bool MuxOrch::handleMuxCfg(const Request& request)
     return true;
 }
 
+// Retrieve tc_to_queue_map and tc_to_dscp_map from CONFIG_DB, and 
+// resolve the ids from QosOrch
+bool MuxOrch::resolveQosTableIds()
+{
+    std::vector<FieldValueTuple> field_value_tuples;
+    if (cfgTunnelTable_.get(MUX_TUNNEL, field_value_tuples))
+    {
+        KeyOpFieldsValuesTuple tuple{"TUNNEL", MUX_TUNNEL, field_value_tuples};
+        for (auto it = kfvFieldsValues(tuple).begin(); it != kfvFieldsValues(tuple).end(); it++)
+        {
+            if (tunnel_qos_to_ref_table_map.find(fvField(*it)) != tunnel_qos_to_ref_table_map.end())
+            {
+                sai_object_id_t id;
+                string object_name;
+                string &map_type_name = fvField(*it);
+                string &map_name = fvValue(*it);
+                ref_resolve_status status = resolveFieldRefValue(QosOrch::getTypeMap(), map_type_name, tunnel_qos_to_ref_table_map.at(map_type_name), tuple, id, object_name);
+                if (status == ref_resolve_status::success)
+                {
+                    if (map_type_name == encap_tc_to_queue_field_name)
+                    {
+                        tc_to_queue_map_id_ = id;
+                    }
+                    else if (map_type_name == encap_tc_to_dscp_field_name)
+                    {
+                        tc_to_dscp_map_id_ = id;
+                    }
+                    SWSS_LOG_INFO("Resolved QoS map for tunnel %s type %s name %s", MUX_TUNNEL, map_type_name.c_str(), map_name.c_str());
+                }
+            }
+        }
+        return true;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Failed to read config from CONFIG_DB for %s", MUX_TUNNEL);
+        return false;
+    }
+}
+
 bool MuxOrch::handlePeerSwitch(const Request& request)
 {
     SWSS_LOG_ENTER();
@@ -1252,11 +1300,13 @@ bool MuxOrch::handlePeerSwitch(const Request& request)
                            MUX_TUNNEL, peer_ip.to_string().c_str());
             return false;
         }
-        sai_object_id_t tc_to_dscp_map_id = decap_orch_->getTCToDSCPMap(MUX_TUNNEL);
-        sai_object_id_t tc_to_queue_map_id = decap_orch_->getTCToQueueMap(MUX_TUNNEL);
+        if (!resolveQosTableIds())
+        {
+            return false;
+        }
         auto it =  dst_ips.getIpAddresses().begin();
         const IpAddress& dst_ip = *it;
-        mux_tunnel_id_ = create_tunnel(&peer_ip, &dst_ip, tc_to_dscp_map_id, tc_to_queue_map_id);
+        mux_tunnel_id_ = create_tunnel(&peer_ip, &dst_ip, tc_to_dscp_map_id_, tc_to_queue_map_id_);
         SWSS_LOG_NOTICE("Mux peer ip '%s' was added, peer name '%s'",
                          peer_ip.to_string().c_str(), peer_name.c_str());
     }

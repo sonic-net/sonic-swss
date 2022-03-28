@@ -41,7 +41,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
         string op = kfvOp(t);
 
         IpAddresses dst_ip_addresses;
-        IpAddress src_ip("0.0.0.0");
+        IpAddress src_ip_address("0.0.0.0");
         IpAddress* p_src_ip = nullptr;
         string tunnel_type;
         string dscp_mode;
@@ -50,9 +50,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
         string ttl_mode;
         sai_object_id_t dscp_to_dc_map_id = SAI_NULL_OBJECT_ID;
         sai_object_id_t tc_to_pg_map_id = SAI_NULL_OBJECT_ID;
-        sai_object_id_t tc_to_queue_map_id = SAI_NULL_OBJECT_ID;
-        sai_object_id_t tc_to_dscp_map_id = SAI_NULL_OBJECT_ID;
-        
+        TunnelTermType term_type = TUNNEL_TERM_TYPE_P2MP;
 
         bool valid = true;
 
@@ -64,12 +62,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
         {
             tunnel_id = tunnelTable[key].tunnel_id;
         }
-        //Tunnel term type is set to P2P for mux tunnel to apply different configs
-        TunnelTermType term_type = TUNNEL_TERM_TYPE_P2MP;
-        if (key == MUX_TUNNEL)
-        {
-            term_type = TUNNEL_TERM_TYPE_P2P;
-        }
+        
         if (op == SET_COMMAND)
         {
 
@@ -97,13 +90,19 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                         valid = false;
                         break;
                     }
+                    if (exists)
+                    {
+                        setIpAttribute(key, ip_addresses, tunnelTable.find(key)->second.tunnel_id);
+                    }
                 }
                 else if (fvField(i) == "src_ip")
                 {
                     try
                     {
-                        src_ip = IpAddress(fvValue(i));
-                        p_src_ip = &src_ip;
+                        src_ip_address = IpAddress(fvValue(i));
+                        p_src_ip = &src_ip_address;
+                        //Tunnel term type is set to P2P when source ip is present
+                        term_type = TUNNEL_TERM_TYPE_P2P;
                     }
                     catch (const std::invalid_argument &e)
                     {
@@ -190,26 +189,14 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                         setTunnelAttribute(fvField(i), tc_to_pg_map, tunnel_id);
                     }
                 }
-                else if (fvField(i) == ENCAP_TC_TO_DSCP_MAP)
-                {
-                    // TODO:
-                }
-                else if (fvField(i) == ENCAP_TC_TO_QUEUE_MAP)
-                {
-                    // TODO:
-                }
             }
 
-            if (valid)
+            //create new tunnel if it doesn't exists already
+            if (valid && !exists)
             {
-                if (exists)
-                {
-                    // Update existing tunnel terms
-                    setIpAttribute(key, src_ip, dst_ip_addresses, tunnel_id, term_type);
-                }
-                // create new tunnel if it doesn't exists already
-                else if (addDecapTunnel(key, tunnel_type, dst_ip_addresses, p_src_ip, dscp_mode, ecn_mode, encap_ecn_mode, ttl_mode,
-                                         dscp_to_dc_map_id, tc_to_pg_map_id, tc_to_dscp_map_id, tc_to_queue_map_id))
+                
+                if (addDecapTunnel(key, tunnel_type, dst_ip_addresses, p_src_ip, dscp_mode, ecn_mode, encap_ecn_mode, ttl_mode,
+                                         dscp_to_dc_map_id, tc_to_pg_map_id))
                 {
                     SWSS_LOG_NOTICE("Tunnel(s) added to ASIC_DB.");
                 }
@@ -250,8 +237,6 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
  *    @param[in] term_type - The type of tunnel term
  *    @param[in] dscp_to_tc_map_id - Map ID for remapping DSCP to TC (decap)
  *    @param[in] tc_to_pg_map_id   - Map ID for remapping TC to PG (decap)
- *    @param[in] tc_to_dscp_map_id - Map ID for remapping TC to DSCP (encap)
- *    @param[in] tc_to_queue_map_id   - Map ID for remapping TC to queue (encap)
  *
  * Return Values:
  *    @return true on success and false if there's an error
@@ -267,9 +252,7 @@ bool TunnelDecapOrch::addDecapTunnel(
     string ttl,
     TunnelTermType term_type,
     sai_object_id_t dscp_to_tc_map_id,
-    sai_object_id_t tc_to_pg_map_id,
-    sai_object_id_t tc_to_dscp_map_id,
-    sai_object_id_t tc_to_queue_map_id)
+    sai_object_id_t tc_to_pg_map_id)
 {
 
     SWSS_LOG_ENTER();
@@ -405,7 +388,7 @@ bool TunnelDecapOrch::addDecapTunnel(
         }
     }
 
-    tunnelTable[key] = { tunnel_id, overlayIfId, dst_ip, {}, tc_to_dscp_map_id, tc_to_queue_map_id };
+    tunnelTable[key] = { tunnel_id, overlayIfId, dst_ip, {} };
 
     // create a decap tunnel entry for every source_ip - dest_ip pair
     if (!addDecapTunnelTermEntries(key, src_ip, dst_ip, tunnel_id, term_type))
@@ -477,8 +460,17 @@ bool TunnelDecapOrch::addDecapTunnelTermEntries(string tunnelKey, swss::IpAddres
     {
         const IpAddress& ia = *it;
         string dst_ip = ia.to_string();
-        // Key is src_ip-dst_ip, 10.1.1.1-20.2.2.2
-        string key = src_ip.to_string + '-' + dst_ip;
+        // The key will be src_ip-dst_ip (like 10.1.1.1-20.2.2.2) if src_ip is not 0,
+        // or the key will contain dst_ip only
+        string key;
+        if (!src_ip.isZero())
+        {
+            key = src_ip.to_string + '-' + dst_ip;
+        }
+        else
+        {
+            key = dst_ip;
+        }
 
         // check if the there's an entry already for the key pair
         if (existingIps.find(key) != existingIps.end())
@@ -624,15 +616,13 @@ bool TunnelDecapOrch::setTunnelAttribute(string field, string value, sai_object_
  *
  * Arguments:
  *    @param[in] key - key of the tunnel from APP_DB
- *    @param[in] src_ip - source IP for tunnel term
- *    @param[in] new_dst_ip_addresses - new destination ip addresses to decap (comes from APP_DB)
+ *    @param[in] new_ip_addresses - new destination ip addresses to decap (comes from APP_DB)
  *    @param[in] tunnel_id - the id of the tunnel
- *    @param[in] term_type - The type of tunnel term
  *
  * Return Values:
  *    @return true on success and false if there's an error
  */
-bool TunnelDecapOrch::setIpAttribute(string key, IpAddress src_ip, IpAddresses new_dst_ip_addresses, sai_object_id_t tunnel_id, TunnelTermType term_type)
+bool TunnelDecapOrch::setIpAttribute(string key, IpAddresses new_ip_addresses, sai_object_id_t tunnel_id)
 {
     TunnelEntry *tunnel_info = &tunnelTable.find(key)->second;
 
@@ -640,16 +630,16 @@ bool TunnelDecapOrch::setIpAttribute(string key, IpAddress src_ip, IpAddresses n
     vector<TunnelTermEntry> tunnel_term_info_copy(tunnel_info->tunnel_term_info);
 
     tunnel_info->tunnel_term_info.clear();
-    tunnel_info->dst_ip_addrs = new_dst_ip_addresses;
-    string src_ip = src_ip.to_string();
+    tunnel_info->dst_ip_addrs = new_ip_addresses;
+
     // loop through original ips and remove ips not in the new ip_addresses
     for (auto it = tunnel_term_info_copy.begin(); it != tunnel_term_info_copy.end(); ++it)
     {
         TunnelTermEntry tunnel_entry_info = *it;
-        string key = src_ip + '-' + tunnel_entry_info.dst_ip;
-        if (!new_dst_ip_addresses.contains(key))
+        string ip = tunnel_entry_info.ip_address;
+        if (!new_ip_addresses.contains(ip))
         {
-            if (!removeDecapTunnelTermEntry(tunnel_entry_info.tunnel_term_id, key))
+            if (!removeDecapTunnelTermEntry(tunnel_entry_info.tunnel_term_id, ip))
             {
                 return false;
             }
@@ -657,12 +647,12 @@ bool TunnelDecapOrch::setIpAttribute(string key, IpAddress src_ip, IpAddresses n
         else
         {
             // add the data into the tunnel_term_info
-            tunnel_info->tunnel_term_info.push_back({ tunnel_entry_info.tunnel_term_id, src_ip, dst_ip, term_type });
+            tunnel_info->tunnel_term_info.push_back({ tunnel_entry_info.tunnel_term_id, ip });
         }
     }
 
     // add all the new ip addresses
-    if(!addDecapTunnelTermEntries(key, src_ip, new_dst_ip_addresses, tunnel_id, term_type))
+    if(!addDecapTunnelTermEntries(key, IPAddress('0.0.0.0'), new_ip_addresses, tunnel_id, TUNNEL_TERM_TYPE_P2MP))
     {
         return false;
     }
@@ -919,26 +909,4 @@ IpAddresses TunnelDecapOrch::getDstIpAddresses(std::string tunnelKey) const
     }
 
     return tunnelTable[tunnelKey].dst_ip_addrs;
-}
-
-sai_object_id_t TunnelDecapOrch::getTCToDSCPMap(std::string tunnelKey) const
-{
-    auto iter = tunnelTable.find(tunnelKey);
-    if (iter == tunnelTable.end())
-    {
-        SWSS_LOG_ERROR("Tunnel config not found %s", tunnelKey.c_str());
-        return SAI_NULL_OBJECT_ID;
-    }
-    return iter->second.tc_to_dscp_map_id;
-}
-
-sai_object_id_t TunnelDecapOrch::getTCToQueueMap(std::string tunnelKey) const
-{
-    auto iter = tunnelTable.find(tunnelKey);
-    if (iter == tunnelTable.end())
-    {
-        SWSS_LOG_ERROR("Tunnel config not found %s", tunnelKey.c_str());
-        return SAI_NULL_OBJECT_ID;
-    }
-    return iter->second.tc_to_queue_map_id;
 }

@@ -22,9 +22,6 @@ enum TunnelTermType
 #define DECAP_DSCP_TO_DC_MAP    "decap_dscp_to_tc_map"
 #define DECAP_TC_TO_PG_MAP      "decap_tc_to_pg_map"
 
-#define ENCAP_TC_TO_QUEUE_MAP   "encap_tc_to_queue_map"
-#define ENCAP_TC_TO_DSCP_MAP    "encap_tc_to_dscp_map"
-
 struct TunnelTermEntry
 {
     sai_object_id_t                 tunnel_term_id;
@@ -39,8 +36,6 @@ struct TunnelEntry
     sai_object_id_t                 overlay_intf_id;        // overlay interface id
     swss::IpAddresses               dst_ip_addrs;           // destination ip addresses
     std::vector<TunnelTermEntry>    tunnel_term_info;       // tunnel_entry ids related to the tunnel abd ips related to the tunnel (all ips for tunnel entries that refer to this tunnel)
-    sai_object_id_t                 tc_to_dscp_map_id;      // map for re-writing DSCP value of tunnel traffic
-    sai_object_id_t                 tc_to_queue_map_id;     // map for remapping tunnel traffic into another queue
 };
 
 struct NexthopTunnel
@@ -72,8 +67,6 @@ public:
     sai_object_id_t createNextHopTunnel(std::string tunnelKey, swss::IpAddress& ipAddr);
     bool removeNextHopTunnel(std::string tunnelKey, swss::IpAddress& ipAddr);
     swss::IpAddresses getDstIpAddresses(std::string tunnelKey) const;
-    sai_object_id_t getTCToDSCPMap(std::string tunnelKey) const;
-    sai_object_id_t getTCToQueueMap(std::string tunnelKey) const; 
 
 private:
     TunnelTable tunnelTable;
