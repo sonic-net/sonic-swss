@@ -301,6 +301,12 @@ const set<sai_acl_action_type_t>& AclTableType::getActions() const
     return m_aclAcitons;
 }
 
+bool AclTableType::addAction(sai_acl_action_type_t action)
+{
+    m_aclAcitons.insert(action);
+    returne true;
+}
+
 AclTableTypeBuilder& AclTableTypeBuilder::withName(string name)
 {
     m_tableType.m_name = name;
@@ -1799,6 +1805,50 @@ AclTable::AclTable(AclOrch *pAclOrch, string id) noexcept : m_pAclOrch(pAclOrch)
 AclTable::AclTable(AclOrch *pAclOrch) noexcept : m_pAclOrch(pAclOrch)
 {
 
+}
+
+bool AclTable::addMandatoryActions()
+{
+    SWSS_LOG_ENTER();
+
+    if (stage == ACL_STAGE_UNKNOWN)
+    {
+        return false;
+    }
+
+    if (!m_pAclOrch->isAclActionListMandatoryOnTableCreation(stage))
+    {
+        // No op if action list is not mandatory on table creation.
+        return true;
+    }
+
+    if (type.getName() == TABLE_TYPE_MIRROR || type.getName() == TABLE_TYPE_MIRRORV6)
+    {
+
+        sai_acl_action_type_t acl_action = SAI_ACL_ACTION_TYPE_COUNTER;
+        if (m_pAclOrch->isAclActionSupported(stage, acl_action))
+        {
+            SWSS_LOG_INFO("Add counter acl action");
+            type.addAction(acl_action);
+        }
+
+        if (stage == ACL_STAGE_INGRESS)
+        {
+            acl_action = SAI_ACL_ACTION_TYPE_MIRROR_INGRESS;
+        }
+        else
+        {
+            acl_action = SAI_ACL_ACTION_TYPE_MIRROR_EGRESS;
+        }
+
+        if (m_pAclOrch->isAclActionSupported(stage, acl_action))
+        {
+            SWSS_LOG_INFO("Add ingress/egress acl action");
+            type.addAction(acl_action);
+        }
+    }
+
+    return true;
 }
 
 bool AclTable::validateAddType(const AclTableType &tableType)
@@ -3938,6 +3988,8 @@ void AclOrch::doAclTableTask(Consumer &consumer)
             }
 
             newTable.validateAddType(*tableType);
+
+            newTable.addMandatoryActions();
 
             // validate and create/update ACL Table
             if (bAllAttributesOk && newTable.validate())
