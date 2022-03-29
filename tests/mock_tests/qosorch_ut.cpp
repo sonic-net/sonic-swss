@@ -759,6 +759,120 @@ namespace qosorch_test
         ASSERT_EQ((*QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME])["AZURE_1"].m_saiObjectId, SAI_NULL_OBJECT_ID);
     }
 
+    TEST_F(QosOrchTest, QosOrchTestPortQosMapReferencingObjRemoveThenAdd)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        Table portQosMapTable = Table(m_config_db.get(), CFG_PORT_QOS_MAP_TABLE_NAME);
+
+        portQosMapTable.set("Ethernet0",
+                            {
+                                {"dscp_to_tc_map", "AZURE"}
+                            });
+        gQosOrch->addExistingData(&portQosMapTable);
+        static_cast<Orch *>(gQosOrch)->doTask();
+        CheckDependency(CFG_PORT_QOS_MAP_TABLE_NAME, "Ethernet0", "dscp_to_tc_map", CFG_DSCP_TO_TC_MAP_TABLE_NAME, "AZURE");
+
+        // Remove referenced obj
+        entries.push_back({"AZURE", "DEL", {}});
+        auto dscpToTcMapConsumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_DSCP_TO_TC_MAP_TABLE_NAME));
+        dscpToTcMapConsumer->addToSync(entries);
+        entries.clear();
+        // Drain DSCP_TO_TC_MAP table
+        static_cast<Orch *>(gQosOrch)->doTask();
+        // Make sure the dependency remains
+        CheckDependency(CFG_PORT_QOS_MAP_TABLE_NAME, "Ethernet0", "dscp_to_tc_map", CFG_DSCP_TO_TC_MAP_TABLE_NAME, "AZURE");
+
+        // Remove and readd referencing obj
+        entries.push_back({"Ethernet0", "DEL", {}});
+        entries.push_back({"Ethernet0", "SET",
+                           {
+                               {"dscp_to_tc_map", "AZURE"}
+                           }});
+        auto portQosMapConsumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_PORT_QOS_MAP_TABLE_NAME));
+        portQosMapConsumer->addToSync(entries);
+        entries.clear();
+        // Drain PORT_QOS_MAP table
+        static_cast<Orch *>(gQosOrch)->doTask();
+        static_cast<Orch *>(gQosOrch)->doTask();
+        // The dependency should be removed
+        //CheckDependency(CFG_PORT_QOS_MAP_TABLE_NAME, "Ethernet0", "dscp_to_tc_map", CFG_DSCP_TO_TC_MAP_TABLE_NAME);
+
+        // Re-create referenced obj
+        entries.push_back({"AZURE", "SET",
+                           {
+                               {"1", "0"}
+                           }});
+        dscpToTcMapConsumer->addToSync(entries);
+        entries.clear();
+        // Drain DSCP_TO_TC_MAP table
+        static_cast<Orch *>(gQosOrch)->doTask();
+        // Make sure the dependency recovers
+        CheckDependency(CFG_PORT_QOS_MAP_TABLE_NAME, "Ethernet0", "dscp_to_tc_map", CFG_DSCP_TO_TC_MAP_TABLE_NAME, "AZURE");
+
+        // All items have been drained
+        vector<string> ts;
+        static_cast<Orch *>(gQosOrch)->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+    }
+
+    TEST_F(QosOrchTest, QosOrchTestQueueReferencingObjRemoveThenAdd)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        Table queueTable = Table(m_config_db.get(), CFG_QUEUE_TABLE_NAME);
+
+        queueTable.set("Ethernet0|0",
+                       {
+                           {"scheduler", "scheduler.0"}
+                       });
+        gQosOrch->addExistingData(&queueTable);
+        static_cast<Orch *>(gQosOrch)->doTask();
+        CheckDependency(CFG_QUEUE_TABLE_NAME, "Ethernet0|0", "scheduler", CFG_SCHEDULER_TABLE_NAME, "scheduler.0");
+
+        // Remove referenced obj
+        entries.push_back({"scheduler.0", "DEL", {}});
+        auto schedulerConsumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_SCHEDULER_TABLE_NAME));
+        schedulerConsumer->addToSync(entries);
+        entries.clear();
+        // Drain SCHEDULER table
+        static_cast<Orch *>(gQosOrch)->doTask();
+        // Make sure the dependency remains
+        CheckDependency(CFG_QUEUE_TABLE_NAME, "Ethernet0|0", "scheduler", CFG_SCHEDULER_TABLE_NAME, "scheduler.0");
+
+        // Remove and readd referencing obj
+        entries.push_back({"Ethernet0|0", "DEL", {}});
+        entries.push_back({"Ethernet0|0", "SET",
+                           {
+                               {"scheduler", "scheduler.0"}
+                           }});
+        auto queueConsumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_QUEUE_TABLE_NAME));
+        queueConsumer->addToSync(entries);
+        entries.clear();
+        // Drain QUEUE table
+        static_cast<Orch *>(gQosOrch)->doTask();
+        // The dependency should be removed
+        //CheckDependency(CFG_QUEUE_TABLE_NAME, "Ethernet0|0", "scheduler", CFG_SCHEDULER_TABLE_NAME);
+
+        // Re-create referenced obj
+        entries.push_back({"scheduler.0", "SET",
+                           {
+                               {"type", "DWRR"},
+                               {"weight", "14"}
+                           }});
+        schedulerConsumer->addToSync(entries);
+        entries.clear();
+        // Drain SCHEDULER table
+        static_cast<Orch *>(gQosOrch)->doTask();
+        // Drain QUEUE table
+        static_cast<Orch *>(gQosOrch)->doTask();
+        // Make sure the dependency recovers
+        CheckDependency(CFG_QUEUE_TABLE_NAME, "Ethernet0|0", "scheduler", CFG_SCHEDULER_TABLE_NAME, "scheduler.0");
+
+        // All items have been drained
+        vector<string> ts;
+        static_cast<Orch *>(gQosOrch)->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+    }
+
     TEST_F(QosOrchTest, QosOrchTestGlobalDscpToTcMap)
     {
         // Make sure dscp to tc map is correct
