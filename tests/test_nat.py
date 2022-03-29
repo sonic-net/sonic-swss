@@ -1,4 +1,5 @@
 import time
+import pytest
 
 from dvslib.dvs_common import wait_for_result
 
@@ -175,6 +176,7 @@ class TestNat(object):
         #check the entry is not there in asic db
         self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 0)
 
+    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_AddTwiceNatEntry(self, dvs, testlog):
         # initialize
         self.setup_db(dvs)

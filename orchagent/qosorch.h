@@ -72,6 +72,7 @@ class DscpToTcMapHandler : public QosMapHandler
 public:
     bool convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes) override;
     sai_object_id_t addQosItem(const vector<sai_attribute_t> &attributes) override;
+    bool removeQosItem(sai_object_id_t sai_object);
 protected:
     void applyDscpToTcMapToSwitch(sai_attr_id_t attr_id, sai_object_id_t sai_dscp_to_tc_map);
 };
@@ -196,5 +197,11 @@ private:
     };
 
     std::unordered_map<sai_object_id_t, SchedulerGroupPortInfo_t> m_scheduler_group_port_info;
+
+    // SAI OID of the global dscp to tc map
+    sai_object_id_t m_globalDscpToTcMap;
+
+    friend QosMapHandler;
+    friend DscpToTcMapHandler;
 };
 #endif /* SWSS_QOSORCH_H */

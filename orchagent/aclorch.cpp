@@ -2645,7 +2645,9 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     // Broadcom and Mellanox. Virtual switch is also supported for testing
     // purposes.
     string platform = getenv("platform") ? getenv("platform") : "";
+    string sub_platform = getenv("sub_platform") ? getenv("sub_platform") : "";
     if (platform == BRCM_PLATFORM_SUBSTRING ||
+            platform == CISCO_8000_PLATFORM_SUBSTRING ||
             platform == MLNX_PLATFORM_SUBSTRING ||
             platform == BFN_PLATFORM_SUBSTRING  ||
             platform == MRVL_PLATFORM_SUBSTRING ||
@@ -2675,8 +2677,11 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
             m_mirrorTableCapabilities[TABLE_TYPE_MIRRORV6] ? "yes" : "no");
 
     // In Mellanox platform, V4 and V6 rules are stored in different tables
+    // In Broadcom DNX platform also, V4 and V6 rules are stored in different tables
     if (platform == MLNX_PLATFORM_SUBSTRING ||
-        platform == MRVL_PLATFORM_SUBSTRING)
+        platform == CISCO_8000_PLATFORM_SUBSTRING ||
+        platform == MRVL_PLATFORM_SUBSTRING ||
+        (platform == BRCM_PLATFORM_SUBSTRING && sub_platform == BRCM_DNX_PLATFORM_SUBSTRING))
     {
         m_isCombinedMirrorV6Table = false;
     }
@@ -3615,7 +3620,9 @@ bool AclOrch::removeAclRule(string table_id, string rule_id)
     auto rule = getAclRule(table_id, rule_id);
     if (!rule)
     {
-        return false;
+        SWSS_LOG_NOTICE("ACL rule [%s] in table [%s] already deleted",
+                        rule_id.c_str(), table_id.c_str());
+        return true;
     }
 
     if (rule->hasCounter())

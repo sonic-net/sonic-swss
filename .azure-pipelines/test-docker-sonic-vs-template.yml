@@ -1,7 +1,7 @@
 parameters:
 - name: timeout
   type: number
-  default: 240
+  default: 480
 
 - name: log_artifact_name
   type: string
@@ -21,10 +21,13 @@ jobs:
   displayName: vstest
   timeoutInMinutes: ${{ parameters.timeout }}
 
-  pool:
-    vmImage: 'ubuntu-20.04'
+  pool: sonic-common
 
   steps:
+  - script: |
+      ls -A1 | xargs -I{} sudo rm -rf {}
+    displayName: "Clean workspace"
+  - checkout: self
   - task: DownloadPipelineArtifact@2
     inputs:
       artifact: docker-sonic-vs

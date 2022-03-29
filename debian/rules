@@ -29,7 +29,7 @@ include /usr/share/dpkg/default.mk
 
 ifeq ($(ENABLE_GCOV), y)
 override_dh_auto_configure:
-	dh_auto_configure -- --enable-gcov
+	dh_auto_configure -- --enable-gcov CFLAGS="-g -O0" CXXFLAGS="-g -O0"
 endif
 
 override_dh_auto_install:
