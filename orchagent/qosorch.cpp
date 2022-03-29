@@ -1739,7 +1739,7 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
                 SWSS_LOG_INFO("Removed %s on port %s", mapRef.first.c_str(), port_name.c_str());
             }
 
-            if (!gPortsOrch->setPortPfc(port.m_port_id, 0))
+            if (!gPortsOrch->setPortPfc(port.m_port_id, 0, 0))
             {
                 SWSS_LOG_ERROR("Failed to disable PFC on port %s", port_name.c_str());
             }
