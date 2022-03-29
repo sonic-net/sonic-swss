@@ -984,9 +984,13 @@ bool AclRule::updateCounter(const AclRule& updatedRule)
         {
             return false;
         }
+
+        m_pAclOrch->registerFlexCounter(*this);
     }
     else
     {
+        m_pAclOrch->deregisterFlexCounter(*this);
+
         if (!disableCounter())
         {
             return false;
