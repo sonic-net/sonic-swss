@@ -636,10 +636,13 @@ void NeighOrch::doTask(Consumer &consumer)
         return;
     }
 
+    SWSS_LOG_NOTICE("Test log message");
+
     string table_name = consumer.getTableName();
     if(table_name == CHASSIS_APP_SYSTEM_NEIGH_TABLE_NAME)
     {
         doVoqSystemNeighTask(consumer);
+        SWSS_LOG_NOTICE("Test log message");
         return;
     }
 
