@@ -761,6 +761,7 @@ namespace qosorch_test
 
     TEST_F(QosOrchTest, QosOrchTestPortQosMapReferencingObjRemoveThenAdd)
     {
+        vector<string> ts;
         std::deque<KeyOpFieldsValuesTuple> entries;
         Table portQosMapTable = Table(m_config_db.get(), CFG_PORT_QOS_MAP_TABLE_NAME);
 
@@ -781,6 +782,11 @@ namespace qosorch_test
         static_cast<Orch *>(gQosOrch)->doTask();
         // Make sure the dependency remains
         CheckDependency(CFG_PORT_QOS_MAP_TABLE_NAME, "Ethernet0", "dscp_to_tc_map", CFG_DSCP_TO_TC_MAP_TABLE_NAME, "AZURE");
+        // Make sure the notification isn't drained
+        static_cast<Orch *>(gQosOrch)->dumpPendingTasks(ts);
+        ASSERT_EQ(ts.size(), 1);
+        ASSERT_EQ(ts[0], "DSCP_TO_TC_MAP|AZURE|DEL");
+        ts.clear();
 
         // Remove and readd referencing obj
         entries.push_back({"Ethernet0", "DEL", {}});
@@ -791,11 +797,16 @@ namespace qosorch_test
         auto portQosMapConsumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_PORT_QOS_MAP_TABLE_NAME));
         portQosMapConsumer->addToSync(entries);
         entries.clear();
-        // Drain PORT_QOS_MAP table
+        // Drain the PORT_QOS_MAP table
         static_cast<Orch *>(gQosOrch)->doTask();
+        // Drain the DSCP_TO_TC_MAP table which contains items need to retry
         static_cast<Orch *>(gQosOrch)->doTask();
         // The dependency should be removed
-        //CheckDependency(CFG_PORT_QOS_MAP_TABLE_NAME, "Ethernet0", "dscp_to_tc_map", CFG_DSCP_TO_TC_MAP_TABLE_NAME);
+        CheckDependency(CFG_PORT_QOS_MAP_TABLE_NAME, "Ethernet0", "dscp_to_tc_map", CFG_DSCP_TO_TC_MAP_TABLE_NAME);
+        static_cast<Orch *>(gQosOrch)->dumpPendingTasks(ts);
+        ASSERT_EQ(ts.size(), 1);
+        ASSERT_EQ(ts[0], "PORT_QOS_MAP|Ethernet0|SET|dscp_to_tc_map:AZURE");
+        ts.clear();
 
         // Re-create referenced obj
         entries.push_back({"AZURE", "SET",
@@ -810,13 +821,13 @@ namespace qosorch_test
         CheckDependency(CFG_PORT_QOS_MAP_TABLE_NAME, "Ethernet0", "dscp_to_tc_map", CFG_DSCP_TO_TC_MAP_TABLE_NAME, "AZURE");
 
         // All items have been drained
-        vector<string> ts;
         static_cast<Orch *>(gQosOrch)->dumpPendingTasks(ts);
         ASSERT_TRUE(ts.empty());
     }
 
     TEST_F(QosOrchTest, QosOrchTestQueueReferencingObjRemoveThenAdd)
     {
+        vector<string> ts;
         std::deque<KeyOpFieldsValuesTuple> entries;
         Table queueTable = Table(m_config_db.get(), CFG_QUEUE_TABLE_NAME);
 
@@ -837,6 +848,10 @@ namespace qosorch_test
         static_cast<Orch *>(gQosOrch)->doTask();
         // Make sure the dependency remains
         CheckDependency(CFG_QUEUE_TABLE_NAME, "Ethernet0|0", "scheduler", CFG_SCHEDULER_TABLE_NAME, "scheduler.0");
+        static_cast<Orch *>(gQosOrch)->dumpPendingTasks(ts);
+        ASSERT_EQ(ts.size(), 1);
+        ASSERT_EQ(ts[0], "SCHEDULER|scheduler.0|DEL");
+        ts.clear();
 
         // Remove and readd referencing obj
         entries.push_back({"Ethernet0|0", "DEL", {}});
@@ -850,7 +865,11 @@ namespace qosorch_test
         // Drain QUEUE table
         static_cast<Orch *>(gQosOrch)->doTask();
         // The dependency should be removed
-        //CheckDependency(CFG_QUEUE_TABLE_NAME, "Ethernet0|0", "scheduler", CFG_SCHEDULER_TABLE_NAME);
+        CheckDependency(CFG_QUEUE_TABLE_NAME, "Ethernet0|0", "scheduler", CFG_SCHEDULER_TABLE_NAME);
+        static_cast<Orch *>(gQosOrch)->dumpPendingTasks(ts);
+        ASSERT_EQ(ts.size(), 1);
+        ASSERT_EQ(ts[0], "QUEUE|Ethernet0|0|SET|scheduler:scheduler.0");
+        ts.clear();
 
         // Re-create referenced obj
         entries.push_back({"scheduler.0", "SET",
@@ -868,7 +887,6 @@ namespace qosorch_test
         CheckDependency(CFG_QUEUE_TABLE_NAME, "Ethernet0|0", "scheduler", CFG_SCHEDULER_TABLE_NAME, "scheduler.0");
 
         // All items have been drained
-        vector<string> ts;
         static_cast<Orch *>(gQosOrch)->dumpPendingTasks(ts);
         ASSERT_TRUE(ts.empty());
     }
