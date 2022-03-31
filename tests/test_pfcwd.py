@@ -147,7 +147,7 @@ class TestPfcwdFunc(object):
 
         return str(mask)
 
-    def set_ports_pfc(self, status='enable', pfc_queues=[3,4], watchdog_type='software'):
+    def set_ports_pfc(self, status='enable', pfc_queues=[3,4]):
         keyname = 'pfcwd_sw_enable'
         for port in self.test_ports:
             if 'enable' in status:
@@ -218,7 +218,7 @@ class TestPfcwdFunc(object):
         try:
             # enable PFC on queues
             test_queues = [3, 4]
-            self.set_ports_pfc(pfc_queues=test_queues, watchdog_type='software')
+            self.set_ports_pfc(pfc_queues=test_queues)
 
             # verify in asic db
             self.verify_ports_pfc(test_queues)
@@ -259,7 +259,7 @@ class TestPfcwdFunc(object):
         try:
             # enable PFC on queues
             test_queues = [3, 4]
-            self.set_ports_pfc(pfc_queues=test_queues, watchdog_type='software')
+            self.set_ports_pfc(pfc_queues=test_queues)
 
             # verify in asic db
             self.verify_ports_pfc(test_queues)
