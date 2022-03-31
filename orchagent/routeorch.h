@@ -274,8 +274,6 @@ private:
     const NhgBase &getNhg(const std::string& nhg_index);
     void incNhgRefCount(const std::string& nhg_index);
     void decNhgRefCount(const std::string& nhg_index);
-    
-    bool parseRouteKey(const std::string &key, char sep, sai_object_id_t &vrf_id, IpPrefix &ip_prefix);
 };
 
 #endif /* SWSS_ROUTEORCH_H */

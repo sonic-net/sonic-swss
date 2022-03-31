@@ -565,10 +565,23 @@ void RouteOrch::doTask(Consumer& consumer)
             sai_object_id_t& vrf_id = ctx.vrf_id;
             IpPrefix& ip_prefix = ctx.ip_prefix;
 
-            if (!parseRouteKey(key, ':', vrf_id, ip_prefix))
+            if (!key.compare(0, strlen(VRF_PREFIX), VRF_PREFIX))
             {
-                it++;
-                continue;
+                size_t found = key.find(':');
+                string vrf_name = key.substr(0, found);
+
+                if (!m_vrfOrch->isVRFexists(vrf_name))
+                {
+                    it++;
+                    continue;
+                }
+                vrf_id = m_vrfOrch->getVRFid(vrf_name);
+                ip_prefix = IpPrefix(key.substr(found+1));
+            }
+            else
+            {
+                vrf_id = gVirtualRouterId;
+                ip_prefix = IpPrefix(key);
             }
 
             if (op == SET_COMMAND)
@@ -2211,7 +2224,6 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
 
     if (it_route == m_syncdRoutes.at(vrf_id).end())
     {
-        // TODO: make the function name clearer -> handleRouteAdd
         gFlowCounterRouteOrch->handleRouteAdd(vrf_id, ipPrefix);
     }
 
@@ -2566,28 +2578,4 @@ void RouteOrch::decNhgRefCount(const std::string &nhg_index)
     {
         gCbfNhgOrch->decNhgRefCount(nhg_index);
     }
-}
-
-bool RouteOrch::parseRouteKey(const std::string &key, char sep, sai_object_id_t &vrf_id, IpPrefix &ip_prefix)
-{
-    if (!key.compare(0, strlen(VRF_PREFIX), VRF_PREFIX))
-    {
-        size_t found = key.find(sep);
-        string vrf_name = key.substr(0, found);
-
-        if (!m_vrfOrch->isVRFexists(vrf_name))
-        {
-            SWSS_LOG_ERROR("Invalid VRF name: %s", vrf_name.c_str());
-            return false;
-        }
-        vrf_id = m_vrfOrch->getVRFid(vrf_name);
-        ip_prefix = IpPrefix(key.substr(found+1));
-    }
-    else
-    {
-        vrf_id = gVirtualRouterId;
-        ip_prefix = IpPrefix(key);
-    }
-
-    return true;
 }
