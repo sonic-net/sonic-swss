@@ -456,6 +456,8 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
             else
             {
                 intfs_entry.mac = gMacAddress;
+                port.m_mac = gMacAddress;
+                gPortsOrch->setPort(alias, port);
             }
             m_syncdIntfses[alias] = intfs_entry;
             m_vrfOrch->increaseVrfRefCount(vrf_id);
@@ -955,7 +957,7 @@ void IntfsOrch::doTask(Consumer &consumer)
 
                         if (m_syncdIntfses.find(alias) != m_syncdIntfses.end())
                         {
-                            SWSS_LOG_NOTICE("update router interface mac to %s", port.m_mac.to_string().c_str());
+                            SWSS_LOG_NOTICE("update %s router interface mac to %s", alias.c_str(), mac.to_string().c_str());
                             m_syncdIntfses[alias].mac = mac;
                         }
                     }
@@ -968,7 +970,7 @@ void IntfsOrch::doTask(Consumer &consumer)
             }
             else
             {
-                if (gPortsOrch->getPort(alias, port))
+                if (!ip_prefix_in_key && gPortsOrch->getPort(alias, port))
                 {
                     if (m_syncdIntfses.find(alias) != m_syncdIntfses.end())
                     {
