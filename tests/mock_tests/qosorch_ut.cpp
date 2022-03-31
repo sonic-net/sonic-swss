@@ -823,6 +823,25 @@ namespace qosorch_test
         // All items have been drained
         static_cast<Orch *>(gQosOrch)->dumpPendingTasks(ts);
         ASSERT_TRUE(ts.empty());
+
+        // Remove and recreate the referenced obj
+        entries.push_back({"AZURE", "DEL", {}});
+        entries.push_back({"AZURE", "SET",
+                           {
+                               {"1", "0"}
+                           }});
+        dscpToTcMapConsumer->addToSync(entries);
+        entries.clear();
+        // Drain DSCP_TO_TC_MAP table
+        static_cast<Orch *>(gQosOrch)->doTask();
+        // Make sure the dependency remains
+        CheckDependency(CFG_PORT_QOS_MAP_TABLE_NAME, "Ethernet0", "dscp_to_tc_map", CFG_DSCP_TO_TC_MAP_TABLE_NAME, "AZURE");
+        // Make sure the notification isn't drained
+        static_cast<Orch *>(gQosOrch)->dumpPendingTasks(ts);
+        ASSERT_EQ(ts.size(), 2);
+        ASSERT_EQ(ts[0], "DSCP_TO_TC_MAP|AZURE|DEL");
+        ASSERT_EQ(ts[1], "DSCP_TO_TC_MAP|AZURE|SET|1:0");
+        ts.clear();
     }
 
     TEST_F(QosOrchTest, QosOrchTestQueueReferencingObjRemoveThenAdd)
@@ -889,6 +908,25 @@ namespace qosorch_test
         // All items have been drained
         static_cast<Orch *>(gQosOrch)->dumpPendingTasks(ts);
         ASSERT_TRUE(ts.empty());
+
+        // Remove and then re-add the referenced obj
+        entries.push_back({"scheduler.0", "DEL", {}});
+        entries.push_back({"scheduler.0", "SET",
+                           {
+                               {"type", "DWRR"},
+                               {"weight", "14"}
+                           }});
+        schedulerConsumer->addToSync(entries);
+        entries.clear();
+        // Drain SCHEDULER table
+        static_cast<Orch *>(gQosOrch)->doTask();
+        // Make sure the dependency remains
+        CheckDependency(CFG_QUEUE_TABLE_NAME, "Ethernet0|0", "scheduler", CFG_SCHEDULER_TABLE_NAME, "scheduler.0");
+        static_cast<Orch *>(gQosOrch)->dumpPendingTasks(ts);
+        ASSERT_EQ(ts.size(), 2);
+        ASSERT_EQ(ts[0], "SCHEDULER|scheduler.0|DEL");
+        ASSERT_EQ(ts[1], "SCHEDULER|scheduler.0|SET|type:DWRR|weight:14");
+        ts.clear();
     }
 
     TEST_F(QosOrchTest, QosOrchTestGlobalDscpToTcMap)
