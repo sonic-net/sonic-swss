@@ -2853,7 +2853,7 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
         // For del command:
         // 1. Removing it from APPL_DB
         // 2. Update internal caches
-        string &runningProfileName = bufferPg.running_profile_name;
+        string runningProfileName = bufferPg.running_profile_name;
         string &configProfileName = bufferPg.configured_profile_name;
 
         if (!m_supportRemoving)
