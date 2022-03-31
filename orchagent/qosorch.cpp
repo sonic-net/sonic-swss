@@ -1648,56 +1648,6 @@ bool QosOrch::applyMapToPort(Port &port, sai_attr_id_t attr_id, sai_object_id_t 
     return true;
 }
 
-task_process_status QosOrch::ResolveMapAndApplyToPort(
-    Port                    &port,
-    sai_port_attr_t         port_attr,
-    string                  field_name,
-    KeyOpFieldsValuesTuple  &tuple,
-    string                  op)
-{
-    SWSS_LOG_ENTER();
-
-    if (op == DEL_COMMAND)
-    {
-        // NOTE: The map is un-bound from the port. But the map itself still exists.
-        applyMapToPort(port, port_attr, SAI_NULL_OBJECT_ID);
-        return task_process_status::task_success;
-    }
-    else if (op != SET_COMMAND)
-    {
-        SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
-        return task_process_status::task_invalid_entry;
-    }
-
-    sai_object_id_t sai_object = SAI_NULL_OBJECT_ID;
-    string object_name;
-    bool result;
-    ref_resolve_status resolve_result = resolveFieldRefValue(m_qos_maps, field_name,
-                           qos_to_ref_table_map.at(field_name), tuple, sai_object, object_name);
-    if (ref_resolve_status::success == resolve_result)
-    {
-        result = applyMapToPort(port, port_attr, sai_object);
-        if (!result)
-        {
-            SWSS_LOG_ERROR("Failed setting field:%s to port:%s, line:%d", field_name.c_str(), port.m_alias.c_str(), __LINE__);
-            return task_process_status::task_failed;
-        }
-        SWSS_LOG_DEBUG("Applied field:%s to port:%s, line:%d", field_name.c_str(), port.m_alias.c_str(), __LINE__);
-        return task_process_status::task_success;
-    }
-    else if (resolve_result != ref_resolve_status::field_not_found)
-    {
-        if(ref_resolve_status::not_resolved == resolve_result)
-        {
-            SWSS_LOG_INFO("Missing or invalid %s reference", field_name.c_str());
-            return task_process_status::task_need_retry;
-        }
-        SWSS_LOG_ERROR("Resolving %s reference failed", field_name.c_str());
-        return task_process_status::task_failed;
-    }
-    return task_process_status::task_success;
-}
-
 task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
