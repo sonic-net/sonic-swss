@@ -254,9 +254,8 @@ class TestPortAutoNeg(object):
         cfvs = swsscommon.FieldValuePairs([("admin_status", "up")])
         ctbl.set("Ethernet0", cfvs)
 
-        # enable warm restart
-        (exitcode, result) = dvs.runcmd("config warm_restart enable swss")
-        assert exitcode == 0
+
+        dvs.warm_restart_swss("true")
 
         # freeze orchagent for warm restart
         (exitcode, result) = dvs.runcmd("/usr/bin/orchagent_restart_check")
@@ -290,9 +289,9 @@ class TestPortAutoNeg(object):
 
         finally:
             # disable warm restart
-            dvs.runcmd("config warm_restart disable swss")
+            dvs.warm_restart_swss("disable")
             # slow down crm polling
-            dvs.runcmd("crm config polling interval 10000")
+            dvs.crm_poll_set("10000")
 
 
 # Add Dummy always-pass test at end as workaroud

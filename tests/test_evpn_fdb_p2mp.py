@@ -54,7 +54,7 @@ def test_evpnFdbP2MP(dvs, testlog):
     helper = VxlanEvpnHelper()
     dvs.setup_db()
 
-    dvs.runcmd("sonic-clear fdb all")
+    dvs.clear_fdb()
     time.sleep(2)
 
     #Find switch_id

@@ -1,4 +1,5 @@
 #include <map>
+#include <set>
 #include <inttypes.h>
 
 #include "switchorch.h"
@@ -26,6 +27,7 @@ const map<string, sai_switch_attr_t> switch_attribute_map =
     {"ecmp_hash_seed",                      SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_SEED},
     {"lag_hash_seed",                       SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_SEED},
     {"fdb_aging_time",                      SAI_SWITCH_ATTR_FDB_AGING_TIME},
+    {"debug_shell_enable",                  SAI_SWITCH_ATTR_SWITCH_SHELL_ENABLE},
     {"vxlan_port",                          SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT},
     {"vxlan_router_mac",                    SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC}
 };
@@ -42,6 +44,9 @@ const map<string, sai_packet_action_t> packet_action_map =
     {"forward", SAI_PACKET_ACTION_FORWARD},
     {"trap",    SAI_PACKET_ACTION_TRAP}
 };
+
+
+const std::set<std::string> switch_non_sai_attribute_set = {"ordered_ecmp"};
 
 SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, TableConnector switchTable):
         Orch(connectors),
@@ -223,7 +228,51 @@ void SwitchOrch::doCfgSensorsTableTask(Consumer &consumer)
     }
 }
 
+void SwitchOrch::setSwitchNonSaiAttributes(swss::FieldValueTuple &val)
+{
+    auto attribute = fvField(val);
+    auto value = fvValue(val);
 
+    if (attribute == "ordered_ecmp")
+    {
+        vector<FieldValueTuple> fvVector;
+        if (value == "true")
+        {
+            const auto* meta = sai_metadata_get_attr_metadata(SAI_OBJECT_TYPE_NEXT_HOP_GROUP, SAI_NEXT_HOP_GROUP_ATTR_TYPE);
+            if (meta && meta->isenum)
+            {
+                vector<int32_t> values_list(meta->enummetadata->valuescount);
+                sai_s32_list_t values;
+                values.count = static_cast<uint32_t>(values_list.size());
+                values.list = values_list.data();
+
+                auto status = sai_query_attribute_enum_values_capability(gSwitchId,
+                                                                         SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
+                                                                         SAI_NEXT_HOP_GROUP_ATTR_TYPE,
+                                                                         &values);
+                if (status == SAI_STATUS_SUCCESS)
+                {
+                    for (size_t i = 0; i < values.count; i++)
+                    {
+                        if (values.list[i] == SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP)
+                        {
+                            m_orderedEcmpEnable = true;
+                            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_ORDERED_ECMP_CAPABLE, "true");
+                            set_switch_capability(fvVector);
+                            SWSS_LOG_NOTICE("Ordered ECMP/Nexthop-Group is configured");
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+        m_orderedEcmpEnable = false;
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_ORDERED_ECMP_CAPABLE, "false");
+        set_switch_capability(fvVector);
+        SWSS_LOG_NOTICE("Ordered ECMP/Nexthop-Group is not configured");
+        return;
+    }
+}
 sai_status_t SwitchOrch::setSwitchTunnelVxlanParams(swss::FieldValueTuple &val)
 {
     auto attribute = fvField(val);
@@ -295,7 +344,12 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
             {
                 auto attribute = fvField(i);
 
-                if (switch_attribute_map.find(attribute) == switch_attribute_map.end())
+                if (switch_non_sai_attribute_set.find(attribute) != switch_non_sai_attribute_set.end())
+                {
+                    setSwitchNonSaiAttributes(i);
+                    continue;
+                }
+                else if (switch_attribute_map.find(attribute) == switch_attribute_map.end())
                 {
                     // Check additionally 'switch_tunnel_attribute_map' for Switch Tunnel
                     if (switch_tunnel_attribute_map.find(attribute) == switch_tunnel_attribute_map.end())
@@ -342,6 +396,10 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
 
                     case SAI_SWITCH_ATTR_FDB_AGING_TIME:
                         attr.value.u32 = to_uint<uint32_t>(value);
+                        break;
+
+                    case SAI_SWITCH_ATTR_SWITCH_SHELL_ENABLE:
+                        attr.value.booldata = to_uint<bool>(value);
                         break;
 
                     case SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT:

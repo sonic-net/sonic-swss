@@ -699,6 +699,54 @@ class TestMACsec(object):
             1)
         assert(not inspector.get_macsec_port(macsec_port))
 
+    def test_macsec_attribute_change(self, dvs: conftest.DockerVirtualSwitch, testlog):
+        port_name = "Ethernet0"
+        local_mac_address = "00-15-5D-78-FF-C1"
+        peer_mac_address = "00-15-5D-78-FF-C2"
+        macsec_port_identifier = 1
+        macsec_port = "macsec_eth1"
+        sak = "0" * 32
+        auth_key = "0" * 32
+        packet_number = 1
+        ssci = 1
+        salt = "0" * 24
+
+        wpa = WPASupplicantMock(dvs)
+        inspector = MACsecInspector(dvs)
+
+        self.init_macsec(
+            wpa,
+            port_name,
+            local_mac_address,
+            macsec_port_identifier)
+        wpa.set_macsec_control(port_name, True)
+        wpa.config_macsec_port(port_name, {"enable_encrypt": False})
+        wpa.config_macsec_port(port_name, {"cipher_suite": "GCM-AES-256"})
+        self.establish_macsec(
+            wpa,
+            port_name,
+            local_mac_address,
+            peer_mac_address,
+            macsec_port_identifier,
+            0,
+            sak,
+            packet_number,
+            auth_key,
+            ssci,
+            salt)
+        macsec_info = inspector.get_macsec_port(macsec_port)
+        assert("encrypt off" in macsec_info)
+        assert("GCM-AES-256" in macsec_info)
+        self.deinit_macsec(
+            wpa,
+            inspector,
+            port_name,
+            macsec_port,
+            local_mac_address,
+            peer_mac_address,
+            macsec_port_identifier,
+            0)
+
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down

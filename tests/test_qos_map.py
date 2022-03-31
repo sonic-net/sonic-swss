@@ -139,7 +139,7 @@ class TestCbf(object):
         self.init_test(dvs)
 
         # Create a DSCP_TO_FC map
-        dscp_map = [(str(i), str(i)) for i in range(0, 64)]
+        dscp_map = [(str(i), str(i)) for i in range(0, 63)]
         self.dscp_ps.set("AZURE", swsscommon.FieldValuePairs(dscp_map))
 
         self.asic_db.wait_for_n_keys(self.ASIC_QOS_MAP_STR, self.asic_qos_map_count + 1)
@@ -153,7 +153,7 @@ class TestCbf(object):
         assert(fvs.get("SAI_QOS_MAP_ATTR_TYPE") == "SAI_QOS_MAP_TYPE_DSCP_TO_FORWARDING_CLASS")
 
         # Modify the map
-        dscp_map = [(str(i), '0') for i in range(0, 64)]
+        dscp_map = [(str(i), '0') for i in range(0, 63)]
         self.dscp_ps.set("AZURE", swsscommon.FieldValuePairs(dscp_map))
         time.sleep(1)
 
@@ -174,7 +174,7 @@ class TestCbf(object):
             ('-1', '0'), # negative DSCP
             ('64', '0'), # DSCP greater than max value
             ('0', '-1'), # negative FC
-            ('0', '64'), # FC greater than max value
+            ('0', '63'), # FC greater than max value
             ('a', '0'), # non-integer DSCP
             ('0', 'a'), # non-integet FC
         ]
@@ -228,7 +228,7 @@ class TestCbf(object):
             ('-1', '0'), # negative EXP
             ('8', '0'), # EXP greater than max value
             ('0', '-1'), # negative FC
-            ('0', '64'), # FC greater than max value
+            ('0', '63'), # FC greater than max value
             ('a', '0'), # non-integer EXP
             ('0', 'a'), # non-integet FC
         ]
@@ -258,7 +258,7 @@ class TestCbf(object):
         self.init_test(dvs)
 
         # Create a DSCP_TO_FC map
-        dscp_map = [(str(i), str(i)) for i in range(0, 64)]
+        dscp_map = [(str(i), str(i)) for i in range(0, 63)]
         self.dscp_ps.set("AZURE", swsscommon.FieldValuePairs(dscp_map))
         self.asic_db.wait_for_n_keys(self.ASIC_QOS_MAP_STR, self.asic_qos_map_count + 1)
         dscp_map_id = self.get_qos_id()

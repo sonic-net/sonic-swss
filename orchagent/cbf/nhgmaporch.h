@@ -43,9 +43,9 @@ public:
     void decRefCount(const string &key);
 
     /*
-     * Get the max FC value supported by the switch.
+     * Get the maximum number of FC classes supported by the switch.
      */
-    static sai_uint8_t getMaxFcVal();
+    static sai_uint8_t getMaxNumFcs();
 
 private:
     /*

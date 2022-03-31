@@ -171,9 +171,9 @@ void P4Orch::handlePortStatusChangeNotification(const std::string &op, const std
             {
                 m_wcmpManager->pruneNextHops(port.m_alias);
             }
-
-            sai_deserialize_free_port_oper_status_ntf(count, port_oper_status);
         }
+
+        sai_deserialize_free_port_oper_status_ntf(count, port_oper_status);
     }
 }
 
