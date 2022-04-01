@@ -174,6 +174,7 @@ public:
 
     bool m_fec_cfg = false;
     bool m_an_cfg = false;
+    bool m_port_cap_an = false; /* Port Capability - AutoNeg */
 };
 
 }
