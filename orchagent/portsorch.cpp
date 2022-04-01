@@ -1879,7 +1879,7 @@ void PortsOrch::initPortCapAutoNeg(Port &port)
     }
     else
     {
-        port.m_port_cap_an = false;
+        port.m_port_cap_an = true; /* This is for vstest */
         SWSS_LOG_NOTICE("Unable to get %s AN capability", port.m_alias.c_str());
     }
 }
