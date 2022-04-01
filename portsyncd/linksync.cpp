@@ -39,7 +39,10 @@ struct if_nameindex
     unsigned int if_index;
     char *if_name;
 };
-extern "C" { extern struct if_nameindex *if_nameindex (void) __THROW; }
+extern "C" {
+    extern struct if_nameindex *if_nameindex (void) __THROW;
+    extern void if_freenameindex (struct if_nameindex *) __THROW;
+}
 
 LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
     m_portTableProducer(appl_db, APP_PORT_TABLE_NAME),
@@ -151,6 +154,8 @@ LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
             }
         }
     }
+
+    if_freenameindex(if_ni);
 }
 
 void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
