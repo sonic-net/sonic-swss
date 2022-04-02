@@ -25,6 +25,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 portsorch_ut.cpp \
                 routeorch_ut.cpp \
                 qosorch_ut.cpp \
+                bufferorch_ut.cpp \
                 saispy_ut.cpp \
                 consumer_ut.cpp \
                 ut_saihelper.cpp \
