@@ -97,8 +97,6 @@ struct RoutePattern
 typedef std::set<RoutePattern> RoutePatternSet;
 /* RoutePattern to <prefix, counter OID> */
 typedef std::map<RoutePattern, std::map<IpPrefix, sai_object_id_t>> RouterFlowCounterCache;
-/* RoutePattern to prefix set */
-typedef std::map<RoutePattern, std::set<IpPrefix>> RouterPatternToPrefixMap;
 /* IP2ME, MUX, VNET route entries */
 typedef std::map<sai_object_id_t, std::set<IpPrefix>> MiscRouteEntryMap;
 
@@ -134,7 +132,6 @@ private:
     std::unique_ptr<Table> mPrefixToCounterTable;
     std::unique_ptr<Table> mPrefixToPatternTable;
 
-    // TODO: remove bulk support from this feature
     bool mRouteFlowCounterSupported = false;
     /* Route pattern set, store configured route patterns */
     RoutePatternSet mRoutePatternSet;
@@ -142,10 +139,6 @@ private:
     RouterFlowCounterCache mBoundRouteCounters;
     /* Cache for those route flow counters pending update to FLEX DB */
     RouterFlowCounterCache mPendingAddToFlexCntr;
-    /* Cache for those newly added routes which match pattern */
-    RouterPatternToPrefixMap mPendingBindRoutes;
-    /* Cache for those newly removed routes which match pattern */
-    RouterPatternToPrefixMap mPendingUnbindRoutes; // Used to cache newly added routes in doTask function
     /* IP2ME, MUX */ // TODO: remove MUX support
     MiscRouteEntryMap mMiscRoutes; // Save here for route flow counter
     /* Flex counter manager for route flow counter */
@@ -161,7 +154,7 @@ private:
     bool bindFlowCounter(const RoutePattern &route_pattern, sai_object_id_t vrf_id, const IpPrefix& ip_prefix);
     void unbindFlowCounter(const RoutePattern &route_pattern, sai_object_id_t vrf_id, const IpPrefix& ip_prefix, sai_object_id_t counter_oid);
     void pendingUpdateFlexDb(const RoutePattern &route_pattern, const IpPrefix &ip_prefix, sai_object_id_t counter_oid);
-    void insertOrUpdateRouterFlowCounterCache(
+    void updateRouterFlowCounterCache(
         const RoutePattern &route_pattern,
         const IpPrefix& ip_prefix,
         sai_object_id_t counter_oid,

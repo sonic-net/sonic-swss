@@ -127,7 +127,7 @@ void FlowCounterRouteOrch::doTask(SelectableTimer &timer)
                 getRouteFlowCounterNameMapKey(vrf_id, route_pattern.ip_prefix, pattern);
                 prefixToPatternMap.emplace_back(nameMapKey, pattern);
 
-                insertOrUpdateRouterFlowCounterCache(route_pattern, ip_prefix, inner_iter->second, mBoundRouteCounters);
+                updateRouterFlowCounterCache(route_pattern, ip_prefix, inner_iter->second, mBoundRouteCounters);
                 inner_iter = it->second.erase(inner_iter);
             }
             else
@@ -558,7 +558,7 @@ void FlowCounterRouteOrch::pendingUpdateFlexDb(const RoutePattern &route_pattern
 {
     SWSS_LOG_ENTER();
     bool was_empty = mPendingAddToFlexCntr.empty();
-    insertOrUpdateRouterFlowCounterCache(route_pattern, ip_prefix, counter_oid, mPendingAddToFlexCntr);
+    updateRouterFlowCounterCache(route_pattern, ip_prefix, counter_oid, mPendingAddToFlexCntr);
     if (was_empty)
     {
         mFlexCounterUpdTimer->start();
@@ -648,12 +648,12 @@ void FlowCounterRouteOrch::createRouteFlowCounterByPattern(const RoutePattern &r
 
     createRouteFlowCounterFromVnetRoutes(route_pattern, current_bound_count);
 
-    auto other_iter = mMiscRoutes.find(route_pattern.vrf_id);
-    if (other_iter != mMiscRoutes.end())
+    auto misc_iter = mMiscRoutes.find(route_pattern.vrf_id);
+    if (misc_iter != mMiscRoutes.end())
     {
         SWSS_LOG_NOTICE("Creating route flow counter for pattern %s for other type route entries", route_pattern.to_string().c_str());
 
-        for (auto ip_prefix : other_iter->second)
+        for (auto ip_prefix : misc_iter->second)
         {
             if (current_bound_count == route_pattern.max_match_count)
             {
@@ -890,7 +890,7 @@ void FlowCounterRouteOrch::removeRouteFlowCounterFromDB(sai_object_id_t vrf_id, 
     mRouteFlowCounterMgr.clearCounterIdList(counter_oid);
 }
 
-void FlowCounterRouteOrch::insertOrUpdateRouterFlowCounterCache(
+void FlowCounterRouteOrch::updateRouterFlowCounterCache(
     const RoutePattern &route_pattern,
     const IpPrefix &ip_prefix,
     sai_object_id_t counter_oid,
