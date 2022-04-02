@@ -19,8 +19,6 @@ enum TunnelTermType
 /* Constants */
 #define MUX_TUNNEL "MuxTunnel0"
 
-#define DECAP_DSCP_TO_DC_MAP    "decap_dscp_to_tc_map"
-#define DECAP_TC_TO_PG_MAP      "decap_tc_to_pg_map"
 
 struct TunnelTermEntry
 {
@@ -75,7 +73,7 @@ private:
 
     bool addDecapTunnel(std::string key, std::string type, swss::IpAddresses dst_ip, swss::IpAddress* p_src_ip,
                         std::string dscp, std::string ecn, std::string encap_ecn, std::string ttl, TunnelTermType term_type,
-                        sai_object_id_t dscp_to_tc_map_id, sai_object_id_t tc_to_pg_map_id, sai_object_id_t tc_to_dscp_map_id, sai_object_id_t tc_to_queue_map_id);
+                        sai_object_id_t dscp_to_tc_map_id, sai_object_id_t tc_to_pg_map_id);
     bool removeDecapTunnel(std::string key);
 
     bool addDecapTunnelTermEntries(std::string tunnelKey, swss::IpAddress src_ip, swss::IpAddresses dst_ip, sai_object_id_t tunnel_id, TunnelTermType type);
@@ -89,5 +87,7 @@ private:
     int decNextHopRef(std::string tunnelKey, swss::IpAddress& ipAddr);
 
     void doTask(Consumer& consumer);
+
+    sai_object_id_t resolveQosMapId(std::string tunnle_name, std::string map_type_name, KeyOpFieldsValuesTuple& tuple);
 };
 #endif

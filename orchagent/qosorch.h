@@ -30,6 +30,8 @@ const string dscp_to_fc_field_name              = "dscp_to_fc_map";
 const string exp_to_fc_field_name               = "exp_to_fc_map";
 const string decap_dscp_to_tc_field_name        = "decap_dscp_to_tc_map";
 const string decap_tc_to_pg_field_name          = "decap_tc_to_pg_map";
+const string encap_tc_to_queue_field_name       = "encap_tc_to_queue_map";
+const string encap_tc_to_dscp_field_name        = "encap_tc_to_dscp_map";
 
 const string wred_profile_field_name            = "wred_profile";
 const string wred_red_enable_field_name         = "wred_red_enable";
@@ -58,10 +60,13 @@ const string ecn_green_red                      = "ecn_green_red";
 const string ecn_green_yellow                   = "ecn_green_yellow";
 const string ecn_all                            = "ecn_all";
 
+// Declaration for being referenced in muxorch and decaporch
+extern std::map<string, string> qos_to_ref_table_map;
 class QosMapHandler
 {
 public:
-    task_process_status processWorkItem(Consumer& consumer);
+    task_process_status processWorkItem(KeyOpFieldsValuesTuple& tuple, bool is_switch_level);
+    task_process_status processAllWorkItem(Consumer& consumer);
     virtual bool convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes) = 0;
     virtual void freeAttribResources(vector<sai_attribute_t> &attributes);
     virtual bool modifyQosItem(sai_object_id_t, vector<sai_attribute_t> &attributes);

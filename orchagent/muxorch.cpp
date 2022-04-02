@@ -82,11 +82,6 @@ const map <string, MuxState> muxStateStringToVal =
     { "pending", MuxState::MUX_STATE_PENDING },
 };
 
-const map<string, string> tunnel_qos_to_ref_table_map = {
-    {encap_tc_to_dscp_field_name, CFG_TC_TO_DSCP_MAP_TABLE_NAME},
-    {encap_tc_to_queue_field_name, CFG_TC_TO_QUEUE_MAP_TABLE_NAME}
-};
-
 static inline MuxStateChange mux_state_change (MuxState prev, MuxState curr)
 {
     auto key = std::make_pair(prev, curr);
@@ -1249,13 +1244,13 @@ bool MuxOrch::resolveQosTableIds()
         KeyOpFieldsValuesTuple tuple{"TUNNEL", MUX_TUNNEL, field_value_tuples};
         for (auto it = kfvFieldsValues(tuple).begin(); it != kfvFieldsValues(tuple).end(); it++)
         {
-            if (tunnel_qos_to_ref_table_map.find(fvField(*it)) != tunnel_qos_to_ref_table_map.end())
+            if (qos_to_ref_table_map.find(fvField(*it)) != qos_to_ref_table_map.end())
             {
                 sai_object_id_t id;
                 string object_name;
                 string &map_type_name = fvField(*it);
                 string &map_name = fvValue(*it);
-                ref_resolve_status status = resolveFieldRefValue(QosOrch::getTypeMap(), map_type_name, tunnel_qos_to_ref_table_map.at(map_type_name), tuple, id, object_name);
+                ref_resolve_status status = resolveFieldRefValue(QosOrch::getTypeMap(), map_type_name, qos_to_ref_table_map.at(map_type_name), tuple, id, object_name);
                 if (status == ref_resolve_status::success)
                 {
                     if (map_type_name == encap_tc_to_queue_field_name)
@@ -1266,6 +1261,7 @@ bool MuxOrch::resolveQosTableIds()
                     {
                         tc_to_dscp_map_id_ = id;
                     }
+                    setObjectReference(QosOrch::getTypeMap(), CFG_TUNNEL_TABLE_NAME, MUX_TUNNEL, map_type_name, object_name);
                     SWSS_LOG_INFO("Resolved QoS map for tunnel %s type %s name %s", MUX_TUNNEL, map_type_name.c_str(), map_name.c_str());
                 }
             }

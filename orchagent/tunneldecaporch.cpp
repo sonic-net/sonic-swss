@@ -5,6 +5,7 @@
 #include "crmorch.h"
 #include "logger.h"
 #include "swssnet.h"
+#include "qosorch.h"
 
 #define OVERLAY_RIF_DEFAULT_MTU 9100
 
@@ -171,22 +172,20 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                         setTunnelAttribute(fvField(i), ttl_mode, tunnel_id);
                     }
                 }
-                else if (fvField(i) == DECAP_DSCP_TO_DC_MAP)
+                else if (fvField(i) == decap_dscp_to_tc_field_name)
                 {
-                    string dscp_to_dc_map_name = fvValue(i);
-                    // TODO: Validate DSCP_TO_TC_MAP map name, and get map id
-                    if (exists)
+                    dscp_to_dc_map_id = resolveQosMapId(key, decap_dscp_to_tc_field_name, t); 
+                    if (exists && dscp_to_dc_map_id != SAI_NULL_OBJECT_ID)
                     {
-                        setTunnelAttribute(fvField(i), dscp_to_dc_map, tunnel_id);
+                        setTunnelAttribute(fvField(i), dscp_to_dc_map_id, tunnel_id);
                     }
                 }
-                else if (fvField(i) == DECAP_TC_TO_PG_MAP)
+                else if (fvField(i) == decap_tc_to_pg_field_name)
                 {
-                    string tc_to_pg_map_name = fvValue(i);
-                    // TODO: Validate TC_TO_PG_MAP name, and get map id
-                    if (exists)
+                    tc_to_pg_map_id = resolveQosMapId(key, decap_tc_to_pg_field_name, t); 
+                    if (exists && tc_to_pg_map_id != SAI_NULL_OBJECT_ID)
                     {
-                        setTunnelAttribute(fvField(i), tc_to_pg_map, tunnel_id);
+                        setTunnelAttribute(fvField(i), tc_to_pg_map_id, tunnel_id);
                     }
                 }
             }
@@ -909,4 +908,36 @@ IpAddresses TunnelDecapOrch::getDstIpAddresses(std::string tunnelKey) const
     }
 
     return tunnelTable[tunnelKey].dst_ip_addrs;
+}
+
+/**
+ * Function Description:
+ *    @brief Resolve the map id from QosOrch
+ *
+ * Arguments:
+ *    @param[in] tunnle_name - The name of tunnel
+ *    @param[in] map_type_name - The type of referenced QoS map
+ *    @param[in] tuple - The KeyOpFieldsValuesTuple that contains keys - values
+ *
+ * Return Values:
+ *    @return The sai_object_id of referenced map, or SAI_NULL_OBJECT_ID  if there's an error
+ */
+sai_object_id_t TunnelDecapOrch::resolveQosMapId(std::string tunnle_name, std::string map_type_name, KeyOpFieldsValuesTuple& tuple)
+{
+    sai_object_id_t id;
+    string object_name;
+    ref_resolve_status status = resolveFieldRefValue(QosOrch::getTypeMap(), map_type_name, qos_to_ref_table_map.at(map_type_name), tuple, id, object_name);
+    if (status == ref_resolve_status::success)
+    {
+        
+        setObjectReference(QosOrch::getTypeMap(), CFG_TUNNEL_TABLE_NAME, tunnle_name, map_type_name, object_name);
+        SWSS_LOG_INFO("Resolved QoS map for tunnel %s type %s name %s", tunnle_name.c_str(), map_type_name.c_str(), map_name.c_str());
+        return id;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Failed to resolce QoS map for tunnel %s type %s", tunnle_name.c_str(), map_type_name.c_str());
+        return SAI_NULL_OBJECT_ID;
+    }
+
 }
