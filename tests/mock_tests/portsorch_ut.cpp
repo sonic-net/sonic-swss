@@ -1035,9 +1035,9 @@ namespace portsorch_test
         ASSERT_EQ(size_t(3), actual_attrs.size());
         ASSERT_EQ(SAI_PORT_ATTR_AUTO_NEG_MODE, actual_attrs[0]->id);
         ASSERT_TRUE(actual_attrs[0]->value.booldata);
-        ASSERT_EQ(SAI_PORT_ATTR_ADVERTISED_SPEED, actual_attrs[1]->id);
+        ASSERT_EQ(SAI_PORT_ATTR_ADVERTISED_INTERFACE_TYPE, actual_attrs[1]->id);
         ASSERT_EQ(0, actual_attrs[1]->value.u32list.count);
-        ASSERT_EQ(SAI_PORT_ATTR_ADVERTISED_INTERFACE_TYPE, actual_attrs[2]->id);
+        ASSERT_EQ(SAI_PORT_ATTR_ADVERTISED_SPEED, actual_attrs[2]->id);
         ASSERT_EQ(0, actual_attrs[2]->value.u32list.count);
 
         // Set speed/interface type while autoneg is enabled, verify the SAI API is not called
@@ -1083,10 +1083,10 @@ namespace portsorch_test
         ASSERT_EQ(size_t(3), actual_attrs.size());
         ASSERT_EQ(SAI_PORT_ATTR_AUTO_NEG_MODE, actual_attrs[0]->id);
         ASSERT_FALSE(actual_attrs[0]->value.booldata);
-        ASSERT_EQ(SAI_PORT_ATTR_SPEED, actual_attrs[1]->id);
-        ASSERT_EQ(100000, actual_attrs[1]->value.u32);
-        ASSERT_EQ(SAI_PORT_ATTR_INTERFACE_TYPE, actual_attrs[2]->id);
-        ASSERT_EQ(static_cast<uint32_t>(SAI_PORT_INTERFACE_TYPE_CR), actual_attrs[2]->value.u32);
+        ASSERT_EQ(SAI_PORT_ATTR_INTERFACE_TYPE, actual_attrs[1]->id);
+        ASSERT_EQ(static_cast<uint32_t>(SAI_PORT_INTERFACE_TYPE_CR), actual_attrs[1]->value.u32);
+        ASSERT_EQ(SAI_PORT_ATTR_SPEED, actual_attrs[2]->id);
+        ASSERT_EQ(100000, actual_attrs[2]->value.u32);
 
         // Set advertised speeds, advertised interface types while autoneg is disabled, verify the SAI API is not called
         actual_attrs.clear();
@@ -1115,6 +1115,108 @@ namespace portsorch_test
         ASSERT_EQ(static_cast<uint32_t>(SAI_PORT_INTERFACE_TYPE_CR2), actual_attrs[0]->value.u32);
 
         sai_port_api = orig_port_api;
+    }
+
+    /*
+    * The scope of this test is to verify that auto negotiation related configuration failed due to SAI return value
+    */
+    TEST_F(PortsOrchTest, PortAutoNegConfigNeg)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        // Populate port table with SAI ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone, PortInitDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+        // Apply configuration : create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // save original api since we will spy
+        auto orig_port_api = sai_port_api;
+        sai_port_api = new sai_port_api_t();
+        memcpy(sai_port_api, orig_port_api, sizeof(*sai_port_api));
+
+        // mock SAI API sai_port_api->get_port_attribute
+        auto portSpy = SpyOn<SAI_API_PORT, SAI_OBJECT_TYPE_PORT>(&sai_port_api->set_port_attribute);
+        auto set_autoneg_mode_return = SAI_STATUS_INVALID_ATTR_VALUE_0;
+        auto set_adv_speeds_return = SAI_STATUS_INVALID_ATTR_VALUE_0;
+        auto set_adv_types_return = SAI_STATUS_INVALID_ATTR_VALUE_0;
+        auto set_speed_return = SAI_STATUS_INVALID_ATTR_VALUE_0;
+        auto set_type_return = SAI_STATUS_INVALID_ATTR_VALUE_0;
+        std::map<sai_status_t, size_t> call_stats;
+        portSpy->callFake([&](sai_object_id_t oid, const sai_attribute_t * attr) -> sai_status_t {
+                switch(attr->id)
+                {
+                    case SAI_PORT_ATTR_AUTO_NEG_MODE:
+                        call_stats[SAI_PORT_ATTR_AUTO_NEG_MODE] += 1;
+                        return (sai_status_t)set_autoneg_mode_return;
+                    case SAI_PORT_ATTR_ADVERTISED_SPEED:
+                        call_stats[SAI_PORT_ATTR_ADVERTISED_SPEED] += 1;
+                        return (sai_status_t)set_adv_speeds_return;
+                    case SAI_PORT_ATTR_ADVERTISED_INTERFACE_TYPE:
+                        call_stats[SAI_PORT_ATTR_ADVERTISED_INTERFACE_TYPE] += 1;
+                        return (sai_status_t)set_adv_types_return;
+                    case SAI_PORT_ATTR_INTERFACE_TYPE:
+                        call_stats[SAI_PORT_ATTR_INTERFACE_TYPE] += 1;
+                        return (sai_status_t)set_type_return;
+                    case SAI_PORT_ATTR_SPEED:
+                        call_stats[SAI_PORT_ATTR_SPEED] += 1;
+                        return (sai_status_t)set_speed_return;
+                    default:
+                        return (sai_status_t)SAI_STATUS_SUCCESS;
+                }
+        });
+
+        portTable.set("Ethernet0", { { "autoneg", "on" } });
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        ASSERT_EQ(1, call_stats[SAI_PORT_ATTR_AUTO_NEG_MODE]);
+        ASSERT_FALSE(call_stats.count(SAI_PORT_ATTR_ADVERTISED_INTERFACE_TYPE));
+        ASSERT_FALSE(call_stats.count(SAI_PORT_ATTR_ADVERTISED_SPEED));
+
+        set_autoneg_mode_return = SAI_STATUS_SUCCESS;
+        portTable.set("Ethernet0", { { "autoneg", "on" } });
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        ASSERT_EQ(1, call_stats[SAI_PORT_ATTR_ADVERTISED_INTERFACE_TYPE]);
+        ASSERT_FALSE(call_stats.count(SAI_PORT_ATTR_ADVERTISED_SPEED));
+
+        set_adv_types_return = SAI_STATUS_SUCCESS;
+        portTable.set("Ethernet0", { { "autoneg", "on" } });
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        ASSERT_EQ(1, call_stats[SAI_PORT_ATTR_ADVERTISED_SPEED]);
+
+        set_autoneg_mode_return = SAI_STATUS_INVALID_ATTR_VALUE_0;
+        portTable.set("Ethernet0", { { "autoneg", "off" } });
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        ASSERT_FALSE(call_stats.count(SAI_PORT_ATTR_INTERFACE_TYPE));
+        ASSERT_FALSE(call_stats.count(SAI_PORT_ATTR_SPEED));
+
+        set_autoneg_mode_return = SAI_STATUS_SUCCESS;
+        portTable.set("Ethernet0", { { "autoneg", "off" } });
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        ASSERT_EQ(1, call_stats[SAI_PORT_ATTR_INTERFACE_TYPE]);
+        ASSERT_FALSE(call_stats.count(SAI_PORT_ATTR_SPEED));
+
+        set_type_return = SAI_STATUS_SUCCESS;
+        portTable.set("Ethernet0", { { "autoneg", "off" } });
+        gPortsOrch->addExistingData(&portTable);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        ASSERT_EQ(1, call_stats[SAI_PORT_ATTR_SPEED]);
     }
 
     /*
