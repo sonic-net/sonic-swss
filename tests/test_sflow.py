@@ -146,7 +146,6 @@ class TestSflow:
         '''
         self.setup_sflow(dvs)
         appldb = dvs.get_app_db()
-        #dvs.runcmd("portconfig -p {} -s {}".format("Ethernet0", "25000"))
         self.cdb.update_entry("PORT", "Ethernet0", {'speed' : "25000"})
         expected_fields = {"sample_rate": self.speed_rate_table["25000"]}
         appldb.wait_for_field_match("SFLOW_SESSION_TABLE", "Ethernet0", expected_fields)

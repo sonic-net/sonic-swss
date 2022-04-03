@@ -3851,6 +3851,17 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
                     continue;
                 }
 
+                if (!port.m_ingress_acl_tables_uset.empty() || !port.m_egress_acl_tables_uset.empty())
+                {
+                    SWSS_LOG_ERROR(
+                        "Failed to add member %s to LAG %s: ingress/egress ACL configuration is present",
+                        port.m_alias.c_str(),
+                        lag.m_alias.c_str()
+                    );
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+
                 if (!addLagMember(lag, port, (status == "enabled")))
                 {
                     it++;

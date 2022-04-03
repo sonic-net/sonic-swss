@@ -661,13 +661,6 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
             sai_attribute_t attr;
             if (field == buffer_pool_field_name)
             {
-                if (SAI_NULL_OBJECT_ID != sai_object)
-                {
-                    // We should skip the profile's pool name because it's create only when setting a profile's attribute.
-                    SWSS_LOG_INFO("Skip setting buffer profile's pool %s for profile %s", value.c_str(), object_name.c_str());
-                    continue;
-                }
-
                 sai_object_id_t sai_pool;
                 ref_resolve_status resolve_result = resolveFieldRefValue(m_buffer_type_maps, buffer_pool_field_name,
                                                     buffer_to_ref_table_map.at(buffer_pool_field_name),

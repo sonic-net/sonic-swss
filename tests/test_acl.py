@@ -553,11 +553,11 @@ class TestAcl:
 class TestAclCrmUtilization:
     @pytest.fixture(scope="class", autouse=True)
     def configure_crm_polling_interval_for_test(self, dvs):
-        dvs.runcmd("crm config polling interval 1")
+        dvs.crm_poll_set("1")
 
         yield
 
-        dvs.runcmd("crm config polling interval 300")
+        dvs.crm_poll_set("300")
 
     def test_ValidateAclTableBindingCrmUtilization(self, dvs, dvs_acl):
         counter_db = dvs.get_counters_db()
