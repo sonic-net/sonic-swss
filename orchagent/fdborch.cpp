@@ -519,6 +519,8 @@ void FdbOrch::update(sai_fdb_event_t        type,
                            update.entry.mac.to_string().c_str(), vlanName.c_str());
             for (auto itr = m_entries.begin(); itr != m_entries.end();)
             {
+                // TEST
+
                 /*
                    TODO: here should only delete the dynamic fdb entries,
                    but unfortunately in structure FdbEntry currently have
@@ -546,6 +548,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
             for (auto itr = m_entries.begin(); itr != m_entries.end();)
             {
                 auto next_item = std::next(itr);
+                // TEST
                 if (itr->first.port_name == update.port.m_alias)
                 {
                     update.entry.mac = itr->first.mac;
@@ -798,6 +801,7 @@ void FdbOrch::doTask(Consumer& consumer)
             fdbData.remote_ip = remote_ip;
             fdbData.esi = esi;
             fdbData.vni = vni;
+            // TEST
             if (addFdbEntry(entry, port, fdbData))
             {
                 if (origin == FDB_ORIGIN_MCLAG_ADVERTIZED)
@@ -880,6 +884,8 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
             {
                 SWSS_LOG_ERROR("Flush fdb failed, return code %x", status);
             }
+
+            // TEST
 
             return;
         }
@@ -1040,6 +1046,8 @@ void FdbOrch::flushFDBEntries(sai_object_id_t bridge_port_oid,
     {
         SWSS_LOG_ERROR("Flushing FDB failed. rv:%d", rv);
     }
+
+    // TEST
 }
 
 void FdbOrch::notifyObserversFDBFlush(Port &port, sai_object_id_t& bvid)

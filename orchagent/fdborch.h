@@ -57,6 +57,7 @@ struct FdbData
       {"static", FDB_ORIGIN_PROVISIONED} => statically provisioned
       {"static", FDB_ORIGIN_ADVERTIZED} => sticky synced from remote device
     */
+    // TEST
 
     /* Remote FDB related info */
     string remote_ip;
