@@ -50,10 +50,10 @@ LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
     m_statePortTable(state_db, STATE_PORT_TABLE_NAME),
     m_stateMgmtPortTable(state_db, STATE_MGMT_PORT_TABLE_NAME)
 {
-    struct if_nameindex *if_ni, *idx_p;
-    if_ni = if_nameindex();
+    std::shared_ptr<struct if_nameindex> if_ni(if_nameindex(), if_freenameindex);
+    struct if_nameindex *idx_p;
 
-    for (idx_p = if_ni;
+    for (idx_p = if_ni.get();
             idx_p != NULL && idx_p->if_index != 0 && idx_p->if_name != NULL;
             idx_p++)
     {
@@ -124,7 +124,7 @@ LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
             }
         }
 
-        for (idx_p = if_ni;
+        for (idx_p = if_ni.get();
                 idx_p != NULL && idx_p->if_index != 0 && idx_p->if_name != NULL;
                 idx_p++)
         {
@@ -154,8 +154,6 @@ LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
             }
         }
     }
-
-    if_freenameindex(if_ni);
 }
 
 void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
