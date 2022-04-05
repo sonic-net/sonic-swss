@@ -25,6 +25,7 @@ private:
 
     uint32_t bfd_gen_id(void);
     uint32_t bfd_src_port(void);
+    void update_port_number(std::vector<sai_attribute_t> &attrs);
 
     bool register_bfd_state_change_notification(void);
 
