@@ -10,6 +10,8 @@
 #include <string>
 #include <vector>
 
+#define ROUTE_FLOW_COUNTER_FLEX_COUNTER_GROUP "ROUTE_FLOW_COUNTER"
+
 struct RoutePattern
 {
     RoutePattern(const std::string& input_vrf_name, sai_object_id_t vrf, IpPrefix prefix, size_t max_match_count)

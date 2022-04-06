@@ -16,9 +16,6 @@
 #include "bulker.h"
 #include "fgnhgorch.h"
 #include <map>
-#include <memory>
-#include <set>
-#include <sstream>
 
 /* Maximum next hop group number */
 #define NHGRP_MAX_SIZE 128
@@ -26,7 +23,6 @@
 #define EUI64_INTF_ID_LEN 8
 
 #define LOOPBACK_PREFIX     "Loopback"
-#define ROUTE_FLOW_COUNTER_FLEX_COUNTER_GROUP "ROUTE_FLOW_COUNTER"
 
 struct NextHopGroupMemberEntry
 {
@@ -219,7 +215,6 @@ public:
 
     unsigned int getNhgCount() { return m_nextHopGroupCount; }
     unsigned int getMaxNhgCount() { return m_maxNextHopGroupCount; }
-
     void increaseNextHopGroupCount();
     void decreaseNextHopGroupCount();
     bool checkNextHopGroupCount();

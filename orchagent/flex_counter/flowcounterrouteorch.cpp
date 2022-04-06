@@ -304,7 +304,7 @@ void FlowCounterRouteOrch::onAddMiscRouteEntry(sai_object_id_t vrf_id, const sai
         return;
     }
 
-    IpPrefix ip_prefix = copy(ip_pfx);
+    IpPrefix ip_prefix = convert(ip_pfx);
     onAddMiscRouteEntry(vrf_id, ip_prefix, add_to_cache);
 }
 
@@ -350,7 +350,7 @@ void FlowCounterRouteOrch::onRemoveMiscRouteEntry(sai_object_id_t vrf_id, const 
         return;
     }
 
-    IpPrefix ip_prefix = copy(ip_pfx);
+    IpPrefix ip_prefix = convert(ip_pfx);
     onRemoveMiscRouteEntry(vrf_id, ip_prefix, remove_from_cache);
 }
 
