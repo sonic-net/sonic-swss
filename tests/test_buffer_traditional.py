@@ -3,7 +3,7 @@ import time
 
 
 class TestBuffer(object):
-    LOSSLESS_PGS = [3, 4]
+    LOSSLESS_PGS = [2, 3, 4, 6]
     INTF = "Ethernet0"
 
     def setup_db(self, dvs):

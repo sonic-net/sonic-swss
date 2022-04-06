@@ -135,7 +135,6 @@ Create/update two tables: profile (in m_cfgBufferProfileTable) and port buffer (
 */
 task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up)
 {
-    vector<FieldValueTuple> fvVectorPg, fvVectorProfile;
     string cable;
     string speed;
 
@@ -153,94 +152,99 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up)
     }
 
     speed = m_speedLookup[port];
-
-    string buffer_pg_key = port + m_cfgBufferPgTable.getTableNameSeparator() + LOSSLESS_PGS;
     // key format is pg_lossless_<speed>_<cable>_profile
     string buffer_profile_key = "pg_lossless_" + speed + "_" + cable + "_profile";
     string profile_ref = buffer_profile_key;
-
-    m_cfgBufferPgTable.get(buffer_pg_key, fvVectorPg);
-
-    if (!admin_up && m_platform == "mellanox")
+    
+    vector<string> lossless_pgs = tokenize(LOSSLESS_PGS, ',');
+    for (auto lossless_pg : lossless_pgs)
     {
-        // Remove the entry in BUFFER_PG table if any
-        if (!fvVectorPg.empty())
+        vector<FieldValueTuple> fvVectorPg, fvVectorProfile;
+        string buffer_pg_key = port + m_cfgBufferPgTable.getTableNameSeparator() + lossless_pg;
+
+        m_cfgBufferPgTable.get(buffer_pg_key, fvVectorPg);
+
+        if (!admin_up && m_platform == "mellanox")
         {
-            for (auto &prop : fvVectorPg)
+            // Remove the entry in BUFFER_PG table if any
+            if (!fvVectorPg.empty())
             {
-                if (fvField(prop) == "profile")
+                for (auto &prop : fvVectorPg)
                 {
-                    if (fvValue(prop) == profile_ref)
+                    if (fvField(prop) == "profile")
                     {
-                        SWSS_LOG_NOTICE("Removing PG %s from port %s which is administrative down", buffer_pg_key.c_str(), port.c_str());
-                        m_cfgBufferPgTable.del(buffer_pg_key);
-                    }
-                    else
-                    {
-                        SWSS_LOG_NOTICE("Not default profile %s is configured on PG %s, won't reclaim buffer", fvValue(prop).c_str(), buffer_pg_key.c_str());
+                        if (fvValue(prop) == profile_ref)
+                        {
+                            SWSS_LOG_NOTICE("Removing PG %s from port %s which is administrative down", buffer_pg_key.c_str(), port.c_str());
+                            m_cfgBufferPgTable.del(buffer_pg_key);
+                        }
+                        else
+                        {
+                            SWSS_LOG_NOTICE("Not default profile %s is configured on PG %s, won't reclaim buffer", fvValue(prop).c_str(), buffer_pg_key.c_str());
+                        }
                     }
                 }
             }
+
+            continue;
         }
 
-        return task_process_status::task_success;
-    }
-
-    if (m_pgProfileLookup.count(speed) == 0 || m_pgProfileLookup[speed].count(cable) == 0)
-    {
-        SWSS_LOG_ERROR("Unable to create/update PG profile for port %s. No PG profile configured for speed %s and cable length %s",
-                       port.c_str(), speed.c_str(), cable.c_str());
-        return task_process_status::task_invalid_entry;
-    }
-
-    // check if profile already exists - if yes - skip creation
-    m_cfgBufferProfileTable.get(buffer_profile_key, fvVectorProfile);
-    // Create record in BUFFER_PROFILE table
-    if (fvVectorProfile.size() == 0)
-    {
-        SWSS_LOG_NOTICE("Creating new profile '%s'", buffer_profile_key.c_str());
-
-        string mode = getPgPoolMode();
-        if (mode.empty())
+        if (m_pgProfileLookup.count(speed) == 0 || m_pgProfileLookup[speed].count(cable) == 0)
         {
-            // this should never happen if switch initialized properly
-            SWSS_LOG_INFO("PG lossless pool is not yet created");
-            return task_process_status::task_need_retry;
+            SWSS_LOG_ERROR("Unable to create/update PG profile for port %s. No PG profile configured for speed %s and cable length %s",
+                        port.c_str(), speed.c_str(), cable.c_str());
+            return task_process_status::task_invalid_entry;
         }
 
-        // profile threshold field name
-        mode += "_th";
-
-        fvVectorProfile.push_back(make_pair("pool", INGRESS_LOSSLESS_PG_POOL_NAME));
-        fvVectorProfile.push_back(make_pair("xon", m_pgProfileLookup[speed][cable].xon));
-        if (m_pgProfileLookup[speed][cable].xon_offset.length() > 0) {
-            fvVectorProfile.push_back(make_pair("xon_offset",
-                                         m_pgProfileLookup[speed][cable].xon_offset));
-        }
-        fvVectorProfile.push_back(make_pair("xoff", m_pgProfileLookup[speed][cable].xoff));
-        fvVectorProfile.push_back(make_pair("size", m_pgProfileLookup[speed][cable].size));
-        fvVectorProfile.push_back(make_pair(mode, m_pgProfileLookup[speed][cable].threshold));
-        m_cfgBufferProfileTable.set(buffer_profile_key, fvVectorProfile);
-    }
-    else
-    {
-        SWSS_LOG_NOTICE("Reusing existing profile '%s'", buffer_profile_key.c_str());
-    }
-
-    /* Check if PG Mapping is already then log message and return. */
-    for (auto& prop : fvVectorPg)
-    {
-        if ((fvField(prop) == "profile") && (profile_ref == fvValue(prop)))
+        // check if profile already exists - if yes - skip creation
+        m_cfgBufferProfileTable.get(buffer_profile_key, fvVectorProfile);
+        // Create record in BUFFER_PROFILE table
+        if (fvVectorProfile.size() == 0)
         {
-            SWSS_LOG_NOTICE("PG to Buffer Profile Mapping %s already present", buffer_pg_key.c_str());
-            return task_process_status::task_success;
+            SWSS_LOG_NOTICE("Creating new profile '%s'", buffer_profile_key.c_str());
+
+            string mode = getPgPoolMode();
+            if (mode.empty())
+            {
+                // this should never happen if switch initialized properly
+                SWSS_LOG_INFO("PG lossless pool is not yet created");
+                return task_process_status::task_need_retry;
+            }
+
+            // profile threshold field name
+            mode += "_th";
+
+            fvVectorProfile.push_back(make_pair("pool", INGRESS_LOSSLESS_PG_POOL_NAME));
+            fvVectorProfile.push_back(make_pair("xon", m_pgProfileLookup[speed][cable].xon));
+            if (m_pgProfileLookup[speed][cable].xon_offset.length() > 0) {
+                fvVectorProfile.push_back(make_pair("xon_offset",
+                                            m_pgProfileLookup[speed][cable].xon_offset));
+            }
+            fvVectorProfile.push_back(make_pair("xoff", m_pgProfileLookup[speed][cable].xoff));
+            fvVectorProfile.push_back(make_pair("size", m_pgProfileLookup[speed][cable].size));
+            fvVectorProfile.push_back(make_pair(mode, m_pgProfileLookup[speed][cable].threshold));
+            m_cfgBufferProfileTable.set(buffer_profile_key, fvVectorProfile);
         }
+        else
+        {
+            SWSS_LOG_NOTICE("Reusing existing profile '%s'", buffer_profile_key.c_str());
+        }
+
+        /* Check if PG Mapping is already then log message and return. */
+        for (auto& prop : fvVectorPg)
+        {
+            if ((fvField(prop) == "profile") && (profile_ref == fvValue(prop)))
+            {
+                SWSS_LOG_NOTICE("PG to Buffer Profile Mapping %s already present", buffer_pg_key.c_str());
+                continue;
+            }
+        }
+
+        fvVectorPg.clear();
+
+        fvVectorPg.push_back(make_pair("profile", profile_ref));
+        m_cfgBufferPgTable.set(buffer_pg_key, fvVectorPg);
     }
-
-    fvVectorPg.clear();
-
-    fvVectorPg.push_back(make_pair("profile", profile_ref));
-    m_cfgBufferPgTable.set(buffer_pg_key, fvVectorPg);
     return task_process_status::task_success;
 }
 
