@@ -240,8 +240,6 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
     vector<FieldValueTuple> fvVector;
-    uint32_t attr_idx = 0;
-    uint32_t src_port_attr_idx = 0;
 
     for (auto i : data)
     {
@@ -295,62 +293,50 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     attr.id = SAI_BFD_SESSION_ATTR_TYPE;
     attr.value.s32 = bfd_session_type;
     attrs.emplace_back(attr);
-    attr_idx++;
     fvVector.emplace_back("type", session_type_lookup.at(bfd_session_type));
 
     attr.id = SAI_BFD_SESSION_ATTR_LOCAL_DISCRIMINATOR;
     attr.value.u32 = bfd_gen_id();
     attrs.emplace_back(attr);
-    attr_idx++;
 
     attr.id = SAI_BFD_SESSION_ATTR_UDP_SRC_PORT;
     attr.value.u32 = bfd_src_port();
     attrs.emplace_back(attr);
-    src_port_attr_idx = attr_idx;
-    attr_idx++;
 
     attr.id = SAI_BFD_SESSION_ATTR_REMOTE_DISCRIMINATOR;
     attr.value.u32 = 0;
     attrs.emplace_back(attr);
-    attr_idx++;
 
     attr.id = SAI_BFD_SESSION_ATTR_BFD_ENCAPSULATION_TYPE;
     attr.value.s32 = encapsulation_type;
     attrs.emplace_back(attr);
-    attr_idx++;
 
     attr.id = SAI_BFD_SESSION_ATTR_IPHDR_VERSION;
     attr.value.u8 = src_ip.isV4() ? 4 : 6;
     attrs.emplace_back(attr);
-    attr_idx++;
 
     attr.id = SAI_BFD_SESSION_ATTR_SRC_IP_ADDRESS;
     copy(attr.value.ipaddr, src_ip);
     attrs.emplace_back(attr);
-    attr_idx++;
     fvVector.emplace_back("local_addr", src_ip.to_string());
 
     attr.id = SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS;
     copy(attr.value.ipaddr, peer_address);
     attrs.emplace_back(attr);
-    attr_idx++;
 
     attr.id = SAI_BFD_SESSION_ATTR_MIN_TX;
     attr.value.u32 = tx_interval * BFD_SESSION_MILLISECOND_TO_MICROSECOND;
     attrs.emplace_back(attr);
-    attr_idx++;
     fvVector.emplace_back("tx_interval", to_string(tx_interval));
 
     attr.id = SAI_BFD_SESSION_ATTR_MIN_RX;
     attr.value.u32 = rx_interval * BFD_SESSION_MILLISECOND_TO_MICROSECOND;
     attrs.emplace_back(attr);
-    attr_idx++;
     fvVector.emplace_back("rx_interval", to_string(rx_interval));
 
     attr.id = SAI_BFD_SESSION_ATTR_MULTIPLIER;
     attr.value.u8 = multiplier;
     attrs.emplace_back(attr);
-    attr_idx++;
     fvVector.emplace_back("multiplier", to_string(multiplier));
 
     if (multihop)
@@ -358,7 +344,6 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
         attr.id = SAI_BFD_SESSION_ATTR_MULTIHOP;
         attr.value.booldata = true;
         attrs.emplace_back(attr);
-        attr_idx++;
         fvVector.emplace_back("multihop", "true");
     }
     else
@@ -392,22 +377,18 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
         attr.id = SAI_BFD_SESSION_ATTR_HW_LOOKUP_VALID;
         attr.value.booldata = false;
         attrs.emplace_back(attr);
-        attr_idx++;
 
         attr.id = SAI_BFD_SESSION_ATTR_PORT;
         attr.value.oid = port.m_port_id;
         attrs.emplace_back(attr);
-        attr_idx++;
 
         attr.id = SAI_BFD_SESSION_ATTR_SRC_MAC_ADDRESS;
         memcpy(attr.value.mac, port.m_mac.getMac(), sizeof(sai_mac_t));
         attrs.emplace_back(attr);
-        attr_idx++;
 
         attr.id = SAI_BFD_SESSION_ATTR_DST_MAC_ADDRESS;
         memcpy(attr.value.mac, dst_mac.getMac(), sizeof(sai_mac_t));
         attrs.emplace_back(attr);
-        attr_idx++;
     }
     else
     {
@@ -430,24 +411,17 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
         }
 
         attrs.emplace_back(attr);
-        attr_idx++;
     }
 
     fvVector.emplace_back("state", session_state_lookup.at(SAI_BFD_SESSION_STATE_DOWN));
 
     sai_object_id_t bfd_session_id = SAI_NULL_OBJECT_ID;
-    sai_status_t status = sai_bfd_api->create_bfd_session(&bfd_session_id, gSwitchId, attr_idx, attrs.data());
+    sai_status_t status = sai_bfd_api->create_bfd_session(&bfd_session_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
 
-    for (int retry = 0; (status != SAI_STATUS_SUCCESS) && (retry < NUM_BFD_SRCPORT_RETRIES); retry++)
+    if (status != SAI_STATUS_SUCCESS)
     {
-        auto old_num = attrs[src_port_attr_idx].value.u32;
-        attrs[src_port_attr_idx].value.u32 = bfd_src_port();
-        SWSS_LOG_WARN("BFD create using port number %d failed. Retrying with port number %d",
-                      old_num, attrs[src_port_attr_idx].value.u32);
-        status = sai_bfd_api->create_bfd_session(&bfd_session_id, gSwitchId,
-                                                 attr_idx, attrs.data());
+        status = retry_create_bfd_session(bfd_session_id, attrs);
     }
-
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create bfd session %s, rv:%d", key.c_str(), status);
@@ -469,6 +443,38 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     notify(SUBJECT_TYPE_BFD_SESSION_STATE_CHANGE, static_cast<void *>(&update));
 
     return true;
+}
+
+void BfdOrch::update_port_number(vector<sai_attribute_t> &attrs)
+{
+    for (uint32_t attr_idx = 0; attr_idx < (uint32_t)attrs.size(); attr_idx++)
+    {
+       if (attrs[attr_idx].id ==  SAI_BFD_SESSION_ATTR_UDP_SRC_PORT)
+       {
+           auto old_num = attrs[attr_idx].value.u32;
+           attrs[attr_idx].value.u32 = bfd_src_port();
+           SWSS_LOG_INFO ("BFD create using port number %d failed. Retrying with port number %d",
+                          old_num, attrs[attr_idx].value.u32);
+           return;
+       }
+    }
+}
+
+sai_status_t BfdOrch::retry_create_bfd_session(sai_object_id_t &bfd_session_id, vector<sai_attribute_t> attrs)
+{
+    sai_status_t status = SAI_STATUS_FAILURE;
+
+    for (int retry = 0; retry < NUM_BFD_SRCPORT_RETRIES; retry++)
+    {
+        update_port_number(attrs);
+        status = sai_bfd_api->create_bfd_session(&bfd_session_id, gSwitchId,
+                                                 (uint32_t)attrs.size(), attrs.data());
+        if(status == SAI_STATUS_SUCCESS)
+        {
+            return status;
+        }
+    }
+    return status;
 }
 
 bool BfdOrch::remove_bfd_session(const string& key)
