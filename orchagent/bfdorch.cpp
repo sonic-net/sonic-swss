@@ -422,6 +422,7 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     {
         status = retry_create_bfd_session(bfd_session_id, attrs);
     }
+
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create bfd session %s, rv:%d", key.c_str(), status);
@@ -453,8 +454,8 @@ void BfdOrch::update_port_number(vector<sai_attribute_t> &attrs)
        {
            auto old_num = attrs[attr_idx].value.u32;
            attrs[attr_idx].value.u32 = bfd_src_port();
-           SWSS_LOG_INFO ("BFD create using port number %d failed. Retrying with port number %d",
-                          old_num, attrs[attr_idx].value.u32);
+           SWSS_LOG_WARN("BFD create using port number %d failed. Retrying with port number %d",
+                         old_num, attrs[attr_idx].value.u32);
            return;
        }
     }
