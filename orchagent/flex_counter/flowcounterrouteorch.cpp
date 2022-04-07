@@ -844,6 +844,16 @@ void FlowCounterRouteOrch::getRouteFlowCounterNameMapKey(sai_object_id_t vrf_id,
 
 void FlowCounterRouteOrch::handleRouteAdd(sai_object_id_t vrf_id, const IpPrefix& ip_prefix)
 {
+    if (!mRouteFlowCounterSupported)
+    {
+        return;
+    }
+
+    if (!isRouteFlowCounterEnabled())
+    {
+        return;
+    }
+
     for (const auto &route_pattern : mRoutePatternSet)
     {
         if (route_pattern.is_match(vrf_id, ip_prefix))
@@ -860,6 +870,16 @@ void FlowCounterRouteOrch::handleRouteAdd(sai_object_id_t vrf_id, const IpPrefix
 
 void FlowCounterRouteOrch::handleRouteRemove(sai_object_id_t vrf_id, const IpPrefix& ip_prefix)
 {
+    if (!mRouteFlowCounterSupported)
+    {
+        return;
+    }
+
+    if (!isRouteFlowCounterEnabled())
+    {
+        return;
+    }
+    
     for (const auto &route_pattern : mRoutePatternSet)
     {
         if (route_pattern.is_match(vrf_id, ip_prefix))

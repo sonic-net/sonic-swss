@@ -12,7 +12,6 @@
 #include "swssnet.h"
 #include "crmorch.h"
 #include "directory.h"
-#include "sai_serialize.h"
 #include "timer.h"
 
 extern sai_object_id_t gVirtualRouterId;
@@ -33,8 +32,8 @@ extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
 extern size_t gMaxBulkSize;
 
 /* Default maximum number of next hop groups */
-#define DEFAULT_NUMBER_OF_ECMP_GROUPS               128
-#define DEFAULT_MAX_ECMP_GROUP_SIZE                 32
+#define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
+#define DEFAULT_MAX_ECMP_GROUP_SIZE     32
 
 RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch) :
         gRouteBulker(sai_route_api, gMaxBulkSize),

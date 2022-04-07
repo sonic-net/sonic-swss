@@ -22,7 +22,6 @@
 #include "portsorch.h"
 #include "aclorch.h"
 #include "routeorch.h"
-#include "flowcounterrouteorch.h"
 #include "fdborch.h"
 
 /* Global variables */
@@ -30,7 +29,6 @@ extern Directory<Orch*> gDirectory;
 extern CrmOrch *gCrmOrch;
 extern NeighOrch *gNeighOrch;
 extern RouteOrch *gRouteOrch;
-extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
 extern AclOrch *gAclOrch;
 extern PortsOrch *gPortsOrch;
 extern FdbOrch *gFdbOrch;
@@ -131,8 +129,6 @@ static sai_status_t create_route(IpPrefix &pfx, sai_object_id_t nh)
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
     }
 
-    gFlowCounterRouteOrch->onAddMiscRouteEntry(gVirtualRouterId, pfx.getSubnet());
-
     SWSS_LOG_NOTICE("Created tunnel route to %s ", pfx.to_string().c_str());
     return status;
 }
@@ -161,8 +157,6 @@ static sai_status_t remove_route(IpPrefix &pfx)
     {
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
     }
-
-    gFlowCounterRouteOrch->onRemoveMiscRouteEntry(gVirtualRouterId, pfx.getSubnet());
 
     SWSS_LOG_NOTICE("Removed tunnel route to %s ", pfx.to_string().c_str());
     return status;
