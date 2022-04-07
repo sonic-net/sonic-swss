@@ -1,5 +1,6 @@
 import pytest
 import logging
+import time
 
 import test_flex_counters as flex_counter_module
 
@@ -418,12 +419,13 @@ class TestPbhBasicEditFlows:
                 flow_counter="ENABLED"
             )
             self.dvs_acl.verify_acl_rule_count(1)
+            self.dvs_acl.get_acl_counter_ids(1)
 
             pbhlogger.info("Enable a ACL FLEX counter")
             test_flex_counters.set_flex_counter_group_status(counter_key, counter_map)
-            test_flex_counters.verify_flex_counters_populated(counter_map, counter_stat)
+            time.sleep(1)
             test_flex_counters.set_flex_counter_group_interval(counter_key, counter_stat, '2500')
-            self.dvs_acl.get_acl_counter_ids(1)
+            test_flex_counters.verify_flex_counters_populated(counter_map, counter_stat)
 
             pbhlogger.info("Disable a flow counter for PBH rule: {}".format(PBH_RULE_NAME))
             self.dvs_pbh.update_pbh_rule(
@@ -469,6 +471,10 @@ class TestPbhBasicEditFlows:
             pbhlogger.info("Remove PBH hash field: {}".format(PBH_HASH_FIELD_NAME))
             self.dvs_pbh.remove_pbh_hash_field(PBH_HASH_FIELD_NAME)
             self.dvs_pbh.verify_pbh_hash_field_count(0)
+
+            # ACL FLEX counter
+            pbhlogger.info("Disable ACL FLEX counter")
+            test_flex_counters.post_trap_flow_counter_test(meta_data)
 
 
 @pytest.mark.usefixtures("dvs_lag_manager")
