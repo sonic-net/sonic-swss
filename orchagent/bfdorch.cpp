@@ -470,7 +470,7 @@ sai_status_t BfdOrch::retry_create_bfd_session(sai_object_id_t &bfd_session_id, 
         update_port_number(attrs);
         status = sai_bfd_api->create_bfd_session(&bfd_session_id, gSwitchId,
                                                  (uint32_t)attrs.size(), attrs.data());
-        if(status == SAI_STATUS_SUCCESS)
+        if (status == SAI_STATUS_SUCCESS)
         {
             return status;
         }
