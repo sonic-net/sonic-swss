@@ -3,7 +3,7 @@ import time
 
 
 class TestBuffer(object):
-    LOSSLESS_PGS = [2, 3, 4, 6]
+    lossless_pgs = []
     INTF = "Ethernet0"
 
     def setup_db(self, dvs):
@@ -14,6 +14,10 @@ class TestBuffer(object):
 
         # enable PG watermark
         self.set_pg_wm_status('enable')
+    
+    def get_pfc_enable_queues(self):
+        qos_map = self.config_db.get_entry("PORT_QOS_MAP", self.INTF)
+        self.lossless_pgs = qos_map['pfc_enable'].split(',')
 
     def get_pg_oid(self, pg):
         fvs = dict()
@@ -61,7 +65,7 @@ class TestBuffer(object):
         try:
             self.setup_db(dvs)
             pg_name_map = dict()
-            for pg in self.LOSSLESS_PGS:
+            for pg in self.lossless_pgs:
                 pg_name = "{}:{}".format(self.INTF, pg)
                 pg_name_map[pg_name] = self.get_pg_oid(pg_name)
             yield pg_name_map
@@ -119,7 +123,8 @@ class TestBuffer(object):
             self.app_db.wait_for_deleted_entry("BUFFER_PROFILE_TABLE", test_lossless_profile)
 
             # buffer pgs should still point to the original buffer profile
-            self.app_db.wait_for_field_match("BUFFER_PG_TABLE", self.INTF + ":3-4", {"profile": orig_lossless_profile})
+            for pg in self.lossless_pgs:
+                self.app_db.wait_for_field_match("BUFFER_PG_TABLE", self.INTF + ":" + pg, {"profile": orig_lossless_profile})
             fvs = dict()
             for pg in self.pg_name_map:
                 fvs["SAI_INGRESS_PRIORITY_GROUP_ATTR_BUFFER_PROFILE"] = self.buf_pg_profile[pg]

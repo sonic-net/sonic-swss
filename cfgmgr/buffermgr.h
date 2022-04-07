@@ -11,7 +11,7 @@
 namespace swss {
 
 #define INGRESS_LOSSLESS_PG_POOL_NAME "ingress_lossless_pool"
-#define LOSSLESS_PGS "2,3-4,6"
+#define LOSSLESS_PGS "3-4"
 
 #define BUFFERMGR_TIMER_PERIOD 10
 
@@ -43,6 +43,7 @@ private:
     Table m_cfgBufferProfileTable;
     Table m_cfgBufferPgTable;
     Table m_cfgLosslessPgPoolTable;
+    Table m_cfgPortQosMapTable;
 
     ProducerStateTable m_applBufferProfileTable;
     ProducerStateTable m_applBufferPgTable;
@@ -60,13 +61,14 @@ private:
     std::string getPgPoolMode();
     void readPgProfileLookupFile(std::string);
     task_process_status doCableTask(std::string port, std::string cable_length);
-    task_process_status doSpeedUpdateTask(std::string port, bool admin_up);
+    task_process_status doSpeedUpdateTask(std::string port, bool admin_up, const std::string &pfc_enable);
     void doBufferTableTask(Consumer &consumer, ProducerStateTable &applTable);
 
     void transformSeperator(std::string &name);
 
     void doTask(Consumer &consumer);
     void doBufferMetaTask(Consumer &consumer);
+    std::string getPfcEnableQueuesForPort(std::string port); 
 };
 
 }

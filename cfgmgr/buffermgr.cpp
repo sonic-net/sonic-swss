@@ -18,6 +18,7 @@ using namespace swss;
 BufferMgr::BufferMgr(DBConnector *cfgDb, DBConnector *applDb, string pg_lookup_file, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
         m_cfgPortTable(cfgDb, CFG_PORT_TABLE_NAME),
+        m_cfgPortQosMapTable(cfgDb, CFG_PORT_QOS_MAP_TABLE_NAME),
         m_cfgCableLenTable(cfgDb, CFG_PORT_CABLE_LEN_TABLE_NAME),
         m_cfgBufferProfileTable(cfgDb, CFG_BUFFER_PROFILE_TABLE_NAME),
         m_cfgBufferPgTable(cfgDb, CFG_BUFFER_PG_TABLE_NAME),
@@ -133,7 +134,7 @@ Create/update two tables: profile (in m_cfgBufferProfileTable) and port buffer (
         }
     }
 */
-task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up)
+task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up, const string& pfc_enable)
 {
     string cable;
     string speed;
@@ -156,7 +157,7 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up)
     string buffer_profile_key = "pg_lossless_" + speed + "_" + cable + "_profile";
     string profile_ref = buffer_profile_key;
     
-    vector<string> lossless_pgs = tokenize(LOSSLESS_PGS, ',');
+    vector<string> lossless_pgs = tokenize(pfc_enable, ',');
     for (auto lossless_pg : lossless_pgs)
     {
         vector<FieldValueTuple> fvVectorPg, fvVectorProfile;
@@ -350,6 +351,21 @@ void BufferMgr::doBufferMetaTask(Consumer &consumer)
     }
 }
 
+/*
+Read pfc_enable entry from PORT_QOS_MAP to decide on which queue to
+apply lossless PG.
+Return the hardcoded value '3-4' if failed to get that value
+*/
+string BufferMgr::getPfcEnableQueuesForPort(std::string port)
+{
+    string pfc_enable;
+    if (!m_cfgPortQosMapTable.hget(port, "pfc_enable", pfc_enable))
+    {
+        return LOSSLESS_PGS;
+    }
+    return pfc_enable;
+}
+
 void BufferMgr::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -442,7 +458,8 @@ void BufferMgr::doTask(Consumer &consumer)
                 if (m_speedLookup.count(port) != 0)
                 {
                     // create/update profile for port
-                    task_status = doSpeedUpdateTask(port, admin_up);
+                    string lossless_pgs = getPfcEnableQueuesForPort(port);
+                    task_status = doSpeedUpdateTask(port, admin_up, lossless_pgs);
                 }
 
                 if (task_status != task_process_status::task_success)
