@@ -113,11 +113,12 @@ task_process_status QosMapHandler::processAllWorkItem(Consumer& consumer)
      As we are going to have more than one QosMap in type DSCP_TO_TC_MAP, TC_TO_PRIORITY_GROUP_MAP and TC_TO_QUEUE_MAP,
      we always use the first map as switch level (port level) QoS map 
     */ 
+    string qos_map_type_name = consumer.getTableName();
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
         KeyOpFieldsValuesTuple &tuple = it->second;
-        status = processWorkItem(tuple, first_one);
+        status = processWorkItem(qos_map_type_name, tuple, first_one);
         if (status != task_process_status::task_success)
         {
             // Stop parsing if any error seen
@@ -129,13 +130,12 @@ task_process_status QosMapHandler::processAllWorkItem(Consumer& consumer)
     return status;
 }
 
-task_process_status QosMapHandler::processWorkItem(KeyOpFieldsValuesTuple& tuple, bool is_switch_level)
+task_process_status QosMapHandler::processWorkItem(string qos_map_type_name, KeyOpFieldsValuesTuple& tuple, bool is_switch_level)
 {
     
 
     sai_object_id_t sai_object = SAI_NULL_OBJECT_ID;
     string qos_object_name = kfvKey(tuple);
-    string qos_map_type_name = consumer.getTableName();
     string op = kfvOp(tuple);
 
     if (QosOrch::getTypeMap()[qos_map_type_name]->find(qos_object_name) != QosOrch::getTypeMap()[qos_map_type_name]->end())
@@ -1092,8 +1092,6 @@ bool TcToDscpMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
 {
     SWSS_LOG_ENTER();
 
-    sai_uint8_t max_num_fcs = NhgMapOrch::getMaxNumFcs();
-
     sai_attribute_t list_attr;
     list_attr.id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;
     list_attr.value.qosmap.count = (uint32_t)kfvFieldsValues(tuple).size();
@@ -1212,7 +1210,7 @@ void QosOrch::initTableHandlers()
     m_qos_handler_map.insert(qos_handler_pair(CFG_WRED_PROFILE_TABLE_NAME, &QosOrch::handleWredProfileTable));
     m_qos_handler_map.insert(qos_handler_pair(CFG_DSCP_TO_FC_MAP_TABLE_NAME, &QosOrch::handleDscpToFcTable));
     m_qos_handler_map.insert(qos_handler_pair(CFG_EXP_TO_FC_MAP_TABLE_NAME, &QosOrch::handleExpToFcTable));
-    m_qos_handler_map.insert(qos_handler_pair(CFG_TC_TO_DSCP_MAP_TABLE_NAME，&QosOrch::handleTcToDscpTable));
+    m_qos_handler_map.insert(qos_handler_pair(CFG_TC_TO_DSCP_MAP_TABLE_NAME, &QosOrch::handleTcToDscpTable));
 
     m_qos_handler_map.insert(qos_handler_pair(CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME, &QosOrch::handleTcToPgTable));
     m_qos_handler_map.insert(qos_handler_pair(CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME, &QosOrch::handlePfcPrioToPgTable));

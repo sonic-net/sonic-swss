@@ -93,7 +93,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                     }
                     if (exists)
                     {
-                        setIpAttribute(key, ip_addresses, tunnelTable.find(key)->second.tunnel_id);
+                        setIpAttribute(key, dst_ip_addresses, tunnelTable.find(key)->second.tunnel_id);
                     }
                 }
                 else if (fvField(i) == "src_ip")
@@ -195,7 +195,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
             {
                 
                 if (addDecapTunnel(key, tunnel_type, dst_ip_addresses, p_src_ip, dscp_mode, ecn_mode, encap_ecn_mode, ttl_mode,
-                                         dscp_to_dc_map_id, tc_to_pg_map_id))
+                                    term_type, dscp_to_dc_map_id, tc_to_pg_map_id))
                 {
                     SWSS_LOG_NOTICE("Tunnel(s) added to ASIC_DB.");
                 }
@@ -464,7 +464,7 @@ bool TunnelDecapOrch::addDecapTunnelTermEntries(string tunnelKey, swss::IpAddres
         string key;
         if (!src_ip.isZero())
         {
-            key = src_ip.to_string + '-' + dst_ip;
+            key = src_ip.to_string() + '-' + dst_ip;
         }
         else
         {
@@ -499,7 +499,7 @@ bool TunnelDecapOrch::addDecapTunnelTermEntries(string tunnelKey, swss::IpAddres
             existingIps.insert(key);
 
             // insert entry id and ip into tunnel mapping
-            tunnel_info->tunnel_term_info.push_back({ tunnel_term_table_entry_id, src_ip, dst_ip, tunnel_type });
+            tunnel_info->tunnel_term_info.push_back({ tunnel_term_table_entry_id, src_ip.to_string(), dst_ip, tunnel_type });
 
             // pop the last element for the next loop
             tunnel_table_entry_attrs.pop_back();
@@ -580,21 +580,6 @@ bool TunnelDecapOrch::setTunnelAttribute(string field, string value, sai_object_
         }
     }
 
-    if (field == DECAP_DSCP_TO_DC_MAP)
-    {
-        // TC remapping.
-        attr.id = SAI_TUNNEL_ATTR_DECAP_QOS_DSCP_TO_TC_MAP;
-        // TODO: Fill value of DSCP_TO_TC_MAP 
-        
-    }
-
-    if (field == DECAP_TC_TO_PG_MAP)
-    {
-        // TC to PG remapping
-        attr.id = SAI_TUNNEL_ATTR_DECAP_QOS_TC_TO_PRIORITY_GROUP_MAP;
-        // TODO: Fill value of TC_TO_PRIORITY_GROUP_MAP
-    }
-
     sai_status_t status = sai_tunnel_api->set_tunnel_attribute(existing_tunnel_id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -606,6 +591,52 @@ bool TunnelDecapOrch::setTunnelAttribute(string field, string value, sai_object_
         }
     }
     SWSS_LOG_NOTICE("Set attribute %s with value %s\n", field.c_str(), value.c_str());
+    return true;
+}
+
+/**
+ * Function Description:
+ *    @brief sets attributes for a tunnel （decap_dscp_to_tc_map and decap_tc_to_pg_map are supported)
+ *
+ * Arguments:
+ *    @param[in] field - field to set the attribute for
+ *    @param[in] value - value to set the attribute to (sai_object_id)
+ *    @param[in] existing_tunnel_id - the id of the tunnel you want to set the attribute for
+ *
+ * Return Values:
+ *    @return true on success and false if there's an error
+ */
+bool TunnelDecapOrch::setTunnelAttribute(string field, sai_object_id_t value, sai_object_id_t existing_tunnel_id)
+{
+
+    sai_attribute_t attr;
+
+    if (field == "decap_dscp_to_tc_map")
+    {
+        // TC remapping.
+        attr.id = SAI_TUNNEL_ATTR_DECAP_QOS_DSCP_TO_TC_MAP;
+        attr.value.oid = value; 
+        
+    }
+
+    if (field == "decap_tc_to_pg_map")
+    {
+        // TC to PG remapping
+        attr.id = SAI_TUNNEL_ATTR_DECAP_QOS_TC_TO_PRIORITY_GROUP_MAP;
+        attr.value.oid = value;
+    }
+
+    sai_status_t status = sai_tunnel_api->set_tunnel_attribute(existing_tunnel_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set attribute %s with value %" PRIu64, field.c_str(), value);
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_TUNNEL, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+    SWSS_LOG_NOTICE("Set attribute %s with value %" PRIu64, field.c_str(), value);
     return true;
 }
 
@@ -635,7 +666,7 @@ bool TunnelDecapOrch::setIpAttribute(string key, IpAddresses new_ip_addresses, s
     for (auto it = tunnel_term_info_copy.begin(); it != tunnel_term_info_copy.end(); ++it)
     {
         TunnelTermEntry tunnel_entry_info = *it;
-        string ip = tunnel_entry_info.ip_address;
+        string ip = tunnel_entry_info.dst_ip;
         if (!new_ip_addresses.contains(ip))
         {
             if (!removeDecapTunnelTermEntry(tunnel_entry_info.tunnel_term_id, ip))
@@ -646,12 +677,12 @@ bool TunnelDecapOrch::setIpAttribute(string key, IpAddresses new_ip_addresses, s
         else
         {
             // add the data into the tunnel_term_info
-            tunnel_info->tunnel_term_info.push_back({ tunnel_entry_info.tunnel_term_id, ip });
+            tunnel_info->tunnel_term_info.push_back({ tunnel_entry_info.tunnel_term_id, "0.0.0.0", ip, TUNNEL_TERM_TYPE_P2MP });
         }
     }
 
     // add all the new ip addresses
-    if(!addDecapTunnelTermEntries(key, IPAddress('0.0.0.0'), new_ip_addresses, tunnel_id, TUNNEL_TERM_TYPE_P2MP))
+    if(!addDecapTunnelTermEntries(key, IpAddress(0), new_ip_addresses, tunnel_id, TUNNEL_TERM_TYPE_P2MP))
     {
         return false;
     }
@@ -899,7 +930,7 @@ bool TunnelDecapOrch::removeNextHopTunnel(std::string tunnelKey, IpAddress& ipAd
     return true;
 }
 
-IpAddresses TunnelDecapOrch::getDstIpAddresses(std::string tunnelKey) const
+IpAddresses TunnelDecapOrch::getDstIpAddresses(std::string tunnelKey)
 {
     if (tunnelTable.find(tunnelKey) == tunnelTable.end())
     {
@@ -931,7 +962,7 @@ sai_object_id_t TunnelDecapOrch::resolveQosMapId(std::string tunnle_name, std::s
     {
         
         setObjectReference(QosOrch::getTypeMap(), CFG_TUNNEL_TABLE_NAME, tunnle_name, map_type_name, object_name);
-        SWSS_LOG_INFO("Resolved QoS map for tunnel %s type %s name %s", tunnle_name.c_str(), map_type_name.c_str(), map_name.c_str());
+        SWSS_LOG_INFO("Resolved QoS map for tunnel %s type %s name %s", tunnle_name.c_str(), map_type_name.c_str(), object_name.c_str());
         return id;
     }
     else

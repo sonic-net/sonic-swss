@@ -65,7 +65,7 @@ extern std::map<string, string> qos_to_ref_table_map;
 class QosMapHandler
 {
 public:
-    task_process_status processWorkItem(KeyOpFieldsValuesTuple& tuple, bool is_switch_level);
+    task_process_status processWorkItem(std::string qos_map_type, KeyOpFieldsValuesTuple& tuple, bool is_switch_level);
     task_process_status processAllWorkItem(Consumer& consumer);
     virtual bool convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes) = 0;
     virtual void freeAttribResources(vector<sai_attribute_t> &attributes);

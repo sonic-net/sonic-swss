@@ -64,7 +64,7 @@ public:
 
     sai_object_id_t createNextHopTunnel(std::string tunnelKey, swss::IpAddress& ipAddr);
     bool removeNextHopTunnel(std::string tunnelKey, swss::IpAddress& ipAddr);
-    swss::IpAddresses getDstIpAddresses(std::string tunnelKey) const;
+    swss::IpAddresses getDstIpAddresses(std::string tunnelKey);
 
 private:
     TunnelTable tunnelTable;
@@ -80,7 +80,8 @@ private:
     bool removeDecapTunnelTermEntry(sai_object_id_t tunnel_term_id, std::string ip);
 
     bool setTunnelAttribute(std::string field, std::string value, sai_object_id_t existing_tunnel_id);
-    bool setIpAttribute(std::string key, swss::IpAddress src_ip, swss::IpAddresses new_ip_addresses, sai_object_id_t tunnel_id, TunnelTermType term_type);
+    bool setTunnelAttribute(std::string field, sai_object_id_t value, sai_object_id_t existing_tunnel_id);
+    bool setIpAttribute(std::string key, swss::IpAddresses new_ip_addresses, sai_object_id_t tunnel_id);
 
     sai_object_id_t getNextHopTunnel(std::string tunnelKey, swss::IpAddress& ipAddr);
     int incNextHopRef(std::string tunnelKey, swss::IpAddress& ipAddr);
@@ -88,6 +89,6 @@ private:
 
     void doTask(Consumer& consumer);
 
-    sai_object_id_t resolveQosMapId(std::string tunnle_name, std::string map_type_name, KeyOpFieldsValuesTuple& tuple);
+    sai_object_id_t resolveQosMapId(std::string tunnle_name, std::string map_type_name, swss::KeyOpFieldsValuesTuple& tuple);
 };
 #endif

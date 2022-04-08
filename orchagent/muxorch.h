@@ -29,9 +29,6 @@ enum MuxStateChange
     MUX_STATE_UNKNOWN_STATE
 };
 
-const string encap_tc_to_queue_field_name   = "encap_tc_to_queue_map";
-const string encap_tc_to_dscp_field_name    = "encap_tc_to_dscp_map";
-
 // Forward Declarations
 class MuxOrch;
 class MuxCableOrch;
