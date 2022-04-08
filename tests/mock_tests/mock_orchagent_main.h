@@ -9,7 +9,9 @@
 #include "neighorch.h"
 #include "fdborch.h"
 #include "mirrororch.h"
+#define private public
 #include "bufferorch.h"
+#undef private
 #include "qosorch.h"
 #include "vrforch.h"
 #include "vnetorch.h"

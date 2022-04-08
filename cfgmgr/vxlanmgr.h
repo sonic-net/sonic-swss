@@ -6,6 +6,7 @@
 #include "orch.h"
 
 #include <map>
+#include <vector>
 #include <memory>
 #include <string>
 #include <utility>
@@ -70,6 +71,7 @@ private:
     int createVxlanNetdevice(std::string vxlanTunnelName, std::string vni_id,
                              std::string src_ip, std::string dst_ip, std::string vlan_id);
     int deleteVxlanNetdevice(std::string vxlan_dev_name);
+    std::vector<std::string> parseNetDev(const std::string& stdout);
     void getAllVxlanNetDevices();
 
     /*

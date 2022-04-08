@@ -91,7 +91,7 @@ class TestBuffer(object):
                 test_speed = "100000"
             test_cable_len = "0m"
 
-            dvs.runcmd("config interface startup {}".format(self.INTF))
+            dvs.port_admin_set(self.INTF, "up")
             # Make sure the buffer PG has been created
             orig_lossless_profile = "pg_lossless_{}_{}_profile".format(orig_speed, cable_len_before_test)
             self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", orig_lossless_profile)
@@ -113,7 +113,7 @@ class TestBuffer(object):
             self.change_cable_len(test_cable_len)
 
             # change intf speed to 'test_speed'
-            dvs.runcmd("config interface speed {} {}".format(self.INTF, test_speed))
+            dvs.port_field_set(self.INTF, "speed", test_speed)
             test_lossless_profile = "pg_lossless_{}_{}_profile".format(test_speed, test_cable_len)
             # buffer profile should not get created
             self.app_db.wait_for_deleted_entry("BUFFER_PROFILE_TABLE", test_lossless_profile)
@@ -129,7 +129,7 @@ class TestBuffer(object):
             self.change_cable_len(cable_len_before_test)
 
             # change intf speed to 'test_speed'
-            dvs.runcmd("config interface speed {} {}".format(self.INTF, test_speed))
+            dvs.port_field_set(self.INTF, "speed", test_speed)
             if profile_exp_cnt_diff != 0:
                 # new profile will get created
                 self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", new_lossless_profile)
@@ -150,5 +150,5 @@ class TestBuffer(object):
             if orig_cable_len:
                 self.change_cable_len(orig_cable_len)
             if orig_speed:
-                dvs.runcmd("config interface speed {} {}".format(self.INTF, orig_speed))
-            dvs.runcmd("config interface shutdown {}".format(self.INTF))
+                dvs.port_field_set(self.INTF, "speed", orig_speed)
+            dvs.port_admin_set(self.INTF, "down")

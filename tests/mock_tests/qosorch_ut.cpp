@@ -786,4 +786,97 @@ namespace qosorch_test
         static_cast<Orch *>(gQosOrch)->doTask();
         ASSERT_EQ((*QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME])["AZURE"].m_saiObjectId, switch_dscp_to_tc_map_id);
     }
+
+    TEST_F(QosOrchTest, QosOrchTestRetryFirstItem)
+    {
+        // There was a bug in QosOrch that the 2nd notifications and after can not be handled, eg the 1st one needs to be retried
+        // This is to verify the bug has been fixed
+        vector<string> ts;
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        // Try adding dscp_to_tc_map AZURE.1 and AZURE to PORT_QOS_MAP table
+        // The object AZURE.1 does not exist so the first item can not be handled and remain in m_toSync.
+        entries.push_back({"Ethernet0", "SET",
+                           {
+                               {"dscp_to_tc_map", "AZURE.1"}
+                           }});
+        entries.push_back({"Ethernet4", "SET",
+                           {
+                               {"dscp_to_tc_map", "AZURE"}
+                           }});
+        auto portQosMapConsumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_PORT_QOS_MAP_TABLE_NAME));
+        portQosMapConsumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gQosOrch)->doTask();
+        // The 2nd notification should be handled. Make sure by checking reference
+        CheckDependency(CFG_PORT_QOS_MAP_TABLE_NAME, "Ethernet4", "dscp_to_tc_map", CFG_DSCP_TO_TC_MAP_TABLE_NAME, "AZURE");
+        // Make sure there is one item left
+        portQosMapConsumer->dumpPendingTasks(ts);
+        ASSERT_EQ(ts[0], "PORT_QOS_MAP|Ethernet0|SET|dscp_to_tc_map:AZURE.1");
+        ASSERT_EQ(ts.size(), 1);
+        ts.clear();
+
+        // Try adding scheduler.0 and scheduler.2 to QUEUE table
+        entries.push_back({"Ethernet0|0", "SET",
+                           {
+                               {"scheduler", "scheduler.2"}
+                           }});
+        entries.push_back({"Ethernet0|1", "SET",
+                           {
+                               {"scheduler", "scheduler.0"}
+                           }});
+        auto queueConsumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_QUEUE_TABLE_NAME));
+        queueConsumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gQosOrch)->doTask();
+        // The 2nd notification should be handled. Make sure by checking reference
+        CheckDependency(CFG_QUEUE_TABLE_NAME, "Ethernet0|1", "scheduler", CFG_SCHEDULER_TABLE_NAME, "scheduler.0");
+        // Make sure there is one item left
+        queueConsumer->dumpPendingTasks(ts);
+        ASSERT_EQ(ts[0], "QUEUE|Ethernet0|0|SET|scheduler:scheduler.2");
+        ASSERT_EQ(ts.size(), 1);
+        ts.clear();
+
+        // Try removing AZURE and adding AZURE.1 to DSCP_TO_TC_MAP table
+        entries.push_back({"AZURE", "DEL", {{}}});
+        entries.push_back({"AZURE.1", "SET",
+                           {
+                               {"1", "1"}
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_DSCP_TO_TC_MAP_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gQosOrch)->doTask();
+        // The 2nd notification should be handled. Make sure by checking reference
+        CheckDependency(CFG_PORT_QOS_MAP_TABLE_NAME, "Ethernet0", "dscp_to_tc_map", CFG_DSCP_TO_TC_MAP_TABLE_NAME, "AZURE.1");
+        // The pending item in PORT_QOS_MAP table should also be handled since the dependency is met
+        portQosMapConsumer->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+        consumer->dumpPendingTasks(ts);
+        ASSERT_EQ(ts[0], "DSCP_TO_TC_MAP|AZURE|DEL|:");
+        ASSERT_EQ(ts.size(), 1);
+        ts.clear();
+
+        entries.push_back({"scheduler.0", "DEL", {{}}});
+        entries.push_back({"scheduler.2", "SET",
+                           {
+                               {"type", "DWRR"},
+                               {"weight", "15"}
+                           }});
+        consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_SCHEDULER_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gQosOrch)->doTask();
+        // We need a second call to "doTask" because scheduler table is handled after queue table
+        static_cast<Orch *>(gQosOrch)->doTask();
+        // The 2nd notification should be handled. Make sure by checking reference
+        CheckDependency(CFG_QUEUE_TABLE_NAME, "Ethernet0|0", "scheduler", CFG_SCHEDULER_TABLE_NAME, "scheduler.2");
+        // The pending item in QUEUE table should also be handled since the dependency is met
+        queueConsumer->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+        consumer->dumpPendingTasks(ts);
+        ASSERT_EQ(ts[0], "SCHEDULER|scheduler.0|DEL|:");
+        ASSERT_EQ(ts.size(), 1);
+        ts.clear();
+    }
 }

@@ -10,6 +10,8 @@ class DVSPbh:
     CDB_PBH_HASH = "PBH_HASH"
     CDB_PBH_HASH_FIELD = "PBH_HASH_FIELD"
 
+    ADB_PBH_HASH = "ASIC_STATE:SAI_OBJECT_TYPE_HASH"
+
     def __init__(self, asic_db, config_db):
         """Create a new DVS PBH Manager."""
         self.asic_db = asic_db
@@ -59,6 +61,27 @@ class DVSPbh:
         }
 
         self.config_db.create_entry(self.CDB_PBH_RULE, "{}|{}".format(table_name, rule_name), attr_dict)
+
+    def update_pbh_rule(
+        self,
+        table_name: str,
+        rule_name: str,
+        priority: str,
+        qualifiers: Dict[str, str],
+        hash_name: str,
+        packet_action: str = "SET_ECMP_HASH",
+        flow_counter: str = "DISABLED"
+    ) -> None:
+        """Update PBH rule in Config DB."""
+        attr_dict = {
+            "priority": priority,
+            "hash": hash_name,
+            "packet_action": packet_action,
+            "flow_counter": flow_counter,
+            **qualifiers
+        }
+
+        self.config_db.set_entry(self.CDB_PBH_RULE, "{}|{}".format(table_name, rule_name), attr_dict)
 
     def remove_pbh_rule(
         self,
@@ -125,3 +148,10 @@ class DVSPbh:
     ) -> None:
         """Verify that there are N hash field objects in ASIC DB."""
         self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_FINE_GRAINED_HASH_FIELD", expected)
+
+    def get_pbh_hash_ids(
+        self,
+        expected: int
+    ) -> List[str]:
+        """Get all of the PBH hash IDs in ASIC DB."""
+        return self.asic_db.wait_for_n_keys(self.ADB_PBH_HASH, expected)

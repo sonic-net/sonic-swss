@@ -103,39 +103,13 @@ map<string, string> qos_to_ref_table_map = {
 #define DSCP_MAX_VAL 63
 #define EXP_MAX_VAL 7
 
-task_process_status QosMapHandler::processAllWorkItem(Consumer& consumer)
+task_process_status QosMapHandler::processWorkItem(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
 
-    bool first_one = true;
-    task_process_status status = task_process_status::task_success;
-    /*
-     As we are going to have more than one QosMap in type DSCP_TO_TC_MAP, TC_TO_PRIORITY_GROUP_MAP and TC_TO_QUEUE_MAP,
-     we always use the first map as switch level (port level) QoS map 
-    */ 
-    string qos_map_type_name = consumer.getTableName();
-    auto it = consumer.m_toSync.begin();
-    while (it != consumer.m_toSync.end())
-    {
-        KeyOpFieldsValuesTuple &tuple = it->second;
-        status = processWorkItem(qos_map_type_name, tuple, first_one);
-        if (status != task_process_status::task_success)
-        {
-            // Stop parsing if any error seen
-            break;
-        }
-        first_one = false;
-        it = consumer.m_toSync.erase(it);
-    }
-    return status;
-}
-
-task_process_status QosMapHandler::processWorkItem(string qos_map_type_name, KeyOpFieldsValuesTuple& tuple, bool is_switch_level)
-{
-    
-
     sai_object_id_t sai_object = SAI_NULL_OBJECT_ID;
     string qos_object_name = kfvKey(tuple);
+    string qos_map_type_name = consumer.getTableName();
     string op = kfvOp(tuple);
 
     if (QosOrch::getTypeMap()[qos_map_type_name]->find(qos_object_name) != QosOrch::getTypeMap()[qos_map_type_name]->end())
@@ -350,11 +324,11 @@ bool DscpToTcMapHandler::removeQosItem(sai_object_id_t sai_object)
     return true;
 }
 
-task_process_status QosOrch::handleDscpToTcTable(Consumer& consumer)
+task_process_status QosOrch::handleDscpToTcTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
     DscpToTcMapHandler dscp_tc_handler;
-    return dscp_tc_handler.processAllWorkItem(consumer);
+    return dscp_tc_handler.processWorkItem(consumer, tuple);
 }
 
 bool MplsTcToTcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes)
@@ -405,11 +379,11 @@ sai_object_id_t MplsTcToTcMapHandler::addQosItem(const vector<sai_attribute_t> &
     return sai_object;
 }
 
-task_process_status QosOrch::handleMplsTcToTcTable(Consumer& consumer)
+task_process_status QosOrch::handleMplsTcToTcTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
     MplsTcToTcMapHandler mpls_tc_to_tc_handler;
-    return mpls_tc_to_tc_handler.processAllWorkItem(consumer);
+    return mpls_tc_to_tc_handler.processWorkItem(consumer, tuple);
 }
 
 bool Dot1pToTcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes)
@@ -474,11 +448,11 @@ sai_object_id_t Dot1pToTcMapHandler::addQosItem(const vector<sai_attribute_t> &a
     return object_id;
 }
 
-task_process_status QosOrch::handleDot1pToTcTable(Consumer &consumer)
+task_process_status QosOrch::handleDot1pToTcTable(Consumer &consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
     Dot1pToTcMapHandler dot1p_tc_handler;
-    return dot1p_tc_handler.processAllWorkItem(consumer);
+    return dot1p_tc_handler.processWorkItem(consumer, tuple);
 }
 
 bool TcToQueueMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes)
@@ -527,11 +501,11 @@ sai_object_id_t TcToQueueMapHandler::addQosItem(const vector<sai_attribute_t> &a
     return sai_object;
 }
 
-task_process_status QosOrch::handleTcToQueueTable(Consumer& consumer)
+task_process_status QosOrch::handleTcToQueueTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
     TcToQueueMapHandler tc_queue_handler;
-    return tc_queue_handler.processAllWorkItem(consumer);
+    return tc_queue_handler.processWorkItem(consumer, tuple);
 }
 
 void WredMapHandler::freeAttribResources(vector<sai_attribute_t> &attributes)
@@ -748,11 +722,11 @@ bool WredMapHandler::removeQosItem(sai_object_id_t sai_object)
     return true;
 }
 
-task_process_status QosOrch::handleWredProfileTable(Consumer& consumer)
+task_process_status QosOrch::handleWredProfileTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
     WredMapHandler wred_handler;
-    return wred_handler.processAllWorkItem(consumer);
+    return wred_handler.processWorkItem(consumer, tuple);
 }
 
 bool TcToPgHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes)
@@ -801,11 +775,11 @@ sai_object_id_t TcToPgHandler::addQosItem(const vector<sai_attribute_t> &attribu
 
 }
 
-task_process_status QosOrch::handleTcToPgTable(Consumer& consumer)
+task_process_status QosOrch::handleTcToPgTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
     TcToPgHandler tc_to_pg_handler;
-    return tc_to_pg_handler.processAllWorkItem(consumer);
+    return tc_to_pg_handler.processWorkItem(consumer, tuple);
 }
 
 bool PfcPrioToPgHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes)
@@ -855,11 +829,11 @@ sai_object_id_t PfcPrioToPgHandler::addQosItem(const vector<sai_attribute_t> &at
 
 }
 
-task_process_status QosOrch::handlePfcPrioToPgTable(Consumer& consumer)
+task_process_status QosOrch::handlePfcPrioToPgTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
     PfcPrioToPgHandler pfc_prio_to_pg_handler;
-    return pfc_prio_to_pg_handler.processAllWorkItem(consumer);
+    return pfc_prio_to_pg_handler.processWorkItem(consumer, tuple);
 }
 
 bool PfcToQueueHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes)
@@ -996,11 +970,11 @@ sai_object_id_t DscpToFcMapHandler::addQosItem(const vector<sai_attribute_t> &at
     return sai_object;
 }
 
-task_process_status QosOrch::handleDscpToFcTable(Consumer& consumer)
+task_process_status QosOrch::handleDscpToFcTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
     DscpToFcMapHandler dscp_fc_handler;
-    return dscp_fc_handler.processAllWorkItem(consumer);
+    return dscp_fc_handler.processWorkItem(consumer, tuple);
 }
 
 bool ExpToFcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple,
@@ -1163,25 +1137,25 @@ sai_object_id_t TcToDscpMapHandler::addQosItem(const vector<sai_attribute_t> &at
     return sai_object;
 }
 
-task_process_status QosOrch::handleExpToFcTable(Consumer& consumer)
+task_process_status QosOrch::handleExpToFcTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
     ExpToFcMapHandler exp_fc_handler;
-    return exp_fc_handler.processAllWorkItem(consumer);
+    return exp_fc_handler.processWorkItem(consumer, tuple);
 }
 
-task_process_status QosOrch::handlePfcToQueueTable(Consumer& consumer)
+task_process_status QosOrch::handlePfcToQueueTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
     PfcToQueueHandler pfc_to_queue_handler;
-    return pfc_to_queue_handler.processAllWorkItem(consumer);
+    return pfc_to_queue_handler.processWorkItem(consumer, tuple);
 }
 
-task_process_status QosOrch::handleTcToDscpTable(Consumer& consumer)
+task_process_status QosOrch::handleTcToDscpTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
     TcToDscpMapHandler tc_to_dscp_handler;
-    return tc_to_dscp_handler.processAllWorkItem(consumer);
+    return tc_to_dscp_handler.processWorkItem(consumer, tuple);
 }
 
 QosOrch::QosOrch(DBConnector *db, vector<string> &tableNames) : Orch(db, tableNames)
@@ -1217,14 +1191,13 @@ void QosOrch::initTableHandlers()
     m_qos_handler_map.insert(qos_handler_pair(CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME, &QosOrch::handlePfcToQueueTable));
 }
 
-task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
+task_process_status QosOrch::handleSchedulerTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
 
     sai_status_t sai_status;
     sai_object_id_t sai_object = SAI_NULL_OBJECT_ID;
 
-    KeyOpFieldsValuesTuple tuple = consumer.m_toSync.begin()->second;
     string qos_map_type_name = CFG_SCHEDULER_TABLE_NAME;
     string qos_object_name = kfvKey(tuple);
     string op = kfvOp(tuple);
@@ -1570,11 +1543,9 @@ bool QosOrch::applyWredProfileToQueue(Port &port, size_t queue_ind, sai_object_i
     return true;
 }
 
-task_process_status QosOrch::handleQueueTable(Consumer& consumer)
+task_process_status QosOrch::handleQueueTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
-    auto it = consumer.m_toSync.begin();
-    KeyOpFieldsValuesTuple tuple = it->second;
     Port port;
     bool result;
     string key = kfvKey(tuple);
@@ -1803,11 +1774,10 @@ task_process_status QosOrch::ResolveMapAndApplyToPort(
     return task_process_status::task_success;
 }
 
-task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
+task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
 
-    KeyOpFieldsValuesTuple tuple = consumer.m_toSync.begin()->second;
     string key = kfvKey(tuple);
     string op = kfvOp(tuple);
     vector<string> port_names = tokenize(key, list_item_delimiter);
@@ -2011,7 +1981,7 @@ void QosOrch::doTask(Consumer &consumer)
             continue;
         }
 
-        auto task_status = (this->*(m_qos_handler_map[qos_map_type_name]))(consumer);
+        auto task_status = (this->*(m_qos_handler_map[qos_map_type_name]))(consumer, it->second);
         switch(task_status)
         {
             case task_process_status::task_success :
