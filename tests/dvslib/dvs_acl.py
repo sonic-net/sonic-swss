@@ -16,6 +16,7 @@ class DVSAcl:
     ADB_ACL_TABLE_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE"
     ADB_ACL_GROUP_TABLE_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP"
     ADB_ACL_GROUP_MEMBER_TABLE_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER"
+    ADB_ACL_COUNTER_TABLE_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_ACL_COUNTER"
 
     ADB_ACL_STAGE_LOOKUP = {
         "ingress": "SAI_ACL_STAGE_INGRESS",
@@ -139,6 +140,19 @@ class DVSAcl:
             name: The name of the ACL table type to delete.
         """
         self.config_db.delete_entry(self.CDB_ACL_TABLE_TYPE_NAME, name)
+
+    def get_acl_counter_ids(self, expected: int) -> List[str]:
+        """Get all of the ACL counter IDs in ASIC DB.
+
+        This method will wait for the expected number of counters to exist, or fail.
+
+        Args:
+            expected: The number of counters that are expected to be present in ASIC DB.
+
+        Returns:
+            The list of ACL counter IDs in ASIC DB.
+        """
+        return self.asic_db.wait_for_n_keys(self.ADB_ACL_COUNTER_TABLE_NAME, expected)
 
     def get_acl_table_ids(self, expected: int) -> List[str]:
         """Get all of the ACL table IDs in ASIC DB.
@@ -529,6 +543,39 @@ class DVSAcl:
         self._check_acl_entry_base(fvs, sai_qualifiers, "MIRROR", priority)
         self._check_acl_entry_mirror_action(fvs, session_oid, stage)
         self._check_acl_entry_counters_map(acl_rule_id)
+
+    def verify_acl_rule_generic(
+            self,
+            sai_qualifiers: Dict[str, str],
+            acl_table_id: str = None,
+            acl_rule_id: str = None
+    ) -> None:
+        """Verify that an ACL rule has the correct ASIC DB representation.
+
+        Args:
+            sai_qualifiers: The expected set of SAI qualifiers to be found in ASIC DB.
+            acl_table_id: A specific OID to check in ASIC DB. If left empty, this method
+                         assumes that only one table exists in ASIC DB.
+            acl_rule_id: A specific OID to check in ASIC DB. If left empty, this method
+                         assumes that only one rule exists in ASIC DB.
+        """
+        if not acl_table_id:
+            acl_table_id = self.get_acl_table_ids(1)[0]
+
+        if not acl_rule_id:
+            acl_rule_id = self._get_acl_rule_id()
+
+        entry = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", acl_rule_id)
+
+        for k, v in entry.items():
+            if k == "SAI_ACL_ENTRY_ATTR_TABLE_ID":
+                assert v == acl_table_id
+            elif k == "SAI_ACL_ENTRY_ATTR_ADMIN_STATE":
+                assert v == "true"
+            elif k in sai_qualifiers:
+                assert sai_qualifiers[k](v)
+            else:
+                assert False, "Unknown SAI qualifier: key={}, value={}".format(k, v)
 
     def verify_acl_rule_set(
             self,

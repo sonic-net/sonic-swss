@@ -76,7 +76,7 @@ def how_many_entries_exist(db, table):
 @pytest.mark.dev_sanity
 def test_mclagFdb_basic_config_add(dvs, testlog):
     dvs.setup_db()
-    dvs.runcmd("sonic-clear fdb all")
+    dvs.clear_fdb()
     time.sleep(2)
 
     vlan_before = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")

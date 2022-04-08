@@ -60,6 +60,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/mirrororch.cpp \
                 $(top_srcdir)/orchagent/fdborch.cpp \
                 $(top_srcdir)/orchagent/aclorch.cpp \
+                $(top_srcdir)/orchagent/pbh/pbhcap.cpp \
                 $(top_srcdir)/orchagent/pbh/pbhcnt.cpp \
                 $(top_srcdir)/orchagent/pbh/pbhmgr.cpp \
                 $(top_srcdir)/orchagent/pbh/pbhrule.cpp \
@@ -89,7 +90,8 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/macsecorch.cpp \
                 $(top_srcdir)/orchagent/lagid.cpp \
                 $(top_srcdir)/orchagent/bfdorch.cpp \
-                $(top_srcdir)/orchagent/srv6orch.cpp
+                $(top_srcdir)/orchagent/srv6orch.cpp \
+                $(top_srcdir)/orchagent/nvgreorch.cpp
 
 tests_SOURCES += $(FLEX_CTR_DIR)/flex_counter_manager.cpp $(FLEX_CTR_DIR)/flex_counter_stat_manager.cpp $(FLEX_CTR_DIR)/flow_counter_handler.cpp $(FLEX_CTR_DIR)/flowcounterrouteorch.cpp
 tests_SOURCES += $(DEBUG_CTR_DIR)/debug_counter.cpp $(DEBUG_CTR_DIR)/drop_counter.cpp

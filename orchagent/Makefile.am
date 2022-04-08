@@ -62,6 +62,7 @@ orchagent_SOURCES = \
             mirrororch.cpp \
             fdborch.cpp \
             aclorch.cpp \
+            pbh/pbhcap.cpp \
             pbh/pbhcnt.cpp \
             pbh/pbhmgr.cpp \
             pbh/pbhrule.cpp \
@@ -92,7 +93,8 @@ orchagent_SOURCES = \
             lagid.cpp \
             bfdorch.cpp \
             srv6orch.cpp \
-            response_publisher.cpp
+            response_publisher.cpp \
+            nvgreorch.cpp
 
 orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp flex_counter/flow_counter_handler.cpp flex_counter/flowcounterrouteorch.cpp
 orchagent_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.cpp

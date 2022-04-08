@@ -105,19 +105,22 @@ public:
     } inner_ether_type;
 
     struct {
+        struct {
+            std::string name;
+        } meta;
         std::string value;
         bool is_set = false;
     } hash;
 
     struct {
+        struct {
+            std::string name;
+        } meta;
         sai_acl_entry_attr_t value;
         bool is_set = false;
     } packet_action;
 
     struct {
-        struct {
-            std::string name;
-        } meta;
         bool value;
         bool is_set = false;
     } flow_counter;
