@@ -423,8 +423,8 @@ class TestPbhBasicEditFlows:
 
             pbhlogger.info("Enable a ACL FLEX counter")
             test_flex_counters.set_flex_counter_group_status(counter_key, counter_map)
+            test_flex_counters.set_flex_counter_group_interval(counter_key, counter_stat, '1000')
             time.sleep(1)
-            test_flex_counters.set_flex_counter_group_interval(counter_key, counter_stat, '2500')
             test_flex_counters.verify_flex_counters_populated(counter_map, counter_stat)
 
             pbhlogger.info("Disable a flow counter for PBH rule: {}".format(PBH_RULE_NAME))
