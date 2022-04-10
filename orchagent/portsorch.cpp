@@ -5438,7 +5438,7 @@ void PortsOrch::generateQueueMapPerPort(const Port& port, FlexCounterQueueStates
         uint8_t queueRealIndex = 0;
         if (getQueueTypeAndIndex(port.m_queue_ids[queueIndex], queueType, queueRealIndex))
         {
-            if (queuesState && !queuesState.isQueueCounterEnabled(queueRealIndex))
+            if (!queuesState.isQueueCounterEnabled(queueRealIndex))
             {
                 continue;
             }
@@ -5621,7 +5621,7 @@ void PortsOrch::generatePriorityGroupMapPerPort(const Port& port, FlexCounterPgS
 
     for (size_t pgIndex = 0; pgIndex < port.m_priority_group_ids.size(); ++pgIndex)
     {
-        if (pgsState && !pgsState.isPgCounterEnabled(static_cast<uint32_t>(pgIndex)))
+        if (!pgsState.isPgCounterEnabled(static_cast<uint32_t>(pgIndex)))
         {
             continue;
         }
