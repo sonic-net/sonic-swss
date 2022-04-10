@@ -2289,6 +2289,13 @@ sai_status_t PortsOrch::removePort(sai_object_id_t port_id)
     }
     /* else : port is in default state or not yet created */
 
+    /*
+     * Remove port serdes (if exists) before removing port since this
+     * reference is dependency.
+     */
+
+    removePortSerdesAttribute(port_id);
+
     sai_status_t status = sai_port_api->remove_port(port_id);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -2403,8 +2410,13 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
 {
     SWSS_LOG_ENTER();
 
-    Port p(alias, Port::PHY);
-    p.m_port_id = port_id;
+    Port p;
+
+    if (!getPort(port_id, p))
+    {
+        SWSS_LOG_ERROR("Failed to get port object for port id 0x%" PRIx64, port_id);
+        return;
+    }
 
     /* remove port from flex_counter_table for updating counters  */
     auto flex_counters_orch = gDirectory.get<FlexCounterOrch*>();
@@ -2418,9 +2430,8 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
         port_buffer_drop_stat_manager.clearCounterIdList(p.m_port_id);
     }
 
-
     /* remove port name map from counter table */
-    m_counter_db->hdel(COUNTERS_PORT_NAME_MAP, alias);
+    m_counterTable->hdel("", alias);
 
     /* Remove the associated port serdes attribute */
     removePortSerdesAttribute(p.m_port_id);
@@ -2428,7 +2439,6 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
     m_portList[alias].m_init = false;
     SWSS_LOG_NOTICE("De-Initialized port %s", alias.c_str());
 }
-
 
 bool PortsOrch::bake()
 {
@@ -3841,6 +3851,17 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
                 {
                     SWSS_LOG_INFO("Port %s is already a LAG member", port.m_alias.c_str());
                     it++;
+                    continue;
+                }
+
+                if (!port.m_ingress_acl_tables_uset.empty() || !port.m_egress_acl_tables_uset.empty())
+                {
+                    SWSS_LOG_ERROR(
+                        "Failed to add member %s to LAG %s: ingress/egress ACL configuration is present",
+                        port.m_alias.c_str(),
+                        lag.m_alias.c_str()
+                    );
+                    it = consumer.m_toSync.erase(it);
                     continue;
                 }
 
@@ -5417,7 +5438,7 @@ void PortsOrch::generateQueueMapPerPort(const Port& port, FlexCounterQueueStates
         uint8_t queueRealIndex = 0;
         if (getQueueTypeAndIndex(port.m_queue_ids[queueIndex], queueType, queueRealIndex))
         {
-            if (!queuesState.isQueueCounterEnabled(queueRealIndex))
+            if (queuesState && !queuesState.isQueueCounterEnabled(queueRealIndex))
             {
                 continue;
             }
@@ -5600,7 +5621,7 @@ void PortsOrch::generatePriorityGroupMapPerPort(const Port& port, FlexCounterPgS
 
     for (size_t pgIndex = 0; pgIndex < port.m_priority_group_ids.size(); ++pgIndex)
     {
-        if (!pgsState.isPgCounterEnabled(static_cast<uint32_t>(pgIndex)))
+        if (pgsState && !pgsState.isPgCounterEnabled(static_cast<uint32_t>(pgIndex)))
         {
             continue;
         }
@@ -5859,6 +5880,10 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
                     SWSS_LOG_NOTICE("%s oper speed is %d", port.m_alias.c_str(), speed);
                     updateDbPortOperSpeed(port, speed);
                 }
+                else
+                {
+                    updateDbPortOperSpeed(port, 0);
+                }
             }
 
             /* update m_portList */
@@ -5920,9 +5945,9 @@ void PortsOrch::updateDbPortOperSpeed(Port &port, sai_uint32_t speed)
     SWSS_LOG_ENTER();
 
     vector<FieldValueTuple> tuples;
-    FieldValueTuple tuple("speed", to_string(speed));
-    tuples.push_back(tuple);
-    m_portTable->set(port.m_alias, tuples);
+    string speedStr = speed != 0 ? to_string(speed) : "N/A";
+    tuples.emplace_back(std::make_pair("speed", speedStr));
+    m_portStateTable.set(port.m_alias, tuples);
 
     // We don't set port.m_speed = speed here, because CONFIG_DB still hold the old
     // value. If we set it here, next time configure any attributes related port will
@@ -5968,6 +5993,10 @@ void PortsOrch::refreshPortStatus()
             {
                 SWSS_LOG_INFO("%s oper speed is %d", port.m_alias.c_str(), speed);
                 updateDbPortOperSpeed(port, speed);
+            }
+            else
+            {
+                updateDbPortOperSpeed(port, 0);
             }
         }
     }

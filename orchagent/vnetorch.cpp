@@ -949,7 +949,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             NextHopGroupKey nhg = it_route->second;
             if(--syncd_nexthop_groups_[vnet][nhg].ref_count == 0)
             {
-                if (nexthops.getSize() > 1)
+                if (nhg.getSize() > 1)
                 {
                     removeNextHopGroup(vnet, nhg, vrf_obj);
                 }

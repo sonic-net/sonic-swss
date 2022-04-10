@@ -1277,16 +1277,18 @@ bool MACsecOrch::updateMACsecSCs(MACsecPort &macsec_port, std::function<bool(MAC
 {
     SWSS_LOG_ENTER();
 
-    for (auto &sc : macsec_port.m_egress_scs)
+    auto sc = macsec_port.m_egress_scs.begin();
+    while (sc != macsec_port.m_egress_scs.end())
     {
-        if (!action(sc.second))
+        if (!action((sc++)->second))
         {
             return false;
         }
     }
-    for (auto &sc : macsec_port.m_ingress_scs)
+    sc = macsec_port.m_ingress_scs.begin();
+    while (sc != macsec_port.m_ingress_scs.end())
     {
-        if (!action(sc.second))
+        if (!action((sc++)->second))
         {
             return false;
         }
@@ -1307,17 +1309,21 @@ bool MACsecOrch::deleteMACsecPort(
 
     bool result = true;
 
-    for (auto &sc : macsec_port.m_egress_scs)
+    auto sc = macsec_port.m_egress_scs.begin();
+    while (sc != macsec_port.m_egress_scs.end())
     {
-        const std::string port_sci = swss::join(':', port_name, sc.first);
+        const std::string port_sci = swss::join(':', port_name, sc->first);
+        sc ++;
         if (deleteMACsecSC(port_sci, SAI_MACSEC_DIRECTION_EGRESS) != task_success)
         {
             result &= false;
         }
     }
-    for (auto &sc : macsec_port.m_ingress_scs)
+    sc = macsec_port.m_ingress_scs.begin();
+    while (sc != macsec_port.m_ingress_scs.end())
     {
-        const std::string port_sci = swss::join(':', port_name, sc.first);
+        const std::string port_sci = swss::join(':', port_name, sc->first);
+        sc ++;
         if (deleteMACsecSC(port_sci, SAI_MACSEC_DIRECTION_INGRESS) != task_success)
         {
             result &= false;
@@ -1705,9 +1711,11 @@ task_process_status MACsecOrch::deleteMACsecSC(
 
     auto result = task_success;
 
-    for (auto &sa : ctx.get_macsec_sc()->m_sa_ids)
+    auto sa = ctx.get_macsec_sc()->m_sa_ids.begin();
+    while (sa != ctx.get_macsec_sc()->m_sa_ids.end())
     {
-        const std::string port_sci_an = swss::join(':', port_sci, sa.first);
+        const std::string port_sci_an = swss::join(':', port_sci, sa->first);
+        sa ++;
         deleteMACsecSA(port_sci_an, direction);
     }
 

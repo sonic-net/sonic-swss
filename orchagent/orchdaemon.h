@@ -43,6 +43,7 @@
 #include "p4orch/p4orch.h"
 #include "bfdorch.h"
 #include "srv6orch.h"
+#include "nvgreorch.h"
 
 using namespace swss;
 

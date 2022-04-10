@@ -63,7 +63,6 @@ counter_group_meta = {
     }
 }
 
-
 class TestFlexCounters(object):
 
     def setup_dbs(self, dvs):

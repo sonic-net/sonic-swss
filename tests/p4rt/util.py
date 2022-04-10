@@ -84,8 +84,8 @@ def get_port_oid_by_name(dvs, port_name):
   return port_oid
 
 def initialize_interface(dvs, port_name, ip):
-  dvs.runcmd("config interface startup {}".format(port_name))
-  dvs.runcmd("config interface ip add {} {}".format(port_name, ip))
+  dvs.port_admin_set(port_name, "up")
+  dvs.interface_ip_add(port_name, ip)
 
 def set_interface_status(dvs, if_name, status = "down", server = 0):
   dvs.servers[0].runcmd("ip link set {} dev {}".format(status, if_name)) == 0

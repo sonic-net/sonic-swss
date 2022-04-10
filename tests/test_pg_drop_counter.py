@@ -70,8 +70,7 @@ class TestPGDropCounter(object):
 
         self.config_db.delete_entry("FLEX_COUNTER_TABLE", "PG_DROP")
         self.config_db.delete_entry("FLEX_COUNTER_TABLE", "PG_WATERMARK")
-
-
+        
     def test_pg_drop_counters(self, dvs):
         self.setup_dbs(dvs)
         self.set_up_flex_counter()
@@ -93,3 +92,4 @@ class TestPGDropCounter(object):
             self.verify_value(dvs, self.pgs, pg_drop_attr, "123")
         finally:
             self.clear_flex_counter()
+
