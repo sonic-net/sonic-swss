@@ -13,4 +13,5 @@ public:
     bool validate() override;
     void onUpdate(SubjectType, void *) override;
     bool validateAddAction(string attr_name, string attr_value) override;
+    bool disableAction();
 };

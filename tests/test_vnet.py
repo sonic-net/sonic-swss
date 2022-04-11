@@ -362,6 +362,9 @@ def create_vxlan_tunnel(dvs, name, src_ip):
         attrs,
     )
 
+def delete_vxlan_tunnel(dvs, name):
+    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    delete_entry_tbl(conf_db, "VXLAN_TUNNEL", name)
 
 def create_vxlan_tunnel_map(dvs, tunnel_name, tunnel_map_entry_name, vlan, vni_id):
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
@@ -620,6 +623,18 @@ class VnetVxlanVrfTunnel(object):
         self.tunnel_term_ids.add(tunnel_term_id)
         self.tunnel_map_map[tunnel_name] = tunnel_map_id
         self.tunnel[tunnel_name] = tunnel_id
+
+    def check_del_vxlan_tunnel(self, dvs):
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+
+        old_tunnel = get_deleted_entries(asic_db, self.ASIC_TUNNEL_TABLE, self.tunnel_ids, 1)
+        check_deleted_object(asic_db, self.ASIC_TUNNEL_TABLE, old_tunnel[0])
+        self.tunnel_ids.remove(old_tunnel[0])
+
+        old_tunnel_maps = get_deleted_entries(asic_db, self.ASIC_TUNNEL_MAP, self.tunnel_map_ids, 4)
+        for old_tunnel_map in old_tunnel_maps:
+            check_deleted_object(asic_db, self.ASIC_TUNNEL_MAP, old_tunnel_map)
+            self.tunnel_map_ids.remove(old_tunnel_map)
 
     def check_vxlan_tunnel_entry(self, dvs, tunnel_name, vnet_name, vni_id):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
@@ -1049,6 +1064,9 @@ class TestVnetOrch(object):
         delete_vnet_entry(dvs, 'Vnet_2000')
         vnet_obj.check_del_vnet_entry(dvs, 'Vnet_2000')
 
+        delete_vxlan_tunnel(dvs, tunnel_name)
+        vnet_obj.check_del_vxlan_tunnel(dvs)
+
     '''
     Test 2 - Two VNets, One HSMs per VNet
     '''
@@ -1175,6 +1193,9 @@ class TestVnetOrch(object):
         delete_vnet_entry(dvs, 'Vnet_2')
         vnet_obj.check_del_vnet_entry(dvs, 'Vnet_2')
 
+        delete_vxlan_tunnel(dvs, tunnel_name)
+        vnet_obj.check_del_vxlan_tunnel(dvs)
+
     '''
     Test 3 - Two VNets, One HSMs per VNet, Peering
     '''
@@ -1254,6 +1275,9 @@ class TestVnetOrch(object):
 
         delete_vnet_entry(dvs, 'Vnet_20')
         vnet_obj.check_del_vnet_entry(dvs, 'Vnet_20')
+
+        delete_vxlan_tunnel(dvs, tunnel_name)
+        vnet_obj.check_del_vxlan_tunnel(dvs)
 
     '''
     Test 4 - IPv6 Vxlan tunnel test
@@ -1395,6 +1419,9 @@ class TestVnetOrch(object):
 
         delete_vnet_entry(dvs, 'Vnet3001')
         vnet_obj.check_del_vnet_entry(dvs, 'Vnet3001')
+
+        delete_vxlan_tunnel(dvs, tunnel_name)
+        vnet_obj.check_del_vxlan_tunnel(dvs)
 
     '''
     Test 5 - Default VNet test

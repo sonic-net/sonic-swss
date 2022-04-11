@@ -6,6 +6,7 @@
 #include "notifier.h"
 #include "sai_serialize.h"
 #include "directory.h"
+#include "notifications.h"
 
 using namespace std;
 using namespace swss;
@@ -16,11 +17,13 @@ using namespace swss;
 #define BFD_SESSION_MILLISECOND_TO_MICROSECOND 1000
 #define BFD_SRCPORTINIT 49152
 #define BFD_SRCPORTMAX 65536
+#define NUM_BFD_SRCPORT_RETRIES 3
 
 extern sai_bfd_api_t*       sai_bfd_api;
 extern sai_object_id_t      gSwitchId;
 extern sai_object_id_t      gVirtualRouterId;
 extern PortsOrch*           gPortsOrch;
+extern sai_switch_api_t*    sai_switch_api;
 extern Directory<Orch*>     gDirectory;
 
 const map<string, sai_bfd_session_type_t> session_type_map =
@@ -57,6 +60,7 @@ BfdOrch::BfdOrch(DBConnector *db, string tableName, TableConnector stateDbBfdSes
     m_bfdStateNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
     auto bfdStateNotificatier = new Notifier(m_bfdStateNotificationConsumer, this, "BFD_STATE_NOTIFICATIONS");
     Orch::addExecutor(bfdStateNotificatier);
+    register_state_change_notif = false;
 }
 
 BfdOrch::~BfdOrch(void)
@@ -152,8 +156,52 @@ void BfdOrch::doTask(NotificationConsumer &consumer)
     }
 }
 
+bool BfdOrch::register_bfd_state_change_notification(void)
+{
+    sai_attribute_t  attr;
+    sai_status_t status;
+    sai_attr_capability_t capability;
+
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_SWITCH, 
+                                            SAI_SWITCH_ATTR_BFD_SESSION_STATE_CHANGE_NOTIFY,
+                                            &capability);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Unable to query the BFD change notification capability");
+        return false;
+    }
+
+    if (!capability.set_implemented)
+    {
+        SWSS_LOG_ERROR("BFD register change notification not supported");
+        return false;
+    }
+
+    attr.id = SAI_SWITCH_ATTR_BFD_SESSION_STATE_CHANGE_NOTIFY;
+    attr.value.ptr = (void *)on_bfd_session_state_change;
+
+    status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to register BFD notification handler");
+        return false;
+    }
+    return true;
+}
+
 bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple>& data)
 {
+    if (!register_state_change_notif)
+    {
+        if (!register_bfd_state_change_notification())
+        {
+            SWSS_LOG_ERROR("BFD session for %s cannot be created", key.c_str());
+            return false;
+        }
+        register_state_change_notif = true;
+    }
     if (bfd_session_map.find(key) != bfd_session_map.end())
     {
         SWSS_LOG_ERROR("BFD session for %s already exists", key.c_str());
@@ -369,6 +417,12 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
 
     sai_object_id_t bfd_session_id = SAI_NULL_OBJECT_ID;
     sai_status_t status = sai_bfd_api->create_bfd_session(&bfd_session_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        status = retry_create_bfd_session(bfd_session_id, attrs);
+    }
+
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create bfd session %s, rv:%d", key.c_str(), status);
@@ -390,6 +444,38 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     notify(SUBJECT_TYPE_BFD_SESSION_STATE_CHANGE, static_cast<void *>(&update));
 
     return true;
+}
+
+void BfdOrch::update_port_number(vector<sai_attribute_t> &attrs)
+{
+    for (uint32_t attr_idx = 0; attr_idx < (uint32_t)attrs.size(); attr_idx++)
+    {
+       if (attrs[attr_idx].id ==  SAI_BFD_SESSION_ATTR_UDP_SRC_PORT)
+       {
+           auto old_num = attrs[attr_idx].value.u32;
+           attrs[attr_idx].value.u32 = bfd_src_port();
+           SWSS_LOG_WARN("BFD create using port number %d failed. Retrying with port number %d",
+                         old_num, attrs[attr_idx].value.u32);
+           return;
+       }
+    }
+}
+
+sai_status_t BfdOrch::retry_create_bfd_session(sai_object_id_t &bfd_session_id, vector<sai_attribute_t> attrs)
+{
+    sai_status_t status = SAI_STATUS_FAILURE;
+
+    for (int retry = 0; retry < NUM_BFD_SRCPORT_RETRIES; retry++)
+    {
+        update_port_number(attrs);
+        status = sai_bfd_api->create_bfd_session(&bfd_session_id, gSwitchId,
+                                                 (uint32_t)attrs.size(), attrs.data());
+        if (status == SAI_STATUS_SUCCESS)
+        {
+            return status;
+        }
+    }
+    return status;
 }
 
 bool BfdOrch::remove_bfd_session(const string& key)
@@ -440,3 +526,4 @@ uint32_t BfdOrch::bfd_src_port(void)
 
     return (port++);
 }
+

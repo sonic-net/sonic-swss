@@ -61,8 +61,8 @@ class TestMuxTunnelBase(object):
         confdb.create_entry("VLAN_INTERFACE", "Vlan1000|192.168.0.1/24", fvs)
         confdb.create_entry("VLAN_INTERFACE", "Vlan1000|fc02:1000::1/64", fvs)
 
-        dvs.runcmd("config interface startup Ethernet0")
-        dvs.runcmd("config interface startup Ethernet4")
+        dvs.port_admin_set("Ethernet0", "up")
+        dvs.port_admin_set("Ethernet4", "up")
 
 
     def create_mux_cable(self, confdb):

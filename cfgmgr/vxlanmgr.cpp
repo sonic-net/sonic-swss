@@ -1031,29 +1031,59 @@ int VxlanMgr::deleteVxlanNetdevice(std::string vxlan_dev_name)
     return swss::exec(cmd, res);
 }
 
-void VxlanMgr::getAllVxlanNetDevices()
-{
-    std::string stdout;
-    const std::string cmd = std::string("") + IP_CMD + " link show type vxlan";
-    int ret = swss::exec(cmd, stdout);
-    if (ret != 0)
-    {
-        SWSS_LOG_ERROR("Cannot get devices by command : %s", cmd.c_str());
-        return;
-    }
+std::vector<std::string> VxlanMgr::parseNetDev(const string& stdout){
+    std::vector<std::string> netdevs;
     std::regex device_name_pattern("^\\d+:\\s+([^:]+)");
     std::smatch match_result;
     auto lines = tokenize(stdout, '\n');
     for (const std::string & line : lines)
     {
-        SWSS_LOG_INFO("line : %s\n",line.c_str());
+        SWSS_LOG_DEBUG("line : %s\n",line.c_str());
         if (!std::regex_search(line, match_result, device_name_pattern))
         {
             continue;
         }
-        std::string vxlan_dev_name = match_result[1];
-        m_vxlanNetDevices[vxlan_dev_name] = vxlan_dev_name;
+        std::string dev_name = match_result[1];
+        netdevs.push_back(dev_name);
     }
+    return netdevs;
+}
+
+void VxlanMgr::getAllVxlanNetDevices()
+{
+    std::string stdout;
+
+    // Get VxLan Netdev Interfaces
+    std::string cmd = std::string("") + IP_CMD + " link show type vxlan";
+    int ret = swss::exec(cmd, stdout);
+    if (ret != 0)
+    {
+        SWSS_LOG_ERROR("Cannot get vxlan devices by command : %s", cmd.c_str());
+        stdout.clear();
+    }
+    std::vector<std::string> netdevs = parseNetDev(stdout);
+    for (auto netdev : netdevs)
+    {
+        m_vxlanNetDevices[netdev] = VXLAN;
+    }
+
+    // Get VxLanIf Netdev Interfaces
+    cmd = std::string("") + IP_CMD + " link show type bridge";
+    ret = swss::exec(cmd, stdout);
+    if (ret != 0)
+    {
+        SWSS_LOG_ERROR("Cannot get vxlanIf devices by command : %s", cmd.c_str());
+        stdout.clear();
+    }
+    netdevs = parseNetDev(stdout);
+    for (auto netdev : netdevs)
+    {
+        if (netdev.find(VXLAN_IF_NAME_PREFIX) == 0)
+        {
+            m_vxlanNetDevices[netdev] = VXLAN_IF;
+        }
+    }
+
     return;
 }
 
@@ -1150,8 +1180,21 @@ void VxlanMgr::clearAllVxlanDevices()
 {
     for (auto it = m_vxlanNetDevices.begin(); it != m_vxlanNetDevices.end();)
     {
-        SWSS_LOG_INFO("Deleting Stale NetDevice vxlandevname %s\n", (it->first).c_str());
-        deleteVxlanNetdevice(it->first);
+        std::string netdev_name = it->first;
+        std::string netdev_type = it->second;
+        SWSS_LOG_INFO("Deleting Stale NetDevice %s, type: %s\n", netdev_name.c_str(), netdev_type.c_str());
+        VxlanInfo info;
+        std::string res;
+        if (netdev_type.compare(VXLAN))
+        {
+            info.m_vxlan = netdev_name;
+            cmdDeleteVxlan(info, res);
+        }
+        else if(netdev_type.compare(VXLAN_IF))
+        {
+            info.m_vxlanIf = netdev_name;
+            cmdDeleteVxlanIf(info, res);
+        }
         it = m_vxlanNetDevices.erase(it);
     }
 }
