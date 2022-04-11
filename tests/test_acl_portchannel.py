@@ -1,7 +1,85 @@
 import time
 import pytest
+import logging
 
 from swsscommon import swsscommon
+
+
+logging.basicConfig(level=logging.INFO)
+acllogger = logging.getLogger(__name__)
+
+
+@pytest.fixture(autouse=True, scope="class")
+def dvs_api(request, dvs_acl):
+    # Fixtures are created when first requested by a test, and are destroyed based on their scope
+    if request.cls is None:
+        yield
+        return
+    acllogger.info("Initialize DVS API: ACL")
+    request.cls.dvs_acl = dvs_acl
+    yield
+    acllogger.info("Deinitialize DVS API: ACL")
+    del request.cls.dvs_acl
+
+
+@pytest.mark.usefixtures("dvs_lag_manager")
+class TestAclInterfaceBinding:
+    @pytest.mark.parametrize("stage", ["ingress", "egress"])
+    def test_AclTablePortChannelMemberBinding(self, testlog, stage):
+        """Verify that LAG member creation is prohibited when ACL binding is configured
+
+        The test flow:
+        1. Create ACL table and bind Ethernet124
+        2. Verify ACL table has been successfully added
+        3. Create LAG
+        4. Verify LAG has been successfully added
+        5. Create LAG member Ethernet120
+        6. Verify LAG member has been successfully added
+        7. Create LAG member Ethernet124
+        8. Verify LAG member hasn't been added because of active ACL binding
+
+        Args:
+            testlog: test start/end log record injector
+            stage: ACL table stage (e.g., ingress/egress)
+        """
+        try:
+            acllogger.info("Create ACL table: acl_table")
+            self.dvs_acl.create_acl_table(
+                table_name="acl_table",
+                table_type="L3",
+                ports=["Ethernet124"],
+                stage=stage
+            )
+            self.dvs_acl.verify_acl_table_count(1)
+
+            acllogger.info("Create LAG: PortChannel0001")
+            self.dvs_lag.create_port_channel("0001")
+            self.dvs_lag.get_and_verify_port_channel(1)
+
+            acllogger.info("Create LAG member: Ethernet120")
+            self.dvs_lag.create_port_channel_member("0001", "Ethernet120")
+            self.dvs_lag.get_and_verify_port_channel_members(1)
+
+            acllogger.info("Create LAG member: Ethernet124")
+            self.dvs_lag.create_port_channel_member("0001", "Ethernet124")
+            acllogger.info("Verify LAG member hasn't been created: Ethernet124")
+            self.dvs_lag.get_and_verify_port_channel_members(1)
+        finally:
+            acllogger.info("Remove LAG member: Ethernet124")
+            self.dvs_lag.remove_port_channel_member("0001", "Ethernet124")
+            self.dvs_lag.get_and_verify_port_channel_members(1)
+
+            acllogger.info("Remove LAG member: Ethernet120")
+            self.dvs_lag.remove_port_channel_member("0001", "Ethernet120")
+            self.dvs_lag.get_and_verify_port_channel_members(0)
+
+            acllogger.info("Remove LAG: PortChannel0001")
+            self.dvs_lag.remove_port_channel("0001")
+            self.dvs_lag.get_and_verify_port_channel(0)
+
+            acllogger.info("Remove ACL table: acl_table")
+            self.dvs_acl.remove_acl_table("acl_table")
+            self.dvs_acl.verify_acl_table_count(0)
 
 
 class TestPortChannelAcl(object):

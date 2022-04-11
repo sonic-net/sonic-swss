@@ -253,6 +253,111 @@ class TestPbhBasicFlows:
             self.dvs_pbh.verify_pbh_hash_field_count(0)
 
 
+class TestPbhBasicEditFlows:
+    def test_PbhRuleUpdate(self, testlog):
+        try:
+            # PBH hash field
+            pbhlogger.info("Create PBH hash field: {}".format(PBH_HASH_FIELD_NAME))
+            self.dvs_pbh.create_pbh_hash_field(
+                hash_field_name=PBH_HASH_FIELD_NAME,
+                hash_field=PBH_HASH_FIELD_HASH_FIELD,
+                sequence_id=PBH_HASH_FIELD_SEQUENCE_ID
+            )
+            self.dvs_pbh.verify_pbh_hash_field_count(1)
+
+            # PBH hash
+            pbhlogger.info("Create PBH hash: {}".format(PBH_HASH_NAME))
+            self.dvs_pbh.create_pbh_hash(
+                hash_name=PBH_HASH_NAME,
+                hash_field_list=PBH_HASH_HASH_FIELD_LIST
+            )
+            self.dvs_pbh.verify_pbh_hash_count(1)
+
+            # PBH table
+            pbhlogger.info("Create PBH table: {}".format(PBH_TABLE_NAME))
+            self.dvs_pbh.create_pbh_table(
+                table_name=PBH_TABLE_NAME,
+                interface_list=PBH_TABLE_INTERFACE_LIST,
+                description=PBH_TABLE_DESCRIPTION
+            )
+            self.dvs_acl.verify_acl_table_count(1)
+
+            # PBH rule
+            attr_dict = {
+                "ether_type": PBH_RULE_ETHER_TYPE,
+                "ip_protocol": PBH_RULE_IP_PROTOCOL,
+                "gre_key": PBH_RULE_GRE_KEY,
+                "inner_ether_type": PBH_RULE_INNER_ETHER_TYPE
+            }
+
+            pbhlogger.info("Create PBH rule: {}".format(PBH_RULE_NAME))
+            self.dvs_pbh.create_pbh_rule(
+                table_name=PBH_TABLE_NAME,
+                rule_name=PBH_RULE_NAME,
+                priority=PBH_RULE_PRIORITY,
+                qualifiers=attr_dict,
+                hash_name=PBH_RULE_HASH
+            )
+            self.dvs_acl.verify_acl_rule_count(1)
+
+            attr_dict = {
+                "ether_type": "0x86dd",
+                "ipv6_next_header": "0x2f",
+                "inner_ether_type": "0x0800"
+            }
+
+            pbhlogger.info("Update PBH rule: {}".format(PBH_RULE_NAME))
+            self.dvs_pbh.update_pbh_rule(
+                table_name=PBH_TABLE_NAME,
+                rule_name=PBH_RULE_NAME,
+                priority="100",
+                qualifiers=attr_dict,
+                hash_name=PBH_RULE_HASH,
+                packet_action="SET_LAG_HASH",
+                flow_counter="ENABLED"
+            )
+
+            hash_id = self.dvs_pbh.get_pbh_hash_ids(1)[0]
+            counter_id = self.dvs_acl.get_acl_counter_ids(1)[0]
+
+            sai_attr_dict = {
+                "SAI_ACL_ENTRY_ATTR_PRIORITY": self.dvs_acl.get_simple_qualifier_comparator("100"),
+                "SAI_ACL_ENTRY_ATTR_FIELD_ETHER_TYPE": self.dvs_acl.get_simple_qualifier_comparator("34525&mask:0xffff"),
+                "SAI_ACL_ENTRY_ATTR_FIELD_IP_PROTOCOL": self.dvs_acl.get_simple_qualifier_comparator("disabled"),
+                "SAI_ACL_ENTRY_ATTR_FIELD_IPV6_NEXT_HEADER": self.dvs_acl.get_simple_qualifier_comparator("47&mask:0xff"),
+                "SAI_ACL_ENTRY_ATTR_FIELD_GRE_KEY": self.dvs_acl.get_simple_qualifier_comparator("disabled"),
+                "SAI_ACL_ENTRY_ATTR_FIELD_INNER_ETHER_TYPE": self.dvs_acl.get_simple_qualifier_comparator("2048&mask:0xffff"),
+                "SAI_ACL_ENTRY_ATTR_ACTION_SET_ECMP_HASH_ID": self.dvs_acl.get_simple_qualifier_comparator("disabled"),
+                "SAI_ACL_ENTRY_ATTR_ACTION_SET_LAG_HASH_ID": self.dvs_acl.get_simple_qualifier_comparator(hash_id),
+                "SAI_ACL_ENTRY_ATTR_ACTION_COUNTER": self.dvs_acl.get_simple_qualifier_comparator(counter_id)
+            }
+
+            self.dvs_acl.verify_acl_rule_generic(
+                sai_qualifiers=sai_attr_dict
+            )
+
+        finally:
+            # PBH rule
+            pbhlogger.info("Remove PBH rule: {}".format(PBH_RULE_NAME))
+            self.dvs_pbh.remove_pbh_rule(PBH_TABLE_NAME, PBH_RULE_NAME)
+            self.dvs_acl.verify_acl_rule_count(0)
+
+            # PBH table
+            pbhlogger.info("Remove PBH table: {}".format(PBH_TABLE_NAME))
+            self.dvs_pbh.remove_pbh_table(PBH_TABLE_NAME)
+            self.dvs_acl.verify_acl_table_count(0)
+
+            # PBH hash
+            pbhlogger.info("Remove PBH hash: {}".format(PBH_HASH_NAME))
+            self.dvs_pbh.remove_pbh_hash(PBH_HASH_NAME)
+            self.dvs_pbh.verify_pbh_hash_count(0)
+
+            # PBH hash field
+            pbhlogger.info("Remove PBH hash field: {}".format(PBH_HASH_FIELD_NAME))
+            self.dvs_pbh.remove_pbh_hash_field(PBH_HASH_FIELD_NAME)
+            self.dvs_pbh.verify_pbh_hash_field_count(0)
+
+
 @pytest.mark.usefixtures("dvs_lag_manager")
 class TestPbhExtendedFlows:
     class PbhRefCountHelper(object):

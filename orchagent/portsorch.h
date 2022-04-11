@@ -312,9 +312,11 @@ private:
 
     bool m_isQueueMapGenerated = false;
     void generateQueueMapPerPort(const Port& port);
+    void removeQueueMapPerPort(const Port& port);
 
     bool m_isPriorityGroupMapGenerated = false;
     void generatePriorityGroupMapPerPort(const Port& port);
+    void removePriorityGroupMapPerPort(const Port& port);
 
     bool m_isPortCounterMapGenerated = false;
     bool m_isPortBufferDropCounterMapGenerated = false;
