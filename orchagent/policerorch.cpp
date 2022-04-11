@@ -642,7 +642,7 @@ task_process_status PolicerOrch::handlePortStormControlTable(Consumer& consumer)
 
             if(update)
             {
-                SWSS_LOG_NOTICE("update storm-control policer %s id:%ld", storm_policer_name.c_str(), policer_id);
+                SWSS_LOG_NOTICE("update storm-control policer %s", storm_policer_name.c_str());
                 port_attr.value.oid = SAI_NULL_OBJECT_ID;
                 /*Remove and re-apply policer*/
                 sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &port_attr);
