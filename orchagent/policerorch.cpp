@@ -469,6 +469,7 @@ bool PolicerOrch::isStormControlPolicer(string policer_name)
 task_process_status PolicerOrch::handlePortStormControlTable(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
+    sai_status_t status = SAI_STATUS_SUCCESS;
 
     KeyOpFieldsValuesTuple tuple = consumer.m_toSync.begin()->second;
 
@@ -595,7 +596,7 @@ task_process_status PolicerOrch::handlePortStormControlTable(Consumer& consumer)
             // Create a new policer
             if (!update)
             {
-                sai_status_t status = sai_policer_api->create_policer(
+                status = sai_policer_api->create_policer(
                         &policer_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
                 if (status != SAI_STATUS_SUCCESS)
                 {
@@ -641,7 +642,16 @@ task_process_status PolicerOrch::handlePortStormControlTable(Consumer& consumer)
 
             if(update)
             {
-                SWSS_LOG_NOTICE("update storm-control policer %s", storm_policer_name.c_str());
+                SWSS_LOG_NOTICE("update storm-control policer %s id:%ld", storm_policer_name.c_str(), policer_id);
+                port_attr.value.oid = SAI_NULL_OBJECT_ID;
+                /*Remove and re-apply policer*/
+                sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &port_attr);
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to remove storm-control %s from port %s, rv:%d",
+                            storm_type.c_str(), interface_name.c_str(), status);
+                    continue;
+                }
             }
             port_attr.value.oid = policer_id;
 
