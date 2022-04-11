@@ -2,7 +2,6 @@ import os
 import re
 import time
 import json
-import pytest
 import redis
 
 from swsscommon import swsscommon
