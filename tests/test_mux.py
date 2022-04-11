@@ -21,6 +21,7 @@ class TestMuxTunnelBase(object):
     ASIC_NEXTHOP_TABLE          = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP"
     ASIC_ROUTE_TABLE            = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"
     CONFIG_MUX_CABLE            = "MUX_CABLE"
+    TUNNEL_QOS_MAP_NAME         = "AZURE_TUNNEL"
 
     SERV1_IPV4                  = "192.168.0.100"
     SERV1_IPV6                  = "fc02:1000::100"
@@ -46,6 +47,8 @@ class TestMuxTunnelBase(object):
         "uniform" : "SAI_TUNNEL_TTL_MODE_UNIFORM_MODEL"
     }
 
+    TC_TO_DSCP_MAP = {str(i):str{i} for i in range(0, 8)}
+    TC_TO_QUEUE_MAP = {str(i):str(i) for i in range(0, 8)}
 
     def create_vlan_interface(self, confdb, asicdb, dvs):
 
@@ -513,7 +516,7 @@ class TestMuxTunnelBase(object):
         return True
 
 
-    def create_and_test_peer(self, db, asicdb, peer_name, peer_ip, src_ip):
+    def create_and_test_peer(self, db, asicdb, peer_name, peer_ip, src_ip, tc_to_dscp_map_oid=None, tc_to_queue_map_oid=None):
         """ Create PEER entry verify all needed enties in ASIC DB exists """
 
         peer_attrs = {
@@ -541,6 +544,11 @@ class TestMuxTunnelBase(object):
         assert p2p_obj != None
 
         fvs = asicdb.wait_for_entry(self.ASIC_TUNNEL_TABLE, p2p_obj)
+        
+        if tc_to_dscp_map_oid:
+            assert "SAI_TUNNEL_ATTR_ENCAP_QOS_TC_AND_COLOR_TO_DSCP_MAP" in fvs
+        if tc_to_queue_map_oid:
+            assert "SAI_TUNNEL_ATTR_ENCAP_QOS_TC_TO_QUEUE_MAP" in fvs
 
         for field, value in fvs.items():
             if field == "SAI_TUNNEL_ATTR_TYPE":
@@ -559,12 +567,17 @@ class TestMuxTunnelBase(object):
                 assert value == "SAI_TUNNEL_TTL_MODE_PIPE_MODEL"
             elif field == "SAI_TUNNEL_ATTR_LOOPBACK_PACKET_ACTION":
                 assert value == "SAI_PACKET_ACTION_DROP"
+            elif field == "SAI_TUNNEL_ATTR_ENCAP_QOS_TC_AND_COLOR_TO_DSCP_MAP":
+                assert value == tc_to_dscp_map_oid
+            elif field == "SAI_TUNNEL_ATTR_ENCAP_QOS_TC_TO_QUEUE_MAP":
+                assert value == tc_to_queue_map_oid
             else:
                 assert False, "Field %s is not tested" % field
 
 
-    def check_tunnel_termination_entry_exists_in_asicdb(self, asicdb, tunnel_sai_oid, dst_ips):
+    def check_tunnel_termination_entry_exists_in_asicdb(self, asicdb, tunnel_sai_oid, dst_ips, src_ip=None):
         tunnel_term_entries = asicdb.wait_for_n_keys(self.ASIC_TUNNEL_TERM_ENTRIES, len(dst_ips))
+        expected_term_type = "SAI_TUNNEL_TERM_TABLE_ENTRY_TYPE_P2P" if src_ip else "SAI_TUNNEL_TERM_TABLE_ENTRY_TYPE_P2MP"
 
         for term_entry in tunnel_term_entries:
             fvs = asicdb.get_entry(self.ASIC_TUNNEL_TERM_ENTRIES, term_entry)
@@ -575,13 +588,15 @@ class TestMuxTunnelBase(object):
                 if field == "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_VR_ID":
                     assert self.check_vr_exists_in_asicdb(asicdb, value)
                 elif field == "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TYPE":
-                    assert value == "SAI_TUNNEL_TERM_TABLE_ENTRY_TYPE_P2MP"
+                    assert value == expected_term_type
                 elif field == "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TUNNEL_TYPE":
                     assert value == "SAI_TUNNEL_TYPE_IPINIP"
                 elif field == "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID":
                     assert value == tunnel_sai_oid
                 elif field == "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP":
                     assert value in dst_ips
+                elif field == "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_SRC_IP" and src_ip:
+                    assert value == src_ip
                 else:
                     assert False, "Field %s is not tested" % field
 
@@ -633,8 +648,8 @@ class TestMuxTunnelBase(object):
                 assert self.check_interface_exists_in_asicdb(asicdb, value)
             else:
                 assert False, "Field %s is not tested" % field
-
-        self.check_tunnel_termination_entry_exists_in_asicdb(asicdb, tunnel_sai_obj, kwargs["dst_ip"].split(","))
+        src_ip = kwargs['src_ip'] if 'src_ip' in kwargs else None
+        self.check_tunnel_termination_entry_exists_in_asicdb(asicdb, tunnel_sai_obj, kwargs["dst_ip"].split(","), src_ip)
 
 
     def remove_and_test_tunnel(self, db, asicdb, tunnel_name):
@@ -663,6 +678,25 @@ class TestMuxTunnelBase(object):
         assert len(tunnel_app_table.getKeys()) == 0
         assert not self.check_interface_exists_in_asicdb(asicdb, overlay_infs_id)
 
+    def add_qos_map(self, configdb, asicdb, qos_map_type_name, qos_map_name, qos_map):
+        current_oids = asicdb.get_keys(self.ASIC_QOS_MAP_TABLE_KEY)
+        # Apply QoS map to config db
+        table = swsscommon.Table(configdb, qos_map_type_name)
+        fvs = swsscommon.FieldValuePairs(list(qos_map.items()))
+        table.set(qos_map_name, fvs)
+        time.sleep(1)
+
+        diff = set(asicdb.get_keys(self.ASIC_QOS_MAP_TABLE_KEY)) - set(current_oids)
+        assert len(diff) == 1
+        oid = diff.pop()
+        fvs_in_asicdb = asicdb.get_entry(self.ASIC_QOS_MAP_TABLE_KEY, oid)
+        assert(fvs_in_asicdb["SAI_QOS_MAP_ATTR_TYPE"] == qos_map_type_name)
+        return oid
+
+    def remove_qos_map(self, configdb, qos_map_oid):
+        """ Remove the testing qos map"""
+        table = swsscommon.Table(configdb, qos_map_type_name)
+        table._del(qos_map_oid)
 
     def cleanup_left_over(self, db, asicdb):
         """ Cleanup APP and ASIC tables """
@@ -693,8 +727,10 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
         # create tunnel IPv4 tunnel
         self.create_and_test_tunnel(db, asicdb, tunnel_name="MuxTunnel0", tunnel_type="IPINIP",
-                                   dst_ip="10.1.0.32", dscp_mode="uniform",
-                                   ecn_mode="standard", ttl_mode="pipe")
+                                   dst_ip="10.1.0.32", dscp_mode="pipe",
+                                   ecn_mode="standard", ttl_mode="pipe",
+                                   encap_tc_to_queue_map=self.TUNNEL_QOS_MAP_NAME,
+                                   encap_tc_color_to_dscp_map=self.TUNNEL_QOS_MAP_NAME)
 
 
     def test_Peer(self, dvs, testlog):
@@ -702,8 +738,14 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
         db = dvs.get_config_db()
         asicdb = dvs.get_asic_db()
+        
+        tc_to_dscp_map_oid = self.add_qos_map(configdb, asicdb, swsscommon.CFG_TC_TO_DSCP_MAP_TABLE_NAME, self.TUNNEL_QOS_MAP_NAME, self.TC_TO_DSCP_MAP)
+        tc_to_queue_map_oid = self.add_qos_map(configdb, asicdb, swsscommon.CFG_TC_TO_QUEUE_MAP_TABLE_NAME, self.TUNNEL_QOS_MAP_NAME, self.TC_TO_QUEUE_MAP)
 
-        self.create_and_test_peer(db, asicdb, "peer",  "1.1.1.1", "10.1.0.32")
+        self.create_and_test_peer(db, asicdb, "peer",  "1.1.1.1", "10.1.0.32", tc_to_dscp_map_oid, tc_to_queue_map_oid)
+
+        self.remove_qos_map(configdb, tc_to_dscp_map_oid)
+        self.remove_qos_map(tc_to_queue_map_oid)
 
 
     def test_Neighbor(self, dvs, dvs_route, testlog):
