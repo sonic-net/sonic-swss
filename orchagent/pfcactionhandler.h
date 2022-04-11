@@ -148,10 +148,7 @@ class PfcWdZeroBufferHandler: public PfcWdLossyHandler
                     return ingress ? m_zeroIngressBufferProfile : m_zeroEgressBufferProfile;
                 }
 
-                sai_object_id_t& getPool(bool ingress)
-                {
-                    return ingress ? m_zeroIngressBufferPool : m_zeroEgressBufferPool;
-                }
+                sai_object_id_t& getPool(bool ingress);
 
                 sai_object_id_t m_zeroIngressBufferPool = SAI_NULL_OBJECT_ID;
                 sai_object_id_t m_zeroEgressBufferPool = SAI_NULL_OBJECT_ID;
@@ -165,13 +162,12 @@ class PfcWdZeroBufferHandler: public PfcWdLossyHandler
 
 // PFC queue that implements drop action by draining queue via SAI
 // attribute SAI_QUEUE_ATTR_PFC_DLR_INIT.
-class PfcWdSaiDlrInitHandler: public PfcWdActionHandler
+class PfcWdSaiDlrInitHandler: public PfcWdZeroBufferHandler
 {
     public:
         PfcWdSaiDlrInitHandler(sai_object_id_t port, sai_object_id_t queue,
                 uint8_t queueId, shared_ptr<Table> countersTable);
         virtual ~PfcWdSaiDlrInitHandler(void);
-        virtual bool getHwCounters(PfcWdHwStats& counters);
 };
 
 #endif

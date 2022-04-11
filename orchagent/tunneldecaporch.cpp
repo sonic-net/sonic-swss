@@ -384,7 +384,7 @@ bool TunnelDecapOrch::addDecapTunnelTermEntries(string tunnelKey, IpAddresses ds
         // check if the there's an entry already for the ip
         if (existingIps.find(ip) != existingIps.end())
         {
-            SWSS_LOG_ERROR("%s already exists. Did not create entry.", ip.c_str());
+            SWSS_LOG_NOTICE("%s already exists. Did not create entry.", ip.c_str());
         }
         else
         {

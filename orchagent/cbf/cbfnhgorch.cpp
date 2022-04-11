@@ -308,7 +308,7 @@ bool CbfNhg::sync()
     nhg_attr.value.u32 = static_cast<sai_uint32_t>(m_members.size());
     nhg_attrs.push_back(move(nhg_attr));
 
-    if (nhg_attr.value.u32 > gNhgMapOrch->getMaxFcVal())
+    if (nhg_attr.value.u32 > gNhgMapOrch->getMaxNumFcs())
     {
         /* If there are more members than FCs then this may be an error, as some members won't be used. */
         SWSS_LOG_WARN("More CBF NHG members configured than supported Forwarding Classes");
@@ -632,6 +632,11 @@ bool CbfNhg::syncMembers(const set<string> &members)
                            nhgm.to_string().c_str(), to_string().c_str());
             throw std::logic_error("Syncing already synced NHG member");
         }
+        else if (nhgm.getNhgId() == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_WARN("CBF NHG member %s is not yet synced", nhgm.to_string().c_str());
+            return false;
+        }
 
         /*
          * Check if the group exists in NhgOrch.
@@ -710,10 +715,9 @@ vector<sai_attribute_t> CbfNhg::createNhgmAttrs(const CbfNhgMember &nhgm) const
 {
     SWSS_LOG_ENTER();
 
-    if (!isSynced() || (nhgm.getNhgId() == SAI_NULL_OBJECT_ID))
+    if (!isSynced())
     {
-        SWSS_LOG_ERROR("CBF next hop group %s or next hop group %s are not synced",
-                       to_string().c_str(), nhgm.to_string().c_str());
+        SWSS_LOG_ERROR("CBF next hop group %s is not synced", to_string().c_str());
         throw logic_error("CBF next hop group member attributes data is insufficient");
     }
 

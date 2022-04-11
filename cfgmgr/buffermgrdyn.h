@@ -150,7 +150,10 @@ public:
     using Orch::doTask;
 
 private:
-    std::string m_platform;
+    std::string     m_platform;             // vendor, e.g. "mellanox"
+    std::string     m_specific_platform;    // name of platform, e.g. "x86_64-mlnx_msn3420-r0"
+    unsigned int    m_model_number;         // model number extracted from specific platform, e.g. 3420
+
     std::vector<buffer_direction_t> m_bufferDirections;
     const std::string m_bufferObjectNames[BUFFER_DIR_MAX];
     const std::string m_bufferDirectionNames[BUFFER_DIR_MAX];
@@ -234,7 +237,7 @@ private:
 
     // Other tables
     Table m_cfgDefaultLosslessBufferParam;
-
+    Table m_cfgDeviceMetaDataTable;
     Table m_stateBufferMaximumTable;
 
     Table m_applPortTable;

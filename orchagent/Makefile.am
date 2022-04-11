@@ -18,6 +18,7 @@ dist_swss_DATA = \
 		 pfc_detect_barefoot.lua \
 		 pfc_detect_nephos.lua \
 		 pfc_detect_cisco-8000.lua \
+                 pfc_detect_vs.lua \
 		 pfc_restore.lua \
 		 pfc_restore_cisco-8000.lua \
 		 port_rates.lua \
@@ -61,6 +62,7 @@ orchagent_SOURCES = \
             mirrororch.cpp \
             fdborch.cpp \
             aclorch.cpp \
+            pbh/pbhcap.cpp \
             pbh/pbhcnt.cpp \
             pbh/pbhmgr.cpp \
             pbh/pbhrule.cpp \
@@ -91,10 +93,23 @@ orchagent_SOURCES = \
             lagid.cpp \
             bfdorch.cpp \
             srv6orch.cpp \
-            response_publisher.cpp
+            response_publisher.cpp \
+            nvgreorch.cpp
 
 orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp flex_counter/flow_counter_handler.cpp
 orchagent_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.cpp
+orchagent_SOURCES += p4orch/p4orch.cpp \
+		     p4orch/p4orch_util.cpp \
+		     p4orch/p4oidmapper.cpp \
+		     p4orch/router_interface_manager.cpp \
+		     p4orch/neighbor_manager.cpp \
+		     p4orch/next_hop_manager.cpp \
+		     p4orch/route_manager.cpp \
+		     p4orch/acl_util.cpp \
+		     p4orch/acl_table_manager.cpp \
+		     p4orch/acl_rule_manager.cpp \
+		     p4orch/wcmp_manager.cpp \
+		     p4orch/mirror_session_manager.cpp
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 orchagent_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)

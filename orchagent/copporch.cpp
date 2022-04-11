@@ -1079,16 +1079,20 @@ bool CoppOrch::getAttribsFromTrapGroup (vector<FieldValueTuple> &fv_tuple,
             genetlink_attribs.push_back(attr);
 
             attr.id = SAI_HOSTIF_ATTR_NAME;
+            auto size = sizeof(attr.value.chardata);
             strncpy(attr.value.chardata, fvValue(*i).c_str(),
-                    sizeof(attr.value.chardata));
+                    size - 1);
+            attr.value.chardata[size - 1] = '\0';
             genetlink_attribs.push_back(attr);
 
         }
         else if (fvField(*i) == copp_genetlink_mcgrp_name)
         {
             attr.id = SAI_HOSTIF_ATTR_GENETLINK_MCGRP_NAME;
+            auto size = sizeof(attr.value.chardata);
             strncpy(attr.value.chardata, fvValue(*i).c_str(),
-                    sizeof(attr.value.chardata));
+                    size - 1);
+            attr.value.chardata[size - 1] = '\0';
             genetlink_attribs.push_back(attr);
         }
         else

@@ -26,6 +26,18 @@ def create_entry_pst(db, table, separator, key, pairs):
     create_entry(tbl, key, pairs)
 
 
+def delete_entry_pst(db, table, key):
+    tbl = swsscommon.ProducerStateTable(db, table)
+    tbl._del(key)
+    time.sleep(1)
+
+
+def delete_entry_tbl(db, table, key):
+    tbl = swsscommon.Table(db, table)
+    tbl._del(key)
+    time.sleep(1)
+
+
 def how_many_entries_exist(db, table):
     tbl =  swsscommon.Table(db, table)
     return len(tbl.getKeys())
@@ -324,6 +336,66 @@ class TestVxlan(object):
         create_vxlan_tunnel_entry(dvs, 'tunnel_4', 'entry_2', tunnel_map_map, 'Vlan57', '857',
                                   tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids)
 
+def apply_test_vnet_cfg(cfg_db):
+
+    # create VXLAN Tunnel
+    create_entry_tbl(
+        cfg_db,
+        "VXLAN_TUNNEL", '|', "tunnel1",
+        [
+            ("src_ip", "1.1.1.1")
+        ],
+    )
+
+    # create VNET
+    create_entry_tbl(
+        cfg_db,
+        "VNET", '|', "tunnel1",
+        [
+            ("vxlan_tunnel", "tunnel1"),
+            ("vni", "1")
+        ],
+    )
+
+    return 
+
+
+@pytest.fixture
+def env_setup(dvs):
+    cfg_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+
+    create_entry_pst(
+        app_db,
+        "SWITCH_TABLE", ':', "switch",
+        [
+            ("vxlan_router_mac", "00:01:02:03:04:05")
+        ],
+    )
+
+    apply_test_vnet_cfg(cfg_db)
+
+    yield 
+
+    delete_entry_pst(app_db, "SWITCH_TABLE", "switch")
+    delete_entry_tbl(cfg_db, "VXLAN_TUNNEL", "tunnel1")
+    delete_entry_tbl(cfg_db, "VNET", "Vnet1")
+
+def test_vnet_cleanup_config_reload(dvs, env_setup):
+
+    # Restart vxlanmgrd Process
+    dvs.runcmd(["systemctl", "restart", "vxlanmgrd"])
+
+    # Reapply cfg to simulate cfg reload
+    cfg_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    apply_test_vnet_cfg(cfg_db)
+
+    time.sleep(0.5)
+
+    # Check if the netdevices is created as expected
+    ret, stdout = dvs.runcmd(["ip", "link", "show"])
+    assert "Vxlan1" in stdout
+    assert "Brvxlan1" in stdout
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying

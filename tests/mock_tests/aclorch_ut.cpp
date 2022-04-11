@@ -342,6 +342,9 @@ namespace aclorch_test
 
             gVirtualRouterId = attr.value.oid;
 
+            ASSERT_EQ(gCrmOrch, nullptr);
+            gCrmOrch = new CrmOrch(m_config_db.get(), CFG_CRM_TABLE_NAME);
+
             TableConnector stateDbSwitchTable(m_state_db.get(), "SWITCH_CAPABILITY");
             TableConnector conf_asic_sensors(m_config_db.get(), CFG_ASIC_SENSORS_TABLE_NAME);
             TableConnector app_switch_table(m_app_db.get(),  APP_SWITCH_TABLE_NAME);
@@ -368,9 +371,6 @@ namespace aclorch_test
 
             ASSERT_EQ(gPortsOrch, nullptr);
             gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
-
-            ASSERT_EQ(gCrmOrch, nullptr);
-            gCrmOrch = new CrmOrch(m_config_db.get(), CFG_CRM_TABLE_NAME);
 
             ASSERT_EQ(gVrfOrch, nullptr);
             gVrfOrch = new VRFOrch(m_app_db.get(), APP_VRF_TABLE_NAME, m_state_db.get(), STATE_VRF_OBJECT_TABLE_NAME);
@@ -1724,4 +1724,28 @@ namespace aclorch_test
         ASSERT_TRUE(orch->m_aclOrch->removeAclRule(rule->getTableId(), rule->getId()));
     }
 
+    TEST_F(AclOrchTest, deleteNonExistingRule)
+    {
+        string tableId = "acl_table";
+        string ruleId = "acl_rule";
+
+        auto orch = createAclOrch();
+
+        // add acl table
+        auto kvfAclTable = deque<KeyOpFieldsValuesTuple>({{
+            tableId,
+            SET_COMMAND,
+            {
+                { ACL_TABLE_DESCRIPTION, "L3 table" },
+                { ACL_TABLE_TYPE, TABLE_TYPE_L3 },
+                { ACL_TABLE_STAGE, STAGE_INGRESS },
+                { ACL_TABLE_PORTS, "1,2" }
+            }
+        }});
+
+        orch->doAclTableTask(kvfAclTable);
+
+        // try to delete non existing acl rule
+        ASSERT_TRUE(orch->m_aclOrch->removeAclRule(tableId, ruleId));
+    }
 } // namespace nsAclOrchTest

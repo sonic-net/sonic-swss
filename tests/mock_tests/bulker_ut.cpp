@@ -106,4 +106,40 @@ namespace bulker_test
         ASSERT_EQ(ia->first.id, SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION);
         ASSERT_EQ(ia->first.value.s32, SAI_PACKET_ACTION_FORWARD);
     }
+
+    TEST_F(BulkerTest, BulkerPendindRemoval)
+    {
+        // Create bulker
+        EntityBulker<sai_route_api_t> gRouteBulker(sai_route_api, 1000);
+        deque<sai_status_t> object_statuses;
+
+        // Check max bulk size
+        ASSERT_EQ(gRouteBulker.max_bulk_size, 1000);
+
+        // Create a dummy route entry
+        sai_route_entry_t route_entry_remove;
+        route_entry_remove.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+        route_entry_remove.destination.addr.ip4 = htonl(0x0a00000f);
+        route_entry_remove.destination.mask.ip4 = htonl(0xffffff00);
+        route_entry_remove.vr_id = 0x0;
+        route_entry_remove.switch_id = 0x0;
+
+        // Put route entry into remove
+        object_statuses.emplace_back();
+        gRouteBulker.remove_entry(&object_statuses.back(), &route_entry_remove);
+
+        // Confirm route entry is pending removal
+        ASSERT_TRUE(gRouteBulker.bulk_entry_pending_removal(route_entry_remove));
+
+        // Create another dummy route entry that will not be removed
+        sai_route_entry_t route_entry_non_remove;
+        route_entry_non_remove.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+        route_entry_non_remove.destination.addr.ip4 = htonl(0x0a00010f);
+        route_entry_non_remove.destination.mask.ip4 = htonl(0xffffff00);
+        route_entry_non_remove.vr_id = 0x0;
+        route_entry_non_remove.switch_id = 0x0;
+
+        // Confirm route entry is not pending removal
+        ASSERT_FALSE(gRouteBulker.bulk_entry_pending_removal(route_entry_non_remove));
+    }
 }

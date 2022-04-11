@@ -67,6 +67,13 @@ IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
             setWarmReplayDoneState();
         }
     }
+
+    string swtype;
+    Table cfgDeviceMetaDataTable(cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
+    if(cfgDeviceMetaDataTable.hget("localhost", "switch_type", swtype))
+    {
+       mySwitchType = swtype;
+    }
 }
 
 void IntfMgr::setIntfIp(const string &alias, const string &opCmd,
@@ -86,9 +93,23 @@ void IntfMgr::setIntfIp(const string &alias, const string &opCmd,
     }
     else
     {
+        string metric = "";
+        // Kernel adds connected route with default metric of 256. But the metric is not
+        // communicated to frr unless the ip address is added with explicit metric
+        // In voq system, We need the static route to the remote neighbor and connected
+        // route to have the same metric to enable BGP to choose paths from routes learned
+        // via eBGP and iBGP over the internal inband port be part of same ecmp group.
+        // For v4 both the metrics (connected and static) are default 0 so we do not need
+        // to set the metric explicitly.
+        if(mySwitchType == "voq")
+        {
+           metric = " metric 256";
+        }
+
         (prefixLen < 127) ?
-        (cmd << IP_CMD << " -6 address " << shellquote(opCmd) << " " << shellquote(ipPrefixStr) << " broadcast " << shellquote(broadcastIpStr) << " dev " << shellquote(alias)) :
-        (cmd << IP_CMD << " -6 address " << shellquote(opCmd) << " " << shellquote(ipPrefixStr) << " dev " << shellquote(alias));
+        (cmd << IP_CMD << " -6 address " << shellquote(opCmd) << " " << shellquote(ipPrefixStr) << " broadcast " << shellquote(broadcastIpStr) <<
+         " dev " << shellquote(alias) << metric) :
+        (cmd << IP_CMD << " -6 address " << shellquote(opCmd) << " " << shellquote(ipPrefixStr) << " dev " << shellquote(alias) << metric);
     }
 
     int ret = swss::exec(cmd.str(), res);

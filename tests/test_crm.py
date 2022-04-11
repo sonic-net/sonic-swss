@@ -17,29 +17,16 @@ def getCrmCounterValue(dvs, key, counter):
 
     return 0
 
-def getCrmConfigValue(dvs, key, counter):
-
-    config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-    crm_stats_table = swsscommon.Table(config_db, 'CRM')
-
-    for k in crm_stats_table.get(key)[1]:
-        if k[0] == counter:
-            return int(k[1])
-
-def getCrmConfigStr(dvs, key, counter):
-
-    config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-    crm_stats_table = swsscommon.Table(config_db, 'CRM')
-
-    for k in crm_stats_table.get(key)[1]:
-        if k[0] == counter:
-            return k[1]
-    return ""
-
 def check_syslog(dvs, marker, err_log, expected_cnt):
     (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \"%s\" | wc -l" % (marker, err_log)])
     assert num.strip() >= str(expected_cnt)
 
+def crm_update(dvs, field, value):
+    cfg_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    tbl = swsscommon.Table(cfg_db, "CRM")
+    fvs = swsscommon.FieldValuePairs([(field, value)])
+    tbl.set("Config", fvs)
+    time.sleep(1)
 
 class TestCrm(object):
     def test_CrmFdbEntry(self, dvs, testlog):
@@ -48,7 +35,7 @@ class TestCrm(object):
         # configured, server 2 will send packet which can switch to learn another
         # mac and fail the test.
         dvs.servers[2].runcmd("sysctl -w net.ipv6.conf.eth0.disable_ipv6=1")
-        dvs.runcmd("crm config polling interval 1")
+        crm_update(dvs, "polling_interval", "1")
 
         dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_FDB_ENTRY', '1000')
 
@@ -99,9 +86,9 @@ class TestCrm(object):
         assert new_avail_counter == avail_counter
 
         marker = dvs.add_log_marker()
-        dvs.runcmd("crm config polling interval 2")
-        dvs.runcmd("crm config thresholds fdb high 90")
-        dvs.runcmd("crm config thresholds fdb type free")
+        crm_update(dvs, "polling_interval", "2")
+        crm_update(dvs, "fdb_entry_high_threshold", "90")
+        crm_update(dvs, "fdb_entry_threshold_type", "free")
         time.sleep(2)
         check_syslog(dvs, marker, "FDB_ENTRY THRESHOLD_EXCEEDED for TH_FREE", 1)
 
@@ -115,9 +102,9 @@ class TestCrm(object):
         fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
         intf_tbl.set("Ethernet0", fvs)
         intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
-        dvs.runcmd("config interface startup Ethernet0")
+        dvs.port_admin_set("Ethernet0", "up")
 
-        dvs.runcmd("crm config polling interval 1")
+        crm_update(dvs, "polling_interval", "1")
 
         dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV4_ROUTE_ENTRY', '1000')
 
@@ -162,9 +149,9 @@ class TestCrm(object):
         assert new_avail_counter == avail_counter
 
         marker = dvs.add_log_marker()
-        dvs.runcmd("crm config polling interval 2")
-        dvs.runcmd("crm config thresholds ipv4 route high 90")
-        dvs.runcmd("crm config thresholds ipv4 route type free")
+        crm_update(dvs, "polling_interval", "2")
+        crm_update(dvs, "ipv4_route_high_threshold", "90")
+        crm_update(dvs, "ipv4_route_threshold_type", "free")
         time.sleep(2)
         check_syslog(dvs, marker, "IPV4_ROUTE THRESHOLD_EXCEEDED for TH_FREE",1)
 
@@ -182,12 +169,12 @@ class TestCrm(object):
         fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
         intf_tbl.set("Ethernet0", fvs)
         intf_tbl.set("Ethernet0|fc00::1/126", fvs)
-        dvs.runcmd("config interface startup Ethernet0")
+        dvs.port_admin_set("Ethernet0", "up")
 
         dvs.servers[0].runcmd("ifconfig eth0 inet6 add fc00::2/126")
         dvs.servers[0].runcmd("ip -6 route add default via fc00::1")
 
-        dvs.runcmd("crm config polling interval 1")
+        crm_update(dvs, "polling_interval", "1")
 
         dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV6_ROUTE_ENTRY', '1000')
 
@@ -232,9 +219,9 @@ class TestCrm(object):
         assert new_avail_counter == avail_counter
 
         marker = dvs.add_log_marker()
-        dvs.runcmd("crm config polling interval 2")
-        dvs.runcmd("crm config thresholds ipv6 route high 90")
-        dvs.runcmd("crm config thresholds ipv6 route type free")
+        crm_update(dvs, "polling_interval", "2")
+        crm_update(dvs, "ipv6_route_high_threshold", "90")
+        crm_update(dvs, "ipv6_route_threshold_type", "free")
         time.sleep(2)
         check_syslog(dvs, marker, "IPV6_ROUTE THRESHOLD_EXCEEDED for TH_FREE",1)
 
@@ -248,9 +235,8 @@ class TestCrm(object):
         fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
         intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
         intf_tbl.set("Ethernet0", fvs)
-        dvs.runcmd("config interface startup Ethernet0")
-
-        dvs.runcmd("crm config polling interval 1")
+        dvs.port_admin_set("Ethernet0", "up")
+        crm_update(dvs, "polling_interval", "1")
 
         dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV4_NEXTHOP_ENTRY', '1000')
 
@@ -287,9 +273,9 @@ class TestCrm(object):
         assert new_avail_counter == avail_counter
 
         marker = dvs.add_log_marker()
-        dvs.runcmd("crm config polling interval 2")
-        dvs.runcmd("crm config thresholds ipv4 nexthop high 90")
-        dvs.runcmd("crm config thresholds ipv4 nexthop type free")
+        crm_update(dvs, "polling_interval", "2")
+        crm_update(dvs, "ipv4_nexthop_high_threshold", "90")
+        crm_update(dvs, "ipv4_nexthop_threshold_type", "free")
         time.sleep(2)
         check_syslog(dvs, marker, "IPV4_NEXTHOP THRESHOLD_EXCEEDED for TH_FREE",1)
 
@@ -307,9 +293,9 @@ class TestCrm(object):
         fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
         intf_tbl.set("Ethernet0", fvs)
         intf_tbl.set("Ethernet0|fc00::1/126", fvs)
-        dvs.runcmd("config interface startup Ethernet0")
+        dvs.port_admin_set("Ethernet0", "up")
 
-        dvs.runcmd("crm config polling interval 1")
+        crm_update(dvs, "polling_interval", "1")
 
         dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV6_NEXTHOP_ENTRY', '1000')
 
@@ -346,9 +332,9 @@ class TestCrm(object):
         assert new_avail_counter == avail_counter
 
         marker = dvs.add_log_marker()
-        dvs.runcmd("crm config polling interval 2")
-        dvs.runcmd("crm config thresholds ipv6 nexthop high 90")
-        dvs.runcmd("crm config thresholds ipv6 nexthop type free")
+        crm_update(dvs, "polling_interval", "2")
+        crm_update(dvs, "ipv6_nexthop_high_threshold", "90")
+        crm_update(dvs, "ipv6_nexthop_threshold_type", "free")
         time.sleep(2)
         check_syslog(dvs, marker, "IPV6_NEXTHOP THRESHOLD_EXCEEDED for TH_FREE",1)
 
@@ -362,9 +348,9 @@ class TestCrm(object):
         fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
         intf_tbl.set("Ethernet0", fvs)
         intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
-        dvs.runcmd("config interface startup Ethernet0")
+        dvs.port_admin_set("Ethernet0", "up")
 
-        dvs.runcmd("crm config polling interval 1")
+        crm_update(dvs, "polling_interval", "1")
 
         dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV4_NEIGHBOR_ENTRY', '1000')
 
@@ -401,9 +387,9 @@ class TestCrm(object):
         assert new_avail_counter == avail_counter
 
         marker = dvs.add_log_marker()
-        dvs.runcmd("crm config polling interval 2")
-        dvs.runcmd("crm config thresholds ipv4 neighbor high 90")
-        dvs.runcmd("crm config thresholds ipv4 neighbor type free")
+        crm_update(dvs, "polling_interval", "2")
+        crm_update(dvs, "ipv4_neighbor_high_threshold", "90")
+        crm_update(dvs, "ipv4_neighbor_threshold_type", "free")
         time.sleep(2)
         check_syslog(dvs, marker, "IPV4_NEIGHBOR THRESHOLD_EXCEEDED for TH_FREE",1)
 
@@ -421,9 +407,9 @@ class TestCrm(object):
         fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
         intf_tbl.set("Ethernet0", fvs)
         intf_tbl.set("Ethernet0|fc00::1/126", fvs)
-        dvs.runcmd("config interface startup Ethernet0")
+        dvs.port_admin_set("Ethernet0", "up")
 
-        dvs.runcmd("crm config polling interval 1")
+        crm_update(dvs, "polling_interval", "1")
 
         dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV6_NEIGHBOR_ENTRY', '1000')
 
@@ -460,9 +446,9 @@ class TestCrm(object):
         assert new_avail_counter == avail_counter
 
         marker = dvs.add_log_marker()
-        dvs.runcmd("crm config polling interval 2")
-        dvs.runcmd("crm config thresholds ipv6 neighbor high 90")
-        dvs.runcmd("crm config thresholds ipv6 neighbor type free")
+        crm_update(dvs, "polling_interval", "2")
+        crm_update(dvs, "ipv6_neighbor_high_threshold", "90")
+        crm_update(dvs, "ipv6_neighbor_threshold_type", "free")
         time.sleep(2)
         check_syslog(dvs, marker, "IPV6_NEIGHBOR THRESHOLD_EXCEEDED for TH_FREE",1)
 
@@ -478,10 +464,10 @@ class TestCrm(object):
         intf_tbl.set("Ethernet4", fvs)
         intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
         intf_tbl.set("Ethernet4|10.0.0.2/31", fvs)
-        dvs.runcmd("config interface startup Ethernet0")
-        dvs.runcmd("config interface startup Ethernet4")
+        dvs.port_admin_set("Ethernet0", "up")
+        dvs.port_admin_set("Ethernet4", "up")
 
-        dvs.runcmd("crm config polling interval 1")
+        crm_update(dvs, "polling_interval", "1")
 
         dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_NEXT_HOP_GROUP_ENTRY', '1000')
 
@@ -528,9 +514,9 @@ class TestCrm(object):
         assert new_avail_counter == avail_counter
 
         marker = dvs.add_log_marker()
-        dvs.runcmd("crm config polling interval 2")
-        dvs.runcmd("crm config thresholds nexthop group member high 90")
-        dvs.runcmd("crm config thresholds nexthop group object type free")
+        crm_update(dvs, "polling_interval", "2")
+        crm_update(dvs, "nexthop_group_high_threshold", "90")
+        crm_update(dvs, "nexthop_group_threshold_type", "free")
         time.sleep(2)
         check_syslog(dvs, marker, "NEXTHOP_GROUP THRESHOLD_EXCEEDED for TH_FREE",1)
 
@@ -553,10 +539,10 @@ class TestCrm(object):
         intf_tbl.set("Ethernet4", fvs)
         intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
         intf_tbl.set("Ethernet4|10.0.0.2/31", fvs)
-        dvs.runcmd("config interface startup Ethernet0")
-        dvs.runcmd("config interface startup Ethernet4")
+        dvs.port_admin_set("Ethernet0", "up")
+        dvs.port_admin_set("Ethernet4", "up")
 
-        dvs.runcmd("crm config polling interval 1")
+        crm_update(dvs, "polling_interval", "1")
 
         dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_NEXT_HOP_GROUP_MEMBER_ENTRY', '1000')
 
@@ -603,9 +589,9 @@ class TestCrm(object):
         assert new_avail_counter == avail_counter
 
         marker = dvs.add_log_marker()
-        dvs.runcmd("crm config polling interval 2")
-        dvs.runcmd("crm config thresholds nexthop group member high 90")
-        dvs.runcmd("crm config thresholds nexthop group member type free")
+        crm_update(dvs, "polling_interval", "2")
+        crm_update(dvs, "nexthop_group_member_high_threshold", "90")
+        crm_update(dvs, "nexthop_group_member_threshold_type", "free")
         time.sleep(2)
         check_syslog(dvs, marker, "NEXTHOP_GROUP_MEMBER THRESHOLD_EXCEEDED for TH_FREE",1)
 
@@ -618,7 +604,7 @@ class TestCrm(object):
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
 
-        dvs.runcmd("crm config polling interval 1")
+        crm_update(dvs, "polling_interval", "1")
         time.sleep(1)
 
         bind_ports = ["Ethernet0", "Ethernet4"]
@@ -698,7 +684,7 @@ class TestCrm(object):
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
 
-        dvs.runcmd("crm config polling interval 1")
+        crm_update(dvs, "polling_interval", "1")
         bind_ports = ["Ethernet0", "Ethernet4", "Ethernet8"]
 
         # create ACL table
@@ -733,263 +719,6 @@ class TestCrm(object):
         avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_dnat_entry_available')
         assert used_counter == 0
         assert avail_counter != 0
-
-#    commented ipmc test case till vslib is updated
-#    def test_CrmIpmcEntry(self, dvs, testlog):
-#
-#        # get counters
-#        used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipmc_entry_used')
-#        avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipmc_entry_available')
-#        assert used_counter == 0
-#        assert avail_counter != 0
-
-    def test_Configure(self, dvs, testlog):
-
-        #polling interval
-        dvs.runcmd("crm config polling interval 10")
-        time.sleep(2)
-        polling_interval = getCrmConfigValue(dvs, 'Config', 'polling_interval')
-        assert polling_interval == 10
-
-    def test_Configure_ipv4_route(self, dvs, testlog):
-
-        #ipv4 route low/high threshold/type
-        dvs.runcmd("crm config thresholds ipv4 route low 50")
-        dvs.runcmd("crm config thresholds ipv4 route high 90")
-        dvs.runcmd("crm config thresholds ipv4 route type percentage")
-
-        time.sleep(2)
-        threshold_low = getCrmConfigValue(dvs, 'Config', 'ipv4_route_low_threshold')
-        assert threshold_low == 50
-        threshold_high = getCrmConfigValue(dvs, 'Config', 'ipv4_route_high_threshold')
-        assert threshold_high == 90
-        threshold_type = getCrmConfigStr(dvs, 'Config', 'ipv4_route_threshold_type')
-        assert threshold_type == 'percentage'
-
-    def test_Configure_ipv6_route(self, dvs, testlog):
-
-        #ipv6 route low/high threshold/type
-        dvs.runcmd("crm config thresholds ipv6 route low 50")
-        dvs.runcmd("crm config thresholds ipv6 route high 90")
-        dvs.runcmd("crm config thresholds ipv6 route type used")
-
-        time.sleep(2)
-        threshold_low = getCrmConfigValue(dvs, 'Config', 'ipv6_route_low_threshold')
-        assert threshold_low == 50
-        threshold_high = getCrmConfigValue(dvs, 'Config', 'ipv6_route_high_threshold')
-        assert threshold_high == 90
-        threshold_type = getCrmConfigStr(dvs, 'Config', 'ipv6_route_threshold_type')
-        assert threshold_type == 'used'
-
-    def test_Configure_ipv4_nexthop(self, dvs, testlog):
-
-        #ipv4 nexthop low/high threshold/type
-        dvs.runcmd("crm config thresholds ipv4 nexthop low 50")
-        dvs.runcmd("crm config thresholds ipv4 nexthop high 90")
-        dvs.runcmd("crm config thresholds ipv4 nexthop type 'percentage'")
-
-        time.sleep(2)
-        threshold_low = getCrmConfigValue(dvs, 'Config', 'ipv4_nexthop_low_threshold')
-        assert threshold_low == 50
-        threshold_high = getCrmConfigValue(dvs, 'Config', 'ipv4_nexthop_high_threshold')
-        assert threshold_high == 90
-        threshold_type = getCrmConfigStr(dvs, 'Config', 'ipv4_nexthop_threshold_type')
-        assert threshold_type == 'percentage'
-
-    def test_Configure_ipv6_nexthop(self, dvs, testlog):
-
-        #ipv6 nexthop low/high threshold/type
-        dvs.runcmd("crm config thresholds ipv6 nexthop low 50")
-        dvs.runcmd("crm config thresholds ipv6 nexthop high 90")
-        dvs.runcmd("crm config thresholds ipv6 nexthop type free")
-
-        time.sleep(2)
-        threshold_low = getCrmConfigValue(dvs, 'Config', 'ipv6_nexthop_low_threshold')
-        assert threshold_low == 50
-        threshold_high = getCrmConfigValue(dvs, 'Config', 'ipv6_nexthop_high_threshold')
-        assert threshold_high == 90
-        threshold_type = getCrmConfigStr(dvs, 'Config', 'ipv6_nexthop_threshold_type')
-        assert threshold_type == 'free'
-
-    def test_Configure_ipv4_neighbor(self, dvs, testlog):
-
-        #ipv4 neighbor low/high threshold/type
-        dvs.runcmd("crm config thresholds ipv4 neighbor low 50")
-        dvs.runcmd("crm config thresholds ipv4 neighbor high 90")
-        dvs.runcmd("crm config thresholds ipv4 neighbor type percentage")
-
-        time.sleep(2)
-        threshold_low = getCrmConfigValue(dvs, 'Config', 'ipv4_neighbor_low_threshold')
-        assert threshold_low == 50
-        threshold_high = getCrmConfigValue(dvs, 'Config', 'ipv4_neighbor_high_threshold')
-        assert threshold_high == 90
-        threshold_type = getCrmConfigStr(dvs, 'Config', 'ipv4_neighbor_threshold_type')
-        assert threshold_type == 'percentage'
-
-    def test_Configure_ipv6_neighbor(self, dvs, testlog):
-
-        #ipv6 neighbor low/high threshold/type
-        dvs.runcmd("crm config thresholds ipv6 neighbor low 50")
-        dvs.runcmd("crm config thresholds ipv6 neighbor high 90")
-        dvs.runcmd("crm config thresholds ipv6 neighbor type used")
-
-        time.sleep(2)
-        threshold_low = getCrmConfigValue(dvs, 'Config', 'ipv6_neighbor_low_threshold')
-        assert threshold_low == 50
-        threshold_high = getCrmConfigValue(dvs, 'Config', 'ipv6_neighbor_high_threshold')
-        assert threshold_high == 90
-        threshold_type = getCrmConfigStr(dvs, 'Config', 'ipv6_neighbor_threshold_type')
-        assert threshold_type == 'used'
-
-    def test_Configure_group_member(self, dvs, testlog):
-
-        #nexthop group member low/high threshold/type
-        dvs.runcmd("crm config thresholds nexthop group member low 50")
-        dvs.runcmd("crm config thresholds nexthop group member high 90")
-        dvs.runcmd("crm config thresholds nexthop group member type percentage")
-
-        time.sleep(2)
-        threshold_low = getCrmConfigValue(dvs, 'Config', 'nexthop_group_member_low_threshold')
-        assert threshold_low == 50
-        threshold_high = getCrmConfigValue(dvs, 'Config', 'nexthop_group_member_high_threshold')
-        assert threshold_high == 90
-        threshold_type = getCrmConfigStr(dvs, 'Config', 'nexthop_group_member_threshold_type')
-        assert threshold_type == 'percentage'
-
-    def test_Configure_group_object(self, dvs, testlog):
-
-        #nexthop group object low/high threshold/type
-        dvs.runcmd("crm config thresholds nexthop group object low 50")
-        dvs.runcmd("crm config thresholds nexthop group object high 90")
-        dvs.runcmd("crm config thresholds nexthop group object type free")
-
-        time.sleep(2)
-        threshold_low = getCrmConfigValue(dvs, 'Config', 'nexthop_group_low_threshold')
-        assert threshold_low == 50
-        threshold_high = getCrmConfigValue(dvs, 'Config', 'nexthop_group_high_threshold')
-        assert threshold_high == 90
-        threshold_type = getCrmConfigStr(dvs, 'Config', 'nexthop_group_threshold_type')
-        assert threshold_type == 'free'
-
-    def test_Configure_acl_table(self, dvs, testlog):
-
-        #thresholds acl table low/high threshold/type
-        dvs.runcmd("crm config thresholds acl table low 50")
-        dvs.runcmd("crm config thresholds acl table high 90")
-        dvs.runcmd("crm config thresholds acl table type percentage")
-
-        time.sleep(2)
-        threshold_low = getCrmConfigValue(dvs, 'Config', 'acl_table_low_threshold')
-        assert threshold_low == 50
-        threshold_high = getCrmConfigValue(dvs, 'Config', 'acl_table_high_threshold')
-        assert threshold_high == 90
-        threshold_type = getCrmConfigStr(dvs, 'Config', 'acl_table_threshold_type')
-        assert threshold_type == 'percentage'
-
-    def test_Configure_acl_group(self, dvs, testlog):
-
-        #thresholds acl group low/high threshold/type
-        dvs.runcmd("crm config thresholds acl group low 50")
-        dvs.runcmd("crm config thresholds acl group high 90")
-        dvs.runcmd("crm config thresholds acl group type used")
-
-        time.sleep(2)
-        threshold_low = getCrmConfigValue(dvs, 'Config', 'acl_group_low_threshold')
-        assert threshold_low == 50
-        threshold_high = getCrmConfigValue(dvs, 'Config', 'acl_group_high_threshold')
-        assert threshold_high == 90
-        threshold_type = getCrmConfigStr(dvs, 'Config', 'acl_group_threshold_type')
-        assert threshold_type == 'used'
-
-    def test_Configure_acl_group_entry(self, dvs, testlog):
-
-        #thresholds acl group entry low/high threshold/type
-        dvs.runcmd("crm config thresholds acl group entry low 50")
-        dvs.runcmd("crm config thresholds acl group entry high 90")
-        dvs.runcmd("crm config thresholds acl group entry type percentage")
-
-        time.sleep(2)
-        threshold_low = getCrmConfigValue(dvs, 'Config', 'acl_entry_low_threshold')
-        assert threshold_low == 50
-        threshold_high = getCrmConfigValue(dvs, 'Config', 'acl_entry_high_threshold')
-        assert threshold_high == 90
-        threshold_type = getCrmConfigStr(dvs, 'Config', 'acl_entry_threshold_type')
-        assert threshold_type == 'percentage'
-
-    def test_Configure_acl_group_counter(self, dvs, testlog):
-
-        #thresholds acl group counter low/high threshold/type
-        dvs.runcmd("crm config thresholds acl group counter low 50")
-        dvs.runcmd("crm config thresholds acl group counter high 90")
-        dvs.runcmd("crm config thresholds acl group counter type free")
-
-        time.sleep(2)
-        threshold_low = getCrmConfigValue(dvs, 'Config', 'acl_counter_low_threshold')
-        assert threshold_low == 50
-        threshold_high = getCrmConfigValue(dvs, 'Config', 'acl_counter_high_threshold')
-        assert threshold_high == 90
-        threshold_type = getCrmConfigStr(dvs, 'Config', 'acl_counter_threshold_type')
-        assert threshold_type == 'free'
-
-    def test_Configure_fdb(self, dvs, testlog):
-
-        #thresholds fdb low/high threshold/type
-        dvs.runcmd("crm config thresholds fdb low 50")
-        dvs.runcmd("crm config thresholds fdb high 90")
-        dvs.runcmd("crm config thresholds fdb type percentage")
-
-        time.sleep(2)
-        threshold_low = getCrmConfigValue(dvs, 'Config', 'fdb_entry_low_threshold')
-        assert threshold_low == 50
-        threshold_high = getCrmConfigValue(dvs, 'Config', 'fdb_entry_high_threshold')
-        assert threshold_high == 90
-        threshold_type = getCrmConfigStr(dvs, 'Config', 'fdb_entry_threshold_type')
-        assert threshold_type == 'percentage'
-
-    def test_Configure_snat(self, dvs, testlog):
-
-        #thresholds snat low/high threshold/type
-        dvs.runcmd("crm config thresholds snat low 50")
-        dvs.runcmd("crm config thresholds snat high 90")
-        dvs.runcmd("crm config thresholds snat type percentage")
-
-        time.sleep(2)
-        threshold_low = getCrmConfigValue(dvs, 'Config', 'snat_entry_low_threshold')
-        assert threshold_low == 50
-        threshold_high = getCrmConfigValue(dvs, 'Config', 'snat_entry_high_threshold')
-        assert threshold_high == 90
-        threshold_type = getCrmConfigStr(dvs, 'Config', 'snat_entry_threshold_type')
-        assert threshold_type == 'percentage'
-
-    def test_Configure_dnat(self, dvs, testlog):
-
-        #thresholds dnat low/high threshold/type
-        dvs.runcmd("crm config thresholds dnat low 50")
-        dvs.runcmd("crm config thresholds dnat high 90")
-        dvs.runcmd("crm config thresholds dnat type percentage")
-
-        time.sleep(2)
-        threshold_low = getCrmConfigValue(dvs, 'Config', 'dnat_entry_low_threshold')
-        assert threshold_low == 50
-        threshold_high = getCrmConfigValue(dvs, 'Config', 'dnat_entry_high_threshold')
-        assert threshold_high == 90
-        threshold_type = getCrmConfigStr(dvs, 'Config', 'dnat_entry_threshold_type')
-        assert threshold_type == 'percentage'
-
-    def test_Configure_ipmc(self, dvs, testlog):
-
-        #thresholds ipmc low/high threshold/type
-        dvs.runcmd("crm config thresholds ipmc low 50")
-        dvs.runcmd("crm config thresholds ipmc high 90")
-        dvs.runcmd("crm config thresholds ipmc type percentage")
-
-        time.sleep(2)
-        threshold_low = getCrmConfigValue(dvs, 'Config', 'ipmc_entry_low_threshold')
-        assert threshold_low == 50
-        threshold_high = getCrmConfigValue(dvs, 'Config', 'ipmc_entry_high_threshold')
-        assert threshold_high == 90
-        threshold_type = getCrmConfigStr(dvs, 'Config', 'ipmc_entry_threshold_type')
-        assert threshold_type == 'percentage'
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
