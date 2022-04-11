@@ -643,6 +643,7 @@ bool VxlanMgr::doVxlanTunnelMapDeleteTask(const KeyOpFieldsValuesTuple & t)
     vxlan_dev_name = map_entry.vxlan_dev_name;
     vlan = map_entry.vlan;
     vni_id = map_entry.vni_id;
+    downVxlanNetdevice(vxlan_dev_name);
     deleteVxlanNetdevice(vxlan_dev_name);
 
     m_vxlanTunnelMapCache.erase(vxlanTunnelMapName);
@@ -906,11 +907,11 @@ void VxlanMgr::createAppDBTunnelMapTable(const KeyOpFieldsValuesTuple & t)
     std::replace(vxlanTunnelMapName.begin(), vxlanTunnelMapName.end(), config_db_key_delimiter, delimiter);
 
     /* Case 1: Entry exist - Erase from cache & return
-     * Case 2: Entry does not exist - Write to AppDB 
+     * Case 2: Entry does not exist - Write to AppDB
      * Case 3: Entry exist but modified - Not taken care. Will address later
      */
     if (m_in_reconcile)
-    { 
+    {
         auto it = find(m_appVxlanTunnelMapKeysRecon.begin(), m_appVxlanTunnelMapKeysRecon.end(), vxlanTunnelMapName);
         if (it != m_appVxlanTunnelMapKeysRecon.end())
         {
@@ -939,28 +940,28 @@ void VxlanMgr::delAppDBTunnelMapTable(std::string vxlanTunnelMapName)
     m_appVxlanTunnelMapTable.del(vxlanTunnelMapName);
 }
 
-int VxlanMgr::createVxlanNetdevice(std::string vxlanTunnelName, std::string vni_id, 
-                                   std::string src_ip, std::string dst_ip, 
+int VxlanMgr::createVxlanNetdevice(std::string vxlanTunnelName, std::string vni_id,
+                                   std::string src_ip, std::string dst_ip,
                                    std::string vlan_id)
 {
     std::string res, cmds;
-    std::string link_add_cmd, link_set_master_cmd, link_up_cmd; 
+    std::string link_add_cmd, link_set_master_cmd, link_up_cmd;
     std::string bridge_add_cmd, bridge_untagged_add_cmd, bridge_del_vid_cmd;
     std::string vxlan_dev_name;
 
-    vxlan_dev_name = std::string("") + std::string(vxlanTunnelName) + "-" + 
+    vxlan_dev_name = std::string("") + std::string(vxlanTunnelName) + "-" +
                      std::string(vlan_id);
 
     SWSS_LOG_INFO("Kernel tnl_name: %s vni_id: %s src_ip: %s dst_ip:%s vlan_id: %s",
-                    vxlanTunnelName.c_str(), vni_id.c_str(), src_ip.c_str(), dst_ip.c_str(), 
+                    vxlanTunnelName.c_str(), vni_id.c_str(), src_ip.c_str(), dst_ip.c_str(),
                     vlan_id.c_str());
 
     // Case 1: Entry exist - Erase from cache & return
     // Case 2: Entry does not exist - Create netDevice in Kernel
     // Case 3: Entry exist but modified - Not taken care. Will address later
-     
+
     if (m_in_reconcile)
-    { 
+    {
         auto it = m_vxlanNetDevices.find(vxlan_dev_name);
         if (it != m_vxlanNetDevices.end())
         {
@@ -1022,6 +1023,15 @@ int VxlanMgr::createVxlanNetdevice(std::string vxlanTunnelName, std::string vni_
     cmds += link_up_cmd + "\"";
 
     return swss::exec(cmds,res);
+}
+
+int VxlanMgr::downVxlanNetdevice(std::string vxlan_dev_name)
+{
+    int ret = 0;
+    std::string res;
+    const std::string cmd = std::string("") + IP_CMD + " link set dev " + vxlan_dev_name + " down";
+    exec(cmd, res);
+    return ret;
 }
 
 int VxlanMgr::deleteVxlanNetdevice(std::string vxlan_dev_name)
@@ -1188,6 +1198,7 @@ void VxlanMgr::clearAllVxlanDevices()
         if (netdev_type.compare(VXLAN))
         {
             info.m_vxlan = netdev_name;
+            downVxlanNetdevice(netdev_name);
             cmdDeleteVxlan(info, res);
         }
         else if(netdev_type.compare(VXLAN_IF))
