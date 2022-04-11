@@ -129,7 +129,8 @@ typedef struct tunnel_refcnts_s
 
 typedef struct tunnel_map_entry_s
 {
-   sai_object_id_t map_entry_id;
+   sai_object_id_t map_decap_entry_id;
+   sai_object_id_t map_encap_entry_id;
    uint32_t        vlan_id;
    uint32_t        vni_id;
 } tunnel_map_entry_t;

@@ -2028,7 +2028,8 @@ bool VxlanTunnelMapOrch::addOperation(const Request& request)
         }
     }
 
-    const auto tunnel_map_id = tunnel_obj->getDecapMapId(TUNNEL_MAP_T_VLAN);
+    const auto tunnel_decap_map_id = tunnel_obj->getDecapMapId(TUNNEL_MAP_T_VLAN);
+    const auto tunnel_encap_map_id = tunnel_obj->getEncapMapId(TUNNEL_MAP_T_VLAN);
     const auto tunnel_map_entry_name = request.getKeyString(1);
 
     tunnel_obj->vlan_vrf_vni_count++;
@@ -2036,9 +2037,12 @@ bool VxlanTunnelMapOrch::addOperation(const Request& request)
 
     try
     {
-        auto tunnel_map_entry_id = create_tunnel_map_entry(MAP_T::VNI_TO_VLAN_ID,
-                                                           tunnel_map_id, vni_id, vlan_id);
-        vxlan_tunnel_map_table_[full_tunnel_map_entry_name].map_entry_id = tunnel_map_entry_id;
+        auto tunnel_map_decap_entry_id = create_tunnel_map_entry(MAP_T::VNI_TO_VLAN_ID,
+                                                           tunnel_decap_map_id, vni_id, vlan_id);
+        auto tunnel_map_encap_entry_id = create_tunnel_map_entry(MAP_T::VLAN_ID_TO_VNI,
+                                                           tunnel_encap_map_id, vni_id, vlan_id, SAI_NULL_OBJECT_ID, true);
+        vxlan_tunnel_map_table_[full_tunnel_map_entry_name].map_decap_entry_id = tunnel_map_decap_entry_id;
+        vxlan_tunnel_map_table_[full_tunnel_map_entry_name].map_encap_entry_id = tunnel_map_encap_entry_id;
         vxlan_tunnel_map_table_[full_tunnel_map_entry_name].vlan_id = vlan_id;
         vxlan_tunnel_map_table_[full_tunnel_map_entry_name].vni_id = vni_id;
     }
@@ -2082,10 +2086,21 @@ bool VxlanTunnelMapOrch::delOperation(const Request& request)
 
     vlanPort.m_vnid = (uint32_t) VNID_NONE;
 
-    auto tunnel_map_entry_id = vxlan_tunnel_map_table_[full_tunnel_map_entry_name].map_entry_id;
+    auto tunnel_map_decap_entry_id = vxlan_tunnel_map_table_[full_tunnel_map_entry_name].map_decap_entry_id;
     try
     {
-        remove_tunnel_map_entry(tunnel_map_entry_id);
+        remove_tunnel_map_entry(tunnel_map_decap_entry_id);
+    }
+    catch (const std::runtime_error& error)
+    {
+        SWSS_LOG_ERROR("Error removing decap Ztunnel map %s: %s", full_tunnel_map_entry_name.c_str(), error.what());
+        return false;
+    }
+
+    auto tunnel_map_encap_entry_id = vxlan_tunnel_map_table_[full_tunnel_map_entry_name].map_encap_entry_id;
+    try
+    {
+        remove_tunnel_map_entry(tunnel_map_encap_entry_id);
     }
     catch (const std::runtime_error& error)
     {
