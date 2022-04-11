@@ -66,14 +66,15 @@ class FlexCounterManager
         void updateGroupPollingInterval(const uint polling_interval);
         void updatePlugin(
                 const std::string& pluginField,
-                const std::string& portRateSha);
+                const std::string& scriptSha);
         void enableFlexCounterGroup();
         void disableFlexCounterGroup();
 
         void setCounterIdList(
                 const sai_object_id_t object_id,
                 const CounterType counter_type,
-                const std::unordered_set<std::string>& counter_stats);
+                const std::unordered_set<std::string>& counter_stats,
+                const std::string &object_name = "");
         void clearCounterIdList(const sai_object_id_t object_id);
 
         const std::string& getGroupName() const

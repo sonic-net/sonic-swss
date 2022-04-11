@@ -389,7 +389,6 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         fieldValues.emplace_back(POLL_INTERVAL_FIELD, PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS);
         fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
         m_flexCounterGroupTable->set(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
-        gb_port_stat_manager.updatePlugin(PORT_PLUGIN_FIELD, portRateSha);
 
         fieldValues.clear();
         fieldValues.emplace_back(POLL_INTERVAL_FIELD, PG_DROP_FLEX_STAT_COUNTER_POLL_MSECS);
@@ -2395,12 +2394,15 @@ bool PortsOrch::initPort(const string &alias, const string &role, const int inde
                 if (flex_counters_orch->getPortCountersState())
                 {
                     auto port_counter_stats = generateCounterStats(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP);
-                    port_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, port_counter_stats);
-                    port_counter_stats = generateCounterStats(GBPORT_STAT_COUNTER_FLEX_COUNTER_GROUP);
+                    port_stat_manager.setCounterIdList(p.m_port_id,
+                            CounterType::PORT, port_counter_stats, p.m_alias);
+                    auto gbport_counter_stats = generateCounterStats(GBPORT_STAT_COUNTER_FLEX_COUNTER_GROUP);
                     if (p.m_system_side_id)
-                        gb_port_stat_manager.setCounterIdList(p.m_system_side_id, CounterType::PORT, port_counter_stats);
+                        gb_port_stat_manager.setCounterIdList(p.m_system_side_id,
+                                CounterType::PORT, gbport_counter_stats, p.m_alias + "_system");
                     if (p.m_line_side_id)
-                        gb_port_stat_manager.setCounterIdList(p.m_line_side_id, CounterType::PORT, port_counter_stats);
+                        gb_port_stat_manager.setCounterIdList(p.m_line_side_id,
+                                CounterType::PORT, gbport_counter_stats, p.m_alias + "_line");
                 }
                 if (flex_counters_orch->getPortBufferDropCountersState())
                 {
@@ -5591,13 +5593,14 @@ void PortsOrch::generatePortCounterMap()
         {
             continue;
         }
-        port_stat_manager.setCounterIdList(it.second.m_port_id, CounterType::PORT, port_counter_stats);
+        port_stat_manager.setCounterIdList(it.second.m_port_id,
+                CounterType::PORT, port_counter_stats, it.second.m_alias);
         if (it.second.m_system_side_id)
             gb_port_stat_manager.setCounterIdList(it.second.m_system_side_id,
-                    CounterType::PORT, gbport_counter_stats);
+                    CounterType::PORT, gbport_counter_stats, it.second.m_alias + "_system");
         if (it.second.m_line_side_id)
             gb_port_stat_manager.setCounterIdList(it.second.m_line_side_id,
-                    CounterType::PORT, gbport_counter_stats);
+                    CounterType::PORT, gbport_counter_stats, it.second.m_alias + "_line");
     }
 
     m_isPortCounterMapGenerated = true;
@@ -6189,6 +6192,11 @@ void PortsOrch::initGearbox()
 
         m_gb_counter_db = shared_ptr<DBConnector>(new DBConnector("GB_COUNTERS_DB", 0));
         m_gbcounterTable = unique_ptr<Table>(new Table(m_gb_counter_db.get(), COUNTERS_PORT_NAME_MAP));
+
+
+        string gbportLuaScript = swss::loadLuaScript("gb_port.lua");
+        string gbportSha = swss::loadRedisScript(m_gb_counter_db.get(), gbportLuaScript);
+        gb_port_stat_manager.updatePlugin(PORT_PLUGIN_FIELD, gbportSha);
     }
 }
 

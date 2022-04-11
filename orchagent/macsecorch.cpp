@@ -572,7 +572,7 @@ MACsecOrch::MACsecOrch(
     SWSS_LOG_ENTER();
 
     string LuaScript = swss::loadLuaScript("gb_macsec_sa.lua");
-    string scriptSha = swss::loadRedisScript(m_counter_db.get(), LuaScript);
+    string scriptSha = swss::loadRedisScript(&m_counter_db, LuaScript);
     m_gb_macsec_sa_stat_manager.updatePlugin(MACSEC_SA_PLUGIN_FIELD, scriptSha);
 }
 
