@@ -132,6 +132,7 @@ private:
         sai_object_id_t switch_id,
         sai_macsec_direction_t direction);
     bool updateMACsecPort(MACsecPort &macsec_port, const TaskArgs & port_attr);
+    bool updateMACsecSCs(MACsecPort &macsec_port, std::function<bool(MACsecOrch::MACsecSC &)> action);
     bool deleteMACsecPort(
         const MACsecPort &macsec_port,
         const std::string &port_name,
@@ -178,6 +179,8 @@ private:
         const std::string &port_sci,
         sai_macsec_direction_t direction);
     bool deleteMACsecSC(sai_object_id_t sc_id);
+
+    bool updateMACsecAttr(sai_object_type_t object_type, sai_object_id_t object_id, const sai_attribute_t &attr);
 
     /* MACsec SA */
     task_process_status createMACsecSA(

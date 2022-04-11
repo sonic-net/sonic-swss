@@ -10,6 +10,7 @@
 
 #define SWITCH_CAPABILITY_TABLE_PORT_TPID_CAPABLE                      "PORT_TPID_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_LAG_TPID_CAPABLE                       "LAG_TPID_CAPABLE"
+#define SWITCH_CAPABILITY_TABLE_ORDERED_ECMP_CAPABLE                   "ORDERED_ECMP_CAPABLE"
 
 struct WarmRestartCheck
 {
@@ -37,6 +38,8 @@ public:
     // Initialize the ACL groups bind to Switch
     void initAclGroupsBindToSwitch();
 
+    bool checkOrderedEcmpEnable() { return m_orderedEcmpEnable; }
+
 private:
     void doTask(Consumer &consumer);
     void doTask(swss::SelectableTimer &timer);
@@ -45,6 +48,8 @@ private:
     void initSensorsTable();
     void querySwitchTpidCapability();
     sai_status_t setSwitchTunnelVxlanParams(swss::FieldValueTuple &val);
+    void setSwitchNonSaiAttributes(swss::FieldValueTuple &val);
+
 
     // Create the default ACL group for the given stage, bind point is
     // SAI_ACL_BIND_POINT_TYPE_SWITCH and group type is
@@ -74,6 +79,7 @@ private:
     bool m_sensorsMaxTempSupported = true;
     bool m_sensorsAvgTempSupported = true;
     bool m_vxlanSportUserModeEnabled = false;
+    bool m_orderedEcmpEnable = false;
 
     // Information contained in the request from
     // external program for orchagent pre-shutdown state check
