@@ -7,10 +7,6 @@
 #include "warm_restart.h"
 #include <signal.h>
 
-#if defined(ASAN_ENABLED)
-#include <sanitizer/lsan_interface.h>
-#endif
-
 using namespace std;
 using namespace swss;
 
@@ -27,12 +23,16 @@ ofstream gResponsePublisherRecordOfs;
 string gResponsePublisherRecordFile;
 
 bool received_sigterm = false;
+static struct sigaction old_sigaction;
 
 void sig_handler(int signo)
 {
-#if defined(ASAN_ENABLED)
-    __lsan_do_leak_check();
-#endif
+    SWSS_LOG_ENTER();
+
+    if (old_sigaction.sa_handler != SIG_IGN && old_sigaction.sa_handler != SIG_DFL) {
+        old_sigaction.sa_handler(signo);
+    }
+
     received_sigterm = true;
     return;
 }
@@ -45,7 +45,15 @@ int main(int argc, char **argv)
     SWSS_LOG_NOTICE("--- Starting teammrgd ---");
 
     /* Register the signal handler for SIGTERM */
-    signal(SIGTERM, sig_handler);
+    struct sigaction sigact;
+    sigemptyset(&sigact.sa_mask);
+    sigact.sa_flags = 0;
+    sigact.sa_handler = sig_handler;
+    if (sigaction(SIGTERM, &sigact, &old_sigaction))
+    {
+        SWSS_LOG_ERROR("failed to setup SIGTERM action handler");
+        exit(1);
+    }
 
     try
     {

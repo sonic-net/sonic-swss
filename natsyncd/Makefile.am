@@ -18,3 +18,7 @@ if GCOV_ENABLED
 natsyncd_LDADD += -lgcovpreload
 endif
 
+if ASAN_ENABLED
+natsyncd_SOURCES += $(top_srcdir)/lib/asan.cpp
+endif
+

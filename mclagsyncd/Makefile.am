@@ -17,3 +17,8 @@ mclagsyncd_LDADD = $(LDFLAGS_ASAN) -lnl-3 -lnl-route-3 -lswsscommon
 if GCOV_ENABLED
 mclagsyncd_LDADD += -lgcovpreload
 endif
+
+if ASAN_ENABLED
+mclagsyncd_SOURCES += $(top_srcdir)/lib/asan.cpp
+endif
+

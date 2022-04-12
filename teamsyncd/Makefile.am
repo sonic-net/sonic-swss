@@ -17,3 +17,8 @@ teamsyncd_LDADD = $(LDFLAGS_ASAN) -lnl-3 -lnl-route-3 -lhiredis -lswsscommon -lt
 if GCOV_ENABLED
 teamsyncd_LDADD += -lgcovpreload
 endif
+
+if ASAN_ENABLED
+teamsyncd_SOURCES += $(top_srcdir)/lib/asan.cpp
+endif
+

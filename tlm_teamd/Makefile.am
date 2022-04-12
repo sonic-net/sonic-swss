@@ -17,3 +17,8 @@ tlm_teamd_LDADD = $(LDFLAGS_ASAN) -lhiredis -lswsscommon -lteamdctl $(JANSSON_LI
 if GCOV_ENABLED
 tlm_teamd_LDADD += -lgcovpreload
 endif
+
+if ASAN_ENABLED
+tlm_teamd_SOURCES += $(top_srcdir)/lib/asan.cpp
+endif
+

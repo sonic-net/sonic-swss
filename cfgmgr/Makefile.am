@@ -104,3 +104,19 @@ tunnelmgrd_LDADD += -lgcovpreload
 macsecmgrd_LDADD += -lgcovpreload
 endif
 
+if ASAN_ENABLED
+vlanmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
+teammgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
+portmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
+intfmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
+buffermgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
+vrfmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
+nbrmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
+vxlanmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
+sflowmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
+natmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
+coppmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
+tunnelmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
+macsecmgrd_SOURCES += $(top_srcdir)/lib/asan.cpp
+endif
+

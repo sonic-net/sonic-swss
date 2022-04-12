@@ -17,3 +17,8 @@ neighsyncd_LDADD = $(LDFLAGS_ASAN) -lnl-3 -lnl-route-3 -lswsscommon
 if GCOV_ENABLED
 neighsyncd_LDADD += -lgcovpreload
 endif
+
+if ASAN_ENABLED
+neighsyncd_SOURCES += $(top_srcdir)/lib/asan.cpp
+endif
+

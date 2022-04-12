@@ -9,10 +9,6 @@
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/routesync.h"
 
-#if defined(ASAN_ENABLED)
-#include <sanitizer/lsan_interface.h>
-#endif
-
 using namespace std;
 using namespace swss;
 
@@ -48,26 +44,9 @@ static bool eoiuFlagsSet(Table &bgpStateTable)
     return true;
 }
 
-#if defined(ASAN_ENABLED)
-void sigterm_handler(int signo)
-{
-    __lsan_do_leak_check();
-    signal(signo, SIG_DFL);
-    raise(signo);
-}
-#endif
-
 int main(int argc, char **argv)
 {
     swss::Logger::linkToDbNative("fpmsyncd");
-
-#if defined(ASAN_ENABLED)
-    if (signal(SIGTERM, sigterm_handler) == SIG_ERR)
-    {
-        SWSS_LOG_ERROR("failed to setup SIGTERM action");
-        exit(1);
-    }
-#endif
 
     DBConnector db("APPL_DB", 0);
     RedisPipeline pipeline(&db);

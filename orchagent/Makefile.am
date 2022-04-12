@@ -128,3 +128,10 @@ orchagent_LDADD += -lgcovpreload
 routeresync_LDADD += -lgcovpreload
 orchagent_restart_check_LDADD += -lgcovpreload
 endif
+
+if ASAN_ENABLED
+orchagent_SOURCES += $(top_srcdir)/lib/asan.cpp
+routeresync_SOURCES += $(top_srcdir)/lib/asan.cpp
+orchagent_restart_check_SOURCES += $(top_srcdir)/lib/asan.cpp
+endif
+

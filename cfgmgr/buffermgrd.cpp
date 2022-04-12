@@ -15,10 +15,6 @@
 #include "json.hpp"
 #include "warm_restart.h"
 
-#if defined(ASAN_ENABLED)
-#include <sanitizer/lsan_interface.h>
-#endif
-
 using namespace std;
 using namespace swss;
 using json = nlohmann::json;
@@ -114,15 +110,6 @@ shared_ptr<vector<KeyOpFieldsValuesTuple>> load_json(string file)
     }
 }
 
-#if defined(ASAN_ENABLED)
-void sigterm_handler(int signo)
-{
-    __lsan_do_leak_check();
-    signal(signo, SIG_DFL);
-    raise(signo);
-}
-#endif
-
 int main(int argc, char **argv)
 {
     int opt;
@@ -134,14 +121,6 @@ int main(int argc, char **argv)
     SWSS_LOG_ENTER();
 
     SWSS_LOG_NOTICE("--- Starting buffermgrd ---");
-
-#if defined(ASAN_ENABLED)
-    if (signal(SIGTERM, sigterm_handler) == SIG_ERR)
-    {
-        SWSS_LOG_ERROR("failed to setup SIGTERM action");
-        exit(1);
-    }
-#endif
 
     while ((opt = getopt(argc, argv, "l:a:p:z:h")) != -1 )
     {

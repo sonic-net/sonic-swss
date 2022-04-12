@@ -17,3 +17,8 @@ gearsyncd_LDADD = $(LDFLAGS_ASAN) -lnl-3 -lnl-route-3 -lswsscommon $(COV_LDFLAGS
 if GCOV_ENABLED
 gearsyncd_LDADD += -lgcovpreload
 endif
+
+if ASAN_ENABLED
+gearsyncd_SOURCES += $(top_srcdir)/lib/asan.cpp
+endif
+

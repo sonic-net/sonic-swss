@@ -18,10 +18,6 @@
 #include "exec.h"
 #include "warm_restart.h"
 
-#if defined(ASAN_ENABLED)
-#include <sanitizer/lsan_interface.h>
-#endif
-
 using namespace std;
 using namespace swss;
 
@@ -40,15 +36,6 @@ using namespace swss;
 set<string> g_portSet;
 bool g_init = false;
 
-#if defined(ASAN_ENABLED)
-void sigterm_handler(int signo)
-{
-    __lsan_do_leak_check();
-    signal(signo, SIG_DFL);
-    raise(signo);
-}
-#endif
-
 void usage()
 {
     cout << "Usage: portsyncd" << endl;
@@ -65,14 +52,6 @@ void checkPortInitDone(DBConnector *appl_db);
 int main(int argc, char **argv)
 {
     Logger::linkToDbNative("portsyncd");
-
-#if defined(ASAN_ENABLED)
-    if (signal(SIGTERM, sigterm_handler) == SIG_ERR)
-    {
-        SWSS_LOG_ERROR("failed to setup SIGTERM action");
-        exit(1);
-    }
-#endif
 
     int opt;
     map<string, KeyOpFieldsValuesTuple> port_cfg_map;

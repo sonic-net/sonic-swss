@@ -24,3 +24,9 @@ if GCOV_ENABLED
 swssconfig_LDADD += -lgcovpreload
 swssplayer_LDADD += -lgcovpreload
 endif
+
+if ASAN_ENABLED
+swssconfig_SOURCES += $(top_srcdir)/lib/asan.cpp
+swssplayer_SOURCES += $(top_srcdir)/lib/asan.cpp
+endif
+

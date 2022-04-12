@@ -33,10 +33,6 @@
 #include "shellcmd.h"
 #include "warm_restart.h"
 
-#if defined(ASAN_ENABLED)
-#include <sanitizer/lsan_interface.h>
-#endif
-
 using namespace std;
 using namespace swss;
 
@@ -67,6 +63,8 @@ NotificationConsumer   *timeoutNotificationsConsumer = NULL;
 NotificationConsumer   *flushNotificationsConsumer = NULL;
 
 std::shared_ptr<swss::NotificationProducer> cleanupNotifier;
+
+static struct sigaction old_sigaction;
 
 void sigterm_handler(int signo)
 {
@@ -103,11 +101,9 @@ void sigterm_handler(int signo)
         natmgr->cleanupPoolIpTable();
     }
 
-#if defined(ASAN_ENABLED)
-    __lsan_do_leak_check();
-#endif
-    signal(signo, SIG_DFL);
-    raise(signo);
+    if (old_sigaction.sa_handler != SIG_IGN && old_sigaction.sa_handler != SIG_DFL) {
+        old_sigaction.sa_handler(signo);
+    }
 }
 
 int main(int argc, char **argv)
@@ -139,7 +135,11 @@ int main(int argc, char **argv)
 
         cleanupNotifier = std::make_shared<swss::NotificationProducer>(&appDb, "NAT_DB_CLEANUP_NOTIFICATION");
 
-        if (signal(SIGTERM, sigterm_handler) == SIG_ERR)
+        struct sigaction sigact;
+        sigemptyset(&sigact.sa_mask);
+        sigact.sa_flags = 0;
+        sigact.sa_handler = sigterm_handler;
+        if (sigaction(SIGTERM, &sigact, &old_sigaction))
         {
             SWSS_LOG_ERROR("failed to setup SIGTERM action handler");
             exit(1);
