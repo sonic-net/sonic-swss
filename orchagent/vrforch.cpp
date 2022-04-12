@@ -11,7 +11,6 @@
 #include "request_parser.h"
 #include "vrforch.h"
 #include "vxlanorch.h"
-#include "routeorch.h"
 #include "flowcounterrouteorch.h"
 #include "directory.h"
 
@@ -23,7 +22,6 @@ extern sai_object_id_t gSwitchId;
 
 extern Directory<Orch*>      gDirectory;
 extern PortsOrch*            gPortsOrch;
-extern RouteOrch*            gRouteOrch;
 extern FlowCounterRouteOrch* gFlowCounterRouteOrch;
 
 bool VRFOrch::addOperation(const Request& request)

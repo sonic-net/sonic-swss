@@ -77,7 +77,7 @@ inline static sai_ip_prefix_t& copy(sai_ip_prefix_t& dst, const IpAddress& src)
     return dst;
 }
 
-static int getPrefixLenFromAddr(const uint8_t *addr, int len)
+static int getPrefixLenFromAddrMask(const uint8_t *addr, int len)
 {
     int i = 0;
     uint8_t non_zero = 0xFF;
@@ -114,11 +114,11 @@ inline static IpPrefix convert(const sai_ip_prefix_t& src)
         case SAI_IP_ADDR_FAMILY_IPV4:
             ip.family = AF_INET;
             ip.ip_addr.ipv4_addr = src.addr.ip4;
-            return IpPrefix(ip, getPrefixLenFromAddr(reinterpret_cast<const uint8_t*>(&src.mask.ip4), 4));
+            return IpPrefix(ip, getPrefixLenFromAddrMask(reinterpret_cast<const uint8_t*>(&src.mask.ip4), 4));
         case SAI_IP_ADDR_FAMILY_IPV6:
             ip.family = AF_INET6;
             memcpy(ip.ip_addr.ipv6_addr, src.addr.ip6, 16);
-            return IpPrefix(ip, getPrefixLenFromAddr(src.mask.ip6, 16));
+            return IpPrefix(ip, getPrefixLenFromAddrMask(src.mask.ip6, 16));
         default:
             throw std::logic_error("Invalid family");
     }

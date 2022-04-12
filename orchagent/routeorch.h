@@ -174,7 +174,6 @@ struct LabelRouteBulkContext
     }
 };
 
-
 class RouteOrch : public Orch, public Subject
 {
 public:
@@ -215,6 +214,7 @@ public:
 
     unsigned int getNhgCount() { return m_nextHopGroupCount; }
     unsigned int getMaxNhgCount() { return m_maxNextHopGroupCount; }
+
     void increaseNextHopGroupCount();
     void decreaseNextHopGroupCount();
     bool checkNextHopGroupCount();

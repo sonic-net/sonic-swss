@@ -37,13 +37,6 @@ gRouteBulker(sai_route_api, gMaxBulkSize)
 {
     SWSS_LOG_ENTER();
     initRouteFlowCounterCapability();
-    if (mRouteFlowCounterSupported)
-    {
-        auto intervT = timespec { .tv_sec = FLEX_COUNTER_UPD_INTERVAL , .tv_nsec = 0 };
-        mFlexCounterUpdTimer = new SelectableTimer(intervT);
-        auto executorT = new ExecutableTimer(mFlexCounterUpdTimer, this, "FLEX_COUNTER_UPD_TIMER");
-        Orch::addExecutor(executorT);
-    }
 }
 
 FlowCounterRouteOrch::~FlowCounterRouteOrch()
@@ -177,9 +170,27 @@ void FlowCounterRouteOrch::initRouteFlowCounterCapability()
     capability_table.set(FLOW_COUNTER_ROUTE_KEY, fvs);
 }
 
+void FlowCounterRouteOrch::createFlexCounterUpdateTimer()
+{
+    if (!mFlexCounterUpdTimer)
+    {
+        auto intervT = timespec { .tv_sec = FLEX_COUNTER_UPD_INTERVAL , .tv_nsec = 0 };
+        mFlexCounterUpdTimer = new SelectableTimer(intervT);
+        auto executorT = new ExecutableTimer(mFlexCounterUpdTimer, this, "FLEX_COUNTER_UPD_TIMER");
+        Orch::addExecutor(executorT);
+    }
+}
+
 void FlowCounterRouteOrch::generateRouteFlowStats()
 {
     SWSS_LOG_ENTER();
+    if (!mRouteFlowCounterSupported)
+    {
+        return;
+    }
+
+    createFlexCounterUpdateTimer();
+
     for (const auto &route_pattern : mRoutePatternSet)
     {
         createRouteFlowCounterByPattern(route_pattern, 0);
