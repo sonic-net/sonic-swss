@@ -15,6 +15,7 @@ class TestTunnelBase(object):
     ASIC_VRF_TABLE              = "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER"
     ASIC_QOS_MAP_TABLE_KEY      = "ASIC_STATE:SAI_OBJECT_TYPE_QOS_MAP"
     TUNNEL_QOS_MAP_NAME         = "AZURE_TUNNEL"
+    CONFIG_TUNNEL_TABLE_NAME    = "TUNNEL"
 
     ecn_modes_map = {
         "standard"       : "SAI_TUNNEL_DECAP_ECN_MODE_STANDARD",
@@ -32,8 +33,8 @@ class TestTunnelBase(object):
     }
 
     # Define 2 dummy maps
-    DSCP_TO_TC_MAP = {str(i):str{1} for i in range(0, 64)}
-    TC_TO_PRIORITY_GROUP_MAP = {str{i}:str{i} for i in range(0, 8)}
+    DSCP_TO_TC_MAP = {str(i):str(1) for i in range(0, 64)}
+    TC_TO_PRIORITY_GROUP_MAP = {str(i):str(i) for i in range(0, 8)}
 
     def check_interface_exists_in_asicdb(self, asicdb, sai_oid):
         if_table = swsscommon.Table(asicdb, self.ASIC_RIF_TABLE)
@@ -52,11 +53,12 @@ class TestTunnelBase(object):
         assert len(tunnel_term_entries) == len(dst_ips)
 
         expected_term_type = "SAI_TUNNEL_TERM_TABLE_ENTRY_TYPE_P2P" if src_ip else "SAI_TUNNEL_TERM_TABLE_ENTRY_TYPE_P2MP"
+        expected_len = 6 if src_ip else 5
         for term_entry in tunnel_term_entries:
             status, fvs = tunnel_term_table.get(term_entry)
 
             assert status == True
-            assert len(fvs) == 5
+            assert len(fvs) == expected_len
 
             for field, value in fvs:
                 if field == "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_VR_ID":
@@ -79,21 +81,28 @@ class TestTunnelBase(object):
 
         is_symmetric_tunnel = "src_ip" in kwargs
         
-        decap_dscp_to_tc_map_oid = kwargs["decap_dscp_to_tc_map_oid"] if "decap_dscp_to_tc_map_oid" in kwargs else None
-        decap_tc_to_pg_map_oid = kwargs["decap_tc_to_pg_map_oid"] if "decap_tc_to_pg_map_oid" in kwargs else None
+        decap_dscp_to_tc_map_oid = None
+        decap_tc_to_pg_map_oid = None
+        configdb = None
 
         if "decap_dscp_to_tc_map_oid" in kwargs:
-            kwargs.pop("decap_dscp_to_tc_map_oid")
+            decap_dscp_to_tc_map_oid = kwargs.pop("decap_dscp_to_tc_map_oid")
 
         if "decap_tc_to_pg_map_oid" in kwargs:
-            kwargs.pop("decap_tc_to_pg_map_oid")
-
-        # create tunnel entry in DB
-        ps = swsscommon.ProducerStateTable(db, self.APP_TUNNEL_DECAP_TABLE_NAME)
-
+            decap_tc_to_pg_map_oid = kwargs.pop("decap_tc_to_pg_map_oid")
+        
+        if "configdb" in kwargs:
+            configdb = kwargs.pop("configdb")
+        
         fvs = create_fvs(**kwargs)
-
-        ps.set(tunnel_name, fvs)
+        if configdb:
+            # Write into config db for muxorch, tunnelmgrd will write to APP_DB
+            configdb_ps = swsscommon.Table(configdb, self.CONFIG_TUNNEL_TABLE_NAME)
+            configdb_ps.set(tunnel_name, fvs)
+        else:
+            # create tunnel entry in DB
+            ps = swsscommon.ProducerStateTable(db, self.APP_TUNNEL_DECAP_TABLE_NAME)
+            ps.set(tunnel_name, fvs)
 
         # wait till config will be applied
         time.sleep(1)
@@ -111,17 +120,19 @@ class TestTunnelBase(object):
         assert status == True
         # 6 parameters to check in case of decap tunnel
         # + 1 (SAI_TUNNEL_ATTR_ENCAP_SRC_IP) in case of symmetric tunnel
-        assert len(fvs) == 7 if is_symmetric_tunnel else 6
+        expected_len = 7 if is_symmetric_tunnel else 6
 
         expected_ecn_mode = self.ecn_modes_map[kwargs["ecn_mode"]]
         expected_dscp_mode = self.dscp_modes_map[kwargs["dscp_mode"]]
         expected_ttl_mode = self.ttl_modes_map[kwargs["ttl_mode"]]
         
         if decap_dscp_to_tc_map_oid:
-            assert "SAI_TUNNEL_ATTR_DECAP_QOS_DSCP_TO_TC_MAP" in fvs
+            expected_len += 1
         if decap_tc_to_pg_map_oid:
-            assert "SAI_TUNNEL_ATTR_DECAP_QOS_TC_TO_PRIORITY_GROUP_MAP" in fvs
+            expected_len += 1
         
+        assert len(fvs) == expected_len
+
         for field, value in fvs:
             if field == "SAI_TUNNEL_ATTR_TYPE":
                 assert value == "SAI_TUNNEL_TYPE_IPINIP"
@@ -138,9 +149,9 @@ class TestTunnelBase(object):
             elif field == "SAI_TUNNEL_ATTR_UNDERLAY_INTERFACE":
                 assert self.check_interface_exists_in_asicdb(asicdb, value)
             elif field == "SAI_TUNNEL_ATTR_DECAP_QOS_DSCP_TO_TC_MAP":
-                assert value == dscp_to_tc_map_oid
+                assert value == decap_dscp_to_tc_map_oid
             elif field == "SAI_TUNNEL_ATTR_DECAP_QOS_TC_TO_PRIORITY_GROUP_MAP":
-                assert value = tc_to_pg_map_oid
+                assert value == decap_tc_to_pg_map_oid
             else:
                 assert False, "Field %s is not tested" % field
         src_ip = kwargs["src_ip"] if "src_ip" in kwargs else None
@@ -174,21 +185,21 @@ class TestTunnelBase(object):
 
     def add_qos_map(self, configdb, asicdb, qos_map_type_name, qos_map_name, qos_map):
         """ Add qos map for testing"""
-        current_oids = asicdb.get_keys(self.ASIC_QOS_MAP_TABLE_KEY)
+        qos_table = swsscommon.Table(asicdb, self.ASIC_QOS_MAP_TABLE_KEY)
+        current_oids = qos_table.getKeys()
+
         # Apply QoS map to config db
         table = swsscommon.Table(configdb, qos_map_type_name)
         fvs = swsscommon.FieldValuePairs(list(qos_map.items()))
         table.set(qos_map_name, fvs)
         time.sleep(1)
-
-        diff = set(asicdb.get_keys(self.ASIC_QOS_MAP_TABLE_KEY)) - set(current_oids)
+        
+        diff = set(qos_table.getKeys()) - set(current_oids)
         assert len(diff) == 1
         oid = diff.pop()
-        fvs_in_asicdb = asicdb.get_entry(self.ASIC_QOS_MAP_TABLE_KEY, oid)
-        assert(fvs_in_asicdb["SAI_QOS_MAP_ATTR_TYPE"] == qos_map_type_name)
         return oid
         
-    def remove_qos_map(self, configdb, qos_map_oid):
+    def remove_qos_map(self, configdb, qos_map_type_name, qos_map_oid):
         """ Remove the testing qos map"""
         table = swsscommon.Table(configdb, qos_map_type_name)
         table._del(qos_map_oid)
@@ -261,13 +272,13 @@ class TestDecapTunnel(TestTunnelBase):
             "ttl_mode": "uniform",
             "decap_dscp_to_tc_map": "AZURE_TUNNEL",
             "decap_dscp_to_tc_map_oid": dscp_to_tc_map_oid,
-            "decap_tc_to_pg_map": "AZURE_TUNNEL"
+            "decap_tc_to_pg_map": "AZURE_TUNNEL",
             "decap_tc_to_pg_map_oid": tc_to_pg_map_oid
         }
         self.create_and_test_tunnel(db, asicdb, tunnel_name="MuxTunnel0", **params)
-        
-        self.remove_qos_map(configdb, dscp_to_tc_map_oid)
-        self.remove_qos_map(configdb, tc_to_pg_map_oid)
+
+        self.remove_qos_map(configdb, swsscommon.CFG_DSCP_TO_TC_MAP_TABLE_NAME, dscp_to_tc_map_oid)
+        self.remove_qos_map(configdb, swsscommon.CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME, tc_to_pg_map_oid)
 
 
 class TestSymmetricTunnel(TestTunnelBase):

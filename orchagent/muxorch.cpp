@@ -166,7 +166,8 @@ static sai_object_id_t create_tunnel(
     const IpAddress* p_dst_ip,
     const IpAddress* p_src_ip,
     sai_object_id_t tc_to_dscp_map_id,
-    sai_object_id_t tc_to_queue_map_id)
+    sai_object_id_t tc_to_queue_map_id,
+    string dscp_mode_name)
 {
     sai_status_t status;
 
@@ -210,10 +211,17 @@ static sai_object_id_t create_tunnel(
     attr.value.s32 = SAI_TUNNEL_TTL_MODE_PIPE_MODEL;
     tunnel_attrs.push_back(attr);
 
-    // Set DSCP mode to PIPE to ensure that outer DSCP is independent of inner DSCP
-    // and inner DSCP is unchanged at decap  
+    sai_tunnel_dscp_mode_t dscp_mode;
+    if (dscp_mode_name == "uniform")
+    {
+        dscp_mode = SAI_TUNNEL_DSCP_MODE_UNIFORM_MODEL;
+    }
+    else
+    {
+        dscp_mode = SAI_TUNNEL_DSCP_MODE_PIPE_MODEL;
+    }
     attr.id = SAI_TUNNEL_ATTR_ENCAP_DSCP_MODE;
-    attr.value.s32 = SAI_TUNNEL_DSCP_MODE_PIPE_MODEL;
+    attr.value.s32 = dscp_mode;
     tunnel_attrs.push_back(attr);
 
     attr.id = SAI_TUNNEL_ATTR_LOOPBACK_PACKET_ACTION;
@@ -239,6 +247,7 @@ static sai_object_id_t create_tunnel(
     {
         attr.id = SAI_TUNNEL_ATTR_ENCAP_QOS_TC_AND_COLOR_TO_DSCP_MAP;
         attr.value.oid = tc_to_dscp_map_id;
+        tunnel_attrs.push_back(attr);
     }
 
     // TC remapping
@@ -246,6 +255,7 @@ static sai_object_id_t create_tunnel(
     {
         attr.id = SAI_TUNNEL_ATTR_ENCAP_QOS_TC_TO_QUEUE_MAP;
         attr.value.oid = tc_to_queue_map_id;
+        tunnel_attrs.push_back(attr);
     }
 
     sai_object_id_t tunnel_id;
@@ -1262,7 +1272,7 @@ bool MuxOrch::resolveQosTableIds()
                         tc_to_dscp_map_id_ = id;
                     }
                     setObjectReference(QosOrch::getTypeMap(), CFG_TUNNEL_TABLE_NAME, MUX_TUNNEL, map_type_name, object_name);
-                    SWSS_LOG_INFO("Resolved QoS map for tunnel %s type %s name %s", MUX_TUNNEL, map_type_name.c_str(), map_name.c_str());
+                    SWSS_LOG_NOTICE("Resolved QoS map for tunnel %s type %s name %s", MUX_TUNNEL, map_type_name.c_str(), map_name.c_str());
                 }
             }
         }
@@ -1302,7 +1312,12 @@ bool MuxOrch::handlePeerSwitch(const Request& request)
         }
         auto it =  dst_ips.getIpAddresses().begin();
         const IpAddress& dst_ip = *it;
-        mux_tunnel_id_ = create_tunnel(&peer_ip, &dst_ip, tc_to_dscp_map_id_, tc_to_queue_map_id_);
+
+        // Read dscp_mode of MuxTunnel0 from config_db
+        string dscp_mode_name = "pipe";
+        cfgTunnelTable_.hget(MUX_TUNNEL, "dscp_mode", dscp_mode_name);
+    
+        mux_tunnel_id_ = create_tunnel(&peer_ip, &dst_ip, tc_to_dscp_map_id_, tc_to_queue_map_id_, dscp_mode_name);
         SWSS_LOG_NOTICE("Mux peer ip '%s' was added, peer name '%s'",
                          peer_ip.to_string().c_str(), peer_name.c_str());
     }

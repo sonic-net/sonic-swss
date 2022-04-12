@@ -79,7 +79,8 @@ type_map QosOrch::m_qos_maps = {
     {CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME, new object_reference_map()},
     {CFG_DSCP_TO_FC_MAP_TABLE_NAME, new object_reference_map()},
     {CFG_EXP_TO_FC_MAP_TABLE_NAME, new object_reference_map()},
-    {CFG_TC_TO_DSCP_MAP_TABLE_NAME, new object_reference_map()}
+    {CFG_TC_TO_DSCP_MAP_TABLE_NAME, new object_reference_map()},
+    {CFG_TUNNEL_TABLE_NAME, new object_reference_map()}
 };
 
 map<string, string> qos_to_ref_table_map = {
