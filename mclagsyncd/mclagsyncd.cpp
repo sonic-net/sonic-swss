@@ -18,7 +18,6 @@
  *  Maintainer: Jim Jiang from nephos
  */
 #include <iostream>
-#include <signal.h>
 #include "logger.h"
 #include <map>
 #include "select.h"

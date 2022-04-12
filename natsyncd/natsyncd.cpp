@@ -2,7 +2,6 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <chrono>
-#include <signal.h>
 #include "logger.h"
 #include "select.h"
 #include "netdispatcher.h"
