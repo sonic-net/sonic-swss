@@ -61,7 +61,9 @@ extern string gMyAsicName;
 #define DEFAULT_VLAN_ID     1
 #define MAX_VALID_VLAN_ID   4094
 
-#define PORT_STAT_POLLING_SEC                             1
+#define DEFAULT_VECTOR_SIZE 16
+
+#define PORT_STAT_POLLING_SEC                             5
 #define PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS     1000
 #define PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS     60000
 #define QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   10000
@@ -568,7 +570,6 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
     auto executor = new ExecutableTimer(m_timer, this, "PORT_STATE_POLL");
     Orch::addExecutor(executor);
-    m_timer->start();
 }
 
 void PortsOrch::removeDefaultVlanMembers()
@@ -2044,8 +2045,7 @@ bool PortsOrch::getPortAdvSpeeds(const Port& port, bool remote, std::vector<sai_
     sai_object_id_t line_port_id;
     sai_attribute_t attr;
     sai_status_t status;
-    const auto size_guess = 16; // Guess the size which could be enough
-    std::vector<sai_uint32_t> speeds(size_guess);
+    std::vector<sai_uint32_t> speeds(DEFAULT_VECTOR_SIZE);
 
     attr.id = remote ? SAI_PORT_ATTR_REMOTE_ADVERTISED_SPEED : SAI_PORT_ATTR_ADVERTISED_SPEED;
     attr.value.u32list.count = static_cast<uint32_t>(speeds.size());
@@ -2061,15 +2061,11 @@ bool PortsOrch::getPortAdvSpeeds(const Port& port, bool remote, std::vector<sai_
     }
     if (status != SAI_STATUS_SUCCESS)
     {
+        SWSS_LOG_WARN("Unable to get advertised speed for %s", port.m_alias.c_str());
         return false;
     }
     speeds.resize(attr.value.u32list.count);
-
-    speed_list.clear();
-    for (auto it = speeds.begin(); it != speeds.end(); ++it)
-    {
-        speed_list.push_back(*it);
-    }
+    speed_list.swap(speeds);
     return true;
 }
 
@@ -2078,18 +2074,7 @@ bool PortsOrch::getPortAdvSpeeds(const Port& port, bool remote, string& adv_spee
     std::vector<sai_uint32_t> speed_list;
     bool rc = getPortAdvSpeeds(port, remote, speed_list);
 
-    adv_speeds = "";
-    if (rc)
-    {
-        for (auto it = speed_list.begin(); it != speed_list.end(); ++it)
-        {
-            adv_speeds += std::to_string(*it);
-            if (it + 1 != speed_list.end())
-            {
-              adv_speeds += ",";
-            }
-        }
-    }
+    adv_speeds = rc ? swss::join(',', speed_list.begin(), speed_list.end()) : "";
     return rc;
 }
 
@@ -3017,14 +3002,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         p.m_autoneg = an;
                         m_portList[alias] = p;
                         m_portStateTable.hdel(p.m_alias, "rmt_adv_speeds");
-                        if (an > 0)
-                        {
-                            m_port_state_poll[p.m_alias] |= PORT_STATE_POLL_AN;
-                        }
-                        else
-                        {
-                            m_port_state_poll[p.m_alias] &= ~PORT_STATE_POLL_AN;
-                        }
+                        updatePortStatePoll(p, PORT_STATE_POLL_AN, (an > 0));
                     }
                 }
 
@@ -5855,18 +5833,18 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
     if (port.m_type == Port::PHY)
     {
         updateDbPortOperStatus(port, status);
-        if (port.m_autoneg > 0)
+        if (port.m_admin_state_up && port.m_autoneg > 0)
         {
             if (status == SAI_PORT_OPER_STATUS_UP)
             {
                 updatePortStateAutoNeg(port);
-                m_port_state_poll[port.m_alias] &= ~PORT_STATE_POLL_AN;
+                updatePortStatePoll(port, PORT_STATE_POLL_AN, false);
             }
             else
             {
                 /* Restart autoneg state polling upon link down event */
                 m_portStateTable.hdel(port.m_alias, "rmt_adv_speeds");
-                m_port_state_poll[port.m_alias] |= PORT_STATE_POLL_AN;
+                updatePortStatePoll(port, PORT_STATE_POLL_AN, true);
             }
         }
     }
@@ -7013,7 +6991,25 @@ void PortsOrch::updatePortStateAutoNeg(const Port &port)
     }
     else
     {
-        m_port_state_poll[port.m_alias] &= ~PORT_STATE_POLL_AN;
+        m_portStateTable.hset(port.m_alias, "rmt_adv_speeds", "N/A");
+        updatePortStatePoll(port, PORT_STATE_POLL_AN, false);
+    }
+}
+
+void PortsOrch::updatePortStatePoll(const Port &port, port_state_poll_t type, bool set)
+{
+    if (type == PORT_STATE_POLL_NONE)
+    {
+        return;
+    }
+    if (set)
+    {
+        m_port_state_poll[port.m_alias] |= type;
+        m_timer->start();
+    }
+    else
+    {
+        m_port_state_poll[port.m_alias] &= ~type;
     }
 }
 
@@ -7021,11 +7017,22 @@ void PortsOrch::doTask(swss::SelectableTimer &timer)
 {
     SWSS_LOG_ENTER();
 
-    for (auto it = m_portList.begin(); it != m_portList.end(); ++it)
+    Port port;
+
+    for (auto it = m_port_state_poll.begin(); it != m_port_state_poll.end(); ++it)
     {
-        if (m_port_state_poll[it->second.m_alias] & PORT_STATE_POLL_AN)
+        if ((it->second == 0) || !getPort(it->first, port))
         {
-            updatePortStateAutoNeg(it->second);
+            m_port_state_poll.erase(it);
+            continue;
         }
+        if (port.m_admin_state_up && (it->second & PORT_STATE_POLL_AN))
+        {
+            updatePortStateAutoNeg(port);
+        }
+    }
+    if (m_port_state_poll.size() == 0)
+    {
+        m_timer->stop();
     }
 }

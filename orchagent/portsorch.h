@@ -345,6 +345,7 @@ private:
     void updateDbPortOperSpeed(Port &port, sai_uint32_t speed);
 
     map<string, uint32_t> m_port_state_poll;
+    void updatePortStatePoll(const Port &port, port_state_poll_t type, bool set);
     void updatePortStateAutoNeg(const Port &port);
 
     void getPortSerdesVal(const std::string& s, std::vector<uint32_t> &lane_values);
