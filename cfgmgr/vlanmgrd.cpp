@@ -5,7 +5,6 @@
 #include <iostream>
 #include <mutex>
 #include <algorithm>
-#include <signal.h>
 #include "dbconnector.h"
 #include "select.h"
 #include "exec.h"

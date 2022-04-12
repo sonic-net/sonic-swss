@@ -2,7 +2,6 @@
 #include <getopt.h>
 #include <vector>
 #include <mutex>
-#include <signal.h>
 #include "dbconnector.h"
 #include "select.h"
 #include "exec.h"

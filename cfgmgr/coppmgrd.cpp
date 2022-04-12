@@ -3,7 +3,6 @@
 #include <mutex>
 #include <unistd.h>
 #include <vector>
-#include <signal.h>
 
 #include "exec.h"
 #include "coppmgr.h"

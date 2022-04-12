@@ -21,3 +21,4 @@ endif
 if ASAN_ENABLED
 fdbsyncd_SOURCES += $(top_srcdir)/lib/asan.cpp
 endif
+

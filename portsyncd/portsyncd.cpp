@@ -7,7 +7,6 @@
 #include <map>
 #include <list>
 #include <sys/stat.h>
-#include <signal.h>
 #include "dbconnector.h"
 #include "select.h"
 #include "netdispatcher.h"
@@ -52,7 +51,6 @@ void checkPortInitDone(DBConnector *appl_db);
 int main(int argc, char **argv)
 {
     Logger::linkToDbNative("portsyncd");
-
     int opt;
     map<string, KeyOpFieldsValuesTuple> port_cfg_map;
 

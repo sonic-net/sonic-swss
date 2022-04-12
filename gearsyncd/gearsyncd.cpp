@@ -18,8 +18,6 @@
 #include <iostream>
 #include <vector>
 #include <map>
-#include <signal.h>
-
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "warm_restart.h"
@@ -55,7 +53,6 @@ static void notifyGearboxConfigDone(ProducerStateTable &p, bool success)
 int main(int argc, char **argv)
 {
     Logger::linkToDbNative("gearsyncd");
-
     int opt;
     string gearbox_config_file;
     map<string, KeyOpFieldsValuesTuple> gearbox_cfg_map;

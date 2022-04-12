@@ -1,7 +1,6 @@
 #include <unistd.h>
 #include <vector>
 #include <mutex>
-#include <signal.h>
 
 #include "dbconnector.h"
 #include "select.h"

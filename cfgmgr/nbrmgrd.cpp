@@ -4,7 +4,6 @@
 #include <fstream>
 #include <iostream>
 #include <chrono>
-#include <signal.h>
 
 #include "select.h"
 #include "exec.h"

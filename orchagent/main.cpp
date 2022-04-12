@@ -17,7 +17,6 @@ extern "C" {
 #include <stdexcept>
 #include <stdlib.h>
 #include <string.h>
-#include <signal.h>
 
 #include <sys/time.h>
 #include "timestamp.h"

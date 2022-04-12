@@ -1,6 +1,5 @@
 #include <iostream>
 #include <inttypes.h>
-#include <signal.h>
 #include "logger.h"
 #include "select.h"
 #include "selectabletimer.h"
@@ -8,6 +7,7 @@
 #include "warmRestartHelper.h"
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/routesync.h"
+
 
 using namespace std;
 using namespace swss;
@@ -47,7 +47,6 @@ static bool eoiuFlagsSet(Table &bgpStateTable)
 int main(int argc, char **argv)
 {
     swss::Logger::linkToDbNative("fpmsyncd");
-
     DBConnector db("APPL_DB", 0);
     RedisPipeline pipeline(&db);
     RouteSync sync(&pipeline);

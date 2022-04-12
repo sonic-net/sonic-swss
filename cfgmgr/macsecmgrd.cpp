@@ -5,7 +5,6 @@
 #include <iostream>
 #include <mutex>
 #include <algorithm>
-#include <signal.h>
 
 #include <logger.h>
 #include <producerstatetable.h>
@@ -46,8 +45,10 @@ string gResponsePublisherRecordFile;
 /* Global database mutex */
 mutex gDbMutex;
 
+
 int main(int argc, char **argv)
 {
+
     try
     {
         Logger::linkToDbNative("macsecmgrd");
