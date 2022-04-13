@@ -405,14 +405,14 @@ bool TunnelDecapOrch::addDecapTunnel(
  * Arguments:
  *    @param[in] tunnelKey - key of the tunnel from APP_DB
  *    @param[in] src_ip - source ip address of decap tunnel
- *    @param[in] dst_ip - destination ip addresses to decap
+ *    @param[in] dst_ips - destination ip addresses to decap
  *    @param[in] tunnel_id - the id of the tunnel
  *    @param[in] term_type - P2P or P2MP. Other types (MP2P and MP2MP) not supported yet
  *
  * Return Values:
  *    @return true on success and false if there's an error
  */
-bool TunnelDecapOrch::addDecapTunnelTermEntries(string tunnelKey, swss::IpAddress src_ip, swss::IpAddresses dst_ip, sai_object_id_t tunnel_id, TunnelTermType tunnel_type)
+bool TunnelDecapOrch::addDecapTunnelTermEntries(string tunnelKey, swss::IpAddress src_ip, swss::IpAddresses dst_ips, sai_object_id_t tunnel_id, TunnelTermType tunnel_type)
 {
     SWSS_LOG_ENTER();
 
@@ -454,7 +454,7 @@ bool TunnelDecapOrch::addDecapTunnelTermEntries(string tunnelKey, swss::IpAddres
     TunnelEntry *tunnel_info = &tunnelTable.find(tunnelKey)->second;
 
     // loop through the IP list and create a new tunnel table entry for every IP (in network byte order)
-    set<IpAddress> tunnel_ips = dst_ip.getIpAddresses();
+    set<IpAddress> tunnel_ips = dst_ips.getIpAddresses();
     for (auto it = tunnel_ips.begin(); it != tunnel_ips.end(); ++it)
     {
         const IpAddress& ia = *it;
