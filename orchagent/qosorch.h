@@ -59,7 +59,7 @@ const string ecn_all                            = "ecn_all";
 class QosMapHandler
 {
 public:
-    task_process_status processWorkItem(Consumer& consumer);
+    task_process_status processWorkItem(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
     virtual bool convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes) = 0;
     virtual void freeAttribResources(vector<sai_attribute_t> &attributes);
     virtual bool modifyQosItem(sai_object_id_t, vector<sai_attribute_t> &attributes);
@@ -158,25 +158,25 @@ private:
     void doTask() override;
     virtual void doTask(Consumer& consumer);
 
-    typedef task_process_status (QosOrch::*qos_table_handler)(Consumer& consumer);
+    typedef task_process_status (QosOrch::*qos_table_handler)(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
     typedef map<string, qos_table_handler> qos_table_handler_map;
     typedef pair<string, qos_table_handler> qos_handler_pair;
 
     void initTableHandlers();
 
-    task_process_status handleDscpToTcTable(Consumer& consumer);
-    task_process_status handleMplsTcToTcTable(Consumer& consumer);
-    task_process_status handleDot1pToTcTable(Consumer& consumer);
-    task_process_status handlePfcPrioToPgTable(Consumer& consumer);
-    task_process_status handlePfcToQueueTable(Consumer& consumer);
-    task_process_status handlePortQosMapTable(Consumer& consumer);
-    task_process_status handleTcToPgTable(Consumer& consumer);
-    task_process_status handleTcToQueueTable(Consumer& consumer);
-    task_process_status handleSchedulerTable(Consumer& consumer);
-    task_process_status handleQueueTable(Consumer& consumer);
-    task_process_status handleWredProfileTable(Consumer& consumer);
-    task_process_status handleDscpToFcTable(Consumer& consumer);
-    task_process_status handleExpToFcTable(Consumer& consumer);
+    task_process_status handleDscpToTcTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleMplsTcToTcTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleDot1pToTcTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
+    task_process_status handlePfcPrioToPgTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
+    task_process_status handlePfcToQueueTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
+    task_process_status handlePortQosMapTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleTcToPgTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleTcToQueueTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleSchedulerTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleQueueTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleWredProfileTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleDscpToFcTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleExpToFcTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
 
     sai_object_id_t getSchedulerGroup(const Port &port, const sai_object_id_t queue_id);
 

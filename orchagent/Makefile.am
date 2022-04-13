@@ -62,6 +62,7 @@ orchagent_SOURCES = \
             mirrororch.cpp \
             fdborch.cpp \
             aclorch.cpp \
+            pbh/pbhcap.cpp \
             pbh/pbhcnt.cpp \
             pbh/pbhmgr.cpp \
             pbh/pbhrule.cpp \
