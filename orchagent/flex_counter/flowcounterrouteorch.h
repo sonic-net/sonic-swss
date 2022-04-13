@@ -150,7 +150,6 @@ private:
 
     EntityBulker<sai_route_api_t> gRouteBulker;
 
-    void createFlexCounterUpdateTimer();
     void initRouteFlowCounterCapability();
     void removeRoutePattern(const RoutePattern &route_pattern);
     void removeRouteFlowCounterFromDB(sai_object_id_t vrf_id, const IpPrefix& ip_prefix, sai_object_id_t counter_oid);
