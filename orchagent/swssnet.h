@@ -106,7 +106,7 @@ static int getPrefixLenFromAddrMask(const uint8_t *addr, int len)
     
 }
 
-inline static IpPrefix convert(const sai_ip_prefix_t& src)
+inline static IpPrefix getIpPrefixFromSaiPrefix(const sai_ip_prefix_t& src)
 {
     ip_addr_t ip;
     switch(src.addr_family)
