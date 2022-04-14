@@ -1542,28 +1542,12 @@ bool VxlanTunnelOrch::removeVxlanTunnelMap(string tunnelName, uint32_t vni)
     tunnel_obj->vlan_vrf_vni_count--;
     if (tunnel_obj->vlan_vrf_vni_count == 0)
     {
-        auto tunnel_term_id = vxlan_tunnel_table_[tunnelName].get()->getTunnelTermId();
-        try
-        {
-            remove_tunnel_termination(tunnel_term_id);
-        }
-        catch(const std::runtime_error& error)
-        {
-            SWSS_LOG_ERROR("Error removing tunnel term entry. Tunnel: %s. Error: %s", tunnelName.c_str(), error.what());
-            return false;
-        }
- 
-        auto tunnel_id = vxlan_tunnel_table_[tunnelName].get()->getTunnelId();
-        try
-        {
-            removeTunnelFromFlexCounter(tunnel_id, tunnelName);
-            remove_tunnel(tunnel_id);
-        }
-        catch(const std::runtime_error& error)
-        {
-            SWSS_LOG_ERROR("Error removing tunnel entry. Tunnel: %s. Error: %s", tunnelName.c_str(), error.what());
-            return false;
-        }
+       uint8_t mapper_list = 0;
+
+       TUNNELMAP_SET_VLAN(mapper_list);
+       TUNNELMAP_SET_VRF(mapper_list);
+
+       tunnel_obj->deleteTunnelHw(mapper_list, TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP);
     }
 
     SWSS_LOG_NOTICE("Vxlan map entry deleted for tunnel '%s' with vni '%d'", tunnelName.c_str(), vni);

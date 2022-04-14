@@ -103,7 +103,7 @@ class TestPfcwdFunc(object):
             # set cable len to non zero value. if port is down, default cable len is 0
             self.set_cable_len(port, "5m")
             # startup port
-            dvs.runcmd("config interface startup {}".format(port))
+            dvs.port_admin_set(port, "up")
 
         # enable pfcwd
         self.set_flex_counter_status("PFCWD", "enable")
@@ -120,7 +120,7 @@ class TestPfcwdFunc(object):
             if self.orig_cable_len:
                 self.set_cable_len(port, self.orig_cable_len[port])
             # shutdown port
-            dvs.runcmd("config interface shutdown {}".format(port))
+            dvs.port_admin_set(port, "down")
 
     def get_db_handle(self, dvs):
         self.app_db = dvs.get_app_db()

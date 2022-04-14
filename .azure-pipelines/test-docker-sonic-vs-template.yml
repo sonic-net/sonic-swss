@@ -1,7 +1,7 @@
 parameters:
 - name: timeout
   type: number
-  default: 360
+  default: 480
 
 - name: log_artifact_name
   type: string
