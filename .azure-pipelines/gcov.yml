@@ -47,7 +47,7 @@ jobs:
       vmImage: 'ubuntu-20.04'
 
   variables:
-    DIFF_COVER_CHECK_THRESHOLD: 80
+    DIFF_COVER_CHECK_THRESHOLD: 50
     DIFF_COVER_ENABLE: 'true'
 
   container:
