@@ -17,6 +17,7 @@ using namespace swss;
 #define BFD_SESSION_MILLISECOND_TO_MICROSECOND 1000
 #define BFD_SRCPORTINIT 49152
 #define BFD_SRCPORTMAX 65536
+#define NUM_BFD_SRCPORT_RETRIES 3
 
 extern sai_bfd_api_t*       sai_bfd_api;
 extern sai_object_id_t      gSwitchId;
@@ -416,6 +417,12 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
 
     sai_object_id_t bfd_session_id = SAI_NULL_OBJECT_ID;
     sai_status_t status = sai_bfd_api->create_bfd_session(&bfd_session_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        status = retry_create_bfd_session(bfd_session_id, attrs);
+    }
+
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create bfd session %s, rv:%d", key.c_str(), status);
@@ -437,6 +444,38 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     notify(SUBJECT_TYPE_BFD_SESSION_STATE_CHANGE, static_cast<void *>(&update));
 
     return true;
+}
+
+void BfdOrch::update_port_number(vector<sai_attribute_t> &attrs)
+{
+    for (uint32_t attr_idx = 0; attr_idx < (uint32_t)attrs.size(); attr_idx++)
+    {
+       if (attrs[attr_idx].id ==  SAI_BFD_SESSION_ATTR_UDP_SRC_PORT)
+       {
+           auto old_num = attrs[attr_idx].value.u32;
+           attrs[attr_idx].value.u32 = bfd_src_port();
+           SWSS_LOG_WARN("BFD create using port number %d failed. Retrying with port number %d",
+                         old_num, attrs[attr_idx].value.u32);
+           return;
+       }
+    }
+}
+
+sai_status_t BfdOrch::retry_create_bfd_session(sai_object_id_t &bfd_session_id, vector<sai_attribute_t> attrs)
+{
+    sai_status_t status = SAI_STATUS_FAILURE;
+
+    for (int retry = 0; retry < NUM_BFD_SRCPORT_RETRIES; retry++)
+    {
+        update_port_number(attrs);
+        status = sai_bfd_api->create_bfd_session(&bfd_session_id, gSwitchId,
+                                                 (uint32_t)attrs.size(), attrs.data());
+        if (status == SAI_STATUS_SUCCESS)
+        {
+            return status;
+        }
+    }
+    return status;
 }
 
 bool BfdOrch::remove_bfd_session(const string& key)
@@ -487,3 +526,4 @@ uint32_t BfdOrch::bfd_src_port(void)
 
     return (port++);
 }
+
