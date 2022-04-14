@@ -1627,27 +1627,6 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer, KeyOpFieldsVal
     return task_process_status::task_success;
 }
 
-bool QosOrch::applyMapToPort(Port &port, sai_attr_id_t attr_id, sai_object_id_t map_id)
-{
-    SWSS_LOG_ENTER();
-
-    sai_attribute_t attr;
-    attr.id = attr_id;
-    attr.value.oid = map_id;
-
-    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed setting sai object:%" PRIx64 " for port:%s, status:%d", map_id, port.m_alias.c_str(), status);
-        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
-    }
-    return true;
-}
-
 task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();

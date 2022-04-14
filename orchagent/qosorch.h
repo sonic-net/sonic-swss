@@ -180,7 +180,6 @@ private:
 
     sai_object_id_t getSchedulerGroup(const Port &port, const sai_object_id_t queue_id);
 
-    bool applyMapToPort(Port &port, sai_attr_id_t attr_id, sai_object_id_t sai_dscp_to_tc_map);
     bool applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, sai_object_id_t scheduler_profile_id);
     bool applyWredProfileToQueue(Port &port, size_t queue_ind, sai_object_id_t sai_wred_profile);
 
