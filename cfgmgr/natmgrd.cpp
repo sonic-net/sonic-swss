@@ -135,14 +135,12 @@ int main(int argc, char **argv)
 
         cleanupNotifier = std::make_shared<swss::NotificationProducer>(&appDb, "NAT_DB_CLEANUP_NOTIFICATION");
 
-        struct sigaction sigact;
-        sigemptyset(&sigact.sa_mask);
-        sigact.sa_flags = 0;
+        struct sigaction sigact = {};
         sigact.sa_handler = sigterm_handler;
         if (sigaction(SIGTERM, &sigact, &old_sigaction))
         {
             SWSS_LOG_ERROR("failed to setup SIGTERM action handler");
-            exit(1);
+            exit(EXIT_FAILURE);
         }
 
         natmgr = new NatMgr(&cfgDb, &appDb, &stateDb, cfg_tables);

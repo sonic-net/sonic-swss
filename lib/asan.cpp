@@ -41,9 +41,7 @@ static void swss_asan_init()
 {
     SWSS_LOG_ENTER();
 
-    struct sigaction sigact;
-    sigemptyset(&sigact.sa_mask);
-    sigact.sa_flags = 0;
+    struct sigaction sigact = {};
     sigact.sa_handler = swss_asan_sigterm_handler;
     if (sigaction(SIGTERM, &sigact, NULL))
     {

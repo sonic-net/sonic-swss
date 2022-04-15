@@ -37,14 +37,12 @@ int main(int argc, char **argv)
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELLINK, &sync);
 
     /* Register the signal handler for SIGTERM */
-    struct sigaction sigact;
-    sigemptyset(&sigact.sa_mask);
-    sigact.sa_flags = 0;
+    struct sigaction sigact = {};
     sigact.sa_handler = sig_handler;
     if (sigaction(SIGTERM, &sigact, &old_sigaction))
     {
         SWSS_LOG_ERROR("failed to setup SIGTERM action handler");
-        exit(1);
+        exit(EXIT_FAILURE);
     }
 
     try
