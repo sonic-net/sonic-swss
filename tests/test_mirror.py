@@ -14,6 +14,15 @@ class TestMirror(object):
         self.cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
         self.sdb = swsscommon.DBConnector(6, dvs.redis_sock, 0)
 
+    def set_port_oper_status(self, dvs, port_name, status):
+        if port_name.startswith("Ethernet"):
+            srv_idx = int(port_name[len("Ethernet"):]) // 4
+            dvs.servers[srv_idx].runcmd("ip link set dev eth0 " + status)
+        elif port_name.startswith("PortChannel"):
+            dvs.runcmd("bash -c 'echo " + ("1" if status == "up" else "0") + \
+                    " > /sys/class/net/" + port_name + "/carrier'")
+        time.sleep(1)
+
     def set_interface_status(self, dvs, interface, admin_status):
         if interface.startswith("PortChannel"):
             tbl_name = "PORTCHANNEL"
@@ -26,11 +35,13 @@ class TestMirror(object):
         tbl.set(interface, fvs)
         time.sleep(1)
 
-        # when using FRR, route cannot be inserted if the neighbor is not
-        # connected. thus it is mandatory to force the interface up manually
         if interface.startswith("PortChannel"):
-            dvs.runcmd("bash -c 'echo " + ("1" if admin_status == "up" else "0") +\
-                    " > /sys/class/net/" + interface + "/carrier'")
+            # when using FRR, route cannot be inserted if the neighbor is not
+            # connected. thus it is mandatory to force the interface up manually
+            self.set_port_oper_status(dvs, interface, admin_status)
+        elif interface.startswith("Ethernet"):
+            self.set_port_oper_status(dvs, interface, "down")
+            self.set_port_oper_status(dvs, interface, "up")
 
     def add_ip_address(self, interface, ip):
         if interface.startswith("PortChannel"):
@@ -239,6 +250,11 @@ class TestMirror(object):
         tbl._del("Vlan" + vlan + ":" + mac)
         time.sleep(1)
 
+    def flush_fdb(self, op, data):
+        ntf = swsscommon.NotificationProducer(self.adb, "FLUSHFDBREQUEST")
+        fvs = swsscommon.FieldValuePairs()
+        ntf.send(op, data, fvs)
+        time.sleep(1)
 
     # Ignore testcase in Debian Jessie
     # TODO: Remove this skip if Jessie support is no longer needed
@@ -327,6 +343,56 @@ class TestMirror(object):
                 assert fv[1] == "0"
             else:
                 assert False
+
+        # test port oper status down that triggers fdb flush on port, which further triggers neighbor flush
+        self.set_port_oper_status(dvs, "Ethernet4", "down")
+        assert self.get_mirror_session_state(session)["status"] == "inactive"
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
+        assert len(tbl.getKeys()) == 0
+        # Allow time for neighor flush to occur
+        time.sleep(1)
+
+        # restore port oper status up
+        self.set_port_oper_status(dvs, "Ethernet4", "up")
+
+        # restore fdb entry to ethernet 4
+        self.create_fdb("6", "66-66-66-66-66-66", "Ethernet4")
+        assert self.get_mirror_session_state(session)["status"] == "inactive"
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
+        assert len(tbl.getKeys()) == 0
+
+        # restore neighbor to vlan 6
+        self.add_neighbor("Vlan6", "6.6.6.6", "66:66:66:66:66:66")
+        assert self.get_mirror_session_state(session)["status"] == "active"
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
+        assert len(tbl.getKeys()) == 1
+
+        # test fdb flush all from appl db
+        self.flush_fdb("ALL", "ALL")
+        assert self.get_mirror_session_state(session)["status"] == "inactive"
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
+        assert len(tbl.getKeys()) == 0
+
+        # restore fdb entry to ethernet 4
+        self.create_fdb("6", "66-66-66-66-66-66", "Ethernet4")
+        assert self.get_mirror_session_state(session)["status"] == "active"
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
+        assert len(tbl.getKeys()) == 1
+
+        # test fdb flush port from appl db
+        self.flush_fdb("PORT", "Ethernet4")
+        assert self.get_mirror_session_state(session)["status"] == "inactive"
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
+        assert len(tbl.getKeys()) == 0
+
+        # restore fdb entry to ethernet 4
+        self.create_fdb("6", "66-66-66-66-66-66", "Ethernet4")
+        assert self.get_mirror_session_state(session)["status"] == "active"
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
+        assert len(tbl.getKeys()) == 1
+
+        # test fdb flush vlan from appl db, the corresponding flush event from asic db not yet handled
+        # test fdb flush {vlan, port} from appl db, the corresponding flush event from asic db not yet handled
 
         # remove fdb entry
         self.remove_fdb("6", "66-66-66-66-66-66")
