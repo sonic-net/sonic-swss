@@ -256,7 +256,7 @@ class TestFlexCounters(object):
         dvs.servers[0].runcmd("ip address add 10.0.0.1/31 dev eth0")
         dvs.servers[0].runcmd("ip route add default via 10.0.0.0")
         dvs.servers[0].runcmd("ping -c 1 10.0.0.1")
-        self.create_route_entry('1.1.1.0/24', {'nexthop': '10.0.0.1', 'ifname':'Ethernet0'})
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"ip route 1.1.1.0/24 10.0.0.1\"")
 
         self.create_l3_intf("Ethernet4", "")
         self.set_admin_status("Ethernet4", "up")
@@ -265,8 +265,8 @@ class TestFlexCounters(object):
         dvs.servers[1].runcmd("ip -6 address add 2001::2/64 dev eth0")
         dvs.servers[1].runcmd("ip -6 route add default via 2001::1")
         time.sleep(2)
-        dvs.servers[0].runcmd("ping -6 -c 1 2001::2")
-        self.create_route_entry('2000::1/64', {'nexthop': '2001::2', 'ifname':'Ethernet4'})
+        dvs.servers[1].runcmd("ping -6 -c 1 2001::1")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"ipv6 route 2000::/64 2001::2\"")
 
     def post_rif_counter_test(self, meta_data):
         self.config_db.db_connection.hdel('INTERFACE|Ethernet0|192.168.0.1/24', "NULL")
@@ -318,7 +318,7 @@ class TestFlexCounters(object):
         assert not route_pattern
 
         # Disable route flow counter and verify all counters are removed
-        v6_name_map_key = '2000::1/64'
+        v6_name_map_key = '2000::/64'
         counter_oid = self.counters_db.db_connection.hget(meta_data['name_map'], v6_name_map_key)
         assert counter_oid
         self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'], 'disable')
@@ -326,14 +326,14 @@ class TestFlexCounters(object):
         self.wait_for_table_empty(meta_data['name_map'])
         self.wait_for_table_empty(ROUTE_TO_PATTERN_MAP)
 
-        self.remove_route_entry(v4_name_map_key)
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route {} 10.0.0.1\"".format(v4_name_map_key))
         self.remove_ip_address("Ethernet0", "10.0.0.0/31")
         self.remove_l3_intf("Ethernet0")
         self.set_admin_status("Ethernet0", "down")
         dvs.servers[0].runcmd("ip route del default dev eth0")
         dvs.servers[0].runcmd("ip address del 10.0.0.1/31 dev eth0")
 
-        self.remove_route_entry(v6_name_map_key)
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ipv6 route 2000::/64 2001::2\"")
         self.remove_ip_address("Ethernet4", "2001::1/64")
         self.remove_l3_intf("Ethernet4")
         self.set_admin_status("Ethernet4", "down")
@@ -475,10 +475,9 @@ class TestFlexCounters(object):
         dvs.servers[1].runcmd("ip address add 10.0.0.3/31 dev eth0")
         dvs.servers[1].runcmd("ip route add default via 10.0.0.2")
         dvs.servers[0].runcmd("ping -c 1 10.0.0.3")
-        #dvs.servers[0].runcmd("ping -c 1 10.0.0.1")
 
-        self.create_route_entry('1.1.1.0/24', {'nexthop': '10.0.0.1', 'ifname':'Ethernet0'})
-        self.create_route_entry('2.2.2.0/24', {'nexthop': '10.0.0.3', 'ifname':'Ethernet4'})
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"ip route 1.1.1.0/24 10.0.0.1\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"ip route 2.2.2.0/24 10.0.0.3\"")
 
         meta_data = counter_group_meta['route_flow_counter']
         self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'])
@@ -512,8 +511,8 @@ class TestFlexCounters(object):
         self.wait_for_table_empty(ROUTE_TO_PATTERN_MAP)
 
         self.config_db.delete_entry('FLOW_COUNTER_ROUTE_PATTERN', '2.2.0.0/16')
-        self.remove_route_entry('1.1.1.0/24')
-        self.remove_route_entry('2.2.2.0/24')
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route {} 10.0.0.1\"".format('1.1.1.0/24'))
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route {} 10.0.0.3\"".format('2.2.2.0/24'))
 
         # remove ip address
         self.remove_ip_address("Ethernet0", "10.0.0.0/31")
@@ -549,14 +548,14 @@ class TestFlexCounters(object):
         dvs.servers[0].runcmd("ip address add 10.0.0.1/31 dev eth0")
         dvs.servers[0].runcmd("ip route add default via 10.0.0.0")
         dvs.servers[0].runcmd("ping -c 1 10.0.0.1")
-        self.create_route_entry('1.1.1.0/24', {'nexthop': '10.0.0.1', 'ifname':'Ethernet0'})
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"ip route 1.1.1.0/24 10.0.0.1\"")
 
         self.wait_for_table(meta_data['name_map'])
         self.wait_for_table(ROUTE_TO_PATTERN_MAP)
         counter_oid = self.counters_db.db_connection.hget(meta_data['name_map'], '1.1.1.0/24')
         self.wait_for_id_list(meta_data['group_name'], '1.1.1.0/24', counter_oid)
 
-        self.remove_route_entry('1.1.1.0/24')
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route {} 10.0.0.1\"".format('1.1.1.0/24'))
         self.wait_for_id_list_remove(meta_data['group_name'], '1.1.1.0/24', counter_oid)
         self.wait_for_table_empty(meta_data['name_map'])
         self.wait_for_table_empty(ROUTE_TO_PATTERN_MAP)
@@ -575,9 +574,6 @@ class TestFlexCounters(object):
         # remove ip address and default route
         dvs.servers[0].runcmd("ip route del default dev eth0")
         dvs.servers[0].runcmd("ip address del 10.0.0.1/31 dev eth0")
-
-        #dvs.servers[1].runcmd("ip route del default dev eth0")
-        #dvs.servers[1].runcmd("ip address del 10.0.0.3/31 dev eth0")
 
     def test_router_flow_counter_max_match_count(self, dvs):
         self.setup_dbs(dvs)
@@ -600,8 +596,8 @@ class TestFlexCounters(object):
         dvs.servers[1].runcmd("ip address add 10.0.0.3/31 dev eth0")
         dvs.servers[1].runcmd("ip route add default via 10.0.0.2")
         dvs.servers[0].runcmd("ping -c 1 10.0.0.3")
-        self.create_route_entry('1.1.1.0/24', {'nexthop': '10.0.0.1', 'ifname':'Ethernet0'})
-        self.create_route_entry('1.1.2.0/24', {'nexthop': '10.0.0.3', 'ifname':'Ethernet4'})
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"ip route 1.1.1.0/24 10.0.0.1\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"ip route 1.1.2.0/24 10.0.0.3\"")
 
         self.wait_for_table(meta_data['name_map'])
         self.wait_for_table(ROUTE_TO_PATTERN_MAP)
@@ -638,8 +634,11 @@ class TestFlexCounters(object):
         assert len(counters_keys) == 1
 
         to_remove = '1.1.2.0/24' if '1.1.2.0/24' in counters_keys else '1.1.1.0/24'
+        to_remove_nexthop = '10.0.0.3' if '1.1.2.0/24' in counters_keys else '10.0.0.1'
         to_bound = '1.1.2.0/24' if '1.1.1.0/24' == to_remove else '1.1.1.0/24'
-        self.remove_route_entry(to_remove)
+        to_bound_nexthop = '10.0.0.1' if '1.1.2.0/24' in counters_keys else '10.0.0.3'
+
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route {} {}\"".format(to_remove, to_remove_nexthop))
         for _ in range(NUMBER_OF_RETRIES):
             counter_oid = self.counters_db.db_connection.hget(meta_data['name_map'], to_bound)
             if not counter_oid:
@@ -655,8 +654,7 @@ class TestFlexCounters(object):
         assert to_remove not in counters_keys
         assert to_bound in counters_keys
 
-
-        self.remove_route_entry(to_bound)
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route {} {}\"".format(to_bound, to_bound_nexthop))
 
         # remove ip address
         self.remove_ip_address("Ethernet0", "10.0.0.0/31")
@@ -691,15 +689,6 @@ class TestFlexCounters(object):
 
     def remove_ip_address(self, interface, ip):
         self.config_db.delete_entry("INTERFACE", interface + "|" + ip)
-
-    def create_route_entry(self, key, pairs):
-        tbl = swsscommon.ProducerStateTable(self.app_db.db_connection, "ROUTE_TABLE")
-        fvs = swsscommon.FieldValuePairs(list(pairs.items()))
-        tbl.set(key, fvs)
-
-    def remove_route_entry(self, key):
-        tbl = swsscommon.ProducerStateTable(self.app_db.db_connection, "ROUTE_TABLE")
-        tbl._del(key)
 
     def set_admin_status(self, interface, status):
         self.config_db.update_entry("PORT", interface, {"admin_status": status})
