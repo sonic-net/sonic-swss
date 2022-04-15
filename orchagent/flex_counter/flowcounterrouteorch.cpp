@@ -38,7 +38,7 @@ gRouteBulker(sai_route_api, gMaxBulkSize)
     SWSS_LOG_ENTER();
     initRouteFlowCounterCapability();
 
-    if (!mRouteFlowCounterSupported)
+    if (mRouteFlowCounterSupported)
     {
         auto intervT = timespec { .tv_sec = FLEX_COUNTER_UPD_INTERVAL , .tv_nsec = 0 };
         mFlexCounterUpdTimer = new SelectableTimer(intervT);
