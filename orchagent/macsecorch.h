@@ -67,6 +67,7 @@ private:
     Table               m_macsec_flow_rx_counters_map;
     Table               m_macsec_sa_tx_counters_map;
     Table               m_macsec_sa_rx_counters_map;
+    Table               m_applPortTable;
     FlexCounterManager  m_macsec_sa_attr_manager;
     FlexCounterManager  m_macsec_sa_stat_manager;
     FlexCounterManager  m_macsec_flow_stat_manager;
@@ -75,6 +76,7 @@ private:
     {
         sai_object_id_t         m_table_id;
         sai_object_id_t         m_eapol_packet_forward_entry_id;
+        sai_object_id_t         m_pfc_entry_id;
         std::set<sai_uint32_t>  m_available_acl_priorities;
     };
     struct MACsecSC
@@ -179,6 +181,7 @@ private:
         const std::string &port_sci,
         sai_macsec_direction_t direction);
     bool deleteMACsecSC(sai_object_id_t sc_id);
+    bool setMACsecSC(sai_object_id_t sc_id, const sai_attribute_t &attr);
 
     bool updateMACsecAttr(sai_object_type_t object_type, sai_object_id_t object_id, const sai_attribute_t &attr);
 
@@ -222,11 +225,14 @@ private:
         sai_object_id_t port_id,
         sai_object_id_t switch_id,
         sai_macsec_direction_t direction,
-        bool sci_in_sectag);
+        bool sci_in_sectag,
+        const std::string &port_name,
+        const gearbox_phy_t* phy);
     bool deinitMACsecACLTable(
         const MACsecACLTable &acl_table,
         sai_object_id_t port_id,
-        sai_macsec_direction_t direction);
+        sai_macsec_direction_t direction,
+        const gearbox_phy_t* phy);
     bool createMACsecACLTable(
         sai_object_id_t &table_id,
         sai_object_id_t switch_id,
@@ -255,6 +261,19 @@ private:
         sai_object_id_t switch_id,
         sai_attr_id_t priority_id,
         sai_uint32_t &priority) const;
+
+    /* PFC */
+    bool setPFCForward(sai_object_id_t port_id, bool enable);
+    bool createPFCEntry(sai_object_id_t &entry_id,
+        sai_object_id_t table_id,
+        sai_object_id_t switch_id,
+        sai_macsec_direction_t direction,
+        sai_uint32_t priority,
+        const std::string &pfc_mode);
+    sai_attribute_t identifyPFC() const;
+    sai_attribute_t bypassPFC() const;
+    sai_attribute_t dropPFC() const;
+
 };
 
 #endif  // ORCHAGENT_MACSECORCH_H_
