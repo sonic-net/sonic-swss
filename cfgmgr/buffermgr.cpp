@@ -18,7 +18,6 @@ using namespace swss;
 BufferMgr::BufferMgr(DBConnector *cfgDb, DBConnector *applDb, string pg_lookup_file, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
         m_cfgPortTable(cfgDb, CFG_PORT_TABLE_NAME),
-        m_cfgPortQosMapTable(cfgDb, CFG_PORT_QOS_MAP_TABLE_NAME),
         m_cfgCableLenTable(cfgDb, CFG_PORT_CABLE_LEN_TABLE_NAME),
         m_cfgBufferProfileTable(cfgDb, CFG_BUFFER_PROFILE_TABLE_NAME),
         m_cfgBufferPgTable(cfgDb, CFG_BUFFER_PG_TABLE_NAME),
@@ -352,18 +351,51 @@ void BufferMgr::doBufferMetaTask(Consumer &consumer)
 }
 
 /*
+Parse PORT_QOS_MAP to retrieve on which queue PFC is enable, and
+cached in a map
+*/
+void BufferMgr::doPortQosTableTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple tuple = it->second;
+        string port_name = kfvKey(tuple);
+        string op = kfvOp(t);
+        if (op == SET_COMMAND)
+        {
+            for (auto itp : kfvFieldsValues(tuple))
+            {
+                if (fvField(itp) == "pfc_enable")
+                {
+                    m_portPfcStatus[port_name] = fvValue(itp);
+                    SWSS_LOG_INFO("Got pfc status for port %s status %s", port_name.c_str(), fvValue(itp).c_str());
+                    break;
+                }
+            }
+        }
+        it = consumer.m_toSync.erase(it);
+    }
+
+}
+
+/*
 Read pfc_enable entry from PORT_QOS_MAP to decide on which queue to
 apply lossless PG.
-Return the hardcoded value '3-4' if failed to get that value
+Return the true if PORT_QOS_MAP is already available, otherwise return false
 */
-string BufferMgr::getPfcEnableQueuesForPort(std::string port)
+bool BufferMgr::getPfcEnableQueuesForPort(std::string port, std::string &pfc_status)
 {
-    string pfc_enable;
-    if (!m_cfgPortQosMapTable.hget(port, "pfc_enable", pfc_enable))
+    auto iter = m_portPfcStatus.find(port);
+    if (iter != m_portPfcStatus.end())
     {
-        return LOSSLESS_PGS;
+        pfc_status = iter->second;
+        return true;
     }
-    return pfc_enable;
+
+    return false;
 }
 
 void BufferMgr::doTask(Consumer &consumer)
@@ -419,6 +451,12 @@ void BufferMgr::doTask(Consumer &consumer)
         return;
     }
 
+    if (table_name == CFG_PORT_QOS_MAP_TABLE_NAME)
+    {
+        doPortQosTableTask(consumer);
+        return;
+    }
+
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
@@ -458,8 +496,17 @@ void BufferMgr::doTask(Consumer &consumer)
                 if (m_speedLookup.count(port) != 0)
                 {
                     // create/update profile for port
-                    string lossless_pgs = getPfcEnableQueuesForPort(port);
-                    task_status = doSpeedUpdateTask(port, admin_up, lossless_pgs);
+                    string pfc_enable_status;
+                    if (!getPfcEnableQueuesForPort(port, pfc_enable_status))
+                    {
+                        // PORT_QOS_MAP is not ready yet. retry is required
+                        SWSS_LOG_NOTICE("pfc_enable status is not available for port %s", port.c_str());
+                        task_status = task_process_status::task_need_retry;
+                    }
+                    else
+                    {
+                        task_status = doSpeedUpdateTask(port, admin_up, lossless_pgs);
+                    }
                 }
 
                 if (task_status != task_process_status::task_success)

@@ -28,6 +28,7 @@ typedef std::map<std::string, speed_map_t> pg_profile_lookup_t;
 
 typedef std::map<std::string, std::string> port_cable_length_t;
 typedef std::map<std::string, std::string> port_speed_t;
+typedef std::map<std::string, std::string> port_pfc_status_t;
 
 class BufferMgr : public Orch
 {
@@ -43,7 +44,6 @@ private:
     Table m_cfgBufferProfileTable;
     Table m_cfgBufferPgTable;
     Table m_cfgLosslessPgPoolTable;
-    Table m_cfgPortQosMapTable;
 
     ProducerStateTable m_applBufferProfileTable;
     ProducerStateTable m_applBufferPgTable;
@@ -62,12 +62,16 @@ private:
     void readPgProfileLookupFile(std::string);
     task_process_status doCableTask(std::string port, std::string cable_length);
     task_process_status doSpeedUpdateTask(std::string port, bool admin_up, const std::string &pfc_enable);
-    void doBufferTableTask(Consumer &consumer, ProducerStateTable &applTable);
+    void doBufferTableTask(Consumer &consumer);
 
     void transformSeperator(std::string &name);
 
     void doTask(Consumer &consumer);
     void doBufferMetaTask(Consumer &consumer);
+    
+    port_pfc_status_t m_portPfcStatus;
+    void doPortQosTableTask(Consumer &consumer);
+
     std::string getPfcEnableQueuesForPort(std::string port); 
 };
 
