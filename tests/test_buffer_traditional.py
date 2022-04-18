@@ -60,10 +60,18 @@ class TestBuffer(object):
         fvs[self.INTF] = cable_len
         self.config_db.update_entry("CABLE_LENGTH", "AZURE", fvs)
 
+    def set_port_qos_table(self):
+        pfc_enable = "2,3,4,6"
+        fvs=dict()
+        fvs['pfc_enable'] = pfc_enable
+        self.config_db.update_entry("PORT_QOS_MAP", self.INTF, fvs)
+
     @pytest.fixture
     def setup_teardown_test(self, dvs):
         try:
             self.setup_db(dvs)
+            self.set_port_qos_table()
+            self.get_pfc_enable_queues()
             pg_name_map = dict()
             for pg in self.lossless_pgs:
                 pg_name = "{}:{}".format(self.INTF, pg)
@@ -121,7 +129,7 @@ class TestBuffer(object):
             test_lossless_profile = "pg_lossless_{}_{}_profile".format(test_speed, test_cable_len)
             # buffer profile should not get created
             self.app_db.wait_for_deleted_entry("BUFFER_PROFILE_TABLE", test_lossless_profile)
-
+            
             # buffer pgs should still point to the original buffer profile
             for pg in self.lossless_pgs:
                 self.app_db.wait_for_field_match("BUFFER_PG_TABLE", self.INTF + ":" + pg, {"profile": orig_lossless_profile})

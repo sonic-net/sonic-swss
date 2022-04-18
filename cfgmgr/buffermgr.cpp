@@ -363,7 +363,7 @@ void BufferMgr::doPortQosTableTask(Consumer &consumer)
     {
         KeyOpFieldsValuesTuple tuple = it->second;
         string port_name = kfvKey(tuple);
-        string op = kfvOp(t);
+        string op = kfvOp(tuple);
         if (op == SET_COMMAND)
         {
             for (auto itp : kfvFieldsValues(tuple))
@@ -371,7 +371,7 @@ void BufferMgr::doPortQosTableTask(Consumer &consumer)
                 if (fvField(itp) == "pfc_enable")
                 {
                     m_portPfcStatus[port_name] = fvValue(itp);
-                    SWSS_LOG_INFO("Got pfc status for port %s status %s", port_name.c_str(), fvValue(itp).c_str());
+                    SWSS_LOG_INFO("Got pfc enable status for port %s status %s", port_name.c_str(), fvValue(itp).c_str());
                     break;
                 }
             }
@@ -500,12 +500,12 @@ void BufferMgr::doTask(Consumer &consumer)
                     if (!getPfcEnableQueuesForPort(port, pfc_enable_status))
                     {
                         // PORT_QOS_MAP is not ready yet. retry is required
-                        SWSS_LOG_NOTICE("pfc_enable status is not available for port %s", port.c_str());
+                        SWSS_LOG_INFO("pfc_enable status is not available for port %s", port.c_str());
                         task_status = task_process_status::task_need_retry;
                     }
                     else
                     {
-                        task_status = doSpeedUpdateTask(port, admin_up, lossless_pgs);
+                        task_status = doSpeedUpdateTask(port, admin_up, pfc_enable_status);
                     }
                 }
 

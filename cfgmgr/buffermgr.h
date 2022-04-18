@@ -62,7 +62,7 @@ private:
     void readPgProfileLookupFile(std::string);
     task_process_status doCableTask(std::string port, std::string cable_length);
     task_process_status doSpeedUpdateTask(std::string port, bool admin_up, const std::string &pfc_enable);
-    void doBufferTableTask(Consumer &consumer);
+    void doBufferTableTask(Consumer &consumer, ProducerStateTable &applTable);
 
     void transformSeperator(std::string &name);
 
@@ -72,7 +72,7 @@ private:
     port_pfc_status_t m_portPfcStatus;
     void doPortQosTableTask(Consumer &consumer);
 
-    std::string getPfcEnableQueuesForPort(std::string port); 
+    bool getPfcEnableQueuesForPort(std::string port, std::string &pfc_enable_status); 
 };
 
 }
