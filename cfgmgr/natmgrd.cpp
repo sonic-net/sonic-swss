@@ -62,21 +62,31 @@ NatMgr    *natmgr = NULL;
 NotificationConsumer   *timeoutNotificationsConsumer = NULL;
 NotificationConsumer   *flushNotificationsConsumer = NULL;
 
+static volatile sig_atomic_t gExit = 0;
+
 std::shared_ptr<swss::NotificationProducer> cleanupNotifier;
 
 void sigterm_handler(int signo)
+{
+    SWSS_LOG_ENTER();
+
+    gExit = 1;
+}
+
+int cleanup()
 {
     int ret = 0;
     std::string res;
     const std::string conntrackFlush            = "conntrack -F";
 
-    SWSS_LOG_NOTICE("Got SIGTERM");
+    SWSS_LOG_ENTER();
 
     /*If there are any conntrack entries, clean them */
     ret = swss::exec(conntrackFlush, res);
     if (ret)
     {
         SWSS_LOG_ERROR("Command '%s' failed with rc %d", conntrackFlush.c_str(), ret);
+        return ret;
     }
 
     /* Send notification to Orchagent to clean up the REDIS and ASIC database */
@@ -98,10 +108,14 @@ void sigterm_handler(int signo)
         natmgr->cleanupMangleIpTables();
         natmgr->cleanupPoolIpTable();
     }
+
+    return ret;
 }
 
 int main(int argc, char **argv)
 {
+    int ret = 0;
+
     Logger::linkToDbNative("natmgrd");
     SWSS_LOG_ENTER();
 
@@ -154,10 +168,9 @@ int main(int argc, char **argv)
         s.addSelectable(flushNotificationsConsumer);
 
         SWSS_LOG_NOTICE("starting main loop");
-        while (true)
+        while (!gExit)
         {
             Selectable *sel;
-            int ret;
 
             ret = s.select(&sel, SELECT_TIMEOUT);
             if (ret == Select::ERROR)
@@ -197,10 +210,14 @@ int main(int argc, char **argv)
             auto *c = (Executor *)sel;
             c->execute();
         }
+
+        ret = cleanup();
     }
     catch(const std::exception &e)
     {
         SWSS_LOG_ERROR("Runtime error: %s", e.what());
+        return EXIT_FAILURE;
     }
-    return -1;
+
+    return ret;
 }
