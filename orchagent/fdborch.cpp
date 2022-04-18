@@ -517,29 +517,25 @@ void FdbOrch::update(sai_fdb_event_t        type,
         {
             SWSS_LOG_INFO("FDB Flush: [ %s , %s ] = { port: - }",
                            update.entry.mac.to_string().c_str(), vlanName.c_str());
-            for (auto itr = m_entries.begin(); itr != m_entries.end();)
+            for (auto itr = m_entries.begin(); itr != m_entries.end(); itr++)
             {
-                if (!itr->second.is_flush_pending)
+                if (itr->second.is_flush_pending)
                 {
-                    itr++;
-                    continue;
+                    /*
+                       TODO: here should only delete the dynamic fdb entries,
+                       but unfortunately in structure FdbEntry currently have
+                       no member to indicate the fdb entry type,
+                       if there is static mac added, here will have issue.
+                    */
+                    update.entry.mac = itr->first.mac;
+                    update.entry.bv_id = itr->first.bv_id;
+                    update.add = false;
+
+                    storeFdbEntryState(update);
+
+                    notify(SUBJECT_TYPE_FDB_CHANGE, &update);
+
                 }
-
-                /*
-                   TODO: here should only delete the dynamic fdb entries,
-                   but unfortunately in structure FdbEntry currently have
-                   no member to indicate the fdb entry type,
-                   if there is static mac added, here will have issue.
-                */
-                update.entry.mac = itr->first.mac;
-                update.entry.bv_id = itr->first.bv_id;
-                update.add = false;
-                itr++;
-
-                storeFdbEntryState(update);
-
-                notify(SUBJECT_TYPE_FDB_CHANGE, &update);
-
             }
         }
         else if (entry->bv_id == SAI_NULL_OBJECT_ID)
@@ -887,13 +883,14 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Flush fdb failed, return code %x", status);
-                return;
             }
 
-            for (map<FdbEntry, FdbData>::iterator it = m_entries.begin();
-                    it != m_entries.end(); it++)
-            {
-                it->second.is_flush_pending = true;
+            if (status == SAI_STATUS_SUCCESS) {
+                for (map<FdbEntry, FdbData>::iterator it = m_entries.begin();
+                        it != m_entries.end(); it++)
+                {
+                    it->second.is_flush_pending = true;
+                }
             }
 
             return;
@@ -1054,17 +1051,19 @@ void FdbOrch::flushFDBEntries(sai_object_id_t bridge_port_oid,
     if (SAI_STATUS_SUCCESS != rv)
     {
         SWSS_LOG_ERROR("Flushing FDB failed. rv:%d", rv);
-        return;
     }
 
-    for (map<FdbEntry, FdbData>::iterator it = m_entries.begin();
-            it != m_entries.end(); it++)
-    {
-        if ((bridge_port_oid != SAI_NULL_OBJECT_ID &&
-                it->second.bridge_port_id == bridge_port_oid) ||
-                (vlan_oid != SAI_NULL_OBJECT_ID && it->first.bv_id == vlan_oid))
+    if (SAI_STATUS_SUCCESS == rv) {
+        for (map<FdbEntry, FdbData>::iterator it = m_entries.begin();
+                it != m_entries.end(); it++)
         {
-            it->second.is_flush_pending = true;
+            if ((bridge_port_oid != SAI_NULL_OBJECT_ID &&
+                    it->second.bridge_port_id == bridge_port_oid) ||
+                    (vlan_oid != SAI_NULL_OBJECT_ID &&
+                    it->first.bv_id == vlan_oid))
+            {
+                it->second.is_flush_pending = true;
+            }
         }
     }
 }
