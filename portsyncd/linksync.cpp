@@ -4,6 +4,7 @@
 #include <sys/socket.h>
 #include <linux/if.h>
 #include <netlink/route/link.h>
+#include <netlink/route/link/bridge.h>
 #include "logger.h"
 #include "netmsg.h"
 #include "dbconnector.h"
@@ -212,12 +213,18 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
         return;
     }
 
-    /* If netlink for this port has master, we ignore that for now
-     * This could be the case where the port was removed from VLAN bridge
-     */
+    /* Ignore netlink on interfaces belong to VLAN bridge */
     if (master)
     {
-        return;
+        LinkCache &linkCache = LinkCache::getInstance();
+        string masterName = linkCache.ifindexToName(master);
+        struct rtnl_link *masterLink = linkCache.getLinkByName(masterName.c_str());
+        bool isBridge = rtnl_link_is_bridge(masterLink);
+
+        if(isBridge)
+        {
+            return;
+        }
     }
 
     /* In the event of swss restart, it is possible to get netlink messages during bridge
