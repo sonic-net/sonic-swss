@@ -73,7 +73,7 @@ void sigterm_handler(int signo)
     gExit = 1;
 }
 
-int cleanup()
+void cleanup()
 {
     int ret = 0;
     std::string res;
@@ -86,7 +86,6 @@ int cleanup()
     if (ret)
     {
         SWSS_LOG_ERROR("Command '%s' failed with rc %d", conntrackFlush.c_str(), ret);
-        return ret;
     }
 
     /* Send notification to Orchagent to clean up the REDIS and ASIC database */
@@ -108,14 +107,10 @@ int cleanup()
         natmgr->cleanupMangleIpTables();
         natmgr->cleanupPoolIpTable();
     }
-
-    return ret;
 }
 
 int main(int argc, char **argv)
 {
-    int ret = 0;
-
     Logger::linkToDbNative("natmgrd");
     SWSS_LOG_ENTER();
 
@@ -171,6 +166,7 @@ int main(int argc, char **argv)
         while (!gExit)
         {
             Selectable *sel;
+            int ret;
 
             ret = s.select(&sel, SELECT_TIMEOUT);
             if (ret == Select::ERROR)
@@ -211,7 +207,7 @@ int main(int argc, char **argv)
             c->execute();
         }
 
-        ret = cleanup();
+        cleanup();
     }
     catch(const std::exception &e)
     {
@@ -219,5 +215,5 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    return ret;
+    return 0;
 }
