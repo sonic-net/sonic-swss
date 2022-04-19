@@ -23,6 +23,8 @@ extern "C"
 #include "sai.h"
 }
 
+using ::p4orch::kTableKeyDelimiter;
+
 extern P4Orch *gP4Orch;
 extern VRFOrch *gVrfOrch;
 extern swss::DBConnector *gAppDb;
@@ -50,6 +52,7 @@ namespace
 {
 
 constexpr char *kWcmpGroupId1 = "group-1";
+constexpr char *kWcmpGroupId2 = "group-2";
 constexpr sai_object_id_t kWcmpGroupOid1 = 10;
 constexpr char *kNexthopId1 = "ju1u32m1.atl11:qe-3/7";
 constexpr sai_object_id_t kNexthopOid1 = 1;
@@ -201,6 +204,11 @@ class WcmpManagerTest : public ::testing::Test
         wcmp_group_manager_->drain();
     }
 
+    std::string VerifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple)
+    {
+        return wcmp_group_manager_->verifyState(key, tuple);
+    }
+
     ReturnCode ProcessAddRequest(P4WcmpGroupEntry *app_db_entry)
     {
         return wcmp_group_manager_->processAddRequest(app_db_entry);
@@ -301,10 +309,12 @@ P4WcmpGroupEntry WcmpManagerTest::getDefaultWcmpGroupEntryForTest()
     P4WcmpGroupEntry app_db_entry;
     app_db_entry.wcmp_group_id = kWcmpGroupId1;
     std::shared_ptr<P4WcmpGroupMemberEntry> gm1 = std::make_shared<P4WcmpGroupMemberEntry>();
+    gm1->wcmp_group_id = kWcmpGroupId1;
     gm1->next_hop_id = kNexthopId1;
     gm1->weight = 2;
     app_db_entry.wcmp_group_members.push_back(gm1);
     std::shared_ptr<P4WcmpGroupMemberEntry> gm2 = std::make_shared<P4WcmpGroupMemberEntry>();
+    gm2->wcmp_group_id = kWcmpGroupId1;
     gm2->next_hop_id = kNexthopId2;
     gm2->weight = 1;
     app_db_entry.wcmp_group_members.push_back(gm2);
@@ -459,7 +469,7 @@ TEST_F(WcmpManagerTest, CreateWcmpGroupFailsWhenCreateGroupMemberSaiCallFailsPlu
     EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group(Eq(kWcmpGroupOid1)))
         .WillOnce(Return(SAI_STATUS_SUCCESS));
 
-    // (TODO): Expect critical state.
+    // TODO: Expect critical state.
     EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, ProcessAddRequest(&app_db_entry));
 }
 
@@ -486,7 +496,7 @@ TEST_F(WcmpManagerTest, CreateWcmpGroupFailsWhenCreateGroupMemberSaiCallFailsPlu
     EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group(Eq(kWcmpGroupOid1)))
         .WillOnce(Return(SAI_STATUS_FAILURE));
 
-    // (TODO): Expect critical state.
+    // TODO: Expect critical state.
     EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, ProcessAddRequest(&app_db_entry));
 }
 
@@ -570,7 +580,7 @@ TEST_F(WcmpManagerTest, RemoveWcmpGroupFailsWhenMemberRemovalFailsPlusRecoveryFa
                                              Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 2,
                                                              kWcmpGroupOid1, std::placeholders::_1))))
         .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid1), Return(SAI_STATUS_FAILURE)));
-    // (TODO): Expect critical state.
+    // TODO: Expect critical state.
     EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, RemoveWcmpGroup(kWcmpGroupId1));
 }
 
@@ -760,7 +770,7 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupFailsWhenRemoveGroupMemberSaiCallFails)
                                              Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid2, 10,
                                                              kWcmpGroupOid1, std::placeholders::_1))))
         .WillOnce(Return(SAI_STATUS_TABLE_FULL));
-    // (TODO): Expect critical state.
+    // TODO: Expect critical state.
     EXPECT_EQ("Failed to remove WCMP group member with nexthop id "
               "'ju1u32m3.atl11:qe-3/7'",
               ProcessUpdateRequest(&wcmp_group).message());
@@ -886,7 +896,7 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupFailsWhenCreateNewGroupMemberSaiCallFails
         .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid5), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid2)))
         .WillOnce(Return(SAI_STATUS_OBJECT_IN_USE));
-    // (TODO): Expect critical state.
+    // TODO: Expect critical state.
     EXPECT_EQ("Failed to create next hop group member 'ju1u32m3.atl11:qe-3/7'",
               ProcessUpdateRequest(&updated_wcmp_group).message());
     //  WCMP group is as expected, but refcounts are not
@@ -1023,7 +1033,7 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupFailsWhenIncreaseGroupMemberWeightSaiCall
                                                              kWcmpGroupOid1, std::placeholders::_1))))
         .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid1), Return(SAI_STATUS_NOT_SUPPORTED)));
 
-    // (TODO): Expect critical state.
+    // TODO: Expect critical state.
     EXPECT_EQ("Failed to create next hop group member "
               "'ju1u32m2.atl11:qe-3/7'",
               ProcessUpdateRequest(&wcmp_group).message());
@@ -1462,7 +1472,7 @@ TEST_F(WcmpManagerTest, RestorePrunedNextHopFailsWithNoOidMappingForWcmpGroup)
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], true, 1));
     p4_oid_mapper_->eraseOID(SAI_OBJECT_TYPE_NEXT_HOP_GROUP, KeyGenerator::generateWcmpGroupKey(kWcmpGroupId1));
-    // (TODO): Expect critical state.
+    // TODO: Expect critical state.
     RestorePrunedNextHops(port_name);
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], true, 1));
@@ -1482,7 +1492,7 @@ TEST_F(WcmpManagerTest, RestorePrunedNextHopFailsWithNextHopCreationFailure)
                                              Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 2,
                                                              kWcmpGroupOid1, std::placeholders::_1))))
         .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid1), Return(SAI_STATUS_FAILURE)));
-    // (TODO): Expect critical state.
+    // TODO: Expect critical state.
     RestorePrunedNextHops(port_name);
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], true, 1));
@@ -1762,7 +1772,7 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupWithOperationallyUpWatchportMemberFailsWi
                                              Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 2,
                                                              kWcmpGroupOid1, std::placeholders::_1))))
         .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid1), Return(SAI_STATUS_INSUFFICIENT_RESOURCES)));
-    // (TODO): Expect critical state.
+    // TODO: Expect critical state.
     EXPECT_EQ("Failed to create next hop group member "
               "'ju1u32m2.atl11:qe-3/7'",
               ProcessUpdateRequest(&updated_app_db_entry).message());
@@ -1837,5 +1847,178 @@ TEST_F(WcmpManagerTest, WatchportStateChangeFromOperUnknownToDownPrunesMemberOnl
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], true, 1));
 }
+
+TEST_F(WcmpManagerTest, VerifyStateTest)
+{
+    AddWcmpGroupEntryWithWatchport("Ethernet6", true);
+    nlohmann::json j;
+    j[prependMatchField(p4orch::kWcmpGroupId)] = kWcmpGroupId1;
+    const std::string db_key = std::string(APP_P4RT_TABLE_NAME) + kTableKeyDelimiter + APP_P4RT_WCMP_GROUP_TABLE_NAME +
+                               kTableKeyDelimiter + j.dump();
+    std::vector<swss::FieldValueTuple> attributes;
+
+    // Setup ASIC DB.
+    swss::Table table(nullptr, "ASIC_STATE");
+    table.set("SAI_OBJECT_TYPE_NEXT_HOP_GROUP:oid:0xa",
+              std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{
+                  "SAI_NEXT_HOP_GROUP_ATTR_TYPE", "SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP"}});
+    table.set("SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER:oid:0xb",
+              std::vector<swss::FieldValueTuple>{
+                  swss::FieldValueTuple{"SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID", "oid:0xa"},
+                  swss::FieldValueTuple{"SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID", "oid:0x1"},
+                  swss::FieldValueTuple{"SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT", "2"}});
+
+    // Verification should succeed with vaild key and value.
+    nlohmann::json actions;
+    nlohmann::json action;
+    action[p4orch::kAction] = p4orch::kSetNexthopId;
+    action[p4orch::kWeight] = 2;
+    action[p4orch::kWatchPort] = "Ethernet6";
+    action[prependParamField(p4orch::kNexthopId)] = kNexthopId1;
+    actions.push_back(action);
+    attributes.push_back(swss::FieldValueTuple{p4orch::kActions, actions.dump()});
+    EXPECT_EQ(VerifyState(db_key, attributes), "");
+
+    // Invalid key should fail verification.
+    EXPECT_FALSE(VerifyState("invalid", attributes).empty());
+    EXPECT_FALSE(VerifyState("invalid:invalid", attributes).empty());
+    EXPECT_FALSE(VerifyState(std::string(APP_P4RT_TABLE_NAME) + ":invalid", attributes).empty());
+    EXPECT_FALSE(VerifyState(std::string(APP_P4RT_TABLE_NAME) + ":invalid:invalid", attributes).empty());
+    EXPECT_FALSE(VerifyState(std::string(APP_P4RT_TABLE_NAME) + ":FIXED_WCMP_GROUP_TABLE:invalid", attributes).empty());
+
+    // Non-existing entry should fail verification.
+    j[prependMatchField(p4orch::kWcmpGroupId)] = kWcmpGroupId2;
+    EXPECT_FALSE(VerifyState(std::string(APP_P4RT_TABLE_NAME) + kTableKeyDelimiter + APP_P4RT_WCMP_GROUP_TABLE_NAME +
+                                 kTableKeyDelimiter + j.dump(),
+                             attributes)
+                     .empty());
+
+    // Non-existing nexthop should fail verification.
+    actions.clear();
+    attributes.clear();
+    action[prependParamField(p4orch::kNexthopId)] = "invalid";
+    actions.push_back(action);
+    attributes.push_back(swss::FieldValueTuple{p4orch::kActions, actions.dump()});
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    actions.clear();
+    attributes.clear();
+    action[p4orch::kAction] = p4orch::kSetNexthopId;
+    action[p4orch::kWeight] = 2;
+    action[p4orch::kWatchPort] = "Ethernet6";
+    action[prependParamField(p4orch::kNexthopId)] = kNexthopId1;
+    actions.push_back(action);
+    attributes.push_back(swss::FieldValueTuple{p4orch::kActions, actions.dump()});
+
+    auto *wcmp_group_entry_ptr = GetWcmpGroupEntry(kWcmpGroupId1);
+    EXPECT_NE(nullptr, wcmp_group_entry_ptr);
+
+    // Verification should fail if WCMP group ID mismatches.
+    auto saved_wcmp_group_id = wcmp_group_entry_ptr->wcmp_group_id;
+    wcmp_group_entry_ptr->wcmp_group_id = kWcmpGroupId2;
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    wcmp_group_entry_ptr->wcmp_group_id = saved_wcmp_group_id;
+
+    // Verification should fail if WCMP group ID mismatches.
+    auto saved_wcmp_group_oid = wcmp_group_entry_ptr->wcmp_group_oid;
+    wcmp_group_entry_ptr->wcmp_group_oid = 1111;
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    wcmp_group_entry_ptr->wcmp_group_oid = saved_wcmp_group_oid;
+
+    // Verification should fail if group size mismatches.
+    wcmp_group_entry_ptr->wcmp_group_members.push_back(std::make_shared<P4WcmpGroupMemberEntry>());
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    wcmp_group_entry_ptr->wcmp_group_members.pop_back();
+
+    // Verification should fail if member nexthop ID mismatches.
+    auto saved_next_hop_id = wcmp_group_entry_ptr->wcmp_group_members[0]->next_hop_id;
+    wcmp_group_entry_ptr->wcmp_group_members[0]->next_hop_id = kNexthopId3;
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    wcmp_group_entry_ptr->wcmp_group_members[0]->next_hop_id = saved_next_hop_id;
+
+    // Verification should fail if member weight mismatches.
+    auto saved_weight = wcmp_group_entry_ptr->wcmp_group_members[0]->weight;
+    wcmp_group_entry_ptr->wcmp_group_members[0]->weight = 3;
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    wcmp_group_entry_ptr->wcmp_group_members[0]->weight = saved_weight;
+
+    // Verification should fail if member watch port mismatches.
+    auto saved_watch_port = wcmp_group_entry_ptr->wcmp_group_members[0]->watch_port;
+    wcmp_group_entry_ptr->wcmp_group_members[0]->watch_port = "invalid";
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    wcmp_group_entry_ptr->wcmp_group_members[0]->watch_port = saved_watch_port;
+
+    // Verification should fail if member WCMP group ID mismatches.
+    auto saved_member_wcmp_group_id = wcmp_group_entry_ptr->wcmp_group_members[0]->wcmp_group_id;
+    wcmp_group_entry_ptr->wcmp_group_members[0]->wcmp_group_id = kWcmpGroupId2;
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    wcmp_group_entry_ptr->wcmp_group_members[0]->wcmp_group_id = saved_member_wcmp_group_id;
+
+    // Verification should fail if member OID mapper mismatches.
+    p4_oid_mapper_->eraseOID(SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER,
+                             kWcmpGroupKey1 + kTableKeyDelimiter + sai_serialize_object_id(kWcmpGroupMemberOid1));
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER,
+                           kWcmpGroupKey1 + kTableKeyDelimiter + sai_serialize_object_id(kWcmpGroupMemberOid1),
+                           kWcmpGroupMemberOid1);
+}
+
+TEST_F(WcmpManagerTest, VerifyStateAsicDbTest)
+{
+    AddWcmpGroupEntryWithWatchport("Ethernet6", true);
+    nlohmann::json j;
+    j[prependMatchField(p4orch::kWcmpGroupId)] = kWcmpGroupId1;
+    const std::string db_key = std::string(APP_P4RT_TABLE_NAME) + kTableKeyDelimiter + APP_P4RT_WCMP_GROUP_TABLE_NAME +
+                               kTableKeyDelimiter + j.dump();
+    std::vector<swss::FieldValueTuple> attributes;
+    nlohmann::json actions;
+    nlohmann::json action;
+    action[p4orch::kAction] = p4orch::kSetNexthopId;
+    action[p4orch::kWeight] = 2;
+    action[p4orch::kWatchPort] = "Ethernet6";
+    action[prependParamField(p4orch::kNexthopId)] = kNexthopId1;
+    actions.push_back(action);
+    attributes.push_back(swss::FieldValueTuple{p4orch::kActions, actions.dump()});
+
+    // Setup ASIC DB.
+    swss::Table table(nullptr, "ASIC_STATE");
+    table.set("SAI_OBJECT_TYPE_NEXT_HOP_GROUP:oid:0xa",
+              std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{
+                  "SAI_NEXT_HOP_GROUP_ATTR_TYPE", "SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP"}});
+    table.set("SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER:oid:0xb",
+              std::vector<swss::FieldValueTuple>{
+                  swss::FieldValueTuple{"SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID", "oid:0xa"},
+                  swss::FieldValueTuple{"SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID", "oid:0x1"},
+                  swss::FieldValueTuple{"SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT", "2"}});
+
+    // Verification should succeed with correct ASIC DB values.
+    EXPECT_EQ(VerifyState(db_key, attributes), "");
+
+    // Verification should fail if group values mismatch.
+    table.set("SAI_OBJECT_TYPE_NEXT_HOP_GROUP:oid:0xa",
+              std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"SAI_NEXT_HOP_GROUP_ATTR_TYPE", "invalid"}});
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+
+    // Verification should fail if group table is missing.
+    table.del("SAI_OBJECT_TYPE_NEXT_HOP_GROUP:oid:0xa");
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    table.set("SAI_OBJECT_TYPE_NEXT_HOP_GROUP:oid:0xa",
+              std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{
+                  "SAI_NEXT_HOP_GROUP_ATTR_TYPE", "SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP"}});
+
+    // Verification should fail if member values mismatch.
+    table.set("SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER:oid:0xb",
+              std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT", "1"}});
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+
+    // Verification should fail if member table is missing.
+    table.del("SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER:oid:0xb");
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    table.set("SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER:oid:0xb",
+              std::vector<swss::FieldValueTuple>{
+                  swss::FieldValueTuple{"SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID", "oid:0xa"},
+                  swss::FieldValueTuple{"SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID", "oid:0x1"},
+                  swss::FieldValueTuple{"SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT", "2"}});
+}
+
 } // namespace test
 } // namespace p4orch

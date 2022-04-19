@@ -12,4 +12,7 @@ class ObjectManagerInterface
 
     // Processes all entries in the queue
     virtual void drain() = 0;
+
+    // StateVerification helper function for the manager
+    virtual std::string verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple) = 0;
 };

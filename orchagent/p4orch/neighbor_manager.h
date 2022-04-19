@@ -51,6 +51,7 @@ class NeighborManager : public ObjectManagerInterface
 
     void enqueue(const swss::KeyOpFieldsValuesTuple &entry) override;
     void drain() override;
+    std::string verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple) override;
 
   private:
     ReturnCodeOr<P4NeighborAppDbEntry> deserializeNeighborEntry(const std::string &key,
@@ -63,6 +64,9 @@ class NeighborManager : public ObjectManagerInterface
     ReturnCode processAddRequest(const P4NeighborAppDbEntry &app_db_entry, const std::string &neighbor_key);
     ReturnCode processUpdateRequest(const P4NeighborAppDbEntry &app_db_entry, P4NeighborEntry *neighbor_entry);
     ReturnCode processDeleteRequest(const std::string &neighbor_key);
+    std::string verifyStateCache(const P4NeighborAppDbEntry &app_db_entry, const P4NeighborEntry *neighbor_entry);
+    std::string verifyStateAsicDb(const P4NeighborEntry *neighbor_entry);
+    ReturnCodeOr<sai_neighbor_entry_t> getSaiEntry(const P4NeighborEntry &neighbor_entry);
 
     P4OidMapper *m_p4OidMapper;
     P4NeighborTable m_neighborTable;

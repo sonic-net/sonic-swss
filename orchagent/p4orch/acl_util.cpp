@@ -10,13 +10,6 @@
 namespace p4orch
 {
 
-std::string trim(const std::string &s)
-{
-    size_t end = s.find_last_not_of(WHITESPACE);
-    size_t start = s.find_first_not_of(WHITESPACE);
-    return (end == std::string::npos) ? EMPTY_STRING : s.substr(start, end - start + 1);
-}
-
 bool parseAclTableAppDbActionField(const std::string &aggr_actions_str, std::vector<P4ActionParamName> *action_list,
                                    std::vector<P4PacketActionWithColor> *action_color_list)
 {
@@ -327,8 +320,8 @@ ReturnCode validateAndSetCompositeMatchFieldJson(
     uint32_t composite_bitwidth = bitwidth_it.value();
 
     auto elements_it = aggr_match_json.find(kAclMatchFieldElements);
-    // b/175596733: temp disable verification on composite elements field until
-    // p4rt implementation is added.
+    // TODO: temp disable verification on composite elements field until p4rt
+    // implementation is added.
     if (elements_it == aggr_match_json.end())
     {
         (*udf_fields_lookup)[p4_match];
@@ -864,6 +857,100 @@ bool isDiffActionFieldValue(const acl_entry_attr_union_t attr_name, const sai_at
     case SAI_ACL_ENTRY_ATTR_ACTION_SET_DO_NOT_LEARN: {
         // parameter is not needed
         return false;
+    }
+    default: {
+        return false;
+    }
+    }
+}
+
+bool isDiffMatchFieldValue(const acl_entry_attr_union_t attr_name, const sai_attribute_value_t &value,
+                           const sai_attribute_value_t &old_value, const P4AclRule &acl_rule,
+                           const P4AclRule &old_acl_rule)
+{
+    if (attr_name >= SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MIN &&
+        attr_name <= SAI_ACL_ENTRY_ATTR_USER_DEFINED_FIELD_GROUP_MAX)
+    {
+        // We compare the size here only. The list is explicitly verified in the
+        // ACL rule.
+        return value.aclfield.data.u8list.count != old_value.aclfield.data.u8list.count;
+    }
+    switch (attr_name)
+    {
+    case SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS: {
+        // We compare the size here only. The list is explicitly verified in the
+        // ACL rule.
+        return value.aclfield.data.objlist.count != old_value.aclfield.data.objlist.count;
+    }
+    case SAI_ACL_ENTRY_ATTR_FIELD_OUT_PORTS: {
+        // We compare the size here only. The list is explicitly verified in the
+        // ACL rule.
+        return value.aclfield.data.objlist.count != old_value.aclfield.data.objlist.count;
+    }
+    case SAI_ACL_ENTRY_ATTR_FIELD_IN_PORT:
+    case SAI_ACL_ENTRY_ATTR_FIELD_OUT_PORT: {
+        return value.aclfield.data.oid != old_value.aclfield.data.oid;
+    }
+    case SAI_ACL_ENTRY_ATTR_FIELD_ACL_IP_TYPE:
+    case SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI:
+    case SAI_ACL_ENTRY_ATTR_FIELD_ROUTE_DST_USER_META:
+    case SAI_ACL_ENTRY_ATTR_FIELD_IPV6_FLOW_LABEL:
+    case SAI_ACL_ENTRY_ATTR_FIELD_ACL_IP_FRAG:
+    case SAI_ACL_ENTRY_ATTR_FIELD_PACKET_VLAN: {
+        return value.aclfield.data.u32 != old_value.aclfield.data.u32 ||
+               value.aclfield.mask.u32 != old_value.aclfield.mask.u32;
+    }
+    case SAI_ACL_ENTRY_ATTR_FIELD_TCP_FLAGS:
+    case SAI_ACL_ENTRY_ATTR_FIELD_IP_FLAGS:
+    case SAI_ACL_ENTRY_ATTR_FIELD_DSCP:
+    case SAI_ACL_ENTRY_ATTR_FIELD_TC:
+    case SAI_ACL_ENTRY_ATTR_FIELD_ICMP_TYPE:
+    case SAI_ACL_ENTRY_ATTR_FIELD_ICMP_CODE:
+    case SAI_ACL_ENTRY_ATTR_FIELD_ICMPV6_TYPE:
+    case SAI_ACL_ENTRY_ATTR_FIELD_ICMPV6_CODE:
+    case SAI_ACL_ENTRY_ATTR_FIELD_OUTER_VLAN_PRI:
+    case SAI_ACL_ENTRY_ATTR_FIELD_OUTER_VLAN_CFI:
+    case SAI_ACL_ENTRY_ATTR_FIELD_INNER_VLAN_PRI:
+    case SAI_ACL_ENTRY_ATTR_FIELD_INNER_VLAN_CFI:
+    case SAI_ACL_ENTRY_ATTR_FIELD_INNER_IP_PROTOCOL:
+    case SAI_ACL_ENTRY_ATTR_FIELD_IP_PROTOCOL:
+    case SAI_ACL_ENTRY_ATTR_FIELD_ECN:
+    case SAI_ACL_ENTRY_ATTR_FIELD_TTL:
+    case SAI_ACL_ENTRY_ATTR_FIELD_TOS:
+    case SAI_ACL_ENTRY_ATTR_FIELD_IPV6_NEXT_HEADER: {
+        return value.aclfield.data.u8 != old_value.aclfield.data.u8 ||
+               value.aclfield.mask.u8 != old_value.aclfield.mask.u8;
+    }
+    case SAI_ACL_ENTRY_ATTR_FIELD_ETHER_TYPE:
+    case SAI_ACL_ENTRY_ATTR_FIELD_L4_SRC_PORT:
+    case SAI_ACL_ENTRY_ATTR_FIELD_L4_DST_PORT:
+    case SAI_ACL_ENTRY_ATTR_FIELD_IP_IDENTIFICATION:
+    case SAI_ACL_ENTRY_ATTR_FIELD_OUTER_VLAN_ID:
+    case SAI_ACL_ENTRY_ATTR_FIELD_INNER_VLAN_ID:
+    case SAI_ACL_ENTRY_ATTR_FIELD_INNER_ETHER_TYPE:
+    case SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_SRC_PORT:
+    case SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_DST_PORT: {
+        return value.aclfield.data.u16 != old_value.aclfield.data.u16 ||
+               value.aclfield.mask.u16 != old_value.aclfield.mask.u16;
+    }
+    case SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IP:
+    case SAI_ACL_ENTRY_ATTR_FIELD_INNER_DST_IP:
+    case SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP:
+    case SAI_ACL_ENTRY_ATTR_FIELD_DST_IP: {
+        return value.aclfield.data.ip4 != old_value.aclfield.data.ip4 ||
+               value.aclfield.mask.ip4 != old_value.aclfield.mask.ip4;
+    }
+    case SAI_ACL_ENTRY_ATTR_FIELD_INNER_SRC_IPV6:
+    case SAI_ACL_ENTRY_ATTR_FIELD_INNER_DST_IPV6:
+    case SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6:
+    case SAI_ACL_ENTRY_ATTR_FIELD_DST_IPV6: {
+        return memcmp(value.aclfield.data.ip6, old_value.aclfield.data.ip6, sizeof(sai_ip6_t)) ||
+               memcmp(value.aclfield.mask.ip6, old_value.aclfield.mask.ip6, sizeof(sai_ip6_t));
+    }
+    case SAI_ACL_ENTRY_ATTR_FIELD_SRC_MAC:
+    case SAI_ACL_ENTRY_ATTR_FIELD_DST_MAC: {
+        return memcmp(value.aclfield.data.mac, old_value.aclfield.data.mac, sizeof(sai_mac_t)) ||
+               memcmp(value.aclfield.mask.mac, old_value.aclfield.mask.mac, sizeof(sai_mac_t));
     }
     default: {
         return false;

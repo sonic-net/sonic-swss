@@ -4,22 +4,50 @@
 #include <string>
 #include <vector>
 
+#include "SaiAttributeList.h"
 #include "crmorch.h"
+#include "dbconnector.h"
 #include "json.hpp"
 #include "logger.h"
 #include "orch.h"
 #include "p4orch/p4orch_util.h"
+#include "sai_serialize.h"
 #include "swssnet.h"
+#include "table.h"
 extern "C"
 {
 #include "sai.h"
 }
+
+using ::p4orch::kTableKeyDelimiter;
 
 extern sai_object_id_t gSwitchId;
 
 extern sai_neighbor_api_t *sai_neighbor_api;
 
 extern CrmOrch *gCrmOrch;
+
+namespace
+{
+
+std::vector<sai_attribute_t> getSaiAttrs(const P4NeighborEntry &neighbor_entry)
+{
+    std::vector<sai_attribute_t> attrs;
+    sai_attribute_t attr;
+    attr.id = SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS;
+    memcpy(attr.value.mac, neighbor_entry.dst_mac_address.getMac(), sizeof(sai_mac_t));
+    attrs.push_back(attr);
+
+    // Do not program host route.
+    // This is mainly for neighbor with IPv6 link-local addresses.
+    attr.id = SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE;
+    attr.value.booldata = true;
+    attrs.push_back(attr);
+
+    return attrs;
+}
+
+} // namespace
 
 P4NeighborEntry::P4NeighborEntry(const std::string &router_interface_id, const swss::IpAddress &ip_address,
                                  const swss::MacAddress &mac_address)
@@ -32,6 +60,25 @@ P4NeighborEntry::P4NeighborEntry(const std::string &router_interface_id, const s
 
     router_intf_key = KeyGenerator::generateRouterInterfaceKey(router_intf_id);
     neighbor_key = KeyGenerator::generateNeighborKey(router_intf_id, neighbor_id);
+}
+
+ReturnCodeOr<sai_neighbor_entry_t> NeighborManager::getSaiEntry(const P4NeighborEntry &neighbor_entry)
+{
+    const std::string &router_intf_key = neighbor_entry.router_intf_key;
+    sai_object_id_t router_intf_oid;
+    if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE, router_intf_key, &router_intf_oid))
+    {
+        LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+                             << "Router intf key " << QuotedVar(router_intf_key)
+                             << " does not exist in certralized map");
+    }
+
+    sai_neighbor_entry_t neigh_entry;
+    neigh_entry.switch_id = gSwitchId;
+    copy(neigh_entry.ip_address, neighbor_entry.neighbor_id);
+    neigh_entry.rif_id = router_intf_oid;
+
+    return neigh_entry;
 }
 
 ReturnCodeOr<P4NeighborAppDbEntry> NeighborManager::deserializeNeighborEntry(
@@ -138,37 +185,14 @@ ReturnCode NeighborManager::createNeighbor(P4NeighborEntry &neighbor_entry)
                                                                             << " already exists in centralized map");
     }
 
-    const std::string &router_intf_key = neighbor_entry.router_intf_key;
-    sai_object_id_t router_intf_oid;
-    if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE, router_intf_key, &router_intf_oid))
-    {
-        LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
-                             << "Router intf key " << QuotedVar(router_intf_key)
-                             << " does not exist in certralized map");
-    }
+    ASSIGN_OR_RETURN(neighbor_entry.neigh_entry, getSaiEntry(neighbor_entry));
+    auto attrs = getSaiAttrs(neighbor_entry);
 
-    neighbor_entry.neigh_entry.switch_id = gSwitchId;
-    copy(neighbor_entry.neigh_entry.ip_address, neighbor_entry.neighbor_id);
-    neighbor_entry.neigh_entry.rif_id = router_intf_oid;
-
-    std::vector<sai_attribute_t> neigh_attrs;
-    sai_attribute_t neigh_attr;
-    neigh_attr.id = SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS;
-    memcpy(neigh_attr.value.mac, neighbor_entry.dst_mac_address.getMac(), sizeof(sai_mac_t));
-    neigh_attrs.push_back(neigh_attr);
-
-    // Do not program host route.
-    // This is mainly for neighbor with IPv6 link-local addresses.
-    neigh_attr.id = SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE;
-    neigh_attr.value.booldata = true;
-    neigh_attrs.push_back(neigh_attr);
-
-    CHECK_ERROR_AND_LOG_AND_RETURN(sai_neighbor_api->create_neighbor_entry(&neighbor_entry.neigh_entry,
-                                                                           static_cast<uint32_t>(neigh_attrs.size()),
-                                                                           neigh_attrs.data()),
+    CHECK_ERROR_AND_LOG_AND_RETURN(sai_neighbor_api->create_neighbor_entry(
+                                       &neighbor_entry.neigh_entry, static_cast<uint32_t>(attrs.size()), attrs.data()),
                                    "Failed to create neighbor with key " << QuotedVar(neighbor_key));
 
-    m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_ROUTER_INTERFACE, router_intf_key);
+    m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_ROUTER_INTERFACE, neighbor_entry.router_intf_key);
     if (neighbor_entry.neighbor_id.isV4())
     {
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEIGHBOR);
@@ -373,4 +397,142 @@ void NeighborManager::drain()
                              /*replace=*/true);
     }
     m_entries.clear();
+}
+
+std::string NeighborManager::verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple)
+{
+    SWSS_LOG_ENTER();
+
+    auto pos = key.find_first_of(kTableKeyDelimiter);
+    if (pos == std::string::npos)
+    {
+        return std::string("Invalid key: ") + key;
+    }
+    std::string p4rt_table = key.substr(0, pos);
+    std::string p4rt_key = key.substr(pos + 1);
+    if (p4rt_table != APP_P4RT_TABLE_NAME)
+    {
+        return std::string("Invalid key: ") + key;
+    }
+    std::string table_name;
+    std::string key_content;
+    parseP4RTKey(p4rt_key, &table_name, &key_content);
+    if (table_name != APP_P4RT_NEIGHBOR_TABLE_NAME)
+    {
+        return std::string("Invalid key: ") + key;
+    }
+
+    ReturnCode status;
+    auto app_db_entry_or = deserializeNeighborEntry(key_content, tuple);
+    if (!app_db_entry_or.ok())
+    {
+        status = app_db_entry_or.status();
+        std::stringstream msg;
+        msg << "Unable to deserialize key " << QuotedVar(key) << ": " << status.message();
+        return msg.str();
+    }
+    auto &app_db_entry = *app_db_entry_or;
+
+    const std::string neighbor_key =
+        KeyGenerator::generateNeighborKey(app_db_entry.router_intf_id, app_db_entry.neighbor_id);
+    auto *neighbor_entry = getNeighborEntry(neighbor_key);
+    if (neighbor_entry == nullptr)
+    {
+        std::stringstream msg;
+        msg << "No entry found with key " << QuotedVar(key);
+        return msg.str();
+    }
+
+    std::string cache_result = verifyStateCache(app_db_entry, neighbor_entry);
+    std::string asic_db_result = verifyStateAsicDb(neighbor_entry);
+    if (cache_result.empty())
+    {
+        return asic_db_result;
+    }
+    if (asic_db_result.empty())
+    {
+        return cache_result;
+    }
+    return cache_result + "; " + asic_db_result;
+}
+
+std::string NeighborManager::verifyStateCache(const P4NeighborAppDbEntry &app_db_entry,
+                                              const P4NeighborEntry *neighbor_entry)
+{
+    const std::string neighbor_key =
+        KeyGenerator::generateNeighborKey(app_db_entry.router_intf_id, app_db_entry.neighbor_id);
+    ReturnCode status = validateNeighborAppDbEntry(app_db_entry);
+    if (!status.ok())
+    {
+        std::stringstream msg;
+        msg << "Validation failed for neighbor DB entry with key " << QuotedVar(neighbor_key) << ": "
+            << status.message();
+        return msg.str();
+    }
+
+    if (neighbor_entry->router_intf_id != app_db_entry.router_intf_id)
+    {
+        std::stringstream msg;
+        msg << "Neighbor " << QuotedVar(neighbor_key) << " with ritf ID " << QuotedVar(app_db_entry.router_intf_id)
+            << " does not match internal cache " << QuotedVar(neighbor_entry->router_intf_id)
+            << " in neighbor manager.";
+        return msg.str();
+    }
+    if (neighbor_entry->neighbor_id.to_string() != app_db_entry.neighbor_id.to_string())
+    {
+        std::stringstream msg;
+        msg << "Neighbor " << QuotedVar(neighbor_key) << " with neighbor ID " << app_db_entry.neighbor_id.to_string()
+            << " does not match internal cache " << neighbor_entry->neighbor_id.to_string() << " in neighbor manager.";
+        return msg.str();
+    }
+    if (neighbor_entry->dst_mac_address.to_string() != app_db_entry.dst_mac_address.to_string())
+    {
+        std::stringstream msg;
+        msg << "Neighbor " << QuotedVar(neighbor_key) << " with dest MAC " << app_db_entry.dst_mac_address.to_string()
+            << " does not match internal cache " << neighbor_entry->dst_mac_address.to_string()
+            << " in neighbor manager.";
+        return msg.str();
+    }
+    if (neighbor_entry->router_intf_key != KeyGenerator::generateRouterInterfaceKey(app_db_entry.router_intf_id))
+    {
+        std::stringstream msg;
+        msg << "Neighbor " << QuotedVar(neighbor_key) << " does not match internal cache on ritf key "
+            << QuotedVar(neighbor_entry->router_intf_key) << " in neighbor manager.";
+        return msg.str();
+    }
+    if (neighbor_entry->neighbor_key != neighbor_key)
+    {
+        std::stringstream msg;
+        msg << "Neighbor " << QuotedVar(neighbor_key) << " does not match internal cache on neighbor key "
+            << QuotedVar(neighbor_entry->neighbor_key) << " in neighbor manager.";
+        return msg.str();
+    }
+    return "";
+}
+
+std::string NeighborManager::verifyStateAsicDb(const P4NeighborEntry *neighbor_entry)
+{
+    auto sai_entry_or = getSaiEntry(*neighbor_entry);
+    if (!sai_entry_or.ok())
+    {
+        return std::string("Failed to get SAI entry: ") + sai_entry_or.status().message();
+    }
+    sai_neighbor_entry_t sai_entry = *sai_entry_or;
+    auto attrs = getSaiAttrs(*neighbor_entry);
+    std::vector<swss::FieldValueTuple> exp = saimeta::SaiAttributeList::serialize_attr_list(
+        SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, (uint32_t)attrs.size(), attrs.data(),
+        /*countOnly=*/false);
+
+    swss::DBConnector db("ASIC_DB", 0);
+    swss::Table table(&db, "ASIC_STATE");
+    std::string key =
+        sai_serialize_object_type(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY) + ":" + sai_serialize_neighbor_entry(sai_entry);
+    std::vector<swss::FieldValueTuple> values;
+    if (!table.get(key, values))
+    {
+        return std::string("ASIC DB key not found ") + key;
+    }
+
+    return verifyAttrs(values, exp, std::vector<swss::FieldValueTuple>{},
+                       /*allow_unknown=*/false);
 }
