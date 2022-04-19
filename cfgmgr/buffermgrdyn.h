@@ -71,6 +71,7 @@ typedef struct {
     std::string xon_offset;
     std::string xoff;
     std::string threshold;
+    std::string threshold_mode;
     std::string pool_name;
     // port_pgs - stores pgs referencing this profile
     // An element will be added or removed when a PG added or removed
