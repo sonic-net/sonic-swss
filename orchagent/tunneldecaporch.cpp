@@ -18,6 +18,7 @@ extern sai_object_id_t  gUnderlayIfId;
 extern sai_object_id_t  gSwitchId;
 extern PortsOrch*       gPortsOrch;
 extern CrmOrch*         gCrmOrch;
+extern QosOrch*         gQosOrch;
 
 TunnelDecapOrch::TunnelDecapOrch(DBConnector *db, string tableName) : Orch(db, tableName)
 {
@@ -32,7 +33,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
     {
         return;
     }
-
+    string table_name = consumer.getTableName();
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
@@ -41,8 +42,8 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
         string key = kfvKey(t);
         string op = kfvOp(t);
 
-        IpAddresses dst_ip_addresses;
-        IpAddress src_ip_address("0.0.0.0");
+        IpAddresses ip_addresses;
+        IpAddress src_ip;
         IpAddress* p_src_ip = nullptr;
         string tunnel_type;
         string dscp_mode;
@@ -51,7 +52,6 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
         string ttl_mode;
         sai_object_id_t dscp_to_dc_map_id = SAI_NULL_OBJECT_ID;
         sai_object_id_t tc_to_pg_map_id = SAI_NULL_OBJECT_ID;
-        TunnelTermType term_type = TUNNEL_TERM_TYPE_P2MP;
 
         bool valid = true;
 
@@ -83,7 +83,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                 {
                     try
                     {
-                        dst_ip_addresses = IpAddresses(fvValue(i));
+                        ip_addresses = IpAddresses(fvValue(i));
                     }
                     catch (const std::invalid_argument &e)
                     {
@@ -93,17 +93,15 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                     }
                     if (exists)
                     {
-                        setIpAttribute(key, dst_ip_addresses, tunnelTable.find(key)->second.tunnel_id);
+                        setIpAttribute(key, ip_addresses, tunnelTable.find(key)->second.tunnel_id);
                     }
                 }
                 else if (fvField(i) == "src_ip")
                 {
                     try
                     {
-                        src_ip_address = IpAddress(fvValue(i));
-                        p_src_ip = &src_ip_address;
-                        //Tunnel term type is set to P2P when source ip is present
-                        term_type = TUNNEL_TERM_TYPE_P2P;
+                        src_ip = IpAddress(fvValue(i));
+                        p_src_ip = &src_ip;
                     }
                     catch (const std::invalid_argument &e)
                     {
@@ -174,7 +172,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                 }
                 else if (fvField(i) == decap_dscp_to_tc_field_name)
                 {
-                    dscp_to_dc_map_id = resolveQosMapId(key, decap_dscp_to_tc_field_name, t); 
+                    dscp_to_dc_map_id = gQosOrch->resolveTunnelQosMap(table_name, key, decap_dscp_to_tc_field_name, t); 
                     if (exists && dscp_to_dc_map_id != SAI_NULL_OBJECT_ID)
                     {
                         setTunnelAttribute(fvField(i), dscp_to_dc_map_id, tunnel_id);
@@ -182,7 +180,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                 }
                 else if (fvField(i) == decap_tc_to_pg_field_name)
                 {
-                    tc_to_pg_map_id = resolveQosMapId(key, decap_tc_to_pg_field_name, t); 
+                    tc_to_pg_map_id = gQosOrch->resolveTunnelQosMap(table_name, key, decap_tc_to_pg_field_name, t); 
                     if (exists && tc_to_pg_map_id != SAI_NULL_OBJECT_ID)
                     {
                         setTunnelAttribute(fvField(i), tc_to_pg_map_id, tunnel_id);
@@ -194,8 +192,8 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
             if (valid && !exists)
             {
                 
-                if (addDecapTunnel(key, tunnel_type, dst_ip_addresses, p_src_ip, dscp_mode, ecn_mode, encap_ecn_mode, ttl_mode,
-                                    term_type, dscp_to_dc_map_id, tc_to_pg_map_id))
+                if (addDecapTunnel(key, tunnel_type, ip_addresses, p_src_ip, dscp_mode, ecn_mode, encap_ecn_mode, ttl_mode,
+                                    dscp_to_dc_map_id, tc_to_pg_map_id))
                 {
                     SWSS_LOG_NOTICE("Tunnel(s) added to ASIC_DB.");
                 }
@@ -233,7 +231,6 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
  *    @param[in] dscp - dscp mode (uniform/pipe)
  *    @param[in] ecn - ecn mode (copy_from_outer/standard)
  *    @param[in] ttl - ttl mode (uniform/pipe)
- *    @param[in] term_type - The type of tunnel term
  *    @param[in] dscp_to_tc_map_id - Map ID for remapping DSCP to TC (decap)
  *    @param[in] tc_to_pg_map_id   - Map ID for remapping TC to PG (decap)
  *
@@ -249,7 +246,6 @@ bool TunnelDecapOrch::addDecapTunnel(
     string ecn,
     string encap_ecn,
     string ttl,
-    TunnelTermType term_type,
     sai_object_id_t dscp_to_tc_map_id,
     sai_object_id_t tc_to_pg_map_id)
 {
@@ -262,6 +258,7 @@ bool TunnelDecapOrch::addDecapTunnel(
     sai_attribute_t attr;
     vector<sai_attribute_t> tunnel_attrs;
     sai_object_id_t overlayIfId;
+    TunnelTermType term_type = TUNNEL_TERM_TYPE_P2MP;
 
     // create the overlay router interface to create a LOOPBACK type router interface (decap)
     vector<sai_attribute_t> overlay_intf_attrs;
@@ -310,6 +307,7 @@ bool TunnelDecapOrch::addDecapTunnel(
         copy(attr.value.ipaddr, p_src_ip->to_string());
         tunnel_attrs.push_back(attr);
         src_ip = *p_src_ip;
+        term_type = TUNNEL_TERM_TYPE_P2P;
     }
 
     // decap ecn mode (copy from outer/standard)
@@ -474,7 +472,7 @@ bool TunnelDecapOrch::addDecapTunnelTermEntries(string tunnelKey, swss::IpAddres
         // check if the there's an entry already for the key pair
         if (existingIps.find(key) != existingIps.end())
         {
-            SWSS_LOG_ERROR("%s already exists. Did not create entry.", key.c_str());
+            SWSS_LOG_NOTICE("%s already exists. Did not create entry.", key.c_str());
         }
         else
         {
@@ -941,34 +939,3 @@ IpAddresses TunnelDecapOrch::getDstIpAddresses(std::string tunnelKey)
     return tunnelTable[tunnelKey].dst_ip_addrs;
 }
 
-/**
- * Function Description:
- *    @brief Resolve the map id from QosOrch
- *
- * Arguments:
- *    @param[in] tunnle_name - The name of tunnel
- *    @param[in] map_type_name - The type of referenced QoS map
- *    @param[in] tuple - The KeyOpFieldsValuesTuple that contains keys - values
- *
- * Return Values:
- *    @return The sai_object_id of referenced map, or SAI_NULL_OBJECT_ID  if there's an error
- */
-sai_object_id_t TunnelDecapOrch::resolveQosMapId(std::string tunnle_name, std::string map_type_name, KeyOpFieldsValuesTuple& tuple)
-{
-    sai_object_id_t id;
-    string object_name;
-    ref_resolve_status status = resolveFieldRefValue(QosOrch::getTypeMap(), map_type_name, qos_to_ref_table_map.at(map_type_name), tuple, id, object_name);
-    if (status == ref_resolve_status::success)
-    {
-        
-        setObjectReference(QosOrch::getTypeMap(), CFG_TUNNEL_TABLE_NAME, tunnle_name, map_type_name, object_name);
-        SWSS_LOG_INFO("Resolved QoS map for tunnel %s type %s name %s", tunnle_name.c_str(), map_type_name.c_str(), object_name.c_str());
-        return id;
-    }
-    else
-    {
-        SWSS_LOG_ERROR("Failed to resolce QoS map for tunnel %s type %s", tunnle_name.c_str(), map_type_name.c_str());
-        return SAI_NULL_OBJECT_ID;
-    }
-
-}

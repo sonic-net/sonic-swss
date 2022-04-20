@@ -72,7 +72,7 @@ private:
     TunnelNhs   tunnelNhs;
 
     bool addDecapTunnel(std::string key, std::string type, swss::IpAddresses dst_ip, swss::IpAddress* p_src_ip,
-                        std::string dscp, std::string ecn, std::string encap_ecn, std::string ttl, TunnelTermType term_type,
+                        std::string dscp, std::string ecn, std::string encap_ecn, std::string ttl,
                         sai_object_id_t dscp_to_tc_map_id, sai_object_id_t tc_to_pg_map_id);
     bool removeDecapTunnel(std::string key);
 
@@ -88,7 +88,5 @@ private:
     int decNextHopRef(std::string tunnelKey, swss::IpAddress& ipAddr);
 
     void doTask(Consumer& consumer);
-
-    sai_object_id_t resolveQosMapId(std::string tunnle_name, std::string map_type_name, swss::KeyOpFieldsValuesTuple& tuple);
 };
 #endif

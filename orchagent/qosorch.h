@@ -60,8 +60,6 @@ const string ecn_green_red                      = "ecn_green_red";
 const string ecn_green_yellow                   = "ecn_green_yellow";
 const string ecn_all                            = "ecn_all";
 
-// Declaration for being referenced in muxorch and decaporch
-extern std::map<string, string> qos_to_ref_table_map;
 class QosMapHandler
 {
 public:
@@ -168,6 +166,8 @@ public:
 
     static type_map& getTypeMap();
     static type_map m_qos_maps;
+
+    sai_object_id_t resolveTunnelQosMap(std::string referencing_table_name, std::string tunnel_name, std::string map_type_name, KeyOpFieldsValuesTuple& tuple);
 private:
     void doTask() override;
     virtual void doTask(Consumer& consumer);

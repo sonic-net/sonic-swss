@@ -83,7 +83,6 @@ class TestTunnelBase(object):
         
         decap_dscp_to_tc_map_oid = None
         decap_tc_to_pg_map_oid = None
-        configdb = None
 
         if "decap_dscp_to_tc_map_oid" in kwargs:
             decap_dscp_to_tc_map_oid = kwargs.pop("decap_dscp_to_tc_map_oid")
@@ -91,18 +90,11 @@ class TestTunnelBase(object):
         if "decap_tc_to_pg_map_oid" in kwargs:
             decap_tc_to_pg_map_oid = kwargs.pop("decap_tc_to_pg_map_oid")
         
-        if "configdb" in kwargs:
-            configdb = kwargs.pop("configdb")
-        
         fvs = create_fvs(**kwargs)
-        if configdb:
-            # Write into config db for muxorch, tunnelmgrd will write to APP_DB
-            configdb_ps = swsscommon.Table(configdb, self.CONFIG_TUNNEL_TABLE_NAME)
-            configdb_ps.set(tunnel_name, fvs)
-        else:
-            # create tunnel entry in DB
-            ps = swsscommon.ProducerStateTable(db, self.APP_TUNNEL_DECAP_TABLE_NAME)
-            ps.set(tunnel_name, fvs)
+
+        # create tunnel entry in DB
+        ps = swsscommon.ProducerStateTable(db, self.APP_TUNNEL_DECAP_TABLE_NAME)
+        ps.set(tunnel_name, fvs)
 
         # wait till config will be applied
         time.sleep(1)

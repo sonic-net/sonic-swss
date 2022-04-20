@@ -156,7 +156,7 @@ public:
 class MuxOrch : public Orch2, public Observer, public Subject
 {
 public:
-    MuxOrch(DBConnector *db, const std::vector<std::string> &tables, TunnelDecapOrch*, NeighOrch*, FdbOrch*);
+    MuxOrch(DBConnector *cfg_db, DBConnector *app_db, const std::vector<std::string> &tables, TunnelDecapOrch*, NeighOrch*, FdbOrch*);
 
     using handler_pair = pair<string, bool (MuxOrch::*) (const Request& )>;
     using handler_map = map<string, bool (MuxOrch::*) (const Request& )>;
@@ -214,7 +214,7 @@ private:
     FdbOrch *fdb_orch_;
 
     MuxCfgRequest request_;
-    Table cfgTunnelTable_;
+    Table app_decap_tunnel_table_;
 };
 
 const request_description_t mux_cable_request_description = {

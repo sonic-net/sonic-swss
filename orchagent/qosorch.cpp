@@ -80,7 +80,7 @@ type_map QosOrch::m_qos_maps = {
     {CFG_DSCP_TO_FC_MAP_TABLE_NAME, new object_reference_map()},
     {CFG_EXP_TO_FC_MAP_TABLE_NAME, new object_reference_map()},
     {CFG_TC_TO_DSCP_MAP_TABLE_NAME, new object_reference_map()},
-    {CFG_TUNNEL_TABLE_NAME, new object_reference_map()}
+    {APP_TUNNEL_DECAP_TABLE_NAME, new object_reference_map()}
 };
 
 map<string, string> qos_to_ref_table_map = {
@@ -1947,5 +1947,37 @@ void QosOrch::doTask(Consumer &consumer)
                 it = consumer.m_toSync.erase(it);
                 break;
         }
+    }
+}
+
+/**
+ * Function Description:
+ *    @brief Resolve the id of QoS map that is referenced by tunnel
+ *
+ * Arguments:
+ *    @param[in] referencing_table_name - The name of table that is referencing the QoS map
+ *    @param[in] tunnle_name - The name of tunnel
+ *    @param[in] map_type_name - The type of referenced QoS map
+ *    @param[in] tuple - The KeyOpFieldsValuesTuple that contains keys - values
+ *
+ * Return Values:
+ *    @return The sai_object_id of referenced map, or SAI_NULL_OBJECT_ID  if there's an error
+ */
+sai_object_id_t QosOrch::resolveTunnelQosMap(std::string referencing_table_name, std::string tunnel_name, std::string map_type_name, KeyOpFieldsValuesTuple& tuple)
+{
+    sai_object_id_t id;
+    string object_name;
+    ref_resolve_status status = resolveFieldRefValue(m_qos_maps, map_type_name, qos_to_ref_table_map.at(map_type_name), tuple, id, object_name);
+    if (status == ref_resolve_status::success)
+    {
+        
+        setObjectReference(m_qos_maps, referencing_table_name, tunnel_name, map_type_name, object_name);
+        SWSS_LOG_INFO("Resolved QoS map for table %s tunnel %s type %s name %s", referencing_table_name.c_str(), tunnel_name.c_str(), map_type_name.c_str(), object_name.c_str());
+        return id;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Failed to resolve QoS map for table %s tunnel %s type %s", referencing_table_name.c_str(), tunnel_name.c_str(), map_type_name.c_str());
+        return SAI_NULL_OBJECT_ID;
     }
 }
