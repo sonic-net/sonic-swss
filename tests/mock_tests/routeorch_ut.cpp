@@ -185,6 +185,12 @@ namespace routeorch_test
             auto* flexCounterOrch = new FlexCounterOrch(m_config_db.get(), flex_counter_tables);
             gDirectory.set(flexCounterOrch);
 
+            static const  vector<string> route_pattern_tables = {
+                CFG_FLOW_COUNTER_ROUTE_PATTERN_TABLE_NAME,
+            };
+            gFlowCounterRouteOrch = new FlowCounterRouteOrch(m_config_db.get(), route_pattern_tables);
+            gDirectory.set(gFlowCounterRouteOrch);
+
             ASSERT_EQ(gVrfOrch, nullptr);
             gVrfOrch = new VRFOrch(m_app_db.get(), APP_VRF_TABLE_NAME, m_state_db.get(), STATE_VRF_OBJECT_TABLE_NAME);
 

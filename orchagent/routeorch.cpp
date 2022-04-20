@@ -5,6 +5,7 @@
 #include "nhgorch.h"
 #include "cbf/cbfnhgorch.h"
 #include "logger.h"
+#include "flowcounterrouteorch.h"
 #include "swssnet.h"
 #include "crmorch.h"
 #include "directory.h"
@@ -22,6 +23,7 @@ extern CrmOrch *gCrmOrch;
 extern Directory<Orch*> gDirectory;
 extern NhgOrch *gNhgOrch;
 extern CbfNhgOrch *gCbfNhgOrch;
+extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
 
 extern size_t gMaxBulkSize;
 
@@ -145,7 +147,6 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
 
     addLinkLocalRouteToMe(gVirtualRouterId, default_link_local_prefix);
     SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu", default_link_local_prefix.to_string().c_str());
-
 }
 
 std::string RouteOrch::getLinkLocalEui64Addr(void)
@@ -212,6 +213,8 @@ void RouteOrch::addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal
 
     gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
 
+    gFlowCounterRouteOrch->onAddMiscRouteEntry(vrf_id, linklocal_prefix.getSubnet());
+
     SWSS_LOG_NOTICE("Created link local ipv6 route  %s to cpu", linklocal_prefix.to_string().c_str());
 }
 
@@ -232,6 +235,8 @@ void RouteOrch::delLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal
     }
 
     gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+
+    gFlowCounterRouteOrch->onRemoveMiscRouteEntry(vrf_id, linklocal_prefix.getSubnet());
 
     SWSS_LOG_NOTICE("Deleted link local ipv6 route  %s to cpu", linklocal_prefix.to_string().c_str());
 }
@@ -2212,6 +2217,11 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         updateDefRouteState(ipPrefix.to_string(), true);
     }
 
+    if (it_route == m_syncdRoutes.at(vrf_id).end())
+    {
+        gFlowCounterRouteOrch->handleRouteAdd(vrf_id, ipPrefix);
+    }
+
     m_syncdRoutes[vrf_id][ipPrefix] = RouteNhg(nextHops, ctx.nhg_index);
 
     notifyNextHopChangeObservers(vrf_id, ipPrefix, nextHops, true);
@@ -2419,6 +2429,7 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
     }
     else
     {
+        gFlowCounterRouteOrch->handleRouteRemove(vrf_id, ipPrefix);
         it_route_table->second.erase(ipPrefix);
 
         /* Notify about the route next hop removal */
