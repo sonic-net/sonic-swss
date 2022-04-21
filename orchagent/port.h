@@ -174,7 +174,7 @@ public:
 
     bool m_fec_cfg = false;
     bool m_an_cfg = false;
-    bool m_port_cap_an = false; /* Port Capability - AutoNeg */
+    int m_cap_an = -1; /* Capability - AutoNeg, -1 means not set */
 };
 
 }

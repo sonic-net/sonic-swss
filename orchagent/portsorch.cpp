@@ -1876,11 +1876,11 @@ void PortsOrch::initPortCapAutoNeg(Port &port)
     status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
     if (status == SAI_STATUS_SUCCESS)
     {
-        port.m_port_cap_an = attr.value.booldata;
+        port.m_cap_an = attr.value.booldata ? 1 : 0;
     }
     else
     {
-        port.m_port_cap_an = true; /* This is for vstest */
+        port.m_cap_an = 1; /* Default to 1 for vstest */
         SWSS_LOG_NOTICE("Unable to get %s AN capability", port.m_alias.c_str());
     }
 }
@@ -2414,9 +2414,6 @@ bool PortsOrch::initPort(const string &alias, const string &role, const int inde
             {
                 /* Create associated Gearbox lane mapping */
                 initGearboxPort(p);
-
-                /* Initialize port capabilities */
-                initPortCapAutoNeg(p);
 
                 /* Add port to port list */
                 m_portList[alias] = p;
@@ -2952,7 +2949,12 @@ void PortsOrch::doPortTask(Consumer &consumer)
             {
                 if (!an_str.empty())
                 {
-                    if (!p.m_port_cap_an)
+                    if (p.m_cap_an < 0)
+                    {
+                        initPortCapAutoNeg(p);
+                        m_portList[alias] = p;
+                    }
+                    if (p.m_cap_an < 1)
                     {
                         SWSS_LOG_ERROR("%s: autoneg is not supported", p.m_alias.c_str());
                         // Invalid auto negotiation mode configured, don't retry
