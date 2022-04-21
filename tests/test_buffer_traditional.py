@@ -17,7 +17,7 @@ class TestBuffer(object):
     
     def get_pfc_enable_queues(self):
         qos_map = self.config_db.get_entry("PORT_QOS_MAP", self.INTF)
-        self.lossless_pgs = qos_map['pfc_enable'].split(',')
+        return qos_map['pfc_enable'].split(',')
 
     def get_pg_oid(self, pg):
         fvs = dict()
@@ -60,22 +60,25 @@ class TestBuffer(object):
         fvs[self.INTF] = cable_len
         self.config_db.update_entry("CABLE_LENGTH", "AZURE", fvs)
 
-    def set_port_qos_table(self):
-        pfc_enable = "2,3,4,6"
+    def set_port_qos_table(self, pfc_enable_flag):
         fvs=dict()
-        fvs['pfc_enable'] = pfc_enable
+        fvs['pfc_enable'] = pfc_enable_flag
         self.config_db.update_entry("PORT_QOS_MAP", self.INTF, fvs)
+        self.lossless_pgs = pfc_enable_flag.split(',')
 
+    def get_pg_name_map(self):
+        pg_name_map = dict()
+        for pg in self.lossless_pgs:
+            pg_name = "{}:{}".format(self.INTF, pg)
+            pg_name_map[pg_name] = self.get_pg_oid(pg_name)
+        return pg_name_map
+    
     @pytest.fixture
     def setup_teardown_test(self, dvs):
         try:
             self.setup_db(dvs)
-            self.set_port_qos_table()
-            self.get_pfc_enable_queues()
-            pg_name_map = dict()
-            for pg in self.lossless_pgs:
-                pg_name = "{}:{}".format(self.INTF, pg)
-                pg_name_map[pg_name] = self.get_pg_oid(pg_name)
+            self.set_port_qos_table('2,3,4,6')
+            pg_name_map = self.get_pg_name_map()
             yield pg_name_map
         finally:
             self.teardown()
@@ -134,6 +137,30 @@ class TestBuffer(object):
             for pg in self.lossless_pgs:
                 self.app_db.wait_for_field_match("BUFFER_PG_TABLE", self.INTF + ":" + pg, {"profile": orig_lossless_profile})
             fvs = dict()
+            for pg in self.pg_name_map:
+                fvs["SAI_INGRESS_PRIORITY_GROUP_ATTR_BUFFER_PROFILE"] = self.buf_pg_profile[pg]
+                self.asic_db.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP", self.pg_name_map[pg], fvs)
+
+            # Verify pgs are updated if pfc_enable is updated
+            orig_lossless_pgs = self.lossless_pgs
+            orig_pg_name_map = self.pg_name_map
+            
+            self.set_port_qos_table('0,2,3,7')
+            self.pg_name_map = self.get_pg_name_map()
+            time.sleep(1)
+            for pg in orig_lossless_pgs:
+                if pg not in self.lossless_pgs:
+                    assert len(self.app_db.get_entry("BUFFER_PG_TABLE", self.INTF + ":" + pg)) == 0
+            for pg in orig_pg_name_map:
+                if pg not in self.pg_name_map:
+                    fvs["SAI_INGRESS_PRIORITY_GROUP_ATTR_BUFFER_PROFILE"] = "oid:0x0"
+                    self.asic_db.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP", orig_pg_name_map[pg], fvs)
+            
+            # Update buf_pg_profile
+            self.get_asic_buf_pg_profiles()
+
+            for pg in self.lossless_pgs:
+                self.app_db.wait_for_field_match("BUFFER_PG_TABLE", self.INTF + ":" + pg, {"profile": orig_lossless_profile})
             for pg in self.pg_name_map:
                 fvs["SAI_INGRESS_PRIORITY_GROUP_ATTR_BUFFER_PROFILE"] = self.buf_pg_profile[pg]
                 self.asic_db.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP", self.pg_name_map[pg], fvs)

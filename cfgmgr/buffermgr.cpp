@@ -133,10 +133,12 @@ Create/update two tables: profile (in m_cfgBufferProfileTable) and port buffer (
         }
     }
 */
-task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up, const string& pfc_enable)
+task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up)
 {
     string cable;
     string speed;
+    string pfc_enable;
+    string applied_lossless_pg_status;
 
     if (m_cableLenLookup.count(port) == 0)
     {
@@ -151,22 +153,30 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up, con
         return task_process_status::task_success;
     }
 
+    if (m_portPfcStatus.count(port) == 0)
+    {
+        // PORT_QOS_MAP is not ready yet. retry is required
+        SWSS_LOG_INFO("pfc_enable status is not available for port %s", port.c_str());
+        return task_process_status::task_need_retry;
+    }
+    pfc_enable = m_portPfcStatus[port];
+
     speed = m_speedLookup[port];
     // key format is pg_lossless_<speed>_<cable>_profile
     string buffer_profile_key = "pg_lossless_" + speed + "_" + cable + "_profile";
     string profile_ref = buffer_profile_key;
     
     vector<string> lossless_pgs = tokenize(pfc_enable, ',');
-    for (auto lossless_pg : lossless_pgs)
+
+    if (!admin_up && m_platform == "mellanox")
     {
-        vector<FieldValueTuple> fvVectorPg, fvVectorProfile;
-        string buffer_pg_key = port + m_cfgBufferPgTable.getTableNameSeparator() + lossless_pg;
-
-        m_cfgBufferPgTable.get(buffer_pg_key, fvVectorPg);
-
-        if (!admin_up && m_platform == "mellanox")
+        for (auto lossless_pg : lossless_pgs)
         {
             // Remove the entry in BUFFER_PG table if any
+            vector<FieldValueTuple> fvVectorPg;
+            string buffer_pg_key = port + m_cfgBufferPgTable.getTableNameSeparator() + lossless_pg;
+
+            m_cfgBufferPgTable.get(buffer_pg_key, fvVectorPg);
             if (!fvVectorPg.empty())
             {
                 for (auto &prop : fvVectorPg)
@@ -185,9 +195,26 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up, con
                     }
                 }
             }
-
-            continue;
         }
+        // Clear applied recorded
+        if (m_portLosslessPgs.count(port) != 0)
+        {
+            m_portLosslessPgs.erase(port);
+        };
+        // Clear recorded pg for admin_down port
+        if (m_portPgLookup.count(port) != 0)
+        {
+            m_portPgLookup.erase(port);
+        }
+        return task_process_status::task_success;
+    }
+
+    for (auto lossless_pg : lossless_pgs)
+    {
+        vector<FieldValueTuple> fvVectorPg, fvVectorProfile;
+        string buffer_pg_key = port + m_cfgBufferPgTable.getTableNameSeparator() + lossless_pg;
+
+        m_cfgBufferPgTable.get(buffer_pg_key, fvVectorPg);
 
         if (m_pgProfileLookup.count(speed) == 0 || m_pgProfileLookup[speed].count(cable) == 0)
         {
@@ -244,8 +271,76 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up, con
 
         fvVectorPg.push_back(make_pair("profile", profile_ref));
         m_cfgBufferPgTable.set(buffer_pg_key, fvVectorPg);
+        // Save the applied lossless PG
+        m_portLosslessPgs[port] = pfc_enable;
+        // Save the profile_ref
+        m_portPgLookup[port] = profile_ref;
     }
     return task_process_status::task_success;
+}
+
+void BufferMgr::updatePortLosslessPg(const string &port)
+{
+    string applied_lossless_pg_status;
+    // Read the lossless profile that has been applied to port
+    auto iter = m_portLosslessPgs.find(port);
+    if (iter == m_portLosslessPgs.end())
+    {
+        // No lossless pg is applied to port yet, no need to update
+        return;
+    }
+    applied_lossless_pg_status = iter->second;
+
+    string new_pfc_enable_flag = m_portPfcStatus[port];
+
+    vector<string> new_lossless_pgs = tokenize(new_pfc_enable_flag, ',');
+    std::sort(new_lossless_pgs.begin(), new_lossless_pgs.end());
+    
+    vector<string> applied_lossless_pgs = tokenize(applied_lossless_pg_status, ',');
+    std::sort(applied_lossless_pgs.begin(), applied_lossless_pgs.end());
+    
+    // Compare the sorted items, and update if diff is found
+    if (new_lossless_pgs == applied_lossless_pgs)
+    {
+        // No diff detected
+        return;
+    }
+    
+    iter = m_portPgLookup.find(port);
+    if (iter == m_portPgLookup.end())
+    {
+        // Ignore if PG profile is not generated for the port
+        return;
+    }
+    string profile_ref = m_portPgLookup[port];
+    string buffer_pg_key;
+    vector<FieldValueTuple> fvVectorPg;
+    // Remove the already applied BUFFER_PG
+    for (auto pg : applied_lossless_pgs)
+    {
+        buffer_pg_key = port + m_cfgBufferPgTable.getTableNameSeparator() + pg;
+        fvVectorPg.clear();
+        m_cfgBufferPgTable.get(buffer_pg_key, fvVectorPg);
+
+        // Remove the entry in BUFFER_PG table if any
+        if (!fvVectorPg.empty())
+        {
+            m_cfgBufferPgTable.del(buffer_pg_key);
+        }
+        SWSS_LOG_INFO("Removed stale PG profile for port %s PG %s", port.c_str(), pg.c_str());
+    }
+
+    // Apply PG profile to new lossless pgs
+    for (auto pg : new_lossless_pgs)
+    {
+        buffer_pg_key = port + m_cfgBufferPgTable.getTableNameSeparator() + pg;
+        fvVectorPg.clear();
+        fvVectorPg.push_back(make_pair("profile", profile_ref));
+        m_cfgBufferPgTable.set(buffer_pg_key, fvVectorPg);
+        SWSS_LOG_INFO("Applied PG profile for port %s PG %s", port.c_str(), pg.c_str());
+    }
+    // Record the PGs 
+    m_portLosslessPgs[port] = new_pfc_enable_flag;       
 }
 
 void BufferMgr::transformSeperator(string &name)
@@ -372,6 +467,8 @@ void BufferMgr::doPortQosTableTask(Consumer &consumer)
                 {
                     m_portPfcStatus[port_name] = fvValue(itp);
                     SWSS_LOG_INFO("Got pfc enable status for port %s status %s", port_name.c_str(), fvValue(itp).c_str());
+                    // Check if pfc_enable flag is updated
+                    updatePortLosslessPg(port_name);
                     break;
                 }
             }
@@ -379,23 +476,6 @@ void BufferMgr::doPortQosTableTask(Consumer &consumer)
         it = consumer.m_toSync.erase(it);
     }
 
-}
-
-/*
-Read pfc_enable entry from PORT_QOS_MAP to decide on which queue to
-apply lossless PG.
-Return the true if PORT_QOS_MAP is already available, otherwise return false
-*/
-bool BufferMgr::getPfcEnableQueuesForPort(std::string port, std::string &pfc_status)
-{
-    auto iter = m_portPfcStatus.find(port);
-    if (iter != m_portPfcStatus.end())
-    {
-        pfc_status = iter->second;
-        return true;
-    }
-
-    return false;
 }
 
 void BufferMgr::doTask(Consumer &consumer)
@@ -495,18 +575,7 @@ void BufferMgr::doTask(Consumer &consumer)
 
                 if (m_speedLookup.count(port) != 0)
                 {
-                    // create/update profile for port
-                    string pfc_enable_status;
-                    if (!getPfcEnableQueuesForPort(port, pfc_enable_status))
-                    {
-                        // PORT_QOS_MAP is not ready yet. retry is required
-                        SWSS_LOG_INFO("pfc_enable status is not available for port %s", port.c_str());
-                        task_status = task_process_status::task_need_retry;
-                    }
-                    else
-                    {
-                        task_status = doSpeedUpdateTask(port, admin_up, pfc_enable_status);
-                    }
+                    task_status = doSpeedUpdateTask(port, admin_up);
                 }
 
                 if (task_status != task_process_status::task_success)
