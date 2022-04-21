@@ -63,7 +63,7 @@ extern string gMyAsicName;
 
 #define DEFAULT_VECTOR_SIZE 16
 
-#define PORT_STAT_POLLING_SEC                             5
+#define PORT_STATE_POLLING_SEC                            5
 #define PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS     1000
 #define PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS     60000
 #define QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   10000
@@ -302,7 +302,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         port_stat_manager(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         port_buffer_drop_stat_manager(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS, false),
         queue_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
-        m_timer(new SelectableTimer(timespec { .tv_sec = PORT_STAT_POLLING_SEC, .tv_nsec = 0 }))
+        m_timer(new SelectableTimer(timespec { .tv_sec = PORT_STATE_POLLING_SEC, .tv_nsec = 0 }))
 {
     SWSS_LOG_ENTER();
 
@@ -1873,7 +1873,7 @@ void PortsOrch::initPortCapAutoNeg(Port &port)
     sai_attribute_t attr;
 
     attr.id = SAI_PORT_ATTR_SUPPORTED_AUTO_NEG_MODE;
-    status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+    status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
     if (status == SAI_STATUS_SUCCESS)
     {
         port.m_port_cap_an = attr.value.booldata;
@@ -6996,13 +6996,13 @@ void PortsOrch::updatePortStateAutoNeg(const Port &port)
     }
 }
 
-void PortsOrch::updatePortStatePoll(const Port &port, port_state_poll_t type, bool set)
+void PortsOrch::updatePortStatePoll(const Port &port, port_state_poll_t type, bool active)
 {
     if (type == PORT_STATE_POLL_NONE)
     {
         return;
     }
-    if (set)
+    if (active)
     {
         m_port_state_poll[port.m_alias] |= type;
         m_timer->start();
@@ -7026,7 +7026,11 @@ void PortsOrch::doTask(swss::SelectableTimer &timer)
             m_port_state_poll.erase(it);
             continue;
         }
-        if (port.m_admin_state_up && (it->second & PORT_STATE_POLL_AN))
+        if (!port.m_admin_state_up)
+        {
+            continue;
+        }
+        if (it->second & PORT_STATE_POLL_AN)
         {
             updatePortStateAutoNeg(port);
         }
