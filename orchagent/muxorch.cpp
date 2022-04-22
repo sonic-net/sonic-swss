@@ -1184,14 +1184,12 @@ void MuxOrch::update(SubjectType type, void *cntx)
     }
 }
 
-MuxOrch::MuxOrch(DBConnector *cfg_db, DBConnector *app_db, const std::vector<std::string> &tables,
+MuxOrch::MuxOrch(DBConnector *db, const std::vector<std::string> &tables,
          TunnelDecapOrch* decapOrch, NeighOrch* neighOrch, FdbOrch* fdbOrch) :
-         Orch2(cfg_db, tables, request_),
+         Orch2(db, tables, request_),
          decap_orch_(decapOrch),
          neigh_orch_(neighOrch),
-         fdb_orch_(fdbOrch),
-         app_decap_tunnel_table_(app_db, APP_TUNNEL_DECAP_TABLE_NAME)
-         
+         fdb_orch_(fdbOrch)
 {
     handler_map_.insert(handler_pair(CFG_MUX_CABLE_TABLE_NAME, &MuxOrch::handleMuxCfg));
     handler_map_.insert(handler_pair(CFG_PEER_SWITCH_TABLE_NAME, &MuxOrch::handlePeerSwitch));
@@ -1245,44 +1243,6 @@ bool MuxOrch::handleMuxCfg(const Request& request)
     return true;
 }
 
-// Retrieve tc_to_queue_map and tc_to_dscp_map from CONFIG_DB, and 
-// resolve the ids from QosOrch
-bool MuxOrch::resolveQosTableIds()
-{
-    std::vector<FieldValueTuple> field_value_tuples;
-    if (app_decap_tunnel_table_.get(MUX_TUNNEL, field_value_tuples))
-    {
-        KeyOpFieldsValuesTuple tuple{"TUNNEL", MUX_TUNNEL, field_value_tuples};
-        // Read tc_to_queue_map_id
-        tc_to_queue_map_id_ = gQosOrch->resolveTunnelQosMap(app_decap_tunnel_table_.getTableName(), MUX_TUNNEL, encap_tc_to_queue_field_name, tuple);
-        if (tc_to_queue_map_id_ == SAI_NULL_OBJECT_ID)
-        {
-            SWSS_LOG_NOTICE("QoS map for tunnel %s type %s is not set", MUX_TUNNEL, encap_tc_to_queue_field_name.c_str());
-        }
-        else
-        {
-            SWSS_LOG_NOTICE("Resolved QoS map for tunnel %s type %s id %" PRId64, MUX_TUNNEL, encap_tc_to_queue_field_name.c_str(), tc_to_queue_map_id_);
-        }
-
-        // Read tc_to_dscp_map_id
-        tc_to_dscp_map_id_ = gQosOrch->resolveTunnelQosMap(app_decap_tunnel_table_.getTableName(), MUX_TUNNEL, encap_tc_to_dscp_field_name, tuple);
-        if (tc_to_dscp_map_id_ == SAI_NULL_OBJECT_ID)
-        {
-            SWSS_LOG_NOTICE("QoS map for tunnel %s type %s is not set", MUX_TUNNEL, encap_tc_to_dscp_field_name.c_str());
-        }
-        else
-        {
-            SWSS_LOG_NOTICE("Resolved QoS map for tunnel %s type %s id %" PRId64, MUX_TUNNEL, encap_tc_to_dscp_field_name.c_str(), tc_to_dscp_map_id_);
-        }
-        return true;
-    }
-    else
-    {
-        SWSS_LOG_NOTICE("Entry for table %s not created yet in APP_DB", MUX_TUNNEL);
-        return false;
-    }
-}
-
 bool MuxOrch::handlePeerSwitch(const Request& request)
 {
     SWSS_LOG_ENTER();
@@ -1307,21 +1267,30 @@ bool MuxOrch::handlePeerSwitch(const Request& request)
         auto it =  dst_ips.getIpAddresses().begin();
         const IpAddress& dst_ip = *it;
 
-        // Read dscp_mode of MuxTunnel0 from app_db
-        string dscp_mode_name = "pipe";
-        if (!app_decap_tunnel_table_.hget(MUX_TUNNEL, "dscp_mode", dscp_mode_name))
+        // Read dscp_mode of MuxTunnel0 from decap_orch
+        string dscp_mode_name = decap_orch_->getDscpMode(MUX_TUNNEL);
+        if (dscp_mode_name == "")
         {
-            SWSS_LOG_NOTICE("dscp_mode not available for %s", MUX_TUNNEL);
+            SWSS_LOG_INFO("dscp_mode for tunnel %s is not available yet", MUX_TUNNEL);
             return false;
         }
 
-        // Read tc_to_dscp_map_id and tc_to_queue_map_id
-        if (!resolveQosTableIds())
+        // Read tc_to_dscp_map_id of MuxTunnel0 from decap_orch
+        sai_object_id_t tc_to_dscp_map_id = SAI_NULL_OBJECT_ID;
+        if (!decap_orch_->getQosMapId(MUX_TUNNEL, encap_tc_to_dscp_field_name, tc_to_dscp_map_id))
         {
+            SWSS_LOG_INFO("tc_to_dscp_map_id for tunnel %s is not available yet", MUX_TUNNEL);
+            return false;
+        }
+        // Read tc_to_queue_map_id of MuxTunnel0 from decap_orch
+        sai_object_id_t tc_to_queue_map_id = SAI_NULL_OBJECT_ID;
+        if (!decap_orch_->getQosMapId(MUX_TUNNEL, encap_tc_to_queue_field_name, tc_to_queue_map_id))
+        {
+            SWSS_LOG_INFO("tc_to_queue_map_id for tunnel %s is not available yet", MUX_TUNNEL);
             return false;
         }
 
-        mux_tunnel_id_ = create_tunnel(&peer_ip, &dst_ip, tc_to_dscp_map_id_, tc_to_queue_map_id_, dscp_mode_name);
+        mux_tunnel_id_ = create_tunnel(&peer_ip, &dst_ip, tc_to_dscp_map_id, tc_to_queue_map_id, dscp_mode_name);
         SWSS_LOG_NOTICE("Mux peer ip '%s' was added, peer name '%s'",
                          peer_ip.to_string().c_str(), peer_name.c_str());
     }

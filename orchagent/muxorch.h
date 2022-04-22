@@ -156,7 +156,7 @@ public:
 class MuxOrch : public Orch2, public Observer, public Subject
 {
 public:
-    MuxOrch(DBConnector *cfg_db, DBConnector *app_db, const std::vector<std::string> &tables, TunnelDecapOrch*, NeighOrch*, FdbOrch*);
+    MuxOrch(DBConnector *db, const std::vector<std::string> &tables, TunnelDecapOrch*, NeighOrch*, FdbOrch*);
 
     using handler_pair = pair<string, bool (MuxOrch::*) (const Request& )>;
     using handler_map = map<string, bool (MuxOrch::*) (const Request& )>;
@@ -196,12 +196,8 @@ private:
 
     bool getMuxPort(const MacAddress&, const string&, string&);
 
-    bool resolveQosTableIds();
-
     IpAddress mux_peer_switch_ = 0x0;
     sai_object_id_t mux_tunnel_id_ = SAI_NULL_OBJECT_ID;
-    sai_object_id_t tc_to_queue_map_id_ = SAI_NULL_OBJECT_ID;
-    sai_object_id_t tc_to_dscp_map_id_ = SAI_NULL_OBJECT_ID;
 
     MuxCableTb mux_cable_tb_;
     MuxTunnelNHs mux_tunnel_nh_;
@@ -214,7 +210,6 @@ private:
     FdbOrch *fdb_orch_;
 
     MuxCfgRequest request_;
-    Table app_decap_tunnel_table_;
 };
 
 const request_description_t mux_cable_request_description = {

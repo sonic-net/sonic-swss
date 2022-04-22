@@ -212,7 +212,7 @@ namespace routeorch_test
                 CFG_MUX_CABLE_TABLE_NAME,
                 CFG_PEER_SWITCH_TABLE_NAME
             };
-            MuxOrch *mux_orch = new MuxOrch(m_config_db.get(), m_app_db.get(), mux_tables, tunnel_decap_orch, gNeighOrch, gFdbOrch);
+            MuxOrch *mux_orch = new MuxOrch(m_config_db.get(), mux_tables, tunnel_decap_orch, gNeighOrch, gFdbOrch);
             gDirectory.set(mux_orch);
 
             ASSERT_EQ(gFgNhgOrch, nullptr);

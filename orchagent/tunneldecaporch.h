@@ -30,10 +30,13 @@ struct TunnelTermEntry
 
 struct TunnelEntry
 {
-    sai_object_id_t                 tunnel_id;              // tunnel id
-    sai_object_id_t                 overlay_intf_id;        // overlay interface id
-    swss::IpAddresses               dst_ip_addrs;           // destination ip addresses
-    std::vector<TunnelTermEntry>    tunnel_term_info;       // tunnel_entry ids related to the tunnel abd ips related to the tunnel (all ips for tunnel entries that refer to this tunnel)
+    sai_object_id_t                 tunnel_id;                  // tunnel id
+    sai_object_id_t                 overlay_intf_id;            // overlay interface id
+    swss::IpAddresses               dst_ip_addrs;               // destination ip addresses
+    std::vector<TunnelTermEntry>    tunnel_term_info;           // tunnel_entry ids related to the tunnel abd ips related to the tunnel (all ips for tunnel entries that refer to this tunnel)
+    std::string                     dscp_mode;                  // dscp_mode, will be used in muxorch
+    sai_object_id_t                 encap_tc_to_dscp_map_id;    // TC_TO_DSCP map id, will be used in muxorch
+    sai_object_id_t                 encap_tc_to_queue_map_id;   // TC_TO_QUEUE map id, will be used in muxorch  
 };
 
 struct NexthopTunnel
@@ -65,7 +68,8 @@ public:
     sai_object_id_t createNextHopTunnel(std::string tunnelKey, swss::IpAddress& ipAddr);
     bool removeNextHopTunnel(std::string tunnelKey, swss::IpAddress& ipAddr);
     swss::IpAddresses getDstIpAddresses(std::string tunnelKey);
-
+    std::string getDscpMode(const std::string &tunnelKey) const;
+    bool getQosMapId(const std::string &tunnelKey, const std::string &qos_table_type, sai_object_id_t &oid) const;
 private:
     TunnelTable tunnelTable;
     ExistingIps existingIps;

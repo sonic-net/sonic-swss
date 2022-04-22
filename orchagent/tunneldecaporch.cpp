@@ -52,6 +52,9 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
         string ttl_mode;
         sai_object_id_t dscp_to_dc_map_id = SAI_NULL_OBJECT_ID;
         sai_object_id_t tc_to_pg_map_id = SAI_NULL_OBJECT_ID;
+        // The tc_to_dscp_map_id and tc_to_queue_map_id are parsed here for muxorch to retrieve
+        sai_object_id_t tc_to_dscp_map_id = SAI_NULL_OBJECT_ID;
+        sai_object_id_t tc_to_queue_map_id = SAI_NULL_OBJECT_ID;
 
         bool valid = true;
 
@@ -126,6 +129,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                     if (exists)
                     {
                         setTunnelAttribute(fvField(i), dscp_mode, tunnel_id);
+                        tunnelTable[key].dscp_mode = dscp_mode;
                     }
                 }
                 else if (fvField(i) == "ecn_mode")
@@ -186,6 +190,24 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                         setTunnelAttribute(fvField(i), tc_to_pg_map_id, tunnel_id);
                     }
                 }
+                else if (fvField(i) == encap_tc_to_dscp_field_name)
+                {
+                    tc_to_dscp_map_id = gQosOrch->resolveTunnelQosMap(table_name, key, encap_tc_to_dscp_field_name, t);
+                    if (exists)
+                    {
+                        // Record only
+                        tunnelTable[key].encap_tc_to_dscp_map_id = tc_to_dscp_map_id;
+                    }
+                }
+                else if (fvField(i) == encap_tc_to_queue_field_name)
+                {
+                    tc_to_queue_map_id = gQosOrch->resolveTunnelQosMap(table_name, key, encap_tc_to_queue_field_name, t);
+                    if (exists)
+                    {
+                        // Record only
+                        tunnelTable[key].encap_tc_to_queue_map_id = tc_to_queue_map_id;
+                    }
+                }
             }
 
             //create new tunnel if it doesn't exists already
@@ -195,6 +217,9 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                 if (addDecapTunnel(key, tunnel_type, ip_addresses, p_src_ip, dscp_mode, ecn_mode, encap_ecn_mode, ttl_mode,
                                     dscp_to_dc_map_id, tc_to_pg_map_id))
                 {
+                    // Record only
+                    tunnelTable[key].encap_tc_to_dscp_map_id = tc_to_dscp_map_id;
+                    tunnelTable[key].encap_tc_to_queue_map_id = tc_to_queue_map_id;
                     SWSS_LOG_NOTICE("Tunnel(s) added to ASIC_DB.");
                 }
                 else
@@ -385,7 +410,7 @@ bool TunnelDecapOrch::addDecapTunnel(
         }
     }
 
-    tunnelTable[key] = { tunnel_id, overlayIfId, dst_ip, {} };
+    tunnelTable[key] = { tunnel_id, overlayIfId, dst_ip, {}, dscp, SAI_NULL_OBJECT_ID, SAI_NULL_OBJECT_ID };
 
     // create a decap tunnel entry for every source_ip - dest_ip pair
     if (!addDecapTunnelTermEntries(key, src_ip, dst_ip, tunnel_id, term_type))
@@ -609,15 +634,14 @@ bool TunnelDecapOrch::setTunnelAttribute(string field, sai_object_id_t value, sa
 
     sai_attribute_t attr;
 
-    if (field == "decap_dscp_to_tc_map")
+    if (field == decap_dscp_to_tc_field_name)
     {
         // TC remapping.
         attr.id = SAI_TUNNEL_ATTR_DECAP_QOS_DSCP_TO_TC_MAP;
         attr.value.oid = value; 
         
     }
-
-    if (field == "decap_tc_to_pg_map")
+    else if (field == decap_tc_to_pg_field_name)
     {
         // TC to PG remapping
         attr.id = SAI_TUNNEL_ATTR_DECAP_QOS_TC_TO_PRIORITY_GROUP_MAP;
@@ -939,3 +963,37 @@ IpAddresses TunnelDecapOrch::getDstIpAddresses(std::string tunnelKey)
     return tunnelTable[tunnelKey].dst_ip_addrs;
 }
 
+std::string TunnelDecapOrch::getDscpMode(const std::string &tunnelKey) const
+{
+    auto iter = tunnelTable.find(tunnelKey);
+    if (iter == tunnelTable.end())
+    {
+        SWSS_LOG_INFO("Tunnel not found %s", tunnelKey.c_str());
+        return "";
+    }
+    return iter->second.dscp_mode;
+}
+
+bool TunnelDecapOrch::getQosMapId(const std::string &tunnelKey, const std::string &qos_table_type, sai_object_id_t &oid) const
+{
+    auto iter = tunnelTable.find(tunnelKey);
+    if (iter == tunnelTable.end())
+    {
+        SWSS_LOG_INFO("Tunnel not found %s", tunnelKey.c_str());
+        return false;
+    }
+    if (qos_table_type == encap_tc_to_dscp_field_name)
+    {
+        oid = iter->second.encap_tc_to_dscp_map_id;
+    }
+    else if (qos_table_type == encap_tc_to_queue_field_name)
+    {
+        oid = iter->second.encap_tc_to_queue_map_id;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Unsupported qos type %s", qos_table_type.c_str());
+        return false;
+    }
+    return true;
+}
