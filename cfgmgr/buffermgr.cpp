@@ -199,6 +199,13 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up)
 
         return task_process_status::task_success;
     }
+    
+    if (m_pgProfileLookup.count(speed) == 0 || m_pgProfileLookup[speed].count(cable) == 0)
+    {
+            SWSS_LOG_ERROR("Unable to create/update PG profile for port %s. No PG profile configured for speed %s and cable length %s",
+                        port.c_str(), speed.c_str(), cable.c_str());
+            return task_process_status::task_invalid_entry;
+    }
 
     vector<FieldValueTuple> fvVectorProfile;
     // check if profile already exists - if yes - skip creation
@@ -242,13 +249,6 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up)
         string buffer_pg_key = port + m_cfgBufferPgTable.getTableNameSeparator() + lossless_pg;
 
         m_cfgBufferPgTable.get(buffer_pg_key, fvVectorPg);
-
-        if (m_pgProfileLookup.count(speed) == 0 || m_pgProfileLookup[speed].count(cable) == 0)
-        {
-            SWSS_LOG_ERROR("Unable to create/update PG profile for port %s. No PG profile configured for speed %s and cable length %s",
-                        port.c_str(), speed.c_str(), cable.c_str());
-            return task_process_status::task_invalid_entry;
-        }
 
         /* Check if PG Mapping is already then log message and return. */
         for (auto& prop : fvVectorPg)
