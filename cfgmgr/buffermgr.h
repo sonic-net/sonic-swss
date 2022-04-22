@@ -11,7 +11,6 @@
 namespace swss {
 
 #define INGRESS_LOSSLESS_PG_POOL_NAME "ingress_lossless_pool"
-#define LOSSLESS_PGS "3-4"
 
 #define BUFFERMGR_TIMER_PERIOD 10
 
@@ -71,11 +70,7 @@ private:
     void doBufferMetaTask(Consumer &consumer);
     
     port_pfc_status_t m_portPfcStatus;
-    port_pfc_status_t m_portLosslessPgs;
     void doPortQosTableTask(Consumer &consumer);
-
-    port_pg_profile_t m_portPgLookup;
-    void updatePortLosslessPg(const std::string &port_name);
 
 };
 

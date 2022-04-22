@@ -14,7 +14,7 @@ class TestBuffer(object):
 
         # enable PG watermark
         self.set_pg_wm_status('enable')
-    
+
     def get_pfc_enable_queues(self):
         qos_map = self.config_db.get_entry("PORT_QOS_MAP", self.INTF)
         return qos_map['pfc_enable'].split(',')
@@ -72,7 +72,7 @@ class TestBuffer(object):
             pg_name = "{}:{}".format(self.INTF, pg)
             pg_name_map[pg_name] = self.get_pg_oid(pg_name)
         return pg_name_map
-    
+
     @pytest.fixture
     def setup_teardown_test(self, dvs):
         try:
@@ -132,35 +132,11 @@ class TestBuffer(object):
             test_lossless_profile = "pg_lossless_{}_{}_profile".format(test_speed, test_cable_len)
             # buffer profile should not get created
             self.app_db.wait_for_deleted_entry("BUFFER_PROFILE_TABLE", test_lossless_profile)
-            
+
             # buffer pgs should still point to the original buffer profile
             for pg in self.lossless_pgs:
                 self.app_db.wait_for_field_match("BUFFER_PG_TABLE", self.INTF + ":" + pg, {"profile": orig_lossless_profile})
             fvs = dict()
-            for pg in self.pg_name_map:
-                fvs["SAI_INGRESS_PRIORITY_GROUP_ATTR_BUFFER_PROFILE"] = self.buf_pg_profile[pg]
-                self.asic_db.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP", self.pg_name_map[pg], fvs)
-
-            # Verify pgs are updated if pfc_enable is updated
-            orig_lossless_pgs = self.lossless_pgs
-            orig_pg_name_map = self.pg_name_map
-            
-            self.set_port_qos_table('0,2,3,7')
-            self.pg_name_map = self.get_pg_name_map()
-            time.sleep(1)
-            for pg in orig_lossless_pgs:
-                if pg not in self.lossless_pgs:
-                    assert len(self.app_db.get_entry("BUFFER_PG_TABLE", self.INTF + ":" + pg)) == 0
-            for pg in orig_pg_name_map:
-                if pg not in self.pg_name_map:
-                    fvs["SAI_INGRESS_PRIORITY_GROUP_ATTR_BUFFER_PROFILE"] = "oid:0x0"
-                    self.asic_db.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP", orig_pg_name_map[pg], fvs)
-            
-            # Update buf_pg_profile
-            self.get_asic_buf_pg_profiles()
-
-            for pg in self.lossless_pgs:
-                self.app_db.wait_for_field_match("BUFFER_PG_TABLE", self.INTF + ":" + pg, {"profile": orig_lossless_profile})
             for pg in self.pg_name_map:
                 fvs["SAI_INGRESS_PRIORITY_GROUP_ATTR_BUFFER_PROFILE"] = self.buf_pg_profile[pg]
                 self.asic_db.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP", self.pg_name_map[pg], fvs)
@@ -186,6 +162,65 @@ class TestBuffer(object):
                 for pg in self.pg_name_map:
                     fvs["SAI_INGRESS_PRIORITY_GROUP_ATTR_BUFFER_PROFILE"] = self.buf_pg_profile[pg]
                     self.asic_db.wait_for_field_negative_match("ASIC_STATE:SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP", self.pg_name_map[pg], fvs)
+        finally:
+            if orig_cable_len:
+                self.change_cable_len(orig_cable_len)
+            if orig_speed:
+                dvs.port_field_set(self.INTF, "speed", orig_speed)
+            dvs.port_admin_set(self.INTF, "down")
+
+    # To verify the BUFFER_PG is not hardcoded to 3,4
+    # buffermgrd will read 'pfc_enable' entry and apply lossless profile to that queue
+    def test_buffer_pg_update(self, dvs, setup_teardown_test):
+        self.pg_name_map = setup_teardown_test
+        orig_cable_len = None
+        orig_speed = None
+        try:
+            # Retrieve cable len
+            fvs_cable_len = self.config_db.get_entry("CABLE_LENGTH", "AZURE")
+            orig_cable_len = fvs_cable_len[self.INTF]
+            if orig_cable_len == "0m":
+                fvs_cable_len[self.INTF] = "300m"
+                cable_len_before_test = "300m"
+                self.config_db.update_entry("CABLE_LENGTH", "AZURE", fvs_cable_len)
+            else:
+                cable_len_before_test = orig_cable_len
+            
+            dvs.port_admin_set(self.INTF, "up")
+            
+             # Retrieve port speed
+            fvs_port = self.config_db.get_entry("PORT", self.INTF)
+            orig_speed = fvs_port["speed"]
+
+            # Make sure the buffer PG has been created
+            orig_lossless_profile = "pg_lossless_{}_{}_profile".format(orig_speed, cable_len_before_test)
+            self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", orig_lossless_profile)
+            self.orig_profiles = self.get_asic_buf_profile()
+
+            # get the orig buf profiles attached to the pgs
+            self.get_asic_buf_pg_profiles()
+
+            # Update port speed
+            if orig_speed == "100000":
+                test_speed = "40000"
+            elif orig_speed == "40000":
+                test_speed = "100000"
+            # change intf speed to 'test_speed'
+            dvs.port_field_set(self.INTF, "speed", test_speed)
+
+            # Verify new profile is generated
+            new_lossless_profile = "pg_lossless_{}_{}_profile".format(test_speed, cable_len_before_test)
+            self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", new_lossless_profile)
+
+            # Verify BUFFER_PG is updated
+            for pg in self.lossless_pgs:
+                self.app_db.wait_for_field_match("BUFFER_PG_TABLE", self.INTF + ":" + pg, {"profile": new_lossless_profile})
+           
+            fvs_negative = {}
+            for pg in self.pg_name_map:
+                # verify that buffer pgs do not point to the old profile since we cannot deduce the new profile oid
+                fvs_negative["SAI_INGRESS_PRIORITY_GROUP_ATTR_BUFFER_PROFILE"] = self.buf_pg_profile[pg]
+                self.asic_db.wait_for_field_negative_match("ASIC_STATE:SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP", self.pg_name_map[pg], fvs_negative)
         finally:
             if orig_cable_len:
                 self.change_cable_len(orig_cable_len)
