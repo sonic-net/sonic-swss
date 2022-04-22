@@ -61,6 +61,12 @@ const map<std::pair<MuxState, MuxState>, MuxStateChange> muxStateTransition =
 
     { { MuxState::MUX_STATE_STANDBY, MuxState::MUX_STATE_ACTIVE}, MuxStateChange::MUX_STATE_STANDBY_ACTIVE
     },
+
+    { { MuxState::MUX_STATE_ACTIVE, MuxState::MUX_STATE_ACTIVE}, MuxStateChange::MUX_STATE_ACTIVE_ACTIVE
+    },
+
+    { { MuxState::MUX_STATE_STANDBY, MuxState::MUX_STATE_STANDBY}, MuxStateChange::MUX_STATE_STANDBY_STANDBY
+    },
 };
 
 const map <MuxState, string> muxStateValToString =
@@ -326,6 +332,8 @@ MuxCable::MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress 
     state_machine_handlers_.insert(handler_pair(MUX_STATE_STANDBY_ACTIVE, &MuxCable::stateActive));
     state_machine_handlers_.insert(handler_pair(MUX_STATE_INIT_STANDBY, &MuxCable::stateStandby));
     state_machine_handlers_.insert(handler_pair(MUX_STATE_ACTIVE_STANDBY, &MuxCable::stateStandby));
+    state_machine_handlers_.insert(handler_pair(MUX_STATE_ACTIVE_ACTIVE, &MuxCable::stateActive));
+    state_machine_handlers_.insert(handler_pair(MUX_STATE_STANDBY_STANDBY, &MuxCable::stateStandby));
 
     /* Set initial state to "standby" */
     stateStandby();
