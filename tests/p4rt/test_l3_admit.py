@@ -16,6 +16,7 @@ class TestP4RTL3Admit(object):
             swsscommon.APP_P4RT_TABLE_NAME + "_RESPONSE_CHANNEL"
         )
 
+    @pytest.mark.skip(reason="sairedis vs MY MAC support is not ready")
     def test_DefaultL3AdmitAddDeletePass(self, dvs, testlog):
         # Initialize database connectors.
         self._set_up(dvs)
