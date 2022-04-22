@@ -18,10 +18,15 @@
 
 #define AVAILABLE_ACL_PRIORITIES_LIMITATION             (32)
 #define EAPOL_ETHER_TYPE                                (0x888e)
+#define PAUSE_ETHER_TYPE                                (0x8808)
 #define MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS    (1000)
 #define COUNTERS_MACSEC_SA_ATTR_GROUP                   "COUNTERS_MACSEC_SA_ATTR"
 #define COUNTERS_MACSEC_SA_GROUP                        "COUNTERS_MACSEC_SA"
 #define COUNTERS_MACSEC_FLOW_GROUP                      "COUNTERS_MACSEC_FLOW"
+#define PFC_MODE_BYPASS                                 "bypass"
+#define PFC_MODE_ENCRYPT                                "encrypt"
+#define PFC_MODE_STRICT_ENCRYPT                         "strict_encrypt"
+#define PFC_MODE_DEFAULT                                 PFC_MODE_BYPASS
 
 extern sai_object_id_t   gSwitchId;
 extern sai_macsec_api_t *sai_macsec_api;
@@ -535,6 +540,7 @@ MACsecOrch::MACsecOrch(
                             m_state_macsec_ingress_sc(state_db, STATE_MACSEC_INGRESS_SC_TABLE_NAME),
                             m_state_macsec_egress_sa(state_db, STATE_MACSEC_EGRESS_SA_TABLE_NAME),
                             m_state_macsec_ingress_sa(state_db, STATE_MACSEC_INGRESS_SA_TABLE_NAME),
+                            m_applPortTable(app_db, APP_PORT_TABLE_NAME),
                             m_counter_db("COUNTERS_DB", 0),
                             m_macsec_counters_map(&m_counter_db, COUNTERS_MACSEC_NAME_MAP),
                             m_macsec_flow_tx_counters_map(&m_counter_db, COUNTERS_MACSEC_FLOW_TX_NAME_MAP),
@@ -1085,16 +1091,19 @@ bool MACsecOrch::createMACsecPort(
             port_id,
             switch_id,
             SAI_MACSEC_DIRECTION_EGRESS,
-            macsec_port.m_sci_in_sectag))
+            macsec_port.m_sci_in_sectag,
+            port_name,
+            phy))
     {
         SWSS_LOG_WARN("Cannot init the ACL Table at the port %s.", port_name.c_str());
         return false;
     }
-    recover.add_action([this, &macsec_port, port_id]() {
+    recover.add_action([this, &macsec_port, port_id, phy]() {
         this->deinitMACsecACLTable(
             macsec_port.m_egress_acl_table,
             port_id,
-            SAI_MACSEC_DIRECTION_EGRESS);
+            SAI_MACSEC_DIRECTION_EGRESS,
+            phy);
     });
 
     if (!initMACsecACLTable(
@@ -1102,29 +1111,43 @@ bool MACsecOrch::createMACsecPort(
             port_id,
             switch_id,
             SAI_MACSEC_DIRECTION_INGRESS,
-            macsec_port.m_sci_in_sectag))
+            macsec_port.m_sci_in_sectag,
+            port_name,
+            phy))
     {
         SWSS_LOG_WARN("Cannot init the ACL Table at the port %s.", port_name.c_str());
         return false;
     }
-    recover.add_action([this, &macsec_port, port_id]() {
+    recover.add_action([this, &macsec_port, port_id, phy]() {
         this->deinitMACsecACLTable(
             macsec_port.m_ingress_acl_table,
             port_id,
-            SAI_MACSEC_DIRECTION_INGRESS);
+            SAI_MACSEC_DIRECTION_INGRESS,
+            phy);
     });
 
-    if (phy && phy->macsec_ipg != 0)
+    if (phy)
     {
-        if (!m_port_orch->getPortIPG(port.m_port_id, macsec_port.m_original_ipg))
+        if (!setPFCForward(port_id, true))
         {
-            SWSS_LOG_WARN("Cannot get Port IPG at the port %s", port_name.c_str());
+            SWSS_LOG_WARN("Cannot enable PFC forward at the port %s.", port_name.c_str());
             return false;
         }
-        if (!m_port_orch->setPortIPG(port.m_port_id, phy->macsec_ipg))
+        recover.add_action([this, port_id]()
+                           { this->setPFCForward(port_id, false); });
+
+        if (phy->macsec_ipg != 0)
         {
-            SWSS_LOG_WARN("Cannot set MACsec IPG to %u at the port %s", phy->macsec_ipg, port_name.c_str());
-            return false;
+            if (!m_port_orch->getPortIPG(port.m_port_id, macsec_port.m_original_ipg))
+            {
+                SWSS_LOG_WARN("Cannot get Port IPG at the port %s", port_name.c_str());
+                return false;
+            }
+            if (!m_port_orch->setPortIPG(port.m_port_id, phy->macsec_ipg))
+            {
+                SWSS_LOG_WARN("Cannot set MACsec IPG to %u at the port %s", phy->macsec_ipg, port_name.c_str());
+                return false;
+            }
         }
     }
 
@@ -1345,13 +1368,13 @@ bool MACsecOrch::deleteMACsecPort(
         }
     }
 
-    if (!deinitMACsecACLTable(macsec_port.m_ingress_acl_table, port_id, SAI_MACSEC_DIRECTION_INGRESS))
+    if (!deinitMACsecACLTable(macsec_port.m_ingress_acl_table, port_id, SAI_MACSEC_DIRECTION_INGRESS, phy))
     {
         SWSS_LOG_WARN("Cannot deinit ingress ACL table at the port %s.", port_name.c_str());
         result &= false;
     }
 
-    if (!deinitMACsecACLTable(macsec_port.m_egress_acl_table, port_id, SAI_MACSEC_DIRECTION_EGRESS))
+    if (!deinitMACsecACLTable(macsec_port.m_egress_acl_table, port_id, SAI_MACSEC_DIRECTION_EGRESS, phy))
     {
         SWSS_LOG_WARN("Cannot deinit egress ACL table at the port %s.", port_name.c_str());
         result &= false;
@@ -1369,12 +1392,21 @@ bool MACsecOrch::deleteMACsecPort(
         result &= false;
     }
 
-    if (phy && phy->macsec_ipg != 0)
+    if (phy)
     {
-        if (!m_port_orch->setPortIPG(port.m_port_id, macsec_port.m_original_ipg))
+        if (!setPFCForward(port_id, false))
         {
-            SWSS_LOG_WARN("Cannot set MACsec IPG to %u at the port %s", macsec_port.m_original_ipg, port_name.c_str());
+            SWSS_LOG_WARN("Cannot disable PFC forward at the port %s.", port_name.c_str());
             result &= false;
+        }
+
+        if (phy->macsec_ipg != 0)
+        {
+            if (!m_port_orch->setPortIPG(port.m_port_id, macsec_port.m_original_ipg))
+            {
+                SWSS_LOG_WARN("Cannot set MACsec IPG to %u at the port %s", macsec_port.m_original_ipg, port_name.c_str());
+                result &= false;
+            }
         }
     }
 
@@ -2210,7 +2242,9 @@ bool MACsecOrch::initMACsecACLTable(
     sai_object_id_t port_id,
     sai_object_id_t switch_id,
     sai_macsec_direction_t direction,
-    bool sci_in_sectag)
+    bool sci_in_sectag,
+    const std::string &port_name,
+    const gearbox_phy_t* phy)
 {
     SWSS_LOG_ENTER();
 
@@ -2268,6 +2302,36 @@ bool MACsecOrch::initMACsecACLTable(
     }
     recover.add_action([&acl_table]() { acl_table.m_available_acl_priorities.clear(); });
 
+    if (phy)
+    {
+        if (acl_table.m_available_acl_priorities.empty())
+        {
+            SWSS_LOG_WARN("Available ACL priorities have been exhausted.");
+            return false;
+        }
+        priority = *(acl_table.m_available_acl_priorities.rbegin());
+        acl_table.m_available_acl_priorities.erase(std::prev(acl_table.m_available_acl_priorities.end()));
+
+        TaskArgs values;
+        if (!m_applPortTable.get(port_name, values))
+        {
+            SWSS_LOG_ERROR("Port %s isn't existing", port_name.c_str());
+            return false;
+        }
+        std::string pfc_mode = PFC_MODE_DEFAULT;
+        get_value(values, "pfc_encryption_mode", pfc_mode);
+
+        if (!createPFCEntry(acl_table.m_pfc_entry_id, acl_table.m_table_id, switch_id, direction, priority, pfc_mode))
+        {
+            return false;
+        }
+        recover.add_action([this, &acl_table, priority]() {
+            this->deleteMACsecACLEntry(acl_table.m_pfc_entry_id);
+            acl_table.m_pfc_entry_id = SAI_NULL_OBJECT_ID;
+            acl_table.m_available_acl_priorities.insert(priority);
+        });
+    }
+
     recover.clear();
     return true;
 }
@@ -2275,7 +2339,8 @@ bool MACsecOrch::initMACsecACLTable(
 bool MACsecOrch::deinitMACsecACLTable(
     const MACsecACLTable &acl_table,
     sai_object_id_t port_id,
-    sai_macsec_direction_t direction)
+    sai_macsec_direction_t direction,
+    const gearbox_phy_t* phy)
 {
     bool result = true;
 
@@ -2286,8 +2351,16 @@ bool MACsecOrch::deinitMACsecACLTable(
     }
     if (!deleteMACsecACLEntry(acl_table.m_eapol_packet_forward_entry_id))
     {
-        SWSS_LOG_WARN("Cannot delete ACL entry");
+        SWSS_LOG_WARN("Cannot delete EAPOL ACL entry");
         result &= false;
+    }
+    if (phy)
+    {
+        if (!deleteMACsecACLEntry(acl_table.m_pfc_entry_id))
+        {
+            SWSS_LOG_WARN("Cannot delete PFC ACL entry");
+            result &= false;
+        }
     }
     if (!deleteMACsecACLTable(acl_table.m_table_id))
     {
@@ -2562,6 +2635,11 @@ bool MACsecOrch::setMACsecFlowActive(sai_object_id_t entry_id, sai_object_id_t f
 
 bool MACsecOrch::deleteMACsecACLEntry(sai_object_id_t entry_id)
 {
+    if (entry_id == SAI_NULL_OBJECT_ID)
+    {
+        return true;
+    }
+
     sai_status_t status = sai_acl_api->remove_acl_entry(entry_id);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -2592,4 +2670,152 @@ bool MACsecOrch::getAclPriority(sai_object_id_t switch_id, sai_attr_id_t priorit
     priority = attrs.front().value.u32;
 
     return true;
+}
+
+bool MACsecOrch::setPFCForward(sai_object_id_t port_id, bool enable)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    sai_status_t status;
+
+    // Enable/Disable Forward pause frame
+    attr.id = SAI_PORT_ATTR_GLOBAL_FLOW_CONTROL_FORWARD;
+    attr.value.booldata = enable;
+    status = sai_port_api->set_port_attribute(port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    // Enable/Disable Forward PFC frame
+    attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL_FORWARD;
+    attr.value.booldata = enable;
+    status = sai_port_api->set_port_attribute(port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    return true;
+}
+
+bool MACsecOrch::createPFCEntry(
+        sai_object_id_t &entry_id,
+        sai_object_id_t table_id,
+        sai_object_id_t switch_id,
+        sai_macsec_direction_t direction,
+        sai_uint32_t priority,
+        const std::string &pfc_mode)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    std::vector<sai_attribute_t> attrs;
+
+    if (pfc_mode == PFC_MODE_BYPASS)
+    {
+        attrs.push_back(identifyPFC());
+        attrs.push_back(bypassPFC());
+    }
+    else if (pfc_mode == PFC_MODE_ENCRYPT)
+    {
+        if (direction == SAI_MACSEC_DIRECTION_EGRESS)
+        {
+            entry_id = SAI_NULL_OBJECT_ID;
+            return true;
+        }
+        else
+        {
+            attrs.push_back(identifyPFC());
+            attrs.push_back(bypassPFC());
+        }
+    }
+    else if (pfc_mode == PFC_MODE_STRICT_ENCRYPT)
+    {
+        if (direction == SAI_MACSEC_DIRECTION_EGRESS)
+        {
+            entry_id = SAI_NULL_OBJECT_ID;
+            return true;
+        }
+        else
+        {
+            attrs.push_back(identifyPFC());
+            attrs.push_back(dropPFC());
+        }
+    }
+
+    attr.id = SAI_ACL_ENTRY_ATTR_TABLE_ID;
+    attr.value.oid = table_id;
+    attrs.push_back(attr);
+    attr.id = SAI_ACL_ENTRY_ATTR_PRIORITY;
+    attr.value.u32 = priority;
+    attrs.push_back(attr);
+    attr.id = SAI_ACL_ENTRY_ATTR_ADMIN_STATE;
+    attr.value.booldata = true;
+    attrs.push_back(attr);
+
+    sai_status_t status = sai_acl_api->create_acl_entry(
+                                    &entry_id,
+                                    switch_id,
+                                    static_cast<std::uint32_t>(attrs.size()),
+                                    attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_ACL, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    return true;
+}
+
+sai_attribute_t MACsecOrch::identifyPFC() const
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+
+    attr.id = SAI_ACL_ENTRY_ATTR_FIELD_ETHER_TYPE;
+    attr.value.aclfield.data.u16 = PAUSE_ETHER_TYPE;
+    attr.value.aclfield.mask.u16 = 0xFFFF;
+    attr.value.aclfield.enable = true;
+
+    return attr;
+}
+
+sai_attribute_t MACsecOrch::bypassPFC() const
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+
+    attr.id = SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION;
+    attr.value.aclaction.parameter.s32 = SAI_PACKET_ACTION_FORWARD;
+    attr.value.aclaction.enable = true;
+
+    return attr;
+}
+
+sai_attribute_t MACsecOrch::dropPFC() const
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+
+    attr.id = SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION;
+    attr.value.aclaction.parameter.s32 = SAI_PACKET_ACTION_DROP;
+    attr.value.aclaction.enable = true;
+
+    return attr;
 }
