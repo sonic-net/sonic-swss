@@ -846,10 +846,12 @@ bool AclRule::createRule()
                 m_id.c_str(), status);
         AclRange::remove(range_objects, range_object_list.count);
         decreaseNextHopRefCount();
-        return false;
     }
 
-    gCrmOrch->incCrmAclTableUsedCounter(CrmResourceType::CRM_ACL_ENTRY, m_pTable->getOid());
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        gCrmOrch->incCrmAclTableUsedCounter(CrmResourceType::CRM_ACL_ENTRY, m_pTable->getOid());
+    }
 
     return (status == SAI_STATUS_SUCCESS);
 }
