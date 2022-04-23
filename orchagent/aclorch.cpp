@@ -304,7 +304,7 @@ const set<sai_acl_action_type_t>& AclTableType::getActions() const
 bool AclTableType::addAction(sai_acl_action_type_t action)
 {
     m_aclAcitons.insert(action);
-    returne true;
+    return true;
 }
 
 AclTableTypeBuilder& AclTableTypeBuilder::withName(string name)
@@ -1822,7 +1822,8 @@ bool AclTable::addMandatoryActions()
         return true;
     }
 
-    if (type.getName() == TABLE_TYPE_MIRROR || type.getName() == TABLE_TYPE_MIRRORV6)
+    if (type.getName() == TABLE_TYPE_MIRROR || type.getName() == TABLE_TYPE_MIRRORV6 ||
+        type.getName() == TABLE_TYPE_MIRROR_DSCP )
     {
 
         sai_acl_action_type_t acl_action = SAI_ACL_ACTION_TYPE_COUNTER;
