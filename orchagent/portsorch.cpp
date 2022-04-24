@@ -239,6 +239,8 @@ const vector<sai_port_stat_t> port_stat_ids =
 
 const vector<sai_port_stat_t> gbport_stat_ids =
 {
+    SAI_PORT_STAT_IF_IN_OCTETS,
+    SAI_PORT_STAT_IF_OUT_OCTETS,
     SAI_PORT_STAT_IF_IN_DISCARDS,
     SAI_PORT_STAT_IF_OUT_DISCARDS,
     SAI_PORT_STAT_IF_IN_ERRORS,
@@ -6193,7 +6195,6 @@ void PortsOrch::initGearbox()
         m_gb_counter_db = shared_ptr<DBConnector>(new DBConnector("GB_COUNTERS_DB", 0));
         m_gbcounterTable = unique_ptr<Table>(new Table(m_gb_counter_db.get(), COUNTERS_PORT_NAME_MAP));
 
-
         string gbportLuaScript = swss::loadLuaScript("gb_port.lua");
         string gbportSha = swss::loadRedisScript(m_gb_counter_db.get(), gbportLuaScript);
         gb_port_stat_manager.updatePlugin(PORT_PLUGIN_FIELD, gbportSha);
@@ -6887,7 +6888,7 @@ void PortsOrch::updateGearboxPortOperStatus(const Port& port)
     sai_status_t ret = sai_port_api->get_port_attribute(port.m_system_side_id, 1, &attr);
     if (ret != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to get system_oper_status for %s", port.m_alias.c_str());
+        SWSS_LOG_ERROR("BOX: Failed to get system_oper_status for %s", port.m_alias.c_str());
     }
     else
     {
@@ -6902,7 +6903,7 @@ void PortsOrch::updateGearboxPortOperStatus(const Port& port)
     ret = sai_port_api->get_port_attribute(port.m_line_side_id, 1, &attr);
     if (ret != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to get line_oper_status for %s", port.m_alias.c_str());
+        SWSS_LOG_ERROR("BOX: Failed to get line_oper_status for %s", port.m_alias.c_str());
     }
     else
     {
