@@ -55,9 +55,11 @@ class TestBuffer(object):
             buf_pg_entries = self.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP", self.pg_name_map[pg])
             self.buf_pg_profile[pg] = buf_pg_entries["SAI_INGRESS_PRIORITY_GROUP_ATTR_BUFFER_PROFILE"]
 
-    def change_cable_len(self, cable_len):
+    def change_cable_len(self, cable_len, extra_port=None):
         fvs = dict()
         fvs[self.INTF] = cable_len
+        if extra_port:
+            fvs[extra_port] = cable_len
         self.config_db.update_entry("CABLE_LENGTH", "AZURE", fvs)
 
     def set_port_qos_table(self, pfc_enable_flag):
@@ -175,17 +177,23 @@ class TestBuffer(object):
         self.pg_name_map = setup_teardown_test
         orig_cable_len = None
         orig_speed = None
+        test_speed = None
+        test_port = "Ethernet4"
         try:
             # Retrieve cable len
             fvs_cable_len = self.config_db.get_entry("CABLE_LENGTH", "AZURE")
             orig_cable_len = fvs_cable_len[self.INTF]
             if orig_cable_len == "0m":
-                fvs_cable_len[self.INTF] = "300m"
-                cable_len_before_test = "300m"
+                cable_len_for_test = "300m"
+                fvs_cable_len[self.INTF] = cable_len_for_test
+                fvs_cable_len[test_port] = cable_len_for_test
+                
                 self.config_db.update_entry("CABLE_LENGTH", "AZURE", fvs_cable_len)
             else:
-                cable_len_before_test = orig_cable_len
-            
+                cable_len_for_test = orig_cable_len
+            # Ethernet4 is set to up, while no 'pfc_enable' available. `Ethernet0` is not supposed to be impacted
+            dvs.port_admin_set(test_port, "up")
+
             dvs.port_admin_set(self.INTF, "up")
             
              # Retrieve port speed
@@ -193,7 +201,7 @@ class TestBuffer(object):
             orig_speed = fvs_port["speed"]
 
             # Make sure the buffer PG has been created
-            orig_lossless_profile = "pg_lossless_{}_{}_profile".format(orig_speed, cable_len_before_test)
+            orig_lossless_profile = "pg_lossless_{}_{}_profile".format(orig_speed, cable_len_for_test)
             self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", orig_lossless_profile)
             self.orig_profiles = self.get_asic_buf_profile()
 
@@ -209,7 +217,7 @@ class TestBuffer(object):
             dvs.port_field_set(self.INTF, "speed", test_speed)
 
             # Verify new profile is generated
-            new_lossless_profile = "pg_lossless_{}_{}_profile".format(test_speed, cable_len_before_test)
+            new_lossless_profile = "pg_lossless_{}_{}_profile".format(test_speed, cable_len_for_test)
             self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", new_lossless_profile)
 
             # Verify BUFFER_PG is updated
@@ -223,7 +231,8 @@ class TestBuffer(object):
                 self.asic_db.wait_for_field_negative_match("ASIC_STATE:SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP", self.pg_name_map[pg], fvs_negative)
         finally:
             if orig_cable_len:
-                self.change_cable_len(orig_cable_len)
+                self.change_cable_len(orig_cable_len, test_port)
             if orig_speed:
                 dvs.port_field_set(self.INTF, "speed", orig_speed)
             dvs.port_admin_set(self.INTF, "down")
+            dvs.port_admin_set(test_port, "down")
