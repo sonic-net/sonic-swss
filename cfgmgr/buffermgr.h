@@ -28,7 +28,6 @@ typedef std::map<std::string, speed_map_t> pg_profile_lookup_t;
 typedef std::map<std::string, std::string> port_cable_length_t;
 typedef std::map<std::string, std::string> port_speed_t;
 typedef std::map<std::string, std::string> port_pfc_status_t;
-typedef std::map<std::string, std::string> port_pg_profile_t;
 
 class BufferMgr : public Orch
 {

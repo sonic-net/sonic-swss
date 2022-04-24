@@ -138,7 +138,6 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up)
     string cable;
     string speed;
     string pfc_enable;
-    string applied_lossless_pg_status;
 
     if (m_cableLenLookup.count(port) == 0)
     {
