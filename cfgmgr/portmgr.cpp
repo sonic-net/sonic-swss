@@ -22,7 +22,7 @@ PortMgr::PortMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         m_cfgLagMemberTable(cfgDb, CFG_LAG_MEMBER_TABLE_NAME),
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
         m_appPortTable(appDb, APP_PORT_TABLE_NAME),
-        m_configCache(std::bind(&PortMgr::onPortConfigChanged, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4))
+        m_configCache(std::bind(&PortMgr::onPortConfigChanged, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4, std::placeholders::_5))
 {
 }
 
@@ -87,12 +87,11 @@ void PortMgr::doTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            if (!isPortStateOk(alias))
-            {
-                SWSS_LOG_INFO("Port %s is not ready, pending...", alias.c_str());
-                it++;
-                continue;
-            }
+            /* portOk=true indicates that the port has been created in kernel.
+             * We should not call any ip command if portOk=false. However, it is
+             * valid to put port configuration to APP DB which will trigger port creation in kernel.
+             */
+            bool portOk = isPortStateOk(alias);
 
             /* If this is the first time we set port settings
              * assign default admin status and mtu
@@ -101,7 +100,7 @@ void PortMgr::doTask(Consumer &consumer)
 
             for (auto i : kfvFieldsValues(t))
             {
-                m_configCache.config(alias, fvField(i), fvValue(i));
+                m_configCache.config(alias, fvField(i), fvValue(i), (void *)&portOk);
             }
 
             if (!exist)
@@ -110,7 +109,7 @@ void PortMgr::doTask(Consumer &consumer)
                 // to configure this port, try to apply default configuration. Please
                 // not that applyDefault function will NOT override existing configuration
                 // with default value.
-                m_configCache.applyDefault(alias, portDefaultConfig);
+                m_configCache.applyDefault(alias, portDefaultConfig, (void *)&portOk);
             }
         }
         else if (op == DEL_COMMAND)
@@ -120,26 +119,51 @@ void PortMgr::doTask(Consumer &consumer)
             m_configCache.remove(alias);
         }
 
-        it = consumer.m_toSync.erase(it);
+        if (m_retryFields.empty())
+        {
+            it = consumer.m_toSync.erase(it);
+        }
+        else
+        {
+            /* There are some fields require retry due to set failure. This is usually because 
+             * port has not been created in kernel so that mtu and admin_status configuration 
+             * cannot be synced between kernel and  ASIC for now. In this case, we put the retry fields 
+             * back to m_toSync and wait for re-visit later.
+             */
+            it->second = KeyOpFieldsValuesTuple{alias, SET_COMMAND, m_retryFields};
+            ++it;
+            m_retryFields.clear();
+        }
     }
 }
 
-void PortMgr::onPortConfigChanged(const std::string &alias, const std::string &field, const std::string &old_value, const std::string &new_value)
+bool PortMgr::onPortConfigChanged(const std::string &alias, const std::string &field, const std::string &old_value, const std::string &new_value, void *context)
 {
-    if (field == "mtu")
+    bool portOk = *((bool *)context);
+    if (field == "mtu" && portOk)
     {
         setPortMtu(alias, new_value);
     }
-    else if (field == "admin_status")
+    else if (field == "admin_status" && portOk)
     {
         setPortAdminStatus(alias, new_value == "up");
     }
     else
     {
+        /* For mtu and admin_status, if portOk=false we still save it to APP DB which is 
+         * the same behavior as portsyncd before. 
+         */
         writeConfigToAppDb(alias, field, new_value);
     }
 
+    if (!portOk && (field == "mtu" || field == "admin_status"))
+    {
+        m_retryFields.emplace_back(field, new_value);
+        return false;
+    }
+
     SWSS_LOG_NOTICE("Configure %s %s from %s to %s", alias.c_str(), field.c_str(), old_value.c_str(), new_value.c_str());
+    return true;
 }
 
 bool PortMgr::writeConfigToAppDb(const std::string &alias, const std::string &field, const std::string &value)

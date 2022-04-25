@@ -6,34 +6,40 @@ ConfigCache::ConfigCache(ConfigChangeCb configChangeCb):
 mConfigChangeCb(configChangeCb)
 {}
 
-void ConfigCache::config(const std::string& key, const std::string& field, const std::string& value)
+void ConfigCache::config(const std::string& key, const std::string& field, const std::string& value, void *context)
 {
     auto iter = mConfigData.find(key);
     if (iter == mConfigData.end())
     {
-        mConfigData.emplace(key, ConfigEntry({{field, value}}));
-        mConfigChangeCb(key, field, "", value);
+        if (mConfigChangeCb(key, field, "", value, context))
+        {
+            mConfigData.emplace(key, ConfigEntry({{field, value}}));
+        }
     }
     else
     {
         auto entry_iter = iter->second.find(field);
         if (entry_iter == iter->second.end())
         {
-            iter->second.emplace(field, value);
-            mConfigChangeCb(key, field, "", value);
+            if (mConfigChangeCb(key, field, "", value, context))
+            {
+                iter->second.emplace(field, value);
+            }
         }
         else
         {
             if (value != entry_iter->second)
             {
-                mConfigChangeCb(key, field, entry_iter->second, value);
-                entry_iter->second = value;
+                if (mConfigChangeCb(key, field, entry_iter->second, value, context))
+                {
+                    entry_iter->second = value;
+                }
             }
         }
     }
 }
 
-void ConfigCache::applyDefault(const std::string& key, const ConfigEntry &defaultConfig)
+void ConfigCache::applyDefault(const std::string& key, const ConfigEntry &defaultConfig, void *context)
 {
     auto &entry = mConfigData[key];
     for (auto &fv : defaultConfig)
@@ -41,8 +47,10 @@ void ConfigCache::applyDefault(const std::string& key, const ConfigEntry &defaul
         auto iter = entry.find(fv.first);
         if (iter == entry.end())
         {
-            entry.emplace(fv.first, fv.second);
-            mConfigChangeCb(key, fv.first, "", fv.second);
+            if (mConfigChangeCb(key, fv.first, "", fv.second, context))
+            {
+                entry.emplace(fv.first, fv.second);
+            }
         }
     }
 }

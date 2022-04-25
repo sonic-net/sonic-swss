@@ -28,9 +28,10 @@ private:
     ProducerStateTable m_appPortTable;
 
     ConfigCache m_configCache;
+    std::vector<FieldValueTuple> m_retryFields;
 
     void doTask(Consumer &consumer);
-    void onPortConfigChanged(const std::string &alias, const std::string &field, const std::string &old_value, const std::string &new_value);
+    bool onPortConfigChanged(const std::string &alias, const std::string &field, const std::string &old_value, const std::string &new_value, void *context);
     bool writeConfigToAppDb(const std::string &alias, const std::string &field, const std::string &value);
     bool setPortMtu(const std::string &alias, const std::string &mtu);
     bool setPortAdminStatus(const std::string &alias, const bool up);

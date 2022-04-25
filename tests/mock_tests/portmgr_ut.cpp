@@ -3,6 +3,8 @@
 #include "mock_table.h"
 #include "redisutility.h"
 
+extern std::vector<std::string> mockCallArgs;
+
 namespace portmgr_ut
 {
     using namespace swss;
@@ -41,36 +43,39 @@ namespace portmgr_ut
         Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
 
         // Port is not ready, verify that doTask does not handle port configuration
+        
         cfg_port_table.set("Ethernet0", {
             {"speed", "100000"},
             {"index", "1"}
         });
+        mockCallArgs.clear();
         m_portMgr->addExistingData(&cfg_port_table);
         m_portMgr->doTask();
+        ASSERT_TRUE(mockCallArgs.empty());
         std::vector<FieldValueTuple> values;
         app_port_table.get("Ethernet0", values);
-        ASSERT_TRUE(values.empty());
+        auto value_opt = swss::fvsGetValue(values, "mtu", true);
+        ASSERT_TRUE(value_opt);
+        ASSERT_EQ(DEFAULT_MTU_STR, value_opt.get());
+        value_opt = swss::fvsGetValue(values, "admin_status", true);
+        ASSERT_TRUE(value_opt);
+        ASSERT_EQ(DEFAULT_ADMIN_STATUS_STR, value_opt.get());
+        value_opt = swss::fvsGetValue(values, "speed", true);
+        ASSERT_TRUE(value_opt);
+        ASSERT_EQ("100000", value_opt.get());
+        value_opt = swss::fvsGetValue(values, "index", true);
+        ASSERT_TRUE(value_opt);
+        ASSERT_EQ("1", value_opt.get());
 
         // Set port state to ok, verify that doTask handle port configuration
         state_port_table.set("Ethernet0", {
             {"state", "ok"}
         });
         m_portMgr->doTask();
-        app_port_table.get("Ethernet0", values);
-        auto value_opt = swss::fvsGetValue(values, "speed", true);
-        ASSERT_TRUE(value_opt);
-        ASSERT_EQ("100000", value_opt.get());
-        value_opt = swss::fvsGetValue(values, "index", true);
-        ASSERT_TRUE(value_opt);
-        ASSERT_EQ("1", value_opt.get());
-        // Verify that default value was filled
-        value_opt = swss::fvsGetValue(values, "mtu", true);
-        ASSERT_TRUE(value_opt);
-        ASSERT_EQ(DEFAULT_MTU_STR, value_opt.get());
-        value_opt = swss::fvsGetValue(values, "admin_status", true);
-        ASSERT_TRUE(value_opt);
-        ASSERT_EQ(DEFAULT_ADMIN_STATUS_STR, value_opt.get());
-
+        ASSERT_EQ(size_t(2), mockCallArgs.size());
+        ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" down", mockCallArgs[0]);
+        ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" mtu \"9100\"", mockCallArgs[1]);
+        
         // Set port admin_status, verify that it could override the default value
         cfg_port_table.set("Ethernet0", {
             {"admin_status", "up"}

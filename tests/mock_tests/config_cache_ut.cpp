@@ -15,8 +15,9 @@ namespace config_cache_ut
     {
         int call_count = 0;
 
-        ConfigCache cc([&](const std::string& key, const std::string& field, const std::string& old_value, const std::string &new_value) {
+        ConfigCache cc([&](const std::string& key, const std::string& field, const std::string& old_value, const std::string &new_value, void* context) {
             ++call_count;
+            return true;
         });
 
         cc.config("key", "field", "value");
