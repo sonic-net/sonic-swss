@@ -309,7 +309,7 @@ VNetVrfObject::~VNetVrfObject()
     set<sai_object_id_t> vr_ent = getVRids();
     for (auto it : vr_ent)
     {
-        if it != gVirtualRouterId {
+        if (it != gVirtualRouterId) {
             sai_status_t status = sai_virtual_router_api->remove_virtual_router(it);
             if (status != SAI_STATUS_SUCCESS)
             {
