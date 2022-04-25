@@ -720,6 +720,60 @@ class TestCrm(object):
         assert used_counter == 0
         assert avail_counter != 0
 
+    def test_CrmResetThresholdExceedCount(self, dvs, testlog):
+
+        config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+        intf_tbl = swsscommon.Table(config_db, "INTERFACE")
+        fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+        intf_tbl.set("Ethernet0", fvs)
+        intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
+        dvs.port_admin_set("Ethernet0", "up")
+
+        crm_update(dvs, "polling_interval", "1")
+
+        # add static neighbor
+        dvs.runcmd("ip neigh replace 10.0.0.1 lladdr 11:22:33:44:55:66 dev Ethernet0")
+
+        db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        ps = swsscommon.ProducerStateTable(db, "ROUTE_TABLE")
+        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1"), ("ifname", "Ethernet0")])
+
+        # add route to make sure used count at least 1 and update available counter
+        ps.set("2.2.2.0/24", fvs)
+        dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV4_ROUTE_ENTRY', '1000')
+
+        time.sleep(2)
+
+        # get counters
+        used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_route_used')
+        avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_route_available')
+
+        crm_update(dvs, "ipv4_route_low_threshold", "0")
+
+        # for changing to free type will rest crm threshold exceed count, previous type can not be same free type
+        crm_update(dvs, "ipv4_route_threshold_type", "percentage")
+
+        # trigger exceed high threshold of free type
+        marker = dvs.add_log_marker()
+        crm_update(dvs, "ipv4_route_high_threshold", str(avail_counter))
+        crm_update(dvs, "ipv4_route_threshold_type", "free")
+        time.sleep(20)
+        check_syslog(dvs, marker, "IPV4_ROUTE THRESHOLD_EXCEEDED for TH_FREE", 1)
+
+        # crm threshold exceed count will be reset when threshold type changed
+        marker = dvs.add_log_marker()
+        crm_update(dvs, "ipv4_route_high_threshold", str(used_counter))
+        crm_update(dvs, "ipv4_route_threshold_type", "used")
+        time.sleep(2)
+        check_syslog(dvs, marker, "IPV4_ROUTE THRESHOLD_EXCEEDED for TH_USED", 1)
+
+        # remove route
+        ps._del("2.2.2.0/24")
+        dvs.runcmd("ip neigh del 10.0.0.1 lladdr 11:22:33:44:55:66 dev Ethernet0")
+
+        intf_tbl._del("Ethernet0|10.0.0.0/31")
+        time.sleep(2)
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():

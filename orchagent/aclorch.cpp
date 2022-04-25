@@ -984,9 +984,13 @@ bool AclRule::updateCounter(const AclRule& updatedRule)
         {
             return false;
         }
+
+        m_pAclOrch->registerFlexCounter(*this);
     }
     else
     {
+        m_pAclOrch->deregisterFlexCounter(*this);
+
         if (!disableCounter())
         {
             return false;
@@ -4467,7 +4471,7 @@ void AclOrch::registerFlexCounter(const AclRule& rule)
 void AclOrch::deregisterFlexCounter(const AclRule& rule)
 {
     auto ruleIdentifier = generateAclRuleIdentifierInCountersDb(rule);
-    m_countersDb.hdel(COUNTERS_ACL_COUNTER_RULE_MAP, rule.getId());
+    m_countersDb.hdel(COUNTERS_ACL_COUNTER_RULE_MAP, ruleIdentifier);
     m_flex_counter_manager.clearCounterIdList(rule.getCounterOid());
 }
 
