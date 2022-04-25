@@ -566,7 +566,10 @@ bool AclRule::create()
         decreaseNextHopRefCount();
     }
 
-    gCrmOrch->incCrmAclTableUsedCounter(CrmResourceType::CRM_ACL_ENTRY, m_tableOid);
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        gCrmOrch->incCrmAclTableUsedCounter(CrmResourceType::CRM_ACL_ENTRY, m_tableOid);
+    }
 
     return (status == SAI_STATUS_SUCCESS);
 }
