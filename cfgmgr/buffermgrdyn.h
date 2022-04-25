@@ -178,7 +178,7 @@ private:
 
     std::string m_configuredSharedHeadroomPoolSize;
 
-    std::shared_ptr<DBConnector> m_applDb = nullptr;
+    DBConnector *m_applDb = nullptr;
     SelectableTimer *m_buffermgrPeriodtimer = nullptr;
 
     // Fields for zero pool and profiles
