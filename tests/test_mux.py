@@ -83,6 +83,10 @@ class TestMuxTunnelBase():
         "uniform" : "SAI_TUNNEL_TTL_MODE_UNIFORM_MODEL"
     }
 
+    def check_syslog(dvs, marker, err_log, expected_cnt):
+        (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \"%s\" | wc -l" % (marker, err_log)])
+        assert num.strip() >= str(expected_cnt)
+
     def create_vlan_interface(self, dvs):
         confdb = dvs.get_config_db()
 
@@ -248,6 +252,18 @@ class TestMuxTunnelBase():
         self.create_vlan_interface(dvs)
 
         self.create_mux_cable(confdb)
+
+        marker = dvs.add_log_marker()
+
+        # Test active-active state change
+        self.set_mux_state(appdb, "Ethernet0", "active")
+        self.set_mux_state(appdb, "Ethernet0", "active")
+        self.check_syslog(dvs, marker, "State transition from active to active is not-handled", 0)
+
+        # Test standby-standby state change
+        self.set_mux_state(appdb, "Ethernet0", "standby")
+        self.set_mux_state(appdb, "Ethernet0", "standby")
+        self.check_syslog(dvs, marker, "State transition from standby to standby is not-handled", 0)
 
         self.set_mux_state(appdb, "Ethernet0", "active")
         self.set_mux_state(appdb, "Ethernet4", "standby")
