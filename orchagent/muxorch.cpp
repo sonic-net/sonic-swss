@@ -212,18 +212,21 @@ static sai_object_id_t create_tunnel(
     attr.value.s32 = SAI_TUNNEL_TTL_MODE_PIPE_MODEL;
     tunnel_attrs.push_back(attr);
 
-    sai_tunnel_dscp_mode_t dscp_mode;
-    if (dscp_mode_name == "uniform")
+    if (dscp_mode_name == "uniform" || dscp_mode_name == "pipe")
     {
-        dscp_mode = SAI_TUNNEL_DSCP_MODE_UNIFORM_MODEL;
+        sai_tunnel_dscp_mode_t dscp_mode;
+        if (dscp_mode_name == "uniform")
+        {
+            dscp_mode = SAI_TUNNEL_DSCP_MODE_UNIFORM_MODEL;
+        }
+        else
+        {
+            dscp_mode = SAI_TUNNEL_DSCP_MODE_PIPE_MODEL;
+        }
+        attr.id = SAI_TUNNEL_ATTR_ENCAP_DSCP_MODE;
+        attr.value.s32 = dscp_mode;
+        tunnel_attrs.push_back(attr);
     }
-    else
-    {
-        dscp_mode = SAI_TUNNEL_DSCP_MODE_PIPE_MODEL;
-    }
-    attr.id = SAI_TUNNEL_ATTR_ENCAP_DSCP_MODE;
-    attr.value.s32 = dscp_mode;
-    tunnel_attrs.push_back(attr);
 
     attr.id = SAI_TUNNEL_ATTR_LOOPBACK_PACKET_ACTION;
     attr.value.s32 = SAI_PACKET_ACTION_DROP;
@@ -1271,23 +1274,22 @@ bool MuxOrch::handlePeerSwitch(const Request& request)
         string dscp_mode_name = decap_orch_->getDscpMode(MUX_TUNNEL);
         if (dscp_mode_name == "")
         {
-            SWSS_LOG_INFO("dscp_mode for tunnel %s is not available yet", MUX_TUNNEL);
-            return false;
+            SWSS_LOG_NOTICE("dscp_mode for tunnel %s is not available. Will not be applied", MUX_TUNNEL);
         }
 
         // Read tc_to_dscp_map_id of MuxTunnel0 from decap_orch
         sai_object_id_t tc_to_dscp_map_id = SAI_NULL_OBJECT_ID;
-        if (!decap_orch_->getQosMapId(MUX_TUNNEL, encap_tc_to_dscp_field_name, tc_to_dscp_map_id))
+        decap_orch_->getQosMapId(MUX_TUNNEL, encap_tc_to_dscp_field_name, tc_to_dscp_map_id);
+        if (tc_to_dscp_map_id == SAI_NULL_OBJECT_ID)
         {
-            SWSS_LOG_INFO("tc_to_dscp_map_id for tunnel %s is not available yet", MUX_TUNNEL);
-            return false;
+            SWSS_LOG_NOTICE("tc_to_dscp_map_id for tunnel %s is not available. Will not be applied", MUX_TUNNEL);
         }
         // Read tc_to_queue_map_id of MuxTunnel0 from decap_orch
         sai_object_id_t tc_to_queue_map_id = SAI_NULL_OBJECT_ID;
-        if (!decap_orch_->getQosMapId(MUX_TUNNEL, encap_tc_to_queue_field_name, tc_to_queue_map_id))
+        decap_orch_->getQosMapId(MUX_TUNNEL, encap_tc_to_queue_field_name, tc_to_queue_map_id);
+        if (tc_to_queue_map_id == SAI_NULL_OBJECT_ID)
         {
-            SWSS_LOG_INFO("tc_to_queue_map_id for tunnel %s is not available yet", MUX_TUNNEL);
-            return false;
+            SWSS_LOG_NOTICE("tc_to_queue_map_id for tunnel %s is not available. Will not be applied", MUX_TUNNEL);
         }
 
         mux_tunnel_id_ = create_tunnel(&peer_ip, &dst_ip, tc_to_dscp_map_id, tc_to_queue_map_id, dscp_mode_name);
