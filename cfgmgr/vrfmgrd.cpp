@@ -53,7 +53,7 @@ int main(int argc, char **argv)
             CFG_MGMT_VRF_CONFIG_TABLE_NAME
         };
 
-        conts DBConnector cfgDb("CONFIG_DB", 0);
+        const DBConnector cfgDb("CONFIG_DB", 0);
         DBConnector appDb("APPL_DB", 0);
         DBConnector stateDb("STATE_DB", 0);
 
