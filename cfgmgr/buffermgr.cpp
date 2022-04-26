@@ -133,7 +133,7 @@ Create/update two tables: profile (in m_cfgBufferProfileTable) and port buffer (
         }
     }
 */
-task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up)
+task_process_status BufferMgr::doSpeedUpdateTask(string port)
 {
     string cable;
     string speed;
@@ -152,11 +152,20 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up)
         return task_process_status::task_success;
     }
 
-    if (m_portPfcStatus.count(port) == 0)
+    if (m_portStatusLookup.count(port) == 0)
     {
-        // PORT_QOS_MAP is not ready yet. retry is required
+        // admin_statue is not available yet. This can happen when notification of `PORT_QOS_MAP` table
+        // comes first. 
         SWSS_LOG_INFO("pfc_enable status is not available for port %s", port.c_str());
         return task_process_status::task_need_retry;
+    }
+
+    if (m_portPfcStatus.count(port) == 0)
+    {
+        // PORT_QOS_MAP is not ready yet. The notification is cleared, and buffer pg
+        // will be handled when `pfc_enable` in `PORT_QOS_MAP` table is available
+        SWSS_LOG_INFO("pfc_enable status is not available for port %s", port.c_str());
+        return task_process_status::task_success;
     }
     pfc_enable = m_portPfcStatus[port];
 
@@ -167,7 +176,7 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up)
     
     vector<string> lossless_pgs = tokenize(pfc_enable, ',');
 
-    if (!admin_up && m_platform == "mellanox")
+    if (m_portStatusLookup[port] == "down" && m_platform == "mellanox")
     {
         for (auto lossless_pg : lossless_pgs)
         {
@@ -385,14 +394,24 @@ void BufferMgr::doPortQosTableTask(Consumer &consumer)
         string op = kfvOp(tuple);
         if (op == SET_COMMAND)
         {
+            bool update_pfc_enable = false;
             for (auto itp : kfvFieldsValues(tuple))
             {
                 if (fvField(itp) == "pfc_enable")
                 {
-                    m_portPfcStatus[port_name] = fvValue(itp);
+                    if (m_portPfcStatus.count(port_name) == 0 || m_portPfcStatus[port_name] != fvValue(itp))
+                    {
+                        m_portPfcStatus[port_name] = fvValue(itp);
+                        update_pfc_enable = true;
+                    }
                     SWSS_LOG_INFO("Got pfc enable status for port %s status %s", port_name.c_str(), fvValue(itp).c_str());
                     break;
                 }
+            }
+            if (update_pfc_enable)
+            {
+                // The return status is ignored
+                doSpeedUpdateTask(port_name);
             }
         }
         it = consumer.m_toSync.erase(it);
@@ -482,7 +501,6 @@ void BufferMgr::doTask(Consumer &consumer)
             }
             else if (m_pgfile_processed && table_name == CFG_PORT_TABLE_NAME)
             {
-                bool admin_up = false;
                 for (auto i : kfvFieldsValues(t))
                 {
                     if (fvField(i) == "speed")
@@ -491,14 +509,14 @@ void BufferMgr::doTask(Consumer &consumer)
                     }
                     if (fvField(i) == "admin_status")
                     {
-                        admin_up = ("up" == fvValue(i));
+                        m_portStatusLookup[port] = fvValue(i);
                     }
                 }
 
                 if (m_speedLookup.count(port) != 0)
                 {
                     // create/update profile for port
-                    task_status = doSpeedUpdateTask(port, admin_up);
+                    task_status = doSpeedUpdateTask(port);
                 }
             }
 
