@@ -154,7 +154,7 @@ int main(int argc, char **argv)
         shared_ptr<vector<KeyOpFieldsValuesTuple>> peripherial_table_ptr = nullptr;
         shared_ptr<vector<KeyOpFieldsValuesTuple>> zero_profiles_ptr = nullptr;
 
-        DBConnector cfgDb("CONFIG_DB", 0);
+        const DBConnector cfgDb("CONFIG_DB", 0);
         DBConnector stateDb("STATE_DB", 0);
         DBConnector applDb("APPL_DB", 0);
 

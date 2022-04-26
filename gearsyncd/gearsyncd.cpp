@@ -74,7 +74,7 @@ int main(int argc, char **argv)
         }
     }
 
-    DBConnector cfgDb(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    const DBConnector cfgDb(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
     DBConnector applDb(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
     ProducerStateTable producerStateTable(&applDb, APP_GEARBOX_TABLE_NAME);
 

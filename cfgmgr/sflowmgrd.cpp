@@ -50,7 +50,7 @@ int main(int argc, char **argv)
             CFG_PORT_TABLE_NAME
         };
 
-        DBConnector cfgDb("CONFIG_DB", 0);
+        conts DBConnector cfgDb("CONFIG_DB", 0);
         DBConnector appDb("APPL_DB", 0);
 
         SflowMgr sflowmgr(&cfgDb, &appDb, cfg_sflow_tables);

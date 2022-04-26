@@ -54,7 +54,7 @@ int main(int argc, char **argv)
             CFG_VOQ_INBAND_INTERFACE_TABLE_NAME,
         };
 
-        DBConnector cfgDb("CONFIG_DB", 0);
+        const DBConnector cfgDb("CONFIG_DB", 0);
         DBConnector appDb("APPL_DB", 0);
         DBConnector stateDb("STATE_DB", 0);
 
