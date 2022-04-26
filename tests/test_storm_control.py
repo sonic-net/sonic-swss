@@ -246,7 +246,7 @@ class TestStormControl(object):
             assert len(fvs) > 0
             time.sleep(1)
             #grep for error message in syslog
-            (exitcode,num) = dvs.runcmd(['sh', '-c', 'cat /var/log/syslog | grep -i "handlePortStormControlTable: {}: Unsupported / Invalid interface PortChannel10"'.format(storm_type)])
+            (exitcode,num) = dvs.runcmd(['sh', '-c', 'cat /var/log/syslog | grep -i "doTask: {}: Unsupported / Invalid interface PortChannel10"'.format(storm_type)])
             time.sleep(1)
             assert exitcode == 0
 
@@ -286,7 +286,7 @@ class TestStormControl(object):
             assert len(fvs) > 0
             time.sleep(1)
             #grep for error message in syslog
-            (exitcode,num) = dvs.runcmd(['sh', '-c', 'cat /var/log/syslog | grep -i "handlePortStormControlTable: {}: Unsupported / Invalid interface Vlan10"'.format(storm_type)])
+            (exitcode,num) = dvs.runcmd(['sh', '-c', 'cat /var/log/syslog | grep -i "doTask: {}: Unsupported / Invalid interface Vlan10"'.format(storm_type)])
             time.sleep(1)
             assert exitcode == 0
     
