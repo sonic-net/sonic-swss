@@ -13,6 +13,7 @@ const string dot1p_to_tc_field_name             = "dot1p_to_tc_map";
 const string pfc_to_pg_map_name                 = "pfc_to_pg_map";
 const string pfc_to_queue_map_name              = "pfc_to_queue_map";
 const string pfc_enable_name                    = "pfc_enable";
+const string pfcwd_sw_enable_name               = "pfcwd_sw_enable";
 const string tc_to_pg_map_field_name            = "tc_to_pg_map";
 const string tc_to_queue_field_name             = "tc_to_queue_map";
 const string scheduler_field_name               = "scheduler";
