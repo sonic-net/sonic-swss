@@ -174,9 +174,11 @@ class TestPfcwdFunc(object):
         for port in self.test_ports:
             self.config_db.delete_entry("PFC_WD", port)
 
-    def verify_ports_pfc(self, queues=None):
+    def verify_ports_pfc(self, queues=None, pfc_asym_on=False):
         mask = self._get_bitmask(queues)
         fvs = {"SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL" : mask}
+        if pfc_asym_on:
+            fvs = {"SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL_RX" : mask}
         for port in self.test_ports:
             self.asic_db.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", self.port_oids[port], fvs)
 
@@ -211,6 +213,11 @@ class TestPfcwdFunc(object):
             for queue in queues:
                 queue_name = port + ":" + str(queue)
                 self.counters_db.update_entry("COUNTERS", self.queue_oids[queue_name], fvs)
+
+    def set_pfc_asym(self, state):
+        fvs = {"pfc_asym": state}
+        for port in self.test_ports:
+            self.config_db.update_entry("PORT", port, fvs)
 
     def test_pfcwd_single_queue(self, dvs, setup_teardown_test):
         try:
@@ -290,6 +297,55 @@ class TestPfcwdFunc(object):
             self.verify_ports_pfc(test_queues)
 
         finally:
+            self.reset_pfcwd_counters(test_queues)
+            self.stop_pfcwd_on_ports()
+
+    def test_pfcwd_asym_pfc(self, dvs, setup_teardown_test):
+        try:
+            test_queues = [0, 1, 2, 3, 4, 5, 6, 7]
+
+            # Enable PFC on default queues
+            default_queues = [3, 4]
+            self.set_ports_pfc(pfc_queues=default_queues)
+
+            # Verify default PFC config in ASIC_DB
+            self.verify_ports_pfc(queues=default_queues)
+
+            # Enable asymmetric PFC
+            self.set_pfc_asym("on")
+
+            # Verify PFC configuration in ASIC_DB after enabling asymmetric PFC
+            self.verify_ports_pfc(queues=test_queues, pfc_asym_on=True)
+
+            # Start PFCWD
+            self.start_pfcwd_on_ports()
+
+            # Start PFC storm
+            self.set_storm_state(test_queues)
+
+            # Verify PFCWD detected storm
+            self.verify_pfcwd_state(test_queues)
+
+            # Verify PFCWD counters
+            self.verify_pfcwd_counters(test_queues)
+
+            # Verify if queue is disabled.
+            self.verify_ports_pfc(pfc_asym_on=True)
+
+            # Stop PFC storm
+            self.set_storm_state(test_queues, state="disabled")
+
+            # Verify PFCWD state is restored
+            self.verify_pfcwd_state(test_queues, state="operational")
+
+            # Verify PFCWD counters
+            self.verify_pfcwd_counters(test_queues, restore="1")
+
+            # Verify if queue is enabled
+            self.verify_ports_pfc(queues=test_queues, pfc_asym_on=True)
+
+        finally:
+            self.set_pfc_asym("off")
             self.reset_pfcwd_counters(test_queues)
             self.stop_pfcwd_on_ports()
 

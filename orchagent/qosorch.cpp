@@ -1765,7 +1765,7 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFiel
                 SWSS_LOG_INFO("Removed %s on port %s", mapRef.first.c_str(), port_name.c_str());
             }
 
-            if (!gPortsOrch->setPortPfc(port.m_port_id, 0))
+            if (!gPortsOrch->setPortPfc(port.m_port_id, 0, 0))
             {
                 SWSS_LOG_ERROR("Failed to disable PFC on port %s", port_name.c_str());
             }
@@ -1862,14 +1862,14 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFiel
         }
 
         sai_uint8_t old_pfc_enable = 0;
-        if (!gPortsOrch->getPortPfc(port.m_port_id, &old_pfc_enable))
+        if (!gPortsOrch->getPortPfc(port.m_port_id, &old_pfc_enable, &old_pfc_enable))
         {
             SWSS_LOG_ERROR("Failed to retrieve PFC bits on port %s", port_name.c_str());
         }
 
         if (pfc_enable || old_pfc_enable)
         {
-            if (!gPortsOrch->setPortPfc(port.m_port_id, pfc_enable))
+            if (!gPortsOrch->setPortPfc(port.m_port_id, pfc_enable, pfc_enable))
             {
                 SWSS_LOG_ERROR("Failed to apply PFC bits 0x%x to port %s", pfc_enable, port_name.c_str());
             }
