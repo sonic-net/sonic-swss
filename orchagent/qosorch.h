@@ -25,6 +25,10 @@ const string green_min_threshold_field_name     = "green_min_threshold";
 const string red_drop_probability_field_name    = "red_drop_probability";
 const string yellow_drop_probability_field_name = "yellow_drop_probability";
 const string green_drop_probability_field_name  = "green_drop_probability";
+const string decap_dscp_to_tc_field_name        = "decap_dscp_to_tc_map";
+const string decap_tc_to_pg_field_name          = "decap_tc_to_pg_map";
+const string encap_tc_to_queue_field_name       = "encap_tc_to_queue_map";
+const string encap_tc_to_dscp_field_name        = "encap_tc_to_dscp_map";
 
 const string wred_profile_field_name            = "wred_profile";
 const string wred_red_enable_field_name         = "wred_red_enable";
@@ -122,6 +126,14 @@ public:
     sai_object_id_t addQosItem(const vector<sai_attribute_t> &attributes);
 };
 
+// Handler for TC_TO_DSCP_MAP
+class TcToDscpMapHandler : public QosMapHandler
+{
+public:
+    bool convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes) override;
+    sai_object_id_t addQosItem(const vector<sai_attribute_t> &attributes) override;
+};
+
 class QosOrch : public Orch
 {
 public:
@@ -129,6 +141,9 @@ public:
 
     static type_map& getTypeMap();
     static type_map m_qos_maps;
+
+    sai_object_id_t resolveTunnelQosMap(std::string referencing_table_name, std::string tunnel_name, std::string map_type_name, KeyOpFieldsValuesTuple& tuple);
+
 private:
     void doTask() override;
     virtual void doTask(Consumer& consumer);
@@ -149,6 +164,7 @@ private:
     task_process_status handleSchedulerTable(Consumer& consumer);
     task_process_status handleQueueTable(Consumer& consumer);
     task_process_status handleWredProfileTable(Consumer& consumer);
+    task_process_status handleTcToDscpTable(Consumer& consumer);
 
     sai_object_id_t getSchedulerGroup(const Port &port, const sai_object_id_t queue_id);
 
