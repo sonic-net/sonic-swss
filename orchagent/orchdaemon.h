@@ -11,6 +11,7 @@
 #include "intfsorch.h"
 #include "neighorch.h"
 #include "routeorch.h"
+#include "flowcounterrouteorch.h"
 #include "nhgorch.h"
 #include "cbf/cbfnhgorch.h"
 #include "cbf/nhgmaporch.h"

@@ -26,6 +26,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 portsorch_ut.cpp \
                 routeorch_ut.cpp \
                 qosorch_ut.cpp \
+                bufferorch_ut.cpp \
                 saispy_ut.cpp \
                 consumer_ut.cpp \
                 ut_saihelper.cpp \
@@ -40,6 +41,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 config_cache_ut.cpp \
                 portmgr_ut.cpp \
                 fake_response_publisher.cpp \
+                swssnet_ut.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/lib/subintf.cpp \
                 $(top_srcdir)/orchagent/orchdaemon.cpp \
@@ -98,7 +100,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/cfgmgr/config_cache.cpp \
                 $(top_srcdir)/cfgmgr/portmgr.cpp
 
-tests_SOURCES += $(FLEX_CTR_DIR)/flex_counter_manager.cpp $(FLEX_CTR_DIR)/flex_counter_stat_manager.cpp $(FLEX_CTR_DIR)/flow_counter_handler.cpp
+tests_SOURCES += $(FLEX_CTR_DIR)/flex_counter_manager.cpp $(FLEX_CTR_DIR)/flex_counter_stat_manager.cpp $(FLEX_CTR_DIR)/flow_counter_handler.cpp $(FLEX_CTR_DIR)/flowcounterrouteorch.cpp
 tests_SOURCES += $(DEBUG_CTR_DIR)/debug_counter.cpp $(DEBUG_CTR_DIR)/drop_counter.cpp
 tests_SOURCES += $(P4_ORCH_DIR)/p4orch.cpp \
 		 $(P4_ORCH_DIR)/p4orch_util.cpp \

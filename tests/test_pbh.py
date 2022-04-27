@@ -1,6 +1,8 @@
 import pytest
 import logging
 
+import test_flex_counters as flex_counter_module
+
 
 PBH_HASH_FIELD_NAME = "inner_ip_proto"
 PBH_HASH_FIELD_HASH_FIELD = "INNER_IP_PROTOCOL"
@@ -356,6 +358,121 @@ class TestPbhBasicEditFlows:
             pbhlogger.info("Remove PBH hash field: {}".format(PBH_HASH_FIELD_NAME))
             self.dvs_pbh.remove_pbh_hash_field(PBH_HASH_FIELD_NAME)
             self.dvs_pbh.verify_pbh_hash_field_count(0)
+
+
+    def test_PbhRuleUpdateFlowCounter(self, dvs, testlog):
+        try:
+            # PBH hash field
+            pbhlogger.info("Create PBH hash field: {}".format(PBH_HASH_FIELD_NAME))
+            self.dvs_pbh.create_pbh_hash_field(
+                hash_field_name=PBH_HASH_FIELD_NAME,
+                hash_field=PBH_HASH_FIELD_HASH_FIELD,
+                sequence_id=PBH_HASH_FIELD_SEQUENCE_ID
+            )
+            self.dvs_pbh.verify_pbh_hash_field_count(1)
+
+            # PBH hash
+            pbhlogger.info("Create PBH hash: {}".format(PBH_HASH_NAME))
+            self.dvs_pbh.create_pbh_hash(
+                hash_name=PBH_HASH_NAME,
+                hash_field_list=PBH_HASH_HASH_FIELD_LIST
+            )
+            self.dvs_pbh.verify_pbh_hash_count(1)
+
+            # PBH table
+            pbhlogger.info("Create PBH table: {}".format(PBH_TABLE_NAME))
+            self.dvs_pbh.create_pbh_table(
+                table_name=PBH_TABLE_NAME,
+                interface_list=PBH_TABLE_INTERFACE_LIST,
+                description=PBH_TABLE_DESCRIPTION
+            )
+            self.dvs_acl.verify_acl_table_count(1)
+
+            # Prepare ACL FLEX Counter environment
+            meta_data = flex_counter_module.counter_group_meta['acl_counter']
+            counter_key = meta_data['key']
+            counter_stat = meta_data['group_name']
+            counter_map = meta_data['name_map']
+
+            test_flex_counters = flex_counter_module.TestFlexCounters()
+            test_flex_counters.setup_dbs(dvs)
+            test_flex_counters.verify_no_flex_counters_tables(counter_stat)
+
+            # PBH rule
+            pbhlogger.info("Create PBH rule: {}".format(PBH_RULE_NAME))
+
+            attr_dict = {
+                "ether_type": PBH_RULE_ETHER_TYPE,
+                "ip_protocol": PBH_RULE_IP_PROTOCOL,
+                "gre_key": PBH_RULE_GRE_KEY,
+                "inner_ether_type": PBH_RULE_INNER_ETHER_TYPE
+            }
+
+            self.dvs_pbh.create_pbh_rule(
+                table_name=PBH_TABLE_NAME,
+                rule_name=PBH_RULE_NAME,
+                priority=PBH_RULE_PRIORITY,
+                qualifiers=attr_dict,
+                hash_name=PBH_RULE_HASH,
+                packet_action="SET_ECMP_HASH",
+                flow_counter="ENABLED"
+            )
+            self.dvs_acl.verify_acl_rule_count(1)
+            self.dvs_acl.get_acl_counter_ids(1)
+
+            pbhlogger.info("Enable a ACL FLEX counter")
+            test_flex_counters.set_flex_counter_group_status(counter_key, counter_map)
+            test_flex_counters.set_flex_counter_group_interval(counter_key, counter_stat, '1000')
+            test_flex_counters.verify_flex_counters_populated(counter_map, counter_stat)
+
+            pbhlogger.info("Disable a flow counter for PBH rule: {}".format(PBH_RULE_NAME))
+            self.dvs_pbh.update_pbh_rule(
+                table_name=PBH_TABLE_NAME,
+                rule_name=PBH_RULE_NAME,
+                priority=PBH_RULE_PRIORITY,
+                qualifiers=attr_dict,
+                hash_name=PBH_RULE_HASH,
+                packet_action="SET_ECMP_HASH",
+                flow_counter="DISABLED"
+            )
+            self.dvs_acl.get_acl_counter_ids(0)
+
+            pbhlogger.info("Enable a flow counter for PBH rule: {}".format(PBH_RULE_NAME))
+            self.dvs_pbh.update_pbh_rule(
+                table_name=PBH_TABLE_NAME,
+                rule_name=PBH_RULE_NAME,
+                priority=PBH_RULE_PRIORITY,
+                qualifiers=attr_dict,
+                hash_name=PBH_RULE_HASH,
+                packet_action="SET_ECMP_HASH",
+                flow_counter="ENABLED"
+            )
+            self.dvs_acl.get_acl_counter_ids(1)
+
+        finally:
+            # PBH rule
+            pbhlogger.info("Remove PBH rule: {}".format(PBH_RULE_NAME))
+            self.dvs_pbh.remove_pbh_rule(PBH_TABLE_NAME, PBH_RULE_NAME)
+            self.dvs_acl.verify_acl_rule_count(0)
+
+            # PBH table
+            pbhlogger.info("Remove PBH table: {}".format(PBH_TABLE_NAME))
+            self.dvs_pbh.remove_pbh_table(PBH_TABLE_NAME)
+            self.dvs_acl.verify_acl_table_count(0)
+
+            # PBH hash
+            pbhlogger.info("Remove PBH hash: {}".format(PBH_HASH_NAME))
+            self.dvs_pbh.remove_pbh_hash(PBH_HASH_NAME)
+            self.dvs_pbh.verify_pbh_hash_count(0)
+
+            # PBH hash field
+            pbhlogger.info("Remove PBH hash field: {}".format(PBH_HASH_FIELD_NAME))
+            self.dvs_pbh.remove_pbh_hash_field(PBH_HASH_FIELD_NAME)
+            self.dvs_pbh.verify_pbh_hash_field_count(0)
+
+            # ACL FLEX counter
+            pbhlogger.info("Disable ACL FLEX counter")
+            test_flex_counters.post_trap_flow_counter_test(meta_data)
 
 
 @pytest.mark.usefixtures("dvs_lag_manager")

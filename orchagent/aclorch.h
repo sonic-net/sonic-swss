@@ -489,6 +489,9 @@ public:
     bool m_isCombinedMirrorV6Table = true;
     map<string, bool> m_mirrorTableCapabilities;
 
+    void registerFlexCounter(const AclRule& rule);
+    void deregisterFlexCounter(const AclRule& rule);
+
     // Get the OID for the ACL bind point for a given port
     static bool getAclBindPortId(Port& port, sai_object_id_t& port_id);
 
@@ -537,8 +540,6 @@ private:
     void createDTelWatchListTables();
     void deleteDTelWatchListTables();
 
-    void registerFlexCounter(const AclRule& rule);
-    void deregisterFlexCounter(const AclRule& rule);
     string generateAclRuleIdentifierInCountersDb(const AclRule& rule) const;
 
     map<sai_object_id_t, AclTable> m_AclTables;

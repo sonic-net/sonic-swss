@@ -110,6 +110,11 @@ task_process_status QosMapHandler::processWorkItem(Consumer& consumer, KeyOpFiel
     if (QosOrch::getTypeMap()[qos_map_type_name]->find(qos_object_name) != QosOrch::getTypeMap()[qos_map_type_name]->end())
     {
         sai_object = (*(QosOrch::getTypeMap()[qos_map_type_name]))[qos_object_name].m_saiObjectId;
+        if ((*(QosOrch::getTypeMap()[qos_map_type_name]))[qos_object_name].m_pendingRemove && op == SET_COMMAND)
+        {
+            SWSS_LOG_NOTICE("Entry %s %s is pending remove, need retry", qos_map_type_name.c_str(), qos_object_name.c_str());
+            return task_process_status::task_need_retry;
+        }
     }
     if (op == SET_COMMAND)
     {
@@ -138,6 +143,7 @@ task_process_status QosMapHandler::processWorkItem(Consumer& consumer, KeyOpFiel
                 return task_process_status::task_failed;
             }
             (*(QosOrch::getTypeMap()[qos_map_type_name]))[qos_object_name].m_saiObjectId = sai_object;
+            (*(QosOrch::getTypeMap()[qos_map_type_name]))[qos_object_name].m_pendingRemove = false;
             SWSS_LOG_NOTICE("Created [%s:%s]", qos_map_type_name.c_str(), qos_object_name.c_str());
         }
         freeAttribResources(attributes);
@@ -153,6 +159,7 @@ task_process_status QosMapHandler::processWorkItem(Consumer& consumer, KeyOpFiel
         {
             auto hint = gQosOrch->objectReferenceInfo(QosOrch::getTypeMap(), qos_map_type_name, qos_object_name);
             SWSS_LOG_NOTICE("Can't remove object %s due to being referenced (%s)", qos_object_name.c_str(), hint.c_str());
+            (*(QosOrch::getTypeMap()[qos_map_type_name]))[qos_object_name].m_pendingRemove = true;
             return task_process_status::task_need_retry;
         }
         if (!removeQosItem(sai_object))
@@ -1121,6 +1128,11 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer, KeyOpField
             SWSS_LOG_ERROR("Error sai_object must exist for key %s", qos_object_name.c_str());
             return task_process_status::task_invalid_entry;
         }
+        if ((*(m_qos_maps[qos_map_type_name]))[qos_object_name].m_pendingRemove && op == SET_COMMAND)
+        {
+            SWSS_LOG_NOTICE("Entry %s %s is pending remove, need retry", qos_map_type_name.c_str(), qos_object_name.c_str());
+            return task_process_status::task_need_retry;
+        }
     }
     if (op == SET_COMMAND)
     {
@@ -1228,6 +1240,7 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer, KeyOpField
             }
             SWSS_LOG_NOTICE("Created [%s:%s]", qos_map_type_name.c_str(), qos_object_name.c_str());
             (*(m_qos_maps[qos_map_type_name]))[qos_object_name].m_saiObjectId = sai_object;
+            (*(m_qos_maps[qos_map_type_name]))[qos_object_name].m_pendingRemove = false;
         }
     }
     else if (op == DEL_COMMAND)
@@ -1241,6 +1254,7 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer, KeyOpField
         {
             auto hint = gQosOrch->objectReferenceInfo(QosOrch::getTypeMap(), qos_map_type_name, qos_object_name);
             SWSS_LOG_NOTICE("Can't remove object %s due to being referenced (%s)", qos_object_name.c_str(), hint.c_str());
+            (*(m_qos_maps[qos_map_type_name]))[qos_object_name].m_pendingRemove = true;
             return task_process_status::task_need_retry;
         }
         sai_status = sai_scheduler_api->remove_scheduler(sai_object);
@@ -1610,78 +1624,6 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer, KeyOpFieldsVal
         }
     }
     SWSS_LOG_DEBUG("finished");
-    return task_process_status::task_success;
-}
-
-bool QosOrch::applyMapToPort(Port &port, sai_attr_id_t attr_id, sai_object_id_t map_id)
-{
-    SWSS_LOG_ENTER();
-
-    sai_attribute_t attr;
-    attr.id = attr_id;
-    attr.value.oid = map_id;
-
-    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed setting sai object:%" PRIx64 " for port:%s, status:%d", map_id, port.m_alias.c_str(), status);
-        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
-    }
-    return true;
-}
-
-task_process_status QosOrch::ResolveMapAndApplyToPort(
-    Port                    &port,
-    sai_port_attr_t         port_attr,
-    string                  field_name,
-    KeyOpFieldsValuesTuple  &tuple,
-    string                  op)
-{
-    SWSS_LOG_ENTER();
-
-    sai_object_id_t sai_object = SAI_NULL_OBJECT_ID;
-    string object_name;
-    bool result;
-    ref_resolve_status resolve_result = resolveFieldRefValue(m_qos_maps, field_name,
-                           qos_to_ref_table_map.at(field_name), tuple, sai_object, object_name);
-    if (ref_resolve_status::success == resolve_result)
-    {
-        if (op == SET_COMMAND)
-        {
-            result = applyMapToPort(port, port_attr, sai_object);
-        }
-        else if (op == DEL_COMMAND)
-        {
-            // NOTE: The map is un-bound from the port. But the map itself still exists.
-            result = applyMapToPort(port, port_attr, SAI_NULL_OBJECT_ID);
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
-            return task_process_status::task_invalid_entry;
-        }
-        if (!result)
-        {
-            SWSS_LOG_ERROR("Failed setting field:%s to port:%s, line:%d", field_name.c_str(), port.m_alias.c_str(), __LINE__);
-            return task_process_status::task_failed;
-        }
-        SWSS_LOG_DEBUG("Applied field:%s to port:%s, line:%d", field_name.c_str(), port.m_alias.c_str(), __LINE__);
-        return task_process_status::task_success;
-    }
-    else if (resolve_result != ref_resolve_status::field_not_found)
-    {
-        if(ref_resolve_status::not_resolved == resolve_result)
-        {
-            SWSS_LOG_INFO("Missing or invalid %s reference", field_name.c_str());
-            return task_process_status::task_need_retry;
-        }
-        SWSS_LOG_ERROR("Resolving %s reference failed", field_name.c_str());
-        return task_process_status::task_failed;
-    }
     return task_process_status::task_success;
 }
 
