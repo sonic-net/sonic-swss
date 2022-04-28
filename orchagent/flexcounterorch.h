@@ -10,6 +10,7 @@ extern "C" {
 #include "sai.h"
 }
 
+// Just for checker experiment
 class FlexCounterOrch: public Orch
 {
 public:
