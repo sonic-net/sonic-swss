@@ -1101,6 +1101,16 @@ class DockerVirtualSwitch:
                     break
         return vlan_oid
 
+    def port_field_set(self, port, field, value):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "PORT")
+        fvs = swsscommon.FieldValuePairs([(field, value)])
+        tbl.set(port, fvs)
+        time.sleep(1)
+
+    def port_admin_set(self, port, status):
+        self.port_field_set(port, "admin_status", status)
+        
     # deps: acl_portchannel, fdb
     def getCrmCounterValue(self, key, counter):
         counters_db = swsscommon.DBConnector(swsscommon.COUNTERS_DB, self.redis_sock, 0)

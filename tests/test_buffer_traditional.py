@@ -137,7 +137,7 @@ class TestBuffer(object):
 
             # buffer pgs should still point to the original buffer profile
             for pg in self.lossless_pgs:
-                self.app_db.wait_for_field_match("BUFFER_PG_TABLE", self.INTF + ":" + pg, {"profile": orig_lossless_profile})
+                self.app_db.wait_for_field_match("BUFFER_PG_TABLE", self.INTF + ":" + pg, {"profile": "[BUFFER_PROFILE_TABLE:{}]".format(orig_lossless_profile)})
             fvs = dict()
             for pg in self.pg_name_map:
                 fvs["SAI_INGRESS_PRIORITY_GROUP_ATTR_BUFFER_PROFILE"] = self.buf_pg_profile[pg]
@@ -222,7 +222,7 @@ class TestBuffer(object):
 
             # Verify BUFFER_PG is updated
             for pg in self.lossless_pgs:
-                self.app_db.wait_for_field_match("BUFFER_PG_TABLE", self.INTF + ":" + pg, {"profile": new_lossless_profile})
+                self.app_db.wait_for_field_match("BUFFER_PG_TABLE", self.INTF + ":" + pg, {"profile": "[BUFFER_PROFILE_TABLE:{}]".format(new_lossless_profile)})
 
             fvs_negative = {}
             for pg in self.pg_name_map:
@@ -235,7 +235,7 @@ class TestBuffer(object):
             time.sleep(1)
             # Verify BUFFER_PG is updated when pfc_enable is available
             for pg in self.lossless_pgs:
-                self.app_db.wait_for_field_match("BUFFER_PG_TABLE", extra_port + ":" + pg, {"profile": new_lossless_profile})
+                self.app_db.wait_for_field_match("BUFFER_PG_TABLE", extra_port + ":" + pg, {"profile": "[BUFFER_PROFILE_TABLE:{}]".format(new_lossless_profile)})
         finally:
             if orig_cable_len:
                 self.change_cable_len(orig_cable_len, extra_port)
