@@ -450,7 +450,7 @@ def get_bfd_session_id(dvs, addr):
         status, fvs = tbl.get(entry)
         fvs = dict(fvs)
         assert status, "Got an error when get a key"
-        if fvs["SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS"] == addr:
+        if fvs["SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS"] == addr and fvs["SAI_BFD_SESSION_ATTR_MULTIHOP"] == "true":
             return entry
 
     return None
