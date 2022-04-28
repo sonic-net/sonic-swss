@@ -74,6 +74,9 @@ type_map QosOrch::m_qos_maps = {
     {APP_TUNNEL_DECAP_TABLE_NAME, new object_reference_map()}
 };
 
+#define DSCP_MAX_VAL 63
+#define EXP_MAX_VAL 7
+
 task_process_status QosMapHandler::processWorkItem(Consumer& consumer)
 {
     SWSS_LOG_ENTER();

@@ -85,6 +85,7 @@ private:
 
     bool setTunnelAttribute(std::string field, std::string value, sai_object_id_t existing_tunnel_id);
     bool setTunnelAttribute(std::string field, sai_object_id_t value, sai_object_id_t existing_tunnel_id);
+    bool setIpAttribute(std::string key, swss::IpAddresses new_ip_addresses, sai_object_id_t tunnel_id);
 
     sai_object_id_t getNextHopTunnel(std::string tunnelKey, swss::IpAddress& ipAddr);
     int incNextHopRef(std::string tunnelKey, swss::IpAddress& ipAddr);
