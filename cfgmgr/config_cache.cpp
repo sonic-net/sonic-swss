@@ -28,12 +28,9 @@ void ConfigCache::config(const std::string& key, const std::string& field, const
         }
         else
         {
-            if (value != entry_iter->second)
+            if (mConfigChangeCb(key, field, entry_iter->second, value, context))
             {
-                if (mConfigChangeCb(key, field, entry_iter->second, value, context))
-                {
-                    entry_iter->second = value;
-                }
+                entry_iter->second = value;
             }
         }
     }

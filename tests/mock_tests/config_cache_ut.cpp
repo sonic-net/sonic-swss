@@ -23,13 +23,13 @@ namespace config_cache_ut
         cc.config("key", "field", "value");
         ASSERT_EQ(1, call_count);
         ASSERT_TRUE(cc.exist("key"));
-        // Do the same config again, verify the call count does not increase
+        // Do the same config again, verify the call count increase
         call_count = 0;
         cc.config("key", "field", "value");
-        ASSERT_EQ(0, call_count);
+        ASSERT_EQ(1, call_count);
         // Do a different config, verify the call count increase
         cc.config("key", "field", "new_value");
-        ASSERT_EQ(1, call_count);
+        ASSERT_EQ(2, call_count);
         // Update default config with new field, verify update success
         call_count = 0;
         ConfigEntry ce {{"field1", "value1"}};
