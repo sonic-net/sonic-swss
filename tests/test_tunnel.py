@@ -60,7 +60,7 @@ class TestTunnelBase(object):
             status, fvs = tunnel_term_table.get(term_entry)
 
             assert status == True
-            assert len(fvs) == 5
+            assert len(fvs) == expected_len
 
             for field, value in fvs:
                 if field == "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_VR_ID":
@@ -80,8 +80,6 @@ class TestTunnelBase(object):
 
     def create_and_test_tunnel(self, db, asicdb, tunnel_name, **kwargs):
         """ Create tunnel and verify all needed enties in ASIC DB exists """
-
-        is_symmetric_tunnel = "src_ip" in kwargs;
 
         is_symmetric_tunnel = "src_ip" in kwargs
 
@@ -248,7 +246,7 @@ class TestDecapTunnel(TestTunnelBase):
                                     ecn_mode="copy_from_outer", ttl_mode="uniform")
         self.remove_and_test_tunnel(db, asicdb,"IPINIPv6Decap")
 
-def test_TunnelDecap_MuxTunnel(self, dvs, testlog):
+    def test_TunnelDecap_MuxTunnel(self, dvs, testlog):
         """ Test MuxTunnel creation. """
         db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         asicdb = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
@@ -267,9 +265,9 @@ def test_TunnelDecap_MuxTunnel(self, dvs, testlog):
             "dscp_mode": "pipe",
             "ecn_mode": "copy_from_outer",
             "ttl_mode": "uniform",
-            "decap_dscp_to_tc_map": "AZURE_TUNNEL",
+            "decap_dscp_to_tc_map": "[" + swsscommon.CFG_DSCP_TO_TC_MAP_TABLE_NAME + "|AZURE_TUNNEL]",
             "decap_dscp_to_tc_map_oid": dscp_to_tc_map_oid,
-            "decap_tc_to_pg_map": "AZURE_TUNNEL",
+            "decap_tc_to_pg_map": "[" + swsscommon.CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME + "|AZURE_TUNNEL]",
             "decap_tc_to_pg_map_oid": tc_to_pg_map_oid
         }
         self.create_and_test_tunnel(db, asicdb, tunnel_name="MuxTunnel0", **params)

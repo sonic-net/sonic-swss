@@ -50,14 +50,13 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
         string ecn_mode;
         string encap_ecn_mode;
         string ttl_mode;
-        sai_object_id_t dscp_to_dc_map_id = SAI_NULL_OBJECT_ID;
+        sai_object_id_t dscp_to_tc_map_id = SAI_NULL_OBJECT_ID;
         sai_object_id_t tc_to_pg_map_id = SAI_NULL_OBJECT_ID;
         // The tc_to_dscp_map_id and tc_to_queue_map_id are parsed here for muxorch to retrieve
         sai_object_id_t tc_to_dscp_map_id = SAI_NULL_OBJECT_ID;
         sai_object_id_t tc_to_queue_map_id = SAI_NULL_OBJECT_ID;
 
-        bool valid = true;
-
+        task_process_status task_status = task_process_status::task_success;
         sai_object_id_t tunnel_id = SAI_NULL_OBJECT_ID;
 
         // checking to see if the tunnel already exists
@@ -78,7 +77,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                     if (tunnel_type != "IPINIP")
                     {
                         SWSS_LOG_ERROR("Invalid tunnel type %s", tunnel_type.c_str());
-                        valid = false;
+                        task_status = task_process_status::task_invalid_entry;
                         break;
                     }
                 }
@@ -91,7 +90,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                     catch (const std::invalid_argument &e)
                     {
                         SWSS_LOG_ERROR("%s", e.what());
-                        valid = false;
+                        task_status = task_process_status::task_invalid_entry;
                         break;
                     }
                     if (exists)
@@ -109,7 +108,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                     catch (const std::invalid_argument &e)
                     {
                         SWSS_LOG_ERROR("%s", e.what());
-                        valid = false;
+                        task_status = task_process_status::task_invalid_entry;
                         break;
                     }
                     if (exists)
@@ -123,7 +122,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                     if (dscp_mode != "uniform" && dscp_mode != "pipe")
                     {
                         SWSS_LOG_ERROR("Invalid dscp mode %s\n", dscp_mode.c_str());
-                        valid = false;
+                        task_status = task_process_status::task_invalid_entry;
                         break;
                     }
                     if (exists)
@@ -138,7 +137,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                     if (ecn_mode != "copy_from_outer" && ecn_mode != "standard")
                     {
                         SWSS_LOG_ERROR("Invalid ecn mode %s\n", ecn_mode.c_str());
-                        valid = false;
+                        task_status = task_process_status::task_invalid_entry;
                         break;
                     }
                     if (exists)
@@ -152,7 +151,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                     if (encap_ecn_mode != "standard")
                     {
                         SWSS_LOG_ERROR("Only standard encap ecn mode is supported currently %s\n", ecn_mode.c_str());
-                        valid = false;
+                        task_status = task_process_status::task_invalid_entry;
                         break;
                     }
                     if (exists)
@@ -166,7 +165,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                     if (ttl_mode != "uniform" && ttl_mode != "pipe")
                     {
                         SWSS_LOG_ERROR("Invalid ttl mode %s\n", ttl_mode.c_str());
-                        valid = false;
+                        task_status = task_process_status::task_invalid_entry;
                         break;
                     }
                     if (exists)
@@ -176,15 +175,27 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                 }
                 else if (fvField(i) == decap_dscp_to_tc_field_name)
                 {
-                    dscp_to_dc_map_id = gQosOrch->resolveTunnelQosMap(table_name, key, decap_dscp_to_tc_field_name, t); 
-                    if (exists && dscp_to_dc_map_id != SAI_NULL_OBJECT_ID)
+                    dscp_to_tc_map_id = gQosOrch->resolveTunnelQosMap(table_name, key, decap_dscp_to_tc_field_name, t);
+                    if (dscp_to_tc_map_id == SAI_NULL_OBJECT_ID)
                     {
-                        setTunnelAttribute(fvField(i), dscp_to_dc_map_id, tunnel_id);
+                        SWSS_LOG_NOTICE("QoS map %s is not ready yet", decap_dscp_to_tc_field_name.c_str());
+                        task_status = task_process_status::task_need_retry;
+                        break;
+                    }
+                    if (exists && dscp_to_tc_map_id != SAI_NULL_OBJECT_ID)
+                    {
+                        setTunnelAttribute(fvField(i), dscp_to_tc_map_id, tunnel_id);
                     }
                 }
                 else if (fvField(i) == decap_tc_to_pg_field_name)
                 {
                     tc_to_pg_map_id = gQosOrch->resolveTunnelQosMap(table_name, key, decap_tc_to_pg_field_name, t); 
+                    if (tc_to_pg_map_id == SAI_NULL_OBJECT_ID)
+                    {
+                        SWSS_LOG_NOTICE("QoS map %s is not ready yet", decap_tc_to_pg_field_name.c_str());
+                        task_status = task_process_status::task_need_retry;
+                        break;
+                    }
                     if (exists && tc_to_pg_map_id != SAI_NULL_OBJECT_ID)
                     {
                         setTunnelAttribute(fvField(i), tc_to_pg_map_id, tunnel_id);
@@ -193,6 +204,12 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                 else if (fvField(i) == encap_tc_to_dscp_field_name)
                 {
                     tc_to_dscp_map_id = gQosOrch->resolveTunnelQosMap(table_name, key, encap_tc_to_dscp_field_name, t);
+                    if (tc_to_dscp_map_id == SAI_NULL_OBJECT_ID)
+                    {
+                        SWSS_LOG_NOTICE("QoS map %s is not ready yet", encap_tc_to_dscp_field_name.c_str());
+                        task_status = task_process_status::task_need_retry;
+                        break;
+                    }
                     if (exists)
                     {
                         // Record only
@@ -202,6 +219,12 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                 else if (fvField(i) == encap_tc_to_queue_field_name)
                 {
                     tc_to_queue_map_id = gQosOrch->resolveTunnelQosMap(table_name, key, encap_tc_to_queue_field_name, t);
+                    if (tc_to_queue_map_id == SAI_NULL_OBJECT_ID)
+                    {
+                        SWSS_LOG_NOTICE("QoS map %s is not ready yet", encap_tc_to_queue_field_name.c_str());
+                        task_status = task_process_status::task_need_retry;
+                        break;
+                    }
                     if (exists)
                     {
                         // Record only
@@ -209,20 +232,22 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                     }
                 }
             }
-
+            
             // create new tunnel if it doesn't exists already
-            if (valid && !exists)
+            if (task_status == task_process_status::task_success && !exists)
             {
                 if (addDecapTunnel(key, tunnel_type, ip_addresses, p_src_ip, dscp_mode, ecn_mode, encap_ecn_mode, ttl_mode,
-                                    dscp_to_dc_map_id, tc_to_pg_map_id))
+                                    dscp_to_tc_map_id, tc_to_pg_map_id))
                 {
                     // Record only
                     tunnelTable[key].encap_tc_to_dscp_map_id = tc_to_dscp_map_id;
                     tunnelTable[key].encap_tc_to_queue_map_id = tc_to_queue_map_id;
+                    task_status = task_process_status::task_success;
                     SWSS_LOG_NOTICE("Tunnel(s) added to ASIC_DB.");
                 }
                 else
                 {
+                    task_status = task_process_status::task_failed;
                     SWSS_LOG_ERROR("Failed to add tunnels to ASIC_DB.");
                 }
             }
@@ -240,7 +265,20 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
             }
         }
 
-        it = consumer.m_toSync.erase(it);
+        switch (task_status)
+        {
+            case task_process_status::task_failed:
+            case task_process_status::task_success:
+            case task_process_status::task_invalid_entry:
+                it = consumer.m_toSync.erase(it);
+                break;
+            case task_process_status::task_need_retry:
+                ++it;
+                break;
+            default:
+                it = consumer.m_toSync.erase(it);
+                break;
+        }
     }
 }
 
