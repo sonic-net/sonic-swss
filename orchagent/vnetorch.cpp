@@ -1539,8 +1539,7 @@ void VNetRouteOrch::createBfdSession(const string& vnet, const NextHopKey& endpo
         FieldValueTuple fvTuple("local_addr", src_ip.to_string());
         data.push_back(fvTuple);
 
-        FieldValueTuple fvTuple("multihop", "true");
-        data.push_back(fvTuple);
+	data.emplace_back("multihop", "true");
 
         bfd_session_producer_.set(key, data);
 
