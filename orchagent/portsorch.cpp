@@ -61,7 +61,7 @@ extern string gMyAsicName;
 #define DEFAULT_VLAN_ID     1
 #define MAX_VALID_VLAN_ID   4094
 
-#define DEFAULT_VECTOR_SIZE 16
+#define PORT_SPEED_LIST_DEFAULT_SIZE                     16
 
 #define PORT_STATE_POLLING_SEC                            5
 #define PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS     1000
@@ -302,7 +302,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         port_stat_manager(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         port_buffer_drop_stat_manager(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS, false),
         queue_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
-        m_timer(new SelectableTimer(timespec { .tv_sec = PORT_STATE_POLLING_SEC, .tv_nsec = 0 }))
+        m_port_state_poller(new SelectableTimer(timespec { .tv_sec = PORT_STATE_POLLING_SEC, .tv_nsec = 0 }))
 {
     SWSS_LOG_ENTER();
 
@@ -568,7 +568,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         m_lagIdAllocator = unique_ptr<LagIdAllocator> (new LagIdAllocator(chassisAppDb));
     }
 
-    auto executor = new ExecutableTimer(m_timer, this, "PORT_STATE_POLL");
+    auto executor = new ExecutableTimer(m_port_state_poller, this, "PORT_STATE_POLLER");
     Orch::addExecutor(executor);
 }
 
@@ -2045,7 +2045,7 @@ bool PortsOrch::getPortAdvSpeeds(const Port& port, bool remote, std::vector<sai_
     sai_object_id_t line_port_id;
     sai_attribute_t attr;
     sai_status_t status;
-    std::vector<sai_uint32_t> speeds(DEFAULT_VECTOR_SIZE);
+    std::vector<sai_uint32_t> speeds(PORT_SPEED_LIST_DEFAULT_SIZE);
 
     attr.id = remote ? SAI_PORT_ATTR_REMOTE_ADVERTISED_SPEED : SAI_PORT_ATTR_ADVERTISED_SPEED;
     attr.value.u32list.count = static_cast<uint32_t>(speeds.size());
@@ -7007,7 +7007,7 @@ void PortsOrch::updatePortStatePoll(const Port &port, port_state_poll_t type, bo
     if (active)
     {
         m_port_state_poll[port.m_alias] |= type;
-        m_timer->start();
+        m_port_state_poller->start();
     }
     else
     {
@@ -7021,24 +7021,26 @@ void PortsOrch::doTask(swss::SelectableTimer &timer)
 
     Port port;
 
-    for (auto it = m_port_state_poll.begin(); it != m_port_state_poll.end(); ++it)
+    for (auto it = m_port_state_poll.begin(); it != m_port_state_poll.end(); )
     {
         if ((it->second == 0) || !getPort(it->first, port))
         {
-            m_port_state_poll.erase(it);
+            it = m_port_state_poll.erase(it);
             continue;
         }
         if (!port.m_admin_state_up)
         {
+            ++it;
             continue;
         }
         if (it->second & PORT_STATE_POLL_AN)
         {
             updatePortStateAutoNeg(port);
         }
+        ++it;
     }
     if (m_port_state_poll.size() == 0)
     {
-        m_timer->stop();
+        m_port_state_poller->stop();
     }
 }

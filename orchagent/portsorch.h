@@ -251,7 +251,7 @@ private:
 
     NotificationConsumer* m_portStatusNotificationConsumer;
 
-    swss::SelectableTimer *m_timer = nullptr;
+    swss::SelectableTimer *m_port_state_poller = nullptr;
 
     void doTask() override;
     void doTask(Consumer &consumer);
