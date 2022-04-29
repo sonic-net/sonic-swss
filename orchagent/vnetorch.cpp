@@ -312,11 +312,14 @@ VNetVrfObject::~VNetVrfObject()
     set<sai_object_id_t> vr_ent = getVRids();
     for (auto it : vr_ent)
     {
-        sai_status_t status = sai_virtual_router_api->remove_virtual_router(it);
-        if (status != SAI_STATUS_SUCCESS)
+        if (it != gVirtualRouterId) 
         {
-            SWSS_LOG_ERROR("Failed to remove virtual router name: %s, rv:%d",
-                            vnet_name_.c_str(), status);
+            sai_status_t status = sai_virtual_router_api->remove_virtual_router(it);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to remove virtual router name: %s, rv:%d",
+                                vnet_name_.c_str(), status);
+            }
         }
         gFlowCounterRouteOrch->onRemoveVR(it);
     }
