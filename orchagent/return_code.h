@@ -7,7 +7,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#include "sai_serialize.h"
+#include <sai_serialize.h>
 #include "status_code_util.h"
 
 extern "C"
