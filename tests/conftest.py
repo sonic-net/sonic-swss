@@ -1683,7 +1683,7 @@ def manage_dvs(request) -> str:
             dvs.net_cleanup()
             dvs.destroy_servers()
             dvs.create_servers()
-            dvs.restart()
+            #dvs.restart()
 
         return dvs
 
