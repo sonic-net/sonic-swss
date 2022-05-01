@@ -79,6 +79,8 @@ type_map QosOrch::m_qos_maps = {
     {CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME, new object_reference_map()},
     {CFG_DSCP_TO_FC_MAP_TABLE_NAME, new object_reference_map()},
     {CFG_EXP_TO_FC_MAP_TABLE_NAME, new object_reference_map()},
+    {CFG_TC_TO_DSCP_MAP_TABLE_NAME, new object_reference_map()},
+    {APP_TUNNEL_DECAP_TABLE_NAME, new object_reference_map()}
 };
 
 map<string, string> qos_to_ref_table_map = {
@@ -92,7 +94,11 @@ map<string, string> qos_to_ref_table_map = {
     {scheduler_field_name, CFG_SCHEDULER_TABLE_NAME},
     {wred_profile_field_name, CFG_WRED_PROFILE_TABLE_NAME},
     {dscp_to_fc_field_name, CFG_DSCP_TO_FC_MAP_TABLE_NAME},
-    {exp_to_fc_field_name, CFG_EXP_TO_FC_MAP_TABLE_NAME}
+    {exp_to_fc_field_name, CFG_EXP_TO_FC_MAP_TABLE_NAME},
+    {decap_dscp_to_tc_field_name, CFG_DSCP_TO_TC_MAP_TABLE_NAME},
+    {decap_tc_to_pg_field_name, CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME},
+    {encap_tc_to_dscp_field_name, CFG_TC_TO_DSCP_MAP_TABLE_NAME},
+    {encap_tc_to_queue_field_name, CFG_TC_TO_QUEUE_MAP_TABLE_NAME}
 };
 
 #define DSCP_MAX_VAL 63
@@ -1063,6 +1069,82 @@ sai_object_id_t ExpToFcMapHandler::addQosItem(const vector<sai_attribute_t> &att
     return sai_object;
 }
 
+bool TcToDscpMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple,
+                                                        vector<sai_attribute_t> &attributes)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t list_attr;
+    list_attr.id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;
+    list_attr.value.qosmap.count = (uint32_t)kfvFieldsValues(tuple).size();
+    list_attr.value.qosmap.list = new sai_qos_map_t[list_attr.value.qosmap.count]();
+    uint32_t ind = 0;
+
+    for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++, ind++)
+    {
+        try
+        {
+            auto value = stoi(fvValue(*i));
+            if (value < 0)
+            {
+                SWSS_LOG_ERROR("DSCP value %d is negative", value);
+                delete[] list_attr.value.qosmap.list;
+                return false;
+            }
+            else if (value > DSCP_MAX_VAL)
+            {
+                SWSS_LOG_ERROR("DSCP value %d is greater than max value %d", value, DSCP_MAX_VAL);
+                delete[] list_attr.value.qosmap.list;
+                return false;
+            }
+            list_attr.value.qosmap.list[ind].key.tc = static_cast<sai_uint8_t>(stoi(fvField(*i)));
+            list_attr.value.qosmap.list[ind].value.dscp = static_cast<sai_uint8_t>(value);
+
+            SWSS_LOG_DEBUG("key.tc:%d, value.dscp:%d",
+                            list_attr.value.qosmap.list[ind].key.tc,
+                            list_attr.value.qosmap.list[ind].value.dscp);
+        }
+        catch(const invalid_argument& e)
+        {
+            SWSS_LOG_ERROR("Got exception during conversion: %s", e.what());
+            delete[] list_attr.value.qosmap.list;
+            return false;
+        }
+    }
+    attributes.push_back(list_attr);
+    return true;
+}
+
+sai_object_id_t TcToDscpMapHandler::addQosItem(const vector<sai_attribute_t> &attributes)
+{
+    SWSS_LOG_ENTER();
+    sai_status_t sai_status;
+    sai_object_id_t sai_object;
+    vector<sai_attribute_t> qos_map_attrs;
+
+    sai_attribute_t qos_map_attr;
+    qos_map_attr.id = SAI_QOS_MAP_ATTR_TYPE;
+    qos_map_attr.value.u32 = SAI_QOS_MAP_TYPE_TC_AND_COLOR_TO_DSCP;
+    qos_map_attrs.push_back(qos_map_attr);
+
+    qos_map_attr.id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;
+    qos_map_attr.value.qosmap.count = attributes[0].value.qosmap.count;
+    qos_map_attr.value.qosmap.list = attributes[0].value.qosmap.list;
+    qos_map_attrs.push_back(qos_map_attr);
+
+    sai_status = sai_qos_map_api->create_qos_map(&sai_object,
+                                                gSwitchId,
+                                                (uint32_t)qos_map_attrs.size(),
+                                                qos_map_attrs.data());
+    if (SAI_STATUS_SUCCESS != sai_status)
+    {
+        SWSS_LOG_ERROR("Failed to create tc_to_dscp map. status:%d", sai_status);
+        return SAI_NULL_OBJECT_ID;
+    }
+    SWSS_LOG_DEBUG("created QosMap object:%" PRIx64, sai_object);
+    return sai_object;
+}
+
 task_process_status QosOrch::handleExpToFcTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
@@ -1075,6 +1157,13 @@ task_process_status QosOrch::handlePfcToQueueTable(Consumer& consumer, KeyOpFiel
     SWSS_LOG_ENTER();
     PfcToQueueHandler pfc_to_queue_handler;
     return pfc_to_queue_handler.processWorkItem(consumer, tuple);
+}
+
+task_process_status QosOrch::handleTcToDscpTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
+{
+    SWSS_LOG_ENTER();
+    TcToDscpMapHandler tc_to_dscp_handler;
+    return tc_to_dscp_handler.processWorkItem(consumer, tuple);
 }
 
 QosOrch::QosOrch(DBConnector *db, vector<string> &tableNames) : Orch(db, tableNames)
@@ -1103,6 +1192,7 @@ void QosOrch::initTableHandlers()
     m_qos_handler_map.insert(qos_handler_pair(CFG_WRED_PROFILE_TABLE_NAME, &QosOrch::handleWredProfileTable));
     m_qos_handler_map.insert(qos_handler_pair(CFG_DSCP_TO_FC_MAP_TABLE_NAME, &QosOrch::handleDscpToFcTable));
     m_qos_handler_map.insert(qos_handler_pair(CFG_EXP_TO_FC_MAP_TABLE_NAME, &QosOrch::handleExpToFcTable));
+    m_qos_handler_map.insert(qos_handler_pair(CFG_TC_TO_DSCP_MAP_TABLE_NAME, &QosOrch::handleTcToDscpTable));
 
     m_qos_handler_map.insert(qos_handler_pair(CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME, &QosOrch::handleTcToPgTable));
     m_qos_handler_map.insert(qos_handler_pair(CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME, &QosOrch::handlePfcPrioToPgTable));
@@ -1689,6 +1779,7 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFiel
     }
 
     sai_uint8_t pfc_enable = 0;
+    sai_uint8_t pfcwd_sw_enable = 0;
     map<sai_port_attr_t, pair<string, sai_object_id_t>> update_list;
     for (auto it = kfvFieldsValues(tuple).begin(); it != kfvFieldsValues(tuple).end(); it++)
     {
@@ -1710,14 +1801,24 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFiel
             setObjectReference(m_qos_maps, CFG_PORT_QOS_MAP_TABLE_NAME, key, map_type_name, object_name);
         }
 
-        if (fvField(*it) == pfc_enable_name)
+        else if (fvField(*it) == pfc_enable_name || fvField(*it) == pfcwd_sw_enable_name)
         {
+            sai_uint8_t bitmask = 0;
             vector<string> queue_indexes;
             queue_indexes = tokenize(fvValue(*it), list_item_delimiter);
             for(string q_ind : queue_indexes)
             {
                 sai_uint8_t q_val = (uint8_t)stoi(q_ind);
-                pfc_enable |= (uint8_t)(1 << q_val);
+                bitmask |= (uint8_t)(1 << q_val);
+            }
+
+            if (fvField(*it) == pfc_enable_name)
+            {
+                pfc_enable = bitmask;
+            }
+            else
+            {
+                pfcwd_sw_enable = bitmask;
             }
         }
     }
@@ -1786,6 +1887,9 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFiel
 
             SWSS_LOG_INFO("Applied PFC bits 0x%x to port %s", pfc_enable, port_name.c_str());
         }
+
+        // Save pfd_wd bitmask unconditionally
+        gPortsOrch->setPortPfcWatchdogStatus(port.m_port_id, pfcwd_sw_enable);
     }
 
     SWSS_LOG_NOTICE("Applied QoS maps to ports");
@@ -1857,5 +1961,37 @@ void QosOrch::doTask(Consumer &consumer)
                 it = consumer.m_toSync.erase(it);
                 break;
         }
+    }
+}
+
+/**
+ * Function Description:
+ *    @brief Resolve the id of QoS map that is referenced by tunnel
+ *
+ * Arguments:
+ *    @param[in] referencing_table_name - The name of table that is referencing the QoS map
+ *    @param[in] tunnle_name - The name of tunnel
+ *    @param[in] map_type_name - The type of referenced QoS map
+ *    @param[in] tuple - The KeyOpFieldsValuesTuple that contains keys - values
+ *
+ * Return Values:
+ *    @return The sai_object_id of referenced map, or SAI_NULL_OBJECT_ID  if there's an error
+ */
+sai_object_id_t QosOrch::resolveTunnelQosMap(std::string referencing_table_name, std::string tunnel_name, std::string map_type_name, KeyOpFieldsValuesTuple& tuple)
+{
+    sai_object_id_t id;
+    string object_name;
+    ref_resolve_status status = resolveFieldRefValue(m_qos_maps, map_type_name, qos_to_ref_table_map.at(map_type_name), tuple, id, object_name);
+    if (status == ref_resolve_status::success)
+    {
+        
+        setObjectReference(m_qos_maps, referencing_table_name, tunnel_name, map_type_name, object_name);
+        SWSS_LOG_INFO("Resolved QoS map for table %s tunnel %s type %s name %s", referencing_table_name.c_str(), tunnel_name.c_str(), map_type_name.c_str(), object_name.c_str());
+        return id;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Failed to resolve QoS map for table %s tunnel %s type %s", referencing_table_name.c_str(), tunnel_name.c_str(), map_type_name.c_str());
+        return SAI_NULL_OBJECT_ID;
     }
 }
