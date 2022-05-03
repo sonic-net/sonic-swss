@@ -1995,3 +1995,21 @@ sai_object_id_t QosOrch::resolveTunnelQosMap(std::string referencing_table_name,
         return SAI_NULL_OBJECT_ID;
     }
 }
+
+/**
+ * Function Description:
+ *    @brief Remove the reference from tunnel object. Called after tunnel is removed
+ *
+ * Arguments:
+ *    @param[in] referencing_table_name - The name of table that is referencing the QoS map
+ *    @param[in] tunnle_name - The name of tunnel
+ *
+ * Return Values:
+ *    @return no return
+ */
+void QosOrch::removeTunnelReference(std::string referencing_table_name, std::string tunnel_name)
+{
+    removeObject(m_qos_maps, referencing_table_name, tunnel_name);
+    SWSS_LOG_INFO("Freed QoS objects referenced by %s:%s", referencing_table_name.c_str(), tunnel_name.c_str());
+}
+
