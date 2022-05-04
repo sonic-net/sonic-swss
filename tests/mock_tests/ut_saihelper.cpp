@@ -83,6 +83,7 @@ namespace ut_helper
         sai_api_query(SAI_API_WRED, (void **)&sai_wred_api);
         sai_api_query(SAI_API_QUEUE, (void **)&sai_queue_api);
         sai_api_query(SAI_API_MPLS, (void**)&sai_mpls_api);
+        sai_api_query(SAI_API_COUNTER, (void**)&sai_counter_api);
 
         return SAI_STATUS_SUCCESS;
     }
@@ -106,6 +107,7 @@ namespace ut_helper
         sai_hostif_api = nullptr;
         sai_buffer_api = nullptr;
         sai_queue_api = nullptr;
+        sai_counter_api = nullptr;
     }
 
     map<string, vector<FieldValueTuple>> getInitialSaiPorts()

@@ -38,6 +38,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 bulker_ut.cpp \
                 fake_response_publisher.cpp \
                 swssnet_ut.cpp \
+                flowcounterrouteorch_ut.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/lib/subintf.cpp \
                 $(top_srcdir)/orchagent/orchdaemon.cpp \
