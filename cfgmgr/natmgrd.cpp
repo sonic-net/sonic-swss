@@ -72,6 +72,10 @@ void sigterm_handler(int signo)
 {
     SWSS_LOG_ENTER();
 
+    if (old_sigaction.sa_handler != SIG_IGN && old_sigaction.sa_handler != SIG_DFL) {
+        old_sigaction.sa_handler(signo);
+    }
+
     gExit = 1;
 }
 
@@ -108,10 +112,6 @@ void cleanup()
 
         natmgr->cleanupMangleIpTables();
         natmgr->cleanupPoolIpTable();
-    }
-
-    if (old_sigaction.sa_handler != SIG_IGN && old_sigaction.sa_handler != SIG_DFL) {
-        old_sigaction.sa_handler(signo);
     }
 }
 
