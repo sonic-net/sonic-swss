@@ -621,9 +621,11 @@ bool OrchDaemon::init()
 
     m_orchList.push_back(&CounterCheckOrch::getInstance(m_configDb));
 
-    vector<string> p4rt_tables = {APP_P4RT_TABLE_NAME};
-    gP4Orch = new P4Orch(m_applDb, p4rt_tables, vrf_orch, gCoppOrch);
-    m_orchList.push_back(gP4Orch);
+    if (platform == P4_PLATFORM_SUBSTRING) {
+        vector<string> p4rt_tables = {APP_P4RT_TABLE_NAME};
+        gP4Orch = new P4Orch(m_applDb, p4rt_tables, vrf_orch, gCoppOrch);
+        m_orchList.push_back(gP4Orch);
+    }
 
     if (WarmStart::isWarmStart())
     {
