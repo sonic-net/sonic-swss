@@ -116,7 +116,6 @@ bool PolicerOrch::decreaseRefCount(const string &name)
 PolicerOrch::PolicerOrch(vector<TableConnector> &tableNames, PortsOrch *portOrch) : Orch(tableNames), m_portsOrch(portOrch)
 {
     SWSS_LOG_ENTER();
-    //m_portsOrch->attach(this);
 }
 
 task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsValuesTuple tuple)
@@ -391,6 +390,7 @@ void PolicerOrch::doTask(Consumer &consumer)
         auto op = kfvOp(tuple);
         auto table_name = consumer.getTableName();
 
+        // Special handling for storm-control configuration.
         if (table_name == CFG_PORT_STORM_CONTROL_TABLE_NAME)
         {
             storm_status = handlePortStormControlTable(tuple);
@@ -402,191 +402,188 @@ void PolicerOrch::doTask(Consumer &consumer)
             else
             {
                 it++;
-                continue;
             }
+            continue;
         }
-        else
+        if (op == SET_COMMAND)
         {
-            if (op == SET_COMMAND)
+            // Mark the operation as an 'update', if the policer exists.
+            bool update = m_syncdPolicers.find(key) != m_syncdPolicers.end();
+
+            vector<sai_attribute_t> attrs;
+            bool meter_type = false, mode = false;
+
+            for (auto i = kfvFieldsValues(tuple).begin();
+                    i != kfvFieldsValues(tuple).end(); ++i)
             {
-                // Mark the operation as an 'update', if the policer exists.
-                bool update = m_syncdPolicers.find(key) != m_syncdPolicers.end();
+                auto field = to_upper(fvField(*i));
+                auto value = to_upper(fvValue(*i));
 
-                vector<sai_attribute_t> attrs;
-                bool meter_type = false, mode = false;
+                SWSS_LOG_DEBUG("attribute: %s value: %s", field.c_str(), value.c_str());
 
-                for (auto i = kfvFieldsValues(tuple).begin();
-                        i != kfvFieldsValues(tuple).end(); ++i)
+                sai_attribute_t attr;
+
+                if (field == meter_type_field)
                 {
-                    auto field = to_upper(fvField(*i));
-                    auto value = to_upper(fvValue(*i));
-
-                    SWSS_LOG_DEBUG("attribute: %s value: %s", field.c_str(), value.c_str());
-
-                    sai_attribute_t attr;
-
-                    if (field == meter_type_field)
-                    {
-                        attr.id = SAI_POLICER_ATTR_METER_TYPE;
-                        attr.value.s32 = (sai_meter_type_t) meter_type_map.at(value);
-                        meter_type = true;
-                    }
-                    else if (field == mode_field)
-                    {
-                        attr.id = SAI_POLICER_ATTR_MODE;
-                        attr.value.s32 = (sai_policer_mode_t) policer_mode_map.at(value);
-                        mode = true;
-                    }
-                    else if (field == color_source_field)
-                    {
-                        attr.id = SAI_POLICER_ATTR_COLOR_SOURCE;
-                        attr.value.s32 = policer_color_source_map.at(value);
-                    }
-                    else if (field == cbs_field)
-                    {
-                        attr.id = SAI_POLICER_ATTR_CBS;
-                        attr.value.u64 = stoul(value);
-                    }
-                    else if (field == cir_field)
-                    {
-                        attr.id = SAI_POLICER_ATTR_CIR;
-                        attr.value.u64 = stoul(value);
-                    }
-                    else if (field == pbs_field)
-                    {
-                        attr.id = SAI_POLICER_ATTR_PBS;
-                        attr.value.u64 = stoul(value);
-                    }
-                    else if (field == pir_field)
-                    {
-                        attr.id = SAI_POLICER_ATTR_PIR;
-                        attr.value.u64 = stoul(value);
-                    }
-                    else if (field == red_packet_action_field)
-                    {
-                        attr.id = SAI_POLICER_ATTR_RED_PACKET_ACTION;
-                        attr.value.s32 = packet_action_map.at(value);
-                    }
-                    else if (field == green_packet_action_field)
-                    {
-                        attr.id = SAI_POLICER_ATTR_GREEN_PACKET_ACTION;
-                        attr.value.s32 = packet_action_map.at(value);
-                    }
-                    else if (field == yellow_packet_action_field)
-                    {
-                        attr.id = SAI_POLICER_ATTR_YELLOW_PACKET_ACTION;
-                        attr.value.s32 = packet_action_map.at(value);
-                    }
-                    else
-                    {
-                        SWSS_LOG_ERROR("Unknown policer attribute %s specified",
-                                field.c_str());
-                        continue;
-                    }
-
-                    attrs.push_back(attr);
+                    attr.id = SAI_POLICER_ATTR_METER_TYPE;
+                    attr.value.s32 = (sai_meter_type_t) meter_type_map.at(value);
+                    meter_type = true;
                 }
-
-                // Create a new policer
-                if (!update)
+                else if (field == mode_field)
                 {
-                    if (!meter_type || !mode)
-                    {
-                        SWSS_LOG_ERROR("Failed to create policer %s,\
-                                missing mandatory fields", key.c_str());
-                    }
-
-                    sai_object_id_t policer_id;
-                    sai_status_t status = sai_policer_api->create_policer(
-                            &policer_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
-                    if (status != SAI_STATUS_SUCCESS)
-                    {
-                        SWSS_LOG_ERROR("Failed to create policer %s, rv:%d",
-                                key.c_str(), status);
-                        if (handleSaiCreateStatus(SAI_API_POLICER, status) == task_need_retry)
-                        {
-                            it++;
-                            continue;
-                        }
-                    }
-
-                    SWSS_LOG_NOTICE("Created policer %s", key.c_str());
-                    m_syncdPolicers[key] = policer_id;
-                    m_policerRefCounts[key] = 0;
+                    attr.id = SAI_POLICER_ATTR_MODE;
+                    attr.value.s32 = (sai_policer_mode_t) policer_mode_map.at(value);
+                    mode = true;
                 }
-                // Update an existing policer
+                else if (field == color_source_field)
+                {
+                    attr.id = SAI_POLICER_ATTR_COLOR_SOURCE;
+                    attr.value.s32 = policer_color_source_map.at(value);
+                }
+                else if (field == cbs_field)
+                {
+                    attr.id = SAI_POLICER_ATTR_CBS;
+                    attr.value.u64 = stoul(value);
+                }
+                else if (field == cir_field)
+                {
+                    attr.id = SAI_POLICER_ATTR_CIR;
+                    attr.value.u64 = stoul(value);
+                }
+                else if (field == pbs_field)
+                {
+                    attr.id = SAI_POLICER_ATTR_PBS;
+                    attr.value.u64 = stoul(value);
+                }
+                else if (field == pir_field)
+                {
+                    attr.id = SAI_POLICER_ATTR_PIR;
+                    attr.value.u64 = stoul(value);
+                }
+                else if (field == red_packet_action_field)
+                {
+                    attr.id = SAI_POLICER_ATTR_RED_PACKET_ACTION;
+                    attr.value.s32 = packet_action_map.at(value);
+                }
+                else if (field == green_packet_action_field)
+                {
+                    attr.id = SAI_POLICER_ATTR_GREEN_PACKET_ACTION;
+                    attr.value.s32 = packet_action_map.at(value);
+                }
+                else if (field == yellow_packet_action_field)
+                {
+                    attr.id = SAI_POLICER_ATTR_YELLOW_PACKET_ACTION;
+                    attr.value.s32 = packet_action_map.at(value);
+                }
                 else
                 {
-                    auto policer_id = m_syncdPolicers[key];
-
-                    // The update operation has limitations that it could only update
-                    // the rate and the size accordingly.
-                    // SR_TCM: CIR, CBS, PBS
-                    // TR_TCM: CIR, CBS, PIR, PBS
-                    // STORM_CONTROL: CIR, CBS
-                    for (auto & attr: attrs)
-                    {
-                        if (attr.id != SAI_POLICER_ATTR_CBS &&
-                                attr.id != SAI_POLICER_ATTR_CIR &&
-                                attr.id != SAI_POLICER_ATTR_PBS &&
-                                attr.id != SAI_POLICER_ATTR_PIR)
-                        {
-                            continue;
-                        }
-
-                        sai_status_t status = sai_policer_api->set_policer_attribute(
-                                policer_id, &attr);
-                        if (status != SAI_STATUS_SUCCESS)
-                        {
-                            SWSS_LOG_ERROR("Failed to update policer %s attribute, rv:%d",
-                                    key.c_str(), status);
-                            if (handleSaiSetStatus(SAI_API_POLICER, status) == task_need_retry)
-                            {
-                                it++;
-                                continue;
-                            }
-                        }
-                    }
-
-                    SWSS_LOG_NOTICE("Update policer %s attributes", key.c_str());
+                    SWSS_LOG_ERROR("Unknown policer attribute %s specified",
+                            field.c_str());
+                    continue;
                 }
 
-                it = consumer.m_toSync.erase(it);
+                attrs.push_back(attr);
             }
-            else if (op == DEL_COMMAND)
+
+            // Create a new policer
+            if (!update)
             {
-                if (m_syncdPolicers.find(key) == m_syncdPolicers.end())
+                if (!meter_type || !mode)
                 {
-                    SWSS_LOG_ERROR("Policer %s does not exists", key.c_str());
-                    it = consumer.m_toSync.erase(it);
-                    continue;
+                    SWSS_LOG_ERROR("Failed to create policer %s,\
+                            missing mandatory fields", key.c_str());
                 }
 
-                if (m_policerRefCounts[key] > 0)
-                {
-                    SWSS_LOG_INFO("Policer %s is still referenced", key.c_str());
-                    it++;
-                    continue;
-                }
-
-                sai_status_t status = sai_policer_api->remove_policer(
-                        m_syncdPolicers.at(key));
+                sai_object_id_t policer_id;
+                sai_status_t status = sai_policer_api->create_policer(
+                        &policer_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
                 if (status != SAI_STATUS_SUCCESS)
                 {
-                    SWSS_LOG_ERROR("Failed to remove policer %s, rv:%d",
+                    SWSS_LOG_ERROR("Failed to create policer %s, rv:%d",
                             key.c_str(), status);
-                    if (handleSaiRemoveStatus(SAI_API_POLICER, status) == task_need_retry)
+                    if (handleSaiCreateStatus(SAI_API_POLICER, status) == task_need_retry)
                     {
                         it++;
                         continue;
                     }
                 }
 
-                SWSS_LOG_NOTICE("Removed policer %s", key.c_str());
-                m_syncdPolicers.erase(key);
-                m_policerRefCounts.erase(key);
-                it = consumer.m_toSync.erase(it);
+                SWSS_LOG_NOTICE("Created policer %s", key.c_str());
+                m_syncdPolicers[key] = policer_id;
+                m_policerRefCounts[key] = 0;
             }
+            // Update an existing policer
+            else
+            {
+                auto policer_id = m_syncdPolicers[key];
+
+                // The update operation has limitations that it could only update
+                // the rate and the size accordingly.
+                // SR_TCM: CIR, CBS, PBS
+                // TR_TCM: CIR, CBS, PIR, PBS
+                // STORM_CONTROL: CIR, CBS
+                for (auto & attr: attrs)
+                {
+                    if (attr.id != SAI_POLICER_ATTR_CBS &&
+                            attr.id != SAI_POLICER_ATTR_CIR &&
+                            attr.id != SAI_POLICER_ATTR_PBS &&
+                            attr.id != SAI_POLICER_ATTR_PIR)
+                    {
+                        continue;
+                    }
+
+                    sai_status_t status = sai_policer_api->set_policer_attribute(
+                            policer_id, &attr);
+                    if (status != SAI_STATUS_SUCCESS)
+                    {
+                        SWSS_LOG_ERROR("Failed to update policer %s attribute, rv:%d",
+                                key.c_str(), status);
+                        if (handleSaiSetStatus(SAI_API_POLICER, status) == task_need_retry)
+                        {
+                            it++;
+                            continue;
+                        }
+                    }
+                }
+
+                SWSS_LOG_NOTICE("Update policer %s attributes", key.c_str());
+            }
+
+            it = consumer.m_toSync.erase(it);
+        }
+        else if (op == DEL_COMMAND)
+        {
+            if (m_syncdPolicers.find(key) == m_syncdPolicers.end())
+            {
+                SWSS_LOG_ERROR("Policer %s does not exists", key.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
+            if (m_policerRefCounts[key] > 0)
+            {
+                SWSS_LOG_INFO("Policer %s is still referenced", key.c_str());
+                it++;
+                continue;
+            }
+
+            sai_status_t status = sai_policer_api->remove_policer(
+                    m_syncdPolicers.at(key));
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to remove policer %s, rv:%d",
+                        key.c_str(), status);
+                if (handleSaiRemoveStatus(SAI_API_POLICER, status) == task_need_retry)
+                {
+                    it++;
+                    continue;
+                }
+            }
+
+            SWSS_LOG_NOTICE("Removed policer %s", key.c_str());
+            m_syncdPolicers.erase(key);
+            m_policerRefCounts.erase(key);
+            it = consumer.m_toSync.erase(it);
         }
     }
 }
