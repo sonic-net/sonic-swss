@@ -21,6 +21,7 @@ class PolicerOrch : public Orch
 
         bool increaseRefCount(const string &name);
         bool decreaseRefCount(const string &name);
+        task_process_status handlePortStormControlTable(swss::KeyOpFieldsValuesTuple tuple);
     private:
         PortsOrch *m_portsOrch;
         virtual void doTask(Consumer& consumer);

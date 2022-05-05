@@ -119,10 +119,263 @@ PolicerOrch::PolicerOrch(vector<TableConnector> &tableNames, PortsOrch *portOrch
     //m_portsOrch->attach(this);
 }
 
+task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsValuesTuple tuple)
+{
+    auto key = kfvKey(tuple);
+    auto op = kfvOp(tuple);
+    string storm_key = key;
+    auto tokens = tokenize(storm_key, config_db_key_delimiter);
+    auto interface_name = tokens[0];
+    auto storm_type = tokens[1];
+    Port port;
+
+    /*Only proceed for Ethernet interfaces*/
+    if (strncmp(interface_name.c_str(), ETHERNET_PREFIX, strlen(ETHERNET_PREFIX)))
+    {
+        SWSS_LOG_ERROR("%s: Unsupported / Invalid interface %s",
+                storm_type.c_str(), interface_name.c_str());
+        return task_success;
+    }
+    if (!gPortsOrch->getPort(interface_name, port))
+    {
+        SWSS_LOG_ERROR("Failed to apply storm-control %s to port %s. Port not found",
+                storm_type.c_str(), interface_name.c_str());
+        /*continue here as there can be more interfaces*/
+        return task_success;
+    }
+    /*Policer Name: _<interface_name>_<storm_type>*/
+    const auto storm_policer_name = "_"+interface_name+"_"+storm_type;
+
+    if (op == SET_COMMAND)
+    {
+        // Mark the operation as an 'update', if the policer exists.
+        bool update = m_syncdPolicers.find(storm_policer_name) != m_syncdPolicers.end();
+        vector <sai_attribute_t> attrs;
+        bool cir = false;
+        sai_attribute_t attr;
+
+        /*Meter type hardcoded to BYTES*/
+        attr.id = SAI_POLICER_ATTR_METER_TYPE;
+        attr.value.s32 = (sai_meter_type_t) meter_type_map.at("BYTES");
+        attrs.push_back(attr);
+
+        /*Policer mode hardcoded to STORM_CONTROL*/
+        attr.id = SAI_POLICER_ATTR_MODE;
+        attr.value.s32 = (sai_policer_mode_t) policer_mode_map.at("STORM_CONTROL");
+        attrs.push_back(attr);
+
+        /*Red Packet Action hardcoded to DROP*/
+        attr.id = SAI_POLICER_ATTR_RED_PACKET_ACTION;
+        attr.value.s32 = packet_action_map.at("DROP");
+        attrs.push_back(attr);
+
+        for (auto i = kfvFieldsValues(tuple).begin();
+                i != kfvFieldsValues(tuple).end(); ++i)
+        {
+            auto field = to_upper(fvField(*i));
+            auto value = to_upper(fvValue(*i));
+
+            /*BPS value is used as CIR*/
+            if (field == storm_control_kbps)
+            {
+                attr.id = SAI_POLICER_ATTR_CIR;
+                /*convert kbps to bps*/
+                attr.value.u64 = (stoul(value)*1000/8);
+                cir = true;
+                attrs.push_back(attr);
+                SWSS_LOG_DEBUG("CIR %s",value.c_str());
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Unknown storm control attribute %s specified",
+                        field.c_str());
+                continue;
+            }
+        }
+        /*CIR is mandatory parameter*/
+        if (!cir)
+        {
+            SWSS_LOG_ERROR("Failed to create storm control policer %s,\
+                    missing mandatory fields", storm_policer_name.c_str());
+            return task_failed;
+        }
+
+        /*Enabling storm-control on port*/
+        sai_attribute_t port_attr;
+        if (storm_type == storm_broadcast)
+        {
+            port_attr.id = SAI_PORT_ATTR_BROADCAST_STORM_CONTROL_POLICER_ID;
+        }
+        else if (storm_type == storm_unknown_unicast)
+        {
+            port_attr.id = SAI_PORT_ATTR_FLOOD_STORM_CONTROL_POLICER_ID;
+        }
+        else if (storm_type == storm_unknown_mcast)
+        {
+            port_attr.id = SAI_PORT_ATTR_MULTICAST_STORM_CONTROL_POLICER_ID;
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unknown storm_type %s", storm_type.c_str());
+            return task_failed;
+        }
+
+        sai_object_id_t policer_id;
+        // Create a new policer
+        if (!update)
+        {
+            sai_status_t status = sai_policer_api->create_policer(
+                    &policer_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to create policer %s, rv:%d",
+                        storm_policer_name.c_str(), status);
+                if (handleSaiCreateStatus(SAI_API_POLICER, status) == task_need_retry)
+                {
+                    return task_need_retry;
+                }
+            }
+
+            SWSS_LOG_DEBUG("Created storm-control policer %s", storm_policer_name.c_str());
+            m_syncdPolicers[storm_policer_name] = policer_id;
+            m_policerRefCounts[storm_policer_name] = 0;
+        }
+        // Update an existing policer
+        else
+        {
+            policer_id = m_syncdPolicers[storm_policer_name];
+
+            // The update operation has limitations that it could only update
+            // the rate and the size accordingly.
+            // STORM_CONTROL: CIR, CBS
+            for (auto & attr: attrs)
+            {
+                if (attr.id != SAI_POLICER_ATTR_CIR)
+                {
+                    continue;
+                }
+
+                sai_status_t status = sai_policer_api->set_policer_attribute(
+                        policer_id, &attr);
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to update policer %s attribute, rv:%d",
+                            storm_policer_name.c_str(), status);
+                    if (handleSaiSetStatus(SAI_API_POLICER, status) == task_need_retry)
+                    {
+                        return task_need_retry;
+                    }
+
+                }
+            }
+        }
+        policer_id = m_syncdPolicers[storm_policer_name];
+
+        if(update)
+        {
+            SWSS_LOG_NOTICE("update storm-control policer %s", storm_policer_name.c_str());
+            port_attr.value.oid = SAI_NULL_OBJECT_ID;
+            /*Remove and re-apply policer*/
+            sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &port_attr);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to remove storm-control %s from port %s, rv:%d",
+                        storm_type.c_str(), interface_name.c_str(), status);
+                if (handleSaiSetStatus(SAI_API_POLICER, status) == task_need_retry)
+                {
+                    return task_need_retry;
+                }
+            }
+        }
+        port_attr.value.oid = policer_id;
+
+        sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &port_attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to apply storm-control %s to port %s, rv:%d",
+                    storm_type.c_str(), interface_name.c_str(),status);
+
+            /*TODO: Do the below policer cleanup in an API*/
+            /*Remove the already created policer*/
+            if (SAI_STATUS_SUCCESS != sai_policer_api->remove_policer(
+                        m_syncdPolicers[storm_policer_name]))
+            {
+                SWSS_LOG_ERROR("Failed to remove policer %s, rv:%d",
+                        storm_policer_name.c_str(), status);
+                /*TODO: Just doing a syslog. */
+            }
+
+            SWSS_LOG_NOTICE("Removed policer %s as set_port_attribute for %s failed", 
+                    storm_policer_name.c_str(),interface_name.c_str());
+            m_syncdPolicers.erase(storm_policer_name);
+            m_policerRefCounts.erase(storm_policer_name);
+
+            return task_need_retry;
+        }
+    }
+    else if (op == DEL_COMMAND)
+    {
+        if (m_syncdPolicers.find(storm_policer_name) == m_syncdPolicers.end())
+        {
+            SWSS_LOG_ERROR("Policer %s not configured", storm_policer_name.c_str());
+            return task_success;
+        }
+
+        sai_attribute_t port_attr;
+        if (storm_type == storm_broadcast)
+        {
+            port_attr.id = SAI_PORT_ATTR_BROADCAST_STORM_CONTROL_POLICER_ID;
+        }
+        else if (storm_type == storm_unknown_unicast)
+        {
+            port_attr.id = SAI_PORT_ATTR_FLOOD_STORM_CONTROL_POLICER_ID;
+        }
+        else if (storm_type == storm_unknown_mcast)
+        {
+            port_attr.id = SAI_PORT_ATTR_MULTICAST_STORM_CONTROL_POLICER_ID;
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unknown storm_type %s", storm_type.c_str());
+            return task_failed;
+        }
+
+        port_attr.value.oid = SAI_NULL_OBJECT_ID;
+
+        sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &port_attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove storm-control %s from port %s, rv:%d",
+                    storm_type.c_str(), interface_name.c_str(), status);
+            if (handleSaiRemoveStatus(SAI_API_POLICER, status) == task_need_retry)
+            {
+                return task_need_retry;
+            }
+        }
+
+        status = sai_policer_api->remove_policer(
+                m_syncdPolicers[storm_policer_name]);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove policer %s, rv:%d",
+                    storm_policer_name.c_str(), status);
+            if (handleSaiRemoveStatus(SAI_API_POLICER, status) == task_need_retry)
+            {
+                return task_need_retry;
+            }
+        }
+
+        SWSS_LOG_NOTICE("Removed policer %s", storm_policer_name.c_str());
+        m_syncdPolicers.erase(storm_policer_name);
+        m_policerRefCounts.erase(storm_policer_name);
+    }
+    return task_success;
+}
+
 void PolicerOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
-    sai_status_t status = SAI_STATUS_SUCCESS;
+    task_process_status storm_status = task_success;
 
     if (!gPortsOrch->allPortsReady())
     {
@@ -140,265 +393,16 @@ void PolicerOrch::doTask(Consumer &consumer)
 
         if (table_name == CFG_PORT_STORM_CONTROL_TABLE_NAME)
         {
-            string storm_key = key;
-            auto tokens = tokenize(storm_key, config_db_key_delimiter);
-            auto interface_name = tokens[0];
-            auto storm_type = tokens[1];
-            Port port;
-
-            /*Only proceed for Ethernet interfaces*/
-            if (strncmp(interface_name.c_str(), ETHERNET_PREFIX, strlen(ETHERNET_PREFIX)))
+            storm_status = handlePortStormControlTable(tuple);
+            if ((storm_status == task_success) ||
+                    (storm_status == task_failed))
             {
-                SWSS_LOG_ERROR("%s: Unsupported / Invalid interface %s",
-                        storm_type.c_str(), interface_name.c_str());
                 it = consumer.m_toSync.erase(it);
+            }
+            else
+            {
+                it++;
                 continue;
-            }
-            if (!gPortsOrch->getPort(interface_name, port))
-            {
-                SWSS_LOG_ERROR("Failed to apply storm-control %s to port %s. Port not found",
-                        storm_type.c_str(), interface_name.c_str());
-                /*continue here as there can be more interfaces*/
-                it = consumer.m_toSync.erase(it);
-                continue; 
-            }
-            /*Policer Name: _<interface_name>_<storm_type>*/
-            const auto storm_policer_name = "_"+interface_name+"_"+storm_type;
-
-            if (op == SET_COMMAND)
-            {
-                // Mark the operation as an 'update', if the policer exists.
-                bool update = m_syncdPolicers.find(storm_policer_name) != m_syncdPolicers.end();
-                vector <sai_attribute_t> attrs;
-                bool cir = false;
-                sai_attribute_t attr;
-
-                /*Meter type hardcoded to BYTES*/
-                attr.id = SAI_POLICER_ATTR_METER_TYPE;
-                attr.value.s32 = (sai_meter_type_t) meter_type_map.at("BYTES");
-                attrs.push_back(attr);
-
-                /*Policer mode hardcoded to STORM_CONTROL*/
-                attr.id = SAI_POLICER_ATTR_MODE;
-                attr.value.s32 = (sai_policer_mode_t) policer_mode_map.at("STORM_CONTROL");
-                attrs.push_back(attr);
-
-                /*Red Packet Action hardcoded to DROP*/
-                attr.id = SAI_POLICER_ATTR_RED_PACKET_ACTION;
-                attr.value.s32 = packet_action_map.at("DROP");
-                attrs.push_back(attr);
-
-                for (auto i = kfvFieldsValues(tuple).begin();
-                        i != kfvFieldsValues(tuple).end(); ++i)
-                {
-                    auto field = to_upper(fvField(*i));
-                    auto value = to_upper(fvValue(*i));
-
-                    /*BPS value is used as CIR*/
-                    if (field == storm_control_kbps)
-                    {
-                        attr.id = SAI_POLICER_ATTR_CIR;
-                        /*convert kbps to bps*/
-                        attr.value.u64 = (stoul(value)*1000/8);
-                        cir = true;
-                        attrs.push_back(attr);
-                        SWSS_LOG_DEBUG("CIR %s",value.c_str());
-                    }
-                    else
-                    {
-                        SWSS_LOG_ERROR("Unknown storm control attribute %s specified",
-                                field.c_str());
-                        continue;
-                    }
-                }
-                /*CIR is mandatory parameter*/
-                if (!cir)
-                {
-                    SWSS_LOG_ERROR("Failed to create storm control policer %s,\
-                            missing mandatory fields", storm_policer_name.c_str());
-                    it = consumer.m_toSync.erase(it);
-                    continue;
-                }
-
-                /*Enabling storm-control on port*/
-                sai_attribute_t port_attr;
-                if (storm_type == storm_broadcast)
-                {
-                    port_attr.id = SAI_PORT_ATTR_BROADCAST_STORM_CONTROL_POLICER_ID;
-                }
-                else if (storm_type == storm_unknown_unicast)
-                {
-                    port_attr.id = SAI_PORT_ATTR_FLOOD_STORM_CONTROL_POLICER_ID;
-                }
-                else if (storm_type == storm_unknown_mcast)
-                {
-                    port_attr.id = SAI_PORT_ATTR_MULTICAST_STORM_CONTROL_POLICER_ID;
-                }
-                else
-                {
-                    SWSS_LOG_ERROR("Unknown storm_type %s", storm_type.c_str());
-                    it = consumer.m_toSync.erase(it);
-                    continue;
-                }
-
-                sai_object_id_t policer_id;
-                // Create a new policer
-                if (!update)
-                {
-                    status = sai_policer_api->create_policer(
-                            &policer_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
-                    if (status != SAI_STATUS_SUCCESS)
-                    {
-                        SWSS_LOG_ERROR("Failed to create policer %s, rv:%d",
-                                storm_policer_name.c_str(), status);
-                        if (handleSaiCreateStatus(SAI_API_POLICER, status) == task_need_retry)
-                        {
-                            it++;
-                            continue;
-                        }
-                    }
-
-                    SWSS_LOG_DEBUG("Created storm-control policer %s", storm_policer_name.c_str());
-                    m_syncdPolicers[storm_policer_name] = policer_id;
-                    m_policerRefCounts[storm_policer_name] = 0;
-                }
-                // Update an existing policer
-                else
-                {
-                    policer_id = m_syncdPolicers[storm_policer_name];
-
-                    // The update operation has limitations that it could only update
-                    // the rate and the size accordingly.
-                    // STORM_CONTROL: CIR, CBS
-                    for (auto & attr: attrs)
-                    {
-                        if (attr.id != SAI_POLICER_ATTR_CIR)
-                        {
-                            continue;
-                        }
-
-                        sai_status_t status = sai_policer_api->set_policer_attribute(
-                                policer_id, &attr);
-                        if (status != SAI_STATUS_SUCCESS)
-                        {
-                            SWSS_LOG_ERROR("Failed to update policer %s attribute, rv:%d",
-                                    storm_policer_name.c_str(), status);
-                            if (handleSaiSetStatus(SAI_API_POLICER, status) == task_need_retry)
-                            {
-                                it++;
-                                continue;
-                            }
-
-                        }
-                    }
-                }
-                policer_id = m_syncdPolicers[storm_policer_name];
-
-                if(update)
-                {
-                    SWSS_LOG_NOTICE("update storm-control policer %s", storm_policer_name.c_str());
-                    port_attr.value.oid = SAI_NULL_OBJECT_ID;
-                    /*Remove and re-apply policer*/
-                    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &port_attr);
-                    if (status != SAI_STATUS_SUCCESS)
-                    {
-                        SWSS_LOG_ERROR("Failed to remove storm-control %s from port %s, rv:%d",
-                                storm_type.c_str(), interface_name.c_str(), status);
-                        if (handleSaiSetStatus(SAI_API_POLICER, status) == task_need_retry)
-                        {
-                            it++;
-                            continue;
-                        }
-                    }
-                }
-                port_attr.value.oid = policer_id;
-
-                sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &port_attr);
-                if (status != SAI_STATUS_SUCCESS)
-                {
-                    SWSS_LOG_ERROR("Failed to apply storm-control %s to port %s, rv:%d",
-                            storm_type.c_str(), interface_name.c_str(),status);
-
-                    /*TODO: Do the below policer cleanup in an API*/
-                    /*Remove the already created policer*/
-                    if (SAI_STATUS_SUCCESS != sai_policer_api->remove_policer(
-                                m_syncdPolicers[storm_policer_name]))
-                    {
-                        SWSS_LOG_ERROR("Failed to remove policer %s, rv:%d",
-                                storm_policer_name.c_str(), status);
-                        /*TODO: Just doing a syslog. */
-                    }
-
-                    SWSS_LOG_NOTICE("Removed policer %s as set_port_attribute for %s failed", 
-                            storm_policer_name.c_str(),interface_name.c_str());
-                    m_syncdPolicers.erase(storm_policer_name);
-                    m_policerRefCounts.erase(storm_policer_name);
-
-                    it++;
-                    continue;
-                }
-                it = consumer.m_toSync.erase(it);
-            }
-            else if (op == DEL_COMMAND)
-            {
-                if (m_syncdPolicers.find(storm_policer_name) == m_syncdPolicers.end())
-                {
-                    SWSS_LOG_ERROR("Policer %s not configured", storm_policer_name.c_str());
-                    it = consumer.m_toSync.erase(it);
-                    continue;
-                }
-
-                sai_attribute_t port_attr;
-                if (storm_type == storm_broadcast)
-                {
-                    port_attr.id = SAI_PORT_ATTR_BROADCAST_STORM_CONTROL_POLICER_ID;
-                }
-                else if (storm_type == storm_unknown_unicast)
-                {
-                    port_attr.id = SAI_PORT_ATTR_FLOOD_STORM_CONTROL_POLICER_ID;
-                }
-                else if (storm_type == storm_unknown_mcast)
-                {
-                    port_attr.id = SAI_PORT_ATTR_MULTICAST_STORM_CONTROL_POLICER_ID;
-                }
-                else
-                {
-                    SWSS_LOG_ERROR("Unknown storm_type %s", storm_type.c_str());
-                    it = consumer.m_toSync.erase(it);
-                    continue;
-                }
-
-                port_attr.value.oid = SAI_NULL_OBJECT_ID;
-
-                sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &port_attr);
-                if (status != SAI_STATUS_SUCCESS)
-                {
-                    SWSS_LOG_ERROR("Failed to remove storm-control %s from port %s, rv:%d",
-                            storm_type.c_str(), interface_name.c_str(), status);
-                    if (handleSaiRemoveStatus(SAI_API_POLICER, status) == task_need_retry)
-                    {
-                        it++;
-                        continue;
-                    }
-                }
-
-                status = sai_policer_api->remove_policer(
-                        m_syncdPolicers[storm_policer_name]);
-                if (status != SAI_STATUS_SUCCESS)
-                {
-                    SWSS_LOG_ERROR("Failed to remove policer %s, rv:%d",
-                            storm_policer_name.c_str(), status);
-                    if (handleSaiRemoveStatus(SAI_API_POLICER, status) == task_need_retry)
-                    {
-                        it++;
-                        continue;
-                    }
-                }
-
-                SWSS_LOG_NOTICE("Removed policer %s", storm_policer_name.c_str());
-                m_syncdPolicers.erase(storm_policer_name);
-                m_policerRefCounts.erase(storm_policer_name);
-                it = consumer.m_toSync.erase(it);
             }
         }
         else
