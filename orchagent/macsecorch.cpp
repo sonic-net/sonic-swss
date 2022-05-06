@@ -6,6 +6,7 @@
 #include <swss/redisutility.h>
 #include <swss/boolean.h>
 
+#include <boost/algorithm/string.hpp>
 #include <vector>
 #include <sstream>
 #include <algorithm>
@@ -13,6 +14,7 @@
 #include <stack>
 #include <memory>
 #include <typeinfo>
+#include <byteswap.h>
 
 /* Global Variables*/
 
@@ -216,6 +218,75 @@ static void lexical_convert(const std::string &buffer, MACsecAuthKey &auth_key)
     {
         SWSS_LOG_THROW("Invalid Auth Key %s", buffer.c_str());
     }
+}
+
+class MACsecSCI
+{
+public:
+    operator sai_uint64_t () const
+    {
+    SWSS_LOG_ENTER();
+
+        return m_sci;
+    }
+
+    std::string str() const
+    {
+        SWSS_LOG_ENTER();
+
+        return boost::algorithm::to_lower_copy(swss::binary_to_hex(&m_sci, sizeof(m_sci)));
+    }
+
+    MACsecSCI& operator= (const std::string &buffer)
+    {
+        SWSS_LOG_ENTER();
+
+        if (!swss::hex_to_binary(buffer, reinterpret_cast<std::uint8_t *>(&m_sci), sizeof(m_sci)))
+        {
+            SWSS_LOG_THROW("Invalid SCI %s", buffer.c_str());
+        }
+
+        return *this;
+    }
+
+    MACsecSCI() = default;
+
+    MACsecSCI(const std::string &sci)
+    {
+        SWSS_LOG_ENTER();
+
+        *this = sci;
+    }
+
+    MACsecSCI(const sai_uint64_t sci)
+    {
+        SWSS_LOG_ENTER();
+
+        this->m_sci = sci;
+    }
+
+private:
+    sai_uint64_t m_sci;
+};
+
+namespace swss {
+
+template<>
+inline void lexical_convert(const std::string &buffer, MACsecSCI &sci)
+{
+    SWSS_LOG_ENTER();
+
+    sci = buffer;
+}
+
+}
+
+std::ostream& operator<<(std::ostream& stream, const MACsecSCI& sci)
+{
+    SWSS_LOG_ENTER();
+
+    stream << sci.str();
+    return stream;
 }
 
 /* Recover from a fail action by a serial of pre-defined recover actions */
@@ -805,7 +876,7 @@ task_process_status MACsecOrch::taskUpdateEgressSA(
 {
     SWSS_LOG_ENTER();
     std::string port_name;
-    sai_uint64_t sci = 0;
+    MACsecSCI sci;
     macsec_an_t an = 0;
     if (!extract_variables(port_sci_an, ':', port_name, sci, an) || an > MAX_SA_NUMBER)
     {
@@ -816,7 +887,7 @@ task_process_status MACsecOrch::taskUpdateEgressSA(
     MACsecOrchContext ctx(this, port_name, SAI_MACSEC_DIRECTION_EGRESS, sci, an);
     if (ctx.get_macsec_sc() == nullptr)
     {
-        SWSS_LOG_INFO("The MACsec SC 0x%" PRIx64 " hasn't been created at the port %s.", sci, port_name.c_str());
+        SWSS_LOG_INFO("The MACsec SC %s hasn't been created at the port %s.", sci.str().c_str(), port_name.c_str());
         return task_need_retry;
     }
     if (ctx.get_macsec_sc()->m_encoding_an == an)
@@ -851,7 +922,7 @@ task_process_status MACsecOrch::taskUpdateIngressSA(
     {
 
         std::string port_name;
-        sai_uint64_t sci = 0;
+        MACsecSCI sci;
         macsec_an_t an = 0;
         if (!extract_variables(port_sci_an, ':', port_name, sci, an) || an > MAX_SA_NUMBER)
         {
@@ -1335,7 +1406,7 @@ bool MACsecOrch::deleteMACsecPort(
     auto sc = macsec_port.m_egress_scs.begin();
     while (sc != macsec_port.m_egress_scs.end())
     {
-        const std::string port_sci = swss::join(':', port_name, sc->first);
+        const std::string port_sci = swss::join(':', port_name, MACsecSCI(sc->first));
         sc ++;
         if (deleteMACsecSC(port_sci, SAI_MACSEC_DIRECTION_EGRESS) != task_success)
         {
@@ -1345,7 +1416,7 @@ bool MACsecOrch::deleteMACsecPort(
     sc = macsec_port.m_ingress_scs.begin();
     while (sc != macsec_port.m_ingress_scs.end())
     {
-        const std::string port_sci = swss::join(':', port_name, sc->first);
+        const std::string port_sci = swss::join(':', port_name, MACsecSCI(sc->first));
         sc ++;
         if (deleteMACsecSC(port_sci, SAI_MACSEC_DIRECTION_INGRESS) != task_success)
         {
@@ -1485,7 +1556,7 @@ task_process_status MACsecOrch::updateMACsecSC(
     SWSS_LOG_ENTER();
 
     std::string port_name;
-    sai_uint64_t sci = {0};
+    MACsecSCI sci;
     if (!extract_variables(port_sci, ':', port_name, sci))
     {
         SWSS_LOG_WARN("The key %s isn't correct.", port_sci.c_str());
@@ -1564,7 +1635,7 @@ bool MACsecOrch::createMACsecSC(
 
     RecoverStack recover;
 
-    const std::string port_sci = swss::join(':', port_name, sci);
+    const std::string port_sci = swss::join(':', port_name, MACsecSCI(sci));
 
     auto scs =
         (direction == SAI_MACSEC_DIRECTION_EGRESS)
@@ -1657,11 +1728,11 @@ bool MACsecOrch::createMACsecSC(
     fvVector.emplace_back("state", "ok");
     if (direction == SAI_MACSEC_DIRECTION_EGRESS)
     {
-        m_state_macsec_egress_sc.set(swss::join('|', port_name, sci), fvVector);
+        m_state_macsec_egress_sc.set(swss::join('|', port_name, MACsecSCI(sci)), fvVector);
     }
     else
     {
-        m_state_macsec_ingress_sc.set(swss::join('|', port_name, sci), fvVector);
+        m_state_macsec_ingress_sc.set(swss::join('|', port_name, MACsecSCI(sci)), fvVector);
     }
 
     recover.clear();
@@ -1709,7 +1780,7 @@ bool MACsecOrch::createMACsecSC(
                                 attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_WARN("Cannot create MACsec egress SC 0x%" PRIx64, sci);
+        SWSS_LOG_WARN("Cannot create MACsec egress SC %s", MACsecSCI(sci).str().c_str());
         task_process_status handle_status = handleSaiCreateStatus(SAI_API_MACSEC, status);
         if (handle_status != task_success)
         {
@@ -1726,7 +1797,7 @@ task_process_status MACsecOrch::deleteMACsecSC(
     SWSS_LOG_ENTER();
 
     std::string port_name;
-    sai_uint64_t sci = 0;
+    MACsecSCI sci;
     if (!extract_variables(port_sci, ':', port_name, sci))
     {
         SWSS_LOG_WARN("The key %s isn't correct.", port_sci.c_str());
@@ -1779,11 +1850,11 @@ task_process_status MACsecOrch::deleteMACsecSC(
 
     if (direction == SAI_MACSEC_DIRECTION_EGRESS)
     {
-        m_state_macsec_egress_sc.del(swss::join('|', port_name, sci));
+        m_state_macsec_egress_sc.del(swss::join('|', port_name, MACsecSCI(sci)));
     }
     else
     {
-        m_state_macsec_ingress_sc.del(swss::join('|', port_name, sci));
+        m_state_macsec_ingress_sc.del(swss::join('|', port_name, MACsecSCI(sci)));
     }
 
     return result;
@@ -1849,7 +1920,7 @@ task_process_status MACsecOrch::createMACsecSA(
     SWSS_LOG_ENTER();
 
     std::string port_name;
-    sai_uint64_t sci = 0;
+    MACsecSCI sci;
     macsec_an_t an = 0;
     if (!extract_variables(port_sci_an, ':', port_name, sci, an) || an > MAX_SA_NUMBER)
     {
@@ -1867,7 +1938,7 @@ task_process_status MACsecOrch::createMACsecSA(
 
     if (ctx.get_macsec_sc() == nullptr)
     {
-        SWSS_LOG_INFO("The MACsec SC 0x%" PRIx64 " hasn't been created at the port %s.", sci, port_name.c_str());
+        SWSS_LOG_INFO("The MACsec SC %s hasn't been created at the port %s.", sci.str().c_str(), port_name.c_str());
         return task_need_retry;
     }
     auto sc = ctx.get_macsec_sc();
@@ -2010,7 +2081,7 @@ task_process_status MACsecOrch::deleteMACsecSA(
     SWSS_LOG_ENTER();
 
     std::string port_name = "";
-    sai_uint64_t sci = 0;
+    MACsecSCI sci;
     macsec_an_t an = 0;
     if (!extract_variables(port_sci_an, ':', port_name, sci, an) || an > MAX_SA_NUMBER)
     {
