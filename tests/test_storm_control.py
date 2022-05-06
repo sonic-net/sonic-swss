@@ -224,12 +224,12 @@ class TestStormControl(object):
         self.add_port_channel_member(dvs,lag_name,member_interface)
 
         #click CLI verification
-        for storm_type in storm_list:
-            dvs.runcmd("config interface storm-control add "+lag_name+" "+storm_type+" "+str(kbps_value))
-            tbl = swsscommon.Table(self.cdb,"PORT_STORM_CONTROL")
-            (status,fvs) = tbl.get(lag_name+"|"+storm_type)
-            assert status == False
-            assert len(fvs) == 0
+        #for storm_type in storm_list:
+        #    dvs.runcmd("config interface storm-control add "+lag_name+" "+storm_type+" "+str(kbps_value))
+        #    tbl = swsscommon.Table(self.cdb,"PORT_STORM_CONTROL")
+        #    (status,fvs) = tbl.get(lag_name+"|"+storm_type)
+        #    assert status == False
+        #    assert len(fvs) == 0
 
         #Orchagent verification
         storm_list_db = ["broadcast","unknown-unicast","unknown-multicast"]
@@ -264,12 +264,12 @@ class TestStormControl(object):
         self.add_vlan_member(dvs,str(vlan_id),member_interface)
 
         #click CLI verification 
-        for storm_type in storm_list:
-            dvs.runcmd("config interface storm-control add Vlan"+str(vlan_id)+" "+storm_type+" "+str(kbps_value))
-            tbl = swsscommon.Table(self.cdb,"PORT_STORM_CONTROL")
-            (status,fvs) = tbl.get("Vlan"+str(vlan_id)+"|"+storm_type)
-            assert status == False
-            assert len(fvs) == 0
+        #for storm_type in storm_list:
+        #    dvs.runcmd("config interface storm-control add Vlan"+str(vlan_id)+" "+storm_type+" "+str(kbps_value))
+        #    tbl = swsscommon.Table(self.cdb,"PORT_STORM_CONTROL")
+        #    (status,fvs) = tbl.get("Vlan"+str(vlan_id)+"|"+storm_type)
+        #    assert status == False
+        #    assert len(fvs) == 0
 
         #Orchagent verification
         storm_list_db = ["broadcast","unknown-unicast","unknown-multicast"]
