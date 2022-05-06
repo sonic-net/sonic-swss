@@ -7,6 +7,7 @@
 #include "tokenize.h"
 #include "shellcmd.h"
 #include "warm_restart.h"
+#include "converter.h"
 #include <swss/redisutility.h>
 
 using namespace std;
@@ -31,6 +32,8 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         m_stateVlanMemberTable(stateDb, STATE_VLAN_MEMBER_TABLE_NAME),
         m_appVlanTableProducer(appDb, APP_VLAN_TABLE_NAME),
         m_appVlanMemberTableProducer(appDb, APP_VLAN_MEMBER_TABLE_NAME),
+        m_appVlanStackingTableProducer(appDb, APP_VLAN_STACKING_TABLE_NAME),
+        m_appVlanXlateTableProducer(appDb, APP_VLAN_TRANSLATION_TABLE_NAME),
         replayDone(false)
 {
     SWSS_LOG_ENTER();
@@ -675,6 +678,167 @@ void VlanMgr::doVlanMemberTask(Consumer &consumer)
     }
 }
 
+void VlanMgr::doVlanStackTask(Consumer& consumer)
+{
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        auto& t = it->second;
+
+        string key = kfvKey(t);
+
+        vector<string> keys = tokenize(key, config_db_key_delimiter);
+
+        if (keys.size() != 2)
+        {
+            SWSS_LOG_ERROR("Unknown VLAN Stacking config %s.", key.c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+
+        if (!isValidVlanId(keys.at(1), 1, 4094))
+        {
+            SWSS_LOG_ERROR("Unknown VLAN Stacking config %s.", key.c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+
+        string new_key = keys.at(0) + DEFAULT_KEY_SEPARATOR + keys.at(1);
+
+        string op = kfvOp(t);
+
+        if (op == SET_COMMAND)
+        {
+            uint8_t s_vlan_priority = 0;
+            vector<uint16_t> c_vlanids;
+
+            for (auto itp : kfvFieldsValues(t))
+            {
+                string attr_name = fvField(itp);
+                string attr_value = to_upper(fvValue(itp));
+
+                if (attr_name == "c_vlanids")
+                {
+                    auto rv = parseVlanList(attr_value, c_vlanids);
+                    if (rv == false)
+                    {
+                        goto vlan_stacking_parse_failed;
+                    }
+                }
+                else if (attr_name == "s_vlan_priority")
+                {
+                    try
+                    {
+                        s_vlan_priority = (uint8_t)stoi(attr_value);
+                    }
+                    catch (std::invalid_argument& e)
+                    {
+                        goto vlan_stacking_parse_failed;
+                    }
+
+                    if (s_vlan_priority < 0 || s_vlan_priority > 7)
+                    {
+                        goto vlan_stacking_parse_failed;
+                    }
+                }
+            }
+
+            if (0)
+            {
+vlan_stacking_parse_failed:
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
+            vector<FieldValueTuple> fvVector;
+
+            m_appVlanStackingTableProducer.set(new_key, kfvFieldsValues(t));
+            it = consumer.m_toSync.erase(it);
+        }
+        else if (op == DEL_COMMAND)
+        {
+            SWSS_LOG_INFO("del entry in appVlanStackingTable");
+            m_appVlanStackingTableProducer.del(new_key);
+            it = consumer.m_toSync.erase(it);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
+            it = consumer.m_toSync.erase(it);
+        }
+    }
+}
+
+void VlanMgr::doVlanXlateTask(Consumer& consumer)
+{
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        auto& t = it->second;
+
+        string key = kfvKey(t);
+
+        vector<string> keys = tokenize(key, config_db_key_delimiter);
+
+        if (keys.size() != 2)
+        {
+            SWSS_LOG_ERROR("Unknown VLAN Translation config %s.", key.c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+
+        if (!isValidVlanId(keys.at(1), 1, 4094))
+        {
+            SWSS_LOG_ERROR("Unknown VLAN Translation config %s.", key.c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+
+        string new_key = keys.at(0) + DEFAULT_KEY_SEPARATOR + keys.at(1);
+
+        string op = kfvOp(t);
+
+        if (op == SET_COMMAND)
+        {
+            for (auto itp : kfvFieldsValues(t))
+            {
+                string attr_name = fvField(itp);
+                string attr_value = to_upper(fvValue(itp));
+
+                if (attr_name == "c_vlanid")
+                {
+                    if (!isValidVlanId(attr_value, 1, 4094))
+                    {
+                        goto vlan_xlate_parse_failed;
+                    }
+                }
+            }
+
+            if (0)
+            {
+vlan_xlate_parse_failed:
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
+            vector<FieldValueTuple> fvVector;
+            m_appVlanXlateTableProducer.set(new_key, kfvFieldsValues(t));
+            it = consumer.m_toSync.erase(it);
+        }
+        else if (op == DEL_COMMAND)
+        {
+            SWSS_LOG_INFO("del entry in appVlanTranslationTable");
+            m_appVlanXlateTableProducer.del(new_key);
+            it = consumer.m_toSync.erase(it);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
+            it = consumer.m_toSync.erase(it);
+        }
+    }
+}
+
 void VlanMgr::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -689,9 +853,69 @@ void VlanMgr::doTask(Consumer &consumer)
     {
         doVlanMemberTask(consumer);
     }
+    else if (table_name == CFG_VLAN_STACKING_TABLE_NAME)
+    {
+        SWSS_LOG_DEBUG("Table:CFG_VLAN_STACKING_TABLE_NAME");
+        doVlanStackTask(consumer);
+    }
+    else if (table_name == CFG_VLAN_TRANSLATION_TABLE_NAME)
+    {
+        SWSS_LOG_DEBUG("Table:CFG_VLAN_TRANSLATION_TABLE_NAME");
+        doVlanXlateTask(consumer);
+    }
     else
     {
         SWSS_LOG_ERROR("Unknown config table %s ", table_name.c_str());
         throw runtime_error("VlanMgr doTask failure.");
     }
+}
+
+bool VlanMgr::isValidVlanId(const std::string& str, uint16_t min, uint16_t max)
+{
+    try
+    {
+        to_uint<uint16_t>(str, min, max);
+    }
+    catch (std::invalid_argument& e)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+bool VlanMgr::parseVlanList(const std::string& raw_vlanids, std::vector<uint16_t>& vlanids)
+{
+    stringstream ss(raw_vlanids);
+    while (ss.good()) {
+        string substr;
+        getline(ss, substr, ',');
+        if (substr.find("..") != std::string::npos)
+        {
+            string delimiter = "..";
+            size_t pos = substr.find("..");
+            string start = substr.substr(0, pos);
+            string end = substr.substr(pos + delimiter.size());
+
+            if (!isValidVlanId(start, 1, 4094) || !isValidVlanId(end, 1, 4094))
+            {
+                return false;
+            }
+
+            for (int i = std::stoi(start); i <= std::stoi(end); i++)
+            {
+                vlanids.push_back((uint16_t)i);
+            }
+        }
+        else
+        {
+            if (!isValidVlanId(substr, 1, 4094))
+            {
+                return false;
+            }
+
+            vlanids.push_back((uint16_t)std::stoi(substr));
+        }
+    }
+    return true;
 }

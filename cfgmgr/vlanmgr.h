@@ -16,9 +16,13 @@ class VlanMgr : public Orch
 public:
     VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const std::vector<std::string> &tableNames);
     using Orch::doTask;
+    static bool isValidVlanId(const std::string& str, uint16_t min, uint16_t max);
+    static bool parseVlanList(const std::string& raw_vlanids, std::vector<uint16_t>& vlanids);
 
 private:
     ProducerStateTable m_appVlanTableProducer, m_appVlanMemberTableProducer;
+    ProducerStateTable m_appVlanStackingTableProducer;
+    ProducerStateTable m_appVlanXlateTableProducer;
     Table m_cfgVlanTable, m_cfgVlanMemberTable;
     Table m_statePortTable, m_stateLagTable;
     Table m_stateVlanTable, m_stateVlanMemberTable;
@@ -30,6 +34,8 @@ private:
     void doTask(Consumer &consumer);
     void doVlanTask(Consumer &consumer);
     void doVlanMemberTask(Consumer &consumer);
+    void doVlanStackTask(Consumer &consumer);
+    void doVlanXlateTask(Consumer& consumer);
     void processUntaggedVlanMembers(std::string vlan, const std::string &members);
 
     bool addHostVlan(int vlan_id);

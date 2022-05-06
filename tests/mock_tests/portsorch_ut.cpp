@@ -10,10 +10,13 @@
 #define private public
 #include "pfcactionhandler.h"
 #undef private
+#include "vlanstack.h"
 
 #include <sstream>
 
 extern redisReply *mockReply;
+
+using namespace saimeta;
 
 namespace portsorch_test
 {
@@ -170,6 +173,10 @@ namespace portsorch_test
             gDirectory.set(flexCounterOrch);
 
             gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
+
+            ASSERT_EQ(gVrfOrch, nullptr);
+            gVrfOrch = new VRFOrch(m_app_db.get(), APP_VRF_TABLE_NAME, m_state_db.get(), STATE_VRF_OBJECT_TABLE_NAME);
+
             vector<string> buffer_tables = { APP_BUFFER_POOL_TABLE_NAME,
                                              APP_BUFFER_PROFILE_TABLE_NAME,
                                              APP_BUFFER_QUEUE_TABLE_NAME,
@@ -270,6 +277,258 @@ namespace portsorch_test
             ut_helper::uninitSaiApi();
         }
 
+        void initialPorts()
+        {
+            auto ports = ut_helper::getInitialSaiPorts();
+
+            deque<KeyOpFieldsValuesTuple> port_init_tuple;
+            for (const auto &it : ports)
+            {
+                port_init_tuple.push_back(
+                    { it.first, SET_COMMAND, it.second });
+            }
+
+            // Set PortConfigDone, PortInitDone
+            port_init_tuple.push_back({ "PortConfigDone", SET_COMMAND, { { "count", to_string(ports.size()) } } });
+
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_app_db.get(), APP_PORT_TABLE_NAME, 1, 1), gPortsOrch, APP_PORT_TABLE_NAME));
+            consumer->addToSync(port_init_tuple);
+            static_cast<Orch *>(gPortsOrch)->doTask(*consumer.get());
+
+            consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>({ { "PortInitDone", EMPTY_PREFIX, { { "", "" } } } }));
+            static_cast<Orch *>(gPortsOrch)->doTask(*consumer.get());
+        }
+
+        void createLAG(string lag_name)
+        {
+            auto consumer = unique_ptr<Consumer>(new Consumer(
+                new swss::ConsumerStateTable(m_app_db.get(), APP_LAG_TABLE_NAME, 1, 1), gPortsOrch, APP_LAG_TABLE_NAME));
+
+            consumer->addToSync(
+                deque<KeyOpFieldsValuesTuple>({ { lag_name, SET_COMMAND, { { "mtu", "9100" }, { "admin_status", "up" }, { "lacp_key", "auto" } } } }));
+            static_cast<Orch *>(gPortsOrch)->doTask(*consumer.get());
+        }
+
+        bool validateVlanStackByConfOp(const VlanStackEntry &stack_entry, const vector<swss::FieldValueTuple> &values)
+        {
+            for (const auto &fv : values)
+            {
+                if (fv.first == "s_vlan_priority")
+                {
+                    auto s_vlan_priority = stoi(fv.second);
+                    if (stack_entry.priority != s_vlan_priority)
+                    {
+                        return false;
+                    }
+                }
+                else if (fv.first == "c_vlanids")
+                {
+                    vector<uint16_t> vlanids;
+                    string delimiter = "..";
+                    stringstream ss(fv.second);
+
+                    while (ss.good())
+                    {
+                        string substr;
+                        getline(ss, substr, ',');
+                        if (substr.find(delimiter) != std::string::npos)
+                        {
+                            size_t pos = substr.find(delimiter);
+                            string start = substr.substr(0, pos);
+                            string end = substr.substr(pos + delimiter.size());
+
+                            for (int i = std::stoi(start); i <= std::stoi(end); i++)
+                            {
+                                vlanids.push_back(i);
+                            }
+                        }
+                        else
+                        {
+                            vlanids.push_back(std::stoi(substr));
+                        }
+                    }
+
+                    if (vlanids.size() != stack_entry.push_entries.size())
+                    {
+                        return false;
+                    }
+
+                    for (auto vlan : vlanids)
+                    {
+                        auto it = stack_entry.push_entries.find(vlan);
+                        if (it == stack_entry.push_entries.end())
+                        {
+                            return false;
+                        }
+                    }
+                }
+                else
+                {
+                    // unknown attr_name
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        bool validateVlanStackAttributeList(sai_object_type_t object_type, sai_object_id_t obj_id, shared_ptr<SaiAttributeList> expAttrList)
+        {
+            auto &exp_attrlist = *expAttrList;
+
+            vector<sai_attribute_t> act_attr;
+
+            for (uint32_t i = 0; i < exp_attrlist.get_attr_count(); ++i)
+            {
+                const auto attr = exp_attrlist.get_attr_list()[i];
+                auto meta = sai_metadata_get_attr_metadata(object_type, attr.id);
+
+                if (meta == nullptr)
+                {
+                    return false;
+                }
+
+                sai_attribute_t new_attr;
+                memset(&new_attr, 0, sizeof(new_attr));
+
+                new_attr.id = attr.id;
+                act_attr.emplace_back(new_attr);
+            }
+
+            auto status = sai_vlan_api->get_vlan_stack_attribute(obj_id, (uint32_t)act_attr.size(), act_attr.data());
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                return false;
+            }
+
+            auto b_attr_eq = Check::AttrListEq(object_type, act_attr, exp_attrlist);
+            if (!b_attr_eq)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        bool validateVlanStackLowerLayerDb(const VlanStackKey &stack_key, const VlanStackEntry &stack_entry)
+        {
+            auto object_type = SAI_OBJECT_TYPE_VLAN_STACK;
+            shared_ptr<SaiAttributeList> expAttrList;
+
+            {
+                vector<swss::FieldValueTuple> fields;
+
+                auto port_oid = sai_serialize_object_id(stack_key.port_oid);
+                fields.push_back({ "SAI_VLAN_STACK_ATTR_PORT", port_oid });
+                fields.push_back({ "SAI_VLAN_STACK_ATTR_STAGE", "SAI_VLAN_STACK_STAGE_EGRESS" });
+                fields.push_back({ "SAI_VLAN_STACK_ATTR_ORIGINAL_VLAN_ID", std::to_string(stack_key.s_vlanid) });
+                fields.push_back({ "SAI_VLAN_STACK_ATTR_MATCH_TYPE", "SAI_VLAN_STACK_MATCH_TYPE_OUTER" });
+                fields.push_back({ "SAI_VLAN_STACK_ATTR_ACTION", "SAI_VLAN_STACK_ACTION_POP" });
+
+                expAttrList = shared_ptr<SaiAttributeList>(new SaiAttributeList(object_type, fields, false));
+                auto b_entry_eq = validateVlanStackAttributeList(object_type, stack_entry.pop_entry, expAttrList);
+                if (!b_entry_eq)
+                {
+                    return false;
+                }
+            }
+
+            {
+                for (auto push_entry : stack_entry.push_entries)
+                {
+                    vector<swss::FieldValueTuple> fields;
+
+                    auto port_oid = sai_serialize_object_id(stack_key.port_oid);
+                    fields.push_back({ "SAI_VLAN_STACK_ATTR_PORT", port_oid });
+                    fields.push_back({ "SAI_VLAN_STACK_ATTR_STAGE", "SAI_VLAN_STACK_STAGE_INGRESS" });
+                    fields.push_back({ "SAI_VLAN_STACK_ATTR_ORIGINAL_VLAN_ID", std::to_string(push_entry.first) });
+                    fields.push_back({ "SAI_VLAN_STACK_ATTR_MATCH_TYPE", "SAI_VLAN_STACK_MATCH_TYPE_INNER" });
+                    fields.push_back({ "SAI_VLAN_STACK_ATTR_ACTION", "SAI_VLAN_STACK_ACTION_PUSH" });
+                    fields.push_back({ "SAI_VLAN_STACK_ATTR_VLAN_APPLIED_PRI", std::to_string(stack_entry.priority) });
+                    fields.push_back({ "SAI_VLAN_STACK_ATTR_APPLIED_VLAN_ID", std::to_string(stack_key.s_vlanid) });
+
+                    expAttrList = shared_ptr<SaiAttributeList>(new SaiAttributeList(object_type, fields, false));
+                    auto b_entry_eq = validateVlanStackAttributeList(object_type, push_entry.second, expAttrList);
+                    if (!b_entry_eq)
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        bool validateVlanXlateByConfOp(const VlanXlateEntry &xlate_entry, const vector<swss::FieldValueTuple> &values)
+        {
+            for (const auto &fv : values)
+            {
+                if (fv.first == "c_vlanid")
+                {
+                    auto c_vlanid = std::stoi(fv.second);
+
+                    if (xlate_entry.c_vlanid != c_vlanid)
+                    {
+                        return false;
+                    }
+                }
+                else
+                {
+                    // unknown attr_name
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        bool validateVlanXlateLowerLayerDb(const VlanXlateKey &xlate_key, const VlanXlateEntry &xlate_entry)
+        {
+            auto object_type = SAI_OBJECT_TYPE_VLAN_STACK;
+            shared_ptr<SaiAttributeList> expAttrList;
+
+            {
+                vector<swss::FieldValueTuple> fields;
+
+                auto port_oid = sai_serialize_object_id(xlate_key.port_oid);
+                fields.push_back({ "SAI_VLAN_STACK_ATTR_PORT", port_oid });
+                fields.push_back({ "SAI_VLAN_STACK_ATTR_STAGE", "SAI_VLAN_STACK_STAGE_EGRESS" });
+                fields.push_back({ "SAI_VLAN_STACK_ATTR_ORIGINAL_VLAN_ID", std::to_string(xlate_key.s_vlanid) });
+                fields.push_back({ "SAI_VLAN_STACK_ATTR_MATCH_TYPE", "SAI_VLAN_STACK_MATCH_TYPE_OUTER" });
+                fields.push_back({ "SAI_VLAN_STACK_ATTR_ACTION", "SAI_VLAN_STACK_ACTION_SWAP" });
+                fields.push_back({ "SAI_VLAN_STACK_ATTR_APPLIED_VLAN_ID", std::to_string(xlate_entry.c_vlanid) });
+
+                expAttrList = shared_ptr<SaiAttributeList>(new SaiAttributeList(object_type, fields, false));
+                auto b_entry_eq = validateVlanStackAttributeList(object_type, xlate_entry.egress_entry, expAttrList);
+                if (!b_entry_eq)
+                {
+                    return false;
+                }
+            }
+
+            {
+                vector<swss::FieldValueTuple> fields;
+
+                auto port_oid = sai_serialize_object_id(xlate_key.port_oid);
+                fields.push_back({ "SAI_VLAN_STACK_ATTR_PORT", port_oid });
+                fields.push_back({ "SAI_VLAN_STACK_ATTR_STAGE", "SAI_VLAN_STACK_STAGE_INGRESS" });
+                fields.push_back({ "SAI_VLAN_STACK_ATTR_ORIGINAL_VLAN_ID", std::to_string(xlate_entry.c_vlanid) });
+                fields.push_back({ "SAI_VLAN_STACK_ATTR_MATCH_TYPE", "SAI_VLAN_STACK_MATCH_TYPE_OUTER" });
+                fields.push_back({ "SAI_VLAN_STACK_ATTR_ACTION", "SAI_VLAN_STACK_ACTION_SWAP" });
+                fields.push_back({ "SAI_VLAN_STACK_ATTR_APPLIED_VLAN_ID", std::to_string(xlate_key.s_vlanid) });
+
+                expAttrList = shared_ptr<SaiAttributeList>(new SaiAttributeList(object_type, fields, false));
+                auto b_entry_eq = validateVlanStackAttributeList(object_type, xlate_entry.ingress_entry, expAttrList);
+                if (!b_entry_eq)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
     };
 
     TEST_F(PortsOrchTest, PortReadinessColdBoot)
@@ -1082,5 +1341,625 @@ namespace portsorch_test
         }
 
         ASSERT_FALSE(bridgePortCalledBeforeLagMember); // bridge port created on lag before lag member was created
+    }
+
+    TEST_F(PortsOrchTest, VlanStack_PopAndPushOnEthernetPort)
+    {
+        initialPorts();
+
+        VlanStackEntry stack_entry;
+
+        Table vlanStackTable = Table(m_app_db.get(), APP_VLAN_STACKING_TABLE_NAME);
+
+        {
+            string key = "Ethernet10:21";
+            string op = SET_COMMAND;
+            std::vector<FieldValueTuple> values = {
+                { "c_vlanids", "22" },
+                { "s_vlan_priority", "0" }
+            };
+
+            {
+                auto consumer = unique_ptr<Consumer>(new Consumer(
+                    new swss::ConsumerStateTable(m_app_db.get(), APP_VLAN_STACKING_TABLE_NAME, 1, 1), gPortsOrch, APP_VLAN_STACKING_TABLE_NAME));
+
+                consumer->addToSync(
+                    deque<KeyOpFieldsValuesTuple>({ { key, op, values } }));
+                static_cast<Orch *>(gPortsOrch)->doTask(*consumer.get());
+            }
+            //auto status = gPortsOrch->doVlanStackTask(key, op, values);
+            //ASSERT_EQ(status, task_success);
+
+            Port port;
+
+            gPortsOrch->getPort("Ethernet10", port);
+            auto vlan_stack_key = VlanStackKey(port.m_port_id, 21);
+
+            auto it = gPortsOrch->m_vlan_stack->vlan_stack_map.find(vlan_stack_key);
+            ASSERT_NE(it, gPortsOrch->m_vlan_stack->vlan_stack_map.end());
+
+            stack_entry = it->second;
+            ASSERT_TRUE(validateVlanStackByConfOp(stack_entry, values));
+            ASSERT_TRUE(validateVlanStackLowerLayerDb(vlan_stack_key, stack_entry));
+        }
+
+        {
+            string key = "Ethernet10:21";
+            string op = DEL_COMMAND;
+            std::vector<FieldValueTuple> values = {};
+
+            {
+                auto consumer = unique_ptr<Consumer>(new Consumer(
+                    new swss::ConsumerStateTable(m_app_db.get(), APP_VLAN_STACKING_TABLE_NAME, 1, 1), gPortsOrch, APP_VLAN_STACKING_TABLE_NAME));
+
+                consumer->addToSync(
+                    deque<KeyOpFieldsValuesTuple>({ { key, op, values } }));
+                static_cast<Orch *>(gPortsOrch)->doTask(*consumer.get());
+            }
+
+            //auto status = gPortsOrch->doVlanStackTask(key, op, values);
+            //ASSERT_EQ(status, task_success);
+
+            Port port;
+
+            gPortsOrch->getPort("Ethernet10", port);
+            auto vlan_stack_key = VlanStackKey(port.m_port_id, 21);
+
+            auto it = gPortsOrch->m_vlan_stack->vlan_stack_map.find(vlan_stack_key);
+            ASSERT_EQ(it, gPortsOrch->m_vlan_stack->vlan_stack_map.end());
+
+            {
+                sai_attribute_t attr;
+
+                attr.id = SAI_VLAN_STACK_ATTR_PORT;
+
+                auto rv = sai_vlan_api->get_vlan_stack_attribute(stack_entry.pop_entry, 1, &attr);
+                ASSERT_NE(rv, SAI_STATUS_SUCCESS);
+
+                for (auto entry : stack_entry.push_entries)
+                {
+                    rv = sai_vlan_api->get_vlan_stack_attribute(entry.second, 1, &attr);
+                    ASSERT_NE(rv, SAI_STATUS_SUCCESS);
+                }
+            }
+        }
+    }
+
+    TEST_F(PortsOrchTest, VlanStack_PopAndPushOnPortChannel)
+    {
+        initialPorts();
+
+        VlanStackEntry stack_entry;
+
+        string lag_name = "PortChannel001";
+        createLAG(lag_name);
+
+        {
+            string key = "PortChannel001:21";
+            string op = SET_COMMAND;
+            std::vector<FieldValueTuple> values = {
+                { "c_vlanids", "22" },
+                { "s_vlan_priority", "0" }
+            };
+
+            {
+                auto consumer = unique_ptr<Consumer>(new Consumer(
+                    new swss::ConsumerStateTable(m_app_db.get(), APP_VLAN_STACKING_TABLE_NAME, 1, 1), gPortsOrch, APP_VLAN_STACKING_TABLE_NAME));
+
+                consumer->addToSync(
+                    deque<KeyOpFieldsValuesTuple>({ { key, op, values } }));
+                static_cast<Orch *>(gPortsOrch)->doTask(*consumer.get());
+            }
+            //auto status = gPortsOrch->doVlanStackTask(key, op, values);
+            //ASSERT_EQ(status, task_success);
+
+            Port lag;
+
+            gPortsOrch->getPort(lag_name, lag);
+            auto vlan_stack_key = VlanStackKey(lag.m_lag_id, 21);
+
+            auto it = gPortsOrch->m_vlan_stack->vlan_stack_map.find(vlan_stack_key);
+            ASSERT_NE(it, gPortsOrch->m_vlan_stack->vlan_stack_map.end());
+
+            stack_entry = it->second;
+            ASSERT_TRUE(validateVlanStackByConfOp(stack_entry, values));
+            ASSERT_TRUE(validateVlanStackLowerLayerDb(vlan_stack_key, stack_entry));
+        }
+
+        {
+            string key = "PortChannel001:21";
+            string op = DEL_COMMAND;
+            std::vector<FieldValueTuple> values = {};
+
+            {
+                auto consumer = unique_ptr<Consumer>(new Consumer(
+                    new swss::ConsumerStateTable(m_app_db.get(), APP_VLAN_STACKING_TABLE_NAME, 1, 1), gPortsOrch, APP_VLAN_STACKING_TABLE_NAME));
+
+                consumer->addToSync(
+                    deque<KeyOpFieldsValuesTuple>({ { key, op, values } }));
+                static_cast<Orch *>(gPortsOrch)->doTask(*consumer.get());
+            }
+            //auto status = gPortsOrch->doVlanStackTask(key, op, values);
+            //ASSERT_EQ(status, task_success);
+
+            Port lag;
+
+            gPortsOrch->getPort(lag_name, lag);
+            auto vlan_stack_key = VlanStackKey(lag.m_lag_id, 21);
+
+            auto it = gPortsOrch->m_vlan_stack->vlan_stack_map.find(vlan_stack_key);
+            ASSERT_EQ(it, gPortsOrch->m_vlan_stack->vlan_stack_map.end());
+
+            {
+                sai_attribute_t attr;
+
+                attr.id = SAI_VLAN_STACK_ATTR_PORT;
+
+                auto rv = sai_vlan_api->get_vlan_stack_attribute(stack_entry.pop_entry, 1, &attr);
+                ASSERT_NE(rv, SAI_STATUS_SUCCESS);
+
+                for (auto entry : stack_entry.push_entries)
+                {
+                    rv = sai_vlan_api->get_vlan_stack_attribute(entry.second, 1, &attr);
+                    ASSERT_NE(rv, SAI_STATUS_SUCCESS);
+                }
+            }
+        }
+    }
+
+    TEST_F(PortsOrchTest, VlanStack_MultiCVLAN)
+    {
+        initialPorts();
+        
+        VlanStackEntry stack_entry;
+
+        {
+            string key = "Ethernet10:21";
+            string op = SET_COMMAND;
+            std::vector<FieldValueTuple> values = {
+                { "c_vlanids", "1..3,10" },
+                { "s_vlan_priority", "0" }
+            };
+
+            {
+                auto consumer = unique_ptr<Consumer>(new Consumer(
+                    new swss::ConsumerStateTable(m_app_db.get(), APP_VLAN_STACKING_TABLE_NAME, 1, 1), gPortsOrch, APP_VLAN_STACKING_TABLE_NAME));
+
+                consumer->addToSync(
+                    deque<KeyOpFieldsValuesTuple>({ { key, op, values } }));
+                static_cast<Orch *>(gPortsOrch)->doTask(*consumer.get());
+            }
+            //auto status = gPortsOrch->doVlanStackTask(key, op, values);
+            //ASSERT_EQ(status, task_success);
+
+            Port port;
+
+            gPortsOrch->getPort("Ethernet10", port);
+            auto vlan_stack_key = VlanStackKey(port.m_port_id, 21);
+
+            auto it = gPortsOrch->m_vlan_stack->vlan_stack_map.find(vlan_stack_key);
+            ASSERT_NE(it, gPortsOrch->m_vlan_stack->vlan_stack_map.end());
+
+            stack_entry = it->second;
+            ASSERT_TRUE(validateVlanStackByConfOp(stack_entry, values));
+            ASSERT_TRUE(validateVlanStackLowerLayerDb(vlan_stack_key, stack_entry));
+        }
+
+        {
+            string key = "Ethernet10:21";
+            string op = DEL_COMMAND;
+            std::vector<FieldValueTuple> values = {};
+
+            {
+                auto consumer = unique_ptr<Consumer>(new Consumer(
+                    new swss::ConsumerStateTable(m_app_db.get(), APP_VLAN_STACKING_TABLE_NAME, 1, 1), gPortsOrch, APP_VLAN_STACKING_TABLE_NAME));
+
+                consumer->addToSync(
+                    deque<KeyOpFieldsValuesTuple>({ { key, op, values } }));
+                static_cast<Orch *>(gPortsOrch)->doTask(*consumer.get());
+            }
+            //auto status = gPortsOrch->doVlanStackTask(key, op, values);
+            //ASSERT_EQ(status, task_success);
+
+            Port port;
+
+            gPortsOrch->getPort("Ethernet10", port);
+            auto vlan_stack_key = VlanStackKey(port.m_port_id, 21);
+
+            auto it = gPortsOrch->m_vlan_stack->vlan_stack_map.find(vlan_stack_key);
+            ASSERT_EQ(it, gPortsOrch->m_vlan_stack->vlan_stack_map.end());
+
+            {
+                sai_attribute_t attr;
+
+                attr.id = SAI_VLAN_STACK_ATTR_PORT;
+
+                auto rv = sai_vlan_api->get_vlan_stack_attribute(stack_entry.pop_entry, 1, &attr);
+                ASSERT_NE(rv, SAI_STATUS_SUCCESS);
+
+                for (auto entry : stack_entry.push_entries)
+                {
+                    rv = sai_vlan_api->get_vlan_stack_attribute(entry.second, 1, &attr);
+                    ASSERT_NE(rv, SAI_STATUS_SUCCESS);
+                }
+            }
+        }
+    }
+
+    TEST_F(PortsOrchTest, VlanStack_ModifyExistConfig)
+    {
+        initialPorts();
+        
+        VlanStackEntry stack_entry;
+
+        {
+            string key = "Ethernet10:21";
+            string op = SET_COMMAND;
+            std::vector<FieldValueTuple> values = {
+                { "c_vlanids", "22" },
+                { "s_vlan_priority", "7" }
+            };
+
+            {
+                auto consumer = unique_ptr<Consumer>(new Consumer(
+                    new swss::ConsumerStateTable(m_app_db.get(), APP_VLAN_STACKING_TABLE_NAME, 1, 1), gPortsOrch, APP_VLAN_STACKING_TABLE_NAME));
+
+                consumer->addToSync(
+                    deque<KeyOpFieldsValuesTuple>({ { key, op, values } }));
+                static_cast<Orch *>(gPortsOrch)->doTask(*consumer.get());
+            }
+            //auto status = gPortsOrch->doVlanStackTask(key, op, values);
+            //ASSERT_EQ(status, task_success);
+
+            Port port;
+
+            gPortsOrch->getPort("Ethernet10", port);
+            auto vlan_stack_key = VlanStackKey(port.m_port_id, 21);
+
+            auto it = gPortsOrch->m_vlan_stack->vlan_stack_map.find(vlan_stack_key);
+            ASSERT_NE(it, gPortsOrch->m_vlan_stack->vlan_stack_map.end());
+
+            stack_entry = it->second;
+            ASSERT_TRUE(validateVlanStackByConfOp(stack_entry, values));
+            ASSERT_TRUE(validateVlanStackLowerLayerDb(vlan_stack_key, stack_entry));
+        }
+
+        // Add a new cvlan
+        {
+            string key = "Ethernet10:21";
+            string op = SET_COMMAND;
+            std::vector<FieldValueTuple> values = {
+                { "c_vlanids", "22,23" },
+                { "s_vlan_priority", "0" }
+            };
+
+            {
+                auto consumer = unique_ptr<Consumer>(new Consumer(
+                    new swss::ConsumerStateTable(m_app_db.get(), APP_VLAN_STACKING_TABLE_NAME, 1, 1), gPortsOrch, APP_VLAN_STACKING_TABLE_NAME));
+
+                consumer->addToSync(
+                    deque<KeyOpFieldsValuesTuple>({ { key, op, values } }));
+                static_cast<Orch *>(gPortsOrch)->doTask(*consumer.get());
+            }
+            //auto status = gPortsOrch->doVlanStackTask(key, op, values);
+            //ASSERT_EQ(status, task_success);
+
+            Port port;
+
+            gPortsOrch->getPort("Ethernet10", port);
+            auto vlan_stack_key = VlanStackKey(port.m_port_id, 21);
+
+            auto it = gPortsOrch->m_vlan_stack->vlan_stack_map.find(vlan_stack_key);
+            ASSERT_NE(it, gPortsOrch->m_vlan_stack->vlan_stack_map.end());
+
+            stack_entry = it->second;
+            ASSERT_TRUE(validateVlanStackByConfOp(stack_entry, values));
+            ASSERT_TRUE(validateVlanStackLowerLayerDb(vlan_stack_key, stack_entry));
+        }
+
+        {
+            string key = "Ethernet10:21";
+            string op = DEL_COMMAND;
+            std::vector<FieldValueTuple> values = {};
+
+            {
+                auto consumer = unique_ptr<Consumer>(new Consumer(
+                    new swss::ConsumerStateTable(m_app_db.get(), APP_VLAN_STACKING_TABLE_NAME, 1, 1), gPortsOrch, APP_VLAN_STACKING_TABLE_NAME));
+
+                consumer->addToSync(
+                    deque<KeyOpFieldsValuesTuple>({ { key, op, values } }));
+                static_cast<Orch *>(gPortsOrch)->doTask(*consumer.get());
+            }
+            //auto status = gPortsOrch->doVlanStackTask(key, op, values);
+            //ASSERT_EQ(status, task_success);
+
+            Port port;
+
+            gPortsOrch->getPort("Ethernet10", port);
+            auto vlan_stack_key = VlanStackKey(port.m_port_id, 21);
+
+            auto it = gPortsOrch->m_vlan_stack->vlan_stack_map.find(vlan_stack_key);
+            ASSERT_EQ(it, gPortsOrch->m_vlan_stack->vlan_stack_map.end());
+
+            {
+                sai_attribute_t attr;
+
+                attr.id = SAI_VLAN_STACK_ATTR_PORT;
+
+                auto rv = sai_vlan_api->get_vlan_stack_attribute(stack_entry.pop_entry, 1, &attr);
+                ASSERT_NE(rv, SAI_STATUS_SUCCESS);
+
+                for (auto entry : stack_entry.push_entries)
+                {
+                    rv = sai_vlan_api->get_vlan_stack_attribute(entry.second, 1, &attr);
+                    ASSERT_NE(rv, SAI_STATUS_SUCCESS);
+                }
+            }
+        }
+    }
+
+    TEST_F(PortsOrchTest, VlanStack_XlateSwapOnEthernetPort)
+    {
+        initialPorts();
+
+        VlanXlateEntry xlate_entry;
+
+        {
+            string key = "Ethernet10:21";
+            string op = SET_COMMAND;
+            std::vector<FieldValueTuple> values = {
+                { "c_vlanid", "22" }
+            };
+
+            {
+                auto consumer = unique_ptr<Consumer>(new Consumer(
+                    new swss::ConsumerStateTable(m_app_db.get(), APP_VLAN_TRANSLATION_TABLE_NAME, 1, 1), gPortsOrch, APP_VLAN_TRANSLATION_TABLE_NAME));
+
+                consumer->addToSync(
+                    deque<KeyOpFieldsValuesTuple>({ { key, op, values } }));
+                static_cast<Orch *>(gPortsOrch)->doTask(*consumer.get());
+            }
+            //auto status = gPortsOrch->doVlanXlateTask(key, op, values);
+            //ASSERT_EQ(status, task_success);
+
+            Port port;
+
+            gPortsOrch->getPort("Ethernet10", port);
+            auto vlan_xlate_key = VlanXlateKey(port.m_port_id, 21);
+
+            auto it = gPortsOrch->m_vlan_xlate->vlan_xlate_map.find(vlan_xlate_key);
+            ASSERT_NE(it, gPortsOrch->m_vlan_xlate->vlan_xlate_map.end());
+
+            xlate_entry = it->second;
+            ASSERT_TRUE(validateVlanXlateByConfOp(xlate_entry, values));
+            ASSERT_TRUE(validateVlanXlateLowerLayerDb(vlan_xlate_key, xlate_entry));
+        }
+
+        {
+            string key = "Ethernet10:21";
+            string op = DEL_COMMAND;
+            std::vector<FieldValueTuple> values = {};
+
+            {
+                auto consumer = unique_ptr<Consumer>(new Consumer(
+                    new swss::ConsumerStateTable(m_app_db.get(), APP_VLAN_TRANSLATION_TABLE_NAME, 1, 1), gPortsOrch, APP_VLAN_TRANSLATION_TABLE_NAME));
+
+                consumer->addToSync(
+                    deque<KeyOpFieldsValuesTuple>({ { key, op, values } }));
+                static_cast<Orch *>(gPortsOrch)->doTask(*consumer.get());
+            }
+            //auto status = gPortsOrch->doVlanXlateTask(key, op, values);
+            //ASSERT_EQ(status, task_success);
+
+            {
+                Port port;
+
+                gPortsOrch->getPort("Ethernet10", port);
+                auto vlan_xlate_key = VlanXlateKey(port.m_port_id, 21);
+
+                auto it = gPortsOrch->m_vlan_xlate->vlan_xlate_map.find(vlan_xlate_key);
+                ASSERT_EQ(it, gPortsOrch->m_vlan_xlate->vlan_xlate_map.end());
+
+                {
+                    sai_attribute_t attr;
+
+                    attr.id = SAI_VLAN_STACK_ATTR_PORT;
+
+                    auto rv = sai_vlan_api->get_vlan_stack_attribute(xlate_entry.ingress_entry, 1, &attr);
+                    ASSERT_NE(rv, SAI_STATUS_SUCCESS);
+
+                    rv = sai_vlan_api->get_vlan_stack_attribute(xlate_entry.egress_entry, 1, &attr);
+                    ASSERT_NE(rv, SAI_STATUS_SUCCESS);
+                }
+            }
+        }
+    }
+
+    TEST_F(PortsOrchTest, VlanStack_XlateSwapOnPortChannel)
+    {
+        initialPorts();
+
+        VlanXlateEntry xlate_entry;
+
+        string lag_name = "PortChannel001";
+        createLAG(lag_name);
+
+        {
+            string key = "PortChannel001:21";
+            string op = SET_COMMAND;
+            std::vector<FieldValueTuple> values = {
+                { "c_vlanid", "22" }
+            };
+
+            {
+                auto consumer = unique_ptr<Consumer>(new Consumer(
+                    new swss::ConsumerStateTable(m_app_db.get(), APP_VLAN_TRANSLATION_TABLE_NAME, 1, 1), gPortsOrch, APP_VLAN_TRANSLATION_TABLE_NAME));
+
+                consumer->addToSync(
+                    deque<KeyOpFieldsValuesTuple>({ { key, op, values } }));
+                static_cast<Orch *>(gPortsOrch)->doTask(*consumer.get());
+            }
+            //auto status = gPortsOrch->doVlanXlateTask(key, op, values);
+            //ASSERT_EQ(status, task_success);
+
+            Port lag;
+
+            gPortsOrch->getPort(lag_name, lag);
+            auto vlan_xlate_key = VlanXlateKey(lag.m_lag_id, 21);
+
+            auto it = gPortsOrch->m_vlan_xlate->vlan_xlate_map.find(vlan_xlate_key);
+            ASSERT_NE(it, gPortsOrch->m_vlan_xlate->vlan_xlate_map.end());
+
+            xlate_entry = it->second;
+            ASSERT_TRUE(validateVlanXlateByConfOp(xlate_entry, values));
+            ASSERT_TRUE(validateVlanXlateLowerLayerDb(vlan_xlate_key, xlate_entry));
+        }
+
+        {
+            string key = "PortChannel001:21";
+            string op = DEL_COMMAND;
+            std::vector<FieldValueTuple> values = {};
+
+            {
+                auto consumer = unique_ptr<Consumer>(new Consumer(
+                    new swss::ConsumerStateTable(m_app_db.get(), APP_VLAN_TRANSLATION_TABLE_NAME, 1, 1), gPortsOrch, APP_VLAN_TRANSLATION_TABLE_NAME));
+
+                consumer->addToSync(
+                    deque<KeyOpFieldsValuesTuple>({ { key, op, values } }));
+                static_cast<Orch *>(gPortsOrch)->doTask(*consumer.get());
+            }
+            //auto status = gPortsOrch->doVlanXlateTask(key, op, values);
+            //ASSERT_EQ(status, task_success);
+
+            {
+                Port lag;
+
+                gPortsOrch->getPort(lag_name, lag);
+                auto vlan_xlate_key = VlanXlateKey(lag.m_lag_id, 21);
+
+                auto it = gPortsOrch->m_vlan_xlate->vlan_xlate_map.find(vlan_xlate_key);
+                ASSERT_EQ(it, gPortsOrch->m_vlan_xlate->vlan_xlate_map.end());
+
+                {
+                    sai_attribute_t attr;
+
+                    attr.id = SAI_VLAN_STACK_ATTR_PORT;
+
+                    auto rv = sai_vlan_api->get_vlan_stack_attribute(xlate_entry.ingress_entry, 1, &attr);
+                    ASSERT_NE(rv, SAI_STATUS_SUCCESS);
+
+                    rv = sai_vlan_api->get_vlan_stack_attribute(xlate_entry.egress_entry, 1, &attr);
+                    ASSERT_NE(rv, SAI_STATUS_SUCCESS);
+                }
+            }
+        }
+    }
+
+    TEST_F(PortsOrchTest, VlanStack_XlateModifyExistConfig)
+    {
+        initialPorts();
+
+        VlanXlateEntry xlate_entry;
+
+        {
+            string key = "Ethernet10:21";
+            string op = SET_COMMAND;
+            std::vector<FieldValueTuple> values = {
+                { "c_vlanid", "22" }
+            };
+
+            {
+                auto consumer = unique_ptr<Consumer>(new Consumer(
+                    new swss::ConsumerStateTable(m_app_db.get(), APP_VLAN_TRANSLATION_TABLE_NAME, 1, 1), gPortsOrch, APP_VLAN_TRANSLATION_TABLE_NAME));
+
+                consumer->addToSync(
+                    deque<KeyOpFieldsValuesTuple>({ { key, op, values } }));
+                static_cast<Orch *>(gPortsOrch)->doTask(*consumer.get());
+            }
+            //auto status = gPortsOrch->doVlanXlateTask(key, op, values);
+            //ASSERT_EQ(status, task_success);
+
+            Port port;
+
+            gPortsOrch->getPort("Ethernet10", port);
+            auto vlan_xlate_key = VlanXlateKey(port.m_port_id, 21);
+
+            auto it = gPortsOrch->m_vlan_xlate->vlan_xlate_map.find(vlan_xlate_key);
+            ASSERT_NE(it, gPortsOrch->m_vlan_xlate->vlan_xlate_map.end());
+
+            xlate_entry = it->second;
+            ASSERT_TRUE(validateVlanXlateByConfOp(xlate_entry, values));
+            ASSERT_TRUE(validateVlanXlateLowerLayerDb(vlan_xlate_key, xlate_entry));
+        }
+
+        {
+            string key = "Ethernet10:21";
+            string op = SET_COMMAND;
+            std::vector<FieldValueTuple> values = {
+                { "c_vlanid", "25" }
+            };
+
+            {
+                auto consumer = unique_ptr<Consumer>(new Consumer(
+                    new swss::ConsumerStateTable(m_app_db.get(), APP_VLAN_TRANSLATION_TABLE_NAME, 1, 1), gPortsOrch, APP_VLAN_TRANSLATION_TABLE_NAME));
+
+                consumer->addToSync(
+                    deque<KeyOpFieldsValuesTuple>({ { key, op, values } }));
+                static_cast<Orch *>(gPortsOrch)->doTask(*consumer.get());
+            }
+            //auto status = gPortsOrch->doVlanXlateTask(key, op, values);
+            //ASSERT_EQ(status, task_success);
+
+            Port port;
+
+            gPortsOrch->getPort("Ethernet10", port);
+            auto vlan_xlate_key = VlanXlateKey(port.m_port_id, 21);
+
+            auto it = gPortsOrch->m_vlan_xlate->vlan_xlate_map.find(vlan_xlate_key);
+            ASSERT_NE(it, gPortsOrch->m_vlan_xlate->vlan_xlate_map.end());
+
+            xlate_entry = it->second;
+            ASSERT_TRUE(validateVlanXlateByConfOp(xlate_entry, values));
+            ASSERT_TRUE(validateVlanXlateLowerLayerDb(vlan_xlate_key, xlate_entry));
+        }
+
+        {
+            string key = "Ethernet10:21";
+            string op = DEL_COMMAND;
+            std::vector<FieldValueTuple> values = {};
+
+            {
+                auto consumer = unique_ptr<Consumer>(new Consumer(
+                    new swss::ConsumerStateTable(m_app_db.get(), APP_VLAN_TRANSLATION_TABLE_NAME, 1, 1), gPortsOrch, APP_VLAN_TRANSLATION_TABLE_NAME));
+
+                consumer->addToSync(
+                    deque<KeyOpFieldsValuesTuple>({ { key, op, values } }));
+                static_cast<Orch *>(gPortsOrch)->doTask(*consumer.get());
+            }
+            //auto status = gPortsOrch->doVlanXlateTask(key, op, values);
+            //ASSERT_EQ(status, task_success);
+
+            {
+                Port port;
+
+                gPortsOrch->getPort("Ethernet10", port);
+                auto vlan_xlate_key = VlanXlateKey(port.m_port_id, 21);
+
+                auto it = gPortsOrch->m_vlan_xlate->vlan_xlate_map.find(vlan_xlate_key);
+                ASSERT_EQ(it, gPortsOrch->m_vlan_xlate->vlan_xlate_map.end());
+
+                {
+                    sai_attribute_t attr;
+
+                    attr.id = SAI_VLAN_STACK_ATTR_PORT;
+
+                    auto rv = sai_vlan_api->get_vlan_stack_attribute(xlate_entry.ingress_entry, 1, &attr);
+                    ASSERT_NE(rv, SAI_STATUS_SUCCESS);
+
+                    rv = sai_vlan_api->get_vlan_stack_attribute(xlate_entry.egress_entry, 1, &attr);
+                    ASSERT_NE(rv, SAI_STATUS_SUCCESS);
+                }
+            }
+        }
     }
 }
