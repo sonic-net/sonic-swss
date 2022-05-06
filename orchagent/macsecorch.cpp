@@ -1051,6 +1051,7 @@ bool MACsecOrch::createMACsecPort(
     macsec_port.m_sci_in_sectag = DEFAULT_SCI_IN_SECTAG;
     macsec_port.m_cipher_suite = DEFAULT_CIPHER_SUITE;
     macsec_port.m_enable = false;
+    macsec_port.m_cipher_suite_ready = false;
 
     // If hardware matches SCI in ACL, the macsec_flow maps to an IEEE 802.1ae SecY object.
     // Multiple SCs can be associated with such a macsec_flow.
@@ -1229,18 +1230,22 @@ bool MACsecOrch::updateMACsecPort(MACsecPort &macsec_port, const TaskArgs &port_
         if (cipher_suite == "GCM-AES-128")
         {
             macsec_port.m_cipher_suite = SAI_MACSEC_CIPHER_SUITE_GCM_AES_128;
+            macsec_port.m_cipher_suite_ready = true;
         }
         else if (cipher_suite == "GCM-AES-256")
         {
             macsec_port.m_cipher_suite = SAI_MACSEC_CIPHER_SUITE_GCM_AES_256;
+            macsec_port.m_cipher_suite_ready = true;
         }
         else if (cipher_suite == "GCM-AES-XPN-128")
         {
             macsec_port.m_cipher_suite = SAI_MACSEC_CIPHER_SUITE_GCM_AES_XPN_128;
+            macsec_port.m_cipher_suite_ready = true;
         }
         else if (cipher_suite == "GCM-AES-XPN-256")
         {
             macsec_port.m_cipher_suite = SAI_MACSEC_CIPHER_SUITE_GCM_AES_XPN_256;
+            macsec_port.m_cipher_suite_ready = true;
         }
         else
         {
@@ -1503,6 +1508,11 @@ task_process_status MACsecOrch::updateMACsecSC(
     {
         SWSS_LOG_ERROR("Cannot find switch id at the port %s.", port_name.c_str());
         return task_failed;
+    }
+
+    if (!ctx.get_macsec_port()->m_cipher_suite_ready)
+    {
+        return task_need_retry;
     }
 
     if (ctx.get_macsec_sc() == nullptr)

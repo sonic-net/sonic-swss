@@ -102,6 +102,7 @@ private:
         bool                                m_enable_encrypt;
         bool                                m_sci_in_sectag;
         bool                                m_enable;
+        bool                                m_cipher_suite_ready;
         uint32_t                            m_original_ipg;
     };
     struct MACsecObject
