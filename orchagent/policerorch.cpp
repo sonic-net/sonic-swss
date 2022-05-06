@@ -496,7 +496,7 @@ void PolicerOrch::doTask(Consumer &consumer)
 
                 sai_object_id_t policer_id;
                 sai_status_t status = sai_policer_api->create_policer(
-                        &policer_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+                    &policer_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("Failed to create policer %s, rv:%d",
