@@ -1719,8 +1719,6 @@ namespace portsorch_test
                     deque<KeyOpFieldsValuesTuple>({ { key, op, values } }));
                 static_cast<Orch *>(gPortsOrch)->doTask(*consumer.get());
             }
-            //auto status = gPortsOrch->doVlanXlateTask(key, op, values);
-            //ASSERT_EQ(status, task_success);
 
             Port port;
 
@@ -1748,8 +1746,6 @@ namespace portsorch_test
                     deque<KeyOpFieldsValuesTuple>({ { key, op, values } }));
                 static_cast<Orch *>(gPortsOrch)->doTask(*consumer.get());
             }
-            //auto status = gPortsOrch->doVlanXlateTask(key, op, values);
-            //ASSERT_EQ(status, task_success);
 
             {
                 Port port;
@@ -1799,8 +1795,6 @@ namespace portsorch_test
                     deque<KeyOpFieldsValuesTuple>({ { key, op, values } }));
                 static_cast<Orch *>(gPortsOrch)->doTask(*consumer.get());
             }
-            //auto status = gPortsOrch->doVlanXlateTask(key, op, values);
-            //ASSERT_EQ(status, task_success);
 
             Port lag;
 
@@ -1828,8 +1822,6 @@ namespace portsorch_test
                     deque<KeyOpFieldsValuesTuple>({ { key, op, values } }));
                 static_cast<Orch *>(gPortsOrch)->doTask(*consumer.get());
             }
-            //auto status = gPortsOrch->doVlanXlateTask(key, op, values);
-            //ASSERT_EQ(status, task_success);
 
             {
                 Port lag;
@@ -1876,8 +1868,6 @@ namespace portsorch_test
                     deque<KeyOpFieldsValuesTuple>({ { key, op, values } }));
                 static_cast<Orch *>(gPortsOrch)->doTask(*consumer.get());
             }
-            //auto status = gPortsOrch->doVlanXlateTask(key, op, values);
-            //ASSERT_EQ(status, task_success);
 
             Port port;
 
@@ -1907,8 +1897,6 @@ namespace portsorch_test
                     deque<KeyOpFieldsValuesTuple>({ { key, op, values } }));
                 static_cast<Orch *>(gPortsOrch)->doTask(*consumer.get());
             }
-            //auto status = gPortsOrch->doVlanXlateTask(key, op, values);
-            //ASSERT_EQ(status, task_success);
 
             Port port;
 
@@ -1936,8 +1924,6 @@ namespace portsorch_test
                     deque<KeyOpFieldsValuesTuple>({ { key, op, values } }));
                 static_cast<Orch *>(gPortsOrch)->doTask(*consumer.get());
             }
-            //auto status = gPortsOrch->doVlanXlateTask(key, op, values);
-            //ASSERT_EQ(status, task_success);
 
             {
                 Port port;

@@ -4337,7 +4337,6 @@ task_process_status PortsOrch::doVlanStackTask(const string& key, const string& 
         string s_vlanid;
 
         s_vlanid = keys.at(1);
-        // FIXME: check s_vlanid is correctly ?
         sai_object_id_t port_oid = port.m_type == Port::PHY ? port.m_port_id : port.m_lag_id;
         VlanStackKey stack_key = { port_oid, (uint16_t)to_uint<uint16_t>(s_vlanid) };
 
@@ -4359,17 +4358,13 @@ task_process_status PortsOrch::doVlanXlateTask(const string& key, const string& 
 
     if (!getPort(keys.at(0), port))
     {
-        //assert(0);
-        //SWSS_LOG_ERROR("VlanStack failed to get port object for key %s, port %s", key.c_str(), keys.at(0).c_str());
-        //it = consumer.m_toSync.erase(it);
-        //continue;
+        SWSS_LOG_ERROR("VlanStack failed to get port object for key %s, port %s", key.c_str(), keys.at(0).c_str());
         return task_need_retry;
     }
 
     if (port.m_type != Port::PHY && port.m_type != Port::LAG)
     {
         SWSS_LOG_ERROR("VlanStack failed due to incorrect port type (%d).", port.m_type);
-        //return false;
         return task_failed;
     }
 
@@ -4381,10 +4376,7 @@ task_process_status PortsOrch::doVlanXlateTask(const string& key, const string& 
         s_vlanid = keys.at(1);
         if (!isValidVlanId(s_vlanid, 1, 4094))
         {
-            //assert(0);
-            //SWSS_LOG_ERROR("VlanStack failed to get port object for key %s, port %s", key.c_str(), keys.at(0).c_str());
-            //it = consumer.m_toSync.erase(it);
-            //continue;
+            SWSS_LOG_ERROR("VlanStack failed to get port object for key %s, port %s", key.c_str(), keys.at(0).c_str());
             return task_failed;
         }
 
@@ -4397,10 +4389,7 @@ task_process_status PortsOrch::doVlanXlateTask(const string& key, const string& 
             {
                 if (!isValidVlanId(attr_value, 1, 4094))
                 {
-                    //assert(0);
-                    //SWSS_LOG_ERROR("VlanStack failed to get port object for key %s, port %s", key.c_str(), keys.at(0).c_str());
-                    //it = consumer.m_toSync.erase(it);
-                    //continue;
+                    SWSS_LOG_ERROR("VlanStack failed to get port object for key %s, port %s", key.c_str(), keys.at(0).c_str());
                     return task_failed;
                 }
                 uint16_t vid = (uint16_t)to_uint<uint16_t>(attr_value);
@@ -4426,15 +4415,11 @@ task_process_status PortsOrch::doVlanXlateTask(const string& key, const string& 
     else if (op == DEL_COMMAND)
     {
         string action, s_vlanid;
-        // uint16_t c_vlanid;
 
         s_vlanid = keys.at(1);
         if (!isValidVlanId(s_vlanid, 1, 4094))
         {
-            //assert(0);
-            //SWSS_LOG_ERROR("VlanStack failed to get port object for key %s, port %s", key.c_str(), keys.at(0).c_str());
-            //it = consumer.m_toSync.erase(it);
-            //continue;
+            SWSS_LOG_ERROR("VlanStack failed to get port object for key %s, port %s", key.c_str(), keys.at(0).c_str());
             return task_failed;
         }
 
