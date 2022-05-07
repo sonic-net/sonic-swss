@@ -419,8 +419,8 @@ class TestNeighbor(object):
         # bring up interface
         self.set_admin_status("Ethernet8", "up")
 
-        # create interface and get rif_oid
-        rif_oid = self.create_l3_intf("Ethernet8", "")
+        # create interface
+        self.create_l3_intf("Ethernet8", "")
 
         # assign IP to interface
         self.add_ip_address("Ethernet8", "10.0.0.1/24")
