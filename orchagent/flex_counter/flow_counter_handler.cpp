@@ -47,3 +47,16 @@ void FlowCounterHandler::getGenericCounterStatIdList(std::unordered_set<std::str
         counter_stats.emplace(sai_serialize_counter_stat(it));
     }
 }
+
+bool FlowCounterHandler::queryRouteFlowCounterCapability()
+{
+    sai_attr_capability_t capability;
+    sai_status_t status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_ROUTE_ENTRY, SAI_ROUTE_ENTRY_ATTR_COUNTER_ID, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Could not query route entry attribute SAI_ROUTE_ENTRY_ATTR_COUNTER_ID %d", status);
+        return false;
+    }
+
+    return capability.set_implemented;
+}

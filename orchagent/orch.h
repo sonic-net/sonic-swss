@@ -66,6 +66,7 @@ typedef struct
     // multiple objects being referenced are separated by ','
     std::map<std::string, std::string> m_objsReferencingByMe;
     sai_object_id_t m_saiObjectId;
+    bool m_pendingRemove;
 } referenced_object;
 
 typedef std::map<std::string, referenced_object> object_reference_map;

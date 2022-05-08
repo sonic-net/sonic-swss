@@ -22,6 +22,7 @@ from dvslib.dvs_acl import DVSAcl
 from dvslib.dvs_pbh import DVSPbh
 from dvslib.dvs_route import DVSRoute
 from dvslib import dvs_vlan
+from dvslib import dvs_port
 from dvslib import dvs_lag
 from dvslib import dvs_mirror
 from dvslib import dvs_policer
@@ -1765,7 +1766,11 @@ def dvs_vlan_manager(request, dvs):
                                             dvs.get_counters_db(),
                                             dvs.get_app_db())
 
-
+@pytest.yield_fixture(scope="class")
+def dvs_port_manager(request, dvs):
+    request.cls.dvs_port = dvs_port.DVSPort(dvs.get_asic_db(),
+                                            dvs.get_config_db())
+    
 @pytest.yield_fixture(scope="class")
 def dvs_mirror_manager(request, dvs):
     request.cls.dvs_mirror = dvs_mirror.DVSMirror(dvs.get_asic_db(),
