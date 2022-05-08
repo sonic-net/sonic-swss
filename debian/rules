@@ -27,10 +27,17 @@ include /usr/share/dpkg/default.mk
 #	dh_auto_configure -- \
 #	-DCMAKE_LIBRARY_PATH=$(DEB_HOST_MULTIARCH)
 
-ifeq ($(ENABLE_GCOV), y)
-override_dh_auto_configure:
-	dh_auto_configure -- --enable-gcov CFLAGS="-g -O0" CXXFLAGS="-g -O0"
+configure_opts =
+ifeq ($(ENABLE_ASAN), y)
+	configure_opts += --enable-asan
 endif
+
+ifeq ($(ENABLE_GCOV), y)
+	configure_opts += --enable-gcov CFLAGS="-g -O0" CXXFLAGS="-g -O0"
+endif
+
+override_dh_auto_configure:
+	dh_auto_configure -- $(configure_opts)
 
 override_dh_auto_install:
 	dh_auto_install --destdir=debian/swss
