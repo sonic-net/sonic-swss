@@ -124,6 +124,9 @@ public:
     bool getPortPfc(sai_object_id_t portId, uint8_t *pfc_bitmask);
     bool setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask);
 
+    bool setPortPfcWatchdogStatus(sai_object_id_t portId, uint8_t pfc_bitmask);
+    bool getPortPfcWatchdogStatus(sai_object_id_t portId, uint8_t *pfc_bitmask);
+    
     void generateQueueMap(map<string, FlexCounterQueueStates> queuesStateVector);
     uint32_t getNumberOfPortSupportedQueueCounters(string port);
     void createPortBufferQueueCounters(const Port &port, string queues);

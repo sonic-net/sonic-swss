@@ -23,6 +23,7 @@
 #include "aclorch.h"
 #include "routeorch.h"
 #include "fdborch.h"
+#include "qosorch.h"
 
 /* Global variables */
 extern Directory<Orch*> gDirectory;
@@ -32,6 +33,7 @@ extern RouteOrch *gRouteOrch;
 extern AclOrch *gAclOrch;
 extern PortsOrch *gPortsOrch;
 extern FdbOrch *gFdbOrch;
+extern QosOrch *gQosOrch;
 
 extern sai_object_id_t gVirtualRouterId;
 extern sai_object_id_t  gUnderlayIfId;
@@ -42,7 +44,6 @@ extern sai_next_hop_api_t* sai_next_hop_api;
 extern sai_router_interface_api_t* sai_router_intfs_api;
 
 /* Constants */
-#define MUX_TUNNEL "MuxTunnel0"
 #define MUX_ACL_TABLE_NAME INGRESS_TABLE_DROP
 #define MUX_ACL_RULE_NAME "mux_acl_rule"
 #define MUX_HW_STATE_UNKNOWN "unknown"
@@ -162,7 +163,12 @@ static sai_status_t remove_route(IpPrefix &pfx)
     return status;
 }
 
-static sai_object_id_t create_tunnel(const IpAddress* p_dst_ip, const IpAddress* p_src_ip)
+static sai_object_id_t create_tunnel(
+    const IpAddress* p_dst_ip,
+    const IpAddress* p_src_ip,
+    sai_object_id_t tc_to_dscp_map_id,
+    sai_object_id_t tc_to_queue_map_id,
+    string dscp_mode_name)
 {
     sai_status_t status;
 
@@ -206,6 +212,22 @@ static sai_object_id_t create_tunnel(const IpAddress* p_dst_ip, const IpAddress*
     attr.value.s32 = SAI_TUNNEL_TTL_MODE_PIPE_MODEL;
     tunnel_attrs.push_back(attr);
 
+    if (dscp_mode_name == "uniform" || dscp_mode_name == "pipe")
+    {
+        sai_tunnel_dscp_mode_t dscp_mode;
+        if (dscp_mode_name == "uniform")
+        {
+            dscp_mode = SAI_TUNNEL_DSCP_MODE_UNIFORM_MODEL;
+        }
+        else
+        {
+            dscp_mode = SAI_TUNNEL_DSCP_MODE_PIPE_MODEL;
+        }
+        attr.id = SAI_TUNNEL_ATTR_ENCAP_DSCP_MODE;
+        attr.value.s32 = dscp_mode;
+        tunnel_attrs.push_back(attr);
+    }
+
     attr.id = SAI_TUNNEL_ATTR_LOOPBACK_PACKET_ACTION;
     attr.value.s32 = SAI_PACKET_ACTION_DROP;
     tunnel_attrs.push_back(attr);
@@ -221,6 +243,22 @@ static sai_object_id_t create_tunnel(const IpAddress* p_dst_ip, const IpAddress*
     {
         attr.id = SAI_TUNNEL_ATTR_ENCAP_DST_IP;
         copy(attr.value.ipaddr, p_dst_ip->to_string());
+        tunnel_attrs.push_back(attr);
+    }
+
+    // DSCP rewriting
+    if (tc_to_dscp_map_id != SAI_NULL_OBJECT_ID)
+    {
+        attr.id = SAI_TUNNEL_ATTR_ENCAP_QOS_TC_AND_COLOR_TO_DSCP_MAP;
+        attr.value.oid = tc_to_dscp_map_id;
+        tunnel_attrs.push_back(attr);
+    }
+
+    // TC remapping
+    if (tc_to_queue_map_id != SAI_NULL_OBJECT_ID)
+    {
+        attr.id = SAI_TUNNEL_ATTR_ENCAP_QOS_TC_TO_QUEUE_MAP;
+        attr.value.oid = tc_to_queue_map_id;
         tunnel_attrs.push_back(attr);
     }
 
@@ -1229,10 +1267,32 @@ bool MuxOrch::handlePeerSwitch(const Request& request)
                            MUX_TUNNEL, peer_ip.to_string().c_str());
             return false;
         }
-
         auto it =  dst_ips.getIpAddresses().begin();
         const IpAddress& dst_ip = *it;
-        mux_tunnel_id_ = create_tunnel(&peer_ip, &dst_ip);
+
+        // Read dscp_mode of MuxTunnel0 from decap_orch
+        string dscp_mode_name = decap_orch_->getDscpMode(MUX_TUNNEL);
+        if (dscp_mode_name == "")
+        {
+            SWSS_LOG_NOTICE("dscp_mode for tunnel %s is not available. Will not be applied", MUX_TUNNEL);
+        }
+
+        // Read tc_to_dscp_map_id of MuxTunnel0 from decap_orch
+        sai_object_id_t tc_to_dscp_map_id = SAI_NULL_OBJECT_ID;
+        decap_orch_->getQosMapId(MUX_TUNNEL, encap_tc_to_dscp_field_name, tc_to_dscp_map_id);
+        if (tc_to_dscp_map_id == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_NOTICE("tc_to_dscp_map_id for tunnel %s is not available. Will not be applied", MUX_TUNNEL);
+        }
+        // Read tc_to_queue_map_id of MuxTunnel0 from decap_orch
+        sai_object_id_t tc_to_queue_map_id = SAI_NULL_OBJECT_ID;
+        decap_orch_->getQosMapId(MUX_TUNNEL, encap_tc_to_queue_field_name, tc_to_queue_map_id);
+        if (tc_to_queue_map_id == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_NOTICE("tc_to_queue_map_id for tunnel %s is not available. Will not be applied", MUX_TUNNEL);
+        }
+
+        mux_tunnel_id_ = create_tunnel(&peer_ip, &dst_ip, tc_to_dscp_map_id, tc_to_queue_map_id, dscp_mode_name);
         SWSS_LOG_NOTICE("Mux peer ip '%s' was added, peer name '%s'",
                          peer_ip.to_string().c_str(), peer_name.c_str());
     }

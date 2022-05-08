@@ -342,7 +342,11 @@ void CrmOrch::handleSetCommand(const string& key, const vector<FieldValueTuple>&
                 auto resourceType = crmThreshTypeResMap.at(field);
                 auto thresholdType = crmThreshTypeMap.at(value);
 
-                m_resourcesMap.at(resourceType).thresholdType = thresholdType;
+                if (m_resourcesMap.at(resourceType).thresholdType != thresholdType)
+                {
+                    m_resourcesMap.at(resourceType).thresholdType = thresholdType;
+                    m_resourcesMap.at(resourceType).exceededLogCounter = 0;
+                }
             }
             else if (crmThreshLowResMap.find(field) != crmThreshLowResMap.end())
             {

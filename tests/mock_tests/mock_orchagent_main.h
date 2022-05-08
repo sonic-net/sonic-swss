@@ -5,6 +5,7 @@
 #include "crmorch.h"
 #include "portsorch.h"
 #include "routeorch.h"
+#include "flowcounterrouteorch.h"
 #include "intfsorch.h"
 #include "neighorch.h"
 #include "fdborch.h"
@@ -44,6 +45,7 @@ extern CrmOrch *gCrmOrch;
 extern PortsOrch *gPortsOrch;
 extern FgNhgOrch *gFgNhgOrch;
 extern RouteOrch *gRouteOrch;
+extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
 extern IntfsOrch *gIntfsOrch;
 extern NeighOrch *gNeighOrch;
 extern FdbOrch *gFdbOrch;

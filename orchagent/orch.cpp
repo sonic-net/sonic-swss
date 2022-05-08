@@ -357,6 +357,11 @@ bool Orch::parseReference(type_map &type_maps, string &ref_in, const string &typ
         SWSS_LOG_INFO("map:%s does not contain object with name:%s\n", type_name.c_str(), ref_in.c_str());
         return false;
     }
+    if (obj_it->second.m_pendingRemove)
+    {
+        SWSS_LOG_NOTICE("map:%s contains a pending removed object %s, skip\n", type_name.c_str(), ref_in.c_str());
+        return false;
+    }
     object_name = ref_in;
     SWSS_LOG_DEBUG("parsed: type_name:%s, object_name:%s", type_name.c_str(), object_name.c_str());
     return true;

@@ -47,8 +47,8 @@ public:
     map<string, FlexCounterQueueStates> getQueueConfigurations();
     map<string, FlexCounterPgStates> getPgConfigurations();
     bool getHostIfTrapCounterState() const {return m_hostif_trap_counter_enabled;}
+    bool getRouteFlowCountersState() const {return m_route_flow_counter_enabled;}
     bool bake() override;
-
 
 private:
     std::shared_ptr<swss::DBConnector> m_flexCounterDb = nullptr;
@@ -58,6 +58,7 @@ private:
     bool m_pg_watermark_enabled = false;
     bool m_queue_enabled = false;
     bool m_hostif_trap_counter_enabled = false;
+    bool m_route_flow_counter_enabled = false;
     Table m_flexCounterConfigTable;
     Table m_bufferQueueConfigTable;
     Table m_bufferPgConfigTable;
