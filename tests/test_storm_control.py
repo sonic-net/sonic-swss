@@ -265,6 +265,7 @@ class TestStormControl(object):
             (exitcode,num) = dvs.runcmd(['sh', '-c', 'cat /var/log/syslog | grep -i "handlePortStormControlTable: {}: Unsupported / Invalid interface PortChannel10"'.format(storm_type)])
             time.sleep(1)
             assert exitcode == 0
+            self.delete_storm_session(lag_name, storm_type)
         self.remove_port_channel_member(dvs,lag_name,member_interface)
         self.delete_port_channel(dvs,lag_name)
 
@@ -307,5 +308,6 @@ class TestStormControl(object):
             (exitcode,num) = dvs.runcmd(['sh', '-c', 'cat /var/log/syslog | grep -i "handlePortStormControlTable: {}: Unsupported / Invalid interface Vlan10"'.format(storm_type)])
             time.sleep(1)
             assert exitcode == 0
+            self.delete_storm_session(vlan_name, storm_type)
         self.remove_vlan_member(dvs,str(vlan_id),member_interface)
         self.delete_vlan(dvs,str(vlan_id))
