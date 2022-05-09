@@ -50,6 +50,8 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
         string ecn_mode;
         string encap_ecn_mode;
         string ttl_mode;
+        bool valid = true;
+
         sai_object_id_t dscp_to_tc_map_id = SAI_NULL_OBJECT_ID;
         sai_object_id_t tc_to_pg_map_id = SAI_NULL_OBJECT_ID;
         // The tc_to_dscp_map_id and tc_to_queue_map_id are parsed here for muxorch to retrieve
@@ -77,7 +79,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                     if (tunnel_type != "IPINIP")
                     {
                         SWSS_LOG_ERROR("Invalid tunnel type %s", tunnel_type.c_str());
-                        task_status = task_process_status::task_invalid_entry;
+                        valid = false;
                         break;
                     }
                 }
@@ -90,7 +92,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                     catch (const std::invalid_argument &e)
                     {
                         SWSS_LOG_ERROR("%s", e.what());
-                        task_status = task_process_status::task_invalid_entry;
+                        valid = false;
                         break;
                     }
                     if (exists)
@@ -108,7 +110,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                     catch (const std::invalid_argument &e)
                     {
                         SWSS_LOG_ERROR("%s", e.what());
-                        task_status = task_process_status::task_invalid_entry;
+                        valid = false;
                         break;
                     }
                     if (exists)
@@ -122,7 +124,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                     if (dscp_mode != "uniform" && dscp_mode != "pipe")
                     {
                         SWSS_LOG_ERROR("Invalid dscp mode %s\n", dscp_mode.c_str());
-                        task_status = task_process_status::task_invalid_entry;
+                        valid = false;
                         break;
                     }
                     if (exists)
@@ -137,7 +139,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                     if (ecn_mode != "copy_from_outer" && ecn_mode != "standard")
                     {
                         SWSS_LOG_ERROR("Invalid ecn mode %s\n", ecn_mode.c_str());
-                        task_status = task_process_status::task_invalid_entry;
+                        valid = false;
                         break;
                     }
                     if (exists)
@@ -151,7 +153,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                     if (encap_ecn_mode != "standard")
                     {
                         SWSS_LOG_ERROR("Only standard encap ecn mode is supported currently %s\n", ecn_mode.c_str());
-                        task_status = task_process_status::task_invalid_entry;
+                        valid = false;
                         break;
                     }
                     if (exists)
@@ -165,7 +167,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                     if (ttl_mode != "uniform" && ttl_mode != "pipe")
                     {
                         SWSS_LOG_ERROR("Invalid ttl mode %s\n", ttl_mode.c_str());
-                        task_status = task_process_status::task_invalid_entry;
+                        valid = false;
                         break;
                     }
                     if (exists)
@@ -233,8 +235,13 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                 }
             }
             
+            if (task_status == task_process_status::task_need_retry)
+            {
+                ++it;
+                continue;
+            }
             // create new tunnel if it doesn't exists already
-            if (task_status == task_process_status::task_success && !exists)
+            if (valid && !exists)
             {
                 if (addDecapTunnel(key, tunnel_type, ip_addresses, p_src_ip, dscp_mode, ecn_mode, encap_ecn_mode, ttl_mode,
                                     dscp_to_tc_map_id, tc_to_pg_map_id))
@@ -265,20 +272,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
             }
         }
 
-        switch (task_status)
-        {
-            case task_process_status::task_failed:
-            case task_process_status::task_success:
-            case task_process_status::task_invalid_entry:
-                it = consumer.m_toSync.erase(it);
-                break;
-            case task_process_status::task_need_retry:
-                ++it;
-                break;
-            default:
-                it = consumer.m_toSync.erase(it);
-                break;
-        }
+        it = consumer.m_toSync.erase(it);
     }
 }
 
