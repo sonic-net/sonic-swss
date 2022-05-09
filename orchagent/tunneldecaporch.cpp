@@ -184,7 +184,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                         task_status = task_process_status::task_need_retry;
                         break;
                     }
-                    if (exists && dscp_to_tc_map_id != SAI_NULL_OBJECT_ID)
+                    if (exists)
                     {
                         setTunnelAttribute(fvField(i), dscp_to_tc_map_id, tunnel_id);
                     }
@@ -198,7 +198,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                         task_status = task_process_status::task_need_retry;
                         break;
                     }
-                    if (exists && tc_to_pg_map_id != SAI_NULL_OBJECT_ID)
+                    if (exists)
                     {
                         setTunnelAttribute(fvField(i), tc_to_pg_map_id, tunnel_id);
                     }
