@@ -97,7 +97,23 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                     }
                     if (exists)
                     {
-                        setIpAttribute(key, ip_addresses, tunnelTable.find(key)->second.tunnel_id);
+                        bool is_p2p_tunnel = false;
+                        for (auto term : tunnelTable[key].tunnel_term_info)
+                        {
+                            if (term.term_type == TUNNEL_TERM_TYPE_P2P)
+                            {
+                                is_p2p_tunnel = true;
+                                break;
+                            }
+                        }
+                        if (is_p2p_tunnel)
+                        {
+                            SWSS_LOG_ERROR("cannot modify dst ip for existing tunnel with P2P terminator");
+                        }
+                        else
+                        {
+                            setIpAttribute(key, ip_addresses, tunnelTable.find(key)->second.tunnel_id);
+                        }
                     }
                 }
                 else if (fvField(i) == "src_ip")
@@ -557,7 +573,7 @@ bool TunnelDecapOrch::addDecapTunnelTermEntries(string tunnelKey, swss::IpAddres
             // pop the last element for the next loop
             tunnel_table_entry_attrs.pop_back();
 
-            SWSS_LOG_NOTICE("Created tunnel entry for ip: %s", dst_ip.c_str());
+            SWSS_LOG_NOTICE("Created tunnel entry for ip: %s", key.c_str());
         }
 
     }
@@ -761,7 +777,15 @@ bool TunnelDecapOrch::removeDecapTunnel(string key)
     for (auto it = tunnel_info->tunnel_term_info.begin(); it != tunnel_info->tunnel_term_info.end(); ++it)
     {
         TunnelTermEntry tunnel_entry_info = *it;
-        string term_key = tunnel_entry_info.src_ip + '-' + tunnel_entry_info.dst_ip;
+        string term_key;
+        if (swss::IpAddress(tunnel_entry_info.src_ip).isZero())
+        {
+            term_key = tunnel_entry_info.dst_ip;
+        }
+        else
+        {
+            term_key = tunnel_entry_info.src_ip + '-' + tunnel_entry_info.dst_ip;
+        }
         if (!removeDecapTunnelTermEntry(tunnel_entry_info.tunnel_term_id, term_key))
         {
             return false;

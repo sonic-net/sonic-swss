@@ -251,7 +251,7 @@ sai_object_id_t DscpToTcMapHandler::addQosItem(const vector<sai_attribute_t> &at
     }
     SWSS_LOG_DEBUG("created QosMap object:%" PRIx64, sai_object);
 
-    applyDscpToTcMapToSwitch(SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP, sai_object);
+    //applyDscpToTcMapToSwitch(SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP, sai_object);
 
     return sai_object;
 }
