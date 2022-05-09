@@ -475,6 +475,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
         }
 
         update.add = true;
+	update.entry.port_name = update.port.m_alias;
         if (!port_old.m_alias.empty())
         {
             port_old.m_fdb_count--;

@@ -77,6 +77,10 @@ namespace ut_helper
         sai_api_query(SAI_API_ACL, (void **)&sai_acl_api);
         sai_api_query(SAI_API_HOSTIF, (void **)&sai_hostif_api);
         sai_api_query(SAI_API_BUFFER, (void **)&sai_buffer_api);
+        sai_api_query(SAI_API_QOS_MAP, (void **)&sai_qos_map_api);
+        sai_api_query(SAI_API_SCHEDULER_GROUP, (void **)&sai_scheduler_group_api);
+        sai_api_query(SAI_API_SCHEDULER, (void **)&sai_scheduler_api);
+        sai_api_query(SAI_API_WRED, (void **)&sai_wred_api);
         sai_api_query(SAI_API_QUEUE, (void **)&sai_queue_api);
         sai_api_query(SAI_API_MPLS, (void**)&sai_mpls_api);
 

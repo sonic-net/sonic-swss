@@ -465,7 +465,7 @@ bool RouteOrch::addLabelRoute(LabelRouteBulkContext& ctx, const NextHopGroupKey 
     Label& label = ctx.label;
 
     /* next_hop_id indicates the next hop id or next hop group id of this route */
-    sai_object_id_t next_hop_id;
+    sai_object_id_t next_hop_id = SAI_NULL_OBJECT_ID;
     bool blackhole = false;
 
     if (m_syncdLabelRoutes.find(vrf_id) == m_syncdLabelRoutes.end())

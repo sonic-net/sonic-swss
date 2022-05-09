@@ -124,6 +124,9 @@ public:
     bool getPortPfc(sai_object_id_t portId, uint8_t *pfc_bitmask);
     bool setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask);
 
+    bool setPortPfcWatchdogStatus(sai_object_id_t portId, uint8_t pfc_bitmask);
+    bool getPortPfcWatchdogStatus(sai_object_id_t portId, uint8_t *pfc_bitmask);
+
     void generateQueueMap();
     void generatePriorityGroupMap();
     void generatePortCounterMap();
@@ -312,9 +315,11 @@ private:
 
     bool m_isQueueMapGenerated = false;
     void generateQueueMapPerPort(const Port& port);
+    void removeQueueMapPerPort(const Port& port);
 
     bool m_isPriorityGroupMapGenerated = false;
     void generatePriorityGroupMapPerPort(const Port& port);
+    void removePriorityGroupMapPerPort(const Port& port);
 
     bool m_isPortCounterMapGenerated = false;
     bool m_isPortBufferDropCounterMapGenerated = false;

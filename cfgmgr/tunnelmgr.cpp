@@ -9,6 +9,7 @@
 #include "tokenize.h"
 #include "shellcmd.h"
 #include "exec.h"
+#include "warm_restart.h"
 
 using namespace std;
 using namespace swss;
@@ -107,7 +108,8 @@ static int cmdIpTunnelRouteDel(const std::string& pfx, std::string & res)
 TunnelMgr::TunnelMgr(DBConnector *cfgDb, DBConnector *appDb, const std::vector<std::string> &tableNames) :
         Orch(cfgDb, tableNames),
         m_appIpInIpTunnelTable(appDb, APP_TUNNEL_DECAP_TABLE_NAME),
-        m_cfgPeerTable(cfgDb, CFG_PEER_SWITCH_TABLE_NAME)
+        m_cfgPeerTable(cfgDb, CFG_PEER_SWITCH_TABLE_NAME),
+        m_cfgTunnelTable(cfgDb, CFG_TUNNEL_TABLE_NAME)
 {
     std::vector<string> peer_keys;
     m_cfgPeerTable.getKeys(peer_keys);
@@ -126,6 +128,23 @@ TunnelMgr::TunnelMgr(DBConnector *cfgDb, DBConnector *appDb, const std::vector<s
             }
         }
     }
+    
+    if (WarmStart::isWarmStart())
+    {
+        std::vector<string> tunnel_keys;
+        m_cfgTunnelTable.getKeys(tunnel_keys);
+
+        for (auto tunnel: tunnel_keys)
+        {
+            m_tunnelReplay.insert(tunnel);
+        }
+        if (m_tunnelReplay.empty())
+        {
+            finalizeWarmReboot();
+        }
+
+    }
+
 
     auto consumerStateTable = new swss::ConsumerStateTable(appDb, APP_TUNNEL_ROUTE_TABLE_NAME,
                               TableConsumable::DEFAULT_POP_BATCH_SIZE, default_orch_pri);
@@ -191,6 +210,11 @@ void TunnelMgr::doTask(Consumer &consumer)
             ++it;
         }
     }
+
+    if (!replayDone && m_tunnelReplay.empty() && WarmStart::isWarmStart())
+    {
+        finalizeWarmReboot();
+    }
 }
 
 bool TunnelMgr::doTunnelTask(const KeyOpFieldsValuesTuple & t)
@@ -230,8 +254,16 @@ bool TunnelMgr::doTunnelTask(const KeyOpFieldsValuesTuple & t)
                 SWSS_LOG_NOTICE("Peer/Remote IP not configured");
             }
 
-            m_appIpInIpTunnelTable.set(tunnelName, kfvFieldsValues(t));
+            /* If the tunnel is already in hardware (i.e. present in the replay),
+             * don't try to create it again since it will cause an OA crash
+             * (warmboot case)
+             */
+            if (m_tunnelReplay.find(tunnelName) == m_tunnelReplay.end())
+            {
+                m_appIpInIpTunnelTable.set(tunnelName, kfvFieldsValues(t));
+            }
         }
+        m_tunnelReplay.erase(tunnelName);
         m_tunnelCache[tunnelName] = tunInfo;
     }
     else
@@ -355,4 +387,14 @@ bool TunnelMgr::configIpTunnel(const TunnelInfo& tunInfo)
     }
 
     return true;
+}
+
+
+void TunnelMgr::finalizeWarmReboot()
+{
+    replayDone = true;
+    WarmStart::setWarmStartState("tunnelmgrd", WarmStart::REPLAYED);
+    SWSS_LOG_NOTICE("tunnelmgrd warmstart state set to REPLAYED");
+    WarmStart::setWarmStartState("tunnelmgrd", WarmStart::RECONCILED);
+    SWSS_LOG_NOTICE("tunnelmgrd warmstart state set to RECONCILED");
 }

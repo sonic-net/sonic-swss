@@ -103,7 +103,7 @@ class TestPfcwdFunc(object):
             # set cable len to non zero value. if port is down, default cable len is 0
             self.set_cable_len(port, "5m")
             # startup port
-            dvs.runcmd("config interface startup {}".format(port))
+            dvs.port_admin_set(port, "up")
 
         # enable pfcwd
         self.set_flex_counter_status("PFCWD", "enable")
@@ -120,7 +120,7 @@ class TestPfcwdFunc(object):
             if self.orig_cable_len:
                 self.set_cable_len(port, self.orig_cable_len[port])
             # shutdown port
-            dvs.runcmd("config interface shutdown {}".format(port))
+            dvs.port_admin_set(port, "down")
 
     def get_db_handle(self, dvs):
         self.app_db = dvs.get_app_db()
@@ -148,9 +148,11 @@ class TestPfcwdFunc(object):
         return str(mask)
 
     def set_ports_pfc(self, status='enable', pfc_queues=[3,4]):
+        keyname = 'pfcwd_sw_enable'
         for port in self.test_ports:
             if 'enable' in status:
-                fvs = {'pfc_enable': ",".join([str(q) for q in pfc_queues])}
+                queues = ",".join([str(q) for q in pfc_queues])
+                fvs = {keyname: queues, 'pfc_enable': queues}
                 self.config_db.create_entry("PORT_QOS_MAP", port, fvs)
             else:
                 self.config_db.delete_entry("PORT_QOS_MAP", port)
@@ -212,7 +214,7 @@ class TestPfcwdFunc(object):
                 queue_name = port + ":" + str(queue)
                 self.counters_db.update_entry("COUNTERS", self.queue_oids[queue_name], fvs)
 
-    def test_pfcwd_single_queue(self, dvs, setup_teardown_test):
+    def test_pfcwd_software_single_queue(self, dvs, setup_teardown_test):
         try:
             # enable PFC on queues
             test_queues = [3, 4]
@@ -253,7 +255,7 @@ class TestPfcwdFunc(object):
             self.reset_pfcwd_counters(storm_queue)
             self.stop_pfcwd_on_ports()
 
-    def test_pfcwd_multi_queue(self, dvs, setup_teardown_test):
+    def test_pfcwd_software_multi_queue(self, dvs, setup_teardown_test):
         try:
             # enable PFC on queues
             test_queues = [3, 4]

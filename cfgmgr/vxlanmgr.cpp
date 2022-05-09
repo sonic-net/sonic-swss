@@ -643,6 +643,7 @@ bool VxlanMgr::doVxlanTunnelMapDeleteTask(const KeyOpFieldsValuesTuple & t)
     vxlan_dev_name = map_entry.vxlan_dev_name;
     vlan = map_entry.vlan;
     vni_id = map_entry.vni_id;
+    downVxlanNetdevice(vxlan_dev_name);
     deleteVxlanNetdevice(vxlan_dev_name);
 
     m_vxlanTunnelMapCache.erase(vxlanTunnelMapName);
@@ -906,11 +907,11 @@ void VxlanMgr::createAppDBTunnelMapTable(const KeyOpFieldsValuesTuple & t)
     std::replace(vxlanTunnelMapName.begin(), vxlanTunnelMapName.end(), config_db_key_delimiter, delimiter);
 
     /* Case 1: Entry exist - Erase from cache & return
-     * Case 2: Entry does not exist - Write to AppDB 
+     * Case 2: Entry does not exist - Write to AppDB
      * Case 3: Entry exist but modified - Not taken care. Will address later
      */
     if (m_in_reconcile)
-    { 
+    {
         auto it = find(m_appVxlanTunnelMapKeysRecon.begin(), m_appVxlanTunnelMapKeysRecon.end(), vxlanTunnelMapName);
         if (it != m_appVxlanTunnelMapKeysRecon.end())
         {
@@ -939,28 +940,28 @@ void VxlanMgr::delAppDBTunnelMapTable(std::string vxlanTunnelMapName)
     m_appVxlanTunnelMapTable.del(vxlanTunnelMapName);
 }
 
-int VxlanMgr::createVxlanNetdevice(std::string vxlanTunnelName, std::string vni_id, 
-                                   std::string src_ip, std::string dst_ip, 
+int VxlanMgr::createVxlanNetdevice(std::string vxlanTunnelName, std::string vni_id,
+                                   std::string src_ip, std::string dst_ip,
                                    std::string vlan_id)
 {
     std::string res, cmds;
-    std::string link_add_cmd, link_set_master_cmd, link_up_cmd; 
+    std::string link_add_cmd, link_set_master_cmd, link_up_cmd;
     std::string bridge_add_cmd, bridge_untagged_add_cmd, bridge_del_vid_cmd;
     std::string vxlan_dev_name;
 
-    vxlan_dev_name = std::string("") + std::string(vxlanTunnelName) + "-" + 
+    vxlan_dev_name = std::string("") + std::string(vxlanTunnelName) + "-" +
                      std::string(vlan_id);
 
     SWSS_LOG_INFO("Kernel tnl_name: %s vni_id: %s src_ip: %s dst_ip:%s vlan_id: %s",
-                    vxlanTunnelName.c_str(), vni_id.c_str(), src_ip.c_str(), dst_ip.c_str(), 
+                    vxlanTunnelName.c_str(), vni_id.c_str(), src_ip.c_str(), dst_ip.c_str(),
                     vlan_id.c_str());
 
     // Case 1: Entry exist - Erase from cache & return
     // Case 2: Entry does not exist - Create netDevice in Kernel
     // Case 3: Entry exist but modified - Not taken care. Will address later
-     
+
     if (m_in_reconcile)
-    { 
+    {
         auto it = m_vxlanNetDevices.find(vxlan_dev_name);
         if (it != m_vxlanNetDevices.end())
         {
@@ -1024,6 +1025,15 @@ int VxlanMgr::createVxlanNetdevice(std::string vxlanTunnelName, std::string vni_
     return swss::exec(cmds,res);
 }
 
+int VxlanMgr::downVxlanNetdevice(std::string vxlan_dev_name)
+{
+    int ret = 0;
+    std::string res;
+    const std::string cmd = std::string("") + IP_CMD + " link set dev " + vxlan_dev_name + " down";
+    exec(cmd, res);
+    return ret;
+}
+
 int VxlanMgr::deleteVxlanNetdevice(std::string vxlan_dev_name)
 {    
     std::string res;
@@ -1031,29 +1041,59 @@ int VxlanMgr::deleteVxlanNetdevice(std::string vxlan_dev_name)
     return swss::exec(cmd, res);
 }
 
-void VxlanMgr::getAllVxlanNetDevices()
-{
-    std::string stdout;
-    const std::string cmd = std::string("") + IP_CMD + " link show type vxlan";
-    int ret = swss::exec(cmd, stdout);
-    if (ret != 0)
-    {
-        SWSS_LOG_ERROR("Cannot get devices by command : %s", cmd.c_str());
-        return;
-    }
+std::vector<std::string> VxlanMgr::parseNetDev(const string& stdout){
+    std::vector<std::string> netdevs;
     std::regex device_name_pattern("^\\d+:\\s+([^:]+)");
     std::smatch match_result;
     auto lines = tokenize(stdout, '\n');
     for (const std::string & line : lines)
     {
-        SWSS_LOG_INFO("line : %s\n",line.c_str());
+        SWSS_LOG_DEBUG("line : %s\n",line.c_str());
         if (!std::regex_search(line, match_result, device_name_pattern))
         {
             continue;
         }
-        std::string vxlan_dev_name = match_result[1];
-        m_vxlanNetDevices[vxlan_dev_name] = vxlan_dev_name;
+        std::string dev_name = match_result[1];
+        netdevs.push_back(dev_name);
     }
+    return netdevs;
+}
+
+void VxlanMgr::getAllVxlanNetDevices()
+{
+    std::string stdout;
+
+    // Get VxLan Netdev Interfaces
+    std::string cmd = std::string("") + IP_CMD + " link show type vxlan";
+    int ret = swss::exec(cmd, stdout);
+    if (ret != 0)
+    {
+        SWSS_LOG_ERROR("Cannot get vxlan devices by command : %s", cmd.c_str());
+        stdout.clear();
+    }
+    std::vector<std::string> netdevs = parseNetDev(stdout);
+    for (auto netdev : netdevs)
+    {
+        m_vxlanNetDevices[netdev] = VXLAN;
+    }
+
+    // Get VxLanIf Netdev Interfaces
+    cmd = std::string("") + IP_CMD + " link show type bridge";
+    ret = swss::exec(cmd, stdout);
+    if (ret != 0)
+    {
+        SWSS_LOG_ERROR("Cannot get vxlanIf devices by command : %s", cmd.c_str());
+        stdout.clear();
+    }
+    netdevs = parseNetDev(stdout);
+    for (auto netdev : netdevs)
+    {
+        if (netdev.find(VXLAN_IF_NAME_PREFIX) == 0)
+        {
+            m_vxlanNetDevices[netdev] = VXLAN_IF;
+        }
+    }
+
     return;
 }
 
@@ -1150,8 +1190,22 @@ void VxlanMgr::clearAllVxlanDevices()
 {
     for (auto it = m_vxlanNetDevices.begin(); it != m_vxlanNetDevices.end();)
     {
-        SWSS_LOG_INFO("Deleting Stale NetDevice vxlandevname %s\n", (it->first).c_str());
-        deleteVxlanNetdevice(it->first);
+        std::string netdev_name = it->first;
+        std::string netdev_type = it->second;
+        SWSS_LOG_INFO("Deleting Stale NetDevice %s, type: %s\n", netdev_name.c_str(), netdev_type.c_str());
+        VxlanInfo info;
+        std::string res;
+        if (netdev_type.compare(VXLAN))
+        {
+            info.m_vxlan = netdev_name;
+            downVxlanNetdevice(netdev_name);
+            cmdDeleteVxlan(info, res);
+        }
+        else if(netdev_type.compare(VXLAN_IF))
+        {
+            info.m_vxlanIf = netdev_name;
+            cmdDeleteVxlanIf(info, res);
+        }
         it = m_vxlanNetDevices.erase(it);
     }
 }
