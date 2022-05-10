@@ -92,7 +92,7 @@ def gen_sci(macsec_system_identifier: str, macsec_port_identifier: int) -> str:
         str.maketrans("", "", ":.-"))
     sci = "{}{}".format(
         macsec_system_identifier,
-        str(macsec_port_identifier).zfill(4))
+        str(macsec_port_identifier).zfill(4)).lower()
     return sci
 
 
