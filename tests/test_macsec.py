@@ -1,11 +1,9 @@
 from swsscommon import swsscommon
 import conftest
 
-import sys
 import functools
 import typing
 import re
-import time
 
 
 def to_string(value):
@@ -95,10 +93,7 @@ def gen_sci(macsec_system_identifier: str, macsec_port_identifier: int) -> str:
     sci = "{}{}".format(
         macsec_system_identifier,
         str(macsec_port_identifier).zfill(4))
-    sci = int(sci, 16)
-    if sys.byteorder == "little":
-        sci = int.from_bytes(sci.to_bytes(8, 'big'), 'little', signed=False)
-    return str(sci)
+    return sci
 
 
 def gen_sc_key(
