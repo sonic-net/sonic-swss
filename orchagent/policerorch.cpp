@@ -270,7 +270,7 @@ task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsVa
         }
         policer_id = m_syncdPolicers[storm_policer_name];
 
-        if(update)
+        if (update)
         {
             SWSS_LOG_NOTICE("update storm-control policer %s", storm_policer_name.c_str());
             port_attr.value.oid = SAI_NULL_OBJECT_ID;
