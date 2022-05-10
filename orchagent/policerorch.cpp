@@ -133,14 +133,14 @@ task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsVa
     {
         SWSS_LOG_ERROR("%s: Unsupported / Invalid interface %s",
                 storm_type.c_str(), interface_name.c_str());
-        return task_success;
+        return task_process_status::task_success;
     }
     if (!gPortsOrch->getPort(interface_name, port))
     {
         SWSS_LOG_ERROR("Failed to apply storm-control %s to port %s. Port not found",
                 storm_type.c_str(), interface_name.c_str());
         /*continue here as there can be more interfaces*/
-        return task_success;
+        return task_process_status::task_success;
     }
     /*Policer Name: _<interface_name>_<storm_type>*/
     const auto storm_policer_name = "_"+interface_name+"_"+storm_type;
@@ -196,7 +196,7 @@ task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsVa
         {
             SWSS_LOG_ERROR("Failed to create storm control policer %s,\
                     missing mandatory fields", storm_policer_name.c_str());
-            return task_failed;
+            return task_process_status::task_failed;
         }
 
         /*Enabling storm-control on port*/
@@ -216,7 +216,7 @@ task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsVa
         else
         {
             SWSS_LOG_ERROR("Unknown storm_type %s", storm_type.c_str());
-            return task_failed;
+            return task_process_status::task_failed;
         }
 
         sai_object_id_t policer_id;
@@ -231,7 +231,7 @@ task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsVa
                         storm_policer_name.c_str(), status);
                 if (handleSaiCreateStatus(SAI_API_POLICER, status) == task_need_retry)
                 {
-                    return task_need_retry;
+                    return task_process_status::task_need_retry;
                 }
             }
 
@@ -262,7 +262,7 @@ task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsVa
                             storm_policer_name.c_str(), status);
                     if (handleSaiSetStatus(SAI_API_POLICER, status) == task_need_retry)
                     {
-                        return task_need_retry;
+                        return task_process_status::task_need_retry;
                     }
 
                 }
@@ -282,7 +282,7 @@ task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsVa
                         storm_type.c_str(), interface_name.c_str(), status);
                 if (handleSaiSetStatus(SAI_API_POLICER, status) == task_need_retry)
                 {
-                    return task_need_retry;
+                    return task_process_status::task_need_retry;
                 }
             }
         }
@@ -309,7 +309,7 @@ task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsVa
             m_syncdPolicers.erase(storm_policer_name);
             m_policerRefCounts.erase(storm_policer_name);
 
-            return task_need_retry;
+            return task_process_status::task_need_retry;
         }
     }
     else if (op == DEL_COMMAND)
@@ -317,7 +317,7 @@ task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsVa
         if (m_syncdPolicers.find(storm_policer_name) == m_syncdPolicers.end())
         {
             SWSS_LOG_ERROR("Policer %s not configured", storm_policer_name.c_str());
-            return task_success;
+            return task_process_status::task_success;
         }
 
         sai_attribute_t port_attr;
@@ -336,7 +336,7 @@ task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsVa
         else
         {
             SWSS_LOG_ERROR("Unknown storm_type %s", storm_type.c_str());
-            return task_failed;
+            return task_process_status::task_failed;
         }
 
         port_attr.value.oid = SAI_NULL_OBJECT_ID;
@@ -348,7 +348,7 @@ task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsVa
                     storm_type.c_str(), interface_name.c_str(), status);
             if (handleSaiRemoveStatus(SAI_API_POLICER, status) == task_need_retry)
             {
-                return task_need_retry;
+                return task_process_status::task_need_retry;
             }
         }
 
@@ -360,7 +360,7 @@ task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsVa
                     storm_policer_name.c_str(), status);
             if (handleSaiRemoveStatus(SAI_API_POLICER, status) == task_need_retry)
             {
-                return task_need_retry;
+                return task_process_status::task_need_retry;
             }
         }
 
@@ -368,7 +368,7 @@ task_process_status PolicerOrch::handlePortStormControlTable(swss::KeyOpFieldsVa
         m_syncdPolicers.erase(storm_policer_name);
         m_policerRefCounts.erase(storm_policer_name);
     }
-    return task_success;
+    return task_process_status::task_success;
 }
 
 void PolicerOrch::doTask(Consumer &consumer)
@@ -394,8 +394,8 @@ void PolicerOrch::doTask(Consumer &consumer)
         if (table_name == CFG_PORT_STORM_CONTROL_TABLE_NAME)
         {
             storm_status = handlePortStormControlTable(tuple);
-            if ((storm_status == task_success) ||
-                    (storm_status == task_failed))
+            if ((storm_status == task_process_status::task_success) ||
+                    (storm_status == task_process_status::task_failed))
             {
                 it = consumer.m_toSync.erase(it);
             }
