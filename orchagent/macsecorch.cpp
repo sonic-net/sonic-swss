@@ -225,7 +225,7 @@ class MACsecSCI
 public:
     operator sai_uint64_t () const
     {
-    SWSS_LOG_ENTER();
+        SWSS_LOG_ENTER();
 
         return m_sci;
     }
@@ -250,13 +250,6 @@ public:
     }
 
     MACsecSCI() = default;
-
-    MACsecSCI(const std::string &sci)
-    {
-        SWSS_LOG_ENTER();
-
-        *this = sci;
-    }
 
     MACsecSCI(const sai_uint64_t sci)
     {
