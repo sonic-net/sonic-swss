@@ -23,6 +23,7 @@
 #include "tunneldecaporch.h"
 #include "muxorch.h"
 #include "nhgorch.h"
+#include "copporch.h"
 #include "directory.h"
 
 extern int gBatchSize;
@@ -70,6 +71,7 @@ extern sai_neighbor_api_t *sai_neighbor_api;
 extern sai_tunnel_api_t *sai_tunnel_api;
 extern sai_next_hop_api_t *sai_next_hop_api;
 extern sai_hostif_api_t *sai_hostif_api;
+extern sai_policer_api_t *sai_policer_api;
 extern sai_buffer_api_t *sai_buffer_api;
 extern sai_qos_map_api_t *sai_qos_map_api;
 extern sai_scheduler_api_t *sai_scheduler_api;
