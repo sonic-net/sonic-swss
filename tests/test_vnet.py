@@ -450,7 +450,7 @@ def get_bfd_session_id(dvs, addr):
         status, fvs = tbl.get(entry)
         fvs = dict(fvs)
         assert status, "Got an error when get a key"
-        if fvs["SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS"] == addr:
+        if fvs["SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS"] == addr and fvs["SAI_BFD_SESSION_ATTR_MULTIHOP"] == "true":
             return entry
 
     return None
@@ -1438,6 +1438,9 @@ class TestVnetOrch(object):
 
         vnet_obj.check_default_vnet_entry(dvs, 'Vnet_5')
         vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet_5', '4789')
+
+        delete_vnet_entry(dvs, 'Vnet_5')
+        vnet_obj.check_default_vnet_entry(dvs, 'Vnet_5')
 
     '''
     Test 6 - Test VxLAN tunnel with multiple maps

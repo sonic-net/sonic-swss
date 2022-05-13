@@ -70,6 +70,7 @@ private:
     void delAppDBTunnelMapTable(std::string vxlanTunnelMapName);
     int createVxlanNetdevice(std::string vxlanTunnelName, std::string vni_id,
                              std::string src_ip, std::string dst_ip, std::string vlan_id);
+    int downVxlanNetdevice(std::string vxlan_dev_name);
     int deleteVxlanNetdevice(std::string vxlan_dev_name);
     std::vector<std::string> parseNetDev(const std::string& stdout);
     void getAllVxlanNetDevices();

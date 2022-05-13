@@ -76,6 +76,7 @@ namespace ut_helper
         sai_api_query(SAI_API_NEXT_HOP, (void **)&sai_next_hop_api);
         sai_api_query(SAI_API_ACL, (void **)&sai_acl_api);
         sai_api_query(SAI_API_HOSTIF, (void **)&sai_hostif_api);
+        sai_api_query(SAI_API_POLICER, (void **)&sai_policer_api);
         sai_api_query(SAI_API_BUFFER, (void **)&sai_buffer_api);
         sai_api_query(SAI_API_QOS_MAP, (void **)&sai_qos_map_api);
         sai_api_query(SAI_API_SCHEDULER_GROUP, (void **)&sai_scheduler_group_api);
@@ -87,9 +88,13 @@ namespace ut_helper
         return SAI_STATUS_SUCCESS;
     }
 
-    void uninitSaiApi()
+    sai_status_t uninitSaiApi()
     {
-        sai_api_uninitialize();
+        auto status = sai_api_uninitialize();
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            return status;
+        }
 
         sai_switch_api = nullptr;
         sai_bridge_api = nullptr;
@@ -104,8 +109,11 @@ namespace ut_helper
         sai_next_hop_api = nullptr;
         sai_acl_api = nullptr;
         sai_hostif_api = nullptr;
+        sai_policer_api = nullptr;
         sai_buffer_api = nullptr;
         sai_queue_api = nullptr;
+
+        return SAI_STATUS_SUCCESS;
     }
 
     map<string, vector<FieldValueTuple>> getInitialSaiPorts()
