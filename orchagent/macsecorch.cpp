@@ -15,6 +15,7 @@
 #include <memory>
 #include <typeinfo>
 #include <byteswap.h>
+#include <cstdint>
 
 /* Global Variables*/
 
@@ -885,7 +886,30 @@ task_process_status MACsecOrch::taskUpdateEgressSA(
     }
     if (ctx.get_macsec_sc()->m_encoding_an == an)
     {
-        return createMACsecSA(port_sci_an, sa_attr, SAI_MACSEC_DIRECTION_EGRESS);
+        if (ctx.get_macsec_sa() == nullptr)
+        {
+            // The MACsec SA hasn't been created
+            return createMACsecSA(port_sci_an, sa_attr, SAI_MACSEC_DIRECTION_EGRESS);
+        }
+        else
+        {
+            // The MACsec SA has enabled, update SA's attributes
+            sai_uint64_t pn;
+
+            if (get_value(sa_attr, "next_pn", pn))
+            {
+                sai_attribute_t attr;
+                attr.id = SAI_MACSEC_SA_ATTR_CONFIGURED_EGRESS_XPN;
+                attr.value.u64 = pn;
+                if (!this->updateMACsecAttr(SAI_OBJECT_TYPE_MACSEC_SA, *(ctx.get_macsec_sa()), attr))
+                {
+                    SWSS_LOG_WARN("Fail to update next pn (%" PRIu64 ") of egress MACsec SA %s", pn, port_sci_an.c_str());
+                    return task_failed;
+                }
+            }
+
+            return task_success;
+        }
     }
     return task_need_retry;
 }
@@ -905,7 +929,7 @@ task_process_status MACsecOrch::taskUpdateIngressSA(
     SWSS_LOG_ENTER();
 
     swss::AlphaBoolean alpha_boolean = false;
-    get_value(sa_attr, "active", alpha_boolean);
+    bool has_active_field = get_value(sa_attr, "active", alpha_boolean);
     bool active = alpha_boolean.operator bool();
     if (active)
     {
@@ -927,7 +951,29 @@ task_process_status MACsecOrch::taskUpdateIngressSA(
 
         if (ctx.get_macsec_sa() != nullptr)
         {
-            return deleteMACsecSA(port_sci_an, SAI_MACSEC_DIRECTION_INGRESS);
+            if (has_active_field)
+            {
+                // Delete MACsec SA explicitly by set active to false
+                return deleteMACsecSA(port_sci_an, SAI_MACSEC_DIRECTION_INGRESS);
+            }
+            else
+            {
+                sai_uint64_t pn;
+
+                if (get_value(sa_attr, "lowest_acceptable_pn", pn))
+                {
+                    sai_attribute_t attr;
+                    attr.id = SAI_MACSEC_SA_ATTR_MINIMUM_INGRESS_XPN;
+                    attr.value.u64 = pn;
+                    if (!this->updateMACsecAttr(SAI_OBJECT_TYPE_MACSEC_SA, *(ctx.get_macsec_sa()), attr))
+                    {
+                        SWSS_LOG_WARN("Fail to update lowest acceptable PN (%" PRIu64 ") of ingress MACsec SA %s", pn, port_sci_an.c_str());
+                        return task_failed;
+                    }
+                }
+
+                return task_success;
+            }
         }
         else
         {
@@ -938,6 +984,8 @@ task_process_status MACsecOrch::taskUpdateIngressSA(
             return task_need_retry;
         }
     }
+
+    return task_success;
 }
 
 task_process_status MACsecOrch::taskDeleteIngressSA(

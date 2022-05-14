@@ -392,8 +392,8 @@ bool VxlanMgr::doVxlanDeleteTask(const KeyOpFieldsValuesTuple & t)
         SWSS_LOG_WARN("Vxlan %s hasn't been created ", info.m_vxlan.c_str());
     }
 
-    m_vnetCache.erase(it);
     SWSS_LOG_INFO("Delete vxlan %s", info.m_vxlan.c_str());
+    m_vnetCache.erase(it);
     return true;
 }
 

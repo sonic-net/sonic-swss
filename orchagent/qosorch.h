@@ -169,6 +169,7 @@ public:
     static type_map m_qos_maps;
 
     sai_object_id_t resolveTunnelQosMap(std::string referencing_table_name, std::string tunnel_name, std::string map_type_name, KeyOpFieldsValuesTuple& tuple);
+    void removeTunnelReference(std::string referencing_table_name, std::string tunnel_name);
 private:
     void doTask() override;
     virtual void doTask(Consumer& consumer);
