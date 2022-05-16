@@ -112,21 +112,24 @@ void IntfMgr::setIntfIp(const string &alias, const string &opCmd,
         (cmd << IP_CMD << " -6 address " << shellquote(opCmd) << " " << shellquote(ipPrefixStr) << " dev " << shellquote(alias) << metric);
     }
 
-    int failed = swss::exec(cmd.str(), res);
-    if (failed && !ipPrefix.isV4() && opCmd == "add")
+    int ret = swss::exec(cmd.str(), res);
+    if (ret)
     {
-        SWSS_LOG_NOTICE("Failed to assign IPv6 on interface %s with return code %d, trying to enable IPv6 and retry", alias.c_str(), failed);
-        if (!enableIpv6Flag(alias))
+        if (!ipPrefix.isV4() && opCmd == "add")
         {
-            SWSS_LOG_ERROR("Failed to enable IPv6 on interface %s", alias.c_str());
-            return;
+            SWSS_LOG_NOTICE("Failed to assign IPv6 on interface %s with return code %d, trying to enable IPv6 and retry", alias.c_str(), ret);
+            if (!enableIpv6Flag(alias))
+            {
+                SWSS_LOG_ERROR("Failed to enable IPv6 on interface %s", alias.c_str());
+                return;
+            }
+            ret = swss::exec(cmd.str(), res);
         }
-        failed = swss::exec(cmd.str(), res);
-    }
 
-    if (failed)
-    {
-        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), failed);
+        if (ret)
+        {
+            SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
+        }
     }
 }
 
