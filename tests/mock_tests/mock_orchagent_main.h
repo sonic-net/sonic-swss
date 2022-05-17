@@ -56,6 +56,7 @@ extern QosOrch *gQosOrch;
 extern VRFOrch *gVrfOrch;
 extern NhgOrch *gNhgOrch;
 extern Srv6Orch  *gSrv6Orch;
+extern BfdOrch *gBfdOrch;
 extern Directory<Orch*> gDirectory;
 
 extern sai_acl_api_t *sai_acl_api;
@@ -80,3 +81,4 @@ extern sai_wred_api_t *sai_wred_api;
 extern sai_queue_api_t *sai_queue_api;
 extern sai_udf_api_t* sai_udf_api;
 extern sai_mpls_api_t* sai_mpls_api;
+extern sai_counter_api_t* sai_counter_api;

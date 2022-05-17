@@ -119,4 +119,5 @@ namespace swss
         auto &table = gDB[m_pipe->getDbId()][getTableName()];
         table.erase(key);
     }
+
 }
