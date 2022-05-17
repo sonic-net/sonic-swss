@@ -318,7 +318,7 @@ namespace portsorch_test
     TEST_F(PortsOrchTest, PfcZeroBufferHandlerLocksPortPgAndQueue)
     {
         Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
-        Table pgTable = Table(m_config_db.get(), CFG_BUFFER_PG_TABLE_NAME);
+        Table queueTable = Table(m_config_db.get(), CFG_BUFFER_QUEUE_TABLE_NAME);
         Table profileTable = Table(m_config_db.get(), CFG_BUFFER_PROFILE_TABLE_NAME);
         Table poolTable = Table(m_config_db.get(), CFG_BUFFER_POOL_TABLE_NAME);
 
@@ -397,8 +397,6 @@ namespace portsorch_test
 
         // Create test buffer profile
         profileTable.set("test_profile", { { "pool", "[BUFFER_POOL|test_pool]" },
-                                           { "xon", "14832" },
-                                           { "xoff", "14832" },
                                            { "size", "35000" },
                                            { "dynamic_th", "0" } });
 
@@ -407,29 +405,29 @@ namespace portsorch_test
         {
             std::ostringstream oss;
             oss << it.first << "|3-4";
-            pgTable.set(oss.str(), { { "profile", "[BUFFER_PROFILE|test_profile]" } });
+            queueTable.set(oss.str(), { { "profile", "[BUFFER_PROFILE|test_profile]" } });
         }
-        gBufferOrch->addExistingData(&pgTable);
+        gBufferOrch->addExistingData(&queueTable);
         gBufferOrch->addExistingData(&poolTable);
         gBufferOrch->addExistingData(&profileTable);
 
-        // process pool, profile and PGs
+        // process pool, profile and queues
         static_cast<Orch *>(gBufferOrch)->doTask();
 
-        auto pgConsumer = static_cast<Consumer*>(gBufferOrch->getExecutor(CFG_BUFFER_PG_TABLE_NAME));
-        pgConsumer->dumpPendingTasks(ts);
-        ASSERT_FALSE(ts.empty()); // PG is skipped
+        auto queueConsumer = static_cast<Consumer*>(gBufferOrch->getExecutor(CFG_BUFFER_QUEUE_TABLE_NAME));
+        queueConsumer->dumpPendingTasks(ts);
+        ASSERT_FALSE(ts.empty()); // Queue is skipped
         ts.clear();
 
         // release zero buffer drop handler
         dropHandler.reset();
 
-        // process PGs
+        // process queue
         static_cast<Orch *>(gBufferOrch)->doTask();
 
-        pgConsumer = static_cast<Consumer*>(gBufferOrch->getExecutor(CFG_BUFFER_PG_TABLE_NAME));
-        pgConsumer->dumpPendingTasks(ts);
-        ASSERT_TRUE(ts.empty()); // PG should be proceesed now
+        queueConsumer = static_cast<Consumer*>(gBufferOrch->getExecutor(CFG_BUFFER_QUEUE_TABLE_NAME));
+        queueConsumer->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty()); // Queue should be proceesed now
         ts.clear();
     }
 

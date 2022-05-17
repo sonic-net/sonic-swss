@@ -100,14 +100,13 @@ public:
     uint32_t m_nat_zone_id = 0;
 
     /*
-     * Following two bit vectors are used to lock
-     * the PG/queue from being changed in BufferOrch.
+     * Following bit vector is used to lock
+     * the queue from being changed in BufferOrch.
      * The use case scenario is when PfcWdZeroBufferHandler
-     * sets zero buffer profile it should protect PG/queue
+     * sets zero buffer profile it should protect queue
      * from being overwritten in BufferOrch.
      */
     std::vector<bool> m_queue_lock;
-    std::vector<bool> m_priority_group_lock;
 
     bool m_fec_cfg = false;
     bool m_an_cfg = false;
