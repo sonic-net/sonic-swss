@@ -83,6 +83,7 @@ class TestTunnelBase(object):
         
         decap_dscp_to_tc_map_oid = None
         decap_tc_to_pg_map_oid = None
+        skip_tunnel_creation = False
 
         if "decap_dscp_to_tc_map_oid" in kwargs:
             decap_dscp_to_tc_map_oid = kwargs.pop("decap_dscp_to_tc_map_oid")
@@ -90,11 +91,14 @@ class TestTunnelBase(object):
         if "decap_tc_to_pg_map_oid" in kwargs:
             decap_tc_to_pg_map_oid = kwargs.pop("decap_tc_to_pg_map_oid")
         
-        fvs = create_fvs(**kwargs)
-
-        # create tunnel entry in DB
-        ps = swsscommon.ProducerStateTable(db, self.APP_TUNNEL_DECAP_TABLE_NAME)
-        ps.set(tunnel_name, fvs)
+        if "skip_tunnel_creation" in kwargs:
+            skip_tunnel_creation = kwargs.pop("skip_tunnel_creation")
+        
+        if not skip_tunnel_creation:
+            fvs = create_fvs(**kwargs)
+            # create tunnel entry in DB
+            ps = swsscommon.ProducerStateTable(db, self.APP_TUNNEL_DECAP_TABLE_NAME)
+            ps.set(tunnel_name, fvs)
 
         # wait till config will be applied
         time.sleep(1)
@@ -191,10 +195,10 @@ class TestTunnelBase(object):
         oid = diff.pop()
         return oid
         
-    def remove_qos_map(self, configdb, qos_map_type_name, qos_map_oid):
+    def remove_qos_map(self, configdb, qos_map_type_name, qos_map_name):
         """ Remove the testing qos map"""
         table = swsscommon.Table(configdb, qos_map_type_name)
-        table._del(qos_map_oid)
+        table._del(qos_map_name)
 
     def cleanup_left_over(self, db, asicdb):
         """ Cleanup APP and ASIC tables """
@@ -207,10 +211,9 @@ class TestTunnelBase(object):
         for key in tunnel_term_table.getKeys():
             tunnel_term_table._del(key)
 
-        tunnel_app_table = swsscommon.Table(asicdb, self.APP_TUNNEL_DECAP_TABLE_NAME)
+        tunnel_app_table = swsscommon.Table(db, self.APP_TUNNEL_DECAP_TABLE_NAME)
         for key in tunnel_app_table.getKeys():
-            tunnel_table._del(key)
-
+            tunnel_app_table._del(key)
 
 class TestDecapTunnel(TestTunnelBase):
     """ Tests for decap tunnel creation and removal """
@@ -268,10 +271,58 @@ class TestDecapTunnel(TestTunnelBase):
             "decap_tc_to_pg_map_oid": tc_to_pg_map_oid
         }
         self.create_and_test_tunnel(db, asicdb, tunnel_name="MuxTunnel0", **params)
+        
+        # Remove Tunnel first
+        self.remove_and_test_tunnel(db, asicdb,"MuxTunnel0")
 
+        self.remove_qos_map(configdb, swsscommon.CFG_DSCP_TO_TC_MAP_TABLE_NAME, self.TUNNEL_QOS_MAP_NAME)
+        self.remove_qos_map(configdb, swsscommon.CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME, self.TUNNEL_QOS_MAP_NAME)
+
+    def test_TunnelDecap_MuxTunnel_with_retry(self, dvs, testlog):
+        """ Test MuxTunnel creation. """
+        db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        asicdb = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        configdb = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+
+        self.cleanup_left_over(db, asicdb)
+
+        # Create MuxTunnel0 with QoS remapping attributes
+        params = {
+            "tunnel_type": "IPINIP",
+            "src_ip": "1.1.1.1",
+            "dst_ip": "1.1.1.2",
+            "dscp_mode": "pipe",
+            "ecn_mode": "copy_from_outer",
+            "ttl_mode": "uniform",
+            "decap_dscp_to_tc_map": "AZURE_TUNNEL",
+            "decap_tc_to_pg_map": "AZURE_TUNNEL", 
+        }
+        # Verify tunnel is not created when decap_dscp_to_tc_map/decap_tc_to_pg_map is specified while oid is not ready in qosorch
+        fvs = create_fvs(**params)
+        # create tunnel entry in DB
+        ps = swsscommon.ProducerStateTable(db, self.APP_TUNNEL_DECAP_TABLE_NAME)
+        ps.set("MuxTunnel0", fvs)
+
+        time.sleep(1)
+        # check asic db table
+        tunnel_table = swsscommon.Table(asicdb, self.ASIC_TUNNEL_TABLE)
+        tunnels = tunnel_table.getKeys()
+        assert len(tunnels) == 0
+
+        #Verify tunneldecaporch creates tunnel when qos map is available
+        dscp_to_tc_map_oid = self.add_qos_map(configdb, asicdb, swsscommon.CFG_DSCP_TO_TC_MAP_TABLE_NAME, self.TUNNEL_QOS_MAP_NAME, self.DSCP_TO_TC_MAP)
+        tc_to_pg_map_oid = self.add_qos_map(configdb, asicdb, swsscommon.CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME, self.TUNNEL_QOS_MAP_NAME, self.TC_TO_PRIORITY_GROUP_MAP)
+        params.update({
+                "decap_dscp_to_tc_map_oid": dscp_to_tc_map_oid,
+                "decap_tc_to_pg_map_oid": tc_to_pg_map_oid,
+                "skip_tunnel_creation": True
+            })
+        self.create_and_test_tunnel(db, asicdb, tunnel_name="MuxTunnel0", **params)
+
+        # Cleanup
+        self.remove_and_test_tunnel(db, asicdb,"MuxTunnel0")
         self.remove_qos_map(configdb, swsscommon.CFG_DSCP_TO_TC_MAP_TABLE_NAME, dscp_to_tc_map_oid)
         self.remove_qos_map(configdb, swsscommon.CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME, tc_to_pg_map_oid)
-
 
 class TestSymmetricTunnel(TestTunnelBase):
     """ Tests for symmetric tunnel creation and removal """

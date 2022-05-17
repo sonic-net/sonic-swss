@@ -1427,6 +1427,11 @@ void IntfsOrch::removeRifFromFlexCounter(const string &id, const string &name)
     SWSS_LOG_DEBUG("Unregistered interface %s from Flex counter", name.c_str());
 }
 
+/*
+   TODO A race condition can exist when swss removes the counter from COUNTERS DB
+   and at the same time syncd is inserting a new entry in COUNTERS DB. Therefore
+   all the rif counters cleanup code should move to syncd
+*/
 void IntfsOrch::cleanUpRifFromCounterDb(const string &id, const string &name)
 {
     SWSS_LOG_ENTER();

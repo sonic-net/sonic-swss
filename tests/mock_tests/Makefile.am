@@ -6,9 +6,9 @@ INCLUDES = -I $(FLEX_CTR_DIR) -I $(DEBUG_CTR_DIR) -I $(top_srcdir)/lib
 
 CFLAGS_SAI = -I /usr/include/sai
 
-TESTS = tests
+TESTS = tests tests_intfmgrd
 
-noinst_PROGRAMS = tests
+noinst_PROGRAMS = tests tests_intfmgrd
 
 LDADD_SAI = -lsaimeta -lsaimetadata -lsaivs -lsairedis
 
@@ -39,6 +39,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 bulker_ut.cpp \
                 fake_response_publisher.cpp \
                 swssnet_ut.cpp \
+                flowcounterrouteorch_ut.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/lib/subintf.cpp \
                 $(top_srcdir)/orchagent/orchdaemon.cpp \
@@ -114,3 +115,22 @@ tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAG
 tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) -I$(top_srcdir)/orchagent
 tests_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis -lpthread \
         -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3
+
+## intfmgrd unit tests
+
+tests_intfmgrd_SOURCES = intfmgrd/add_ipv6_prefix_ut.cpp \
+                        $(top_srcdir)/cfgmgr/intfmgr.cpp \
+                        $(top_srcdir)/orchagent/orch.cpp \
+                        $(top_srcdir)/orchagent/request_parser.cpp \
+                        $(top_srcdir)/lib/subintf.cpp \
+                        mock_orchagent_main.cpp \
+                        mock_dbconnector.cpp \
+                        mock_table.cpp \
+                        mock_hiredis.cpp \
+                        fake_response_publisher.cpp \
+                        mock_redisreply.cpp
+
+tests_intfmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
+tests_intfmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) -I $(top_srcdir)/cfgmgr -I $(top_srcdir)/orchagent/
+tests_intfmgrd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis \
+        -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lpthread
