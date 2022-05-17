@@ -78,9 +78,11 @@ class TestStormControl(object):
         status, fvs = atbl.get(dvs.asicdb.portnamemap[if_name])
         assert status == True
 
+        storm_type_port_attr = self.get_port_attr_for_storm_type(storm_type)
+        
         policer_oid = 0
         for fv in fvs:
-            if fv[0] == "SAI_PORT_ATTR_BROADCAST_STORM_CONTROL_POLICER_ID":
+            if fv[0] == storm_type_port_attr:
                 policer_oid = fv[1]
 
         self.delete_storm_session(if_name, storm_type)
@@ -93,7 +95,7 @@ class TestStormControl(object):
         assert status == True
 
         for fv in fvs:
-            if fv[0] == "SAI_PORT_ATTR_BROADCAST_STORM_CONTROL_POLICER_ID":
+            if fv[0] == storm_type_port_attr:
                 assert fv[1] == "oid:0x0"
 
         if policer_oid != 0:
