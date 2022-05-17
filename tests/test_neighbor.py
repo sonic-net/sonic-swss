@@ -413,6 +413,53 @@ class TestNeighbor(object):
         (exitcode, output) = dvs.runcmd(['sh', '-c', "supervisorctl status nbrmgrd | awk '{print $2}'"])
         assert output == "RUNNING\n"
 
+    def test_Ipv4LinkLocalNeighbor(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        # bring up interface
+        self.set_admin_status("Ethernet8", "up")
+
+        # create interface
+        self.create_l3_intf("Ethernet8", "")
+
+        # assign IP to interface
+        self.add_ip_address("Ethernet8", "10.0.0.1/24")
+
+        # add neighbor
+        self.add_neighbor("Ethernet8", "169.254.0.0", "00:01:02:03:04:05")
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "NEIGH_TABLE:Ethernet8")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
+
+        # check ASIC neighbor database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
+
+        # remove neighbor
+        self.remove_neighbor("Ethernet8", "169.254.0.0")
+
+        # remove IP from interface
+        self.remove_ip_address("Ethernet8", "10.0.0.1/24")
+
+        # remove interface
+        self.remove_l3_intf("Ethernet8")
+
+        # bring down interface
+        self.set_admin_status("Ethernet8", "down")
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "NEIGH_TABLE:Ethernet8")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
+
+        # check ASIC neighbor database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
+
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
