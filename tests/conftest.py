@@ -1196,6 +1196,94 @@ class DockerVirtualSwitch:
         fvs = swsscommon.FieldValuePairs([("enable",enable)])
         tbl.set("swss", fvs)
 
+    # nat
+    def nat_mode_set(self, value):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "NAT_GLOBAL")
+        fvs = swsscommon.FieldValuePairs([("admin_mode", value)])
+        tbl.set("Values", fvs)
+        time.sleep(1)
+
+    def nat_timeout_set(self, value):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "NAT_GLOBAL")
+        fvs = swsscommon.FieldValuePairs([("nat_timeout", value)])
+        tbl.set("Values", fvs)
+        time.sleep(1)
+
+    def nat_udp_timeout_set(self, value):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "NAT_GLOBAL")
+        fvs = swsscommon.FieldValuePairs([("nat_udp_timeout", value)])
+        tbl.set("Values", fvs)
+        time.sleep(1)
+
+    def nat_tcp_timeout_set(self, value):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "NAT_GLOBAL")
+        fvs = swsscommon.FieldValuePairs([("nat_tcp_timeout", value)])
+        tbl.set("Values", fvs)
+        time.sleep(1)
+
+    def add_nat_basic_entry(self, external, internal):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "STATIC_NAT")
+        fvs = swsscommon.FieldValuePairs([("local_ip", internal)])
+        tbl.set(external, fvs)
+        time.sleep(1)
+
+    def del_nat_basic_entry(self, external):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "STATIC_NAT")
+        tbl._del(external)
+        time.sleep(1)
+
+    def add_nat_udp_entry(self, external, extport, internal, intport):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "STATIC_NAPT")
+        fvs = swsscommon.FieldValuePairs([("local_ip", internal), ("local_port", intport)])
+        tbl.set(external + "|UDP|" + extport, fvs)
+        time.sleep(1)
+
+    def del_nat_udp_entry(self, external, extport):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "STATIC_NAPT")
+        tbl._del(external + "|UDP|" + extport)
+        time.sleep(1)
+
+    def add_twice_nat_basic_entry(self, external, internal, nat_type, twice_nat_id):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "STATIC_NAT")
+        fvs = swsscommon.FieldValuePairs([("local_ip", internal), ("nat_type", nat_type), ("twice_nat_id", twice_nat_id)])
+        tbl.set(external, fvs)
+        time.sleep(1)
+
+    def del_twice_nat_basic_entry(self, external):
+        self.del_nat_basic_entry(external)
+
+    def add_twice_nat_udp_entry(self, external, extport, internal, intport, nat_type, twice_nat_id):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "STATIC_NAPT")
+        fvs = swsscommon.FieldValuePairs([("local_ip", internal), ("local_port", intport), ("nat_type", nat_type), ("twice_nat_id", twice_nat_id)])
+        tbl.set(external + "|UDP|" + extport, fvs)
+        time.sleep(1)
+
+    def del_twice_nat_udp_entry(self, external, extport):
+        self.del_nat_udp_entry(external, extport)
+
+    def set_nat_zone(self, interface, nat_zone):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        if interface.startswith("PortChannel"):
+            tbl_name = "PORTCHANNEL_INTERFACE"
+        elif interface.startswith("Vlan"):
+            tbl_name = "VLAN_INTERFACE"
+        else:
+            tbl_name = "INTERFACE"
+        tbl = swsscommon.Table(cdb, tbl_name)
+        fvs = swsscommon.FieldValuePairs([("nat_zone", nat_zone)])
+        tbl.set(interface, fvs)
+        time.sleep(1)
+
     # deps: acl, crm, fdb
     def setReadOnlyAttr(self, obj, attr, val):
         db = swsscommon.DBConnector(swsscommon.ASIC_DB, self.redis_sock, 0)
