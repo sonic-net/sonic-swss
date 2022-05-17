@@ -621,7 +621,7 @@ bool OrchDaemon::init()
 
     m_orchList.push_back(&CounterCheckOrch::getInstance(m_configDb));
 
-    if (platform == P4_PLATFORM_SUBSTRING)
+    if (platform != BRCM_PLATFORM_SUBSTRING)
     {
         vector<string> p4rt_tables = {APP_P4RT_TABLE_NAME};
         gP4Orch = new P4Orch(m_applDb, p4rt_tables, vrf_orch, gCoppOrch);
