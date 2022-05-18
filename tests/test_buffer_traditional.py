@@ -13,7 +13,6 @@ class TestBuffer(object):
         self.counter_db = dvs.get_counters_db()
 
         # enable PG watermark
-        self.config_db.update_entry('BUFFER_PG', 'Ethernet0|3-4', {'profile': 'ingress_lossless_profile'})
         self.set_pg_wm_status('enable')
 
     def get_pfc_enable_queues(self):
@@ -175,7 +174,6 @@ class TestBuffer(object):
     # To verify the BUFFER_PG is not hardcoded to 3,4
     # buffermgrd will read 'pfc_enable' entry and apply lossless profile to that queue
     def test_buffer_pg_update(self, dvs, setup_teardown_test):
-        self.pg_name_map = setup_teardown_test
         orig_cable_len = None
         orig_speed = None
         test_speed = None
@@ -204,6 +202,7 @@ class TestBuffer(object):
             # Make sure the buffer PG has been created
             orig_lossless_profile = "pg_lossless_{}_{}_profile".format(orig_speed, cable_len_for_test)
             self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", orig_lossless_profile)
+            self.pg_name_map = self.get_pg_name_map()
             self.orig_profiles = self.get_asic_buf_profile()
 
             # get the orig buf profiles attached to the pgs
