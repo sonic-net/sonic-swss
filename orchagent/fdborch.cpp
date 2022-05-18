@@ -76,6 +76,7 @@ bool FdbOrch::storeFdbEntryState(const FdbUpdate& update)
     string portName = port.m_alias;
     Port vlan;
 
+    oldFdbData.origin = FDB_ORIGIN_INVALID;
     if (!m_portsOrch->getPort(entry.bv_id, vlan))
     {
         SWSS_LOG_NOTICE("FdbOrch notification: Failed to locate \

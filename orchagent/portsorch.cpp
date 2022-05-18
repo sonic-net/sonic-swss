@@ -118,12 +118,16 @@ static map<string, sai_port_interface_type_t> interface_type_map =
  { "none", SAI_PORT_INTERFACE_TYPE_NONE },
  { "cr", SAI_PORT_INTERFACE_TYPE_CR },
  { "cr4", SAI_PORT_INTERFACE_TYPE_CR4 },
+ { "cr8", SAI_PORT_INTERFACE_TYPE_CR8 },
  { "sr", SAI_PORT_INTERFACE_TYPE_SR },
  { "sr4", SAI_PORT_INTERFACE_TYPE_SR4 },
+ { "sr8", SAI_PORT_INTERFACE_TYPE_SR8 },
  { "lr", SAI_PORT_INTERFACE_TYPE_LR },
  { "lr4", SAI_PORT_INTERFACE_TYPE_LR4 },
+ { "lr8", SAI_PORT_INTERFACE_TYPE_LR8 },
  { "kr", SAI_PORT_INTERFACE_TYPE_KR },
- { "kr4", SAI_PORT_INTERFACE_TYPE_KR4 }
+ { "kr4", SAI_PORT_INTERFACE_TYPE_KR4 },
+ { "kr8", SAI_PORT_INTERFACE_TYPE_KR8 }
 };
 
 // Interface type map used for auto negotiation
@@ -133,13 +137,17 @@ static map<string, sai_port_interface_type_t> interface_type_map_for_an =
     { "cr", SAI_PORT_INTERFACE_TYPE_CR },
     { "cr2", SAI_PORT_INTERFACE_TYPE_CR2 },
     { "cr4", SAI_PORT_INTERFACE_TYPE_CR4 },
+    { "cr8", SAI_PORT_INTERFACE_TYPE_CR8 },
     { "sr", SAI_PORT_INTERFACE_TYPE_SR },
     { "sr2", SAI_PORT_INTERFACE_TYPE_SR2 },
     { "sr4", SAI_PORT_INTERFACE_TYPE_SR4 },
+    { "sr8", SAI_PORT_INTERFACE_TYPE_SR8 },
     { "lr", SAI_PORT_INTERFACE_TYPE_LR },
     { "lr4", SAI_PORT_INTERFACE_TYPE_LR4 },
+    { "lr8", SAI_PORT_INTERFACE_TYPE_LR8 },
     { "kr", SAI_PORT_INTERFACE_TYPE_KR },
     { "kr4", SAI_PORT_INTERFACE_TYPE_KR4 },
+    { "kr8", SAI_PORT_INTERFACE_TYPE_KR8 },
     { "caui", SAI_PORT_INTERFACE_TYPE_CAUI },
     { "gmii", SAI_PORT_INTERFACE_TYPE_GMII },
     { "sfi", SAI_PORT_INTERFACE_TYPE_SFI },
