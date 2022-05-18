@@ -67,6 +67,8 @@ class TestBuffer(object):
         fvs['pfc_enable'] = pfc_enable_flag
         self.config_db.update_entry("PORT_QOS_MAP", port, fvs)
         self.lossless_pgs = pfc_enable_flag.split(',')
+        # Replace 3,4 with the combination 3-4 to be back compatible
+        self.lossless_pg_combinations = pfc_enable_flag.replace('3,4', '3-4').split(',')
 
     def get_pg_name_map(self):
         pg_name_map = dict()
@@ -136,7 +138,7 @@ class TestBuffer(object):
             self.app_db.wait_for_deleted_entry("BUFFER_PROFILE_TABLE", test_lossless_profile)
 
             # buffer pgs should still point to the original buffer profile
-            for pg in self.lossless_pgs:
+            for pg in self.lossless_pg_combinations:
                 self.app_db.wait_for_field_match("BUFFER_PG_TABLE", self.INTF + ":" + pg, {"profile": orig_lossless_profile})
             fvs = dict()
             for pg in self.pg_name_map:
@@ -221,7 +223,7 @@ class TestBuffer(object):
             self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", new_lossless_profile)
 
             # Verify BUFFER_PG is updated
-            for pg in self.lossless_pgs:
+            for pg in self.lossless_pg_combinations:
                 self.app_db.wait_for_field_match("BUFFER_PG_TABLE", self.INTF + ":" + pg, {"profile": new_lossless_profile})
 
             fvs_negative = {}
@@ -234,7 +236,7 @@ class TestBuffer(object):
             self.set_port_qos_table(extra_port, '2,3,4,6')
             time.sleep(1)
             # Verify BUFFER_PG is updated when pfc_enable is available
-            for pg in self.lossless_pgs:
+            for pg in self.lossless_pg_combinations:
                 self.app_db.wait_for_field_match("BUFFER_PG_TABLE", extra_port + ":" + pg, {"profile": new_lossless_profile})
         finally:
             if orig_cable_len:
