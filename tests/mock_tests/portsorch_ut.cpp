@@ -390,7 +390,7 @@ namespace portsorch_test
         poolTable.set(
             "test_pool",
             {
-                { "type", "ingress" },
+                { "type", "egress" },
                 { "mode", "dynamic" },
                 { "size", "4200000" },
             });
