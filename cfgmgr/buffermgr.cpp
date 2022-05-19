@@ -168,7 +168,12 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
         return task_process_status::task_success;
     }
     pfc_enable = m_portPfcStatus[port];
-
+    // Replace 2,3,4,6 to 2,3-4,6 to be back compatible
+    auto pos = pfc_enable.find("3,4");
+    if (pos != string::npos)
+    {
+        pfc_enable.replace(pos, 3, "3-4");
+    }
     speed = m_speedLookup[port];
     
     // key format is pg_lossless_<speed>_<cable>_profile
