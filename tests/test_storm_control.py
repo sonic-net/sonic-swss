@@ -273,7 +273,7 @@ class TestStormControl(object):
 
     def test_add_storm_vlan_interface(self,dvs,testlog):
         self.setup_db(dvs)
-        vlan_id = 10
+        vlan_id = 99
         member_interface = "Ethernet4"
         kbps_value = 1000000
         storm_list = ["broadcast","unknown-unicast","unknown-multicast"]
@@ -307,7 +307,7 @@ class TestStormControl(object):
             assert len(fvs) > 0
             time.sleep(1)
             #grep for error message in syslog
-            (exitcode,num) = dvs.runcmd(['sh', '-c', 'cat /var/log/syslog | grep -i "handlePortStormControlTable: {}: Unsupported / Invalid interface Vlan10"'.format(storm_type)])
+            (exitcode,num) = dvs.runcmd(['sh', '-c', 'cat /var/log/syslog | grep -i "handlePortStormControlTable: {}: Unsupported / Invalid interface {}"'.format(storm_type,vlan_name)])
             time.sleep(1)
             assert exitcode == 0
             self.delete_storm_session(vlan_name, storm_type)
