@@ -110,6 +110,7 @@ private:
         sai_object_id_t                                 m_ingress_id;
         map<std::string, std::shared_ptr<MACsecPort> >  m_macsec_ports;
         bool                                            m_sci_in_ingress_macsec_acl;
+        sai_uint8_t                                     m_max_sa_per_sc;
     };
     map<sai_object_id_t, MACsecObject>              m_macsec_objs;
     map<std::string, std::shared_ptr<MACsecPort> >  m_macsec_ports;
