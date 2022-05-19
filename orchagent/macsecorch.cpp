@@ -1082,6 +1082,32 @@ bool MACsecOrch::initMACsecObject(sai_object_id_t switch_id)
     }
     macsec_obj.first->second.m_sci_in_ingress_macsec_acl = attrs.front().value.booldata;
 
+    attrs.clear();
+    attr.id = SAI_MACSEC_ATTR_MAX_SECURE_ASSOCIATIONS_PER_SC;
+    attrs.push_back(attr);
+    status = sai_macsec_api->get_macsec_attribute(
+                    macsec_obj.first->second.m_ingress_id,
+                    static_cast<uint32_t>(attrs.size()),
+                    attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        // Default to 4 if SAI_MACSEC_ATTR_MAX_SECURE_ASSOCIATION_PER_SC isn't supported
+        macsec_obj.first->second.m_max_sa_per_sc = 4;
+    } else {
+        switch (attrs.front().value.s32)
+        {
+            case SAI_MACSEC_MAX_SECURE_ASSOCIATIONS_PER_SC_TWO:
+                macsec_obj.first->second.m_max_sa_per_sc = 2;
+                break;
+            case SAI_MACSEC_MAX_SECURE_ASSOCIATIONS_PER_SC_FOUR:
+                macsec_obj.first->second.m_max_sa_per_sc = 4;
+                break;
+            default:
+                SWSS_LOG_WARN( "Unsupported value returned from SAI_MACSEC_ATTR_MAX_SECURE_ASSOCIATION_PER_SC" );
+                return false;
+        }
+    }
+
     recover.clear();
     return true;
 }
@@ -1266,6 +1292,7 @@ bool MACsecOrch::createMACsecPort(
     SWSS_LOG_NOTICE("MACsec port %s is created.", port_name.c_str());
 
     std::vector<FieldValueTuple> fvVector;
+    fvVector.emplace_back("max_sa_per_sc", std::to_string(macsec_obj.m_max_sa_per_sc));
     fvVector.emplace_back("state", "ok");
     m_state_macsec_port.set(port_name, fvVector);
 

@@ -4573,9 +4573,10 @@ bool PortsOrch::removeVlan(Port vlan)
        return false for retry */
     if (vlan.m_fdb_count > 0)
     {
-        SWSS_LOG_NOTICE("VLAN %s still has assiciated FDB entries", vlan.m_alias.c_str());
+        SWSS_LOG_NOTICE("VLAN %s still has %d FDB entries", vlan.m_alias.c_str(), vlan.m_fdb_count);
         return false;
     }
+
     if (m_port_ref_count[vlan.m_alias] > 0)
     {
         SWSS_LOG_ERROR("Failed to remove ref count %d VLAN %s",
@@ -6927,4 +6928,18 @@ std::unordered_set<std::string> PortsOrch::generateCounterStats(const string& ty
         }
     }
     return counter_stats;
+}
+
+bool PortsOrch::decrFdbCount(const std::string& alias, int count)
+{
+    auto itr = m_portList.find(alias);
+    if (itr == m_portList.end())
+    {
+        return false;
+    }
+    else
+    {
+        itr->second.m_fdb_count -= count;
+    }
+    return true;
 }
