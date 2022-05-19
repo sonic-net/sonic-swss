@@ -465,11 +465,9 @@ ReturnCode AclTableManager::createUdf(const P4UdfField &udf_field)
     if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_UDF_MATCH, P4_UDF_MATCH_DEFAULT, &udf_match_oid))
     {
         // Create the default UDF match
-        auto status = createDefaultUdfMatch();
-        if (!status.ok())
-        {
-            SWSS_LOG_ERROR("Failed to create ACL UDF default match : %s", status.message().c_str());
-        }
+        LOG_AND_RETURN_IF_ERROR(createDefaultUdfMatch()
+                        << "Failed to create ACL UDF default match "
+                        << QuotedVar(P4_UDF_MATCH_DEFAULT));
         m_p4OidMapper->getOID(SAI_OBJECT_TYPE_UDF_MATCH, P4_UDF_MATCH_DEFAULT, &udf_match_oid);
     }
     std::vector<sai_attribute_t> udf_attrs;
