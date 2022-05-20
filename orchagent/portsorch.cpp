@@ -1032,7 +1032,7 @@ void PortsOrch::getCpuPort(Port &port)
     port = m_cpuPort;
 }
 
-bool PortsOrch::initHostTxReadyState(Port &port)
+void PortsOrch::initHostTxReadyState(Port &port)
 {
     SWSS_LOG_ENTER();
 
@@ -1058,8 +1058,6 @@ bool PortsOrch::initHostTxReadyState(Port &port)
         SWSS_LOG_INFO("initalize hostTxReady %s with status %s", 
                 port.m_alias.c_str(), hostTxReady.c_str());
     }
-
- return true;
 }
 
 bool PortsOrch::setPortAdminStatus(Port &port, bool state)
@@ -1090,7 +1088,7 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
     }
 
     bool gbstatus = setGearboxPortsAttr(port, SAI_PORT_ATTR_ADMIN_STATE, &state);
-    if(gbstatus != true)
+    if (gbstatus != true)
     {
         SWSS_LOG_ERROR("Failed to set admin status on PHY %s to port pid:%" PRIx64,
                        state ? "UP" : "DOWN", port.m_port_id);
@@ -3414,11 +3412,10 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
 
                 }
-
-                if (!initHostTxReadyState(p)) {
-                        SWSS_LOG_ERROR("Failed to initialize host_tx_ready for  port %s ", alias.c_str());
-                }
-
+                
+                /* create host_tx_ready field in state-db */
+                initHostTxReadyState(p)
+                
                 /* Last step set port admin status */
                 if (!admin_status.empty() && (p.m_admin_state_up != (admin_status == "up")))
                 {
