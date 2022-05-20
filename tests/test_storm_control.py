@@ -208,8 +208,7 @@ class TestStormControl(object):
             self.add_storm_control_on_interface(dvs,key,"unknown-multicast",3000000)
         dvs.runcmd("config save -y")
         # enable warm restart
-        (exitcode, result) = dvs.runcmd("config warm_restart enable swss")
-        assert exitcode == 0
+        dvs.warm_restart_swss("true")
 
         # freeze orchagent for warm restart
         (exitcode, result) = dvs.runcmd("/usr/bin/orchagent_restart_check")
@@ -228,6 +227,8 @@ class TestStormControl(object):
             self.del_storm_control(dvs,key,"broadcast")
             self.del_storm_control(dvs,key,"unknown-unicast")
             self.del_storm_control(dvs,key,"unknown-multicast")
+        # disable warm restart
+        dvs.warm_restart_swss("false")
 
     def test_add_storm_lag_interface(self,dvs,testlog):
         self.setup_db(dvs)
