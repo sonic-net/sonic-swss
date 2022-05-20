@@ -206,7 +206,7 @@ class TestStormControl(object):
             self.add_storm_control_on_interface(dvs,key,"broadcast",1000000)
             self.add_storm_control_on_interface(dvs,key,"unknown-unicast",2000000)
             self.add_storm_control_on_interface(dvs,key,"unknown-multicast",3000000)
-        dvs.runcmd("config save -y")
+        #dvs.runcmd("config save -y")
         # enable warm restart
         dvs.warm_restart_swss("true")
 
