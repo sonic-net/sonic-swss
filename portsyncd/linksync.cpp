@@ -4,7 +4,6 @@
 #include <sys/socket.h>
 #include <linux/if.h>
 #include <netlink/route/link.h>
-#include <netlink/route/link/bridge.h>
 #include "logger.h"
 #include "netmsg.h"
 #include "dbconnector.h"
