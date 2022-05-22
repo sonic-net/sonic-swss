@@ -213,18 +213,12 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
         return;
     }
 
-    /* Ignore netlink on interfaces belong to VLAN bridge */
-    if (master)
+    /* If netlink for this port has master, we ignore that for now
+     * This could be the case where the port was removed from VLAN bridge
+     */
+    if (master && nlmsg_type == RTM_DELLINK)
     {
-        LinkCache &linkCache = LinkCache::getInstance();
-        string masterName = linkCache.ifindexToName(master);
-        struct rtnl_link *masterLink = linkCache.getLinkByName(masterName.c_str());
-        bool isBridge = rtnl_link_is_bridge(masterLink);
-
-        if(isBridge)
-        {
-            return;
-        }
+        return;
     }
 
     /* In the event of swss restart, it is possible to get netlink messages during bridge
