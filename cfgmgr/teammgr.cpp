@@ -33,7 +33,8 @@ TeamMgr::TeamMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     m_appPortTable(applDb, APP_PORT_TABLE_NAME),
     m_appLagTable(applDb, APP_LAG_TABLE_NAME),
     m_statePortTable(statDb, STATE_PORT_TABLE_NAME),
-    m_stateLagTable(statDb, STATE_LAG_TABLE_NAME)
+    m_stateLagTable(statDb, STATE_LAG_TABLE_NAME),
+    m_stateMACsecPortTable(statDb, STATE_MACSEC_PORT_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
 
@@ -92,6 +93,43 @@ bool TeamMgr::isLagStateOk(const string &alias)
     if (!m_stateLagTable.get(alias, temp))
     {
         SWSS_LOG_INFO("Lag %s is not ready", alias.c_str());
+        return false;
+    }
+
+    return true;
+}
+
+bool TeamMgr::isMACsecSetted(const std::string &port)
+{
+    SWSS_LOG_ENTER();
+
+    vector<FieldValueTuple> temp;
+
+    if (!m_cfgPortTable.get(port, temp))
+    {
+        SWSS_LOG_INFO("Port %s is not ready", port.c_str());
+        return false;
+    }
+
+    auto macsec_opt = swss::fvsGetValue(temp, "macsec", true);
+    if (!macsec_opt || macsec_opt->empty())
+    {
+        SWSS_LOG_INFO("MACsec isn't setted on the port %s", port.c_str());
+        return false;
+    }
+
+    return true;
+}
+
+bool TeamMgr::isMACsecStateOk(const std::string &port)
+{
+    SWSS_LOG_ENTER();
+
+    vector<FieldValueTuple> temp;
+
+    if (!m_stateMACsecPortTable.get(port, temp))
+    {
+        SWSS_LOG_INFO("MACsec isn't ready on the port %s", port.c_str());
         return false;
     }
 
@@ -305,6 +343,12 @@ void TeamMgr::doLagMemberTask(Consumer &consumer)
         if (op == SET_COMMAND)
         {
             if (!isPortStateOk(member) || !isLagStateOk(lag))
+            {
+                it++;
+                continue;
+            }
+
+            if (isMACsecSetted(member) && !isMACsecStateOk(member))
             {
                 it++;
                 continue;
