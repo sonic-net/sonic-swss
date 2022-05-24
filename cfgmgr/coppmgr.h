@@ -14,6 +14,7 @@ namespace swss {
 /* COPP Trap Table Fields */
 #define COPP_TRAP_ID_LIST_FIELD                "trap_ids"
 #define COPP_TRAP_GROUP_FIELD                  "trap_group"
+#define COPP_ALWAYS_ENABLED_FIELD              "always_enabled"
 
 /* COPP Group Table Fields */
 #define COPP_GROUP_QUEUE_FIELD                 "queue"
@@ -42,6 +43,7 @@ struct CoppTrapConf
 {
     std::string         trap_ids;
     std::string         trap_group;
+    std::string         is_always_enabled;
 };
 
 /* TrapName to TrapConf map  */
@@ -70,10 +72,10 @@ private:
     CoppTrapConfMap        m_coppTrapConfMap;
     CoppTrapIdTrapGroupMap m_coppTrapIdTrapGroupMap;
     CoppGroupFvs           m_coppGroupFvs;
-    std::set<std::string>  m_coppDisabledTraps;
     CoppCfg                m_coppGroupInitCfg;
     CoppCfg                m_coppTrapInitCfg;
-    
+    CoppCfg                m_featuresCfgTable;
+
 
     void doTask(Consumer &consumer);
     void doCoppGroupTask(Consumer &consumer);
@@ -96,7 +98,12 @@ private:
                                  std::vector<FieldValueTuple> &modified_fvs);
     void parseInitFile(void);
     bool isTrapGroupInstalled(std::string key);
+    bool isFeatureEnabled(std::string feature);
     void mergeConfig(CoppCfg &init_cfg, CoppCfg &m_cfg, std::vector<std::string> &cfg_keys, Table &cfgTable);
+
+    void removeTrap(std::string key);
+    void addTrap(std::string trap_ids, std::string trap_group);
+
 
 };
 

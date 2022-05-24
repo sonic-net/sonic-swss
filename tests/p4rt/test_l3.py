@@ -23,7 +23,7 @@ class TestP4RTL3(object):
         self._p4rt_route_obj.set_up_databases(dvs)
         self._p4rt_wcmp_group_obj.set_up_databases(dvs)
         self.response_consumer = swsscommon.NotificationConsumer(
-            self._p4rt_route_obj.appl_db, "APPL_DB_P4RT_TABLE_RESPONSE_CHANNEL")
+            self._p4rt_route_obj.appl_state_db, "APPL_DB_P4RT_TABLE_RESPONSE_CHANNEL")
 
     def _set_vrf(self, dvs):
         # Create VRF.
@@ -1328,7 +1328,7 @@ class TestP4RTL3(object):
         util.set_interface_status(dvs, if_name)
 
         # Execute the warm reboot.
-        dvs.runcmd("config warm_restart enable swss")
+        dvs.warm_restart_swss("true")
         dvs.stop_swss()
         dvs.start_swss()
 

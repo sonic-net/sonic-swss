@@ -5,6 +5,7 @@
 #include "nhgorch.h"
 #include "cbf/cbfnhgorch.h"
 #include "logger.h"
+#include "flowcounterrouteorch.h"
 #include "swssnet.h"
 #include "crmorch.h"
 #include "directory.h"
@@ -22,6 +23,7 @@ extern CrmOrch *gCrmOrch;
 extern Directory<Orch*> gDirectory;
 extern NhgOrch *gNhgOrch;
 extern CbfNhgOrch *gCbfNhgOrch;
+extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
 
 extern size_t gMaxBulkSize;
 
@@ -145,7 +147,6 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
 
     addLinkLocalRouteToMe(gVirtualRouterId, default_link_local_prefix);
     SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu", default_link_local_prefix.to_string().c_str());
-
 }
 
 std::string RouteOrch::getLinkLocalEui64Addr(void)
@@ -212,6 +213,8 @@ void RouteOrch::addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal
 
     gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
 
+    gFlowCounterRouteOrch->onAddMiscRouteEntry(vrf_id, linklocal_prefix.getSubnet());
+
     SWSS_LOG_NOTICE("Created link local ipv6 route  %s to cpu", linklocal_prefix.to_string().c_str());
 }
 
@@ -232,6 +235,8 @@ void RouteOrch::delLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal
     }
 
     gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+
+    gFlowCounterRouteOrch->onRemoveMiscRouteEntry(vrf_id, linklocal_prefix.getSubnet());
 
     SWSS_LOG_NOTICE("Deleted link local ipv6 route  %s to cpu", linklocal_prefix.to_string().c_str());
 }
@@ -376,6 +381,13 @@ bool RouteOrch::validnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t& 
             nhgm_attrs.push_back(nhgm_attr);
         }
 
+        if (m_switchOrch->checkOrderedEcmpEnable())
+        {
+            nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID;
+            nhgm_attr.value.u32 = nhopgroup->second.nhopgroup_members[nexthop].seq_id;
+            nhgm_attrs.push_back(nhgm_attr);
+        }
+
         status = sai_next_hop_group_api->create_next_hop_group_member(&nexthop_id, gSwitchId,
                                                                       (uint32_t)nhgm_attrs.size(),
                                                                       nhgm_attrs.data());
@@ -393,7 +405,7 @@ bool RouteOrch::validnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t& 
 
         ++count;
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
-        nhopgroup->second.nhopgroup_members[nexthop] = nexthop_id;
+        nhopgroup->second.nhopgroup_members[nexthop].next_hop_id = nexthop_id;
     }
 
     if (!m_fgNhgOrch->validNextHopInNextHopGroup(nexthop))
@@ -421,7 +433,7 @@ bool RouteOrch::invalidnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t
             continue;
         }
 
-        nexthop_id = nhopgroup->second.nhopgroup_members[nexthop];
+        nexthop_id = nhopgroup->second.nhopgroup_members[nexthop].next_hop_id;
         status = sai_next_hop_group_api->remove_next_hop_group_member(nexthop_id);
 
         if (status != SAI_STATUS_SUCCESS)
@@ -790,6 +802,11 @@ void RouteOrch::doTask(Consumer& consumer)
                     }
                 }
 
+                sai_route_entry_t route_entry;
+                route_entry.vr_id = vrf_id;
+                route_entry.switch_id = gSwitchId;
+                copy(route_entry.destination, ip_prefix);
+
                 if (nhg.getSize() == 1 && nhg.hasIntfNextHop())
                 {
                     if (alsv[0] == "unknown")
@@ -833,6 +850,7 @@ void RouteOrch::doTask(Consumer& consumer)
                 else if (m_syncdRoutes.find(vrf_id) == m_syncdRoutes.end() ||
                     m_syncdRoutes.at(vrf_id).find(ip_prefix) == m_syncdRoutes.at(vrf_id).end() ||
                     m_syncdRoutes.at(vrf_id).at(ip_prefix) != RouteNhg(nhg, ctx.nhg_index) ||
+                    gRouteBulker.bulk_entry_pending_removal(route_entry) ||
                     ctx.using_temp_nhg)
                 {
                     if (addRoute(ctx, nhg))
@@ -1235,7 +1253,7 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
     vector<sai_attribute_t> nhg_attrs;
 
     nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_TYPE;
-    nhg_attr.value.s32 = SAI_NEXT_HOP_GROUP_TYPE_ECMP;
+    nhg_attr.value.s32 = m_switchOrch->checkOrderedEcmpEnable() ? SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP : SAI_NEXT_HOP_GROUP_TYPE_ECMP;
     nhg_attrs.push_back(nhg_attr);
 
     sai_object_id_t next_hop_group_id;
@@ -1289,6 +1307,13 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
             nhgm_attrs.push_back(nhgm_attr);
         }
 
+        if (m_switchOrch->checkOrderedEcmpEnable())
+        {
+            nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID;
+            nhgm_attr.value.u32 = ((uint32_t)i) + 1; // To make non-zero sequence id
+            nhgm_attrs.push_back(nhgm_attr);
+        }
+
         gNextHopGroupMemberBulker.create_entry(&nhgm_ids[i],
                                                  (uint32_t)nhgm_attrs.size(),
                                                  nhgm_attrs.data());
@@ -1313,7 +1338,8 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         if (nhopgroup_shared_set.find(nhid) != nhopgroup_shared_set.end())
         {
             auto it = nhopgroup_shared_set[nhid].begin();
-            next_hop_group_entry.nhopgroup_members[*it] = nhgm_id;
+            next_hop_group_entry.nhopgroup_members[*it].next_hop_id = nhgm_id;
+            next_hop_group_entry.nhopgroup_members[*it].seq_id = (uint32_t)i + 1;
             nhopgroup_shared_set[nhid].erase(it);
             if (nhopgroup_shared_set[nhid].empty())
             {
@@ -1322,7 +1348,8 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         }
         else
         {
-            next_hop_group_entry.nhopgroup_members[nhopgroup_members_set.find(nhid)->second] = nhgm_id;
+            next_hop_group_entry.nhopgroup_members[nhopgroup_members_set.find(nhid)->second].next_hop_id = nhgm_id;
+            next_hop_group_entry.nhopgroup_members[nhopgroup_members_set.find(nhid)->second].seq_id = ((uint32_t)i) + 1;
         }
     }
 
@@ -1367,12 +1394,12 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops)
         if (m_neighOrch->isNextHopFlagSet(nhop->first, NHFLAGS_IFDOWN))
         {
             SWSS_LOG_WARN("NHFLAGS_IFDOWN set for next hop group member %s with next_hop_id %" PRIx64,
-                           nhop->first.to_string().c_str(), nhop->second);
+                           nhop->first.to_string().c_str(), nhop->second.next_hop_id);
             nhop = nhgm.erase(nhop);
             continue;
         }
 
-        next_hop_ids.push_back(nhop->second);
+        next_hop_ids.push_back(nhop->second.next_hop_id);
         nhop = nhgm.erase(nhop);
     }
 
@@ -1826,8 +1853,12 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
      * in m_syncdRoutes, then we need to update the route with a new next hop
      * (group) id. The old next hop (group) is then not used and the reference
      * count will decrease by 1.
+     *
+     * In case the entry is already pending removal in the bulk, it would be removed
+     * from m_syncdRoutes during the bulk call. Therefore, such entries need to be
+     * re-created rather than set attribute.
      */
-    if (it_route == m_syncdRoutes.at(vrf_id).end())
+    if (it_route == m_syncdRoutes.at(vrf_id).end() || gRouteBulker.bulk_entry_pending_removal(route_entry))
     {
         if (blackhole)
         {
@@ -1870,6 +1901,25 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
         }
         else
         {
+            if (!blackhole && vrf_id == gVirtualRouterId && ipPrefix.isDefaultRoute())
+            {
+                // Always set packet action for default route to avoid conflict settings
+                // in case a SET follows a DEL on the default route in the same bulk.
+                // - On DEL default route, the packet action will be set to DROP
+                // - On SET default route, as the default route has NOT been removed from m_syncdRoute
+                //   it calls SAI set_route_attributes instead of crate_route
+                //   However, packet action is called only when a route entry is created
+                //   This leads to conflict settings:
+                //   - packet action: DROP
+                //   - next hop: a valid next hop id
+                // To avoid this, we always set packet action for default route.
+                route_attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+                route_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+
+                object_statuses.emplace_back();
+                gRouteBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &route_attr);
+            }
+
             route_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
             route_attr.value.oid = next_hop_id;
 
@@ -2167,6 +2217,11 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         updateDefRouteState(ipPrefix.to_string(), true);
     }
 
+    if (it_route == m_syncdRoutes.at(vrf_id).end())
+    {
+        gFlowCounterRouteOrch->handleRouteAdd(vrf_id, ipPrefix);
+    }
+
     m_syncdRoutes[vrf_id][ipPrefix] = RouteNhg(nextHops, ctx.nhg_index);
 
     notifyNextHopChangeObservers(vrf_id, ipPrefix, nextHops, true);
@@ -2374,6 +2429,7 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
     }
     else
     {
+        gFlowCounterRouteOrch->handleRouteRemove(vrf_id, ipPrefix);
         it_route_table->second.erase(ipPrefix);
 
         /* Notify about the route next hop removal */

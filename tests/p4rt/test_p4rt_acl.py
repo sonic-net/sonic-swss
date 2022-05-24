@@ -63,7 +63,7 @@ class TestP4RTAcl(object):
         self._p4rt_udf_obj.set_up_databases(dvs)
 
         self.response_consumer = swsscommon.NotificationConsumer(
-            self._p4rt_acl_table_definition_obj.appl_db, "APPL_DB_P4RT_TABLE_RESPONSE_CHANNEL"
+            self._p4rt_acl_table_definition_obj.appl_state_db, "APPL_DB_P4RT_TABLE_RESPONSE_CHANNEL"
         )
 
     @pytest.mark.skip(reason="p4orch is not enabled")

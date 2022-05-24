@@ -22,7 +22,6 @@
  *        In internal maps: table name removed from the index
  * 2. Maintain maps for pools, profiles and PGs in CONFIG_DB and APPL_DB
  * 3. Keys of maps in this file don't contain the TABLE_NAME
- * 3. 
  */
 using namespace std;
 using namespace swss;
@@ -30,17 +29,18 @@ using namespace swss;
 BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBConnector *applDb, const vector<TableConnector> &tables, shared_ptr<vector<KeyOpFieldsValuesTuple>> gearboxInfo, shared_ptr<vector<KeyOpFieldsValuesTuple>> zeroProfilesInfo) :
         Orch(tables),
         m_platform(),
-        m_bufferDirections({BUFFER_INGRESS, BUFFER_EGRESS}),
-        m_bufferObjectNames({"priority group", "queue"}),
-        m_bufferDirectionNames({"ingress", "egress"}),
+        m_bufferDirections{BUFFER_INGRESS, BUFFER_EGRESS},
+        m_bufferObjectNames{"priority group", "queue"},
+        m_bufferDirectionNames{"ingress", "egress"},
         m_applDb(applDb),
         m_zeroProfilesLoaded(false),
         m_supportRemoving(true),
         m_cfgDefaultLosslessBufferParam(cfgDb, CFG_DEFAULT_LOSSLESS_BUFFER_PARAMETER),
+        m_cfgDeviceMetaDataTable(cfgDb, CFG_DEVICE_METADATA_TABLE_NAME),
         m_applBufferPoolTable(applDb, APP_BUFFER_POOL_TABLE_NAME),
         m_applBufferProfileTable(applDb, APP_BUFFER_PROFILE_TABLE_NAME),
-        m_applBufferObjectTables({ProducerStateTable(applDb, APP_BUFFER_PG_TABLE_NAME), ProducerStateTable(applDb, APP_BUFFER_QUEUE_TABLE_NAME)}),
-        m_applBufferProfileListTables({ProducerStateTable(applDb, APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME), ProducerStateTable(applDb, APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME)}),
+        m_applBufferObjectTables{ProducerStateTable(applDb, APP_BUFFER_PG_TABLE_NAME), ProducerStateTable(applDb, APP_BUFFER_QUEUE_TABLE_NAME)},
+        m_applBufferProfileListTables{ProducerStateTable(applDb, APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME), ProducerStateTable(applDb, APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME)},
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
         m_stateBufferMaximumTable(stateDb, STATE_BUFFER_MAXIMUM_VALUE_TABLE),
         m_stateBufferPoolTable(stateDb, STATE_BUFFER_POOL_TABLE_NAME),
@@ -73,6 +73,30 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
     string checkHeadroomPluginName = "buffer_check_headroom_" + platform + ".lua";
 
     m_platform = platform;
+    m_specific_platform = platform;     // default for non-Mellanox
+    m_model_number = 0;
+
+    // Retrieve the type of mellanox platform
+    if (m_platform == "mellanox")
+    {
+        m_cfgDeviceMetaDataTable.hget("localhost", "platform", m_specific_platform);
+        if (!m_specific_platform.empty())
+        {
+            // Mellanox model number follows "sn" in the platform name and is 4 digits long
+            std::size_t sn_pos = m_specific_platform.find("sn");
+            if (sn_pos != std::string::npos)
+            {
+                std::string model_number = m_specific_platform.substr (sn_pos + 2, 4);
+                if (!model_number.empty())
+                {
+                    m_model_number = atoi(model_number.c_str());
+                }
+            }
+        }
+        if (!m_model_number) {
+            SWSS_LOG_ERROR("Failed to retrieve Mellanox model number");
+        }
+    }
 
     try
     {
@@ -471,7 +495,9 @@ string BufferMgrDynamic::getDynamicProfileName(const string &speed, const string
 
     if (m_platform == "mellanox")
     {
-        if ((speed != "400000") && (lane_count == 8))
+        if ((lane_count == 8) &&
+            (((m_model_number / 1000 == 4) && (speed != "400000")) ||
+             ((m_model_number / 1000 == 5) && (speed != "800000"))))
         {
             // On Mellanox platform, ports with 8 lanes have different(double) xon value then other ports
             // For ports at speed other than 400G can have
@@ -482,7 +508,8 @@ string BufferMgrDynamic::getDynamicProfileName(const string &speed, const string
             // Eg.
             // - A 100G port with 8 lanes will use buffer profile "pg_profile_100000_5m_8lane_profile"
             // - A 100G port with 4 lanes will use buffer profile "pg_profile_100000_5m_profile"
-            // Currently, 400G ports can only have 8 lanes. So we don't add this to the profile
+            // Currently, for 4xxx models, 400G ports can only have 8 lanes,
+            // and for 5xxx models, 800G ports can only have 8 lanes. So we don't add this to the profile.
             buffer_profile_key = buffer_profile_key + "_8lane";
         }
     }
@@ -2826,7 +2853,7 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
         // For del command:
         // 1. Removing it from APPL_DB
         // 2. Update internal caches
-        string &runningProfileName = bufferPg.running_profile_name;
+        string runningProfileName = bufferPg.running_profile_name;
         string &configProfileName = bufferPg.configured_profile_name;
 
         if (!m_supportRemoving)

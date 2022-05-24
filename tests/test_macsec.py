@@ -1,11 +1,9 @@
 from swsscommon import swsscommon
 import conftest
 
-import sys
 import functools
 import typing
 import re
-import time
 
 
 def to_string(value):
@@ -94,11 +92,8 @@ def gen_sci(macsec_system_identifier: str, macsec_port_identifier: int) -> str:
         str.maketrans("", "", ":.-"))
     sci = "{}{}".format(
         macsec_system_identifier,
-        str(macsec_port_identifier).zfill(4))
-    sci = int(sci, 16)
-    if sys.byteorder == "little":
-        sci = int.from_bytes(sci.to_bytes(8, 'big'), 'little', signed=False)
-    return str(sci)
+        str(macsec_port_identifier).zfill(4)).lower()
+    return sci
 
 
 def gen_sc_key(
@@ -321,6 +316,13 @@ class WPASupplicantMock(object):
         del self.app_transmit_sa_table[sai]
         self.state_transmit_sa_table.wait_delete(sai)
 
+    @macsec_sa()
+    def set_macsec_pn(
+            self,
+            sai: str,
+            pn: int):
+        self.app_transmit_sa_table[sai] = {"next_pn": pn}
+
     @macsec_sc()
     def set_enable_transmit_sa(self, sci: str, an: int, enable: bool):
         if enable:
@@ -475,6 +477,12 @@ class TestMACsec(object):
             auth_key: str,
             ssci: int,
             salt: str):
+        wpa.set_macsec_pn(
+            port_name,
+            local_mac_address,
+            macsec_port_identifier,
+            an,
+            0x00000000C0000000)
         wpa.create_receive_sa(
             port_name,
             peer_mac_address,
@@ -698,6 +706,54 @@ class TestMACsec(object):
             macsec_port_identifier,
             1)
         assert(not inspector.get_macsec_port(macsec_port))
+
+    def test_macsec_attribute_change(self, dvs: conftest.DockerVirtualSwitch, testlog):
+        port_name = "Ethernet0"
+        local_mac_address = "00-15-5D-78-FF-C1"
+        peer_mac_address = "00-15-5D-78-FF-C2"
+        macsec_port_identifier = 1
+        macsec_port = "macsec_eth1"
+        sak = "0" * 32
+        auth_key = "0" * 32
+        packet_number = 1
+        ssci = 1
+        salt = "0" * 24
+
+        wpa = WPASupplicantMock(dvs)
+        inspector = MACsecInspector(dvs)
+
+        self.init_macsec(
+            wpa,
+            port_name,
+            local_mac_address,
+            macsec_port_identifier)
+        wpa.set_macsec_control(port_name, True)
+        wpa.config_macsec_port(port_name, {"enable_encrypt": False})
+        wpa.config_macsec_port(port_name, {"cipher_suite": "GCM-AES-256"})
+        self.establish_macsec(
+            wpa,
+            port_name,
+            local_mac_address,
+            peer_mac_address,
+            macsec_port_identifier,
+            0,
+            sak,
+            packet_number,
+            auth_key,
+            ssci,
+            salt)
+        macsec_info = inspector.get_macsec_port(macsec_port)
+        assert("encrypt off" in macsec_info)
+        assert("GCM-AES-256" in macsec_info)
+        self.deinit_macsec(
+            wpa,
+            inspector,
+            port_name,
+            macsec_port,
+            local_mac_address,
+            peer_mac_address,
+            macsec_port_identifier,
+            0)
 
 
 # Add Dummy always-pass test at end as workaroud
