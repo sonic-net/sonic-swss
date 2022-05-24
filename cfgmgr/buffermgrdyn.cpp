@@ -2416,6 +2416,9 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
         // For set command:
         // 1. Create the corresponding table entries in APPL_DB
         // 2. Record the table in the internal cache m_bufferProfileLookup
+
+        // The profile did not exist and is created in the next line by the [] operator with incomplete data.
+        // In case the flow does not exit successfully, the incomplete profile should be removed
         bool notExisted = (m_bufferProfileLookup.find(profileName) == m_bufferProfileLookup.end());
         buffer_profile_t &profileApp = m_bufferProfileLookup[profileName];
 
@@ -2798,6 +2801,8 @@ void BufferMgrDynamic::handleDelSingleBufferObjectOnAdminDownPort(buffer_directi
 task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &key, const string &port, const KeyOpFieldsValuesTuple &tuple)
 {
     string op = kfvOp(tuple);
+    // The buffer PG did not exist and is created in the next line by the [] operator with incomplete data.
+    // In case the flow does not exit successfully, the incomplete profile should be removed
     bool notExisted = (m_portPgLookup[port].find(key) == m_portPgLookup[port].end());
     buffer_pg_t &bufferPg = m_portPgLookup[port][key];
     port_info_t &portInfo = m_portInfoLookup[port];
