@@ -2417,9 +2417,9 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
         // 1. Create the corresponding table entries in APPL_DB
         // 2. Record the table in the internal cache m_bufferProfileLookup
 
-        // The profile did not exist and is created in the next line by the [] operator with incomplete data.
-        // In case the flow does not exit successfully, the incomplete profile should be removed
-        bool notExisted = (m_bufferProfileLookup.find(profileName) == m_bufferProfileLookup.end());
+        // If the profile did not exist, it will be created in the next line by the [] operator with incomplete data.
+        // In case the flow does not finish successfully, the incomplete profile should be removed
+        bool needRemoveOnFailure = (m_bufferProfileLookup.find(profileName) == m_bufferProfileLookup.end());
         buffer_profile_t &profileApp = m_bufferProfileLookup[profileName];
 
         profileApp.static_configured = true;
@@ -2444,7 +2444,7 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
                     if (poolRef == m_bufferPoolLookup.end())
                     {
                         SWSS_LOG_WARN("Pool %s hasn't been configured yet, need retry", poolName.c_str());
-                        if (notExisted)
+                        if (needRemoveOnFailure)
                             m_bufferProfileLookup.erase(profileName);
                         return task_process_status::task_need_retry;
                     }
@@ -2462,7 +2462,7 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
                                        profileApp.threshold_mode.c_str(),
                                        poolName.c_str(),
                                        threshold_mode.c_str());
-                        if (notExisted)
+                        if (needRemoveOnFailure)
                             m_bufferProfileLookup.erase(profileName);
                         return task_process_status::task_failed;
                     }
@@ -2470,7 +2470,7 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
                 else
                 {
                     SWSS_LOG_ERROR("Pool for BUFFER_PROFILE %s hasn't been specified", field.c_str());
-                    if (notExisted)
+                    if (needRemoveOnFailure)
                         m_bufferProfileLookup.erase(profileName);
                     return task_process_status::task_failed;
                 }
@@ -2505,7 +2505,7 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
                                    field.c_str(),
                                    profileApp.pool_name.c_str(),
                                    profileApp.threshold_mode.c_str());
-                    if (notExisted)
+                    if (needRemoveOnFailure)
                         m_bufferProfileLookup.erase(profileName);
                     return task_process_status::task_failed;
                 }
@@ -2531,7 +2531,7 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
             if (profileApp.direction != BUFFER_INGRESS)
             {
                 SWSS_LOG_ERROR("BUFFER_PROFILE %s is ingress but referencing an egress pool %s", profileName.c_str(), profileApp.pool_name.c_str());
-                if (notExisted)
+                if (needRemoveOnFailure)
                     m_bufferProfileLookup.erase(profileName);
                 return task_process_status::task_failed;
             }
@@ -2801,9 +2801,9 @@ void BufferMgrDynamic::handleDelSingleBufferObjectOnAdminDownPort(buffer_directi
 task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &key, const string &port, const KeyOpFieldsValuesTuple &tuple)
 {
     string op = kfvOp(tuple);
-    // The buffer PG did not exist and is created in the next line by the [] operator with incomplete data.
-    // In case the flow does not exit successfully, the incomplete profile should be removed
-    bool notExisted = (m_portPgLookup[port].find(key) == m_portPgLookup[port].end());
+    // If the buffer PG did not exist, it will be created in the next line by the [] operator with incomplete data.
+    // In case the flow does not finish successfully, the incomplete profile should be removed
+    bool needRemoveOnFailure = (m_portPgLookup[port].find(key) == m_portPgLookup[port].end());
     buffer_pg_t &bufferPg = m_portPgLookup[port][key];
     port_info_t &portInfo = m_portInfoLookup[port];
 
@@ -2839,7 +2839,7 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
                 if (profileName.empty())
                 {
                     SWSS_LOG_ERROR("BUFFER_PG: Invalid format of reference to profile: %s", value.c_str());
-                    if (notExisted)
+                    if (needRemoveOnFailure)
                         m_portPgLookup[port].erase(key);
                     return task_process_status::task_invalid_entry;
                 }
@@ -2849,7 +2849,7 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
                 {
                     // In this case, we shouldn't set the dynamic calculated flag to true
                     // It will be updated when its profile configured.
-                    if (notExisted)
+                    if (needRemoveOnFailure)
                         m_portPgLookup[port].erase(key);
                     SWSS_LOG_WARN("Profile %s hasn't been configured yet, skip", profileName.c_str());
                     return task_process_status::task_need_retry;
@@ -2859,7 +2859,7 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
                     buffer_profile_t &profileRef = searchRef->second;
                     if (profileRef.direction == BUFFER_EGRESS)
                     {
-                        if (notExisted)
+                        if (needRemoveOnFailure)
                             m_portPgLookup[port].erase(key);
                         SWSS_LOG_ERROR("Egress buffer profile configured on PG %s", key.c_str());
                         return task_process_status::task_failed;
@@ -2875,7 +2875,7 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
             if (field != buffer_profile_field_name)
             {
                 SWSS_LOG_ERROR("BUFFER_PG: Invalid field %s", field.c_str());
-                if (notExisted)
+                if (needRemoveOnFailure)
                     m_portPgLookup[port].erase(key);
                 return task_process_status::task_invalid_entry;
             }
