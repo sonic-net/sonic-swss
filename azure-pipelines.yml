@@ -8,6 +8,18 @@ trigger:
     include:
       - "*"
 
+parameters:
+  - name: debian_version
+    type: string
+    default: buster
+
+variables:
+  - name: BUILD_BRANCH
+    ${{ if eq(variables['Build.Reason'], 'PullRequest') }}:
+      value: $(System.PullRequest.TargetBranch)
+    ${{ else }}:
+      value: $(Build.SourceBranchName)
+
 stages:
 - stage: Build
 
@@ -15,14 +27,14 @@ stages:
   - template: .azure-pipelines/build-template.yml
     parameters:
       arch: amd64
-      sonic_slave: sonic-slave-buster
-      buildimage_artifact_name: sonic-buildimage.vs
-      buildimage_pipeline: 142
+      sonic_slave: sonic-slave-${{ parameters.debian_version }}
+      common_lib_artifact_name: common-lib
       swss_common_artifact_name: sonic-swss-common
       sairedis_artifact_name: sonic-sairedis
       artifact_name: sonic-swss
       archive_pytests: true
       archive_gcov: true
+      debian_version: ${{ parameters.debian_version }}
 
 - stage: BuildArm
   dependsOn: Build
@@ -31,28 +43,26 @@ stages:
   - template: .azure-pipelines/build-template.yml
     parameters:
       arch: armhf
-      timeout: 240
       pool: sonicbld-armhf
-      sonic_slave: sonic-slave-buster-armhf
-      buildimage_artifact_name: sonic-buildimage.marvell-armhf
-      buildimage_pipeline: 141
+      sonic_slave: sonic-slave-${{ parameters.debian_version }}-armhf
+      common_lib_artifact_name: common-lib.armhf
       swss_common_artifact_name: sonic-swss-common.armhf
       sairedis_artifact_name: sonic-sairedis.armhf
       artifact_name: sonic-swss.armhf
       archive_gcov: false
+      debian_version: ${{ parameters.debian_version }}
 
   - template: .azure-pipelines/build-template.yml
     parameters:
       arch: arm64
-      timeout: 240
       pool: sonicbld-arm64
-      sonic_slave: sonic-slave-buster-arm64
+      sonic_slave: sonic-slave-${{ parameters.debian_version }}-arm64
+      common_lib_artifact_name: common-lib.arm64
       swss_common_artifact_name: sonic-swss-common.arm64
-      buildimage_artifact_name: sonic-buildimage.centec-arm64
-      buildimage_pipeline: 140
       sairedis_artifact_name: sonic-sairedis.arm64
       artifact_name: sonic-swss.arm64
       archive_gcov: false
+      debian_version: ${{ parameters.debian_version }}
 
 - stage: BuildDocker
   dependsOn: Build
@@ -73,7 +83,7 @@ stages:
     parameters:
       log_artifact_name: log
       gcov_artifact_name: sonic-gcov
-      sonic_slave: sonic-slave-buster
+      sonic_slave: sonic-slave-${{ parameters.debian_version }}
       archive_gcov: true
 
 - stage: Gcov
@@ -83,7 +93,7 @@ stages:
   - template: .azure-pipelines/gcov.yml
     parameters:
       arch: amd64
-      sonic_slave: sonic-slave-buster
+      sonic_slave: sonic-slave-${{ parameters.debian_version }}
       swss_common_artifact_name: sonic-swss-common
       sairedis_artifact_name: sonic-sairedis
       swss_artifact_name: sonic-swss
