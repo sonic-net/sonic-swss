@@ -22,6 +22,7 @@ from dvslib.dvs_acl import DVSAcl
 from dvslib.dvs_pbh import DVSPbh
 from dvslib.dvs_route import DVSRoute
 from dvslib import dvs_vlan
+from dvslib import dvs_port
 from dvslib import dvs_lag
 from dvslib import dvs_mirror
 from dvslib import dvs_policer
@@ -1157,6 +1158,132 @@ class DockerVirtualSwitch:
             if k[0] == counter:
                 return int(k[1])
 
+    def port_field_set(self, port, field, value):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "PORT")
+        fvs = swsscommon.FieldValuePairs([(field, value)])
+        tbl.set(port, fvs)
+        time.sleep(1)
+
+    def port_admin_set(self, port, status):
+        self.port_field_set(port, "admin_status", status)
+
+    def interface_ip_add(self, port, ip_address):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "INTERFACE")
+        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        tbl.set(port, fvs)
+        tbl.set(port + "|" + ip_address, fvs)
+        time.sleep(1)
+
+    def crm_poll_set(self, value):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "CRM")
+        fvs = swsscommon.FieldValuePairs([("polling_interval", value)])
+        tbl.set("Config", fvs)
+        time.sleep(1)
+
+    def clear_fdb(self):
+        adb = swsscommon.DBConnector(0, self.redis_sock, 0)
+        opdata = ["ALL", "ALL"]
+        msg = json.dumps(opdata,separators=(',',':'))
+        adb.publish('FLUSHFDBREQUEST', msg)
+
+    def warm_restart_swss(self, enable):
+        db = swsscommon.DBConnector(6, self.redis_sock, 0)
+
+        tbl = swsscommon.Table(db, "WARM_RESTART_ENABLE_TABLE")
+        fvs = swsscommon.FieldValuePairs([("enable",enable)])
+        tbl.set("swss", fvs)
+
+    # nat
+    def nat_mode_set(self, value):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "NAT_GLOBAL")
+        fvs = swsscommon.FieldValuePairs([("admin_mode", value)])
+        tbl.set("Values", fvs)
+        time.sleep(1)
+
+    def nat_timeout_set(self, value):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "NAT_GLOBAL")
+        fvs = swsscommon.FieldValuePairs([("nat_timeout", value)])
+        tbl.set("Values", fvs)
+        time.sleep(1)
+
+    def nat_udp_timeout_set(self, value):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "NAT_GLOBAL")
+        fvs = swsscommon.FieldValuePairs([("nat_udp_timeout", value)])
+        tbl.set("Values", fvs)
+        time.sleep(1)
+
+    def nat_tcp_timeout_set(self, value):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "NAT_GLOBAL")
+        fvs = swsscommon.FieldValuePairs([("nat_tcp_timeout", value)])
+        tbl.set("Values", fvs)
+        time.sleep(1)
+
+    def add_nat_basic_entry(self, external, internal):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "STATIC_NAT")
+        fvs = swsscommon.FieldValuePairs([("local_ip", internal)])
+        tbl.set(external, fvs)
+        time.sleep(1)
+
+    def del_nat_basic_entry(self, external):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "STATIC_NAT")
+        tbl._del(external)
+        time.sleep(1)
+
+    def add_nat_udp_entry(self, external, extport, internal, intport):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "STATIC_NAPT")
+        fvs = swsscommon.FieldValuePairs([("local_ip", internal), ("local_port", intport)])
+        tbl.set(external + "|UDP|" + extport, fvs)
+        time.sleep(1)
+
+    def del_nat_udp_entry(self, external, extport):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "STATIC_NAPT")
+        tbl._del(external + "|UDP|" + extport)
+        time.sleep(1)
+
+    def add_twice_nat_basic_entry(self, external, internal, nat_type, twice_nat_id):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "STATIC_NAT")
+        fvs = swsscommon.FieldValuePairs([("local_ip", internal), ("nat_type", nat_type), ("twice_nat_id", twice_nat_id)])
+        tbl.set(external, fvs)
+        time.sleep(1)
+
+    def del_twice_nat_basic_entry(self, external):
+        self.del_nat_basic_entry(external)
+
+    def add_twice_nat_udp_entry(self, external, extport, internal, intport, nat_type, twice_nat_id):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "STATIC_NAPT")
+        fvs = swsscommon.FieldValuePairs([("local_ip", internal), ("local_port", intport), ("nat_type", nat_type), ("twice_nat_id", twice_nat_id)])
+        tbl.set(external + "|UDP|" + extport, fvs)
+        time.sleep(1)
+
+    def del_twice_nat_udp_entry(self, external, extport):
+        self.del_nat_udp_entry(external, extport)
+
+    def set_nat_zone(self, interface, nat_zone):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        if interface.startswith("PortChannel"):
+            tbl_name = "PORTCHANNEL_INTERFACE"
+        elif interface.startswith("Vlan"):
+            tbl_name = "VLAN_INTERFACE"
+        else:
+            tbl_name = "INTERFACE"
+        tbl = swsscommon.Table(cdb, tbl_name)
+        fvs = swsscommon.FieldValuePairs([("nat_zone", nat_zone)])
+        tbl.set(interface, fvs)
+        time.sleep(1)
+
     # deps: acl, crm, fdb
     def setReadOnlyAttr(self, obj, attr, val):
         db = swsscommon.DBConnector(swsscommon.ASIC_DB, self.redis_sock, 0)
@@ -1728,6 +1855,12 @@ def dvs_vlan_manager(request, dvs):
                                             dvs.get_counters_db(),
                                             dvs.get_app_db())
 
+
+@pytest.fixture(scope="class")
+def dvs_port_manager(request, dvs):
+    request.cls.dvs_port = dvs_port.DVSPort(dvs.get_asic_db(),
+                                            dvs.get_config_db())
+    
 
 @pytest.fixture(scope="class")
 def dvs_mirror_manager(request, dvs):

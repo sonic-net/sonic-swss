@@ -330,10 +330,10 @@ void VlanMgr::doVlanTask(Consumer &consumer)
              */
             if (isVlanStateOk(key) && m_vlans.find(key) == m_vlans.end())
             {
+                SWSS_LOG_DEBUG("%s already created", kfvKey(t).c_str());
                 m_vlans.insert(key);
                 m_vlanReplay.erase(kfvKey(t));
                 it = consumer.m_toSync.erase(it);
-                SWSS_LOG_DEBUG("%s already created", kfvKey(t).c_str());
                 continue;
             }
 

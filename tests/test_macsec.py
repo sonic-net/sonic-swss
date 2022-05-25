@@ -1,11 +1,9 @@
 from swsscommon import swsscommon
 import conftest
 
-import sys
 import functools
 import typing
 import re
-import time
 
 
 def to_string(value):
@@ -94,11 +92,8 @@ def gen_sci(macsec_system_identifier: str, macsec_port_identifier: int) -> str:
         str.maketrans("", "", ":.-"))
     sci = "{}{}".format(
         macsec_system_identifier,
-        str(macsec_port_identifier).zfill(4))
-    sci = int(sci, 16)
-    if sys.byteorder == "little":
-        sci = int.from_bytes(sci.to_bytes(8, 'big'), 'little', signed=False)
-    return str(sci)
+        str(macsec_port_identifier).zfill(4)).lower()
+    return sci
 
 
 def gen_sc_key(
@@ -321,6 +316,13 @@ class WPASupplicantMock(object):
         del self.app_transmit_sa_table[sai]
         self.state_transmit_sa_table.wait_delete(sai)
 
+    @macsec_sa()
+    def set_macsec_pn(
+            self,
+            sai: str,
+            pn: int):
+        self.app_transmit_sa_table[sai] = {"next_pn": pn}
+
     @macsec_sc()
     def set_enable_transmit_sa(self, sci: str, an: int, enable: bool):
         if enable:
@@ -475,6 +477,12 @@ class TestMACsec(object):
             auth_key: str,
             ssci: int,
             salt: str):
+        wpa.set_macsec_pn(
+            port_name,
+            local_mac_address,
+            macsec_port_identifier,
+            an,
+            0x00000000C0000000)
         wpa.create_receive_sa(
             port_name,
             peer_mac_address,

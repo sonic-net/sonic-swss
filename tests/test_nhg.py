@@ -135,7 +135,7 @@ class TestNextHopGroupBase(object):
 
         self.config_db.create_entry("INTERFACE", self.port_name(i), fvs)
         self.config_db.create_entry("INTERFACE", "{}|{}".format(self.port_name(i), self.port_ipprefix(i)), fvs)
-        self.dvs.runcmd("config interface startup " + self.port_name(i))
+        self.dvs.port_admin_set(self.port_name(i), "up")
         self.dvs.runcmd("arp -s {} {}".format(self.peer_ip(i), self.port_mac(i)))
         assert self.dvs.servers[i].runcmd("ip link set down dev eth0") == 0
         assert self.dvs.servers[i].runcmd("ip link set up dev eth0") == 0

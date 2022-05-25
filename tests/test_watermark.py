@@ -172,6 +172,12 @@ class TestWatermark(object):
                  tbl.set('', [(q, "SAI_QUEUE_TYPE_ALL")])
                  self.all_q.append(q)
 
+    def clear_watermark(self, dvs, data):
+        adb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        msg = json.dumps(data, separators=(',',':'))
+        adb.publish('WATERMARK_CLEAR_REQUEST', msg)
+        time.sleep(1)
+
     def test_telemetry_period(self, dvs):
         self.setup_dbs(dvs)
         self.set_up(dvs)
@@ -191,7 +197,10 @@ class TestWatermark(object):
 
             self.populate_asic_all(dvs, "123")
 
-            dvs.runcmd("config watermark telemetry interval {}".format(5))
+            interval = {"interval": "5"}
+            self.config_db.create_entry("WATERMARK_TABLE",
+                                        "TELEMETRY_INTERVAL",
+                                        interval)
 
             time.sleep(self.DEFAULT_TELEMETRY_INTERVAL + 1)
             time.sleep(self.NEW_INTERVAL + 1)
@@ -257,10 +266,7 @@ class TestWatermark(object):
 
         # clear pg shared watermark, and verify that headroom watermark and persistent watermarks are not affected
 
-        exitcode, output = dvs.runcmd("sonic-clear priority-group watermark shared")
-        time.sleep(1)
-        assert exitcode == 0, "CLI failure: %s" % output
-        # make sure it cleared
+        self.clear_watermark(dvs, ["USER", "PG_SHARED"])
         self.verify_value(dvs, self.pgs, WmTables.user, SaiWmStats.pg_shared, "0")
 
         # make sure the rest is untouched
@@ -271,9 +277,7 @@ class TestWatermark(object):
 
         # clear queue unicast persistent watermark, and verify that multicast watermark and user watermarks are not affected
 
-        exitcode, output = dvs.runcmd("sonic-clear queue persistent-watermark unicast")
-        time.sleep(1)
-        assert exitcode == 0, "CLI failure: %s" % output
+        self.clear_watermark(dvs, ["PERSISTENT", "Q_SHARED_UNI"])
 
         # make sure it cleared
         self.verify_value(dvs, self.uc_q, WmTables.persistent, SaiWmStats.queue_shared, "0")
@@ -289,16 +293,14 @@ class TestWatermark(object):
         # clear queue all watermark, and verify that multicast and unicast watermarks are not affected
 
         # clear persistent all watermark
-        exitcode, output = dvs.runcmd("sonic-clear queue persistent-watermark all")
-        time.sleep(1)
-        assert exitcode == 0, "CLI failure: %s" % output
+        self.clear_watermark(dvs, ["PERSISTENT", "Q_SHARED_ALL"])
+
         # make sure it cleared
         self.verify_value(dvs, self.all_q, WmTables.persistent, SaiWmStats.queue_shared, "0")
 
         # clear user all watermark
-        exitcode, output = dvs.runcmd("sonic-clear queue watermark all")
-        time.sleep(1)
-        assert exitcode == 0, "CLI failure: %s" % output
+        self.clear_watermark(dvs, ["USER", "Q_SHARED_ALL"])
+
         # make sure it cleared
         self.verify_value(dvs, self.all_q, WmTables.user, SaiWmStats.queue_shared, "0")
 
