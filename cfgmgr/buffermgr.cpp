@@ -11,6 +11,7 @@
 #include "exec.h"
 #include "shellcmd.h"
 #include "warm_restart.h"
+#include "converter.h"
 
 using namespace std;
 using namespace swss;
@@ -114,6 +115,65 @@ string BufferMgr::getPgPoolMode()
     return "";
 }
 
+vector<string> BufferMgr::combinePGs(const vector<string> &pgs)
+{
+    vector<string> lossless_pg_combinations;
+
+    string combination;
+    uint8_t pg_l = 0xFF;
+    uint8_t pg_r = 0xFF;
+    uint8_t cur_pg;
+    for (auto pg : pgs)
+    {
+        try
+        {
+            cur_pg = to_uint<uint8_t>(pg, 0, 254);
+        }
+        catch (const std::invalid_argument &e)
+        {
+            // Ignore invalid value
+            continue;
+        }
+
+        if (pg_l == 0xFF || pg_r == 0xFF)
+        {
+            pg_l = cur_pg;
+            pg_r = cur_pg;
+            continue;
+        }
+        if (cur_pg == pg_r + 1)
+        {
+            pg_r = cur_pg;
+        }
+        else
+        {
+            if (pg_l == pg_r)
+            {
+                combination = to_string(pg_l);
+            }
+            else
+            {
+                combination = to_string(pg_l) + "-" + to_string(pg_r);
+            }
+            lossless_pg_combinations.push_back(combination);
+
+            pg_l = cur_pg;
+            pg_r = cur_pg;
+        }
+    }
+    if (pg_l == pg_r)
+    {
+        combination = to_string(pg_l);
+    }
+    else
+    {
+        combination = to_string(pg_l) + "-" + to_string(pg_r);
+    }
+    lossless_pg_combinations.push_back(combination);
+    
+    return lossless_pg_combinations;
+}
+
 /*
 Create/update two tables: profile (in m_cfgBufferProfileTable) and port buffer (in m_cfgBufferPgTable):
 
@@ -168,22 +228,18 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
         return task_process_status::task_success;
     }
     pfc_enable = m_portPfcStatus[port];
-    // Replace 2,3,4,6 to 2,3-4,6 to be back compatible
-    auto pos = pfc_enable.find("3,4");
-    if (pos != string::npos)
-    {
-        pfc_enable.replace(pos, 3, "3-4");
-    }
+
     speed = m_speedLookup[port];
     // key format is pg_lossless_<speed>_<cable>_profile
     string buffer_profile_key = "pg_lossless_" + speed + "_" + cable + "_profile";
     string profile_ref = buffer_profile_key;
     
     vector<string> lossless_pgs = tokenize(pfc_enable, ',');
+    vector<string> lossless_pg_combinations = combinePGs(lossless_pgs);    
 
     if (m_portStatusLookup[port] == "down" && m_platform == "mellanox")
     {
-        for (auto lossless_pg : lossless_pgs)
+        for (auto lossless_pg : lossless_pg_combinations)
         {
             // Remove the entry in BUFFER_PG table if any
             vector<FieldValueTuple> fvVectorPg;
@@ -256,7 +312,7 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
         SWSS_LOG_NOTICE("Reusing existing profile '%s'", buffer_profile_key.c_str());
     }
 
-    for (auto lossless_pg : lossless_pgs)
+    for (auto lossless_pg : lossless_pg_combinations)
     {
         vector<FieldValueTuple> fvVectorPg;
         string buffer_pg_key = port + m_cfgBufferPgTable.getTableNameSeparator() + lossless_pg;

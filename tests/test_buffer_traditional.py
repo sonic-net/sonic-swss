@@ -67,8 +67,6 @@ class TestBuffer(object):
         fvs['pfc_enable'] = pfc_enable_flag
         self.config_db.update_entry("PORT_QOS_MAP", port, fvs)
         self.lossless_pgs = pfc_enable_flag.split(',')
-        # Replace 3,4 with the combination 3-4 to be back compatible
-        self.lossless_pg_combinations = pfc_enable_flag.replace('3,4', '3-4').split(',')
 
     def get_pg_name_map(self):
         pg_name_map = dict()
@@ -81,7 +79,8 @@ class TestBuffer(object):
     def setup_teardown_test(self, dvs):
         try:
             self.setup_db(dvs)
-            self.set_port_qos_table(self.INTF, '2,3,4,6')
+            self.set_port_qos_table(self.INTF, '3,4')
+            self.lossless_pg_combinations = ['3-4']
             pg_name_map = self.get_pg_name_map()
             yield pg_name_map
         finally:
@@ -234,6 +233,7 @@ class TestBuffer(object):
 
              # Add pfc_enable field for extra port
             self.set_port_qos_table(extra_port, '2,3,4,6')
+            self.lossless_pg_combinations = ['2-4', '6']
             time.sleep(1)
             # Verify BUFFER_PG is updated when pfc_enable is available
             for pg in self.lossless_pg_combinations:

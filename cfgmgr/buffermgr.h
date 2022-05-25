@@ -6,6 +6,7 @@
 #include "orch.h"
 
 #include <map>
+#include <vector>
 #include <string>
 
 namespace swss {
@@ -73,6 +74,7 @@ private:
     port_pfc_status_t m_portPfcStatus;
     void doPortQosTableTask(Consumer &consumer);
 
+    std::vector<std::string> combinePGs(const std::vector<std::string> &pgs);
 };
 
 }
