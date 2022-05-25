@@ -765,7 +765,8 @@ class TestMACsec(object):
     def test_macsec_with_portchannel(self, dvs: conftest.DockerVirtualSwitch, testlog):
 
         # Set MACsec enabled on Ethernet0
-        ConfigTable(dvs, "PORT")["Ethernet0"] = {"macsec": "test"}
+        ConfigTable(dvs, "PORT")["Ethernet0"] = {"macsec" : "test"}
+        StateDBTable(dvs, "FEATURE")["macsec"] = {"state": "enabled"}
 
         # Setup Port-channel
         ConfigTable(dvs, "PORTCHANNEL")["PortChannel001"] = {"admin": "up", "mtu": "9100", "oper_status": "up"}
@@ -830,6 +831,18 @@ class TestMACsec(object):
             peer_mac_address,
             macsec_port_identifier,
             0)
+
+        # remove port channel member
+        del ConfigTable(dvs, "PORTCHANNEL_INTERFACE")["PortChannel001"]
+        del ConfigTable(dvs, "PORTCHANNEL_INTERFACE")["PortChannel001|40.0.0.0/31"]
+        del ConfigTable(dvs, "PORTCHANNEL_MEMBER")["PortChannel001|Ethernet0"]
+
+        # remove port channel
+        del ConfigTable(dvs, "PORTCHANNEL")["PortChannel001"]
+
+        # Clear MACsec enabled on Ethernet0
+        ConfigTable(dvs, "PORT")["Ethernet0"] = {"macsec" : ""}
+
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down

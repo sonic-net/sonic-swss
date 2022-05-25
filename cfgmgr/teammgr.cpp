@@ -34,7 +34,8 @@ TeamMgr::TeamMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     m_appLagTable(applDb, APP_LAG_TABLE_NAME),
     m_statePortTable(statDb, STATE_PORT_TABLE_NAME),
     m_stateLagTable(statDb, STATE_LAG_TABLE_NAME),
-    m_stateMACsecPortTable(statDb, STATE_MACSEC_PORT_TABLE_NAME)
+    m_stateMACsecPortTable(statDb, STATE_MACSEC_PORT_TABLE_NAME),
+    m_stateFeatureTable(statDb, "FEATURE")
 {
     SWSS_LOG_ENTER();
 
@@ -93,6 +94,27 @@ bool TeamMgr::isLagStateOk(const string &alias)
     if (!m_stateLagTable.get(alias, temp))
     {
         SWSS_LOG_INFO("Lag %s is not ready", alias.c_str());
+        return false;
+    }
+
+    return true;
+}
+
+bool TeamMgr::isMACsecFeatureEnabled()
+{
+    SWSS_LOG_ENTER();
+
+    vector<FieldValueTuple> temp;
+    if (!m_stateFeatureTable.get("macsec", temp))
+    {
+        return false;
+    }
+
+    auto opt = swss::fvsGetValue(temp, "state", true);
+
+    if (!opt || *opt != "enabled")
+    {
+        SWSS_LOG_INFO("MACsec feature isn't enabled");
         return false;
     }
 
@@ -348,10 +370,13 @@ void TeamMgr::doLagMemberTask(Consumer &consumer)
                 continue;
             }
 
-            if (isMACsecSetted(member) && !isMACsecStateOk(member))
+            if (isMACsecFeatureEnabled())
             {
-                it++;
-                continue;
+                if (isMACsecSetted(member) && !isMACsecStateOk(member))
+                {
+                    it++;
+                    continue;
+                }
             }
 
             if (addLagMember(lag, member) == task_need_retry)
