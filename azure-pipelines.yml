@@ -3,10 +3,29 @@
 # Add steps that publish test results, save build artifacts, deploy, and more:
 # https://docs.microsoft.com/azure/devops/pipelines/apps/c-cpp/gcc
 
+pr:
+- master
+- 202???
+- 201???
+
 trigger:
+  batch: true
   branches:
     include:
-      - "*"
+    - master
+    - 202???
+    - 201???
+
+# this part need to be set in UI
+schedules:
+- cron: "0 0 * * 6"
+  displayName: Weekly build
+  branches:
+    include:
+    - master
+    - 202???
+    - 201???
+  always: true
 
 stages:
 - stage: Build
