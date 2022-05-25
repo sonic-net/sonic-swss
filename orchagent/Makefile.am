@@ -22,8 +22,6 @@ dist_swss_DATA = \
 		 pfc_restore.lua \
 		 pfc_restore_cisco-8000.lua \
 		 port_rates.lua \
-		 gb_port.lua \
-		 gb_macsec_sa.lua \
 		 watermark_queue.lua \
 		 watermark_pg.lua \
 		 watermark_bufferpool.lua \

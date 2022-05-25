@@ -231,8 +231,7 @@ void FlexCounterManager::disableFlexCounterGroup()
 void FlexCounterManager::setCounterIdList(
         const sai_object_id_t object_id,
         const CounterType counter_type,
-        const unordered_set<string>& counter_stats,
-        const std::string &object_name)
+        const unordered_set<string>& counter_stats)
 {
     SWSS_LOG_ENTER();
 
@@ -248,10 +247,6 @@ void FlexCounterManager::setCounterIdList(
     {
         FieldValueTuple(counter_type_it->second, serializeCounterStats(counter_stats))
     };
-    if (!object_name.empty())
-    {
-        field_values.push_back(FieldValueTuple("NAME", object_name));
-    }
     flex_counter_table->set(getFlexCounterTableKey(group_name, object_id), field_values);
     installed_counters.insert(object_id);
 

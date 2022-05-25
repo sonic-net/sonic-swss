@@ -570,10 +570,6 @@ MACsecOrch::MACsecOrch(
                                 MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true)
 {
     SWSS_LOG_ENTER();
-
-    string LuaScript = swss::loadLuaScript("gb_macsec_sa.lua");
-    string scriptSha = swss::loadRedisScript(&m_counter_db, LuaScript);
-    m_gb_macsec_sa_stat_manager.updatePlugin(MACSEC_SA_PLUGIN_FIELD, scriptSha);
 }
 
 MACsecOrch::~MACsecOrch()
