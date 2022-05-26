@@ -960,7 +960,7 @@ task_process_status BufferMgrDynamic::allocateProfile(const string &speed, const
         string mode = getPgPoolMode();
         if (mode.empty())
         {
-            SWSS_LOG_NOTICE("BUFFER_PROFILE %s cannot be created because the buffer pool isn't ready", profile_name.c_str());
+            SWSS_LOG_INFO("BUFFER_PROFILE %s cannot be created because the buffer pool isn't ready", profile_name.c_str());
             return task_process_status::task_need_retry;
         }
 
@@ -1906,7 +1906,7 @@ task_process_status BufferMgrDynamic::handleDefaultLossLessBufferParam(KeyOpFiel
     {
         if (m_bufferPoolLookup.find(INGRESS_LOSSLESS_PG_POOL_NAME) == m_bufferPoolLookup.end())
         {
-            SWSS_LOG_NOTICE("%s has not been configured, need to retry", INGRESS_LOSSLESS_PG_POOL_NAME);
+            SWSS_LOG_INFO("%s has not been configured, need to retry", INGRESS_LOSSLESS_PG_POOL_NAME);
             return task_process_status::task_need_retry;
         }
 
@@ -2443,9 +2443,11 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
                     auto poolRef = m_bufferPoolLookup.find(poolName);
                     if (poolRef == m_bufferPoolLookup.end())
                     {
-                        SWSS_LOG_WARN("Pool %s hasn't been configured yet, need retry", poolName.c_str());
+                        SWSS_LOG_INFO("Pool %s hasn't been configured yet, need retry", poolName.c_str());
                         if (needRemoveOnFailure)
+                        {
                             m_bufferProfileLookup.erase(profileName);
+                        }
                         return task_process_status::task_need_retry;
                     }
                     profileApp.pool_name = poolName;
@@ -2463,7 +2465,9 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
                                        poolName.c_str(),
                                        threshold_mode.c_str());
                         if (needRemoveOnFailure)
+                        {
                             m_bufferProfileLookup.erase(profileName);
+                        }
                         return task_process_status::task_failed;
                     }
                 }
@@ -2471,7 +2475,9 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
                 {
                     SWSS_LOG_ERROR("Pool for BUFFER_PROFILE %s hasn't been specified", field.c_str());
                     if (needRemoveOnFailure)
+                    {
                         m_bufferProfileLookup.erase(profileName);
+                    }
                     return task_process_status::task_failed;
                 }
             }
@@ -2506,7 +2512,9 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
                                    profileApp.pool_name.c_str(),
                                    profileApp.threshold_mode.c_str());
                     if (needRemoveOnFailure)
+                    {
                         m_bufferProfileLookup.erase(profileName);
+                    }
                     return task_process_status::task_failed;
                 }
                 profileApp.threshold = value;
@@ -2532,7 +2540,9 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
             {
                 SWSS_LOG_ERROR("BUFFER_PROFILE %s is ingress but referencing an egress pool %s", profileName.c_str(), profileApp.pool_name.c_str());
                 if (needRemoveOnFailure)
+                {
                     m_bufferProfileLookup.erase(profileName);
+                }
                 return task_process_status::task_failed;
             }
 
@@ -2840,7 +2850,9 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
                 {
                     SWSS_LOG_ERROR("BUFFER_PG: Invalid format of reference to profile: %s", value.c_str());
                     if (needRemoveOnFailure)
+                    {
                         m_portPgLookup[port].erase(key);
+                    }
                     return task_process_status::task_invalid_entry;
                 }
 
@@ -2850,8 +2862,10 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
                     // In this case, we shouldn't set the dynamic calculated flag to true
                     // It will be updated when its profile configured.
                     if (needRemoveOnFailure)
+                    {
                         m_portPgLookup[port].erase(key);
-                    SWSS_LOG_WARN("Profile %s hasn't been configured yet, skip", profileName.c_str());
+                    }
+                    SWSS_LOG_INFO("Profile %s hasn't been configured yet, skip", profileName.c_str());
                     return task_process_status::task_need_retry;
                 }
                 else
@@ -2860,7 +2874,9 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
                     if (profileRef.direction == BUFFER_EGRESS)
                     {
                         if (needRemoveOnFailure)
+                        {
                             m_portPgLookup[port].erase(key);
+                        }
                         SWSS_LOG_ERROR("Egress buffer profile configured on PG %s", key.c_str());
                         return task_process_status::task_failed;
                     }
@@ -2876,7 +2892,9 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
             {
                 SWSS_LOG_ERROR("BUFFER_PG: Invalid field %s", field.c_str());
                 if (needRemoveOnFailure)
+                {
                     m_portPgLookup[port].erase(key);
+                }
                 return task_process_status::task_invalid_entry;
             }
 
@@ -2976,7 +2994,7 @@ task_process_status BufferMgrDynamic::checkBufferProfileDirection(const string &
         auto profileSearchRef = m_bufferProfileLookup.find(profileName);
         if (profileSearchRef == m_bufferProfileLookup.end())
         {
-            SWSS_LOG_NOTICE("Profile %s doesn't exist, need retry", profileName.c_str());
+            SWSS_LOG_INFO("Profile %s doesn't exist, need retry", profileName.c_str());
             return task_process_status::task_need_retry;
         }
 
