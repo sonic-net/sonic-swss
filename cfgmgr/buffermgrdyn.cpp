@@ -60,7 +60,13 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
     if (nullptr != zeroProfilesInfo)
         m_zeroPoolAndProfileInfo = *zeroProfilesInfo;
 
-    string platform = getenv("ASIC_VENDOR") ? getenv("ASIC_VENDOR") : "mock_test";
+    string platform = getenv("ASIC_VENDOR") ? getenv("ASIC_VENDOR") : "";
+    if (platform == "")
+    {
+        SWSS_LOG_ERROR("Platform environment variable is not defined, buffermgrd won't start");
+        return;
+    }
+
     string headroomSha, bufferpoolSha;
     string headroomPluginName = "buffer_headroom_" + platform + ".lua";
     string bufferpoolPluginName = "buffer_pool_" + platform + ".lua";

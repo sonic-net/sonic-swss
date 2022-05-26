@@ -155,6 +155,8 @@ namespace buffermgrdyn_test
 
         void SetUp() override
         {
+            setenv("ASIC_VENDOR", "mock_test", 1);
+
             testing_db::reset();
 
             WarmStart::initialize("buffermgrd", "swss");
