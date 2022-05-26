@@ -31,6 +31,7 @@ enum class CounterType
     ACL_COUNTER,
     TUNNEL,
     HOSTIF_TRAP,
+    ROUTE,
 };
 
 // FlexCounterManager allows users to manage a group of flex counters.

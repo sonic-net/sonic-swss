@@ -2,7 +2,7 @@
 #include <errno.h>
 #include <system_error>
 #include <sys/socket.h>
-#include <linux/if.h>
+#include <net/if.h>
 #include <netlink/route/link.h>
 #include "logger.h"
 #include "netmsg.h"
@@ -34,23 +34,16 @@ const string LAG_PREFIX = "PortChannel";
 extern set<string> g_portSet;
 extern bool g_init;
 
-struct if_nameindex
-{
-    unsigned int if_index;
-    char *if_name;
-};
-extern "C" { extern struct if_nameindex *if_nameindex (void) __THROW; }
-
 LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
     m_portTableProducer(appl_db, APP_PORT_TABLE_NAME),
     m_portTable(appl_db, APP_PORT_TABLE_NAME),
     m_statePortTable(state_db, STATE_PORT_TABLE_NAME),
     m_stateMgmtPortTable(state_db, STATE_MGMT_PORT_TABLE_NAME)
 {
-    struct if_nameindex *if_ni, *idx_p;
-    if_ni = if_nameindex();
+    std::shared_ptr<struct if_nameindex> if_ni(if_nameindex(), if_freenameindex);
+    struct if_nameindex *idx_p;
 
-    for (idx_p = if_ni;
+    for (idx_p = if_ni.get();
             idx_p != NULL && idx_p->if_index != 0 && idx_p->if_name != NULL;
             idx_p++)
     {
@@ -121,7 +114,7 @@ LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
             }
         }
 
-        for (idx_p = if_ni;
+        for (idx_p = if_ni.get();
                 idx_p != NULL && idx_p->if_index != 0 && idx_p->if_name != NULL;
                 idx_p++)
         {
@@ -212,10 +205,9 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
         return;
     }
 
-    /* If netlink for this port has master, we ignore that for now
-     * This could be the case where the port was removed from VLAN bridge
-     */
-    if (master)
+    /* Ignore DELLINK message if port has master, this is applicable to
+     * the case where port was part of VLAN bridge or LAG */
+    if (master && nlmsg_type == RTM_DELLINK)
     {
         return;
     }

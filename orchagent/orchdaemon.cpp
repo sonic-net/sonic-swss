@@ -45,6 +45,7 @@ QosOrch *gQosOrch;
 SwitchOrch *gSwitchOrch;
 Directory<Orch*> gDirectory;
 NatOrch *gNatOrch;
+PolicerOrch *gPolicerOrch;
 MlagOrch *gMlagOrch;
 IsoGrpOrch *gIsoGrpOrch;
 MACsecOrch *gMacsecOrch;
@@ -52,6 +53,8 @@ CoppOrch *gCoppOrch;
 P4Orch *gP4Orch;
 BfdOrch *gBfdOrch;
 Srv6Orch *gSrv6Orch;
+FlowCounterRouteOrch *gFlowCounterRouteOrch;
+DebugCounterOrch *gDebugCounterOrch;
 
 bool gIsNatSupported = false;
 
@@ -129,6 +132,12 @@ bool OrchDaemon::init()
     gFdbOrch = new FdbOrch(m_applDb, app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch);
     TableConnector stateDbBfdSessionTable(m_stateDb, STATE_BFD_SESSION_TABLE_NAME);
     gBfdOrch = new BfdOrch(m_applDb, APP_BFD_SESSION_TABLE_NAME, stateDbBfdSessionTable);
+
+    static const  vector<string> route_pattern_tables = {
+        CFG_FLOW_COUNTER_ROUTE_PATTERN_TABLE_NAME,
+    };
+    gFlowCounterRouteOrch = new FlowCounterRouteOrch(m_configDb, route_pattern_tables);
+    gDirectory.set(gFlowCounterRouteOrch);
 
     vector<string> vnet_tables = {
             APP_VNET_RT_TABLE_NAME,
@@ -219,7 +228,8 @@ bool OrchDaemon::init()
         CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME,
         CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME,
         CFG_DSCP_TO_FC_MAP_TABLE_NAME,
-        CFG_EXP_TO_FC_MAP_TABLE_NAME
+        CFG_EXP_TO_FC_MAP_TABLE_NAME,
+        CFG_TC_TO_DSCP_MAP_TABLE_NAME
     };
     gQosOrch = new QosOrch(m_configDb, qos_tables);
 
@@ -233,11 +243,17 @@ bool OrchDaemon::init()
     };
     gBufferOrch = new BufferOrch(m_applDb, m_configDb, m_stateDb, buffer_tables);
 
-    PolicerOrch *policer_orch = new PolicerOrch(m_configDb, "POLICER");
+    vector<TableConnector> policer_tables = {
+        TableConnector(m_configDb, CFG_POLICER_TABLE_NAME),
+        TableConnector(m_configDb, CFG_PORT_STORM_CONTROL_TABLE_NAME)
+    };
+
+    TableConnector stateDbStorm(m_stateDb, "BUM_STORM_CAPABILITY");
+    gPolicerOrch = new PolicerOrch(policer_tables, gPortsOrch);
 
     TableConnector stateDbMirrorSession(m_stateDb, STATE_MIRROR_SESSION_TABLE_NAME);
     TableConnector confDbMirrorSession(m_configDb, CFG_MIRROR_SESSION_TABLE_NAME);
-    gMirrorOrch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, policer_orch);
+    gMirrorOrch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, gPolicerOrch);
 
     TableConnector confDbAclTable(m_configDb, CFG_ACL_TABLE_TABLE_NAME);
     TableConnector confDbAclTableType(m_configDb, CFG_ACL_TABLE_TYPE_TABLE_NAME);
@@ -282,7 +298,7 @@ bool OrchDaemon::init()
         CFG_DEBUG_COUNTER_DROP_REASON_TABLE_NAME
     };
 
-    DebugCounterOrch *debug_counter_orch = new DebugCounterOrch(m_configDb, debug_counter_tables, 1000);
+    gDebugCounterOrch = new DebugCounterOrch(m_configDb, debug_counter_tables, 1000);
 
     const int natorch_base_pri = 50;
 
@@ -330,7 +346,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, mux_orch, mux_cb_orch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, policer_orch, tunnel_decap_orch, sflow_orch, debug_counter_orch, gMacsecOrch, gBfdOrch, gSrv6Orch};
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, mux_orch, mux_cb_orch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, tunnel_decap_orch, sflow_orch, gDebugCounterOrch, gMacsecOrch, gBfdOrch, gSrv6Orch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)

@@ -1,4 +1,5 @@
 #include "ut_helper.h"
+#include "flowcounterrouteorch.h"
 
 extern sai_object_id_t gSwitchId;
 
@@ -6,6 +7,7 @@ extern SwitchOrch *gSwitchOrch;
 extern CrmOrch *gCrmOrch;
 extern PortsOrch *gPortsOrch;
 extern RouteOrch *gRouteOrch;
+extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
 extern IntfsOrch *gIntfsOrch;
 extern NeighOrch *gNeighOrch;
 extern FgNhgOrch *gFgNhgOrch;
@@ -372,6 +374,11 @@ namespace aclorch_test
             ASSERT_EQ(gPortsOrch, nullptr);
             gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
 
+            static const  vector<string> route_pattern_tables = {
+                CFG_FLOW_COUNTER_ROUTE_PATTERN_TABLE_NAME,
+            };
+            gFlowCounterRouteOrch = new FlowCounterRouteOrch(m_config_db.get(), route_pattern_tables);
+
             ASSERT_EQ(gVrfOrch, nullptr);
             gVrfOrch = new VRFOrch(m_app_db.get(), APP_VRF_TABLE_NAME, m_state_db.get(), STATE_VRF_OBJECT_TABLE_NAME);
 
@@ -419,7 +426,12 @@ namespace aclorch_test
             };
             gRouteOrch = new RouteOrch(m_app_db.get(), route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch, gSrv6Orch);
 
-            PolicerOrch *policer_orch = new PolicerOrch(m_config_db.get(), "POLICER");
+            vector<TableConnector> policer_tables = {
+                TableConnector(m_config_db.get(), CFG_POLICER_TABLE_NAME),
+                TableConnector(m_config_db.get(), CFG_PORT_STORM_CONTROL_TABLE_NAME)
+            };
+            TableConnector stateDbStorm(m_state_db.get(), "BUM_STORM_CAPABILITY");
+            PolicerOrch *policer_orch = new PolicerOrch(policer_tables, gPortsOrch);
 
             TableConnector stateDbMirrorSession(m_state_db.get(), STATE_MIRROR_SESSION_TABLE_NAME);
             TableConnector confDbMirrorSession(m_config_db.get(), CFG_MIRROR_SESSION_TABLE_NAME);
