@@ -40,7 +40,7 @@ jobs:
       pipeline: 9
       artifact: sonic-swss-common.amd64.ubuntu20_04
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
+      runBranch: 'refs/heads/$(BUILD_BRANCH)'
     displayName: "Download sonic swss common deb packages"
 
   - script: |

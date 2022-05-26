@@ -54,7 +54,7 @@ jobs:
   pool:
     ${{ if ne(parameters.pool, 'default') }}:
       name: ${{ parameters.pool }}
-    ${{ if eq(parameters.pool, 'default') }}:
+    ${{ else }}:
       vmImage: 'ubuntu-20.04'
 
   container:
@@ -82,7 +82,7 @@ jobs:
       pipeline: 9
       artifact: ${{ parameters.swss_common_artifact_name }}
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
+      runBranch: 'refs/heads/$(BUILD_BRANCH)'
       path: '$(Build.SourcesDirectory)/${{ parameters.swss_common_artifact_name }}'
     displayName: "Download sonic swss common deb packages"
   - task: DownloadPipelineArtifact@2
@@ -92,7 +92,7 @@ jobs:
       pipeline: 12
       artifact: ${{ parameters.sairedis_artifact_name }}
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
+      runBranch: 'refs/heads/$(BUILD_BRANCH)'
       path: '$(Build.SourcesDirectory)/${{ parameters.sairedis_artifact_name }}'
     displayName: "Download sonic sairedis deb packages"
   - task: DownloadPipelineArtifact@2
@@ -104,7 +104,7 @@ jobs:
       pipeline: ${{ parameters.buildimage_pipeline }}
       artifact: ${{ parameters.buildimage_artifact_name }}
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
+      runBranch: 'refs/heads/$(BUILD_BRANCH)'
       path: '$(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}'
     displayName: "Download sonic buildimage deb packages"
   - script: |
