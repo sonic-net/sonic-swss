@@ -115,65 +115,6 @@ string BufferMgr::getPgPoolMode()
     return "";
 }
 
-vector<string> BufferMgr::combinePGs(const vector<string> &pgs)
-{
-    vector<string> lossless_pg_combinations;
-
-    string combination;
-    uint8_t pg_l = 0xFF;
-    uint8_t pg_r = 0xFF;
-    uint8_t cur_pg;
-    for (auto pg : pgs)
-    {
-        try
-        {
-            cur_pg = to_uint<uint8_t>(pg, 0, 254);
-        }
-        catch (const std::invalid_argument &e)
-        {
-            // Ignore invalid value
-            continue;
-        }
-
-        if (pg_l == 0xFF || pg_r == 0xFF)
-        {
-            pg_l = cur_pg;
-            pg_r = cur_pg;
-            continue;
-        }
-        if (cur_pg == pg_r + 1)
-        {
-            pg_r = cur_pg;
-        }
-        else
-        {
-            if (pg_l == pg_r)
-            {
-                combination = to_string(pg_l);
-            }
-            else
-            {
-                combination = to_string(pg_l) + "-" + to_string(pg_r);
-            }
-            lossless_pg_combinations.push_back(combination);
-
-            pg_l = cur_pg;
-            pg_r = cur_pg;
-        }
-    }
-    if (pg_l == pg_r)
-    {
-        combination = to_string(pg_l);
-    }
-    else
-    {
-        combination = to_string(pg_l) + "-" + to_string(pg_r);
-    }
-    lossless_pg_combinations.push_back(combination);
-    
-    return lossless_pg_combinations;
-}
-
 /*
 Create/update two tables: profile (in m_cfgBufferProfileTable) and port buffer (in m_cfgBufferPgTable):
 
@@ -235,7 +176,23 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
     string profile_ref = buffer_profile_key;
     
     vector<string> lossless_pgs = tokenize(pfc_enable, ',');
-    vector<string> lossless_pg_combinations = combinePGs(lossless_pgs);    
+    // Convert to bitmap
+    unsigned long lossless_pg_id = 0;
+    for (auto pg : lossless_pgs)
+    {
+        try
+        {
+            uint8_t cur_pg = to_uint<uint8_t>(pg);
+            lossless_pg_id |= (1<<cur_pg);
+        }
+        catch (const std::invalid_argument &e)
+        {
+            // Ignore invalid value
+            continue;
+        }
+    }
+    // Although we have up to 8 PGs for now, the range to check is expanded to 32 support more PGs
+    set<string> lossless_pg_combinations = generateIdListFromMap(lossless_pg_id, sizeof(lossless_pg_id));
 
     if (m_portStatusLookup[port] == "down" && m_platform == "mellanox")
     {
