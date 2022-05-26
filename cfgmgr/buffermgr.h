@@ -72,7 +72,7 @@ private:
     
     port_pfc_status_t m_portPfcStatus;
     void doPortQosTableTask(Consumer &consumer);
-    
+
 };
 
 }
