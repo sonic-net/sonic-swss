@@ -113,19 +113,19 @@ jobs:
       runBranch: 'refs/heads/$(BUILD_BRANCH)'
       path: $(Build.ArtifactStagingDirectory)/download
       patterns: |
-        target/debs/${{ parameters.debian_version }}/libnl-3-200_*.deb
-        target/debs/${{ parameters.debian_version }}/libnl-3-dev_*.deb
-        target/debs/${{ parameters.debian_version }}/libnl-genl-3-200_*.deb
-        target/debs/${{ parameters.debian_version }}/libnl-genl-3-dev_*.deb
-        target/debs/${{ parameters.debian_version }}/libnl-route-3-200_*.deb
-        target/debs/${{ parameters.debian_version }}/libnl-route-3-dev_*.deb
-        target/debs/${{ parameters.debian_version }}/libnl-nf-3-200_*.deb
-        target/debs/${{ parameters.debian_version }}/libnl-nf-3-dev_*.deb
+        target/debs/buster/libnl-3-200_*.deb
+        target/debs/buster/libnl-3-dev_*.deb
+        target/debs/buster/libnl-genl-3-200_*.deb
+        target/debs/buster/libnl-genl-3-dev_*.deb
+        target/debs/buster/libnl-route-3-200_*.deb
+        target/debs/buster/libnl-route-3-dev_*.deb
+        target/debs/buster/libnl-nf-3-200_*.deb
+        target/debs/buster/libnl-nf-3-dev_*.deb
     displayName: "Download common libs"
   - script: |
       set -ex
       cd download
-      sudo dpkg -i $(find target/debs/${{ parameters.debian_version }} -type f)
+      sudo dpkg -i $(find target/debs/buster -type f)
       sudo dpkg -i $(ls *.deb)
       cd ..
       rm -rf download
