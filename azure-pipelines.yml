@@ -83,7 +83,6 @@ stages:
     parameters:
       log_artifact_name: log
       gcov_artifact_name: sonic-gcov
-      sonic_slave: sonic-slave-${{ parameters.debian_version }}
       archive_gcov: true
 
 - stage: Gcov
