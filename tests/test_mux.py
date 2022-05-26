@@ -65,10 +65,10 @@ class TestMuxTunnelBase():
         "dscp_mode": "uniform",
         "ecn_mode": "standard",
         "ttl_mode": "pipe",
-        "encap_tc_to_queue_map": self.TUNNEL_QOS_MAP_NAME,
-        "encap_tc_to_dscp_map": self.TUNNEL_QOS_MAP_NAME,
-        "decap_dscp_to_tc_map": self.TUNNEL_QOS_MAP_NAME,
-        "decap_tc_to_pg_map": self.TUNNEL_QOS_MAP_NAME
+        "encap_tc_to_queue_map": TUNNEL_QOS_MAP_NAME,
+        "encap_tc_to_dscp_map": TUNNEL_QOS_MAP_NAME,
+        "decap_dscp_to_tc_map": TUNNEL_QOS_MAP_NAME,
+        "decap_tc_to_pg_map": TUNNEL_QOS_MAP_NAME
     }
 
     DEFAULT_PEER_SWITCH_PARAMS = {
