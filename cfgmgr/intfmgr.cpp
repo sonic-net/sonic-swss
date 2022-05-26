@@ -115,7 +115,21 @@ void IntfMgr::setIntfIp(const string &alias, const string &opCmd,
     int ret = swss::exec(cmd.str(), res);
     if (ret)
     {
-        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
+        if (!ipPrefix.isV4() && opCmd == "add")
+        {
+            SWSS_LOG_NOTICE("Failed to assign IPv6 on interface %s with return code %d, trying to enable IPv6 and retry", alias.c_str(), ret);
+            if (!enableIpv6Flag(alias))
+            {
+                SWSS_LOG_ERROR("Failed to enable IPv6 on interface %s", alias.c_str());
+                return;
+            }
+            ret = swss::exec(cmd.str(), res);
+        }
+
+        if (ret)
+        {
+            SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
+        }
     }
 }
 
@@ -1138,4 +1152,14 @@ void IntfMgr::doPortTableTask(const string& key, vector<FieldValueTuple> data, s
             }
         }
     }
+}
+
+bool IntfMgr::enableIpv6Flag(const string &alias)
+{
+    stringstream cmd;
+    string temp_res;
+    cmd << "sysctl -w net.ipv6.conf." << shellquote(alias) << ".disable_ipv6=0";
+    int ret = swss::exec(cmd.str(), temp_res);
+    SWSS_LOG_INFO("disable_ipv6 flag is set to 0 for iface: %s, cmd: %s, ret: %d", alias.c_str(), cmd.str().c_str(), ret);
+    return (ret == 0) ? true : false;
 }

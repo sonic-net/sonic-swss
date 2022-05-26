@@ -389,6 +389,11 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
     {
         sai_object = (*(m_buffer_type_maps[map_type_name]))[object_name].m_saiObjectId;
         SWSS_LOG_DEBUG("found existing object:%s of type:%s", object_name.c_str(), map_type_name.c_str());
+        if ((*(m_buffer_type_maps[map_type_name]))[object_name].m_pendingRemove && op == SET_COMMAND)
+        {
+            SWSS_LOG_NOTICE("Entry %s %s is pending remove, need retry", map_type_name.c_str(), object_name.c_str());
+            return task_process_status::task_need_retry;
+        }
     }
     SWSS_LOG_DEBUG("processing command:%s", op.c_str());
     if (object_name == "ingress_zero_pool")
@@ -565,6 +570,7 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
             }
 
             (*(m_buffer_type_maps[map_type_name]))[object_name].m_saiObjectId = sai_object;
+            (*(m_buffer_type_maps[map_type_name]))[object_name].m_pendingRemove = false;
             // Here we take the PFC watchdog approach to update the COUNTERS_DB metadata (e.g., PFC_WD_DETECTION_TIME per queue)
             // at initialization (creation and registration phase)
             // Specifically, we push the buffer pool name to oid mapping upon the creation of the oid
@@ -579,6 +585,7 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
         {
             auto hint = objectReferenceInfo(m_buffer_type_maps, map_type_name, object_name);
             SWSS_LOG_NOTICE("Can't remove object %s due to being referenced (%s)", object_name.c_str(), hint.c_str());
+            (*(m_buffer_type_maps[map_type_name]))[object_name].m_pendingRemove = true;
 
             return task_process_status::task_need_retry;
         }
@@ -647,6 +654,11 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
     {
         sai_object = (*(m_buffer_type_maps[map_type_name]))[object_name].m_saiObjectId;
         SWSS_LOG_DEBUG("found existing object:%s of type:%s", object_name.c_str(), map_type_name.c_str());
+        if ((*(m_buffer_type_maps[map_type_name]))[object_name].m_pendingRemove && op == SET_COMMAND)
+        {
+            SWSS_LOG_NOTICE("Entry %s %s is pending remove, need retry", map_type_name.c_str(), object_name.c_str());
+            return task_process_status::task_need_retry;
+        }
     }
     SWSS_LOG_DEBUG("processing command:%s", op.c_str());
     if (op == SET_COMMAND)
@@ -787,6 +799,7 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
                 }
             }
             (*(m_buffer_type_maps[map_type_name]))[object_name].m_saiObjectId = sai_object;
+            (*(m_buffer_type_maps[map_type_name]))[object_name].m_pendingRemove = false;
             SWSS_LOG_NOTICE("Created buffer profile %s with type %s", object_name.c_str(), map_type_name.c_str());
         }
 
@@ -799,6 +812,7 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
         {
             auto hint = objectReferenceInfo(m_buffer_type_maps, map_type_name, object_name);
             SWSS_LOG_NOTICE("Can't remove object %s due to being referenced (%s)", object_name.c_str(), hint.c_str());
+            (*(m_buffer_type_maps[map_type_name]))[object_name].m_pendingRemove = true;
 
             return task_process_status::task_need_retry;
         }

@@ -2,6 +2,7 @@
 #include <cstring>
 #include <array>
 #include <net/if.h>
+#include <stdexcept>
 #include "subintf.h"
 
 using namespace swss;
