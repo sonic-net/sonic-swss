@@ -465,6 +465,8 @@ namespace buffermgrdyn_test
         {
             delete m_dynamicBuffer;
             m_dynamicBuffer = nullptr;
+
+            unsetenv("ASIC_VENDOR");
         }
     };
 
