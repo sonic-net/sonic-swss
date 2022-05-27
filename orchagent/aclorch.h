@@ -113,7 +113,8 @@ typedef tuple<sai_acl_range_type_t, int, int> acl_range_properties_t;
 typedef map<acl_stage_type_t, AclActionCapabilities> acl_capabilities_t;
 typedef map<sai_acl_action_type_t, set<int32_t>> acl_action_enum_values_capabilities_t;
 
-typedef map<string, acl_capabilities_t> acl_table_action_list_lookup_t;
+typedef map<acl_stage_type_t, set<sai_acl_action_type_t> > acl_stage_action_list_t;
+typedef map<string, acl_stage_action_list_t> acl_table_action_list_lookup_t;
 
 class AclRule;
 

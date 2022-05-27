@@ -161,22 +161,16 @@ static acl_table_action_list_lookup_t defaultAclActionList =
         {
             {
                 ACL_STAGE_INGRESS,
-                AclActionCapabilities
                 {
-                    {
-                        SAI_ACL_ACTION_TYPE_PACKET_ACTION
-                    },
-                    false
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION,
+                    SAI_ACL_ACTION_TYPE_REDIRECT
                 }
             },
             {
                 ACL_STAGE_EGRESS,
-                AclActionCapabilities
                 {
-                    {
-                        SAI_ACL_ACTION_TYPE_PACKET_ACTION
-                    },
-                    false
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION,
+                    SAI_ACL_ACTION_TYPE_REDIRECT
                 }
             }
         }
@@ -187,22 +181,16 @@ static acl_table_action_list_lookup_t defaultAclActionList =
         {
             {
                 ACL_STAGE_INGRESS,
-                AclActionCapabilities
                 {
-                    {
-                        SAI_ACL_ACTION_TYPE_PACKET_ACTION
-                    },
-                    false
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION,
+                    SAI_ACL_ACTION_TYPE_REDIRECT
                 }
             },
             {
                 ACL_STAGE_EGRESS,
-                AclActionCapabilities
                 {
-                    {
-                        SAI_ACL_ACTION_TYPE_PACKET_ACTION
-                    },
-                    false
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION,
+                    SAI_ACL_ACTION_TYPE_REDIRECT
                 }
             }
         }
@@ -213,22 +201,14 @@ static acl_table_action_list_lookup_t defaultAclActionList =
         {
             {
                 ACL_STAGE_INGRESS,
-                AclActionCapabilities
                 {
-                    {
-                        SAI_ACL_ACTION_TYPE_MIRROR_INGRESS
-                    },
-                    false
+                    SAI_ACL_ACTION_TYPE_MIRROR_INGRESS
                 }
             },
             {
                 ACL_STAGE_EGRESS,
-                AclActionCapabilities
                 {
-                    {
-                        SAI_ACL_ACTION_TYPE_MIRROR_EGRESS
-                    },
-                    false
+                    SAI_ACL_ACTION_TYPE_MIRROR_EGRESS
                 }
             }
         }
@@ -239,22 +219,14 @@ static acl_table_action_list_lookup_t defaultAclActionList =
         {
             {
                 ACL_STAGE_INGRESS,
-                AclActionCapabilities
                 {
-                    {
-                        SAI_ACL_ACTION_TYPE_MIRROR_INGRESS
-                    },
-                    false
+                    SAI_ACL_ACTION_TYPE_MIRROR_INGRESS
                 }
             },
             {
                 ACL_STAGE_EGRESS,
-                AclActionCapabilities
                 {
-                    {
-                        SAI_ACL_ACTION_TYPE_MIRROR_EGRESS
-                    },
-                    false
+                    SAI_ACL_ACTION_TYPE_MIRROR_EGRESS
                 }
             }
         }
@@ -265,22 +237,14 @@ static acl_table_action_list_lookup_t defaultAclActionList =
         {
             {
                 ACL_STAGE_INGRESS,
-                AclActionCapabilities
                 {
-                    {
-                        SAI_ACL_ACTION_TYPE_MIRROR_INGRESS
-                    },
-                    false
+                    SAI_ACL_ACTION_TYPE_MIRROR_INGRESS
                 }
             },
             {
                 ACL_STAGE_EGRESS,
-                AclActionCapabilities
                 {
-                    {
-                        SAI_ACL_ACTION_TYPE_MIRROR_EGRESS
-                    },
-                    false
+                    SAI_ACL_ACTION_TYPE_MIRROR_EGRESS
                 }
             }
         }
@@ -291,22 +255,14 @@ static acl_table_action_list_lookup_t defaultAclActionList =
         {
             {
                 ACL_STAGE_INGRESS,
-                AclActionCapabilities
                 {
-                    {
-                        SAI_ACL_ACTION_TYPE_PACKET_ACTION
-                    },
-                    false
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION
                 }
             },
             {
                 ACL_STAGE_EGRESS,
-                AclActionCapabilities
                 {
-                    {
-                        SAI_ACL_ACTION_TYPE_PACKET_ACTION
-                    },
-                    false
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION
                 }
             }
         }
@@ -317,22 +273,14 @@ static acl_table_action_list_lookup_t defaultAclActionList =
         {
             {
                 ACL_STAGE_INGRESS,
-                AclActionCapabilities
                 {
-                    {
-                        SAI_ACL_ACTION_TYPE_PACKET_ACTION
-                    },
-                    false
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION
                 }
             },
             {
                 ACL_STAGE_EGRESS,
-                AclActionCapabilities
                 {
-                    {
-                        SAI_ACL_ACTION_TYPE_PACKET_ACTION
-                    },
-                    false
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION
                 }
             }
         }
@@ -343,22 +291,14 @@ static acl_table_action_list_lookup_t defaultAclActionList =
         {
             {
                 ACL_STAGE_INGRESS,
-                AclActionCapabilities
                 {
-                    {
-                        SAI_ACL_ACTION_TYPE_PACKET_ACTION
-                    },
-                    false
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION
                 }
             },
             {
                 ACL_STAGE_EGRESS,
-                AclActionCapabilities
                 {
-                    {
-                        SAI_ACL_ACTION_TYPE_PACKET_ACTION
-                    },
-                    false
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION
                 }
             }
         }
@@ -369,22 +309,14 @@ static acl_table_action_list_lookup_t defaultAclActionList =
         {
             {
                 ACL_STAGE_INGRESS,
-                AclActionCapabilities
                 {
-                    {
-                        SAI_ACL_ACTION_TYPE_PACKET_ACTION
-                    },
-                    false
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION
                 }
             },
             {
                 ACL_STAGE_EGRESS,
-                AclActionCapabilities
                 {
-                    {
-                        SAI_ACL_ACTION_TYPE_PACKET_ACTION
-                    },
-                    false
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION
                 }
             }
         }
@@ -2082,7 +2014,7 @@ bool AclTable::addMandatoryActions()
     if (defaultAclActionList.count(type.getName()) != 0)
     {
         // Add the default action list
-        for (auto action : defaultAclActionList[type.getName()][stage].actionList)
+        for (auto action : defaultAclActionList[type.getName()][stage])
         {
             if (m_pAclOrch->isAclActionSupported(stage, acl_action))
             {
