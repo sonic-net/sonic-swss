@@ -36,6 +36,9 @@ parameters:
   type: boolean
   default: false
 
+- name: common_lib_artifact_name
+  type: string
+
 jobs:
 - job:
   displayName: ${{ parameters.arch }}
@@ -75,50 +78,63 @@ jobs:
     inputs:
       source: specific
       project: build
-      pipeline: 9
+      pipeline: Azure.sonic-swss-common
       artifact: ${{ parameters.swss_common_artifact_name }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/$(BUILD_BRANCH)'
-      path: '$(Build.SourcesDirectory)/${{ parameters.swss_common_artifact_name }}'
+      path: $(Build.ArtifactStagingDirectory)/download
+      patterns: |
+        libswsscommon_1.0.0_${{ parameters.arch }}.deb
+        libswsscommon-dev_1.0.0_${{ parameters.arch }}.deb
     displayName: "Download sonic swss common deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
       source: specific
       project: build
-      pipeline: 12
+      pipeline: Azure.sonic-sairedis
       artifact: ${{ parameters.sairedis_artifact_name }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/$(BUILD_BRANCH)'
-      path: '$(Build.SourcesDirectory)/${{ parameters.sairedis_artifact_name }}'
+      path: $(Build.ArtifactStagingDirectory)/download
+      patterns: |
+        libsaivs_*.deb
+        libsaivs-dev_*.deb
+        libsairedis_*.deb
+        libsairedis-dev_*.deb
+        libsaimetadata_*.deb
+        libsaimetadata-dev_*.deb
+        syncd-vs_*.deb
     displayName: "Download sonic sairedis deb packages"
   - task: DownloadPipelineArtifact@2
-    ${{ if eq(parameters.buildimage_pipeline, 141) }}:
-      continueOnError: True
     inputs:
       source: specific
       project: build
-      pipeline: ${{ parameters.buildimage_pipeline }}
-      artifact: ${{ parameters.buildimage_artifact_name }}
+      pipeline: Azure.sonic-buildimage.common_libs
+      artifact: ${{ parameters.common_lib_artifact_name }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/$(BUILD_BRANCH)'
-      path: '$(Build.SourcesDirectory)/${{ parameters.buildimage_artifact_name }}'
-    displayName: "Download sonic buildimage deb packages"
+      path: $(Build.ArtifactStagingDirectory)/download
+      patterns: |
+        target/debs/buster/libnl-3-200_*.deb
+        target/debs/buster/libnl-3-dev_*.deb
+        target/debs/buster/libnl-genl-3-200_*.deb
+        target/debs/buster/libnl-genl-3-dev_*.deb
+        target/debs/buster/libnl-route-3-200_*.deb
+        target/debs/buster/libnl-route-3-dev_*.deb
+        target/debs/buster/libnl-nf-3-200_*.deb
+        target/debs/buster/libnl-nf-3-dev_*.deb
+    displayName: "Download common libs"
   - script: |
-      sudo dpkg -i libswsscommon_1.0.0_${{ parameters.arch }}.deb
-      sudo dpkg -i libswsscommon-dev_1.0.0_${{ parameters.arch }}.deb
-      sudo dpkg -i libsaivs_*.deb
-      sudo dpkg -i libsaivs-dev_*.deb
-      sudo dpkg -i libsairedis_*.deb
-      sudo dpkg -i libsairedis-dev_*.deb
-      sudo dpkg -i libsaimetadata_*.deb
-      sudo dpkg -i libsaimetadata-dev_*.deb
-      sudo dpkg -i syncd-vs_*.deb
-    workingDirectory: $(Pipeline.Workspace)
-    displayName: "Install sonic swss common and sairedis"
-  - checkout: self
-    submodules: true
+      set -ex
+      cd download
+      sudo dpkg -i $(find target/debs/buster -type f)
+      sudo dpkg -i $(ls *.deb)
+      cd ..
+      rm -rf download
+    workingDirectory: $(Build.ArtifactStagingDirectory)
+    displayName: "Install libnl3, sonic swss common and sairedis"
   - script: |
-      set -x
+      set -ex
       tar czf pytest.tgz tests
       cp -r pytest.tgz $(Build.ArtifactStagingDirectory)/
       ./autogen.sh
