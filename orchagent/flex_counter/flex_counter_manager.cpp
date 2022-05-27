@@ -167,22 +167,6 @@ void FlexCounterManager::updateGroupPollingInterval(
             group_name.c_str(), polling_interval);
 }
 
-void FlexCounterManager::updatePlugin(
-        const std::string& pluginField,
-        const std::string& scriptSha)
-{
-    SWSS_LOG_ENTER();
-
-    vector<FieldValueTuple> field_values =
-    {
-        FieldValueTuple(pluginField, scriptSha)
-    };
-    flex_counter_group_table->set(group_name, field_values);
-
-    SWSS_LOG_DEBUG("Set lua plugin for flex counter group '%s' to %s.",
-            group_name.c_str(), scriptSha.c_str());
-}
-
 // enableFlexCounterGroup will do nothing if the flex counter group is already
 // enabled.
 void FlexCounterManager::enableFlexCounterGroup()

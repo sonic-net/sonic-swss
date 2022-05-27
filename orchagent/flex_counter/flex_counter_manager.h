@@ -65,9 +65,6 @@ class FlexCounterManager
         virtual ~FlexCounterManager();
 
         void updateGroupPollingInterval(const uint polling_interval);
-        void updatePlugin(
-                const std::string& pluginField,
-                const std::string& scriptSha);
         void enableFlexCounterGroup();
         void disableFlexCounterGroup();
 
