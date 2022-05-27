@@ -282,7 +282,7 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
             if ((fvField(prop) == "profile") && (profile_ref == fvValue(prop)))
             {
                 SWSS_LOG_NOTICE("PG to Buffer Profile Mapping %s already present", buffer_pg_key.c_str());
-                continue;
+                return task_process_status::task_success;
             }
         }
 
