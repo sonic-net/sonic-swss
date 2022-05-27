@@ -156,6 +156,8 @@ public:
     const set<sai_acl_range_type_t>& getRangeTypes() const;
     const set<sai_acl_action_type_t>& getActions() const;
 
+    bool addAction(sai_acl_action_type_t action);
+
 private:
     friend class AclTableTypeBuilder;
 
@@ -386,6 +388,9 @@ public:
     bool validateAddPorts(const unordered_set<string> &value);
     bool validate();
     bool create();
+
+    // Add actions to ACL table if mandatory action list is required on table creation.
+    bool addMandatoryActions();
 
     // validate AclRule match attribute against rule and table configuration
     bool validateAclRuleMatch(sai_acl_entry_attr_t matchId, const AclRule& rule) const;
