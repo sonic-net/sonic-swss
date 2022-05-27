@@ -42,8 +42,7 @@ stages:
     parameters:
       arch: amd64
       sonic_slave: sonic-slave-buster
-      buildimage_artifact_name: sonic-buildimage.vs
-      buildimage_pipeline: 142
+      common_lib_artifact_name: common-lib
       swss_common_artifact_name: sonic-swss-common
       sairedis_artifact_name: sonic-sairedis
       artifact_name: sonic-swss
@@ -60,8 +59,7 @@ stages:
       timeout: 240
       pool: sonicbld-armhf
       sonic_slave: sonic-slave-buster-armhf
-      buildimage_artifact_name: sonic-buildimage.marvell-armhf
-      buildimage_pipeline: 141
+      common_lib_artifact_name: common-lib.armhf
       swss_common_artifact_name: sonic-swss-common.armhf
       sairedis_artifact_name: sonic-sairedis.armhf
       artifact_name: sonic-swss.armhf
@@ -73,9 +71,8 @@ stages:
       timeout: 240
       pool: sonicbld-arm64
       sonic_slave: sonic-slave-buster-arm64
+      common_lib_artifact_name: common-lib.arm64
       swss_common_artifact_name: sonic-swss-common.arm64
-      buildimage_artifact_name: sonic-buildimage.centec-arm64
-      buildimage_pipeline: 140
       sairedis_artifact_name: sonic-sairedis.arm64
       artifact_name: sonic-swss.arm64
       archive_gcov: false

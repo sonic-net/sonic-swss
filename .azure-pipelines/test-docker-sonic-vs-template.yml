@@ -31,25 +31,26 @@ jobs:
   - task: DownloadPipelineArtifact@2
     inputs:
       artifact: docker-sonic-vs
-    displayName: "Download docker sonic vs image"
-
+      path: $(Build.ArtifactStagingDirectory)/download
+    displayName: "Download pre-stage built docker-sonic-vs"
   - task: DownloadPipelineArtifact@2
     inputs:
       source: specific
       project: build
-      pipeline: 9
+      pipeline: Azure.sonic-swss-common
       artifact: sonic-swss-common.amd64.ubuntu20_04
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/$(BUILD_BRANCH)'
+      path: $(Build.ArtifactStagingDirectory)/download
     displayName: "Download sonic swss common deb packages"
 
   - script: |
-      set -x
+      set -ex
       sudo .azure-pipelines/build_and_install_module.sh
 
       sudo apt-get install -y libhiredis0.14
-      sudo dpkg -i --force-confask,confnew ../libswsscommon_1.0.0_amd64.deb || apt-get install -f
-      sudo dpkg -i ../python3-swsscommon_1.0.0_amd64.deb
+      sudo dpkg -i --force-confask,confnew $(Build.ArtifactStagingDirectory)/download/libswsscommon_1.0.0_amd64.deb || apt-get install -f
+      sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/python3-swsscommon_1.0.0_amd64.deb
 
       # install packages for vs test
       sudo apt-get install -y net-tools bridge-utils vlan
@@ -58,8 +59,8 @@ jobs:
     displayName: "Install dependencies"
 
   - script: |
-      set -x
-      sudo docker load -i ../docker-sonic-vs.gz
+      set -ex
+      sudo docker load -i $(Build.ArtifactStagingDirectory)/download/docker-sonic-vs.gz
       docker ps
       ip netns list
       uname -a
@@ -72,6 +73,7 @@ jobs:
       else
         sudo py.test -v --force-flaky --junitxml=tr.xml --imgname=docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber)
       fi
+      rm -rf $(Build.ArtifactStagingDirectory)/download
     displayName: "Run vs tests"
 
   - task: PublishTestResults@2

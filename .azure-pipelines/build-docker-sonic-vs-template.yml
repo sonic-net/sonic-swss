@@ -36,40 +36,47 @@ jobs:
     inputs:
       source: specific
       project: build
-      pipeline: 9
+      pipeline: Azure.sonic-swss-common
       artifact: ${{ parameters.swss_common_artifact_name }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/$(BUILD_BRANCH)'
+      path: $(Build.ArtifactStagingDirectory)/download
     displayName: "Download sonic swss common deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
       source: specific
       project: build
-      pipeline: 12
+      pipeline: Azure.sonic-sairedis
       artifact: ${{ parameters.sairedis_artifact_name }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/$(BUILD_BRANCH)'
+      path: $(Build.ArtifactStagingDirectory)/download
     displayName: "Download sonic sairedis deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
       artifact: ${{ parameters.swss_artifact_name }}
-    displayName: "Download sonic swss artifact"
+      path: $(Build.ArtifactStagingDirectory)/download
+    displayName: "Download pre-stage built ${{ parameters.swss_artifact_name }}"
   - task: DownloadPipelineArtifact@2
     inputs:
       source: specific
       project: build
-      pipeline: 1
+      pipeline: Azure.sonic-buildimage.official.vs
       artifact: sonic-buildimage.vs
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/$(BUILD_BRANCH)'
-    displayName: "Download sonic buildimage"
+      path: $(Build.ArtifactStagingDirectory)/download
+      patterns: '**/target/docker-sonic-vs.gz'
+    displayName: "Download sonic-buildimage docker-sonic-vs"
   - script: |
+      set -ex
       echo $(Build.DefinitionName).$(Build.BuildNumber)
 
-      docker load < ../target/docker-sonic-vs.gz
+      docker load < $(Build.ArtifactStagingDirectory)/download/target/docker-sonic-vs.gz
+
       mkdir -p .azure-pipelines/docker-sonic-vs/debs
 
-      cp -v ../*.deb .azure-pipelines/docker-sonic-vs/debs
+      cp -v $(Build.ArtifactStagingDirectory)/download/*.deb .azure-pipelines/docker-sonic-vs/debs
 
       pushd .azure-pipelines
 
@@ -78,7 +85,8 @@ jobs:
       popd
 
       docker save docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber) | gzip -c > $(Build.ArtifactStagingDirectory)/docker-sonic-vs.gz
-
+      rm -rf $(Build.ArtifactStagingDirectory)/download
+    displayName: "Build docker-sonic-vs"
   - publish: $(Build.ArtifactStagingDirectory)/
     artifact: ${{ parameters.artifact_name }}
     displayName: "Archive sonic docker vs image"
