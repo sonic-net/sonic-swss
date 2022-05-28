@@ -102,6 +102,45 @@ CFLAGS_COMMON+=" -Wno-switch-default"
 CFLAGS_COMMON+=" -Wno-long-long"
 CFLAGS_COMMON+=" -Wno-redundant-decls"
 
+# Code testing coverage with gcov
+AC_MSG_CHECKING(whether to build with gcov testing)
+AC_ARG_ENABLE(gcov, AS_HELP_STRING([--enable-gcov], [Whether to enable gcov testing]),, enable_gcov=no)
+
+if test "x$enable_gcov" = "xyes"; then
+    if test "$GCC" = "no"; then
+        AC_MSG_ERROR(not compiling with gcc, which is required for gcov testing)
+    fi
+
+    CFLAGS_COMMON+=" -fprofile-arcs -ftest-coverage"
+    AC_SUBST(CFLAGS_COMMON)
+
+    LDFLAGS+=" -fprofile-arcs -lgcov"
+    AC_SUBST(LDFLAGS)
+fi
+
+AM_CONDITIONAL(GCOV_ENABLED, test x$enable_gcov = xyes)
+AC_MSG_RESULT($enable_gcov)
+
+AC_ARG_ENABLE(asan,
+[  --enable-asan      Compile with address sanitizer],
+[case "${enableval}" in
+	yes) asan_enabled=true ;;
+	no)  asan_enabled=false ;;
+	*) AC_MSG_ERROR(bad value ${enableval} for --enable-asan) ;;
+esac],[asan_enabled=false])
+
+if test "x$asan_enabled" = "xtrue"; then
+    CFLAGS_ASAN+=" -fsanitize=address"
+    CFLAGS_ASAN+=" -DASAN_ENABLED"
+    CFLAGS_ASAN+=" -ggdb -fno-omit-frame-pointer -U_FORTIFY_SOURCE"
+    AC_SUBST(CFLAGS_ASAN)
+
+    LDFLAGS_ASAN+=" -lasan"
+    AC_SUBST(LDFLAGS_ASAN)
+fi
+
+AM_CONDITIONAL(ASAN_ENABLED, test x$asan_enabled = xtrue)
+
 AC_SUBST(CFLAGS_COMMON)
 
 AC_CONFIG_FILES([
@@ -119,6 +158,7 @@ AC_CONFIG_FILES([
     swssconfig/Makefile
     cfgmgr/Makefile
     tests/Makefile
+    orchagent/p4orch/tests/Makefile
 ])
 
 # If no SAI library is installed, compile with SAIVS and run unit tests

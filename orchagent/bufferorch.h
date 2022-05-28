@@ -37,6 +37,14 @@ public:
     static type_map m_buffer_type_maps;
     void generateBufferPoolWatermarkCounterIdList(void);
     const object_reference_map &getBufferPoolNameOidMap(void);
+    sai_object_id_t getZeroBufferPool(bool ingress)
+    {
+        return ingress ? m_ingressZeroBufferPool : m_egressZeroBufferPool;
+    }
+
+    void lockZeroBufferPool(bool ingress);
+    void unlockZeroBufferPool(bool ingress);
+    void setZeroBufferPool(bool direction, sai_object_id_t pool);
 
 private:
     typedef task_process_status (BufferOrch::*buffer_table_handler)(KeyOpFieldsValuesTuple &tuple);
@@ -45,6 +53,7 @@ private:
 
     void doTask() override;
     virtual void doTask(Consumer& consumer);
+    void clearBufferPoolWatermarkCounterIdList(const sai_object_id_t object_id);
     void initTableHandlers();
     void initBufferReadyLists(DBConnector *confDb, DBConnector *applDb);
     void initBufferReadyList(Table& table, bool isConfigDb);
@@ -70,6 +79,11 @@ private:
     unique_ptr<DBConnector> m_countersDb;
 
     bool m_isBufferPoolWatermarkCounterIdListGenerated = false;
+
+    sai_object_id_t m_ingressZeroBufferPool;
+    sai_object_id_t m_egressZeroBufferPool;
+    int m_ingressZeroPoolRefCount;
+    int m_egressZeroPoolRefCount;
 };
 #endif /* SWSS_BUFFORCH_H */
 

@@ -12,6 +12,7 @@ public:
     NextHopGroupKey(const std::string &nexthops)
     {
         m_overlay_nexthops = false;
+        m_srv6_nexthops = false;
         auto nhv = tokenize(nexthops, NHG_DELIMITER);
         for (const auto &nh : nhv)
         {
@@ -20,13 +21,43 @@ public:
     }
 
     /* ip_string|if_alias|vni|router_mac separated by ',' */
-    NextHopGroupKey(const std::string &nexthops, bool overlay_nh)
+    NextHopGroupKey(const std::string &nexthops, bool overlay_nh, bool srv6_nh = false)
     {
-        m_overlay_nexthops = true;
-        auto nhv = tokenize(nexthops, NHG_DELIMITER);
-        for (const auto &nh_str : nhv)
+        if (overlay_nh)
         {
-            auto nh = NextHopKey(nh_str, overlay_nh);
+            m_overlay_nexthops = true;
+            m_srv6_nexthops = false;
+            auto nhv = tokenize(nexthops, NHG_DELIMITER);
+            for (const auto &nh_str : nhv)
+            {
+                auto nh = NextHopKey(nh_str, overlay_nh, srv6_nh);
+                m_nexthops.insert(nh);
+            }
+        }
+        else if (srv6_nh)
+        {
+            m_overlay_nexthops = false;
+            m_srv6_nexthops = true;
+            auto nhv = tokenize(nexthops, NHG_DELIMITER);
+            for (const auto &nh_str : nhv)
+            {
+                auto nh = NextHopKey(nh_str, overlay_nh, srv6_nh);
+                m_nexthops.insert(nh);
+            }
+        }
+    }
+
+    NextHopGroupKey(const std::string &nexthops, const std::string &weights)
+    {
+        m_overlay_nexthops = false;
+        m_srv6_nexthops = false;
+        std::vector<std::string> nhv = tokenize(nexthops, NHG_DELIMITER);
+        std::vector<std::string> wtv = tokenize(weights, NHG_DELIMITER);
+        bool set_weight = wtv.size() == nhv.size();
+        for (uint32_t i = 0; i < nhv.size(); i++)
+        {
+            NextHopKey nh(nhv[i]);
+            nh.weight = set_weight? (uint32_t)std::stoi(wtv[i]) : 0;
             m_nexthops.insert(nh);
         }
     }
@@ -43,12 +74,45 @@ public:
 
     inline bool operator<(const NextHopGroupKey &o) const
     {
-        return m_nexthops < o.m_nexthops;
+        if (m_nexthops < o.m_nexthops)
+        {
+            return true;
+        }
+        else if (m_nexthops == o.m_nexthops)
+        {
+            auto it1 = m_nexthops.begin();
+            for (auto& it2 : o.m_nexthops)
+            {
+                if (it1->weight < it2.weight)
+                {
+                    return true;
+                }
+                else if(it1->weight > it2.weight)
+                {
+                    return false;
+                }
+                it1++;
+            }
+        }
+        return false;
     }
 
     inline bool operator==(const NextHopGroupKey &o) const
     {
-        return m_nexthops == o.m_nexthops;
+        if (m_nexthops != o.m_nexthops)
+        {
+            return false;
+        }
+        auto it1 = m_nexthops.begin();
+        for (auto& it2 : o.m_nexthops)
+        {
+            if (it2.weight != it1->weight)
+            {
+                return false;
+            }
+            it1++;
+        }
+        return true;
     }
 
     inline bool operator!=(const NextHopGroupKey &o) const
@@ -137,8 +201,8 @@ public:
             {
                 nhs_str += NHG_DELIMITER;
             }
-            if (m_overlay_nexthops) {
-                nhs_str += it->to_string(m_overlay_nexthops);
+            if (m_overlay_nexthops || m_srv6_nexthops) {
+                nhs_str += it->to_string(m_overlay_nexthops, m_srv6_nexthops);
             } else {
                 nhs_str += it->to_string();
             }
@@ -152,6 +216,11 @@ public:
         return m_overlay_nexthops;
     }
 
+    inline bool is_srv6_nexthop() const
+    {
+        return m_srv6_nexthops;
+    }
+
     void clear()
     {
         m_nexthops.clear();
@@ -160,6 +229,7 @@ public:
 private:
     std::set<NextHopKey> m_nexthops;
     bool m_overlay_nexthops;
+    bool m_srv6_nexthops;
 };
 
 #endif /* SWSS_NEXTHOPGROUPKEY_H */

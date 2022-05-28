@@ -38,11 +38,17 @@ struct VlanMemberEntry
 
 typedef std::map<sai_vlan_id_t, VlanMemberEntry> vlan_members_t;
 
+typedef std::map<std::string, sai_object_id_t> endpoint_ip_l2mc_group_member_map_t;
+
 struct VlanInfo
 {
     sai_object_id_t     vlan_oid = 0;
     sai_vlan_id_t       vlan_id = 0;
     sai_object_id_t     host_intf_id = SAI_NULL_OBJECT_ID;
+    sai_vlan_flood_control_type_t uuc_flood_type = SAI_VLAN_FLOOD_CONTROL_TYPE_ALL;
+    sai_vlan_flood_control_type_t bc_flood_type = SAI_VLAN_FLOOD_CONTROL_TYPE_ALL;
+    sai_object_id_t    l2mc_group_id = SAI_NULL_OBJECT_ID;
+    endpoint_ip_l2mc_group_member_map_t l2mc_members;
 };
 
 struct SystemPortInfo
@@ -115,6 +121,7 @@ public:
     VlanInfo            m_vlan_info;
     MacAddress          m_mac;
     sai_object_id_t     m_bridge_port_id = 0;   // TODO: port could have multiple bridge port IDs
+    sai_object_id_t     m_bridge_port_admin_state = 0;   // TODO: port could have multiple bridge port IDs
     sai_vlan_id_t       m_port_vlan_id = DEFAULT_PORT_VLAN_ID;  // Port VLAN ID
     sai_object_id_t     m_rif_id = 0;
     sai_object_id_t     m_vr_id = 0;
@@ -124,7 +131,6 @@ public:
     sai_object_id_t     m_tunnel_id = 0;
     sai_object_id_t     m_ingress_acl_table_group_id = 0;
     sai_object_id_t     m_egress_acl_table_group_id = 0;
-    vlan_members_t      m_vlan_members;
     sai_object_id_t     m_parent_port_id = 0;
     uint32_t            m_dependency_bitmap = 0;
     sai_port_oper_status_t m_oper_status = SAI_PORT_OPER_STATUS_UNKNOWN;
@@ -133,7 +139,8 @@ public:
     std::vector<sai_object_id_t> m_queue_ids;
     std::vector<sai_object_id_t> m_priority_group_ids;
     sai_port_priority_flow_control_mode_t m_pfc_asym = SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_COMBINED;
-    uint8_t   m_pfc_bitmask = 0;
+    uint8_t   m_pfc_bitmask = 0;        // PFC enable bit mask
+    uint8_t   m_pfcwd_sw_bitmask = 0;   // PFC software watchdog enable
     uint16_t  m_tpid = DEFAULT_TPID;
     uint32_t  m_nat_zone_id = 0;
     uint32_t  m_vnid = VNID_NONE;
@@ -164,6 +171,7 @@ public:
     SystemLagInfo    m_system_lag_info;
 
     sai_object_id_t  m_switch_id = 0;
+    sai_object_id_t  m_system_side_id = 0;
     sai_object_id_t  m_line_side_id = 0;
 
     bool m_fec_cfg = false;

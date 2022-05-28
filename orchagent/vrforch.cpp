@@ -11,6 +11,7 @@
 #include "request_parser.h"
 #include "vrforch.h"
 #include "vxlanorch.h"
+#include "flowcounterrouteorch.h"
 #include "directory.h"
 #include "routeorch.h"
 
@@ -19,9 +20,11 @@ using namespace swss;
 
 extern sai_virtual_router_api_t* sai_virtual_router_api;
 extern sai_object_id_t gSwitchId;
-extern Directory<Orch*> gDirectory;
-extern PortsOrch*       gPortsOrch;
-extern RouteOrch*       gRouteOrch;
+
+extern Directory<Orch*>      gDirectory;
+extern PortsOrch*            gPortsOrch;
+extern FlowCounterRouteOrch* gFlowCounterRouteOrch;
+extern RouteOrch*            gRouteOrch;
 
 bool VRFOrch::addOperation(const Request& request)
 {
@@ -120,6 +123,7 @@ bool VRFOrch::addOperation(const Request& request)
         vrf_table_[vrf_name].vrf_id = router_id;
         vrf_table_[vrf_name].ref_count = 0;
         vrf_id_table_[router_id] = vrf_name;
+        gFlowCounterRouteOrch->onAddVR(router_id);
         if (vni != 0)
         {
             SWSS_LOG_INFO("VRF '%s' vni %d add", vrf_name.c_str(), vni);
@@ -202,6 +206,8 @@ bool VRFOrch::delOperation(const Request& request)
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
+
+    gFlowCounterRouteOrch->onRemoveVR(router_id);
 
     vrf_table_.erase(vrf_name);
     vrf_id_table_.erase(router_id);

@@ -5,6 +5,8 @@
 
 #include "aclorch.h"
 #include "crmorch.h"
+#include "copporch.h"
+#include "directory.h"
 
 #undef protected
 #undef private
@@ -18,12 +20,12 @@ struct Portal
             return aclRule->m_ruleOid;
         }
 
-        static const map<sai_acl_entry_attr_t, sai_attribute_value_t> &getMatches(const AclRule *aclRule)
+        static const map<sai_acl_entry_attr_t, SaiAttrWrapper> &getMatches(const AclRule *aclRule)
         {
             return aclRule->m_matches;
         }
 
-        static const map<sai_acl_entry_attr_t, sai_attribute_value_t> &getActions(const AclRule *aclRule)
+        static const map<sai_acl_entry_attr_t, SaiAttrWrapper> &getActions(const AclRule *aclRule)
         {
             return aclRule->m_actions;
         }
@@ -57,6 +59,41 @@ struct Portal
         static void getResAvailableCounters(CrmOrch *crmOrch)
         {
             crmOrch->getResAvailableCounters();
+        }
+    };
+
+    struct CoppOrchInternal
+    {
+        static TrapGroupPolicerTable getTrapGroupPolicerMap(CoppOrch &obj)
+        {
+            return obj.m_trap_group_policer_map;
+        }
+
+        static TrapIdTrapObjectsTable getTrapGroupIdMap(CoppOrch &obj)
+        {
+            return obj.m_syncdTrapIds;
+        }
+
+        static std::vector<sai_hostif_trap_type_t> getTrapIdsFromTrapGroup(CoppOrch &obj, sai_object_id_t trapGroupOid)
+        {
+            std::vector<sai_hostif_trap_type_t> trapIdList;
+            obj.getTrapIdsFromTrapGroup(trapGroupOid, trapIdList);
+            return trapIdList;
+        }
+    };
+
+    struct DirectoryInternal
+    {
+        template <typename T>
+        static void clear(Directory<T> &obj)
+        {
+            obj.m_values.clear();
+        }
+
+        template <typename T>
+        static bool empty(Directory<T> &obj)
+        {
+            return obj.m_values.empty();
         }
     };
 };

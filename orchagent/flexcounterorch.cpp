@@ -1,5 +1,4 @@
 #include <unordered_map>
-#include "flexcounterorch.h"
 #include "portsorch.h"
 #include "fabricportsorch.h"
 #include "select.h"
@@ -9,6 +8,10 @@
 #include "bufferorch.h"
 #include "flexcounterorch.h"
 #include "debugcounterorch.h"
+#include "directory.h"
+#include "copporch.h"
+#include "routeorch.h"
+#include "flowcounterrouteorch.h"
 
 extern sai_port_api_t *sai_port_api;
 
@@ -16,6 +19,9 @@ extern PortsOrch *gPortsOrch;
 extern FabricPortsOrch *gFabricPortsOrch;
 extern IntfsOrch *gIntfsOrch;
 extern BufferOrch *gBufferOrch;
+extern Directory<Orch*> gDirectory;
+extern CoppOrch *gCoppOrch;
+extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
 
 #define BUFFER_POOL_WATERMARK_KEY   "BUFFER_POOL_WATERMARK"
 #define PORT_KEY                    "PORT"
@@ -23,12 +29,16 @@ extern BufferOrch *gBufferOrch;
 #define QUEUE_KEY                   "QUEUE"
 #define PG_WATERMARK_KEY            "PG_WATERMARK"
 #define RIF_KEY                     "RIF"
+#define ACL_KEY                     "ACL"
+#define TUNNEL_KEY                  "TUNNEL"
+#define FLOW_CNT_TRAP_KEY           "FLOW_CNT_TRAP"
+#define FLOW_CNT_ROUTE_KEY          "FLOW_CNT_ROUTE"
 
 unordered_map<string, string> flexCounterGroupMap =
 {
     {"PORT", PORT_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"PORT_RATES", PORT_RATE_COUNTER_FLEX_COUNTER_GROUP},
-    {"PORT_BUFFER_DROP", PORT_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {"PORT_BUFFER_DROP", PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP},
     {"QUEUE", QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"PFCWD", PFC_WD_FLEX_COUNTER_GROUP},
     {"QUEUE_WATERMARK", QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP},
@@ -38,11 +48,16 @@ unordered_map<string, string> flexCounterGroupMap =
     {"RIF", RIF_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"RIF_RATES", RIF_RATE_COUNTER_FLEX_COUNTER_GROUP},
     {"DEBUG_COUNTER", DEBUG_COUNTER_FLEX_COUNTER_GROUP},
+    {"ACL", ACL_COUNTER_FLEX_COUNTER_GROUP},
+    {"TUNNEL", TUNNEL_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {FLOW_CNT_TRAP_KEY, HOSTIF_TRAP_COUNTER_FLEX_COUNTER_GROUP},
+    {FLOW_CNT_ROUTE_KEY, ROUTE_FLOW_COUNTER_FLEX_COUNTER_GROUP},
 };
 
 
 FlexCounterOrch::FlexCounterOrch(DBConnector *db, vector<string> &tableNames):
     Orch(db, tableNames),
+    m_flexCounterConfigTable(db, CFG_FLEX_COUNTER_TABLE_NAME),
     m_flexCounterDb(new DBConnector("FLEX_COUNTER_DB", 0)),
     m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE))
 {
@@ -58,6 +73,7 @@ void FlexCounterOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
+    VxlanTunnelOrch* vxlan_tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
     if (gPortsOrch && !gPortsOrch->allPortsReady())
     {
         return;
@@ -86,6 +102,13 @@ void FlexCounterOrch::doTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
+            auto itDelay = std::find(std::begin(data), std::end(data), FieldValueTuple(FLEX_COUNTER_DELAY_STATUS_FIELD, "true"));
+
+            if (itDelay != data.end())
+            {
+                consumer.m_toSync.erase(it++);
+                continue;
+            }
             for (auto valuePair:data)
             {
                 const auto &field = fvField(valuePair);
@@ -140,9 +163,51 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     {
                         gFabricPortsOrch->generateQueueStats();
                     }
+                    if (vxlan_tunnel_orch && (key== TUNNEL_KEY) && (value == "enable"))
+                    {
+                        vxlan_tunnel_orch->generateTunnelCounterMap();
+                    }
+                    if (gCoppOrch && (key == FLOW_CNT_TRAP_KEY))
+                    {
+                        if (value == "enable")
+                        {
+                            m_hostif_trap_counter_enabled = true;
+                            gCoppOrch->generateHostIfTrapCounterIdList();
+                        }
+                        else if (value == "disable")
+                        {
+                            gCoppOrch->clearHostIfTrapCounterIdList();
+                            m_hostif_trap_counter_enabled = false;
+                        }
+                    }
+                    if (gFlowCounterRouteOrch && gFlowCounterRouteOrch->getRouteFlowCounterSupported() && key == FLOW_CNT_ROUTE_KEY)
+                    {
+                        if (value == "enable" && !m_route_flow_counter_enabled)
+                        {
+                            m_route_flow_counter_enabled = true;
+                            gFlowCounterRouteOrch->generateRouteFlowStats();
+                        }
+                        else if (value == "disable" && m_route_flow_counter_enabled)
+                        {
+                            gFlowCounterRouteOrch->clearRouteFlowStats();
+                            m_route_flow_counter_enabled = false;
+                        }
+                    }
                     vector<FieldValueTuple> fieldValues;
                     fieldValues.emplace_back(FLEX_COUNTER_STATUS_FIELD, value);
                     m_flexCounterGroupTable->set(flexCounterGroupMap[key], fieldValues);
+
+                    // Update FLEX_COUNTER_STATUS for gearbox port
+                    if (key == PORT_KEY && gPortsOrch && gPortsOrch->isGearboxEnabled())
+                    {
+                        gPortsOrch->setGearboxFlexCounterStatus(value == "enable");
+                    }
+                }
+                else if(field == FLEX_COUNTER_DELAY_STATUS_FIELD)
+                {
+                    // This field is ignored since it is being used before getting into this loop.
+                    // If it is exist and the value is 'true' we need to skip the iteration in order to delay the counter creation.
+                    // The field will clear out and counter will be created when enable_counters script is called.
                 }
                 else
                 {
@@ -163,4 +228,46 @@ bool FlexCounterOrch::getPortCountersState() const
 bool FlexCounterOrch::getPortBufferDropCountersState() const
 {
     return m_port_buffer_drop_counter_enabled;
+}
+
+bool FlexCounterOrch::bake()
+{
+    /*
+     * bake is called during warmreboot reconciling procedure.
+     * By default, it should fetch items from the tables the sub agents listen to,
+     * and then push them into m_toSync of each sub agent.
+     * The motivation is to make sub agents handle the saved entries first and then handle the upcoming entries.
+     */
+
+    std::deque<KeyOpFieldsValuesTuple> entries;
+    vector<string> keys;
+    m_flexCounterConfigTable.getKeys(keys);
+    for (const auto &key: keys)
+    {
+        if (!flexCounterGroupMap.count(key))
+        {
+            SWSS_LOG_NOTICE("FlexCounterOrch: Invalid flex counter group intput %s is skipped during reconciling", key.c_str());
+            continue;
+        }
+
+        if (key == BUFFER_POOL_WATERMARK_KEY)
+        {
+            SWSS_LOG_NOTICE("FlexCounterOrch: Do not handle any FLEX_COUNTER table for %s update during reconciling",
+                            BUFFER_POOL_WATERMARK_KEY);
+            continue;
+        }
+
+        KeyOpFieldsValuesTuple kco;
+
+        kfvKey(kco) = key;
+        kfvOp(kco) = SET_COMMAND;
+
+        if (!m_flexCounterConfigTable.get(key, kfvFieldsValues(kco)))
+        {
+            continue;
+        }
+        entries.push_back(kco);
+    }
+    Consumer* consumer = dynamic_cast<Consumer *>(getExecutor(CFG_FLEX_COUNTER_TABLE_NAME));
+    return consumer->addToSync(entries);
 }

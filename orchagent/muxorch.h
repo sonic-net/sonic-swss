@@ -43,7 +43,8 @@ public:
 
 private:
     void createMuxAclTable(sai_object_id_t port, string strTable);
-    void createMuxAclRule(shared_ptr<AclRuleMux> rule, string strTable);
+    void createMuxAclRule(shared_ptr<AclRulePacket> rule, string strTable);
+    void bindAllPorts(AclTable &acl_table);
 
     // class shared dict: ACL table name -> ACL table
     static std::map<std::string, AclTable> acl_table_;
@@ -130,6 +131,8 @@ const request_description_t mux_cfg_request_description = {
                 { "server_ipv4", REQ_T_IP_PREFIX },
                 { "server_ipv6", REQ_T_IP_PREFIX },
                 { "address_ipv4", REQ_T_IP },
+                { "soc_ipv4", REQ_T_IP_PREFIX },
+                { "cable_type", REQ_T_STRING },
             },
             { }
 };

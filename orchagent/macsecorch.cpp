@@ -6,6 +6,7 @@
 #include <swss/redisutility.h>
 #include <swss/boolean.h>
 
+#include <boost/algorithm/string.hpp>
 #include <vector>
 #include <sstream>
 #include <algorithm>
@@ -13,13 +14,22 @@
 #include <stack>
 #include <memory>
 #include <typeinfo>
+#include <byteswap.h>
+#include <cstdint>
 
 /* Global Variables*/
 
 #define AVAILABLE_ACL_PRIORITIES_LIMITATION             (32)
 #define EAPOL_ETHER_TYPE                                (0x888e)
+#define PAUSE_ETHER_TYPE                                (0x8808)
 #define MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS    (1000)
-#define COUNTERS_MACSEC_ATTR_GROUP                      "COUNTERS_MACSEC_ATTR"
+#define COUNTERS_MACSEC_SA_ATTR_GROUP                   "COUNTERS_MACSEC_SA_ATTR"
+#define COUNTERS_MACSEC_SA_GROUP                        "COUNTERS_MACSEC_SA"
+#define COUNTERS_MACSEC_FLOW_GROUP                      "COUNTERS_MACSEC_FLOW"
+#define PFC_MODE_BYPASS                                 "bypass"
+#define PFC_MODE_ENCRYPT                                "encrypt"
+#define PFC_MODE_STRICT_ENCRYPT                         "strict_encrypt"
+#define PFC_MODE_DEFAULT                                 PFC_MODE_BYPASS
 
 extern sai_object_id_t   gSwitchId;
 extern sai_macsec_api_t *sai_macsec_api;
@@ -34,6 +44,62 @@ constexpr sai_macsec_cipher_suite_t DEFAULT_CIPHER_SUITE = SAI_MACSEC_CIPHER_SUI
 static const std::vector<std::string> macsec_sa_attrs =
     {
         "SAI_MACSEC_SA_ATTR_CURRENT_XPN",
+};
+static const std::vector<std::string> macsec_sa_ingress_stats =
+    {
+        "SAI_MACSEC_SA_STAT_OCTETS_ENCRYPTED",
+        "SAI_MACSEC_SA_STAT_OCTETS_PROTECTED",
+        "SAI_MACSEC_SA_STAT_IN_PKTS_UNCHECKED",
+        "SAI_MACSEC_SA_STAT_IN_PKTS_DELAYED",
+        "SAI_MACSEC_SA_STAT_IN_PKTS_LATE",
+        "SAI_MACSEC_SA_STAT_IN_PKTS_INVALID",
+        "SAI_MACSEC_SA_STAT_IN_PKTS_NOT_VALID",
+        "SAI_MACSEC_SA_STAT_IN_PKTS_NOT_USING_SA",
+        "SAI_MACSEC_SA_STAT_IN_PKTS_UNUSED_SA",
+        "SAI_MACSEC_SA_STAT_IN_PKTS_OK",
+};
+static const std::vector<std::string> macsec_sa_egress_stats =
+    {
+        "SAI_MACSEC_SA_STAT_OCTETS_ENCRYPTED",
+        "SAI_MACSEC_SA_STAT_OCTETS_PROTECTED",
+        "SAI_MACSEC_SA_STAT_OUT_PKTS_ENCRYPTED",
+        "SAI_MACSEC_SA_STAT_OUT_PKTS_PROTECTED",
+};
+static const std::vector<std::string> macsec_flow_ingress_stats =
+    {
+        "SAI_MACSEC_FLOW_STAT_OTHER_ERR",
+        "SAI_MACSEC_FLOW_STAT_OCTETS_UNCONTROLLED",
+        "SAI_MACSEC_FLOW_STAT_OCTETS_CONTROLLED",
+        "SAI_MACSEC_FLOW_STAT_UCAST_PKTS_UNCONTROLLED",
+        "SAI_MACSEC_FLOW_STAT_UCAST_PKTS_CONTROLLED",
+        "SAI_MACSEC_FLOW_STAT_MULTICAST_PKTS_UNCONTROLLED",
+        "SAI_MACSEC_FLOW_STAT_MULTICAST_PKTS_CONTROLLED",
+        "SAI_MACSEC_FLOW_STAT_BROADCAST_PKTS_UNCONTROLLED",
+        "SAI_MACSEC_FLOW_STAT_BROADCAST_PKTS_CONTROLLED",
+        "SAI_MACSEC_FLOW_STAT_CONTROL_PKTS",
+        "SAI_MACSEC_FLOW_STAT_PKTS_UNTAGGED",
+        "SAI_MACSEC_FLOW_STAT_IN_TAGGED_CONTROL_PKTS",
+        "SAI_MACSEC_FLOW_STAT_IN_PKTS_NO_TAG",
+        "SAI_MACSEC_FLOW_STAT_IN_PKTS_BAD_TAG",
+        "SAI_MACSEC_FLOW_STAT_IN_PKTS_NO_SCI",
+        "SAI_MACSEC_FLOW_STAT_IN_PKTS_UNKNOWN_SCI",
+        "SAI_MACSEC_FLOW_STAT_IN_PKTS_OVERRUN",
+};
+static const std::vector<std::string> macsec_flow_egress_stats =
+    {
+        "SAI_MACSEC_FLOW_STAT_OTHER_ERR",
+        "SAI_MACSEC_FLOW_STAT_OCTETS_UNCONTROLLED",
+        "SAI_MACSEC_FLOW_STAT_OCTETS_CONTROLLED",
+        "SAI_MACSEC_FLOW_STAT_OUT_OCTETS_COMMON",
+        "SAI_MACSEC_FLOW_STAT_UCAST_PKTS_UNCONTROLLED",
+        "SAI_MACSEC_FLOW_STAT_UCAST_PKTS_CONTROLLED",
+        "SAI_MACSEC_FLOW_STAT_MULTICAST_PKTS_UNCONTROLLED",
+        "SAI_MACSEC_FLOW_STAT_MULTICAST_PKTS_CONTROLLED",
+        "SAI_MACSEC_FLOW_STAT_BROADCAST_PKTS_UNCONTROLLED",
+        "SAI_MACSEC_FLOW_STAT_BROADCAST_PKTS_CONTROLLED",
+        "SAI_MACSEC_FLOW_STAT_CONTROL_PKTS",
+        "SAI_MACSEC_FLOW_STAT_PKTS_UNTAGGED",
+        "SAI_MACSEC_FLOW_STAT_OUT_PKTS_TOO_LONG",
 };
 
 template <typename T, typename... Args>
@@ -155,6 +221,68 @@ static void lexical_convert(const std::string &buffer, MACsecAuthKey &auth_key)
     }
 }
 
+class MACsecSCI
+{
+public:
+    operator sai_uint64_t () const
+    {
+        SWSS_LOG_ENTER();
+
+        return m_sci;
+    }
+
+    std::string str() const
+    {
+        SWSS_LOG_ENTER();
+
+        return boost::algorithm::to_lower_copy(swss::binary_to_hex(&m_sci, sizeof(m_sci)));
+    }
+
+    MACsecSCI& operator= (const std::string &buffer)
+    {
+        SWSS_LOG_ENTER();
+
+        if (!swss::hex_to_binary(buffer, reinterpret_cast<std::uint8_t *>(&m_sci), sizeof(m_sci)))
+        {
+            SWSS_LOG_THROW("Invalid SCI %s", buffer.c_str());
+        }
+
+        return *this;
+    }
+
+    MACsecSCI() = default;
+
+    MACsecSCI(const sai_uint64_t sci)
+    {
+        SWSS_LOG_ENTER();
+
+        this->m_sci = sci;
+    }
+
+private:
+    sai_uint64_t m_sci;
+};
+
+namespace swss {
+
+template<>
+inline void lexical_convert(const std::string &buffer, MACsecSCI &sci)
+{
+    SWSS_LOG_ENTER();
+
+    sci = buffer;
+}
+
+}
+
+std::ostream& operator<<(std::ostream& stream, const MACsecSCI& sci)
+{
+    SWSS_LOG_ENTER();
+
+    stream << sci.str();
+    return stream;
+}
+
 /* Recover from a fail action by a serial of pre-defined recover actions */
 class RecoverStack
 {
@@ -219,7 +347,7 @@ public:
 
     sai_object_id_t *get_port_id()
     {
-        if(m_port_id == nullptr)
+        if (m_port_id == nullptr)
         {
             auto port = get_port();
             if (port == nullptr)
@@ -382,24 +510,27 @@ public:
         return m_macsec_sa;
     }
 
-private:
-    MACsecOrchContext(MACsecOrch *orch) : m_orch(orch),
-                                          m_port_name(nullptr),
-                                          m_direction(SAI_MACSEC_DIRECTION_EGRESS),
-                                          m_sci(nullptr),
-                                          m_an(nullptr),
-                                          m_port(nullptr),
-                                          m_macsec_obj(nullptr),
-                                          m_port_id(nullptr),
-                                          m_switch_id(nullptr),
-                                          m_macsec_port(nullptr),
-                                          m_acl_table(nullptr),
-                                          m_macsec_sc(nullptr),
-                                          m_macsec_sa(nullptr)
+    const gearbox_phy_t* get_gearbox_phy()
     {
+        if (m_gearbox_phy)
+        {
+            return m_gearbox_phy;
+        }
+        auto switch_id = get_switch_id();
+        if (switch_id == nullptr || get_port() == nullptr)
+        {
+            SWSS_LOG_ERROR("Switch/Port wasn't provided");
+            return nullptr;
+        }
+        if (*switch_id == gSwitchId)
+        {
+            return nullptr;
+        }
+        m_gearbox_phy = m_orch->m_port_orch->getGearboxPhy(*get_port());
+        return m_gearbox_phy;
     }
 
-    const Port *get_port()
+    Port *get_port()
     {
         if (m_port == nullptr)
         {
@@ -424,6 +555,24 @@ private:
         return m_port.get();
     }
 
+private:
+    MACsecOrchContext(MACsecOrch *orch) : m_orch(orch),
+                                          m_port_name(nullptr),
+                                          m_direction(SAI_MACSEC_DIRECTION_EGRESS),
+                                          m_sci(nullptr),
+                                          m_an(nullptr),
+                                          m_port(nullptr),
+                                          m_macsec_obj(nullptr),
+                                          m_port_id(nullptr),
+                                          m_switch_id(nullptr),
+                                          m_macsec_port(nullptr),
+                                          m_acl_table(nullptr),
+                                          m_macsec_sc(nullptr),
+                                          m_macsec_sa(nullptr),
+                                          m_gearbox_phy(nullptr)
+    {
+    }
+
     MACsecOrch                          *m_orch;
     std::shared_ptr<std::string>        m_port_name;
     sai_macsec_direction_t              m_direction;
@@ -440,6 +589,7 @@ private:
 
     MACsecOrch::MACsecSC                *m_macsec_sc;
     sai_object_id_t                     *m_macsec_sa;
+    const gearbox_phy_t                 *m_gearbox_phy;
 };
 
 /* MACsec Orchagent */
@@ -455,10 +605,38 @@ MACsecOrch::MACsecOrch(
                             m_state_macsec_ingress_sc(state_db, STATE_MACSEC_INGRESS_SC_TABLE_NAME),
                             m_state_macsec_egress_sa(state_db, STATE_MACSEC_EGRESS_SA_TABLE_NAME),
                             m_state_macsec_ingress_sa(state_db, STATE_MACSEC_INGRESS_SA_TABLE_NAME),
+                            m_applPortTable(app_db, APP_PORT_TABLE_NAME),
                             m_counter_db("COUNTERS_DB", 0),
                             m_macsec_counters_map(&m_counter_db, COUNTERS_MACSEC_NAME_MAP),
-                            m_macsec_flex_counter_manager(
-                                COUNTERS_MACSEC_ATTR_GROUP,
+                            m_macsec_flow_tx_counters_map(&m_counter_db, COUNTERS_MACSEC_FLOW_TX_NAME_MAP),
+                            m_macsec_flow_rx_counters_map(&m_counter_db, COUNTERS_MACSEC_FLOW_RX_NAME_MAP),
+                            m_macsec_sa_tx_counters_map(&m_counter_db, COUNTERS_MACSEC_SA_TX_NAME_MAP),
+                            m_macsec_sa_rx_counters_map(&m_counter_db, COUNTERS_MACSEC_SA_RX_NAME_MAP),
+                            m_macsec_sa_attr_manager(
+                                COUNTERS_MACSEC_SA_ATTR_GROUP,
+                                StatsMode::READ,
+                                MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
+                            m_macsec_sa_stat_manager(
+                                COUNTERS_MACSEC_SA_GROUP,
+                                StatsMode::READ,
+                                MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
+                            m_macsec_flow_stat_manager(
+                                COUNTERS_MACSEC_FLOW_GROUP,
+                                StatsMode::READ,
+                                MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
+                            m_gb_macsec_sa_attr_manager(
+                                "GB_FLEX_COUNTER_DB",
+                                COUNTERS_MACSEC_SA_ATTR_GROUP,
+                                StatsMode::READ,
+                                MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
+                            m_gb_macsec_sa_stat_manager(
+                                "GB_FLEX_COUNTER_DB",
+                                COUNTERS_MACSEC_SA_GROUP,
+                                StatsMode::READ,
+                                MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
+                            m_gb_macsec_flow_stat_manager(
+                                "GB_FLEX_COUNTER_DB",
+                                COUNTERS_MACSEC_FLOW_GROUP,
                                 StatsMode::READ,
                                 MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true)
 {
@@ -592,7 +770,9 @@ task_process_status MACsecOrch::taskUpdateMACsecPort(
                 port_attr,
                 *ctx.get_macsec_obj(),
                 *ctx.get_port_id(),
-                *ctx.get_switch_id()))
+                *ctx.get_switch_id(),
+                *ctx.get_port(),
+                ctx.get_gearbox_phy()))
         {
             return task_failed;
         }
@@ -602,7 +782,9 @@ task_process_status MACsecOrch::taskUpdateMACsecPort(
                 *macsec_port_itr->second,
                 port_name,
                 *ctx.get_macsec_obj(),
-                *ctx.get_port_id());
+                *ctx.get_port_id(),
+                *ctx.get_port(),
+                ctx.get_gearbox_phy());
         });
     }
     if (!updateMACsecPort(*ctx.get_macsec_port(), port_attr))
@@ -644,7 +826,9 @@ task_process_status MACsecOrch::taskDisableMACsecPort(
             *ctx.get_macsec_port(),
             port_name,
             *ctx.get_macsec_obj(),
-            *ctx.get_port_id()))
+            *ctx.get_port_id(),
+            *ctx.get_port(),
+            ctx.get_gearbox_phy()))
     {
         result = task_failed;
     }
@@ -701,7 +885,7 @@ task_process_status MACsecOrch::taskUpdateEgressSA(
 {
     SWSS_LOG_ENTER();
     std::string port_name;
-    sai_uint64_t sci = 0;
+    MACsecSCI sci;
     macsec_an_t an = 0;
     if (!extract_variables(port_sci_an, ':', port_name, sci, an) || an > MAX_SA_NUMBER)
     {
@@ -712,12 +896,35 @@ task_process_status MACsecOrch::taskUpdateEgressSA(
     MACsecOrchContext ctx(this, port_name, SAI_MACSEC_DIRECTION_EGRESS, sci, an);
     if (ctx.get_macsec_sc() == nullptr)
     {
-        SWSS_LOG_INFO("The MACsec SC 0x%" PRIx64 " hasn't been created at the port %s.", sci, port_name.c_str());
+        SWSS_LOG_INFO("The MACsec SC %s hasn't been created at the port %s.", sci.str().c_str(), port_name.c_str());
         return task_need_retry;
     }
     if (ctx.get_macsec_sc()->m_encoding_an == an)
     {
-        return createMACsecSA(port_sci_an, sa_attr, SAI_MACSEC_DIRECTION_EGRESS);
+        if (ctx.get_macsec_sa() == nullptr)
+        {
+            // The MACsec SA hasn't been created
+            return createMACsecSA(port_sci_an, sa_attr, SAI_MACSEC_DIRECTION_EGRESS);
+        }
+        else
+        {
+            // The MACsec SA has enabled, update SA's attributes
+            sai_uint64_t pn;
+
+            if (get_value(sa_attr, "next_pn", pn))
+            {
+                sai_attribute_t attr;
+                attr.id = SAI_MACSEC_SA_ATTR_CONFIGURED_EGRESS_XPN;
+                attr.value.u64 = pn;
+                if (!this->updateMACsecAttr(SAI_OBJECT_TYPE_MACSEC_SA, *(ctx.get_macsec_sa()), attr))
+                {
+                    SWSS_LOG_WARN("Fail to update next pn (%" PRIu64 ") of egress MACsec SA %s", pn, port_sci_an.c_str());
+                    return task_failed;
+                }
+            }
+
+            return task_success;
+        }
     }
     return task_need_retry;
 }
@@ -737,7 +944,7 @@ task_process_status MACsecOrch::taskUpdateIngressSA(
     SWSS_LOG_ENTER();
 
     swss::AlphaBoolean alpha_boolean = false;
-    get_value(sa_attr, "active", alpha_boolean);
+    bool has_active_field = get_value(sa_attr, "active", alpha_boolean);
     bool active = alpha_boolean.operator bool();
     if (active)
     {
@@ -747,7 +954,7 @@ task_process_status MACsecOrch::taskUpdateIngressSA(
     {
 
         std::string port_name;
-        sai_uint64_t sci = 0;
+        MACsecSCI sci;
         macsec_an_t an = 0;
         if (!extract_variables(port_sci_an, ':', port_name, sci, an) || an > MAX_SA_NUMBER)
         {
@@ -759,7 +966,29 @@ task_process_status MACsecOrch::taskUpdateIngressSA(
 
         if (ctx.get_macsec_sa() != nullptr)
         {
-            return deleteMACsecSA(port_sci_an, SAI_MACSEC_DIRECTION_INGRESS);
+            if (has_active_field)
+            {
+                // Delete MACsec SA explicitly by set active to false
+                return deleteMACsecSA(port_sci_an, SAI_MACSEC_DIRECTION_INGRESS);
+            }
+            else
+            {
+                sai_uint64_t pn;
+
+                if (get_value(sa_attr, "lowest_acceptable_pn", pn))
+                {
+                    sai_attribute_t attr;
+                    attr.id = SAI_MACSEC_SA_ATTR_MINIMUM_INGRESS_XPN;
+                    attr.value.u64 = pn;
+                    if (!this->updateMACsecAttr(SAI_OBJECT_TYPE_MACSEC_SA, *(ctx.get_macsec_sa()), attr))
+                    {
+                        SWSS_LOG_WARN("Fail to update lowest acceptable PN (%" PRIu64 ") of ingress MACsec SA %s", pn, port_sci_an.c_str());
+                        return task_failed;
+                    }
+                }
+
+                return task_success;
+            }
         }
         else
         {
@@ -770,6 +999,8 @@ task_process_status MACsecOrch::taskUpdateIngressSA(
             return task_need_retry;
         }
     }
+
+    return task_success;
 }
 
 task_process_status MACsecOrch::taskDeleteIngressSA(
@@ -866,6 +1097,32 @@ bool MACsecOrch::initMACsecObject(sai_object_id_t switch_id)
     }
     macsec_obj.first->second.m_sci_in_ingress_macsec_acl = attrs.front().value.booldata;
 
+    attrs.clear();
+    attr.id = SAI_MACSEC_ATTR_MAX_SECURE_ASSOCIATIONS_PER_SC;
+    attrs.push_back(attr);
+    status = sai_macsec_api->get_macsec_attribute(
+                    macsec_obj.first->second.m_ingress_id,
+                    static_cast<uint32_t>(attrs.size()),
+                    attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        // Default to 4 if SAI_MACSEC_ATTR_MAX_SECURE_ASSOCIATION_PER_SC isn't supported
+        macsec_obj.first->second.m_max_sa_per_sc = 4;
+    } else {
+        switch (attrs.front().value.s32)
+        {
+            case SAI_MACSEC_MAX_SECURE_ASSOCIATIONS_PER_SC_TWO:
+                macsec_obj.first->second.m_max_sa_per_sc = 2;
+                break;
+            case SAI_MACSEC_MAX_SECURE_ASSOCIATIONS_PER_SC_FOUR:
+                macsec_obj.first->second.m_max_sa_per_sc = 4;
+                break;
+            default:
+                SWSS_LOG_WARN( "Unsupported value returned from SAI_MACSEC_ATTR_MAX_SECURE_ASSOCIATION_PER_SC" );
+                return false;
+        }
+    }
+
     recover.clear();
     return true;
 }
@@ -906,8 +1163,10 @@ bool MACsecOrch::createMACsecPort(
     const std::string &port_name,
     const TaskArgs &port_attr,
     const MACsecObject &macsec_obj,
-    sai_object_id_t line_port_id,
-    sai_object_id_t switch_id)
+    sai_object_id_t port_id,
+    sai_object_id_t switch_id,
+    Port &port,
+    const gearbox_phy_t* phy)
 {
     SWSS_LOG_ENTER();
 
@@ -915,7 +1174,7 @@ bool MACsecOrch::createMACsecPort(
 
     if (!createMACsecPort(
             macsec_port.m_egress_port_id,
-            line_port_id,
+            port_id,
             switch_id,
             SAI_MACSEC_DIRECTION_EGRESS))
     {
@@ -929,7 +1188,7 @@ bool MACsecOrch::createMACsecPort(
 
     if (!createMACsecPort(
             macsec_port.m_ingress_port_id,
-            line_port_id,
+            port_id,
             switch_id,
             SAI_MACSEC_DIRECTION_INGRESS))
     {
@@ -982,41 +1241,73 @@ bool MACsecOrch::createMACsecPort(
 
     if (!initMACsecACLTable(
             macsec_port.m_egress_acl_table,
-            line_port_id,
+            port_id,
             switch_id,
             SAI_MACSEC_DIRECTION_EGRESS,
-            macsec_port.m_sci_in_sectag))
+            macsec_port.m_sci_in_sectag,
+            port_name,
+            phy))
     {
         SWSS_LOG_WARN("Cannot init the ACL Table at the port %s.", port_name.c_str());
         return false;
     }
-    recover.add_action([this, &macsec_port, line_port_id]() {
+    recover.add_action([this, &macsec_port, port_id, phy]() {
         this->deinitMACsecACLTable(
             macsec_port.m_egress_acl_table,
-            line_port_id,
-            SAI_MACSEC_DIRECTION_EGRESS);
+            port_id,
+            SAI_MACSEC_DIRECTION_EGRESS,
+            phy);
     });
 
     if (!initMACsecACLTable(
             macsec_port.m_ingress_acl_table,
-            line_port_id,
+            port_id,
             switch_id,
             SAI_MACSEC_DIRECTION_INGRESS,
-            macsec_port.m_sci_in_sectag))
+            macsec_port.m_sci_in_sectag,
+            port_name,
+            phy))
     {
         SWSS_LOG_WARN("Cannot init the ACL Table at the port %s.", port_name.c_str());
         return false;
     }
-    recover.add_action([this, &macsec_port, line_port_id]() {
+    recover.add_action([this, &macsec_port, port_id, phy]() {
         this->deinitMACsecACLTable(
             macsec_port.m_ingress_acl_table,
-            line_port_id,
-            SAI_MACSEC_DIRECTION_INGRESS);
+            port_id,
+            SAI_MACSEC_DIRECTION_INGRESS,
+            phy);
     });
+
+    if (phy)
+    {
+        if (!setPFCForward(port_id, true))
+        {
+            SWSS_LOG_WARN("Cannot enable PFC forward at the port %s.", port_name.c_str());
+            return false;
+        }
+        recover.add_action([this, port_id]()
+                           { this->setPFCForward(port_id, false); });
+
+        if (phy->macsec_ipg != 0)
+        {
+            if (!m_port_orch->getPortIPG(port.m_port_id, macsec_port.m_original_ipg))
+            {
+                SWSS_LOG_WARN("Cannot get Port IPG at the port %s", port_name.c_str());
+                return false;
+            }
+            if (!m_port_orch->setPortIPG(port.m_port_id, phy->macsec_ipg))
+            {
+                SWSS_LOG_WARN("Cannot set MACsec IPG to %u at the port %s", phy->macsec_ipg, port_name.c_str());
+                return false;
+            }
+        }
+    }
 
     SWSS_LOG_NOTICE("MACsec port %s is created.", port_name.c_str());
 
     std::vector<FieldValueTuple> fvVector;
+    fvVector.emplace_back("max_sa_per_sc", std::to_string(macsec_obj.m_max_sa_per_sc));
     fvVector.emplace_back("state", "ok");
     m_state_macsec_port.set(port_name, fvVector);
 
@@ -1026,7 +1317,7 @@ bool MACsecOrch::createMACsecPort(
 
 bool MACsecOrch::createMACsecPort(
     sai_object_id_t &macsec_port_id,
-    sai_object_id_t line_port_id,
+    sai_object_id_t port_id,
     sai_object_id_t switch_id,
     sai_macsec_direction_t direction)
 {
@@ -1039,7 +1330,7 @@ bool MACsecOrch::createMACsecPort(
     attr.value.s32 = direction;
     attrs.push_back(attr);
     attr.id = SAI_MACSEC_PORT_ATTR_PORT_ID;
-    attr.value.oid = line_port_id;
+    attr.value.oid = port_id;
     attrs.push_back(attr);
     sai_status_t status = sai_macsec_api->create_macsec_port(
                                 &macsec_port_id,
@@ -1069,6 +1360,18 @@ bool MACsecOrch::updateMACsecPort(MACsecPort &macsec_port, const TaskArgs &port_
     if (get_value(port_attr, "enable_encrypt", alpha_boolean))
     {
         macsec_port.m_enable_encrypt = alpha_boolean.operator bool();
+        if (!updateMACsecSCs(
+                macsec_port,
+                [&macsec_port, this](MACsecOrch::MACsecSC &macsec_sc)
+                {
+                    sai_attribute_t attr;
+                    attr.id = SAI_MACSEC_SC_ATTR_ENCRYPTION_ENABLE;
+                    attr.value.booldata = macsec_port.m_enable_encrypt;
+                    return this->updateMACsecAttr(SAI_OBJECT_TYPE_MACSEC_SC, macsec_sc.m_sc_id, attr);
+                }))
+        {
+            return false;
+        }
     }
     if (get_value(port_attr, "send_sci", alpha_boolean))
     {
@@ -1095,41 +1398,51 @@ bool MACsecOrch::updateMACsecPort(MACsecPort &macsec_port, const TaskArgs &port_
         }
         else
         {
-            SWSS_LOG_WARN("Unknow Cipher Suite %s", cipher_suite.c_str());
+            SWSS_LOG_WARN("Unknown Cipher Suite %s", cipher_suite.c_str());
+            return false;
+        }
+        if (!updateMACsecSCs(
+                macsec_port,
+                [&macsec_port, this](MACsecOrch::MACsecSC &macsec_sc)
+                {
+                    sai_attribute_t attr;
+                    attr.id = SAI_MACSEC_SC_ATTR_MACSEC_CIPHER_SUITE;
+                    attr.value.s32 = macsec_port.m_cipher_suite;
+                    return this->updateMACsecAttr(SAI_OBJECT_TYPE_MACSEC_SC, macsec_sc.m_sc_id, attr);
+                }))
+        {
             return false;
         }
     }
     swss::AlphaBoolean enable = false;
     if (get_value(port_attr, "enable", enable) && enable.operator bool() != macsec_port.m_enable)
     {
-        std::vector<MACsecOrch::MACsecSC *> macsec_scs;
         macsec_port.m_enable = enable.operator bool();
-        for (auto &sc : macsec_port.m_egress_scs)
-        {
-            macsec_scs.push_back(&sc.second);
-        }
-        for (auto &sc : macsec_port.m_ingress_scs)
-        {
-            macsec_scs.push_back(&sc.second);
-        }
-        for (auto &macsec_sc : macsec_scs)
-        {
-            // Change the ACL entry action from packet action to MACsec flow
-            if (macsec_port.m_enable)
-            {
-                if (!setMACsecFlowActive(macsec_sc->m_entry_id, macsec_sc->m_flow_id, true))
+        if (!updateMACsecSCs(
+                macsec_port,
+                [&macsec_port, &recover, this](MACsecOrch::MACsecSC &macsec_sc)
                 {
-                    SWSS_LOG_WARN("Cannot change the ACL entry action from packet action to MACsec flow");
-                    return false;
-                }
-                auto entry_id = macsec_sc->m_entry_id;
-                auto flow_id = macsec_sc->m_flow_id;
-                recover.add_action([this, entry_id, flow_id]() { this->setMACsecFlowActive(entry_id, flow_id, false); });
-            }
-            else
-            {
-                setMACsecFlowActive(macsec_sc->m_entry_id, macsec_sc->m_flow_id, false);
-            }
+                    // Change the ACL entry action from packet action to MACsec flow
+                    if (macsec_port.m_enable)
+                    {
+                        if (!this->setMACsecFlowActive(macsec_sc.m_entry_id, macsec_sc.m_flow_id, true))
+                        {
+                            SWSS_LOG_WARN("Cannot change the ACL entry action from packet action to MACsec flow");
+                            return false;
+                        }
+                        auto entry_id = macsec_sc.m_entry_id;
+                        auto flow_id = macsec_sc.m_flow_id;
+                        recover.add_action([this, entry_id, flow_id]()
+                                           { this->setMACsecFlowActive(entry_id, flow_id, false); });
+                    }
+                    else
+                    {
+                        this->setMACsecFlowActive(macsec_sc.m_entry_id, macsec_sc.m_flow_id, false);
+                    }
+                    return true;
+                }))
+        {
+            return false;
         }
     }
 
@@ -1137,27 +1450,57 @@ bool MACsecOrch::updateMACsecPort(MACsecPort &macsec_port, const TaskArgs &port_
     return true;
 }
 
+bool MACsecOrch::updateMACsecSCs(MACsecPort &macsec_port, std::function<bool(MACsecOrch::MACsecSC &)> action)
+{
+    SWSS_LOG_ENTER();
+
+    auto sc = macsec_port.m_egress_scs.begin();
+    while (sc != macsec_port.m_egress_scs.end())
+    {
+        if (!action((sc++)->second))
+        {
+            return false;
+        }
+    }
+    sc = macsec_port.m_ingress_scs.begin();
+    while (sc != macsec_port.m_ingress_scs.end())
+    {
+        if (!action((sc++)->second))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 bool MACsecOrch::deleteMACsecPort(
     const MACsecPort &macsec_port,
     const std::string &port_name,
     const MACsecObject &macsec_obj,
-    sai_object_id_t line_port_id)
+    sai_object_id_t port_id,
+    Port &port,
+    const gearbox_phy_t* phy)
 {
     SWSS_LOG_ENTER();
 
     bool result = true;
 
-    for (auto &sc : macsec_port.m_egress_scs)
+    auto sc = macsec_port.m_egress_scs.begin();
+    while (sc != macsec_port.m_egress_scs.end())
     {
-        const std::string port_sci = swss::join(':', port_name, sc.first);
+        const std::string port_sci = swss::join(':', port_name, MACsecSCI(sc->first));
+        sc ++;
         if (deleteMACsecSC(port_sci, SAI_MACSEC_DIRECTION_EGRESS) != task_success)
         {
             result &= false;
         }
     }
-    for (auto &sc : macsec_port.m_ingress_scs)
+    sc = macsec_port.m_ingress_scs.begin();
+    while (sc != macsec_port.m_ingress_scs.end())
     {
-        const std::string port_sci = swss::join(':', port_name, sc.first);
+        const std::string port_sci = swss::join(':', port_name, MACsecSCI(sc->first));
+        sc ++;
         if (deleteMACsecSC(port_sci, SAI_MACSEC_DIRECTION_INGRESS) != task_success)
         {
             result &= false;
@@ -1179,13 +1522,13 @@ bool MACsecOrch::deleteMACsecPort(
         }
     }
 
-    if (!deinitMACsecACLTable(macsec_port.m_ingress_acl_table, line_port_id, SAI_MACSEC_DIRECTION_INGRESS))
+    if (!deinitMACsecACLTable(macsec_port.m_ingress_acl_table, port_id, SAI_MACSEC_DIRECTION_INGRESS, phy))
     {
         SWSS_LOG_WARN("Cannot deinit ingress ACL table at the port %s.", port_name.c_str());
         result &= false;
     }
 
-    if (!deinitMACsecACLTable(macsec_port.m_egress_acl_table, line_port_id, SAI_MACSEC_DIRECTION_EGRESS))
+    if (!deinitMACsecACLTable(macsec_port.m_egress_acl_table, port_id, SAI_MACSEC_DIRECTION_EGRESS, phy))
     {
         SWSS_LOG_WARN("Cannot deinit egress ACL table at the port %s.", port_name.c_str());
         result &= false;
@@ -1201,6 +1544,24 @@ bool MACsecOrch::deleteMACsecPort(
     {
         SWSS_LOG_WARN("Cannot delete MACsec ingress port at the port %s", port_name.c_str());
         result &= false;
+    }
+
+    if (phy)
+    {
+        if (!setPFCForward(port_id, false))
+        {
+            SWSS_LOG_WARN("Cannot disable PFC forward at the port %s.", port_name.c_str());
+            result &= false;
+        }
+
+        if (phy->macsec_ipg != 0)
+        {
+            if (!m_port_orch->setPortIPG(port.m_port_id, macsec_port.m_original_ipg))
+            {
+                SWSS_LOG_WARN("Cannot set MACsec IPG to %u at the port %s", macsec_port.m_original_ipg, port_name.c_str());
+                result &= false;
+            }
+        }
     }
 
     m_state_macsec_port.del(port_name);
@@ -1278,7 +1639,7 @@ task_process_status MACsecOrch::updateMACsecSC(
     SWSS_LOG_ENTER();
 
     std::string port_name;
-    sai_uint64_t sci = {0};
+    MACsecSCI sci;
     if (!extract_variables(port_sci, ':', port_name, sci))
     {
         SWSS_LOG_WARN("The key %s isn't correct.", port_sci.c_str());
@@ -1357,7 +1718,7 @@ bool MACsecOrch::createMACsecSC(
 
     RecoverStack recover;
 
-    const std::string port_sci = swss::join(':', port_name, sci);
+    const std::string port_sci = swss::join(':', port_name, MACsecSCI(sci));
 
     auto scs =
         (direction == SAI_MACSEC_DIRECTION_EGRESS)
@@ -1450,11 +1811,11 @@ bool MACsecOrch::createMACsecSC(
     fvVector.emplace_back("state", "ok");
     if (direction == SAI_MACSEC_DIRECTION_EGRESS)
     {
-        m_state_macsec_egress_sc.set(swss::join('|', port_name, sci), fvVector);
+        m_state_macsec_egress_sc.set(swss::join('|', port_name, MACsecSCI(sci)), fvVector);
     }
     else
     {
-        m_state_macsec_ingress_sc.set(swss::join('|', port_name, sci), fvVector);
+        m_state_macsec_ingress_sc.set(swss::join('|', port_name, MACsecSCI(sci)), fvVector);
     }
 
     recover.clear();
@@ -1502,7 +1863,7 @@ bool MACsecOrch::createMACsecSC(
                                 attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_WARN("Cannot create MACsec egress SC 0x%" PRIx64, sci);
+        SWSS_LOG_WARN("Cannot create MACsec egress SC %s", MACsecSCI(sci).str().c_str());
         task_process_status handle_status = handleSaiCreateStatus(SAI_API_MACSEC, status);
         if (handle_status != task_success)
         {
@@ -1519,7 +1880,7 @@ task_process_status MACsecOrch::deleteMACsecSC(
     SWSS_LOG_ENTER();
 
     std::string port_name;
-    sai_uint64_t sci = 0;
+    MACsecSCI sci;
     if (!extract_variables(port_sci, ':', port_name, sci))
     {
         SWSS_LOG_WARN("The key %s isn't correct.", port_sci.c_str());
@@ -1536,9 +1897,11 @@ task_process_status MACsecOrch::deleteMACsecSC(
 
     auto result = task_success;
 
-    for (auto &sa : ctx.get_macsec_sc()->m_sa_ids)
+    auto sa = ctx.get_macsec_sc()->m_sa_ids.begin();
+    while (sa != ctx.get_macsec_sc()->m_sa_ids.end())
     {
-        const std::string port_sci_an = swss::join(':', port_sci, sa.first);
+        const std::string port_sci_an = swss::join(':', port_sci, sa->first);
+        sa ++;
         deleteMACsecSA(port_sci_an, direction);
     }
 
@@ -1570,11 +1933,11 @@ task_process_status MACsecOrch::deleteMACsecSC(
 
     if (direction == SAI_MACSEC_DIRECTION_EGRESS)
     {
-        m_state_macsec_egress_sc.del(swss::join('|', port_name, sci));
+        m_state_macsec_egress_sc.del(swss::join('|', port_name, MACsecSCI(sci)));
     }
     else
     {
-        m_state_macsec_ingress_sc.del(swss::join('|', port_name, sci));
+        m_state_macsec_ingress_sc.del(swss::join('|', port_name, MACsecSCI(sci)));
     }
 
     return result;
@@ -1596,6 +1959,42 @@ bool MACsecOrch::deleteMACsecSC(sai_object_id_t sc_id)
     return true;
 }
 
+bool MACsecOrch::updateMACsecAttr(sai_object_type_t object_type, sai_object_id_t object_id, const sai_attribute_t &attr)
+{
+    SWSS_LOG_ENTER();
+
+    sai_status_t status = SAI_STATUS_SUCCESS;
+
+    if (object_type == SAI_OBJECT_TYPE_MACSEC_PORT)
+    {
+        status = sai_macsec_api->set_macsec_port_attribute(object_id, &attr);
+    }
+    else if (object_type == SAI_OBJECT_TYPE_MACSEC_SC)
+    {
+        status = sai_macsec_api->set_macsec_sc_attribute(object_id, &attr);
+    }
+    else if (object_type == SAI_OBJECT_TYPE_MACSEC_SA)
+    {
+        status = sai_macsec_api->set_macsec_sa_attribute(object_id, &attr);
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Wrong type %s", sai_serialize_object_type(object_type).c_str());
+        return false;
+    }
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_MACSEC, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    return true;
+}
+
 task_process_status MACsecOrch::createMACsecSA(
     const std::string &port_sci_an,
     const TaskArgs &sa_attr,
@@ -1604,7 +2003,7 @@ task_process_status MACsecOrch::createMACsecSA(
     SWSS_LOG_ENTER();
 
     std::string port_name;
-    sai_uint64_t sci = 0;
+    MACsecSCI sci;
     macsec_an_t an = 0;
     if (!extract_variables(port_sci_an, ':', port_name, sci, an) || an > MAX_SA_NUMBER)
     {
@@ -1622,7 +2021,7 @@ task_process_status MACsecOrch::createMACsecSA(
 
     if (ctx.get_macsec_sc() == nullptr)
     {
-        SWSS_LOG_INFO("The MACsec SC 0x%" PRIx64 " hasn't been created at the port %s.", sci, port_name.c_str());
+        SWSS_LOG_INFO("The MACsec SC %s hasn't been created at the port %s.", sci.str().c_str(), port_name.c_str());
         return task_need_retry;
     }
     auto sc = ctx.get_macsec_sc();
@@ -1738,15 +2137,17 @@ task_process_status MACsecOrch::createMACsecSA(
         sc->m_sa_ids.erase(an);
     });
 
-    installCounter(CounterType::MACSEC_SA_ATTR, port_sci_an, sc->m_sa_ids[an], macsec_sa_attrs);
+    installCounter(ctx, CounterType::MACSEC_SA_ATTR, direction, port_sci_an, sc->m_sa_ids[an], macsec_sa_attrs);
     std::vector<FieldValueTuple> fvVector;
     fvVector.emplace_back("state", "ok");
     if (direction == SAI_MACSEC_DIRECTION_EGRESS)
     {
+        installCounter(ctx, CounterType::MACSEC_SA, direction, port_sci_an, sc->m_sa_ids[an], macsec_sa_egress_stats);
         m_state_macsec_egress_sa.set(swss::join('|', port_name, sci, an), fvVector);
     }
     else
     {
+        installCounter(ctx, CounterType::MACSEC_SA, direction, port_sci_an, sc->m_sa_ids[an], macsec_sa_ingress_stats);
         m_state_macsec_ingress_sa.set(swss::join('|', port_name, sci, an), fvVector);
     }
 
@@ -1763,7 +2164,7 @@ task_process_status MACsecOrch::deleteMACsecSA(
     SWSS_LOG_ENTER();
 
     std::string port_name = "";
-    sai_uint64_t sci = 0;
+    MACsecSCI sci;
     macsec_an_t an = 0;
     if (!extract_variables(port_sci_an, ':', port_name, sci, an) || an > MAX_SA_NUMBER)
     {
@@ -1781,7 +2182,8 @@ task_process_status MACsecOrch::deleteMACsecSA(
 
     auto result = task_success;
 
-    uninstallCounter(port_sci_an, ctx.get_macsec_sc()->m_sa_ids[an]);
+    uninstallCounter(ctx, CounterType::MACSEC_SA_ATTR, direction, port_sci_an, ctx.get_macsec_sc()->m_sa_ids[an]);
+    uninstallCounter(ctx, CounterType::MACSEC_SA, direction, port_sci_an, ctx.get_macsec_sc()->m_sa_ids[an]);
     if (!deleteMACsecSA(ctx.get_macsec_sc()->m_sa_ids[an]))
     {
         SWSS_LOG_WARN("Cannot delete the MACsec SA %s.", port_sci_an.c_str());
@@ -1906,8 +2308,31 @@ bool MACsecOrch::deleteMACsecSA(sai_object_id_t sa_id)
     return true;
 }
 
+FlexCounterManager& MACsecOrch::MACsecSaStatManager(MACsecOrchContext &ctx)
+{
+    if (ctx.get_gearbox_phy() != nullptr)
+        return m_gb_macsec_sa_stat_manager;
+    return m_macsec_sa_stat_manager;
+}
+
+FlexCounterManager& MACsecOrch::MACsecSaAttrStatManager(MACsecOrchContext &ctx)
+{
+    if (ctx.get_gearbox_phy() != nullptr)
+        return m_gb_macsec_sa_attr_manager;
+    return m_macsec_sa_attr_manager;
+}
+
+FlexCounterManager& MACsecOrch::MACsecFlowStatManager(MACsecOrchContext &ctx)
+{
+    if (ctx.get_gearbox_phy() != nullptr)
+        return m_gb_macsec_flow_stat_manager;
+    return m_macsec_flow_stat_manager;
+}
+
 void MACsecOrch::installCounter(
+    MACsecOrchContext &ctx,
     CounterType counter_type,
+    sai_macsec_direction_t direction,
     const std::string &obj_name,
     sai_object_id_t obj_id,
     const std::vector<std::string> &stats)
@@ -1915,21 +2340,78 @@ void MACsecOrch::installCounter(
     FieldValueTuple tuple(obj_name, sai_serialize_object_id(obj_id));
     vector<FieldValueTuple> fields;
     fields.push_back(tuple);
-    m_macsec_counters_map.set("", fields);
 
     std::unordered_set<std::string> counter_stats;
     for (const auto &stat : stats)
     {
         counter_stats.emplace(stat);
     }
-    m_macsec_flex_counter_manager.setCounterIdList(obj_id, counter_type, counter_stats);
+    switch(counter_type)
+    {
+        case CounterType::MACSEC_SA_ATTR:
+            MACsecSaAttrStatManager(ctx).setCounterIdList(obj_id, counter_type, counter_stats);
+            m_macsec_counters_map.set("", fields);
+            break;
+
+        case CounterType::MACSEC_SA:
+            MACsecSaStatManager(ctx).setCounterIdList(obj_id, counter_type, counter_stats);
+            if (direction == SAI_MACSEC_DIRECTION_EGRESS)
+            {
+                m_macsec_sa_tx_counters_map.set("", fields);
+            }
+            else
+            {
+                m_macsec_sa_rx_counters_map.set("", fields);
+            }
+            break;
+
+        case CounterType::MACSEC_FLOW:
+            MACsecFlowStatManager(ctx).setCounterIdList(obj_id, counter_type, counter_stats);
+            break;
+
+        default:
+            SWSS_LOG_ERROR("Failed to install unknown counter type %u.\n",
+                           static_cast<uint32_t>(counter_type));
+            break;
+    }
 }
 
-void MACsecOrch::uninstallCounter(const std::string &obj_name, sai_object_id_t obj_id)
+void MACsecOrch::uninstallCounter(
+    MACsecOrchContext &ctx,
+    CounterType counter_type,
+    sai_macsec_direction_t direction,
+    const std::string &obj_name,
+    sai_object_id_t obj_id)
 {
-    m_macsec_flex_counter_manager.clearCounterIdList(obj_id);
+    switch(counter_type)
+    {
+        case CounterType::MACSEC_SA_ATTR:
+            MACsecSaAttrStatManager(ctx).clearCounterIdList(obj_id);
+            m_counter_db.hdel(COUNTERS_MACSEC_NAME_MAP, obj_name);
+            break;
 
-    m_counter_db.hdel(COUNTERS_MACSEC_NAME_MAP, obj_name);
+        case CounterType::MACSEC_SA:
+            MACsecSaStatManager(ctx).clearCounterIdList(obj_id);
+            if (direction == SAI_MACSEC_DIRECTION_EGRESS)
+            {
+                m_counter_db.hdel(COUNTERS_MACSEC_SA_TX_NAME_MAP, obj_name);
+            }
+            else
+            {
+                m_counter_db.hdel(COUNTERS_MACSEC_SA_RX_NAME_MAP, obj_name);
+            }
+            break;
+
+        case CounterType::MACSEC_FLOW:
+            MACsecFlowStatManager(ctx).clearCounterIdList(obj_id);
+            break;
+
+        default:
+            SWSS_LOG_ERROR("Failed to uninstall unknown counter type %u.\n",
+                           static_cast<uint32_t>(counter_type));
+            break;
+    }
+
 }
 
 bool MACsecOrch::initMACsecACLTable(
@@ -1937,7 +2419,9 @@ bool MACsecOrch::initMACsecACLTable(
     sai_object_id_t port_id,
     sai_object_id_t switch_id,
     sai_macsec_direction_t direction,
-    bool sci_in_sectag)
+    bool sci_in_sectag,
+    const std::string &port_name,
+    const gearbox_phy_t* phy)
 {
     SWSS_LOG_ENTER();
 
@@ -1995,6 +2479,36 @@ bool MACsecOrch::initMACsecACLTable(
     }
     recover.add_action([&acl_table]() { acl_table.m_available_acl_priorities.clear(); });
 
+    if (phy)
+    {
+        if (acl_table.m_available_acl_priorities.empty())
+        {
+            SWSS_LOG_WARN("Available ACL priorities have been exhausted.");
+            return false;
+        }
+        priority = *(acl_table.m_available_acl_priorities.rbegin());
+        acl_table.m_available_acl_priorities.erase(std::prev(acl_table.m_available_acl_priorities.end()));
+
+        TaskArgs values;
+        if (!m_applPortTable.get(port_name, values))
+        {
+            SWSS_LOG_ERROR("Port %s isn't existing", port_name.c_str());
+            return false;
+        }
+        std::string pfc_mode = PFC_MODE_DEFAULT;
+        get_value(values, "pfc_encryption_mode", pfc_mode);
+
+        if (!createPFCEntry(acl_table.m_pfc_entry_id, acl_table.m_table_id, switch_id, direction, priority, pfc_mode))
+        {
+            return false;
+        }
+        recover.add_action([this, &acl_table, priority]() {
+            this->deleteMACsecACLEntry(acl_table.m_pfc_entry_id);
+            acl_table.m_pfc_entry_id = SAI_NULL_OBJECT_ID;
+            acl_table.m_available_acl_priorities.insert(priority);
+        });
+    }
+
     recover.clear();
     return true;
 }
@@ -2002,7 +2516,8 @@ bool MACsecOrch::initMACsecACLTable(
 bool MACsecOrch::deinitMACsecACLTable(
     const MACsecACLTable &acl_table,
     sai_object_id_t port_id,
-    sai_macsec_direction_t direction)
+    sai_macsec_direction_t direction,
+    const gearbox_phy_t* phy)
 {
     bool result = true;
 
@@ -2013,8 +2528,16 @@ bool MACsecOrch::deinitMACsecACLTable(
     }
     if (!deleteMACsecACLEntry(acl_table.m_eapol_packet_forward_entry_id))
     {
-        SWSS_LOG_WARN("Cannot delete ACL entry");
+        SWSS_LOG_WARN("Cannot delete EAPOL ACL entry");
         result &= false;
+    }
+    if (phy)
+    {
+        if (!deleteMACsecACLEntry(acl_table.m_pfc_entry_id))
+        {
+            SWSS_LOG_WARN("Cannot delete PFC ACL entry");
+            result &= false;
+        }
     }
     if (!deleteMACsecACLTable(acl_table.m_table_id))
     {
@@ -2231,7 +2754,9 @@ bool MACsecOrch::createMACsecACLDataEntry(
     if (sci_in_sectag)
     {
         attr.id = SAI_ACL_ENTRY_ATTR_FIELD_MACSEC_SCI;
-        attr.value.u64 = sci;
+        attr.value.aclfield.enable = true;
+        attr.value.aclfield.mask.u64 = 0xFFFFFFFFFFFFFFFF;
+        attr.value.aclfield.data.u64 = sci;
         attrs.push_back(attr);
     }
 
@@ -2287,6 +2812,11 @@ bool MACsecOrch::setMACsecFlowActive(sai_object_id_t entry_id, sai_object_id_t f
 
 bool MACsecOrch::deleteMACsecACLEntry(sai_object_id_t entry_id)
 {
+    if (entry_id == SAI_NULL_OBJECT_ID)
+    {
+        return true;
+    }
+
     sai_status_t status = sai_acl_api->remove_acl_entry(entry_id);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -2317,4 +2847,152 @@ bool MACsecOrch::getAclPriority(sai_object_id_t switch_id, sai_attr_id_t priorit
     priority = attrs.front().value.u32;
 
     return true;
+}
+
+bool MACsecOrch::setPFCForward(sai_object_id_t port_id, bool enable)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    sai_status_t status;
+
+    // Enable/Disable Forward pause frame
+    attr.id = SAI_PORT_ATTR_GLOBAL_FLOW_CONTROL_FORWARD;
+    attr.value.booldata = enable;
+    status = sai_port_api->set_port_attribute(port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    // Enable/Disable Forward PFC frame
+    attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL_FORWARD;
+    attr.value.booldata = enable;
+    status = sai_port_api->set_port_attribute(port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    return true;
+}
+
+bool MACsecOrch::createPFCEntry(
+        sai_object_id_t &entry_id,
+        sai_object_id_t table_id,
+        sai_object_id_t switch_id,
+        sai_macsec_direction_t direction,
+        sai_uint32_t priority,
+        const std::string &pfc_mode)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    std::vector<sai_attribute_t> attrs;
+
+    if (pfc_mode == PFC_MODE_BYPASS)
+    {
+        attrs.push_back(identifyPFC());
+        attrs.push_back(bypassPFC());
+    }
+    else if (pfc_mode == PFC_MODE_ENCRYPT)
+    {
+        if (direction == SAI_MACSEC_DIRECTION_EGRESS)
+        {
+            entry_id = SAI_NULL_OBJECT_ID;
+            return true;
+        }
+        else
+        {
+            attrs.push_back(identifyPFC());
+            attrs.push_back(bypassPFC());
+        }
+    }
+    else if (pfc_mode == PFC_MODE_STRICT_ENCRYPT)
+    {
+        if (direction == SAI_MACSEC_DIRECTION_EGRESS)
+        {
+            entry_id = SAI_NULL_OBJECT_ID;
+            return true;
+        }
+        else
+        {
+            attrs.push_back(identifyPFC());
+            attrs.push_back(dropPFC());
+        }
+    }
+
+    attr.id = SAI_ACL_ENTRY_ATTR_TABLE_ID;
+    attr.value.oid = table_id;
+    attrs.push_back(attr);
+    attr.id = SAI_ACL_ENTRY_ATTR_PRIORITY;
+    attr.value.u32 = priority;
+    attrs.push_back(attr);
+    attr.id = SAI_ACL_ENTRY_ATTR_ADMIN_STATE;
+    attr.value.booldata = true;
+    attrs.push_back(attr);
+
+    sai_status_t status = sai_acl_api->create_acl_entry(
+                                    &entry_id,
+                                    switch_id,
+                                    static_cast<std::uint32_t>(attrs.size()),
+                                    attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_ACL, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    return true;
+}
+
+sai_attribute_t MACsecOrch::identifyPFC() const
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+
+    attr.id = SAI_ACL_ENTRY_ATTR_FIELD_ETHER_TYPE;
+    attr.value.aclfield.data.u16 = PAUSE_ETHER_TYPE;
+    attr.value.aclfield.mask.u16 = 0xFFFF;
+    attr.value.aclfield.enable = true;
+
+    return attr;
+}
+
+sai_attribute_t MACsecOrch::bypassPFC() const
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+
+    attr.id = SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION;
+    attr.value.aclaction.parameter.s32 = SAI_PACKET_ACTION_FORWARD;
+    attr.value.aclaction.enable = true;
+
+    return attr;
+}
+
+sai_attribute_t MACsecOrch::dropPFC() const
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+
+    attr.id = SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION;
+    attr.value.aclaction.parameter.s32 = SAI_PACKET_ACTION_DROP;
+    attr.value.aclaction.enable = true;
+
+    return attr;
 }

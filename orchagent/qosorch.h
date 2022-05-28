@@ -5,13 +5,16 @@
 #include <unordered_map>
 #include <unordered_set>
 #include "orch.h"
+#include "switchorch.h"
 #include "portsorch.h"
 
 const string dscp_to_tc_field_name              = "dscp_to_tc_map";
+const string mpls_tc_to_tc_field_name           = "mpls_tc_to_tc_map";
 const string dot1p_to_tc_field_name             = "dot1p_to_tc_map";
 const string pfc_to_pg_map_name                 = "pfc_to_pg_map";
 const string pfc_to_queue_map_name              = "pfc_to_queue_map";
 const string pfc_enable_name                    = "pfc_enable";
+const string pfcwd_sw_enable_name               = "pfcwd_sw_enable";
 const string tc_to_pg_map_field_name            = "tc_to_pg_map";
 const string tc_to_queue_field_name             = "tc_to_queue_map";
 const string scheduler_field_name               = "scheduler";
@@ -24,6 +27,12 @@ const string green_min_threshold_field_name     = "green_min_threshold";
 const string red_drop_probability_field_name    = "red_drop_probability";
 const string yellow_drop_probability_field_name = "yellow_drop_probability";
 const string green_drop_probability_field_name  = "green_drop_probability";
+const string dscp_to_fc_field_name              = "dscp_to_fc_map";
+const string exp_to_fc_field_name               = "exp_to_fc_map";
+const string decap_dscp_to_tc_field_name        = "decap_dscp_to_tc_map";
+const string decap_tc_to_pg_field_name          = "decap_tc_to_pg_map";
+const string encap_tc_to_queue_field_name       = "encap_tc_to_queue_map";
+const string encap_tc_to_dscp_field_name        = "encap_tc_to_dscp_map";
 
 const string wred_profile_field_name            = "wred_profile";
 const string wred_red_enable_field_name         = "wred_red_enable";
@@ -55,7 +64,7 @@ const string ecn_all                            = "ecn_all";
 class QosMapHandler
 {
 public:
-    task_process_status processWorkItem(Consumer& consumer);
+    task_process_status processWorkItem(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
     virtual bool convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes) = 0;
     virtual void freeAttribResources(vector<sai_attribute_t> &attributes);
     virtual bool modifyQosItem(sai_object_id_t, vector<sai_attribute_t> &attributes);
@@ -64,6 +73,16 @@ public:
 };
 
 class DscpToTcMapHandler : public QosMapHandler
+{
+public:
+    bool convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes) override;
+    sai_object_id_t addQosItem(const vector<sai_attribute_t> &attributes) override;
+    bool removeQosItem(sai_object_id_t sai_object);
+protected:
+    void applyDscpToTcMapToSwitch(sai_attr_id_t attr_id, sai_object_id_t sai_dscp_to_tc_map);
+};
+
+class MplsTcToTcMapHandler : public QosMapHandler
 {
 public:
     bool convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes) override;
@@ -119,6 +138,28 @@ public:
     sai_object_id_t addQosItem(const vector<sai_attribute_t> &attributes);
 };
 
+class DscpToFcMapHandler : public QosMapHandler
+{
+public:
+    bool convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes) override;
+    sai_object_id_t addQosItem(const vector<sai_attribute_t> &attributes) override;
+};
+
+class ExpToFcMapHandler : public QosMapHandler
+{
+public:
+    bool convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes) override;
+    sai_object_id_t addQosItem(const vector<sai_attribute_t> &attributes) override;
+};
+
+// Handler for TC_TO_DSCP_MAP
+class TcToDscpMapHandler : public QosMapHandler
+{
+public:
+    bool convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes) override;
+    sai_object_id_t addQosItem(const vector<sai_attribute_t> &attributes) override;
+};
+
 class QosOrch : public Orch
 {
 public:
@@ -126,34 +167,38 @@ public:
 
     static type_map& getTypeMap();
     static type_map m_qos_maps;
+
+    sai_object_id_t resolveTunnelQosMap(std::string referencing_table_name, std::string tunnel_name, std::string map_type_name, KeyOpFieldsValuesTuple& tuple);
+    void removeTunnelReference(std::string referencing_table_name, std::string tunnel_name);
 private:
     void doTask() override;
     virtual void doTask(Consumer& consumer);
 
-    typedef task_process_status (QosOrch::*qos_table_handler)(Consumer& consumer);
+    typedef task_process_status (QosOrch::*qos_table_handler)(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
     typedef map<string, qos_table_handler> qos_table_handler_map;
     typedef pair<string, qos_table_handler> qos_handler_pair;
 
     void initTableHandlers();
 
-    task_process_status handleDscpToTcTable(Consumer& consumer);
-    task_process_status handleDot1pToTcTable(Consumer& consumer);
-    task_process_status handlePfcPrioToPgTable(Consumer& consumer);
-    task_process_status handlePfcToQueueTable(Consumer& consumer);
-    task_process_status handlePortQosMapTable(Consumer& consumer);
-    task_process_status handleTcToPgTable(Consumer& consumer);
-    task_process_status handleTcToQueueTable(Consumer& consumer);
-    task_process_status handleSchedulerTable(Consumer& consumer);
-    task_process_status handleQueueTable(Consumer& consumer);
-    task_process_status handleWredProfileTable(Consumer& consumer);
+    task_process_status handleDscpToTcTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleMplsTcToTcTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleDot1pToTcTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
+    task_process_status handlePfcPrioToPgTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
+    task_process_status handlePfcToQueueTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
+    task_process_status handlePortQosMapTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleTcToPgTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleTcToQueueTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleSchedulerTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleQueueTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleWredProfileTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleDscpToFcTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleExpToFcTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleTcToDscpTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
 
     sai_object_id_t getSchedulerGroup(const Port &port, const sai_object_id_t queue_id);
 
-    bool applyMapToPort(Port &port, sai_attr_id_t attr_id, sai_object_id_t sai_dscp_to_tc_map);
     bool applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, sai_object_id_t scheduler_profile_id);
     bool applyWredProfileToQueue(Port &port, size_t queue_ind, sai_object_id_t sai_wred_profile);
-    task_process_status ResolveMapAndApplyToPort(Port &port,sai_port_attr_t port_attr,
-                                                 string field_name, KeyOpFieldsValuesTuple &tuple, string op);
 
 private:
     qos_table_handler_map m_qos_handler_map;
@@ -162,8 +207,15 @@ private:
     {
         std::vector<sai_object_id_t> groups;
         std::vector<std::vector<sai_object_id_t>> child_groups;
+        std::vector<bool> group_has_been_initialized;
     };
 
     std::unordered_map<sai_object_id_t, SchedulerGroupPortInfo_t> m_scheduler_group_port_info;
+
+    // SAI OID of the global dscp to tc map
+    sai_object_id_t m_globalDscpToTcMap;
+
+    friend QosMapHandler;
+    friend DscpToTcMapHandler;
 };
 #endif /* SWSS_QOSORCH_H */

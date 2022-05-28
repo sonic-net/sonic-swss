@@ -30,6 +30,9 @@ enum class CrmResourceType
     CRM_DNAT_ENTRY,
     CRM_MPLS_INSEG,
     CRM_MPLS_NEXTHOP,
+    CRM_SRV6_MY_SID_ENTRY,
+    CRM_SRV6_NEXTHOP,
+    CRM_NEXTHOP_GROUP_MAP,
 };
 
 enum class CrmThresholdType
@@ -95,6 +98,7 @@ private:
     void doTask(Consumer &consumer);
     void handleSetCommand(const std::string& key, const std::vector<swss::FieldValueTuple>& data);
     void doTask(swss::SelectableTimer &timer);
+    bool getResAvailability(CrmResourceType type, CrmResourceEntry &res);
     void getResAvailableCounters();
     void updateCrmCountersTable();
     void checkCrmThresholds();

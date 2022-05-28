@@ -11,7 +11,6 @@
 namespace swss {
 
 #define INGRESS_LOSSLESS_PG_POOL_NAME "ingress_lossless_pool"
-#define LOSSLESS_PGS "3-4"
 
 #define BUFFERMGR_TIMER_PERIOD 10
 
@@ -28,6 +27,8 @@ typedef std::map<std::string, speed_map_t> pg_profile_lookup_t;
 
 typedef std::map<std::string, std::string> port_cable_length_t;
 typedef std::map<std::string, std::string> port_speed_t;
+typedef std::map<std::string, std::string> port_pfc_status_t;
+typedef std::map<std::string, std::string> port_admin_status_t;
 
 class BufferMgr : public Orch
 {
@@ -36,6 +37,8 @@ public:
     using Orch::doTask;
 
 private:
+    std::string m_platform;
+
     Table m_cfgPortTable;
     Table m_cfgCableLenTable;
     Table m_cfgBufferProfileTable;
@@ -50,9 +53,11 @@ private:
     ProducerStateTable m_applBufferEgressProfileListTable;
 
     bool m_pgfile_processed;
+    bool dynamic_buffer_model;
 
     pg_profile_lookup_t m_pgProfileLookup;
     port_cable_length_t m_cableLenLookup;
+    port_admin_status_t m_portStatusLookup;
     port_speed_t m_speedLookup;
     std::string getPgPoolMode();
     void readPgProfileLookupFile(std::string);
@@ -61,9 +66,13 @@ private:
     void doBufferTableTask(Consumer &consumer, ProducerStateTable &applTable);
 
     void transformSeperator(std::string &name);
-    void transformReference(std::string &name);
 
     void doTask(Consumer &consumer);
+    void doBufferMetaTask(Consumer &consumer);
+    
+    port_pfc_status_t m_portPfcStatus;
+    void doPortQosTableTask(Consumer &consumer);
+
 };
 
 }

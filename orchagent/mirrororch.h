@@ -95,12 +95,16 @@ private:
     NeighOrch *m_neighOrch;
     FdbOrch *m_fdbOrch;
     PolicerOrch *m_policerOrch;
+    // Maximum number of traffic classes starting at 0, thus queue can be 0 - m_maxNumTC-1
+    uint8_t m_maxNumTC;
 
     Table m_mirrorTable;
 
     MirrorTable m_syncdMirrors;
     // session_name -> VLAN | monitor_port_alias | next_hop_ip
     map<string, string> m_recoverySessionMap;
+
+    bool isHwResourcesAvailable();
 
     task_process_status createEntry(const string&, const vector<FieldValueTuple>&);
     task_process_status deleteEntry(const string&);
