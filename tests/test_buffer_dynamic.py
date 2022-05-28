@@ -11,7 +11,6 @@ def dynamic_buffer(dvs):
     yield
     buffer_model.disable_dynamic_buffer(dvs.get_config_db(), dvs.runcmd)
 
-
 @pytest.mark.usefixtures("dynamic_buffer")
 class TestBufferMgrDyn(object):
     DEFAULT_POLLING_CONFIG = PollingConfig(polling_interval=0.01, timeout=60, strict=True)
@@ -129,16 +128,18 @@ class TestBufferMgrDyn(object):
         if fvs.get('dynamic_th'):
             sai_threshold_value = fvs['dynamic_th']
             sai_threshold_mode = 'SAI_BUFFER_PROFILE_THRESHOLD_MODE_DYNAMIC'
+            sai_threshold_name = 'SAI_BUFFER_PROFILE_ATTR_SHARED_DYNAMIC_TH'
         else:
             sai_threshold_value = fvs['static_th']
             sai_threshold_mode = 'SAI_BUFFER_PROFILE_THRESHOLD_MODE_STATIC'
+            sai_threshold_name = 'SAI_BUFFER_PROFILE_ATTR_SHARED_STATIC_TH'
         self.asic_db.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_PROFILE", self.newProfileInAsicDb,
                                              {'SAI_BUFFER_PROFILE_ATTR_XON_TH': fvs['xon'],
                                               'SAI_BUFFER_PROFILE_ATTR_XOFF_TH': fvs['xoff'],
                                               'SAI_BUFFER_PROFILE_ATTR_RESERVED_BUFFER_SIZE': fvs['size'],
                                               'SAI_BUFFER_PROFILE_ATTR_POOL_ID': self.ingress_lossless_pool_oid,
                                               'SAI_BUFFER_PROFILE_ATTR_THRESHOLD_MODE': sai_threshold_mode,
-                                              'SAI_BUFFER_PROFILE_ATTR_SHARED_DYNAMIC_TH': sai_threshold_value},
+                                              sai_threshold_name: sai_threshold_value},
                                           self.DEFAULT_POLLING_CONFIG)
 
     def make_lossless_profile_name(self, speed, cable_length, mtu = None, dynamic_th = None):

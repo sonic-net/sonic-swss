@@ -2,7 +2,7 @@ FLEX_CTR_DIR = $(top_srcdir)/orchagent/flex_counter
 DEBUG_CTR_DIR = $(top_srcdir)/orchagent/debug_counter
 P4_ORCH_DIR = $(top_srcdir)/orchagent/p4orch
 
-INCLUDES = -I $(FLEX_CTR_DIR) -I $(DEBUG_CTR_DIR) -I $(top_srcdir)/lib
+INCLUDES = -I $(FLEX_CTR_DIR) -I $(DEBUG_CTR_DIR) -I $(top_srcdir)/lib -I $(top_srcdir)/cfgmgr
 
 CFLAGS_SAI = -I /usr/include/sai
 
@@ -27,6 +27,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 qosorch_ut.cpp \
                 bufferorch_ut.cpp \
                 fdborch/flush_syncd_notif_ut.cpp \
+                buffermgrdyn_ut.cpp \
                 saispy_ut.cpp \
                 consumer_ut.cpp \
                 ut_saihelper.cpp \
@@ -91,7 +92,8 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/macsecorch.cpp \
                 $(top_srcdir)/orchagent/lagid.cpp \
                 $(top_srcdir)/orchagent/bfdorch.cpp \
-                $(top_srcdir)/orchagent/srv6orch.cpp
+                $(top_srcdir)/orchagent/srv6orch.cpp \
+                $(top_srcdir)/cfgmgr/buffermgrdyn.cpp
 
 tests_SOURCES += $(FLEX_CTR_DIR)/flex_counter_manager.cpp $(FLEX_CTR_DIR)/flex_counter_stat_manager.cpp $(FLEX_CTR_DIR)/flow_counter_handler.cpp
 tests_SOURCES += $(DEBUG_CTR_DIR)/debug_counter.cpp $(DEBUG_CTR_DIR)/drop_counter.cpp
