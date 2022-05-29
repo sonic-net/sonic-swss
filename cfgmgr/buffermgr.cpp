@@ -275,17 +275,21 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
         string buffer_pg_key = port + m_cfgBufferPgTable.getTableNameSeparator() + lossless_pg;
 
         m_cfgBufferPgTable.get(buffer_pg_key, fvVectorPg);
-
+        bool profile_existing = false;
         /* Check if PG Mapping is already then log message and return. */
         for (auto& prop : fvVectorPg)
         {
             if ((fvField(prop) == "profile") && (profile_ref == fvValue(prop)))
             {
                 SWSS_LOG_NOTICE("PG to Buffer Profile Mapping %s already present", buffer_pg_key.c_str());
-                return task_process_status::task_success;
+                profile_existing = true;
+                break;
             }
         }
-
+        if (profile_existing)
+        {
+            continue;
+        }
         fvVectorPg.clear();
 
         fvVectorPg.push_back(make_pair("profile", profile_ref));
