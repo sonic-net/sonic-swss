@@ -252,8 +252,10 @@ public:
 };
 
 typedef std::unique_ptr<VxlanTunnel> VxlanTunnel_T;
+///////VXLANTUNNELTABEL ///////
 typedef std::map<std::string, VxlanTunnel_T> VxlanTunnelTable;
-typedef std::map<uint32_t, uint16_t> VxlanVniVlanMapTable;
+///////VXLANTUNNELMAPTABEL ///////
+
 typedef std::map<IpAddress, VxlanTunnel*> VTEPTable;
 
 class VxlanTunnelOrch : public Orch2
@@ -367,7 +369,12 @@ private:
     virtual bool delOperation(const Request& request);
     void doTask(swss::SelectableTimer&);
 
-    VxlanTunnelTable vxlan_tunnel_table_;
+
+/////////////////////////VXLAN IMPLEMENTATION////////////////////////////////
+/////////////////////////VXLAN TUNNEL TABLE IMPLEMENTATION////////////////////////////////
+
+    VxlanTunnelTable vxlan_tunnel_table_;                  ///adddeddddd for VXLAN HLD
+  
     VxlanTunnelRequest request_;
     VxlanVniVlanMapTable vxlan_vni_vlan_map_table_;
     VTEPTable vtep_table_;
@@ -394,7 +401,7 @@ const request_description_t vxlan_tunnel_map_request_description = {
             { "vni", "vlan" }
 };
 
-typedef std::map<std::string, tunnel_map_entry_t> VxlanTunnelMapTable;
+typedef std::map<std::string, tunnel_map_entry_t> VxlanTunnelMapTable; ///////addeddddd for VXLANMAPTABLE  HLD
 
 class VxlanTunnelMapRequest : public Request
 {
@@ -415,7 +422,7 @@ private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
 
-    VxlanTunnelMapTable vxlan_tunnel_map_table_;
+    VxlanTunnelMapTable vxlan_tunnel_map_table_; ///////addeddddd for VXLAN HLD
     VxlanTunnelMapRequest request_;
 };
 
@@ -438,7 +445,7 @@ struct vrf_map_entry_t {
     sai_object_id_t encap_id;
     sai_object_id_t decap_id;
 };
-
+///////Vxlanvrf table for mapping Tunnel on Vrfs
 typedef std::map<string, vrf_map_entry_t> VxlanVrfTable;
 typedef std::map<string, sai_object_id_t> VxlanVrfTunnel;
 
@@ -457,6 +464,7 @@ public:
 private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
+///////Vxlanvrf table  obj for mapping Tunnel on Vrfs
 
     VxlanVrfTable vxlan_vrf_table_;
     VxlanVrfTunnel vxlan_vrf_tunnel_;

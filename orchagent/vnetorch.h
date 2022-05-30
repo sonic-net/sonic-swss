@@ -204,6 +204,10 @@ private:
 };
 
 typedef std::unique_ptr<VNetObject> VNetObject_T;
+////////////////////////VXLAN HLD IMPLEMENTATION/////////////////
+////// created a unodered map VNET TABLE//////////
+////it will have a key vnettable and field as val///
+///peer_list means names of different vnets////
 typedef std::unordered_map<std::string, VNetObject_T> VNetTable;
 
 class VNetOrch : public Orch2
