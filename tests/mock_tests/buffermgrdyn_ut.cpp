@@ -817,6 +817,9 @@ namespace buffermgrdyn_test
                                {"supported_speeds", "100000,50000,40000,25000,10000,1000"}
                            });
         InitPort("Ethernet0", "down");
+        InitPort("Ethernet4", "down");
+        InitPort("Ethernet6", "down");
+        vector<string> adminDownPorts = {"Ethernet0", "Ethernet4", "Ethernet6"};
         InitPort("Ethernet2");
         InitCableLength("Ethernet2", "5m");
         auto expectedProfile = "pg_lossless_100000_5m_profile";
@@ -852,8 +855,12 @@ namespace buffermgrdyn_test
                 CheckProfile(m_dynamicBuffer->m_bufferProfileLookup[i.first], fieldValues);
             }
 
-            InitBufferQueue("Ethernet0|3-4", "egress_lossless_profile");
-            InitBufferQueue("Ethernet0|0-2", "egress_lossy_profile");
+            for (auto &adminDownPort : adminDownPorts)
+            {
+                InitBufferQueue(adminDownPort + "|3-4", "egress_lossless_profile");
+                InitBufferQueue(adminDownPort + "|0-2", "egress_lossy_profile");
+                InitBufferQueue(adminDownPort + "|5-6", "egress_lossy_profile");
+            }
             InitBufferPg("Ethernet0|0", "ingress_lossy_profile");
             InitBufferPg("Ethernet0|3-4");
             InitBufferProfileList("Ethernet0", "ingress_lossless_profile", bufferIngProfileListTable);
@@ -900,7 +907,6 @@ namespace buffermgrdyn_test
                 static_cast<Orch *>(m_dynamicBuffer)->doTask();
             }
 
-            //m_dynamicBuffer->m_waitApplyAdditionalZeroProfiles = 0;
             m_dynamicBuffer->doTask(m_selectableTable);
 
             // Check whether zero profiles and pool have been applied
@@ -941,13 +947,19 @@ namespace buffermgrdyn_test
             ASSERT_TRUE(appBufferPgTable.get("Ethernet0:0", fieldValues));
             CheckIfVectorsMatch(fieldValues, {{"profile", "ingress_lossy_pg_zero_profile"}});
             ASSERT_FALSE(appBufferPgTable.get("Ethernet0:3-4", fieldValues));
-            fieldValues.clear();
-            ASSERT_TRUE(appBufferQueueTable.get("Ethernet0:0-2", fieldValues));
-            CheckIfVectorsMatch(fieldValues, {{"profile", "egress_lossy_zero_profile"}});
-            fieldValues.clear();
-            ASSERT_TRUE(appBufferQueueTable.get("Ethernet0:3-4", fieldValues));
-            CheckIfVectorsMatch(fieldValues, {{"profile", "egress_lossless_zero_profile"}});
-            fieldValues.clear();
+            for (auto &adminDownPort : adminDownPorts)
+            {
+                fieldValues.clear();
+                ASSERT_TRUE(appBufferQueueTable.get(adminDownPort + ":0-2", fieldValues));
+                CheckIfVectorsMatch(fieldValues, {{"profile", "egress_lossy_zero_profile"}});
+                fieldValues.clear();
+                ASSERT_TRUE(appBufferQueueTable.get(adminDownPort + ":3-4", fieldValues));
+                CheckIfVectorsMatch(fieldValues, {{"profile", "egress_lossless_zero_profile"}});
+                fieldValues.clear();
+                ASSERT_TRUE(appBufferQueueTable.get(adminDownPort + ":5-6", fieldValues));
+                CheckIfVectorsMatch(fieldValues, {{"profile", "egress_lossy_zero_profile"}});
+                fieldValues.clear();
+            }
             ASSERT_TRUE(appBufferIngProfileListTable.get("Ethernet0", fieldValues));
             CheckIfVectorsMatch(fieldValues, {{"profile_list", "ingress_lossless_zero_profile"}});
             fieldValues.clear();
@@ -958,9 +970,12 @@ namespace buffermgrdyn_test
             m_dynamicBuffer->m_waitApplyAdditionalZeroProfiles = 0;
             m_dynamicBuffer->doTask(m_selectableTable);
             fieldValues.clear();
-            ASSERT_TRUE(appBufferQueueTable.get("Ethernet0:5-15", fieldValues));
+            ASSERT_TRUE(appBufferQueueTable.get("Ethernet0:7-15", fieldValues));
             CheckIfVectorsMatch(fieldValues, {{"profile", "egress_lossy_zero_profile"}});
 
+            ClearBufferObject("Ethernet0|3-4", CFG_BUFFER_QUEUE_TABLE_NAME);
+            ClearBufferObject("Ethernet4|5-6", CFG_BUFFER_QUEUE_TABLE_NAME);
+            ClearBufferObject("Ethernet4|0-2", CFG_BUFFER_QUEUE_TABLE_NAME);
             // Clear all qos tables
             ClearBufferPool(skippedPool);
             ClearBufferProfile();
@@ -969,8 +984,12 @@ namespace buffermgrdyn_test
             ClearBufferObject("Ethernet2|3-4", CFG_BUFFER_PG_TABLE_NAME);
             ClearBufferObject("Ethernet0|0-2", CFG_BUFFER_QUEUE_TABLE_NAME);
             ClearBufferObject("Ethernet2|0-2", CFG_BUFFER_QUEUE_TABLE_NAME);
-            ClearBufferObject("Ethernet0|3-4", CFG_BUFFER_QUEUE_TABLE_NAME);
             ClearBufferObject("Ethernet2|3-4", CFG_BUFFER_QUEUE_TABLE_NAME);
+            ClearBufferObject("Ethernet0|5-6", CFG_BUFFER_QUEUE_TABLE_NAME);
+            ClearBufferObject("Ethernet4|3-4", CFG_BUFFER_QUEUE_TABLE_NAME);
+            ClearBufferObject("Ethernet6|0-2", CFG_BUFFER_QUEUE_TABLE_NAME);
+            ClearBufferObject("Ethernet6|3-4", CFG_BUFFER_QUEUE_TABLE_NAME);
+            ClearBufferObject("Ethernet6|5-6", CFG_BUFFER_QUEUE_TABLE_NAME);
             ClearBufferObject("Ethernet0", CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME);
             ClearBufferObject("Ethernet2", CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME);
             ClearBufferObject("Ethernet0", CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME);

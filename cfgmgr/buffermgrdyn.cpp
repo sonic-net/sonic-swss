@@ -2809,6 +2809,14 @@ void BufferMgrDynamic::handleDelSingleBufferObjectOnAdminDownPort(buffer_directi
 
     if (idsToZero.empty())
     {
+        if (!m_bufferPoolReady)
+        {
+            // Reclaiming buffer has not started yet so just remove it.
+            // Do not add it to "supported but not configured" set
+            updateBufferObjectToDb(key, "", false, direction);
+            return;
+        }
+
         // For admin down ports, if zero profiles have been applied to all configured items
         // do NOT remove it otherwise SDK default value will be set for the items
         // Move the key to supported_but_not_configured_items so that the slice of items
