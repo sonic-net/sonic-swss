@@ -11,6 +11,7 @@
 #include "exec.h"
 #include "shellcmd.h"
 #include "warm_restart.h"
+#include "converter.h"
 
 using namespace std;
 using namespace swss;
@@ -168,12 +169,6 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
         return task_process_status::task_success;
     }
     pfc_enable = m_portPfcStatus[port];
-    // Replace 2,3,4,6 to 2,3-4,6 to be back compatible
-    auto pos = pfc_enable.find("3,4");
-    if (pos != string::npos)
-    {
-        pfc_enable.replace(pos, 3, "3-4");
-    }
     speed = m_speedLookup[port];
     
     // key format is pg_lossless_<speed>_<cable>_profile
@@ -186,10 +181,27 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
 
     
     vector<string> lossless_pgs = tokenize(pfc_enable, ',');
+    // Convert to bitmap
+    unsigned long lossless_pg_id = 0;
+    for (auto pg : lossless_pgs)
+    {
+        try
+        {
+            uint8_t cur_pg = to_uint<uint8_t>(pg);
+            lossless_pg_id |= (1<<cur_pg);
+        }
+        catch (const std::invalid_argument &e)
+        {
+            // Ignore invalid value
+            continue;
+        }
+    }
+    // Although we have up to 8 PGs for now, the range to check is expanded to 32 support more PGs
+    set<string> lossless_pg_combinations = generateIdListFromMap(lossless_pg_id, sizeof(lossless_pg_id));
 
     if (m_portStatusLookup[port] == "down" && m_platform == "mellanox")
     {
-        for (auto lossless_pg : lossless_pgs)
+        for (auto lossless_pg : lossless_pg_combinations)
         {
             // Remove the entry in BUFFER_PG table if any
             vector<FieldValueTuple> fvVectorPg;
@@ -264,23 +276,27 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
         SWSS_LOG_NOTICE("Reusing existing profile '%s'", buffer_profile_key.c_str());
     }
     
-    for (auto lossless_pg : lossless_pgs)
+    for (auto lossless_pg : lossless_pg_combinations)
     {
         vector<FieldValueTuple> fvVectorPg;
         string buffer_pg_key = port + m_cfgBufferPgTable.getTableNameSeparator() + lossless_pg;
 
         m_cfgBufferPgTable.get(buffer_pg_key, fvVectorPg);
-
+        bool profile_existing = false;
         /* Check if PG Mapping is already then log message and return. */
         for (auto& prop : fvVectorPg)
         {
             if ((fvField(prop) == "profile") && (profile_ref == fvValue(prop)))
             {
                 SWSS_LOG_NOTICE("PG to Buffer Profile Mapping %s already present", buffer_pg_key.c_str());
-                continue;
+                profile_existing = true;
+                break;
             }
         }
-
+        if (profile_existing)
+        {
+            continue;
+        }
         fvVectorPg.clear();
 
         fvVectorPg.push_back(make_pair("profile", profile_ref));

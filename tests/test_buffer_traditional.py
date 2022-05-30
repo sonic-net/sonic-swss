@@ -81,7 +81,8 @@ class TestBuffer(object):
     def setup_teardown_test(self, dvs):
         try:
             self.setup_db(dvs)
-            self.set_port_qos_table(self.INTF, '2,3,4,6')
+            self.set_port_qos_table(self.INTF, '3,4')
+            self.lossless_pg_combinations = ['3-4']
             pg_name_map = self.get_pg_name_map()
             yield pg_name_map
         finally:
@@ -234,6 +235,7 @@ class TestBuffer(object):
 
              # Add pfc_enable field for extra port
             self.set_port_qos_table(extra_port, '2,3,4,6')
+            self.lossless_pg_combinations = ['2-4', '6']
             time.sleep(1)
             # Verify BUFFER_PG is updated when pfc_enable is available
             for pg in self.lossless_pg_combinations:
