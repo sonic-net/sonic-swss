@@ -1007,9 +1007,6 @@ void IntfsOrch::doTask(Consumer &consumer)
                     }
 
                     /* Set loopback action */
-                    string cache_action_str = getIntfLoopbackActionStr(port.m_loopback_action);
-                    string got_action_str = getIntfLoopbackActionStr(loopbackAction);
-
                     if ((loopbackAction != LOOPBACK_ACTION_NONE) and (port.m_loopback_action != loopbackAction))
                     {
                         port.m_loopback_action = loopbackAction;
