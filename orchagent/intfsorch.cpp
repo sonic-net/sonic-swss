@@ -1180,8 +1180,6 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port)
     if((port.m_loopback_action != LOOPBACK_ACTION_NONE) and
        (m_vnetInfses.find(port.m_alias) == m_vnetInfses.end()))
     {
-        string action_str = getIntfLoopbackActionStr(port.m_loopback_action);
-
         attr.id = SAI_ROUTER_INTERFACE_ATTR_LOOPBACK_PACKET_ACTION;
         attr.value.s32 = m_sai_loopback_action_map.at( port.m_loopback_action);
         attrs.push_back(attr);
