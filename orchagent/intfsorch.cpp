@@ -504,13 +504,14 @@ set<IpPrefix> IntfsOrch:: getSubnetRoutes()
     return subnet_routes;
 }
 
-bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPrefix *ip_prefix, const bool adminUp, const uint32_t mtu, loopback_action_e loopbackAction)
+bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPrefix *ip_prefix,
+                        const bool adminUp, const uint32_t mtu, loopback_action_e loopbackAction)
 
 {
     SWSS_LOG_ENTER();
+
     Port port;
     gPortsOrch->getPort(alias, port);
-
     port.m_loopback_action = loopbackAction;
 
     auto it_intfs = m_syncdIntfses.find(alias);
