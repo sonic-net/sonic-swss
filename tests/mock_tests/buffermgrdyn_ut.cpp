@@ -819,7 +819,9 @@ namespace buffermgrdyn_test
         InitPort("Ethernet0", "down");
         InitPort("Ethernet4", "down");
         InitPort("Ethernet6", "down");
+        InitPort("Ethernet8", "down");
         vector<string> adminDownPorts = {"Ethernet0", "Ethernet4", "Ethernet6"};
+        vector<string> ports = {"Ethernet0", "Ethernet2", "Ethernet4", "Ethernet6"};
         InitPort("Ethernet2");
         InitCableLength("Ethernet2", "5m");
         auto expectedProfile = "pg_lossless_100000_5m_profile";
@@ -857,6 +859,7 @@ namespace buffermgrdyn_test
 
             for (auto &adminDownPort : adminDownPorts)
             {
+                InitBufferPg(adminDownPort + "|3-4", "NULL");
                 InitBufferQueue(adminDownPort + "|3-4", "egress_lossless_profile");
                 InitBufferQueue(adminDownPort + "|0-2", "egress_lossy_profile");
                 InitBufferQueue(adminDownPort + "|5-6", "egress_lossy_profile");
@@ -893,12 +896,21 @@ namespace buffermgrdyn_test
             m_dynamicBuffer->doTask(m_selectableTable);
 
             // Push maximum buffer parameters for the port in order to make it ready to reclaim
-            if (round++ == 0)
+            if (round == 0)
             {
                 // To simulate different sequences
                 // The 1st round: STATE_DB.PORT_TABLE is updated after buffer items ready
                 // The 2nd, 3rd rounds: before
-                stateBufferTable.set("Ethernet0",
+
+                for (auto &adminDownPort : adminDownPorts)
+                {
+                    stateBufferTable.set(adminDownPort,
+                                         {
+                                             {"max_priority_groups", "8"},
+                                             {"max_queues", "16"}
+                                         });
+                }
+                stateBufferTable.set("Ethernet8",
                                      {
                                          {"max_priority_groups", "8"},
                                          {"max_queues", "16"}
@@ -943,12 +955,12 @@ namespace buffermgrdyn_test
                 }
             }
 
-            fieldValues.clear();
-            ASSERT_TRUE(appBufferPgTable.get("Ethernet0:0", fieldValues));
-            CheckIfVectorsMatch(fieldValues, {{"profile", "ingress_lossy_pg_zero_profile"}});
-            ASSERT_FALSE(appBufferPgTable.get("Ethernet0:3-4", fieldValues));
             for (auto &adminDownPort : adminDownPorts)
             {
+                fieldValues.clear();
+                ASSERT_TRUE(appBufferPgTable.get("Ethernet0:0", fieldValues));
+                CheckIfVectorsMatch(fieldValues, {{"profile", "ingress_lossy_pg_zero_profile"}});
+                ASSERT_FALSE(appBufferPgTable.get("Ethernet0:3-4", fieldValues));
                 fieldValues.clear();
                 ASSERT_TRUE(appBufferQueueTable.get(adminDownPort + ":0-2", fieldValues));
                 CheckIfVectorsMatch(fieldValues, {{"profile", "egress_lossy_zero_profile"}});
@@ -969,9 +981,25 @@ namespace buffermgrdyn_test
             // Configured but not applied items. There is an extra delay
             m_dynamicBuffer->m_waitApplyAdditionalZeroProfiles = 0;
             m_dynamicBuffer->doTask(m_selectableTable);
-            fieldValues.clear();
-            ASSERT_TRUE(appBufferQueueTable.get("Ethernet0:7-15", fieldValues));
-            CheckIfVectorsMatch(fieldValues, {{"profile", "egress_lossy_zero_profile"}});
+            for (auto &adminDownPort : adminDownPorts)
+            {
+                ASSERT_TRUE(appBufferQueueTable.get(adminDownPort + ":7-15", fieldValues));
+                CheckIfVectorsMatch(fieldValues, {{"profile", "egress_lossy_zero_profile"}});
+                fieldValues.clear();
+            }
+
+            if (round == 0)
+            {
+                ASSERT_TRUE(appBufferQueueTable.get("Ethernet8:0-15", fieldValues));
+                CheckIfVectorsMatch(fieldValues, {{"profile", "egress_lossy_zero_profile"}});
+                fieldValues.clear();
+                ASSERT_TRUE(appBufferPgTable.get("Ethernet8:0", fieldValues));
+                CheckIfVectorsMatch(fieldValues, {{"profile", "ingress_lossy_pg_zero_profile"}});
+                fieldValues.clear();
+                ClearBufferObject("Ethernet8", CFG_PORT_TABLE_NAME);
+                ASSERT_FALSE(appBufferPgTable.get("Ethernet8:0", fieldValues));
+                ASSERT_FALSE(appBufferQueueTable.get("Ethernet8:0-15", fieldValues));
+            }
 
             ClearBufferObject("Ethernet0|3-4", CFG_BUFFER_QUEUE_TABLE_NAME);
             ClearBufferObject("Ethernet4|5-6", CFG_BUFFER_QUEUE_TABLE_NAME);
@@ -980,7 +1008,10 @@ namespace buffermgrdyn_test
             ClearBufferPool(skippedPool);
             ClearBufferProfile();
             ClearBufferObject("Ethernet0|0", CFG_BUFFER_PG_TABLE_NAME);
-            ClearBufferObject("Ethernet0|3-4", CFG_BUFFER_PG_TABLE_NAME);
+            for (auto &adminDownPort : adminDownPorts)
+            {
+                ClearBufferObject(adminDownPort + "|3-4", CFG_BUFFER_PG_TABLE_NAME);
+            }
             ClearBufferObject("Ethernet2|3-4", CFG_BUFFER_PG_TABLE_NAME);
             ClearBufferObject("Ethernet0|0-2", CFG_BUFFER_QUEUE_TABLE_NAME);
             ClearBufferObject("Ethernet2|0-2", CFG_BUFFER_QUEUE_TABLE_NAME);
@@ -990,10 +1021,11 @@ namespace buffermgrdyn_test
             ClearBufferObject("Ethernet6|0-2", CFG_BUFFER_QUEUE_TABLE_NAME);
             ClearBufferObject("Ethernet6|3-4", CFG_BUFFER_QUEUE_TABLE_NAME);
             ClearBufferObject("Ethernet6|5-6", CFG_BUFFER_QUEUE_TABLE_NAME);
-            ClearBufferObject("Ethernet0", CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME);
-            ClearBufferObject("Ethernet2", CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME);
-            ClearBufferObject("Ethernet0", CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME);
-            ClearBufferObject("Ethernet2", CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME);
+            for (auto &port : ports)
+            {
+                ClearBufferObject(port, CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME);
+                ClearBufferObject(port, CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME);
+            }
 
             // Run timer
             m_dynamicBuffer->doTask(m_selectableTable);
@@ -1019,6 +1051,8 @@ namespace buffermgrdyn_test
             ASSERT_TRUE(m_dynamicBuffer->m_portQueueLookup.empty());
             ASSERT_TRUE(m_dynamicBuffer->m_portProfileListLookups[BUFFER_EGRESS].empty());
             ASSERT_TRUE(m_dynamicBuffer->m_portProfileListLookups[BUFFER_INGRESS].empty());
+
+            round++;
         }
     }
 

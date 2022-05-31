@@ -2203,7 +2203,9 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
         string &effective_speed = portInfo.effective_speed;
 
         if (cable_length.empty() && !m_cableLengths[port].empty())
+        {
             cable_length = m_cableLengths[port];
+        }
 
         bool need_refresh_all_buffer_objects = false, need_handle_admin_down = false, was_admin_down = false;
 
@@ -2328,15 +2330,23 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
     }
     else if (op == DEL_COMMAND)
     {
-        if (m_portPgLookup.find(port) != m_portPgLookup.end()
-            || m_portQueueLookup.find(port) != m_portQueueLookup.end()
-            || m_portProfileListLookups[BUFFER_INGRESS].find(port) != m_portProfileListLookups[BUFFER_INGRESS].end()
-            || m_portProfileListLookups[BUFFER_EGRESS].find(port) != m_portProfileListLookups[BUFFER_EGRESS].end())
+        cleanUpItemsForReclaimingBuffer(port);
+        if ((m_portPgLookup.find(port) != m_portPgLookup.end()
+             && !m_portPgLookup[port].empty())
+            || (m_portQueueLookup.find(port) != m_portQueueLookup.end()
+                && !m_portQueueLookup[port].empty())
+            || (m_portProfileListLookups[BUFFER_INGRESS].find(port) != m_portProfileListLookups[BUFFER_INGRESS].end()
+                && !m_portProfileListLookups[BUFFER_INGRESS][port].empty())
+            || (m_portProfileListLookups[BUFFER_EGRESS].find(port) != m_portProfileListLookups[BUFFER_EGRESS].end()
+                && !m_portProfileListLookups[BUFFER_EGRESS][port].empty()))
         {
-            SWSS_LOG_NOTICE("Port %s can be removed before buffer items have been removed", port.c_str());
+            SWSS_LOG_INFO("Port %s can't be removed before buffer items have been removed", port.c_str());
             return task_process_status::task_need_retry;
         }
-        cleanUpItemsForReclaimingBuffer(port);
+        m_portPgLookup.erase(port);
+        m_portQueueLookup.erase(port);
+        m_portProfileListLookups[BUFFER_INGRESS].erase(port);
+        m_portProfileListLookups[BUFFER_EGRESS].erase(port);
         m_portInfoLookup.erase(port);
         SWSS_LOG_NOTICE("Port %s is removed", port.c_str());
     }
@@ -2445,7 +2455,9 @@ task_process_status BufferMgrDynamic::handleBufferPoolTable(KeyOpFieldsValuesTup
         if (m_bufferPoolReady && m_bufferPoolLookup.empty())
         {
             for(auto &port : m_adminDownPorts)
+            {
                 cleanUpItemsForReclaimingBuffer(port);
+            }
 
             // Zero profiles must be unloaded once all pools have been uploaded
             // This can be resulted from "config qos reload"
@@ -2692,7 +2704,9 @@ void BufferMgrDynamic::handleSetSingleBufferObjectOnAdminDownPort(buffer_directi
         {
             // Happens only after "config qos reload"
             if (!m_zeroProfilesLoaded)
+            {
                 loadZeroPoolAndProfiles();
+            }
 
             // If initialization finished, no extra handle required.
             // Check whether the key overlaps with supported but not configured map
@@ -3200,7 +3214,9 @@ task_process_status BufferMgrDynamic::handleSingleBufferPortProfileListEntry(con
             {
                 // Happens only after "config qos reload"
                 if (!m_zeroProfilesLoaded)
+                {
                     loadZeroPoolAndProfiles();
+                }
                 vector<FieldValueTuple> fvVector;
                 const string &zeroProfileNameList = constructZeroProfileListFromNormalProfileList(profileList, port);
                 fvVector.emplace_back(buffer_profile_list_field_name, zeroProfileNameList);
@@ -3548,9 +3564,13 @@ void BufferMgrDynamic::cleanUpItemsForReclaimingBuffer(const string &port)
 {
     // Clean up zero buffers when the buffer pools or a port has been removed
     if (!m_bufferObjectIdsToZero[BUFFER_PG].empty())
+    {
         updateBufferObjectToDb(port + delimiter + m_bufferObjectIdsToZero[BUFFER_PG], "", false, BUFFER_PG);
+    }
     if (!m_bufferObjectIdsToZero[BUFFER_QUEUE].empty())
+    {
         updateBufferObjectToDb(port + delimiter + m_bufferObjectIdsToZero[BUFFER_QUEUE], "", false, BUFFER_QUEUE);
+    }
     removeSupportedButNotConfiguredItemsOnPort(m_portInfoLookup[port], port);
 }
 
@@ -3558,5 +3578,7 @@ void BufferMgrDynamic::doTask(SelectableTimer &timer)
 {
     checkSharedBufferPoolSize(true);
     if (!m_bufferCompletelyInitialized)
+    {
         handlePendingBufferObjects();
+    }
 }
