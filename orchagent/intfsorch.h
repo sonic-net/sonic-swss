@@ -57,10 +57,7 @@ public:
     bool setIntfLoopbackAction(const Port &port);
     bool getIntfLoopbackAction(const std::string &action_str, loopback_action_e &action);
     string getIntfLoopbackActionStr(loopback_action_e action);
-    bool doSetIntf(Port port, sai_object_id_t vrf_id, const IpPrefix *ip_prefix, const bool adminUp, const uint32_t mtu);
-    bool setIntf(const string& alias, loopback_action_e loopbackAction, sai_object_id_t vrf_id = gVirtualRouterId,
-                 const IpPrefix *ip_prefix = nullptr, const bool adminUp = true, const uint32_t mtu = 0);
-    bool setIntf(const string& alias, sai_object_id_t vrf_id = gVirtualRouterId, const IpPrefix *ip_prefix = nullptr, const bool adminUp = true, const uint32_t mtu = 0);
+    bool setIntf(const string& alias, sai_object_id_t vrf_id = gVirtualRouterId, const IpPrefix *ip_prefix = nullptr, const bool adminUp = true, const uint32_t mtu = 0, loopback_action_e loopbackAction = LOOPBACK_ACTION_NONE);
     bool removeIntf(const string& alias, sai_object_id_t vrf_id = gVirtualRouterId, const IpPrefix *ip_prefix = nullptr);
 
     void addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix);

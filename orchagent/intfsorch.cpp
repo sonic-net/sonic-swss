@@ -504,10 +504,14 @@ set<IpPrefix> IntfsOrch:: getSubnetRoutes()
     return subnet_routes;
 }
 
-bool IntfsOrch::doSetIntf(Port port, sai_object_id_t vrf_id, const IpPrefix *ip_prefix, const bool adminUp, const uint32_t mtu)
+bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPrefix *ip_prefix, const bool adminUp, const uint32_t mtu, loopback_action_e loopbackAction)
+
 {
     SWSS_LOG_ENTER();
-    string alias = port.m_alias;
+    Port port;
+    gPortsOrch->getPort(alias, port);
+
+    port.m_loopback_action = loopbackAction;
 
     auto it_intfs = m_syncdIntfses.find(alias);
     if (it_intfs == m_syncdIntfses.end())
@@ -618,27 +622,6 @@ bool IntfsOrch::doSetIntf(Port port, sai_object_id_t vrf_id, const IpPrefix *ip_
 
     m_syncdIntfses[alias].ip_addresses.insert(*ip_prefix);
     return true;
-}
-
-bool IntfsOrch::setIntf(const string& alias, loopback_action_e loopbackAction,
-                        sai_object_id_t vrf_id, const IpPrefix *ip_prefix,
-                        const bool adminUp, const uint32_t mtu)
-{
-    Port port;
-    gPortsOrch->getPort(alias, port);
-    port.m_loopback_action = loopbackAction;
-
-    return doSetIntf(port, vrf_id, ip_prefix, adminUp, mtu);
-}
-
-bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id,
-                        const IpPrefix *ip_prefix, const bool adminUp,
-                        const uint32_t mtu)
-{
-    Port port;
-    gPortsOrch->getPort(alias, port);
-
-    return doSetIntf(port, vrf_id, ip_prefix, adminUp, mtu);
 }
 
 bool IntfsOrch::removeIntf(const string& alias, sai_object_id_t vrf_id, const IpPrefix *ip_prefix)
@@ -973,7 +956,7 @@ void IntfsOrch::doTask(Consumer &consumer)
                     adminUp = port.m_admin_state_up;
                 }
 
-                if (!setIntf(alias, loopbackAction, vrf_id, ip_prefix_in_key ? &ip_prefix : nullptr, adminUp, mtu))
+                if (!setIntf(alias, vrf_id, ip_prefix_in_key ? &ip_prefix : nullptr, adminUp, mtu, loopbackAction))
                 {
                     it++;
                     continue;
@@ -1176,12 +1159,10 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port)
     attr.value.oid = vrf_id;
     attrs.push_back(attr);
 
-    /* Set loopback action only for non virtual rifs */
-    if((port.m_loopback_action != LOOPBACK_ACTION_NONE) and
-       (m_vnetInfses.find(port.m_alias) == m_vnetInfses.end()))
+    if(port.m_loopback_action != LOOPBACK_ACTION_NONE)
     {
         attr.id = SAI_ROUTER_INTERFACE_ATTR_LOOPBACK_PACKET_ACTION;
-        attr.value.s32 = m_sai_loopback_action_map.at( port.m_loopback_action);
+        attr.value.s32 = m_sai_loopback_action_map.at(port.m_loopback_action);
         attrs.push_back(attr);
     }
 
