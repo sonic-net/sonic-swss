@@ -54,6 +54,12 @@ public:
     void addRifToFlexCounter(const string&, const string&, const string&);
     void removeRifFromFlexCounter(const string&, const string&);
 
+    bool setIntfLoopbackAction(const Port &port);
+    bool getIntfLoopbackAction(const std::string &action_str, loopback_action_e &action);
+    string getIntfLoopbackActionStr(loopback_action_e action);
+    bool doSetIntf(Port port, sai_object_id_t vrf_id, const IpPrefix *ip_prefix, const bool adminUp, const uint32_t mtu);
+    bool setIntf(const string& alias, loopback_action_e loopbackAction, sai_object_id_t vrf_id = gVirtualRouterId,
+                 const IpPrefix *ip_prefix = nullptr, const bool adminUp = true, const uint32_t mtu = 0);
     bool setIntf(const string& alias, sai_object_id_t vrf_id = gVirtualRouterId, const IpPrefix *ip_prefix = nullptr, const bool adminUp = true, const uint32_t mtu = 0);
     bool removeIntf(const string& alias, sai_object_id_t vrf_id = gVirtualRouterId, const IpPrefix *ip_prefix = nullptr);
 
@@ -88,6 +94,8 @@ private:
     unique_ptr<Table> m_vidToRidTable;
     unique_ptr<ProducerTable> m_flexCounterTable;
     unique_ptr<ProducerTable> m_flexCounterGroupTable;
+    static const unordered_map<string, loopback_action_e> m_loopback_action_map;
+    static const unordered_map<loopback_action_e, sai_packet_action_t> m_sai_loopback_action_map;
 
     std::string getRifFlexCounterTableKey(std::string s);
 

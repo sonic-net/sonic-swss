@@ -57,6 +57,21 @@ static const vector<sai_router_interface_stat_t> rifStatIds =
     SAI_ROUTER_INTERFACE_STAT_OUT_ERROR_OCTETS,
 };
 
+// Translation of loopback action from string to sai type
+const unordered_map<string, loopback_action_e> IntfsOrch::m_loopback_action_map =
+{
+    {"none",    LOOPBACK_ACTION_NONE},
+    {"drop",    LOOPBACK_ACTION_DROP},
+    {"forward", LOOPBACK_ACTION_FORWARD},
+};
+
+// Translation of loopback action from sonic to sai type
+const unordered_map<loopback_action_e, sai_packet_action_t> IntfsOrch::m_sai_loopback_action_map =
+{
+    {LOOPBACK_ACTION_DROP, SAI_PACKET_ACTION_DROP},
+    {LOOPBACK_ACTION_FORWARD, SAI_PACKET_ACTION_FORWARD},
+};
+
 IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch, DBConnector *chassisAppDb) :
         Orch(db, tableName, intfsorch_pri), m_vrfOrch(vrf_orch)
 {
@@ -416,6 +431,62 @@ bool IntfsOrch::setIntfProxyArp(const string &alias, const string &proxy_arp)
     return true;
 }
 
+bool IntfsOrch::setIntfLoopbackAction(const Port &port)
+{
+    sai_attribute_t attr;
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_LOOPBACK_PACKET_ACTION;
+    attr.value.s32 = m_sai_loopback_action_map.at(port.m_loopback_action);
+
+    string action_str = getIntfLoopbackActionStr(port.m_loopback_action);
+
+    sai_status_t status = sai_router_intfs_api->set_router_interface_attribute(port.m_rif_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Loopback action [%s] set failed, interface [%s], rc [%d]",
+                       action_str.c_str(), port.m_alias.c_str(), status);
+
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_ROUTER_INTERFACE, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    SWSS_LOG_NOTICE("Loopback action [%s] set success, interface [%s]",
+                    action_str.c_str(), port.m_alias.c_str());
+    return true;
+}
+
+bool IntfsOrch::getIntfLoopbackAction(const std::string &actionStr, loopback_action_e &action)
+{
+    auto it = m_loopback_action_map.find(actionStr);
+    if (it != m_loopback_action_map.end())
+    {
+        action = m_loopback_action_map.at(actionStr);
+        return true;
+    }
+    else
+    {
+        SWSS_LOG_WARN("Unsupported loopback action [%s]", actionStr.c_str());
+        return false;
+    }
+}
+
+string IntfsOrch::getIntfLoopbackActionStr(loopback_action_e action)
+{
+    for (auto it = m_loopback_action_map.begin(); it != m_loopback_action_map.end(); ++it)
+    {
+        if (it->second == action)
+        {
+            return it->first;
+        }
+    }
+
+    SWSS_LOG_WARN("Failed to fetch action as string for action [%u]", action);
+    return string();
+}
+
+
 set<IpPrefix> IntfsOrch:: getSubnetRoutes()
 {
     SWSS_LOG_ENTER();
@@ -433,12 +504,10 @@ set<IpPrefix> IntfsOrch:: getSubnetRoutes()
     return subnet_routes;
 }
 
-bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPrefix *ip_prefix, const bool adminUp, const uint32_t mtu)
+bool IntfsOrch::doSetIntf(Port port, sai_object_id_t vrf_id, const IpPrefix *ip_prefix, const bool adminUp, const uint32_t mtu)
 {
     SWSS_LOG_ENTER();
-
-    Port port;
-    gPortsOrch->getPort(alias, port);
+    string alias = port.m_alias;
 
     auto it_intfs = m_syncdIntfses.find(alias);
     if (it_intfs == m_syncdIntfses.end())
@@ -549,6 +618,27 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
 
     m_syncdIntfses[alias].ip_addresses.insert(*ip_prefix);
     return true;
+}
+
+bool IntfsOrch::setIntf(const string& alias, loopback_action_e loopbackAction,
+                        sai_object_id_t vrf_id, const IpPrefix *ip_prefix,
+                        const bool adminUp, const uint32_t mtu)
+{
+    Port port;
+    gPortsOrch->getPort(alias, port);
+    port.m_loopback_action = loopbackAction;
+
+    return doSetIntf(port, vrf_id, ip_prefix, adminUp, mtu);
+}
+
+bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id,
+                        const IpPrefix *ip_prefix, const bool adminUp,
+                        const uint32_t mtu)
+{
+    Port port;
+    gPortsOrch->getPort(alias, port);
+
+    return doSetIntf(port, vrf_id, ip_prefix, adminUp, mtu);
 }
 
 bool IntfsOrch::removeIntf(const string& alias, sai_object_id_t vrf_id, const IpPrefix *ip_prefix)
@@ -665,6 +755,7 @@ void IntfsOrch::doTask(Consumer &consumer)
         string inband_type = "";
         bool mpls = false;
         string vlan = "";
+        loopback_action_e loopbackAction = LOOPBACK_ACTION_NONE;
 
         for (auto idx : data)
         {
@@ -756,6 +847,13 @@ void IntfsOrch::doTask(Consumer &consumer)
             else if (field == "vlan")
             {
                 vlan = value;
+            }
+            else if (field == "loopback_action")
+            {
+                if(!getIntfLoopbackAction(value, loopbackAction))
+                {
+                    continue;
+                }
             }
         }
 
@@ -874,7 +972,8 @@ void IntfsOrch::doTask(Consumer &consumer)
                 {
                     adminUp = port.m_admin_state_up;
                 }
-                if (!setIntf(alias, vrf_id, ip_prefix_in_key ? &ip_prefix : nullptr, adminUp, mtu))
+
+                if (!setIntf(alias, loopbackAction, vrf_id, ip_prefix_in_key ? &ip_prefix : nullptr, adminUp, mtu))
                 {
                     it++;
                     continue;
@@ -905,6 +1004,19 @@ void IntfsOrch::doTask(Consumer &consumer)
 
                         setRouterIntfsMpls(port);
                         gPortsOrch->setPort(alias, port);
+                    }
+
+                    /* Set loopback action */
+                    string cache_action_str = getIntfLoopbackActionStr(port.m_loopback_action);
+                    string got_action_str = getIntfLoopbackActionStr(loopbackAction);
+
+                    if ((loopbackAction != LOOPBACK_ACTION_NONE) and (port.m_loopback_action != loopbackAction))
+                    {
+                        port.m_loopback_action = loopbackAction;
+                        if(setIntfLoopbackAction(port))
+                        {
+                            gPortsOrch->setPort(alias, port);
+                        }
                     }
                 }
             }
@@ -1066,6 +1178,17 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port)
     attr.id = SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID;
     attr.value.oid = vrf_id;
     attrs.push_back(attr);
+
+    /* Set loopback action only for non virtual rifs */
+    if((port.m_loopback_action != LOOPBACK_ACTION_NONE) and
+       (m_vnetInfses.find(port.m_alias) == m_vnetInfses.end()))
+    {
+        string action_str = getIntfLoopbackActionStr(port.m_loopback_action);
+
+        attr.id = SAI_ROUTER_INTERFACE_ATTR_LOOPBACK_PACKET_ACTION;
+        attr.value.s32 = m_sai_loopback_action_map.at( port.m_loopback_action);
+        attrs.push_back(attr);
+    }
 
     attr.id = SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS;
     if (port.m_mac)
