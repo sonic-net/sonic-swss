@@ -168,6 +168,7 @@ public:
 
     bool getPortOperStatus(const Port& port, sai_port_oper_status_t& status) const;
 
+    bool decrFdbCount(const string& alias, int count);
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_counterLagTable;

@@ -153,6 +153,176 @@ static const acl_capabilities_t defaultAclActionsSupported =
     }
 };
 
+static acl_table_action_list_lookup_t defaultAclActionList = 
+{
+    {
+        // L3
+        TABLE_TYPE_L3,
+        {
+            {
+                ACL_STAGE_INGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION,
+                    SAI_ACL_ACTION_TYPE_REDIRECT
+                }
+            },
+            {
+                ACL_STAGE_EGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION,
+                    SAI_ACL_ACTION_TYPE_REDIRECT
+                }
+            }
+        }
+    },
+    {
+        // L3V6
+        TABLE_TYPE_L3V6,
+        {
+            {
+                ACL_STAGE_INGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION,
+                    SAI_ACL_ACTION_TYPE_REDIRECT
+                }
+            },
+            {
+                ACL_STAGE_EGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION,
+                    SAI_ACL_ACTION_TYPE_REDIRECT
+                }
+            }
+        }
+    },
+    {
+        // MIRROR
+        TABLE_TYPE_MIRROR,
+        {
+            {
+                ACL_STAGE_INGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_MIRROR_INGRESS
+                }
+            },
+            {
+                ACL_STAGE_EGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_MIRROR_EGRESS
+                }
+            }
+        }
+    },
+    {
+        // MIRRORV6
+        TABLE_TYPE_MIRRORV6,
+        {
+            {
+                ACL_STAGE_INGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_MIRROR_INGRESS
+                }
+            },
+            {
+                ACL_STAGE_EGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_MIRROR_EGRESS
+                }
+            }
+        }
+    },
+    {
+        // MIRROR_DSCP
+        TABLE_TYPE_MIRROR_DSCP,
+        {
+            {
+                ACL_STAGE_INGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_MIRROR_INGRESS
+                }
+            },
+            {
+                ACL_STAGE_EGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_MIRROR_EGRESS
+                }
+            }
+        }
+    },
+    {
+        // TABLE_TYPE_PFCWD
+        TABLE_TYPE_PFCWD,
+        {
+            {
+                ACL_STAGE_INGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION
+                }
+            },
+            {
+                ACL_STAGE_EGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION
+                }
+            }
+        }
+    },
+    {
+        // MCLAG
+        TABLE_TYPE_MCLAG,
+        {
+            {
+                ACL_STAGE_INGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION
+                }
+            },
+            {
+                ACL_STAGE_EGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION
+                }
+            }
+        }
+    },
+    {
+        // MUX
+        TABLE_TYPE_MUX,
+        {
+            {
+                ACL_STAGE_INGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION
+                }
+            },
+            {
+                ACL_STAGE_EGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION
+                }
+            }
+        }
+    },
+    {
+        // DROP
+        TABLE_TYPE_DROP,
+        {
+            {
+                ACL_STAGE_INGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION
+                }
+            },
+            {
+                ACL_STAGE_EGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION
+                }
+            }
+        }
+    }
+};
+
 static acl_ip_type_lookup_t aclIpTypeLookup =
 {
     { IP_TYPE_ANY,         SAI_ACL_IP_TYPE_ANY },
@@ -299,6 +469,12 @@ const map<sai_acl_table_attr_t, shared_ptr<AclTableMatchInterface>>& AclTableTyp
 const set<sai_acl_action_type_t>& AclTableType::getActions() const
 {
     return m_aclAcitons;
+}
+
+bool AclTableType::addAction(sai_acl_action_type_t action)
+{
+    m_aclAcitons.insert(action);
+    return true;
 }
 
 AclTableTypeBuilder& AclTableTypeBuilder::withName(string name)
@@ -1806,6 +1982,51 @@ AclTable::AclTable(AclOrch *pAclOrch, string id) noexcept : m_pAclOrch(pAclOrch)
 AclTable::AclTable(AclOrch *pAclOrch) noexcept : m_pAclOrch(pAclOrch)
 {
 
+}
+
+bool AclTable::addMandatoryActions()
+{
+    SWSS_LOG_ENTER();
+
+    if (stage == ACL_STAGE_UNKNOWN)
+    {
+        return false;
+    }
+
+    if (!m_pAclOrch->isAclActionListMandatoryOnTableCreation(stage))
+    {
+        // No op if action list is not mandatory on table creation.
+        return true;
+    }
+    if (!type.getActions().empty())
+    {
+        // No change if action_list is provided
+        return true;
+    }
+
+    sai_acl_action_type_t acl_action = SAI_ACL_ACTION_TYPE_COUNTER;
+    if (m_pAclOrch->isAclActionSupported(stage, acl_action))
+    {
+        SWSS_LOG_INFO("Add counter acl action");
+        type.addAction(acl_action);
+    }
+
+    if (defaultAclActionList.count(type.getName()) != 0)
+    {
+        // Add the default action list
+        for (auto action : defaultAclActionList[type.getName()][stage])
+        {
+            if (m_pAclOrch->isAclActionSupported(stage, acl_action))
+            {
+                SWSS_LOG_INFO("Added default action for table type %s stage %s",
+                                    type.getName().c_str(),
+                                    ((stage == ACL_STAGE_INGRESS)? "INGRESS":"EGRESS"));
+                type.addAction(action);
+            }
+        }
+    }
+
+    return true;
 }
 
 bool AclTable::validateAddType(const AclTableType &tableType)
@@ -3948,6 +4169,8 @@ void AclOrch::doAclTableTask(Consumer &consumer)
             }
 
             newTable.validateAddType(*tableType);
+
+            newTable.addMandatoryActions();
 
             // validate and create/update ACL Table
             if (bAllAttributesOk && newTable.validate())

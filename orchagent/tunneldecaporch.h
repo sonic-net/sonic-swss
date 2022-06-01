@@ -78,7 +78,7 @@ private:
     bool addDecapTunnel(std::string key, std::string type, swss::IpAddresses dst_ip, swss::IpAddress* p_src_ip,
                         std::string dscp, std::string ecn, std::string encap_ecn, std::string ttl,
                         sai_object_id_t dscp_to_tc_map_id, sai_object_id_t tc_to_pg_map_id);
-    bool removeDecapTunnel(std::string key);
+    bool removeDecapTunnel(std::string table_name, std::string key);
 
     bool addDecapTunnelTermEntries(std::string tunnelKey, swss::IpAddress src_ip, swss::IpAddresses dst_ip, sai_object_id_t tunnel_id, TunnelTermType type);
     bool removeDecapTunnelTermEntry(sai_object_id_t tunnel_term_id, std::string ip);

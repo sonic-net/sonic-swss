@@ -79,6 +79,16 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     key+= ":";
 
     nl_addr2str(rtnl_neigh_get_dst(neigh), ipStr, MAX_ADDR_SIZE);
+
+    /* Ignore IPv4 link-local addresses as neighbors */
+    IpAddress ipAddress(ipStr);
+    if (family == IPV4_NAME && ipAddress.getAddrScope() == IpAddress::AddrScope::LINK_SCOPE)
+    {
+        SWSS_LOG_INFO("Link Local address received, ignoring for %s", ipStr);
+        return;
+    }
+
+
     /* Ignore IPv6 link-local addresses as neighbors, if ipv6 link local mode is disabled */
     if (family == IPV6_NAME && IN6_IS_ADDR_LINKLOCAL(nl_addr_get_binary_addr(rtnl_neigh_get_dst(neigh))))
     {
