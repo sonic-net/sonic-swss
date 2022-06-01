@@ -57,6 +57,21 @@
             "separator": "|",
             "instance" : "redis"
         },
+        "GB_ASIC_DB" : {
+            "id" : 9,
+            "separator": ":",
+            "instance" : "redis"
+        },
+        "GB_COUNTERS_DB" : {
+            "id" : 10,
+            "separator": ":",
+            "instance" : "redis"
+        },
+        "GB_FLEX_COUNTER_DB" : {
+            "id" : 11,
+            "separator": ":",
+            "instance" : "redis"
+        },
         "CHASSIS_APP_DB" : {
             "id" : 12,
             "separator": "|",
