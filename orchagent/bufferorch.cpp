@@ -1,5 +1,6 @@
 #include "tokenize.h"
 #include "bufferorch.h"
+#include "directory.h"
 #include "logger.h"
 #include "sai_serialize.h"
 #include "warm_restart.h"
@@ -16,6 +17,7 @@ extern sai_switch_api_t *sai_switch_api;
 extern sai_buffer_api_t *sai_buffer_api;
 
 extern PortsOrch *gPortsOrch;
+extern Directory<Orch*> gDirectory;
 extern sai_object_id_t gSwitchId;
 
 #define BUFFER_POOL_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS  "60000"
@@ -948,6 +950,20 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
                         return handle_status;
                     }
                 }
+                // create/remove a port queue counter for the queue buffer
+                else
+                {
+                    auto flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
+                    auto queues = tokens[1];
+                    if (op == SET_COMMAND && flexCounterOrch->getQueueCountersState())
+                    {
+                        gPortsOrch->createPortBufferQueueCounters(port, queues);
+                    }
+                    else if (op == DEL_COMMAND && flexCounterOrch->getQueueCountersState())
+                    {
+                        gPortsOrch->removePortBufferQueueCounters(port, queues);
+                    }
+                }
             }
         }
     }
@@ -1007,7 +1023,7 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
     if (op == SET_COMMAND)
     {
         ref_resolve_status  resolve_result = resolveFieldRefValue(m_buffer_type_maps, buffer_profile_field_name,
-                                             buffer_to_ref_table_map.at(buffer_profile_field_name), tuple, 
+                                             buffer_to_ref_table_map.at(buffer_profile_field_name), tuple,
                                              sai_buffer_profile, buffer_profile_name);
         if (ref_resolve_status::success != resolve_result)
         {
@@ -1085,6 +1101,20 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
                         if (handle_status != task_process_status::task_success)
                         {
                             return handle_status;
+                        }
+                    }
+                    // create or remove a port PG counter for the PG buffer
+                    else
+                    {
+                        auto flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
+                        auto pgs = tokens[1];
+                        if (op == SET_COMMAND && flexCounterOrch->getPgWatermarkCountersState())
+                        {
+                            gPortsOrch->createPortBufferPgCounters(port, pgs);
+                        }
+                        else if (op == DEL_COMMAND && flexCounterOrch->getPgWatermarkCountersState())
+                        {
+                            gPortsOrch->removePortBufferPgCounters(port, pgs);
                         }
                     }
                 }

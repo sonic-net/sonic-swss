@@ -203,7 +203,11 @@ namespace copporch_test
             // PolicerOrch
             //
 
-            auto policerOrch = new PolicerOrch(this->configDb.get(), CFG_POLICER_TABLE_NAME);
+            vector<TableConnector> policer_tables = {
+                TableConnector(this->configDb.get(), CFG_POLICER_TABLE_NAME),
+                TableConnector(this->configDb.get(), CFG_PORT_STORM_CONTROL_TABLE_NAME)
+            };
+            auto policerOrch = new PolicerOrch(policer_tables, gPortsOrch);
             gDirectory.set(policerOrch);
             resourcesList.push_back(policerOrch);
 

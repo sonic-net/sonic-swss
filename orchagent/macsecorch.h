@@ -72,6 +72,10 @@ private:
     FlexCounterManager  m_macsec_sa_stat_manager;
     FlexCounterManager  m_macsec_flow_stat_manager;
 
+    FlexCounterManager  m_gb_macsec_sa_attr_manager;
+    FlexCounterManager  m_gb_macsec_sa_stat_manager;
+    FlexCounterManager  m_gb_macsec_flow_stat_manager;
+
     struct MACsecACLTable
     {
         sai_object_id_t         m_table_id;
@@ -110,6 +114,7 @@ private:
         sai_object_id_t                                 m_ingress_id;
         map<std::string, std::shared_ptr<MACsecPort> >  m_macsec_ports;
         bool                                            m_sci_in_ingress_macsec_acl;
+        sai_uint8_t                                     m_max_sa_per_sc;
     };
     map<sai_object_id_t, MACsecObject>              m_macsec_objs;
     map<std::string, std::shared_ptr<MACsecPort> >  m_macsec_ports;
@@ -208,16 +213,23 @@ private:
 
     /* Counter */
     void installCounter(
+        MACsecOrchContext &ctx,
         CounterType counter_type,
         sai_macsec_direction_t direction,
         const std::string &obj_name,
         sai_object_id_t obj_id,
         const std::vector<std::string> &stats);
     void uninstallCounter(
+        MACsecOrchContext &ctx,
         CounterType counter_type,
         sai_macsec_direction_t direction,
         const std::string &obj_name,
         sai_object_id_t obj_id);
+
+    /* Flex Counter Manager */
+    FlexCounterManager& MACsecSaStatManager(MACsecOrchContext &ctx);
+    FlexCounterManager& MACsecSaAttrStatManager(MACsecOrchContext &ctx);
+    FlexCounterManager& MACsecFlowStatManager(MACsecOrchContext &ctx);
 
     /* MACsec ACL */
     bool initMACsecACLTable(

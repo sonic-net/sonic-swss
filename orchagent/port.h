@@ -171,6 +171,7 @@ public:
     SystemLagInfo    m_system_lag_info;
 
     sai_object_id_t  m_switch_id = 0;
+    sai_object_id_t  m_system_side_id = 0;
     sai_object_id_t  m_line_side_id = 0;
 
     bool m_fec_cfg = false;
