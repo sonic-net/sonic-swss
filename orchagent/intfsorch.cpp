@@ -60,7 +60,6 @@ static const vector<sai_router_interface_stat_t> rifStatIds =
 // Translation of loopback action from string to sai type
 const unordered_map<string, loopback_action_e> IntfsOrch::m_loopback_action_map =
 {
-    {"none",    LOOPBACK_ACTION_NONE},
     {"drop",    LOOPBACK_ACTION_DROP},
     {"forward", LOOPBACK_ACTION_FORWARD},
 };
