@@ -1,4 +1,4 @@
-arameters:
+parameters:
 - name: timeout
   type: number
   default: 480
