@@ -7,6 +7,7 @@ ADD ["debs", "/debs"]
 RUN dpkg --purge python-swsscommon
 RUN dpkg --purge python3-swsscommon
 RUN dpkg --purge swss
+RUN dpkg --purge sonic-db-cli
 RUN dpkg --purge libsairedis
 RUN dpkg --purge libswsscommon
 RUN dpkg --purge libsaimetadata
@@ -21,6 +22,7 @@ RUN dpkg -i /debs/libsaimetadata_1.0.0_amd64.deb
 RUN dpkg -i /debs/libsairedis_1.0.0_amd64.deb
 RUN dpkg -i /debs/libsaivs_1.0.0_amd64.deb
 RUN dpkg -i /debs/syncd-vs_1.0.0_amd64.deb
+RUN dpkg -i /debs/sonic-db-cli_1.0.0_amd64.deb
 
 RUN dpkg --purge swss
 RUN dpkg -i /debs/swss_1.0.0_amd64.deb
