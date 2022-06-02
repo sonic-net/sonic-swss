@@ -106,10 +106,10 @@ static map<string, sai_port_internal_loopback_mode_t> loopback_mode_map =
     { "mac", SAI_PORT_INTERNAL_LOOPBACK_MODE_MAC }
 };
 
-static map<string, Port::AutoNegMode> autoneg_mode_map =
+static map<string, int> autoneg_mode_map =
 {
-    { "on", Port::AutoNegMode::AUTONEG_ON },
-    { "off", Port::AutoNegMode::AUTONEG_OFF }
+    { "on", 1 },
+    { "off", 0 }
 };
 
 // Interface type map used for gearbox
@@ -174,24 +174,6 @@ static const std::string& getValidInterfaceTypes()
     }
 
     return validInterfaceTypes;
-}
-
-static std::string serialize_adv_interface_types(const std::vector<uint32_t>& adv_types)
-{
-    if (adv_types.empty())
-    {
-        return "";
-    }
-    std::ostringstream oss;
-    auto begin = adv_types.begin();
-    auto end = adv_types.end();
-    oss << sai_serialize_enum(static_cast<sai_port_interface_type_t>(*begin), &sai_metadata_enum_sai_port_interface_type_t);
-    while(++begin != end)
-    {
-        oss << "," << sai_serialize_enum(static_cast<sai_port_interface_type_t>(*begin), &sai_metadata_enum_sai_port_interface_type_t);
-    }
-
-    return oss.str();
 }
 
 const vector<sai_port_stat_t> port_stat_ids =
@@ -2173,71 +2155,13 @@ bool PortsOrch::getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uin
     return true;
 }
 
-task_process_status PortsOrch::onPortAutoNegChanged(Port &p, Port::AutoNegMode an)
-{
-    auto status = setPortAutoNeg(p.m_port_id, an);
-    if (status != task_success)
-    {
-        SWSS_LOG_ERROR("Failed to set port %s AN from %d to %d", p.m_alias.c_str(), int(p.m_autoneg), an);
-        return status;
-    }
-    SWSS_LOG_NOTICE("Set port %s AutoNeg from %d to %d", p.m_alias.c_str(), int(p.m_autoneg), an);
-
-    if (an == Port::AutoNegMode::AUTONEG_ON)
-    {
-        status = setPortAdvInterfaceTypes(p.m_port_id, p.m_adv_interface_types);
-        auto adv_interface_types = serialize_adv_interface_types(p.m_adv_interface_types);
-        if (status != task_success)
-        {
-            SWSS_LOG_ERROR("Failed to set port %s advertised interface type to %s", p.m_alias.c_str(), 
-                                                                                    adv_interface_types.c_str());
-            return status;
-        }
-        SWSS_LOG_NOTICE("Set port %s advertised interface type to %s", p.m_alias.c_str(), 
-                                                                       adv_interface_types.c_str());  
-
-        status = setPortAdvSpeeds(p.m_port_id, p.m_adv_speeds);
-        auto adv_speeds = swss::join(',', p.m_adv_speeds.begin(), p.m_adv_speeds.end());
-        if (status != task_success)
-        {
-            SWSS_LOG_ERROR("Failed to set port %s advertised speed to %s", p.m_alias.c_str(),
-                                                                           adv_speeds.c_str());
-            return status;
-        }
-        SWSS_LOG_NOTICE("Set port %s advertised speed to %s", p.m_alias.c_str(),
-                                                              adv_speeds.c_str());                    
-    }
-    else if (an == Port::AutoNegMode::AUTONEG_OFF)
-    {
-        status = setPortInterfaceType(p.m_port_id, p.m_interface_type);
-        if (status != task_success)
-        {
-            SWSS_LOG_ERROR("Failed to set port %s interface type to %s", p.m_alias.c_str(), 
-                                                                         sai_serialize_enum(p.m_interface_type, &sai_metadata_enum_sai_port_interface_type_t).c_str());
-            return status;
-        }
-        SWSS_LOG_NOTICE("Set port %s interface type to %s", p.m_alias.c_str(),
-                                                            sai_serialize_enum(p.m_interface_type, &sai_metadata_enum_sai_port_interface_type_t).c_str());
-
-        status = setPortSpeed(p, p.m_speed);
-        if (status != task_success)
-        {
-            SWSS_LOG_ERROR("Failed to set port %s speed to %u", p.m_alias.c_str(), p.m_speed);
-            return status;
-        }
-        SWSS_LOG_NOTICE("Set port %s speed to %u", p.m_alias.c_str(), p.m_speed);
-    }
-
-    return task_success;
-}
-
-task_process_status PortsOrch::setPortAutoNeg(sai_object_id_t id, Port::AutoNegMode an)
+task_process_status PortsOrch::setPortAutoNeg(sai_object_id_t id, int an)
 {
     SWSS_LOG_ENTER();
 
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_AUTO_NEG_MODE;
-    attr.value.booldata = (an == Port::AutoNegMode::AUTONEG_ON);
+    attr.value.booldata = (an == 1 ? true : false);
 
     sai_status_t status = sai_port_api->set_port_attribute(id, &attr);
     if (status != SAI_STATUS_SUCCESS)
@@ -2748,7 +2672,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
             uint32_t speed = 0;
             string learn_mode;
             string an_str;
-            Port::AutoNegMode an = Port::AutoNegMode::AUTONEG_NOT_SET;
+            int an = -1;
             int index = -1;
             string role;
             string adv_speeds_str;
@@ -3004,11 +2928,9 @@ void PortsOrch::doPortTask(Consumer &consumer)
             }
             else
             {
-                if (p.m_admin_state_up && admin_status.empty()) 
+                if (admin_status.empty())
                 {
-                    // Since we support incremental configuration, the admin_status is likely to be empty. However, configuring other field would cause
-                    // port admin down. Here we set default admin_status to up so that port admin status can be recovered at the end of this code block.
-                    admin_status = "up";
+                    admin_status = p.m_admin_state_up ? "up" : "down";
                 }
 
                 if (!an_str.empty())
@@ -3038,9 +2960,10 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             m_portList[alias] = p;
                         }
 
-                        auto status = onPortAutoNegChanged(p, an);
+                        auto status = setPortAutoNeg(p.m_port_id, an);
                         if (status != task_success)
                         {
+                            SWSS_LOG_ERROR("Failed to set port %s AN from %d to %d", alias.c_str(), p.m_autoneg, an);
                             if (status == task_need_retry)
                             {
                                 it++;
@@ -3051,8 +2974,8 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             }
                             continue;
                         }
-
-                        p.m_autoneg = an;
+                        SWSS_LOG_NOTICE("Set port %s AutoNeg from %d to %d", alias.c_str(), p.m_autoneg, an);
+                        p.m_autoneg = static_cast<swss::Port::AutoNegMode>(an);
                         m_portList[alias] = p;
                     }
                 }
@@ -3069,8 +2992,8 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             continue;
                         }
 
-                        // for backward compatible, if p.m_autoneg != AUTONEG_ON, toggle admin status
-                        if (p.m_admin_state_up && p.m_autoneg != Port::AutoNegMode::AUTONEG_ON)
+                        // for backward compatible, if p.m_autoneg != 1, toggle admin status
+                        if (p.m_admin_state_up && p.m_autoneg != 1)
                         {
                             /* Bring port down before applying speed */
                             if (!setPortAdminStatus(p, false))
@@ -3084,25 +3007,22 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             m_portList[alias] = p;
                         }
 
-                        if (p.m_autoneg != Port::AutoNegMode::AUTONEG_ON)
+                        auto status = setPortSpeed(p, speed);
+                        if (status != task_success)
                         {
-                            auto status = setPortSpeed(p, speed);
-                            if (status != task_success)
+                            SWSS_LOG_ERROR("Failed to set port %s speed from %u to %u", alias.c_str(), p.m_speed, speed);
+                            if (status == task_need_retry)
                             {
-                                SWSS_LOG_ERROR("Failed to set port %s speed from %u to %u", alias.c_str(), p.m_speed, speed);
-                                if (status == task_need_retry)
-                                {
-                                    it++;
-                                }
-                                else
-                                {
-                                    it = consumer.m_toSync.erase(it);
-                                }
-                                continue;
+                                it++;
                             }
-
-                            SWSS_LOG_NOTICE("Set port %s speed from %u to %u", alias.c_str(), p.m_speed, speed);
+                            else
+                            {
+                                it = consumer.m_toSync.erase(it);
+                            }
+                            continue;
                         }
+
+                        SWSS_LOG_NOTICE("Set port %s speed from %u to %u", alias.c_str(), p.m_speed, speed);
                         p.m_speed = speed;
                         m_portList[alias] = p;
                     }
@@ -3125,7 +3045,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                     if (adv_speeds != p.m_adv_speeds)
                     {
-                        if (p.m_admin_state_up && p.m_autoneg == Port::AutoNegMode::AUTONEG_ON)
+                        if (p.m_admin_state_up && p.m_autoneg == 1)
                         {
                             /* Bring port down before applying speed */
                             if (!setPortAdminStatus(p, false))
@@ -3139,30 +3059,27 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             m_portList[alias] = p;
                         }
 
-                        if (p.m_autoneg == Port::AutoNegMode::AUTONEG_ON)
+                        auto ori_adv_speeds = swss::join(',', p.m_adv_speeds.begin(), p.m_adv_speeds.end());
+                        auto status = setPortAdvSpeeds(p.m_port_id, adv_speeds);
+                        if (status != task_success)
                         {
-                            auto ori_adv_speeds = swss::join(',', p.m_adv_speeds.begin(), p.m_adv_speeds.end());
-                            auto status = setPortAdvSpeeds(p.m_port_id, adv_speeds);
-                            if (status != task_success)
-                            {
 
-                                SWSS_LOG_ERROR("Failed to set port %s advertised speed from %s to %s", alias.c_str(),
-                                                                                                    ori_adv_speeds.c_str(),
-                                                                                                    adv_speeds_str.c_str());
-                                if (status == task_need_retry)
-                                {
-                                    it++;
-                                }
-                                else
-                                {
-                                    it = consumer.m_toSync.erase(it);
-                                }
-                                continue;
+                            SWSS_LOG_ERROR("Failed to set port %s advertised speed from %s to %s", alias.c_str(),
+                                                                                                   ori_adv_speeds.c_str(),
+                                                                                                   adv_speeds_str.c_str());
+                            if (status == task_need_retry)
+                            {
+                                it++;
                             }
-                            SWSS_LOG_NOTICE("Set port %s advertised speed from %s to %s", alias.c_str(),
-                                                                                        ori_adv_speeds.c_str(),
-                                                                                        adv_speeds_str.c_str());
+                            else
+                            {
+                                it = consumer.m_toSync.erase(it);
+                            }
+                            continue;
                         }
+                        SWSS_LOG_NOTICE("Set port %s advertised speed from %s to %s", alias.c_str(),
+                                                                                      ori_adv_speeds.c_str(),
+                                                                                      adv_speeds_str.c_str());
                         p.m_adv_speeds.swap(adv_speeds);
                         m_portList[alias] = p;
                     }
@@ -3180,7 +3097,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                     if (interface_type != p.m_interface_type)
                     {
-                        if (p.m_admin_state_up && p.m_autoneg == Port::AutoNegMode::AUTONEG_OFF)
+                        if (p.m_admin_state_up && p.m_autoneg == 0)
                         {
                             /* Bring port down before applying speed */
                             if (!setPortAdminStatus(p, false))
@@ -3194,29 +3111,22 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             m_portList[alias] = p;
                         }
 
-                        if (p.m_autoneg == Port::AutoNegMode::AUTONEG_OFF)
+                        auto status = setPortInterfaceType(p.m_port_id, interface_type);
+                        if (status != task_success)
                         {
-                            auto status = setPortInterfaceType(p.m_port_id, interface_type);
-                            if (status != task_success)
+                            SWSS_LOG_ERROR("Failed to set port %s interface type to %s", alias.c_str(), interface_type_str.c_str());
+                            if (status == task_need_retry)
                             {
-                                SWSS_LOG_ERROR("Failed to set port %s interface type from %s to %s", alias.c_str(), 
-                                                                                                     sai_serialize_enum(p.m_interface_type, &sai_metadata_enum_sai_port_interface_type_t).c_str(), 
-                                                                                                     interface_type_str.c_str());
-                                if (status == task_need_retry)
-                                {
-                                    it++;
-                                }
-                                else
-                                {
-                                    it = consumer.m_toSync.erase(it);
-                                }
-                                continue;
+                                it++;
                             }
-
-                            SWSS_LOG_NOTICE("Set port %s interface type from %s to %s", alias.c_str(),
-                                                                                        sai_serialize_enum(p.m_interface_type, &sai_metadata_enum_sai_port_interface_type_t).c_str(),  
-                                                                                        interface_type_str.c_str());
+                            else
+                            {
+                                it = consumer.m_toSync.erase(it);
+                            }
+                            continue;
                         }
+
+                        SWSS_LOG_NOTICE("Set port %s interface type to %s", alias.c_str(), interface_type_str.c_str());
                         p.m_interface_type = interface_type;
                         m_portList[alias] = p;
                     }
@@ -3232,9 +3142,9 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         continue;
                     }
 
-                    if (adv_interface_types != p.m_adv_interface_types)
+                    if (adv_interface_types != p.m_adv_interface_types && p.m_autoneg == 1)
                     {
-                        if (p.m_admin_state_up && p.m_autoneg == Port::AutoNegMode::AUTONEG_ON)
+                        if (p.m_admin_state_up)
                         {
                             /* Bring port down before applying speed */
                             if (!setPortAdminStatus(p, false))
@@ -3248,29 +3158,22 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             m_portList[alias] = p;
                         }
 
-                        if (p.m_autoneg == Port::AutoNegMode::AUTONEG_ON)
+                        auto status = setPortAdvInterfaceTypes(p.m_port_id, adv_interface_types);
+                        if (status != task_success)
                         {
-                            auto status = setPortAdvInterfaceTypes(p.m_port_id, adv_interface_types);
-                            if (status != task_success)
+                            SWSS_LOG_ERROR("Failed to set port %s advertised interface type to %s", alias.c_str(), adv_interface_types_str.c_str());
+                            if (status == task_need_retry)
                             {
-                                SWSS_LOG_ERROR("Failed to set port %s advertised interface type from %s to %s", alias.c_str(), 
-                                                                                                                serialize_adv_interface_types(p.m_adv_interface_types).c_str(), 
-                                                                                                                adv_interface_types_str.c_str());
-                                if (status == task_need_retry)
-                                {
-                                    it++;
-                                }
-                                else
-                                {
-                                    it = consumer.m_toSync.erase(it);
-                                }
-                                continue;
+                                it++;
                             }
-
-                            SWSS_LOG_NOTICE("Set port %s advertised interface type from %s to %s", alias.c_str(), 
-                                                                                                   serialize_adv_interface_types(p.m_adv_interface_types).c_str(), 
-                                                                                                   adv_interface_types_str.c_str());
+                            else
+                            {
+                                it = consumer.m_toSync.erase(it);
+                            }
+                            continue;
                         }
+
+                        SWSS_LOG_NOTICE("Set port %s advertised interface type to %s", alias.c_str(), adv_interface_types_str.c_str());
                         p.m_adv_interface_types.swap(adv_interface_types);
                         m_portList[alias] = p;
                     }

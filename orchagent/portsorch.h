@@ -325,8 +325,7 @@ private:
     bool m_isPortCounterMapGenerated = false;
     bool m_isPortBufferDropCounterMapGenerated = false;
 
-    task_process_status onPortAutoNegChanged(Port &port, Port::AutoNegMode an);
-    task_process_status setPortAutoNeg(sai_object_id_t id, Port::AutoNegMode an);
+    task_process_status setPortAutoNeg(sai_object_id_t id, int an);
     bool setPortFecMode(sai_object_id_t id, int fec);
     task_process_status setPortInterfaceType(sai_object_id_t id, sai_port_interface_type_t interface_type);
     task_process_status setPortAdvInterfaceTypes(sai_object_id_t id, std::vector<uint32_t> &interface_types);

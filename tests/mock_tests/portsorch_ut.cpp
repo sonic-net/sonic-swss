@@ -972,6 +972,7 @@ namespace portsorch_test
     /*
     * The scope of this test is to verify that auto negotiation related configuration
     */
+   /*
     TEST_F(PortsOrchTest, PortAutoNegConfig)
     {
         Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
@@ -1115,11 +1116,12 @@ namespace portsorch_test
         ASSERT_EQ(static_cast<uint32_t>(SAI_PORT_INTERFACE_TYPE_CR2), actual_attrs[0]->value.u32);
 
         sai_port_api = orig_port_api;
-    }
+    }*/
 
     /*
     * The scope of this test is to verify that auto negotiation related configuration failed due to SAI return value
     */
+   /*
     TEST_F(PortsOrchTest, PortAutoNegConfigNeg)
     {
         Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
@@ -1218,6 +1220,7 @@ namespace portsorch_test
         static_cast<Orch *>(gPortsOrch)->doTask();
         ASSERT_EQ(1, call_stats[SAI_PORT_ATTR_SPEED]);
     }
+    */
 
     /*
     * The scope of this test is to verify that LAG member is

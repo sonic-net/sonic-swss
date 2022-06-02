@@ -40,7 +40,6 @@ tests_SOURCES = aclorch_ut.cpp \
                 mock_redisreply.cpp \
                 mock_shell_command.cpp \
                 bulker_ut.cpp \
-                config_cache_ut.cpp \
                 portmgr_ut.cpp \
                 fake_response_publisher.cpp \
                 swssnet_ut.cpp \
@@ -100,7 +99,6 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/bfdorch.cpp \
                 $(top_srcdir)/orchagent/srv6orch.cpp \
                 $(top_srcdir)/orchagent/nvgreorch.cpp \
-                $(top_srcdir)/cfgmgr/config_cache.cpp \
                 $(top_srcdir)/cfgmgr/portmgr.cpp
 
 tests_SOURCES += $(FLEX_CTR_DIR)/flex_counter_manager.cpp $(FLEX_CTR_DIR)/flex_counter_stat_manager.cpp $(FLEX_CTR_DIR)/flow_counter_handler.cpp $(FLEX_CTR_DIR)/flowcounterrouteorch.cpp

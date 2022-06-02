@@ -1,6 +1,5 @@
 #pragma once
 
-#include "config_cache.h"
 #include "dbconnector.h"
 #include "orch.h"
 #include "producerstatetable.h"
@@ -27,11 +26,10 @@ private:
     Table m_statePortTable;
     ProducerStateTable m_appPortTable;
 
-    ConfigCache m_configCache;
+    std::set<std::string> m_portList;
     std::vector<FieldValueTuple> m_retryFields;
 
     void doTask(Consumer &consumer);
-    bool onPortConfigChanged(const std::string &alias, const std::string &field, const std::string &old_value, const std::string &new_value, void *context);
     bool writeConfigToAppDb(const std::string &alias, const std::string &field, const std::string &value);
     bool setPortMtu(const std::string &alias, const std::string &mtu);
     bool setPortAdminStatus(const std::string &alias, const bool up);

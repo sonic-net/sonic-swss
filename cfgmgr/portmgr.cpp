@@ -21,8 +21,7 @@ PortMgr::PortMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         m_cfgPortTable(cfgDb, CFG_PORT_TABLE_NAME),
         m_cfgLagMemberTable(cfgDb, CFG_LAG_MEMBER_TABLE_NAME),
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
-        m_appPortTable(appDb, APP_PORT_TABLE_NAME),
-        m_configCache(std::bind(&PortMgr::onPortConfigChanged, this, std::placeholders::_1, std::placeholders::_2, std::placeholders::_3, std::placeholders::_4, std::placeholders::_5))
+        m_appPortTable(appDb, APP_PORT_TABLE_NAME)
 {
 }
 
@@ -93,33 +92,100 @@ void PortMgr::doTask(Consumer &consumer)
              */
             bool portOk = isPortStateOk(alias);
 
+            string admin_status, mtu, learn_mode, tpid;
+            std::vector<FieldValueTuple> field_values;
+
+            bool configured = (m_portList.find(alias) != m_portList.end());
+
             /* If this is the first time we set port settings
              * assign default admin status and mtu
              */
-            bool exist = m_configCache.exist(alias);
+            if (!configured)
+            {
+                admin_status = DEFAULT_ADMIN_STATUS_STR;
+                mtu = DEFAULT_MTU_STR;
+
+                m_portList.insert(alias);
+            }
 
             for (auto i : kfvFieldsValues(t))
             {
-                m_configCache.config(alias, fvField(i), fvValue(i), (void *)&portOk);
+                if (fvField(i) == "mtu")
+                {
+                    mtu = fvValue(i);
+                }
+                else if (fvField(i) == "admin_status")
+                {
+                    admin_status = fvValue(i);
+                }
+                else if (fvField(i) == "learn_mode")
+                {
+                    learn_mode = fvValue(i);
+                }
+                else if (fvField(i) == "tpid")
+                {
+                    tpid = fvValue(i);
+                }
+                else 
+                {
+                    field_values.emplace_back(i);
+                }
             }
 
-            if (!exist)
+            if (!mtu.empty())
             {
-                // The port does not exist before, it means that it is the first time
-                // to configure this port, try to apply default configuration. Please
-                // not that applyDefault function will NOT override existing configuration
-                // with default value.
-                m_configCache.applyDefault(alias, portDefaultConfig, (void *)&portOk);
+                if (portOk)
+                {
+                    setPortMtu(alias, mtu);
+                }
+                else
+                {
+                    writeConfigToAppDb(alias, "mtu", mtu);
+                    m_retryFields.emplace_back("mtu", mtu);
+                }
+                SWSS_LOG_NOTICE("Configure %s MTU to %s", alias.c_str(), mtu.c_str());
+            }
+
+            if (!admin_status.empty())
+            {
+                if (portOk)
+                {
+                    setPortAdminStatus(alias, admin_status == "up");
+                }
+                else
+                {
+                     writeConfigToAppDb(alias, "admin_status", admin_status);
+                     m_retryFields.emplace_back("admin_status", admin_status);
+                }
+                SWSS_LOG_NOTICE("Configure %s admin status to %s", alias.c_str(), admin_status.c_str());
+            }
+
+            if (!learn_mode.empty())
+            {
+                writeConfigToAppDb(alias, "learn_mode", learn_mode);
+                SWSS_LOG_NOTICE("Configure %s MAC learn mode to %s", alias.c_str(), learn_mode.c_str());
+            }
+
+            if (!tpid.empty())
+            {
+                writeConfigToAppDb(alias, "tpid", tpid);
+                SWSS_LOG_NOTICE("Configure %s TPID to %s", alias.c_str(), tpid.c_str());
+            }
+
+            for (auto &entry : field_values)
+            {
+                writeConfigToAppDb(alias, fvField(entry), fvValue(entry));
+                SWSS_LOG_NOTICE("Configure %s %s to %s", alias.c_str(), fvField(entry).c_str(), fvValue(entry).c_str());
             }
         }
         else if (op == DEL_COMMAND)
         {
             SWSS_LOG_NOTICE("Delete Port: %s", alias.c_str());
             m_appPortTable.del(alias);
-            m_configCache.remove(alias);
+            m_portList.erase(alias);
         }
 
-        if (m_retryFields.empty())
+        if (m_retryFields.empty()) // TODO: test delete & retry
         {
             it = consumer.m_toSync.erase(it);
         }
@@ -135,35 +201,6 @@ void PortMgr::doTask(Consumer &consumer)
             m_retryFields.clear();
         }
     }
-}
-
-bool PortMgr::onPortConfigChanged(const std::string &alias, const std::string &field, const std::string &old_value, const std::string &new_value, void *context)
-{
-    bool portOk = *((bool *)context);
-    if (field == "mtu" && portOk)
-    {
-        setPortMtu(alias, new_value);
-    }
-    else if (field == "admin_status" && portOk)
-    {
-        setPortAdminStatus(alias, new_value == "up");
-    }
-    else
-    {
-        /* For mtu and admin_status, if portOk=false we still save it to APP DB which is 
-         * the same behavior as portsyncd before. 
-         */
-        writeConfigToAppDb(alias, field, new_value);
-    }
-
-    if (!portOk && (field == "mtu" || field == "admin_status"))
-    {
-        m_retryFields.emplace_back(field, new_value);
-        return false;
-    }
-
-    SWSS_LOG_NOTICE("Configure %s %s from %s to %s", alias.c_str(), field.c_str(), old_value.c_str(), new_value.c_str());
-    return true;
 }
 
 bool PortMgr::writeConfigToAppDb(const std::string &alias, const std::string &field, const std::string &value)
