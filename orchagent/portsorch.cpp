@@ -1032,6 +1032,11 @@ void PortsOrch::getCpuPort(Port &port)
     port = m_cpuPort;
 }
 
+/* 
+ * Create host_tx_ready field in PORT_TABLE of STATE-DB 
+ * and set the field to false by default for the 
+ * front<Ethernet> port.
+ */
 void PortsOrch::initHostTxReadyState(Port &port)
 {
     SWSS_LOG_ENTER();
@@ -1051,7 +1056,6 @@ void PortsOrch::initHostTxReadyState(Port &port)
         }
     }
 
-     /* Create host_tx_ready field in state-DB and set it to false by default. */
     if (hostTxReady.empty())
     {
         m_portStateTable.hset(port.m_alias, "host_tx_ready", "false");
@@ -1092,7 +1096,7 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
     {
         SWSS_LOG_ERROR("Failed to set admin status on PHY %s to port pid:%" PRIx64,
                        state ? "UP" : "DOWN", port.m_port_id);
-     /* add task handler to recover/take action on this failure */
+        /* TODO add task handler to recover/take action on this failure */
     }
    
     /* Update the state table for 'host_tx_ready'*/
