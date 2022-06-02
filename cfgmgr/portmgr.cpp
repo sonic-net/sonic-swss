@@ -11,11 +11,6 @@
 using namespace std;
 using namespace swss;
 
-map<std::string, std::string> portDefaultConfig = {
-    {"mtu", DEFAULT_MTU_STR},
-    {"admin_status", DEFAULT_ADMIN_STATUS_STR}
-};
-
 PortMgr::PortMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
         m_cfgPortTable(cfgDb, CFG_PORT_TABLE_NAME),

@@ -1,13 +1,8 @@
 FLEX_CTR_DIR = $(top_srcdir)/orchagent/flex_counter
 DEBUG_CTR_DIR = $(top_srcdir)/orchagent/debug_counter
 P4_ORCH_DIR = $(top_srcdir)/orchagent/p4orch
-CFG_MGR_DIR = $(top_srcdir)/cfgmgr
 
-<<<<<<< HEAD
-INCLUDES = -I $(FLEX_CTR_DIR) -I $(DEBUG_CTR_DIR) -I $(top_srcdir)/lib -I $(CFG_MGR_DIR)
-=======
 INCLUDES = -I $(FLEX_CTR_DIR) -I $(DEBUG_CTR_DIR) -I $(top_srcdir)/lib -I $(top_srcdir)/cfgmgr
->>>>>>> origin/master
 
 CFLAGS_SAI = -I /usr/include/sai
 
