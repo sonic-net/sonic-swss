@@ -580,7 +580,7 @@ void BufferMgr::doTask(Consumer &consumer)
                 if (m_speedLookup.count(port) != 0)
                 {
                     // create/update profile for port
-                    SWSS_LOG_DEBUG("Port %s Speed %s admin status %d", port.c_str(), m_speedLookup[port].c_str(), m_portStatusLookup[port].c_str());
+                    SWSS_LOG_DEBUG("Port %s Speed %s admin status %s", port.c_str(), m_speedLookup[port].c_str(), m_portStatusLookup[port].c_str());
                     task_status = doSpeedUpdateTask(port);
                     SWSS_LOG_DEBUG("Return code for doSpeedUpdateTask %d", task_status);
                 }
