@@ -1056,7 +1056,7 @@ bool PortsOrch::setPortPfcWatchdogStatus(sai_object_id_t portId, uint8_t pfcwd_b
 
     m_portList[p.m_alias] = p;
 
-    SWSS_LOG_INFO("Set PFC watchdog port id=0x%" PRIx64 ", bitmast=0x%x", portId, pfcwd_bitmask);
+    SWSS_LOG_INFO("Set PFC watchdog port id=0x%" PRIx64 ", bitmask=0x%x", portId, pfcwd_bitmask);
     return true;
 }
 
