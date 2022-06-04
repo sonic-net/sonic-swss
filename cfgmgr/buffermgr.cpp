@@ -155,7 +155,7 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
 
     if (m_portStatusLookup.count(port) == 0)
     {
-        // admin_statue is not available yet. This can happen when notification of `PORT_QOS_MAP` table
+        // admin_status is not available yet. This can happen when notification of `PORT_QOS_MAP` table
         // comes first. 
         SWSS_LOG_INFO("pfc_enable status is not available for port %s", port.c_str());
         return task_process_status::task_need_retry;
@@ -301,6 +301,7 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
 
         fvVectorPg.push_back(make_pair("profile", profile_ref));
         m_cfgBufferPgTable.set(buffer_pg_key, fvVectorPg);
+        SWSS_LOG_INFO("Setting buffer profile to PG %s", buffer_pg_key.c_str());
     }
     return task_process_status::task_success;
 }
@@ -564,7 +565,6 @@ void BufferMgr::doTask(Consumer &consumer)
             }
             else if (m_pgfile_processed && table_name == CFG_PORT_TABLE_NAME)
             {
-                bool admin_up = false;
                 for (auto i : kfvFieldsValues(t))
                 {
                     if (fvField(i) == "speed")
@@ -580,7 +580,7 @@ void BufferMgr::doTask(Consumer &consumer)
                 if (m_speedLookup.count(port) != 0)
                 {
                     // create/update profile for port
-                    SWSS_LOG_DEBUG("Port %s Speed %s admin status %d", port.c_str(), m_speedLookup[port].c_str(), admin_up);
+                    SWSS_LOG_DEBUG("Port %s Speed %s admin status %d", port.c_str(), m_speedLookup[port].c_str(), m_portStatusLookup[port].c_str());
                     task_status = doSpeedUpdateTask(port);
                     SWSS_LOG_DEBUG("Return code for doSpeedUpdateTask %d", task_status);
                 }
