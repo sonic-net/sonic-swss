@@ -81,8 +81,7 @@ class TestBuffer(object):
             self.setup_db(dvs)
             self.set_port_qos_table(self.INTF, '3,4')
             self.lossless_pg_combinations = ['3-4']
-            pg_name_map = self.get_pg_name_map()
-            yield pg_name_map
+            yield
         finally:
             self.teardown()
 
