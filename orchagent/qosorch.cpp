@@ -104,6 +104,8 @@ map<string, string> qos_to_ref_table_map = {
 #define DSCP_MAX_VAL 63
 #define EXP_MAX_VAL 7
 
+#define DEFAULT_DSCP_TO_TC_MAP_NAME "AZURE"
+
 task_process_status QosMapHandler::processWorkItem(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
@@ -148,6 +150,16 @@ task_process_status QosMapHandler::processWorkItem(Consumer& consumer, KeyOpFiel
                 freeAttribResources(attributes);
                 return task_process_status::task_failed;
             }
+            if ((qos_map_type_name == CFG_DSCP_TO_TC_MAP_TABLE_NAME) && (qos_object_name == DEFAULT_DSCP_TO_TC_MAP_NAME))
+            {
+                DscpToTcMapHandler *handler = dynamic_cast<DscpToTcMapHandler*>(this);
+                if (handler)
+                {
+                    handler->applyDscpToTcMapToSwitch(SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP, sai_object);
+                    SWSS_LOG_NOTICE("Applied DSCP_TO_TC_MAP %s to switch level", DEFAULT_DSCP_TO_TC_MAP_NAME);
+                }
+            }
+
             (*(QosOrch::getTypeMap()[qos_map_type_name]))[qos_object_name].m_saiObjectId = sai_object;
             (*(QosOrch::getTypeMap()[qos_map_type_name]))[qos_object_name].m_pendingRemove = false;
             SWSS_LOG_NOTICE("Created [%s:%s]", qos_map_type_name.c_str(), qos_object_name.c_str());
@@ -291,8 +303,6 @@ sai_object_id_t DscpToTcMapHandler::addQosItem(const vector<sai_attribute_t> &at
         return SAI_NULL_OBJECT_ID;
     }
     SWSS_LOG_DEBUG("created QosMap object:%" PRIx64, sai_object);
-
-    applyDscpToTcMapToSwitch(SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP, sai_object);
 
     return sai_object;
 }

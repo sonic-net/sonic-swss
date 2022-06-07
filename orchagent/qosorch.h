@@ -78,7 +78,7 @@ public:
     bool convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes) override;
     sai_object_id_t addQosItem(const vector<sai_attribute_t> &attributes) override;
     bool removeQosItem(sai_object_id_t sai_object);
-protected:
+
     void applyDscpToTcMapToSwitch(sai_attr_id_t attr_id, sai_object_id_t sai_dscp_to_tc_map);
 };
 
