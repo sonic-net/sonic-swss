@@ -1,4 +1,6 @@
 #include "table.h"
+#include "producerstatetable.h"
+#include <set>
 
 using TableDataT = std::map<std::string, std::vector<swss::FieldValueTuple>>;
 using TablesT = std::map<std::string, TableDataT>;
@@ -71,4 +73,45 @@ namespace swss
             keys.push_back(it.first);
         }
     }
+
+    void ProducerStateTable::set(const std::string &key,
+                                 const std::vector<FieldValueTuple> &values,
+                                 const std::string &op,
+                                 const std::string &prefix)
+    {
+        auto &table = gDB[m_pipe->getDbId()][getTableName()];
+        auto iter = table.find(key);
+        if (iter == table.end())
+        {
+            table[key] = values;
+        }
+        else
+        {
+            std::vector<FieldValueTuple> new_values(values);
+            std::set<std::string> field_set;
+            for (auto &value : values)
+            {
+                field_set.insert(fvField(value));
+            }
+            for (auto &value : iter->second)
+            {
+                auto &field = fvField(value);
+                if (field_set.find(field) != field_set.end())
+                {
+                    continue;
+                }
+                new_values.push_back(value);
+            }
+            iter->second.swap(new_values);
+        }
+    }
+
+    void ProducerStateTable::del(const std::string &key,
+                                 const std::string &op,
+                                 const std::string &prefix)
+    {
+        auto &table = gDB[m_pipe->getDbId()][getTableName()];
+        table.erase(key);
+    }
+
 }
