@@ -161,7 +161,7 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, bool admin_up)
 
     m_cfgBufferPgTable.get(buffer_pg_key, fvVectorPg);
 
-    if (!admin_up && m_platform == "mellanox")
+    if (!admin_up && (m_platform == "mellanox" || m_platform == "barefoot"))
     {
         // Remove the entry in BUFFER_PG table if any
         if (!fvVectorPg.empty())
