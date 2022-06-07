@@ -204,7 +204,7 @@ void DscpToTcMapHandler::applyDscpToTcMapToSwitch(sai_attr_id_t attr_id, sai_obj
     bool rv = true;
 
     /* Query DSCP_TO_TC QoS map at switch capability */
-    rv = gSwitchOrch->querySwitchDscpToTcCapability(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP);
+    rv = gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP);
     if (rv == false)
     {
         SWSS_LOG_ERROR("Switch level DSCP to TC QoS map configuration is not supported");

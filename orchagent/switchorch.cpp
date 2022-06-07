@@ -45,6 +45,23 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
     m_restartCheckNotificationConsumer = new NotificationConsumer(db, "RESTARTCHECK");
     auto restartCheckNotifier = new Notifier(m_restartCheckNotificationConsumer, this, "RESTARTCHECK");
     Orch::addExecutor(restartCheckNotifier);
+    vector<FieldValueTuple> fvVector;
+
+    /* Query PFC DLR INIT capability */
+    bool rv = querySwitchCapability(SAI_OBJECT_TYPE_QUEUE, SAI_QUEUE_ATTR_PFC_DLR_INIT);
+    if (rv == false)
+    {
+        SWSS_LOG_INFO("Queue level PFC DLR INIT configuration is not supported");
+        m_PfcDlrInitEnable = false;
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PFC_DLR_INIT_CAPABLE, "false");
+    }
+    else 
+    {
+        SWSS_LOG_INFO("Queue level PFC DLR INIT configuration is supported");
+        m_PfcDlrInitEnable = true;
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PFC_DLR_INIT_CAPABLE, "true");
+    }
+    set_switch_capability(fvVector);
 
     initSensorsTable();
     auto executorT = new ExecutableTimer(m_sensorsPollerTimer, this, "ASIC_SENSORS_POLL_TIMER");
@@ -492,7 +509,7 @@ void SwitchOrch::set_switch_capability(const std::vector<FieldValueTuple>& value
      m_switchTable.set("switch", values);
 }
 
-bool SwitchOrch::querySwitchDscpToTcCapability(sai_object_type_t sai_object, sai_attr_id_t attr_id)
+bool SwitchOrch::querySwitchCapability(sai_object_type_t sai_object, sai_attr_id_t attr_id)
 {
     SWSS_LOG_ENTER();
 

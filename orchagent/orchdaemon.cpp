@@ -469,13 +469,26 @@ bool OrchDaemon::init()
             SAI_QUEUE_ATTR_PAUSE_STATUS,
         };
 
-        m_orchList.push_back(new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
-                    m_configDb,
-                    pfc_wd_tables,
-                    portStatIds,
-                    queueStatIds,
-                    queueAttrIds,
-                    PFC_WD_POLL_MSECS));
+        if(gSwitchOrch->checkPfcDlrInitEnable())
+        {
+            m_orchList.push_back(new PfcWdSwOrch<PfcWdDlrHandler, PfcWdLossyHandler>(
+                        m_configDb,
+                        pfc_wd_tables,
+                        portStatIds,
+                        queueStatIds,
+                        queueAttrIds,
+                        PFC_WD_POLL_MSECS));
+        }
+        else
+        {
+            m_orchList.push_back(new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
+                        m_configDb,
+                        pfc_wd_tables,
+                        portStatIds,
+                        queueStatIds,
+                        queueAttrIds,
+                        PFC_WD_POLL_MSECS));
+        }
     } else if (platform == CISCO_8000_PLATFORM_SUBSTRING)
     {
         static const vector<sai_port_stat_t> portStatIds;

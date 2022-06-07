@@ -7,6 +7,7 @@
 #define ASIC_SENSORS_POLLER_STATUS "ASIC_SENSORS_POLLER_STATUS"
 #define ASIC_SENSORS_POLLER_INTERVAL "ASIC_SENSORS_POLLER_INTERVAL"
 
+#define SWITCH_CAPABILITY_TABLE_PFC_DLR_INIT_CAPABLE "PFC_DLR_INIT_CAPABLE"
 struct WarmRestartCheck
 {
     bool    checkRestartReadyState;
@@ -25,7 +26,8 @@ public:
     void restartCheckReply(const std::string &op, const std::string &data, std::vector<swss::FieldValueTuple> &values);
     bool setAgingFDB(uint32_t sec);
     void set_switch_capability(const std::vector<swss::FieldValueTuple>& values);
-    bool querySwitchDscpToTcCapability(sai_object_type_t sai_object, sai_attr_id_t attr_id);
+    bool querySwitchCapability(sai_object_type_t sai_object, sai_attr_id_t attr_id);
+    bool checkPfcDlrInitEnable() { return m_PfcDlrInitEnable; }
 private:
     void doTask(Consumer &consumer);
     void doTask(swss::SelectableTimer &timer);
@@ -37,6 +39,8 @@ private:
     void doTask(swss::NotificationConsumer& consumer);
     swss::DBConnector *m_db;
     swss::Table m_switchTable;
+
+    bool m_PfcDlrInitEnable = false;
 
     // ASIC temperature sensors
     std::shared_ptr<swss::DBConnector> m_stateDb = nullptr;
