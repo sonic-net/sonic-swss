@@ -7,6 +7,8 @@ TUNNEL_TYPE_MAP           = "COUNTERS_TUNNEL_TYPE_MAP"
 ROUTE_TO_PATTERN_MAP      = "COUNTERS_ROUTE_TO_PATTERN_MAP"
 NUMBER_OF_RETRIES         = 10
 CPU_PORT_OID              = "0x0"
+PORT                      = "Ethernet0"
+PORT_MAP                  = "COUNTERS_PORT_NAME_MAP"
 
 counter_group_meta = {
     'port_counter': {
@@ -71,6 +73,7 @@ counter_group_meta = {
     }
 }
 
+@pytest.mark.usefixtures('dvs_port_manager')
 class TestFlexCounters(object):
 
     def setup_dbs(self, dvs):
@@ -129,18 +132,6 @@ class TestFlexCounters(object):
                 time.sleep(1)
 
         assert False, "Polling interval is not applied to FLEX_COUNTER_GROUP_TABLE for group {}, expect={}, actual={}".format(group, interval, interval_value)
-
-    def wait_for_buffer_pg_queue_counter(self, map, port, index, isSet):
-        for retry in range(NUMBER_OF_RETRIES):
-            counter_oid = self.counters_db.db_connection.hget(map, port + ':' + index)
-            if (isSet and counter_oid):
-                return counter_oid
-            elif (not isSet and not counter_oid):
-                return None
-            else:
-                time.sleep(1)
-
-        assert False, "Counter not {} for port: {}, type: {}, index: {}".format("created" if isSet else "removed", port, map, index)
 
     def verify_no_flex_counters_tables(self, counter_stat):
         counters_stat_keys = self.flex_db.get_keys("FLEX_COUNTER_TABLE:" + counter_stat)
@@ -701,53 +692,64 @@ class TestFlexCounters(object):
 
     def set_admin_status(self, interface, status):
         self.config_db.update_entry("PORT", interface, {"admin_status": status})
-
-    def test_create_remove_buffer_pg_counter(self, dvs):
-        """
-        Test steps:
-            1. Enable PG flex counters.
-            2. Configure new buffer prioriy group for a port
-            3. Verify counter is automatically created
-            4. Remove the new buffer prioriy group for the port
-            5. Verify counter is automatically removed
-
-        Args:
-            dvs (object): virtual switch object
-        """
+            
+    def test_add_remove_ports(self, dvs):
         self.setup_dbs(dvs)
-        meta_data = counter_group_meta['pg_watermark_counter']
+        
+        # set flex counter
+        counter_key = counter_group_meta['queue_counter']['key']
+        counter_stat = counter_group_meta['queue_counter']['group_name']
+        counter_map = counter_group_meta['queue_counter']['name_map']
+        self.set_flex_counter_group_status(counter_key, counter_map)
 
-        self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'])
+        # receive port info
+        fvs = self.config_db.get_entry("PORT", PORT)
+        assert len(fvs) > 0
+        
+        # save all the oids of the pg drop counters            
+        oid_list = []
+        counters_queue_map = self.counters_db.get_entry("COUNTERS_QUEUE_NAME_MAP", "")
+        for key, oid in counters_queue_map.items():
+            if PORT in key:
+                oid_list.append(oid)
+                fields = self.flex_db.get_entry("FLEX_COUNTER_TABLE", counter_stat + ":%s" % oid)
+                assert len(fields) == 1
+        oid_list_len = len(oid_list)
 
-        self.config_db.update_entry('BUFFER_PG', 'Ethernet0|1', {'profile': 'ingress_lossy_profile'})
-        counter_oid = self.wait_for_buffer_pg_queue_counter(meta_data['name_map'], 'Ethernet0', '1', True)
-        self.wait_for_id_list(meta_data['group_name'], "Ethernet0", counter_oid)
+        # get port oid
+        port_oid = self.counters_db.get_entry(PORT_MAP, "")[PORT]
 
-        self.config_db.delete_entry('BUFFER_PG', 'Ethernet0|1')
-        self.wait_for_buffer_pg_queue_counter(meta_data['name_map'], 'Ethernet0', '1', False)
-        self.wait_for_id_list_remove(meta_data['group_name'], "Ethernet0", counter_oid)
+        # remove port and verify that it was removed properly
+        self.dvs_port.remove_port(PORT)
+        dvs.get_asic_db().wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid)
+        
+        # verify counters were removed from flex counter table
+        for oid in oid_list:
+            fields = self.flex_db.get_entry("FLEX_COUNTER_TABLE", counter_stat + ":%s" % oid)
+            assert len(fields) == 0
+        
+        # verify that port counter maps were removed from counters db
+        counters_queue_map = self.counters_db.get_entry("COUNTERS_QUEUE_NAME_MAP", "")
+        for key in counters_queue_map.keys():
+            if PORT in key:
+                assert False
+        
+        # add port and wait until the port is added on asic db
+        num_of_keys_without_port = len(dvs.get_asic_db().get_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT"))
+        
+        self.config_db.create_entry("PORT", PORT, fvs)
+        
+        dvs.get_asic_db().wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT", num_of_keys_without_port + 1)
+        dvs.get_counters_db().wait_for_fields("COUNTERS_QUEUE_NAME_MAP", "", ["%s:0"%(PORT)])
+        
+        # verify queue counters were added
+        oid_list = []
+        counters_queue_map = self.counters_db.get_entry("COUNTERS_QUEUE_NAME_MAP", "")
 
-    def test_create_remove_buffer_queue_counter(self, dvs):
-        """
-        Test steps:
-            1. Enable Queue flex counters.
-            2. Configure new buffer queue for a port
-            3. Verify counter is automatically created
-            4. Remove the new buffer queue for the port
-            5. Verify counter is automatically removed
-
-        Args:
-            dvs (object): virtual switch object
-        """
-        self.setup_dbs(dvs)
-        meta_data = counter_group_meta['queue_counter']
-
-        self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'])
-
-        self.config_db.update_entry('BUFFER_QUEUE', 'Ethernet0|7', {'profile': 'egress_lossless_profile'})
-        counter_oid = self.wait_for_buffer_pg_queue_counter(meta_data['name_map'], 'Ethernet0', '7', True)
-        self.wait_for_id_list(meta_data['group_name'], "Ethernet0", counter_oid)
-
-        self.config_db.delete_entry('BUFFER_QUEUE', 'Ethernet0|7')
-        self.wait_for_buffer_pg_queue_counter(meta_data['name_map'], 'Ethernet0', '7', False)
-        self.wait_for_id_list_remove(meta_data['group_name'], "Ethernet0", counter_oid)
+        for key, oid in counters_queue_map.items():
+            if PORT in key:
+                oid_list.append(oid)
+                fields = self.flex_db.get_entry("FLEX_COUNTER_TABLE", counter_stat + ":%s" % oid)
+                assert len(fields) == 1
+        # the number of the oids needs to be the same as the original number of oids (before removing a port and adding)
+        assert oid_list_len == len(oid_list)

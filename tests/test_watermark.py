@@ -104,8 +104,22 @@ class TestWatermark(object):
             assert found, "no such watermark found"
 
     def set_up_flex_counter(self, dvs):
-        fc_status_enable = {"FLEX_COUNTER_STATUS": "enable"}
+        for q in self.qs:
+            self.flex_db.create_entry("FLEX_COUNTER_TABLE",
+                                     "QUEUE_WATERMARK_STAT_COUNTER:{}".format(q),
+                                     WmFCEntry.queue_stats_entry)
 
+        for pg in self.pgs:
+            self.flex_db.create_entry("FLEX_COUNTER_TABLE",
+                                     "PG_WATERMARK_STAT_COUNTER:{}".format(pg),
+                                     WmFCEntry.pg_stats_entry)
+
+        for buffer in self.buffers:
+            self.flex_db.create_entry("FLEX_COUNTER_TABLE",
+                                      "BUFFER_POOL_WATERMARK_STAT_COUNTER:{}".format(buffer),
+                                      WmFCEntry.buffer_stats_entry)
+
+        fc_status_enable = {"FLEX_COUNTER_STATUS": "enable"}
         self.config_db.create_entry("FLEX_COUNTER_TABLE",
                                     "PG_WATERMARK",
                                     fc_status_enable)
@@ -116,8 +130,7 @@ class TestWatermark(object):
                                     "BUFFER_POOL_WATERMARK",
                                     fc_status_enable)
 
-        # Wait for DB's to populate by orchagent
-        time.sleep(2)
+        self.populate_asic_all(dvs, "0")
 
     def clear_flex_counter(self, dvs):
         for q in self.qs:
@@ -137,13 +150,9 @@ class TestWatermark(object):
         self.config_db.delete_entry("FLEX_COUNTER_TABLE", "BUFFER_POOL_WATERMARK")
 
     def set_up(self, dvs):
-        self.pgs = self.counters_db.db_connection.hgetall("COUNTERS_PG_NAME_MAP").values()
-        assert self.pgs is not None and len(self.pgs) > 0
-        self.qs = self.counters_db.db_connection.hgetall("COUNTERS_QUEUE_NAME_MAP").values()
-        assert self.qs is not None and len(self.pgs) > 0
+        self.qs = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_QUEUE")
+        self.pgs = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP")
         self.buffers = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_POOL")
-
-        self.populate_asic_all(dvs, "0")
 
         db = swsscommon.DBConnector(swsscommon.COUNTERS_DB, dvs.redis_sock, 0)
         tbl = swsscommon.Table(db, "COUNTERS_QUEUE_TYPE_MAP")
@@ -171,9 +180,9 @@ class TestWatermark(object):
 
     def test_telemetry_period(self, dvs):
         self.setup_dbs(dvs)
-        self.set_up_flex_counter(dvs)
         self.set_up(dvs)
         try:
+            self.set_up_flex_counter(dvs)
             self.enable_unittests(dvs, "true")
 
             self.populate_asic_all(dvs, "100")
