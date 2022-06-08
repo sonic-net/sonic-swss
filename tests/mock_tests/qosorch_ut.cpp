@@ -947,7 +947,8 @@ namespace qosorch_test
         entries.clear();
         // Drain DSCP_TO_TC_MAP table
         static_cast<Orch *>(gQosOrch)->doTask();
-        ASSERT_EQ((*QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME])["AZURE_1"].m_saiObjectId, switch_dscp_to_tc_map_id);
+        // As we hardcode the default map name to AZURE, pushing AZURE_1 makes no change
+        ASSERT_EQ((*QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME])["AZURE"].m_saiObjectId, switch_dscp_to_tc_map_id);
 
         entries.push_back({"AZURE_1", "DEL", {}});
         consumer->addToSync(entries);
