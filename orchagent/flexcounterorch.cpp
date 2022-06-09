@@ -196,6 +196,12 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     vector<FieldValueTuple> fieldValues;
                     fieldValues.emplace_back(FLEX_COUNTER_STATUS_FIELD, value);
                     m_flexCounterGroupTable->set(flexCounterGroupMap[key], fieldValues);
+
+                    // Update FLEX_COUNTER_STATUS for gearbox port
+                    if (key == PORT_KEY && gPortsOrch && gPortsOrch->isGearboxEnabled())
+                    {
+                        gPortsOrch->setGearboxFlexCounterStatus(value == "enable");
+                    }
                 }
                 else if(field == FLEX_COUNTER_DELAY_STATUS_FIELD)
                 {
