@@ -15,6 +15,8 @@
 using namespace std;
 using namespace swss;
 
+#define PORT_NAME_GLOBAL "global"
+
 BufferMgr::BufferMgr(DBConnector *cfgDb, DBConnector *applDb, string pg_lookup_file, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
         m_cfgPortTable(cfgDb, CFG_PORT_TABLE_NAME),
@@ -391,6 +393,11 @@ void BufferMgr::doPortQosTableTask(Consumer &consumer)
     {
         KeyOpFieldsValuesTuple tuple = it->second;
         string port_name = kfvKey(tuple);
+        if (port_name == PORT_NAME_GLOBAL)
+        {
+            // Ignore the entry for global level 
+            continue;
+        }
         string op = kfvOp(tuple);
         if (op == SET_COMMAND)
         {

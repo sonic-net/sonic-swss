@@ -382,6 +382,7 @@ class TestDscpToTcMap(object):
         self.asic_qos_map_ids = self.asic_db.get_keys(self.ASIC_QOS_MAP_STR)
         self.asic_qos_map_count = len(self.asic_qos_map_ids)
         self.dscp_to_tc_table = swsscommon.Table(self.config_db.db_connection, swsscommon.CFG_DSCP_TO_TC_MAP_TABLE_NAME)
+        self.port_qos_table = swsscommon.Table(self.config_db.db_connection, swsscommon.CFG_PORT_QOS_MAP_TABLE_NAME)
 
     def get_qos_id(self):
         diff = set(self.asic_db.get_keys(self.ASIC_QOS_MAP_STR)) - set(self.asic_qos_map_ids)
@@ -415,9 +416,16 @@ class TestDscpToTcMap(object):
                     if fvs.get("SAI_QOS_MAP_ATTR_TYPE") == "SAI_QOS_MAP_TYPE_DSCP_TO_TC":
                         dscp_to_tc_map_id = id
                         break
+            switch_oid = dvs.getSwitchOid()
+            # Check switch level DSCP_TO_TC_MAP doesn't before PORT_QOS_MAP|global is created
+            fvs = self.asic_db.get_entry(self.ASIC_SWITCH_STR, switch_oid)
+            assert("SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP" not in fvs)
+
+            # Insert switch level map entry 
+            self.port_qos_table.set("global", [("dscp_to_tc_map", "AZURE")])
+            time.sleep(1)
 
             # Check the switch level DSCP_TO_TC_MAP is applied
-            switch_oid = dvs.getSwitchOid()
             fvs = self.asic_db.get_entry(self.ASIC_SWITCH_STR, switch_oid)
             assert(fvs.get("SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP") == dscp_to_tc_map_id)
 
