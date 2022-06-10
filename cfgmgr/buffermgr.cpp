@@ -176,7 +176,7 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
     
     vector<string> lossless_pgs = tokenize(pfc_enable, ',');
 
-    if (m_portStatusLookup[port] == "down" && m_platform == "mellanox")
+    if (m_portStatusLookup[port] == "down" && (m_platform == "mellanox" || m_platform == "barefoot"))
     {
         for (auto lossless_pg : lossless_pgs)
         {
