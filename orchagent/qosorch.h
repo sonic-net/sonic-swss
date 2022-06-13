@@ -212,9 +212,6 @@ private:
 
     std::unordered_map<sai_object_id_t, SchedulerGroupPortInfo_t> m_scheduler_group_port_info;
 
-    // SAI OID of the global dscp to tc map
-    sai_object_id_t m_globalDscpToTcMap;
-
     friend QosMapHandler;
     friend DscpToTcMapHandler;
 };

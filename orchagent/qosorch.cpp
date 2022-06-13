@@ -270,13 +270,6 @@ bool DscpToTcMapHandler::removeQosItem(sai_object_id_t sai_object)
 {
     SWSS_LOG_ENTER();
 
-    if (sai_object == gQosOrch->m_globalDscpToTcMap)
-    {
-        // The current global dscp to tc map is still referenced
-        SWSS_LOG_NOTICE("Current global dscp_to_tc map is still being referenced %" PRIx64, sai_object);
-        return false;
-    }
-
     SWSS_LOG_DEBUG("Removing DscpToTcMap object:%" PRIx64, sai_object);
     sai_status_t sai_status = sai_qos_map_api->remove_qos_map(sai_object);
     if (SAI_STATUS_SUCCESS != sai_status)
@@ -1695,9 +1688,6 @@ bool QosOrch::applyDscpToTcMapToSwitch(sai_attr_id_t attr_id, sai_object_id_t ma
         SWSS_LOG_ERROR("Failed to apply DSCP_TO_TC QoS map to switch rv:%d", status);
         return false;
     }
-
-    if (map_id != gQosOrch->m_globalDscpToTcMap)
-        gQosOrch->m_globalDscpToTcMap = map_id;
 
     SWSS_LOG_NOTICE("Applied DSCP_TO_TC QoS map to switch successfully");
     return true;
