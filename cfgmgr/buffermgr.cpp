@@ -395,7 +395,8 @@ void BufferMgr::doPortQosTableTask(Consumer &consumer)
         string port_name = kfvKey(tuple);
         if (port_name == PORT_NAME_GLOBAL)
         {
-            // Ignore the entry for global level 
+            // Ignore the entry for global level
+            it = consumer.m_toSync.erase(it);
             continue;
         }
         string op = kfvOp(tuple);

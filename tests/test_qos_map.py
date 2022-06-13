@@ -429,6 +429,13 @@ class TestDscpToTcMap(object):
             fvs = self.asic_db.get_entry(self.ASIC_SWITCH_STR, switch_oid)
             assert(fvs.get("SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP") == dscp_to_tc_map_id)
 
+            # Remove the global level DSCP_TO_TC_MAP
+            self.port_qos_table._del("global")
+            time.sleep(1)
+
+            # Check the global level DSCP_TO_TC_MAP is set to SAI_
+            fvs = self.asic_db.get_entry(self.ASIC_SWITCH_STR, switch_oid)
+            assert(fvs.get("SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP") == "oid:0x0")
         finally:
             if created_new_map:
                 self.dscp_to_tc_table._del("AZURE")

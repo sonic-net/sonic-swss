@@ -1705,23 +1705,42 @@ bool QosOrch::applyDscpToTcMapToSwitch(sai_attr_id_t attr_id, sai_object_id_t ma
 
 task_process_status QosOrch::handleGlobalQosMap(const string &OP, KeyOpFieldsValuesTuple &tuple)
 {
+    SWSS_LOG_ENTER();
+
     task_process_status task_status = task_process_status::task_success;
+    
     if (OP == DEL_COMMAND)
     {
-        // Ignore the DEL operation for switch level mapping
-        SWSS_LOG_NOTICE("Ignore DEL operation for global qos map");
+        string referenced_obj;
+        if (!doesObjectExist(m_qos_maps, CFG_PORT_QOS_MAP_TABLE_NAME, PORT_NAME_GLOBAL, dscp_to_tc_field_name, referenced_obj))
+        {
+            return task_status;
+        }
+        // Set SAI_NULL_OBJECT_ID to switch level if PORT_QOS_MAP|global is removed
+        if (applyDscpToTcMapToSwitch(SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP, SAI_NULL_OBJECT_ID))
+        {
+            removeObject(m_qos_maps, CFG_PORT_QOS_MAP_TABLE_NAME, PORT_NAME_GLOBAL);
+            task_status = task_process_status::task_success;
+            SWSS_LOG_INFO("Global QoS map type %s is removed", dscp_to_tc_field_name.c_str());
+        }
+        else
+        {
+            task_status = task_process_status::task_failed;
+            SWSS_LOG_WARN("Failed to remove switch level QoS map type %s", dscp_to_tc_field_name.c_str());
+        }
         return task_status;
     }
-    
+
     for (auto it = kfvFieldsValues(tuple).begin(); it != kfvFieldsValues(tuple).end(); it++)
     {
         string map_type_name = fvField(*it);
         string map_name = fvValue(*it);
         if (map_type_name != dscp_to_tc_field_name)
         {
-            SWSS_LOG_WARN("Qos map %s is not supported at global level", map_type_name.c_str());
+            SWSS_LOG_WARN("Qos map type %s is not supported at global level", map_type_name.c_str());
             continue;
         }
+
         if (qos_to_attr_map.find(map_type_name) != qos_to_attr_map.end())
         {
             sai_object_id_t id;
@@ -1736,9 +1755,15 @@ task_process_status QosOrch::handleGlobalQosMap(const string &OP, KeyOpFieldsVal
 
             if (applyDscpToTcMapToSwitch(SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP, id))
             {
+                setObjectReference(m_qos_maps, CFG_PORT_QOS_MAP_TABLE_NAME, PORT_NAME_GLOBAL, map_type_name, object_name);
                 task_status = task_process_status::task_success;
+                SWSS_LOG_INFO("Applied QoS map type %s name %s to switch level", map_type_name.c_str(), object_name.c_str());
             }
-            setObjectReference(m_qos_maps, CFG_PORT_QOS_MAP_TABLE_NAME, PORT_NAME_GLOBAL, map_type_name, object_name);
+            else
+            {
+                task_status = task_process_status::task_failed;
+                SWSS_LOG_INFO("Failed to apply QoS map type %s name %s to switch level", map_type_name.c_str(), object_name.c_str());
+            }
         }
     }
     return task_status;

@@ -954,17 +954,28 @@ namespace qosorch_test
         // Check DSCP_TO_TC_MAP|AZURE is applied to switch
         ASSERT_EQ((*QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME])["AZURE"].m_saiObjectId, switch_dscp_to_tc_map_id);
 
+        // Remove global DSCP_TO_TC_MAP
+        entries.push_back({"global", "DEL", {}});
+        consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_PORT_QOS_MAP_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+        // Drain PORT_QOS_TABLE table
+        static_cast<Orch *>(gQosOrch)->doTask();
+        // Check switch_level dscp_to_tc_map is set to NULL
+        ASSERT_EQ(SAI_NULL_OBJECT_ID, switch_dscp_to_tc_map_id);
+
         entries.push_back({"AZURE", "DEL", {}});
         consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_DSCP_TO_TC_MAP_TABLE_NAME));
         consumer->addToSync(entries);
         entries.clear();
+
         auto current_sai_remove_qos_map_count = sai_remove_qos_map_count;
         // Drain DSCP_TO_TC_MAP table
         static_cast<Orch *>(gQosOrch)->doTask();
-        // Check DSCP_TO_TC_MAP|AZURE is not removed because it's still referenced by switch
-        ASSERT_EQ(current_sai_remove_qos_map_count, sai_remove_qos_map_count);
-        ASSERT_EQ((*QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME]).count("AZURE"), 1);
-        ASSERT_EQ((*QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME])["AZURE"].m_saiObjectId, switch_dscp_to_tc_map_id);
+        // Check DSCP_TO_TC_MAP|AZURE is removed, and the switch_level dscp_to_tc_map is set to NULL
+        ASSERT_EQ(current_sai_remove_qos_map_count + 1, sai_remove_qos_map_count);
+        ASSERT_EQ((*QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME]).count("AZURE"), 0);
+        
     }
 
     TEST_F(QosOrchTest, QosOrchTestRetryFirstItem)
