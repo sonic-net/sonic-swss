@@ -293,6 +293,23 @@ class TestPortAutoNeg(object):
             # slow down crm polling
             dvs.crm_poll_set("10000")
 
+    def test_PortAutoNegRemoteAdvSpeeds(self, dvs, testlog):
+
+        cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        sdb = swsscommon.DBConnector(6, dvs.redis_sock, 0)
+
+        ctbl = swsscommon.Table(cdb, "PORT")
+        stbl = swsscommon.Table(sdb, "PORT_TABLE")
+
+        # set autoneg = true and admin_status = up
+        fvs = swsscommon.FieldValuePairs([("autoneg","on"),("admin_status","up")])
+        ctbl.set("Ethernet0", fvs)
+
+        time.sleep(10)
+
+        (status, fvs) = stbl.get("Ethernet0")
+        assert status == True
+        assert "rmt_adv_speeds" in [fv[0] for fv in fvs]
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
