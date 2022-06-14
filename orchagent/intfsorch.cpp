@@ -57,18 +57,11 @@ static const vector<sai_router_interface_stat_t> rifStatIds =
     SAI_ROUTER_INTERFACE_STAT_OUT_ERROR_OCTETS,
 };
 
-// Translation of loopback action from string to sai type
-const unordered_map<string, loopback_action_e> IntfsOrch::m_loopback_action_map =
-{
-    {"drop",    LOOPBACK_ACTION_DROP},
-    {"forward", LOOPBACK_ACTION_FORWARD},
-};
-
 // Translation of loopback action from sonic to sai type
-const unordered_map<loopback_action_e, sai_packet_action_t> IntfsOrch::m_sai_loopback_action_map =
+const unordered_map<string, sai_packet_action_t> IntfsOrch::m_sai_loopback_action_map =
 {
-    {LOOPBACK_ACTION_DROP, SAI_PACKET_ACTION_DROP},
-    {LOOPBACK_ACTION_FORWARD, SAI_PACKET_ACTION_FORWARD},
+    {"drop", SAI_PACKET_ACTION_DROP},
+    {"forward", SAI_PACKET_ACTION_FORWARD},
 };
 
 IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch, DBConnector *chassisAppDb) :
@@ -430,19 +423,24 @@ bool IntfsOrch::setIntfProxyArp(const string &alias, const string &proxy_arp)
     return true;
 }
 
-bool IntfsOrch::setIntfLoopbackAction(const Port &port)
+bool IntfsOrch::setIntfLoopbackAction(const Port &port, string actionStr)
 {
     sai_attribute_t attr;
-    attr.id = SAI_ROUTER_INTERFACE_ATTR_LOOPBACK_PACKET_ACTION;
-    attr.value.s32 = m_sai_loopback_action_map.at(port.m_loopback_action);
+    sai_packet_action_t action;
 
-    string action_str = getIntfLoopbackActionStr(port.m_loopback_action);
+    if (!getSaiLoopbackAction(actionStr, action))
+    {
+        return false;
+    }
+
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_LOOPBACK_PACKET_ACTION;
+    attr.value.s32 = action;
 
     sai_status_t status = sai_router_intfs_api->set_router_interface_attribute(port.m_rif_id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Loopback action [%s] set failed, interface [%s], rc [%d]",
-                       action_str.c_str(), port.m_alias.c_str(), status);
+                       actionStr.c_str(), port.m_alias.c_str(), status);
 
         task_process_status handle_status = handleSaiSetStatus(SAI_API_ROUTER_INTERFACE, status);
         if (handle_status != task_success)
@@ -452,39 +450,9 @@ bool IntfsOrch::setIntfLoopbackAction(const Port &port)
     }
 
     SWSS_LOG_NOTICE("Loopback action [%s] set success, interface [%s]",
-                    action_str.c_str(), port.m_alias.c_str());
+                    actionStr.c_str(), port.m_alias.c_str());
     return true;
 }
-
-bool IntfsOrch::getIntfLoopbackAction(const std::string &actionStr, loopback_action_e &action)
-{
-    auto it = m_loopback_action_map.find(actionStr);
-    if (it != m_loopback_action_map.end())
-    {
-        action = m_loopback_action_map.at(actionStr);
-        return true;
-    }
-    else
-    {
-        SWSS_LOG_WARN("Unsupported loopback action [%s]", actionStr.c_str());
-        return false;
-    }
-}
-
-string IntfsOrch::getIntfLoopbackActionStr(loopback_action_e action)
-{
-    for (auto it = m_loopback_action_map.begin(); it != m_loopback_action_map.end(); ++it)
-    {
-        if (it->second == action)
-        {
-            return it->first;
-        }
-    }
-
-    SWSS_LOG_WARN("Failed to fetch action as string for action [%u]", action);
-    return string();
-}
-
 
 set<IpPrefix> IntfsOrch:: getSubnetRoutes()
 {
@@ -504,19 +472,18 @@ set<IpPrefix> IntfsOrch:: getSubnetRoutes()
 }
 
 bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPrefix *ip_prefix,
-                        const bool adminUp, const uint32_t mtu, loopback_action_e loopbackAction)
+                        const bool adminUp, const uint32_t mtu, string loopbackAction)
 
 {
     SWSS_LOG_ENTER();
 
     Port port;
     gPortsOrch->getPort(alias, port);
-    port.m_loopback_action = loopbackAction;
 
     auto it_intfs = m_syncdIntfses.find(alias);
     if (it_intfs == m_syncdIntfses.end())
     {
-        if (!ip_prefix && addRouterIntfs(vrf_id, port))
+        if (!ip_prefix && addRouterIntfs(vrf_id, port, loopbackAction))
         {
             gPortsOrch->increasePortRefCount(alias);
             IntfsEntry intfs_entry;
@@ -738,7 +705,7 @@ void IntfsOrch::doTask(Consumer &consumer)
         string inband_type = "";
         bool mpls = false;
         string vlan = "";
-        loopback_action_e loopbackAction = LOOPBACK_ACTION_NONE;
+        string loopbackAction = "";
 
         for (auto idx : data)
         {
@@ -833,10 +800,7 @@ void IntfsOrch::doTask(Consumer &consumer)
             }
             else if (field == "loopback_action")
             {
-                if(!getIntfLoopbackAction(value, loopbackAction))
-                {
-                    continue;
-                }
+                loopbackAction = value;
             }
         }
 
@@ -990,11 +954,11 @@ void IntfsOrch::doTask(Consumer &consumer)
                     }
 
                     /* Set loopback action */
-                    if ((loopbackAction != LOOPBACK_ACTION_NONE) and (port.m_loopback_action != loopbackAction))
+                    if ((!loopbackAction.empty()) && (port.m_loopback_action != loopbackAction))
                     {
-                        port.m_loopback_action = loopbackAction;
-                        if(setIntfLoopbackAction(port))
+                        if (setIntfLoopbackAction(port, loopbackAction))
                         {
+                            port.m_loopback_action = loopbackAction;
                             gPortsOrch->setPort(alias, port);
                         }
                     }
@@ -1139,7 +1103,22 @@ void IntfsOrch::doTask(Consumer &consumer)
     }
 }
 
-bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port)
+bool IntfsOrch::getSaiLoopbackAction(const string &actionStr, sai_packet_action_t &action)
+{
+    auto it = m_sai_loopback_action_map.find(actionStr);
+    if (it != m_sai_loopback_action_map.end())
+    {
+        action = m_sai_loopback_action_map.at(actionStr);
+        return true;
+    }
+    else
+    {
+        SWSS_LOG_WARN("Unsupported loopback action [%s]", actionStr.c_str());
+        return false;
+    }
+}
+
+bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port, string loopbackActionStr)
 {
     SWSS_LOG_ENTER();
 
@@ -1159,11 +1138,15 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port)
     attr.value.oid = vrf_id;
     attrs.push_back(attr);
 
-    if(port.m_loopback_action != LOOPBACK_ACTION_NONE)
+    if (!loopbackActionStr.empty())
     {
-        attr.id = SAI_ROUTER_INTERFACE_ATTR_LOOPBACK_PACKET_ACTION;
-        attr.value.s32 = m_sai_loopback_action_map.at(port.m_loopback_action);
-        attrs.push_back(attr);
+        sai_packet_action_t loopbackAction;
+        if (getSaiLoopbackAction(loopbackActionStr, loopbackAction))
+        {
+            attr.id = SAI_ROUTER_INTERFACE_ATTR_LOOPBACK_PACKET_ACTION;
+            attr.value.s32 = loopbackAction;
+            attrs.push_back(attr);
+        }
     }
 
     attr.id = SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS;
@@ -1276,6 +1259,7 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port)
     }
 
     port.m_vr_id = vrf_id;
+    port.m_loopback_action = loopbackActionStr;
 
     gPortsOrch->setPort(port.m_alias, port);
     m_rifsToAdd.push_back(port);

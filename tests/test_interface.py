@@ -2213,13 +2213,11 @@ class TestRouterInterface(object):
         tbl.set(interface, fvs)
         time.sleep(1)
 
-    def loopback_action_test(self, iface):
+    def loopback_action_test(self, iface, action):
         # create interface
         self.create_l3_intf(iface, "")
 
-        # set interface loopback action in config database
-        action_map = {"drop": "SAI_PACKET_ACTION_DROP", "forward": "SAI_PACKET_ACTION_FORWARD"}
-        action = random.choice(list(action_map.keys()))
+        # set interface loopback action in config db
         self.set_loopback_action(iface, action)
 
         # check application database
@@ -2234,10 +2232,11 @@ class TestRouterInterface(object):
                 assert fv[1] == action
         assert action_found == True
 
-        # check asic database
+        # check asic db
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
         intf_entries = tbl.getKeys()
 
+        action_map = {"drop": "SAI_PACKET_ACTION_DROP", "forward": "SAI_PACKET_ACTION_FORWARD"}
         action_found = False
         for key in intf_entries:
             (status, fvs) = tbl.get(key)
@@ -2252,25 +2251,45 @@ class TestRouterInterface(object):
         # remove interface
         self.remove_l3_intf(iface)
 
-    def test_interfaceLoopbackAction(self, dvs, testlog):
+    def test_interfaceLoopbackActionDrop(self, dvs, testlog):
         self.setup_db(dvs)
-        self.loopback_action_test("Ethernet8")
-
-    def test_subInterfaceLoopbackAction(self, dvs, testlog):
+        self.loopback_action_test("Ethernet8", "drop")
+        
+    def test_interfaceLoopbackActionForward(self, dvs, testlog):
         self.setup_db(dvs)
-        self.loopback_action_test("Ethernet8.1")
+        self.loopback_action_test("Ethernet8", "forward")
 
-    def test_vlanInterfaceLoopbackAction(self, dvs, testlog):
+    def test_subInterfaceLoopbackActionDrop(self, dvs, testlog):
+        self.setup_db(dvs)
+        self.loopback_action_test("Ethernet8.1", "drop")
+        
+    def test_subInterfaceLoopbackActionForward(self, dvs, testlog):
+        self.setup_db(dvs)
+        self.loopback_action_test("Ethernet8.1", "forward")
+
+    def test_vlanInterfaceLoopbackActionDrop(self, dvs, testlog):
         self.setup_db(dvs)
         self.create_vlan("10")
-        self.loopback_action_test("Vlan10")
+        self.loopback_action_test("Vlan10", "drop")
         self.remove_vlan("10")
+        
+    def test_vlanInterfaceLoopbackActionForward(self, dvs, testlog):
+        self.setup_db(dvs)
+        self.create_vlan("20")
+        self.loopback_action_test("Vlan20", "forward")
+        self.remove_vlan("20")
 
-    def test_portChannelInterfaceLoopbackAction(self, dvs, testlog):
+    def test_portChannelInterfaceLoopbackActionDrop(self, dvs, testlog):
         self.setup_db(dvs)
         self.create_port_channel("PortChannel009")
-        self.loopback_action_test("PortChannel009")
+        self.loopback_action_test("PortChannel009", "drop")
         self.remove_port_channel("PortChannel009")
+        
+    def test_portChannelInterfaceLoopbackActionForward(self, dvs, testlog):
+        self.setup_db(dvs)
+        self.create_port_channel("PortChannel010")
+        self.loopback_action_test("PortChannel010", "forward")
+        self.remove_port_channel("PortChannel010")
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying

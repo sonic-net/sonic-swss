@@ -71,13 +71,6 @@ struct SystemLagInfo
     int32_t spa_id = 0;
 };
 
-typedef enum loopback_action
-{
-    LOOPBACK_ACTION_NONE,
-    LOOPBACK_ACTION_DROP,
-    LOOPBACK_ACTION_FORWARD,
-} loopback_action_e;
-
 class Port
 {
 public:
@@ -114,7 +107,6 @@ public:
     }
 
     std::string         m_alias;
-    loopback_action_e   m_loopback_action;
     Type                m_type;
     int                 m_index = 0;    // PHY_PORT: index
     uint32_t            m_mtu = DEFAULT_MTU;
@@ -158,6 +150,7 @@ public:
     sai_port_interface_type_t m_interface_type;
     std::vector<uint32_t> m_adv_interface_types;
     bool      m_mpls = false;
+    std::string m_loopback_action;
 
     /*
      * Following two bit vectors are used to lock

@@ -54,10 +54,9 @@ public:
     void addRifToFlexCounter(const string&, const string&, const string&);
     void removeRifFromFlexCounter(const string&, const string&);
 
-    bool setIntfLoopbackAction(const Port &port);
-    bool getIntfLoopbackAction(const std::string &action_str, loopback_action_e &action);
-    string getIntfLoopbackActionStr(loopback_action_e action);
-    bool setIntf(const string& alias, sai_object_id_t vrf_id = gVirtualRouterId, const IpPrefix *ip_prefix = nullptr, const bool adminUp = true, const uint32_t mtu = 0, loopback_action_e loopbackAction = LOOPBACK_ACTION_NONE);
+    bool setIntfLoopbackAction(const Port &port, string actionStr);
+    bool getSaiLoopbackAction(const string &actionStr, sai_packet_action_t &action);
+    bool setIntf(const string& alias, sai_object_id_t vrf_id = gVirtualRouterId, const IpPrefix *ip_prefix = nullptr, const bool adminUp = true, const uint32_t mtu = 0, string loopbackAction = "");
     bool removeIntf(const string& alias, sai_object_id_t vrf_id = gVirtualRouterId, const IpPrefix *ip_prefix = nullptr);
 
     void addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix);
@@ -91,12 +90,11 @@ private:
     unique_ptr<Table> m_vidToRidTable;
     unique_ptr<ProducerTable> m_flexCounterTable;
     unique_ptr<ProducerTable> m_flexCounterGroupTable;
-    static const unordered_map<string, loopback_action_e> m_loopback_action_map;
-    static const unordered_map<loopback_action_e, sai_packet_action_t> m_sai_loopback_action_map;
+    static const unordered_map<string, sai_packet_action_t> m_sai_loopback_action_map;
 
     std::string getRifFlexCounterTableKey(std::string s);
 
-    bool addRouterIntfs(sai_object_id_t vrf_id, Port &port);
+    bool addRouterIntfs(sai_object_id_t vrf_id, Port &port, string loopbackAction);
     bool removeRouterIntfs(Port &port);
 
     void addDirectedBroadcast(const Port &port, const IpPrefix &ip_prefix);
