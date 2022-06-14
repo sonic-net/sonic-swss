@@ -79,14 +79,12 @@ class TestBuffer(object):
     def setup_teardown_test(self, dvs):
         try:
             self.setup_db(dvs)
-            self.set_port_qos_table(self.INTF, '2,3,4,6')
-            pg_name_map = self.get_pg_name_map()
-            yield pg_name_map
+            self.set_port_qos_table(self.INTF, '3,4')
+            self.lossless_pg_combinations = ['3-4']
         finally:
             self.teardown()
 
     def test_zero_cable_len_profile_update(self, dvs, setup_teardown_test):
-        self.pg_name_map = setup_teardown_test
         orig_cable_len = None
         orig_speed = None
         try:
@@ -112,6 +110,7 @@ class TestBuffer(object):
             # Make sure the buffer PG has been created
             orig_lossless_profile = "pg_lossless_{}_{}_profile".format(orig_speed, cable_len_before_test)
             self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", orig_lossless_profile)
+            self.pg_name_map = self.get_pg_name_map()
             self.orig_profiles = self.get_asic_buf_profile()
 
             # check if the lossless profile for the test speed is already present
@@ -136,7 +135,7 @@ class TestBuffer(object):
             self.app_db.wait_for_deleted_entry("BUFFER_PROFILE_TABLE", test_lossless_profile)
 
             # buffer pgs should still point to the original buffer profile
-            for pg in self.lossless_pgs:
+            for pg in self.lossless_pg_combinations:
                 self.app_db.wait_for_field_match("BUFFER_PG_TABLE", self.INTF + ":" + pg, {"profile": orig_lossless_profile})
             fvs = dict()
             for pg in self.pg_name_map:
@@ -174,7 +173,6 @@ class TestBuffer(object):
     # To verify the BUFFER_PG is not hardcoded to 3,4
     # buffermgrd will read 'pfc_enable' entry and apply lossless profile to that queue
     def test_buffer_pg_update(self, dvs, setup_teardown_test):
-        self.pg_name_map = setup_teardown_test
         orig_cable_len = None
         orig_speed = None
         test_speed = None
@@ -203,6 +201,7 @@ class TestBuffer(object):
             # Make sure the buffer PG has been created
             orig_lossless_profile = "pg_lossless_{}_{}_profile".format(orig_speed, cable_len_for_test)
             self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", orig_lossless_profile)
+            self.pg_name_map = self.get_pg_name_map()
             self.orig_profiles = self.get_asic_buf_profile()
 
             # get the orig buf profiles attached to the pgs
@@ -221,7 +220,7 @@ class TestBuffer(object):
             self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", new_lossless_profile)
 
             # Verify BUFFER_PG is updated
-            for pg in self.lossless_pgs:
+            for pg in self.lossless_pg_combinations:
                 self.app_db.wait_for_field_match("BUFFER_PG_TABLE", self.INTF + ":" + pg, {"profile": new_lossless_profile})
 
             fvs_negative = {}
@@ -232,9 +231,10 @@ class TestBuffer(object):
 
              # Add pfc_enable field for extra port
             self.set_port_qos_table(extra_port, '2,3,4,6')
+            self.lossless_pg_combinations = ['2-4', '6']
             time.sleep(1)
             # Verify BUFFER_PG is updated when pfc_enable is available
-            for pg in self.lossless_pgs:
+            for pg in self.lossless_pg_combinations:
                 self.app_db.wait_for_field_match("BUFFER_PG_TABLE", extra_port + ":" + pg, {"profile": new_lossless_profile})
         finally:
             if orig_cable_len:

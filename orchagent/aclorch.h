@@ -113,6 +113,9 @@ typedef tuple<sai_acl_range_type_t, int, int> acl_range_properties_t;
 typedef map<acl_stage_type_t, AclActionCapabilities> acl_capabilities_t;
 typedef map<sai_acl_action_type_t, set<int32_t>> acl_action_enum_values_capabilities_t;
 
+typedef map<acl_stage_type_t, set<sai_acl_action_type_t> > acl_stage_action_list_t;
+typedef map<string, acl_stage_action_list_t> acl_table_action_list_lookup_t;
+
 class AclRule;
 
 class AclTableMatchInterface
@@ -155,6 +158,8 @@ public:
     const map<sai_acl_table_attr_t, shared_ptr<AclTableMatchInterface>>& getMatches() const;
     const set<sai_acl_range_type_t>& getRangeTypes() const;
     const set<sai_acl_action_type_t>& getActions() const;
+
+    bool addAction(sai_acl_action_type_t action);
 
 private:
     friend class AclTableTypeBuilder;
@@ -386,6 +391,9 @@ public:
     bool validateAddPorts(const unordered_set<string> &value);
     bool validate();
     bool create();
+
+    // Add actions to ACL table if mandatory action list is required on table creation.
+    bool addMandatoryActions();
 
     // validate AclRule match attribute against rule and table configuration
     bool validateAclRuleMatch(sai_acl_entry_attr_t matchId, const AclRule& rule) const;

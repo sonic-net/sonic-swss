@@ -257,8 +257,17 @@ class TestP4RTAcl(object):
         assert status == True
         util.verify_attr(fvs, attr_list)
 
+        asic_udf_matches = util.get_keys(
+            self._p4rt_udf_match_obj.asic_db, self._p4rt_udf_match_obj.ASIC_DB_TBL_NAME
+        )
+
         # query ASIC database for default UDF wildcard match
-        udf_match_asic_db_key = original_asic_udf_matches[0]
+        udf_match_asic_db_keys = [
+            key for key in asic_udf_matches if key not in original_asic_udf_matches
+        ]
+
+        assert len(udf_match_asic_db_keys) == 1
+        udf_match_asic_db_key = udf_match_asic_db_keys[0]
 
         (status, fvs) = util.get_key(
             self._p4rt_udf_match_obj.asic_db,

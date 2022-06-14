@@ -205,10 +205,9 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
         return;
     }
 
-    /* If netlink for this port has master, we ignore that for now
-     * This could be the case where the port was removed from VLAN bridge
-     */
-    if (master)
+    /* Ignore DELLINK message if port has master, this is applicable to
+     * the case where port was part of VLAN bridge or LAG */
+    if (master && nlmsg_type == RTM_DELLINK)
     {
         return;
     }

@@ -12,7 +12,6 @@
 #include "mock_sai_next_hop_group.h"
 #include "mock_sai_serialize.h"
 #include "mock_sai_switch.h"
-#include "mock_sai_udf.h"
 #include "p4oidmapper.h"
 #include "p4orch.h"
 #include "p4orch/p4orch_util.h"
@@ -31,7 +30,6 @@ extern sai_object_id_t gSwitchId;
 extern sai_next_hop_group_api_t *sai_next_hop_group_api;
 extern sai_hostif_api_t *sai_hostif_api;
 extern sai_switch_api_t *sai_switch_api;
-extern sai_udf_api_t *sai_udf_api;
 extern sai_object_id_t gSwitchId;
 extern sai_acl_api_t *sai_acl_api;
 
@@ -68,7 +66,6 @@ const std::string kWcmpGroupKey1 = KeyGenerator::generateWcmpGroupKey(kWcmpGroup
 const std::string kNexthopKey1 = KeyGenerator::generateNextHopKey(kNexthopId1);
 const std::string kNexthopKey2 = KeyGenerator::generateNextHopKey(kNexthopId2);
 const std::string kNexthopKey3 = KeyGenerator::generateNextHopKey(kNexthopId3);
-constexpr sai_object_id_t kUdfMatchOid1 = 5001;
 
 // Matches the next hop group type sai_attribute_t argument.
 bool MatchSaiNextHopGroupAttribute(const sai_attribute_t *attr)
@@ -154,7 +151,6 @@ class WcmpManagerTest : public ::testing::Test
         EXPECT_CALL(mock_sai_switch_, set_switch_attribute(Eq(gSwitchId), _))
             .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
         EXPECT_CALL(mock_sai_acl_, remove_acl_table_group(_)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
-        EXPECT_CALL(mock_sai_udf_, remove_udf_match(_)).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
         delete gP4Orch;
         delete copp_orch_;
     }
@@ -167,7 +163,6 @@ class WcmpManagerTest : public ::testing::Test
         mock_sai_hostif = &mock_sai_hostif_;
         mock_sai_serialize = &mock_sai_serialize_;
         mock_sai_acl = &mock_sai_acl_;
-        mock_sai_udf = &mock_sai_udf_;
 
         sai_next_hop_group_api->create_next_hop_group = create_next_hop_group;
         sai_next_hop_group_api->remove_next_hop_group = remove_next_hop_group;
@@ -181,8 +176,6 @@ class WcmpManagerTest : public ::testing::Test
         sai_switch_api->set_switch_attribute = mock_set_switch_attribute;
         sai_acl_api->create_acl_table_group = create_acl_table_group;
         sai_acl_api->remove_acl_table_group = remove_acl_table_group;
-        sai_udf_api->create_udf_match = create_udf_match;
-        sai_udf_api->remove_udf_match = remove_udf_match;
     }
 
     void setUpP4Orch()
@@ -194,9 +187,6 @@ class WcmpManagerTest : public ::testing::Test
         copp_orch_ = new CoppOrch(gAppDb, APP_COPP_TABLE_NAME);
 
         // init P4 orch
-        EXPECT_CALL(mock_sai_udf_, create_udf_match(_, _, _, _))
-            .WillOnce(DoAll(SetArgPointee<0>(kUdfMatchOid1), Return(SAI_STATUS_SUCCESS)));
-
         std::vector<std::string> p4_tables;
         gP4Orch = new P4Orch(gAppDb, p4_tables, gVrfOrch, copp_orch_);
     }
@@ -301,7 +291,6 @@ class WcmpManagerTest : public ::testing::Test
     StrictMock<MockSaiHostif> mock_sai_hostif_;
     StrictMock<MockSaiSerialize> mock_sai_serialize_;
     StrictMock<MockSaiAcl> mock_sai_acl_;
-    StrictMock<MockSaiUdf> mock_sai_udf_;
     P4OidMapper *p4_oid_mapper_;
     WcmpManager *wcmp_group_manager_;
     CoppOrch *copp_orch_;
