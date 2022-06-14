@@ -34,7 +34,7 @@ TeamMgr::TeamMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     m_appLagTable(applDb, APP_LAG_TABLE_NAME),
     m_statePortTable(statDb, STATE_PORT_TABLE_NAME),
     m_stateLagTable(statDb, STATE_LAG_TABLE_NAME),
-    m_stateMACsecPortTable(statDb, STATE_MACSEC_PORT_TABLE_NAME),
+    m_stateMACsecIngressSATable(statDb, STATE_MACSEC_INGRESS_SA_TABLE_NAME),
     m_stateFeatureTable(statDb, "FEATURE")
 {
     SWSS_LOG_ENTER();
@@ -121,7 +121,7 @@ bool TeamMgr::isMACsecFeatureEnabled()
     return true;
 }
 
-bool TeamMgr::isMACsecSetted(const std::string &port)
+bool TeamMgr::isMACsecAttached(const std::string &port)
 {
     SWSS_LOG_ENTER();
 
@@ -143,19 +143,27 @@ bool TeamMgr::isMACsecSetted(const std::string &port)
     return true;
 }
 
-bool TeamMgr::isMACsecStateOk(const std::string &port)
+bool TeamMgr::isMACsecIngressSAOk(const std::string &port)
 {
     SWSS_LOG_ENTER();
 
-    vector<FieldValueTuple> temp;
+    vector<string> keys;
+    m_stateMACsecIngressSATable.getKeys(keys);
 
-    if (!m_stateMACsecPortTable.get(port, temp))
+    for (auto key: keys)
     {
-        SWSS_LOG_INFO("MACsec isn't ready on the port %s", port.c_str());
-        return false;
+        auto tokens = tokenize(key, state_db_key_delimiter);
+        auto interface = tokens[0];
+
+        if (port == interface)
+        {
+            SWSS_LOG_NOTICE(" MACsec is ready on the port %s", port.c_str());
+            return true;
+        }
     }
 
-    return true;
+    SWSS_LOG_INFO("MACsec is NOT ready on the port %s", port.c_str());
+    return false;
 }
 
 void TeamMgr::doTask(Consumer &consumer)
@@ -372,7 +380,7 @@ void TeamMgr::doLagMemberTask(Consumer &consumer)
 
             if (isMACsecFeatureEnabled())
             {
-                if (isMACsecSetted(member) && !isMACsecStateOk(member))
+                if (isMACsecAttached(member) && !isMACsecIngressSAOk(member))
                 {
                     it++;
                     continue;
@@ -469,6 +477,17 @@ void TeamMgr::doPortUpdateTask(Consumer &consumer)
             string lag;
             if (findPortMaster(lag, alias))
             {
+                if (isMACsecFeatureEnabled())
+                {
+                    if (isMACsecAttached(alias) && !isMACsecIngressSAOk(alias))
+                    {
+                        it++;
+                        SWSS_LOG_INFO("MACsec is NOT ready on the port %s", alias.c_str());
+                        continue;
+                    }
+                    SWSS_LOG_NOTICE("MACsec is ready on the port %s", alias.c_str());
+                }
+
                 if (addLagMember(lag, alias) == task_need_retry)
                 {
                     it++;
