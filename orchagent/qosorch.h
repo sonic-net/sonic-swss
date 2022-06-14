@@ -74,8 +74,7 @@ class DscpToTcMapHandler : public QosMapHandler
 public:
     bool convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes) override;
     sai_object_id_t addQosItem(const vector<sai_attribute_t> &attributes) override;
-protected:
-    void applyDscpToTcMapToSwitch(sai_attr_id_t attr_id, sai_object_id_t sai_dscp_to_tc_map);
+    bool removeQosItem(sai_object_id_t sai_object);
 };
 
 class Dot1pToTcMapHandler : public QosMapHandler
@@ -167,11 +166,14 @@ private:
     task_process_status handleWredProfileTable(Consumer& consumer);
     task_process_status handleTcToDscpTable(Consumer& consumer);
 
+    task_process_status handleGlobalQosMap(const string &op, KeyOpFieldsValuesTuple &tuple);
+
     sai_object_id_t getSchedulerGroup(const Port &port, const sai_object_id_t queue_id);
 
     bool applyMapToPort(Port &port, sai_attr_id_t attr_id, sai_object_id_t sai_dscp_to_tc_map);
     bool applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, sai_object_id_t scheduler_profile_id);
     bool applyWredProfileToQueue(Port &port, size_t queue_ind, sai_object_id_t sai_wred_profile);
+    bool applyDscpToTcMapToSwitch(sai_attr_id_t attr_id, sai_object_id_t sai_dscp_to_tc_map);
     task_process_status ResolveMapAndApplyToPort(Port &port,sai_port_attr_t port_attr,
                                                  string field_name, KeyOpFieldsValuesTuple &tuple, string op);
 

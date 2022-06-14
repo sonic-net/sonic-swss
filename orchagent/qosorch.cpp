@@ -77,6 +77,8 @@ type_map QosOrch::m_qos_maps = {
 #define DSCP_MAX_VAL 63
 #define EXP_MAX_VAL 7
 
+#define PORT_NAME_GLOBAL "global"
+
 task_process_status QosMapHandler::processWorkItem(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
@@ -198,34 +200,6 @@ bool DscpToTcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
     return true;
 }
 
-void DscpToTcMapHandler::applyDscpToTcMapToSwitch(sai_attr_id_t attr_id, sai_object_id_t map_id)
-{
-    SWSS_LOG_ENTER();
-    bool rv = true;
-
-    /* Query DSCP_TO_TC QoS map at switch capability */
-    rv = gSwitchOrch->querySwitchDscpToTcCapability(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP);
-    if (rv == false)
-    {
-        SWSS_LOG_ERROR("Switch level DSCP to TC QoS map configuration is not supported");
-        return;
-    }
-
-    /* Apply DSCP_TO_TC QoS map at switch */
-    sai_attribute_t attr;
-    attr.id = attr_id;
-    attr.value.oid = map_id;
-
-    sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to apply DSCP_TO_TC QoS map to switch rv:%d", status);
-        return;
-    }
-
-    SWSS_LOG_NOTICE("Applied DSCP_TO_TC QoS map to switch successfully");
-}
-
 sai_object_id_t DscpToTcMapHandler::addQosItem(const vector<sai_attribute_t> &attributes)
 {
     SWSS_LOG_ENTER();
@@ -249,11 +223,23 @@ sai_object_id_t DscpToTcMapHandler::addQosItem(const vector<sai_attribute_t> &at
         SWSS_LOG_ERROR("Failed to create dscp_to_tc map. status:%d", sai_status);
         return SAI_NULL_OBJECT_ID;
     }
-    SWSS_LOG_DEBUG("created QosMap object:%" PRIx64, sai_object);
-
-    //applyDscpToTcMapToSwitch(SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP, sai_object);
+    SWSS_LOG_DEBUG("created QosMap object:%" PRIx64, sai_object);   
 
     return sai_object;
+}
+
+bool DscpToTcMapHandler::removeQosItem(sai_object_id_t sai_object)
+{
+    SWSS_LOG_ENTER();
+
+    SWSS_LOG_DEBUG("Removing DscpToTcMap object:%" PRIx64, sai_object);
+    sai_status_t sai_status = sai_qos_map_api->remove_qos_map(sai_object);
+    if (SAI_STATUS_SUCCESS != sai_status)
+    {
+        SWSS_LOG_ERROR("Failed to remove DSCP_TO_TC map, status:%d", sai_status);
+        return false;
+    }
+    return true;
 }
 
 task_process_status QosOrch::handleDscpToTcTable(Consumer& consumer)
@@ -1436,6 +1422,93 @@ task_process_status QosOrch::ResolveMapAndApplyToPort(
     return task_process_status::task_success;
 }
 
+bool QosOrch::applyDscpToTcMapToSwitch(sai_attr_id_t attr_id, sai_object_id_t map_id)
+{
+    SWSS_LOG_ENTER();
+
+    /* Query DSCP_TO_TC QoS map at switch capability */
+    bool rv = gSwitchOrch->querySwitchDscpToTcCapability(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP);
+    if (rv == false)
+    {
+        SWSS_LOG_ERROR("Switch level DSCP to TC QoS map configuration is not supported");
+        return true;
+    }
+
+    /* Apply DSCP_TO_TC QoS map at switch */
+    sai_attribute_t attr;
+    attr.id = attr_id;
+    attr.value.oid = map_id;
+
+    sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to apply DSCP_TO_TC QoS map to switch rv:%d", status);
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("Applied DSCP_TO_TC QoS map to switch successfully");
+    return true;
+}
+
+task_process_status QosOrch::handleGlobalQosMap(const string &OP, KeyOpFieldsValuesTuple &tuple)
+{
+    SWSS_LOG_ENTER();
+
+    task_process_status task_status = task_process_status::task_success;
+
+    if (OP == DEL_COMMAND)
+    {
+        // Set SAI_NULL_OBJECT_ID to switch level if PORT_QOS_MAP|global is removed
+        if (applyDscpToTcMapToSwitch(SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP, SAI_NULL_OBJECT_ID))
+        {
+            task_status = task_process_status::task_success;
+            SWSS_LOG_INFO("Global QoS map type %s is removed", dscp_to_tc_field_name.c_str());
+        }
+        else
+        {
+            task_status = task_process_status::task_failed;
+            SWSS_LOG_WARN("Failed to remove switch level QoS map type %s", dscp_to_tc_field_name.c_str());
+        }
+        return task_status;
+    }
+
+    for (auto it = kfvFieldsValues(tuple).begin(); it != kfvFieldsValues(tuple).end(); it++)
+    {
+        string map_type_name = fvField(*it);
+        string map_name = fvValue(*it);
+        if (map_type_name != dscp_to_tc_field_name)
+        {
+            SWSS_LOG_WARN("Qos map type %s is not supported at global level", map_type_name.c_str());
+            continue;
+        }
+
+        if (qos_to_attr_map.find(map_type_name) != qos_to_attr_map.end())
+        {
+            sai_object_id_t id;
+            string object_name;
+            ref_resolve_status status = resolveFieldRefValue(m_qos_maps, map_type_name, tuple, id, object_name);
+
+            if (status != ref_resolve_status::success)
+            {
+                SWSS_LOG_INFO("Global QoS map %s is not yet created", map_name.c_str());
+                task_status = task_process_status::task_need_retry;
+            }
+
+            if (applyDscpToTcMapToSwitch(SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP, id))
+            {
+                task_status = task_process_status::task_success;
+                SWSS_LOG_INFO("Applied QoS map type %s name %s to switch level", map_type_name.c_str(), object_name.c_str());
+            }
+            else
+            {
+                task_status = task_process_status::task_failed;
+                SWSS_LOG_INFO("Failed to apply QoS map type %s name %s to switch level", map_type_name.c_str(), object_name.c_str());
+            }
+        }
+    }
+    return task_status;
+}
+
 task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
@@ -1443,6 +1516,11 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
     KeyOpFieldsValuesTuple tuple = consumer.m_toSync.begin()->second;
     string key = kfvKey(tuple);
     string op = kfvOp(tuple);
+
+    if (key == PORT_NAME_GLOBAL)
+    {
+        return handleGlobalQosMap(op, tuple);
+    }
 
     sai_uint8_t pfc_enable = 0;
     sai_uint8_t pfcwd_sw_enable = 0;
