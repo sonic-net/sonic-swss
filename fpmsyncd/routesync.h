@@ -31,6 +31,8 @@ public:
 private:
     /* regular route table */
     ProducerStateTable  m_routeTable;
+    /* label route table */
+    ProducerStateTable  m_label_routeTable;
     /* vnet route table */
     ProducerStateTable  m_vnet_routeTable;
     /* vnet vxlan tunnel table */  
@@ -41,7 +43,10 @@ private:
     /* Handle regular route (include VRF route) */
     void onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf);
 
-    void parseEncap(struct rtattr *tb, uint32_t &encap_value, string &rmac, uint32_t &vlan);
+    /* Handle label route */
+    void onLabelRouteMsg(int nlmsg_type, struct nl_object *obj);
+
+    void parseEncap(struct rtattr *tb, uint32_t &encap_value, string &rmac);
 
     void parseRtAttrNested(struct rtattr **tb, int max,
                  struct rtattr *rta);
@@ -64,17 +69,24 @@ private:
     void getEvpnNextHopGwIf(char *gwaddr, int vni_value,
                           string& nexthops, string& vni_list,
                           string& mac_list, string& intf_list,
-                          string rmac, unsigned int vid);
+                          string rmac, string vlan_id);
 
     bool getEvpnNextHop(struct nlmsghdr *h, int received_bytes, struct rtattr *tb[],
                         string& nexthops, string& vni_list, string& mac_list,
                         string& intf_list);
+
+    /* Get next hop list */
+    void getNextHopList(struct rtnl_route *route_obj, string& gw_list,
+                        string& mpls_list, string& intf_list);
 
     /* Get next hop gateway IP addresses */
     string getNextHopGw(struct rtnl_route *route_obj);
 
     /* Get next hop interfaces */
     string getNextHopIf(struct rtnl_route *route_obj);
+
+    /* Get next hop weights*/
+    string getNextHopWt(struct rtnl_route *route_obj);
 };
 
 }

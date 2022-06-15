@@ -5,6 +5,7 @@
 #include "schema.h"
 #include "drop_counter.h"
 #include <memory>
+#include "observer.h"
 
 using std::string;
 using std::unordered_map;
@@ -34,11 +35,59 @@ DebugCounterOrch::DebugCounterOrch(DBConnector *db, const vector<string>& table_
 {
     SWSS_LOG_ENTER();
     publishDropCounterCapabilities();
+
+    gPortsOrch->attach(this);
 }
 
 DebugCounterOrch::~DebugCounterOrch(void)
 {
     SWSS_LOG_ENTER();
+}
+
+void DebugCounterOrch::update(SubjectType type, void *cntx)
+{
+    SWSS_LOG_ENTER();
+
+    if (type == SUBJECT_TYPE_PORT_CHANGE) 
+    {
+        if (!cntx) 
+        {
+            SWSS_LOG_ERROR("cntx is NULL");
+            return;
+        }
+
+        PortUpdate *update = static_cast<PortUpdate *>(cntx);
+        Port &port = update->port;
+
+        if (update->add) 
+        {
+            for (const auto& debug_counter: debug_counters)
+            {
+                DebugCounter *counter = debug_counter.second.get();
+                auto counter_type = counter->getCounterType();
+                auto counter_stat = counter->getDebugCounterSAIStat();
+                auto flex_counter_type = getFlexCounterType(counter_type);
+                if (flex_counter_type == CounterType::PORT_DEBUG)
+                {
+                    installDebugFlexCounters(counter_type, counter_stat, port.m_port_id);
+                }
+            }
+        } 
+        else 
+        {
+            for (const auto& debug_counter: debug_counters)
+            {
+                DebugCounter *counter = debug_counter.second.get();
+                auto counter_type = counter->getCounterType();
+                auto counter_stat = counter->getDebugCounterSAIStat();
+                auto flex_counter_type = getFlexCounterType(counter_type);
+                if (flex_counter_type == CounterType::PORT_DEBUG)
+                {
+                    uninstallDebugFlexCounters(counter_type, counter_stat, port.m_port_id);
+                }
+            }
+        }
+    }
 }
 
 // doTask processes updates from the consumer and modifies the state of the
@@ -163,7 +212,7 @@ void DebugCounterOrch::doTask(Consumer& consumer)
                 ++it;
                 break;
             case task_process_status::task_failed:
-                SWSS_LOG_ERROR("Failed to process debug counters '%s' task, error(s) occured during execution", op.c_str());
+                SWSS_LOG_ERROR("Failed to process debug counters '%s' task, error(s) occurred during execution", op.c_str());
                 consumer.m_toSync.erase(it++);
                 break;
             default:
@@ -183,6 +232,7 @@ void DebugCounterOrch::publishDropCounterCapabilities()
 {
     supported_ingress_drop_reasons = DropCounter::getSupportedDropReasons(SAI_DEBUG_COUNTER_ATTR_IN_DROP_REASON_LIST);
     supported_egress_drop_reasons  = DropCounter::getSupportedDropReasons(SAI_DEBUG_COUNTER_ATTR_OUT_DROP_REASON_LIST);
+    supported_counter_types        = DropCounter::getSupportedCounterTypes();
 
     string ingress_drop_reason_str = DropCounter::serializeSupportedDropReasons(supported_ingress_drop_reasons);
     string egress_drop_reason_str = DropCounter::serializeSupportedDropReasons(supported_egress_drop_reasons);
@@ -190,6 +240,12 @@ void DebugCounterOrch::publishDropCounterCapabilities()
     for (auto const &counter_type : DebugCounter::getDebugCounterTypeLookup())
     {
         string drop_reasons;
+
+        if (!supported_counter_types.count(counter_type.first))
+        {
+            continue;
+        }
+
         if (counter_type.first == PORT_INGRESS_DROPS || counter_type.first == SWITCH_INGRESS_DROPS)
         {
             drop_reasons = ingress_drop_reason_str;
@@ -212,8 +268,6 @@ void DebugCounterOrch::publishDropCounterCapabilities()
         {
             continue;
         }
-
-        supported_counter_types.emplace(counter_type.first);
 
         vector<FieldValueTuple> fieldValues;
         fieldValues.push_back(FieldValueTuple("count", num_counters));
@@ -255,7 +309,7 @@ task_process_status DebugCounterOrch::installDebugCounter(const string& counter_
     addFreeCounter(counter_name, counter_type);
     reconcileFreeDropCounters(counter_name);
 
-    SWSS_LOG_NOTICE("Succesfully created drop counter %s", counter_name.c_str());
+    SWSS_LOG_NOTICE("Successfully created drop counter %s", counter_name.c_str());
     return task_process_status::task_success;
 }
 
@@ -294,7 +348,7 @@ task_process_status DebugCounterOrch::uninstallDebugCounter(const string& counte
         m_counterNameToSwitchStatMap->hdel("", counter_name);
     }
 
-    SWSS_LOG_NOTICE("Succesfully deleted drop counter %s", counter_name.c_str());
+    SWSS_LOG_NOTICE("Successfully deleted drop counter %s", counter_name.c_str());
     return task_process_status::task_success;
 }
 
@@ -451,7 +505,7 @@ void DebugCounterOrch::reconcileFreeDropCounters(const string& counter_name)
         createDropCounter(counter_name, counter_it->second, reasons_it->second);
         free_drop_counters.erase(counter_it);
         free_drop_reasons.erase(reasons_it);
-        SWSS_LOG_NOTICE("Succesfully matched drop reasons to counter %s", counter_name.c_str());
+        SWSS_LOG_NOTICE("Successfully matched drop reasons to counter %s", counter_name.c_str());
     }
 }
 
@@ -471,7 +525,8 @@ CounterType DebugCounterOrch::getFlexCounterType(const string& counter_type)
 }
 
 void DebugCounterOrch::installDebugFlexCounters(const string& counter_type,
-                                                const string& counter_stat)
+                                                const string& counter_stat,
+                                                sai_object_id_t port_id)
 {
     SWSS_LOG_ENTER();
     CounterType flex_counter_type = getFlexCounterType(counter_type);
@@ -484,6 +539,14 @@ void DebugCounterOrch::installDebugFlexCounters(const string& counter_type,
     {
         for (auto const &curr : gPortsOrch->getAllPorts())
         {
+            if (port_id != SAI_NULL_OBJECT_ID)
+            {
+                if (curr.second.m_port_id != port_id)
+                {
+                    continue;
+                }
+            }
+
             if (curr.second.m_type != Port::Type::PHY)
             {
                 continue;
@@ -498,7 +561,8 @@ void DebugCounterOrch::installDebugFlexCounters(const string& counter_type,
 }
 
 void DebugCounterOrch::uninstallDebugFlexCounters(const string& counter_type,
-                                                  const string& counter_stat)
+                                                  const string& counter_stat,
+                                                  sai_object_id_t port_id)
 {
     SWSS_LOG_ENTER();
     CounterType flex_counter_type = getFlexCounterType(counter_type);
@@ -511,6 +575,14 @@ void DebugCounterOrch::uninstallDebugFlexCounters(const string& counter_type,
     {
         for (auto const &curr : gPortsOrch->getAllPorts())
         {
+            if (port_id != SAI_NULL_OBJECT_ID)
+            {
+                if (curr.second.m_port_id != port_id)
+                {
+                    continue;
+                }
+            }
+
             if (curr.second.m_type != Port::Type::PHY)
             {
                 continue;
@@ -611,3 +683,6 @@ bool DebugCounterOrch::isDropReasonValid(const string& drop_reason) const
 
     return true;
 }
+
+
+

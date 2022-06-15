@@ -111,7 +111,8 @@ class PfcWdAclHandler: public PfcWdLossyHandler
         string m_strEgressTable;
         string m_strRule;
         void createPfcAclTable(sai_object_id_t port, string strTable, bool ingress);
-        void createPfcAclRule(shared_ptr<AclRulePfcwd> rule, uint8_t queueId, string strTable);
+        void createPfcAclRule(shared_ptr<AclRulePacket> rule, uint8_t queueId, string strTable, sai_object_id_t port);
+        void updatePfcAclRule(shared_ptr<AclRule> rule, uint8_t queueId, string strTable, vector<sai_object_id_t> port);
 };
 
 // PFC queue that implements drop action by draining queue with buffer of zero size
@@ -125,7 +126,7 @@ class PfcWdZeroBufferHandler: public PfcWdLossyHandler
     private:
         /*
          * Sets lock bits on port's priority group and queue
-         * to protect them from beeing changed by other Orch's
+         * to protect them from being changed by other Orch's
          */
         void setPriorityGroupAndQueueLockFlag(Port& port, bool isLocked) const;
 
@@ -147,10 +148,7 @@ class PfcWdZeroBufferHandler: public PfcWdLossyHandler
                     return ingress ? m_zeroIngressBufferProfile : m_zeroEgressBufferProfile;
                 }
 
-                sai_object_id_t& getPool(bool ingress)
-                {
-                    return ingress ? m_zeroIngressBufferPool : m_zeroEgressBufferPool;
-                }
+                sai_object_id_t& getPool(bool ingress);
 
                 sai_object_id_t m_zeroIngressBufferPool = SAI_NULL_OBJECT_ID;
                 sai_object_id_t m_zeroEgressBufferPool = SAI_NULL_OBJECT_ID;
@@ -160,6 +158,16 @@ class PfcWdZeroBufferHandler: public PfcWdLossyHandler
 
         sai_object_id_t m_originalQueueBufferProfile = SAI_NULL_OBJECT_ID;
         sai_object_id_t m_originalPgBufferProfile = SAI_NULL_OBJECT_ID;
+};
+
+// PFC queue that implements drop action by draining queue via SAI
+// attribute SAI_QUEUE_ATTR_PFC_DLR_INIT.
+class PfcWdSaiDlrInitHandler: public PfcWdZeroBufferHandler
+{
+    public:
+        PfcWdSaiDlrInitHandler(sai_object_id_t port, sai_object_id_t queue,
+                uint8_t queueId, shared_ptr<Table> countersTable);
+        virtual ~PfcWdSaiDlrInitHandler(void);
 };
 
 #endif

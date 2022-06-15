@@ -80,7 +80,6 @@ public:
                PortsOrch *portOrch, RouteOrch *routeOrch, NeighOrch *neighOrch, FdbOrch *fdbOrch, PolicerOrch *policerOrch);
 
     bool bake() override;
-    bool postBake() override;
     void update(SubjectType, void *);
     bool sessionExists(const string&);
     bool getSessionStatus(const string&, bool&);
@@ -88,12 +87,16 @@ public:
     bool increaseRefCount(const string&);
     bool decreaseRefCount(const string&);
 
+    using Orch::doTask;  // Allow access to the basic doTask
+
 private:
     PortsOrch *m_portsOrch;
     RouteOrch *m_routeOrch;
     NeighOrch *m_neighOrch;
     FdbOrch *m_fdbOrch;
     PolicerOrch *m_policerOrch;
+    // Maximum number of traffic classes starting at 0, thus queue can be 0 - m_maxNumTC-1
+    uint8_t m_maxNumTC;
 
     Table m_mirrorTable;
 
@@ -101,9 +104,9 @@ private:
     // session_name -> VLAN | monitor_port_alias | next_hop_ip
     map<string, string> m_recoverySessionMap;
 
-    bool m_freeze = false;
+    bool isHwResourcesAvailable();
 
-    void createEntry(const string&, const vector<FieldValueTuple>&);
+    task_process_status createEntry(const string&, const vector<FieldValueTuple>&);
     task_process_status deleteEntry(const string&);
 
     bool activateSession(const string&, MirrorEntry&);

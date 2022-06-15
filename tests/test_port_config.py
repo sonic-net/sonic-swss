@@ -4,6 +4,7 @@ import os
 import pytest
 
 from swsscommon import swsscommon
+from dvslib.dvs_common import wait_for_result, PollingConfig
 
 
 @pytest.yield_fixture
@@ -154,6 +155,77 @@ class TestPortConfig(object):
             assert hw_lane_value, "Can't get hw_lane list"
             assert hw_lane_value == "1:%s" % (new_lanes[i])
 
+    @pytest.mark.skip(reason="Failing. Under investigation")
+    def test_recirc_port(self, dvs):
+
+        # Get port config from configDB
+        cfg_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+        cfg_port_tbl = swsscommon.Table(cfg_db, swsscommon.CFG_PORT_TABLE_NAME)
+
+        indexes = []
+        lanes = []
+        keys = cfg_port_tbl.getKeys()
+        for port in keys:
+            (status, fvs) = cfg_port_tbl.get(port)
+            assert(status == True)
+
+            for fv in fvs:
+                if fv[0] == "index":
+                    indexes.append(int(fv[1]))
+                if fv[0] == "lanes":
+                    lanes.extend([int(lane) for lane in fv[1].split(",")])
+
+        # Stop swss before modifing the configDB
+        dvs.stop_swss()
+        time.sleep(1)
+
+        recirc_port_lane_base = max(lanes) + 1
+        recirc_port_index_base = max(indexes) + 1
+
+        # Add recirc ports to port config in configDB
+        recirc_port_lane_name_map = {}
+        for i in range(2):
+            name = alias = "Ethernet-Rec%s" % i
+            fvs = swsscommon.FieldValuePairs([("role", "Rec" if i % 2 == 0 else "Inb"),
+                                              ("alias", alias),
+                                              ("lanes", str(recirc_port_lane_base + i)),
+                                              ("speed", "10000"),
+                                              ("index", str(recirc_port_index_base + i))])
+            cfg_port_tbl.set(name, fvs)
+
+        # Start swss
+        dvs.start_swss()
+        time.sleep(5)
+
+        polling_config = PollingConfig(polling_interval=0.1, timeout=15, strict=True)
+
+        # Verify recirc ports in port table in applDB
+        for i in range(2):
+            name = alias = "Ethernet-Rec%s" % i
+            dvs.get_app_db().wait_for_field_match(swsscommon.APP_PORT_TABLE_NAME, name,
+                                                  {"role" : "Rec" if i % 2 == 0 else "Inb",
+                                                   "alias" : name,
+                                                   "lanes" : str(recirc_port_lane_base + i),
+                                                   "speed" : "10000",
+                                                   "index" : str(recirc_port_index_base + i) },
+                                                  polling_config=polling_config)
+
+        # Verify recirc port lanes in asicDB
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        asic_db_lanes_tbl = swsscommon.Table(asic_db, "LANES")
+
+        def _access_function():
+            lanes = asic_db_lanes_tbl.get('')[1]
+            if len(lanes) == 0:
+                return (False, None)
+
+            recirc_port_lanes = [recirc_port_lane_base, recirc_port_lane_base + 1]
+            for lane in lanes:
+                lane_num = int(lane[0])
+                if int(lane_num) in recirc_port_lanes:
+                    recirc_port_lanes.remove( lane_num )
+            return (not recirc_port_lanes, None)
+        wait_for_result(_access_function, polling_config=polling_config)
 
 
 

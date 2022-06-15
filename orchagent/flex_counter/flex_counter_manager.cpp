@@ -7,6 +7,8 @@
 #include "logger.h"
 #include "sai_serialize.h"
 
+#include <macsecorch.h>
+
 using std::shared_ptr;
 using std::string;
 using std::unordered_map;
@@ -32,24 +34,83 @@ const unordered_map<bool, string> FlexCounterManager::status_lookup =
 
 const unordered_map<CounterType, string> FlexCounterManager::counter_id_field_lookup =
 {
-    { CounterType::PORT_DEBUG,   PORT_DEBUG_COUNTER_ID_LIST },
-    { CounterType::SWITCH_DEBUG, SWITCH_DEBUG_COUNTER_ID_LIST },
-    { CounterType::PORT,         PORT_COUNTER_ID_LIST },
-    { CounterType::QUEUE,        QUEUE_COUNTER_ID_LIST }
+    { CounterType::PORT_DEBUG,      PORT_DEBUG_COUNTER_ID_LIST },
+    { CounterType::SWITCH_DEBUG,    SWITCH_DEBUG_COUNTER_ID_LIST },
+    { CounterType::PORT,            PORT_COUNTER_ID_LIST },
+    { CounterType::QUEUE,           QUEUE_COUNTER_ID_LIST },
+    { CounterType::MACSEC_SA_ATTR,  MACSEC_SA_ATTR_ID_LIST },
+    { CounterType::MACSEC_SA,       MACSEC_SA_COUNTER_ID_LIST },
+    { CounterType::MACSEC_FLOW,     MACSEC_FLOW_COUNTER_ID_LIST },
+    { CounterType::ACL_COUNTER,     ACL_COUNTER_ATTR_ID_LIST },
+    { CounterType::TUNNEL,          TUNNEL_COUNTER_ID_LIST },
+    { CounterType::HOSTIF_TRAP,     FLOW_COUNTER_ID_LIST },
+    { CounterType::ROUTE,           FLOW_COUNTER_ID_LIST },
 };
+
+FlexManagerDirectory g_FlexManagerDirectory;
+
+FlexCounterManager *FlexManagerDirectory::createFlexCounterManager(const string& group_name,
+                                                                   const StatsMode stats_mode,
+                                                                   const uint polling_interval,
+                                                                   const bool enabled,
+                                                                   FieldValueTuple fv_plugin)
+{
+    if (m_managers.find(group_name) != m_managers.end())
+    {
+        if (stats_mode != m_managers[group_name]->getStatsMode())
+        {
+            SWSS_LOG_ERROR("Stats mode mismatch with already created flex counter manager %s",
+                          group_name.c_str());
+            return NULL;
+        }
+        if (polling_interval != m_managers[group_name]->getPollingInterval())
+        {
+            SWSS_LOG_ERROR("Polling interval mismatch with already created flex counter manager %s",
+                          group_name.c_str());
+            return NULL;
+        }
+        if (enabled != m_managers[group_name]->getEnabled())
+        {
+            SWSS_LOG_ERROR("Enabled field mismatch with already created flex counter manager %s",
+                          group_name.c_str());
+            return NULL;
+        }
+        return m_managers[group_name];
+    }
+    FlexCounterManager *fc_manager = new FlexCounterManager(group_name, stats_mode, polling_interval,
+                                                            enabled, fv_plugin);
+    m_managers[group_name] = fc_manager;
+    return fc_manager;
+}
 
 FlexCounterManager::FlexCounterManager(
         const string& group_name,
         const StatsMode stats_mode,
         const uint polling_interval,
-        const bool enabled) :
+        const bool enabled,
+        FieldValueTuple fv_plugin) :
+    FlexCounterManager("FLEX_COUNTER_DB", group_name, stats_mode,
+            polling_interval, enabled, fv_plugin)
+{
+}
+
+FlexCounterManager::FlexCounterManager(
+        const string& db_name,
+        const string& group_name,
+        const StatsMode stats_mode,
+        const uint polling_interval,
+        const bool enabled,
+        FieldValueTuple fv_plugin) :
     group_name(group_name),
     stats_mode(stats_mode),
     polling_interval(polling_interval),
     enabled(enabled),
-    flex_counter_db(new DBConnector("FLEX_COUNTER_DB", 0)),
-    flex_counter_group_table(new ProducerTable(flex_counter_db.get(), FLEX_COUNTER_GROUP_TABLE)),
-    flex_counter_table(new ProducerTable(flex_counter_db.get(), FLEX_COUNTER_TABLE))
+    fv_plugin(fv_plugin),
+    flex_counter_db(new DBConnector(db_name, 0)),
+    flex_counter_group_table(new ProducerTable(flex_counter_db.get(),
+                FLEX_COUNTER_GROUP_TABLE)),
+    flex_counter_table(new ProducerTable(flex_counter_db.get(),
+                FLEX_COUNTER_TABLE))
 {
     SWSS_LOG_ENTER();
 
@@ -82,6 +143,11 @@ void FlexCounterManager::applyGroupConfiguration()
         FieldValueTuple(POLL_INTERVAL_FIELD, std::to_string(polling_interval)),
         FieldValueTuple(FLEX_COUNTER_STATUS_FIELD, status_lookup.at(enabled))
     };
+
+    if (!fvField(fv_plugin).empty())
+    {
+        field_values.emplace_back(fv_plugin);
+    }
 
     flex_counter_group_table->set(group_name, field_values);
 }

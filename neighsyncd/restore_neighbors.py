@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 """"
 Description: restore_neighbors.py -- restoring neighbor table into kernel during system warm reboot.
@@ -16,7 +16,6 @@ import sys
 import swsssdk
 import netifaces
 import time
-import monotonic
 from pyroute2 import IPRoute, NetlinkError
 from pyroute2.netlink.rtnl import ndmsg
 from socket import AF_INET,AF_INET6
@@ -184,7 +183,7 @@ def set_neigh_in_kernel(ipclass, family, intf_idx, dst_ip, dmac):
 
     # If neigh exists, log it but no exception raise, other exceptions, raise
     except NetlinkError as e:
-        if e[0] == errno.EEXIST:
+        if e.code == errno.EEXIST:
             log_warning('Neigh exists in kernel with family: {}, intf_idx: {}, ip: {}, mac: {}'.format(
             family, intf_idx, dst_ip, dmac))
         else:
@@ -227,13 +226,12 @@ def set_statedb_neigh_restore_done():
 def restore_update_kernel_neighbors(intf_neigh_map, timeout=DEF_TIME_OUT):
     # create object for netlink calls to kernel
     ipclass = IPRoute()
-    mtime = monotonic.time.time
-    start_time = mtime()
+    start_time = time.monotonic()
     is_intf_up.counter = 0
     db = swsssdk.SonicV2Connector(host='127.0.0.1')
     db.connect(db.STATE_DB, False)
-    while (mtime() - start_time) < timeout:
-        for intf, family_neigh_map in intf_neigh_map.items():
+    while (time.monotonic() - start_time) < timeout:
+        for intf, family_neigh_map in list(intf_neigh_map.items()):
             # only try to restore to kernel when link is up
             if is_intf_up(intf, db):
                 src_mac = get_if_hwaddr(intf)

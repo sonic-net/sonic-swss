@@ -3,7 +3,7 @@ import time
 
 from swsscommon import swsscommon
 
-DVS_FAKE_PLATFORM = "mellanox"
+DVS_ENV = ["HWSKU=Mellanox-SN2700"]
 
 
 class TestMirror(object):
@@ -169,6 +169,7 @@ class TestMirror(object):
             "SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS",
             "SAI_ACL_TABLE_ATTR_FIELD_DSCP",
             "SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE",
+            "SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID",
             "SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS",
         ]
 
@@ -236,6 +237,7 @@ class TestMirror(object):
             "SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT",
             "SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS",
             "SAI_ACL_TABLE_ATTR_FIELD_DSCP",
+            "SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID"
         ]
 
         expected_sai_list_attributes = [

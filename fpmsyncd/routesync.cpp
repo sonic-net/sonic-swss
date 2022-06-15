@@ -19,6 +19,9 @@ using namespace swss;
 #define VXLAN_IF_NAME_PREFIX    "Brvxlan"
 #define VNET_PREFIX             "Vnet"
 #define VRF_PREFIX              "Vrf"
+#define MGMT_VRF_PREFIX         "mgmt"
+
+#define NHG_DELIMITER ','
 
 #ifndef ETH_ALEN
 #define ETH_ALEN 6
@@ -31,7 +34,6 @@ using namespace swss;
 
 #define VXLAN_VNI             0
 #define VXLAN_RMAC            1
-#define VXLAN_VLAN            2
 #define NH_ENCAP_VXLAN      100
 
 
@@ -44,6 +46,7 @@ using namespace swss;
 
 RouteSync::RouteSync(RedisPipeline *pipeline) :
     m_routeTable(pipeline, APP_ROUTE_TABLE_NAME, true),
+    m_label_routeTable(pipeline, APP_LABEL_ROUTE_TABLE_NAME, true),
     m_vnet_routeTable(pipeline, APP_VNET_RT_TABLE_NAME, true),
     m_vnet_tunnelTable(pipeline, APP_VNET_RT_TUNNEL_TABLE_NAME, true),
     m_warmStartHelper(pipeline, &m_routeTable, APP_ROUTE_TABLE_NAME, "bgp", "bgp"),
@@ -93,7 +96,7 @@ void RouteSync::parseRtAttrNested(struct rtattr **tb, int max,
  *
  * Return:      void.
  */
-void RouteSync::parseEncap(struct rtattr *tb, uint32_t &encap_value, string &rmac, uint32_t &vlan)
+void RouteSync::parseEncap(struct rtattr *tb, uint32_t &encap_value, string &rmac)
 {
     struct rtattr *tb_encap[3] = {0};
     char mac_buf[MAX_ADDR_SIZE+1];
@@ -102,10 +105,9 @@ void RouteSync::parseEncap(struct rtattr *tb, uint32_t &encap_value, string &rma
     parseRtAttrNested(tb_encap, 3, tb);
     encap_value = *(uint32_t *)RTA_DATA(tb_encap[VXLAN_VNI]);
     memcpy(&mac_buf, RTA_DATA(tb_encap[VXLAN_RMAC]), MAX_ADDR_SIZE);
-    vlan = *(uint32_t *)RTA_DATA(tb_encap[VXLAN_VLAN]);
 
-    SWSS_LOG_INFO("Rx MAC %s VNI %d Vlan %d",
-        prefixMac2Str(mac_buf, mac_val, ETHER_ADDR_STRLEN), encap_value, vlan);
+    SWSS_LOG_INFO("Rx MAC %s VNI %d",
+        prefixMac2Str(mac_buf, mac_val, ETHER_ADDR_STRLEN), encap_value);
     rmac = mac_val;
 
     return;
@@ -114,10 +116,10 @@ void RouteSync::parseEncap(struct rtattr *tb, uint32_t &encap_value, string &rma
 void RouteSync::getEvpnNextHopSep(string& nexthops, string& vni_list,  
                    string& mac_list, string& intf_list)
 {
-    nexthops  += string(",");
-    vni_list  += string(",");
-    mac_list  += string(",");
-    intf_list += string(",");
+    nexthops  += NHG_DELIMITER;
+    vni_list  += NHG_DELIMITER;
+    mac_list  += NHG_DELIMITER;
+    intf_list += NHG_DELIMITER;
 
     return;
 }
@@ -125,9 +127,8 @@ void RouteSync::getEvpnNextHopSep(string& nexthops, string& vni_list,
 void RouteSync::getEvpnNextHopGwIf(char *gwaddr, int vni_value, 
                                string& nexthops, string& vni_list,  
                                string& mac_list, string& intf_list,
-                               string rmac, unsigned int vid)
+                               string rmac, string vlan_id)
 {
-    string vlan_id = "Vlan" + to_string(vid);
     nexthops+= gwaddr;
     vni_list+= to_string(vni_value);
     mac_list+=rmac;
@@ -148,7 +149,10 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
     int gw_af;
     struct in6_addr ipv6_address;
     string rmac;
-    uint32_t vlan = 0;
+    string vlan;
+    int index;
+    char if_name[IFNAMSIZ] = "0";
+    char ifname_unknown[IFNAMSIZ] = "unknown";
 
     if (tb[RTA_GATEWAY])
         gate = RTA_DATA(tb[RTA_GATEWAY]);
@@ -189,6 +193,19 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
 
             inet_ntop(gw_af, gateaddr, nexthopaddr, MAX_ADDR_SIZE);
 
+            if (tb[RTA_OIF])
+            {
+                index = *(int *)RTA_DATA(tb[RTA_OIF]);
+
+                /* If we cannot get the interface name */
+                if (!getIfName(index, if_name, IFNAMSIZ))
+                {
+                    strcpy(if_name, ifname_unknown);
+                }
+
+                vlan = if_name;
+            }
+
             if (tb[RTA_ENCAP_TYPE])
             {
                 encap = *(uint16_t *)RTA_DATA(tb[RTA_ENCAP_TYPE]);
@@ -197,12 +214,12 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
             if (tb[RTA_ENCAP] && tb[RTA_ENCAP_TYPE]
                 && (*(uint16_t *)RTA_DATA(tb[RTA_ENCAP_TYPE]) == NH_ENCAP_VXLAN)) 
             {
-                parseEncap(tb[RTA_ENCAP], encap_value, rmac, vlan);
+                parseEncap(tb[RTA_ENCAP], encap_value, rmac);
             }
-            SWSS_LOG_DEBUG("Rx MsgType:%d Nexthop:%s encap:%d encap_value:%d rmac:%s vlan:%d", h->nlmsg_type,
-                            nexthopaddr, encap, encap_value, rmac.c_str(), vlan);
+            SWSS_LOG_DEBUG("Rx MsgType:%d Nexthop:%s encap:%d encap_value:%d rmac:%s vlan:%s", h->nlmsg_type,
+                            nexthopaddr, encap, encap_value, rmac.c_str(), vlan.c_str());
 
-            if (encap_value == 0 || vlan == 0 || MacAddress(rmac) == MacAddress("00:00:00:00:00:00"))
+            if (encap_value == 0 || !(vlan.compare(ifname_unknown)) || MacAddress(rmac) == MacAddress("00:00:00:00:00:00"))
             {
                 return false;
             }
@@ -270,6 +287,20 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
                     
                     inet_ntop(gw_af, gateaddr, nexthopaddr, MAX_ADDR_SIZE);
 
+
+                    if (rtnh->rtnh_ifindex)
+                    {
+                        index = rtnh->rtnh_ifindex;
+
+                        /* If we cannot get the interface name */
+                        if (!getIfName(index, if_name, IFNAMSIZ))
+                        {
+                            strcpy(if_name, ifname_unknown);
+                        }
+
+                        vlan = if_name;
+                    }
+
                     if (subtb[RTA_ENCAP_TYPE])
                     {
                         encap = *(uint16_t *)RTA_DATA(subtb[RTA_ENCAP_TYPE]);
@@ -278,12 +309,12 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
                     if (subtb[RTA_ENCAP] && subtb[RTA_ENCAP_TYPE]
                         && (*(uint16_t *)RTA_DATA(subtb[RTA_ENCAP_TYPE]) == NH_ENCAP_VXLAN))
                     {
-                        parseEncap(subtb[RTA_ENCAP], encap_value, rmac, vlan);
+                        parseEncap(subtb[RTA_ENCAP], encap_value, rmac);
                     }
-                    SWSS_LOG_DEBUG("Multipath Nexthop:%s encap:%d encap_value:%d rmac:%s vlan:%d",
-                                    nexthopaddr, encap, encap_value, rmac.c_str(), vlan);
+                    SWSS_LOG_DEBUG("Multipath Nexthop:%s encap:%d encap_value:%d rmac:%s vlan:%s",
+                                    nexthopaddr, encap, encap_value, rmac.c_str(), vlan.c_str());
 
-                    if (encap_value == 0 || vlan == 0 || MacAddress(rmac) == MacAddress("00:00:00:00:00:00"))
+                    if (encap_value == 0 || !(vlan.compare(ifname_unknown)) || MacAddress(rmac) == MacAddress("00:00:00:00:00:00"))
                     {
                         return false;
                     }
@@ -392,9 +423,17 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
         destipprefix[strlen(destipprefix)] = ':';
     }
 
-    /* Full mask route append prefix length, or else resync cannot match. */
-    snprintf(destipprefix + strlen(destipprefix), sizeof(destipprefix) - strlen(destipprefix), "%s/%u", 
+    if((rtm->rtm_family == AF_INET && dst_len == IPV4_MAX_BITLEN)
+        || (rtm->rtm_family == AF_INET6 && dst_len == IPV6_MAX_BITLEN))
+    {
+        snprintf(destipprefix + strlen(destipprefix), sizeof(destipprefix) - strlen(destipprefix), "%s",
+                inet_ntop(rtm->rtm_family, dstaddr, buf, MAX_ADDR_SIZE));
+    }
+    else
+    {
+        snprintf(destipprefix + strlen(destipprefix), sizeof(destipprefix) - strlen(destipprefix), "%s/%u",
                 inet_ntop(rtm->rtm_family, dstaddr, buf, MAX_ADDR_SIZE), dst_len);
+    }
 
     SWSS_LOG_INFO("Receive route message dest ip prefix: %s Op:%s", 
                     destipprefix,
@@ -535,6 +574,12 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
 
     /* Supports IPv4 or IPv6 address, otherwise return immediately */
     auto family = rtnl_route_get_family(route_obj);
+    /* Check for Label route. */
+    if (family == AF_MPLS)
+    {
+        onLabelRouteMsg(nlmsg_type, obj);
+        return;
+    }
     if (family != AF_INET && family != AF_INET6)
     {
         SWSS_LOG_INFO("Unknown route family support (object: %s)", nl_object_get_type(obj));
@@ -562,7 +607,6 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
         {
             onRouteMsg(nlmsg_type, obj, master_name);
         }
-
     }
     else
     {
@@ -590,7 +634,17 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
          */
         if (memcmp(vrf, VRF_PREFIX, strlen(VRF_PREFIX)))
         {
-            SWSS_LOG_ERROR("Invalid VRF name %s (ifindex %u)", vrf, rtnl_route_get_table(route_obj));
+            if(memcmp(vrf, MGMT_VRF_PREFIX, strlen(MGMT_VRF_PREFIX)))
+            {
+                SWSS_LOG_ERROR("Invalid VRF name %s (ifindex %u)", vrf, rtnl_route_get_table(route_obj));
+            }
+            else
+            {
+                dip = rtnl_route_get_dst(route_obj);
+                nl_addr2str(dip, destipprefix, MAX_ADDR_SIZE);
+                SWSS_LOG_INFO("Skip routes for Mgmt VRF name %s (ifindex %u) prefix: %s", vrf,
+                        rtnl_route_get_table(route_obj), destipprefix);
+            }
             return;
         }
         memcpy(destipprefix, vrf, strlen(vrf));
@@ -663,21 +717,49 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
     }
 
     /* Get nexthop lists */
-    string nexthops = getNextHopGw(route_obj);
-    string ifnames = getNextHopIf(route_obj);
+    string gw_list;
+    string intf_list;
+    string mpls_list;
+    getNextHopList(route_obj, gw_list, mpls_list, intf_list);
+    string weights = getNextHopWt(route_obj);
+
+    vector<string> alsv = tokenize(intf_list, NHG_DELIMITER);
+    for (auto alias : alsv)
+    {
+        /*
+         * An FRR behavior change from 7.2 to 7.5 makes FRR update default route to eth0 in interface
+         * up/down events. Skipping routes to eth0 or docker0 to avoid such behavior
+         */
+        if (alias == "eth0" || alias == "docker0")
+        {
+            SWSS_LOG_DEBUG("Skip routes to eth0 or docker0: %s %s %s",
+                    destipprefix, gw_list.c_str(), intf_list.c_str());
+            return;
+        }
+    }
 
     vector<FieldValueTuple> fvVector;
-    FieldValueTuple nh("nexthop", nexthops);
-    FieldValueTuple idx("ifname", ifnames);
+    FieldValueTuple gw("nexthop", gw_list);
+    FieldValueTuple intf("ifname", intf_list);
 
-    fvVector.push_back(nh);
-    fvVector.push_back(idx);
+    fvVector.push_back(gw);
+    fvVector.push_back(intf);
+    if (!mpls_list.empty())
+    {
+        FieldValueTuple mpls_nh("mpls_nh", mpls_list);
+        fvVector.push_back(mpls_nh);
+    }
+    if (!weights.empty())
+    {
+        FieldValueTuple wt("weight", weights);
+        fvVector.push_back(wt);
+    }
 
     if (!warmRestartInProgress)
     {
         m_routeTable.set(destipprefix, fvVector);
-        SWSS_LOG_DEBUG("RouteTable set msg: %s %s %s",
-                       destipprefix, nexthops.c_str(), ifnames.c_str());
+        SWSS_LOG_DEBUG("RouteTable set msg: %s %s %s %s", destipprefix,
+                       gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
     }
 
     /*
@@ -686,8 +768,8 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
      */
     else
     {
-        SWSS_LOG_INFO("Warm-Restart mode: RouteTable set msg: %s %s %s",
-                      destipprefix, nexthops.c_str(), ifnames.c_str());
+        SWSS_LOG_INFO("Warm-Restart mode: RouteTable set msg: %s %s %s %s", destipprefix,
+                      gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
 
         const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix,
                                                            SET_COMMAND,
@@ -697,6 +779,98 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
 }
 
 /* 
+ * Handle label route
+ * @arg nlmsg_type      Netlink message type
+ * @arg obj             Netlink object
+ */
+void RouteSync::onLabelRouteMsg(int nlmsg_type, struct nl_object *obj)
+{
+    struct rtnl_route *route_obj = (struct rtnl_route *)obj;
+    struct nl_addr *daddr;
+    char destaddr[MAX_ADDR_SIZE + 1] = {0};
+
+    daddr = rtnl_route_get_dst(route_obj);
+    nl_addr2str(daddr, destaddr, MAX_ADDR_SIZE);
+    SWSS_LOG_INFO("Receive new LabelRoute message dest addr: %s", destaddr);
+    if (nl_addr_iszero(daddr)) return;
+
+    if (nlmsg_type == RTM_DELROUTE)
+    {
+        m_label_routeTable.del(destaddr);
+        return;
+    }
+    else if (nlmsg_type != RTM_NEWROUTE)
+    {
+        SWSS_LOG_INFO("Unknown message-type: %d for LabelRoute %s", nlmsg_type, destaddr);
+        return;
+    }
+
+    /* Get the index of the master device */
+    uint32_t master_index = rtnl_route_get_table(route_obj);
+    /* if the table_id is not set in the route obj then route is for default vrf. */
+    if (master_index)
+    {
+        SWSS_LOG_INFO("Unsupported Non-default VRF: %d for LabelRoute %s",
+                      master_index, destaddr);
+        return;
+    }
+
+    switch (rtnl_route_get_type(route_obj))
+    {
+        case RTN_BLACKHOLE:
+        {
+            vector<FieldValueTuple> fvVector;
+            FieldValueTuple fv("blackhole", "true");
+            fvVector.push_back(fv);
+            m_label_routeTable.set(destaddr, fvVector);
+            return;
+        }
+        case RTN_UNICAST:
+            break;
+
+        case RTN_MULTICAST:
+        case RTN_BROADCAST:
+        case RTN_LOCAL:
+            SWSS_LOG_INFO("BUM routes aren't supported yet (%s)", destaddr);
+            return;
+
+        default:
+            return;
+    }
+
+    struct nl_list_head *nhs = rtnl_route_get_nexthops(route_obj);
+    if (!nhs)
+    {
+        SWSS_LOG_INFO("Nexthop list is empty for LabelRoute %s", destaddr);
+        return;
+    }
+
+    /* Get nexthop lists */
+    string gw_list;
+    string intf_list;
+    string mpls_list;
+    getNextHopList(route_obj, gw_list, mpls_list, intf_list);
+
+    vector<FieldValueTuple> fvVector;
+    FieldValueTuple gw("nexthop", gw_list);
+    FieldValueTuple intf("ifname", intf_list);
+    FieldValueTuple mpls_pop("mpls_pop", "1");
+
+    fvVector.push_back(gw);
+    fvVector.push_back(intf);
+    if (!mpls_list.empty())
+    {
+        FieldValueTuple mpls_nh("mpls_nh", mpls_list);
+        fvVector.push_back(mpls_nh);
+    }
+    fvVector.push_back(mpls_pop);
+
+    m_label_routeTable.set(destaddr, fvVector);
+    SWSS_LOG_INFO("LabelRouteTable set msg: %s %s %s %s", destaddr,
+                  gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
+}
+
+/*
  * Handle vnet route 
  * @arg nlmsg_type      Netlink message type
  * @arg obj             Netlink object
@@ -837,6 +1011,110 @@ bool RouteSync::getIfName(int if_index, char *if_name, size_t name_len)
 }
 
 /*
+ * getNextHopList() - parses next hop list attached to route_obj
+ * @arg route_obj     (input) Netlink route object
+ * @arg gw_list       (output) comma-separated list of NH IP gateways
+ * @arg mpls_list     (output) comma-separated list of NH MPLS info
+ * @arg intf_list     (output) comma-separated list of NH interfaces
+ *
+ * Return void
+ */
+void RouteSync::getNextHopList(struct rtnl_route *route_obj, string& gw_list,
+                               string& mpls_list, string& intf_list)
+{
+    bool mpls_found = false;
+
+    for (int i = 0; i < rtnl_route_get_nnexthops(route_obj); i++)
+    {
+        struct rtnl_nexthop *nexthop = rtnl_route_nexthop_n(route_obj, i);
+        struct nl_addr *addr = NULL;
+
+        /* RTA_GATEWAY is NH gateway info for IP routes only */
+        if ((addr = rtnl_route_nh_get_gateway(nexthop)))
+        {
+            char gw_ip[MAX_ADDR_SIZE + 1] = {0};
+            nl_addr2str(addr, gw_ip, MAX_ADDR_SIZE);
+            gw_list += gw_ip;
+
+            /* LWTUNNEL_ENCAP_MPLS RTA_DST is MPLS NH label stack for IP routes only */
+            if ((addr = rtnl_route_nh_get_encap_mpls_dst(nexthop)))
+            {
+                char labelstack[MAX_ADDR_SIZE + 1] = {0};
+                nl_addr2str(addr, labelstack, MAX_ADDR_SIZE);
+                mpls_list += string("push");
+                mpls_list += labelstack;
+                mpls_found = true;
+            }
+            /* Filler for proper parsing in routeorch */
+            else
+            {
+                mpls_list += string("na");
+            }
+        }
+        /* RTA_VIA is NH gateway info for MPLS routes only */
+        else if ((addr = rtnl_route_nh_get_via(nexthop)))
+        {
+            char gw_ip[MAX_ADDR_SIZE + 1] = {0};
+            nl_addr2str(addr, gw_ip, MAX_ADDR_SIZE);
+            gw_list += gw_ip;
+
+            /* RTA_NEWDST is MPLS NH label stack for MPLS routes only */
+            if ((addr = rtnl_route_nh_get_newdst(nexthop)))
+            {
+                char labelstack[MAX_ADDR_SIZE + 1] = {0};
+                nl_addr2str(addr, labelstack, MAX_ADDR_SIZE);
+                mpls_list += string("swap");
+                mpls_list += labelstack;
+                mpls_found = true;
+            }
+            /* Filler for proper parsing in routeorch */
+            else
+            {
+                mpls_list += string("na");
+            }
+        }
+        else
+        {
+            if (rtnl_route_get_family(route_obj) == AF_INET6)
+            {
+                gw_list += "::";
+            }
+            /* for MPLS route, use IPv4 as default gateway. */
+            else
+            {
+                gw_list += "0.0.0.0";
+            }
+            mpls_list += string("na");
+        }
+
+        /* Get the ID of next hop interface */
+        unsigned if_index = rtnl_route_nh_get_ifindex(nexthop);
+        char if_name[IFNAMSIZ] = "0";
+        if (getIfName(if_index, if_name, IFNAMSIZ))
+        {
+            intf_list += if_name;
+        }
+        /* If we cannot get the interface name */
+        else
+        {
+            intf_list += "unknown";
+        }
+
+        if (i + 1 < rtnl_route_get_nnexthops(route_obj))
+        {
+            gw_list += NHG_DELIMITER;
+            mpls_list += NHG_DELIMITER;
+            intf_list += NHG_DELIMITER;
+        }
+    }
+
+    if (!mpls_found)
+    {
+        mpls_list.clear();
+    }
+}
+
+/*
  * Get next hop gateway IP addresses
  * @arg route_obj     route object
  *
@@ -872,7 +1150,7 @@ string RouteSync::getNextHopGw(struct rtnl_route *route_obj)
 
         if (i + 1 < rtnl_route_get_nnexthops(route_obj))
         {
-            result += string(",");
+            result += NHG_DELIMITER;
         }
     }
 
@@ -903,6 +1181,39 @@ string RouteSync::getNextHopIf(struct rtnl_route *route_obj)
         }
 
         result += if_name;
+
+        if (i + 1 < rtnl_route_get_nnexthops(route_obj))
+        {
+            result += NHG_DELIMITER;
+        }
+    }
+
+    return result;
+}
+
+/*
+ * Get next hop weights
+ * @arg route_obj     route object
+ *
+ * Return concatenation of interface names: wt0 + "," + wt1 + .... + "," + wtN
+ */
+string RouteSync::getNextHopWt(struct rtnl_route *route_obj)
+{
+    string result = "";
+
+    for (int i = 0; i < rtnl_route_get_nnexthops(route_obj); i++)
+    {
+        struct rtnl_nexthop *nexthop = rtnl_route_nexthop_n(route_obj, i);
+        /* Get the weight of next hop */
+        uint8_t weight = rtnl_route_nh_get_weight(nexthop);
+        if (weight)
+        {
+            result += to_string(weight);
+        }
+        else
+        {
+            return "";
+        }
 
         if (i + 1 < rtnl_route_get_nnexthops(route_obj))
         {

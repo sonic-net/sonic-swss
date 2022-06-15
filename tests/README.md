@@ -36,7 +36,7 @@ SWSS, Redis, and all the other required components run inside a virtual switch D
     ```
     sudo modprobe team
     sudo apt install python3-pip net-tools ethtool vlan libnl-nf-3-200 libnl-cli-3-200
-    sudo pip3 install docker pytest flaky redis distro
+    sudo pip3 install docker pytest flaky redis distro dataclasses fstring
     ```
 
     If you are running **Ubuntu 18.04** you will need to install this package:
@@ -103,10 +103,10 @@ For those developing new features for SWSS or the DVS framework, you might find 
     sudo pytest --dvsname=vs --forcedvs
     ```
 
-5. Additionally, if you need to simulate a specific hardware platform (e.g. Broadcom or Mellanox), you can add this environment variable when starting the DVS container. Note that this is not a precise 1-to-1 model, and dataplane behavior is not simulated by the DVS.
+5. Additionally, if you need to simulate a specific hardware platform (e.g. Broadcom or Mellanox), you can add this environment variable for hardware SKU when starting the DVS container. Note that this is not a precise 1-to-1 model, and dataplane behavior is not simulated by the DVS.
 
     ```
-    -e "fake_platform=mellanox"
+    -e "HWSKU=Mellanox-SN2700"
     ```
 
 ## Other useful test parameters

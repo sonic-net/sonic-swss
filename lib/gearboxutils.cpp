@@ -173,6 +173,10 @@ std::map<int, gearbox_phy_t> GearboxUtils::loadPhyMap(Table *gearboxTable)
                 {
                     phy.access = val.second;
                 }
+                else if (val.first == "hwinfo")
+                {
+                    phy.hwinfo = val.second;
+                }
                 else if (val.first == "address")
                 {
                     phy.address = std::stoi(val.second);
@@ -180,6 +184,14 @@ std::map<int, gearbox_phy_t> GearboxUtils::loadPhyMap(Table *gearboxTable)
                 else if (val.first == "bus_id")
                 {
                     phy.bus_id = std::stoi(val.second);
+                }
+                else if (val.first == "context_id")
+                {
+                    phy.context_id = std::stoi(val.second);
+                }
+                else if (val.first == "macsec_ipg")
+                {
+                    phy.macsec_ipg = std::stoi(val.second);
                 }
             }
             gearboxPhyMap[phy.phy_id] = phy;

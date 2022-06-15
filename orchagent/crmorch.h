@@ -25,6 +25,14 @@ enum class CrmResourceType
     CRM_ACL_ENTRY,
     CRM_ACL_COUNTER,
     CRM_FDB_ENTRY,
+    CRM_IPMC_ENTRY,
+    CRM_SNAT_ENTRY,
+    CRM_DNAT_ENTRY,
+    CRM_MPLS_INSEG,
+    CRM_MPLS_NEXTHOP,
+    CRM_SRV6_MY_SID_ENTRY,
+    CRM_SRV6_NEXTHOP,
+    CRM_NEXTHOP_GROUP_MAP,
 };
 
 enum class CrmThresholdType
@@ -32,6 +40,12 @@ enum class CrmThresholdType
     CRM_PERCENTAGE,
     CRM_USED,
     CRM_FREE,
+};
+
+enum class CrmResourceStatus
+{
+    CRM_RES_SUPPORTED,
+    CRM_RES_NOT_SUPPORTED,
 };
 
 class CrmOrch : public Orch
@@ -74,6 +88,7 @@ private:
         std::map<std::string, CrmResourceCounter> countersMap;
 
         uint32_t exceededLogCounter = 0;
+        CrmResourceStatus resStatus = CrmResourceStatus::CRM_RES_SUPPORTED;
     };
 
     std::chrono::seconds m_pollingInterval;
@@ -83,6 +98,7 @@ private:
     void doTask(Consumer &consumer);
     void handleSetCommand(const std::string& key, const std::vector<swss::FieldValueTuple>& data);
     void doTask(swss::SelectableTimer &timer);
+    bool getResAvailability(CrmResourceType type, CrmResourceEntry &res);
     void getResAvailableCounters();
     void updateCrmCountersTable();
     void checkCrmThresholds();

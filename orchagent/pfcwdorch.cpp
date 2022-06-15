@@ -36,9 +36,15 @@ template <typename DropHandler, typename ForwardHandler>
 PfcWdOrch<DropHandler, ForwardHandler>::PfcWdOrch(DBConnector *db, vector<string> &tableNames):
     Orch(db, tableNames),
     m_countersDb(new DBConnector("COUNTERS_DB", 0)),
-    m_countersTable(new Table(m_countersDb.get(), COUNTERS_TABLE))
+    m_countersTable(new Table(m_countersDb.get(), COUNTERS_TABLE)),
+    m_platform(getenv("platform") ? getenv("platform") : "")
 {
     SWSS_LOG_ENTER();
+    if (m_platform == "")
+    {
+        SWSS_LOG_ERROR("Platform environment variable is not defined");
+        return;
+    }
 }
 
 
@@ -177,8 +183,7 @@ task_process_status PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const st
     uint32_t detectionTime = 0;
     uint32_t restorationTime = 0;
     // According to requirements, drop action is default
-    PfcWdAction action = PfcWdAction::PFC_WD_ACTION_DROP;
-
+    PfcWdAction action = PfcWdAction::PFC_WD_ACTION_DROP; 
     Port port;
     if (!gPortsOrch->getPort(key, port))
     {
@@ -218,6 +223,10 @@ task_process_status PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const st
                 if (action == PfcWdAction::PFC_WD_ACTION_UNKNOWN)
                 {
                     SWSS_LOG_ERROR("Invalid PFC Watchdog action %s", value.c_str());
+                    return task_process_status::task_invalid_entry;
+                }
+                if ((m_platform == CISCO_8000_PLATFORM_SUBSTRING) && (action == PfcWdAction::PFC_WD_ACTION_FORWARD)) {
+                    SWSS_LOG_ERROR("Unsupported action %s for platform %s", value.c_str(), m_platform.c_str());
                     return task_process_status::task_invalid_entry;
                 }
             }
@@ -305,7 +314,7 @@ task_process_status PfcWdSwOrch<DropHandler, ForwardHandler>::createEntry(const 
             }
             else if (field == BIG_RED_SWITCH_FIELD)
             {
-                SWSS_LOG_NOTICE("Recieve brs mode set, %s", value.c_str());
+                SWSS_LOG_NOTICE("Receive brs mode set, %s", value.c_str());
                 setBigRedSwitchMode(value);
             }
         }
@@ -345,7 +354,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::disableBigRedSwitchMode()
     SWSS_LOG_ENTER();
 
     m_bigRedSwitchFlag = false;
-    // Disable pfcwdaction hanlder on each queue if exists.
+    // Disable pfcwdaction handler on each queue if exists.
     for (auto &entry : m_brsEntryMap)
     {
 
@@ -390,9 +399,9 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
             continue;
         }
 
-        if (!gPortsOrch->getPortPfc(port.m_port_id, &pfcMask))
+        if (!gPortsOrch->getPortPfcWatchdogStatus(port.m_port_id, &pfcMask))
         {
-            SWSS_LOG_ERROR("Failed to get PFC mask on port %s", port.m_alias.c_str());
+            SWSS_LOG_ERROR("Failed to get PFC watchdog mask on port %s", port.m_alias.c_str());
             return;
         }
 
@@ -422,7 +431,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
         }
     }
 
-    // Create pfcwdaction hanlder on all the ports.
+    // Create pfcwdaction handler on all the ports.
     for (auto & it: allPorts)
     {
         Port port = it.second;
@@ -434,9 +443,9 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
             continue;
         }
 
-        if (!gPortsOrch->getPortPfc(port.m_port_id, &pfcMask))
+        if (!gPortsOrch->getPortPfcWatchdogStatus(port.m_port_id, &pfcMask))
         {
-            SWSS_LOG_ERROR("Failed to get PFC mask on port %s", port.m_alias.c_str());
+            SWSS_LOG_ERROR("Failed to get PFC watchdog mask on port %s", port.m_alias.c_str());
             return;
         }
 
@@ -480,7 +489,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
 
     uint8_t pfcMask = 0;
 
-    if (!gPortsOrch->getPortPfc(port.m_port_id, &pfcMask))
+    if (!gPortsOrch->getPortPfcWatchdogStatus(port.m_port_id, &pfcMask))
     {
         SWSS_LOG_ERROR("Failed to get PFC mask on port %s", port.m_alias.c_str());
         return false;
@@ -658,16 +667,14 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
 {
     SWSS_LOG_ENTER();
 
-    string platform = getenv("platform") ? getenv("platform") : "";
-    if (platform == "")
-    {
-        SWSS_LOG_ERROR("Platform environment variable is not defined");
-        return;
-    }
-
     string detectSha, restoreSha;
-    string detectPluginName = "pfc_detect_" + platform + ".lua";
-    string restorePluginName = "pfc_restore.lua";
+    string detectPluginName = "pfc_detect_" + this->m_platform + ".lua";
+    string restorePluginName;
+    if (this->m_platform == CISCO_8000_PLATFORM_SUBSTRING) {
+        restorePluginName = "pfc_restore_" + this->m_platform + ".lua";
+    } else {
+        restorePluginName = "pfc_restore.lua";
+    }
 
     try
     {
@@ -907,7 +914,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
 
     if (m_bigRedSwitchFlag)
     {
-        SWSS_LOG_NOTICE("Big_RED_SWITCH mode is on, ingore syncd pfc watchdog notification");
+        SWSS_LOG_NOTICE("Big_RED_SWITCH mode is on, ignore syncd pfc watchdog notification");
     }
     else if (event == "storm")
     {
@@ -1057,3 +1064,4 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::bake()
 // Trick to keep member functions in a separate file
 template class PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>;
 template class PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>;
+template class PfcWdSwOrch<PfcWdSaiDlrInitHandler, PfcWdActionHandler>;

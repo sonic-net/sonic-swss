@@ -1,6 +1,19 @@
 import pytest
 
-TABLE_TYPE = "L3"
+TABLE_TYPE = "CUSTOM_L3"
+CUSTOM_TABLE_TYPE_MATCHES = [
+    "L4_SRC_PORT_RANGE",
+    "L4_DST_PORT_RANGE",
+    "ETHER_TYPE",
+    "TUNNEL_VNI",
+    "TC",
+    "INNER_IP_PROTOCOL",
+    "INNER_ETHER_TYPE",
+    "INNER_L4_SRC_PORT",
+    "INNER_L4_DST_PORT",
+    "VLAN_ID"
+]
+CUSTOM_TABLE_TYPE_BPOINT_TYPES = ["PORT","PORTCHANNEL"]
 TABLE_NAME = "EGRESS_TEST"
 BIND_PORTS = ["Ethernet0", "Ethernet4"]
 RULE_NAME = "EGRESS_TEST_RULE"
@@ -10,14 +23,17 @@ class TestEgressAclTable:
     @pytest.yield_fixture
     def egress_acl_table(self, dvs_acl):
         try:
+            dvs_acl.create_acl_table_type(TABLE_TYPE, CUSTOM_TABLE_TYPE_MATCHES, CUSTOM_TABLE_TYPE_BPOINT_TYPES)
             dvs_acl.create_acl_table(TABLE_NAME, TABLE_TYPE, BIND_PORTS, stage="egress")
             yield dvs_acl.get_acl_table_ids(1)[0]
         finally:
             dvs_acl.remove_acl_table(TABLE_NAME)
+            dvs_acl.remove_acl_table_type(TABLE_TYPE)
             dvs_acl.verify_acl_table_count(0)
 
     def test_EgressAclTableCreationDeletion(self, dvs_acl):
         try:
+            dvs_acl.create_acl_table_type(TABLE_TYPE, CUSTOM_TABLE_TYPE_MATCHES, CUSTOM_TABLE_TYPE_BPOINT_TYPES)
             dvs_acl.create_acl_table(TABLE_NAME, TABLE_TYPE, BIND_PORTS, stage="egress")
 
             acl_table_id = dvs_acl.get_acl_table_ids(1)[0]
@@ -27,6 +43,7 @@ class TestEgressAclTable:
             dvs_acl.verify_acl_table_port_binding(acl_table_id, BIND_PORTS, 1, stage="egress")
         finally:
             dvs_acl.remove_acl_table(TABLE_NAME)
+            dvs_acl.remove_acl_table_type(TABLE_TYPE)
             dvs_acl.verify_acl_table_count(0)
 
     def test_EgressAclRuleL4SrcPortRange(self, dvs_acl, egress_acl_table):
@@ -129,6 +146,18 @@ class TestEgressAclTable:
         config_qualifiers = {"INNER_L4_DST_PORT": "999"}
         expected_sai_qualifiers = {
             "SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_DST_PORT": dvs_acl.get_simple_qualifier_comparator("999&mask:0xffff")
+        }
+
+        dvs_acl.create_acl_rule(TABLE_NAME, RULE_NAME, config_qualifiers, action="DROP", priority="1000")
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers, action="DROP", priority="1000")
+
+        dvs_acl.remove_acl_rule(TABLE_NAME, RULE_NAME)
+        dvs_acl.verify_no_acl_rules()
+
+    def test_AclRuleVlanId(self, dvs_acl, egress_acl_table):
+        config_qualifiers = {"VLAN_ID": "100"}
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_OUTER_VLAN_ID": dvs_acl.get_simple_qualifier_comparator("100&mask:0xfff")
         }
 
         dvs_acl.create_acl_rule(TABLE_NAME, RULE_NAME, config_qualifiers, action="DROP", priority="1000")

@@ -29,12 +29,17 @@ bool gSwssRecord = false;
 bool gLogRotate = false;
 ofstream gRecordOfs;
 string gRecordFile;
+bool gResponsePublisherRecord = false;
+bool gResponsePublisherLogRotate = false;
+ofstream gResponsePublisherRecordOfs;
+string gResponsePublisherRecordFile;
 /* Global database mutex */
 mutex gDbMutex;
 
 int main(int argc, char **argv)
 {
     Logger::linkToDbNative("vrfmgrd");
+    bool isWarmStart = false;
     SWSS_LOG_ENTER();
 
     SWSS_LOG_NOTICE("--- Starting vrfmgrd ---");
@@ -44,6 +49,8 @@ int main(int argc, char **argv)
         vector<string> cfg_vrf_tables = {
             CFG_VRF_TABLE_NAME,
             CFG_VNET_TABLE_NAME,
+            CFG_VXLAN_EVPN_NVO_TABLE_NAME,
+            CFG_MGMT_VRF_CONFIG_TABLE_NAME
         };
 
         DBConnector cfgDb("CONFIG_DB", 0);
@@ -54,6 +61,8 @@ int main(int argc, char **argv)
         WarmStart::checkWarmStart("vrfmgrd", "swss");
 
         VrfMgr vrfmgr(&cfgDb, &appDb, &stateDb, cfg_vrf_tables);
+
+        isWarmStart = WarmStart::isWarmStart();
 
         // TODO: add tables in stateDB which interface depends on to monitor list
         std::vector<Orch *> cfgOrchList = {&vrfmgr};
@@ -68,6 +77,7 @@ int main(int argc, char **argv)
         while (true)
         {
             Selectable *sel;
+            static bool firstReadTimeout = true;
             int ret;
 
             ret = s.select(&sel, SELECT_TIMEOUT);
@@ -79,6 +89,14 @@ int main(int argc, char **argv)
             if (ret == Select::TIMEOUT)
             {
                 vrfmgr.doTask();
+                if (isWarmStart && firstReadTimeout)
+                {
+                    firstReadTimeout = false;
+                    WarmStart::setWarmStartState("vrfmgrd", WarmStart::REPLAYED);
+                    // There is no operation to be performed for vrfmgrd reconcillation
+                    // Hence mark it reconciled right away
+                    WarmStart::setWarmStartState("vrfmgrd", WarmStart::RECONCILED);
+                }
                 continue;
             }
 

@@ -6,6 +6,7 @@
 #include "portmgr.h"
 #include "exec.h"
 #include "shellcmd.h"
+#include <swss/redisutility.h>
 
 using namespace std;
 using namespace swss;
@@ -37,6 +38,21 @@ bool PortMgr::setPortMtu(const string &alias, const string &mtu)
 
     return true;
 }
+
+bool PortMgr::setPortTpid(const string &alias, const string &tpid)
+{
+    stringstream cmd;
+    string res;
+
+    // Set the port TPID in application database to update port TPID
+    vector<FieldValueTuple> fvs;
+    FieldValueTuple fv("tpid", tpid);
+    fvs.push_back(fv);
+    m_appPortTable.set(alias, fvs);
+
+    return true;
+}
+
 
 bool PortMgr::setPortAdminStatus(const string &alias, const bool up)
 {
@@ -72,6 +88,12 @@ bool PortMgr::isPortStateOk(const string &alias)
 
     if (m_statePortTable.get(alias, temp))
     {
+        auto state_opt = swss::fvsGetValue(temp, "state", true);
+        if (!state_opt)
+        {
+            return false;
+        }
+
         SWSS_LOG_INFO("Port %s is ready", alias.c_str());
         return true;
     }
@@ -102,7 +124,7 @@ void PortMgr::doTask(Consumer &consumer)
                 continue;
             }
 
-            string admin_status, mtu, learn_mode;
+            string admin_status, mtu, learn_mode, tpid;
 
             bool configured = (m_portList.find(alias) != m_portList.end());
 
@@ -131,6 +153,10 @@ void PortMgr::doTask(Consumer &consumer)
                 {
                     learn_mode = fvValue(i);
                 }
+                else if (fvField(i) == "tpid")
+                {
+                    tpid = fvValue(i);
+                }
             }
 
             if (!mtu.empty())
@@ -149,6 +175,12 @@ void PortMgr::doTask(Consumer &consumer)
             {
                 setPortLearnMode(alias, learn_mode);
                 SWSS_LOG_NOTICE("Configure %s MAC learn mode to %s", alias.c_str(), learn_mode.c_str());
+            }
+
+            if (!tpid.empty())
+            {
+                setPortTpid(alias, tpid);
+                SWSS_LOG_NOTICE("Configure %s TPID to %s", alias.c_str(), tpid.c_str());
             }
         }
         else if (op == DEL_COMMAND)

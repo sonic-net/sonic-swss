@@ -18,8 +18,9 @@ int main(int argc, char **argv)
     DBConnector appDb("APPL_DB", 0);
     RedisPipeline pipelineAppDB(&appDb);
     DBConnector stateDb("STATE_DB", 0);
+    DBConnector cfgDb("CONFIG_DB", 0);
 
-    NeighSync sync(&pipelineAppDB, &stateDb);
+    NeighSync sync(&pipelineAppDB, &stateDb, &cfgDb);
 
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWNEIGH, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELNEIGH, &sync);
@@ -86,7 +87,7 @@ int main(int argc, char **argv)
         }
         catch (const std::exception& e)
         {
-            cout << "Exception \"" << e.what() << "\" had been thrown in deamon" << endl;
+            cout << "Exception \"" << e.what() << "\" had been thrown in daemon" << endl;
             return 0;
         }
     }

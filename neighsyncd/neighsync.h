@@ -14,7 +14,7 @@
  * service to finish, should be longer than the restore_neighbors timeout value (110)
  * This should not happen, if happens, system is in a unknown state, we should exit.
  */
-#define RESTORE_NEIGH_WAIT_TIME_OUT 120
+#define RESTORE_NEIGH_WAIT_TIME_OUT 180
 
 namespace swss {
 
@@ -23,7 +23,7 @@ class NeighSync : public NetMsg
 public:
     enum { MAX_ADDR_SIZE = 64 };
 
-    NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb);
+    NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector *cfgDb);
     ~NeighSync();
 
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
@@ -39,6 +39,9 @@ private:
     Table m_stateNeighRestoreTable;
     ProducerStateTable m_neighTable;
     AppRestartAssist  *m_AppRestartAssist;
+    Table m_cfgVlanInterfaceTable, m_cfgLagInterfaceTable, m_cfgInterfaceTable;
+
+    bool isLinkLocalEnabled(const std::string &port);
 };
 
 }

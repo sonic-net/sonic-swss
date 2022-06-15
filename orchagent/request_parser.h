@@ -5,6 +5,7 @@
 #include "ipprefix.h"
 #include <sstream>
 #include <set>
+#include <vector>
 
 typedef enum _request_types_t
 {
@@ -18,6 +19,9 @@ typedef enum _request_types_t
     REQ_T_VLAN,
     REQ_T_UINT,
     REQ_T_SET,
+    REQ_T_MAC_ADDRESS_LIST,
+    REQ_T_IP_LIST,
+    REQ_T_UINT_LIST,
 } request_types_t;
 
 typedef struct _request_description
@@ -117,6 +121,12 @@ public:
         return attr_item_ip_.at(attr_name);
     }
 
+    swss::IpPrefix getAttrIpPrefix(const std::string& attr_name) const
+    {
+        assert(is_parsed_);
+        return attr_item_ip_prefix_.at(attr_name);
+    }
+
     const uint64_t& getAttrUint(const std::string& attr_name) const
     {
         assert(is_parsed_);
@@ -140,6 +150,24 @@ public:
         return table_name_;
     }
 
+    const std::vector<swss::IpAddress>& getAttrIPList(const std::string& attr_name) const
+    {
+        assert(is_parsed_);
+        return attr_item_ip_list_.at(attr_name);
+    }
+
+    const std::vector<swss::MacAddress>& getAttrMacAddressList(const std::string& attr_name) const
+    {
+        assert(is_parsed_);
+        return attr_item_mac_addresses_list_.at(attr_name);
+    }
+
+    const std::vector<uint64_t>& getAttrUintList(const std::string& attr_name) const
+    {
+        assert(is_parsed_);
+        return attr_item_uint_list_.at(attr_name);
+    }
+
 protected:
     Request(const request_description_t& request_description, const char key_separator)
         : request_description_(request_description),
@@ -161,6 +189,9 @@ private:
     uint64_t parseUint(const std::string& str);
     uint16_t parseVlan(const std::string& str);
     std::set<std::string> parseSet(const std::string& str);
+    std::vector<swss::IpAddress> parseIpAddressList(const std::string& str);
+    std::vector<swss::MacAddress> parseMacAddressList(const std::string& str);
+    std::vector<uint64_t> parseUintList(const std::string& str);
 
     sai_packet_action_t parsePacketAction(const std::string& str);
 
@@ -185,8 +216,12 @@ private:
     std::unordered_map<std::string, sai_packet_action_t> attr_item_packet_actions_;
     std::unordered_map<std::string, uint16_t> attr_item_vlan_;
     std::unordered_map<std::string, swss::IpAddress> attr_item_ip_;
+    std::unordered_map<std::string, swss::IpPrefix> attr_item_ip_prefix_;
     std::unordered_map<std::string, uint64_t> attr_item_uint_;
     std::unordered_map<std::string, std::set<std::string>> attr_item_set_;
+    std::unordered_map<std::string, std::vector<swss::IpAddress>> attr_item_ip_list_;
+    std::unordered_map<std::string, std::vector<swss::MacAddress>> attr_item_mac_addresses_list_;
+    std::unordered_map<std::string, std::vector<uint64_t>> attr_item_uint_list_;
 };
 
 #endif // __REQUEST_PARSER_H

@@ -6,6 +6,39 @@ from swsscommon import swsscommon
 
 
 class TestPort(object):
+    def test_PortTpid(self, dvs, testlog):
+        pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+
+        # set TPID to port
+        cdb_port_tbl = swsscommon.Table(cdb, "PORT")
+        fvs = swsscommon.FieldValuePairs([("tpid", "0x9200")])
+        cdb_port_tbl.set("Ethernet8", fvs)
+        time.sleep(1)
+
+        # check application database
+        pdb_port_tbl = swsscommon.Table(pdb, "PORT_TABLE")
+        (status, fvs) = pdb_port_tbl.get("Ethernet8")
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "tpid":
+                tpid = fv[1]
+        assert tpid == "0x9200"
+
+        # Check ASIC DB
+        atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
+        # get TPID and validate it to be 0x9200 (37376)
+        (status, fvs) = atbl.get(dvs.asicdb.portnamemap["Ethernet8"])
+        assert status == True
+        asic_tpid = "0"
+
+        for fv in fvs:
+            if fv[0] == "SAI_PORT_ATTR_TPID":
+                asic_tpid = fv[1]
+
+        assert asic_tpid == "37376"
+
     def test_PortMtu(self, dvs, testlog):
         pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
@@ -26,11 +59,11 @@ class TestPort(object):
                 assert fv[1] == "9100"
 
     def test_PortNotification(self, dvs, testlog):
-        dvs.runcmd("config interface startup Ethernet0")
-        dvs.runcmd("config interface ip add Ethernet0 10.0.0.0/31")
+        dvs.port_admin_set("Ethernet0", "up")
+        dvs.interface_ip_add("Ethernet0", "10.0.0.0/31")
 
-        dvs.runcmd("config interface startup Ethernet4")
-        dvs.runcmd("config interface ip add Ethernet4 10.0.0.2/31")
+        dvs.port_admin_set("Ethernet4", "up")
+        dvs.interface_ip_add("Ethernet4", "10.0.0.2/31")
 
         dvs.servers[0].runcmd("ip link set down dev eth0") == 0
 
@@ -70,12 +103,34 @@ class TestPort(object):
 
         assert oper_status == "up"
 
-    def test_PortFec(self, dvs, testlog):
-        dvs.runcmd("config interface startup Ethernet0")
-        dvs.runcmd("config interface ip add Ethernet0 10.0.0.0/31")
+    def test_PortFecForce(self, dvs, testlog):
+        db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        adb = dvs.get_asic_db()
 
-        dvs.runcmd("config interface startup Ethernet4")
-        dvs.runcmd("config interface ip add Ethernet4 10.0.0.2/31")
+        ptbl = swsscommon.ProducerStateTable(db, "PORT_TABLE")
+
+        # set fec
+        fvs = swsscommon.FieldValuePairs([("fec","none")])
+        ptbl.set("Ethernet0", fvs)
+        fvs = swsscommon.FieldValuePairs([("fec","rs")])
+        ptbl.set("Ethernet4", fvs)
+
+        # validate if fec none is pushed to asic db when set first time
+        port_oid = adb.port_name_map["Ethernet0"]
+        expected_fields = {"SAI_PORT_ATTR_FEC_MODE":"SAI_PORT_FEC_MODE_NONE"}
+        adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
+
+        # validate if fec rs is pushed to asic db when set first time
+        port_oid = adb.port_name_map["Ethernet4"]
+        expected_fields = {"SAI_PORT_ATTR_FEC_MODE":"SAI_PORT_FEC_MODE_RS"}
+        adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
+
+    def test_PortFec(self, dvs, testlog):
+        dvs.port_admin_set("Ethernet0", "up")
+        dvs.interface_ip_add("Ethernet0", "10.0.0.0/31")
+
+        dvs.port_admin_set("Ethernet4", "up")
+        dvs.interface_ip_add("Ethernet4", "10.0.0.2/31")
 
         dvs.servers[0].runcmd("ip link set down dev eth0") == 0
 

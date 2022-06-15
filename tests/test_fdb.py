@@ -31,9 +31,10 @@ class TestFdb(object):
     def test_FdbWarmRestartNotifications(self, dvs, testlog):
         dvs.setup_db()
 
-        dvs.runcmd("sonic-clear fdb all")
+        dvs.clear_fdb()
 
-        dvs.runcmd("crm config polling interval 1")
+        dvs.crm_poll_set("1")
+        
         dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_FDB_ENTRY', '1000')
 
         time.sleep(2)
@@ -225,8 +226,7 @@ class TestFdb(object):
         assert ok, str(extra)
 
         # enable warm restart
-        (exitcode, result) = dvs.runcmd("config warm_restart enable swss")
-        assert exitcode == 0
+        dvs.warm_restart_swss("true")
 
         # freeze orchagent for warm restart
         (exitcode, result) = dvs.runcmd("/usr/bin/orchagent_restart_check")
@@ -317,14 +317,14 @@ class TestFdb(object):
 
         finally:
             # disable warm restart
-            dvs.runcmd("config warm_restart disable swss")
+            dvs.warm_restart_swss("false")
             # slow down crm polling
-            dvs.runcmd("crm config polling interval 10000")
+            dvs.crm_poll_set("10000")
 
     def test_FdbAddedAfterMemberCreated(self, dvs, testlog):
         dvs.setup_db()
 
-        dvs.runcmd("sonic-clear fdb all")
+        dvs.clear_fdb()
         time.sleep(2)
 
         # create a FDB entry in Application DB
@@ -374,12 +374,10 @@ class TestFdb(object):
         ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
                         [("mac", "52:54:00:25:06:E9"), ("bvid", bvid)],
                         [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_DYNAMIC"),
-                         ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", iface_2_bridge_port_id["Ethernet0"]),
-                         ('SAI_FDB_ENTRY_ATTR_PACKET_ACTION', 'SAI_PACKET_ACTION_FORWARD')]
-        )
+                         ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", iface_2_bridge_port_id["Ethernet0"])])
         assert ok, str(extra)
 
-        dvs.runcmd("sonic-clear fdb all")
+        dvs.clear_fdb()
         dvs.remove_vlan_member("2", "Ethernet0")
         dvs.remove_vlan("2")
 

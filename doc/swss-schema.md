@@ -31,13 +31,16 @@ Stores information for physical switch ports managed by the switch chip. Ports t
     ;QOS Mappings
     map_dscp_to_tc      = ref_hash_key_reference
     map_tc_to_queue     = ref_hash_key_reference
+    map_mpls_tc_to_tc   = ref_hash_key_reference
 
     Example:
     127.0.0.1:6379> hgetall PORT_TABLE:ETHERNET4
     1) "dscp_to_tc_map"
-    2) "[DSCP_TO_TC_MAP_TABLE:AZURE]"
+    2) "AZURE"
     3) "tc_to_queue_map"
-    4) "[TC_TO_QUEUE_MAP_TABLE:AZURE]"
+    4) "AZURE"
+    5) "mpls_tc_to_tc_map"
+    6) "AZURE"
 
 ---------------------------------------------
 ### INTF_TABLE
@@ -159,8 +162,59 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     ;Status: Mandatory
     key           = ROUTE_TABLE:prefix
     nexthop       = *prefix, ;IP addresses separated “,” (empty indicates no gateway)
-    intf          = ifindex? PORT_TABLE.key  ; zero or more separated by “,” (zero indicates no interface)
+    ifname        = ifindex? PORT_TABLE.key  ; zero or more separated by “,” (zero indicates no interface)
+    mpls_nh       = STRING                   ; Comma-separated list of MPLS NH info.
     blackhole     = BIT ; Set to 1 if this route is a blackhole (or null0)
+    weight        = weight_list              ; List of weights.
+    nexthop_group = string ; index within the NEXTHOP_GROUP_TABLE, used instead of nexthop and intf fields
+    segment       = string ; SRV6 segment name
+    seg_src       = string ; ipv6 address for SRV6 tunnel source
+
+---------------------------------------------
+
+###### LABEL_ROUTE_TABLE
+    ; Defines schema for MPLS label route table attributes
+    key           = LABEL_ROUTE_TABLE:mpls_label ; MPLS label
+    ; field       = value
+    nexthop       = STRING                   ; Comma-separated list of nexthops.
+    ifname        = STRING                   ; Comma-separated list of interfaces.
+    mpls_nh       = STRING                   ; Comma-separated list of MPLS NH info.
+    mpls_pop      = STRING                   ; Number of ingress MPLS labels to POP
+    weight        = STRING                   ; Comma-separated list of weights.
+    blackhole     = BIT ; Set to 1 if this route is a blackhole (or null0)
+    nexthop_group = string ; index within the NEXTHOP_GROUP_TABLE, used instead of nexthop and intf fields
+
+---------------------------------------------
+### NEXTHOP_GROUP_TABLE
+    ;Stores a list of groups of one or more next hops
+    ;Status: Mandatory
+    key           = NEXTHOP_GROUP_TABLE:string ; arbitrary index for the next hop group
+    nexthop       = *prefix, ;IP addresses separated “,” (empty indicates no gateway)
+    ifname        = ifindex? PORT_TABLE.key  ; zero or more separated by “,” (zero indicates no interface)
+    mpls_nh       = STRING                   ; Comma-separated list of MPLS NH info.
+    weight        = weight_list              ; List of weights.
+
+---------------------------------------------
+### CLASS_BASED_NEXT_HOP_GROUP_TABLE
+    ;Stores a list of groups of one or more next hop groups used for class based forwarding
+    ;Status: Mandatory
+    key           = CLASS_BASED_NEXT_HOP_GROUP_TABLE:string ; arbitrary index for the next hop group
+    members       = NEXT_HOP_GROUP_TABLE.key ; one or more separated by ","
+    selection_map = FC_TO_NHG_INDEX_MAP_TABLE.key ; the NHG map to use for this CBF NHG
+
+---------------------------------------------
+### FC_TO_NHG_INDEX_MAP_TABLE
+    ; FC to Next hop group index map
+    key                    = "FC_TO_NHG_INDEX_MAP_TABLE:"name
+    fc_num = 1*DIGIT ;value
+    nh_index  = 1*DIGIT;  index of NH inside NH group
+
+    Example:
+    127.0.0.1:6379> hgetall "FC_TO_NHG_INDEX_MAP_TABLE:AZURE"
+     1) "0" ;fc_num
+     2) "0" ;nhg_index
+     3) "1"
+     4) "0"
 
 ---------------------------------------------
 ### NEIGH_TABLE
@@ -172,6 +226,21 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     key           = prefix PORT_TABLE.name / VLAN_INTF_TABLE.name / LAG_INTF_TABLE.name = macaddress ; (may be empty)
     neigh         = 12HEXDIG         ;  mac address of the neighbor
     family        = "IPv4" / "IPv6"  ; address family
+
+---------------------------------------------
+### SRV6_SID_LIST_TABLE
+    ; Stores IPV6 prefixes for a SRV6 segment name
+    key           = ROUTE_TABLE:segment ; SRV6 segment name
+    ; field       = value
+    path          = STRING              ; Comma-separated list of IPV6 prefixes for a SRV6 segment
+
+---------------------------------------------
+### SRV6_MY_SID_TABLE
+    ; Stores SRV6 MY_SID table entries and associated actions
+    key           = STRING ; SRV6 MY_SID prefix string
+    ; field       = value
+    action        = STRING ; MY_SID actions like "end", "end.dt46"
+    vrf           = STRING ; VRF string for END.DT46 or END.DT4 or END.DT6
 
 ---------------------------------------------
 ### FDB_TABLE
@@ -209,9 +278,9 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     Example:
     127.0.0.1:6379> hgetall QUEUE_TABLE:ETHERNET4:1
     1) "scheduler"
-    2) "[SCHEDULER_TABLE:BEST_EFFORT]"
+    2) "BEST_EFFORT"
     3) "wred_profile"
-    4) "[WRED_PROFILE_TABLE:AZURE]"
+    4) "AZURE"
 
 ---------------------------------------------
 ### TC\_TO\_QUEUE\_MAP\_TABLE
@@ -251,6 +320,63 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
      8) "7"
      9) "9"
     10) "8"
+
+---------------------------------------------
+### MPLS\_TC\_TO\_TC\_MAP\_TABLE
+    ; MPLS TC to TC map
+    ;SAI mapping - qos_map object with SAI_QOS_MAP_ATTR_TYPE == sai_qos_map_type_t::SAI_QOS_MAP_EXP_TO_TC
+    key        = "MPLS_TC_TO_TC_MAP_TABLE:"name
+    ;field    value
+    mpls_tc_value = 1*DIGIT
+    tc_value   = 1*DIGIT
+
+    Example:
+    127.0.0.1:6379> hgetall "MPLS_TC_TO_TC_MAP_TABLE:AZURE"
+     1) "0" ;mpls_tc
+     2) "3" ;tc
+     3) "1"
+     4) "5"
+     5) "2"
+     6) "5"
+     7) "3"
+     8) "7"
+     9) "4"
+    10) "8"
+
+### DSCP_TO_FC_TABLE_NAME
+    ; dscp to FC map
+    ;SAI mapping - qos_map object with SAI_QOS_MAP_ATTR_TYPE == sai_qos_map_type_t::SAI_QOS_MAP_TYPE_DSCP_TO_FORWARDING_CLASS
+    key        = "DSCP_TO_FC_MAP_TABLE:"name
+    ;field       value
+    dscp_value = 1*DIGIT
+    fc_value   = 1*DIGIT
+
+    Example:
+    127.0.0.1:6379> hgetall "DSCP_TO_FC_MAP_TABLE:AZURE"
+     1) "0" ;dscp
+     2) "1" ;fc
+     3) "1"
+     4) "1"
+     5) "2"
+     6) "3"
+     7)
+---------------------------------------------
+### EXP_TO_FC_MAP_TABLE
+    ; dscp to FC map
+    ;SAI mapping - qos_map object with SAI_QOS_MAP_ATTR_TYPE == sai_qos_map_type_t::SAI_QOS_MAP_TYPE_MPLS_EXP_TO_FORWARDING_CLASS
+    key            = "EXP_TO_FC_MAP_TABLE:"name
+    ;field           value
+    mpls_exp_value = 1*DIGIT
+    fc_value       = 1*DIGIT
+
+    Example:
+    127.0.0.1:6379> hgetall "EXP_TO_FC_MAP_TABLE:AZURE"
+     1) "0" ;mpls_exp
+     2) "1" ;fc
+     3) "1"
+     4) "1"
+     5) "2"
+     6) "3"
 
 ---------------------------------------------
 ### SCHEDULER_TABLE
@@ -443,15 +569,37 @@ It's possible to create separate configuration files for different ASIC platform
 
 ----------------------------------------------
 
+### ACL\_TABLE\_TYPE
+Stores a definition of table - set of matches, actions and bind point types. ACL_TABLE references a key inside this table in "type" field.
+
+```
+key: ACL_TABLE_TYPE:name           ; key of the ACL table type entry. The name is arbitary name user chooses.
+; field         = value
+matches         = match-list       ; list of matches for this table, matches are same as in ACL_RULE table.
+actions         = action-list      ; list of actions for this table, actions are same as in ACL_RULE table.
+bind_points     = bind-points-list ; list of bind point types for this table.
+
+; values annotation
+match            = 1*64VCHAR
+match-list       = [1-max-matches]*match
+action           = 1*64VCHAR
+action-list      = [1-max-actions]*action
+bind-point       = port/lag
+bind-points-list = [1-max-bind-points]*bind-point
+```
+
 ### ACL\_TABLE
 Stores information about ACL tables on the switch.  Port names are defined in [port_config.ini](../portsyncd/port_config.ini).
 
     key           = ACL_TABLE:name          ; acl_table_name must be unique
     ;field        = value
     policy_desc   = 1*255VCHAR              ; name of the ACL policy table description
-    type          = "mirror"/"l3"/"l3v6"    ; type of acl table, every type of
+    type          = 1*255VCHAR              ; type of acl table, every type of
                                             ; table defines the match/action a
                                             ; specific set of match and actions.
+                                            ; There are pre-defined table types like
+                                            ; "MIRROR", "MIRRORV6", "MIRROR_DSCP",
+                                            ; "L3", "L3V6", "MCLAG", "PFCWD", "DROP".
     ports         = [0-max_ports]*port_name ; the ports to which this ACL
                                             ; table is applied, can be emtry
                                             ; value annotations
@@ -803,6 +951,59 @@ packet_action = "drop" | "forward" | "copy" | "copy_cancel" | "trap" | "log" | "
     nexthop                    = IP             ; Nexthop IP address (Optional)
     ifname                     = ifname         ; Interface name
 
+### BUFFER_POOL_TABLE
+    ;Stores buffer pools
+
+    key             = BUFFER_POOL_TABLE:poolname    ; The poolname can be one of ingress_lossless_pool, ingress_lossy_pool, egress_lossless_pool, and egress_lossy_pool or other used-defined pools.
+    mode            = "dynamic" / "static"          ; Whether the pool uses dynamic threshold or static threshold.
+    type            = "ingress" / "egress"          ; Whether the pool serves for ingress or egress traffic
+    size            = 1*10DIGIT                     ; The size of the shared buffer pool
+    xoff            = 1*10DIGIT                     ; The size of the shared headroom pool. Available only for ingress_lossless_pool.
+
+### BUFFER_PROFILE_TABLE
+    ;Stores buffer profiles
+
+    key             = BUFFER_PROFILE_TABLE:profilename      ; profile name can be predefined or dynamically generated with name convention "pg_lossless_<speed>_<cable_length>_profile"
+    pool            = reference to BUFFER_POOL_TABLE object
+    xon             = 1*6DIGIT                              ; The xon threshold. The switch stops sending PFC frame when the buffer occupancy drops to this threshold.
+    xon_offset      = 1*6DIGIT                              ; The xon offset. If both xon and xon_offset have been defined, the switch stops sending PFC frame
+                                                            ; when the buffer occupancy drops to xon or size of buffer pool size minus xon_offset, whichever is larger.
+    xoff            = 1*6DIGIT                              ; The xoff threshold. The switch starts sending PFC frame when the buffer occupancy rises to this threshold.
+    size            = 1*6DIGIT                              ; The reserved size of the PG or queue referencing this buffer profile.
+    dynamic_th      = 1*2DIGIT                              ; For dynamic pools, representing the proportion of currently available memory in the pool the PG or queue can occupy.
+                                                            ; It is calculated as:
+                                                            ;     alpha = 2 ^ dynamic_th;
+                                                            ;     proportion = alpha / (1 + alpha)
+    static_th       = 1*10DIGIT                             ; For static pools, representing the threshold in bytes the PG or queue can occupy.
+
+### BUFFER_PG_TABLE
+    ;Stores buffer PG (priority-groups)
+
+    key            = BUFFER_PG_TABLE:port_name:pg               ; The pg consists of a single number representing a single priority or two numbers connected by a dash representing a range of priorities.
+                                                                ; By default, PG 0 for lossy traffic and PG 3-4 for lossless traffic.
+    profile        = reference to BUFFER_PROFILE_TABLE object
+
+### BUFFER_QUEUE_TABLE
+    ;Stores buffer queue
+
+    key            = BUFFER_QUEUE_TABLE:port_name:queue         ; The queue consists of a single number representing a single priority or two numbers connected by a dash representing a range of priorities.
+                                                                ; By default, queue 0-2 and 5-6 for lossy traffic and queue 3-4 for lossless traffic
+    profile        = reference to BUFFER_PROFILE_TABLE object
+
+### BUFFER_PORT_INGRESS_PROFILE_LIST_TABLE
+    ;Stores per port buffer threshold on ingress side
+
+    key            = BUFFER_PORT_INGRESS_PROFILE_LIST_TABLE:port_name
+    profile_list   = a list of references to BUFFER_PROFILE_TABLE object    ; Typically, for each ingress buffer pools there should be a buffer profile referencing the pool in the list.
+                                                                            ; For example, if there are two ingress buffer pools in the system, ingress_lossless_pool and ingress_lossy_pool,
+                                                                            ; there should be two profiles in the list: ingress_lossless_profile and ingress_lossy_profile
+
+### BUFFER_PORT_EGRESS_PROFILE_LIST_TABLE
+    ;Stores per port buffer threshold on egress side
+
+    key            = BUFFER_PORT_EGRESS_PROFILE_LIST_TABLE:port_name
+    profile_list   = a list of references to BUFFER_PROFILE_TABLE object    ; Similar to profile_list in BUFFER_PORT_INGRESS_PROFILE_LIST_TABLE but on egress side.
+
 ## Configuration DB schema
 
 ### PORT_TABLE
@@ -994,6 +1195,14 @@ Stores information for physical switch ports managed by the switch chip. Ports t
     key                 = VRF_OBJECT_TABLE|vrf_name ; vrf_name start with 'Vrf' prefix
     state               = "ok"                      ; vrf entry exist in orchagent
 
+### BUFFER_MAX_PARAM_TABLE
+    ;Available only when the switch is running in dynamic buffer model
+    ;Stores the maximum available buffer on a global or per-port basis
+
+    key                 = BUFFER_MAX_PARAM_TABLE|ifname  ; The maximum headroom of the port. The ifname should be the name of a physical port.
+                          BUFFER_MAX_PARAM_TABLE|global  ; The maximum available of the system.
+    mmu_size            = 1*10DIGIT                      ; The maximum available of the system. Available only when the key is "global".
+    max_headroom_size   = 1*10DIGIT                      ; The maximum headroom of the port. Available only when the key is ifname.
 
 ## Configuration files
 What configuration files should we have?  Do apps, orch agent each need separate files?

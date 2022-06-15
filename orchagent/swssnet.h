@@ -3,6 +3,7 @@
 //
 #pragma once
 
+#include <assert.h>
 #include <memory.h>
 #include <stdexcept>
 #include <net/if.h>
@@ -74,6 +75,53 @@ inline static sai_ip_prefix_t& copy(sai_ip_prefix_t& dst, const IpAddress& src)
             throw std::logic_error("Invalid family");
     }
     return dst;
+}
+
+static int getPrefixLenFromAddrMask(const uint8_t *addr, int len)
+{
+    int i = 0;
+    uint8_t non_zero = 0xFF;
+    for (i = len - 1; i >=0; i--)
+    {
+        if (addr[i] != 0)
+        {
+            non_zero = addr[i];
+            break;
+        }
+    }
+
+    if (non_zero == 0xFF)
+    {
+        return (i + 1) * 8;
+    }
+    else
+    {
+        int j = 2;
+        while(((non_zero >> j) & 0x1) == 0)
+        {
+            ++j;
+        }
+        return (i + 1) * 8 - (j + 1);
+    }
+    
+}
+
+inline static IpPrefix getIpPrefixFromSaiPrefix(const sai_ip_prefix_t& src)
+{
+    ip_addr_t ip;
+    switch(src.addr_family)
+    {
+        case SAI_IP_ADDR_FAMILY_IPV4:
+            ip.family = AF_INET;
+            ip.ip_addr.ipv4_addr = src.addr.ip4;
+            return IpPrefix(ip, getPrefixLenFromAddrMask(reinterpret_cast<const uint8_t*>(&src.mask.ip4), 4));
+        case SAI_IP_ADDR_FAMILY_IPV6:
+            ip.family = AF_INET6;
+            memcpy(ip.ip_addr.ipv6_addr, src.addr.ip6, 16);
+            return IpPrefix(ip, getPrefixLenFromAddrMask(src.mask.ip6, 16));
+        default:
+            throw std::logic_error("Invalid family");
+    }
 }
 
 inline static sai_ip_prefix_t& subnet(sai_ip_prefix_t& dst, const sai_ip_prefix_t& src)

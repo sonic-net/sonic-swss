@@ -32,10 +32,11 @@ typedef map<string, IntfsEntry> IntfsTable;
 class IntfsOrch : public Orch
 {
 public:
-    IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch);
+    IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch, DBConnector *chassisAppDb);
 
     sai_object_id_t getRouterIntfsId(const string&);
     bool isPrefixSubnet(const IpPrefix&, const string&);
+    bool isInbandIntfInMgmtVrf(const string& alias);
     string getRouterIntfsAlias(const IpAddress &ip, const string &vrf_name = "");
     string getRifRateFlexCounterTableKey(string key);
     void increaseRouterIntfsRefCount(const string&);
@@ -45,6 +46,7 @@ public:
     bool setRouterIntfsMac(const Port &port);
     bool setRouterIntfsNatZoneId(Port &port);
     bool setRouterIntfsAdminStatus(const Port &port);
+    bool setRouterIntfsMpls(const Port &port);
 
     std::set<IpPrefix> getSubnetRoutes();
 
@@ -64,6 +66,8 @@ public:
     }
 
     bool updateSyncdIntfPfx(const string &alias, const IpPrefix &ip_prefix, bool add = true);
+
+    bool isRemoteSystemPortIntf(string alias);
 
 private:
 
@@ -86,6 +90,10 @@ private:
     unique_ptr<ProducerTable> m_flexCounterGroupTable;
 
     std::string getRifFlexCounterTableKey(std::string s);
+    std::string getRifCounterTableKey(std::string s);
+    std::string getRifRateTableKey(std::string s);
+    std::string getRifRateInitTableKey(std::string s);
+    void cleanUpRifFromCounterDb(const string &id, const string &name);
 
     bool addRouterIntfs(sai_object_id_t vrf_id, Port &port);
     bool removeRouterIntfs(Port &port);
@@ -95,6 +103,11 @@ private:
 
     bool setIntfVlanFloodType(const Port &port, sai_vlan_flood_control_type_t vlan_flood_type);
     bool setIntfProxyArp(const string &alias, const string &proxy_arp);
+
+    unique_ptr<Table> m_tableVoqSystemInterfaceTable;
+    void voqSyncAddIntf(string &alias);
+    void voqSyncDelIntf(string &alias);
+
 };
 
 #endif /* SWSS_INTFSORCH_H */
