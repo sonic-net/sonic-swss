@@ -1,7 +1,6 @@
 import time
 import json
 import pytest
-import random
 
 from swsscommon import swsscommon
 
