@@ -95,7 +95,7 @@ jobs:
     condition: always()
 
   - publish: $(Build.ArtifactStagingDirectory)/gcov_tmp
-    artifact: ${{ parameters.gcov_artifact_name }}
+    artifact: ${{ parameters.gcov_artifact_name }}@$(System.JobAttempt)
     displayName: "Publish gcov output"
     condition: eq('${{ parameters.archive_gcov }}', true)
 
