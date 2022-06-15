@@ -1056,6 +1056,11 @@ void FdbOrch::flushFDBEntries(sai_object_id_t bridge_port_oid,
         attr.value.oid = vlan_oid;
         attrs.push_back(attr);
     }
+    
+    /* do not flush static mac */
+    attr.id = SAI_FDB_FLUSH_ATTR_ENTRY_TYPE;
+    attr.value.s32 = SAI_FDB_FLUSH_ENTRY_TYPE_DYNAMIC;
+    attrs.push_back(attr);
 
     SWSS_LOG_INFO("Flushing FDB bridge_port_oid: 0x%" PRIx64 ", and bvid_oid:0x%" PRIx64 ".", bridge_port_oid, vlan_oid);
 
