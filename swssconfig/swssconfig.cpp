@@ -21,6 +21,10 @@ const int el_count = 2;
 
 const string SWSS_CONFIG_DIR    = "/etc/swss/config.d/";
 
+DBConnector db("APPL_DB", 0, false);
+RedisPipeline pipeline(&db);
+unordered_map<string, ProducerStateTable> table_map;
+
 void usage()
 {
     cout << "Usage: swssconfig [FILE...]" << endl;
@@ -39,9 +43,28 @@ void dump_db_item(KeyOpFieldsValuesTuple &db_item)
     SWSS_LOG_DEBUG("]");
 }
 
+ProducerStateTable &get_producer_table(const std::string &table_name)
+{
+    auto iter = table_map.find(table_name);
+    if (iter != table_map.end())
+    {
+        return iter->second;
+    }
+
+    auto ret = table_map.emplace(table_name, ProducerStateTable(&pipeline, table_name, true));
+    return ret.first->second;
+}
+
+void flush_db_data()
+{
+    for (auto &table_item : table_map)
+    {
+        table_item.second.flush();
+    }
+}
+
 bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items)
 {
-    DBConnector db("APPL_DB", 0, true);
     for (auto &db_item : db_items)
     {
         dump_db_item(db_item);
@@ -50,12 +73,13 @@ bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items)
         size_t pos = key.find(name_delimiter);
         if ((string::npos == pos) || ((key.size() - 1) == pos))
         {
+            flush_db_data(); // flush existing valid data to DB to keep logic the same as before
             SWSS_LOG_ERROR("Invalid formatted hash:%s\n", key.c_str());
             return false;
         }
         string table_name = key.substr(0, pos);
         string key_name = key.substr(pos + 1);
-        ProducerStateTable producer(&db, table_name);
+        ProducerStateTable &producer = get_producer_table(table_name);
 
         if (kfvOp(db_item) == SET_COMMAND)
             producer.set(key_name, kfvFieldsValues(db_item), SET_COMMAND);
@@ -63,10 +87,13 @@ bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items)
             producer.del(key_name, DEL_COMMAND);
         else
         {
+            flush_db_data(); // flush existing valid data to DB to keep logic the same as before
             SWSS_LOG_ERROR("Invalid operation: %s\n", kfvOp(db_item).c_str());
             return false;
         }
     }
+
+    flush_db_data();
     return true;
 }
 
