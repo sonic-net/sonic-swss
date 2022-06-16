@@ -36,16 +36,15 @@ AclTableManager::AclTableManager(P4OidMapper *p4oidMapper, ResponsePublisherInte
     SWSS_LOG_ENTER();
 
     assert(p4oidMapper != nullptr);
-    // Create the default UDF match
-    auto status = createDefaultUdfMatch();
-    if (!status.ok())
-    {
-        SWSS_LOG_ERROR("Failed to create ACL UDF default match : %s", status.message().c_str());
-    }
 }
 
 AclTableManager::~AclTableManager()
 {
+    sai_object_id_t udf_match_oid;
+    if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_UDF_MATCH, P4_UDF_MATCH_DEFAULT, &udf_match_oid)) 
+    {
+        return;
+    }
     auto status = removeDefaultUdfMatch();
     if (!status.ok())
     {
@@ -465,8 +464,11 @@ ReturnCode AclTableManager::createUdf(const P4UdfField &udf_field)
     sai_object_id_t udf_match_oid;
     if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_UDF_MATCH, P4_UDF_MATCH_DEFAULT, &udf_match_oid))
     {
-        return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
-               << "UDF default match " << QuotedVar(P4_UDF_MATCH_DEFAULT) << " does not exist";
+        // Create the default UDF match
+        LOG_AND_RETURN_IF_ERROR(createDefaultUdfMatch()
+                        << "Failed to create ACL UDF default match "
+                        << QuotedVar(P4_UDF_MATCH_DEFAULT));
+        m_p4OidMapper->getOID(SAI_OBJECT_TYPE_UDF_MATCH, P4_UDF_MATCH_DEFAULT, &udf_match_oid);
     }
     std::vector<sai_attribute_t> udf_attrs;
     sai_attribute_t udf_attr;
