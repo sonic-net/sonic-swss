@@ -423,9 +423,39 @@ bool Srv6Orch::sidEntryEndpointBehavior(string action, sai_my_sid_entry_endpoint
     {
         end_behavior = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_B6_INSERT_RED;
     }
+    else if (action == "udx6")
+    {
+        end_behavior = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DX6;
+    }
+    else if (action == "udx4")
+    {
+        end_behavior = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DX4;
+    }
+    else if (action == "udt4")
+    {
+        end_behavior = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT4;
+    }
+    else if (action == "udt6")
+    {
+        end_behavior = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT6;
+    }
+    else if (action == "udt46")
+    {
+        end_behavior = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT46;
+    }
+    else if (action == "un")
+    {
+        end_behavior = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UN;
+        end_flavor = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD;
+    }
+    else if (action == "ua")
+    {
+        end_behavior = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UA;
+        end_flavor = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD;
+    }
     else
     {
-        SWSS_LOG_ERROR("Invalid endpoing behavior function");
+        SWSS_LOG_ERROR("Invalid endpoint behavior function");
         return false;
     }
     return true;
