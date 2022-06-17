@@ -45,13 +45,7 @@ void dump_db_item(KeyOpFieldsValuesTuple &db_item)
 
 ProducerStateTable &get_producer_table(const std::string &table_name)
 {
-    auto iter = table_map.find(table_name);
-    if (iter != table_map.end())
-    {
-        return iter->second;
-    }
-
-    auto ret = table_map.emplace(table_name, ProducerStateTable(&pipeline, table_name, true));
+    auto ret = table_map.emplace(std::piecewise_construct, std::forward_as_tuple(table_name), std::forward_as_tuple(&pipeline, table_name, true));
     return ret.first->second;
 }
 
