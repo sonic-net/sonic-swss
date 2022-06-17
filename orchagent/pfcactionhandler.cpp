@@ -3,7 +3,6 @@
 #include "logger.h"
 #include "sai_serialize.h"
 #include "portsorch.h"
-#include "bufferorch.h"
 #include <vector>
 #include <inttypes.h>
 
@@ -27,7 +26,6 @@
 extern sai_object_id_t gSwitchId;
 extern PortsOrch *gPortsOrch;
 extern AclOrch * gAclOrch;
-extern BufferOrch *gBufferOrch;
 extern sai_port_api_t *sai_port_api;
 extern sai_queue_api_t *sai_queue_api;
 extern sai_buffer_api_t *sai_buffer_api;
@@ -658,24 +656,6 @@ PfcWdZeroBufferHandler::ZeroBufferProfile &PfcWdZeroBufferHandler::ZeroBufferPro
     return instance;
 }
 
-sai_object_id_t& PfcWdZeroBufferHandler::ZeroBufferProfile::getPool()
-{
-    // If there is a cached zero buffer pool, just use it
-    // else fetch zero buffer pool from buffer orch
-    // If there is one, use it and increase the reference number.
-    // otherwise, just return NULL OID
-    // PfcWdZeroBufferHandler will create it later and notify buffer orch later
-    if (m_zeroEgressBufferPool == SAI_NULL_OBJECT_ID)
-    {
-        m_zeroEgressBufferPool = gBufferOrch->getZeroBufferPool(false);
-        if (m_zeroEgressBufferPool != SAI_NULL_OBJECT_ID)
-        {
-            gBufferOrch->lockZeroBufferPool(false);
-        }
-    }
-    return m_zeroEgressBufferPool;
-}
-
 sai_object_id_t PfcWdZeroBufferHandler::ZeroBufferProfile::getZeroBufferProfile()
 {
     SWSS_LOG_ENTER();
@@ -696,37 +676,28 @@ void PfcWdZeroBufferHandler::ZeroBufferProfile::createZeroBufferProfile()
     vector<sai_attribute_t> attribs;
     sai_status_t status;
 
-    auto &poolId = getPool();
+    // Create zero pool
+    attr.id = SAI_BUFFER_POOL_ATTR_SIZE;
+    attr.value.u64 = 0;
+    attribs.push_back(attr);
 
-    if (SAI_NULL_OBJECT_ID == poolId)
+    attr.id = SAI_BUFFER_POOL_ATTR_TYPE;
+    attr.value.u32 = SAI_BUFFER_POOL_TYPE_EGRESS;
+    attribs.push_back(attr);
+
+    attr.id = SAI_BUFFER_POOL_ATTR_THRESHOLD_MODE;
+    attr.value.u32 = SAI_BUFFER_POOL_THRESHOLD_MODE_STATIC;
+    attribs.push_back(attr);
+
+    status = sai_buffer_api->create_buffer_pool(
+        &getPool(),
+        gSwitchId,
+        static_cast<uint32_t>(attribs.size()),
+        attribs.data());
+    if (status != SAI_STATUS_SUCCESS)
     {
-        // Create zero pool
-        attr.id = SAI_BUFFER_POOL_ATTR_SIZE;
-        attr.value.u64 = 0;
-        attribs.push_back(attr);
-
-        attr.id = SAI_BUFFER_POOL_ATTR_TYPE;
-        attr.value.u32 = SAI_BUFFER_POOL_TYPE_EGRESS;
-        attribs.push_back(attr);
-
-        attr.id = SAI_BUFFER_POOL_ATTR_THRESHOLD_MODE;
-        attr.value.u32 = SAI_BUFFER_POOL_THRESHOLD_MODE_STATIC;
-        attribs.push_back(attr);
-
-        status = sai_buffer_api->create_buffer_pool(
-            &poolId,
-            gSwitchId,
-            static_cast<uint32_t>(attribs.size()),
-            attribs.data());
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Failed to create dynamic zero buffer pool for PFC WD: %d", status);
-            return;
-        }
-
-        // Pass the ownership to BufferOrch
-        gBufferOrch->setZeroBufferPool(false, poolId);
-        gBufferOrch->lockZeroBufferPool(false);
+        SWSS_LOG_ERROR("Failed to create dynamic zero buffer pool for PFC WD: %d", status);
+        return;
     }
 
     // Create zero profile
@@ -764,18 +735,16 @@ void PfcWdZeroBufferHandler::ZeroBufferProfile::destroyZeroBufferProfile()
 {
     SWSS_LOG_ENTER();
 
-    if (getProfile() != SAI_NULL_OBJECT_ID)
+    sai_status_t status = sai_buffer_api->remove_buffer_profile(getProfile());
+    if (status != SAI_STATUS_SUCCESS)
     {
-        sai_status_t status = sai_buffer_api->remove_buffer_profile(getProfile());
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Failed to remove static zero buffer profile for PFC WD: %d", status);
-            return;
-        }
+        SWSS_LOG_ERROR("Failed to remove static zero buffer profile for PFC WD: %d", status);
+        return;
     }
 
-    if (m_zeroEgressBufferPool != SAI_NULL_OBJECT_ID)
+    status = sai_buffer_api->remove_buffer_pool(getPool());
+    if (status != SAI_STATUS_SUCCESS)
     {
-        gBufferOrch->unlockZeroBufferPool(false);
+        SWSS_LOG_ERROR("Failed to remove static zero buffer pool for PFC WD: %d", status);
     }
 }
