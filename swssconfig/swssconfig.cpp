@@ -21,10 +21,6 @@ const int el_count = 2;
 
 const string SWSS_CONFIG_DIR    = "/etc/swss/config.d/";
 
-DBConnector db("APPL_DB", 0, false);
-RedisPipeline pipeline(&db);
-unordered_map<string, ProducerStateTable> table_map;
-
 void usage()
 {
     cout << "Usage: swssconfig [FILE...]" << endl;
@@ -43,22 +39,12 @@ void dump_db_item(KeyOpFieldsValuesTuple &db_item)
     SWSS_LOG_DEBUG("]");
 }
 
-ProducerStateTable &get_producer_table(const std::string &table_name)
-{
-    auto ret = table_map.emplace(std::piecewise_construct, std::forward_as_tuple(table_name), std::forward_as_tuple(&pipeline, table_name, true));
-    return ret.first->second;
-}
-
-void flush_db_data()
-{
-    for (auto &table_item : table_map)
-    {
-        table_item.second.flush();
-    }
-}
-
 bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items)
 {
+    DBConnector db("APPL_DB", 0, false);
+    RedisPipeline pipeline(&db); // dtor of RedisPipeline will automatically flush data
+    unordered_map<string, ProducerStateTable> table_map;
+    
     for (auto &db_item : db_items)
     {
         dump_db_item(db_item);
@@ -67,27 +53,24 @@ bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items)
         size_t pos = key.find(name_delimiter);
         if ((string::npos == pos) || ((key.size() - 1) == pos))
         {
-            flush_db_data(); // flush existing valid data to DB to keep logic the same as before
             SWSS_LOG_ERROR("Invalid formatted hash:%s\n", key.c_str());
             return false;
         }
         string table_name = key.substr(0, pos);
         string key_name = key.substr(pos + 1);
-        ProducerStateTable &producer = get_producer_table(table_name);
+        auto ret = table_map.emplace(std::piecewise_construct, std::forward_as_tuple(table_name), std::forward_as_tuple(&pipeline, table_name, true));
 
         if (kfvOp(db_item) == SET_COMMAND)
-            producer.set(key_name, kfvFieldsValues(db_item), SET_COMMAND);
+            ret.first->second.set(key_name, kfvFieldsValues(db_item), SET_COMMAND);
         else if (kfvOp(db_item) == DEL_COMMAND)
-            producer.del(key_name, DEL_COMMAND);
+            ret.first->second.del(key_name, DEL_COMMAND);
         else
         {
-            flush_db_data(); // flush existing valid data to DB to keep logic the same as before
             SWSS_LOG_ERROR("Invalid operation: %s\n", kfvOp(db_item).c_str());
             return false;
         }
     }
 
-    flush_db_data();
     return true;
 }
 
