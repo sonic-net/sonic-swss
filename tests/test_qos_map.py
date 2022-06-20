@@ -370,6 +370,76 @@ class TestMplsTc(object):
         port_cnt = len(swsscommon.Table(self.config_db, CFG_PORT_TABLE_NAME).getKeys())
         assert port_cnt == cnt
 
+class TestDscpToTcMap(object):
+    ASIC_QOS_MAP_STR = "ASIC_STATE:SAI_OBJECT_TYPE_QOS_MAP"
+    ASIC_PORT_STR = "ASIC_STATE:SAI_OBJECT_TYPE_PORT"
+    ASIC_SWITCH_STR = "ASIC_STATE:SAI_OBJECT_TYPE_SWITCH"
+
+    def init_test(self, dvs):
+        dvs.setup_db()
+        self.asic_db = dvs.get_asic_db()
+        self.config_db = dvs.get_config_db()
+        self.asic_qos_map_ids = self.asic_db.get_keys(self.ASIC_QOS_MAP_STR)
+        self.asic_qos_map_count = len(self.asic_qos_map_ids)
+        self.dscp_to_tc_table = swsscommon.Table(self.config_db.db_connection, swsscommon.CFG_DSCP_TO_TC_MAP_TABLE_NAME)
+        self.port_qos_table = swsscommon.Table(self.config_db.db_connection, swsscommon.CFG_PORT_QOS_MAP_TABLE_NAME)
+
+    def get_qos_id(self):
+        diff = set(self.asic_db.get_keys(self.ASIC_QOS_MAP_STR)) - set(self.asic_qos_map_ids)
+        assert len(diff) <= 1
+        return None if len(diff) == 0 else diff.pop()
+    
+    def test_dscp_to_tc_map_applied_to_switch(self, dvs):
+        self.init_test(dvs)
+        dscp_to_tc_map_id = None
+        created_new_map = False
+        try:
+            existing_map = self.dscp_to_tc_table.getKeys()
+            if "AZURE" not in existing_map: 
+                # Create a DSCP_TO_TC map
+                dscp_to_tc_map = [(str(i), str(i)) for i in range(0, 63)]
+                self.dscp_to_tc_table.set("AZURE", swsscommon.FieldValuePairs(dscp_to_tc_map))
+
+                self.asic_db.wait_for_n_keys(self.ASIC_QOS_MAP_STR, self.asic_qos_map_count + 1)
+
+                # Get the DSCP_TO_TC map ID
+                dscp_to_tc_map_id = self.get_qos_id()
+                assert(dscp_to_tc_map_id is not None)
+
+                # Assert the expected values
+                fvs = self.asic_db.get_entry(self.ASIC_QOS_MAP_STR, dscp_to_tc_map_id)
+                assert(fvs.get("SAI_QOS_MAP_ATTR_TYPE") == "SAI_QOS_MAP_TYPE_DSCP_TO_TC")
+                created_new_map = True
+            else:
+                for id in self.asic_qos_map_ids:
+                    fvs = self.asic_db.get_entry(self.ASIC_QOS_MAP_STR, id)
+                    if fvs.get("SAI_QOS_MAP_ATTR_TYPE") == "SAI_QOS_MAP_TYPE_DSCP_TO_TC":
+                        dscp_to_tc_map_id = id
+                        break
+            switch_oid = dvs.getSwitchOid()
+            # Check switch level DSCP_TO_TC_MAP doesn't before PORT_QOS_MAP|global is created
+            fvs = self.asic_db.get_entry(self.ASIC_SWITCH_STR, switch_oid)
+            assert("SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP" not in fvs)
+
+            # Insert switch level map entry 
+            self.port_qos_table.set("global", [("dscp_to_tc_map", "AZURE")])
+            time.sleep(1)
+
+            # Check the switch level DSCP_TO_TC_MAP is applied
+            fvs = self.asic_db.get_entry(self.ASIC_SWITCH_STR, switch_oid)
+            assert(fvs.get("SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP") == dscp_to_tc_map_id)
+
+            # Remove the global level DSCP_TO_TC_MAP
+            self.port_qos_table._del("global")
+            time.sleep(1)
+
+            # Check the global level DSCP_TO_TC_MAP is set to SAI_
+            fvs = self.asic_db.get_entry(self.ASIC_SWITCH_STR, switch_oid)
+            assert(fvs.get("SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP") == "oid:0x0")
+        finally:
+            if created_new_map:
+                self.dscp_to_tc_table._del("AZURE")
+        
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
