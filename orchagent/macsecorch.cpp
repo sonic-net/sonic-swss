@@ -22,10 +22,8 @@
 #define AVAILABLE_ACL_PRIORITIES_LIMITATION             (32)
 #define EAPOL_ETHER_TYPE                                (0x888e)
 #define PAUSE_ETHER_TYPE                                (0x8808)
-#define MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS    (1000)
-#define COUNTERS_MACSEC_SA_ATTR_GROUP                   "COUNTERS_MACSEC_SA_ATTR"
-#define COUNTERS_MACSEC_SA_GROUP                        "COUNTERS_MACSEC_SA"
-#define COUNTERS_MACSEC_FLOW_GROUP                      "COUNTERS_MACSEC_FLOW"
+#define MACSEC_STAT_XPN_POLLING_INTERVAL_MS             (1000)
+#define MACSEC_STAT_POLLING_INTERVAL_MS                 (10000)
 #define PFC_MODE_BYPASS                                 "bypass"
 #define PFC_MODE_ENCRYPT                                "encrypt"
 #define PFC_MODE_STRICT_ENCRYPT                         "strict_encrypt"
@@ -608,37 +606,35 @@ MACsecOrch::MACsecOrch(
                             m_applPortTable(app_db, APP_PORT_TABLE_NAME),
                             m_counter_db("COUNTERS_DB", 0),
                             m_macsec_counters_map(&m_counter_db, COUNTERS_MACSEC_NAME_MAP),
-                            m_macsec_flow_tx_counters_map(&m_counter_db, COUNTERS_MACSEC_FLOW_TX_NAME_MAP),
-                            m_macsec_flow_rx_counters_map(&m_counter_db, COUNTERS_MACSEC_FLOW_RX_NAME_MAP),
-                            m_macsec_sa_tx_counters_map(&m_counter_db, COUNTERS_MACSEC_SA_TX_NAME_MAP),
-                            m_macsec_sa_rx_counters_map(&m_counter_db, COUNTERS_MACSEC_SA_RX_NAME_MAP),
+                            m_gb_counter_db("GB_COUNTERS_DB", 0),
+                            m_gb_macsec_counters_map(&m_gb_counter_db, COUNTERS_MACSEC_NAME_MAP),
                             m_macsec_sa_attr_manager(
                                 COUNTERS_MACSEC_SA_ATTR_GROUP,
                                 StatsMode::READ,
-                                MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
+                                MACSEC_STAT_XPN_POLLING_INTERVAL_MS, true),
                             m_macsec_sa_stat_manager(
                                 COUNTERS_MACSEC_SA_GROUP,
                                 StatsMode::READ,
-                                MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
+                                MACSEC_STAT_POLLING_INTERVAL_MS, true),
                             m_macsec_flow_stat_manager(
                                 COUNTERS_MACSEC_FLOW_GROUP,
                                 StatsMode::READ,
-                                MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
+                                MACSEC_STAT_POLLING_INTERVAL_MS, true),
                             m_gb_macsec_sa_attr_manager(
                                 "GB_FLEX_COUNTER_DB",
                                 COUNTERS_MACSEC_SA_ATTR_GROUP,
                                 StatsMode::READ,
-                                MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
+                                MACSEC_STAT_XPN_POLLING_INTERVAL_MS, true),
                             m_gb_macsec_sa_stat_manager(
                                 "GB_FLEX_COUNTER_DB",
                                 COUNTERS_MACSEC_SA_GROUP,
                                 StatsMode::READ,
-                                MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
+                                MACSEC_STAT_POLLING_INTERVAL_MS, true),
                             m_gb_macsec_flow_stat_manager(
                                 "GB_FLEX_COUNTER_DB",
                                 COUNTERS_MACSEC_FLOW_GROUP,
                                 StatsMode::READ,
-                                MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true)
+                                MACSEC_STAT_POLLING_INTERVAL_MS, true)
 {
     SWSS_LOG_ENTER();
 }
@@ -2329,6 +2325,13 @@ FlexCounterManager& MACsecOrch::MACsecFlowStatManager(MACsecOrchContext &ctx)
     return m_macsec_flow_stat_manager;
 }
 
+Table& MACsecOrch::MACsecCountersMap(MACsecOrchContext &ctx)
+{
+    if (ctx.get_gearbox_phy() != nullptr)
+        return m_gb_macsec_counters_map;
+    return m_macsec_counters_map;
+}
+
 void MACsecOrch::installCounter(
     MACsecOrchContext &ctx,
     CounterType counter_type,
@@ -2350,19 +2353,12 @@ void MACsecOrch::installCounter(
     {
         case CounterType::MACSEC_SA_ATTR:
             MACsecSaAttrStatManager(ctx).setCounterIdList(obj_id, counter_type, counter_stats);
-            m_macsec_counters_map.set("", fields);
+            MACsecCountersMap(ctx).set("", fields);
             break;
 
         case CounterType::MACSEC_SA:
             MACsecSaStatManager(ctx).setCounterIdList(obj_id, counter_type, counter_stats);
-            if (direction == SAI_MACSEC_DIRECTION_EGRESS)
-            {
-                m_macsec_sa_tx_counters_map.set("", fields);
-            }
-            else
-            {
-                m_macsec_sa_rx_counters_map.set("", fields);
-            }
+            MACsecCountersMap(ctx).set("", fields);
             break;
 
         case CounterType::MACSEC_FLOW:
