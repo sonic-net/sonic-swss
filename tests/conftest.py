@@ -89,6 +89,11 @@ def pytest_addoption(parser):
                      default="traditional",
                      help="Buffer model")
 
+    parser.addoption("--graceful-stop",
+                     action="store_true",
+                     default=False,
+                     help="Stop swss before stopping a conatainer")
+
 
 def random_string(size=4, chars=string.ascii_uppercase + string.digits):
     return "".join(random.choice(chars) for x in range(size))
@@ -1730,6 +1735,8 @@ def manage_dvs(request) -> str:
     max_cpu = request.config.getoption("--max_cpu")
     buffer_model = request.config.getoption("--buffer_model")
     force_recreate = request.config.getoption("--force-recreate-dvs")
+    graceful_stop = request.config.getoption("--graceful-stop")
+
     dvs = None
     curr_dvs_env = [] # lgtm[py/unused-local-variable]
 
@@ -1778,6 +1785,8 @@ def manage_dvs(request) -> str:
 
     yield update_dvs
 
+    if graceful_stop:
+        dvs.stop_swss()
     dvs.get_logs()
     dvs.destroy()
 
