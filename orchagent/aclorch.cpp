@@ -323,6 +323,38 @@ static acl_table_action_list_lookup_t defaultAclActionList =
     }
 };
 
+// The match fields for certain ACL table type are not exactly the same between INGRESS and EGRESS.
+// For example, we can only match IN_PORT for PFCWD table type at INGRESS.
+// Hence we need to specify stage particular matching fields in stageMandatoryMatchFields
+static acl_table_match_field_lookup_t stageMandatoryMatchFields = 
+{
+    {
+        // TABLE_TYPE_PFCWD
+        TABLE_TYPE_PFCWD,
+        {
+            {
+                ACL_STAGE_INGRESS,
+                {
+                    SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS
+                }
+            }
+        }
+    },
+    {
+        // TABLE_TYPE_DROP
+        TABLE_TYPE_DROP,
+        {
+            {
+                ACL_STAGE_INGRESS,
+                {
+                    SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS
+                }
+            }
+        }
+    }
+
+};
+
 static acl_ip_type_lookup_t aclIpTypeLookup =
 {
     { IP_TYPE_ANY,         SAI_ACL_IP_TYPE_ANY },
@@ -474,6 +506,12 @@ const set<sai_acl_action_type_t>& AclTableType::getActions() const
 bool AclTableType::addAction(sai_acl_action_type_t action)
 {
     m_aclAcitons.insert(action);
+    return true;
+}
+
+bool AclTableType::addMatch(shared_ptr<AclTableMatchInterface> match)
+{
+    m_matches.emplace(match->getId(), match);
     return true;
 }
 
@@ -2020,6 +2058,34 @@ bool AclTable::addMandatoryActions()
     return true;
 }
 
+bool AclTable::addStageMandatoryMatchFields()
+{
+    SWSS_LOG_ENTER();
+
+    if (stage == ACL_STAGE_UNKNOWN)
+    {
+        return false;
+    }
+
+    if (stageMandatoryMatchFields.count(type.getName()) != 0)
+    {
+        auto &fields_for_stage = stageMandatoryMatchFields[type.getName()];
+        if (fields_for_stage.count(stage) != 0)
+        {
+            // Add the stage particular matching fields
+            for (auto match : fields_for_stage[stage])
+            {
+                type.addMatch(make_shared<AclTableMatch>(match));
+                SWSS_LOG_INFO("Added mandatory match field %s for table type %s stage %d",
+                                sai_serialize_enum(match, &sai_metadata_enum_sai_acl_table_attr_t).c_str(),
+                                type.getName().c_str(), stage);
+            }
+        }
+    }
+
+    return true;
+}
+
 bool AclTable::validateAddType(const AclTableType &tableType)
 {
     SWSS_LOG_ENTER();
@@ -2983,7 +3049,6 @@ void AclOrch::initDefaultTableTypes()
         builder.withName(TABLE_TYPE_PFCWD)
             .withBindPointType(SAI_ACL_BIND_POINT_TYPE_PORT)
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TC))
-            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS))
             .build()
     );
 
@@ -2991,7 +3056,6 @@ void AclOrch::initDefaultTableTypes()
         builder.withName(TABLE_TYPE_DROP)
             .withBindPointType(SAI_ACL_BIND_POINT_TYPE_PORT)
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TC))
-            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS))
             .build()
     );
 
@@ -4107,6 +4171,8 @@ void AclOrch::doAclTableTask(Consumer &consumer)
             }
 
             newTable.validateAddType(*tableType);
+
+            newTable.addStageMandatoryMatchFields();
 
             newTable.addMandatoryActions();
 

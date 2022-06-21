@@ -116,6 +116,9 @@ typedef map<sai_acl_action_type_t, set<int32_t>> acl_action_enum_values_capabili
 typedef map<acl_stage_type_t, set<sai_acl_action_type_t> > acl_stage_action_list_t;
 typedef map<string, acl_stage_action_list_t> acl_table_action_list_lookup_t;
 
+typedef map<acl_stage_type_t, set<sai_acl_table_attr_t> > acl_stage_match_field_t;
+typedef map<string, acl_stage_match_field_t> acl_table_match_field_lookup_t;
+
 class AclRule;
 
 class AclTableMatchInterface
@@ -160,6 +163,7 @@ public:
     const set<sai_acl_action_type_t>& getActions() const;
 
     bool addAction(sai_acl_action_type_t action);
+    bool addMatch(shared_ptr<AclTableMatchInterface> match);
 
 private:
     friend class AclTableTypeBuilder;
@@ -383,6 +387,9 @@ public:
 
     // Add actions to ACL table if mandatory action list is required on table creation.
     bool addMandatoryActions();
+
+    // Add stage mandatory matching fields to ACL table
+    bool addStageMandatoryMatchFields();
 
     // validate AclRule match attribute against rule and table configuration
     bool validateAclRuleMatch(sai_acl_entry_attr_t matchId, const AclRule& rule) const;
