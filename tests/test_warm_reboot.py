@@ -118,12 +118,14 @@ def how_many_entries_exist(db, table):
 
 def stop_neighsyncd(dvs):
     dvs.runcmd(['sh', '-c', 'pkill -x neighsyncd'])
+    time.sleep(1)
 
 def start_neighsyncd(dvs):
     dvs.runcmd(['sh', '-c', 'supervisorctl start neighsyncd'])
 
 def stop_restore_neighbors(dvs):
     dvs.runcmd(['sh', '-c', 'pkill -x restore_neighbors'])
+    time.sleep(1)
 
 def start_restore_neighbors(dvs):
     dvs.runcmd(['sh', '-c', 'supervisorctl start restore_neighbors'])
@@ -293,6 +295,7 @@ class TestWarmReboot(object):
 
         # restart portsyncd
         dvs.runcmd(['sh', '-c', 'pkill -x portsyncd'])
+        time.sleep(1)
 
         pubsub = dvs.SubscribeAsicDbObject("SAI_OBJECT_TYPE")
         dvs.runcmd(['sh', '-c', 'supervisorctl start portsyncd'])
@@ -328,7 +331,6 @@ class TestWarmReboot(object):
         intf_tbl._del("Ethernet16")
         intf_tbl._del("Ethernet20")
         time.sleep(2)
-
 
     def test_VlanMgrdWarmRestart(self, dvs, testlog):
 
@@ -415,6 +417,7 @@ class TestWarmReboot(object):
         restore_count = swss_get_RestoreCount(dvs, state_db)
 
         dvs.runcmd(['sh', '-c', 'pkill -x vlanmgrd'])
+        time.sleep(1)
 
         pubsub = dvs.SubscribeAsicDbObject("SAI_OBJECT_TYPE")
 
@@ -1063,7 +1066,6 @@ class TestWarmReboot(object):
     #
     ################################################################################
 
-
     def test_routing_WarmRestart(self, dvs, testlog):
 
         appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
@@ -1249,7 +1251,8 @@ class TestWarmReboot(object):
         rt_key = json.loads(addobjs[0]['key'])
         rt_val = json.loads(addobjs[0]['vals'])
         assert rt_key == "192.168.100.0/24"
-        assert rt_val == {"ifname": "Ethernet0", "nexthop": "111.0.0.2"}
+        assert rt_val.get("ifname") == "Ethernet0"
+        assert rt_val.get("nexthop") == "111.0.0.2"
 
         # Verify the changed prefix is seen in sairedis
         (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
@@ -1321,7 +1324,8 @@ class TestWarmReboot(object):
         rt_key = json.loads(addobjs[0]['key'])
         rt_val = json.loads(addobjs[0]['vals'])
         assert rt_key == "192.168.200.0/24"
-        assert rt_val == {"ifname": "Ethernet0,Ethernet4,Ethernet8", "nexthop": "111.0.0.2,122.0.0.2,133.0.0.2"}
+        assert rt_val.get("ifname") == "Ethernet0,Ethernet4,Ethernet8"
+        assert rt_val.get("nexthop") == "111.0.0.2,122.0.0.2,133.0.0.2"
 
         # Verify the changed prefix is seen in sairedis
         (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
@@ -1394,7 +1398,8 @@ class TestWarmReboot(object):
         rt_key = json.loads(addobjs[0]['key'])
         rt_val = json.loads(addobjs[0]['vals'])
         assert rt_key == "192.168.1.3"
-        assert rt_val == {"ifname": "Ethernet0,Ethernet4,Ethernet8", "nexthop": "111.0.0.2,122.0.0.2,133.0.0.2"}
+        assert rt_val.get("ifname") == "Ethernet0,Ethernet4,Ethernet8"
+        assert rt_val.get("nexthop") == "111.0.0.2,122.0.0.2,133.0.0.2"
 
         # Verify the changed prefix is seen in sairedis
         (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
@@ -1432,7 +1437,8 @@ class TestWarmReboot(object):
         rt_key = json.loads(addobjs[0]['key'])
         rt_val = json.loads(addobjs[0]['vals'])
         assert rt_key == "192.168.1.3"
-        assert rt_val == {"ifname": "Ethernet0,Ethernet4", "nexthop": "111.0.0.2,122.0.0.2"}
+        assert rt_val.get("ifname") == "Ethernet0,Ethernet4"
+        assert rt_val.get("nexthop") == "111.0.0.2,122.0.0.2"
 
         # Verify the changed prefix is seen in sairedis
         (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
@@ -1469,7 +1475,8 @@ class TestWarmReboot(object):
         rt_key = json.loads(addobjs[0]['key'])
         rt_val = json.loads(addobjs[0]['vals'])
         assert rt_key == "fc00:4:4::1"
-        assert rt_val == {"ifname": "Ethernet0", "nexthop": "1110::2"}
+        assert rt_val.get("ifname") == "Ethernet0"
+        assert rt_val.get("nexthop") == "1110::2"
 
         # Verify the changed prefix is seen in sairedis
         (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
@@ -1567,7 +1574,8 @@ class TestWarmReboot(object):
         rt_key = json.loads(addobjs[0]['key'])
         rt_val = json.loads(addobjs[0]['vals'])
         assert rt_key == "192.168.100.0/24"
-        assert rt_val == {"ifname": "Ethernet0", "nexthop": "111.0.0.2"}
+        assert rt_val.get("ifname") == "Ethernet0"
+        assert rt_val.get("nexthop") == "111.0.0.2"
 
         # Verify the changed prefix is seen in sairedis
         (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
@@ -1679,7 +1687,8 @@ class TestWarmReboot(object):
         rt_key = json.loads(addobjs[0]['key'])
         rt_val = json.loads(addobjs[0]['vals'])
         assert rt_key == "192.168.100.0/24"
-        assert rt_val == {"ifname": "Ethernet4", "nexthop": "122.0.0.2"}
+        assert rt_val.get("ifname") == "Ethernet4"
+        assert rt_val.get("nexthop") == "122.0.0.2"
 
         # Verify the changed prefix is seen in sairedis
         (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
@@ -2160,6 +2169,7 @@ class TestWarmReboot(object):
         (exitcode, vrf_before) = dvs.runcmd(['sh', '-c', "ip link show | grep Vrf"])
 
         dvs.runcmd(['sh', '-c', 'pkill -x vrfmgrd'])
+        time.sleep(1)
 
         pubsub = dvs.SubscribeAsicDbObject("SAI_OBJECT_TYPE")
 
