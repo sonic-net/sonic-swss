@@ -87,4 +87,40 @@ namespace portmgr_ut
         ASSERT_TRUE(value_opt);
         ASSERT_EQ("up", value_opt.get());
     }
+
+    TEST_F(PortMgrTest, ConfigureDuringRetry)
+    {
+        Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
+        Table app_port_table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
+
+        cfg_port_table.set("Ethernet0", {
+            {"speed", "100000"},
+            {"index", "1"}
+        });
+
+        mockCallArgs.clear();
+        m_portMgr->addExistingData(&cfg_port_table);
+        m_portMgr->doTask();
+        ASSERT_TRUE(mockCallArgs.empty());
+
+        cfg_port_table.set("Ethernet0", {
+            {"speed", "50000"},
+            {"index", "1"},
+            {"mtu", "1518"},
+            {"admin_status", "up"}
+        });
+
+        m_portMgr->addExistingData(&cfg_port_table);
+        m_portMgr->doTask();
+        ASSERT_TRUE(mockCallArgs.empty());
+
+        state_port_table.set("Ethernet0", {
+            {"state", "ok"}
+        });
+        m_portMgr->doTask();
+        ASSERT_EQ(size_t(2), mockCallArgs.size());
+        ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" mtu \"1518\"", mockCallArgs[0]);
+        ASSERT_EQ("/sbin/ip link set dev \"Ethernet0\" up", mockCallArgs[1]);
+    }
 }
