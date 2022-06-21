@@ -87,7 +87,7 @@ void PortMgr::doTask(Consumer &consumer)
              */
             bool portOk = isPortStateOk(alias);
 
-            string admin_status, mtu, learn_mode, tpid;
+            string admin_status, mtu;
             std::vector<FieldValueTuple> field_values;
 
             bool configured = (m_portList.find(alias) != m_portList.end());
@@ -112,14 +112,6 @@ void PortMgr::doTask(Consumer &consumer)
                 else if (fvField(i) == "admin_status")
                 {
                     admin_status = fvValue(i);
-                }
-                else if (fvField(i) == "learn_mode")
-                {
-                    learn_mode = fvValue(i);
-                }
-                else if (fvField(i) == "tpid")
-                {
-                    tpid = fvValue(i);
                 }
                 else 
                 {
@@ -153,18 +145,6 @@ void PortMgr::doTask(Consumer &consumer)
                      m_retryFields.emplace_back("admin_status", admin_status);
                 }
                 SWSS_LOG_NOTICE("Configure %s admin status to %s", alias.c_str(), admin_status.c_str());
-            }
-
-            if (!learn_mode.empty())
-            {
-                writeConfigToAppDb(alias, "learn_mode", learn_mode);
-                SWSS_LOG_NOTICE("Configure %s MAC learn mode to %s", alias.c_str(), learn_mode.c_str());
-            }
-
-            if (!tpid.empty())
-            {
-                writeConfigToAppDb(alias, "tpid", tpid);
-                SWSS_LOG_NOTICE("Configure %s TPID to %s", alias.c_str(), tpid.c_str());
             }
 
             for (auto &entry : field_values)
