@@ -248,7 +248,11 @@ const vector<sai_port_stat_t> port_stat_ids =
 const vector<sai_port_stat_t> gbport_stat_ids =
 {
     SAI_PORT_STAT_IF_IN_OCTETS,
+    SAI_PORT_STAT_IF_IN_UCAST_PKTS,
+    SAI_PORT_STAT_IF_IN_NON_UCAST_PKTS,
     SAI_PORT_STAT_IF_OUT_OCTETS,
+    SAI_PORT_STAT_IF_OUT_UCAST_PKTS,
+    SAI_PORT_STAT_IF_OUT_NON_UCAST_PKTS,
     SAI_PORT_STAT_IF_IN_DISCARDS,
     SAI_PORT_STAT_IF_OUT_DISCARDS,
     SAI_PORT_STAT_IF_IN_ERRORS,
@@ -324,7 +328,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         m_portStateTable(stateDb, STATE_PORT_TABLE_NAME),
         port_stat_manager(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         gb_port_stat_manager("GB_FLEX_COUNTER_DB",
-                GBPORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ,
+                PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ,
                 PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         port_buffer_drop_stat_manager(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS, false),
         queue_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false)
@@ -2443,7 +2447,7 @@ bool PortsOrch::initPort(const string &alias, const string &role, const int inde
                     auto port_counter_stats = generateCounterStats(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP);
                     port_stat_manager.setCounterIdList(p.m_port_id,
                             CounterType::PORT, port_counter_stats);
-                    auto gbport_counter_stats = generateCounterStats(GBPORT_STAT_COUNTER_FLEX_COUNTER_GROUP);
+                    auto gbport_counter_stats = generateCounterStats(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, true);
                     if (p.m_system_side_id)
                         gb_port_stat_manager.setCounterIdList(p.m_system_side_id,
                                 CounterType::PORT, gbport_counter_stats);
@@ -5713,7 +5717,7 @@ void PortsOrch::generatePortCounterMap()
     }
 
     auto port_counter_stats = generateCounterStats(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP);
-    auto gbport_counter_stats = generateCounterStats(GBPORT_STAT_COUNTER_FLEX_COUNTER_GROUP);
+    auto gbport_counter_stats = generateCounterStats(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, true);
     for (const auto& it: m_portList)
     {
         // Set counter stats only for PHY ports to ensure syncd will not try to query the counter statistics from the HW for non-PHY ports.
@@ -6955,19 +6959,13 @@ void PortsOrch::voqSyncDelLagMember(Port &lag, Port &port)
     m_tableVoqSystemLagMemberTable->del(key);
 }
 
-std::unordered_set<std::string> PortsOrch::generateCounterStats(const string& type)
+std::unordered_set<std::string> PortsOrch::generateCounterStats(const string& type, bool gearbox)
 {
     std::unordered_set<std::string> counter_stats;
     if (type == PORT_STAT_COUNTER_FLEX_COUNTER_GROUP)
     {
-        for (const auto& it: port_stat_ids)
-        {
-            counter_stats.emplace(sai_serialize_port_stat(it));
-        }
-    }
-    else if (type == GBPORT_STAT_COUNTER_FLEX_COUNTER_GROUP)
-    {
-        for (const auto& it: gbport_stat_ids)
+        auto& stat_ids = gearbox ? gbport_stat_ids : port_stat_ids;
+        for (const auto& it: stat_ids)
         {
             counter_stats.emplace(sai_serialize_port_stat(it));
         }
@@ -6980,18 +6978,6 @@ std::unordered_set<std::string> PortsOrch::generateCounterStats(const string& ty
         }
     }
     return counter_stats;
-}
-
-void PortsOrch::setGearboxFlexCounterStatus(bool enabled)
-{
-    if (enabled)
-    {
-        gb_port_stat_manager.enableFlexCounterGroup();
-    }
-    else
-    {
-        gb_port_stat_manager.disableFlexCounterGroup();
-    }
 }
 
 void PortsOrch::updateGearboxPortOperStatus(const Port& port)

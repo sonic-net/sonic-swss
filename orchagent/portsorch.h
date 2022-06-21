@@ -20,7 +20,6 @@
 #define VLAN_TAG_LEN 4
 #define PORT_STAT_COUNTER_FLEX_COUNTER_GROUP "PORT_STAT_COUNTER"
 #define PORT_RATE_COUNTER_FLEX_COUNTER_GROUP "PORT_RATE_COUNTER"
-#define GBPORT_STAT_COUNTER_FLEX_COUNTER_GROUP "GBPORT_STAT_COUNTER"
 #define PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP "PORT_BUFFER_DROP_STAT"
 #define QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_STAT_COUNTER"
 #define QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_WATERMARK_STAT_COUNTER"
@@ -170,7 +169,6 @@ public:
 
     bool getPortOperStatus(const Port& port, sai_port_oper_status_t& status) const;
 
-    void setGearboxFlexCounterStatus(bool enabled);
     void updateGearboxPortOperStatus(const Port& port);
 
     bool decrFdbCount(const string& alias, int count);
@@ -376,7 +374,7 @@ private:
     void voqSyncDelLagMember(Port &lag, Port &port);
     unique_ptr<LagIdAllocator> m_lagIdAllocator;
 
-    std::unordered_set<std::string> generateCounterStats(const string& type);
+    std::unordered_set<std::string> generateCounterStats(const string& type, bool gearbox = false);
 
 };
 #endif /* SWSS_PORTSORCH_H */
