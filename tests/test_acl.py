@@ -64,10 +64,10 @@ class TestAcl:
             dvs_acl.verify_acl_table_count(0)
 
     @pytest.fixture(params=['ingress', 'egress'])
-    def pfcwd_acl_table(self, dvs_acl):
+    def pfcwd_acl_table(self, dvs_acl, request):
         try:
-            dvs_acl.create_acl_table(PFCWD_TABLE_NAME, PFCWD_TABLE_TYPE, PFCWD_BIND_PORTS, request.params)
-            yield dvs_acl.get_acl_table_ids(1)[0], request.params
+            dvs_acl.create_acl_table(PFCWD_TABLE_NAME, PFCWD_TABLE_TYPE, PFCWD_BIND_PORTS, request.param)
+            yield dvs_acl.get_acl_table_ids(1)[0], request.param
         finally:
             dvs_acl.remove_acl_table(PFCWD_TABLE_NAME)
             dvs_acl.verify_acl_table_count(0)
