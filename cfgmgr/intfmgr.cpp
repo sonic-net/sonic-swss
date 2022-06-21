@@ -566,15 +566,15 @@ bool IntfMgr::setIntfProxyArp(const string &alias, const string &proxy_arp)
 {
     stringstream cmd;
     string res;
-    string proxy_arp_pvlan;
+    string proxy_arp_status;
 
     if (proxy_arp == "enabled")
     {
-        proxy_arp_pvlan = "1";
+        proxy_arp_status = "1";
     }
     else if (proxy_arp == "disabled")
     {
-        proxy_arp_pvlan = "0";
+        proxy_arp_status = "0";
     }
     else
     {
@@ -582,7 +582,13 @@ bool IntfMgr::setIntfProxyArp(const string &alias, const string &proxy_arp)
         return false;
     }
 
-    cmd << ECHO_CMD << " " << proxy_arp_pvlan << " > /proc/sys/net/ipv4/conf/" << alias << "/proxy_arp_pvlan";
+    cmd << ECHO_CMD << " " << proxy_arp_status << " > /proc/sys/net/ipv4/conf/" << alias << "/proxy_arp_pvlan";
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+
+    cmd.clear();
+    cmd.str(std::string());
+
+    cmd << ECHO_CMD << " " << proxy_arp_status << " > /proc/sys/net/ipv4/conf/" << alias << "/proxy_arp";
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     SWSS_LOG_INFO("Proxy ARP set to \"%s\" on interface \"%s\"", proxy_arp.c_str(), alias.c_str());

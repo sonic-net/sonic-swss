@@ -1455,23 +1455,14 @@ shared_ptr<AclRule> AclRule::makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOr
         {
             return make_shared<AclRulePacket>(acl, rule, table);
         }
-        else if (aclDTelFlowOpTypeLookup.find(action) != aclDTelFlowOpTypeLookup.cend())
+        else if (aclDTelActionLookup.find(action) != aclDTelActionLookup.cend())
         {
             if (!dtel)
             {
                 throw runtime_error("DTel feature is not enabled. Watchlists cannot be configured");
             }
 
-            if (action == ACTION_DTEL_DROP_REPORT_ENABLE ||
-                action == ACTION_DTEL_TAIL_DROP_REPORT_ENABLE ||
-                action == ACTION_DTEL_REPORT_ALL_PACKETS)
-            {
-                return make_shared<AclRuleDTelDropWatchListEntry>(acl, dtel, rule, table);
-            }
-            else
-            {
-                return make_shared<AclRuleDTelFlowWatchListEntry>(acl, dtel, rule, table);
-            }
+            return make_shared<AclRuleDTelWatchListEntry>(acl, dtel, rule, table);
         }
     }
 
@@ -2447,13 +2438,13 @@ bool AclTable::clear()
     return true;
 }
 
-AclRuleDTelFlowWatchListEntry::AclRuleDTelFlowWatchListEntry(AclOrch *aclOrch, DTelOrch *dtel, string rule, string table) :
+AclRuleDTelWatchListEntry::AclRuleDTelWatchListEntry(AclOrch *aclOrch, DTelOrch *dtel, string rule, string table) :
         AclRule(aclOrch, rule, table),
         m_pDTelOrch(dtel)
 {
 }
 
-bool AclRuleDTelFlowWatchListEntry::validateAddAction(string attr_name, string attr_val)
+bool AclRuleDTelWatchListEntry::validateAddAction(string attr_name, string attr_val)
 {
     SWSS_LOG_ENTER();
 
@@ -2535,7 +2526,7 @@ bool AclRuleDTelFlowWatchListEntry::validateAddAction(string attr_name, string a
     return setAction(aclDTelActionLookup[attr_name], actionData);
 }
 
-bool AclRuleDTelFlowWatchListEntry::validate()
+bool AclRuleDTelWatchListEntry::validate()
 {
     SWSS_LOG_ENTER();
 
@@ -2552,19 +2543,19 @@ bool AclRuleDTelFlowWatchListEntry::validate()
     return true;
 }
 
-bool AclRuleDTelFlowWatchListEntry::createRule()
+bool AclRuleDTelWatchListEntry::createRule()
 {
     SWSS_LOG_ENTER();
 
     return activate();
 }
 
-bool AclRuleDTelFlowWatchListEntry::removeRule()
+bool AclRuleDTelWatchListEntry::removeRule()
 {
     return deactivate();
 }
 
-bool AclRuleDTelFlowWatchListEntry::activate()
+bool AclRuleDTelWatchListEntry::activate()
 {
     SWSS_LOG_ENTER();
 
@@ -2581,7 +2572,7 @@ bool AclRuleDTelFlowWatchListEntry::activate()
     return AclRule::createRule();
 }
 
-bool AclRuleDTelFlowWatchListEntry::deactivate()
+bool AclRuleDTelWatchListEntry::deactivate()
 {
     SWSS_LOG_ENTER();
 
@@ -2612,7 +2603,7 @@ bool AclRuleDTelFlowWatchListEntry::deactivate()
     return true;
 }
 
-void AclRuleDTelFlowWatchListEntry::onUpdate(SubjectType type, void *cntx)
+void AclRuleDTelWatchListEntry::onUpdate(SubjectType type, void *cntx)
 {
     sai_acl_action_data_t actionData;
     sai_object_id_t session_oid = SAI_NULL_OBJECT_ID;
@@ -2673,70 +2664,17 @@ void AclRuleDTelFlowWatchListEntry::onUpdate(SubjectType type, void *cntx)
     }
 }
 
-bool AclRuleDTelFlowWatchListEntry::update(const AclRule& rule)
+bool AclRuleDTelWatchListEntry::update(const AclRule& rule)
 {
-    auto dtelDropWathcListRule = dynamic_cast<const AclRuleDTelFlowWatchListEntry*>(&rule);
-    if (!dtelDropWathcListRule)
+    auto dtelWatchListRule = dynamic_cast<const AclRuleDTelWatchListEntry*>(&rule);
+    if (!dtelWatchListRule)
     {
-        SWSS_LOG_ERROR("Cannot update DTEL flow watch list rule with a rule of a different type");
+        SWSS_LOG_ERROR("Cannot update DTEL watch list rule with a rule of a different type");
         return false;
     }
 
-    SWSS_LOG_ERROR("Updating DTEL flow watch list rule is currently not implemented");
+    SWSS_LOG_ERROR("Updating DTEL watch list rule is currently not implemented");
     return false;
-}
-
-AclRuleDTelDropWatchListEntry::AclRuleDTelDropWatchListEntry(AclOrch *aclOrch, DTelOrch *dtel, string rule, string table) :
-        AclRule(aclOrch, rule, table),
-        m_pDTelOrch(dtel)
-{
-}
-
-bool AclRuleDTelDropWatchListEntry::validateAddAction(string attr_name, string attr_val)
-{
-    SWSS_LOG_ENTER();
-
-    if (!m_pDTelOrch)
-    {
-        return false;
-    }
-
-    sai_acl_action_data_t actionData;
-    string attr_value = to_upper(attr_val);
-
-    if (attr_name != ACTION_DTEL_DROP_REPORT_ENABLE &&
-        attr_name != ACTION_DTEL_TAIL_DROP_REPORT_ENABLE &&
-        attr_name != ACTION_DTEL_REPORT_ALL_PACKETS)
-    {
-        return false;
-    }
-
-    actionData.parameter.booldata = (attr_value == DTEL_ENABLED) ? true : false;
-    actionData.enable = (attr_value == DTEL_ENABLED) ? true : false;
-
-    return setAction(aclDTelActionLookup[attr_name], actionData);
-}
-
-bool AclRuleDTelDropWatchListEntry::validate()
-{
-    SWSS_LOG_ENTER();
-
-    if (!m_pDTelOrch)
-    {
-        return false;
-    }
-
-    if ((m_rangeConfig.empty() && m_matches.empty()) || m_actions.size() == 0)
-    {
-        return false;
-    }
-
-    return true;
-}
-
-void AclRuleDTelDropWatchListEntry::onUpdate(SubjectType, void *)
-{
-    // Do nothing
 }
 
 AclRange::AclRange(sai_acl_range_type_t type, sai_object_id_t oid, int min, int max):
@@ -4619,11 +4557,10 @@ void AclOrch::createDTelWatchListTables()
 
     AclTableTypeBuilder builder;
 
-    AclTable flowWLTable(this, TABLE_TYPE_DTEL_FLOW_WATCHLIST);
-    AclTable dropWLTable(this, TABLE_TYPE_DTEL_DROP_WATCHLIST);
+    AclTable dtelWLTable(this, TABLE_TYPE_DTEL_FLOW_WATCHLIST);
 
-    flowWLTable.validateAddStage(ACL_STAGE_INGRESS);
-    flowWLTable.validateAddType(builder
+    dtelWLTable.validateAddStage(ACL_STAGE_INGRESS);
+    dtelWLTable.validateAddType(builder
         .withBindPointType(SAI_ACL_BIND_POINT_TYPE_SWITCH)
         .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE))
         .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_SRC_IP))
@@ -4635,31 +4572,28 @@ void AclOrch::createDTelWatchListTables()
         .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_INNER_ETHER_TYPE))
         .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_INNER_SRC_IP))
         .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_INNER_DST_IP))
+        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID))
+        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE))
+        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS))
+        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DSCP))
+        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6))
+        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6))
+        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ICMP_TYPE))
+        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ICMP_CODE))
+        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_TYPE))
+        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_CODE))
+        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER))
         .withAction(SAI_ACL_ACTION_TYPE_ACL_DTEL_FLOW_OP)
         .withAction(SAI_ACL_ACTION_TYPE_DTEL_INT_SESSION)
+        .withAction(SAI_ACL_ACTION_TYPE_DTEL_DROP_REPORT_ENABLE)
+        .withAction(SAI_ACL_ACTION_TYPE_DTEL_TAIL_DROP_REPORT_ENABLE)
         .withAction(SAI_ACL_ACTION_TYPE_DTEL_REPORT_ALL_PACKETS)
         .withAction(SAI_ACL_ACTION_TYPE_DTEL_FLOW_SAMPLE_PERCENT)
         .build()
     );
-    flowWLTable.setDescription("Dataplane Telemetry Flow Watchlist table");
+    dtelWLTable.setDescription("Dataplane Telemetry Watchlist table");
 
-    dropWLTable.validateAddStage(ACL_STAGE_INGRESS);
-    dropWLTable.validateAddType(builder
-        .withBindPointType(SAI_ACL_BIND_POINT_TYPE_SWITCH)
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE))
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_SRC_IP))
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DST_IP))
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT))
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT))
-        .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL))
-        .withAction(SAI_ACL_ACTION_TYPE_DTEL_DROP_REPORT_ENABLE)
-        .withAction(SAI_ACL_ACTION_TYPE_DTEL_TAIL_DROP_REPORT_ENABLE)
-        .build()
-    );
-    dropWLTable.setDescription("Dataplane Telemetry Drop Watchlist table");
-
-    addAclTable(flowWLTable);
-    addAclTable(dropWLTable);
+    addAclTable(dtelWLTable);
 }
 
 void AclOrch::deleteDTelWatchListTables()
@@ -4667,7 +4601,6 @@ void AclOrch::deleteDTelWatchListTables()
     SWSS_LOG_ENTER();
 
     removeAclTable(TABLE_TYPE_DTEL_FLOW_WATCHLIST);
-    removeAclTable(TABLE_TYPE_DTEL_DROP_WATCHLIST);
 }
 
 void AclOrch::registerFlexCounter(const AclRule& rule)
