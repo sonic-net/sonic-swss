@@ -786,6 +786,492 @@ namespace buffermgrdyn_test
     }
 
     /*
+     * Clear qos with reclaiming buffer
+     *
+     * To test clear qos flow with reclaiming buffer.
+     * 1. Init buffer manager as normal
+     * 2. Configure buffer for 2 ports with admin status being up and down respectively
+     * 3. Clear qos
+     * 4. Check whether all the buffer items have been removed
+     * 5. Repeat the flow from step 2 for two extra times:
+     *    - Check whether buffer manager works correctly after clear qos
+     *    - STATE_DB.BUFFER_MAX_PARAM is received before and after buffer items received
+     */
+    TEST_F(BufferMgrDynTest, BufferMgrTestClearQosReclaimingBuffer)
+    {
+        vector<FieldValueTuple> fieldValues;
+        vector<string> keys;
+        vector<string> skippedPools = {"", "ingress_lossless_pool", ""};
+        int round = 0;
+
+        SetUpReclaimingBuffer();
+        shared_ptr<vector<KeyOpFieldsValuesTuple>> zero_profile = make_shared<vector<KeyOpFieldsValuesTuple>>(zeroProfile);
+
+        InitDefaultLosslessParameter();
+        InitMmuSize();
+
+        StartBufferManager(zero_profile);
+
+        statePortTable.set("Ethernet0",
+                           {
+                               {"supported_speeds", "100000,50000,40000,25000,10000,1000"}
+                           });
+        InitPort("Ethernet0", "down");
+        InitPort("Ethernet4", "down");
+        InitPort("Ethernet6", "down");
+        InitPort("Ethernet8", "down");
+        vector<string> adminDownPorts = {"Ethernet0", "Ethernet4", "Ethernet6"};
+        vector<string> ports = {"Ethernet0", "Ethernet2", "Ethernet4", "Ethernet6"};
+        InitPort("Ethernet2");
+        InitCableLength("Ethernet2", "5m");
+        auto expectedProfile = "pg_lossless_100000_5m_profile";
+        ASSERT_EQ(m_dynamicBuffer->m_portInfoLookup["Ethernet0"].state, PORT_ADMIN_DOWN);
+
+        SetPortInitDone();
+        for(auto &skippedPool : skippedPools)
+        {
+            // Call timer
+            m_dynamicBuffer->doTask(m_selectableTable);
+            ASSERT_EQ(m_dynamicBuffer->m_bufferPoolLookup.size(), 0);
+            InitBufferPool();
+            ASSERT_EQ(m_dynamicBuffer->m_bufferPoolLookup.size(), 3);
+            appBufferPoolTable.getKeys(keys);
+            ASSERT_EQ(keys.size(), 3);
+            for (auto i : testBufferPool)
+            {
+                CheckPool(m_dynamicBuffer->m_bufferPoolLookup[i.first], testBufferPool[i.first]);
+                fieldValues.clear();
+                appBufferPoolTable.get(i.first, fieldValues);
+                CheckPool(m_dynamicBuffer->m_bufferPoolLookup[i.first], fieldValues);
+            }
+
+            InitDefaultBufferProfile();
+            appBufferProfileTable.getKeys(keys);
+            ASSERT_EQ(keys.size(), 3);
+            ASSERT_EQ(m_dynamicBuffer->m_bufferProfileLookup.size(), 3);
+            for (auto i : testBufferProfile)
+            {
+                CheckProfile(m_dynamicBuffer->m_bufferProfileLookup[i.first], testBufferProfile[i.first]);
+                fieldValues.clear();
+                appBufferProfileTable.get(i.first, fieldValues);
+                CheckProfile(m_dynamicBuffer->m_bufferProfileLookup[i.first], fieldValues);
+            }
+
+            for (auto &adminDownPort : adminDownPorts)
+            {
+                InitBufferPg(adminDownPort + "|3-4", "NULL");
+                InitBufferQueue(adminDownPort + "|3-4", "egress_lossless_profile");
+                InitBufferQueue(adminDownPort + "|0-2", "egress_lossy_profile");
+                InitBufferQueue(adminDownPort + "|5-6", "egress_lossy_profile");
+            }
+            InitBufferPg("Ethernet0|0", "ingress_lossy_profile");
+            InitBufferPg("Ethernet0|3-4");
+            InitBufferProfileList("Ethernet0", "ingress_lossless_profile", bufferIngProfileListTable);
+            InitBufferProfileList("Ethernet0", "egress_lossless_profile,egress_lossy_profile", bufferEgrProfileListTable);
+
+            // Init buffer items for a normal port and check APPL_DB
+            InitBufferQueue("Ethernet2|3-4", "egress_lossless_profile");
+            InitBufferQueue("Ethernet2|0-2", "egress_lossy_profile");
+            InitBufferPg("Ethernet2|3-4");
+            InitBufferProfileList("Ethernet2", "ingress_lossless_profile", bufferIngProfileListTable);
+            InitBufferProfileList("Ethernet2", "egress_lossless_profile,egress_lossy_profile", bufferEgrProfileListTable);
+
+            fieldValues.clear();
+            ASSERT_TRUE(appBufferPgTable.get("Ethernet2:3-4", fieldValues));
+            CheckIfVectorsMatch(fieldValues, {{"profile", expectedProfile}});
+            fieldValues.clear();
+            ASSERT_TRUE(appBufferQueueTable.get("Ethernet2:0-2", fieldValues));
+            CheckIfVectorsMatch(fieldValues, {{"profile", "egress_lossy_profile"}});
+            fieldValues.clear();
+            ASSERT_TRUE(appBufferQueueTable.get("Ethernet2:3-4", fieldValues));
+            CheckIfVectorsMatch(fieldValues, {{"profile", "egress_lossless_profile"}});
+            fieldValues.clear();
+            ASSERT_TRUE(appBufferIngProfileListTable.get("Ethernet2", fieldValues));
+            CheckIfVectorsMatch(fieldValues, {{"profile_list", "ingress_lossless_profile"}});
+            fieldValues.clear();
+            ASSERT_TRUE(appBufferEgrProfileListTable.get("Ethernet2", fieldValues));
+            CheckIfVectorsMatch(fieldValues, {{"profile_list", "egress_lossless_profile,egress_lossy_profile"}});
+
+            // Buffer pools ready but the port is not ready to be reclaimed
+            m_dynamicBuffer->doTask(m_selectableTable);
+
+            // Push maximum buffer parameters for the port in order to make it ready to reclaim
+            if (round == 0)
+            {
+                // To simulate different sequences
+                // The 1st round: STATE_DB.PORT_TABLE is updated after buffer items ready
+                // The 2nd, 3rd rounds: before
+
+                for (auto &adminDownPort : adminDownPorts)
+                {
+                    stateBufferTable.set(adminDownPort,
+                                         {
+                                             {"max_priority_groups", "8"},
+                                             {"max_queues", "16"}
+                                         });
+                }
+                stateBufferTable.set("Ethernet8",
+                                     {
+                                         {"max_priority_groups", "8"},
+                                         {"max_queues", "16"}
+                                     });
+                m_dynamicBuffer->addExistingData(&stateBufferTable);
+                static_cast<Orch *>(m_dynamicBuffer)->doTask();
+            }
+
+            m_dynamicBuffer->doTask(m_selectableTable);
+
+            // Check whether zero profiles and pool have been applied
+            appBufferPoolTable.getKeys(keys);
+            ASSERT_EQ(keys.size(), 4);
+            for (auto key : keys)
+            {
+                if (testBufferPool.find(key) == testBufferPool.end())
+                {
+                    fieldValues.clear();
+                    appBufferPoolTable.get(key, fieldValues);
+                    CheckIfVectorsMatch(fieldValues, zeroProfileMap[key]);
+                }
+            }
+
+            appBufferProfileTable.getKeys(keys);
+            for (auto key : keys)
+            {
+                if (testBufferProfile.find(key) == testBufferProfile.end())
+                {
+                    fieldValues.clear();
+                    appBufferProfileTable.get(key, fieldValues);
+                    if (zeroProfileMap.find(key) == zeroProfileMap.end())
+                        CheckIfVectorsMatch(fieldValues,
+                                            {
+                                                {"xon", ""},  // Due to the limitation of mock lua scricpt call,
+                                                {"xoff", ""}, // we can not calculate the number
+                                                {"size", ""}, // so expected value is the empty string
+                                                {"pool", "ingress_lossless_pool"},
+                                                {"dynamic_th", "0"}
+                                            });
+                    else
+                        CheckIfVectorsMatch(fieldValues, zeroProfileMap[key]);
+                }
+            }
+
+            for (auto &adminDownPort : adminDownPorts)
+            {
+                fieldValues.clear();
+                ASSERT_TRUE(appBufferPgTable.get("Ethernet0:0", fieldValues));
+                CheckIfVectorsMatch(fieldValues, {{"profile", "ingress_lossy_pg_zero_profile"}});
+                ASSERT_FALSE(appBufferPgTable.get("Ethernet0:3-4", fieldValues));
+                fieldValues.clear();
+                ASSERT_TRUE(appBufferQueueTable.get(adminDownPort + ":0-2", fieldValues));
+                CheckIfVectorsMatch(fieldValues, {{"profile", "egress_lossy_zero_profile"}});
+                fieldValues.clear();
+                ASSERT_TRUE(appBufferQueueTable.get(adminDownPort + ":3-4", fieldValues));
+                CheckIfVectorsMatch(fieldValues, {{"profile", "egress_lossless_zero_profile"}});
+                fieldValues.clear();
+                ASSERT_TRUE(appBufferQueueTable.get(adminDownPort + ":5-6", fieldValues));
+                CheckIfVectorsMatch(fieldValues, {{"profile", "egress_lossy_zero_profile"}});
+                fieldValues.clear();
+            }
+            ASSERT_TRUE(appBufferIngProfileListTable.get("Ethernet0", fieldValues));
+            CheckIfVectorsMatch(fieldValues, {{"profile_list", "ingress_lossless_zero_profile"}});
+            fieldValues.clear();
+            ASSERT_TRUE(appBufferEgrProfileListTable.get("Ethernet0", fieldValues));
+            CheckIfVectorsMatch(fieldValues, {{"profile_list", "egress_lossless_zero_profile,egress_lossy_zero_profile"}});
+
+            // Configured but not applied items. There is an extra delay
+            m_dynamicBuffer->m_waitApplyAdditionalZeroProfiles = 0;
+            m_dynamicBuffer->doTask(m_selectableTable);
+            for (auto &adminDownPort : adminDownPorts)
+            {
+                ASSERT_TRUE(appBufferQueueTable.get(adminDownPort + ":7-15", fieldValues));
+                CheckIfVectorsMatch(fieldValues, {{"profile", "egress_lossy_zero_profile"}});
+                fieldValues.clear();
+            }
+
+            if (round == 0)
+            {
+                ASSERT_TRUE(appBufferQueueTable.get("Ethernet8:0-15", fieldValues));
+                CheckIfVectorsMatch(fieldValues, {{"profile", "egress_lossy_zero_profile"}});
+                fieldValues.clear();
+                ASSERT_TRUE(appBufferPgTable.get("Ethernet8:0", fieldValues));
+                CheckIfVectorsMatch(fieldValues, {{"profile", "ingress_lossy_pg_zero_profile"}});
+                fieldValues.clear();
+                ClearBufferObject("Ethernet8", CFG_PORT_TABLE_NAME);
+                ASSERT_FALSE(appBufferPgTable.get("Ethernet8:0", fieldValues));
+                ASSERT_FALSE(appBufferQueueTable.get("Ethernet8:0-15", fieldValues));
+            }
+
+            ClearBufferObject("Ethernet0|3-4", CFG_BUFFER_QUEUE_TABLE_NAME);
+            ClearBufferObject("Ethernet4|5-6", CFG_BUFFER_QUEUE_TABLE_NAME);
+            ClearBufferObject("Ethernet4|0-2", CFG_BUFFER_QUEUE_TABLE_NAME);
+            // Clear all qos tables
+            ClearBufferPool(skippedPool);
+            ClearBufferProfile();
+            ClearBufferObject("Ethernet0|0", CFG_BUFFER_PG_TABLE_NAME);
+            for (auto &adminDownPort : adminDownPorts)
+            {
+                ClearBufferObject(adminDownPort + "|3-4", CFG_BUFFER_PG_TABLE_NAME);
+            }
+            ClearBufferObject("Ethernet2|3-4", CFG_BUFFER_PG_TABLE_NAME);
+            ClearBufferObject("Ethernet0|0-2", CFG_BUFFER_QUEUE_TABLE_NAME);
+            ClearBufferObject("Ethernet2|0-2", CFG_BUFFER_QUEUE_TABLE_NAME);
+            ClearBufferObject("Ethernet2|3-4", CFG_BUFFER_QUEUE_TABLE_NAME);
+            ClearBufferObject("Ethernet0|5-6", CFG_BUFFER_QUEUE_TABLE_NAME);
+            ClearBufferObject("Ethernet4|3-4", CFG_BUFFER_QUEUE_TABLE_NAME);
+            ClearBufferObject("Ethernet6|0-2", CFG_BUFFER_QUEUE_TABLE_NAME);
+            ClearBufferObject("Ethernet6|3-4", CFG_BUFFER_QUEUE_TABLE_NAME);
+            ClearBufferObject("Ethernet6|5-6", CFG_BUFFER_QUEUE_TABLE_NAME);
+            for (auto &port : ports)
+            {
+                ClearBufferObject(port, CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME);
+                ClearBufferObject(port, CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME);
+            }
+
+            // Run timer
+            m_dynamicBuffer->doTask(m_selectableTable);
+
+            if (!skippedPool.empty())
+            {
+                // Clear the pool that was skipped in the previous step
+                // This is to simulate the case where all the pools are not removed in one-shot
+                ClearBufferPool("", skippedPool);
+                m_dynamicBuffer->doTask(m_selectableTable);
+            }
+
+            // All internal data and APPL_DB has been cleared
+            ASSERT_TRUE((appBufferPgTable.getKeys(keys), keys.empty()));
+            ASSERT_TRUE((appBufferQueueTable.getKeys(keys), keys.empty()));
+            ASSERT_TRUE((appBufferProfileTable.getKeys(keys), keys.empty()));
+            ASSERT_TRUE((appBufferPoolTable.getKeys(keys), keys.empty()));
+            ASSERT_TRUE((appBufferIngProfileListTable.getKeys(keys), keys.empty()));
+            ASSERT_TRUE((appBufferEgrProfileListTable.getKeys(keys), keys.empty()));
+            ASSERT_TRUE(m_dynamicBuffer->m_bufferPoolLookup.empty());
+            ASSERT_TRUE(m_dynamicBuffer->m_bufferProfileLookup.empty());
+            ASSERT_TRUE(m_dynamicBuffer->m_portPgLookup.empty());
+            ASSERT_TRUE(m_dynamicBuffer->m_portQueueLookup.empty());
+            ASSERT_TRUE(m_dynamicBuffer->m_portProfileListLookups[BUFFER_EGRESS].empty());
+            ASSERT_TRUE(m_dynamicBuffer->m_portProfileListLookups[BUFFER_INGRESS].empty());
+
+            round++;
+        }
+    }
+
+
+    /*
+     * Clear qos with reclaiming buffer sad flows
+     * Reclaiming buffer should be triggered via any single buffer item
+     */
+    TEST_F(BufferMgrDynTest, BufferMgrTestReclaimingBufferSadFlows)
+    {
+        vector<FieldValueTuple> fieldValues;
+        vector<string> keys;
+        vector<tuple<Table&, string, string, Table&, string, string>> bufferItems;
+
+        bufferItems.emplace_back(bufferPgTable, "Ethernet0:0", "ingress_lossy_profile", appBufferPgTable, "profile", "ingress_lossy_pg_zero_profile");
+        bufferItems.emplace_back(bufferPgTable, "Ethernet0:3-4", "NULL", appBufferPgTable, "", "");
+        bufferItems.emplace_back(bufferQueueTable, "Ethernet0:0-2", "egress_lossy_profile", appBufferQueueTable, "profile", "egress_lossy_zero_profile");
+        bufferItems.emplace_back(bufferQueueTable, "Ethernet0:3-4", "egress_lossless_profile", appBufferQueueTable, "profile", "egress_lossless_zero_profile");
+        bufferItems.emplace_back(bufferIngProfileListTable, "Ethernet0", "ingress_lossless_profile", appBufferIngProfileListTable, "profile_list", "ingress_lossless_zero_profile");
+        bufferItems.emplace_back(bufferEgrProfileListTable, "Ethernet0", "egress_lossless_profile,egress_lossy_profile", appBufferEgrProfileListTable, "profile_list", "egress_lossless_zero_profile,egress_lossy_zero_profile");
+
+        SetUpReclaimingBuffer();
+        shared_ptr<vector<KeyOpFieldsValuesTuple>> zero_profile = make_shared<vector<KeyOpFieldsValuesTuple>>(zeroProfile);
+
+        InitDefaultLosslessParameter();
+        InitMmuSize();
+
+        StartBufferManager(zero_profile);
+
+        stateBufferTable.set("Ethernet0",
+                             {
+                                 {"max_priority_groups", "8"},
+                                 {"max_queues", "16"}
+                             });
+        m_dynamicBuffer->addExistingData(&stateBufferTable);
+        static_cast<Orch *>(m_dynamicBuffer)->doTask();
+
+        InitPort("Ethernet0", "down");
+
+        ASSERT_EQ(m_dynamicBuffer->m_portInfoLookup["Ethernet0"].state, PORT_ADMIN_DOWN);
+
+        SetPortInitDone();
+        m_dynamicBuffer->doTask(m_selectableTable);
+
+        // After "config qos clear" the zero buffer profiles are unloaded
+        m_dynamicBuffer->unloadZeroPoolAndProfiles();
+
+        // Starts with empty buffer tables
+        for(auto &bufferItem : bufferItems)
+        {
+            auto &cfgTable = get<0>(bufferItem);
+            auto &key = get<1>(bufferItem);
+            auto &profile = get<2>(bufferItem);
+            auto &appTable = get<3>(bufferItem);
+            auto &fieldName = get<4>(bufferItem);
+            auto &expectedProfile = get<5>(bufferItem);
+
+            cfgTable.set(key,
+                         {
+                             {fieldName, profile}
+                         });
+            m_dynamicBuffer->addExistingData(&cfgTable);
+            static_cast<Orch *>(m_dynamicBuffer)->doTask();
+
+            ASSERT_FALSE(m_dynamicBuffer->m_bufferCompletelyInitialized);
+            ASSERT_FALSE(m_dynamicBuffer->m_zeroProfilesLoaded);
+            ASSERT_TRUE(m_dynamicBuffer->m_portInitDone);
+            ASSERT_TRUE(m_dynamicBuffer->m_pendingApplyZeroProfilePorts.find("Ethernet0") != m_dynamicBuffer->m_pendingApplyZeroProfilePorts.end());
+
+            InitBufferPool();
+            InitDefaultBufferProfile();
+
+            m_dynamicBuffer->doTask(m_selectableTable);
+
+            // Another doTask to ensure all the dependent tables have been drained
+            // after buffer pools and profiles have been drained
+            static_cast<Orch *>(m_dynamicBuffer)->doTask();
+
+            if (expectedProfile.empty())
+            {
+                ASSERT_FALSE(appTable.get(key, fieldValues));
+            }
+            else
+            {
+                ASSERT_TRUE(appTable.get(key, fieldValues));
+                CheckIfVectorsMatch(fieldValues, {{fieldName, expectedProfile}});
+            }
+
+            m_dynamicBuffer->m_waitApplyAdditionalZeroProfiles = 0;
+            m_dynamicBuffer->doTask(m_selectableTable);
+
+            ASSERT_TRUE(m_dynamicBuffer->m_pendingApplyZeroProfilePorts.empty());
+            ASSERT_TRUE(m_dynamicBuffer->m_bufferCompletelyInitialized);
+
+            // Simulate clear qos
+            ClearBufferPool();
+            ClearBufferProfile();
+
+            // Call timer
+            m_dynamicBuffer->doTask(m_selectableTable);
+        }
+    }
+
+    /*
+     * Port removing flow
+     */
+    TEST_F(BufferMgrDynTest, BufferMgrTestRemovePort)
+    {
+        vector<FieldValueTuple> fieldValues;
+        vector<string> keys;
+        vector<string> statuses = {"up", "down"};
+
+        // Prepare information that will be read at the beginning
+        InitDefaultLosslessParameter();
+        InitMmuSize();
+
+        shared_ptr<vector<KeyOpFieldsValuesTuple>> zero_profile = make_shared<vector<KeyOpFieldsValuesTuple>>(zeroProfile);
+        StartBufferManager(zero_profile);
+
+        SetPortInitDone();
+        // Timer will be called
+        m_dynamicBuffer->doTask(m_selectableTable);
+
+        InitBufferPool();
+        appBufferPoolTable.getKeys(keys);
+        ASSERT_EQ(keys.size(), 3);
+        InitDefaultBufferProfile();
+        appBufferProfileTable.getKeys(keys);
+        ASSERT_EQ(keys.size(), 3);
+        ASSERT_EQ(m_dynamicBuffer->m_bufferProfileLookup.size(), 3);
+
+        m_dynamicBuffer->m_bufferCompletelyInitialized = true;
+        m_dynamicBuffer->m_waitApplyAdditionalZeroProfiles = 0;
+        InitCableLength("Ethernet0", "5m");
+
+        for(auto status : statuses)
+        {
+            bool admin_up = (status == "up");
+
+            InitPort("Ethernet0", status);
+            ASSERT_TRUE(m_dynamicBuffer->m_portInfoLookup.find("Ethernet0") != m_dynamicBuffer->m_portInfoLookup.end());
+            ASSERT_EQ(m_dynamicBuffer->m_portInfoLookup["Ethernet0"].state, admin_up ? PORT_READY : PORT_ADMIN_DOWN);
+
+            // Init port buffer items
+            InitBufferQueue("Ethernet0|3-4", "egress_lossless_profile");
+            InitBufferProfileList("Ethernet0", "ingress_lossless_profile", bufferIngProfileListTable);
+            InitBufferPg("Ethernet0|3-4");
+            if (admin_up)
+            {
+                InitBufferProfileList("Ethernet0", "egress_lossless_profile,egress_lossy_profile", bufferEgrProfileListTable);
+
+                auto expectedProfile = "pg_lossless_100000_5m_profile";
+                CheckPg("Ethernet0", "Ethernet0:3-4", expectedProfile);
+                CheckQueue("Ethernet0", "Ethernet0:3-4", "egress_lossless_profile", true);
+                CheckProfileList("Ethernet0", true, "ingress_lossless_profile");
+                CheckProfileList("Ethernet0", false, "egress_lossless_profile,egress_lossy_profile");
+            }
+            else
+            {
+                InitBufferPg("Ethernet0|0", "ingress_lossy_profile");
+
+                stateBufferTable.set("Ethernet0",
+                                     {
+                                         {"max_priority_groups", "8"},
+                                         {"max_queues", "16"}
+                                     });
+                m_dynamicBuffer->addExistingData(&stateBufferTable);
+                static_cast<Orch *>(m_dynamicBuffer)->doTask();
+
+                // Make sure profile list is applied after maximum buffer parameter table
+                InitBufferProfileList("Ethernet0", "egress_lossless_profile,egress_lossy_profile", bufferEgrProfileListTable);
+
+                fieldValues.clear();
+                ASSERT_TRUE(appBufferPgTable.get("Ethernet0:0", fieldValues));
+                CheckIfVectorsMatch(fieldValues, {{"profile", "ingress_lossy_pg_zero_profile"}});
+
+                fieldValues.clear();
+                ASSERT_TRUE(appBufferQueueTable.get("Ethernet0:3-4", fieldValues));
+                CheckIfVectorsMatch(fieldValues, {{"profile", "egress_lossless_zero_profile"}});
+
+                fieldValues.clear();
+                ASSERT_TRUE(appBufferQueueTable.get("Ethernet0:0-2", fieldValues));
+                CheckIfVectorsMatch(fieldValues, {{"profile", "egress_lossy_zero_profile"}});
+
+                fieldValues.clear();
+                ASSERT_TRUE(appBufferQueueTable.get("Ethernet0:5-15", fieldValues));
+                CheckIfVectorsMatch(fieldValues, {{"profile", "egress_lossy_zero_profile"}});
+
+                fieldValues.clear();
+                ASSERT_TRUE(appBufferIngProfileListTable.get("Ethernet0", fieldValues));
+                CheckIfVectorsMatch(fieldValues, {{"profile_list", "ingress_lossless_zero_profile"}});
+
+                fieldValues.clear();
+                ASSERT_TRUE(appBufferEgrProfileListTable.get("Ethernet0", fieldValues));
+                CheckIfVectorsMatch(fieldValues, {{"profile_list", "egress_lossless_zero_profile,egress_lossy_zero_profile"}});
+
+                ClearBufferObject("Ethernet0|0", CFG_BUFFER_PG_TABLE_NAME);
+            }
+
+            // Remove port
+            ClearBufferObject("Ethernet0", CFG_PORT_TABLE_NAME);
+            ASSERT_FALSE(m_dynamicBuffer->m_portPgLookup.empty());
+            ClearBufferObject("Ethernet0", CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME);
+            ClearBufferObject("Ethernet0", CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME);
+            ClearBufferObject("Ethernet0|3-4", CFG_BUFFER_PG_TABLE_NAME);
+            ClearBufferObject("Ethernet0|3-4", CFG_BUFFER_QUEUE_TABLE_NAME);
+            static_cast<Orch *>(m_dynamicBuffer)->doTask();
+            ASSERT_TRUE(m_dynamicBuffer->m_portPgLookup.empty());
+            ASSERT_TRUE(m_dynamicBuffer->m_portQueueLookup.empty());
+            ASSERT_TRUE(m_dynamicBuffer->m_portProfileListLookups[BUFFER_INGRESS].empty());
+            ASSERT_TRUE(m_dynamicBuffer->m_portProfileListLookups[BUFFER_EGRESS].empty());
+            ASSERT_TRUE((appBufferPgTable.getKeys(keys), keys.empty()));
+            ASSERT_TRUE((appBufferQueueTable.getKeys(keys), keys.empty()));
+            ASSERT_TRUE((appBufferIngProfileListTable.getKeys(keys), keys.empty()));
+            ASSERT_TRUE((appBufferEgrProfileListTable.getKeys(keys), keys.empty()));
+        }
+    }
+
+    /*
      * Port configuration flow
      * Port table items are received in different order
      */
