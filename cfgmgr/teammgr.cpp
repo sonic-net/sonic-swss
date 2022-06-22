@@ -34,8 +34,7 @@ TeamMgr::TeamMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     m_appLagTable(applDb, APP_LAG_TABLE_NAME),
     m_statePortTable(statDb, STATE_PORT_TABLE_NAME),
     m_stateLagTable(statDb, STATE_LAG_TABLE_NAME),
-    m_stateMACsecIngressSATable(statDb, STATE_MACSEC_INGRESS_SA_TABLE_NAME),
-    m_stateFeatureTable(statDb, "FEATURE")
+    m_stateMACsecIngressSATable(statDb, STATE_MACSEC_INGRESS_SA_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
 
@@ -94,27 +93,6 @@ bool TeamMgr::isLagStateOk(const string &alias)
     if (!m_stateLagTable.get(alias, temp))
     {
         SWSS_LOG_INFO("Lag %s is not ready", alias.c_str());
-        return false;
-    }
-
-    return true;
-}
-
-bool TeamMgr::isMACsecFeatureEnabled()
-{
-    SWSS_LOG_ENTER();
-
-    vector<FieldValueTuple> temp;
-    if (!m_stateFeatureTable.get("macsec", temp))
-    {
-        return false;
-    }
-
-    auto opt = swss::fvsGetValue(temp, "state", true);
-
-    if (!opt || *opt != "enabled")
-    {
-        SWSS_LOG_INFO("MACsec feature isn't enabled");
         return false;
     }
 
@@ -377,16 +355,11 @@ void TeamMgr::doLagMemberTask(Consumer &consumer)
                 it++;
                 continue;
             }
-
-            if (isMACsecFeatureEnabled())
+            if (isMACsecAttached(member) && !isMACsecIngressSAOk(member))
             {
-                if (isMACsecAttached(member) && !isMACsecIngressSAOk(member))
-                {
-                    it++;
-                    continue;
-                }
+                it++;
+                continue;
             }
-
             if (addLagMember(lag, member) == task_need_retry)
             {
                 it++;
@@ -477,16 +450,13 @@ void TeamMgr::doPortUpdateTask(Consumer &consumer)
             string lag;
             if (findPortMaster(lag, alias))
             {
-                if (isMACsecFeatureEnabled())
+                if (isMACsecAttached(alias) && !isMACsecIngressSAOk(alias))
                 {
-                    if (isMACsecAttached(alias) && !isMACsecIngressSAOk(alias))
-                    {
-                        it++;
-                        SWSS_LOG_INFO("MACsec is NOT ready on the port %s", alias.c_str());
-                        continue;
-                    }
-                    SWSS_LOG_NOTICE("MACsec is ready on the port %s", alias.c_str());
+                    it++;
+                    SWSS_LOG_INFO("MACsec is NOT ready on the port %s", alias.c_str());
+                    continue;
                 }
+                SWSS_LOG_NOTICE("MACsec is ready on the port %s", alias.c_str());
 
                 if (addLagMember(lag, alias) == task_need_retry)
                 {
