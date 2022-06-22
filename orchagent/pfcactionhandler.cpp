@@ -686,7 +686,7 @@ void PfcWdZeroBufferHandler::ZeroBufferProfile::createZeroBufferProfile()
     attribs.push_back(attr);
 
     attr.id = SAI_BUFFER_POOL_ATTR_THRESHOLD_MODE;
-    attr.value.u32 = SAI_BUFFER_POOL_THRESHOLD_MODE_STATIC;
+    attr.value.u32 = SAI_BUFFER_POOL_THRESHOLD_MODE_DYNAMIC;
     attribs.push_back(attr);
 
     status = sai_buffer_api->create_buffer_pool(
@@ -708,14 +708,14 @@ void PfcWdZeroBufferHandler::ZeroBufferProfile::createZeroBufferProfile()
     attribs.push_back(attr);
 
     attr.id = SAI_BUFFER_PROFILE_ATTR_THRESHOLD_MODE;
-    attr.value.u32 = SAI_BUFFER_PROFILE_THRESHOLD_MODE_STATIC;
+    attr.value.u32 = SAI_BUFFER_PROFILE_THRESHOLD_MODE_DYNAMIC;
     attribs.push_back(attr);
 
     attr.id = SAI_BUFFER_PROFILE_ATTR_BUFFER_SIZE;
     attr.value.u64 = 0;
     attribs.push_back(attr);
 
-    attr.id = SAI_BUFFER_PROFILE_ATTR_SHARED_STATIC_TH;
+    attr.id = SAI_BUFFER_PROFILE_ATTR_SHARED_DYNAMIC_TH;
     attr.value.s8 = 0;
     attribs.push_back(attr);
 
