@@ -41,7 +41,7 @@ namespace swss {
 #define TWICE_NAT_ID_MAX           9999
 #define ENTRY_TYPE                 "entry_type"
 #define STATIC_ENTRY_TYPE          "static"
-#define DYNAMIC_ENTRY_TYPE         "dynamic" 
+#define DYNAMIC_ENTRY_TYPE         "dynamic"
 #define STATIC_NAPT_KEY_SIZE       3
 #define LOCAL_PORT                 "local_port"
 #define TRANSLATED_L4_PORT         "translated_l4_port"
@@ -67,7 +67,7 @@ namespace swss {
 #define NAT_TCP_TIMEOUT_MIN        300
 #define NAT_TCP_TIMEOUT_MAX        432000
 #define NAT_TCP_TIMEOUT_DEFAULT    86400
-#define NAT_UDP_TIMEOUT            "nat_udp_timeout" 
+#define NAT_UDP_TIMEOUT            "nat_udp_timeout"
 #define NAT_UDP_TIMEOUT_MIN        120
 #define NAT_UDP_TIMEOUT_MAX        600
 #define NAT_UDP_TIMEOUT_DEFAULT    300
@@ -96,7 +96,7 @@ namespace swss {
 #define MATCH_IP_PROTOCOL          "IP_PROTOCOL"
 #define MATCH_IP_PROTOCOL_ICMP     1
 #define MATCH_IP_PROTOCOL_TCP      6
-#define MATCH_IP_PROTOCOL_UDP      17          
+#define MATCH_IP_PROTOCOL_UDP      17
 #define MATCH_L4_SRC_PORT          "L4_SRC_PORT"
 #define MATCH_L4_DST_PORT          "L4_DST_PORT"
 #define MATCH_L4_SRC_PORT_RANGE    "L4_SRC_PORT_RANGE"
@@ -240,7 +240,7 @@ class NatMgr : public Orch
 public:
     /* NatMgr Constructor */
     NatMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const std::vector<std::string> &tableNames);
-    using Orch::doTask; 
+    using Orch::doTask;
 
     /* Function to be called from signal handler on nat docker stop */
     void cleanupPoolIpTable();
@@ -257,7 +257,7 @@ private:
     ProducerStateTable m_appNatTableProducer, m_appNaptTableProducer, m_appNatGlobalTableProducer;
     ProducerStateTable m_appTwiceNatTableProducer, m_appTwiceNaptTableProducer, m_appNatDnatPoolProducer;
     Table m_statePortTable, m_stateLagTable, m_stateVlanTable, m_stateInterfaceTable, m_appNaptPoolIpTable;
-    Table m_stateWarmRestartEnableTable, m_stateWarmRestartTable;
+    Table m_stateAdvancedRestartEnableTable, m_stateAdvancedRestartTable;
 
     /* Declare containers to store NAT Info */
     int          m_natTimeout;
@@ -292,7 +292,7 @@ private:
     /* Declare all NAT functionality member functions*/
     void enableNatFeature(void);
     void disableNatFeature(void);
-    bool warmBootingInProgress(void);
+    bool advancedBootingInProgress(void);
     void flushAllNatEntries(void);
     void addAllStaticConntrackEntries(void);
     void addConntrackStaticSingleNatEntry(const std::string &key);
@@ -359,8 +359,8 @@ private:
 
     bool isNatEnabled(void);
     bool isPortStateOk(const std::string &alias);
-    bool isIntfStateOk(const std::string &alias); 
-    bool isPoolMappedtoBinding(const std::string &pool_name, std::string &binding_name); 
+    bool isIntfStateOk(const std::string &alias);
+    bool isPoolMappedtoBinding(const std::string &pool_name, std::string &binding_name);
     bool isMatchesWithStaticNat(const std::string &global_ip, std::string &local_ip);
     bool isMatchesWithStaticNapt(const std::string &global_ip, std::string &local_ip);
     bool isGlobalIpMatching(const std::string &intf_keys, const std::string &global_ip);
@@ -369,7 +369,7 @@ private:
     bool setFullConeDnatIptablesRule(const std::string &opCmd);
     bool setMangleIptablesRules(const std::string &opCmd, const std::string &interface, const std::string &nat_zone);
     bool setStaticNatIptablesRules(const std::string &opCmd, const std::string &interface, const std::string &external_ip, const std::string &internal_ip, const std::string &nat_type);
-    bool setStaticNaptIptablesRules(const std::string &opCmd, const std::string &interface, const std::string &prototype, const std::string &external_ip, 
+    bool setStaticNaptIptablesRules(const std::string &opCmd, const std::string &interface, const std::string &prototype, const std::string &external_ip,
                                     const std::string &external_port, const std::string &internal_ip, const std::string &internal_port, const std::string &nat_type);
     bool setStaticTwiceNatIptablesRules(const std::string &opCmd, const std::string &interface, const std::string &src_ip, const std::string &translated_src_ip,
                                         const std::string &dest_ip, const std::string &translated_dest_ip);

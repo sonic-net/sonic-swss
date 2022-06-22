@@ -30,7 +30,7 @@ private:
 
     bool configIpTunnel(const TunnelInfo& info);
 
-    void finalizeWarmReboot();
+    void finalizeAdvancedReboot();
 
     ProducerStateTable m_appIpInIpTunnelTable;
     Table m_cfgPeerTable;

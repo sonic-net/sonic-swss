@@ -1,4 +1,4 @@
-INCLUDES = -I $(top_srcdir) -I $(top_srcdir)/warmrestart
+INCLUDES = -I $(top_srcdir) -I $(top_srcdir)/advancedrestart
 
 bin_PROGRAMS = natsyncd
 
@@ -8,7 +8,7 @@ else
 DBGFLAGS = -g
 endif
 
-natsyncd_SOURCES = natsyncd.cpp natsync.cpp $(top_srcdir)/warmrestart/warmRestartAssist.cpp
+natsyncd_SOURCES = natsyncd.cpp natsync.cpp $(top_srcdir)/advancedrestart/advancedRestartAssist.cpp
 
 natsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_ASAN)
 natsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_ASAN)

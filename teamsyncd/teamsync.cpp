@@ -9,7 +9,7 @@
 #include "netmsg.h"
 #include "dbconnector.h"
 #include "producerstatetable.h"
-#include "warm_restart.h"
+#include "advanced_restart.h"
 #include "teamsync.h"
 
 #include <unistd.h>
@@ -27,32 +27,32 @@ TeamSync::TeamSync(DBConnector *db, DBConnector *stateDb, Select *select) :
     m_lagMemberTable(db, APP_LAG_MEMBER_TABLE_NAME),
     m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME)
 {
-    WarmStart::initialize(TEAMSYNCD_APP_NAME, "teamd");
-    WarmStart::checkWarmStart(TEAMSYNCD_APP_NAME, "teamd");
-    m_warmstart = WarmStart::isWarmStart();
+    AdvancedStart::initialize(TEAMSYNCD_APP_NAME, "teamd");
+    AdvancedStart::checkAdvancedStart(TEAMSYNCD_APP_NAME, "teamd");
+    m_advancedstart = AdvancedStart::isAdvancedStart();
 
-    if (m_warmstart)
+    if (m_advancedstart)
     {
         m_start_time = steady_clock::now();
-        auto warmRestartIval = WarmStart::getWarmStartTimer(TEAMSYNCD_APP_NAME, "teamd");
-        m_pending_timeout = warmRestartIval ? warmRestartIval : DEFAULT_WR_PENDING_TIMEOUT;
+        auto advancedRestartIval = AdvancedStart::getAdvancedStartTimer(TEAMSYNCD_APP_NAME, "teamd");
+        m_pending_timeout = advancedRestartIval ? advancedRestartIval : DEFAULT_WR_PENDING_TIMEOUT;
         m_lagTable.create_temp_view();
         m_lagMemberTable.create_temp_view();
-        WarmStart::setWarmStartState(TEAMSYNCD_APP_NAME, WarmStart::INITIALIZED);
-        SWSS_LOG_NOTICE("Starting in warmstart mode");
+        AdvancedStart::setAdvancedStartState(TEAMSYNCD_APP_NAME, AdvancedStart::INITIALIZED);
+        SWSS_LOG_NOTICE("Starting in advanced start mode");
     }
 }
 
 void TeamSync::periodic()
 {
-    if (m_warmstart)
+    if (m_advancedstart)
     {
         auto diff = duration_cast<seconds>(steady_clock::now() - m_start_time);
         if(diff.count() > m_pending_timeout)
         {
             applyState();
-            m_warmstart = false; // apply state just once
-            WarmStart::setWarmStartState(TEAMSYNCD_APP_NAME, WarmStart::RECONCILED);
+            m_advancedstart = false; // apply state just once
+            AdvancedStart::setAdvancedStartState(TEAMSYNCD_APP_NAME, AdvancedStart::RECONCILED);
         }
     }
 
@@ -171,7 +171,7 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
 
     FieldValueTuple s("state", "ok");
     fvVector.push_back(s);
-    if (m_warmstart)
+    if (m_advancedstart)
     {
         m_stateLagTablePreserved[lagName] = fvVector;
     }
@@ -210,7 +210,7 @@ void TeamSync::removeLag(const string &lagName)
     if (m_teamSelectables.find(lagName) == m_teamSelectables.end())
         return;
 
-    if (m_warmstart)
+    if (m_advancedstart)
     {
         m_stateLagTablePreserved.erase(lagName);
     }

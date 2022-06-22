@@ -4,7 +4,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include "../mock_table.h"
-#include "warm_restart.h"
+#include "advanced_restart.h"
 #define private public 
 #include "intfmgr.h"
 #undef private
@@ -51,7 +51,7 @@ namespace add_ipv6_prefix_ut
             m_app_db = std::make_shared<swss::DBConnector>("APPL_DB", 0);
             m_state_db = std::make_shared<swss::DBConnector>("STATE_DB", 0);
             
-            swss::WarmStart::initialize("intfmgrd", "swss");
+            swss::AdvancedStart::initialize("intfmgrd", "swss");
 
             std::vector<std::string> tables = {
                 CFG_INTF_TABLE_NAME,

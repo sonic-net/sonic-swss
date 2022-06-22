@@ -13,7 +13,7 @@
 
 #include "linkcache.h"
 #include "portsyncd/linksync.h"
-#include "warm_restart.h"
+#include "advanced_restart.h"
 #include "shellcmd.h"
 
 #include <iostream>
@@ -88,7 +88,7 @@ LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
         }
     }
 
-    if (!WarmStart::isWarmStart())
+    if (!AdvancedStart::isAdvancedStart())
     {
         /* See the comments for g_portSet in portsyncd.cpp */
         for (auto port_iter = g_portSet.begin(); port_iter != g_portSet.end();)

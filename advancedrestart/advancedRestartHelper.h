@@ -1,5 +1,5 @@
-#ifndef __WARMRESTART_HELPER__
-#define __WARMRESTART_HELPER__
+#ifndef __ADVANCEDRESTART_HELPER__
+#define __ADVANCEDRESTART_HELPER__
 
 
 #include <vector>
@@ -12,22 +12,22 @@
 #include "netmsg.h"
 #include "table.h"
 #include "tokenize.h"
-#include "warm_restart.h"
+#include "advanced_restart.h"
 
 
 namespace swss {
 
 
-class WarmStartHelper {
+class AdvancedStartHelper {
   public:
 
-    WarmStartHelper(RedisPipeline      *pipeline,
+    AdvancedStartHelper(RedisPipeline      *pipeline,
                     ProducerStateTable *syncTable,
                     const std::string  &syncTableName,
                     const std::string  &dockerName,
                     const std::string  &appName);
 
-    ~WarmStartHelper();
+    ~AdvancedStartHelper();
 
     /* fvVector type to be used to host AppDB restored elements */
     using kfvVector = std::vector<KeyOpFieldsValuesTuple>;
@@ -38,9 +38,9 @@ class WarmStartHelper {
      */
     using kfvMap = std::unordered_map<std::string, KeyOpFieldsValuesTuple>;
 
-    void setState(WarmStart::WarmStartState state);
+    void setState(AdvancedStart::AdvancedStartState state);
 
-    WarmStart::WarmStartState getState(void) const;
+    AdvancedStart::AdvancedStartState getState(void) const;
 
     bool checkAndStart(void);
 
@@ -70,11 +70,11 @@ class WarmStartHelper {
     Table                     m_restorationTable;  // redis table to import current-state from
     kfvVector                 m_restorationVector; // buffer struct to hold old state
     kfvMap                    m_refreshMap;        // buffer struct to hold new state
-    WarmStart::WarmStartState m_state;             // cached value of warmStart's FSM state
-    bool                      m_enabled;           // warm-reboot enabled/disabled status
+    AdvancedStart::AdvancedStartState m_state;             // cached value of advancedStart's FSM state
+    bool                      m_enabled;           // advanced-reboot enabled/disabled status
     std::string               m_syncTableName;     // producer-table-name to sync/push state to
-    std::string               m_dockName;          // sonic-docker requesting warmStart services
-    std::string               m_appName;           // sonic-app requesting warmStart services
+    std::string               m_dockName;          // sonic-docker requesting advancedStart services
+    std::string               m_appName;           // sonic-app requesting advancedStart services
 };
 
 

@@ -31,7 +31,7 @@
 #include "notificationproducer.h"
 #include "natmgr.h"
 #include "shellcmd.h"
-#include "warm_restart.h"
+#include "advanced_restart.h"
 
 using namespace std;
 using namespace swss;
@@ -103,7 +103,7 @@ void cleanup()
 
         cleanupNotifier->send("nat_cleanup", "all", entry);
     }
-    
+
     if (natmgr)
     {
         natmgr->removeStaticNatIptables();
@@ -155,7 +155,7 @@ int main(int argc, char **argv)
         natmgr = new NatMgr(&cfgDb, &appDb, &stateDb, cfg_tables);
 
         natmgr->isPortInitDone(&appDb);
-        
+
         std::vector<Orch *> cfgOrchList = {natmgr};
 
         swss::Select s;

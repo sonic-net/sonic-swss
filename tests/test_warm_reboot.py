@@ -14,16 +14,16 @@ NUM_INTF = 8
 NUM_NEIGH_PER_INTF = 16 #128
 NUM_OF_NEIGHS = (NUM_INTF*NUM_NEIGH_PER_INTF)
 
-# Get restore count of all processes supporting warm restart
+# Get restore count of all processes supporting advanced restart
 def swss_get_RestoreCount(dvs, state_db):
     restore_count = {}
-    warmtbl = swsscommon.Table(state_db, swsscommon.STATE_WARM_RESTART_TABLE_NAME)
-    keys = warmtbl.getKeys()
+    advancedtbl = swsscommon.Table(state_db, swsscommon.STATE_ADVANCED_RESTART_TABLE_NAME)
+    keys = advancedtbl.getKeys()
     assert  len(keys) !=  0
     for key in keys:
         if key not in dvs.swssd:
             continue
-        (status, fvs) = warmtbl.get(key)
+        (status, fvs) = advancedtbl.get(key)
         assert status == True
         for fv in fvs:
             if fv[0] == "restore_count":
@@ -31,16 +31,16 @@ def swss_get_RestoreCount(dvs, state_db):
     print(restore_count)
     return restore_count
 
-# function to check the restore count incremented by 1 for all processes supporting warm restart
+# function to check the restore count incremented by 1 for all processes supporting advanced restart
 def swss_check_RestoreCount(dvs, state_db, restore_count):
-    warmtbl = swsscommon.Table(state_db, swsscommon.STATE_WARM_RESTART_TABLE_NAME)
-    keys = warmtbl.getKeys()
+    advancedtbl = swsscommon.Table(state_db, swsscommon.STATE_ADVANCED_RESTART_TABLE_NAME)
+    keys = advancedtbl.getKeys()
     print(keys)
     assert  len(keys) > 0
     for key in keys:
         if key not in dvs.swssd:
             continue
-        (status, fvs) = warmtbl.get(key)
+        (status, fvs) = advancedtbl.get(key)
         assert status == True
         for fv in fvs:
             if fv[0] == "restore_count":
@@ -62,15 +62,15 @@ def check_port_oper_status(appl_db, port_name, state):
 
 # function to check the restore count incremented by 1 for a single process
 def swss_app_check_RestoreCount_single(state_db, restore_count, name):
-    warmtbl = swsscommon.Table(state_db, swsscommon.STATE_WARM_RESTART_TABLE_NAME)
-    keys = warmtbl.getKeys()
+    advancedtbl = swsscommon.Table(state_db, swsscommon.STATE_ADVANCED_RESTART_TABLE_NAME)
+    keys = advancedtbl.getKeys()
     print(keys)
     print(restore_count)
     assert  len(keys) > 0
     for key in keys:
         if key != name:
             continue
-        (status, fvs) = warmtbl.get(key)
+        (status, fvs) = advancedtbl.get(key)
         assert status == True
         for fv in fvs:
             if fv[0] == "restore_count":
@@ -79,15 +79,15 @@ def swss_app_check_RestoreCount_single(state_db, restore_count, name):
                 assert fv[1] == "reconciled" or fv[1] == "disabled"
     return status, fvs
 
-def swss_app_check_warmstart_state(state_db, name, state):
-    warmtbl = swsscommon.Table(state_db, swsscommon.STATE_WARM_RESTART_TABLE_NAME)
-    keys = warmtbl.getKeys()
+def swss_app_check_advancedstart_state(state_db, name, state):
+    advancedtbl = swsscommon.Table(state_db, swsscommon.STATE_ADVANCED_RESTART_TABLE_NAME)
+    keys = advancedtbl.getKeys()
     print(keys)
     assert  len(keys) > 0
     for key in keys:
         if key != name:
             continue
-        (status, fvs) = warmtbl.get(key)
+        (status, fvs) = advancedtbl.get(key)
         assert status == True
         for fv in fvs:
             if fv[0] == "state":
@@ -131,11 +131,11 @@ def start_restore_neighbors(dvs):
     dvs.runcmd(['sh', '-c', 'supervisorctl start restore_neighbors'])
 
 def check_no_neighsyncd_timer(dvs):
-    (exitcode, string) = dvs.runcmd(['sh', '-c', 'grep getWarmStartTimer /var/log/syslog | grep neighsyncd | grep invalid'])
+    (exitcode, string) = dvs.runcmd(['sh', '-c', 'grep getAdvancedStartTimer /var/log/syslog | grep neighsyncd | grep invalid'])
     assert string.strip() != ""
 
 def check_neighsyncd_timer(dvs, timer_value):
-    (exitcode, num) = dvs.runcmd(['sh', '-c', "grep getWarmStartTimer /var/log/syslog | grep neighsyncd | tail -n 1 | rev | cut -d ' ' -f 1 | rev"])
+    (exitcode, num) = dvs.runcmd(['sh', '-c', "grep getAdvancedStartTimer /var/log/syslog | grep neighsyncd | tail -n 1 | rev | cut -d ' ' -f 1 | rev"])
     assert num.strip() == timer_value
 
 def check_redis_neigh_entries(dvs, neigh_tbl, number):
@@ -194,7 +194,7 @@ def check_syslog_for_neighbor_entry(dvs, marker, new_cnt, delete_cnt, iptype):
 def set_restart_timer(dvs, db, app_name, value):
     create_entry_tbl(
         db,
-        swsscommon.CFG_WARM_RESTART_TABLE_NAME, app_name,
+        swsscommon.CFG_ADVANCED_RESTART_TABLE_NAME, app_name,
         [
             (app_name + "_timer", value),
         ]
@@ -239,29 +239,29 @@ def ping_new_ips(dvs):
             dvs.runcmd(['sh', '-c', "ping -c 1 -W 0 -q {}.0.0.{} > /dev/null 2>&1".format(i*4, j+NUM_NEIGH_PER_INTF+2)])
             dvs.runcmd(['sh', '-c', "ping6 -c 1 -W 0 -q {}00::{} > /dev/null 2>&1".format(i*4, j+NUM_NEIGH_PER_INTF+2)])
 
-def warm_restart_set(dvs, app, enable):
+def advanced_restart_set(dvs, app, enable):
     db = swsscommon.DBConnector(6, dvs.redis_sock, 0)
-    tbl = swsscommon.Table(db, "WARM_RESTART_ENABLE_TABLE")
+    tbl = swsscommon.Table(db, "ADVANCED_RESTART_ENABLE_TABLE")
     fvs = swsscommon.FieldValuePairs([("enable",enable)])
     tbl.set(app, fvs)
     time.sleep(1)
 
 
-def warm_restart_timer_set(dvs, app, timer, val):
+def advanced_restart_timer_set(dvs, app, timer, val):
     db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-    tbl = swsscommon.Table(db, "WARM_RESTART")
+    tbl = swsscommon.Table(db, "ADVANCED_RESTART")
     fvs = swsscommon.FieldValuePairs([(timer, val)])
     tbl.set(app, fvs)
     time.sleep(1)
 
-class TestWarmReboot(object):
-    def test_PortSyncdWarmRestart(self, dvs, testlog):
+class TestAdvancedReboot(object):
+    def test_PortSyncdAdvancedRestart(self, dvs, testlog):
 
         conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
         appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
 
-        dvs.warm_restart_swss("true")
+        dvs.advanced_restart_swss("true")
 
         dvs.port_admin_set("Ethernet16", "up")
         dvs.port_admin_set("Ethernet20", "up")
@@ -346,8 +346,7 @@ class TestWarmReboot(object):
         intf_tbl._del("Ethernet20")
         time.sleep(2)
 
-    def test_VlanMgrdWarmRestart(self, dvs, testlog):
-
+    def test_VlanMgrdAdvancedRestart(self, dvs, testlog):
         conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
         appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
@@ -360,7 +359,7 @@ class TestWarmReboot(object):
 
         time.sleep(1)
 
-        dvs.warm_restart_swss("true")
+        dvs.advanced_restart_swss("true")
 
         # create vlan
         create_entry_tbl(
@@ -461,14 +460,14 @@ class TestWarmReboot(object):
         intf_tbl._del("Vlan20")
         time.sleep(2)
 
-    def test_IntfMgrdWarmRestartNoInterfaces(self, dvs, testlog):
+    def test_IntfMgrdAdvancedRestartNoInterfaces(self, dvs, testlog):
         """ Tests that intfmgrd reaches reconciled state when
         there are no interfaces in configuration. """
 
         state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
         restore_count = swss_get_RestoreCount(dvs, state_db)
 
-        dvs.warm_restart_swss("true")
+        dvs.advanced_restart_swss("true")
         dvs.runcmd("supervisorctl restart intfmgrd")
 
         reached_desired_state = False
@@ -489,7 +488,7 @@ class TestWarmReboot(object):
         conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
         state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
 
-        dvs.warm_restart_swss("true")
+        dvs.advanced_restart_swss("true")
 
         #
         # Testcase1:
@@ -609,8 +608,8 @@ class TestWarmReboot(object):
 
         #
         # Testcase 3:
-        # stop neighsyncd, delete even nummber ipv4/ipv6 neighbor entries from each interface, warm start neighsyncd.
-        # the neighsyncd is supposed to sync up the entries from kernel after warm restart
+        # stop neighsyncd, delete even nummber ipv4/ipv6 neighbor entries from each interface, advanced start neighsyncd.
+        # the neighsyncd is supposed to sync up the entries from kernel after advanced restart
         # note: there was an issue for neighbor delete, it will be marked as FAILED instead of deleted in kernel
         #       but it will send netlink message to be removed from appDB, so it works ok here,
         #       just that if we want to add the same neighbor again, use "change" instead of "add"
@@ -685,7 +684,7 @@ class TestWarmReboot(object):
         # Testcase 4:
         # Stop neighsyncd, add even nummber of ipv4/ipv6 neighbor entries to each interface again,
         # Start neighsyncd
-        # The neighsyncd is supposed to sync up the entries from kernel after warm restart
+        # The neighsyncd is supposed to sync up the entries from kernel after advanced restart
         # Check the timer is not retrieved from configDB since it is not configured
 
         # get restore_count
@@ -757,13 +756,13 @@ class TestWarmReboot(object):
         # Testcase 5:
         # Even number of ip4/6 neigbors updated with new mac.
         # Odd number of ipv4/6 neighbors removed
-        # neighbor syncd should sync it up after warm restart
+        # neighbor syncd should sync it up after advanced restart
         # include the timer settings in this testcase
 
         # setup timer in configDB
         timer_value = "15"
 
-        warm_restart_timer_set(dvs, "swss", "neighsyncd_timer", timer_value)
+        advanced_restart_timer_set(dvs, "swss", "neighsyncd_timer", timer_value)
 
         # get restore_count
         restore_count = swss_get_RestoreCount(dvs, state_db)
@@ -795,7 +794,7 @@ class TestWarmReboot(object):
         time.sleep(10)
 
         # timer is not expired yet, state should be "restored"
-        swss_app_check_warmstart_state(state_db, "neighsyncd", "restored")
+        swss_app_check_advancedstart_state(state_db, "neighsyncd", "restored")
         time.sleep(10)
 
         # check neigh syncd timer is retrived from configDB
@@ -857,12 +856,12 @@ class TestWarmReboot(object):
         time.sleep(2)
 
 
-    # TODO: The condition of warm restart readiness check is still under discussion.
-    def test_OrchagentWarmRestartReadyCheck(self, dvs, testlog):
+    # TODO: The condition of advanced restart readiness check is still under discussion.
+    def test_OrchagentAdvancedRestartReadyCheck(self, dvs, testlog):
 
         time.sleep(1)
 
-        dvs.warm_restart_swss("true")
+        dvs.advanced_restart_swss("true")
 
         config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
         intf_tbl = swsscommon.Table(config_db, "INTERFACE")
@@ -931,7 +930,7 @@ class TestWarmReboot(object):
         conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
         state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
 
-        dvs.warm_restart_swss("true")
+        dvs.advanced_restart_swss("true")
 
         tbl = swsscommon.Table(appl_db, swsscommon.APP_PORT_TABLE_NAME)
 
@@ -996,7 +995,7 @@ class TestWarmReboot(object):
 
         time.sleep(5)
         dbobjs =[(swsscommon.APPL_DB, swsscommon.APP_PORT_TABLE_NAME + ":*"), \
-            (swsscommon.STATE_DB, swsscommon.STATE_WARM_RESTART_TABLE_NAME + "|orchagent")]
+            (swsscommon.STATE_DB, swsscommon.STATE_ADVANCED_RESTART_TABLE_NAME + "|orchagent")]
         pubsubDbs = dvs.SubscribeDbObjects(dbobjs)
         dvs.start_swss()
         start_restore_neighbors(dvs)
@@ -1027,12 +1026,12 @@ class TestWarmReboot(object):
 
         # check the pubsub messages.
         # No appDB port table operation should exist before orchagent state restored flag got set.
-        # appDB port table status sync up happens before WARM_RESTART_TABLE reconciled flag is set
+        # appDB port table status sync up happens before ADVANCED_RESTART_TABLE reconciled flag is set
         # pubsubMessages is an ordered list of pubsub messages.
         pubsubMessages = dvs.GetSubscribedMessages(pubsubDbs)
 
         portOperStatusChanged = False
-        # number of times that WARM_RESTART_TABLE|orchagent key was set after the first
+        # number of times that ADVANCED_RESTART_TABLE|orchagent key was set after the first
         # appDB port table operation
         orchStateCount = 0
         for message in pubsubMessages:
@@ -1044,11 +1043,11 @@ class TestWarmReboot(object):
             if key.find(swsscommon.APP_PORT_TABLE_NAME)==0:
                portOperStatusChanged = True
             else:
-                # found one orchagent WARM_RESTART_TABLE operation after appDB port table change
+                # found one orchagent ADVANCED_RESTART_TABLE operation after appDB port table change
                 if portOperStatusChanged == True:
                     orchStateCount += 1;
 
-        # Only WARM_RESTART_TABLE|orchagent state=reconciled operation may exist after port oper status change.
+        # Only ADVANCED_RESTART_TABLE|orchagent state=reconciled operation may exist after port oper status change.
         assert orchStateCount == 1
 
         #clean up arp
@@ -1067,19 +1066,18 @@ class TestWarmReboot(object):
 
     #############################################################################
     #                                                                           #
-    #                        Routing Warm-Restart Testing                       #
+    #                        Routing Advanced-Restart Testing                       #
     #                                                                           #
     #############################################################################
 
 
     ################################################################################
     #
-    # Routing warm-restart testcases
+    # Routing advanced-restart testcases
     #
     ################################################################################
 
-    def test_routing_WarmRestart(self, dvs, testlog):
-
+    def test_routing_AdvancedRestart(self, dvs, testlog):
         appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
         state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
@@ -1177,7 +1175,7 @@ class TestWarmReboot(object):
 
         #############################################################################
         #
-        # Testcase 1. Having routing-warm-reboot disabled, restart zebra and verify
+        # Testcase 1. Having routing-advanced-reboot disabled, restart zebra and verify
         #             that the traditional/cold-boot logic is followed.
         #
         #############################################################################
@@ -1189,10 +1187,10 @@ class TestWarmReboot(object):
         time.sleep(5)
 
         # Verify FSM
-        swss_app_check_warmstart_state(state_db, "bgp", "disabled")
+        swss_app_check_advancedstart_state(state_db, "bgp", "disabled")
 
         # Verify that multiple changes are seen in swss and sairedis logs as there's
-        # no warm-reboot logic in place.
+        # no advanced-reboot logic in place.
         (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
         assert len(addobjs) != 0
 
@@ -1203,18 +1201,18 @@ class TestWarmReboot(object):
         #############################################################################
         #
         # Testcase 2. Restart zebra and make no control-plane changes.
-        #             For this and all subsequent test-cases routing-warm-reboot
+        #             For this and all subsequent test-cases routing-advanced-reboot
         #             feature will be kept enabled.
         #
         #############################################################################
 
 
-        # Enabling bgp warmrestart and setting restart timer.
+        # Enabling bgp advancedrestart and setting restart timer.
         # The following two instructions will be substituted by the commented ones
         # once the later ones are added to sonic-utilities repo.
 
-        warm_restart_set(dvs, "bgp", "true")
-        warm_restart_timer_set(dvs, "bgp", "bgp_timer", str(restart_timer))
+        advanced_restart_set(dvs, "bgp", "true")
+        advanced_restart_timer_set(dvs, "bgp", "bgp_timer", str(restart_timer))
 
         time.sleep(1)
 
@@ -1223,9 +1221,9 @@ class TestWarmReboot(object):
         dvs.start_zebra()
 
         # Verify FSM
-        swss_app_check_warmstart_state(state_db, "bgp", "restored")
+        swss_app_check_advancedstart_state(state_db, "bgp", "restored")
         time.sleep(restart_timer + 1)
-        swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+        swss_app_check_advancedstart_state(state_db, "bgp", "reconciled")
 
         # Verify swss changes -- none are expected this time
         (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
@@ -1253,9 +1251,9 @@ class TestWarmReboot(object):
         dvs.start_zebra()
 
         # Verify FSM
-        swss_app_check_warmstart_state(state_db, "bgp", "restored")
+        swss_app_check_advancedstart_state(state_db, "bgp", "restored")
         time.sleep(restart_timer + 1)
-        swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+        swss_app_check_advancedstart_state(state_db, "bgp", "reconciled")
 
         # Verify the changed prefix is seen in swss
         (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
@@ -1291,9 +1289,9 @@ class TestWarmReboot(object):
         dvs.start_zebra()
 
         # Verify FSM
-        swss_app_check_warmstart_state(state_db, "bgp", "restored")
+        swss_app_check_advancedstart_state(state_db, "bgp", "restored")
         time.sleep(restart_timer + 1)
-        swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+        swss_app_check_advancedstart_state(state_db, "bgp", "reconciled")
 
         # Verify the changed prefix is seen in swss
         (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
@@ -1326,9 +1324,9 @@ class TestWarmReboot(object):
         dvs.start_zebra()
 
         # Verify FSM
-        swss_app_check_warmstart_state(state_db, "bgp", "restored")
+        swss_app_check_advancedstart_state(state_db, "bgp", "restored")
         time.sleep(restart_timer + 1)
-        swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+        swss_app_check_advancedstart_state(state_db, "bgp", "reconciled")
 
         # Verify the changed prefix is seen in swss
         (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
@@ -1364,9 +1362,9 @@ class TestWarmReboot(object):
         dvs.start_zebra()
 
         # Verify FSM
-        swss_app_check_warmstart_state(state_db, "bgp", "restored")
+        swss_app_check_advancedstart_state(state_db, "bgp", "restored")
         time.sleep(restart_timer + 1)
-        swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+        swss_app_check_advancedstart_state(state_db, "bgp", "reconciled")
 
         # Verify the changed prefix is seen in swss
         (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
@@ -1400,9 +1398,9 @@ class TestWarmReboot(object):
         dvs.start_zebra()
 
         # Verify FSM
-        swss_app_check_warmstart_state(state_db, "bgp", "restored")
+        swss_app_check_advancedstart_state(state_db, "bgp", "restored")
         time.sleep(restart_timer + 1)
-        swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+        swss_app_check_advancedstart_state(state_db, "bgp", "reconciled")
 
          # Verify the changed prefix is seen in swss
         (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
@@ -1439,9 +1437,9 @@ class TestWarmReboot(object):
         dvs.start_zebra()
 
         # Verify FSM
-        swss_app_check_warmstart_state(state_db, "bgp", "restored")
+        swss_app_check_advancedstart_state(state_db, "bgp", "restored")
         time.sleep(restart_timer + 1)
-        swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+        swss_app_check_advancedstart_state(state_db, "bgp", "reconciled")
 
          # Verify the changed prefix is seen in swss
         (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
@@ -1477,9 +1475,9 @@ class TestWarmReboot(object):
         dvs.start_zebra()
 
         # Verify FSM
-        swss_app_check_warmstart_state(state_db, "bgp", "restored")
+        swss_app_check_advancedstart_state(state_db, "bgp", "restored")
         time.sleep(restart_timer + 1)
-        swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+        swss_app_check_advancedstart_state(state_db, "bgp", "reconciled")
 
         # Verify the changed prefix is seen in swss
         (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
@@ -1514,9 +1512,9 @@ class TestWarmReboot(object):
         dvs.start_zebra()
 
         # Verify FSM
-        swss_app_check_warmstart_state(state_db, "bgp", "restored")
+        swss_app_check_advancedstart_state(state_db, "bgp", "restored")
         time.sleep(restart_timer + 1)
-        swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+        swss_app_check_advancedstart_state(state_db, "bgp", "reconciled")
 
         # Verify the changed prefix is seen in swss
         (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
@@ -1545,9 +1543,9 @@ class TestWarmReboot(object):
         dvs.start_fpmsyncd()
 
         # Verify FSM
-        swss_app_check_warmstart_state(state_db, "bgp", "restored")
+        swss_app_check_advancedstart_state(state_db, "bgp", "restored")
         time.sleep(restart_timer + 1)
-        swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+        swss_app_check_advancedstart_state(state_db, "bgp", "reconciled")
 
         # Verify swss changes -- none are expected this time
         (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
@@ -1576,9 +1574,9 @@ class TestWarmReboot(object):
         dvs.start_fpmsyncd()
 
         # Verify FSM
-        swss_app_check_warmstart_state(state_db, "bgp", "restored")
+        swss_app_check_advancedstart_state(state_db, "bgp", "restored")
         time.sleep(restart_timer + 1)
-        swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+        swss_app_check_advancedstart_state(state_db, "bgp", "reconciled")
 
         # Verify the changed prefix is seen in swss
         (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
@@ -1614,9 +1612,9 @@ class TestWarmReboot(object):
         dvs.start_fpmsyncd()
 
         # Verify FSM
-        swss_app_check_warmstart_state(state_db, "bgp", "restored")
+        swss_app_check_advancedstart_state(state_db, "bgp", "restored")
         time.sleep(restart_timer + 1)
-        swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+        swss_app_check_advancedstart_state(state_db, "bgp", "reconciled")
 
         # Verify the changed prefix is seen in swss
         (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
@@ -1651,9 +1649,9 @@ class TestWarmReboot(object):
         time.sleep(1)
 
         # Verify FSM
-        swss_app_check_warmstart_state(state_db, "bgp", "restored")
+        swss_app_check_advancedstart_state(state_db, "bgp", "restored")
         time.sleep(restart_timer + 1)
-        swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+        swss_app_check_advancedstart_state(state_db, "bgp", "reconciled")
 
         # Verify swss changes -- none are expected this time
         (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
@@ -1689,9 +1687,9 @@ class TestWarmReboot(object):
         time.sleep(1)
 
         # Verify FSM
-        swss_app_check_warmstart_state(state_db, "bgp", "restored")
+        swss_app_check_advancedstart_state(state_db, "bgp", "restored")
         time.sleep(restart_timer + 1)
-        swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+        swss_app_check_advancedstart_state(state_db, "bgp", "reconciled")
 
         # Verify the changed prefix is seen in swss
         (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
@@ -1712,10 +1710,10 @@ class TestWarmReboot(object):
         #############################################################################
         #
         # Testcase 16. Restart zebra and make no control-plane changes.
-        #             Set WARM_RESTART_TABLE|IPv4|eoiu
-        #                 WARM_RESTART_TABLE|IPv6|eoiu
+        #             Set ADVANCED_RESTART_TABLE|IPv4|eoiu
+        #                 ADVANCED_RESTART_TABLE|IPv6|eoiu
         #             Check route reconciliation wait time is reduced
-        #             For this and all subsequent test-cases routing-warm-reboot
+        #             For this and all subsequent test-cases routing-advanced-reboot
         #             feature will be kept enabled.
         #
         #############################################################################
@@ -1732,23 +1730,23 @@ class TestWarmReboot(object):
         del_entry_tbl(state_db, "BGP_STATE_TABLE", "IPv4|eoiu")
         del_entry_tbl(state_db, "BGP_STATE_TABLE", "IPv6|eoiu")
 
-        warm_restart_timer_set(dvs, "bgp", "bgp_timer", str(restart_timer))
+        advanced_restart_timer_set(dvs, "bgp", "bgp_timer", str(restart_timer))
         # Restart zebra
         dvs.stop_zebra()
         dvs.start_zebra()
 
         #
-        # Verify FSM:  no eoiu, just default warm restart timer
+        # Verify FSM:  no eoiu, just default advanced restart timer
         #
-        swss_app_check_warmstart_state(state_db, "bgp", "restored")
+        swss_app_check_advancedstart_state(state_db, "bgp", "restored")
         # Periodic eoiu check timer, first wait 5 seconds, then check every 1 second
         # DEFAULT_EOIU_HOLD_INTERVAL is 3 seconds.
         # Since no EOIU set, after 3+ 5 + 1 seconds, the state still in restored state
         time.sleep(DEFAULT_EOIU_HOLD_INTERVAL + 5 +1)
-        swss_app_check_warmstart_state(state_db, "bgp", "restored")
+        swss_app_check_advancedstart_state(state_db, "bgp", "restored")
         # default restart timer kicks in:
         time.sleep(restart_timer - DEFAULT_EOIU_HOLD_INTERVAL -5)
-        swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+        swss_app_check_advancedstart_state(state_db, "bgp", "reconciled")
 
 
         time.sleep(1)
@@ -1759,7 +1757,7 @@ class TestWarmReboot(object):
         #
         # Verify FSM:  eoiu works as expected
         #
-        swss_app_check_warmstart_state(state_db, "bgp", "restored")
+        swss_app_check_advancedstart_state(state_db, "bgp", "restored")
         # Set BGP_STATE_TABLE|Ipv4|eoiu BGP_STATE_TABLE|IPv6|eoiu
         create_entry_tbl(
             state_db,
@@ -1781,7 +1779,7 @@ class TestWarmReboot(object):
         # after DEFAULT_EOIU_HOLD_INTERVAL + inital eoiu check timer wait time + 1 seconds: 3+5+1
         # verify that bgp reached reconciled state
         time.sleep(DEFAULT_EOIU_HOLD_INTERVAL + 5 + 1)
-        swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+        swss_app_check_advancedstart_state(state_db, "bgp", "reconciled")
 
         # Verify swss changes -- none are expected this time
         (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
@@ -1799,9 +1797,9 @@ class TestWarmReboot(object):
         dvs.start_zebra()
 
         #
-        # Verify FSM:  partial eoiu,  fallback to default warm restart timer
+        # Verify FSM:  partial eoiu,  fallback to default advanced restart timer
         #
-        swss_app_check_warmstart_state(state_db, "bgp", "restored")
+        swss_app_check_advancedstart_state(state_db, "bgp", "restored")
         # Set BGP_STATE_TABLE|Ipv4|eoiu but not BGP_STATE_TABLE|IPv6|eoiu
         create_entry_tbl(
             state_db,
@@ -1816,10 +1814,10 @@ class TestWarmReboot(object):
         # DEFAULT_EOIU_HOLD_INTERVAL is 3 seconds.
         # Current bgp eoiu needs flag set on both Ipv4/Ipv6 to work, after 3+ 5 + 1 seconds, the state still in restored state
         time.sleep(DEFAULT_EOIU_HOLD_INTERVAL + 5 +1)
-        swss_app_check_warmstart_state(state_db, "bgp", "restored")
-        # Fall back to warm restart timer, it kicks in after 15 seconds, +1 to avoid race condition:
+        swss_app_check_advancedstart_state(state_db, "bgp", "restored")
+        # Fall back to advanced restart timer, it kicks in after 15 seconds, +1 to avoid race condition:
         time.sleep(restart_timer - DEFAULT_EOIU_HOLD_INTERVAL -5 )
-        swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+        swss_app_check_advancedstart_state(state_db, "bgp", "reconciled")
 
         # Verify swss changes -- none are expected this time
         (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
@@ -1862,7 +1860,7 @@ class TestWarmReboot(object):
         time.sleep(2)
 
     @pytest.mark.xfail(reason="Test unstable, blocking PR builds")
-    def test_system_warmreboot_neighbor_syncup(self, dvs, testlog):
+    def test_system_advancedreboot_neighbor_syncup(self, dvs, testlog):
 
         appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
@@ -1875,7 +1873,7 @@ class TestWarmReboot(object):
         flush_neigh_entries(dvs)
         time.sleep(5)
 
-        warm_restart_set(dvs, "system", "true")
+        advanced_restart_set(dvs, "system", "true")
 
         # Test neighbors on NUM_INTF (e,g 8) interfaces
         # Ethernet32/36/.../60, with ip: 32.0.0.1/24... 60.0.0.1/24
@@ -1940,7 +1938,7 @@ class TestWarmReboot(object):
         #
         # Testcase 2:
         # Stop neighsyncd, appDB entries should be reserved
-        # flush kernel neigh table to simulate warm reboot
+        # flush kernel neigh table to simulate advanced reboot
         # start neighsyncd, start restore_neighbors service to restore the neighbor table in kernel
         # check all neighbors learned in kernel
         # no changes should be there in syslog and sairedis.rec
@@ -1983,7 +1981,7 @@ class TestWarmReboot(object):
         #
         # Testcase 3:
         # Stop neighsyncd, appDB entries should be reserved
-        # flush kernel neigh table to simulate warm reboot
+        # flush kernel neigh table to simulate advanced reboot
         # Remove half of ips of servers' interfaces, add new half of ips
         # start neighsyncd, start restore_neighbors service to restore the neighbor table in kernel
         # check all new neighbors learned in kernel
@@ -2067,7 +2065,7 @@ class TestWarmReboot(object):
         #
         # Testcase 5:
         # Stop neighsyncd, appDB entries should be reserved
-        # flush kernel neigh table to simulate warm reboot
+        # flush kernel neigh table to simulate advanced reboot
         # keep half of the interface down
         # start neighsyncd, start restore_neighbors service to restore the neighbor table in kernel
         # check all new neighbors with interface up to be learned in kernel
@@ -2123,8 +2121,8 @@ class TestWarmReboot(object):
         # check restore Count
         swss_app_check_RestoreCount_single(state_db, restore_count, "neighsyncd")
 
-        # disable system warm restart
-        warm_restart_set(dvs, "system", "false")
+        # disable system advanced restart
+        advanced_restart_set(dvs, "system", "false")
 
         for i in range(8, 8+NUM_INTF):
             intf_tbl._del("Ethernet{}|{}.0.0.1/24".format(i*4, i*4))
@@ -2132,13 +2130,13 @@ class TestWarmReboot(object):
             intf_tbl._del("Ethernet{}".format(i*4, i*4))
             intf_tbl._del("Ethernet{}".format(i*4, i*4))
 
-    def test_VrfMgrdWarmRestart(self, dvs, testlog):
+    def test_VrfMgrdAdvancedRestart(self, dvs, testlog):
 
         conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
         appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
 
-        dvs.warm_restart_swss("true")
+        dvs.advanced_restart_swss("true")
 
         # bring up interface
         dvs.port_admin_set("Ethernet0", "up")
@@ -2291,7 +2289,7 @@ class TestWarmReboot(object):
         dvs.set_interface_status("Ethernet20", "down")
 
     @pytest.mark.usefixtures("dvs_mirror_manager", "setup_erspan_neighbors")
-    def test_MirrorSessionWarmReboot(self, dvs):
+    def test_MirrorSessionAdvancedReboot(self, dvs):
         dvs.setup_db()
 
         # Setup the mirror session
@@ -2307,7 +2305,7 @@ class TestWarmReboot(object):
         # Monitor port should not change b/c routes are ECMP
         state_db.wait_for_field_match("MIRROR_SESSION_TABLE", "test_session", {"monitor_port": "Ethernet12"})
 
-        dvs.warm_restart_swss("true")
+        dvs.advanced_restart_swss("true")
         dvs.stop_swss()
         dvs.start_swss()
 
@@ -2327,7 +2325,7 @@ class TestWarmReboot(object):
         dvs.check_swss_ready()
 
     @pytest.mark.usefixtures("dvs_mirror_manager", "dvs_policer_manager", "setup_erspan_neighbors")
-    def test_EverflowWarmReboot(self, dvs, dvs_acl):
+    def test_EverflowAdvancedReboot(self, dvs, dvs_acl):
         # Setup the policer
         self.dvs_policer.create_policer("test_policer")
         self.dvs_policer.verify_policer("test_policer")
@@ -2342,9 +2340,9 @@ class TestWarmReboot(object):
         dvs_acl.create_acl_table("EVERFLOW_TEST", "MIRROR", ["Ethernet12"])
 
 
-        # TODO: The standard methods for counting ACL tables and ACL rules break down after warm reboot b/c the OIDs
+        # TODO: The standard methods for counting ACL tables and ACL rules break down after advanced reboot b/c the OIDs
         # of the default tables change. We also can't just re-initialize the default value b/c we've added another
-        # table and rule that aren't part of the base device config. We should come up with a way to handle warm reboot
+        # table and rule that aren't part of the base device config. We should come up with a way to handle advanced reboot
         # changes more gracefully to make it easier for future tests.
         asic_db = dvs.get_asic_db()
         asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE", 1 + len(asic_db.default_acl_tables))
@@ -2353,8 +2351,8 @@ class TestWarmReboot(object):
         dvs_acl.create_mirror_acl_rule("EVERFLOW_TEST", "TEST_RULE", {"SRC_IP": "20.0.0.2"}, "test_session")
         asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", 1 + len(asic_db.default_acl_entries))
 
-        # Execute the warm reboot
-        dvs.warm_restart_swss("true")
+        # Execute the advanced reboot
+        dvs.advanced_restart_swss("true")
         dvs.stop_swss()
         dvs.start_swss()
 
@@ -2387,7 +2385,7 @@ class TestWarmReboot(object):
         dvs.start_swss()
         dvs.check_swss_ready()
 
-    def test_TunnelMgrdWarmRestart(self, dvs):
+    def test_TunnelMgrdAdvancedRestart(self, dvs):
         tunnel_name = "MuxTunnel0"
         tunnel_table = "TUNNEL_DECAP_TABLE"
         tunnel_params = {
@@ -2397,10 +2395,10 @@ class TestWarmReboot(object):
             "ecn_mode": "standard",
             "ttl_mode": "pipe"
         }
-        
+
         pubsub = dvs.SubscribeAppDbObject(tunnel_table)
 
-        dvs.runcmd("config warm_restart enable swss")
+        dvs.runcmd("config advanced_restart enable swss")
         config_db = dvs.get_config_db()
         config_db.create_entry("TUNNEL", tunnel_name, tunnel_params)
 

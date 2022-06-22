@@ -12,7 +12,7 @@
 #include <exec.h>
 #include <tokenize.h>
 #include <shellcmd.h>
-#include <warm_restart.h>
+#include <advanced_restart.h>
 #include <select.h>
 
 #include "macsecmgr.h"

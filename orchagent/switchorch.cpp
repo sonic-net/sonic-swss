@@ -485,27 +485,27 @@ void SwitchOrch::doTask(NotificationConsumer& consumer)
         return;
     }
 
-    m_warmRestartCheck.checkRestartReadyState = false;
-    m_warmRestartCheck.noFreeze = false;
-    m_warmRestartCheck.skipPendingTaskCheck = false;
+    m_advancedRestartCheck.checkRestartReadyState = false;
+    m_advancedRestartCheck.noFreeze = false;
+    m_advancedRestartCheck.skipPendingTaskCheck = false;
 
     SWSS_LOG_NOTICE("RESTARTCHECK notification for %s ", op.c_str());
     if (op == "orchagent")
     {
         string s  =  op;
 
-        m_warmRestartCheck.checkRestartReadyState = true;
+        m_advancedRestartCheck.checkRestartReadyState = true;
         for (auto &i : values)
         {
             s += "|" + fvField(i) + ":" + fvValue(i);
 
             if (fvField(i) == "NoFreeze" && fvValue(i) == "true")
             {
-                m_warmRestartCheck.noFreeze = true;
+                m_advancedRestartCheck.noFreeze = true;
             }
             if (fvField(i) == "SkipPendingTaskCheck" && fvValue(i) == "true")
             {
-                m_warmRestartCheck.skipPendingTaskCheck = true;
+                m_advancedRestartCheck.skipPendingTaskCheck = true;
             }
         }
         SWSS_LOG_NOTICE("%s", s.c_str());
@@ -777,13 +777,13 @@ bool SwitchOrch::querySwitchDscpToTcCapability(sai_object_type_t sai_object, sai
         SWSS_LOG_WARN("Could not query switch level DSCP to TC map %d", status);
         return false;
     }
-    else 
+    else
     {
         if (capability.set_implemented)
         {
             return true;
         }
-        else 
+        else
         {
             return false;
         }

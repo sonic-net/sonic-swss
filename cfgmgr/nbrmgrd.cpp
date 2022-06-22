@@ -9,7 +9,7 @@
 #include "exec.h"
 #include "schema.h"
 #include "nbrmgr.h"
-#include "warm_restart.h"
+#include "advanced_restart.h"
 
 using namespace std;
 using namespace swss;
@@ -59,10 +59,10 @@ int main(int argc, char **argv)
 
         NbrMgr nbrmgr(&cfgDb, &appDb, &stateDb, cfg_nbr_tables);
 
-        WarmStart::initialize("nbrmgrd", "swss");
-        WarmStart::checkWarmStart("nbrmgrd", "swss");
+        AdvancedStart::initialize("nbrmgrd", "swss");
+        AdvancedStart::checkAdvancedStart("nbrmgrd", "swss");
 
-        if (WarmStart::isWarmStart())
+        if (AdvancedStart::isAdvancedStart())
         {
             chrono::steady_clock::time_point starttime = chrono::steady_clock::now();
             while (!nbrmgr.isNeighRestoreDone())

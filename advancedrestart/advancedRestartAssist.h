@@ -1,5 +1,5 @@
-#ifndef __WARM_RESTART_ASSIST__
-#define __WARM_RESTART_ASSIST__
+#ifndef __ADVANCED_RESTART_ASSIST__
+#define __ADVANCED_RESTART_ASSIST__
 
 #include <unordered_map>
 #include <string>
@@ -24,15 +24,15 @@ namespace swss {
  *    docker name, application name, timer value etc
  *
  * 3. Define Select s;
- *    Check if warmstart enabled, if so,read application table to cache and start timer:
- *      if (appClass.getRestartAssist()->isWarmStartInProgress())
+ *    Check if advancedstart enabled, if so,read application table to cache and start timer:
+ *      if (appClass.getRestartAssist()->isAdvancedStartInProgress())
  *      {
  *          appClass.getRestartAssist()->readTableToMap()
  *          appClass.getRestartAssist()->startReconcileTimer(s);
  *       }
  *
  * 4. Before the reconcile timer is expired, insert all requests into cache:
- *      if (m_AppRestartAssist.isWarmStartInProgress())
+ *      if (m_AppRestartAssist.isAdvancedStartInProgress())
  *      {
  *          m_AppRestartAssist.insertToMap(key, fvVector, delete_key);
  *      }
@@ -41,7 +41,7 @@ namespace swss {
  *    stop timer and call the reconcilation function:
  *      Selectable *temps;
  *      s.select(&temps);
- *      if (appClass.getRestartAssist()->isWarmStartInProgress())
+ *      if (appClass.getRestartAssist()->isAdvancedStartInProgress())
  *      {
  *          if (appClass.getRestartAssist()->checkReconcileTimer(temps))
  *          {
@@ -57,7 +57,7 @@ class AppRestartAssist
 {
 public:
     AppRestartAssist(RedisPipeline *pipeline, const std::string &appName,
-                     const std::string &dockerName, const uint32_t defaultWarmStartTimerValue = 0);
+                     const std::string &dockerName, const uint32_t defaultAdvancedStartTimerValue = 0);
     virtual ~AppRestartAssist();
 
     /*
@@ -81,12 +81,12 @@ public:
     bool checkReconcileTimer(Selectable *s);
     void readTablesToMap(void);
     void appDataReplayed(void);
-    void warmStartDisabled(void);
+    void advancedStartDisabled(void);
     void insertToMap(std::string tableName, std::string key, std::vector<FieldValueTuple> fvVector, bool delete_key);
     void reconcile(void);
-    bool isWarmStartInProgress(void)
+    bool isAdvancedStartInProgress(void)
     {
-        return m_warmStartInProgress;
+        return m_advancedStartInProgress;
     }
     void registerAppTable(const std::string &tableName, ProducerStateTable *psTable);
 
@@ -113,9 +113,9 @@ private:
     std::string         m_appName;    // application name
     ProducerStateTables m_psTables;   // producer state tables
 
-    bool m_warmStartInProgress;       // indicate if warm start is in progress
+    bool m_advancedStartInProgress;       // indicate if advanced start is in progress
     time_t m_reconcileTimer;          // reconcile timer value
-    SelectableTimer m_warmStartTimer; // reconcile timer
+    SelectableTimer m_advancedStartTimer; // reconcile timer
 
     // Set or get cache entry state
     std::string joinVectorString(const std::vector<FieldValueTuple> &fv);

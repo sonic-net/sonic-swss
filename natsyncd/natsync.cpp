@@ -27,7 +27,7 @@
 #include "linkcache.h"
 
 #include "natsync.h"
-#include "warm_restart.h"
+#include "advanced_restart.h"
 
 using namespace std;
 using namespace swss;
@@ -51,7 +51,7 @@ NatSync::NatSync(RedisPipeline *pipelineAppDB, DBConnector *appDb, DBConnector *
 {
     nfsock = nfnl;
 
-    m_AppRestartAssist = new AppRestartAssist(pipelineAppDB, "natsyncd", "nat", DEFAULT_NATSYNC_WARMSTART_TIMER);
+    m_AppRestartAssist = new AppRestartAssist(pipelineAppDB, "natsyncd", "nat", DEFAULT_NATSYNC_ADVANCEDSTART_TIMER);
     if (m_AppRestartAssist)
     {
         m_AppRestartAssist->registerAppTable(APP_NAT_TABLE_NAME, &m_natTable);
@@ -166,7 +166,7 @@ int NatSync::parseConnTrackMsg(const struct nfnl_ct *ct, struct naptEntry &entry
     /* If the connection is not subjected to either SNAT or DNAT,
      * we are not interested in those connection entries.
      */
-    entry.ct_status         = nfnl_ct_get_status(ct); 
+    entry.ct_status         = nfnl_ct_get_status(ct);
 
     if (! ((entry.ct_status & IPS_SRC_NAT_DONE) || (entry.ct_status & IPS_DST_NAT_DONE)))
     {
@@ -183,7 +183,7 @@ int NatSync::parseConnTrackMsg(const struct nfnl_ct *ct, struct naptEntry &entry
      * connections in the system. ie., if source ip or destination ip are in 127.0.0.X.
      * Ideally, such connections would not have been subjected to SNAT/DNAT and should
      * have been ignored in the above check already.
-     */ 
+     */
     if (((IS_LOOPBACK_ADDR(ntohl(entry.orig_src_ip.getV4Addr())))  &&
          (IS_LOOPBACK_ADDR(ntohl(entry.orig_dest_ip.getV4Addr())))) ||
         ((IS_LOOPBACK_ADDR(ntohl(entry.nat_src_ip.getV4Addr())))   &&
@@ -199,7 +199,7 @@ int NatSync::parseConnTrackMsg(const struct nfnl_ct *ct, struct naptEntry &entry
     entry.nat_dst_l4_port   = nfnl_ct_get_src_port(ct, 1);
 
     entry.protocol          = nfnl_ct_get_proto(ct);
-    entry.conntrack_id      = nfnl_ct_get_id(ct); 
+    entry.conntrack_id      = nfnl_ct_get_id(ct);
     ct_status_str           = ctStatusStr(nfnl_ct_get_status(ct));
 
     nl_ip_proto2str(entry.protocol, proto_str, sizeof(proto_str));
@@ -240,7 +240,7 @@ void NatSync::onMsg(int nlmsg_type, struct nl_object *obj)
 
     struct nfnl_ct *ct = (struct nfnl_ct *)obj;
     struct naptEntry      napt;
-  
+
     nlmsg_type = NFNL_MSG_TYPE(nlmsg_type);
 
     SWSS_LOG_DEBUG("Conntrack entry notification, msg type :%s (%d)",
@@ -250,7 +250,7 @@ void NatSync::onMsg(int nlmsg_type, struct nl_object *obj)
     if ((nlmsg_type != IPCTNL_MSG_CT_NEW) && (nlmsg_type != IPCTNL_MSG_CT_DELETE))
     {
         SWSS_LOG_DEBUG("Conntrack entry notification, msg type not NEW or DELETE, ignoring");
-  
+
     }
 
     /* Parse the conntrack notification from the kernel */
@@ -276,10 +276,10 @@ void NatSync::onMsg(int nlmsg_type, struct nl_object *obj)
                      * to age the UDP entries prematurely.
                      */
                     napt.ct_status |= (IPS_SEEN_REPLY | IPS_ASSURED);
-    
+
                     nfnl_ct_set_status(ct, napt.ct_status);
                     nfnl_ct_set_timeout(ct, CT_UDP_EXPIRY_TIMEOUT);
-    
+
                     updateConnTrackEntry(ct);
                 }
             }
@@ -293,7 +293,7 @@ void NatSync::onMsg(int nlmsg_type, struct nl_object *obj)
 }
 
 /* Conntrack notifications from the kernel don't have a flag to indicate if the
- * NAT is NAPT or basic NAT. The original L4 port and the translated L4 port may 
+ * NAT is NAPT or basic NAT. The original L4 port and the translated L4 port may
  * be the same and still can be the NAPT (can happen if the original L4 port is
  * already in the L4 port pool range). To find out if it is a case of NAPT, we
  * check if the Nat'ted IP is one of the NAPT pool range IP addresses, or if
@@ -347,9 +347,9 @@ bool NatSync::matchingDnaptEntryExists(const naptEntry &entry)
  * ----------------------------------------------------
  *   - If only source ip changed, add it as SNAT entry.
  *   - If only destination ip changed, add it as DNAT entry.
- *   - If SNAT happened and the l4 port changes or part of any dynamic pool range 
+ *   - If SNAT happened and the l4 port changes or part of any dynamic pool range
  *       or if there is matching static or dynamic NAPT entry, add it as SNAPT entry.
- *   - If DNAT happened and the l4 port changes or if there is matching static 
+ *   - If DNAT happened and the l4 port changes or if there is matching static
  *       or dynamic NAPT entry, add it as DNAPT entry.
  *   - If SNAT and DNAT happened, add it as Twice NAT entry.
  *   - If SNAPT and DNAPT conditions are met or if there is no static
@@ -361,8 +361,8 @@ int NatSync::addNatEntry(struct nfnl_ct *ct, struct naptEntry &entry, bool addFl
 
     bool src_ip_natted   = (entry.orig_src_ip      != entry.nat_src_ip);
     bool dst_ip_natted   = (entry.orig_dest_ip     != entry.nat_dest_ip);
-    bool src_port_natted = (src_ip_natted && ((entry.orig_src_l4_port != entry.nat_src_l4_port) || 
-                                              (matchingSnaptPoolExists(entry.nat_src_ip)) || 
+    bool src_port_natted = (src_ip_natted && ((entry.orig_src_l4_port != entry.nat_src_l4_port) ||
+                                              (matchingSnaptPoolExists(entry.nat_src_ip)) ||
                                               (matchingSnaptEntryExists(entry))));
     bool dst_port_natted = (dst_ip_natted && ((entry.orig_dst_l4_port != entry.nat_dst_l4_port) ||
                                               (matchingDnaptEntryExists(entry))));
@@ -412,7 +412,7 @@ int NatSync::addNatEntry(struct nfnl_ct *ct, struct naptEntry &entry, bool addFl
                 if ((fvField(iter) == "entry_type") && (fvValue(iter) == "static"))
                 {
                     SWSS_LOG_INFO("Static Twice NAT %s: entry exists, not processing twice NAT entry notification", opStr.c_str());
-                    if (m_AppRestartAssist->isWarmStartInProgress())
+                    if (m_AppRestartAssist->isAdvancedStartInProgress())
                     {
                        m_AppRestartAssist->insertToMap(APP_NAT_TWICE_TABLE_NAME, tmpKey, fvVector, (!addFlag));
                        m_AppRestartAssist->insertToMap(APP_NAT_TWICE_TABLE_NAME, tmpReverseEntryKey, reverseFvVector, (!addFlag));
@@ -456,7 +456,7 @@ int NatSync::addNatEntry(struct nfnl_ct *ct, struct naptEntry &entry, bool addFl
                     if ((fvField(iter) == "entry_type") && (fvValue(iter) == "static"))
                     {
                         SWSS_LOG_INFO("Static Twice NAPT %s: entry exists, not processing dynamic twice NAPT entry", opStr.c_str());
-                        if (m_AppRestartAssist->isWarmStartInProgress())
+                        if (m_AppRestartAssist->isAdvancedStartInProgress())
                         {
                             m_AppRestartAssist->insertToMap(APP_NAPT_TWICE_TABLE_NAME, key, fvVector, (!addFlag));
                             m_AppRestartAssist->insertToMap(APP_NAPT_TWICE_TABLE_NAME, reverseEntryKey, reverseFvVector, (!addFlag));
@@ -483,7 +483,7 @@ int NatSync::addNatEntry(struct nfnl_ct *ct, struct naptEntry &entry, bool addFl
                 reverseFvVector.push_back(reverse_translated_dst_port);
 
 
-                if (m_AppRestartAssist->isWarmStartInProgress())
+                if (m_AppRestartAssist->isAdvancedStartInProgress())
                 {
                     m_AppRestartAssist->insertToMap(APP_NAPT_TWICE_TABLE_NAME, key, fvVector, false);
                     m_AppRestartAssist->insertToMap(APP_NAPT_TWICE_TABLE_NAME, reverseEntryKey, reverseFvVector, false);
@@ -499,7 +499,7 @@ int NatSync::addNatEntry(struct nfnl_ct *ct, struct naptEntry &entry, bool addFl
             }
             else
             {
-                if (m_AppRestartAssist->isWarmStartInProgress())
+                if (m_AppRestartAssist->isAdvancedStartInProgress())
                 {
                     m_AppRestartAssist->insertToMap(APP_NAPT_TWICE_TABLE_NAME, key, fvVector, true);
                     m_AppRestartAssist->insertToMap(APP_NAPT_TWICE_TABLE_NAME, reverseEntryKey, reverseFvVector, true);
@@ -514,7 +514,7 @@ int NatSync::addNatEntry(struct nfnl_ct *ct, struct naptEntry &entry, bool addFl
             }
         }
         else
-        { 
+        {
             /* Case of Twice NAT entry, where only the SIP, DIP are
              * NAT'ted but the port translation is not done. */
             SWSS_LOG_INFO("Twice NAT %s conntrack notification", opStr.c_str());
@@ -524,7 +524,7 @@ int NatSync::addNatEntry(struct nfnl_ct *ct, struct naptEntry &entry, bool addFl
 
             if (addFlag)
             {
-                if (m_AppRestartAssist->isWarmStartInProgress())
+                if (m_AppRestartAssist->isAdvancedStartInProgress())
                 {
                     m_AppRestartAssist->insertToMap(APP_NAT_TWICE_TABLE_NAME, key, fvVector, false);
                     m_AppRestartAssist->insertToMap(APP_NAT_TWICE_TABLE_NAME, reverseEntryKey, reverseFvVector, false);
@@ -540,7 +540,7 @@ int NatSync::addNatEntry(struct nfnl_ct *ct, struct naptEntry &entry, bool addFl
             }
             else
             {
-                if (m_AppRestartAssist->isWarmStartInProgress())
+                if (m_AppRestartAssist->isAdvancedStartInProgress())
                 {
                     m_AppRestartAssist->insertToMap(APP_NAT_TWICE_TABLE_NAME, key, fvVector, true);
                     m_AppRestartAssist->insertToMap(APP_NAT_TWICE_TABLE_NAME, reverseEntryKey, reverseFvVector, true);
@@ -591,7 +591,7 @@ int NatSync::addNatEntry(struct nfnl_ct *ct, struct naptEntry &entry, bool addFl
                 /* We check for existence of reverse nat entry in the app-db because the same dnat static entry
                  * would be reported as snat entry from the kernel if a packet that is forwarded in the kernel
                  * is matched by the iptables rules corresponding to the dnat static entry */
-                if (! m_AppRestartAssist->isWarmStartInProgress())
+                if (! m_AppRestartAssist->isAdvancedStartInProgress())
                 {
                     if ((entryExists = m_naptCheckTable.get(key, values)))
                     {
@@ -664,11 +664,11 @@ int NatSync::addNatEntry(struct nfnl_ct *ct, struct naptEntry &entry, bool addFl
                 {
                     FieldValueTuple snat_translated_port("translated_l4_port", nat_src_l4_port);
                     FieldValueTuple dnat_translated_port("translated_l4_port", src_l4_port);
-   
+
                     fvVector.push_back(snat_translated_port);
                     reverseFvVector.push_back(dnat_translated_port);
-  
-                    if (m_AppRestartAssist->isWarmStartInProgress())
+
+                    if (m_AppRestartAssist->isAdvancedStartInProgress())
                     {
                         m_AppRestartAssist->insertToMap(APP_NAPT_TABLE_NAME, key, fvVector, false);
                         m_AppRestartAssist->insertToMap(APP_NAPT_TABLE_NAME, reverseEntryKey, reverseFvVector, false);
@@ -702,7 +702,7 @@ int NatSync::addNatEntry(struct nfnl_ct *ct, struct naptEntry &entry, bool addFl
                 reverseEntryKey += entry.nat_src_ip.to_string();
 
                 std::vector<FieldValueTuple> values;
-                if (! m_AppRestartAssist->isWarmStartInProgress())
+                if (! m_AppRestartAssist->isAdvancedStartInProgress())
                 {
                     if ((entryExists = m_natCheckTable.get(key, values)))
                     {
@@ -773,7 +773,7 @@ int NatSync::addNatEntry(struct nfnl_ct *ct, struct naptEntry &entry, bool addFl
                 }
                 if (addFlag)
                 {
-                    if (m_AppRestartAssist->isWarmStartInProgress())
+                    if (m_AppRestartAssist->isAdvancedStartInProgress())
                     {
                         m_AppRestartAssist->insertToMap(APP_NAT_TABLE_NAME, key, fvVector, false);
                         m_AppRestartAssist->insertToMap(APP_NAT_TABLE_NAME, reverseEntryKey, reverseFvVector, false);
@@ -830,7 +830,7 @@ int NatSync::addNatEntry(struct nfnl_ct *ct, struct naptEntry &entry, bool addFl
                 reverseEntryKey += ":" + nat_dst_l4_port;
 
                 std::vector<FieldValueTuple> values;
-                if (! m_AppRestartAssist->isWarmStartInProgress())
+                if (! m_AppRestartAssist->isAdvancedStartInProgress())
                 {
                     if ((entryExists = m_naptCheckTable.get(key, values)))
                     {
@@ -887,7 +887,7 @@ int NatSync::addNatEntry(struct nfnl_ct *ct, struct naptEntry &entry, bool addFl
                     fvVector.push_back(dnat_translated_port);
                     reverseFvVector.push_back(snat_translated_port);
 
-                    if (m_AppRestartAssist->isWarmStartInProgress())
+                    if (m_AppRestartAssist->isAdvancedStartInProgress())
                     {
                         m_AppRestartAssist->insertToMap(APP_NAPT_TABLE_NAME, key, fvVector, false);
                         m_AppRestartAssist->insertToMap(APP_NAPT_TABLE_NAME, reverseEntryKey, reverseFvVector, false);
@@ -910,7 +910,7 @@ int NatSync::addNatEntry(struct nfnl_ct *ct, struct naptEntry &entry, bool addFl
                 reverseEntryKey += entry.nat_dest_ip.to_string();
 
                 std::vector<FieldValueTuple> values;
-                if (! m_AppRestartAssist->isWarmStartInProgress())
+                if (! m_AppRestartAssist->isAdvancedStartInProgress())
                 {
                     if ((entryExists = m_natCheckTable.get(key, values)))
                     {
@@ -930,7 +930,7 @@ int NatSync::addNatEntry(struct nfnl_ct *ct, struct naptEntry &entry, bool addFl
                             return 1;
                         }
                         else
-                        { 
+                        {
                             m_natTable.del(key);
                             SWSS_LOG_NOTICE("DNAT entry with key %s deleted from APP_DB", key.c_str());
                         }
@@ -953,7 +953,7 @@ int NatSync::addNatEntry(struct nfnl_ct *ct, struct naptEntry &entry, bool addFl
                             return 1;
                         }
                         else
-                        { 
+                        {
                             m_natTable.del(reverseEntryKey);
                             SWSS_LOG_NOTICE("Implicit SNAT entry with key %s deleted from APP_DB", reverseEntryKey.c_str());
                         }
@@ -961,7 +961,7 @@ int NatSync::addNatEntry(struct nfnl_ct *ct, struct naptEntry &entry, bool addFl
                 }
                 if (addFlag)
                 {
-                    if (m_AppRestartAssist->isWarmStartInProgress())
+                    if (m_AppRestartAssist->isAdvancedStartInProgress())
                     {
                         m_AppRestartAssist->insertToMap(APP_NAT_TABLE_NAME, key, fvVector, false);
                         m_AppRestartAssist->insertToMap(APP_NAT_TABLE_NAME, reverseEntryKey, reverseFvVector, false);

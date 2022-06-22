@@ -78,9 +78,9 @@ typedef struct FgNhgEntry
 } FgNhgEntry;
 
 /* Map from IP prefix to user configured FG NHG entries */
-typedef std::map<IpPrefix, FgNhgEntry*> FgNhgPrefixes; 
+typedef std::map<IpPrefix, FgNhgEntry*> FgNhgPrefixes;
 /* Map from IP address to user configured FG NHG entries */
-typedef std::map<IpAddress, FgNhgEntry*> FgNhgMembers; 
+typedef std::map<IpAddress, FgNhgEntry*> FgNhgMembers;
 /* Main structure to hold user configuration */
 typedef std::map<FgNhg, FgNhgEntry> FgNhgs;
 
@@ -93,7 +93,7 @@ typedef struct
 } BankMemberChanges;
 
 typedef std::vector<string> NextHopIndexMap;
-typedef map<string, NextHopIndexMap> WarmBootRecoveryMap;
+typedef map<string, NextHopIndexMap> AdvancedBootRecoveryMap;
 
 class FgNhgOrch : public Orch, public Observer
 {
@@ -108,7 +108,7 @@ public:
     bool setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops, sai_object_id_t &next_hop_id, bool &isNextHopIdChanged);
     bool removeFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix);
 
-    // warm reboot support
+    // advanced reboot support
     bool bake() override;
 
 private:
@@ -122,18 +122,18 @@ private:
     FgNhgPrefixes m_fgNhgPrefixes;
     bool isFineGrainedConfigured;
 
-    Table m_stateWarmRestartRouteTable;
+    Table m_stateAdvancedRestartRouteTable;
     ProducerStateTable m_routeTable;
 
     FgPrefixOpCache m_fgPrefixAddCache;
     FgPrefixOpCache m_fgPrefixDelCache;
 
-    // warm reboot support for recovery
+    // advanced reboot support for recovery
     // < ip_prefix, < HashBuckets, nh_ip>>
-    WarmBootRecoveryMap m_recoveryMap;
+    AdvancedBootRecoveryMap m_recoveryMap;
 
     bool setNewNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
-                    std::vector<BankMemberChanges> &bank_member_changes, 
+                    std::vector<BankMemberChanges> &bank_member_changes,
                     std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set, const IpPrefix&);
     bool computeAndSetHashBucketChanges(FGNextHopGroupEntry *syncd_fg_route_entry,
                     FgNhgEntry *fgNhgEntry, std::vector<BankMemberChanges> &bank_member_changes,

@@ -4,7 +4,7 @@
 #include "select.h"
 #include "selectabletimer.h"
 #include "netdispatcher.h"
-#include "warmRestartHelper.h"
+#include "advancedRestartHelper.h"
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/routesync.h"
 
@@ -13,7 +13,7 @@ using namespace std;
 using namespace swss;
 
 /*
- * Default warm-restart timer interval for routing-stack app. To be used only if
+ * Default advanced-restart timer interval for routing-stack app. To be used only if
  * no explicit value has been defined in configuration.
  */
 const uint32_t DEFAULT_ROUTING_RESTART_INTERVAL = 120;
@@ -40,7 +40,7 @@ static bool eoiuFlagsSet(Table &bgpStateTable)
         SWSS_LOG_DEBUG("IPv6|eoiu state: %s", value.c_str());
         return false;
     }
-    SWSS_LOG_NOTICE("Warm-Restart bgp eoiu reached for both ipv4 and ipv6");
+    SWSS_LOG_NOTICE("Advanced-Restart bgp eoiu reached for both ipv4 and ipv6");
     return true;
 }
 
@@ -63,12 +63,12 @@ int main(int argc, char **argv)
         {
             FpmLink fpm(&sync);
             Select s;
-            SelectableTimer warmStartTimer(timespec{0, 0});
+            SelectableTimer advancedStartTimer(timespec{0, 0});
             // Before eoiu flags detected, check them periodically. It also stop upon detection of reconciliation done.
             SelectableTimer eoiuCheckTimer(timespec{0, 0});
             // After eoiu flags are detected, start a hold timer before starting reconciliation.
             SelectableTimer eoiuHoldTimer(timespec{0, 0});
-           
+
             /*
              * Pipeline should be flushed right away to deal with state pending
              * from previous try/catch iterations.
@@ -81,38 +81,38 @@ int main(int argc, char **argv)
 
             s.addSelectable(&fpm);
 
-            /* If warm-restart feature is enabled, execute 'restoration' logic */
-            bool warmStartEnabled = sync.m_warmStartHelper.checkAndStart();
-            if (warmStartEnabled)
+            /* If advanced-restart feature is enabled, execute 'restoration' logic */
+            bool advancedStartEnabled = sync.m_advancedStartHelper.checkAndStart();
+            if (advancedStartEnabled)
             {
-                /* Obtain warm-restart timer defined for routing application */
-                time_t warmRestartIval = sync.m_warmStartHelper.getRestartTimer();
-                if (!warmRestartIval)
+                /* Obtain advanced-restart timer defined for routing application */
+                time_t advancedRestartIval = sync.m_advancedStartHelper.getRestartTimer();
+                if (!advancedRestartIval)
                 {
-                    warmStartTimer.setInterval(timespec{DEFAULT_ROUTING_RESTART_INTERVAL, 0});
+                    advancedStartTimer.setInterval(timespec{DEFAULT_ROUTING_RESTART_INTERVAL, 0});
                 }
                 else
                 {
-                    warmStartTimer.setInterval(timespec{warmRestartIval, 0});
+                    advancedStartTimer.setInterval(timespec{advancedRestartIval, 0});
                 }
 
-                /* Execute restoration instruction and kick off warm-restart timer */
-                if (sync.m_warmStartHelper.runRestoration())
+                /* Execute restoration instruction and kick off advanced-restart timer */
+                if (sync.m_advancedStartHelper.runRestoration())
                 {
-                    warmStartTimer.start();
-                    s.addSelectable(&warmStartTimer);
-                    SWSS_LOG_NOTICE("Warm-Restart timer started.");
+                    advancedStartTimer.start();
+                    s.addSelectable(&advancedStartTimer);
+                    SWSS_LOG_NOTICE("Advanced-Restart timer started.");
                 }
 
                 // Also start periodic eoiu check timer, first wait 5 seconds, then check every 1 second
                 eoiuCheckTimer.setInterval(timespec{5, 0});
                 eoiuCheckTimer.start();
                 s.addSelectable(&eoiuCheckTimer);
-                SWSS_LOG_NOTICE("Warm-Restart eoiuCheckTimer timer started.");
+                SWSS_LOG_NOTICE("Advanced-Restart eoiuCheckTimer timer started.");
             }
             else
             {
-                sync.m_warmStartHelper.setState(WarmStart::WSDISABLED);
+                sync.m_advancedStartHelper.setState(AdvancedStart::WSDISABLED);
             }
 
             while (true)
@@ -123,26 +123,26 @@ int main(int argc, char **argv)
                 s.select(&temps);
 
                 /*
-                 * Upon expiration of the warm-restart timer or eoiu Hold Timer, proceed to run the
+                 * Upon expiration of the advanced-restart timer or eoiu Hold Timer, proceed to run the
                  * reconciliation process if not done yet and remove the timer from
                  * select() loop.
                  * Note:  route reconciliation always succeeds, it will not be done twice.
                  */
-                if (temps == &warmStartTimer || temps == &eoiuHoldTimer)
+                if (temps == &advancedStartTimer || temps == &eoiuHoldTimer)
                 {
-                    if (temps == &warmStartTimer)
+                    if (temps == &advancedStartTimer)
                     {
-                        SWSS_LOG_NOTICE("Warm-Restart timer expired.");
+                        SWSS_LOG_NOTICE("Advanced-Restart timer expired.");
                     }
                     else
                     {
-                        SWSS_LOG_NOTICE("Warm-Restart EOIU hold timer expired.");
+                        SWSS_LOG_NOTICE("Advanced-Restart EOIU hold timer expired.");
                     }
 
-                    if (sync.m_warmStartHelper.inProgress())
+                    if (sync.m_advancedStartHelper.inProgress())
                     {
-                        sync.m_warmStartHelper.reconcile();
-                        SWSS_LOG_NOTICE("Warm-Restart reconciliation processed.");
+                        sync.m_advancedStartHelper.reconcile();
+                        SWSS_LOG_NOTICE("Advanced-Restart reconciliation processed.");
                     }
                     // remove the one-shot timer.
                     s.removeSelectable(temps);
@@ -151,12 +151,12 @@ int main(int argc, char **argv)
                 }
                 else if (temps == &eoiuCheckTimer)
                 {
-                    if (sync.m_warmStartHelper.inProgress())
+                    if (sync.m_advancedStartHelper.inProgress())
                     {
                         if (eoiuFlagsSet(bgpStateTable))
                         {
                             /* Obtain eoiu hold timer defined for bgp docker */
-                            uintmax_t eoiuHoldIval = WarmStart::getWarmStartTimer("eoiu_hold", "bgp");
+                            uintmax_t eoiuHoldIval = AdvancedStart::getAdvancedStartTimer("eoiu_hold", "bgp");
                             if (!eoiuHoldIval)
                             {
                                 eoiuHoldTimer.setInterval(timespec{DEFAULT_EOIU_HOLD_INTERVAL, 0});
@@ -168,21 +168,21 @@ int main(int argc, char **argv)
                             }
                             eoiuHoldTimer.start();
                             s.addSelectable(&eoiuHoldTimer);
-                            SWSS_LOG_NOTICE("Warm-Restart started EOIU hold timer which is to expire in %" PRIuMAX " seconds.", eoiuHoldIval);
+                            SWSS_LOG_NOTICE("Advanced-Restart started EOIU hold timer which is to expire in %" PRIuMAX " seconds.", eoiuHoldIval);
                             s.removeSelectable(&eoiuCheckTimer);
                             continue;
                         }
                         eoiuCheckTimer.setInterval(timespec{1, 0});
                         // re-start eoiu check timer
                         eoiuCheckTimer.start();
-                        SWSS_LOG_DEBUG("Warm-Restart eoiuCheckTimer restarted");
+                        SWSS_LOG_DEBUG("Advanced-Restart eoiuCheckTimer restarted");
                     }
                     else
                     {
                         s.removeSelectable(&eoiuCheckTimer);
                     }
                 }
-                else if (!warmStartEnabled || sync.m_warmStartHelper.isReconciled())
+                else if (!advancedStartEnabled || sync.m_advancedStartHelper.isReconciled())
                 {
                     pipeline.flush();
                     SWSS_LOG_DEBUG("Pipeline flushed");

@@ -5,7 +5,7 @@
 #include "orchdaemon.h"
 #include "logger.h"
 #include <sairedis.h>
-#include "warm_restart.h"
+#include "advanced_restart.h"
 
 #define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 #include "sairedis.h"
@@ -339,12 +339,12 @@ bool OrchDaemon::init()
     gNhgMapOrch = new NhgMapOrch(m_applDb, APP_FC_TO_NHG_INDEX_MAP_TABLE_NAME);
 
     /*
-     * The order of the orch list is important for state restore of warm start and
+     * The order of the orch list is important for state restore of advanced start and
      * the queued processing in m_toSync map after gPortsOrch->allPortsReady() is set.
      *
      * For the multiple consumers in Orchs, tasks in a table which name is smaller in lexicographic order are processed first
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
-     * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
+     * For cases when Orch has to process tables in specific order, like PortsOrch during advanced start, it has to override Orch::doTask()
      */
     m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, mux_orch, mux_cb_orch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, tunnel_decap_orch, sflow_orch, gDebugCounterOrch, gMacsecOrch, gBfdOrch, gSrv6Orch};
 
@@ -633,9 +633,9 @@ bool OrchDaemon::init()
     gP4Orch = new P4Orch(m_applDb, p4rt_tables, vrf_orch, gCoppOrch);
     m_orchList.push_back(gP4Orch);
 
-    if (WarmStart::isWarmStart())
+    if (AdvancedStart::isAdvancedStart())
     {
-        bool suc = warmRestoreAndSyncUp();
+        bool suc = advancedRestoreAndSyncUp();
         if (!suc)
         {
             return false;
@@ -730,16 +730,16 @@ void OrchDaemon::start()
             o->doTask();
 
         /*
-         * Asked to check warm restart readiness.
+         * Asked to check advanced restart readiness.
          * Not doing this under Select::TIMEOUT condition because of
          * the existence of finer granularity ExecutableTimer with select
          */
         if (gSwitchOrch && gSwitchOrch->checkRestartReady())
         {
-            bool ret = warmRestartCheck();
+            bool ret = advancedRestartCheck();
             if (ret)
             {
-                // Orchagent is ready to perform warm restart, stop processing any new db data.
+                // Orchagent is ready to perform advanced restart, stop processing any new db data.
                 // Should sleep here or continue handling timers and etc.??
                 if (!gSwitchOrch->checkRestartNoFreeze())
                 {
@@ -759,7 +759,7 @@ void OrchDaemon::start()
                     // Flush sairedis's redis pipeline
                     flush();
 
-                    SWSS_LOG_WARN("Orchagent is frozen for warm restart!");
+                    SWSS_LOG_WARN("Orchagent is frozen for advanced restart!");
                     sleep(UINT_MAX);
                 }
             }
@@ -769,11 +769,11 @@ void OrchDaemon::start()
 
 /*
  * Try to perform orchagent state restore and dynamic states sync up if
- * warm start request is detected.
+ * advanced start request is detected.
  */
-bool OrchDaemon::warmRestoreAndSyncUp()
+bool OrchDaemon::advancedRestoreAndSyncUp()
 {
-    WarmStart::setWarmStartState("orchagent", WarmStart::INITIALIZED);
+    AdvancedStart::setAdvancedStartState("orchagent", AdvancedStart::INITIALIZED);
 
     for (Orch *o : m_orchList)
     {
@@ -817,7 +817,7 @@ bool OrchDaemon::warmRestoreAndSyncUp()
      * orchagent should be in exact same state of pre-shutdown.
      * Perform restore validation as needed.
      */
-    bool suc = warmRestoreValidation();
+    bool suc = advancedRestoreValidation();
     if (!suc)
     {
         SWSS_LOG_ERROR("Orchagent state restore failed");
@@ -835,7 +835,7 @@ bool OrchDaemon::warmRestoreAndSyncUp()
      * Note. Arp sync up is handled in neighsyncd.
      * The "RECONCILED" state of orchagent doesn't mean the state related to neighbor is up to date.
      */
-    WarmStart::setWarmStartState("orchagent", WarmStart::RECONCILED);
+    AdvancedStart::setAdvancedStartState("orchagent", AdvancedStart::RECONCILED);
     return true;
 }
 
@@ -851,8 +851,8 @@ void OrchDaemon::getTaskToSync(vector<string> &ts)
 }
 
 
-/* Perform basic validation after start restore for warm start */
-bool OrchDaemon::warmRestoreValidation()
+/* Perform basic validation after start restore for advanced start */
+bool OrchDaemon::advancedRestoreValidation()
 {
     /*
      * No pending task should exist for any of the consumer at this point.
@@ -862,24 +862,24 @@ bool OrchDaemon::warmRestoreValidation()
     getTaskToSync(ts);
     if (ts.size() != 0)
     {
-        // TODO: Update this section accordingly once pre-warmStart consistency validation is ready.
+        // TODO: Update this section accordingly once pre-advancedStart consistency validation is ready.
         SWSS_LOG_NOTICE("There are pending consumer tasks after restore: ");
         for(auto &s : ts)
         {
             SWSS_LOG_NOTICE("%s", s.c_str());
         }
     }
-    WarmStart::setWarmStartState("orchagent", WarmStart::RESTORED);
+    AdvancedStart::setAdvancedStartState("orchagent", AdvancedStart::RESTORED);
     return ts.empty();
 }
 
 /*
  * Reply with "READY" notification if no pending tasks, and return true.
  * Ortherwise reply with "NOT_READY" notification and return false.
- * Further consideration is needed as to when orchagent is treated as warm restart ready.
+ * Further consideration is needed as to when orchagent is treated as advanced restart ready.
  * For now, no pending task should exist in any orch agent.
  */
-bool OrchDaemon::warmRestartCheck()
+bool OrchDaemon::advancedRestartCheck()
 {
     std::vector<swss::FieldValueTuple> values;
     std::string op = "orchagent";
@@ -891,7 +891,7 @@ bool OrchDaemon::warmRestartCheck()
 
     if (ts.size() != 0)
     {
-        SWSS_LOG_NOTICE("WarmRestart check found pending tasks: ");
+        SWSS_LOG_NOTICE("AdvancedRestart check found pending tasks: ");
         for(auto &s : ts)
         {
             SWSS_LOG_NOTICE("    %s", s.c_str());

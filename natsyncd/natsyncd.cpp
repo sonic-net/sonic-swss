@@ -36,11 +36,11 @@ int main(int argc, char **argv)
 
             using namespace std::chrono;
             /*
-             * If warmstart, read the NAT tables to cache map.
-             * Wait for the kernel NAT conntrack table restore to finish in case of warmreboot.
+             * If advanced start, read the NAT tables to cache map.
+             * Wait for the kernel NAT conntrack table restore to finish in case of advanced reboot.
              * Start reconcile timer once restore flag is set.
              */
-            if (sync.getRestartAssist()->isWarmStartInProgress())
+            if (sync.getRestartAssist()->isAdvancedStartInProgress())
             {
                 sync.getRestartAssist()->readTablesToMap();
 
@@ -76,10 +76,10 @@ int main(int argc, char **argv)
                 Selectable *temps;
                 s.select(&temps);
                 /*
-                 * If warmstart is in progress, we check the reconcile timer,
+                 * If advanced start is in progress, we check the reconcile timer,
                  * if timer expired, we stop the timer and start the reconcile process
                  */
-                if (sync.getRestartAssist()->isWarmStartInProgress())
+                if (sync.getRestartAssist()->isAdvancedStartInProgress())
                 {
                     if (sync.getRestartAssist()->checkReconcileTimer(temps))
                     {

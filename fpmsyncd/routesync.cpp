@@ -49,7 +49,7 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     m_label_routeTable(pipeline, APP_LABEL_ROUTE_TABLE_NAME, true),
     m_vnet_routeTable(pipeline, APP_VNET_RT_TABLE_NAME, true),
     m_vnet_tunnelTable(pipeline, APP_VNET_RT_TUNNEL_TABLE_NAME, true),
-    m_warmStartHelper(pipeline, &m_routeTable, APP_ROUTE_TABLE_NAME, "bgp", "bgp"),
+    m_advancedStartHelper(pipeline, &m_routeTable, APP_ROUTE_TABLE_NAME, "bgp", "bgp"),
     m_nl_sock(NULL), m_link_cache(NULL)
 {
     m_nl_sock = nl_socket_alloc();
@@ -113,7 +113,7 @@ void RouteSync::parseEncap(struct rtattr *tb, uint32_t &encap_value, string &rma
     return;
 }
 
-void RouteSync::getEvpnNextHopSep(string& nexthops, string& vni_list,  
+void RouteSync::getEvpnNextHopSep(string& nexthops, string& vni_list,
                    string& mac_list, string& intf_list)
 {
     nexthops  += NHG_DELIMITER;
@@ -124,8 +124,8 @@ void RouteSync::getEvpnNextHopSep(string& nexthops, string& vni_list,
     return;
 }
 
-void RouteSync::getEvpnNextHopGwIf(char *gwaddr, int vni_value, 
-                               string& nexthops, string& vni_list,  
+void RouteSync::getEvpnNextHopGwIf(char *gwaddr, int vni_value,
+                               string& nexthops, string& vni_list,
                                string& mac_list, string& intf_list,
                                string rmac, string vlan_id)
 {
@@ -135,9 +135,9 @@ void RouteSync::getEvpnNextHopGwIf(char *gwaddr, int vni_value,
     intf_list+=vlan_id;
 }
 
-bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes, 
-                               struct rtattr *tb[], string& nexthops, 
-                               string& vni_list, string& mac_list, 
+bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
+                               struct rtattr *tb[], string& nexthops,
+                               string& vni_list, string& mac_list,
                                string& intf_list)
 {
     void *gate = NULL;
@@ -157,9 +157,9 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
     if (tb[RTA_GATEWAY])
         gate = RTA_DATA(tb[RTA_GATEWAY]);
 
-    if (h->nlmsg_type == RTM_NEWROUTE) 
+    if (h->nlmsg_type == RTM_NEWROUTE)
     {
-        if (!tb[RTA_MULTIPATH]) 
+        if (!tb[RTA_MULTIPATH])
         {
             gw_af = AF_INET; // default value
             if (gate)
@@ -172,7 +172,7 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
                 else
                 {
                     memcpy(ipv6_address.s6_addr, gate, IPV6_MAX_BYTE);
-                    gw_af = AF_INET6;                    
+                    gw_af = AF_INET6;
                 }
             }
 
@@ -212,7 +212,7 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
             }
 
             if (tb[RTA_ENCAP] && tb[RTA_ENCAP_TYPE]
-                && (*(uint16_t *)RTA_DATA(tb[RTA_ENCAP_TYPE]) == NH_ENCAP_VXLAN)) 
+                && (*(uint16_t *)RTA_DATA(tb[RTA_ENCAP_TYPE]) == NH_ENCAP_VXLAN))
             {
                 parseEncap(tb[RTA_ENCAP], encap_value, rmac);
             }
@@ -235,7 +235,7 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
             struct rtnexthop *rtnh = (struct rtnexthop *)RTA_DATA(tb[RTA_MULTIPATH]);
             len = (int)RTA_PAYLOAD(tb[RTA_MULTIPATH]);
 
-            for (;;) 
+            for (;;)
             {
                 uint16_t encap = 0;
                 if (len < (int)sizeof(*rtnh) || rtnh->rtnh_len > len)
@@ -244,7 +244,7 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
                 }
 
                 gate = 0;
-                if (rtnh->rtnh_len > sizeof(*rtnh)) 
+                if (rtnh->rtnh_len > sizeof(*rtnh))
                 {
                     memset(subtb, 0, sizeof(subtb));
 
@@ -266,10 +266,10 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
                         else
                         {
                             memcpy(ipv6_address.s6_addr, gate, IPV6_MAX_BYTE);
-                            gw_af = AF_INET6;                    
+                            gw_af = AF_INET6;
                         }
                     }
-                    
+
                     if(gw_af == AF_INET6)
                     {
                         if (IN6_IS_ADDR_V4MAPPED(&ipv6_address))
@@ -284,7 +284,7 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
                             return false;
                         }
                     }
-                    
+
                     inet_ntop(gw_af, gateaddr, nexthopaddr, MAX_ADDR_SIZE);
 
 
@@ -338,7 +338,7 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
 
                 len -= NLMSG_ALIGN(rtnh->rtnh_len);
                 rtnh = RTNH_NEXT(rtnh);
-            }			
+            }
         }
     }
     return true;
@@ -383,7 +383,7 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
     }
     else if (rtm->rtm_family == AF_INET6)
     {
-        if (rtm->rtm_dst_len > IPV6_MAX_BITLEN) 
+        if (rtm->rtm_dst_len > IPV6_MAX_BITLEN)
         {
             return;
         }
@@ -435,33 +435,33 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
                 inet_ntop(rtm->rtm_family, dstaddr, buf, MAX_ADDR_SIZE), dst_len);
     }
 
-    SWSS_LOG_INFO("Receive route message dest ip prefix: %s Op:%s", 
+    SWSS_LOG_INFO("Receive route message dest ip prefix: %s Op:%s",
                     destipprefix,
                     nlmsg_type == RTM_NEWROUTE ? "add":"del");
 
     /*
      * Upon arrival of a delete msg we could either push the change right away,
-     * or we could opt to defer it if we are going through a warm-reboot cycle.
+     * or we could opt to defer it if we are going through a advanced-reboot cycle.
      */
-    bool warmRestartInProgress = m_warmStartHelper.inProgress();
+    bool advancedRestartInProgress = m_advancedStartHelper.inProgress();
 
     if (nlmsg_type == RTM_DELROUTE)
     {
-        if (!warmRestartInProgress)
+        if (!advancedRestartInProgress)
         {
             m_routeTable.del(destipprefix);
             return;
         }
         else
         {
-            SWSS_LOG_INFO("Warm-Restart mode: Receiving delete msg: %s",
+            SWSS_LOG_INFO("Advanced-Restart mode: Receiving delete msg: %s",
                           destipprefix);
 
             vector<FieldValueTuple> fvVector;
             const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix,
                                                                DEL_COMMAND,
                                                                fvVector);
-            m_warmStartHelper.insertRefreshMap(kfv);
+            m_advancedStartHelper.insertRefreshMap(kfv);
             return;
         }
     }
@@ -524,7 +524,7 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
     fvVector.push_back(vni);
     fvVector.push_back(mac);
 
-    if (!warmRestartInProgress)
+    if (!advancedRestartInProgress)
     {
         m_routeTable.set(destipprefix, fvVector);
         SWSS_LOG_DEBUG("RouteTable set msg: %s vtep:%s vni:%s mac:%s intf:%s",
@@ -533,17 +533,17 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
 
     /*
      * During routing-stack restarting scenarios route-updates will be temporarily
-     * put on hold by warm-reboot logic.
+     * put on hold by advanced-reboot logic.
      */
     else
     {
-        SWSS_LOG_INFO("Warm-Restart mode: RouteTable set msg: %s vtep:%s vni:%s mac:%s",
+        SWSS_LOG_INFO("Advanced-Restart mode: RouteTable set msg: %s vtep:%s vni:%s mac:%s",
                       destipprefix, nexthops.c_str(), vni_list.c_str(), mac_list.c_str());
 
         const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix,
                                                            SET_COMMAND,
                                                            fvVector);
-        m_warmStartHelper.insertRefreshMap(kfv);
+        m_advancedStartHelper.insertRefreshMap(kfv);
     }
     return;
 }
@@ -557,7 +557,7 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
         return;
     /* Length validity. */
     len = (int)(h->nlmsg_len - NLMSG_LENGTH(sizeof(struct ndmsg)));
-    if (len < 0) 
+    if (len < 0)
     {
         SWSS_LOG_ERROR("%s: Message received from netlink is of a broken size %d %zu",
             __PRETTY_FUNCTION__, h->nlmsg_len,
@@ -595,7 +595,7 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
     {
         /* Get the name of the master device */
         getIfName(master_index, master_name, IFNAMSIZ);
-    
+
         /* If the master device name starts with VNET_PREFIX, it is a VNET route.
            The VNET name is exactly the name of the associated master device. */
         if (string(master_name).find(VNET_PREFIX) == 0)
@@ -614,8 +614,8 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
     }
 }
 
-/* 
- * Handle regular route (include VRF route) 
+/*
+ * Handle regular route (include VRF route)
  * @arg nlmsg_type      Netlink message type
  * @arg obj             Netlink object
  * @arg vrf             Vrf name
@@ -656,27 +656,27 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
 
     /*
      * Upon arrival of a delete msg we could either push the change right away,
-     * or we could opt to defer it if we are going through a warm-reboot cycle.
+     * or we could opt to defer it if we are going through a advanced-reboot cycle.
      */
-    bool warmRestartInProgress = m_warmStartHelper.inProgress();
+    bool advancedRestartInProgress = m_advancedStartHelper.inProgress();
 
     if (nlmsg_type == RTM_DELROUTE)
     {
-        if (!warmRestartInProgress)
+        if (!advancedRestartInProgress)
         {
             m_routeTable.del(destipprefix);
             return;
         }
         else
         {
-            SWSS_LOG_INFO("Warm-Restart mode: Receiving delete msg: %s",
+            SWSS_LOG_INFO("Advanced-Restart mode: Receiving delete msg: %s",
                           destipprefix);
 
             vector<FieldValueTuple> fvVector;
             const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix,
                                                                DEL_COMMAND,
                                                                fvVector);
-            m_warmStartHelper.insertRefreshMap(kfv);
+            m_advancedStartHelper.insertRefreshMap(kfv);
             return;
         }
     }
@@ -755,7 +755,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
         fvVector.push_back(wt);
     }
 
-    if (!warmRestartInProgress)
+    if (!advancedRestartInProgress)
     {
         m_routeTable.set(destipprefix, fvVector);
         SWSS_LOG_DEBUG("RouteTable set msg: %s %s %s %s", destipprefix,
@@ -764,21 +764,21 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
 
     /*
      * During routing-stack restarting scenarios route-updates will be temporarily
-     * put on hold by warm-reboot logic.
+     * put on hold by advanced-reboot logic.
      */
     else
     {
-        SWSS_LOG_INFO("Warm-Restart mode: RouteTable set msg: %s %s %s %s", destipprefix,
+        SWSS_LOG_INFO("Advanced-Restart mode: RouteTable set msg: %s %s %s %s", destipprefix,
                       gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
 
         const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix,
                                                            SET_COMMAND,
                                                            fvVector);
-        m_warmStartHelper.insertRefreshMap(kfv);
+        m_advancedStartHelper.insertRefreshMap(kfv);
     }
 }
 
-/* 
+/*
  * Handle label route
  * @arg nlmsg_type      Netlink message type
  * @arg obj             Netlink object
@@ -871,11 +871,11 @@ void RouteSync::onLabelRouteMsg(int nlmsg_type, struct nl_object *obj)
 }
 
 /*
- * Handle vnet route 
+ * Handle vnet route
  * @arg nlmsg_type      Netlink message type
  * @arg obj             Netlink object
  * @arg vnet            Vnet name
- */     
+ */
 void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj, string vnet)
 {
     struct rtnl_route *route_obj = (struct rtnl_route *)obj;

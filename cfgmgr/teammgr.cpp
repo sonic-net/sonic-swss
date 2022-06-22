@@ -3,7 +3,7 @@
 #include "logger.h"
 #include "shellcmd.h"
 #include "tokenize.h"
-#include "warm_restart.h"
+#include "advanced_restart.h"
 #include "portmgr.h"
 #include <swss/redisutility.h>
 
@@ -508,10 +508,10 @@ task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fal
     const string dump_path = "/var/warmboot/teamd/";
     MacAddress mac_boot = m_mac;
 
-    // set portchannel mac same with mac before warmStart, when warmStart and there
+    // set portchannel mac same with mac before advancedStart, when advancedStart and there
     // is a file written by teamd.
     ifstream aliasfile(dump_path + alias);
-    if (WarmStart::isWarmStart() && aliasfile.is_open())
+    if (AdvancedStart::isAdvancedStart() && aliasfile.is_open())
     {
         const int partner_system_id_offset = 40;
         string line;
@@ -558,10 +558,10 @@ task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fal
     SWSS_LOG_INFO("Port channel %s teamd configuration: %s",
             alias.c_str(), conf.str().c_str());
 
-    string warmstart_flag = WarmStart::isWarmStart() ? " -w -o " : " -r ";
+    string advancedstart_flag = AdvancedStart::isAdvancedStart() ? " -w -o " : " -r ";
 
     cmd << TEAMD_CMD
-        << warmstart_flag
+        << advancedstart_flag
         << " -t " << alias
         << " -c " << conf.str()
         << " -L " << dump_path
@@ -595,7 +595,7 @@ bool TeamMgr::removeLag(const string &alias)
 }
 
 // Port-channel names are in the pattern of "PortChannel####"
-// 
+//
 // The LACP key could be generated in 3 ways based on the value in config DB:
 //      1. "auto" - LACP key is extracted from the port-channel name and is set to be the number at the end of the port-channel name
 //                  We are adding 1 at the beginning to avoid LACP key collisions between similar LACP keys e.g. PortChannel10 and PortChannel010.

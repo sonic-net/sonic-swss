@@ -7,7 +7,7 @@
 #include "netdispatcher.h"
 #include "netlink.h"
 #include "fdbsyncd/fdbsync.h"
-#include "warm_restart.h"
+#include "advanced_restart.h"
 
 using namespace std;
 using namespace swss;
@@ -41,13 +41,13 @@ int main(int argc, char **argv)
             using namespace std::chrono;
 
             /*
-             * If WarmStart is enabled, restore the VXLAN-FDB and VNI 
+             * If AdvancedStart is enabled, restore the VXLAN-FDB and VNI
              * tables and start a reconcillation timer
              */
-            if (sync.getRestartAssist()->isWarmStartInProgress())
+            if (sync.getRestartAssist()->isAdvancedStartInProgress())
             {
                 sync.getRestartAssist()->readTablesToMap();
-                
+
                 steady_clock::time_point starttime = steady_clock::now();
                 while (!sync.isIntfRestoreDone())
                 {
@@ -68,7 +68,7 @@ int main(int argc, char **argv)
             }
             else
             {
-                sync.getRestartAssist()->warmStartDisabled();
+                sync.getRestartAssist()->advancedStartDisabled();
                 sync.m_reconcileDone = true;
             }
 
@@ -112,11 +112,11 @@ int main(int argc, char **argv)
                         SWSS_LOG_NOTICE("FDB Replay Complete");
                         s.removeSelectable(&replayCheckTimer);
 
-                        /* Obtain warm-restart timer defined for routing application */
-                        uint32_t warmRestartIval = WarmStart::getWarmStartTimer("bgp","bgp");
-                        if (warmRestartIval)
+                        /* Obtain advanced-restart timer defined for routing application */
+                        uint32_t advancedRestartIval = AdvancedStart::getAdvancedStartTimer("bgp","bgp");
+                        if (advancedRestartIval)
                         {
-                            sync.getRestartAssist()->setReconcileInterval(warmRestartIval);
+                            sync.getRestartAssist()->setReconcileInterval(advancedRestartIval);
                         }
                         //Else the interval is already set to default value
 
@@ -134,10 +134,10 @@ int main(int argc, char **argv)
                 else
                 {
                     /*
-                     * If warmstart is in progress, we check the reconcile timer,
+                     * If advanced start is in progress, we check the reconcile timer,
                      * if timer expired, we stop the timer and start the reconcile process
                      */
-                    if (sync.getRestartAssist()->isWarmStartInProgress())
+                    if (sync.getRestartAssist()->isAdvancedStartInProgress())
                     {
                         if (sync.getRestartAssist()->checkReconcileTimer(temps))
                         {

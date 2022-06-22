@@ -1033,20 +1033,20 @@ Stores information for physical switch ports managed by the switch chip. Ports t
     fec                 = 1*64VCHAR     ; port fec mode
     autoneg             = BIT           ; auto-negotiation mode
 
-### WARM\_RESTART
-    ;Stores system warm start configuration
+### ADVANCED\_RESTART
+    ;Stores system advanced start configuration
     ;Status: work in progress
 
-    key                 = WARM_RESTART:name ; name is the name of SONiC docker or "system" for global configuration.
+    key                 = ADVANCED_RESTART:name ; name is the name of SONiC docker or "system" for global configuration.
 
-    neighsyncd_timer    = 1*4DIGIT          ; neighsyncd_timer is the timer used for neighsyncd during the warm restart.
+    neighsyncd_timer    = 1*4DIGIT          ; neighsyncd_timer is the timer used for neighsyncd during the advanced restart.
                                             ; Timer is started after we restored the neighborTable to internal data structures.
                                             ; neighborsyncd then starts to read all linux kernel entries and mark the entries in
                                             ; the data structures accordingly. Once the timer is expired, we will do reconciliation
                                             ; and push the delta to appDB
                                             ; Valid value is 1-9999. 0 is invalid.
 
-    bgp_timer           = 1*4DIGIT          ; bgp_timer holds the time interval utilized by fpmsyncd during warm-restart episodes.
+    bgp_timer           = 1*4DIGIT          ; bgp_timer holds the time interval utilized by fpmsyncd during advanced-restart episodes.
                                             ; During this interval fpmsyncd will recover all the routing state previously pushed to
                                             ; AppDB, as well as all the new state coming from zebra/bgpd. Upon expiration of this
                                             ; timer, fpmsyncd will execute the reconciliation logic to eliminate all the staled
@@ -1054,7 +1054,7 @@ Stores information for physical switch ports managed by the switch chip. Ports t
                                             ; the elected routing-stack.
                                             ; Supported range: 1-3600.
 
-    teamsyncd_timer     = 1*4DIGIT          ; teamsyncd_timer holds the time interval utilized by teamsyncd during warm-restart episodes.
+    teamsyncd_timer     = 1*4DIGIT          ; teamsyncd_timer holds the time interval utilized by teamsyncd during advanced-restart episodes.
                                             ; The timer is started when teamsyncd starts. During the timer interval teamsyncd
                                             ; will preserver all LAG interface changes, but it will not apply them. The changes
                                             ; will only be applied when the timer expired. During the changes application the stale
@@ -1102,37 +1102,37 @@ Stores information for physical switch ports managed by the switch chip. Ports t
     key                 = MGMT_PORT_TABLE|ifname    ; ifname must be unique across PORT,INTF,VLAN,LAG TABLES
     oper_status         = "down" / "up" ; oper status
 
-### WARM\_RESTART\_ENABLE\_TABLE
-    ;Stores system warm start and docker warm start enable/disable configuration
-    ;The configuration is persistent across warm reboot but not cold reboot.
+### ADVANCED\_RESTART\_ENABLE\_TABLE
+    ;Stores system advanced start and docker advanced start enable/disable configuration
+    ;The configuration is persistent across advanced reboot but not cold reboot.
     ;Status: work in progress
 
-    key                 = WARM_RESTART_ENABLE_TABLE:name ; name is the name of SONiC docker or "system" for global configuration.
+    key                 = ADVANCED_RESTART_ENABLE_TABLE:name ; name is the name of SONiC docker or "system" for global configuration.
 
     enable              = "true" / "false"  ; Default value as false.
-                                            ; If "system" warm start knob is true, docker level knob will be ignored.
-                                            ; If "system" warm start knob is false, docker level knob takes effect.
+                                            ; If "system" advanced start knob is true, docker level knob will be ignored.
+                                            ; If "system" advanced start knob is false, docker level knob takes effect.
 
-### WARM\_RESTART\_TABLE
-    ;Stores application and orchdameon warm start status
+### ADVANCED\_RESTART\_TABLE
+    ;Stores application and orchdameon advanced start status
     ;Status: work in progress
 
-    key             = WARM_RESTART_TABLE|process_name         ; process_name is a unique process identifier.
-                                                              ; with exception of 'warm-shutdown' operation.
-                                                              ; 'warm-shutdown' operation key is used to
-                                                              ; track warm shutdown stages and results.
+    key             = ADVANCED_RESTART_TABLE|process_name     ; process_name is a unique process identifier.
+                                                              ; with exception of 'advanced-shutdown' operation.
+                                                              ; 'advanced-shutdown' operation key is used to
+                                                              ; track advanced shutdown stages and results.
                                                               ; Added to this table to leverage the existing
-                                                              ; "show warm-restart state" command.
+                                                              ; "show advanced-restart state" command.
 
     restore_count   = 1*10DIGIT                               ; a value between 0 and 2147483647 to keep track
                                                               ; of the number of times that an application has
                                                               ; 'restored' its state from its associated redis
                                                               ; data-store; which is equivalent to the number
                                                               ; of times an application has iterated through
-                                                              ; a warm-restart cycle.
+                                                              ; a advanced-restart cycle.
 
     state           = "initialized" / "restored" / "reconciled"  ; initialized: initial FSM state for processes
-                                                                 ; with warm-restart capabilities turned on.
+                                                                 ; with advanced-restart capabilities turned on.
                                                                  ;
                                                                  ; restored: process restored the state previously
                                                                  ; uploaded to redis data-stores.
@@ -1143,7 +1143,7 @@ Stores information for physical switch ports managed by the switch chip. Ports t
                                                                  ; and so on.
 
 ### NEIGH_RESTORE_TABLE
-    ;State for neighbor table restoring process during warm reboot
+    ;State for neighbor table restoring process during advanced reboot
     key                 = NEIGH_RESTORE_TABLE|Flags
     restored            = "true" / "false" ; restored state
 

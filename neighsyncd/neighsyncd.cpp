@@ -34,12 +34,12 @@ int main(int argc, char **argv)
 
             using namespace std::chrono;
             /*
-             * If warmstart, read neighbor table to cache map.
-             * Wait the kernel neighbor table restore to finish in case of warmreboot.
-             * Regular swss docker warmstart should have marked the restore flag to true always.
+             * If advanced start, read neighbor table to cache map.
+             * Wait the kernel neighbor table restore to finish in case of advanced reboot.
+             * Regular swss docker advanced start should have marked the restore flag to true always.
              * Start reconcile timer once restore flag is set
              */
-            if (sync.getRestartAssist()->isWarmStartInProgress())
+            if (sync.getRestartAssist()->isAdvancedStartInProgress())
             {
                 sync.getRestartAssist()->readTablesToMap();
 
@@ -72,10 +72,10 @@ int main(int argc, char **argv)
                 Selectable *temps;
                 s.select(&temps);
                 /*
-                 * If warmstart is in progress, we check the reconcile timer,
+                 * If advanced start is in progress, we check the reconcile timer,
                  * if timer expired, we stop the timer and start the reconcile process
                  */
-                if (sync.getRestartAssist()->isWarmStartInProgress())
+                if (sync.getRestartAssist()->isAdvancedStartInProgress())
                 {
                     if (sync.getRestartAssist()->checkReconcileTimer(temps))
                     {

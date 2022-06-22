@@ -9,7 +9,7 @@
 #include "tokenize.h"
 #include "shellcmd.h"
 #include "exec.h"
-#include "warm_restart.h"
+#include "advanced_restart.h"
 
 using namespace std;
 using namespace swss;
@@ -128,8 +128,8 @@ TunnelMgr::TunnelMgr(DBConnector *cfgDb, DBConnector *appDb, const std::vector<s
             }
         }
     }
-    
-    if (WarmStart::isWarmStart())
+
+    if (AdvancedStart::isAdvancedStart())
     {
         std::vector<string> tunnel_keys;
         m_cfgTunnelTable.getKeys(tunnel_keys);
@@ -140,7 +140,7 @@ TunnelMgr::TunnelMgr(DBConnector *cfgDb, DBConnector *appDb, const std::vector<s
         }
         if (m_tunnelReplay.empty())
         {
-            finalizeWarmReboot();
+            finalizeAdvancedReboot();
         }
 
     }
@@ -211,9 +211,9 @@ void TunnelMgr::doTask(Consumer &consumer)
         }
     }
 
-    if (!replayDone && m_tunnelReplay.empty() && WarmStart::isWarmStart())
+    if (!replayDone && m_tunnelReplay.empty() && AdvancedStart::isAdvancedStart())
     {
-        finalizeWarmReboot();
+        finalizeAdvancedReboot();
     }
 }
 
@@ -287,7 +287,7 @@ bool TunnelMgr::doTunnelTask(const KeyOpFieldsValuesTuple & t)
         }
         m_tunnelCache.erase(tunnelName);
     }
-    
+
     SWSS_LOG_NOTICE("Tunnel %s task, op %s", tunnelName.c_str(), op.c_str());
     return true;
 }
@@ -390,11 +390,11 @@ bool TunnelMgr::configIpTunnel(const TunnelInfo& tunInfo)
 }
 
 
-void TunnelMgr::finalizeWarmReboot()
+void TunnelMgr::finalizeAdvancedReboot()
 {
     replayDone = true;
-    WarmStart::setWarmStartState("tunnelmgrd", WarmStart::REPLAYED);
-    SWSS_LOG_NOTICE("tunnelmgrd warmstart state set to REPLAYED");
-    WarmStart::setWarmStartState("tunnelmgrd", WarmStart::RECONCILED);
-    SWSS_LOG_NOTICE("tunnelmgrd warmstart state set to RECONCILED");
+    AdvancedStart::setAdvancedStartState("tunnelmgrd", AdvancedStart::REPLAYED);
+    SWSS_LOG_NOTICE("tunnelmgrd advanced start state set to REPLAYED");
+    AdvancedStart::setAdvancedStartState("tunnelmgrd", AdvancedStart::RECONCILED);
+    SWSS_LOG_NOTICE("tunnelmgrd advanced start state set to RECONCILED");
 }

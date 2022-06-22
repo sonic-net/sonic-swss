@@ -7,16 +7,16 @@
 #include "producerstatetable.h"
 #include "subscriberstatetable.h"
 #include "netmsg.h"
-#include "warmRestartAssist.h"
+#include "advancedRestartAssist.h"
 
 /*
- * Default timer interval for fdbsyncd reconcillation 
+ * Default timer interval for fdbsyncd reconcillation
  */
-#define DEFAULT_FDBSYNC_WARMSTART_TIMER 120
+#define DEFAULT_FDBSYNC_ADVANCEDSTART_TIMER 120
 
 /*
- * This is the MAX time in seconds, fdbsyncd will wait after warm-reboot
- * for the interface entries to be recreated in kernel before attempting to 
+ * This is the MAX time in seconds, fdbsyncd will wait after advanced-reboot
+ * for the interface entries to be recreated in kernel before attempting to
  * write the FDB data to kernel
  */
 #define INTF_RESTORE_MAX_WAIT_TIME 180

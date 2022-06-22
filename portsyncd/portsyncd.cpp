@@ -15,7 +15,7 @@
 #include "portsyncd/linksync.h"
 #include "subscriberstatetable.h"
 #include "exec.h"
-#include "warm_restart.h"
+#include "advanced_restart.h"
 
 using namespace std;
 using namespace swss;
@@ -42,8 +42,8 @@ void usage()
     cout << "       this program will exit if configDB does not contain that info" << endl;
 }
 
-void handlePortConfigFile(ProducerStateTable &p, string file, bool warm);
-void handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, bool warm);
+void handlePortConfigFile(ProducerStateTable &p, string file, bool advanced);
+void handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, bool advanced);
 void handleVlanIntfFile(string file);
 void handlePortConfig(ProducerStateTable &p, map<string, KeyOpFieldsValuesTuple> &port_cfg_map);
 void checkPortInitDone(DBConnector *appl_db);
@@ -73,9 +73,9 @@ int main(int argc, char **argv)
     ProducerStateTable p(&appl_db, APP_PORT_TABLE_NAME);
     SubscriberStateTable portCfg(&cfgDb, CFG_PORT_TABLE_NAME);
 
-    WarmStart::initialize("portsyncd", "swss");
-    WarmStart::checkWarmStart("portsyncd", "swss");
-    const bool warm = WarmStart::isWarmStart();
+    AdvancedStart::initialize("portsyncd", "swss");
+    AdvancedStart::checkAdvancedStart("portsyncd", "swss");
+    const bool advanced = AdvancedStart::isAdvancedStart();
 
     try
     {
@@ -86,7 +86,7 @@ int main(int argc, char **argv)
         netlink.dumpRequest(RTM_GETLINK);
         cout << "Listen to link messages..." << endl;
 
-        handlePortConfigFromConfigDB(p, cfgDb, warm);
+        handlePortConfigFromConfigDB(p, cfgDb, advanced);
 
         LinkSync sync(&appl_db, &state_db);
         NetDispatcher::getInstance().registerMessageHandler(RTM_NEWLINK, &sync);
@@ -187,7 +187,7 @@ static void notifyPortConfigDone(ProducerStateTable &p)
     p.set("PortConfigDone", attrs);
 }
 
-void handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, bool warm)
+void handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, bool advanced)
 {
     SWSS_LOG_ENTER();
 
@@ -213,13 +213,13 @@ void handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, boo
             FieldValueTuple attr(v.first, v.second);
             attrs.push_back(attr);
         }
-        if (!warm)
+        if (!advanced)
         {
             p.set(k, attrs);
         }
         g_portSet.insert(k);
     }
-    if (!warm)
+    if (!advanced)
     {
         notifyPortConfigDone(p);
     }

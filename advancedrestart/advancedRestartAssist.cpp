@@ -2,8 +2,8 @@
 #include <algorithm>
 #include "logger.h"
 #include "schema.h"
-#include "warm_restart.h"
-#include "warmRestartAssist.h"
+#include "advanced_restart.h"
+#include "advancedRestartAssist.h"
 
 using namespace std;
 using namespace swss;
@@ -18,51 +18,51 @@ const AppRestartAssist::cache_state_map AppRestartAssist::cacheStateMap =
 };
 
 AppRestartAssist::AppRestartAssist(RedisPipeline *pipelineAppDB, const std::string &appName,
-                                   const std::string &dockerName, const uint32_t defaultWarmStartTimerValue):
+                                   const std::string &dockerName, const uint32_t defaultAdvancedStartTimerValue):
     m_pipeLine(pipelineAppDB),
     m_appName(appName),
     m_dockerName(dockerName),
-    m_warmStartTimer(timespec{0, 0})
+    m_advancedStartTimer(timespec{0, 0})
 {
-    WarmStart::initialize(m_appName, m_dockerName);
-    WarmStart::checkWarmStart(m_appName, m_dockerName);
+    AdvancedStart::initialize(m_appName, m_dockerName);
+    AdvancedStart::checkAdvancedStart(m_appName, m_dockerName);
 
     /*
      * set the default timer value.
      * If the application instance provides timer value, use it if valid.
      * Use the class default one if none is provided by application.
      */
-    if (defaultWarmStartTimerValue > MAXIMUM_WARMRESTART_TIMER_VALUE)
+    if (defaultAdvancedStartTimerValue > MAXIMUM_ADVANCEDRESTART_TIMER_VALUE)
     {
         throw std::invalid_argument("invalid timer value was provided");
     }
-    else if (defaultWarmStartTimerValue != 0)
+    else if (defaultAdvancedStartTimerValue != 0)
     {
-        m_reconcileTimer = defaultWarmStartTimerValue;
+        m_reconcileTimer = defaultAdvancedStartTimerValue;
     }
     else
     {
         m_reconcileTimer = DEFAULT_INTERNAL_TIMER_VALUE;
     }
 
-    // If warm start enabled, it is marked as in progress initially.
-    if (!WarmStart::isWarmStart())
+    // If advanced start enabled, it is marked as in progress initially.
+    if (!AdvancedStart::isAdvancedStart())
     {
-        m_warmStartInProgress = false;
+        m_advancedStartInProgress = false;
     }
     else
     {
         // Use the configured timer if available and valid
-        m_warmStartInProgress = true;
-        uint32_t temp_value = WarmStart::getWarmStartTimer(m_appName, m_dockerName);
+        m_advancedStartInProgress = true;
+        uint32_t temp_value = AdvancedStart::getAdvancedStartTimer(m_appName, m_dockerName);
         if (temp_value != 0)
         {
             m_reconcileTimer = temp_value;
         }
 
-        m_warmStartTimer.setInterval(timespec{m_reconcileTimer, 0});
+        m_advancedStartTimer.setInterval(timespec{m_reconcileTimer, 0});
 
-        WarmStart::setWarmStartState(m_appName, WarmStart::INITIALIZED);
+        AdvancedStart::setAdvancedStartState(m_appName, AdvancedStart::INITIALIZED);
     }
 }
 
@@ -79,7 +79,7 @@ void AppRestartAssist::registerAppTable(const std::string &tableName, ProducerSt
     m_psTables[tableName]  = psTable;
 
     // Clear the producerstate table to make sure no pending data for the AppTable
-    if (m_warmStartInProgress)
+    if (m_advancedStartInProgress)
     {
         psTable->clear();
     }
@@ -119,12 +119,12 @@ AppRestartAssist::cache_state_t AppRestartAssist::getCacheEntryState(const std::
 
 void AppRestartAssist::appDataReplayed()
 {
-    WarmStart::setWarmStartState(m_appName, WarmStart::REPLAYED);
+    AdvancedStart::setAdvancedStartState(m_appName, AdvancedStart::REPLAYED);
 }
 
-void AppRestartAssist::warmStartDisabled()
+void AppRestartAssist::advancedStartDisabled()
 {
-    WarmStart::setWarmStartState(m_appName, WarmStart::WSDISABLED);
+    AdvancedStart::setAdvancedStartState(m_appName, AdvancedStart::WSDISABLED);
 }
 
 // Read table(s) from APPDB and append stale flag then insert to cachemap
@@ -158,7 +158,7 @@ void AppRestartAssist::readTablesToMap()
             // insert to the cache map
             appTableCacheMap[it->first][key] = fv;
         }
-        WarmStart::setWarmStartState(m_appName, WarmStart::RESTORED);
+        AdvancedStart::setAdvancedStartState(m_appName, AdvancedStart::RESTORED);
         SWSS_LOG_NOTICE("Restored appDB table to %s internal cache map", (it->first).c_str());
     }
     return;
@@ -275,12 +275,12 @@ void AppRestartAssist::reconcile()
                 throw std::logic_error("cache entry state is invalid");
             }
         }
-        // reconcile finished, clear the map, mark the warmstart state
+        // reconcile finished, clear the map, mark the advanced start state
         appTableCacheMap[tableName].clear();
     }
     appTableCacheMap.clear();
-    WarmStart::setWarmStartState(m_appName, WarmStart::RECONCILED);
-    m_warmStartInProgress = false;
+    AdvancedStart::setAdvancedStartState(m_appName, AdvancedStart::RECONCILED);
+    m_advancedStartInProgress = false;
     return;
 }
 
@@ -288,28 +288,28 @@ void AppRestartAssist::reconcile()
 void AppRestartAssist::setReconcileInterval(uint32_t time)
 {
     m_reconcileTimer = time;
-    m_warmStartTimer.setInterval(timespec{m_reconcileTimer, 0});
+    m_advancedStartTimer.setInterval(timespec{m_reconcileTimer, 0});
 }
 
 // start the timer, take Select class "s" to add the timer.
 void AppRestartAssist::startReconcileTimer(Select &s)
 {
-    m_warmStartTimer.start();
-    s.addSelectable(&m_warmStartTimer);
+    m_advancedStartTimer.start();
+    s.addSelectable(&m_advancedStartTimer);
 }
 
 // stop the timer, take Select class "s" to remove the timer.
 void AppRestartAssist::stopReconcileTimer(Select &s)
 {
-    m_warmStartTimer.stop();
-    s.removeSelectable(&m_warmStartTimer);
+    m_advancedStartTimer.stop();
+    s.removeSelectable(&m_advancedStartTimer);
 }
 
 // take Selectable class pointer "*s" to check if timer expired.
 bool AppRestartAssist::checkReconcileTimer(Selectable *s)
 {
-    if(s == &m_warmStartTimer) {
-        SWSS_LOG_INFO("warmstart timer expired");
+    if(s == &m_advancedStartTimer) {
+        SWSS_LOG_INFO("advanced start timer expired");
         return true;
     }
     return false;

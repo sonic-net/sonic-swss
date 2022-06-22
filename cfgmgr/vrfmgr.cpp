@@ -7,7 +7,7 @@
 #include "vrfmgr.h"
 #include "exec.h"
 #include "shellcmd.h"
-#include "warm_restart.h"
+#include "advanced_restart.h"
 
 #define VRF_TABLE_START 1001
 #define VRF_TABLE_END 2000
@@ -62,7 +62,7 @@ VrfMgr::VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
                 rowType = DETAILS_ROW;
                 break;
             case DETAILS_ROW:
-                if (WarmStart::isWarmStart())
+                if (AdvancedStart::isAdvancedStart())
                 {
                     table = static_cast<uint32_t>(stoul(items[6]));
                     m_vrfTableMap[vrfName] = table;
@@ -72,7 +72,7 @@ VrfMgr::VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
                 {
                     // No deletion of mgmt table from kernel
                     if (vrfName.compare("mgmt") == 0)
-                    { 
+                    {
                         SWSS_LOG_NOTICE("Skipping remove vrf device %s", vrfName.c_str());
                         rowType = LINK_ROW;
                         break;
@@ -105,9 +105,9 @@ VrfMgr::VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
         EXEC_WITH_ERROR_THROW(cmd.str(), res);
     }
 
-    if (!WarmStart::isWarmStart())
+    if (!AdvancedStart::isAdvancedStart())
     {
-        WarmStart::setWarmStartState("vrfmgrd", WarmStart::WSDISABLED);
+        AdvancedStart::setAdvancedStartState("vrfmgrd", AdvancedStart::WSDISABLED);
     }
 }
 
@@ -172,10 +172,10 @@ bool VrfMgr::setLink(const string& vrfName)
     {
         return true;
     }
-    
+
     if (vrfName == MGMT_VRF)
     {
-        // Mgmt VRF is initialised as part of hostcfgd, 
+        // Mgmt VRF is initialised as part of hostcfgd,
         // just return the reserved table_id for mgmt VRF from here.
         uint32_t table_id = MGMT_VRF_TABLE_ID;
         m_vrfTableMap.emplace(vrfName, table_id);
@@ -229,7 +229,7 @@ void VrfMgr::doTask(Consumer &consumer)
         if (consumer.getTableName() == CFG_MGMT_VRF_CONFIG_TABLE_NAME)
         {
             SWSS_LOG_DEBUG("Event for mgmt VRF op %s", op.c_str());
-            if (op == SET_COMMAND) 
+            if (op == SET_COMMAND)
             {
                 bool in_band_mgmt_enabled = false;
                 bool mgmt_vrf_enabled = false;
@@ -252,7 +252,7 @@ void VrfMgr::doTask(Consumer &consumer)
                         SWSS_LOG_DEBUG("Event for mgmt VRF table in_band_mgmt_enabled is set val:%s", fvValue(i).c_str());
                     }
                 }
-                // If mgmt VRF is not enabled or in-band-mgmt is not enabled delete the in-band-mgmt 
+                // If mgmt VRF is not enabled or in-band-mgmt is not enabled delete the in-band-mgmt
                 // related VRF table map information
                 if ((op == SET_COMMAND) && ((mgmt_vrf_enabled == false) || (in_band_mgmt_enabled == false)))
                 {

@@ -74,7 +74,7 @@ private:
     ProducerStateTable m_lagMemberTable;
     Table m_stateLagTable;
 
-    bool m_warmstart;
+    bool m_advancedstart;
     std::unordered_map<std::string, std::vector<FieldValueTuple>> m_stateLagTablePreserved;
     steady_clock::time_point m_start_time;
     uint32_t m_pending_timeout;

@@ -8,7 +8,7 @@
 #include "exec.h"
 #include "shellcmd.h"
 #include "macaddress.h"
-#include "warm_restart.h"
+#include "advanced_restart.h"
 #include "subscriberstatetable.h"
 #include <swss/redisutility.h>
 #include "subintf.h"
@@ -53,10 +53,10 @@ IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
     auto stateLagConsumer = new Consumer(subscriberStateLagTable, this, STATE_LAG_TABLE_NAME);
     Orch::addExecutor(stateLagConsumer);
 
-    if (!WarmStart::isWarmStart())
+    if (!AdvancedStart::isAdvancedStart())
     {
         flushLoopbackIntfs();
-        WarmStart::setWarmStartState("intfmgrd", WarmStart::WSDISABLED);
+        AdvancedStart::setAdvancedStartState("intfmgrd", AdvancedStart::WSDISABLED);
     }
     else
     {
@@ -64,7 +64,7 @@ IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         buildIntfReplayList();
         if (m_pendingReplayIntfList.empty())
         {
-            setWarmReplayDoneState();
+            setAdvancedReplayDoneState();
         }
     }
 
@@ -285,13 +285,13 @@ void IntfMgr::buildIntfReplayList(void)
     SWSS_LOG_INFO("Found %d Total Intfs to be replayed", (int)m_pendingReplayIntfList.size() );
 }
 
-void IntfMgr::setWarmReplayDoneState()
+void IntfMgr::setAdvancedReplayDoneState()
 {
     m_replayDone = true;
-    WarmStart::setWarmStartState("intfmgrd", WarmStart::REPLAYED);
+    AdvancedStart::setAdvancedStartState("intfmgrd", AdvancedStart::REPLAYED);
     // There is no operation to be performed for intfmgr reconcillation
     // Hence mark it reconciled right away
-    WarmStart::setWarmStartState("intfmgrd", WarmStart::RECONCILED);
+    AdvancedStart::setAdvancedStartState("intfmgrd", AdvancedStart::RECONCILED);
 }
 
 bool IntfMgr::isIntfCreated(const string &alias)
@@ -468,7 +468,7 @@ void IntfMgr::updateSubIntfAdminStatus(const string &alias, const string &admin)
                 continue;
             }
             std::vector<FieldValueTuple> fvVector;
-            string subintf_admin = setHostSubIntfAdminStatus(intf, m_subIntfList[intf].adminStatus, admin); 
+            string subintf_admin = setHostSubIntfAdminStatus(intf, m_subIntfList[intf].adminStatus, admin);
             m_subIntfList[intf].currAdminStatus = subintf_admin;
             FieldValueTuple fvTuple("admin_status", subintf_admin);
             fvVector.push_back(fvTuple);
@@ -1131,9 +1131,9 @@ void IntfMgr::doTask(Consumer &consumer)
         it = consumer.m_toSync.erase(it);
     }
 
-    if (!m_replayDone && WarmStart::isWarmStart() && m_pendingReplayIntfList.empty() )
+    if (!m_replayDone && AdvancedStart::isAdvancedStart() && m_pendingReplayIntfList.empty() )
     {
-        setWarmReplayDoneState();
+        setAdvancedReplayDoneState();
     }
 }
 

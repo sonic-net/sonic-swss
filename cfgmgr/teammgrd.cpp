@@ -4,7 +4,7 @@
 #include "netdispatcher.h"
 #include "netlink.h"
 #include "select.h"
-#include "warm_restart.h"
+#include "advanced_restart.h"
 #include <signal.h>
 
 using namespace std;
@@ -59,8 +59,8 @@ int main(int argc, char **argv)
         DBConnector app_db("APPL_DB", 0);
         DBConnector state_db("STATE_DB", 0);
 
-        WarmStart::initialize("teammgrd", "teamd");
-        WarmStart::checkWarmStart("teammgrd", "teamd");
+        AdvancedStart::initialize("teammgrd", "teamd");
+        AdvancedStart::checkAdvancedStart("teammgrd", "teamd");
 
         TableConnector conf_lag_table(&conf_db, CFG_LAG_TABLE_NAME);
         TableConnector conf_lag_member_table(&conf_db, CFG_LAG_MEMBER_TABLE_NAME);

@@ -12,7 +12,7 @@
 #include <iostream>
 #include "json.h"
 #include "json.hpp"
-#include "warm_restart.h"
+#include "advanced_restart.h"
 
 using namespace std;
 using namespace swss;
@@ -186,8 +186,8 @@ int main(int argc, char **argv)
 
         if (dynamicMode)
         {
-            WarmStart::initialize("buffermgrd", "swss");
-            WarmStart::checkWarmStart("buffermgrd", "swss");
+            AdvancedStart::initialize("buffermgrd", "swss");
+            AdvancedStart::checkAdvancedStart("buffermgrd", "swss");
 
             vector<TableConnector> buffer_table_connectors = {
                 TableConnector(&cfgDb, CFG_PORT_TABLE_NAME),

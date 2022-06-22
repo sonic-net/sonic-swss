@@ -29,7 +29,7 @@ void printUsage()
 
 
 /*
- * Before stopping orchagent for warm restart, basic state check is preferred to
+ * Before stopping orchagent for advanced restart, basic state check is preferred to
  * ensure orchagent is not in transient state, so a deterministic state may be restored after restart.
  *
  * Here is to implement orchagent_restart_check binary which may talk to orchagent and
@@ -106,7 +106,7 @@ int main(int argc, char **argv)
     }
 
     swss::DBConnector db("APPL_DB", 0);
-    // Send warm restart query via "RESTARTCHECK" notification channel
+    // Send advanced restart query via "RESTARTCHECK" notification channel
     swss::NotificationProducer restartQuery(&db, "RESTARTCHECK");
     // Will listen for the reply on "RESTARTCHECKREPLY" channel
     swss::NotificationConsumer restartQueryReply(&db, "RESTARTCHECKREPLY");
@@ -124,7 +124,7 @@ int main(int argc, char **argv)
 
     while (retries <= retryCount)
     {
-        SWSS_LOG_NOTICE("requested %s to do warm restart state check, retry count: %d", op.c_str(), retries);
+        SWSS_LOG_NOTICE("requested %s to do advanced restart state check, retry count: %d", op.c_str(), retries);
         restartQuery.send(op, op, values);
 
         std::string op_ret, data;
@@ -135,13 +135,13 @@ int main(int argc, char **argv)
             restartQueryReply.pop(op_ret, data, values_ret);
             if (data == "READY")
             {
-                SWSS_LOG_NOTICE("RESTARTCHECK success, %s is frozen and ready for warm restart", op_ret.c_str());
+                SWSS_LOG_NOTICE("RESTARTCHECK success, %s is frozen and ready for advanced restart", op_ret.c_str());
                 std::cout << "RESTARTCHECK succeeded" << std::endl;
                 return EXIT_SUCCESS;
             }
             else
             {
-                SWSS_LOG_NOTICE("RESTARTCHECK failed, %s is not ready for warm restart with status %s",
+                SWSS_LOG_NOTICE("RESTARTCHECK failed, %s is not ready for advanced restart with status %s",
                         op_ret.c_str(), data.c_str());
             }
         }

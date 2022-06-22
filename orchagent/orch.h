@@ -202,11 +202,11 @@ public:
 
     std::vector<swss::Selectable*> getSelectables();
 
-    // add the existing table data (left by warm reboot) to the consumer todo task list.
+    // add the existing table data (left by advanced reboot) to the consumer todo task list.
     size_t addExistingData(swss::Table *table);
     size_t addExistingData(const std::string& tableName);
 
-    // Prepare for warm start if Redis contains valid input data
+    // Prepare for advanced start if Redis contains valid input data
     // otherwise fallback to cold start
     virtual bool bake();
 

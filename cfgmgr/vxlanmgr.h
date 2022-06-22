@@ -45,8 +45,8 @@ public:
     } MapCache;
 
     void waitTillReadyToReconcile();
-    void beginReconcile(bool warm);
-    void endReconcile(bool warm);
+    void beginReconcile(bool advanced);
+    void endReconcile(bool advanced);
     void restoreVxlanNetDevices();
     bool isTunnelActive(std::string vxlanTunnelName);
 

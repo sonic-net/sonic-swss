@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 
 """"
-Description: bgp_eoiu_marker.py -- populating bgp eoiu marker flags in stateDB during warm reboot.
+Description: bgp_eoiu_marker.py -- populating bgp eoiu marker flags in stateDB during advanced reboot.
     The script is started by supervisord in bgp docker when the docker is started.
-    It does not do anything in case neither system nor bgp warm restart is enabled.
+    It does not do anything in case neither system nor bgp advanced restart is enabled.
 
     The script check bgp neighbor state via vtysh cli interface periodically (every 1 second).
     It looks for explicit EOR and implicit EOR (keep alive after established) in the json output of show ip bgp neighbors A.B.C.D json
@@ -13,7 +13,7 @@ Description: bgp_eoiu_marker.py -- populating bgp eoiu marker flags in stateDB d
     fpmsyncd may hold a few seconds (2~5 seconds) after getting the flag before starting routing reconciliation.
     2-5 seconds should be enough for all the route to be synced to fpmsyncd from bgp. If not, the system probably is already in wrong state.
 
-    For any reason the script failed to set EOIU flag in stateDB, the current warm_restart bgp_timer will kick in later.
+    For any reason the script failed to set EOIU flag in stateDB, the current advanced_restart bgp_timer will kick in later.
 """
 
 import sys
@@ -29,7 +29,7 @@ from time import gmtime, strftime
 
 class BgpStateCheck():
     # timeout the restore process in 120 seconds if not finished
-    # This is in consistent with the default timerout for bgp warm restart set in fpmsyncd
+    # This is in consistent with the default timerout for bgp advanced restart set in fpmsyncd
 
     DEF_TIME_OUT = 120
 
@@ -188,14 +188,14 @@ def main():
     # Always clean the eoiu marker in stateDB first
     bgp_state_check.clean_bgp_eoiu_marker()
 
-    # Use warmstart python binding to check warmstart information
-    warmstart = swsscommon.WarmStart()
-    warmstart.initialize("bgp", "bgp")
-    warmstart.checkWarmStart("bgp", "bgp", False)
+    # Use advanced start python binding to check advanced start information
+    advancedstart = swsscommon.AdvancedStart()
+    advancedstart.initialize("bgp", "bgp")
+    advancedstart.checkAdvancedStart("bgp", "bgp", False)
 
-    # if bgp or system warm reboot not enabled, don't run
-    if not warmstart.isWarmStart():
-        print "bgp_eoiu_marker service is skipped as warm restart not enabled"
+    # if bgp or system advanced reboot not enabled, don't run
+    if not advancedstart.isAdvancedStart():
+        print "bgp_eoiu_marker service is skipped as advanced restart not enabled"
         return
 
     bgp_state_check.set_bgp_eoiu_marker("IPv4", "unknown")

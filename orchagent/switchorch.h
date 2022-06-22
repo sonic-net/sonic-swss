@@ -12,7 +12,7 @@
 #define SWITCH_CAPABILITY_TABLE_LAG_TPID_CAPABLE                       "LAG_TPID_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_ORDERED_ECMP_CAPABLE                   "ORDERED_ECMP_CAPABLE"
 
-struct WarmRestartCheck
+struct AdvancedRestartCheck
 {
     bool    checkRestartReadyState;
     bool    noFreeze;
@@ -23,10 +23,10 @@ class SwitchOrch : public Orch
 {
 public:
     SwitchOrch(swss::DBConnector *db, std::vector<TableConnector>& connectors, TableConnector switchTable);
-    bool checkRestartReady() { return m_warmRestartCheck.checkRestartReadyState; }
-    bool checkRestartNoFreeze() { return m_warmRestartCheck.noFreeze; }
-    bool skipPendingTaskCheck() { return m_warmRestartCheck.skipPendingTaskCheck; }
-    void checkRestartReadyDone() { m_warmRestartCheck.checkRestartReadyState = false; }
+    bool checkRestartReady() { return m_advancedRestartCheck.checkRestartReadyState; }
+    bool checkRestartNoFreeze() { return m_advancedRestartCheck.noFreeze; }
+    bool skipPendingTaskCheck() { return m_advancedRestartCheck.skipPendingTaskCheck; }
+    void checkRestartReadyDone() { m_advancedRestartCheck.checkRestartReadyState = false; }
     void restartCheckReply(const std::string &op, const std::string &data, std::vector<swss::FieldValueTuple> &values);
     bool setAgingFDB(uint32_t sec);
     void set_switch_capability(const std::vector<swss::FieldValueTuple>& values);
@@ -83,5 +83,5 @@ private:
 
     // Information contained in the request from
     // external program for orchagent pre-shutdown state check
-    WarmRestartCheck m_warmRestartCheck = {false, false, false};
+    AdvancedRestartCheck m_advancedRestartCheck = {false, false, false};
 };

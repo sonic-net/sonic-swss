@@ -141,7 +141,7 @@ bool MirrorOrch::bake()
 
         if (active)
         {
-            SWSS_LOG_NOTICE("Found mirror session %s active before warm reboot",
+            SWSS_LOG_NOTICE("Found mirror session %s active before advanced reboot",
                     key.c_str());
 
             // Recover saved active session's monitor port
@@ -660,8 +660,8 @@ bool MirrorOrch::getNeighborInfo(const string& name, MirrorEntry& session)
                 return false;
             }
 
-            // Recover the LAG member monitor port picked before warm reboot
-            // to minimalize the data plane changes across warm reboot.
+            // Recover the LAG member monitor port picked before advanced reboot
+            // to minimalize the data plane changes across advanced reboot.
             if (m_recoverySessionMap.find(name) != m_recoverySessionMap.end())
             {
                 string alias = tokenize(m_recoverySessionMap[name],
@@ -690,7 +690,7 @@ bool MirrorOrch::getNeighborInfo(const string& name, MirrorEntry& session)
             SWSS_LOG_NOTICE("Get mirror session destination IP neighbor VLAN %d",
                     session.neighborInfo.port.m_vlan_info.vlan_id);
 
-            // Recover the VLAN member monitor port picked before warm reboot
+            // Recover the VLAN member monitor port picked before advanced reboot
             // since the FDB entries are not yet learned on the hardware
             if (m_recoverySessionMap.find(name) != m_recoverySessionMap.end())
             {
@@ -1552,6 +1552,6 @@ void MirrorOrch::doTask(Consumer& consumer)
         }
     }
 
-    // Clear any recovery state that might be leftover from warm reboot
+    // Clear any recovery state that might be leftover from advanced reboot
     m_recoverySessionMap.clear();
 }

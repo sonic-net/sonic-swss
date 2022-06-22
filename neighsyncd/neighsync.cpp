@@ -12,7 +12,7 @@
 #include "macaddress.h"
 
 #include "neighsync.h"
-#include "warm_restart.h"
+#include "advanced_restart.h"
 #include <algorithm>
 
 using namespace std;
@@ -25,7 +25,7 @@ NeighSync::NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConne
     m_cfgLagInterfaceTable(cfgDb, CFG_LAG_INTF_TABLE_NAME),
     m_cfgVlanInterfaceTable(cfgDb, CFG_VLAN_INTF_TABLE_NAME)
 {
-    m_AppRestartAssist = new AppRestartAssist(pipelineAppDB, "neighsyncd", "swss", DEFAULT_NEIGHSYNC_WARMSTART_TIMER);
+    m_AppRestartAssist = new AppRestartAssist(pipelineAppDB, "neighsyncd", "swss", DEFAULT_NEIGHSYNC_ADVANCEDSTART_TIMER);
     if (m_AppRestartAssist)
     {
         m_AppRestartAssist->registerAppTable(APP_NEIGH_TABLE_NAME, &m_neighTable);
@@ -130,8 +130,8 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     fvVector.push_back(nh);
     fvVector.push_back(f);
 
-    // If warmstart is in progress, we take all netlink changes into the cache map
-    if (m_AppRestartAssist->isWarmStartInProgress())
+    // If advanced start is in progress, we take all netlink changes into the cache map
+    if (m_AppRestartAssist->isAdvancedStartInProgress())
     {
         m_AppRestartAssist->insertToMap(APP_NEIGH_TABLE_NAME, key, fvVector, delete_key);
     }

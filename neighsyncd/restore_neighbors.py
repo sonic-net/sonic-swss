@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 
 """"
-Description: restore_neighbors.py -- restoring neighbor table into kernel during system warm reboot.
+Description: restore_neighbors.py -- restoring neighbor table into kernel during system advanced reboot.
     The script is started by supervisord in swss docker when the docker is started.
-    It does not do anything in case neither system nor swss warm restart is enabled.
-    In case swss warm restart enabled only, it sets the stateDB flag so neighsyncd can continue
+    It does not do anything in case neither system nor swss advanced restart is enabled.
+    In case swss advanced restart enabled only, it sets the stateDB flag so neighsyncd can continue
     the reconciation process.
-    In case system warm reboot is enabled, it will try to restore the neighbor table into kernel
+    In case system advanced reboot is enabled, it will try to restore the neighbor table into kernel
     through netlink API calls and update the neighbor table in kernel by sending arp/ns requests
     to all neighbor entries, then it sets the stateDB flag for neighsyncd to continue the
     reconciliation process.
@@ -48,7 +48,7 @@ def log_error(msg):
     syslog.closelog()
 
 # timeout the restore process in 110 seconds if not finished
-# This is mostly to wait for interfaces to be created and up after system warm-reboot
+# This is mostly to wait for interfaces to be created and up after system advanced-reboot
 # and this process is started by supervisord in swss docker.
 # There had been devices taking close to 70 seconds to complete restoration, setting
 # default timeout to 110 seconds.
@@ -271,20 +271,20 @@ def restore_update_kernel_neighbors(intf_neigh_map, timeout=DEF_TIME_OUT):
 def main():
 
     log_info ("restore_neighbors service is started")
-    # Use warmstart python binding to check warmstart information
-    warmstart = swsscommon.WarmStart()
-    warmstart.initialize("neighsyncd", "swss")
-    warmstart.checkWarmStart("neighsyncd", "swss", False)
+    # Use advanced start python binding to check advanced start information
+    advancedstart = swsscommon.AdvancedStart()
+    advancedstart.initialize("neighsyncd", "swss")
+    advancedstart.checkAdvancedStart("neighsyncd", "swss", False)
 
-    # if swss or system warm reboot not enabled, don't run
-    if not warmstart.isWarmStart():
-        log_info ("restore_neighbors service is skipped as warm restart not enabled")
+    # if swss or system advanced reboot not enabled, don't run
+    if not advancedstart.isAdvancedStart():
+        log_info ("restore_neighbors service is skipped as advanced restart not enabled")
         return
 
-    # swss restart not system warm reboot, set statedb directly
-    if not warmstart.isSystemWarmRebootEnabled():
+    # swss restart not system advanced reboot, set statedb directly
+    if not advancedstart.isSystemAdvancedRebootEnabled():
         set_statedb_neigh_restore_done()
-        log_info ("restore_neighbors service is done as system warm reboot not enabled")
+        log_info ("restore_neighbors service is done as system advanced reboot not enabled")
         return
     # read the neigh table from appDB to internal map
     try:
@@ -301,7 +301,7 @@ def main():
 
     # set statedb to signal other processes like neighsyncd
     set_statedb_neigh_restore_done()
-    log_info ("restore_neighbor service is done for system warmreboot")
+    log_info ("restore_neighbor service is done for system advanced reboot")
     return
 
 if __name__ == '__main__':

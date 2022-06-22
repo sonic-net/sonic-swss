@@ -10,8 +10,8 @@
 #include "buffermgr.h"
 #include "exec.h"
 #include "shellcmd.h"
-#include "warm_restart.h"
 #include "converter.h"
+#include "advanced_restart.h"
 
 using namespace std;
 using namespace swss;
@@ -158,7 +158,7 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
     if (m_portStatusLookup.count(port) == 0)
     {
         // admin_statue is not available yet. This can happen when notification of `PORT_QOS_MAP` table
-        // comes first. 
+        // comes first.
         SWSS_LOG_INFO("pfc_enable status is not available for port %s", port.c_str());
         return task_process_status::task_need_retry;
     }
@@ -176,7 +176,7 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
     // key format is pg_lossless_<speed>_<cable>_profile
     string buffer_profile_key = "pg_lossless_" + speed + "_" + cable + "_profile";
     string profile_ref = buffer_profile_key;
-    
+
     vector<string> lossless_pgs = tokenize(pfc_enable, ',');
     // Convert to bitmap
     unsigned long lossless_pg_id = 0;
@@ -227,7 +227,7 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
 
         return task_process_status::task_success;
     }
-    
+
     if (m_pgProfileLookup.count(speed) == 0 || m_pgProfileLookup[speed].count(cable) == 0)
     {
             SWSS_LOG_ERROR("Unable to create/update PG profile for port %s. No PG profile configured for speed %s and cable length %s",
@@ -319,7 +319,7 @@ void BufferMgr::transformSeperator(string &name)
  * some entries that have been moved to APPL_DB
  *  - BUFFER_QUEUE
  *  - BUFFER_PORT_INGRESS_PROFILE_LIST
- *  - BUFFER_PORT_EGRESS_PROFILE_LIST   
+ *  - BUFFER_PORT_EGRESS_PROFILE_LIST
  * One thing we need to handle is to transform the separator from | to :
  * The following items contain separator:
  *  - keys of each item

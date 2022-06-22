@@ -29,7 +29,7 @@ extern "C" {
 #include "saihelper.h"
 #include "notifications.h"
 #include <signal.h>
-#include "warm_restart.h"
+#include "advanced_restart.h"
 #include "gearboxutils.h"
 
 using namespace std;
@@ -319,8 +319,8 @@ int main(int argc, char **argv)
 
     SWSS_LOG_ENTER();
 
-    WarmStart::initialize("orchagent", "swss");
-    WarmStart::checkWarmStart("orchagent", "swss");
+    AdvancedStart::initialize("orchagent", "swss");
+    AdvancedStart::checkAdvancedStart("orchagent", "swss");
 
     if (signal(SIGHUP, sighup_handler) == SIG_ERR)
     {
@@ -364,7 +364,7 @@ int main(int argc, char **argv)
             // Disable all recordings if atoi() fails i.e. returns 0 due to
             // invalid command line argument.
             record_type = atoi(optarg);
-            if (record_type < 0 || record_type > 7) 
+            if (record_type < 0 || record_type > 7)
             {
                 usage();
                 exit(EXIT_FAILURE);
@@ -457,7 +457,7 @@ int main(int argc, char **argv)
     }
 
     // Disable/Enable response publisher recording.
-    if (gResponsePublisherRecord) 
+    if (gResponsePublisherRecord)
     {
         gResponsePublisherRecordFile = record_location + "/" + responsepublisher_rec_filename;
         gResponsePublisherRecordOfs.open(gResponsePublisherRecordFile, std::ofstream::out | std::ofstream::app);
@@ -466,8 +466,8 @@ int main(int argc, char **argv)
             SWSS_LOG_ERROR("Failed to open Response Publisher recording file %s",
                     gResponsePublisherRecordFile.c_str());
             gResponsePublisherRecord = false;
-        } 
-        else 
+        }
+        else
         {
             gResponsePublisherRecordOfs << getTimestamp() << "|recording started"
                 << endl;
@@ -726,7 +726,7 @@ int main(int argc, char **argv)
     * In syncd view comparison solution, apply view has been sent
     * immediately after restore is done
     */
-    if (!WarmStart::isWarmStart())
+    if (!AdvancedStart::isAdvancedStart())
     {
         syncd_apply_view();
     }

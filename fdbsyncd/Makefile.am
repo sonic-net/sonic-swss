@@ -1,4 +1,4 @@
-INCLUDES = -I $(top_srcdir) -I $(top_srcdir)/warmrestart
+INCLUDES = -I $(top_srcdir) -I $(top_srcdir)/advancedrestart
 
 bin_PROGRAMS = fdbsyncd
 
@@ -8,7 +8,7 @@ else
 DBGFLAGS = -g
 endif
 
-fdbsyncd_SOURCES = fdbsyncd.cpp fdbsync.cpp $(top_srcdir)/warmrestart/warmRestartAssist.cpp
+fdbsyncd_SOURCES = fdbsyncd.cpp fdbsync.cpp $(top_srcdir)/advancedrestart/advancedRestartAssist.cpp
 
 fdbsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(COV_CFLAGS) $(CFLAGS_ASAN)
 fdbsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(COV_CFLAGS) $(CFLAGS_ASAN)

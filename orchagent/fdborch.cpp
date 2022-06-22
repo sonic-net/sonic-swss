@@ -60,7 +60,7 @@ bool FdbOrch::bake()
     }
 
     size_t refilled = consumer->refillToSync(&m_fdbStateTable);
-    SWSS_LOG_NOTICE("Add warm input FDB State: %s, %zd", APP_FDB_TABLE_NAME, refilled);
+    SWSS_LOG_NOTICE("Add advanced input FDB State: %s, %zd", APP_FDB_TABLE_NAME, refilled);
     return true;
 }
 
@@ -977,7 +977,7 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
             {
                 return;
             }
-            flushFDBEntries(port.m_bridge_port_id, vlanPort.m_vlan_info.vlan_oid); 
+            flushFDBEntries(port.m_bridge_port_id, vlanPort.m_vlan_info.vlan_oid);
             SWSS_LOG_NOTICE("Clear fdb by port(%s)+vlan(%s)", alias.c_str(), vlan.c_str());
             return;
         }

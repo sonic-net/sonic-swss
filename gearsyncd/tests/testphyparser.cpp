@@ -25,7 +25,7 @@ void usage()
   std::cout << "Usage: testphyparser" << std::endl;
 }
 
-bool handlePhyConfigFile(std::string file, bool warm);
+bool handlePhyConfigFile(std::string file, bool advanced);
 
 void positiveConfigTest()
 {
@@ -109,19 +109,19 @@ int unitTestMain()
     CU_pTest pTest = NULL;
     int ret = 0;
 
-    if (CUE_SUCCESS != CU_initialize_registry()) 
+    if (CUE_SUCCESS != CU_initialize_registry())
     {
         printf("%s: cunit failed to initialize registry\n", __FUNCTION__);
         ret = CU_get_error();
-    } 
-    else 
+    }
+    else
     {
 
         CU_basic_set_mode(CU_BRM_VERBOSE);
 
         // Run the tests and show the run summary
         pSuite = CU_add_suite("phy_config_suite", 0, 0);
-        if (NULL == pSuite) 
+        if (NULL == pSuite)
         {
             printf("%s: cunit failed to create suite\n", __FUNCTION__);
             CU_cleanup_registry();
@@ -130,30 +130,30 @@ int unitTestMain()
     }
 
     // Add the test to the suite
-    if (ret == 0) 
+    if (ret == 0)
     {
         pTest = CU_add_test(pSuite, "phy_positive_config_test", positiveConfigTest);
-      
-        if (pTest != NULL) 
-        { 
+
+        if (pTest != NULL)
+        {
             pTest = CU_add_test(pSuite, "phy_negative_config_test", negativeConfigTest);
         }
 
-        if (pTest == NULL) 
+        if (pTest == NULL)
         {
             CU_cleanup_registry();
             printf("%s: cunit failed to add test\n", __FUNCTION__);
             ret = CU_get_error();
         }
     }
-    if (ret == 0) 
+    if (ret == 0)
     {
         CU_basic_run_tests();
     }
     return ret;
 }
 
-bool handlePhyConfigFile(std::string file, bool warm)
+bool handlePhyConfigFile(std::string file, bool advanced)
 {
     PhyParser p;
     bool ret;

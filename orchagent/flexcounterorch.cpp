@@ -233,7 +233,7 @@ bool FlexCounterOrch::getPortBufferDropCountersState() const
 bool FlexCounterOrch::bake()
 {
     /*
-     * bake is called during warmreboot reconciling procedure.
+     * bake is called during advancedreboot reconciling procedure.
      * By default, it should fetch items from the tables the sub agents listen to,
      * and then push them into m_toSync of each sub agent.
      * The motivation is to make sub agents handle the saved entries first and then handle the upcoming entries.

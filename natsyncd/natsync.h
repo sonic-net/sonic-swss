@@ -21,7 +21,7 @@
 #include "producerstatetable.h"
 #include "notificationproducer.h"
 #include "netmsg.h"
-#include "warmRestartAssist.h"
+#include "advancedRestartAssist.h"
 #include "ipaddress.h"
 #include "nfnetlink.h"
 #include <linux/netfilter/nfnetlink_conntrack.h>
@@ -29,9 +29,9 @@
 #include <unistd.h>
 
 // The timeout value (in seconds) for natsyncd reconcilation logic
-#define DEFAULT_NATSYNC_WARMSTART_TIMER 30
+#define DEFAULT_NATSYNC_ADVANCEDSTART_TIMER 30
 
-/* This is the timer value (in seconds) that the natsyncd waits for 
+/* This is the timer value (in seconds) that the natsyncd waits for
  * restore_nat_entries service to finish. */
 
 #define RESTORE_NAT_WAIT_TIME_OUT 120

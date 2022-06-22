@@ -4,7 +4,7 @@
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "netmsg.h"
-#include "warmRestartHelper.h"
+#include "advancedRestartHelper.h"
 #include <string.h>
 #include <bits/stdc++.h>
 
@@ -26,7 +26,7 @@ public:
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
 
     virtual void onMsgRaw(struct nlmsghdr *obj);
-    WarmStartHelper  m_warmStartHelper;
+    AdvancedStartHelper  m_advancedStartHelper;
 
 private:
     /* regular route table */
@@ -35,8 +35,8 @@ private:
     ProducerStateTable  m_label_routeTable;
     /* vnet route table */
     ProducerStateTable  m_vnet_routeTable;
-    /* vnet vxlan tunnel table */  
-    ProducerStateTable  m_vnet_tunnelTable; 
+    /* vnet vxlan tunnel table */
+    ProducerStateTable  m_vnet_tunnelTable;
     struct nl_cache    *m_link_cache;
     struct nl_sock     *m_nl_sock;
 
@@ -63,7 +63,7 @@ private:
     /* Get interface name based on interface index */
     bool getIfName(int if_index, char *if_name, size_t name_len);
 
-    void getEvpnNextHopSep(string& nexthops, string& vni_list,  
+    void getEvpnNextHopSep(string& nexthops, string& vni_list,
                        string& mac_list, string& intf_list);
 
     void getEvpnNextHopGwIf(char *gwaddr, int vni_value,

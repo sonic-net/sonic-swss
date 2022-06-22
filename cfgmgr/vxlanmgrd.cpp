@@ -13,7 +13,7 @@
 #include "producerstatetable.h"
 #include "vxlanmgr.h"
 #include "shellcmd.h"
-#include "warm_restart.h"
+#include "advanced_restart.h"
 
 using namespace std;
 using namespace swss;
@@ -55,11 +55,11 @@ int main(int argc, char **argv)
         DBConnector appDb("APPL_DB", 0);
         DBConnector stateDb("STATE_DB", 0);
 
-        WarmStart::initialize("vxlanmgrd", "swss");
-        WarmStart::checkWarmStart("vxlanmgrd", "swss");
-        if (WarmStart::isWarmStart())
+        AdvancedStart::initialize("vxlanmgrd", "swss");
+        AdvancedStart::checkAdvancedStart("vxlanmgrd", "swss");
+        if (AdvancedStart::isAdvancedStart())
         {
-            WarmStart::setWarmStartState("vxlanmgrd", WarmStart::INITIALIZED);
+            AdvancedStart::setAdvancedStartState("vxlanmgrd", AdvancedStart::INITIALIZED);
         }
 
         vector<std::string> cfg_vnet_tables = {
@@ -96,11 +96,11 @@ int main(int argc, char **argv)
         auto in_recon = true;
         vxlanmgr.beginReconcile(true);
 
-        if (WarmStart::isWarmStart())
+        if (AdvancedStart::isAdvancedStart())
         {
             vxlanmgr.waitTillReadyToReconcile();
             vxlanmgr.restoreVxlanNetDevices();
-            WarmStart::setWarmStartState("vxlanmgrd", WarmStart::REPLAYED);
+            AdvancedStart::setAdvancedStartState("vxlanmgrd", AdvancedStart::REPLAYED);
         }
 
         SWSS_LOG_NOTICE("starting main loop");
@@ -121,9 +121,9 @@ int main(int argc, char **argv)
                 {
                     in_recon = false;
                     vxlanmgr.endReconcile(false);
-                    if (WarmStart::isWarmStart())
+                    if (AdvancedStart::isAdvancedStart())
                     {
-                        WarmStart::setWarmStartState("vxlanmgrd", WarmStart::RECONCILED);
+                        AdvancedStart::setAdvancedStartState("vxlanmgrd", AdvancedStart::RECONCILED);
                     }
                 }
                 vxlanmgr.doTask();

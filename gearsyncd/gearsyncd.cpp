@@ -20,7 +20,7 @@
 #include <map>
 #include "dbconnector.h"
 #include "producerstatetable.h"
-#include "warm_restart.h"
+#include "advanced_restart.h"
 #include "gearboxparser.h"
 #include "gearboxutils.h"
 #include "schema.h"
@@ -37,8 +37,8 @@ void usage()
     cout << "          use configDB data if not specified" << endl;
 }
 
-bool handleGearboxConfigFile(string file, bool warm);
-bool handleGearboxConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, bool warm);
+bool handleGearboxConfigFile(string file, bool advanced);
+bool handleGearboxConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, bool advanced);
 
 static void notifyGearboxConfigDone(ProducerStateTable &p, bool success)
 {
@@ -78,25 +78,25 @@ int main(int argc, char **argv)
     DBConnector applDb(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
     ProducerStateTable producerStateTable(&applDb, APP_GEARBOX_TABLE_NAME);
 
-    WarmStart::initialize("gearsyncd", "swss");
-    WarmStart::checkWarmStart("gearsyncd", "swss");
-    const bool warm = WarmStart::isWarmStart();
+    AdvancedStart::initialize("gearsyncd", "swss");
+    AdvancedStart::checkAdvancedStart("gearsyncd", "swss");
+    const bool advanced = AdvancedStart::isAdvancedStart();
 
     try
     {
-        if (utils.platformHasGearbox() == false) 
+        if (utils.platformHasGearbox() == false)
         {
           // no gearbox, move on
 
           notifyGearboxConfigDone(producerStateTable, true);
-        } 
-        else if (!handleGearboxConfigFromConfigDB(producerStateTable, cfgDb, warm))
+        }
+        else if (!handleGearboxConfigFromConfigDB(producerStateTable, cfgDb, advanced))
         {
             // if gearbox config is missing in ConfigDB
             // attempt to use gearbox_config.json
             if (!gearbox_config_file.empty())
             {
-                handleGearboxConfigFile(gearbox_config_file, warm);
+                handleGearboxConfigFile(gearbox_config_file, advanced);
             }
         }
     }
@@ -108,7 +108,7 @@ int main(int argc, char **argv)
     return EXIT_SUCCESS;
 }
 
-bool handleGearboxConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, bool warm)
+bool handleGearboxConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, bool advanced)
 {
     cout << "Get gearbox configuration from ConfigDB..." << endl;
 
@@ -132,12 +132,12 @@ bool handleGearboxConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, 
             FieldValueTuple attr(v.first, v.second);
             attrs.push_back(attr);
         }
-        if (!warm)
+        if (!advanced)
         {
             p.set(k, attrs);
         }
     }
-    if (!warm)
+    if (!advanced)
     {
         notifyGearboxConfigDone(p, true);
     }
@@ -145,7 +145,7 @@ bool handleGearboxConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, 
     return true;
 }
 
-bool handleGearboxConfigFile(string file, bool warm)
+bool handleGearboxConfigFile(string file, bool advanced)
 {
     GearboxParser parser;
     bool ret;
@@ -153,6 +153,6 @@ bool handleGearboxConfigFile(string file, bool warm)
     parser.setWriteToDb(true);
     parser.setConfigPath(file);
     ret = parser.parse();
-    parser.notifyGearboxConfigDone(ret);   // if (!warm....)
+    parser.notifyGearboxConfigDone(ret);   // if (!advanced....)
     return ret;
 }

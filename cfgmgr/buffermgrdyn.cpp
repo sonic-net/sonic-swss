@@ -12,7 +12,7 @@
 #include "exec.h"
 #include "shellcmd.h"
 #include "schema.h"
-#include "warm_restart.h"
+#include "advanced_restart.h"
 
 /*
  * Some Tips
@@ -150,19 +150,19 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
 
     // m_waitApplyAdditionalZeroProfiles represents for how long applying additional zero profiles will be deferred
     // after normal profiles and profiles for configured items have been applied
-    // For warm reboot, it is not deferred as the additional zero profiles have been in the APPL_DB
+    // For advanced reboot, it is not deferred as the additional zero profiles have been in the APPL_DB
     // In this case, they should be replayed as soon as possible
     // For fast/cold reboot and other initialization flow, it is defered for 30 seconds.
     // This is to accelerate the fast reboot converging time.
-    if (WarmStart::isWarmStart())
+    if (AdvancedStart::isAdvancedStart())
     {
         m_waitApplyAdditionalZeroProfiles = 0;
-        WarmStart::setWarmStartState("buffermgrd", WarmStart::INITIALIZED);
+        AdvancedStart::setAdvancedStartState("buffermgrd", AdvancedStart::INITIALIZED);
     }
     else
     {
         m_waitApplyAdditionalZeroProfiles = 3;
-        WarmStart::setWarmStartState("buffermgrd", WarmStart::WSDISABLED);
+        AdvancedStart::setAdvancedStartState("buffermgrd", AdvancedStart::WSDISABLED);
     }
 }
 
@@ -3504,15 +3504,15 @@ void BufferMgrDynamic::handlePendingBufferObjects()
         // - on admin down ports, zero profiles are applied
         bool configuredItemsDone = !m_bufferObjectsPending && m_pendingApplyZeroProfilePorts.empty();
 
-        if (WarmStart::isWarmStart())
+        if (AdvancedStart::isAdvancedStart())
         {
-            // For warm restart, all buffer items have been applied now
+            // For advanced restart, all buffer items have been applied now
             if (configuredItemsDone)
             {
-                WarmStart::setWarmStartState("buffermgrd", WarmStart::REPLAYED);
+                AdvancedStart::setAdvancedStartState("buffermgrd", AdvancedStart::REPLAYED);
                 // There is no operation to be performed for buffermgrd reconcillation
                 // Hence mark it reconciled right away
-                WarmStart::setWarmStartState("buffermgrd", WarmStart::RECONCILED);
+                AdvancedStart::setAdvancedStartState("buffermgrd", AdvancedStart::RECONCILED);
                 m_bufferCompletelyInitialized = true;
                 SWSS_LOG_NOTICE("All bufer configuration has been applied. Buffer initialization done");
             }

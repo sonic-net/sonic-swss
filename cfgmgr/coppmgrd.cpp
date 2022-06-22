@@ -8,7 +8,7 @@
 #include "coppmgr.h"
 #include "schema.h"
 #include "select.h"
-#include "warm_restart.h"
+#include "advanced_restart.h"
 
 using namespace std;
 using namespace swss;
@@ -51,8 +51,8 @@ int main(int argc, char **argv)
             CFG_FEATURE_TABLE_NAME,
         };
 
-        WarmStart::initialize("coppmgrd", "swss");
-        WarmStart::checkWarmStart("coppmgrd", "swss");
+        AdvancedStart::initialize("coppmgrd", "swss");
+        AdvancedStart::checkAdvancedStart("coppmgrd", "swss");
 
         DBConnector cfgDb("CONFIG_DB", 0);
         DBConnector appDb("APPL_DB", 0);

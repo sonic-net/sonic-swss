@@ -56,11 +56,11 @@ public:
 
     virtual bool init();
     void start();
-    bool warmRestoreAndSyncUp();
+    bool advancedRestoreAndSyncUp();
     void getTaskToSync(vector<string> &ts);
-    bool warmRestoreValidation();
+    bool advancedRestoreValidation();
 
-    bool warmRestartCheck();
+    bool advancedRestartCheck();
 
     void addOrchList(Orch* o);
     void setFabricEnabled(bool enabled)

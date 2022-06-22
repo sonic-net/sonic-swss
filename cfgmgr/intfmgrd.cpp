@@ -8,7 +8,7 @@
 #include "intfmgr.h"
 #include <fstream>
 #include <iostream>
-#include "warm_restart.h"
+#include "advanced_restart.h"
 
 using namespace std;
 using namespace swss;
@@ -58,8 +58,8 @@ int main(int argc, char **argv)
         DBConnector appDb("APPL_DB", 0);
         DBConnector stateDb("STATE_DB", 0);
 
-        WarmStart::initialize("intfmgrd", "swss");
-        WarmStart::checkWarmStart("intfmgrd", "swss");
+        AdvancedStart::initialize("intfmgrd", "swss");
+        AdvancedStart::checkAdvancedStart("intfmgrd", "swss");
 
         IntfMgr intfmgr(&cfgDb, &appDb, &stateDb, cfg_intf_tables);
 

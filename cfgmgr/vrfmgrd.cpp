@@ -8,7 +8,7 @@
 #include "vrfmgr.h"
 #include <fstream>
 #include <iostream>
-#include "warm_restart.h"
+#include "advanced_restart.h"
 
 using namespace std;
 using namespace swss;
@@ -39,7 +39,7 @@ mutex gDbMutex;
 int main(int argc, char **argv)
 {
     Logger::linkToDbNative("vrfmgrd");
-    bool isWarmStart = false;
+    bool isAdvancedStart = false;
     SWSS_LOG_ENTER();
 
     SWSS_LOG_NOTICE("--- Starting vrfmgrd ---");
@@ -57,12 +57,12 @@ int main(int argc, char **argv)
         DBConnector appDb("APPL_DB", 0);
         DBConnector stateDb("STATE_DB", 0);
 
-        WarmStart::initialize("vrfmgrd", "swss");
-        WarmStart::checkWarmStart("vrfmgrd", "swss");
+        AdvancedStart::initialize("vrfmgrd", "swss");
+        AdvancedStart::checkAdvancedStart("vrfmgrd", "swss");
 
         VrfMgr vrfmgr(&cfgDb, &appDb, &stateDb, cfg_vrf_tables);
 
-        isWarmStart = WarmStart::isWarmStart();
+        isAdvancedStart = AdvancedStart::isAdvancedStart();
 
         // TODO: add tables in stateDB which interface depends on to monitor list
         std::vector<Orch *> cfgOrchList = {&vrfmgr};
@@ -89,13 +89,13 @@ int main(int argc, char **argv)
             if (ret == Select::TIMEOUT)
             {
                 vrfmgr.doTask();
-                if (isWarmStart && firstReadTimeout)
+                if (isAdvancedStart && firstReadTimeout)
                 {
                     firstReadTimeout = false;
-                    WarmStart::setWarmStartState("vrfmgrd", WarmStart::REPLAYED);
+                    AdvancedStart::setAdvancedStartState("vrfmgrd", AdvancedStart::REPLAYED);
                     // There is no operation to be performed for vrfmgrd reconcillation
                     // Hence mark it reconciled right away
-                    WarmStart::setWarmStartState("vrfmgrd", WarmStart::RECONCILED);
+                    AdvancedStart::setAdvancedStartState("vrfmgrd", AdvancedStart::RECONCILED);
                 }
                 continue;
             }

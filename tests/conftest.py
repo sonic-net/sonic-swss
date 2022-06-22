@@ -407,7 +407,7 @@ class DockerVirtualSwitch:
         for i in range(NUM_PORTS):
             server = VirtualServer(self.ctn_sw.name, self.ctn_sw_pid, i)
             self.servers.append(server)
-            
+
     def reset_dbs(self):
         # DB wrappers are declared here, lazy-loaded in the tests
         self.app_db = None
@@ -1193,7 +1193,7 @@ class DockerVirtualSwitch:
     def warm_restart_swss(self, enable):
         db = swsscommon.DBConnector(6, self.redis_sock, 0)
 
-        tbl = swsscommon.Table(db, "WARM_RESTART_ENABLE_TABLE")
+        tbl = swsscommon.Table(db, "ADVANCED_RESTART_ENABLE_TABLE")
         fvs = swsscommon.FieldValuePairs([("enable",enable)])
         tbl.set("swss", fvs)
 
@@ -1859,7 +1859,7 @@ def dvs_vlan_manager(request, dvs):
 def dvs_port_manager(request, dvs):
     request.cls.dvs_port = dvs_port.DVSPort(dvs.get_asic_db(),
                                             dvs.get_config_db())
-    
+
 @pytest.yield_fixture(scope="class")
 def dvs_mirror_manager(request, dvs):
     request.cls.dvs_mirror = dvs_mirror.DVSMirror(dvs.get_asic_db(),

@@ -1,6 +1,6 @@
 INCLUDES = -I $(top_srcdir)/lib \
            -I $(top_srcdir) \
-           -I $(top_srcdir)/warmrestart \
+           -I $(top_srcdir)/advancedrestart \
            -I flex_counter \
            -I debug_counter \
            -I pbh \

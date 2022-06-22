@@ -54,7 +54,7 @@ private:
     bool isIntfChangeVrf(const std::string &alias, const std::string &vrfName);
     int getIntfIpCount(const std::string &alias);
     void buildIntfReplayList(void);
-    void setWarmReplayDoneState();
+    void setAdvancedReplayDoneState();
 
     void addLoopbackIntf(const std::string &alias);
     void delLoopbackIntf(const std::string &alias);

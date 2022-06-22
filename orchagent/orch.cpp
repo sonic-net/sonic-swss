@@ -306,7 +306,7 @@ bool Orch::bake()
         }
 
         size_t refilled = consumer->refillToSync();
-        SWSS_LOG_NOTICE("Add warm input: %s, %zd", executorName.c_str(), refilled);
+        SWSS_LOG_NOTICE("Add advanced input: %s, %zd", executorName.c_str(), refilled);
     }
 
     return true;

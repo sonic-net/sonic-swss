@@ -7,7 +7,7 @@
 #include "coppmgr.h"
 #include "exec.h"
 #include "shellcmd.h"
-#include "warm_restart.h"
+#include "advanced_restart.h"
 #include "json.hpp"
 
 using json = nlohmann::json;

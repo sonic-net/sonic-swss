@@ -1,13 +1,13 @@
 #include <cassert>
 #include <sstream>
 
-#include "warmRestartHelper.h"
+#include "advancedRestartHelper.h"
 
 
 using namespace swss;
 
 
-WarmStartHelper::WarmStartHelper(RedisPipeline      *pipeline,
+AdvancedStartHelper::AdvancedStartHelper(RedisPipeline      *pipeline,
                                  ProducerStateTable *syncTable,
                                  const std::string  &syncTableName,
                                  const std::string  &dockerName,
@@ -18,25 +18,25 @@ WarmStartHelper::WarmStartHelper(RedisPipeline      *pipeline,
     m_dockName(dockerName),
     m_appName(appName)
 {
-    WarmStart::initialize(appName, dockerName);
+    AdvancedStart::initialize(appName, dockerName);
 }
 
 
-WarmStartHelper::~WarmStartHelper()
+AdvancedStartHelper::~AdvancedStartHelper()
 {
 }
 
 
-void WarmStartHelper::setState(WarmStart::WarmStartState state)
+void AdvancedStartHelper::setState(AdvancedStart::AdvancedStartState state)
 {
-    WarmStart::setWarmStartState(m_appName, state);
+    AdvancedStart::setAdvancedStartState(m_appName, state);
 
-    /* Caching warm-restart FSM state in local member */
+    /* Caching advanced-restart FSM state in local member */
     m_state = state;
 }
 
 
-WarmStart::WarmStartState WarmStartHelper::getState(void) const
+AdvancedStart::AdvancedStartState AdvancedStartHelper::getState(void) const
 {
     return m_state;
 }
@@ -44,64 +44,64 @@ WarmStart::WarmStartState WarmStartHelper::getState(void) const
 
 /*
  * To be called by each application to obtain the active/inactive state of
- * warm-restart functionality, and proceed to initialize the FSM accordingly.
+ * advanced-restart functionality, and proceed to initialize the FSM accordingly.
  */
-bool WarmStartHelper::checkAndStart(void)
+bool AdvancedStartHelper::checkAndStart(void)
 {
-    bool enabled = WarmStart::checkWarmStart(m_appName, m_dockName);
+    bool enabled = AdvancedStart::checkAdvancedStart(m_appName, m_dockName);
 
     /*
-     * If warm-restart feature is enabled for this application, proceed to
+     * If advanced-restart feature is enabled for this application, proceed to
      * initialize its FSM, and clean any pending state that could be potentially
      * held in ProducerState queues.
      */
     if (enabled)
     {
-        SWSS_LOG_NOTICE("Initializing Warm-Restart cycle for %s application.",
+        SWSS_LOG_NOTICE("Initializing Advanced-Restart cycle for %s application.",
                         m_appName.c_str());
 
-        setState(WarmStart::INITIALIZED);
+        setState(AdvancedStart::INITIALIZED);
         m_syncTable->clear();
     }
 
-    /* Cleaning state from previous (unsuccessful) warm-restart attempts */
+    /* Cleaning state from previous (unsuccessful) advanced-restart attempts */
     m_restorationVector.clear();
     m_refreshMap.clear();
 
-    /* Keeping track of warm-reboot active/inactive state */
+    /* Keeping track of advanced-reboot active/inactive state */
     m_enabled = enabled;
 
     return enabled;
 }
 
 
-bool WarmStartHelper::isReconciled(void) const
+bool AdvancedStartHelper::isReconciled(void) const
 {
-    return (m_state == WarmStart::RECONCILED);
+    return (m_state == AdvancedStart::RECONCILED);
 }
 
 
-bool WarmStartHelper::inProgress(void) const
+bool AdvancedStartHelper::inProgress(void) const
 {
-    return (m_enabled && m_state != WarmStart::RECONCILED);
+    return (m_enabled && m_state != AdvancedStart::RECONCILED);
 }
 
 
-uint32_t WarmStartHelper::getRestartTimer(void) const
+uint32_t AdvancedStartHelper::getRestartTimer(void) const
 {
-    return WarmStart::getWarmStartTimer(m_appName, m_dockName);
+    return AdvancedStart::getAdvancedStartTimer(m_appName, m_dockName);
 }
 
 
 /*
- * Invoked by warmStartHelper clients during initialization. All interested parties
+ * Invoked by advancedStartHelper clients during initialization. All interested parties
  * are expected to call this method to upload their associated redisDB state into
  * a temporary buffer, which will eventually serve to resolve any conflict between
  * 'old' and 'new' state.
  */
-bool WarmStartHelper::runRestoration()
+bool AdvancedStartHelper::runRestoration()
 {
-    SWSS_LOG_NOTICE("Warm-Restart: Initiating AppDB restoration process for %s "
+    SWSS_LOG_NOTICE("Advanced-Restart: Initiating AppDB restoration process for %s "
                     "application.", m_appName.c_str());
 
     m_restorationTable.getContent(m_restorationVector);
@@ -112,29 +112,29 @@ bool WarmStartHelper::runRestoration()
      */
     if (!m_restorationVector.size())
     {
-        SWSS_LOG_NOTICE("Warm-Restart: No records received from AppDB for %s "
+        SWSS_LOG_NOTICE("Advanced-Restart: No records received from AppDB for %s "
                         "application.", m_appName.c_str());
 
-        setState(WarmStart::RECONCILED);
+        setState(AdvancedStart::RECONCILED);
 
         return false;
     }
 
-    SWSS_LOG_NOTICE("Warm-Restart: Received %zu records from AppDB for %s "
+    SWSS_LOG_NOTICE("Advanced-Restart: Received %zu records from AppDB for %s "
                     "application.",
                     m_restorationVector.size(),
                     m_appName.c_str());
 
-    setState(WarmStart::RESTORED);
+    setState(AdvancedStart::RESTORED);
 
-    SWSS_LOG_NOTICE("Warm-Restart: Completed AppDB restoration process for %s "
+    SWSS_LOG_NOTICE("Advanced-Restart: Completed AppDB restoration process for %s "
                     "application.", m_appName.c_str());
 
     return true;
 }
 
 
-void WarmStartHelper::insertRefreshMap(const KeyOpFieldsValuesTuple &kfv)
+void AdvancedStartHelper::insertRefreshMap(const KeyOpFieldsValuesTuple &kfv)
 {
     const std::string key = kfvKey(kfv);
 
@@ -149,12 +149,12 @@ void WarmStartHelper::insertRefreshMap(const KeyOpFieldsValuesTuple &kfv)
  * state-diff is found between these two, we will be honoring the refreshed
  * one received from the application, and will proceed to push it down to AppDB.
  */
-void WarmStartHelper::reconcile(void)
+void AdvancedStartHelper::reconcile(void)
 {
-    SWSS_LOG_NOTICE("Warm-Restart: Initiating reconciliation process for %s "
+    SWSS_LOG_NOTICE("Advanced-Restart: Initiating reconciliation process for %s "
                     "application.", m_appName.c_str());
 
-    assert(getState() == WarmStart::RESTORED);
+    assert(getState() == AdvancedStart::RESTORED);
 
     for (auto &restoredElem : m_restorationVector)
     {
@@ -169,7 +169,7 @@ void WarmStartHelper::reconcile(void)
          */
         if (iter == m_refreshMap.end())
         {
-            SWSS_LOG_NOTICE("Warm-Restart reconciliation: deleting stale entry %s",
+            SWSS_LOG_NOTICE("Advanced-Restart reconciliation: deleting stale entry %s",
                             printKFV(restoredKey, restoredFV).c_str());
 
             m_syncTable->del(restoredKey);
@@ -182,7 +182,7 @@ void WarmStartHelper::reconcile(void)
          */
         else if (kfvOp(iter->second) == DEL_COMMAND)
         {
-            SWSS_LOG_NOTICE("Warm-Restart reconciliation: deleting entry %s",
+            SWSS_LOG_NOTICE("Advanced-Restart reconciliation: deleting entry %s",
                             printKFV(restoredKey, restoredFV).c_str());
 
             m_syncTable->del(restoredKey);
@@ -199,14 +199,14 @@ void WarmStartHelper::reconcile(void)
 
             if (compareAllFV(restoredFV, refreshedFV))
             {
-                SWSS_LOG_NOTICE("Warm-Restart reconciliation: updating entry %s",
+                SWSS_LOG_NOTICE("Advanced-Restart reconciliation: updating entry %s",
                                 printKFV(refreshedKey, refreshedFV).c_str());
 
                 m_syncTable->set(refreshedKey, refreshedFV);
             }
             else
             {
-                SWSS_LOG_INFO("Warm-Restart reconciliation: no changes needed for "
+                SWSS_LOG_INFO("Advanced-Restart reconciliation: no changes needed for "
                               "existing entry %s",
                               printKFV(refreshedKey, refreshedFV).c_str());
             }
@@ -227,20 +227,20 @@ void WarmStartHelper::reconcile(void)
         auto refreshedFV  = kfvFieldsValues(kfv.second);
 
         /*
-         * During warm-reboot, apps could receive an 'add' and a 'delete' for an
+         * During advanced-reboot, apps could receive an 'add' and a 'delete' for an
          * entry that does not exist in AppDB. In these cases we must prevent the
          * 'delete' from being pushed down to AppDB, so we are handling this case
          * differently than the 'add' one.
          */
         if(refreshedOp == DEL_COMMAND)
         {
-            SWSS_LOG_NOTICE("Warm-Restart reconciliation: discarding non-existing"
+            SWSS_LOG_NOTICE("Advanced-Restart reconciliation: discarding non-existing"
                             " entry %s\n",
                             refreshedKey.c_str());
         }
         else
         {
-            SWSS_LOG_NOTICE("Warm-Restart reconciliation: introducing new entry %s",
+            SWSS_LOG_NOTICE("Advanced-Restart reconciliation: introducing new entry %s",
                             printKFV(refreshedKey, refreshedFV).c_str());
 
             m_syncTable->set(refreshedKey, refreshedFV);
@@ -253,9 +253,9 @@ void WarmStartHelper::reconcile(void)
     /* Clearing restoration vector */
     m_restorationVector.clear();
 
-    setState(WarmStart::RECONCILED);
+    setState(AdvancedStart::RECONCILED);
 
-    SWSS_LOG_NOTICE("Warm-Restart: Concluded reconciliation process for %s "
+    SWSS_LOG_NOTICE("Advanced-Restart: Concluded reconciliation process for %s "
                     "application.", m_appName.c_str());
 }
 
@@ -271,7 +271,7 @@ void WarmStartHelper::reconcile(void)
  *    'false' : If the content of both 'fields' and 'values' fully match
  *    'true'  : No full-match is found
  */
-bool WarmStartHelper::compareAllFV(const std::vector<FieldValueTuple> &v1,
+bool AdvancedStartHelper::compareAllFV(const std::vector<FieldValueTuple> &v1,
                                    const std::vector<FieldValueTuple> &v2)
 {
     std::unordered_map<std::string, std::string> v1Map((v1.begin()), v1.end());
@@ -318,7 +318,7 @@ bool WarmStartHelper::compareAllFV(const std::vector<FieldValueTuple> &v1,
  *    'false' : If the content of both strings fully matches
  *    'true'  : No full-match is found
  */
-bool WarmStartHelper::compareOneFV(const std::string &s1, const std::string &s2)
+bool AdvancedStartHelper::compareOneFV(const std::string &s1, const std::string &s2)
 {
     if (s1.size() != s2.size())
     {
@@ -355,7 +355,7 @@ bool WarmStartHelper::compareOneFV(const std::string &s1, const std::string &s2)
  *
  * 192.168.1.0/30 { nexthop: 10.2.2.1,10.1.2.1 | ifname: Ethernet116,Ethernet112 }
  */
-const std::string WarmStartHelper::printKFV(const std::string                  &key,
+const std::string AdvancedStartHelper::printKFV(const std::string                  &key,
                                             const std::vector<FieldValueTuple> &fv)
 {
     std::string res;

@@ -2,7 +2,7 @@
 #include "bufferorch.h"
 #include "logger.h"
 #include "sai_serialize.h"
-#include "warm_restart.h"
+#include "advanced_restart.h"
 
 #include <inttypes.h>
 #include <sstream>
@@ -86,18 +86,18 @@ void BufferOrch::initBufferReadyLists(DBConnector *applDb, DBConnector *confDb)
        - buffermgr to notify bufferorch explicitly to remove the PG and queue items configured on admin down ports
        - bufferorch to add the items to m_ready_list on receiving notifications, which is an existing logic
 
-       Theoretically, the initial configuration should come from CONFIG_DB but APPL_DB is used for warm reboot, because:
+       Theoretically, the initial configuration should come from CONFIG_DB but APPL_DB is used for advanced reboot, because:
        - For cold/fast start, buffermgr is responsible for injecting items to APPL_DB
          There is no guarantee that items in APPL_DB are ready when orchagent starts
-       - For warm reboot, APPL_DB is restored from the previous boot, which means they are ready when orchagent starts
-         In addition, bufferorch won't be notified removal of items on admin down ports during warm reboot
+       - For advanced reboot, APPL_DB is restored from the previous boot, which means they are ready when orchagent starts
+         In addition, bufferorch won't be notified removal of items on admin down ports during advanced reboot
          because buffermgrd hasn't been started yet.
          Using APPL_DB means items of admin down ports won't be inserted into m_port_ready_list_ref
          and guarantees the admin down ports always be ready in dynamic buffer model
     */
     SWSS_LOG_ENTER();
 
-    if (WarmStart::isWarmStart())
+    if (AdvancedStart::isAdvancedStart())
     {
         Table pg_table(applDb, APP_BUFFER_PG_TABLE_NAME);
         initBufferReadyList(pg_table, false);
@@ -1007,7 +1007,7 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
     if (op == SET_COMMAND)
     {
         ref_resolve_status  resolve_result = resolveFieldRefValue(m_buffer_type_maps, buffer_profile_field_name,
-                                             buffer_to_ref_table_map.at(buffer_profile_field_name), tuple, 
+                                             buffer_to_ref_table_map.at(buffer_profile_field_name), tuple,
                                              sai_buffer_profile, buffer_profile_name);
         if (ref_resolve_status::success != resolve_result)
         {

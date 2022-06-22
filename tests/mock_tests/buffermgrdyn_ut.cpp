@@ -10,7 +10,7 @@
 #define private public
 #include "buffermgrdyn.h"
 #undef private
-#include "warm_restart.h"
+#include "advanced_restart.h"
 
 extern string gMySwitchType;
 
@@ -159,8 +159,8 @@ namespace buffermgrdyn_test
 
             testing_db::reset();
 
-            WarmStart::initialize("buffermgrd", "swss");
-            WarmStart::checkWarmStart("buffermgrd", "swss");
+            AdvancedStart::initialize("buffermgrd", "swss");
+            AdvancedStart::checkAdvancedStart("buffermgrd", "swss");
         }
 
         void StartBufferManager(shared_ptr<vector<KeyOpFieldsValuesTuple>> zero_profile=nullptr)

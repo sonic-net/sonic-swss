@@ -6,7 +6,7 @@
 #include "exec.h"
 #include "tokenize.h"
 #include "shellcmd.h"
-#include "warm_restart.h"
+#include "advanced_restart.h"
 #include <swss/redisutility.h>
 
 using namespace std;
@@ -35,7 +35,7 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
 {
     SWSS_LOG_ENTER();
 
-    if (WarmStart::isWarmStart())
+    if (AdvancedStart::isAdvancedStart())
     {
         vector<string> vlanKeys, vlanMemberKeys;
 
@@ -53,10 +53,10 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         if (m_vlanReplay.empty())
         {
             replayDone = true;
-            WarmStart::setWarmStartState("vlanmgrd", WarmStart::REPLAYED);
-            SWSS_LOG_NOTICE("vlanmgr warmstart state set to REPLAYED");
-            WarmStart::setWarmStartState("vlanmgrd", WarmStart::RECONCILED);
-            SWSS_LOG_NOTICE("vlanmgr warmstart state set to RECONCILED");
+            AdvancedStart::setAdvancedStartState("vlanmgrd", AdvancedStart::REPLAYED);
+            SWSS_LOG_NOTICE("vlanmgr advanced start state set to REPLAYED");
+            AdvancedStart::setAdvancedStartState("vlanmgrd", AdvancedStart::RECONCILED);
+            SWSS_LOG_NOTICE("vlanmgr advanced start state set to RECONCILED");
         }
         const std::string cmds = std::string("")
           + IP_CMD + " link show " + DOT1Q_BRIDGE_NAME + " 2>/dev/null";
@@ -65,8 +65,8 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         int ret = swss::exec(cmds, res);
         if (ret == 0)
         {
-            // Don't reset vlan aware bridge upon swss docker warm restart.
-            SWSS_LOG_INFO("vlanmgrd warm start, skipping bridge create");
+            // Don't reset vlan aware bridge upon swss docker advanced restart.
+            SWSS_LOG_INFO("vlanmgrd advanced start, skipping bridge create");
             return;
         }
     }
@@ -323,7 +323,7 @@ void VlanMgr::doVlanTask(Consumer &consumer)
             /*
              * If state is already set for this vlan, but it doesn't exist in m_vlans set,
              * just add it to m_vlans set and remove the request to skip disrupting Linux vlan.
-             * Will hit this scenario for docker warm restart.
+             * Will hit this scenario for docker advanced restart.
              *
              * Otherwise, it is new VLAN create or VLAN attribute update like admin_status/mtu change,
              * proceed with regular processing.
@@ -438,13 +438,13 @@ void VlanMgr::doVlanTask(Consumer &consumer)
     }
     if (!replayDone && m_vlanReplay.empty() &&
         m_vlanMemberReplay.empty() &&
-        WarmStart::isWarmStart())
+        AdvancedStart::isAdvancedStart())
     {
         replayDone = true;
-        WarmStart::setWarmStartState("vlanmgrd", WarmStart::REPLAYED);
-        SWSS_LOG_NOTICE("vlanmgr warmstart state set to REPLAYED");
-        WarmStart::setWarmStartState("vlanmgrd", WarmStart::RECONCILED);
-        SWSS_LOG_NOTICE("vlanmgr warmstart state set to RECONCILED");
+        AdvancedStart::setAdvancedStartState("vlanmgrd", AdvancedStart::REPLAYED);
+        SWSS_LOG_NOTICE("vlanmgr advanced start state set to REPLAYED");
+        AdvancedStart::setAdvancedStartState("vlanmgrd", AdvancedStart::RECONCILED);
+        SWSS_LOG_NOTICE("vlanmgr advanced start state set to RECONCILED");
     }
 }
 
@@ -664,13 +664,13 @@ void VlanMgr::doVlanMemberTask(Consumer &consumer)
         it = consumer.m_toSync.erase(it);
     }
     if (!replayDone && m_vlanMemberReplay.empty() &&
-        WarmStart::isWarmStart())
+        AdvancedStart::isAdvancedStart())
     {
         replayDone = true;
-        WarmStart::setWarmStartState("vlanmgrd", WarmStart::REPLAYED);
-        SWSS_LOG_NOTICE("vlanmgr warmstart state set to REPLAYED");
-        WarmStart::setWarmStartState("vlanmgrd", WarmStart::RECONCILED);
-        SWSS_LOG_NOTICE("vlanmgr warmstart state set to RECONCILED");
+        AdvancedStart::setAdvancedStartState("vlanmgrd", AdvancedStart::REPLAYED);
+        SWSS_LOG_NOTICE("vlanmgr advanced start state set to REPLAYED");
+        AdvancedStart::setAdvancedStartState("vlanmgrd", AdvancedStart::RECONCILED);
+        SWSS_LOG_NOTICE("vlanmgr advanced start state set to RECONCILED");
 
     }
 }
