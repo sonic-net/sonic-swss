@@ -456,7 +456,6 @@ void TeamMgr::doPortUpdateTask(Consumer &consumer)
                     SWSS_LOG_INFO("MACsec is NOT ready on the port %s", alias.c_str());
                     continue;
                 }
-                SWSS_LOG_NOTICE("MACsec is ready on the port %s", alias.c_str());
 
                 if (addLagMember(lag, alias) == task_need_retry)
                 {
