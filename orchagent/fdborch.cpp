@@ -177,31 +177,28 @@ bool FdbOrch::storeFdbEntryState(const FdbUpdate& update)
 /*
 clears stateDb and decrements corresponding internal fdb counters
 */
-void FdbOrch::clearFdbEntry(const MacAddress& mac,
-                   const sai_object_id_t& bv_id,
-                   const string& port_alias)
+void FdbOrch::clearFdbEntry(const FdbEntry& entry)
 {
     FdbUpdate update;
-    update.entry.mac = mac;
-    update.entry.bv_id = bv_id;
+    update.entry = entry;
     update.add = false;
 
     /* Fetch Vlan and decrement the counter */
     Port temp_vlan;
-    if (m_portsOrch->getPort(bv_id, temp_vlan))
+    if (m_portsOrch->getPort(entry.bv_id, temp_vlan))
     {
         m_portsOrch->decrFdbCount(temp_vlan.m_alias, 1);
     }
 
     /* Decrement port fdb_counter */
-    m_portsOrch->decrFdbCount(port_alias, 1);
+    m_portsOrch->decrFdbCount(entry.port_name, 1);
 
     /* Remove the FdbEntry from the internal cache, update state DB and CRM counter */
     storeFdbEntryState(update);
     notify(SUBJECT_TYPE_FDB_CHANGE, &update);
 
     SWSS_LOG_INFO("FdbEntry removed from internal cache, MAC: %s , port: %s, BVID: 0x%" PRIx64,
-                   mac.to_string().c_str(), port_alias.c_str(), bv_id);
+                   update.entry.mac.to_string().c_str(), update.entry.port_name.c_str(), update.entry.bv_id);
 }
 
 /*
@@ -224,7 +221,7 @@ void FdbOrch::handleSyncdFlushNotif(const sai_object_id_t& bv_id,
             auto curr = itr++;
             if (curr->second.type != "static" && (curr->first.mac == mac || mac == flush_mac))
             {
-                clearFdbEntry(curr->first.mac, curr->first.bv_id, curr->first.port_name);
+                clearFdbEntry(curr->first);
             }
         }
     }
@@ -238,7 +235,7 @@ void FdbOrch::handleSyncdFlushNotif(const sai_object_id_t& bv_id,
             {
                 if (curr->second.type != "static" && (curr->first.mac == mac || mac == flush_mac))
                 {
-                    clearFdbEntry(curr->first.mac, curr->first.bv_id, curr->first.port_name);
+                    clearFdbEntry(curr->first);
                 }
             }
         }
@@ -253,7 +250,7 @@ void FdbOrch::handleSyncdFlushNotif(const sai_object_id_t& bv_id,
             {
                 if (curr->second.type != "static" && (curr->first.mac == mac || mac == flush_mac))
                 {
-                    clearFdbEntry(curr->first.mac, curr->first.bv_id, curr->first.port_name);
+                    clearFdbEntry(curr->first);
                 }
             }
         }
@@ -268,7 +265,7 @@ void FdbOrch::handleSyncdFlushNotif(const sai_object_id_t& bv_id,
             {
                 if (curr->second.type != "static" && (curr->first.mac == mac || mac == flush_mac))
                 {
-                    clearFdbEntry(curr->first.mac, curr->first.bv_id, curr->first.port_name);
+                    clearFdbEntry(curr->first);
                 }
             }
         }
