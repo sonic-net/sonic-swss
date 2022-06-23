@@ -899,7 +899,12 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
     {
         if (op == "ALL")
         {
-            status = sai_fdb_api->flush_fdb_entries(gSwitchId, 0, NULL);
+            vector<sai_attribute_t>    attrs;
+            sai_attribute_t            attr;
+            attr.id = SAI_FDB_FLUSH_ATTR_ENTRY_TYPE;
+            attr.value.s32 = SAI_FDB_FLUSH_ENTRY_TYPE_DYNAMIC;
+            attrs.push_back(attr);
+            status = sai_fdb_api->flush_fdb_entries(gSwitchId, (uint32_t)attrs.size(), attrs.data());
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Flush fdb failed, return code %x", status);
@@ -1056,6 +1061,11 @@ void FdbOrch::flushFDBEntries(sai_object_id_t bridge_port_oid,
         attr.value.oid = vlan_oid;
         attrs.push_back(attr);
     }
+    
+    /* do not flush static mac */
+    attr.id = SAI_FDB_FLUSH_ATTR_ENTRY_TYPE;
+    attr.value.s32 = SAI_FDB_FLUSH_ENTRY_TYPE_DYNAMIC;
+    attrs.push_back(attr);
 
     SWSS_LOG_INFO("Flushing FDB bridge_port_oid: 0x%" PRIx64 ", and bvid_oid:0x%" PRIx64 ".", bridge_port_oid, vlan_oid);
 
