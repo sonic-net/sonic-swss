@@ -150,8 +150,6 @@ public:
     sai_port_interface_type_t m_interface_type;
     std::vector<uint32_t> m_adv_interface_types;
     bool      m_mpls = false;
-    std::string m_loopback_action;
-
     /*
      * Following two bit vectors are used to lock
      * the PG/queue from being changed in BufferOrch.

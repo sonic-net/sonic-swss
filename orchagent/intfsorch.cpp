@@ -57,13 +57,6 @@ static const vector<sai_router_interface_stat_t> rifStatIds =
     SAI_ROUTER_INTERFACE_STAT_OUT_ERROR_OCTETS,
 };
 
-// Translation of loopback action from sonic to sai type
-const unordered_map<string, sai_packet_action_t> IntfsOrch::m_sai_loopback_action_map =
-{
-    {"drop", SAI_PACKET_ACTION_DROP},
-    {"forward", SAI_PACKET_ACTION_FORWARD},
-};
-
 IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch, DBConnector *chassisAppDb) :
         Orch(db, tableName, intfsorch_pri), m_vrfOrch(vrf_orch)
 {
@@ -954,13 +947,9 @@ void IntfsOrch::doTask(Consumer &consumer)
                     }
 
                     /* Set loopback action */
-                    if ((!loopbackAction.empty()) && (port.m_loopback_action != loopbackAction))
+                    if (!loopbackAction.empty())
                     {
-                        if (setIntfLoopbackAction(port, loopbackAction))
-                        {
-                            port.m_loopback_action = loopbackAction;
-                            gPortsOrch->setPort(alias, port);
-                        }
+                        setIntfLoopbackAction(port, loopbackAction);
                     }
                 }
             }
@@ -1105,10 +1094,16 @@ void IntfsOrch::doTask(Consumer &consumer)
 
 bool IntfsOrch::getSaiLoopbackAction(const string &actionStr, sai_packet_action_t &action)
 {
-    auto it = m_sai_loopback_action_map.find(actionStr);
-    if (it != m_sai_loopback_action_map.end())
+    const unordered_map<string, sai_packet_action_t> loopbackActionMap =
     {
-        action = m_sai_loopback_action_map.at(actionStr);
+        {"drop", SAI_PACKET_ACTION_DROP},
+        {"forward", SAI_PACKET_ACTION_FORWARD},
+    };
+
+    auto it = loopbackActionMap.find(actionStr);
+    if (it != loopbackActionMap.end())
+    {
+        action = loopbackActionMap.at(actionStr);
         return true;
     }
     else
@@ -1259,7 +1254,6 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port, string loopba
     }
 
     port.m_vr_id = vrf_id;
-    port.m_loopback_action = loopbackActionStr;
 
     gPortsOrch->setPort(port.m_alias, port);
     m_rifsToAdd.push_back(port);

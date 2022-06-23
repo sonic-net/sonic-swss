@@ -90,7 +90,6 @@ private:
     unique_ptr<Table> m_vidToRidTable;
     unique_ptr<ProducerTable> m_flexCounterTable;
     unique_ptr<ProducerTable> m_flexCounterGroupTable;
-    static const unordered_map<string, sai_packet_action_t> m_sai_loopback_action_map;
 
     std::string getRifFlexCounterTableKey(std::string s);
 
