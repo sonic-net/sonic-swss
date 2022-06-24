@@ -153,7 +153,7 @@ static const acl_capabilities_t defaultAclActionsSupported =
     }
 };
 
-static acl_table_action_list_lookup_t defaultAclActionList = 
+static acl_table_action_list_lookup_t defaultAclActionList =
 {
     {
         // L3
@@ -2016,7 +2016,7 @@ bool AclTable::addMandatoryActions()
         // Add the default action list
         for (auto action : defaultAclActionList[type.getName()][stage])
         {
-            if (m_pAclOrch->isAclActionSupported(stage, acl_action))
+            if (m_pAclOrch->isAclActionSupported(stage, action))
             {
                 SWSS_LOG_INFO("Added default action for table type %s stage %s",
                                     type.getName().c_str(),
