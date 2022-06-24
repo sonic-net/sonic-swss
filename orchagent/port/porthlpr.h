@@ -6,6 +6,22 @@
 #include <string>
 
 #include "portcnt.h"
+#include "portschema.h"
+
+static const std::unordered_map<std::string, sai_port_fec_mode_t> portFecMap =
+{
+    { PORT_FEC_NONE, SAI_PORT_FEC_MODE_NONE },
+    { PORT_FEC_RS,   SAI_PORT_FEC_MODE_RS   },
+    { PORT_FEC_FC,   SAI_PORT_FEC_MODE_FC   },
+    { PORT_FEC_AUTO, SAI_PORT_FEC_MODE_NONE }
+};
+
+static const std::unordered_map<sai_port_fec_mode_t, std::string> portFecRevMap =
+{
+    { SAI_PORT_FEC_MODE_NONE, PORT_FEC_NONE },
+    { SAI_PORT_FEC_MODE_RS,   PORT_FEC_RS   },
+    { SAI_PORT_FEC_MODE_FC,   PORT_FEC_FC   }
+};
 
 class PortHelper final
 {

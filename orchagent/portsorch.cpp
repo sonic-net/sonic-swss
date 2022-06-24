@@ -88,20 +88,6 @@ typedef std::map<sai_port_serdes_attr_t, std::vector<std::uint32_t>> PortSerdesA
 
 // constants ----------------------------------------------------------------------------------------------------------
 
-static map<string, sai_port_fec_mode_t> fec_mode_map =
-{
-    { "none",  SAI_PORT_FEC_MODE_NONE },
-    { "rs", SAI_PORT_FEC_MODE_RS },
-    { "fc", SAI_PORT_FEC_MODE_FC }
-};
-
-static map<sai_port_fec_mode_t, string> fec_mode_reverse_map =
-{
-    { SAI_PORT_FEC_MODE_NONE, "none" },
-    { SAI_PORT_FEC_MODE_RS, "rs"  },
-    { SAI_PORT_FEC_MODE_FC, "fc"  }
-};
-
 static map<string, sai_bridge_port_fdb_learning_mode_t> learn_mode_map =
 {
     { "drop",  SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DROP },
@@ -1542,7 +1528,7 @@ bool PortsOrch::setPortFecOverride(sai_object_id_t port_obj, bool fec_override)
     return true;
 }
 
-bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t fec_mode)
+bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t fec_mode, bool auto_fec)
 {
     SWSS_LOG_ENTER();
 
@@ -1561,11 +1547,11 @@ bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t fec_mode)
         }
     }
 
-    if (fec_override_sup && !setPortFecOverride(port.m_port_id, true))
+    if (fec_override_sup && !setPortFecOverride(port.m_port_id, !auto_fec))
     {
         return false;
     }
-    setGearboxPortsAttr(port, SAI_PORT_ATTR_FEC_MODE, &fec_mode);
+    setGearboxPortsAttr(port, SAI_PORT_ATTR_FEC_MODE, &fec_mode, auto_fec);
 
     SWSS_LOG_NOTICE("Set port %s FEC mode %d", port.m_alias.c_str(), fec_mode);
 
@@ -2357,10 +2343,14 @@ void PortsOrch::initPortCapLinkTraining(Port &port)
     SWSS_LOG_WARN("Unable to get %s LT support capability", port.m_alias.c_str());
 }
 
-bool PortsOrch::isFecModeSupported(const Port &port, sai_port_fec_mode_t fec_mode)
+bool PortsOrch::isFecModeSupported(const Port &port, sai_port_fec_mode_t fec_mode, bool is_auto)
 {
     initPortSupportedFecModes(port.m_alias, port.m_port_id);
 
+    if (is_auto && !fec_override_sup)
+    {
+        return false;
+    }
     const auto &obj = m_portSupportedFecModes.at(port.m_port_id);
 
     if (!obj.supported)
@@ -2462,6 +2452,10 @@ void PortsOrch::initPortSupportedFecModes(const std::string& alias, sai_object_i
 
             fecModeList.push_back(fecMode);
         }
+        if (!fecModeList.empty() && fec_override_sup)
+        {
+            fecModeList.push_back(PORT_FEC_AUTO);
+        }
     }
 
     std::vector<FieldValueTuple> v;
@@ -2474,15 +2468,15 @@ void PortsOrch::initPortSupportedFecModes(const std::string& alias, sai_object_i
 /*
  * If Gearbox is enabled and this is a Gearbox port then set the attributes accordingly.
  */
-bool PortsOrch::setGearboxPortsAttr(const Port &port, sai_port_attr_t id, void *value)
+bool PortsOrch::setGearboxPortsAttr(const Port &port, sai_port_attr_t id, void *value, bool auto_fec)
 {
     bool status = false;
 
-    status = setGearboxPortAttr(port, PHY_PORT_TYPE, id, value);
+    status = setGearboxPortAttr(port, PHY_PORT_TYPE, id, value, auto_fec);
 
     if (status == true)
     {
-        status = setGearboxPortAttr(port, LINE_PORT_TYPE, id, value);
+        status = setGearboxPortAttr(port, LINE_PORT_TYPE, id, value, auto_fec);
     }
 
     return status;
@@ -2492,7 +2486,7 @@ bool PortsOrch::setGearboxPortsAttr(const Port &port, sai_port_attr_t id, void *
  * If Gearbox is enabled and this is a Gearbox port then set the specific lane attribute.
  * Note: the appl_db is also updated (Gearbox config_db tables are TBA).
  */
-bool PortsOrch::setGearboxPortAttr(const Port &port, dest_port_type_t port_type, sai_port_attr_t id, void *value)
+bool PortsOrch::setGearboxPortAttr(const Port &port, dest_port_type_t port_type, sai_port_attr_t id, void *value, bool auto_fec)
 {
     sai_status_t status = SAI_STATUS_SUCCESS;
     sai_object_id_t dest_port_id;
@@ -2568,7 +2562,7 @@ bool PortsOrch::setGearboxPortAttr(const Port &port, dest_port_type_t port_type,
                     m_gearboxTable->hset(key, speed_attr, to_string(speed));
                     SWSS_LOG_NOTICE("BOX: Updated APPL_DB key:%s %s %d", key.c_str(), speed_attr.c_str(), speed);
                 }
-                else if (id == SAI_PORT_ATTR_FEC_MODE && fec_override_sup && !setPortFecOverride(dest_port_id, true))
+                else if (id == SAI_PORT_ATTR_FEC_MODE && fec_override_sup && !setPortFecOverride(dest_port_id, !auto_fec))
                 {
                     return false;
                 }
@@ -3869,7 +3863,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     /* reset fec mode upon mode change */
                     if (!p.m_fec_cfg || p.m_fec_mode != pCfg.fec.value)
                     {
-                        if (!isFecModeSupported(p, pCfg.fec.value))
+                        if (!isFecModeSupported(p, pCfg.fec.value, pCfg.fec.is_auto))
                         {
                             SWSS_LOG_ERROR(
                                 "Unsupported port %s FEC mode %s",
@@ -3897,7 +3891,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             m_portList[p.m_alias] = p;
                         }
 
-                        if (!setPortFec(p, pCfg.fec.value))
+                        if (!setPortFec(p, pCfg.fec.value, pCfg.fec.is_auto))
                         {
                             SWSS_LOG_ERROR(
                                 "Failed to set port %s FEC mode %s",
@@ -7618,8 +7612,23 @@ bool PortsOrch::initGearboxPort(Port &port)
             attrs.push_back(attr);
 
             attr.id = SAI_PORT_ATTR_FEC_MODE;
-            attr.value.s32 = fec_mode_map[m_gearboxPortMap[port.m_index].system_fec];
+            attr.value.s32 = portFecMap.at(m_gearboxPortMap[port.m_index].system_fec);
             attrs.push_back(attr);
+           
+            if (fec_override_sup)
+            {
+                attr.id = SAI_PORT_ATTR_AUTO_NEG_FEC_MODE_OVERRIDE;
+            
+                if (m_gearboxPortMap[port.m_index].system_fec == PORT_FEC_AUTO)
+                {
+                    attr.value.booldata = false;
+                }
+                else
+                {
+                    attr.value.booldata = true;
+                }
+                attrs.push_back(attr);
+            }
 
             attr.id = SAI_PORT_ATTR_INTERNAL_LOOPBACK_MODE;
             attr.value.u32 = loopback_mode_map[m_gearboxPortMap[port.m_index].system_loopback];
@@ -7674,8 +7683,23 @@ bool PortsOrch::initGearboxPort(Port &port)
             attrs.push_back(attr);
 
             attr.id = SAI_PORT_ATTR_FEC_MODE;
-            attr.value.s32 = fec_mode_map[m_gearboxPortMap[port.m_index].line_fec];
+            attr.value.s32 = portFecMap.at(m_gearboxPortMap[port.m_index].line_fec);
             attrs.push_back(attr);
+
+            if (fec_override_sup)
+            {
+                attr.id = SAI_PORT_ATTR_AUTO_NEG_FEC_MODE_OVERRIDE;
+            
+                if (m_gearboxPortMap[port.m_index].system_fec == PORT_FEC_AUTO)
+                {
+                    attr.value.booldata = false;
+                }
+                else
+                {
+                    attr.value.booldata = true;
+                }
+                attrs.push_back(attr);
+            }
 
             attr.id = SAI_PORT_ATTR_MEDIA_TYPE;
             attr.value.u32 = media_type_map[m_gearboxPortMap[port.m_index].line_media_type];

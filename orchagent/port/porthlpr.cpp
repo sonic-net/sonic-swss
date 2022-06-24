@@ -9,7 +9,6 @@
 
 #include <boost/algorithm/string.hpp>
 
-#include "portschema.h"
 #include "converter.h"
 #include "tokenize.h"
 #include "logger.h"
@@ -70,19 +69,6 @@ static const std::unordered_map<std::string, sai_port_interface_type_t> portInte
     { PORT_INTERFACE_TYPE_XGMII, SAI_PORT_INTERFACE_TYPE_XGMII }
 };
 
-static const std::unordered_map<std::string, sai_port_fec_mode_t> portFecMap =
-{
-    { PORT_FEC_NONE, SAI_PORT_FEC_MODE_NONE },
-    { PORT_FEC_RS,   SAI_PORT_FEC_MODE_RS   },
-    { PORT_FEC_FC,   SAI_PORT_FEC_MODE_FC   }
-};
-
-static const std::unordered_map<sai_port_fec_mode_t, std::string> portFecRevMap =
-{
-    { SAI_PORT_FEC_MODE_NONE, PORT_FEC_NONE },
-    { SAI_PORT_FEC_MODE_RS,   PORT_FEC_RS   },
-    { SAI_PORT_FEC_MODE_FC,   PORT_FEC_FC   }
-};
 
 static const std::unordered_map<std::string, sai_port_priority_flow_control_mode_t> portPfcAsymMap =
 {
@@ -470,6 +456,11 @@ bool PortHelper::parsePortFec(PortConfig &port, const std::string &field, const 
 
     port.fec.value = cit->second;
     port.fec.is_set = true;
+
+    if (value == PORT_FEC_AUTO)
+    {
+        port.fec.is_auto = true;
+    }
 
     return true;
 }
