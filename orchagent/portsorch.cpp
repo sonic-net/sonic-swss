@@ -3418,7 +3418,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 }
                 
                 /* create host_tx_ready field in state-db */
-                initHostTxReadyState(p)
+                initHostTxReadyState(p);
                 
                 /* Last step set port admin status */
                 if (!admin_status.empty() && (p.m_admin_state_up != (admin_status == "up")))
