@@ -678,6 +678,12 @@ class TestMACsec(object):
         assert(
             inspector.get_macsec_xpn_counter(
                 port_name,
+                local_mac_address,
+                macsec_port_identifier,
+                0) == packet_number)
+        assert(
+            inspector.get_macsec_xpn_counter(
+                port_name,
                 peer_mac_address,
                 macsec_port_identifier,
                 0) == packet_number)
@@ -701,6 +707,18 @@ class TestMACsec(object):
                 macsec_port_identifier,
                 1))
         assert(
+            inspector.get_macsec_sa(
+                macsec_port,
+                peer_mac_address,
+                macsec_port_identifier,
+                1))
+        assert(
+            inspector.get_macsec_xpn_counter(
+                port_name,
+                local_mac_address,
+                macsec_port_identifier,
+                1) == packet_number)
+        assert(
             inspector.get_macsec_xpn_counter(
                 port_name,
                 peer_mac_address,
@@ -712,6 +730,18 @@ class TestMACsec(object):
                 local_mac_address,
                 macsec_port_identifier,
                 0))
+        assert(
+            not inspector.get_macsec_sa(
+                macsec_port,
+                peer_mac_address,
+                macsec_port_identifier,
+                0))
+        assert(
+            not inspector.get_macsec_xpn_counter(
+                port_name,
+                local_mac_address,
+                macsec_port_identifier,
+                0) == packet_number)
         assert(
             not inspector.get_macsec_xpn_counter(
                 port_name,
