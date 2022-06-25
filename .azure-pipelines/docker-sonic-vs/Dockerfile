@@ -1,6 +1,7 @@
 FROM docker-sonic-vs
 
 ARG docker_container_name
+ARG need_dbg
 
 ADD ["debs", "/debs"]
 
@@ -17,6 +18,7 @@ RUN dpkg -i /debs/syncd-vs_1.0.0_amd64.deb
 
 RUN dpkg --purge swss
 RUN dpkg -i /debs/swss_1.0.0_amd64.deb
+RUN if [ "$need_dbg" = "y" ] ; then dpkg -i /debs/swss-dbg_1.0.0_amd64.deb ; fi
 
 RUN apt-get update
 
