@@ -359,9 +359,6 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
     sai_status_t status;
     char fwPath[PATH_MAX];
     char hwinfo[HWINFO_MAX_SIZE + 1];
-    char hwinfoIntf[IFNAMSIZ + 1];
-    unsigned int hwinfoPhyid;
-    int ret;
 
     SWSS_LOG_ENTER();
 
@@ -377,19 +374,11 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
     attr.value.u32 = 0;
     attrs.push_back(attr);
 
-    ret = sscanf(phy->hwinfo.c_str(), "%" STR(IFNAMSIZ) "[^/]/%u", hwinfoIntf, &hwinfoPhyid);
-    if (ret != 2) {
-        SWSS_LOG_ERROR("BOX: hardware info doesn't match the 'interface_name/phyid' "
-                       "format");
-        return SAI_STATUS_FAILURE;
+    if( phy->hwinfo.length() > HWINFO_MAX_SIZE ) {
+       SWSS_LOG_ERROR( "hwinfo string attribute is too long." );
+       return SAI_STATUS_FAILURE;
     }
-
-    if (hwinfoPhyid > std::numeric_limits<uint16_t>::max()) {
-        SWSS_LOG_ERROR("BOX: phyid is bigger than maximum limit");
-        return SAI_STATUS_FAILURE;
-    }
-
-    strcpy(hwinfo, phy->hwinfo.c_str());
+    strncpy(hwinfo, phy->hwinfo.c_str(), HWINFO_MAX_SIZE);
 
     attr.id = SAI_SWITCH_ATTR_SWITCH_HARDWARE_INFO;
     attr.value.s8list.count = (uint32_t) phy->hwinfo.length();
