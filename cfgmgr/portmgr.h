@@ -27,15 +27,12 @@ private:
     ProducerStateTable m_appPortTable;
 
     std::set<std::string> m_portList;
-    std::map<std::string, std::map<std::string, std::string>> m_retryMap;
 
     void doTask(Consumer &consumer);
     bool writeConfigToAppDb(const std::string &alias, const std::string &field, const std::string &value);
     bool setPortMtu(const std::string &alias, const std::string &mtu);
     bool setPortAdminStatus(const std::string &alias, const bool up);
     bool isPortStateOk(const std::string &alias);
-    bool addToRetry(const std::string &alias, const std::string &field, const std::string &value);
-    void removeFromRetry(const std::string &alias, const std::string &field);
 };
 
 }

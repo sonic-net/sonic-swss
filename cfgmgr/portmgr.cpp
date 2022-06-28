@@ -69,7 +69,6 @@ void PortMgr::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    std::vector<FieldValueTuple> retryFields;
     auto table = consumer.getTableName();
 
     auto it = consumer.m_toSync.begin();
@@ -103,6 +102,11 @@ void PortMgr::doTask(Consumer &consumer)
 
                 m_portList.insert(alias);
             }
+            else if (!portOk)
+            {
+                it++;
+                continue;
+            }
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -120,46 +124,36 @@ void PortMgr::doTask(Consumer &consumer)
                 }
             }
 
+            for (auto &entry : field_values)
+            {
+                writeConfigToAppDb(alias, fvField(entry), fvValue(entry));
+                SWSS_LOG_NOTICE("Configure %s %s to %s", alias.c_str(), fvField(entry).c_str(), fvValue(entry).c_str());
+            }
+
+            if (!portOk)
+            {
+                SWSS_LOG_INFO("Port %s is not ready, pending...", alias.c_str());
+
+                writeConfigToAppDb(alias, "mtu", mtu);
+                writeConfigToAppDb(alias, "admin_status", admin_status);
+                field_values.clear();
+                field_values.emplace_back("mtu", mtu);
+                field_values.emplace_back("admin_status", admin_status);
+                it->second = KeyOpFieldsValuesTuple{alias, SET_COMMAND, field_values};
+                it++;
+                continue;
+            }
+
             if (!mtu.empty())
             {
-                if (portOk)
-                {
-                    removeFromRetry(alias, "mtu");
-                    setPortMtu(alias, mtu);
-                }
-                else
-                {
-                    if (addToRetry(alias, "mtu", mtu))
-                    {
-                        writeConfigToAppDb(alias, "mtu", mtu);
-                    }
-                    retryFields.emplace_back("mtu", mtu);
-                }
+                setPortMtu(alias, mtu);
                 SWSS_LOG_NOTICE("Configure %s MTU to %s", alias.c_str(), mtu.c_str());
             }
 
             if (!admin_status.empty())
             {
-                if (portOk)
-                {
-                    removeFromRetry(alias, "admin_status");
-                    setPortAdminStatus(alias, admin_status == "up");
-                }
-                else
-                {
-                    if (addToRetry(alias, "admin_status", admin_status))
-                    {
-                         writeConfigToAppDb(alias, "admin_status", admin_status);
-                    }
-                    retryFields.emplace_back("admin_status", admin_status);
-                }
+                setPortAdminStatus(alias, admin_status == "up");
                 SWSS_LOG_NOTICE("Configure %s admin status to %s", alias.c_str(), admin_status.c_str());
-            }
-
-            for (auto &entry : field_values)
-            {
-                writeConfigToAppDb(alias, fvField(entry), fvValue(entry));
-                SWSS_LOG_NOTICE("Configure %s %s to %s", alias.c_str(), fvField(entry).c_str(), fvValue(entry).c_str());
             }
         }
         else if (op == DEL_COMMAND)
@@ -169,21 +163,7 @@ void PortMgr::doTask(Consumer &consumer)
             m_portList.erase(alias);
         }
 
-        if (retryFields.empty()) // TODO: test delete & retry
-        {
-            it = consumer.m_toSync.erase(it);
-        }
-        else
-        {
-            /* There are some fields require retry due to set failure. This is usually because 
-             * port has not been created in kernel so that mtu and admin_status configuration 
-             * cannot be synced between kernel and  ASIC for now. In this case, we put the retry fields 
-             * back to m_toSync and wait for re-visit later.
-             */
-            it->second = KeyOpFieldsValuesTuple{alias, SET_COMMAND, retryFields};
-            ++it;
-            retryFields.clear();
-        }
+        it = consumer.m_toSync.erase(it);
     }
 }
 
@@ -195,47 +175,4 @@ bool PortMgr::writeConfigToAppDb(const std::string &alias, const std::string &fi
     m_appPortTable.set(alias, fvs);
 
     return true;
-}
-
-bool PortMgr::addToRetry(const std::string &alias, const std::string &field, const std::string &value)
-{
-    auto iter = m_retryMap.find(alias);
-    if (iter == m_retryMap.end())
-    {
-        m_retryMap.emplace(alias, std::map<std::string, std::string>{{field, value}});
-        return true;
-    }
-
-    auto ret = iter->second.emplace(field, value);
-    if (ret.second)
-    {
-        return true;
-    }
-    else
-    {
-        if (ret.first->second == value)
-        {
-            return false;
-        }
-
-        ret.first->second = value;
-        return true;
-    }
-}
-
-void PortMgr::removeFromRetry(const std::string &alias, const std::string &field)
-{
-    auto iter = m_retryMap.find(alias);
-    if (iter != m_retryMap.end())
-    {
-        auto innerIter = iter->second.find(field);
-        if (innerIter != iter->second.end())
-        {
-            iter->second.erase(innerIter);
-            if (iter->second.empty())
-            {
-                m_retryMap.erase(iter);
-            }
-        }
-    }
 }
