@@ -1076,7 +1076,8 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
     if (!state) 
     {
         m_portStateTable.hset(port.m_alias, "host_tx_ready", "false");
-        SWSS_LOG_INFO("Set admin status false %s to port pid:%" PRIx64, state ? "true" : "false", port.m_port_id);
+        SWSS_LOG_INFO("Set admin status DOWN host_tx_ready to false to port pid:%" PRIx64,
+                port.m_port_id);
     }
     
     sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
@@ -1084,6 +1085,7 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
     {
         SWSS_LOG_ERROR("Failed to set admin status %s to port pid:%" PRIx64,
                        state ? "UP" : "DOWN", port.m_port_id);
+        m_portStateTable.hset(port.m_alias, "host_tx_ready", "false");
         task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
         if (handle_status != task_success)
         {
@@ -1092,18 +1094,19 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
     }
 
     bool gbstatus = setGearboxPortsAttr(port, SAI_PORT_ATTR_ADMIN_STATE, &state);
-    if (gbstatus != true)
-    {
-        SWSS_LOG_ERROR("Failed to set admin status on PHY %s to port pid:%" PRIx64,
-                       state ? "UP" : "DOWN", port.m_port_id);
-        /* TODO add task handler to recover/take action on this failure */
-    }
    
-    /* Update the state table for 'host_tx_ready'*/
+    /* Update the state table for host_tx_ready*/
     if (state && (gbstatus == true) && (status == SAI_STATUS_SUCCESS) )
     {
         m_portStateTable.hset(port.m_alias, "host_tx_ready", "true");
-        SWSS_LOG_INFO("Set admin status true %s to port pid:%" PRIx64, state ? "true" : "false", port.m_port_id);
+        SWSS_LOG_INFO("Set admin status UP host_tx_ready to true to port pid:%" PRIx64,
+                port.m_port_id);
+    } 
+    else
+    {
+        m_portStateTable.hset(port.m_alias, "host_tx_ready", "false");
+        SWSS_LOG_INFO("Set admin status %s host_tx_ready to false to port pid:%" PRIx64,
+                    state ? "UP" : "DOWN", port.m_port_id);
     }
 
     return true;
