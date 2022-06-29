@@ -410,7 +410,8 @@ class DockerVirtualSwitch:
 
     def create_servers(self):
         for i in range(NUM_PORTS):
-            server = VirtualServer(self.ctn_sw.name, self.ctn_sw_pid, i)
+            name = self.ctn_sw.name if hasattr(self, 'ctn_sw') else self.dvsname
+            server = VirtualServer(name, self.ctn_sw_pid, i)
             self.servers.append(server)
             
     def reset_dbs(self):

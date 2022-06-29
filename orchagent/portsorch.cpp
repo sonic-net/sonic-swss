@@ -3158,7 +3158,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     if (p.m_cap_an < 1)
                     {
                         SWSS_LOG_ERROR("%s: autoneg is not supported", p.m_alias.c_str());
-                        // Invalid auto negotiation mode configured, don't retry
+                        // autoneg is not supported, don't retry
                         it = consumer.m_toSync.erase(it);
                         continue;
                     }
