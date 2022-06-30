@@ -68,6 +68,7 @@ public:
     bool updateSyncdIntfPfx(const string &alias, const IpPrefix &ip_prefix, bool add = true);
 
     bool isRemoteSystemPortIntf(string alias);
+    bool isLocalSystemPortIntf(string alias);
 
 private:
 
