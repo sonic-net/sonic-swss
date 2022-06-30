@@ -1094,6 +1094,10 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
     }
 
     bool gbstatus = setGearboxPortsAttr(port, SAI_PORT_ATTR_ADMIN_STATE, &state);
+    if (gbstatus != true)
+    {
+        m_portStateTable.hset(port.m_alias, "host_tx_ready", "false");
+    }
    
     /* Update the state table for host_tx_ready*/
     if (state && (gbstatus == true) && (status == SAI_STATUS_SUCCESS) )
@@ -1102,12 +1106,6 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
         SWSS_LOG_INFO("Set admin status UP host_tx_ready to true to port pid:%" PRIx64,
                 port.m_port_id);
     } 
-    else
-    {
-        m_portStateTable.hset(port.m_alias, "host_tx_ready", "false");
-        SWSS_LOG_INFO("Set admin status %s host_tx_ready to false to port pid:%" PRIx64,
-                    state ? "UP" : "DOWN", port.m_port_id);
-    }
 
     return true;
 }
