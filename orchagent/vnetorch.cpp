@@ -1602,7 +1602,8 @@ void VNetRouteOrch::delEndpointMonitor(const string& vnet, NextHopGroupKey& next
         if (nexthop_info_[vnet].find(ip) != nexthop_info_[vnet].end()) {
             if (--nexthop_info_[vnet][ip].ref_count == 0)
             {
-                removeBfdSession(vnet, nhk, nexthop_info_[vnet][ip].monitor_addr);
+                IpAddress monitor_addr = nexthop_info_[vnet][ip].monitor_addr;
+                removeBfdSession(vnet, nhk, monitor_addr);
             }
         }
     }
