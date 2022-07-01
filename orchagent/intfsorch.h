@@ -54,7 +54,9 @@ public:
     void addRifToFlexCounter(const string&, const string&, const string&);
     void removeRifFromFlexCounter(const string&, const string&);
 
-    bool setIntf(const string& alias, sai_object_id_t vrf_id = gVirtualRouterId, const IpPrefix *ip_prefix = nullptr, const bool adminUp = true, const uint32_t mtu = 0);
+    bool setIntfLoopbackAction(const Port &port, string actionStr);
+    bool getSaiLoopbackAction(const string &actionStr, sai_packet_action_t &action);
+    bool setIntf(const string& alias, sai_object_id_t vrf_id = gVirtualRouterId, const IpPrefix *ip_prefix = nullptr, const bool adminUp = true, const uint32_t mtu = 0, string loopbackAction = "");
     bool removeIntf(const string& alias, sai_object_id_t vrf_id = gVirtualRouterId, const IpPrefix *ip_prefix = nullptr);
 
     void addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix);
@@ -95,7 +97,7 @@ private:
     std::string getRifRateInitTableKey(std::string s);
     void cleanUpRifFromCounterDb(const string &id, const string &name);
 
-    bool addRouterIntfs(sai_object_id_t vrf_id, Port &port);
+    bool addRouterIntfs(sai_object_id_t vrf_id, Port &port, string loopbackAction);
     bool removeRouterIntfs(Port &port);
 
     void addDirectedBroadcast(const Port &port, const IpPrefix &ip_prefix);

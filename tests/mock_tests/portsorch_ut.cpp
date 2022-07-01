@@ -20,105 +20,6 @@ namespace portsorch_test
 
     using namespace std;
 
-    sai_queue_api_t ut_sai_queue_api;
-    sai_queue_api_t *pold_sai_queue_api;
-    sai_buffer_api_t ut_sai_buffer_api;
-    sai_buffer_api_t *pold_sai_buffer_api;
-
-    string _ut_stub_queue_key;
-    sai_status_t _ut_stub_sai_get_queue_attribute(
-        _In_ sai_object_id_t queue_id,
-        _In_ uint32_t attr_count,
-        _Inout_ sai_attribute_t *attr_list)
-    {
-        if (attr_count == 1 && attr_list[0].id == SAI_QUEUE_ATTR_BUFFER_PROFILE_ID)
-        {
-            auto &typemapQueue = (*gBufferOrch->m_buffer_type_maps[APP_BUFFER_QUEUE_TABLE_NAME]);
-            auto &profileName = typemapQueue["Ethernet0:3-4"].m_objsReferencingByMe["profile"];
-            auto profileNameVec = tokenize(profileName, ':');
-            auto &typemapProfile = (*gBufferOrch->m_buffer_type_maps[APP_BUFFER_PROFILE_TABLE_NAME]);
-            attr_list[0].value.oid = typemapProfile[profileNameVec[1]].m_saiObjectId;
-            return SAI_STATUS_SUCCESS;
-        }
-        else
-        {
-            return pold_sai_queue_api->get_queue_attribute(queue_id, attr_count, attr_list);
-        }
-    }
-
-    sai_status_t _ut_stub_sai_get_ingress_priority_group_attribute(
-        _In_ sai_object_id_t ingress_priority_group_id,
-        _In_ uint32_t attr_count,
-        _Inout_ sai_attribute_t *attr_list)
-    {
-        if (attr_count == 1 && attr_list[0].id == SAI_INGRESS_PRIORITY_GROUP_ATTR_BUFFER_PROFILE)
-        {
-            auto &typemapPg = (*gBufferOrch->m_buffer_type_maps[APP_BUFFER_PG_TABLE_NAME]);
-            auto &profileName = typemapPg["Ethernet0:3-4"].m_objsReferencingByMe["profile"];
-            auto profileNameVec = tokenize(profileName, ':');
-            auto &typemapProfile = (*gBufferOrch->m_buffer_type_maps[APP_BUFFER_PROFILE_TABLE_NAME]);
-            attr_list[0].value.oid = typemapProfile[profileNameVec[1]].m_saiObjectId;
-            return SAI_STATUS_SUCCESS;
-        }
-        else
-        {
-            return pold_sai_buffer_api->get_ingress_priority_group_attribute(ingress_priority_group_id, attr_count, attr_list);
-        }
-    }
-
-    int _sai_create_buffer_pool_count = 0;
-    sai_status_t _ut_stub_sai_create_buffer_pool(
-        _Out_ sai_object_id_t *buffer_pool_id,
-        _In_ sai_object_id_t switch_id,
-        _In_ uint32_t attr_count,
-        _In_ const sai_attribute_t *attr_list)
-    {
-        auto status = pold_sai_buffer_api->create_buffer_pool(buffer_pool_id, switch_id, attr_count, attr_list);
-        if (SAI_STATUS_SUCCESS == status)
-            _sai_create_buffer_pool_count++;
-        return status;
-    }
-
-    int _sai_remove_buffer_pool_count = 0;
-    sai_status_t _ut_stub_sai_remove_buffer_pool(
-        _In_ sai_object_id_t buffer_pool_id)
-    {
-        auto status = pold_sai_buffer_api->remove_buffer_pool(buffer_pool_id);
-        if (SAI_STATUS_SUCCESS == status)
-            _sai_remove_buffer_pool_count++;
-        return status;
-    }
-
-    void _hook_sai_buffer_and_queue_api()
-    {
-        ut_sai_buffer_api = *sai_buffer_api;
-        pold_sai_buffer_api = sai_buffer_api;
-        ut_sai_buffer_api.create_buffer_pool = _ut_stub_sai_create_buffer_pool;
-        ut_sai_buffer_api.remove_buffer_pool = _ut_stub_sai_remove_buffer_pool;
-        ut_sai_buffer_api.get_ingress_priority_group_attribute = _ut_stub_sai_get_ingress_priority_group_attribute;
-        sai_buffer_api = &ut_sai_buffer_api;
-
-        ut_sai_queue_api = *sai_queue_api;
-        pold_sai_queue_api = sai_queue_api;
-        ut_sai_queue_api.get_queue_attribute = _ut_stub_sai_get_queue_attribute;
-        sai_queue_api = &ut_sai_queue_api;
-    }
-
-    void _unhook_sai_buffer_and_queue_api()
-    {
-        sai_buffer_api = pold_sai_buffer_api;
-        sai_queue_api = pold_sai_queue_api;
-    }
-
-    void clear_pfcwd_zero_buffer_handler()
-    {
-        auto &zeroProfile = PfcWdZeroBufferHandler::ZeroBufferProfile::getInstance();        
-        zeroProfile.m_zeroIngressBufferPool = SAI_NULL_OBJECT_ID;
-        zeroProfile.m_zeroEgressBufferPool = SAI_NULL_OBJECT_ID;
-        zeroProfile.m_zeroIngressBufferProfile = SAI_NULL_OBJECT_ID;
-        zeroProfile.m_zeroEgressBufferProfile = SAI_NULL_OBJECT_ID;
-    }
-
     struct PortsOrchTest : public ::testing::Test
     {
         shared_ptr<swss::DBConnector> m_app_db;
@@ -460,9 +361,8 @@ namespace portsorch_test
         ASSERT_TRUE(ts.empty());
     }
 
-    TEST_F(PortsOrchTest, PfcZeroBufferHandlerLocksPortPgAndQueue)
+    TEST_F(PortsOrchTest, PfcZeroBufferHandler)
     {
-        _hook_sai_buffer_and_queue_api();
         Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
         Table pgTable = Table(m_app_db.get(), APP_BUFFER_PG_TABLE_NAME);
         Table profileTable = Table(m_app_db.get(), APP_BUFFER_PROFILE_TABLE_NAME);
@@ -506,14 +406,10 @@ namespace portsorch_test
         Port port;
         gPortsOrch->getPort("Ethernet0", port);
 
+        auto countersTable = make_shared<Table>(m_counters_db.get(), COUNTERS_TABLE);
+        auto dropHandler = make_unique<PfcWdZeroBufferHandler>(port.m_port_id, port.m_queue_ids[3], 3, countersTable);
+
         // Create test buffer pool
-        poolTable.set(
-            "ingress_pool",
-            {
-                { "type", "ingress" },
-                { "mode", "dynamic" },
-                { "size", "4200000" },
-            });
         poolTable.set(
             "egress_pool",
             {
@@ -521,13 +417,15 @@ namespace portsorch_test
                 { "mode", "dynamic" },
                 { "size", "4200000" },
             });
+        poolTable.set(
+            "ingress_pool",
+            {
+                { "type", "ingress" },
+                { "mode", "dynamic" },
+                { "size", "4200000" },
+            });
 
         // Create test buffer profile
-        profileTable.set("test_profile", { { "pool", "ingress_pool" },
-                                           { "xon", "14832" },
-                                           { "xoff", "14832" },
-                                           { "size", "35000" },
-                                           { "dynamic_th", "0" } });
         profileTable.set("ingress_profile", { { "pool", "ingress_pool" },
                                               { "xon", "14832" },
                                               { "xoff", "14832" },
@@ -537,7 +435,7 @@ namespace portsorch_test
                                              { "size", "0" },
                                              { "dynamic_th", "0" } });
 
-        // Apply profile on PGs 3-4 all ports
+        // Apply profile on Queue and PGs 3-4 all ports
         for (const auto &it : ports)
         {
             std::ostringstream oss;
@@ -550,210 +448,28 @@ namespace portsorch_test
         gBufferOrch->addExistingData(&profileTable);
         gBufferOrch->addExistingData(&queueTable);
 
-        // process pool, profile and PGs
+        // process pool, profile and Q's
         static_cast<Orch *>(gBufferOrch)->doTask();
 
-        auto countersTable = make_shared<Table>(m_counters_db.get(), COUNTERS_TABLE);
-        auto current_create_buffer_pool_count = _sai_create_buffer_pool_count;
-        auto dropHandler = make_unique<PfcWdZeroBufferHandler>(port.m_port_id, port.m_queue_ids[3], 3, countersTable);
+        auto queueConsumer = static_cast<Consumer*>(gBufferOrch->getExecutor(APP_BUFFER_QUEUE_TABLE_NAME));
+        queueConsumer->dumpPendingTasks(ts);
+        ASSERT_FALSE(ts.empty()); // Queue is skipped
+        ts.clear();
 
-        current_create_buffer_pool_count += 2;
-        ASSERT_TRUE(current_create_buffer_pool_count == _sai_create_buffer_pool_count);
-        ASSERT_TRUE(PfcWdZeroBufferHandler::ZeroBufferProfile::getInstance().getPool(true) == gBufferOrch->m_ingressZeroBufferPool);
-        ASSERT_TRUE(PfcWdZeroBufferHandler::ZeroBufferProfile::getInstance().getPool(false) == gBufferOrch->m_egressZeroBufferPool);
-        ASSERT_TRUE(gBufferOrch->m_ingressZeroPoolRefCount == 1);
-        ASSERT_TRUE(gBufferOrch->m_egressZeroPoolRefCount == 1);
-
-        std::deque<KeyOpFieldsValuesTuple> entries;
-        entries.push_back({"Ethernet0:3-4", "SET", {{ "profile", "test_profile"}}});
         auto pgConsumer = static_cast<Consumer*>(gBufferOrch->getExecutor(APP_BUFFER_PG_TABLE_NAME));
-        pgConsumer->addToSync(entries);
-        entries.clear();
-        static_cast<Orch *>(gBufferOrch)->doTask();
-
-        // Port should have been updated by BufferOrch->doTask
-        gPortsOrch->getPort("Ethernet0", port);
-        auto profile_id = (*BufferOrch::m_buffer_type_maps["BUFFER_PROFILE_TABLE"])[string("test_profile")].m_saiObjectId;
-        ASSERT_TRUE(profile_id != SAI_NULL_OBJECT_ID);
-        ASSERT_TRUE(port.m_priority_group_pending_profile[3] == profile_id);
-        ASSERT_TRUE(port.m_priority_group_pending_profile[4] == SAI_NULL_OBJECT_ID);
-
-        pgConsumer = static_cast<Consumer*>(gBufferOrch->getExecutor(APP_BUFFER_PG_TABLE_NAME));
         pgConsumer->dumpPendingTasks(ts);
-        ASSERT_TRUE(ts.empty()); // PG is stored in m_priority_group_pending_profile
+        ASSERT_TRUE(ts.empty()); // PG Notification is not skipped
         ts.clear();
-
-        // Create a zero buffer pool after PFC storm
-        entries.push_back({"ingress_zero_pool", "SET", {{ "type", "ingress" },
-                                                        { "mode", "static" },
-                                                        { "size", "0" }}});
-        auto poolConsumer = static_cast<Consumer*>(gBufferOrch->getExecutor(APP_BUFFER_POOL_TABLE_NAME));
-        poolConsumer->addToSync(entries);
-        entries.clear();
-        static_cast<Orch *>(gBufferOrch)->doTask();
-        // Reference increased
-        ASSERT_TRUE(gBufferOrch->m_ingressZeroPoolRefCount == 2);
-        // Didn't create buffer pool again
-        ASSERT_TRUE(_sai_create_buffer_pool_count == current_create_buffer_pool_count);
-
-        entries.push_back({"ingress_zero_pool", "DEL", {}});
-        poolConsumer->addToSync(entries);
-        entries.clear();
-        auto current_remove_buffer_pool_count = _sai_remove_buffer_pool_count;
-        static_cast<Orch *>(gBufferOrch)->doTask();
-        ASSERT_TRUE(gBufferOrch->m_ingressZeroPoolRefCount == 1);
-        ASSERT_TRUE(_sai_remove_buffer_pool_count == current_remove_buffer_pool_count);
 
         // release zero buffer drop handler
         dropHandler.reset();
 
-        // re-fetch the port
-        gPortsOrch->getPort("Ethernet0", port);
-
-        // pending profile should be cleared
-        ASSERT_TRUE(port.m_priority_group_pending_profile[3] == SAI_NULL_OBJECT_ID);
-        ASSERT_TRUE(port.m_priority_group_pending_profile[4] == SAI_NULL_OBJECT_ID);
-
-        // process PGs
+        // process queue
         static_cast<Orch *>(gBufferOrch)->doTask();
 
-        pgConsumer = static_cast<Consumer*>(gBufferOrch->getExecutor(APP_BUFFER_PG_TABLE_NAME));
-        pgConsumer->dumpPendingTasks(ts);
-        ASSERT_TRUE(ts.empty()); // PG should be processed now
+        queueConsumer->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty()); // queue should be processed now
         ts.clear();
-        clear_pfcwd_zero_buffer_handler();
-        _unhook_sai_buffer_and_queue_api();
-    }
-
-    TEST_F(PortsOrchTest, PfcZeroBufferHandlerLocksPortWithZeroPoolCreated)
-    {
-        _hook_sai_buffer_and_queue_api();
-        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
-        Table pgTable = Table(m_app_db.get(), APP_BUFFER_PG_TABLE_NAME);
-        Table profileTable = Table(m_app_db.get(), APP_BUFFER_PROFILE_TABLE_NAME);
-        Table poolTable = Table(m_app_db.get(), APP_BUFFER_POOL_TABLE_NAME);
-        Table queueTable = Table(m_app_db.get(), APP_BUFFER_QUEUE_TABLE_NAME);
-
-        // Get SAI default ports to populate DB
-        auto ports = ut_helper::getInitialSaiPorts();
-
-        // Populate port table with SAI ports
-        for (const auto &it : ports)
-        {
-            portTable.set(it.first, it.second);
-        }
-
-        // Set PortConfigDone, PortInitDone
-        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
-        portTable.set("PortInitDone", { { "lanes", "0" } });
-
-        // refill consumer
-        gPortsOrch->addExistingData(&portTable);
-
-        // Apply configuration :
-        //  create ports
-
-        static_cast<Orch *>(gPortsOrch)->doTask();
-
-        // Apply configuration
-        //          ports
-        static_cast<Orch *>(gPortsOrch)->doTask();
-
-        ASSERT_TRUE(gPortsOrch->allPortsReady());
-
-        // No more tasks
-        vector<string> ts;
-        gPortsOrch->dumpPendingTasks(ts);
-        ASSERT_TRUE(ts.empty());
-        ts.clear();
-
-        // Simulate storm drop handler started on Ethernet0 TC 3
-        Port port;
-        gPortsOrch->getPort("Ethernet0", port);
-
-        // Create test buffer pool
-        poolTable.set("ingress_pool",
-                      {
-                          { "type", "ingress" },
-                          { "mode", "dynamic" },
-                          { "size", "4200000" },
-                      });
-        poolTable.set("egress_pool",
-                      {
-                          { "type", "egress" },
-                          { "mode", "dynamic" },
-                          { "size", "4200000" },
-                      });
-        poolTable.set("ingress_zero_pool",
-                      {
-                          { "type", "ingress" },
-                          { "mode", "static" },
-                          { "size", "0" }
-                      });
-        auto poolConsumer = static_cast<Consumer*>(gBufferOrch->getExecutor(APP_BUFFER_POOL_TABLE_NAME));
-
-        // Create test buffer profile
-        profileTable.set("ingress_profile", { { "pool", "ingress_pool" },
-                                              { "xon", "14832" },
-                                              { "xoff", "14832" },
-                                              { "size", "35000" },
-                                              { "dynamic_th", "0" } });
-        profileTable.set("egress_profile", { { "pool", "egress_pool" },
-                                             { "size", "0" },
-                                             { "dynamic_th", "0" } });
-
-        // Apply profile on PGs 3-4 all ports
-        for (const auto &it : ports)
-        {
-            std::ostringstream oss;
-            oss << it.first << ":3-4";
-            pgTable.set(oss.str(), { { "profile", "ingress_profile" } });
-            queueTable.set(oss.str(), { {"profile", "egress_profile" } });
-        }
-
-        gBufferOrch->addExistingData(&poolTable);
-        gBufferOrch->addExistingData(&profileTable);
-        gBufferOrch->addExistingData(&pgTable);
-        gBufferOrch->addExistingData(&queueTable);
-
-        auto current_create_buffer_pool_count = _sai_create_buffer_pool_count + 3; // call SAI API create_buffer_pool for each pool
-        ASSERT_TRUE(gBufferOrch->m_ingressZeroPoolRefCount == 0);
-        ASSERT_TRUE(gBufferOrch->m_egressZeroPoolRefCount == 0);
-        ASSERT_TRUE(gBufferOrch->m_ingressZeroBufferPool == SAI_NULL_OBJECT_ID);
-        ASSERT_TRUE(gBufferOrch->m_egressZeroBufferPool == SAI_NULL_OBJECT_ID);
-
-        // process pool, profile and PGs
-        static_cast<Orch *>(gBufferOrch)->doTask();
-
-        ASSERT_TRUE(current_create_buffer_pool_count == _sai_create_buffer_pool_count);
-        ASSERT_TRUE(gBufferOrch->m_ingressZeroPoolRefCount == 1);
-        ASSERT_TRUE(gBufferOrch->m_egressZeroPoolRefCount == 0);
-        ASSERT_TRUE(gBufferOrch->m_ingressZeroBufferPool != SAI_NULL_OBJECT_ID);
-        ASSERT_TRUE(gBufferOrch->m_egressZeroBufferPool == SAI_NULL_OBJECT_ID);
-
-        auto countersTable = make_shared<Table>(m_counters_db.get(), COUNTERS_TABLE);
-        auto dropHandler = make_unique<PfcWdZeroBufferHandler>(port.m_port_id, port.m_queue_ids[3], 3, countersTable);
-
-        current_create_buffer_pool_count++; // Increased for egress zero pool
-        ASSERT_TRUE(current_create_buffer_pool_count == _sai_create_buffer_pool_count);
-        ASSERT_TRUE(PfcWdZeroBufferHandler::ZeroBufferProfile::getInstance().getPool(true) == gBufferOrch->m_ingressZeroBufferPool);
-        ASSERT_TRUE(PfcWdZeroBufferHandler::ZeroBufferProfile::getInstance().getPool(false) == gBufferOrch->m_egressZeroBufferPool);
-        ASSERT_TRUE(gBufferOrch->m_ingressZeroPoolRefCount == 2);
-        ASSERT_TRUE(gBufferOrch->m_egressZeroPoolRefCount == 1);
-
-        std::deque<KeyOpFieldsValuesTuple> entries;
-        entries.push_back({"ingress_zero_pool", "DEL", {}});
-        poolConsumer->addToSync(entries);
-        entries.clear();
-        auto current_remove_buffer_pool_count = _sai_remove_buffer_pool_count;
-        static_cast<Orch *>(gBufferOrch)->doTask();
-        ASSERT_TRUE(gBufferOrch->m_ingressZeroPoolRefCount == 1);
-        ASSERT_TRUE(_sai_remove_buffer_pool_count == current_remove_buffer_pool_count);
-
-        // release zero buffer drop handler
-        dropHandler.reset();
-        clear_pfcwd_zero_buffer_handler();
-        _unhook_sai_buffer_and_queue_api();
     }
 
     /* This test checks that a LAG member validation happens on orchagent level

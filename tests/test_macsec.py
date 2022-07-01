@@ -1,9 +1,11 @@
 from swsscommon import swsscommon
+from swsscommon.swsscommon import CounterTable, MacsecCounter
 import conftest
 
 import functools
 import typing
 import re
+import time
 
 
 def to_string(value):
@@ -389,6 +391,21 @@ class MACsecInspector(object):
         print(info.group(0))
         return info.group(0)
 
+    @macsec_sa()
+    def get_macsec_xpn_counter(
+            self,
+            sai: str) -> int:
+        counter_table = CounterTable(self.dvs.get_counters_db().db_connection)
+        for i in range(3):
+            r, value = counter_table.hget(
+                MacsecCounter(),
+                sai,
+                "SAI_MACSEC_SA_ATTR_CURRENT_XPN")
+            if r: return int(value)
+            time.sleep(1) # wait a moment for polling counter
+
+        return None
+
 
 class TestMACsec(object):
     def init_macsec(
@@ -658,6 +675,18 @@ class TestMACsec(object):
                 peer_mac_address,
                 macsec_port_identifier,
                 0))
+        assert(
+            inspector.get_macsec_xpn_counter(
+                port_name,
+                local_mac_address,
+                macsec_port_identifier,
+                0) == packet_number)
+        assert(
+            inspector.get_macsec_xpn_counter(
+                port_name,
+                peer_mac_address,
+                macsec_port_identifier,
+                0) == packet_number)
         self.rekey_macsec(
             wpa,
             port_name,
@@ -684,6 +713,18 @@ class TestMACsec(object):
                 macsec_port_identifier,
                 1))
         assert(
+            inspector.get_macsec_xpn_counter(
+                port_name,
+                local_mac_address,
+                macsec_port_identifier,
+                1) == packet_number)
+        assert(
+            inspector.get_macsec_xpn_counter(
+                port_name,
+                peer_mac_address,
+                macsec_port_identifier,
+                1) == packet_number)
+        assert(
             not inspector.get_macsec_sa(
                 macsec_port,
                 local_mac_address,
@@ -695,6 +736,18 @@ class TestMACsec(object):
                 peer_mac_address,
                 macsec_port_identifier,
                 0))
+        assert(
+            not inspector.get_macsec_xpn_counter(
+                port_name,
+                local_mac_address,
+                macsec_port_identifier,
+                0) == packet_number)
+        assert(
+            not inspector.get_macsec_xpn_counter(
+                port_name,
+                peer_mac_address,
+                macsec_port_identifier,
+                0) == packet_number)
         # Exit MACsec port
         self.deinit_macsec(
             wpa,

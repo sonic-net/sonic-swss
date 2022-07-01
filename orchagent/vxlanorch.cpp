@@ -1110,13 +1110,14 @@ void VxlanTunnel::updateRemoteEndPointIpRef(const std::string remote_vtep, bool 
             it->second.ip_refcnt++;
         }
         SWSS_LOG_DEBUG("Incrementing remote end point %s reference to %d", remote_vtep.c_str(),
-                       it->second.ip_refcnt);
+                       tnl_users_[remote_vtep].ip_refcnt);
     }
     else
     {
         if (it == tnl_users_.end())
         {
             SWSS_LOG_ERROR("Cannot decrement ref. End point not referenced %s", remote_vtep.c_str());
+            return;
         }
         it->second.ip_refcnt--;
 
