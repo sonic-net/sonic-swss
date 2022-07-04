@@ -11,9 +11,12 @@
 #include "exec.h"
 #include "shellcmd.h"
 #include "warm_restart.h"
+#include "converter.h"
 
 using namespace std;
 using namespace swss;
+
+#define PORT_NAME_GLOBAL "global"
 
 BufferMgr::BufferMgr(DBConnector *cfgDb, DBConnector *applDb, string pg_lookup_file, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
@@ -175,10 +178,27 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
     string profile_ref = buffer_profile_key;
     
     vector<string> lossless_pgs = tokenize(pfc_enable, ',');
+    // Convert to bitmap
+    unsigned long lossless_pg_id = 0;
+    for (auto pg : lossless_pgs)
+    {
+        try
+        {
+            uint8_t cur_pg = to_uint<uint8_t>(pg);
+            lossless_pg_id |= (1<<cur_pg);
+        }
+        catch (const std::invalid_argument &e)
+        {
+            // Ignore invalid value
+            continue;
+        }
+    }
+    // Although we have up to 8 PGs for now, the range to check is expanded to 32 support more PGs
+    set<string> lossless_pg_combinations = generateIdListFromMap(lossless_pg_id, sizeof(lossless_pg_id));
 
     if (m_portStatusLookup[port] == "down" && m_platform == "mellanox")
     {
-        for (auto lossless_pg : lossless_pgs)
+        for (auto lossless_pg : lossless_pg_combinations)
         {
             // Remove the entry in BUFFER_PG table if any
             vector<FieldValueTuple> fvVectorPg;
@@ -251,23 +271,27 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
         SWSS_LOG_NOTICE("Reusing existing profile '%s'", buffer_profile_key.c_str());
     }
 
-    for (auto lossless_pg : lossless_pgs)
+    for (auto lossless_pg : lossless_pg_combinations)
     {
         vector<FieldValueTuple> fvVectorPg;
         string buffer_pg_key = port + m_cfgBufferPgTable.getTableNameSeparator() + lossless_pg;
 
         m_cfgBufferPgTable.get(buffer_pg_key, fvVectorPg);
-
+        bool profile_existing = false;
         /* Check if PG Mapping is already then log message and return. */
         for (auto& prop : fvVectorPg)
         {
             if ((fvField(prop) == "profile") && (profile_ref == fvValue(prop)))
             {
                 SWSS_LOG_NOTICE("PG to Buffer Profile Mapping %s already present", buffer_pg_key.c_str());
-                continue;
+                profile_existing = true;
+                break;
             }
         }
-
+        if (profile_existing)
+        {
+            continue;
+        }
         fvVectorPg.clear();
 
         fvVectorPg.push_back(make_pair("profile", profile_ref));
@@ -391,6 +415,12 @@ void BufferMgr::doPortQosTableTask(Consumer &consumer)
     {
         KeyOpFieldsValuesTuple tuple = it->second;
         string port_name = kfvKey(tuple);
+        if (port_name == PORT_NAME_GLOBAL)
+        {
+            // Ignore the entry for global level
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
         string op = kfvOp(tuple);
         if (op == SET_COMMAND)
         {

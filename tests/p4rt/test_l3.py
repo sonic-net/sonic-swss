@@ -262,7 +262,7 @@ class TestP4RTL3(object):
 
         # Verify that P4RT key to OID count is same as the original count.
         status, fvs = key_to_oid_helper.get_db_info()
-        assert status == True
+        assert status == False
         assert len(fvs) == len(original_key_oid_info)
 
         # Query application database for route entries.
@@ -651,7 +651,7 @@ class TestP4RTL3(object):
 
         # Verify that P4RT key to OID count is same as original count.
         status, fvs = key_to_oid_helper.get_db_info()
-        assert status == True
+        assert status == False
         assert len(fvs) == len(original_key_oid_info)
 
         # Query application database for route entries.
@@ -1148,7 +1148,7 @@ class TestP4RTL3(object):
 
         # Verify that P4RT key to OID count is same as the original count.
         status, fvs = key_to_oid_helper.get_db_info()
-        assert status == True
+        assert status == False
         assert len(fvs) == len(original_key_oid_info)
 
     def test_PruneNextHopOnWarmBoot(self, dvs, testlog):
@@ -1386,7 +1386,7 @@ class TestP4RTL3(object):
 
         # Verify that P4RT key to OID count is same as the original count.
         status, fvs = key_to_oid_helper.get_db_info()
-        assert status == True
+        assert status == False
         assert len(fvs) == len(original_key_oid_info)
 
     def test_CreateWcmpMemberForOperUpWatchportOnly(self, dvs, testlog):
@@ -1620,7 +1620,7 @@ class TestP4RTL3(object):
 
         # Verify that P4RT key to OID count is same as the original count.
         status, fvs = key_to_oid_helper.get_db_info()
-        assert status == True
+        assert status == False
         assert len(fvs) == len(original_key_oid_info)
 
     def test_RemovePrunedWcmpGroupMember(self, dvs, testlog):
@@ -1841,5 +1841,5 @@ class TestP4RTL3(object):
 
         # Verify that P4RT key to OID count is same as the original count.
         status, fvs = key_to_oid_helper.get_db_info()
-        assert status == True
+        assert status == False
         assert len(fvs) == len(original_key_oid_info)

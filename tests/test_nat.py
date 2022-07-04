@@ -15,13 +15,10 @@ class TestNat(object):
         self.config_db = dvs.get_config_db()
 
     def set_interfaces(self, dvs):
-        fvs = {"NULL": "NULL"}
-        self.config_db.create_entry("INTERFACE", "Ethernet0|67.66.65.1/24", fvs)
-        self.config_db.create_entry("INTERFACE", "Ethernet4|18.18.18.1/24", fvs)
-        self.config_db.create_entry("INTERFACE", "Ethernet0", fvs)
-        self.config_db.create_entry("INTERFACE", "Ethernet4", fvs)
-        dvs.runcmd("config interface startup Ethernet0")
-        dvs.runcmd("config interface startup Ethernet4")
+        dvs.interface_ip_add("Ethernet0", "67.66.65.1/24")
+        dvs.interface_ip_add("Ethernet4", "18.18.18.1/24")
+        dvs.port_admin_set("Ethernet0", "up")
+        dvs.port_admin_set("Etherent4", "up")
 
         dvs.servers[0].runcmd("ip link set down dev eth0")
         dvs.servers[0].runcmd("ip link set up dev eth0")
@@ -33,7 +30,7 @@ class TestNat(object):
         dvs.servers[1].runcmd("ifconfig eth0 18.18.18.2/24")
         dvs.servers[1].runcmd("ip route add default via 18.18.18.1")
 
-        dvs.runcmd("config nat add interface Ethernet0 -nat_zone 1")
+        dvs.set_nat_zone("Ethernet0", "1")
 
         time.sleep(1)
 
@@ -48,10 +45,10 @@ class TestNat(object):
         self.setup_db(dvs)
 
         # enable NAT feature
-        dvs.runcmd("config nat feature enable")
-        dvs.runcmd("config nat set timeout 450")
-        dvs.runcmd("config nat set udp-timeout 360")
-        dvs.runcmd("config nat set tcp-timeout 900")
+        dvs.nat_mode_set("enabled")
+        dvs.nat_timeout_set("450")
+        dvs.nat_udp_timeout_set("360")
+        dvs.nat_tcp_timeout_set("900")
 
         # check NAT global values in appdb
         self.app_db.wait_for_n_keys("NAT_GLOBAL_TABLE", 1)
@@ -82,7 +79,7 @@ class TestNat(object):
         dvs.servers[0].runcmd("ping -c 1 18.18.18.2")
 
         # add a static nat entry
-        dvs.runcmd("config nat add static basic 67.66.65.1 18.18.18.2")
+        dvs.add_nat_basic_entry("67.66.65.1", "18.18.18.2")
 
         # check the entry in the config db
         self.config_db.wait_for_n_keys("STATIC_NAT", 1)
@@ -115,7 +112,7 @@ class TestNat(object):
         self.setup_db(dvs)
 
         # delete a static nat entry
-        dvs.runcmd("config nat remove static basic 67.66.65.1 18.18.18.2")
+        dvs.del_nat_basic_entry("67.66.65.1")
 
         # check the entry is no there in the config db
         self.config_db.wait_for_n_keys("STATIC_NAT", 0)
@@ -134,7 +131,7 @@ class TestNat(object):
         dvs.servers[0].runcmd("ping -c 1 18.18.18.2")
 
         # add a static nat entry
-        dvs.runcmd("config nat add static udp 67.66.65.1 670 18.18.18.2 180")
+        dvs.add_nat_udp_entry("67.66.65.1", "670", "18.18.18.2", "180")
 
         # check the entry in the config db
         self.config_db.wait_for_n_keys("STATIC_NAPT", 1)
@@ -165,7 +162,7 @@ class TestNat(object):
         self.setup_db(dvs)
 
         # delete a static nat entry
-        dvs.runcmd("config nat remove static udp 67.66.65.1 670 18.18.18.2 180")
+        dvs.del_nat_udp_entry("67.66.65.1", "670")
 
         # check the entry is no there in the config db
         self.config_db.wait_for_n_keys("STATIC_NAPT", 0)
@@ -186,8 +183,8 @@ class TestNat(object):
         dvs.servers[1].runcmd("ping -c 1 67.66.65.2")
 
         # add a twice nat entry
-        dvs.runcmd("config nat add static basic 67.66.65.2 18.18.18.1 -nat_type snat -twice_nat_id 9")
-        dvs.runcmd("config nat add static basic 67.66.65.1 18.18.18.2 -nat_type dnat -twice_nat_id 9")
+        dvs.add_twice_nat_basic_entry("67.66.65.2", "18.18.18.1", "snat", "9")
+        dvs.add_twice_nat_basic_entry("67.66.65.1", "18.18.18.2", "dnat", "9")
 
         # check the entry in the config db
         self.config_db.wait_for_n_keys("STATIC_NAT", 2)
@@ -220,8 +217,8 @@ class TestNat(object):
         self.setup_db(dvs)
 
         # delete a static nat entry
-        dvs.runcmd("config nat remove static basic 67.66.65.2 18.18.18.1")
-        dvs.runcmd("config nat remove static basic 67.66.65.1 18.18.18.2")
+        dvs.del_twice_nat_basic_entry("67.66.65.2")
+        dvs.del_twice_nat_basic_entry("67.66.65.1")
 
         # check the entry is no there in the config db
         self.config_db.wait_for_n_keys("STATIC_NAT", 0)
@@ -241,8 +238,8 @@ class TestNat(object):
         dvs.servers[1].runcmd("ping -c 1 67.66.65.2")
 
         # add a twice nat entry
-        dvs.runcmd("config nat add static udp 67.66.65.2 670 18.18.18.1 181 -nat_type snat -twice_nat_id 7")
-        dvs.runcmd("config nat add static udp 67.66.65.1 660 18.18.18.2 182 -nat_type dnat -twice_nat_id 7")
+        dvs.add_twice_nat_udp_entry("67.66.65.2", "670", "18.18.18.1", "181", "snat", "7")
+        dvs.add_twice_nat_udp_entry("67.66.65.1", "660", "18.18.18.2", "182", "dnat", "7")
 
         # check the entry in the config db
         self.config_db.wait_for_n_keys("STATIC_NAPT", 2)
@@ -277,8 +274,8 @@ class TestNat(object):
         self.setup_db(dvs)
 
         # delete a static nat entry
-        dvs.runcmd("config nat remove static udp 67.66.65.2 670 18.18.18.1 181")
-        dvs.runcmd("config nat remove static udp 67.66.65.1 660 18.18.18.2 182")
+        dvs.del_twice_nat_udp_entry("67.66.65.2", "670")
+        dvs.del_twice_nat_udp_entry("67.66.65.1", "660")
 
         # check the entry is not there in the config db
         self.config_db.wait_for_n_keys("STATIC_NAPT", 0)
@@ -294,7 +291,7 @@ class TestNat(object):
         dvs.servers[0].runcmd("ping -c 1 18.18.18.2")
 
         # add a static nat entry
-        dvs.runcmd("config nat add static basic 67.66.65.1 18.18.18.2")
+        dvs.add_nat_basic_entry("67.66.65.1", "18.18.18.2")
 
         # check the conntrack timeout for static entry
         def _check_conntrack_for_static_entry():
@@ -321,7 +318,7 @@ class TestNat(object):
         wait_for_result(_check_conntrack_for_static_entry)
 
         # delete a static nat entry
-        dvs.runcmd("config nat remove static basic 67.66.65.1 18.18.18.2")
+        dvs.del_nat_basic_entry("67.66.65.1")
 
     def test_DoNotNatAclAction(self, dvs_acl, testlog):
 
@@ -360,7 +357,7 @@ class TestNat(object):
         dvs.servers[0].runcmd("ping -c 1 18.18.18.2")
 
         # set pooling interval to 1
-        dvs.runcmd("crm config polling interval 1")
+        dvs.crm_poll_set("1")
 
         dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_SNAT_ENTRY', '1000')
         dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_DNAT_ENTRY', '1000')
@@ -376,7 +373,7 @@ class TestNat(object):
         avail_dnat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_dnat_entry_available')
 
         # add a static nat entry
-        dvs.runcmd("config nat add static basic 67.66.65.1 18.18.18.2")
+        dvs.add_nat_basic_entry("67.66.65.1", "18.18.18.2")
 
         #check the entry in asic db, 3 keys = SNAT, DNAT and DNAT_Pool
         keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 3)
@@ -405,7 +402,7 @@ class TestNat(object):
         assert avail_dnat_counter - new_avail_dnat_counter == 1
 
         # delete a static nat entry
-        dvs.runcmd("config nat remove static basic 67.66.65.1 18.18.18.2")
+        dvs.del_nat_basic_entry("67.66.65.1")
 
         dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_SNAT_ENTRY', '1000')
         dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_DNAT_ENTRY', '1000')

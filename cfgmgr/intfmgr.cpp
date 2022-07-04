@@ -115,7 +115,21 @@ void IntfMgr::setIntfIp(const string &alias, const string &opCmd,
     int ret = swss::exec(cmd.str(), res);
     if (ret)
     {
-        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
+        if (!ipPrefix.isV4() && opCmd == "add")
+        {
+            SWSS_LOG_NOTICE("Failed to assign IPv6 on interface %s with return code %d, trying to enable IPv6 and retry", alias.c_str(), ret);
+            if (!enableIpv6Flag(alias))
+            {
+                SWSS_LOG_ERROR("Failed to enable IPv6 on interface %s", alias.c_str());
+                return;
+            }
+            ret = swss::exec(cmd.str(), res);
+        }
+
+        if (ret)
+        {
+            SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
+        }
     }
 }
 
@@ -552,15 +566,15 @@ bool IntfMgr::setIntfProxyArp(const string &alias, const string &proxy_arp)
 {
     stringstream cmd;
     string res;
-    string proxy_arp_pvlan;
+    string proxy_arp_status;
 
     if (proxy_arp == "enabled")
     {
-        proxy_arp_pvlan = "1";
+        proxy_arp_status = "1";
     }
     else if (proxy_arp == "disabled")
     {
-        proxy_arp_pvlan = "0";
+        proxy_arp_status = "0";
     }
     else
     {
@@ -568,7 +582,13 @@ bool IntfMgr::setIntfProxyArp(const string &alias, const string &proxy_arp)
         return false;
     }
 
-    cmd << ECHO_CMD << " " << proxy_arp_pvlan << " > /proc/sys/net/ipv4/conf/" << alias << "/proxy_arp_pvlan";
+    cmd << ECHO_CMD << " " << proxy_arp_status << " > /proc/sys/net/ipv4/conf/" << alias << "/proxy_arp_pvlan";
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+
+    cmd.clear();
+    cmd.str(std::string());
+
+    cmd << ECHO_CMD << " " << proxy_arp_status << " > /proc/sys/net/ipv4/conf/" << alias << "/proxy_arp";
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     SWSS_LOG_INFO("Proxy ARP set to \"%s\" on interface \"%s\"", proxy_arp.c_str(), alias.c_str());
@@ -708,6 +728,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
     string grat_arp = "";
     string mpls = "";
     string ipv6_link_local_mode = "";
+    string loopback_action = "";
 
     for (auto idx : data)
     {
@@ -750,6 +771,10 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         {
             vlanId = value;
         }
+        else if (field == "loopback_action")
+        {
+            loopback_action = value;
+        }
     }
 
     if (op == SET_COMMAND)
@@ -788,6 +813,13 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
             if (!nat_zone.empty())
             {
                 FieldValueTuple fvTuple("nat_zone", nat_zone);
+                data.push_back(fvTuple);
+            }
+
+            /* Set loopback action */
+            if (!loopback_action.empty())
+            {
+                FieldValueTuple fvTuple("loopback_action", loopback_action);
                 data.push_back(fvTuple);
             }
 
@@ -1138,4 +1170,14 @@ void IntfMgr::doPortTableTask(const string& key, vector<FieldValueTuple> data, s
             }
         }
     }
+}
+
+bool IntfMgr::enableIpv6Flag(const string &alias)
+{
+    stringstream cmd;
+    string temp_res;
+    cmd << "sysctl -w net.ipv6.conf." << shellquote(alias) << ".disable_ipv6=0";
+    int ret = swss::exec(cmd.str(), temp_res);
+    SWSS_LOG_INFO("disable_ipv6 flag is set to 0 for iface: %s, cmd: %s, ret: %d", alias.c_str(), cmd.str().c_str(), ret);
+    return (ret == 0) ? true : false;
 }

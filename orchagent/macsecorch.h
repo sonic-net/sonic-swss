@@ -16,6 +16,10 @@
 
 using namespace swss;
 
+#define COUNTERS_MACSEC_SA_ATTR_GROUP                   "COUNTERS_MACSEC_SA_ATTR"
+#define COUNTERS_MACSEC_SA_GROUP                        "COUNTERS_MACSEC_SA"
+#define COUNTERS_MACSEC_FLOW_GROUP                      "COUNTERS_MACSEC_FLOW"
+
 // AN is a 2 bit number, it can only be 0, 1, 2 or 3
 #define MAX_SA_NUMBER (3)
 
@@ -63,14 +67,16 @@ private:
 
     DBConnector         m_counter_db;
     Table               m_macsec_counters_map;
-    Table               m_macsec_flow_tx_counters_map;
-    Table               m_macsec_flow_rx_counters_map;
-    Table               m_macsec_sa_tx_counters_map;
-    Table               m_macsec_sa_rx_counters_map;
+    DBConnector         m_gb_counter_db;
+    Table               m_gb_macsec_counters_map;
     Table               m_applPortTable;
     FlexCounterManager  m_macsec_sa_attr_manager;
     FlexCounterManager  m_macsec_sa_stat_manager;
     FlexCounterManager  m_macsec_flow_stat_manager;
+
+    FlexCounterManager  m_gb_macsec_sa_attr_manager;
+    FlexCounterManager  m_gb_macsec_sa_stat_manager;
+    FlexCounterManager  m_gb_macsec_flow_stat_manager;
 
     struct MACsecACLTable
     {
@@ -110,6 +116,7 @@ private:
         sai_object_id_t                                 m_ingress_id;
         map<std::string, std::shared_ptr<MACsecPort> >  m_macsec_ports;
         bool                                            m_sci_in_ingress_macsec_acl;
+        sai_uint8_t                                     m_max_sa_per_sc;
     };
     map<sai_object_id_t, MACsecObject>              m_macsec_objs;
     map<std::string, std::shared_ptr<MACsecPort> >  m_macsec_ports;
@@ -208,16 +215,25 @@ private:
 
     /* Counter */
     void installCounter(
+        MACsecOrchContext &ctx,
         CounterType counter_type,
         sai_macsec_direction_t direction,
         const std::string &obj_name,
         sai_object_id_t obj_id,
         const std::vector<std::string> &stats);
     void uninstallCounter(
+        MACsecOrchContext &ctx,
         CounterType counter_type,
         sai_macsec_direction_t direction,
         const std::string &obj_name,
         sai_object_id_t obj_id);
+
+    Table& MACsecCountersMap(MACsecOrchContext &ctx);
+
+    /* Flex Counter Manager */
+    FlexCounterManager& MACsecSaStatManager(MACsecOrchContext &ctx);
+    FlexCounterManager& MACsecSaAttrStatManager(MACsecOrchContext &ctx);
+    FlexCounterManager& MACsecFlowStatManager(MACsecOrchContext &ctx);
 
     /* MACsec ACL */
     bool initMACsecACLTable(

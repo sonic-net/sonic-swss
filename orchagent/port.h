@@ -151,17 +151,14 @@ public:
     sai_port_interface_type_t m_interface_type;
     std::vector<uint32_t> m_adv_interface_types;
     bool      m_mpls = false;
-
     /*
-     * Following two bit vectors are used to lock
-     * the PG/queue from being changed in BufferOrch.
+     * Following bit vector is used to lock
+     * the queue from being changed in BufferOrch.
      * The use case scenario is when PfcWdZeroBufferHandler
-     * sets zero buffer profile it should protect PG/queue
+     * sets zero buffer profile it should protect queue
      * from being overwritten in BufferOrch.
      */
     std::vector<bool> m_queue_lock;
-    std::vector<bool> m_priority_group_lock;
-    std::vector<sai_object_id_t> m_priority_group_pending_profile;
 
     std::unordered_set<sai_object_id_t> m_ingress_acl_tables_uset;
     std::unordered_set<sai_object_id_t> m_egress_acl_tables_uset;
@@ -171,6 +168,7 @@ public:
     SystemLagInfo    m_system_lag_info;
 
     sai_object_id_t  m_switch_id = 0;
+    sai_object_id_t  m_system_side_id = 0;
     sai_object_id_t  m_line_side_id = 0;
 
     bool m_fec_cfg = false;
