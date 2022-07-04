@@ -1,3 +1,4 @@
+import pytest
 import time
 import re
 import json
@@ -6,6 +7,7 @@ import itertools
 from swsscommon import swsscommon
 
 
+@pytest.mark.usefixtures('dvs_lag_manager')
 class TestPortchannel(object):
     def test_Portchannel(self, dvs, testlog):
 
@@ -90,51 +92,28 @@ class TestPortchannel(object):
         assert len(lagms) == 0
 
     def test_Portchannel_fast_rate(self, dvs, testlog):
-        portchannel_slow = ("PortChannel0003", "Ethernet16", 0)
-        portchannel_fast = ("PortChannel0004", "Ethernet20", 0)
-
-        self.cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        portchannels = [("0003", "Ethernet16", False),
+                        ("0004", "Ethernet20", True)]
 
         # Create PortChannels
-        tbl = swsscommon.Table(self.cdb, "PORTCHANNEL")
-        fvs_base = [("admin_status", "up"), ("mtu", "9100"), ("oper_status", "up"), ("lacp_key", "auto")]
-
-        fvs_slow = swsscommon.FieldValuePairs(fvs_base + [("fast_rate", "false")])
-        tbl.set(portchannel_slow[0], fvs_slow)
-
-        fvs_fast = swsscommon.FieldValuePairs(fvs_base + [("fast_rate", "true")])
-        tbl.set(portchannel_fast[0], fvs_fast)
-        time.sleep(1)
+        for portchannel in portchannels:
+            self.dvs_lag.create_port_channel(portchannel[0], fast_rate=portchannel[2])
+        self.dvs_lag.get_and_verify_port_channel(len(portchannels))
 
         # Add members to PortChannels
-        tbl = swsscommon.Table(self.cdb, "PORTCHANNEL_MEMBER")
-        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
-
-        for portchannel in portchannel_slow, portchannel_fast:
-            tbl.set(portchannel[0] + "|" + portchannel[1], fvs)
-        time.sleep(1)
+        for portchannel in portchannels:
+            self.dvs_lag.create_port_channel_member(portchannel[0], portchannel[1])
+        self.dvs_lag.get_and_verify_port_channel_members(len(portchannels))
 
         # test fast rate was not set on portchannel_slow
-        output = dvs.runcmd("teamdctl {} state dump".format(portchannel_slow[0]))[1]
-        port_state_dump = json.loads(output)
-        assert not port_state_dump["runner"]["fast_rate"]
-
-        # test fast rate was set on portchannel_fast
-        output = dvs.runcmd("teamdctl {} state dump".format(portchannel_fast[0]))[1]
-        port_state_dump = json.loads(output)
-        assert port_state_dump["runner"]["fast_rate"]
+        for portchannel in portchannels:
+            self.dvs_lag.get_and_verify_port_channel_fast_rate(portchannel[0], portchannel[2])
 
         # remove PortChannel members
-        tbl = swsscommon.Table(self.cdb, "PORTCHANNEL_MEMBER")
-        for portchannel in portchannel_slow, portchannel_fast:
-            tbl._del(portchannel[0] + "|" + portchannel[1])
-        time.sleep(1)
+        for portchannel in portchannels:
+            self.dvs_lag.remove_port_channel(portchannel[0])
+        self.dvs_lag.get_and_verify_port_channel(0)
 
-        # remove PortChannel
-        tbl = swsscommon.Table(self.cdb, "PORTCHANNEL")
-        for portchannel in portchannel_slow, portchannel_fast:
-            tbl._del(portchannel[0])
-        time.sleep(1)
 
     def test_Portchannel_lacpkey(self, dvs, testlog):
         portchannelNamesAuto = [("PortChannel001", "Ethernet0", 1001),
