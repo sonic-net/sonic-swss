@@ -517,20 +517,21 @@ void FdbOrch::update(sai_fdb_event_t        type,
         {
             SWSS_LOG_INFO("FDB Flush: [ %s , %s ] = { port: - }",
                            update.entry.mac.to_string().c_str(), vlanName.c_str());
-            for (auto itr = m_entries.begin(); itr != m_entries.end(); itr++)
+            for (auto itr = m_entries.begin(); itr != m_entries.end();)
             {
+                /*
+                   TODO: here should only delete the dynamic fdb entries,
+                   but unfortunately in structure FdbEntry currently have
+                   no member to indicate the fdb entry type,
+                   if there is static mac added, here will have issue.
+                */
+                update.entry.mac = itr->first.mac;
+                update.entry.bv_id = itr->first.bv_id;
+                update.add = false;
+                itr++;
+
                 if (itr->second.is_flush_pending)
                 {
-                    /*
-                       TODO: here should only delete the dynamic fdb entries,
-                       but unfortunately in structure FdbEntry currently have
-                       no member to indicate the fdb entry type,
-                       if there is static mac added, here will have issue.
-                    */
-                    update.entry.mac = itr->first.mac;
-                    update.entry.bv_id = itr->first.bv_id;
-                    update.add = false;
-
                     storeFdbEntryState(update);
 
                     notify(SUBJECT_TYPE_FDB_CHANGE, &update);
