@@ -153,7 +153,7 @@ static const acl_capabilities_t defaultAclActionsSupported =
     }
 };
 
-static acl_table_action_list_lookup_t defaultAclActionList = 
+static acl_table_action_list_lookup_t defaultAclActionList =
 {
     {
         // L3
@@ -326,7 +326,7 @@ static acl_table_action_list_lookup_t defaultAclActionList =
 // The match fields for certain ACL table type are not exactly the same between INGRESS and EGRESS.
 // For example, we can only match IN_PORT for PFCWD table type at INGRESS.
 // Hence we need to specify stage particular matching fields in stageMandatoryMatchFields
-static acl_table_match_field_lookup_t stageMandatoryMatchFields = 
+static acl_table_match_field_lookup_t stageMandatoryMatchFields =
 {
     {
         // TABLE_TYPE_PFCWD
@@ -2045,7 +2045,7 @@ bool AclTable::addMandatoryActions()
         // Add the default action list
         for (auto action : defaultAclActionList[type.getName()][stage])
         {
-            if (m_pAclOrch->isAclActionSupported(stage, acl_action))
+            if (m_pAclOrch->isAclActionSupported(stage, action))
             {
                 SWSS_LOG_INFO("Added default action for table type %s stage %s",
                                     type.getName().c_str(),

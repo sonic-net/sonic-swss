@@ -2340,10 +2340,6 @@ void MACsecOrch::installCounter(
     sai_object_id_t obj_id,
     const std::vector<std::string> &stats)
 {
-    FieldValueTuple tuple(obj_name, sai_serialize_object_id(obj_id));
-    vector<FieldValueTuple> fields;
-    fields.push_back(tuple);
-
     std::unordered_set<std::string> counter_stats;
     for (const auto &stat : stats)
     {
@@ -2353,12 +2349,11 @@ void MACsecOrch::installCounter(
     {
         case CounterType::MACSEC_SA_ATTR:
             MACsecSaAttrStatManager(ctx).setCounterIdList(obj_id, counter_type, counter_stats);
-            MACsecCountersMap(ctx).set("", fields);
             break;
 
         case CounterType::MACSEC_SA:
             MACsecSaStatManager(ctx).setCounterIdList(obj_id, counter_type, counter_stats);
-            MACsecCountersMap(ctx).set("", fields);
+            MACsecCountersMap(ctx).hset("", obj_name, sai_serialize_object_id(obj_id));
             break;
 
         case CounterType::MACSEC_FLOW:
@@ -2383,19 +2378,11 @@ void MACsecOrch::uninstallCounter(
     {
         case CounterType::MACSEC_SA_ATTR:
             MACsecSaAttrStatManager(ctx).clearCounterIdList(obj_id);
-            m_counter_db.hdel(COUNTERS_MACSEC_NAME_MAP, obj_name);
             break;
 
         case CounterType::MACSEC_SA:
             MACsecSaStatManager(ctx).clearCounterIdList(obj_id);
-            if (direction == SAI_MACSEC_DIRECTION_EGRESS)
-            {
-                m_counter_db.hdel(COUNTERS_MACSEC_SA_TX_NAME_MAP, obj_name);
-            }
-            else
-            {
-                m_counter_db.hdel(COUNTERS_MACSEC_SA_RX_NAME_MAP, obj_name);
-            }
+            MACsecCountersMap(ctx).hdel("", obj_name);
             break;
 
         case CounterType::MACSEC_FLOW:

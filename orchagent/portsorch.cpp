@@ -4162,8 +4162,6 @@ void PortsOrch::initializePriorityGroups(Port &port)
     SWSS_LOG_INFO("Get %d priority groups for port %s", attr.value.u32, port.m_alias.c_str());
 
     port.m_priority_group_ids.resize(attr.value.u32);
-    port.m_priority_group_lock.resize(attr.value.u32);
-    port.m_priority_group_pending_profile.resize(attr.value.u32);
 
     if (attr.value.u32 == 0)
     {

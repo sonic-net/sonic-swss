@@ -48,11 +48,7 @@ BufferOrch::BufferOrch(DBConnector *applDb, DBConnector *confDb, DBConnector *st
     m_flexCounterTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_TABLE)),
     m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE)),
     m_countersDb(new DBConnector("COUNTERS_DB", 0)),
-    m_stateBufferMaximumValueTable(stateDb, STATE_BUFFER_MAXIMUM_VALUE_TABLE),
-    m_ingressZeroBufferPool(SAI_NULL_OBJECT_ID),
-    m_egressZeroBufferPool(SAI_NULL_OBJECT_ID),
-    m_ingressZeroPoolRefCount(0),
-    m_egressZeroPoolRefCount(0)
+    m_stateBufferMaximumValueTable(stateDb, STATE_BUFFER_MAXIMUM_VALUE_TABLE)
 {
     SWSS_LOG_ENTER();
     initTableHandlers();
@@ -314,65 +310,6 @@ const object_reference_map &BufferOrch::getBufferPoolNameOidMap(void)
     return *m_buffer_type_maps[APP_BUFFER_POOL_TABLE_NAME];
 }
 
-void BufferOrch::lockZeroBufferPool(bool ingress)
-{
-    if (ingress)
-        m_ingressZeroPoolRefCount++;
-    else
-        m_egressZeroPoolRefCount++;
-}
-
-void BufferOrch::unlockZeroBufferPool(bool ingress)
-{
-    sai_object_id_t pool = SAI_NULL_OBJECT_ID;
-    if (ingress)
-    {
-        if (--m_ingressZeroPoolRefCount <= 0)
-        {
-            pool = m_ingressZeroBufferPool;
-            m_ingressZeroBufferPool = SAI_NULL_OBJECT_ID;
-        }
-    }
-    else
-    {
-        if (--m_egressZeroPoolRefCount <= 0)
-        {
-            pool = m_egressZeroBufferPool;
-            m_egressZeroBufferPool = SAI_NULL_OBJECT_ID;
-        }
-    }
-
-    if (pool != SAI_NULL_OBJECT_ID)
-    {
-        auto sai_status = sai_buffer_api->remove_buffer_pool(pool);
-        if (SAI_STATUS_SUCCESS != sai_status)
-        {
-            SWSS_LOG_ERROR("Failed to remove buffer pool, rv:%d", sai_status);
-            task_process_status handle_status = handleSaiRemoveStatus(SAI_API_BUFFER, sai_status);
-            if (handle_status != task_process_status::task_success)
-            {
-                return;
-            }
-        }
-        else
-        {
-            SWSS_LOG_NOTICE("Zero buffer pool has been successfully removed");
-        }
-    }
-}
-
-void BufferOrch::setZeroBufferPool(bool ingress, sai_object_id_t pool)
-{
-    if (ingress)
-    {
-        m_ingressZeroBufferPool = pool;
-    }
-    else
-    {
-        m_egressZeroBufferPool = pool;
-    }
-}
-
 task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
@@ -381,8 +318,6 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
     string map_type_name = APP_BUFFER_POOL_TABLE_NAME;
     string object_name = kfvKey(tuple);
     string op = kfvOp(tuple);
-    sai_buffer_pool_type_t pool_direction = SAI_BUFFER_POOL_TYPE_INGRESS;
-    bool creating_zero_pool = false;
 
     SWSS_LOG_DEBUG("object name:%s", object_name.c_str());
     if (m_buffer_type_maps[map_type_name]->find(object_name) != m_buffer_type_maps[map_type_name]->end())
@@ -396,16 +331,6 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
         }
     }
     SWSS_LOG_DEBUG("processing command:%s", op.c_str());
-    if (object_name == "ingress_zero_pool")
-    {
-        creating_zero_pool = true;
-        pool_direction = SAI_BUFFER_POOL_TYPE_INGRESS;
-    }
-    else if (object_name == "egress_zero_pool")
-    {
-        creating_zero_pool = true;
-        pool_direction = SAI_BUFFER_POOL_TYPE_EGRESS;
-    }
 
     if (op == SET_COMMAND)
     {
@@ -453,11 +378,6 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
                     return task_process_status::task_invalid_entry;
                 }
                 attr.id = SAI_BUFFER_POOL_ATTR_TYPE;
-                if (creating_zero_pool && pool_direction != static_cast<sai_buffer_pool_type_t>(attr.value.u32))
-                {
-                    SWSS_LOG_ERROR("Wrong pool direction for pool %s", object_name.c_str());
-                    return task_process_status::task_invalid_entry;
-                }
                 attribs.push_back(attr);
             }
             else if (field == buffer_pool_mode_field_name)
@@ -523,54 +443,20 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
         }
         else
         {
-            if (creating_zero_pool)
+            sai_status = sai_buffer_api->create_buffer_pool(&sai_object, gSwitchId, (uint32_t)attribs.size(), attribs.data());
+            if (SAI_STATUS_SUCCESS != sai_status)
             {
-                if (pool_direction == SAI_BUFFER_POOL_TYPE_INGRESS)
+                SWSS_LOG_ERROR("Failed to create buffer pool %s with type %s, rv:%d", object_name.c_str(), map_type_name.c_str(), sai_status);
+                task_process_status handle_status = handleSaiCreateStatus(SAI_API_BUFFER, sai_status);
+                if (handle_status != task_process_status::task_success)
                 {
-                    sai_object = m_ingressZeroBufferPool;
-                }
-                else if (pool_direction == SAI_BUFFER_POOL_TYPE_EGRESS)
-                {
-                    sai_object = m_egressZeroBufferPool;
-                }
-            }
-
-            if (SAI_NULL_OBJECT_ID == sai_object)
-            {
-                sai_status = sai_buffer_api->create_buffer_pool(&sai_object, gSwitchId, (uint32_t)attribs.size(), attribs.data());
-                if (SAI_STATUS_SUCCESS != sai_status)
-                {
-                    SWSS_LOG_ERROR("Failed to create buffer pool %s with type %s, rv:%d", object_name.c_str(), map_type_name.c_str(), sai_status);
-                    task_process_status handle_status = handleSaiCreateStatus(SAI_API_BUFFER, sai_status);
-                    if (handle_status != task_process_status::task_success)
-                    {
-                        return handle_status;
-                    }
-                }
-
-                SWSS_LOG_NOTICE("Created buffer pool %s with type %s", object_name.c_str(), map_type_name.c_str());
-            }
-            else
-            {
-                SWSS_LOG_NOTICE("No need to create buffer pool %s since it has been created", object_name.c_str());
-            }
-
-            if (creating_zero_pool)
-            {
-                if (pool_direction == SAI_BUFFER_POOL_TYPE_INGRESS)
-                {
-                    m_ingressZeroPoolRefCount++;
-                    m_ingressZeroBufferPool = sai_object;
-                }
-                else if (pool_direction == SAI_BUFFER_POOL_TYPE_EGRESS)
-                {
-                    m_egressZeroPoolRefCount++;
-                    m_egressZeroBufferPool = sai_object;
+                    return handle_status;
                 }
             }
 
             (*(m_buffer_type_maps[map_type_name]))[object_name].m_saiObjectId = sai_object;
             (*(m_buffer_type_maps[map_type_name]))[object_name].m_pendingRemove = false;
+            SWSS_LOG_NOTICE("Created buffer pool %s with type %s", object_name.c_str(), map_type_name.c_str());
             // Here we take the PFC watchdog approach to update the COUNTERS_DB metadata (e.g., PFC_WD_DETECTION_TIME per queue)
             // at initialization (creation and registration phase)
             // Specifically, we push the buffer pool name to oid mapping upon the creation of the oid
@@ -593,39 +479,17 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
         if (SAI_NULL_OBJECT_ID != sai_object)
         {
             clearBufferPoolWatermarkCounterIdList(sai_object);
-            bool remove = true;
-            if (sai_object == m_ingressZeroBufferPool)
+            sai_status = sai_buffer_api->remove_buffer_pool(sai_object);
+            if (SAI_STATUS_SUCCESS != sai_status)
             {
-                if (--m_ingressZeroPoolRefCount > 0)
-                    remove = false;
-                else
-                    m_ingressZeroBufferPool = SAI_NULL_OBJECT_ID;
-            }
-            else if (sai_object == m_egressZeroBufferPool)
-            {
-                if (--m_egressZeroPoolRefCount > 0)
-                    remove = false;
-                else
-                    m_egressZeroBufferPool = SAI_NULL_OBJECT_ID;
-            }
-            if (remove)
-            {
-                sai_status = sai_buffer_api->remove_buffer_pool(sai_object);
-                if (SAI_STATUS_SUCCESS != sai_status)
+                SWSS_LOG_ERROR("Failed to remove buffer pool %s with type %s, rv:%d", object_name.c_str(), map_type_name.c_str(), sai_status);
+                task_process_status handle_status = handleSaiRemoveStatus(SAI_API_BUFFER, sai_status);
+                if (handle_status != task_process_status::task_success)
                 {
-                    SWSS_LOG_ERROR("Failed to remove buffer pool %s with type %s, rv:%d", object_name.c_str(), map_type_name.c_str(), sai_status);
-                    task_process_status handle_status = handleSaiRemoveStatus(SAI_API_BUFFER, sai_status);
-                    if (handle_status != task_process_status::task_success)
-                    {
-                        return handle_status;
-                    }
+                    return handle_status;
                 }
-                SWSS_LOG_NOTICE("Removed buffer pool %s with type %s", object_name.c_str(), map_type_name.c_str());
             }
-            else
-            {
-                SWSS_LOG_NOTICE("Will not remove buffer pool %s since it is still referenced", object_name.c_str());
-            }
+            SWSS_LOG_NOTICE("Removed buffer pool %s with type %s", object_name.c_str(), map_type_name.c_str());
         }
         auto it_to_delete = (m_buffer_type_maps[map_type_name])->find(object_name);
         (m_buffer_type_maps[map_type_name])->erase(it_to_delete);
@@ -1049,7 +913,6 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
     for (string port_name : port_names)
     {
         Port port;
-        bool portUpdated = false;
         SWSS_LOG_DEBUG("processing port:%s", port_name.c_str());
         if (!gPortsOrch->getPort(port_name, port))
         {
@@ -1063,12 +926,6 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
             {
                 SWSS_LOG_ERROR("Invalid pg index specified:%zd", ind);
                 return task_process_status::task_invalid_entry;
-            }
-            if (port.m_priority_group_lock[ind])
-            {
-                SWSS_LOG_WARN("Priority group %zd on port %s is locked, pending profile 0x%" PRIx64 " until unlocked", ind, port_name.c_str(), sai_buffer_profile);
-                portUpdated = true;
-                port.m_priority_group_pending_profile[ind] = sai_buffer_profile;
             }
             else
             {
@@ -1089,10 +946,6 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
                     }
                 }
             }
-        }
-        if (portUpdated)
-        {
-            gPortsOrch->setPort(port_name, port);
         }
     }
 
