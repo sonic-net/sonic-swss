@@ -443,12 +443,17 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
 
     attr.id = SAI_SWITCH_ATTR_FIRMWARE_MAJOR_VERSION;
     status = sai_switch_api->get_switch_attribute(phyOid, 1, &attr);
-    if (status == SAI_STATUS_SUCCESS) {
+    if (status == SAI_STATUS_SUCCESS)
+    {
        phy->firmware_major_version = string(attr.value.chardata);
-    } else if( status == SAI_STATUS_NOT_SUPPORTED ) {
-       phy->firmware_major_version = "";
+    }
+    else if ( status == SAI_STATUS_NOT_SUPPORTED )
+    {
+       phy->firmware_major_version = "N/A";
        status = SAI_STATUS_SUCCESS;
-    } else {
+    }
+    else
+    {
         SWSS_LOG_ERROR("BOX: Failed to get firmware major version:%d rtn:%d", phy->phy_id, status);
         return status;
     }
