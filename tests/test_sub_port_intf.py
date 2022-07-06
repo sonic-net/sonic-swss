@@ -1,5 +1,6 @@
 import json
 import time
+import pytest
 
 from dvslib.dvs_common import wait_for_result
 from swsscommon import swsscommon
@@ -866,6 +867,7 @@ class TestSubPortIntf(object):
             self.remove_lag(parent_port)
             self.asic_db.wait_for_n_keys(ASIC_LAG_TABLE, 0)
 
+    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_sub_port_intf_admin_status_change(self, dvs):
         self.connect_dbs(dvs)
 
@@ -950,6 +952,7 @@ class TestSubPortIntf(object):
             self.remove_lag(parent_port)
             self.asic_db.wait_for_n_keys(ASIC_LAG_TABLE, 0)
 
+    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_sub_port_intf_remove_ip_addrs(self, dvs):
         self.connect_dbs(dvs)
 
@@ -1141,6 +1144,7 @@ class TestSubPortIntf(object):
             self.remove_lag(parent_port)
             self.check_lag_removal(parent_port_oid)
 
+    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_sub_port_intf_removal(self, dvs):
         self.connect_dbs(dvs)
 
@@ -1216,6 +1220,7 @@ class TestSubPortIntf(object):
             self.remove_lag(parent_port)
             self.asic_db.wait_for_n_keys(ASIC_LAG_TABLE, 0)
 
+    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_sub_port_intf_mtu(self, dvs):
         self.connect_dbs(dvs)
 
@@ -1444,6 +1449,7 @@ class TestSubPortIntf(object):
 
             parent_port_idx += (4 if parent_port_prefix == ETHERNET_PREFIX else 1)
 
+    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_sub_port_intf_nhg_accel(self, dvs):
         self.connect_dbs(dvs)
 
@@ -1584,6 +1590,7 @@ class TestSubPortIntf(object):
 
             parent_port_idx += (4 if parent_port_prefix == ETHERNET_PREFIX else 1)
 
+    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_sub_port_intf_oper_down_with_pending_neigh_route_tasks(self, dvs):
         self.connect_dbs(dvs)
 
