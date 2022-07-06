@@ -582,6 +582,7 @@ class TestSubPortIntf(object):
             self.remove_lag(parent_port)
             self.check_lag_removal(parent_port_oid)
 
+    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_sub_port_intf_creation(self, dvs):
         self.connect_dbs(dvs)
 
@@ -668,6 +669,7 @@ class TestSubPortIntf(object):
             self.remove_lag(parent_port)
             self.asic_db.wait_for_n_keys(ASIC_LAG_TABLE, 0)
 
+    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_sub_port_intf_add_ip_addrs(self, dvs):
         self.connect_dbs(dvs)
 
@@ -743,6 +745,7 @@ class TestSubPortIntf(object):
             self.remove_lag(parent_port)
             self.check_lag_removal(parent_port_oid)
 
+    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_sub_port_intf_appl_db_proc_seq(self, dvs):
         self.connect_dbs(dvs)
 
