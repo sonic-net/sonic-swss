@@ -2,6 +2,7 @@ from swsscommon import swsscommon
 from swsscommon.swsscommon import CounterTable, MacsecCounter
 import conftest
 
+import time
 import functools
 import typing
 import re
@@ -87,6 +88,12 @@ class StateDBTable(Table):
             str.maketrans(
                 AppDBTable.SEPARATOR,
                 StateDBTable.SEPARATOR))
+
+
+class ConfigTable(Table):
+
+    def __init__(self, dvs: conftest.DockerVirtualSwitch, table_name: str):
+        super(ConfigTable, self).__init__(dvs.get_config_db(), table_name)
 
 
 def gen_sci(macsec_system_identifier: str, macsec_port_identifier: int) -> str:
@@ -807,6 +814,87 @@ class TestMACsec(object):
             peer_mac_address,
             macsec_port_identifier,
             0)
+
+    def test_macsec_with_portchannel(self, dvs: conftest.DockerVirtualSwitch, testlog):
+
+        # Set MACsec enabled on Ethernet0
+        ConfigTable(dvs, "PORT")["Ethernet0"] = {"macsec" : "test"}
+        StateDBTable(dvs, "FEATURE")["macsec"] = {"state": "enabled"}
+
+        # Setup Port-channel
+        ConfigTable(dvs, "PORTCHANNEL")["PortChannel001"] = {"admin": "up", "mtu": "9100", "oper_status": "up"}
+        time.sleep(1)
+
+        # create port channel member
+        ConfigTable(dvs, "PORTCHANNEL_MEMBER")["PortChannel001|Ethernet0"] = {"NULL": "NULL"}
+        ConfigTable(dvs, "PORTCHANNEL_INTERFACE")["PortChannel001"] = {"NULL": "NULL"}
+        ConfigTable(dvs, "PORTCHANNEL_INTERFACE")["PortChannel001|40.0.0.0/31"] = {"NULL": "NULL"}
+        time.sleep(3)
+
+        # Check Portchannel member in ASIC db that shouldn't been created before MACsec enabled
+        lagmtbl = swsscommon.Table(swsscommon.DBConnector(1, dvs.redis_sock, 0), "ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER")
+        lagms = lagmtbl.getKeys()
+        assert len(lagms) == 0
+
+        # Create MACsec session
+        port_name = "Ethernet0"
+        local_mac_address = "00-15-5D-78-FF-C1"
+        peer_mac_address = "00-15-5D-78-FF-C2"
+        macsec_port_identifier = 1
+        macsec_port = "macsec_eth1"
+        sak = "0" * 32
+        auth_key = "0" * 32
+        packet_number = 1
+        ssci = 1
+        salt = "0" * 24
+
+        wpa = WPASupplicantMock(dvs)
+        inspector = MACsecInspector(dvs)
+
+        self.init_macsec(
+            wpa,
+            port_name,
+            local_mac_address,
+            macsec_port_identifier)
+        self.establish_macsec(
+            wpa,
+            port_name,
+            local_mac_address,
+            peer_mac_address,
+            macsec_port_identifier,
+            0,
+            sak,
+            packet_number,
+            auth_key,
+            ssci,
+            salt)
+        time.sleep(3)
+
+        # Check Portchannel member in ASIC db that should been created after MACsec enabled
+        lagmtbl = swsscommon.Table(swsscommon.DBConnector(1, dvs.redis_sock, 0), "ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER")
+        lagms = lagmtbl.getKeys()
+        assert len(lagms) == 1
+
+        self.deinit_macsec(
+            wpa,
+            inspector,
+            port_name,
+            macsec_port,
+            local_mac_address,
+            peer_mac_address,
+            macsec_port_identifier,
+            0)
+
+        # remove port channel member
+        del ConfigTable(dvs, "PORTCHANNEL_INTERFACE")["PortChannel001"]
+        del ConfigTable(dvs, "PORTCHANNEL_INTERFACE")["PortChannel001|40.0.0.0/31"]
+        del ConfigTable(dvs, "PORTCHANNEL_MEMBER")["PortChannel001|Ethernet0"]
+
+        # remove port channel
+        del ConfigTable(dvs, "PORTCHANNEL")["PortChannel001"]
+
+        # Clear MACsec enabled on Ethernet0
+        ConfigTable(dvs, "PORT")["Ethernet0"] = {"macsec" : ""}
 
 
 # Add Dummy always-pass test at end as workaroud
