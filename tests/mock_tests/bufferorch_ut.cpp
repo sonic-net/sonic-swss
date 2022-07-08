@@ -472,6 +472,17 @@ namespace bufferorch_test
         // As an side-effect, all pending notifications should be drained
         ASSERT_TRUE(ts.empty());
 
+        // To satisfy the coverage requirement
+        bufferProfileListTable.set("Ethernet0",
+                                   {
+                                       {"profile_list", "ingress_no_exist_profile"}
+                                   });
+        gBufferOrch->addExistingData(&bufferProfileListTable);
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_EQ(ts[0], "BUFFER_PORT_INGRESS_PROFILE_LIST_TABLE:Ethernet0|SET|profile_list:ingress_no_exist_profile");
+        ts.clear();
+
         _unhook_sai_port_api();
     }
 
@@ -483,6 +494,18 @@ namespace bufferorch_test
         Table bufferPoolTable = Table(m_app_db.get(), APP_BUFFER_POOL_TABLE_NAME);
         Table bufferProfileTable = Table(m_app_db.get(), APP_BUFFER_PROFILE_TABLE_NAME);
         Table bufferProfileListTable = Table(m_app_db.get(), APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME);
+
+        // To satisfy the coverage requirement
+        bufferProfileListTable.set("Ethernet0",
+                                   {
+                                       {"profile_list", "egress_lossless_profile"}
+                                   });
+
+        gBufferOrch->addExistingData(&bufferProfileListTable);
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_EQ(ts[0], "BUFFER_PORT_EGRESS_PROFILE_LIST_TABLE:Ethernet0|SET|profile_list:egress_lossless_profile");
+        ts.clear();
 
         bufferPoolTable.set("egress_lossless_pool",
                             {
@@ -499,14 +522,7 @@ namespace bufferorch_test
 
         gBufferOrch->addExistingData(&bufferPoolTable);
         gBufferOrch->addExistingData(&bufferProfileTable);
-        static_cast<Orch *>(gBufferOrch)->doTask();
 
-        bufferProfileListTable.set("Ethernet0",
-                                   {
-                                       {"profile_list", "egress_lossless_profile"}
-                                   });
-
-        gBufferOrch->addExistingData(&bufferProfileListTable);
         auto sai_port_profile_list_create_count = _ut_stub_port_profile_list_add_count;
         _ut_stub_expected_profile_count = 1;
         _ut_stub_expected_profile_list_type = SAI_PORT_ATTR_QOS_EGRESS_BUFFER_PROFILE_LIST;
