@@ -208,7 +208,7 @@ class TestMuxTunnelBase(object):
         srv1_v6 = self.check_neigh_in_asic_db(asicdb, self.SERV1_IPV6, 3)
 
         self.add_neighbor(dvs, self.SERV1_SOC_IPV4, "00:00:00:00:00:01")
-        srv1_soc_v4 = self.check_neigh_in_asic_db(asicdb, self.SERV1_SOC_IPV4, 4)
+        self.check_neigh_in_asic_db(asicdb, self.SERV1_SOC_IPV4, 4)
 
         existing_keys = asicdb.get_keys(self.ASIC_NEIGH_TABLE)
 
