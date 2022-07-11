@@ -534,9 +534,9 @@ bool MuxCable::nbrHandler(bool enable, bool update_rt)
 void MuxCable::updateNeighbor(NextHopKey nh, bool add)
 {
     sai_object_id_t tnh = mux_orch_->getNextHopTunnelId(MUX_TUNNEL, peer_ip4_);
-    if (add && skip_neighbors_.count(nh.ip_address) != 0)
+    if (add && skip_neighbors_.find(nh.ip_address) != skip_neighbors_.end())
     {
-        SWSS_LOG_NOTICE("Skip update neighbor %s on %s", nh.ip_address.to_string().c_str(), nh.alias.c_str());
+        SWSS_LOG_INFO("Skip update neighbor %s on %s", nh.ip_address.to_string().c_str(), nh.alias.c_str());
         return;
     }
     nbr_handler_->update(nh, tnh, add, state_);
@@ -1214,7 +1214,6 @@ bool MuxOrch::handleMuxCfg(const Request& request)
     auto srv_ip6 = request.getAttrIpPrefix("server_ipv6");
 
     std::set<IpAddress> skip_neighbors;
-    std::string cable_type = "active-standby";
 
     const auto& port_name = request.getKeyString(0);
     auto op = request.getOperation();
@@ -1233,15 +1232,6 @@ bool MuxOrch::handleMuxCfg(const Request& request)
             SWSS_LOG_NOTICE("%s: %s was added to ignored neighbor list", port_name.c_str(), soc_ip6.getIp().to_string().c_str());
             skip_neighbors.insert(soc_ip6.getIp());
         }
-        else if (name == "cable_type")
-        {
-            cable_type = request.getAttrString("cable_type");
-        }
-    }
-
-    if (cable_type != "active-active")
-    {
-        skip_neighbors.clear();
     }
 
     if (op == SET_COMMAND)
