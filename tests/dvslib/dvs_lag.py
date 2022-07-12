@@ -8,7 +8,7 @@ class DVSLag(object):
 
     def create_port_channel(self, lag_id, admin_status="up", mtu="1500", fast_rate=False):
         lag = "PortChannel{}".format(lag_id)
-        lag_entry = {"admin_status": admin_status, "mtu": mtu, "fast_rate": str(fast_rate)}
+        lag_entry = {"admin_status": admin_status, "mtu": mtu, "fast_rate": str(fast_rate).lower()}
         self.config_db.create_entry("PORTCHANNEL", lag, lag_entry)
 
     def remove_port_channel(self, lag_id):

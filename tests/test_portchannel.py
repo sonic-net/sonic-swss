@@ -91,27 +91,25 @@ class TestPortchannel(object):
         lagms = lagmtbl.getKeys()
         assert len(lagms) == 0
 
-    def test_Portchannel_fast_rate(self, dvs, testlog):
-        portchannels = [("0003", "Ethernet16", False),
-                        ("0004", "Ethernet20", True)]
+    @pytest.mark.parametrize("fast_rate", ["Fasle", "True"])
+    def test_Portchannel_fast_rate(self, dvs, testlog, fast_rate):
+        po_id = "0003"
+        po_member = "Ethernet16"
 
-        # Create PortChannels
-        for portchannel in portchannels:
-            self.dvs_lag.create_port_channel(portchannel[0], fast_rate=portchannel[2])
-        self.dvs_lag.get_and_verify_port_channel(len(portchannels))
+        # Create PortChannel
+        self.dvs_lag.create_port_channel(po_id, fast_rate=fast_rate)
+        self.dvs_lag.get_and_verify_port_channel(1)
 
-        # Add members to PortChannels
-        for portchannel in portchannels:
-            self.dvs_lag.create_port_channel_member(portchannel[0], portchannel[1])
-        self.dvs_lag.get_and_verify_port_channel_members(len(portchannels))
+        # Add member to PortChannel
+        self.dvs_lag.create_port_channel_member(po_id, po_member)
+        self.dvs_lag.get_and_verify_port_channel_members(1)
 
-        # test fast rate was not set on portchannel_slow
-        for portchannel in portchannels:
-            self.dvs_lag.get_and_verify_port_channel_fast_rate(portchannel[0], portchannel[2])
+        # test fast rate configuration
+        self.dvs_lag.get_and_verify_port_channel_fast_rate(po_id, fast_rate)
 
-        # remove PortChannel members
-        for portchannel in portchannels:
-            self.dvs_lag.remove_port_channel(portchannel[0])
+        # remove PortChannel
+        self.dvs_lag.create_port_channel_member(po_id, po_member)
+        self.dvs_lag.remove_port_channel(po_id)
         self.dvs_lag.get_and_verify_port_channel(0)
 
 
