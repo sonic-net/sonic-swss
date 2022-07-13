@@ -128,7 +128,10 @@ FlexCounterManager::~FlexCounterManager()
         flex_counter_table->del(getFlexCounterTableKey(group_name, counter));
     }
 
-    flex_counter_group_table->del(group_name);
+    if (flex_counter_group_table != nullptr)
+    {
+        flex_counter_group_table->del(group_name);
+    }
 
     SWSS_LOG_DEBUG("Deleted flex counter group '%s'.", group_name.c_str());
 }

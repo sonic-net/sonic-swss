@@ -6,6 +6,10 @@ INCLUDES = -I $(top_srcdir)/lib \
            -I pbh \
            -I nhg
 
+if GCOV_ENABLED
+SUBDIRS = p4orch/tests
+endif
+
 CFLAGS_SAI = -I /usr/include/sai
 
 swssdir = $(datadir)/swss
@@ -18,7 +22,7 @@ dist_swss_DATA = \
 		 pfc_detect_barefoot.lua \
 		 pfc_detect_nephos.lua \
 		 pfc_detect_cisco-8000.lua \
-                 pfc_detect_vs.lua \
+		 pfc_detect_vs.lua \
 		 pfc_restore.lua \
 		 pfc_restore_cisco-8000.lua \
 		 port_rates.lua \

@@ -206,7 +206,8 @@ bool PortsOrch::removeAclTableGroup(const Port &p)
     return true;
 }
 
-bool PortsOrch::addSubPort(Port &port, const string &alias, const bool &adminUp, const uint32_t &mtu)
+bool PortsOrch::addSubPort(Port &port, const string &alias, const string &vlan, const bool &adminUp,
+                           const uint32_t &mtu)
 {
     return true;
 }
@@ -400,7 +401,7 @@ void PortsOrch::initializePriorityGroups(Port &port)
 {
 }
 
-void PortsOrch::initializePortMaximumHeadroom(Port &port)
+void PortsOrch::initializePortBufferMaximumParameters(Port &port)
 {
 }
 
@@ -685,7 +686,7 @@ void PortsOrch::voqSyncDelLagMember(Port &lag, Port &port)
 {
 }
 
-std::unordered_set<std::string> PortsOrch::generateCounterStats(const string &type)
+std::unordered_set<std::string> PortsOrch::generateCounterStats(const string &type, bool gearbox)
 {
     return {};
 }
