@@ -42,7 +42,7 @@ jobs:
       # runVersion: 'latestFromBranch'
       # runBranch: 'refs/heads/$(BUILD_BRANCH)'
       runVersion: specific
-      runId: 103441 
+      runId: 121504
       path: $(Build.ArtifactStagingDirectory)/download
     displayName: "Download sonic swss common deb packages"
 
