@@ -3150,18 +3150,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 if (!an_str.empty())
                 {
-                    if (p.m_cap_an < 0)
-                    {
-                        initPortCapAutoNeg(p);
-                        m_portList[alias] = p;
-                    }
-                    if (p.m_cap_an < 1)
-                    {
-                        SWSS_LOG_ERROR("%s: autoneg is not supported", p.m_alias.c_str());
-                        // autoneg is not supported, don't retry
-                        it = consumer.m_toSync.erase(it);
-                        continue;
-                    }
                     if (autoneg_mode_map.find(an_str) == autoneg_mode_map.end())
                     {
                         SWSS_LOG_ERROR("Failed to parse autoneg value: %s", an_str.c_str());
@@ -3169,7 +3157,18 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         it = consumer.m_toSync.erase(it);
                         continue;
                     }
-
+                    if (p.m_cap_an < 0)
+                    {
+                        initPortCapAutoNeg(p);
+                        m_portList[alias] = p;
+                    }
+                    if (p.m_cap_an < 1)
+                    {
+                        SWSS_LOG_ERROR("%s: autoneg is not supported (cap=%d)", p.m_alias.c_str(), p.m_cap_an);
+                        // autoneg is not supported, don't retry
+                        it = consumer.m_toSync.erase(it);
+                        continue;
+                    }
                     an = autoneg_mode_map[an_str];
                     if (an != p.m_autoneg)
                     {
@@ -7503,7 +7502,7 @@ void PortsOrch::doTask(swss::SelectableTimer &timer)
 
     for (auto it = m_port_state_poll.begin(); it != m_port_state_poll.end(); )
     {
-        if ((it->second == 0) || !getPort(it->first, port))
+        if ((it->second == PORT_STATE_POLL_NONE) || !getPort(it->first, port))
         {
             it = m_port_state_poll.erase(it);
             continue;
