@@ -2398,7 +2398,7 @@ class TestAdvancedReboot(object):
 
         pubsub = dvs.SubscribeAppDbObject(tunnel_table)
 
-        dvs.runcmd("config advanced_restart enable swss")
+        dvs.runcmd("config warm_restart enable swss")
         config_db = dvs.get_config_db()
         config_db.create_entry("TUNNEL", tunnel_name, tunnel_params)
 
