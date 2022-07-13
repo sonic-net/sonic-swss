@@ -3157,21 +3157,21 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         it = consumer.m_toSync.erase(it);
                         continue;
                     }
-                    if (p.m_cap_an < 0)
-                    {
-                        initPortCapAutoNeg(p);
-                        m_portList[alias] = p;
-                    }
-                    if (p.m_cap_an < 1)
-                    {
-                        SWSS_LOG_ERROR("%s: autoneg is not supported (cap=%d)", p.m_alias.c_str(), p.m_cap_an);
-                        // autoneg is not supported, don't retry
-                        it = consumer.m_toSync.erase(it);
-                        continue;
-                    }
                     an = autoneg_mode_map[an_str];
                     if (an != p.m_autoneg)
                     {
+                        if (p.m_cap_an < 0)
+                        {
+                            initPortCapAutoNeg(p);
+                            m_portList[alias] = p;
+                        }
+                        if (p.m_cap_an < 1)
+                        {
+                            SWSS_LOG_ERROR("%s: autoneg is not supported (cap=%d)", p.m_alias.c_str(), p.m_cap_an);
+                            // autoneg is not supported, don't retry
+                            it = consumer.m_toSync.erase(it);
+                            continue;
+                        }
                         if (p.m_admin_state_up)
                         {
                             /* Bring port down before applying speed */
@@ -3228,7 +3228,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         }
                         if (p.m_cap_lt < 1)
                         {
-                            SWSS_LOG_WARN("%s: LT is not supported by the ASIC", alias.c_str());
+                            SWSS_LOG_WARN("%s: LT is not supported(cap=%d)", alias.c_str(), p.m_cap_lt);
                             // Don't retry
                             it = consumer.m_toSync.erase(it);
                             continue;
