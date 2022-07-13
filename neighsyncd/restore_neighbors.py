@@ -13,7 +13,6 @@ Description: restore_neighbors.py -- restoring neighbor table into kernel during
 """
 
 import sys
-import swsssdk
 import netifaces
 import time
 from pyroute2 import IPRoute, NetlinkError
@@ -117,7 +116,7 @@ def is_intf_up(intf, db):
 #  2, need check interface state twice due to the split map
 
 def read_neigh_table_to_maps():
-    db = swsssdk.SonicV2Connector(host='127.0.0.1')
+    db = swsscommon.SonicV2Connector(host='127.0.0.1')
     db.connect(db.APPL_DB, False)
 
     intf_neigh_map = {}
@@ -207,7 +206,7 @@ def build_arp_ns_pkt(family, smac, src_ip, dst_ip):
 
 # Set the statedb "NEIGH_RESTORE_TABLE|Flags", so neighsyncd can start reconciliation
 def set_statedb_neigh_restore_done():
-    db = swsssdk.SonicV2Connector(host='127.0.0.1')
+    db = swsscommon.SonicV2Connector(host='127.0.0.1')
     db.connect(db.STATE_DB, False)
     db.set(db.STATE_DB, 'NEIGH_RESTORE_TABLE|Flags', 'restored', 'true')
     db.close(db.STATE_DB)
@@ -228,7 +227,7 @@ def restore_update_kernel_neighbors(intf_neigh_map, timeout=DEF_TIME_OUT):
     ipclass = IPRoute()
     start_time = time.monotonic()
     is_intf_up.counter = 0
-    db = swsssdk.SonicV2Connector(host='127.0.0.1')
+    db = swsscommon.SonicV2Connector(host='127.0.0.1')
     db.connect(db.STATE_DB, False)
     while (time.monotonic() - start_time) < timeout:
         for intf, family_neigh_map in list(intf_neigh_map.items()):

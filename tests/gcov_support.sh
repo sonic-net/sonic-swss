@@ -197,12 +197,6 @@ gcov_set_environment()
 
     echo "cat list"
     cat ${CONTAINER_LIST}
-
-    cd ${build_dir}/gcov_tmp/
-    tar -zcvf sonic-gcov.tar.gz sonic-gcov/
-    rm -rf sonic-gcov
-    cd ../../
-    rm ${CONTAINER_LIST}
 }
 
 gcov_merge_info()

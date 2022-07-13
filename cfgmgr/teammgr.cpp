@@ -33,7 +33,8 @@ TeamMgr::TeamMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     m_appPortTable(applDb, APP_PORT_TABLE_NAME),
     m_appLagTable(applDb, APP_LAG_TABLE_NAME),
     m_statePortTable(statDb, STATE_PORT_TABLE_NAME),
-    m_stateLagTable(statDb, STATE_LAG_TABLE_NAME)
+    m_stateLagTable(statDb, STATE_LAG_TABLE_NAME),
+    m_stateMACsecIngressSATable(statDb, STATE_MACSEC_INGRESS_SA_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
 
@@ -96,6 +97,51 @@ bool TeamMgr::isLagStateOk(const string &alias)
     }
 
     return true;
+}
+
+bool TeamMgr::isMACsecAttached(const std::string &port)
+{
+    SWSS_LOG_ENTER();
+
+    vector<FieldValueTuple> temp;
+
+    if (!m_cfgPortTable.get(port, temp))
+    {
+        SWSS_LOG_INFO("Port %s is not ready", port.c_str());
+        return false;
+    }
+
+    auto macsec_opt = swss::fvsGetValue(temp, "macsec", true);
+    if (!macsec_opt || macsec_opt->empty())
+    {
+        SWSS_LOG_INFO("MACsec isn't setted on the port %s", port.c_str());
+        return false;
+    }
+
+    return true;
+}
+
+bool TeamMgr::isMACsecIngressSAOk(const std::string &port)
+{
+    SWSS_LOG_ENTER();
+
+    vector<string> keys;
+    m_stateMACsecIngressSATable.getKeys(keys);
+
+    for (auto key: keys)
+    {
+        auto tokens = tokenize(key, state_db_key_delimiter);
+        auto interface = tokens[0];
+
+        if (port == interface)
+        {
+            SWSS_LOG_NOTICE(" MACsec is ready on the port %s", port.c_str());
+            return true;
+        }
+    }
+
+    SWSS_LOG_INFO("MACsec is NOT ready on the port %s", port.c_str());
+    return false;
 }
 
 void TeamMgr::doTask(Consumer &consumer)
@@ -309,7 +355,11 @@ void TeamMgr::doLagMemberTask(Consumer &consumer)
                 it++;
                 continue;
             }
-
+            if (isMACsecAttached(member) && !isMACsecIngressSAOk(member))
+            {
+                it++;
+                continue;
+            }
             if (addLagMember(lag, member) == task_need_retry)
             {
                 it++;
@@ -400,6 +450,13 @@ void TeamMgr::doPortUpdateTask(Consumer &consumer)
             string lag;
             if (findPortMaster(lag, alias))
             {
+                if (isMACsecAttached(alias) && !isMACsecIngressSAOk(alias))
+                {
+                    it++;
+                    SWSS_LOG_INFO("MACsec is NOT ready on the port %s", alias.c_str());
+                    continue;
+                }
+
                 if (addLagMember(lag, alias) == task_need_retry)
                 {
                     it++;

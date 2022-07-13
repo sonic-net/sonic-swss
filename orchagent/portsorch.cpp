@@ -2966,6 +2966,11 @@ void PortsOrch::doPortTask(Consumer &consumer)
             }
             else
             {
+                if (admin_status.empty())
+                {
+                    admin_status = p.m_admin_state_up ? "up" : "down";
+                }
+
                 if (!an_str.empty())
                 {
                     if (autoneg_mode_map.find(an_str) == autoneg_mode_map.end())
@@ -3008,7 +3013,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             continue;
                         }
                         SWSS_LOG_NOTICE("Set port %s AutoNeg from %d to %d", alias.c_str(), p.m_autoneg, an);
-                        p.m_autoneg = an;
+                        p.m_autoneg = static_cast<swss::Port::AutoNegMode>(an);
                         m_portList[alias] = p;
                     }
                 }

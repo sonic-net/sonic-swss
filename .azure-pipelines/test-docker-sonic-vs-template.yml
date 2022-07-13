@@ -69,16 +69,27 @@ jobs:
       pushd tests
 
       if [ '${{ parameters.archive_gcov }}' == True ]; then
-        sudo py.test -v --force-flaky --junitxml=tr.xml --keeptb --imgname=docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber)
+        all_tests=$(ls test_*.py)
+        all_tests="${all_tests} p4rt"
+        for test in ${all_tests}; do
+          test_name=$(echo "${test}" | cut -d "." -f 1)
+          sudo py.test -v --force-flaky --junitxml="${test_name}_tr.xml" --keeptb --imgname=docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber) ${test}
+          container_count=$(docker ps -q -a | wc -l)
+          if [ ${container_count} -gt 0 ]; then
+            ./gcov_support.sh set_environment $(Build.ArtifactStagingDirectory)
+            docker stop $(docker ps -q -a)
+            docker rm $(docker ps -q -a)
+          fi
+        done
       else
-        sudo py.test -v --force-flaky --junitxml=tr.xml --imgname=docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber)
+        sudo py.test -v --force-flaky --junitxml=tests_tr.xml --imgname=docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber)
       fi
       rm -rf $(Build.ArtifactStagingDirectory)/download
     displayName: "Run vs tests"
 
   - task: PublishTestResults@2
     inputs:
-      testResultsFiles: '**/tr.xml'
+      testResultsFiles: '**/*_tr.xml'
       testRunTitle: vstest
     condition: always()
 
@@ -87,9 +98,9 @@ jobs:
 
       if [ '${{ parameters.archive_gcov }}' == True ]; then
         sudo apt-get install -y lcov
-        ./tests/gcov_support.sh set_environment $(Build.ArtifactStagingDirectory)
-        docker stop $(docker ps -q -a)
-        docker rm $(docker ps -q -a)
+        cd $(Build.ArtifactStagingDirectory)/gcov_tmp/
+        tar -zcvf sonic-gcov.tar.gz sonic-gcov/
+        rm -rf sonic-gcov
       fi
     displayName: "Collect logs"
     condition: always()

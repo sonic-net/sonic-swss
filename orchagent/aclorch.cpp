@@ -3694,7 +3694,14 @@ bool AclOrch::addAclTable(AclTable &newTable)
             return true;
         }
     }
-
+    // Update matching field according to ACL stage
+    newTable.addStageMandatoryMatchFields();
+    
+    // Add mandatory ACL action if not present
+    // We need to call addMandatoryActions here because addAclTable is directly called in other orchs.
+    // The action_list is already added if the ACL table creation is triggered by CONFIGDD, but calling addMandatoryActions
+    // twice will make no effect
+    newTable.addMandatoryActions();
     if (createBindAclTable(newTable, table_oid))
     {
         m_AclTables[table_oid] = newTable;
@@ -4171,11 +4178,8 @@ void AclOrch::doAclTableTask(Consumer &consumer)
             }
 
             newTable.validateAddType(*tableType);
-
-            newTable.addStageMandatoryMatchFields();
-
+            // Add mandatory ACL action if not present
             newTable.addMandatoryActions();
-
             // validate and create/update ACL Table
             if (bAllAttributesOk && newTable.validate())
             {
