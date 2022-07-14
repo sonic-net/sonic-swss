@@ -27,6 +27,7 @@ private:
     Table m_cfgLagMemberTable;
     Table m_statePortTable;
     Table m_stateLagTable;
+    Table m_stateMACsecIngressSATable;
 
     ProducerStateTable m_appPortTable;
     ProducerStateTable m_appLagTable;
@@ -55,6 +56,8 @@ private:
     bool checkPortIffUp(const std::string &);
     bool isPortStateOk(const std::string&);
     bool isLagStateOk(const std::string&);
+    bool isMACsecAttached(const std::string &);
+    bool isMACsecIngressSAOk(const std::string &);
     uint16_t generateLacpKey(const std::string&);
 };
 
