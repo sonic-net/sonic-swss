@@ -378,10 +378,11 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
        SWSS_LOG_ERROR( "hwinfo string attribute is too long." );
        return SAI_STATUS_FAILURE;
     }
-    strncpy(hwinfo, phy->hwinfo.c_str(), HWINFO_MAX_SIZE);
+    memset(hwinfo, 0, HWINFO_MAX_SIZE + 1);
+    strncpy(hwinfo, phy->hwinfo.c_str(), phy->hwinfo.length());
 
     attr.id = SAI_SWITCH_ATTR_SWITCH_HARDWARE_INFO;
-    attr.value.s8list.count = (uint32_t) phy->hwinfo.length();
+    attr.value.s8list.count = (uint32_t) phy->hwinfo.length() + 1;
     attr.value.s8list.list = (int8_t *) hwinfo;
     attrs.push_back(attr);
 
@@ -441,21 +442,21 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
 
     phy->phy_oid = sai_serialize_object_id(phyOid);
 
-    attr.id = SAI_SWITCH_ATTR_FIRMWARE_MAJOR_VERSION;
-    status = sai_switch_api->get_switch_attribute(phyOid, 1, &attr);
-    if (status == SAI_STATUS_SUCCESS)
+    if (phy->firmware.length() != 0)
     {
-       phy->firmware_major_version = string(attr.value.chardata);
-    }
-    else if ( status == SAI_STATUS_NOT_SUPPORTED )
-    {
-       phy->firmware_major_version = "N/A";
-       status = SAI_STATUS_SUCCESS;
-    }
-    else
-    {
-        SWSS_LOG_ERROR("BOX: Failed to get firmware major version:%d rtn:%d", phy->phy_id, status);
-        return status;
+        attr.id = SAI_SWITCH_ATTR_FIRMWARE_MAJOR_VERSION;
+        status = sai_switch_api->get_switch_attribute(phyOid, 1, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("BOX: Failed to get firmware major version for hwinfo:%s, phy:%d, rtn:%d",
+                           phy->hwinfo.c_str(), phy->phy_id, status);
+            return status;
+        }
+        else
+        {
+            phy->firmware_major_version = string(attr.value.chardata);
+        }
     }
     return status;
 }
+
