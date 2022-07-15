@@ -339,7 +339,7 @@ gcov_support_collect_gcno()
     echo " === Start collecting .gcno files... === "
     submodule_name=$1
     exec 3>$GCNO_LIST_FILE
-    find_command=`find -name *.gcno`
+    find_command=`find -name "*.gcno" -o -name "*.gcda"`
     echo "${find_command}"
     if [ -z "${find_command}" ]; then
         echo "### Error! no gcno files found!"
