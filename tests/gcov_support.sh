@@ -143,6 +143,11 @@ lcov_merge_all()
     done < infolist
 
     lcov --extract total.info '*sonic-gcov/*' -o total.info
+
+    # Remove unit test files.
+    lcov -o total.info -r total.info "*sonic-gcov/common_work/gcov/orchagent/p4orch/tests/*"
+    lcov -o total.info -r total.info "*sonic-gcov/common_work/gcov/tests/*"
+
     cp $1/lcov_cobertura.py $1/common_work/gcov/
     python $1/common_work/gcov/lcov_cobertura.py total.info -o coverage.xml
 
