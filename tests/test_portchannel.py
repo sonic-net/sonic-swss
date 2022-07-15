@@ -91,7 +91,7 @@ class TestPortchannel(object):
         lagms = lagmtbl.getKeys()
         assert len(lagms) == 0
 
-    @pytest.mark.parametrize("fast_rate", ["Fasle", "True"])
+    @pytest.mark.parametrize("fast_rate", [False, True])
     def test_Portchannel_fast_rate(self, dvs, testlog, fast_rate):
         po_id = "0003"
         po_member = "Ethernet16"
