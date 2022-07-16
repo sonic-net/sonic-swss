@@ -46,10 +46,10 @@ string gResponsePublisherRecordFile;
 /* Global database mutex */
 mutex gDbMutex;
 
-bool received_sigterm = false;
+static bool received_sigterm = false;
 static struct sigaction old_sigaction;
 
-void sig_handler(int signo)
+static void sig_handler(int signo)
 {
     SWSS_LOG_ENTER();
 
