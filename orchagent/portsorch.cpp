@@ -1032,6 +1032,38 @@ void PortsOrch::getCpuPort(Port &port)
     port = m_cpuPort;
 }
 
+/* 
+ * Create host_tx_ready field in PORT_TABLE of STATE-DB 
+ * and set the field to false by default for the 
+ * front<Ethernet> port.
+ */
+void PortsOrch::initHostTxReadyState(Port &port)
+{
+    SWSS_LOG_ENTER();
+
+    vector<FieldValueTuple> tuples;
+    bool exist = m_portStateTable.get(port.m_alias, tuples);
+    string hostTxReady;
+
+    if (exist)
+    {
+        for (auto i : tuples)
+        {
+            if (fvField(i) == "host_tx_ready")
+            {
+                hostTxReady = fvValue(i);
+            }
+        }
+    }
+
+    if (hostTxReady.empty())
+    {
+        m_portStateTable.hset(port.m_alias, "host_tx_ready", "false");
+        SWSS_LOG_INFO("initalize hostTxReady %s with status %s", 
+                port.m_alias.c_str(), hostTxReady.c_str());
+    }
+}
+
 bool PortsOrch::setPortAdminStatus(Port &port, bool state)
 {
     SWSS_LOG_ENTER();
@@ -1040,11 +1072,20 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
     attr.id = SAI_PORT_ATTR_ADMIN_STATE;
     attr.value.booldata = state;
 
+    /* Update the host_tx_ready to false before setting admin_state, when admin state is false */
+    if (!state) 
+    {
+        m_portStateTable.hset(port.m_alias, "host_tx_ready", "false");
+        SWSS_LOG_INFO("Set admin status DOWN host_tx_ready to false to port pid:%" PRIx64,
+                port.m_port_id);
+    }
+    
     sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set admin status %s to port pid:%" PRIx64,
                        state ? "UP" : "DOWN", port.m_port_id);
+        m_portStateTable.hset(port.m_alias, "host_tx_ready", "false");
         task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
         if (handle_status != task_success)
         {
@@ -1052,10 +1093,19 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
         }
     }
 
-    SWSS_LOG_INFO("Set admin status %s to port pid:%" PRIx64,
-                    state ? "UP" : "DOWN", port.m_port_id);
-
-    setGearboxPortsAttr(port, SAI_PORT_ATTR_ADMIN_STATE, &state);
+    bool gbstatus = setGearboxPortsAttr(port, SAI_PORT_ATTR_ADMIN_STATE, &state);
+    if (gbstatus != true)
+    {
+        m_portStateTable.hset(port.m_alias, "host_tx_ready", "false");
+    }
+   
+    /* Update the state table for host_tx_ready*/
+    if (state && (gbstatus == true) && (status == SAI_STATUS_SUCCESS) )
+    {
+        m_portStateTable.hset(port.m_alias, "host_tx_ready", "true");
+        SWSS_LOG_INFO("Set admin status UP host_tx_ready to true to port pid:%" PRIx64,
+                port.m_port_id);
+    } 
 
     return true;
 }
@@ -1940,7 +1990,7 @@ void PortsOrch::initPortSupportedSpeeds(const std::string& alias, sai_object_id_
  */
 bool PortsOrch::setGearboxPortsAttr(Port &port, sai_port_attr_t id, void *value)
 {
-    bool status;
+    bool status = false;
 
     status = setGearboxPortAttr(port, PHY_PORT_TYPE, id, value);
 
@@ -2966,6 +3016,11 @@ void PortsOrch::doPortTask(Consumer &consumer)
             }
             else
             {
+                if (admin_status.empty())
+                {
+                    admin_status = p.m_admin_state_up ? "up" : "down";
+                }
+
                 if (!an_str.empty())
                 {
                     if (autoneg_mode_map.find(an_str) == autoneg_mode_map.end())
@@ -3008,7 +3063,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             continue;
                         }
                         SWSS_LOG_NOTICE("Set port %s AutoNeg from %d to %d", alias.c_str(), p.m_autoneg, an);
-                        p.m_autoneg = an;
+                        p.m_autoneg = static_cast<swss::Port::AutoNegMode>(an);
                         m_portList[alias] = p;
                     }
                 }
@@ -3362,7 +3417,10 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
 
                 }
-
+                
+                /* create host_tx_ready field in state-db */
+                initHostTxReadyState(p);
+                
                 /* Last step set port admin status */
                 if (!admin_status.empty() && (p.m_admin_state_up != (admin_status == "up")))
                 {
@@ -4774,7 +4832,11 @@ bool PortsOrch::addVlanFloodGroups(Port &vlan, Port &port, string end_point_ip)
         {
             SWSS_LOG_ERROR("Failed to set l2mc flood type combined "
                            " to vlan %hu for unknown unicast flooding", vlan.m_vlan_info.vlan_id);
-            return false;
+            task_process_status handle_status = handleSaiSetStatus(SAI_API_VLAN, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
         vlan.m_vlan_info.uuc_flood_type = SAI_VLAN_FLOOD_CONTROL_TYPE_COMBINED;
     }
@@ -4789,7 +4851,12 @@ bool PortsOrch::addVlanFloodGroups(Port &vlan, Port &port, string end_point_ip)
         {
             SWSS_LOG_ERROR("Failed to set l2mc flood type combined "
                            " to vlan %hu for broadcast flooding", vlan.m_vlan_info.vlan_id);
-            return false;
+            task_process_status handle_status = handleSaiSetStatus(SAI_API_VLAN, status);
+            if (handle_status != task_success)
+            {
+                m_portList[vlan.m_alias] = vlan;
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
         vlan.m_vlan_info.bc_flood_type = SAI_VLAN_FLOOD_CONTROL_TYPE_COMBINED;
     }
@@ -4800,7 +4867,12 @@ bool PortsOrch::addVlanFloodGroups(Port &vlan, Port &port, string end_point_ip)
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create l2mc flood group");
-            return false;
+            task_process_status handle_status = handleSaiCreateStatus(SAI_API_L2MC_GROUP, status);
+            if (handle_status != task_success)
+            {
+                m_portList[vlan.m_alias] = vlan;
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
 
         if (vlan.m_vlan_info.uuc_flood_type == SAI_VLAN_FLOOD_CONTROL_TYPE_COMBINED)
@@ -4814,7 +4886,12 @@ bool PortsOrch::addVlanFloodGroups(Port &vlan, Port &port, string end_point_ip)
                 SWSS_LOG_ERROR("Failed to set l2mc group %" PRIx64
                                " to vlan %hu for unknown unicast flooding",
                                l2mc_group_id, vlan.m_vlan_info.vlan_id);
-                return false;
+                task_process_status handle_status = handleSaiSetStatus(SAI_API_VLAN, status);
+                if (handle_status != task_success)
+                {
+                    m_portList[vlan.m_alias] = vlan;
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
         }
         if (vlan.m_vlan_info.bc_flood_type == SAI_VLAN_FLOOD_CONTROL_TYPE_COMBINED)
@@ -4828,7 +4905,12 @@ bool PortsOrch::addVlanFloodGroups(Port &vlan, Port &port, string end_point_ip)
                 SWSS_LOG_ERROR("Failed to set l2mc group %" PRIx64
                                " to vlan %hu for broadcast flooding",
                                l2mc_group_id, vlan.m_vlan_info.vlan_id);
-                return false;
+                task_process_status handle_status = handleSaiSetStatus(SAI_API_VLAN, status);
+                if (handle_status != task_success)
+                {
+                    m_portList[vlan.m_alias] = vlan;
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
         }
         vlan.m_vlan_info.l2mc_group_id = l2mc_group_id;
@@ -4868,7 +4950,12 @@ bool PortsOrch::addVlanFloodGroups(Port &vlan, Port &port, string end_point_ip)
     {
         SWSS_LOG_ERROR("Failed to create l2mc group member for adding tunnel %s to vlan %hu",
                        end_point_ip.c_str(), vlan.m_vlan_info.vlan_id);
-        return false;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_L2MC_GROUP, status);
+        if (handle_status != task_success)
+        {
+            m_portList[vlan.m_alias] = vlan;
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     vlan.m_vlan_info.l2mc_members[end_point_ip] = l2mc_group_member;
     m_portList[vlan.m_alias] = vlan;
@@ -4895,7 +4982,11 @@ bool PortsOrch::removeVlanEndPointIp(Port &vlan, Port &port, string end_point_ip
     {
         SWSS_LOG_ERROR("Failed to remove end point ip %s from vlan %hu",
                        end_point_ip.c_str(), vlan.m_vlan_info.vlan_id);
-        return false;
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_L2MC_GROUP, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     decreaseBridgePortRefCount(port);
     vlan.m_vlan_info.l2mc_members.erase(end_point_ip);
@@ -4915,7 +5006,12 @@ bool PortsOrch::removeVlanEndPointIp(Port &vlan, Port &port, string end_point_ip
                 SWSS_LOG_ERROR("Failed to set null l2mc group "
                                " to vlan %hu for unknown unicast flooding",
                                vlan.m_vlan_info.vlan_id);
-                return false;
+                task_process_status handle_status = handleSaiSetStatus(SAI_API_VLAN, status);
+                if (handle_status != task_success)
+                {
+                    m_portList[vlan.m_alias] = vlan;
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
             attr.id = SAI_VLAN_ATTR_UNKNOWN_UNICAST_FLOOD_CONTROL_TYPE;
             attr.value.s32 = SAI_VLAN_FLOOD_CONTROL_TYPE_ALL;
@@ -4925,7 +5021,12 @@ bool PortsOrch::removeVlanEndPointIp(Port &vlan, Port &port, string end_point_ip
                 SWSS_LOG_ERROR("Failed to set flood control type all"
                                " to vlan %hu for unknown unicast flooding",
                                vlan.m_vlan_info.vlan_id);
-                return false;
+                task_process_status handle_status = handleSaiSetStatus(SAI_API_VLAN, status);
+                if (handle_status != task_success)
+                {
+                    m_portList[vlan.m_alias] = vlan;
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
             vlan.m_vlan_info.uuc_flood_type = SAI_VLAN_FLOOD_CONTROL_TYPE_ALL;
         }
@@ -4940,7 +5041,12 @@ bool PortsOrch::removeVlanEndPointIp(Port &vlan, Port &port, string end_point_ip
                 SWSS_LOG_ERROR("Failed to set null l2mc group "
                                " to vlan %hu for broadcast flooding",
                                vlan.m_vlan_info.vlan_id);
-                return false;
+                task_process_status handle_status = handleSaiSetStatus(SAI_API_VLAN, status);
+                if (handle_status != task_success)
+                {
+                    m_portList[vlan.m_alias] = vlan;
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
             attr.id = SAI_VLAN_ATTR_BROADCAST_FLOOD_CONTROL_TYPE;
             attr.value.s32 = SAI_VLAN_FLOOD_CONTROL_TYPE_ALL;
@@ -4950,7 +5056,12 @@ bool PortsOrch::removeVlanEndPointIp(Port &vlan, Port &port, string end_point_ip
                 SWSS_LOG_ERROR("Failed to set flood control type all"
                                " to vlan %hu for broadcast flooding",
                                vlan.m_vlan_info.vlan_id);
-                return false;
+                task_process_status handle_status = handleSaiSetStatus(SAI_API_VLAN, status);
+                if (handle_status != task_success)
+                {
+                    m_portList[vlan.m_alias] = vlan;
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
             vlan.m_vlan_info.bc_flood_type = SAI_VLAN_FLOOD_CONTROL_TYPE_ALL;
         }
@@ -4958,10 +5069,16 @@ bool PortsOrch::removeVlanEndPointIp(Port &vlan, Port &port, string end_point_ip
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to remove l2mc group %" PRIx64, l2mc_group_id);
-            return false;
+            task_process_status handle_status = handleSaiRemoveStatus(SAI_API_L2MC_GROUP, status);
+            if (handle_status != task_success)
+            {
+                m_portList[vlan.m_alias] = vlan;
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
         vlan.m_vlan_info.l2mc_group_id = SAI_NULL_OBJECT_ID;
     }
+    m_portList[vlan.m_alias] = vlan;
     return true;
 }
 

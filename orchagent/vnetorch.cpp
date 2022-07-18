@@ -172,6 +172,28 @@ bool VNetVrfObject::addRoute(IpPrefix& ipPrefix, NextHopGroupKey& nexthops)
     return true;
 }
 
+void VNetVrfObject::addProfile(IpPrefix& ipPrefix, string& profile)
+{
+    profile_[ipPrefix] = profile;
+}
+
+void VNetVrfObject::removeProfile(IpPrefix& ipPrefix)
+{
+    if (profile_.find(ipPrefix) != profile_.end())
+    {
+        profile_.erase(ipPrefix);
+    }
+}
+
+string VNetVrfObject::getProfile(IpPrefix& ipPrefix)
+{
+    if (profile_.find(ipPrefix) != profile_.end())
+    {
+        return profile_[ipPrefix];
+    }
+    return string();
+}
+
 void VNetVrfObject::increaseNextHopRefCount(const nextHop& nh)
 {
     /* Return when there is no next hop (dropped) */
@@ -872,7 +894,7 @@ bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey
 
 template<>
 bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipPrefix,
-                                               NextHopGroupKey& nexthops, string& op,
+                                               NextHopGroupKey& nexthops, string& op, string& profile,
                                                const map<NextHopKey, IpAddress>& monitors)
 {
     SWSS_LOG_ENTER();
@@ -1011,6 +1033,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                 syncd_nexthop_groups_[vnet][nhg].tunnel_routes.erase(ipPrefix);
             }
             vrf_obj->removeRoute(ipPrefix);
+            vrf_obj->removeProfile(ipPrefix);
         }
 
         syncd_nexthop_groups_[vnet][nexthops].tunnel_routes.insert(ipPrefix);
@@ -1019,7 +1042,12 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         syncd_nexthop_groups_[vnet][nexthops].ref_count++;
         vrf_obj->addRoute(ipPrefix, nexthops);
 
-        postRouteState(vnet, ipPrefix, nexthops);
+        if (!profile.empty())
+        {
+            vrf_obj->addProfile(ipPrefix, profile);
+        }
+
+        postRouteState(vnet, ipPrefix, nexthops, profile);
     }
     else if (op == DEL_COMMAND)
     {
@@ -1071,6 +1099,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         }
 
         vrf_obj->removeRoute(ipPrefix);
+        vrf_obj->removeProfile(ipPrefix);
 
         removeRouteState(vnet, ipPrefix);
     }
@@ -1609,7 +1638,7 @@ void VNetRouteOrch::delEndpointMonitor(const string& vnet, NextHopGroupKey& next
     }
 }
 
-void VNetRouteOrch::postRouteState(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops)
+void VNetRouteOrch::postRouteState(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& profile)
 {
     const string state_db_key = vnet + state_db_key_delimiter + ipPrefix.to_string();
     vector<FieldValueTuple> fvVector;
@@ -1634,7 +1663,7 @@ void VNetRouteOrch::postRouteState(const string& vnet, IpPrefix& ipPrefix, NextH
     {
         if (route_state == "active")
         {
-            addRouteAdvertisement(ipPrefix);
+            addRouteAdvertisement(ipPrefix, profile);
         }
         else
         {
@@ -1650,11 +1679,18 @@ void VNetRouteOrch::removeRouteState(const string& vnet, IpPrefix& ipPrefix)
     removeRouteAdvertisement(ipPrefix);
 }
 
-void VNetRouteOrch::addRouteAdvertisement(IpPrefix& ipPrefix)
+void VNetRouteOrch::addRouteAdvertisement(IpPrefix& ipPrefix, string& profile)
 {
     const string key = ipPrefix.to_string();
     vector<FieldValueTuple> fvs;
-    fvs.push_back(FieldValueTuple("", ""));
+    if (profile.empty())
+    {
+        fvs.push_back(FieldValueTuple("", ""));
+    }
+    else
+    {
+        fvs.push_back(FieldValueTuple("profile", profile));
+    }
     state_vnet_rt_adv_table_->set(key, fvs);
 }
 
@@ -1865,7 +1901,8 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
         // Post configured in State DB
         for (auto ip_pfx : syncd_nexthop_groups_[vnet][nexthops].tunnel_routes)
         {
-            postRouteState(vnet, ip_pfx, nexthops);
+            string profile = vrf_obj->getProfile(ip_pfx);
+            postRouteState(vnet, ip_pfx, nexthops, profile);
         }
     }
 }
@@ -1878,6 +1915,7 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     vector<string> mac_list;
     vector<string> vni_list;
     vector<IpAddress> monitor_list;
+    string profile = "";
 
     for (const auto& name: request.getAttrFieldNames())
     {
@@ -1898,6 +1936,10 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         else if (name == "endpoint_monitor")
         {
             monitor_list = request.getAttrIPList(name);
+        }
+        else if (name == "profile")
+        {
+            profile = request.getAttrString(name);
         }
         else
         {
@@ -1962,7 +2004,7 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
 
     if (vnet_orch_->isVnetExecVrf())
     {
-        return doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, nhg, op, monitors);
+        return doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, nhg, op, profile, monitors);
     }
 
     return true;
