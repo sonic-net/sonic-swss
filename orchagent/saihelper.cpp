@@ -378,11 +378,10 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
        SWSS_LOG_ERROR( "hwinfo string attribute is too long." );
        return SAI_STATUS_FAILURE;
     }
-    memset(hwinfo, 0, HWINFO_MAX_SIZE + 1);
     strncpy(hwinfo, phy->hwinfo.c_str(), phy->hwinfo.length());
 
     attr.id = SAI_SWITCH_ATTR_SWITCH_HARDWARE_INFO;
-    attr.value.s8list.count = (uint32_t) phy->hwinfo.length() + 1;
+    attr.value.s8list.count = (uint32_t) phy->hwinfo.length();
     attr.value.s8list.list = (int8_t *) hwinfo;
     attrs.push_back(attr);
 
