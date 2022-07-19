@@ -70,6 +70,7 @@ class GBAsic(DVSDatabase):
         DVSDatabase.__init__(self, db_id, connector)
         self.gearbox = gearbox
         self.ports = {}
+        self.port_oid_to_intf_idx = {}
         self._wait_for_gb_asic_db_to_initialize()
 
         for connector in self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT_CONNECTOR"):
@@ -88,8 +89,28 @@ class GBAsic(DVSDatabase):
                 if intf["system_lanes"] == system_lanes:
                     assert intf["line_lanes"] == line_lanes
                     self.ports[intf["index"]] = (system_port_oid, line_port_oid)
+                    self.port_oid_to_intf_idx[system_port_oid] = (i, True)
+                    self.port_oid_to_intf_idx[line_port_oid] = (i, False)
 
         assert len(self.ports) == len(self.gearbox.interfaces)
+
+        for serdes in self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT_SERDES"):
+            fvs = self.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_PORT_SERDES", serdes)
+            port_oid = fvs.get("SAI_PORT_SERDES_ATTR_PORT_ID")
+            intf_idx, is_system = self.port_oid_to_intf_idx[port_oid]
+            intf = self.gearbox.interfaces[ intf_idx ]
+            appl_db_key_prefix = 'system_' if is_system else 'line_'
+            for asic_db_key, appl_db_key_suffix in [
+                ("SAI_PORT_SERDES_ATTR_TX_FIR_MAIN", "tx_fir_main"),
+                ("SAI_PORT_SERDES_ATTR_TX_FIR_PRE1", "tx_fir_pre1"),
+                ("SAI_PORT_SERDES_ATTR_TX_FIR_PRE2", "tx_fir_pre2"),
+                ("SAI_PORT_SERDES_ATTR_TX_FIR_POST1", "tx_fir_post1"),
+                ("SAI_PORT_SERDES_ATTR_TX_FIR_POST2", "tx_fir_post2"),
+            ]:
+                if asic_db_key not in fvs:
+                   continue
+                asic_db_value = fvs.get(asic_db_key).split(":")[-1]
+                assert intf[appl_db_key_prefix + appl_db_key_suffix] == asic_db_value
 
     def _wait_for_gb_asic_db_to_initialize(self) -> None:
         """Wait up to 30 seconds for the default fields to appear in ASIC DB."""
