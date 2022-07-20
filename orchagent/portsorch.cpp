@@ -1145,27 +1145,6 @@ bool PortsOrch::setPortTpid(sai_object_id_t id, sai_uint16_t tpid)
     return true;
 }
 
-/*
- * Originally, setPortFec returns
- *   -  true only if setting FEC modes succeeds
- *   -  false in case SAI return need_retry
- * Now, it returns true in case the to-be-configured FEC mode is not supported on the port
- * We do not returen false here because of the logic to set FEC in doTask when port's admin_status is up:
- *   - Set port's admin_state to down
- *   - Call setPortFec
- *   - If it returns true, set port's admin_state to up
- *   - Otherwise, skip the reset handling of this port, which means the port's admin_status keeps down
- *     and it will be up only after setPortFec returns true after retrying
- *     Originally, it hits this logic only if SAI returns need_retry in a racing condition,
- *     which means it lasts only for a short period of time.
- *     Now, it can hit the logic in case user configured a not-supported FEC mode and the function returned false in this case
- *     It depends on user to re-configure it, which means the port's admin_status can be down for a relatively long time
- *     To avoid that, setPortFec returns true in this case, making admin_status to be up
- *
- * The log message has also been moved from doTask to setPortFec because it is confusing to print "setting successful" in doTask
- * in case setPortFec returns true when the FEC mode is not supported but "setting failed" in setPortFec
- * Arguments of the function have been adjusted accordingly.
- **/
 bool PortsOrch::setPortFec(Port &port, string &mode)
 {
     SWSS_LOG_ENTER();
@@ -1177,6 +1156,8 @@ bool PortsOrch::setPortFec(Port &port, string &mode)
         if (!supportedFecModes.empty() && (supportedFecModes.find(mode) == supportedFecModes.end()))
         {
             SWSS_LOG_ERROR("Unsupported mode %s on port %s", mode.c_str(), port.m_alias.c_str());
+            // We return true becase the caller will keep the item in m_toSync and retry it later if we return false
+            // As the FEC mode is not supported it doesn't make sense to retry.
             return true;
         }
     }
