@@ -37,11 +37,11 @@ class TestL3VxlanP2MP(object):
         vxlan_obj.create_vxlan_tunnel(dvs, tunnel_name, '6.6.6.6')
         vxlan_obj.create_evpn_nvo(dvs, 'nvo1', tunnel_name)
 
-        print ("\tCreate Vlan-VNI map and VRF-VNI map")
-        vxlan_obj.create_vxlan_tunnel_map(dvs, tunnel_name, map_name, '1000', 'Vlan100')
-
         vxlan_obj.create_vrf(dvs, "Vrf-RED")
         vxlan_obj.create_vxlan_vrf_tunnel_map(dvs, 'Vrf-RED', '1000')
+
+        print ("\tCreate Vlan-VNI map and VRF-VNI map")
+        vxlan_obj.create_vxlan_tunnel_map(dvs, tunnel_name, map_name, '1000', 'Vlan100')
 
         print ("\tTesting VRF-VNI map in APP DB")
         vlanlist = ['100']
