@@ -4878,6 +4878,9 @@ bool PortsOrch::addVlanFloodGroups(Port &vlan, Port &port, string end_point_ip)
     vlan.m_vlan_info.l2mc_members[end_point_ip] = l2mc_group_member;
     m_portList[vlan.m_alias] = vlan;
     increaseBridgePortRefCount(port);
+
+    VlanMemberUpdate update = { vlan, port, true };
+    notify(SUBJECT_TYPE_VLAN_MEMBER_CHANGE, static_cast<void *>(&update));
     return true;
 }
 
