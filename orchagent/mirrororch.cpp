@@ -1115,7 +1115,13 @@ bool MirrorOrch::updateSessionDstMac(const string& name, MirrorEntry& session)
 
     sai_attribute_t attr;
     attr.id = SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS;
-    memcpy(attr.value.mac, session.neighborInfo.mac.getMac(), sizeof(sai_mac_t));
+    if (gMySwitchType == "voq")
+    {
+        memcpy(attr.value.mac, gMacAddress.getMac(), sizeof(sai_mac_t));
+    } else
+    {
+        memcpy(attr.value.mac, session.neighborInfo.mac.getMac(), sizeof(sai_mac_t));
+    }
 
     sai_status_t status = sai_mirror_api->set_mirror_session_attribute(session.sessionId, &attr);
     if (status != SAI_STATUS_SUCCESS)
@@ -1148,7 +1154,28 @@ bool MirrorOrch::updateSessionDstPort(const string& name, MirrorEntry& session)
 
     sai_attribute_t attr;
     attr.id = SAI_MIRROR_SESSION_ATTR_MONITOR_PORT;
-    attr.value.oid = session.neighborInfo.portId;
+    if (session.type == MIRROR_SESSION_SPAN)
+    {
+      attr.value.oid = session.neighborInfo.portId;
+    }
+    else
+    {
+        // Set monitor port to recirc port in voq switch.
+        if (gMySwitchType == "voq")
+        {
+            Port recirc_port;
+            if (!m_portsOrch->getRecircPort(recirc_port, "Rec"))
+            {
+                SWSS_LOG_ERROR("Failed to get recirc prot");
+                return false;
+            }
+            attr.value.oid = recirc_port.m_port_id;
+        }
+        else
+        {
+          attr.value.oid = session.neighborInfo.portId;
+	}
+    }
 
     sai_status_t status = sai_mirror_api->
         set_mirror_session_attribute(session.sessionId, &attr);
