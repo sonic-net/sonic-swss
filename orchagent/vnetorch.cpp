@@ -554,9 +554,14 @@ static bool del_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx)
     route_entry.destination = ip_pfx;
 
     sai_status_t status = sai_route_api->remove_route_entry(&route_entry);
-    if (status != SAI_STATUS_SUCCESS)
+    if (status == SAI_STATUS_ITEM_NOT_FOUND || status == SAI_STATUS_INVALID_PARAMETER)
     {
-        SWSS_LOG_ERROR("SAI Failed to remove route");
+        SWSS_LOG_INFO("Unable to remove route since route is already removed");
+        return true;
+    }
+    else if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("SAI Failed to remove route, rv: %d", status);
         return false;
     }
 
