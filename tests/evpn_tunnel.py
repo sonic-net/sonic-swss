@@ -522,7 +522,6 @@ class VxlanTunnel(object):
         tunnel_map_id  = self.helper.get_created_entries(asic_db, self.ASIC_TUNNEL_MAP, self.tunnel_map_ids, 4)
         tunnel_id      = self.helper.get_created_entry(asic_db, self.ASIC_TUNNEL_TABLE, self.tunnel_ids)
         tunnel_term_id = self.helper.get_created_entry(asic_db, self.ASIC_TUNNEL_TERM_ENTRY, self.tunnel_term_ids)
-        tunnel_map_entry_id = self.helper.get_created_entries(asic_db, self.ASIC_TUNNEL_MAP_ENTRY, self.tunnel_map_entry_ids, 3)
 
         # check that the vxlan tunnel termination are there
         assert self.helper.how_many_entries_exist(asic_db, self.ASIC_TUNNEL_MAP) == (len(self.tunnel_map_ids) + 4), "The TUNNEL_MAP wasn't created"
@@ -794,11 +793,6 @@ class VxlanTunnel(object):
 
     def check_vxlan_tunnel_vrf_map_entry(self, dvs, tunnel_name, vrf_name, vni_id):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-
-        if (self.tunnel_map_map.get(tunnel_name) is None):
-            tunnel_map_id = self.helper.get_created_entries(asic_db, self.ASIC_TUNNEL_MAP, self.tunnel_map_ids, 4)
-        else:
-            tunnel_map_id = self.tunnel_map_map[tunnel_name]
 
         tunnel_map_entry_id = self.helper.get_created_entries(asic_db, self.ASIC_TUNNEL_MAP_ENTRY, self.tunnel_map_entry_ids, 3)
 
