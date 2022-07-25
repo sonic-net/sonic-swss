@@ -27,6 +27,7 @@
 #define PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP "PG_DROP_STAT_COUNTER"
 
 typedef std::vector<sai_uint32_t> PortSupportedSpeeds;
+typedef std::set<std::string> PortSupportedFecModes;
 
 static const map<sai_port_oper_status_t, string> oper_status_strings =
 {
@@ -209,6 +210,8 @@ private:
     unique_ptr<Table> m_gbcounterTable;
 
     std::map<sai_object_id_t, PortSupportedSpeeds> m_portSupportedSpeeds;
+    // Supported FEC modes on the system side.
+    std::map<sai_object_id_t, PortSupportedFecModes> m_portSupportedFecModes;
 
     bool m_initDone = false;
     Port m_cpuPort;
@@ -305,7 +308,7 @@ private:
     bool setPortTpid(sai_object_id_t id, sai_uint16_t tpid);
     bool setPortPvid (Port &port, sai_uint32_t pvid);
     bool getPortPvid(Port &port, sai_uint32_t &pvid);
-    bool setPortFec(Port &port, sai_port_fec_mode_t mode);
+    bool setPortFec(Port &port, std::string &mode);
     bool setPortPfcAsym(Port &port, string pfc_asym);
     bool getDestPortId(sai_object_id_t src_port_id, dest_port_type_t port_type, sai_object_id_t &des_port_id);
 
@@ -314,6 +317,9 @@ private:
     bool isSpeedSupported(const std::string& alias, sai_object_id_t port_id, sai_uint32_t speed);
     void getPortSupportedSpeeds(const std::string& alias, sai_object_id_t port_id, PortSupportedSpeeds &supported_speeds);
     void initPortSupportedSpeeds(const std::string& alias, sai_object_id_t port_id);
+    // Get supported FEC modes on system side
+    void getPortSupportedFecModes(const std::string& alias, sai_object_id_t port_id, PortSupportedFecModes &supported_fecmodes);
+    void initPortSupportedFecModes(const std::string& alias, sai_object_id_t port_id);
     task_process_status setPortSpeed(Port &port, sai_uint32_t speed);
     bool getPortSpeed(sai_object_id_t id, sai_uint32_t &speed);
     bool setGearboxPortsAttr(Port &port, sai_port_attr_t id, void *value);
