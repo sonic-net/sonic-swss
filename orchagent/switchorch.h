@@ -11,6 +11,7 @@
 #define SWITCH_CAPABILITY_TABLE_PORT_TPID_CAPABLE                      "PORT_TPID_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_LAG_TPID_CAPABLE                       "LAG_TPID_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_ORDERED_ECMP_CAPABLE                   "ORDERED_ECMP_CAPABLE"
+#define SWITCH_CAPABILITY_TABLE_PFC_DLR_INIT_CAPABLE                   "PFC_DLR_INIT_CAPABLE"
 
 struct WarmRestartCheck
 {
@@ -30,7 +31,9 @@ public:
     void restartCheckReply(const std::string &op, const std::string &data, std::vector<swss::FieldValueTuple> &values);
     bool setAgingFDB(uint32_t sec);
     void set_switch_capability(const std::vector<swss::FieldValueTuple>& values);
-    bool querySwitchDscpToTcCapability(sai_object_type_t sai_object, sai_attr_id_t attr_id);
+    bool querySwitchCapability(sai_object_type_t sai_object, sai_attr_id_t attr_id);
+    bool checkPfcDlrInitEnable() { return m_PfcDlrInitEnable; }
+    void set_switch_pfc_dlr_init_capability();
 
     // Return reference to ACL group created for each stage and the bind point is
     // the switch
@@ -80,6 +83,7 @@ private:
     bool m_sensorsAvgTempSupported = true;
     bool m_vxlanSportUserModeEnabled = false;
     bool m_orderedEcmpEnable = false;
+    bool m_PfcDlrInitEnable = false;
 
     // Information contained in the request from
     // external program for orchagent pre-shutdown state check

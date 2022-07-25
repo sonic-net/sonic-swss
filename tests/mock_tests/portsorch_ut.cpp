@@ -20,6 +20,39 @@ namespace portsorch_test
 
     using namespace std;
 
+    sai_queue_api_t ut_sai_queue_api;
+    sai_queue_api_t *pold_sai_queue_api;
+    int _sai_set_queue_attr_count = 0;
+
+    sai_status_t _ut_stub_sai_set_queue_attribute(sai_object_id_t queue_id, const sai_attribute_t *attr)
+    {
+        if(attr->id == SAI_QUEUE_ATTR_PFC_DLR_INIT)
+        {
+            if(attr->value.booldata == true) 
+            {
+                _sai_set_queue_attr_count++;
+            }
+            else
+            {
+                _sai_set_queue_attr_count--;
+            }
+        }
+        return SAI_STATUS_SUCCESS;
+    }
+
+    void _hook_sai_queue_api()
+    {
+        ut_sai_queue_api = *sai_queue_api;
+        pold_sai_queue_api = sai_queue_api;
+        ut_sai_queue_api.set_queue_attribute = _ut_stub_sai_set_queue_attribute;
+        sai_queue_api = &ut_sai_queue_api;
+    }
+
+    void _unhook_sai_queue_api()
+    {
+        sai_queue_api = pold_sai_queue_api;
+    }
+
     struct PortsOrchTest : public ::testing::Test
     {
         shared_ptr<swss::DBConnector> m_app_db;
@@ -359,6 +392,61 @@ namespace portsorch_test
 
         gBufferOrch->dumpPendingTasks(ts);
         ASSERT_TRUE(ts.empty());
+    }
+
+    TEST_F(PortsOrchTest, PfcDlrHandlerCallingDlrInitAttribute)
+    {
+        _hook_sai_queue_api();
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table pgTable = Table(m_app_db.get(), APP_BUFFER_PG_TABLE_NAME);
+        Table profileTable = Table(m_app_db.get(), APP_BUFFER_PROFILE_TABLE_NAME);
+        Table poolTable = Table(m_app_db.get(), APP_BUFFER_POOL_TABLE_NAME);
+        Table queueTable = Table(m_app_db.get(), APP_BUFFER_QUEUE_TABLE_NAME);
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        // Populate port table with SAI ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone, PortInitDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // Apply configuration
+        //          ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        ASSERT_TRUE(gPortsOrch->allPortsReady());
+
+        // No more tasks
+        vector<string> ts;
+        gPortsOrch->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+        ts.clear();
+
+        // Simulate storm drop handler started on Ethernet0 TC 3
+        Port port;
+        gPortsOrch->getPort("Ethernet0", port);
+        auto countersTable = make_shared<Table>(m_counters_db.get(), COUNTERS_TABLE);
+        auto dropHandler = make_unique<PfcWdDlrHandler>(port.m_port_id, port.m_queue_ids[3], 3, countersTable);
+        ASSERT_TRUE(_sai_set_queue_attr_count == 1);
+
+        dropHandler.reset();
+        ASSERT_FALSE(_sai_set_queue_attr_count == 1);
+
+        _unhook_sai_queue_api();
     }
 
     TEST_F(PortsOrchTest, PfcZeroBufferHandler)
@@ -799,4 +887,5 @@ namespace portsorch_test
 
         ASSERT_FALSE(bridgePortCalledBeforeLagMember); // bridge port created on lag before lag member was created
     }
+
 }
