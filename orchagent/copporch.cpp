@@ -86,6 +86,8 @@ static map<string, sai_hostif_trap_type_t> trap_id_map = {
     {"bfdv6", SAI_HOSTIF_TRAP_TYPE_BFDV6},
     {"src_nat_miss", SAI_HOSTIF_TRAP_TYPE_SNAT_MISS},
     {"dest_nat_miss", SAI_HOSTIF_TRAP_TYPE_DNAT_MISS},
+    {"l2dhcp", SAI_HOSTIF_TRAP_TYPE_DHCP_L2},
+    {"l2dhcpv6", SAI_HOSTIF_TRAP_TYPE_DHCPV6_L2},
     {"ldp", SAI_HOSTIF_TRAP_TYPE_LDP},
     {"bfd_micro", SAI_HOSTIF_TRAP_TYPE_BFD_MICRO},
     {"bfdv6_micro", SAI_HOSTIF_TRAP_TYPE_BFDV6_MICRO}
