@@ -418,7 +418,7 @@ bool OrchDaemon::init()
         static const vector<sai_queue_attr_t> queueAttrIds;
 
         if ((platform == INVM_PLATFORM_SUBSTRING) || (platform == NPS_PLATFORM_SUBSTRING)
-		    || (platform == CLX_PLATFORM_SUBSTRING))
+	|| (platform == CLX_PLATFORM_SUBSTRING))
         {
             m_orchList.push_back(new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
                         m_configDb,
