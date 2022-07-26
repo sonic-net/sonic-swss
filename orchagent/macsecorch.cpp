@@ -1275,6 +1275,18 @@ bool MACsecOrch::createMACsecPort(
             phy);
     });
 
+    if (!m_port_orch->getPortMtu(port.m_port_id, macsec_port.m_original_mtu))
+    {
+        SWSS_LOG_WARN("Cannot get Port MTU at the port %s", port_name.c_str());
+        return false;
+    }
+    m_port_orch->setMACsecEnabledState(port.m_port_id, true);
+    if (!m_port_orch->setPortMtu(port.m_port_id, macsec_port.m_original_mtu))
+    {
+        SWSS_LOG_WARN("Cannot set MTU to %u at the MACsec enabled port %s", macsec_port.m_original_mtu, port_name.c_str());
+        return false;
+    }
+
     if (phy)
     {
         if (!setPFCForward(port_id, true))
@@ -1540,6 +1552,13 @@ bool MACsecOrch::deleteMACsecPort(
     {
         SWSS_LOG_WARN("Cannot delete MACsec ingress port at the port %s", port_name.c_str());
         result &= false;
+    }
+
+    m_port_orch->setMACsecEnabledState(port.m_port_id, false);
+    if (!m_port_orch->setPortMtu(port.m_port_id, macsec_port.m_original_mtu))
+    {
+        SWSS_LOG_WARN("Cannot set MTU to %u at the port %s", macsec_port.m_original_mtu, port_name.c_str());
+        return false;
     }
 
     if (phy)

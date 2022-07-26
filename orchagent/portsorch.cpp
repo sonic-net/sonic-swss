@@ -1135,6 +1135,34 @@ bool PortsOrch::getPortAdminStatus(sai_object_id_t id, bool &up)
     return true;
 }
 
+bool PortsOrch::getPortMtu(sai_object_id_t id, sai_uint32_t &mtu)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_MTU;
+
+    sai_status_t status = sai_port_api->get_port_attribute(id, 1, &attr);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    mtu = attr.value.u32 - (uint32_t)(sizeof(struct ether_header) + FCS_LEN + VLAN_TAG_LEN);
+
+    if (isMACsecPort(id))
+    {
+        mtu -= MAX_MACSEC_SECTAG_SIZE;
+    }
+
+    return true;
+}
+
 bool PortsOrch::setPortMtu(sai_object_id_t id, sai_uint32_t mtu)
 {
     SWSS_LOG_ENTER();
@@ -1143,6 +1171,11 @@ bool PortsOrch::setPortMtu(sai_object_id_t id, sai_uint32_t mtu)
     attr.id = SAI_PORT_ATTR_MTU;
     /* mtu + 14 + 4 + 4 = 22 bytes */
     attr.value.u32 = (uint32_t)(mtu + sizeof(struct ether_header) + FCS_LEN + VLAN_TAG_LEN);
+
+    if (isMACsecPort(id))
+    {
+        attr.value.u32 += MAX_MACSEC_SECTAG_SIZE;
+    }
 
     sai_status_t status = sai_port_api->set_port_attribute(id, &attr);
     if (status != SAI_STATUS_SUCCESS)
@@ -7153,4 +7186,25 @@ bool PortsOrch::decrFdbCount(const std::string& alias, int count)
         itr->second.m_fdb_count -= count;
     }
     return true;
+}
+
+void PortsOrch::setMACsecEnabledState(sai_object_id_t port_id, bool enabled)
+{
+    SWSS_LOG_ENTER();
+
+    if (enabled)
+    {
+        m_macsecEnabledPorts.insert(port_id);
+    }
+    else
+    {
+        m_macsecEnabledPorts.erase(port_id);
+    }
+}
+
+bool PortsOrch::isMACsecPort(sai_object_id_t port_id) const
+{
+    SWSS_LOG_ENTER();
+
+    return m_macsecEnabledPorts.find(port_id) != m_macsecEnabledPorts.end();
 }
