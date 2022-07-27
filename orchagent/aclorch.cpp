@@ -2281,7 +2281,7 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     if (platform == MLNX_PLATFORM_SUBSTRING ||
         platform == CISCO_8000_PLATFORM_SUBSTRING ||
         platform == MRVL_PLATFORM_SUBSTRING ||
-	platform == CLX_PLATFORM_SUBSTRING)) {
+	platform == CLX_PLATFORM_SUBSTRING) {
         m_isCombinedMirrorV6Table = false;
     }
 
