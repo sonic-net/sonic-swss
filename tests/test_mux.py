@@ -20,6 +20,7 @@ class TestMuxTunnelBase(object):
     ASIC_NEIGH_TABLE            = "ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY"
     ASIC_NEXTHOP_TABLE          = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP"
     ASIC_ROUTE_TABLE            = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"
+    ASIC_FDB_TABLE              = "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY"
     CONFIG_MUX_CABLE            = "MUX_CABLE"
     CONFIG_TUNNEL_TABLE_NAME    = "TUNNEL"
     ASIC_QOS_MAP_TABLE_KEY      = "ASIC_STATE:SAI_OBJECT_TYPE_QOS_MAP"
@@ -728,6 +729,45 @@ class TestMuxTunnelBase(object):
         table = swsscommon.Table(configdb.db_connection, qos_map_type_name)
         table._del(qos_map_oid)
 
+    def remove_link_and_test_tunnel_create(self, appdb, asicdb, confdb, dvs):
+        self.create_vlan_interface(confdb, asicdb, dvs)
+        self.create_mux_cable(confdb)
+        self.create_and_test_tunnel(appdb, asicdb, tunnel_name="MuxTunnel0", tunnel_type="IPINIP",
+                                   dst_ip="10.1.0.32", dscp_mode="uniform",
+                                   ecn_mode="standard", ttl_mode="pipe")
+        
+        peer_attrs = {
+            "address_ipv4": "10.1.0.32"
+        }
+        confdb.create_entry("PEER_SWITCH", "peer", peer_attrs)
+
+        dvs.runcmd("ping -c 10 192.168.0.99")
+        route = None
+        routes = asicdb.get_keys(self.ASIC_ROUTE_TABLE)
+        for r in routes:
+            t = json.loads(r)        
+            if t["dest"] == "192.168.0.99/32":
+                route = r
+        assert json.loads(route)["dest"] == "192.168.0.99/32"
+
+        fvs1 = asicdb.get_entry(self.ASIC_ROUTE_TABLE, route)
+        oid = fvs1["SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID"]
+        fvs2 = asicdb.get_entry(self.ASIC_NEXTHOP_TABLE, oid)
+        assert fvs2["SAI_NEXT_HOP_ATTR_IP"] == "10.1.0.32"
+
+        fdb = asicdb.get_keys(self.ASIC_FDB_TABLE)
+        mac = json.loads(fdb[0])["mac"]
+        dvs.runcmd("ip -4 neigh replace 192.168.0.99 lladdr "+mac+" dev Vlan1000")
+        time.sleep(10)
+        route = None
+        routes = asicdb.get_keys(self.ASIC_ROUTE_TABLE)
+        for r in routes:
+            t = json.loads(r)        
+            if t["dest"] == "192.168.0.99/32":
+                route = r
+        assert route == None        
+
+
     def cleanup_left_over(self, db, asicdb):
         """ Cleanup APP and ASIC tables """
 
@@ -837,6 +877,14 @@ class TestMuxTunnel(TestMuxTunnelBase):
         statedb = dvs.get_state_db()
 
         self.create_and_test_metrics(appdb, statedb, dvs)
+
+    def test_neighbor_miss(self, dvs, testlog):
+        """ test IP tunnel to Active for missing neighbor """
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        asicdb = dvs.get_asic_db()
+        confdb = dvs.get_config_db()
+
+        self.remove_link_and_test_tunnel_create(appdb, asicdb, confdb, dvs)
 
 
 # Add Dummy always-pass test at end as workaroud
