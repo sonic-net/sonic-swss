@@ -109,7 +109,6 @@ private:
         bool                                m_sci_in_sectag;
         bool                                m_enable;
         uint32_t                            m_original_ipg;
-        uint32_t                            m_original_mtu;
     };
     struct MACsecObject
     {

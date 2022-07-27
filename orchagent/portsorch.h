@@ -18,7 +18,7 @@
 
 #define FCS_LEN 4
 #define VLAN_TAG_LEN 4
-#define MAX_MACSEC_SECTAG_SIZE                           (32)
+#define MAX_MACSEC_SECTAG_SIZE 32
 #define PORT_STAT_COUNTER_FLEX_COUNTER_GROUP "PORT_STAT_COUNTER"
 #define PORT_RATE_COUNTER_FLEX_COUNTER_GROUP "PORT_RATE_COUNTER"
 #define PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP "PORT_BUFFER_DROP_STAT"
@@ -177,8 +177,6 @@ public:
 
     void setMACsecEnabledState(sai_object_id_t port_id, bool enabled);
     bool isMACsecPort(sai_object_id_t port_id) const;
-    bool getPortMtu(sai_object_id_t id, sai_uint32_t &mtu);
-    bool setPortMtu(sai_object_id_t id, sai_uint32_t mtu);
 
 private:
     unique_ptr<Table> m_counterTable;
@@ -307,6 +305,7 @@ private:
 
     bool setPortAdminStatus(Port &port, bool up);
     bool getPortAdminStatus(sai_object_id_t id, bool& up);
+    bool setPortMtu(const Port& port, sai_uint32_t mtu);
     bool setPortTpid(sai_object_id_t id, sai_uint16_t tpid);
     bool setPortPvid (Port &port, sai_uint32_t pvid);
     bool getPortPvid(Port &port, sai_uint32_t &pvid);
@@ -321,8 +320,8 @@ private:
     void initPortSupportedSpeeds(const std::string& alias, sai_object_id_t port_id);
     task_process_status setPortSpeed(Port &port, sai_uint32_t speed);
     bool getPortSpeed(sai_object_id_t id, sai_uint32_t &speed);
-    bool setGearboxPortsAttr(Port &port, sai_port_attr_t id, void *value);
-    bool setGearboxPortAttr(Port &port, dest_port_type_t port_type, sai_port_attr_t id, void *value);
+    bool setGearboxPortsAttr(const Port &port, sai_port_attr_t id, void *value);
+    bool setGearboxPortAttr(const Port &port, dest_port_type_t port_type, sai_port_attr_t id, void *value);
 
     task_process_status setPortAdvSpeeds(sai_object_id_t port_id, std::vector<sai_uint32_t>& speed_list);
 

@@ -1135,60 +1135,35 @@ bool PortsOrch::getPortAdminStatus(sai_object_id_t id, bool &up)
     return true;
 }
 
-bool PortsOrch::getPortMtu(sai_object_id_t id, sai_uint32_t &mtu)
-{
-    SWSS_LOG_ENTER();
-
-    sai_attribute_t attr;
-    attr.id = SAI_PORT_ATTR_MTU;
-
-    sai_status_t status = sai_port_api->get_port_attribute(id, 1, &attr);
-
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
-    }
-
-    mtu = attr.value.u32 - (uint32_t)(sizeof(struct ether_header) + FCS_LEN + VLAN_TAG_LEN);
-
-    if (isMACsecPort(id))
-    {
-        mtu -= MAX_MACSEC_SECTAG_SIZE;
-    }
-
-    return true;
-}
-
-bool PortsOrch::setPortMtu(sai_object_id_t id, sai_uint32_t mtu)
+bool PortsOrch::setPortMtu(const Port& port, sai_uint32_t mtu)
 {
     SWSS_LOG_ENTER();
 
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_MTU;
     /* mtu + 14 + 4 + 4 = 22 bytes */
-    attr.value.u32 = (uint32_t)(mtu + sizeof(struct ether_header) + FCS_LEN + VLAN_TAG_LEN);
+    mtu += (uint32_t)(sizeof(struct ether_header) + FCS_LEN + VLAN_TAG_LEN);
+    attr.value.u32 = mtu;
 
-    if (isMACsecPort(id))
+    if (isMACsecPort(port.m_port_id))
     {
         attr.value.u32 += MAX_MACSEC_SECTAG_SIZE;
     }
 
-    sai_status_t status = sai_port_api->set_port_attribute(id, &attr);
+    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set MTU %u to port pid:%" PRIx64 ", rv:%d",
-                attr.value.u32, id, status);
+                attr.value.u32, port.m_port_id, status);
         task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
-    SWSS_LOG_INFO("Set MTU %u to port pid:%" PRIx64, attr.value.u32, id);
+
+    setGearboxPortsAttr(port, SAI_PORT_ATTR_MTU, &mtu);
+    SWSS_LOG_INFO("Set MTU %u to port pid:%" PRIx64, attr.value.u32, port.m_port_id);
     return true;
 }
 
@@ -2021,7 +1996,7 @@ void PortsOrch::initPortSupportedSpeeds(const std::string& alias, sai_object_id_
 /*
  * If Gearbox is enabled and this is a Gearbox port then set the attributes accordingly.
  */
-bool PortsOrch::setGearboxPortsAttr(Port &port, sai_port_attr_t id, void *value)
+bool PortsOrch::setGearboxPortsAttr(const Port &port, sai_port_attr_t id, void *value)
 {
     bool status = false;
 
@@ -2039,7 +2014,7 @@ bool PortsOrch::setGearboxPortsAttr(Port &port, sai_port_attr_t id, void *value)
  * If Gearbox is enabled and this is a Gearbox port then set the specific lane attribute.
  * Note: the appl_db is also updated (Gearbox config_db tables are TBA).
  */
-bool PortsOrch::setGearboxPortAttr(Port &port, dest_port_type_t port_type, sai_port_attr_t id, void *value)
+bool PortsOrch::setGearboxPortAttr(const Port &port, dest_port_type_t port_type, sai_port_attr_t id, void *value)
 {
     sai_status_t status = SAI_STATUS_SUCCESS;
     sai_object_id_t dest_port_id;
@@ -2092,6 +2067,15 @@ bool PortsOrch::setGearboxPortAttr(Port &port, dest_port_type_t port_type, sai_p
                         attr.value.u32 = speed;
                     }
                     SWSS_LOG_NOTICE("BOX: Set %s lane %s %d", port.m_alias.c_str(), speed_attr.c_str(), speed);
+                    break;
+                case SAI_PORT_ATTR_MTU:
+                    attr.id = id;
+                    attr.value.u32 = *static_cast<sai_uint32_t*>(value);
+                    if (LINE_PORT_TYPE == port_type && isMACsecPort(dest_port_id))
+                    {
+                        attr.value.u32 += MAX_MACSEC_SECTAG_SIZE;
+                    }
+                    SWSS_LOG_NOTICE("BOX: Set %s MTU %d", port.m_alias.c_str(), attr.value.u32);
                     break;
                 default:
                     return false;
@@ -3302,7 +3286,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 if (mtu != 0 && mtu != p.m_mtu)
                 {
-                    if (setPortMtu(p.m_port_id, mtu))
+                    if (setPortMtu(p, mtu))
                     {
                         p.m_mtu = mtu;
                         m_portList[alias] = p;
@@ -6686,6 +6670,8 @@ bool PortsOrch::initGearboxPort(Port &port)
             SWSS_LOG_NOTICE("BOX: Connected Gearbox ports; system-side:0x%" PRIx64 " to line-side:0x%" PRIx64, systemPort, linePort);
             m_gearboxPortListLaneMap[port.m_port_id] = make_tuple(systemPort, linePort);
             port.m_line_side_id = linePort;
+            saiOidToAlias[systemPort] = port.m_alias;
+            saiOidToAlias[linePort] = port.m_alias;
 
             /* Add gearbox system/line port name map to counter table */
             FieldValueTuple tuple(port.m_alias + "_system", sai_serialize_object_id(systemPort));
@@ -7192,6 +7178,13 @@ void PortsOrch::setMACsecEnabledState(sai_object_id_t port_id, bool enabled)
 {
     SWSS_LOG_ENTER();
 
+    Port p;
+    if (!getPort(port_id, p))
+    {
+        SWSS_LOG_ERROR("Failed to get port object for port id 0x%" PRIx64, port_id);
+        return;
+    }
+
     if (enabled)
     {
         m_macsecEnabledPorts.insert(port_id);
@@ -7200,6 +7193,8 @@ void PortsOrch::setMACsecEnabledState(sai_object_id_t port_id, bool enabled)
     {
         m_macsecEnabledPorts.erase(port_id);
     }
+
+    setPortMtu(p, p.m_mtu);
 }
 
 bool PortsOrch::isMACsecPort(sai_object_id_t port_id) const
