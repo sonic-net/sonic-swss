@@ -112,6 +112,12 @@ static map<string, int> autoneg_mode_map =
     { "off", 0 }
 };
 
+static map<string, int> prbs_mode_map =
+{
+    { "on", 1 },
+    { "off", 0 }
+};
+
 // Interface type map used for gearbox
 static map<string, sai_port_interface_type_t> interface_type_map =
 {
@@ -2836,6 +2842,11 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 {
                     an_str = fvValue(i);
                 }
+                /* Set prbs */
+                else if (fvField(i) == "prbs")
+                {
+                    prbs_str = fvValue(i);
+                }
                 /* Set advertised speeds */
                 else if (fvField(i) == "adv_speeds")
                 {
@@ -3067,6 +3078,24 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         m_portList[alias] = p;
                     }
                 }
+
+                if (!prbs_str.empty())
+                {
+                    if (prbs_mode_map.find(prbs_str) == prbs_mode_map.end())
+                    {
+                        SWSS_LOG_ERROR("Failed to parse prbs value: %s", an_str.c_str());
+                        // Invalid auto negotiation mode configured, don't retry
+                        it = consumer.m_toSync.erase(it);
+                        continue;
+                    }
+
+                    mode = prbs_mode_map[prbs_str];
+		    //set the correct value
+                }
+
+                if (speed != 0)
+                {
+                    if (speed != p.m_speed)
 
                 if (speed != 0)
                 {
