@@ -834,8 +834,6 @@ class AclManagerTest : public ::testing::Test
                                          Truly(std::bind(MatchSaiSwitchAttrByAclStage, SAI_SWITCH_ATTR_PRE_INGRESS_ACL,
                                                          kAclGroupLookupOid, std::placeholders::_1))))
             .WillRepeatedly(Return(SAI_STATUS_SUCCESS));
-        EXPECT_CALL(mock_sai_udf_, create_udf_match(_, _, _, _))
-            .WillOnce(DoAll(SetArgPointee<0>(kUdfMatchOid1), Return(SAI_STATUS_SUCCESS)));
         std::vector<std::string> p4_tables;
         gP4Orch = new P4Orch(gAppDb, p4_tables, gVrfOrch, copp_orch_);
         acl_table_manager_ = gP4Orch->getAclTableManager();
@@ -860,6 +858,8 @@ class AclManagerTest : public ::testing::Test
             .WillOnce(DoAll(SetArgPointee<0>(kAclTableIngressOid), Return(SAI_STATUS_SUCCESS)));
         EXPECT_CALL(mock_sai_acl_, create_acl_table_group_member(_, _, _, _))
             .WillOnce(DoAll(SetArgPointee<0>(kAclGroupMemberIngressOid), Return(SAI_STATUS_SUCCESS)));
+        EXPECT_CALL(mock_sai_udf_, create_udf_match(_, _, _, _))
+            .WillOnce(DoAll(SetArgPointee<0>(kUdfMatchOid1), Return(SAI_STATUS_SUCCESS)));
         EXPECT_CALL(mock_sai_udf_, create_udf_group(_, _, _, _))
             .Times(3)
             .WillRepeatedly(DoAll(SetArgPointee<0>(kUdfGroupOid1), Return(SAI_STATUS_SUCCESS)));
@@ -1156,6 +1156,8 @@ TEST_F(AclManagerTest, CreateIngressPuntTableFailsWhenCapabilityExceeds)
     auto app_db_entry = getDefaultAclTableDefAppDbEntry();
     sai_object_id_t user_defined_trap_oid = gUserDefinedTrapStartOid;
     AddDefaultUserTrapsSaiCalls(&user_defined_trap_oid);
+    EXPECT_CALL(mock_sai_udf_, create_udf_match(_, _, _, _))
+        .WillOnce(DoAll(SetArgPointee<0>(kUdfMatchOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_udf_, create_udf_group(_, _, _, _))
         .WillRepeatedly(DoAll(SetArgPointee<0>(kUdfGroupOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_udf_, create_udf(_, _, _, _)).Times(3).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
@@ -1170,6 +1172,8 @@ TEST_F(AclManagerTest, CreateIngressPuntTableFailsWhenFailedToCreateTableGroupMe
     auto app_db_entry = getDefaultAclTableDefAppDbEntry();
     sai_object_id_t user_defined_trap_oid = gUserDefinedTrapStartOid;
     AddDefaultUserTrapsSaiCalls(&user_defined_trap_oid);
+    EXPECT_CALL(mock_sai_udf_, create_udf_match(_, _, _, _))
+        .WillOnce(DoAll(SetArgPointee<0>(kUdfMatchOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_udf_, create_udf_group(_, _, _, _))
         .WillRepeatedly(DoAll(SetArgPointee<0>(kUdfGroupOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_udf_, create_udf(_, _, _, _)).Times(3).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
@@ -1187,6 +1191,8 @@ TEST_F(AclManagerTest, CreateIngressPuntTableRaisesCriticalStateWhenAclTableReco
     auto app_db_entry = getDefaultAclTableDefAppDbEntry();
     sai_object_id_t user_defined_trap_oid = gUserDefinedTrapStartOid;
     AddDefaultUserTrapsSaiCalls(&user_defined_trap_oid);
+    EXPECT_CALL(mock_sai_udf_, create_udf_match(_, _, _, _))
+        .WillOnce(DoAll(SetArgPointee<0>(kUdfMatchOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_udf_, create_udf_group(_, _, _, _))
         .WillRepeatedly(DoAll(SetArgPointee<0>(kUdfGroupOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_udf_, create_udf(_, _, _, _)).Times(3).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
@@ -1205,6 +1211,8 @@ TEST_F(AclManagerTest, CreateIngressPuntTableRaisesCriticalStateWhenUdfGroupReco
     auto app_db_entry = getDefaultAclTableDefAppDbEntry();
     sai_object_id_t user_defined_trap_oid = gUserDefinedTrapStartOid;
     AddDefaultUserTrapsSaiCalls(&user_defined_trap_oid);
+    EXPECT_CALL(mock_sai_udf_, create_udf_match(_, _, _, _))
+        .WillOnce(DoAll(SetArgPointee<0>(kUdfMatchOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_udf_, create_udf_group(_, _, _, _))
         .WillRepeatedly(DoAll(SetArgPointee<0>(kUdfGroupOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_udf_, create_udf(_, _, _, _)).Times(3).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
@@ -1223,6 +1231,8 @@ TEST_F(AclManagerTest, CreateIngressPuntTableRaisesCriticalStateWhenUdfRecoveryF
     auto app_db_entry = getDefaultAclTableDefAppDbEntry();
     sai_object_id_t user_defined_trap_oid = gUserDefinedTrapStartOid;
     AddDefaultUserTrapsSaiCalls(&user_defined_trap_oid);
+    EXPECT_CALL(mock_sai_udf_, create_udf_match(_, _, _, _))
+        .WillOnce(DoAll(SetArgPointee<0>(kUdfMatchOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_udf_, create_udf_group(_, _, _, _))
         .WillRepeatedly(DoAll(SetArgPointee<0>(kUdfGroupOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_udf_, create_udf(_, _, _, _)).Times(3).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
@@ -1244,6 +1254,8 @@ TEST_F(AclManagerTest, CreateIngressPuntTableFailsWhenFailedToCreateUdf)
     AddDefaultUserTrapsSaiCalls(&user_defined_trap_oid);
     // Fail to create the first UDF, and success to remove the first UDF
     // group
+    EXPECT_CALL(mock_sai_udf_, create_udf_match(_, _, _, _))
+        .WillOnce(DoAll(SetArgPointee<0>(kUdfMatchOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_udf_, create_udf_group(_, _, _, _)).WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_udf_, create_udf(_, _, _, _)).WillOnce(Return(SAI_STATUS_FAILURE));
     EXPECT_CALL(mock_sai_udf_, remove_udf_group(_)).WillOnce(Return(SAI_STATUS_SUCCESS));
@@ -2099,6 +2111,8 @@ TEST_F(AclManagerTest, DrainRuleTuplesToProcessSetRequestSucceeds)
         .WillOnce(DoAll(SetArgPointee<0>(kAclTableIngressOid), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_acl_, create_acl_table_group_member(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kAclGroupMemberIngressOid), Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_udf_, create_udf_match(_, _, _, _))
+        .WillOnce(DoAll(SetArgPointee<0>(kUdfMatchOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_udf_, create_udf_group(_, _, _, _))
         .WillRepeatedly(DoAll(SetArgPointee<0>(kUdfGroupOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_udf_, create_udf(_, _, _, _)).Times(3).WillRepeatedly(Return(SAI_STATUS_SUCCESS));
@@ -4055,6 +4069,8 @@ TEST_F(AclManagerTest, DoAclCounterStatsTaskSucceeds)
         .WillOnce(DoAll(SetArgPointee<0>(kAclTableIngressOid), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_acl_, create_acl_table_group_member(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kAclGroupMemberIngressOid), Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_udf_, create_udf_match(_, _, _, _))
+        .WillOnce(DoAll(SetArgPointee<0>(kUdfMatchOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_udf_, create_udf_group(_, _, _, _))
         .WillRepeatedly(DoAll(SetArgPointee<0>(kUdfGroupOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_udf_, create_udf(_, _, _, _)).Times(3).WillRepeatedly(Return(SAI_STATUS_SUCCESS));

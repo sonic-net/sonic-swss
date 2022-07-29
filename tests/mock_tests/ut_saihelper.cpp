@@ -66,6 +66,7 @@ namespace ut_helper
         sai_api_query(SAI_API_SWITCH, (void **)&sai_switch_api);
         sai_api_query(SAI_API_BRIDGE, (void **)&sai_bridge_api);
         sai_api_query(SAI_API_VIRTUAL_ROUTER, (void **)&sai_virtual_router_api);
+        sai_api_query(SAI_API_SAMPLEPACKET, (void **)&sai_samplepacket_api);
         sai_api_query(SAI_API_PORT, (void **)&sai_port_api);
         sai_api_query(SAI_API_LAG, (void **)&sai_lag_api);
         sai_api_query(SAI_API_VLAN, (void **)&sai_vlan_api);

@@ -125,39 +125,39 @@ class PfcWdZeroBufferHandler: public PfcWdLossyHandler
 
     private:
         /*
-         * Sets lock bits on port's priority group and queue
-         * to protect them from being changed by other Orch's
-         */
-        void setPriorityGroupAndQueueLockFlag(Port& port, bool isLocked) const;
+         * Sets lock bits on port's queue
+         * to protect it from being changed by other Orch's
+        */
+        void setQueueLockFlag(Port& port, bool isLocked) const;
 
         // Singletone class for keeping shared data - zero buffer profiles
         class ZeroBufferProfile
         {
             public:
                 ~ZeroBufferProfile(void);
-                static sai_object_id_t getZeroBufferProfile(bool ingress);
+                static sai_object_id_t getZeroBufferProfile();
 
             private:
                 ZeroBufferProfile(void);
                 static ZeroBufferProfile &getInstance(void);
-                void createZeroBufferProfile(bool ingress);
-                void destroyZeroBufferProfile(bool ingress);
+                void createZeroBufferProfile();
+                void destroyZeroBufferProfile();
 
-                sai_object_id_t& getProfile(bool ingress)
+                sai_object_id_t& getProfile()
                 {
-                    return ingress ? m_zeroIngressBufferProfile : m_zeroEgressBufferProfile;
+                    return m_zeroEgressBufferProfile;
                 }
 
-                sai_object_id_t& getPool(bool ingress);
+                sai_object_id_t& getPool()
+                {
+                    return m_zeroEgressBufferPool;
+                }
 
-                sai_object_id_t m_zeroIngressBufferPool = SAI_NULL_OBJECT_ID;
                 sai_object_id_t m_zeroEgressBufferPool = SAI_NULL_OBJECT_ID;
-                sai_object_id_t m_zeroIngressBufferProfile = SAI_NULL_OBJECT_ID;
                 sai_object_id_t m_zeroEgressBufferProfile = SAI_NULL_OBJECT_ID;
         };
 
         sai_object_id_t m_originalQueueBufferProfile = SAI_NULL_OBJECT_ID;
-        sai_object_id_t m_originalPgBufferProfile = SAI_NULL_OBJECT_ID;
 };
 
 // PFC queue that implements drop action by draining queue via SAI

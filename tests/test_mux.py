@@ -38,6 +38,7 @@ class TestMuxTunnelBase():
     PEER_IPV4                   = "10.1.0.33"
     SERV1_IPV4                  = "192.168.0.100"
     SERV1_IPV6                  = "fc02:1000::100"
+    SERV1_SOC_IPV4              = "192.168.0.102"
     SERV2_IPV4                  = "192.168.0.101"
     SERV2_IPV6                  = "fc02:1000::101"
     SERV3_IPV4                  = "192.168.0.102"
@@ -117,8 +118,12 @@ class TestMuxTunnelBase():
         dvs.port_admin_set("Ethernet8", "up")
 
     def create_mux_cable(self, confdb):
-        fvs = {"server_ipv4": self.SERV1_IPV4+self.IPV4_MASK,
-               "server_ipv6": self.SERV1_IPV6+self.IPV6_MASK}
+        fvs = {
+            "server_ipv4":self.SERV1_IPV4 + self.IPV4_MASK,
+            "server_ipv6":self.SERV1_IPV6 + self.IPV6_MASK,
+            "soc_ipv4": self.SERV1_SOC_IPV4 + self.IPV4_MASK,
+            "cable_type": "active-active" # "cable_type" is not used by orchagent, this is a dummy value
+        }
         confdb.create_entry(self.CONFIG_MUX_CABLE, "Ethernet0", fvs)
 
         fvs = {"server_ipv4": self.SERV2_IPV4+self.IPV4_MASK,
@@ -271,6 +276,9 @@ class TestMuxTunnelBase():
         self.add_neighbor(dvs, self.SERV1_IPV6, "00:00:00:00:00:01")
         srv1_v6 = self.check_neigh_in_asic_db(asicdb, self.SERV1_IPV6)
 
+        self.add_neighbor(dvs, self.SERV1_SOC_IPV4, "00:00:00:00:00:01")
+        self.check_neigh_in_asic_db(asicdb, self.SERV1_SOC_IPV4)
+
         existing_keys = asicdb.get_keys(self.ASIC_NEIGH_TABLE)
 
         self.add_neighbor(dvs, self.SERV2_IPV4, "00:00:00:00:00:02")
@@ -284,7 +292,7 @@ class TestMuxTunnelBase():
         )
 
         # The first standby route also creates as tunnel Nexthop
-        self.check_tnl_nexthop_in_asic_db(asicdb, 3)
+        self.check_tnl_nexthop_in_asic_db(asicdb, 4)
 
         # Change state to Standby. This will delete Neigh and add Route
         self.set_mux_state(appdb, "Ethernet0", "standby")
@@ -294,6 +302,8 @@ class TestMuxTunnelBase():
         dvs_route.check_asicdb_route_entries(
             [self.SERV1_IPV4+self.IPV4_MASK, self.SERV1_IPV6+self.IPV6_MASK]
         )
+        self.check_neigh_in_asic_db(asicdb, self.SERV1_SOC_IPV4)
+        dvs_route.check_asicdb_deleted_route_entries([self.SERV1_SOC_IPV4+self.IPV4_MASK])
 
         # Change state to Active. This will add Neigh and delete Route
         self.set_mux_state(appdb, "Ethernet4", "active")

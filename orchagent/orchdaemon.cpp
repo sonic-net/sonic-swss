@@ -346,7 +346,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, mux_orch, mux_cb_orch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, tunnel_decap_orch, sflow_orch, gDebugCounterOrch, gMacsecOrch, gBfdOrch, gSrv6Orch};
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, tunnel_decap_orch, sflow_orch, gDebugCounterOrch, gMacsecOrch, gBfdOrch, gSrv6Orch, mux_orch, mux_cb_orch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)

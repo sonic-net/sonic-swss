@@ -1208,7 +1208,7 @@ string RouteSync::getNextHopWt(struct rtnl_route *route_obj)
         uint8_t weight = rtnl_route_nh_get_weight(nexthop);
         if (weight)
         {
-            result += to_string(weight + 1);
+            result += to_string(weight);
         }
         else
         {
