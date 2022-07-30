@@ -678,7 +678,7 @@ void IntfsOrch::doTask(Consumer &consumer)
 
         if(table_name == CHASSIS_APP_SYSTEM_INTERFACE_TABLE_NAME)
         {
-            if(!isRemoteSystemPortIntf(alias))
+            if(isLocalSystemPortIntf(alias))
             {
                 //Synced local interface. Skip
                 it = consumer.m_toSync.erase(it);
@@ -1618,6 +1618,22 @@ bool IntfsOrch::isRemoteSystemPortIntf(string alias)
         }
 
         return(port.m_system_port_info.type == SAI_SYSTEM_PORT_TYPE_REMOTE);
+    }
+    //Given alias is system port alias of the local port/LAG
+    return false;
+}
+
+bool IntfsOrch::isLocalSystemPortIntf(string alias)
+{
+    Port port;
+    if(gPortsOrch->getPort(alias, port))
+    {
+        if (port.m_type == Port::LAG)
+        {
+            return(port.m_system_lag_info.switch_id == gVoqMySwitchId);
+        }
+
+        return(port.m_system_port_info.type != SAI_SYSTEM_PORT_TYPE_REMOTE);
     }
     //Given alias is system port alias of the local port/LAG
     return false;

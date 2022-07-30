@@ -1203,7 +1203,7 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
 
         string alias = key.substr(0, found);
 
-        if(!gIntfsOrch->isRemoteSystemPortIntf(alias))
+        if(gIntfsOrch->isLocalSystemPortIntf(alias))
         {
             //Synced local neighbor. Skip
             it = consumer.m_toSync.erase(it);

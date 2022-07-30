@@ -690,3 +690,7 @@ std::unordered_set<std::string> PortsOrch::generateCounterStats(const string &ty
 {
     return {};
 }
+
+void PortsOrch::doTask(swss::SelectableTimer &timer)
+{
+}
