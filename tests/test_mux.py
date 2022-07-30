@@ -38,7 +38,7 @@ class TestMuxTunnelBase():
     PEER_IPV4                   = "10.1.0.33"
     SERV1_IPV4                  = "192.168.0.100"
     SERV1_IPV6                  = "fc02:1000::100"
-    SERV1_SOC_IPV4              = "192.168.0.102"
+    SERV1_SOC_IPV4              = "192.168.0.103"
     SERV2_IPV4                  = "192.168.0.101"
     SERV2_IPV6                  = "fc02:1000::101"
     SERV3_IPV4                  = "192.168.0.102"
@@ -63,7 +63,7 @@ class TestMuxTunnelBase():
     DEFAULT_TUNNEL_PARAMS = {
         "tunnel_type": "IPINIP",
         "dst_ip": SELF_IPV4,
-        "dscp_mode": "uniform",
+        "dscp_mode": "pipe",
         "ecn_mode": "standard",
         "ttl_mode": "pipe",
         "encap_tc_to_queue_map": TUNNEL_QOS_MAP_NAME,
@@ -99,7 +99,6 @@ class TestMuxTunnelBase():
     def create_vlan_interface(self, dvs):
         confdb = dvs.get_config_db()
 
-    def create_vlan_interface(self, confdb, asicdb, dvs):
         fvs = {"vlanid": "1000"}
         confdb.create_entry("VLAN", self.VLAN_1000, fvs)
 
@@ -262,10 +261,6 @@ class TestMuxTunnelBase():
         time.sleep(1)
 
     def create_and_test_neighbor(self, confdb, appdb, asicdb, dvs, dvs_route):
-
-        self.create_vlan_interface(dvs)
-
-        self.create_mux_cable(confdb)
 
         self.set_mux_state(appdb, "Ethernet0", "active")
         self.set_mux_state(appdb, "Ethernet4", "standby")
@@ -713,16 +708,6 @@ class TestMuxTunnelBase():
             expected_len += 1
             decap_dscp_to_tc_map_id = tunnel_params.pop('decap_dscp_to_tc_map_id')
 
-        # create tunnel entry in DB
-        ps = swsscommon.ProducerStateTable(db, self.APP_TUNNEL_DECAP_TABLE_NAME)
-
-        fvs = create_fvs(**tunnel_params)
-
-        ps.set(tunnel_name, fvs)
-
-        # wait till config will be applied
-        time.sleep(1)
-
         # check asic db table
         tunnels = asicdb.wait_for_n_keys(self.ASIC_TUNNEL_TABLE, 1)
 
@@ -760,7 +745,7 @@ class TestMuxTunnelBase():
                 assert False, "Field %s is not tested" % field
 
 
-        src_ip = tunnel_params['src_ip'] if 'src_ip' in kwargs else None
+        src_ip = tunnel_params['src_ip'] if 'src_ip' in tunnel_params else None
         self.check_tunnel_termination_entry_exists_in_asicdb(asicdb, tunnel_sai_obj, tunnel_params["dst_ip"].split(","), src_ip)
 
     def remove_and_test_tunnel(self, db, asicdb, tunnel_name):
@@ -1030,7 +1015,7 @@ class TestMuxTunnel(TestMuxTunnelBase):
         # create tunnel IPv4 tunnel
         self.create_and_test_tunnel(db, asicdb, self.MUX_TUNNEL_0, tunnel_params)
 
-    def test_Peer(self, dvs, setup_peer_switch, setup, testlog):
+    def test_Peer(self, dvs, setup_peer_switch, setup_tunnel, setup, testlog):
 
         """ test IPv4 Mux tunnel creation """
 
@@ -1040,7 +1025,7 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
         self.create_and_test_peer(asicdb, encap_tc_to_dscp_map_id, encap_tc_to_queue_map_id)
 
-    def test_Neighbor(self, dvs, dvs_route, testlog):
+    def test_Neighbor(self, dvs, dvs_route, setup_vlan, setup_mux_cable, testlog):
         """ test Neighbor entries and mux state change """
 
         confdb = dvs.get_config_db()
