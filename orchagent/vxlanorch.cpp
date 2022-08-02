@@ -1956,14 +1956,17 @@ bool VxlanTunnelMapOrch::addOperation(const Request& request)
         TUNNELMAP_SET_VLAN(mapper_list);
         TUNNELMAP_SET_VRF(mapper_list);
         tunnel_obj->createTunnelHw(mapper_list,TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP);
-        Port tunPort;
-        auto src_vtep = tunnel_obj->getSrcIP().to_string();
-        if (!tunnel_orch->getTunnelPort(src_vtep, tunPort, true))
+        if (!tunnel_orch->isDipTunnelsSupported())
         {
-            auto port_tunnel_name = tunnel_orch->getTunnelPortName(src_vtep, true);
-            gPortsOrch->addTunnel(port_tunnel_name, tunnel_obj->getTunnelId(), false);
-            gPortsOrch->getPort(port_tunnel_name,tunPort);
-            gPortsOrch->addBridgePort(tunPort);
+            Port tunPort;
+            auto src_vtep = tunnel_obj->getSrcIP().to_string();
+            if (!tunnel_orch->getTunnelPort(src_vtep, tunPort, true))
+            {
+                auto port_tunnel_name = tunnel_orch->getTunnelPortName(src_vtep, true);
+                gPortsOrch->addTunnel(port_tunnel_name, tunnel_obj->getTunnelId(), false);
+                gPortsOrch->getPort(port_tunnel_name,tunPort);
+                gPortsOrch->addBridgePort(tunPort);
+            }
         }
     }
 
@@ -2160,14 +2163,17 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
             TUNNELMAP_SET_VLAN(mapper_list);
             TUNNELMAP_SET_VRF(mapper_list);
             tunnel_obj->createTunnelHw(mapper_list,TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP);
-            Port tunPort;
-            auto src_vtep = tunnel_obj->getSrcIP().to_string();
-            if (!tunnel_orch->getTunnelPort(src_vtep, tunPort, true))
+            if (!tunnel_orch->isDipTunnelsSupported())
             {
-                auto port_tunnel_name = tunnel_orch->getTunnelPortName(src_vtep, true);
-                gPortsOrch->addTunnel(port_tunnel_name, tunnel_obj->getTunnelId(), false);
-                gPortsOrch->getPort(port_tunnel_name,tunPort);
-                gPortsOrch->addBridgePort(tunPort);
+                Port tunPort;
+                auto src_vtep = tunnel_obj->getSrcIP().to_string();
+                if (!tunnel_orch->getTunnelPort(src_vtep, tunPort, true))
+                {
+                    auto port_tunnel_name = tunnel_orch->getTunnelPortName(src_vtep, true);
+                    gPortsOrch->addTunnel(port_tunnel_name, tunnel_obj->getTunnelId(), false);
+                    gPortsOrch->getPort(port_tunnel_name,tunPort);
+                    gPortsOrch->addBridgePort(tunPort);
+                }
             }
         }
         vrf_id = vrf_orch->getVRFid(vrf_name);
