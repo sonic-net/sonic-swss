@@ -485,7 +485,7 @@ class VxlanTunnel(object):
             (exitcode, out) = dvs.runcmd(iplinkcmd)
             assert exitcode == 0, "Kernel device not created"
 
-    def check_vxlan_sip_tunnel_delete(self, dvs, tunnel_name, sip):
+    def check_vxlan_sip_tunnel_delete(self, dvs, tunnel_name, sip, ignore_bp = True):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
         app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
 
@@ -511,11 +511,13 @@ class VxlanTunnel(object):
         status, fvs = tbl.get(self.tunnel_map_map[tunnel_name][3])
         assert status == False, "SIP Tunnel mapper3 not deleted from ASIC_DB"
 
-        tbl = swsscommon.Table(asic_db, self.ASIC_BRIDGE_PORT)
-        status, fvs = tbl.get(self.bridgeport_map[sip])
-        assert status == False, "Tunnel bridgeport entry not deleted"
+        if not ignore_bp:
+            tbl = swsscommon.Table(asic_db, self.ASIC_BRIDGE_PORT)
+            status, fvs = tbl.get(self.bridgeport_map[sip])
+            assert status == False, "Tunnel bridgeport entry not deleted"
 
-    def check_vxlan_sip_tunnel(self, dvs, tunnel_name, src_ip, vidlist, vnidlist, dst_ip = '0.0.0.0', skip_dst_ip = 'True'):
+    def check_vxlan_sip_tunnel(self, dvs, tunnel_name, src_ip, vidlist, vnidlist, 
+                               dst_ip = '0.0.0.0', skip_dst_ip = 'True', ignore_bp = True):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
         app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
 
@@ -590,16 +592,18 @@ class VxlanTunnel(object):
         assert len(ret) == 1, "More than 1 Tunn statetable entry created"
         self.tunnel_appdb[tunnel_name] = ret[0]
 
-        expected_bridgeport_attributes = {
-        'SAI_BRIDGE_PORT_ATTR_TYPE': 'SAI_BRIDGE_PORT_TYPE_TUNNEL',
-        'SAI_BRIDGE_PORT_ATTR_TUNNEL_ID': tunnel_id,
-        'SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE': 'SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE',
-        'SAI_BRIDGE_PORT_ATTR_ADMIN_STATE': 'true',
-        }
-        ret = self.helper.get_key_with_attr(asic_db, self.ASIC_BRIDGE_PORT, expected_bridgeport_attributes)
-        assert len(ret) > 0, "Bridgeport entry not created"
-        assert len(ret) == 1, "More than 1 bridgeport entry created"
-        self.bridgeport_map[src_ip] = ret[0]
+        if not ignore_bp:
+            expected_bridgeport_attributes = {
+            'SAI_BRIDGE_PORT_ATTR_TYPE': 'SAI_BRIDGE_PORT_TYPE_TUNNEL',
+            'SAI_BRIDGE_PORT_ATTR_TUNNEL_ID': tunnel_id,
+            'SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE': 'SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE',
+            'SAI_BRIDGE_PORT_ATTR_ADMIN_STATE': 'true',
+            }
+            ret = self.helper.get_key_with_attr(asic_db, self.ASIC_BRIDGE_PORT, expected_bridgeport_attributes)
+            assert len(ret) > 0, "Bridgeport entry not created"
+            assert len(ret) == 1, "More than 1 bridgeport entry created"
+            self.bridgeport_map[src_ip] = ret[0]
+
         self.tunnel_map_ids.update(tunnel_map_id)
         self.tunnel_ids.add(tunnel_id)
         self.tunnel_term_ids.add(tunnel_term_id)
