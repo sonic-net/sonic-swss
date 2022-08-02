@@ -67,7 +67,7 @@ class TestL3VxlanP2MP(object):
         helper.check_object(self.pdb, "VXLAN_VRF_TABLE", "%s:%s" % (tunnel_name, vrf_map_name), exp_attr1)
 
         print ("\tTesting SIP Tunnel Creation")
-        vxlan_obj.check_vxlan_sip_tunnel(dvs, tunnel_name, '6.6.6.6', vlanlist, vnilist, False)
+        vxlan_obj.check_vxlan_sip_tunnel(dvs, tunnel_name, '6.6.6.6', vlanlist, vnilist, ignore_bp=False)
 
         print ("\tTesting Tunnel Vlan VNI Map Entry")
         vxlan_obj.check_vxlan_tunnel_map_entry(dvs, tunnel_name, vlanlist, vnilist)
@@ -88,7 +88,7 @@ class TestL3VxlanP2MP(object):
         vxlan_obj.remove_vxlan_tunnel(dvs, tunnel_name)
         vxlan_obj.remove_evpn_nvo(dvs, 'nvo1')
         time.sleep(2)
-        vxlan_obj.check_vxlan_sip_tunnel_delete(dvs, tunnel_name, '6.6.6.6', False)
+        vxlan_obj.check_vxlan_sip_tunnel_delete(dvs, tunnel_name, '6.6.6.6', ignore_bp=False)
         vxlan_obj.remove_vlan(dvs, "100")
 
 
@@ -141,7 +141,7 @@ class TestL3VxlanP2MP(object):
         helper.check_object(self.pdb, "VXLAN_VRF_TABLE", "%s:%s" % (tunnel_name, vrf_map_name), exp_attr1)
 
         print ("\tTesting SIP Tunnel Creation")
-        vxlan_obj.check_vxlan_sip_tunnel(dvs, tunnel_name, '6.6.6.6', vlanlist, vnilist, False)
+        vxlan_obj.check_vxlan_sip_tunnel(dvs, tunnel_name, '6.6.6.6', vlanlist, vnilist, ignore_bp=False)
 
         print ("\tTesting Tunnel Vlan Map Entry")
         vxlan_obj.check_vxlan_tunnel_map_entry(dvs, tunnel_name, vlanlist, vnilist)
@@ -179,7 +179,7 @@ class TestL3VxlanP2MP(object):
         vxlan_obj.remove_vxlan_tunnel(dvs, tunnel_name)
         vxlan_obj.remove_evpn_nvo(dvs, 'nvo1')
         time.sleep(2)
-        vxlan_obj.check_vxlan_sip_tunnel_delete(dvs, tunnel_name, '6.6.6.6', False)
+        vxlan_obj.check_vxlan_sip_tunnel_delete(dvs, tunnel_name, '6.6.6.6', ignore_bp=False)
         vxlan_obj.remove_vrf(dvs, "Vrf-RED")
         vxlan_obj.remove_vlan_member(dvs, "100", "Ethernet24")
         vxlan_obj.remove_vlan(dvs, "100")
@@ -233,7 +233,7 @@ class TestL3VxlanP2MP(object):
         helper.check_object(self.pdb, "VXLAN_VRF_TABLE", "%s:%s" % (tunnel_name, vrf_map_name), exp_attr1)
 
         print ("\tTesting SIP Tunnel Creation")
-        vxlan_obj.check_vxlan_sip_tunnel(dvs, tunnel_name, '6.6.6.6', vlanlist, vnilist, False)
+        vxlan_obj.check_vxlan_sip_tunnel(dvs, tunnel_name, '6.6.6.6', vlanlist, vnilist, ignore_bp=False)
 
         print ("\tTesting Tunnel Vlan Map Entry")
         vxlan_obj.check_vxlan_tunnel_map_entry(dvs, tunnel_name, vlanlist, vnilist)
@@ -380,7 +380,7 @@ class TestL3VxlanP2MP(object):
         vxlan_obj.remove_vxlan_tunnel(dvs, tunnel_name)
         vxlan_obj.remove_evpn_nvo(dvs, 'nvo1')
         time.sleep(2)
-        vxlan_obj.check_vxlan_sip_tunnel_delete(dvs, tunnel_name, '6.6.6.6', False)
+        vxlan_obj.check_vxlan_sip_tunnel_delete(dvs, tunnel_name, '6.6.6.6', ignore_bp=False)
         vxlan_obj.remove_vrf(dvs, "Vrf-RED")
         vxlan_obj.remove_vlan_member(dvs, "100", "Ethernet24")
         vxlan_obj.remove_vlan(dvs, "100")
@@ -436,7 +436,7 @@ class TestL3VxlanP2MP(object):
         helper.check_object(self.pdb, "VXLAN_VRF_TABLE", "%s:%s" % (tunnel_name, vrf_map_name), exp_attr1)
 
         print ("\tTesting SIP Tunnel Creation")
-        vxlan_obj.check_vxlan_sip_tunnel(dvs, tunnel_name, '6.6.6.6', vlanlist, vnilist, False)
+        vxlan_obj.check_vxlan_sip_tunnel(dvs, tunnel_name, '6.6.6.6', vlanlist, vnilist, ignore_bp=False)
 
         print ("\tTesting Tunnel Vlan Map Entry")
         vxlan_obj.check_vxlan_tunnel_map_entry(dvs, tunnel_name, vlanlist, vnilist)
@@ -584,7 +584,7 @@ class TestL3VxlanP2MP(object):
         vxlan_obj.remove_vxlan_tunnel(dvs, tunnel_name)
         vxlan_obj.remove_evpn_nvo(dvs, 'nvo1')
         time.sleep(2)
-        vxlan_obj.check_vxlan_sip_tunnel_delete(dvs, tunnel_name, '6.6.6.6', False)
+        vxlan_obj.check_vxlan_sip_tunnel_delete(dvs, tunnel_name, '6.6.6.6', ignore_bp=False)
         vxlan_obj.remove_vrf(dvs, "Vrf-RED")
         vxlan_obj.remove_vlan_member(dvs, "100", "Ethernet24")
         vxlan_obj.remove_vlan(dvs, "100")
