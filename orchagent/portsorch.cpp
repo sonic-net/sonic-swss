@@ -1161,6 +1161,30 @@ bool PortsOrch::getPortAdminStatus(sai_object_id_t id, bool &up)
     return true;
 }
 
+bool PortsOrch::getPortMtu(const Port& port, sai_uint32_t &mtu)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_MTU;
+
+    sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        return false;
+    }
+
+    mtu = attr.value.u32 - (uint32_t)(sizeof(struct ether_header) + FCS_LEN + VLAN_TAG_LEN);
+
+    if (isMACsecPort(port.m_port_id))
+    {
+        mtu -= MAX_MACSEC_SECTAG_SIZE;
+    }
+
+    return true;
+}
+
 bool PortsOrch::setPortMtu(const Port& port, sai_uint32_t mtu)
 {
     SWSS_LOG_ENTER();
@@ -1188,7 +1212,10 @@ bool PortsOrch::setPortMtu(const Port& port, sai_uint32_t mtu)
         }
     }
 
-    setGearboxPortsAttr(port, SAI_PORT_ATTR_MTU, &mtu);
+    if (m_gearboxEnabled)
+    {
+        setGearboxPortsAttr(port, SAI_PORT_ATTR_MTU, &mtu);
+    }
     SWSS_LOG_INFO("Set MTU %u to port pid:%" PRIx64, attr.value.u32, port.m_port_id);
     return true;
 }
@@ -4551,6 +4578,12 @@ bool PortsOrch::initializePort(Port &port)
         return false;
     }
 
+    /* initialize port mtu */
+    if (!getPortMtu(port, port.m_mtu))
+    {
+        SWSS_LOG_ERROR("Failed to get initial port mtu %d", port.m_mtu);
+    }
+
     /*
      * always initialize Port SAI_HOSTIF_ATTR_OPER_STATUS based on oper_status value in appDB.
      */
@@ -7451,7 +7484,10 @@ void PortsOrch::setMACsecEnabledState(sai_object_id_t port_id, bool enabled)
         m_macsecEnabledPorts.erase(port_id);
     }
 
-    setPortMtu(p, p.m_mtu);
+    if (p.m_mtu)
+    {
+        setPortMtu(p, p.m_mtu);
+    }
 }
 
 bool PortsOrch::isMACsecPort(sai_object_id_t port_id) const

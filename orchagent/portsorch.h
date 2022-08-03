@@ -311,6 +311,7 @@ private:
 
     bool setPortAdminStatus(Port &port, bool up);
     bool getPortAdminStatus(sai_object_id_t id, bool& up);
+    bool getPortMtu(const Port& port, sai_uint32_t &mtu);
     bool setPortMtu(const Port& port, sai_uint32_t mtu);
     bool setPortTpid(sai_object_id_t id, sai_uint16_t tpid);
     bool setPortPvid (Port &port, sai_uint32_t pvid);
