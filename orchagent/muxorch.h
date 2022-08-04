@@ -97,6 +97,10 @@ public:
     {
         return nbr_handler_->getNextHopId(nh);
     }
+    std::set<IpAddress> getSkipNeighborsSet()
+    {
+        return skip_neighbors_;
+    }
 
 private:
     bool stateActive();
