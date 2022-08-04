@@ -484,7 +484,11 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
     {
         sai_object_id_t dt_vrf_id;
         SWSS_LOG_INFO("DT VRF name %s", dt_vrf.c_str());
-        if (m_vrfOrch->isVRFexists(dt_vrf))
+        if (dt_vrf == "default")
+        {
+            dt_vrf_id = gVirtualRouterId;
+        }
+        else if (m_vrfOrch->isVRFexists(dt_vrf))
         {
             SWSS_LOG_INFO("VRF %s exists in DB", dt_vrf.c_str());
             dt_vrf_id = m_vrfOrch->getVRFid(dt_vrf);
