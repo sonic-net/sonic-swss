@@ -2901,8 +2901,16 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 type = table_id == m_mirrorTableId[stage] ? ACL_TABLE_MIRROR : ACL_TABLE_MIRRORV6;
             }
 
-
-            newRule = AclRule::makeShared(type, this, m_mirrorOrch, m_dTelOrch, rule_id, table_id, t);
+            try
+            {
+                newRule = AclRule::makeShared(type, this, m_mirrorOrch, m_dTelOrch, rule_id, table_id, t);
+            }
+            catch (runtime_error &e)
+            {
+                SWSS_LOG_ERROR("Error while creating ACL rule %s: %s", rule_id.c_str(), e.what());
+                it = consumer.m_toSync.erase(it);
+                return;
+            }
 
             for (const auto& itr : kfvFieldsValues(t))
             {
