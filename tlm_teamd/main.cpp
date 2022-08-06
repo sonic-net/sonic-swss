@@ -9,6 +9,7 @@
 
 #include "teamdctl_mgr.h"
 #include "values_store.h"
+#include "subintf.h"
 
 
 bool g_run = true;
@@ -30,6 +31,11 @@ void update_interfaces(swss::SubscriberStateTable & table, TeamdCtlMgr & mgr)
         const auto & lag_name = kfvKey(entry);
         const auto & op = kfvOp(entry);
 
+        if (lag_name.find(VLAN_SUB_INTERFACE_SEPARATOR) != string::npos)
+        {
+            SWSS_LOG_INFO("Skip subintf %s statedb event", lag_name.c_str());
+            continue;
+        }
         if (op == "SET")
         {
             mgr.add_lag(lag_name);
