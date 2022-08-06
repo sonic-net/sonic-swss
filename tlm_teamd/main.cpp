@@ -6,6 +6,7 @@
 #include <select.h>
 #include <dbconnector.h>
 #include <subscriberstatetable.h>
+#include <string.h>
 
 #include "teamdctl_mgr.h"
 #include "values_store.h"
