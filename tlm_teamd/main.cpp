@@ -6,7 +6,6 @@
 #include <select.h>
 #include <dbconnector.h>
 #include <subscriberstatetable.h>
-#include <string.h>
 
 #include "teamdctl_mgr.h"
 #include "values_store.h"
@@ -32,7 +31,7 @@ void update_interfaces(swss::SubscriberStateTable & table, TeamdCtlMgr & mgr)
         const auto & lag_name = kfvKey(entry);
         const auto & op = kfvOp(entry);
 
-        if (lag_name.find(VLAN_SUB_INTERFACE_SEPARATOR) != string::npos)
+        if (lag_name.find(VLAN_SUB_INTERFACE_SEPARATOR) != std::string::npos)
         {
             SWSS_LOG_INFO("Skip subintf %s statedb event", lag_name.c_str());
             continue;
