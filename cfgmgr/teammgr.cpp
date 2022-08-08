@@ -252,6 +252,7 @@ void TeamMgr::doLagTask(Consumer &consumer)
         {
             int min_links = 0;
             bool fallback = false;
+            bool fast_rate = false;
             string admin_status = DEFAULT_ADMIN_STATUS_STR;
             string mtu = DEFAULT_MTU_STR;
             string learn_mode;
@@ -293,12 +294,18 @@ void TeamMgr::doLagTask(Consumer &consumer)
                 {
                     tpid = fvValue(i);
                     SWSS_LOG_INFO("Get TPID %s", tpid.c_str());
-                 }
+                }
+                else if (fvField(i) == "fast_rate")
+                {
+                    fast_rate = fvValue(i) == "true";
+                    SWSS_LOG_INFO("Get fast_rate `%s`",
+                                  fast_rate ? "true" : "false");
+                }
             }
 
             if (m_lagList.find(alias) == m_lagList.end())
             {
-                if (addLag(alias, min_links, fallback) == task_need_retry)
+                if (addLag(alias, min_links, fallback, fast_rate) == task_need_retry)
                 {
                     it++;
                     continue;
@@ -553,7 +560,7 @@ bool TeamMgr::setLagLearnMode(const string &alias, const string &learn_mode)
     return true;
 }
 
-task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fallback)
+task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fallback, bool fast_rate)
 {
     SWSS_LOG_ENTER();
 
@@ -610,6 +617,11 @@ task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fal
         conf << ",\"fallback\":true";
     }
 
+    if (fast_rate)
+    {
+        conf << ",\"fast_rate\":true";
+    }
+
     conf << "}}'";
 
     SWSS_LOG_INFO("Port channel %s teamd configuration: %s",
@@ -652,7 +664,7 @@ bool TeamMgr::removeLag(const string &alias)
 }
 
 // Port-channel names are in the pattern of "PortChannel####"
-// 
+//
 // The LACP key could be generated in 3 ways based on the value in config DB:
 //      1. "auto" - LACP key is extracted from the port-channel name and is set to be the number at the end of the port-channel name
 //                  We are adding 1 at the beginning to avoid LACP key collisions between similar LACP keys e.g. PortChannel10 and PortChannel010.
