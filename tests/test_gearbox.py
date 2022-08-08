@@ -104,8 +104,10 @@ class GBAsic(DVSDatabase):
                 ("SAI_PORT_SERDES_ATTR_TX_FIR_MAIN", "tx_fir_main"),
                 ("SAI_PORT_SERDES_ATTR_TX_FIR_PRE1", "tx_fir_pre1"),
                 ("SAI_PORT_SERDES_ATTR_TX_FIR_PRE2", "tx_fir_pre2"),
+                ("SAI_PORT_SERDES_ATTR_TX_FIR_PRE3", "tx_fir_pre3"),
                 ("SAI_PORT_SERDES_ATTR_TX_FIR_POST1", "tx_fir_post1"),
                 ("SAI_PORT_SERDES_ATTR_TX_FIR_POST2", "tx_fir_post2"),
+                ("SAI_PORT_SERDES_ATTR_TX_FIR_POST3", "tx_fir_post3"),
             ]:
                 if asic_db_key not in fvs:
                    continue

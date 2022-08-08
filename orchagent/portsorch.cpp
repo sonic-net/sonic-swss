@@ -6789,7 +6789,8 @@ void PortsOrch::removePortSerdesAttribute(sai_object_id_t port_id)
 }
 
 void PortsOrch::getPortSerdesVal(const std::string& val_str,
-                                 std::vector<uint32_t> &lane_values)
+                                 std::vector<uint32_t> &lane_values,
+                                 int base)
 {
     SWSS_LOG_ENTER();
 
@@ -6799,23 +6800,7 @@ void PortsOrch::getPortSerdesVal(const std::string& val_str,
 
     while (std::getline(iss, lane_str, ','))
     {
-        lane_val = (uint32_t)std::stoul(lane_str, NULL, 16);
-        lane_values.push_back(lane_val);
-    }
-}
-
-void PortsOrch::getPortSerdesValBase10(const std::string& val_str,
-                                       std::vector<uint32_t> &lane_values)
-{
-    SWSS_LOG_ENTER();
-
-    uint32_t lane_val;
-    std::string lane_str;
-    std::istringstream iss(val_str);
-
-    while (std::getline(iss, lane_str, ','))
-    {
-        lane_val = (uint32_t)std::stoul(lane_str, NULL, 10);
+        lane_val = (uint32_t)std::stoul(lane_str, NULL, base);
         lane_values.push_back(lane_val);
     }
 }
@@ -7199,7 +7184,7 @@ bool PortsOrch::initGearboxPort(Port &port)
             for (auto pair: tx_fir_strings_system_side) {
                 if (m_gearboxInterfaceMap[port.m_index].tx_firs.find(pair.first) != m_gearboxInterfaceMap[port.m_index].tx_firs.end() ) {
                     attr_val.clear();
-                    getPortSerdesValBase10(m_gearboxInterfaceMap[port.m_index].tx_firs[pair.first], attr_val);
+                    getPortSerdesVal(m_gearboxInterfaceMap[port.m_index].tx_firs[pair.first], attr_val, 10);
                     serdes_attr.insert(serdes_attr_pair(pair.second, attr_val));
                 }
             }
@@ -7219,7 +7204,7 @@ bool PortsOrch::initGearboxPort(Port &port)
             for (auto pair: tx_fir_strings_line_side) {
                 if (m_gearboxInterfaceMap[port.m_index].tx_firs.find(pair.first) != m_gearboxInterfaceMap[port.m_index].tx_firs.end() ) {
                     attr_val.clear();
-                    getPortSerdesValBase10(m_gearboxInterfaceMap[port.m_index].tx_firs[pair.first], attr_val);
+                    getPortSerdesVal(m_gearboxInterfaceMap[port.m_index].tx_firs[pair.first], attr_val, 10);
                     serdes_attr.insert(serdes_attr_pair(pair.second, attr_val));
                 }
             }

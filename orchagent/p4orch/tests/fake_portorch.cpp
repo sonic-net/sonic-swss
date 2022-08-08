@@ -623,7 +623,7 @@ void PortsOrch::updateDbPortOperSpeed(Port &port, sai_uint32_t speed)
 {
 }
 
-void PortsOrch::getPortSerdesVal(const std::string &s, std::vector<uint32_t> &lane_values)
+void PortsOrch::getPortSerdesVal(const std::string &s, std::vector<uint32_t> &lane_values, int base)
 {
 }
 

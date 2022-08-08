@@ -406,8 +406,7 @@ private:
     void refreshPortStateAutoNeg(const Port &port);
     void refreshPortStateLinkTraining(const Port &port);
 
-    void getPortSerdesVal(const std::string& s, std::vector<uint32_t> &lane_values);
-    void getPortSerdesValBase10(const std::string& s, std::vector<uint32_t> &lane_values);
+    void getPortSerdesVal(const std::string& s, std::vector<uint32_t> &lane_values, int base = 16);
     bool getPortAdvSpeedsVal(const std::string &s, std::vector<uint32_t> &speed_values);
     bool getPortInterfaceTypeVal(const std::string &s, sai_port_interface_type_t &interface_type);
     bool getPortAdvInterfaceTypesVal(const std::string &s, std::vector<uint32_t> &type_values);
