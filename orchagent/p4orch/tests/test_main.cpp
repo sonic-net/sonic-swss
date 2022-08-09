@@ -11,6 +11,7 @@ extern "C"
 #include "crmorch.h"
 #include "dbconnector.h"
 #include "directory.h"
+#include "flowcounterrouteorch.h"
 #include "mock_sai_virtual_router.h"
 #include "p4orch.h"
 #include "portsorch.h"
@@ -37,6 +38,8 @@ sai_object_id_t gUnderlayIfId;
 
 #define DEFAULT_BATCH_SIZE 128
 int gBatchSize = DEFAULT_BATCH_SIZE;
+#define DEFAULT_MAX_BULK_SIZE 1000
+size_t gMaxBulkSize = DEFAULT_MAX_BULK_SIZE;
 bool gSairedisRecord = true;
 bool gSwssRecord = true;
 bool gLogRotate = false;
@@ -50,6 +53,7 @@ PortsOrch *gPortsOrch;
 CrmOrch *gCrmOrch;
 P4Orch *gP4Orch;
 VRFOrch *gVrfOrch;
+FlowCounterRouteOrch *gFlowCounterRouteOrch;
 SwitchOrch *gSwitchOrch;
 Directory<Orch *> gDirectory;
 ofstream gRecordOfs;
@@ -73,6 +77,8 @@ sai_switch_api_t *sai_switch_api;
 sai_mirror_api_t *sai_mirror_api;
 sai_udf_api_t *sai_udf_api;
 sai_tunnel_api_t *sai_tunnel_api;
+sai_my_mac_api_t *sai_my_mac_api;
+sai_counter_api_t *sai_counter_api;
 
 namespace
 {
@@ -162,6 +168,9 @@ int main(int argc, char *argv[])
     sai_switch_api_t switch_api;
     sai_mirror_api_t mirror_api;
     sai_udf_api_t udf_api;
+    sai_my_mac_api_t my_mac_api;
+    sai_tunnel_api_t tunnel_api;
+    sai_counter_api_t counter_api;
     sai_router_intfs_api = &router_intfs_api;
     sai_neighbor_api = &neighbor_api;
     sai_next_hop_api = &next_hop_api;
@@ -174,6 +183,9 @@ int main(int argc, char *argv[])
     sai_switch_api = &switch_api;
     sai_mirror_api = &mirror_api;
     sai_udf_api = &udf_api;
+    sai_my_mac_api = &my_mac_api;
+    sai_tunnel_api = &tunnel_api;
+    sai_counter_api = &counter_api;
 
     swss::DBConnector appl_db("APPL_DB", 0);
     swss::DBConnector state_db("STATE_DB", 0);
@@ -192,6 +204,10 @@ int main(int argc, char *argv[])
     VRFOrch vrf_orch(gAppDb, APP_VRF_TABLE_NAME, gStateDb, STATE_VRF_OBJECT_TABLE_NAME);
     gVrfOrch = &vrf_orch;
     gDirectory.set(static_cast<VRFOrch *>(&vrf_orch));
+
+    FlowCounterRouteOrch flow_counter_route_orch(gConfigDb, std::vector<std::string>{});
+    gFlowCounterRouteOrch = &flow_counter_route_orch;
+    gDirectory.set(static_cast<FlowCounterRouteOrch *>(&flow_counter_route_orch));
 
     // Setup ports for all tests.
     SetupPorts();

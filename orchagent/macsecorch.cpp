@@ -1482,22 +1482,22 @@ bool MACsecOrch::deleteMACsecPort(
 
     bool result = true;
 
-    auto sc = macsec_port.m_egress_scs.begin();
-    while (sc != macsec_port.m_egress_scs.end())
-    {
-        const std::string port_sci = swss::join(':', port_name, MACsecSCI(sc->first));
-        sc ++;
-        if (deleteMACsecSC(port_sci, SAI_MACSEC_DIRECTION_EGRESS) != task_success)
-        {
-            result &= false;
-        }
-    }
-    sc = macsec_port.m_ingress_scs.begin();
+    auto sc = macsec_port.m_ingress_scs.begin();
     while (sc != macsec_port.m_ingress_scs.end())
     {
         const std::string port_sci = swss::join(':', port_name, MACsecSCI(sc->first));
         sc ++;
         if (deleteMACsecSC(port_sci, SAI_MACSEC_DIRECTION_INGRESS) != task_success)
+        {
+            result &= false;
+        }
+    }
+    sc = macsec_port.m_egress_scs.begin();
+    while (sc != macsec_port.m_egress_scs.end())
+    {
+        const std::string port_sci = swss::join(':', port_name, MACsecSCI(sc->first));
+        sc ++;
+        if (deleteMACsecSC(port_sci, SAI_MACSEC_DIRECTION_EGRESS) != task_success)
         {
             result &= false;
         }

@@ -987,28 +987,43 @@ task_process_status BufferOrch::processIngressBufferProfileList(KeyOpFieldsValue
 
     vector<string> port_names = tokenize(key, list_item_delimiter);
     vector<sai_object_id_t> profile_list;
-
-    string profile_name_list;
-    ref_resolve_status resolve_status = resolveFieldRefArray(m_buffer_type_maps, buffer_profile_list_field_name,
-                                        buffer_to_ref_table_map.at(buffer_profile_list_field_name), tuple,
-                                        profile_list, profile_name_list);
-    if (ref_resolve_status::success != resolve_status)
-    {
-        if(ref_resolve_status::not_resolved == resolve_status)
-        {
-            SWSS_LOG_INFO("Missing or invalid ingress buffer profile reference specified for:%s", key.c_str());
-            return task_process_status::task_need_retry;
-        }
-        SWSS_LOG_ERROR("Failed resolving ingress buffer profile reference specified for:%s", key.c_str());
-        return task_process_status::task_failed;
-    }
-
-    setObjectReference(m_buffer_type_maps, APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, key, buffer_profile_list_field_name, profile_name_list);
-
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_QOS_INGRESS_BUFFER_PROFILE_LIST;
-    attr.value.objlist.count = (uint32_t)profile_list.size();
-    attr.value.objlist.list = profile_list.data();
+
+    if (op == SET_COMMAND)
+    {
+        string profile_name_list;
+        ref_resolve_status resolve_status = resolveFieldRefArray(m_buffer_type_maps, buffer_profile_list_field_name,
+                                                                 buffer_to_ref_table_map.at(buffer_profile_list_field_name), tuple,
+                                                                 profile_list, profile_name_list);
+        if (ref_resolve_status::success != resolve_status)
+        {
+            if(ref_resolve_status::not_resolved == resolve_status)
+            {
+                SWSS_LOG_INFO("Missing or invalid ingress buffer profile reference specified for:%s", key.c_str());
+                return task_process_status::task_need_retry;
+            }
+            SWSS_LOG_ERROR("Failed resolving ingress buffer profile reference specified for:%s", key.c_str());
+            return task_process_status::task_failed;
+        }
+
+        setObjectReference(m_buffer_type_maps, APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, key, buffer_profile_list_field_name, profile_name_list);
+
+        attr.value.objlist.count = (uint32_t)profile_list.size();
+        attr.value.objlist.list = profile_list.data();
+    }
+    else if (op == DEL_COMMAND)
+    {
+        SWSS_LOG_NOTICE("%s has been removed from BUFFER_PORT_INGRESS_PROFILE_LIST_TABLE", key.c_str());
+        removeObject(m_buffer_type_maps, APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, key);
+        attr.value.objlist.count = 0;
+        attr.value.objlist.list = profile_list.data();
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Unknown command %s when handling BUFFER_PORT_INGRESS_PROFILE_LIST_TABLE key %s", op.c_str(), key.c_str());
+    }
+
     for (string port_name : port_names)
     {
         if (!gPortsOrch->getPort(port_name, port))
@@ -1043,28 +1058,43 @@ task_process_status BufferOrch::processEgressBufferProfileList(KeyOpFieldsValues
     SWSS_LOG_DEBUG("processing:%s", key.c_str());
     vector<string> port_names = tokenize(key, list_item_delimiter);
     vector<sai_object_id_t> profile_list;
-
-    string profile_name_list;
-    ref_resolve_status resolve_status = resolveFieldRefArray(m_buffer_type_maps, buffer_profile_list_field_name,
-                                        buffer_to_ref_table_map.at(buffer_profile_list_field_name), tuple,
-                                        profile_list, profile_name_list);
-    if (ref_resolve_status::success != resolve_status)
-    {
-        if(ref_resolve_status::not_resolved == resolve_status)
-        {
-            SWSS_LOG_INFO("Missing or invalid egress buffer profile reference specified for:%s", key.c_str());
-            return task_process_status::task_need_retry;
-        }
-        SWSS_LOG_ERROR("Failed resolving egress buffer profile reference specified for:%s", key.c_str());
-        return task_process_status::task_failed;
-    }
-
-    setObjectReference(m_buffer_type_maps, APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, key, buffer_profile_list_field_name, profile_name_list);
-
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_QOS_EGRESS_BUFFER_PROFILE_LIST;
-    attr.value.objlist.count = (uint32_t)profile_list.size();
-    attr.value.objlist.list = profile_list.data();
+
+    if (op == SET_COMMAND)
+    {
+        string profile_name_list;
+        ref_resolve_status resolve_status = resolveFieldRefArray(m_buffer_type_maps, buffer_profile_list_field_name,
+                                                                 buffer_to_ref_table_map.at(buffer_profile_list_field_name), tuple,
+                                                                 profile_list, profile_name_list);
+        if (ref_resolve_status::success != resolve_status)
+        {
+            if(ref_resolve_status::not_resolved == resolve_status)
+            {
+                SWSS_LOG_INFO("Missing or invalid egress buffer profile reference specified for:%s", key.c_str());
+                return task_process_status::task_need_retry;
+            }
+            SWSS_LOG_ERROR("Failed resolving egress buffer profile reference specified for:%s", key.c_str());
+            return task_process_status::task_failed;
+        }
+
+        setObjectReference(m_buffer_type_maps, APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, key, buffer_profile_list_field_name, profile_name_list);
+
+        attr.value.objlist.count = (uint32_t)profile_list.size();
+        attr.value.objlist.list = profile_list.data();
+    }
+    else if (op == DEL_COMMAND)
+    {
+        SWSS_LOG_NOTICE("%s has been removed from BUFFER_PORT_EGRESS_PROFILE_LIST_TABLE", key.c_str());
+        removeObject(m_buffer_type_maps, APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, key);
+        attr.value.objlist.count = 0;
+        attr.value.objlist.list = profile_list.data();
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Unknown command %s when handling BUFFER_PORT_EGRESS_PROFILE_LIST_TABLE key %s", op.c_str(), key.c_str());
+    }
+
     for (string port_name : port_names)
     {
         if (!gPortsOrch->getPort(port_name, port))
