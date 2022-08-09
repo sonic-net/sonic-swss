@@ -6,6 +6,7 @@
 #include "vxlanorch.h"
 #include "directory.h"
 #include "subintf.h"
+#include "vlanstack.h"
 
 #include <inttypes.h>
 #include <cassert>
@@ -397,6 +398,9 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
     m_state_db = shared_ptr<DBConnector>(new DBConnector("STATE_DB", 0));
     m_stateBufferMaximumValueTable = unique_ptr<Table>(new Table(m_state_db.get(), STATE_BUFFER_MAXIMUM_VALUE_TABLE));
+
+    m_vlan_stack = shared_ptr<VlanStack>(new VlanStack());
+    m_vlan_xlate = shared_ptr<VlanXlate>(new VlanXlate());
 
     initGearbox();
 
@@ -4391,6 +4395,490 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
     }
 }
 
+bool PortsOrch::parseVlanList(const string& raw_vlanids, vector<uint16_t>& vlanids)
+{
+    stringstream ss(raw_vlanids);
+    while (ss.good()) {
+        string substr;
+        getline(ss, substr, ',');
+        if (substr.find("..") != std::string::npos)
+        {
+            string delimiter = "..";
+            size_t pos = substr.find("..");
+            string start = substr.substr(0, pos);
+            string end = substr.substr(pos + delimiter.size());
+
+            if (!isValidVlanId(start, 1, 4094) || !isValidVlanId(end, 1, 4094))
+            {
+                return false;
+            }
+
+            for (int i = std::stoi(start); i <= std::stoi(end); i++)
+            {
+                vlanids.push_back((uint16_t)i);
+            }
+        }
+        else
+        {
+            if (!isValidVlanId(substr, 1, 4094))
+            {
+                return false;
+            }
+
+            vlanids.push_back((uint16_t)std::stoi(substr));
+        }
+    }
+    return true;
+}
+
+task_process_status PortsOrch::addVlanStackEntry(const VlanStackKey& key, const vector<uint16_t>& c_vlanids, const uint8_t s_vlan_priority)
+{
+    VlanStackEntry stack_entry;
+
+    stack_entry.priority = s_vlan_priority;
+
+    for (auto vid : c_vlanids)
+    {
+        sai_object_id_t oid;
+        sai_attribute_t attr;
+        std::vector<sai_attribute_t> attrs;
+
+        attr.id = SAI_VLAN_STACK_ATTR_PORT;
+        attr.value.oid = key.port_oid;
+        attrs.push_back(attr);
+
+        attr.id = SAI_VLAN_STACK_ATTR_STAGE;
+        attr.value.s32 = SAI_VLAN_STACK_STAGE_INGRESS;
+        attrs.push_back(attr);
+
+        attr.id = SAI_VLAN_STACK_ATTR_ORIGINAL_VLAN_ID;
+        attr.value.u16 = vid;
+        attrs.push_back(attr);
+
+        attr.id = SAI_VLAN_STACK_ATTR_MATCH_TYPE;
+        attr.value.s32 = SAI_VLAN_STACK_MATCH_TYPE_INNER;
+        attrs.push_back(attr);
+
+        attr.id = SAI_VLAN_STACK_ATTR_ACTION;
+        attr.value.s32 = SAI_VLAN_STACK_ACTION_PUSH;
+        attrs.push_back(attr);
+
+        attr.id = SAI_VLAN_STACK_ATTR_VLAN_APPLIED_PRI;
+        attr.value.u8 = s_vlan_priority;
+        attrs.push_back(attr);
+
+        attr.id = SAI_VLAN_STACK_ATTR_APPLIED_VLAN_ID;
+        attr.value.u16 = key.s_vlanid;
+        attrs.push_back(attr);
+
+        auto status = sai_vlan_api->create_vlan_stack(&oid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+        if (status != SAI_STATUS_SUCCESS) {
+            SWSS_LOG_ERROR("Create VLAN Stacking entry failed, port:%" PRIx64 ", s_vlanid:%d, c_vlanid:%d", key.port_oid, key.s_vlanid, vid);
+            return handleSaiCreateStatus(SAI_API_VLAN, status);
+        }
+
+        stack_entry.push_entries.emplace(vid, oid);
+    }
+
+    {
+        sai_object_id_t oid;
+        sai_attribute_t attr;
+        std::vector<sai_attribute_t> attrs;
+
+        attr.id = SAI_VLAN_STACK_ATTR_PORT;
+        attr.value.oid = key.port_oid;
+        attrs.push_back(attr);
+
+        attr.id = SAI_VLAN_STACK_ATTR_STAGE;
+        attr.value.s32 = SAI_VLAN_STACK_STAGE_EGRESS;
+        attrs.push_back(attr);
+
+        attr.id = SAI_VLAN_STACK_ATTR_ORIGINAL_VLAN_ID;
+        attr.value.u16 = key.s_vlanid;
+        attrs.push_back(attr);
+
+        attr.id = SAI_VLAN_STACK_ATTR_MATCH_TYPE;
+        attr.value.s32 = SAI_VLAN_STACK_MATCH_TYPE_OUTER;
+        attrs.push_back(attr);
+
+        attr.id = SAI_VLAN_STACK_ATTR_ACTION;
+        attr.value.s32 = SAI_VLAN_STACK_ACTION_POP;
+        attrs.push_back(attr);
+
+        auto status = sai_vlan_api->create_vlan_stack(&oid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+        if (status != SAI_STATUS_SUCCESS) {
+            SWSS_LOG_ERROR("Create VLAN Stacking entry failed, port:%" PRIx64 ", s_vlanid: %d", key.port_oid, key.s_vlanid);
+            return handleSaiCreateStatus(SAI_API_VLAN, status);
+        }
+
+        stack_entry.pop_entry = oid;
+    }
+
+    m_vlan_stack->vlan_stack_map.emplace(key, stack_entry);
+
+    return task_success;
+}
+
+task_process_status PortsOrch::deleteVlanStackEntry(const VlanStackKey& key)
+{
+    auto it = m_vlan_stack->vlan_stack_map.find(key);
+    if (it != m_vlan_stack->vlan_stack_map.end())
+    {
+        auto status = sai_vlan_api->remove_vlan_stack(it->second.pop_entry);
+        if (status != SAI_STATUS_SUCCESS) {
+            SWSS_LOG_ERROR("Failed to remove VLAN Stacking entry: %" PRIu64 " ",
+                            it->second.pop_entry);
+            return handleSaiRemoveStatus(SAI_API_VLAN, status);
+        }
+
+        for (auto entry : it->second.push_entries)
+        {
+            auto status = sai_vlan_api->remove_vlan_stack(entry.second);
+            if (status != SAI_STATUS_SUCCESS) {
+                SWSS_LOG_ERROR("Remove VLAN Stacking entry failed, port:%" PRIx64 ", s_vlanid: %d", key.port_oid, key.s_vlanid);
+                return handleSaiRemoveStatus(SAI_API_VLAN, status);
+            }
+        }
+
+        m_vlan_stack->vlan_stack_map.erase(key);
+    }
+
+    return task_success;
+}
+
+task_process_status PortsOrch::addVlanXlateEntry(const VlanXlateKey& key, const uint16_t c_vlanid)
+{
+    sai_object_id_t ingress_entry_oid;
+    sai_object_id_t egress_entry_oid;
+
+    {
+        sai_attribute_t attr;
+        std::vector<sai_attribute_t> attrs;
+
+        attr.id = SAI_VLAN_STACK_ATTR_PORT;
+        attr.value.oid = key.port_oid;
+        attrs.push_back(attr);
+
+        attr.id = SAI_VLAN_STACK_ATTR_STAGE;
+        attr.value.s32 = SAI_VLAN_STACK_STAGE_INGRESS;
+        attrs.push_back(attr);
+
+        attr.id = SAI_VLAN_STACK_ATTR_ORIGINAL_VLAN_ID;
+        attr.value.u16 = c_vlanid;
+        attrs.push_back(attr);
+
+        attr.id = SAI_VLAN_STACK_ATTR_MATCH_TYPE;
+        attr.value.s32 = SAI_VLAN_STACK_MATCH_TYPE_OUTER;
+        attrs.push_back(attr);
+
+        attr.id = SAI_VLAN_STACK_ATTR_ACTION;
+        attr.value.s32 = SAI_VLAN_STACK_ACTION_SWAP;
+        attrs.push_back(attr);
+
+        attr.id = SAI_VLAN_STACK_ATTR_APPLIED_VLAN_ID;
+        attr.value.u16 = key.s_vlanid;
+        attrs.push_back(attr);
+
+        auto status = sai_vlan_api->create_vlan_stack(&ingress_entry_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+        if (status != SAI_STATUS_SUCCESS) {
+            SWSS_LOG_ERROR("Create VLAN xlate entry ingress failed, port:%" PRIx64 ", s_vlanid:%d, c_vlanid:%d", key.port_oid, key.s_vlanid, c_vlanid);
+            return handleSaiCreateStatus(SAI_API_VLAN, status);
+        }
+    }
+
+    {
+        sai_attribute_t attr;
+        std::vector<sai_attribute_t> attrs;
+
+        attr.id = SAI_VLAN_STACK_ATTR_PORT;
+        attr.value.oid = key.port_oid;
+        attrs.push_back(attr);
+
+        attr.id = SAI_VLAN_STACK_ATTR_STAGE;
+        attr.value.s32 = SAI_VLAN_STACK_STAGE_EGRESS;
+        attrs.push_back(attr);
+
+        attr.id = SAI_VLAN_STACK_ATTR_ORIGINAL_VLAN_ID;
+        attr.value.u16 = key.s_vlanid;
+        attrs.push_back(attr);
+
+        attr.id = SAI_VLAN_STACK_ATTR_MATCH_TYPE;
+        attr.value.s32 = SAI_VLAN_STACK_MATCH_TYPE_OUTER;
+        attrs.push_back(attr);
+
+        attr.id = SAI_VLAN_STACK_ATTR_ACTION;
+        attr.value.s32 = SAI_VLAN_STACK_ACTION_SWAP;
+        attrs.push_back(attr);
+
+        attr.id = SAI_VLAN_STACK_ATTR_APPLIED_VLAN_ID;
+        attr.value.u16 = c_vlanid;
+        attrs.push_back(attr);
+
+        auto status = sai_vlan_api->create_vlan_stack(&egress_entry_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+        if (status != SAI_STATUS_SUCCESS) {
+            SWSS_LOG_ERROR("Create VLAN xlate entry egress failed, port:%" PRIx64 ", s_vlanid:%d, c_vlanid:%d", key.port_oid, key.s_vlanid, c_vlanid);
+            return handleSaiCreateStatus(SAI_API_VLAN, status);
+        }
+    }
+
+    m_vlan_xlate->vlan_xlate_map.emplace(key, VlanXlateEntry(c_vlanid, ingress_entry_oid, egress_entry_oid));
+
+    return task_success;
+}
+
+task_process_status PortsOrch::deleteVlanXlateEntry(const VlanXlateKey& key)
+{
+    auto it = m_vlan_xlate->vlan_xlate_map.find(key);
+    if (it != m_vlan_xlate->vlan_xlate_map.end())
+    {
+        auto status = sai_vlan_api->remove_vlan_stack(it->second.ingress_entry);
+        if (status != SAI_STATUS_SUCCESS) {
+            SWSS_LOG_ERROR("Delete VLAN xlate entry ingress failed, port:%" PRIx64 ", s_vlanid:%d", key.port_oid, key.s_vlanid);
+            return handleSaiRemoveStatus(SAI_API_VLAN, status);
+        }
+
+        status = sai_vlan_api->remove_vlan_stack(it->second.egress_entry);
+        if (status != SAI_STATUS_SUCCESS) {
+            SWSS_LOG_ERROR("Delete VLAN xlate entry egress failed, port:%" PRIx64 ", s_vlanid:%d", key.port_oid, key.s_vlanid);
+            return handleSaiRemoveStatus(SAI_API_VLAN, status);
+        }
+
+        m_vlan_xlate->vlan_xlate_map.erase(key);
+    }
+
+    return task_success;
+}
+
+task_process_status PortsOrch::doVlanStackTask(const string& key, const string& op, const vector<swss::FieldValueTuple>& values)
+{
+    task_process_status task_status;
+    vector<string> keys = tokenize(key, ':');
+    Port port;
+
+    if (!getPort(keys.at(0), port))
+    {
+        return task_need_retry;
+    }
+
+    if (port.m_type != Port::PHY && port.m_type != Port::LAG)
+    {
+        SWSS_LOG_ERROR("VlanStack failed due to incorrect port type (%d).", port.m_type);
+        return task_failed;
+    }
+
+    if (op == SET_COMMAND)
+    {
+        string action, s_vlanid;
+        uint8_t s_vlan_priority = 0;
+        vector<uint16_t> c_vlanids;
+
+        s_vlanid = keys.at(1);
+        if (!isValidVlanId(s_vlanid, 1, 4094))
+        {
+            return task_failed;
+        }
+
+        for (auto itp : values)
+        {
+            string attr_name = fvField(itp);
+            string attr_value = to_upper(fvValue(itp));
+
+            if (attr_name == "c_vlanids")
+            {
+                auto rv = parseVlanList(attr_value, c_vlanids);
+                if (rv == false)
+                {
+                    return task_failed;
+                }
+            }
+            else if (attr_name == "s_vlan_priority")
+            {
+                try
+                {
+                    s_vlan_priority = (uint8_t)stoi(attr_value);
+                }
+                catch (std::invalid_argument& e)
+                {
+                    return task_failed;
+                }
+
+                if (s_vlan_priority < 0 || s_vlan_priority > 7)
+                {
+                    return task_failed;
+                }
+            }
+        }
+
+        sai_object_id_t port_oid = port.m_type == Port::PHY ? port.m_port_id : port.m_lag_id;
+        VlanStackKey stack_key = { port_oid, (uint16_t)to_uint<uint16_t>(s_vlanid) };
+
+        task_status = deleteVlanStackEntry(stack_key);
+        if (task_status != task_success)
+        {
+            return task_status;
+        }
+
+        task_status = addVlanStackEntry(stack_key, c_vlanids, s_vlan_priority);
+        if (task_status != task_success)
+        {
+            return task_status;
+        }
+    }
+    else if (op == DEL_COMMAND)
+    {
+        string s_vlanid;
+
+        s_vlanid = keys.at(1);
+        sai_object_id_t port_oid = port.m_type == Port::PHY ? port.m_port_id : port.m_lag_id;
+        VlanStackKey stack_key = { port_oid, (uint16_t)to_uint<uint16_t>(s_vlanid) };
+
+        task_status = deleteVlanStackEntry(stack_key);
+        if (task_status != task_success)
+        {
+            return task_status;
+        }
+    }
+
+    return task_success;
+}
+
+task_process_status PortsOrch::doVlanXlateTask(const string& key, const string& op, const vector<swss::FieldValueTuple>& values)
+{
+    task_process_status task_status;
+    vector<string> keys = tokenize(key, ':');
+    Port port;
+
+    if (!getPort(keys.at(0), port))
+    {
+        SWSS_LOG_ERROR("VlanStack failed to get port object for key %s, port %s", key.c_str(), keys.at(0).c_str());
+        return task_need_retry;
+    }
+
+    if (port.m_type != Port::PHY && port.m_type != Port::LAG)
+    {
+        SWSS_LOG_ERROR("VlanStack failed due to incorrect port type (%d).", port.m_type);
+        return task_failed;
+    }
+
+    if (op == SET_COMMAND)
+    {
+        string action, s_vlanid;
+        uint16_t c_vlanid = 0;
+
+        s_vlanid = keys.at(1);
+        if (!isValidVlanId(s_vlanid, 1, 4094))
+        {
+            SWSS_LOG_ERROR("VlanStack failed to get port object for key %s, port %s", key.c_str(), keys.at(0).c_str());
+            return task_failed;
+        }
+
+        for (auto itp : values)
+        {
+            string attr_name = fvField(itp);
+            string attr_value = to_upper(fvValue(itp));
+
+            if (attr_name == "c_vlanid")
+            {
+                if (!isValidVlanId(attr_value, 1, 4094))
+                {
+                    SWSS_LOG_ERROR("VlanStack failed to get port object for key %s, port %s", key.c_str(), keys.at(0).c_str());
+                    return task_failed;
+                }
+                uint16_t vid = (uint16_t)to_uint<uint16_t>(attr_value);
+
+                c_vlanid = vid;
+            }
+        }
+        sai_object_id_t port_oid = port.m_type == Port::PHY ? port.m_port_id : port.m_lag_id;
+        VlanXlateKey xlate_key = { port_oid, (uint16_t)to_uint<uint16_t>(s_vlanid) };
+
+        task_status = deleteVlanXlateEntry(xlate_key);
+        if (task_status != task_success)
+        {
+            return task_status;
+        }
+
+        task_status = addVlanXlateEntry(xlate_key, c_vlanid);
+        if (task_status != task_success)
+        {
+            return task_status;
+        }
+    }
+    else if (op == DEL_COMMAND)
+    {
+        string action, s_vlanid;
+
+        s_vlanid = keys.at(1);
+        if (!isValidVlanId(s_vlanid, 1, 4094))
+        {
+            SWSS_LOG_ERROR("VlanStack failed to get port object for key %s, port %s", key.c_str(), keys.at(0).c_str());
+            return task_failed;
+        }
+
+        sai_object_id_t port_oid = port.m_type == Port::PHY ? port.m_port_id : port.m_lag_id;
+        VlanXlateKey xlate_key = { port_oid, (uint16_t)to_uint<uint16_t>(s_vlanid) };
+
+        task_status = deleteVlanXlateEntry(xlate_key);
+        if (task_status != task_success)
+        {
+            return task_status;
+        }
+    }
+
+    //return true;
+    return task_success;
+}
+
+void PortsOrch::doVlanStackTask(Consumer& consumer)
+{
+    SWSS_LOG_ENTER();
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        auto& t = it->second;
+        string key = kfvKey(t);
+        string op = kfvOp(t);
+        auto values = kfvFieldsValues(t);
+
+        SWSS_LOG_INFO("doVlanStackTask: key:%s", key.c_str());
+
+        auto task_status = doVlanStackTask(key, op, values);
+        if (task_status == task_need_retry)
+        {
+            it++;
+        }
+        else
+        {
+            it = consumer.m_toSync.erase(it);
+        }
+    }
+}
+
+void PortsOrch::doVlanXlateTask(Consumer& consumer)
+{
+    SWSS_LOG_ENTER();
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        auto& t = it->second;
+        string key = kfvKey(t);
+        string op = kfvOp(t);
+        auto values = kfvFieldsValues(t);
+
+        SWSS_LOG_INFO("doVlanXlateTask: key:%s", key.c_str());
+
+        auto task_status = doVlanXlateTask(key, op, values);
+        if (task_status == task_need_retry)
+        {
+            it++;
+        }
+        else
+        {
+            it = consumer.m_toSync.erase(it);
+        }
+    }
+}
+
 void PortsOrch::doTask()
 {
     auto tableOrder = {
@@ -4399,6 +4887,8 @@ void PortsOrch::doTask()
         APP_LAG_MEMBER_TABLE_NAME,
         APP_VLAN_TABLE_NAME,
         APP_VLAN_MEMBER_TABLE_NAME,
+        APP_VLAN_STACKING_TABLE_NAME,
+        APP_VLAN_TRANSLATION_TABLE_NAME
     };
 
     for (auto tableName: tableOrder)
@@ -4452,6 +4942,14 @@ void PortsOrch::doTask(Consumer &consumer)
         else if (table_name == APP_LAG_MEMBER_TABLE_NAME || table_name == CHASSIS_APP_LAG_MEMBER_TABLE_NAME)
         {
             doLagMemberTask(consumer);
+        }
+        else if (table_name == APP_VLAN_STACKING_TABLE_NAME)
+        {
+            doVlanStackTask(consumer);
+        }
+        else if (table_name == APP_VLAN_TRANSLATION_TABLE_NAME)
+        {
+            doVlanXlateTask(consumer);
         }
     }
 }
@@ -7018,6 +7516,20 @@ bool PortsOrch::initGearboxPort(Port &port)
             fields[0] = FieldValueTuple(port.m_alias + "_line", sai_serialize_object_id(linePort));
             m_gbcounterTable->set("", fields);
         }
+    }
+
+    return true;
+}
+
+bool PortsOrch::isValidVlanId(const std::string& str, uint16_t min, uint16_t max)
+{
+    try
+    {
+        to_uint<uint16_t>(str, min, max);
+    }
+    catch (std::invalid_argument& e)
+    {
+        return false;
     }
 
     return true;

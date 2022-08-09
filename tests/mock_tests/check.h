@@ -28,22 +28,25 @@ struct Check
 
             assert(meta != nullptr);
 
-            // The following id can not serialize, check id only
-            if (id == SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE || id == SAI_ACL_BIND_POINT_TYPE_PORT || id == SAI_ACL_BIND_POINT_TYPE_LAG)
+            if (objecttype == SAI_OBJECT_TYPE_ACL_TABLE)
             {
-                if (id != act_attr_list[i].id)
+                // The following id can not serialize, check id only
+                if (id == SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE || id == SAI_ACL_BIND_POINT_TYPE_PORT || id == SAI_ACL_BIND_POINT_TYPE_LAG)
                 {
-                    auto meta_act = sai_metadata_get_attr_metadata(objecttype, act_attr_list[i].id);
-
-                    if (meta_act)
+                    if (id != act_attr_list[i].id)
                     {
-                        std::cerr << "AttrListEq failed\n";
-                        std::cerr << "Actual:   " << meta_act->attridname << "\n";
-                        std::cerr << "Expected: " << meta->attridname << "\n";
-                    }
-                }
+                        auto meta_act = sai_metadata_get_attr_metadata(objecttype, act_attr_list[i].id);
 
-                continue;
+                        if (meta_act)
+                        {
+                            std::cerr << "AttrListEq failed\n";
+                            std::cerr << "Actual:   " << meta_act->attridname << "\n";
+                            std::cerr << "Expected: " << meta->attridname << "\n";
+                        }
+                    }
+
+                    continue;
+                }
             }
 
             const int MAX_BUF_SIZE = 0x4000;

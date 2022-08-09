@@ -26,6 +26,8 @@
 #define PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "PG_WATERMARK_STAT_COUNTER"
 #define PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP "PG_DROP_STAT_COUNTER"
 
+#define TABLE_VLAN_STACKING_SVLAN "s_vlanid"
+
 typedef std::vector<sai_uint32_t> PortSupportedSpeeds;
 typedef std::set<std::string> PortSupportedFecModes;
 
@@ -72,6 +74,11 @@ struct VlanMemberUpdate
     Port member;
     bool add;
 };
+
+class VlanStack;
+struct VlanStackKey;
+class VlanXlate;
+struct VlanXlateKey;
 
 class PortsOrch : public Orch, public Subject
 {
@@ -170,6 +177,7 @@ public:
     bool setPortIPG(sai_object_id_t port_id, uint32_t ipg);
 
     bool getPortOperStatus(const Port& port, sai_port_oper_status_t& status) const;
+    bool parseVlanList(const string& raw_vlanids, vector<uint16_t>& vlanids);
 
     void updateGearboxPortOperStatus(const Port& port);
 
@@ -200,6 +208,9 @@ private:
     shared_ptr<DBConnector> m_counter_db;
     shared_ptr<DBConnector> m_flex_db;
     shared_ptr<DBConnector> m_state_db;
+
+    shared_ptr<VlanStack> m_vlan_stack;
+    shared_ptr<VlanXlate> m_vlan_xlate;
 
     FlexCounterManager port_stat_manager;
     FlexCounterManager port_buffer_drop_stat_manager;
@@ -270,9 +281,18 @@ private:
     void doVlanMemberTask(Consumer &consumer);
     void doLagTask(Consumer &consumer);
     void doLagMemberTask(Consumer &consumer);
+    void doVlanStackTask(Consumer& consumer);
+    void doVlanXlateTask(Consumer& consumer);
 
     void doTask(NotificationConsumer &consumer);
     void doTask(swss::SelectableTimer &timer);
+
+    task_process_status addVlanStackEntry(const VlanStackKey& key, const vector<uint16_t>& c_vlanids, const uint8_t s_vlan_priority);
+    task_process_status deleteVlanStackEntry(const VlanStackKey& key);
+    task_process_status addVlanXlateEntry(const VlanXlateKey& key, const uint16_t c_vlanid);
+    task_process_status deleteVlanXlateEntry(const VlanXlateKey& key);
+    task_process_status doVlanStackTask(const string& key, const string& op, const vector<swss::FieldValueTuple>& values);
+    task_process_status doVlanXlateTask(const string& key, const string& op, const vector<swss::FieldValueTuple>& values);
 
     void removePortFromLanesMap(string alias);
     void removePortFromPortListMap(sai_object_id_t port_id);
@@ -388,6 +408,7 @@ private:
                                 sai_acl_bind_point_type_t &sai_acl_bind_type);
     void initGearbox();
     bool initGearboxPort(Port &port);
+    bool isValidVlanId(const std::string& str, uint16_t min, uint16_t max);
 
     map<string, string> m_recircPortRole;
 

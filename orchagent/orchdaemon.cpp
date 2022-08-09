@@ -117,7 +117,9 @@ bool OrchDaemon::init()
         { APP_VLAN_TABLE_NAME,        portsorch_base_pri + 2 },
         { APP_VLAN_MEMBER_TABLE_NAME, portsorch_base_pri     },
         { APP_LAG_TABLE_NAME,         portsorch_base_pri + 4 },
-        { APP_LAG_MEMBER_TABLE_NAME,  portsorch_base_pri     }
+        { APP_LAG_MEMBER_TABLE_NAME,  portsorch_base_pri     },
+        { APP_VLAN_STACKING_TABLE_NAME,  portsorch_base_pri },
+        { APP_VLAN_TRANSLATION_TABLE_NAME,  portsorch_base_pri }
     };
 
     vector<table_name_with_pri_t> app_fdb_tables = {
