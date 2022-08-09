@@ -80,6 +80,7 @@ int32_t gVoqMaxCores = 0;
 uint32_t gCfgSystemPorts = 0;
 string gMyHostName = "";
 string gMyAsicName = "";
+static struct sigaction old_sigaction;
 
 void usage()
 {
@@ -103,6 +104,30 @@ void usage()
     cout << "    -k max bulk size in bulk mode (default 1000)" << endl;
 }
 
+int release_resources(sai_object_id_t switch_id)
+{
+    int exit_code = 0;
+
+    /* Nothing to release */
+    if (switch_id == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_NOTICE("Nothing to release, switch id is NULL");
+        return exit_code;
+    }
+
+    /* Release switch */
+    sai_status_t status = sai_switch_api->remove_switch(switch_id);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove a switch, rv: %d", status);
+        exit_code = 1;
+        return exit_code;
+    }
+
+    SWSS_LOG_NOTICE("Remove switch, id:%" PRIu64, gSwitchId);
+    return exit_code;
+}
+
 void sighup_handler(int signo)
 {
     /*
@@ -111,6 +136,20 @@ void sighup_handler(int signo)
     gLogRotate = true;
     gSaiRedisLogRotate = true;
     gResponsePublisherLogRotate = true;
+}
+
+void sigterm_handler(int signo)
+{
+    SWSS_LOG_ENTER();
+    SWSS_LOG_NOTICE("Handling SIGTERM graceful stop");
+
+    release_resources(gSwitchId);
+
+    if (old_sigaction.sa_handler != SIG_IGN &&
+        old_sigaction.sa_handler != SIG_DFL)
+    {
+        old_sigaction.sa_handler(signo);
+    }
 }
 
 void syncd_apply_view()
@@ -323,8 +362,17 @@ int main(int argc, char **argv)
 
     if (signal(SIGHUP, sighup_handler) == SIG_ERR)
     {
-        SWSS_LOG_ERROR("failed to setup SIGHUP action");
-        exit(1);
+        SWSS_LOG_ERROR("Failed to setup SIGHUP action");
+        exit(EXIT_FAILURE);
+    }
+
+    /* Set SIGTERM action to gracefully free resources */
+    struct sigaction sigact = {};
+    sigact.sa_handler = sigterm_handler;
+    if (sigaction(SIGTERM, &sigact, &old_sigaction))
+    {
+        SWSS_LOG_ERROR("Failed to setup SIGTERM action handler");
+        exit(EXIT_FAILURE);
     }
 
     int opt;
@@ -634,6 +682,7 @@ int main(int argc, char **argv)
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to get MAC address from switch, rv:%d", status);
+                release_resources(gSwitchId);
                 exit(EXIT_FAILURE);
             }
             else
@@ -720,6 +769,7 @@ int main(int argc, char **argv)
     if (!orchDaemon->init())
     {
         SWSS_LOG_ERROR("Failed to initialize orchestration daemon");
+        release_resources(gSwitchId);
         exit(EXIT_FAILURE);
     }
 
@@ -734,5 +784,8 @@ int main(int argc, char **argv)
 
     orchDaemon->start();
 
-    return 0;
+    if (release_resources(gSwitchId))
+        exit(EXIT_FAILURE);
+
+    exit(EXIT_SUCCESS);
 }
