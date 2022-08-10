@@ -775,10 +775,6 @@ void IntfsOrch::doTask(Consumer &consumer)
                 }
                 adminStateChanged = true;
             }
-            else if (field == "nat_zone")
-            {
-                nat_zone = value;
-            }
             else if (field == "proxy_arp")
             {
                 proxy_arp = value;
