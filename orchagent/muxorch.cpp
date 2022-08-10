@@ -367,6 +367,7 @@ MuxCable::MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress 
 
     /* Set initial state to "standby" */
     stateStandby();
+    state_ = MuxState::MUX_STATE_STANDBY;
 }
 
 bool MuxCable::stateInitActive()
