@@ -518,7 +518,7 @@ bool PortsOrch::getPortPvid(Port &port, sai_uint32_t &pvid)
     return true;
 }
 
-bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t mode)
+bool PortsOrch::setPortFec(Port &port, std::string &mode)
 {
     return true;
 }

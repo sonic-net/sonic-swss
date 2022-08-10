@@ -219,7 +219,7 @@ void FdbOrch::handleSyncdFlushNotif(const sai_object_id_t& bv_id,
         for (auto itr = m_entries.begin(); itr != m_entries.end();)
         {
             auto curr = itr++;
-            if (curr->second.type != "static" && (curr->first.mac == mac || mac == flush_mac))
+            if (curr->second.type != "static" && (curr->first.mac == mac || mac == flush_mac) && curr->second.is_flush_pending)
             {
                 clearFdbEntry(curr->first);
             }
@@ -233,7 +233,7 @@ void FdbOrch::handleSyncdFlushNotif(const sai_object_id_t& bv_id,
             auto curr = itr++;
             if (curr->second.bridge_port_id == bridge_port_id)
             {
-                if (curr->second.type != "static" && (curr->first.mac == mac || mac == flush_mac))
+                if (curr->second.type != "static" && (curr->first.mac == mac || mac == flush_mac) && curr->second.is_flush_pending)
                 {
                     clearFdbEntry(curr->first);
                 }
@@ -248,7 +248,7 @@ void FdbOrch::handleSyncdFlushNotif(const sai_object_id_t& bv_id,
             auto curr = itr++;
             if (curr->first.bv_id == bv_id)
             {
-                if (curr->second.type != "static" && (curr->first.mac == mac || mac == flush_mac))
+                if (curr->second.type != "static" && (curr->first.mac == mac || mac == flush_mac) && curr->second.is_flush_pending)
                 {
                     clearFdbEntry(curr->first);
                 }
@@ -263,7 +263,7 @@ void FdbOrch::handleSyncdFlushNotif(const sai_object_id_t& bv_id,
             auto curr = itr++;
             if (curr->first.bv_id == bv_id && curr->second.bridge_port_id == bridge_port_id)
             {
-                if (curr->second.type != "static" && (curr->first.mac == mac || mac == flush_mac))
+                if (curr->second.type != "static" && (curr->first.mac == mac || mac == flush_mac) && curr->second.is_flush_pending)
                 {
                     clearFdbEntry(curr->first);
                 }
@@ -819,6 +819,7 @@ void FdbOrch::doTask(Consumer& consumer)
             fdbData.remote_ip = remote_ip;
             fdbData.esi = esi;
             fdbData.vni = vni;
+            fdbData.is_flush_pending = false;
             if (addFdbEntry(entry, port, fdbData))
             {
                 if (origin == FDB_ORIGIN_MCLAG_ADVERTIZED)
@@ -905,6 +906,14 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Flush fdb failed, return code %x", status);
+            }
+
+            if (status == SAI_STATUS_SUCCESS) {
+                for (map<FdbEntry, FdbData>::iterator it = m_entries.begin();
+                        it != m_entries.end(); it++)
+                {
+                    it->second.is_flush_pending = true;
+                }
             }
 
             return;
@@ -1070,6 +1079,20 @@ void FdbOrch::flushFDBEntries(sai_object_id_t bridge_port_oid,
     if (SAI_STATUS_SUCCESS != rv)
     {
         SWSS_LOG_ERROR("Flushing FDB failed. rv:%d", rv);
+    }
+
+    if (SAI_STATUS_SUCCESS == rv) {
+        for (map<FdbEntry, FdbData>::iterator it = m_entries.begin();
+                it != m_entries.end(); it++)
+        {
+            if ((bridge_port_oid != SAI_NULL_OBJECT_ID &&
+                    it->second.bridge_port_id == bridge_port_oid) ||
+                    (vlan_oid != SAI_NULL_OBJECT_ID &&
+                    it->first.bv_id == vlan_oid))
+            {
+                it->second.is_flush_pending = true;
+            }
+        }
     }
 }
 
