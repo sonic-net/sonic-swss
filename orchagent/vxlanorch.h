@@ -37,7 +37,7 @@ typedef enum
 #define IS_TUNNELMAP_SET_BRIDGE(x) ((x)& (1<<TUNNEL_MAP_T_BRIDGE))
 
 #define TUNNEL_STAT_COUNTER_FLEX_COUNTER_GROUP "TUNNEL_STAT_COUNTER"
-#define TUNNEL_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS 1000
+#define TUNNEL_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS 10000
 #define LOCAL_TUNNEL_PORT_PREFIX "Port_SRC_VTEP_"
 #define EVPN_TUNNEL_PORT_PREFIX  "Port_EVPN_"
 #define EVPN_TUNNEL_NAME_PREFIX  "EVPN_"
@@ -149,7 +149,6 @@ public:
         return active_;
     }
 
-    bool createTunnel(MAP_T encap, MAP_T decap, uint8_t encap_ttl=0);
     sai_object_id_t addEncapMapperEntry(sai_object_id_t obj, uint32_t vni, 
                                         tunnel_map_type_t type=TUNNEL_MAP_T_VIRTUAL_ROUTER);
     sai_object_id_t addDecapMapperEntry(sai_object_id_t obj, uint32_t vni,

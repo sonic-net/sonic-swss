@@ -184,6 +184,10 @@ namespace fdb_syncd_flush_test
 
         /* Event 2: Generate a FDB Flush per port and per vlan */
         vector<uint8_t> flush_mac_addr = {0, 0, 0, 0, 0, 0};
+        for (map<FdbEntry, FdbData>::iterator it = m_fdborch->m_entries.begin(); it != m_fdborch->m_entries.end(); it++)
+        {
+            it->second.is_flush_pending = true;
+        }
         triggerUpdate(m_fdborch.get(), SAI_FDB_EVENT_FLUSHED, flush_mac_addr, m_portsOrch->m_portList[ETH0].m_bridge_port_id,
                       m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid);
 
@@ -228,6 +232,10 @@ namespace fdb_syncd_flush_test
 
         /* Event2: Send a Consolidated Flush response from syncd */
         vector<uint8_t> flush_mac_addr = {0, 0, 0, 0, 0, 0};
+        for (map<FdbEntry, FdbData>::iterator it = m_fdborch->m_entries.begin(); it != m_fdborch->m_entries.end(); it++)
+        {
+            it->second.is_flush_pending = true;
+        }
         triggerUpdate(m_fdborch.get(), SAI_FDB_EVENT_FLUSHED, flush_mac_addr, SAI_NULL_OBJECT_ID,
                       SAI_NULL_OBJECT_ID);
 
@@ -272,6 +280,10 @@ namespace fdb_syncd_flush_test
 
         /* Event2: Send a Consolidated Flush response from syncd for vlan */
         vector<uint8_t> flush_mac_addr = {0, 0, 0, 0, 0, 0};
+        for (map<FdbEntry, FdbData>::iterator it = m_fdborch->m_entries.begin(); it != m_fdborch->m_entries.end(); it++)
+        {
+            it->second.is_flush_pending = true;
+        }
         triggerUpdate(m_fdborch.get(), SAI_FDB_EVENT_FLUSHED, flush_mac_addr, SAI_NULL_OBJECT_ID,
                       m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid);
 
@@ -316,6 +328,10 @@ namespace fdb_syncd_flush_test
 
         /* Event2: Send a Consolidated Flush response from syncd for a port */
         vector<uint8_t> flush_mac_addr = {0, 0, 0, 0, 0, 0};
+        for (map<FdbEntry, FdbData>::iterator it = m_fdborch->m_entries.begin(); it != m_fdborch->m_entries.end(); it++)
+        {
+            it->second.is_flush_pending = true;
+        }
         triggerUpdate(m_fdborch.get(), SAI_FDB_EVENT_FLUSHED, flush_mac_addr, m_portsOrch->m_portList[ETH0].m_bridge_port_id,
                       SAI_NULL_OBJECT_ID);
 
@@ -366,6 +382,10 @@ namespace fdb_syncd_flush_test
 
         /* Event 2: Generate a FDB Flush per port and per vlan */
         vector<uint8_t> flush_mac_addr = {0, 0, 0, 0, 0, 0};
+        for (map<FdbEntry, FdbData>::iterator it = m_fdborch->m_entries.begin(); it != m_fdborch->m_entries.end(); it++)
+        {
+            it->second.is_flush_pending = true;
+        }
         triggerUpdate(m_fdborch.get(), SAI_FDB_EVENT_FLUSHED, flush_mac_addr, bridge_port_oid,
                       m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid);
 
@@ -410,6 +430,10 @@ namespace fdb_syncd_flush_test
 
         /* Event 2: Generate a non-consilidated FDB Flush per port and per vlan */
         vector<uint8_t> flush_mac_addr = {124, 254, 144, 18, 34, 236};
+        for (map<FdbEntry, FdbData>::iterator it = m_fdborch->m_entries.begin(); it != m_fdborch->m_entries.end(); it++)
+        {
+            it->second.is_flush_pending = true;
+        }
         triggerUpdate(m_fdborch.get(), SAI_FDB_EVENT_FLUSHED, flush_mac_addr, m_portsOrch->m_portList[ETH0].m_bridge_port_id,
                       m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid);
 

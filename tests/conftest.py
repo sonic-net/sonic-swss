@@ -412,7 +412,7 @@ class DockerVirtualSwitch:
         for i in range(NUM_PORTS):
             server = VirtualServer(self.ctn_sw.name, self.ctn_sw_pid, i)
             self.servers.append(server)
-            
+
     def reset_dbs(self):
         # DB wrappers are declared here, lazy-loaded in the tests
         self.app_db = None
@@ -1854,7 +1854,8 @@ def dvs_route(request, dvs) -> DVSRoute:
 @pytest.fixture(scope="class")
 def dvs_lag_manager(request, dvs):
     request.cls.dvs_lag = dvs_lag.DVSLag(dvs.get_asic_db(),
-                                         dvs.get_config_db())
+                                         dvs.get_config_db(),
+                                         dvs)
 
 
 @pytest.fixture(scope="class")
@@ -1870,7 +1871,7 @@ def dvs_vlan_manager(request, dvs):
 def dvs_port_manager(request, dvs):
     request.cls.dvs_port = dvs_port.DVSPort(dvs.get_asic_db(),
                                             dvs.get_config_db())
-    
+
 
 @pytest.fixture(scope="class")
 def dvs_mirror_manager(request, dvs):
