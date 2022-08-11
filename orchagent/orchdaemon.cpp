@@ -222,6 +222,31 @@ bool OrchDaemon::init()
     NvgreTunnelMapOrch *nvgre_tunnel_map_orch = new NvgreTunnelMapOrch(m_configDb, CFG_NVGRE_TUNNEL_MAP_TABLE_NAME);
     gDirectory.set(nvgre_tunnel_map_orch);
 
+	vector<string> dash_vnet_tables = {
+        APP_DASH_VNET_TABLE_NAME,
+        APP_DASH_VNET_MAPPING_TABLE_NAME
+    };
+    DashVnetOrch *dash_vnet_orch = new DashVnetOrch(m_applDb, dash_vnet_tables);
+    gDirectory.set(dash_vnet_orch);
+
+    vector<string> dash_route_tables = {
+        APP_DASH_ENI_TABLE_NAME,
+        APP_DASH_QOS_TABLE_NAME,
+        APP_DASH_ROUTE_TABLE_NAME,
+        APP_DASH_ROUTE_RULE_TABLE_NAME
+    };
+
+    DashRouteOrch *dash_route_orch = new DashRouteOrch(m_applDb, dash_route_tables);
+    gDirectory.set(dash_route_orch);
+
+    vector<string> dash_tables = {
+        APP_DASH_APPLIANCE_TABLE_NAME,
+        APP_DASH_ROUTING_TYPE_TABLE_NAME
+    };
+
+    DashOrch *dash_orch = new DashOrch(m_applDb, dash_tables);
+    gDirectory.set(dash_orch);
+
     vector<string> qos_tables = {
         CFG_TC_TO_QUEUE_MAP_TABLE_NAME,
         CFG_SCHEDULER_TABLE_NAME,
@@ -454,6 +479,9 @@ bool OrchDaemon::init()
     m_orchList.push_back(mux_st_orch);
     m_orchList.push_back(nvgre_tunnel_orch);
     m_orchList.push_back(nvgre_tunnel_map_orch);
+    m_orchList.push_back(dash_vnet_orch);
+    m_orchList.push_back(dash_route_orch);
+    m_orchList.push_back(dash_orch);
 
     if (m_fabricEnabled)
     {
