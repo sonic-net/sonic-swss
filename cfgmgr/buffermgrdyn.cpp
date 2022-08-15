@@ -3110,8 +3110,7 @@ task_process_status BufferMgrDynamic::handleSingleBufferQueueEntry(const string 
 
     if (op == SET_COMMAND)
     {
-        auto &portQueue = m_portQueueLookup[port][queues];
-
+        bool successful = false;
         SWSS_LOG_INFO("Inserting entry BUFFER_QUEUE_TABLE:%s to APPL_DB", key.c_str());
 
         for (auto i : kfvFieldsValues(tuple))
@@ -3122,8 +3121,10 @@ task_process_status BufferMgrDynamic::handleSingleBufferQueueEntry(const string 
                 auto rc = checkBufferProfileDirection(fvValue(i), BUFFER_EGRESS);
                 if (rc != task_process_status::task_success)
                     return rc;
-                portQueue.running_profile_name = fvValue(i);
+
+                m_portQueueLookup[port][queues].running_profile_name = fvValue(i);
                 SWSS_LOG_NOTICE("Queue %s has been configured on the system, referencing profile %s", key.c_str(), fvValue(i).c_str());
+                successful = true;
             }
             else
             {
@@ -3134,8 +3135,15 @@ task_process_status BufferMgrDynamic::handleSingleBufferQueueEntry(const string 
             SWSS_LOG_INFO("Inserting field %s value %s", fvField(i).c_str(), fvValue(i).c_str());
         }
 
+        if (!successful)
+        {
+            SWSS_LOG_ERROR("Invalid BUFFER_QUEUE configuration on %s: no profile configured", key.c_str());
+            return task_process_status::task_failed;
+        }
+
         // TODO: check overlap. Currently, assume there is no overlap
 
+        auto &portQueue = m_portQueueLookup[port][queues];
         if (PORT_ADMIN_DOWN == portInfo.state)
         {
             handleSetSingleBufferObjectOnAdminDownPort(BUFFER_QUEUE, port, key, portQueue.running_profile_name);
