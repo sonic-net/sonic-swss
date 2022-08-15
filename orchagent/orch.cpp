@@ -393,7 +393,7 @@ ref_resolve_status Orch::resolveFieldRefValue(
             {
                 return ref_resolve_status::not_resolved;
             }
-            else if (ref_type_name.empty() && object_name.empty())
+            else if (object_name.empty())
             {
                 return ref_resolve_status::empty;
             }
