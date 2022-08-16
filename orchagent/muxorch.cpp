@@ -963,7 +963,7 @@ bool MuxOrch::isNeighborActive(const IpAddress& nbr, const MacAddress& mac, stri
 
     if (ptr)
     {
-        return ptr->isActive() || ptr->isSkipNeighbor(nbr);
+        return (ptr->isActive() || ptr->isSkipNeighbor(nbr));
     }
 
     string port;
@@ -977,7 +977,7 @@ bool MuxOrch::isNeighborActive(const IpAddress& nbr, const MacAddress& mac, stri
     if (!port.empty() && isMuxExists(port))
     {
         MuxCable* ptr = getMuxCable(port);
-        return ptr->isActive() || ptr->isSkipNeighbor(nbr);
+        return (ptr->isActive() || ptr->isSkipNeighbor(nbr));
     }
 
     NextHopKey nh_key = NextHopKey(nbr, alias);
@@ -985,7 +985,7 @@ bool MuxOrch::isNeighborActive(const IpAddress& nbr, const MacAddress& mac, stri
     if (port.empty() && !curr_port.empty() && isMuxExists(curr_port))
     {
         MuxCable* ptr = getMuxCable(curr_port);
-        return ptr->isActive() || ptr->isSkipNeighbor(nbr);
+        return (ptr->isActive() || ptr->isSkipNeighbor(nbr));
     }
 
     return true;
