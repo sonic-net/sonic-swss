@@ -89,6 +89,11 @@ def pytest_addoption(parser):
                      default="traditional",
                      help="Buffer model")
 
+    parser.addoption("--graceful-stop",
+                     action="store_true",
+                     default=False,
+                     help="Stop swss before stopping a conatainer")
+
 
 def random_string(size=4, chars=string.ascii_uppercase + string.digits):
     return "".join(random.choice(chars) for x in range(size))
@@ -407,7 +412,7 @@ class DockerVirtualSwitch:
         for i in range(NUM_PORTS):
             server = VirtualServer(self.ctn_sw.name, self.ctn_sw_pid, i)
             self.servers.append(server)
-            
+
     def reset_dbs(self):
         # DB wrappers are declared here, lazy-loaded in the tests
         self.app_db = None
@@ -658,6 +663,7 @@ class DockerVirtualSwitch:
         for pname in self.swssd:
             cmd += "supervisorctl stop {}; ".format(pname)
         self.runcmd(['sh', '-c', cmd])
+        time.sleep(5)
 
     # deps: warm_reboot
     def start_zebra(self):
@@ -669,7 +675,7 @@ class DockerVirtualSwitch:
     # deps: warm_reboot
     def stop_zebra(self):
         self.runcmd(['sh', '-c', 'pkill -9 zebra'])
-        time.sleep(1)
+        time.sleep(5)
 
     # deps: warm_reboot
     def start_fpmsyncd(self):
@@ -1729,6 +1735,8 @@ def manage_dvs(request) -> str:
     max_cpu = request.config.getoption("--max_cpu")
     buffer_model = request.config.getoption("--buffer_model")
     force_recreate = request.config.getoption("--force-recreate-dvs")
+    graceful_stop = request.config.getoption("--graceful-stop")
+
     dvs = None
     curr_dvs_env = [] # lgtm[py/unused-local-variable]
 
@@ -1777,6 +1785,8 @@ def manage_dvs(request) -> str:
 
     yield update_dvs
 
+    if graceful_stop:
+        dvs.stop_swss()
     dvs.get_logs()
     dvs.destroy()
 
@@ -1843,7 +1853,8 @@ def dvs_route(request, dvs) -> DVSRoute:
 @pytest.yield_fixture(scope="class")
 def dvs_lag_manager(request, dvs):
     request.cls.dvs_lag = dvs_lag.DVSLag(dvs.get_asic_db(),
-                                         dvs.get_config_db())
+                                         dvs.get_config_db(),
+                                         dvs)
 
 
 @pytest.yield_fixture(scope="class")
@@ -1858,7 +1869,7 @@ def dvs_vlan_manager(request, dvs):
 def dvs_port_manager(request, dvs):
     request.cls.dvs_port = dvs_port.DVSPort(dvs.get_asic_db(),
                                             dvs.get_config_db())
-    
+
 @pytest.yield_fixture(scope="class")
 def dvs_mirror_manager(request, dvs):
     request.cls.dvs_mirror = dvs_mirror.DVSMirror(dvs.get_asic_db(),

@@ -140,11 +140,11 @@ def delete_vnet_local_routes(dvs, prefix, vnet_name):
     time.sleep(2)
 
 
-def create_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor=""):
-    set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac=mac, vni=vni, ep_monitor=ep_monitor)
+def create_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile=""):
+    set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac=mac, vni=vni, ep_monitor=ep_monitor, profile=profile)
 
 
-def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor=""):
+def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile=""):
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
     attrs = [
@@ -159,6 +159,9 @@ def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor=
 
     if ep_monitor:
         attrs.append(('endpoint_monitor', ep_monitor))
+
+    if profile:
+        attrs.append(('profile', profile))
 
     tbl = swsscommon.Table(conf_db, "VNET_ROUTE_TUNNEL")
     fvs = swsscommon.FieldValuePairs(attrs)
@@ -490,12 +493,18 @@ def check_remove_state_db_routes(dvs, vnet, prefix):
     assert vnet + '|' + prefix not in keys
 
 
-def check_routes_advertisement(dvs, prefix):
+def check_routes_advertisement(dvs, prefix, profile=""):
     state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
     tbl =  swsscommon.Table(state_db, "ADVERTISE_NETWORK_TABLE")
     keys = tbl.getKeys()
 
     assert prefix in keys
+
+    if profile:
+        status, fvs = tbl.get(prefix)
+        assert status, "Got an error when get a key"
+        fvs = dict(fvs)
+        assert fvs['profile'] == profile
 
 
 def check_remove_routes_advertisement(dvs, prefix):
@@ -2011,7 +2020,7 @@ class TestVnetOrch(object):
         vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '12.12.12.12')
 
         vnet_obj.fetch_exist_entries(dvs)
-        create_vnet_routes(dvs, "100.100.1.1/32", 'Vnet12', '12.0.0.1,12.0.0.2,12.0.0.3', ep_monitor='12.1.0.1,12.1.0.2,12.1.0.3')
+        create_vnet_routes(dvs, "100.100.1.1/32", 'Vnet12', '12.0.0.1,12.0.0.2,12.0.0.3', ep_monitor='12.1.0.1,12.1.0.2,12.1.0.3', profile="test_profile")
 
         # default bfd status is down, route should not be programmed in this status
         vnet_obj.check_del_vnet_routes(dvs, 'Vnet12', ["100.100.1.1/32"])
@@ -2025,14 +2034,14 @@ class TestVnetOrch(object):
         time.sleep(2)
         route1, nhg1_1 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet12', ['12.0.0.1', '12.0.0.2', '12.0.0.3'], tunnel_name)
         check_state_db_routes(dvs, 'Vnet12', "100.100.1.1/32", ['12.0.0.1', '12.0.0.2', '12.0.0.3'])
-        check_routes_advertisement(dvs, "100.100.1.1/32")
+        check_routes_advertisement(dvs, "100.100.1.1/32", "test_profile")
 
         # Remove endpoint from group if it goes down
         update_bfd_session_state(dvs, '12.1.0.2', 'Down')
         time.sleep(2)
         route1, nhg1_1 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet12', ['12.0.0.1', '12.0.0.3'], tunnel_name, route_ids=route1, nhg=nhg1_1)
         check_state_db_routes(dvs, 'Vnet12', "100.100.1.1/32", ['12.0.0.1', '12.0.0.3'])
-        check_routes_advertisement(dvs, "100.100.1.1/32")
+        check_routes_advertisement(dvs, "100.100.1.1/32", "test_profile")
 
         # Create another tunnel route with endpoint group overlapped with route1
         vnet_obj.fetch_exist_entries(dvs)
@@ -2054,15 +2063,15 @@ class TestVnetOrch(object):
 
         route1, nhg1_1 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet12', ['12.0.0.1'], tunnel_name, route_ids=route1, nhg=nhg1_1)
         check_state_db_routes(dvs, 'Vnet12', "100.100.1.1/32", ['12.0.0.1'])
-        check_routes_advertisement(dvs, "100.100.1.1/32")
+        check_routes_advertisement(dvs, "100.100.1.1/32", "test_profile")
 
         # Set the route1 to a new group
-        set_vnet_routes(dvs, "100.100.1.1/32", 'Vnet12', '12.0.0.1,12.0.0.2,12.0.0.3,12.0.0.4', ep_monitor='12.1.0.1,12.1.0.2,12.1.0.3,12.1.0.4')
+        set_vnet_routes(dvs, "100.100.1.1/32", 'Vnet12', '12.0.0.1,12.0.0.2,12.0.0.3,12.0.0.4', ep_monitor='12.1.0.1,12.1.0.2,12.1.0.3,12.1.0.4', profile="test_profile2")
         update_bfd_session_state(dvs, '12.1.0.4', 'Up')
         time.sleep(2)
         route1, nhg1_2 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet12', ['12.0.0.1', '12.0.0.4'], tunnel_name, route_ids=route1)
         check_state_db_routes(dvs, 'Vnet12', "100.100.1.1/32", ['12.0.0.1', '12.0.0.4'])
-        check_routes_advertisement(dvs, "100.100.1.1/32")
+        check_routes_advertisement(dvs, "100.100.1.1/32", "test_profile2")
 
         # Check the previous nexthop group is removed
         vnet_obj.fetch_exist_entries(dvs)
@@ -2073,7 +2082,7 @@ class TestVnetOrch(object):
         time.sleep(2)
         route1, nhg1_2 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet12', ['12.0.0.1', '12.0.0.2', '12.0.0.4'], tunnel_name, route_ids=route1, nhg=nhg1_2)
         check_state_db_routes(dvs, 'Vnet12', "100.100.1.1/32", ['12.0.0.1', '12.0.0.2', '12.0.0.4'])
-        check_routes_advertisement(dvs, "100.100.1.1/32")
+        check_routes_advertisement(dvs, "100.100.1.1/32", "test_profile2")
 
         # Set all endpoint to down state
         update_bfd_session_state(dvs, '12.1.0.1', 'Down')

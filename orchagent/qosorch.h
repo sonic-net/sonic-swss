@@ -78,8 +78,6 @@ public:
     bool convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes) override;
     sai_object_id_t addQosItem(const vector<sai_attribute_t> &attributes) override;
     bool removeQosItem(sai_object_id_t sai_object);
-protected:
-    void applyDscpToTcMapToSwitch(sai_attr_id_t attr_id, sai_object_id_t sai_dscp_to_tc_map);
 };
 
 class MplsTcToTcMapHandler : public QosMapHandler
@@ -114,6 +112,24 @@ public:
 protected:
     bool convertEcnMode(string str, sai_ecn_mark_mode_t &ecn_val);
     bool convertBool(string str, bool &val);
+private:
+    void appendThresholdToAttributeList(sai_attr_id_t type,
+                                        sai_uint32_t threshold,
+                                        bool needDefer,
+                                        vector<sai_attribute_t> &normalQueue,
+                                        vector<sai_attribute_t> &deferredQueue,
+                                        sai_uint32_t &newThreshold);
+    typedef struct {
+        sai_uint32_t green_max_threshold;
+        sai_uint32_t green_min_threshold;
+        sai_uint32_t yellow_max_threshold;
+        sai_uint32_t yellow_min_threshold;
+        sai_uint32_t red_max_threshold;
+        sai_uint32_t red_min_threshold;
+    } qos_wred_thresholds_t;
+    typedef map<string, qos_wred_thresholds_t> qos_wred_thresholds_store_t;
+
+    static qos_wred_thresholds_store_t m_wredProfiles;
 };
 
 
@@ -195,11 +211,13 @@ private:
     task_process_status handleExpToFcTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
     task_process_status handleTcToDscpTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
 
+    task_process_status handleGlobalQosMap(const string &op, KeyOpFieldsValuesTuple &tuple);
+
     sai_object_id_t getSchedulerGroup(const Port &port, const sai_object_id_t queue_id);
 
     bool applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, sai_object_id_t scheduler_profile_id);
     bool applyWredProfileToQueue(Port &port, size_t queue_ind, sai_object_id_t sai_wred_profile);
-
+    bool applyDscpToTcMapToSwitch(sai_attr_id_t attr_id, sai_object_id_t sai_dscp_to_tc_map);
 private:
     qos_table_handler_map m_qos_handler_map;
 
@@ -211,9 +229,6 @@ private:
     };
 
     std::unordered_map<sai_object_id_t, SchedulerGroupPortInfo_t> m_scheduler_group_port_info;
-
-    // SAI OID of the global dscp to tc map
-    sai_object_id_t m_globalDscpToTcMap;
 
     friend QosMapHandler;
     friend DscpToTcMapHandler;

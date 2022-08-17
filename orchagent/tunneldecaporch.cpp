@@ -67,7 +67,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
         {
             tunnel_id = tunnelTable[key].tunnel_id;
         }
-        
+
         if (op == SET_COMMAND)
         {
 
@@ -240,11 +240,11 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                 ++it;
                 continue;
             }
-            
+
             //create new tunnel if it doesn't exists already
             if (valid && !exists)
             {
-                
+
                 if (addDecapTunnel(key, tunnel_type, ip_addresses, p_src_ip, dscp_mode, ecn_mode, encap_ecn_mode, ttl_mode,
                                     dscp_to_tc_map_id, tc_to_pg_map_id))
                 {
@@ -427,7 +427,7 @@ bool TunnelDecapOrch::addDecapTunnel(
         attr.value.oid = tc_to_pg_map_id;
         tunnel_attrs.push_back(attr);
     }
-    
+
     // write attributes to ASIC_DB
     sai_object_id_t tunnel_id;
     status = sai_tunnel_api->create_tunnel(&tunnel_id, gSwitchId, (uint32_t)tunnel_attrs.size(), tunnel_attrs.data());
@@ -669,8 +669,8 @@ bool TunnelDecapOrch::setTunnelAttribute(string field, sai_object_id_t value, sa
     {
         // TC remapping.
         attr.id = SAI_TUNNEL_ATTR_DECAP_QOS_DSCP_TO_TC_MAP;
-        attr.value.oid = value; 
-        
+        attr.value.oid = value;
+
     }
     else if (field == decap_tc_to_pg_field_name)
     {
@@ -763,7 +763,16 @@ bool TunnelDecapOrch::removeDecapTunnel(string table_name, string key)
     for (auto it = tunnel_info->tunnel_term_info.begin(); it != tunnel_info->tunnel_term_info.end(); ++it)
     {
         TunnelTermEntry tunnel_entry_info = *it;
-        string term_key = tunnel_entry_info.src_ip + '-' + tunnel_entry_info.dst_ip;
+        string term_key;
+        swss::IpAddress src_ip(tunnel_entry_info.src_ip);
+        if (!src_ip.isZero())
+        {
+            term_key = src_ip.to_string() + '-' + tunnel_entry_info.dst_ip;
+        }
+        else
+        {
+            term_key = tunnel_entry_info.dst_ip;
+        }
         if (!removeDecapTunnelTermEntry(tunnel_entry_info.tunnel_term_id, term_key))
         {
             return false;

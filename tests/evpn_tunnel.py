@@ -485,7 +485,7 @@ class VxlanTunnel(object):
             (exitcode, out) = dvs.runcmd(iplinkcmd)
             assert exitcode == 0, "Kernel device not created"
 
-    def check_vxlan_sip_tunnel_delete(self, dvs, tunnel_name, sip):
+    def check_vxlan_sip_tunnel_delete(self, dvs, tunnel_name, sip, ignore_bp = True):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
         app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
 
@@ -511,18 +511,19 @@ class VxlanTunnel(object):
         status, fvs = tbl.get(self.tunnel_map_map[tunnel_name][3])
         assert status == False, "SIP Tunnel mapper3 not deleted from ASIC_DB"
 
-        tbl = swsscommon.Table(asic_db, self.ASIC_BRIDGE_PORT)
-        status, fvs = tbl.get(self.bridgeport_map[sip])
-        assert status == False, "Tunnel bridgeport entry not deleted"
+        if not ignore_bp:
+            tbl = swsscommon.Table(asic_db, self.ASIC_BRIDGE_PORT)
+            status, fvs = tbl.get(self.bridgeport_map[sip])
+            assert status == False, "Tunnel bridgeport entry not deleted"
 
-    def check_vxlan_sip_tunnel(self, dvs, tunnel_name, src_ip, vidlist, vnidlist, dst_ip = '0.0.0.0', skip_dst_ip = 'True'):
+    def check_vxlan_sip_tunnel(self, dvs, tunnel_name, src_ip, vidlist, vnidlist, 
+                               dst_ip = '0.0.0.0', skip_dst_ip = 'True', ignore_bp = True):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
         app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
 
         tunnel_map_id  = self.helper.get_created_entries(asic_db, self.ASIC_TUNNEL_MAP, self.tunnel_map_ids, 4)
         tunnel_id      = self.helper.get_created_entry(asic_db, self.ASIC_TUNNEL_TABLE, self.tunnel_ids)
         tunnel_term_id = self.helper.get_created_entry(asic_db, self.ASIC_TUNNEL_TERM_ENTRY, self.tunnel_term_ids)
-        tunnel_map_entry_id = self.helper.get_created_entries(asic_db, self.ASIC_TUNNEL_MAP_ENTRY, self.tunnel_map_entry_ids, 3)
 
         # check that the vxlan tunnel termination are there
         assert self.helper.how_many_entries_exist(asic_db, self.ASIC_TUNNEL_MAP) == (len(self.tunnel_map_ids) + 4), "The TUNNEL_MAP wasn't created"
@@ -530,17 +531,15 @@ class VxlanTunnel(object):
         assert self.helper.how_many_entries_exist(asic_db, self.ASIC_TUNNEL_TABLE) == (len(self.tunnel_ids) + 1), "The TUNNEL wasn't created"
         assert self.helper.how_many_entries_exist(asic_db, self.ASIC_TUNNEL_TERM_ENTRY) == (len(self.tunnel_term_ids) + 1), "The TUNNEL_TERM_TABLE_ENTRY wasm't created"
 
-        self.helper.check_object(asic_db, self.ASIC_TUNNEL_MAP, tunnel_map_id[2],
-                        {
-                            'SAI_TUNNEL_MAP_ATTR_TYPE': 'SAI_TUNNEL_MAP_TYPE_VNI_TO_VIRTUAL_ROUTER_ID',
-                        }
-                )
+        expected_attributes_1 = {}
+        expected_attributes_1['SAI_TUNNEL_MAP_ATTR_TYPE'] = 'SAI_TUNNEL_MAP_TYPE_VNI_TO_VIRTUAL_ROUTER_ID'
+        ret = self.helper.get_key_with_attr(asic_db, self.ASIC_TUNNEL_MAP, expected_attributes_1)
+        assert len(ret) == 1, "Unexpected number of tunnel maps created for type SAI_TUNNEL_MAP_TYPE_VNI_TO_VIRTUAL_ROUTER_ID"
 
-        self.helper.check_object(asic_db, self.ASIC_TUNNEL_MAP, tunnel_map_id[3],
-                        {
-                            'SAI_TUNNEL_MAP_ATTR_TYPE': 'SAI_TUNNEL_MAP_TYPE_VIRTUAL_ROUTER_ID_TO_VNI',
-                        }
-                )
+        expected_attributes_1['SAI_TUNNEL_MAP_ATTR_TYPE'] = 'SAI_TUNNEL_MAP_TYPE_VIRTUAL_ROUTER_ID_TO_VNI'
+        ret = self.helper.get_key_with_attr(asic_db, self.ASIC_TUNNEL_MAP, expected_attributes_1)
+        assert len(ret) == 1, "Unexpected number of tunnel maps created for type SAI_TUNNEL_MAP_TYPE_VIRTUAL_ROUTER_ID_TO_VNI"
+
 
         decapstr = '2:' + tunnel_map_id[0] + ',' + tunnel_map_id[2]
         encapstr = '2:' + tunnel_map_id[1] + ',' + tunnel_map_id[3]
@@ -571,7 +570,6 @@ class VxlanTunnel(object):
 
         expected_attributes_1 = {
         'SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP_TYPE': 'SAI_TUNNEL_MAP_TYPE_VNI_TO_VLAN_ID',
-        'SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP': tunnel_map_id[0],
         'SAI_TUNNEL_MAP_ENTRY_ATTR_VLAN_ID_VALUE': vidlist[0],
         'SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_KEY': vnidlist[0],
         }
@@ -579,7 +577,8 @@ class VxlanTunnel(object):
         for x in range(len(vidlist)):
             expected_attributes_1['SAI_TUNNEL_MAP_ENTRY_ATTR_VLAN_ID_VALUE'] = vidlist[x]
             expected_attributes_1['SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_KEY'] = vnidlist[x]
-            self.helper.check_object(asic_db, self.ASIC_TUNNEL_MAP_ENTRY, tunnel_map_entry_id[x], expected_attributes_1)
+            self.helper.get_key_with_attr(asic_db, self.ASIC_TUNNEL_MAP_ENTRY, expected_attributes_1)
+            assert len(ret) == 1, "Unexpected number of tunnel map entries created for VLAN to VNI mapping"
 
         expected_siptnl_attributes = {
             'src_ip': src_ip,
@@ -593,16 +592,18 @@ class VxlanTunnel(object):
         assert len(ret) == 1, "More than 1 Tunn statetable entry created"
         self.tunnel_appdb[tunnel_name] = ret[0]
 
-        expected_bridgeport_attributes = {
-        'SAI_BRIDGE_PORT_ATTR_TYPE': 'SAI_BRIDGE_PORT_TYPE_TUNNEL',
-        'SAI_BRIDGE_PORT_ATTR_TUNNEL_ID': tunnel_id,
-        'SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE': 'SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE',
-        'SAI_BRIDGE_PORT_ATTR_ADMIN_STATE': 'true',
-        }
-        ret = self.helper.get_key_with_attr(asic_db, self.ASIC_BRIDGE_PORT, expected_bridgeport_attributes)
-        assert len(ret) > 0, "Bridgeport entry not created"
-        assert len(ret) == 1, "More than 1 bridgeport entry created"
-        self.bridgeport_map[src_ip] = ret[0]
+        if not ignore_bp:
+            expected_bridgeport_attributes = {
+            'SAI_BRIDGE_PORT_ATTR_TYPE': 'SAI_BRIDGE_PORT_TYPE_TUNNEL',
+            'SAI_BRIDGE_PORT_ATTR_TUNNEL_ID': tunnel_id,
+            'SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE': 'SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE',
+            'SAI_BRIDGE_PORT_ATTR_ADMIN_STATE': 'true',
+            }
+            ret = self.helper.get_key_with_attr(asic_db, self.ASIC_BRIDGE_PORT, expected_bridgeport_attributes)
+            assert len(ret) > 0, "Bridgeport entry not created"
+            assert len(ret) == 1, "More than 1 bridgeport entry created"
+            self.bridgeport_map[src_ip] = ret[0]
+
         self.tunnel_map_ids.update(tunnel_map_id)
         self.tunnel_ids.add(tunnel_id)
         self.tunnel_term_ids.add(tunnel_term_id)
@@ -797,37 +798,33 @@ class VxlanTunnel(object):
     def check_vxlan_tunnel_vrf_map_entry(self, dvs, tunnel_name, vrf_name, vni_id):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
-        if (self.tunnel_map_map.get(tunnel_name) is None):
-            tunnel_map_id = self.helper.get_created_entries(asic_db, self.ASIC_TUNNEL_MAP, self.tunnel_map_ids, 4)
-        else:
-            tunnel_map_id = self.tunnel_map_map[tunnel_name]
-
         tunnel_map_entry_id = self.helper.get_created_entries(asic_db, self.ASIC_TUNNEL_MAP_ENTRY, self.tunnel_map_entry_ids, 3)
 
         # check that the vxlan tunnel termination are there
         assert self.helper.how_many_entries_exist(asic_db, self.ASIC_TUNNEL_MAP_ENTRY) == (len(self.tunnel_map_entry_ids) + 3), "The TUNNEL_MAP_ENTRY is created too early"
 
-        self.helper.check_object(asic_db, self.ASIC_TUNNEL_MAP_ENTRY, tunnel_map_entry_id[1],
+        ret = self.helper.get_key_with_attr(asic_db, self.ASIC_TUNNEL_MAP_ENTRY,
             {
                 'SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP_TYPE': 'SAI_TUNNEL_MAP_TYPE_VIRTUAL_ROUTER_ID_TO_VNI',
-                'SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP': tunnel_map_id[3],
                 'SAI_TUNNEL_MAP_ENTRY_ATTR_VIRTUAL_ROUTER_ID_KEY': self.vr_map[vrf_name].get('ing'),
                 'SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_VALUE': vni_id,
             }
         )
 
-        self.tunnel_map_vrf_entry_ids.update(tunnel_map_entry_id[1])
+        assert len(ret) == 1, "Invalid number of tunnel map entries for SAI_TUNNEL_MAP_TYPE_VIRTUAL_ROUTER_ID_TO_VNI"
 
-        self.helper.check_object(asic_db, self.ASIC_TUNNEL_MAP_ENTRY, tunnel_map_entry_id[2],
+        self.tunnel_map_vrf_entry_ids.update(ret[0])
+
+        ret = self.helper.get_key_with_attr(asic_db, self.ASIC_TUNNEL_MAP_ENTRY,
             {
                 'SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP_TYPE': 'SAI_TUNNEL_MAP_TYPE_VNI_TO_VIRTUAL_ROUTER_ID',
-                'SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP': tunnel_map_id[2],
                 'SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_KEY': vni_id,
                 'SAI_TUNNEL_MAP_ENTRY_ATTR_VIRTUAL_ROUTER_ID_VALUE': self.vr_map[vrf_name].get('egr'),
             }
         )
 
-        self.tunnel_map_vrf_entry_ids.update(tunnel_map_entry_id[2])
+        assert len(ret) == 1, "Invalid number of tunnel map entries for SAI_TUNNEL_MAP_TYPE_VNI_TO_VIRTUAL_ROUTER_ID"
+        self.tunnel_map_vrf_entry_ids.update(ret[0])
         self.tunnel_map_entry_ids.update(tunnel_map_entry_id)
 
     def check_vxlan_tunnel_vrf_map_entry_remove(self, dvs, tunnel_name, vrf_name, vni_id):

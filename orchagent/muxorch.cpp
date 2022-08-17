@@ -351,8 +351,8 @@ static bool remove_nh_tunnel(sai_object_id_t nh_id, IpAddress& ipAddr)
     return true;
 }
 
-MuxCable::MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress peer_ip)
-         :mux_name_(name), srv_ip4_(srv_ip4), srv_ip6_(srv_ip6), peer_ip4_(peer_ip)
+MuxCable::MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress peer_ip, std::set<IpAddress> skip_neighbors)
+         :mux_name_(name), srv_ip4_(srv_ip4), srv_ip6_(srv_ip6), peer_ip4_(peer_ip), skip_neighbors_(skip_neighbors)
 {
     mux_orch_ = gDirectory.get<MuxOrch*>();
     mux_cb_orch_ = gDirectory.get<MuxCableOrch*>();
@@ -367,6 +367,7 @@ MuxCable::MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress 
 
     /* Set initial state to "standby" */
     stateStandby();
+    state_ = MuxState::MUX_STATE_STANDBY;
 }
 
 bool MuxCable::stateInitActive()
@@ -534,6 +535,11 @@ bool MuxCable::nbrHandler(bool enable, bool update_rt)
 void MuxCable::updateNeighbor(NextHopKey nh, bool add)
 {
     sai_object_id_t tnh = mux_orch_->getNextHopTunnelId(MUX_TUNNEL, peer_ip4_);
+    if (add && skip_neighbors_.find(nh.ip_address) != skip_neighbors_.end())
+    {
+        SWSS_LOG_INFO("Skip update neighbor %s on %s", nh.ip_address.to_string().c_str(), nh.alias.c_str());
+        return;
+    }
     nbr_handler_->update(nh, tnh, add, state_);
     if (add)
     {
@@ -957,6 +963,10 @@ bool MuxOrch::isNeighborActive(const IpAddress& nbr, const MacAddress& mac, stri
 
     if (ptr)
     {
+        if (ptr->getSkipNeighborsSet().find(nbr) != ptr->getSkipNeighborsSet().end())
+        {
+            return true;
+        }
         return ptr->isActive();
     }
 
@@ -1208,8 +1218,26 @@ bool MuxOrch::handleMuxCfg(const Request& request)
     auto srv_ip = request.getAttrIpPrefix("server_ipv4");
     auto srv_ip6 = request.getAttrIpPrefix("server_ipv6");
 
+    std::set<IpAddress> skip_neighbors;
+
     const auto& port_name = request.getKeyString(0);
     auto op = request.getOperation();
+
+    for (const auto &name : request.getAttrFieldNames())
+    {
+        if (name == "soc_ipv4")
+        {
+            auto soc_ip = request.getAttrIpPrefix("soc_ipv4");
+            SWSS_LOG_NOTICE("%s: %s was added to ignored neighbor list", port_name.c_str(), soc_ip.getIp().to_string().c_str());
+            skip_neighbors.insert(soc_ip.getIp());
+        }
+        else if (name == "soc_ipv6")
+        {
+            auto soc_ip6 = request.getAttrIpPrefix("soc_ipv6");
+            SWSS_LOG_NOTICE("%s: %s was added to ignored neighbor list", port_name.c_str(), soc_ip6.getIp().to_string().c_str());
+            skip_neighbors.insert(soc_ip6.getIp());
+        }
+    }
 
     if (op == SET_COMMAND)
     {
@@ -1226,7 +1254,7 @@ bool MuxOrch::handleMuxCfg(const Request& request)
         }
 
         mux_cable_tb_[port_name] = std::make_unique<MuxCable>
-                                   (MuxCable(port_name, srv_ip, srv_ip6, mux_peer_switch_));
+                                   (MuxCable(port_name, srv_ip, srv_ip6, mux_peer_switch_, skip_neighbors));
 
         SWSS_LOG_NOTICE("Mux entry for port '%s' was added", port_name.c_str());
     }
@@ -1257,8 +1285,6 @@ bool MuxOrch::handlePeerSwitch(const Request& request)
 
     if (op == SET_COMMAND)
     {
-        mux_peer_switch_ = peer_ip;
-
         // Create P2P tunnel when peer_ip is available.
         IpAddresses dst_ips = decap_orch_->getDstIpAddresses(MUX_TUNNEL);
         if (!dst_ips.getSize())
@@ -1293,6 +1319,7 @@ bool MuxOrch::handlePeerSwitch(const Request& request)
         }
 
         mux_tunnel_id_ = create_tunnel(&peer_ip, &dst_ip, tc_to_dscp_map_id, tc_to_queue_map_id, dscp_mode_name);
+        mux_peer_switch_ = peer_ip;
         SWSS_LOG_NOTICE("Mux peer ip '%s' was added, peer name '%s'",
                          peer_ip.to_string().c_str(), peer_name.c_str());
     }

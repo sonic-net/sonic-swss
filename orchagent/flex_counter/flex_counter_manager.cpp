@@ -89,14 +89,28 @@ FlexCounterManager::FlexCounterManager(
         const uint polling_interval,
         const bool enabled,
         FieldValueTuple fv_plugin) :
+    FlexCounterManager("FLEX_COUNTER_DB", group_name, stats_mode,
+            polling_interval, enabled, fv_plugin)
+{
+}
+
+FlexCounterManager::FlexCounterManager(
+        const string& db_name,
+        const string& group_name,
+        const StatsMode stats_mode,
+        const uint polling_interval,
+        const bool enabled,
+        FieldValueTuple fv_plugin) :
     group_name(group_name),
     stats_mode(stats_mode),
     polling_interval(polling_interval),
     enabled(enabled),
     fv_plugin(fv_plugin),
-    flex_counter_db(new DBConnector("FLEX_COUNTER_DB", 0)),
-    flex_counter_group_table(new ProducerTable(flex_counter_db.get(), FLEX_COUNTER_GROUP_TABLE)),
-    flex_counter_table(new ProducerTable(flex_counter_db.get(), FLEX_COUNTER_TABLE))
+    flex_counter_db(new DBConnector(db_name, 0)),
+    flex_counter_group_table(new ProducerTable(flex_counter_db.get(),
+                FLEX_COUNTER_GROUP_TABLE)),
+    flex_counter_table(new ProducerTable(flex_counter_db.get(),
+                FLEX_COUNTER_TABLE))
 {
     SWSS_LOG_ENTER();
 
@@ -114,7 +128,10 @@ FlexCounterManager::~FlexCounterManager()
         flex_counter_table->del(getFlexCounterTableKey(group_name, counter));
     }
 
-    flex_counter_group_table->del(group_name);
+    if (flex_counter_group_table != nullptr)
+    {
+        flex_counter_group_table->del(group_name);
+    }
 
     SWSS_LOG_DEBUG("Deleted flex counter group '%s'.", group_name.c_str());
 }

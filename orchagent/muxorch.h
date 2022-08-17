@@ -76,7 +76,7 @@ private:
 class MuxCable
 {
 public:
-    MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress peer_ip);
+    MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress peer_ip, std::set<IpAddress> skip_neighbors);
 
     bool isActive() const
     {
@@ -97,6 +97,10 @@ public:
     {
         return nbr_handler_->getNextHopId(nh);
     }
+    std::set<IpAddress> getSkipNeighborsSet()
+    {
+        return skip_neighbors_;
+    }
 
 private:
     bool stateActive();
@@ -115,6 +119,8 @@ private:
     IpPrefix srv_ip4_, srv_ip6_;
     IpAddress peer_ip4_;
 
+    std::set<IpAddress> skip_neighbors_;
+
     MuxOrch *mux_orch_;
     MuxCableOrch *mux_cb_orch_;
     MuxStateOrch *mux_state_orch_;
@@ -131,6 +137,9 @@ const request_description_t mux_cfg_request_description = {
                 { "server_ipv4", REQ_T_IP_PREFIX },
                 { "server_ipv6", REQ_T_IP_PREFIX },
                 { "address_ipv4", REQ_T_IP },
+                { "soc_ipv4", REQ_T_IP_PREFIX },
+                { "soc_ipv6", REQ_T_IP_PREFIX },
+                { "cable_type", REQ_T_STRING },
             },
             { }
 };
