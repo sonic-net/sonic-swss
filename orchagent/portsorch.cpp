@@ -6112,19 +6112,27 @@ void PortsOrch::removePortBufferQueueCounters(const Port &port, string queues)
         name << port.m_alias << ":" << queueIndex;
         const auto id = sai_serialize_object_id(port.m_queue_ids[queueIndex]);
 
-        /* Remove watermark queue counters */
-        string key = getQueueWatermarkFlexCounterTableKey(id);
-        m_flexCounterTable->del(key);
+        // Remove the queue counter from counters DB maps
+        m_queueTable->hdel("", name.str());
+        m_queuePortTable->hdel("", id);
+
+        string queueType;
+        uint8_t queueRealIndex = 0;
+        if (getQueueTypeAndIndex(port.m_queue_ids[queueIndex], queueType, queueRealIndex))
+        {
+            m_queueTypeTable->hdel("", id);
+            m_queueIndexTable->hdel("", id);
+        }
 
         // Remove the flex counter for this queue
         queue_stat_manager.clearCounterIdList(port.m_queue_ids[queueIndex]);
 
-        // Remove the queue counter from counters DB maps
-        m_queueTable->hdel("", name.str());
-        m_queuePortTable->hdel("", id);
-        m_queueIndexTable->hdel("", id);
-        m_queueTypeTable->hdel("", id);
+        // Remove watermark queue counters
+        string key = getQueueWatermarkFlexCounterTableKey(id);
+        m_flexCounterTable->del(key);
     }
+
+    CounterCheckOrch::getInstance().removePort(port);
 }
 
 void PortsOrch::generatePriorityGroupMap(map<string, FlexCounterPgStates> pgsStateVector)
@@ -6301,19 +6309,21 @@ void PortsOrch::removePortBufferPgCounters(const Port& port, string pgs)
         name << port.m_alias << ":" << pgIndex;
         const auto id = sai_serialize_object_id(port.m_priority_group_ids[pgIndex]);
 
-        /* Remove dropped packets counters from flex_counter */
-        string key = getPriorityGroupDropPacketsFlexCounterTableKey(id);
-        m_flexCounterTable->del(key);
-
-        /* Remove watermark counters from flex_counter */
-        key = getPriorityGroupWatermarkFlexCounterTableKey(id);
-        m_flexCounterTable->del(key);
-
         // Remove the pg counter from counters DB maps
         m_pgTable->hdel("", name.str());
         m_pgPortTable->hdel("", id);
         m_pgIndexTable->hdel("", id);
+
+        // Remove dropped packets counters from flex_counter
+        string key = getPriorityGroupDropPacketsFlexCounterTableKey(id);
+        m_flexCounterTable->del(key);
+
+        // Remove watermark counters from flex_counter
+        key = getPriorityGroupWatermarkFlexCounterTableKey(id);
+        m_flexCounterTable->del(key);
     }
+
+    CounterCheckOrch::getInstance().removePort(port);
 }
 
 void PortsOrch::generatePortCounterMap()
