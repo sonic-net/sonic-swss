@@ -115,6 +115,14 @@ class PfcWdAclHandler: public PfcWdLossyHandler
         void updatePfcAclRule(shared_ptr<AclRule> rule, uint8_t queueId, string strTable, vector<sai_object_id_t> port);
 };
 
+class PfcWdDlrHandler: public PfcWdLossyHandler
+{
+    public:
+        PfcWdDlrHandler(sai_object_id_t port, sai_object_id_t queue,
+                uint8_t queueId, shared_ptr<Table> countersTable);
+        virtual ~PfcWdDlrHandler(void);
+};
+
 // PFC queue that implements drop action by draining queue with buffer of zero size
 class PfcWdZeroBufferHandler: public PfcWdLossyHandler
 {

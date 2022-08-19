@@ -262,6 +262,49 @@ PfcWdSaiDlrInitHandler::~PfcWdSaiDlrInitHandler(void)
     }
 }
 
+PfcWdDlrHandler::PfcWdDlrHandler(sai_object_id_t port, sai_object_id_t queue,
+                                               uint8_t queueId, shared_ptr<Table> countersTable):
+    PfcWdLossyHandler(port, queue, queueId, countersTable)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    attr.id = SAI_QUEUE_ATTR_PFC_DLR_INIT;
+    attr.value.booldata = true;
+
+    // Set DLR init to true to start PFC deadlock recovery
+    sai_status_t status = sai_queue_api->set_queue_attribute(queue, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set PFC DLR INIT on port 0x%" PRIx64 " queue 0x%" PRIx64
+                       " queueId %d : %d",
+                       port, queue, queueId, status);
+        return;
+    }
+}
+
+PfcWdDlrHandler::~PfcWdDlrHandler(void)
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_id_t port = getPort();
+    sai_object_id_t queue = getQueue();
+    uint8_t queueId = getQueueId();
+
+    sai_attribute_t attr;
+    attr.id = SAI_QUEUE_ATTR_PFC_DLR_INIT;
+    attr.value.booldata = false;
+
+    // Set DLR init to false to stop PFC deadlock recovery
+    sai_status_t status = sai_queue_api->set_queue_attribute(getQueue(), &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to clear PFC DLR INIT on port 0x%" PRIx64 " queue 0x%" PRIx64
+                       " queueId %d : %d", port, queue, queueId, status);
+        return;
+    }
+}
+
 PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
         uint8_t queueId, shared_ptr<Table> countersTable):
     PfcWdLossyHandler(port, queue, queueId, countersTable)

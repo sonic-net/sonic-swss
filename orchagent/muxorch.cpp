@@ -963,6 +963,10 @@ bool MuxOrch::isNeighborActive(const IpAddress& nbr, const MacAddress& mac, stri
 
     if (ptr)
     {
+        if (ptr->getSkipNeighborsSet().find(nbr) != ptr->getSkipNeighborsSet().end())
+        {
+            return true;
+        }
         return ptr->isActive();
     }
 
