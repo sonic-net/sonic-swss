@@ -44,8 +44,8 @@ public:
     bool getPortBufferDropCountersState() const;
     bool getPgWatermarkCountersState() const;
     bool getQueueCountersState() const;
-    map<string, FlexCounterQueueStates> getQueueConfigurations();
-    map<string, FlexCounterPgStates> getPgConfigurations();
+    std::map<std::string, FlexCounterQueueStates> getQueueConfigurations();
+    std::map<std::string, FlexCounterPgStates> getPgConfigurations();
     bool getHostIfTrapCounterState() const {return m_hostif_trap_counter_enabled;}
     bool getRouteFlowCountersState() const {return m_route_flow_counter_enabled;}
     bool bake() override;
