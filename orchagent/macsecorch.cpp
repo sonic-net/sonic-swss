@@ -1275,6 +1275,8 @@ bool MACsecOrch::createMACsecPort(
             phy);
     });
 
+    m_port_orch->setMACsecEnabledState(port_id, true);
+
     if (phy)
     {
         if (!setPFCForward(port_id, true))
@@ -1541,6 +1543,8 @@ bool MACsecOrch::deleteMACsecPort(
         SWSS_LOG_WARN("Cannot delete MACsec ingress port at the port %s", port_name.c_str());
         result &= false;
     }
+
+    m_port_orch->setMACsecEnabledState(port_id, false);
 
     if (phy)
     {

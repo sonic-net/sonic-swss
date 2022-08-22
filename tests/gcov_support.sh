@@ -247,6 +247,7 @@ gcov_support_generate_report()
         pushd common_work
         find . -name "*.gcda" -o -name "*.gz" -o -name "*.info" | xargs rm -rf
         popd
+        rm -rf ${container_id}
     done < container_dir_list
 
     # generate report with code

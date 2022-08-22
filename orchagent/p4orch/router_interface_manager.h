@@ -51,6 +51,7 @@ class RouterInterfaceManager : public ObjectManagerInterface
 
     void enqueue(const swss::KeyOpFieldsValuesTuple &entry) override;
     void drain() override;
+    std::string verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple) override;
 
   private:
     ReturnCodeOr<P4RouterInterfaceAppDbEntry> deserializeRouterIntfEntry(
@@ -63,6 +64,9 @@ class RouterInterfaceManager : public ObjectManagerInterface
     ReturnCode processUpdateRequest(const P4RouterInterfaceAppDbEntry &app_db_entry,
                                     P4RouterInterfaceEntry *router_intf_entry);
     ReturnCode processDeleteRequest(const std::string &router_intf_key);
+    std::string verifyStateCache(const P4RouterInterfaceAppDbEntry &app_db_entry,
+                                 const P4RouterInterfaceEntry *router_intf_entry);
+    std::string verifyStateAsicDb(const P4RouterInterfaceEntry *router_intf_entry);
 
     P4RouterInterfaceTable m_routerIntfTable;
     P4OidMapper *m_p4OidMapper;

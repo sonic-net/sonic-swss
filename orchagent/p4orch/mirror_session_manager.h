@@ -85,6 +85,8 @@ class MirrorSessionManager : public ObjectManagerInterface
 
     void drain() override;
 
+    std::string verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple) override;
+
   private:
     ReturnCodeOr<P4MirrorSessionAppDbEntry> deserializeP4MirrorSessionAppDbEntry(
         const std::string &key, const std::vector<swss::FieldValueTuple> &attributes);
@@ -107,6 +109,11 @@ class MirrorSessionManager : public ObjectManagerInterface
                                      P4MirrorSessionEntry *existing_mirror_session_entry);
 
     ReturnCode processDeleteRequest(const std::string &mirror_session_key);
+
+    // state verification DB helper functions. Return err string or empty string.
+    std::string verifyStateCache(const P4MirrorSessionAppDbEntry &app_db_entry,
+                                 const P4MirrorSessionEntry *mirror_session_entry);
+    std::string verifyStateAsicDb(const P4MirrorSessionEntry *mirror_session_entry);
 
     std::unordered_map<std::string, P4MirrorSessionEntry> m_mirrorSessionTable;
 

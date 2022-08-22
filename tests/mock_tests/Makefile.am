@@ -116,7 +116,9 @@ tests_SOURCES += $(P4_ORCH_DIR)/p4orch.cpp \
 		 $(P4_ORCH_DIR)/acl_table_manager.cpp \
 		 $(P4_ORCH_DIR)/acl_rule_manager.cpp \
 		 $(P4_ORCH_DIR)/wcmp_manager.cpp \
-		 $(P4_ORCH_DIR)/mirror_session_manager.cpp
+		 $(P4_ORCH_DIR)/mirror_session_manager.cpp \
+		 $(P4_ORCH_DIR)/gre_tunnel_manager.cpp \
+		 $(P4_ORCH_DIR)/l3_admit_manager.cpp
 
 tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) -I$(top_srcdir)/orchagent

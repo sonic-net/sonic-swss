@@ -79,6 +79,13 @@ static map<string, sai_port_fec_mode_t> fec_mode_map =
     { "fc", SAI_PORT_FEC_MODE_FC }
 };
 
+static map<sai_port_fec_mode_t, string> fec_mode_reverse_map =
+{
+    { SAI_PORT_FEC_MODE_NONE, "none" },
+    { SAI_PORT_FEC_MODE_RS, "rs"  },
+    { SAI_PORT_FEC_MODE_FC, "fc"  }
+};
+
 static map<string, sai_port_priority_flow_control_mode_t> pfc_asym_map =
 {
     { "on", SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_SEPARATE },
@@ -1161,27 +1168,62 @@ bool PortsOrch::getPortAdminStatus(sai_object_id_t id, bool &up)
     return true;
 }
 
-bool PortsOrch::setPortMtu(sai_object_id_t id, sai_uint32_t mtu)
+bool PortsOrch::getPortMtu(const Port& port, sai_uint32_t &mtu)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_MTU;
+
+    sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        return false;
+    }
+
+    mtu = attr.value.u32 - (uint32_t)(sizeof(struct ether_header) + FCS_LEN + VLAN_TAG_LEN);
+
+    if (isMACsecPort(port.m_port_id))
+    {
+        mtu -= MAX_MACSEC_SECTAG_SIZE;
+    }
+
+    return true;
+}
+
+bool PortsOrch::setPortMtu(const Port& port, sai_uint32_t mtu)
 {
     SWSS_LOG_ENTER();
 
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_MTU;
     /* mtu + 14 + 4 + 4 = 22 bytes */
-    attr.value.u32 = (uint32_t)(mtu + sizeof(struct ether_header) + FCS_LEN + VLAN_TAG_LEN);
+    mtu += (uint32_t)(sizeof(struct ether_header) + FCS_LEN + VLAN_TAG_LEN);
+    attr.value.u32 = mtu;
 
-    sai_status_t status = sai_port_api->set_port_attribute(id, &attr);
+    if (isMACsecPort(port.m_port_id))
+    {
+        attr.value.u32 += MAX_MACSEC_SECTAG_SIZE;
+    }
+
+    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set MTU %u to port pid:%" PRIx64 ", rv:%d",
-                attr.value.u32, id, status);
+                attr.value.u32, port.m_port_id, status);
         task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
-    SWSS_LOG_INFO("Set MTU %u to port pid:%" PRIx64, attr.value.u32, id);
+
+    if (m_gearboxEnabled)
+    {
+        setGearboxPortsAttr(port, SAI_PORT_ATTR_MTU, &mtu);
+    }
+    SWSS_LOG_INFO("Set MTU %u to port pid:%" PRIx64, attr.value.u32, port.m_port_id);
     return true;
 }
 
@@ -1214,19 +1256,31 @@ bool PortsOrch::setPortTpid(sai_object_id_t id, sai_uint16_t tpid)
     return true;
 }
 
-
-bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t mode)
+bool PortsOrch::setPortFec(Port &port, string &mode)
 {
     SWSS_LOG_ENTER();
 
+    auto searchRef = m_portSupportedFecModes.find(port.m_port_id);
+    if (searchRef != m_portSupportedFecModes.end())
+    {
+        auto &supportedFecModes = searchRef->second;
+        if (!supportedFecModes.empty() && (supportedFecModes.find(mode) == supportedFecModes.end()))
+        {
+            SWSS_LOG_ERROR("Unsupported mode %s on port %s", mode.c_str(), port.m_alias.c_str());
+            // We return true becase the caller will keep the item in m_toSync and retry it later if we return false
+            // As the FEC mode is not supported it doesn't make sense to retry.
+            return true;
+        }
+    }
+
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_FEC_MODE;
-    attr.value.s32 = mode;
+    attr.value.s32 = port.m_fec_mode;
 
     sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to set fec mode %d to port pid:%" PRIx64, mode, port.m_port_id);
+        SWSS_LOG_ERROR("Failed to set FEC mode %s to port %s", mode.c_str(), port.m_alias.c_str());
         task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
         if (handle_status != task_success)
         {
@@ -1234,7 +1288,7 @@ bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t mode)
         }
     }
 
-    SWSS_LOG_INFO("Set fec mode %d to port pid:%" PRIx64, mode, port.m_port_id);
+    SWSS_LOG_NOTICE("Set port %s FEC mode %s", port.m_alias.c_str(), mode.c_str());
 
     setGearboxPortsAttr(port, SAI_PORT_ATTR_FEC_MODE, &mode);
 
@@ -2011,6 +2065,7 @@ void PortsOrch::initPortSupportedSpeeds(const std::string& alias, sai_object_id_
     m_portStateTable.set(alias, v);
 }
 
+
 void PortsOrch::initPortCapAutoNeg(Port &port)
 {
     sai_status_t status;
@@ -2040,10 +2095,91 @@ void PortsOrch::initPortCapLinkTraining(Port &port)
     SWSS_LOG_WARN("Unable to get %s LT support capability", port.m_alias.c_str());
 }
 
+void PortsOrch::getPortSupportedFecModes(const std::string& alias, sai_object_id_t port_id, PortSupportedFecModes &supported_fecmodes)
+{
+    sai_attribute_t attr;
+    sai_status_t status;
+    vector<sai_int32_t> fecModes(fec_mode_reverse_map.size());
+
+    attr.id = SAI_PORT_ATTR_SUPPORTED_FEC_MODE;
+    attr.value.s32list.count = static_cast<uint32_t>(fecModes.size());
+    attr.value.s32list.list = fecModes.data();
+
+    status = sai_port_api->get_port_attribute(port_id, 1, &attr);
+    fecModes.resize(attr.value.s32list.count);
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        if (fecModes.empty())
+        {
+            supported_fecmodes.insert("N/A");
+        }
+        else
+        {
+            for(auto fecMode : fecModes)
+            {
+                supported_fecmodes.insert(fec_mode_reverse_map[static_cast<sai_port_fec_mode_t>(fecMode)]);
+            }
+        }
+    }
+    else
+    {
+        if (SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
+            SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status) ||
+            status == SAI_STATUS_NOT_IMPLEMENTED)
+        {
+            // unable to validate FEC mode if attribute is not supported on platform
+            SWSS_LOG_NOTICE("Unable to validate FEC mode for port %s id=%" PRIx64 " due to unsupported by platform",
+                            alias.c_str(), port_id);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to get a list of supported FEC modes for port %s id=%" PRIx64 ". Error=%d",
+                           alias.c_str(), port_id, status);
+        }
+
+        supported_fecmodes.clear(); // return empty
+    }
+}
+
+void PortsOrch::initPortSupportedFecModes(const std::string& alias, sai_object_id_t port_id)
+{
+    // If port supported speeds map already contains the information, save the SAI call
+    if (m_portSupportedFecModes.count(port_id))
+    {
+        return;
+    }
+    PortSupportedFecModes supported_fec_modes;
+    getPortSupportedFecModes(alias, port_id, supported_fec_modes);
+    m_portSupportedFecModes[port_id] = supported_fec_modes;
+
+    if (supported_fec_modes.empty())
+    {
+        // Do not expose "supported_fecs" in case fetching FEC modes is not supported by the vendor
+        SWSS_LOG_INFO("No supported_fecs exposed to STATE_DB for port %s since fetching supported FEC modes is not supported by the vendor",
+                      alias.c_str());
+        return;
+    }
+
+    vector<FieldValueTuple> v;
+    std::string supported_fec_modes_str;
+    bool first = true;
+    for(auto fec : supported_fec_modes)
+    {
+        if (first)
+            first = false;
+        else
+            supported_fec_modes_str += ',';
+        supported_fec_modes_str += fec;
+    }
+
+    v.emplace_back(std::make_pair("supported_fecs", supported_fec_modes_str));
+    m_portStateTable.set(alias, v);
+}
+
 /*
  * If Gearbox is enabled and this is a Gearbox port then set the attributes accordingly.
  */
-bool PortsOrch::setGearboxPortsAttr(Port &port, sai_port_attr_t id, void *value)
+bool PortsOrch::setGearboxPortsAttr(const Port &port, sai_port_attr_t id, void *value)
 {
     bool status = false;
 
@@ -2061,7 +2197,7 @@ bool PortsOrch::setGearboxPortsAttr(Port &port, sai_port_attr_t id, void *value)
  * If Gearbox is enabled and this is a Gearbox port then set the specific lane attribute.
  * Note: the appl_db is also updated (Gearbox config_db tables are TBA).
  */
-bool PortsOrch::setGearboxPortAttr(Port &port, dest_port_type_t port_type, sai_port_attr_t id, void *value)
+bool PortsOrch::setGearboxPortAttr(const Port &port, dest_port_type_t port_type, sai_port_attr_t id, void *value)
 {
     sai_status_t status = SAI_STATUS_SUCCESS;
     sai_object_id_t dest_port_id;
@@ -2114,6 +2250,15 @@ bool PortsOrch::setGearboxPortAttr(Port &port, dest_port_type_t port_type, sai_p
                         attr.value.u32 = speed;
                     }
                     SWSS_LOG_NOTICE("BOX: Set %s lane %s %d", port.m_alias.c_str(), speed_attr.c_str(), speed);
+                    break;
+                case SAI_PORT_ATTR_MTU:
+                    attr.id = id;
+                    attr.value.u32 = *static_cast<sai_uint32_t*>(value);
+                    if (LINE_PORT_TYPE == port_type && isMACsecPort(dest_port_id))
+                    {
+                        attr.value.u32 += MAX_MACSEC_SECTAG_SIZE;
+                    }
+                    SWSS_LOG_NOTICE("BOX: Set %s MTU %d", port.m_alias.c_str(), attr.value.u32);
                     break;
                 default:
                     return false;
@@ -3105,6 +3250,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
 
                     initPortSupportedSpeeds(get<0>(it->second), m_portListLaneMap[it->first]);
+                    initPortSupportedFecModes(get<0>(it->second), m_portListLaneMap[it->first]);
                     it++;
                 }
 
@@ -3463,7 +3609,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 if (mtu != 0 && mtu != p.m_mtu)
                 {
-                    if (setPortMtu(p.m_port_id, mtu))
+                    if (setPortMtu(p, mtu))
                     {
                         p.m_mtu = mtu;
                         m_portList[alias] = p;
@@ -3520,14 +3666,12 @@ void PortsOrch::doPortTask(Consumer &consumer)
                                 p.m_fec_mode = fec_mode_map[fec_mode];
                                 p.m_fec_cfg = true;
 
-                                if (setPortFec(p, p.m_fec_mode))
+                                if (setPortFec(p, fec_mode))
                                 {
                                     m_portList[alias] = p;
-                                    SWSS_LOG_NOTICE("Set port %s fec to %s", alias.c_str(), fec_mode.c_str());
                                 }
                                 else
                                 {
-                                    SWSS_LOG_ERROR("Failed to set port %s fec to %s", alias.c_str(), fec_mode.c_str());
                                     it++;
                                     continue;
                                 }
@@ -3537,14 +3681,12 @@ void PortsOrch::doPortTask(Consumer &consumer)
                                 /* Port is already down, setting fec mode*/
                                 p.m_fec_mode = fec_mode_map[fec_mode];
                                 p.m_fec_cfg = true;
-                                if (setPortFec(p, p.m_fec_mode))
+                                if (setPortFec(p, fec_mode))
                                 {
                                     m_portList[alias] = p;
-                                    SWSS_LOG_NOTICE("Set port %s fec to %s", alias.c_str(), fec_mode.c_str());
                                 }
                                 else
                                 {
-                                    SWSS_LOG_ERROR("Failed to set port %s fec to %s", alias.c_str(), fec_mode.c_str());
                                     it++;
                                     continue;
                                 }
@@ -4532,6 +4674,12 @@ bool PortsOrch::initializePort(Port &port)
     {
         SWSS_LOG_ERROR("Failed to get initial port admin speed %d", port.m_speed);
         return false;
+    }
+
+    /* initialize port mtu */
+    if (!getPortMtu(port, port.m_mtu))
+    {
+        SWSS_LOG_ERROR("Failed to get initial port mtu %d", port.m_mtu);
     }
 
     /*
@@ -6910,6 +7058,8 @@ bool PortsOrch::initGearboxPort(Port &port)
             SWSS_LOG_NOTICE("BOX: Connected Gearbox ports; system-side:0x%" PRIx64 " to line-side:0x%" PRIx64, systemPort, linePort);
             m_gearboxPortListLaneMap[port.m_port_id] = make_tuple(systemPort, linePort);
             port.m_line_side_id = linePort;
+            saiOidToAlias[systemPort] = port.m_alias;
+            saiOidToAlias[linePort] = port.m_alias;
 
             /* Add gearbox system/line port name map to counter table */
             FieldValueTuple tuple(port.m_alias + "_system", sai_serialize_object_id(systemPort));
@@ -7410,6 +7560,39 @@ bool PortsOrch::decrFdbCount(const std::string& alias, int count)
         itr->second.m_fdb_count -= count;
     }
     return true;
+}
+
+void PortsOrch::setMACsecEnabledState(sai_object_id_t port_id, bool enabled)
+{
+    SWSS_LOG_ENTER();
+
+    Port p;
+    if (!getPort(port_id, p))
+    {
+        SWSS_LOG_ERROR("Failed to get port object for port id 0x%" PRIx64, port_id);
+        return;
+    }
+
+    if (enabled)
+    {
+        m_macsecEnabledPorts.insert(port_id);
+    }
+    else
+    {
+        m_macsecEnabledPorts.erase(port_id);
+    }
+
+    if (p.m_mtu)
+    {
+        setPortMtu(p, p.m_mtu);
+    }
+}
+
+bool PortsOrch::isMACsecPort(sai_object_id_t port_id) const
+{
+    SWSS_LOG_ENTER();
+
+    return m_macsecEnabledPorts.find(port_id) != m_macsecEnabledPorts.end();
 }
 
 /* Refresh the per-port Auto-Negotiation operational states */

@@ -12,6 +12,8 @@
 #include "orch.h"
 #include "p4orch/acl_rule_manager.h"
 #include "p4orch/acl_table_manager.h"
+#include "p4orch/gre_tunnel_manager.h"
+#include "p4orch/l3_admit_manager.h"
 #include "p4orch/mirror_session_manager.h"
 #include "p4orch/neighbor_manager.h"
 #include "p4orch/next_hop_manager.h"
@@ -34,6 +36,7 @@ class P4Orch : public Orch
     p4orch::AclTableManager *getAclTableManager();
     p4orch::AclRuleManager *getAclRuleManager();
     p4orch::WcmpManager *getWcmpManager();
+    GreTunnelManager *getGreTunnelManager();
 
   private:
     void doTask(Consumer &consumer);
@@ -49,6 +52,7 @@ class P4Orch : public Orch
     swss::SelectableTimer *m_aclCounterStatsTimer;
     P4OidMapper m_p4OidMapper;
     std::unique_ptr<RouterInterfaceManager> m_routerIntfManager;
+    std::unique_ptr<GreTunnelManager> m_greTunnelManager;
     std::unique_ptr<NeighborManager> m_neighborManager;
     std::unique_ptr<NextHopManager> m_nextHopManager;
     std::unique_ptr<RouteManager> m_routeManager;
@@ -56,6 +60,7 @@ class P4Orch : public Orch
     std::unique_ptr<p4orch::AclTableManager> m_aclTableManager;
     std::unique_ptr<p4orch::AclRuleManager> m_aclRuleManager;
     std::unique_ptr<p4orch::WcmpManager> m_wcmpManager;
+    std::unique_ptr<L3AdmitManager> m_l3AdmitManager;
 
     // Notification consumer for port state change
     swss::NotificationConsumer *m_portStatusNotificationConsumer;
