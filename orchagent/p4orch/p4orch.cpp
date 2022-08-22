@@ -30,8 +30,8 @@ P4Orch::P4Orch(swss::DBConnector *db, std::vector<std::string> tableNames, VRFOr
     SWSS_LOG_ENTER();
 
     m_routerIntfManager = std::make_unique<RouterInterfaceManager>(&m_p4OidMapper, &m_publisher);
-    m_greTunnelManager = std::make_unique<GreTunnelManager>(&m_p4OidMapper, &m_publisher);
     m_neighborManager = std::make_unique<NeighborManager>(&m_p4OidMapper, &m_publisher);
+    m_greTunnelManager = std::make_unique<GreTunnelManager>(&m_p4OidMapper, &m_publisher);
     m_nextHopManager = std::make_unique<NextHopManager>(&m_p4OidMapper, &m_publisher);
     m_routeManager = std::make_unique<RouteManager>(&m_p4OidMapper, vrfOrch, &m_publisher);
     m_mirrorSessionManager = std::make_unique<p4orch::MirrorSessionManager>(&m_p4OidMapper, &m_publisher);
@@ -52,8 +52,8 @@ P4Orch::P4Orch(swss::DBConnector *db, std::vector<std::string> tableNames, VRFOr
     m_p4TableToManagerMap[APP_P4RT_L3_ADMIT_TABLE_NAME] = m_l3AdmitManager.get();
 
     m_p4ManagerPrecedence.push_back(m_routerIntfManager.get());
-    m_p4ManagerPrecedence.push_back(m_greTunnelManager.get());
     m_p4ManagerPrecedence.push_back(m_neighborManager.get());
+    m_p4ManagerPrecedence.push_back(m_greTunnelManager.get());
     m_p4ManagerPrecedence.push_back(m_nextHopManager.get());
     m_p4ManagerPrecedence.push_back(m_wcmpManager.get());
     m_p4ManagerPrecedence.push_back(m_routeManager.get());

@@ -41,18 +41,22 @@ namespace
 
 ReturnCode validateAppDbEntry(const P4NextHopAppDbEntry &app_db_entry)
 {
+    // TODO(b/225242372): remove kSetNexthop action after P4RT and Orion update
+    // naming
     if (app_db_entry.action_str != p4orch::kSetIpNexthop && app_db_entry.action_str != p4orch::kSetNexthop &&
         app_db_entry.action_str != p4orch::kSetTunnelNexthop)
     {
         return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
                << "Invalid action " << QuotedVar(app_db_entry.action_str) << " of Nexthop App DB entry";
     }
-    if (app_db_entry.neighbor_id.isZero())
+    if (app_db_entry.action_str == p4orch::kSetIpNexthop && app_db_entry.neighbor_id.isZero())
     {
         return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
                << "Missing field " << QuotedVar(prependParamField(p4orch::kNeighborId)) << " for action "
                << QuotedVar(p4orch::kSetIpNexthop) << " in table entry";
     }
+    // TODO(b/225242372): remove kSetNexthop action after P4RT and Orion update
+    // naming
     if (app_db_entry.action_str == p4orch::kSetIpNexthop || app_db_entry.action_str == p4orch::kSetNexthop)
     {
         if (!app_db_entry.gre_tunnel_id.empty())
@@ -321,23 +325,27 @@ ReturnCode NextHopManager::createNextHop(P4NextHopEntry &next_hop_entry)
                                                                       << " already exists in centralized mapper");
     }
 
-    std::string router_interface_id = next_hop_entry.router_interface_id;
     if (!next_hop_entry.gre_tunnel_id.empty())
     {
-        auto underlay_if_or = gP4Orch->getGreTunnelManager()->getUnderlayIfFromGreTunnelEntry(
+        auto gre_tunnel_or = gP4Orch->getGreTunnelManager()->getConstGreTunnelEntry(
             KeyGenerator::generateTunnelKey(next_hop_entry.gre_tunnel_id));
-        if (!underlay_if_or.ok())
+        if (!gre_tunnel_or.ok())
         {
             LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
                                  << "GRE Tunnel " << QuotedVar(next_hop_entry.gre_tunnel_id)
                                  << " does not exist in GRE Tunnel Manager");
         }
-        router_interface_id = *underlay_if_or;
+        next_hop_entry.router_interface_id = (*gre_tunnel_or).router_interface_id;
+        // BRCM requires neighbor object to be created before GRE tunnel, referring
+        // to the one in GRE tunnel object when creating next_hop_entry_with
+        // setTunnelAction
+        next_hop_entry.neighbor_id = (*gre_tunnel_or).neighbor_id;
     }
 
     // Neighbor doesn't have OID and the IP addr needed in next hop creation is
     // neighbor_id, so only check neighbor existence in centralized mapper.
-    const auto neighbor_key = KeyGenerator::generateNeighborKey(router_interface_id, next_hop_entry.neighbor_id);
+    const auto neighbor_key =
+        KeyGenerator::generateNeighborKey(next_hop_entry.router_interface_id, next_hop_entry.neighbor_id);
     if (!m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, neighbor_key))
     {
         LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
@@ -456,15 +464,15 @@ ReturnCode NextHopManager::removeNextHop(const std::string &next_hop_key)
     std::string router_interface_id = next_hop_entry->router_interface_id;
     if (!next_hop_entry->gre_tunnel_id.empty())
     {
-        auto underlay_if_or = gP4Orch->getGreTunnelManager()->getUnderlayIfFromGreTunnelEntry(
+        auto gre_tunnel_or = gP4Orch->getGreTunnelManager()->getConstGreTunnelEntry(
             KeyGenerator::generateTunnelKey(next_hop_entry->gre_tunnel_id));
-        if (!underlay_if_or.ok())
+        if (!gre_tunnel_or.ok())
         {
             LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
                                  << "GRE Tunnel " << QuotedVar(next_hop_entry->gre_tunnel_id)
                                  << " does not exist in GRE Tunnel Manager");
         }
-        router_interface_id = *underlay_if_or;
+        router_interface_id = (*gre_tunnel_or).router_interface_id;
     }
     m_p4OidMapper->decreaseRefCount(
         SAI_OBJECT_TYPE_NEIGHBOR_ENTRY,
@@ -560,7 +568,8 @@ std::string NextHopManager::verifyStateCache(const P4NextHopAppDbEntry &app_db_e
             << QuotedVar(next_hop_entry->next_hop_id) << " in nexthop manager.";
         return msg.str();
     }
-    if (next_hop_entry->router_interface_id != app_db_entry.router_interface_id)
+    if (app_db_entry.action_str == p4orch::kSetIpNexthop &&
+        next_hop_entry->router_interface_id != app_db_entry.router_interface_id)
     {
         std::stringstream msg;
         msg << "Nexthop " << QuotedVar(app_db_entry.next_hop_id) << " with ritf ID "
@@ -568,7 +577,8 @@ std::string NextHopManager::verifyStateCache(const P4NextHopAppDbEntry &app_db_e
             << QuotedVar(next_hop_entry->router_interface_id) << " in nexthop manager.";
         return msg.str();
     }
-    if (next_hop_entry->neighbor_id.to_string() != app_db_entry.neighbor_id.to_string())
+    if (app_db_entry.action_str == p4orch::kSetIpNexthop &&
+        next_hop_entry->neighbor_id.to_string() != app_db_entry.neighbor_id.to_string())
     {
         std::stringstream msg;
         msg << "Nexthop " << QuotedVar(app_db_entry.next_hop_id) << " with neighbor ID "
@@ -577,13 +587,44 @@ std::string NextHopManager::verifyStateCache(const P4NextHopAppDbEntry &app_db_e
         return msg.str();
     }
 
-    if (next_hop_entry->gre_tunnel_id != app_db_entry.gre_tunnel_id)
+    if (app_db_entry.action_str == p4orch::kSetTunnelNexthop &&
+        next_hop_entry->gre_tunnel_id != app_db_entry.gre_tunnel_id)
     {
         std::stringstream msg;
         msg << "Nexthop " << QuotedVar(app_db_entry.next_hop_id) << " with GRE tunnel ID "
             << QuotedVar(app_db_entry.gre_tunnel_id) << " does not match internal cache "
             << QuotedVar(next_hop_entry->gre_tunnel_id) << " in nexthop manager.";
         return msg.str();
+    }
+    if (!next_hop_entry->gre_tunnel_id.empty())
+    {
+        auto gre_tunnel_or = gP4Orch->getGreTunnelManager()->getConstGreTunnelEntry(
+            KeyGenerator::generateTunnelKey(next_hop_entry->gre_tunnel_id));
+        if (!gre_tunnel_or.ok())
+        {
+            std::stringstream msg;
+            msg << "GRE Tunnel " << QuotedVar(next_hop_entry->gre_tunnel_id) << " does not exist in GRE Tunnel Manager";
+            return msg.str();
+        }
+        P4GreTunnelEntry gre_tunnel = *gre_tunnel_or;
+        if (gre_tunnel.neighbor_id.to_string() != next_hop_entry->neighbor_id.to_string())
+        {
+            std::stringstream msg;
+            msg << "Nexthop " << QuotedVar(next_hop_entry->next_hop_id) << " with neighbor ID "
+                << QuotedVar(next_hop_entry->neighbor_id.to_string())
+                << " in nexthop manager does not match internal cache " << QuotedVar(gre_tunnel.neighbor_id.to_string())
+                << " with tunnel ID " << QuotedVar(gre_tunnel.tunnel_id) << " in GRE tunnel manager.";
+            return msg.str();
+        }
+        if (gre_tunnel.router_interface_id != next_hop_entry->router_interface_id)
+        {
+            std::stringstream msg;
+            msg << "Nexthop " << QuotedVar(next_hop_entry->next_hop_id) << " with rif ID "
+                << QuotedVar(next_hop_entry->router_interface_id)
+                << " in nexthop manager does not match internal cache " << QuotedVar(gre_tunnel.router_interface_id)
+                << " with tunnel ID " << QuotedVar(gre_tunnel.tunnel_id) << " in GRE tunnel manager.";
+            return msg.str();
+        }
     }
 
     return m_p4OidMapper->verifyOIDMapping(SAI_OBJECT_TYPE_NEXT_HOP, next_hop_entry->next_hop_key,
