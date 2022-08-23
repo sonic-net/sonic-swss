@@ -239,6 +239,8 @@ class TestVirtualChassis(object):
         # Test neighbor on Ethernet4 since Ethernet0 is used as Inband port
         test_neigh_dev = "Ethernet4"
         test_neigh_ip = "10.8.104.3"
+        # Use this as the initial mac address of interface, later change to  test_neigh_mac
+        test_neigh_orig_mac = "00:01:02:03:04:77"
         test_neigh_mac = "00:01:02:03:04:05"
 
         dvss = vct.dvss
@@ -259,7 +261,8 @@ class TestVirtualChassis(object):
 
                     # Add a static neighbor
                     _, res = dvs.runcmd(['sh', "-c", "ip neigh show"])
-                    _, res = dvs.runcmd(['sh', "-c", f"ip neigh add {test_neigh_ip} lladdr {test_neigh_mac} dev {test_neigh_dev}"])
+                    _, res = dvs.runcmd(['sh', "-c", f"ip neigh add {test_neigh_ip} lladdr {test_neigh_orig_mac} dev {test_neigh_dev}"])
+                    _, res = dvs.runcmd(['sh', "-c", f"ip neigh change {test_neigh_ip} lladdr {test_neigh_mac} dev {test_neigh_dev}"])
                     assert res == "", "Error configuring static neigh"
 
                     asic_db = dvs.get_asic_db()
