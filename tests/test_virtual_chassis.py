@@ -399,10 +399,10 @@ class TestVirtualChassis(object):
 
         # Test mac change for a neighbor.
         # First step is to add a new neighbor and check local/chassis_db/remote entry creation
-        test_neigh_asic_db_key, test_sysneigh_chassis_app_db_key, test_remote_neigh_asic_db_key = chassis_system_neigh_create(self, vct, test_neigh_orig_mac, "add")
+        wait_for_result(chassis_system_neigh_create(self, vct, test_neigh_orig_mac, "add"))
 
         # Second step to update the mac address and check local/chassis_db/remote entry creation
-        test_neigh_asic_db_key, test_sysneigh_chassis_app_db_key, test_remote_neigh_asic_db_key = chassis_system_neigh_create(self, vct, test_neigh_mac, "change")
+        test_neigh_asic_db_key, test_sysneigh_chassis_app_db_key, test_remote_neigh_asic_db_key = wait_for_result(chassis_system_neigh_create(self, vct, test_neigh_mac, "change"))
 
         # Verify system neighbor delete and clearing
         dvss = vct.dvss
