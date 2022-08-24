@@ -431,12 +431,12 @@ class TestNeighbor(object):
         # check application database
         tbl = swsscommon.Table(self.pdb, "NEIGH_TABLE:Ethernet8")
         intf_entries = tbl.getKeys()
-        assert len(intf_entries) == 0
+        assert len(intf_entries) == 1
 
         # check ASIC neighbor database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY")
         intf_entries = tbl.getKeys()
-        assert len(intf_entries) == 0
+        assert len(intf_entries) == 1
 
         # remove neighbor
         self.remove_neighbor("Ethernet8", "169.254.0.0")

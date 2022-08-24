@@ -63,6 +63,9 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     string key;
     string family;
     string intfName;
+    std::vector<std::string> peerSwitchKeys;
+    m_cfgPeerSwitchTable.getKeys(peerSwitchKeys);
+    bool is_dualtor = peerSwitchKeys.size() > 0;
 
     if ((nlmsg_type != RTM_NEWNEIGH) && (nlmsg_type != RTM_GETNEIGH) &&
         (nlmsg_type != RTM_DELNEIGH))
@@ -81,11 +84,11 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
 
     nl_addr2str(rtnl_neigh_get_dst(neigh), ipStr, MAX_ADDR_SIZE);
 
-    /* Ignore IPv4 link-local addresses as neighbors */
+    /* Ignore IPv4 link-local addresses as neighbors if subtype is dualtor */
     IpAddress ipAddress(ipStr);
-    if (family == IPV4_NAME && ipAddress.getAddrScope() == IpAddress::AddrScope::LINK_SCOPE)
+    if (family == IPV4_NAME && ipAddress.getAddrScope() == IpAddress::AddrScope::LINK_SCOPE && is_dualtor)
     {
-        SWSS_LOG_INFO("Link Local address received, ignoring for %s", ipStr);
+        SWSS_LOG_INFO("Link Local address received on dualtor, ignoring for %s", ipStr);
         return;
     }
 
@@ -109,11 +112,8 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
         return;
     }
 
-    std::vector<std::string> peerSwitchKeys;
     bool delete_key = false;
     bool use_zero_mac = false;
-    m_cfgPeerSwitchTable.getKeys(peerSwitchKeys);
-    bool is_dualtor = peerSwitchKeys.size() > 0;
     if (is_dualtor && (state == NUD_INCOMPLETE || state == NUD_FAILED))
     {
         SWSS_LOG_INFO("Unable to resolve %s, setting zero MAC", key.c_str());
