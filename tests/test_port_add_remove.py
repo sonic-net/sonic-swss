@@ -21,9 +21,17 @@ def dynamic_buffer(dvs):
     yield
     buffer_model.disable_dynamic_buffer(dvs.get_config_db(), dvs.runcmd)
 
+
 @pytest.mark.usefixtures('dvs_port_manager')
 @pytest.mark.usefixtures("dynamic_buffer")    
 class TestPortAddRemove(object):
+
+    def set_mmu(self,dvs):
+        state_db = dvs.get_state_db()
+        # set mmu size
+        fvs = {"mmu_size": "12766208"}
+        state_db.create_entry("BUFFER_MAX_PARAM_TABLE", "global", fvs)
+
 
     def test_remove_add_remove_port_with_buffer_cfg(self, dvs, testlog):
         config_db = dvs.get_config_db()
@@ -32,9 +40,7 @@ class TestPortAddRemove(object):
         app_db = dvs.get_app_db()
 
         # set mmu size
-        fvs = {"mmu_size": "12766208"}
-        state_db.create_entry("BUFFER_MAX_PARAM_TABLE", "global", fvs)
-        bufferMaxParameter = state_db.wait_for_entry("BUFFER_MAX_PARAM_TABLE", PORT_A)
+        self.set_mmu(dvs)
 
         # Startup interface
         dvs.port_admin_set(PORT_A, 'up')
@@ -141,6 +147,9 @@ class TestPortAddRemove(object):
         state_db = dvs.get_state_db()
         asic_db = dvs.get_asic_db()
         app_db = dvs.get_app_db()
+
+        # set mmu size
+        self.set_mmu(dvs)
 
         # get the number of ports before removal
         num_of_ports = len(asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT"))
