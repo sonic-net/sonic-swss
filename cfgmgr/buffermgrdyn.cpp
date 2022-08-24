@@ -2247,7 +2247,7 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
             }
             else
             {
-                SWSS_LOG_WARN("Cable length or effective speed for %s hasn't been configured yet, unable to calculate headroom", port.c_str());
+                SWSS_LOG_NOTICE("Cable length or effective speed for %s hasn't been configured yet, unable to calculate headroom", port.c_str());
                 // We don't retry here because it doesn't make sense until both cable length and speed are configured.
             }
         }
