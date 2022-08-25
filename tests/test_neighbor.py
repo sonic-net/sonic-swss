@@ -8,6 +8,7 @@ from swsscommon import swsscommon
 class TestNeighbor(object):
     CONFIG_PEER_SWITCH          = "PEER_SWITCH"
     PEER_SWITCH_HOST            = "peer_switch_hostname"
+    PEER_IPV4                   = "10.1.0.33"
 
     DEFAULT_PEER_SWITCH_PARAMS = {
         "address_ipv4": PEER_IPV4
