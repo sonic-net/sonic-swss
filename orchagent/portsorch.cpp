@@ -1290,7 +1290,7 @@ bool PortsOrch::setPortFec(Port &port, string &mode)
 
     SWSS_LOG_NOTICE("Set port %s FEC mode %s", port.m_alias.c_str(), mode.c_str());
 
-    setGearboxPortsAttr(port, SAI_PORT_ATTR_FEC_MODE, &mode);
+    setGearboxPortsAttr(port, SAI_PORT_ATTR_FEC_MODE, &port.m_fec_mode);
 
     return true;
 }
