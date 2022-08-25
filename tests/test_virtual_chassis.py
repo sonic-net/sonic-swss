@@ -392,7 +392,7 @@ class TestVirtualChassis(object):
                     
                         break
 
-            return (True, test_neigh_asic_db_key, test_sysneigh_chassis_app_db_key, test_remote_neigh_asic_db_key)
+            return True, (test_neigh_asic_db_key, test_sysneigh_chassis_app_db_key, test_remote_neigh_asic_db_key)
 
         # Original mac_address of neighbor, and the new mac_address for mac change test
         test_neigh_orig_mac = "00:01:02:03:04:77"
@@ -403,7 +403,7 @@ class TestVirtualChassis(object):
         wait_for_result(chassis_system_neigh_create(self, vct, test_neigh_orig_mac, "add"))
 
         # Second step to update the mac address and check local/chassis_db/remote entry creation
-        _, test_neigh_asic_db_key, test_sysneigh_chassis_app_db_key, test_remote_neigh_asic_db_key = wait_for_result(chassis_system_neigh_create(self, vct, test_neigh_mac, "change"))
+        _, (test_neigh_asic_db_key, test_sysneigh_chassis_app_db_key, test_remote_neigh_asic_db_key) = wait_for_result(chassis_system_neigh_create(self, vct, test_neigh_mac, "change"))
 
         # Verify system neighbor delete and clearing
         dvss = vct.dvss
