@@ -464,3 +464,23 @@ class TestBfd(object):
         self.adb.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", session3)
         self.remove_bfd_session(key4)
         self.adb.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", session4)
+
+    def test_bfd_state_db_clear(self, dvs):
+        self.setup_db(dvs)
+
+        bfdSessions = self.get_exist_bfd_session()
+
+        # Create BFD session
+        fieldValues = {"local_addr": "10.0.0.1", "type": "demand_active"}
+        self.create_bfd_session("default:default:10.0.0.2", fieldValues)
+        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", len(bfdSessions) + 1)
+
+        # Checked created BFD session in ASIC_DB
+        createdSessions = self.get_exist_bfd_session() - bfdSessions
+        assert len(createdSessions) == 1
+        dvs.stop_swss()
+        dvs.start_swss()
+
+        time.sleep(5)
+        keys = self.sdb.get_keys("BFD_SESSION_TABLE")
+        assert len(keys) == 0
