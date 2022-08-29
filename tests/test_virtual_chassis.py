@@ -1,7 +1,7 @@
 from swsscommon import swsscommon
 from dvslib.dvs_database import DVSDatabase
-from dvslib.dvs_common import wait_for_result
 import ast
+import time
 
 class TestVirtualChassis(object):
 
@@ -237,14 +237,14 @@ class TestVirtualChassis(object):
         # Configure port type inband interface
         self.config_inbandif_port(vct, inband_port)
 
+        # Test neighbor on Ethernet4 since Ethernet0 is used as Inband port
+        test_neigh_dev = "Ethernet4"
+        test_neigh_ip = "10.8.104.3"
+
         # Grouping together the checks done during neighbor entry create into a function chassis_system_neigh_create()
         # if action is "add" it creates a new neighbor entry in local asic
         # if action is "change" it updates an existing neighbor entry with the mac_address
-        def chassis_system_neigh_create(self, vct, mac_address, action):
-            # Test neighbor on Ethernet4 since Ethernet0 is used as Inband port
-            test_neigh_dev = "Ethernet4"
-            test_neigh_ip = "10.8.104.3"
-
+        def chassis_system_neigh_create():
             dvss = vct.dvss
             print("name {}".format(dvss.keys()))
             for name in dvss.keys():
@@ -325,6 +325,9 @@ class TestVirtualChassis(object):
 
                     break
 
+            # Add a delay for the programming of neighbor in remote LC
+            time.sleep(10)
+
             # Verify programming of remote neighbor in asic db and programming of static route and static
             # neigh in the kernel for the remote neighbor. The neighbor created in linecard 1  will be a
             # remote neighbor in other linecards. Verity existence of the test neighbor in  linecards other
@@ -392,18 +395,17 @@ class TestVirtualChassis(object):
                     
                         break
 
-            return True, (test_neigh_asic_db_key, test_sysneigh_chassis_app_db_key, test_remote_neigh_asic_db_key)
+            return test_neigh_asic_db_key, test_sysneigh_chassis_app_db_key, test_remote_neigh_asic_db_key
 
-        # Original mac_address of neighbor, and the new mac_address for mac change test
-        test_neigh_orig_mac = "00:01:02:03:04:77"
-        test_neigh_mac = "00:01:02:03:04:05"
-
-        # Test mac change for a neighbor.
         # First step is to add a new neighbor and check local/chassis_db/remote entry creation
-        wait_for_result(chassis_system_neigh_create(self, vct, test_neigh_orig_mac, "add"))
+        mac_address = "00:01:02:03:04:77"
+        action = "add"
+        chassis_system_neigh_create()
 
         # Second step to update the mac address and check local/chassis_db/remote entry creation
-        _, (test_neigh_asic_db_key, test_sysneigh_chassis_app_db_key, test_remote_neigh_asic_db_key) = wait_for_result(chassis_system_neigh_create(self, vct, test_neigh_mac, "change"))
+        mac_address = "00:01:02:03:04:05"
+        action = "change"
+        test_neigh_asic_db_key, test_sysneigh_chassis_app_db_key, test_remote_neigh_asic_db_key = chassis_system_neigh_create()
 
         # Verify system neighbor delete and clearing
         dvss = vct.dvss
