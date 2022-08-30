@@ -138,6 +138,11 @@ class NeighborManagerTest : public ::testing::Test
         neighbor_manager_.drain();
     }
 
+    std::string VerifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple)
+    {
+        return neighbor_manager_.verifyState(key, tuple);
+    }
+
     ReturnCodeOr<P4NeighborAppDbEntry> DeserializeNeighborEntry(const std::string &key,
                                                                 const std::vector<swss::FieldValueTuple> &attributes)
     {
@@ -280,7 +285,7 @@ TEST_F(NeighborManagerTest, CreateNeighborEntryExistsInP4OidMapper)
     P4NeighborEntry neighbor_entry(kRouterInterfaceId2, kNeighborId2, kMacAddress2);
     p4_oid_mapper_.setDummyOID(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, neighbor_entry.neighbor_key);
 
-    // (TODO): Expect critical state.
+    // TODO: Expect critical state.
     EXPECT_EQ(StatusCode::SWSS_RC_INTERNAL, CreateNeighbor(neighbor_entry));
 
     auto current_entry = GetNeighborEntry(neighbor_entry.neighbor_key);
@@ -342,7 +347,7 @@ TEST_F(NeighborManagerTest, RemoveNeighborNotExistInMapper)
     AddNeighborEntry(neighbor_entry, kRouterInterfaceOid2);
 
     ASSERT_TRUE(p4_oid_mapper_.eraseOID(SAI_OBJECT_TYPE_NEIGHBOR_ENTRY, neighbor_entry.neighbor_key));
-    // (TODO): Expect critical state.
+    // TODO: Expect critical state.
     EXPECT_EQ(StatusCode::SWSS_RC_INTERNAL, RemoveNeighbor(neighbor_entry.neighbor_key));
 }
 
@@ -819,4 +824,117 @@ TEST_F(NeighborManagerTest, DrainInvalidOperation)
 
     P4NeighborEntry neighbor_entry(kRouterInterfaceId1, kNeighborId1, kMacAddress1);
     ValidateNeighborEntryNotPresent(neighbor_entry, /*check_ref_count=*/true);
+}
+
+TEST_F(NeighborManagerTest, VerifyStateTest)
+{
+    P4NeighborEntry neighbor_entry(kRouterInterfaceId1, kNeighborId1, kMacAddress1);
+    AddNeighborEntry(neighbor_entry, kRouterInterfaceOid1);
+
+    // Setup ASIC DB.
+    swss::Table table(nullptr, "ASIC_STATE");
+    table.set("SAI_OBJECT_TYPE_NEIGHBOR_ENTRY:{\"ip\":\"10.0.0.22\",\"rif\":\"oid:"
+              "0x295100\",\"switch_id\":\"oid:0x0\"}",
+              std::vector<swss::FieldValueTuple>{
+                  swss::FieldValueTuple{"SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS", "00:01:02:03:04:05"},
+                  swss::FieldValueTuple{"SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE", "true"}});
+
+    const std::string db_key = std::string(APP_P4RT_TABLE_NAME) + kTableKeyDelimiter + APP_P4RT_NEIGHBOR_TABLE_NAME +
+                               kTableKeyDelimiter + CreateNeighborAppDbKey(kRouterInterfaceId1, kNeighborId1);
+    std::vector<swss::FieldValueTuple> attributes;
+
+    // Verification should succeed with vaild key and value.
+    attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kDstMac), kMacAddress1.to_string()});
+    EXPECT_EQ(VerifyState(db_key, attributes), "");
+
+    // Invalid key should fail verification.
+    EXPECT_FALSE(VerifyState("invalid", attributes).empty());
+    EXPECT_FALSE(VerifyState("invalid:invalid", attributes).empty());
+    EXPECT_FALSE(VerifyState(std::string(APP_P4RT_TABLE_NAME) + ":invalid", attributes).empty());
+    EXPECT_FALSE(VerifyState(std::string(APP_P4RT_TABLE_NAME) + ":invalid:invalid", attributes).empty());
+    EXPECT_FALSE(VerifyState(std::string(APP_P4RT_TABLE_NAME) + ":FIXED_NEIGHBOR_TABLE:invalid", attributes).empty());
+
+    // Non-existing router intf should fail verification.
+    EXPECT_FALSE(VerifyState(std::string(APP_P4RT_TABLE_NAME) + kTableKeyDelimiter + APP_P4RT_NEIGHBOR_TABLE_NAME +
+                                 kTableKeyDelimiter + CreateNeighborAppDbKey(kRouterInterfaceId2, kNeighborId1),
+                             attributes)
+                     .empty());
+
+    // Non-existing entry should fail verification.
+    EXPECT_FALSE(VerifyState(std::string(APP_P4RT_TABLE_NAME) + kTableKeyDelimiter + APP_P4RT_NEIGHBOR_TABLE_NAME +
+                                 kTableKeyDelimiter + CreateNeighborAppDbKey(kRouterInterfaceId1, kNeighborId2),
+                             attributes)
+                     .empty());
+
+    auto *current_entry = GetNeighborEntry(KeyGenerator::generateNeighborKey(kRouterInterfaceId1, kNeighborId1));
+    EXPECT_NE(current_entry, nullptr);
+
+    // Verification should fail if ritf ID mismatches.
+    auto saved_router_intf_id = current_entry->router_intf_id;
+    current_entry->router_intf_id = kRouterInterfaceId2;
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    current_entry->router_intf_id = saved_router_intf_id;
+
+    // Verification should fail if neighbor ID mismatches.
+    auto saved_neighbor_id = current_entry->neighbor_id;
+    current_entry->neighbor_id = kNeighborId2;
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    current_entry->neighbor_id = saved_neighbor_id;
+
+    // Verification should fail if dest MAC mismatches.
+    auto saved_dst_mac_address = current_entry->dst_mac_address;
+    current_entry->dst_mac_address = kMacAddress2;
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    current_entry->dst_mac_address = saved_dst_mac_address;
+
+    // Verification should fail if router intf key mismatches.
+    auto saved_router_intf_key = current_entry->router_intf_key;
+    current_entry->router_intf_key = "invalid";
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    current_entry->router_intf_key = saved_router_intf_key;
+
+    // Verification should fail if neighbor key mismatches.
+    auto saved_neighbor_key = current_entry->neighbor_key;
+    current_entry->neighbor_key = "invalid";
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    current_entry->neighbor_key = saved_neighbor_key;
+}
+
+TEST_F(NeighborManagerTest, VerifyStateAsicDbTest)
+{
+    P4NeighborEntry neighbor_entry(kRouterInterfaceId1, kNeighborId1, kMacAddress1);
+    AddNeighborEntry(neighbor_entry, kRouterInterfaceOid1);
+
+    // Setup ASIC DB.
+    swss::Table table(nullptr, "ASIC_STATE");
+    table.set("SAI_OBJECT_TYPE_NEIGHBOR_ENTRY:{\"ip\":\"10.0.0.22\",\"rif\":\"oid:"
+              "0x295100\",\"switch_id\":\"oid:0x0\"}",
+              std::vector<swss::FieldValueTuple>{
+                  swss::FieldValueTuple{"SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS", "00:01:02:03:04:05"},
+                  swss::FieldValueTuple{"SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE", "true"}});
+
+    const std::string db_key = std::string(APP_P4RT_TABLE_NAME) + kTableKeyDelimiter + APP_P4RT_NEIGHBOR_TABLE_NAME +
+                               kTableKeyDelimiter + CreateNeighborAppDbKey(kRouterInterfaceId1, kNeighborId1);
+    std::vector<swss::FieldValueTuple> attributes;
+    attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kDstMac), kMacAddress1.to_string()});
+
+    // Verification should succeed with correct ASIC DB values.
+    EXPECT_EQ(VerifyState(db_key, attributes), "");
+
+    // Verification should fail if ASIC DB values mismatch.
+    table.set("SAI_OBJECT_TYPE_NEIGHBOR_ENTRY:{\"ip\":\"10.0.0.22\",\"rif\":\"oid:"
+              "0x295100\",\"switch_id\":\"oid:0x0\"}",
+              std::vector<swss::FieldValueTuple>{
+                  swss::FieldValueTuple{"SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS", "00:ff:ee:dd:cc:bb"}});
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+
+    // Verification should fail if ASIC DB table is missing.
+    table.del("SAI_OBJECT_TYPE_NEIGHBOR_ENTRY:{\"ip\":\"10.0.0.22\",\"rif\":\"oid:"
+              "0x295100\",\"switch_id\":\"oid:0x0\"}");
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    table.set("SAI_OBJECT_TYPE_NEIGHBOR_ENTRY:{\"ip\":\"10.0.0.22\",\"rif\":\"oid:"
+              "0x295100\",\"switch_id\":\"oid:0x0\"}",
+              std::vector<swss::FieldValueTuple>{
+                  swss::FieldValueTuple{"SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS", "00:01:02:03:04:05"},
+                  swss::FieldValueTuple{"SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE", "true"}});
 }

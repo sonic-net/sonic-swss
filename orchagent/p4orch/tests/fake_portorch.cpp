@@ -181,11 +181,35 @@ bool PortsOrch::setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask)
     return true;
 }
 
-void PortsOrch::generateQueueMap()
+void PortsOrch::generateQueueMap(std::map<string, FlexCounterQueueStates> queuesStateVector)
 {
 }
 
-void PortsOrch::generatePriorityGroupMap()
+void PortsOrch::generateQueueMapPerPort(const Port& port, FlexCounterQueueStates& queuesState)
+{
+}
+
+void PortsOrch::createPortBufferQueueCounters(const Port &port, string queues)
+{
+}
+
+void PortsOrch::removePortBufferQueueCounters(const Port &port, string queues)
+{
+}
+
+void PortsOrch::generatePriorityGroupMap(std::map<string, FlexCounterPgStates> pgsStateVector)
+{
+}
+
+void PortsOrch::generatePriorityGroupMapPerPort(const Port& port, FlexCounterPgStates& pgsState)
+{
+}
+
+void PortsOrch::createPortBufferPgCounters(const Port& port, string pgs)
+{
+}
+
+void PortsOrch::removePortBufferPgCounters(const Port& port, string pgs)
 {
 }
 
@@ -498,7 +522,7 @@ bool PortsOrch::getPortAdminStatus(sai_object_id_t id, bool &up)
     return true;
 }
 
-bool PortsOrch::setPortMtu(sai_object_id_t id, sai_uint32_t mtu)
+bool PortsOrch::setPortMtu(const Port &port, sai_uint32_t mtu)
 {
     return true;
 }
@@ -518,7 +542,7 @@ bool PortsOrch::getPortPvid(Port &port, sai_uint32_t &pvid)
     return true;
 }
 
-bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t mode)
+bool PortsOrch::setPortFec(Port &port, std::string &mode)
 {
     return true;
 }
@@ -562,12 +586,12 @@ bool PortsOrch::getPortSpeed(sai_object_id_t port_id, sai_uint32_t &speed)
     return true;
 }
 
-bool PortsOrch::setGearboxPortsAttr(Port &port, sai_port_attr_t id, void *value)
+bool PortsOrch::setGearboxPortsAttr(const Port &port, sai_port_attr_t id, void *value)
 {
     return true;
 }
 
-bool PortsOrch::setGearboxPortAttr(Port &port, dest_port_type_t port_type, sai_port_attr_t id, void *value)
+bool PortsOrch::setGearboxPortAttr(const Port &port, dest_port_type_t port_type, sai_port_attr_t id, void *value)
 {
     return true;
 }
@@ -580,14 +604,6 @@ task_process_status PortsOrch::setPortAdvSpeeds(sai_object_id_t port_id, std::ve
 bool PortsOrch::getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uint8_t &index)
 {
     return true;
-}
-
-void PortsOrch::generateQueueMapPerPort(const Port &port)
-{
-}
-
-void PortsOrch::generatePriorityGroupMapPerPort(const Port &port)
-{
 }
 
 task_process_status PortsOrch::setPortAutoNeg(sai_object_id_t id, int an)

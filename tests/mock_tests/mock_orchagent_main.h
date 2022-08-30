@@ -12,8 +12,8 @@
 #include "mirrororch.h"
 #define private public
 #include "bufferorch.h"
-#undef private
 #include "qosorch.h"
+#undef private
 #include "vrforch.h"
 #include "vnetorch.h"
 #include "vxlanorch.h"
