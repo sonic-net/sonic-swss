@@ -24,7 +24,13 @@
 
 #define LOOPBACK_PREFIX     "Loopback"
 
-typedef std::map<NextHopKey, sai_object_id_t> NextHopGroupMembers;
+struct NextHopGroupMemberEntry
+{
+    sai_object_id_t  next_hop_id; // next hop sai oid
+    uint32_t         seq_id; // Sequence Id of nexthop in the group
+};
+
+typedef std::map<NextHopKey, NextHopGroupMemberEntry> NextHopGroupMembers;
 
 struct NhgBase;
 
@@ -208,10 +214,11 @@ public:
 
     unsigned int getNhgCount() { return m_nextHopGroupCount; }
     unsigned int getMaxNhgCount() { return m_maxNextHopGroupCount; }
-    
+
     void increaseNextHopGroupCount();
     void decreaseNextHopGroupCount();
     bool checkNextHopGroupCount();
+    const RouteTables& getSyncdRoutes() const { return m_syncdRoutes; }
 
 private:
     SwitchOrch *m_switchOrch;

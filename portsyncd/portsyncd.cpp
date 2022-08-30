@@ -45,14 +45,12 @@ void usage()
 void handlePortConfigFile(ProducerStateTable &p, string file, bool warm);
 void handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, bool warm);
 void handleVlanIntfFile(string file);
-void handlePortConfig(ProducerStateTable &p, map<string, KeyOpFieldsValuesTuple> &port_cfg_map);
 void checkPortInitDone(DBConnector *appl_db);
 
 int main(int argc, char **argv)
 {
     Logger::linkToDbNative("portsyncd");
     int opt;
-    map<string, KeyOpFieldsValuesTuple> port_cfg_map;
 
     while ((opt = getopt(argc, argv, "v:h")) != -1 )
     {
@@ -71,7 +69,6 @@ int main(int argc, char **argv)
     DBConnector appl_db("APPL_DB", 0);
     DBConnector state_db("STATE_DB", 0);
     ProducerStateTable p(&appl_db, APP_PORT_TABLE_NAME);
-    SubscriberStateTable portCfg(&cfgDb, CFG_PORT_TABLE_NAME);
 
     WarmStart::initialize("portsyncd", "swss");
     WarmStart::checkWarmStart("portsyncd", "swss");
@@ -93,7 +90,6 @@ int main(int argc, char **argv)
         NetDispatcher::getInstance().registerMessageHandler(RTM_DELLINK, &sync);
 
         s.addSelectable(&netlink);
-        s.addSelectable(&portCfg);
 
         while (true)
         {
@@ -135,28 +131,6 @@ int main(int argc, char **argv)
 
                     g_init = true;
                 }
-                if (!port_cfg_map.empty())
-                {
-                    handlePortConfig(p, port_cfg_map);
-                }
-            }
-            else if (temps == (Selectable *)&portCfg)
-            {
-                std::deque<KeyOpFieldsValuesTuple> entries;
-                portCfg.pops(entries);
-
-                for (auto entry: entries)
-                {
-                    string key = kfvKey(entry);
-
-                    if (port_cfg_map.find(key) != port_cfg_map.end())
-                    {
-                        /* For now we simply drop previous pending port config */
-                        port_cfg_map.erase(key);
-                    }
-                    port_cfg_map[key] = entry;
-                }
-                handlePortConfig(p, port_cfg_map);
             }
             else
             {
@@ -224,84 +198,4 @@ void handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, boo
         notifyPortConfigDone(p);
     }
 
-}
-
-void handlePortConfig(ProducerStateTable &p, map<string, KeyOpFieldsValuesTuple> &port_cfg_map)
-{
-    string autoneg;
-    vector<FieldValueTuple> attrs;
-    vector<FieldValueTuple> autoneg_attrs;
-    vector<FieldValueTuple> force_attrs;
-
-    auto it = port_cfg_map.begin();
-    while (it != port_cfg_map.end())
-    {
-        KeyOpFieldsValuesTuple entry = it->second;
-        string key = kfvKey(entry);
-        string op  = kfvOp(entry);
-        auto values = kfvFieldsValues(entry);
-
-        /* only push down port config when port is not in hostif create pending state */
-        if (g_portSet.find(key) == g_portSet.end())
-        {
-            /* No support for port delete yet */
-            if (op == SET_COMMAND)
-            {
-                
-                for (auto i : values)
-                {
-                    auto field = fvField(i);
-                    if (field == "adv_speeds")
-                    {
-                        autoneg_attrs.push_back(i);
-                    }
-                    else if (field == "adv_interface_types")
-                    {
-                        autoneg_attrs.push_back(i);
-                    }
-                    else if (field == "speed")
-                    {
-                        force_attrs.push_back(i);
-                    }
-                    else if (field == "interface_type")
-                    {
-                        force_attrs.push_back(i);
-                    }
-                    else if (field == "autoneg")
-                    {
-                        autoneg = fvValue(i);
-                        attrs.push_back(i);
-                    }
-                    else 
-                    {
-                        attrs.push_back(i);
-                    }
-                }
-                if (autoneg == "on") // autoneg is on, only put adv_speeds and adv_interface_types to APPL_DB
-                {
-                    attrs.insert(attrs.end(), autoneg_attrs.begin(), autoneg_attrs.end());
-                }
-                else if (autoneg == "off") // autoneg is off, only put speed and interface_type to APPL_DB
-                {
-                    attrs.insert(attrs.end(), force_attrs.begin(), force_attrs.end());
-                }
-                else // autoneg is not configured, put all attributes to APPL_DB
-                {
-                    attrs.insert(attrs.end(), autoneg_attrs.begin(), autoneg_attrs.end());
-                    attrs.insert(attrs.end(), force_attrs.begin(), force_attrs.end());
-                }
-                p.set(key, attrs);
-                attrs.clear();
-                autoneg_attrs.clear();
-                force_attrs.clear();
-                autoneg.clear();
-            }
-
-            it = port_cfg_map.erase(it);
-        }
-        else
-        {
-            it++;
-        }
-    }
 }

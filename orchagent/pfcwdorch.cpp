@@ -27,9 +27,12 @@
 #define PFC_WD_TC_MAX 8
 #define COUNTER_CHECK_POLL_TIMEOUT_SEC  1
 
+extern sai_object_id_t gSwitchId;
+extern sai_switch_api_t* sai_switch_api;
 extern sai_port_api_t *sai_port_api;
 extern sai_queue_api_t *sai_queue_api;
 
+extern SwitchOrch *gSwitchOrch;
 extern PortsOrch *gPortsOrch;
 
 template <typename DropHandler, typename ForwardHandler>
@@ -229,6 +232,36 @@ task_process_status PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const st
                     SWSS_LOG_ERROR("Unsupported action %s for platform %s", value.c_str(), m_platform.c_str());
                     return task_process_status::task_invalid_entry;
                 }
+                if(m_platform == BRCM_PLATFORM_SUBSTRING)
+                {
+                    if(gSwitchOrch->checkPfcDlrInitEnable())
+                    {
+                        if(getPfcDlrPacketAction() == PfcWdAction::PFC_WD_ACTION_UNKNOWN)
+                        {
+                            sai_attribute_t attr;
+                            attr.id = SAI_SWITCH_ATTR_PFC_DLR_PACKET_ACTION;
+                            attr.value.u32 = (sai_uint32_t)action;
+
+                            sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+                            if(status != SAI_STATUS_SUCCESS)
+                            {
+                                SWSS_LOG_ERROR("Failed to set switch level PFC DLR packet action rv : %d", status);
+                                return task_process_status::task_invalid_entry;
+                            }
+                            setPfcDlrPacketAction(action);
+                        }
+                        else
+                        {
+                            if(getPfcDlrPacketAction() != action)
+                            {
+                                string DlrPacketAction = serializeAction(getPfcDlrPacketAction());
+                                SWSS_LOG_ERROR("Invalid PFC Watchdog action %s as switch level action %s is set",
+                                               value.c_str(), DlrPacketAction.c_str());
+                                return task_process_status::task_invalid_entry;
+                            }
+                        }
+                    }
+                }
             }
             else
             {
@@ -399,9 +432,9 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
             continue;
         }
 
-        if (!gPortsOrch->getPortPfc(port.m_port_id, &pfcMask))
+        if (!gPortsOrch->getPortPfcWatchdogStatus(port.m_port_id, &pfcMask))
         {
-            SWSS_LOG_ERROR("Failed to get PFC mask on port %s", port.m_alias.c_str());
+            SWSS_LOG_ERROR("Failed to get PFC watchdog mask on port %s", port.m_alias.c_str());
             return;
         }
 
@@ -443,9 +476,9 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
             continue;
         }
 
-        if (!gPortsOrch->getPortPfc(port.m_port_id, &pfcMask))
+        if (!gPortsOrch->getPortPfcWatchdogStatus(port.m_port_id, &pfcMask))
         {
-            SWSS_LOG_ERROR("Failed to get PFC mask on port %s", port.m_alias.c_str());
+            SWSS_LOG_ERROR("Failed to get PFC watchdog mask on port %s", port.m_alias.c_str());
             return;
         }
 
@@ -489,7 +522,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
 
     uint8_t pfcMask = 0;
 
-    if (!gPortsOrch->getPortPfc(port.m_port_id, &pfcMask))
+    if (!gPortsOrch->getPortPfcWatchdogStatus(port.m_port_id, &pfcMask))
     {
         SWSS_LOG_ERROR("Failed to get PFC mask on port %s", port.m_alias.c_str());
         return false;
@@ -1064,4 +1097,5 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::bake()
 // Trick to keep member functions in a separate file
 template class PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>;
 template class PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>;
+template class PfcWdSwOrch<PfcWdDlrHandler, PfcWdLossyHandler>;
 template class PfcWdSwOrch<PfcWdSaiDlrInitHandler, PfcWdActionHandler>;

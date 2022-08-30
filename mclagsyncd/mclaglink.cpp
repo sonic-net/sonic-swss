@@ -31,6 +31,7 @@
 #include "mclagsyncd/mclaglink.h"
 #include "mclagsyncd/mclag.h"
 #include <set>
+#include <unordered_set>
 #include <algorithm>
 #include "macaddress.h"
 #include <string>
@@ -188,8 +189,13 @@ void MclagLink::mclagsyncdFetchMclagInterfaceConfigFromConfigdb()
 
 void MclagLink::setPortIsolate(char *msg)
 {
-    char *platform = getenv("platform");
-    if ((NULL != platform) && (strstr(platform, BRCM_PLATFORM_SUBSTRING)))
+    static const unordered_set<string> supported {
+        BRCM_PLATFORM_SUBSTRING,
+        BFN_PLATFORM_SUBSTRING
+    };
+
+    const char *platform = getenv("platform");
+    if (platform != nullptr && supported.find(string(platform)) != supported.end())
     {
         mclag_sub_option_hdr_t *op_hdr = NULL;
         string isolate_src_port;

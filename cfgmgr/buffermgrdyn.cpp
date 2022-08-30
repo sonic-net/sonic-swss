@@ -22,7 +22,6 @@
  *        In internal maps: table name removed from the index
  * 2. Maintain maps for pools, profiles and PGs in CONFIG_DB and APPL_DB
  * 3. Keys of maps in this file don't contain the TABLE_NAME
- * 3. 
  */
 using namespace std;
 using namespace swss;
@@ -30,17 +29,18 @@ using namespace swss;
 BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBConnector *applDb, const vector<TableConnector> &tables, shared_ptr<vector<KeyOpFieldsValuesTuple>> gearboxInfo, shared_ptr<vector<KeyOpFieldsValuesTuple>> zeroProfilesInfo) :
         Orch(tables),
         m_platform(),
-        m_bufferDirections({BUFFER_INGRESS, BUFFER_EGRESS}),
-        m_bufferObjectNames({"priority group", "queue"}),
-        m_bufferDirectionNames({"ingress", "egress"}),
+        m_bufferDirections{BUFFER_INGRESS, BUFFER_EGRESS},
+        m_bufferObjectNames{"priority group", "queue"},
+        m_bufferDirectionNames{"ingress", "egress"},
         m_applDb(applDb),
         m_zeroProfilesLoaded(false),
         m_supportRemoving(true),
         m_cfgDefaultLosslessBufferParam(cfgDb, CFG_DEFAULT_LOSSLESS_BUFFER_PARAMETER),
+        m_cfgDeviceMetaDataTable(cfgDb, CFG_DEVICE_METADATA_TABLE_NAME),
         m_applBufferPoolTable(applDb, APP_BUFFER_POOL_TABLE_NAME),
         m_applBufferProfileTable(applDb, APP_BUFFER_PROFILE_TABLE_NAME),
-        m_applBufferObjectTables({ProducerStateTable(applDb, APP_BUFFER_PG_TABLE_NAME), ProducerStateTable(applDb, APP_BUFFER_QUEUE_TABLE_NAME)}),
-        m_applBufferProfileListTables({ProducerStateTable(applDb, APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME), ProducerStateTable(applDb, APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME)}),
+        m_applBufferObjectTables{ProducerStateTable(applDb, APP_BUFFER_PG_TABLE_NAME), ProducerStateTable(applDb, APP_BUFFER_QUEUE_TABLE_NAME)},
+        m_applBufferProfileListTables{ProducerStateTable(applDb, APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME), ProducerStateTable(applDb, APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME)},
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
         m_stateBufferMaximumTable(stateDb, STATE_BUFFER_MAXIMUM_VALUE_TABLE),
         m_stateBufferPoolTable(stateDb, STATE_BUFFER_POOL_TABLE_NAME),
@@ -73,6 +73,30 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
     string checkHeadroomPluginName = "buffer_check_headroom_" + platform + ".lua";
 
     m_platform = platform;
+    m_specific_platform = platform;     // default for non-Mellanox
+    m_model_number = 0;
+
+    // Retrieve the type of mellanox platform
+    if (m_platform == "mellanox")
+    {
+        m_cfgDeviceMetaDataTable.hget("localhost", "platform", m_specific_platform);
+        if (!m_specific_platform.empty())
+        {
+            // Mellanox model number follows "sn" in the platform name and is 4 digits long
+            std::size_t sn_pos = m_specific_platform.find("sn");
+            if (sn_pos != std::string::npos)
+            {
+                std::string model_number = m_specific_platform.substr (sn_pos + 2, 4);
+                if (!model_number.empty())
+                {
+                    m_model_number = atoi(model_number.c_str());
+                }
+            }
+        }
+        if (!m_model_number) {
+            SWSS_LOG_ERROR("Failed to retrieve Mellanox model number");
+        }
+    }
 
     try
     {
@@ -87,8 +111,11 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
     }
     catch (...)
     {
-        SWSS_LOG_ERROR("Lua scripts for buffer calculation were not loaded successfully, buffermgrd won't start");
-        return;
+        if (platform != "mock_test")
+        {
+            SWSS_LOG_ERROR("Lua scripts for buffer calculation were not loaded successfully, buffermgrd won't start");
+            return;
+        }
     }
 
     // Init timer
@@ -471,7 +498,9 @@ string BufferMgrDynamic::getDynamicProfileName(const string &speed, const string
 
     if (m_platform == "mellanox")
     {
-        if ((speed != "400000") && (lane_count == 8))
+        if ((lane_count == 8) &&
+            (((m_model_number / 1000 == 4) && (speed != "400000")) ||
+             ((m_model_number / 1000 == 5) && (speed != "800000"))))
         {
             // On Mellanox platform, ports with 8 lanes have different(double) xon value then other ports
             // For ports at speed other than 400G can have
@@ -482,7 +511,8 @@ string BufferMgrDynamic::getDynamicProfileName(const string &speed, const string
             // Eg.
             // - A 100G port with 8 lanes will use buffer profile "pg_profile_100000_5m_8lane_profile"
             // - A 100G port with 4 lanes will use buffer profile "pg_profile_100000_5m_profile"
-            // Currently, 400G ports can only have 8 lanes. So we don't add this to the profile
+            // Currently, for 4xxx models, 400G ports can only have 8 lanes,
+            // and for 5xxx models, 800G ports can only have 8 lanes. So we don't add this to the profile.
             buffer_profile_key = buffer_profile_key + "_8lane";
         }
     }
@@ -691,7 +721,13 @@ void BufferMgrDynamic::recalculateSharedBufferPool()
                 //  - In case the shared headroom pool size is statically configured, as it is programmed to APPL_DB during buffer pool handling,
                 //     - any change from lua plugin will be ignored.
                 //     - will handle ingress_lossless_pool in the way all other pools are handled in this case
-                auto &pool = m_bufferPoolLookup[poolName];
+                const auto &poolRef = m_bufferPoolLookup.find(poolName);
+                if (poolRef == m_bufferPoolLookup.end())
+                {
+                    SWSS_LOG_WARN("Unconfigured buffer pool %s got from lua plugin", poolName.c_str());
+                    continue;
+                }
+                auto &pool = poolRef->second;
                 auto &poolSizeStr = pairs[1];
                 auto old_xoff = pool.xoff;
                 bool xoff_updated = false;
@@ -848,10 +884,8 @@ void BufferMgrDynamic::updateBufferProfileToDb(const string &name, const buffer_
     }
 
     vector<FieldValueTuple> fvVector;
-    string mode = getPgPoolMode();
 
-    // profile threshold field name
-    mode += "_th";
+    const string &&mode = profile.threshold_mode.empty() ? getPgPoolMode() + "_th" : profile.threshold_mode;
 
     if (profile.lossless)
     {
@@ -932,7 +966,7 @@ task_process_status BufferMgrDynamic::allocateProfile(const string &speed, const
         string mode = getPgPoolMode();
         if (mode.empty())
         {
-            SWSS_LOG_NOTICE("BUFFER_PROFILE %s cannot be created because the buffer pool isn't ready", profile_name.c_str());
+            SWSS_LOG_INFO("BUFFER_PROFILE %s cannot be created because the buffer pool isn't ready", profile_name.c_str());
             return task_process_status::task_need_retry;
         }
 
@@ -1403,9 +1437,10 @@ task_process_status BufferMgrDynamic::refreshPgsForPort(const string &port, cons
         return task_process_status::task_success;
     }
 
-    if (!m_bufferPoolReady)
+    if (!m_bufferPoolReady || m_defaultThreshold.empty())
     {
-        SWSS_LOG_INFO("Nothing to be done since the buffer pool is not ready");
+        SWSS_LOG_INFO("Nothing to be done since either the buffer pool or default threshold is not ready");
+        m_bufferObjectsPending = true;
         return task_process_status::task_success;
     }
 
@@ -1427,6 +1462,12 @@ task_process_status BufferMgrDynamic::refreshPgsForPort(const string &port, cons
 
         if (portPg.dynamic_calculated)
         {
+            if (portInfo.state != PORT_READY)
+            {
+                SWSS_LOG_INFO("Nothing to be done for %s since port is not ready", key.c_str());
+                continue;
+            }
+
             string threshold;
             // Calculate new headroom size
             if (portPg.static_configured)
@@ -1821,6 +1862,14 @@ task_process_status BufferMgrDynamic::handleBufferMaxParam(KeyOpFieldsValuesTupl
                     SWSS_LOG_INFO("BUFFER_MAX_PARAM: Got port %s's max priority group %s", key.c_str(), value.c_str());
 
                     portInfo.maximum_buffer_objects[BUFFER_PG] = (sai_uint32_t)pgCount;
+
+                    if (m_bufferCompletelyInitialized && portInfo.state == PORT_ADMIN_DOWN)
+                    {
+                        // This is mostly for the case where the port is created only-the-fly
+                        // The maximum buffer parameters can be received after buffer items
+                        reclaimReservedBufferForPort(key, m_portPgLookup, BUFFER_PG);
+                        SWSS_LOG_NOTICE("Admin-down port %s is handled after maximum buffer parameter has been received", key.c_str());
+                    }
                 }
                 else if (fvField(i) == "max_queues")
                 {
@@ -1834,6 +1883,14 @@ task_process_status BufferMgrDynamic::handleBufferMaxParam(KeyOpFieldsValuesTupl
                     SWSS_LOG_INFO("BUFFER_MAX_PARAM: Got port %s's max queue %s", key.c_str(), value.c_str());
 
                     portInfo.maximum_buffer_objects[BUFFER_QUEUE] = (sai_uint32_t)queueCount;
+
+                    if (m_bufferCompletelyInitialized && portInfo.state == PORT_ADMIN_DOWN)
+                    {
+                        // This is mostly for the case where the port is created only-the-fly
+                        // The maximum buffer parameters can be received after buffer items
+                        reclaimReservedBufferForPort(key, m_portQueueLookup, BUFFER_QUEUE);
+                        SWSS_LOG_NOTICE("Admin-down port %s is handled after maximum buffer parameter has been received", key.c_str());
+                    }
                 }
             }
         }
@@ -1865,10 +1922,16 @@ task_process_status BufferMgrDynamic::handleBufferMaxParam(KeyOpFieldsValuesTupl
 task_process_status BufferMgrDynamic::handleDefaultLossLessBufferParam(KeyOpFieldsValuesTuple &tuple)
 {
     string op = kfvOp(tuple);
-    string newRatio = "0";
+    string newRatio = "";
 
     if (op == SET_COMMAND)
     {
+        if (m_bufferPoolLookup.find(INGRESS_LOSSLESS_PG_POOL_NAME) == m_bufferPoolLookup.end())
+        {
+            SWSS_LOG_INFO("%s has not been configured, need to retry", INGRESS_LOSSLESS_PG_POOL_NAME);
+            return task_process_status::task_need_retry;
+        }
+
         for (auto i : kfvFieldsValues(tuple))
         {
             if (fvField(i) == "default_dynamic_th")
@@ -1882,6 +1945,10 @@ task_process_status BufferMgrDynamic::handleDefaultLossLessBufferParam(KeyOpFiel
                 SWSS_LOG_DEBUG("Handling Buffer parameter table field over_subscribe_ratio value %s", fvValue(i).c_str());
             }
         }
+    }
+    else if (op == DEL_COMMAND)
+    {
+        newRatio = "";
     }
     else
     {
@@ -1910,6 +1977,7 @@ task_process_status BufferMgrDynamic::handleCableLenTable(KeyOpFieldsValuesTuple
     int failed_item_count = 0;
     if (op == SET_COMMAND)
     {
+        m_cableLengths.clear();
         for (auto i : kfvFieldsValues(tuple))
         {
             // receive and cache cable length table
@@ -1923,6 +1991,8 @@ task_process_status BufferMgrDynamic::handleCableLenTable(KeyOpFieldsValuesTuple
             SWSS_LOG_DEBUG("Port Info for %s before handling %s %s %s",
                            port.c_str(),
                            portInfo.effective_speed.c_str(), portInfo.cable_length.c_str(), portInfo.gearbox_model.c_str());
+
+            m_cableLengths[port] = cable_length;
 
             if (portInfo.cable_length == cable_length)
             {
@@ -2132,6 +2202,11 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
         string &mtu = portInfo.mtu;
         string &effective_speed = portInfo.effective_speed;
 
+        if (cable_length.empty() && !m_cableLengths[port].empty())
+        {
+            cable_length = m_cableLengths[port];
+        }
+
         bool need_refresh_all_buffer_objects = false, need_handle_admin_down = false, was_admin_down = false;
 
         if (effective_speed_updated || mtu_updated)
@@ -2253,6 +2328,28 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
             task_status = refreshPgsForPort(port, portInfo.effective_speed, portInfo.cable_length, portInfo.mtu);
         }
     }
+    else if (op == DEL_COMMAND)
+    {
+        cleanUpItemsForReclaimingBuffer(port);
+        if ((m_portPgLookup.find(port) != m_portPgLookup.end()
+             && !m_portPgLookup[port].empty())
+            || (m_portQueueLookup.find(port) != m_portQueueLookup.end()
+                && !m_portQueueLookup[port].empty())
+            || (m_portProfileListLookups[BUFFER_INGRESS].find(port) != m_portProfileListLookups[BUFFER_INGRESS].end()
+                && !m_portProfileListLookups[BUFFER_INGRESS][port].empty())
+            || (m_portProfileListLookups[BUFFER_EGRESS].find(port) != m_portProfileListLookups[BUFFER_EGRESS].end()
+                && !m_portProfileListLookups[BUFFER_EGRESS][port].empty()))
+        {
+            SWSS_LOG_INFO("Port %s can't be removed before buffer items have been removed", port.c_str());
+            return task_process_status::task_need_retry;
+        }
+        m_portPgLookup.erase(port);
+        m_portQueueLookup.erase(port);
+        m_portProfileListLookups[BUFFER_INGRESS].erase(port);
+        m_portProfileListLookups[BUFFER_EGRESS].erase(port);
+        m_portInfoLookup.erase(port);
+        SWSS_LOG_NOTICE("Port %s is removed", port.c_str());
+    }
 
     return task_status;
 }
@@ -2350,6 +2447,28 @@ task_process_status BufferMgrDynamic::handleBufferPoolTable(KeyOpFieldsValuesTup
         m_applBufferPoolTable.del(pool);
         m_stateBufferPoolTable.del(pool);
         m_bufferPoolLookup.erase(pool);
+        if (pool == INGRESS_LOSSLESS_PG_POOL_NAME)
+        {
+            m_configuredSharedHeadroomPoolSize.clear();
+        }
+
+        if (m_bufferPoolReady && m_bufferPoolLookup.empty())
+        {
+            for(auto &port : m_adminDownPorts)
+            {
+                cleanUpItemsForReclaimingBuffer(port);
+            }
+
+            // Zero profiles must be unloaded once all pools have been uploaded
+            // This can be resulted from "config qos reload"
+            // Any zero profile left can leads to buffer pool not able to be cleared
+            unloadZeroPoolAndProfiles();
+
+            m_bufferPoolReady = false;
+            m_bufferCompletelyInitialized = false;
+
+            m_pendingApplyZeroProfilePorts = m_adminDownPorts;
+        }
     }
     else
     {
@@ -2371,6 +2490,10 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
         // For set command:
         // 1. Create the corresponding table entries in APPL_DB
         // 2. Record the table in the internal cache m_bufferProfileLookup
+
+        // If the profile did not exist, it will be created in the next line by the [] operator with incomplete data.
+        // In case the flow does not finish successfully, the incomplete profile should be removed
+        bool needRemoveOnFailure = (m_bufferProfileLookup.find(profileName) == m_bufferProfileLookup.end());
         buffer_profile_t &profileApp = m_bufferProfileLookup[profileName];
 
         profileApp.static_configured = true;
@@ -2391,24 +2514,44 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
                 if (!value.empty())
                 {
                     auto &poolName = value;
-                    if (poolName.empty())
-                    {
-                        SWSS_LOG_ERROR("BUFFER_PROFILE: Invalid format of reference to pool: %s", value.c_str());
-                        return task_process_status::task_invalid_entry;
-                    }
-
                     auto poolRef = m_bufferPoolLookup.find(poolName);
                     if (poolRef == m_bufferPoolLookup.end())
                     {
-                        SWSS_LOG_WARN("Pool %s hasn't been configured yet, need retry", poolName.c_str());
+                        SWSS_LOG_INFO("Pool %s hasn't been configured yet, need retry", poolName.c_str());
+                        if (needRemoveOnFailure)
+                        {
+                            m_bufferProfileLookup.erase(profileName);
+                        }
                         return task_process_status::task_need_retry;
                     }
                     profileApp.pool_name = poolName;
                     profileApp.direction = poolRef->second.direction;
+                    auto threshold_mode = poolRef->second.mode + "_th";
+                    if (profileApp.threshold_mode.empty())
+                    {
+                        profileApp.threshold_mode = threshold_mode;
+                    }
+                    else if (profileApp.threshold_mode != threshold_mode)
+                    {
+                        SWSS_LOG_ERROR("Buffer profile %s's mode %s doesn't match with buffer pool %s whose mode is %s",
+                                       profileName.c_str(),
+                                       profileApp.threshold_mode.c_str(),
+                                       poolName.c_str(),
+                                       threshold_mode.c_str());
+                        if (needRemoveOnFailure)
+                        {
+                            m_bufferProfileLookup.erase(profileName);
+                        }
+                        return task_process_status::task_failed;
+                    }
                 }
                 else
                 {
                     SWSS_LOG_ERROR("Pool for BUFFER_PROFILE %s hasn't been specified", field.c_str());
+                    if (needRemoveOnFailure)
+                    {
+                        m_bufferProfileLookup.erase(profileName);
+                    }
                     return task_process_status::task_failed;
                 }
             }
@@ -2429,12 +2572,25 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
             {
                 profileApp.size = value;
             }
-            else if (field == buffer_dynamic_th_field_name)
+            else if (field == buffer_dynamic_th_field_name || field == buffer_static_th_field_name)
             {
-                profileApp.threshold = value;
-            }
-            else if (field == buffer_static_th_field_name)
-            {
+                if (profileApp.threshold_mode.empty())
+                {
+                    profileApp.threshold_mode = field;
+                }
+                else if (profileApp.threshold_mode != field)
+                {
+                    SWSS_LOG_ERROR("Buffer profile %s's mode %s doesn't align with buffer pool %s whose mode is %s",
+                                   profileName.c_str(),
+                                   field.c_str(),
+                                   profileApp.pool_name.c_str(),
+                                   profileApp.threshold_mode.c_str());
+                    if (needRemoveOnFailure)
+                    {
+                        m_bufferProfileLookup.erase(profileName);
+                    }
+                    return task_process_status::task_failed;
+                }
                 profileApp.threshold = value;
             }
             else if (field == buffer_headroom_type_field_name)
@@ -2457,7 +2613,11 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
             if (profileApp.direction != BUFFER_INGRESS)
             {
                 SWSS_LOG_ERROR("BUFFER_PROFILE %s is ingress but referencing an egress pool %s", profileName.c_str(), profileApp.pool_name.c_str());
-                return task_process_status::task_success;
+                if (needRemoveOnFailure)
+                {
+                    m_bufferProfileLookup.erase(profileName);
+                }
+                return task_process_status::task_failed;
             }
 
             if (profileApp.dynamic_calculated)
@@ -2542,6 +2702,12 @@ void BufferMgrDynamic::handleSetSingleBufferObjectOnAdminDownPort(buffer_directi
     {
         if (idsToZero.empty())
         {
+            // Happens only after "config qos reload"
+            if (!m_zeroProfilesLoaded)
+            {
+                loadZeroPoolAndProfiles();
+            }
+
             // If initialization finished, no extra handle required.
             // Check whether the key overlaps with supported but not configured map
             auto const &idsToAdd = parseObjectNameFromKey(key, 1);
@@ -2657,6 +2823,14 @@ void BufferMgrDynamic::handleDelSingleBufferObjectOnAdminDownPort(buffer_directi
 
     if (idsToZero.empty())
     {
+        if (!m_bufferPoolReady)
+        {
+            // Reclaiming buffer has not started yet so just remove it.
+            // Do not add it to "supported but not configured" set
+            updateBufferObjectToDb(key, "", false, direction);
+            return;
+        }
+
         // For admin down ports, if zero profiles have been applied to all configured items
         // do NOT remove it otherwise SDK default value will be set for the items
         // Move the key to supported_but_not_configured_items so that the slice of items
@@ -2725,6 +2899,9 @@ void BufferMgrDynamic::handleDelSingleBufferObjectOnAdminDownPort(buffer_directi
 task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &key, const string &port, const KeyOpFieldsValuesTuple &tuple)
 {
     string op = kfvOp(tuple);
+    // If the buffer PG did not exist, it will be created in the next line by the [] operator with incomplete data.
+    // In case the flow does not finish successfully, the incomplete profile should be removed
+    bool needRemoveOnFailure = (m_portPgLookup[port].find(key) == m_portPgLookup[port].end());
     buffer_pg_t &bufferPg = m_portPgLookup[port][key];
     port_info_t &portInfo = m_portInfoLookup[port];
 
@@ -2760,6 +2937,10 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
                 if (profileName.empty())
                 {
                     SWSS_LOG_ERROR("BUFFER_PG: Invalid format of reference to profile: %s", value.c_str());
+                    if (needRemoveOnFailure)
+                    {
+                        m_portPgLookup[port].erase(key);
+                    }
                     return task_process_status::task_invalid_entry;
                 }
 
@@ -2768,13 +2949,25 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
                 {
                     // In this case, we shouldn't set the dynamic calculated flag to true
                     // It will be updated when its profile configured.
-                    bufferPg.dynamic_calculated = false;
-                    SWSS_LOG_WARN("Profile %s hasn't been configured yet, skip", profileName.c_str());
+                    if (needRemoveOnFailure)
+                    {
+                        m_portPgLookup[port].erase(key);
+                    }
+                    SWSS_LOG_INFO("Profile %s hasn't been configured yet, skip", profileName.c_str());
                     return task_process_status::task_need_retry;
                 }
                 else
                 {
                     buffer_profile_t &profileRef = searchRef->second;
+                    if (profileRef.direction == BUFFER_EGRESS)
+                    {
+                        if (needRemoveOnFailure)
+                        {
+                            m_portPgLookup[port].erase(key);
+                        }
+                        SWSS_LOG_ERROR("Egress buffer profile configured on PG %s", key.c_str());
+                        return task_process_status::task_failed;
+                    }
                     bufferPg.dynamic_calculated = profileRef.dynamic_calculated;
                     bufferPg.configured_profile_name = profileName;
                     bufferPg.lossless = profileRef.lossless;
@@ -2786,6 +2979,10 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
             if (field != buffer_profile_field_name)
             {
                 SWSS_LOG_ERROR("BUFFER_PG: Invalid field %s", field.c_str());
+                if (needRemoveOnFailure)
+                {
+                    m_portPgLookup[port].erase(key);
+                }
                 return task_process_status::task_invalid_entry;
             }
 
@@ -2826,7 +3023,7 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
         // For del command:
         // 1. Removing it from APPL_DB
         // 2. Update internal caches
-        string &runningProfileName = bufferPg.running_profile_name;
+        string runningProfileName = bufferPg.running_profile_name;
         string &configProfileName = bufferPg.configured_profile_name;
 
         if (!m_supportRemoving)
@@ -2869,6 +3066,7 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
     else
     {
         SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
+        m_portPgLookup[port].erase(key);
         return task_process_status::task_invalid_entry;
     }
 
@@ -2884,7 +3082,7 @@ task_process_status BufferMgrDynamic::checkBufferProfileDirection(const string &
         auto profileSearchRef = m_bufferProfileLookup.find(profileName);
         if (profileSearchRef == m_bufferProfileLookup.end())
         {
-            SWSS_LOG_NOTICE("Profile %s doesn't exist, need retry", profileName.c_str());
+            SWSS_LOG_INFO("Profile %s doesn't exist, need retry", profileName.c_str());
             return task_process_status::task_need_retry;
         }
 
@@ -2956,6 +3154,8 @@ task_process_status BufferMgrDynamic::handleSingleBufferQueueEntry(const string 
         }
         SWSS_LOG_INFO("Removing entry %s from APPL_DB", key.c_str());
         m_portQueueLookup[port].erase(queues);
+        if (m_portQueueLookup[port].empty())
+            m_portQueueLookup.erase(port);
         if (PORT_ADMIN_DOWN == portInfo.state)
         {
             handleDelSingleBufferObjectOnAdminDownPort(BUFFER_QUEUE, port, key, portInfo);
@@ -3006,6 +3206,22 @@ task_process_status BufferMgrDynamic::handleSingleBufferPortProfileListEntry(con
             // Only apply profile list on admin up port
             // For admin-down ports, zero profile list has been applied on the port when it entered admin-down state
             updateBufferObjectListToDb(key, profileListLookup[port], dir);
+        }
+        else
+        {
+            const auto &profileList = m_portProfileListLookups[dir][port];
+            if (!profileList.empty())
+            {
+                // Happens only after "config qos reload"
+                if (!m_zeroProfilesLoaded)
+                {
+                    loadZeroPoolAndProfiles();
+                }
+                vector<FieldValueTuple> fvVector;
+                const string &zeroProfileNameList = constructZeroProfileListFromNormalProfileList(profileList, port);
+                fvVector.emplace_back(buffer_profile_list_field_name, zeroProfileNameList);
+                m_applBufferProfileListTables[dir].set(port, fvVector);
+            }
         }
     }
     else if (op == DEL_COMMAND)
@@ -3162,7 +3378,8 @@ void BufferMgrDynamic::doTask(Consumer &consumer)
         {
             case task_process_status::task_failed:
                 SWSS_LOG_ERROR("Failed to process table update");
-                return;
+                it = consumer.m_toSync.erase(it);
+                break;
             case task_process_status::task_need_retry:
                 SWSS_LOG_INFO("Unable to process table update. Will retry...");
                 it++;
@@ -3211,7 +3428,7 @@ void BufferMgrDynamic::doTask(Consumer &consumer)
  */
 void BufferMgrDynamic::handlePendingBufferObjects()
 {
-    if (m_bufferPoolReady)
+    if (m_bufferPoolReady && !m_defaultThreshold.empty())
     {
         if (!m_pendingApplyZeroProfilePorts.empty())
         {
@@ -3343,9 +3560,25 @@ void BufferMgrDynamic::handlePendingBufferObjects()
     }
 }
 
+void BufferMgrDynamic::cleanUpItemsForReclaimingBuffer(const string &port)
+{
+    // Clean up zero buffers when the buffer pools or a port has been removed
+    if (!m_bufferObjectIdsToZero[BUFFER_PG].empty())
+    {
+        updateBufferObjectToDb(port + delimiter + m_bufferObjectIdsToZero[BUFFER_PG], "", false, BUFFER_PG);
+    }
+    if (!m_bufferObjectIdsToZero[BUFFER_QUEUE].empty())
+    {
+        updateBufferObjectToDb(port + delimiter + m_bufferObjectIdsToZero[BUFFER_QUEUE], "", false, BUFFER_QUEUE);
+    }
+    removeSupportedButNotConfiguredItemsOnPort(m_portInfoLookup[port], port);
+}
+
 void BufferMgrDynamic::doTask(SelectableTimer &timer)
 {
     checkSharedBufferPoolSize(true);
     if (!m_bufferCompletelyInitialized)
+    {
         handlePendingBufferObjects();
+    }
 }

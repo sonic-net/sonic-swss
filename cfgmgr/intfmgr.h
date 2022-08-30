@@ -37,6 +37,7 @@ private:
     std::set<std::string> m_loopbackIntfList;
     std::set<std::string> m_pendingReplayIntfList;
     std::set<std::string> m_ipv6LinkLocalModeList;
+    std::string mySwitchType;
 
     void setIntfIp(const std::string &alias, const std::string &opCmd, const IpPrefix &ipPrefix);
     void setIntfVrf(const std::string &alias, const std::string &vrfName);
@@ -74,6 +75,7 @@ private:
 
     void updateSubIntfAdminStatus(const std::string &alias, const std::string &admin);
     void updateSubIntfMtu(const std::string &alias, const std::string &mtu);
+    bool enableIpv6Flag(const std::string&);
 
     bool m_replayDone {false};
 };

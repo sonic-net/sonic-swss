@@ -51,7 +51,7 @@ def test_evpnFdb(dvs, testlog):
     helper = VxlanEvpnHelper()
     dvs.setup_db()
 
-    dvs.runcmd("sonic-clear fdb all")
+    dvs.clear_fdb()
     time.sleep(2)
 
     #Find switch_id
@@ -62,7 +62,6 @@ def test_evpnFdb(dvs, testlog):
 
     # create vlan
     print("Creating Vlan3")
-    #dvs.runcmd("config vlan add 3")
     dvs.create_vlan("3")
     time.sleep(2)
 
@@ -79,7 +78,6 @@ def test_evpnFdb(dvs, testlog):
     vm_before = helper.how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
 
     print("Making Ethernet0 as a member of Vlan3")
-    #dvs.runcmd("config vlan member add 3 Ethernet0")
     dvs.create_vlan_member("3", "Ethernet0")
     time.sleep(2)
 

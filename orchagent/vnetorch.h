@@ -27,12 +27,13 @@ extern sai_object_id_t gVirtualRouterId;
 const request_description_t vnet_request_description = {
     { REQ_T_STRING },
     {
-        { "src_mac",       REQ_T_MAC_ADDRESS },
-        { "vxlan_tunnel",  REQ_T_STRING },
-        { "vni",           REQ_T_UINT },
-        { "peer_list",     REQ_T_SET },
-        { "guid",          REQ_T_STRING },
-        { "scope",         REQ_T_STRING },
+        { "src_mac",            REQ_T_MAC_ADDRESS },
+        { "vxlan_tunnel",       REQ_T_STRING },
+        { "vni",                REQ_T_UINT },
+        { "peer_list",          REQ_T_SET },
+        { "guid",               REQ_T_STRING },
+        { "scope",              REQ_T_STRING },
+        { "advertise_prefix",   REQ_T_BOOL},
     },
     { "vxlan_tunnel", "vni" } // mandatory attributes
 };
@@ -57,6 +58,7 @@ struct VNetInfo
     uint32_t vni;
     set<string> peers;
     string scope;
+    bool advertise_prefix;
 };
 
 typedef map<VR_TYPE, sai_object_id_t> vrid_list_t;
@@ -83,7 +85,8 @@ public:
                tunnel_(vnetInfo.tunnel),
                peer_list_(vnetInfo.peers),
                vni_(vnetInfo.vni),
-               scope_(vnetInfo.scope)
+               scope_(vnetInfo.scope),
+               advertise_prefix_(vnetInfo.advertise_prefix)
                { }
 
     virtual bool updateObj(vector<sai_attribute_t>&) = 0;
@@ -113,6 +116,11 @@ public:
         return scope_;
     }
 
+    bool getAdvertisePrefix() const
+    {
+        return advertise_prefix_;
+    }
+
     virtual ~VNetObject() noexcept(false) {};
 
 private:
@@ -120,6 +128,7 @@ private:
     string tunnel_;
     uint32_t vni_;
     string scope_;
+    bool advertise_prefix_;
 };
 
 struct nextHop
@@ -130,6 +139,7 @@ struct nextHop
 
 typedef std::map<IpPrefix, NextHopGroupKey> TunnelRoutes;
 typedef std::map<IpPrefix, nextHop> RouteMap;
+typedef std::map<IpPrefix, string> ProfileMap;
 
 class VNetVrfObject : public VNetObject
 {
@@ -172,6 +182,10 @@ public:
     bool addRoute(IpPrefix& ipPrefix, nextHop& nh);
     bool removeRoute(IpPrefix& ipPrefix);
 
+    void addProfile(IpPrefix& ipPrefix, string& profile);
+    void removeProfile(IpPrefix& ipPrefix);
+    string getProfile(IpPrefix& ipPrefix);
+
     size_t getRouteCount() const;
     bool getRouteNextHop(IpPrefix& ipPrefix, nextHop& nh);
     bool hasRoute(IpPrefix& ipPrefix);
@@ -181,6 +195,9 @@ public:
     void increaseNextHopRefCount(const nextHop&);
     void decreaseNextHopRefCount(const nextHop&);
 
+    const RouteMap &getRouteMap() const { return routes_; }
+    const TunnelRoutes &getTunnelRoutes() const { return tunnels_; }
+
     ~VNetVrfObject();
 
 private:
@@ -189,6 +206,7 @@ private:
 
     TunnelRoutes tunnels_;
     RouteMap routes_;
+    ProfileMap profile_;
 };
 
 typedef std::unique_ptr<VNetObject> VNetObject_T;
@@ -223,6 +241,11 @@ public:
         return vnet_table_.at(name)->getTunnelName();
     }
 
+    bool getAdvertisePrefix(const std::string& name) const
+    {
+        return vnet_table_.at(name)->getAdvertisePrefix();
+    }
+
     bool isVnetExecVrf() const
     {
         return (vnet_exec_ == VNET_EXEC::VNET_EXEC_VRF);
@@ -232,6 +255,9 @@ public:
     {
         return (vnet_exec_ == VNET_EXEC::VNET_EXEC_BRIDGE);
     }
+
+    bool getVrfIdByVnetName(const std::string& vnet_name, sai_object_id_t &vrf_id);
+    bool getVnetNameByVrfId(sai_object_id_t vrf_id, std::string& vnet_name);
 
 private:
     virtual bool addOperation(const Request& request);
@@ -255,6 +281,7 @@ const request_description_t vnet_route_description = {
         { "vni",                    REQ_T_STRING },
         { "mac_address",            REQ_T_STRING },
         { "endpoint_monitor",       REQ_T_IP_LIST },
+        { "profile",                REQ_T_STRING },
     },
     { }
 };
@@ -336,14 +363,16 @@ private:
     void removeBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr);
     void setEndpointMonitor(const string& vnet, const map<NextHopKey, IpAddress>& monitors, NextHopGroupKey& nexthops);
     void delEndpointMonitor(const string& vnet, NextHopGroupKey& nexthops);
-    void postRouteState(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops);
+    void postRouteState(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& profile);
     void removeRouteState(const string& vnet, IpPrefix& ipPrefix);
+    void addRouteAdvertisement(IpPrefix& ipPrefix, string& profile);
+    void removeRouteAdvertisement(IpPrefix& ipPrefix);
 
     void updateVnetTunnel(const BfdUpdate&);
     bool updateTunnelRoute(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op);
 
     template<typename T>
-    bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op,
+    bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op, string& profile,
                     const std::map<NextHopKey, IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
 
     template<typename T>
@@ -362,6 +391,7 @@ private:
     ProducerStateTable bfd_session_producer_;
     shared_ptr<DBConnector> state_db_;
     unique_ptr<Table> state_vnet_rt_tunnel_table_;
+    unique_ptr<Table> state_vnet_rt_adv_table_;
 };
 
 class VNetCfgRouteOrch : public Orch

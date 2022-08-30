@@ -34,11 +34,13 @@ const char state_db_key_delimiter  = '|';
 #define INVM_PLATFORM_SUBSTRING "innovium"
 #define MLNX_PLATFORM_SUBSTRING "mellanox"
 #define BRCM_PLATFORM_SUBSTRING "broadcom"
+#define BRCM_DNX_PLATFORM_SUBSTRING "broadcom-dnx"
 #define BFN_PLATFORM_SUBSTRING  "barefoot"
 #define VS_PLATFORM_SUBSTRING   "vs"
 #define NPS_PLATFORM_SUBSTRING  "nephos"
 #define MRVL_PLATFORM_SUBSTRING "marvell"
 #define CISCO_8000_PLATFORM_SUBSTRING "cisco-8000"
+#define XS_PLATFORM_SUBSTRING   "xsight"
 
 #define CONFIGDB_KEY_SEPARATOR "|"
 #define DEFAULT_KEY_SEPARATOR  ":"
@@ -65,6 +67,7 @@ typedef struct
     // multiple objects being referenced are separated by ','
     std::map<std::string, std::string> m_objsReferencingByMe;
     sai_object_id_t m_saiObjectId;
+    bool m_pendingRemove;
 } referenced_object;
 
 typedef std::map<std::string, referenced_object> object_reference_map;
@@ -233,9 +236,11 @@ protected:
     bool parseReference(type_map &type_maps, std::string &ref, const std::string &table_name, std::string &object_name);
     ref_resolve_status resolveFieldRefArray(type_map&, const std::string&, const std::string&, swss::KeyOpFieldsValuesTuple&, std::vector<sai_object_id_t>&, std::string&);
     void setObjectReference(type_map&, const std::string&, const std::string&, const std::string&, const std::string&);
+    bool doesObjectExist(type_map&, const std::string&, const std::string&, const std::string&, std::string&);
     void removeObject(type_map&, const std::string&, const std::string&);
     bool isObjectBeingReferenced(type_map&, const std::string&, const std::string&);
     std::string objectReferenceInfo(type_map&, const std::string&, const std::string&);
+    void removeMeFromObjsReferencedByMe(type_map &type_maps, const std::string &table, const std::string &obj_name, const std::string &field, const std::string &old_referenced_obj_name, bool remove_field=true);
 
     /* Note: consumer will be owned by this class */
     void addExecutor(Executor* executor);
@@ -250,7 +255,6 @@ protected:
 
     ResponsePublisher m_publisher;
 private:
-    void removeMeFromObjsReferencedByMe(type_map &type_maps, const std::string &table, const std::string &obj_name, const std::string &field, const std::string &old_referenced_obj_name);
     void addConsumer(swss::DBConnector *db, std::string tableName, int pri = default_orch_pri);
 };
 

@@ -20,6 +20,38 @@ extern sai_next_hop_api_t* sai_next_hop_api;
 extern RouteOrch *gRouteOrch;
 extern CrmOrch *gCrmOrch;
 
+const map<string, sai_my_sid_entry_endpoint_behavior_t> end_behavior_map =
+{
+    {"end",                SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_E},
+    {"end.x",              SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_X},
+    {"end.t",              SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_T},
+    {"end.dx6",            SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DX6},
+    {"end.dx4",            SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DX4},
+    {"end.dt4",            SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT4},
+    {"end.dt6",            SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT6},
+    {"end.dt46",           SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT46},
+    {"end.b6.encaps",      SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_B6_ENCAPS},
+    {"end.b6.encaps.red",  SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_B6_ENCAPS_RED},
+    {"end.b6.insert",      SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_B6_INSERT},
+    {"end.b6.insert.red",  SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_B6_INSERT_RED},
+    {"udx6",               SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DX6},
+    {"udx4",               SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DX4},
+    {"udt6",               SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT6},
+    {"udt4",               SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT4},
+    {"udt46",              SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT46},
+    {"un",                 SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UN},
+    {"ua",                 SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UA}
+};
+
+const map<string, sai_my_sid_entry_endpoint_behavior_flavor_t> end_flavor_map =
+{
+    {"end",                SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD},
+    {"end.x",              SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD},
+    {"end.t",              SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD},
+    {"un",                 SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD},
+    {"ua",                 SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD}
+};
+
 void Srv6Orch::srv6TunnelUpdateNexthops(const string srv6_source, const NextHopKey nhkey, bool insert)
 {
     if (insert)
@@ -372,62 +404,18 @@ bool Srv6Orch::mySidExists(string my_sid_string)
 bool Srv6Orch::sidEntryEndpointBehavior(string action, sai_my_sid_entry_endpoint_behavior_t &end_behavior,
                                         sai_my_sid_entry_endpoint_behavior_flavor_t &end_flavor)
 {
-    if (action == "end")
+    if (end_behavior_map.find(action) == end_behavior_map.end())
     {
-        end_behavior = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_E;
-        end_flavor = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD;
-    }
-    else if (action == "end.x")
-    {
-        end_behavior = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_X;
-        end_flavor = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD;
-    }
-    else if (action == "end.t")
-    {
-        end_behavior = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_T;
-        end_flavor = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD;
-    }
-    else if (action == "end.dx6")
-    {
-        end_behavior = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DX6;
-    }
-    else if (action == "end.dx4")
-    {
-        end_behavior = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DX4;
-    }
-    else if (action == "end.dt4")
-    {
-        end_behavior = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT4;
-    }
-    else if (action == "end.dt6")
-    {
-        end_behavior = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT6;
-    }
-    else if (action == "end.dt46")
-    {
-        end_behavior = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT46;
-    }
-    else if (action == "end.b6.encaps")
-    {
-        end_behavior = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_B6_ENCAPS;
-    }
-    else if (action == "end.b6.encaps.red")
-    {
-        end_behavior = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_B6_ENCAPS_RED;
-    }
-    else if (action == "end.b6.insert")
-    {
-        end_behavior = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_B6_INSERT;
-    }
-    else if (action == "end.b6.insert.red")
-    {
-        end_behavior = SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_B6_INSERT_RED;
-    }
-    else
-    {
-        SWSS_LOG_ERROR("Invalid endpoing behavior function");
+        SWSS_LOG_ERROR("Invalid endpoint behavior function");
         return false;
     }
+    end_behavior = end_behavior_map.at(action);
+
+    if (end_flavor_map.find(action) != end_flavor_map.end())
+    {
+        end_flavor = end_flavor_map.at(action);
+    }
+
     return true;
 }
 

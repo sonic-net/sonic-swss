@@ -20,7 +20,7 @@ RULE_NAME = "EGRESS_TEST_RULE"
 
 
 class TestEgressAclTable:
-    @pytest.yield_fixture
+    @pytest.fixture
     def egress_acl_table(self, dvs_acl):
         try:
             dvs_acl.create_acl_table_type(TABLE_TYPE, CUSTOM_TABLE_TYPE_MATCHES, CUSTOM_TABLE_TYPE_BPOINT_TYPES)

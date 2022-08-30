@@ -41,7 +41,10 @@ void dump_db_item(KeyOpFieldsValuesTuple &db_item)
 
 bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items)
 {
-    DBConnector db("APPL_DB", 0, true);
+    DBConnector db("APPL_DB", 0, false);
+    RedisPipeline pipeline(&db); // dtor of RedisPipeline will automatically flush data
+    unordered_map<string, ProducerStateTable> table_map;
+    
     for (auto &db_item : db_items)
     {
         dump_db_item(db_item);
@@ -55,18 +58,19 @@ bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items)
         }
         string table_name = key.substr(0, pos);
         string key_name = key.substr(pos + 1);
-        ProducerStateTable producer(&db, table_name);
+        auto ret = table_map.emplace(std::piecewise_construct, std::forward_as_tuple(table_name), std::forward_as_tuple(&pipeline, table_name, true));
 
         if (kfvOp(db_item) == SET_COMMAND)
-            producer.set(key_name, kfvFieldsValues(db_item), SET_COMMAND);
+            ret.first->second.set(key_name, kfvFieldsValues(db_item), SET_COMMAND);
         else if (kfvOp(db_item) == DEL_COMMAND)
-            producer.del(key_name, DEL_COMMAND);
+            ret.first->second.del(key_name, DEL_COMMAND);
         else
         {
             SWSS_LOG_ERROR("Invalid operation: %s\n", kfvOp(db_item).c_str());
             return false;
         }
     }
+
     return true;
 }
 

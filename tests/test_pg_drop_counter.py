@@ -2,7 +2,6 @@ import os
 import re
 import time
 import json
-import pytest
 import redis
 
 from swsscommon import swsscommon
@@ -58,14 +57,11 @@ class TestPGDropCounter(object):
             assert found, "entry name %s not found" % (entry_name)
 
     def set_up_flex_counter(self):
-        pg_stats_entry = {"PG_COUNTER_ID_LIST": "{}".format(pg_drop_attr)}
-        for pg in self.pgs:
-            self.flex_db.create_entry("FLEX_COUNTER_TABLE", "PG_DROP_STAT_COUNTER:{}".format(pg), pg_stats_entry)
-
         fc_status_enable = {"FLEX_COUNTER_STATUS": "enable"}
-
         self.config_db.create_entry("FLEX_COUNTER_TABLE", "PG_DROP", fc_status_enable)
         self.config_db.create_entry("FLEX_COUNTER_TABLE", "PG_WATERMARK", fc_status_enable)
+        # Wait for DB's to populate by orchagent
+        time.sleep(2)
 
     def clear_flex_counter(self):
         for pg in self.pgs:
@@ -73,14 +69,15 @@ class TestPGDropCounter(object):
 
         self.config_db.delete_entry("FLEX_COUNTER_TABLE", "PG_DROP")
         self.config_db.delete_entry("FLEX_COUNTER_TABLE", "PG_WATERMARK")
-
-
+        
     def test_pg_drop_counters(self, dvs):
         self.setup_dbs(dvs)
-        self.pgs = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP")
-        try:
-            self.set_up_flex_counter()
+        self.set_up_flex_counter()
+        # Get all configured counters OID's
+        self.pgs = self.counters_db.db_connection.hgetall("COUNTERS_PG_NAME_MAP").values()
+        assert self.pgs is not None and len(self.pgs) > 0
 
+        try:
             self.populate_asic(dvs, "0")
             time.sleep(self.DEFAULT_POLL_INTERVAL)
             self.verify_value(dvs, self.pgs, pg_drop_attr, "0")
@@ -94,3 +91,4 @@ class TestPGDropCounter(object):
             self.verify_value(dvs, self.pgs, pg_drop_attr, "123")
         finally:
             self.clear_flex_counter()
+

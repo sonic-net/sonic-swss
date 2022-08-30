@@ -23,7 +23,8 @@ NeighSync::NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConne
     m_stateNeighRestoreTable(stateDb, STATE_NEIGH_RESTORE_TABLE_NAME),
     m_cfgInterfaceTable(cfgDb, CFG_INTF_TABLE_NAME),
     m_cfgLagInterfaceTable(cfgDb, CFG_LAG_INTF_TABLE_NAME),
-    m_cfgVlanInterfaceTable(cfgDb, CFG_VLAN_INTF_TABLE_NAME)
+    m_cfgVlanInterfaceTable(cfgDb, CFG_VLAN_INTF_TABLE_NAME),
+    m_cfgPeerSwitchTable(cfgDb, CFG_PEER_SWITCH_TABLE_NAME)
 {
     m_AppRestartAssist = new AppRestartAssist(pipelineAppDB, "neighsyncd", "swss", DEFAULT_NEIGHSYNC_WARMSTART_TIMER);
     if (m_AppRestartAssist)
@@ -62,6 +63,9 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     string key;
     string family;
     string intfName;
+    std::vector<std::string> peerSwitchKeys;
+    m_cfgPeerSwitchTable.getKeys(peerSwitchKeys);
+    bool is_dualtor = peerSwitchKeys.size() > 0;
 
     if ((nlmsg_type != RTM_NEWNEIGH) && (nlmsg_type != RTM_GETNEIGH) &&
         (nlmsg_type != RTM_DELNEIGH))
@@ -79,6 +83,16 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     key+= ":";
 
     nl_addr2str(rtnl_neigh_get_dst(neigh), ipStr, MAX_ADDR_SIZE);
+
+    /* Ignore IPv4 link-local addresses as neighbors if subtype is dualtor */
+    IpAddress ipAddress(ipStr);
+    if (family == IPV4_NAME && ipAddress.getAddrScope() == IpAddress::AddrScope::LINK_SCOPE && is_dualtor)
+    {
+        SWSS_LOG_INFO("Link Local address received on dualtor, ignoring for %s", ipStr);
+        return;
+    }
+
+
     /* Ignore IPv6 link-local addresses as neighbors, if ipv6 link local mode is disabled */
     if (family == IPV6_NAME && IN6_IS_ADDR_LINKLOCAL(nl_addr_get_binary_addr(rtnl_neigh_get_dst(neigh))))
     {
@@ -99,13 +113,35 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     }
 
     bool delete_key = false;
-    if ((nlmsg_type == RTM_DELNEIGH) || (state == NUD_INCOMPLETE) ||
-        (state == NUD_FAILED))
+    bool use_zero_mac = false;
+    if (is_dualtor && (state == NUD_INCOMPLETE || state == NUD_FAILED))
+    {
+        SWSS_LOG_INFO("Unable to resolve %s, setting zero MAC", key.c_str());
+        use_zero_mac = true;
+
+        // Unresolved neighbor deletion on dual ToR devices must be handled
+        // separately, otherwise delete_key is never set to true
+        // and neighorch is never able to remove the neighbor
+        if (nlmsg_type == RTM_DELNEIGH)
+        {
+            delete_key = true;
+        }
+    }
+    else if ((nlmsg_type == RTM_DELNEIGH) ||
+             (state == NUD_INCOMPLETE) || (state == NUD_FAILED))
     {
 	    delete_key = true;
     }
 
-    nl_addr2str(rtnl_neigh_get_lladdr(neigh), macStr, MAX_ADDR_SIZE);
+    if (use_zero_mac)
+    {
+        std::string zero_mac = "00:00:00:00:00:00";
+        strncpy(macStr, zero_mac.c_str(), zero_mac.length());
+    }
+    else
+    {
+        nl_addr2str(rtnl_neigh_get_lladdr(neigh), macStr, MAX_ADDR_SIZE);
+    }
 
     /* Ignore neighbor entries with Broadcast Mac - Trigger for directed broadcast */
     if (!delete_key && (MacAddress(macStr) == MacAddress("ff:ff:ff:ff:ff:ff")))

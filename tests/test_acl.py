@@ -1,4 +1,5 @@
 import pytest
+from requests import request
 
 L3_TABLE_TYPE = "L3"
 L3_TABLE_NAME = "L3_TEST"
@@ -20,8 +21,11 @@ MIRROR_TABLE_NAME = "MIRROR_TEST"
 MIRROR_BIND_PORTS = ["Ethernet0", "Ethernet4", "Ethernet8", "Ethernet12"]
 MIRROR_RULE_NAME = "MIRROR_TEST_RULE"
 
+PFCWD_TABLE_TYPE = "PFCWD"
+PFCWD_TABLE_NAME = "PFCWD_TEST"
+PFCWD_BIND_PORTS = ["Ethernet0", "Ethernet4", "Ethernet8", "Ethernet12"]
 class TestAcl:
-    @pytest.yield_fixture
+    @pytest.fixture
     def l3_acl_table(self, dvs_acl):
         try:
             dvs_acl.create_acl_table(L3_TABLE_NAME, L3_TABLE_TYPE, L3_BIND_PORTS)
@@ -30,7 +34,7 @@ class TestAcl:
             dvs_acl.remove_acl_table(L3_TABLE_NAME)
             dvs_acl.verify_acl_table_count(0)
 
-    @pytest.yield_fixture
+    @pytest.fixture
     def l3v6_acl_table(self, dvs_acl):
         try:
             dvs_acl.create_acl_table(L3V6_TABLE_NAME,
@@ -41,7 +45,7 @@ class TestAcl:
             dvs_acl.remove_acl_table(L3V6_TABLE_NAME)
             dvs_acl.verify_acl_table_count(0)
 
-    @pytest.yield_fixture
+    @pytest.fixture
     def mclag_acl_table(self, dvs_acl):
         try:
             dvs_acl.create_acl_table(MCLAG_TABLE_NAME, MCLAG_TABLE_TYPE, MCLAG_BIND_PORTS)
@@ -50,7 +54,7 @@ class TestAcl:
             dvs_acl.remove_acl_table(MCLAG_TABLE_NAME)
             dvs_acl.verify_acl_table_count(0)
 
-    @pytest.yield_fixture
+    @pytest.fixture
     def mirror_acl_table(self, dvs_acl):
         try:
             dvs_acl.create_acl_table(MIRROR_TABLE_NAME, MIRROR_TABLE_TYPE, MIRROR_BIND_PORTS)
@@ -59,7 +63,16 @@ class TestAcl:
             dvs_acl.remove_acl_table(MIRROR_TABLE_NAME)
             dvs_acl.verify_acl_table_count(0)
 
-    @pytest.yield_fixture
+    @pytest.fixture(params=['ingress', 'egress'])
+    def pfcwd_acl_table(self, dvs_acl, request):
+        try:
+            dvs_acl.create_acl_table(PFCWD_TABLE_NAME, PFCWD_TABLE_TYPE, PFCWD_BIND_PORTS, request.param)
+            yield dvs_acl.get_acl_table_ids(1)[0], request.param
+        finally:
+            dvs_acl.remove_acl_table(PFCWD_TABLE_NAME)
+            dvs_acl.verify_acl_table_count(0)
+
+    @pytest.fixture
     def setup_teardown_neighbor(self, dvs):
         try:
             # NOTE: set_interface_status has a dependency on cdb within dvs,
@@ -548,16 +561,30 @@ class TestAcl:
 
         dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
         dvs_acl.verify_no_acl_rules()
-
-
+    
+    def test_AclTableMandatoryMatchFields(self, dvs, pfcwd_acl_table):
+        """
+        The test case is to verify stage particular matching fields is applied
+        """
+        table_oid, stage = pfcwd_acl_table
+        match_in_ports = False
+        entry = dvs.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE", table_oid)
+        for k, v in entry.items():
+            if k == "SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS" and v == "true":
+                match_in_ports = True
+        
+        if stage == "ingress":
+            assert match_in_ports
+        else:
+            assert not match_in_ports
 class TestAclCrmUtilization:
     @pytest.fixture(scope="class", autouse=True)
     def configure_crm_polling_interval_for_test(self, dvs):
-        dvs.runcmd("crm config polling interval 1")
+        dvs.crm_poll_set("1")
 
         yield
 
-        dvs.runcmd("crm config polling interval 300")
+        dvs.crm_poll_set("300")
 
     def test_ValidateAclTableBindingCrmUtilization(self, dvs, dvs_acl):
         counter_db = dvs.get_counters_db()

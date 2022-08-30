@@ -61,6 +61,8 @@ extern string gMyAsicName;
 #define DEFAULT_VLAN_ID     1
 #define MAX_VALID_VLAN_ID   4094
 
+#define PORT_SPEED_LIST_DEFAULT_SIZE                     16
+#define PORT_STATE_POLLING_SEC                            5
 #define PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS     1000
 #define PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS     60000
 #define QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   10000
@@ -75,6 +77,13 @@ static map<string, sai_port_fec_mode_t> fec_mode_map =
     { "none",  SAI_PORT_FEC_MODE_NONE },
     { "rs", SAI_PORT_FEC_MODE_RS },
     { "fc", SAI_PORT_FEC_MODE_FC }
+};
+
+static map<sai_port_fec_mode_t, string> fec_mode_reverse_map =
+{
+    { SAI_PORT_FEC_MODE_NONE, "none" },
+    { SAI_PORT_FEC_MODE_RS, "rs"  },
+    { SAI_PORT_FEC_MODE_FC, "fc"  }
 };
 
 static map<string, sai_port_priority_flow_control_mode_t> pfc_asym_map =
@@ -112,18 +121,42 @@ static map<string, int> autoneg_mode_map =
     { "off", 0 }
 };
 
+static map<string, int> link_training_mode_map =
+{
+    { "on", 1 },
+    { "off", 0 }
+};
+
+static map<sai_port_link_training_failure_status_t, string> link_training_failure_map =
+{
+    { SAI_PORT_LINK_TRAINING_FAILURE_STATUS_NO_ERROR, "none" },
+    { SAI_PORT_LINK_TRAINING_FAILURE_STATUS_FRAME_LOCK_ERROR, "frame_lock"},
+    { SAI_PORT_LINK_TRAINING_FAILURE_STATUS_SNR_LOWER_THRESHOLD, "snr_low"},
+    { SAI_PORT_LINK_TRAINING_FAILURE_STATUS_TIME_OUT, "timeout"}
+};
+
+static map<sai_port_link_training_rx_status_t, string> link_training_rx_status_map =
+{
+    { SAI_PORT_LINK_TRAINING_RX_STATUS_NOT_TRAINED, "not_trained" },
+    { SAI_PORT_LINK_TRAINING_RX_STATUS_TRAINED, "trained"}
+};
+
 // Interface type map used for gearbox
 static map<string, sai_port_interface_type_t> interface_type_map =
 {
  { "none", SAI_PORT_INTERFACE_TYPE_NONE },
  { "cr", SAI_PORT_INTERFACE_TYPE_CR },
  { "cr4", SAI_PORT_INTERFACE_TYPE_CR4 },
+ { "cr8", SAI_PORT_INTERFACE_TYPE_CR8 },
  { "sr", SAI_PORT_INTERFACE_TYPE_SR },
  { "sr4", SAI_PORT_INTERFACE_TYPE_SR4 },
+ { "sr8", SAI_PORT_INTERFACE_TYPE_SR8 },
  { "lr", SAI_PORT_INTERFACE_TYPE_LR },
  { "lr4", SAI_PORT_INTERFACE_TYPE_LR4 },
+ { "lr8", SAI_PORT_INTERFACE_TYPE_LR8 },
  { "kr", SAI_PORT_INTERFACE_TYPE_KR },
- { "kr4", SAI_PORT_INTERFACE_TYPE_KR4 }
+ { "kr4", SAI_PORT_INTERFACE_TYPE_KR4 },
+ { "kr8", SAI_PORT_INTERFACE_TYPE_KR8 }
 };
 
 // Interface type map used for auto negotiation
@@ -133,13 +166,17 @@ static map<string, sai_port_interface_type_t> interface_type_map_for_an =
     { "cr", SAI_PORT_INTERFACE_TYPE_CR },
     { "cr2", SAI_PORT_INTERFACE_TYPE_CR2 },
     { "cr4", SAI_PORT_INTERFACE_TYPE_CR4 },
+    { "cr8", SAI_PORT_INTERFACE_TYPE_CR8 },
     { "sr", SAI_PORT_INTERFACE_TYPE_SR },
     { "sr2", SAI_PORT_INTERFACE_TYPE_SR2 },
     { "sr4", SAI_PORT_INTERFACE_TYPE_SR4 },
+    { "sr8", SAI_PORT_INTERFACE_TYPE_SR8 },
     { "lr", SAI_PORT_INTERFACE_TYPE_LR },
     { "lr4", SAI_PORT_INTERFACE_TYPE_LR4 },
+    { "lr8", SAI_PORT_INTERFACE_TYPE_LR8 },
     { "kr", SAI_PORT_INTERFACE_TYPE_KR },
     { "kr4", SAI_PORT_INTERFACE_TYPE_KR4 },
+    { "kr8", SAI_PORT_INTERFACE_TYPE_KR8 },
     { "caui", SAI_PORT_INTERFACE_TYPE_CAUI },
     { "gmii", SAI_PORT_INTERFACE_TYPE_GMII },
     { "sfi", SAI_PORT_INTERFACE_TYPE_SFI },
@@ -237,6 +274,28 @@ const vector<sai_port_stat_t> port_stat_ids =
     SAI_PORT_STAT_IF_IN_FEC_SYMBOL_ERRORS
 };
 
+const vector<sai_port_stat_t> gbport_stat_ids =
+{
+    SAI_PORT_STAT_IF_IN_OCTETS,
+    SAI_PORT_STAT_IF_IN_UCAST_PKTS,
+    SAI_PORT_STAT_IF_IN_NON_UCAST_PKTS,
+    SAI_PORT_STAT_IF_OUT_OCTETS,
+    SAI_PORT_STAT_IF_OUT_UCAST_PKTS,
+    SAI_PORT_STAT_IF_OUT_NON_UCAST_PKTS,
+    SAI_PORT_STAT_IF_IN_DISCARDS,
+    SAI_PORT_STAT_IF_OUT_DISCARDS,
+    SAI_PORT_STAT_IF_IN_ERRORS,
+    SAI_PORT_STAT_IF_OUT_ERRORS,
+    SAI_PORT_STAT_ETHER_RX_OVERSIZE_PKTS,
+    SAI_PORT_STAT_ETHER_TX_OVERSIZE_PKTS,
+    SAI_PORT_STAT_ETHER_STATS_UNDERSIZE_PKTS,
+    SAI_PORT_STAT_ETHER_STATS_JABBERS,
+    SAI_PORT_STAT_ETHER_STATS_FRAGMENTS,
+    SAI_PORT_STAT_IF_IN_FEC_CORRECTABLE_FRAMES,
+    SAI_PORT_STAT_IF_IN_FEC_NOT_CORRECTABLE_FRAMES,
+    SAI_PORT_STAT_IF_IN_FEC_SYMBOL_ERRORS
+};
+
 const vector<sai_port_stat_t> port_buffer_drop_stat_ids =
 {
     SAI_PORT_STAT_IN_DROPPED_PKTS,
@@ -297,8 +356,12 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         Orch(db, tableNames),
         m_portStateTable(stateDb, STATE_PORT_TABLE_NAME),
         port_stat_manager(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
+        gb_port_stat_manager("GB_FLEX_COUNTER_DB",
+                PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ,
+                PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         port_buffer_drop_stat_manager(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS, false),
-        queue_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false)
+        queue_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
+        m_port_state_poller(new SelectableTimer(timespec { .tv_sec = PORT_STATE_POLLING_SEC, .tv_nsec = 0 }))
 {
     SWSS_LOG_ENTER();
 
@@ -563,6 +626,9 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
         m_lagIdAllocator = unique_ptr<LagIdAllocator> (new LagIdAllocator(chassisAppDb));
     }
+
+    auto executor = new ExecutableTimer(m_port_state_poller, this, "PORT_STATE_POLLER");
+    Orch::addExecutor(executor);
 }
 
 void PortsOrch::removeDefaultVlanMembers()
@@ -676,6 +742,11 @@ bool PortsOrch::isInitDone()
 bool PortsOrch::isConfigDone()
 {
     return m_portConfigState == PORT_CONFIG_DONE;
+}
+
+bool PortsOrch::isGearboxEnabled()
+{
+    return m_gearboxEnabled;
 }
 
 /* Use this method to retrieve the desired port if the destination port is a Gearbox port.
@@ -994,6 +1065,38 @@ void PortsOrch::getCpuPort(Port &port)
     port = m_cpuPort;
 }
 
+/* 
+ * Create host_tx_ready field in PORT_TABLE of STATE-DB 
+ * and set the field to false by default for the 
+ * front<Ethernet> port.
+ */
+void PortsOrch::initHostTxReadyState(Port &port)
+{
+    SWSS_LOG_ENTER();
+
+    vector<FieldValueTuple> tuples;
+    bool exist = m_portStateTable.get(port.m_alias, tuples);
+    string hostTxReady;
+
+    if (exist)
+    {
+        for (auto i : tuples)
+        {
+            if (fvField(i) == "host_tx_ready")
+            {
+                hostTxReady = fvValue(i);
+            }
+        }
+    }
+
+    if (hostTxReady.empty())
+    {
+        m_portStateTable.hset(port.m_alias, "host_tx_ready", "false");
+        SWSS_LOG_INFO("initalize hostTxReady %s with status %s", 
+                port.m_alias.c_str(), hostTxReady.c_str());
+    }
+}
+
 bool PortsOrch::setPortAdminStatus(Port &port, bool state)
 {
     SWSS_LOG_ENTER();
@@ -1002,11 +1105,20 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
     attr.id = SAI_PORT_ATTR_ADMIN_STATE;
     attr.value.booldata = state;
 
+    /* Update the host_tx_ready to false before setting admin_state, when admin state is false */
+    if (!state) 
+    {
+        m_portStateTable.hset(port.m_alias, "host_tx_ready", "false");
+        SWSS_LOG_INFO("Set admin status DOWN host_tx_ready to false to port pid:%" PRIx64,
+                port.m_port_id);
+    }
+    
     sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set admin status %s to port pid:%" PRIx64,
                        state ? "UP" : "DOWN", port.m_port_id);
+        m_portStateTable.hset(port.m_alias, "host_tx_ready", "false");
         task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
         if (handle_status != task_success)
         {
@@ -1014,10 +1126,19 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
         }
     }
 
-    SWSS_LOG_INFO("Set admin status %s to port pid:%" PRIx64,
-                    state ? "UP" : "DOWN", port.m_port_id);
-
-    setGearboxPortsAttr(port, SAI_PORT_ATTR_ADMIN_STATE, &state);
+    bool gbstatus = setGearboxPortsAttr(port, SAI_PORT_ATTR_ADMIN_STATE, &state);
+    if (gbstatus != true)
+    {
+        m_portStateTable.hset(port.m_alias, "host_tx_ready", "false");
+    }
+   
+    /* Update the state table for host_tx_ready*/
+    if (state && (gbstatus == true) && (status == SAI_STATUS_SUCCESS) )
+    {
+        m_portStateTable.hset(port.m_alias, "host_tx_ready", "true");
+        SWSS_LOG_INFO("Set admin status UP host_tx_ready to true to port pid:%" PRIx64,
+                port.m_port_id);
+    } 
 
     return true;
 }
@@ -1047,27 +1168,62 @@ bool PortsOrch::getPortAdminStatus(sai_object_id_t id, bool &up)
     return true;
 }
 
-bool PortsOrch::setPortMtu(sai_object_id_t id, sai_uint32_t mtu)
+bool PortsOrch::getPortMtu(const Port& port, sai_uint32_t &mtu)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_MTU;
+
+    sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        return false;
+    }
+
+    mtu = attr.value.u32 - (uint32_t)(sizeof(struct ether_header) + FCS_LEN + VLAN_TAG_LEN);
+
+    if (isMACsecPort(port.m_port_id))
+    {
+        mtu -= MAX_MACSEC_SECTAG_SIZE;
+    }
+
+    return true;
+}
+
+bool PortsOrch::setPortMtu(const Port& port, sai_uint32_t mtu)
 {
     SWSS_LOG_ENTER();
 
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_MTU;
     /* mtu + 14 + 4 + 4 = 22 bytes */
-    attr.value.u32 = (uint32_t)(mtu + sizeof(struct ether_header) + FCS_LEN + VLAN_TAG_LEN);
+    mtu += (uint32_t)(sizeof(struct ether_header) + FCS_LEN + VLAN_TAG_LEN);
+    attr.value.u32 = mtu;
 
-    sai_status_t status = sai_port_api->set_port_attribute(id, &attr);
+    if (isMACsecPort(port.m_port_id))
+    {
+        attr.value.u32 += MAX_MACSEC_SECTAG_SIZE;
+    }
+
+    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set MTU %u to port pid:%" PRIx64 ", rv:%d",
-                attr.value.u32, id, status);
+                attr.value.u32, port.m_port_id, status);
         task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
-    SWSS_LOG_INFO("Set MTU %u to port pid:%" PRIx64, attr.value.u32, id);
+
+    if (m_gearboxEnabled)
+    {
+        setGearboxPortsAttr(port, SAI_PORT_ATTR_MTU, &mtu);
+    }
+    SWSS_LOG_INFO("Set MTU %u to port pid:%" PRIx64, attr.value.u32, port.m_port_id);
     return true;
 }
 
@@ -1100,19 +1256,31 @@ bool PortsOrch::setPortTpid(sai_object_id_t id, sai_uint16_t tpid)
     return true;
 }
 
-
-bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t mode)
+bool PortsOrch::setPortFec(Port &port, string &mode)
 {
     SWSS_LOG_ENTER();
 
+    auto searchRef = m_portSupportedFecModes.find(port.m_port_id);
+    if (searchRef != m_portSupportedFecModes.end())
+    {
+        auto &supportedFecModes = searchRef->second;
+        if (!supportedFecModes.empty() && (supportedFecModes.find(mode) == supportedFecModes.end()))
+        {
+            SWSS_LOG_ERROR("Unsupported mode %s on port %s", mode.c_str(), port.m_alias.c_str());
+            // We return true becase the caller will keep the item in m_toSync and retry it later if we return false
+            // As the FEC mode is not supported it doesn't make sense to retry.
+            return true;
+        }
+    }
+
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_FEC_MODE;
-    attr.value.s32 = mode;
+    attr.value.s32 = port.m_fec_mode;
 
     sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to set fec mode %d to port pid:%" PRIx64, mode, port.m_port_id);
+        SWSS_LOG_ERROR("Failed to set FEC mode %s to port %s", mode.c_str(), port.m_alias.c_str());
         task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
         if (handle_status != task_success)
         {
@@ -1120,7 +1288,7 @@ bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t mode)
         }
     }
 
-    SWSS_LOG_INFO("Set fec mode %d to port pid:%" PRIx64, mode, port.m_port_id);
+    SWSS_LOG_NOTICE("Set port %s FEC mode %s", port.m_alias.c_str(), mode.c_str());
 
     setGearboxPortsAttr(port, SAI_PORT_ATTR_FEC_MODE, &mode);
 
@@ -1190,6 +1358,43 @@ bool PortsOrch::setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask)
         m_portList[p.m_alias] = p;
     }
 
+    return true;
+}
+
+bool PortsOrch::setPortPfcWatchdogStatus(sai_object_id_t portId, uint8_t pfcwd_bitmask)
+{
+    SWSS_LOG_ENTER();
+
+    Port p;
+
+    if (!getPort(portId, p))
+    {
+        SWSS_LOG_ERROR("Failed to get port object for port id 0x%" PRIx64, portId);
+        return false;
+    }
+    
+    p.m_pfcwd_sw_bitmask = pfcwd_bitmask;
+   
+    m_portList[p.m_alias] = p;
+
+    SWSS_LOG_INFO("Set PFC watchdog port id=0x%" PRIx64 ", bitmast=0x%x", portId, pfcwd_bitmask);
+    return true;
+}
+
+bool PortsOrch::getPortPfcWatchdogStatus(sai_object_id_t portId, uint8_t *pfcwd_bitmask)
+{
+    SWSS_LOG_ENTER();
+
+    Port p;
+
+    if (!pfcwd_bitmask || !getPort(portId, p))
+    {
+        SWSS_LOG_ERROR("Failed to get port object for port id 0x%" PRIx64, portId);
+        return false;
+    }
+    
+    *pfcwd_bitmask = p.m_pfcwd_sw_bitmask;
+    
     return true;
 }
 
@@ -1860,12 +2065,123 @@ void PortsOrch::initPortSupportedSpeeds(const std::string& alias, sai_object_id_
     m_portStateTable.set(alias, v);
 }
 
+
+void PortsOrch::initPortCapAutoNeg(Port &port)
+{
+    sai_status_t status;
+    sai_attribute_t attr;
+
+    attr.id = SAI_PORT_ATTR_SUPPORTED_AUTO_NEG_MODE;
+    status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        port.m_cap_an = attr.value.booldata ? 1 : 0;
+    }
+    else
+    {
+        // To avoid breakage on the existing platforms, AN should be 1 by default
+        port.m_cap_an = 1;
+        SWSS_LOG_WARN("Unable to get %s AN support capability",
+                      port.m_alias.c_str());
+    }
+}
+
+void PortsOrch::initPortCapLinkTraining(Port &port)
+{
+    // TODO:
+    // Add SAI_PORT_ATTR_SUPPORTED_LINK_TRAINING_MODE query when it is
+    // available in the saiport.h of SAI.
+    port.m_cap_lt = 1;
+    SWSS_LOG_WARN("Unable to get %s LT support capability", port.m_alias.c_str());
+}
+
+void PortsOrch::getPortSupportedFecModes(const std::string& alias, sai_object_id_t port_id, PortSupportedFecModes &supported_fecmodes)
+{
+    sai_attribute_t attr;
+    sai_status_t status;
+    vector<sai_int32_t> fecModes(fec_mode_reverse_map.size());
+
+    attr.id = SAI_PORT_ATTR_SUPPORTED_FEC_MODE;
+    attr.value.s32list.count = static_cast<uint32_t>(fecModes.size());
+    attr.value.s32list.list = fecModes.data();
+
+    status = sai_port_api->get_port_attribute(port_id, 1, &attr);
+    fecModes.resize(attr.value.s32list.count);
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        if (fecModes.empty())
+        {
+            supported_fecmodes.insert("N/A");
+        }
+        else
+        {
+            for(auto fecMode : fecModes)
+            {
+                supported_fecmodes.insert(fec_mode_reverse_map[static_cast<sai_port_fec_mode_t>(fecMode)]);
+            }
+        }
+    }
+    else
+    {
+        if (SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
+            SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status) ||
+            status == SAI_STATUS_NOT_IMPLEMENTED)
+        {
+            // unable to validate FEC mode if attribute is not supported on platform
+            SWSS_LOG_NOTICE("Unable to validate FEC mode for port %s id=%" PRIx64 " due to unsupported by platform",
+                            alias.c_str(), port_id);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to get a list of supported FEC modes for port %s id=%" PRIx64 ". Error=%d",
+                           alias.c_str(), port_id, status);
+        }
+
+        supported_fecmodes.clear(); // return empty
+    }
+}
+
+void PortsOrch::initPortSupportedFecModes(const std::string& alias, sai_object_id_t port_id)
+{
+    // If port supported speeds map already contains the information, save the SAI call
+    if (m_portSupportedFecModes.count(port_id))
+    {
+        return;
+    }
+    PortSupportedFecModes supported_fec_modes;
+    getPortSupportedFecModes(alias, port_id, supported_fec_modes);
+    m_portSupportedFecModes[port_id] = supported_fec_modes;
+
+    if (supported_fec_modes.empty())
+    {
+        // Do not expose "supported_fecs" in case fetching FEC modes is not supported by the vendor
+        SWSS_LOG_INFO("No supported_fecs exposed to STATE_DB for port %s since fetching supported FEC modes is not supported by the vendor",
+                      alias.c_str());
+        return;
+    }
+
+    vector<FieldValueTuple> v;
+    std::string supported_fec_modes_str;
+    bool first = true;
+    for(auto fec : supported_fec_modes)
+    {
+        if (first)
+            first = false;
+        else
+            supported_fec_modes_str += ',';
+        supported_fec_modes_str += fec;
+    }
+
+    v.emplace_back(std::make_pair("supported_fecs", supported_fec_modes_str));
+    m_portStateTable.set(alias, v);
+}
+
 /*
  * If Gearbox is enabled and this is a Gearbox port then set the attributes accordingly.
  */
-bool PortsOrch::setGearboxPortsAttr(Port &port, sai_port_attr_t id, void *value)
+bool PortsOrch::setGearboxPortsAttr(const Port &port, sai_port_attr_t id, void *value)
 {
-    bool status;
+    bool status = false;
 
     status = setGearboxPortAttr(port, PHY_PORT_TYPE, id, value);
 
@@ -1881,7 +2197,7 @@ bool PortsOrch::setGearboxPortsAttr(Port &port, sai_port_attr_t id, void *value)
  * If Gearbox is enabled and this is a Gearbox port then set the specific lane attribute.
  * Note: the appl_db is also updated (Gearbox config_db tables are TBA).
  */
-bool PortsOrch::setGearboxPortAttr(Port &port, dest_port_type_t port_type, sai_port_attr_t id, void *value)
+bool PortsOrch::setGearboxPortAttr(const Port &port, dest_port_type_t port_type, sai_port_attr_t id, void *value)
 {
     sai_status_t status = SAI_STATUS_SUCCESS;
     sai_object_id_t dest_port_id;
@@ -1934,6 +2250,15 @@ bool PortsOrch::setGearboxPortAttr(Port &port, dest_port_type_t port_type, sai_p
                         attr.value.u32 = speed;
                     }
                     SWSS_LOG_NOTICE("BOX: Set %s lane %s %d", port.m_alias.c_str(), speed_attr.c_str(), speed);
+                    break;
+                case SAI_PORT_ATTR_MTU:
+                    attr.id = id;
+                    attr.value.u32 = *static_cast<sai_uint32_t*>(value);
+                    if (LINE_PORT_TYPE == port_type && isMACsecPort(dest_port_id))
+                    {
+                        attr.value.u32 += MAX_MACSEC_SECTAG_SIZE;
+                    }
+                    SWSS_LOG_NOTICE("BOX: Set %s MTU %d", port.m_alias.c_str(), attr.value.u32);
                     break;
                 default:
                     return false;
@@ -2012,6 +2337,45 @@ bool PortsOrch::getPortSpeed(sai_object_id_t id, sai_uint32_t &speed)
     }
 
     return true;
+}
+
+bool PortsOrch::getPortAdvSpeeds(const Port& port, bool remote, std::vector<sai_uint32_t>& speed_list)
+{
+    sai_object_id_t port_id = port.m_port_id;
+    sai_object_id_t line_port_id;
+    sai_attribute_t attr;
+    sai_status_t status;
+    std::vector<sai_uint32_t> speeds(PORT_SPEED_LIST_DEFAULT_SIZE);
+
+    attr.id = remote ? SAI_PORT_ATTR_REMOTE_ADVERTISED_SPEED : SAI_PORT_ATTR_ADVERTISED_SPEED;
+    attr.value.u32list.count = static_cast<uint32_t>(speeds.size());
+    attr.value.u32list.list = speeds.data();
+
+    if (getDestPortId(port_id, LINE_PORT_TYPE, line_port_id))
+    {
+        status = sai_port_api->get_port_attribute(line_port_id, 1, &attr);
+    }
+    else
+    {
+        status = sai_port_api->get_port_attribute(port_id, 1, &attr);
+    }
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Unable to get advertised speed for %s", port.m_alias.c_str());
+        return false;
+    }
+    speeds.resize(attr.value.u32list.count);
+    speed_list.swap(speeds);
+    return true;
+}
+
+bool PortsOrch::getPortAdvSpeeds(const Port& port, bool remote, string& adv_speeds)
+{
+    std::vector<sai_uint32_t> speed_list;
+    bool rc = getPortAdvSpeeds(port, remote, speed_list);
+
+    adv_speeds = rc ? swss::join(',', speed_list.begin(), speed_list.end()) : "";
+    return rc;
 }
 
 task_process_status PortsOrch::setPortAdvSpeeds(sai_object_id_t port_id, std::vector<sai_uint32_t>& speed_list)
@@ -2128,6 +2492,32 @@ task_process_status PortsOrch::setPortAutoNeg(sai_object_id_t id, int an)
     return task_success;
 }
 
+task_process_status PortsOrch::setPortLinkTraining(const Port &port, bool state)
+{
+    SWSS_LOG_ENTER();
+
+    if (port.m_type != Port::PHY)
+    {
+        return task_failed;
+    }
+
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_LINK_TRAINING_ENABLE;
+    attr.value.booldata = state;
+
+    string op = state ? "on" : "off";
+    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set LT %s to port %s", op.c_str(), port.m_alias.c_str());
+        return handleSaiSetStatus(SAI_API_PORT, status);
+    }
+
+    SWSS_LOG_INFO("Set LT %s to port %s", op.c_str(), port.m_alias.c_str());
+
+    return task_success;
+}
+
 bool PortsOrch::setHostIntfsOperStatus(const Port& port, bool isUp) const
 {
     SWSS_LOG_ENTER();
@@ -2172,7 +2562,12 @@ bool PortsOrch::createVlanHostIntf(Port& vl, string hostif_name)
     attrs.push_back(attr);
 
     attr.id = SAI_HOSTIF_ATTR_NAME;
-    strncpy(attr.value.chardata, hostif_name.c_str(), sizeof(attr.value.chardata));
+    if (hostif_name.length() >= SAI_HOSTIF_NAME_SIZE)
+    {
+        SWSS_LOG_WARN("Host interface name %s is too long and will be truncated to %d bytes", hostif_name.c_str(), SAI_HOSTIF_NAME_SIZE - 1);
+    }
+    strncpy(attr.value.chardata, hostif_name.c_str(), SAI_HOSTIF_NAME_SIZE);
+    attr.value.chardata[SAI_HOSTIF_NAME_SIZE - 1] = '\0';
     attrs.push_back(attr);
 
     sai_status_t status = sai_hostif_api->create_hostif(&vl.m_vlan_info.host_intf_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
@@ -2284,6 +2679,13 @@ sai_status_t PortsOrch::removePort(sai_object_id_t port_id)
     }
     /* else : port is in default state or not yet created */
 
+    /*
+     * Remove port serdes (if exists) before removing port since this
+     * reference is dependency.
+     */
+
+    removePortSerdesAttribute(port_id);
+
     sai_status_t status = sai_port_api->remove_port(port_id);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -2358,7 +2760,15 @@ bool PortsOrch::initPort(const string &alias, const string &role, const int inde
                 if (flex_counters_orch->getPortCountersState())
                 {
                     auto port_counter_stats = generateCounterStats(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP);
-                    port_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, port_counter_stats);
+                    port_stat_manager.setCounterIdList(p.m_port_id,
+                            CounterType::PORT, port_counter_stats);
+                    auto gbport_counter_stats = generateCounterStats(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, true);
+                    if (p.m_system_side_id)
+                        gb_port_stat_manager.setCounterIdList(p.m_system_side_id,
+                                CounterType::PORT, gbport_counter_stats);
+                    if (p.m_line_side_id)
+                        gb_port_stat_manager.setCounterIdList(p.m_line_side_id,
+                                CounterType::PORT, gbport_counter_stats);
                 }
                 if (flex_counters_orch->getPortBufferDropCountersState())
                 {
@@ -2398,8 +2808,13 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
 {
     SWSS_LOG_ENTER();
 
-    Port p(alias, Port::PHY);
-    p.m_port_id = port_id;
+    Port p;
+
+    if (!getPort(port_id, p))
+    {
+        SWSS_LOG_ERROR("Failed to get port object for port id 0x%" PRIx64, port_id);
+        return;
+    }
 
     /* remove port from flex_counter_table for updating counters  */
     auto flex_counters_orch = gDirectory.get<FlexCounterOrch*>();
@@ -2413,9 +2828,8 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
         port_buffer_drop_stat_manager.clearCounterIdList(p.m_port_id);
     }
 
-
     /* remove port name map from counter table */
-    m_counter_db->hdel(COUNTERS_PORT_NAME_MAP, alias);
+    m_counterTable->hdel("", alias);
 
     /* Remove the associated port serdes attribute */
     removePortSerdesAttribute(p.m_port_id);
@@ -2423,7 +2837,6 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
     m_portList[alias].m_init = false;
     SWSS_LOG_NOTICE("De-Initialized port %s", alias.c_str());
 }
-
 
 bool PortsOrch::bake()
 {
@@ -2588,7 +3001,9 @@ void PortsOrch::doPortTask(Consumer &consumer)
             uint32_t speed = 0;
             string learn_mode;
             string an_str;
+            string lt_str;
             int an = -1;
+            int lt = -1;
             int index = -1;
             string role;
             string adv_speeds_str;
@@ -2678,6 +3093,11 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 else if (fvField(i) == "adv_interface_types")
                 {
                     adv_interface_types_str = fvValue(i);
+                }
+                /* Set link training */
+                else if (fvField(i) == "link_training")
+                {
+                    lt_str = fvValue(i);
                 }
                 /* Set port serdes Pre-emphasis */
                 else if (fvField(i) == "preemphasis")
@@ -2806,6 +3226,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
 
                     initPortSupportedSpeeds(get<0>(it->second), m_portListLaneMap[it->first]);
+                    initPortSupportedFecModes(get<0>(it->second), m_portListLaneMap[it->first]);
                     it++;
                 }
 
@@ -2844,6 +3265,11 @@ void PortsOrch::doPortTask(Consumer &consumer)
             }
             else
             {
+                if (admin_status.empty())
+                {
+                    admin_status = p.m_admin_state_up ? "up" : "down";
+                }
+
                 if (!an_str.empty())
                 {
                     if (autoneg_mode_map.find(an_str) == autoneg_mode_map.end())
@@ -2853,10 +3279,21 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         it = consumer.m_toSync.erase(it);
                         continue;
                     }
-
                     an = autoneg_mode_map[an_str];
                     if (an != p.m_autoneg)
                     {
+                        if (p.m_cap_an < 0)
+                        {
+                            initPortCapAutoNeg(p);
+                            m_portList[alias] = p;
+                        }
+                        if (p.m_cap_an < 1)
+                        {
+                            SWSS_LOG_ERROR("%s: autoneg is not supported (cap=%d)", p.m_alias.c_str(), p.m_cap_an);
+                            // autoneg is not supported, don't retry
+                            it = consumer.m_toSync.erase(it);
+                            continue;
+                        }
                         if (p.m_admin_state_up)
                         {
                             /* Bring port down before applying speed */
@@ -2886,8 +3323,64 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             continue;
                         }
                         SWSS_LOG_NOTICE("Set port %s AutoNeg from %d to %d", alias.c_str(), p.m_autoneg, an);
-                        p.m_autoneg = an;
+                        p.m_autoneg = static_cast<swss::Port::AutoNegMode>(an);
                         m_portList[alias] = p;
+                        m_portStateTable.hdel(p.m_alias, "rmt_adv_speeds");
+                        updatePortStatePoll(p, PORT_STATE_POLL_AN, (an > 0));
+                    }
+                }
+
+                if (!lt_str.empty() && (p.m_type == Port::PHY))
+                {
+                    if (link_training_mode_map.find(lt_str) == link_training_mode_map.end())
+                    {
+                        SWSS_LOG_ERROR("Failed to parse LT value: %s", lt_str.c_str());
+                        // Invalid link training mode configured, don't retry
+                        it = consumer.m_toSync.erase(it);
+                        continue;
+                    }
+
+                    lt = link_training_mode_map[lt_str];
+                    if (lt != p.m_link_training)
+                    {
+                        if (p.m_cap_lt < 0)
+                        {
+                            initPortCapLinkTraining(p);
+                            m_portList[alias] = p;
+                        }
+                        if (p.m_cap_lt < 1)
+                        {
+                            SWSS_LOG_WARN("%s: LT is not supported(cap=%d)", alias.c_str(), p.m_cap_lt);
+                            // Don't retry
+                            it = consumer.m_toSync.erase(it);
+                            continue;
+                        }
+
+                        auto status = setPortLinkTraining(p, lt > 0 ? true : false);
+                        if (status != task_success)
+                        {
+                            SWSS_LOG_ERROR("Failed to set port %s LT from %d to %d", alias.c_str(), p.m_link_training, lt);
+                            if (status == task_need_retry)
+                            {
+                                it++;
+                            }
+                            else
+                            {
+                                it = consumer.m_toSync.erase(it);
+                            }
+                            continue;
+                        }
+                        m_portStateTable.hset(alias, "link_training_status", lt_str);
+                        SWSS_LOG_NOTICE("Set port %s LT from %d to %d", alias.c_str(), p.m_link_training, lt);
+                        p.m_link_training = lt;
+                        m_portList[alias] = p;
+                        updatePortStatePoll(p, PORT_STATE_POLL_LT, (lt > 0));
+
+                        // Restore pre-emphasis when LT is transitioned from ON to OFF
+                        if ((p.m_link_training < 1) && (serdes_attr.size() == 0))
+                        {
+                            serdes_attr = p.m_preemphasis;
+                        }
                     }
                 }
 
@@ -3092,7 +3585,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 if (mtu != 0 && mtu != p.m_mtu)
                 {
-                    if (setPortMtu(p.m_port_id, mtu))
+                    if (setPortMtu(p, mtu))
                     {
                         p.m_mtu = mtu;
                         m_portList[alias] = p;
@@ -3149,14 +3642,12 @@ void PortsOrch::doPortTask(Consumer &consumer)
                                 p.m_fec_mode = fec_mode_map[fec_mode];
                                 p.m_fec_cfg = true;
 
-                                if (setPortFec(p, p.m_fec_mode))
+                                if (setPortFec(p, fec_mode))
                                 {
                                     m_portList[alias] = p;
-                                    SWSS_LOG_NOTICE("Set port %s fec to %s", alias.c_str(), fec_mode.c_str());
                                 }
                                 else
                                 {
-                                    SWSS_LOG_ERROR("Failed to set port %s fec to %s", alias.c_str(), fec_mode.c_str());
                                     it++;
                                     continue;
                                 }
@@ -3166,14 +3657,12 @@ void PortsOrch::doPortTask(Consumer &consumer)
                                 /* Port is already down, setting fec mode*/
                                 p.m_fec_mode = fec_mode_map[fec_mode];
                                 p.m_fec_cfg = true;
-                                if (setPortFec(p, p.m_fec_mode))
+                                if (setPortFec(p, fec_mode))
                                 {
                                     m_portList[alias] = p;
-                                    SWSS_LOG_NOTICE("Set port %s fec to %s", alias.c_str(), fec_mode.c_str());
                                 }
                                 else
                                 {
-                                    SWSS_LOG_ERROR("Failed to set port %s fec to %s", alias.c_str(), fec_mode.c_str());
                                     it++;
                                     continue;
                                 }
@@ -3228,9 +3717,17 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 if (serdes_attr.size() != 0)
                 {
-                    if (setPortSerdesAttribute(p.m_port_id, serdes_attr))
+                    if (p.m_link_training > 0)
                     {
-                        SWSS_LOG_NOTICE("Set port %s  preemphasis is success", alias.c_str());
+                        SWSS_LOG_NOTICE("Save port %s preemphasis for LT", alias.c_str());
+                        p.m_preemphasis = serdes_attr;
+                        m_portList[alias] = p;
+                    }
+                    else if (setPortSerdesAttribute(p.m_port_id, serdes_attr))
+                    {
+                        SWSS_LOG_NOTICE("Set port %s preemphasis is success", alias.c_str());
+                        p.m_preemphasis = serdes_attr;
+                        m_portList[alias] = p;
                     }
                     else
                     {
@@ -3238,9 +3735,11 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         it++;
                         continue;
                     }
-
                 }
-
+                
+                /* create host_tx_ready field in state-db */
+                initHostTxReadyState(p);
+                
                 /* Last step set port admin status */
                 if (!admin_status.empty() && (p.m_admin_state_up != (admin_status == "up")))
                 {
@@ -4040,8 +4539,6 @@ void PortsOrch::initializePriorityGroups(Port &port)
     SWSS_LOG_INFO("Get %d priority groups for port %s", attr.value.u32, port.m_alias.c_str());
 
     port.m_priority_group_ids.resize(attr.value.u32);
-    port.m_priority_group_lock.resize(attr.value.u32);
-    port.m_priority_group_pending_profile.resize(attr.value.u32);
 
     if (attr.value.u32 == 0)
     {
@@ -4155,6 +4652,12 @@ bool PortsOrch::initializePort(Port &port)
         return false;
     }
 
+    /* initialize port mtu */
+    if (!getPortMtu(port, port.m_mtu))
+    {
+        SWSS_LOG_ERROR("Failed to get initial port mtu %d", port.m_mtu);
+    }
+
     /*
      * always initialize Port SAI_HOSTIF_ATTR_OPER_STATUS based on oper_status value in appDB.
      */
@@ -4186,6 +4689,11 @@ bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_int
 
     attr.id = SAI_HOSTIF_ATTR_NAME;
     strncpy((char *)&attr.value.chardata, alias.c_str(), SAI_HOSTIF_NAME_SIZE);
+    if (alias.length() >= SAI_HOSTIF_NAME_SIZE)
+    {
+        SWSS_LOG_WARN("Host interface name %s is too long and will be truncated to %d bytes", alias.c_str(), SAI_HOSTIF_NAME_SIZE - 1);
+    }
+    attr.value.chardata[SAI_HOSTIF_NAME_SIZE - 1] = '\0';
     attrs.push_back(attr);
 
     sai_status_t status = sai_hostif_api->create_hostif(&host_intfs_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
@@ -4473,9 +4981,10 @@ bool PortsOrch::removeVlan(Port vlan)
        return false for retry */
     if (vlan.m_fdb_count > 0)
     {
-        SWSS_LOG_NOTICE("VLAN %s still has assiciated FDB entries", vlan.m_alias.c_str());
+        SWSS_LOG_NOTICE("VLAN %s still has %d FDB entries", vlan.m_alias.c_str(), vlan.m_fdb_count);
         return false;
     }
+
     if (m_port_ref_count[vlan.m_alias] > 0)
     {
         SWSS_LOG_ERROR("Failed to remove ref count %d VLAN %s",
@@ -4648,7 +5157,11 @@ bool PortsOrch::addVlanFloodGroups(Port &vlan, Port &port, string end_point_ip)
         {
             SWSS_LOG_ERROR("Failed to set l2mc flood type combined "
                            " to vlan %hu for unknown unicast flooding", vlan.m_vlan_info.vlan_id);
-            return false;
+            task_process_status handle_status = handleSaiSetStatus(SAI_API_VLAN, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
         vlan.m_vlan_info.uuc_flood_type = SAI_VLAN_FLOOD_CONTROL_TYPE_COMBINED;
     }
@@ -4663,7 +5176,12 @@ bool PortsOrch::addVlanFloodGroups(Port &vlan, Port &port, string end_point_ip)
         {
             SWSS_LOG_ERROR("Failed to set l2mc flood type combined "
                            " to vlan %hu for broadcast flooding", vlan.m_vlan_info.vlan_id);
-            return false;
+            task_process_status handle_status = handleSaiSetStatus(SAI_API_VLAN, status);
+            if (handle_status != task_success)
+            {
+                m_portList[vlan.m_alias] = vlan;
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
         vlan.m_vlan_info.bc_flood_type = SAI_VLAN_FLOOD_CONTROL_TYPE_COMBINED;
     }
@@ -4674,7 +5192,12 @@ bool PortsOrch::addVlanFloodGroups(Port &vlan, Port &port, string end_point_ip)
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create l2mc flood group");
-            return false;
+            task_process_status handle_status = handleSaiCreateStatus(SAI_API_L2MC_GROUP, status);
+            if (handle_status != task_success)
+            {
+                m_portList[vlan.m_alias] = vlan;
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
 
         if (vlan.m_vlan_info.uuc_flood_type == SAI_VLAN_FLOOD_CONTROL_TYPE_COMBINED)
@@ -4688,7 +5211,12 @@ bool PortsOrch::addVlanFloodGroups(Port &vlan, Port &port, string end_point_ip)
                 SWSS_LOG_ERROR("Failed to set l2mc group %" PRIx64
                                " to vlan %hu for unknown unicast flooding",
                                l2mc_group_id, vlan.m_vlan_info.vlan_id);
-                return false;
+                task_process_status handle_status = handleSaiSetStatus(SAI_API_VLAN, status);
+                if (handle_status != task_success)
+                {
+                    m_portList[vlan.m_alias] = vlan;
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
         }
         if (vlan.m_vlan_info.bc_flood_type == SAI_VLAN_FLOOD_CONTROL_TYPE_COMBINED)
@@ -4702,7 +5230,12 @@ bool PortsOrch::addVlanFloodGroups(Port &vlan, Port &port, string end_point_ip)
                 SWSS_LOG_ERROR("Failed to set l2mc group %" PRIx64
                                " to vlan %hu for broadcast flooding",
                                l2mc_group_id, vlan.m_vlan_info.vlan_id);
-                return false;
+                task_process_status handle_status = handleSaiSetStatus(SAI_API_VLAN, status);
+                if (handle_status != task_success)
+                {
+                    m_portList[vlan.m_alias] = vlan;
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
         }
         vlan.m_vlan_info.l2mc_group_id = l2mc_group_id;
@@ -4742,11 +5275,19 @@ bool PortsOrch::addVlanFloodGroups(Port &vlan, Port &port, string end_point_ip)
     {
         SWSS_LOG_ERROR("Failed to create l2mc group member for adding tunnel %s to vlan %hu",
                        end_point_ip.c_str(), vlan.m_vlan_info.vlan_id);
-        return false;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_L2MC_GROUP, status);
+        if (handle_status != task_success)
+        {
+            m_portList[vlan.m_alias] = vlan;
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     vlan.m_vlan_info.l2mc_members[end_point_ip] = l2mc_group_member;
     m_portList[vlan.m_alias] = vlan;
     increaseBridgePortRefCount(port);
+
+    VlanMemberUpdate update = { vlan, port, true };
+    notify(SUBJECT_TYPE_VLAN_MEMBER_CHANGE, static_cast<void *>(&update));
     return true;
 }
 
@@ -4769,7 +5310,11 @@ bool PortsOrch::removeVlanEndPointIp(Port &vlan, Port &port, string end_point_ip
     {
         SWSS_LOG_ERROR("Failed to remove end point ip %s from vlan %hu",
                        end_point_ip.c_str(), vlan.m_vlan_info.vlan_id);
-        return false;
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_L2MC_GROUP, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     decreaseBridgePortRefCount(port);
     vlan.m_vlan_info.l2mc_members.erase(end_point_ip);
@@ -4789,7 +5334,12 @@ bool PortsOrch::removeVlanEndPointIp(Port &vlan, Port &port, string end_point_ip
                 SWSS_LOG_ERROR("Failed to set null l2mc group "
                                " to vlan %hu for unknown unicast flooding",
                                vlan.m_vlan_info.vlan_id);
-                return false;
+                task_process_status handle_status = handleSaiSetStatus(SAI_API_VLAN, status);
+                if (handle_status != task_success)
+                {
+                    m_portList[vlan.m_alias] = vlan;
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
             attr.id = SAI_VLAN_ATTR_UNKNOWN_UNICAST_FLOOD_CONTROL_TYPE;
             attr.value.s32 = SAI_VLAN_FLOOD_CONTROL_TYPE_ALL;
@@ -4799,7 +5349,12 @@ bool PortsOrch::removeVlanEndPointIp(Port &vlan, Port &port, string end_point_ip
                 SWSS_LOG_ERROR("Failed to set flood control type all"
                                " to vlan %hu for unknown unicast flooding",
                                vlan.m_vlan_info.vlan_id);
-                return false;
+                task_process_status handle_status = handleSaiSetStatus(SAI_API_VLAN, status);
+                if (handle_status != task_success)
+                {
+                    m_portList[vlan.m_alias] = vlan;
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
             vlan.m_vlan_info.uuc_flood_type = SAI_VLAN_FLOOD_CONTROL_TYPE_ALL;
         }
@@ -4814,7 +5369,12 @@ bool PortsOrch::removeVlanEndPointIp(Port &vlan, Port &port, string end_point_ip
                 SWSS_LOG_ERROR("Failed to set null l2mc group "
                                " to vlan %hu for broadcast flooding",
                                vlan.m_vlan_info.vlan_id);
-                return false;
+                task_process_status handle_status = handleSaiSetStatus(SAI_API_VLAN, status);
+                if (handle_status != task_success)
+                {
+                    m_portList[vlan.m_alias] = vlan;
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
             attr.id = SAI_VLAN_ATTR_BROADCAST_FLOOD_CONTROL_TYPE;
             attr.value.s32 = SAI_VLAN_FLOOD_CONTROL_TYPE_ALL;
@@ -4824,7 +5384,12 @@ bool PortsOrch::removeVlanEndPointIp(Port &vlan, Port &port, string end_point_ip
                 SWSS_LOG_ERROR("Failed to set flood control type all"
                                " to vlan %hu for broadcast flooding",
                                vlan.m_vlan_info.vlan_id);
-                return false;
+                task_process_status handle_status = handleSaiSetStatus(SAI_API_VLAN, status);
+                if (handle_status != task_success)
+                {
+                    m_portList[vlan.m_alias] = vlan;
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
             vlan.m_vlan_info.bc_flood_type = SAI_VLAN_FLOOD_CONTROL_TYPE_ALL;
         }
@@ -4832,10 +5397,16 @@ bool PortsOrch::removeVlanEndPointIp(Port &vlan, Port &port, string end_point_ip
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to remove l2mc group %" PRIx64, l2mc_group_id);
-            return false;
+            task_process_status handle_status = handleSaiRemoveStatus(SAI_API_L2MC_GROUP, status);
+            if (handle_status != task_success)
+            {
+                m_portList[vlan.m_alias] = vlan;
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
         vlan.m_vlan_info.l2mc_group_id = SAI_NULL_OBJECT_ID;
     }
+    m_portList[vlan.m_alias] = vlan;
     return true;
 }
 
@@ -4917,7 +5488,7 @@ bool PortsOrch::addLag(string lag_alias, uint32_t spa_id, int32_t switch_id)
     auto lagport = m_portList.find(lag_alias);
     if (lagport != m_portList.end())
     {
-        /* The deletion of bridgeport attached to the lag may still be 
+        /* The deletion of bridgeport attached to the lag may still be
          * pending due to fdb entries still present on the lag. Wait
          * until the cleanup is done.
          */
@@ -5363,7 +5934,7 @@ bool PortsOrch::removeTunnel(Port tunnel)
     return true;
 }
 
-void PortsOrch::generateQueueMap()
+void PortsOrch::generateQueueMap(map<string, FlexCounterQueueStates> queuesStateVector)
 {
     if (m_isQueueMapGenerated)
     {
@@ -5374,14 +5945,20 @@ void PortsOrch::generateQueueMap()
     {
         if (it.second.m_type == Port::PHY)
         {
-            generateQueueMapPerPort(it.second);
+            if (!queuesStateVector.count(it.second.m_alias))
+            {
+                auto maxQueueNumber = getNumberOfPortSupportedQueueCounters(it.second.m_alias);
+                FlexCounterQueueStates flexCounterQueueState(maxQueueNumber);
+                queuesStateVector.insert(make_pair(it.second.m_alias, flexCounterQueueState));
+            }
+            generateQueueMapPerPort(it.second, queuesStateVector.at(it.second.m_alias));
         }
     }
 
     m_isQueueMapGenerated = true;
 }
 
-void PortsOrch::generateQueueMapPerPort(const Port& port)
+void PortsOrch::generateQueueMapPerPort(const Port& port, FlexCounterQueueStates& queuesState)
 {
     /* Create the Queue map in the Counter DB */
     /* Add stat counters to flex_counter */
@@ -5397,16 +5974,20 @@ void PortsOrch::generateQueueMapPerPort(const Port& port)
 
         const auto id = sai_serialize_object_id(port.m_queue_ids[queueIndex]);
 
-        queueVector.emplace_back(name.str(), id);
-        queuePortVector.emplace_back(id, sai_serialize_object_id(port.m_port_id));
-
         string queueType;
         uint8_t queueRealIndex = 0;
         if (getQueueTypeAndIndex(port.m_queue_ids[queueIndex], queueType, queueRealIndex))
         {
+            if (!queuesState.isQueueCounterEnabled(queueRealIndex))
+            {
+                continue;
+            }
             queueTypeVector.emplace_back(id, queueType);
             queueIndexVector.emplace_back(id, to_string(queueRealIndex));
         }
+
+        queueVector.emplace_back(name.str(), id);
+        queuePortVector.emplace_back(id, sai_serialize_object_id(port.m_port_id));
 
         // Install a flex counter for this queue to track stats
         std::unordered_set<string> counter_stats;
@@ -5441,7 +6022,120 @@ void PortsOrch::generateQueueMapPerPort(const Port& port)
     CounterCheckOrch::getInstance().addPort(port);
 }
 
-void PortsOrch::generatePriorityGroupMap()
+void PortsOrch::createPortBufferQueueCounters(const Port &port, string queues)
+{
+    SWSS_LOG_ENTER();
+
+    /* Create the Queue map in the Counter DB */
+    /* Add stat counters to flex_counter */
+    vector<FieldValueTuple> queueVector;
+    vector<FieldValueTuple> queuePortVector;
+    vector<FieldValueTuple> queueIndexVector;
+    vector<FieldValueTuple> queueTypeVector;
+
+    auto toks = tokenize(queues, '-');
+    auto startIndex = to_uint<uint32_t>(toks[0]);
+    auto endIndex = startIndex;
+    if (toks.size() > 1)
+    {
+        endIndex = to_uint<uint32_t>(toks[1]);
+    }
+
+    for (auto queueIndex = startIndex; queueIndex <= endIndex; queueIndex++)
+    {
+        std::ostringstream name;
+        name << port.m_alias << ":" << queueIndex;
+
+        const auto id = sai_serialize_object_id(port.m_queue_ids[queueIndex]);
+
+        string queueType;
+        uint8_t queueRealIndex = 0;
+        if (getQueueTypeAndIndex(port.m_queue_ids[queueIndex], queueType, queueRealIndex))
+        {
+            queueTypeVector.emplace_back(id, queueType);
+            queueIndexVector.emplace_back(id, to_string(queueRealIndex));
+        }
+
+        queueVector.emplace_back(name.str(), id);
+        queuePortVector.emplace_back(id, sai_serialize_object_id(port.m_port_id));
+
+        // Install a flex counter for this queue to track stats
+        std::unordered_set<string> counter_stats;
+        for (const auto& it: queue_stat_ids)
+        {
+            counter_stats.emplace(sai_serialize_queue_stat(it));
+        }
+        queue_stat_manager.setCounterIdList(port.m_queue_ids[queueIndex], CounterType::QUEUE, counter_stats);
+
+        /* add watermark queue counters */
+        string key = getQueueWatermarkFlexCounterTableKey(id);
+
+        string delimiter("");
+        std::ostringstream counters_stream;
+        for (const auto& it: queueWatermarkStatIds)
+        {
+            counters_stream << delimiter << sai_serialize_queue_stat(it);
+            delimiter = comma;
+        }
+
+        vector<FieldValueTuple> fieldValues;
+        fieldValues.emplace_back(QUEUE_COUNTER_ID_LIST, counters_stream.str());
+
+        m_flexCounterTable->set(key, fieldValues);
+    }
+
+    m_queueTable->set("", queueVector);
+    m_queuePortTable->set("", queuePortVector);
+    m_queueIndexTable->set("", queueIndexVector);
+    m_queueTypeTable->set("", queueTypeVector);
+
+    CounterCheckOrch::getInstance().addPort(port);
+}
+
+void PortsOrch::removePortBufferQueueCounters(const Port &port, string queues)
+{
+    SWSS_LOG_ENTER();
+
+    /* Remove the Queues maps in the Counter DB */
+    /* Remove stat counters from flex_counter DB */
+    auto toks = tokenize(queues, '-');
+    auto startIndex = to_uint<uint32_t>(toks[0]);
+    auto endIndex = startIndex;
+    if (toks.size() > 1)
+    {
+        endIndex = to_uint<uint32_t>(toks[1]);
+    }
+
+    for (auto queueIndex = startIndex; queueIndex <= endIndex; queueIndex++)
+    {
+        std::ostringstream name;
+        name << port.m_alias << ":" << queueIndex;
+        const auto id = sai_serialize_object_id(port.m_queue_ids[queueIndex]);
+
+        // Remove the queue counter from counters DB maps
+        m_queueTable->hdel("", name.str());
+        m_queuePortTable->hdel("", id);
+
+        string queueType;
+        uint8_t queueRealIndex = 0;
+        if (getQueueTypeAndIndex(port.m_queue_ids[queueIndex], queueType, queueRealIndex))
+        {
+            m_queueTypeTable->hdel("", id);
+            m_queueIndexTable->hdel("", id);
+        }
+
+        // Remove the flex counter for this queue
+        queue_stat_manager.clearCounterIdList(port.m_queue_ids[queueIndex]);
+
+        // Remove watermark queue counters
+        string key = getQueueWatermarkFlexCounterTableKey(id);
+        m_flexCounterTable->del(key);
+    }
+
+    CounterCheckOrch::getInstance().removePort(port);
+}
+
+void PortsOrch::generatePriorityGroupMap(map<string, FlexCounterPgStates> pgsStateVector)
 {
     if (m_isPriorityGroupMapGenerated)
     {
@@ -5452,14 +6146,20 @@ void PortsOrch::generatePriorityGroupMap()
     {
         if (it.second.m_type == Port::PHY)
         {
-            generatePriorityGroupMapPerPort(it.second);
+            if (!pgsStateVector.count(it.second.m_alias))
+            {
+                auto maxPgNumber = getNumberOfPortSupportedPgCounters(it.second.m_alias);
+                FlexCounterPgStates flexCounterPgState(maxPgNumber);
+                pgsStateVector.insert(make_pair(it.second.m_alias, flexCounterPgState));
+            }
+            generatePriorityGroupMapPerPort(it.second, pgsStateVector.at(it.second.m_alias));
         }
     }
 
     m_isPriorityGroupMapGenerated = true;
 }
 
-void PortsOrch::generatePriorityGroupMapPerPort(const Port& port)
+void PortsOrch::generatePriorityGroupMapPerPort(const Port& port, FlexCounterPgStates& pgsState)
 {
     /* Create the PG map in the Counter DB */
     /* Add stat counters to flex_counter */
@@ -5468,6 +6168,78 @@ void PortsOrch::generatePriorityGroupMapPerPort(const Port& port)
     vector<FieldValueTuple> pgIndexVector;
 
     for (size_t pgIndex = 0; pgIndex < port.m_priority_group_ids.size(); ++pgIndex)
+    {
+        if (!pgsState.isPgCounterEnabled(static_cast<uint32_t>(pgIndex)))
+        {
+            continue;
+        }
+        std::ostringstream name;
+        name << port.m_alias << ":" << pgIndex;
+
+        const auto id = sai_serialize_object_id(port.m_priority_group_ids[pgIndex]);
+
+        pgVector.emplace_back(name.str(), id);
+        pgPortVector.emplace_back(id, sai_serialize_object_id(port.m_port_id));
+        pgIndexVector.emplace_back(id, to_string(pgIndex));
+
+        string key = getPriorityGroupWatermarkFlexCounterTableKey(id);
+
+        std::string delimiter = "";
+        std::ostringstream counters_stream;
+        /* Add watermark counters to flex_counter */
+        for (const auto& it: ingressPriorityGroupWatermarkStatIds)
+        {
+            counters_stream << delimiter << sai_serialize_ingress_priority_group_stat(it);
+            delimiter = comma;
+        }
+
+        vector<FieldValueTuple> fieldValues;
+        fieldValues.emplace_back(PG_COUNTER_ID_LIST, counters_stream.str());
+        m_flexCounterTable->set(key, fieldValues);
+
+        delimiter = "";
+        std::ostringstream ingress_pg_drop_packets_counters_stream;
+        key = getPriorityGroupDropPacketsFlexCounterTableKey(id);
+        /* Add dropped packets counters to flex_counter */
+        for (const auto& it: ingressPriorityGroupDropStatIds)
+        {
+            ingress_pg_drop_packets_counters_stream << delimiter << sai_serialize_ingress_priority_group_stat(it);
+            if (delimiter.empty())
+            {
+                delimiter = comma;
+            }
+        }
+        fieldValues.clear();
+        fieldValues.emplace_back(PG_COUNTER_ID_LIST, ingress_pg_drop_packets_counters_stream.str());
+        m_flexCounterTable->set(key, fieldValues);
+    }
+
+    m_pgTable->set("", pgVector);
+    m_pgPortTable->set("", pgPortVector);
+    m_pgIndexTable->set("", pgIndexVector);
+
+    CounterCheckOrch::getInstance().addPort(port);
+}
+
+void PortsOrch::createPortBufferPgCounters(const Port& port, string pgs)
+{
+    SWSS_LOG_ENTER();
+
+    /* Create the PG map in the Counter DB */
+    /* Add stat counters to flex_counter */
+    vector<FieldValueTuple> pgVector;
+    vector<FieldValueTuple> pgPortVector;
+    vector<FieldValueTuple> pgIndexVector;
+
+    auto toks = tokenize(pgs, '-');
+    auto startIndex = to_uint<uint32_t>(toks[0]);
+    auto endIndex = startIndex;
+    if (toks.size() > 1)
+    {
+        endIndex = to_uint<uint32_t>(toks[1]);
+    }
+
+    for (auto pgIndex = startIndex; pgIndex <= endIndex; pgIndex++)
     {
         std::ostringstream name;
         name << port.m_alias << ":" << pgIndex;
@@ -5517,6 +6289,43 @@ void PortsOrch::generatePriorityGroupMapPerPort(const Port& port)
     CounterCheckOrch::getInstance().addPort(port);
 }
 
+void PortsOrch::removePortBufferPgCounters(const Port& port, string pgs)
+{
+    SWSS_LOG_ENTER();
+
+    /* Remove the Pgs maps in the Counter DB */
+    /* Remove stat counters from flex_counter DB */
+    auto toks = tokenize(pgs, '-');
+    auto startIndex = to_uint<uint32_t>(toks[0]);
+    auto endIndex = startIndex;
+    if (toks.size() > 1)
+    {
+        endIndex = to_uint<uint32_t>(toks[1]);
+    }
+
+    for (auto pgIndex = startIndex; pgIndex <= endIndex; pgIndex++)
+    {
+        std::ostringstream name;
+        name << port.m_alias << ":" << pgIndex;
+        const auto id = sai_serialize_object_id(port.m_priority_group_ids[pgIndex]);
+
+        // Remove the pg counter from counters DB maps
+        m_pgTable->hdel("", name.str());
+        m_pgPortTable->hdel("", id);
+        m_pgIndexTable->hdel("", id);
+
+        // Remove dropped packets counters from flex_counter
+        string key = getPriorityGroupDropPacketsFlexCounterTableKey(id);
+        m_flexCounterTable->del(key);
+
+        // Remove watermark counters from flex_counter
+        key = getPriorityGroupWatermarkFlexCounterTableKey(id);
+        m_flexCounterTable->del(key);
+    }
+
+    CounterCheckOrch::getInstance().removePort(port);
+}
+
 void PortsOrch::generatePortCounterMap()
 {
     if (m_isPortCounterMapGenerated)
@@ -5525,6 +6334,7 @@ void PortsOrch::generatePortCounterMap()
     }
 
     auto port_counter_stats = generateCounterStats(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP);
+    auto gbport_counter_stats = generateCounterStats(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, true);
     for (const auto& it: m_portList)
     {
         // Set counter stats only for PHY ports to ensure syncd will not try to query the counter statistics from the HW for non-PHY ports.
@@ -5532,7 +6342,14 @@ void PortsOrch::generatePortCounterMap()
         {
             continue;
         }
-        port_stat_manager.setCounterIdList(it.second.m_port_id, CounterType::PORT, port_counter_stats);
+        port_stat_manager.setCounterIdList(it.second.m_port_id,
+                CounterType::PORT, port_counter_stats);
+        if (it.second.m_system_side_id)
+            gb_port_stat_manager.setCounterIdList(it.second.m_system_side_id,
+                    CounterType::PORT, gbport_counter_stats);
+        if (it.second.m_line_side_id)
+            gb_port_stat_manager.setCounterIdList(it.second.m_line_side_id,
+                    CounterType::PORT, gbport_counter_stats);
     }
 
     m_isPortCounterMapGenerated = true;
@@ -5557,6 +6374,16 @@ void PortsOrch::generatePortBufferDropCounterMap()
     }
 
     m_isPortBufferDropCounterMapGenerated = true;
+}
+
+uint32_t PortsOrch::getNumberOfPortSupportedPgCounters(string port)
+{
+    return static_cast<uint32_t>(m_portList[port].m_priority_group_ids.size());
+}
+
+uint32_t PortsOrch::getNumberOfPortSupportedQueueCounters(string port)
+{
+    return static_cast<uint32_t>(m_portList[port].m_queue_ids.size());
 }
 
 void PortsOrch::doTask(NotificationConsumer &consumer)
@@ -5611,6 +6438,10 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
                     SWSS_LOG_NOTICE("%s oper speed is %d", port.m_alias.c_str(), speed);
                     updateDbPortOperSpeed(port, speed);
                 }
+                else
+                {
+                    updateDbPortOperSpeed(port, 0);
+                }
             }
 
             /* update m_portList */
@@ -5634,6 +6465,19 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
     if (port.m_type == Port::PHY)
     {
         updateDbPortOperStatus(port, status);
+        updateGearboxPortOperStatus(port);
+
+        /* Refresh the port states and reschedule the poller tasks */
+        if (port.m_autoneg > 0)
+        {
+            refreshPortStateAutoNeg(port);
+            updatePortStatePoll(port, PORT_STATE_POLL_AN, !(status == SAI_PORT_OPER_STATUS_UP));
+        }
+        if (port.m_link_training > 0)
+        {
+            refreshPortStateLinkTraining(port);
+            updatePortStatePoll(port, PORT_STATE_POLL_LT, !(status == SAI_PORT_OPER_STATUS_UP));
+        }
     }
     port.m_oper_status = status;
 
@@ -5672,9 +6516,9 @@ void PortsOrch::updateDbPortOperSpeed(Port &port, sai_uint32_t speed)
     SWSS_LOG_ENTER();
 
     vector<FieldValueTuple> tuples;
-    FieldValueTuple tuple("speed", to_string(speed));
-    tuples.push_back(tuple);
-    m_portTable->set(port.m_alias, tuples);
+    string speedStr = speed != 0 ? to_string(speed) : "N/A";
+    tuples.emplace_back(std::make_pair("speed", speedStr));
+    m_portStateTable.set(port.m_alias, tuples);
 
     // We don't set port.m_speed = speed here, because CONFIG_DB still hold the old
     // value. If we set it here, next time configure any attributes related port will
@@ -5720,6 +6564,10 @@ void PortsOrch::refreshPortStatus()
             {
                 SWSS_LOG_INFO("%s oper speed is %d", port.m_alias.c_str(), speed);
                 updateDbPortOperSpeed(port, speed);
+            }
+            else
+            {
+                updateDbPortOperSpeed(port, 0);
             }
         }
     }
@@ -5782,6 +6630,50 @@ bool PortsOrch::getPortOperSpeed(const Port& port, sai_uint32_t& speed) const
         return false;
     }
 
+    return true;
+}
+
+bool PortsOrch::getPortLinkTrainingRxStatus(const Port &port, sai_port_link_training_rx_status_t &rx_status)
+{
+    SWSS_LOG_ENTER();
+
+    if (port.m_type != Port::PHY)
+    {
+        return false;
+    }
+
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_LINK_TRAINING_RX_STATUS;
+    sai_status_t ret = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
+    if (ret != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get LT rx status for %s", port.m_alias.c_str());
+        return false;
+    }
+
+    rx_status = static_cast<sai_port_link_training_rx_status_t>(attr.value.u32);
+    return true;
+}
+
+bool PortsOrch::getPortLinkTrainingFailure(const Port &port, sai_port_link_training_failure_status_t &failure)
+{
+    SWSS_LOG_ENTER();
+
+    if (port.m_type != Port::PHY)
+    {
+        return false;
+    }
+
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_LINK_TRAINING_FAILURE_STATUS;
+    sai_status_t ret = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
+    if (ret != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get LT failure status for %s", port.m_alias.c_str());
+        return false;
+    }
+
+    failure = static_cast<sai_port_link_training_failure_status_t>(attr.value.u32);
     return true;
 }
 
@@ -6112,6 +7004,9 @@ void PortsOrch::initGearbox()
         SWSS_LOG_NOTICE("BOX: m_gearboxInterfaceMap size = %d.", (int) m_gearboxInterfaceMap.size());
         SWSS_LOG_NOTICE("BOX: m_gearboxLaneMap size      = %d.", (int) m_gearboxLaneMap.size());
         SWSS_LOG_NOTICE("BOX: m_gearboxPortMap size      = %d.", (int) m_gearboxPortMap.size());
+
+        m_gb_counter_db = shared_ptr<DBConnector>(new DBConnector("GB_COUNTERS_DB", 0));
+        m_gbcounterTable = unique_ptr<Table>(new Table(m_gb_counter_db.get(), COUNTERS_PORT_NAME_MAP));
     }
 }
 
@@ -6210,6 +7105,7 @@ bool PortsOrch::initGearboxPort(Port &port)
             }
             SWSS_LOG_NOTICE("BOX: Created Gearbox system-side port 0x%" PRIx64 " for alias:%s index:%d",
                     systemPort, port.m_alias.c_str(), port.m_index);
+            port.m_system_side_id = systemPort;
 
             /* Create LINE-SIDE port */
             attrs.clear();
@@ -6322,6 +7218,17 @@ bool PortsOrch::initGearboxPort(Port &port)
             SWSS_LOG_NOTICE("BOX: Connected Gearbox ports; system-side:0x%" PRIx64 " to line-side:0x%" PRIx64, systemPort, linePort);
             m_gearboxPortListLaneMap[port.m_port_id] = make_tuple(systemPort, linePort);
             port.m_line_side_id = linePort;
+            saiOidToAlias[systemPort] = port.m_alias;
+            saiOidToAlias[linePort] = port.m_alias;
+
+            /* Add gearbox system/line port name map to counter table */
+            FieldValueTuple tuple(port.m_alias + "_system", sai_serialize_object_id(systemPort));
+            vector<FieldValueTuple> fields;
+            fields.push_back(tuple);
+            m_gbcounterTable->set("", fields);
+
+            fields[0] = FieldValueTuple(port.m_alias + "_line", sai_serialize_object_id(linePort));
+            m_gbcounterTable->set("", fields);
         }
     }
 
@@ -6737,12 +7644,13 @@ void PortsOrch::voqSyncDelLagMember(Port &lag, Port &port)
     m_tableVoqSystemLagMemberTable->del(key);
 }
 
-std::unordered_set<std::string> PortsOrch::generateCounterStats(const string& type)
+std::unordered_set<std::string> PortsOrch::generateCounterStats(const string& type, bool gearbox)
 {
     std::unordered_set<std::string> counter_stats;
     if (type == PORT_STAT_COUNTER_FLEX_COUNTER_GROUP)
     {
-        for (const auto& it: port_stat_ids)
+        auto& stat_ids = gearbox ? gbport_stat_ids : port_stat_ids;
+        for (const auto& it: stat_ids)
         {
             counter_stats.emplace(sai_serialize_port_stat(it));
         }
@@ -6755,4 +7663,210 @@ std::unordered_set<std::string> PortsOrch::generateCounterStats(const string& ty
         }
     }
     return counter_stats;
+}
+
+void PortsOrch::updateGearboxPortOperStatus(const Port& port)
+{
+    if (!isGearboxEnabled())
+        return;
+
+    SWSS_LOG_NOTICE("BOX: port %s, system_side_id:0x%" PRIx64 "line_side_id:0x%" PRIx64,
+            port.m_alias.c_str(), port.m_system_side_id, port.m_line_side_id);
+
+    if (!port.m_system_side_id || !port.m_line_side_id)
+        return;
+
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_OPER_STATUS;
+    sai_status_t ret = sai_port_api->get_port_attribute(port.m_system_side_id, 1, &attr);
+    if (ret != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("BOX: Failed to get system_oper_status for %s", port.m_alias.c_str());
+    }
+    else
+    {
+        sai_port_oper_status_t oper = static_cast<sai_port_oper_status_t>(attr.value.u32);
+        vector<FieldValueTuple> tuples;
+        FieldValueTuple tuple("system_oper_status", oper_status_strings.at(oper));
+        tuples.push_back(tuple);
+        m_portTable->set(port.m_alias, tuples);
+    }
+
+    attr.id = SAI_PORT_ATTR_OPER_STATUS;
+    ret = sai_port_api->get_port_attribute(port.m_line_side_id, 1, &attr);
+    if (ret != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("BOX: Failed to get line_oper_status for %s", port.m_alias.c_str());
+    }
+    else
+    {
+        sai_port_oper_status_t oper = static_cast<sai_port_oper_status_t>(attr.value.u32);
+        vector<FieldValueTuple> tuples;
+        FieldValueTuple tuple("line_oper_status", oper_status_strings.at(oper));
+        tuples.push_back(tuple);
+        m_portTable->set(port.m_alias, tuples);
+    }
+}
+
+bool PortsOrch::decrFdbCount(const std::string& alias, int count)
+{
+    auto itr = m_portList.find(alias);
+    if (itr == m_portList.end())
+    {
+        return false;
+    }
+    else
+    {
+        itr->second.m_fdb_count -= count;
+    }
+    return true;
+}
+
+void PortsOrch::setMACsecEnabledState(sai_object_id_t port_id, bool enabled)
+{
+    SWSS_LOG_ENTER();
+
+    Port p;
+    if (!getPort(port_id, p))
+    {
+        SWSS_LOG_ERROR("Failed to get port object for port id 0x%" PRIx64, port_id);
+        return;
+    }
+
+    if (enabled)
+    {
+        m_macsecEnabledPorts.insert(port_id);
+    }
+    else
+    {
+        m_macsecEnabledPorts.erase(port_id);
+    }
+
+    if (p.m_mtu)
+    {
+        setPortMtu(p, p.m_mtu);
+    }
+}
+
+bool PortsOrch::isMACsecPort(sai_object_id_t port_id) const
+{
+    SWSS_LOG_ENTER();
+
+    return m_macsecEnabledPorts.find(port_id) != m_macsecEnabledPorts.end();
+}
+
+/* Refresh the per-port Auto-Negotiation operational states */
+void PortsOrch::refreshPortStateAutoNeg(const Port &port)
+{
+    SWSS_LOG_ENTER();
+
+    if (port.m_type != Port::Type::PHY)
+    {
+        return;
+    }
+
+    string adv_speeds = "N/A";
+
+    if (port.m_admin_state_up)
+    {
+        if (!getPortAdvSpeeds(port, true, adv_speeds))
+        {
+            adv_speeds = "N/A";
+            updatePortStatePoll(port, PORT_STATE_POLL_AN, false);
+        }
+    }
+
+    m_portStateTable.hset(port.m_alias, "rmt_adv_speeds", adv_speeds);
+}
+
+/* Refresh the per-port Link-Training operational states */
+void PortsOrch::refreshPortStateLinkTraining(const Port &port)
+{
+    SWSS_LOG_ENTER();
+
+    if (port.m_type != Port::Type::PHY)
+    {
+        return;
+    }
+
+    string status = "off";
+
+    if (port.m_admin_state_up && port.m_link_training > 0 && port.m_cap_lt > 0)
+    {
+        sai_port_link_training_rx_status_t rx_status;
+        sai_port_link_training_failure_status_t failure;
+
+        if (!getPortLinkTrainingRxStatus(port, rx_status))
+        {
+            status = "on"; // LT is enabled, while the rx status is unavailable
+        }
+        else if (rx_status == SAI_PORT_LINK_TRAINING_RX_STATUS_TRAINED)
+        {
+            status = link_training_rx_status_map.at(rx_status);
+        }
+        else
+        {
+            if (getPortLinkTrainingFailure(port, failure) &&
+                failure != SAI_PORT_LINK_TRAINING_FAILURE_STATUS_NO_ERROR)
+            {
+                status = link_training_failure_map.at(failure);
+            }
+            else
+            {
+                status = link_training_rx_status_map.at(rx_status);
+            }
+        }
+    }
+
+    m_portStateTable.hset(port.m_alias, "link_training_status", status);
+}
+
+/* Activate/De-activate a specific port state poller task */
+void PortsOrch::updatePortStatePoll(const Port &port, port_state_poll_t type, bool active)
+{
+    if (type == PORT_STATE_POLL_NONE)
+    {
+        return;
+    }
+    if (active)
+    {
+        m_port_state_poll[port.m_alias] |= type;
+        m_port_state_poller->start();
+    }
+    else
+    {
+        m_port_state_poll[port.m_alias] &= ~type;
+    }
+}
+
+void PortsOrch::doTask(swss::SelectableTimer &timer)
+{
+    Port port;
+
+    for (auto it = m_port_state_poll.begin(); it != m_port_state_poll.end(); )
+    {
+        if ((it->second == PORT_STATE_POLL_NONE) || !getPort(it->first, port))
+        {
+            it = m_port_state_poll.erase(it);
+            continue;
+        }
+        if (!port.m_admin_state_up)
+        {
+            ++it;
+            continue;
+        }
+        if (it->second & PORT_STATE_POLL_AN)
+        {
+            refreshPortStateAutoNeg(port);
+        }
+        if (it->second & PORT_STATE_POLL_LT)
+        {
+            refreshPortStateLinkTraining(port);
+        }
+        ++it;
+    }
+    if (m_port_state_poll.size() == 0)
+    {
+        m_port_state_poller->stop();
+    }
 }

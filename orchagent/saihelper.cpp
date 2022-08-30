@@ -71,6 +71,7 @@ sai_srv6_api_t**            sai_srv6_api;;
 sai_l2mc_group_api_t*       sai_l2mc_group_api;
 sai_counter_api_t*          sai_counter_api;
 sai_bfd_api_t*              sai_bfd_api;
+sai_my_mac_api_t*           sai_my_mac_api;
 
 extern sai_object_id_t gSwitchId;
 extern bool gSairedisRecord;
@@ -199,6 +200,7 @@ void initSaiApi()
     sai_api_query(SAI_API_L2MC_GROUP,           (void **)&sai_l2mc_group_api);
     sai_api_query(SAI_API_COUNTER,              (void **)&sai_counter_api);
     sai_api_query(SAI_API_BFD,                  (void **)&sai_bfd_api);
+    sai_api_query(SAI_API_MY_MAC,               (void **)&sai_my_mac_api);
 
     sai_log_set(SAI_API_SWITCH,                 SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_BRIDGE,                 SAI_LOG_LEVEL_NOTICE);
@@ -236,6 +238,7 @@ void initSaiApi()
     sai_log_set(SAI_API_L2MC_GROUP,             SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_COUNTER,                SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_BFD,                    SAI_LOG_LEVEL_NOTICE);
+    sai_log_set(SAI_API_MY_MAC,                 SAI_LOG_LEVEL_NOTICE);
 }
 
 void initSaiRedis(const string &record_location, const std::string &record_filename)
@@ -304,7 +307,7 @@ void initSaiRedis(const string &record_location, const std::string &record_filen
     SWSS_LOG_NOTICE("Enable redis pipeline");
 
     char *platform = getenv("platform");
-    if (platform && strstr(platform, MLNX_PLATFORM_SUBSTRING))
+    if (platform && (strstr(platform, MLNX_PLATFORM_SUBSTRING) || strstr(platform, XS_PLATFORM_SUBSTRING)))
     {
         /* We set this long timeout in order for Orchagent to wait enough time for
          * response from syncd. It is needed since in init, systemd syncd startup
@@ -334,7 +337,7 @@ void initSaiRedis(const string &record_location, const std::string &record_filen
     }
     SWSS_LOG_NOTICE("Notify syncd INIT_VIEW");
 
-    if (platform && strstr(platform, MLNX_PLATFORM_SUBSTRING))
+    if (platform && (strstr(platform, MLNX_PLATFORM_SUBSTRING) || strstr(platform, XS_PLATFORM_SUBSTRING)))
     {
         /* Set timeout back to the default value */
         attr.id = SAI_REDIS_SWITCH_ATTR_SYNC_OPERATION_RESPONSE_TIMEOUT;
@@ -359,9 +362,6 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
     sai_status_t status;
     char fwPath[PATH_MAX];
     char hwinfo[HWINFO_MAX_SIZE + 1];
-    char hwinfoIntf[IFNAMSIZ + 1];
-    unsigned int hwinfoPhyid;
-    int ret;
 
     SWSS_LOG_ENTER();
 
@@ -377,19 +377,11 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
     attr.value.u32 = 0;
     attrs.push_back(attr);
 
-    ret = sscanf(phy->hwinfo.c_str(), "%" STR(IFNAMSIZ) "[^/]/%u", hwinfoIntf, &hwinfoPhyid);
-    if (ret != 2) {
-        SWSS_LOG_ERROR("BOX: hardware info doesn't match the 'interface_name/phyid' "
-                       "format");
-        return SAI_STATUS_FAILURE;
+    if( phy->hwinfo.length() > HWINFO_MAX_SIZE ) {
+       SWSS_LOG_ERROR( "hwinfo string attribute is too long." );
+       return SAI_STATUS_FAILURE;
     }
-
-    if (hwinfoPhyid > std::numeric_limits<uint16_t>::max()) {
-        SWSS_LOG_ERROR("BOX: phyid is bigger than maximum limit");
-        return SAI_STATUS_FAILURE;
-    }
-
-    strcpy(hwinfo, phy->hwinfo.c_str());
+    strncpy(hwinfo, phy->hwinfo.c_str(), phy->hwinfo.length());
 
     attr.id = SAI_SWITCH_ATTR_SWITCH_HARDWARE_INFO;
     attr.value.s8list.count = (uint32_t) phy->hwinfo.length();
@@ -452,17 +444,21 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
 
     phy->phy_oid = sai_serialize_object_id(phyOid);
 
-    attr.id = SAI_SWITCH_ATTR_FIRMWARE_MAJOR_VERSION;
-    status = sai_switch_api->get_switch_attribute(phyOid, 1, &attr);
-    if (status != SAI_STATUS_SUCCESS)
+    if (phy->firmware.length() != 0)
     {
-        SWSS_LOG_ERROR("BOX: Failed to get firmware major version:%d rtn:%d", phy->phy_id, status);
-        return status;
+        attr.id = SAI_SWITCH_ATTR_FIRMWARE_MAJOR_VERSION;
+        status = sai_switch_api->get_switch_attribute(phyOid, 1, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("BOX: Failed to get firmware major version for hwinfo:%s, phy:%d, rtn:%d",
+                           phy->hwinfo.c_str(), phy->phy_id, status);
+            return status;
+        }
+        else
+        {
+            phy->firmware_major_version = string(attr.value.chardata);
+        }
     }
-    else
-    {
-        phy->firmware_major_version = string(attr.value.chardata);
-    }
-
     return status;
 }
+
