@@ -177,7 +177,7 @@ void getCfgSwitchType(DBConnector *cfgDb, string &switch_type)
         switch_type = "switch";
     }
 
-    if (switch_type != "voq" && switch_type != "fabric" && switch_type != "chassis-packet" && switch_type != "switch")
+    if (switch_type != "voq" && switch_type != "fabric" && switch_type != "chassis-packet" && switch_type != "switch" && switch_type != "dpu")
     {
         SWSS_LOG_ERROR("Invalid switch type %s configured", switch_type.c_str());
     	//If configured switch type is none of the supported, assume regular switch
@@ -425,15 +425,27 @@ int main(int argc, char **argv)
     initSaiApi();
     initSaiRedis(record_location, sairedis_rec_filename);
 
+    // Instantiate database connectors
+    DBConnector appl_db("APPL_DB", 0);
+    DBConnector config_db("CONFIG_DB", 0);
+    DBConnector state_db("STATE_DB", 0);
+
+    // Get switch_type
+    getCfgSwitchType(&config_db, gMySwitchType);
+
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
 
     attr.id = SAI_SWITCH_ATTR_INIT_SWITCH;
     attr.value.booldata = true;
     attrs.push_back(attr);
-    attr.id = SAI_SWITCH_ATTR_FDB_EVENT_NOTIFY;
-    attr.value.ptr = (void *)on_fdb_event;
-    attrs.push_back(attr);
+
+    if (gMySwitchType != "dpu")
+    {
+        attr.id = SAI_SWITCH_ATTR_FDB_EVENT_NOTIFY;
+        attr.value.ptr = (void *)on_fdb_event;
+        attrs.push_back(attr);
+    }
 
     // Initialize recording parameters.
     gSairedisRecord =
@@ -481,14 +493,6 @@ int main(int argc, char **argv)
     attr.id = SAI_SWITCH_ATTR_SHUTDOWN_REQUEST_NOTIFY;
     attr.value.ptr = (void *)on_switch_shutdown_request;
     attrs.push_back(attr);
-
-    // Instantiate database connectors
-    DBConnector appl_db("APPL_DB", 0);
-    DBConnector config_db("CONFIG_DB", 0);
-    DBConnector state_db("STATE_DB", 0);
-
-    // Get switch_type
-    getCfgSwitchType(&config_db, gMySwitchType);
 
     if (gMySwitchType != "fabric" && gMacAddress)
     {
@@ -570,7 +574,7 @@ int main(int argc, char **argv)
     attr.value.u64 = gSwitchId;
     attrs.push_back(attr);
 
-    if (gMySwitchType == "voq" || gMySwitchType == "fabric" || gMySwitchType == "chassis-packet")
+    if (gMySwitchType == "voq" || gMySwitchType == "fabric" || gMySwitchType == "chassis-packet" || gMySwitchType == "dpu")
     {
         /* We set this long timeout in order for orchagent to wait enough time for
          * response from syncd. It is needed since switch create takes more time
@@ -578,7 +582,7 @@ int main(int argc, char **argv)
          * and systems ports to initialize
          */
 
-        if (gMySwitchType == "voq" || gMySwitchType == "chassis-packet")
+        if (gMySwitchType == "voq" || gMySwitchType == "chassis-packet" || gMySwitchType == "dpu")
         {
             attr.value.u64 = (5 * SAI_REDIS_DEFAULT_SYNC_OPERATION_RESPONSE_TIMEOUT);
         }
@@ -608,7 +612,7 @@ int main(int argc, char **argv)
     }
     SWSS_LOG_NOTICE("Create a switch, id:%" PRIu64, gSwitchId);
 
-    if (gMySwitchType == "voq" || gMySwitchType == "fabric" || gMySwitchType == "chassis-packet")
+    if (gMySwitchType == "voq" || gMySwitchType == "fabric" || gMySwitchType == "chassis-packet" || gMySwitchType == "dpu")
     {
         /* Set syncd response timeout back to the default value */
         attr.id = SAI_REDIS_SWITCH_ATTR_SYNC_OPERATION_RESPONSE_TIMEOUT;

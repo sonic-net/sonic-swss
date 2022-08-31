@@ -28,6 +28,7 @@ extern sai_switch_api_t* sai_switch_api;
 extern sai_object_id_t   gSwitchId;
 extern PortsOrch*        gPortsOrch;
 extern CrmOrch *gCrmOrch;
+extern string gMySwitchType;
 
 #define MIN_VLAN_ID 1    // 0 is a reserved VLAN ID
 #define MAX_VLAN_ID 4095 // 4096 is a reserved VLAN ID
@@ -2944,27 +2945,30 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     }
     m_switchOrch->set_switch_capability(fvVector);
 
-    sai_attribute_t attrs[2];
-    attrs[0].id = SAI_SWITCH_ATTR_ACL_ENTRY_MINIMUM_PRIORITY;
-    attrs[1].id = SAI_SWITCH_ATTR_ACL_ENTRY_MAXIMUM_PRIORITY;
+    if (gMySwitchType != "dpu")
+    {
+        sai_attribute_t attrs[2];
+        attrs[0].id = SAI_SWITCH_ATTR_ACL_ENTRY_MINIMUM_PRIORITY;
+        attrs[1].id = SAI_SWITCH_ATTR_ACL_ENTRY_MAXIMUM_PRIORITY;
 
-    sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 2, attrs);
-    if (status == SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_NOTICE("Get ACL entry priority values, min: %u, max: %u", attrs[0].value.u32, attrs[1].value.u32);
-        AclRule::setRulePriorities(attrs[0].value.u32, attrs[1].value.u32);
-    }
-    else
-    {
-        SWSS_LOG_ERROR("Failed to get ACL entry priority min/max values, rv:%d", status);
-        task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
-        if (handle_status != task_process_status::task_success)
+        sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 2, attrs);
+        if (status == SAI_STATUS_SUCCESS)
         {
-            throw "AclOrch initialization failure";
+            SWSS_LOG_NOTICE("Get ACL entry priority values, min: %u, max: %u", attrs[0].value.u32, attrs[1].value.u32);
+            AclRule::setRulePriorities(attrs[0].value.u32, attrs[1].value.u32);
         }
-    }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to get ACL entry priority min/max values, rv:%d", status);
+            task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
+            if (handle_status != task_process_status::task_success)
+            {
+                throw "AclOrch initialization failure";
+            }
+        }
 
-    queryAclActionCapability();
+        queryAclActionCapability();
+    }
 
     for (auto stage: {ACL_STAGE_INGRESS, ACL_STAGE_EGRESS})
     {

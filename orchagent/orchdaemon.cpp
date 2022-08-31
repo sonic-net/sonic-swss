@@ -21,6 +21,7 @@ using namespace swss;
 extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
 extern bool                        gSaiRedisLogRotate;
+extern string                      gMySwitchType;
 
 extern void syncd_apply_view();
 /*
@@ -629,9 +630,12 @@ bool OrchDaemon::init()
 
     m_orchList.push_back(&CounterCheckOrch::getInstance(m_configDb));
 
-    vector<string> p4rt_tables = {APP_P4RT_TABLE_NAME};
-    gP4Orch = new P4Orch(m_applDb, p4rt_tables, vrf_orch, gCoppOrch);
-    m_orchList.push_back(gP4Orch);
+    if (gMySwitchType != "dpu")
+    {
+        vector<string> p4rt_tables = {APP_P4RT_TABLE_NAME};
+        gP4Orch = new P4Orch(m_applDb, p4rt_tables, vrf_orch, gCoppOrch);
+        m_orchList.push_back(gP4Orch);
+    }
 
     if (WarmStart::isWarmStart())
     {

@@ -34,6 +34,7 @@ using namespace swss;
  */
 set<string> g_portSet;
 bool g_init = false;
+string g_switchType;
 
 void usage()
 {
@@ -69,6 +70,13 @@ int main(int argc, char **argv)
     DBConnector appl_db("APPL_DB", 0);
     DBConnector state_db("STATE_DB", 0);
     ProducerStateTable p(&appl_db, APP_PORT_TABLE_NAME);
+
+    Table cfgDeviceMetaDataTable(&cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
+    if (!cfgDeviceMetaDataTable.hget("localhost", "switch_type", g_switchType))
+    {
+        //Switch type is not configured. Consider it default = "switch" (regular switch)
+        g_switchType = "switch";
+    }
 
     WarmStart::initialize("portsyncd", "swss");
     WarmStart::checkWarmStart("portsyncd", "swss");
