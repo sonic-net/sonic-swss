@@ -37,7 +37,7 @@ public:
 
     // Return reference to ACL group created for each stage and the bind point is
     // the switch
-    const std::map<sai_acl_stage_t, sai_object_id_t> &getAclGroupOidsBindingToSwitch();
+    std::map<sai_acl_stage_t, referenced_object> &getAclGroupsBindingToSwitch();
     // Initialize the ACL groups bind to Switch
     void initAclGroupsBindToSwitch();
 
@@ -57,17 +57,17 @@ private:
     // Create the default ACL group for the given stage, bind point is
     // SAI_ACL_BIND_POINT_TYPE_SWITCH and group type is
     // SAI_ACL_TABLE_GROUP_TYPE_PARALLEL.
-    ReturnCode createAclGroup(const sai_acl_stage_t &group_stage, sai_object_id_t *acl_grp_oid);
+    ReturnCode createAclGroup(const sai_acl_stage_t &group_stage, referenced_object *acl_grp);
 
     // Bind the ACL group to switch for the given stage.
     // Set the SAI_SWITCH_ATTR_{STAGE}_ACL with the group oid.
-    ReturnCode bindAclGroupToSwitch(const sai_acl_stage_t &group_stage, const sai_object_id_t &acl_grp_oid);
+    ReturnCode bindAclGroupToSwitch(const sai_acl_stage_t &group_stage, const referenced_object &acl_grp);
 
     swss::NotificationConsumer* m_restartCheckNotificationConsumer;
     void doTask(swss::NotificationConsumer& consumer);
     swss::DBConnector *m_db;
     swss::Table m_switchTable;
-    std::map<sai_acl_stage_t, sai_object_id_t> m_aclGroups;
+    std::map<sai_acl_stage_t, referenced_object> m_aclGroups;
     sai_object_id_t m_switchTunnelId;
 
     // ASIC temperature sensors

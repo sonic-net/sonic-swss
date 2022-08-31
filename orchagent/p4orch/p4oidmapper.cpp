@@ -1,6 +1,7 @@
 #include "p4oidmapper.h"
 
 #include <limits>
+#include <sstream>
 #include <string>
 
 #include "logger.h"
@@ -41,7 +42,8 @@ bool P4OidMapper::setOID(_In_ sai_object_type_t object_type, _In_ const std::str
     return true;
 }
 
-bool P4OidMapper::getOID(_In_ sai_object_type_t object_type, _In_ const std::string &key, _Out_ sai_object_id_t *oid)
+bool P4OidMapper::getOID(_In_ sai_object_type_t object_type, _In_ const std::string &key,
+                         _Out_ sai_object_id_t *oid) const
 {
     SWSS_LOG_ENTER();
 
@@ -57,12 +59,12 @@ bool P4OidMapper::getOID(_In_ sai_object_type_t object_type, _In_ const std::str
         return false;
     }
 
-    *oid = m_oidTables[object_type][key].sai_oid;
+    *oid = m_oidTables[object_type].at(key).sai_oid;
     return true;
 }
 
 bool P4OidMapper::getRefCount(_In_ sai_object_type_t object_type, _In_ const std::string &key,
-                              _Out_ uint32_t *ref_count)
+                              _Out_ uint32_t *ref_count) const
 {
     SWSS_LOG_ENTER();
 
@@ -80,7 +82,7 @@ bool P4OidMapper::getRefCount(_In_ sai_object_type_t object_type, _In_ const std
         return false;
     }
 
-    *ref_count = m_oidTables[object_type][key].ref_count;
+    *ref_count = m_oidTables[object_type].at(key).ref_count;
     return true;
 }
 
@@ -117,14 +119,14 @@ void P4OidMapper::eraseAllOIDs(_In_ sai_object_type_t object_type)
     m_table.del("");
 }
 
-size_t P4OidMapper::getNumEntries(_In_ sai_object_type_t object_type)
+size_t P4OidMapper::getNumEntries(_In_ sai_object_type_t object_type) const
 {
     SWSS_LOG_ENTER();
 
     return (m_oidTables[object_type].size());
 }
 
-bool P4OidMapper::existsOID(_In_ sai_object_type_t object_type, _In_ const std::string &key)
+bool P4OidMapper::existsOID(_In_ sai_object_type_t object_type, _In_ const std::string &key) const
 {
     SWSS_LOG_ENTER();
 
@@ -177,4 +179,41 @@ bool P4OidMapper::decreaseRefCount(_In_ sai_object_type_t object_type, _In_ cons
 
     m_oidTables[object_type][key].ref_count--;
     return true;
+}
+
+std::string P4OidMapper::verifyOIDMapping(_In_ sai_object_type_t object_type, _In_ const std::string &key,
+                                          _In_ sai_object_id_t oid)
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_id_t mapper_oid;
+    if (!getOID(object_type, key, &mapper_oid))
+    {
+        std::stringstream msg;
+        msg << "OID not found in mapper for key " << key;
+        return msg.str();
+    }
+    if (mapper_oid != oid)
+    {
+        std::stringstream msg;
+        msg << "OID mismatched in mapper for key " << key << ": " << sai_serialize_object_id(oid) << " vs "
+            << sai_serialize_object_id(mapper_oid);
+        return msg.str();
+    }
+    std::string db_oid;
+    if (!m_table.hget("", convertToDBField(object_type, key), db_oid))
+    {
+        std::stringstream msg;
+        msg << "OID not found in mapper DB for key " << key;
+        return msg.str();
+    }
+    if (db_oid != sai_serialize_object_id(oid))
+    {
+        std::stringstream msg;
+        msg << "OID mismatched in mapper DB for key " << key << ": " << db_oid << " vs "
+            << sai_serialize_object_id(oid);
+        return msg.str();
+    }
+
+    return "";
 }

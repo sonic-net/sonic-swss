@@ -4,16 +4,21 @@
 #include <string>
 #include <vector>
 
+#include "SaiAttributeList.h"
 #include "crmorch.h"
+#include "dbconnector.h"
 #include "json.hpp"
 #include "logger.h"
 #include "p4orch/p4orch_util.h"
 #include "portsorch.h"
 #include "sai_serialize.h"
+#include "table.h"
 extern "C"
 {
 #include "sai.h"
 }
+
+using ::p4orch::kTableKeyDelimiter;
 
 extern sai_object_id_t gSwitchId;
 extern sai_next_hop_group_api_t *sai_next_hop_group_api;
@@ -31,7 +36,44 @@ std::string getWcmpGroupMemberKey(const std::string &wcmp_group_key, const sai_o
     return wcmp_group_key + kTableKeyDelimiter + sai_serialize_object_id(wcmp_member_oid);
 }
 
+std::vector<sai_attribute_t> getSaiGroupAttrs(const P4WcmpGroupEntry &wcmp_group_entry)
+{
+    std::vector<sai_attribute_t> attrs;
+    sai_attribute_t attr;
+
+    // TODO: Update type to WCMP when SAI supports it.
+    attr.id = SAI_NEXT_HOP_GROUP_ATTR_TYPE;
+    attr.value.s32 = SAI_NEXT_HOP_GROUP_TYPE_ECMP;
+    attrs.push_back(attr);
+
+    return attrs;
+}
+
 } // namespace
+
+std::vector<sai_attribute_t> WcmpManager::getSaiMemberAttrs(const P4WcmpGroupMemberEntry &wcmp_member_entry,
+                                                            const sai_object_id_t group_oid)
+{
+    std::vector<sai_attribute_t> attrs;
+    sai_attribute_t attr;
+    sai_object_id_t next_hop_oid = SAI_NULL_OBJECT_ID;
+    m_p4OidMapper->getOID(SAI_OBJECT_TYPE_NEXT_HOP, KeyGenerator::generateNextHopKey(wcmp_member_entry.next_hop_id),
+                          &next_hop_oid);
+
+    attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID;
+    attr.value.oid = group_oid;
+    attrs.push_back(attr);
+
+    attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
+    attr.value.oid = next_hop_oid;
+    attrs.push_back(attr);
+
+    attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT;
+    attr.value.u32 = (uint32_t)wcmp_member_entry.weight;
+    attrs.push_back(attr);
+
+    return attrs;
+}
 
 ReturnCode WcmpManager::validateWcmpGroupEntry(const P4WcmpGroupEntry &app_db_entry)
 {
@@ -173,27 +215,11 @@ ReturnCode WcmpManager::processAddRequest(P4WcmpGroupEntry *app_db_entry)
 ReturnCode WcmpManager::createWcmpGroupMember(std::shared_ptr<P4WcmpGroupMemberEntry> wcmp_group_member,
                                               const sai_object_id_t group_oid, const std::string &wcmp_group_key)
 {
-    std::vector<sai_attribute_t> nhgm_attrs;
-    sai_attribute_t nhgm_attr;
-    sai_object_id_t next_hop_oid = SAI_NULL_OBJECT_ID;
-    m_p4OidMapper->getOID(SAI_OBJECT_TYPE_NEXT_HOP, KeyGenerator::generateNextHopKey(wcmp_group_member->next_hop_id),
-                          &next_hop_oid);
-
-    nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID;
-    nhgm_attr.value.oid = group_oid;
-    nhgm_attrs.push_back(nhgm_attr);
-
-    nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
-    nhgm_attr.value.oid = next_hop_oid;
-    nhgm_attrs.push_back(nhgm_attr);
-
-    nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT;
-    nhgm_attr.value.u32 = (uint32_t)wcmp_group_member->weight;
-    nhgm_attrs.push_back(nhgm_attr);
+    auto attrs = getSaiMemberAttrs(*wcmp_group_member, group_oid);
 
     CHECK_ERROR_AND_LOG_AND_RETURN(
         sai_next_hop_group_api->create_next_hop_group_member(&wcmp_group_member->member_oid, gSwitchId,
-                                                             (uint32_t)nhgm_attrs.size(), nhgm_attrs.data()),
+                                                             (uint32_t)attrs.size(), attrs.data()),
         "Failed to create next hop group member " << QuotedVar(wcmp_group_member->next_hop_id));
 
     // Update reference count
@@ -337,18 +363,10 @@ ReturnCode WcmpManager::processWcmpGroupMemberRemoval(std::shared_ptr<P4WcmpGrou
 ReturnCode WcmpManager::createWcmpGroup(P4WcmpGroupEntry *wcmp_group)
 {
     SWSS_LOG_ENTER();
-    // Create SAI next hop group
-    sai_attribute_t nhg_attr;
-    std::vector<sai_attribute_t> nhg_attrs;
 
-    // TODO: Update type to WCMP when SAI supports it.
-    nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_TYPE;
-    nhg_attr.value.s32 = SAI_NEXT_HOP_GROUP_TYPE_ECMP;
-    nhg_attrs.push_back(nhg_attr);
-
+    auto attrs = getSaiGroupAttrs(*wcmp_group);
     CHECK_ERROR_AND_LOG_AND_RETURN(sai_next_hop_group_api->create_next_hop_group(&wcmp_group->wcmp_group_oid, gSwitchId,
-                                                                                 (uint32_t)nhg_attrs.size(),
-                                                                                 nhg_attrs.data()),
+                                                                                 (uint32_t)attrs.size(), attrs.data()),
                                    "Failed to create next hop group  " << QuotedVar(wcmp_group->wcmp_group_id));
     // Update reference count
     const auto &wcmp_group_key = KeyGenerator::generateWcmpGroupKey(wcmp_group->wcmp_group_id);
@@ -755,6 +773,202 @@ void WcmpManager::drain()
                              /*replace=*/true);
     }
     m_entries.clear();
+}
+
+std::string WcmpManager::verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple)
+{
+    SWSS_LOG_ENTER();
+
+    auto pos = key.find_first_of(kTableKeyDelimiter);
+    if (pos == std::string::npos)
+    {
+        return std::string("Invalid key: ") + key;
+    }
+    std::string p4rt_table = key.substr(0, pos);
+    std::string p4rt_key = key.substr(pos + 1);
+    if (p4rt_table != APP_P4RT_TABLE_NAME)
+    {
+        return std::string("Invalid key: ") + key;
+    }
+    std::string table_name;
+    std::string key_content;
+    parseP4RTKey(p4rt_key, &table_name, &key_content);
+    if (table_name != APP_P4RT_WCMP_GROUP_TABLE_NAME)
+    {
+        return std::string("Invalid key: ") + key;
+    }
+
+    ReturnCode status;
+    auto app_db_entry_or = deserializeP4WcmpGroupAppDbEntry(key_content, tuple);
+    if (!app_db_entry_or.ok())
+    {
+        status = app_db_entry_or.status();
+        std::stringstream msg;
+        msg << "Unable to deserialize key " << QuotedVar(key) << ": " << status.message();
+        return msg.str();
+    }
+    auto &app_db_entry = *app_db_entry_or;
+
+    auto *wcmp_group_entry = getWcmpGroupEntry(app_db_entry.wcmp_group_id);
+    if (wcmp_group_entry == nullptr)
+    {
+        std::stringstream msg;
+        msg << "No entry found with key " << QuotedVar(key);
+        return msg.str();
+    }
+
+    std::string cache_result = verifyStateCache(app_db_entry, wcmp_group_entry);
+    std::string asic_db_result = verifyStateAsicDb(wcmp_group_entry);
+    if (cache_result.empty())
+    {
+        return asic_db_result;
+    }
+    if (asic_db_result.empty())
+    {
+        return cache_result;
+    }
+    return cache_result + "; " + asic_db_result;
+}
+
+std::string WcmpManager::verifyStateCache(const P4WcmpGroupEntry &app_db_entry,
+                                          const P4WcmpGroupEntry *wcmp_group_entry)
+{
+    const std::string &wcmp_group_key = KeyGenerator::generateWcmpGroupKey(app_db_entry.wcmp_group_id);
+    ReturnCode status = validateWcmpGroupEntry(app_db_entry);
+    if (!status.ok())
+    {
+        std::stringstream msg;
+        msg << "Validation failed for WCMP group DB entry with key " << QuotedVar(wcmp_group_key) << ": "
+            << status.message();
+        return msg.str();
+    }
+
+    if (wcmp_group_entry->wcmp_group_id != app_db_entry.wcmp_group_id)
+    {
+        std::stringstream msg;
+        msg << "WCMP group ID " << QuotedVar(app_db_entry.wcmp_group_id) << " does not match internal cache "
+            << QuotedVar(wcmp_group_entry->wcmp_group_id) << " in wcmp manager.";
+        return msg.str();
+    }
+
+    std::string err_msg = m_p4OidMapper->verifyOIDMapping(SAI_OBJECT_TYPE_NEXT_HOP_GROUP, wcmp_group_key,
+                                                          wcmp_group_entry->wcmp_group_oid);
+    if (!err_msg.empty())
+    {
+        return err_msg;
+    }
+
+    if (wcmp_group_entry->wcmp_group_members.size() != app_db_entry.wcmp_group_members.size())
+    {
+        std::stringstream msg;
+        msg << "WCMP group with ID " << QuotedVar(app_db_entry.wcmp_group_id) << " has member size "
+            << app_db_entry.wcmp_group_members.size() << " non-matching internal cache "
+            << wcmp_group_entry->wcmp_group_members.size();
+        return msg.str();
+    }
+
+    for (size_t i = 0; i < wcmp_group_entry->wcmp_group_members.size(); ++i)
+    {
+        if (wcmp_group_entry->wcmp_group_members[i]->next_hop_id != app_db_entry.wcmp_group_members[i]->next_hop_id)
+        {
+            std::stringstream msg;
+            msg << "WCMP group member " << QuotedVar(app_db_entry.wcmp_group_members[i]->next_hop_id)
+                << " does not match internal cache " << QuotedVar(wcmp_group_entry->wcmp_group_members[i]->next_hop_id)
+                << " in wcmp manager.";
+            return msg.str();
+        }
+        if (wcmp_group_entry->wcmp_group_members[i]->weight != app_db_entry.wcmp_group_members[i]->weight)
+        {
+            std::stringstream msg;
+            msg << "WCMP group member " << QuotedVar(app_db_entry.wcmp_group_members[i]->next_hop_id) << " weight "
+                << app_db_entry.wcmp_group_members[i]->weight << " does not match internal cache "
+                << wcmp_group_entry->wcmp_group_members[i]->weight << " in wcmp manager.";
+            return msg.str();
+        }
+        if (wcmp_group_entry->wcmp_group_members[i]->watch_port != app_db_entry.wcmp_group_members[i]->watch_port)
+        {
+            std::stringstream msg;
+            msg << "WCMP group member " << QuotedVar(app_db_entry.wcmp_group_members[i]->next_hop_id) << " watch port "
+                << QuotedVar(app_db_entry.wcmp_group_members[i]->watch_port) << " does not match internal cache "
+                << QuotedVar(wcmp_group_entry->wcmp_group_members[i]->watch_port) << " in wcmp manager.";
+            return msg.str();
+        }
+        if (wcmp_group_entry->wcmp_group_members[i]->wcmp_group_id != app_db_entry.wcmp_group_members[i]->wcmp_group_id)
+        {
+            std::stringstream msg;
+            msg << "WCMP group member " << QuotedVar(app_db_entry.wcmp_group_members[i]->next_hop_id) << " group ID "
+                << QuotedVar(app_db_entry.wcmp_group_members[i]->wcmp_group_id) << " does not match internal cache "
+                << QuotedVar(wcmp_group_entry->wcmp_group_members[i]->wcmp_group_id) << " in wcmp manager.";
+            return msg.str();
+        }
+        // Group member might not be created if it is a watch port.
+        if (!app_db_entry.wcmp_group_members[i]->watch_port.empty() &&
+            wcmp_group_entry->wcmp_group_members[i]->member_oid == SAI_NULL_OBJECT_ID)
+        {
+            continue;
+        }
+        err_msg = m_p4OidMapper->verifyOIDMapping(
+            SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER,
+            getWcmpGroupMemberKey(wcmp_group_key, wcmp_group_entry->wcmp_group_members[i]->member_oid),
+            wcmp_group_entry->wcmp_group_members[i]->member_oid);
+        if (!err_msg.empty())
+        {
+            return err_msg;
+        }
+    }
+
+    return "";
+}
+
+std::string WcmpManager::verifyStateAsicDb(const P4WcmpGroupEntry *wcmp_group_entry)
+{
+    swss::DBConnector db("ASIC_DB", 0);
+    swss::Table table(&db, "ASIC_STATE");
+
+    auto group_attrs = getSaiGroupAttrs(*wcmp_group_entry);
+    std::vector<swss::FieldValueTuple> exp = saimeta::SaiAttributeList::serialize_attr_list(
+        SAI_OBJECT_TYPE_NEXT_HOP_GROUP, (uint32_t)group_attrs.size(), group_attrs.data(), /*countOnly=*/false);
+    std::string key = sai_serialize_object_type(SAI_OBJECT_TYPE_NEXT_HOP_GROUP) + ":" +
+                      sai_serialize_object_id(wcmp_group_entry->wcmp_group_oid);
+    std::vector<swss::FieldValueTuple> values;
+    if (!table.get(key, values))
+    {
+        return std::string("ASIC DB key not found ") + key;
+    }
+    auto group_result = verifyAttrs(values, exp, std::vector<swss::FieldValueTuple>{},
+                                    /*allow_unknown=*/false);
+    if (!group_result.empty())
+    {
+        return group_result;
+    }
+
+    for (const auto &member : wcmp_group_entry->wcmp_group_members)
+    {
+        // Group member might not be created if it is a watch port.
+        if (!member->watch_port.empty() && member->member_oid == SAI_NULL_OBJECT_ID)
+        {
+            continue;
+        }
+        auto member_attrs = getSaiMemberAttrs(*member, wcmp_group_entry->wcmp_group_oid);
+        std::vector<swss::FieldValueTuple> exp = saimeta::SaiAttributeList::serialize_attr_list(
+            SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER, (uint32_t)member_attrs.size(), member_attrs.data(),
+            /*countOnly=*/false);
+        std::string key = sai_serialize_object_type(SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER) + ":" +
+                          sai_serialize_object_id(member->member_oid);
+        std::vector<swss::FieldValueTuple> values;
+        if (!table.get(key, values))
+        {
+            return std::string("ASIC DB key not found ") + key;
+        }
+        auto member_result = verifyAttrs(values, exp, std::vector<swss::FieldValueTuple>{},
+                                         /*allow_unknown=*/false);
+        if (!member_result.empty())
+        {
+            return member_result;
+        }
+    }
+
+    return "";
 }
 
 } // namespace p4orch

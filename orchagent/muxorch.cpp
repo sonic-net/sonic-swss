@@ -963,11 +963,7 @@ bool MuxOrch::isNeighborActive(const IpAddress& nbr, const MacAddress& mac, stri
 
     if (ptr)
     {
-        if (ptr->getSkipNeighborsSet().find(nbr) != ptr->getSkipNeighborsSet().end())
-        {
-            return true;
-        }
-        return ptr->isActive();
+        return (ptr->isActive() || ptr->isSkipNeighbor(nbr));
     }
 
     string port;
@@ -981,7 +977,7 @@ bool MuxOrch::isNeighborActive(const IpAddress& nbr, const MacAddress& mac, stri
     if (!port.empty() && isMuxExists(port))
     {
         MuxCable* ptr = getMuxCable(port);
-        return ptr->isActive();
+        return (ptr->isActive() || ptr->isSkipNeighbor(nbr));
     }
 
     NextHopKey nh_key = NextHopKey(nbr, alias);
@@ -989,7 +985,7 @@ bool MuxOrch::isNeighborActive(const IpAddress& nbr, const MacAddress& mac, stri
     if (port.empty() && !curr_port.empty() && isMuxExists(curr_port))
     {
         MuxCable* ptr = getMuxCable(curr_port);
-        return ptr->isActive();
+        return (ptr->isActive() || ptr->isSkipNeighbor(nbr));
     }
 
     return true;
@@ -1071,6 +1067,37 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
     if (mux_cable_tb_.empty())
     {
         return;
+    }
+
+    auto standalone_tunnel_neigh_it = standalone_tunnel_neighbors_.find(update.entry.ip_address);
+    // Handling zero MAC neighbor updates
+    if (!update.mac)
+    {
+        /* For neighbors that were previously resolvable but are now unresolvable,
+         * we expect such neighbor entries to be deleted prior to a zero MAC update
+         * arriving for that same neighbor.
+         */
+
+        if (update.add)
+        {
+            if (standalone_tunnel_neigh_it == standalone_tunnel_neighbors_.end())
+            {
+                createStandaloneTunnelRoute(update.entry.ip_address);
+            }
+            /* If the MAC address in the neighbor entry is zero but the neighbor IP
+             * is already present in standalone_tunnel_neighbors_, assume we have already
+             * added a tunnel route for it and exit early
+             */
+            return;
+        }
+    }
+    /* If the update operation for a neighbor contains a non-zero MAC, we must
+     * make sure to remove any existing tunnel routes to prevent conflicts.
+     * This block also covers the case of neighbor deletion.
+     */
+    if (standalone_tunnel_neigh_it != standalone_tunnel_neighbors_.end())
+    {
+        removeStandaloneTunnelRoute(update.entry.ip_address);
     }
 
     for (auto it = mux_cable_tb_.begin(); it != mux_cable_tb_.end(); it++)
@@ -1378,6 +1405,27 @@ bool MuxOrch::delOperation(const Request& request)
     }
 
     return true;
+}
+
+void MuxOrch::createStandaloneTunnelRoute(IpAddress neighborIp)
+{
+    SWSS_LOG_INFO("Creating standalone tunnel route for neighbor %s", neighborIp.to_string().c_str());
+    sai_object_id_t tunnel_nexthop = getNextHopTunnelId(MUX_TUNNEL, mux_peer_switch_);
+    if (tunnel_nexthop == SAI_NULL_OBJECT_ID) {
+        SWSS_LOG_NOTICE("%s nexthop not created yet, ignoring tunnel route creation for %s", MUX_TUNNEL, neighborIp.to_string().c_str());
+        return;
+    }
+    IpPrefix pfx = neighborIp.to_string();
+    create_route(pfx, tunnel_nexthop);
+    standalone_tunnel_neighbors_.insert(neighborIp);
+}
+
+void MuxOrch::removeStandaloneTunnelRoute(IpAddress neighborIp)
+{
+    SWSS_LOG_INFO("Removing standalone tunnel route for neighbor %s", neighborIp.to_string().c_str());
+    IpPrefix pfx = neighborIp.to_string();
+    remove_route(pfx);
+    standalone_tunnel_neighbors_.erase(neighborIp);
 }
 
 MuxCableOrch::MuxCableOrch(DBConnector *db, DBConnector *sdb, const std::string& tableName):

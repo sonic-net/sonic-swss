@@ -172,6 +172,11 @@ class RouterInterfaceManagerTest : public ::testing::Test
         router_intf_manager_.drain();
     }
 
+    std::string VerifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple)
+    {
+        return router_intf_manager_.verifyState(key, tuple);
+    }
+
     ReturnCodeOr<P4RouterInterfaceAppDbEntry> DeserializeRouterIntfEntry(
         const std::string &key, const std::vector<swss::FieldValueTuple> &attributes)
     {
@@ -290,7 +295,7 @@ TEST_F(RouterInterfaceManagerTest, CreateRouterInterfaceEntryExistsInP4OidMapper
     p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE, router_intf_key, kRouterInterfaceOid2);
     P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId2, kPortName2, kMacAddress2);
 
-    // (TODO): Expect critical state.
+    // TODO: Expect critical state.
     EXPECT_EQ(StatusCode::SWSS_RC_INTERNAL, CreateRouterInterface(router_intf_key, router_intf_entry));
 
     auto current_entry = GetRouterInterfaceEntry(router_intf_key);
@@ -622,7 +627,7 @@ TEST_F(RouterInterfaceManagerTest, ProcessDeleteRequestInterfaceNotExistInMapper
 
     p4_oid_mapper_.eraseOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
                             KeyGenerator::generateRouterInterfaceKey(kRouterInterfaceId1));
-    // (TODO): Expect critical state.
+    // TODO: Expect critical state.
     EXPECT_EQ(StatusCode::SWSS_RC_INTERNAL,
               ProcessDeleteRequest(KeyGenerator::generateRouterInterfaceKey(router_intf_entry.router_interface_id)));
 }
@@ -840,4 +845,124 @@ TEST_F(RouterInterfaceManagerTest, DrainInvalidOperation)
     Drain();
 
     ValidateRouterInterfaceEntryNotPresent(kRouterInterfaceId1);
+}
+
+TEST_F(RouterInterfaceManagerTest, VerifyStateTest)
+{
+    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, kPortName1, kMacAddress1);
+    router_intf_entry.router_interface_oid = kRouterInterfaceOid1;
+    AddRouterInterfaceEntry(router_intf_entry, kPortOid1, kMtu1);
+
+    // Setup ASIC DB.
+    swss::Table table(nullptr, "ASIC_STATE");
+    table.set("SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x295100",
+              std::vector<swss::FieldValueTuple>{
+                  swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID", "oid:0x0"},
+                  swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS", "00:01:02:03:04:05"},
+                  swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_TYPE", "SAI_ROUTER_INTERFACE_TYPE_PORT"},
+                  swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_PORT_ID", "oid:0x112233"},
+                  swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "1500"}});
+
+    const std::string db_key = std::string(APP_P4RT_TABLE_NAME) + kTableKeyDelimiter +
+                               APP_P4RT_ROUTER_INTERFACE_TABLE_NAME + kTableKeyDelimiter + kRouterIntfAppDbKey;
+    std::vector<swss::FieldValueTuple> attributes;
+
+    // Verification should succeed with vaild key and value.
+    attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kPort), kPortName1});
+    attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kMacAddress1.to_string()});
+    EXPECT_EQ(VerifyState(db_key, attributes), "");
+
+    // Invalid key should fail verification.
+    EXPECT_FALSE(VerifyState("invalid", attributes).empty());
+    EXPECT_FALSE(VerifyState("invalid:invalid", attributes).empty());
+    EXPECT_FALSE(VerifyState(std::string(APP_P4RT_TABLE_NAME) + ":invalid", attributes).empty());
+    EXPECT_FALSE(VerifyState(std::string(APP_P4RT_TABLE_NAME) + ":invalid:invalid", attributes).empty());
+    EXPECT_FALSE(
+        VerifyState(std::string(APP_P4RT_TABLE_NAME) + ":FIXED_ROUTER_INTERFACE_TABLE:invalid", attributes).empty());
+    EXPECT_FALSE(VerifyState(std::string(APP_P4RT_TABLE_NAME) + ":FIXED_ROUTER_INTERFACE_TABLE:{\"match/"
+                                                                "router_interface_id\":\"invalid\"}",
+                             attributes)
+                     .empty());
+
+    // Invalid attributes should fail verification.
+    attributes.clear();
+    attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kPort), kPortName2});
+    attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kMacAddress1.to_string()});
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+
+    attributes.clear();
+    attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kPort), kPortName1});
+    attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kMacAddress2.to_string()});
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+
+    // Invalid port should fail verification.
+    attributes.clear();
+    attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kPort), "invalid"});
+    attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kMacAddress1.to_string()});
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+
+    // Verification should fail if interface IDs mismatch.
+    attributes.clear();
+    attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kPort), kPortName1});
+    attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kMacAddress1.to_string()});
+    auto *router_intf_entry_ptr =
+        GetRouterInterfaceEntry(KeyGenerator::generateRouterInterfaceKey(router_intf_entry.router_interface_id));
+    auto saved_ritf_id = router_intf_entry_ptr->router_interface_id;
+    router_intf_entry_ptr->router_interface_id = "invalid";
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    router_intf_entry_ptr->router_interface_id = saved_ritf_id;
+
+    // Verification should fail if OID mapper mismatches.
+    p4_oid_mapper_.eraseOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE,
+                            KeyGenerator::generateRouterInterfaceKey(router_intf_entry.router_interface_id));
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+}
+
+TEST_F(RouterInterfaceManagerTest, VerifyStateAsicDbTest)
+{
+    P4RouterInterfaceEntry router_intf_entry(kRouterInterfaceId1, "Ethernet7", kMacAddress1);
+    router_intf_entry.router_interface_oid = kRouterInterfaceOid1;
+    AddRouterInterfaceEntry(router_intf_entry, 0x1234, 9100);
+
+    // Setup ASIC DB.
+    swss::Table table(nullptr, "ASIC_STATE");
+    table.set("SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x295100",
+              std::vector<swss::FieldValueTuple>{
+                  swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID", "oid:0x0"},
+                  swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS", "00:01:02:03:04:05"},
+                  swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_TYPE", "SAI_ROUTER_INTERFACE_TYPE_PORT"},
+                  swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_PORT_ID", "oid:0x1234"},
+                  swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "9100"}});
+
+    const std::string db_key = std::string(APP_P4RT_TABLE_NAME) + kTableKeyDelimiter +
+                               APP_P4RT_ROUTER_INTERFACE_TABLE_NAME + kTableKeyDelimiter + kRouterIntfAppDbKey;
+    std::vector<swss::FieldValueTuple> attributes;
+    attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kPort), "Ethernet7"});
+    attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kMacAddress1.to_string()});
+
+    // Verification should succeed with correct ASIC DB values.
+    EXPECT_EQ(VerifyState(db_key, attributes), "");
+
+    // Verification should fail if ASIC DB values mismatch.
+    table.set("SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x295100",
+              std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "1500"}});
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+
+    // Verification should fail if ASIC DB table is missing.
+    table.del("SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x295100");
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    table.set("SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x295100",
+              std::vector<swss::FieldValueTuple>{
+                  swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID", "oid:0x0"},
+                  swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS", "00:01:02:03:04:05"},
+                  swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_TYPE", "SAI_ROUTER_INTERFACE_TYPE_PORT"},
+                  swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_PORT_ID", "oid:0x1234"},
+                  swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "9100"}});
+
+    // Verification should fail if SAI attr cannot be constructed.
+    auto *router_intf_entry_ptr =
+        GetRouterInterfaceEntry(KeyGenerator::generateRouterInterfaceKey(router_intf_entry.router_interface_id));
+    router_intf_entry_ptr->port_name = "Ethernet8";
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    router_intf_entry_ptr->port_name = "Ethernet7";
 }
