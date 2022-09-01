@@ -535,7 +535,7 @@ void IntfMgr::removeSubIntfState(const string &alias)
 bool IntfMgr::setIntfGratArp(const string &alias, const string &grat_arp)
 {
     /*
-     * Enable gratuitous ARP by accepting unsolicited ARP replies
+     * Enable gratuitous ARP by accepting unsolicited ARP replies and untracked neighbor advertisements
      */
     stringstream cmd;
     string res;
@@ -557,8 +557,15 @@ bool IntfMgr::setIntfGratArp(const string &alias, const string &grat_arp)
 
     cmd << ECHO_CMD << " " << garp_enabled << " > /proc/sys/net/ipv4/conf/" << alias << "/arp_accept";
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
-
     SWSS_LOG_INFO("ARP accept set to \"%s\" on interface \"%s\"",  grat_arp.c_str(), alias.c_str());
+
+    cmd.clear();
+    cmd.str(std::string());
+
+    cmd << ECHO_CMD << " " << garp_enabled << " > /proc/sys/net/ipv6/conf/" << alias << "/accept_untracked_na";
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+    SWSS_LOG_INFO("`accept_untracked_na` set to \"%s\" on interface \"%s\"",  grat_arp.c_str(), alias.c_str());
+
     return true;
 }
 
