@@ -5355,3 +5355,17 @@ std::unordered_set<std::string> PortsOrch::generateCounterStats(const string& ty
     }
     return counter_stats;
 }
+
+bool PortsOrch::decrFdbCount(const std::string& alias, int count)
+{
+    auto itr = m_portList.find(alias);
+    if (itr == m_portList.end())
+    {
+        return false;
+    }
+    else
+    {
+        itr->second.m_fdb_count -= count;
+    }
+    return true;
+}

@@ -147,6 +147,7 @@ public:
     bool removeVlanMember(Port &vlan, Port &port);
     bool isVlanMember(Port &vlan, Port &port);
 
+    bool decrFdbCount(const string& alias, int count);
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_counterLagTable;

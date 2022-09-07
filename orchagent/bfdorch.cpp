@@ -59,6 +59,17 @@ BfdOrch::BfdOrch(DBConnector *db, string tableName, TableConnector stateDbBfdSes
     DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
     m_bfdStateNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
     auto bfdStateNotificatier = new Notifier(m_bfdStateNotificationConsumer, this, "BFD_STATE_NOTIFICATIONS");
+
+    // Clean up state database BFD entries
+    vector<string> keys;
+
+    m_stateBfdSessionTable.getKeys(keys);
+
+    for (auto alias : keys)
+    {
+        m_stateBfdSessionTable.del(alias);
+    }
+
     Orch::addExecutor(bfdStateNotificatier);
     register_state_change_notif = false;
 }
