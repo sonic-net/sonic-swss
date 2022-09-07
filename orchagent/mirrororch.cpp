@@ -50,7 +50,6 @@ extern sai_port_api_t *sai_port_api;
 extern sai_object_id_t  gSwitchId;
 extern PortsOrch*       gPortsOrch;
 extern string           gMySwitchType;
-extern IntfsOrch        *gIntfsOrch;
 
 using namespace std::rel_ops;
 
@@ -584,12 +583,11 @@ void MirrorOrch::setSessionState(const string& name, const MirrorEntry& session,
     if (attr.empty() || attr == MIRROR_SESSION_MONITOR_PORT)
     {
         Port port;
-        if ((gMySwitchType == "voq") && (session.type == MIRROR_SESSION_ERSPAN) &&
-            (gIntfsOrch->isRemoteSystemPortIntf(session.neighborInfo.neighbor.alias)))
+        if ((gMySwitchType == "voq") && (session.type == MIRROR_SESSION_ERSPAN))
         {
              if (!m_portsOrch->getRecircPort(port, "Rec"))
              {
-                 SWSS_LOG_ERROR("Failed to get recirc prot mirror session %s", name.c_str());
+                 SWSS_LOG_ERROR("Failed to get recirc port for mirror session %s", name.c_str());
                  return;
              }
 	}
@@ -947,7 +945,7 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
             Port recirc_port;
             if (!m_portsOrch->getRecircPort(recirc_port, "Rec"))
             {
-                SWSS_LOG_ERROR("Failed to get recirc prot");
+                SWSS_LOG_ERROR("Failed to get recirc port");
                 return false;
             }
             attr.value.oid = recirc_port.m_port_id;
@@ -1178,7 +1176,7 @@ bool MirrorOrch::updateSessionDstPort(const string& name, MirrorEntry& session)
     {
          if (!m_portsOrch->getRecircPort(port, "Rec"))
          {
-             SWSS_LOG_ERROR("Failed to get recirc prot mirror session %s", name.c_str());
+             SWSS_LOG_ERROR("Failed to get recirc port for mirror session %s", name.c_str());
              return false;
          }
          attr.value.oid = port.m_port_id;
