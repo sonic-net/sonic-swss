@@ -45,6 +45,7 @@ private:
 
     void doTask() override;
     virtual void doTask(Consumer& consumer);
+    void clearBufferPoolWatermarkCounterIdList(const sai_object_id_t object_id);
     void initTableHandlers();
     void initBufferReadyLists(DBConnector *confDb, DBConnector *applDb);
     void initBufferReadyList(Table& table, bool isConfigDb);
@@ -70,6 +71,7 @@ private:
     unique_ptr<DBConnector> m_countersDb;
 
     bool m_isBufferPoolWatermarkCounterIdListGenerated = false;
+
 };
 #endif /* SWSS_BUFFORCH_H */
 

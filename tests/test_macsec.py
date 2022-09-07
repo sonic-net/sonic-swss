@@ -1,7 +1,8 @@
 from swsscommon import swsscommon
+from swsscommon.swsscommon import CounterTable, MacsecCounter
 import conftest
 
-import sys
+import time
 import functools
 import typing
 import re
@@ -89,47 +90,50 @@ class StateDBTable(Table):
                 StateDBTable.SEPARATOR))
 
 
+class ConfigTable(Table):
+
+    def __init__(self, dvs: conftest.DockerVirtualSwitch, table_name: str):
+        super(ConfigTable, self).__init__(dvs.get_config_db(), table_name)
+
+
 def gen_sci(macsec_system_identifier: str, macsec_port_identifier: int) -> str:
     macsec_system_identifier = macsec_system_identifier.translate(
         str.maketrans("", "", ":.-"))
     sci = "{}{}".format(
         macsec_system_identifier,
-        str(macsec_port_identifier).zfill(4))
-    sci = int(sci, 16)
-    if sys.byteorder == "little":
-        sci = int.from_bytes(sci.to_bytes(8, 'big'), 'little', signed=False)
-    return str(sci)
+        str(macsec_port_identifier).zfill(4)).lower()
+    return sci
 
 
 def gen_sc_key(
-        seperator: str,
+        separator: str,
         port_name: str,
         macsec_system_identifier: str,
         macsec_port_identifier: int) -> str:
     sci = gen_sci(macsec_system_identifier, macsec_port_identifier)
     key = "{}{}{}".format(
         port_name,
-        seperator,
+        separator,
         sci)
     return key
 
 
 def gen_sa_key(
-        seperator: str,
+        separator: str,
         port_name: str,
         macsec_system_identifier: str,
         macsec_port_identifier: int,
         an: int):
     sc_key = gen_sc_key(
-        seperator,
+        separator,
         port_name,
         macsec_system_identifier,
         macsec_port_identifier)
-    key = "{}{}{}".format(sc_key, seperator, an)
+    key = "{}{}{}".format(sc_key, separator, an)
     return key
 
 
-def macsec_sc(seperator: str = AppDBTable.SEPARATOR):
+def macsec_sc(separator: str = AppDBTable.SEPARATOR):
     def inner(func: typing.Callable) -> typing.Callable:
         @functools.wraps(func)
         def wrap_func(
@@ -140,7 +144,7 @@ def macsec_sc(seperator: str = AppDBTable.SEPARATOR):
                 *args,
                 **kwargs) -> typing.Any:
             key = gen_sc_key(
-                seperator,
+                separator,
                 port_name,
                 macsec_system_identifier,
                 macsec_port_identifier)
@@ -149,7 +153,7 @@ def macsec_sc(seperator: str = AppDBTable.SEPARATOR):
     return inner
 
 
-def macsec_sa(seperator: str = AppDBTable.SEPARATOR):
+def macsec_sa(separator: str = AppDBTable.SEPARATOR):
     def inner(func: typing.Callable) -> typing.Callable:
         @functools.wraps(func)
         def wrap_func(
@@ -161,7 +165,7 @@ def macsec_sa(seperator: str = AppDBTable.SEPARATOR):
                 *args,
                 **kwargs) -> typing.Any:
             key = gen_sa_key(
-                seperator,
+                separator,
                 port_name,
                 macsec_system_identifier,
                 macsec_port_identifier,
@@ -216,8 +220,8 @@ class WPASupplicantMock(object):
         self.app_port_table[port_name] = {"enable": True}
 
     @macsec_sc()
-    def create_receive_sc(self, sci: str, ssci: int):
-        self.app_receive_sc_table[sci] = {"ssci": ssci}
+    def create_receive_sc(self, sci: str):
+        self.app_receive_sc_table[sci] = {"NULL": "NULL"}
         self.state_receive_sc_table.wait(sci)
 
     @macsec_sc()
@@ -226,8 +230,8 @@ class WPASupplicantMock(object):
         self.state_receive_sc_table.wait_delete(sci)
 
     @macsec_sc()
-    def create_transmit_sc(self, sci: str, ssci: int):
-        self.app_transmit_sc_table[sci] = {"sci": sci, "encoding_an": 0}
+    def create_transmit_sc(self, sci: str):
+        self.app_transmit_sc_table[sci] = {"encoding_an": 0}
         self.state_transmit_sc_table.wait(sci)
 
     @macsec_sc()
@@ -240,6 +244,7 @@ class WPASupplicantMock(object):
             sak: str,
             auth_key: str,
             lowest_acceptable_pn: int,
+            ssci: int,
             salt: str) -> bool:
         # Check SAK is hex string
         int(sak, 16)
@@ -268,17 +273,20 @@ class WPASupplicantMock(object):
             sak: str,
             auth_key: str,
             lowest_acceptable_pn: int,
+            ssci: int,
             salt: str):
         assert(
             self.check_valid_sa_parameter(
                 sak,
                 auth_key,
                 lowest_acceptable_pn,
+                ssci,
                 salt),
             "Wrong parameter to MACsec receive SA")
         self.app_receive_sa_table[sai] = {
             "active": False, "sak": sak, "auth_key": auth_key,
-            "lowest_acceptable_pn": lowest_acceptable_pn, "salt": salt}
+            "lowest_acceptable_pn": lowest_acceptable_pn,
+            "ssci": ssci, "salt": salt}
 
     @macsec_sa()
     def delete_receive_sa(self, sai: str):
@@ -298,22 +306,31 @@ class WPASupplicantMock(object):
             sak: str,
             auth_key: str,
             init_pn: int,
+            ssci: int,
             salt: str):
         assert(
             self.check_valid_sa_parameter(
                 sak,
                 auth_key,
                 init_pn,
+                ssci,
                 salt),
             "Wrong parameter to MACsec receive SA")
         self.app_transmit_sa_table[sai] = {
             "sak": sak, "auth_key": auth_key,
-            "next_pn": init_pn, "salt": salt}
+            "next_pn": init_pn, "ssci": ssci, "salt": salt}
 
     @macsec_sa()
     def delete_transmit_sa(self, sai: str):
         del self.app_transmit_sa_table[sai]
         self.state_transmit_sa_table.wait_delete(sai)
+
+    @macsec_sa()
+    def set_macsec_pn(
+            self,
+            sai: str,
+            pn: int):
+        self.app_transmit_sa_table[sai] = {"next_pn": pn}
 
     @macsec_sc()
     def set_enable_transmit_sa(self, sci: str, an: int, enable: bool):
@@ -381,6 +398,21 @@ class MACsecInspector(object):
         print(info.group(0))
         return info.group(0)
 
+    @macsec_sa()
+    def get_macsec_xpn_counter(
+            self,
+            sai: str) -> int:
+        counter_table = CounterTable(self.dvs.get_counters_db().db_connection)
+        for i in range(3):
+            r, value = counter_table.hget(
+                MacsecCounter(),
+                sai,
+                "SAI_MACSEC_SA_ATTR_CURRENT_XPN")
+            if r: return int(value)
+            time.sleep(1) # wait a moment for polling counter
+
+        return None
+
 
 class TestMACsec(object):
     def init_macsec(
@@ -388,8 +420,7 @@ class TestMACsec(object):
             wpa: WPASupplicantMock,
             port_name: str,
             local_mac_address: str,
-            macsec_port_identifier: int,
-            ssci: int):
+            macsec_port_identifier: int):
         wpa.init_macsec_port(port_name)
         wpa.config_macsec_port(port_name, {"enable_protect": True})
         wpa.config_macsec_port(port_name, {"enable_encrypt": True})
@@ -403,8 +434,7 @@ class TestMACsec(object):
         wpa.create_transmit_sc(
             port_name,
             local_mac_address,
-            macsec_port_identifier,
-            ssci)
+            macsec_port_identifier)
 
     def establish_macsec(
             self,
@@ -422,8 +452,7 @@ class TestMACsec(object):
         wpa.create_receive_sc(
             port_name,
             peer_mac_address,
-            macsec_port_identifier,
-            ssci)
+            macsec_port_identifier)
         wpa.create_receive_sa(
             port_name,
             peer_mac_address,
@@ -432,6 +461,7 @@ class TestMACsec(object):
             sak,
             auth_key,
             packet_number,
+            ssci,
             salt)
         wpa.create_transmit_sa(
             port_name,
@@ -441,6 +471,7 @@ class TestMACsec(object):
             sak,
             auth_key,
             packet_number,
+            ssci,
             salt)
         wpa.set_enable_receive_sa(
             port_name,
@@ -468,7 +499,14 @@ class TestMACsec(object):
             sak: str,
             packet_number: int,
             auth_key: str,
+            ssci: int,
             salt: str):
+        wpa.set_macsec_pn(
+            port_name,
+            local_mac_address,
+            macsec_port_identifier,
+            an,
+            0x00000000C0000000)
         wpa.create_receive_sa(
             port_name,
             peer_mac_address,
@@ -477,6 +515,7 @@ class TestMACsec(object):
             sak,
             auth_key,
             packet_number,
+            ssci,
             salt)
         wpa.create_transmit_sa(
             port_name,
@@ -486,6 +525,7 @@ class TestMACsec(object):
             sak,
             auth_key,
             packet_number,
+            ssci,
             salt)
         wpa.set_enable_receive_sa(
             port_name,
@@ -606,8 +646,7 @@ class TestMACsec(object):
             wpa,
             port_name,
             local_mac_address,
-            macsec_port_identifier,
-            ssci)
+            macsec_port_identifier)
         self.establish_macsec(
             wpa,
             port_name,
@@ -643,6 +682,18 @@ class TestMACsec(object):
                 peer_mac_address,
                 macsec_port_identifier,
                 0))
+        assert(
+            inspector.get_macsec_xpn_counter(
+                port_name,
+                local_mac_address,
+                macsec_port_identifier,
+                0) == packet_number)
+        assert(
+            inspector.get_macsec_xpn_counter(
+                port_name,
+                peer_mac_address,
+                macsec_port_identifier,
+                0) == packet_number)
         self.rekey_macsec(
             wpa,
             port_name,
@@ -654,6 +705,7 @@ class TestMACsec(object):
             sak,
             packet_number,
             auth_key,
+            ssci,
             salt)
         assert(
             inspector.get_macsec_sa(
@@ -668,6 +720,18 @@ class TestMACsec(object):
                 macsec_port_identifier,
                 1))
         assert(
+            inspector.get_macsec_xpn_counter(
+                port_name,
+                local_mac_address,
+                macsec_port_identifier,
+                1) == packet_number)
+        assert(
+            inspector.get_macsec_xpn_counter(
+                port_name,
+                peer_mac_address,
+                macsec_port_identifier,
+                1) == packet_number)
+        assert(
             not inspector.get_macsec_sa(
                 macsec_port,
                 local_mac_address,
@@ -679,6 +743,18 @@ class TestMACsec(object):
                 peer_mac_address,
                 macsec_port_identifier,
                 0))
+        assert(
+            not inspector.get_macsec_xpn_counter(
+                port_name,
+                local_mac_address,
+                macsec_port_identifier,
+                0) == packet_number)
+        assert(
+            not inspector.get_macsec_xpn_counter(
+                port_name,
+                peer_mac_address,
+                macsec_port_identifier,
+                0) == packet_number)
         # Exit MACsec port
         self.deinit_macsec(
             wpa,
@@ -690,6 +766,135 @@ class TestMACsec(object):
             macsec_port_identifier,
             1)
         assert(not inspector.get_macsec_port(macsec_port))
+
+    def test_macsec_attribute_change(self, dvs: conftest.DockerVirtualSwitch, testlog):
+        port_name = "Ethernet0"
+        local_mac_address = "00-15-5D-78-FF-C1"
+        peer_mac_address = "00-15-5D-78-FF-C2"
+        macsec_port_identifier = 1
+        macsec_port = "macsec_eth1"
+        sak = "0" * 32
+        auth_key = "0" * 32
+        packet_number = 1
+        ssci = 1
+        salt = "0" * 24
+
+        wpa = WPASupplicantMock(dvs)
+        inspector = MACsecInspector(dvs)
+
+        self.init_macsec(
+            wpa,
+            port_name,
+            local_mac_address,
+            macsec_port_identifier)
+        wpa.set_macsec_control(port_name, True)
+        wpa.config_macsec_port(port_name, {"enable_encrypt": False})
+        wpa.config_macsec_port(port_name, {"cipher_suite": "GCM-AES-256"})
+        self.establish_macsec(
+            wpa,
+            port_name,
+            local_mac_address,
+            peer_mac_address,
+            macsec_port_identifier,
+            0,
+            sak,
+            packet_number,
+            auth_key,
+            ssci,
+            salt)
+        macsec_info = inspector.get_macsec_port(macsec_port)
+        assert("encrypt off" in macsec_info)
+        assert("GCM-AES-256" in macsec_info)
+        self.deinit_macsec(
+            wpa,
+            inspector,
+            port_name,
+            macsec_port,
+            local_mac_address,
+            peer_mac_address,
+            macsec_port_identifier,
+            0)
+
+    def test_macsec_with_portchannel(self, dvs: conftest.DockerVirtualSwitch, testlog):
+
+        # Set MACsec enabled on Ethernet0
+        ConfigTable(dvs, "PORT")["Ethernet0"] = {"macsec" : "test"}
+        StateDBTable(dvs, "FEATURE")["macsec"] = {"state": "enabled"}
+
+        # Setup Port-channel
+        ConfigTable(dvs, "PORTCHANNEL")["PortChannel001"] = {"admin": "up", "mtu": "9100", "oper_status": "up"}
+        time.sleep(1)
+
+        # create port channel member
+        ConfigTable(dvs, "PORTCHANNEL_MEMBER")["PortChannel001|Ethernet0"] = {"NULL": "NULL"}
+        ConfigTable(dvs, "PORTCHANNEL_INTERFACE")["PortChannel001"] = {"NULL": "NULL"}
+        ConfigTable(dvs, "PORTCHANNEL_INTERFACE")["PortChannel001|40.0.0.0/31"] = {"NULL": "NULL"}
+        time.sleep(3)
+
+        # Check Portchannel member in ASIC db that shouldn't been created before MACsec enabled
+        lagmtbl = swsscommon.Table(swsscommon.DBConnector(1, dvs.redis_sock, 0), "ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER")
+        lagms = lagmtbl.getKeys()
+        assert len(lagms) == 0
+
+        # Create MACsec session
+        port_name = "Ethernet0"
+        local_mac_address = "00-15-5D-78-FF-C1"
+        peer_mac_address = "00-15-5D-78-FF-C2"
+        macsec_port_identifier = 1
+        macsec_port = "macsec_eth1"
+        sak = "0" * 32
+        auth_key = "0" * 32
+        packet_number = 1
+        ssci = 1
+        salt = "0" * 24
+
+        wpa = WPASupplicantMock(dvs)
+        inspector = MACsecInspector(dvs)
+
+        self.init_macsec(
+            wpa,
+            port_name,
+            local_mac_address,
+            macsec_port_identifier)
+        self.establish_macsec(
+            wpa,
+            port_name,
+            local_mac_address,
+            peer_mac_address,
+            macsec_port_identifier,
+            0,
+            sak,
+            packet_number,
+            auth_key,
+            ssci,
+            salt)
+        time.sleep(3)
+
+        # Check Portchannel member in ASIC db that should been created after MACsec enabled
+        lagmtbl = swsscommon.Table(swsscommon.DBConnector(1, dvs.redis_sock, 0), "ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER")
+        lagms = lagmtbl.getKeys()
+        assert len(lagms) == 1
+
+        self.deinit_macsec(
+            wpa,
+            inspector,
+            port_name,
+            macsec_port,
+            local_mac_address,
+            peer_mac_address,
+            macsec_port_identifier,
+            0)
+
+        # remove port channel member
+        del ConfigTable(dvs, "PORTCHANNEL_INTERFACE")["PortChannel001"]
+        del ConfigTable(dvs, "PORTCHANNEL_INTERFACE")["PortChannel001|40.0.0.0/31"]
+        del ConfigTable(dvs, "PORTCHANNEL_MEMBER")["PortChannel001|Ethernet0"]
+
+        # remove port channel
+        del ConfigTable(dvs, "PORTCHANNEL")["PortChannel001"]
+
+        # Clear MACsec enabled on Ethernet0
+        ConfigTable(dvs, "PORT")["Ethernet0"] = {"macsec" : ""}
 
 
 # Add Dummy always-pass test at end as workaroud

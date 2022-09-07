@@ -39,6 +39,11 @@
 #define MIRROR_SESSION_DSCP_MIN         0
 #define MIRROR_SESSION_DSCP_MAX         63
 
+// 15 is a typical value, but if vendor's SAI does not supply the maximum value,
+// allow all 8-bit numbers, effectively cancelling validation by orchagent.
+#define MIRROR_SESSION_DEFAULT_NUM_TC   255
+
+extern sai_switch_api_t *sai_switch_api;
 extern sai_mirror_api_t *sai_mirror_api;
 extern sai_port_api_t *sai_port_api;
 
@@ -80,9 +85,26 @@ MirrorOrch::MirrorOrch(TableConnector stateDbConnector, TableConnector confDbCon
         m_policerOrch(policerOrch),
         m_mirrorTable(stateDbConnector.first, stateDbConnector.second)
 {
+    sai_status_t status;
+    sai_attribute_t attr;
+
     m_portsOrch->attach(this);
     m_neighOrch->attach(this);
     m_fdbOrch->attach(this);
+
+    // Retrieve the number of valid values for queue, starting at 0
+    attr.id = SAI_SWITCH_ATTR_QOS_MAX_NUMBER_OF_TRAFFIC_CLASSES;
+    status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Failed to get switch attribute number of traffic classes. \
+                       Use default value. rv:%d", status);
+        m_maxNumTC = MIRROR_SESSION_DEFAULT_NUM_TC;
+    }
+    else
+    {
+        m_maxNumTC = attr.value.u8;
+    }
 }
 
 bool MirrorOrch::bake()
@@ -305,6 +327,7 @@ bool MirrorOrch::validateSrcPortList(const string& srcPortList)
             if (port.m_type == Port::LAG)
             {
                 vector<Port> portv;
+                int portCount = 0;
                 m_portsOrch->getLagMember(port, portv);
                 for (const auto p : portv)
                 {
@@ -314,12 +337,40 @@ bool MirrorOrch::validateSrcPortList(const string& srcPortList)
                                   p.m_alias.c_str(), port.m_alias.c_str(), srcPortList.c_str());
                         return false;
                     }
+                    portCount++;
+                }
+                if (!portCount)
+                {
+                    SWSS_LOG_ERROR("Source LAG %s is empty. set mirror session to inactive",
+                             port.m_alias.c_str());;
+                    return false;
                 }
             }
         }
     }
 
     return true;
+}
+
+bool MirrorOrch::isHwResourcesAvailable()
+{
+    uint64_t availCount = 0;
+
+    sai_status_t status = sai_object_type_get_availability(
+        gSwitchId, SAI_OBJECT_TYPE_MIRROR_SESSION, 0, nullptr, &availCount
+    );
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        if (status == SAI_STATUS_NOT_SUPPORTED)
+        {
+            SWSS_LOG_WARN("Mirror session resource availability monitoring is not supported. Skipping ...");
+            return true;
+        }
+
+        return parseHandleSaiStatusFailure(handleSaiGetStatus(SAI_API_MIRROR, status));
+    }
+
+    return availCount > 0;
 }
 
 task_process_status MirrorOrch::createEntry(const string& key, const vector<FieldValueTuple>& data)
@@ -329,8 +380,7 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
     auto session = m_syncdMirrors.find(key);
     if (session != m_syncdMirrors.end())
     {
-        SWSS_LOG_NOTICE("Failed to create session, session %s already exists",
-                key.c_str());
+        SWSS_LOG_NOTICE("Failed to create session %s: object already exists", key.c_str());
         return task_process_status::task_duplicated;
     }
 
@@ -373,6 +423,11 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
             else if (fvField(i) == MIRROR_SESSION_QUEUE)
             {
                 entry.queue = to_uint<uint8_t>(fvValue(i));
+                if (entry.queue >= m_maxNumTC)
+                {
+                    SWSS_LOG_ERROR("Failed to get valid queue %s", fvValue(i).c_str());
+                    return task_process_status::task_invalid_entry;
+                }
             }
             else if (fvField(i) == MIRROR_SESSION_POLICER)
             {
@@ -436,10 +491,13 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
         }
     }
 
+    if (!isHwResourcesAvailable())
+    {
+        SWSS_LOG_ERROR("Failed to create session %s: HW resources are not available", key.c_str());
+        return task_process_status::task_failed;
+    }
+
     m_syncdMirrors.emplace(key, entry);
-
-    SWSS_LOG_NOTICE("Created mirror session %s", key.c_str());
-
     setSessionState(key, entry);
 
     if (entry.type == MIRROR_SESSION_SPAN && !entry.dst_port.empty())
@@ -452,6 +510,8 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
         // Attach the destination IP to the routeOrch
         m_routeOrch->attach(this, entry.dstIp);
     }
+
+    SWSS_LOG_NOTICE("Created mirror session %s", key.c_str());
 
     return task_process_status::task_success;
 }
@@ -737,8 +797,7 @@ bool MirrorOrch::setUnsetPortMirror(Port port,
     if (set)
     {
         port_attr.value.objlist.count = 1;
-        port_attr.value.objlist.list = reinterpret_cast<sai_object_id_t *>(calloc(port_attr.value.objlist.count, sizeof(sai_object_id_t)));
-        port_attr.value.objlist.list[0] = sessionId;
+        port_attr.value.objlist.list = &sessionId;
     }
     else
     {

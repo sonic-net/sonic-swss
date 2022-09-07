@@ -52,6 +52,32 @@ static void lexical_convert(const std::string &policy_str, MACsecMgr::MACsecProf
     }
 }
 
+static void lexical_convert(const std::string &cipher_str, MACsecMgr::MACsecProfile::CipherSuite & cipher_suite)
+{
+    SWSS_LOG_ENTER();
+
+    if (boost::iequals(cipher_str, "GCM-AES-128"))
+    {
+        cipher_suite = MACsecMgr::MACsecProfile::CipherSuite::GCM_AES_128;
+    }
+    else if (boost::iequals(cipher_str, "GCM-AES-256"))
+    {
+        cipher_suite = MACsecMgr::MACsecProfile::CipherSuite::GCM_AES_256;
+    }
+    else if (boost::iequals(cipher_str, "GCM-AES-XPN-128"))
+    {
+        cipher_suite = MACsecMgr::MACsecProfile::CipherSuite::GCM_AES_XPN_128;
+    }
+    else if (boost::iequals(cipher_str, "GCM-AES-XPN-256"))
+    {
+        cipher_suite = MACsecMgr::MACsecProfile::CipherSuite::GCM_AES_XPN_256;
+    }
+    else
+    {
+        throw std::invalid_argument("Invalid cipher_suite : " + cipher_str);
+    }
+}
+
 template<class T>
 static bool get_value(
     const MACsecMgr::TaskArgs & ta,
@@ -122,7 +148,7 @@ static void wpa_cli_commands(
     }
     if (!network_id.empty())
     {
-        wpa_cli_commands(ostream, "set_network", port_name);
+        wpa_cli_commands(ostream, "set_network", network_id);
     }
     wpa_cli_commands(ostream, args...);
 }
@@ -521,10 +547,13 @@ bool MACsecMgr::isPortStateOk(const std::string & port_name)
 
     std::vector<FieldValueTuple> temp;
     std::string state;
+    std::string oper_status;
 
     if (m_statePortTable.get(port_name, temp)
         && get_value(temp, "state", state)
-        && state == "ok")
+        && state == "ok"
+        && get_value(temp, "netdev_oper_status", oper_status)
+        && oper_status == "up")
     {
         SWSS_LOG_DEBUG("Port '%s' is ready", port_name.c_str());
         return true;
@@ -685,6 +714,30 @@ bool MACsecMgr::configureMACsec(
             network_id,
             "mka_priority",
             profile.priority);
+
+        if (profile.rekey_period)
+        {
+            wpa_cli_exec_and_check(
+                session.sock,
+                port_name,
+                network_id,
+                "mka_rekey_period",
+                profile.rekey_period);
+        }
+
+        wpa_cli_exec_and_check(
+            session.sock,
+            port_name,
+            network_id,
+            "macsec_ciphersuite",
+            profile.cipher_suite);
+
+        wpa_cli_exec_and_check(
+            session.sock,
+            port_name,
+            network_id,
+            "macsec_include_sci",
+            (profile.send_sci ? 1 : 0));
 
         wpa_cli_exec_and_check(
             session.sock,

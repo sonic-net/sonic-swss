@@ -12,6 +12,7 @@
 #include "swssnet.h"
 #include "tokenize.h"
 #include "routeorch.h"
+#include "flowcounterrouteorch.h"
 #include "crmorch.h"
 #include "bufferorch.h"
 #include "directory.h"
@@ -29,7 +30,7 @@ extern sai_vlan_api_t*              sai_vlan_api;
 
 extern sai_object_id_t gSwitchId;
 extern PortsOrch *gPortsOrch;
-extern RouteOrch *gRouteOrch;
+extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
 extern CrmOrch *gCrmOrch;
 extern BufferOrch *gBufferOrch;
 extern bool gIsNatSupported;
@@ -415,6 +416,37 @@ bool IntfsOrch::setIntfProxyArp(const string &alias, const string &proxy_arp)
     return true;
 }
 
+bool IntfsOrch::setIntfLoopbackAction(const Port &port, string actionStr)
+{
+    sai_attribute_t attr;
+    sai_packet_action_t action;
+
+    if (!getSaiLoopbackAction(actionStr, action))
+    {
+        return false;
+    }
+
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_LOOPBACK_PACKET_ACTION;
+    attr.value.s32 = action;
+
+    sai_status_t status = sai_router_intfs_api->set_router_interface_attribute(port.m_rif_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Loopback action [%s] set failed, interface [%s], rc [%d]",
+                       actionStr.c_str(), port.m_alias.c_str(), status);
+
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_ROUTER_INTERFACE, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+
+    SWSS_LOG_NOTICE("Loopback action [%s] set success, interface [%s]",
+                    actionStr.c_str(), port.m_alias.c_str());
+    return true;
+}
+
 set<IpPrefix> IntfsOrch:: getSubnetRoutes()
 {
     SWSS_LOG_ENTER();
@@ -432,7 +464,9 @@ set<IpPrefix> IntfsOrch:: getSubnetRoutes()
     return subnet_routes;
 }
 
-bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPrefix *ip_prefix, const bool adminUp, const uint32_t mtu)
+bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPrefix *ip_prefix,
+                        const bool adminUp, const uint32_t mtu, string loopbackAction)
+
 {
     SWSS_LOG_ENTER();
 
@@ -442,7 +476,7 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
     auto it_intfs = m_syncdIntfses.find(alias);
     if (it_intfs == m_syncdIntfses.end())
     {
-        if (!ip_prefix && addRouterIntfs(vrf_id, port))
+        if (!ip_prefix && addRouterIntfs(vrf_id, port, loopbackAction))
         {
             gPortsOrch->increasePortRefCount(alias);
             IntfsEntry intfs_entry;
@@ -644,7 +678,7 @@ void IntfsOrch::doTask(Consumer &consumer)
 
         if(table_name == CHASSIS_APP_SYSTEM_INTERFACE_TABLE_NAME)
         {
-            if(!isRemoteSystemPortIntf(alias))
+            if(isLocalSystemPortIntf(alias))
             {
                 //Synced local interface. Skip
                 it = consumer.m_toSync.erase(it);
@@ -657,11 +691,14 @@ void IntfsOrch::doTask(Consumer &consumer)
         MacAddress mac;
 
         uint32_t mtu = 0;
-        bool adminUp = false;
+        bool adminUp;
+        bool adminStateChanged = false;
         uint32_t nat_zone_id = 0;
         string proxy_arp = "";
         string inband_type = "";
         bool mpls = false;
+        string vlan = "";
+        string loopbackAction = "";
 
         for (auto idx : data)
         {
@@ -736,10 +773,7 @@ void IntfsOrch::doTask(Consumer &consumer)
                         SWSS_LOG_WARN("Sub interface %s unknown admin status %s", alias.c_str(), value.c_str());
                     }
                 }
-            }
-            else if (field == "nat_zone")
-            {
-                nat_zone = value;
+                adminStateChanged = true;
             }
             else if (field == "proxy_arp")
             {
@@ -748,6 +782,14 @@ void IntfsOrch::doTask(Consumer &consumer)
             else if (field == "inband_type")
             {
                 inband_type = value;
+            }
+            else if (field == "vlan")
+            {
+                vlan = value;
+            }
+            else if (field == "loopback_action")
+            {
+                loopbackAction = value;
             }
         }
 
@@ -818,7 +860,11 @@ void IntfsOrch::doTask(Consumer &consumer)
             {
                 if (!ip_prefix_in_key && isSubIntf)
                 {
-                    if (!gPortsOrch->addSubPort(port, alias, adminUp, mtu))
+                    if (adminStateChanged == false)
+                    {
+                        adminUp = port.m_admin_state_up;
+                    }
+                    if (!gPortsOrch->addSubPort(port, alias, vlan, adminUp, mtu))
                     {
                         it++;
                         continue;
@@ -858,7 +904,12 @@ void IntfsOrch::doTask(Consumer &consumer)
             }
             else
             {
-                if (!setIntf(alias, vrf_id, ip_prefix_in_key ? &ip_prefix : nullptr, adminUp, mtu))
+                if (adminStateChanged == false)
+                {
+                    adminUp = port.m_admin_state_up;
+                }
+
+                if (!setIntf(alias, vrf_id, ip_prefix_in_key ? &ip_prefix : nullptr, adminUp, mtu, loopbackAction))
                 {
                     it++;
                     continue;
@@ -889,6 +940,12 @@ void IntfsOrch::doTask(Consumer &consumer)
 
                         setRouterIntfsMpls(port);
                         gPortsOrch->setPort(alias, port);
+                    }
+
+                    /* Set loopback action */
+                    if (!loopbackAction.empty())
+                    {
+                        setIntfLoopbackAction(port, loopbackAction);
                     }
                 }
             }
@@ -1031,7 +1088,28 @@ void IntfsOrch::doTask(Consumer &consumer)
     }
 }
 
-bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port)
+bool IntfsOrch::getSaiLoopbackAction(const string &actionStr, sai_packet_action_t &action)
+{
+    const unordered_map<string, sai_packet_action_t> loopbackActionMap =
+    {
+        {"drop", SAI_PACKET_ACTION_DROP},
+        {"forward", SAI_PACKET_ACTION_FORWARD},
+    };
+
+    auto it = loopbackActionMap.find(actionStr);
+    if (it != loopbackActionMap.end())
+    {
+        action = loopbackActionMap.at(actionStr);
+        return true;
+    }
+    else
+    {
+        SWSS_LOG_WARN("Unsupported loopback action [%s]", actionStr.c_str());
+        return false;
+    }
+}
+
+bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port, string loopbackActionStr)
 {
     SWSS_LOG_ENTER();
 
@@ -1050,6 +1128,17 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port)
     attr.id = SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID;
     attr.value.oid = vrf_id;
     attrs.push_back(attr);
+
+    if (!loopbackActionStr.empty())
+    {
+        sai_packet_action_t loopbackAction;
+        if (getSaiLoopbackAction(loopbackActionStr, loopbackAction))
+        {
+            attr.id = SAI_ROUTER_INTERFACE_ATTR_LOOPBACK_PACKET_ACTION;
+            attr.value.s32 = loopbackAction;
+            attrs.push_back(attr);
+        }
+    }
 
     attr.id = SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS;
     if (port.m_mac)
@@ -1188,6 +1277,7 @@ bool IntfsOrch::removeRouterIntfs(Port &port)
 
     const auto id = sai_serialize_object_id(port.m_rif_id);
     removeRifFromFlexCounter(id, port.m_alias);
+    cleanUpRifFromCounterDb(id, port.m_alias);
 
     sai_status_t status = sai_router_intfs_api->remove_router_interface(port.m_rif_id);
     if (status != SAI_STATUS_SUCCESS)
@@ -1257,6 +1347,8 @@ void IntfsOrch::addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix)
     {
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
     }
+
+    gFlowCounterRouteOrch->onAddMiscRouteEntry(vrf_id, IpPrefix(ip_prefix.getIp().to_string()));
 }
 
 void IntfsOrch::removeIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix)
@@ -1286,6 +1378,8 @@ void IntfsOrch::removeIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_pref
     {
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
     }
+
+    gFlowCounterRouteOrch->onRemoveMiscRouteEntry(vrf_id, IpPrefix(ip_prefix.getIp().to_string()));
 }
 
 void IntfsOrch::addDirectedBroadcast(const Port &port, const IpPrefix &ip_prefix)
@@ -1406,10 +1500,44 @@ void IntfsOrch::removeRifFromFlexCounter(const string &id, const string &name)
     SWSS_LOG_DEBUG("Unregistered interface %s from Flex counter", name.c_str());
 }
 
+/*
+   TODO A race condition can exist when swss removes the counter from COUNTERS DB
+   and at the same time syncd is inserting a new entry in COUNTERS DB. Therefore
+   all the rif counters cleanup code should move to syncd
+*/
+void IntfsOrch::cleanUpRifFromCounterDb(const string &id, const string &name)
+{
+    SWSS_LOG_ENTER();
+    string counter_key = getRifCounterTableKey(id);
+    string rate_key = getRifRateTableKey(id);
+    string rate_init_key = getRifRateInitTableKey(id);
+    m_counter_db->del(counter_key);
+    m_counter_db->del(rate_key);
+    m_counter_db->del(rate_init_key);
+    SWSS_LOG_NOTICE("CleanUp interface %s oid %s from counter db", name.c_str(),id.c_str());
+}
+
 string IntfsOrch::getRifFlexCounterTableKey(string key)
 {
     return string(RIF_STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
 }
+
+string IntfsOrch::getRifCounterTableKey(string key)
+{
+    return "COUNTERS:" + key;
+}
+
+string IntfsOrch::getRifRateTableKey(string key)
+{
+    return "RATES:" + key;
+}
+
+string IntfsOrch::getRifRateInitTableKey(string key)
+{
+    return "RATES:" + key + ":RIF";
+}
+
+
 
 void IntfsOrch::generateInterfaceMap()
 {
@@ -1486,6 +1614,22 @@ bool IntfsOrch::isRemoteSystemPortIntf(string alias)
         }
 
         return(port.m_system_port_info.type == SAI_SYSTEM_PORT_TYPE_REMOTE);
+    }
+    //Given alias is system port alias of the local port/LAG
+    return false;
+}
+
+bool IntfsOrch::isLocalSystemPortIntf(string alias)
+{
+    Port port;
+    if(gPortsOrch->getPort(alias, port))
+    {
+        if (port.m_type == Port::LAG)
+        {
+            return(port.m_system_lag_info.switch_id == gVoqMySwitchId);
+        }
+
+        return(port.m_system_port_info.type != SAI_SYSTEM_PORT_TYPE_REMOTE);
     }
     //Given alias is system port alias of the local port/LAG
     return false;

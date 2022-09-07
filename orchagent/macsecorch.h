@@ -16,6 +16,10 @@
 
 using namespace swss;
 
+#define COUNTERS_MACSEC_SA_ATTR_GROUP                   "COUNTERS_MACSEC_SA_ATTR"
+#define COUNTERS_MACSEC_SA_GROUP                        "COUNTERS_MACSEC_SA"
+#define COUNTERS_MACSEC_FLOW_GROUP                      "COUNTERS_MACSEC_FLOW"
+
 // AN is a 2 bit number, it can only be 0, 1, 2 or 3
 #define MAX_SA_NUMBER (3)
 
@@ -63,12 +67,22 @@ private:
 
     DBConnector         m_counter_db;
     Table               m_macsec_counters_map;
-    FlexCounterManager  m_macsec_flex_counter_manager;
+    DBConnector         m_gb_counter_db;
+    Table               m_gb_macsec_counters_map;
+    Table               m_applPortTable;
+    FlexCounterManager  m_macsec_sa_attr_manager;
+    FlexCounterManager  m_macsec_sa_stat_manager;
+    FlexCounterManager  m_macsec_flow_stat_manager;
+
+    FlexCounterManager  m_gb_macsec_sa_attr_manager;
+    FlexCounterManager  m_gb_macsec_sa_stat_manager;
+    FlexCounterManager  m_gb_macsec_flow_stat_manager;
 
     struct MACsecACLTable
     {
         sai_object_id_t         m_table_id;
         sai_object_id_t         m_eapol_packet_forward_entry_id;
+        sai_object_id_t         m_pfc_entry_id;
         std::set<sai_uint32_t>  m_available_acl_priorities;
     };
     struct MACsecSC
@@ -94,6 +108,7 @@ private:
         bool                                m_enable_encrypt;
         bool                                m_sci_in_sectag;
         bool                                m_enable;
+        uint32_t                            m_original_ipg;
     };
     struct MACsecObject
     {
@@ -101,6 +116,7 @@ private:
         sai_object_id_t                                 m_ingress_id;
         map<std::string, std::shared_ptr<MACsecPort> >  m_macsec_ports;
         bool                                            m_sci_in_ingress_macsec_acl;
+        sai_uint8_t                                     m_max_sa_per_sc;
     };
     map<sai_object_id_t, MACsecObject>              m_macsec_objs;
     map<std::string, std::shared_ptr<MACsecPort> >  m_macsec_ports;
@@ -115,19 +131,24 @@ private:
         const std::string &port_name,
         const TaskArgs & port_attr,
         const MACsecObject &macsec_obj,
-        sai_object_id_t line_port_id,
-        sai_object_id_t switch_id);
+        sai_object_id_t port_id,
+        sai_object_id_t switch_id,
+        Port &port,
+        const gearbox_phy_t* phy);
     bool createMACsecPort(
         sai_object_id_t &macsec_port_id,
-        sai_object_id_t line_port_id,
+        sai_object_id_t port_id,
         sai_object_id_t switch_id,
         sai_macsec_direction_t direction);
     bool updateMACsecPort(MACsecPort &macsec_port, const TaskArgs & port_attr);
+    bool updateMACsecSCs(MACsecPort &macsec_port, std::function<bool(MACsecOrch::MACsecSC &)> action);
     bool deleteMACsecPort(
         const MACsecPort &macsec_port,
         const std::string &port_name,
         const MACsecObject &macsec_obj,
-        sai_object_id_t line_port_id);
+        sai_object_id_t port_id,
+        Port &port,
+        const gearbox_phy_t* phy);
     bool deleteMACsecPort(sai_object_id_t macsec_port_id);
 
     /* MACsec Flow */
@@ -167,6 +188,9 @@ private:
         const std::string &port_sci,
         sai_macsec_direction_t direction);
     bool deleteMACsecSC(sai_object_id_t sc_id);
+    bool setMACsecSC(sai_object_id_t sc_id, const sai_attribute_t &attr);
+
+    bool updateMACsecAttr(sai_object_type_t object_type, sai_object_id_t object_id, const sai_attribute_t &attr);
 
     /* MACsec SA */
     task_process_status createMACsecSA(
@@ -191,11 +215,25 @@ private:
 
     /* Counter */
     void installCounter(
+        MACsecOrchContext &ctx,
         CounterType counter_type,
+        sai_macsec_direction_t direction,
         const std::string &obj_name,
         sai_object_id_t obj_id,
         const std::vector<std::string> &stats);
-    void uninstallCounter(const std::string &obj_name, sai_object_id_t obj_id);
+    void uninstallCounter(
+        MACsecOrchContext &ctx,
+        CounterType counter_type,
+        sai_macsec_direction_t direction,
+        const std::string &obj_name,
+        sai_object_id_t obj_id);
+
+    Table& MACsecCountersMap(MACsecOrchContext &ctx);
+
+    /* Flex Counter Manager */
+    FlexCounterManager& MACsecSaStatManager(MACsecOrchContext &ctx);
+    FlexCounterManager& MACsecSaAttrStatManager(MACsecOrchContext &ctx);
+    FlexCounterManager& MACsecFlowStatManager(MACsecOrchContext &ctx);
 
     /* MACsec ACL */
     bool initMACsecACLTable(
@@ -203,11 +241,14 @@ private:
         sai_object_id_t port_id,
         sai_object_id_t switch_id,
         sai_macsec_direction_t direction,
-        bool sci_in_sectag);
+        bool sci_in_sectag,
+        const std::string &port_name,
+        const gearbox_phy_t* phy);
     bool deinitMACsecACLTable(
         const MACsecACLTable &acl_table,
         sai_object_id_t port_id,
-        sai_macsec_direction_t direction);
+        sai_macsec_direction_t direction,
+        const gearbox_phy_t* phy);
     bool createMACsecACLTable(
         sai_object_id_t &table_id,
         sai_object_id_t switch_id,
@@ -236,6 +277,19 @@ private:
         sai_object_id_t switch_id,
         sai_attr_id_t priority_id,
         sai_uint32_t &priority) const;
+
+    /* PFC */
+    bool setPFCForward(sai_object_id_t port_id, bool enable);
+    bool createPFCEntry(sai_object_id_t &entry_id,
+        sai_object_id_t table_id,
+        sai_object_id_t switch_id,
+        sai_macsec_direction_t direction,
+        sai_uint32_t priority,
+        const std::string &pfc_mode);
+    sai_attribute_t identifyPFC() const;
+    sai_attribute_t bypassPFC() const;
+    sai_attribute_t dropPFC() const;
+
 };
 
 #endif  // ORCHAGENT_MACSECORCH_H_

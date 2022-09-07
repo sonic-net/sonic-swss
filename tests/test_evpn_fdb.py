@@ -1,118 +1,6 @@
 from swsscommon import swsscommon
 import time
-
-def create_entry(tbl, key, pairs):
-    fvs = swsscommon.FieldValuePairs(pairs)
-    tbl.set(key, fvs)
-
-    # FIXME: better to wait until DB create them
-    time.sleep(1)
-
-def create_entry_tbl(db, table, key, pairs):
-    tbl = swsscommon.Table(db, table)
-    create_entry(tbl, key, pairs)
-
-def create_entry_pst(db, table, key, pairs):
-    tbl = swsscommon.ProducerStateTable(db, table)
-    create_entry(tbl, key, pairs)
-
-def delete_entry_pst(db, table, key):
-    tbl = swsscommon.ProducerStateTable(db, table)
-    tbl._del(key)
-
-def how_many_entries_exist(db, table):
-    tbl =  swsscommon.Table(db, table)
-    return len(tbl.getKeys())
-
-def remove_mac(db, table, mac, vlan):
-    tbl = swsscommon.Table(db, table)
-    tbl._del("Vlan" + vlan + "|" + mac.lower())
-    time.sleep(1)
-
-def delete_entry_tbl(db, table, key):
-    tbl = swsscommon.Table(db, table)
-    tbl._del(key)
-    time.sleep(1)
-
-def create_evpn_nvo(db, nvoname, tnlname):
-    #conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-    attrs = [
-            ("source_vtep", tnlname),
-    ]
-
-    # create the VXLAN tunnel Term entry in Config DB
-    create_entry_tbl(
-        db,
-        "VXLAN_EVPN_NVO", nvoname,
-        attrs,
-    )
-
-def remove_evpn_nvo(db, nvoname):
-    #conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-    delete_entry_tbl(db,"VXLAN_EVPN_NVO", nvoname,)
-
-def create_vxlan_tunnel(db, name, src_ip):
-    #conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-
-    attrs = [
-            ("src_ip", src_ip),
-    ]
-
-    # create the VXLAN tunnel Term entry in Config DB
-    create_entry_tbl(
-        db,
-        "VXLAN_TUNNEL", name,
-        attrs,
-    )
-
-def remove_vxlan_tunnel(db, tnlname):
-    #conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-
-    # create the VXLAN tunnel Term entry in Config DB
-    delete_entry_tbl(
-        db,
-        "VXLAN_TUNNEL", tnlname,
-    )
-
-def create_vxlan_tunnel_map(db, tnlname, mapname, vni_id, vlan_id):
-    #conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-
-    attrs = [
-            ("vni", vni_id),
-            ("vlan", vlan_id),
-    ]
-
-    # create the VXLAN tunnel Term entry in Config DB
-    create_entry_tbl(
-        db,
-        "VXLAN_TUNNEL_MAP", "%s|%s" % (tnlname, mapname),
-        attrs,
-    )
-
-def remove_vxlan_tunnel_map(db, tnlname, mapname):
-    #conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-    # create the VXLAN tunnel Term entry in Config DB
-    delete_entry_tbl(
-        db,
-        "VXLAN_TUNNEL_MAP", "%s|%s" % (tnlname, mapname),
-    )
-
-def create_evpn_remote_vni(db, vlan_id, remotevtep, vnid):
-    #app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-    create_entry_pst(
-        db,
-        "VXLAN_REMOTE_VNI_TABLE", "%s:%s" % (vlan_id, remotevtep),
-        [
-            ("vni", vnid),
-        ],
-    )
-
-def remove_evpn_remote_vni(db, vlan_id, remotevtep ):
-    #app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-    delete_entry_pst(
-        db,
-        "VXLAN_REMOTE_VNI_TABLE", "%s:%s" % (vlan_id, remotevtep),
-    )
+from evpn_tunnel import VxlanTunnel,VxlanEvpnHelper
 
 def get_vxlan_p2p_tunnel_bp(db, remote_ip):
     tnl_id = None
@@ -159,24 +47,25 @@ def get_vxlan_p2p_tunnel_bp(db, remote_ip):
                     
 
 def test_evpnFdb(dvs, testlog):
+    vxlan_obj = VxlanTunnel()
+    helper = VxlanEvpnHelper()
     dvs.setup_db()
 
-    dvs.runcmd("sonic-clear fdb all")
+    dvs.clear_fdb()
     time.sleep(2)
 
     #Find switch_id
     switch_id = dvs.getSwitchOid()
     print("Switch_id="+str(switch_id))
 
-    vlan_before = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+    vlan_before = helper.how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
 
     # create vlan
     print("Creating Vlan3")
-    #dvs.runcmd("config vlan add 3")
     dvs.create_vlan("3")
     time.sleep(2)
 
-    vlan_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+    vlan_after = helper.how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
     assert vlan_after - vlan_before == 1, "The Vlan3 wasn't created"
     print("Vlan3 is created")
 
@@ -185,17 +74,16 @@ def test_evpnFdb(dvs, testlog):
     assert vlan_oid_3 is not None, "Could not find Vlan_oid"
     print("Vlan-3 vlan_oid="+str(vlan_oid_3))
 
-    bp_before = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")
-    vm_before = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
+    bp_before = helper.how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")
+    vm_before = helper.how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
 
     print("Making Ethernet0 as a member of Vlan3")
-    #dvs.runcmd("config vlan member add 3 Ethernet0")
     dvs.create_vlan_member("3", "Ethernet0")
     time.sleep(2)
 
     # check that the vlan information was propagated
-    bp_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")
-    vm_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
+    bp_after = helper.how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")
+    vm_after = helper.how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
 
     assert bp_after - bp_before == 1, "The bridge port wasn't created"
     assert vm_after - vm_before == 1, "The vlan member wasn't added"
@@ -207,30 +95,30 @@ def test_evpnFdb(dvs, testlog):
     #create SIP side of tunnel
     source_tnl_name = "source_vtep_name"
     source_tnl_ip = "7.7.7.7"
-    create_vxlan_tunnel(dvs.cdb, source_tnl_name, source_tnl_ip)
+    vxlan_obj.create_vxlan_tunnel(dvs, source_tnl_name, source_tnl_ip)
     time.sleep(1)
 
 
     nvo_name = "evpn_nvo"
-    create_evpn_nvo(dvs.cdb, nvo_name, source_tnl_name)
+    vxlan_obj.create_evpn_nvo(dvs, nvo_name, source_tnl_name)
     time.sleep(1)
 
 
     map_name_vlan_3 = "map_3_3"
-    create_vxlan_tunnel_map(dvs.cdb, source_tnl_name, map_name_vlan_3, "3", "Vlan3")
+    vxlan_obj.create_vxlan_tunnel_map(dvs, source_tnl_name, map_name_vlan_3, "3", "Vlan3")
     time.sleep(1)
 
 
     remote_ip_6 = "6.6.6.6"
-    create_evpn_remote_vni(dvs.pdb, "Vlan3", remote_ip_6, "3")
+    vxlan_obj.create_evpn_remote_vni(dvs, "Vlan3", remote_ip_6, "3")
     remote_ip_8 = "8.8.8.8"
-    create_evpn_remote_vni(dvs.pdb, "Vlan3", remote_ip_8, "3")
+    vxlan_obj.create_evpn_remote_vni(dvs, "Vlan3", remote_ip_8, "3")
     time.sleep(1)
 
     #UT-1 Evpn Mac add from remote when tunnels are already created
     mac = "52:54:00:25:06:E9"
     print("Creating Evpn FDB Vlan3:"+mac.lower()+":6.6.6.6 in APP-DB")
-    create_entry_pst(
+    helper.create_entry_pst(
         dvs.pdb,
         "VXLAN_FDB_TABLE", "Vlan3:"+mac.lower(),
         [
@@ -260,7 +148,7 @@ def test_evpnFdb(dvs, testlog):
     #UT-2 Evpn Mac del from remote
     mac = "52:54:00:25:06:E9"
     print("Deleting Evpn FDB Vlan3:"+mac.lower()+":6.6.6.6 in APP-DB")
-    delete_entry_pst(
+    helper.delete_entry_pst(
         dvs.pdb,
         "VXLAN_FDB_TABLE", "Vlan3:"+mac.lower()
     )
@@ -285,7 +173,7 @@ def test_evpnFdb(dvs, testlog):
 
     print("Creating Local dynamic FDB Vlan3:"+mac.lower()+":Ethernet0 in APP-DB")
     # Create Dynamic MAC entry in APP DB
-    create_entry_pst(
+    helper.create_entry_pst(
         dvs.pdb,
         "FDB_TABLE", "Vlan3:"+mac.lower(),
         [
@@ -317,7 +205,7 @@ def test_evpnFdb(dvs, testlog):
     print("FDB Vlan3:"+mac+":Ethernet0 is created in STATE-DB")
 
     print("Creating Evpn FDB Vlan3:"+mac.lower()+":6.6.6.6 in APP-DB")
-    create_entry_pst(
+    helper.create_entry_pst(
         dvs.pdb,
         "VXLAN_FDB_TABLE", "Vlan3:"+mac.lower(),
         [
@@ -357,7 +245,7 @@ def test_evpnFdb(dvs, testlog):
     #UT-4 Evpn Sticky Mac add from remote
     mac = "52:54:00:25:06:E9"
     print("Creating Evpn Sticky FDB Vlan3:"+mac.lower()+":6.6.6.6 in APP-DB")
-    create_entry_pst(
+    helper.create_entry_pst(
         dvs.pdb,
         "VXLAN_FDB_TABLE", "Vlan3:"+mac.lower(),
         [
@@ -385,7 +273,7 @@ def test_evpnFdb(dvs, testlog):
     #UT-8 Evpn Mac add from remote when tunnels are already created
     mac = "52:54:00:25:06:E9"
     print("Creating Evpn FDB Vlan3:"+mac.lower()+":6.6.6.6 in APP-DB")
-    create_entry_pst(
+    helper.create_entry_pst(
         dvs.pdb,
         "VXLAN_FDB_TABLE", "Vlan3:"+mac.lower(),
         [
@@ -415,7 +303,7 @@ def test_evpnFdb(dvs, testlog):
     tnl_bp_oid_8 = get_vxlan_p2p_tunnel_bp(dvs.adb, remote_ip_8)
 
     print("Creating Evpn FDB Vlan3:"+mac.lower()+":8.8.8.8 in APP-DB")
-    create_entry_pst(
+    helper.create_entry_pst(
         dvs.pdb,
         "VXLAN_FDB_TABLE", "Vlan3:"+mac.lower(),
         [
@@ -445,7 +333,7 @@ def test_evpnFdb(dvs, testlog):
     #UT-9 Local mac move (delete and learn) when remote is already added
     mac = "52:54:00:25:06:E9"
     print("Deleting FDB Vlan3:52-54-00-25-06-E9:8.8.8.8 in ASIC-DB")
-    delete_entry_tbl(dvs.adb, "ASIC_STATE", "SAI_OBJECT_TYPE_FDB_ENTRY:{\"bvid\":\""+vlan_oid_3+"\",\"mac\":\""+mac+"\",\"switch_id\":\""+switch_id+"\"}")
+    helper.delete_entry_tbl(dvs.adb, "ASIC_STATE", "SAI_OBJECT_TYPE_FDB_ENTRY:{\"bvid\":\""+vlan_oid_3+"\",\"mac\":\""+mac+"\",\"switch_id\":\""+switch_id+"\"}")
 
     ntf = swsscommon.NotificationProducer(dvs.adb, "NOTIFICATIONS")
     fvp = swsscommon.FieldValuePairs()
@@ -457,7 +345,7 @@ def test_evpnFdb(dvs, testlog):
     #raw_input("Check ASIC_DB.........")
 
     print("Creating FDB Vlan3:52-54-00-25-06-E9:Ethernet0 in ASIC-DB")
-    create_entry_tbl(
+    helper.create_entry_tbl(
         dvs.adb,
         "ASIC_STATE", "SAI_OBJECT_TYPE_FDB_ENTRY:{\"bvid\":\""+vlan_oid_3+"\",\"mac\":\"52:54:00:25:06:E9\",\"switch_id\":\""+switch_id+"\"}",
         [

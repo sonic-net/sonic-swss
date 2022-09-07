@@ -22,6 +22,8 @@ end
 -- Initialize the accumulative size with 4096
 -- This is to absorb the possible deviation
 local accumulative_size = 4096
+-- Egress mirror size: 2 * maximum MTU (10k)
+local egress_mirror_size = 20*1024
 
 local appl_db = "0"
 local state_db = "6"
@@ -56,8 +58,9 @@ local pipeline_latency = tonumber(redis.call('HGET', asic_keys[1], 'pipeline_lat
 if is_port_with_8lanes(lanes) then
     -- The pipeline latency should be adjusted accordingly for ports with 2 buffer units
     pipeline_latency = pipeline_latency * 2 - 1
+    egress_mirror_size = egress_mirror_size * 2
 end
-accumulative_size = accumulative_size + 2 * pipeline_latency * 1024
+accumulative_size = accumulative_size + 2 * pipeline_latency * 1024 + egress_mirror_size
 
 -- Fetch all keys in BUFFER_PG according to the port
 redis.call('SELECT', appl_db)
@@ -91,11 +94,11 @@ end
 table.insert(debuginfo, 'debug:other overhead:' .. accumulative_size)
 local pg_keys = redis.call('KEYS', 'BUFFER_PG_TABLE:' .. port .. ':*')
 for i = 1, #pg_keys do
-    local profile = string.sub(redis.call('HGET', pg_keys[i], 'profile'), 2, -2)
+    local profile = redis.call('HGET', pg_keys[i], 'profile')
     local current_profile_size
-    if profile ~= 'BUFFER_PROFILE_TABLE:ingress_lossy_profile' and (no_input_pg or new_pg ~= pg_keys[i]) then
+    if profile ~= 'ingress_lossy_profile' and (no_input_pg or new_pg ~= pg_keys[i]) then
         if profile ~= input_profile_name and not no_input_pg then
-            local referenced_profile = redis.call('HGETALL', profile)
+            local referenced_profile = redis.call('HGETALL', 'BUFFER_PROFILE_TABLE:' .. profile)
             for j = 1, #referenced_profile, 2 do
                 if referenced_profile[j] == 'size' then
                     current_profile_size = tonumber(referenced_profile[j+1])

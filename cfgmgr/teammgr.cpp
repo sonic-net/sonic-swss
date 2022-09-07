@@ -5,6 +5,7 @@
 #include "tokenize.h"
 #include "warm_restart.h"
 #include "portmgr.h"
+#include <swss/redisutility.h>
 
 #include <algorithm>
 #include <iostream>
@@ -32,7 +33,8 @@ TeamMgr::TeamMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     m_appPortTable(applDb, APP_PORT_TABLE_NAME),
     m_appLagTable(applDb, APP_LAG_TABLE_NAME),
     m_statePortTable(statDb, STATE_PORT_TABLE_NAME),
-    m_stateLagTable(statDb, STATE_LAG_TABLE_NAME)
+    m_stateLagTable(statDb, STATE_LAG_TABLE_NAME),
+    m_stateMACsecIngressSATable(statDb, STATE_MACSEC_INGRESS_SA_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
 
@@ -72,6 +74,13 @@ bool TeamMgr::isPortStateOk(const string &alias)
         return false;
     }
 
+    auto state_opt = swss::fvsGetValue(temp, "state", true);
+    if (!state_opt)
+    {
+        SWSS_LOG_INFO("Port %s is not ready", alias.c_str());
+        return false;
+    }
+
     return true;
 }
 
@@ -88,6 +97,51 @@ bool TeamMgr::isLagStateOk(const string &alias)
     }
 
     return true;
+}
+
+bool TeamMgr::isMACsecAttached(const std::string &port)
+{
+    SWSS_LOG_ENTER();
+
+    vector<FieldValueTuple> temp;
+
+    if (!m_cfgPortTable.get(port, temp))
+    {
+        SWSS_LOG_INFO("Port %s is not ready", port.c_str());
+        return false;
+    }
+
+    auto macsec_opt = swss::fvsGetValue(temp, "macsec", true);
+    if (!macsec_opt || macsec_opt->empty())
+    {
+        SWSS_LOG_INFO("MACsec isn't setted on the port %s", port.c_str());
+        return false;
+    }
+
+    return true;
+}
+
+bool TeamMgr::isMACsecIngressSAOk(const std::string &port)
+{
+    SWSS_LOG_ENTER();
+
+    vector<string> keys;
+    m_stateMACsecIngressSATable.getKeys(keys);
+
+    for (auto key: keys)
+    {
+        auto tokens = tokenize(key, state_db_key_delimiter);
+        auto interface = tokens[0];
+
+        if (port == interface)
+        {
+            SWSS_LOG_NOTICE(" MACsec is ready on the port %s", port.c_str());
+            return true;
+        }
+    }
+
+    SWSS_LOG_INFO("MACsec is NOT ready on the port %s", port.c_str());
+    return false;
 }
 
 void TeamMgr::doTask(Consumer &consumer)
@@ -112,18 +166,74 @@ void TeamMgr::doTask(Consumer &consumer)
     }
 }
 
-
 void TeamMgr::cleanTeamProcesses()
 {
     SWSS_LOG_ENTER();
     SWSS_LOG_NOTICE("Cleaning up LAGs during shutdown...");
-    for (const auto& it: m_lagList)
+
+    std::unordered_map<std::string, pid_t> aliasPidMap;
+
+    for (const auto& alias: m_lagList)
     {
-        //This will call team -k kill -t <teamdevicename> which internally send SIGTERM 
-        removeLag(it);
+        std::string res;
+        pid_t pid;
+
+        try
+        {
+            std::stringstream cmd;
+            cmd << "cat " << shellquote("/var/run/teamd/" + alias + ".pid");
+            EXEC_WITH_ERROR_THROW(cmd.str(), res);
+        }
+        catch (const std::exception &e)
+        {
+            // Handle Warm/Fast reboot scenario
+            SWSS_LOG_NOTICE("Skipping non-existent port channel %s pid...", alias.c_str());
+            continue;
+        }
+
+        try
+        {
+            pid = static_cast<pid_t>(std::stoul(res, nullptr, 10));
+            aliasPidMap[alias] = pid;
+
+            SWSS_LOG_INFO("Read port channel %s pid %d", alias.c_str(), pid);
+        }
+        catch (const std::exception &e)
+        {
+            SWSS_LOG_ERROR("Failed to read port channel %s pid: %s", alias.c_str(), e.what());
+            continue;
+        }
+
+        try
+        {
+            std::stringstream cmd;
+            cmd << "kill -TERM " << pid;
+            EXEC_WITH_ERROR_THROW(cmd.str(), res);
+
+            SWSS_LOG_NOTICE("Sent SIGTERM to port channel %s pid %d", alias.c_str(), pid);
+        }
+        catch (const std::exception &e)
+        {
+            SWSS_LOG_ERROR("Failed to send SIGTERM to port channel %s pid %d: %s", alias.c_str(), pid, e.what());
+            aliasPidMap.erase(alias);
+        }
     }
 
-    return;
+    for (const auto& cit: aliasPidMap)
+    {
+        const auto &alias = cit.first;
+        const auto &pid = cit.second;
+
+        std::stringstream cmd;
+        std::string res;
+
+        SWSS_LOG_NOTICE("Waiting for port channel %s pid %d to stop...", alias.c_str(), pid);
+
+        cmd << "tail -f --pid=" << pid << " /dev/null";
+        EXEC_WITH_ERROR_THROW(cmd.str(), res);
+    }
+
+    SWSS_LOG_NOTICE("LAGs cleanup is done");
 }
 
 void TeamMgr::doLagTask(Consumer &consumer)
@@ -142,6 +252,7 @@ void TeamMgr::doLagTask(Consumer &consumer)
         {
             int min_links = 0;
             bool fallback = false;
+            bool fast_rate = false;
             string admin_status = DEFAULT_ADMIN_STATUS_STR;
             string mtu = DEFAULT_MTU_STR;
             string learn_mode;
@@ -183,12 +294,18 @@ void TeamMgr::doLagTask(Consumer &consumer)
                 {
                     tpid = fvValue(i);
                     SWSS_LOG_INFO("Get TPID %s", tpid.c_str());
-                 }
+                }
+                else if (fvField(i) == "fast_rate")
+                {
+                    fast_rate = fvValue(i) == "true";
+                    SWSS_LOG_INFO("Get fast_rate `%s`",
+                                  fast_rate ? "true" : "false");
+                }
             }
 
             if (m_lagList.find(alias) == m_lagList.end())
             {
-                if (addLag(alias, min_links, fallback) == task_need_retry)
+                if (addLag(alias, min_links, fallback, fast_rate) == task_need_retry)
                 {
                     it++;
                     continue;
@@ -245,7 +362,11 @@ void TeamMgr::doLagMemberTask(Consumer &consumer)
                 it++;
                 continue;
             }
-
+            if (isMACsecAttached(member) && !isMACsecIngressSAOk(member))
+            {
+                it++;
+                continue;
+            }
             if (addLagMember(lag, member) == task_need_retry)
             {
                 it++;
@@ -336,6 +457,13 @@ void TeamMgr::doPortUpdateTask(Consumer &consumer)
             string lag;
             if (findPortMaster(lag, alias))
             {
+                if (isMACsecAttached(alias) && !isMACsecIngressSAOk(alias))
+                {
+                    it++;
+                    SWSS_LOG_INFO("MACsec is NOT ready on the port %s", alias.c_str());
+                    continue;
+                }
+
                 if (addLagMember(lag, alias) == task_need_retry)
                 {
                     it++;
@@ -432,7 +560,7 @@ bool TeamMgr::setLagLearnMode(const string &alias, const string &learn_mode)
     return true;
 }
 
-task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fallback)
+task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fallback, bool fast_rate)
 {
     SWSS_LOG_ENTER();
 
@@ -489,6 +617,11 @@ task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fal
         conf << ",\"fallback\":true";
     }
 
+    if (fast_rate)
+    {
+        conf << ",\"fast_rate\":true";
+    }
+
     conf << "}}'";
 
     SWSS_LOG_INFO("Port channel %s teamd configuration: %s",
@@ -531,7 +664,7 @@ bool TeamMgr::removeLag(const string &alias)
 }
 
 // Port-channel names are in the pattern of "PortChannel####"
-// 
+//
 // The LACP key could be generated in 3 ways based on the value in config DB:
 //      1. "auto" - LACP key is extracted from the port-channel name and is set to be the number at the end of the port-channel name
 //                  We are adding 1 at the beginning to avoid LACP key collisions between similar LACP keys e.g. PortChannel10 and PortChannel010.

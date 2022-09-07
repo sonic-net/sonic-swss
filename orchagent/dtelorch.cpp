@@ -5,6 +5,8 @@
 #include "converter.h"
 #include "ipprefix.h"
 #include "swssnet.h"
+#include "directory.h"
+#include "vrforch.h"
 
 using namespace std;
 using namespace swss;
@@ -13,6 +15,7 @@ extern sai_switch_api_t* sai_switch_api;
 extern sai_dtel_api_t* sai_dtel_api;
 extern sai_object_id_t gVirtualRouterId;
 extern sai_object_id_t gSwitchId;
+extern Directory<Orch*> gDirectory;
 
 dtelEventLookup_t dTelEventLookup =
 {
@@ -1152,9 +1155,14 @@ void DTelOrch::doDtelReportSessionTableTask(Consumer &consumer)
                 }
                 else if (fvField(i) == VRF)
                 {
-                    rs_attr.id = SAI_DTEL_REPORT_SESSION_ATTR_VIRTUAL_ROUTER_ID;
-                    /* TODO: find a way to convert vrf to oid */
+                    string vrf_name = fvValue(i);
                     rs_attr.value.oid = gVirtualRouterId;
+                    if (vrf_name != "default")
+                    {
+                        VRFOrch* vrf_orch = gDirectory.get<VRFOrch*>();
+                        rs_attr.value.oid = vrf_orch->getVRFid(vrf_name);
+                    }
+                    rs_attr.id = SAI_DTEL_REPORT_SESSION_ATTR_VIRTUAL_ROUTER_ID;
                     report_session_attr.push_back(rs_attr);
                 }
                 else if (fvField(i) == TRUNCATE_SIZE)

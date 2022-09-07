@@ -1,4 +1,5 @@
 import pytest
+from requests import request
 
 L3_TABLE_TYPE = "L3"
 L3_TABLE_NAME = "L3_TEST"
@@ -10,9 +11,21 @@ L3V6_TABLE_NAME = "L3_V6_TEST"
 L3V6_BIND_PORTS = ["Ethernet0", "Ethernet4", "Ethernet8"]
 L3V6_RULE_NAME = "L3V6_TEST_RULE"
 
+MCLAG_TABLE_TYPE = "MCLAG"
+MCLAG_TABLE_NAME = "MCLAG_TEST"
+MCLAG_BIND_PORTS = ["Ethernet0", "Ethernet4", "Ethernet8", "Ethernet12"]
+MCLAG_RULE_NAME = "MCLAG_TEST_RULE"
 
+MIRROR_TABLE_TYPE = "MIRROR"
+MIRROR_TABLE_NAME = "MIRROR_TEST"
+MIRROR_BIND_PORTS = ["Ethernet0", "Ethernet4", "Ethernet8", "Ethernet12"]
+MIRROR_RULE_NAME = "MIRROR_TEST_RULE"
+
+PFCWD_TABLE_TYPE = "PFCWD"
+PFCWD_TABLE_NAME = "PFCWD_TEST"
+PFCWD_BIND_PORTS = ["Ethernet0", "Ethernet4", "Ethernet8", "Ethernet12"]
 class TestAcl:
-    @pytest.yield_fixture
+    @pytest.fixture
     def l3_acl_table(self, dvs_acl):
         try:
             dvs_acl.create_acl_table(L3_TABLE_NAME, L3_TABLE_TYPE, L3_BIND_PORTS)
@@ -21,7 +34,7 @@ class TestAcl:
             dvs_acl.remove_acl_table(L3_TABLE_NAME)
             dvs_acl.verify_acl_table_count(0)
 
-    @pytest.yield_fixture
+    @pytest.fixture
     def l3v6_acl_table(self, dvs_acl):
         try:
             dvs_acl.create_acl_table(L3V6_TABLE_NAME,
@@ -32,7 +45,34 @@ class TestAcl:
             dvs_acl.remove_acl_table(L3V6_TABLE_NAME)
             dvs_acl.verify_acl_table_count(0)
 
-    @pytest.yield_fixture
+    @pytest.fixture
+    def mclag_acl_table(self, dvs_acl):
+        try:
+            dvs_acl.create_acl_table(MCLAG_TABLE_NAME, MCLAG_TABLE_TYPE, MCLAG_BIND_PORTS)
+            yield dvs_acl.get_acl_table_ids(1)[0]
+        finally:
+            dvs_acl.remove_acl_table(MCLAG_TABLE_NAME)
+            dvs_acl.verify_acl_table_count(0)
+
+    @pytest.fixture
+    def mirror_acl_table(self, dvs_acl):
+        try:
+            dvs_acl.create_acl_table(MIRROR_TABLE_NAME, MIRROR_TABLE_TYPE, MIRROR_BIND_PORTS)
+            yield dvs_acl.get_acl_table_ids(1)[0]
+        finally:
+            dvs_acl.remove_acl_table(MIRROR_TABLE_NAME)
+            dvs_acl.verify_acl_table_count(0)
+
+    @pytest.fixture(params=['ingress', 'egress'])
+    def pfcwd_acl_table(self, dvs_acl, request):
+        try:
+            dvs_acl.create_acl_table(PFCWD_TABLE_NAME, PFCWD_TABLE_TYPE, PFCWD_BIND_PORTS, request.param)
+            yield dvs_acl.get_acl_table_ids(1)[0], request.param
+        finally:
+            dvs_acl.remove_acl_table(PFCWD_TABLE_NAME)
+            dvs_acl.verify_acl_table_count(0)
+
+    @pytest.fixture
     def setup_teardown_neighbor(self, dvs):
         try:
             # NOTE: set_interface_status has a dependency on cdb within dvs,
@@ -88,6 +128,23 @@ class TestAcl:
         dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
         dvs_acl.verify_no_acl_rules()
 
+    def test_AclRuleTCPProtocolAppendedForTCPFlags(self, dvs_acl, l3_acl_table):
+        """
+        Verify TCP Protocol number (6) will be appended for ACL rules matching TCP_FLAGS
+        """
+        config_qualifiers = {"TCP_FLAGS": "0x07/0x3f"}
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_TCP_FLAGS":
+                dvs_acl.get_simple_qualifier_comparator("7&mask:0x3f"),
+            "SAI_ACL_ENTRY_ATTR_FIELD_IP_PROTOCOL":
+                dvs_acl.get_simple_qualifier_comparator("6&mask:0xff")
+        }
+        dvs_acl.create_acl_rule(L3_TABLE_NAME, L3_RULE_NAME, config_qualifiers)
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+
+        dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
+        dvs_acl.verify_no_acl_rules()
+
     def test_AclRuleNextHeader(self, dvs_acl, l3_acl_table):
         config_qualifiers = {"NEXT_HEADER": "6"}
 
@@ -98,42 +155,87 @@ class TestAcl:
         dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
         dvs_acl.verify_no_acl_rules()
 
-    def test_AclRuleInOutPorts(self, dvs_acl, l3_acl_table):
+    def test_V6AclRuleNextHeaderAppendedForTCPFlags(self, dvs_acl, l3v6_acl_table):
+        """
+        Verify next heder (6) will be appended for IPv6 ACL rules matching TCP_FLAGS
+        """
+        config_qualifiers = {"TCP_FLAGS": "0x07/0x3f"}
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_TCP_FLAGS":
+                dvs_acl.get_simple_qualifier_comparator("7&mask:0x3f"),
+            "SAI_ACL_ENTRY_ATTR_FIELD_IPV6_NEXT_HEADER":
+                dvs_acl.get_simple_qualifier_comparator("6&mask:0xff")
+        }
+
+        dvs_acl.create_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME, config_qualifiers)
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+
+        dvs_acl.remove_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME)
+        dvs_acl.verify_no_acl_rules()
+
+    def test_AclRuleInPorts(self, dvs_acl, mirror_acl_table):
+        """
+        Verify IN_PORTS matches on ACL rule.
+        Using MIRROR table type for IN_PORTS matches.
+        """
         config_qualifiers = {
-            "IN_PORTS": "Ethernet0,Ethernet4",
-            "OUT_PORTS": "Ethernet8,Ethernet12"
+            "IN_PORTS": "Ethernet8,Ethernet12",
         }
 
         expected_sai_qualifiers = {
-            "SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS": dvs_acl.get_port_list_comparator(["Ethernet0", "Ethernet4"]),
+            "SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS": dvs_acl.get_port_list_comparator(["Ethernet8", "Ethernet12"])
+        }
+
+        dvs_acl.create_acl_rule(MIRROR_TABLE_NAME, MIRROR_RULE_NAME, config_qualifiers)
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+
+        dvs_acl.remove_acl_rule(MIRROR_TABLE_NAME, MIRROR_RULE_NAME)
+        dvs_acl.verify_no_acl_rules()
+
+    def test_AclRuleOutPorts(self, dvs_acl, mclag_acl_table):
+        """
+        Verify OUT_PORTS matches on ACL rule.
+        Using MCLAG table type for OUT_PORTS matches.
+        """
+        config_qualifiers = {
+            "OUT_PORTS": "Ethernet8,Ethernet12",
+        }
+
+        expected_sai_qualifiers = {
             "SAI_ACL_ENTRY_ATTR_FIELD_OUT_PORTS": dvs_acl.get_port_list_comparator(["Ethernet8", "Ethernet12"])
         }
 
-        dvs_acl.create_acl_rule(L3_TABLE_NAME, L3_RULE_NAME, config_qualifiers)
+        dvs_acl.create_acl_rule(MCLAG_TABLE_NAME, MCLAG_RULE_NAME, config_qualifiers)
         dvs_acl.verify_acl_rule(expected_sai_qualifiers)
 
-        dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
+        dvs_acl.remove_acl_rule(MCLAG_TABLE_NAME, MCLAG_RULE_NAME)
         dvs_acl.verify_no_acl_rules()
 
-    def test_AclRuleInPortsNonExistingInterface(self, dvs_acl, l3_acl_table):
+    def test_AclRuleInPortsNonExistingInterface(self, dvs_acl, mirror_acl_table):
+        """
+        Using MIRROR table type as it has IN_PORTS matches.
+        """
         config_qualifiers = {
             "IN_PORTS": "FOO_BAR_BAZ"
         }
 
-        dvs_acl.create_acl_rule(L3_TABLE_NAME, L3_RULE_NAME, config_qualifiers)
+        dvs_acl.create_acl_rule(MIRROR_TABLE_NAME, MIRROR_RULE_NAME, config_qualifiers)
 
         dvs_acl.verify_no_acl_rules()
-        dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
+        dvs_acl.remove_acl_rule(MIRROR_TABLE_NAME, MIRROR_RULE_NAME)
 
-    def test_AclRuleOutPortsNonExistingInterface(self, dvs_acl, l3_acl_table):
+    def test_AclRuleOutPortsNonExistingInterface(self, dvs_acl, mclag_acl_table):
+        """
+        Using MCLAG table type as it has OUT_PORTS matches.
+        """
         config_qualifiers = {
             "OUT_PORTS": "FOO_BAR_BAZ"
         }
 
-        dvs_acl.create_acl_rule(L3_TABLE_NAME, L3_RULE_NAME, config_qualifiers)
+        dvs_acl.create_acl_rule(MCLAG_TABLE_NAME, MCLAG_RULE_NAME, config_qualifiers)
 
         dvs_acl.verify_no_acl_rules()
-        dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
+        dvs_acl.remove_acl_rule(MCLAG_TABLE_NAME, MCLAG_RULE_NAME)
 
     def test_AclRuleVlanId(self, dvs_acl, l3_acl_table):
         config_qualifiers = {"VLAN_ID": "100"}
@@ -255,19 +357,6 @@ class TestAcl:
         config_qualifiers = {"L4_DST_PORT": "65001"}
         expected_sai_qualifiers = {
             "SAI_ACL_ENTRY_ATTR_FIELD_L4_DST_PORT": dvs_acl.get_simple_qualifier_comparator("65001&mask:0xffff")
-        }
-
-        dvs_acl.create_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME, config_qualifiers)
-        dvs_acl.verify_acl_rule(expected_sai_qualifiers)
-
-        dvs_acl.remove_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME)
-        dvs_acl.verify_no_acl_rules()
-
-    def test_V6AclRuleTCPFlags(self, dvs_acl, l3v6_acl_table):
-        config_qualifiers = {"TCP_FLAGS": "0x07/0x3f"}
-        expected_sai_qualifiers = {
-            "SAI_ACL_ENTRY_ATTR_FIELD_TCP_FLAGS":
-                dvs_acl.get_simple_qualifier_comparator("7&mask:0x3f")
         }
 
         dvs_acl.create_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME, config_qualifiers)
@@ -472,16 +561,30 @@ class TestAcl:
 
         dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
         dvs_acl.verify_no_acl_rules()
-
-
+    
+    def test_AclTableMandatoryMatchFields(self, dvs, pfcwd_acl_table):
+        """
+        The test case is to verify stage particular matching fields is applied
+        """
+        table_oid, stage = pfcwd_acl_table
+        match_in_ports = False
+        entry = dvs.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE", table_oid)
+        for k, v in entry.items():
+            if k == "SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS" and v == "true":
+                match_in_ports = True
+        
+        if stage == "ingress":
+            assert match_in_ports
+        else:
+            assert not match_in_ports
 class TestAclCrmUtilization:
     @pytest.fixture(scope="class", autouse=True)
     def configure_crm_polling_interval_for_test(self, dvs):
-        dvs.runcmd("crm config polling interval 1")
+        dvs.crm_poll_set("1")
 
         yield
 
-        dvs.runcmd("crm config polling interval 300")
+        dvs.crm_poll_set("300")
 
     def test_ValidateAclTableBindingCrmUtilization(self, dvs, dvs_acl):
         counter_db = dvs.get_counters_db()
@@ -528,15 +631,12 @@ class TestAclCrmUtilization:
 class TestAclRuleValidation:
     """Test class for cases that check if orchagent corectly validates ACL rules input."""
 
-    SWITCH_CAPABILITY_TABLE = "SWITCH_CAPABILITY"
+    ACL_STAGE_CAPABILITY_TABLE_NAME = "ACL_STAGE_CAPABILITY_TABLE"
+    ACL_ACTION_LIST_FIELD_NAME = "action_list"
 
     def get_acl_actions_supported(self, dvs_acl, stage):
-        switch_id = dvs_acl.state_db.wait_for_n_keys(self.SWITCH_CAPABILITY_TABLE, 1)[0]
-        switch = dvs_acl.state_db.wait_for_entry(self.SWITCH_CAPABILITY_TABLE, switch_id)
-
-        field = "ACL_ACTIONS|{}".format(stage.upper())
-
-        supported_actions = switch.get(field, None)
+        switch = dvs_acl.state_db.wait_for_entry(self.ACL_STAGE_CAPABILITY_TABLE_NAME, stage.upper())
+        supported_actions = switch.get(self.ACL_ACTION_LIST_FIELD_NAME, None)
 
         if supported_actions:
             supported_actions = supported_actions.split(",")

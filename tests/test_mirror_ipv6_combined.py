@@ -3,9 +3,6 @@ import time
 
 from swsscommon import swsscommon
 
-DVS_FAKE_PLATFORM = "broadcom"
-
-
 class TestMirror(object):
     def setup_db(self, dvs):
         self.pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
@@ -453,85 +450,6 @@ class TestMirror(object):
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
         rule_entries = [k for k in tbl.getKeys() if k not in dvs.asicdb.default_acl_entries]
         assert len(rule_entries) == 2
-
-        # remove acl rule
-        self.remove_mirror_acl_rule(acl_table, acl_rule_1)
-        self.remove_mirror_acl_rule(acl_table_v6, acl_rule_2)
-
-        # remove acl table
-        self.remove_acl_table(acl_table)
-        self.remove_acl_table(acl_table_v6)
-
-        # remove mirror session
-        self.remove_mirror_session(session)
-
-        # assert no mirror session in asic database
-        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
-        assert len(tbl.getKeys()) == 0
-
-        # remove route; remove neighbor; remove ip; bring down port
-        self.remove_route(dvs, "4.4.4.4")
-        self.remove_neighbor("Ethernet32", "20.0.0.1")
-        self.remove_ip_address("Ethernet32", "20.0.0.0/31")
-        self.set_interface_status("Ethernet32", "down")
-
-
-    # Test case - create ACL rules associated with wrong table
-    # 0. predefine the VS platform: mellanox platform
-    # 1. create a mirror session
-    # 2. create the ipv4 ACL table
-    # 3. create the ipv6 ACL rule associated with ipv4 table
-    # 4. create the ipv6 ACL table
-    # 5. create the ipv4 ACL rule associated with ipv6 table
-    # 6. verify two rules are inserted successfully
-    def test_AclBindMirrorV6WrongConfig(self, dvs, testlog):
-        """
-        This test verifies IPv6 rules cannot be inserted into MIRROR table
-        """
-        self.setup_db(dvs)
-
-        session = "MIRROR_SESSION"
-        acl_table = "MIRROR_TABLE"
-        acl_table_v6 = "MIRROR_TABLE_V6"
-        acl_rule_1 = "MIRROR_RULE_1"
-        acl_rule_2 = "MIRROR_RULE_2"
-
-        # bring up port; assign ip; create neighbor; create route
-        self.set_interface_status("Ethernet32", "up")
-        self.add_ip_address("Ethernet32", "20.0.0.0/31")
-        self.add_neighbor("Ethernet32", "20.0.0.1", "02:04:06:08:10:12")
-        self.add_route(dvs, "4.4.4.4", "20.0.0.1")
-
-        # create mirror session
-        self.create_mirror_session(session, "3.3.3.3", "4.4.4.4", "0x6558", "8", "100", "0")
-        assert self.get_mirror_session_state(session)["status"] == "active"
-
-        # assert mirror session in asic database
-        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
-        assert len(tbl.getKeys()) == 1
-        mirror_session_oid = tbl.getKeys()[0]
-
-        # create acl table ipv4
-        self.create_acl_table(acl_table, ["Ethernet0", "Ethernet4"], "MIRROR")
-
-        # create WRONG acl rule with IPv6 addresses
-        self.create_mirror_acl_ipv6_rule(acl_table, acl_rule_2, session)
-
-        # assert acl rule is not created
-        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
-        rule_entries = [k for k in tbl.getKeys() if k not in dvs.asicdb.default_acl_entries]
-        assert len(rule_entries) == 0
-
-        # create acl table ipv6
-        self.create_acl_table(acl_table_v6, ["Ethernet0", "Ethernet4"], "MIRRORV6")
-
-        # create WRONG acl rule with IPv4 addresses
-        self.create_mirror_acl_ipv4_rule(acl_table_v6, acl_rule_1, session)
-
-        # assert acl rules are created
-        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
-        rule_entries = [k for k in tbl.getKeys() if k not in dvs.asicdb.default_acl_entries]
-        assert len(rule_entries) == 0
 
         # remove acl rule
         self.remove_mirror_acl_rule(acl_table, acl_rule_1)

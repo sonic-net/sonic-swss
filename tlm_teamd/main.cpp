@@ -9,6 +9,7 @@
 
 #include "teamdctl_mgr.h"
 #include "values_store.h"
+#include "subintf.h"
 
 
 bool g_run = true;
@@ -30,6 +31,11 @@ void update_interfaces(swss::SubscriberStateTable & table, TeamdCtlMgr & mgr)
         const auto & lag_name = kfvKey(entry);
         const auto & op = kfvOp(entry);
 
+        if (lag_name.find(VLAN_SUB_INTERFACE_SEPARATOR) != std::string::npos)
+        {
+            SWSS_LOG_INFO("Skip subintf %s statedb event", lag_name.c_str());
+            continue;
+        }
         if (op == "SET")
         {
             mgr.add_lag(lag_name);
@@ -98,7 +104,7 @@ int main()
             if (res == swss::Select::OBJECT)
             {
                 update_interfaces(sst_lag, teamdctl_mgr);
-                values_store.update(teamdctl_mgr.get_dumps());
+                values_store.update(teamdctl_mgr.get_dumps(false));
             }
             else if (res == swss::Select::ERROR)
             {
@@ -108,7 +114,10 @@ int main()
             else if (res == swss::Select::TIMEOUT)
             {
                 teamdctl_mgr.process_add_queue();
-                values_store.update(teamdctl_mgr.get_dumps());
+                // In the case of lag removal, there is a scenario where the select::TIMEOUT
+                // occurs, it triggers get_dumps incorrectly for resource which was in process of 
+                // getting deleted. The fix here is to retry and check if this is a real failure.
+                values_store.update(teamdctl_mgr.get_dumps(true));
             }
             else
             {

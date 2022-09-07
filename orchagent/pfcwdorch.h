@@ -49,14 +49,18 @@ public:
 
     virtual task_process_status createEntry(const string& key, const vector<FieldValueTuple>& data);
     task_process_status deleteEntry(const string& name);
+    PfcWdAction getPfcDlrPacketAction() { return PfcDlrPacketAction; }
+    void setPfcDlrPacketAction(PfcWdAction action) { PfcDlrPacketAction = action; }
 
 protected:
     virtual bool startWdActionOnQueue(const string &event, sai_object_id_t queueId) = 0;
+    string m_platform = "";
 
 private:
 
     shared_ptr<DBConnector> m_countersDb = nullptr;
     shared_ptr<Table> m_countersTable = nullptr;
+    PfcWdAction PfcDlrPacketAction = PfcWdAction::PFC_WD_ACTION_UNKNOWN;
 };
 
 template <typename DropHandler, typename ForwardHandler>
