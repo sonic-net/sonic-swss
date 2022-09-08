@@ -371,6 +371,40 @@ def test_evpnFdbP2MP(dvs, testlog):
     assert mac1_found, str(extra)
     print("FDB Vlan3:52-54-00-25-06-E9:Ethernet0 is created in STATE-DB")
 
+    #UT-10 Evpn Mac add from remote when tunnels are not created
+    mac = "52:54:00:25:06:E1"
+    remote_ip_9 = "9.9.9.9"
+    print("Creating Evpn FDB Vlan3:"+mac.lower()+":9.9.9.9 in APP-DB")
+    helper.create_entry_pst(
+        dvs.pdb,
+        "VXLAN_FDB_TABLE", "Vlan3:"+mac.lower(),
+        [
+            ("remote_vtep", remote_ip_9),
+            ("type", "dynamic"),
+            ("vni", "3")
+        ]
+    )
+    time.sleep(1)
+
+    #Adding remote VNI later
+    vxlan_obj.create_evpn_remote_vni(dvs, "Vlan3", remote_ip_9, "3")
+    time.sleep(1)
+    tnl_bp_oid_9 = get_vxlan_p2mp_tunnel_bp(dvs.adb, source_tnl_ip)
+
+    # check that the FDB entry is inserted into ASIC DB
+    ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+            [("mac", mac), ("bvid", vlan_oid_3)],
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC"),
+                     ("SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE", "true"),
+                     ("SAI_FDB_ENTRY_ATTR_ENDPOINT_IP", remote_ip_9),
+                     ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", str(tnl_bp_oid_9)),
+                    ]
+    )
+    assert ok == True, str(extra)
+    print("EVPN FDB Vlan3:"+mac.lower()+":"+remote_ip_9+" is created in ASIC-DB")
+
+    time.sleep(1)
+
 
     dvs.remove_vlan_member("3", "Ethernet0")
     dvs.remove_vlan("3")

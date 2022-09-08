@@ -119,6 +119,7 @@ public:
     uint32_t            m_speed = 0;    // Mbps
     std::string         m_learn_mode = "hardware";
     AutoNegMode         m_autoneg = Port::AutoNegMode::AUTONEG_NOT_SET;
+    int                 m_link_training = -1; // -1 means not set, 0 = disabled, 1 = enabled
     bool                m_admin_state_up = false;
     bool                m_init = false;
     bool                m_l3_vni = false;
@@ -177,8 +178,14 @@ public:
     sai_object_id_t  m_system_side_id = 0;
     sai_object_id_t  m_line_side_id = 0;
 
+    /* pre-emphasis */
+    std::map<sai_port_serdes_attr_t, std::vector<uint32_t>> m_preemphasis;
+
     bool m_fec_cfg = false;
     bool m_an_cfg = false;
+
+    int m_cap_an = -1; /* Capability - AutoNeg, -1 means not set */
+    int m_cap_lt = -1; /* Capability - LinkTraining, -1 means not set */
 };
 
 }

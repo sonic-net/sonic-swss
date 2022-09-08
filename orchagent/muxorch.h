@@ -97,6 +97,10 @@ public:
     {
         return nbr_handler_->getNextHopId(nh);
     }
+    bool isSkipNeighbor(const IpAddress& nbr)
+    {
+        return (skip_neighbors_.find(nbr) != skip_neighbors_.end());
+    }
 
 private:
     bool stateActive();
@@ -201,6 +205,13 @@ private:
 
     bool getMuxPort(const MacAddress&, const string&, string&);
 
+    /***
+     * Methods for managing tunnel routes for neighbor IPs not associated
+     * with a specific mux cable
+    ***/
+    void createStandaloneTunnelRoute(IpAddress neighborIp);
+    void removeStandaloneTunnelRoute(IpAddress neighborIp);
+
     IpAddress mux_peer_switch_ = 0x0;
     sai_object_id_t mux_tunnel_id_ = SAI_NULL_OBJECT_ID;
 
@@ -215,6 +226,7 @@ private:
     FdbOrch *fdb_orch_;
 
     MuxCfgRequest request_;
+    std::set<IpAddress> standalone_tunnel_neighbors_;
 };
 
 const request_description_t mux_cable_request_description = {

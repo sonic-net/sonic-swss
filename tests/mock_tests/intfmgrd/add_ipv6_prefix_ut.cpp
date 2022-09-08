@@ -5,25 +5,17 @@
 #include <sys/stat.h>
 #include "../mock_table.h"
 #include "warm_restart.h"
-#define private public 
+#define private public
 #include "intfmgr.h"
 #undef private
 
-/* Override this pointer for custom behavior */
-int (*callback)(const std::string &cmd, std::string &stdout) = nullptr;
-std::vector<std::string> mockCallArgs;
-
-namespace swss {
-    int exec(const std::string &cmd, std::string &stdout)
-    {
-        mockCallArgs.push_back(cmd);
-        return callback(cmd, stdout);
-    }
-}
+extern int (*callback)(const std::string &cmd, std::string &stdout);
+extern std::vector<std::string> mockCallArgs;
 
 bool Ethernet0IPv6Set = false;
 
 int cb(const std::string &cmd, std::string &stdout){
+    mockCallArgs.push_back(cmd);
     if (cmd == "sysctl -w net.ipv6.conf.\"Ethernet0\".disable_ipv6=0") Ethernet0IPv6Set = true;
     else if (cmd.find("/sbin/ip -6 address \"add\"") == 0) {
         return Ethernet0IPv6Set ? 0 : 2;

@@ -77,6 +77,7 @@ class WcmpManager : public ObjectManagerInterface
 
     void enqueue(const swss::KeyOpFieldsValuesTuple &entry) override;
     void drain() override;
+    std::string verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple) override;
 
     // Prunes next hop members egressing through the given port.
     void pruneNextHops(const std::string &port);
@@ -153,6 +154,16 @@ class WcmpManager : public ObjectManagerInterface
 
     // Gets port oper-status from port_oper_status_map if present
     bool getPortOperStatusFromMap(const std::string &port, sai_port_oper_status_t *status);
+
+    // Verifies the internal cache for an entry.
+    std::string verifyStateCache(const P4WcmpGroupEntry &app_db_entry, const P4WcmpGroupEntry *wcmp_group_entry);
+
+    // Verifies the ASIC DB for an entry.
+    std::string verifyStateAsicDb(const P4WcmpGroupEntry *wcmp_group_entry);
+
+    // Returns the SAI attributes for a group member.
+    std::vector<sai_attribute_t> getSaiMemberAttrs(const P4WcmpGroupMemberEntry &wcmp_member_entry,
+                                                   const sai_object_id_t group_oid);
 
     // Maps wcmp_group_id to P4WcmpGroupEntry
     std::unordered_map<std::string, P4WcmpGroupEntry> m_wcmpGroupTable;

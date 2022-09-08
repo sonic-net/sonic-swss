@@ -1275,6 +1275,8 @@ bool MACsecOrch::createMACsecPort(
             phy);
     });
 
+    m_port_orch->setMACsecEnabledState(port_id, true);
+
     if (phy)
     {
         if (!setPFCForward(port_id, true))
@@ -1482,22 +1484,22 @@ bool MACsecOrch::deleteMACsecPort(
 
     bool result = true;
 
-    auto sc = macsec_port.m_egress_scs.begin();
-    while (sc != macsec_port.m_egress_scs.end())
-    {
-        const std::string port_sci = swss::join(':', port_name, MACsecSCI(sc->first));
-        sc ++;
-        if (deleteMACsecSC(port_sci, SAI_MACSEC_DIRECTION_EGRESS) != task_success)
-        {
-            result &= false;
-        }
-    }
-    sc = macsec_port.m_ingress_scs.begin();
+    auto sc = macsec_port.m_ingress_scs.begin();
     while (sc != macsec_port.m_ingress_scs.end())
     {
         const std::string port_sci = swss::join(':', port_name, MACsecSCI(sc->first));
         sc ++;
         if (deleteMACsecSC(port_sci, SAI_MACSEC_DIRECTION_INGRESS) != task_success)
+        {
+            result &= false;
+        }
+    }
+    sc = macsec_port.m_egress_scs.begin();
+    while (sc != macsec_port.m_egress_scs.end())
+    {
+        const std::string port_sci = swss::join(':', port_name, MACsecSCI(sc->first));
+        sc ++;
+        if (deleteMACsecSC(port_sci, SAI_MACSEC_DIRECTION_EGRESS) != task_success)
         {
             result &= false;
         }
@@ -1541,6 +1543,8 @@ bool MACsecOrch::deleteMACsecPort(
         SWSS_LOG_WARN("Cannot delete MACsec ingress port at the port %s", port_name.c_str());
         result &= false;
     }
+
+    m_port_orch->setMACsecEnabledState(port_id, false);
 
     if (phy)
     {

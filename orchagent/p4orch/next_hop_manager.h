@@ -6,6 +6,7 @@
 
 #include "ipaddress.h"
 #include "orch.h"
+#include "p4orch/gre_tunnel_manager.h"
 #include "p4orch/neighbor_manager.h"
 #include "p4orch/object_manager_interface.h"
 #include "p4orch/p4oidmapper.h"
@@ -29,13 +30,14 @@ struct P4NextHopEntry
     std::string next_hop_id;
     // Action
     std::string router_interface_id;
+    std::string gre_tunnel_id;
     swss::IpAddress neighbor_id;
 
     // SAI OID associated with this entry.
-    sai_object_id_t next_hop_oid = 0;
+    sai_object_id_t next_hop_oid = SAI_NULL_OBJECT_ID;
 
     P4NextHopEntry(const std::string &next_hop_id, const std::string &router_interface_id,
-                   const swss::IpAddress &neighbor_id);
+                   const std::string &gre_tunnel_id, const swss::IpAddress &neighbor_id);
 };
 
 // NextHopManager listens to changes in table APP_P4RT_NEXTHOP_TABLE_NAME and
@@ -57,6 +59,7 @@ class NextHopManager : public ObjectManagerInterface
 
     void enqueue(const swss::KeyOpFieldsValuesTuple &entry) override;
     void drain() override;
+    std::string verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple) override;
 
   private:
     // Gets the internal cached next hop entry by its key.
@@ -81,6 +84,15 @@ class NextHopManager : public ObjectManagerInterface
 
     // Deletes an next hop in the next hop table. Return true on success.
     ReturnCode removeNextHop(const std::string &next_hop_key);
+
+    // Verifies internal cache for an entry.
+    std::string verifyStateCache(const P4NextHopAppDbEntry &app_db_entry, const P4NextHopEntry *next_hop_entry);
+
+    // Verifies ASIC DB for an entry.
+    std::string verifyStateAsicDb(const P4NextHopEntry *next_hop_entry);
+
+    // Returns the SAI attributes for an entry.
+    ReturnCodeOr<std::vector<sai_attribute_t>> getSaiAttrs(const P4NextHopEntry &next_hop_entry);
 
     // m_nextHopTable: next_hop_key, P4NextHopEntry
     std::unordered_map<std::string, P4NextHopEntry> m_nextHopTable;

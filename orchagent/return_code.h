@@ -145,6 +145,21 @@ using swss::StatusCode;
         return RETURN_INTERNAL_ERROR_AND_RAISE_CRITICAL_RC_;                                                           \
     } while (0)
 
+#define SAI_RANGED_STATUS_IS_INVALID_ATTRIBUTE(x)                                                                      \
+    ((SAI_STATUS_CODE(x) & ~(0xFFFFL)) == SAI_STATUS_CODE(SAI_STATUS_INVALID_ATTRIBUTE_0))
+
+#define SAI_RANGED_STATUS_IS_INVALID_ATTR_VALUE(x)                                                                     \
+    ((SAI_STATUS_CODE(x) & ~(0xFFFFL)) == SAI_STATUS_CODE(SAI_STATUS_INVALID_ATTR_VALUE_0))
+
+#define SAI_RANGED_STATUS_IS_ATTR_NOT_IMPLEMENTED(x)                                                                   \
+    ((SAI_STATUS_CODE(x) & ~(0xFFFFL)) == SAI_STATUS_CODE(SAI_STATUS_ATTR_NOT_IMPLEMENTED_0))
+
+#define SAI_RANGED_STATUS_IS_UNKNOWN_ATTRIBUTE(x)                                                                      \
+    ((SAI_STATUS_CODE(x) & ~(0xFFFFL)) == SAI_STATUS_CODE(SAI_STATUS_UNKNOWN_ATTRIBUTE_0))
+
+#define SAI_RANGED_STATUS_IS_ATTR_NOT_SUPPORTED(x)                                                                     \
+    ((SAI_STATUS_CODE(x) & ~(0xFFFFL)) == SAI_STATUS_CODE(SAI_STATUS_ATTR_NOT_SUPPORTED_0))
+
 class ReturnCode
 {
   public:
@@ -164,7 +179,31 @@ class ReturnCode
     {
         if (m_saiStatusCodeLookup.find(status) == m_saiStatusCodeLookup.end())
         {
-            status_ = StatusCode::SWSS_RC_UNKNOWN;
+            // Check for ranged SAI codes.
+            if (SAI_RANGED_STATUS_IS_INVALID_ATTRIBUTE(status))
+            {
+                status_ = StatusCode::SWSS_RC_INVALID_PARAM;
+            }
+            else if (SAI_RANGED_STATUS_IS_INVALID_ATTR_VALUE(status))
+            {
+                status_ = StatusCode::SWSS_RC_INVALID_PARAM;
+            }
+            else if (SAI_RANGED_STATUS_IS_ATTR_NOT_IMPLEMENTED(status))
+            {
+                status_ = StatusCode::SWSS_RC_UNIMPLEMENTED;
+            }
+            else if (SAI_RANGED_STATUS_IS_UNKNOWN_ATTRIBUTE(status))
+            {
+                status_ = StatusCode::SWSS_RC_INVALID_PARAM;
+            }
+            else if (SAI_RANGED_STATUS_IS_ATTR_NOT_SUPPORTED(status))
+            {
+                status_ = StatusCode::SWSS_RC_UNIMPLEMENTED;
+            }
+            else
+            {
+                status_ = StatusCode::SWSS_RC_UNKNOWN;
+            }
         }
         else
         {
@@ -259,7 +298,7 @@ class ReturnCode
     }
 
   private:
-    // SAI codes that are not included in this lookup map will map to
+    // Non-ranged SAI codes that are not included in this lookup map will map to
     // SWSS_RC_UNKNOWN. This includes the general SAI failure: SAI_STATUS_FAILURE.
     std::unordered_map<sai_status_t, StatusCode> m_saiStatusCodeLookup = {
         {SAI_STATUS_SUCCESS, StatusCode::SWSS_RC_SUCCESS},
