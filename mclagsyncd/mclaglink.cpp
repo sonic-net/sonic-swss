@@ -1744,7 +1744,7 @@ MclagLink::MclagLink(Select *select, int port) :
     m_server_up(false),
     m_select(select)
 {
-    struct sockaddr_in addr = {0};
+    struct sockaddr_in addr = {};
     int true_val = 1;
 
     m_server_socket = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);

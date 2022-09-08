@@ -119,7 +119,7 @@ FpmLink::FpmLink(RouteSync *rsync, unsigned short port) :
     m_server_up(false),
     m_routesync(rsync)
 {
-    struct sockaddr_in addr = {0};
+    struct sockaddr_in addr = {};
     int true_val = 1;
 
     m_server_socket = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
