@@ -587,7 +587,7 @@ namespace aclorch_test
                         return false;
                     }
 
-                    sai_attribute_t new_attr = {0};
+                    sai_attribute_t new_attr = {};
 
                     new_attr.id = attr.id;
 
@@ -647,7 +647,7 @@ namespace aclorch_test
                         return false;
                     }
 
-                    sai_attribute_t new_attr = {0};
+                    sai_attribute_t new_attr = {};
 
                     new_attr.id = attr.id;
 
