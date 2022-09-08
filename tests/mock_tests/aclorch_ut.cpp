@@ -587,8 +587,7 @@ namespace aclorch_test
                         return false;
                     }
 
-                    sai_attribute_t new_attr;
-                    memset(&new_attr, 0, sizeof(new_attr));
+                    sai_attribute_t new_attr = {0};
 
                     new_attr.id = attr.id;
 
@@ -648,8 +647,7 @@ namespace aclorch_test
                         return false;
                     }
 
-                    sai_attribute_t new_attr;
-                    memset(&new_attr, 0, sizeof(new_attr));
+                    sai_attribute_t new_attr = {0};
 
                     new_attr.id = attr.id;
 

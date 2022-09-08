@@ -1744,7 +1744,7 @@ MclagLink::MclagLink(Select *select, int port) :
     m_server_up(false),
     m_select(select)
 {
-    struct sockaddr_in addr;
+    struct sockaddr_in addr = {0};
     int true_val = 1;
 
     m_server_socket = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -1765,7 +1765,6 @@ MclagLink::MclagLink(Select *select, int port) :
         throw system_error(errno, system_category());
     }
 
-    memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_port = htons((unsigned short int)port);
     addr.sin_addr.s_addr = htonl(MCLAG_DEFAULT_IP);
