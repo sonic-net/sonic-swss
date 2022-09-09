@@ -48,7 +48,7 @@ jobs:
       set -ex
       sudo .azure-pipelines/build_and_install_module.sh
 
-      sudo apt-get install -y libhiredis0.14
+      sudo apt-get install -y libhiredis0.14 libyang0.16
       sudo dpkg -i --force-confask,confnew $(Build.ArtifactStagingDirectory)/download/libswsscommon_1.0.0_amd64.deb || apt-get install -f
       sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/python3-swsscommon_1.0.0_amd64.deb
 

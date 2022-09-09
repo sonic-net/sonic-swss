@@ -121,6 +121,7 @@ jobs:
         target/debs/buster/libnl-route-3-dev_*.deb
         target/debs/buster/libnl-nf-3-200_*.deb
         target/debs/buster/libnl-nf-3-dev_*.deb
+        target/debs/buster/libyang_*.deb
     displayName: "Download common libs"
   - script: |
       set -ex
