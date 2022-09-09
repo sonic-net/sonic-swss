@@ -597,18 +597,37 @@ void NeighOrch::decreaseNextHopRefCount(const NextHopKey &nexthop, uint32_t coun
 
 bool NeighOrch::getNeighborEntry(const NextHopKey &nexthop, NeighborEntry &neighborEntry, MacAddress &macAddress)
 {
+    Port inbp;
+    string nbr_alias;
     if (!hasNextHop(nexthop))
     {
         return false;
     }
+    if (gMySwitchType == "voq")
+    {
+        gPortsOrch->getInbandPort(inbp);
+        assert(inbp.m_alias.length());
+    }
 
     for (const auto &entry : m_syncdNeighbors)
     {
-        if (entry.first.ip_address == nexthop.ip_address && entry.first.alias == nexthop.alias)
+        if (entry.first.ip_address == nexthop.ip_address)
         {
-            neighborEntry = entry.first;
-            macAddress = entry.second.mac;
-            return true;
+           if (m_intfsOrch->isRemoteSystemPortIntf(entry.first.alias))
+           {
+               //For remote system ports, nexthops are always on inband.
+               nbr_alias = inbp.m_alias;
+           }
+           else
+           {
+               nbr_alias = entry.first.alias;
+           }
+           if (nbr_alias == nexthop.alias)
+           {
+              neighborEntry = entry.first;
+              macAddress = entry.second.mac;
+              return true;
+           }
         }
     }
 
