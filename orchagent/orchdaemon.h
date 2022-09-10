@@ -68,6 +68,7 @@ public:
         m_fabricEnabled = enabled;
     }
 private:
+    event_handle_t m_events_handle;
     DBConnector *m_applDb;
     DBConnector *m_configDb;
     DBConnector *m_stateDb;

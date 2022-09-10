@@ -352,8 +352,10 @@ static bool isValidPortTypeForLagMember(const Port& port)
  *    bridge. By design, SONiC switch starts with all bridge ports removed from
  *    default VLAN and all ports removed from .1Q bridge.
  */
-PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames, DBConnector *chassisAppDb) :
+PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames,
+        DBConnector *chassisAppDb, event_handle_t events_handle) :
         Orch(db, tableNames),
+        m_events_handle(events_handle),
         m_portStateTable(stateDb, STATE_PORT_TABLE_NAME),
         port_stat_manager(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         gb_port_stat_manager("GB_FLEX_COUNTER_DB",
@@ -2537,6 +2539,10 @@ bool PortsOrch::setHostIntfsOperStatus(const Port& port, bool isUp) const
     SWSS_LOG_NOTICE("Set operation status %s to host interface %s",
             isUp ? "UP" : "DOWN", port.m_alias.c_str());
 
+    event_params_t params = {{"ifname",port.m_alias},{"status",isUp ? "up" : "down"}};
+    if (0 != event_publish(m_events_handle, "if-state", &params)) {
+        SWSS_LOG_WARN("Failed to publish event for if-state");
+    }
     return true;
 }
 

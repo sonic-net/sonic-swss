@@ -64,6 +64,7 @@ public:
     void decCrmAclTableUsedCounter(CrmResourceType resource, sai_object_id_t tableId);
 
 private:
+    event_handle_t m_events_handle;
     std::shared_ptr<swss::DBConnector> m_countersDb = nullptr;
     std::shared_ptr<swss::Table> m_countersCrmTable = nullptr;
     swss::SelectableTimer *m_timer = nullptr;

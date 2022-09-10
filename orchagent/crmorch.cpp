@@ -241,8 +241,9 @@ const map<string, CrmResourceType> crmUsedCntsTableMap =
     { "crm_stats_nexthop_group_map_used", CrmResourceType::CRM_NEXTHOP_GROUP_MAP },
 };
 
-CrmOrch::CrmOrch(DBConnector *db, string tableName):
+CrmOrch::CrmOrch(DBConnector *db, string tableName, event_handle_t handle):
     Orch(db, tableName),
+    m_events_handle(handle),
     m_countersDb(new DBConnector("COUNTERS_DB", 0)),
     m_countersCrmTable(new Table(m_countersDb.get(), COUNTERS_CRM_TABLE)),
     m_timer(new SelectableTimer(timespec { .tv_sec = CRM_POLLING_INTERVAL_DEFAULT, .tv_nsec = 0 }))
@@ -763,8 +764,17 @@ void CrmOrch::checkCrmThresholds()
 
             if ((utilization >= res.highThreshold) && (res.exceededLogCounter < CRM_EXCEEDED_MSG_MAX))
             {
+                event_params_t params = {
+                    { "percent", percentageUtil },
+                    { "used_cnt", cnt.usedCounter },
+                    { "free_cnt", cnt.availableCounter }};
+
                 SWSS_LOG_WARN("%s THRESHOLD_EXCEEDED for %s %u%% Used count %u free count %u",
                               res.name.c_str(), threshType.c_str(), percentageUtil, cnt.usedCounter, cnt.availableCounter);
+
+                if (0 != event_publish(m_events_handle, "chk_crm_threshold", &params)) {
+                    SWSS_LOG_WARN("Failed to publish event for if-state");
+                }
 
                 res.exceededLogCounter++;
             }

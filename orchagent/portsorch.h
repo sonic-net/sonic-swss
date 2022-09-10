@@ -188,6 +188,7 @@ public:
     bool isMACsecPort(sai_object_id_t port_id) const;
 
 private:
+    event_handle_t m_events_handle;
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_counterLagTable;
     unique_ptr<Table> m_portTable;

@@ -26,7 +26,7 @@ template <typename DropHandler, typename ForwardHandler>
 class PfcWdOrch: public Orch
 {
 public:
-    PfcWdOrch(DBConnector *db, vector<string> &tableNames);
+    PfcWdOrch(DBConnector *db, vector<string> &tableNames, event_handle_t handle);
     virtual ~PfcWdOrch(void);
 
     virtual void doTask(Consumer& consumer);
@@ -55,7 +55,7 @@ public:
 protected:
     virtual bool startWdActionOnQueue(const string &event, sai_object_id_t queueId) = 0;
     string m_platform = "";
-
+    event_handle_t m_events_handle;
 private:
 
     shared_ptr<DBConnector> m_countersDb = nullptr;
@@ -73,7 +73,8 @@ public:
             const vector<sai_port_stat_t> &portStatIds,
             const vector<sai_queue_stat_t> &queueStatIds,
             const vector<sai_queue_attr_t> &queueAttrIds,
-            int pollInterval);
+            int pollInterval,
+            event_handle_t handle);
     virtual ~PfcWdSwOrch(void);
 
     void doTask(Consumer& consumer) override;
@@ -120,6 +121,8 @@ private:
     void disableBigRedSwitchMode();
     void enableBigRedSwitchMode();
     void setBigRedSwitchMode(string value);
+
+    void report_pfc_storm(const PfcWdQueueEntry *);
 
     map<sai_object_id_t, PfcWdQueueEntry> m_entryMap;
     map<sai_object_id_t, PfcWdQueueEntry> m_brsEntryMap;
