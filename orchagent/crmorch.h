@@ -5,6 +5,7 @@
 #include <map>
 #include "orch.h"
 #include "port.h"
+#include "events.h"
 
 extern "C" {
 #include "sai.h"

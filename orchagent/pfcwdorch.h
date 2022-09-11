@@ -7,6 +7,7 @@
 #include "producertable.h"
 #include "notificationconsumer.h"
 #include "timer.h"
+#include "events.h"
 
 extern "C" {
 #include "sai.h"
