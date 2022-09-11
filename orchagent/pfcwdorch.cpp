@@ -937,11 +937,11 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(SelectableTimer &timer)
 }
 
 template <typename DropHandler, typename ForwardHandler>
-void PfcWdSwOrch<DropHandler, ForwardHandler>::report_pfc_storm(const PfcWdQueueEntry *entry
+void PfcWdSwOrch<DropHandler, ForwardHandler>::report_pfc_storm(const PfcWdQueueEntry *entry)
 {
     event_params_t params = {
         { "ifname", entry->second.portAlias },
-        { "queue_index", to_string(entry->second.index },
+        { "queue_index", to_string(entry->second.index) },
         { "queue_id", entry->first },
         { "port_id", to_string(entry->second.portId) }};
 
