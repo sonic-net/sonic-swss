@@ -52,7 +52,7 @@ enum class CrmResourceStatus
 class CrmOrch : public Orch
 {
 public:
-    CrmOrch(swss::DBConnector *db, std::string tableName);
+    CrmOrch(swss::DBConnector *db, std::string tableName, event_handle_t handle);
     void incCrmResUsedCounter(CrmResourceType resource);
     void decCrmResUsedCounter(CrmResourceType resource);
     // Increment "used" counter for the ACL table/group CRM resources
