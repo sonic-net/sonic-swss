@@ -688,7 +688,7 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
         const vector<sai_queue_attr_t> &queueAttrIds,
         int pollInterval,
         event_handle_t handle):
-    PfcWdOrch<DropHandler, ForwardHandler>(db, tableNames, handle),
+    PfcWdOrch<DropHandler, ForwardHandler>(db, tableNames),
     m_events_handle(handle),
     m_flexCounterDb(new DBConnector("FLEX_COUNTER_DB", 0)),
     m_flexCounterTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_TABLE)),
