@@ -1426,4 +1426,36 @@ namespace qosorch_test
 
         testing_wred_thresholds = false;
     }
+
+
+    /*
+     * Make sure empty fields won't cause orchagent crash
+     */
+    TEST_F(QosOrchTest, QosOrchTestEmptyField)
+    {
+        // Create a new dscp to tc map
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Ethernet0", "SET",
+                            {
+                                {"dscp_to_tc_map", ""}
+                            }});
+        auto consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_PORT_QOS_MAP_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+
+        entries.push_back({"Ethernet0|3", "SET",
+                           {
+                               {"scheduler", ""}
+                           }});
+        entries.push_back({"Ethernet0|4", "SET",
+                           {
+                               {"wred_profile", ""}
+                           }});
+        consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_QUEUE_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+
+        // Drain DSCP_TO_TC_MAP and PORT_QOS_MAP table
+        static_cast<Orch *>(gQosOrch)->doTask();
+    }
 }

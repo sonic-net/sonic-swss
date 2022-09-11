@@ -1477,6 +1477,11 @@ const vector<AclRangeConfig>& AclRule::getRangeConfig() const
     return m_rangeConfig;
 }
 
+bool AclRule::getCreateCounter() const
+{
+    return m_createCounter;
+}
+
 shared_ptr<AclRule> AclRule::makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOrch *dtel, const string& rule, const string& table, const KeyOpFieldsValuesTuple& data)
 {
     shared_ptr<AclRule> aclRule;
@@ -1624,6 +1629,13 @@ bool AclRule::createCounter()
 bool AclRule::removeRanges()
 {
     SWSS_LOG_ENTER();
+    if (!m_ranges.size())
+    {
+       //The Acl Rules which have mirror action will not have ranges created till the mirror becomes active
+       SWSS_LOG_INFO("No Acl Range created for ACL Rule %s in table %s", m_id.c_str(), m_pTable->getId().c_str());
+       return true;
+    }
+
     for (const auto& rangeConfig: m_rangeConfig)
     {
         if (!AclRange::remove(rangeConfig.rangeType, rangeConfig.min, rangeConfig.max))
@@ -1922,6 +1934,16 @@ bool AclRuleMirror::activate()
         attr.value.aclaction.parameter.objlist.list = &oid;
         attr.value.aclaction.parameter.objlist.count = 1;
         setAction(it.first, attr.value.aclaction);
+    }
+
+    // If the rule with mirror action is removed and then mirror is activated, create the counter before rule is created
+    if (!hasCounter())
+    {
+        if (getCreateCounter() && !createCounter())
+        {
+            SWSS_LOG_ERROR("createCounter failed for Rule %s session %s", m_id.c_str(), m_sessionName.c_str());
+            return false;
+       }
     }
 
     if (!AclRule::createRule())
@@ -2885,6 +2907,7 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
             platform == MRVL_PLATFORM_SUBSTRING ||
             platform == INVM_PLATFORM_SUBSTRING ||
             platform == NPS_PLATFORM_SUBSTRING ||
+            platform == XS_PLATFORM_SUBSTRING ||
             platform == VS_PLATFORM_SUBSTRING)
     {
         m_mirrorTableCapabilities =
@@ -2913,6 +2936,7 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     if (platform == MLNX_PLATFORM_SUBSTRING ||
         platform == CISCO_8000_PLATFORM_SUBSTRING ||
         platform == MRVL_PLATFORM_SUBSTRING ||
+        platform == XS_PLATFORM_SUBSTRING ||
         (platform == BRCM_PLATFORM_SUBSTRING && sub_platform == BRCM_DNX_PLATFORM_SUBSTRING))
     {
         m_isCombinedMirrorV6Table = false;

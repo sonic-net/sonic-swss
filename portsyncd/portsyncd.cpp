@@ -42,10 +42,7 @@ void usage()
     cout << "       this program will exit if configDB does not contain that info" << endl;
 }
 
-void handlePortConfigFile(ProducerStateTable &p, string file, bool warm);
 void handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, bool warm);
-void handleVlanIntfFile(string file);
-void checkPortInitDone(DBConnector *appl_db);
 
 int main(int argc, char **argv)
 {

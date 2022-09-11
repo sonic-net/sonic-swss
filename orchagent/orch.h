@@ -40,6 +40,7 @@ const char state_db_key_delimiter  = '|';
 #define NPS_PLATFORM_SUBSTRING  "nephos"
 #define MRVL_PLATFORM_SUBSTRING "marvell"
 #define CISCO_8000_PLATFORM_SUBSTRING "cisco-8000"
+#define XS_PLATFORM_SUBSTRING   "xsight"
 
 #define CONFIGDB_KEY_SEPARATOR "|"
 #define DEFAULT_KEY_SEPARATOR  ":"
