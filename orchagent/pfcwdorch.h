@@ -74,7 +74,7 @@ public:
             const vector<sai_queue_stat_t> &queueStatIds,
             const vector<sai_queue_attr_t> &queueAttrIds,
             int pollInterval,
-            event_handle_t handle);
+            event_handle_t handle = NULL);
     virtual ~PfcWdSwOrch(void);
 
     void doTask(Consumer& consumer) override;
