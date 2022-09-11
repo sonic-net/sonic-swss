@@ -124,7 +124,7 @@ private:
     void enableBigRedSwitchMode();
     void setBigRedSwitchMode(string value);
 
-    void report_pfc_storm(const PfcWdQueueEntry *);
+    void report_pfc_storm(sai_object_id_t id, const PfcWdQueueEntry *);
 
     map<sai_object_id_t, PfcWdQueueEntry> m_entryMap;
     map<sai_object_id_t, PfcWdQueueEntry> m_brsEntryMap;
