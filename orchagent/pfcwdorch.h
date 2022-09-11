@@ -27,7 +27,7 @@ template <typename DropHandler, typename ForwardHandler>
 class PfcWdOrch: public Orch
 {
 public:
-    PfcWdOrch(DBConnector *db, vector<string> &tableNames, event_handle_t handle);
+    PfcWdOrch(DBConnector *db, vector<string> &tableNames);
     virtual ~PfcWdOrch(void);
 
     virtual void doTask(Consumer& consumer);
@@ -56,7 +56,6 @@ public:
 protected:
     virtual bool startWdActionOnQueue(const string &event, sai_object_id_t queueId) = 0;
     string m_platform = "";
-    event_handle_t m_events_handle;
 private:
 
     shared_ptr<DBConnector> m_countersDb = nullptr;
@@ -94,6 +93,8 @@ protected:
     bool startWdActionOnQueue(const string &event, sai_object_id_t queueId) override;
 
 private:
+    event_handle_t m_events_handle;
+
     struct PfcWdQueueEntry
     {
         PfcWdQueueEntry(

@@ -36,10 +36,8 @@ extern SwitchOrch *gSwitchOrch;
 extern PortsOrch *gPortsOrch;
 
 template <typename DropHandler, typename ForwardHandler>
-PfcWdOrch<DropHandler, ForwardHandler>::PfcWdOrch(DBConnector *db, vector<string> &tableNames,
-        event_handle_t handle):
+PfcWdOrch<DropHandler, ForwardHandler>::PfcWdOrch(DBConnector *db, vector<string> &tableNames):
     Orch(db, tableNames),
-    m_events_handle(handle),
     m_countersDb(new DBConnector("COUNTERS_DB", 0)),
     m_countersTable(new Table(m_countersDb.get(), COUNTERS_TABLE)),
     m_platform(getenv("platform") ? getenv("platform") : "")
@@ -691,6 +689,7 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
         int pollInterval,
         event_handle_t handle):
     PfcWdOrch<DropHandler, ForwardHandler>(db, tableNames, handle),
+    m_events_handle(handle),
     m_flexCounterDb(new DBConnector("FLEX_COUNTER_DB", 0)),
     m_flexCounterTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_TABLE)),
     m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE)),
