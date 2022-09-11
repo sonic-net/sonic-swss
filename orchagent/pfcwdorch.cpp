@@ -941,9 +941,9 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::report_pfc_storm(const PfcWdQueue
 {
     event_params_t params = {
         { "ifname", entry->second.portAlias },
-        { "queue_index", entry->second.index },
+        { "queue_index", to_string(entry->second.index },
         { "queue_id", entry->first },
-        { "port_id", entry->second.portId }};
+        { "port_id", to_string(entry->second.portId) }};
 
     SWSS_LOG_NOTICE(
             "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ".",

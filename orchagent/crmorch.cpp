@@ -765,9 +765,9 @@ void CrmOrch::checkCrmThresholds()
             if ((utilization >= res.highThreshold) && (res.exceededLogCounter < CRM_EXCEEDED_MSG_MAX))
             {
                 event_params_t params = {
-                    { "percent", percentageUtil },
-                    { "used_cnt", cnt.usedCounter },
-                    { "free_cnt", cnt.availableCounter }};
+                    { "percent", to_string(percentageUtil) },
+                    { "used_cnt", to_string(cnt.usedCounter) },
+                    { "free_cnt", to_string(cnt.availableCounter) }};
 
                 SWSS_LOG_WARN("%s THRESHOLD_EXCEEDED for %s %u%% Used count %u free count %u",
                               res.name.c_str(), threshType.c_str(), percentageUtil, cnt.usedCounter, cnt.availableCounter);
