@@ -135,7 +135,7 @@ class TestMclagConfig(object):
 
         #check whether new mclag interface is added
         key_string = self.MCLAG_DOMAIN_ID + "|" + self.MCLAG_INTERFACE2
-        ok,error_info = check_table_doesnt_exists(self.cfg_db, self.CFG_MCLAG_INTERFACE_TABLE, key_string)
+        ok,error_info = check_table_exists(self.cfg_db, self.CFG_MCLAG_INTERFACE_TABLE, key_string)
         assert ok,error_info
 
     # Testcase 5 Verify Configuration of valid values for session timeout
