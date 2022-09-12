@@ -3,7 +3,7 @@
 
 #include "crmorch.h"
 
-CrmOrch::CrmOrch(swss::DBConnector *db, std::string tableName) : Orch(db, std::vector<std::string>{})
+CrmOrch::CrmOrch(swss::DBConnector *db, std::string tableName, event_handle_t) : Orch(db, std::vector<std::string>{})
 {
 }
 

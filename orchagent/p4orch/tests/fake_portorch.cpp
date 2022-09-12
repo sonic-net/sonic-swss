@@ -13,7 +13,7 @@ extern "C"
 #define QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS 10000
 
 PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames,
-                     DBConnector *chassisAppDb)
+                     DBConnector *chassisAppDb, event_handle_t)
     : Orch(db, tableNames), m_portStateTable(stateDb, STATE_PORT_TABLE_NAME),
       port_stat_manager(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ,
                         PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
