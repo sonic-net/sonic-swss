@@ -35,7 +35,37 @@ def check_table_doesnt_exists(db, table, key):
     return True, error_info
 
 
+def create_mclag_domain(dvs, domain_id, source_ip, peer_ip, peer_link):
+    tbl = swsscommon.Table(dvs.cdb, "MCLAG_DOMAIN")
+    fvs = swsscommon.FieldValuePairs([("source_ip", source_ip),
+                                  ("peer_ip", peer_ip),
+				("peer_link", peer_link)])
+    tbl.set(domain_id, fvs)
+    time.sleep(1)
 
+def remove_mclag_domain(dvs, domain_id):
+    tbl = swsscommon.Table(dvs.cdb, "MCLAG_DOMAIN")
+    tbl._del(domain_id)
+    time.sleep(1)
+
+def add_mclag_domain_field(dvs, domain_id, field, value):
+    tbl = swsscommon.Table(dvs.cdb, "MCLAG_DOMAIN")
+    fvs = swsscommon.FieldValuePairs([(field, value)])
+    tbl.set(domain_id, fvs)
+    time.sleep(1)
+
+def create_mclag_interface(dvs, domain_id, mclag_interface):
+    tbl = swsscommon.Table(dvs.cdb, "MCLAG_INTERFACE")
+    fvs = swsscommon.FieldValuePairs([("if_type", "PortChannel")])
+    key_string = domain_id + "|" + mclag_interface
+    tbl.set(key_string, fvs)
+    time.sleep(1)
+
+def remove_mclag_interface(dvs, domain_id, mclag_interface):
+    tbl = swsscommon.Table(dvs.cdb, "MCLAG_INTERFACE")
+    key_string = domain_id + "|" + mclag_interface
+    tbl._del(key_string)
+    time.sleep(1)
 
 # Test MCLAG Configs
 class TestMclagConfig(object):
@@ -72,8 +102,7 @@ class TestMclagConfig(object):
         delete_table_keys(self.cfg_db, self.CFG_MCLAG_DOMAIN_TABLE) 
         delete_table_keys(self.cfg_db, self.CFG_MCLAG_INTERFACE_TABLE) 
 
-        cmd_string ="config mclag add {} {} {} {}".format(self.MCLAG_DOMAIN_ID, self.MCLAG_SRC_IP, self.MCLAG_PEER_IP, self.MCLAG_PEER_LINK)
-        dvs.runcmd(cmd_string)
+        create_mclag_domain(dvs, self.MCLAG_DOMAIN_ID, self.MCLAG_SRC_IP, self.MCLAG_PEER_IP, self.MCLAG_PEER_LINK)
         time.sleep(2)
         
         #check whether domain cfg table contents are same as configured values
@@ -86,27 +115,12 @@ class TestMclagConfig(object):
                 )
         assert ok,error_info
 
-    # Testcase 2 Verify that second domain addition fails when there is already a domain configured
-    @pytest.mark.dev_sanity
-    def test_mclag_cfg_domain_add_2nd(self, dvs, testlog):
-        self.cfg_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-        cmd_string ="config mclag add {} {} {} {}".format(self.MCLAG_DOMAIN_2, self.MCLAG_SRC_IP, self.MCLAG_PEER_IP, self.MCLAG_PEER_LINK)
-        dvs.runcmd(cmd_string)
-        time.sleep(2)
-        
-        #check whether second domain config is not added to config db
-        key_string = self.MCLAG_DOMAIN_2 
-        ok,error_info = check_table_doesnt_exists(self.cfg_db, self.CFG_MCLAG_DOMAIN_TABLE, key_string)
-        assert ok,error_info
-
-
 
     # Testcase 3 Verify Configuration of MCLAG Interface to existing domain
     @pytest.mark.dev_sanity
     def test_mclag_cfg_intf_add(self, dvs, testlog):
         self.cfg_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-        cmd_string ="config mclag member add {} {}".format(self.MCLAG_DOMAIN_ID, self.MCLAG_INTERFACE1)
-        dvs.runcmd(cmd_string)
+        create_mclag_interface(dvs, self.MCLAG_DOMAIN_ID, self.MCLAG_INTERFACE1)
         time.sleep(2)
         
         #check whether mclag interface config is reflected
@@ -118,9 +132,7 @@ class TestMclagConfig(object):
     @pytest.mark.dev_sanity
     def test_mclag_cfg_intf_remove_and_add(self, dvs, testlog):
         self.cfg_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-
-        cmd_string ="config mclag member del {} {}".format(self.MCLAG_DOMAIN_ID, self.MCLAG_INTERFACE1)
-        dvs.runcmd(cmd_string)
+        remove_mclag_interface(dvs, self.MCLAG_DOMAIN_ID, self.MCLAG_INTERFACE1)
         time.sleep(2)
         
         #check whether mclag interface is removed
@@ -129,8 +141,7 @@ class TestMclagConfig(object):
         assert ok,error_info
 
         #add different mclag interface
-        cmd_string ="config mclag member del {} {}".format(self.MCLAG_DOMAIN_ID, self.MCLAG_INTERFACE2)
-        dvs.runcmd(cmd_string)
+        create_mclag_interface(dvs, self.MCLAG_DOMAIN_ID, self.MCLAG_INTERFACE2)
         time.sleep(2)
 
         #check whether new mclag interface is added
@@ -144,8 +155,8 @@ class TestMclagConfig(object):
         self.cfg_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
         for value in self.MCLAG_SESS_TMOUT_VALID_LIST:
-            cmd_string ="config mclag session-timeout {} {}".format(self.MCLAG_DOMAIN_ID, value)
-            dvs.runcmd(cmd_string)
+            add_mclag_domain_field(dvs, self.MCLAG_DOMAIN_ID, "session_timeout", value)
+            
             time.sleep(2)
             
             #check whether domain cfg table contents are same as configured values
@@ -165,10 +176,8 @@ class TestMclagConfig(object):
         self.cfg_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
         for value in self.MCLAG_KA_VALID_LIST:
-            cmd_string ="config mclag keepalive-interval {} {}".format(self.MCLAG_DOMAIN_ID, value)
-            dvs.runcmd(cmd_string)
+            add_mclag_domain_field(dvs, self.MCLAG_DOMAIN_ID, "keepalive_interval", value)
             time.sleep(2)
-            
             #check whether domain cfg table contents are same as configured values
             ok,error_info = dvs.all_table_entry_has(self.cfg_db, self.CFG_MCLAG_DOMAIN_TABLE, self.MCLAG_DOMAIN_ID,
                         [ 
@@ -181,50 +190,12 @@ class TestMclagConfig(object):
             assert ok,error_info
 
 
-
-    # Testcase 7 Verify Configuration of invalid values for KA
-    @pytest.mark.dev_sanity
-    def test_mclag_cfg_ka_invalid_values(self, dvs, testlog):
-        self.cfg_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-
-        for value in self.MCLAG_KA_INVALID_LIST:
-            cmd_string ="config mclag keepalive-interval {} {}".format(self.MCLAG_DOMAIN_ID, value)
-            dvs.runcmd(cmd_string)
-            time.sleep(2)
-            
-            #check whether domain cfg table contents are same as configured values
-            found,error_info = dvs.all_table_entry_has(self.cfg_db, self.CFG_MCLAG_DOMAIN_TABLE, self.MCLAG_DOMAIN_ID,
-                        [ 
-                            ("keepalive_interval",value)
-                        ]                    
-                    )
-            assert found == False, "invalid keepalive value %s written to CONFIG_DB" % value
-
-    # Testcase 8 Verify Configuration of invalid values for session timeout
-    @pytest.mark.dev_sanity
-    def test_mclag_cfg_session_invalid_values(self, dvs, testlog):
-        self.cfg_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-
-        for value in self.MCLAG_SESS_TMOUT_INVALID_LIST:
-            cmd_string ="config mclag session-timeout {} {}".format(self.MCLAG_DOMAIN_ID, value)
-            dvs.runcmd(cmd_string)
-            time.sleep(2)
-            
-            #check whether domain cfg table contents are same as configured values
-            found,error_info = dvs.all_table_entry_has(self.cfg_db, self.CFG_MCLAG_DOMAIN_TABLE, self.MCLAG_DOMAIN_ID,
-                        [ 
-                            ("session_timeout",value)
-                        ]                    
-                    )
-            assert found == False, "invalid keepalive value %s written to CONFIG_DB" % value
-
-    # Testcase 9 Verify Deletion of MCLAG Domain
+    # Testcase 7 Verify Deletion of MCLAG Domain
     @pytest.mark.dev_sanity
     def test_mclag_cfg_domain_del(self, dvs, testlog):
         self.cfg_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
-        cmd_string ="config mclag del {}".format(self.MCLAG_DOMAIN_ID)
-        dvs.runcmd(cmd_string)
+        remove_mclag_domain(dvs, self.MCLAG_DOMAIN_ID)
         time.sleep(2)
         
         #check whether domain cfg table contents are same as configured values
