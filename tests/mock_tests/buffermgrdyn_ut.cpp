@@ -667,6 +667,13 @@ namespace buffermgrdyn_test
         CheckProfileList("Ethernet0", true, "ingress_lossless_profile", false);
         CheckProfileList("Ethernet0", false, "egress_lossless_profile,egress_lossy_profile", false);
 
+        // Initialize a port with all profiles undefined
+        InitPort("Ethernet8");
+        InitBufferPg("Ethernet8|0", "ingress_not_defined_profile");
+        InitBufferQueue("Ethernet8|0", "egress_not_defined_profile");
+        InitBufferProfileList("Ethernet8", "egress_not_defined_profile", bufferEgrProfileListTable);
+        InitBufferProfileList("Ethernet8", "ingress_not_defined_profile", bufferIngProfileListTable);
+
         // All default buffer profiles should be generated and pushed into BUFFER_PROFILE_TABLE
         static_cast<Orch *>(m_dynamicBuffer)->doTask();
 
@@ -685,6 +692,36 @@ namespace buffermgrdyn_test
 
         CheckProfileList("Ethernet0", true, "ingress_lossless_profile", true);
         CheckProfileList("Ethernet0", false, "egress_lossless_profile,egress_lossy_profile", true);
+
+        // Check no items applied on port Ethernet8
+        ASSERT_EQ(appBufferPgTable.get("Ethernet8:0", fieldValues), false);
+        CheckQueue("Ethernet8", "Ethernet8:0", "", false);
+        CheckProfileList("Ethernet8", true, "", false);
+        CheckProfileList("Ethernet8", false, "", false);
+
+        // Configure the missing buffer profiles
+        bufferProfileTable.set("ingress_not_defined_profile",
+                               {
+                                   {"pool", "ingress_lossless_pool"},
+                                   {"dynamic_th", "0"},
+                                   {"size", "0"}
+                               });
+        bufferProfileTable.set("egress_not_defined_profile",
+                               {
+                                   {"pool", "egress_lossless_pool"},
+                                   {"dynamic_th", "0"},
+                                   {"size", "0"}
+                               });
+        m_dynamicBuffer->addExistingData(&bufferProfileTable);
+        // For buffer profile
+        static_cast<Orch *>(m_dynamicBuffer)->doTask();
+        // For all other items
+        static_cast<Orch *>(m_dynamicBuffer)->doTask();
+        ASSERT_EQ(appBufferPgTable.get("Ethernet8:0", fieldValues), true);
+        ASSERT_EQ(fvValue(fieldValues[0]), "ingress_not_defined_profile");
+        CheckQueue("Ethernet8", "Ethernet8:0", "egress_not_defined_profile", true);
+        CheckProfileList("Ethernet8", true, "ingress_not_defined_profile", true);
+        CheckProfileList("Ethernet8", false, "egress_not_defined_profile", true);
 
         InitPort("Ethernet4");
         InitPort("Ethernet6");
