@@ -952,9 +952,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::report_pfc_storm(
             id,
             entry->portId);
 
-    if (0 != event_publish(m_events_handle, "pfc-storm", &params)) {
-        SWSS_LOG_WARN("Failed to publish event for pfc-storm");
-    }
+    event_publish(m_events_handle, "pfc-storm", &params);
 }
 
 template <typename DropHandler, typename ForwardHandler>
