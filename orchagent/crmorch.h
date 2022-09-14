@@ -52,7 +52,7 @@ enum class CrmResourceStatus
 class CrmOrch : public Orch
 {
 public:
-    CrmOrch(swss::DBConnector *db, std::string tableName, event_handle_t handle = NULL);
+    CrmOrch(swss::DBConnector *db, std::string tableName);
     void incCrmResUsedCounter(CrmResourceType resource);
     void decCrmResUsedCounter(CrmResourceType resource);
     // Increment "used" counter for the ACL table/group CRM resources
@@ -65,7 +65,6 @@ public:
     void decCrmAclTableUsedCounter(CrmResourceType resource, sai_object_id_t tableId);
 
 private:
-    event_handle_t m_events_handle;
     std::shared_ptr<swss::DBConnector> m_countersDb = nullptr;
     std::shared_ptr<swss::Table> m_countersCrmTable = nullptr;
     swss::SelectableTimer *m_timer = nullptr;

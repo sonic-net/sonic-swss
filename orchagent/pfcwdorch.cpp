@@ -32,6 +32,8 @@ extern sai_switch_api_t* sai_switch_api;
 extern sai_port_api_t *sai_port_api;
 extern sai_queue_api_t *sai_queue_api;
 
+extern event_handle_t g_events_handle;
+
 extern SwitchOrch *gSwitchOrch;
 extern PortsOrch *gPortsOrch;
 
@@ -686,10 +688,8 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
         const vector<sai_port_stat_t> &portStatIds,
         const vector<sai_queue_stat_t> &queueStatIds,
         const vector<sai_queue_attr_t> &queueAttrIds,
-        int pollInterval,
-        event_handle_t handle):
+        int pollInterval):
     PfcWdOrch<DropHandler, ForwardHandler>(db, tableNames),
-    m_events_handle(handle),
     m_flexCounterDb(new DBConnector("FLEX_COUNTER_DB", 0)),
     m_flexCounterTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_TABLE)),
     m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE)),
@@ -952,7 +952,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::report_pfc_storm(
             id,
             entry->portId);
 
-    event_publish(m_events_handle, "pfc-storm", &params);
+    event_publish(g_events_handle, "pfc-storm", &params);
 }
 
 template <typename DropHandler, typename ForwardHandler>

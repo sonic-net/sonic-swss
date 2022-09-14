@@ -73,8 +73,7 @@ public:
             const vector<sai_port_stat_t> &portStatIds,
             const vector<sai_queue_stat_t> &queueStatIds,
             const vector<sai_queue_attr_t> &queueAttrIds,
-            int pollInterval,
-            event_handle_t handle = NULL);
+            int pollInterval);
     virtual ~PfcWdSwOrch(void);
 
     void doTask(Consumer& consumer) override;
@@ -93,8 +92,6 @@ protected:
     bool startWdActionOnQueue(const string &event, sai_object_id_t queueId) override;
 
 private:
-    event_handle_t m_events_handle;
-
     struct PfcWdQueueEntry
     {
         PfcWdQueueEntry(

@@ -18,6 +18,7 @@
 extern sai_object_id_t gSwitchId;
 extern sai_switch_api_t *sai_switch_api;
 extern sai_acl_api_t *sai_acl_api;
+extern event_handle_t g_events_handle;
 
 using namespace std;
 using namespace swss;
@@ -241,9 +242,8 @@ const map<string, CrmResourceType> crmUsedCntsTableMap =
     { "crm_stats_nexthop_group_map_used", CrmResourceType::CRM_NEXTHOP_GROUP_MAP },
 };
 
-CrmOrch::CrmOrch(DBConnector *db, string tableName, event_handle_t handle):
+CrmOrch::CrmOrch(DBConnector *db, string tableName):
     Orch(db, tableName),
-    m_events_handle(handle),
     m_countersDb(new DBConnector("COUNTERS_DB", 0)),
     m_countersCrmTable(new Table(m_countersDb.get(), COUNTERS_CRM_TABLE)),
     m_timer(new SelectableTimer(timespec { .tv_sec = CRM_POLLING_INTERVAL_DEFAULT, .tv_nsec = 0 }))
@@ -772,8 +772,7 @@ void CrmOrch::checkCrmThresholds()
                 SWSS_LOG_WARN("%s THRESHOLD_EXCEEDED for %s %u%% Used count %u free count %u",
                               res.name.c_str(), threshType.c_str(), percentageUtil, cnt.usedCounter, cnt.availableCounter);
 
-                event_publish(m_events_handle, "chk_crm_threshold", &params);
-
+                event_publish(g_events_handle, "chk_crm_threshold", &params);
                 res.exceededLogCounter++;
             }
             else if ((utilization <= res.lowThreshold) && (res.exceededLogCounter > 0) && (res.highThreshold != res.lowThreshold))

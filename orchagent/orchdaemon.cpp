@@ -57,12 +57,12 @@ FlowCounterRouteOrch *gFlowCounterRouteOrch;
 DebugCounterOrch *gDebugCounterOrch;
 
 bool gIsNatSupported = false;
+event_handle_t g_events_handle;
 
 #define DEFAULT_MAX_BULK_SIZE 1000
 size_t gMaxBulkSize = DEFAULT_MAX_BULK_SIZE;
 
 OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb, DBConnector *chassisAppDb) :
-        m_events_handle(NULL),
         m_applDb(applDb),
         m_configDb(configDb),
         m_stateDb(stateDb),
@@ -91,7 +91,7 @@ OrchDaemon::~OrchDaemon()
     }
     delete m_select;
 
-    events_deinit_publisher(m_events_handle);
+    events_deinit_publisher(g_events_handle);
 }
 
 bool OrchDaemon::init()
@@ -100,9 +100,9 @@ bool OrchDaemon::init()
 
     string platform = getenv("platform") ? getenv("platform") : "";
 
-    m_events_handle = events_init_publisher("sonic-events-swss");
+    g_events_handle = events_init_publisher("sonic-events-swss");
 
-    gCrmOrch = new CrmOrch(m_configDb, CFG_CRM_TABLE_NAME, m_events_handle);
+    gCrmOrch = new CrmOrch(m_configDb, CFG_CRM_TABLE_NAME);
 
     TableConnector stateDbSwitchTable(m_stateDb, "SWITCH_CAPABILITY");
     TableConnector app_switch_table(m_applDb, APP_SWITCH_TABLE_NAME);
@@ -131,7 +131,7 @@ bool OrchDaemon::init()
         { APP_MCLAG_FDB_TABLE_NAME,  FdbOrch::fdborch_pri}
     };
 
-    gPortsOrch = new PortsOrch(m_applDb, m_stateDb, ports_tables, m_chassisAppDb, m_events_handle);
+    gPortsOrch = new PortsOrch(m_applDb, m_stateDb, ports_tables, m_chassisAppDb);
     TableConnector stateDbFdb(m_stateDb, STATE_FDB_TABLE_NAME);
     TableConnector stateMclagDbFdb(m_stateDb, STATE_MCLAG_REMOTE_FDB_TABLE_NAME);
     gFdbOrch = new FdbOrch(m_applDb, app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch);
@@ -513,8 +513,7 @@ bool OrchDaemon::init()
                     portStatIds,
                     queueStatIds,
                     queueAttrIds,
-                    PFC_WD_POLL_MSECS,
-                    m_events_handle));
+                    PFC_WD_POLL_MSECS));
     }
     else if ((platform == INVM_PLATFORM_SUBSTRING)
              || (platform == BFN_PLATFORM_SUBSTRING)
@@ -557,8 +556,7 @@ bool OrchDaemon::init()
                         portStatIds,
                         queueStatIds,
                         queueAttrIds,
-                        PFC_WD_POLL_MSECS,
-                        m_events_handle));
+                        PFC_WD_POLL_MSECS));
         }
         else if (platform == BFN_PLATFORM_SUBSTRING)
         {
@@ -568,8 +566,7 @@ bool OrchDaemon::init()
                         portStatIds,
                         queueStatIds,
                         queueAttrIds,
-                        PFC_WD_POLL_MSECS,
-                        m_events_handle));
+                        PFC_WD_POLL_MSECS));
         }
     }
     else if (platform == BRCM_PLATFORM_SUBSTRING)
@@ -613,8 +610,7 @@ bool OrchDaemon::init()
                         portStatIds,
                         queueStatIds,
                         queueAttrIds,
-                        PFC_WD_POLL_MSECS,
-                        m_events_handle));
+                        PFC_WD_POLL_MSECS));
         }
         else
         {
@@ -624,8 +620,7 @@ bool OrchDaemon::init()
                         portStatIds,
                         queueStatIds,
                         queueAttrIds,
-                        PFC_WD_POLL_MSECS,
-                        m_events_handle));
+                        PFC_WD_POLL_MSECS));
         }
     } else if (platform == CISCO_8000_PLATFORM_SUBSTRING)
     {
@@ -647,8 +642,7 @@ bool OrchDaemon::init()
                     portStatIds,
                     queueStatIds,
                     queueAttrIds,
-                    PFC_WD_POLL_MSECS,
-                    m_events_handle));
+                    PFC_WD_POLL_MSECS));
     }
 
     m_orchList.push_back(&CounterCheckOrch::getInstance(m_configDb));
