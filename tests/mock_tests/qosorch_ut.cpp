@@ -37,6 +37,13 @@ namespace qosorch_test
     sai_set_switch_attribute_fn old_set_switch_attribute_fn;
     sai_switch_api_t ut_sai_switch_api, *pold_sai_switch_api;
 
+    typedef struct
+    {
+        sai_uint32_t green_max_drop_probability;
+        sai_uint32_t yellow_max_drop_probability;
+        sai_uint32_t red_max_drop_probability;
+    } qos_wred_max_drop_probability_t;
+
     sai_status_t _ut_stub_sai_set_switch_attribute(sai_object_id_t switch_id, const sai_attribute_t *attr)
     {
         auto rc = old_set_switch_attribute_fn(switch_id, attr);
@@ -55,6 +62,7 @@ namespace qosorch_test
 
     bool testing_wred_thresholds;
     WredMapHandler::qos_wred_thresholds_t saiThresholds;
+    qos_wred_max_drop_probability_t saiMaxDropProbabilities;
     void _ut_stub_sai_check_wred_attributes(const sai_attribute_t &attr)
     {
         if (!testing_wred_thresholds)
@@ -87,6 +95,15 @@ namespace qosorch_test
         case SAI_WRED_ATTR_RED_MIN_THRESHOLD:
             ASSERT_TRUE(!saiThresholds.red_max_threshold || saiThresholds.red_max_threshold > attr.value.u32);
             saiThresholds.red_min_threshold = attr.value.u32;
+            break;
+        case SAI_WRED_ATTR_GREEN_DROP_PROBABILITY:
+            saiMaxDropProbabilities.green_max_drop_probability = attr.value.u32;
+            break;
+        case SAI_WRED_ATTR_YELLOW_DROP_PROBABILITY:
+            saiMaxDropProbabilities.yellow_max_drop_probability = attr.value.u32;
+            break;
+        case SAI_WRED_ATTR_RED_DROP_PROBABILITY:
+            saiMaxDropProbabilities.red_max_drop_probability = attr.value.u32;
             break;
         default:
             break;
@@ -130,6 +147,23 @@ namespace qosorch_test
         ASSERT_EQ(current_sai_wred_set_count, sai_set_wred_attribute_count);
         static_cast<Orch *>(gQosOrch)->dumpPendingTasks(ts);
         ASSERT_TRUE(ts.empty());
+    }
+
+    void updateMaxDropProbabilityAndCheck(string name, vector<FieldValueTuple> &maxDropProbabilityVector, qos_wred_max_drop_probability_t &maxDropProbabilities)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        vector<string> ts;
+        entries.push_back({name, "SET", maxDropProbabilityVector});
+        auto consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_WRED_PROFILE_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+        saiMaxDropProbabilities.green_max_drop_probability = 0;
+        saiMaxDropProbabilities.yellow_max_drop_probability = 0;
+        saiMaxDropProbabilities.red_max_drop_probability = 0;
+        static_cast<Orch *>(gQosOrch)->doTask();
+        ASSERT_EQ(saiMaxDropProbabilities.green_max_drop_probability, maxDropProbabilities.green_max_drop_probability);
+        ASSERT_EQ(saiMaxDropProbabilities.yellow_max_drop_probability, maxDropProbabilities.yellow_max_drop_probability);
+        ASSERT_EQ(saiMaxDropProbabilities.red_max_drop_probability, maxDropProbabilities.red_max_drop_probability);
     }
 
     sai_status_t _ut_stub_sai_create_wred(
@@ -1337,6 +1371,62 @@ namespace qosorch_test
 
         testing_wred_thresholds = false;
     }
+
+    TEST_F(QosOrchTest, QosOrchTestWredDropProbability)
+    {
+        testing_wred_thresholds = true;
+
+        // The order of fields matters when the wred profile is updated from the upper set to the lower set
+        // It should be max, min for each color. In this order, the new max is less then the current min
+        // QoS orchagent should guarantee that the new min is configured first and then new max
+        vector<FieldValueTuple> greenProfile = {
+            {"wred_green_enable", "true"},
+            {"wred_yellow_enable", "false"},
+        };
+        qos_wred_max_drop_probability_t greenProbabilities = {
+            100, // green_max_drop_probability
+            0,   // yellow_max_drop_probability
+            0    // red_max_drop_probability
+        };
+        updateMaxDropProbabilityAndCheck("green_default", greenProfile, greenProbabilities);
+
+        greenProfile.push_back({"green_drop_probability", "5"});
+        greenProbabilities.green_max_drop_probability = 5;
+        updateMaxDropProbabilityAndCheck("green", greenProfile, greenProbabilities);
+
+        vector<FieldValueTuple> yellowProfile = {
+            {"wred_yellow_enable", "true"},
+            {"wred_red_enable", "false"},
+        };
+        qos_wred_max_drop_probability_t yellowProbabilities = {
+            0,   // green_max_drop_probability
+            100, // yellow_max_drop_probability
+            0    // red_max_drop_probability
+        };
+        updateMaxDropProbabilityAndCheck("yellow_default", yellowProfile, yellowProbabilities);
+
+        yellowProfile.push_back({"yellow_drop_probability", "5"});
+        yellowProbabilities.yellow_max_drop_probability = 5;
+        updateMaxDropProbabilityAndCheck("yellow", yellowProfile, yellowProbabilities);
+
+        vector<FieldValueTuple> redProfile = {
+            {"wred_green_enable", "false"},
+            {"wred_red_enable", "true"},
+        };
+        qos_wred_max_drop_probability_t redProbabilities = {
+            0,   // green_max_drop_probability
+            0,   // yellow_max_drop_probability
+            100  // red_max_drop_probability
+        };
+        updateMaxDropProbabilityAndCheck("red_default", redProfile, redProbabilities);
+
+        redProfile.push_back({"red_drop_probability", "5"});
+        redProbabilities.red_max_drop_probability = 5;
+        updateMaxDropProbabilityAndCheck("red", redProfile, redProbabilities);
+
+        testing_wred_thresholds = false;
+    }
+
 
     /*
      * Make sure empty fields won't cause orchagent crash
