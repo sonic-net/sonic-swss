@@ -55,6 +55,7 @@ extern string gMySwitchType;
 extern int32_t gVoqMySwitchId;
 extern string gMyHostName;
 extern string gMyAsicName;
+extern event_handle_t g_events_handle;
 
 #define DEFAULT_SYSTEM_PORT_MTU 9100
 #define VLAN_PREFIX         "Vlan"
@@ -353,9 +354,8 @@ static bool isValidPortTypeForLagMember(const Port& port)
  *    default VLAN and all ports removed from .1Q bridge.
  */
 PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames,
-        DBConnector *chassisAppDb, event_handle_t events_handle) :
+        DBConnector *chassisAppDb) :
         Orch(db, tableNames),
-        m_events_handle(events_handle),
         m_portStateTable(stateDb, STATE_PORT_TABLE_NAME),
         port_stat_manager(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         gb_port_stat_manager("GB_FLEX_COUNTER_DB",
@@ -2540,7 +2540,7 @@ bool PortsOrch::setHostIntfsOperStatus(const Port& port, bool isUp) const
             isUp ? "UP" : "DOWN", port.m_alias.c_str());
 
     event_params_t params = {{"ifname",port.m_alias},{"status",isUp ? "up" : "down"}};
-    event_publish(m_events_handle, "if-state", &params);
+    event_publish(g_events_handle, "if-state", &params);
     return true;
 }
 
