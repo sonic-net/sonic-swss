@@ -773,7 +773,6 @@ void CrmOrch::checkCrmThresholds()
                               res.name.c_str(), threshType.c_str(), percentageUtil, cnt.usedCounter, cnt.availableCounter);
 
                 event_publish(g_events_handle, "chk_crm_threshold", &params);
-
                 res.exceededLogCounter++;
             }
             else if ((utilization <= res.lowThreshold) && (res.exceededLogCounter > 0) && (res.highThreshold != res.lowThreshold))
