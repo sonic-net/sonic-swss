@@ -772,9 +772,7 @@ void CrmOrch::checkCrmThresholds()
                 SWSS_LOG_WARN("%s THRESHOLD_EXCEEDED for %s %u%% Used count %u free count %u",
                               res.name.c_str(), threshType.c_str(), percentageUtil, cnt.usedCounter, cnt.availableCounter);
 
-                if (0 != event_publish(m_events_handle, "chk_crm_threshold", &params)) {
-                    SWSS_LOG_WARN("Failed to publish event for if-state");
-                }
+                event_publish(m_events_handle, "chk_crm_threshold", &params);
 
                 res.exceededLogCounter++;
             }

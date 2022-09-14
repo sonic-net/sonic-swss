@@ -2540,9 +2540,7 @@ bool PortsOrch::setHostIntfsOperStatus(const Port& port, bool isUp) const
             isUp ? "UP" : "DOWN", port.m_alias.c_str());
 
     event_params_t params = {{"ifname",port.m_alias},{"status",isUp ? "up" : "down"}};
-    if (0 != event_publish(m_events_handle, "if-state", &params)) {
-        SWSS_LOG_WARN("Failed to publish event for if-state");
-    }
+    event_publish(m_events_handle, "if-state", &params);
     return true;
 }
 
