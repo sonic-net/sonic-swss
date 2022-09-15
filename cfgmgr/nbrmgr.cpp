@@ -41,8 +41,8 @@ static bool send_message(struct nl_sock *sk, struct nl_msg *msg)
     return rc;
 }
 
-NbrMgr::NbrMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
-        Orch(cfgDb, tableNames),
+NbrMgr::NbrMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<TableConnector> &tableNames) :
+        Orch(tableNames),
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
         m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME),
         m_stateVlanTable(stateDb, STATE_VLAN_TABLE_NAME),
@@ -342,6 +342,16 @@ void NbrMgr::doTask(Consumer &consumer)
     {
         doStateSystemNeighTask(consumer);
     }
+    else if (table_name == CFG_INTF_TABLE_NAME)
+    {
+        doIpInterfaceTask(consumer);
+        return;
+    }
+    else if (table_name == CFG_DEVICE_METADATA_TABLE_NAME)
+    {
+        doSystemMacTask(consumer);
+        return;
+    }
     else
     {
         SWSS_LOG_ERROR("Unknown REDIS table %s ", table_name.c_str());
@@ -626,3 +636,270 @@ bool NbrMgr::delKernelNeigh(string odev, IpAddress ip_addr)
     SWSS_LOG_INFO("Deleted Nbr for %s on interface %s", ip_str.c_str(), odev.c_str());
     return true;
 }
+
+void NbrMgr::doIpInterfaceTask(Consumer &consumer)
+{
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple t = it->second;
+        vector<string> keys = tokenize(kfvKey(t), config_db_key_delimiter);
+        string op = kfvOp(t);
+        string key = kfvKey(t);
+
+        if (keys.size() == 2)
+        {
+            string alias(keys[0]);
+            IpPrefix ip_prefix(keys[1]);
+
+            if (op == SET_COMMAND)
+            {
+                if (!isIntfStateOk(alias))
+                {
+                    it++;
+                    continue;
+                }
+
+                if (m_IntfsTable.find(alias) == m_IntfsTable.end())
+                {
+                    IntfsEntry intfs_entry;
+                    m_IntfsTable[alias] = intfs_entry;
+                    m_IntfsTable[alias].v4_addr_cnt = 0;
+                    m_IntfsTable[alias].v6_addr_cnt = 0;
+                }
+
+                m_IntfsTable[alias].ip_addresses.insert(ip_prefix);
+                ip_prefix.isV4() ? m_IntfsTable[alias].v4_addr_cnt++ : m_IntfsTable[alias].v6_addr_cnt++;
+            }
+            else if (op == DEL_COMMAND)
+            {
+                if (m_IntfsTable.find(alias) != m_IntfsTable.end())
+                {
+                    if(m_IntfsTable[alias].ip_addresses.find(ip_prefix) != (m_IntfsTable[alias].ip_addresses.end()))
+                    {
+                        m_IntfsTable[alias].ip_addresses.erase(ip_prefix);
+                        ip_prefix.isV4() ? m_IntfsTable[alias].v4_addr_cnt-- : m_IntfsTable[alias].v6_addr_cnt--;
+                        if(m_IntfsTable[alias].ip_addresses.size() == 0 && !(m_IntfsTable[alias].ipv6_enable_config))
+                        {
+                            m_IntfsTable.erase(alias);
+                        }
+                    }
+                }
+            }
+        }
+        else if (keys.size() == 1)
+        {
+            string alias(keys[0]);
+            const vector<FieldValueTuple>& data = kfvFieldsValues(t);
+            string ipv6_link_local_mode = "";
+            string donar_intf = "";
+            bool is_ip_unnm = false;
+            string vrf_name = "";
+            for (auto idx : data)
+            {
+                const auto &field = fvField(idx);
+                const auto &value = fvValue(idx);
+                if (field == "ipv6_use_link_local_only")
+                {
+                    ipv6_link_local_mode = value;
+                    break;
+                }
+                if (field == "unnumbered")
+                {
+                    is_ip_unnm = true;
+                    donar_intf = value;
+                    break;
+                }
+                if (field == "vrf_name")
+                {
+                    vrf_name = value;
+                    SWSS_LOG_INFO("doIpInterfaceTask, vrf %s\n", vrf_name.c_str());
+                    break;
+                }
+            }
+            if (op == SET_COMMAND)
+            {
+                if (!isIntfStateOk(alias))
+                {
+                    it++;
+                    continue;
+                }
+                if((ipv6_link_local_mode == "enable") || (is_ip_unnm) || (vrf_name != ""))
+                {
+                    if (m_IntfsTable.find(alias) == m_IntfsTable.end())
+                    {
+                        IntfsEntry intfs_entry;
+                        m_IntfsTable[alias] = intfs_entry;
+                    }
+
+                    if (ipv6_link_local_mode == "enable")
+                       m_IntfsTable[alias].ipv6_enable_config = true;
+
+                    if(is_ip_unnm)
+                        m_IntfsTable[alias].donar_intf = donar_intf;
+
+                    m_IntfsTable[alias].is_ip_unnm = is_ip_unnm;
+
+                    if (vrf_name != "")
+                    {
+                        SWSS_LOG_INFO("doIpInterfaceTask, add vrf %s for intf %s\n", vrf_name.c_str(), alias.c_str());
+                        m_IntfsTable[alias].vrf_name = vrf_name;
+                    }
+                }
+            }
+            if (op == DEL_COMMAND || ipv6_link_local_mode == "disable")
+            {
+                if (m_IntfsTable.find(alias) != m_IntfsTable.end())
+                {
+                    if(m_IntfsTable[alias].ip_addresses.size() == 0)
+                    {
+                        m_IntfsTable.erase(alias);
+                    }
+                    else
+                    {
+                        m_IntfsTable[alias].ipv6_enable_config = false;
+                    }
+                }
+            }
+        }
+        it = consumer.m_toSync.erase(it);
+    }
+}
+
+string NbrMgr::getSubnetInterfaceName(const string &alias, const IpAddress &ip)
+{
+    string ifName = alias;
+
+    if (m_IntfsTable.find(ifName) != m_IntfsTable.end())
+    {
+        if (ip.isV4()) 
+        {
+            for (auto &prefixIt: m_IntfsTable[ifName].ip_addresses)
+            {
+                if (prefixIt.isAddressInSubnet(ip))
+                {
+                    return ifName;
+                }
+            }
+        }
+
+        if(m_IntfsTable[ifName].is_ip_unnm)
+            return ifName;
+    }
+    return {};
+}
+
+void NbrMgr::doSystemMacTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple entry = it->second;
+        vector<string> keys = tokenize(kfvKey(entry), config_db_key_delimiter);
+        string op = kfvOp(entry);
+        string key = kfvKey(entry);
+
+        if (op == SET_COMMAND)
+        {
+            for (auto i : kfvFieldsValues(entry))
+            {
+                SWSS_LOG_INFO("Field: %s Val %s", fvField(i).c_str(), fvValue(i).c_str());
+                if (fvField(i) == "mac") {
+                    m_system_mac = MacAddress(fvValue(i));
+                    SWSS_LOG_NOTICE("System MAC %s", m_system_mac.to_string().c_str());
+
+                    auto itr = m_IntfsTable.begin();
+                    while (itr != m_IntfsTable.end())
+                    {
+                        if (itr->second.is_sag == false) {
+                            itr->second.source_mac = m_system_mac;
+                        }
+                        itr++;
+                    }
+
+                    break;
+                }
+            }
+        }
+        else if (op == DEL_COMMAND)
+        {
+            m_system_mac = MacAddress();
+        }
+        it = consumer.m_toSync.erase(it);
+    }
+}
+
+bool NbrMgr::hasIntfIpAddress(string ifname, bool isV4)
+{
+    auto it =  m_IntfsTable.find(ifname);
+    bool hasIp = false;
+
+    if(it != m_IntfsTable.end())
+    {
+        if(isV4)
+        {
+            if(m_IntfsTable[ifname].is_ip_unnm || m_IntfsTable[ifname].v4_addr_cnt)
+                hasIp = true;
+        }
+        else
+        {
+            if(m_IntfsTable[ifname].ipv6_enable_config || m_IntfsTable[ifname].v6_addr_cnt)
+                hasIp = true;
+        }
+
+    }
+    return hasIp;
+}
+
+IpAddress NbrMgr::getIntfIpAddress(string ifname, IpAddress dst_ip)
+{
+    //Get Interface from Interface Cache
+    auto it =  m_IntfsTable.find(ifname);
+
+    if(it != m_IntfsTable.end())
+    {
+        struct IntfsEntry intfs = it->second;
+        if (intfs.is_ip_unnm)
+        {
+            auto it_unnm  =  m_IntfsTable.find(intfs.donar_intf);
+            if(it_unnm !=  m_IntfsTable.end())
+            {
+                for (auto &prefixIt: m_IntfsTable[intfs.donar_intf].ip_addresses)
+                {
+                    return prefixIt.getIp();
+                }
+            }
+        }
+        else
+        {
+            for (auto &prefixIt: m_IntfsTable[ifname].ip_addresses)
+            {
+                if (prefixIt.isAddressInSubnet(dst_ip))
+                {
+                    return prefixIt.getIp();
+                }
+            }
+        }
+    }
+    return IpAddress("0.0.0.0");
+}
+
+bool NbrMgr::isPrefixSubnet(const IpAddress &ip, const string &alias)
+{
+    if (m_IntfsTable.find(alias) == m_IntfsTable.end())
+    {
+        return false;
+    }
+    for (auto &prefixIt: m_IntfsTable[alias].ip_addresses)
+    {
+        if (prefixIt.isAddressInSubnet(ip))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+
