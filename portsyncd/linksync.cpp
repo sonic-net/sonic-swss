@@ -115,39 +115,41 @@ LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
             }
         }
 
-        /* In DPU SONiC this step is not needed as netdevs in Kernel are created in the early stage of the syncd service start, 
-         * when driver is loading. And exist while the driver is not unloaded.
-        */
-        if (g_switchType != "dpu")
+        /* In DPU SONiC netdevs in Kernel are created in the early stage of the syncd service start,
+         * when the driver is loading. And exist while the driver remains loaded. 
+         *The comparison logic to distinguish "old" interfaces is not needed. */
+        if (g_switchType == "dpu")
         {
-            for (idx_p = if_ni.get();
-                    idx_p != NULL && idx_p->if_index != 0 && idx_p->if_name != NULL;
-                    idx_p++)
+            return;
+        }
+
+        for (idx_p = if_ni.get();
+                idx_p != NULL && idx_p->if_index != 0 && idx_p->if_name != NULL;
+                idx_p++)
+        {
+            string key = idx_p->if_name;
+
+            /* Skip all non-frontpanel ports */
+            if (key.compare(0, INTFS_PREFIX.length(), INTFS_PREFIX))
             {
-                string key = idx_p->if_name;
+                continue;
+            }
 
-                /* Skip all non-frontpanel ports */
-                if (key.compare(0, INTFS_PREFIX.length(), INTFS_PREFIX))
-                {
-                    continue;
-                }
+            m_ifindexOldNameMap[idx_p->if_index] = key;
 
-                m_ifindexOldNameMap[idx_p->if_index] = key;
-
-                ostringstream cmd;
-                string res;
-                /* Bring down the existing kernel interfaces */
-                SWSS_LOG_INFO("Bring down old interface %s(%d)", key.c_str(), idx_p->if_index);
-                cmd << "ip link set " << quoted(key) << " down";
-                try
-                {
-                    swss::exec(cmd.str(), res);
-                }
-                catch (...)
-                {
-                    /* Ignore error in this flow ; */
-                    SWSS_LOG_WARN("Failed to bring down old interface %s(%d)", key.c_str(), idx_p->if_index);
-                }
+            ostringstream cmd;
+            string res;
+            /* Bring down the existing kernel interfaces */
+            SWSS_LOG_INFO("Bring down old interface %s(%d)", key.c_str(), idx_p->if_index);
+            cmd << "ip link set " << quoted(key) << " down";
+            try
+            {
+                swss::exec(cmd.str(), res);
+            }
+            catch (...)
+            {
+                /* Ignore error in this flow ; */
+                SWSS_LOG_WARN("Failed to bring down old interface %s(%d)", key.c_str(), idx_p->if_index);
             }
         }
     }
