@@ -33,6 +33,7 @@ const string LAG_PREFIX = "PortChannel";
 
 extern set<string> g_portSet;
 extern bool g_init;
+extern string g_switchType;
 
 LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
     m_portTableProducer(appl_db, APP_PORT_TABLE_NAME),
@@ -112,6 +113,14 @@ LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
             {
                 ++port_iter;
             }
+        }
+
+        /* In DPU SONiC netdevs in Kernel are created in the early stage of the syncd service start,
+         * when the driver is loading. And exist while the driver remains loaded. 
+         *The comparison logic to distinguish "old" interfaces is not needed. */
+        if (g_switchType == "dpu")
+        {
+            return;
         }
 
         for (idx_p = if_ni.get();
