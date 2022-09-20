@@ -101,7 +101,7 @@ stages:
 
 - stage: Gcov
   dependsOn: Test
-  condition: always()
+  condition: in(dependencies.Test.result, 'Succeeded', 'SucceededWithIssues')
   jobs:
   - template: .azure-pipelines/gcov.yml
     parameters:
