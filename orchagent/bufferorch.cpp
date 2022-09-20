@@ -19,6 +19,7 @@ extern sai_buffer_api_t *sai_buffer_api;
 extern PortsOrch *gPortsOrch;
 extern Directory<Orch*> gDirectory;
 extern sai_object_id_t gSwitchId;
+extern string gMySwitchType;
 
 #define BUFFER_POOL_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS  "60000"
 
@@ -103,16 +104,32 @@ void BufferOrch::initBufferReadyLists(DBConnector *applDb, DBConnector *confDb)
         Table pg_table(applDb, APP_BUFFER_PG_TABLE_NAME);
         initBufferReadyList(pg_table, false);
 
-        Table queue_table(applDb, APP_BUFFER_QUEUE_TABLE_NAME);
-        initBufferReadyList(queue_table, false);
+        if(gMySwitchType == "voq") 
+        {
+            Table queue_table(applDb, APP_BUFFER_QUEUE_TABLE_NAME);
+            initVoqBufferReadyList(queue_table, false);
+        }
+        else
+        {
+            Table queue_table(applDb, APP_BUFFER_QUEUE_TABLE_NAME);
+            initBufferReadyList(queue_table, false);
+        }
     }
     else
     {
         Table pg_table(confDb, CFG_BUFFER_PG_TABLE_NAME);
         initBufferReadyList(pg_table, true);
 
-        Table queue_table(confDb, CFG_BUFFER_QUEUE_TABLE_NAME);
-        initBufferReadyList(queue_table, true);
+        if(gMySwitchType == "voq") 
+        {
+            Table queue_table(confDb, CFG_BUFFER_QUEUE_TABLE_NAME);
+            initVoqBufferReadyList(queue_table, true);
+        }
+        else
+        {
+            Table queue_table(confDb, CFG_BUFFER_QUEUE_TABLE_NAME);
+            initBufferReadyList(queue_table, true);
+        }
     }
 }
 
@@ -141,6 +158,38 @@ void BufferOrch::initBufferReadyList(Table& table, bool isConfigDb)
 
         auto &&port_names = tokenize(tokens[0], list_item_delimiter);
 
+        for(const auto& port_name: port_names)
+        {
+            SWSS_LOG_INFO("Item %s has been inserted into ready list", appldb_key.c_str());
+            m_port_ready_list_ref[port_name].push_back(appldb_key);
+        }
+    }
+}
+
+void BufferOrch::initVoqBufferReadyList(Table& table, bool isConfigDb)
+{
+    SWSS_LOG_ENTER();
+
+    std::vector<std::string> keys;
+    table.getKeys(keys);
+
+    const char dbKeyDelimiter = (isConfigDb ? config_db_key_delimiter : delimiter);
+
+    // populate the lists with buffer configuration information
+    for (const auto& key: keys)
+    {
+        auto &&tokens = tokenize(key, dbKeyDelimiter);
+        if (tokens.size() != 4)
+        {
+            SWSS_LOG_ERROR("Wrong format of a table '%s' key '%s'. Skip it", table.getTableName().c_str(), key.c_str());
+            continue;
+        }
+
+        // We need transform the key from config db format to appl db format
+        auto appldb_key = tokens[0] + config_db_key_delimiter + tokens[1] + config_db_key_delimiter + tokens[2] + delimiter + tokens[3];
+        m_ready_list[appldb_key] = false;
+
+        auto &&port_names = tokenize(tokens[0] + config_db_key_delimiter + tokens[1] + config_db_key_delimiter + tokens[2], list_item_delimiter);
         for(const auto& port_name: port_names)
         {
             SWSS_LOG_INFO("Item %s has been inserted into ready list", appldb_key.c_str());
@@ -712,7 +761,8 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
 }
 
 /*
-Input sample "BUFFER_QUEUE|Ethernet4,Ethernet45|10-15"
+   Input sample "BUFFER_QUEUE|Ethernet4,Ethernet45|10-15" or
+                "BUFFER_QUEUE|STG01-0101-0400-01T2-LC6|ASIC0|Ethernet4|10-15"
 */
 task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
 {
@@ -727,15 +777,35 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
 
     SWSS_LOG_DEBUG("Processing:%s", key.c_str());
     tokens = tokenize(key, delimiter);
-    if (tokens.size() != 2)
+
+    vector<string> port_names;
+    if (gMySwitchType == "voq") 
     {
-        SWSS_LOG_ERROR("malformed key:%s. Must contain 2 tokens", key.c_str());
-        return task_process_status::task_invalid_entry;
+        if (tokens.size() != 4)
+        {
+            SWSS_LOG_ERROR("malformed key:%s. Must contain 4 tokens", key.c_str());
+            return task_process_status::task_invalid_entry;
+        }
+
+        port_names = tokenize(tokens[0] + config_db_key_delimiter + tokens[1] + config_db_key_delimiter + tokens[2], list_item_delimiter);
+        if (!parseIndexRange(tokens[3], range_low, range_high))
+        {
+            return task_process_status::task_invalid_entry;
+        }
     }
-    vector<string> port_names = tokenize(tokens[0], list_item_delimiter);
-    if (!parseIndexRange(tokens[1], range_low, range_high))
+    else 
     {
-        return task_process_status::task_invalid_entry;
+        if (tokens.size() != 2)
+        {
+            SWSS_LOG_ERROR("malformed key:%s. Must contain 2 tokens", key.c_str());
+            return task_process_status::task_invalid_entry;
+        }
+
+        port_names = tokenize(tokens[0], list_item_delimiter);
+        if (!parseIndexRange(tokens[1], range_low, range_high))
+        {
+            return task_process_status::task_invalid_entry;
+        }
     }
 
     if (op == SET_COMMAND)
@@ -792,20 +862,35 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
         for (size_t ind = range_low; ind <= range_high; ind++)
         {
             SWSS_LOG_DEBUG("processing queue:%zd", ind);
-            if (port.m_queue_ids.size() <= ind)
+            sai_object_id_t queue_id;
+
+            if (gMySwitchType == "voq") 
             {
-                SWSS_LOG_ERROR("Invalid queue index specified:%zd", ind);
-                return task_process_status::task_invalid_entry;
-            }
-            if (port.m_queue_lock[ind])
+                std :: vector<sai_object_id_t> queue_ids = gPortsOrch->getPortVoQIds(port);
+                if (queue_ids.size() <= ind)
+                {
+                    SWSS_LOG_ERROR("Invalid voq index specified:%zd", ind);
+                    return task_process_status::task_invalid_entry;
+                }
+                queue_id = queue_ids[ind];
+            } 
+            else
             {
-                SWSS_LOG_WARN("Queue %zd on port %s is locked, will retry", ind, port_name.c_str());
-                return task_process_status::task_need_retry;
+                if (port.m_queue_ids.size() <= ind)
+                 {
+                    SWSS_LOG_ERROR("Invalid queue index specified:%zd", ind);
+                    return task_process_status::task_invalid_entry;
+                }
+                if (port.m_queue_lock[ind])
+                {
+                    SWSS_LOG_WARN("Queue %zd on port %s is locked, will retry", ind, port_name.c_str());
+                    return task_process_status::task_need_retry;
+                }
+                queue_id = port.m_queue_ids[ind];
             }
+
             if (need_update_sai)
             {
-                sai_object_id_t queue_id;
-                queue_id = port.m_queue_ids[ind];
                 SWSS_LOG_DEBUG("Applying buffer profile:0x%" PRIx64 " to queue index:%zd, queue sai_id:0x%" PRIx64, sai_buffer_profile, ind, queue_id);
                 sai_status_t sai_status = sai_queue_api->set_queue_attribute(queue_id, &attr);
                 if (sai_status != SAI_STATUS_SUCCESS)
@@ -1258,7 +1343,15 @@ void BufferOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isConfigDone())
+    if (gMySwitchType == "voq")
+    {
+        if(!gPortsOrch->isInitDone()) 
+        {
+            SWSS_LOG_INFO("Buffer task for %s can't be executed ahead of port config done", consumer.getTableName().c_str());
+            return;
+        }
+    }
+    else if (!gPortsOrch->isConfigDone())
     {
         SWSS_LOG_INFO("Buffer task for %s can't be executed ahead of port config done", consumer.getTableName().c_str());
         return;

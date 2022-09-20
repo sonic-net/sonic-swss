@@ -213,6 +213,7 @@ public:
 
     void setMACsecEnabledState(sai_object_id_t port_id, bool enabled);
     bool isMACsecPort(sai_object_id_t port_id) const;
+    vector<sai_object_id_t> getPortVoQIds(Port& port);
 
 private:
     unique_ptr<Table> m_counterTable;
