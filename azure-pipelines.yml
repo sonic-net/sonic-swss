@@ -50,7 +50,7 @@ stages:
       archive_gcov: true
 
 - stage: BuildAsan
-
+  dependsOn: []
   jobs:
   - template: .azure-pipelines/build-template.yml
     parameters:
