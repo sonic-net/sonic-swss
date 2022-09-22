@@ -39,7 +39,7 @@ bool FpmLink::isRawProcessing(struct nlmsghdr *h)
     int len;
     short encap_type = 0;
     struct rtmsg *rtm;
-    struct rtattr *tb[RTA_MAX + 1];
+    struct rtattr *tb[RTA_MAX + 1] = {0};
 
     rtm = (struct rtmsg *)NLMSG_DATA(h);
 
@@ -54,7 +54,6 @@ bool FpmLink::isRawProcessing(struct nlmsghdr *h)
         return false;
     }
 
-    memset(tb, 0, sizeof(tb));
     netlink_parse_rtattr(tb, RTA_MAX, RTM_RTA(rtm), len);
 
     if (!tb[RTA_MULTIPATH])
@@ -120,7 +119,7 @@ FpmLink::FpmLink(RouteSync *rsync, unsigned short port) :
     m_server_up(false),
     m_routesync(rsync)
 {
-    struct sockaddr_in addr;
+    struct sockaddr_in addr = {};
     int true_val = 1;
 
     m_server_socket = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -141,7 +140,6 @@ FpmLink::FpmLink(RouteSync *rsync, unsigned short port) :
         throw system_error(errno, system_category());
     }
 
-    memset (&addr, 0, sizeof (addr));
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
     addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);

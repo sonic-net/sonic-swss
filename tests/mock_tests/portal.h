@@ -6,6 +6,7 @@
 #include "aclorch.h"
 #include "crmorch.h"
 #include "copporch.h"
+#include "sfloworch.h"
 #include "directory.h"
 
 #undef protected
@@ -79,6 +80,24 @@ struct Portal
             std::vector<sai_hostif_trap_type_t> trapIdList;
             obj.getTrapIdsFromTrapGroup(trapGroupOid, trapIdList);
             return trapIdList;
+        }
+    };
+
+    struct SflowOrchInternal
+    {
+        static bool getSflowStatusEnable(SflowOrch &obj)
+        {
+            return obj.m_sflowStatus;
+        }
+
+        static SflowRateSampleMap getSflowSampleMap(SflowOrch &obj)
+        {
+            return obj.m_sflowRateSampleMap;
+        }
+
+        static SflowPortInfoMap getSflowPortInfoMap(SflowOrch &obj)
+        {
+            return obj.m_sflowPortInfoMap;
         }
     };
 

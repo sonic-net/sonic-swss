@@ -77,4 +77,57 @@ TEST(P4OrchUtilTest, QuotedVarTest)
     EXPECT_EQ(QuotedVar(bar.c_str()), "'a string has \\\'quote\\\''");
 }
 
+TEST(P4OrchUtilTest, VerifyAttrsTest)
+{
+    EXPECT_TRUE(verifyAttrs(std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"k1", "v1"}},
+                            std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"k1", "v1"}},
+                            std::vector<swss::FieldValueTuple>{},
+                            /*allow_unknown=*/false)
+                    .empty());
+    EXPECT_FALSE(verifyAttrs(std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"k1", "v1"},
+                                                                swss::FieldValueTuple{"k2", "v2"}},
+                             std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"k1", "v1"}},
+                             std::vector<swss::FieldValueTuple>{},
+                             /*allow_unknown=*/false)
+                     .empty());
+    EXPECT_TRUE(verifyAttrs(std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"k1", "v1"},
+                                                               swss::FieldValueTuple{"k2", "v2"}},
+                            std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"k1", "v1"}},
+                            std::vector<swss::FieldValueTuple>{},
+                            /*allow_unknown=*/true)
+                    .empty());
+    EXPECT_TRUE(verifyAttrs(std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"k1", "v1"},
+                                                               swss::FieldValueTuple{"k2", "v2"}},
+                            std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"k1", "v1"}},
+                            std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"k2", "v2"}},
+                            /*allow_unknown=*/false)
+                    .empty());
+    EXPECT_FALSE(verifyAttrs(std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"k1", "v1"},
+                                                                swss::FieldValueTuple{"k2", "v2"}},
+                             std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"k1", "v3"}},
+                             std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"k2", "v2"}},
+                             /*allow_unknown=*/false)
+                     .empty());
+    EXPECT_FALSE(verifyAttrs(std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"k1", "v1"},
+                                                                swss::FieldValueTuple{"k2", "v2"}},
+                             std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"k1", "v1"}},
+                             std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"k2", "v3"}},
+                             /*allow_unknown=*/false)
+                     .empty());
+    EXPECT_FALSE(
+        verifyAttrs(
+            std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"k1", "v1"}, swss::FieldValueTuple{"k2", "v2"}},
+            std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"k1", "v1"}, swss::FieldValueTuple{"k3", "v3"}},
+            std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"k2", "v2"}},
+            /*allow_unknown=*/true)
+            .empty());
+    EXPECT_TRUE(
+        verifyAttrs(
+            std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"k1", "v1"}, swss::FieldValueTuple{"k2", "v2"}},
+            std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"k1", "v1"}},
+            std::vector<swss::FieldValueTuple>{swss::FieldValueTuple{"k2", "v2"}, swss::FieldValueTuple{"k3", "v3"}},
+            /*allow_unknown=*/false)
+            .empty());
+}
+
 } // namespace

@@ -30,7 +30,7 @@ class TestVxlanOrchP2MP(object):
         vnilist = ['1000', '1001', '1002']
 
         print("Testing SIP Tunnel Creation")
-        vxlan_obj.check_vxlan_sip_tunnel(dvs, tunnel_name, '6.6.6.6', vlanlist, vnilist)
+        vxlan_obj.check_vxlan_sip_tunnel(dvs, tunnel_name, '6.6.6.6', vlanlist, vnilist, ignore_bp=False)
 
         print("Testing Tunnel Map Entry")
         vxlan_obj.check_vxlan_tunnel_map_entry(dvs, tunnel_name, vlanlist, vnilist)
@@ -43,7 +43,7 @@ class TestVxlanOrchP2MP(object):
 
         print("Testing SIP Tunnel Deletion")
         vxlan_obj.remove_vxlan_tunnel(dvs, tunnel_name)
-        vxlan_obj.check_vxlan_sip_tunnel_delete(dvs, tunnel_name, '6.6.6.6')
+        vxlan_obj.check_vxlan_sip_tunnel_delete(dvs, tunnel_name, '6.6.6.6', ignore_bp=False)
 
 #    Test 2 - Vlan extension Tests
     def test_vlan_extension(self, dvs, testlog):
@@ -62,7 +62,7 @@ class TestVxlanOrchP2MP(object):
         vxlan_obj.create_vxlan_tunnel_map(dvs, tunnel_name, map_name_1, '1001', 'Vlan101')
         vxlan_obj.create_vxlan_tunnel_map(dvs, tunnel_name, map_name_2, '1002', 'Vlan102')
 
-        vxlan_obj.check_vxlan_sip_tunnel(dvs, tunnel_name, '6.6.6.6', vlanlist, vnilist)
+        vxlan_obj.check_vxlan_sip_tunnel(dvs, tunnel_name, '6.6.6.6', vlanlist, vnilist, ignore_bp=False)
         vxlan_obj.check_vxlan_tunnel_map_entry(dvs, tunnel_name, vlanlist, vnilist)
 
         vxlan_obj.create_evpn_nvo(dvs, 'nvo1', tunnel_name)
@@ -102,6 +102,17 @@ class TestVxlanOrchP2MP(object):
         vxlan_obj.remove_evpn_remote_vni(dvs, 'Vlan100', '8.8.8.8')
         vxlan_obj.check_vlan_extension_delete_p2mp(dvs, '100', '6.6.6.6', '8.8.8.8')
 
+        print("Testing remote endpoint again to 8.8.8.8")
+        vxlan_obj.create_evpn_remote_vni(dvs, 'Vlan100', '8.8.8.8', '1000')
+        print("Testing remote endpoint creation to 8.8.8.8")
+
+        print("Testing VLAN 100 extension to 8.8.8.8")
+        vxlan_obj.check_vlan_extension_p2mp(dvs, '100', '6.6.6.6', '8.8.8.8')
+
+        print("Testing Last Vlan removal and remote endpoint delete for 8.8.8.8")
+        vxlan_obj.remove_evpn_remote_vni(dvs, 'Vlan100', '8.8.8.8')
+        vxlan_obj.check_vlan_extension_delete_p2mp(dvs, '100', '6.6.6.6', '8.8.8.8')
+
         vxlan_obj.remove_vxlan_tunnel_map(dvs, tunnel_name, map_name, '1000', 'Vlan100')
         vxlan_obj.remove_vxlan_tunnel_map(dvs, tunnel_name, map_name_1, '1001', 'Vlan101')
         vxlan_obj.remove_vxlan_tunnel_map(dvs, tunnel_name, map_name_2, '1002', 'Vlan102')
@@ -110,4 +121,4 @@ class TestVxlanOrchP2MP(object):
         print("Testing SIP Tunnel Deletion")
         vxlan_obj.remove_evpn_nvo(dvs, 'nvo1')
         vxlan_obj.remove_vxlan_tunnel(dvs, tunnel_name)
-        vxlan_obj.check_vxlan_sip_tunnel_delete(dvs, tunnel_name, '6.6.6.6')
+        vxlan_obj.check_vxlan_sip_tunnel_delete(dvs, tunnel_name, '6.6.6.6', ignore_bp=False)

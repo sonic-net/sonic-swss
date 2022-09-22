@@ -3,14 +3,22 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
+#include "SaiAttributeList.h"
+#include "converter.h"
 #include "crmorch.h"
+#include "dbconnector.h"
 #include "json.hpp"
 #include "logger.h"
 #include "p4orch/p4orch_util.h"
+#include "sai_serialize.h"
 #include "swssnet.h"
+#include "table.h"
+
+using ::p4orch::kTableKeyDelimiter;
 
 extern sai_object_id_t gSwitchId;
 extern sai_object_id_t gVirtualRouterId;
@@ -19,86 +27,284 @@ extern sai_route_api_t *sai_route_api;
 
 extern CrmOrch *gCrmOrch;
 
+extern size_t gMaxBulkSize;
+
 namespace
 {
 
-// This function will perform a route update. A route update will have two
-// attribute update. If the second attribut update fails, the function will try
-// to revert the first attribute. If the revert fails, the function will raise
-// critical state.
-ReturnCode UpdateRouteAttrs(sai_packet_action_t old_action, sai_packet_action_t new_action, sai_object_id_t old_nexthop,
-                            sai_object_id_t new_nexthop, const std::string &route_entry_key,
-                            sai_route_entry_t *rotue_entry)
+ReturnCode checkNextHopAndWcmpGroupAndRouteMetadataExistence(bool expected_next_hop_existence,
+                                                             bool expected_wcmp_group_existence,
+                                                             bool expected_route_metadata_existence,
+                                                             const P4RouteEntry &route_entry)
 {
-    SWSS_LOG_ENTER();
-    // For drop action, we will update the action attribute first.
-    bool action_first = (new_action == SAI_PACKET_ACTION_DROP);
+    if (route_entry.nexthop_id.empty() && expected_next_hop_existence)
+    {
+        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "Empty nexthop_id for route with " << route_entry.action << " action";
+    }
+    if (!route_entry.nexthop_id.empty() && !expected_next_hop_existence)
+    {
+        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "Non-empty nexthop_id for route with " << route_entry.action << " action";
+    }
+    if (route_entry.wcmp_group.empty() && expected_wcmp_group_existence)
+    {
+        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "Empty wcmp_group_id for route with " << route_entry.action << " action";
+    }
+    if (!route_entry.wcmp_group.empty() && !expected_wcmp_group_existence)
+    {
+        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "Non-empty wcmp_group_id for route with " << route_entry.action << " action";
+    }
+    if (route_entry.route_metadata.empty() && expected_route_metadata_existence)
+    {
+        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "Empty route_metadata for route with " << route_entry.action << " action";
+    }
+    if (!route_entry.route_metadata.empty() && !expected_route_metadata_existence)
+    {
+        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+               << "Non-empty route_metadata for route with " << route_entry.action << " action";
+    }
+    return ReturnCode();
+}
 
-    // First attribute
-    sai_attribute_t route_attr;
-    route_attr.id = (action_first) ? SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION : SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
-    if (action_first)
+// Returns the nexthop OID of the given entry.
+// Raise critical state if OID cannot be found.
+sai_object_id_t getNexthopOid(const P4RouteEntry &route_entry, const P4OidMapper &mapper)
+{
+    sai_object_id_t oid = SAI_NULL_OBJECT_ID;
+    if (route_entry.action == p4orch::kSetNexthopId || route_entry.action == p4orch::kSetNexthopIdAndMetadata)
     {
-        route_attr.value.s32 = new_action;
+        auto nexthop_key = KeyGenerator::generateNextHopKey(route_entry.nexthop_id);
+        if (!mapper.getOID(SAI_OBJECT_TYPE_NEXT_HOP, nexthop_key, &oid))
+        {
+            std::stringstream msg;
+            msg << "Nexthop " << QuotedVar(route_entry.nexthop_id) << " does not exist";
+            SWSS_LOG_ERROR("%s", msg.str().c_str());
+            SWSS_RAISE_CRITICAL_STATE(msg.str());
+            return oid;
+        }
     }
-    else
+    else if (route_entry.action == p4orch::kSetWcmpGroupId || route_entry.action == p4orch::kSetWcmpGroupIdAndMetadata)
     {
-        route_attr.value.oid = new_nexthop;
+        auto wcmp_group_key = KeyGenerator::generateWcmpGroupKey(route_entry.wcmp_group);
+        if (!mapper.getOID(SAI_OBJECT_TYPE_NEXT_HOP_GROUP, wcmp_group_key, &oid))
+        {
+            std::stringstream msg;
+            msg << "WCMP group " << QuotedVar(route_entry.nexthop_id) << " does not exist";
+            SWSS_LOG_ERROR("%s", msg.str().c_str());
+            SWSS_RAISE_CRITICAL_STATE(msg.str());
+            return oid;
+        }
     }
-    CHECK_ERROR_AND_LOG_AND_RETURN(sai_route_api->set_route_entry_attribute(rotue_entry, &route_attr),
-                                   "Failed to set SAI attribute "
-                                       << (action_first ? "SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION"
-                                                        : "SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID")
-                                       << " when updating route " << QuotedVar(route_entry_key));
+    return oid;
+}
 
-    // Second attribute
-    route_attr.id = (action_first) ? SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID : SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
-    if (action_first)
+// Returns the SAI action of the given entry.
+sai_packet_action_t getSaiAction(const P4RouteEntry &route_entry)
+{
+    if (route_entry.action == p4orch::kDrop || route_entry.action == p4orch::kSetMetadataAndDrop)
     {
-        route_attr.value.oid = new_nexthop;
+        return SAI_PACKET_ACTION_DROP;
     }
-    else
+    else if (route_entry.action == p4orch::kTrap)
     {
-        route_attr.value.s32 = new_action;
+        return SAI_PACKET_ACTION_TRAP;
     }
-    ReturnCode status;
-    auto sai_status = sai_route_api->set_route_entry_attribute(rotue_entry, &route_attr);
-    if (sai_status == SAI_STATUS_SUCCESS)
-    {
-        return ReturnCode();
-    }
-    status = ReturnCode(sai_status) << "Failed to set SAI attribute "
-                                    << (action_first ? "SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID"
-                                                     : "SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION")
-                                    << " when updating route " << QuotedVar(route_entry_key);
-    SWSS_LOG_ERROR("%s SAI_STATUS: %s", status.message().c_str(), sai_serialize_status(sai_status).c_str());
+    return SAI_PACKET_ACTION_FORWARD;
+}
 
-    // Revert the first attribute
-    route_attr.id = (action_first) ? SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION : SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
-    if (action_first)
+// Returns the metadata of the given entry.
+uint32_t getMetadata(const P4RouteEntry &route_entry)
+{
+    if (route_entry.route_metadata.empty())
     {
-        route_attr.value.s32 = old_action;
+        return 0;
     }
-    else
-    {
-        route_attr.value.oid = old_nexthop;
-    }
-    sai_status = sai_route_api->set_route_entry_attribute(rotue_entry, &route_attr);
-    if (sai_status != SAI_STATUS_SUCCESS)
-    {
-        // Raise critical state if we fail to recover.
-        std::stringstream msg;
-        msg << "Failed to revert route attribute "
-            << (action_first ? "SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION" : "SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID")
-            << " for route " << QuotedVar(route_entry_key);
-        SWSS_LOG_ERROR("%s SAI_STATUS: %s", msg.str().c_str(), sai_serialize_status(sai_status).c_str());
-        SWSS_RAISE_CRITICAL_STATE(msg.str());
-    }
+    return swss::to_uint<uint32_t>(route_entry.route_metadata);
+}
 
-    return status;
+// Returns a list of SAI actions for route update.
+std::vector<sai_route_entry_attr_t> getSaiActions(const std::string action)
+{
+    static const auto *const kRouteActionToSaiActions =
+        new std::unordered_map<std::string, std::vector<sai_route_entry_attr_t>>({
+            {p4orch::kSetNexthopId,
+             std::vector<sai_route_entry_attr_t>{SAI_ROUTE_ENTRY_ATTR_META_DATA, SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID,
+                                                 SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION}},
+            {p4orch::kSetWcmpGroupId,
+             std::vector<sai_route_entry_attr_t>{SAI_ROUTE_ENTRY_ATTR_META_DATA, SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID,
+                                                 SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION}},
+            {p4orch::kSetNexthopIdAndMetadata,
+             std::vector<sai_route_entry_attr_t>{SAI_ROUTE_ENTRY_ATTR_META_DATA, SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID,
+                                                 SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION}},
+            {p4orch::kSetWcmpGroupIdAndMetadata,
+             std::vector<sai_route_entry_attr_t>{SAI_ROUTE_ENTRY_ATTR_META_DATA, SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID,
+                                                 SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION}},
+            {p4orch::kDrop,
+             std::vector<sai_route_entry_attr_t>{SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION, SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID,
+                                                 SAI_ROUTE_ENTRY_ATTR_META_DATA}},
+            {p4orch::kTrap,
+             std::vector<sai_route_entry_attr_t>{SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION, SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID,
+                                                 SAI_ROUTE_ENTRY_ATTR_META_DATA}},
+            {p4orch::kSetMetadataAndDrop,
+             std::vector<sai_route_entry_attr_t>{SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION, SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID,
+                                                 SAI_ROUTE_ENTRY_ATTR_META_DATA}},
+        });
+
+    if (kRouteActionToSaiActions->count(action) == 0)
+    {
+        return std::vector<sai_route_entry_attr_t>{};
+    }
+    return kRouteActionToSaiActions->at(action);
 }
 
 } // namespace
+
+RouteUpdater::RouteUpdater(const P4RouteEntry &old_route, const P4RouteEntry &new_route, P4OidMapper *mapper)
+    : m_oldRoute(old_route), m_newRoute(new_route), m_p4OidMapper(mapper), m_actions(getSaiActions(new_route.action))
+{
+    updateIdx();
+}
+
+P4RouteEntry RouteUpdater::getOldEntry() const
+{
+    return m_oldRoute;
+}
+
+P4RouteEntry RouteUpdater::getNewEntry() const
+{
+    return m_newRoute;
+}
+
+sai_route_entry_t RouteUpdater::getSaiEntry() const
+{
+    return m_newRoute.sai_route_entry;
+}
+
+sai_attribute_t RouteUpdater::getSaiAttr() const
+{
+    sai_attribute_t route_attr = {};
+    if (m_idx < 0 || m_idx >= static_cast<int>(m_actions.size()))
+    {
+        return route_attr;
+    }
+    route_attr.id = m_actions[m_idx];
+    switch (m_actions[m_idx])
+    {
+    case SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID:
+        route_attr.value.oid =
+            (m_revert) ? getNexthopOid(m_oldRoute, *m_p4OidMapper) : getNexthopOid(m_newRoute, *m_p4OidMapper);
+        break;
+    case SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION:
+        route_attr.value.s32 = (m_revert) ? getSaiAction(m_oldRoute) : getSaiAction(m_newRoute);
+        break;
+    default:
+        route_attr.value.u32 = (m_revert) ? getMetadata(m_oldRoute) : getMetadata(m_newRoute);
+    }
+    return route_attr;
+}
+
+bool RouteUpdater::updateResult(sai_status_t sai_status)
+{
+    if (sai_status != SAI_STATUS_SUCCESS)
+    {
+        if (m_revert)
+        {
+            std::stringstream msg;
+            msg << "Failed to revert SAI attribute for route entry " << QuotedVar(m_newRoute.route_entry_key);
+            SWSS_LOG_ERROR("%s SAI_STATUS: %s", msg.str().c_str(), sai_serialize_status(sai_status).c_str());
+            SWSS_RAISE_CRITICAL_STATE(msg.str());
+        }
+        else
+        {
+            m_status = ReturnCode(sai_status)
+                       << "Failed to update route entry " << QuotedVar(m_newRoute.route_entry_key);
+            m_revert = true;
+        }
+    }
+    return updateIdx();
+}
+
+ReturnCode RouteUpdater::getStatus() const
+{
+    return m_status;
+}
+
+bool RouteUpdater::updateIdx()
+{
+    if (m_revert)
+    {
+        for (--m_idx; m_idx >= 0; --m_idx)
+        {
+            if (checkAction())
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+    for (++m_idx; m_idx < static_cast<int>(m_actions.size()); ++m_idx)
+    {
+        if (checkAction())
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool RouteUpdater::checkAction() const
+{
+    if (m_idx < 0 || m_idx >= static_cast<int>(m_actions.size()))
+    {
+        return false;
+    }
+    switch (m_actions[m_idx])
+    {
+    case SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID:
+        if (getNexthopOid(m_oldRoute, *m_p4OidMapper) == getNexthopOid(m_newRoute, *m_p4OidMapper))
+        {
+            return false;
+        }
+        return true;
+    case SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION:
+        if (getSaiAction(m_oldRoute) == getSaiAction(m_newRoute))
+        {
+            return false;
+        }
+        return true;
+    default:
+        if (getMetadata(m_oldRoute) == getMetadata(m_newRoute))
+        {
+            return false;
+        }
+        return true;
+    }
+    return false;
+}
+
+RouteManager::RouteManager(P4OidMapper *p4oidMapper, VRFOrch *vrfOrch, ResponsePublisherInterface *publisher)
+    : m_vrfOrch(vrfOrch), m_routerBulker(sai_route_api, gMaxBulkSize)
+{
+    SWSS_LOG_ENTER();
+
+    assert(p4oidMapper != nullptr);
+    m_p4OidMapper = p4oidMapper;
+    assert(publisher != nullptr);
+    m_publisher = publisher;
+}
+
+sai_route_entry_t RouteManager::getSaiEntry(const P4RouteEntry &route_entry)
+{
+    sai_route_entry_t sai_entry;
+    sai_entry.vr_id = m_vrfOrch->getVRFid(route_entry.vrf_id);
+    sai_entry.switch_id = gSwitchId;
+    copy(sai_entry.destination, route_entry.route_prefix);
+    return sai_entry;
+}
 
 bool RouteManager::mergeRouteEntry(const P4RouteEntry &dest, const P4RouteEntry &src, P4RouteEntry *ret)
 {
@@ -106,11 +312,8 @@ bool RouteManager::mergeRouteEntry(const P4RouteEntry &dest, const P4RouteEntry 
 
     *ret = src;
     ret->sai_route_entry = dest.sai_route_entry;
-    if (ret->action.empty())
-    {
-        ret->action = dest.action;
-    }
-    if (ret->action != dest.action || ret->nexthop_id != dest.nexthop_id || ret->wcmp_group != dest.wcmp_group)
+    if (ret->action != dest.action || ret->nexthop_id != dest.nexthop_id || ret->wcmp_group != dest.wcmp_group ||
+        ret->route_metadata != dest.route_metadata)
     {
         return true;
     }
@@ -183,6 +386,10 @@ ReturnCodeOr<P4RouteEntry> RouteManager::deserializeRouteEntry(const std::string
         {
             route_entry.wcmp_group = value;
         }
+        else if (field == prependParamField(p4orch::kRouteMetadata))
+        {
+            route_entry.route_metadata = value;
+        }
         else if (field != p4orch::kControllerMetadata)
         {
             return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
@@ -203,7 +410,7 @@ P4RouteEntry *RouteManager::getRouteEntry(const std::string &route_entry_key)
     return &m_routeTable[route_entry_key];
 }
 
-ReturnCode RouteManager::validateRouteEntry(const P4RouteEntry &route_entry)
+ReturnCode RouteManager::validateRouteEntry(const P4RouteEntry &route_entry, const std::string &operation)
 {
     SWSS_LOG_ENTER();
 
@@ -229,7 +436,16 @@ ReturnCode RouteManager::validateRouteEntry(const P4RouteEntry &route_entry)
     {
         return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND) << "No VRF found with name " << QuotedVar(route_entry.vrf_id);
     }
-    return ReturnCode();
+
+    if (operation == SET_COMMAND)
+    {
+        return validateSetRouteEntry(route_entry);
+    }
+    else if (operation == DEL_COMMAND)
+    {
+        return validateDelRouteEntry(route_entry);
+    }
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Unknown operation type " << QuotedVar(operation);
 }
 
 ReturnCode RouteManager::validateSetRouteEntry(const P4RouteEntry &route_entry)
@@ -258,44 +474,64 @@ ReturnCode RouteManager::validateSetRouteEntry(const P4RouteEntry &route_entry)
     }
     if (action == p4orch::kSetNexthopId)
     {
-        if (route_entry.nexthop_id.empty())
-        {
-            return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Empty nexthop_id for route with nexthop_id action";
-        }
-        if (!route_entry.wcmp_group.empty())
-        {
-            return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                   << "Non-empty wcmp_group_id for route with nexthop_id action";
-        }
+        RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
+            /*expected_next_hop_existence=*/true,
+            /*expected_wcmp_group_existence=*/false,
+            /*expected_route_metadata_existence=*/false, route_entry));
     }
     else if (action == p4orch::kSetWcmpGroupId)
     {
-        if (!route_entry.nexthop_id.empty())
-        {
-            return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                   << "Non-empty nexthop_id for route with wcmp_group action";
-        }
-        if (route_entry.wcmp_group.empty())
-        {
-            return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                   << "Empty wcmp_group_id for route with wcmp_group action";
-        }
+        RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
+            /*expected_next_hop_existence=*/false,
+            /*expected_wcmp_group_existence=*/true,
+            /*expected_route_metadata_existence=*/false, route_entry));
     }
-    else if (action == p4orch::kDrop)
+    else if (action == p4orch::kSetNexthopIdAndMetadata)
     {
-        if (!route_entry.nexthop_id.empty())
-        {
-            return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Non-empty nexthop_id for route with drop action";
-        }
-        if (!route_entry.wcmp_group.empty())
-        {
-            return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                   << "Non-empty wcmp_group_id for route with drop action";
-        }
+        RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
+            /*expected_next_hop_existence=*/true,
+            /*expected_wcmp_group_existence=*/false,
+            /*expected_route_metadata_existence=*/true, route_entry));
+    }
+    else if (action == p4orch::kSetWcmpGroupIdAndMetadata)
+    {
+        RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
+            /*expected_next_hop_existence=*/false,
+            /*expected_wcmp_group_existence=*/true,
+            /*expected_route_metadata_existence=*/true, route_entry));
+    }
+    else if (action == p4orch::kDrop || action == p4orch::kTrap)
+    {
+        RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
+            /*expected_next_hop_existence=*/false,
+            /*expected_wcmp_group_existence=*/false,
+            /*expected_route_metadata_existence=*/false, route_entry));
+    }
+    else if (action == p4orch::kSetMetadataAndDrop)
+    {
+        RETURN_IF_ERROR(checkNextHopAndWcmpGroupAndRouteMetadataExistence(
+            /*expected_next_hop_existence=*/false,
+            /*expected_wcmp_group_existence=*/false,
+            /*expected_route_metadata_existence=*/true, route_entry));
     }
     else
     {
         return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Invalid action " << QuotedVar(action);
+    }
+
+    if (!route_entry.route_metadata.empty())
+    {
+        try
+        {
+            swss::to_uint<uint32_t>(route_entry.route_metadata);
+        }
+        catch (std::exception &e)
+        {
+            return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                   << "Action attribute " << QuotedVar(p4orch::kRouteMetadata) << " is invalid for "
+                   << QuotedVar(route_entry.route_entry_key) << ": Expect integer but got "
+                   << QuotedVar(route_entry.route_metadata);
+        }
     }
     return ReturnCode();
 }
@@ -322,177 +558,283 @@ ReturnCode RouteManager::validateDelRouteEntry(const P4RouteEntry &route_entry)
     {
         return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Non-empty wcmp_group for Del route";
     }
+    if (!route_entry.route_metadata.empty())
+    {
+        return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Non-empty route_metadata for Del route";
+    }
     return ReturnCode();
 }
 
-ReturnCode RouteManager::createRouteEntry(const P4RouteEntry &route_entry)
+std::vector<ReturnCode> RouteManager::createRouteEntries(const std::vector<P4RouteEntry> &route_entries)
 {
     SWSS_LOG_ENTER();
 
-    sai_route_entry_t sai_route_entry;
-    sai_route_entry.vr_id = m_vrfOrch->getVRFid(route_entry.vrf_id);
-    sai_route_entry.switch_id = gSwitchId;
-    copy(sai_route_entry.destination, route_entry.route_prefix);
-    if (route_entry.action == p4orch::kSetNexthopId)
-    {
-        auto nexthop_key = KeyGenerator::generateNextHopKey(route_entry.nexthop_id);
-        sai_object_id_t next_hop_oid;
-        m_p4OidMapper->getOID(SAI_OBJECT_TYPE_NEXT_HOP, nexthop_key, &next_hop_oid);
-        sai_attribute_t route_attr;
-        route_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
-        route_attr.value.oid = next_hop_oid;
-        // Default SAI_ROUTE_ATTR_PACKET_ACTION is SAI_PACKET_ACTION_FORWARD.
-        CHECK_ERROR_AND_LOG_AND_RETURN(sai_route_api->create_route_entry(&sai_route_entry, /*size=*/1, &route_attr),
-                                       "Failed to create route " << QuotedVar(route_entry.route_entry_key)
-                                                                 << " with next hop "
-                                                                 << QuotedVar(route_entry.nexthop_id));
-        m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP, nexthop_key);
-    }
-    else if (route_entry.action == p4orch::kSetWcmpGroupId)
-    {
-        auto wcmp_group_key = KeyGenerator::generateWcmpGroupKey(route_entry.wcmp_group);
-        sai_object_id_t wcmp_group_oid;
-        m_p4OidMapper->getOID(SAI_OBJECT_TYPE_NEXT_HOP_GROUP, wcmp_group_key, &wcmp_group_oid);
-        sai_attribute_t route_attr;
-        route_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
-        route_attr.value.oid = wcmp_group_oid;
-        // Default SAI_ROUTE_ATTR_PACKET_ACTION is SAI_PACKET_ACTION_FORWARD.
-        CHECK_ERROR_AND_LOG_AND_RETURN(sai_route_api->create_route_entry(&sai_route_entry, /*size=*/1, &route_attr),
-                                       "Failed to create route " << QuotedVar(route_entry.route_entry_key)
-                                                                 << " with wcmp group "
-                                                                 << QuotedVar(route_entry.wcmp_group));
-        m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP_GROUP, wcmp_group_key);
-    }
-    else
-    {
-        sai_attribute_t route_attr;
-        route_attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
-        route_attr.value.s32 = SAI_PACKET_ACTION_DROP;
-        CHECK_ERROR_AND_LOG_AND_RETURN(sai_route_api->create_route_entry(&sai_route_entry, /*size=*/1, &route_attr),
-                                       "Failed to create route " << QuotedVar(route_entry.route_entry_key)
-                                                                 << " with action drop");
-    }
+    std::vector<sai_route_entry_t> sai_route_entries(route_entries.size());
+    // Currently, there are maximum of 2 SAI attributes for route creation.
+    // For drop and trap routes, there is one SAI attribute:
+    // SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION.
+    // For forwarding routes, the default SAI_ROUTE_ATTR_PACKET_ACTION is already
+    // SAI_PACKET_ACTION_FORWARD, so we don't need SAI_ROUTE_ATTR_PACKET_ACTION.
+    // But we need SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID and optionally
+    // SAI_ROUTE_ENTRY_ATTR_META_DATA.
+    std::vector<sai_attribute_t> sai_attrs(2 * route_entries.size());
+    std::vector<sai_status_t> object_statuses(route_entries.size());
+    std::vector<ReturnCode> statuses(route_entries.size());
 
-    m_routeTable[route_entry.route_entry_key] = route_entry;
-    m_routeTable[route_entry.route_entry_key].sai_route_entry = sai_route_entry;
-    m_p4OidMapper->setDummyOID(SAI_OBJECT_TYPE_ROUTE_ENTRY, route_entry.route_entry_key);
-    if (route_entry.route_prefix.isV4())
+    for (size_t i = 0; i < route_entries.size(); ++i)
     {
-        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
-    }
-    else
-    {
-        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
-    }
-    m_vrfOrch->increaseVrfRefCount(route_entry.vrf_id);
-    return ReturnCode();
-}
-
-ReturnCodeOr<sai_object_id_t> RouteManager::getNexthopOid(const P4RouteEntry &route_entry)
-{
-    sai_object_id_t oid = SAI_NULL_OBJECT_ID;
-    if (route_entry.action == p4orch::kSetNexthopId)
-    {
-        auto nexthop_key = KeyGenerator::generateNextHopKey(route_entry.nexthop_id);
-        if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_NEXT_HOP, nexthop_key, &oid))
+        const auto &route_entry = route_entries[i];
+        sai_route_entries[i] = getSaiEntry(route_entry);
+        uint32_t num_attrs = 1;
+        if (route_entry.action == p4orch::kDrop)
         {
-            RETURN_INTERNAL_ERROR_AND_RAISE_CRITICAL("Nexthop " << QuotedVar(route_entry.nexthop_id)
-                                                                << " does not exist");
+            sai_attrs[2 * i].id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+            sai_attrs[2 * i].value.s32 = SAI_PACKET_ACTION_DROP;
+        }
+        else if (route_entry.action == p4orch::kTrap)
+        {
+            sai_attrs[2 * i].id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+            sai_attrs[2 * i].value.s32 = SAI_PACKET_ACTION_TRAP;
+        }
+        else if (route_entry.action == p4orch::kSetMetadataAndDrop)
+        {
+            sai_attrs[2 * i].id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+            sai_attrs[2 * i].value.s32 = SAI_PACKET_ACTION_DROP;
+            sai_attrs[2 * i + 1].id = SAI_ROUTE_ENTRY_ATTR_META_DATA;
+            sai_attrs[2 * i + 1].value.u32 = swss::to_uint<uint32_t>(route_entry.route_metadata);
+            num_attrs++;
+        }
+        else
+        {
+            // Default SAI_ROUTE_ATTR_PACKET_ACTION is SAI_PACKET_ACTION_FORWARD.
+            sai_attrs[2 * i].id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+            sai_attrs[2 * i].value.oid = getNexthopOid(route_entry, *m_p4OidMapper);
+            if (route_entry.action == p4orch::kSetNexthopIdAndMetadata ||
+                route_entry.action == p4orch::kSetWcmpGroupIdAndMetadata)
+            {
+                sai_attrs[2 * i + 1].id = SAI_ROUTE_ENTRY_ATTR_META_DATA;
+                sai_attrs[2 * i + 1].value.u32 = swss::to_uint<uint32_t>(route_entry.route_metadata);
+                num_attrs++;
+            }
+        }
+        object_statuses[i] =
+            m_routerBulker.create_entry(&object_statuses[i], &sai_route_entries[i], num_attrs, &sai_attrs[2 * i]);
+    }
+
+    m_routerBulker.flush();
+
+    for (size_t i = 0; i < route_entries.size(); ++i)
+    {
+        const auto &route_entry = route_entries[i];
+        CHECK_ERROR_AND_LOG(object_statuses[i],
+                            "Failed to create route entry " << QuotedVar(route_entry.route_entry_key));
+        if (object_statuses[i] == SAI_STATUS_SUCCESS)
+        {
+            if (route_entry.action == p4orch::kSetNexthopId || route_entry.action == p4orch::kSetNexthopIdAndMetadata)
+            {
+                m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP,
+                                                KeyGenerator::generateNextHopKey(route_entry.nexthop_id));
+            }
+            else if (route_entry.action == p4orch::kSetWcmpGroupId ||
+                     route_entry.action == p4orch::kSetWcmpGroupIdAndMetadata)
+            {
+                m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
+                                                KeyGenerator::generateWcmpGroupKey(route_entry.wcmp_group));
+            }
+            m_routeTable[route_entry.route_entry_key] = route_entry;
+            m_routeTable[route_entry.route_entry_key].sai_route_entry = sai_route_entries[i];
+            m_p4OidMapper->setDummyOID(SAI_OBJECT_TYPE_ROUTE_ENTRY, route_entry.route_entry_key);
+            if (route_entry.route_prefix.isV4())
+            {
+                gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
+            }
+            else
+            {
+                gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+            }
+            m_vrfOrch->increaseVrfRefCount(route_entry.vrf_id);
+            statuses[i] = ReturnCode();
+        }
+        else
+        {
+            statuses[i] = ReturnCode(object_statuses[i])
+                          << "Failed to create route entry " << QuotedVar(route_entry.route_entry_key);
         }
     }
-    else if (route_entry.action == p4orch::kSetWcmpGroupId)
-    {
-        auto wcmp_group_key = KeyGenerator::generateWcmpGroupKey(route_entry.wcmp_group);
-        if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_NEXT_HOP_GROUP, wcmp_group_key, &oid))
-        {
-            RETURN_INTERNAL_ERROR_AND_RAISE_CRITICAL("WCMP group " << QuotedVar(route_entry.wcmp_group)
-                                                                   << " does not exist");
-        }
-    }
-    return oid;
+
+    return statuses;
 }
 
-ReturnCode RouteManager::updateRouteEntry(const P4RouteEntry &route_entry)
+void RouteManager::updateRouteEntriesMeta(const P4RouteEntry &old_entry, const P4RouteEntry &new_entry)
 {
-    SWSS_LOG_ENTER();
-
-    auto *route_entry_ptr = getRouteEntry(route_entry.route_entry_key);
-    P4RouteEntry new_route_entry;
-    if (!mergeRouteEntry(*route_entry_ptr, route_entry, &new_route_entry))
+    if (getNexthopOid(old_entry, *m_p4OidMapper) != getNexthopOid(new_entry, *m_p4OidMapper))
     {
-        return ReturnCode();
-    }
-
-    ASSIGN_OR_RETURN(sai_object_id_t old_nexthop, getNexthopOid(*route_entry_ptr));
-    ASSIGN_OR_RETURN(sai_object_id_t new_nexthop, getNexthopOid(new_route_entry));
-    RETURN_IF_ERROR(UpdateRouteAttrs(
-        (route_entry_ptr->action == p4orch::kDrop) ? SAI_PACKET_ACTION_DROP : SAI_PACKET_ACTION_FORWARD,
-        (new_route_entry.action == p4orch::kDrop) ? SAI_PACKET_ACTION_DROP : SAI_PACKET_ACTION_FORWARD, old_nexthop,
-        new_nexthop, new_route_entry.route_entry_key, &new_route_entry.sai_route_entry));
-
-    if (new_route_entry.action == p4orch::kSetNexthopId)
-    {
-        m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP,
-                                        KeyGenerator::generateNextHopKey(new_route_entry.nexthop_id));
-    }
-    if (new_route_entry.action == p4orch::kSetWcmpGroupId)
-    {
-        m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
-                                        KeyGenerator::generateWcmpGroupKey(new_route_entry.wcmp_group));
-    }
-
-    if (route_entry_ptr->action == p4orch::kSetNexthopId)
-    {
-        if (new_route_entry.action != p4orch::kSetNexthopId ||
-            new_route_entry.nexthop_id != route_entry_ptr->nexthop_id)
+        if (new_entry.action == p4orch::kSetNexthopId || new_entry.action == p4orch::kSetNexthopIdAndMetadata)
+        {
+            m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP,
+                                            KeyGenerator::generateNextHopKey(new_entry.nexthop_id));
+        }
+        else if (new_entry.action == p4orch::kSetWcmpGroupId || new_entry.action == p4orch::kSetWcmpGroupIdAndMetadata)
+        {
+            m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
+                                            KeyGenerator::generateWcmpGroupKey(new_entry.wcmp_group));
+        }
+        if (old_entry.action == p4orch::kSetNexthopId || old_entry.action == p4orch::kSetNexthopIdAndMetadata)
         {
             m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP,
-                                            KeyGenerator::generateNextHopKey(route_entry_ptr->nexthop_id));
+                                            KeyGenerator::generateNextHopKey(old_entry.nexthop_id));
         }
-    }
-    if (route_entry_ptr->action == p4orch::kSetWcmpGroupId)
-    {
-        if (new_route_entry.action != p4orch::kSetWcmpGroupId ||
-            new_route_entry.wcmp_group != route_entry_ptr->wcmp_group)
+        else if (old_entry.action == p4orch::kSetWcmpGroupId || old_entry.action == p4orch::kSetWcmpGroupIdAndMetadata)
         {
             m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
-                                            KeyGenerator::generateWcmpGroupKey(route_entry_ptr->wcmp_group));
+                                            KeyGenerator::generateWcmpGroupKey(old_entry.wcmp_group));
         }
     }
-    m_routeTable[route_entry.route_entry_key] = new_route_entry;
-    return ReturnCode();
+    m_routeTable[new_entry.route_entry_key] = new_entry;
 }
 
-ReturnCode RouteManager::deleteRouteEntry(const P4RouteEntry &route_entry)
+void RouteManager::updateRouteAttrs(int size, const std::vector<std::unique_ptr<RouteUpdater>> &updaters,
+                                    std::vector<size_t> &indice, std::vector<ReturnCode> &statuses)
+{
+    std::vector<sai_route_entry_t> sai_route_entries(size);
+    std::vector<sai_attribute_t> sai_attrs(size);
+    std::vector<sai_status_t> object_statuses(size);
+    // We will perform route update in multiple SAI calls.
+    // If error is encountered, the previous SAI calls will be reverted.
+    // Raise critical state if the revert fails.
+    // We avoid changing multiple attributes of the same entry in a single bulk
+    // call.
+    constexpr int kMaxAttrUpdate = 20;
+    int i;
+    for (i = 0; i < kMaxAttrUpdate; ++i)
+    {
+        for (int j = 0; j < size; ++j)
+        {
+            sai_route_entries[j] = updaters[indice[j]]->getSaiEntry();
+            sai_attrs[j] = updaters[indice[j]]->getSaiAttr();
+            m_routerBulker.set_entry_attribute(&object_statuses[j], &sai_route_entries[j], &sai_attrs[j]);
+        }
+        m_routerBulker.flush();
+        int new_size = 0;
+        for (int j = 0; j < size; j++)
+        {
+            if (updaters[indice[j]]->updateResult(object_statuses[j]))
+            {
+                statuses[indice[j]] = updaters[indice[j]]->getStatus();
+                if (statuses[indice[j]].ok())
+                {
+                    updateRouteEntriesMeta(updaters[indice[j]]->getOldEntry(), updaters[indice[j]]->getNewEntry());
+                }
+            }
+            else
+            {
+                indice[new_size++] = indice[j];
+            }
+        }
+        if (new_size == 0)
+        {
+            break;
+        }
+        size = new_size;
+    }
+    // Just a safety check to prevent infinite loop. Should not happen.
+    if (i == kMaxAttrUpdate)
+    {
+        SWSS_RAISE_CRITICAL_STATE("Route update operation did not terminate.");
+    }
+    return;
+}
+
+std::vector<ReturnCode> RouteManager::updateRouteEntries(const std::vector<P4RouteEntry> &route_entries)
 {
     SWSS_LOG_ENTER();
 
-    auto *route_entry_ptr = getRouteEntry(route_entry.route_entry_key);
-    CHECK_ERROR_AND_LOG_AND_RETURN(sai_route_api->remove_route_entry(&route_entry_ptr->sai_route_entry),
-                                   "Failed to delete route " << QuotedVar(route_entry.route_entry_key));
+    std::vector<std::unique_ptr<RouteUpdater>> updaters(route_entries.size());
+    std::vector<size_t> indice(route_entries.size()); // index to the route_entries
+    std::vector<ReturnCode> statuses(route_entries.size());
 
-    if (route_entry_ptr->action == p4orch::kSetNexthopId)
+    int size = 0;
+    for (size_t i = 0; i < route_entries.size(); ++i)
     {
-        m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP,
-                                        KeyGenerator::generateNextHopKey(route_entry_ptr->nexthop_id));
+        const auto &route_entry = route_entries[i];
+        auto *route_entry_ptr = getRouteEntry(route_entry.route_entry_key);
+        P4RouteEntry new_entry;
+        if (!mergeRouteEntry(*route_entry_ptr, route_entry, &new_entry))
+        {
+            statuses[i] = ReturnCode();
+            continue;
+        }
+        updaters[i] = std::unique_ptr<RouteUpdater>(new RouteUpdater(*route_entry_ptr, new_entry, m_p4OidMapper));
+        indice[size++] = i;
     }
-    if (route_entry_ptr->action == p4orch::kSetWcmpGroupId)
+    if (size == 0)
     {
-        m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
-                                        KeyGenerator::generateWcmpGroupKey(route_entry_ptr->wcmp_group));
+        return statuses;
     }
-    m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_ROUTE_ENTRY, route_entry.route_entry_key);
-    if (route_entry.route_prefix.isV4())
+
+    updateRouteAttrs(size, updaters, indice, statuses);
+    return statuses;
+}
+
+std::vector<ReturnCode> RouteManager::deleteRouteEntries(const std::vector<P4RouteEntry> &route_entries)
+{
+    SWSS_LOG_ENTER();
+
+    std::vector<sai_route_entry_t> sai_route_entries(route_entries.size());
+    std::vector<sai_status_t> object_statuses(route_entries.size());
+    std::vector<ReturnCode> statuses(route_entries.size());
+
+    for (size_t i = 0; i < route_entries.size(); ++i)
     {
-        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
+        const auto &route_entry = route_entries[i];
+        auto *route_entry_ptr = getRouteEntry(route_entry.route_entry_key);
+        sai_route_entries[i] = route_entry_ptr->sai_route_entry;
+        object_statuses[i] = m_routerBulker.remove_entry(&object_statuses[i], &sai_route_entries[i]);
     }
-    else
+
+    m_routerBulker.flush();
+
+    for (size_t i = 0; i < route_entries.size(); ++i)
     {
-        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+        const auto &route_entry = route_entries[i];
+        auto *route_entry_ptr = getRouteEntry(route_entry.route_entry_key);
+        CHECK_ERROR_AND_LOG(object_statuses[i],
+                            "Failed to delete route entry " << QuotedVar(route_entry.route_entry_key));
+        if (object_statuses[i] == SAI_STATUS_SUCCESS)
+        {
+            if (route_entry_ptr->action == p4orch::kSetNexthopId ||
+                route_entry_ptr->action == p4orch::kSetNexthopIdAndMetadata)
+            {
+                m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP,
+                                                KeyGenerator::generateNextHopKey(route_entry_ptr->nexthop_id));
+            }
+            else if (route_entry_ptr->action == p4orch::kSetWcmpGroupId ||
+                     route_entry_ptr->action == p4orch::kSetWcmpGroupIdAndMetadata)
+            {
+                m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
+                                                KeyGenerator::generateWcmpGroupKey(route_entry_ptr->wcmp_group));
+            }
+            m_p4OidMapper->eraseOID(SAI_OBJECT_TYPE_ROUTE_ENTRY, route_entry.route_entry_key);
+            if (route_entry.route_prefix.isV4())
+            {
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
+            }
+            else
+            {
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+            }
+            m_vrfOrch->decreaseVrfRefCount(route_entry.vrf_id);
+            m_routeTable.erase(route_entry.route_entry_key);
+            statuses[i] = ReturnCode();
+        }
+        else
+        {
+            statuses[i] = ReturnCode(object_statuses[i])
+                          << "Failed to delete route entry " << QuotedVar(route_entry.route_entry_key);
+        }
     }
-    m_vrfOrch->decreaseVrfRefCount(route_entry.vrf_id);
-    m_routeTable.erase(route_entry.route_entry_key);
-    return ReturnCode();
+
+    return statuses;
 }
 
 void RouteManager::enqueue(const swss::KeyOpFieldsValuesTuple &entry)
@@ -503,6 +845,14 @@ void RouteManager::enqueue(const swss::KeyOpFieldsValuesTuple &entry)
 void RouteManager::drain()
 {
     SWSS_LOG_ENTER();
+
+    std::vector<P4RouteEntry> create_route_list;
+    std::vector<P4RouteEntry> update_route_list;
+    std::vector<P4RouteEntry> delete_route_list;
+    std::vector<swss::KeyOpFieldsValuesTuple> create_tuple_list;
+    std::vector<swss::KeyOpFieldsValuesTuple> update_tuple_list;
+    std::vector<swss::KeyOpFieldsValuesTuple> delete_tuple_list;
+    std::unordered_set<std::string> route_entry_list;
 
     for (const auto &key_op_fvs_tuple : m_entries)
     {
@@ -525,7 +875,19 @@ void RouteManager::drain()
         }
         auto &route_entry = *route_entry_or;
 
-        status = validateRouteEntry(route_entry);
+        // A single batch should not modify the same route more than once.
+        if (route_entry_list.count(route_entry.route_entry_key) != 0)
+        {
+            status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Route entry has been included in the same batch";
+            SWSS_LOG_ERROR("%s: %s", status.message().c_str(), QuotedVar(route_entry.route_entry_key).c_str());
+            m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
+                                 status,
+                                 /*replace=*/true);
+            continue;
+        }
+
+        const std::string &operation = kfvOp(key_op_fvs_tuple);
+        status = validateRouteEntry(route_entry, operation);
         if (!status.ok())
         {
             SWSS_LOG_ERROR("Validation failed for Route APP DB entry with key  %s: %s",
@@ -535,45 +897,270 @@ void RouteManager::drain()
                                  /*replace=*/true);
             continue;
         }
+        route_entry_list.insert(route_entry.route_entry_key);
 
-        const std::string &operation = kfvOp(key_op_fvs_tuple);
         if (operation == SET_COMMAND)
         {
-            status = validateSetRouteEntry(route_entry);
-            if (!status.ok())
+            if (getRouteEntry(route_entry.route_entry_key) == nullptr)
             {
-                SWSS_LOG_ERROR("Validation failed for Set Route APP DB entry with key %s: %s",
-                               QuotedVar(table_name + ":" + key).c_str(), status.message().c_str());
-            }
-            else if (getRouteEntry(route_entry.route_entry_key) == nullptr)
-            {
-                status = createRouteEntry(route_entry);
+                create_route_list.push_back(route_entry);
+                create_tuple_list.push_back(key_op_fvs_tuple);
             }
             else
             {
-                status = updateRouteEntry(route_entry);
-            }
-        }
-        else if (operation == DEL_COMMAND)
-        {
-            status = validateDelRouteEntry(route_entry);
-            if (!status.ok())
-            {
-                SWSS_LOG_ERROR("Validation failed for Del Route APP DB entry with key %s: %s",
-                               QuotedVar(table_name + ":" + key).c_str(), status.message().c_str());
-            }
-            else
-            {
-                status = deleteRouteEntry(route_entry);
+                update_route_list.push_back(route_entry);
+                update_tuple_list.push_back(key_op_fvs_tuple);
             }
         }
         else
         {
-            status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) << "Unknown operation type " << QuotedVar(operation);
-            SWSS_LOG_ERROR("%s", status.message().c_str());
+            delete_route_list.push_back(route_entry);
+            delete_tuple_list.push_back(key_op_fvs_tuple);
         }
-        m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple), status,
-                             /*replace=*/true);
+    }
+
+    if (!create_route_list.empty())
+    {
+        auto statuses = createRouteEntries(create_route_list);
+        for (size_t i = 0; i < create_route_list.size(); ++i)
+        {
+            m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(create_tuple_list[i]),
+                                 kfvFieldsValues(create_tuple_list[i]), statuses[i],
+                                 /*replace=*/true);
+        }
+    }
+    if (!update_route_list.empty())
+    {
+        auto statuses = updateRouteEntries(update_route_list);
+        for (size_t i = 0; i < update_route_list.size(); ++i)
+        {
+            m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(update_tuple_list[i]),
+                                 kfvFieldsValues(update_tuple_list[i]), statuses[i],
+                                 /*replace=*/true);
+        }
+    }
+    if (!delete_route_list.empty())
+    {
+        auto statuses = deleteRouteEntries(delete_route_list);
+        for (size_t i = 0; i < delete_route_list.size(); ++i)
+        {
+            m_publisher->publish(APP_P4RT_TABLE_NAME, kfvKey(delete_tuple_list[i]),
+                                 kfvFieldsValues(delete_tuple_list[i]), statuses[i],
+                                 /*replace=*/true);
+        }
     }
     m_entries.clear();
+}
+
+std::string RouteManager::verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple)
+{
+    SWSS_LOG_ENTER();
+
+    auto pos = key.find_first_of(kTableKeyDelimiter);
+    if (pos == std::string::npos)
+    {
+        return std::string("Invalid key: ") + key;
+    }
+    std::string p4rt_table = key.substr(0, pos);
+    std::string p4rt_key = key.substr(pos + 1);
+    if (p4rt_table != APP_P4RT_TABLE_NAME)
+    {
+        return std::string("Invalid key: ") + key;
+    }
+    std::string table_name;
+    std::string key_content;
+    parseP4RTKey(p4rt_key, &table_name, &key_content);
+    if (table_name != APP_P4RT_IPV4_TABLE_NAME && table_name != APP_P4RT_IPV6_TABLE_NAME)
+    {
+        return std::string("Invalid key: ") + key;
+    }
+
+    ReturnCode status;
+    auto app_db_entry_or = deserializeRouteEntry(key_content, tuple, table_name);
+    if (!app_db_entry_or.ok())
+    {
+        status = app_db_entry_or.status();
+        std::stringstream msg;
+        msg << "Unable to deserialize key " << QuotedVar(key) << ": " << status.message();
+        return msg.str();
+    }
+    auto &app_db_entry = *app_db_entry_or;
+
+    auto *route_entry = getRouteEntry(app_db_entry.route_entry_key);
+    if (route_entry == nullptr)
+    {
+        std::stringstream msg;
+        msg << "No entry found with key " << QuotedVar(key);
+        return msg.str();
+    }
+
+    std::string cache_result = verifyStateCache(app_db_entry, route_entry);
+    std::string asic_db_result = verifyStateAsicDb(route_entry);
+    if (cache_result.empty())
+    {
+        return asic_db_result;
+    }
+    if (asic_db_result.empty())
+    {
+        return cache_result;
+    }
+    return cache_result + "; " + asic_db_result;
+}
+
+std::string RouteManager::verifyStateCache(const P4RouteEntry &app_db_entry, const P4RouteEntry *route_entry)
+{
+    ReturnCode status = validateRouteEntry(app_db_entry, SET_COMMAND);
+    if (!status.ok())
+    {
+        std::stringstream msg;
+        msg << "Validation failed for route DB entry with key " << QuotedVar(app_db_entry.route_entry_key) << ": "
+            << status.message();
+        return msg.str();
+    }
+
+    if (route_entry->route_entry_key != app_db_entry.route_entry_key)
+    {
+        std::stringstream msg;
+        msg << "Route entry " << QuotedVar(app_db_entry.route_entry_key) << " does not match internal cache "
+            << QuotedVar(route_entry->route_entry_key) << " in route manager.";
+        return msg.str();
+    }
+    if (route_entry->vrf_id != app_db_entry.vrf_id)
+    {
+        std::stringstream msg;
+        msg << "Route entry " << QuotedVar(app_db_entry.route_entry_key) << " with VRF "
+            << QuotedVar(app_db_entry.vrf_id) << " does not match internal cache " << QuotedVar(route_entry->vrf_id)
+            << " in route manager.";
+        return msg.str();
+    }
+    if (route_entry->route_prefix.to_string() != app_db_entry.route_prefix.to_string())
+    {
+        std::stringstream msg;
+        msg << "Route entry " << QuotedVar(app_db_entry.route_entry_key) << " with route prefix "
+            << app_db_entry.route_prefix.to_string() << " does not match internal cache "
+            << route_entry->route_prefix.to_string() << " in route manager.";
+        return msg.str();
+    }
+    if (route_entry->action != app_db_entry.action)
+    {
+        std::stringstream msg;
+        msg << "Route entry " << QuotedVar(app_db_entry.route_entry_key) << " with action "
+            << QuotedVar(app_db_entry.action) << " does not match internal cache " << QuotedVar(route_entry->action)
+            << " in route manager.";
+        return msg.str();
+    }
+    if (route_entry->nexthop_id != app_db_entry.nexthop_id)
+    {
+        std::stringstream msg;
+        msg << "Route entry " << QuotedVar(app_db_entry.route_entry_key) << " with nexthop ID "
+            << QuotedVar(app_db_entry.nexthop_id) << " does not match internal cache "
+            << QuotedVar(route_entry->nexthop_id) << " in route manager.";
+        return msg.str();
+    }
+    if (route_entry->wcmp_group != app_db_entry.wcmp_group)
+    {
+        std::stringstream msg;
+        msg << "Route entry " << QuotedVar(app_db_entry.route_entry_key) << " with WCMP group "
+            << QuotedVar(app_db_entry.wcmp_group) << " does not match internal cache "
+            << QuotedVar(route_entry->wcmp_group) << " in route manager.";
+        return msg.str();
+    }
+    if (route_entry->route_metadata != app_db_entry.route_metadata)
+    {
+        std::stringstream msg;
+        msg << "Route entry " << QuotedVar(app_db_entry.route_entry_key) << " with metadata "
+            << QuotedVar(app_db_entry.route_metadata) << " does not match internal cache "
+            << QuotedVar(route_entry->route_metadata) << " in route manager.";
+        return msg.str();
+    }
+
+    return "";
+}
+
+std::string RouteManager::verifyStateAsicDb(const P4RouteEntry *route_entry)
+{
+    std::vector<sai_attribute_t> exp_attrs;
+    std::vector<sai_attribute_t> opt_attrs;
+    sai_attribute_t attr;
+
+    if (route_entry->action == p4orch::kDrop)
+    {
+        attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+        attr.value.s32 = SAI_PACKET_ACTION_DROP;
+        exp_attrs.push_back(attr);
+    }
+    else if (route_entry->action == p4orch::kTrap)
+    {
+        attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+        attr.value.s32 = SAI_PACKET_ACTION_TRAP;
+        exp_attrs.push_back(attr);
+    }
+    else if (route_entry->action == p4orch::kSetMetadataAndDrop)
+    {
+        attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+        attr.value.s32 = SAI_PACKET_ACTION_DROP;
+        exp_attrs.push_back(attr);
+        attr.id = SAI_ROUTE_ENTRY_ATTR_META_DATA;
+        attr.value.u32 = swss::to_uint<uint32_t>(route_entry->route_metadata);
+        exp_attrs.push_back(attr);
+    }
+    else
+    {
+        attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+        attr.value.oid = getNexthopOid(*route_entry, *m_p4OidMapper);
+        exp_attrs.push_back(attr);
+        if (route_entry->action == p4orch::kSetNexthopIdAndMetadata ||
+            route_entry->action == p4orch::kSetWcmpGroupIdAndMetadata)
+        {
+            attr.id = SAI_ROUTE_ENTRY_ATTR_META_DATA;
+            attr.value.u32 = swss::to_uint<uint32_t>(route_entry->route_metadata);
+            exp_attrs.push_back(attr);
+        }
+    }
+
+    if (route_entry->action == p4orch::kDrop || route_entry->action == p4orch::kTrap)
+    {
+        attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+        attr.value.oid = SAI_NULL_OBJECT_ID;
+        opt_attrs.push_back(attr);
+        attr.id = SAI_ROUTE_ENTRY_ATTR_META_DATA;
+        attr.value.u32 = 0;
+        opt_attrs.push_back(attr);
+    }
+    else if (route_entry->action == p4orch::kSetMetadataAndDrop)
+    {
+        attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+        attr.value.oid = SAI_NULL_OBJECT_ID;
+        opt_attrs.push_back(attr);
+    }
+    else
+    {
+        attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+        attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+        opt_attrs.push_back(attr);
+        if (route_entry->action != p4orch::kSetNexthopIdAndMetadata &&
+            route_entry->action != p4orch::kSetWcmpGroupIdAndMetadata)
+        {
+            attr.id = SAI_ROUTE_ENTRY_ATTR_META_DATA;
+            attr.value.u32 = 0;
+            opt_attrs.push_back(attr);
+        }
+    }
+
+    std::vector<swss::FieldValueTuple> exp = saimeta::SaiAttributeList::serialize_attr_list(
+        SAI_OBJECT_TYPE_ROUTE_ENTRY, (uint32_t)exp_attrs.size(), exp_attrs.data(), /*countOnly=*/false);
+    std::vector<swss::FieldValueTuple> opt = saimeta::SaiAttributeList::serialize_attr_list(
+        SAI_OBJECT_TYPE_ROUTE_ENTRY, (uint32_t)opt_attrs.size(), opt_attrs.data(), /*countOnly=*/false);
+
+    swss::DBConnector db("ASIC_DB", 0);
+    swss::Table table(&db, "ASIC_STATE");
+    std::string key = sai_serialize_object_type(SAI_OBJECT_TYPE_ROUTE_ENTRY) + ":" +
+                      sai_serialize_route_entry(getSaiEntry(*route_entry));
+    std::vector<swss::FieldValueTuple> values;
+    if (!table.get(key, values))
+    {
+        return std::string("ASIC DB key not found ") + key;
+    }
+
+    return verifyAttrs(values, exp, opt, /*allow_unknown=*/false);
 }

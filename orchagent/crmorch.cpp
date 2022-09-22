@@ -18,6 +18,7 @@
 extern sai_object_id_t gSwitchId;
 extern sai_switch_api_t *sai_switch_api;
 extern sai_acl_api_t *sai_acl_api;
+extern event_handle_t g_events_handle;
 
 using namespace std;
 using namespace swss;
@@ -763,12 +764,18 @@ void CrmOrch::checkCrmThresholds()
 
             if ((utilization >= res.highThreshold) && (res.exceededLogCounter < CRM_EXCEEDED_MSG_MAX))
             {
+                event_params_t params = {
+                    { "percent", to_string(percentageUtil) },
+                    { "used_cnt", to_string(cnt.usedCounter) },
+                    { "free_cnt", to_string(cnt.availableCounter) }};
+
                 SWSS_LOG_WARN("%s THRESHOLD_EXCEEDED for %s %u%% Used count %u free count %u",
                               res.name.c_str(), threshType.c_str(), percentageUtil, cnt.usedCounter, cnt.availableCounter);
 
+                event_publish(g_events_handle, "chk_crm_threshold", &params);
                 res.exceededLogCounter++;
             }
-            else if ((utilization <= res.lowThreshold) && (res.exceededLogCounter > 0))
+            else if ((utilization <= res.lowThreshold) && (res.exceededLogCounter > 0) && (res.highThreshold != res.lowThreshold))
             {
                 SWSS_LOG_WARN("%s THRESHOLD_CLEAR for %s %u%% Used count %u free count %u",
                               res.name.c_str(), threshType.c_str(), percentageUtil, cnt.usedCounter, cnt.availableCounter);

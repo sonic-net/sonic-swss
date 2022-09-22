@@ -7,7 +7,7 @@ from swsscommon import swsscommon
 from dvslib.dvs_common import wait_for_result, PollingConfig
 
 
-@pytest.yield_fixture
+@pytest.fixture
 def port_config(request, dvs):
     file_name = "/usr/share/sonic/hwsku/port_config.ini"
     dvs.runcmd("cp %s %s.bak" % (file_name, file_name))

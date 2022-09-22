@@ -22,10 +22,8 @@
 #define AVAILABLE_ACL_PRIORITIES_LIMITATION             (32)
 #define EAPOL_ETHER_TYPE                                (0x888e)
 #define PAUSE_ETHER_TYPE                                (0x8808)
-#define MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS    (1000)
-#define COUNTERS_MACSEC_SA_ATTR_GROUP                   "COUNTERS_MACSEC_SA_ATTR"
-#define COUNTERS_MACSEC_SA_GROUP                        "COUNTERS_MACSEC_SA"
-#define COUNTERS_MACSEC_FLOW_GROUP                      "COUNTERS_MACSEC_FLOW"
+#define MACSEC_STAT_XPN_POLLING_INTERVAL_MS             (1000)
+#define MACSEC_STAT_POLLING_INTERVAL_MS                 (10000)
 #define PFC_MODE_BYPASS                                 "bypass"
 #define PFC_MODE_ENCRYPT                                "encrypt"
 #define PFC_MODE_STRICT_ENCRYPT                         "strict_encrypt"
@@ -608,22 +606,35 @@ MACsecOrch::MACsecOrch(
                             m_applPortTable(app_db, APP_PORT_TABLE_NAME),
                             m_counter_db("COUNTERS_DB", 0),
                             m_macsec_counters_map(&m_counter_db, COUNTERS_MACSEC_NAME_MAP),
-                            m_macsec_flow_tx_counters_map(&m_counter_db, COUNTERS_MACSEC_FLOW_TX_NAME_MAP),
-                            m_macsec_flow_rx_counters_map(&m_counter_db, COUNTERS_MACSEC_FLOW_RX_NAME_MAP),
-                            m_macsec_sa_tx_counters_map(&m_counter_db, COUNTERS_MACSEC_SA_TX_NAME_MAP),
-                            m_macsec_sa_rx_counters_map(&m_counter_db, COUNTERS_MACSEC_SA_RX_NAME_MAP),
+                            m_gb_counter_db("GB_COUNTERS_DB", 0),
+                            m_gb_macsec_counters_map(&m_gb_counter_db, COUNTERS_MACSEC_NAME_MAP),
                             m_macsec_sa_attr_manager(
                                 COUNTERS_MACSEC_SA_ATTR_GROUP,
                                 StatsMode::READ,
-                                MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
+                                MACSEC_STAT_XPN_POLLING_INTERVAL_MS, true),
                             m_macsec_sa_stat_manager(
                                 COUNTERS_MACSEC_SA_GROUP,
                                 StatsMode::READ,
-                                MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
+                                MACSEC_STAT_POLLING_INTERVAL_MS, true),
                             m_macsec_flow_stat_manager(
                                 COUNTERS_MACSEC_FLOW_GROUP,
                                 StatsMode::READ,
-                                MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true)
+                                MACSEC_STAT_POLLING_INTERVAL_MS, true),
+                            m_gb_macsec_sa_attr_manager(
+                                "GB_FLEX_COUNTER_DB",
+                                COUNTERS_MACSEC_SA_ATTR_GROUP,
+                                StatsMode::READ,
+                                MACSEC_STAT_XPN_POLLING_INTERVAL_MS, true),
+                            m_gb_macsec_sa_stat_manager(
+                                "GB_FLEX_COUNTER_DB",
+                                COUNTERS_MACSEC_SA_GROUP,
+                                StatsMode::READ,
+                                MACSEC_STAT_POLLING_INTERVAL_MS, true),
+                            m_gb_macsec_flow_stat_manager(
+                                "GB_FLEX_COUNTER_DB",
+                                COUNTERS_MACSEC_FLOW_GROUP,
+                                StatsMode::READ,
+                                MACSEC_STAT_POLLING_INTERVAL_MS, true)
 {
     SWSS_LOG_ENTER();
 }
@@ -1264,6 +1275,8 @@ bool MACsecOrch::createMACsecPort(
             phy);
     });
 
+    m_port_orch->setMACsecEnabledState(port_id, true);
+
     if (phy)
     {
         if (!setPFCForward(port_id, true))
@@ -1471,22 +1484,22 @@ bool MACsecOrch::deleteMACsecPort(
 
     bool result = true;
 
-    auto sc = macsec_port.m_egress_scs.begin();
-    while (sc != macsec_port.m_egress_scs.end())
-    {
-        const std::string port_sci = swss::join(':', port_name, MACsecSCI(sc->first));
-        sc ++;
-        if (deleteMACsecSC(port_sci, SAI_MACSEC_DIRECTION_EGRESS) != task_success)
-        {
-            result &= false;
-        }
-    }
-    sc = macsec_port.m_ingress_scs.begin();
+    auto sc = macsec_port.m_ingress_scs.begin();
     while (sc != macsec_port.m_ingress_scs.end())
     {
         const std::string port_sci = swss::join(':', port_name, MACsecSCI(sc->first));
         sc ++;
         if (deleteMACsecSC(port_sci, SAI_MACSEC_DIRECTION_INGRESS) != task_success)
+        {
+            result &= false;
+        }
+    }
+    sc = macsec_port.m_egress_scs.begin();
+    while (sc != macsec_port.m_egress_scs.end())
+    {
+        const std::string port_sci = swss::join(':', port_name, MACsecSCI(sc->first));
+        sc ++;
+        if (deleteMACsecSC(port_sci, SAI_MACSEC_DIRECTION_EGRESS) != task_success)
         {
             result &= false;
         }
@@ -1530,6 +1543,8 @@ bool MACsecOrch::deleteMACsecPort(
         SWSS_LOG_WARN("Cannot delete MACsec ingress port at the port %s", port_name.c_str());
         result &= false;
     }
+
+    m_port_orch->setMACsecEnabledState(port_id, false);
 
     if (phy)
     {
@@ -2122,17 +2137,17 @@ task_process_status MACsecOrch::createMACsecSA(
         sc->m_sa_ids.erase(an);
     });
 
-    installCounter(CounterType::MACSEC_SA_ATTR, direction, port_sci_an, sc->m_sa_ids[an], macsec_sa_attrs);
+    installCounter(ctx, CounterType::MACSEC_SA_ATTR, direction, port_sci_an, sc->m_sa_ids[an], macsec_sa_attrs);
     std::vector<FieldValueTuple> fvVector;
     fvVector.emplace_back("state", "ok");
     if (direction == SAI_MACSEC_DIRECTION_EGRESS)
     {
-        installCounter(CounterType::MACSEC_SA, direction, port_sci_an, sc->m_sa_ids[an], macsec_sa_egress_stats);
+        installCounter(ctx, CounterType::MACSEC_SA, direction, port_sci_an, sc->m_sa_ids[an], macsec_sa_egress_stats);
         m_state_macsec_egress_sa.set(swss::join('|', port_name, sci, an), fvVector);
     }
     else
     {
-        installCounter(CounterType::MACSEC_SA, direction, port_sci_an, sc->m_sa_ids[an], macsec_sa_ingress_stats);
+        installCounter(ctx, CounterType::MACSEC_SA, direction, port_sci_an, sc->m_sa_ids[an], macsec_sa_ingress_stats);
         m_state_macsec_ingress_sa.set(swss::join('|', port_name, sci, an), fvVector);
     }
 
@@ -2167,8 +2182,8 @@ task_process_status MACsecOrch::deleteMACsecSA(
 
     auto result = task_success;
 
-    uninstallCounter(CounterType::MACSEC_SA_ATTR, direction, port_sci_an, ctx.get_macsec_sc()->m_sa_ids[an]);
-    uninstallCounter(CounterType::MACSEC_SA, direction, port_sci_an, ctx.get_macsec_sc()->m_sa_ids[an]);
+    uninstallCounter(ctx, CounterType::MACSEC_SA_ATTR, direction, port_sci_an, ctx.get_macsec_sc()->m_sa_ids[an]);
+    uninstallCounter(ctx, CounterType::MACSEC_SA, direction, port_sci_an, ctx.get_macsec_sc()->m_sa_ids[an]);
     if (!deleteMACsecSA(ctx.get_macsec_sc()->m_sa_ids[an]))
     {
         SWSS_LOG_WARN("Cannot delete the MACsec SA %s.", port_sci_an.c_str());
@@ -2293,17 +2308,42 @@ bool MACsecOrch::deleteMACsecSA(sai_object_id_t sa_id)
     return true;
 }
 
+FlexCounterManager& MACsecOrch::MACsecSaStatManager(MACsecOrchContext &ctx)
+{
+    if (ctx.get_gearbox_phy() != nullptr)
+        return m_gb_macsec_sa_stat_manager;
+    return m_macsec_sa_stat_manager;
+}
+
+FlexCounterManager& MACsecOrch::MACsecSaAttrStatManager(MACsecOrchContext &ctx)
+{
+    if (ctx.get_gearbox_phy() != nullptr)
+        return m_gb_macsec_sa_attr_manager;
+    return m_macsec_sa_attr_manager;
+}
+
+FlexCounterManager& MACsecOrch::MACsecFlowStatManager(MACsecOrchContext &ctx)
+{
+    if (ctx.get_gearbox_phy() != nullptr)
+        return m_gb_macsec_flow_stat_manager;
+    return m_macsec_flow_stat_manager;
+}
+
+Table& MACsecOrch::MACsecCountersMap(MACsecOrchContext &ctx)
+{
+    if (ctx.get_gearbox_phy() != nullptr)
+        return m_gb_macsec_counters_map;
+    return m_macsec_counters_map;
+}
+
 void MACsecOrch::installCounter(
+    MACsecOrchContext &ctx,
     CounterType counter_type,
     sai_macsec_direction_t direction,
     const std::string &obj_name,
     sai_object_id_t obj_id,
     const std::vector<std::string> &stats)
 {
-    FieldValueTuple tuple(obj_name, sai_serialize_object_id(obj_id));
-    vector<FieldValueTuple> fields;
-    fields.push_back(tuple);
-
     std::unordered_set<std::string> counter_stats;
     for (const auto &stat : stats)
     {
@@ -2312,24 +2352,16 @@ void MACsecOrch::installCounter(
     switch(counter_type)
     {
         case CounterType::MACSEC_SA_ATTR:
-            m_macsec_sa_attr_manager.setCounterIdList(obj_id, counter_type, counter_stats);
-            m_macsec_counters_map.set("", fields);
+            MACsecSaAttrStatManager(ctx).setCounterIdList(obj_id, counter_type, counter_stats);
             break;
 
         case CounterType::MACSEC_SA:
-            m_macsec_sa_stat_manager.setCounterIdList(obj_id, counter_type, counter_stats);
-            if (direction == SAI_MACSEC_DIRECTION_EGRESS)
-            {
-                m_macsec_sa_tx_counters_map.set("", fields);
-            }
-            else
-            {
-                m_macsec_sa_rx_counters_map.set("", fields);
-            }
+            MACsecSaStatManager(ctx).setCounterIdList(obj_id, counter_type, counter_stats);
+            MACsecCountersMap(ctx).hset("", obj_name, sai_serialize_object_id(obj_id));
             break;
 
         case CounterType::MACSEC_FLOW:
-            m_macsec_flow_stat_manager.setCounterIdList(obj_id, counter_type, counter_stats);
+            MACsecFlowStatManager(ctx).setCounterIdList(obj_id, counter_type, counter_stats);
             break;
 
         default:
@@ -2340,6 +2372,7 @@ void MACsecOrch::installCounter(
 }
 
 void MACsecOrch::uninstallCounter(
+    MACsecOrchContext &ctx,
     CounterType counter_type,
     sai_macsec_direction_t direction,
     const std::string &obj_name,
@@ -2348,24 +2381,16 @@ void MACsecOrch::uninstallCounter(
     switch(counter_type)
     {
         case CounterType::MACSEC_SA_ATTR:
-            m_macsec_sa_attr_manager.clearCounterIdList(obj_id);
-            m_counter_db.hdel(COUNTERS_MACSEC_NAME_MAP, obj_name);
+            MACsecSaAttrStatManager(ctx).clearCounterIdList(obj_id);
             break;
 
         case CounterType::MACSEC_SA:
-            m_macsec_sa_stat_manager.clearCounterIdList(obj_id);
-            if (direction == SAI_MACSEC_DIRECTION_EGRESS)
-            {
-                m_counter_db.hdel(COUNTERS_MACSEC_SA_TX_NAME_MAP, obj_name);
-            }
-            else
-            {
-                m_counter_db.hdel(COUNTERS_MACSEC_SA_RX_NAME_MAP, obj_name);
-            }
+            MACsecSaStatManager(ctx).clearCounterIdList(obj_id);
+            MACsecCountersMap(ctx).hdel("", obj_name);
             break;
 
         case CounterType::MACSEC_FLOW:
-            m_macsec_flow_stat_manager.clearCounterIdList(obj_id);
+            MACsecFlowStatManager(ctx).clearCounterIdList(obj_id);
             break;
 
         default:

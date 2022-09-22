@@ -177,31 +177,28 @@ bool FdbOrch::storeFdbEntryState(const FdbUpdate& update)
 /*
 clears stateDb and decrements corresponding internal fdb counters
 */
-void FdbOrch::clearFdbEntry(const MacAddress& mac,
-                   const sai_object_id_t& bv_id,
-                   const string& port_alias)
+void FdbOrch::clearFdbEntry(const FdbEntry& entry)
 {
     FdbUpdate update;
-    update.entry.mac = mac;
-    update.entry.bv_id = bv_id;
+    update.entry = entry;
     update.add = false;
 
     /* Fetch Vlan and decrement the counter */
     Port temp_vlan;
-    if (m_portsOrch->getPort(bv_id, temp_vlan))
+    if (m_portsOrch->getPort(entry.bv_id, temp_vlan))
     {
         m_portsOrch->decrFdbCount(temp_vlan.m_alias, 1);
     }
 
     /* Decrement port fdb_counter */
-    m_portsOrch->decrFdbCount(port_alias, 1);
+    m_portsOrch->decrFdbCount(entry.port_name, 1);
 
     /* Remove the FdbEntry from the internal cache, update state DB and CRM counter */
     storeFdbEntryState(update);
     notify(SUBJECT_TYPE_FDB_CHANGE, &update);
 
     SWSS_LOG_INFO("FdbEntry removed from internal cache, MAC: %s , port: %s, BVID: 0x%" PRIx64,
-                   mac.to_string().c_str(), port_alias.c_str(), bv_id);
+                   update.entry.mac.to_string().c_str(), update.entry.port_name.c_str(), update.entry.bv_id);
 }
 
 /*
@@ -222,9 +219,9 @@ void FdbOrch::handleSyncdFlushNotif(const sai_object_id_t& bv_id,
         for (auto itr = m_entries.begin(); itr != m_entries.end();)
         {
             auto curr = itr++;
-            if (curr->second.type != "static" && (curr->first.mac == mac || mac == flush_mac))
+            if (curr->second.type != "static" && (curr->first.mac == mac || mac == flush_mac) && curr->second.is_flush_pending)
             {
-                clearFdbEntry(curr->first.mac, curr->first.bv_id, curr->first.port_name);
+                clearFdbEntry(curr->first);
             }
         }
     }
@@ -236,9 +233,9 @@ void FdbOrch::handleSyncdFlushNotif(const sai_object_id_t& bv_id,
             auto curr = itr++;
             if (curr->second.bridge_port_id == bridge_port_id)
             {
-                if (curr->second.type != "static" && (curr->first.mac == mac || mac == flush_mac))
+                if (curr->second.type != "static" && (curr->first.mac == mac || mac == flush_mac) && curr->second.is_flush_pending)
                 {
-                    clearFdbEntry(curr->first.mac, curr->first.bv_id, curr->first.port_name);
+                    clearFdbEntry(curr->first);
                 }
             }
         }
@@ -251,9 +248,9 @@ void FdbOrch::handleSyncdFlushNotif(const sai_object_id_t& bv_id,
             auto curr = itr++;
             if (curr->first.bv_id == bv_id)
             {
-                if (curr->second.type != "static" && (curr->first.mac == mac || mac == flush_mac))
+                if (curr->second.type != "static" && (curr->first.mac == mac || mac == flush_mac) && curr->second.is_flush_pending)
                 {
-                    clearFdbEntry(curr->first.mac, curr->first.bv_id, curr->first.port_name);
+                    clearFdbEntry(curr->first);
                 }
             }
         }
@@ -266,9 +263,9 @@ void FdbOrch::handleSyncdFlushNotif(const sai_object_id_t& bv_id,
             auto curr = itr++;
             if (curr->first.bv_id == bv_id && curr->second.bridge_port_id == bridge_port_id)
             {
-                if (curr->second.type != "static" && (curr->first.mac == mac || mac == flush_mac))
+                if (curr->second.type != "static" && (curr->first.mac == mac || mac == flush_mac) && curr->second.is_flush_pending)
                 {
-                    clearFdbEntry(curr->first.mac, curr->first.bv_id, curr->first.port_name);
+                    clearFdbEntry(curr->first);
                 }
             }
         }
@@ -822,6 +819,7 @@ void FdbOrch::doTask(Consumer& consumer)
             fdbData.remote_ip = remote_ip;
             fdbData.esi = esi;
             fdbData.vni = vni;
+            fdbData.is_flush_pending = false;
             if (addFdbEntry(entry, port, fdbData))
             {
                 if (origin == FDB_ORIGIN_MCLAG_ADVERTIZED)
@@ -899,10 +897,23 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
     {
         if (op == "ALL")
         {
-            status = sai_fdb_api->flush_fdb_entries(gSwitchId, 0, NULL);
+            vector<sai_attribute_t>    attrs;
+            sai_attribute_t            attr;
+            attr.id = SAI_FDB_FLUSH_ATTR_ENTRY_TYPE;
+            attr.value.s32 = SAI_FDB_FLUSH_ENTRY_TYPE_DYNAMIC;
+            attrs.push_back(attr);
+            status = sai_fdb_api->flush_fdb_entries(gSwitchId, (uint32_t)attrs.size(), attrs.data());
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Flush fdb failed, return code %x", status);
+            }
+
+            if (status == SAI_STATUS_SUCCESS) {
+                for (map<FdbEntry, FdbData>::iterator it = m_entries.begin();
+                        it != m_entries.end(); it++)
+                {
+                    it->second.is_flush_pending = true;
+                }
             }
 
             return;
@@ -1056,6 +1067,11 @@ void FdbOrch::flushFDBEntries(sai_object_id_t bridge_port_oid,
         attr.value.oid = vlan_oid;
         attrs.push_back(attr);
     }
+    
+    /* do not flush static mac */
+    attr.id = SAI_FDB_FLUSH_ATTR_ENTRY_TYPE;
+    attr.value.s32 = SAI_FDB_FLUSH_ENTRY_TYPE_DYNAMIC;
+    attrs.push_back(attr);
 
     SWSS_LOG_INFO("Flushing FDB bridge_port_oid: 0x%" PRIx64 ", and bvid_oid:0x%" PRIx64 ".", bridge_port_oid, vlan_oid);
 
@@ -1063,6 +1079,20 @@ void FdbOrch::flushFDBEntries(sai_object_id_t bridge_port_oid,
     if (SAI_STATUS_SUCCESS != rv)
     {
         SWSS_LOG_ERROR("Flushing FDB failed. rv:%d", rv);
+    }
+
+    if (SAI_STATUS_SUCCESS == rv) {
+        for (map<FdbEntry, FdbData>::iterator it = m_entries.begin();
+                it != m_entries.end(); it++)
+        {
+            if ((bridge_port_oid != SAI_NULL_OBJECT_ID &&
+                    it->second.bridge_port_id == bridge_port_oid) ||
+                    (vlan_oid != SAI_NULL_OBJECT_ID &&
+                    it->first.bv_id == vlan_oid))
+            {
+                it->second.is_flush_pending = true;
+            }
+        }
     }
 }
 

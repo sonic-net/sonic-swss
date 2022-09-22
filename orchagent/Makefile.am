@@ -6,6 +6,10 @@ INCLUDES = -I $(top_srcdir)/lib \
            -I pbh \
            -I nhg
 
+if GCOV_ENABLED
+SUBDIRS = p4orch/tests
+endif
+
 CFLAGS_SAI = -I /usr/include/sai
 
 swssdir = $(datadir)/swss
@@ -18,7 +22,7 @@ dist_swss_DATA = \
 		 pfc_detect_barefoot.lua \
 		 pfc_detect_nephos.lua \
 		 pfc_detect_cisco-8000.lua \
-                 pfc_detect_vs.lua \
+		 pfc_detect_vs.lua \
 		 pfc_restore.lua \
 		 pfc_restore_cisco-8000.lua \
 		 port_rates.lua \
@@ -102,6 +106,7 @@ orchagent_SOURCES += p4orch/p4orch.cpp \
 		     p4orch/p4orch_util.cpp \
 		     p4orch/p4oidmapper.cpp \
 		     p4orch/router_interface_manager.cpp \
+		     p4orch/gre_tunnel_manager.cpp \
 		     p4orch/neighbor_manager.cpp \
 		     p4orch/next_hop_manager.cpp \
 		     p4orch/route_manager.cpp \
@@ -109,7 +114,8 @@ orchagent_SOURCES += p4orch/p4orch.cpp \
 		     p4orch/acl_table_manager.cpp \
 		     p4orch/acl_rule_manager.cpp \
 		     p4orch/wcmp_manager.cpp \
-		     p4orch/mirror_session_manager.cpp
+		     p4orch/mirror_session_manager.cpp \
+		     p4orch/l3_admit_manager.cpp
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 orchagent_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)

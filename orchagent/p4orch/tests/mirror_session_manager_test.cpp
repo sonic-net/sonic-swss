@@ -20,6 +20,8 @@ extern "C"
 #include "sai.h"
 }
 
+using ::p4orch::kTableKeyDelimiter;
+
 extern sai_mirror_api_t *sai_mirror_api;
 extern sai_object_id_t gSwitchId;
 extern PortsOrch *gPortsOrch;
@@ -221,6 +223,11 @@ class MirrorSessionManagerTest : public ::testing::Test
     void Drain()
     {
         return mirror_session_manager_.drain();
+    }
+
+    std::string VerifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple)
+    {
+        return mirror_session_manager_.verifyState(key, tuple);
     }
 
     ReturnCodeOr<P4MirrorSessionAppDbEntry> DeserializeP4MirrorSessionAppDbEntry(
@@ -712,7 +719,7 @@ TEST_F(MirrorSessionManagerTest, CreateExistingMirrorSessionInMapperShouldFail)
     ASSERT_TRUE(p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_MIRROR_SESSION, mirror_session_entry.mirror_session_key,
                                       mirror_session_entry.mirror_session_oid));
 
-    // (TODO): Expect critical state.
+    // TODO: Expect critical state.
     EXPECT_FALSE(CreateMirrorSession(mirror_session_entry).ok());
 }
 
@@ -735,7 +742,7 @@ TEST_F(MirrorSessionManagerTest, UpdatingNonexistingMirrorSessionShouldFail)
 {
     P4MirrorSessionAppDbEntry app_db_entry;
     // Fail because existing_mirror_session_entry is nullptr.
-    // (TODO): Expect critical state.
+    // TODO: Expect critical state.
     EXPECT_FALSE(ProcessUpdateRequest(app_db_entry,
                                       /*existing_mirror_session_entry=*/nullptr)
                      .ok());
@@ -746,7 +753,7 @@ TEST_F(MirrorSessionManagerTest, UpdatingNonexistingMirrorSessionShouldFail)
         kTtl1Num, kTos1Num);
 
     // Fail because the mirror session is not added into centralized mapper.
-    // (TODO): Expect critical state.
+    // TODO: Expect critical state.
     EXPECT_FALSE(ProcessUpdateRequest(app_db_entry, &existing_mirror_session_entry).ok());
 }
 
@@ -975,7 +982,7 @@ TEST_F(MirrorSessionManagerTest, UpdateRecoveryFailureShouldRaiseCriticalState)
         .WillOnce(Return(SAI_STATUS_SUCCESS))
         .WillOnce(Return(SAI_STATUS_SUCCESS))
         .WillOnce(Return(SAI_STATUS_FAILURE));
-    // (TODO): Expect critical state.
+    // TODO: Expect critical state.
 
     Drain();
 
@@ -1002,9 +1009,192 @@ TEST_F(MirrorSessionManagerTest, DeleteMirrorSessionNotInMapperShouldFail)
 {
     AddDefaultMirrorSection();
     p4_oid_mapper_.eraseOID(SAI_OBJECT_TYPE_MIRROR_SESSION, KeyGenerator::generateMirrorSessionKey(kMirrorSessionId));
-    // (TODO): Expect critical state.
+    // TODO: Expect critical state.
     ASSERT_EQ(StatusCode::SWSS_RC_INTERNAL,
               ProcessDeleteRequest(KeyGenerator::generateMirrorSessionKey(kMirrorSessionId)));
+}
+
+TEST_F(MirrorSessionManagerTest, VerifyStateTest)
+{
+    AddDefaultMirrorSection();
+    nlohmann::json j;
+    j[prependMatchField(p4orch::kMirrorSessionId)] = kMirrorSessionId;
+    const std::string db_key = std::string(APP_P4RT_TABLE_NAME) + kTableKeyDelimiter +
+                               APP_P4RT_MIRROR_SESSION_TABLE_NAME + kTableKeyDelimiter + j.dump();
+    // Setup ASIC DB.
+    swss::Table table(nullptr, "ASIC_STATE");
+    table.set("SAI_OBJECT_TYPE_MIRROR_SESSION:oid:0x445566",
+              std::vector<swss::FieldValueTuple>{
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_MONITOR_PORT", "oid:0x112233"},
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_TYPE", "SAI_MIRROR_SESSION_TYPE_ENHANCED_REMOTE"},
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_ERSPAN_ENCAPSULATION_TYPE",
+                                        "SAI_ERSPAN_ENCAPSULATION_TYPE_MIRROR_L3_GRE_TUNNEL"},
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_IPHDR_VERSION", "4"},
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_TOS", "0"},
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_TTL", "64"},
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_SRC_IP_ADDRESS", "10.206.196.31"},
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_DST_IP_ADDRESS", "172.20.0.203"},
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_SRC_MAC_ADDRESS", "00:02:03:04:05:06"},
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS", "00:1A:11:17:5F:80"},
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_GRE_PROTOCOL_TYPE", "35006"},
+              });
+    std::vector<swss::FieldValueTuple> attributes;
+
+    // Verification should succeed with vaild key and value.
+    attributes.push_back(swss::FieldValueTuple{p4orch::kAction, p4orch::kMirrorAsIpv4Erspan});
+    attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kPort), kPort1});
+    attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcIp), kSrcIp1});
+    attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kDstIp), kDstIp1});
+    attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
+    attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kDstMac), kDstMac1});
+    attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kTtl), kTtl1});
+    attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kTos), kTos1});
+    EXPECT_EQ(VerifyState(db_key, attributes), "");
+
+    // Invalid key should fail verification.
+    EXPECT_FALSE(VerifyState("invalid", attributes).empty());
+    EXPECT_FALSE(VerifyState("invalid:invalid", attributes).empty());
+    EXPECT_FALSE(VerifyState(std::string(APP_P4RT_TABLE_NAME) + ":invalid", attributes).empty());
+    EXPECT_FALSE(VerifyState(std::string(APP_P4RT_TABLE_NAME) + ":invalid:invalid", attributes).empty());
+    EXPECT_FALSE(
+        VerifyState(std::string(APP_P4RT_TABLE_NAME) + ":FIXED_MIRROR_SESSION_TABLE:invalid", attributes).empty());
+
+    // Verification should fail if entry does not exist.
+    j[prependMatchField(p4orch::kMirrorSessionId)] = "invalid";
+    EXPECT_FALSE(VerifyState(std::string(APP_P4RT_TABLE_NAME) + kTableKeyDelimiter +
+                                 APP_P4RT_MIRROR_SESSION_TABLE_NAME + kTableKeyDelimiter + j.dump(),
+                             attributes)
+                     .empty());
+
+    auto *mirror_entry = GetMirrorSessionEntry(KeyGenerator::generateMirrorSessionKey(kMirrorSessionId));
+    ASSERT_NE(mirror_entry, nullptr);
+
+    // Verification should fail if mirror section key mismatches.
+    auto saved_mirror_session_key = mirror_entry->mirror_session_key;
+    mirror_entry->mirror_session_key = "invalid";
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    mirror_entry->mirror_session_key = saved_mirror_session_key;
+
+    // Verification should fail if mirror section ID mismatches.
+    auto saved_mirror_session_id = mirror_entry->mirror_session_id;
+    mirror_entry->mirror_session_id = "invalid";
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    mirror_entry->mirror_session_id = saved_mirror_session_id;
+
+    // Verification should fail if port mismatches.
+    auto saved_port = mirror_entry->port;
+    mirror_entry->port = kPort2;
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    mirror_entry->port = saved_port;
+
+    // Verification should fail if source IP mismatches.
+    auto saved_src_ip = mirror_entry->src_ip;
+    mirror_entry->src_ip = swss::IpAddress(kSrcIp2);
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    mirror_entry->src_ip = saved_src_ip;
+
+    // Verification should fail if dest IP mismatches.
+    auto saved_dst_ip = mirror_entry->dst_ip;
+    mirror_entry->dst_ip = swss::IpAddress(kDstIp2);
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    mirror_entry->dst_ip = saved_dst_ip;
+
+    // Verification should fail if source MAC mismatches.
+    auto saved_src_mac = mirror_entry->src_mac;
+    mirror_entry->src_mac = swss::MacAddress(kSrcMac2);
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    mirror_entry->src_mac = saved_src_mac;
+
+    // Verification should fail if dest MAC mismatches.
+    auto saved_dst_mac = mirror_entry->dst_mac;
+    mirror_entry->dst_mac = swss::MacAddress(kDstMac2);
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    mirror_entry->dst_mac = saved_dst_mac;
+
+    // Verification should fail if ttl mismatches.
+    auto saved_ttl = mirror_entry->ttl;
+    mirror_entry->ttl = kTtl2Num;
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    mirror_entry->ttl = saved_ttl;
+
+    // Verification should fail if tos mismatches.
+    auto saved_tos = mirror_entry->tos;
+    mirror_entry->tos = kTos2Num;
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    mirror_entry->tos = saved_tos;
+
+    // Verification should fail if OID mapper mismatches.
+    p4_oid_mapper_.eraseOID(SAI_OBJECT_TYPE_MIRROR_SESSION, KeyGenerator::generateMirrorSessionKey(kMirrorSessionId));
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_MIRROR_SESSION, KeyGenerator::generateMirrorSessionKey(kMirrorSessionId),
+                          kMirrorSessionOid);
+}
+
+TEST_F(MirrorSessionManagerTest, VerifyStateAsicDbTest)
+{
+    AddDefaultMirrorSection();
+    nlohmann::json j;
+    j[prependMatchField(p4orch::kMirrorSessionId)] = kMirrorSessionId;
+    const std::string db_key = std::string(APP_P4RT_TABLE_NAME) + kTableKeyDelimiter +
+                               APP_P4RT_MIRROR_SESSION_TABLE_NAME + kTableKeyDelimiter + j.dump();
+    // Setup ASIC DB.
+    swss::Table table(nullptr, "ASIC_STATE");
+    table.set("SAI_OBJECT_TYPE_MIRROR_SESSION:oid:0x445566",
+              std::vector<swss::FieldValueTuple>{
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_MONITOR_PORT", "oid:0x112233"},
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_TYPE", "SAI_MIRROR_SESSION_TYPE_ENHANCED_REMOTE"},
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_ERSPAN_ENCAPSULATION_TYPE",
+                                        "SAI_ERSPAN_ENCAPSULATION_TYPE_MIRROR_L3_GRE_TUNNEL"},
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_IPHDR_VERSION", "4"},
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_TOS", "0"},
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_TTL", "64"},
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_SRC_IP_ADDRESS", "10.206.196.31"},
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_DST_IP_ADDRESS", "172.20.0.203"},
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_SRC_MAC_ADDRESS", "00:02:03:04:05:06"},
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS", "00:1A:11:17:5F:80"},
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_GRE_PROTOCOL_TYPE", "35006"},
+              });
+
+    std::vector<swss::FieldValueTuple> attributes;
+
+    // Verification should succeed with vaild key and value.
+    attributes.push_back(swss::FieldValueTuple{p4orch::kAction, p4orch::kMirrorAsIpv4Erspan});
+    attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kPort), kPort1});
+    attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcIp), kSrcIp1});
+    attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kDstIp), kDstIp1});
+    attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kSrcMac), kSrcMac1});
+    attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kDstMac), kDstMac1});
+    attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kTtl), kTtl1});
+    attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kTos), kTos1});
+
+    EXPECT_EQ(VerifyState(db_key, attributes), "");
+
+    // set differenet SRC IP ADDR and expect the VerifyState to fail
+    table.set("SAI_OBJECT_TYPE_MIRROR_SESSION:oid:0x445566",
+              std::vector<swss::FieldValueTuple>{
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_SRC_IP_ADDRESS", "10.206.196.32"}});
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+
+    // Delete the ASIC DB entry and expect the VerifyState to fail
+    table.del("SAI_OBJECT_TYPE_MIRROR_SESSION:oid:0x445566");
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+
+    // Restore the ASIC DB entry
+    table.set("SAI_OBJECT_TYPE_MIRROR_SESSION:oid:0x445566",
+              std::vector<swss::FieldValueTuple>{
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_MONITOR_PORT", "oid:0x112233"},
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_TYPE", "SAI_MIRROR_SESSION_TYPE_ENHANCED_REMOTE"},
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_ERSPAN_ENCAPSULATION_TYPE",
+                                        "SAI_ERSPAN_ENCAPSULATION_TYPE_MIRROR_L3_GRE_TUNNEL"},
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_IPHDR_VERSION", "4"},
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_TOS", "0"},
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_TTL", "64"},
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_SRC_IP_ADDRESS", "10.206.196.31"},
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_DST_IP_ADDRESS", "172.20.0.203"},
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_SRC_MAC_ADDRESS", "00:02:03:04:05:06"},
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS", "00:1A:11:17:5F:80"},
+                  swss::FieldValueTuple{"SAI_MIRROR_SESSION_ATTR_GRE_PROTOCOL_TYPE", "35006"},
+              });
 }
 
 } // namespace test

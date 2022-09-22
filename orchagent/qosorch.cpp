@@ -46,6 +46,12 @@ enum {
     RED_DROP_PROBABILITY_SET    = (1U << 2)
 };
 
+enum {
+    GREEN_WRED_ENABLED  = (1U << 0),
+    YELLOW_WRED_ENABLED = (1U << 1),
+    RED_WRED_ENABLED    = (1U << 2)
+};
+
 // field_name is what is expected in CONFIG_DB PORT_QOS_MAP table
 map<string, sai_port_attr_t> qos_to_attr_map = {
     {dscp_to_tc_field_name, SAI_PORT_ATTR_QOS_DSCP_TO_TC_MAP},
@@ -103,6 +109,8 @@ map<string, string> qos_to_ref_table_map = {
 
 #define DSCP_MAX_VAL 63
 #define EXP_MAX_VAL 7
+
+#define PORT_NAME_GLOBAL "global"
 
 task_process_status QosMapHandler::processWorkItem(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
@@ -236,37 +244,6 @@ bool DscpToTcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
     return true;
 }
 
-void DscpToTcMapHandler::applyDscpToTcMapToSwitch(sai_attr_id_t attr_id, sai_object_id_t map_id)
-{
-    SWSS_LOG_ENTER();
-    bool rv = true;
-
-    /* Query DSCP_TO_TC QoS map at switch capability */
-    rv = gSwitchOrch->querySwitchDscpToTcCapability(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP);
-    if (rv == false)
-    {
-        SWSS_LOG_ERROR("Switch level DSCP to TC QoS map configuration is not supported");
-        return;
-    }
-
-    /* Apply DSCP_TO_TC QoS map at switch */
-    sai_attribute_t attr;
-    attr.id = attr_id;
-    attr.value.oid = map_id;
-
-    sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to apply DSCP_TO_TC QoS map to switch rv:%d", status);
-        return;
-    }
-
-    if (map_id != gQosOrch->m_globalDscpToTcMap)
-        gQosOrch->m_globalDscpToTcMap = map_id;
-
-    SWSS_LOG_NOTICE("Applied DSCP_TO_TC QoS map to switch successfully");
-}
-
 sai_object_id_t DscpToTcMapHandler::addQosItem(const vector<sai_attribute_t> &attributes)
 {
     SWSS_LOG_ENTER();
@@ -292,35 +269,12 @@ sai_object_id_t DscpToTcMapHandler::addQosItem(const vector<sai_attribute_t> &at
     }
     SWSS_LOG_DEBUG("created QosMap object:%" PRIx64, sai_object);
 
-    applyDscpToTcMapToSwitch(SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP, sai_object);
-
     return sai_object;
 }
 
 bool DscpToTcMapHandler::removeQosItem(sai_object_id_t sai_object)
 {
     SWSS_LOG_ENTER();
-
-    if (sai_object == gQosOrch->m_globalDscpToTcMap)
-    {
-        // The current global dscp to tc map is about to be removed.
-        // Find another one to set to the switch or NULL in case this is the last one
-        const auto &dscpToTcObjects = (*QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME]);
-        bool found = false;
-        for (const auto &ref : dscpToTcObjects)
-        {
-            if (ref.second.m_saiObjectId == sai_object)
-                continue;
-            SWSS_LOG_NOTICE("Current global dscp_to_tc map is about to be removed, set it to %s %" PRIx64, ref.first.c_str(), ref.second.m_saiObjectId);
-            applyDscpToTcMapToSwitch(SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP, ref.second.m_saiObjectId);
-            found = true;
-            break;
-        }
-        if (!found)
-        {
-            applyDscpToTcMapToSwitch(SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP, SAI_NULL_OBJECT_ID);
-        }
-    }
 
     SWSS_LOG_DEBUG("Removing DscpToTcMap object:%" PRIx64, sai_object);
     sai_status_t sai_status = sai_qos_map_api->remove_qos_map(sai_object);
@@ -541,47 +495,140 @@ bool WredMapHandler::convertBool(string str, bool &val)
     return true;
 }
 
+void WredMapHandler::appendThresholdToAttributeList(sai_attr_id_t type,
+                                                    sai_uint32_t threshold,
+                                                    bool needDefer,
+                                                    vector<sai_attribute_t> &normalQueue,
+                                                    vector<sai_attribute_t> &deferredQueue,
+                                                    sai_uint32_t &newThreshold)
+{
+    sai_attribute_t attr;
+
+    attr.id = type;
+    attr.value.u32 = threshold;
+    if (needDefer)
+    {
+        deferredQueue.push_back(attr);
+    }
+    else
+    {
+        normalQueue.push_back(attr);
+    }
+    newThreshold = threshold;
+}
+
+WredMapHandler::qos_wred_thresholds_store_t WredMapHandler::m_wredProfiles;
+
 bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attribs)
 {
     SWSS_LOG_ENTER();
     sai_attribute_t attr;
+    vector<sai_attribute_t> deferred_attributes;
+    auto &key = kfvKey(tuple);
+    auto &storedProfile = WredMapHandler::m_wredProfiles[key];
+    qos_wred_thresholds_t currentProfile = storedProfile;
+    sai_uint32_t threshold;
+
+    /*
+     * Setting WRED profile can fail in case
+     * - the current min threshold is greater than the new max threshold 
+     * - or the current max threshold is less than the new min threshold
+     * for any color at any time, on some vendor's platforms.
+     *
+     * The root cause
+     * There can be only one attribute in each SAI SET operation, which means
+     * the vendor SAI do not have a big picture regarding what attributes are being set
+     * and can only perform the sanity check against each SET operation.
+     * In the above case, the sanity check will fail.
+     *
+     * The fix
+     * The thresholds that have been applied to SAI will be stored in orchagent.
+     *
+     * The original logic is to handle each attribute to be set and append it to an attribute list.
+     * To resolve the issue, a 2nd half attribute list is introduced and
+     * will be appended to the original attribute list after all the attributes have been handled.
+     *
+     * In the new logic, each threshold to be set will be checked against the stored data.
+     * In case it violates the condition, the violating attribute will be deferred, done via putting it into the 2nd half attributes list.
+     *
+     * For any color, there can be only 1 threshold violating the condition.
+     * Otherwise, it means both new min > old max and new max > old min, which means either old max < old min or new max < new min,
+     * which means either old or new data is illegal.
+     * This can not happen because illegal data can not be applied and stored.
+     *
+     * By doing so, the other threshold will be applied first, which extends the threshold range and breaks the violating condition.
+     * A logic is also introduced to guarantee the min threshold is always less than the max threshold in the new profile to be set.
+     *
+     * For example:
+     * Current min=1M, max=2M, new min=3M, new max=4M
+     * The min is set first, so current max (2M) < new min (3M), which violates the condition
+     * By the new logic, min threshold will be deferred so the new max will be applied first and then the new min is applied and no violating.
+     *  min = 1M, max = 2M
+     *  => min = 1M, max = 4M
+     *  => min = 3M, max = 4M
+     */
+
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
     {
         if (fvField(*i) == yellow_max_threshold_field_name)
         {
-            attr.id = SAI_WRED_ATTR_YELLOW_MAX_THRESHOLD;
-            attr.value.s32 = stoi(fvValue(*i));
-            attribs.push_back(attr);
+            threshold = stoi(fvValue(*i));
+            appendThresholdToAttributeList(SAI_WRED_ATTR_YELLOW_MAX_THRESHOLD,
+                                           threshold,
+                                           (storedProfile.yellow_min_threshold > threshold),
+                                           attribs,
+                                           deferred_attributes,
+                                           currentProfile.yellow_max_threshold);
         }
         else if (fvField(*i) == yellow_min_threshold_field_name)
         {
-            attr.id = SAI_WRED_ATTR_YELLOW_MIN_THRESHOLD;
-            attr.value.s32 = stoi(fvValue(*i));
-            attribs.push_back(attr);
+            threshold = stoi(fvValue(*i));
+            appendThresholdToAttributeList(SAI_WRED_ATTR_YELLOW_MIN_THRESHOLD,
+                                           threshold,
+                                           (storedProfile.yellow_max_threshold < threshold),
+                                           attribs,
+                                           deferred_attributes,
+                                           currentProfile.yellow_min_threshold);
         }
         else if (fvField(*i) == green_max_threshold_field_name)
         {
-            attr.id = SAI_WRED_ATTR_GREEN_MAX_THRESHOLD;
-            attr.value.s32 = stoi(fvValue(*i));
-            attribs.push_back(attr);
+            threshold = stoi(fvValue(*i));
+            appendThresholdToAttributeList(SAI_WRED_ATTR_GREEN_MAX_THRESHOLD,
+                                           threshold,
+                                           (storedProfile.green_min_threshold > threshold),
+                                           attribs,
+                                           deferred_attributes,
+                                           currentProfile.green_max_threshold);
         }
         else if (fvField(*i) == green_min_threshold_field_name)
         {
-           attr.id = SAI_WRED_ATTR_GREEN_MIN_THRESHOLD;
-           attr.value.s32 = stoi(fvValue(*i));
-           attribs.push_back(attr);
+            threshold = stoi(fvValue(*i));
+            appendThresholdToAttributeList(SAI_WRED_ATTR_GREEN_MIN_THRESHOLD,
+                                           threshold,
+                                           (storedProfile.green_max_threshold < threshold),
+                                           attribs,
+                                           deferred_attributes,
+                                           currentProfile.green_min_threshold);
         }
         else if (fvField(*i) == red_max_threshold_field_name)
         {
-            attr.id = SAI_WRED_ATTR_RED_MAX_THRESHOLD;
-            attr.value.s32 = stoi(fvValue(*i));
-            attribs.push_back(attr);
+            threshold = stoi(fvValue(*i));
+            appendThresholdToAttributeList(SAI_WRED_ATTR_RED_MAX_THRESHOLD,
+                                           threshold,
+                                           (storedProfile.red_min_threshold > threshold),
+                                           attribs,
+                                           deferred_attributes,
+                                           currentProfile.red_max_threshold);
         }
         else if (fvField(*i) == red_min_threshold_field_name)
         {
-            attr.id = SAI_WRED_ATTR_RED_MIN_THRESHOLD;
-            attr.value.s32 = stoi(fvValue(*i));
-            attribs.push_back(attr);
+            threshold = stoi(fvValue(*i));
+            appendThresholdToAttributeList(SAI_WRED_ATTR_RED_MIN_THRESHOLD,
+                                           threshold,
+                                           (storedProfile.red_max_threshold < threshold),
+                                           attribs,
+                                           deferred_attributes,
+                                           currentProfile.red_min_threshold);
         }
         else if (fvField(*i) == green_drop_probability_field_name)
         {
@@ -640,6 +687,18 @@ bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tupl
             return false;
         }
     }
+
+    if ((currentProfile.green_min_threshold > currentProfile.green_max_threshold)
+        || (currentProfile.yellow_min_threshold > currentProfile.yellow_max_threshold)
+        || (currentProfile.red_min_threshold > currentProfile.red_max_threshold))
+    {
+        SWSS_LOG_ERROR("Wrong wred profile: min threshold is greater than max threshold");
+        return false;
+    }
+
+    attribs.insert(attribs.end(), deferred_attributes.begin(), deferred_attributes.end());
+    storedProfile = currentProfile;
+
     return true;
 }
 
@@ -667,6 +726,7 @@ sai_object_id_t WredMapHandler::addQosItem(const vector<sai_attribute_t> &attrib
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
     uint8_t drop_prob_set = 0;
+    uint8_t wred_enable_set = 0;
 
     attr.id = SAI_WRED_ATTR_WEIGHT;
     attr.value.s32 = 0;
@@ -676,32 +736,53 @@ sai_object_id_t WredMapHandler::addQosItem(const vector<sai_attribute_t> &attrib
     {
         attrs.push_back(attrib);
 
-        if (attrib.id == SAI_WRED_ATTR_GREEN_DROP_PROBABILITY)
+        switch (attrib.id)
         {
+        case SAI_WRED_ATTR_GREEN_ENABLE:
+            if (attrib.value.booldata)
+            {
+                wred_enable_set |= GREEN_WRED_ENABLED;
+            }
+            break;
+        case SAI_WRED_ATTR_YELLOW_ENABLE:
+            if (attrib.value.booldata)
+            {
+                wred_enable_set |= YELLOW_WRED_ENABLED;
+            }
+            break;
+        case SAI_WRED_ATTR_RED_ENABLE:
+            if (attrib.value.booldata)
+            {
+                wred_enable_set |= RED_WRED_ENABLED;
+            }
+            break;
+        case SAI_WRED_ATTR_GREEN_DROP_PROBABILITY:
             drop_prob_set |= GREEN_DROP_PROBABILITY_SET;
-        }
-        else if (attrib.id == SAI_WRED_ATTR_YELLOW_DROP_PROBABILITY)
-        {
+            break;
+        case SAI_WRED_ATTR_YELLOW_DROP_PROBABILITY:
             drop_prob_set |= YELLOW_DROP_PROBABILITY_SET;
-        }
-        else if (attrib.id == SAI_WRED_ATTR_RED_DROP_PROBABILITY)
-        {
+            break;
+        case SAI_WRED_ATTR_RED_DROP_PROBABILITY:
             drop_prob_set |= RED_DROP_PROBABILITY_SET;
+            break;
+        default:
+            break;
         }
     }
-    if (!(drop_prob_set & GREEN_DROP_PROBABILITY_SET))
+
+    if (!(drop_prob_set & GREEN_DROP_PROBABILITY_SET) && (wred_enable_set & GREEN_WRED_ENABLED))
     {
         attr.id = SAI_WRED_ATTR_GREEN_DROP_PROBABILITY;
         attr.value.s32 = 100;
         attrs.push_back(attr);
     }
-    if (!(drop_prob_set & YELLOW_DROP_PROBABILITY_SET))
+    if (!(drop_prob_set & YELLOW_DROP_PROBABILITY_SET) && (wred_enable_set & YELLOW_WRED_ENABLED))
     {
         attr.id = SAI_WRED_ATTR_YELLOW_DROP_PROBABILITY;
         attr.value.s32 = 100;
         attrs.push_back(attr);
     }
-    if (!(drop_prob_set & RED_DROP_PROBABILITY_SET))
+    if (!(drop_prob_set & RED_DROP_PROBABILITY_SET) && (wred_enable_set & RED_WRED_ENABLED))
     {
         attr.id = SAI_WRED_ATTR_RED_DROP_PROBABILITY;
         attr.value.s32 = 100;
@@ -1717,12 +1798,112 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer, KeyOpFieldsVal
     return task_process_status::task_success;
 }
 
+bool QosOrch::applyDscpToTcMapToSwitch(sai_attr_id_t attr_id, sai_object_id_t map_id)
+{
+    SWSS_LOG_ENTER();
+
+    /* Query DSCP_TO_TC QoS map at switch capability */
+    bool rv = gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP);
+    if (rv == false)
+    {
+        SWSS_LOG_ERROR("Switch level DSCP to TC QoS map configuration is not supported");
+        return true;
+    }
+
+    /* Apply DSCP_TO_TC QoS map at switch */
+    sai_attribute_t attr;
+    attr.id = attr_id;
+    attr.value.oid = map_id;
+
+    sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to apply DSCP_TO_TC QoS map to switch rv:%d", status);
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("Applied DSCP_TO_TC QoS map to switch successfully");
+    return true;
+}
+
+task_process_status QosOrch::handleGlobalQosMap(const string &OP, KeyOpFieldsValuesTuple &tuple)
+{
+    SWSS_LOG_ENTER();
+
+    task_process_status task_status = task_process_status::task_success;
+    
+    if (OP == DEL_COMMAND)
+    {
+        string referenced_obj;
+        if (!doesObjectExist(m_qos_maps, CFG_PORT_QOS_MAP_TABLE_NAME, PORT_NAME_GLOBAL, dscp_to_tc_field_name, referenced_obj))
+        {
+            return task_status;
+        }
+        // Set SAI_NULL_OBJECT_ID to switch level if PORT_QOS_MAP|global is removed
+        if (applyDscpToTcMapToSwitch(SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP, SAI_NULL_OBJECT_ID))
+        {
+            removeObject(m_qos_maps, CFG_PORT_QOS_MAP_TABLE_NAME, PORT_NAME_GLOBAL);
+            task_status = task_process_status::task_success;
+            SWSS_LOG_INFO("Global QoS map type %s is removed", dscp_to_tc_field_name.c_str());
+        }
+        else
+        {
+            task_status = task_process_status::task_failed;
+            SWSS_LOG_WARN("Failed to remove switch level QoS map type %s", dscp_to_tc_field_name.c_str());
+        }
+        return task_status;
+    }
+
+    for (auto it = kfvFieldsValues(tuple).begin(); it != kfvFieldsValues(tuple).end(); it++)
+    {
+        string map_type_name = fvField(*it);
+        string map_name = fvValue(*it);
+        if (map_type_name != dscp_to_tc_field_name)
+        {
+            SWSS_LOG_WARN("Qos map type %s is not supported at global level", map_type_name.c_str());
+            continue;
+        }
+
+        if (qos_to_attr_map.find(map_type_name) != qos_to_attr_map.end())
+        {
+            sai_object_id_t id;
+            string object_name;
+            ref_resolve_status status = resolveFieldRefValue(m_qos_maps, map_type_name, qos_to_ref_table_map.at(map_type_name), tuple, id, object_name);
+
+            if (status != ref_resolve_status::success)
+            {
+                SWSS_LOG_INFO("Global QoS map %s is not yet created", map_name.c_str());
+                task_status = task_process_status::task_need_retry;
+            }
+
+            if (applyDscpToTcMapToSwitch(SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP, id))
+            {
+                setObjectReference(m_qos_maps, CFG_PORT_QOS_MAP_TABLE_NAME, PORT_NAME_GLOBAL, map_type_name, object_name);
+                task_status = task_process_status::task_success;
+                SWSS_LOG_INFO("Applied QoS map type %s name %s to switch level", map_type_name.c_str(), object_name.c_str());
+            }
+            else
+            {
+                task_status = task_process_status::task_failed;
+                SWSS_LOG_INFO("Failed to apply QoS map type %s name %s to switch level", map_type_name.c_str(), object_name.c_str());
+            }
+        }
+    }
+    return task_status;
+}
+
 task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
 
     string key = kfvKey(tuple);
     string op = kfvOp(tuple);
+
+    if (key == PORT_NAME_GLOBAL)
+    {
+        return handleGlobalQosMap(op, tuple);
+    }
+
     vector<string> port_names = tokenize(key, list_item_delimiter);
 
     if (op == DEL_COMMAND)

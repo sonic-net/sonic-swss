@@ -23,16 +23,26 @@ namespace qosorch_test
     int sai_remove_qos_map_count;
     int sai_remove_wred_profile_count;
     int sai_remove_scheduler_count;
+    int sai_set_wred_attribute_count;
     sai_object_id_t switch_dscp_to_tc_map_id;
 
     sai_remove_scheduler_fn old_remove_scheduler;
     sai_scheduler_api_t ut_sai_scheduler_api, *pold_sai_scheduler_api;
+    sai_create_wred_fn old_create_wred;
     sai_remove_wred_fn old_remove_wred;
+    sai_set_wred_attribute_fn old_set_wred_attribute;
     sai_wred_api_t ut_sai_wred_api, *pold_sai_wred_api;
     sai_remove_qos_map_fn old_remove_qos_map;
     sai_qos_map_api_t ut_sai_qos_map_api, *pold_sai_qos_map_api;
     sai_set_switch_attribute_fn old_set_switch_attribute_fn;
     sai_switch_api_t ut_sai_switch_api, *pold_sai_switch_api;
+
+    typedef struct
+    {
+        sai_uint32_t green_max_drop_probability;
+        sai_uint32_t yellow_max_drop_probability;
+        sai_uint32_t red_max_drop_probability;
+    } qos_wred_max_drop_probability_t;
 
     sai_status_t _ut_stub_sai_set_switch_attribute(sai_object_id_t switch_id, const sai_attribute_t *attr)
     {
@@ -50,11 +60,147 @@ namespace qosorch_test
         return rc;
     }
 
+    bool testing_wred_thresholds;
+    WredMapHandler::qos_wred_thresholds_t saiThresholds;
+    qos_wred_max_drop_probability_t saiMaxDropProbabilities;
+    void _ut_stub_sai_check_wred_attributes(const sai_attribute_t &attr)
+    {
+        if (!testing_wred_thresholds)
+        {
+            return;
+        }
+
+        switch (attr.id)
+        {
+        case SAI_WRED_ATTR_GREEN_MAX_THRESHOLD:
+            ASSERT_TRUE(!saiThresholds.green_min_threshold || saiThresholds.green_min_threshold < attr.value.u32);
+            saiThresholds.green_max_threshold = attr.value.u32;
+            break;
+        case SAI_WRED_ATTR_GREEN_MIN_THRESHOLD:
+            ASSERT_TRUE(!saiThresholds.green_max_threshold || saiThresholds.green_max_threshold > attr.value.u32);
+            saiThresholds.green_min_threshold = attr.value.u32;
+            break;
+        case SAI_WRED_ATTR_YELLOW_MAX_THRESHOLD:
+            ASSERT_TRUE(!saiThresholds.yellow_min_threshold || saiThresholds.yellow_min_threshold < attr.value.u32);
+            saiThresholds.yellow_max_threshold = attr.value.u32;
+            break;
+        case SAI_WRED_ATTR_YELLOW_MIN_THRESHOLD:
+            ASSERT_TRUE(!saiThresholds.yellow_max_threshold || saiThresholds.yellow_max_threshold > attr.value.u32);
+            saiThresholds.yellow_min_threshold = attr.value.u32;
+            break;
+        case SAI_WRED_ATTR_RED_MAX_THRESHOLD:
+            ASSERT_TRUE(!saiThresholds.red_min_threshold || saiThresholds.red_min_threshold < attr.value.u32);
+            saiThresholds.red_max_threshold = attr.value.u32;
+            break;
+        case SAI_WRED_ATTR_RED_MIN_THRESHOLD:
+            ASSERT_TRUE(!saiThresholds.red_max_threshold || saiThresholds.red_max_threshold > attr.value.u32);
+            saiThresholds.red_min_threshold = attr.value.u32;
+            break;
+        case SAI_WRED_ATTR_GREEN_DROP_PROBABILITY:
+            saiMaxDropProbabilities.green_max_drop_probability = attr.value.u32;
+            break;
+        case SAI_WRED_ATTR_YELLOW_DROP_PROBABILITY:
+            saiMaxDropProbabilities.yellow_max_drop_probability = attr.value.u32;
+            break;
+        case SAI_WRED_ATTR_RED_DROP_PROBABILITY:
+            saiMaxDropProbabilities.red_max_drop_probability = attr.value.u32;
+            break;
+        default:
+            break;
+        }
+    }
+
+    void checkWredProfileEqual(const string &name, WredMapHandler::qos_wred_thresholds_t &thresholds)
+    {
+        auto &oaThresholds = WredMapHandler::m_wredProfiles[name];
+
+        ASSERT_EQ(oaThresholds.green_min_threshold, thresholds.green_min_threshold);
+        ASSERT_EQ(oaThresholds.green_max_threshold, thresholds.green_max_threshold);
+        ASSERT_EQ(oaThresholds.yellow_min_threshold, thresholds.yellow_min_threshold);
+        ASSERT_EQ(oaThresholds.yellow_max_threshold, thresholds.yellow_max_threshold);
+        ASSERT_EQ(oaThresholds.red_min_threshold, thresholds.red_min_threshold);
+        ASSERT_EQ(oaThresholds.red_max_threshold, thresholds.red_max_threshold);
+    }
+
+    void updateWredProfileAndCheck(vector<FieldValueTuple> &thresholdsVector, WredMapHandler::qos_wred_thresholds_t &thresholdsValue)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"AZURE", "SET", thresholdsVector});
+        auto consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_WRED_PROFILE_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gQosOrch)->doTask();
+        checkWredProfileEqual("AZURE", saiThresholds);
+        checkWredProfileEqual("AZURE", thresholdsValue);
+    }
+
+    void updateWrongWredProfileAndCheck(vector<FieldValueTuple> &thresholdsVector)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        vector<string> ts;
+        entries.push_back({"AZURE", "SET", thresholdsVector});
+        auto consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_WRED_PROFILE_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+        auto current_sai_wred_set_count = sai_set_wred_attribute_count;
+        static_cast<Orch *>(gQosOrch)->doTask();
+        ASSERT_EQ(current_sai_wred_set_count, sai_set_wred_attribute_count);
+        static_cast<Orch *>(gQosOrch)->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+    }
+
+    void updateMaxDropProbabilityAndCheck(string name, vector<FieldValueTuple> &maxDropProbabilityVector, qos_wred_max_drop_probability_t &maxDropProbabilities)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        vector<string> ts;
+        entries.push_back({name, "SET", maxDropProbabilityVector});
+        auto consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_WRED_PROFILE_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+        saiMaxDropProbabilities.green_max_drop_probability = 0;
+        saiMaxDropProbabilities.yellow_max_drop_probability = 0;
+        saiMaxDropProbabilities.red_max_drop_probability = 0;
+        static_cast<Orch *>(gQosOrch)->doTask();
+        ASSERT_EQ(saiMaxDropProbabilities.green_max_drop_probability, maxDropProbabilities.green_max_drop_probability);
+        ASSERT_EQ(saiMaxDropProbabilities.yellow_max_drop_probability, maxDropProbabilities.yellow_max_drop_probability);
+        ASSERT_EQ(saiMaxDropProbabilities.red_max_drop_probability, maxDropProbabilities.red_max_drop_probability);
+    }
+
+    sai_status_t _ut_stub_sai_create_wred(
+        _Out_ sai_object_id_t *wred_id,
+        _In_ sai_object_id_t switch_id,
+        _In_ uint32_t attr_count,
+        _In_ const sai_attribute_t *attr_list)
+    {
+        auto rc = old_create_wred(wred_id, switch_id, attr_count, attr_list);
+        if (rc == SAI_STATUS_SUCCESS)
+        {
+            for (uint32_t i = 0; i < attr_count; i++)
+            {
+                _ut_stub_sai_check_wred_attributes(attr_list[i]);
+            }
+        }
+        return rc;
+    }
+
     sai_status_t _ut_stub_sai_remove_wred(sai_object_id_t wred_id)
     {
         auto rc = old_remove_wred(wred_id);
         if (rc == SAI_STATUS_SUCCESS)
             sai_remove_wred_profile_count++;
+        return rc;
+    }
+
+    sai_status_t _ut_stub_sai_set_wred_attribute(
+        _In_ sai_object_id_t wred_id,
+        _In_ const sai_attribute_t *attr)
+    {
+        auto rc = old_set_wred_attribute(wred_id, attr);
+        if (rc == SAI_STATUS_SUCCESS)
+        {
+            _ut_stub_sai_check_wred_attributes(*attr);
+        }
+        sai_set_wred_attribute_count++;
         return rc;
     }
 
@@ -133,6 +279,13 @@ namespace qosorch_test
             ReplaceSaiRemoveApi<sai_wred_api_t, sai_remove_wred_fn>(sai_wred_api, ut_sai_wred_api, pold_sai_wred_api,
                                                                     _ut_stub_sai_remove_wred, sai_wred_api->remove_wred,
                                                                     old_remove_wred, ut_sai_wred_api.remove_wred);
+            // Mock other wred APIs
+            old_create_wred = pold_sai_wred_api->create_wred;
+            ut_sai_wred_api.create_wred = _ut_stub_sai_create_wred;
+            old_set_wred_attribute = pold_sai_wred_api->set_wred_attribute;
+            ut_sai_wred_api.set_wred_attribute = _ut_stub_sai_set_wred_attribute;
+
+            // Mock switch API
             pold_sai_switch_api = sai_switch_api;
             ut_sai_switch_api = *pold_sai_switch_api;
             old_set_switch_attribute_fn = pold_sai_switch_api->set_switch_attribute;
@@ -723,8 +876,6 @@ namespace qosorch_test
         static_cast<Orch *>(gQosOrch)->doTask();
         ASSERT_EQ(++current_sai_remove_qos_map_count, sai_remove_qos_map_count);
         ASSERT_EQ((*QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME]).count("AZURE"), 0);
-        // Global dscp to tc map should not be cleared
-        ASSERT_EQ((*QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME])["AZURE_1"].m_saiObjectId, switch_dscp_to_tc_map_id);
 
         // Make sure other dependencies are not touched
         CheckDependency(CFG_PORT_QOS_MAP_TABLE_NAME, "Ethernet0", "pfc_to_pg_map", CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME, "AZURE");
@@ -931,12 +1082,9 @@ namespace qosorch_test
 
     TEST_F(QosOrchTest, QosOrchTestGlobalDscpToTcMap)
     {
-        // Make sure dscp to tc map is correct
-        ASSERT_EQ((*QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME])["AZURE"].m_saiObjectId, switch_dscp_to_tc_map_id);
-
         // Create a new dscp to tc map
         std::deque<KeyOpFieldsValuesTuple> entries;
-        entries.push_back({"AZURE_1", "SET",
+        entries.push_back({"AZURE", "SET",
                            {
                                {"1", "0"},
                                {"0", "1"}
@@ -945,16 +1093,42 @@ namespace qosorch_test
         auto consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_DSCP_TO_TC_MAP_TABLE_NAME));
         consumer->addToSync(entries);
         entries.clear();
-        // Drain DSCP_TO_TC_MAP table
-        static_cast<Orch *>(gQosOrch)->doTask();
-        ASSERT_EQ((*QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME])["AZURE_1"].m_saiObjectId, switch_dscp_to_tc_map_id);
 
-        entries.push_back({"AZURE_1", "DEL", {}});
+        entries.push_back({"global", "SET",
+                            {
+                                {"dscp_to_tc_map", "AZURE"}
+                            }});
+        consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_PORT_QOS_MAP_TABLE_NAME));
         consumer->addToSync(entries);
         entries.clear();
+
+        // Drain DSCP_TO_TC_MAP and PORT_QOS_MAP table
+        static_cast<Orch *>(gQosOrch)->doTask();
+        // Check DSCP_TO_TC_MAP|AZURE is applied to switch
+        ASSERT_EQ((*QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME])["AZURE"].m_saiObjectId, switch_dscp_to_tc_map_id);
+
+        // Remove global DSCP_TO_TC_MAP
+        entries.push_back({"global", "DEL", {}});
+        consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_PORT_QOS_MAP_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+        // Drain PORT_QOS_TABLE table
+        static_cast<Orch *>(gQosOrch)->doTask();
+        // Check switch_level dscp_to_tc_map is set to NULL
+        ASSERT_EQ(SAI_NULL_OBJECT_ID, switch_dscp_to_tc_map_id);
+
+        entries.push_back({"AZURE", "DEL", {}});
+        consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_DSCP_TO_TC_MAP_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+
+        auto current_sai_remove_qos_map_count = sai_remove_qos_map_count;
         // Drain DSCP_TO_TC_MAP table
         static_cast<Orch *>(gQosOrch)->doTask();
-        ASSERT_EQ((*QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME])["AZURE"].m_saiObjectId, switch_dscp_to_tc_map_id);
+        // Check DSCP_TO_TC_MAP|AZURE is removed, and the switch_level dscp_to_tc_map is set to NULL
+        ASSERT_EQ(current_sai_remove_qos_map_count + 1, sai_remove_qos_map_count);
+        ASSERT_EQ((*QosOrch::getTypeMap()[CFG_DSCP_TO_TC_MAP_TABLE_NAME]).count("AZURE"), 0);
+        
     }
 
     TEST_F(QosOrchTest, QosOrchTestRetryFirstItem)
@@ -1048,5 +1222,240 @@ namespace qosorch_test
         ASSERT_EQ(ts[0], "SCHEDULER|scheduler.0|DEL|:");
         ASSERT_EQ(ts.size(), 1);
         ts.clear();
+    }
+
+    /*
+     * There are 4 ECN ranges
+     * -------------------------------------------------------------------------------
+     * profile lower     min=1M            max=2M
+     * profile upper                                           min=3M          max=4M
+     * proile middle            min=1.5M           max=1.5M
+     * -------------------------------------------------------------------------------
+     *    Test step                                         Test case
+     * 1. Initialize a wred profile with value lower set    Wred profile intialization
+     * 2. Update the value to upper set                     The new min threshold is greater than the current max threshold
+     * 3. Update the value back to lower set                The new max threshold is less than the current min threshold
+     * 4. Update the value to middle set                    Normal case to ensure nothing broken
+     * 5. Update the value back to lower set                Normal case to ensure nothing broken
+     */
+    TEST_F(QosOrchTest, QosOrchTestWredThresholdsTest)
+    {
+        testing_wred_thresholds = true;
+
+        // The order of fields matters when the wred profile is updated from the upper set to the lower set
+        // It should be max, min for each color. In this order, the new max is less then the current min
+        // QoS orchagent should guarantee that the new min is configured first and then new max
+        vector<FieldValueTuple> lowerSetVector = {
+            {"ecn", "ecn_all"},
+            {"green_drop_probability", "5"},
+            {"green_max_threshold", "2097152"},
+            {"green_min_threshold", "1048576"},
+            {"wred_green_enable", "true"},
+            {"yellow_drop_probability", "5"},
+            {"yellow_max_threshold", "2097153"},
+            {"yellow_min_threshold", "1048577"},
+            {"wred_yellow_enable", "true"},
+            {"red_drop_probability", "5"},
+            {"red_max_threshold", "2097154"},
+            {"red_min_threshold", "1048578"},
+            {"wred_red_enable", "true"}
+        };
+        WredMapHandler::qos_wred_thresholds_t lowerThresholds = {
+            2097152, //green_max_threshold
+            1048576, //green_min_threshold
+            2097153, //yellow_max_threshold
+            1048577, //yellow_min_threshold
+            2097154, //red_max_threshold
+            1048578  //red_min_threshold
+        };
+        // The order of fields matters when the wred profile is updated from the lower set to the upper set
+        // It should be min, max for each color, in which the new min is larger then the current max
+        // QoS orchagent should guarantee that the new max is configured first and then new min
+        vector<FieldValueTuple> upperSetVector = {
+            {"ecn", "ecn_all"},
+            {"green_drop_probability", "5"},
+            {"green_min_threshold", "3145728"},
+            {"green_max_threshold", "4194304"},
+            {"wred_green_enable", "true"},
+            {"yellow_drop_probability", "5"},
+            {"yellow_min_threshold", "3145729"},
+            {"yellow_max_threshold", "4194305"},
+            {"wred_yellow_enable", "true"},
+            {"red_drop_probability", "5"},
+            {"red_min_threshold", "3145730"},
+            {"red_max_threshold", "4194306"},
+            {"wred_red_enable", "true"}
+        };
+        WredMapHandler::qos_wred_thresholds_t upperThresholds = {
+            4194304, //green_max_threshold
+            3145728, //green_min_threshold
+            4194305, //yellow_max_threshold
+            3145729, //yellow_min_threshold
+            4194306, //red_max_threshold
+            3145730  //red_min_threshold
+        };
+        // Order doesn't matter.
+        vector<FieldValueTuple> middleSetVector = {
+            {"ecn", "ecn_all"},
+            {"green_drop_probability", "5"},
+            {"green_min_threshold", "1572864"},
+            {"green_max_threshold", "2621440"},
+            {"wred_green_enable", "true"},
+            {"yellow_drop_probability", "5"},
+            {"yellow_min_threshold", "1572865"},
+            {"yellow_max_threshold", "2621441"},
+            {"wred_yellow_enable", "true"},
+            {"red_drop_probability", "5"},
+            {"red_min_threshold", "1572866"},
+            {"red_max_threshold", "2621442"},
+            {"wred_red_enable", "true"}
+        };
+        WredMapHandler::qos_wred_thresholds_t middleThresholds = {
+            2621440, //green_max_threshold
+            1572864, //green_min_threshold
+            2621441, //yellow_max_threshold
+            1572865, //yellow_min_threshold
+            2621442, //red_max_threshold
+            1572866  //red_min_threshold
+        };
+
+        // Wrong profile
+        vector<FieldValueTuple> greenWrongVector = {
+            {"ecn", "ecn_green"},
+            {"green_drop_probability", "5"},
+            {"green_min_threshold", "2621440"},
+            {"green_max_threshold", "1572864"},
+            {"wred_green_enable", "true"}
+        };
+
+        vector<FieldValueTuple> yellowWrongVector = {
+            {"ecn", "ecn_yellow"},
+            {"yellow_drop_probability", "5"},
+            {"yellow_min_threshold", "2621441"},
+            {"yellow_max_threshold", "1572865"},
+            {"wred_yellow_enable", "true"}
+        };
+
+        vector<FieldValueTuple> redWrongVector = {
+            {"ecn", "ecn_red"},
+            {"red_drop_probability", "5"},
+            {"red_min_threshold", "2621442"},
+            {"red_max_threshold", "1572866"},
+            {"wred_red_enable", "true"}
+        };
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        // 1. Initialize
+        updateWredProfileAndCheck(lowerSetVector, lowerThresholds);
+
+        // 2. Update the thresholds from the lower set to the upper set
+        updateWredProfileAndCheck(upperSetVector, upperThresholds);
+
+        // 3. Update the thresholds from the upper set back to the lower set
+        updateWredProfileAndCheck(lowerSetVector, lowerThresholds);
+
+        // 4. Update the thresholds from the lower set to the middle set
+        updateWredProfileAndCheck(middleSetVector, middleThresholds);
+
+        // 5. Update the thresholds from the middle set back to the lower set
+        updateWredProfileAndCheck(lowerSetVector, lowerThresholds);
+
+        // Wrong parameters
+        updateWrongWredProfileAndCheck(greenWrongVector);
+        updateWrongWredProfileAndCheck(yellowWrongVector);
+        updateWrongWredProfileAndCheck(redWrongVector);
+
+        // Make sure the profiles in orchagent and SAI are not updated by the wrong profile
+        checkWredProfileEqual("AZURE", saiThresholds);
+        checkWredProfileEqual("AZURE", lowerThresholds);
+
+        testing_wred_thresholds = false;
+    }
+
+    TEST_F(QosOrchTest, QosOrchTestWredDropProbability)
+    {
+        testing_wred_thresholds = true;
+
+        // The order of fields matters when the wred profile is updated from the upper set to the lower set
+        // It should be max, min for each color. In this order, the new max is less then the current min
+        // QoS orchagent should guarantee that the new min is configured first and then new max
+        vector<FieldValueTuple> greenProfile = {
+            {"wred_green_enable", "true"},
+            {"wred_yellow_enable", "false"},
+        };
+        qos_wred_max_drop_probability_t greenProbabilities = {
+            100, // green_max_drop_probability
+            0,   // yellow_max_drop_probability
+            0    // red_max_drop_probability
+        };
+        updateMaxDropProbabilityAndCheck("green_default", greenProfile, greenProbabilities);
+
+        greenProfile.push_back({"green_drop_probability", "5"});
+        greenProbabilities.green_max_drop_probability = 5;
+        updateMaxDropProbabilityAndCheck("green", greenProfile, greenProbabilities);
+
+        vector<FieldValueTuple> yellowProfile = {
+            {"wred_yellow_enable", "true"},
+            {"wred_red_enable", "false"},
+        };
+        qos_wred_max_drop_probability_t yellowProbabilities = {
+            0,   // green_max_drop_probability
+            100, // yellow_max_drop_probability
+            0    // red_max_drop_probability
+        };
+        updateMaxDropProbabilityAndCheck("yellow_default", yellowProfile, yellowProbabilities);
+
+        yellowProfile.push_back({"yellow_drop_probability", "5"});
+        yellowProbabilities.yellow_max_drop_probability = 5;
+        updateMaxDropProbabilityAndCheck("yellow", yellowProfile, yellowProbabilities);
+
+        vector<FieldValueTuple> redProfile = {
+            {"wred_green_enable", "false"},
+            {"wred_red_enable", "true"},
+        };
+        qos_wred_max_drop_probability_t redProbabilities = {
+            0,   // green_max_drop_probability
+            0,   // yellow_max_drop_probability
+            100  // red_max_drop_probability
+        };
+        updateMaxDropProbabilityAndCheck("red_default", redProfile, redProbabilities);
+
+        redProfile.push_back({"red_drop_probability", "5"});
+        redProbabilities.red_max_drop_probability = 5;
+        updateMaxDropProbabilityAndCheck("red", redProfile, redProbabilities);
+
+        testing_wred_thresholds = false;
+    }
+
+
+    /*
+     * Make sure empty fields won't cause orchagent crash
+     */
+    TEST_F(QosOrchTest, QosOrchTestEmptyField)
+    {
+        // Create a new dscp to tc map
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"Ethernet0", "SET",
+                            {
+                                {"dscp_to_tc_map", ""}
+                            }});
+        auto consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_PORT_QOS_MAP_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+
+        entries.push_back({"Ethernet0|3", "SET",
+                           {
+                               {"scheduler", ""}
+                           }});
+        entries.push_back({"Ethernet0|4", "SET",
+                           {
+                               {"wred_profile", ""}
+                           }});
+        consumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_QUEUE_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+
+        // Drain DSCP_TO_TC_MAP and PORT_QOS_MAP table
+        static_cast<Orch *>(gQosOrch)->doTask();
     }
 }

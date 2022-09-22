@@ -494,67 +494,6 @@ VxlanTunnel::~VxlanTunnel()
                                           src_creation_, false);
 }
 
-bool VxlanTunnel::createTunnel(MAP_T encap, MAP_T decap, uint8_t encap_ttl)
-{
-    try
-    {
-        VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
-        sai_ip_address_t ips, ipd, *ip=nullptr;
-        uint8_t mapper_list = 0;
-        swss::copy(ips, src_ip_);
-
-        // Only a single mapper type is created
-
-        if (decap == MAP_T::VNI_TO_BRIDGE)
-        {
-            TUNNELMAP_SET_BRIDGE(mapper_list);
-        }
-        else if (decap == MAP_T::VNI_TO_VLAN_ID)
-        {
-            TUNNELMAP_SET_VLAN(mapper_list);
-        }
-        else
-        {
-            TUNNELMAP_SET_VRF(mapper_list);
-        }
-        
-        createMapperHw(mapper_list, (encap == MAP_T::MAP_TO_INVALID) ? 
-                       TUNNEL_MAP_USE_DECAP_ONLY: TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP);
-
-        if (encap != MAP_T::MAP_TO_INVALID)
-        {
-            ip = &ips;
-        }
-
-        ids_.tunnel_id = create_tunnel(&ids_, ip, NULL, gUnderlayIfId, false, encap_ttl);
-
-        if (ids_.tunnel_id != SAI_NULL_OBJECT_ID)
-        {
-            tunnel_orch->addTunnelToFlexCounter(ids_.tunnel_id, tunnel_name_);
-        }
-
-        ip = nullptr;
-        if (!dst_ip_.isZero())
-        {
-            swss::copy(ipd, dst_ip_);
-            ip = &ipd;
-        }
-
-        ids_.tunnel_term_id = create_tunnel_termination(ids_.tunnel_id, ips, ip, gVirtualRouterId);
-        active_ = true;
-        tunnel_map_ = { encap, decap };
-    }
-    catch (const std::runtime_error& error)
-    {
-        SWSS_LOG_ERROR("Error creating tunnel %s: %s", tunnel_name_.c_str(), error.what());
-        // FIXME: add code to remove already created objects
-        return false;
-    }
-
-    SWSS_LOG_NOTICE("Vxlan tunnel '%s' was created", tunnel_name_.c_str());
-    return true;
-}
-
 sai_object_id_t VxlanTunnel::addEncapMapperEntry(sai_object_id_t obj, uint32_t vni, tunnel_map_type_t type)
 {
     const auto encap_id = getEncapMapId(type);
@@ -1110,13 +1049,14 @@ void VxlanTunnel::updateRemoteEndPointIpRef(const std::string remote_vtep, bool 
             it->second.ip_refcnt++;
         }
         SWSS_LOG_DEBUG("Incrementing remote end point %s reference to %d", remote_vtep.c_str(),
-                       it->second.ip_refcnt);
+                       tnl_users_[remote_vtep].ip_refcnt);
     }
     else
     {
         if (it == tnl_users_.end())
         {
             SWSS_LOG_ERROR("Cannot decrement ref. End point not referenced %s", remote_vtep.c_str());
+            return;
         }
         it->second.ip_refcnt--;
 
@@ -1923,20 +1863,18 @@ bool VxlanTunnel::isTunnelReferenced()
     Port tunnelPort;
     bool dip_tunnels_used = tunnel_orch->isDipTunnelsSupported();
 
-    ret = gPortsOrch->getPort(port_tunnel_name, tunnelPort);
-    if (!ret)
-    {
-        SWSS_LOG_ERROR("Get port failed for source vtep %s", port_tunnel_name.c_str());
-        return false;
-    }
-
-
     if (dip_tunnels_used)
     {
         return (getDipTunnelCnt() != 0);
     }
     else
     {
+        ret = gPortsOrch->getPort(port_tunnel_name, tunnelPort);
+        if (!ret)
+        {
+            SWSS_LOG_ERROR("Get port failed for source vtep %s", port_tunnel_name.c_str());
+            return false;
+        }
         if (tunnelPort.m_fdb_count != 0)
         {
 	    return true;
@@ -2012,19 +1950,21 @@ bool VxlanTunnelMapOrch::addOperation(const Request& request)
     if (!tunnel_obj->isActive())
     {
         //@Todo, currently only decap mapper is allowed
-        //tunnel_obj->createTunnel(MAP_T::MAP_TO_INVALID, MAP_T::VNI_TO_VLAN_ID);
         uint8_t mapper_list = 0;
         TUNNELMAP_SET_VLAN(mapper_list);
         TUNNELMAP_SET_VRF(mapper_list);
         tunnel_obj->createTunnelHw(mapper_list,TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP);
-        Port tunPort;
-        auto src_vtep = tunnel_obj->getSrcIP().to_string();
-        if (!tunnel_orch->getTunnelPort(src_vtep, tunPort, true))
+        if (!tunnel_orch->isDipTunnelsSupported())
         {
-            auto port_tunnel_name = tunnel_orch->getTunnelPortName(src_vtep, true);
-            gPortsOrch->addTunnel(port_tunnel_name, tunnel_obj->getTunnelId(), false);
-            gPortsOrch->getPort(port_tunnel_name,tunPort);
-            gPortsOrch->addBridgePort(tunPort);
+            Port tunPort;
+            auto src_vtep = tunnel_obj->getSrcIP().to_string();
+            if (!tunnel_orch->getTunnelPort(src_vtep, tunPort, true))
+            {
+                auto port_tunnel_name = tunnel_orch->getTunnelPortName(src_vtep, true);
+                gPortsOrch->addTunnel(port_tunnel_name, tunnel_obj->getTunnelId(), false);
+                gPortsOrch->getPort(port_tunnel_name,tunPort);
+                gPortsOrch->addBridgePort(tunPort);
+            }
         }
     }
 
@@ -2116,26 +2056,27 @@ bool VxlanTunnelMapOrch::delOperation(const Request& request)
       auto port_tunnel_name = tunnel_orch->getTunnelPortName(src_vtep, true);
       bool ret;
 
-      ret = gPortsOrch->getPort(port_tunnel_name, tunnelPort);
       // If there are Dynamic DIP Tunnels referring to this SIP Tunnel 
       // then mark it as pending for delete. 
       if (!tunnel_obj->isTunnelReferenced())
       {
-          if (!ret)
+          if (!tunnel_orch->isDipTunnelsSupported())
           {
-              SWSS_LOG_ERROR("Get port failed for source vtep %s", port_tunnel_name.c_str());
-              return true;
+              ret = gPortsOrch->getPort(port_tunnel_name, tunnelPort);
+              if (!ret)
+              {
+                  SWSS_LOG_ERROR("Get port failed for source vtep %s", port_tunnel_name.c_str());
+                  return true;
+              }
+              ret = gPortsOrch->removeBridgePort(tunnelPort);
+              if (!ret)
+              {
+                  SWSS_LOG_ERROR("Remove Bridge port failed for source vtep = %s fdbcount = %d",
+                                 port_tunnel_name.c_str(), tunnelPort.m_fdb_count);
+                  return true;
+              }
+              gPortsOrch->removeTunnel(tunnelPort);
           }
-          ret = gPortsOrch->removeBridgePort(tunnelPort);
-          if (!ret)
-          {
-              SWSS_LOG_ERROR("Remove Bridge port failed for source vtep = %s fdbcount = %d",
-                             port_tunnel_name.c_str(), tunnelPort.m_fdb_count);
-              return true;
-          }
-
-          gPortsOrch->removeTunnel(tunnelPort);
-
           uint8_t mapper_list=0;
           TUNNELMAP_SET_VLAN(mapper_list);
           TUNNELMAP_SET_VRF(mapper_list);
@@ -2151,6 +2092,7 @@ bool VxlanTunnelMapOrch::delOperation(const Request& request)
           }
           else
           {
+              gPortsOrch->getPort(port_tunnel_name, tunnelPort);
               SWSS_LOG_WARN("Postponing the SIP Tunnel HW deletion Remote reference count = %d",
                             gPortsOrch->getBridgePortReferenceCount(tunnelPort));
           }
@@ -2217,7 +2159,22 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
     {
         if (!tunnel_obj->isActive()) 
         {
-            tunnel_obj->createTunnel(MAP_T::VRID_TO_VNI, MAP_T::VNI_TO_VRID);
+            uint8_t mapper_list = 0;
+            TUNNELMAP_SET_VLAN(mapper_list);
+            TUNNELMAP_SET_VRF(mapper_list);
+            tunnel_obj->createTunnelHw(mapper_list,TUNNEL_MAP_USE_DEDICATED_ENCAP_DECAP);
+            if (!tunnel_orch->isDipTunnelsSupported())
+            {
+                Port tunPort;
+                auto src_vtep = tunnel_obj->getSrcIP().to_string();
+                if (!tunnel_orch->getTunnelPort(src_vtep, tunPort, true))
+                {
+                    auto port_tunnel_name = tunnel_orch->getTunnelPortName(src_vtep, true);
+                    gPortsOrch->addTunnel(port_tunnel_name, tunnel_obj->getTunnelId(), false);
+                    gPortsOrch->getPort(port_tunnel_name,tunPort);
+                    gPortsOrch->addBridgePort(tunPort);
+                }
+            }
         }
         vrf_id = vrf_orch->getVRFid(vrf_name);
     }

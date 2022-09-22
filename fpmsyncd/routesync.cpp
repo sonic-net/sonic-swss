@@ -347,7 +347,7 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
 void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
 {
     struct rtmsg *rtm;
-    struct rtattr *tb[RTA_MAX + 1];
+    struct rtattr *tb[RTA_MAX + 1] = {0};
     void *dest = NULL;
     char anyaddr[16] = {0};
     char dstaddr[16] = {0};
@@ -360,7 +360,6 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
     rtm = (struct rtmsg *)NLMSG_DATA(h);
 
     /* Parse attributes and extract fields of interest. */
-    memset(tb, 0, sizeof(tb));
     netlink_parse_rtattr(tb, RTA_MAX, RTM_RTA(rtm), len);
 
     if (tb[RTA_DST])
@@ -1208,7 +1207,7 @@ string RouteSync::getNextHopWt(struct rtnl_route *route_obj)
         uint8_t weight = rtnl_route_nh_get_weight(nexthop);
         if (weight)
         {
-            result += to_string(weight + 1);
+            result += to_string(weight);
         }
         else
         {

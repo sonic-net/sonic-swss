@@ -17,7 +17,6 @@ Description: bgp_eoiu_marker.py -- populating bgp eoiu marker flags in stateDB d
 """
 
 import sys
-import swsssdk
 import time
 import syslog
 import traceback
@@ -80,7 +79,7 @@ class BgpStateCheck():
     # Only two families: 'ipv4' and 'ipv6'
     # state is "unknown" / "reached" / "consumed"
     def set_bgp_eoiu_marker(self, family, state):
-        db = swsssdk.SonicV2Connector(host='127.0.0.1')
+        db = swsscommon.SonicV2Connector(host='127.0.0.1')
         db.connect(db.STATE_DB, False)
         key = "BGP_STATE_TABLE|%s|eoiu" % family
         db.set(db.STATE_DB, key, 'state', state)
@@ -90,7 +89,7 @@ class BgpStateCheck():
         return
 
     def clean_bgp_eoiu_marker(self):
-        db = swsssdk.SonicV2Connector(host='127.0.0.1')
+        db = swsscommon.SonicV2Connector(host='127.0.0.1')
         db.connect(db.STATE_DB, False)
         db.delete(db.STATE_DB, "BGP_STATE_TABLE|IPv4|eoiu")
         db.delete(db.STATE_DB, "BGP_STATE_TABLE|IPv6|eoiu")

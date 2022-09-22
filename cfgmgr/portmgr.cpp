@@ -23,62 +23,54 @@ PortMgr::PortMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
 bool PortMgr::setPortMtu(const string &alias, const string &mtu)
 {
     stringstream cmd;
-    string res;
+    string res, cmd_str;
 
     // ip link set dev <port_name> mtu <mtu>
     cmd << IP_CMD << " link set dev " << shellquote(alias) << " mtu " << shellquote(mtu);
-    EXEC_WITH_ERROR_THROW(cmd.str(), res);
-
-    // Set the port MTU in application database to update both
-    // the port MTU and possibly the port based router interface MTU
-    vector<FieldValueTuple> fvs;
-    FieldValueTuple fv("mtu", mtu);
-    fvs.push_back(fv);
-    m_appPortTable.set(alias, fvs);
-
+    cmd_str = cmd.str();
+    int ret = swss::exec(cmd_str, res);
+    if (!ret)
+    {
+        // Set the port MTU in application database to update both
+        // the port MTU and possibly the port based router interface MTU
+        return writeConfigToAppDb(alias, "mtu", mtu);
+    }
+    else if (!isPortStateOk(alias))
+    {
+        // Can happen when a DEL notification is sent by portmgrd immediately followed by a new SET notif
+        SWSS_LOG_WARN("Setting mtu to alias:%s netdev failed with cmd:%s, rc:%d, error:%s", alias.c_str(), cmd_str.c_str(), ret, res.c_str());
+        return false;
+    }
+    else
+    {
+        throw runtime_error(cmd_str + " : " + res);
+    }
     return true;
 }
-
-bool PortMgr::setPortTpid(const string &alias, const string &tpid)
-{
-    stringstream cmd;
-    string res;
-
-    // Set the port TPID in application database to update port TPID
-    vector<FieldValueTuple> fvs;
-    FieldValueTuple fv("tpid", tpid);
-    fvs.push_back(fv);
-    m_appPortTable.set(alias, fvs);
-
-    return true;
-}
-
 
 bool PortMgr::setPortAdminStatus(const string &alias, const bool up)
 {
     stringstream cmd;
-    string res;
+    string res, cmd_str;
 
     // ip link set dev <port_name> [up|down]
     cmd << IP_CMD << " link set dev " << shellquote(alias) << (up ? " up" : " down");
-    EXEC_WITH_ERROR_THROW(cmd.str(), res);
-
-    vector<FieldValueTuple> fvs;
-    FieldValueTuple fv("admin_status", (up ? "up" : "down"));
-    fvs.push_back(fv);
-    m_appPortTable.set(alias, fvs);
-
-    return true;
-}
-
-bool PortMgr::setPortLearnMode(const string &alias, const string &learn_mode)
-{
-    // Set the port MAC learn mode in application database
-    vector<FieldValueTuple> fvs;
-    FieldValueTuple fv("learn_mode", learn_mode);
-    fvs.push_back(fv);
-    m_appPortTable.set(alias, fvs);
-
+    cmd_str = cmd.str();
+    int ret = swss::exec(cmd_str, res);
+    if (!ret)
+    {
+        return writeConfigToAppDb(alias, "admin_status", (up ? "up" : "down"));
+    }
+    else if (!isPortStateOk(alias))
+    {
+        // Can happen when a DEL notification is sent by portmgrd immediately followed by a new SET notification
+        SWSS_LOG_WARN("Setting admin_status to alias:%s netdev failed with cmd%s, rc:%d, error:%s", alias.c_str(), cmd_str.c_str(), ret, res.c_str());
+        return false;
+    }
+    else
+    {
+        throw runtime_error(cmd_str + " : " + res);
+    }
     return true;
 }
 
@@ -117,14 +109,14 @@ void PortMgr::doTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            if (!isPortStateOk(alias))
-            {
-                SWSS_LOG_INFO("Port %s is not ready, pending...", alias.c_str());
-                it++;
-                continue;
-            }
+            /* portOk=true indicates that the port has been created in kernel.
+             * We should not call any ip command if portOk=false. However, it is
+             * valid to put port configuration to APP DB which will trigger port creation in kernel.
+             */
+            bool portOk = isPortStateOk(alias);
 
-            string admin_status, mtu, learn_mode, tpid;
+            string admin_status, mtu;
+            std::vector<FieldValueTuple> field_values;
 
             bool configured = (m_portList.find(alias) != m_portList.end());
 
@@ -138,6 +130,11 @@ void PortMgr::doTask(Consumer &consumer)
 
                 m_portList.insert(alias);
             }
+            else if (!portOk)
+            {
+                it++;
+                continue;
+            }
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -149,14 +146,30 @@ void PortMgr::doTask(Consumer &consumer)
                 {
                     admin_status = fvValue(i);
                 }
-                else if (fvField(i) == "learn_mode")
+                else 
                 {
-                    learn_mode = fvValue(i);
+                    field_values.emplace_back(i);
                 }
-                else if (fvField(i) == "tpid")
-                {
-                    tpid = fvValue(i);
-                }
+            }
+
+            if (field_values.size())
+            {
+                writeConfigToAppDb(alias, field_values);
+            }
+
+            if (!portOk)
+            {
+                SWSS_LOG_INFO("Port %s is not ready, pending...", alias.c_str());
+
+                writeConfigToAppDb(alias, "mtu", mtu);
+                writeConfigToAppDb(alias, "admin_status", admin_status);
+                /* Retry setting these params after the netdev is created */
+                field_values.clear();
+                field_values.emplace_back("mtu", mtu);
+                field_values.emplace_back("admin_status", admin_status);
+                it->second = KeyOpFieldsValuesTuple{alias, SET_COMMAND, field_values};
+                it++;
+                continue;
             }
 
             if (!mtu.empty())
@@ -170,18 +183,6 @@ void PortMgr::doTask(Consumer &consumer)
                 setPortAdminStatus(alias, admin_status == "up");
                 SWSS_LOG_NOTICE("Configure %s admin status to %s", alias.c_str(), admin_status.c_str());
             }
-
-            if (!learn_mode.empty())
-            {
-                setPortLearnMode(alias, learn_mode);
-                SWSS_LOG_NOTICE("Configure %s MAC learn mode to %s", alias.c_str(), learn_mode.c_str());
-            }
-
-            if (!tpid.empty())
-            {
-                setPortTpid(alias, tpid);
-                SWSS_LOG_NOTICE("Configure %s TPID to %s", alias.c_str(), tpid.c_str());
-            }
         }
         else if (op == DEL_COMMAND)
         {
@@ -192,4 +193,20 @@ void PortMgr::doTask(Consumer &consumer)
 
         it = consumer.m_toSync.erase(it);
     }
+}
+
+bool PortMgr::writeConfigToAppDb(const std::string &alias, const std::string &field, const std::string &value)
+{
+    vector<FieldValueTuple> fvs;
+    FieldValueTuple fv(field, value);
+    fvs.push_back(fv);
+    m_appPortTable.set(alias, fvs);
+
+    return true;
+}
+
+bool PortMgr::writeConfigToAppDb(const std::string &alias, std::vector<FieldValueTuple> &field_values)
+{
+    m_appPortTable.set(alias, field_values);
+    return true;
 }
