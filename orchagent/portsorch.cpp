@@ -6017,13 +6017,15 @@ void PortsOrch::generateQueueMap(map<string, FlexCounterQueueStates> queuesState
             generateQueueMapPerPort(it.second, queuesStateVector.at(it.second.m_alias), false);
             if (gMySwitchType == "voq")
 	    {
-                generateQueueMapPerPort(it.second, FlexCounterQueueStates(), true);
+                // pass a dummy FlexCounterQueueStates since it is not used for voqs.
+                generateQueueMapPerPort(it.second, FlexCounterQueueStates(0), true);
 	    }
         }
 
 	if (it.second.m_type == Port::SYSTEM)
 	{
-            generateQueueMapPerPort(it.second, FlexCounterQueueStates(), true);
+            // pass a dummy FlexCounterQueueStates since it is not used for voqs.
+            generateQueueMapPerPort(it.second, FlexCounterQueueStates(0), true);
 	}
     }
 
