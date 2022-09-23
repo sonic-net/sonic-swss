@@ -49,6 +49,19 @@ stages:
       archive_pytests: true
       archive_gcov: true
 
+- stage: BuildAsan
+  dependsOn: []
+  jobs:
+  - template: .azure-pipelines/build-template.yml
+    parameters:
+      arch: amd64
+      sonic_slave: sonic-slave-buster
+      common_lib_artifact_name: common-lib
+      swss_common_artifact_name: sonic-swss-common
+      sairedis_artifact_name: sonic-sairedis
+      artifact_name: sonic-swss-asan
+      asan: true
+
 - stage: BuildArm
   dependsOn: Build
   condition: succeeded('Build')
@@ -88,6 +101,18 @@ stages:
       swss_artifact_name: sonic-swss
       artifact_name: docker-sonic-vs
 
+- stage: BuildDockerAsan
+  dependsOn: BuildAsan
+  condition: succeeded('BuildAsan')
+  jobs:
+  - template: .azure-pipelines/build-docker-sonic-vs-template.yml
+    parameters:
+      swss_common_artifact_name: sonic-swss-common
+      sairedis_artifact_name: sonic-sairedis
+      swss_artifact_name: sonic-swss-asan
+      artifact_name: docker-sonic-vs-asan
+      asan: true
+
 - stage: Test
   dependsOn: BuildDocker
   condition: succeeded('BuildDocker')
@@ -98,6 +123,18 @@ stages:
       gcov_artifact_name: sonic-gcov
       sonic_slave: sonic-slave-buster
       archive_gcov: true
+
+- stage: TestAsan
+  dependsOn: BuildDockerAsan
+  condition: succeeded('BuildDockerAsan')
+  jobs:
+  - template: .azure-pipelines/test-docker-sonic-vs-template.yml
+    parameters:
+      log_artifact_name: log-asan
+      gcov_artifact_name: sonic-gcov
+      sonic_slave: sonic-slave-buster
+      docker_sonic_vs_name: docker-sonic-vs-asan
+      asan: true
 
 - stage: Gcov
   dependsOn: Test
