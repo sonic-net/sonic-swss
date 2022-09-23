@@ -2803,7 +2803,7 @@ bool PortsOrch::initPort(const string &alias, const string &role, const int inde
                 /* when a port is added and queue map counter is enabled --> we need to add queue map counter for it */
                 if (m_isQueueMapGenerated)
                 {
-                    generateQueueMapPerPort(p);
+                    generateQueueMapPerPort(p, false);
                 }
 
                 PortUpdate update = { p, true };
@@ -6041,9 +6041,7 @@ void PortsOrch::generateQueueMap()
 
 	if (it.second.m_type == Port::SYSTEM)
 	{
-            // pass a dummy FlexCounterQueueStates since it is not used for voqs.
-            FlexCounterQueueStates counterState(0);
-            generateQueueMapPerPort(it.second, counterState, true);
+            generateQueueMapPerPort(it.second, true);
 	}
     }
 
