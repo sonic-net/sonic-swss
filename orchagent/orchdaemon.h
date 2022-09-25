@@ -45,6 +45,7 @@
 #include "bfdorch.h"
 #include "srv6orch.h"
 #include "nvgreorch.h"
+#include "dash/dashaclorch.h"
 
 using namespace swss;
 
