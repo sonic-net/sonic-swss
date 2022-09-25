@@ -9,6 +9,9 @@ from swsscommon import swsscommon
 
 pg_drop_attr = "SAI_INGRESS_PRIORITY_GROUP_STAT_DROPPED_PACKETS"
 
+PORT = "Ethernet0"
+
+@pytest.mark.usefixtures('dvs_port_manager')
 class TestPGDropCounter(object):
     DEFAULT_POLL_INTERVAL = 10
     pgs = {}
@@ -73,8 +76,7 @@ class TestPGDropCounter(object):
 
         self.config_db.delete_entry("FLEX_COUNTER_TABLE", "PG_DROP")
         self.config_db.delete_entry("FLEX_COUNTER_TABLE", "PG_WATERMARK")
-
-
+        
     def test_pg_drop_counters(self, dvs):
         self.setup_dbs(dvs)
         self.pgs = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP")
@@ -92,5 +94,51 @@ class TestPGDropCounter(object):
             self.populate_asic(dvs, "123")
             time.sleep(self.DEFAULT_POLL_INTERVAL)
             self.verify_value(dvs, self.pgs, pg_drop_attr, "123")
+        finally:
+            self.clear_flex_counter()
+
+    def test_pg_drop_counter_port_add_remove(self, dvs):
+        self.setup_dbs(dvs)
+
+        try:
+            # configure pg drop flex counter
+            self.set_up_flex_counter()
+
+            # receive port info
+            fvs = self.config_db.get_entry("PORT", PORT)
+            assert len(fvs) > 0
+        
+            # save all the oids of the pg drop counters            
+            oid_list = []
+            for priority in range(0,7):
+                oid_list.append(dvs.get_counters_db().get_entry("COUNTERS_PG_NAME_MAP", "")["%s:%d"%(PORT, priority)])
+                # verify that counters exists on flex counter
+                fields = self.flex_db.get_entry("FLEX_COUNTER_TABLE", "PG_WATERMARK_STAT_COUNTER:%s"%oid_list[-1])
+                assert len(fields) == 1
+
+            # remove port
+            port_oid = self.counters_db.get_entry("COUNTERS_PORT_NAME_MAP", "")[PORT]
+            self.dvs_port.remove_port(PORT)
+            dvs.get_asic_db().wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid)
+        
+            # verify counters were removed from flex counter table
+            for oid in oid_list:
+                fields = self.flex_db.get_entry("FLEX_COUNTER_TABLE", "PG_WATERMARK_STAT_COUNTER:%s"%oid)
+                assert len(fields) == 0
+              
+            # add port and wait until the port is added on asic db
+            num_of_keys_without_port = len(dvs.get_asic_db().get_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT"))
+            self.config_db.create_entry("PORT", PORT, fvs)
+            dvs.get_asic_db().wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT", num_of_keys_without_port + 1)
+            dvs.get_counters_db().wait_for_fields("COUNTERS_PG_NAME_MAP", "", ["%s:0"%(PORT)])
+            
+            # verify counter was added
+            for priority in range(0,7):
+                oid = dvs.get_counters_db().get_entry("COUNTERS_PG_NAME_MAP", "")["%s:%d"%(PORT, priority)]
+      
+                # verify that counters exists on flex counter
+                fields = self.flex_db.get_entry("FLEX_COUNTER_TABLE", "PG_WATERMARK_STAT_COUNTER:%s"%oid)
+                assert len(fields) == 1
+            
         finally:
             self.clear_flex_counter()

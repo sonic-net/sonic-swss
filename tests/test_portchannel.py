@@ -1,3 +1,4 @@
+import pytest
 import time
 import re
 import json
@@ -6,6 +7,7 @@ import itertools
 from swsscommon import swsscommon
 
 
+@pytest.mark.usefixtures('dvs_lag_manager')
 class TestPortchannel(object):
     def test_Portchannel(self, dvs, testlog):
 
@@ -89,6 +91,28 @@ class TestPortchannel(object):
         lagms = lagmtbl.getKeys()
         assert len(lagms) == 0
 
+    @pytest.mark.parametrize("fast_rate", [False, True])
+    def test_Portchannel_fast_rate(self, dvs, testlog, fast_rate):
+        po_id = "0003"
+        po_member = "Ethernet16"
+
+        # Create PortChannel
+        self.dvs_lag.create_port_channel(po_id, fast_rate=fast_rate)
+        self.dvs_lag.get_and_verify_port_channel(1)
+
+        # Add member to PortChannel
+        self.dvs_lag.create_port_channel_member(po_id, po_member)
+        self.dvs_lag.get_and_verify_port_channel_members(1)
+
+        # test fast rate configuration
+        self.dvs_lag.get_and_verify_port_channel_fast_rate(po_id, fast_rate)
+
+        # remove PortChannel
+        self.dvs_lag.create_port_channel_member(po_id, po_member)
+        self.dvs_lag.remove_port_channel(po_id)
+        self.dvs_lag.get_and_verify_port_channel(0)
+
+
     def test_Portchannel_lacpkey(self, dvs, testlog):
         portchannelNamesAuto = [("PortChannel001", "Ethernet0", 1001),
                             ("PortChannel002", "Ethernet4", 1002),
@@ -108,7 +132,7 @@ class TestPortchannel(object):
 
         for portchannel in portchannelNamesAuto:
             tbl.set(portchannel[0], fvs)
-            
+
         fvs_no_lacp_key = swsscommon.FieldValuePairs(
             [("admin_status", "up"), ("mtu", "9100"), ("oper_status", "up")])
         tbl.set(portchannelNames[0][0], fvs_no_lacp_key)
@@ -382,6 +406,63 @@ class TestPortchannel(object):
         tbl._del("PortChannel0002")
         time.sleep(1)
 
+    def test_portchannel_member_netdev_oper_status(self, dvs, testlog):
+        config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+        state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+        app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+
+        # create port-channel
+        tbl = swsscommon.Table(config_db, "PORTCHANNEL")
+        fvs = swsscommon.FieldValuePairs([("admin_status", "up"),("mtu", "9100"),("oper_status", "up")])
+        tbl.set("PortChannel111", fvs)
+
+        # set port-channel oper status
+        tbl = swsscommon.ProducerStateTable(app_db, "LAG_TABLE")
+        fvs = swsscommon.FieldValuePairs([("admin_status", "up"),("mtu", "9100"),("oper_status", "up")])
+        tbl.set("PortChannel111", fvs)
+
+        # add members to port-channel
+        tbl = swsscommon.Table(config_db, "PORTCHANNEL_MEMBER")
+        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        tbl.set("PortChannel111|Ethernet0", fvs)
+        tbl.set("PortChannel111|Ethernet4", fvs)
+
+        # wait for port-channel netdev creation
+        time.sleep(1)
+
+        # set netdev oper status
+        (exitcode, _) = dvs.runcmd("ip link set up dev Ethernet0")
+        assert exitcode == 0, "ip link set failed"
+
+        (exitcode, _) = dvs.runcmd("ip link set up dev Ethernet4")
+        assert exitcode == 0, "ip link set failed"
+
+        (exitcode, _) = dvs.runcmd("ip link set dev PortChannel111 carrier on")
+        assert exitcode == 0, "ip link set failed"
+
+        # verify port-channel members netdev oper status
+        tbl =  swsscommon.Table(state_db, "PORT_TABLE")
+        status, fvs = tbl.get("Ethernet0")
+        assert status is True
+        fvs = dict(fvs)
+        assert fvs['netdev_oper_status'] == 'up'
+
+        status, fvs = tbl.get("Ethernet4")
+        assert status is True
+        fvs = dict(fvs)
+        assert fvs['netdev_oper_status'] == 'up'
+
+        # remove port-channel members
+        tbl = swsscommon.Table(config_db, "PORTCHANNEL_MEMBER")
+        tbl._del("PortChannel111|Ethernet0")
+        tbl._del("PortChannel111|Ethernet4")
+
+        # remove port-channel
+        tbl = swsscommon.Table(config_db, "PORTCHANNEL")
+        tbl._del("PortChannel111")
+
+        # wait for port-channel deletion
+        time.sleep(1)
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying

@@ -115,8 +115,7 @@ NatOrch::NatOrch(DBConnector *appDb, DBConnector *stateDb, vector<table_name_wit
     /* Get the Maximum supported SNAT entries */
     SWSS_LOG_INFO("Get the Maximum supported SNAT entries");
     sai_status_t     status;
-    sai_attribute_t  attr;
-    memset(&attr, 0, sizeof(attr));
+    sai_attribute_t  attr = {};
     attr.id = SAI_SWITCH_ATTR_AVAILABLE_SNAT_ENTRY;
     maxAllowedSNatEntries = 0;
 
@@ -754,8 +753,8 @@ void NatOrch::removeTwiceNaptFromNhCache(const IpAddress &translatedIp, const Tw
 bool NatOrch::addHwDnatEntry(const IpAddress &ip_address, NatBulkContext &ctx)
 {
     uint32_t        attr_count;
-    sai_nat_entry_t dnat_entry;
-    sai_attribute_t nat_entry_attr[5];
+    sai_nat_entry_t dnat_entry = {};
+    sai_attribute_t nat_entry_attr[5] = {};
     sai_status_t    status;
 
     SWSS_LOG_ENTER();
@@ -768,8 +767,6 @@ bool NatOrch::addHwDnatEntry(const IpAddress &ip_address, NatBulkContext &ctx)
     }
 
     NatEntryValue entry = m_natEntries[ip_address];
-
-    memset(nat_entry_attr, 0, sizeof(nat_entry_attr));
 
     nat_entry_attr[0].id = SAI_NAT_ENTRY_ATTR_DST_IP;
     nat_entry_attr[0].value.u32 = entry.translated_ip.getV4Addr();
@@ -785,8 +782,6 @@ bool NatOrch::addHwDnatEntry(const IpAddress &ip_address, NatBulkContext &ctx)
     }
 
     attr_count = 5;
-
-    memset(&dnat_entry, 0, sizeof(dnat_entry));
 
     dnat_entry.vr_id = gVirtualRouterId;
     dnat_entry.switch_id = gSwitchId;
@@ -832,8 +827,8 @@ bool NatOrch::addHwDnatEntry(const IpAddress &ip_address, NatBulkContext &ctx)
 bool NatOrch::addHwDnaptEntry(const NaptEntryKey &key, NatBulkContext &ctx)
 {
     uint32_t        attr_count;
-    sai_nat_entry_t dnat_entry;
-    sai_attribute_t nat_entry_attr[6];
+    sai_nat_entry_t dnat_entry = {};
+    sai_attribute_t nat_entry_attr[6] = {};
     uint8_t         ip_protocol = ((key.prototype == "TCP") ? IPPROTO_TCP : IPPROTO_UDP);
     sai_status_t    status;
 
@@ -849,8 +844,6 @@ bool NatOrch::addHwDnaptEntry(const NaptEntryKey &key, NatBulkContext &ctx)
     }
 
     NaptEntryValue entry = m_naptEntries[key];
-
-    memset(nat_entry_attr, 0, sizeof(nat_entry_attr));
 
     nat_entry_attr[0].id = SAI_NAT_ENTRY_ATTR_DST_IP;
     nat_entry_attr[1].id = SAI_NAT_ENTRY_ATTR_DST_IP_MASK;
@@ -868,8 +861,6 @@ bool NatOrch::addHwDnaptEntry(const NaptEntryKey &key, NatBulkContext &ctx)
     }
 
     attr_count = 6;
-
-    memset(&dnat_entry, 0, sizeof(dnat_entry));
 
     dnat_entry.vr_id = gVirtualRouterId;
     dnat_entry.switch_id = gSwitchId;
@@ -920,7 +911,7 @@ bool NatOrch::addHwDnaptEntry(const NaptEntryKey &key, NatBulkContext &ctx)
 // Remove the DNAT entry from the hardware
 bool NatOrch::removeHwDnatEntry(const IpAddress &dstIp, NatBulkContext &ctx)
 {
-    sai_nat_entry_t dnat_entry;
+    sai_nat_entry_t dnat_entry = {};
     sai_status_t    status;
 
     SWSS_LOG_ENTER();
@@ -944,8 +935,6 @@ bool NatOrch::removeHwDnatEntry(const IpAddress &dstIp, NatBulkContext &ctx)
     NatEntryValue entry = m_natEntries[dstIp];
 
     m_natEntries[dstIp].addedToHw = false;
-
-    memset(&dnat_entry, 0, sizeof(dnat_entry));
 
     dnat_entry.vr_id = gVirtualRouterId;
     dnat_entry.switch_id = gSwitchId;
@@ -1002,7 +991,7 @@ bool NatOrch::removeHwDnatEntry(const IpAddress &dstIp, NatBulkContext &ctx)
 // Remove the Twice NAT entry from the hardware
 bool NatOrch::removeHwTwiceNatEntry(const TwiceNatEntryKey &key, NatBulkContext &ctx)
 {
-    sai_nat_entry_t dbl_nat_entry;
+    sai_nat_entry_t dbl_nat_entry = {};
     sai_status_t    status;
 
     SWSS_LOG_ENTER();
@@ -1028,8 +1017,6 @@ bool NatOrch::removeHwTwiceNatEntry(const TwiceNatEntryKey &key, NatBulkContext 
     TwiceNatEntryValue value = m_twiceNatEntries[key];
 
     m_twiceNatEntries[key].addedToHw = false;
-
-    memset(&dbl_nat_entry, 0, sizeof(dbl_nat_entry));
 
     dbl_nat_entry.vr_id = gVirtualRouterId;
     dbl_nat_entry.switch_id = gSwitchId;
@@ -1095,7 +1082,7 @@ bool NatOrch::removeHwTwiceNatEntry(const TwiceNatEntryKey &key, NatBulkContext 
 // Remove the DNAPT entry from the hardware
 bool NatOrch::removeHwDnaptEntry(const NaptEntryKey &key, NatBulkContext &ctx)
 {
-    sai_nat_entry_t dnat_entry;
+    sai_nat_entry_t dnat_entry = {};
     sai_status_t    status;
     uint8_t         ip_protocol = ((key.prototype == "TCP") ? IPPROTO_TCP : IPPROTO_UDP);
 
@@ -1121,8 +1108,6 @@ bool NatOrch::removeHwDnaptEntry(const NaptEntryKey &key, NatBulkContext &ctx)
     NaptEntryValue entry = m_naptEntries[key];
 
     m_naptEntries[key].addedToHw = false;
-
-    memset(&dnat_entry, 0, sizeof(dnat_entry));
 
     dnat_entry.vr_id = gVirtualRouterId;
     dnat_entry.switch_id = gSwitchId;
@@ -1186,7 +1171,7 @@ bool NatOrch::removeHwDnaptEntry(const NaptEntryKey &key, NatBulkContext &ctx)
 // Remove the Twice NAPT entry from the hardware
 bool NatOrch::removeHwTwiceNaptEntry(const TwiceNaptEntryKey &key, NatBulkContext &ctx)
 {
-    sai_nat_entry_t dbl_nat_entry;
+    sai_nat_entry_t dbl_nat_entry = {};
     sai_status_t    status;
     uint8_t         protoType = ((key.prototype == "TCP") ? IPPROTO_TCP : IPPROTO_UDP);
 
@@ -1215,8 +1200,6 @@ bool NatOrch::removeHwTwiceNaptEntry(const TwiceNaptEntryKey &key, NatBulkContex
     TwiceNaptEntryValue value = m_twiceNaptEntries[key];
 
     m_twiceNaptEntries[key].addedToHw = false;
-
-    memset(&dbl_nat_entry, 0, sizeof(dbl_nat_entry));
 
     dbl_nat_entry.vr_id = gVirtualRouterId;
     dbl_nat_entry.switch_id = gSwitchId;
@@ -1292,8 +1275,8 @@ bool NatOrch::removeHwTwiceNaptEntry(const TwiceNaptEntryKey &key, NatBulkContex
 bool NatOrch::addHwSnatEntry(const IpAddress &ip_address, NatBulkContext &ctx)
 {
     uint32_t        attr_count;
-    sai_nat_entry_t snat_entry;
-    sai_attribute_t nat_entry_attr[5];
+    sai_nat_entry_t snat_entry = {};
+    sai_attribute_t nat_entry_attr[5] = {};
     sai_status_t    status;
     struct timespec  time_now;
 
@@ -1306,8 +1289,6 @@ bool NatOrch::addHwSnatEntry(const IpAddress &ip_address, NatBulkContext &ctx)
     }
 
     NatEntryValue entry = m_natEntries[ip_address];
-
-    memset(nat_entry_attr, 0, sizeof(nat_entry_attr));
 
     nat_entry_attr[0].id = SAI_NAT_ENTRY_ATTR_SRC_IP;
     nat_entry_attr[0].value.u32 = entry.translated_ip.getV4Addr();
@@ -1323,8 +1304,6 @@ bool NatOrch::addHwSnatEntry(const IpAddress &ip_address, NatBulkContext &ctx)
     }
 
     attr_count = 5;
-
-    memset(&snat_entry, 0, sizeof(snat_entry));
 
     snat_entry.vr_id = gVirtualRouterId;
     snat_entry.switch_id = gSwitchId;
@@ -1369,9 +1348,8 @@ bool NatOrch::addHwSnatEntry(const IpAddress &ip_address, NatBulkContext &ctx)
 bool NatOrch::addHwTwiceNatEntry(const TwiceNatEntryKey &key, NatBulkContext &ctx)
 {
     uint32_t        attr_count;
-    sai_nat_entry_t dbl_nat_entry;
-    sai_attribute_t nat_entry_attr[7];
-
+    sai_nat_entry_t dbl_nat_entry = {};
+    sai_attribute_t nat_entry_attr[7] = {};
     sai_status_t    status;
     struct timespec  time_now;
 
@@ -1384,8 +1362,6 @@ bool NatOrch::addHwTwiceNatEntry(const TwiceNatEntryKey &key, NatBulkContext &ct
     }
 
     TwiceNatEntryValue value = m_twiceNatEntries[key];
-
-    memset(nat_entry_attr, 0, sizeof(nat_entry_attr));
 
     nat_entry_attr[0].id = SAI_NAT_ENTRY_ATTR_SRC_IP;
     nat_entry_attr[0].value.u32 = value.translated_src_ip.getV4Addr();
@@ -1405,8 +1381,6 @@ bool NatOrch::addHwTwiceNatEntry(const TwiceNatEntryKey &key, NatBulkContext &ct
     }
 
     attr_count = 7;
-
-    memset(&dbl_nat_entry, 0, sizeof(dbl_nat_entry));
 
     dbl_nat_entry.vr_id = gVirtualRouterId;
     dbl_nat_entry.switch_id = gSwitchId;
@@ -1460,8 +1434,8 @@ bool NatOrch::addHwTwiceNatEntry(const TwiceNatEntryKey &key, NatBulkContext &ct
 bool NatOrch::addHwSnaptEntry(const NaptEntryKey &keyEntry, NatBulkContext &ctx)
 {
     uint32_t        attr_count;
-    sai_nat_entry_t snat_entry;
-    sai_attribute_t nat_entry_attr[6];
+    sai_nat_entry_t snat_entry = {};
+    sai_attribute_t nat_entry_attr[6] = {};
     uint8_t         ip_protocol = ((keyEntry.prototype == "TCP") ? IPPROTO_TCP : IPPROTO_UDP);
     sai_status_t    status;
     struct timespec  time_now;
@@ -1476,8 +1450,6 @@ bool NatOrch::addHwSnaptEntry(const NaptEntryKey &keyEntry, NatBulkContext &ctx)
     }
 
     NaptEntryValue entry = m_naptEntries[keyEntry];
-
-    memset(nat_entry_attr, 0, sizeof(nat_entry_attr));
 
     nat_entry_attr[0].id = SAI_NAT_ENTRY_ATTR_SRC_IP;
     nat_entry_attr[0].value.u32 = entry.translated_ip.getV4Addr();
@@ -1495,8 +1467,6 @@ bool NatOrch::addHwSnaptEntry(const NaptEntryKey &keyEntry, NatBulkContext &ctx)
     }
 
     attr_count = 6;
-
-    memset(&snat_entry, 0, sizeof(snat_entry));
 
     snat_entry.vr_id = gVirtualRouterId;
     snat_entry.switch_id = gSwitchId;
@@ -1548,8 +1518,8 @@ bool NatOrch::addHwSnaptEntry(const NaptEntryKey &keyEntry, NatBulkContext &ctx)
 bool NatOrch::addHwTwiceNaptEntry(const TwiceNaptEntryKey &key, NatBulkContext &ctx)
 {
     uint32_t        attr_count;
-    sai_nat_entry_t dbl_nat_entry;
-    sai_attribute_t nat_entry_attr[9];
+    sai_nat_entry_t dbl_nat_entry = {};
+    sai_attribute_t nat_entry_attr[9] = {};
     uint8_t         protoType = ((key.prototype == "TCP") ? IPPROTO_TCP : IPPROTO_UDP);
     sai_status_t    status;
     struct timespec  time_now;
@@ -1565,8 +1535,6 @@ bool NatOrch::addHwTwiceNaptEntry(const TwiceNaptEntryKey &key, NatBulkContext &
     }
 
     TwiceNaptEntryValue value = m_twiceNaptEntries[key];
-
-    memset(nat_entry_attr, 0, sizeof(nat_entry_attr));
 
     nat_entry_attr[0].id = SAI_NAT_ENTRY_ATTR_SRC_IP;
     nat_entry_attr[0].value.u32 = value.translated_src_ip.getV4Addr();
@@ -1590,8 +1558,6 @@ bool NatOrch::addHwTwiceNaptEntry(const TwiceNaptEntryKey &key, NatBulkContext &
     }
 
     attr_count = 9;
-
-    memset(&dbl_nat_entry, 0, sizeof(dbl_nat_entry));
 
     dbl_nat_entry.vr_id = gVirtualRouterId;
     dbl_nat_entry.switch_id = gSwitchId;
@@ -1655,15 +1621,13 @@ bool NatOrch::addHwTwiceNaptEntry(const TwiceNaptEntryKey &key, NatBulkContext &
 // Remove the SNAT entry from the hardware
 bool NatOrch::removeHwSnatEntry(const IpAddress &ip_address, NatBulkContext &ctx)
 {
-    sai_nat_entry_t snat_entry;
+    sai_nat_entry_t snat_entry = {};
     sai_status_t    status;
 
     SWSS_LOG_ENTER();
     SWSS_LOG_INFO("Deleting SNAT entry ip %s from hardware", ip_address.to_string().c_str());
 
     NatEntryValue entry = m_natEntries[ip_address];
-
-    memset(&snat_entry, 0, sizeof(snat_entry));
 
     snat_entry.vr_id = gVirtualRouterId;
     snat_entry.switch_id = gSwitchId;
@@ -1732,7 +1696,7 @@ bool NatOrch::removeHwSnatEntry(const IpAddress &ip_address, NatBulkContext &ctx
 // Remove the SNAPT entry from the hardware
 bool NatOrch::removeHwSnaptEntry(const NaptEntryKey &keyEntry, NatBulkContext &ctx)
 {
-    sai_nat_entry_t snat_entry;
+    sai_nat_entry_t snat_entry = {};
     sai_status_t    status;
     uint8_t         ip_protocol = ((keyEntry.prototype == "TCP") ? IPPROTO_TCP : IPPROTO_UDP);
 
@@ -1749,8 +1713,6 @@ bool NatOrch::removeHwSnaptEntry(const NaptEntryKey &keyEntry, NatBulkContext &c
     }
 
     NaptEntryValue entry = m_naptEntries[keyEntry];
-
-    memset(&snat_entry, 0, sizeof(snat_entry));
 
     snat_entry.vr_id = gVirtualRouterId;
     snat_entry.switch_id = gSwitchId;
@@ -1827,8 +1789,8 @@ bool NatOrch::removeHwSnaptEntry(const NaptEntryKey &keyEntry, NatBulkContext &c
 bool NatOrch::addHwDnatPoolEntry(const IpAddress &ip_address, NatBulkContext &ctx)
 {
     uint32_t        attr_count;
-    sai_nat_entry_t dnat_pool_entry;
-    sai_attribute_t nat_entry_attr[1];
+    sai_nat_entry_t dnat_pool_entry = {};
+    sai_attribute_t nat_entry_attr[1] = {};
     sai_status_t    status;
 
     SWSS_LOG_ENTER();
@@ -1841,10 +1803,7 @@ bool NatOrch::addHwDnatPoolEntry(const IpAddress &ip_address, NatBulkContext &ct
 
     SWSS_LOG_INFO("Create DNAT Pool entry for ip %s", ip_address.to_string().c_str());
 
-    memset(nat_entry_attr, 0, sizeof(nat_entry_attr));
     attr_count = 0;
-
-    memset(&dnat_pool_entry, 0, sizeof(dnat_pool_entry));
 
     dnat_pool_entry.vr_id = gVirtualRouterId;
     dnat_pool_entry.switch_id = gSwitchId;
@@ -1869,13 +1828,11 @@ bool NatOrch::addHwDnatPoolEntry(const IpAddress &ip_address, NatBulkContext &ct
 // Remove the DNAT Pool entry from the hardware
 bool NatOrch::removeHwDnatPoolEntry(const IpAddress &dstIp, NatBulkContext &ctx)
 {
-    sai_nat_entry_t dnat_pool_entry;
+    sai_nat_entry_t dnat_pool_entry = {};
     sai_status_t    status;
 
     SWSS_LOG_ENTER();
     SWSS_LOG_INFO("Deleting DNAT Pool entry ip %s from hardware", dstIp.to_string().c_str());
-
-    memset(&dnat_pool_entry, 0, sizeof(dnat_pool_entry));
 
     dnat_pool_entry.vr_id = gVirtualRouterId;
     dnat_pool_entry.switch_id = gSwitchId;
@@ -2586,7 +2543,7 @@ void NatOrch::cleanupAppDbEntries(void)
 void NatOrch::enableNatFeature(void)
 {
     sai_status_t     status;
-    sai_attribute_t  attr;
+    sai_attribute_t  attr = {};
 
     SWSS_LOG_INFO("Verify NAT is supported or not");
 
@@ -2603,7 +2560,6 @@ void NatOrch::enableNatFeature(void)
 
     SWSS_LOG_INFO("Enabling NAT ");
 
-    memset(&attr, 0, sizeof(attr));
     attr.id = SAI_SWITCH_ATTR_NAT_ENABLE;
     attr.value.booldata = true;
 
@@ -2636,11 +2592,9 @@ void NatOrch::enableNatFeature(void)
 void NatOrch::disableNatFeature(void)
 {
     sai_status_t     status;
-    sai_attribute_t  attr;
+    sai_attribute_t  attr = {};
 
     SWSS_LOG_INFO("Disabling NAT ");
-
-    memset(&attr, 0, sizeof(attr));
 
     admin_mode = "disabled";
     attr.id = SAI_SWITCH_ATTR_NAT_ENABLE;
@@ -3576,8 +3530,8 @@ bool NatOrch::getNatCounters(const NatEntry::iterator &iter)
     const IpAddress   &ipAddr = iter->first;
     NatEntryValue     &entry  = iter->second;
     uint32_t          attr_count;
-    sai_attribute_t   nat_entry_attr[4];
-    sai_nat_entry_t   nat_entry;
+    sai_attribute_t   nat_entry_attr[4] = {};
+    sai_nat_entry_t   nat_entry = {};
     sai_status_t      status;
     uint64_t          nat_translations_pkts = 0, nat_translations_bytes = 0;
 
@@ -3587,13 +3541,11 @@ bool NatOrch::getNatCounters(const NatEntry::iterator &iter)
         return 0;
     }
 
-    memset(nat_entry_attr, 0, sizeof(nat_entry_attr));
     nat_entry_attr[0].id   = SAI_NAT_ENTRY_ATTR_BYTE_COUNT;
     nat_entry_attr[1].id   = SAI_NAT_ENTRY_ATTR_PACKET_COUNT;
 
     attr_count = 2;
 
-    memset(&nat_entry, 0, sizeof(nat_entry));
 
     nat_entry.vr_id       = gVirtualRouterId;
     nat_entry.switch_id   = gSwitchId;
@@ -3650,8 +3602,8 @@ bool NatOrch::getTwiceNatCounters(const TwiceNatEntry::iterator &iter)
     const TwiceNatEntryKey   &key = iter->first;
     TwiceNatEntryValue       &entry  = iter->second;
     uint32_t          attr_count;
-    sai_attribute_t   nat_entry_attr[4];
-    sai_nat_entry_t   dbl_nat_entry;
+    sai_attribute_t   nat_entry_attr[4] = {};
+    sai_nat_entry_t   dbl_nat_entry = {};
     sai_status_t      status;
     uint64_t          nat_translations_pkts = 0, nat_translations_bytes = 0;
 
@@ -3662,13 +3614,10 @@ bool NatOrch::getTwiceNatCounters(const TwiceNatEntry::iterator &iter)
         return 0;
     }
 
-    memset(nat_entry_attr, 0, sizeof(nat_entry_attr));
     nat_entry_attr[0].id   = SAI_NAT_ENTRY_ATTR_BYTE_COUNT;
     nat_entry_attr[1].id   = SAI_NAT_ENTRY_ATTR_PACKET_COUNT;
 
     attr_count = 2;
-
-    memset(&dbl_nat_entry, 0, sizeof(dbl_nat_entry));
 
     dbl_nat_entry.vr_id = gVirtualRouterId;
     dbl_nat_entry.switch_id = gSwitchId;
@@ -3701,9 +3650,9 @@ bool NatOrch::setNatCounters(const NatEntry::iterator &iter)
 {
     const IpAddress   &ipAddr = iter->first;
     NatEntryValue     &entry  = iter->second;
-    sai_attribute_t   nat_entry_attr_packet;
-    sai_attribute_t   nat_entry_attr_byte;
-    sai_nat_entry_t   nat_entry;
+    sai_attribute_t   nat_entry_attr_packet = {};
+    sai_attribute_t   nat_entry_attr_byte = {};
+    sai_nat_entry_t   nat_entry = {};
     sai_status_t      status;
     uint64_t          nat_translations_pkts = 0, nat_translations_bytes = 0;
 
@@ -3713,12 +3662,8 @@ bool NatOrch::setNatCounters(const NatEntry::iterator &iter)
         return 0;
     }
 
-    memset(&nat_entry_attr_packet, 0, sizeof(nat_entry_attr_packet));
-    memset(&nat_entry_attr_byte, 0, sizeof(nat_entry_attr_byte));
     nat_entry_attr_byte.id   = SAI_NAT_ENTRY_ATTR_BYTE_COUNT;
     nat_entry_attr_packet.id   = SAI_NAT_ENTRY_ATTR_PACKET_COUNT;
-    
-    memset(&nat_entry, 0, sizeof(nat_entry));
 
     nat_entry.vr_id       = gVirtualRouterId;
     nat_entry.switch_id   = gSwitchId;
@@ -3785,8 +3730,8 @@ bool NatOrch::getNaptCounters(const NaptEntry::iterator &iter)
     NaptEntryValue     &entry      = iter->second;
     uint8_t            protoType   = ((naptKey.prototype == "TCP") ? IPPROTO_TCP : IPPROTO_UDP);
     uint32_t           attr_count;
-    sai_attribute_t    nat_entry_attr[4];
-    sai_nat_entry_t    nat_entry;
+    sai_attribute_t    nat_entry_attr[4] = {};
+    sai_nat_entry_t    nat_entry = {};
     sai_status_t       status;
     uint64_t           nat_translations_pkts = 0, nat_translations_bytes = 0;
 
@@ -3797,13 +3742,10 @@ bool NatOrch::getNaptCounters(const NaptEntry::iterator &iter)
         return 0;
     }
 
-    memset(nat_entry_attr, 0, sizeof(nat_entry_attr));
     nat_entry_attr[0].id   = SAI_NAT_ENTRY_ATTR_BYTE_COUNT;
     nat_entry_attr[1].id   = SAI_NAT_ENTRY_ATTR_PACKET_COUNT;
 
     attr_count = 2;
-
-    memset(&nat_entry, 0, sizeof(nat_entry));
 
     nat_entry.vr_id       = gVirtualRouterId;
     nat_entry.switch_id   = gSwitchId;
@@ -3871,8 +3813,8 @@ bool NatOrch::getTwiceNaptCounters(const TwiceNaptEntry::iterator &iter)
     TwiceNaptEntryValue     &entry      = iter->second;
     uint8_t            protoType   = ((key.prototype == "TCP") ? IPPROTO_TCP : IPPROTO_UDP);
     uint32_t           attr_count;
-    sai_attribute_t    nat_entry_attr[4];
-    sai_nat_entry_t    dbl_nat_entry;
+    sai_attribute_t    nat_entry_attr[4] = {};
+    sai_nat_entry_t    dbl_nat_entry = {};
     sai_status_t       status;
     uint64_t           nat_translations_pkts = 0, nat_translations_bytes = 0;
 
@@ -3884,13 +3826,10 @@ bool NatOrch::getTwiceNaptCounters(const TwiceNaptEntry::iterator &iter)
         return 0;
     }
 
-    memset(nat_entry_attr, 0, sizeof(nat_entry_attr));
     nat_entry_attr[0].id   = SAI_NAT_ENTRY_ATTR_BYTE_COUNT;
     nat_entry_attr[1].id   = SAI_NAT_ENTRY_ATTR_PACKET_COUNT;
 
     attr_count = 2;
-
-    memset(&dbl_nat_entry, 0, sizeof(dbl_nat_entry));
 
     dbl_nat_entry.vr_id = gVirtualRouterId;
     dbl_nat_entry.switch_id = gSwitchId;
@@ -3930,9 +3869,9 @@ bool NatOrch::setNaptCounters(const NaptEntry::iterator &iter)
     const NaptEntryKey &naptKey    = iter->first;
     NaptEntryValue     &entry      = iter->second;
     uint8_t            protoType   = ((naptKey.prototype == "TCP") ? IPPROTO_TCP : IPPROTO_UDP);
-    sai_attribute_t    nat_entry_attr_packet;
-    sai_attribute_t    nat_entry_attr_byte;
-    sai_nat_entry_t    nat_entry;
+    sai_attribute_t    nat_entry_attr_packet = {};
+    sai_attribute_t    nat_entry_attr_byte = {};
+    sai_nat_entry_t    nat_entry = {};
     sai_status_t       status;
     uint64_t           nat_translations_pkts = 0, nat_translations_bytes = 0;
 
@@ -3943,12 +3882,8 @@ bool NatOrch::setNaptCounters(const NaptEntry::iterator &iter)
         return 0;
     }
 
-    memset(&nat_entry_attr_packet, 0, sizeof(nat_entry_attr_packet));
-    memset(&nat_entry_attr_byte, 0, sizeof(nat_entry_attr_byte));
     nat_entry_attr_packet.id = SAI_NAT_ENTRY_ATTR_PACKET_COUNT;
     nat_entry_attr_byte.id = SAI_NAT_ENTRY_ATTR_BYTE_COUNT;
-
-    memset(&nat_entry, 0, sizeof(nat_entry));
 
     nat_entry.vr_id       = gVirtualRouterId;
     nat_entry.switch_id   = gSwitchId;
@@ -4025,9 +3960,9 @@ bool NatOrch::setTwiceNatCounters(const TwiceNatEntry::iterator &iter)
 {
     const TwiceNatEntryKey &key    = iter->first;
     TwiceNatEntryValue     &entry  = iter->second;
-    sai_attribute_t    nat_entry_attr_packet;
-    sai_attribute_t    nat_entry_attr_byte;
-    sai_nat_entry_t    dbl_nat_entry;
+    sai_attribute_t    nat_entry_attr_packet = {};
+    sai_attribute_t    nat_entry_attr_byte = {};
+    sai_nat_entry_t    dbl_nat_entry = {};
     sai_status_t       status;
     uint64_t           nat_translations_pkts = 0, nat_translations_bytes = 0;
 
@@ -4038,12 +3973,8 @@ bool NatOrch::setTwiceNatCounters(const TwiceNatEntry::iterator &iter)
         return 0;
     }
 
-    memset(&nat_entry_attr_packet, 0, sizeof(nat_entry_attr_packet));
-    memset(&nat_entry_attr_byte, 0, sizeof(nat_entry_attr_byte));
     nat_entry_attr_packet.id = SAI_NAT_ENTRY_ATTR_PACKET_COUNT;
     nat_entry_attr_byte.id = SAI_NAT_ENTRY_ATTR_BYTE_COUNT;
-
-    memset(&dbl_nat_entry, 0, sizeof(dbl_nat_entry));
 
     dbl_nat_entry.vr_id = gVirtualRouterId;
     dbl_nat_entry.switch_id = gSwitchId;
@@ -4082,9 +4013,9 @@ bool NatOrch::setTwiceNaptCounters(const TwiceNaptEntry::iterator &iter)
     const TwiceNaptEntryKey &key    = iter->first;
     TwiceNaptEntryValue     &entry  = iter->second;
     uint8_t            protoType   = ((key.prototype == "TCP") ? IPPROTO_TCP : IPPROTO_UDP);
-    sai_attribute_t    nat_entry_attr_packet;
-    sai_attribute_t    nat_entry_attr_byte;
-    sai_nat_entry_t    dbl_nat_entry;
+    sai_attribute_t    nat_entry_attr_packet = {};
+    sai_attribute_t    nat_entry_attr_byte = {};
+    sai_nat_entry_t    dbl_nat_entry = {};
     sai_status_t       status;
     uint64_t           nat_translations_pkts = 0, nat_translations_bytes = 0;
 
@@ -4095,12 +4026,8 @@ bool NatOrch::setTwiceNaptCounters(const TwiceNaptEntry::iterator &iter)
         return 0;
     }
 
-    memset(&nat_entry_attr_packet, 0, sizeof(nat_entry_attr_packet));
-    memset(&nat_entry_attr_byte, 0, sizeof(nat_entry_attr_byte));
     nat_entry_attr_packet.id = SAI_NAT_ENTRY_ATTR_PACKET_COUNT;
     nat_entry_attr_byte.id = SAI_NAT_ENTRY_ATTR_BYTE_COUNT;
-
-    memset(&dbl_nat_entry, 0, sizeof(dbl_nat_entry));
 
     dbl_nat_entry.vr_id = gVirtualRouterId;
     dbl_nat_entry.switch_id = gSwitchId;
@@ -4234,8 +4161,9 @@ bool NatOrch::checkIfNatEntryIsActive(const NatEntry::iterator &iter, time_t now
     NatEntryValue     &entry  = iter->second;
     uint32_t          attr_count;
     IpAddress         srcIp;
-    sai_attribute_t   nat_entry_attr[4];
-    sai_nat_entry_t   snat_entry, dnat_entry;
+    sai_attribute_t   nat_entry_attr[4] = {};
+    sai_nat_entry_t   snat_entry = {};
+    sai_nat_entry_t   dnat_entry;
     sai_status_t      status;
 
     if (entry.nat_type == "dnat")
@@ -4256,15 +4184,12 @@ bool NatOrch::checkIfNatEntryIsActive(const NatEntry::iterator &iter, time_t now
         return 1;
     }
 
-    memset(nat_entry_attr, 0, sizeof(nat_entry_attr));
     nat_entry_attr[0].id             = SAI_NAT_ENTRY_ATTR_HIT_BIT;  /* Get the Hit bit */
     nat_entry_attr[0].value.booldata = 0;
     nat_entry_attr[1].id             = SAI_NAT_ENTRY_ATTR_HIT_BIT_COR; /* clear the hit bit after returning the value */
     nat_entry_attr[1].value.booldata = 1;
 
     attr_count = 2;
-
-    memset(&snat_entry, 0, sizeof(snat_entry));
 
     snat_entry.vr_id                 = gVirtualRouterId;
     snat_entry.switch_id             = gSwitchId;
@@ -4329,8 +4254,9 @@ bool NatOrch::checkIfNaptEntryIsActive(const NaptEntry::iterator &iter, time_t n
     uint32_t           attr_count;
     IpAddress          srcIp;
     uint16_t           srcPort;
-    sai_attribute_t    nat_entry_attr[4];
-    sai_nat_entry_t    snat_entry, dnat_entry;
+    sai_attribute_t    nat_entry_attr[4] = {};
+    sai_nat_entry_t    snat_entry = {};
+    sai_nat_entry_t    dnat_entry;
     sai_status_t       status;
 
     if (entry.nat_type == "dnat")
@@ -4352,15 +4278,12 @@ bool NatOrch::checkIfNaptEntryIsActive(const NaptEntry::iterator &iter, time_t n
         return 1;
     }
 
-    memset(nat_entry_attr, 0, sizeof(nat_entry_attr));
     nat_entry_attr[0].id             = SAI_NAT_ENTRY_ATTR_HIT_BIT;  /* Get the Hit bit */
     nat_entry_attr[0].value.booldata = 0;
     nat_entry_attr[1].id             = SAI_NAT_ENTRY_ATTR_HIT_BIT_COR; /* clear the hit bit after returning the value */
     nat_entry_attr[1].value.booldata = 1;
 
     attr_count = 2;
-
-    memset(&snat_entry, 0, sizeof(snat_entry));
 
     snat_entry.vr_id                 = gVirtualRouterId;
     snat_entry.switch_id             = gSwitchId;
@@ -4440,8 +4363,8 @@ bool NatOrch::checkIfTwiceNatEntryIsActive(const TwiceNatEntry::iterator &iter, 
     const TwiceNatEntryKey &key    = iter->first;
     TwiceNatEntryValue     &entry  = iter->second;
     uint32_t           attr_count;
-    sai_attribute_t    nat_entry_attr[4];
-    sai_nat_entry_t    dbl_nat_entry;
+    sai_attribute_t    nat_entry_attr[4] = {};
+    sai_nat_entry_t    dbl_nat_entry = {};
     sai_status_t       status;
 
     if (entry.entry_type == "static")
@@ -4457,15 +4380,12 @@ bool NatOrch::checkIfTwiceNatEntryIsActive(const TwiceNatEntry::iterator &iter, 
         return 0;
     }
 
-    memset(nat_entry_attr, 0, sizeof(nat_entry_attr));
     nat_entry_attr[0].id             = SAI_NAT_ENTRY_ATTR_HIT_BIT;  /* Get the Hit bit */
     nat_entry_attr[0].value.booldata = 0;
     nat_entry_attr[1].id             = SAI_NAT_ENTRY_ATTR_HIT_BIT_COR; /* clear the hit bit after returning the value */
     nat_entry_attr[1].value.booldata = 1;
 
     attr_count = 2;
-
-    memset(&dbl_nat_entry, 0, sizeof(dbl_nat_entry));
 
     dbl_nat_entry.vr_id = gVirtualRouterId;
     dbl_nat_entry.switch_id = gSwitchId;
@@ -4495,8 +4415,8 @@ bool NatOrch::checkIfTwiceNaptEntryIsActive(const TwiceNaptEntry::iterator &iter
     TwiceNaptEntryValue     &entry = iter->second;
     uint8_t            protoType   = ((key.prototype == "TCP") ? IPPROTO_TCP : IPPROTO_UDP);
     uint32_t           attr_count;
-    sai_attribute_t    nat_entry_attr[4];
-    sai_nat_entry_t    dbl_nat_entry;
+    sai_attribute_t    nat_entry_attr[4] = {};
+    sai_nat_entry_t    dbl_nat_entry = {};
     sai_status_t       status;
 
     if (entry.addedToHw == false)
@@ -4512,15 +4432,12 @@ bool NatOrch::checkIfTwiceNaptEntryIsActive(const TwiceNaptEntry::iterator &iter
         return 1;
     }
 
-    memset(nat_entry_attr, 0, sizeof(nat_entry_attr));
     nat_entry_attr[0].id             = SAI_NAT_ENTRY_ATTR_HIT_BIT;  /* Get the Hit bit */
     nat_entry_attr[0].value.booldata = 0;
     nat_entry_attr[1].id             = SAI_NAT_ENTRY_ATTR_HIT_BIT_COR; /* clear the hit bit after returning the value */
     nat_entry_attr[1].value.booldata = 1;
 
     attr_count = 2;
-
-    memset(&dbl_nat_entry, 0, sizeof(dbl_nat_entry));
 
     dbl_nat_entry.vr_id = gVirtualRouterId;
     dbl_nat_entry.switch_id = gSwitchId;

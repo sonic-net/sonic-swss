@@ -128,14 +128,14 @@ class TestNextHopGroupBase(object):
         return "10.0.0." + str(i * 2 + 1)
 
     def port_mac(self, i):
-        return "00:00:00:00:00:0" + str(i)
+        return "00:00:00:00:00:0" + str(i + 1)
 
     def config_intf(self, i):
         fvs = {'NULL': 'NULL'}
 
         self.config_db.create_entry("INTERFACE", self.port_name(i), fvs)
         self.config_db.create_entry("INTERFACE", "{}|{}".format(self.port_name(i), self.port_ipprefix(i)), fvs)
-        self.dvs.runcmd("config interface startup " + self.port_name(i))
+        self.dvs.port_admin_set(self.port_name(i), "up")
         self.dvs.runcmd("arp -s {} {}".format(self.peer_ip(i), self.port_mac(i)))
         assert self.dvs.servers[i].runcmd("ip link set down dev eth0") == 0
         assert self.dvs.servers[i].runcmd("ip link set up dev eth0") == 0
@@ -154,11 +154,13 @@ class TestNextHopGroupBase(object):
         self.app_db = self.dvs.get_app_db()
         self.asic_db = self.dvs.get_asic_db()
         self.config_db = self.dvs.get_config_db()
+        self.state_db = self.dvs.get_state_db()
         self.nhg_ps = swsscommon.ProducerStateTable(self.app_db.db_connection, swsscommon.APP_NEXTHOP_GROUP_TABLE_NAME)
         self.rt_ps = swsscommon.ProducerStateTable(self.app_db.db_connection, swsscommon.APP_ROUTE_TABLE_NAME)
         self.lr_ps = swsscommon.ProducerStateTable(self.app_db.db_connection, swsscommon.APP_LABEL_ROUTE_TABLE_NAME)
         self.cbf_nhg_ps = swsscommon.ProducerStateTable(self.app_db.db_connection, swsscommon.APP_CLASS_BASED_NEXT_HOP_GROUP_TABLE_NAME)
         self.fc_to_nhg_ps = swsscommon.ProducerStateTable(self.app_db.db_connection, swsscommon.APP_FC_TO_NHG_INDEX_MAP_TABLE_NAME)
+        self.switch_ps =  swsscommon.ProducerStateTable(self.app_db.db_connection, swsscommon.APP_SWITCH_TABLE_NAME)
 
         # Set switch FC capability to 63
         self.dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_MAX_NUMBER_OF_FORWARDING_CLASSES', '63')
@@ -181,6 +183,16 @@ class TestNextHopGroupBase(object):
 
     def nhg_map_exists(self, nhg_map_index):
         return self.get_nhg_map_id(nhg_map_index) is not None
+
+    def enable_ordered_ecmp(self):
+        switch_fvs = swsscommon.FieldValuePairs([('ordered_ecmp', 'true')])
+        self.switch_ps.set('switch', switch_fvs)
+        self.state_db.wait_for_field_match("SWITCH_CAPABILITY", "switch", {"ORDERED_ECMP_CAPABLE": "true"})
+
+    def disble_ordered_ecmp(self):
+        switch_fvs = swsscommon.FieldValuePairs([('ordered_ecmp', 'false')])
+        self.switch_ps.set('switch', switch_fvs)
+        self.state_db.wait_for_field_match("SWITCH_CAPABILITY", "switch", {"ORDERED_ECMP_CAPABLE": "false"})
 
 class TestNhgExhaustBase(TestNextHopGroupBase):
     MAX_ECMP_COUNT = 512
@@ -887,8 +899,13 @@ class TestNhgOrchNhgExhaust(TestNhgExhaustBase):
 
 class TestNextHopGroup(TestNextHopGroupBase):
 
-    def test_route_nhg(self, dvs, dvs_route, testlog):
+    @pytest.mark.parametrize('ordered_ecmp', ['false', 'true'])
+    def test_route_nhg(self, ordered_ecmp, dvs, dvs_route, testlog):
         self.init_test(dvs, 3)
+        nhip_seqid_map = {"10.0.0.1" : "1", "10.0.0.3" : "2" , "10.0.0.5" : "3" }
+
+        if ordered_ecmp == 'true':
+           self.enable_ordered_ecmp()
 
         rtprefix = "2.2.2.0/24"
 
@@ -897,6 +914,55 @@ class TestNextHopGroup(TestNextHopGroupBase):
         # nexthop group without weight
         fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.3,10.0.0.5"),
                                           ("ifname", "Ethernet0,Ethernet4,Ethernet8")])
+        self.rt_ps.set(rtprefix, fvs)
+
+        # check if route was propagated to ASIC DB
+        rtkeys = dvs_route.check_asicdb_route_entries([rtprefix])
+
+        # assert the route points to next hop group
+        fvs = self.asic_db.get_entry(self.ASIC_RT_STR, rtkeys[0])
+
+        nhgid = fvs["SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID"]
+
+        fvs = self.asic_db.get_entry(self.ASIC_NHG_STR, nhgid)
+
+        assert bool(fvs)
+
+        if ordered_ecmp == 'true':
+            assert fvs["SAI_NEXT_HOP_GROUP_ATTR_TYPE"] == "SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP"
+        else:
+            assert fvs["SAI_NEXT_HOP_GROUP_ATTR_TYPE"] == "SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP"
+
+        keys = self.asic_db.get_keys(self.ASIC_NHGM_STR)
+
+        assert len(keys) == 3
+
+        for k in keys:
+            fvs = self.asic_db.get_entry(self.ASIC_NHGM_STR, k)
+
+            assert fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"] == nhgid
+
+            # verify weight attributes not in asic db
+            assert fvs.get("SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT") is None
+
+            if ordered_ecmp == "true":
+                nhid = fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID"]
+                nh_fvs = self.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", nhid)
+                assert nhip_seqid_map[nh_fvs["SAI_NEXT_HOP_ATTR_IP"]] == fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID"]
+            else:
+                assert fvs.get("SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID") is None
+     
+        # Remove route 2.2.2.0/24
+        self.rt_ps._del(rtprefix)
+
+        # Wait for route 2.2.2.0/24 to be removed
+        dvs_route.check_asicdb_deleted_route_entries([rtprefix])
+
+        # Negative test with nexthops with incomplete weight info
+        # To validate Order ECMP change the nexthop order
+        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.5,10.0.0.1,10.0.0.3"),
+                                          ("ifname", "Ethernet8,Ethernet0,Ethernet4"),
+                                          ("weight", "10,30")])
         self.rt_ps.set(rtprefix, fvs)
 
         # check if route was propagated to ASIC DB
@@ -922,42 +988,14 @@ class TestNextHopGroup(TestNextHopGroupBase):
 
             # verify weight attributes not in asic db
             assert fvs.get("SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT") is None
-
-        # Remove route 2.2.2.0/24
-        self.rt_ps._del(rtprefix)
-
-        # Wait for route 2.2.2.0/24 to be removed
-        dvs_route.check_asicdb_deleted_route_entries([rtprefix])
-
-        # Negative test with nexthops with incomplete weight info
-        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.3,10.0.0.5"),
-                                          ("ifname", "Ethernet0,Ethernet4,Ethernet8"),
-                                          ("weight", "10,30")])
-        self.rt_ps.set(rtprefix, fvs)
-
-        # check if route was propagated to ASIC DB
-        rtkeys = dvs_route.check_asicdb_route_entries([rtprefix])
-
-        # assert the route points to next hop group
-        fvs = self.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY", rtkeys[0])
-
-        nhgid = fvs["SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID"]
-
-        fvs = self.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP", nhgid)
-
-        assert bool(fvs)
-
-        keys = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER")
-
-        assert len(keys) == 3
-
-        for k in keys:
-            fvs = self.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER", k)
-
-            assert fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"] == nhgid
-
-            # verify weight attributes not in asic db
-            assert fvs.get("SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT") is None
+            
+            if ordered_ecmp == "true":
+                nhid = fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID"]
+                nh_fvs = self.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", nhid)
+                assert nhip_seqid_map[nh_fvs["SAI_NEXT_HOP_ATTR_IP"]] == fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID"]
+            else:
+                assert fvs.get("SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID") is None
+ 
 
         # Remove route 2.2.2.0/24
         self.rt_ps._del(rtprefix)
@@ -974,20 +1012,20 @@ class TestNextHopGroup(TestNextHopGroupBase):
         rtkeys = dvs_route.check_asicdb_route_entries([rtprefix])
 
         # assert the route points to next hop group
-        fvs = self.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY", rtkeys[0])
+        fvs = self.asic_db.get_entry(self.ASIC_RT_STR, rtkeys[0])
 
         nhgid = fvs["SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID"]
 
-        fvs = self.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP", nhgid)
+        fvs = self.asic_db.get_entry(self.ASIC_NHG_STR, nhgid)
 
         assert bool(fvs)
 
-        keys = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER")
+        keys = self.asic_db.get_keys(self.ASIC_NHGM_STR)
 
         assert len(keys) == 3
 
         for k in keys:
-            fvs = self.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER", k)
+            fvs = self.asic_db.get_entry(self.ASIC_NHGM_STR, k)
 
             assert fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"] == nhgid
 
@@ -995,6 +1033,13 @@ class TestNextHopGroup(TestNextHopGroupBase):
             nhid = fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID"]
             weight = fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT"]
 
+            if ordered_ecmp == "true":
+                nhid = fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID"]
+                nh_fvs = self.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", nhid)
+                assert nhip_seqid_map[nh_fvs["SAI_NEXT_HOP_ATTR_IP"]] == fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID"]
+            else:
+                assert fvs.get("SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID") is None
+ 
             fvs = self.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", nhid)
             nhip = fvs["SAI_NEXT_HOP_ATTR_IP"].split('.')
             expected_weight = int(nhip[3]) * 10
@@ -1011,11 +1056,11 @@ class TestNextHopGroup(TestNextHopGroupBase):
         # wait for route to be programmed
         time.sleep(1)
 
-        keys = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP")
+        keys = self.asic_db.get_keys(self.ASIC_NHG_STR)
 
         assert len(keys) == 2
 
-        keys = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER")
+        keys = self.asic_db.get_keys(self.ASIC_NHGM_STR)
 
         assert len(keys) == 6
 
@@ -1035,7 +1080,8 @@ class TestNextHopGroup(TestNextHopGroupBase):
             assert len(keys) == 2 - i
 
         # bring links up one-by-one
-        for i in [0, 1, 2]:
+        # Bring link up in random order to verify sequence id is as per order
+        for i, val in enumerate([2,1,0]):
             self.flap_intf(i, 'up')
 
             keys = self.asic_db.get_keys(self.ASIC_NHGM_STR)
@@ -1045,12 +1091,22 @@ class TestNextHopGroup(TestNextHopGroupBase):
             for k in keys:
                 fvs = self.asic_db.get_entry(self.ASIC_NHGM_STR, k)
                 assert fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"] == nhgid
-
+                if ordered_ecmp == "true":
+                    nhid = fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID"]
+                    nh_fvs = self.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", nhid)
+                    assert nhip_seqid_map[nh_fvs["SAI_NEXT_HOP_ATTR_IP"]] == fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID"]
+                else:
+                    assert fvs.get("SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID") is None
+     
         # Remove route 2.2.2.0/24
         self.rt_ps._del(rtprefix)
 
         # Wait for route 2.2.2.0/24 to be removed
         dvs_route.check_asicdb_deleted_route_entries([rtprefix])
+
+        # Cleanup by disabling to get default behaviour
+        if ordered_ecmp == 'true':
+           self.disble_ordered_ecmp()
 
     def test_label_route_nhg(self, dvs, testlog):
         self.init_test(dvs, 3)
@@ -1875,6 +1931,9 @@ class TestCbfNextHopGroup(TestNextHopGroupBase):
             time.sleep(1)
             assert(not self.nhg_exists('cbfgroup3'))
 
+            # Cleanup
+            self.cbf_nhg_ps._del('cbfgroup3')
+
         self.init_test(dvs, 4)
 
         mainline_cbf_nhg_test()
@@ -2151,6 +2210,42 @@ class TestCbfNextHopGroup(TestNextHopGroupBase):
             self.fc_to_nhg_ps._del(nhg_maps.pop())
         self.asic_db.wait_for_n_keys(self.ASIC_NHG_MAP_STR, self.asic_nhg_maps_count)
 
+    # Test scenario:
+    # - Create a CBF NHG that has a member which is not yet synced. It shouldn't be synced.
+    # - Add the missing member and assert the CBF NHG is now synced.
+    def test_cbf_sync_before_member(self, dvs, testlog):
+        self.init_test(dvs, 2)
+
+        # Create an FC to NH index selection map
+        nhg_map = [(str(i), '0' if i < 4 else '1') for i in range(8)]
+        fvs = swsscommon.FieldValuePairs(nhg_map)
+        self.fc_to_nhg_ps.set('cbfnhgmap1', fvs)
+        self.asic_db.wait_for_n_keys(self.ASIC_NHG_MAP_STR, self.asic_nhg_maps_count + 1)
+
+        # Create a non-CBF NHG
+        fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'),
+                                            ('ifname', 'Ethernet0,Ethernet4')])
+        self.nhg_ps.set('group1', fvs)
+        self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 1)
+
+        # Create a CBF NHG with a member that doesn't currently exist. Nothing should happen
+        fvs = swsscommon.FieldValuePairs([('members', 'group1,group2'),
+                                        ('selection_map', 'cbfnhgmap1')])
+        self.cbf_nhg_ps.set('cbfgroup1', fvs)
+        time.sleep(1)
+        assert(len(self.asic_db.get_keys(self.ASIC_NHG_STR)) == self.asic_nhgs_count + 1)
+
+        # Create the missing non-CBF NHG. This and the CBF NHG should be created.
+        fvs = swsscommon.FieldValuePairs([('nexthop', '10.0.0.1,10.0.0.3'),
+                                        ("ifname", "Ethernet0,Ethernet4")])
+        self.nhg_ps.set("group2", fvs)
+        self.asic_db.wait_for_n_keys(self.ASIC_NHG_STR, self.asic_nhgs_count + 3)
+
+        # Cleanup
+        self.nhg_ps._del('cbfgroup1')
+        self.nhg_ps._del('group1')
+        self.nhg_ps._del('group2')
+        self.nhg_ps._del('cbfnhgmap1')
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying

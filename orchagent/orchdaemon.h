@@ -11,6 +11,7 @@
 #include "intfsorch.h"
 #include "neighorch.h"
 #include "routeorch.h"
+#include "flowcounterrouteorch.h"
 #include "nhgorch.h"
 #include "cbf/cbfnhgorch.h"
 #include "cbf/nhgmaporch.h"
@@ -43,6 +44,7 @@
 #include "p4orch/p4orch.h"
 #include "bfdorch.h"
 #include "srv6orch.h"
+#include "nvgreorch.h"
 
 using namespace swss;
 

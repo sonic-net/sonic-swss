@@ -10,6 +10,9 @@
 #include "debugcounterorch.h"
 #include "directory.h"
 #include "copporch.h"
+#include "routeorch.h"
+#include "macsecorch.h"
+#include "flowcounterrouteorch.h"
 
 extern sai_port_api_t *sai_port_api;
 
@@ -19,6 +22,7 @@ extern IntfsOrch *gIntfsOrch;
 extern BufferOrch *gBufferOrch;
 extern Directory<Orch*> gDirectory;
 extern CoppOrch *gCoppOrch;
+extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
 
 #define BUFFER_POOL_WATERMARK_KEY   "BUFFER_POOL_WATERMARK"
 #define PORT_KEY                    "PORT"
@@ -29,6 +33,7 @@ extern CoppOrch *gCoppOrch;
 #define ACL_KEY                     "ACL"
 #define TUNNEL_KEY                  "TUNNEL"
 #define FLOW_CNT_TRAP_KEY           "FLOW_CNT_TRAP"
+#define FLOW_CNT_ROUTE_KEY          "FLOW_CNT_ROUTE"
 
 unordered_map<string, string> flexCounterGroupMap =
 {
@@ -47,6 +52,10 @@ unordered_map<string, string> flexCounterGroupMap =
     {"ACL", ACL_COUNTER_FLEX_COUNTER_GROUP},
     {"TUNNEL", TUNNEL_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {FLOW_CNT_TRAP_KEY, HOSTIF_TRAP_COUNTER_FLEX_COUNTER_GROUP},
+    {FLOW_CNT_ROUTE_KEY, ROUTE_FLOW_COUNTER_FLEX_COUNTER_GROUP},
+    {"MACSEC_SA", COUNTERS_MACSEC_SA_GROUP},
+    {"MACSEC_SA_ATTR", COUNTERS_MACSEC_SA_ATTR_GROUP},
+    {"MACSEC_FLOW", COUNTERS_MACSEC_FLOW_GROUP},
 };
 
 
@@ -54,7 +63,9 @@ FlexCounterOrch::FlexCounterOrch(DBConnector *db, vector<string> &tableNames):
     Orch(db, tableNames),
     m_flexCounterConfigTable(db, CFG_FLEX_COUNTER_TABLE_NAME),
     m_flexCounterDb(new DBConnector("FLEX_COUNTER_DB", 0)),
-    m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE))
+    m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE)),
+    m_gbflexCounterDb(new DBConnector("GB_FLEX_COUNTER_DB", 0)),
+    m_gbflexCounterGroupTable(new ProducerTable(m_gbflexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE))
 {
     SWSS_LOG_ENTER();
 }
@@ -114,6 +125,13 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     vector<FieldValueTuple> fieldValues;
                     fieldValues.emplace_back(POLL_INTERVAL_FIELD, value);
                     m_flexCounterGroupTable->set(flexCounterGroupMap[key], fieldValues);
+                    if (gPortsOrch && gPortsOrch->isGearboxEnabled())
+                    {
+                        if (key == PORT_KEY || key.rfind("MACSEC", 0) == 0)
+                        {
+                            m_gbflexCounterGroupTable->set(flexCounterGroupMap[key], fieldValues);
+                        }
+                    }
                 }
                 else if(field == FLEX_COUNTER_STATUS_FIELD)
                 {
@@ -175,9 +193,30 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                             m_hostif_trap_counter_enabled = false;
                         }
                     }
+                    if (gFlowCounterRouteOrch && gFlowCounterRouteOrch->getRouteFlowCounterSupported() && key == FLOW_CNT_ROUTE_KEY)
+                    {
+                        if (value == "enable" && !m_route_flow_counter_enabled)
+                        {
+                            m_route_flow_counter_enabled = true;
+                            gFlowCounterRouteOrch->generateRouteFlowStats();
+                        }
+                        else if (value == "disable" && m_route_flow_counter_enabled)
+                        {
+                            gFlowCounterRouteOrch->clearRouteFlowStats();
+                            m_route_flow_counter_enabled = false;
+                        }
+                    }
                     vector<FieldValueTuple> fieldValues;
                     fieldValues.emplace_back(FLEX_COUNTER_STATUS_FIELD, value);
                     m_flexCounterGroupTable->set(flexCounterGroupMap[key], fieldValues);
+
+                    if (gPortsOrch && gPortsOrch->isGearboxEnabled())
+                    {
+                        if (key == PORT_KEY || key.rfind("MACSEC", 0) == 0)
+                        {
+                            m_gbflexCounterGroupTable->set(flexCounterGroupMap[key], fieldValues);
+                        }
+                    }
                 }
                 else if(field == FLEX_COUNTER_DELAY_STATUS_FIELD)
                 {

@@ -206,7 +206,8 @@ bool PortsOrch::removeAclTableGroup(const Port &p)
     return true;
 }
 
-bool PortsOrch::addSubPort(Port &port, const string &alias, const bool &adminUp, const uint32_t &mtu)
+bool PortsOrch::addSubPort(Port &port, const string &alias, const string &vlan, const bool &adminUp,
+                           const uint32_t &mtu)
 {
     return true;
 }
@@ -400,7 +401,7 @@ void PortsOrch::initializePriorityGroups(Port &port)
 {
 }
 
-void PortsOrch::initializePortMaximumHeadroom(Port &port)
+void PortsOrch::initializePortBufferMaximumParameters(Port &port)
 {
 }
 
@@ -497,7 +498,7 @@ bool PortsOrch::getPortAdminStatus(sai_object_id_t id, bool &up)
     return true;
 }
 
-bool PortsOrch::setPortMtu(sai_object_id_t id, sai_uint32_t mtu)
+bool PortsOrch::setPortMtu(const Port &port, sai_uint32_t mtu)
 {
     return true;
 }
@@ -517,7 +518,7 @@ bool PortsOrch::getPortPvid(Port &port, sai_uint32_t &pvid)
     return true;
 }
 
-bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t mode)
+bool PortsOrch::setPortFec(Port &port, std::string &mode)
 {
     return true;
 }
@@ -561,12 +562,12 @@ bool PortsOrch::getPortSpeed(sai_object_id_t port_id, sai_uint32_t &speed)
     return true;
 }
 
-bool PortsOrch::setGearboxPortsAttr(Port &port, sai_port_attr_t id, void *value)
+bool PortsOrch::setGearboxPortsAttr(const Port &port, sai_port_attr_t id, void *value)
 {
     return true;
 }
 
-bool PortsOrch::setGearboxPortAttr(Port &port, dest_port_type_t port_type, sai_port_attr_t id, void *value)
+bool PortsOrch::setGearboxPortAttr(const Port &port, dest_port_type_t port_type, sai_port_attr_t id, void *value)
 {
     return true;
 }
@@ -685,7 +686,11 @@ void PortsOrch::voqSyncDelLagMember(Port &lag, Port &port)
 {
 }
 
-std::unordered_set<std::string> PortsOrch::generateCounterStats(const string &type)
+std::unordered_set<std::string> PortsOrch::generateCounterStats(const string &type, bool gearbox)
 {
     return {};
+}
+
+void PortsOrch::doTask(swss::SelectableTimer &timer)
+{
 }

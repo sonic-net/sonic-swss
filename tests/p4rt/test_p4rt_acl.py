@@ -24,12 +24,13 @@ def verify_selected_attr_vals(db, table, key, expected_attrs):
     fv_dict = dict(fvs)
 
     for attr_name, expected_val in expected_attrs:
-        assert attr_name in fv_dict, "Attribute %s not found in %s" % (attr_name, key)
+        assert attr_name in fv_dict, "Attribute %s not found in %s" % (
+            attr_name, key)
         assert fv_dict[attr_name] == expected_val, "Wrong value %s for the attribute %s = %s" % (
-                    fv_dict[attr_name],
-                    attr_name,
-                    expected_val,
-                )
+            fv_dict[attr_name],
+            attr_name,
+            expected_val,
+        )
 
 
 class TestP4RTAcl(object):
@@ -63,7 +64,8 @@ class TestP4RTAcl(object):
         self._p4rt_udf_obj.set_up_databases(dvs)
 
         self.response_consumer = swsscommon.NotificationConsumer(
-            self._p4rt_acl_table_definition_obj.appl_db, "APPL_DB_P4RT_TABLE_RESPONSE_CHANNEL"
+            self._p4rt_acl_table_definition_obj.appl_db, "APPL_DB_" +
+            swsscommon.APP_P4RT_TABLE_NAME + "_RESPONSE_CHANNEL"
         )
 
     @pytest.mark.skip(reason="p4orch is not enabled")
@@ -127,8 +129,8 @@ class TestP4RTAcl(object):
             "ASIC_STATE:SAI_OBJECT_TYPE_SWITCH",
             switch_oid,
             [("SAI_SWITCH_ATTR_PRE_INGRESS_ACL", pre_ingress_group_oids[0]),
-            ("SAI_SWITCH_ATTR_INGRESS_ACL",ingress_group_oids[0]),
-            ("SAI_SWITCH_ATTR_EGRESS_ACL", egress_group_oids[0])],
+             ("SAI_SWITCH_ATTR_INGRESS_ACL", ingress_group_oids[0]),
+             ("SAI_SWITCH_ATTR_EGRESS_ACL", egress_group_oids[0])],
         )
 
         # Verify APP DB trap groups for QOS_QUEUE
@@ -161,6 +163,7 @@ class TestP4RTAcl(object):
         size = "123"
         ether_type = '{"kind":"sai_field","sai_field":"SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE","format":"HEX_STRING","bitwidth":8}'
         ether_dst = '{"kind":"sai_field","sai_field":"SAI_ACL_TABLE_ATTR_FIELD_DST_MAC","format":"MAC","bitwidth":48}'
+        l3_class_id = '{"kind":"sai_field","sai_field":"SAI_ACL_TABLE_ATTR_FIELD_ROUTE_DST_USER_META","format":"HEX_STRING","bitwidth":6}'
         is_ip = '{"kind":"sai_field","sai_field":"SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE/IP","format":"HEX_STRING","bitwidth":1}'
         is_ipv4 = '{"kind":"sai_field","sai_field":"SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE/IPV4ANY","format":"HEX_STRING","bitwidth":1}'
         is_ipv6 = '{"kind":"sai_field","sai_field":"SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE/IPV6ANY","format":"HEX_STRING","bitwidth":1}'
@@ -185,6 +188,7 @@ class TestP4RTAcl(object):
             (self._p4rt_acl_table_definition_obj.SIZE_FIELD, size),
             (self._p4rt_acl_table_definition_obj.MATCH_FIELD_ETHER_DST, ether_dst),
             (self._p4rt_acl_table_definition_obj.MATCH_FIELD_ETHER_TYPE, ether_type),
+            (self._p4rt_acl_table_definition_obj.MATCH_FIELD_L3_CLASS_ID, l3_class_id),
             (self._p4rt_acl_table_definition_obj.MATCH_FIELD_IS_IP, is_ip),
             (self._p4rt_acl_table_definition_obj.MATCH_FIELD_IS_IPV4, is_ipv4),
             (self._p4rt_acl_table_definition_obj.MATCH_FIELD_IS_IPV6, is_ipv6),
@@ -257,8 +261,17 @@ class TestP4RTAcl(object):
         assert status == True
         util.verify_attr(fvs, attr_list)
 
+        asic_udf_matches = util.get_keys(
+            self._p4rt_udf_match_obj.asic_db, self._p4rt_udf_match_obj.ASIC_DB_TBL_NAME
+        )
+
         # query ASIC database for default UDF wildcard match
-        udf_match_asic_db_key = original_asic_udf_matches[0]
+        udf_match_asic_db_keys = [
+            key for key in asic_udf_matches if key not in original_asic_udf_matches
+        ]
+
+        assert len(udf_match_asic_db_keys) == 1
+        udf_match_asic_db_key = udf_match_asic_db_keys[0]
 
         (status, fvs) = util.get_key(
             self._p4rt_udf_match_obj.asic_db,
@@ -321,7 +334,8 @@ class TestP4RTAcl(object):
         assert len(udfs_asic) == len(original_asic_udfs) + 2
 
         # query ASIC database for newly created UDFs
-        udfs_asic_db_keys = [key for key in udfs_asic if key not in original_asic_udfs]
+        udfs_asic_db_keys = [
+            key for key in udfs_asic if key not in original_asic_udfs]
         assert len(udfs_asic_db_keys) == 2
         udfs_asic_db_keys.sort()
         udf_0_asic_db_key = udfs_asic_db_keys[0]
@@ -382,6 +396,7 @@ class TestP4RTAcl(object):
             ),
             (self._p4rt_acl_table_definition_obj.SAI_ACL_TABLE_ATTR_SIZE, size),
             (self._p4rt_acl_table_definition_obj.SAI_ATTR_MATCH_ETHER_TYPE, "true"),
+            (self._p4rt_acl_table_definition_obj.SAI_ATTR_MATCH_ROUTE_DST_USER_META, "true"),
             (self._p4rt_acl_table_definition_obj.SAI_ATTR_MATCH_IP_TYPE, "true"),
             (self._p4rt_acl_table_definition_obj.SAI_ATTR_MATCH_DST_MAC, "true"),
             (self._p4rt_acl_table_definition_obj.SAI_ATTR_MATCH_SRC_IPV6_WORD3, "true"),
@@ -440,7 +455,8 @@ class TestP4RTAcl(object):
             (self._p4rt_acl_rule_obj.METER_PBURST, meter_pbs),
         ]
 
-        self._p4rt_acl_rule_obj.set_app_db_entry(table_name_with_rule_key1, attr_list)
+        self._p4rt_acl_rule_obj.set_app_db_entry(
+            table_name_with_rule_key1, attr_list)
         util.verify_response(
             self.response_consumer,
             table_name_with_rule_key1,
@@ -612,7 +628,8 @@ class TestP4RTAcl(object):
             (self._p4rt_acl_rule_obj.METER_PBURST, meter_pbs),
         ]
 
-        self._p4rt_acl_rule_obj.set_app_db_entry(table_name_with_rule_key1, attr_list)
+        self._p4rt_acl_rule_obj.set_app_db_entry(
+            table_name_with_rule_key1, attr_list)
         util.verify_response(
             self.response_consumer,
             table_name_with_rule_key1,
@@ -785,7 +802,8 @@ class TestP4RTAcl(object):
             (self._p4rt_acl_rule_obj.METER_PBURST, meter_pbs),
         ]
 
-        self._p4rt_acl_rule_obj.set_app_db_entry(table_name_with_rule_key2, attr_list)
+        self._p4rt_acl_rule_obj.set_app_db_entry(
+            table_name_with_rule_key2, attr_list)
         util.verify_response(
             self.response_consumer,
             table_name_with_rule_key2,
@@ -971,6 +989,189 @@ class TestP4RTAcl(object):
             (self._p4rt_acl_rule_obj.SAI_ATTR_PRIORITY, "100"),
         ]
         util.verify_attr(fvs, attr_list)
+
+        # create ACL rule 3 with match field SAI_ACL_TABLE_ATTR_FIELD_ROUTE_DST_USER_META
+        rule_json_key3 = '{"match/ether_type":"0x0800","match/l3_class_id":"0x1", "priority":100}'
+        action = "copy_and_set_tc"
+        table_name_with_rule_key3 = table_name + ":" + rule_json_key3
+
+        attr_list = [
+            (self._p4rt_acl_rule_obj.ACTION, action),
+            ("param/traffic_class", "1"),
+        ]
+
+        self._p4rt_acl_rule_obj.set_app_db_entry(
+            table_name_with_rule_key3, attr_list)
+        util.verify_response(
+            self.response_consumer,
+            table_name_with_rule_key3,
+            attr_list,
+            "SWSS_RC_SUCCESS",
+        )
+
+        # query application database for ACL rules
+        acl_rules = util.get_keys(
+            self._p4rt_acl_rule_obj.appl_db,
+            self._p4rt_acl_rule_obj.APP_DB_TBL_NAME + ":" + table_name,
+        )
+        assert len(acl_rules) == len(original_appl_acl_rules) + 3
+
+        # query application database for newly created ACL rule
+        (status, fvs) = util.get_key(
+            self._p4rt_acl_rule_obj.appl_db,
+            self._p4rt_acl_table_definition_obj.APP_DB_TBL_NAME,
+            table_name_with_rule_key3,
+        )
+        assert status == True
+        util.verify_attr(fvs, attr_list)
+
+        # query application state database for ACL rules
+        state_acl_rules = util.get_keys(
+            self._p4rt_acl_rule_obj.appl_state_db,
+            self._p4rt_acl_rule_obj.APP_DB_TBL_NAME + ":" + table_name,
+        )
+        assert len(state_acl_rules) == len(original_appl_state_acl_rules) + 3
+
+        # query application state database for newly created ACL rule
+        (status, fvs) = util.get_key(
+            self._p4rt_acl_rule_obj.appl_state_db,
+            self._p4rt_acl_table_definition_obj.APP_DB_TBL_NAME,
+            table_name_with_rule_key3,
+        )
+        assert status == True
+        util.verify_attr(fvs, attr_list)
+
+        # query ASIC database for ACL counters
+        acl_asic_counters = util.get_keys(
+            self._p4rt_acl_counter_obj.asic_db,
+            self._p4rt_acl_counter_obj.ASIC_DB_TBL_NAME,
+        )
+        assert len(acl_asic_counters) == len(original_asic_acl_counters) + 3
+
+        # query ASIC database for newly created ACL counter
+        counter_asic_db_keys = [
+            key for key in acl_asic_counters
+            if key not in original_asic_acl_counters
+            and key != counter_asic_db_key1
+            and key != counter_asic_db_key2
+        ]
+        assert len(counter_asic_db_keys) == 1
+        counter_asic_db_key3 = counter_asic_db_keys[0]
+
+        (status, fvs) = util.get_key(
+            self._p4rt_acl_counter_obj.asic_db,
+            self._p4rt_acl_counter_obj.ASIC_DB_TBL_NAME,
+            counter_asic_db_key3,
+        )
+        assert status == True
+        attr_list = [
+            (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_PACKET_COUNT, "true"),
+            (self._p4rt_acl_counter_obj.SAI_ATTR_ENABLE_BYTE_COUNT, "true"),
+            (self._p4rt_acl_counter_obj.SAI_ATTR_TABLE_ID, table_asic_db_key),
+        ]
+        util.verify_attr(fvs, attr_list)
+
+        # query ASIC database for ACL rules
+        acl_asic_rules = util.get_keys(
+            self._p4rt_acl_rule_obj.asic_db, self._p4rt_acl_rule_obj.ASIC_DB_TBL_NAME
+        )
+        assert len(acl_asic_rules) == len(original_asic_acl_rules) + 3
+
+        # query ASIC database for newly created ACL rule
+        rule_asic_db_keys = [
+            key for key in acl_asic_rules
+            if key not in original_asic_acl_rules
+            and key != rule_asic_db_key1
+            and key != rule_asic_db_key2
+        ]
+        assert len(rule_asic_db_keys) == 1
+        rule_asic_db_key3 = rule_asic_db_keys[0]
+
+        (status, fvs) = util.get_key(
+            self._p4rt_acl_rule_obj.asic_db,
+            self._p4rt_acl_rule_obj.ASIC_DB_TBL_NAME,
+            rule_asic_db_key3,
+        )
+        assert status == True
+        attr_list = [
+            (self._p4rt_acl_rule_obj.SAI_ATTR_ACTION_SET_TC, "1"),
+            (
+                self._p4rt_acl_rule_obj.SAI_ATTR_ACTION_PACKET_ACTION,
+                "SAI_PACKET_ACTION_COPY",
+            ),
+            (self._p4rt_acl_rule_obj.SAI_ATTR_MATCH_ETHER_TYPE, "2048&mask:0xffff"),
+            (
+                self._p4rt_acl_rule_obj.SAI_ATTR_MATCH_ROUTE_DST_USER_META,
+                "1&mask:0xffffffff",
+            ),
+            (
+                self._p4rt_acl_rule_obj.SAI_ATTR_MATCH_IP_TYPE,
+                "SAI_ACL_IP_TYPE_ANY&mask:0xffffffffffffffff",
+            ),
+            (self._p4rt_acl_rule_obj.SAI_ATTR_TABLE_ID, table_asic_db_key),
+            (self._p4rt_acl_rule_obj.SAI_ATTR_COUNTER, counter_asic_db_key3),
+            (self._p4rt_acl_rule_obj.SAI_ATTR_ADMIN_STATE, "true"),
+            (self._p4rt_acl_rule_obj.SAI_ATTR_PRIORITY, "100"),
+        ]
+        util.verify_attr(fvs, attr_list)
+
+        # remove ACL rule 3
+        self._p4rt_acl_rule_obj.remove_app_db_entry(table_name_with_rule_key3)
+        util.verify_response(
+            self.response_consumer, table_name_with_rule_key3, [], "SWSS_RC_SUCCESS"
+        )
+
+        # query application database for ACL rules
+        acl_rules = util.get_keys(
+            self._p4rt_acl_rule_obj.appl_db,
+            self._p4rt_acl_rule_obj.APP_DB_TBL_NAME + ":" + table_name,
+        )
+        assert len(acl_rules) == len(original_appl_acl_rules) + 2
+
+        # verify that the ACL rule no longer exists in application database
+        (status, fvs) = util.get_key(
+            self._p4rt_acl_rule_obj.appl_db,
+            self._p4rt_acl_rule_obj.APP_DB_TBL_NAME,
+            table_name_with_rule_key3,
+        )
+        assert status == False
+
+        # query application state database for ACL rules
+        state_acl_rules = util.get_keys(
+            self._p4rt_acl_rule_obj.appl_state_db,
+            self._p4rt_acl_rule_obj.APP_DB_TBL_NAME + ":" + table_name,
+        )
+        assert len(state_acl_rules) == len(original_appl_state_acl_rules) + 2
+
+        # verify that the ACL rule no longer exists in application state database
+        (status, fvs) = util.get_key(
+            self._p4rt_acl_rule_obj.appl_state_db,
+            self._p4rt_acl_rule_obj.APP_DB_TBL_NAME,
+            table_name_with_rule_key3,
+        )
+        assert status == False
+
+        # query ASIC database for ACL rules
+        acl_rules = util.get_keys(
+            self._p4rt_acl_rule_obj.asic_db, self._p4rt_acl_rule_obj.ASIC_DB_TBL_NAME
+        )
+        assert len(acl_rules) == len(original_asic_acl_rules) + 2
+
+        # verify that removed ACL rule no longer exists in ASIC database
+        (status, fvs) = util.get_key(
+            self._p4rt_acl_rule_obj.asic_db,
+            self._p4rt_acl_rule_obj.ASIC_DB_TBL_NAME,
+            rule_asic_db_key3,
+        )
+        assert status == False
+
+        # verify that removed ACL counter no longer exists in ASIC database
+        (status, fvs) = util.get_key(
+            self._p4rt_acl_counter_obj.asic_db,
+            self._p4rt_acl_counter_obj.ASIC_DB_TBL_NAME,
+            counter_asic_db_key3,
+        )
+        assert status == False
 
         # remove ACL rule 1
         self._p4rt_acl_rule_obj.remove_app_db_entry(table_name_with_rule_key1)
@@ -1201,7 +1402,8 @@ class TestP4RTAcl(object):
             (self._p4rt_acl_rule_obj.METER_PBURST, meter_pbs),
         ]
 
-        self._p4rt_acl_rule_obj.set_app_db_entry(table_name_with_rule_key, attr_list)
+        self._p4rt_acl_rule_obj.set_app_db_entry(
+            table_name_with_rule_key, attr_list)
         util.verify_response(
             self.response_consumer,
             table_name_with_rule_key,

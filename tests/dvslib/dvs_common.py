@@ -17,7 +17,7 @@ class PollingConfig:
     """
 
     polling_interval: float = 0.01
-    timeout: float = 5.00
+    timeout: float = 20.00
     strict: bool = True
 
     def iterations(self) -> int:

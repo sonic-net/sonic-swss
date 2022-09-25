@@ -49,20 +49,20 @@ class Gearbox(object):
         for i in [x for x in intf_table.getKeys() if sr not in x]:
             (status, fvs) = intf_table.get(i)
             assert status == True
-            self.interfaces[i] = {"attrs" : dict(fvs)}
+            self.interfaces[i] = dict(fvs)
 
-    def SanityCheck(self, dvs, testlog):
+    def SanityCheck(self, testlog):
         """
         Verify data integrity of Gearbox objects in APPL_DB
         """
         for i in self.interfaces:
-            phy_id = self.interfaces[i]["attrs"]["phy_id"]
+            phy_id = self.interfaces[i]["phy_id"]
             assert phy_id in self.phys
-            assert self.interfaces[i]["attrs"]["index"] in self.phys[phy_id]["ports"]
+            assert self.interfaces[i]["index"] in self.phys[phy_id]["ports"]
 
-            for lane in self.interfaces[i]["attrs"]["system_lanes"].split(','):
+            for lane in self.interfaces[i]["system_lanes"].split(','):
                 assert lane in self.phys[phy_id]["lanes"]
-            for lane in self.interfaces[i]["attrs"]["line_lanes"].split(','):
+            for lane in self.interfaces[i]["line_lanes"].split(','):
                 assert lane in self.phys[phy_id]["lanes"]
 
 class GBAsic(DVSDatabase):
@@ -85,9 +85,9 @@ class GBAsic(DVSDatabase):
 
             for i in self.gearbox.interfaces:
                 intf = self.gearbox.interfaces[i]
-                if intf["attrs"]["system_lanes"] == system_lanes:
-                    assert intf["attrs"]["line_lanes"] == line_lanes
-                    self.ports[intf["attrs"]["index"]] = (system_port_oid, line_port_oid)
+                if intf["system_lanes"] == system_lanes:
+                    assert intf["line_lanes"] == line_lanes
+                    self.ports[intf["index"]] = (system_port_oid, line_port_oid)
 
         assert len(self.ports) == len(self.gearbox.interfaces)
 
@@ -112,13 +112,50 @@ class GBAsic(DVSDatabase):
         init_polling_config = PollingConfig(2, 30, strict=True)
         wait_for_result(_verify_db_contents, init_polling_config)
 
+@pytest.fixture(scope="module")
+def gearbox(dvs):
+    return Gearbox(dvs)
+
+@pytest.fixture(scope="module")
+def gbasic(dvs, gearbox):
+    return GBAsic(swsscommon.GB_ASIC_DB, dvs.redis_sock, gearbox)
+
+@pytest.fixture(scope="module")
+def enable_port_counter(dvs):
+    flex_counter_table = swsscommon.Table(dvs.get_config_db().db_connection,
+        "FLEX_COUNTER_TABLE")
+
+    # Enable port counter
+    flex_counter_table.hset("PORT", "FLEX_COUNTER_STATUS", "enable")
+    yield
+    # Disable port counter
+    flex_counter_table.hdel("PORT", "FLEX_COUNTER_STATUS")
 
 class TestGearbox(object):
-    def test_GearboxSanity(self, dvs, testlog):
-        Gearbox(dvs).SanityCheck(dvs, testlog)
+    def test_GearboxSanity(self, gearbox, testlog):
+        gearbox.SanityCheck(testlog)
 
-    def test_GbAsicFEC(self, dvs, testlog):
-        gbasic = GBAsic(swsscommon.GB_ASIC_DB, dvs.redis_sock, Gearbox(dvs))
+    def test_GearboxCounter(self, dvs, gbasic, enable_port_counter, testlog):
+        counters_db = DVSDatabase(swsscommon.COUNTERS_DB, dvs.redis_sock)
+        gb_counters_db = DVSDatabase(swsscommon.GB_COUNTERS_DB, dvs.redis_sock)
+
+        intf = gbasic.gearbox.interfaces["0"]
+        port_oid = counters_db.get_entry("COUNTERS_PORT_NAME_MAP", "")[intf["name"]]
+        system_port_oid, line_port_oid = gbasic.ports["0"]
+
+        fvs = gb_counters_db.wait_for_entry("COUNTERS", system_port_oid)
+        assert fvs.get("SAI_PORT_STAT_IF_OUT_ERRORS")
+
+        fvs = gb_counters_db.wait_for_entry("COUNTERS", line_port_oid)
+        assert fvs.get("SAI_PORT_STAT_IF_IN_ERRORS")
+
+        fvs = counters_db.wait_for_entry("COUNTERS", port_oid)
+        assert fvs.get("SAI_PORT_STAT_IF_IN_ERRORS")
+
+        fvs = counters_db.wait_for_entry("COUNTERS", port_oid)
+        assert fvs.get("SAI_PORT_STAT_IF_IN_ERRORS")
+
+    def test_GbAsicFEC(self, gbasic, testlog):
 
         # set fec rs on port 0 of phy 1
         fvs = swsscommon.FieldValuePairs([("system_fec","rs")])

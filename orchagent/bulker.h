@@ -278,7 +278,7 @@ public:
         auto& attrs = it->second.first;
         attrs.insert(attrs.end(), attr_list, attr_list + attr_count);
         it->second.second = object_status;
-        SWSS_LOG_INFO("EntityBulker.create_entry %zu, %zu, %d, %d\n", creating_entries.size(), it->second.first.size(), (int)it->second.first[0].id, inserted);
+        SWSS_LOG_INFO("EntityBulker.create_entry %zu, %zu, %d\n", creating_entries.size(), it->second.first.size(), inserted);
         *object_status = SAI_STATUS_NOT_EXECUTED;
         return *object_status;
     }

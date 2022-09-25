@@ -41,9 +41,11 @@ PbhOrch *gPbhOrch;
 MirrorOrch *gMirrorOrch;
 CrmOrch *gCrmOrch;
 BufferOrch *gBufferOrch;
+QosOrch *gQosOrch;
 SwitchOrch *gSwitchOrch;
 Directory<Orch*> gDirectory;
 NatOrch *gNatOrch;
+PolicerOrch *gPolicerOrch;
 MlagOrch *gMlagOrch;
 IsoGrpOrch *gIsoGrpOrch;
 MACsecOrch *gMacsecOrch;
@@ -51,8 +53,11 @@ CoppOrch *gCoppOrch;
 P4Orch *gP4Orch;
 BfdOrch *gBfdOrch;
 Srv6Orch *gSrv6Orch;
+FlowCounterRouteOrch *gFlowCounterRouteOrch;
+DebugCounterOrch *gDebugCounterOrch;
 
 bool gIsNatSupported = false;
+event_handle_t g_events_handle;
 
 #define DEFAULT_MAX_BULK_SIZE 1000
 size_t gMaxBulkSize = DEFAULT_MAX_BULK_SIZE;
@@ -85,6 +90,8 @@ OrchDaemon::~OrchDaemon()
         delete(*it);
     }
     delete m_select;
+
+    events_deinit_publisher(g_events_handle);
 }
 
 bool OrchDaemon::init()
@@ -92,6 +99,8 @@ bool OrchDaemon::init()
     SWSS_LOG_ENTER();
 
     string platform = getenv("platform") ? getenv("platform") : "";
+
+    g_events_handle = events_init_publisher("sonic-events-swss");
 
     gCrmOrch = new CrmOrch(m_configDb, CFG_CRM_TABLE_NAME);
 
@@ -128,6 +137,12 @@ bool OrchDaemon::init()
     gFdbOrch = new FdbOrch(m_applDb, app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch);
     TableConnector stateDbBfdSessionTable(m_stateDb, STATE_BFD_SESSION_TABLE_NAME);
     gBfdOrch = new BfdOrch(m_applDb, APP_BFD_SESSION_TABLE_NAME, stateDbBfdSessionTable);
+
+    static const  vector<string> route_pattern_tables = {
+        CFG_FLOW_COUNTER_ROUTE_PATTERN_TABLE_NAME,
+    };
+    gFlowCounterRouteOrch = new FlowCounterRouteOrch(m_configDb, route_pattern_tables);
+    gDirectory.set(gFlowCounterRouteOrch);
 
     vector<string> vnet_tables = {
             APP_VNET_RT_TABLE_NAME,
@@ -200,6 +215,10 @@ bool OrchDaemon::init()
     EvpnNvoOrch* evpn_nvo_orch = new EvpnNvoOrch(m_applDb, APP_VXLAN_EVPN_NVO_TABLE_NAME);
     gDirectory.set(evpn_nvo_orch);
 
+    NvgreTunnelOrch *nvgre_tunnel_orch = new NvgreTunnelOrch(m_configDb, CFG_NVGRE_TUNNEL_TABLE_NAME);
+    gDirectory.set(nvgre_tunnel_orch);
+    NvgreTunnelMapOrch *nvgre_tunnel_map_orch = new NvgreTunnelMapOrch(m_configDb, CFG_NVGRE_TUNNEL_MAP_TABLE_NAME);
+    gDirectory.set(nvgre_tunnel_map_orch);
 
     vector<string> qos_tables = {
         CFG_TC_TO_QUEUE_MAP_TABLE_NAME,
@@ -214,9 +233,10 @@ bool OrchDaemon::init()
         CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME,
         CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME,
         CFG_DSCP_TO_FC_MAP_TABLE_NAME,
-        CFG_EXP_TO_FC_MAP_TABLE_NAME
+        CFG_EXP_TO_FC_MAP_TABLE_NAME,
+        CFG_TC_TO_DSCP_MAP_TABLE_NAME
     };
-    QosOrch *qos_orch = new QosOrch(m_configDb, qos_tables);
+    gQosOrch = new QosOrch(m_configDb, qos_tables);
 
     vector<string> buffer_tables = {
         APP_BUFFER_POOL_TABLE_NAME,
@@ -228,11 +248,17 @@ bool OrchDaemon::init()
     };
     gBufferOrch = new BufferOrch(m_applDb, m_configDb, m_stateDb, buffer_tables);
 
-    PolicerOrch *policer_orch = new PolicerOrch(m_configDb, "POLICER");
+    vector<TableConnector> policer_tables = {
+        TableConnector(m_configDb, CFG_POLICER_TABLE_NAME),
+        TableConnector(m_configDb, CFG_PORT_STORM_CONTROL_TABLE_NAME)
+    };
+
+    TableConnector stateDbStorm(m_stateDb, "BUM_STORM_CAPABILITY");
+    gPolicerOrch = new PolicerOrch(policer_tables, gPortsOrch);
 
     TableConnector stateDbMirrorSession(m_stateDb, STATE_MIRROR_SESSION_TABLE_NAME);
     TableConnector confDbMirrorSession(m_configDb, CFG_MIRROR_SESSION_TABLE_NAME);
-    gMirrorOrch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, policer_orch);
+    gMirrorOrch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, gPolicerOrch);
 
     TableConnector confDbAclTable(m_configDb, CFG_ACL_TABLE_TABLE_NAME);
     TableConnector confDbAclTableType(m_configDb, CFG_ACL_TABLE_TYPE_TABLE_NAME);
@@ -277,7 +303,7 @@ bool OrchDaemon::init()
         CFG_DEBUG_COUNTER_DROP_REASON_TABLE_NAME
     };
 
-    DebugCounterOrch *debug_counter_orch = new DebugCounterOrch(m_configDb, debug_counter_tables, 1000);
+    gDebugCounterOrch = new DebugCounterOrch(m_configDb, debug_counter_tables, 1000);
 
     const int natorch_base_pri = 50;
 
@@ -325,7 +351,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, mux_orch, mux_cb_orch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gRouteOrch, gCoppOrch, qos_orch, wm_orch, policer_orch, tunnel_decap_orch, sflow_orch, debug_counter_orch, gMacsecOrch, gBfdOrch, gSrv6Orch};
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, tunnel_decap_orch, sflow_orch, gDebugCounterOrch, gMacsecOrch, gBfdOrch, gSrv6Orch, mux_orch, mux_cb_orch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
@@ -424,6 +450,8 @@ bool OrchDaemon::init()
     m_orchList.push_back(gIsoGrpOrch);
     m_orchList.push_back(gFgNhgOrch);
     m_orchList.push_back(mux_st_orch);
+    m_orchList.push_back(nvgre_tunnel_orch);
+    m_orchList.push_back(nvgre_tunnel_map_orch);
 
     if (m_fabricEnabled)
     {
@@ -448,7 +476,7 @@ bool OrchDaemon::init()
         CFG_PFC_WD_TABLE_NAME
     };
 
-    if (platform == MLNX_PLATFORM_SUBSTRING)
+    if ((platform == MLNX_PLATFORM_SUBSTRING)  || (platform == VS_PLATFORM_SUBSTRING))
     {
 
         static const vector<sai_port_stat_t> portStatIds =
@@ -574,13 +602,26 @@ bool OrchDaemon::init()
             SAI_QUEUE_ATTR_PAUSE_STATUS,
         };
 
-        m_orchList.push_back(new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
-                    m_configDb,
-                    pfc_wd_tables,
-                    portStatIds,
-                    queueStatIds,
-                    queueAttrIds,
-                    PFC_WD_POLL_MSECS));
+        if(gSwitchOrch->checkPfcDlrInitEnable())
+        {
+            m_orchList.push_back(new PfcWdSwOrch<PfcWdDlrHandler, PfcWdLossyHandler>(
+                        m_configDb,
+                        pfc_wd_tables,
+                        portStatIds,
+                        queueStatIds,
+                        queueAttrIds,
+                        PFC_WD_POLL_MSECS));
+        }
+        else
+        {
+            m_orchList.push_back(new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
+                        m_configDb,
+                        pfc_wd_tables,
+                        portStatIds,
+                        queueStatIds,
+                        queueAttrIds,
+                        PFC_WD_POLL_MSECS));
+        }
     } else if (platform == CISCO_8000_PLATFORM_SUBSTRING)
     {
         static const vector<sai_port_stat_t> portStatIds;
@@ -633,7 +674,7 @@ void OrchDaemon::flush()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to flush redis pipeline %d", status);
-        exit(EXIT_FAILURE);
+        abort();
     }
 
     // check if logroate is requested

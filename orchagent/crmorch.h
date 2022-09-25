@@ -5,6 +5,7 @@
 #include <map>
 #include "orch.h"
 #include "port.h"
+#include "events.h"
 
 extern "C" {
 #include "sai.h"
@@ -98,6 +99,7 @@ private:
     void doTask(Consumer &consumer);
     void handleSetCommand(const std::string& key, const std::vector<swss::FieldValueTuple>& data);
     void doTask(swss::SelectableTimer &timer);
+    bool getResAvailability(CrmResourceType type, CrmResourceEntry &res);
     void getResAvailableCounters();
     void updateCrmCountersTable();
     void checkCrmThresholds();

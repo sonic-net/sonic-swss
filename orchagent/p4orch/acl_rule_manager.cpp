@@ -4,8 +4,11 @@
 #include <string>
 #include <vector>
 
+#include "SaiAttributeList.h"
 #include "converter.h"
 #include "crmorch.h"
+#include "dbconnector.h"
+#include "intfsorch.h"
 #include "json.hpp"
 #include "logger.h"
 #include "orch.h"
@@ -13,11 +16,14 @@
 #include "p4orch/p4orch_util.h"
 #include "portsorch.h"
 #include "sai_serialize.h"
+#include "table.h"
 #include "tokenize.h"
 extern "C"
 {
 #include "sai.h"
 }
+
+using ::p4orch::kTableKeyDelimiter;
 
 extern sai_object_id_t gSwitchId;
 extern sai_acl_api_t *sai_acl_api;
@@ -35,6 +41,126 @@ namespace
 const std::string concatTableNameAndRuleKey(const std::string &table_name, const std::string &rule_key)
 {
     return table_name + kTableKeyDelimiter + rule_key;
+}
+
+std::vector<sai_attribute_t> getRuleSaiAttrs(const P4AclRule &acl_rule)
+{
+    std::vector<sai_attribute_t> acl_entry_attrs;
+    sai_attribute_t acl_entry_attr;
+    acl_entry_attr.id = SAI_ACL_ENTRY_ATTR_TABLE_ID;
+    acl_entry_attr.value.oid = acl_rule.acl_table_oid;
+    acl_entry_attrs.push_back(acl_entry_attr);
+
+    acl_entry_attr.id = SAI_ACL_ENTRY_ATTR_PRIORITY;
+    acl_entry_attr.value.u32 = acl_rule.priority;
+    acl_entry_attrs.push_back(acl_entry_attr);
+
+    acl_entry_attr.id = SAI_ACL_ENTRY_ATTR_ADMIN_STATE;
+    acl_entry_attr.value.booldata = true;
+    acl_entry_attrs.push_back(acl_entry_attr);
+
+    // Add matches
+    for (const auto &match_fv : acl_rule.match_fvs)
+    {
+        acl_entry_attr.id = fvField(match_fv);
+        acl_entry_attr.value = fvValue(match_fv);
+        acl_entry_attrs.push_back(acl_entry_attr);
+    }
+
+    // Add actions
+    for (const auto &action_fv : acl_rule.action_fvs)
+    {
+        acl_entry_attr.id = fvField(action_fv);
+        acl_entry_attr.value = fvValue(action_fv);
+        acl_entry_attrs.push_back(acl_entry_attr);
+    }
+
+    // Add meter
+    if (acl_rule.meter.enabled)
+    {
+        acl_entry_attr.id = SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER;
+        acl_entry_attr.value.aclaction.parameter.oid = acl_rule.meter.meter_oid;
+        acl_entry_attr.value.aclaction.enable = true;
+        acl_entry_attrs.push_back(acl_entry_attr);
+    }
+
+    // Add counter
+    if (acl_rule.counter.packets_enabled || acl_rule.counter.bytes_enabled)
+    {
+        acl_entry_attr.id = SAI_ACL_ENTRY_ATTR_ACTION_COUNTER;
+        acl_entry_attr.value.aclaction.enable = true;
+        acl_entry_attr.value.aclaction.parameter.oid = acl_rule.counter.counter_oid;
+        acl_entry_attrs.push_back(acl_entry_attr);
+    }
+
+    return acl_entry_attrs;
+}
+
+std::vector<sai_attribute_t> getCounterSaiAttrs(const P4AclRule &acl_rule)
+{
+    sai_attribute_t attr;
+    std::vector<sai_attribute_t> counter_attrs;
+    attr.id = SAI_ACL_COUNTER_ATTR_TABLE_ID;
+    attr.value.oid = acl_rule.acl_table_oid;
+    counter_attrs.push_back(attr);
+
+    if (acl_rule.counter.bytes_enabled)
+    {
+        attr.id = SAI_ACL_COUNTER_ATTR_ENABLE_BYTE_COUNT;
+        attr.value.booldata = true;
+        counter_attrs.push_back(attr);
+    }
+
+    if (acl_rule.counter.packets_enabled)
+    {
+        attr.id = SAI_ACL_COUNTER_ATTR_ENABLE_PACKET_COUNT;
+        attr.value.booldata = true;
+        counter_attrs.push_back(attr);
+    }
+
+    return counter_attrs;
+}
+
+std::vector<sai_attribute_t> getMeterSaiAttrs(const P4AclMeter &p4_acl_meter)
+{
+    std::vector<sai_attribute_t> meter_attrs;
+    sai_attribute_t meter_attr;
+
+    meter_attr.id = SAI_POLICER_ATTR_MODE;
+    meter_attr.value.s32 = p4_acl_meter.mode;
+    meter_attrs.push_back(meter_attr);
+
+    if (p4_acl_meter.enabled)
+    {
+        meter_attr.id = SAI_POLICER_ATTR_METER_TYPE;
+        meter_attr.value.s32 = p4_acl_meter.type;
+        meter_attrs.push_back(meter_attr);
+
+        meter_attr.id = SAI_POLICER_ATTR_CBS;
+        meter_attr.value.u64 = p4_acl_meter.cburst;
+        meter_attrs.push_back(meter_attr);
+
+        meter_attr.id = SAI_POLICER_ATTR_CIR;
+        meter_attr.value.u64 = p4_acl_meter.cir;
+        meter_attrs.push_back(meter_attr);
+
+        meter_attr.id = SAI_POLICER_ATTR_PIR;
+        meter_attr.value.u64 = p4_acl_meter.pir;
+        meter_attrs.push_back(meter_attr);
+
+        meter_attr.id = SAI_POLICER_ATTR_PBS;
+        meter_attr.value.u64 = p4_acl_meter.pburst;
+        meter_attrs.push_back(meter_attr);
+    }
+
+    for (const auto &packet_color_action : p4_acl_meter.packet_color_actions)
+    {
+        meter_attr.id = fvField(packet_color_action);
+        meter_attr.value.s32 = fvValue(packet_color_action);
+        meter_attrs.push_back(meter_attr);
+    }
+
+    return meter_attrs;
 }
 
 } // namespace
@@ -232,43 +358,18 @@ void AclRuleManager::doAclCounterStatsTask()
 }
 
 ReturnCode AclRuleManager::createAclCounter(const std::string &acl_table_name, const std::string &counter_key,
-                                            const P4AclCounter &p4_acl_counter, sai_object_id_t *counter_oid)
+                                            const P4AclRule &acl_rule, sai_object_id_t *counter_oid)
 {
     SWSS_LOG_ENTER();
 
-    sai_attribute_t attr;
-    std::vector<sai_attribute_t> counter_attrs;
-    sai_object_id_t acl_table_oid;
-    if (!m_p4OidMapper->getOID(SAI_OBJECT_TYPE_ACL_TABLE, acl_table_name, &acl_table_oid))
-    {
-        LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
-                             << "Invalid ACL counter to create: ACL table key " << QuotedVar(acl_table_name)
-                             << " not found.");
-    }
-    attr.id = SAI_ACL_COUNTER_ATTR_TABLE_ID;
-    attr.value.oid = acl_table_oid;
-    counter_attrs.push_back(attr);
-
-    if (p4_acl_counter.bytes_enabled)
-    {
-        attr.id = SAI_ACL_COUNTER_ATTR_ENABLE_BYTE_COUNT;
-        attr.value.booldata = true;
-        counter_attrs.push_back(attr);
-    }
-
-    if (p4_acl_counter.packets_enabled)
-    {
-        attr.id = SAI_ACL_COUNTER_ATTR_ENABLE_PACKET_COUNT;
-        attr.value.booldata = true;
-        counter_attrs.push_back(attr);
-    }
+    auto attrs = getCounterSaiAttrs(acl_rule);
 
     CHECK_ERROR_AND_LOG_AND_RETURN(
-        sai_acl_api->create_acl_counter(counter_oid, gSwitchId, (uint32_t)counter_attrs.size(), counter_attrs.data()),
-        "Faied to create counter for the rule in table " << sai_serialize_object_id(acl_table_oid));
+        sai_acl_api->create_acl_counter(counter_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data()),
+        "Faied to create counter for the rule in table " << sai_serialize_object_id(acl_rule.acl_table_oid));
     SWSS_LOG_NOTICE("Suceeded to create ACL counter %s ", sai_serialize_object_id(*counter_oid).c_str());
     m_p4OidMapper->setOID(SAI_OBJECT_TYPE_ACL_COUNTER, counter_key, *counter_oid);
-    gCrmOrch->incCrmAclTableUsedCounter(CrmResourceType::CRM_ACL_COUNTER, acl_table_oid);
+    gCrmOrch->incCrmAclTableUsedCounter(CrmResourceType::CRM_ACL_COUNTER, acl_rule.acl_table_oid);
     m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_ACL_TABLE, acl_table_name);
     return ReturnCode();
 }
@@ -305,44 +406,10 @@ ReturnCode AclRuleManager::createAclMeter(const P4AclMeter &p4_acl_meter, const 
 {
     SWSS_LOG_ENTER();
 
-    std::vector<sai_attribute_t> meter_attrs;
-    sai_attribute_t meter_attr;
-    meter_attr.id = SAI_POLICER_ATTR_METER_TYPE;
-    meter_attr.value.s32 = p4_acl_meter.type;
-    meter_attrs.push_back(meter_attr);
-
-    meter_attr.id = SAI_POLICER_ATTR_MODE;
-    meter_attr.value.s32 = p4_acl_meter.mode;
-    meter_attrs.push_back(meter_attr);
-
-    if (p4_acl_meter.enabled)
-    {
-        meter_attr.id = SAI_POLICER_ATTR_CBS;
-        meter_attr.value.u64 = p4_acl_meter.cburst;
-        meter_attrs.push_back(meter_attr);
-
-        meter_attr.id = SAI_POLICER_ATTR_CIR;
-        meter_attr.value.u64 = p4_acl_meter.cir;
-        meter_attrs.push_back(meter_attr);
-
-        meter_attr.id = SAI_POLICER_ATTR_PIR;
-        meter_attr.value.u64 = p4_acl_meter.pir;
-        meter_attrs.push_back(meter_attr);
-
-        meter_attr.id = SAI_POLICER_ATTR_PBS;
-        meter_attr.value.u64 = p4_acl_meter.pburst;
-        meter_attrs.push_back(meter_attr);
-    }
-
-    for (const auto &packet_color_action : p4_acl_meter.packet_color_actions)
-    {
-        meter_attr.id = fvField(packet_color_action);
-        meter_attr.value.s32 = fvValue(packet_color_action);
-        meter_attrs.push_back(meter_attr);
-    }
+    auto attrs = getMeterSaiAttrs(p4_acl_meter);
 
     CHECK_ERROR_AND_LOG_AND_RETURN(
-        sai_policer_api->create_policer(meter_oid, gSwitchId, (uint32_t)meter_attrs.size(), meter_attrs.data()),
+        sai_policer_api->create_policer(meter_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data()),
         "Failed to create ACL meter");
     m_p4OidMapper->setOID(SAI_OBJECT_TYPE_POLICER, meter_key, *meter_oid);
     SWSS_LOG_NOTICE("Suceeded to create ACL meter %s ", sai_serialize_object_id(*meter_oid).c_str());
@@ -645,39 +712,37 @@ ReturnCode AclRuleManager::setAclRuleCounterStats(const P4AclRule &acl_rule)
                                                                  std::to_string(meter_stats[i])});
         }
     }
-    else
+    // Query general packets/bytes stats by ACL counter object id.
+    std::vector<sai_attribute_t> counter_attrs;
+    sai_attribute_t counter_attr;
+    if (acl_rule.counter.packets_enabled)
     {
-        // Query general packets/bytes stats by ACL counter object id.
-        std::vector<sai_attribute_t> counter_attrs;
-        sai_attribute_t counter_attr;
-        if (acl_rule.counter.packets_enabled)
+        counter_attr.id = SAI_ACL_COUNTER_ATTR_PACKETS;
+        counter_attrs.push_back(counter_attr);
+    }
+    if (acl_rule.counter.bytes_enabled)
+    {
+        counter_attr.id = SAI_ACL_COUNTER_ATTR_BYTES;
+        counter_attrs.push_back(counter_attr);
+    }
+    CHECK_ERROR_AND_LOG_AND_RETURN(sai_acl_api->get_acl_counter_attribute(acl_rule.counter.counter_oid,
+                                                                          static_cast<uint32_t>(counter_attrs.size()),
+                                                                          counter_attrs.data()),
+                                   "Failed to get counters stats for " << QuotedVar(acl_rule.acl_table_name));
+    for (const auto &counter_attr : counter_attrs)
+    {
+        if (counter_attr.id == SAI_ACL_COUNTER_ATTR_PACKETS)
         {
-            counter_attr.id = SAI_ACL_COUNTER_ATTR_PACKETS;
-            counter_attrs.push_back(counter_attr);
+            counter_stats_values.push_back(
+                swss::FieldValueTuple{P4_COUNTER_STATS_PACKETS, std::to_string(counter_attr.value.u64)});
         }
-        if (acl_rule.counter.bytes_enabled)
+        if (counter_attr.id == SAI_ACL_COUNTER_ATTR_BYTES)
         {
-            counter_attr.id = SAI_ACL_COUNTER_ATTR_BYTES;
-            counter_attrs.push_back(counter_attr);
-        }
-        CHECK_ERROR_AND_LOG_AND_RETURN(
-            sai_acl_api->get_acl_counter_attribute(acl_rule.counter.counter_oid,
-                                                   static_cast<uint32_t>(counter_attrs.size()), counter_attrs.data()),
-            "Failed to get counters stats for " << QuotedVar(acl_rule.acl_table_name));
-        for (const auto &counter_attr : counter_attrs)
-        {
-            if (counter_attr.id == SAI_ACL_COUNTER_ATTR_PACKETS)
-            {
-                counter_stats_values.push_back(
-                    swss::FieldValueTuple{P4_COUNTER_STATS_PACKETS, std::to_string(counter_attr.value.u64)});
-            }
-            if (counter_attr.id == SAI_ACL_COUNTER_ATTR_BYTES)
-            {
-                counter_stats_values.push_back(
-                    swss::FieldValueTuple{P4_COUNTER_STATS_BYTES, std::to_string(counter_attr.value.u64)});
-            }
+            counter_stats_values.push_back(
+                swss::FieldValueTuple{P4_COUNTER_STATS_BYTES, std::to_string(counter_attr.value.u64)});
         }
     }
+
     // Set field value tuples for counters stats in COUNTERS_DB
     m_countersTable->set(acl_rule.db_key, counter_stats_values);
     return ReturnCode();
@@ -916,6 +981,7 @@ ReturnCode AclRuleManager::setMatchValue(const acl_entry_attr_union_t attr_name,
             break;
         }
         case SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI:
+        case SAI_ACL_ENTRY_ATTR_FIELD_ROUTE_DST_USER_META:
         case SAI_ACL_ENTRY_ATTR_FIELD_IPV6_FLOW_LABEL: {
             const std::vector<std::string> &value_and_mask = tokenize(attr_value, kDataMaskDelimiter);
             value->aclfield.data.u32 = to_uint<uint32_t>(trim(value_and_mask[0]));
@@ -1402,41 +1468,26 @@ ReturnCode AclRuleManager::setMeterValue(const P4AclTableDefinition *acl_table, 
     {
         acl_meter.packet_color_actions = action_color_it->second;
     }
+
+    // SAI_POLICER_MODE_TR_TCM mode is used by default.
+    // Meter rate limit config is not present for the ACL rule
+    // Mark the packet as GREEN by setting rate limit to max.
+    if (!acl_meter.packet_color_actions.empty() && !acl_meter.enabled)
+    {
+        acl_meter.enabled = true;
+        acl_meter.type = SAI_METER_TYPE_PACKETS;
+        acl_meter.cburst = 0x7fffffff;
+        acl_meter.cir = 0x7fffffff;
+        acl_meter.pir = 0x7fffffff;
+        acl_meter.pburst = 0x7fffffff;
+    }
+
     return ReturnCode();
 }
 
 ReturnCode AclRuleManager::createAclRule(P4AclRule &acl_rule)
 {
     SWSS_LOG_ENTER();
-    std::vector<sai_attribute_t> acl_entry_attrs;
-    sai_attribute_t acl_entry_attr;
-    acl_entry_attr.id = SAI_ACL_ENTRY_ATTR_TABLE_ID;
-    acl_entry_attr.value.oid = acl_rule.acl_table_oid;
-    acl_entry_attrs.push_back(acl_entry_attr);
-
-    acl_entry_attr.id = SAI_ACL_ENTRY_ATTR_PRIORITY;
-    acl_entry_attr.value.u32 = acl_rule.priority;
-    acl_entry_attrs.push_back(acl_entry_attr);
-
-    acl_entry_attr.id = SAI_ACL_ENTRY_ATTR_ADMIN_STATE;
-    acl_entry_attr.value.booldata = true;
-    acl_entry_attrs.push_back(acl_entry_attr);
-
-    // Add matches
-    for (const auto &match_fv : acl_rule.match_fvs)
-    {
-        acl_entry_attr.id = fvField(match_fv);
-        acl_entry_attr.value = fvValue(match_fv);
-        acl_entry_attrs.push_back(acl_entry_attr);
-    }
-
-    // Add actions
-    for (const auto &action_fv : acl_rule.action_fvs)
-    {
-        acl_entry_attr.id = fvField(action_fv);
-        acl_entry_attr.value = fvValue(action_fv);
-        acl_entry_attrs.push_back(acl_entry_attr);
-    }
 
     // Track if the entry creats a new counter or meter
     bool created_meter = false;
@@ -1444,7 +1495,7 @@ ReturnCode AclRuleManager::createAclRule(P4AclRule &acl_rule)
     const auto &table_name_and_rule_key = concatTableNameAndRuleKey(acl_rule.acl_table_name, acl_rule.acl_rule_key);
 
     // Add meter
-    if (acl_rule.meter.enabled || !acl_rule.meter.packet_color_actions.empty())
+    if (acl_rule.meter.enabled)
     {
         if (acl_rule.meter.meter_oid == SAI_NULL_OBJECT_ID)
         {
@@ -1456,10 +1507,6 @@ ReturnCode AclRuleManager::createAclRule(P4AclRule &acl_rule)
             }
             created_meter = true;
         }
-        acl_entry_attr.id = SAI_ACL_ENTRY_ATTR_ACTION_SET_POLICER;
-        acl_entry_attr.value.aclaction.parameter.oid = acl_rule.meter.meter_oid;
-        acl_entry_attr.value.aclaction.enable = true;
-        acl_entry_attrs.push_back(acl_entry_attr);
     }
 
     // Add counter
@@ -1467,7 +1514,7 @@ ReturnCode AclRuleManager::createAclRule(P4AclRule &acl_rule)
     {
         if (acl_rule.counter.counter_oid == SAI_NULL_OBJECT_ID)
         {
-            auto status = createAclCounter(acl_rule.acl_table_name, table_name_and_rule_key, acl_rule.counter,
+            auto status = createAclCounter(acl_rule.acl_table_name, table_name_and_rule_key, acl_rule,
                                            &acl_rule.counter.counter_oid);
             if (!status.ok())
             {
@@ -1484,14 +1531,12 @@ ReturnCode AclRuleManager::createAclRule(P4AclRule &acl_rule)
             }
             created_counter = true;
         }
-        acl_entry_attr.id = SAI_ACL_ENTRY_ATTR_ACTION_COUNTER;
-        acl_entry_attr.value.aclaction.enable = true;
-        acl_entry_attr.value.aclaction.parameter.oid = acl_rule.counter.counter_oid;
-        acl_entry_attrs.push_back(acl_entry_attr);
     }
 
-    auto sai_status = sai_acl_api->create_acl_entry(&acl_rule.acl_entry_oid, gSwitchId,
-                                                    (uint32_t)acl_entry_attrs.size(), acl_entry_attrs.data());
+    auto attrs = getRuleSaiAttrs(acl_rule);
+
+    auto sai_status =
+        sai_acl_api->create_acl_entry(&acl_rule.acl_entry_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (sai_status != SAI_STATUS_SUCCESS)
     {
         ReturnCode status = ReturnCode(sai_status)
@@ -1665,7 +1710,7 @@ ReturnCode AclRuleManager::removeAclRule(const std::string &acl_table_name, cons
                                        << sai_serialize_object_id(acl_rule->acl_entry_oid) << " in table "
                                        << QuotedVar(acl_table_name));
     bool deleted_meter = false;
-    if (acl_rule->meter.enabled || !acl_rule->meter.packet_color_actions.empty())
+    if (acl_rule->meter.enabled)
     {
         m_p4OidMapper->decreaseRefCount(SAI_OBJECT_TYPE_POLICER, table_name_and_rule_key);
         auto status = removeAclMeter(table_name_and_rule_key);
@@ -1750,7 +1795,7 @@ ReturnCode AclRuleManager::removeAclRule(const std::string &acl_table_name, cons
 ReturnCode AclRuleManager::processAddRuleRequest(const std::string &acl_rule_key,
                                                  const P4AclRuleAppDbEntry &app_db_entry)
 {
-    P4AclRule acl_rule;
+    P4AclRule acl_rule{};
     acl_rule.priority = app_db_entry.priority;
     acl_rule.acl_rule_key = acl_rule_key;
     acl_rule.p4_action = app_db_entry.action;
@@ -1832,7 +1877,6 @@ ReturnCode AclRuleManager::processAddRuleRequest(const std::string &acl_rule_key
         gPortsOrch->increasePortRefCount(port_alias);
     }
     gCrmOrch->incCrmAclTableUsedCounter(CrmResourceType::CRM_ACL_ENTRY, acl_rule.acl_table_oid);
-    m_aclRuleTables[acl_rule.acl_table_name][acl_rule.acl_rule_key] = acl_rule;
     m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_ACL_TABLE, acl_rule.acl_table_name);
     const auto &table_name_and_rule_key = concatTableNameAndRuleKey(acl_rule.acl_table_name, acl_rule.acl_rule_key);
     m_p4OidMapper->setOID(SAI_OBJECT_TYPE_ACL_ENTRY, table_name_and_rule_key, acl_rule.acl_entry_oid);
@@ -1841,13 +1885,15 @@ ReturnCode AclRuleManager::processAddRuleRequest(const std::string &acl_rule_key
         // Counter was created, increase ACL rule ref count
         m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_ACL_COUNTER, table_name_and_rule_key);
     }
-    if (acl_rule.meter.enabled || !acl_rule.meter.packet_color_actions.empty())
+    if (acl_rule.meter.enabled)
     {
         // Meter was created, increase ACL rule ref count
         m_p4OidMapper->increaseRefCount(SAI_OBJECT_TYPE_POLICER, table_name_and_rule_key);
     }
-    SWSS_LOG_NOTICE("Suceeded to create ACL rule %s : %s", QuotedVar(acl_rule.acl_rule_key).c_str(),
-                    sai_serialize_object_id(acl_rule.acl_entry_oid).c_str());
+    m_aclRuleTables[acl_table->acl_table_name][acl_rule_key] = std::move(acl_rule);
+    SWSS_LOG_NOTICE(
+        "Suceeded to create ACL rule %s : %s", QuotedVar(acl_rule_key).c_str(),
+        sai_serialize_object_id(m_aclRuleTables[acl_table->acl_table_name][acl_rule_key].acl_entry_oid).c_str());
     return status;
 }
 
@@ -1868,7 +1914,7 @@ ReturnCode AclRuleManager::processUpdateRuleRequest(const P4AclRuleAppDbEntry &a
 {
     SWSS_LOG_ENTER();
 
-    P4AclRule acl_rule;
+    P4AclRule acl_rule{};
     const auto *acl_table = gP4Orch->getAclTableManager()->getAclTable(app_db_entry.acl_table_name);
     acl_rule.acl_table_oid = acl_table->table_oid;
     acl_rule.acl_table_name = acl_table->acl_table_name;
@@ -1876,9 +1922,6 @@ ReturnCode AclRuleManager::processUpdateRuleRequest(const P4AclRuleAppDbEntry &a
 
     // Skip match field comparison because the acl_rule_key including match
     // field value and priority should be the same with old one.
-    acl_rule.match_fvs = old_acl_rule.match_fvs;
-    acl_rule.in_ports = old_acl_rule.in_ports;
-    acl_rule.out_ports = old_acl_rule.out_ports;
     acl_rule.priority = app_db_entry.priority;
     acl_rule.acl_rule_key = old_acl_rule.acl_rule_key;
     // Skip Counter comparison since the counter unit is defined in table
@@ -1906,8 +1949,7 @@ ReturnCode AclRuleManager::processUpdateRuleRequest(const P4AclRuleAppDbEntry &a
     bool created_meter = false;
     bool updated_meter = false;
     LOG_AND_RETURN_IF_ERROR(setMeterValue(acl_table, app_db_entry, acl_rule.meter));
-    if (old_acl_rule.meter.meter_oid == SAI_NULL_OBJECT_ID &&
-        (acl_rule.meter.enabled || !acl_rule.meter.packet_color_actions.empty()))
+    if (old_acl_rule.meter.meter_oid == SAI_NULL_OBJECT_ID && acl_rule.meter.enabled)
     {
         // Create new meter
         auto status = createAclMeter(acl_rule.meter, table_name_and_rule_key, &acl_rule.meter.meter_oid);
@@ -1926,8 +1968,7 @@ ReturnCode AclRuleManager::processUpdateRuleRequest(const P4AclRuleAppDbEntry &a
         acl_entry_attr.value.aclaction.parameter.oid = SAI_NULL_OBJECT_ID;
         rollback_attrs.push_back(acl_entry_attr);
     }
-    else if (old_acl_rule.meter.meter_oid != SAI_NULL_OBJECT_ID && !acl_rule.meter.enabled &&
-             acl_rule.meter.packet_color_actions.empty())
+    else if (old_acl_rule.meter.meter_oid != SAI_NULL_OBJECT_ID && !acl_rule.meter.enabled)
     {
         // Remove old meter
         remove_meter = true;
@@ -2001,9 +2042,468 @@ ReturnCode AclRuleManager::processUpdateRuleRequest(const P4AclRuleAppDbEntry &a
         }
         return status;
     }
-
-    m_aclRuleTables[acl_rule.acl_table_name][acl_rule.acl_rule_key] = acl_rule;
+    // Move match_fvs and referred pointers from old rule to new rule
+    acl_rule.in_ports = std::move(old_acl_rule.in_ports);
+    acl_rule.out_ports = std::move(old_acl_rule.out_ports);
+    acl_rule.in_ports_oids = std::move(old_acl_rule.in_ports_oids);
+    acl_rule.out_ports_oids = std::move(old_acl_rule.out_ports_oids);
+    acl_rule.udf_data_masks = std::move(old_acl_rule.udf_data_masks);
+    acl_rule.match_fvs = std::move(old_acl_rule.match_fvs);
+    m_aclRuleTables[acl_rule.acl_table_name][acl_rule.acl_rule_key] = std::move(acl_rule);
     return ReturnCode();
+}
+
+std::string AclRuleManager::verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple)
+{
+    SWSS_LOG_ENTER();
+
+    auto pos = key.find_first_of(kTableKeyDelimiter);
+    if (pos == std::string::npos)
+    {
+        return std::string("Invalid key: ") + key;
+    }
+    std::string p4rt_table = key.substr(0, pos);
+    std::string p4rt_key = key.substr(pos + 1);
+    if (p4rt_table != APP_P4RT_TABLE_NAME)
+    {
+        return std::string("Invalid key: ") + key;
+    }
+    std::string table_name;
+    std::string key_content;
+    parseP4RTKey(p4rt_key, &table_name, &key_content);
+
+    ReturnCode status;
+    auto app_db_entry_or = deserializeAclRuleAppDbEntry(table_name, key_content, tuple);
+    if (!app_db_entry_or.ok())
+    {
+        status = app_db_entry_or.status();
+        std::stringstream msg;
+        msg << "Unable to deserialize key " << QuotedVar(key) << ": " << status.message();
+        return msg.str();
+    }
+    auto &app_db_entry = *app_db_entry_or;
+
+    const auto &acl_table_name = app_db_entry.acl_table_name;
+    const auto &acl_rule_key =
+        KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, std::to_string(app_db_entry.priority));
+    auto *acl_rule = getAclRule(acl_table_name, acl_rule_key);
+    if (acl_rule == nullptr)
+    {
+        std::stringstream msg;
+        msg << "No entry found with key " << QuotedVar(key);
+        return msg.str();
+    }
+
+    std::string cache_result = verifyStateCache(app_db_entry, acl_rule);
+    std::string asic_db_result = verifyStateAsicDb(acl_rule);
+    if (cache_result.empty())
+    {
+        return asic_db_result;
+    }
+    if (asic_db_result.empty())
+    {
+        return cache_result;
+    }
+    return cache_result + "; " + asic_db_result;
+}
+
+std::string AclRuleManager::verifyStateCache(const P4AclRuleAppDbEntry &app_db_entry, const P4AclRule *acl_rule)
+{
+    ReturnCode status = validateAclRuleAppDbEntry(app_db_entry);
+    if (!status.ok())
+    {
+        std::stringstream msg;
+        msg << "Validation failed for ACL rule DB entry with key " << QuotedVar(acl_rule->acl_rule_key) << ": "
+            << status.message();
+        return msg.str();
+    }
+
+    const auto &acl_rule_key =
+        KeyGenerator::generateAclRuleKey(app_db_entry.match_fvs, std::to_string(app_db_entry.priority));
+    if (acl_rule->acl_rule_key != acl_rule_key)
+    {
+        std::stringstream msg;
+        msg << "ACL rule " << QuotedVar(acl_rule_key) << " does not match internal cache "
+            << QuotedVar(acl_rule->acl_rule_key) << " in ACL rule manager.";
+        return msg.str();
+    }
+    if (acl_rule->acl_table_name != app_db_entry.acl_table_name)
+    {
+        std::stringstream msg;
+        msg << "ACL rule " << QuotedVar(acl_rule_key) << " with table name " << QuotedVar(app_db_entry.acl_table_name)
+            << " does not match internal cache " << QuotedVar(acl_rule->acl_table_name) << " in ACL rule manager.";
+        return msg.str();
+    }
+    if (acl_rule->db_key != app_db_entry.db_key)
+    {
+        std::stringstream msg;
+        msg << "ACL rule " << QuotedVar(acl_rule_key) << " with DB key " << QuotedVar(app_db_entry.db_key)
+            << " does not match internal cache " << QuotedVar(acl_rule->db_key) << " in ACL rule manager.";
+        return msg.str();
+    }
+    if (acl_rule->p4_action != app_db_entry.action)
+    {
+        std::stringstream msg;
+        msg << "ACL rule " << QuotedVar(acl_rule_key) << " with action " << QuotedVar(app_db_entry.action)
+            << " does not match internal cache " << QuotedVar(acl_rule->p4_action) << " in ACL rule manager.";
+        return msg.str();
+    }
+    if (acl_rule->priority != app_db_entry.priority)
+    {
+        std::stringstream msg;
+        msg << "ACL rule " << QuotedVar(acl_rule_key) << " with priority " << app_db_entry.priority
+            << " does not match internal cache " << acl_rule->priority << " in ACL rule manager.";
+        return msg.str();
+    }
+
+    auto *acl_table = gP4Orch->getAclTableManager()->getAclTable(app_db_entry.acl_table_name);
+    if (acl_table == nullptr)
+    {
+        std::stringstream msg;
+        msg << "ACL table " << QuotedVar(app_db_entry.acl_table_name) << " not found in ACL rule "
+            << QuotedVar(acl_rule_key);
+        return msg.str();
+    }
+    if (acl_rule->acl_table_name != acl_table->acl_table_name)
+    {
+        std::stringstream msg;
+        msg << "ACL rule " << QuotedVar(acl_rule_key) << " with ACL table name " << QuotedVar(acl_rule->acl_table_name)
+            << " mismatch with ACl table " << QuotedVar(acl_table->acl_table_name) << " in ACl rule manager.";
+        return msg.str();
+    }
+    if (acl_rule->acl_table_oid != acl_table->table_oid)
+    {
+        std::stringstream msg;
+        msg << "ACL rule " << QuotedVar(acl_rule_key) << " with ACL table OID " << acl_rule->acl_table_oid
+            << " mismatch with ACl table " << acl_table->table_oid << " in ACl rule manager.";
+        return msg.str();
+    }
+
+    P4AclRule acl_rule_entry{};
+    acl_rule_entry.priority = app_db_entry.priority;
+    acl_rule_entry.acl_rule_key = acl_rule_key;
+    acl_rule_entry.p4_action = app_db_entry.action;
+    acl_rule_entry.db_key = app_db_entry.db_key;
+    status = setAllMatchFieldValues(app_db_entry, acl_table, acl_rule_entry);
+    if (!status.ok())
+    {
+        std::stringstream msg;
+        msg << "Failed to set match field values for ACL rule " << QuotedVar(acl_rule_key);
+        return msg.str();
+    }
+    status = setAllActionFieldValues(app_db_entry, acl_table, acl_rule_entry);
+    if (!status.ok())
+    {
+        std::stringstream msg;
+        msg << "Failed to set action field values for ACL rule " << QuotedVar(acl_rule_key);
+        return msg.str();
+    }
+    status = setMeterValue(acl_table, app_db_entry, acl_rule_entry.meter);
+    if (!status.ok())
+    {
+        std::stringstream msg;
+        msg << "Failed to set meter value for ACL rule " << QuotedVar(acl_rule_key);
+        return msg.str();
+    }
+    if (!acl_table->counter_unit.empty())
+    {
+        if (acl_table->counter_unit == P4_COUNTER_UNIT_PACKETS)
+        {
+            acl_rule_entry.counter.packets_enabled = true;
+        }
+        else if (acl_table->counter_unit == P4_COUNTER_UNIT_BYTES)
+        {
+            acl_rule_entry.counter.bytes_enabled = true;
+        }
+        else if (acl_table->counter_unit == P4_COUNTER_UNIT_BOTH)
+        {
+            acl_rule_entry.counter.bytes_enabled = true;
+            acl_rule_entry.counter.packets_enabled = true;
+        }
+    }
+
+    if (acl_rule->match_fvs.size() != acl_rule_entry.match_fvs.size())
+    {
+        std::stringstream msg;
+        msg << "ACL rule " << QuotedVar(acl_rule_key) << " with match fvs size " << acl_rule_entry.match_fvs.size()
+            << " does not match internal cache " << acl_rule->match_fvs.size() << " in ACl rule manager.";
+        return msg.str();
+    }
+    for (const auto &match_fv : acl_rule_entry.match_fvs)
+    {
+        const auto &it = acl_rule->match_fvs.find(fvField(match_fv));
+        if (it == acl_rule->match_fvs.end())
+        {
+            std::stringstream msg;
+            msg << "ACL match field " << fvField(match_fv) << " not found in internal cache in ACL rule "
+                << QuotedVar(acl_rule_key);
+            return msg.str();
+        }
+        else if (isDiffMatchFieldValue(fvField(match_fv), fvValue(match_fv), it->second, acl_rule_entry, *acl_rule))
+        {
+            std::stringstream msg;
+            msg << "ACL match field " << fvField(match_fv) << " mismatch in internal cache in ACL rule "
+                << QuotedVar(acl_rule_key);
+            return msg.str();
+        }
+    }
+
+    if (acl_rule->action_fvs.size() != acl_rule_entry.action_fvs.size())
+    {
+        std::stringstream msg;
+        msg << "ACL rule " << QuotedVar(acl_rule_key) << " with action fvs size " << acl_rule_entry.action_fvs.size()
+            << " does not match internal cache " << acl_rule->action_fvs.size() << " in ACl rule manager.";
+        return msg.str();
+    }
+    for (const auto &action_fv : acl_rule_entry.action_fvs)
+    {
+        const auto &it = acl_rule->action_fvs.find(fvField(action_fv));
+        if (it == acl_rule->action_fvs.end())
+        {
+            std::stringstream msg;
+            msg << "ACL action field " << fvField(action_fv) << " not found in internal cache in ACL rule "
+                << QuotedVar(acl_rule_key);
+            return msg.str();
+        }
+        else if (isDiffActionFieldValue(fvField(action_fv), fvValue(action_fv), it->second, acl_rule_entry, *acl_rule))
+        {
+            std::stringstream msg;
+            msg << "ACL action field " << fvField(action_fv) << " mismatch in internal cache in ACL rule "
+                << QuotedVar(acl_rule_key);
+            return msg.str();
+        }
+    }
+
+    if (acl_rule->meter != acl_rule_entry.meter)
+    {
+        std::stringstream msg;
+        msg << "Meter mismatch on ACL rule " << QuotedVar(acl_rule_key);
+        return msg.str();
+    }
+    if (acl_rule->counter != acl_rule_entry.counter)
+    {
+        std::stringstream msg;
+        msg << "Counter mismatch on ACL rule " << QuotedVar(acl_rule_key);
+        return msg.str();
+    }
+    if (acl_rule->action_qos_queue_num != acl_rule_entry.action_qos_queue_num)
+    {
+        std::stringstream msg;
+        msg << "ACL rule " << QuotedVar(acl_rule_key) << " with qos queue number "
+            << acl_rule_entry.action_qos_queue_num << " mismatch with internal cache " << acl_rule->action_qos_queue_num
+            << " in ACl rule manager.";
+        return msg.str();
+    }
+    if (acl_rule->action_redirect_nexthop_key != acl_rule_entry.action_redirect_nexthop_key)
+    {
+        std::stringstream msg;
+        msg << "ACL rule " << QuotedVar(acl_rule_key) << " with redirect nexthop key "
+            << QuotedVar(acl_rule_entry.action_redirect_nexthop_key) << " mismatch with internal cache "
+            << QuotedVar(acl_rule->action_redirect_nexthop_key) << " in ACl rule manager.";
+        return msg.str();
+    }
+    if (acl_rule->action_mirror_sessions != acl_rule_entry.action_mirror_sessions)
+    {
+        std::stringstream msg;
+        msg << "Mirror sessions mismatch on ACL rule " << QuotedVar(acl_rule_key);
+        return msg.str();
+    }
+    if (!acl_rule->action_mirror_sessions.empty())
+    {
+        for (const auto &fv : acl_rule->action_mirror_sessions)
+        {
+            if (acl_rule->action_fvs.find(fvField(fv)) == acl_rule->action_fvs.end() ||
+                acl_rule->action_fvs.at(fvField(fv)).aclaction.parameter.objlist.list != &fvValue(fv).oid)
+            {
+                std::stringstream msg;
+                msg << "Mirror session " << QuotedVar(std::to_string(fvField(fv)))
+                    << " mismatch on internal cache ACL rule " << QuotedVar(acl_rule_key);
+                return msg.str();
+            }
+        }
+    }
+
+    if (acl_rule->udf_data_masks != acl_rule_entry.udf_data_masks)
+    {
+        std::stringstream msg;
+        msg << "UDF data masks mismatch on ACL rule " << QuotedVar(acl_rule_key);
+        return msg.str();
+    }
+    if (!acl_rule->udf_data_masks.empty())
+    {
+        std::stringstream msg;
+        for (const auto &fv : acl_rule->udf_data_masks)
+        {
+            if (acl_rule->match_fvs.find(fvField(fv)) == acl_rule->match_fvs.end())
+            {
+                msg << "UDF group " << QuotedVar(std::to_string(fvField(fv)))
+                    << " are missing in in internal cache in ACL rule match_fvs" << QuotedVar(acl_rule_key);
+                return msg.str();
+            }
+            if (acl_rule->match_fvs.at(fvField(fv)).aclfield.data.u8list.list != fvValue(fv).data.data())
+            {
+                msg << "UDF data for field " << QuotedVar(std::to_string(fvField(fv)))
+                    << " mismatches between match_fvs and "
+                       "udf_data_masks in internal cache in ACL rule"
+                    << QuotedVar(acl_rule_key);
+                return msg.str();
+            }
+            if (acl_rule->match_fvs.at(fvField(fv)).aclfield.mask.u8list.list != fvValue(fv).mask.data())
+            {
+                msg << "UDF mask for field " << QuotedVar(std::to_string(fvField(fv)))
+                    << " mismatches between match_fvs and "
+                       "udf_data_masks in internal cache in ACL rule"
+                    << QuotedVar(acl_rule_key);
+                return msg.str();
+            }
+        }
+    }
+    if (acl_rule->in_ports != acl_rule_entry.in_ports)
+    {
+        std::stringstream msg;
+        msg << "In ports mismatch on ACL rule " << QuotedVar(acl_rule_key);
+        return msg.str();
+    }
+    if (acl_rule->out_ports != acl_rule_entry.out_ports)
+    {
+        std::stringstream msg;
+        msg << "Out ports mismatch on ACL rule " << QuotedVar(acl_rule_key);
+        return msg.str();
+    }
+    if (acl_rule->in_ports_oids != acl_rule_entry.in_ports_oids)
+    {
+        std::stringstream msg;
+        msg << "In port OIDs mismatch on ACL rule " << QuotedVar(acl_rule_key);
+        return msg.str();
+    }
+    if (!acl_rule->in_ports_oids.empty() &&
+        (acl_rule->match_fvs.find(SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS) == acl_rule->match_fvs.end() ||
+         acl_rule->match_fvs.at(SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS).aclfield.data.objlist.list !=
+             acl_rule->in_ports_oids.data()))
+    {
+        std::stringstream msg;
+        msg << "In port OIDs mismatch between match_fvs and "
+               "in_ports_oids in internal cache in ACL rule"
+            << QuotedVar(acl_rule_key);
+        return msg.str();
+    }
+
+    if (acl_rule->out_ports_oids != acl_rule_entry.out_ports_oids)
+    {
+        std::stringstream msg;
+        msg << "Out port OIDs mismatch on ACL rule " << QuotedVar(acl_rule_key);
+        return msg.str();
+    }
+    if (!acl_rule->out_ports_oids.empty() &&
+        (acl_rule->match_fvs.find(SAI_ACL_ENTRY_ATTR_FIELD_OUT_PORTS) == acl_rule->match_fvs.end() ||
+         acl_rule->match_fvs.at(SAI_ACL_ENTRY_ATTR_FIELD_OUT_PORTS).aclfield.data.objlist.list !=
+             acl_rule->out_ports_oids.data()))
+    {
+        std::stringstream msg;
+        msg << "Out port OIDs mismatch between match_fvs and "
+               "out_ports_oids in internal cache in ACL rule"
+            << QuotedVar(acl_rule_key);
+        return msg.str();
+    }
+
+    const auto &table_name_and_rule_key = concatTableNameAndRuleKey(acl_rule->acl_table_name, acl_rule->acl_rule_key);
+    std::string err_msg =
+        m_p4OidMapper->verifyOIDMapping(SAI_OBJECT_TYPE_ACL_ENTRY, table_name_and_rule_key, acl_rule->acl_entry_oid);
+    if (!err_msg.empty())
+    {
+        return err_msg;
+    }
+    if (!acl_table->counter_unit.empty())
+    {
+        err_msg = m_p4OidMapper->verifyOIDMapping(SAI_OBJECT_TYPE_ACL_COUNTER, table_name_and_rule_key,
+                                                  acl_rule->counter.counter_oid);
+        if (!err_msg.empty())
+        {
+            return err_msg;
+        }
+    }
+    if (acl_rule_entry.meter.enabled)
+    {
+        err_msg = m_p4OidMapper->verifyOIDMapping(SAI_OBJECT_TYPE_POLICER, table_name_and_rule_key,
+                                                  acl_rule->meter.meter_oid);
+        if (!err_msg.empty())
+        {
+            return err_msg;
+        }
+    }
+
+    return "";
+}
+
+std::string AclRuleManager::verifyStateAsicDb(const P4AclRule *acl_rule)
+{
+    swss::DBConnector db("ASIC_DB", 0);
+    swss::Table table(&db, "ASIC_STATE");
+
+    // Verify rule.
+    auto attrs = getRuleSaiAttrs(*acl_rule);
+    std::vector<swss::FieldValueTuple> exp =
+        saimeta::SaiAttributeList::serialize_attr_list(SAI_OBJECT_TYPE_ACL_ENTRY, (uint32_t)attrs.size(), attrs.data(),
+                                                       /*countOnly=*/false);
+    std::string key =
+        sai_serialize_object_type(SAI_OBJECT_TYPE_ACL_ENTRY) + ":" + sai_serialize_object_id(acl_rule->acl_entry_oid);
+    std::vector<swss::FieldValueTuple> values;
+    if (!table.get(key, values))
+    {
+        return std::string("ASIC DB key not found ") + key;
+    }
+    std::string err_msg = verifyAttrs(values, exp, std::vector<swss::FieldValueTuple>{},
+                                      /*allow_unknown=*/true);
+    if (!err_msg.empty())
+    {
+        return err_msg;
+    }
+
+    // Verify counter.
+    if (acl_rule->counter.packets_enabled || acl_rule->counter.bytes_enabled)
+    {
+        attrs = getCounterSaiAttrs(*acl_rule);
+        exp = saimeta::SaiAttributeList::serialize_attr_list(SAI_OBJECT_TYPE_ACL_COUNTER, (uint32_t)attrs.size(),
+                                                             attrs.data(),
+                                                             /*countOnly=*/false);
+        key = sai_serialize_object_type(SAI_OBJECT_TYPE_ACL_COUNTER) + ":" +
+              sai_serialize_object_id(acl_rule->counter.counter_oid);
+        values.clear();
+        if (!table.get(key, values))
+        {
+            return std::string("ASIC DB key not found ") + key;
+        }
+        err_msg = verifyAttrs(values, exp, std::vector<swss::FieldValueTuple>{},
+                              /*allow_unknown=*/true);
+        if (!err_msg.empty())
+        {
+            return err_msg;
+        }
+    }
+
+    // Verify meter.
+    if (acl_rule->meter.enabled)
+    {
+        attrs = getMeterSaiAttrs(acl_rule->meter);
+        exp = saimeta::SaiAttributeList::serialize_attr_list(SAI_OBJECT_TYPE_POLICER, (uint32_t)attrs.size(),
+                                                             attrs.data(),
+                                                             /*countOnly=*/false);
+        key = sai_serialize_object_type(SAI_OBJECT_TYPE_POLICER) + ":" +
+              sai_serialize_object_id(acl_rule->meter.meter_oid);
+        values.clear();
+        if (!table.get(key, values))
+        {
+            return std::string("ASIC DB key not found ") + key;
+        }
+        err_msg = verifyAttrs(values, exp, std::vector<swss::FieldValueTuple>{},
+                              /*allow_unknown=*/true);
+        if (!err_msg.empty())
+        {
+            return err_msg;
+        }
+    }
+
+    return "";
 }
 
 } // namespace p4orch

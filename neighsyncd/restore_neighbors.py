@@ -13,7 +13,6 @@ Description: restore_neighbors.py -- restoring neighbor table into kernel during
 """
 
 import sys
-import swsssdk
 import netifaces
 import time
 from pyroute2 import IPRoute, NetlinkError
@@ -81,20 +80,28 @@ def is_intf_oper_state_up(intf):
         return True
     return False
 
+def check_state_db(intf, db):
+    table_name = ''
+    if 'Vlan' in intf:
+        table_name = 'VLAN_MEMBER_TABLE|{}|*'.format(intf)
+    elif 'PortChannel' in intf:
+        table_name = 'LAG_MEMBER_TABLE|{}|*'.format(intf)
+    else:
+        return True
+    key = db.keys(db.STATE_DB, table_name)
+    if key is None:
+        log_info ("members for {} are not yet created".format(intf))
+        return False
+    if is_intf_up.counter == 0:
+        time.sleep(3*CHECK_INTERVAL)
+        is_intf_up.counter = 1
+    log_info ("intf {} is up".format(intf))
+    return True
+
 def is_intf_up(intf, db):
     if not is_intf_oper_state_up(intf):
          return False
-    if 'Vlan' in intf:
-        table_name = 'VLAN_MEMBER_TABLE|{}|*'.format(intf)
-        key = db.keys(db.STATE_DB, table_name)
-        if key is None:
-            log_info ("Vlan member is not yet created")
-            return False
-        if is_intf_up.counter == 0:
-            time.sleep(3*CHECK_INTERVAL)
-            is_intf_up.counter = 1
-        log_info ("intf {} is up".format(intf))
-    return True
+    return check_state_db(intf, db)
 
 # read the neigh table from AppDB to memory, format as below
 # build map as below, this can efficiently access intf and family groups later
@@ -117,7 +124,7 @@ def is_intf_up(intf, db):
 #  2, need check interface state twice due to the split map
 
 def read_neigh_table_to_maps():
-    db = swsssdk.SonicV2Connector(host='127.0.0.1')
+    db = swsscommon.SonicV2Connector(host='127.0.0.1')
     db.connect(db.APPL_DB, False)
 
     intf_neigh_map = {}
@@ -207,7 +214,7 @@ def build_arp_ns_pkt(family, smac, src_ip, dst_ip):
 
 # Set the statedb "NEIGH_RESTORE_TABLE|Flags", so neighsyncd can start reconciliation
 def set_statedb_neigh_restore_done():
-    db = swsssdk.SonicV2Connector(host='127.0.0.1')
+    db = swsscommon.SonicV2Connector(host='127.0.0.1')
     db.connect(db.STATE_DB, False)
     db.set(db.STATE_DB, 'NEIGH_RESTORE_TABLE|Flags', 'restored', 'true')
     db.close(db.STATE_DB)
@@ -228,7 +235,7 @@ def restore_update_kernel_neighbors(intf_neigh_map, timeout=DEF_TIME_OUT):
     ipclass = IPRoute()
     start_time = time.monotonic()
     is_intf_up.counter = 0
-    db = swsssdk.SonicV2Connector(host='127.0.0.1')
+    db = swsscommon.SonicV2Connector(host='127.0.0.1')
     db.connect(db.STATE_DB, False)
     while (time.monotonic() - start_time) < timeout:
         for intf, family_neigh_map in list(intf_neigh_map.items()):

@@ -597,18 +597,37 @@ void NeighOrch::decreaseNextHopRefCount(const NextHopKey &nexthop, uint32_t coun
 
 bool NeighOrch::getNeighborEntry(const NextHopKey &nexthop, NeighborEntry &neighborEntry, MacAddress &macAddress)
 {
+    Port inbp;
+    string nbr_alias;
     if (!hasNextHop(nexthop))
     {
         return false;
     }
+    if (gMySwitchType == "voq")
+    {
+        gPortsOrch->getInbandPort(inbp);
+        assert(inbp.m_alias.length());
+    }
 
     for (const auto &entry : m_syncdNeighbors)
     {
-        if (entry.first.ip_address == nexthop.ip_address && entry.first.alias == nexthop.alias)
+        if (entry.first.ip_address == nexthop.ip_address)
         {
-            neighborEntry = entry.first;
-            macAddress = entry.second.mac;
-            return true;
+           if (m_intfsOrch->isRemoteSystemPortIntf(entry.first.alias))
+           {
+               //For remote system ports, nexthops are always on inband.
+               nbr_alias = inbp.m_alias;
+           }
+           else
+           {
+               nbr_alias = entry.first.alias;
+           }
+           if (nbr_alias == nexthop.alias)
+           {
+              neighborEntry = entry.first;
+              macAddress = entry.second.mac;
+              return true;
+           }
         }
     }
 
@@ -685,19 +704,6 @@ void NeighOrch::doTask(Consumer &consumer)
 
         IpAddress ip_address(key.substr(found+1));
 
-        /* Verify Ipv4 LinkLocal and skip neighbor entry added for RFC5549 */
-        if ((ip_address.getAddrScope() == IpAddress::LINK_SCOPE) && (ip_address.isV4()))
-        {
-            /* Check if this prefix is not a configured ip, if so allow */
-            IpPrefix ipll_prefix(ip_address.getV4Addr(), 16);
-            if (!m_intfsOrch->isPrefixSubnet (ipll_prefix, alias))
-            {
-                SWSS_LOG_NOTICE("Skip IPv4LL neighbor %s, Intf:%s op: %s ", ip_address.to_string().c_str(), alias.c_str(), op.c_str());
-                it = consumer.m_toSync.erase(it);
-                continue;
-            }
-        }
-
         NeighborEntry neighbor_entry = { ip_address, alias };
 
         if (op == SET_COMMAND)
@@ -728,7 +734,16 @@ void NeighOrch::doTask(Consumer &consumer)
             if (m_syncdNeighbors.find(neighbor_entry) == m_syncdNeighbors.end()
                     || m_syncdNeighbors[neighbor_entry].mac != mac_address)
             {
-                if (addNeighbor(neighbor_entry, mac_address))
+                // only for unresolvable neighbors that are new
+                if (!mac_address) 
+                {
+                    if (m_syncdNeighbors.find(neighbor_entry) == m_syncdNeighbors.end())
+                    {
+                        addZeroMacTunnelRoute(neighbor_entry, mac_address);
+                    }
+                    it = consumer.m_toSync.erase(it);
+                }
+                else if (addNeighbor(neighbor_entry, mac_address))
                 {
                     it = consumer.m_toSync.erase(it);
                 }
@@ -806,6 +821,18 @@ bool NeighOrch::addNeighbor(const NeighborEntry &neighborEntry, const MacAddress
     neighbor_attr.id = SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS;
     memcpy(neighbor_attr.value.mac, macAddress.getMac(), 6);
     neighbor_attrs.push_back(neighbor_attr);
+
+    if ((ip_address.getAddrScope() == IpAddress::LINK_SCOPE) && (ip_address.isV4()))
+    {
+        /* Check if this prefix is a configured ip, if not allow */
+        IpPrefix ipll_prefix(ip_address.getV4Addr(), 16);
+        if (!m_intfsOrch->isPrefixSubnet (ipll_prefix, alias))
+        {
+            neighbor_attr.id = SAI_NEIGHBOR_ENTRY_ATTR_NO_HOST_ROUTE;
+            neighbor_attr.value.booldata = 1;
+            neighbor_attrs.push_back(neighbor_attr);
+        }
+    }
 
     MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
     bool hw_config = isHwConfigured(neighborEntry);
@@ -1204,7 +1231,7 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
 
         string alias = key.substr(0, found);
 
-        if(!gIntfsOrch->isRemoteSystemPortIntf(alias))
+        if(gIntfsOrch->isLocalSystemPortIntf(alias))
         {
             //Synced local neighbor. Skip
             it = consumer.m_toSync.erase(it);
@@ -1541,10 +1568,6 @@ bool NeighOrch::addVoqEncapIndex(string &alias, IpAddress &ip, vector<sai_attrib
             attr.value.u32 = encap_index;
             neighbor_attrs.push_back(attr);
 
-            attr.id = SAI_NEIGHBOR_ENTRY_ATTR_ENCAP_IMPOSE_INDEX;
-            attr.value.booldata = true;
-            neighbor_attrs.push_back(attr);
-
             attr.id = SAI_NEIGHBOR_ENTRY_ATTR_IS_LOCAL;
             attr.value.booldata = false;
             neighbor_attrs.push_back(attr);
@@ -1721,3 +1744,12 @@ void NeighOrch::updateSrv6Nexthop(const NextHopKey &nh, const sai_object_id_t &n
         m_syncdNextHops.erase(nh);
     }
 }
+void NeighOrch::addZeroMacTunnelRoute(const NeighborEntry& entry, const MacAddress& mac)
+{
+    SWSS_LOG_INFO("Creating tunnel route for neighbor %s", entry.ip_address.to_string().c_str());
+    MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
+    NeighborUpdate update = {entry, mac, true};
+    mux_orch->update(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
+    m_syncdNeighbors[entry] = { mac, false };
+}
+

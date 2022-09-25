@@ -14,10 +14,12 @@
 #include "saihelper.h"
 #include "lagid.h"
 #include "flexcounterorch.h"
+#include "events.h"
 
 
 #define FCS_LEN 4
 #define VLAN_TAG_LEN 4
+#define MAX_MACSEC_SECTAG_SIZE 32
 #define PORT_STAT_COUNTER_FLEX_COUNTER_GROUP "PORT_STAT_COUNTER"
 #define PORT_RATE_COUNTER_FLEX_COUNTER_GROUP "PORT_RATE_COUNTER"
 #define PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP "PORT_BUFFER_DROP_STAT"
@@ -27,6 +29,7 @@
 #define PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP "PG_DROP_STAT_COUNTER"
 
 typedef std::vector<sai_uint32_t> PortSupportedSpeeds;
+typedef std::set<std::string> PortSupportedFecModes;
 
 static const map<sai_port_oper_status_t, string> oper_status_strings =
 {
@@ -80,6 +83,7 @@ public:
     bool allPortsReady();
     bool isInitDone();
     bool isConfigDone();
+    bool isGearboxEnabled();
     bool isPortAdminUp(const string &alias);
 
     map<string, Port>& getAllPorts();
@@ -94,6 +98,7 @@ public:
     bool getPortByBridgePortId(sai_object_id_t bridge_port_id, Port &port);
     void setPort(string alias, Port port);
     void getCpuPort(Port &port);
+    void initHostTxReadyState(Port &port);
     bool getInbandPort(Port &port);
     bool getVlanByVlanId(sai_vlan_id_t vlan_id, Port &vlan);
 
@@ -123,6 +128,9 @@ public:
                                  bool bind);
     bool getPortPfc(sai_object_id_t portId, uint8_t *pfc_bitmask);
     bool setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask);
+
+    bool setPortPfcWatchdogStatus(sai_object_id_t portId, uint8_t pfc_bitmask);
+    bool getPortPfcWatchdogStatus(sai_object_id_t portId, uint8_t *pfc_bitmask);
 
     void generateQueueMap();
     void generatePriorityGroupMap();
@@ -165,6 +173,13 @@ public:
 
     bool getPortOperStatus(const Port& port, sai_port_oper_status_t& status) const;
 
+    void updateGearboxPortOperStatus(const Port& port);
+
+    bool decrFdbCount(const string& alias, int count);
+
+    void setMACsecEnabledState(sai_object_id_t port_id, bool enabled);
+    bool isMACsecPort(sai_object_id_t port_id) const;
+
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_counterLagTable;
@@ -195,7 +210,13 @@ private:
     FlexCounterManager port_buffer_drop_stat_manager;
     FlexCounterManager queue_stat_manager;
 
+    FlexCounterManager gb_port_stat_manager;
+    shared_ptr<DBConnector> m_gb_counter_db;
+    unique_ptr<Table> m_gbcounterTable;
+
     std::map<sai_object_id_t, PortSupportedSpeeds> m_portSupportedSpeeds;
+    // Supported FEC modes on the system side.
+    std::map<sai_object_id_t, PortSupportedFecModes> m_portSupportedFecModes;
 
     bool m_initDone = false;
     Port m_cpuPort;
@@ -245,6 +266,8 @@ private:
 
     NotificationConsumer* m_portStatusNotificationConsumer;
 
+    swss::SelectableTimer *m_port_state_poller = nullptr;
+
     void doTask() override;
     void doTask(Consumer &consumer);
     void doPortTask(Consumer &consumer);
@@ -254,6 +277,7 @@ private:
     void doLagMemberTask(Consumer &consumer);
 
     void doTask(NotificationConsumer &consumer);
+    void doTask(swss::SelectableTimer &timer);
 
     void removePortFromLanesMap(string alias);
     void removePortFromPortListMap(sai_object_id_t port_id);
@@ -286,13 +310,17 @@ private:
     bool initPort(const string &alias, const string &role, const int index, const set<int> &lane_set);
     void deInitPort(string alias, sai_object_id_t port_id);
 
+    void initPortCapAutoNeg(Port &port);
+    void initPortCapLinkTraining(Port &port);
+
     bool setPortAdminStatus(Port &port, bool up);
     bool getPortAdminStatus(sai_object_id_t id, bool& up);
-    bool setPortMtu(sai_object_id_t id, sai_uint32_t mtu);
+    bool getPortMtu(const Port& port, sai_uint32_t &mtu);
+    bool setPortMtu(const Port& port, sai_uint32_t mtu);
     bool setPortTpid(sai_object_id_t id, sai_uint16_t tpid);
     bool setPortPvid (Port &port, sai_uint32_t pvid);
     bool getPortPvid(Port &port, sai_uint32_t &pvid);
-    bool setPortFec(Port &port, sai_port_fec_mode_t mode);
+    bool setPortFec(Port &port, std::string &mode);
     bool setPortPfcAsym(Port &port, string pfc_asym);
     bool getDestPortId(sai_object_id_t src_port_id, dest_port_type_t port_type, sai_object_id_t &des_port_id);
 
@@ -301,20 +329,27 @@ private:
     bool isSpeedSupported(const std::string& alias, sai_object_id_t port_id, sai_uint32_t speed);
     void getPortSupportedSpeeds(const std::string& alias, sai_object_id_t port_id, PortSupportedSpeeds &supported_speeds);
     void initPortSupportedSpeeds(const std::string& alias, sai_object_id_t port_id);
+    // Get supported FEC modes on system side
+    void getPortSupportedFecModes(const std::string& alias, sai_object_id_t port_id, PortSupportedFecModes &supported_fecmodes);
+    void initPortSupportedFecModes(const std::string& alias, sai_object_id_t port_id);
     task_process_status setPortSpeed(Port &port, sai_uint32_t speed);
     bool getPortSpeed(sai_object_id_t id, sai_uint32_t &speed);
-    bool setGearboxPortsAttr(Port &port, sai_port_attr_t id, void *value);
-    bool setGearboxPortAttr(Port &port, dest_port_type_t port_type, sai_port_attr_t id, void *value);
+    bool setGearboxPortsAttr(const Port &port, sai_port_attr_t id, void *value);
+    bool setGearboxPortAttr(const Port &port, dest_port_type_t port_type, sai_port_attr_t id, void *value);
 
+    bool getPortAdvSpeeds(const Port& port, bool remote, std::vector<sai_uint32_t>& speed_list);
+    bool getPortAdvSpeeds(const Port& port, bool remote, string& adv_speeds);
     task_process_status setPortAdvSpeeds(sai_object_id_t port_id, std::vector<sai_uint32_t>& speed_list);
 
     bool getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uint8_t &index);
 
     bool m_isQueueMapGenerated = false;
     void generateQueueMapPerPort(const Port& port);
+    void removeQueueMapPerPort(const Port& port);
 
     bool m_isPriorityGroupMapGenerated = false;
     void generatePriorityGroupMapPerPort(const Port& port);
+    void removePriorityGroupMapPerPort(const Port& port);
 
     bool m_isPortCounterMapGenerated = false;
     bool m_isPortBufferDropCounterMapGenerated = false;
@@ -323,11 +358,26 @@ private:
     bool setPortFecMode(sai_object_id_t id, int fec);
     task_process_status setPortInterfaceType(sai_object_id_t id, sai_port_interface_type_t interface_type);
     task_process_status setPortAdvInterfaceTypes(sai_object_id_t id, std::vector<uint32_t> &interface_types);
+    task_process_status setPortLinkTraining(const Port& port, bool state);
 
     void updatePortOperStatus(Port &port, sai_port_oper_status_t status);
 
     bool getPortOperSpeed(const Port& port, sai_uint32_t& speed) const;
     void updateDbPortOperSpeed(Port &port, sai_uint32_t speed);
+
+    bool getPortLinkTrainingRxStatus(const Port &port, sai_port_link_training_rx_status_t &rx_status);
+    bool getPortLinkTrainingFailure(const Port &port, sai_port_link_training_failure_status_t &failure);
+
+    typedef enum {
+        PORT_STATE_POLL_NONE = 0,
+        PORT_STATE_POLL_AN   = 0x00000001, /* Auto Negotiation */
+        PORT_STATE_POLL_LT   = 0x00000002  /* Link Trainig */
+    } port_state_poll_t;
+
+    map<string, uint32_t> m_port_state_poll;
+    void updatePortStatePoll(const Port &port, port_state_poll_t type, bool active);
+    void refreshPortStateAutoNeg(const Port &port);
+    void refreshPortStateLinkTraining(const Port &port);
 
     void getPortSerdesVal(const std::string& s, std::vector<uint32_t> &lane_values);
     bool getPortAdvSpeedsVal(const std::string &s, std::vector<uint32_t> &speed_values);
@@ -359,8 +409,8 @@ private:
     void voqSyncAddLagMember(Port &lag, Port &port);
     void voqSyncDelLagMember(Port &lag, Port &port);
     unique_ptr<LagIdAllocator> m_lagIdAllocator;
+    set<sai_object_id_t> m_macsecEnabledPorts;
 
-    std::unordered_set<std::string> generateCounterStats(const string& type);
-
+    std::unordered_set<std::string> generateCounterStats(const string& type, bool gearbox = false);
 };
 #endif /* SWSS_PORTSORCH_H */

@@ -11,6 +11,7 @@
 #include "exec.h"
 #include "schema.h"
 #include "tunnelmgr.h"
+#include "warm_restart.h"
 
 using namespace std;
 using namespace swss;
@@ -53,6 +54,9 @@ int main(int argc, char **argv)
 
         DBConnector cfgDb("CONFIG_DB", 0);
         DBConnector appDb("APPL_DB", 0);
+
+        WarmStart::initialize("tunnelmgrd", "swss");
+        WarmStart::checkWarmStart("tunnelmgrd", "swss");
 
         TunnelMgr tunnelmgr(&cfgDb, &appDb, cfgTunTables);
 
