@@ -425,6 +425,283 @@ class TestNat(object):
         # clear interfaces
         self.clear_interfaces(dvs)
 
+    def test_AddSnatDynamicEntry(self, dvs, testlog):
+        # initialize
+        self.setup_db(dvs)
+        dvs.nat_mode_set("enabled")
+        dvs.nat_timeout_set("400")
+        self.set_interfaces(dvs)
+
+        exitcode, output = dvs.runcmd("conntrack -L -j")
+        assert exitcode == 0, "0 flow entries have been shown" in output
+
+        # create SNAT entry in kernel
+        exitcode, output = dvs.runcmd("conntrack -I -p udp -t 400 --src 33.33.33.33 --sport 3000 --dst 44.44.44.44 --dport 4000 -n 10.10.10.10:3000")
+        assert exitcode == 0, "1 flow entries have been created" in output
+
+        # check the SNAT entry and implicit DNAT entry pushed to app db
+        self.app_db.wait_for_n_keys("NAT_TABLE", 2)
+
+        # check the entries in app db
+        fvs = self.app_db.wait_for_entry("NAT_TABLE", "33.33.33.33")
+        assert fvs == {
+            "translated_ip": "10.10.10.10",
+            "nat_type": "snat",
+            "entry_type": "dynamic"
+        }
+        fvs = self.app_db.wait_for_entry("NAT_TABLE", "10.10.10.10")
+        assert fvs == {
+            "translated_ip": "33.33.33.33",
+            "nat_type": "dnat",
+            "entry_type": "dynamic"
+        }
+
+        # check the entries in asic db
+        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 2)
+        for key in keys:
+            if '"nat_type":"SAI_NAT_TYPE_SOURCE_NAT"' in key:
+                fvs = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", key)
+                assert fvs == {
+                    'SAI_NAT_ENTRY_ATTR_SRC_IP': '10.10.10.10',
+                    'SAI_NAT_ENTRY_ATTR_SRC_IP_MASK': '255.255.255.255',
+                    'SAI_NAT_ENTRY_ATTR_ENABLE_PACKET_COUNT': 'true',
+                    'SAI_NAT_ENTRY_ATTR_ENABLE_BYTE_COUNT': 'true',
+                    'SAI_NAT_ENTRY_ATTR_AGING_TIME': '400'
+                }
+            elif '"nat_type":"SAI_NAT_TYPE_DESTINATION_NAT"' in key:
+                fvs = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", key)
+                assert fvs == {
+                    'SAI_NAT_ENTRY_ATTR_DST_IP': '33.33.33.33',
+                    'SAI_NAT_ENTRY_ATTR_DST_IP_MASK': '255.255.255.255',
+                    'SAI_NAT_ENTRY_ATTR_ENABLE_PACKET_COUNT': 'true',
+                    'SAI_NAT_ENTRY_ATTR_ENABLE_BYTE_COUNT': 'true',
+                    'SAI_NAT_ENTRY_ATTR_AGING_TIME': '400'
+                }
+            else:
+                assert False
+
+        # delete SNAT entry in kernel
+        exitcode, output = dvs.runcmd("conntrack -D -p udp --src 33.33.33.33 --sport 3000 --dst 44.44.44.44 --dport 4000")
+        assert exitcode == 0, "1 flow entries have been deleted" in output
+
+        exitcode, output = dvs.runcmd("conntrack -L -j")
+        assert exitcode == 0, "0 flow entries have been shown" in output
+
+        # check the entry is not there in app db
+        self.app_db.wait_for_n_keys("NAT_TABLE", 0)
+
+        # check the entry is not there in asic db
+        self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 0)
+
+    def test_AddDnatDynamicEntry(self, dvs, testlog):
+        # initialize
+        self.setup_db(dvs)
+        dvs.nat_mode_set("enabled")
+        dvs.nat_timeout_set("450")
+        self.set_interfaces(dvs)
+
+        exitcode, output = dvs.runcmd("conntrack -L -j")
+        assert exitcode == 0, "0 flow entries have been shown" in output
+
+        # create DNAT entry in kernel
+        exitcode, output = dvs.runcmd("conntrack -I -p udp -t 450 --src 33.33.33.33 --sport 3000 --dst 44.44.44.44 --dport 4000 -g 10.10.10.10:4000")
+        assert exitcode == 0, "1 flow entries have been created" in output
+
+        # check the DNAT entry and implicit SNAT entry pushed to app db
+        self.app_db.wait_for_n_keys("NAT_TABLE", 2)
+
+        # check the entries in app db
+        fvs = self.app_db.wait_for_entry("NAT_TABLE", "44.44.44.44")
+        assert fvs == {
+            "translated_ip": "10.10.10.10",
+            "nat_type": "dnat",
+            "entry_type": "dynamic"
+        }
+        fvs = self.app_db.wait_for_entry("NAT_TABLE", "10.10.10.10")
+        assert fvs == {
+            "translated_ip": "44.44.44.44",
+            "nat_type": "snat",
+            "entry_type": "dynamic"
+        }
+
+        # check the entries in asic db
+        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 2)
+        for key in keys:
+            if '"nat_type":"SAI_NAT_TYPE_DESTINATION_NAT"' in key:
+                fvs = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", key)
+                assert fvs == {
+                    'SAI_NAT_ENTRY_ATTR_DST_IP': '10.10.10.10',
+                    'SAI_NAT_ENTRY_ATTR_DST_IP_MASK': '255.255.255.255',
+                    'SAI_NAT_ENTRY_ATTR_ENABLE_PACKET_COUNT': 'true',
+                    'SAI_NAT_ENTRY_ATTR_ENABLE_BYTE_COUNT': 'true',
+                    'SAI_NAT_ENTRY_ATTR_AGING_TIME': '450'
+                }
+            elif '"nat_type":"SAI_NAT_TYPE_SOURCE_NAT"' in key:
+                fvs = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", key)
+                assert fvs == {
+                    'SAI_NAT_ENTRY_ATTR_SRC_IP': '44.44.44.44',
+                    'SAI_NAT_ENTRY_ATTR_SRC_IP_MASK': '255.255.255.255',
+                    'SAI_NAT_ENTRY_ATTR_ENABLE_PACKET_COUNT': 'true',
+                    'SAI_NAT_ENTRY_ATTR_ENABLE_BYTE_COUNT': 'true',
+                    'SAI_NAT_ENTRY_ATTR_AGING_TIME': '450'
+                }
+
+        # delete DNAT entry in kernel
+        exitcode, output = dvs.runcmd("conntrack -D -p udp --src 33.33.33.33 --sport 3000 --dst 44.44.44.44 --dport 4000")
+        assert exitcode == 0, "1 flow entries have been deleted" in output
+
+        exitcode, output = dvs.runcmd("conntrack -L -j")
+        assert exitcode == 0, "0 flow entries have been shown" in output
+
+        # check the entry is not there in app db
+        self.app_db.wait_for_n_keys("NAT_TABLE", 0)
+
+        # check the entry is not there in asic db
+        self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 0)
+
+    def test_AddSnaptDynamicEntry(self, dvs, testlog):
+        # initialize
+        self.setup_db(dvs)
+        dvs.nat_mode_set("enabled")
+        dvs.nat_udp_timeout_set("360")
+        self.set_interfaces(dvs)
+
+        exitcode, output = dvs.runcmd("conntrack -L -j")
+        assert exitcode == 0, "0 flow entries have been shown" in output
+
+        # create SNAPT entry in kernel
+        exitcode, output = dvs.runcmd("conntrack -I -p udp -t 360 --src 33.33.33.33 --sport 3000 --dst 44.44.44.44 --dport 4000 -n 10.10.10.10:5000")
+        assert exitcode == 0, "1 flow entries have been created" in output
+
+        # check the SNAPT entry and implicit DNAPT entry pushed to app db
+        self.app_db.wait_for_n_keys("NAPT_TABLE", 2)
+
+        # check the entries in app db
+        fvs = self.app_db.wait_for_entry("NAPT_TABLE", "UDP:33.33.33.33:3000")
+        assert fvs == {
+            "translated_ip": "10.10.10.10",
+            "translated_l4_port": "5000",
+            "nat_type": "snat",
+            "entry_type": "dynamic"
+        }
+        fvs = self.app_db.wait_for_entry("NAPT_TABLE", "UDP:10.10.10.10:5000")
+        assert fvs == {
+            "translated_ip": "33.33.33.33",
+            "translated_l4_port": "3000",
+            "nat_type": "dnat",
+            "entry_type": "dynamic"
+        }
+
+        # check the entries in asic db
+        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 2)
+        for key in keys:
+            if '"nat_type":"SAI_NAT_TYPE_SOURCE_NAT"' in key:
+                fvs = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", key)
+                assert fvs == {
+                    'SAI_NAT_ENTRY_ATTR_SRC_IP': '10.10.10.10',
+                    'SAI_NAT_ENTRY_ATTR_L4_SRC_PORT': '5000',
+                    'SAI_NAT_ENTRY_ATTR_SRC_IP_MASK': '255.255.255.255',
+                    'SAI_NAT_ENTRY_ATTR_ENABLE_PACKET_COUNT': 'true',
+                    'SAI_NAT_ENTRY_ATTR_ENABLE_BYTE_COUNT': 'true',
+                    'SAI_NAT_ENTRY_ATTR_AGING_TIME': '360'
+                }
+            elif '"nat_type":"SAI_NAT_TYPE_DESTINATION_NAT"' in key:
+                fvs = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", key)
+                assert fvs == {
+                    'SAI_NAT_ENTRY_ATTR_DST_IP': '33.33.33.33',
+                    'SAI_NAT_ENTRY_ATTR_L4_DST_PORT': '3000',
+                    'SAI_NAT_ENTRY_ATTR_DST_IP_MASK': '255.255.255.255',
+                    'SAI_NAT_ENTRY_ATTR_ENABLE_PACKET_COUNT': 'true',
+                    'SAI_NAT_ENTRY_ATTR_ENABLE_BYTE_COUNT': 'true',
+                    'SAI_NAT_ENTRY_ATTR_AGING_TIME': '360'
+                }
+            else:
+                assert False
+
+        # delete SNAPT entry in kernel
+        exitcode, output = dvs.runcmd("conntrack -D -p udp --src 33.33.33.33 --sport 3000 --dst 44.44.44.44 --dport 4000")
+        assert exitcode == 0, "1 flow entries have been deleted" in output
+
+        exitcode, output = dvs.runcmd("conntrack -L -j")
+        assert exitcode == 0, "0 flow entries have been shown" in output
+
+        # check the entry is not there in app db
+        self.app_db.wait_for_n_keys("NAPT_TABLE", 0)
+
+        # check the entry is not there in asic db
+        self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 0)
+
+    def test_AddDnaptDynamicEntry(self, dvs, testlog):
+        # initialize
+        self.setup_db(dvs)
+        dvs.nat_mode_set("enabled")
+        dvs.nat_tcp_timeout_set("432")
+        self.set_interfaces(dvs)
+
+        exitcode, output = dvs.runcmd("conntrack -L -j")
+        assert exitcode == 0, "0 flow entries have been shown" in output
+
+        # create DNAPT entry in kernel
+        exitcode, output = dvs.runcmd("conntrack -I -p tcp --state ESTABLISHED -t 432 --src 33.33.33.33 --sport 3000 --dst 44.44.44.44 --dport 4000 -u ASSURED -g 10.10.10.10:6000")
+        assert exitcode == 0, "1 flow entries have been created" in output
+
+        # check the DNAPT entry and implicit SNAPT entry pushed to app db
+        self.app_db.wait_for_n_keys("NAPT_TABLE", 2)
+
+        fvs = self.app_db.wait_for_entry("NAPT_TABLE", "TCP:44.44.44.44:4000")
+        assert fvs == {
+            "translated_ip": "10.10.10.10",
+            "translated_l4_port": "6000",
+            "nat_type": "dnat",
+            "entry_type": "dynamic"
+        }
+        fvs = self.app_db.wait_for_entry("NAPT_TABLE", "TCP:10.10.10.10:6000")
+        assert fvs == {
+            "translated_ip": "44.44.44.44",
+            "translated_l4_port": "4000",
+            "nat_type": "snat",
+            "entry_type": "dynamic"
+        }
+
+        # check the entries in asic db
+        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 2)
+        for key in keys:
+            if '"nat_type":"SAI_NAT_TYPE_DESTINATION_NAT"' in key:
+                fvs = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", key)
+                assert fvs == {
+                    'SAI_NAT_ENTRY_ATTR_DST_IP': '10.10.10.10',
+                    'SAI_NAT_ENTRY_ATTR_L4_DST_PORT': '6000',
+                    'SAI_NAT_ENTRY_ATTR_DST_IP_MASK': '255.255.255.255',
+                    'SAI_NAT_ENTRY_ATTR_ENABLE_PACKET_COUNT': 'true',
+                    'SAI_NAT_ENTRY_ATTR_ENABLE_BYTE_COUNT': 'true',
+                    'SAI_NAT_ENTRY_ATTR_AGING_TIME': '432'
+                }
+            elif '"nat_type":"SAI_NAT_TYPE_SOURCE_NAT"' in key:
+                fvs = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", key)
+                assert fvs == {
+                    'SAI_NAT_ENTRY_ATTR_SRC_IP': '44.44.44.44',
+                    'SAI_NAT_ENTRY_ATTR_L4_SRC_PORT': '4000',
+                    'SAI_NAT_ENTRY_ATTR_SRC_IP_MASK': '255.255.255.255',
+                    'SAI_NAT_ENTRY_ATTR_ENABLE_PACKET_COUNT': 'true',
+                    'SAI_NAT_ENTRY_ATTR_ENABLE_BYTE_COUNT': 'true',
+                    'SAI_NAT_ENTRY_ATTR_AGING_TIME': '432'
+                }
+            else:
+                assert False
+
+        # delete DNAPT entry in kernel
+        exitcode, output = dvs.runcmd("conntrack -D -p tcp --src 33.33.33.33 --sport 3000 --dst 44.44.44.44 --dport 4000")
+        assert exitcode == 0, "1 flow entries have been deleted" in output
+
+        exitcode, output = dvs.runcmd("conntrack -L -j")
+        assert exitcode == 0, "0 flow entries have been shown" in output
+
+        # check the entry is not there in app db
+        self.app_db.wait_for_n_keys("NAPT_TABLE", 0)
+
+        # check the entry is not there in asic db
+        self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 0)
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():

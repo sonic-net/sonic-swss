@@ -944,7 +944,7 @@ bool NatOrch::removeHwDnatEntry(const IpAddress &dstIp, NatBulkContext &ctx)
 
     ctx.object_statuses.emplace_back();
     status = gNatBulker.remove_entry(&ctx.object_statuses.back(), &dnat_entry);
-    if (status != SAI_STATUS_SUCCESS)
+    if (status != SAI_STATUS_SUCCESS && status != SAI_STATUS_NOT_EXECUTED)
     {
         SWSS_LOG_INFO("Failed to remove %s DNAT NAT entry with ip %s and it's translated ip %s",
                       entry.entry_type.c_str(), dstIp.to_string().c_str(), entry.translated_ip.to_string().c_str());
@@ -1029,7 +1029,7 @@ bool NatOrch::removeHwTwiceNatEntry(const TwiceNatEntryKey &key, NatBulkContext 
     ctx.object_statuses.emplace_back();
     status = gNatBulker.remove_entry(&ctx.object_statuses.back(),
                                      &dbl_nat_entry);
-    if (status != SAI_STATUS_SUCCESS)
+    if (status != SAI_STATUS_SUCCESS && status != SAI_STATUS_NOT_EXECUTED)
     {
         SWSS_LOG_INFO("Failed to remove Twice NAT entry with src-ip %s, dst-ip %s",
                       key.src_ip.to_string().c_str(), key.dst_ip.to_string().c_str());
@@ -1122,7 +1122,7 @@ bool NatOrch::removeHwDnaptEntry(const NaptEntryKey &key, NatBulkContext &ctx)
     ctx.object_statuses.emplace_back();
     status = gNatBulker.remove_entry(&ctx.object_statuses.back(),
                                      &dnat_entry);
-    if (status != SAI_STATUS_NOT_EXECUTED)
+    if (status != SAI_STATUS_SUCCESS && status != SAI_STATUS_NOT_EXECUTED)
     {
         SWSS_LOG_INFO("Failed to remove %s DNAT NAPT entry with ip %s, port %d, prototype %s and it's translated ip %s, translated port %d",
                       entry.entry_type.c_str(), key.ip_address.to_string().c_str(), key.l4_port, key.prototype.c_str(),
@@ -1218,7 +1218,7 @@ bool NatOrch::removeHwTwiceNaptEntry(const TwiceNaptEntryKey &key, NatBulkContex
     ctx.object_statuses.emplace_back();
     status = gNatBulker.remove_entry(&ctx.object_statuses.back(),
                                      &dbl_nat_entry);
-    if (status != SAI_STATUS_SUCCESS)
+    if (status != SAI_STATUS_SUCCESS && status != SAI_STATUS_NOT_EXECUTED)
     {
         SWSS_LOG_INFO("Failed to remove Twice NAPT entry with prototype %s, src-ip %s, src port %d, dst-ip %s, dst port %d",
                        key.prototype.c_str(), key.src_ip.to_string().c_str(), key.src_l4_port,
@@ -1637,7 +1637,7 @@ bool NatOrch::removeHwSnatEntry(const IpAddress &ip_address, NatBulkContext &ctx
 
     ctx.object_statuses.emplace_back();
     status = gNatBulker.remove_entry(&ctx.object_statuses.back(), &snat_entry);
-    if (status != SAI_STATUS_SUCCESS)
+    if (status != SAI_STATUS_SUCCESS && status != SAI_STATUS_NOT_EXECUTED)
     {
         SWSS_LOG_INFO("Failed to removed %s SNAT NAT entry with ip %s and it's translated ip %s",
                       entry.entry_type.c_str(), ip_address.to_string().c_str(), entry.translated_ip.to_string().c_str());
@@ -1727,7 +1727,7 @@ bool NatOrch::removeHwSnaptEntry(const NaptEntryKey &keyEntry, NatBulkContext &c
     ctx.object_statuses.emplace_back();
     status = gNatBulker.remove_entry(&ctx.object_statuses.back(),
                                      &snat_entry);
-    if (status != SAI_STATUS_NOT_EXECUTED)
+    if (status != SAI_STATUS_SUCCESS && status != SAI_STATUS_NOT_EXECUTED)
     {
         SWSS_LOG_INFO("Failed to removed %s SNAT NAPT entry with ip %s, port %d, prototype %s and it's translated ip %s, translated port %d",
                       entry.entry_type.c_str(), keyEntry.ip_address.to_string().c_str(), keyEntry.l4_port, keyEntry.prototype.c_str(),
@@ -1843,7 +1843,7 @@ bool NatOrch::removeHwDnatPoolEntry(const IpAddress &dstIp, NatBulkContext &ctx)
     ctx.object_statuses.emplace_back();
     status = gNatBulker.remove_entry(&ctx.object_statuses.back(),
                                      &dnat_pool_entry);
-    if (status != SAI_STATUS_SUCCESS)
+    if (status != SAI_STATUS_SUCCESS && status != SAI_STATUS_NOT_EXECUTED)
     {
         SWSS_LOG_INFO("Failed to remove DNAT Pool entry with ip %s", dstIp.to_string().c_str());
         return false;
@@ -4588,6 +4588,7 @@ void NatOrch::doTask(NotificationConsumer& consumer)
     }
     else if (&consumer == m_natNotificationConsumer && op == "nat_event")
     {
+        SWSS_LOG_INFO("Received NAT event notification");
         uint32_t count;
         sai_nat_event_notification_data_t *natevent = nullptr;
 
