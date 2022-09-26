@@ -26,6 +26,14 @@ extern sai_dash_inbound_routing_api_t* sai_dash_inbound_routing_api;
 extern sai_object_id_t gSwitchId;
 extern size_t gMaxBulkSize;
 
+static std::unordered_map<std::string, sai_outbound_routing_entry_action_t> sOutboundAction =
+{
+    { "vnet", SAI_OUTBOUND_ROUTING_ENTRY_ACTION_ROUTE_VNET },
+    { "vnet_direct", SAI_OUTBOUND_ROUTING_ENTRY_ACTION_ROUTE_VNET_DIRECT },
+    { "route_direct", SAI_OUTBOUND_ROUTING_ENTRY_ACTION_ROUTE_DIRECT },
+    { "drop", SAI_OUTBOUND_ROUTING_ENTRY_ACTION_DROP }
+};
+
 DashRouteOrch::DashRouteOrch(DBConnector *db, vector<string> &tableName) :
     outbound_routing_bulker_(sai_dash_outbound_routing_api, gMaxBulkSize),
     inbound_routing_bulker_(sai_dash_inbound_routing_api, gMaxBulkSize),
@@ -34,7 +42,7 @@ DashRouteOrch::DashRouteOrch(DBConnector *db, vector<string> &tableName) :
     SWSS_LOG_ENTER();
 }
 
-bool DashRouteOrch::addEniEntry(string eni)
+bool DashRouteOrch::addEniEntry(const string& eni)
 {
     SWSS_LOG_ENTER();
 
@@ -45,6 +53,14 @@ bool DashRouteOrch::addEniEntry(string eni)
     }
 
     EniEntry &entry = eni_entries_[eni].eni_entry;
+    const string &vnet = entry.vnet;
+
+    if (!vnet.empty() && gVnetNameToId.find(vnet) == gVnetNameToId.end())
+    {
+        SWSS_LOG_ERROR("Retry as vnet %s not found", vnet.c_str());
+        return false;
+    }
+
     sai_object_id_t &eni_id = entry.eni_id;
     sai_attribute_t eni_attr;
     vector<sai_attribute_t> eni_attrs;
@@ -67,6 +83,10 @@ bool DashRouteOrch::addEniEntry(string eni)
     eni_attr.value.u32 = has_qos ? qos_entries_[entry.qos_name].flows : 0;
     eni_attrs.push_back(eni_attr);
 
+    eni_attr.id = SAI_ENI_ATTR_ADMIN_STATE;
+    eni_attr.value.booldata = entry.admin_state;
+    eni_attrs.push_back(eni_attr);
+
     sai_status_t status = sai_dash_eni_api->create_eni(&eni_id, gSwitchId,
                                 (uint32_t)eni_attrs.size(), eni_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
@@ -86,7 +106,7 @@ bool DashRouteOrch::addEniEntry(string eni)
     return true;
 }
 
-bool DashRouteOrch::addEniAddrMapEntry(string eni)
+bool DashRouteOrch::addEniAddrMapEntry(const string& eni)
 {
     SWSS_LOG_ENTER();
 
@@ -128,7 +148,7 @@ bool DashRouteOrch::addEniAddrMapEntry(string eni)
     return true;
 }
 
-bool DashRouteOrch::addEni(string eni, EniEntry &entry)
+bool DashRouteOrch::addEni(const string& eni, const EniEntry &entry)
 {
     SWSS_LOG_ENTER();
 
@@ -145,7 +165,7 @@ bool DashRouteOrch::addEni(string eni, EniEntry &entry)
     return addEniEntry(eni) && addEniAddrMapEntry(eni);
 }
 
-bool DashRouteOrch::removeEniEntry(string eni)
+bool DashRouteOrch::removeEniEntry(const string& eni)
 {
     SWSS_LOG_ENTER();
 
@@ -179,7 +199,7 @@ bool DashRouteOrch::removeEniEntry(string eni)
     return true;
 }
 
-bool DashRouteOrch::removeEniAddrMapEntry(string eni)
+bool DashRouteOrch::removeEniAddrMapEntry(const string& eni)
 {
     SWSS_LOG_ENTER();
 
@@ -212,7 +232,7 @@ bool DashRouteOrch::removeEniAddrMapEntry(string eni)
     return true;
 }
 
-bool DashRouteOrch::removeEni(string eni)
+bool DashRouteOrch::removeEni(const string& eni)
 {
     SWSS_LOG_ENTER();
 
@@ -251,19 +271,19 @@ void DashRouteOrch::doTaskEniTable(Consumer& consumer)
             {
                 entry.mac_address = fvValue(i);
             }
-            if (fvField(i) == "underlay_ip")
+            else if (fvField(i) == "underlay_ip")
             {
                 entry.underlay_ip = IpAddress(fvValue(i));
             }
-            if (fvField(i) == "admin_state")
+            else if (fvField(i) == "admin_state")
             {
                 entry.admin_state = (fvValue(i) == "enabled" ? true : false);
             }
-            if (fvField(i) == "vnet")
+            else if (fvField(i) == "vnet")
             {
                 entry.vnet = fvValue(i);
             }
-            if (fvField(i) == "qos")
+            else if (fvField(i) == "qos")
             {
                 entry.qos_name = fvValue(i);
             }
@@ -298,7 +318,7 @@ void DashRouteOrch::doTaskEniTable(Consumer& consumer)
     }
 }
 
-bool DashRouteOrch::addQosEntry(string qos_name, const QosEntry &entry)
+bool DashRouteOrch::addQosEntry(const string& qos_name, const QosEntry &entry)
 {
     SWSS_LOG_ENTER();
 
@@ -313,7 +333,7 @@ bool DashRouteOrch::addQosEntry(string qos_name, const QosEntry &entry)
     return true;
 }
 
-bool DashRouteOrch::removeQosEntry(string qos_name)
+bool DashRouteOrch::removeQosEntry(const string& qos_name)
 {
     SWSS_LOG_ENTER();
 
@@ -380,7 +400,7 @@ void DashRouteOrch::doTaskQosTable(Consumer& consumer)
     }
 }
 
-bool DashRouteOrch::addOutboundRouting(string key, OutboundRoutingBulkContext& ctxt)
+bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -389,6 +409,16 @@ bool DashRouteOrch::addOutboundRouting(string key, OutboundRoutingBulkContext& c
     {
         SWSS_LOG_ERROR("Outbound routing entry already exists for %s", key.c_str());
         return true;
+    }
+    if (eni_entries_.find(ctxt.eni) == eni_entries_.end())
+    {
+        SWSS_LOG_ERROR("Retry as ENI entry %s not found", ctxt.eni.c_str());
+        return false;
+    }
+    if (!ctxt.vnet.empty() && gVnetNameToId.find(ctxt.vnet) == gVnetNameToId.end())
+    {
+        SWSS_LOG_ERROR("Retry as vnet %s not found", ctxt.vnet.c_str());
+        return false;
     }
 
     sai_outbound_routing_entry_t outbound_routing_entry;
@@ -399,13 +429,23 @@ bool DashRouteOrch::addOutboundRouting(string key, OutboundRoutingBulkContext& c
     vector<sai_attribute_t> outbound_routing_attrs;
     auto& object_statuses = ctxt.object_statuses;
 
-    outbound_routing_attr.id = SAI_OUTBOUND_ROUTING_ENTRY_ATTR_DST_VNET_ID;
-    outbound_routing_attr.value.oid = gVnetNameToId[ctxt.vnet];
+    outbound_routing_attr.id = SAI_OUTBOUND_ROUTING_ENTRY_ATTR_ACTION;
+    outbound_routing_attr.value.u32 = sOutboundAction[ctxt.action_type];
     outbound_routing_attrs.push_back(outbound_routing_attr);
 
-    outbound_routing_attr.id = SAI_OUTBOUND_ROUTING_ENTRY_ATTR_OVERLAY_IP;
-    copy(outbound_routing_attr.value.ipaddr, ctxt.overlay_ip);
-    outbound_routing_attrs.push_back(outbound_routing_attr);
+    if (!ctxt.vnet.empty())
+    {
+        outbound_routing_attr.id = SAI_OUTBOUND_ROUTING_ENTRY_ATTR_DST_VNET_ID;
+        outbound_routing_attr.value.oid = gVnetNameToId[ctxt.vnet];
+        outbound_routing_attrs.push_back(outbound_routing_attr);
+    }
+
+    if (!ctxt.action_type.compare("vnet_direct"))
+    {
+        outbound_routing_attr.id = SAI_OUTBOUND_ROUTING_ENTRY_ATTR_OVERLAY_IP;
+        copy(outbound_routing_attr.value.ipaddr, ctxt.overlay_ip);
+        outbound_routing_attrs.push_back(outbound_routing_attr);
+    }
 
     object_statuses.emplace_back();
     outbound_routing_bulker_.create_entry(&object_statuses.back(), &outbound_routing_entry, (uint32_t)outbound_routing_attrs.size(), outbound_routing_attrs.data());
@@ -413,7 +453,7 @@ bool DashRouteOrch::addOutboundRouting(string key, OutboundRoutingBulkContext& c
     return false;
 }
 
-bool DashRouteOrch::addOutboundRoutingPost(string key, const OutboundRoutingBulkContext& ctxt)
+bool DashRouteOrch::addOutboundRoutingPost(const string& key, const OutboundRoutingBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -427,6 +467,12 @@ bool DashRouteOrch::addOutboundRoutingPost(string key, const OutboundRoutingBulk
     sai_status_t status = *it_status++;
     if (status != SAI_STATUS_SUCCESS)
     {
+        if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
+        {
+            // Retry if item exists in the bulker
+            return false;
+        }
+
         SWSS_LOG_ERROR("Failed to create outbound routing entry for %s", key.c_str());
         task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_OUTBOUND_ROUTING, status);
         if (handle_status != task_success)
@@ -442,7 +488,7 @@ bool DashRouteOrch::addOutboundRoutingPost(string key, const OutboundRoutingBulk
     return true;
 }
 
-bool DashRouteOrch::removeOutboundRouting(string key, OutboundRoutingBulkContext& ctxt)
+bool DashRouteOrch::removeOutboundRouting(const string& key, OutboundRoutingBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -465,7 +511,7 @@ bool DashRouteOrch::removeOutboundRouting(string key, OutboundRoutingBulkContext
     return false;
 }
 
-bool DashRouteOrch::removeOutboundRoutingPost(string key, const OutboundRoutingBulkContext& ctxt)
+bool DashRouteOrch::removeOutboundRoutingPost(const string& key, const OutboundRoutingBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -479,6 +525,11 @@ bool DashRouteOrch::removeOutboundRoutingPost(string key, const OutboundRoutingB
     sai_status_t status = *it_status++;
     if (status != SAI_STATUS_SUCCESS)
     {
+        if (status == SAI_STATUS_NOT_EXECUTED)
+        {
+            // Retry if bulk operation did not execute
+            return false;
+        }
         SWSS_LOG_ERROR("Failed to remove outbound routing entry for %s", key.c_str());
         task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_OUTBOUND_ROUTING, status);
         if (handle_status != task_success)
@@ -531,6 +582,7 @@ void DashRouteOrch::doTaskRouteTable(Consumer& consumer)
             destination = IpPrefix(keys[1]);
 
             if (op == SET_COMMAND)
+
             {
                 for (auto i : kfvFieldsValues(tuple))
                 {
@@ -538,11 +590,11 @@ void DashRouteOrch::doTaskRouteTable(Consumer& consumer)
                     {
                         action_type = fvValue(i);
                     }
-                    if (fvField(i) == "vnet")
+                    else if (fvField(i) == "vnet")
                     {
                         vnet = fvValue(i);
                     }
-                    if (fvField(i) == "overlay_ip")
+                    else if (fvField(i) == "overlay_ip")
                     {
                         overlay_ip = IpAddress(fvValue(i));
                     }
@@ -623,7 +675,7 @@ void DashRouteOrch::doTaskRouteTable(Consumer& consumer)
     }
 }
 
-bool DashRouteOrch::addInboundRouting(string key, InboundRoutingBulkContext& ctxt)
+bool DashRouteOrch::addInboundRouting(const string& key, InboundRoutingBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -633,10 +685,22 @@ bool DashRouteOrch::addInboundRouting(string key, InboundRoutingBulkContext& ctx
         SWSS_LOG_ERROR("Inbound routing entry already exists for %s", key.c_str());
         return true;
     }
+    if (eni_entries_.find(ctxt.eni) == eni_entries_.end())
+    {
+        SWSS_LOG_ERROR("Retry as ENI entry %s not found", ctxt.eni.c_str());
+        return false;
+    }
+    if (!ctxt.vnet.empty() && gVnetNameToId.find(ctxt.vnet) == gVnetNameToId.end())
+    {
+        SWSS_LOG_ERROR("Retry as vnet %s not found", ctxt.vnet.c_str());
+        return false;
+    }
 
     sai_inbound_routing_entry_t inbound_routing_entry;
     IpAddress& sip_mask = ctxt.sip_mask;
     sip_mask = IpAddress("255.255.255.0");
+    bool deny = !ctxt.action_type.compare("drop");
+
     inbound_routing_entry.switch_id = gSwitchId;
     inbound_routing_entry.eni_id = eni_entries_[ctxt.eni].eni_entry.eni_id;
     inbound_routing_entry.vni = ctxt.vni;
@@ -647,22 +711,27 @@ bool DashRouteOrch::addInboundRouting(string key, InboundRoutingBulkContext& ctx
 
     sai_attribute_t inbound_routing_attr;
     vector<sai_attribute_t> inbound_routing_attrs;
+
     inbound_routing_attr.id = SAI_INBOUND_ROUTING_ENTRY_ATTR_ACTION;
-    inbound_routing_attr.value.u32 = ctxt.pa_validation ? SAI_INBOUND_ROUTING_ENTRY_ACTION_VXLAN_DECAP_PA_VALIDATE :
-        SAI_INBOUND_ROUTING_ENTRY_ACTION_VXLAN_DECAP;
+    inbound_routing_attr.value.u32 = deny ? SAI_INBOUND_ROUTING_ENTRY_ACTION_DENY : (ctxt.pa_validation ?
+                                   SAI_INBOUND_ROUTING_ENTRY_ACTION_VXLAN_DECAP_PA_VALIDATE : SAI_INBOUND_ROUTING_ENTRY_ACTION_VXLAN_DECAP);
     inbound_routing_attrs.push_back(inbound_routing_attr);
 
-    inbound_routing_attr.id = SAI_INBOUND_ROUTING_ENTRY_ATTR_SRC_VNET_ID;
-    inbound_routing_attr.value.oid = gVnetNameToId[ctxt.vnet];
-    inbound_routing_attrs.push_back(inbound_routing_attr);
+    if (!ctxt.vnet.empty())
+    {
+        inbound_routing_attr.id = SAI_INBOUND_ROUTING_ENTRY_ATTR_SRC_VNET_ID;
+        inbound_routing_attr.value.oid = gVnetNameToId[ctxt.vnet];
+        inbound_routing_attrs.push_back(inbound_routing_attr);
+    }
 
     object_statuses.emplace_back();
-    inbound_routing_bulker_.create_entry(&object_statuses.back(), &inbound_routing_entry, (uint32_t)inbound_routing_attrs.size(), inbound_routing_attrs.data());
+    inbound_routing_bulker_.create_entry(&object_statuses.back(), &inbound_routing_entry,
+                                        (uint32_t)inbound_routing_attrs.size(), inbound_routing_attrs.data());
 
     return false;
 }
 
-bool DashRouteOrch::addInboundRoutingPost(string key, const InboundRoutingBulkContext& ctxt)
+bool DashRouteOrch::addInboundRoutingPost(const string& key, const InboundRoutingBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -676,6 +745,12 @@ bool DashRouteOrch::addInboundRoutingPost(string key, const InboundRoutingBulkCo
     sai_status_t status = *it_status++;
     if (status != SAI_STATUS_SUCCESS)
     {
+        if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
+        {
+            // Retry if item exists in the bulker
+            return false;
+        }
+
         SWSS_LOG_ERROR("Failed to create inbound routing entry");
         task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_INBOUND_ROUTING, status);
         if (handle_status != task_success)
@@ -691,7 +766,7 @@ bool DashRouteOrch::addInboundRoutingPost(string key, const InboundRoutingBulkCo
     return true;
 }
 
-bool DashRouteOrch::removeInboundRouting(string key, InboundRoutingBulkContext& ctxt)
+bool DashRouteOrch::removeInboundRouting(const string& key, InboundRoutingBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -717,7 +792,7 @@ bool DashRouteOrch::removeInboundRouting(string key, InboundRoutingBulkContext& 
     return false;
 }
 
-bool DashRouteOrch::removeInboundRoutingPost(string key, const InboundRoutingBulkContext& ctxt)
+bool DashRouteOrch::removeInboundRoutingPost(const string& key, const InboundRoutingBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -731,6 +806,11 @@ bool DashRouteOrch::removeInboundRoutingPost(string key, const InboundRoutingBul
     sai_status_t status = *it_status++;
     if (status != SAI_STATUS_SUCCESS)
     {
+        if (status == SAI_STATUS_NOT_EXECUTED)
+        {
+            // Retry if bulk operation did not execute
+            return false;
+        }
         SWSS_LOG_ERROR("Failed to remove inbound routing entry for %s", key.c_str());
         task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_INBOUND_ROUTING, status);
         if (handle_status != task_success)
@@ -794,15 +874,15 @@ void DashRouteOrch::doTaskRouteRuleTable(Consumer& consumer)
                     {
                         action_type = fvValue(i);
                     }
-                    if (fvField(i) == "vnet")
+                    else if (fvField(i) == "vnet")
                     {
                         vnet = fvValue(i);
                     }
-                    if (fvField(i) == "priority")
+                    else if (fvField(i) == "priority")
                     {
                         priority = to_uint<uint32_t>(fvValue(i));
                     }
-                    if (fvField(i) == "pa_validation")
+                    else if (fvField(i) == "pa_validation")
                     {
                         pa_validation = fvValue(i) == "true";
                     }

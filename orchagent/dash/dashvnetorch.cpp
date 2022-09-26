@@ -37,7 +37,7 @@ DashVnetOrch::DashVnetOrch(DBConnector *db, vector<string> &tables) :
     SWSS_LOG_ENTER();
 }
 
-bool DashVnetOrch::addVnet(string vnet_name, DashVnetBulkContext& ctxt)
+bool DashVnetOrch::addVnet(const string& vnet_name, DashVnetBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -58,7 +58,7 @@ bool DashVnetOrch::addVnet(string vnet_name, DashVnetBulkContext& ctxt)
     return false;
 }
 
-bool DashVnetOrch::addVnetPost(string vnet_name, const DashVnetBulkContext& ctxt)
+bool DashVnetOrch::addVnetPost(const string& vnet_name, const DashVnetBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -85,7 +85,7 @@ bool DashVnetOrch::addVnetPost(string vnet_name, const DashVnetBulkContext& ctxt
     return true;
 }
 
-bool DashVnetOrch::removeVnet(string vnet_name, DashVnetBulkContext& ctxt)
+bool DashVnetOrch::removeVnet(const string& vnet_name, DashVnetBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -106,7 +106,7 @@ bool DashVnetOrch::removeVnet(string vnet_name, DashVnetBulkContext& ctxt)
     return false;
 }
 
-bool DashVnetOrch::removeVnetPost(string vnet_name, const DashVnetBulkContext& ctxt)
+bool DashVnetOrch::removeVnetPost(const string& vnet_name, const DashVnetBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -121,12 +121,13 @@ bool DashVnetOrch::removeVnetPost(string vnet_name, const DashVnetBulkContext& c
     sai_status_t status = *it_status++;
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to remove vnet entry for %s", vnet_name.c_str());
-        // Retry later if object is in use
-        if (status == SAI_STATUS_OBJECT_IN_USE)
+        // Retry later if object has non-zero reference to it
+        if (status == SAI_STATUS_NOT_EXECUTED)
         {
             return false;
         }
+
+        SWSS_LOG_ERROR("Failed to remove vnet entry for %s", vnet_name.c_str());
         task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_VNET, status);
         if (handle_status != task_success)
         {
@@ -274,7 +275,7 @@ void DashVnetOrch::doTaskVnetTable(Consumer& consumer)
 }
 
 
-bool DashVnetOrch::addOutboundCaToPa(string key, VnetMapBulkContext& ctxt)
+bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -301,7 +302,7 @@ bool DashVnetOrch::addOutboundCaToPa(string key, VnetMapBulkContext& ctxt)
     return false;
 }
 
-bool DashVnetOrch::addPaValidation(string key, VnetMapBulkContext& ctxt)
+bool DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -322,7 +323,7 @@ bool DashVnetOrch::addPaValidation(string key, VnetMapBulkContext& ctxt)
     return false;
 }
 
-bool DashVnetOrch::addVnetMap(string key, VnetMapBulkContext& ctxt)
+bool DashVnetOrch::addVnetMap(const string& key, VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -336,7 +337,7 @@ bool DashVnetOrch::addVnetMap(string key, VnetMapBulkContext& ctxt)
     return false;
 }
 
-bool DashVnetOrch::addOutboundCaToPaPost(string key, const VnetMapBulkContext& ctxt)
+bool DashVnetOrch::addOutboundCaToPaPost(const string& key, const VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -350,6 +351,12 @@ bool DashVnetOrch::addOutboundCaToPaPost(string key, const VnetMapBulkContext& c
     sai_status_t status = *it_status++;
     if (status != SAI_STATUS_SUCCESS)
     {
+        if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
+        {
+            // Retry if item exists in the bulker
+            return false;
+        }
+
         SWSS_LOG_ERROR("Failed to create CA to PA entry for %s", key.c_str());
         task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_OUTBOUND_CA_TO_PA, status);
         if (handle_status != task_success)
@@ -363,7 +370,7 @@ bool DashVnetOrch::addOutboundCaToPaPost(string key, const VnetMapBulkContext& c
     return true;
 }
 
-bool DashVnetOrch::addPaValidationPost(string key, const VnetMapBulkContext& ctxt)
+bool DashVnetOrch::addPaValidationPost(const string& key, const VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -377,6 +384,12 @@ bool DashVnetOrch::addPaValidationPost(string key, const VnetMapBulkContext& ctx
     sai_status_t status = *it_status++;
     if (status != SAI_STATUS_SUCCESS)
     {
+        if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
+        {
+            // Retry if item exists in the bulker
+            return false;
+        }
+
         SWSS_LOG_ERROR("Failed to create PA validation entry for %s", key.c_str());
         task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_PA_VALIDATION, status);
         if (handle_status != task_success)
@@ -390,7 +403,7 @@ bool DashVnetOrch::addPaValidationPost(string key, const VnetMapBulkContext& ctx
     return true;
 }
 
-bool DashVnetOrch::addVnetMapPost(string key, const VnetMapBulkContext& ctxt)
+bool DashVnetOrch::addVnetMapPost(const string& key, const VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -410,7 +423,7 @@ bool DashVnetOrch::addVnetMapPost(string key, const VnetMapBulkContext& ctxt)
     return true;
 }
 
-bool DashVnetOrch::removeOutboundCaToPa(string key, VnetMapBulkContext& ctxt)
+bool DashVnetOrch::removeOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -426,7 +439,7 @@ bool DashVnetOrch::removeOutboundCaToPa(string key, VnetMapBulkContext& ctxt)
     return false;
 }
 
-bool DashVnetOrch::removePaValidation(string key, VnetMapBulkContext& ctxt)
+bool DashVnetOrch::removePaValidation(const string& key, VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -442,7 +455,7 @@ bool DashVnetOrch::removePaValidation(string key, VnetMapBulkContext& ctxt)
     return false;
 }
 
-bool DashVnetOrch::removeVnetMap(string key, VnetMapBulkContext& ctxt)
+bool DashVnetOrch::removeVnetMap(const string& key, VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -459,7 +472,7 @@ bool DashVnetOrch::removeVnetMap(string key, VnetMapBulkContext& ctxt)
     return false;
 }
 
-bool DashVnetOrch::removeOutboundCaToPaPost(string key, const VnetMapBulkContext& ctxt)
+bool DashVnetOrch::removeOutboundCaToPaPost(const string& key, const VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -473,6 +486,12 @@ bool DashVnetOrch::removeOutboundCaToPaPost(string key, const VnetMapBulkContext
     sai_status_t status = *it_status++;
     if (status != SAI_STATUS_SUCCESS)
     {
+        // Retry later if object has non-zero reference to it
+        if (status == SAI_STATUS_NOT_EXECUTED)
+        {
+            return false;
+        }
+
         SWSS_LOG_ERROR("Failed to remove outbound routing entry for %s", key.c_str());
         task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_OUTBOUND_CA_TO_PA, status);
         if (handle_status != task_success)
@@ -486,7 +505,7 @@ bool DashVnetOrch::removeOutboundCaToPaPost(string key, const VnetMapBulkContext
     return true;
 }
 
-bool DashVnetOrch::removePaValidationPost(string key, const VnetMapBulkContext& ctxt)
+bool DashVnetOrch::removePaValidationPost(const string& key, const VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -500,6 +519,12 @@ bool DashVnetOrch::removePaValidationPost(string key, const VnetMapBulkContext& 
     sai_status_t status = *it_status++;
     if (status != SAI_STATUS_SUCCESS)
     {
+        // Retry later if object has non-zero reference to it
+        if (status == SAI_STATUS_NOT_EXECUTED)
+        {
+            return false;
+        }
+
         SWSS_LOG_ERROR("Failed to remove PA validation entry for %s", key.c_str());
         task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_PA_VALIDATION, status);
         if (handle_status != task_success)
@@ -513,7 +538,7 @@ bool DashVnetOrch::removePaValidationPost(string key, const VnetMapBulkContext& 
     return true;
 }
 
-bool DashVnetOrch::removeVnetMapPost(string key, const VnetMapBulkContext& ctxt)
+bool DashVnetOrch::removeVnetMapPost(const string& key, const VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
