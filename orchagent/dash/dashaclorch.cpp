@@ -53,7 +53,7 @@ static bool getValue(
     }
     catch(const exception &err)
     {
-        SWSS_LOG_DEBUG("Cannot convert field : %s to type : %s", field.c_str(), typeid(T).name());
+        SWSS_LOG_WARN("Cannot convert field %s to type %s (%s)", field.c_str(), typeid(T).name(), err.what());
         return false;
     }
 }
@@ -134,6 +134,26 @@ inline void lexical_convert(const string &buffer, DashAclRuleEntry::Action &acti
 }
 
 template<>
+inline void lexical_convert(const string &buffer, bool &terminating)
+{
+    SWSS_LOG_ENTER();
+
+    if (buffer == "true" || buffer == "True" || buffer == "1")
+    {
+        terminating = true;
+    }
+    else if (buffer == "false" || buffer == "False" || buffer == "0")
+    {
+        terminating = false;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Invalid terminating : %s", buffer.c_str());
+        throw std::invalid_argument("Invalid terminating");
+    }
+}
+
+template<>
 inline void lexical_convert(const string &buffer, vector<uint8_t> &protocols)
 {
     SWSS_LOG_ENTER();
@@ -143,9 +163,9 @@ inline void lexical_convert(const string &buffer, vector<uint8_t> &protocols)
     protocols.reserve(tokens.size());
     for (auto &token : tokens)
     {
-        uint8_t protocol;
+        uint32_t protocol;
         lexical_convert(token, protocol);
-        protocols.push_back(protocol);
+        protocols.push_back(static_cast<uint8_t>(protocol));
     }
 }
 
@@ -177,8 +197,15 @@ inline void lexical_convert(const string &buffer, std::vector<sai_u16_range_t> &
     for (auto &token : tokens)
     {
         sai_u16_range_t port;
-        if (!extractVariables(token, '-', port.min, port.max))
+        if (token.find('-') == std::string::npos)
         {
+            // Only one port
+            lexical_convert(token, port.min);
+            port.max = port.min;
+        }
+        else if (!extractVariables(token, '-', port.min, port.max))
+        {
+            // Range
             SWSS_LOG_ERROR("Invalid port range : %s", token.c_str());
             throw invalid_argument("Invalid port range");
         }
@@ -394,30 +421,30 @@ task_process_status DashAclOrch::taskUpdateDashAclGroup(
     SWSS_LOG_ENTER();
 
     auto &acl_group = m_dash_acl_group_table[key];
+    bool is_existing = acl_group.m_dash_acl_group_id != SAI_NULL_OBJECT_ID;
+
     vector<sai_attribute_t> attrs;
 
-    if (updateValue(data, "ip_version", acl_group.m_ip_version))
+    if (updateValue(data, "ip_version", acl_group.m_ip_version) || (acl_group.m_ip_version && !is_existing))
     {
         attrs.emplace_back();
         attrs.back().id = SAI_DASH_ACL_GROUP_ATTR_IP_ADDR_FAMILY;
         attrs.back().value.s32 = *(acl_group.m_ip_version);
     }
+
     // Guid wasn't mapping to any SAI attributes
     updateValue(data, "guid", acl_group.m_guid);
-
-    bool is_existing = acl_group.m_dash_acl_group_id != SAI_NULL_OBJECT_ID;
 
     if (!is_existing && attrs.empty())
     {
         // Assign default values
-        TaskArgs default_values;
-
         if (!acl_group.m_ip_version)
         {
-            default_values.emplace_back("ip_version", "ipv4");
+            acl_group.m_ip_version = SAI_IP_ADDR_FAMILY_IPV4;
+            attrs.emplace_back();
+            attrs.back().id = SAI_DASH_ACL_GROUP_ATTR_IP_ADDR_FAMILY;
+            attrs.back().value.s32 = *(acl_group.m_ip_version);
         }
-
-        return taskUpdateDashAclGroup(key, default_values);
     }
 
     if (!attrs.empty())
@@ -427,6 +454,12 @@ task_process_status DashAclOrch::taskUpdateDashAclGroup(
             // Create a new ACL group
             acl_group.m_status = m_dash_acl_group_bulker.create_entry(&acl_group.m_dash_acl_group_id, static_cast<uint32_t>(attrs.size()), attrs.data());
             acl_group.m_rule_count = 0;
+            m_defer_funcs.push_back([this, key]() {
+                if (m_dash_acl_group_table[key].m_dash_acl_group_id != SAI_NULL_OBJECT_ID)
+                {
+                    SWSS_LOG_NOTICE("Created ACL group %s", key.c_str());
+                }
+            });
         }
         else
         {
@@ -440,6 +473,7 @@ task_process_status DashAclOrch::taskUpdateDashAclGroup(
                     return task_failed;
                 }
             }
+            SWSS_LOG_NOTICE("Updated ACL group %s", key.c_str());
         }
     }
 
@@ -470,7 +504,16 @@ task_process_status DashAclOrch::taskRemoveDashAclGroup(
     // Remove the ACL group
     m_dash_acl_group_bulker.remove_entry(&acl_group->m_status, acl_group->m_dash_acl_group_id);
     m_defer_funcs.push_back([this, key]() {
-        m_dash_acl_group_table.erase(key);
+        auto itr = m_dash_acl_group_table.find(key);
+        if (itr != m_dash_acl_group_table.end())
+        {
+            const auto &acl_group = itr->second;
+            if (acl_group.m_status == SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_NOTICE("Removed ACL group %s", key.c_str());
+                m_dash_acl_group_table.erase(itr);
+            }
+        }
     });
 
     return task_success;
@@ -497,16 +540,20 @@ task_process_status DashAclOrch::taskUpdateDashAclRule(
     }
 
     auto &acl_rule = m_dash_acl_rule_table[key];
+    bool is_existing = acl_rule.m_dash_acl_rule_id != SAI_NULL_OBJECT_ID;
     vector<sai_attribute_t> attrs;
 
-    if (updateValue(data, "priority", acl_rule.m_priority))
+    if (updateValue(data, "priority", acl_rule.m_priority) || (acl_rule.m_priority && !is_existing))
     {
         attrs.emplace_back();
         attrs.back().id = SAI_DASH_ACL_RULE_ATTR_PRIORITY;
         attrs.back().value.u32 = *(acl_rule.m_priority);
     }
 
-    if (updateValue(data, "action", acl_rule.m_action) || updateValue(data, "terminating", acl_rule.m_terminating))
+    bool update_action = false;
+    update_action |= updateValue(data, "action", acl_rule.m_action);
+    update_action |= updateValue(data, "terminating", acl_rule.m_terminating);
+    if (update_action || (acl_rule.m_action && acl_rule.m_terminating && !is_existing))
     {
         attrs.emplace_back();
         attrs.back().id = SAI_DASH_ACL_RULE_ATTR_ACTION;
@@ -534,7 +581,7 @@ task_process_status DashAclOrch::taskUpdateDashAclRule(
         }
     }
 
-    if (updateValue(data, "protocol", acl_rule.m_protocols))
+    if (updateValue(data, "protocol", acl_rule.m_protocols) || (acl_rule.m_protocols && !is_existing))
     {
         attrs.emplace_back();
         attrs.back().id = SAI_DASH_ACL_RULE_ATTR_PROTOCOL;
@@ -542,7 +589,7 @@ task_process_status DashAclOrch::taskUpdateDashAclRule(
         attrs.back().value.u8list.list = acl_rule.m_protocols.value().data();
     }
 
-    if (updateValue(data, "src_addr", acl_rule.m_src_ips))
+    if (updateValue(data, "src_addr", acl_rule.m_src_ips) || (acl_rule.m_src_ips && !is_existing))
     {
         attrs.emplace_back();
         attrs.back().id = SAI_DASH_ACL_RULE_ATTR_SIP;
@@ -550,7 +597,7 @@ task_process_status DashAclOrch::taskUpdateDashAclRule(
         attrs.back().value.ipaddrlist.list = acl_rule.m_src_ips.value().data();
     }
 
-    if (updateValue(data, "dst_addr", acl_rule.m_dst_ips))
+    if (updateValue(data, "dst_addr", acl_rule.m_dst_ips) || (acl_rule.m_dst_ips && !is_existing))
     {
         attrs.emplace_back();
         attrs.back().id = SAI_DASH_ACL_RULE_ATTR_DIP;
@@ -558,7 +605,7 @@ task_process_status DashAclOrch::taskUpdateDashAclRule(
         attrs.back().value.ipaddrlist.list = acl_rule.m_dst_ips.value().data();
     }
 
-    if (updateValue(data, "src_port", acl_rule.m_src_ports))
+    if (updateValue(data, "src_port", acl_rule.m_src_ports) || (acl_rule.m_src_ports && !is_existing))
     {
         attrs.emplace_back();
         attrs.back().id = SAI_DASH_ACL_RULE_ATTR_SRC_PORT;
@@ -566,7 +613,7 @@ task_process_status DashAclOrch::taskUpdateDashAclRule(
         attrs.back().value.u16rangelist.list = acl_rule.m_src_ports.value().data();
     }
 
-    if (updateValue(data, "src_port", acl_rule.m_dst_ports))
+    if (updateValue(data, "dst_port", acl_rule.m_dst_ports) || (acl_rule.m_dst_ports && !is_existing))
     {
         attrs.emplace_back();
         attrs.back().id = SAI_DASH_ACL_RULE_ATTR_DST_PORT;
@@ -574,45 +621,41 @@ task_process_status DashAclOrch::taskUpdateDashAclRule(
         attrs.back().value.u16rangelist.list = acl_rule.m_dst_ports.value().data();
     }
 
-    bool is_existing = acl_rule.m_dash_acl_rule_id != SAI_NULL_OBJECT_ID;
-
     if (!is_existing)
     {
         // Mandatory on create attributes should be setted, otherwise assign the default value.
         // If the attributes don't have default value, just skip and wait for the user to set the value at the next message
-        TaskArgs default_values;
-
-        if (!acl_rule.m_action)
+        if (!acl_rule.m_action || !acl_rule.m_terminating)
         {
-            default_values.emplace_back("action", "allow");
-        }
-        if (!acl_rule.m_terminating)
-        {
-            default_values.emplace_back("terminating", "false");
+            acl_rule.m_action == DashAclRuleEntry::Action::ALLOW;
+            acl_rule.m_terminating == false;
+            attrs.emplace_back();
+            attrs.back().id = SAI_DASH_ACL_RULE_ATTR_ACTION;
+            attrs.back().value.s32 = SAI_DASH_ACL_RULE_ACTION_PERMIT;
         }
         if (!acl_rule.m_protocols)
         {
-            constexpr static char *all_protocols = 
-                "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,"
-                "32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,"
-                "64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,"
-                "96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,"
-                "128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,"
-                "160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,"
-                "192,193,194,195,196,197,198,199,200,201,202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,219,220,221,222,223,"
-                "224,225,226,227,228,229,230,231,232,233,234,235,236,237,238,239,240,241,242,243,244,245,246,247,248,249,250,251,252,253,254,255";
-            default_values.emplace_back("protocol", all_protocols);
+            const static vector<uint8_t> all_protocols = {
+                    0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,
+                    32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,
+                    64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,
+                    96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,
+                    128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,
+                    160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,
+                    192,193,194,195,196,197,198,199,200,201,202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,219,220,221,222,223,
+                    224,225,226,227,228,229,230,231,232,233,234,235,236,237,238,239,240,241,242,243,244,245,246,247,248,249,250,251,252,253,254,255
+                };
+            acl_rule.m_protocols = all_protocols;
+            attrs.emplace_back();
+            attrs.back().id = SAI_DASH_ACL_RULE_ATTR_PROTOCOL;
+            attrs.back().value.u8list.count = static_cast<uint32_t>(acl_rule.m_protocols.value().size());
+            attrs.back().value.u8list.list = acl_rule.m_protocols.value().data();
         }
 
         if (!acl_rule.m_priority || !acl_rule.m_dst_ips || !acl_rule.m_src_ips || !acl_rule.m_dst_ports || !acl_rule.m_src_ports)
         {
             SWSS_LOG_WARN("ACL rule %s doesn't have all mandatory attributes, waiting for user to set the value", key.c_str());
             return task_success;
-        }
-
-        if (!default_values.empty())
-        {
-            return taskUpdateDashAclRule(key, default_values);
         }
     }
 
@@ -628,6 +671,17 @@ task_process_status DashAclOrch::taskUpdateDashAclRule(
 
             acl_rule.m_status = m_dash_acl_rule_bulker.create_entry(&acl_rule.m_dash_acl_rule_id, static_cast<uint32_t>(attrs.size()), attrs.data());
             acl_group->m_rule_count++;
+
+            m_defer_funcs.push_back([this, group_id, key]() {
+                if (m_dash_acl_rule_table[key].m_dash_acl_rule_id != SAI_NULL_OBJECT_ID)
+                {
+                    SWSS_LOG_NOTICE("Created ACL rule %s", key.c_str());
+                }
+                else
+                {
+                    getAclGroup(group_id)->m_rule_count--;
+                }
+            });
         }
         else
         {
@@ -681,8 +735,13 @@ task_process_status DashAclOrch::taskRemoveDashAclRule(
     // Remove the ACL group
     m_dash_acl_rule_bulker.remove_entry(&acl_rule.m_status, acl_rule.m_dash_acl_rule_id);
     m_defer_funcs.push_back([this, key, group_id]() {
-        m_dash_acl_rule_table.erase(key);
-        m_dash_acl_group_table[group_id].m_rule_count--;
+        auto itr = m_dash_acl_rule_table.find(key);
+        if (itr != m_dash_acl_rule_table.end())
+        {
+            SWSS_LOG_NOTICE("Removed ACL rule %s", key.c_str());
+            m_dash_acl_rule_table.erase(itr);
+            m_dash_acl_group_table[group_id].m_rule_count--;
+        }
     });
 
     return task_success;
@@ -722,7 +781,7 @@ task_process_status DashAclOrch::bindAclToEni(DashAclTable &acl_table, const std
     auto eni_entry = m_dash_route_orch->getEni(eni);
     if (eni_entry == nullptr)
     {
-        SWSS_LOG_WARN("eni : %s cannot be found", eni.c_str());
+        SWSS_LOG_WARN("eni %s cannot be found", eni.c_str());
         // The ENI may not be created yet, so we will wait for the ENI to be created
         return task_need_retry;
     }
@@ -735,7 +794,8 @@ task_process_status DashAclOrch::bindAclToEni(DashAclTable &acl_table, const std
         auto acl_group = getAclGroup(*(acl.m_acl_group_id));
         if (acl_group == nullptr)
         {
-            SWSS_LOG_WARN("Invalid acl group id : %s", acl.m_acl_group_id->c_str());
+            SWSS_LOG_WARN("acl group %s cannot be found, wait for create", acl.m_acl_group_id->c_str());
+            acl.m_acl_group_id.reset();
             return task_need_retry;
         }
 
@@ -744,13 +804,9 @@ task_process_status DashAclOrch::bindAclToEni(DashAclTable &acl_table, const std
     }
     else
     {
-        if (acl.m_acl_group_id)
+        if (!acl.m_acl_group_id)
         {
             SWSS_LOG_WARN("acl_group_id is not specified in %s", key.c_str());
-        }
-        else
-        {
-            SWSS_LOG_WARN("The ACL group %s wasn't been changed in %s", acl.m_acl_group_id->c_str(), key.c_str());
         }
         return task_success;
     }
@@ -761,6 +817,8 @@ task_process_status DashAclOrch::bindAclToEni(DashAclTable &acl_table, const std
         SWSS_LOG_ERROR("Failed to bind ACL %s to eni %s attribute, status : %s", key.c_str(), acl.m_acl_group_id->c_str(), sai_serialize_status(status).c_str());
         return task_failed;
     }
+
+    SWSS_LOG_NOTICE("Bind ACL group %s to %s", acl.m_acl_group_id->c_str(), key.c_str());
 
     return task_success;
 }
@@ -783,7 +841,7 @@ task_process_status DashAclOrch::unbindAclFromEni(DashAclTable &acl_table, const
     auto eni_entry = m_dash_route_orch->getEni(eni);
     if (eni_entry == nullptr)
     {
-        SWSS_LOG_WARN("eni : %s cannot be found", eni.c_str());
+        SWSS_LOG_WARN("eni %s cannot be found", eni.c_str());
         return task_failed;
     }
 
@@ -814,6 +872,8 @@ task_process_status DashAclOrch::unbindAclFromEni(DashAclTable &acl_table, const
         return task_failed;
     }
 
+    SWSS_LOG_NOTICE("Unbind ACL group %s from %s", acl.m_acl_group_id->c_str(), key.c_str());
+
     return task_success;
 }
 
@@ -821,7 +881,7 @@ void DashAclOrch::callDeferFunctions()
 {
     SWSS_LOG_ENTER();
 
-    while(m_defer_funcs.empty())
+    while(!m_defer_funcs.empty())
     {
         m_defer_funcs.front()();
         m_defer_funcs.pop_front();
