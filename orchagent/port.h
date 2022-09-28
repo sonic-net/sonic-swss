@@ -113,7 +113,7 @@ public:
     }
 
     std::string         m_alias;
-    Type                m_type;
+    Type                m_type = UNKNOWN;
     int                 m_index = 0;    // PHY_PORT: index
     uint32_t            m_mtu = DEFAULT_MTU;
     uint32_t            m_speed = 0;    // Mbps

@@ -2696,7 +2696,11 @@ sai_status_t PortsOrch::removePort(sai_object_id_t port_id)
      */
     if (getPort(port_id, port))
     {
-        setPortAdminStatus(port, false);
+        /* Bring port down before removing port */
+        if (!setPortAdminStatus(port, false))
+        {
+            SWSS_LOG_ERROR("Failed to set admin status to DOWN to remove port %" PRIx64, port_id);
+        }
     }
     /* else : port is in default state or not yet created */
 
@@ -4440,7 +4444,7 @@ void PortsOrch::doTask()
         APP_LAG_TABLE_NAME,
         APP_LAG_MEMBER_TABLE_NAME,
         APP_VLAN_TABLE_NAME,
-        APP_VLAN_MEMBER_TABLE_NAME,
+        APP_VLAN_MEMBER_TABLE_NAME
     };
 
     for (auto tableName: tableOrder)
