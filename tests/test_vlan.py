@@ -1,6 +1,5 @@
 import distro
 import pytest
-import time
 
 from distutils.version import StrictVersion
 from dvslib.dvs_common import PollingConfig, wait_for_result
