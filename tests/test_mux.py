@@ -303,6 +303,9 @@ class TestMuxTunnelBase():
         self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV4)
         self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV6)
 
+        # Check that pfc_wd is enabled after switchovers
+        self.check_pfc_wd_state(dvs, "enable")
+
     def create_and_test_fdb(self, appdb, asicdb, dvs, dvs_route):
 
         self.set_mux_state(appdb, "Ethernet0", "active")
@@ -853,6 +856,9 @@ class TestMuxTunnelBase():
             self.del_neighbor(dvs, test_info[IP])
         else:
             pytest.fail('Invalid test action {}'.format(action))
+
+    def check_pfc_wd_state(self, dvs, state):
+        pfc_wd_state = dvs.runcmd('show runningconfiguration all | grep default_pfcwd | grep ' + state)
 
     @pytest.fixture(scope='module')
     def setup_vlan(self, dvs):

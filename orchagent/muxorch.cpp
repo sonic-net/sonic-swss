@@ -24,6 +24,7 @@
 #include "routeorch.h"
 #include "fdborch.h"
 #include "qosorch.h"
+#include "pfcwdorch.h"
 
 /* Global variables */
 extern Directory<Orch*> gDirectory;
@@ -34,6 +35,7 @@ extern AclOrch *gAclOrch;
 extern PortsOrch *gPortsOrch;
 extern FdbOrch *gFdbOrch;
 extern QosOrch *gQosOrch;
+extern PfcWdSwOrch<PfcWdActionHandler,PfcWdActionHandler> *gPfcWdSwOrch;
 
 extern sai_object_id_t gVirtualRouterId;
 extern sai_object_id_t  gUnderlayIfId;
@@ -1531,10 +1533,16 @@ MuxStateOrch::MuxStateOrch(DBConnector *db, const std::string& tableName) :
 
 void MuxStateOrch::updateMuxState(string portName, string muxState)
 {
+    /* Disable Pfc Watchdog for perfomance */
+    gPfcWdSwOrch->stopWdOnAllPorts();
+
     vector<FieldValueTuple> tuples;
     FieldValueTuple tuple("state", muxState);
     tuples.push_back(tuple);
     mux_state_table_.set(portName, tuples);
+
+    /* Enable Pfc Watchdog */
+    gPfcWdSwOrch->startWdOnAllPorts();
 }
 
 bool MuxStateOrch::addOperation(const Request& request)

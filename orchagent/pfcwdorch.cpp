@@ -1,6 +1,7 @@
 #include <limits.h>
 #include <inttypes.h>
 #include <unordered_map>
+#include <tuple>
 #include "pfcwdorch.h"
 #include "sai_serialize.h"
 #include "portsorch.h"
@@ -750,6 +751,68 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::stopWdOnPort(const Port& port)
     SWSS_LOG_ENTER();
 
     unregisterFromWdDb(port);
+
+    return true;
+}
+
+template <typename DropHandler, typename ForwardHandler>
+bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdOnAllPorts()
+{
+    SWSS_LOG_ENTER();
+
+    auto allPorts = gPortsOrch->getAllPorts();
+
+    for (auto &it: allPorts)
+    {
+        Port port = it.second;
+
+        auto pos = m_pfcwdconfigs.find(port.m_alias);
+        if (pos == m_pfcwdconfigs.end()) {
+            continue;
+        }
+
+        createEntry(port.m_alias, pos->second);
+    }
+
+    return true;
+}
+
+template <typename DropHandler, typename ForwardHandler>
+bool PfcWdSwOrch<DropHandler, ForwardHandler>::stopWdOnAllPorts()
+{
+    SWSS_LOG_ENTER();
+
+    auto allPorts = gPortsOrch->getAllPorts();
+
+    for (auto &it: allPorts)
+    {
+        Port port = it.second;
+        vector<FieldValueTuple> configs;
+        string status;
+
+        const string countersKey = this->getCountersTable()->getTableName()
+                + this->getCountersTable()->getTableNameSeparator()
+                + port.m_alias;
+
+        this->getCountersTable()->hget(countersKey, "PFC_WD_QUEUE_STATS_STORM_DETECTED", status);
+        if (status == PFC_WD_IN_STORM)
+        {
+            SWSS_LOG_ERROR("Storm detected on port %s, skipping disable.", port.m_alias.c_str());
+            continue;
+        }
+
+        string detection = *this->getCountersDb()->hget(countersKey, "PFC_WD_DETECTION_TIME");
+        string restoration = *this->getCountersDb()->hget(countersKey, "PFC_WD_DETECTION_TIME");
+        string action = *this->getCountersDb()->hget(countersKey, "PFC_WD_DETECTION_TIME");
+
+        configs.push_back(FieldValueTuple("PFC_WD_DETECTION_TIME", detection));
+        configs.push_back(FieldValueTuple("PFC_WD_RESTORATION_TIME", restoration));
+        configs.push_back(FieldValueTuple("PFC_WD_ACTION", action));
+
+        m_pfcwdconfigs.emplace(port.m_alias, configs);
+
+        PfcWdOrch<DropHandler, ForwardHandler>::deleteEntry(port.m_alias);
+    }
 
     return true;
 }
