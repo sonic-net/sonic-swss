@@ -802,8 +802,8 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::stopWdOnAllPorts()
         }
 
         string detection = *this->getCountersDb()->hget(countersKey, "PFC_WD_DETECTION_TIME");
-        string restoration = *this->getCountersDb()->hget(countersKey, "PFC_WD_DETECTION_TIME");
-        string action = *this->getCountersDb()->hget(countersKey, "PFC_WD_DETECTION_TIME");
+        string restoration = *this->getCountersDb()->hget(countersKey, "PFC_WD_RESTORATION_TIME");
+        string action = *this->getCountersDb()->hget(countersKey, "PFC_WD_ACTION");
 
         configs.push_back(FieldValueTuple("PFC_WD_DETECTION_TIME", detection));
         configs.push_back(FieldValueTuple("PFC_WD_RESTORATION_TIME", restoration));
