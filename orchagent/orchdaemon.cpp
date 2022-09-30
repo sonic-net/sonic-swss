@@ -376,8 +376,7 @@ bool OrchDaemon::init()
 
         static const vector<sai_queue_attr_t> queueAttrIds;
 
-        PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>* pfcwd_sw_orch =
-            new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
+        gPfcWdSwOrch = new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
                     m_configDb,
                     pfc_wd_tables,
                     portStatIds,
@@ -385,8 +384,7 @@ bool OrchDaemon::init()
                     queueAttrIds,
                     PFC_WD_POLL_MSECS);
 
-        gDirectory.set(pfcwd_sw_orch);
-        m_orchList.push_back(pfcwd_sw_orch);
+        m_orchList.push_back(gPfcWdSwOrch);
     }
     else if ((platform == INVM_PLATFORM_SUBSTRING)
              || (platform == CLX_PLATFORM_SUBSTRING)
@@ -425,8 +423,7 @@ bool OrchDaemon::init()
         if ((platform == INVM_PLATFORM_SUBSTRING) || (platform == NPS_PLATFORM_SUBSTRING)
 	|| (platform == CLX_PLATFORM_SUBSTRING))
         {
-            PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>* pfcwd_sw_orch =
-                new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
+            gPfcWdSwOrch = new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
                         m_configDb,
                         pfc_wd_tables,
                         portStatIds,
@@ -434,13 +431,11 @@ bool OrchDaemon::init()
                         queueAttrIds,
                         PFC_WD_POLL_MSECS);
 
-            gDirectory.set(pfcwd_sw_orch);
-            m_orchList.push_back(pfcwd_sw_orch);
+            m_orchList.push_back(gPfcWdSwOrch);
         }
         else if (platform == BFN_PLATFORM_SUBSTRING)
         {
-            PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>* pfcwd_sw_orch =
-                new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
+            gPfcWdSwOrch = new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
                         m_configDb,
                         pfc_wd_tables,
                         portStatIds,
@@ -448,8 +443,7 @@ bool OrchDaemon::init()
                         queueAttrIds,
                         PFC_WD_POLL_MSECS);
 
-            gDirectory.set(pfcwd_sw_orch);
-            m_orchList.push_back(pfcwd_sw_orch);
+            m_orchList.push_back(gPfcWdSwOrch);
         }
     }
     else if (platform == BRCM_PLATFORM_SUBSTRING)
@@ -485,8 +479,7 @@ bool OrchDaemon::init()
             SAI_QUEUE_ATTR_PAUSE_STATUS,
         };
 
-        PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>* pfcwd_sw_orch =
-            new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
+        gPfcWdSwOrch = new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
                 m_configDb,
                 pfc_wd_tables,
                 portStatIds,
@@ -494,8 +487,7 @@ bool OrchDaemon::init()
                 queueAttrIds,
                 PFC_WD_POLL_MSECS);
 
-        gDirectory.set(pfcwd_sw_orch);
-        m_orchList.push_back(pfcwd_sw_orch);
+        m_orchList.push_back(gPfcWdSwOrch);
     } else if (platform == CISCO_8000_PLATFORM_SUBSTRING)
     {
         static const vector<sai_port_stat_t> portStatIds;
@@ -510,8 +502,7 @@ bool OrchDaemon::init()
             SAI_QUEUE_ATTR_PAUSE_STATUS,
         };
 
-        PfcWdSwOrch<PfcWdSaiDlrInitHandler, PfcWdActionHandler>* pfcwd_sw_orch =
-            new PfcWdSwOrch<PfcWdSaiDlrInitHandler, PfcWdActionHandler>(
+        gPfcWdSwOrch = new PfcWdSwOrch<PfcWdSaiDlrInitHandler, PfcWdActionHandler>(
                     m_configDb,
                     pfc_wd_tables,
                     portStatIds,
@@ -519,8 +510,7 @@ bool OrchDaemon::init()
                     queueAttrIds,
                     PFC_WD_POLL_MSECS);
 
-        gDirectory.set(pfcwd_sw_orch);
-        m_orchList.push_back(pfcwd_sw_orch);
+        m_orchList.push_back(gPfcWdSwOrch);
     }
 
     m_orchList.push_back(&CounterCheckOrch::getInstance(m_configDb));
