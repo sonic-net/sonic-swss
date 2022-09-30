@@ -4512,6 +4512,51 @@ void PortsOrch::doTask(Consumer &consumer)
     }
 }
 
+void PortsOrch::initializeVoqs(Port &port)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    attr.id = SAI_SYSTEM_PORT_ATTR_QOS_NUMBER_OF_VOQS;
+    sai_status_t status = sai_system_port_api->get_system_port_attribute(
+		    port.m_system_port_oid, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get number of voqs for port %s rv:%d", port.m_alias.c_str(), status);
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            throw runtime_error("PortsOrch initialization failure.");
+        }
+    }
+    SWSS_LOG_INFO("Get %d voq for port %s", attr.value.u32, port.m_alias.c_str());
+
+    port.m_system_port_info.m_voq_ids.resize(attr.value.u32);
+
+    if (attr.value.u32 == 0)
+    {
+        return;
+    }
+
+    attr.id = SAI_SYSTEM_PORT_ATTR_QOS_VOQ_LIST;
+    attr.value.objlist.count = (uint32_t)port.m_system_port_info.m_voq_ids.size();
+    attr.value.objlist.list = port.m_system_port_info.m_voq_ids.data();
+
+    status = sai_system_port_api->get_system_port_attribute(
+			port.m_system_port_oid, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get voq list for port %s rv:%d", port.m_alias.c_str(), status);
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            throw runtime_error("PortsOrch initialization failure.");
+        }
+    }
+
+    SWSS_LOG_INFO("Get voqs for port %s", port.m_alias.c_str());
+}
+
 void PortsOrch::initializeQueues(Port &port)
 {
     SWSS_LOG_ENTER();
@@ -7361,6 +7406,7 @@ bool PortsOrch::addSystemPorts()
             port.m_system_port_info.speed = attrs[1].value.sysportconfig.speed;
             port.m_system_port_info.num_voq = attrs[1].value.sysportconfig.num_voq;
 
+            initializeVoqs( port );
             setPort(port.m_alias, port);
             if(m_port_ref_count.find(port.m_alias) == m_port_ref_count.end())
             {
