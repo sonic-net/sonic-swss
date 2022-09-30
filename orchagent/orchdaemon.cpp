@@ -376,7 +376,8 @@ bool OrchDaemon::init()
 
         static const vector<sai_queue_attr_t> queueAttrIds;
 
-        gPfcWdSwOrch = new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
+        gPfcWdSwOrch = (PfcWdSwOrch<PfcWdActionHandler,PfcWdActionHandler> *)
+            new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
                     m_configDb,
                     pfc_wd_tables,
                     portStatIds,
@@ -423,7 +424,8 @@ bool OrchDaemon::init()
         if ((platform == INVM_PLATFORM_SUBSTRING) || (platform == NPS_PLATFORM_SUBSTRING)
 	|| (platform == CLX_PLATFORM_SUBSTRING))
         {
-            gPfcWdSwOrch = new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
+            gPfcWdSwOrch = (PfcWdSwOrch<PfcWdActionHandler,PfcWdActionHandler> *)
+                new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
                         m_configDb,
                         pfc_wd_tables,
                         portStatIds,
@@ -435,7 +437,8 @@ bool OrchDaemon::init()
         }
         else if (platform == BFN_PLATFORM_SUBSTRING)
         {
-            gPfcWdSwOrch = new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
+            gPfcWdSwOrch = (PfcWdSwOrch<PfcWdActionHandler,PfcWdActionHandler> *)
+                new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
                         m_configDb,
                         pfc_wd_tables,
                         portStatIds,
@@ -479,7 +482,8 @@ bool OrchDaemon::init()
             SAI_QUEUE_ATTR_PAUSE_STATUS,
         };
 
-        gPfcWdSwOrch = new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
+        gPfcWdSwOrch = (PfcWdSwOrch<PfcWdActionHandler,PfcWdActionHandler> *)
+            new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
                 m_configDb,
                 pfc_wd_tables,
                 portStatIds,
@@ -502,7 +506,8 @@ bool OrchDaemon::init()
             SAI_QUEUE_ATTR_PAUSE_STATUS,
         };
 
-        gPfcWdSwOrch = new PfcWdSwOrch<PfcWdSaiDlrInitHandler, PfcWdActionHandler>(
+        gPfcWdSwOrch = (PfcWdSwOrch<PfcWdActionHandler,PfcWdActionHandler> *)
+            new PfcWdSwOrch<PfcWdSaiDlrInitHandler, PfcWdActionHandler>(
                     m_configDb,
                     pfc_wd_tables,
                     portStatIds,
