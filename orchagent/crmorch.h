@@ -74,6 +74,7 @@ private:
         sai_object_id_t id = 0;
         uint32_t availableCounter = 0;
         uint32_t usedCounter = 0;
+        uint32_t exceededLogCounter = 0;
     };
 
     struct CrmResourceEntry
@@ -88,7 +89,6 @@ private:
 
         std::map<std::string, CrmResourceCounter> countersMap;
 
-        uint32_t exceededLogCounter = 0;
         CrmResourceStatus resStatus = CrmResourceStatus::CRM_RES_SUPPORTED;
     };
 
