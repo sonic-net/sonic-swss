@@ -120,6 +120,8 @@ private:
     void enableBigRedSwitchMode();
     void setBigRedSwitchMode(string value);
 
+    bool PfcWdInStormOnPort(Port port);
+
     map<sai_object_id_t, PfcWdQueueEntry> m_entryMap;
     map<sai_object_id_t, PfcWdQueueEntry> m_brsEntryMap;
     // Track configs during disable

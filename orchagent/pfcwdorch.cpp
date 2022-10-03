@@ -779,6 +779,25 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdOnAllPorts()
 }
 
 template <typename DropHandler, typename ForwardHandler>
+bool PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdInStormOnPort(Port port) {
+    PfcWdActionHandler::PfcWdQueueStats status;
+    sai_object_id_t queueId = SAI_NULL_OBJECT_ID;
+    for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
+    {
+        sai_object_id_t queueId = port.m_queue_ids[i];
+        PfcWdActionHandler::getQueueStats(
+                this->getCountersTable(),
+                sai_serialize_object_id(queueId));
+        if (status == PFC_WD_IN_STORM)
+        {
+            SWSS_LOG_ERROR("Storm detected on port %s.", port.m_alias.c_str());
+            return true;
+        }
+    }
+    return false;
+}
+
+template <typename DropHandler, typename ForwardHandler>
 bool PfcWdSwOrch<DropHandler, ForwardHandler>::stopWdOnAllPorts()
 {
     SWSS_LOG_ENTER();
@@ -788,30 +807,28 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::stopWdOnAllPorts()
     for (auto &it: allPorts)
     {
         Port port = it.second;
-        vector<FieldValueTuple> configs;
-        string status;
 
-        const string countersKey = this->getCountersTable()->getTableName()
-                + this->getCountersTable()->getTableNameSeparator()
-                + port.m_alias;
-
-        this->getCountersTable()->hget(countersKey, "PFC_WD_QUEUE_STATS_STORM_DETECTED", status);
-        if (status == PFC_WD_IN_STORM)
-        {
-            SWSS_LOG_ERROR("Storm detected on port %s, skipping disable.", port.m_alias.c_str());
+        // Check if port is currently storming
+        if (PfcWdInStormOnPort(port)) {
             continue;
         }
 
+        // Store configurations for enabling on all ports next time
+        const string countersKey = this->getCountersTable()->getTableName()
+                + this->getCountersTable()->getTableNameSeparator()
+                + port.m_alias;
         string detection = *this->getCountersDb()->hget(countersKey, "PFC_WD_DETECTION_TIME");
         string restoration = *this->getCountersDb()->hget(countersKey, "PFC_WD_RESTORATION_TIME");
         string action = *this->getCountersDb()->hget(countersKey, "PFC_WD_ACTION");
 
+        vector<FieldValueTuple> configs;
         configs.push_back(FieldValueTuple("PFC_WD_DETECTION_TIME", detection));
         configs.push_back(FieldValueTuple("PFC_WD_RESTORATION_TIME", restoration));
         configs.push_back(FieldValueTuple("PFC_WD_ACTION", action));
 
         m_pfcwdconfigs.emplace(port.m_alias, configs);
 
+        // Disable PfcWd on this port
         PfcWdOrch<DropHandler, ForwardHandler>::deleteEntry(port.m_alias);
     }
 
