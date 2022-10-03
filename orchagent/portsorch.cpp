@@ -4556,6 +4556,7 @@ void PortsOrch::initializeVoqs(Port &port)
     }
 
     SWSS_LOG_INFO("Get voqs for port %s", port.m_alias.c_str());
+
 }
 */
 
