@@ -28,6 +28,7 @@ extern std::string mockCmdStdcout;
 extern std::vector<std::string> mockCallArgs;
 std::set<std::string> g_portSet;
 bool g_init = false;
+std::string g_switchType;
 
 void writeToApplDB(swss::ProducerStateTable &p, swss::DBConnector &cfgDb)
 {
