@@ -772,6 +772,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdOnAllPorts()
         }
 
         createEntry(port.m_alias, pos->second);
+        m_pfcwdconfigs.erase(pos);
     }
 
     return true;
@@ -809,7 +810,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::stopWdOnAllPorts()
         configs.push_back(FieldValueTuple("PFC_WD_RESTORATION_TIME", restoration));
         configs.push_back(FieldValueTuple("PFC_WD_ACTION", action));
 
-        m_pfcwdconfigs.emplace(port.m_alias, configs);
+        m_pfcwdconfigs.insert(port.m_alias, configs);
 
         PfcWdOrch<DropHandler, ForwardHandler>::deleteEntry(port.m_alias);
     }
