@@ -858,7 +858,7 @@ class TestMuxTunnelBase():
             pytest.fail('Invalid test action {}'.format(action))
 
     def check_pfc_wd_state(self, dvs, state):
-        pfc_wd_state = dvs.runcmd('show runningconfiguration all | grep default_pfcwd | grep ' + state)
+        pfc_wd_state = dvs.runcmd("show runningconfiguration all | grep default_pfcwd | grep " + state)
         assert (pfc_wd_state == state);
 
     @pytest.fixture(scope='module')
