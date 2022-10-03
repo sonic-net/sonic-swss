@@ -775,19 +775,24 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdOnAllPorts()
         m_pfcwdconfigs.erase(pos);
     }
 
+    m_pfcwdconfigs.clear();
+
     return true;
 }
 
 template <typename DropHandler, typename ForwardHandler>
 bool PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdInStormOnPort(Port port) {
-    PfcWdActionHandler::PfcWdQueueStats status;
+    string status;
     sai_object_id_t queueId = SAI_NULL_OBJECT_ID;
     for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
     {
-        sai_object_id_t queueId = port.m_queue_ids[i];
-        PfcWdActionHandler::getQueueStats(
-                this->getCountersTable(),
-                sai_serialize_object_id(queueId));
+        queueId = port.m_queue_ids[i];
+        string countersKey = this->getCountersTable()->getTableName()
+                + this->getCountersTable()->getTableNameSeparator()
+                + sai_serialize_object_id(queueId);
+
+        status = *this->getCountersDb()->hget(countersKey, "PFC_WD_STATUS");
+
         if (status == PFC_WD_IN_STORM)
         {
             SWSS_LOG_ERROR("Storm detected on port %s.", port.m_alias.c_str());

@@ -207,7 +207,7 @@ class TestPfcwdFunc(object):
                 queue_name = port + ":" + str(queue)
                 self.counters_db.update_entry("COUNTERS", self.queue_oids[queue_name], fvs)
 
-    def set_storm_state(self, queues, state="enabled"):
+    def set_storm_state(self, queues, state="'enabled'"):
         fvs = {"DEBUG_STORM": state}
         for port in self.test_ports:
             for queue in queues:
