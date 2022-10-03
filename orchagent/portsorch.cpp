@@ -7406,7 +7406,7 @@ bool PortsOrch::addSystemPorts()
             port.m_system_port_info.speed = attrs[1].value.sysportconfig.speed;
             port.m_system_port_info.num_voq = attrs[1].value.sysportconfig.num_voq;
 
-            initializeVoqs( port );
+            //initializeVoqs( port );
             setPort(port.m_alias, port);
             if(m_port_ref_count.find(port.m_alias) == m_port_ref_count.end())
             {
