@@ -144,7 +144,6 @@ public:
     std::set<std::string> m_members;
     std::set<std::string> m_child_ports;
     std::vector<sai_object_id_t> m_queue_ids;
-    std::vector<sai_object_id_t> m_voq_ids;
     std::vector<sai_object_id_t> m_priority_group_ids;
     sai_port_priority_flow_control_mode_t m_pfc_asym = SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_COMBINED;
     uint8_t   m_pfc_bitmask = 0;        // PFC enable bit mask
@@ -187,6 +186,7 @@ public:
 
     int m_cap_an = -1; /* Capability - AutoNeg, -1 means not set */
     int m_cap_lt = -1; /* Capability - LinkTraining, -1 means not set */
+    std::vector<sai_object_id_t> m_voq_ids;
 };
 
 }
