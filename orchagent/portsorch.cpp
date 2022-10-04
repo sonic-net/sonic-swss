@@ -4537,7 +4537,7 @@ void PortsOrch::initializeVoqs(Port &port)
     }
     SWSS_LOG_INFO("Get %d voq for port %s", attr.value.u32, port.m_alias.c_str());
 
-    port.m_system_port_info.m_voq_ids.resize(attr.value.u32);
+    port.m_voq_ids.resize(attr.value.u32);
 
     if (attr.value.u32 == 0)
     {
@@ -4545,8 +4545,8 @@ void PortsOrch::initializeVoqs(Port &port)
     }
 
     attr.id = SAI_SYSTEM_PORT_ATTR_QOS_VOQ_LIST;
-    attr.value.objlist.count = (uint32_t)port.m_system_port_info.m_voq_ids.size();
-    attr.value.objlist.list = port.m_system_port_info.m_voq_ids.data();
+    attr.value.objlist.count = (uint32_t)port.m_voq_ids.size();
+    attr.value.objlist.list = port.m_voq_ids.data();
 
     status = sai_system_port_api->get_system_port_attribute(
 			port.m_system_port_oid, 1, &attr);
@@ -6097,7 +6097,7 @@ void PortsOrch::generateQueueMapPerPort(const Port& port, bool voq)
     std::vector<sai_object_id_t> queue_ids;
     if (voq)
     {
-        queue_ids = port.m_system_port_info.m_voq_ids; 
+        queue_ids = port.m_voq_ids; 
     }
     else
     {
