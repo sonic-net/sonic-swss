@@ -45,8 +45,10 @@
 #include "bfdorch.h"
 #include "srv6orch.h"
 #include "nvgreorch.h"
+#include <sairedis.h>
 
 using namespace swss;
+extern bool gSaiRedisLogRotate;
 
 class OrchDaemon
 {
@@ -67,6 +69,7 @@ public:
     {
         m_fabricEnabled = enabled;
     }
+    void logRotate();
 private:
     DBConnector *m_applDb;
     DBConnector *m_configDb;
