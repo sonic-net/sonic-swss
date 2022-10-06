@@ -582,7 +582,7 @@ bool PortsOrch::getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uin
     return true;
 }
 
-void PortsOrch::generateQueueMapPerPort(const Port &port)
+void PortsOrch::generateQueueMapPerPort(const Port &port, bool voq)
 {
 }
 
