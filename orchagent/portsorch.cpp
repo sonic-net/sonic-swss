@@ -4681,9 +4681,15 @@ bool PortsOrch::initializePort(Port &port)
         return false;
     }
 
-    /* initialize port admin speed */
-    if (!getPortSpeed(port.m_port_id, port.m_speed))
+    if (port.m_autoneg == 1 && !getPortAdvSpeeds(port, true, port.m_adv_speeds))
     {
+        /* initialize port advertised speed */
+        SWSS_LOG_ERROR("Failed to get initial port advertised speed %d", port.m_adv_speeds);
+        return false;
+    }
+    else if (!getPortSpeed(port.m_port_id, port.m_speed))
+    {
+        /* initialize port admin speed */
         SWSS_LOG_ERROR("Failed to get initial port admin speed %d", port.m_speed);
         return false;
     }
