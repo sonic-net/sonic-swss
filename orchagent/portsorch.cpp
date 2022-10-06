@@ -4537,7 +4537,6 @@ void PortsOrch::initializeVoqs(Port &port)
     }
     SWSS_LOG_INFO("Get %d voq for port %s", attr.value.u32, port.m_alias.c_str());
 
-    //port.m_system_port_info.m_voq_ids.resize(attr.value.u32);
     m_port_voq_ids[port.m_alias] = std::vector<sai_object_id_t>( attr.value.u32 );
 
     if (attr.value.u32 == 0)
