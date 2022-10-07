@@ -46,6 +46,12 @@ enum {
     RED_DROP_PROBABILITY_SET    = (1U << 2)
 };
 
+enum {
+    GREEN_WRED_ENABLED  = (1U << 0),
+    YELLOW_WRED_ENABLED = (1U << 1),
+    RED_WRED_ENABLED    = (1U << 2)
+};
+
 // field_name is what is expected in CONFIG_DB PORT_QOS_MAP table
 map<string, sai_port_attr_t> qos_to_attr_map = {
     {dscp_to_tc_field_name, SAI_PORT_ATTR_QOS_DSCP_TO_TC_MAP},
@@ -720,6 +726,7 @@ sai_object_id_t WredMapHandler::addQosItem(const vector<sai_attribute_t> &attrib
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
     uint8_t drop_prob_set = 0;
+    uint8_t wred_enable_set = 0;
 
     attr.id = SAI_WRED_ATTR_WEIGHT;
     attr.value.s32 = 0;
@@ -729,32 +736,53 @@ sai_object_id_t WredMapHandler::addQosItem(const vector<sai_attribute_t> &attrib
     {
         attrs.push_back(attrib);
 
-        if (attrib.id == SAI_WRED_ATTR_GREEN_DROP_PROBABILITY)
+        switch (attrib.id)
         {
+        case SAI_WRED_ATTR_GREEN_ENABLE:
+            if (attrib.value.booldata)
+            {
+                wred_enable_set |= GREEN_WRED_ENABLED;
+            }
+            break;
+        case SAI_WRED_ATTR_YELLOW_ENABLE:
+            if (attrib.value.booldata)
+            {
+                wred_enable_set |= YELLOW_WRED_ENABLED;
+            }
+            break;
+        case SAI_WRED_ATTR_RED_ENABLE:
+            if (attrib.value.booldata)
+            {
+                wred_enable_set |= RED_WRED_ENABLED;
+            }
+            break;
+        case SAI_WRED_ATTR_GREEN_DROP_PROBABILITY:
             drop_prob_set |= GREEN_DROP_PROBABILITY_SET;
-        }
-        else if (attrib.id == SAI_WRED_ATTR_YELLOW_DROP_PROBABILITY)
-        {
+            break;
+        case SAI_WRED_ATTR_YELLOW_DROP_PROBABILITY:
             drop_prob_set |= YELLOW_DROP_PROBABILITY_SET;
-        }
-        else if (attrib.id == SAI_WRED_ATTR_RED_DROP_PROBABILITY)
-        {
+            break;
+        case SAI_WRED_ATTR_RED_DROP_PROBABILITY:
             drop_prob_set |= RED_DROP_PROBABILITY_SET;
+            break;
+        default:
+            break;
         }
     }
-    if (!(drop_prob_set & GREEN_DROP_PROBABILITY_SET))
+
+    if (!(drop_prob_set & GREEN_DROP_PROBABILITY_SET) && (wred_enable_set & GREEN_WRED_ENABLED))
     {
         attr.id = SAI_WRED_ATTR_GREEN_DROP_PROBABILITY;
         attr.value.s32 = 100;
         attrs.push_back(attr);
     }
-    if (!(drop_prob_set & YELLOW_DROP_PROBABILITY_SET))
+    if (!(drop_prob_set & YELLOW_DROP_PROBABILITY_SET) && (wred_enable_set & YELLOW_WRED_ENABLED))
     {
         attr.id = SAI_WRED_ATTR_YELLOW_DROP_PROBABILITY;
         attr.value.s32 = 100;
         attrs.push_back(attr);
     }
-    if (!(drop_prob_set & RED_DROP_PROBABILITY_SET))
+    if (!(drop_prob_set & RED_DROP_PROBABILITY_SET) && (wred_enable_set & RED_WRED_ENABLED))
     {
         attr.id = SAI_WRED_ATTR_RED_DROP_PROBABILITY;
         attr.value.s32 = 100;

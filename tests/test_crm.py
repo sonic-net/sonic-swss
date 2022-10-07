@@ -697,12 +697,22 @@ class TestCrm(object):
         entry_used_counter = getCrmCounterValue(dvs, 'ACL_STATS:INGRESS:PORT', 'crm_stats_acl_group_used')
         assert entry_used_counter == 3
 
-        # remove ACL table
-        #tbl._del("test-aclv6")
-        #time.sleep(2)
-        #atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP")
-        #table_used_counter = getCrmCounterValue(dvs, 'ACL_STATS:INGRESS:PORT', 'crm_stats_acl_group_used')
-        #assert table_used_counter == 0
+        marker = dvs.add_log_marker()
+        crm_update(dvs, "polling_interval", "1")
+        crm_update(dvs, "acl_group_threshold_type", "used")
+        crm_update(dvs, "acl_group_low_threshold", str(0))
+        crm_update(dvs, "acl_group_high_threshold", str(2))
+
+        time.sleep(2)
+        check_syslog(dvs, marker, "ACL_GROUP THRESHOLD_EXCEEDED for TH_USED", 1)
+        check_syslog(dvs, marker, "ACL_GROUP THRESHOLD_CLEAR for TH_USED", 0)
+
+        tbl._del("test-aclv6")
+        time.sleep(2)
+        check_syslog(dvs, marker, "ACL_GROUP THRESHOLD_CLEAR for TH_USED", 1)
+
+        table_used_counter = getCrmCounterValue(dvs, 'ACL_STATS:INGRESS:PORT', 'crm_stats_acl_group_used')
+        assert table_used_counter == 0
 
     def test_CrmSnatEntry(self, dvs, testlog):
 

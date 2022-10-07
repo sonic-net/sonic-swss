@@ -183,7 +183,7 @@ void IntfsOrch::increaseRouterIntfsRefCount(const string &alias)
     SWSS_LOG_ENTER();
 
     m_syncdIntfses[alias].ref_count++;
-    SWSS_LOG_DEBUG("Router interface %s ref count is increased to %d",
+    SWSS_LOG_INFO("Router interface %s ref count is increased to %d",
                   alias.c_str(), m_syncdIntfses[alias].ref_count);
 }
 
@@ -192,7 +192,7 @@ void IntfsOrch::decreaseRouterIntfsRefCount(const string &alias)
     SWSS_LOG_ENTER();
 
     m_syncdIntfses[alias].ref_count--;
-    SWSS_LOG_DEBUG("Router interface %s ref count is decreased to %d",
+    SWSS_LOG_INFO("Router interface %s ref count is decreased to %d",
                   alias.c_str(), m_syncdIntfses[alias].ref_count);
 }
 
@@ -1271,7 +1271,7 @@ bool IntfsOrch::removeRouterIntfs(Port &port)
 
     if (m_syncdIntfses[port.m_alias].ref_count > 0)
     {
-        SWSS_LOG_NOTICE("Router interface is still referenced");
+        SWSS_LOG_NOTICE("Router interface %s is still referenced with ref count %d", port.m_alias.c_str(), m_syncdIntfses[port.m_alias].ref_count);
         return false;
     }
 

@@ -176,14 +176,14 @@ namespace routeorch_test
                 { APP_LAG_MEMBER_TABLE_NAME, portsorch_base_pri }
             };
 
-            ASSERT_EQ(gPortsOrch, nullptr);
-            gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
-
             vector<string> flex_counter_tables = {
                 CFG_FLEX_COUNTER_TABLE_NAME
             };
             auto* flexCounterOrch = new FlexCounterOrch(m_config_db.get(), flex_counter_tables);
             gDirectory.set(flexCounterOrch);
+
+            ASSERT_EQ(gPortsOrch, nullptr);
+            gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
 
             static const  vector<string> route_pattern_tables = {
                 CFG_FLOW_COUNTER_ROUTE_PATTERN_TABLE_NAME,

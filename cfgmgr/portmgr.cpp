@@ -23,27 +23,55 @@ PortMgr::PortMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
 bool PortMgr::setPortMtu(const string &alias, const string &mtu)
 {
     stringstream cmd;
-    string res;
+    string res, cmd_str;
 
     // ip link set dev <port_name> mtu <mtu>
     cmd << IP_CMD << " link set dev " << shellquote(alias) << " mtu " << shellquote(mtu);
-    EXEC_WITH_ERROR_THROW(cmd.str(), res);
-
-    // Set the port MTU in application database to update both
-    // the port MTU and possibly the port based router interface MTU
-    return writeConfigToAppDb(alias, "mtu", mtu);
+    cmd_str = cmd.str();
+    int ret = swss::exec(cmd_str, res);
+    if (!ret)
+    {
+        // Set the port MTU in application database to update both
+        // the port MTU and possibly the port based router interface MTU
+        return writeConfigToAppDb(alias, "mtu", mtu);
+    }
+    else if (!isPortStateOk(alias))
+    {
+        // Can happen when a DEL notification is sent by portmgrd immediately followed by a new SET notif
+        SWSS_LOG_WARN("Setting mtu to alias:%s netdev failed with cmd:%s, rc:%d, error:%s", alias.c_str(), cmd_str.c_str(), ret, res.c_str());
+        return false;
+    }
+    else
+    {
+        throw runtime_error(cmd_str + " : " + res);
+    }
+    return true;
 }
 
 bool PortMgr::setPortAdminStatus(const string &alias, const bool up)
 {
     stringstream cmd;
-    string res;
+    string res, cmd_str;
 
     // ip link set dev <port_name> [up|down]
     cmd << IP_CMD << " link set dev " << shellquote(alias) << (up ? " up" : " down");
-    EXEC_WITH_ERROR_THROW(cmd.str(), res);
-
-    return writeConfigToAppDb(alias, "admin_status", (up ? "up" : "down"));
+    cmd_str = cmd.str();
+    int ret = swss::exec(cmd_str, res);
+    if (!ret)
+    {
+        return writeConfigToAppDb(alias, "admin_status", (up ? "up" : "down"));
+    }
+    else if (!isPortStateOk(alias))
+    {
+        // Can happen when a DEL notification is sent by portmgrd immediately followed by a new SET notification
+        SWSS_LOG_WARN("Setting admin_status to alias:%s netdev failed with cmd%s, rc:%d, error:%s", alias.c_str(), cmd_str.c_str(), ret, res.c_str());
+        return false;
+    }
+    else
+    {
+        throw runtime_error(cmd_str + " : " + res);
+    }
+    return true;
 }
 
 bool PortMgr::isPortStateOk(const string &alias)
@@ -124,10 +152,9 @@ void PortMgr::doTask(Consumer &consumer)
                 }
             }
 
-            for (auto &entry : field_values)
+            if (field_values.size())
             {
-                writeConfigToAppDb(alias, fvField(entry), fvValue(entry));
-                SWSS_LOG_NOTICE("Configure %s %s to %s", alias.c_str(), fvField(entry).c_str(), fvValue(entry).c_str());
+                writeConfigToAppDb(alias, field_values);
             }
 
             if (!portOk)
@@ -136,6 +163,7 @@ void PortMgr::doTask(Consumer &consumer)
 
                 writeConfigToAppDb(alias, "mtu", mtu);
                 writeConfigToAppDb(alias, "admin_status", admin_status);
+                /* Retry setting these params after the netdev is created */
                 field_values.clear();
                 field_values.emplace_back("mtu", mtu);
                 field_values.emplace_back("admin_status", admin_status);
@@ -174,5 +202,11 @@ bool PortMgr::writeConfigToAppDb(const std::string &alias, const std::string &fi
     fvs.push_back(fv);
     m_appPortTable.set(alias, fvs);
 
+    return true;
+}
+
+bool PortMgr::writeConfigToAppDb(const std::string &alias, std::vector<FieldValueTuple> &field_values)
+{
+    m_appPortTable.set(alias, field_values);
     return true;
 }

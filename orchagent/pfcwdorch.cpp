@@ -32,6 +32,8 @@ extern sai_switch_api_t* sai_switch_api;
 extern sai_port_api_t *sai_port_api;
 extern sai_queue_api_t *sai_queue_api;
 
+extern event_handle_t g_events_handle;
+
 extern SwitchOrch *gSwitchOrch;
 extern PortsOrch *gPortsOrch;
 
@@ -934,6 +936,26 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(SelectableTimer &timer)
 }
 
 template <typename DropHandler, typename ForwardHandler>
+void PfcWdSwOrch<DropHandler, ForwardHandler>::report_pfc_storm(
+        sai_object_id_t id, const PfcWdQueueEntry *entry)
+{
+    event_params_t params = {
+        { "ifname", entry->portAlias },
+        { "queue_index", to_string(entry->index) },
+        { "queue_id", to_string(id) },
+        { "port_id", to_string(entry->portId) }};
+
+    SWSS_LOG_NOTICE(
+            "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ".",
+            entry->portAlias.c_str(),
+            entry->index,
+            id,
+            entry->portId);
+
+    event_publish(g_events_handle, "pfc-storm", &params);
+}
+
+template <typename DropHandler, typename ForwardHandler>
 bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string &event, sai_object_id_t queueId)
 {
     auto entry = m_entryMap.find(queueId);
@@ -955,12 +977,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
         {
             if (entry->second.handler == nullptr)
             {
-                SWSS_LOG_NOTICE(
-                        "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ".",
-                        entry->second.portAlias.c_str(),
-                        entry->second.index,
-                        entry->first,
-                        entry->second.portId);
+                report_pfc_storm(entry->first, &entry->second);
 
                 entry->second.handler = make_shared<PfcWdActionHandler>(
                         entry->second.portId,
@@ -977,12 +994,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
         {
             if (entry->second.handler == nullptr)
             {
-                SWSS_LOG_NOTICE(
-                        "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ".",
-                        entry->second.portAlias.c_str(),
-                        entry->second.index,
-                        entry->first,
-                        entry->second.portId);
+                report_pfc_storm(entry->first, &entry->second);
 
                 entry->second.handler = make_shared<DropHandler>(
                         entry->second.portId,
@@ -999,12 +1011,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
         {
             if (entry->second.handler == nullptr)
             {
-                SWSS_LOG_NOTICE(
-                        "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ".",
-                        entry->second.portAlias.c_str(),
-                        entry->second.index,
-                        entry->first,
-                        entry->second.portId);
+                report_pfc_storm(entry->first, &entry->second);
 
                 entry->second.handler = make_shared<ForwardHandler>(
                         entry->second.portId,
