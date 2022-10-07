@@ -2,7 +2,7 @@ import distro
 import pytest
 
 from distutils.version import StrictVersion
-from dvslib.dvs_common import PollingConfig
+from dvslib.dvs_common import PollingConfig, wait_for_result
 
 @pytest.mark.usefixtures("testlog")
 @pytest.mark.usefixtures('dvs_vlan_manager')
@@ -435,6 +435,100 @@ class TestVlan(object):
         self.dvs_vlan.remove_vlan(vlan)
         self.dvs_vlan.get_and_verify_vlan_ids(0)
         self.dvs_vlan.get_and_verify_vlan_hostif_ids(len(dvs.asic_db.hostif_name_map) - 1)
+
+    def test_VlanGratArp(self, dvs):
+        def arp_accept_enabled():
+            rc, res = dvs.runcmd("cat /proc/sys/net/ipv4/conf/Vlan{}/arp_accept".format(vlan))
+            return (res.strip("\n") == "1", res)
+
+        def arp_accept_disabled():
+            rc, res = dvs.runcmd("cat /proc/sys/net/ipv4/conf/Vlan{}/arp_accept".format(vlan))
+            return (res.strip("\n") == "0", res)
+
+        vlan = "2"
+        self.dvs_vlan.create_vlan(vlan)
+        self.dvs_vlan.create_vlan_interface(vlan)
+        self.dvs_vlan.set_vlan_intf_property(vlan, "grat_arp", "enabled")
+
+        wait_for_result(arp_accept_enabled, PollingConfig(), "IPv4 arp_accept not enabled")
+
+        # Not currently possible to test `accept_untracked_na` as it doesn't exist in the kernel for
+        # our test VMs (only present in kernels 5.19 and above)
+
+        self.dvs_vlan.set_vlan_intf_property(vlan, "grat_arp", "disabled")
+
+        wait_for_result(arp_accept_disabled, PollingConfig(), "IPv4 arp_accept not disabled")
+
+        self.dvs_vlan.remove_vlan(vlan)
+
+    def test_VlanProxyArp(self, dvs): 
+
+        def proxy_arp_enabled():
+            rc, proxy_arp_res = dvs.runcmd("cat /proc/sys/net/ipv4/conf/Vlan{}/proxy_arp".format(vlan))
+            rc, pvlan_res = dvs.runcmd("cat /proc/sys/net/ipv4/conf/Vlan{}/proxy_arp_pvlan".format(vlan))
+
+            return (proxy_arp_res.strip("\n") == "1" and pvlan_res.strip("\n") == "1", (proxy_arp_res, pvlan_res))
+
+        def proxy_arp_disabled():
+            rc, proxy_arp_res = dvs.runcmd("cat /proc/sys/net/ipv4/conf/Vlan{}/proxy_arp".format(vlan))
+            rc, pvlan_res = dvs.runcmd("cat /proc/sys/net/ipv4/conf/Vlan{}/proxy_arp_pvlan".format(vlan))
+
+            return (proxy_arp_res.strip("\n") == "0" and pvlan_res.strip("\n") == "0", (proxy_arp_res, pvlan_res))
+            
+        vlan = "2"
+        self.dvs_vlan.create_vlan(vlan)
+        self.dvs_vlan.create_vlan_interface(vlan)
+        self.dvs_vlan.set_vlan_intf_property(vlan, "proxy_arp", "enabled")
+
+        wait_for_result(proxy_arp_enabled, PollingConfig(), 'IPv4 proxy_arp or proxy_arp_pvlan not enabled')
+
+        self.dvs_vlan.set_vlan_intf_property(vlan, "proxy_arp", "disabled")
+
+        wait_for_result(proxy_arp_disabled, PollingConfig(), 'IPv4 proxy_arp or proxy_arp_pvlan not disabled')
+
+        self.dvs_vlan.remove_vlan(vlan)
+
+    def test_VlanMemberLinkDown(self, dvs):
+
+        # TODO: add_ip_address has a dependency on cdb within dvs,
+        # so we still need to setup the db. This should be refactored.
+        dvs.setup_db()
+
+        vlan = "1000"
+        vlan_ip = "192.168.0.1/21"
+        interface = "Ethernet0"
+        vlan_interface = "Vlan%s" % vlan
+        server_ip = "192.168.0.100"
+        vlan_intf_sysctl_param_path = "/proc/sys/net/ipv4/conf/%s/arp_evict_nocarrier" % vlan_interface
+
+        self.dvs_vlan.create_vlan(vlan)
+        vlan_oid = self.dvs_vlan.get_and_verify_vlan_ids(1)[0]
+        self.dvs_vlan.verify_vlan(vlan_oid, vlan)
+        self.dvs_vlan.create_vlan_member(vlan, interface)
+        self.dvs_vlan.verify_vlan_member(vlan_oid, interface)
+        dvs.set_interface_status(interface, "up")
+        dvs.add_ip_address(vlan_interface, vlan_ip)
+        dvs.runcmd("ip neigh replace %s lladdr 11:22:33:44:55:66 dev %s nud stale" % (server_ip, vlan_interface))
+
+        neigh_oid = self.dvs_vlan.app_db.wait_for_n_keys("NEIGH_TABLE", 1)[0]
+        assert vlan_interface in neigh_oid and server_ip in neigh_oid
+
+        # NOTE: arp_evict_nocarrier is available for kernel >= v5.16 and current
+        # docker-sonic-vs is based on kernel v5.4.0, so test only if this sysctl
+        # param is present
+        rc, res = dvs.runcmd("cat %s" % vlan_intf_sysctl_param_path)
+        if rc == 0:
+            assert res.strip() == "0"
+            dvs.set_interface_status(interface, "down")
+            neigh_oid = self.dvs_vlan.app_db.wait_for_n_keys("NEIGH_TABLE", 1)[0]
+            assert vlan_interface in neigh_oid and server_ip in neigh_oid
+
+        dvs.runcmd("ip neigh flush all")
+        dvs.remove_ip_address(vlan_interface, vlan_ip)
+        self.dvs_vlan.remove_vlan_member(vlan, interface)
+        self.dvs_vlan.get_and_verify_vlan_member_ids(0)
+        self.dvs_vlan.remove_vlan(vlan)
+        self.dvs_vlan.get_and_verify_vlan_ids(0)
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
