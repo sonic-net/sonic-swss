@@ -61,6 +61,9 @@ class DVSVlan(object):
 
     def verify_vlan(self, vlan_oid, vlan_id):
         vlan = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_VLAN", vlan_oid)
+        print( "Vlan is " )
+        print( vlan )
+        print( vlan.get("SAI_VLAN_ATTR_VLAN_ID") )
         assert vlan.get("SAI_VLAN_ATTR_VLAN_ID") == vlan_id
 
     def get_and_verify_vlan_ids(self,

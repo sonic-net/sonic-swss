@@ -84,8 +84,8 @@ jobs:
         params='--graceful-stop'
       fi
 
-      all_tests=$(ls test_*.py)
-      all_tests="${all_tests} p4rt"
+      all_tests=$(ls test_vlan.py)
+      #all_tests="${all_tests} p4rt"
       test_set=()
       # Run 20 tests as a set.
       for test in ${all_tests}; do
