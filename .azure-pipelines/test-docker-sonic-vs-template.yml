@@ -84,7 +84,7 @@ jobs:
         params='--graceful-stop'
       fi
 
-      all_tests=$(ls test_vlan.py)
+      all_tests=$(ls test_tunnel.py test_virtual_chassis.py test_vlan.py)
       #all_tests="${all_tests} p4rt"
       test_set=()
       # Run 20 tests as a set.
