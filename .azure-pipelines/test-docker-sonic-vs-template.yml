@@ -84,7 +84,7 @@ jobs:
         params='--graceful-stop'
       fi
 
-      all_tests=$(ls test_tunnel.py test_virtual_chassis.py test_vlan.py)
+      all_tests=$(ls test_port_dpb_system.py test_port_dpb_vlan.py test_port_lt.py test_port_mac_learn.py test_portchannel.py test_qos_map.py test_route.py test_setro.py test_sflow.py test_speed.py test_srv6.py test_storm_control.py test_sub_port_intf.py  test_switch.py test_tunnel.py test_virtual_chassis.py test_vlan.py)
       #all_tests="${all_tests} p4rt"
       test_set=()
       # Run 20 tests as a set.
