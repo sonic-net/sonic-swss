@@ -494,7 +494,7 @@ class TestVlan(object):
 
         # TODO: add_ip_address has a dependency on cdb within dvs,
         # so we still need to setup the db. This should be refactored.
-        self.dvs_vlan.get_and_verify_vlan_ids(0)
+        //self.dvs_vlan.get_and_verify_vlan_ids(0)
         dvs.setup_db()
 
         vlan = "1000"
