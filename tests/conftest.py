@@ -94,15 +94,21 @@ def pytest_addoption(parser):
                      default=False,
                      help="Stop swss before stopping a conatainer")
 
+    parser.addoption("--keepenv",
+                     action="store_true",
+                     default=False,
+                     help="Keep the current environment to skip validations and restart")
+
 
 def random_string(size=4, chars=string.ascii_uppercase + string.digits):
     return "".join(random.choice(chars) for x in range(size))
 
 
 class AsicDbValidator(DVSDatabase):
-    def __init__(self, db_id: int, connector: str):
+    def __init__(self, db_id: int, connector: str, wait_for_init = True):
         DVSDatabase.__init__(self, db_id, connector)
-        self._wait_for_asic_db_to_initialize()
+        if wait_for_init:
+            self._wait_for_asic_db_to_initialize()
         self._populate_default_asic_db_values()
         self._generate_oid_to_interface_mapping()
 
@@ -270,6 +276,7 @@ class DockerVirtualSwitch:
         newctnname: str = None,
         ctnmounts: Dict[str, str] = None,
         buffer_model: str = None,
+        keepenv: bool = False
     ):
         self.basicd = ["redis-server", "rsyslogd"]
         self.swssd = [
@@ -298,6 +305,7 @@ class DockerVirtualSwitch:
         ctn_sw_name = None
 
         self.persistent = False
+        self.keepenv = keepenv
 
         self.client = docker.from_env()
 
@@ -349,8 +357,9 @@ class DockerVirtualSwitch:
             # As part of https://github.com/Azure/sonic-buildimage/pull/4499
             # VS support dynamically create Front-panel ports so save the orginal
             # config db for persistent DVS
-            self.runcmd("mv /etc/sonic/config_db.json /etc/sonic/config_db.json.orig")
-            self.ctn_restart()
+            if not self.keepenv:
+                self.runcmd("mv /etc/sonic/config_db.json /etc/sonic/config_db.json.orig")
+                self.ctn_restart()
 
         # Dynamically create a DVS container and servers
         else:
@@ -463,8 +472,9 @@ class DockerVirtualSwitch:
             self.init_appl_db_validator()
             self.reset_dbs()
 
-            # Verify that SWSS has finished initializing.
-            self.check_swss_ready()
+            if not self.keepenv:
+                # Verify that SWSS has finished initializing.
+                self.check_swss_ready()
 
         except Exception:
             self.get_logs()
@@ -497,7 +507,7 @@ class DockerVirtualSwitch:
         wait_for_result(_polling_function, service_polling_config)
 
     def init_asic_db_validator(self) -> None:
-        self.asicdb = AsicDbValidator(self.ASIC_DB_ID, self.redis_sock)
+        self.asicdb = AsicDbValidator(self.ASIC_DB_ID, self.redis_sock, wait_for_init = not self.keepenv)
 
     def init_appl_db_validator(self) -> None:
         self.appldb = ApplDbValidator(self.APPL_DB_ID, self.redis_sock)
@@ -1736,6 +1746,7 @@ def manage_dvs(request) -> str:
     buffer_model = request.config.getoption("--buffer_model")
     force_recreate = request.config.getoption("--force-recreate-dvs")
     graceful_stop = request.config.getoption("--graceful-stop")
+    keepenv = request.config.getoption("--keepenv")
 
     dvs = None
     curr_dvs_env = [] # lgtm[py/unused-local-variable]
@@ -1767,7 +1778,7 @@ def manage_dvs(request) -> str:
                 dvs.get_logs()
                 dvs.destroy()
 
-            dvs = DockerVirtualSwitch(name, imgname, keeptb, new_dvs_env, log_path, max_cpu, forcedvs, buffer_model = buffer_model)
+            dvs = DockerVirtualSwitch(name, imgname, keeptb, new_dvs_env, log_path, max_cpu, forcedvs, buffer_model = buffer_model, keepenv = keepenv)
 
             curr_dvs_env = new_dvs_env
 
@@ -1790,7 +1801,7 @@ def manage_dvs(request) -> str:
     dvs.get_logs()
     dvs.destroy()
 
-    if dvs.persistent:
+    if dvs.persistent and not keepenv:
         dvs.runcmd("mv /etc/sonic/config_db.json.orig /etc/sonic/config_db.json")
         dvs.ctn_restart()
 

@@ -30,7 +30,7 @@ class ProduceStateTable(object):
 class Table(object):
     def __init__(self, database, table_name: str):
         self.table_name = table_name
-        self.table = swsscommon.Table(database, self.table_name)
+        self.table = swsscommon.Table(database.db_connection, self.table_name)
 
     def __getitem__(self, key: str):
         exists, result = self.table.get(str(key))
@@ -106,13 +106,11 @@ class DashAcl(object):
 
 
 class TestAcl(object):
-    def __init__(self):
+    def create_ctx(self, dvs):
         self.vnet_name = "vnet1"
         self.eni_name = "eth0"
         self.vni = "1"
         self.mac_address = "00:00:00:00:00:00"
-
-    def create_ctx(self, dvs):
         ctx = DashAcl(dvs)
         ctx.create_vnet(self.vnet_name, {"vni": self.vni})
         ctx.create_eni(self.eni_name, {"vnet": self.vnet_name,
