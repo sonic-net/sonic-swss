@@ -62,6 +62,26 @@ static inline bool operator==(const sai_ip_prefix_t& a, const sai_ip_prefix_t& b
     }
 }
 
+static inline bool operator==(const sai_ip_address_t& a, const sai_ip_address_t& b)
+{
+    if (a.addr_family != b.addr_family) return false;
+
+    if (a.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+    {
+        return a.addr.ip4 == b.addr.ip4
+            ;
+    }
+    else if (a.addr_family == SAI_IP_ADDR_FAMILY_IPV6)
+    {
+        return memcmp(a.addr.ip6, b.addr.ip6, sizeof(a.addr.ip6)) == 0
+            ;
+    }
+    else
+    {
+        throw std::invalid_argument("a has invalid addr_family");
+    }
+}
+
 static inline bool operator==(const sai_route_entry_t& a, const sai_route_entry_t& b)
 {
     return a.switch_id == b.switch_id
@@ -81,6 +101,10 @@ static inline bool operator==(const sai_inbound_routing_entry_t& a, const sai_in
 {
     return a.switch_id == b.switch_id
         && a.eni_id == b.eni_id
+        && a.vni == b.vni
+        && a.sip == b.sip
+        && a.sip_mask == b.sip_mask
+        && a.priority == b.priority
         ;
 }
 
@@ -88,6 +112,7 @@ static inline bool operator==(const sai_outbound_ca_to_pa_entry_t& a, const sai_
 {
     return a.switch_id == b.switch_id
         && a.dst_vnet_id == b.dst_vnet_id
+        && a.dip == b.dip
         ;
 }
 
@@ -95,6 +120,7 @@ static inline bool operator==(const sai_pa_validation_entry_t& a, const sai_pa_v
 {
     return a.switch_id == b.switch_id
         && a.vnet_id == b.vnet_id
+        && a.sip == b.sip
         ;
 }
 
@@ -102,6 +128,7 @@ static inline bool operator==(const sai_outbound_routing_entry_t& a, const sai_o
 {
     return a.switch_id == b.switch_id
         && a.eni_id == b.eni_id
+        && a.destination == b.destination
         ;
 }
 

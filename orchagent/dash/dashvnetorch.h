@@ -12,22 +12,19 @@
 #include "macaddress.h"
 #include "timer.h"
 
-using namespace std;
-using namespace swss;
-
 struct VnetEntry
 {
     sai_object_id_t vni;
-    string guid;
+    std::string guid;
 };
 
 struct VnetMapEntry
 {
     sai_object_id_t dst_vnet_id;
-    string routing_type;
-    IpAddress dip;
-    IpAddress underlay_ip;
-    MacAddress mac_address;
+    std::string routing_type;
+    swss::IpAddress dip;
+    swss::IpAddress underlay_ip;
+    swss::MacAddress mac_address;
     uint32_t metering_bucket;
     bool use_dst_vni;
 };
@@ -37,9 +34,9 @@ typedef std::unordered_map<std::string, VnetMapEntry> DashVnetMapTable;
 
 struct DashVnetBulkContext
 {
-    string vnet_name;
+    std::string vnet_name;
     uint32_t vni;
-    string guid;
+    std::string guid;
     std::deque<sai_object_id_t> object_ids;
     std::deque<sai_status_t> object_statuses;
     DashVnetBulkContext() {}
@@ -56,11 +53,11 @@ struct DashVnetBulkContext
 
 struct VnetMapBulkContext
 {
-    string vnet_name;
-    IpAddress dip;
-    string routing_type;
-    IpAddress underlay_ip;
-    MacAddress mac_address;
+    std::string vnet_name;
+    swss::IpAddress dip;
+    std::string routing_type;
+    swss::IpAddress underlay_ip;
+    swss::MacAddress mac_address;
     uint32_t metering_bucket;
     bool use_dst_vni;
     std::deque<sai_status_t> outbound_ca_to_pa_object_statuses;
@@ -73,13 +70,14 @@ struct VnetMapBulkContext
     void clear()
     {
         outbound_ca_to_pa_object_statuses.clear();
+        pa_validation_object_statuses.clear();
     }
 };
 
 class DashVnetOrch : public Orch
 {
 public:
-    DashVnetOrch(DBConnector *db, std::vector<std::string> &tables);
+    DashVnetOrch(swss::DBConnector *db, std::vector<std::string> &tables);
 
 private:
     DashVnetTable vnet_table_;
@@ -91,20 +89,20 @@ private:
     void doTask(Consumer &consumer);
     void doTaskVnetTable(Consumer &consumer);
     void doTaskVnetMapTable(Consumer &consumer);
-    bool addVnet(const string& key, DashVnetBulkContext& ctxt);
-    bool addVnetPost(const string& key, const DashVnetBulkContext& ctxt);
-    bool removeVnet(const string& key, DashVnetBulkContext& ctxt);
-    bool removeVnetPost(const string& key, const DashVnetBulkContext& ctxt);
-    bool addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt);
-    bool addOutboundCaToPaPost(const string& key, const VnetMapBulkContext& ctxt);
-    bool removeOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt);
-    bool removeOutboundCaToPaPost(const string& key, const VnetMapBulkContext& ctxt);
-    bool addPaValidation(const string& key, VnetMapBulkContext& ctxt);
-    bool addPaValidationPost(const string& key, const VnetMapBulkContext& ctxt);
-    bool removePaValidation(const string& key, VnetMapBulkContext& ctxt);
-    bool removePaValidationPost(const string& key, const VnetMapBulkContext& ctxt);
-    bool addVnetMap(const string& key, VnetMapBulkContext& ctxt);
-    bool addVnetMapPost(const string& key, const VnetMapBulkContext& ctxt);
-    bool removeVnetMap(const string& key, VnetMapBulkContext& ctxt);
-    bool removeVnetMapPost(const string& key, const VnetMapBulkContext& ctxt);
+    bool addVnet(const std::string& key, DashVnetBulkContext& ctxt);
+    bool addVnetPost(const std::string& key, const DashVnetBulkContext& ctxt);
+    bool removeVnet(const std::string& key, DashVnetBulkContext& ctxt);
+    bool removeVnetPost(const std::string& key, const DashVnetBulkContext& ctxt);
+    bool addOutboundCaToPa(const std::string& key, VnetMapBulkContext& ctxt);
+    bool addOutboundCaToPaPost(const std::string& key, const VnetMapBulkContext& ctxt);
+    bool removeOutboundCaToPa(const std::string& key, VnetMapBulkContext& ctxt);
+    bool removeOutboundCaToPaPost(const std::string& key, const VnetMapBulkContext& ctxt);
+    bool addPaValidation(const std::string& key, VnetMapBulkContext& ctxt);
+    bool addPaValidationPost(const std::string& key, const VnetMapBulkContext& ctxt);
+    bool removePaValidation(const std::string& key, VnetMapBulkContext& ctxt);
+    bool removePaValidationPost(const std::string& key, const VnetMapBulkContext& ctxt);
+    bool addVnetMap(const std::string& key, VnetMapBulkContext& ctxt);
+    bool addVnetMapPost(const std::string& key, const VnetMapBulkContext& ctxt);
+    bool removeVnetMap(const std::string& key, VnetMapBulkContext& ctxt);
+    bool removeVnetMapPost(const std::string& key, const VnetMapBulkContext& ctxt);
 };

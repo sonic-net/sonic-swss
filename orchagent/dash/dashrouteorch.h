@@ -13,17 +13,14 @@
 #include "macaddress.h"
 #include "timer.h"
 
-using namespace std;
-using namespace swss;
-
 struct EniEntry
 {
     sai_object_id_t eni_id;
-    string mac_address;
-    string qos_name;
-    IpAddress underlay_ip;
+    std::string mac_address;
+    std::string qos_name;
+    swss::IpAddress underlay_ip;
     bool admin_state;
-    string vnet;
+    std::string vnet;
 };
 
 struct Eni
@@ -35,7 +32,7 @@ struct Eni
 
 struct QosEntry
 {
-    string qos_id;
+    std::string qos_id;
     uint32_t bw;
     uint32_t cps;
     uint32_t flows;
@@ -44,36 +41,36 @@ struct QosEntry
 struct OutboundRoutingEntry
 {
     sai_object_id_t eni;
-    IpPrefix destination;
-    string action_type;
-    string vnet;
-    IpAddress overlay_ip;
+    swss::IpPrefix destination;
+    std::string action_type;
+    std::string vnet;
+    swss::IpAddress overlay_ip;
 };
 
 struct InboundRoutingEntry
 {
     sai_object_id_t eni;
     uint32_t vni;
-    IpAddress sip;
-    IpAddress sip_mask;
-    string action_type;
-    string vnet;
+    swss::IpAddress sip;
+    swss::IpAddress sip_mask;
+    std::string action_type;
+    std::string vnet;
     bool pa_validation;
     uint32_t priority;
 };
 
-typedef std::map<string, Eni> EniTable;
-typedef std::map<string, QosEntry> QosTable;
-typedef std::map<string, OutboundRoutingEntry> RoutingTable;
-typedef std::map<string, InboundRoutingEntry> RoutingRuleTable;
+typedef std::map<std::string, Eni> EniTable;
+typedef std::map<std::string, QosEntry> QosTable;
+typedef std::map<std::string, OutboundRoutingEntry> RoutingTable;
+typedef std::map<std::string, InboundRoutingEntry> RoutingRuleTable;
 
 struct OutboundRoutingBulkContext
 {
-    string eni;
-    IpPrefix destination;
-    string action_type;
-    string vnet;
-    IpAddress overlay_ip;
+    std::string eni;
+    swss::IpPrefix destination;
+    std::string action_type;
+    std::string vnet;
+    swss::IpAddress overlay_ip;
     std::deque<sai_status_t> object_statuses;
     OutboundRoutingBulkContext() {}
     OutboundRoutingBulkContext(const OutboundRoutingBulkContext&) = delete;
@@ -87,12 +84,12 @@ struct OutboundRoutingBulkContext
 
 struct InboundRoutingBulkContext
 {
-    string eni;
+    std::string eni;
     uint32_t vni;
-    string action_type;
-    string vnet;
-    IpAddress sip;
-    IpAddress sip_mask;
+    std::string action_type;
+    std::string vnet;
+    swss::IpAddress sip;
+    swss::IpAddress sip_mask;
     uint32_t priority;
     bool pa_validation;
     std::deque<sai_status_t> object_statuses;
@@ -109,7 +106,7 @@ struct InboundRoutingBulkContext
 class DashRouteOrch : public Orch
 {
 public:
-    DashRouteOrch(DBConnector *db, std::vector<std::string> &tables);
+    DashRouteOrch(swss::DBConnector *db, std::vector<std::string> &tables);
 
 private:
     EniTable eni_entries_;
@@ -124,20 +121,20 @@ private:
     void doTaskRouteTable(Consumer &consumer);
     void doTaskRouteRuleTable(Consumer &consumer);
     void doTask(Consumer &consumer);
-    bool addEniEntry(const string& eni);
-    bool addEniAddrMapEntry(const string& eni);
-    bool addEni(const string& eni, const EniEntry &entry);
-    bool removeEniEntry(const string& eni);
-    bool removeEniAddrMapEntry(const string& eni);
-    bool removeEni(const string& eni);
-    bool addQosEntry(const string& qos_name, const QosEntry &entry);
-    bool removeQosEntry(const string& qos_name);
-    bool addOutboundRouting(const string& key, OutboundRoutingBulkContext& ctxt);
-    bool addOutboundRoutingPost(const string& key, const OutboundRoutingBulkContext& ctxt);
-    bool removeOutboundRouting(const string& key, OutboundRoutingBulkContext& ctxt);
-    bool removeOutboundRoutingPost(const string& key, const OutboundRoutingBulkContext& ctxt);
-    bool addInboundRouting(const string& key, InboundRoutingBulkContext& ctxt);
-    bool addInboundRoutingPost(const string& key, const InboundRoutingBulkContext& ctxt);
-    bool removeInboundRouting(const string& key, InboundRoutingBulkContext& ctxt);
-    bool removeInboundRoutingPost(const string& key, const InboundRoutingBulkContext& ctxt);
+    bool addEniEntry(const std::string& eni);
+    bool addEniAddrMapEntry(const std::string& eni);
+    bool addEni(const std::string& eni, const EniEntry &entry);
+    bool removeEniEntry(const std::string& eni);
+    bool removeEniAddrMapEntry(const std::string& eni);
+    bool removeEni(const std::string& eni);
+    bool addQosEntry(const std::string& qos_name, const QosEntry &entry);
+    bool removeQosEntry(const std::string& qos_name);
+    bool addOutboundRouting(const std::string& key, OutboundRoutingBulkContext& ctxt);
+    bool addOutboundRoutingPost(const std::string& key, const OutboundRoutingBulkContext& ctxt);
+    bool removeOutboundRouting(const std::string& key, OutboundRoutingBulkContext& ctxt);
+    bool removeOutboundRoutingPost(const std::string& key, const OutboundRoutingBulkContext& ctxt);
+    bool addInboundRouting(const std::string& key, InboundRoutingBulkContext& ctxt);
+    bool addInboundRoutingPost(const std::string& key, const InboundRoutingBulkContext& ctxt);
+    bool removeInboundRouting(const std::string& key, InboundRoutingBulkContext& ctxt);
+    bool removeInboundRoutingPost(const std::string& key, const InboundRoutingBulkContext& ctxt);
 };
