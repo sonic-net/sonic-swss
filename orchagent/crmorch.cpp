@@ -771,7 +771,7 @@ void CrmOrch::checkCrmThresholds()
                 SWSS_LOG_WARN("%s THRESHOLD_EXCEEDED for %s %u%% Used count %u free count %u",
                               res.name.c_str(), threshType.c_str(), percentageUtil, cnt.usedCounter, cnt.availableCounter);
 
-                res.exceededLogCounter++;
+                cnt.exceededLogCounter++;
             }
             else if ((utilization <= res.lowThreshold) && (cnt.exceededLogCounter > 0) && (res.highThreshold != res.lowThreshold))
             {
