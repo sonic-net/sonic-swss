@@ -459,7 +459,7 @@ bool OrchDaemon::init()
         vector<table_name_with_pri_t> fabric_port_tables = {
            // empty for now
         };
-        gFabricPortsOrch = new FabricPortsOrch(m_applDb, fabric_port_tables);
+        gFabricPortsOrch = new FabricPortsOrch(m_applDb, fabric_port_tables, m_fabricPortStatEnabled, m_fabricQueueStatEnabled);
         m_orchList.push_back(gFabricPortsOrch);
     }
 

@@ -100,11 +100,12 @@ def random_string(size=4, chars=string.ascii_uppercase + string.digits):
 
 
 class AsicDbValidator(DVSDatabase):
-    def __init__(self, db_id: int, connector: str):
+    def __init__(self, db_id: int, connector: str, switch_type: str):
         DVSDatabase.__init__(self, db_id, connector)
-        self._wait_for_asic_db_to_initialize()
-        self._populate_default_asic_db_values()
-        self._generate_oid_to_interface_mapping()
+        if switch_type not in ['fabric']:
+           self._wait_for_asic_db_to_initialize()
+           self._populate_default_asic_db_values()
+           self._generate_oid_to_interface_mapping()
 
     def _wait_for_asic_db_to_initialize(self) -> None:
         """Wait up to 30 seconds for the default fields to appear in ASIC DB."""
@@ -497,7 +498,9 @@ class DockerVirtualSwitch:
         wait_for_result(_polling_function, service_polling_config)
 
     def init_asic_db_validator(self) -> None:
-        self.asicdb = AsicDbValidator(self.ASIC_DB_ID, self.redis_sock)
+        self.get_config_db()
+        metadata = self.config_db.get_entry('DEVICE_METADATA|localhost', '')
+        self.asicdb = AsicDbValidator(self.ASIC_DB_ID, self.redis_sock, metadata.get("switch_type"))
 
     def init_appl_db_validator(self) -> None:
         self.appldb = ApplDbValidator(self.APPL_DB_ID, self.redis_sock)
@@ -526,11 +529,13 @@ class DockerVirtualSwitch:
             port_table_keys = app_db.get_keys("PORT_TABLE")
             return ("PortInitDone" in port_table_keys and "PortConfigDone" in port_table_keys, None)
 
-        wait_for_result(_polling_function, startup_polling_config)
+        if metadata.get('switch_type') not in ['fabric']:
+            wait_for_result(_polling_function, startup_polling_config)
 
         # Verify that all ports have been created
-        asic_db = self.get_asic_db()
-        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT", num_ports + 1)  # +1 CPU Port
+        if metadata.get('switch_type') not in ['fabric']:
+            asic_db = self.get_asic_db()
+            asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT", num_ports + 1)  # +1 CPU Port
 
         # Verify that fabric ports are monitored in STATE_DB
         if metadata.get('switch_type', 'npu') in ['voq', 'fabric']:
@@ -1801,6 +1806,25 @@ def dvs(request, manage_dvs) -> DockerVirtualSwitch:
     log_path = name if name else request.module.__name__
 
     return manage_dvs(log_path, dvs_env)
+
+@pytest.yield_fixture(scope="module")
+def vst(request):
+    vctns = request.config.getoption("--vctns")
+    topo = request.config.getoption("--topo")
+    forcedvs = request.config.getoption("--forcedvs")
+    keeptb = request.config.getoption("--keeptb")
+    imgname = request.config.getoption("--imgname")
+    max_cpu = request.config.getoption("--max_cpu")
+    log_path = vctns if vctns else request.module.__name__
+    dvs_env = getattr(request.module, "DVS_ENV", [])
+    if not topo:
+        # use ecmp topology as default
+        topo = "virtual_chassis/chassis_supervisor.json"
+    vct = DockerVirtualChassisTopology(vctns, imgname, keeptb, dvs_env, log_path, max_cpu,
+                                       forcedvs, topo)
+    yield vct
+    vct.get_logs(request.module.__name__)
+    vct.destroy()
 
 @pytest.fixture(scope="module")
 def vct(request):
