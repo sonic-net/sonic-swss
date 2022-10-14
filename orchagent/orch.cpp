@@ -8,6 +8,7 @@
 #include "orch.h"
 
 #include "subscriberstatetable.h"
+#include "decoratorsubscriberstatetable.h"
 #include "portsorch.h"
 #include "tokenize.h"
 #include "logger.h"
@@ -824,7 +825,14 @@ void Orch::addConsumer(DBConnector *db, string tableName, int pri)
 {
     if (db->getDbId() == CONFIG_DB || db->getDbId() == STATE_DB || db->getDbId() == CHASSIS_APP_DB)
     {
-        addExecutor(new Consumer(new SubscriberStateTable(db, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, pri), this, tableName));
+        if (db->getDbId() == CONFIG_DB && (tableName == "BUFFER_POOL" || tableName == "BUFFER_PROFILE"))
+        {
+            addExecutor(new Consumer(new DecoratorSubscriberStateTable(db, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, pri), this, tableName));
+        }
+        else
+        {
+            addExecutor(new Consumer(new SubscriberStateTable(db, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, pri), this, tableName));
+        }
     }
     else
     {

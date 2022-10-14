@@ -3,6 +3,7 @@
 
 #include "dbconnector.h"
 #include "producerstatetable.h"
+#include "decoratortable.h"
 #include "orch.h"
 
 #include <map>
@@ -41,9 +42,9 @@ private:
 
     Table m_cfgPortTable;
     Table m_cfgCableLenTable;
-    Table m_cfgBufferProfileTable;
+    DecoratorTable m_cfgBufferProfileTable;
     Table m_cfgBufferPgTable;
-    Table m_cfgLosslessPgPoolTable;
+    DecoratorTable m_cfgLosslessPgPoolTable;
 
     ProducerStateTable m_applBufferProfileTable;
     ProducerStateTable m_applBufferPgTable;
