@@ -4,7 +4,7 @@
 local appl_db = "0"
 local config_db = "4"
 local state_db = "6"
-local static_config_db = "15"
+local profile_db = "15"
 
 -- Number of ports with 8 lanes (whose pipeline latency should be doubled)
 local port_count_8lanes = 0
@@ -164,7 +164,7 @@ local function fetch_buffer_pool_size_from_appldb()
 
     -- POC, HUA: also read and merge from static config db
     -- TODO: improve the dupe code.
-    redis.call('SELECT', static_config_db)
+    redis.call('SELECT', profile_db)
     local buffer_pool_keys_static = redis.call('KEYS', 'BUFFER_POOL|*')
     for i = 1, #buffer_pool_keys_static, 1 do
          if not contains(buffer_pool_keys, buffer_pool_keys_static[i]) then
@@ -237,7 +237,7 @@ end
 -- POC, HUA: Fetch from both config DB and static config DB.
 local egress_lossless_pool_size = redis.call('HGET', 'BUFFER_POOL|egress_lossless_pool', 'size')
 if not egress_lossless_pool_size then
-    redis.call('SELECT', static_config_db)
+    redis.call('SELECT', profile_db)
     egress_lossless_pool_size = redis.call('HGET', 'BUFFER_POOL|egress_lossless_pool', 'size')
     redis.call('SELECT', config_db)
 end
@@ -255,7 +255,7 @@ end
 -- POC, HUA: Fetch from both config DB and static config DB.
 local shp_size_val = redis.call('HGET', 'BUFFER_POOL|ingress_lossless_pool', 'xoff')
 if not shp_size_val then
-    redis.call('SELECT', static_config_db)
+    redis.call('SELECT', profile_db)
     shp_size_val = redis.call('HGET', 'BUFFER_POOL|ingress_lossless_pool', 'xoff')
     redis.call('SELECT', config_db)
 end
@@ -407,7 +407,7 @@ for i = 1, #epools, 1 do
 end
 
 -- POC: merge those static config pools
-redis.call('SELECT', static_config_db)
+redis.call('SELECT', profile_db)
 local ipools_static = redis.call('KEYS', 'BUFFER_POOL|ingress*')
 for i = 1, #ipools_static, 1 do
 -- POC: if config already exist in config DB, means user already has a customize config, ignore static config.
