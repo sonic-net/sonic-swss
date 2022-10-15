@@ -94,6 +94,12 @@ def pytest_addoption(parser):
                      default=False,
                      help="Stop swss before stopping a conatainer")
 
+    parser.addoption("--num-ports",
+                     action="store",
+                     default=NUM_PORTS,
+                     type=int,
+                     help="number of ports")
+
     parser.addoption("--keepenv",
                      action="store_true",
                      default=False,
@@ -1747,6 +1753,8 @@ def manage_dvs(request) -> str:
     force_recreate = request.config.getoption("--force-recreate-dvs")
     graceful_stop = request.config.getoption("--graceful-stop")
     keepenv = request.config.getoption("--keepenv")
+    global NUM_PORTS
+    NUM_PORTS = request.config.getoption("--num-ports")
 
     dvs = None
     curr_dvs_env = [] # lgtm[py/unused-local-variable]
