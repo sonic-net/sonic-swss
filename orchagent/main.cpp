@@ -562,6 +562,28 @@ int main(int argc, char **argv)
         attr.id = SAI_SWITCH_ATTR_TYPE;
         attr.value.u32 = SAI_SWITCH_TYPE_FABRIC;
         attrs.push_back(attr);
+
+        Table cfgDeviceMetaDataTable(&config_db, CFG_DEVICE_METADATA_TABLE_NAME);
+        string value;
+        if (!cfgDeviceMetaDataTable.hget("localhost", "switch_id", value))
+        {
+            //VOQ switch id is not configured.
+            SWSS_LOG_ERROR("VOQ switch id is not configured");
+            exit(EXIT_FAILURE);
+        }
+
+        if (value.size())
+            gVoqMySwitchId = stoi(value);
+
+        if (gVoqMySwitchId < 0)
+        {
+            SWSS_LOG_ERROR("Invalid VOQ switch id %d configured", gVoqMySwitchId);
+            exit(EXIT_FAILURE);
+        }
+
+        attr.id = SAI_SWITCH_ATTR_SWITCH_ID;
+        attr.value.u32 = gVoqMySwitchId;
+        attrs.push_back(attr);
     }
 
     /* Must be last Attribute */
