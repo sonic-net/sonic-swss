@@ -277,6 +277,7 @@ const request_description_t vnet_route_description = {
         { "mac_address",            REQ_T_STRING },
         { "endpoint_monitor",       REQ_T_IP_LIST },
         { "profile",                REQ_T_STRING },
+        { "primary",                REQ_T_IP_LIST },
     },
     { }
 };
@@ -321,8 +322,22 @@ struct BfdSessionInfo
     NextHopKey endpoint;
 };
 
+struct PriorityEpInfo 
+{
+    bool is_primary; 
+    IpPrefix tunnel_prefix;  
+};
+
+struct VNetTunnelRouteEntry 
+{
+    NextHopGroupKey ngh_key; 
+    NextHopGroupKey primary;
+    NextHopGroupKey all;
+};
+
+typedef std::map<IpAddress, vector<PriorityEpInfo>> PriorityEndpoints;
 typedef std::map<NextHopGroupKey, NextHopGroupInfo> VNetNextHopGroupInfoTable;
-typedef std::map<IpPrefix, NextHopGroupKey> VNetTunnelRouteTable;
+typedef std::map<IpPrefix, VNetTunnelRouteEntry> VNetTunnelRouteTable;
 typedef std::map<IpAddress, BfdSessionInfo> BfdSessionTable;
 typedef std::map<IpAddress, VNetNextHopInfo> VNetEndpointInfoTable;
 
@@ -362,12 +377,15 @@ private:
     void removeRouteState(const string& vnet, IpPrefix& ipPrefix);
     void addRouteAdvertisement(IpPrefix& ipPrefix, string& profile);
     void removeRouteAdvertisement(IpPrefix& ipPrefix);
+    void addPriorityEndpoints(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& primary,  NextHopGroupKey& all);
+    void removePriorityEndpoints(const string& vnet, IpPrefix& ipPrefix);
 
     void updateVnetTunnel(const BfdUpdate&);
     bool updateTunnelRoute(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op);
 
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op, string& profile,
+                    NextHopGroupKey& nexthops_all,
                     const std::map<NextHopKey, IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
 
     template<typename T>
@@ -387,6 +405,7 @@ private:
     shared_ptr<DBConnector> state_db_;
     unique_ptr<Table> state_vnet_rt_tunnel_table_;
     unique_ptr<Table> state_vnet_rt_adv_table_;
+    std::map<std::string, PriorityEndpoints> priority_endpoints_; 
 };
 
 class VNetCfgRouteOrch : public Orch

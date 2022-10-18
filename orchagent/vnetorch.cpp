@@ -843,6 +843,7 @@ bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey
 template<>
 bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipPrefix,
                                                NextHopGroupKey& nexthops, string& op, string& profile,
+                                               NextHopGroupKey& nexthops_all,
                                                const map<NextHopKey, IpAddress>& monitors)
 {
     SWSS_LOG_ENTER();
@@ -883,7 +884,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         sai_object_id_t nh_id;
         if (!hasNextHopGroup(vnet, nexthops))
         {
-            setEndpointMonitor(vnet, monitors, nexthops);
+            setEndpointMonitor(vnet, monitors, nexthops_all);
             if (nexthops.getSize() == 1)
             {
                 NextHopKey nexthop(nexthops.to_string(), true);
@@ -900,7 +901,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             {
                 if (!addNextHopGroup(vnet, nexthops, vrf_obj))
                 {
-                    delEndpointMonitor(vnet, nexthops);
+                    delEndpointMonitor(vnet, nexthops_all);
                     SWSS_LOG_ERROR("Failed to create next hop group %s", nexthops.to_string().c_str());
                     return false;
                 }
@@ -918,7 +919,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             {
                 if (it_route != syncd_tunnel_routes_[vnet].end())
                 {
-                    NextHopGroupKey nhg = it_route->second;
+                    NextHopGroupKey nhg = it_route->second.ngh_key;
                     // Remove route when updating from a nhg with active member to another nhg without
                     if (!syncd_nexthop_groups_[vnet][nhg].active_members.empty())
                     {
@@ -934,7 +935,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                 }
                 else
                 {
-                    NextHopGroupKey nhg = it_route->second;
+                    NextHopGroupKey nhg = it_route->second.ngh_key;
                     if (syncd_nexthop_groups_[vnet][nhg].active_members.empty())
                     {
                         route_status = add_route(vr_id, pfx, nh_id);
@@ -961,7 +962,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         if (it_route != syncd_tunnel_routes_[vnet].end())
         {
             // In case of updating an existing route, decrease the reference count for the previous nexthop group
-            NextHopGroupKey nhg = it_route->second;
+            NextHopGroupKey nhg = it_route->second.ngh_key;
             if(--syncd_nexthop_groups_[vnet][nhg].ref_count == 0)
             {
                 if (nhg.getSize() > 1)
@@ -974,7 +975,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                     NextHopKey nexthop(nhg.to_string(), true);
                     vrf_obj->removeTunnelNextHop(nexthop);
                 }
-                delEndpointMonitor(vnet, nhg);
+                delEndpointMonitor(vnet, it_route->second.all);
             }
             else
             {
@@ -986,7 +987,14 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
 
         syncd_nexthop_groups_[vnet][nexthops].tunnel_routes.insert(ipPrefix);
 
-        syncd_tunnel_routes_[vnet][ipPrefix] = nexthops;
+        VNetTunnelRouteEntry tunnel_route_entry;
+        tunnel_route_entry.ngh_key = nexthops;
+        tunnel_route_entry.all = nexthops_all;
+        tunnel_route_entry.primary = nexthops;
+        syncd_tunnel_routes_[vnet][ipPrefix] = tunnel_route_entry;
+
+	    addPriorityEndpoints(vnet, ipPrefix, nexthops, nexthops_all);
+
         syncd_nexthop_groups_[vnet][nexthops].ref_count++;
         vrf_obj->addRoute(ipPrefix, nexthops);
 
@@ -1006,7 +1014,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                 ipPrefix.to_string().c_str());
             return true;
         }
-        NextHopGroupKey nhg = it_route->second;
+        NextHopGroupKey nhg = it_route->second.ngh_key;
 
         for (auto vr_id : vr_set)
         {
@@ -1033,7 +1041,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                 NextHopKey nexthop(nhg.to_string(), true);
                 vrf_obj->removeTunnelNextHop(nexthop);
             }
-            delEndpointMonitor(vnet, nhg);
+            delEndpointMonitor(vnet, it_route->second.all);
         }
         else
         {
@@ -1045,6 +1053,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         {
             syncd_tunnel_routes_.erase(vnet);
         }
+        removePriorityEndpoints(vnet, ipPrefix);
 
         vrf_obj->removeRoute(ipPrefix);
         vrf_obj->removeProfile(ipPrefix);
@@ -1053,6 +1062,97 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
     }
 
     return true;
+}
+
+void VNetRouteOrch::addPriorityEndpoints(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& primary,  NextHopGroupKey& all)
+{
+    std::set<NextHopKey> nhks_primary = primary.getNextHops();
+    std::set<NextHopKey> nhks_all = all.getNextHops();
+    for (auto nkh : nhks_all)
+    {
+        bool is_primary = std::find(nhks_primary.begin(), nhks_primary.end(),nkh) != nhks_primary.end();
+        PriorityEpInfo ep_info;
+        ep_info.is_primary = is_primary;
+        ep_info.tunnel_prefix = ipPrefix;
+        priority_endpoints_[vnet][nkh.ip_address].push_back(ep_info);
+    }
+}
+
+void VNetRouteOrch::removePriorityEndpoints(const string& vnet, IpPrefix& ipPrefix)
+{
+    auto it_route = syncd_tunnel_routes_[vnet].find(ipPrefix);
+    if (it_route == syncd_tunnel_routes_[vnet].end())
+    {
+        SWSS_LOG_INFO("Failed to find priority tunnel route entry, prefix %s\n",
+        ipPrefix.to_string().c_str());
+        return;
+    }
+    auto old_primary_nhgk = it_route->second.primary;
+    auto old_all_nhgk = it_route->second.all;
+
+    std::set<NextHopKey> nhks_primary = old_primary_nhgk.getNextHops();
+    for (auto nhk: nhks_primary)
+    {
+        IpAddress ip = nhk.ip_address;
+        size_t mark_for_removal = priority_endpoints_[vnet][ip].size();
+        for (size_t idx_ep_info = 0; idx_ep_info < priority_endpoints_[vnet][ip].size(); idx_ep_info++)
+        { 
+            auto ep_info = priority_endpoints_[vnet][ip][idx_ep_info];
+            if (ep_info.tunnel_prefix == ipPrefix)
+            {
+                if(ep_info.is_primary != true)
+                {
+                    SWSS_LOG_WARN("Endpoint infomation corruption. Primary endpoint not marked as Primary");
+
+                }
+                mark_for_removal = idx_ep_info;
+                break;
+            }
+        }
+        if (mark_for_removal == priority_endpoints_[vnet][ip].size())
+        {
+            SWSS_LOG_WARN("Endpoint information corruption, Couldnt find Primary's information for removal"); 
+        }
+        else
+        {
+            priority_endpoints_[vnet][ip].erase(priority_endpoints_[vnet][ip].begin() + mark_for_removal);
+            if (priority_endpoints_[vnet][ip].size() == 0)
+            {
+                priority_endpoints_[vnet].erase(ip);
+            }
+        }
+    }
+    std::set<NextHopKey> nhks_all = old_all_nhgk.getNextHops();
+    for (auto nhk: nhks_all)
+    {
+        IpAddress ip = nhk.ip_address;
+        size_t mark_for_removal = priority_endpoints_[vnet][ip].size();
+        for (size_t idx_ep_info = 0; idx_ep_info < priority_endpoints_[vnet][ip].size(); idx_ep_info++)
+        { 
+            auto ep_info = priority_endpoints_[vnet][ip][idx_ep_info];
+            if (ep_info.tunnel_prefix == ipPrefix)
+            {
+                if (ep_info.is_primary == true)
+                {
+                    SWSS_LOG_WARN("Endpoint information corruption, Secondary endpoint makred as Primary"); 
+                }
+                mark_for_removal = idx_ep_info;
+                break;
+            }
+        }
+        if (mark_for_removal == priority_endpoints_[vnet][ip].size() )
+        {
+            SWSS_LOG_WARN("Endpoint Information corruption, Couldn't find Secondary information for removal"); 
+        }
+        else
+        {
+            priority_endpoints_[vnet][ip].erase(priority_endpoints_[vnet][ip].begin() + mark_for_removal);
+            if (priority_endpoints_[vnet][ip].size() == 0)
+            {
+                priority_endpoints_[vnet].erase(ip);
+            }
+        }
+    }
 }
 
 bool VNetRouteOrch::updateTunnelRoute(const string& vnet, IpPrefix& ipPrefix,
@@ -1116,7 +1216,7 @@ bool VNetRouteOrch::updateTunnelRoute(const string& vnet, IpPrefix& ipPrefix,
                 ipPrefix.to_string().c_str());
             return true;
         }
-        NextHopGroupKey nhg = it_route->second;
+        NextHopGroupKey nhg = it_route->second.ngh_key;
 
         for (auto vr_id : vr_set)
         {
@@ -1844,7 +1944,8 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     vector<string> vni_list;
     vector<IpAddress> monitor_list;
     string profile = "";
-
+    vector<IpAddress> primary_list;
+    bool has_priority_ep = false;
     for (const auto& name: request.getAttrFieldNames())
     {
         if (name == "endpoint")
@@ -1868,6 +1969,10 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         else if (name == "profile")
         {
             profile = request.getAttrString(name);
+        }
+        else if (name == "primary")
+        {
+            primary_list = request.getAttrIPList(name);
         }
         else
         {
@@ -1893,7 +1998,12 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         SWSS_LOG_ERROR("Peer monitor size of %zu does not match endpoint size of %zu", monitor_list.size(), ip_list.size());
         return false;
     }
-    
+    if (!primary_list.empty() && monitor_list.empty())
+    {
+        SWSS_LOG_ERROR("Primary/backup behaviour cannot function without endpoint monitoring.");
+        return false;
+    }
+
     const std::string& vnet_name = request.getKeyString(0);
     auto ip_pfx = request.getKeyIpPrefix(1);
     auto op = request.getOperation();
@@ -1901,6 +2011,12 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     SWSS_LOG_INFO("VNET-RT '%s' op '%s' for pfx %s", vnet_name.c_str(),
                    op.c_str(), ip_pfx.to_string().c_str());
 
+    if (!primary_list.empty())
+    {
+        has_priority_ep = true;
+        SWSS_LOG_INFO("Handling Priority Tunnel with prefix %s", ip_pfx.to_string().c_str());
+    }
+    NextHopGroupKey nhg_primary("", true);
     NextHopGroupKey nhg("", true);
     map<NextHopKey, IpAddress> monitors;
     for (size_t idx_ip = 0; idx_ip < ip_list.size(); idx_ip++)
@@ -1923,16 +2039,24 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         }
 
         NextHopKey nh(ip, mac, vni, true);
-        nhg.add(nh);
         if (!monitor_list.empty())
         {
             monitors[nh] = monitor_list[idx_ip];
         }
+        if (has_priority_ep)
+        {
+            if (std::find(primary_list.begin(), primary_list.end(), ip) != primary_list.end())
+            {
+                // only add the primary endpoint ips.
+                nhg_primary.add(nh);
+            }
+        }
+        nhg.add(nh);
     }
 
     if (vnet_orch_->isVnetExecVrf())
     {
-        return doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, nhg, op, profile, monitors);
+        return doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, (has_priority_ep == true) ? nhg_primary : nhg, op, profile, nhg, monitors);
     }
 
     return true;

@@ -140,11 +140,11 @@ def delete_vnet_local_routes(dvs, prefix, vnet_name):
     time.sleep(2)
 
 
-def create_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile=""):
-    set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac=mac, vni=vni, ep_monitor=ep_monitor, profile=profile)
+def create_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="", primary=""):
+    set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac=mac, vni=vni, ep_monitor=ep_monitor, profile=profile, primary=primary)
 
 
-def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile=""):
+def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="", primary=""):
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
     attrs = [
@@ -162,6 +162,8 @@ def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor=
 
     if profile:
         attrs.append(('profile', profile))
+    if primary:
+        attrs.append(('primary', primary))
 
     tbl = swsscommon.Table(conf_db, "VNET_ROUTE_TUNNEL")
     fvs = swsscommon.FieldValuePairs(attrs)
@@ -2104,6 +2106,140 @@ class TestVnetOrch(object):
         delete_vnet_entry(dvs, 'Vnet12')
         vnet_obj.check_del_vnet_entry(dvs, 'Vnet12')
 
+    '''
+   Test 13 - Test for Primary vnet tunnel routes with ECMP nexthop group with endpoint health monitor
+    '''
+    def test_vnet_orch_13(self, dvs, testlog):
+        vnet_obj = self.get_vnet_obj()
+        tunnel_name = 'tunnel_13'
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+        create_vnet_entry(dvs, 'Vnet13', tunnel_name, '10009', "")
+
+        vnet_obj.check_vnet_entry(dvs, 'Vnet13')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet13', '10009')
+
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+
+        vnet_obj.fetch_exist_entries(dvs)
+        create_vnet_routes(dvs, "100.100.1.1/32", 'Vnet13', '9.0.0.1,9.0.0.2,9.0.0.3', ep_monitor='9.1.0.1,9.1.0.2,9.1.0.3', primary ='9.0.0.1,9.0.0.2,9.0.0.3',)
+
+        # default bfd status is down, route should not be programmed in this status
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet13', ["100.100.1.1/32"])
+        check_state_db_routes(dvs, 'Vnet13', "100.100.1.1/32", [])
+        check_remove_routes_advertisement(dvs, "100.100.1.1/32")
+
+        # Route should be properly configured when all bfd session states go up
+        update_bfd_session_state(dvs, '9.1.0.1', 'Up')
+        update_bfd_session_state(dvs, '9.1.0.2', 'Up')
+        update_bfd_session_state(dvs, '9.1.0.3', 'Up')
+        time.sleep(2)
+        route1, nhg1_1 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet13', ['9.0.0.1', '9.0.0.2', '9.0.0.3'], tunnel_name)
+        check_state_db_routes(dvs, 'Vnet13', "100.100.1.1/32", ['9.0.0.1', '9.0.0.2', '9.0.0.3'])
+        # The default Vnet setting does not advertise prefix
+        check_remove_routes_advertisement(dvs, "100.100.1.1/32")
+
+        # Remove endpoint from group if it goes down
+        update_bfd_session_state(dvs, '9.1.0.2', 'Down')
+        time.sleep(2)
+        route1, nhg1_1 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet13', ['9.0.0.1', '9.0.0.3'], tunnel_name, route_ids=route1, nhg=nhg1_1)
+        check_state_db_routes(dvs, 'Vnet13', "100.100.1.1/32", ['9.0.0.1', '9.0.0.3'])
+        # The default Vnet setting does not advertise prefix
+        check_remove_routes_advertisement(dvs, "100.100.1.1/32")
+
+        # Create another tunnel route with endpoint group overlapped with route1
+        vnet_obj.fetch_exist_entries(dvs)
+        create_vnet_routes(dvs, "100.100.2.1/32", 'Vnet13', '9.0.0.1,9.0.0.2,9.0.0.5', ep_monitor='9.1.0.1,9.1.0.2,9.1.0.5',  primary ='9.0.0.1,9.0.0.2,9.0.0.5')
+        route2, nhg2_1 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet13', ['9.0.0.1'], tunnel_name)
+        check_state_db_routes(dvs, 'Vnet13', "100.100.2.1/32", ['9.0.0.1'])
+        # The default Vnet setting does not advertise prefix
+        check_remove_routes_advertisement(dvs, "100.100.1.1/32")
+
+        # Update BFD session state and verify route change
+        update_bfd_session_state(dvs, '9.1.0.5', 'Up')
+        time.sleep(2)
+        route2, nhg2_1 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet13', ['9.0.0.1', '9.0.0.5'], tunnel_name, route_ids=route2, nhg=nhg2_1)
+        check_state_db_routes(dvs, 'Vnet13', "100.100.2.1/32", ['9.0.0.1', '9.0.0.5'])
+        # The default Vnet setting does not advertise prefix
+        check_remove_routes_advertisement(dvs, "100.100.2.1/32")
+
+        # Update BFD state and check route nexthop
+        update_bfd_session_state(dvs, '9.1.0.3', 'Down')
+        time.sleep(2)
+
+        route1, nhg1_1 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet13', ['9.0.0.1'], tunnel_name, route_ids=route1, nhg=nhg1_1)
+        check_state_db_routes(dvs, 'Vnet13', "100.100.1.1/32", ['9.0.0.1'])
+        # The default Vnet setting does not advertise prefix
+        check_remove_routes_advertisement(dvs, "100.100.1.1/32")
+
+        # Set the route1 to a new group
+        set_vnet_routes(dvs, "100.100.1.1/32", 'Vnet13', '9.0.0.1,9.0.0.2,9.0.0.3,9.0.0.4', ep_monitor='9.1.0.1,9.1.0.2,9.1.0.3,9.1.0.4',  primary ='9.0.0.1,9.0.0.2,9.0.0.3,9.0.0.4')
+        update_bfd_session_state(dvs, '9.1.0.4', 'Up')
+        time.sleep(2)
+        route1, nhg1_2 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet13', ['9.0.0.1', '9.0.0.4'], tunnel_name, route_ids=route1)
+        check_state_db_routes(dvs, 'Vnet13', "100.100.1.1/32", ['9.0.0.1', '9.0.0.4'])
+        # The default Vnet setting does not advertise prefix
+        check_remove_routes_advertisement(dvs, "100.100.1.1/32")
+
+        # Check the previous nexthop group is removed
+        vnet_obj.fetch_exist_entries(dvs)
+        assert nhg1_1 not in vnet_obj.nhgs
+
+        # Set BFD session state for a down endpoint to up
+        update_bfd_session_state(dvs, '9.1.0.2', 'Up')
+        time.sleep(2)
+        route1, nhg1_2 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet13', ['9.0.0.1', '9.0.0.2', '9.0.0.4'], tunnel_name, route_ids=route1, nhg=nhg1_2)
+        check_state_db_routes(dvs, 'Vnet13', "100.100.1.1/32", ['9.0.0.1', '9.0.0.2', '9.0.0.4'])
+        # The default Vnet setting does not advertise prefix
+        check_remove_routes_advertisement(dvs, "100.100.1.1/32")
+
+        # Set all endpoint to down state
+        update_bfd_session_state(dvs, '9.1.0.1', 'Down')
+        update_bfd_session_state(dvs, '9.1.0.2', 'Down')
+        update_bfd_session_state(dvs, '9.1.0.3', 'Down')
+        update_bfd_session_state(dvs, '9.1.0.4', 'Down')
+        time.sleep(2)
+
+        # Confirm the tunnel route is updated in ASIC
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet13', ["100.100.1.1/32"])
+        route2, nhg2_1 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet13', ['9.0.0.5'], tunnel_name, route_ids=route2, nhg=nhg2_1)
+        check_state_db_routes(dvs, 'Vnet13', "100.100.2.1/32", ['9.0.0.5'])
+        check_state_db_routes(dvs, 'Vnet13', "100.100.1.1/32", [])
+        check_remove_routes_advertisement(dvs, "100.100.1.1/32")
+        # The default Vnet setting does not advertise prefix
+        check_remove_routes_advertisement(dvs, "100.100.2.1/32")
+
+        # Remove tunnel route2
+        delete_vnet_routes(dvs, "100.100.2.1/32", 'Vnet13')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet13', ["100.100.2.1/32"])
+        check_remove_state_db_routes(dvs, 'Vnet13', "100.100.2.1/32")
+        check_remove_routes_advertisement(dvs, "100.100.2.1/32")
+
+        # Check the corresponding nexthop group is removed
+        vnet_obj.fetch_exist_entries(dvs)
+        assert nhg2_1 not in vnet_obj.nhgs
+
+        # Check the BFD session specific to the endpoint group is removed while others exist
+        check_del_bfd_session(dvs, ['9.1.0.5'])
+        check_bfd_session(dvs, ['9.1.0.1', '9.1.0.2', '9.1.0.3', '9.1.0.4'])
+
+        # Remove tunnel route 1
+        delete_vnet_routes(dvs, "100.100.1.1/32", 'Vnet13')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet13', ["100.100.1.1/32"])
+        check_remove_state_db_routes(dvs, 'Vnet13', "100.100.1.1/32")
+        check_remove_routes_advertisement(dvs, "100.100.1.1/32")
+
+        # Check the previous nexthop group is removed
+        vnet_obj.fetch_exist_entries(dvs)
+        assert nhg1_2 not in vnet_obj.nhgs
+
+        # Confirm the BFD sessions are removed
+        check_del_bfd_session(dvs, ['9.1.0.1', '9.1.0.2', '9.1.0.3', '9.1.0.4', '9.1.0.5'])
+
+        delete_vnet_entry(dvs, 'Vnet13')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet13')
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
