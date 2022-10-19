@@ -359,6 +359,7 @@ private:
     bool m_isPortCounterMapGenerated = false;
     bool m_isPortBufferDropCounterMapGenerated = false;
 
+    bool isAutoNegEnabled(sai_object_id_t id);
     task_process_status setPortAutoNeg(sai_object_id_t id, int an);
     bool setPortFecMode(sai_object_id_t id, int fec);
     task_process_status setPortInterfaceType(sai_object_id_t id, sai_port_interface_type_t interface_type);
