@@ -992,9 +992,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         tunnel_route_entry.all = nexthops_all;
         tunnel_route_entry.primary = nexthops;
         syncd_tunnel_routes_[vnet][ipPrefix] = tunnel_route_entry;
-
-	    addPriorityEndpoints(vnet, ipPrefix, nexthops, nexthops_all);
-
+        addPriorityEndpoints(vnet, ipPrefix, nexthops, nexthops_all);
         syncd_nexthop_groups_[vnet][nexthops].ref_count++;
         vrf_obj->addRoute(ipPrefix, nexthops);
 
@@ -1047,13 +1045,13 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         {
             syncd_nexthop_groups_[vnet][nhg].tunnel_routes.erase(ipPrefix);
         }
+        removePriorityEndpoints(vnet, ipPrefix);
 
         syncd_tunnel_routes_[vnet].erase(ipPrefix);
         if (syncd_tunnel_routes_[vnet].empty())
         {
             syncd_tunnel_routes_.erase(vnet);
         }
-        removePriorityEndpoints(vnet, ipPrefix);
 
         vrf_obj->removeRoute(ipPrefix);
         vrf_obj->removeProfile(ipPrefix);
@@ -1083,74 +1081,28 @@ void VNetRouteOrch::removePriorityEndpoints(const string& vnet, IpPrefix& ipPref
     auto it_route = syncd_tunnel_routes_[vnet].find(ipPrefix);
     if (it_route == syncd_tunnel_routes_[vnet].end())
     {
-        SWSS_LOG_INFO("Failed to find priority tunnel route entry, prefix %s\n",
+        SWSS_LOG_WARN("Failed to find priority tunnel route entry, prefix %s\n",
         ipPrefix.to_string().c_str());
         return;
     }
-    auto old_primary_nhgk = it_route->second.primary;
+
     auto old_all_nhgk = it_route->second.all;
-
-    std::set<NextHopKey> nhks_primary = old_primary_nhgk.getNextHops();
-    for (auto nhk: nhks_primary)
-    {
-        IpAddress ip = nhk.ip_address;
-        size_t mark_for_removal = priority_endpoints_[vnet][ip].size();
-        for (size_t idx_ep_info = 0; idx_ep_info < priority_endpoints_[vnet][ip].size(); idx_ep_info++)
-        { 
-            auto ep_info = priority_endpoints_[vnet][ip][idx_ep_info];
-            if (ep_info.tunnel_prefix == ipPrefix)
-            {
-                if(ep_info.is_primary != true)
-                {
-                    SWSS_LOG_WARN("Endpoint infomation corruption. Primary endpoint not marked as Primary");
-
-                }
-                mark_for_removal = idx_ep_info;
-                break;
-            }
-        }
-        if (mark_for_removal == priority_endpoints_[vnet][ip].size())
-        {
-            SWSS_LOG_WARN("Endpoint information corruption, Couldnt find Primary's information for removal"); 
-        }
-        else
-        {
-            priority_endpoints_[vnet][ip].erase(priority_endpoints_[vnet][ip].begin() + mark_for_removal);
-            if (priority_endpoints_[vnet][ip].size() == 0)
-            {
-                priority_endpoints_[vnet].erase(ip);
-            }
-        }
-    }
     std::set<NextHopKey> nhks_all = old_all_nhgk.getNextHops();
     for (auto nhk: nhks_all)
     {
         IpAddress ip = nhk.ip_address;
-        size_t mark_for_removal = priority_endpoints_[vnet][ip].size();
         for (size_t idx_ep_info = 0; idx_ep_info < priority_endpoints_[vnet][ip].size(); idx_ep_info++)
         { 
             auto ep_info = priority_endpoints_[vnet][ip][idx_ep_info];
             if (ep_info.tunnel_prefix == ipPrefix)
             {
-                if (ep_info.is_primary == true)
-                {
-                    SWSS_LOG_WARN("Endpoint information corruption, Secondary endpoint makred as Primary"); 
-                }
-                mark_for_removal = idx_ep_info;
+                priority_endpoints_[vnet][ip].erase(priority_endpoints_[vnet][ip].begin() + idx_ep_info);
                 break;
             }
         }
-        if (mark_for_removal == priority_endpoints_[vnet][ip].size() )
+        if (priority_endpoints_[vnet][ip].size() == 0)
         {
-            SWSS_LOG_WARN("Endpoint Information corruption, Couldn't find Secondary information for removal"); 
-        }
-        else
-        {
-            priority_endpoints_[vnet][ip].erase(priority_endpoints_[vnet][ip].begin() + mark_for_removal);
-            if (priority_endpoints_[vnet][ip].size() == 0)
-            {
-                priority_endpoints_[vnet].erase(ip);
-            }
+            priority_endpoints_[vnet].erase(ip);
         }
     }
 }
@@ -2001,7 +1953,7 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     if (!primary_list.empty() && monitor_list.empty())
     {
         SWSS_LOG_ERROR("Primary/backup behaviour cannot function without endpoint monitoring.");
-        return false;
+        return true;
     }
 
     const std::string& vnet_name = request.getKeyString(0);
