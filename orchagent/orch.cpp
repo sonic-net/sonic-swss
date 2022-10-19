@@ -14,6 +14,7 @@
 #include "logger.h"
 #include "consumerstatetable.h"
 #include "sai_serialize.h"
+#include "schema.h"
 
 using namespace swss;
 
@@ -825,8 +826,9 @@ void Orch::addConsumer(DBConnector *db, string tableName, int pri)
 {
     if (db->getDbId() == CONFIG_DB || db->getDbId() == STATE_DB || db->getDbId() == CHASSIS_APP_DB)
     {
-        if (db->getDbId() == CONFIG_DB && (tableName == "BUFFER_POOL" || tableName == "BUFFER_PROFILE"))
+        if (db->getDbId() == CONFIG_DB && (tableName == CFG_BUFFER_POOL_TABLE_NAME || tableName == CFG_BUFFER_PROFILE_TABLE_NAME))
         {
+            SWSS_LOG_INFO("Add executor with DecoratorSubscriberStateTable for CONFIG_DB table %s", tableName.c_str());
             addExecutor(new Consumer(new DecoratorSubscriberStateTable(db, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, pri), this, tableName));
         }
         else
