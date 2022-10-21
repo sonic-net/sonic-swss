@@ -655,6 +655,8 @@ class TestMuxTunnelBase():
                 assert self.check_interface_exists_in_asicdb(asicdb, value)
             elif field == "SAI_TUNNEL_ATTR_ENCAP_TTL_MODE":
                 assert value == "SAI_TUNNEL_TTL_MODE_PIPE_MODEL"
+            elif field == "SAI_TUNNEL_ATTR_DECAP_TTL_MODE":
+                assert value == "SAI_TUNNEL_TTL_MODE_PIPE_MODEL"
             elif field == "SAI_TUNNEL_ATTR_LOOPBACK_PACKET_ACTION":
                 assert value == "SAI_PACKET_ACTION_DROP"
             elif field == "SAI_TUNNEL_ATTR_ENCAP_QOS_TC_AND_COLOR_TO_DSCP_MAP":
@@ -662,6 +664,8 @@ class TestMuxTunnelBase():
             elif field == "SAI_TUNNEL_ATTR_ENCAP_QOS_TC_TO_QUEUE_MAP":
                 assert value == tc_to_queue_map_oid
             elif field == "SAI_TUNNEL_ATTR_ENCAP_DSCP_MODE":
+                assert value == "SAI_TUNNEL_DSCP_MODE_PIPE_MODEL"
+            elif field == "SAI_TUNNEL_ATTR_DECAP_DSCP_MODE":
                 assert value == "SAI_TUNNEL_DSCP_MODE_PIPE_MODEL"
             else:
                 assert False, "Field %s is not tested" % field
