@@ -824,6 +824,7 @@ bool Orch::isItemIdsMapContinuous(unsigned long idsMap, sai_uint32_t maxId)
 
 void Orch::addConsumer(DBConnector *db, string tableName, int pri)
 {
+    SWSS_LOG_INFO("addConsumer for %d table %s", db->getDbId(), tableName.c_str());
     if (db->getDbId() == CONFIG_DB || db->getDbId() == STATE_DB || db->getDbId() == CHASSIS_APP_DB)
     {
         if (db->getDbId() == CONFIG_DB && (tableName == CFG_BUFFER_POOL_TABLE_NAME || tableName == CFG_BUFFER_PROFILE_TABLE_NAME))
