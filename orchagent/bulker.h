@@ -11,20 +11,12 @@
 #include "logger.h"
 #include "sai_serialize.h"
 
-typedef sai_status_t (*sai_bulk_set_inbound_routing_entry_attribute_fn) (
-        _In_ uint32_t object_count,
-        _In_ const sai_inbound_routing_entry_t *entry,
-        _In_ const sai_attribute_t *attr_list,
-        _In_ sai_bulk_op_error_mode_t mode,
-        _Out_ sai_status_t *object_statuses);
-
 typedef sai_status_t (*sai_bulk_set_outbound_ca_to_pa_entry_attribute_fn) (
         _In_ uint32_t object_count,
         _In_ const sai_outbound_ca_to_pa_entry_t *entry,
         _In_ const sai_attribute_t *attr_list,
         _In_ sai_bulk_op_error_mode_t mode,
         _Out_ sai_status_t *object_statuses);
-
 
 typedef sai_status_t (*sai_bulk_set_pa_validation_entry_attribute_fn) (
         _In_ uint32_t object_count,
@@ -36,6 +28,13 @@ typedef sai_status_t (*sai_bulk_set_pa_validation_entry_attribute_fn) (
 typedef sai_status_t (*sai_bulk_set_outbound_routing_entry_attribute_fn) (
         _In_ uint32_t object_count,
         _In_ const sai_outbound_routing_entry_t *entry,
+        _In_ const sai_attribute_t *attr_list,
+        _In_ sai_bulk_op_error_mode_t mode,
+        _Out_ sai_status_t *object_statuses);
+
+typedef sai_status_t (*sai_bulk_set_inbound_routing_entry_attribute_fn) (
+        _In_ uint32_t object_count,
+        _In_ const sai_inbound_routing_entry_t *entry,
         _In_ const sai_attribute_t *attr_list,
         _In_ sai_bulk_op_error_mode_t mode,
         _Out_ sai_status_t *object_statuses);
@@ -149,6 +148,21 @@ static inline std::size_t hash_value(const sai_ip_prefix_t& a)
     return seed;
 }
 
+static inline std::size_t hash_value(const sai_ip_address_t& a)
+{
+    size_t seed = 0;
+    boost::hash_combine(seed, a.addr_family);
+    if (a.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+    {
+        boost::hash_combine(seed, a.addr.ip4);
+    }
+    else if (a.addr_family == SAI_IP_ADDR_FAMILY_IPV6)
+    {
+        boost::hash_combine(seed, a.addr.ip6);
+    }
+    return seed;
+}
+
 namespace std
 {
     template <>
@@ -190,18 +204,6 @@ namespace std
     };
 
     template <>
-    struct hash<sai_inbound_routing_entry_t>
-    {
-        size_t operator()(const sai_inbound_routing_entry_t& a) const noexcept
-        {
-            size_t seed = 0;
-            boost::hash_combine(seed, a.switch_id);
-            boost::hash_combine(seed, a.eni_id);
-            return seed;
-        }
-    };
-
-    template <>
     struct hash<sai_outbound_ca_to_pa_entry_t>
     {
         size_t operator()(const sai_outbound_ca_to_pa_entry_t& a) const noexcept
@@ -209,6 +211,7 @@ namespace std
             size_t seed = 0;
             boost::hash_combine(seed, a.switch_id);
             boost::hash_combine(seed, a.dst_vnet_id);
+            boost::hash_combine(seed, a.dip);
             return seed;
         }
     };
@@ -221,6 +224,7 @@ namespace std
             size_t seed = 0;
             boost::hash_combine(seed, a.switch_id);
             boost::hash_combine(seed, a.vnet_id);
+            boost::hash_combine(seed, a.sip);
             return seed;
         }
     };
@@ -233,6 +237,21 @@ namespace std
             size_t seed = 0;
             boost::hash_combine(seed, a.switch_id);
             boost::hash_combine(seed, a.eni_id);
+            boost::hash_combine(seed, a.destination);
+            return seed;
+        }
+    };
+
+    template <>
+    struct hash<sai_inbound_routing_entry_t>
+    {
+        size_t operator()(const sai_inbound_routing_entry_t& a) const noexcept
+        {
+            size_t seed = 0;
+            boost::hash_combine(seed, a.switch_id);
+            boost::hash_combine(seed, a.eni_id);
+            boost::hash_combine(seed, a.vni);
+            boost::hash_combine(seed, a.sip);
             return seed;
         }
     };

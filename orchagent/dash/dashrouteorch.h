@@ -12,31 +12,7 @@
 #include "ipprefix.h"
 #include "macaddress.h"
 #include "timer.h"
-
-struct EniEntry
-{
-    sai_object_id_t eni_id;
-    std::string mac_address;
-    std::string qos_name;
-    swss::IpAddress underlay_ip;
-    bool admin_state;
-    std::string vnet;
-};
-
-struct Eni
-{
-    EniEntry eni_entry;
-    bool eniEntryAdded;
-    bool eniAddrMapEntryAdded;
-};
-
-struct QosEntry
-{
-    std::string qos_id;
-    uint32_t bw;
-    uint32_t cps;
-    uint32_t flows;
-};
+#include "dashorch.h"
 
 struct OutboundRoutingEntry
 {
@@ -59,8 +35,6 @@ struct InboundRoutingEntry
     uint32_t priority;
 };
 
-typedef std::map<std::string, Eni> EniTable;
-typedef std::map<std::string, QosEntry> QosTable;
 typedef std::map<std::string, OutboundRoutingEntry> RoutingTable;
 typedef std::map<std::string, InboundRoutingEntry> RoutingRuleTable;
 
@@ -106,29 +80,18 @@ struct InboundRoutingBulkContext
 class DashRouteOrch : public Orch
 {
 public:
-    DashRouteOrch(swss::DBConnector *db, std::vector<std::string> &tables);
+    DashRouteOrch(swss::DBConnector *db, std::vector<std::string> &tables, DashOrch *dash_orch);
 
 private:
-    EniTable eni_entries_;
-    QosTable qos_entries_;
     RoutingTable routing_entries_;
     RoutingRuleTable routing_rule_entries_;
     EntityBulker<sai_dash_outbound_routing_api_t> outbound_routing_bulker_;
     EntityBulker<sai_dash_inbound_routing_api_t> inbound_routing_bulker_;
+    DashOrch *dash_orch_;
 
-    void doTaskEniTable(Consumer &consumer);
-    void doTaskQosTable(Consumer &consumer);
+    void doTask(Consumer &consumer);
     void doTaskRouteTable(Consumer &consumer);
     void doTaskRouteRuleTable(Consumer &consumer);
-    void doTask(Consumer &consumer);
-    bool addEniEntry(const std::string& eni);
-    bool addEniAddrMapEntry(const std::string& eni);
-    bool addEni(const std::string& eni, const EniEntry &entry);
-    bool removeEniEntry(const std::string& eni);
-    bool removeEniAddrMapEntry(const std::string& eni);
-    bool removeEni(const std::string& eni);
-    bool addQosEntry(const std::string& qos_name, const QosEntry &entry);
-    bool removeQosEntry(const std::string& qos_name);
     bool addOutboundRouting(const std::string& key, OutboundRoutingBulkContext& ctxt);
     bool addOutboundRoutingPost(const std::string& key, const OutboundRoutingBulkContext& ctxt);
     bool removeOutboundRouting(const std::string& key, OutboundRoutingBulkContext& ctxt);

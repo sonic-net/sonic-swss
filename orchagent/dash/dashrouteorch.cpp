@@ -15,12 +15,12 @@
 #include "saiextensions.h"
 #include "swssnet.h"
 #include "tokenize.h"
+#include "dashorch.h"
 
 using namespace std;
 using namespace swss;
 
 extern std::unordered_map<std::string, sai_object_id_t> gVnetNameToId;
-extern sai_dash_eni_api_t* sai_dash_eni_api;
 extern sai_dash_outbound_routing_api_t* sai_dash_outbound_routing_api;
 extern sai_dash_inbound_routing_api_t* sai_dash_inbound_routing_api;
 extern sai_object_id_t gSwitchId;
@@ -34,370 +34,13 @@ static std::unordered_map<std::string, sai_outbound_routing_entry_action_t> sOut
     { "drop", SAI_OUTBOUND_ROUTING_ENTRY_ACTION_DROP }
 };
 
-DashRouteOrch::DashRouteOrch(DBConnector *db, vector<string> &tableName) :
+DashRouteOrch::DashRouteOrch(DBConnector *db, vector<string> &tableName, DashOrch *dash_orch) :
     outbound_routing_bulker_(sai_dash_outbound_routing_api, gMaxBulkSize),
     inbound_routing_bulker_(sai_dash_inbound_routing_api, gMaxBulkSize),
-    Orch(db, tableName)
+    Orch(db, tableName),
+    dash_orch_(dash_orch)
 {
     SWSS_LOG_ENTER();
-}
-
-bool DashRouteOrch::addEniEntry(const string& eni)
-{
-    SWSS_LOG_ENTER();
-
-    if (eni_entries_[eni].eniEntryAdded)
-    {
-        SWSS_LOG_ERROR("ENI entry already exists for %s", eni.c_str());
-        return true;
-    }
-
-    EniEntry &entry = eni_entries_[eni].eni_entry;
-    const string &vnet = entry.vnet;
-
-    if (!vnet.empty() && gVnetNameToId.find(vnet) == gVnetNameToId.end())
-    {
-        SWSS_LOG_ERROR("Retry as vnet %s not found", vnet.c_str());
-        return false;
-    }
-
-    sai_object_id_t &eni_id = entry.eni_id;
-    sai_attribute_t eni_attr;
-    vector<sai_attribute_t> eni_attrs;
-
-    eni_attr.id = SAI_ENI_ATTR_VNET_ID;
-    eni_attr.value.oid = gVnetNameToId[entry.vnet];
-    eni_attrs.push_back(eni_attr);
-
-    bool has_qos = qos_entries_.find(entry.qos_name) != qos_entries_.end();
-
-    eni_attr.id = SAI_ENI_ATTR_PPS;
-    eni_attr.value.u32 = has_qos ? qos_entries_[entry.qos_name].bw : 0;
-    eni_attrs.push_back(eni_attr);
-
-    eni_attr.id = SAI_ENI_ATTR_CPS;
-    eni_attr.value.u32 = has_qos ? qos_entries_[entry.qos_name].cps : 0;
-    eni_attrs.push_back(eni_attr);
-
-    eni_attr.id = SAI_ENI_ATTR_FLOWS;
-    eni_attr.value.u32 = has_qos ? qos_entries_[entry.qos_name].flows : 0;
-    eni_attrs.push_back(eni_attr);
-
-    eni_attr.id = SAI_ENI_ATTR_ADMIN_STATE;
-    eni_attr.value.booldata = entry.admin_state;
-    eni_attrs.push_back(eni_attr);
-
-    sai_status_t status = sai_dash_eni_api->create_eni(&eni_id, gSwitchId,
-                                (uint32_t)eni_attrs.size(), eni_attrs.data());
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to create ENI entry for %s", eni.c_str());
-        task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_ENI, status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
-    }
-
-    eni_entries_[eni].eniEntryAdded = true;
-    entry.eni_id = eni_id;
-    SWSS_LOG_INFO("Created ENI entry for %s", eni.c_str());
-
-    return true;
-}
-
-bool DashRouteOrch::addEniAddrMapEntry(const string& eni)
-{
-    SWSS_LOG_ENTER();
-
-    if (eni_entries_[eni].eniAddrMapEntryAdded)
-    {
-        SWSS_LOG_ERROR("ENI ether address map entry already exists for %s", eni.c_str());
-        return true;
-    }
-    if (!eni_entries_[eni].eniEntryAdded)
-    {
-        // return false to retry
-        return false;
-    }
-
-    EniEntry entry = eni_entries_[eni].eni_entry;
-    MacAddress mac_addr = MacAddress(entry.mac_address);
-    sai_eni_ether_address_map_entry_t eni_ether_address_map_entry;
-    eni_ether_address_map_entry.switch_id = gSwitchId;
-    memcpy(eni_ether_address_map_entry.address, mac_addr.getMac(), sizeof(sai_mac_t));
-
-    sai_attribute_t eni_ether_address_map_entry_attr;
-    eni_ether_address_map_entry_attr.id = SAI_ENI_ETHER_ADDRESS_MAP_ENTRY_ATTR_ENI_ID;
-    eni_ether_address_map_entry_attr.value.oid = entry.eni_id;
-
-    sai_status_t status = sai_dash_eni_api->create_eni_ether_address_map_entry(&eni_ether_address_map_entry, 1, &eni_ether_address_map_entry_attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to create ENI ether address map entry for %s", entry.mac_address.c_str());
-        task_process_status handle_status = handleSaiCreateStatus((sai_api_t) SAI_API_DASH_ENI, status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
-    }
-
-    eni_entries_[eni].eniAddrMapEntryAdded = true;
-    SWSS_LOG_INFO("Created ENI ether address map entry for %s", eni.c_str());
-
-    return true;
-}
-
-bool DashRouteOrch::addEni(const string& eni, const EniEntry &entry)
-{
-    SWSS_LOG_ENTER();
-
-    Eni obj;
-
-    if (eni_entries_.find(eni) == eni_entries_.end())
-    {
-        obj.eni_entry = entry;
-        obj.eniEntryAdded = false;
-        obj.eniAddrMapEntryAdded = false;
-        eni_entries_[eni] = obj;
-    }
-
-    return addEniEntry(eni) && addEniAddrMapEntry(eni);
-}
-
-bool DashRouteOrch::removeEniEntry(const string& eni)
-{
-    SWSS_LOG_ENTER();
-
-    if (!eni_entries_[eni].eniEntryAdded)
-    {
-        SWSS_LOG_ERROR("ENI entry does not exist for %s", eni.c_str());
-        return true;
-    }
-
-    EniEntry entry = eni_entries_[eni].eni_entry;
-    sai_status_t status = sai_dash_eni_api->remove_eni(entry.eni_id);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to remove ENI entry for %s", eni.c_str());
-
-        //Retry later if object is in use
-        if (status == SAI_STATUS_OBJECT_IN_USE)
-        {
-            return false;
-        }
-        task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_ENI, status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
-    }
-
-    eni_entries_[eni].eniEntryAdded = false;
-    SWSS_LOG_INFO("Removed ENI entry for %s", eni.c_str());
-
-    return true;
-}
-
-bool DashRouteOrch::removeEniAddrMapEntry(const string& eni)
-{
-    SWSS_LOG_ENTER();
-
-    if (!eni_entries_[eni].eniAddrMapEntryAdded)
-    {
-        SWSS_LOG_ERROR("ENI ether address map entry does not exist for %s", eni.c_str());
-        return true;
-    }
-
-    EniEntry entry = eni_entries_[eni].eni_entry;
-    MacAddress mac_addr = MacAddress(entry.mac_address);
-    sai_eni_ether_address_map_entry_t eni_ether_address_map_entry;
-    eni_ether_address_map_entry.switch_id = gSwitchId;
-    memcpy(eni_ether_address_map_entry.address, mac_addr.getMac(), sizeof(sai_mac_t));
-
-    sai_status_t status = sai_dash_eni_api->remove_eni_ether_address_map_entry(&eni_ether_address_map_entry);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to remove ENI ether address map entry for %s", eni.c_str());
-        task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_ENI, status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
-    }
-
-    eni_entries_[eni].eniAddrMapEntryAdded = false;
-    SWSS_LOG_INFO("Removed ENI ether address map entry for %s", eni.c_str());
-
-    return true;
-}
-
-bool DashRouteOrch::removeEni(const string& eni)
-{
-    SWSS_LOG_ENTER();
-
-    if (eni_entries_.find(eni) == eni_entries_.end())
-    {
-        SWSS_LOG_ERROR("ENI entry does not exist for %s", eni.c_str());
-        return true;
-    }
-
-    if (!removeEniAddrMapEntry(eni) || !removeEniEntry(eni))
-    {
-        return false;
-    }
-
-    eni_entries_.erase(eni);
-
-    return true;
-}
-
-void DashRouteOrch::doTaskEniTable(Consumer& consumer)
-{
-    SWSS_LOG_ENTER();
-
-    const auto& tn = consumer.getTableName();
-
-    auto it = consumer.m_toSync.begin();
-    while (it != consumer.m_toSync.end())
-    {
-        auto t = it->second;
-        string eni = kfvKey(t);
-        string op = kfvOp(t);
-        EniEntry entry;
-        for (auto i : kfvFieldsValues(t))
-        {
-            if (fvField(i) == "mac_address")
-            {
-                entry.mac_address = fvValue(i);
-            }
-            else if (fvField(i) == "underlay_ip")
-            {
-                entry.underlay_ip = IpAddress(fvValue(i));
-            }
-            else if (fvField(i) == "admin_state")
-            {
-                entry.admin_state = (fvValue(i) == "enabled" ? true : false);
-            }
-            else if (fvField(i) == "vnet")
-            {
-                entry.vnet = fvValue(i);
-            }
-            else if (fvField(i) == "qos")
-            {
-                entry.qos_name = fvValue(i);
-            }
-        }
-        if (op == SET_COMMAND)
-        {
-            if (addEni(eni, entry))
-            {
-                it = consumer.m_toSync.erase(it);
-            }
-            else
-            {
-                it++;
-            }
-        }
-        else if (op == DEL_COMMAND)
-        {
-            if (removeEni(eni))
-            {
-                it = consumer.m_toSync.erase(it);
-            }
-            else
-            {
-                it++;
-            }
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
-            it = consumer.m_toSync.erase(it);
-        }
-    }
-}
-
-bool DashRouteOrch::addQosEntry(const string& qos_name, const QosEntry &entry)
-{
-    SWSS_LOG_ENTER();
-
-    if (qos_entries_.find(qos_name) != qos_entries_.end())
-    {
-        return true;
-    }
-
-    qos_entries_[qos_name] = entry;
-    SWSS_LOG_INFO("Added QOS entries for %s", qos_name.c_str());
-
-    return true;
-}
-
-bool DashRouteOrch::removeQosEntry(const string& qos_name)
-{
-    SWSS_LOG_ENTER();
-
-    if (qos_entries_.find(qos_name) == qos_entries_.end())
-    {
-        return true;
-    }
-
-    qos_entries_.erase(qos_name);
-    SWSS_LOG_INFO("Removed QOS entries for %s", qos_name.c_str());
-
-    return true;
-}
-
-void DashRouteOrch::doTaskQosTable(Consumer& consumer)
-{
-    auto it = consumer.m_toSync.begin();
-    while (it != consumer.m_toSync.end())
-    {
-        KeyOpFieldsValuesTuple t = it->second;
-        string qos_name = kfvKey(t);
-        string op = kfvOp(t);
-
-        if (op == SET_COMMAND)
-        {
-            QosEntry entry;
-
-            for (auto i : kfvFieldsValues(t))
-            {
-                if (fvField(i) == "qos_id")
-                    entry.qos_id = fvValue(i);
-                else if (fvField(i) == "bw")
-                    entry.bw = to_uint<uint32_t>(fvValue(i));
-                else if (fvField(i) == "cps")
-                    entry.cps = to_uint<uint32_t>(fvValue(i));
-                else if (fvField(i) == "flows")
-                    entry.flows = to_uint<uint32_t>(fvValue(i));
-            }
-            if (addQosEntry(qos_name, entry))
-            {
-                it = consumer.m_toSync.erase(it);
-            }
-            else
-            {
-                it++;
-            }
-        }
-        else if (op == DEL_COMMAND)
-        {
-            if (removeQosEntry(qos_name))
-            {
-                it = consumer.m_toSync.erase(it);
-            }
-            else
-            {
-                it++;
-            }
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Unknown operation %s", op.c_str());
-            it = consumer.m_toSync.erase(it);
-        }
-    }
 }
 
 bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkContext& ctxt)
@@ -407,23 +50,23 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
     bool exists = (routing_entries_.find(key) != routing_entries_.end());
     if (exists)
     {
-        SWSS_LOG_ERROR("Outbound routing entry already exists for %s", key.c_str());
+        SWSS_LOG_WARN("Outbound routing entry already exists for %s", key.c_str());
         return true;
     }
-    if (eni_entries_.find(ctxt.eni) == eni_entries_.end())
+    if (!dash_orch_->getEni(ctxt.eni))
     {
-        SWSS_LOG_ERROR("Retry as ENI entry %s not found", ctxt.eni.c_str());
+        SWSS_LOG_INFO("Retry as ENI entry %s not found", ctxt.eni.c_str());
         return false;
     }
     if (!ctxt.vnet.empty() && gVnetNameToId.find(ctxt.vnet) == gVnetNameToId.end())
     {
-        SWSS_LOG_ERROR("Retry as vnet %s not found", ctxt.vnet.c_str());
+        SWSS_LOG_INFO("Retry as vnet %s not found", ctxt.vnet.c_str());
         return false;
     }
 
     sai_outbound_routing_entry_t outbound_routing_entry;
     outbound_routing_entry.switch_id = gSwitchId;
-    outbound_routing_entry.eni_id = eni_entries_[ctxt.eni].eni_entry.eni_id;
+    outbound_routing_entry.eni_id = dash_orch_->getEni(ctxt.eni)->eni_id;
     swss::copy(outbound_routing_entry.destination, ctxt.destination);
     sai_attribute_t outbound_routing_attr;
     vector<sai_attribute_t> outbound_routing_attrs;
@@ -448,7 +91,8 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
     }
 
     object_statuses.emplace_back();
-    outbound_routing_bulker_.create_entry(&object_statuses.back(), &outbound_routing_entry, (uint32_t)outbound_routing_attrs.size(), outbound_routing_attrs.data());
+    outbound_routing_bulker_.create_entry(&object_statuses.back(), &outbound_routing_entry,
+                                            (uint32_t)outbound_routing_attrs.size(), outbound_routing_attrs.data());
 
     return false;
 }
@@ -481,9 +125,9 @@ bool DashRouteOrch::addOutboundRoutingPost(const string& key, const OutboundRout
         }
     }
 
-    OutboundRoutingEntry entry = { eni_entries_[ctxt.eni].eni_entry.eni_id, ctxt.destination, ctxt.action_type, ctxt.vnet, ctxt.overlay_ip };
+    OutboundRoutingEntry entry = { dash_orch_->getEni(ctxt.eni)->eni_id, ctxt.destination, ctxt.action_type, ctxt.vnet, ctxt.overlay_ip };
     routing_entries_[key] = entry;
-    SWSS_LOG_INFO("Outbound routing entry for %s added", key.c_str());
+    SWSS_LOG_NOTICE("Outbound routing entry for %s added", key.c_str());
 
     return true;
 }
@@ -495,7 +139,7 @@ bool DashRouteOrch::removeOutboundRouting(const string& key, OutboundRoutingBulk
     bool exists = (routing_entries_.find(key) != routing_entries_.end());
     if (!exists)
     {
-        SWSS_LOG_ERROR("Failed to find outbound routing entry %s to remove", key.c_str());
+        SWSS_LOG_WARN("Failed to find outbound routing entry %s to remove", key.c_str());
         return true;
     }
 
@@ -539,7 +183,7 @@ bool DashRouteOrch::removeOutboundRoutingPost(const string& key, const OutboundR
     }
 
     routing_entries_.erase(key);
-    SWSS_LOG_INFO("Outbound routing entry for %s removed", key.c_str());
+    SWSS_LOG_NOTICE("Outbound routing entry for %s removed", key.c_str());
 
     return true;
 }
@@ -582,7 +226,6 @@ void DashRouteOrch::doTaskRouteTable(Consumer& consumer)
             destination = IpPrefix(keys[1]);
 
             if (op == SET_COMMAND)
-
             {
                 for (auto i : kfvFieldsValues(tuple))
                 {
@@ -682,30 +325,28 @@ bool DashRouteOrch::addInboundRouting(const string& key, InboundRoutingBulkConte
     bool exists = (routing_rule_entries_.find(key) != routing_rule_entries_.end());
     if (exists)
     {
-        SWSS_LOG_ERROR("Inbound routing entry already exists for %s", key.c_str());
+        SWSS_LOG_WARN("Inbound routing entry already exists for %s", key.c_str());
         return true;
     }
-    if (eni_entries_.find(ctxt.eni) == eni_entries_.end())
+    if (!dash_orch_->getEni(ctxt.eni))
     {
-        SWSS_LOG_ERROR("Retry as ENI entry %s not found", ctxt.eni.c_str());
+        SWSS_LOG_INFO("Retry as ENI entry %s not found", ctxt.eni.c_str());
         return false;
     }
     if (!ctxt.vnet.empty() && gVnetNameToId.find(ctxt.vnet) == gVnetNameToId.end())
     {
-        SWSS_LOG_ERROR("Retry as vnet %s not found", ctxt.vnet.c_str());
+        SWSS_LOG_INFO("Retry as vnet %s not found", ctxt.vnet.c_str());
         return false;
     }
 
     sai_inbound_routing_entry_t inbound_routing_entry;
-    IpAddress& sip_mask = ctxt.sip_mask;
-    sip_mask = IpAddress("255.255.255.0");
     bool deny = !ctxt.action_type.compare("drop");
 
     inbound_routing_entry.switch_id = gSwitchId;
-    inbound_routing_entry.eni_id = eni_entries_[ctxt.eni].eni_entry.eni_id;
+    inbound_routing_entry.eni_id = dash_orch_->getEni(ctxt.eni)->eni_id;
     inbound_routing_entry.vni = ctxt.vni;
     swss::copy(inbound_routing_entry.sip, ctxt.sip);
-    swss::copy(inbound_routing_entry.sip_mask, sip_mask);
+    swss::copy(inbound_routing_entry.sip_mask, ctxt.sip_mask);
     inbound_routing_entry.priority = ctxt.priority;
     auto& object_statuses = ctxt.object_statuses;
 
@@ -759,9 +400,9 @@ bool DashRouteOrch::addInboundRoutingPost(const string& key, const InboundRoutin
         }
     }
 
-    InboundRoutingEntry entry = { eni_entries_[ctxt.eni].eni_entry.eni_id, ctxt.vni, ctxt.sip, ctxt.sip_mask, ctxt.action_type, ctxt.vnet, ctxt.pa_validation, ctxt.priority };
+    InboundRoutingEntry entry = { dash_orch_->getEni(ctxt.eni)->eni_id, ctxt.vni, ctxt.sip, ctxt.sip_mask, ctxt.action_type, ctxt.vnet, ctxt.pa_validation, ctxt.priority };
     routing_rule_entries_[key] = entry;
-    SWSS_LOG_INFO("Inbound routing entry for %s added", key.c_str());
+    SWSS_LOG_NOTICE("Inbound routing entry for %s added", key.c_str());
 
     return true;
 }
@@ -773,7 +414,7 @@ bool DashRouteOrch::removeInboundRouting(const string& key, InboundRoutingBulkCo
     bool exists = (routing_rule_entries_.find(key) != routing_rule_entries_.end());
     if (!exists)
     {
-        SWSS_LOG_ERROR("Failed to find inbound routing entry %s to remove", key.c_str());
+        SWSS_LOG_WARN("Failed to find inbound routing entry %s to remove", key.c_str());
         return true;
     }
 
@@ -821,7 +462,7 @@ bool DashRouteOrch::removeInboundRoutingPost(const string& key, const InboundRou
 
 
     routing_rule_entries_.erase(key);
-    SWSS_LOG_INFO("Inbound routing entry for %s removed", key.c_str());
+    SWSS_LOG_NOTICE("Inbound routing entry for %s removed", key.c_str());
 
     return true;
 }
@@ -858,13 +499,16 @@ void DashRouteOrch::doTaskRouteRuleTable(Consumer& consumer)
             string& action_type = ctxt.action_type;
             string& vnet = ctxt.vnet;
             IpAddress& sip = ctxt.sip;
+            IpAddress& sip_mask = ctxt.sip_mask;
             uint32_t& priority = ctxt.priority;
             bool& pa_validation = ctxt.pa_validation;
 
             vector<string> keys = tokenize(key, ':');
             eni = keys[0];
             vni = to_uint<uint32_t>(keys[1]);
-            sip = IpAddress(keys[2]);
+            IpPrefix prefix = IpPrefix(keys[2]);
+            sip = prefix.getIp();
+            sip_mask = prefix.getMask();
 
             if (op == SET_COMMAND)
             {
@@ -969,17 +613,9 @@ void DashRouteOrch::doTask(Consumer& consumer)
 
     const auto& tn = consumer.getTableName();
 
-    SWSS_LOG_ERROR("Table name: %s", tn.c_str());
+    SWSS_LOG_INFO("Table name: %s", tn.c_str());
 
-    if (tn == APP_DASH_ENI_TABLE_NAME)
-    {
-        doTaskEniTable(consumer);
-    }
-    else if (tn == APP_DASH_QOS_TABLE_NAME)
-    {
-        doTaskQosTable(consumer);
-    }
-    else if (tn == APP_DASH_ROUTE_TABLE_NAME)
+    if (tn == APP_DASH_ROUTE_TABLE_NAME)
     {
         doTaskRouteTable(consumer);
     }

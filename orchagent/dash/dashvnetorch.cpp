@@ -21,7 +21,6 @@ using namespace std;
 using namespace swss;
 
 std::unordered_map<std::string, sai_object_id_t> gVnetNameToId;
-
 extern sai_dash_vnet_api_t* sai_dash_vnet_api;
 extern sai_dash_outbound_ca_to_pa_api_t* sai_dash_outbound_ca_to_pa_api;
 extern sai_dash_pa_validation_api_t* sai_dash_pa_validation_api;
@@ -44,16 +43,17 @@ bool DashVnetOrch::addVnet(const string& vnet_name, DashVnetBulkContext& ctxt)
     bool exists = (vnet_table_.find(vnet_name) != vnet_table_.end());
     if (exists)
     {
-        SWSS_LOG_ERROR("Vnet already exists for %s", vnet_name.c_str());
+        SWSS_LOG_WARN("Vnet already exists for %s", vnet_name.c_str());
         return true;
     }
 
+    uint32_t attr_count = 1;
     auto& object_ids = ctxt.object_ids;
     sai_attribute_t dash_vnet_attr;
     dash_vnet_attr.id = SAI_VNET_ATTR_VNI;
     dash_vnet_attr.value.u32 = ctxt.vni;
     object_ids.emplace_back();
-    vnet_bulker_.create_entry(&object_ids.back(), 1, &dash_vnet_attr);
+    vnet_bulker_.create_entry(&object_ids.back(), attr_count, &dash_vnet_attr);
 
     return false;
 }
@@ -79,8 +79,7 @@ bool DashVnetOrch::addVnetPost(const string& vnet_name, const DashVnetBulkContex
     VnetEntry entry = { id, ctxt.guid };
     vnet_table_[vnet_name] = entry;
     gVnetNameToId[vnet_name] = id;
-
-    SWSS_LOG_INFO("Vnet entry added for %s", vnet_name.c_str());
+    SWSS_LOG_NOTICE("Vnet entry added for %s", vnet_name.c_str());
 
     return true;
 }
@@ -92,7 +91,7 @@ bool DashVnetOrch::removeVnet(const string& vnet_name, DashVnetBulkContext& ctxt
     bool exists = (vnet_table_.find(vnet_name) != vnet_table_.end());
     if (!exists)
     {
-        SWSS_LOG_ERROR("Failed to find vnet entry %s to remove", vnet_name.c_str());
+        SWSS_LOG_WARN("Failed to find vnet entry %s to remove", vnet_name.c_str());
         return true;
     }
 
@@ -126,7 +125,6 @@ bool DashVnetOrch::removeVnetPost(const string& vnet_name, const DashVnetBulkCon
         {
             return false;
         }
-
         SWSS_LOG_ERROR("Failed to remove vnet entry for %s", vnet_name.c_str());
         task_process_status handle_status = handleSaiRemoveStatus((sai_api_t) SAI_API_DASH_VNET, status);
         if (handle_status != task_success)
@@ -134,11 +132,9 @@ bool DashVnetOrch::removeVnetPost(const string& vnet_name, const DashVnetBulkCon
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
-
     vnet_table_.erase(vnet_name);
     gVnetNameToId.erase(vnet_name);
-
-    SWSS_LOG_INFO("Vnet entry removed for %s", vnet_name.c_str());
+    SWSS_LOG_NOTICE("Vnet entry removed for %s", vnet_name.c_str());
 
     return true;
 }
@@ -274,7 +270,6 @@ void DashVnetOrch::doTaskVnetTable(Consumer& consumer)
     }
 }
 
-
 bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
@@ -306,6 +301,7 @@ bool DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
+    uint32_t attr_count = 1;
     sai_pa_validation_entry_t pa_validation_entry;
     pa_validation_entry.vnet_id = gVnetNameToId[ctxt.vnet_name];
     pa_validation_entry.switch_id = gSwitchId;
@@ -318,7 +314,7 @@ bool DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
 
     object_statuses.emplace_back();
     pa_validation_bulker_.create_entry(&object_statuses.back(), &pa_validation_entry,
-            1, &pa_validation_attr);
+            attr_count, &pa_validation_attr);
 
     return false;
 }
@@ -364,8 +360,7 @@ bool DashVnetOrch::addOutboundCaToPaPost(const string& key, const VnetMapBulkCon
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
-
-    SWSS_LOG_INFO("Outbound CA to PA  map entry for %s added", key.c_str());
+    SWSS_LOG_NOTICE("Outbound CA to PA  map entry for %s added", key.c_str());
 
     return true;
 }
@@ -397,8 +392,7 @@ bool DashVnetOrch::addPaValidationPost(const string& key, const VnetMapBulkConte
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
-
-    SWSS_LOG_INFO("PA validation entry for %s added", key.c_str());
+    SWSS_LOG_NOTICE("PA validation entry for %s added", key.c_str());
 
     return true;
 }
@@ -418,7 +412,7 @@ bool DashVnetOrch::addVnetMapPost(const string& key, const VnetMapBulkContext& c
     VnetMapEntry entry = {  gVnetNameToId[vnet_name], ctxt.routing_type, ctxt.dip, ctxt.underlay_ip,
         ctxt.mac_address, ctxt.metering_bucket, ctxt.use_dst_vni };
     vnet_map_table_[key] = entry;
-    SWSS_LOG_INFO("Vnet map added for %s", key.c_str());
+    SWSS_LOG_NOTICE("Vnet map added for %s", key.c_str());
 
     return true;
 }
@@ -462,12 +456,12 @@ bool DashVnetOrch::removeVnetMap(const string& key, VnetMapBulkContext& ctxt)
     bool exists = (vnet_map_table_.find(key) != vnet_map_table_.end());
     if (!exists)
     {
-        SWSS_LOG_ERROR("Failed to find vnet mapping %s to remove", key.c_str());
+        SWSS_LOG_WARN("Failed to find vnet mapping %s to remove", key.c_str());
         return true;
     }
 
-    removeOutboundCaToPa(key, ctxt);
     removePaValidation(key, ctxt);
+    removeOutboundCaToPa(key, ctxt);
 
     return false;
 }
@@ -499,8 +493,7 @@ bool DashVnetOrch::removeOutboundCaToPaPost(const string& key, const VnetMapBulk
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
-
-    SWSS_LOG_INFO("Outbound CA to PA map entry for %s removed", key.c_str());
+    SWSS_LOG_NOTICE("Outbound CA to PA map entry for %s removed", key.c_str());
 
     return true;
 }
@@ -532,8 +525,7 @@ bool DashVnetOrch::removePaValidationPost(const string& key, const VnetMapBulkCo
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
-
-    SWSS_LOG_INFO("PA validation entry for %s removed", key.c_str());
+    SWSS_LOG_NOTICE("PA validation entry for %s removed", key.c_str());
 
     return true;
 }
@@ -547,9 +539,8 @@ bool DashVnetOrch::removeVnetMapPost(const string& key, const VnetMapBulkContext
     {
         return false;
     }
-
     vnet_map_table_.erase(key);
-    SWSS_LOG_INFO("Vnet map removed for %s", key.c_str());
+    SWSS_LOG_NOTICE("Vnet map removed for %s", key.c_str());
 
     return true;
 }
@@ -635,7 +626,7 @@ void DashVnetOrch::doTaskVnetMapTable(Consumer& consumer)
             {
                 if (removeVnetMap(key, ctxt))
                 {
-                    it = consumer.m_toSync.erase(it);	
+                    it = consumer.m_toSync.erase(it);
                 }
                 else
                 {
