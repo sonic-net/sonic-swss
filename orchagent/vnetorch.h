@@ -322,20 +322,13 @@ struct BfdSessionInfo
     NextHopKey endpoint;
 };
 
-struct PriorityEpInfo 
-{
-    bool is_primary; 
-    IpPrefix tunnel_prefix;  
-};
-
 struct VNetTunnelRouteEntry 
 {
     NextHopGroupKey ngh_key; 
     NextHopGroupKey primary;
-    NextHopGroupKey all;
+    NextHopGroupKey secondary;
 };
 
-typedef std::map<IpAddress, vector<PriorityEpInfo>> PriorityEndpoints;
 typedef std::map<NextHopGroupKey, NextHopGroupInfo> VNetNextHopGroupInfoTable;
 typedef std::map<IpPrefix, VNetTunnelRouteEntry> VNetTunnelRouteTable;
 typedef std::map<IpAddress, BfdSessionInfo> BfdSessionTable;
@@ -365,9 +358,15 @@ private:
     bool handleTunnel(const Request&);
 
     bool hasNextHopGroup(const string&, const NextHopGroupKey&);
+    bool isActiveNextHopGroup(const string&, const NextHopGroupKey&);
     sai_object_id_t getNextHopGroupId(const string&, const NextHopGroupKey&);
     bool addNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj);
     bool removeNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj);
+    bool createNextHopGroup(const string&, NextHopGroupKey&, VNetVrfObject *vrf_obj,
+                            const std::map<NextHopKey, IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
+    bool selectNextHopGroup(const string&, NextHopGroupKey&, NextHopGroupKey&,
+                            VNetVrfObject *vrf_obj, NextHopGroupKey&,
+                            const std::map<NextHopKey,IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
 
     void createBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr);
     void removeBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr);
@@ -377,16 +376,13 @@ private:
     void removeRouteState(const string& vnet, IpPrefix& ipPrefix);
     void addRouteAdvertisement(IpPrefix& ipPrefix, string& profile);
     void removeRouteAdvertisement(IpPrefix& ipPrefix);
-    void addPriorityEndpoints(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& primary,  NextHopGroupKey& all);
-    void removePriorityEndpoints(const string& vnet, IpPrefix& ipPrefix);
 
     void updateVnetTunnel(const BfdUpdate&);
     bool updateTunnelRoute(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op);
 
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op, string& profile,
-                    NextHopGroupKey& nexthops_all,
-                    const std::map<NextHopKey, IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
+                    NextHopGroupKey& nexthops_secondary, const std::map<NextHopKey, IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
 
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, nextHop& nh, string& op);
@@ -405,7 +401,6 @@ private:
     shared_ptr<DBConnector> state_db_;
     unique_ptr<Table> state_vnet_rt_tunnel_table_;
     unique_ptr<Table> state_vnet_rt_adv_table_;
-    std::map<std::string, PriorityEndpoints> priority_endpoints_; 
 };
 
 class VNetCfgRouteOrch : public Orch
