@@ -822,11 +822,13 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
                 {
                     auto flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
                     auto queues = tokens[1];
-                    if (op == SET_COMMAND && flexCounterOrch->getQueueCountersState())
+                    if (op == SET_COMMAND &&
+                        (flexCounterOrch->getQueueCountersState() || flexCounterOrch->getQueueWatermarkCountersState()))
                     {
                         gPortsOrch->createPortBufferQueueCounters(port, queues);
                     }
-                    else if (op == DEL_COMMAND && flexCounterOrch->getQueueCountersState())
+                    else if (op == DEL_COMMAND &&
+                             (flexCounterOrch->getQueueCountersState() || flexCounterOrch->getQueueWatermarkCountersState()))
                     {
                         gPortsOrch->removePortBufferQueueCounters(port, queues);
                     }
@@ -841,23 +843,23 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
              * so we added a map that will help us to know what was the last command for this port and priority -
              * if the last command was set command then it is a modify command and we dont need to increase the buffer counter
              * all other cases (no last command exist or del command was the last command) it means that we need to increase the ref counter */
-            if (op == SET_COMMAND) 
+            if (op == SET_COMMAND)
             {
-                if (queue_port_flags[port_name][ind] != SET_COMMAND) 
+                if (queue_port_flags[port_name][ind] != SET_COMMAND)
                 {
                     /* if the last operation was not "set" then it's create and not modify - need to increase ref counter */
                     gPortsOrch->increasePortRefCount(port_name);
                 }
-            } 
+            }
             else if (op == DEL_COMMAND)
             {
-                if (queue_port_flags[port_name][ind] == SET_COMMAND) 
+                if (queue_port_flags[port_name][ind] == SET_COMMAND)
 		{
                     /* we need to decrease ref counter only if the last operation was "SET_COMMAND" */
                     gPortsOrch->decreasePortRefCount(port_name);
                 }
-            } 
-            else 
+            }
+            else
             {
                 SWSS_LOG_ERROR("operation value is not SET or DEL (op = %s)", op.c_str());
                 return task_process_status::task_invalid_entry;
@@ -1001,11 +1003,13 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
                     {
                         auto flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
                         auto pgs = tokens[1];
-                        if (op == SET_COMMAND && flexCounterOrch->getPgWatermarkCountersState())
+                        if (op == SET_COMMAND &&
+                            (flexCounterOrch->getPgCountersState() || flexCounterOrch->getPgWatermarkCountersState()))
                         {
                             gPortsOrch->createPortBufferPgCounters(port, pgs);
                         }
-                        else if (op == DEL_COMMAND && flexCounterOrch->getPgWatermarkCountersState())
+                        else if (op == DEL_COMMAND &&
+                                 (flexCounterOrch->getPgCountersState() || flexCounterOrch->getPgWatermarkCountersState()))
                         {
                             gPortsOrch->removePortBufferPgCounters(port, pgs);
                         }
@@ -1021,23 +1025,23 @@ task_process_status BufferOrch::processPriorityGroup(KeyOpFieldsValuesTuple &tup
              * so we added a map that will help us to know what was the last command for this port and priority -
              * if the last command was set command then it is a modify command and we dont need to increase the buffer counter
              * all other cases (no last command exist or del command was the last command) it means that we need to increase the ref counter */
-            if (op == SET_COMMAND) 
+            if (op == SET_COMMAND)
             {
-                if (pg_port_flags[port_name][ind] != SET_COMMAND) 
+                if (pg_port_flags[port_name][ind] != SET_COMMAND)
                 {
                     /* if the last operation was not "set" then it's create and not modify - need to increase ref counter */
                     gPortsOrch->increasePortRefCount(port_name);
                 }
-            } 
+            }
             else if (op == DEL_COMMAND)
             {
-                if (pg_port_flags[port_name][ind] == SET_COMMAND) 
+                if (pg_port_flags[port_name][ind] == SET_COMMAND)
                 {
                     /* we need to decrease ref counter only if the last operation was "SET_COMMAND" */
                     gPortsOrch->decreasePortRefCount(port_name);
                 }
-            } 
-            else 
+            }
+            else
             {
                 SWSS_LOG_ERROR("operation value is not SET or DEL (op = %s)", op.c_str());
                 return task_process_status::task_invalid_entry;

@@ -29,7 +29,9 @@ extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
 #define PORT_KEY                    "PORT"
 #define PORT_BUFFER_DROP_KEY        "PORT_BUFFER_DROP"
 #define QUEUE_KEY                   "QUEUE"
+#define QUEUE_WATERMARK             "QUEUE_WATERMARK"
 #define PG_WATERMARK_KEY            "PG_WATERMARK"
+#define PG_DROP_KEY                 "PG_DROP"
 #define RIF_KEY                     "RIF"
 #define ACL_KEY                     "ACL"
 #define TUNNEL_KEY                  "TUNNEL"
@@ -162,11 +164,25 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                         {
                             gPortsOrch->generateQueueMap(getQueueConfigurations());
                             m_queue_enabled = true;
+                            gPortsOrch->addQueueFlexCounters(getQueueConfigurations());
+                        }
+                        else if(key == QUEUE_WATERMARK)
+                        {
+                            gPortsOrch->generateQueueMap(getQueueConfigurations());
+                            m_queue_watermark_enabled = true;
+                            gPortsOrch->addQueueWatermarkFlexCounters(getQueueConfigurations());
+                        }
+                        else if(key == PG_DROP_KEY)
+                        {
+                            gPortsOrch->generatePriorityGroupMap(getPgConfigurations());
+                            m_pg_enabled = true;
+                            gPortsOrch->addPriorityGroupFlexCounters(getPgConfigurations());
                         }
                         else if(key == PG_WATERMARK_KEY)
                         {
                             gPortsOrch->generatePriorityGroupMap(getPgConfigurations());
                             m_pg_watermark_enabled = true;
+                            gPortsOrch->addPriorityGroupWatermarkFlexCounters(getPgConfigurations());
                         }
                     }
                     if(gIntfsOrch && (key == RIF_KEY) && (value == "enable"))
@@ -250,14 +266,24 @@ bool FlexCounterOrch::getPortBufferDropCountersState() const
     return m_port_buffer_drop_counter_enabled;
 }
 
-bool FlexCounterOrch::getPgWatermarkCountersState() const
-{
-    return m_pg_watermark_enabled;
-}
-
 bool FlexCounterOrch::getQueueCountersState() const
 {
     return m_queue_enabled;
+}
+
+bool FlexCounterOrch::getQueueWatermarkCountersState() const
+{
+    return m_queue_watermark_enabled;
+}
+
+bool FlexCounterOrch::getPgCountersState() const
+{
+    return m_pg_enabled;
+}
+
+bool FlexCounterOrch::getPgWatermarkCountersState() const
+{
+    return m_pg_watermark_enabled;
 }
 
 bool FlexCounterOrch::bake()
