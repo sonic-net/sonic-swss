@@ -28,7 +28,9 @@ extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
 #define PORT_KEY                    "PORT"
 #define PORT_BUFFER_DROP_KEY        "PORT_BUFFER_DROP"
 #define QUEUE_KEY                   "QUEUE"
+#define QUEUE_WATERMARK             "QUEUE_WATERMARK"
 #define PG_WATERMARK_KEY            "PG_WATERMARK"
+#define PG_DROP_KEY                 "PG_DROP"
 #define RIF_KEY                     "RIF"
 #define ACL_KEY                     "ACL"
 #define TUNNEL_KEY                  "TUNNEL"
@@ -158,10 +160,22 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                         else if(key == QUEUE_KEY)
                         {
                             gPortsOrch->generateQueueMap();
+                            gPortsOrch->addQueueFlexCounters();
+                        }
+                        else if(key == QUEUE_WATERMARK)
+                        {
+                            gPortsOrch->generateQueueMap();
+                            gPortsOrch->addQueueWatermarkFlexCounters();
+                        }
+                        else if(key == PG_DROP_KEY)
+                        {
+                            gPortsOrch->generatePriorityGroupMap();
+                            gPortsOrch->addPriorityGroupFlexCounters();
                         }
                         else if(key == PG_WATERMARK_KEY)
                         {
                             gPortsOrch->generatePriorityGroupMap();
+                            gPortsOrch->addPriorityGroupWatermarkFlexCounters();
                         }
                     }
                     if(gIntfsOrch && (key == RIF_KEY) && (value == "enable"))

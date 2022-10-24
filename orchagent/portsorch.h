@@ -131,7 +131,11 @@ public:
     bool getPortPfcWatchdogStatus(sai_object_id_t portId, uint8_t *pfc_bitmask);
 
     void generateQueueMap();
+    void addQueueFlexCounters();
+    void addQueueWatermarkFlexCounters();
     void generatePriorityGroupMap();
+    void addPriorityGroupFlexCounters();
+    void addPriorityGroupWatermarkFlexCounters();
     void generatePortCounterMap();
     void generatePortBufferDropCounterMap();
 
@@ -340,10 +344,20 @@ private:
     bool m_isQueueMapGenerated = false;
     void generateQueueMapPerPort(const Port& port);
     void removeQueueMapPerPort(const Port& port);
+    bool m_isQueueFlexCountersAdded = false;
+    void addQueueFlexCountersPerPort(const Port& port);
+
+    bool m_isQueueWatermarkFlexCountersAdded = false;
+    void addQueueWatermarkFlexCountersPerPort(const Port& port);
 
     bool m_isPriorityGroupMapGenerated = false;
     void generatePriorityGroupMapPerPort(const Port& port);
     void removePriorityGroupMapPerPort(const Port& port);
+    bool m_isPriorityGroupFlexCountersAdded = false;
+    void addPriorityGroupFlexCountersPerPort(const Port& port);
+
+    bool m_isPriorityGroupWatermarkFlexCountersAdded = false;
+    void addPriorityGroupWatermarkFlexCountersPerPort(const Port& port);
 
     bool m_isPortCounterMapGenerated = false;
     bool m_isPortBufferDropCounterMapGenerated = false;
