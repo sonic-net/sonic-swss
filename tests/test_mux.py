@@ -56,6 +56,8 @@ class TestMuxTunnelBase():
 
     PING_CMD                    = "timeout 0.5 ping -c1 -W1 -i0 -n -q {ip}"
 
+    PFC_WD_QUEUE_MAX               = 8
+
     SAI_ROUTER_INTERFACE_ATTR_TYPE = "SAI_ROUTER_INTERFACE_ATTR_TYPE"
     SAI_ROUTER_INTERFACE_TYPE_VLAN = "SAI_ROUTER_INTERFACE_TYPE_VLAN"
 
@@ -226,6 +228,10 @@ class TestMuxTunnelBase():
                 count += 1
 
         assert num_tnl_nh == count
+
+    def check_syslog(self, dvs, marker, err_log, expected_cnt):
+        (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \"%s\" | wc -l" % (marker, err_log)])
+        assert int(num.strip()) >= int(expected_cnt)
 
     def add_neighbor(self, dvs, ip, mac):
         if ip_address(ip).version == 6:
@@ -598,6 +604,40 @@ class TestMuxTunnelBase():
             assert start
             assert end
 
+    def create_and_test_pfcwd(self, dvs, appdb, counters_db, config_db):
+        test_port = "Ethernet0"
+        counter_queue = 3
+
+        marker = dvs.add_log_marker()
+
+        # Enabling some extra logging to catch info message
+        dvs.runcmd("swssloglevel -l INFO -c orchagent")
+
+        # Do a switchover
+        self.set_mux_state(appdb, test_port, "active")
+        time.sleep(1)
+
+        # # Check that pfc_wd was stopped
+        self.check_syslog(dvs, marker, "Stopped PFC Watchdog on port " + test_port, 1)
+        # Check that pfc_wd was started
+        self.check_syslog(dvs, marker, "Started PFC Watchdog on port " + test_port, 1)
+
+        # Set a storm on port
+        self.set_storm_state_on_port_queue(counters_db, test_port, counter_queue, state="enabled")
+        # Wait for storm state to set
+        time.sleep(1)
+
+        marker = dvs.add_log_marker()
+
+        # Do a switchover
+        self.set_mux_state(appdb, test_port, "standby")
+
+        # Check that pfcwd wasn't disabled on port
+        self.check_syslog(dvs, marker, "Storm active on port " + test_port, 1)
+
+        # Disable extra logging
+        dvs.runcmd("swssloglevel -l NOTICE -c orchagent")
+
     def check_interface_exists_in_asicdb(self, asicdb, sai_oid):
         asicdb.wait_for_entry(self.ASIC_RIF_TABLE, sai_oid)
         return True
@@ -854,6 +894,78 @@ class TestMuxTunnelBase():
         else:
             pytest.fail('Invalid test action {}'.format(action))
 
+    def setup_pfcwd(self, dvs, config_db):
+        pfc_test_ports = ["Ethernet0"]
+        pfc_test_queue = 3
+        # set cable lengths
+        for port in pfc_test_ports:
+            fvs = {port: "5m"}
+            config_db.update_entry("CABLE_LENGTH", "AZURE", fvs)
+            dvs.port_admin_set(port, "up")
+
+        # enable pfcwd
+        self.set_flex_counter_status("PFCWD", "enable", config_db)
+        self.set_flex_counter_status("QUEUE", "enable", config_db)
+
+        for port in pfc_test_ports:
+            self.set_ports_pfc(port, pfc_test_queue, config_db, "enable")
+
+        self.start_pfcwd_on_ports(pfc_test_ports, config_db)
+
+    def teardown_pfcwd(self, dvs, config_db):
+        pfc_test_ports = ["Ethernet0"]
+        pfc_test_queue = 3
+        # disable pfcwd
+        self.set_flex_counter_status("PFCWD", "disable", config_db)
+        # disable queue
+        self.set_flex_counter_status("QUEUE", "disable", config_db)
+
+        for port in pfc_test_ports:
+            # shutdown port
+            dvs.port_admin_set(port, "down")
+
+    def set_flex_counter_status(self, key, state, config_db):
+        fvs = {'FLEX_COUNTER_STATUS': state}
+        config_db.update_entry("FLEX_COUNTER_TABLE", key, fvs)
+        time.sleep(1)
+
+    def set_ports_pfc(self, port, queue, config_db, status='enable'):
+        keyname = 'pfcwd_sw_enable'
+        if 'enable' in status:
+            fvs = {keyname: str(queue), 'pfc_enable': str(queue)}
+            config_db.create_entry("PORT_QOS_MAP", port, fvs)
+        else:
+            config_db.delete_entry("PORT_QOS_MAP", port)
+
+    def start_pfcwd_on_ports(self, test_ports, config_db, poll_interval="200", detection_time="200", restoration_time="200", action="drop"):
+        pfcwd_info = {"POLL_INTERVAL": poll_interval}
+        config_db.update_entry("PFC_WD", "GLOBAL", pfcwd_info)
+
+        pfcwd_info = {"action": action,
+                      "detection_time" : detection_time,
+                      "restoration_time": restoration_time
+                     }
+
+        for port in test_ports:
+            config_db.update_entry("PFC_WD", port, pfcwd_info)
+
+    def stop_pfcwd_on_ports(self, dvs, port):
+        config_db = dvs.get_config_db()
+        config_db.delete_entry("PFC_WD", port)
+
+    def verify_pfcwd_state_on_port(self, counters_db, port, state="stormed"):
+        fvs = {"PFC_WD_STATUS": state}
+        queue_oids = counters_db.get_entry("COUNTERS_QUEUE_NAME_MAP", "")
+        for queue in range(0,self.PFC_WD_QUEUE_MAX):
+            queue_name = port + ":" + str(queue)
+            counters_db.wait_for_field_match("COUNTERS", queue_oids[queue_name], fvs)
+
+    def set_storm_state_on_port_queue(self, counters_db, port, queue, state="enabled"):
+        fvs = {"DEBUG_STORM": state}
+        queue_oids = counters_db.get_entry("COUNTERS_QUEUE_NAME_MAP", "")
+        queue_name = port + ":" + str(queue)
+        counters_db.update_entry("COUNTERS", queue_oids[queue_name], fvs)
+
     @pytest.fixture(scope='module')
     def setup_vlan(self, dvs):
         self.create_vlan_interface(dvs)
@@ -987,6 +1099,13 @@ class TestMuxTunnelBase():
 
         return fdb_map
 
+    @pytest.fixture
+    def setup_teardown_pfcwd(self, dvs):
+        config_db = dvs.get_config_db()
+        self.setup_pfcwd(dvs, config_db)
+        yield
+        self.teardown_pfcwd(dvs, config_db)
+
 
 class TestMuxTunnel(TestMuxTunnelBase):
     """ Tests for Mux tunnel creation and removal """
@@ -1097,6 +1216,20 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
         for ip in test_ips:
             self.check_neighbor_state(dvs, dvs_route, ip, expect_route=False)
+
+    def test_mux_pfcwd_switching(
+            self, dvs, neighbor_cleanup, setup_vlan,
+            setup_mux_cable, setup_tunnel, setup_peer_switch,
+            setup_qos_map, setup_teardown_pfcwd, testlog
+    ):
+        """ test pfcwd gets disabled, then enabled """
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        counters_db = dvs.get_counters_db()
+        config_db = dvs.get_config_db()
+
+        self.create_and_test_pfcwd(dvs, appdb, counters_db, config_db)
+
+
 
 
 # Add Dummy always-pass test at end as workaroud

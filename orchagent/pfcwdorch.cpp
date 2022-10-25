@@ -1,6 +1,7 @@
 #include <limits.h>
 #include <inttypes.h>
 #include <unordered_map>
+#include <tuple>
 #include "pfcwdorch.h"
 #include "sai_serialize.h"
 #include "portsorch.h"
@@ -752,6 +753,151 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::stopWdOnPort(const Port& port)
     unregisterFromWdDb(port);
 
     return true;
+}
+
+template <typename DropHandler, typename ForwardHandler>
+bool PfcWdSwOrch<DropHandler, ForwardHandler>::continueWdOnPort(const Port& port)
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_id_t queueId = SAI_NULL_OBJECT_ID;
+
+    for (uint8_t i = 0; i < port.m_queue_ids.size(); i++)
+    {
+        queueId = port.m_queue_ids[i];
+
+        auto pos = m_pfcwdconfigs.find(queueId);
+        if (pos == m_pfcwdconfigs.end()) {
+            continue;
+        }
+
+        SWSS_LOG_INFO("Starting Wd on port %s", port.m_alias.c_str());
+        return PfcWdOrch<DropHandler, ForwardHandler>::createEntry(port.m_alias, pos->second);
+    }
+    return true;
+}
+
+template <typename DropHandler, typename ForwardHandler>
+bool PfcWdSwOrch<DropHandler, ForwardHandler>::pauseWdOnPort(const Port& port)
+{
+    SWSS_LOG_ENTER();
+
+    uint8_t pfcMask = 0;
+    sai_object_id_t queueId = SAI_NULL_OBJECT_ID;
+
+    for (uint8_t i = 0; i < port.m_queue_ids.size(); i++)
+    {
+        queueId = port.m_queue_ids[i];
+        if ((pfcMask & (1 << i)) == 0 && m_entryMap.find(queueId) == m_entryMap.end())
+        {
+            continue;
+        }
+
+        // Store configurations for enabling on all ports next time
+        // This is per-queue
+        const string countersKey = this->getCountersTable()->getTableName()
+                + this->getCountersTable()->getTableNameSeparator()
+                + sai_serialize_object_id(queueId);
+
+        uint32_t detection = stoi(*this->getCountersDb()->hget(countersKey, "PFC_WD_DETECTION_TIME"));
+        uint32_t restoration = stoi(*this->getCountersDb()->hget(countersKey, "PFC_WD_RESTORATION_TIME"));
+        string action = *this->getCountersDb()->hget(countersKey, "PFC_WD_ACTION");
+
+        vector<FieldValueTuple> configs;
+        configs.push_back(FieldValueTuple(PFC_WD_DETECTION_TIME, to_string(detection/1000)));
+        configs.push_back(FieldValueTuple(PFC_WD_RESTORATION_TIME, to_string(restoration/1000)));
+        configs.push_back(FieldValueTuple(PFC_WD_ACTION, action));
+
+        m_pfcwdconfigs.emplace(queueId, configs);
+
+        // Disable PfcWd on this port
+        PfcWdOrch<DropHandler, ForwardHandler>::deleteEntry(port.m_alias);
+        return true;
+    }
+
+    return false;
+}
+
+template <typename DropHandler, typename ForwardHandler>
+bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdOnAllPorts()
+{
+    SWSS_LOG_ENTER();
+
+    auto allPorts = gPortsOrch->getAllPorts();
+
+    for (auto &it: allPorts)
+    {
+        Port port = it.second;
+
+        if (port.m_type != Port::Type::PHY)
+        {
+            continue;
+        }
+
+        continueWdOnPort(port);
+    }
+
+    m_pfcwdconfigs.clear();
+
+    return true;
+}
+
+template <typename DropHandler, typename ForwardHandler>
+bool PfcWdSwOrch<DropHandler, ForwardHandler>::stopWdOnAllPorts()
+{
+    SWSS_LOG_ENTER();
+
+    auto allPorts = gPortsOrch->getAllPorts();
+    for (auto &it: allPorts)
+    {
+        Port port = it.second;
+
+        if (port.m_type != Port::Type::PHY)
+        {
+            continue;
+        }
+
+        // Check if port is currently storming
+        if (isStormingOnPort(port)) {
+            SWSS_LOG_INFO("Port %s is storming, skipping", port.m_alias.c_str());
+            continue;
+        }
+
+        pauseWdOnPort(port);
+    }
+
+    return true;
+}
+
+template <typename DropHandler, typename ForwardHandler>
+bool PfcWdSwOrch<DropHandler, ForwardHandler>::isStormingOnPort(Port port) {
+    SWSS_LOG_ENTER();
+
+    string status;
+    sai_object_id_t queueId = SAI_NULL_OBJECT_ID;
+    uint8_t pfcMask = 0;
+
+    for (uint8_t i = 0; i < port.m_queue_ids.size(); i++)
+    {
+        queueId = port.m_queue_ids[i];
+        if ((pfcMask & (1 << i)) == 0 && m_entryMap.find(queueId) == m_entryMap.end())
+        {
+            continue;
+        }
+
+        string countersKey = this->getCountersTable()->getTableName()
+                + this->getCountersTable()->getTableNameSeparator()
+                + sai_serialize_object_id(queueId);
+
+        status = *this->getCountersDb()->hget(countersKey, "PFC_WD_STATUS");
+
+        if (status == "stormed")
+        {
+            SWSS_LOG_NOTICE("Storm active on port %s.", port.m_alias.c_str());
+            return true;
+        }
+    }
+    return false;
 }
 
 template <typename DropHandler, typename ForwardHandler>

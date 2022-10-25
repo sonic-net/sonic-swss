@@ -41,6 +41,7 @@ Directory<Orch*> gDirectory;
 NatOrch *gNatOrch;
 BfdOrch *gBfdOrch;
 QosOrch *gQosOrch;
+PfcWdSwOrch<PfcWdActionHandler,PfcWdActionHandler> *gPfcWdSwOrch;
 
 bool gIsNatSupported = false;
 
@@ -375,13 +376,16 @@ bool OrchDaemon::init()
 
         static const vector<sai_queue_attr_t> queueAttrIds;
 
-        m_orchList.push_back(new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
+        gPfcWdSwOrch = (PfcWdSwOrch<PfcWdActionHandler,PfcWdActionHandler> *)
+            new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
                     m_configDb,
                     pfc_wd_tables,
                     portStatIds,
                     queueStatIds,
                     queueAttrIds,
-                    PFC_WD_POLL_MSECS));
+                    PFC_WD_POLL_MSECS);
+
+        m_orchList.push_back(gPfcWdSwOrch);
     }
     else if ((platform == INVM_PLATFORM_SUBSTRING)
              || (platform == CLX_PLATFORM_SUBSTRING)
@@ -420,23 +424,29 @@ bool OrchDaemon::init()
         if ((platform == INVM_PLATFORM_SUBSTRING) || (platform == NPS_PLATFORM_SUBSTRING)
 	|| (platform == CLX_PLATFORM_SUBSTRING))
         {
-            m_orchList.push_back(new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
+            gPfcWdSwOrch = (PfcWdSwOrch<PfcWdActionHandler,PfcWdActionHandler> *)
+                new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
                         m_configDb,
                         pfc_wd_tables,
                         portStatIds,
                         queueStatIds,
                         queueAttrIds,
-                        PFC_WD_POLL_MSECS));
+                        PFC_WD_POLL_MSECS);
+
+            m_orchList.push_back(gPfcWdSwOrch);
         }
         else if (platform == BFN_PLATFORM_SUBSTRING)
         {
-            m_orchList.push_back(new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
+            gPfcWdSwOrch = (PfcWdSwOrch<PfcWdActionHandler,PfcWdActionHandler> *)
+                new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
                         m_configDb,
                         pfc_wd_tables,
                         portStatIds,
                         queueStatIds,
                         queueAttrIds,
-                        PFC_WD_POLL_MSECS));
+                        PFC_WD_POLL_MSECS);
+
+            m_orchList.push_back(gPfcWdSwOrch);
         }
     }
     else if (platform == BRCM_PLATFORM_SUBSTRING)
@@ -472,13 +482,16 @@ bool OrchDaemon::init()
             SAI_QUEUE_ATTR_PAUSE_STATUS,
         };
 
-        m_orchList.push_back(new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
-                    m_configDb,
-                    pfc_wd_tables,
-                    portStatIds,
-                    queueStatIds,
-                    queueAttrIds,
-                    PFC_WD_POLL_MSECS));
+        gPfcWdSwOrch = (PfcWdSwOrch<PfcWdActionHandler,PfcWdActionHandler> *)
+            new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
+                m_configDb,
+                pfc_wd_tables,
+                portStatIds,
+                queueStatIds,
+                queueAttrIds,
+                PFC_WD_POLL_MSECS);
+
+        m_orchList.push_back(gPfcWdSwOrch);
     } else if (platform == CISCO_8000_PLATFORM_SUBSTRING)
     {
         static const vector<sai_port_stat_t> portStatIds;
@@ -493,13 +506,16 @@ bool OrchDaemon::init()
             SAI_QUEUE_ATTR_PAUSE_STATUS,
         };
 
-        m_orchList.push_back(new PfcWdSwOrch<PfcWdSaiDlrInitHandler, PfcWdActionHandler>(
+        gPfcWdSwOrch = (PfcWdSwOrch<PfcWdActionHandler,PfcWdActionHandler> *)
+            new PfcWdSwOrch<PfcWdSaiDlrInitHandler, PfcWdActionHandler>(
                     m_configDb,
                     pfc_wd_tables,
                     portStatIds,
                     queueStatIds,
                     queueAttrIds,
-                    PFC_WD_POLL_MSECS));
+                    PFC_WD_POLL_MSECS);
+
+        m_orchList.push_back(gPfcWdSwOrch);
     }
 
     m_orchList.push_back(&CounterCheckOrch::getInstance(m_configDb));

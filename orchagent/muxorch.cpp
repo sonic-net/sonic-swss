@@ -24,6 +24,7 @@
 #include "routeorch.h"
 #include "fdborch.h"
 #include "qosorch.h"
+#include "pfcwdorch.h"
 
 /* Global variables */
 extern Directory<Orch*> gDirectory;
@@ -34,6 +35,7 @@ extern AclOrch *gAclOrch;
 extern PortsOrch *gPortsOrch;
 extern FdbOrch *gFdbOrch;
 extern QosOrch *gQosOrch;
+extern PfcWdSwOrch<PfcWdActionHandler,PfcWdActionHandler> *gPfcWdSwOrch;
 
 extern sai_object_id_t gVirtualRouterId;
 extern sai_object_id_t  gUnderlayIfId;
@@ -476,6 +478,7 @@ void MuxCable::setState(string new_state)
     SWSS_LOG_INFO("Changed state to %s", new_state.c_str());
 
     mux_cb_orch_->updateMuxState(mux_name_, new_state);
+
     return;
 }
 
@@ -1495,6 +1498,10 @@ bool MuxCableOrch::addOperation(const Request& request)
     auto state = request.getAttrString("state");
     auto mux_obj = mux_orch->getMuxCable(port_name);
 
+    /* Disable Pfc Watchdog for perfomance */
+    SWSS_LOG_INFO("Disabling PFCWD for Mux Switchover on %s", port_name.c_str());
+    gPfcWdSwOrch->stopWdOnAllPorts();
+
     try
     {
         mux_obj->setState(state);
@@ -1505,6 +1512,9 @@ bool MuxCableOrch::addOperation(const Request& request)
                         state.c_str(), port_name.c_str(), error.what());
         return true;
     }
+    /* Enable Pfc Watchdog */
+    SWSS_LOG_INFO("Enabling PFCWD for Mux Switchover on %s", port_name.c_str());
+    gPfcWdSwOrch->startWdOnAllPorts();
 
     SWSS_LOG_NOTICE("Mux State set to %s for port %s", state.c_str(), port_name.c_str());
 
@@ -1531,10 +1541,18 @@ MuxStateOrch::MuxStateOrch(DBConnector *db, const std::string& tableName) :
 
 void MuxStateOrch::updateMuxState(string portName, string muxState)
 {
+    /* Disable Pfc Watchdog for perfomance */
+    SWSS_LOG_INFO("Disabling PFCWD for Mux Switchover on %s", portName.c_str());
+    gPfcWdSwOrch->stopWdOnAllPorts();
+
     vector<FieldValueTuple> tuples;
     FieldValueTuple tuple("state", muxState);
     tuples.push_back(tuple);
     mux_state_table_.set(portName, tuples);
+
+    /* Enable Pfc Watchdog */
+    SWSS_LOG_INFO("Enabling PFCWD for Mux Switchover on %s", portName.c_str());
+    gPfcWdSwOrch->startWdOnAllPorts();
 }
 
 bool MuxStateOrch::addOperation(const Request& request)
