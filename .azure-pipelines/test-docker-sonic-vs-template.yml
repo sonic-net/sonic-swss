@@ -77,7 +77,7 @@ jobs:
       sudo /sbin/ip link del Vrf1 type vrf table 1001
       pushd tests
 
-      params=''
+      params=' --num-ports=2 '
       if [ '${{ parameters.archive_gcov }}' == True ]; then
         params='--keeptb'
       fi
@@ -85,8 +85,7 @@ jobs:
         params='--graceful-stop'
       fi
 
-      all_tests=$(ls test_*.py)
-      all_tests="${all_tests} p4rt"
+      all_tests=$(ls test_dash_*.py)
       test_set=()
       # Run 20 tests as a set.
       for test in ${all_tests}; do
