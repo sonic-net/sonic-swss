@@ -3567,9 +3567,9 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         continue;
                     }
 
-                    if (adv_interface_types != p.m_adv_interface_types && p.m_autoneg == 1)
+                    if (adv_interface_types != p.m_adv_interface_types)
                     {
-                        if (p.m_admin_state_up)
+                        if (p.m_admin_state_up && p.m_autoneg == 1)
                         {
                             /* Bring port down before applying speed */
                             if (!setPortAdminStatus(p, false))
