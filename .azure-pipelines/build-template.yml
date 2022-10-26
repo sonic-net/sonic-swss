@@ -26,6 +26,22 @@ parameters:
 - name: sairedis_artifact_name
   type: string
 
+- name: sairedis_artifact_project
+  type: string
+  default: 'build'
+
+- name: sairedis_artifact_pipeline
+  type: string
+  default: 'Azure.sonic-sairedis'
+
+- name: sairedis_artifact_branch
+  type: string
+  default: '$(BUILD_BRANCH)'
+
+- name: sairedis_artifact_pattern
+  type: string
+  default: '**'
+
 - name: swss_common_artifact_name
   type: string
 
@@ -43,7 +59,23 @@ parameters:
 - name: common_lib_artifact_name
   type: string
 
+- name: common_lib_artifact_project
+  type: string
+  default: 'build'
+
+- name: common_lib_artifact_pipeline
+  type: string
+  default: 'Azure.sonic-buildimage.common_libs'
+
+- name: common_lib_artifact_branch
+  type: string
+  default: '$(BUILD_BRANCH)'
+
 - name: asan
+  type: boolean
+  default: false
+
+- name: allow_failed_artifact
   type: boolean
   default: false
 
@@ -84,8 +116,8 @@ jobs:
       artifact: ${{ parameters.swss_common_artifact_name }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/$(BUILD_BRANCH)'
-      allowFailedBuilds: true
-      path: $(Build.ArtifactStagingDirectory)/download
+      allowFailedBuilds: ${{ parameters.allow_failed_artifact }}
+      path: $(Build.ArtifactStagingDirectory)/download/swsscommon
       patterns: |
         libswsscommon_1.0.0_${{ parameters.arch }}.deb
         libswsscommon-dev_1.0.0_${{ parameters.arch }}.deb
@@ -93,30 +125,30 @@ jobs:
   - task: DownloadPipelineArtifact@2
     inputs:
       source: specific
-      project: nvidia
-      pipeline: nvidia-sonic.sonic-buildimage
-      artifact: sonic-buildimage.vs
+      project: ${{ parameters.sairedis_artifact_project }}
+      pipeline: ${{ parameters.sairedis_artifact_pipeline }}
+      artifact: ${{ parameters.sairedis_artifact_name }}
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/bluefield'
+      runBranch: 'refs/heads/${{ parameters.sairedis_artifact_branch }}'
       path: $(Build.ArtifactStagingDirectory)/download/sairedis
       patterns: |
-        target/debs/buster/libsaivs_*.deb
-        target/debs/buster/libsaivs-dev_*.deb
-        target/debs/buster/libsairedis_*.deb
-        target/debs/buster/libsairedis-dev_*.deb
-        target/debs/buster/libsaimetadata_*.deb
-        target/debs/buster/libsaimetadata-dev_*.deb
-        target/debs/buster/syncd-vs_*.deb
+        ${{ parameters.sairedis_artifact_pattern }}/libsaivs_*.deb
+        ${{ parameters.sairedis_artifact_pattern }}/libsaivs-dev_*.deb
+        ${{ parameters.sairedis_artifact_pattern }}/libsairedis_*.deb
+        ${{ parameters.sairedis_artifact_pattern }}/libsairedis-dev_*.deb
+        ${{ parameters.sairedis_artifact_pattern }}/libsaimetadata_*.deb
+        ${{ parameters.sairedis_artifact_pattern }}/libsaimetadata-dev_*.deb
+        ${{ parameters.sairedis_artifact_pattern }}/syncd-vs_*.deb
     displayName: "Download sonic sairedis deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
       source: specific
-      project: nvidia
-      pipeline: nvidia-sonic.sonic-buildimage
-      artifact: sonic-buildimage.vs
+      project: ${{ parameters.common_lib_artifact_project }}
+      pipeline: ${{ parameters.common_lib_artifact_pipeline }}
+      artifact: ${{ parameters.common_lib_artifact_name }}
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/bluefield'
-      path: $(Build.ArtifactStagingDirectory)/download
+      runBranch: 'refs/heads/${{ parameters.common_lib_artifact_branch }}'
+      path: $(Build.ArtifactStagingDirectory)/download/common
       patterns: |
         target/debs/buster/libnl-3-200_*.deb
         target/debs/buster/libnl-3-dev_*.deb
@@ -131,9 +163,9 @@ jobs:
   - script: |
       set -ex
       cd download
-      sudo dpkg -i $(find target/debs/buster -type f)
-      sudo dpkg -i $(ls *.deb)
-      sudo dpkg -i $(find sairedis/target/debs/buster -type f)
+      sudo dpkg -i $(find common -type f -name '*.deb')
+      sudo dpkg -i $(find swsscommon -type f -name '*.deb')
+      sudo dpkg -i $(find sairedis -type f -name '*.deb')
       cd ..
       rm -rf download
     workingDirectory: $(Build.ArtifactStagingDirectory)
