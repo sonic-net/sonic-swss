@@ -625,14 +625,6 @@ task_process_status DashAclOrch::taskUpdateDashAclRule(
     {
         // Mandatory on create attributes should be setted, otherwise assign the default value.
         // If the attributes don't have default value, just skip and wait for the user to set the value at the next message
-        if (!acl_rule.m_action || !acl_rule.m_terminating)
-        {
-            acl_rule.m_action == DashAclRuleEntry::Action::ALLOW;
-            acl_rule.m_terminating == false;
-            attrs.emplace_back();
-            attrs.back().id = SAI_DASH_ACL_RULE_ATTR_ACTION;
-            attrs.back().value.s32 = SAI_DASH_ACL_RULE_ACTION_PERMIT;
-        }
         if (!acl_rule.m_protocols)
         {
             const static vector<uint8_t> all_protocols = {
@@ -851,8 +843,8 @@ task_process_status DashAclOrch::unbindAclFromEni(DashAclTable &acl_table, const
         SWSS_LOG_WARN("ACL %s doesn't exist", key.c_str());
         return task_success;
     }
-    acl_table.erase(itr);
     auto acl = itr->second;
+    acl_table.erase(itr);
 
     auto acl_group = getAclGroup(*(acl.m_acl_group_id));
     if (acl_group == nullptr)
