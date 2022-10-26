@@ -914,7 +914,7 @@ class TestMuxTunnelBase():
 
     def teardown_pfcwd(self, dvs, config_db):
         pfc_test_ports = ["Ethernet0"]
-        pfc_test_queue = 3
+
         # disable pfcwd
         self.set_flex_counter_status("PFCWD", "disable", config_db)
         # disable queue
