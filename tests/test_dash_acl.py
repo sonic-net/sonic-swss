@@ -236,7 +236,7 @@ class TestAcl(object):
         time.sleep(3)
         rule_ids = ctx.asic_dash_acl_rule_table.get_keys()
         assert len(rule_ids) == 1
-        ctx.create_acl_rule(acl_group1, acl_rule2, {"src_addr": "192.168.0.1,192.168.1.2", "dst_addr": "192.168.0.1,192.168.1.2", "src_port": "0-1", "dst_port": "0-1"})
+        ctx.create_acl_rule(acl_group1, acl_rule2, {"src_addr": "", "dst_addr": "192.168.0.1,192.168.1.2", "src_port": "", "dst_port": "0-1"})
         time.sleep(3)
         rule_ids = ctx.asic_dash_acl_rule_table.get_keys()
         assert len(rule_ids) == 2
