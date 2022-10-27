@@ -23,6 +23,10 @@ parameters:
 - name: artifact_name
   type: string
 
+- name: asan
+  type: boolean
+  default: false
+
 jobs:
 - job:
   displayName: ${{ parameters.arch }}
@@ -66,13 +70,13 @@ jobs:
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/$(BUILD_BRANCH)'
       path: $(Build.ArtifactStagingDirectory)/download
-      patterns: '**/target/docker-sonic-vs.gz'
-    displayName: "Download sonic-buildimage docker-sonic-vs"
+      patterns: '**/target/${{ parameters.artifact_name }}.gz'
+    displayName: "Download sonic-buildimage ${{ parameters.artifact_name }}"
   - script: |
       set -ex
       echo $(Build.DefinitionName).$(Build.BuildNumber)
 
-      docker load < $(Build.ArtifactStagingDirectory)/download/target/docker-sonic-vs.gz
+      docker load < $(Build.ArtifactStagingDirectory)/download/target/${{ parameters.artifact_name }}.gz
 
       mkdir -p .azure-pipelines/docker-sonic-vs/debs
 
@@ -80,13 +84,18 @@ jobs:
 
       pushd .azure-pipelines
 
-      docker build --no-cache -t docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber) docker-sonic-vs
+      build_args=""
+      if [ '${{ parameters.asan }}' == True ]; then
+        build_args="--build-arg need_dbg=y"
+      fi
+
+      docker build $build_args --no-cache -t docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber).asan-${{ parameters.asan }} docker-sonic-vs
 
       popd
 
-      docker save docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber) | gzip -c > $(Build.ArtifactStagingDirectory)/docker-sonic-vs.gz
+      docker save docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber).asan-${{ parameters.asan }} | gzip -c > $(Build.ArtifactStagingDirectory)/docker-sonic-vs.gz
       rm -rf $(Build.ArtifactStagingDirectory)/download
-    displayName: "Build docker-sonic-vs"
+    displayName: "Build ${{ parameters.artifact_name }}"
   - publish: $(Build.ArtifactStagingDirectory)/
     artifact: ${{ parameters.artifact_name }}
     displayName: "Archive sonic docker vs image"

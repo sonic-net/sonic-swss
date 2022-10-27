@@ -57,6 +57,8 @@ FlowCounterRouteOrch *gFlowCounterRouteOrch;
 DebugCounterOrch *gDebugCounterOrch;
 
 bool gIsNatSupported = false;
+bool gSaiRedisLogRotate = false;
+event_handle_t g_events_handle;
 
 #define DEFAULT_MAX_BULK_SIZE 1000
 size_t gMaxBulkSize = DEFAULT_MAX_BULK_SIZE;
@@ -89,6 +91,8 @@ OrchDaemon::~OrchDaemon()
         delete(*it);
     }
     delete m_select;
+
+    events_deinit_publisher(g_events_handle);
 }
 
 bool OrchDaemon::init()
@@ -96,6 +100,8 @@ bool OrchDaemon::init()
     SWSS_LOG_ENTER();
 
     string platform = getenv("platform") ? getenv("platform") : "";
+
+    g_events_handle = events_init_publisher("sonic-events-swss");
 
     gCrmOrch = new CrmOrch(m_configDb, CFG_CRM_TABLE_NAME);
 
@@ -346,7 +352,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, mux_orch, mux_cb_orch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, tunnel_decap_orch, sflow_orch, gDebugCounterOrch, gMacsecOrch, gBfdOrch, gSrv6Orch};
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, tunnel_decap_orch, sflow_orch, gDebugCounterOrch, gMacsecOrch, gBfdOrch, gSrv6Orch, mux_orch, mux_cb_orch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
@@ -453,7 +459,7 @@ bool OrchDaemon::init()
         vector<table_name_with_pri_t> fabric_port_tables = {
            // empty for now
         };
-        gFabricPortsOrch = new FabricPortsOrch(m_applDb, fabric_port_tables);
+        gFabricPortsOrch = new FabricPortsOrch(m_applDb, fabric_port_tables, m_fabricPortStatEnabled, m_fabricQueueStatEnabled);
         m_orchList.push_back(gFabricPortsOrch);
     }
 
@@ -597,13 +603,26 @@ bool OrchDaemon::init()
             SAI_QUEUE_ATTR_PAUSE_STATUS,
         };
 
-        m_orchList.push_back(new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
-                    m_configDb,
-                    pfc_wd_tables,
-                    portStatIds,
-                    queueStatIds,
-                    queueAttrIds,
-                    PFC_WD_POLL_MSECS));
+        if(gSwitchOrch->checkPfcDlrInitEnable())
+        {
+            m_orchList.push_back(new PfcWdSwOrch<PfcWdDlrHandler, PfcWdLossyHandler>(
+                        m_configDb,
+                        pfc_wd_tables,
+                        portStatIds,
+                        queueStatIds,
+                        queueAttrIds,
+                        PFC_WD_POLL_MSECS));
+        }
+        else
+        {
+            m_orchList.push_back(new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
+                        m_configDb,
+                        pfc_wd_tables,
+                        portStatIds,
+                        queueStatIds,
+                        queueAttrIds,
+                        PFC_WD_POLL_MSECS));
+        }
     } else if (platform == CISCO_8000_PLATFORM_SUBSTRING)
     {
         static const vector<sai_port_stat_t> portStatIds;
@@ -658,24 +677,26 @@ void OrchDaemon::flush()
         SWSS_LOG_ERROR("Failed to flush redis pipeline %d", status);
         abort();
     }
+}
 
-    // check if logroate is requested
-    if (gSaiRedisLogRotate)
+/* Release the file handle so the log can be rotated */
+void OrchDaemon::logRotate() {
+    SWSS_LOG_ENTER();
+    sai_attribute_t attr;
+    attr.id = SAI_REDIS_SWITCH_ATTR_PERFORM_LOG_ROTATE;
+    attr.value.booldata = true;
+    sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_NOTICE("performing log rotate");
-
-        gSaiRedisLogRotate = false;
-
-        attr.id = SAI_REDIS_SWITCH_ATTR_PERFORM_LOG_ROTATE;
-        attr.value.booldata = true;
-
-        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+        SWSS_LOG_ERROR("Failed to release the file handle on sairedis log %d", status);
     }
 }
+
 
 void OrchDaemon::start()
 {
     SWSS_LOG_ENTER();
+    gSaiRedisLogRotate = false;
 
     for (Orch *o : m_orchList)
     {
@@ -716,6 +737,17 @@ void OrchDaemon::start()
              * requests live in it. When the daemon has nothing to do, it
              * is a good chance to flush the pipeline  */
             flush();
+            continue;
+        }
+
+        // check if logroate is requested
+        if (gSaiRedisLogRotate)
+        {
+            SWSS_LOG_NOTICE("performing log rotate");
+
+            gSaiRedisLogRotate = false;
+
+            logRotate();
             continue;
         }
 

@@ -10,7 +10,9 @@
 #include "debugcounterorch.h"
 #include "directory.h"
 #include "copporch.h"
+#include <swss/tokenize.h>
 #include "routeorch.h"
+#include "macsecorch.h"
 #include "flowcounterrouteorch.h"
 
 extern sai_port_api_t *sai_port_api;
@@ -52,14 +54,21 @@ unordered_map<string, string> flexCounterGroupMap =
     {"TUNNEL", TUNNEL_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {FLOW_CNT_TRAP_KEY, HOSTIF_TRAP_COUNTER_FLEX_COUNTER_GROUP},
     {FLOW_CNT_ROUTE_KEY, ROUTE_FLOW_COUNTER_FLEX_COUNTER_GROUP},
+    {"MACSEC_SA", COUNTERS_MACSEC_SA_GROUP},
+    {"MACSEC_SA_ATTR", COUNTERS_MACSEC_SA_ATTR_GROUP},
+    {"MACSEC_FLOW", COUNTERS_MACSEC_FLOW_GROUP},
 };
 
 
 FlexCounterOrch::FlexCounterOrch(DBConnector *db, vector<string> &tableNames):
     Orch(db, tableNames),
     m_flexCounterConfigTable(db, CFG_FLEX_COUNTER_TABLE_NAME),
+    m_bufferQueueConfigTable(db, CFG_BUFFER_QUEUE_TABLE_NAME),
+    m_bufferPgConfigTable(db, CFG_BUFFER_PG_TABLE_NAME),
     m_flexCounterDb(new DBConnector("FLEX_COUNTER_DB", 0)),
-    m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE))
+    m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE)),
+    m_gbflexCounterDb(new DBConnector("GB_FLEX_COUNTER_DB", 0)),
+    m_gbflexCounterGroupTable(new ProducerTable(m_gbflexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE))
 {
     SWSS_LOG_ENTER();
 }
@@ -119,6 +128,13 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     vector<FieldValueTuple> fieldValues;
                     fieldValues.emplace_back(POLL_INTERVAL_FIELD, value);
                     m_flexCounterGroupTable->set(flexCounterGroupMap[key], fieldValues);
+                    if (gPortsOrch && gPortsOrch->isGearboxEnabled())
+                    {
+                        if (key == PORT_KEY || key.rfind("MACSEC", 0) == 0)
+                        {
+                            m_gbflexCounterGroupTable->set(flexCounterGroupMap[key], fieldValues);
+                        }
+                    }
                 }
                 else if(field == FLEX_COUNTER_STATUS_FIELD)
                 {
@@ -144,11 +160,13 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                         }
                         else if(key == QUEUE_KEY)
                         {
-                            gPortsOrch->generateQueueMap();
+                            gPortsOrch->generateQueueMap(getQueueConfigurations());
+                            m_queue_enabled = true;
                         }
                         else if(key == PG_WATERMARK_KEY)
                         {
-                            gPortsOrch->generatePriorityGroupMap();
+                            gPortsOrch->generatePriorityGroupMap(getPgConfigurations());
+                            m_pg_watermark_enabled = true;
                         }
                     }
                     if(gIntfsOrch && (key == RIF_KEY) && (value == "enable"))
@@ -197,10 +215,12 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     fieldValues.emplace_back(FLEX_COUNTER_STATUS_FIELD, value);
                     m_flexCounterGroupTable->set(flexCounterGroupMap[key], fieldValues);
 
-                    // Update FLEX_COUNTER_STATUS for gearbox port
-                    if (key == PORT_KEY && gPortsOrch && gPortsOrch->isGearboxEnabled())
+                    if (gPortsOrch && gPortsOrch->isGearboxEnabled())
                     {
-                        gPortsOrch->setGearboxFlexCounterStatus(value == "enable");
+                        if (key == PORT_KEY || key.rfind("MACSEC", 0) == 0)
+                        {
+                            m_gbflexCounterGroupTable->set(flexCounterGroupMap[key], fieldValues);
+                        }
                     }
                 }
                 else if(field == FLEX_COUNTER_DELAY_STATUS_FIELD)
@@ -228,6 +248,16 @@ bool FlexCounterOrch::getPortCountersState() const
 bool FlexCounterOrch::getPortBufferDropCountersState() const
 {
     return m_port_buffer_drop_counter_enabled;
+}
+
+bool FlexCounterOrch::getPgWatermarkCountersState() const
+{
+    return m_pg_watermark_enabled;
+}
+
+bool FlexCounterOrch::getQueueCountersState() const
+{
+    return m_queue_enabled;
 }
 
 bool FlexCounterOrch::bake()
@@ -270,4 +300,166 @@ bool FlexCounterOrch::bake()
     }
     Consumer* consumer = dynamic_cast<Consumer *>(getExecutor(CFG_FLEX_COUNTER_TABLE_NAME));
     return consumer->addToSync(entries);
+}
+
+map<string, FlexCounterQueueStates> FlexCounterOrch::getQueueConfigurations()
+{
+    SWSS_LOG_ENTER();
+
+    map<string, FlexCounterQueueStates> queuesStateVector;
+    std::vector<std::string> portQueueKeys;
+    m_bufferQueueConfigTable.getKeys(portQueueKeys);
+
+    for (const auto& portQueueKey : portQueueKeys)
+    {
+        auto toks = tokenize(portQueueKey, '|');
+        if (toks.size() != 2)
+        {
+            SWSS_LOG_ERROR("Invalid BUFFER_QUEUE key: [%s]", portQueueKey.c_str());
+            continue;
+        }
+
+        auto configPortNames = tokenize(toks[0], ',');
+        auto configPortQueues = toks[1];
+        toks = tokenize(configPortQueues, '-');
+
+        for (const auto& configPortName : configPortNames)
+        {
+            uint32_t maxQueueNumber = gPortsOrch->getNumberOfPortSupportedQueueCounters(configPortName);
+            uint32_t maxQueueIndex = maxQueueNumber - 1;
+            uint32_t minQueueIndex = 0;
+
+            if (!queuesStateVector.count(configPortName))
+            {
+                FlexCounterQueueStates flexCounterQueueState(maxQueueNumber);
+                queuesStateVector.insert(make_pair(configPortName, flexCounterQueueState));
+            }
+
+            try {
+                auto startIndex = to_uint<uint32_t>(toks[0], minQueueIndex, maxQueueIndex);
+                if (toks.size() > 1)
+                {
+                    auto endIndex = to_uint<uint32_t>(toks[1], minQueueIndex, maxQueueIndex);
+                    queuesStateVector.at(configPortName).enableQueueCounters(startIndex, endIndex);
+                }
+                else
+                {
+                    queuesStateVector.at(configPortName).enableQueueCounter(startIndex);
+                }
+            } catch (std::invalid_argument const& e) {
+                    SWSS_LOG_ERROR("Invalid queue index [%s] for port [%s]", configPortQueues.c_str(), configPortName.c_str());
+                    continue;
+            }
+        }
+    }
+
+    return queuesStateVector;
+}
+
+map<string, FlexCounterPgStates> FlexCounterOrch::getPgConfigurations()
+{
+    SWSS_LOG_ENTER();
+
+    map<string, FlexCounterPgStates> pgsStateVector;
+    std::vector<std::string> portPgKeys;
+    m_bufferPgConfigTable.getKeys(portPgKeys);
+
+    for (const auto& portPgKey : portPgKeys)
+    {
+        auto toks = tokenize(portPgKey, '|');
+        if (toks.size() != 2)
+        {
+            SWSS_LOG_ERROR("Invalid BUFFER_PG key: [%s]", portPgKey.c_str());
+            continue;
+        }
+
+        auto configPortNames = tokenize(toks[0], ',');
+        auto configPortPgs = toks[1];
+        toks = tokenize(configPortPgs, '-');
+
+        for (const auto& configPortName : configPortNames)
+        {
+            uint32_t maxPgNumber = gPortsOrch->getNumberOfPortSupportedPgCounters(configPortName);
+            uint32_t maxPgIndex = maxPgNumber - 1;
+            uint32_t minPgIndex = 0;
+
+            if (!pgsStateVector.count(configPortName))
+            {
+                FlexCounterPgStates flexCounterPgState(maxPgNumber);
+                pgsStateVector.insert(make_pair(configPortName, flexCounterPgState));
+            }
+
+            try {
+                auto startIndex = to_uint<uint32_t>(toks[0], minPgIndex, maxPgIndex);
+                if (toks.size() > 1)
+                {
+                    auto endIndex = to_uint<uint32_t>(toks[1], minPgIndex, maxPgIndex);
+                    pgsStateVector.at(configPortName).enablePgCounters(startIndex, endIndex);
+                }
+                else
+                {
+                    pgsStateVector.at(configPortName).enablePgCounter(startIndex);
+                }
+            } catch (std::invalid_argument const& e) {
+                    SWSS_LOG_ERROR("Invalid pg index [%s] for port [%s]", configPortPgs.c_str(), configPortName.c_str());
+                    continue;
+            }
+        }
+    }
+
+    return pgsStateVector;
+}
+
+FlexCounterQueueStates::FlexCounterQueueStates(uint32_t maxQueueNumber)
+{
+    SWSS_LOG_ENTER();
+    m_queueStates.resize(maxQueueNumber, false);
+}
+
+bool FlexCounterQueueStates::isQueueCounterEnabled(uint32_t index) const
+{
+    SWSS_LOG_ENTER();
+    return m_queueStates[index];
+}
+
+void FlexCounterQueueStates::enableQueueCounters(uint32_t startIndex, uint32_t endIndex)
+{
+    SWSS_LOG_ENTER();
+    for (uint32_t queueIndex = startIndex; queueIndex <= endIndex; queueIndex++)
+    {
+        enableQueueCounter(queueIndex);
+    }
+}
+
+void FlexCounterQueueStates::enableQueueCounter(uint32_t queueIndex)
+{
+    SWSS_LOG_ENTER();
+    m_queueStates[queueIndex] = true;
+}
+
+FlexCounterPgStates::FlexCounterPgStates(uint32_t maxPgNumber)
+{
+    SWSS_LOG_ENTER();
+    m_pgStates.resize(maxPgNumber, false);
+}
+
+bool FlexCounterPgStates::isPgCounterEnabled(uint32_t index) const
+{
+    SWSS_LOG_ENTER();
+    return m_pgStates[index];
+}
+
+void FlexCounterPgStates::enablePgCounters(uint32_t startIndex, uint32_t endIndex)
+{
+    SWSS_LOG_ENTER();
+    for (uint32_t pgIndex = startIndex; pgIndex <= endIndex; pgIndex++)
+    {
+        enablePgCounter(pgIndex);
+    }
+}
+
+void FlexCounterPgStates::enablePgCounter(uint32_t pgIndex)
+{
+    SWSS_LOG_ENTER();
+    m_pgStates[pgIndex] = true;
 }

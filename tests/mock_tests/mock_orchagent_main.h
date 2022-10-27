@@ -12,8 +12,8 @@
 #include "mirrororch.h"
 #define private public
 #include "bufferorch.h"
-#undef private
 #include "qosorch.h"
+#undef private
 #include "vrforch.h"
 #include "vnetorch.h"
 #include "vxlanorch.h"
@@ -30,7 +30,6 @@ extern int gBatchSize;
 extern bool gSwssRecord;
 extern bool gSairedisRecord;
 extern bool gLogRotate;
-extern bool gSaiRedisLogRotate;
 extern ofstream gRecordOfs;
 extern string gRecordFile;
 
@@ -82,3 +81,4 @@ extern sai_queue_api_t *sai_queue_api;
 extern sai_udf_api_t* sai_udf_api;
 extern sai_mpls_api_t* sai_mpls_api;
 extern sai_counter_api_t* sai_counter_api;
+extern sai_samplepacket_api_t *sai_samplepacket_api;

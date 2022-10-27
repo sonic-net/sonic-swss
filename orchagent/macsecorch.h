@@ -16,6 +16,10 @@
 
 using namespace swss;
 
+#define COUNTERS_MACSEC_SA_ATTR_GROUP                   "COUNTERS_MACSEC_SA_ATTR"
+#define COUNTERS_MACSEC_SA_GROUP                        "COUNTERS_MACSEC_SA"
+#define COUNTERS_MACSEC_FLOW_GROUP                      "COUNTERS_MACSEC_FLOW"
+
 // AN is a 2 bit number, it can only be 0, 1, 2 or 3
 #define MAX_SA_NUMBER (3)
 
@@ -63,10 +67,8 @@ private:
 
     DBConnector         m_counter_db;
     Table               m_macsec_counters_map;
-    Table               m_macsec_flow_tx_counters_map;
-    Table               m_macsec_flow_rx_counters_map;
-    Table               m_macsec_sa_tx_counters_map;
-    Table               m_macsec_sa_rx_counters_map;
+    DBConnector         m_gb_counter_db;
+    Table               m_gb_macsec_counters_map;
     Table               m_applPortTable;
     FlexCounterManager  m_macsec_sa_attr_manager;
     FlexCounterManager  m_macsec_sa_stat_manager;
@@ -225,6 +227,8 @@ private:
         sai_macsec_direction_t direction,
         const std::string &obj_name,
         sai_object_id_t obj_id);
+
+    Table& MACsecCountersMap(MACsecOrchContext &ctx);
 
     /* Flex Counter Manager */
     FlexCounterManager& MACsecSaStatManager(MACsecOrchContext &ctx);

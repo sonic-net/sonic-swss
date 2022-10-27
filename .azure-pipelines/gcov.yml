@@ -14,7 +14,7 @@ parameters:
 
 - name: timeout
   type: number
-  default: 180
+  default: 240
 
 - name: sonic_slave
   type: string

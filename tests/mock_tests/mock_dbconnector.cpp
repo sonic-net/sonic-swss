@@ -5,6 +5,8 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 
+#include <map>
+
 #include "dbconnector.h"
 
 namespace swss

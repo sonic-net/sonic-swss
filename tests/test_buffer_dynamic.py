@@ -5,7 +5,7 @@ import buffer_model
 
 from dvslib.dvs_common import PollingConfig
 
-@pytest.yield_fixture
+@pytest.fixture
 def dynamic_buffer(dvs):
     buffer_model.enable_dynamic_buffer(dvs.get_config_db(), dvs.runcmd)
     yield

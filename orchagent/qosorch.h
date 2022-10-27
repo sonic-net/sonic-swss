@@ -112,6 +112,24 @@ public:
 protected:
     bool convertEcnMode(string str, sai_ecn_mark_mode_t &ecn_val);
     bool convertBool(string str, bool &val);
+private:
+    void appendThresholdToAttributeList(sai_attr_id_t type,
+                                        sai_uint32_t threshold,
+                                        bool needDefer,
+                                        vector<sai_attribute_t> &normalQueue,
+                                        vector<sai_attribute_t> &deferredQueue,
+                                        sai_uint32_t &newThreshold);
+    typedef struct {
+        sai_uint32_t green_max_threshold;
+        sai_uint32_t green_min_threshold;
+        sai_uint32_t yellow_max_threshold;
+        sai_uint32_t yellow_min_threshold;
+        sai_uint32_t red_max_threshold;
+        sai_uint32_t red_min_threshold;
+    } qos_wred_thresholds_t;
+    typedef map<string, qos_wred_thresholds_t> qos_wred_thresholds_store_t;
+
+    static qos_wred_thresholds_store_t m_wredProfiles;
 };
 
 

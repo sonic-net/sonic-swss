@@ -417,9 +417,6 @@ class TestDscpToTcMap(object):
                         dscp_to_tc_map_id = id
                         break
             switch_oid = dvs.getSwitchOid()
-            # Check switch level DSCP_TO_TC_MAP doesn't before PORT_QOS_MAP|global is created
-            fvs = self.asic_db.get_entry(self.ASIC_SWITCH_STR, switch_oid)
-            assert("SAI_SWITCH_ATTR_QOS_DSCP_TO_TC_MAP" not in fvs)
 
             # Insert switch level map entry 
             self.port_qos_table.set("global", [("dscp_to_tc_map", "AZURE")])

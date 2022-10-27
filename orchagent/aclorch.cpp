@@ -153,7 +153,7 @@ static const acl_capabilities_t defaultAclActionsSupported =
     }
 };
 
-static acl_table_action_list_lookup_t defaultAclActionList = 
+static acl_table_action_list_lookup_t defaultAclActionList =
 {
     {
         // L3
@@ -323,6 +323,38 @@ static acl_table_action_list_lookup_t defaultAclActionList =
     }
 };
 
+// The match fields for certain ACL table type are not exactly the same between INGRESS and EGRESS.
+// For example, we can only match IN_PORT for PFCWD table type at INGRESS.
+// Hence we need to specify stage particular matching fields in stageMandatoryMatchFields
+static acl_table_match_field_lookup_t stageMandatoryMatchFields =
+{
+    {
+        // TABLE_TYPE_PFCWD
+        TABLE_TYPE_PFCWD,
+        {
+            {
+                ACL_STAGE_INGRESS,
+                {
+                    SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS
+                }
+            }
+        }
+    },
+    {
+        // TABLE_TYPE_DROP
+        TABLE_TYPE_DROP,
+        {
+            {
+                ACL_STAGE_INGRESS,
+                {
+                    SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS
+                }
+            }
+        }
+    }
+
+};
+
 static acl_ip_type_lookup_t aclIpTypeLookup =
 {
     { IP_TYPE_ANY,         SAI_ACL_IP_TYPE_ANY },
@@ -474,6 +506,12 @@ const set<sai_acl_action_type_t>& AclTableType::getActions() const
 bool AclTableType::addAction(sai_acl_action_type_t action)
 {
     m_aclAcitons.insert(action);
+    return true;
+}
+
+bool AclTableType::addMatch(shared_ptr<AclTableMatchInterface> match)
+{
+    m_matches.emplace(match->getId(), match);
     return true;
 }
 
@@ -1439,6 +1477,11 @@ const vector<AclRangeConfig>& AclRule::getRangeConfig() const
     return m_rangeConfig;
 }
 
+bool AclRule::getCreateCounter() const
+{
+    return m_createCounter;
+}
+
 shared_ptr<AclRule> AclRule::makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOrch *dtel, const string& rule, const string& table, const KeyOpFieldsValuesTuple& data)
 {
     shared_ptr<AclRule> aclRule;
@@ -1586,6 +1629,13 @@ bool AclRule::createCounter()
 bool AclRule::removeRanges()
 {
     SWSS_LOG_ENTER();
+    if (!m_ranges.size())
+    {
+       //The Acl Rules which have mirror action will not have ranges created till the mirror becomes active
+       SWSS_LOG_INFO("No Acl Range created for ACL Rule %s in table %s", m_id.c_str(), m_pTable->getId().c_str());
+       return true;
+    }
+
     for (const auto& rangeConfig: m_rangeConfig)
     {
         if (!AclRange::remove(rangeConfig.rangeType, rangeConfig.min, rangeConfig.max))
@@ -1886,6 +1936,16 @@ bool AclRuleMirror::activate()
         setAction(it.first, attr.value.aclaction);
     }
 
+    // If the rule with mirror action is removed and then mirror is activated, create the counter before rule is created
+    if (!hasCounter())
+    {
+        if (getCreateCounter() && !createCounter())
+        {
+            SWSS_LOG_ERROR("createCounter failed for Rule %s session %s", m_id.c_str(), m_sessionName.c_str());
+            return false;
+       }
+    }
+
     if (!AclRule::createRule())
     {
         return false;
@@ -2007,12 +2067,40 @@ bool AclTable::addMandatoryActions()
         // Add the default action list
         for (auto action : defaultAclActionList[type.getName()][stage])
         {
-            if (m_pAclOrch->isAclActionSupported(stage, acl_action))
+            if (m_pAclOrch->isAclActionSupported(stage, action))
             {
                 SWSS_LOG_INFO("Added default action for table type %s stage %s",
                                     type.getName().c_str(),
                                     ((stage == ACL_STAGE_INGRESS)? "INGRESS":"EGRESS"));
                 type.addAction(action);
+            }
+        }
+    }
+
+    return true;
+}
+
+bool AclTable::addStageMandatoryMatchFields()
+{
+    SWSS_LOG_ENTER();
+
+    if (stage == ACL_STAGE_UNKNOWN)
+    {
+        return false;
+    }
+
+    if (stageMandatoryMatchFields.count(type.getName()) != 0)
+    {
+        auto &fields_for_stage = stageMandatoryMatchFields[type.getName()];
+        if (fields_for_stage.count(stage) != 0)
+        {
+            // Add the stage particular matching fields
+            for (auto match : fields_for_stage[stage])
+            {
+                type.addMatch(make_shared<AclTableMatch>(match));
+                SWSS_LOG_INFO("Added mandatory match field %s for table type %s stage %d",
+                                sai_serialize_enum(match, &sai_metadata_enum_sai_acl_table_attr_t).c_str(),
+                                type.getName().c_str(), stage);
             }
         }
     }
@@ -2819,6 +2907,7 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
             platform == MRVL_PLATFORM_SUBSTRING ||
             platform == INVM_PLATFORM_SUBSTRING ||
             platform == NPS_PLATFORM_SUBSTRING ||
+            platform == XS_PLATFORM_SUBSTRING ||
             platform == VS_PLATFORM_SUBSTRING)
     {
         m_mirrorTableCapabilities =
@@ -2847,6 +2936,7 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     if (platform == MLNX_PLATFORM_SUBSTRING ||
         platform == CISCO_8000_PLATFORM_SUBSTRING ||
         platform == MRVL_PLATFORM_SUBSTRING ||
+        platform == XS_PLATFORM_SUBSTRING ||
         (platform == BRCM_PLATFORM_SUBSTRING && sub_platform == BRCM_DNX_PLATFORM_SUBSTRING))
     {
         m_isCombinedMirrorV6Table = false;
@@ -2983,7 +3073,6 @@ void AclOrch::initDefaultTableTypes()
         builder.withName(TABLE_TYPE_PFCWD)
             .withBindPointType(SAI_ACL_BIND_POINT_TYPE_PORT)
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TC))
-            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS))
             .build()
     );
 
@@ -2991,7 +3080,6 @@ void AclOrch::initDefaultTableTypes()
         builder.withName(TABLE_TYPE_DROP)
             .withBindPointType(SAI_ACL_BIND_POINT_TYPE_PORT)
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TC))
-            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS))
             .build()
     );
 
@@ -3630,7 +3718,14 @@ bool AclOrch::addAclTable(AclTable &newTable)
             return true;
         }
     }
-
+    // Update matching field according to ACL stage
+    newTable.addStageMandatoryMatchFields();
+    
+    // Add mandatory ACL action if not present
+    // We need to call addMandatoryActions here because addAclTable is directly called in other orchs.
+    // The action_list is already added if the ACL table creation is triggered by CONFIGDD, but calling addMandatoryActions
+    // twice will make no effect
+    newTable.addMandatoryActions();
     if (createBindAclTable(newTable, table_oid))
     {
         m_AclTables[table_oid] = newTable;
@@ -4107,9 +4202,8 @@ void AclOrch::doAclTableTask(Consumer &consumer)
             }
 
             newTable.validateAddType(*tableType);
-
+            // Add mandatory ACL action if not present
             newTable.addMandatoryActions();
-
             // validate and create/update ACL Table
             if (bAllAttributesOk && newTable.validate())
             {
