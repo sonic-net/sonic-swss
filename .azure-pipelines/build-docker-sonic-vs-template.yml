@@ -20,15 +20,19 @@ parameters:
 - name: artifact_name
   type: string
 
-- name: artifact_project
+- name: buildimage_artifact_name
+  type: string
+  default: 'sonic-buildimage.vs'
+
+- name: buildimage_artifact_project
   type: string
   default: 'build'
 
-- name: artifact_pipeline
+- name: buildimage_artifact_pipeline
   type: string
   default: 'Azure.sonic-buildimage.official.vs'
 
-- name: artifact_branch
+- name: buildimage_artifact_branch
   type: string
   default: '$(BUILD_BRANCH)'
 
@@ -105,11 +109,11 @@ jobs:
   - task: DownloadPipelineArtifact@2
     inputs:
       source: specific
-      project: ${{ parameters.artifact_project }}
-      pipeline: ${{ parameters.artifact_pipeline }}
-      artifact: ${{ parameters.artifact_name }}
+      project: ${{ parameters.buildimage_artifact_project }}
+      pipeline: ${{ parameters.buildimage_artifact_pipeline }}
+      artifact: ${{ parameters.buildimage_artifact_name }}
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/${{ parameters.artifact_branch }}'
+      runBranch: 'refs/heads/${{ parameters.buildimage_artifact_branch }}'
       path: $(Build.ArtifactStagingDirectory)/download
       patterns: '**/target/${{ parameters.artifact_name }}.gz'
     displayName: "Download sonic-buildimage ${{ parameters.artifact_name }}"
