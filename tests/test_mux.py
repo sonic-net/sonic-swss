@@ -95,6 +95,10 @@ class TestMuxTunnelBase():
         "uniform" : "SAI_TUNNEL_TTL_MODE_UNIFORM_MODEL"
     }
 
+    def check_syslog(self, dvs, marker, err_log, expected_cnt):
+        (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \"%s\" | wc -l" % (marker, err_log)])
+        assert num.strip() >= str(expected_cnt)
+
     def create_vlan_interface(self, dvs):
         confdb = dvs.get_config_db()
 
@@ -1097,6 +1101,22 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
         for ip in test_ips:
             self.check_neighbor_state(dvs, dvs_route, ip, expect_route=False)
+
+    def test_mux_states(
+        self, dvs, neighbor_cleanup, setup_vlan,
+        setup_mux_cable, setup_tunnel, setup_peer_switch,
+        setup_qos_map, testlog
+    ):
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+
+        marker = dvs.add_log_marker()
+
+        self.set_mux_state(appdb, "Ethernet0", "active")
+        self.set_mux_state(appdb, "Ethernet0", "active")
+        self.check_syslog(dvs, marker, "Maintaining current MUX state", 1)
+
+        self.set_mux_state(appdb, "Ethernet0", "init")
+        self.check_syslog(dvs, marker, "State transition from active to init is not-handled", 1)
 
 
 # Add Dummy always-pass test at end as workaroud
