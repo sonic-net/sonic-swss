@@ -77,6 +77,8 @@ public:
     virtual bool startWdOnPort(const Port& port,
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action);
     virtual bool stopWdOnPort(const Port& port);
+    virtual bool startWdOnAllPorts();
+    virtual bool stopWdOnAllPorts();
 
     task_process_status createEntry(const string& key, const vector<FieldValueTuple>& data) override;
     virtual void doTask(SelectableTimer &timer);
@@ -118,8 +120,14 @@ private:
     void enableBigRedSwitchMode();
     void setBigRedSwitchMode(string value);
 
+    bool isStormingOnPort(Port port);
+    bool continueWdOnPort(const Port& port);
+    bool pauseWdOnPort(const Port& port);
+
     map<sai_object_id_t, PfcWdQueueEntry> m_entryMap;
     map<sai_object_id_t, PfcWdQueueEntry> m_brsEntryMap;
+    // Track configs during disable
+    map<sai_object_id_t, vector<FieldValueTuple>> m_pfcwdconfigs;
 
     const vector<sai_port_stat_t> c_portStatIds;
     const vector<sai_queue_stat_t> c_queueStatIds;
