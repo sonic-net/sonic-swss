@@ -82,16 +82,16 @@ namespace portsorch_test
     {
         sai_port_api = pold_sai_port_api;
     }
-    
+
     sai_queue_api_t ut_sai_queue_api;
     sai_queue_api_t *pold_sai_queue_api;
     int _sai_set_queue_attr_count = 0;
-    
+
     sai_status_t _ut_stub_sai_set_queue_attribute(sai_object_id_t queue_id, const sai_attribute_t *attr)
     {
         if(attr->id == SAI_QUEUE_ATTR_PFC_DLR_INIT)
         {
-            if(attr->value.booldata == true) 
+            if(attr->value.booldata == true)
             {
                 _sai_set_queue_attr_count++;
             }
@@ -269,6 +269,46 @@ namespace portsorch_test
         }
 
     };
+
+    /**
+     * Test that verifies PortsOrch::getPort() on a port that has been deleted
+     */
+    TEST_F(PortsOrchTest, GetPortTest)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        ASSERT_NE(port.m_port_id, SAI_NULL_OBJECT_ID);
+
+        // Delete port
+        entries.push_back({"Ethernet0", "DEL", {}});
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        entries.clear();
+
+        ASSERT_FALSE(gPortsOrch->getPort(port.m_port_id, port));
+    }
 
     TEST_F(PortsOrchTest, PortSupportedFecModes)
     {

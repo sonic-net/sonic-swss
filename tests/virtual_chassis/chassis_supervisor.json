@@ -1,0 +1,5 @@
+{
+    "VIRTUAL_TOPOLOGY": {
+        "chassis_instances" : [ "8", "1", "2", "3" ]
+    }
+}

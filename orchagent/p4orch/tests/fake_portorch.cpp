@@ -185,7 +185,7 @@ void PortsOrch::generateQueueMap(std::map<string, FlexCounterQueueStates> queues
 {
 }
 
-void PortsOrch::generateQueueMapPerPort(const Port& port, FlexCounterQueueStates& queuesState)
+void PortsOrch::generateQueueMapPerPort(const Port& port, FlexCounterQueueStates& queuesState, bool voq)
 {
 }
 

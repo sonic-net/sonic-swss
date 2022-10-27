@@ -30,9 +30,11 @@ parameters:
 
 - name: num_ports
   type: number
+  default: 0
 
 - name: run_tests_pattern
   type: string
+  default: ""
 
 jobs:
 - job:
@@ -94,7 +96,7 @@ jobs:
       if [ '${{ parameters.asan }}' == True ]; then
         params=" ${params} --graceful-stop "
       fi
-      if [ -n '${{ parameters.num_ports }}' ]; then
+      if [ ${{ parameters.num_ports }} -gt 0 ]; then
         params=" ${params} --num-ports=${{ parameters.num_ports }} "
       fi
 

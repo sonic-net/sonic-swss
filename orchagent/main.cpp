@@ -58,7 +58,6 @@ bool gSairedisRecord = true;
 bool gSwssRecord = true;
 bool gResponsePublisherRecord = false;
 bool gLogRotate = false;
-bool gSaiRedisLogRotate = false;
 bool gResponsePublisherLogRotate = false;
 bool gSyncMode = false;
 sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
@@ -709,6 +708,9 @@ int main(int argc, char **argv)
         if (gMySwitchType == "voq")
         {
             orchDaemon->setFabricEnabled(true);
+            // SAI doesn't fully support counters for non fabric asics
+            orchDaemon->setFabricPortStatEnabled(false);
+            orchDaemon->setFabricQueueStatEnabled(false);
         }
     }
     else

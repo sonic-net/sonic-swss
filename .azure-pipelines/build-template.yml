@@ -38,9 +38,9 @@ parameters:
   type: string
   default: '$(BUILD_BRANCH)'
 
-- name: sairedis_artifact_folder
+- name: sairedis_artifact_pattern
   type: string
-  default: '.'
+  default: '**'
 
 - name: swss_common_artifact_name
   type: string
@@ -132,13 +132,13 @@ jobs:
       runBranch: 'refs/heads/${{ parameters.sairedis_artifact_branch }}'
       path: $(Build.ArtifactStagingDirectory)/download/sairedis
       patterns: |
-        ${{ parameters.sairedis_artifact_folder }}/libsaivs_*.deb
-        ${{ parameters.sairedis_artifact_folder }}/libsaivs-dev_*.deb
-        ${{ parameters.sairedis_artifact_folder }}/libsairedis_*.deb
-        ${{ parameters.sairedis_artifact_folder }}/libsairedis-dev_*.deb
-        ${{ parameters.sairedis_artifact_folder }}/libsaimetadata_*.deb
-        ${{ parameters.sairedis_artifact_folder }}/libsaimetadata-dev_*.deb
-        ${{ parameters.sairedis_artifact_folder }}/syncd-vs_*.deb
+        ${{ parameters.sairedis_artifact_pattern }}/libsaivs_*.deb
+        ${{ parameters.sairedis_artifact_pattern }}/libsaivs-dev_*.deb
+        ${{ parameters.sairedis_artifact_pattern }}/libsairedis_*.deb
+        ${{ parameters.sairedis_artifact_pattern }}/libsairedis-dev_*.deb
+        ${{ parameters.sairedis_artifact_pattern }}/libsaimetadata_*.deb
+        ${{ parameters.sairedis_artifact_pattern }}/libsaimetadata-dev_*.deb
+        ${{ parameters.sairedis_artifact_pattern }}/syncd-vs_*.deb
     displayName: "Download sonic sairedis deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
