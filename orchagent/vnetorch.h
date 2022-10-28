@@ -324,10 +324,19 @@ struct BfdSessionInfo
 
 struct VNetTunnelRouteEntry 
 {
-    NextHopGroupKey ngh_key; 
+    NextHopGroupKey nhg_key; 
     NextHopGroupKey primary;
     NextHopGroupKey secondary;
 };
+
+typedef enum
+{
+    TUNNEL_ROUTE_ACTION_NONE         = 0,
+    TUNNEL_ROUTE_ACTION_ADD_ROUTE    = 1,
+    TUNNEL_ROUTE_ACTION_DELETE_ROUTE = 2,
+    TUNNEL_ROUTE_ACTION_REPLACE_NHG  = 3,
+    TUNNEL_ROUTE_ACTION_COUNT
+} tunnel_route_action_t;
 
 typedef std::map<NextHopGroupKey, NextHopGroupInfo> VNetNextHopGroupInfoTable;
 typedef std::map<IpPrefix, VNetTunnelRouteEntry> VNetTunnelRouteTable;
@@ -367,6 +376,7 @@ private:
     bool selectNextHopGroup(const string&, NextHopGroupKey&, NextHopGroupKey&,
                             VNetVrfObject *vrf_obj, NextHopGroupKey&,
                             const std::map<NextHopKey,IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
+    tunnel_route_action_t switchNextHopGroup(const string&, NextHopGroupKey&,  IpPrefix&, NextHopGroupKey&);
 
     void createBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr);
     void removeBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr);
@@ -379,6 +389,7 @@ private:
 
     void updateVnetTunnel(const BfdUpdate&);
     bool updateTunnelRoute(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op);
+    bool updateTunnelRouteNextHopGroup(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops);
 
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op, string& profile,
