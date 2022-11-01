@@ -6,6 +6,7 @@
 #include <exception>
 #include <inttypes.h>
 #include <algorithm>
+#include <numeric>
 
 #include "converter.h"
 #include "dashrouteorch.h"
@@ -223,7 +224,10 @@ void DashRouteOrch::doTaskRouteTable(Consumer& consumer)
 
             vector<string> keys = tokenize(key, ':');
             eni = keys[0];
-            destination = IpPrefix(keys[1]);
+            string ip_str;
+            size_t pos = key.find(":", eni.length());
+            ip_str = key.substr(pos + 1);
+            destination = IpPrefix(ip_str);
 
             if (op == SET_COMMAND)
             {
@@ -502,11 +506,16 @@ void DashRouteOrch::doTaskRouteRuleTable(Consumer& consumer)
             IpAddress& sip_mask = ctxt.sip_mask;
             uint32_t& priority = ctxt.priority;
             bool& pa_validation = ctxt.pa_validation;
+            IpPrefix prefix;
 
             vector<string> keys = tokenize(key, ':');
             eni = keys[0];
             vni = to_uint<uint32_t>(keys[1]);
-            IpPrefix prefix = IpPrefix(keys[2]);
+            string ip_str;
+            size_t pos = key.find(":", keys[0].length() + keys[1].length() + 1);
+            ip_str = key.substr(pos + 1);
+            prefix = IpPrefix(ip_str);
+
             sip = prefix.getIp();
             sip_mask = prefix.getMask();
 

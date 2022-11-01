@@ -6,6 +6,7 @@
 #include <exception>
 #include <inttypes.h>
 #include <algorithm>
+#include <numeric>
 
 #include "converter.h"
 #include "dashvnetorch.h"
@@ -582,7 +583,9 @@ void DashVnetOrch::doTaskVnetMapTable(Consumer& consumer)
 
             vector<string> keys = tokenize(key, ':');
             vnet_name = keys[0];
-            dip = IpAddress(keys[1]);
+            size_t pos = key.find(":", vnet_name.length());
+            string ip_str = key.substr(pos + 1);
+            dip = IpAddress(ip_str);
 
             if (op == SET_COMMAND)
             {
