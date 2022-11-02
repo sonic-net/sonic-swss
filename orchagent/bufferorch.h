@@ -71,6 +71,7 @@ private:
     unique_ptr<DBConnector> m_countersDb;
 
     bool m_isBufferPoolWatermarkCounterIdListGenerated = false;
+
 };
 #endif /* SWSS_BUFFORCH_H */
 

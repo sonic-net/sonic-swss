@@ -11,6 +11,7 @@
 #include "intfsorch.h"
 #include "neighorch.h"
 #include "routeorch.h"
+#include "flowcounterrouteorch.h"
 #include "nhgorch.h"
 #include "cbf/cbfnhgorch.h"
 #include "cbf/nhgmaporch.h"
@@ -43,8 +44,11 @@
 #include "p4orch/p4orch.h"
 #include "bfdorch.h"
 #include "srv6orch.h"
+#include "nvgreorch.h"
+#include <sairedis.h>
 
 using namespace swss;
+extern bool gSaiRedisLogRotate;
 
 class OrchDaemon
 {
@@ -65,6 +69,15 @@ public:
     {
         m_fabricEnabled = enabled;
     }
+    void setFabricPortStatEnabled(bool enabled)
+    {
+        m_fabricPortStatEnabled = enabled;
+    }
+    void setFabricQueueStatEnabled(bool enabled)
+    {
+        m_fabricQueueStatEnabled = enabled;
+    }
+    void logRotate();
 private:
     DBConnector *m_applDb;
     DBConnector *m_configDb;
@@ -72,6 +85,8 @@ private:
     DBConnector *m_chassisAppDb;
 
     bool m_fabricEnabled = false;
+    bool m_fabricPortStatEnabled = true;
+    bool m_fabricQueueStatEnabled = true;
 
     std::vector<Orch *> m_orchList;
     Select *m_select;

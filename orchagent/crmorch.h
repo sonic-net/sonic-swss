@@ -5,6 +5,7 @@
 #include <map>
 #include "orch.h"
 #include "port.h"
+#include "events.h"
 
 extern "C" {
 #include "sai.h"
@@ -73,6 +74,7 @@ private:
         sai_object_id_t id = 0;
         uint32_t availableCounter = 0;
         uint32_t usedCounter = 0;
+        uint32_t exceededLogCounter = 0;
     };
 
     struct CrmResourceEntry
@@ -87,7 +89,6 @@ private:
 
         std::map<std::string, CrmResourceCounter> countersMap;
 
-        uint32_t exceededLogCounter = 0;
         CrmResourceStatus resStatus = CrmResourceStatus::CRM_RES_SUPPORTED;
     };
 
@@ -98,6 +99,7 @@ private:
     void doTask(Consumer &consumer);
     void handleSetCommand(const std::string& key, const std::vector<swss::FieldValueTuple>& data);
     void doTask(swss::SelectableTimer &timer);
+    bool getResAvailability(CrmResourceType type, CrmResourceEntry &res);
     void getResAvailableCounters();
     void updateCrmCountersTable();
     void checkCrmThresholds();

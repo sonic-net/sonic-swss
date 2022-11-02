@@ -57,6 +57,7 @@ struct FdbData
       {"static", FDB_ORIGIN_PROVISIONED} => statically provisioned
       {"static", FDB_ORIGIN_ADVERTIZED} => sticky synced from remote device
     */
+    bool is_flush_pending;
 
     /* Remote FDB related info */
     string remote_ip;
@@ -122,6 +123,9 @@ private:
 
     bool storeFdbEntryState(const FdbUpdate& update);
     void notifyTunnelOrch(Port& port);
+
+    void clearFdbEntry(const FdbEntry&);
+    void handleSyncdFlushNotif(const sai_object_id_t&, const sai_object_id_t&, const MacAddress& );
 };
 
 #endif /* SWSS_FDBORCH_H */

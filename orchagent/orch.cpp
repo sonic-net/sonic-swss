@@ -357,6 +357,11 @@ bool Orch::parseReference(type_map &type_maps, string &ref_in, const string &typ
         SWSS_LOG_INFO("map:%s does not contain object with name:%s\n", type_name.c_str(), ref_in.c_str());
         return false;
     }
+    if (obj_it->second.m_pendingRemove)
+    {
+        SWSS_LOG_NOTICE("map:%s contains a pending removed object %s, skip\n", type_name.c_str(), ref_in.c_str());
+        return false;
+    }
     object_name = ref_in;
     SWSS_LOG_DEBUG("parsed: type_name:%s, object_name:%s", type_name.c_str(), object_name.c_str());
     return true;
@@ -388,7 +393,7 @@ ref_resolve_status Orch::resolveFieldRefValue(
             {
                 return ref_resolve_status::not_resolved;
             }
-            else if (ref_type_name.empty() && object_name.empty())
+            else if (object_name.empty())
             {
                 return ref_resolve_status::empty;
             }
@@ -410,7 +415,8 @@ void Orch::removeMeFromObjsReferencedByMe(
     const string &table,
     const string &obj_name,
     const string &field,
-    const string &old_referenced_obj_name)
+    const string &old_referenced_obj_name,
+    bool remove_field)
 {
     vector<string> objects = tokenize(old_referenced_obj_name, list_item_delimiter);
     for (auto &obj : objects)
@@ -426,6 +432,12 @@ void Orch::removeMeFromObjsReferencedByMe(
                       referenced_table.c_str(), ref_obj_name.c_str(),
                       to_string(old_referenced_obj.m_objsDependingOnMe.size()).c_str());
     }
+
+    if (remove_field)
+    {
+        auto &referencing_object = (*type_maps[table])[obj_name];
+        referencing_object.m_objsReferencingByMe.erase(field);
+    }
 }
 
 void Orch::setObjectReference(
@@ -439,7 +451,7 @@ void Orch::setObjectReference(
     auto field_ref = obj.m_objsReferencingByMe.find(field);
 
     if (field_ref != obj.m_objsReferencingByMe.end())
-        removeMeFromObjsReferencedByMe(type_maps, table, obj_name, field, field_ref->second);
+        removeMeFromObjsReferencedByMe(type_maps, table, obj_name, field, field_ref->second, false);
 
     obj.m_objsReferencingByMe[field] = referenced_obj;
 
@@ -459,16 +471,44 @@ void Orch::setObjectReference(
     }
 }
 
+bool Orch::doesObjectExist(
+    type_map &type_maps,
+    const string &table,
+    const string &obj_name,
+    const string &field,
+    string &referenced_obj)
+{
+    auto &&searchRef = (*type_maps[table]).find(obj_name);
+    if (searchRef != (*type_maps[table]).end())
+    {
+        auto &obj = searchRef->second;
+        auto &&searchReferencingObjectRef = obj.m_objsReferencingByMe.find(field);
+        if (searchReferencingObjectRef != obj.m_objsReferencingByMe.end())
+        {
+            referenced_obj = searchReferencingObjectRef->second;
+            return true;
+        }
+    }
+
+    return false;
+}
+
 void Orch::removeObject(
     type_map &type_maps,
     const string &table,
     const string &obj_name)
 {
-    auto &obj = (*type_maps[table])[obj_name];
+    auto &&searchRef = (*type_maps[table]).find(obj_name);
+    if (searchRef == (*type_maps[table]).end())
+    {
+        return;
+    }
+
+    auto &obj = searchRef->second;
 
     for (auto field_ref : obj.m_objsReferencingByMe)
     {
-        removeMeFromObjsReferencedByMe(type_maps, table, obj_name, field_ref.first, field_ref.second);
+        removeMeFromObjsReferencedByMe(type_maps, table, obj_name, field_ref.first, field_ref.second, false);
     }
 
     // Update the field store
@@ -847,7 +887,7 @@ task_process_status Orch::handleSaiCreateStatus(sai_api_t api, sai_status_t stat
                 default:
                     SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
                                 sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-                    exit(EXIT_FAILURE);
+                    abort();
             }
             break;
         case SAI_API_HOSTIF:
@@ -865,7 +905,7 @@ task_process_status Orch::handleSaiCreateStatus(sai_api_t api, sai_status_t stat
                 default:
                     SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
                                 sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-                    exit(EXIT_FAILURE);
+                    abort();
             }
         default:
             switch (status)
@@ -876,7 +916,7 @@ task_process_status Orch::handleSaiCreateStatus(sai_api_t api, sai_status_t stat
                 default:
                     SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
                                 sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-                    exit(EXIT_FAILURE);
+                    abort();
             }
     }
     return task_need_retry;
@@ -917,12 +957,12 @@ task_process_status Orch::handleSaiSetStatus(sai_api_t api, sai_status_t status,
                 default:
                     SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
                             sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-                    exit(EXIT_FAILURE);
+                    abort();
             }
         default:
             SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
                         sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-            exit(EXIT_FAILURE);
+            abort();
     }
 
     return task_need_retry;
@@ -950,7 +990,7 @@ task_process_status Orch::handleSaiRemoveStatus(sai_api_t api, sai_status_t stat
         default:
             SWSS_LOG_ERROR("Encountered failure in remove operation, exiting orchagent, SAI API: %s, status: %s",
                         sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-            exit(EXIT_FAILURE);
+            abort();
     }
     return task_need_retry;
 }

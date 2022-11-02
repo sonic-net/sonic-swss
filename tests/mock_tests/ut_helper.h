@@ -13,7 +13,7 @@
 namespace ut_helper
 {
     sai_status_t initSaiApi(const std::map<std::string, std::string> &profile);
-    void uninitSaiApi();
+    sai_status_t uninitSaiApi();
 
     map<string, vector<FieldValueTuple>> getInitialSaiPorts();
 }

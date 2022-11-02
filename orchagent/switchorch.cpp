@@ -1,4 +1,5 @@
 #include <map>
+#include <set>
 #include <inttypes.h>
 
 #include "switchorch.h"
@@ -44,6 +45,30 @@ const map<string, sai_packet_action_t> packet_action_map =
     {"trap",    SAI_PACKET_ACTION_TRAP}
 };
 
+
+const std::set<std::string> switch_non_sai_attribute_set = {"ordered_ecmp"};
+
+void SwitchOrch::set_switch_pfc_dlr_init_capability()
+{
+    vector<FieldValueTuple> fvVector;
+
+    /* Query PFC DLR INIT capability */
+    bool rv = querySwitchCapability(SAI_OBJECT_TYPE_QUEUE, SAI_QUEUE_ATTR_PFC_DLR_INIT);
+    if (rv == false)
+    {
+        SWSS_LOG_INFO("Queue level PFC DLR INIT configuration is not supported");
+        m_PfcDlrInitEnable = false;
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PFC_DLR_INIT_CAPABLE, "false");
+    }
+    else 
+    {
+        SWSS_LOG_INFO("Queue level PFC DLR INIT configuration is supported");
+        m_PfcDlrInitEnable = true;
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PFC_DLR_INIT_CAPABLE, "true");
+    }
+    set_switch_capability(fvVector);
+}
+
 SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, TableConnector switchTable):
         Orch(connectors),
         m_switchTable(switchTable.first, switchTable.second),
@@ -56,6 +81,7 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
     auto restartCheckNotifier = new Notifier(m_restartCheckNotificationConsumer, this, "RESTARTCHECK");
     Orch::addExecutor(restartCheckNotifier);
 
+    set_switch_pfc_dlr_init_capability();
     initSensorsTable();
     querySwitchTpidCapability();
     auto executorT = new ExecutableTimer(m_sensorsPollerTimer, this, "ASIC_SENSORS_POLL_TIMER");
@@ -67,16 +93,14 @@ void SwitchOrch::initAclGroupsBindToSwitch()
     // Create an ACL group per stage, INGRESS, EGRESS and PRE_INGRESS
     for (auto stage_it : aclStageLookup)
     {
-        sai_object_id_t group_oid;
-        auto status = createAclGroup(fvValue(stage_it), &group_oid);
+        auto status = createAclGroup(fvValue(stage_it), &m_aclGroups[fvValue(stage_it)]);
         if (!status.ok())
         {
             status.prepend("Failed to create ACL group for stage " + fvField(stage_it) + ": ");
             SWSS_LOG_THROW("%s", status.message().c_str());
         }
         SWSS_LOG_NOTICE("Created ACL group for stage %s", fvField(stage_it).c_str());
-        m_aclGroups[fvValue(stage_it)] = group_oid;
-        status = bindAclGroupToSwitch(fvValue(stage_it), group_oid);
+        status = bindAclGroupToSwitch(fvValue(stage_it), m_aclGroups[fvValue(stage_it)]);
         if (!status.ok())
         {
             status.prepend("Failed to bind ACL group to stage " + fvField(stage_it) + ": ");
@@ -85,12 +109,12 @@ void SwitchOrch::initAclGroupsBindToSwitch()
     }
 }
 
-const std::map<sai_acl_stage_t, sai_object_id_t> &SwitchOrch::getAclGroupOidsBindingToSwitch()
+std::map<sai_acl_stage_t, referenced_object> &SwitchOrch::getAclGroupsBindingToSwitch()
 {
     return m_aclGroups;
 }
 
-ReturnCode SwitchOrch::createAclGroup(const sai_acl_stage_t &group_stage, sai_object_id_t *acl_grp_oid)
+ReturnCode SwitchOrch::createAclGroup(const sai_acl_stage_t &group_stage, referenced_object *acl_grp)
 {
     SWSS_LOG_ENTER();
 
@@ -111,8 +135,9 @@ ReturnCode SwitchOrch::createAclGroup(const sai_acl_stage_t &group_stage, sai_ob
     acl_grp_attr.value.s32list.list = bpoint_list.data();
     acl_grp_attrs.push_back(acl_grp_attr);
 
-    CHECK_ERROR_AND_LOG_AND_RETURN(sai_acl_api->create_acl_table_group(
-                                       acl_grp_oid, gSwitchId, (uint32_t)acl_grp_attrs.size(), acl_grp_attrs.data()),
+    CHECK_ERROR_AND_LOG_AND_RETURN(sai_acl_api->create_acl_table_group(&acl_grp->m_saiObjectId, gSwitchId,
+                                                                       (uint32_t)acl_grp_attrs.size(),
+                                                                       acl_grp_attrs.data()),
                                    "Failed to create ACL group for stage " << group_stage);
     if (group_stage == SAI_ACL_STAGE_INGRESS || group_stage == SAI_ACL_STAGE_PRE_INGRESS ||
         group_stage == SAI_ACL_STAGE_EGRESS)
@@ -120,12 +145,12 @@ ReturnCode SwitchOrch::createAclGroup(const sai_acl_stage_t &group_stage, sai_ob
         gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_GROUP, (sai_acl_stage_t)group_stage,
                                        SAI_ACL_BIND_POINT_TYPE_SWITCH);
     }
-    SWSS_LOG_INFO("Suceeded to create ACL group %s in stage %d ", sai_serialize_object_id(*acl_grp_oid).c_str(),
-                  group_stage);
+    SWSS_LOG_INFO("Suceeded to create ACL group %s in stage %d ",
+                  sai_serialize_object_id(acl_grp->m_saiObjectId).c_str(), group_stage);
     return ReturnCode();
 }
 
-ReturnCode SwitchOrch::bindAclGroupToSwitch(const sai_acl_stage_t &group_stage, const sai_object_id_t &acl_grp_oid)
+ReturnCode SwitchOrch::bindAclGroupToSwitch(const sai_acl_stage_t &group_stage, const referenced_object &acl_grp)
 {
     SWSS_LOG_ENTER();
 
@@ -133,17 +158,17 @@ ReturnCode SwitchOrch::bindAclGroupToSwitch(const sai_acl_stage_t &group_stage, 
     if (switch_attr_it == aclStageToSwitchAttrLookup.end())
     {
         LOG_ERROR_AND_RETURN(ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                             << "Failed to set ACL group(" << acl_grp_oid << ") to the SWITCH bind point at stage "
-                             << group_stage);
+                             << "Failed to set ACL group(" << acl_grp.m_saiObjectId
+                             << ") to the SWITCH bind point at stage " << group_stage);
     }
     sai_attribute_t attr;
     attr.id = switch_attr_it->second;
-    attr.value.oid = acl_grp_oid;
+    attr.value.oid = acl_grp.m_saiObjectId;
     auto sai_status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
     if (sai_status != SAI_STATUS_SUCCESS)
     {
         LOG_ERROR_AND_RETURN(ReturnCode(sai_status) << "[SAI] Failed to set_switch_attribute with attribute.id="
-                                                    << attr.id << " and acl group oid=" << acl_grp_oid);
+                                                    << attr.id << " and acl group oid=" << acl_grp.m_saiObjectId);
     }
     return ReturnCode();
 }
@@ -224,7 +249,51 @@ void SwitchOrch::doCfgSensorsTableTask(Consumer &consumer)
     }
 }
 
+void SwitchOrch::setSwitchNonSaiAttributes(swss::FieldValueTuple &val)
+{
+    auto attribute = fvField(val);
+    auto value = fvValue(val);
 
+    if (attribute == "ordered_ecmp")
+    {
+        vector<FieldValueTuple> fvVector;
+        if (value == "true")
+        {
+            const auto* meta = sai_metadata_get_attr_metadata(SAI_OBJECT_TYPE_NEXT_HOP_GROUP, SAI_NEXT_HOP_GROUP_ATTR_TYPE);
+            if (meta && meta->isenum)
+            {
+                vector<int32_t> values_list(meta->enummetadata->valuescount);
+                sai_s32_list_t values;
+                values.count = static_cast<uint32_t>(values_list.size());
+                values.list = values_list.data();
+
+                auto status = sai_query_attribute_enum_values_capability(gSwitchId,
+                                                                         SAI_OBJECT_TYPE_NEXT_HOP_GROUP,
+                                                                         SAI_NEXT_HOP_GROUP_ATTR_TYPE,
+                                                                         &values);
+                if (status == SAI_STATUS_SUCCESS)
+                {
+                    for (size_t i = 0; i < values.count; i++)
+                    {
+                        if (values.list[i] == SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_ORDERED_ECMP)
+                        {
+                            m_orderedEcmpEnable = true;
+                            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_ORDERED_ECMP_CAPABLE, "true");
+                            set_switch_capability(fvVector);
+                            SWSS_LOG_NOTICE("Ordered ECMP/Nexthop-Group is configured");
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+        m_orderedEcmpEnable = false;
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_ORDERED_ECMP_CAPABLE, "false");
+        set_switch_capability(fvVector);
+        SWSS_LOG_NOTICE("Ordered ECMP/Nexthop-Group is not configured");
+        return;
+    }
+}
 sai_status_t SwitchOrch::setSwitchTunnelVxlanParams(swss::FieldValueTuple &val)
 {
     auto attribute = fvField(val);
@@ -296,7 +365,12 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
             {
                 auto attribute = fvField(i);
 
-                if (switch_attribute_map.find(attribute) == switch_attribute_map.end())
+                if (switch_non_sai_attribute_set.find(attribute) != switch_non_sai_attribute_set.end())
+                {
+                    setSwitchNonSaiAttributes(i);
+                    continue;
+                }
+                else if (switch_attribute_map.find(attribute) == switch_attribute_map.end())
                 {
                     // Check additionally 'switch_tunnel_attribute_map' for Switch Tunnel
                     if (switch_tunnel_attribute_map.find(attribute) == switch_tunnel_attribute_map.end())
@@ -709,7 +783,7 @@ void SwitchOrch::querySwitchTpidCapability()
     }
 }
 
-bool SwitchOrch::querySwitchDscpToTcCapability(sai_object_type_t sai_object, sai_attr_id_t attr_id)
+bool SwitchOrch::querySwitchCapability(sai_object_type_t sai_object, sai_attr_id_t attr_id)
 {
     SWSS_LOG_ENTER();
 

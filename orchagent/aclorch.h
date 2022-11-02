@@ -113,6 +113,12 @@ typedef tuple<sai_acl_range_type_t, int, int> acl_range_properties_t;
 typedef map<acl_stage_type_t, AclActionCapabilities> acl_capabilities_t;
 typedef map<sai_acl_action_type_t, set<int32_t>> acl_action_enum_values_capabilities_t;
 
+typedef map<acl_stage_type_t, set<sai_acl_action_type_t> > acl_stage_action_list_t;
+typedef map<string, acl_stage_action_list_t> acl_table_action_list_lookup_t;
+
+typedef map<acl_stage_type_t, set<sai_acl_table_attr_t> > acl_stage_match_field_t;
+typedef map<string, acl_stage_match_field_t> acl_table_match_field_lookup_t;
+
 class AclRule;
 
 class AclTableMatchInterface
@@ -155,6 +161,9 @@ public:
     const map<sai_acl_table_attr_t, shared_ptr<AclTableMatchInterface>>& getMatches() const;
     const set<sai_acl_range_type_t>& getRangeTypes() const;
     const set<sai_acl_action_type_t>& getActions() const;
+
+    bool addAction(sai_acl_action_type_t action);
+    bool addMatch(shared_ptr<AclTableMatchInterface> match);
 
 private:
     friend class AclTableTypeBuilder;
@@ -254,6 +263,7 @@ public:
     sai_object_id_t getCounterOid() const;
     bool hasCounter() const;
     vector<sai_object_id_t> getInPorts() const;
+    bool getCreateCounter() const;
 
     const vector<AclRangeConfig>& getRangeConfig() const;
     static shared_ptr<AclRule> makeShared(AclOrch *acl, MirrorOrch *mirror, DTelOrch *dtel, const string& rule, const string& table, const KeyOpFieldsValuesTuple&);
@@ -334,10 +344,10 @@ protected:
     MirrorOrch *m_pMirrorOrch {nullptr};
 };
 
-class AclRuleDTelFlowWatchListEntry: public AclRule
+class AclRuleDTelWatchListEntry: public AclRule
 {
 public:
-    AclRuleDTelFlowWatchListEntry(AclOrch *m_pAclOrch, DTelOrch *m_pDTelOrch, string rule, string table);
+    AclRuleDTelWatchListEntry(AclOrch *m_pAclOrch, DTelOrch *m_pDTelOrch, string rule, string table);
     bool validateAddAction(string attr_name, string attr_value);
     bool validate();
     bool createRule();
@@ -353,17 +363,6 @@ protected:
     string m_intSessionId;
     bool INT_enabled;
     bool INT_session_valid;
-};
-
-class AclRuleDTelDropWatchListEntry: public AclRule
-{
-public:
-    AclRuleDTelDropWatchListEntry(AclOrch *m_pAclOrch, DTelOrch *m_pDTelOrch, string rule, string table);
-    bool validateAddAction(string attr_name, string attr_value);
-    bool validate();
-    void onUpdate(SubjectType, void *) override;
-protected:
-    DTelOrch *m_pDTelOrch;
 };
 
 class AclTable
@@ -386,6 +385,12 @@ public:
     bool validateAddPorts(const unordered_set<string> &value);
     bool validate();
     bool create();
+
+    // Add actions to ACL table if mandatory action list is required on table creation.
+    bool addMandatoryActions();
+
+    // Add stage mandatory matching fields to ACL table
+    bool addStageMandatoryMatchFields();
 
     // validate AclRule match attribute against rule and table configuration
     bool validateAclRuleMatch(sai_acl_entry_attr_t matchId, const AclRule& rule) const;
@@ -489,6 +494,9 @@ public:
     bool m_isCombinedMirrorV6Table = true;
     map<string, bool> m_mirrorTableCapabilities;
 
+    void registerFlexCounter(const AclRule& rule);
+    void deregisterFlexCounter(const AclRule& rule);
+
     // Get the OID for the ACL bind point for a given port
     static bool getAclBindPortId(Port& port, sai_object_id_t& port_id);
 
@@ -537,8 +545,6 @@ private:
     void createDTelWatchListTables();
     void deleteDTelWatchListTables();
 
-    void registerFlexCounter(const AclRule& rule);
-    void deregisterFlexCounter(const AclRule& rule);
     string generateAclRuleIdentifierInCountersDb(const AclRule& rule) const;
 
     map<sai_object_id_t, AclTable> m_AclTables;

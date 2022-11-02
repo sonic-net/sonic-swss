@@ -4,6 +4,8 @@
 #include "producerstatetable.h"
 #include "orch.h"
 
+#include <set>
+
 namespace swss {
 
 struct TunnelInfo
@@ -28,12 +30,18 @@ private:
 
     bool configIpTunnel(const TunnelInfo& info);
 
+    void finalizeWarmReboot();
+
     ProducerStateTable m_appIpInIpTunnelTable;
     Table m_cfgPeerTable;
+    Table m_cfgTunnelTable;
 
     std::map<std::string, TunnelInfo > m_tunnelCache;
     std::map<std::string, IpPrefix> m_intfCache;
     std::string m_peerIp;
+
+    std::set<std::string> m_tunnelReplay;
+    bool replayDone = false;
 };
 
 }

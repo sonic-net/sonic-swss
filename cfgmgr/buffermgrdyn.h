@@ -71,6 +71,7 @@ typedef struct {
     std::string xon_offset;
     std::string xoff;
     std::string threshold;
+    std::string threshold_mode;
     std::string pool_name;
     // port_pgs - stores pgs referencing this profile
     // An element will be added or removed when a PG added or removed
@@ -150,7 +151,10 @@ public:
     using Orch::doTask;
 
 private:
-    std::string m_platform;
+    std::string     m_platform;             // vendor, e.g. "mellanox"
+    std::string     m_specific_platform;    // name of platform, e.g. "x86_64-mlnx_msn3420-r0"
+    unsigned int    m_model_number;         // model number extracted from specific platform, e.g. 3420
+
     std::vector<buffer_direction_t> m_bufferDirections;
     const std::string m_bufferObjectNames[BUFFER_DIR_MAX];
     const std::string m_bufferDirectionNames[BUFFER_DIR_MAX];
@@ -174,7 +178,7 @@ private:
 
     std::string m_configuredSharedHeadroomPoolSize;
 
-    std::shared_ptr<DBConnector> m_applDb = nullptr;
+    DBConnector *m_applDb = nullptr;
     SelectableTimer *m_buffermgrPeriodtimer = nullptr;
 
     // Fields for zero pool and profiles
@@ -192,6 +196,7 @@ private:
     // key: port name
     // updated only when a port's speed and cable length updated
     port_info_lookup_t m_portInfoLookup;
+    std::map<std::string, std::string> m_cableLengths;
     std::set<std::string> m_adminDownPorts;
     std::set<std::string> m_pendingApplyZeroProfilePorts;
     std::set<std::string> m_pendingSupportedButNotConfiguredPorts[BUFFER_DIR_MAX];
@@ -234,7 +239,7 @@ private:
 
     // Other tables
     Table m_cfgDefaultLosslessBufferParam;
-
+    Table m_cfgDeviceMetaDataTable;
     Table m_stateBufferMaximumTable;
 
     Table m_applPortTable;
@@ -298,6 +303,7 @@ private:
     void handleSetSingleBufferObjectOnAdminDownPort(buffer_direction_t direction, const std::string &port, const std::string &key, const std::string &profile);
     void handleDelSingleBufferObjectOnAdminDownPort(buffer_direction_t direction, const std::string &port, const std::string &key, port_info_t &portInfo);
     bool isReadyToReclaimBufferOnPort(const std::string &port);
+    void cleanUpItemsForReclaimingBuffer(const std::string &port);
 
     // Main flows
     template<class T> task_process_status reclaimReservedBufferForPort(const std::string &port, T &obj, buffer_direction_t dir);

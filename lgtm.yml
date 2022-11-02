@@ -16,6 +16,7 @@ extraction:
       - libnl-genl-3-dev
       - libnl-route-3-dev
       - libnl-nf-3-dev
+      - libyang-dev
       - libzmq3-dev
       - libzmq5
       - swig3.0
@@ -29,6 +30,7 @@ extraction:
       - flex
       - graphviz
       - autoconf-archive
+      - uuid-dev
     after_prepare:
       - git clone https://github.com/Azure/sonic-buildimage; pushd sonic-buildimage/src/libnl3
       - git clone https://github.com/thom311/libnl libnl3-3.5.0; pushd libnl3-3.5.0; git checkout tags/libnl3_5_0

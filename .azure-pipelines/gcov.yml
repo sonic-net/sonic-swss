@@ -14,7 +14,7 @@ parameters:
 
 - name: timeout
   type: number
-  default: 180
+  default: 240
 
 - name: sonic_slave
   type: string
@@ -46,11 +46,23 @@ jobs:
     ${{ if eq(parameters.pool, 'default') }}:
       vmImage: 'ubuntu-20.04'
 
+  variables:
+    DIFF_COVER_CHECK_THRESHOLD: 50
+    DIFF_COVER_ENABLE: 'true'
+
   container:
     image: sonicdev-microsoft.azurecr.io:443/${{ parameters.sonic_slave }}:latest
   
 
   steps:
+  - script: |
+        set -ex
+        # Install .NET CORE
+        curl -sSL https://packages.microsoft.com/keys/microsoft.asc | sudo apt-key add -
+        sudo apt-add-repository https://packages.microsoft.com/debian/10/prod
+        sudo apt-get update
+        sudo apt-get install -y dotnet-sdk-5.0
+    displayName: "Install .NET CORE"
   - script: |
       sudo apt-get install -y lcov
     displayName: "Install dependencies"
@@ -93,6 +105,7 @@ jobs:
       sudo ./gcov_support.sh generate
       sudo ./gcov_support.sh merge_container_info $(Build.ArtifactStagingDirectory)
       sudo cp -rf gcov_output $(Build.ArtifactStagingDirectory)
+      sudo cp -rf $(Build.ArtifactStagingDirectory)/gcov_output/AllMergeReport/coverage.xml $(System.DefaultWorkingDirectory)/
       ls -lh $(Build.ArtifactStagingDirectory)
       popd
     workingDirectory: $(Pipeline.Workspace)
