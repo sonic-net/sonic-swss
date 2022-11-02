@@ -1119,7 +1119,6 @@ class TestMuxTunnel(TestMuxTunnelBase):
             self.check_neighbor_state(dvs, dvs_route, ip, expect_route=False)
 
 
-
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():
