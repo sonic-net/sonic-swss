@@ -46,6 +46,10 @@ class DVSVlan(object):
         member = "Vlan{}|{}".format(vlanID, interface)
         self.config_db.delete_entry("VLAN_MEMBER", member)
 
+    def remove_vlan_interface(self, vlanID):
+        vlan = "Vlan{}".format(vlanID)
+        self.config_db.delete_entry("VLAN_INTERFACE", vlan)
+
     def check_app_db_vlan_fields(self, fvs, admin_status="up", mtu="9100"):
         assert fvs.get("admin_status") == admin_status
         assert fvs.get("mtu") == mtu
