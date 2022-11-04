@@ -307,6 +307,15 @@ class TestMuxTunnelBase():
         self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV4)
         self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV6)
 
+        marker = dvs.add_log_marker()
+
+        self.set_mux_state(appdb, "Ethernet0", "active")
+        self.set_mux_state(appdb, "Ethernet0", "active")
+        self.check_syslog(dvs, marker, "Maintaining current MUX state", 1)
+
+        self.set_mux_state(appdb, "Ethernet0", "init")
+        self.check_syslog(dvs, marker, "State transition from active to init is not-handled", 1)
+
     def create_and_test_fdb(self, appdb, asicdb, dvs, dvs_route):
 
         self.set_mux_state(appdb, "Ethernet0", "active")
@@ -1102,21 +1111,6 @@ class TestMuxTunnel(TestMuxTunnelBase):
         for ip in test_ips:
             self.check_neighbor_state(dvs, dvs_route, ip, expect_route=False)
 
-    def test_mux_states(
-        self, dvs, neighbor_cleanup, setup_vlan,
-        setup_mux_cable, setup_tunnel, setup_peer_switch,
-        setup_qos_map, testlog
-    ):
-        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-
-        marker = dvs.add_log_marker()
-
-        self.set_mux_state(appdb, "Ethernet0", "active")
-        self.set_mux_state(appdb, "Ethernet0", "active")
-        self.check_syslog(dvs, marker, "Maintaining current MUX state", 1)
-
-        self.set_mux_state(appdb, "Ethernet0", "init")
-        self.check_syslog(dvs, marker, "State transition from active to init is not-handled", 1)
 
 
 # Add Dummy always-pass test at end as workaroud
