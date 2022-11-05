@@ -14,7 +14,7 @@
 #include <bulker.h>
 #include <orch.h>
 
-#include "dashrouteorch.h"
+#include "dashorch.h"
 
 typedef enum _DashAclStage
 {
@@ -70,7 +70,7 @@ class DashAclOrch : public Orch
 public:
     using TaskArgs = std::vector<swss::FieldValueTuple>;
 
-    DashAclOrch(swss::DBConnector *db, const std::vector<std::string> &tables, DashRouteOrch *dash_route_orch);
+    DashAclOrch(swss::DBConnector *db, const std::vector<std::string> &tables, DashOrch *dash_orch);
 
 private:
     void doTask(Consumer &consumer);
@@ -125,7 +125,7 @@ private:
     ObjectBulker<sai_dash_acl_group_api_t> m_dash_acl_group_bulker;
     ObjectBulker<sai_dash_acl_rule_api_t> m_dash_acl_rule_bulker;
 
-    DashRouteOrch *m_dash_route_orch;
+    DashOrch *m_dash_orch;
 
     // There are some resources need to be released after bulker SAI functions,
     // So, defer functions will be called after all bulker SAI functions

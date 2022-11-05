@@ -215,14 +215,6 @@ inline void lexical_convert(const string &buffer, std::vector<sai_u16_range_t> &
 
 }
 
-static bool operator==(const sai_ip_address_t& a, const sai_ip_address_t& b)
-{
-    SWSS_LOG_ENTER();
-
-    return a.addr_family == b.addr_family &&
-        (a.addr_family == SAI_IP_ADDR_FAMILY_IPV4 ? a.addr.ip4 == b.addr.ip4 : memcmp(a.addr.ip6, b.addr.ip6, sizeof(a.addr.ip6)) == 0);
-}
-
 static bool operator==(const sai_u16_range_t& a, const sai_u16_range_t& b)
 {
     SWSS_LOG_ENTER();
@@ -291,15 +283,15 @@ sai_attr_id_t getSaiStage(DashAclDirection d, sai_ip_addr_family_t f, DashAclSta
     return stage->second;
 }
 
-DashAclOrch::DashAclOrch(DBConnector *db, const vector<string> &tables, DashRouteOrch *dash_route_orch) :
+DashAclOrch::DashAclOrch(DBConnector *db, const vector<string> &tables, DashOrch *dash_orch) :
     Orch(db, tables),
     m_dash_acl_group_bulker(sai_dash_acl_api, gSwitchId, gMaxBulkSize),
     m_dash_acl_rule_bulker(sai_dash_acl_api, gSwitchId, gMaxBulkSize),
-    m_dash_route_orch(dash_route_orch)
+    m_dash_orch(dash_orch)
 {
     SWSS_LOG_ENTER();
 
-    assert(m_dash_route_orch);
+    assert(m_dash_orch);
 }
 
 void DashAclOrch::doTask(Consumer &consumer)
@@ -770,7 +762,7 @@ task_process_status DashAclOrch::bindAclToEni(DashAclTable &acl_table, const std
         return task_failed;
     }
 
-    auto eni_entry = m_dash_route_orch->getEni(eni);
+    auto eni_entry = m_dash_orch->getEni(eni);
     if (eni_entry == nullptr)
     {
         SWSS_LOG_WARN("eni %s cannot be found", eni.c_str());
@@ -830,7 +822,7 @@ task_process_status DashAclOrch::unbindAclFromEni(DashAclTable &acl_table, const
         return task_failed;
     }
 
-    auto eni_entry = m_dash_route_orch->getEni(eni);
+    auto eni_entry = m_dash_orch->getEni(eni);
     if (eni_entry == nullptr)
     {
         SWSS_LOG_WARN("eni %s cannot be found", eni.c_str());
