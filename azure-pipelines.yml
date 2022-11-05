@@ -7,6 +7,7 @@ pr:
 - master
 - 202???
 - 201???
+- dash
 
 trigger:
   batch: true
@@ -15,6 +16,7 @@ trigger:
     - master
     - 202???
     - 201???
+    - dash
 
 # this part need to be set in UI
 schedules:
@@ -25,6 +27,7 @@ schedules:
     - master
     - 202???
     - 201???
+    - dash
   always: true
 
 variables:
@@ -149,3 +152,63 @@ stages:
       swss_artifact_name: sonic-swss
       artifact_name: sonic-gcov
       archive_gcov: true
+
+- stage: DASH-Build
+  jobs:
+  - template: .azure-pipelines/build-template.yml
+    parameters:
+      arch: amd64
+      sonic_slave: sonic-slave-buster
+      swss_common_artifact_name: sonic-swss-common
+      swss_common_branch: dash
+      artifact_name: sonic-swss
+      archive_pytests: true
+      archive_gcov: true
+      allow_failed_artifact: true
+      sairedis_artifact_name: sonic-buildimage.vs
+      sairedis_artifact_project: nvidia
+      sairedis_artifact_pipeline: nvidia-sonic.sonic-buildimage
+      sairedis_artifact_branch: bluefield
+      sairedis_artifact_pattern: target/debs/buster
+      common_lib_artifact_name: sonic-buildimage.vs
+      common_lib_artifact_project: nvidia
+      common_lib_artifact_pipeline: nvidia-sonic.sonic-buildimage
+      common_lib_artifact_branch: bluefield
+
+
+- stage: DASH-BuildDocker
+  dependsOn: Build
+  condition: succeeded('DASH-Build')
+  jobs:
+  - template: .azure-pipelines/build-docker-sonic-vs-template.yml
+    parameters:
+      swss_common_artifact_name: sonic-swss-common
+      swss_common_branch: dash
+      swss_artifact_name: sonic-swss
+      allow_failed_artifact: true
+      artifact_name: docker-sonic-vs
+      buildimage_artifact_name: sonic-buildimage.vs
+      buildimage_artifact_project: nvidia
+      buildimage_artifact_pipeline: nvidia-sonic.sonic-buildimage
+      buildimage_artifact_branch: bluefield
+      sairedis_artifact_name: sonic-buildimage.vs
+      sairedis_artifact_project: nvidia
+      sairedis_artifact_pipeline: nvidia-sonic.sonic-buildimage
+      sairedis_artifact_branch: bluefield
+      sairedis_artifact_pattern: target/debs/buster
+
+- stage: DASH-Test
+  dependsOn: BuildDocker
+  condition: succeeded('DASH-BuildDocker')
+  jobs:
+  - template: .azure-pipelines/test-docker-sonic-vs-template.yml
+    parameters:
+      log_artifact_name: log
+      gcov_artifact_name: sonic-gcov
+      sonic_slave: sonic-slave-buster
+      swss_common_branch: dash
+      archive_gcov: true
+      allow_failed_artifact: true
+      num_ports: 2
+      run_tests_pattern: test_dash_*.py
+
