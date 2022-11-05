@@ -45,6 +45,9 @@
 #include "bfdorch.h"
 #include "srv6orch.h"
 #include "nvgreorch.h"
+#include "dash/dashorch.h"
+#include "dash/dashrouteorch.h"
+#include "dash/dashvnetorch.h"
 #include <sairedis.h>
 
 using namespace swss;
