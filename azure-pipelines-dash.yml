@@ -36,6 +36,7 @@ stages:
       arch: amd64
       sonic_slave: sonic-slave-buster
       swss_common_artifact_name: sonic-swss-common
+      swss_common_branch: dash
       artifact_name: sonic-swss
       archive_pytests: true
       archive_gcov: true
@@ -58,6 +59,7 @@ stages:
   - template: .azure-pipelines/build-docker-sonic-vs-template.yml
     parameters:
       swss_common_artifact_name: sonic-swss-common
+      swss_common_branch: dash
       swss_artifact_name: sonic-swss
       allow_failed_artifact: true
       artifact_name: docker-sonic-vs
@@ -80,6 +82,7 @@ stages:
       log_artifact_name: log
       gcov_artifact_name: sonic-gcov
       sonic_slave: sonic-slave-buster
+      swss_common_branch: dash
       archive_gcov: true
       allow_failed_artifact: true
       num_ports: 2

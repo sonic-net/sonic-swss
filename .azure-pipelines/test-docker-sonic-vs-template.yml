@@ -20,6 +20,10 @@ parameters:
   type: string
   default: docker-sonic-vs
 
+- name: swss_common_branch
+  type: string
+  default: '$(BUILD_BRANCH)'
+
 - name: asan
   type: boolean
   default: false
@@ -60,7 +64,7 @@ jobs:
       pipeline: Azure.sonic-swss-common
       artifact: sonic-swss-common.amd64.ubuntu20_04
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/$(BUILD_BRANCH)'
+      runBranch: 'refs/heads/${{ parameters.swss_common_branch }}'
       allowFailedBuilds: ${{ parameters.allow_failed_artifact }}
       path: $(Build.ArtifactStagingDirectory)/download
     displayName: "Download sonic swss common deb packages"

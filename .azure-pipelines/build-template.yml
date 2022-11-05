@@ -45,6 +45,10 @@ parameters:
 - name: swss_common_artifact_name
   type: string
 
+- name: swss_common_branch
+  type: string
+  default: '$(BUILD_BRANCH)'
+
 - name: artifact_name
   type: string
 
@@ -115,7 +119,7 @@ jobs:
       pipeline: Azure.sonic-swss-common
       artifact: ${{ parameters.swss_common_artifact_name }}
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/$(BUILD_BRANCH)'
+      runBranch: 'refs/heads/${{ parameters.swss_common_branch }}'
       allowFailedBuilds: ${{ parameters.allow_failed_artifact }}
       path: $(Build.ArtifactStagingDirectory)/download/swsscommon
       patterns: |
