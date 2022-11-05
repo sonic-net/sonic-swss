@@ -153,7 +153,8 @@ stages:
       artifact_name: sonic-gcov
       archive_gcov: true
 
-- stage: DASH-Build
+- stage: DASH_Build
+  dependsOn: []
   jobs:
   - template: .azure-pipelines/build-template.yml
     parameters:
@@ -176,9 +177,9 @@ stages:
       common_lib_artifact_branch: bluefield
 
 
-- stage: DASH-BuildDocker
-  dependsOn: Build
-  condition: succeeded('DASH-Build')
+- stage: DASH_BuildDocker
+  dependsOn: DASH_Build
+  condition: succeeded('DASH_Build')
   jobs:
   - template: .azure-pipelines/build-docker-sonic-vs-template.yml
     parameters:
@@ -197,9 +198,9 @@ stages:
       sairedis_artifact_branch: bluefield
       sairedis_artifact_pattern: target/debs/buster
 
-- stage: DASH-Test
-  dependsOn: BuildDocker
-  condition: succeeded('DASH-BuildDocker')
+- stage: DASH_Test
+  dependsOn: DASH_BuildDocker
+  condition: succeeded('DASH_BuildDocker')
   jobs:
   - template: .azure-pipelines/test-docker-sonic-vs-template.yml
     parameters:

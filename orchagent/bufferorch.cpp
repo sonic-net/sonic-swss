@@ -17,6 +17,7 @@ extern sai_buffer_api_t *sai_buffer_api;
 
 extern PortsOrch *gPortsOrch;
 extern sai_object_id_t gSwitchId;
+extern string gMySwitchType;
 
 #define BUFFER_POOL_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS  "60000"
 
@@ -57,7 +58,11 @@ BufferOrch::BufferOrch(DBConnector *applDb, DBConnector *confDb, DBConnector *st
     initTableHandlers();
     initBufferReadyLists(applDb, confDb);
     initFlexCounterGroupTable();
-    initBufferConstants();
+
+    if (gMySwitchType != "dpu")
+    {
+        initBufferConstants();
+    }
 };
 
 void BufferOrch::initTableHandlers()

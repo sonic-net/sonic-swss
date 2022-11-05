@@ -16,6 +16,7 @@ extraction:
       - libnl-genl-3-dev
       - libnl-route-3-dev
       - libnl-nf-3-dev
+      - libyang-dev
       - libzmq3-dev
       - libzmq5
       - swig3.0

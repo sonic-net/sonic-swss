@@ -21,6 +21,7 @@ using namespace swss;
 extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
 extern bool                        gSaiRedisLogRotate;
+extern string                      gMySwitchType;
 
 extern void syncd_apply_view();
 /*
@@ -57,6 +58,7 @@ FlowCounterRouteOrch *gFlowCounterRouteOrch;
 DebugCounterOrch *gDebugCounterOrch;
 
 bool gIsNatSupported = false;
+bool gSaiRedisLogRotate = false;
 event_handle_t g_events_handle;
 
 #define DEFAULT_MAX_BULK_SIZE 1000
@@ -228,9 +230,30 @@ bool OrchDaemon::init()
     };
     DashAclOrch *dash_acl_orch = new DashAclOrch(m_applDb, dash_acl_tables, dash_route_orch);
     gDirectory.set(dash_acl_orch);
+	vector<string> dash_vnet_tables = {
+        APP_DASH_VNET_TABLE_NAME,
+        APP_DASH_VNET_MAPPING_TABLE_NAME
+    };
+    DashVnetOrch *dash_vnet_orch = new DashVnetOrch(m_applDb, dash_vnet_tables);
+    gDirectory.set(dash_vnet_orch);
+
+    vector<string> dash_tables = {
+        APP_DASH_APPLIANCE_TABLE_NAME,
+        APP_DASH_ROUTING_TYPE_TABLE_NAME,
+        APP_DASH_ENI_TABLE_NAME,
+        APP_DASH_QOS_TABLE_NAME
+    };
 
     DashOrch *dash_orch = new DashOrch(m_applDb, dash_tables);
     gDirectory.set(dash_orch);
+
+    vector<string> dash_route_tables = {
+        APP_DASH_ROUTE_TABLE_NAME,
+        APP_DASH_ROUTE_RULE_TABLE_NAME
+    };
+
+    DashRouteOrch *dash_route_orch = new DashRouteOrch(m_applDb, dash_route_tables, dash_orch);
+    gDirectory.set(dash_route_orch);
 
     vector<string> qos_tables = {
         CFG_TC_TO_QUEUE_MAP_TABLE_NAME,
@@ -465,6 +488,9 @@ bool OrchDaemon::init()
     m_orchList.push_back(nvgre_tunnel_orch);
     m_orchList.push_back(nvgre_tunnel_map_orch);
     m_orchList.push_back(dash_acl_orch);
+    m_orchList.push_back(dash_vnet_orch);
+    m_orchList.push_back(dash_route_orch);
+    m_orchList.push_back(dash_orch);
 
     if (m_fabricEnabled)
     {
@@ -689,24 +715,26 @@ void OrchDaemon::flush()
         SWSS_LOG_ERROR("Failed to flush redis pipeline %d", status);
         abort();
     }
+}
 
-    // check if logroate is requested
-    if (gSaiRedisLogRotate)
+/* Release the file handle so the log can be rotated */
+void OrchDaemon::logRotate() {
+    SWSS_LOG_ENTER();
+    sai_attribute_t attr;
+    attr.id = SAI_REDIS_SWITCH_ATTR_PERFORM_LOG_ROTATE;
+    attr.value.booldata = true;
+    sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_NOTICE("performing log rotate");
-
-        gSaiRedisLogRotate = false;
-
-        attr.id = SAI_REDIS_SWITCH_ATTR_PERFORM_LOG_ROTATE;
-        attr.value.booldata = true;
-
-        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+        SWSS_LOG_ERROR("Failed to release the file handle on sairedis log %d", status);
     }
 }
+
 
 void OrchDaemon::start()
 {
     SWSS_LOG_ENTER();
+    gSaiRedisLogRotate = false;
 
     for (Orch *o : m_orchList)
     {
@@ -747,6 +775,17 @@ void OrchDaemon::start()
              * requests live in it. When the daemon has nothing to do, it
              * is a good chance to flush the pipeline  */
             flush();
+            continue;
+        }
+
+        // check if logroate is requested
+        if (gSaiRedisLogRotate)
+        {
+            SWSS_LOG_NOTICE("performing log rotate");
+
+            gSaiRedisLogRotate = false;
+
+            logRotate();
             continue;
         }
 

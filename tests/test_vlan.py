@@ -2,7 +2,7 @@ import distro
 import pytest
 
 from distutils.version import StrictVersion
-from dvslib.dvs_common import PollingConfig
+from dvslib.dvs_common import PollingConfig, wait_for_result
 
 @pytest.mark.usefixtures("testlog")
 @pytest.mark.usefixtures('dvs_vlan_manager')
@@ -435,6 +435,58 @@ class TestVlan(object):
         self.dvs_vlan.remove_vlan(vlan)
         self.dvs_vlan.get_and_verify_vlan_ids(0)
         self.dvs_vlan.get_and_verify_vlan_hostif_ids(len(dvs.asic_db.hostif_name_map) - 1)
+
+    def test_VlanGratArp(self, dvs):
+        def arp_accept_enabled():
+            rc, res = dvs.runcmd("cat /proc/sys/net/ipv4/conf/Vlan{}/arp_accept".format(vlan))
+            return (res.strip("\n") == "1", res)
+
+        def arp_accept_disabled():
+            rc, res = dvs.runcmd("cat /proc/sys/net/ipv4/conf/Vlan{}/arp_accept".format(vlan))
+            return (res.strip("\n") == "0", res)
+
+        vlan = "2"
+        self.dvs_vlan.create_vlan(vlan)
+        self.dvs_vlan.create_vlan_interface(vlan)
+        self.dvs_vlan.set_vlan_intf_property(vlan, "grat_arp", "enabled")
+
+        wait_for_result(arp_accept_enabled, PollingConfig(), "IPv4 arp_accept not enabled")
+
+        # Not currently possible to test `accept_untracked_na` as it doesn't exist in the kernel for
+        # our test VMs (only present in kernels 5.19 and above)
+
+        self.dvs_vlan.set_vlan_intf_property(vlan, "grat_arp", "disabled")
+
+        wait_for_result(arp_accept_disabled, PollingConfig(), "IPv4 arp_accept not disabled")
+
+        self.dvs_vlan.remove_vlan(vlan)
+
+    def test_VlanProxyArp(self, dvs): 
+
+        def proxy_arp_enabled():
+            rc, proxy_arp_res = dvs.runcmd("cat /proc/sys/net/ipv4/conf/Vlan{}/proxy_arp".format(vlan))
+            rc, pvlan_res = dvs.runcmd("cat /proc/sys/net/ipv4/conf/Vlan{}/proxy_arp_pvlan".format(vlan))
+
+            return (proxy_arp_res.strip("\n") == "1" and pvlan_res.strip("\n") == "1", (proxy_arp_res, pvlan_res))
+
+        def proxy_arp_disabled():
+            rc, proxy_arp_res = dvs.runcmd("cat /proc/sys/net/ipv4/conf/Vlan{}/proxy_arp".format(vlan))
+            rc, pvlan_res = dvs.runcmd("cat /proc/sys/net/ipv4/conf/Vlan{}/proxy_arp_pvlan".format(vlan))
+
+            return (proxy_arp_res.strip("\n") == "0" and pvlan_res.strip("\n") == "0", (proxy_arp_res, pvlan_res))
+            
+        vlan = "2"
+        self.dvs_vlan.create_vlan(vlan)
+        self.dvs_vlan.create_vlan_interface(vlan)
+        self.dvs_vlan.set_vlan_intf_property(vlan, "proxy_arp", "enabled")
+
+        wait_for_result(proxy_arp_enabled, PollingConfig(), 'IPv4 proxy_arp or proxy_arp_pvlan not enabled')
+
+        self.dvs_vlan.set_vlan_intf_property(vlan, "proxy_arp", "disabled")
+
+        wait_for_result(proxy_arp_disabled, PollingConfig(), 'IPv4 proxy_arp or proxy_arp_pvlan not disabled')
+
+        self.dvs_vlan.remove_vlan(vlan)
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying

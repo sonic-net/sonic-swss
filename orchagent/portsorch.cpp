@@ -56,6 +56,7 @@ extern int32_t gVoqMySwitchId;
 extern string gMyHostName;
 extern string gMyAsicName;
 extern event_handle_t g_events_handle;
+extern string gMySwitchType;
 
 #define DEFAULT_SYSTEM_PORT_MTU 9100
 #define VLAN_PREFIX         "Vlan"
@@ -579,32 +580,38 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         }
     }
 
-    /* Get default 1Q bridge and default VLAN */
-    vector<sai_attribute_t> attrs;
-    attr.id = SAI_SWITCH_ATTR_DEFAULT_1Q_BRIDGE_ID;
-    attrs.push_back(attr);
-    attr.id = SAI_SWITCH_ATTR_DEFAULT_VLAN_ID;
-    attrs.push_back(attr);
-
-    status = sai_switch_api->get_switch_attribute(gSwitchId, (uint32_t)attrs.size(), attrs.data());
-    if (status != SAI_STATUS_SUCCESS)
+    if (gMySwitchType != "dpu")
     {
-        SWSS_LOG_ERROR("Failed to get default 1Q bridge and/or default VLAN, rv:%d", status);
-        task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
-        if (handle_status != task_process_status::task_success)
-        {
-            throw runtime_error("PortsOrch initialization failure");
-        }
-    }
+        /* Get default 1Q bridge and default VLAN */
+        vector<sai_attribute_t> attrs;
+        attr.id = SAI_SWITCH_ATTR_DEFAULT_1Q_BRIDGE_ID;
+        attrs.push_back(attr);
+        attr.id = SAI_SWITCH_ATTR_DEFAULT_VLAN_ID;
+        attrs.push_back(attr);
 
-    m_default1QBridge = attrs[0].value.oid;
-    m_defaultVlan = attrs[1].value.oid;
+        status = sai_switch_api->get_switch_attribute(gSwitchId, (uint32_t)attrs.size(), attrs.data());
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to get default 1Q bridge and/or default VLAN, rv:%d", status);
+            task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
+            if (handle_status != task_process_status::task_success)
+            {
+                throw runtime_error("PortsOrch initialization failure");
+            }
+        }
+
+        m_default1QBridge = attrs[0].value.oid;
+        m_defaultVlan = attrs[1].value.oid;
+    }
 
     /* Get System ports */
     getSystemPorts();
 
-    removeDefaultVlanMembers();
-    removeDefaultBridgePorts();
+    if (gMySwitchType != "dpu")
+    {
+        removeDefaultVlanMembers();
+        removeDefaultBridgePorts();
+    }
 
     /* Add port oper status notification support */
     DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
@@ -4628,9 +4635,12 @@ bool PortsOrch::initializePort(Port &port)
 
     SWSS_LOG_NOTICE("Initializing port alias:%s pid:%" PRIx64, port.m_alias.c_str(), port.m_port_id);
 
-    initializePriorityGroups(port);
-    initializeQueues(port);
-    initializePortBufferMaximumParameters(port);
+    if (gMySwitchType != "dpu")
+    {
+        initializePriorityGroups(port);
+        initializeQueues(port);
+        initializePortBufferMaximumParameters(port);
+    }
 
     /* Create host interface */
     if (!addHostIntfs(port, port.m_alias, port.m_hif_id))

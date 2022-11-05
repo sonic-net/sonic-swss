@@ -46,8 +46,13 @@
 #include "srv6orch.h"
 #include "nvgreorch.h"
 #include "dash/dashaclorch.h"
+#include "dash/dashorch.h"
+#include "dash/dashrouteorch.h"
+#include "dash/dashvnetorch.h"
+#include <sairedis.h>
 
 using namespace swss;
+extern bool gSaiRedisLogRotate;
 
 class OrchDaemon
 {
@@ -68,6 +73,7 @@ public:
     {
         m_fabricEnabled = enabled;
     }
+    void logRotate();
 private:
     DBConnector *m_applDb;
     DBConnector *m_configDb;
