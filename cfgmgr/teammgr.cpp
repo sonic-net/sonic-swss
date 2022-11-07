@@ -716,6 +716,17 @@ task_process_status TeamMgr::addLagMember(const string &lag, const string &membe
 {
     SWSS_LOG_ENTER();
 
+    stringstream cmd;
+    string res;
+
+    // If port was already deleted, ignore this operation
+    cmd << IP_CMD << " link show " << shellquote(member);
+    if (exec(cmd.str(), res) != 0)
+    {
+	SWSS_LOG_WARN("Unable to find port %s", member.c_str());
+	return task_ignore;
+    }
+
     // If port is already enslaved, ignore this operation
     // TODO: check the current master if it is the same as to be configured
     if (isPortEnslaved(member))
@@ -723,9 +734,9 @@ task_process_status TeamMgr::addLagMember(const string &lag, const string &membe
         return task_ignore;
     }
 
-    stringstream cmd;
-    string res;
     uint16_t keyId = generateLacpKey(lag);
+    cmd.str("");
+    cmd.clear();
 
     // Set admin down LAG member (required by teamd) and enslave it
     // ip link set dev <member> down;
