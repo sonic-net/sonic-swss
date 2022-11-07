@@ -163,7 +163,7 @@ stages:
       swss_common_artifact_name: sonic-swss-common
       swss_common_branch: dash
       artifact_name: sonic-swss
-      archive_pytests: true
+      archive_pytests: false
       archive_gcov: true
       allow_failed_artifact: true
       sairedis_artifact_name: sonic-buildimage.vs
