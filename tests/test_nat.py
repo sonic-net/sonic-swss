@@ -775,8 +775,8 @@ class TestNat(object):
         ntf.send("nat_event", ntf_data, fvp)
 
         # check the entry is not there in kernel
-        output = dvs.runcmd("conntrack -L -j")
-        assert("0 flow entries have been shown.")
+        exitcode, output = dvs.runcmd("conntrack -L -j")
+        assert exitcode == 0, "0 flow entries have been shown" in output
 
         # check the entry is not there in app db
         self.app_db.wait_for_n_keys("NAPT_TABLE", 0)
