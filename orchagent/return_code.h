@@ -272,6 +272,7 @@ class ReturnCode {
       {SAI_STATUS_TABLE_FULL, StatusCode::SWSS_RC_FULL},
       {SAI_STATUS_NOT_IMPLEMENTED, StatusCode::SWSS_RC_UNIMPLEMENTED},
       {SAI_STATUS_OBJECT_IN_USE, StatusCode::SWSS_RC_IN_USE},
+      {SAI_STATUS_NOT_EXECUTED, StatusCode::SWSS_RC_NOT_EXECUTED},
   };
 
   StatusCode status_;
