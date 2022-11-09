@@ -45,6 +45,7 @@ using ::testing::DoAll;
 using ::testing::Eq;
 using ::testing::Return;
 using ::testing::SetArgPointee;
+using ::testing::SetArrayArgument;
 using ::testing::StrictMock;
 using ::testing::Truly;
 
@@ -69,6 +70,60 @@ const std::string kWcmpGroupKey1 = KeyGenerator::generateWcmpGroupKey(kWcmpGroup
 const std::string kNexthopKey1 = KeyGenerator::generateNextHopKey(kNexthopId1);
 const std::string kNexthopKey2 = KeyGenerator::generateNextHopKey(kNexthopId2);
 const std::string kNexthopKey3 = KeyGenerator::generateNextHopKey(kNexthopId3);
+
+// Matches two SAI attributes.
+bool MatchSaiAttribute(const sai_attribute_t &attr, const sai_attribute_t &exp_attr)
+{
+    if (exp_attr.id == SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID)
+    {
+        if (attr.id != SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID || attr.value.oid != exp_attr.value.oid)
+        {
+            return false;
+        }
+    }
+    if (exp_attr.id == SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID)
+    {
+        if (attr.id != SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID || attr.value.oid != exp_attr.value.oid)
+        {
+            return false;
+        }
+    }
+    if (exp_attr.id == SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT)
+    {
+        if (attr.id != SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT || attr.value.u32 != exp_attr.value.u32)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+MATCHER_P(ArrayEq, array, "")
+{
+    for (size_t i = 0; i < array.size(); ++i)
+    {
+        if (arg[i] != array[i])
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+MATCHER_P(AttrArrayArrayEq, array, "")
+{
+    for (size_t i = 0; i < array.size(); ++i)
+    {
+        for (size_t j = 0; j < array[i].size(); j++)
+        {
+            if (!MatchSaiAttribute(arg[i][j], array[i][j]))
+            {
+                return false;
+            }
+        }
+    }
+    return true;
+}
 
 // Matches the next hop group type sai_attribute_t argument.
 bool MatchSaiNextHopGroupAttribute(const sai_attribute_t *attr)
@@ -116,6 +171,26 @@ bool MatchSaiNextHopGroupMemberAttribute(const sai_object_id_t expected_next_hop
         }
     }
     return true;
+}
+
+std::vector<sai_attribute_t> GetSaiNextHopGroupMemberAttribute(sai_object_id_t next_hop_oid, uint32_t weight,
+                                                               sai_object_id_t group_oid)
+{
+    std::vector<sai_attribute_t> attrs;
+    sai_attribute_t attr;
+    attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID;
+    attr.value.oid = group_oid;
+    attrs.push_back(attr);
+
+    attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
+    attr.value.oid = next_hop_oid;
+    attrs.push_back(attr);
+
+    attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT;
+    attr.value.u32 = weight;
+    attrs.push_back(attr);
+
+    return attrs;
 }
 
 void VerifyWcmpGroupMemberEntry(const std::string &expected_next_hop_id, const int expected_weight,
@@ -172,6 +247,8 @@ class WcmpManagerTest : public ::testing::Test
         sai_next_hop_group_api->create_next_hop_group_member = create_next_hop_group_member;
         sai_next_hop_group_api->remove_next_hop_group_member = remove_next_hop_group_member;
         sai_next_hop_group_api->set_next_hop_group_member_attribute = set_next_hop_group_member_attribute;
+        sai_next_hop_group_api->create_next_hop_group_members = create_next_hop_group_members;
+        sai_next_hop_group_api->remove_next_hop_group_members = remove_next_hop_group_members;
 
         sai_hostif_api->create_hostif_table_entry = mock_create_hostif_table_entry;
         sai_hostif_api->create_hostif_trap = mock_create_hostif_trap;
@@ -227,18 +304,6 @@ class WcmpManagerTest : public ::testing::Test
     void RestorePrunedNextHops(const std::string &port)
     {
         wcmp_group_manager_->restorePrunedNextHops(port);
-    }
-
-    bool VerifyWcmpGroupMemberInPrunedSet(std::shared_ptr<P4WcmpGroupMemberEntry> gm, bool expected_member_present,
-                                          long unsigned int expected_set_size)
-    {
-        if (wcmp_group_manager_->pruned_wcmp_members_set.size() != expected_set_size)
-            return false;
-
-        return expected_member_present ? (wcmp_group_manager_->pruned_wcmp_members_set.find(gm) !=
-                                          wcmp_group_manager_->pruned_wcmp_members_set.end())
-                                       : (wcmp_group_manager_->pruned_wcmp_members_set.find(gm) ==
-                                          wcmp_group_manager_->pruned_wcmp_members_set.end());
     }
 
     bool VerifyWcmpGroupMemberInPortMap(std::shared_ptr<P4WcmpGroupMemberEntry> gm, bool expected_member_present,
@@ -338,13 +403,18 @@ P4WcmpGroupEntry WcmpManagerTest::AddWcmpGroupEntryWithWatchport(const std::stri
         .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupOid1), Return(SAI_STATUS_SUCCESS)));
     // For members with non empty watchport field, member creation in SAI happens
     // for operationally up ports only..
+    std::vector<sai_object_id_t> return_oids{kWcmpGroupMemberOid1};
+    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
     if (oper_up)
     {
-        EXPECT_CALL(mock_sai_next_hop_group_,
-                    create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                                 Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 2,
-                                                                 kWcmpGroupOid1, std::placeholders::_1))))
-            .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid1), Return(SAI_STATUS_SUCCESS)));
+        EXPECT_CALL(
+            mock_sai_next_hop_group_,
+            create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                          AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                              GetSaiNextHopGroupMemberAttribute(kNexthopOid1, 2, kWcmpGroupOid1)}),
+                                          Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+            .WillOnce(DoAll(SetArrayArgument<5>(return_oids.begin(), return_oids.end()),
+                            SetArrayArgument<6>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
     }
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessAddRequest(&app_db_entry));
     EXPECT_NE(nullptr, GetWcmpGroupEntry(kWcmpGroupId1));
@@ -361,16 +431,16 @@ P4WcmpGroupEntry WcmpManagerTest::AddWcmpGroupEntry1()
                 create_next_hop_group(_, Eq(gSwitchId), Eq(1),
                                       Truly(std::bind(MatchSaiNextHopGroupAttribute, std::placeholders::_1))))
         .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupOid1), Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_object_id_t> return_oids{kWcmpGroupMemberOid1, kWcmpGroupMemberOid2};
+    std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS, SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 2,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid1), Return(SAI_STATUS_SUCCESS)));
-    EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid2, 1,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid2), Return(SAI_STATUS_SUCCESS)));
+                create_next_hop_group_members(Eq(gSwitchId), Eq(2), ArrayEq(std::vector<uint32_t>{3, 3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid1, 2, kWcmpGroupOid1),
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid2, 1, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids.begin(), return_oids.end()),
+                        SetArrayArgument<6>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessAddRequest(&app_db_entry));
     EXPECT_NE(nullptr, GetWcmpGroupEntry(kWcmpGroupId1));
     return app_db_entry;
@@ -420,21 +490,26 @@ TEST_F(WcmpManagerTest, CreateWcmpGroupFailsWhenCreateGroupMemberSaiCallFails)
     // WCMP group creation fails when one of the group member creation fails
     EXPECT_CALL(mock_sai_next_hop_group_, create_next_hop_group(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupOid1), Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_object_id_t> return_oids{kWcmpGroupMemberOid1, SAI_NULL_OBJECT_ID};
+    std::vector<sai_status_t> exp_create_status{SAI_STATUS_SUCCESS, SAI_STATUS_ITEM_NOT_FOUND};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 2,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid1), Return(SAI_STATUS_SUCCESS)));
+                create_next_hop_group_members(Eq(gSwitchId), Eq(2), ArrayEq(std::vector<uint32_t>{3, 3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid1, 2, kWcmpGroupOid1),
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid2, 1, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids.begin(), return_oids.end()),
+                        SetArrayArgument<6>(exp_create_status.begin(), exp_create_status.end()),
+                        Return(SAI_STATUS_ITEM_NOT_FOUND)));
+    std::vector<sai_status_t> exp_remove_status{SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid2, 1,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(Return(SAI_STATUS_ITEM_NOT_FOUND));
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid1}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group(Eq(kWcmpGroupOid1)))
         .WillOnce(Return(SAI_STATUS_SUCCESS));
-    EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, ProcessAddRequest(&app_db_entry));
+    EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, ProcessAddRequest(&app_db_entry));
     std::string key = KeyGenerator::generateWcmpGroupKey(kWcmpGroupId1);
     auto *wcmp_group_entry_ptr = GetWcmpGroupEntry(kWcmpGroupId1);
     EXPECT_EQ(nullptr, wcmp_group_entry_ptr);
@@ -454,23 +529,28 @@ TEST_F(WcmpManagerTest, CreateWcmpGroupFailsWhenCreateGroupMemberSaiCallFailsPlu
     // WCMP group creation fails when one of the group member creation fails
     EXPECT_CALL(mock_sai_next_hop_group_, create_next_hop_group(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupOid1), Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_object_id_t> return_oids{kWcmpGroupMemberOid1, SAI_NULL_OBJECT_ID};
+    std::vector<sai_status_t> exp_create_status{SAI_STATUS_SUCCESS, SAI_STATUS_ITEM_NOT_FOUND};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 2,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid1), Return(SAI_STATUS_SUCCESS)));
+                create_next_hop_group_members(Eq(gSwitchId), Eq(2), ArrayEq(std::vector<uint32_t>{3, 3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid1, 2, kWcmpGroupOid1),
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid2, 1, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids.begin(), return_oids.end()),
+                        SetArrayArgument<6>(exp_create_status.begin(), exp_create_status.end()),
+                        Return(SAI_STATUS_ITEM_NOT_FOUND)));
+    std::vector<sai_status_t> exp_remove_status{SAI_STATUS_FAILURE};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid2, 1,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(Return(SAI_STATUS_ITEM_NOT_FOUND));
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid1)))
-        .WillOnce(Return(SAI_STATUS_FAILURE));
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid1}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_FAILURE)));
     EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group(Eq(kWcmpGroupOid1)))
         .WillOnce(Return(SAI_STATUS_SUCCESS));
 
     // TODO: Expect critical state.
-    EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, ProcessAddRequest(&app_db_entry));
+    EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, ProcessAddRequest(&app_db_entry));
 }
 
 TEST_F(WcmpManagerTest, CreateWcmpGroupFailsWhenCreateGroupMemberSaiCallFailsPlusGroupRecoveryFails)
@@ -481,23 +561,28 @@ TEST_F(WcmpManagerTest, CreateWcmpGroupFailsWhenCreateGroupMemberSaiCallFailsPlu
     // WCMP group creation fails when one of the group member creation fails
     EXPECT_CALL(mock_sai_next_hop_group_, create_next_hop_group(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupOid1), Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_object_id_t> return_oids{kWcmpGroupMemberOid1, SAI_NULL_OBJECT_ID};
+    std::vector<sai_status_t> exp_create_status{SAI_STATUS_SUCCESS, SAI_STATUS_ITEM_NOT_FOUND};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 2,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid1), Return(SAI_STATUS_SUCCESS)));
+                create_next_hop_group_members(Eq(gSwitchId), Eq(2), ArrayEq(std::vector<uint32_t>{3, 3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid1, 2, kWcmpGroupOid1),
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid2, 1, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids.begin(), return_oids.end()),
+                        SetArrayArgument<6>(exp_create_status.begin(), exp_create_status.end()),
+                        Return(SAI_STATUS_ITEM_NOT_FOUND)));
+    std::vector<sai_status_t> exp_remove_status{SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid2, 1,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(Return(SAI_STATUS_ITEM_NOT_FOUND));
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid1}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group(Eq(kWcmpGroupOid1)))
         .WillOnce(Return(SAI_STATUS_FAILURE));
 
     // TODO: Expect critical state.
-    EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, ProcessAddRequest(&app_db_entry));
+    EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, ProcessAddRequest(&app_db_entry));
 }
 
 TEST_F(WcmpManagerTest, CreateWcmpGroupFailsWhenCreateGroupSaiCallFails)
@@ -534,52 +619,72 @@ TEST_F(WcmpManagerTest, RemoveWcmpGroupFailsWhenNotExist)
 TEST_F(WcmpManagerTest, RemoveWcmpGroupFailsWhenSaiCallFails)
 {
     P4WcmpGroupEntry app_db_entry = AddWcmpGroupEntry1();
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid2)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    std::vector<sai_status_t> exp_remove_status{SAI_STATUS_SUCCESS, SAI_STATUS_SUCCESS};
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                remove_next_hop_group_members(
+                    Eq(2), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid2, kWcmpGroupMemberOid1}),
+                    Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group(Eq(kWcmpGroupOid1)))
         .WillOnce(Return(SAI_STATUS_FAILURE));
+    std::vector<sai_object_id_t> return_oids{kWcmpGroupMemberOid1, kWcmpGroupMemberOid2};
+    std::vector<sai_status_t> exp_create_status{SAI_STATUS_SUCCESS, SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 2,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid1), Return(SAI_STATUS_SUCCESS)));
-    EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid2, 1,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid2), Return(SAI_STATUS_SUCCESS)));
+                create_next_hop_group_members(Eq(gSwitchId), Eq(2), ArrayEq(std::vector<uint32_t>{3, 3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid1, 2, kWcmpGroupOid1),
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid2, 1, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids.begin(), return_oids.end()),
+                        SetArrayArgument<6>(exp_create_status.begin(), exp_create_status.end()),
+                        Return(SAI_STATUS_SUCCESS)));
     EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, RemoveWcmpGroup(kWcmpGroupId1));
 }
 
 TEST_F(WcmpManagerTest, RemoveWcmpGroupFailsWhenMemberRemovalFails)
 {
     P4WcmpGroupEntry app_db_entry = AddWcmpGroupEntry1();
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid2)))
-        .WillOnce(Return(SAI_STATUS_FAILURE));
+    std::vector<sai_status_t> exp_remove_status{SAI_STATUS_FAILURE, SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 2,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid1), Return(SAI_STATUS_SUCCESS)));
+                remove_next_hop_group_members(
+                    Eq(2), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid2, kWcmpGroupMemberOid1}),
+                    Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_FAILURE)));
+    std::vector<sai_object_id_t> return_oids{kWcmpGroupMemberOid1};
+    std::vector<sai_status_t> exp_create_status{SAI_STATUS_SUCCESS};
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid1, 2, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids.begin(), return_oids.end()),
+                        SetArrayArgument<6>(exp_create_status.begin(), exp_create_status.end()),
+                        Return(SAI_STATUS_SUCCESS)));
     EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, RemoveWcmpGroup(kWcmpGroupId1));
 }
 
 TEST_F(WcmpManagerTest, RemoveWcmpGroupFailsWhenMemberRemovalFailsPlusRecoveryFails)
 {
     P4WcmpGroupEntry app_db_entry = AddWcmpGroupEntry1();
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid2)))
-        .WillOnce(Return(SAI_STATUS_FAILURE));
+    std::vector<sai_status_t> exp_remove_status{SAI_STATUS_FAILURE, SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 2,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid1), Return(SAI_STATUS_FAILURE)));
+                remove_next_hop_group_members(
+                    Eq(2), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid2, kWcmpGroupMemberOid1}),
+                    Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_FAILURE)));
+    std::vector<sai_object_id_t> return_oids{SAI_NULL_OBJECT_ID};
+    std::vector<sai_status_t> exp_create_status{SAI_STATUS_FAILURE};
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid1, 2, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids.begin(), return_oids.end()),
+                        SetArrayArgument<6>(exp_create_status.begin(), exp_create_status.end()),
+                        Return(SAI_STATUS_FAILURE)));
     // TODO: Expect critical state.
     EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, RemoveWcmpGroup(kWcmpGroupId1));
 }
@@ -594,20 +699,36 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupMembersSucceed)
     std::shared_ptr<P4WcmpGroupMemberEntry> gm2 = createWcmpGroupMemberEntry(kNexthopId2, 15);
     wcmp_group.wcmp_group_members.push_back(gm1);
     wcmp_group.wcmp_group_members.push_back(gm2);
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid2)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    std::vector<sai_status_t> exp_remove_status{SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 3,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid4), Return(SAI_STATUS_SUCCESS)));
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid1}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid2, 15,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid5), Return(SAI_STATUS_SUCCESS)));
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid2}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_object_id_t> return_oids_4{kWcmpGroupMemberOid4};
+    std::vector<sai_object_id_t> return_oids_5{kWcmpGroupMemberOid5};
+    std::vector<sai_status_t> exp_create_status{SAI_STATUS_SUCCESS};
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid1, 3, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids_4.begin(), return_oids_4.end()),
+                        SetArrayArgument<6>(exp_create_status.begin(), exp_create_status.end()),
+                        Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid2, 15, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids_5.begin(), return_oids_5.end()),
+                        SetArrayArgument<6>(exp_create_status.begin(), exp_create_status.end()),
+                        Return(SAI_STATUS_SUCCESS)));
     EXPECT_TRUE(ProcessUpdateRequest(&wcmp_group).ok());
     VerifyWcmpGroupEntry(wcmp_group, *GetWcmpGroupEntry(kWcmpGroupId1));
     uint32_t wcmp_group_refcount = 0;
@@ -622,15 +743,27 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupMembersSucceed)
     wcmp_group.wcmp_group_members.clear();
     gm2 = createWcmpGroupMemberEntry(kNexthopId2, 15);
     wcmp_group.wcmp_group_members.push_back(gm2);
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid4)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid5)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    exp_remove_status = {SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid2, 15,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid2), Return(SAI_STATUS_SUCCESS)));
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid4}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid5}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_object_id_t> return_oids_2{kWcmpGroupMemberOid2};
+    exp_create_status = {SAI_STATUS_SUCCESS};
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid2, 15, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids_2.begin(), return_oids_2.end()),
+                        SetArrayArgument<6>(exp_create_status.begin(), exp_create_status.end()),
+                        Return(SAI_STATUS_SUCCESS)));
     EXPECT_TRUE(ProcessUpdateRequest(&wcmp_group).ok());
     VerifyWcmpGroupEntry(wcmp_group, *GetWcmpGroupEntry(kWcmpGroupId1));
     ASSERT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_NEXT_HOP_GROUP, kWcmpGroupKey1, &wcmp_group_refcount));
@@ -645,18 +778,30 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupMembersSucceed)
     std::shared_ptr<P4WcmpGroupMemberEntry> updated_gm1 = createWcmpGroupMemberEntry(kNexthopId1, 20);
     wcmp_group.wcmp_group_members.push_back(updated_gm1);
     wcmp_group.wcmp_group_members.push_back(updated_gm2);
+    exp_remove_status = {SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 20,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid1), Return(SAI_STATUS_SUCCESS)));
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid2)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid2}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_object_id_t> return_oids_1{kWcmpGroupMemberOid1};
+    exp_create_status = {SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid2, 15,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid5), Return(SAI_STATUS_SUCCESS)));
+                create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid1, 20, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids_1.begin(), return_oids_1.end()),
+                        SetArrayArgument<6>(exp_create_status.begin(), exp_create_status.end()),
+                        Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid2, 15, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids_5.begin(), return_oids_5.end()),
+                        SetArrayArgument<6>(exp_create_status.begin(), exp_create_status.end()),
+                        Return(SAI_STATUS_SUCCESS)));
     EXPECT_TRUE(ProcessUpdateRequest(&wcmp_group).ok());
     VerifyWcmpGroupEntry(wcmp_group, *GetWcmpGroupEntry(kWcmpGroupId1));
     ASSERT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_NEXT_HOP_GROUP, kWcmpGroupKey1, &wcmp_group_refcount));
@@ -668,10 +813,17 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupMembersSucceed)
 
     // Update WCMP without group members
     wcmp_group.wcmp_group_members.clear();
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid5)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    exp_remove_status = {SAI_STATUS_SUCCESS};
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid1}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid5}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
     EXPECT_TRUE(ProcessUpdateRequest(&wcmp_group).ok());
     VerifyWcmpGroupEntry(wcmp_group, *GetWcmpGroupEntry(kWcmpGroupId1));
     ASSERT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_NEXT_HOP_GROUP, kWcmpGroupKey1, &wcmp_group_refcount));
@@ -696,25 +848,38 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupFailsWhenRemoveGroupMemberSaiCallFails)
     wcmp_group.wcmp_group_members.push_back(gm1);
     wcmp_group.wcmp_group_members.push_back(gm2);
     wcmp_group.wcmp_group_members.push_back(gm3);
+    std::vector<sai_object_id_t> return_oids_4{kWcmpGroupMemberOid4};
+    std::vector<sai_object_id_t> return_oids_5_6{kWcmpGroupMemberOid5, kWcmpGroupMemberOid3};
+    std::vector<sai_status_t> exp_create_status_1{SAI_STATUS_SUCCESS};
+    std::vector<sai_status_t> exp_create_status_2{SAI_STATUS_SUCCESS, SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 3,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid4), Return(SAI_STATUS_SUCCESS)));
+                create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid1, 3, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids_4.begin(), return_oids_4.end()),
+                        SetArrayArgument<6>(exp_create_status_1.begin(), exp_create_status_1.end()),
+                        Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid2, 10,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid5), Return(SAI_STATUS_SUCCESS)));
+                create_next_hop_group_members(Eq(gSwitchId), Eq(2), ArrayEq(std::vector<uint32_t>{3, 3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid2, 10, kWcmpGroupOid1),
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid3, 30, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids_5_6.begin(), return_oids_5_6.end()),
+                        SetArrayArgument<6>(exp_create_status_2.begin(), exp_create_status_2.end()),
+                        Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_status_t> exp_remove_status{SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid3, 30,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid3), Return(SAI_STATUS_SUCCESS)));
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid2)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid1}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid2}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
     EXPECT_TRUE(ProcessUpdateRequest(&wcmp_group).ok());
     VerifyWcmpGroupEntry(wcmp_group, *GetWcmpGroupEntry(kWcmpGroupId1));
     uint32_t wcmp_group_refcount = 0;
@@ -732,16 +897,23 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupFailsWhenRemoveGroupMemberSaiCallFails)
     wcmp_group.wcmp_group_members.clear();
     wcmp_group.wcmp_group_members.push_back(gm1);
     wcmp_group.wcmp_group_members.push_back(gm3);
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid5)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid3)))
-        .WillOnce(Return(SAI_STATUS_OBJECT_IN_USE));
-    // Clean up - revert deletions -success
+    exp_remove_status = {SAI_STATUS_OBJECT_IN_USE, SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid2, 10,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid5), Return(SAI_STATUS_SUCCESS)));
+                remove_next_hop_group_members(
+                    Eq(2), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid3, kWcmpGroupMemberOid5}),
+                    Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()),
+                        Return(SAI_STATUS_OBJECT_IN_USE)));
+    // Clean up - revert deletions -success
+    std::vector<sai_object_id_t> return_oids_5{kWcmpGroupMemberOid5};
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid2, 10, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids_5.begin(), return_oids_5.end()),
+                        SetArrayArgument<6>(exp_create_status_1.begin(), exp_create_status_1.end()),
+                        Return(SAI_STATUS_SUCCESS)));
     EXPECT_EQ(StatusCode::SWSS_RC_IN_USE, ProcessUpdateRequest(&wcmp_group));
     P4WcmpGroupEntry expected_wcmp_group = {.wcmp_group_id = kWcmpGroupId1, .wcmp_group_members = {}};
     expected_wcmp_group.wcmp_group_members.push_back(gm1);
@@ -760,19 +932,26 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupFailsWhenRemoveGroupMemberSaiCallFails)
 
     // Remove WCMP group member with nexthop_id=kNexthopId1 and
     // nexthop_id=kNexthopId3(fail) - fail to clean up
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid5)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid3)))
-        .WillOnce(Return(SAI_STATUS_OBJECT_IN_USE));
-    // Clean up - revert deletions -failure
+    exp_remove_status = {SAI_STATUS_OBJECT_IN_USE, SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid2, 10,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(Return(SAI_STATUS_TABLE_FULL));
+                remove_next_hop_group_members(
+                    Eq(2), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid3, kWcmpGroupMemberOid5}),
+                    Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()),
+                        Return(SAI_STATUS_OBJECT_IN_USE)));
+    // Clean up - revert deletions -failure
+    std::vector<sai_object_id_t> return_oids{SAI_NULL_OBJECT_ID};
+    std::vector<sai_status_t> exp_create_status{SAI_STATUS_TABLE_FULL};
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid2, 10, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids.begin(), return_oids.end()),
+                        SetArrayArgument<6>(exp_create_status.begin(), exp_create_status.end()),
+                        Return(SAI_STATUS_TABLE_FULL)));
     // TODO: Expect critical state.
-    EXPECT_EQ("Failed to remove WCMP group member with nexthop id "
-              "'ju1u32m3.atl11:qe-3/7'",
+    EXPECT_EQ("Failed to delete WCMP group member: 'ju1u32m3.atl11:qe-3/7'",
               ProcessUpdateRequest(&wcmp_group).message());
     // WCMP group is as expected, but refcounts are not
     VerifyWcmpGroupEntry(expected_wcmp_group, *GetWcmpGroupEntry(kWcmpGroupId1));
@@ -796,15 +975,27 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupFailsWhenCreateNewGroupMemberSaiCallFails
     wcmp_group.wcmp_group_members.clear();
     std::shared_ptr<P4WcmpGroupMemberEntry> gm = createWcmpGroupMemberEntry(kNexthopId2, 15);
     wcmp_group.wcmp_group_members.push_back(gm);
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid2)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    std::vector<sai_status_t> exp_remove_status{SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid2, 15,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid5), Return(SAI_STATUS_SUCCESS)));
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid1}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid2}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_object_id_t> return_oids_5{kWcmpGroupMemberOid5};
+    std::vector<sai_status_t> exp_create_status{SAI_STATUS_SUCCESS};
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid2, 15, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids_5.begin(), return_oids_5.end()),
+                        SetArrayArgument<6>(exp_create_status.begin(), exp_create_status.end()),
+                        Return(SAI_STATUS_SUCCESS)));
     EXPECT_TRUE(ProcessUpdateRequest(&wcmp_group).ok());
     VerifyWcmpGroupEntry(wcmp_group, *GetWcmpGroupEntry(kWcmpGroupId1));
     uint32_t wcmp_group_refcount = 0;
@@ -827,33 +1018,47 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupFailsWhenCreateNewGroupMemberSaiCallFails
     updated_wcmp_group.wcmp_group_members.push_back(updated_gm1);
     updated_wcmp_group.wcmp_group_members.push_back(updated_gm2);
     updated_wcmp_group.wcmp_group_members.push_back(updated_gm3);
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid5)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 3,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid1), Return(SAI_STATUS_SUCCESS)));
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid5}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_object_id_t> return_oids_1{kWcmpGroupMemberOid1};
+    std::vector<sai_status_t> exp_create_status_fail{SAI_STATUS_SUCCESS, SAI_STATUS_TABLE_FULL};
+    std::vector<sai_object_id_t> return_oids_2_null{kWcmpGroupMemberOid2, SAI_NULL_OBJECT_ID};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid2, 20,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid2), Return(SAI_STATUS_SUCCESS)));
+                create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid1, 3, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids_1.begin(), return_oids_1.end()),
+                        SetArrayArgument<6>(exp_create_status.begin(), exp_create_status.end()),
+                        Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid3, 30,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(Return(SAI_STATUS_TABLE_FULL));
+                create_next_hop_group_members(Eq(gSwitchId), Eq(2), ArrayEq(std::vector<uint32_t>{3, 3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid2, 20, kWcmpGroupOid1),
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid3, 30, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids_2_null.begin(), return_oids_2_null.end()),
+                        SetArrayArgument<6>(exp_create_status_fail.begin(), exp_create_status_fail.end()),
+                        Return(SAI_STATUS_TABLE_FULL)));
     // Clean up - success
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid2)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    std::vector<sai_status_t> exp_remove_status_2{SAI_STATUS_SUCCESS, SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid2, 15,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid5), Return(SAI_STATUS_SUCCESS)));
+                remove_next_hop_group_members(
+                    Eq(2), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid2, kWcmpGroupMemberOid1}),
+                    Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(DoAll(SetArrayArgument<3>(exp_remove_status_2.begin(), exp_remove_status_2.end()),
+                        Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid2, 15, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids_5.begin(), return_oids_5.end()),
+                        SetArrayArgument<6>(exp_create_status.begin(), exp_create_status.end()),
+                        Return(SAI_STATUS_SUCCESS)));
     EXPECT_FALSE(ProcessUpdateRequest(&updated_wcmp_group).ok());
     P4WcmpGroupEntry expected_wcmp_group = {.wcmp_group_id = kWcmpGroupId1, .wcmp_group_members = {}};
     std::shared_ptr<P4WcmpGroupMemberEntry> expected_gm = createWcmpGroupMemberEntry(kNexthopId2, 15);
@@ -869,44 +1074,48 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupFailsWhenCreateNewGroupMemberSaiCallFails
     EXPECT_EQ(0, nexthop_refcount);
 
     // Try again, but this time clean up failed to remove created group member
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid5)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    exp_remove_status = {SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 3,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid1), Return(SAI_STATUS_SUCCESS)));
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid5}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid2, 20,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid2), Return(SAI_STATUS_SUCCESS)));
+                create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid1, 3, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids_1.begin(), return_oids_1.end()),
+                        SetArrayArgument<6>(exp_create_status.begin(), exp_create_status.end()),
+                        Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid3, 30,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(Return(SAI_STATUS_TABLE_FULL));
+                create_next_hop_group_members(Eq(gSwitchId), Eq(2), ArrayEq(std::vector<uint32_t>{3, 3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid2, 20, kWcmpGroupOid1),
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid3, 30, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids_2_null.begin(), return_oids_2_null.end()),
+                        SetArrayArgument<6>(exp_create_status_fail.begin(), exp_create_status_fail.end()),
+                        Return(SAI_STATUS_TABLE_FULL)));
     // Clean up - revert creation - failure
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    std::vector<sai_status_t> exp_remove_status_fail{SAI_STATUS_OBJECT_IN_USE, SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid2, 15,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid5), Return(SAI_STATUS_SUCCESS)));
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid2)))
-        .WillOnce(Return(SAI_STATUS_OBJECT_IN_USE));
+                remove_next_hop_group_members(
+                    Eq(2), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid2, kWcmpGroupMemberOid1}),
+                    Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(DoAll(SetArrayArgument<3>(exp_remove_status_fail.begin(), exp_remove_status_fail.end()),
+                        Return(SAI_STATUS_OBJECT_IN_USE)));
     // TODO: Expect critical state.
-    EXPECT_EQ("Failed to create next hop group member 'ju1u32m3.atl11:qe-3/7'",
+    EXPECT_EQ("Fail to create wcmp group member: 'ju1u32m3.atl11:qe-3/7'",
               ProcessUpdateRequest(&updated_wcmp_group).message());
     //  WCMP group is as expected, but refcounts are not
     VerifyWcmpGroupEntry(expected_wcmp_group, *GetWcmpGroupEntry(kWcmpGroupId1));
     ASSERT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_NEXT_HOP_GROUP, kWcmpGroupKey1, &wcmp_group_refcount));
-    EXPECT_EQ(2, wcmp_group_refcount); // Corrupt status due to clean up failure
+    EXPECT_EQ(1, wcmp_group_refcount);
     ASSERT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey1, &nexthop_refcount));
     EXPECT_EQ(0, nexthop_refcount); // Corrupt status due to clean up failure
     ASSERT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey2, &nexthop_refcount));
-    EXPECT_EQ(2, nexthop_refcount);
+    EXPECT_EQ(1, nexthop_refcount);
     ASSERT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey3, &nexthop_refcount));
     EXPECT_EQ(0, nexthop_refcount);
 }
@@ -922,18 +1131,32 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupFailsWhenReduceGroupMemberWeightSaiCallFa
     std::shared_ptr<P4WcmpGroupMemberEntry> gm2 = createWcmpGroupMemberEntry(kNexthopId2, 10);
     wcmp_group.wcmp_group_members.push_back(gm1);
     wcmp_group.wcmp_group_members.push_back(gm2);
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    std::vector<sai_status_t> exp_remove_status{SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 1,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(Return(SAI_STATUS_NOT_SUPPORTED));
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid1}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_object_id_t> return_oids_1{kWcmpGroupMemberOid1};
+    std::vector<sai_object_id_t> return_oids_null{SAI_NULL_OBJECT_ID};
+    std::vector<sai_status_t> exp_create_status{SAI_STATUS_SUCCESS};
+    std::vector<sai_status_t> exp_create_status_fail{SAI_STATUS_NOT_SUPPORTED};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 2,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid1), Return(SAI_STATUS_SUCCESS)));
+                create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid1, 1, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids_null.begin(), return_oids_null.end()),
+                        SetArrayArgument<6>(exp_create_status_fail.begin(), exp_create_status_fail.end()),
+                        Return(SAI_STATUS_NOT_SUPPORTED)));
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid1, 2, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids_1.begin(), return_oids_1.end()),
+                        SetArrayArgument<6>(exp_create_status.begin(), exp_create_status.end()),
+                        Return(SAI_STATUS_NOT_SUPPORTED)));
     EXPECT_FALSE(ProcessUpdateRequest(&wcmp_group).ok());
     P4WcmpGroupEntry expected_wcmp_group = {.wcmp_group_id = kWcmpGroupId1, .wcmp_group_members = {}};
     std::shared_ptr<P4WcmpGroupMemberEntry> expected_gm1 = createWcmpGroupMemberEntry(kNexthopId1, 2);
@@ -962,33 +1185,54 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupFailsWhenIncreaseGroupMemberWeightSaiCall
     std::shared_ptr<P4WcmpGroupMemberEntry> gm2 = createWcmpGroupMemberEntry(kNexthopId2, 10);
     wcmp_group.wcmp_group_members.push_back(gm1);
     wcmp_group.wcmp_group_members.push_back(gm2);
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid2)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    std::vector<sai_status_t> exp_remove_status{SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 1,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid4), Return(SAI_STATUS_SUCCESS)));
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid1}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid2, 10,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(Return(SAI_STATUS_NOT_SUPPORTED));
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid2}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_object_id_t> return_oids_4{kWcmpGroupMemberOid4};
+    std::vector<sai_object_id_t> return_oids_null{SAI_NULL_OBJECT_ID};
+    std::vector<sai_status_t> exp_create_status{SAI_STATUS_SUCCESS};
+    std::vector<sai_status_t> exp_create_status_fail{SAI_STATUS_NOT_SUPPORTED};
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid1, 1, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids_4.begin(), return_oids_4.end()),
+                        SetArrayArgument<6>(exp_create_status.begin(), exp_create_status.end()),
+                        Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid2, 10, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids_null.begin(), return_oids_null.end()),
+                        SetArrayArgument<6>(exp_create_status_fail.begin(), exp_create_status_fail.end()),
+                        Return(SAI_STATUS_NOT_SUPPORTED)));
     // Clean up modified members - success
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid4)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 2,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid1), Return(SAI_STATUS_SUCCESS)));
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid4}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_object_id_t> return_oids_1_2{kWcmpGroupMemberOid1, kWcmpGroupMemberOid2};
+    std::vector<sai_status_t> exp_create_status_2{SAI_STATUS_SUCCESS, SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid2, 1,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid2), Return(SAI_STATUS_SUCCESS)));
+                create_next_hop_group_members(Eq(gSwitchId), Eq(2), ArrayEq(std::vector<uint32_t>{3, 3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid1, 2, kWcmpGroupOid1),
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid2, 1, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids_1_2.begin(), return_oids_1_2.end()),
+                        SetArrayArgument<6>(exp_create_status_2.begin(), exp_create_status_2.end()),
+                        Return(SAI_STATUS_SUCCESS)));
     EXPECT_FALSE(ProcessUpdateRequest(&wcmp_group).ok());
     P4WcmpGroupEntry expected_wcmp_group = {.wcmp_group_id = kWcmpGroupId1, .wcmp_group_members = {}};
     std::shared_ptr<P4WcmpGroupMemberEntry> expected_gm1 = createWcmpGroupMemberEntry(kNexthopId1, 2);
@@ -1005,38 +1249,52 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupFailsWhenIncreaseGroupMemberWeightSaiCall
     ASSERT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey2, &nexthop_refcount));
     EXPECT_EQ(1, nexthop_refcount);
     // Try again, the same error happens when update and new error during clean up
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid2)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 1,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid4), Return(SAI_STATUS_SUCCESS)));
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid1}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid2, 10,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(Return(SAI_STATUS_NOT_SUPPORTED));
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid2}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid1, 1, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids_4.begin(), return_oids_4.end()),
+                        SetArrayArgument<6>(exp_create_status.begin(), exp_create_status.end()),
+                        Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid2, 10, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids_null.begin(), return_oids_null.end()),
+                        SetArrayArgument<6>(exp_create_status_fail.begin(), exp_create_status_fail.end()),
+                        Return(SAI_STATUS_NOT_SUPPORTED)));
     // Clean up modified members - failure
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid4)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid2, 1,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid2), Return(SAI_STATUS_SUCCESS)));
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid4}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_object_id_t> return_oids_2_null{SAI_NULL_OBJECT_ID, kWcmpGroupMemberOid2};
+    std::vector<sai_status_t> exp_create_status_2_fail{SAI_STATUS_NOT_SUPPORTED, SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 2,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid1), Return(SAI_STATUS_NOT_SUPPORTED)));
+                create_next_hop_group_members(Eq(gSwitchId), Eq(2), ArrayEq(std::vector<uint32_t>{3, 3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid1, 2, kWcmpGroupOid1),
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid2, 1, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids_2_null.begin(), return_oids_2_null.end()),
+                        SetArrayArgument<6>(exp_create_status_2_fail.begin(), exp_create_status_2_fail.end()),
+                        Return(SAI_STATUS_NOT_SUPPORTED)));
 
     // TODO: Expect critical state.
-    EXPECT_EQ("Failed to create next hop group member "
-              "'ju1u32m2.atl11:qe-3/7'",
-              ProcessUpdateRequest(&wcmp_group).message());
+    EXPECT_EQ("Fail to create wcmp group member: 'ju1u32m2.atl11:qe-3/7'", ProcessUpdateRequest(&wcmp_group).message());
     // weight of wcmp_group_members[kNexthopId1] unable to revert
     // SAI object in ASIC DB: missing group member with
     // next_hop_id=kNexthopId1
@@ -1052,19 +1310,58 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupFailsWhenIncreaseGroupMemberWeightSaiCall
 
 TEST_F(WcmpManagerTest, ValidateWcmpGroupEntryFailsWhenNextHopDoesNotExist)
 {
-    P4WcmpGroupEntry app_db_entry = {.wcmp_group_id = kWcmpGroupId1, .wcmp_group_members = {}};
-    std::shared_ptr<P4WcmpGroupMemberEntry> gm = createWcmpGroupMemberEntry("Unregistered-Nexthop", 1);
-    app_db_entry.wcmp_group_members.push_back(gm);
-    EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, ProcessAddRequest(&app_db_entry));
+    const std::string kKeyPrefix = std::string(APP_P4RT_WCMP_GROUP_TABLE_NAME) + kTableKeyDelimiter;
+    p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey1, kNexthopOid1);
+    nlohmann::json j;
+    j[prependMatchField(p4orch::kWcmpGroupId)] = kWcmpGroupId1;
+    std::vector<swss::FieldValueTuple> attributes;
+    nlohmann::json actions;
+    nlohmann::json action;
+    action[p4orch::kAction] = p4orch::kSetNexthopId;
+    action[prependParamField(p4orch::kNexthopId)] = kNexthopId1;
+    actions.push_back(action);
+    action[prependParamField(p4orch::kNexthopId)] = kNexthopId2;
+    actions.push_back(action);
+    attributes.push_back(swss::FieldValueTuple{p4orch::kActions, actions.dump()});
+    Enqueue(swss::KeyOpFieldsValuesTuple(kKeyPrefix + j.dump(), SET_COMMAND, attributes));
+    Drain();
+    std::string key = KeyGenerator::generateWcmpGroupKey(kWcmpGroupId1);
+    auto *wcmp_group_entry_ptr = GetWcmpGroupEntry(kWcmpGroupId1);
+    EXPECT_EQ(nullptr, wcmp_group_entry_ptr);
+    EXPECT_FALSE(p4_oid_mapper_->existsOID(SAI_OBJECT_TYPE_NEXT_HOP_GROUP, key));
+    uint32_t ref_cnt;
+    EXPECT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey1, &ref_cnt));
+    EXPECT_EQ(0, ref_cnt);
 }
 
 TEST_F(WcmpManagerTest, ValidateWcmpGroupEntryFailsWhenWeightLessThanOne)
 {
-    P4WcmpGroupEntry app_db_entry = {.wcmp_group_id = kWcmpGroupId1, .wcmp_group_members = {}};
-    std::shared_ptr<P4WcmpGroupMemberEntry> gm = createWcmpGroupMemberEntry(kNexthopId1, 0);
-    app_db_entry.wcmp_group_members.push_back(gm);
+    const std::string kKeyPrefix = std::string(APP_P4RT_WCMP_GROUP_TABLE_NAME) + kTableKeyDelimiter;
     p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey1, kNexthopOid1);
-    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, ProcessAddRequest(&app_db_entry));
+    p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey2, kNexthopOid2);
+    nlohmann::json j;
+    j[prependMatchField(p4orch::kWcmpGroupId)] = kWcmpGroupId1;
+    std::vector<swss::FieldValueTuple> attributes;
+    nlohmann::json actions;
+    nlohmann::json action;
+    action[p4orch::kAction] = p4orch::kSetNexthopId;
+    action[prependParamField(p4orch::kNexthopId)] = kNexthopId1;
+    actions.push_back(action);
+    action[p4orch::kWeight] = -1;
+    action[prependParamField(p4orch::kNexthopId)] = kNexthopId2;
+    actions.push_back(action);
+    attributes.push_back(swss::FieldValueTuple{p4orch::kActions, actions.dump()});
+    Enqueue(swss::KeyOpFieldsValuesTuple(kKeyPrefix + j.dump(), SET_COMMAND, attributes));
+    Drain();
+    std::string key = KeyGenerator::generateWcmpGroupKey(kWcmpGroupId1);
+    auto *wcmp_group_entry_ptr = GetWcmpGroupEntry(kWcmpGroupId1);
+    EXPECT_EQ(nullptr, wcmp_group_entry_ptr);
+    EXPECT_FALSE(p4_oid_mapper_->existsOID(SAI_OBJECT_TYPE_NEXT_HOP_GROUP, key));
+    uint32_t ref_cnt;
+    EXPECT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey1, &ref_cnt));
+    EXPECT_EQ(0, ref_cnt);
+    EXPECT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey2, &ref_cnt));
+    EXPECT_EQ(0, ref_cnt);
 }
 
 TEST_F(WcmpManagerTest, WcmpGroupInvalidOperationInDrainFails)
@@ -1137,16 +1434,17 @@ TEST_F(WcmpManagerTest, WcmpGroupCreateAndDeleteInDrainSucceeds)
     EXPECT_CALL(mock_sai_next_hop_group_, create_next_hop_group(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupOid1), Return(SAI_STATUS_SUCCESS)));
 
+    std::vector<sai_object_id_t> return_oids{kWcmpGroupMemberOid1, kWcmpGroupMemberOid2};
+    std::vector<sai_status_t> exp_create_status{SAI_STATUS_SUCCESS, SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 1,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid1), Return(SAI_STATUS_SUCCESS)));
-    EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid2, 1,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid2), Return(SAI_STATUS_SUCCESS)));
+                create_next_hop_group_members(Eq(gSwitchId), Eq(2), ArrayEq(std::vector<uint32_t>{3, 3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid1, 1, kWcmpGroupOid1),
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid2, 1, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids.begin(), return_oids.end()),
+                        SetArrayArgument<6>(exp_create_status.begin(), exp_create_status.end()),
+                        Return(SAI_STATUS_SUCCESS)));
     Drain();
     std::string key = KeyGenerator::generateWcmpGroupKey(kWcmpGroupId1);
     auto *wcmp_group_entry_ptr = GetWcmpGroupEntry(kWcmpGroupId1);
@@ -1158,10 +1456,13 @@ TEST_F(WcmpManagerTest, WcmpGroupCreateAndDeleteInDrainSucceeds)
     EXPECT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey2, &ref_cnt));
     EXPECT_EQ(1, ref_cnt);
 
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid2)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    std::vector<sai_status_t> exp_remove_status{SAI_STATUS_SUCCESS, SAI_STATUS_SUCCESS};
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                remove_next_hop_group_members(
+                    Eq(2), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid2, kWcmpGroupMemberOid1}),
+                    Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group(Eq(kWcmpGroupOid1)))
         .WillOnce(Return(SAI_STATUS_SUCCESS));
     attributes.clear();
@@ -1195,11 +1496,16 @@ TEST_F(WcmpManagerTest, WcmpGroupCreateAndUpdateInDrainSucceeds)
     Enqueue(swss::KeyOpFieldsValuesTuple(kKeyPrefix + j.dump(), SET_COMMAND, attributes));
     EXPECT_CALL(mock_sai_next_hop_group_, create_next_hop_group(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupOid1), Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_object_id_t> return_oids{kWcmpGroupMemberOid1};
+    std::vector<sai_status_t> exp_create_status{SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 1,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid1), Return(SAI_STATUS_SUCCESS)));
+                create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid1, 1, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids.begin(), return_oids.end()),
+                        SetArrayArgument<6>(exp_create_status.begin(), exp_create_status.end()),
+                        Return(SAI_STATUS_SUCCESS)));
     Drain();
     std::string key = KeyGenerator::generateWcmpGroupKey(kWcmpGroupId1);
     auto *wcmp_group_entry_ptr = GetWcmpGroupEntry(kWcmpGroupId1);
@@ -1215,13 +1521,22 @@ TEST_F(WcmpManagerTest, WcmpGroupCreateAndUpdateInDrainSucceeds)
     // Update WCMP group with exact same members, the same entry will be removed
     // and created again
     Enqueue(swss::KeyOpFieldsValuesTuple(kKeyPrefix + j.dump(), SET_COMMAND, attributes));
+    return_oids = {kWcmpGroupMemberOid3};
+    exp_create_status = {SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 1,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid3), Return(SAI_STATUS_SUCCESS)));
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
+                create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid1, 1, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids.begin(), return_oids.end()),
+                        SetArrayArgument<6>(exp_create_status.begin(), exp_create_status.end()),
+                        Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_status_t> exp_remove_status{SAI_STATUS_SUCCESS};
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid1}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
     Drain();
     wcmp_group_entry_ptr = GetWcmpGroupEntry(kWcmpGroupId1);
     EXPECT_NE(nullptr, wcmp_group_entry_ptr);
@@ -1239,13 +1554,22 @@ TEST_F(WcmpManagerTest, WcmpGroupCreateAndUpdateInDrainSucceeds)
     attributes.clear();
     attributes.push_back(swss::FieldValueTuple{p4orch::kActions, actions.dump()});
     Enqueue(swss::KeyOpFieldsValuesTuple(kKeyPrefix + j.dump(), SET_COMMAND, attributes));
+    return_oids = {kWcmpGroupMemberOid2};
+    exp_create_status = {SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid2, 1,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid2), Return(SAI_STATUS_SUCCESS)));
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid3)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
+                create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid2, 1, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids.begin(), return_oids.end()),
+                        SetArrayArgument<6>(exp_create_status.begin(), exp_create_status.end()),
+                        Return(SAI_STATUS_SUCCESS)));
+    exp_remove_status = {SAI_STATUS_SUCCESS};
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid3}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
     Drain();
     wcmp_group_entry_ptr = GetWcmpGroupEntry(kWcmpGroupId1);
     EXPECT_NE(nullptr, wcmp_group_entry_ptr);
@@ -1264,13 +1588,22 @@ TEST_F(WcmpManagerTest, WcmpGroupCreateAndUpdateInDrainSucceeds)
     attributes.clear();
     attributes.push_back(swss::FieldValueTuple{p4orch::kActions, actions.dump()});
     Enqueue(swss::KeyOpFieldsValuesTuple(kKeyPrefix + j.dump(), SET_COMMAND, attributes));
+    return_oids = {kWcmpGroupMemberOid4};
+    exp_create_status = {SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid2, 2,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid4), Return(SAI_STATUS_SUCCESS)));
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid2)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
+                create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid2, 2, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids.begin(), return_oids.end()),
+                        SetArrayArgument<6>(exp_create_status.begin(), exp_create_status.end()),
+                        Return(SAI_STATUS_SUCCESS)));
+    exp_remove_status = {SAI_STATUS_SUCCESS};
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid2}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
     Drain();
     wcmp_group_entry_ptr = GetWcmpGroupEntry(kWcmpGroupId1);
     EXPECT_NE(nullptr, wcmp_group_entry_ptr);
@@ -1402,13 +1735,27 @@ TEST_F(WcmpManagerTest, DeserializeWcmpGroupFailsWithUndefinedAttributes)
 
 TEST_F(WcmpManagerTest, ValidateWcmpGroupEntryWithInvalidWatchportAttributeFails)
 {
-    P4WcmpGroupEntry app_db_entry = {.wcmp_group_id = kWcmpGroupId1, .wcmp_group_members = {}};
-    std::shared_ptr<P4WcmpGroupMemberEntry> gm =
-        createWcmpGroupMemberEntryWithWatchport(kNexthopId1, 1, "EthernetXX", kWcmpGroupId1, kNexthopOid1);
-    app_db_entry.wcmp_group_members.push_back(gm);
-    EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, ProcessAddRequest(&app_db_entry));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(gm, false, 0));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(gm, false, 0));
+    const std::string kKeyPrefix = std::string(APP_P4RT_WCMP_GROUP_TABLE_NAME) + kTableKeyDelimiter;
+    p4_oid_mapper_->setOID(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey1, kNexthopOid1);
+    nlohmann::json j;
+    j[prependMatchField(p4orch::kWcmpGroupId)] = kWcmpGroupId1;
+    std::vector<swss::FieldValueTuple> attributes;
+    nlohmann::json actions;
+    nlohmann::json action;
+    action[p4orch::kAction] = p4orch::kSetNexthopId;
+    action[p4orch::kWatchPort] = "EthernetXX";
+    action[prependParamField(p4orch::kNexthopId)] = kNexthopId1;
+    actions.push_back(action);
+    attributes.push_back(swss::FieldValueTuple{p4orch::kActions, actions.dump()});
+    Enqueue(swss::KeyOpFieldsValuesTuple(kKeyPrefix + j.dump(), SET_COMMAND, attributes));
+    Drain();
+    std::string key = KeyGenerator::generateWcmpGroupKey(kWcmpGroupId1);
+    auto *wcmp_group_entry_ptr = GetWcmpGroupEntry(kWcmpGroupId1);
+    EXPECT_EQ(nullptr, wcmp_group_entry_ptr);
+    EXPECT_FALSE(p4_oid_mapper_->existsOID(SAI_OBJECT_TYPE_NEXT_HOP_GROUP, key));
+    uint32_t ref_cnt;
+    EXPECT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey1, &ref_cnt));
+    EXPECT_EQ(0, ref_cnt);
 }
 
 TEST_F(WcmpManagerTest, PruneNextHopSucceeds)
@@ -1417,13 +1764,13 @@ TEST_F(WcmpManagerTest, PruneNextHopSucceeds)
     std::string port_name = "Ethernet6";
     P4WcmpGroupEntry app_db_entry = AddWcmpGroupEntryWithWatchport(port_name, true);
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], false, 0));
+    EXPECT_FALSE(app_db_entry.wcmp_group_members[0]->pruned);
     EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid1)))
         .WillOnce(Return(SAI_STATUS_SUCCESS));
     // Prune next hops associated with port
     PruneNextHops(port_name);
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], true, 1));
+    EXPECT_TRUE(app_db_entry.wcmp_group_members[0]->pruned);
 }
 
 TEST_F(WcmpManagerTest, PruneNextHopFailsWithNextHopRemovalFailure)
@@ -1432,13 +1779,14 @@ TEST_F(WcmpManagerTest, PruneNextHopFailsWithNextHopRemovalFailure)
     std::string port_name = "Ethernet6";
     P4WcmpGroupEntry app_db_entry = AddWcmpGroupEntryWithWatchport(port_name, true);
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], false, 0));
+    EXPECT_FALSE(app_db_entry.wcmp_group_members[0]->pruned);
     EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid1)))
         .WillOnce(Return(SAI_STATUS_FAILURE));
+    // TODO: Expect critical state.
     // Prune next hops associated with port (fails)
     PruneNextHops(port_name);
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], false, 0));
+    EXPECT_FALSE(app_db_entry.wcmp_group_members[0]->pruned);
 }
 
 TEST_F(WcmpManagerTest, RestorePrunedNextHopSucceeds)
@@ -1449,7 +1797,7 @@ TEST_F(WcmpManagerTest, RestorePrunedNextHopSucceeds)
     std::string port_name = "Ethernet1";
     P4WcmpGroupEntry app_db_entry = AddWcmpGroupEntryWithWatchport(port_name);
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], true, 1));
+    EXPECT_TRUE(app_db_entry.wcmp_group_members[0]->pruned);
     EXPECT_CALL(mock_sai_next_hop_group_,
                 create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
                                              Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 2,
@@ -1459,7 +1807,7 @@ TEST_F(WcmpManagerTest, RestorePrunedNextHopSucceeds)
     // Restore next hops associated with port
     RestorePrunedNextHops(port_name);
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], false, 0));
+    EXPECT_FALSE(app_db_entry.wcmp_group_members[0]->pruned);
 }
 
 TEST_F(WcmpManagerTest, RestorePrunedNextHopFailsWithNoOidMappingForWcmpGroup)
@@ -1470,12 +1818,12 @@ TEST_F(WcmpManagerTest, RestorePrunedNextHopFailsWithNoOidMappingForWcmpGroup)
     std::string port_name = "Ethernet1";
     P4WcmpGroupEntry app_db_entry = AddWcmpGroupEntryWithWatchport(port_name);
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], true, 1));
+    EXPECT_TRUE(app_db_entry.wcmp_group_members[0]->pruned);
     p4_oid_mapper_->eraseOID(SAI_OBJECT_TYPE_NEXT_HOP_GROUP, KeyGenerator::generateWcmpGroupKey(kWcmpGroupId1));
     // TODO: Expect critical state.
     RestorePrunedNextHops(port_name);
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], true, 1));
+    EXPECT_TRUE(app_db_entry.wcmp_group_members[0]->pruned);
 }
 
 TEST_F(WcmpManagerTest, RestorePrunedNextHopFailsWithNextHopCreationFailure)
@@ -1486,7 +1834,7 @@ TEST_F(WcmpManagerTest, RestorePrunedNextHopFailsWithNextHopCreationFailure)
     std::string port_name = "Ethernet1";
     P4WcmpGroupEntry app_db_entry = AddWcmpGroupEntryWithWatchport(port_name);
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], true, 1));
+    EXPECT_TRUE(app_db_entry.wcmp_group_members[0]->pruned);
     EXPECT_CALL(mock_sai_next_hop_group_,
                 create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
                                              Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 2,
@@ -1495,7 +1843,7 @@ TEST_F(WcmpManagerTest, RestorePrunedNextHopFailsWithNextHopCreationFailure)
     // TODO: Expect critical state.
     RestorePrunedNextHops(port_name);
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], true, 1));
+    EXPECT_TRUE(app_db_entry.wcmp_group_members[0]->pruned);
 }
 
 TEST_F(WcmpManagerTest, CreateGroupWithWatchportFailsWithNextHopCreationFailure)
@@ -1514,26 +1862,31 @@ TEST_F(WcmpManagerTest, CreateGroupWithWatchportFailsWithNextHopCreationFailure)
                 create_next_hop_group(_, Eq(gSwitchId), Eq(1),
                                       Truly(std::bind(MatchSaiNextHopGroupAttribute, std::placeholders::_1))))
         .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupOid1), Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_object_id_t> return_oids{kWcmpGroupMemberOid1, SAI_NULL_OBJECT_ID};
+    std::vector<sai_status_t> exp_create_status{SAI_STATUS_SUCCESS, SAI_STATUS_FAILURE};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 1,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid1), Return(SAI_STATUS_SUCCESS)));
-    EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid2, 1,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(Return(SAI_STATUS_FAILURE));
+                create_next_hop_group_members(Eq(gSwitchId), Eq(2), ArrayEq(std::vector<uint32_t>{3, 3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid1, 1, kWcmpGroupOid1),
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid2, 1, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids.begin(), return_oids.end()),
+                        SetArrayArgument<6>(exp_create_status.begin(), exp_create_status.end()),
+                        Return(SAI_STATUS_FAILURE)));
     // Clean up created members
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    std::vector<sai_status_t> exp_remove_status{SAI_STATUS_SUCCESS};
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid1}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group(Eq(kWcmpGroupOid1)))
         .WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, ProcessAddRequest(&app_db_entry));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(gm1, false, 0));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(gm2, false, 0));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(gm1, false, 0));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(gm2, false, 0));
+    EXPECT_FALSE(gm1->pruned);
+    EXPECT_FALSE(gm2->pruned);
 }
 
 TEST_F(WcmpManagerTest, RemoveWcmpGroupAfterPruningSucceeds)
@@ -1542,12 +1895,12 @@ TEST_F(WcmpManagerTest, RemoveWcmpGroupAfterPruningSucceeds)
     std::string port_name = "Ethernet6";
     P4WcmpGroupEntry app_db_entry = AddWcmpGroupEntryWithWatchport(port_name, true);
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], false, 0));
+    EXPECT_FALSE(app_db_entry.wcmp_group_members[0]->pruned);
     EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid1)))
         .WillOnce(Return(SAI_STATUS_SUCCESS));
     PruneNextHops(port_name);
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], true, 1));
+    EXPECT_TRUE(app_db_entry.wcmp_group_members[0]->pruned);
 
     // Remove Wcmp group. No SAI call for member removal is expected as it is
     // already pruned.
@@ -1555,7 +1908,6 @@ TEST_F(WcmpManagerTest, RemoveWcmpGroupAfterPruningSucceeds)
         .WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, RemoveWcmpGroup(kWcmpGroupId1));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], false, 0));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], false, 0));
 }
 
 TEST_F(WcmpManagerTest, RemoveWcmpGroupWithOperationallyDownWatchportSucceeds)
@@ -1565,7 +1917,7 @@ TEST_F(WcmpManagerTest, RemoveWcmpGroupWithOperationallyDownWatchportSucceeds)
     // directly added to the pruned set of WCMP group members.
     P4WcmpGroupEntry app_db_entry = AddWcmpGroupEntryWithWatchport("Ethernet1");
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], true, 1));
+    EXPECT_TRUE(app_db_entry.wcmp_group_members[0]->pruned);
 
     // Remove Wcmp group. No SAI call for member removal is expected as it is
     // already pruned.
@@ -1573,7 +1925,103 @@ TEST_F(WcmpManagerTest, RemoveWcmpGroupWithOperationallyDownWatchportSucceeds)
         .WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, RemoveWcmpGroup(kWcmpGroupId1));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], false, 0));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], false, 0));
+}
+
+TEST_F(WcmpManagerTest, RemoveNextHopWithPrunedMember)
+{
+    // Add member with operationally down watch port. Since associated watchport
+    // is operationally down, member will not be created in SAI but will be
+    // directly added to the pruned set of WCMP group members.
+    P4WcmpGroupEntry app_db_entry = AddWcmpGroupEntryWithWatchport("Ethernet1");
+    EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
+    EXPECT_TRUE(app_db_entry.wcmp_group_members[0]->pruned);
+
+    // Verify that next hop reference count is incremented due to the member.
+    uint32_t ref_cnt;
+    EXPECT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey1, &ref_cnt));
+    EXPECT_EQ(1, ref_cnt);
+
+    // Remove Wcmp group. No SAI call for member removal is expected as it is
+    // already pruned.
+    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group(Eq(kWcmpGroupOid1)))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, RemoveWcmpGroup(kWcmpGroupId1));
+    EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], false, 0));
+
+    // Verify that the next hop reference count is now 0.
+    EXPECT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey1, &ref_cnt));
+    EXPECT_EQ(0, ref_cnt);
+}
+
+TEST_F(WcmpManagerTest, RemoveNextHopWithRestoredPrunedMember)
+{
+    // Add member with operationally down watch port. Since associated watchport
+    // is operationally down, member will not be created in SAI but will be
+    // directly added to the pruned set of WCMP group members.
+    std::string port_name = "Ethernet1";
+    P4WcmpGroupEntry app_db_entry = AddWcmpGroupEntryWithWatchport(port_name);
+    EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
+    EXPECT_TRUE(app_db_entry.wcmp_group_members[0]->pruned);
+
+    // Verify that next hop reference count is incremented due to the member.
+    uint32_t ref_cnt;
+    EXPECT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey1, &ref_cnt));
+    EXPECT_EQ(1, ref_cnt);
+
+    // Restore member associated with port.
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
+                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 2,
+                                                             kWcmpGroupOid1, std::placeholders::_1))))
+        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid1), Return(SAI_STATUS_SUCCESS)));
+    RestorePrunedNextHops(port_name);
+    EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
+    EXPECT_FALSE(app_db_entry.wcmp_group_members[0]->pruned);
+
+    // Verify that next hop reference count remains the same after restore.
+    EXPECT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey1, &ref_cnt));
+    EXPECT_EQ(1, ref_cnt);
+
+    // Remove Wcmp group.
+    std::vector<sai_status_t> exp_remove_status{SAI_STATUS_SUCCESS};
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid1}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group(Eq(kWcmpGroupOid1)))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, RemoveWcmpGroup(kWcmpGroupId1));
+    EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], false, 0));
+
+    // Verify that the next hop reference count is now 0.
+    EXPECT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey1, &ref_cnt));
+    EXPECT_EQ(0, ref_cnt);
+}
+
+TEST_F(WcmpManagerTest, VerifyNextHopRefCountWhenMemberPruned)
+{
+    // Add member with operationally up watch port
+    std::string port_name = "Ethernet6";
+    P4WcmpGroupEntry app_db_entry = AddWcmpGroupEntryWithWatchport(port_name, true);
+    EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
+    EXPECT_FALSE(app_db_entry.wcmp_group_members[0]->pruned);
+
+    // Verify that next hop reference count is incremented due to the member.
+    uint32_t ref_cnt;
+    EXPECT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey1, &ref_cnt));
+    EXPECT_EQ(1, ref_cnt);
+
+    // Prune member associated with port.
+    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid1)))
+        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    PruneNextHops(port_name);
+    EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
+    EXPECT_TRUE(app_db_entry.wcmp_group_members[0]->pruned);
+
+    // Verify that next hop reference count does not change on pruning.
+    EXPECT_TRUE(p4_oid_mapper_->getRefCount(SAI_OBJECT_TYPE_NEXT_HOP, kNexthopKey1, &ref_cnt));
+    EXPECT_EQ(1, ref_cnt);
 }
 
 TEST_F(WcmpManagerTest, UpdateWcmpGroupWithOperationallyUpWatchportMemberSucceeds)
@@ -1582,7 +2030,7 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupWithOperationallyUpWatchportMemberSucceed
     std::string port_name = "Ethernet6";
     P4WcmpGroupEntry app_db_entry = AddWcmpGroupEntryWithWatchport(port_name, true);
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], false, 0));
+    EXPECT_FALSE(app_db_entry.wcmp_group_members[0]->pruned);
 
     // Update WCMP group to remove kNexthopId1 and add kNexthopId2
     P4WcmpGroupEntry updated_app_db_entry;
@@ -1590,18 +2038,27 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupWithOperationallyUpWatchportMemberSucceed
     std::shared_ptr<P4WcmpGroupMemberEntry> updated_gm =
         createWcmpGroupMemberEntryWithWatchport(kNexthopId2, 1, port_name, kWcmpGroupId1, kNexthopOid2);
     updated_app_db_entry.wcmp_group_members.push_back(updated_gm);
+    std::vector<sai_object_id_t> return_oids{kWcmpGroupMemberOid2};
+    std::vector<sai_status_t> exp_create_status{SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid2, 1,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid2), Return(SAI_STATUS_SUCCESS)));
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
+                create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid2, 1, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids.begin(), return_oids.end()),
+                        SetArrayArgument<6>(exp_create_status.begin(), exp_create_status.end()),
+                        Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_status_t> exp_remove_status{SAI_STATUS_SUCCESS};
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid1}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessUpdateRequest(&updated_app_db_entry));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], false, 1));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(updated_gm, true, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], false, 0));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(updated_gm, false, 0));
+    EXPECT_FALSE(app_db_entry.wcmp_group_members[0]->pruned);
+    EXPECT_FALSE(updated_gm->pruned);
 }
 
 TEST_F(WcmpManagerTest, UpdateWcmpGroupWithOperationallyDownWatchportMemberSucceeds)
@@ -1612,7 +2069,7 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupWithOperationallyDownWatchportMemberSucce
     std::string port_name = "Ethernet1";
     P4WcmpGroupEntry app_db_entry = AddWcmpGroupEntryWithWatchport(port_name);
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], true, 1));
+    EXPECT_TRUE(app_db_entry.wcmp_group_members[0]->pruned);
 
     // Update WCMP group to remove kNexthopId1 and add kNexthopId2. No SAI calls
     // are expected as the associated watch port is operationally down.
@@ -1624,8 +2081,7 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupWithOperationallyDownWatchportMemberSucce
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessUpdateRequest(&updated_app_db_entry));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], false, 1));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(updated_gm, true, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], false, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(updated_gm, true, 1));
+    EXPECT_TRUE(updated_gm->pruned);
 }
 
 TEST_F(WcmpManagerTest, PruneAfterWcmpGroupUpdateSucceeds)
@@ -1634,7 +2090,7 @@ TEST_F(WcmpManagerTest, PruneAfterWcmpGroupUpdateSucceeds)
     std::string port_name = "Ethernet6";
     P4WcmpGroupEntry app_db_entry = AddWcmpGroupEntryWithWatchport(port_name, true);
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], false, 0));
+    EXPECT_FALSE(app_db_entry.wcmp_group_members[0]->pruned);
 
     // Update WCMP group to modify weight of kNexthopId1.
     P4WcmpGroupEntry updated_app_db_entry;
@@ -1642,25 +2098,33 @@ TEST_F(WcmpManagerTest, PruneAfterWcmpGroupUpdateSucceeds)
     std::shared_ptr<P4WcmpGroupMemberEntry> updated_gm =
         createWcmpGroupMemberEntryWithWatchport(kNexthopId1, 10, port_name, kWcmpGroupId1, kNexthopOid1);
     updated_app_db_entry.wcmp_group_members.push_back(updated_gm);
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    std::vector<sai_status_t> exp_remove_status{SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 10,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid1), Return(SAI_STATUS_SUCCESS)));
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid1}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_object_id_t> return_oids{kWcmpGroupMemberOid1};
+    std::vector<sai_status_t> exp_create_status{SAI_STATUS_SUCCESS};
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid1, 10, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids.begin(), return_oids.end()),
+                        SetArrayArgument<6>(exp_create_status.begin(), exp_create_status.end()),
+                        Return(SAI_STATUS_SUCCESS)));
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessUpdateRequest(&updated_app_db_entry));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], false, 1));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(updated_app_db_entry.wcmp_group_members[0], true, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], false, 0));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(updated_app_db_entry.wcmp_group_members[0], false, 0));
+    EXPECT_FALSE(updated_app_db_entry.wcmp_group_members[0]->pruned);
 
     // Prune members associated with port.
     EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid1)))
         .WillOnce(Return(SAI_STATUS_SUCCESS));
     PruneNextHops(port_name);
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(updated_app_db_entry.wcmp_group_members[0], true, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(updated_app_db_entry.wcmp_group_members[0], true, 1));
+    EXPECT_TRUE(updated_app_db_entry.wcmp_group_members[0]->pruned);
 
     // Remove Wcmp group. No SAI call for member removal is expected as it is
     // already pruned.
@@ -1671,7 +2135,6 @@ TEST_F(WcmpManagerTest, PruneAfterWcmpGroupUpdateSucceeds)
         .WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, RemoveWcmpGroup(kWcmpGroupId1));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(updated_app_db_entry.wcmp_group_members[0], false, 0));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(updated_app_db_entry.wcmp_group_members[0], false, 0));
 }
 
 TEST_F(WcmpManagerTest, PrunedMemberUpdateOnRestoreSucceeds)
@@ -1682,7 +2145,7 @@ TEST_F(WcmpManagerTest, PrunedMemberUpdateOnRestoreSucceeds)
     std::string port_name = "Ethernet1";
     P4WcmpGroupEntry app_db_entry = AddWcmpGroupEntryWithWatchport(port_name);
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], true, 1));
+    EXPECT_TRUE(app_db_entry.wcmp_group_members[0]->pruned);
 
     // Update WCMP group to modify weight of kNexthopId1.
     P4WcmpGroupEntry updated_app_db_entry;
@@ -1693,8 +2156,7 @@ TEST_F(WcmpManagerTest, PrunedMemberUpdateOnRestoreSucceeds)
     EXPECT_EQ(StatusCode::SWSS_RC_SUCCESS, ProcessUpdateRequest(&updated_app_db_entry));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], false, 1));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(updated_app_db_entry.wcmp_group_members[0], true, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], false, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(updated_app_db_entry.wcmp_group_members[0], true, 1));
+    EXPECT_TRUE(updated_app_db_entry.wcmp_group_members[0]->pruned);
 
     // Restore members associated with port.
     // Verify that the weight of the restored member is updated.
@@ -1705,7 +2167,7 @@ TEST_F(WcmpManagerTest, PrunedMemberUpdateOnRestoreSucceeds)
         .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid1), Return(SAI_STATUS_SUCCESS)));
     RestorePrunedNextHops(port_name);
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(updated_app_db_entry.wcmp_group_members[0], true, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(updated_app_db_entry.wcmp_group_members[0], false, 0));
+    EXPECT_FALSE(updated_app_db_entry.wcmp_group_members[0]->pruned);
 }
 
 TEST_F(WcmpManagerTest, UpdateWcmpGroupWithOperationallyUpWatchportMemberFailsWithMemberRemovalFailure)
@@ -1714,7 +2176,7 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupWithOperationallyUpWatchportMemberFailsWi
     std::string port_name = "Ethernet6";
     P4WcmpGroupEntry app_db_entry = AddWcmpGroupEntryWithWatchport(port_name, true);
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], false, 0));
+    EXPECT_FALSE(app_db_entry.wcmp_group_members[0]->pruned);
 
     // Update WCMP group to remove kNexthopId1(fails) and add kNexthopId2
     P4WcmpGroupEntry updated_app_db_entry;
@@ -1725,61 +2187,96 @@ TEST_F(WcmpManagerTest, UpdateWcmpGroupWithOperationallyUpWatchportMemberFailsWi
         createWcmpGroupMemberEntryWithWatchport(kNexthopId1, 1, port_name, kWcmpGroupId1, kNexthopOid1);
     updated_app_db_entry.wcmp_group_members.push_back(updated_gm1);
     updated_app_db_entry.wcmp_group_members.push_back(updated_gm2);
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
+    std::vector<sai_status_t> exp_remove_status{SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 1,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid4), Return(SAI_STATUS_SUCCESS)));
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid1}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
+    std::vector<sai_object_id_t> return_oids_4{kWcmpGroupMemberOid4};
+    std::vector<sai_object_id_t> return_oids_null{SAI_NULL_OBJECT_ID};
+    std::vector<sai_status_t> exp_create_status{SAI_STATUS_SUCCESS};
+    std::vector<sai_status_t> exp_create_status_fail{SAI_STATUS_INSUFFICIENT_RESOURCES};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid2, 10,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(Return(SAI_STATUS_INSUFFICIENT_RESOURCES));
+                create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid1, 1, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids_4.begin(), return_oids_4.end()),
+                        SetArrayArgument<6>(exp_create_status.begin(), exp_create_status.end()),
+                        Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid2, 10, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids_null.begin(), return_oids_null.end()),
+                        SetArrayArgument<6>(exp_create_status_fail.begin(), exp_create_status_fail.end()),
+                        Return(SAI_STATUS_INSUFFICIENT_RESOURCES)));
     // Clean up created member-succeeds
+    std::vector<sai_object_id_t> return_oids_1{kWcmpGroupMemberOid1};
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 2,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid1), Return(SAI_STATUS_SUCCESS)));
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid4)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
-    EXPECT_EQ(StatusCode::SWSS_RC_FULL, ProcessUpdateRequest(&updated_app_db_entry));
+                create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid1, 2, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids_1.begin(), return_oids_1.end()),
+                        SetArrayArgument<6>(exp_create_status.begin(), exp_create_status.end()),
+                        Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid4}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
+    EXPECT_EQ(StatusCode::SWSS_RC_UNKNOWN, ProcessUpdateRequest(&updated_app_db_entry));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(updated_gm2, false, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], false, 0));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(updated_gm2, false, 0));
+    EXPECT_FALSE(app_db_entry.wcmp_group_members[0]->pruned);
+    EXPECT_FALSE(updated_gm2->pruned);
 
     // Update again, this time clean up fails
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid1)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 1,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid4), Return(SAI_STATUS_SUCCESS)));
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid1}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid2, 10,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(Return(SAI_STATUS_INSUFFICIENT_RESOURCES));
+                create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid1, 1, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids_4.begin(), return_oids_4.end()),
+                        SetArrayArgument<6>(exp_create_status.begin(), exp_create_status.end()),
+                        Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid2, 10, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids_null.begin(), return_oids_null.end()),
+                        SetArrayArgument<6>(exp_create_status_fail.begin(), exp_create_status_fail.end()),
+                        Return(SAI_STATUS_INSUFFICIENT_RESOURCES)));
     // Clean up created member(fails)
-    EXPECT_CALL(mock_sai_next_hop_group_, remove_next_hop_group_member(Eq(kWcmpGroupMemberOid4)))
-        .WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_next_hop_group_,
-                create_next_hop_group_member(_, Eq(gSwitchId), Eq(3),
-                                             Truly(std::bind(MatchSaiNextHopGroupMemberAttribute, kNexthopOid1, 2,
-                                                             kWcmpGroupOid1, std::placeholders::_1))))
-        .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid1), Return(SAI_STATUS_INSUFFICIENT_RESOURCES)));
+                remove_next_hop_group_members(Eq(1), ArrayEq(std::vector<sai_object_id_t>{kWcmpGroupMemberOid4}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _))
+        .WillOnce(
+            DoAll(SetArrayArgument<3>(exp_remove_status.begin(), exp_remove_status.end()), Return(SAI_STATUS_SUCCESS)));
+    EXPECT_CALL(mock_sai_next_hop_group_,
+                create_next_hop_group_members(Eq(gSwitchId), Eq(1), ArrayEq(std::vector<uint32_t>{3}),
+                                              AttrArrayArrayEq(std::vector<std::vector<sai_attribute_t>>{
+                                                  GetSaiNextHopGroupMemberAttribute(kNexthopOid1, 2, kWcmpGroupOid1)}),
+                                              Eq(SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR), _, _))
+        .WillOnce(DoAll(SetArrayArgument<5>(return_oids_null.begin(), return_oids_null.end()),
+                        SetArrayArgument<6>(exp_create_status_fail.begin(), exp_create_status_fail.end()),
+                        Return(SAI_STATUS_INSUFFICIENT_RESOURCES)));
     // TODO: Expect critical state.
-    EXPECT_EQ("Failed to create next hop group member "
-              "'ju1u32m2.atl11:qe-3/7'",
+    EXPECT_EQ("Fail to create wcmp group member: 'ju1u32m2.atl11:qe-3/7'",
               ProcessUpdateRequest(&updated_app_db_entry).message());
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], false, 0));
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(updated_gm2, false, 0));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], false, 0));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(updated_gm2, false, 0));
+    EXPECT_FALSE(app_db_entry.wcmp_group_members[0]->pruned);
+    EXPECT_FALSE(updated_gm2->pruned);
 }
 
 TEST_F(WcmpManagerTest, WatchportStateChangetoOperDownSucceeds)
@@ -1788,7 +2285,7 @@ TEST_F(WcmpManagerTest, WatchportStateChangetoOperDownSucceeds)
     std::string port_name = "Ethernet6";
     P4WcmpGroupEntry app_db_entry = AddWcmpGroupEntryWithWatchport(port_name, true);
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], false, 0));
+    EXPECT_FALSE(app_db_entry.wcmp_group_members[0]->pruned);
 
     // Send port down signal
     // Verify that the next hop member associated with the port is pruned.
@@ -1799,7 +2296,7 @@ TEST_F(WcmpManagerTest, WatchportStateChangetoOperDownSucceeds)
         .WillOnce(Return(SAI_STATUS_SUCCESS));
     HandlePortStatusChangeNotification(op, data);
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], true, 1));
+    EXPECT_TRUE(app_db_entry.wcmp_group_members[0]->pruned);
 }
 
 TEST_F(WcmpManagerTest, WatchportStateChangeToOperUpSucceeds)
@@ -1810,7 +2307,7 @@ TEST_F(WcmpManagerTest, WatchportStateChangeToOperUpSucceeds)
     std::string port_name = "Ethernet1";
     P4WcmpGroupEntry app_db_entry = AddWcmpGroupEntryWithWatchport(port_name);
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], true, 1));
+    EXPECT_TRUE(app_db_entry.wcmp_group_members[0]->pruned);
 
     // Send port up signal.
     // Verify that the pruned next hop member associated with the port is
@@ -1825,7 +2322,7 @@ TEST_F(WcmpManagerTest, WatchportStateChangeToOperUpSucceeds)
         .WillOnce(DoAll(SetArgPointee<0>(kWcmpGroupMemberOid1), Return(SAI_STATUS_SUCCESS)));
     HandlePortStatusChangeNotification(op, data);
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], false, 0));
+    EXPECT_FALSE(app_db_entry.wcmp_group_members[0]->pruned);
 }
 
 TEST_F(WcmpManagerTest, WatchportStateChangeFromOperUnknownToDownPrunesMemberOnlyOnceSuceeds)
@@ -1836,7 +2333,7 @@ TEST_F(WcmpManagerTest, WatchportStateChangeFromOperUnknownToDownPrunesMemberOnl
     std::string port_name = "Ethernet1";
     P4WcmpGroupEntry app_db_entry = AddWcmpGroupEntryWithWatchport(port_name);
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], true, 1));
+    EXPECT_TRUE(app_db_entry.wcmp_group_members[0]->pruned);
 
     // Send port down signal.
     // Verify that the pruned next hop member is not pruned again.
@@ -1845,7 +2342,7 @@ TEST_F(WcmpManagerTest, WatchportStateChangeFromOperUnknownToDownPrunesMemberOnl
                        "STATUS_DOWN\"}]";
     HandlePortStatusChangeNotification(op, data);
     EXPECT_TRUE(VerifyWcmpGroupMemberInPortMap(app_db_entry.wcmp_group_members[0], true, 1));
-    EXPECT_TRUE(VerifyWcmpGroupMemberInPrunedSet(app_db_entry.wcmp_group_members[0], true, 1));
+    EXPECT_TRUE(app_db_entry.wcmp_group_members[0]->pruned);
 }
 
 TEST_F(WcmpManagerTest, VerifyStateTest)

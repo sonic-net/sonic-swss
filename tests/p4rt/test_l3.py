@@ -2731,7 +2731,24 @@ class TestP4RTL3(object):
             == self._p4rt_wcmp_group_obj.get_original_asic_db_member_entries_count()
         )
 
-        # Delete the pruned wcmp group member.
+        # Attempt to delete the next hop. Expect failure as the pruned WCMP
+        # group member is still referencing it.
+        self._p4rt_nexthop_obj.remove_app_db_entry(nexthop_key)
+
+        # Verify that the P4RT key to OID count is same as before in Redis DB.
+        status, fvs = key_to_oid_helper.get_db_info()
+        assert status == True
+        assert len(fvs) == len(original_key_oid_info) + count
+
+        # Verify that the next hop still exists in app state db.
+        (status, fvs) = util.get_key(
+            self._p4rt_nexthop_obj.appl_state_db,
+            self._p4rt_nexthop_obj.APP_DB_TBL_NAME,
+            nexthop_key,
+        )
+        assert status == True
+
+        # Delete the pruned wcmp group member and try again.
         self._p4rt_wcmp_group_obj.remove_app_db_entry(wcmp_group_key)
 
         # Verify that P4RT key to OID count decremented by 1 in Redis DB.

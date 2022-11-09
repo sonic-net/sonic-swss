@@ -52,7 +52,7 @@ const P4GreTunnelAppDbEntry kP4GreTunnelAppDbEntry1{/*tunnel_id=*/"tunnel-1",
                                                     /*router_interface_id=*/"intf-eth-1/2/3",
                                                     /*encap_src_ip=*/swss::IpAddress("2607:f8b0:8096:3110::1"),
                                                     /*encap_dst_ip=*/swss::IpAddress("2607:f8b0:8096:311a::2"),
-                                                    /*action_str=*/"mark_for_tunnel_encap"};
+                                                    /*action_str=*/"mark_for_p2p_tunnel_encap"};
 
 std::unordered_map<sai_attr_id_t, sai_attribute_value_t> CreateAttributeListForGreTunnelObject(
     const P4GreTunnelAppDbEntry &app_entry, const sai_object_id_t &rif_oid)
@@ -304,6 +304,7 @@ bool GreTunnelManagerTest::ValidateGreTunnelEntryAdd(const P4GreTunnelAppDbEntry
     const auto *p4_gre_tunnel_entry = GetGreTunnelEntry(KeyGenerator::generateTunnelKey(app_db_entry.tunnel_id));
     if (p4_gre_tunnel_entry == nullptr || p4_gre_tunnel_entry->encap_src_ip != app_db_entry.encap_src_ip ||
         p4_gre_tunnel_entry->encap_dst_ip != app_db_entry.encap_dst_ip ||
+        p4_gre_tunnel_entry->neighbor_id != app_db_entry.encap_dst_ip ||
         p4_gre_tunnel_entry->router_interface_id != app_db_entry.router_interface_id ||
         p4_gre_tunnel_entry->tunnel_id != app_db_entry.tunnel_id)
     {
@@ -334,7 +335,7 @@ TEST_F(GreTunnelManagerTest, ProcessAddRequestShouldFailWhenDependingPortIsNotPr
                                             /*router_interface_id=*/"intf-eth-1/2/3",
                                             /*encap_src_ip=*/swss::IpAddress("2607:f8b0:8096:3110::1"),
                                             /*encap_dst_ip=*/swss::IpAddress("2607:f8b0:8096:311a::2"),
-                                            /*action_str=*/"mark_for_tunnel_encap"};
+                                            /*action_str=*/"mark_for_p2p_tunnel_encap"};
     const auto gre_tunnel_key = KeyGenerator::generateTunnelKey(kAppDbEntry.tunnel_id);
 
     EXPECT_EQ(StatusCode::SWSS_RC_NOT_FOUND, ProcessAddRequest(kAppDbEntry));
@@ -816,6 +817,12 @@ TEST_F(GreTunnelManagerTest, VerifyStateTest)
     p4_tunnel_entry->encap_dst_ip = swss::IpAddress("2.2.2.2");
     EXPECT_FALSE(VerifyState(db_key, attributes).empty());
     p4_tunnel_entry->encap_dst_ip = saved_DST_IP;
+
+    // Verification should fail if IP mask mismatches.
+    auto saved_NEIGHBOR_ID = p4_tunnel_entry->neighbor_id;
+    p4_tunnel_entry->neighbor_id = swss::IpAddress("2.2.2.2");
+    EXPECT_FALSE(VerifyState(db_key, attributes).empty());
+    p4_tunnel_entry->neighbor_id = saved_NEIGHBOR_ID;
 
     // Verification should fail if tunnel_id mismatches.
     auto saved_tunnel_id = p4_tunnel_entry->tunnel_id;

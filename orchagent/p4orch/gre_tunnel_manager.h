@@ -36,6 +36,9 @@ struct P4GreTunnelEntry
     std::string router_interface_id;
     swss::IpAddress encap_src_ip;
     swss::IpAddress encap_dst_ip;
+    // neighbor_id is required to be equal to encap_dst_ip by BRCM. And the
+    // neighbor entry needs to be created before GRE tunnel object
+    swss::IpAddress neighbor_id;
 
     // SAI OID associated with this entry.
     sai_object_id_t tunnel_oid = SAI_NULL_OBJECT_ID;
@@ -45,7 +48,8 @@ struct P4GreTunnelEntry
     sai_object_id_t underlay_if_oid = SAI_NULL_OBJECT_ID;
 
     P4GreTunnelEntry(const std::string &tunnel_id, const std::string &router_interface_id,
-                     const swss::IpAddress &encap_src_ip, const swss::IpAddress &encap_dst_ip);
+                     const swss::IpAddress &encap_src_ip, const swss::IpAddress &encap_dst_ip,
+                     const swss::IpAddress &neighbor_id);
 };
 
 // GreTunnelManager listens to changes in table APP_P4RT_TUNNEL_TABLE_NAME and
@@ -69,7 +73,7 @@ class GreTunnelManager : public ObjectManagerInterface
     void drain() override;
     std::string verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple) override;
 
-    ReturnCodeOr<const std::string> getUnderlayIfFromGreTunnelEntry(const std::string &gre_tunnel_key);
+    ReturnCodeOr<const P4GreTunnelEntry> getConstGreTunnelEntry(const std::string &gre_tunnel_key);
 
   private:
     // Gets the internal cached GRE tunnel entry by its key.
