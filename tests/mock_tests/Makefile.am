@@ -111,6 +111,7 @@ tests_SOURCES += $(DEBUG_CTR_DIR)/debug_counter.cpp $(DEBUG_CTR_DIR)/drop_counte
 tests_SOURCES += $(P4_ORCH_DIR)/p4orch.cpp \
 		 $(P4_ORCH_DIR)/p4orch_util.cpp \
 		 $(P4_ORCH_DIR)/p4oidmapper.cpp \
+		 $(P4_ORCH_DIR)/tables_definition_manager.cpp \
 		 $(P4_ORCH_DIR)/router_interface_manager.cpp \
 		 $(P4_ORCH_DIR)/neighbor_manager.cpp \
 		 $(P4_ORCH_DIR)/next_hop_manager.cpp \
@@ -122,6 +123,7 @@ tests_SOURCES += $(P4_ORCH_DIR)/p4orch.cpp \
 		 $(P4_ORCH_DIR)/mirror_session_manager.cpp \
 		 $(P4_ORCH_DIR)/gre_tunnel_manager.cpp \
 		 $(P4_ORCH_DIR)/l3_admit_manager.cpp \
+		 $(P4_ORCH_DIR)/ext_tables_manager.cpp \
 		 $(P4_ORCH_DIR)/tests/mock_sai_switch.cpp
 
 tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) 

@@ -337,7 +337,30 @@ ReturnCode RouterInterfaceManager::processDeleteRequest(const std::string &route
     return status;
 }
 
-void RouterInterfaceManager::enqueue(const swss::KeyOpFieldsValuesTuple &entry)
+ReturnCode RouterInterfaceManager::getSaiObject(const std::string &json_key, sai_object_type_t &object_type, std::string &object_key)
+{
+    std::string     value;
+    nlohmann::json  j = nlohmann::json::parse(json_key);
+
+    try
+    {
+        if (j.find(prependMatchField(p4orch::kRouterInterfaceId)) != j.end())
+        {
+            value = j.at(prependMatchField(p4orch::kRouterInterfaceId)).get<std::string>();
+            object_key = KeyGenerator::generateRouterInterfaceKey(value);
+            object_type = SAI_OBJECT_TYPE_ROUTER_INTERFACE;
+            return ReturnCode();
+        }
+    }
+    catch (std::exception &ex)
+    {
+        SWSS_LOG_ERROR("unsupported action");
+    }
+
+    return StatusCode::SWSS_RC_INVALID_PARAM;
+}
+
+void RouterInterfaceManager::enqueue(const std::string &table_name, const swss::KeyOpFieldsValuesTuple &entry)
 {
     m_entries.push_back(entry);
 }

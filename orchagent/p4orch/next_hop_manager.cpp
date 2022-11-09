@@ -147,7 +147,30 @@ ReturnCodeOr<std::vector<sai_attribute_t>> NextHopManager::getSaiAttrs(const P4N
     return next_hop_attrs;
 }
 
-void NextHopManager::enqueue(const swss::KeyOpFieldsValuesTuple &entry)
+ReturnCode NextHopManager::getSaiObject(const std::string &json_key, sai_object_type_t &object_type, std::string &object_key)
+{
+    std::string     value;
+    nlohmann::json  j = nlohmann::json::parse(json_key);
+
+    try
+    {
+        if (j.find(prependMatchField(p4orch::kNexthopId)) != j.end())
+        {
+            value = j.at(prependMatchField(p4orch::kNexthopId)).get<std::string>();
+            object_key = KeyGenerator::generateNextHopKey(value);
+            object_type = SAI_OBJECT_TYPE_NEXT_HOP;
+            return ReturnCode();
+        }
+    }
+    catch (std::exception &ex)
+    {
+        SWSS_LOG_ERROR("unsupported action");
+    }
+
+    return StatusCode::SWSS_RC_INVALID_PARAM;
+}
+
+void NextHopManager::enqueue(const std::string &table_name, const swss::KeyOpFieldsValuesTuple &entry)
 {
     m_entries.push_back(entry);
 }
