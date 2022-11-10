@@ -2,6 +2,7 @@ import time
 import pytest
 
 from dvslib.dvs_common import wait_for_result
+from swsscommon import swsscommon
 
 L3_TABLE_TYPE = "L3"
 L3_TABLE_NAME = "L3_TEST"
