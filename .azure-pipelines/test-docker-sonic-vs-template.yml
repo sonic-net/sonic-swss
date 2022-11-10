@@ -28,10 +28,6 @@ parameters:
   type: boolean
   default: false
 
-- name: allow_failed_artifact
-  type: boolean
-  default: false
-
 - name: num_ports
   type: number
   default: 0
@@ -65,7 +61,6 @@ jobs:
       artifact: sonic-swss-common.amd64.ubuntu20_04
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/${{ parameters.swss_common_branch }}'
-      allowFailedBuilds: ${{ parameters.allow_failed_artifact }}
       path: $(Build.ArtifactStagingDirectory)/download
     displayName: "Download sonic swss common deb packages"
 

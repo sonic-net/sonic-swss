@@ -36,11 +36,10 @@ stages:
       arch: amd64
       sonic_slave: sonic-slave-buster
       swss_common_artifact_name: sonic-swss-common
-      swss_common_branch: dash
+      swss_common_branch: master
       artifact_name: sonic-swss
       archive_pytests: true
       archive_gcov: true
-      allow_failed_artifact: true
       sairedis_artifact_name: sonic-buildimage.vs
       sairedis_artifact_project: nvidia
       sairedis_artifact_pipeline: nvidia-sonic.sonic-buildimage
@@ -59,9 +58,8 @@ stages:
   - template: .azure-pipelines/build-docker-sonic-vs-template.yml
     parameters:
       swss_common_artifact_name: sonic-swss-common
-      swss_common_branch: dash
+      swss_common_branch: master
       swss_artifact_name: sonic-swss
-      allow_failed_artifact: true
       artifact_name: docker-sonic-vs
       buildimage_artifact_name: sonic-buildimage.vs
       buildimage_artifact_project: nvidia
@@ -82,8 +80,7 @@ stages:
       log_artifact_name: log
       gcov_artifact_name: sonic-gcov
       sonic_slave: sonic-slave-buster
-      swss_common_branch: dash
+      swss_common_branch: master
       archive_gcov: true
-      allow_failed_artifact: true
       num_ports: 2
       run_tests_pattern: test_dash_*.py
