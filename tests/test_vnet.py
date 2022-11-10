@@ -2104,6 +2104,296 @@ class TestVnetOrch(object):
         delete_vnet_entry(dvs, 'Vnet12')
         vnet_obj.check_del_vnet_entry(dvs, 'Vnet12')
 
+    '''
+    Test 13 - Test for configuration idempotent behaviour
+    '''
+    def test_vnet_orch_13(self, dvs, testlog):
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_13'
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, 'fd:8::32')
+        create_vnet_entry(dvs, 'Vnet13', tunnel_name, '10008', "")
+
+        vnet_obj.check_vnet_entry(dvs, 'Vnet13')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet13', '10008')
+
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, 'fd:8::32')
+
+        # Create an ECMP tunnel route
+        vnet_obj.fetch_exist_entries(dvs)
+        create_vnet_routes(dvs, "fd:8:10::32/128", 'Vnet13', 'fd:8:1::1,fd:8:1::2,fd:8:1::3')
+        route1, nhg1_1 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet13', ['fd:8:1::1', 'fd:8:1::2', 'fd:8:1::3'], tunnel_name)
+        check_state_db_routes(dvs, 'Vnet13', "fd:8:10::32/128", ['fd:8:1::1', 'fd:8:1::2', 'fd:8:1::3'])
+        # The default Vnet setting does not advertise prefix
+        check_remove_routes_advertisement(dvs, "fd:8:10::32/128")
+
+        # readd same tunnel again
+        set_vnet_routes(dvs, "fd:8:10::32/128", 'Vnet13', 'fd:8:1::1,fd:8:1::2,fd:8:1::3')
+        route1, nhg1_2 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet13', ['fd:8:1::1', 'fd:8:1::2', 'fd:8:1::3'], tunnel_name, route_ids=route1)
+        check_state_db_routes(dvs, 'Vnet13', "fd:8:10::32/128", ['fd:8:1::1', 'fd:8:1::2', 'fd:8:1::3'])
+        # The default Vnet setting does not advertise prefix
+        check_remove_routes_advertisement(dvs, "fd:8:10::32/128")
+        # Check only one group is present
+        vnet_obj.fetch_exist_entries(dvs)
+        assert nhg1_1 in vnet_obj.nhgs
+        assert len(vnet_obj.nhgs) == 1
+        assert nhg1_1 == nhg1_2
+
+        # Remove one of the tunnel routes
+        delete_vnet_routes(dvs, "fd:8:10::32/128", 'Vnet13')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet13', ["fd:8:10::32/128"])
+        check_remove_state_db_routes(dvs, 'Vnet13', "fd:8:10::32/128")
+        check_remove_routes_advertisement(dvs, "fd:8:10::32/128")
+
+        # Check the nexthop group still exists
+        vnet_obj.fetch_exist_entries(dvs)
+        assert nhg1_2 not in  vnet_obj.nhgs
+        assert len(vnet_obj.nhgs) == 0
+        delete_vnet_entry(dvs, 'Vnet13')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet13')
+
+    '''
+    Test 14 - Test for configuration idempotent behaviour 2
+    '''
+    def test_vnet_orch_14(self, dvs, testlog):
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_14'
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, 'fd:8::32')
+        create_vnet_entry(dvs, 'Vnet14', tunnel_name, '10008', "")
+
+        vnet_obj.check_vnet_entry(dvs, 'Vnet14')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet14', '10008')
+
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, 'fd:8::32')
+
+        # Create an ECMP tunnel route
+        vnet_obj.fetch_exist_entries(dvs)
+        create_vnet_routes(dvs, "fd:8:10::32/128", 'Vnet14', 'fd:8:1::1,fd:8:1::2,fd:8:1::3')
+        route1, nhg1_1 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet14', ['fd:8:1::1', 'fd:8:1::2', 'fd:8:1::3'], tunnel_name)
+        check_state_db_routes(dvs, 'Vnet14', "fd:8:10::32/128", ['fd:8:1::1', 'fd:8:1::2', 'fd:8:1::3'])
+        # The default Vnet setting does not advertise prefix
+        check_remove_routes_advertisement(dvs, "fd:8:10::32/128")
+
+        # readd same tunnel again
+        set_vnet_routes(dvs, "fd:8:10::32/128", 'Vnet14', 'fd:8:1::1,fd:8:1::2,fd:8:1::3')
+        route1, nhg1_2 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet14', ['fd:8:1::1', 'fd:8:1::2', 'fd:8:1::3'], tunnel_name, route_ids=route1)
+        check_state_db_routes(dvs, 'Vnet14', "fd:8:10::32/128", ['fd:8:1::1', 'fd:8:1::2', 'fd:8:1::3'])
+        # The default Vnet setting does not advertise prefix
+        check_remove_routes_advertisement(dvs, "fd:8:10::32/128")
+
+        #update nexthops for the same tunnel.
+        set_vnet_routes(dvs, "fd:8:10::32/128", 'Vnet14', 'fd:8:1::1,fd:8:1::2,fd:8:1::3,fd:8:1::4')
+        route1, nhg1_2 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet14', ['fd:8:1::1', 'fd:8:1::2', 'fd:8:1::3', 'fd:8:1::4'], tunnel_name, route_ids=route1)
+        check_state_db_routes(dvs, 'Vnet14', "fd:8:10::32/128", ['fd:8:1::1', 'fd:8:1::2', 'fd:8:1::3', 'fd:8:1::4'])
+        # The default Vnet setting does not advertise prefix
+        check_remove_routes_advertisement(dvs, "fd:8:10::32/128")
+
+        # Check the previous nexthop group is removed
+        vnet_obj.fetch_exist_entries(dvs)
+        assert nhg1_1 not in vnet_obj.nhgs
+        assert nhg1_2 in vnet_obj.nhgs
+
+        # Remove the tunnel route
+        delete_vnet_routes(dvs, "fd:8:10::32/128", 'Vnet14')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet14', ["fd:8:10::32/128"])
+        check_remove_state_db_routes(dvs, 'Vnet14', "fd:8:10::32/128")
+        check_remove_routes_advertisement(dvs, "fd:8:10::32/128")
+        # Remove the tunnel route
+        delete_vnet_routes(dvs, "fd:8:10::32/128", 'Vnet14')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet14', ["fd:8:10::32/128"])
+        check_remove_state_db_routes(dvs, 'Vnet14', "fd:8:10::32/128")
+        check_remove_routes_advertisement(dvs, "fd:8:10::32/128")
+
+        # Check the nexthop group still exists
+        vnet_obj.fetch_exist_entries(dvs)
+        assert nhg1_2 not in  vnet_obj.nhgs
+        assert nhg1_1 not in  vnet_obj.nhgs
+
+        delete_vnet_entry(dvs, 'Vnet14')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet14')
+
+    '''
+    Test 15 - Test for configuration idempotent behaviour single endpoint
+    '''
+    def test_vnet_orch_15(self, dvs, testlog):
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_15'
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, 'fd:8::32')
+        create_vnet_entry(dvs, 'Vnet15', tunnel_name, '10008', "")
+
+        vnet_obj.check_vnet_entry(dvs, 'Vnet15')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet15', '10008')
+
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, 'fd:8::32')
+
+        # Create an tunnel route
+        vnet_obj.fetch_exist_entries(dvs)
+        create_vnet_routes(dvs, "fd:8:10::32/128", 'Vnet15', 'fd:8:1::1')
+        route1 = vnet_obj.check_vnet_routes(dvs, 'Vnet15', 'fd:8:1::1', tunnel_name)
+        check_state_db_routes(dvs, 'Vnet15', "fd:8:10::32/128", ['fd:8:1::1'])
+        # The default Vnet setting does not advertise prefix
+        check_remove_routes_advertisement(dvs, "fd:8:10::32/128")
+
+        # readd same tunnel again
+        set_vnet_routes(dvs, "fd:8:10::32/128", 'Vnet15', 'fd:8:1::1')
+        route1 = vnet_obj.check_vnet_routes(dvs, 'Vnet15', 'fd:8:1::1', tunnel_name, route_ids=route1)
+        check_state_db_routes(dvs, 'Vnet15', "fd:8:10::32/128", ['fd:8:1::1'])
+        # The default Vnet setting does not advertise prefix
+        check_remove_routes_advertisement(dvs, "fd:8:10::32/128")
+        # Check only one group is present
+        vnet_obj.fetch_exist_entries(dvs)
+        assert len(vnet_obj.nhops) == 1
+
+        # Remove one of the tunnel routes
+        delete_vnet_routes(dvs, "fd:8:10::32/128", 'Vnet15')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet15', ["fd:8:10::32/128"])
+        check_remove_state_db_routes(dvs, 'Vnet15', "fd:8:10::32/128")
+        check_remove_routes_advertisement(dvs, "fd:8:10::32/128")
+
+        # Check the nexthop group still exists
+        vnet_obj.fetch_exist_entries(dvs)
+        assert len(vnet_obj.nhops) == 0
+        delete_vnet_entry(dvs, 'Vnet15')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet15')
+
+    '''
+    Test 16 - Test for configuration idempotent behaviour single endpoint with BFD
+    '''
+    def test_vnet_orch_16(self, dvs, testlog):
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_16'
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, 'fd:8::33')
+        create_vnet_entry(dvs, 'Vnet16', tunnel_name, '10008', "")
+
+        vnet_obj.check_vnet_entry(dvs, 'Vnet16')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet16', '10008')
+
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, 'fd:8::33')
+
+        # Create a tunnel route
+        vnet_obj.fetch_exist_entries(dvs)
+        create_vnet_routes(dvs, "fd:8:11::32/128", 'Vnet16', 'fd:8:2::1', ep_monitor='fd:8:2::1')
+        update_bfd_session_state(dvs, 'fd:8:2::1', 'Up')
+        time.sleep(2)
+
+        route1 = vnet_obj.check_vnet_routes(dvs, 'Vnet16', 'fd:8:2::1', tunnel_name)
+        check_state_db_routes(dvs, 'Vnet16', "fd:8:11::32/128", ['fd:8:2::1'])
+        # The default Vnet setting does not advertise prefix
+        check_remove_routes_advertisement(dvs, "fd:8:11::32/128")
+
+        # readd same tunnel again
+        set_vnet_routes(dvs, "fd:8:11::32/128", 'Vnet16', 'fd:8:2::1', ep_monitor='fd:8:2::1')
+        route1 = vnet_obj.check_vnet_routes(dvs, 'Vnet16', 'fd:8:2::1', tunnel_name, route_ids=route1)
+        check_state_db_routes(dvs, 'Vnet16', "fd:8:11::32/128", ['fd:8:2::1'])
+        # The default Vnet setting does not advertise prefix
+        check_remove_routes_advertisement(dvs, "fd:8:11::32/128")
+        # Check only one group is present
+        vnet_obj.fetch_exist_entries(dvs)
+        assert len(vnet_obj.nhops) == 1
+
+        update_bfd_session_state(dvs, 'fd:8:2::1', 'Down')
+        time.sleep(2)
+        # readd same tunnel again
+        set_vnet_routes(dvs, "fd:8:11::32/128", 'Vnet16', 'fd:8:2::1', ep_monitor='fd:8:2::1')
+
+        update_bfd_session_state(dvs, 'fd:8:2::1', 'Up')
+        time.sleep(2)
+
+        route1 = vnet_obj.check_vnet_routes(dvs, 'Vnet16', 'fd:8:2::1', tunnel_name,route_ids=route1)
+        check_state_db_routes(dvs, 'Vnet16', "fd:8:11::32/128", ['fd:8:2::1'])
+        # The default Vnet setting does not advertise prefix
+        check_remove_routes_advertisement(dvs, "fd:8:11::32/128")
+
+
+        # Remove one of the tunnel routes
+        delete_vnet_routes(dvs, "fd:8:11::32/128", 'Vnet16')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet16', ["fd:8:11::32/128"])
+        check_remove_state_db_routes(dvs, 'Vnet16', "fd:8:11::32/128")
+        check_remove_routes_advertisement(dvs, "fd:8:11::32/128")
+
+        # Check the nexthop group still exists
+        vnet_obj.fetch_exist_entries(dvs)
+        assert len(vnet_obj.nhops) == 0
+        delete_vnet_entry(dvs, 'Vnet16')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet16')
+
+    '''
+    Test 17 - Test for configuration idempotent behaviour multiple endpoint with BFD
+    '''
+    def test_vnet_orch_17(self, dvs, testlog):
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_17'
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+        create_vnet_entry(dvs, 'Vnet17', tunnel_name, '10009', "")
+
+        vnet_obj.check_vnet_entry(dvs, 'Vnet17')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet17', '10009')
+
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+
+        vnet_obj.fetch_exist_entries(dvs)
+        create_vnet_routes(dvs, "100.100.1.1/32", 'Vnet17', '9.0.0.1,9.0.0.2,9.0.0.3', ep_monitor='9.1.0.1,9.1.0.2,9.1.0.3')
+
+        # default bfd status is down, route should not be programmed in this status
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet17', ["100.100.1.1/32"])
+        check_state_db_routes(dvs, 'Vnet17', "100.100.1.1/32", [])
+        check_remove_routes_advertisement(dvs, "100.100.1.1/32")
+
+        #readd the route
+        set_vnet_routes(dvs, "100.100.1.1/32", 'Vnet17', '9.0.0.1,9.0.0.2,9.0.0.3',ep_monitor='9.1.0.1,9.1.0.2,9.1.0.3')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet17', ["100.100.1.1/32"])
+        check_state_db_routes(dvs, 'Vnet17', "100.100.1.1/32", [])
+        check_remove_routes_advertisement(dvs, "100.100.1.1/32")
+
+        # Route should be properly configured when all bfd session states go up
+        update_bfd_session_state(dvs, '9.1.0.1', 'Up')
+        update_bfd_session_state(dvs, '9.1.0.2', 'Up')
+        update_bfd_session_state(dvs, '9.1.0.3', 'Up')
+        time.sleep(2)
+
+        route1, nhg1_1 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet17', ['9.0.0.1', '9.0.0.2', '9.0.0.3'], tunnel_name)
+        check_state_db_routes(dvs, 'Vnet17', "100.100.1.1/32", ['9.0.0.1', '9.0.0.2', '9.0.0.3'])
+        # The default Vnet setting does not advertise prefix
+        check_remove_routes_advertisement(dvs, "100.100.1.1/32")
+
+        #readd the active route
+        set_vnet_routes(dvs, "100.100.1.1/32", 'Vnet17', '9.0.0.1,9.0.0.2,9.0.0.3',ep_monitor='9.1.0.1,9.1.0.2,9.1.0.3')
+        route2, nhg1_2 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet17', ['9.0.0.1', '9.0.0.2', '9.0.0.3'], tunnel_name, route_ids=route1, nhg=nhg1_1)
+        check_state_db_routes(dvs, 'Vnet17', "100.100.1.1/32", ['9.0.0.1', '9.0.0.2', '9.0.0.3'])
+        # The default Vnet setting does not advertise prefix
+        check_remove_routes_advertisement(dvs, "100.100.1.1/32")
+        assert nhg1_1 == nhg1_2
+        assert len(vnet_obj.nhgs) == 1
+
+        # Remove tunnel route
+        delete_vnet_routes(dvs, "100.100.1.1/32", 'Vnet17')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet17', ["100.100.1.1/32"])
+        check_remove_state_db_routes(dvs, 'Vnet17', "100.100.1.1/32")
+        check_remove_routes_advertisement(dvs, "100.100.1.1/32")
+
+        # Check the corresponding nexthop group is removed
+        vnet_obj.fetch_exist_entries(dvs)
+        assert nhg1_1 not in vnet_obj.nhgs
+        # Check the BFD session specific to the endpoint group is removed while others exist
+        check_del_bfd_session(dvs, ['9.1.0.1', '9.1.0.2', '9.1.0.3'])
+
+        delete_vnet_entry(dvs, 'Vnet17')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet17')
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying

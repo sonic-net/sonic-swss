@@ -958,11 +958,11 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             }
         }
 
-        if (it_route != syncd_tunnel_routes_[vnet].end())
+        if (it_route != syncd_tunnel_routes_[vnet].end() && it_route->second != nexthops)
         {
-            // In case of updating an existing route, decrease the reference count for the previous nexthop group
+            // In case of updating an existing route, decrease the reference count for the previous nexthop group if not same as new nhg
             NextHopGroupKey nhg = it_route->second;
-            if(--syncd_nexthop_groups_[vnet][nhg].ref_count == 0)
+            if (--syncd_nexthop_groups_[vnet][nhg].ref_count == 0)
             {
                 if (nhg.getSize() > 1)
                 {
@@ -983,13 +983,14 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             vrf_obj->removeRoute(ipPrefix);
             vrf_obj->removeProfile(ipPrefix);
         }
+        if (it_route == syncd_tunnel_routes_[vnet].end() || (it_route != syncd_tunnel_routes_[vnet].end() && it_route->second != nexthops))
+        {
+            syncd_nexthop_groups_[vnet][nexthops].tunnel_routes.insert(ipPrefix);
 
-        syncd_nexthop_groups_[vnet][nexthops].tunnel_routes.insert(ipPrefix);
-
-        syncd_tunnel_routes_[vnet][ipPrefix] = nexthops;
-        syncd_nexthop_groups_[vnet][nexthops].ref_count++;
-        vrf_obj->addRoute(ipPrefix, nexthops);
-
+            syncd_tunnel_routes_[vnet][ipPrefix] = nexthops;
+            syncd_nexthop_groups_[vnet][nexthops].ref_count++;
+            vrf_obj->addRoute(ipPrefix, nexthops);
+        }
         if (!profile.empty())
         {
             vrf_obj->addProfile(ipPrefix, profile);
