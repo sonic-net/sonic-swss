@@ -40,7 +40,7 @@ constexpr char *kSetWcmpGroupIdAndMetadata = "set_wcmp_group_id_and_metadata";
 constexpr char *kSetMetadataAndDrop = "set_metadata_and_drop";
 constexpr char *kSetNexthop = "set_nexthop";
 constexpr char *kSetIpNexthop = "set_ip_nexthop";
-constexpr char *kSetTunnelNexthop = "set_tunnel_encap_nexthop";
+constexpr char *kSetTunnelNexthop = "set_p2p_tunnel_encap_nexthop";
 constexpr char *kDrop = "drop";
 constexpr char *kTrap = "trap";
 constexpr char *kStage = "stage";
@@ -79,7 +79,7 @@ constexpr char *kTtl = "ttl";
 constexpr char *kTos = "tos";
 constexpr char *kMirrorAsIpv4Erspan = "mirror_as_ipv4_erspan";
 constexpr char *kL3AdmitAction = "admit_to_l3";
-constexpr char *kTunnelAction = "mark_for_tunnel_encap";
+constexpr char *kTunnelAction = "mark_for_p2p_tunnel_encap";
 } // namespace p4orch
 
 // Prepends "match/" to the input string str to construct a new string.
