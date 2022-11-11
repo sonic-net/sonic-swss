@@ -20,9 +20,21 @@ parameters:
   type: string
   default: docker-sonic-vs
 
+- name: swss_common_branch
+  type: string
+  default: '$(BUILD_BRANCH)'
+
 - name: asan
   type: boolean
   default: false
+
+- name: num_ports
+  type: number
+  default: 0
+
+- name: run_tests_pattern
+  type: string
+  default: ""
 
 jobs:
 - job:
@@ -48,7 +60,7 @@ jobs:
       pipeline: Azure.sonic-swss-common
       artifact: sonic-swss-common.amd64.ubuntu20_04
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/$(BUILD_BRANCH)'
+      runBranch: 'refs/heads/${{ parameters.swss_common_branch }}'
       path: $(Build.ArtifactStagingDirectory)/download
     displayName: "Download sonic swss common deb packages"
 
@@ -76,16 +88,24 @@ jobs:
       sudo /sbin/ip link del Vrf1 type vrf table 1001
       pushd tests
 
-      params=''
+      params=""
       if [ '${{ parameters.archive_gcov }}' == True ]; then
-        params='--keeptb'
+        params=" ${params} --keeptb "
       fi
       if [ '${{ parameters.asan }}' == True ]; then
-        params='--graceful-stop'
+        params=" ${params} --graceful-stop "
+      fi
+      if [ ${{ parameters.num_ports }} -gt 0 ]; then
+        params=" ${params} --num-ports=${{ parameters.num_ports }} "
       fi
 
       all_tests=$(ls test_*.py)
       all_tests="${all_tests} p4rt"
+
+      if [ -n '${{ parameters.run_tests_pattern }}' ]; then
+        all_tests=" $(ls ${{ parameters.run_tests_pattern }}) "
+      fi
+
       test_set=()
       # Run 20 tests as a set.
       for test in ${all_tests}; do
