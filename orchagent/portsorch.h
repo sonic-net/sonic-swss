@@ -299,8 +299,8 @@ private:
     void initializePriorityGroups(Port &port);
     void initializePortBufferMaximumParameters(Port &port);
     void initializeQueues(Port &port);
+    void initializeSchedulerGroups(Port &port);
     void initializeVoqs(Port &port);
-
 
     bool addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id);
     bool setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip);

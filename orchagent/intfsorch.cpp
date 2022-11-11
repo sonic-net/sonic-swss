@@ -1277,7 +1277,6 @@ bool IntfsOrch::removeRouterIntfs(Port &port)
 
     const auto id = sai_serialize_object_id(port.m_rif_id);
     removeRifFromFlexCounter(id, port.m_alias);
-    cleanUpRifFromCounterDb(id, port.m_alias);
 
     sai_status_t status = sai_router_intfs_api->remove_router_interface(port.m_rif_id);
     if (status != SAI_STATUS_SUCCESS)
@@ -1500,44 +1499,10 @@ void IntfsOrch::removeRifFromFlexCounter(const string &id, const string &name)
     SWSS_LOG_DEBUG("Unregistered interface %s from Flex counter", name.c_str());
 }
 
-/*
-   TODO A race condition can exist when swss removes the counter from COUNTERS DB
-   and at the same time syncd is inserting a new entry in COUNTERS DB. Therefore
-   all the rif counters cleanup code should move to syncd
-*/
-void IntfsOrch::cleanUpRifFromCounterDb(const string &id, const string &name)
-{
-    SWSS_LOG_ENTER();
-    string counter_key = getRifCounterTableKey(id);
-    string rate_key = getRifRateTableKey(id);
-    string rate_init_key = getRifRateInitTableKey(id);
-    m_counter_db->del(counter_key);
-    m_counter_db->del(rate_key);
-    m_counter_db->del(rate_init_key);
-    SWSS_LOG_NOTICE("CleanUp interface %s oid %s from counter db", name.c_str(),id.c_str());
-}
-
 string IntfsOrch::getRifFlexCounterTableKey(string key)
 {
     return string(RIF_STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
 }
-
-string IntfsOrch::getRifCounterTableKey(string key)
-{
-    return "COUNTERS:" + key;
-}
-
-string IntfsOrch::getRifRateTableKey(string key)
-{
-    return "RATES:" + key;
-}
-
-string IntfsOrch::getRifRateInitTableKey(string key)
-{
-    return "RATES:" + key + ":RIF";
-}
-
-
 
 void IntfsOrch::generateInterfaceMap()
 {

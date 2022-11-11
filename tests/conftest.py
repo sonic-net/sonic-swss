@@ -92,7 +92,7 @@ def pytest_addoption(parser):
     parser.addoption("--graceful-stop",
                      action="store_true",
                      default=False,
-                     help="Stop swss before stopping a conatainer")
+                     help="Stop swss and syncd before stopping a conatainer")
 
 
 def random_string(size=4, chars=string.ascii_uppercase + string.digits):
@@ -668,6 +668,10 @@ class DockerVirtualSwitch:
         for pname in self.swssd:
             cmd += "supervisorctl stop {}; ".format(pname)
         self.runcmd(['sh', '-c', cmd])
+        time.sleep(5)
+
+    def stop_syncd(self):
+        self.runcmd(['sh', '-c', 'supervisorctl stop syncd'])
         time.sleep(5)
 
     # deps: warm_reboot
@@ -1792,6 +1796,7 @@ def manage_dvs(request) -> str:
 
     if graceful_stop:
         dvs.stop_swss()
+        dvs.stop_syncd()
     dvs.get_logs()
     dvs.destroy()
 
