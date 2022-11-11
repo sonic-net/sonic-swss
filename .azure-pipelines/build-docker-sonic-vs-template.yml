@@ -14,14 +14,50 @@ parameters:
 - name: swss_artifact_name
   type: string
 
-- name: sairedis_artifact_name
-  type: string
-
 - name: swss_common_artifact_name
   type: string
 
+- name: swss_common_branch
+  type: string
+  default: '$(BUILD_BRANCH)'
+
 - name: artifact_name
   type: string
+
+- name: buildimage_artifact_name
+  type: string
+  default: 'sonic-buildimage.vs'
+
+- name: buildimage_artifact_project
+  type: string
+  default: 'build'
+
+- name: buildimage_artifact_pipeline
+  type: string
+  default: 'Azure.sonic-buildimage.official.vs'
+
+- name: buildimage_artifact_branch
+  type: string
+  default: '$(BUILD_BRANCH)'
+
+- name: sairedis_artifact_name
+  type: string
+
+- name: sairedis_artifact_project
+  type: string
+  default: 'build'
+
+- name: sairedis_artifact_pipeline
+  type: string
+  default: 'Azure.sonic-sairedis'
+
+- name: sairedis_artifact_branch
+  type: string
+  default: '$(BUILD_BRANCH)'
+
+- name: sairedis_artifact_pattern
+  type: string
+  default: '**'
 
 - name: asan
   type: boolean
@@ -43,18 +79,26 @@ jobs:
       pipeline: Azure.sonic-swss-common
       artifact: ${{ parameters.swss_common_artifact_name }}
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/$(BUILD_BRANCH)'
+      runBranch: 'refs/heads/${{ parameters.swss_common_branch }}'
       path: $(Build.ArtifactStagingDirectory)/download
     displayName: "Download sonic swss common deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
       source: specific
-      project: build
-      pipeline: Azure.sonic-sairedis
+      project: ${{ parameters.sairedis_artifact_project }}
+      pipeline: ${{ parameters.sairedis_artifact_pipeline }}
       artifact: ${{ parameters.sairedis_artifact_name }}
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/$(BUILD_BRANCH)'
-      path: $(Build.ArtifactStagingDirectory)/download
+      runBranch: 'refs/heads/${{ parameters.sairedis_artifact_branch }}'
+      path: $(Build.ArtifactStagingDirectory)/download/sairedis
+      patterns: |
+        ${{ parameters.sairedis_artifact_pattern }}/libsaivs_*.deb
+        ${{ parameters.sairedis_artifact_pattern }}/libsaivs-dev_*.deb
+        ${{ parameters.sairedis_artifact_pattern }}/libsairedis_*.deb
+        ${{ parameters.sairedis_artifact_pattern }}/libsairedis-dev_*.deb
+        ${{ parameters.sairedis_artifact_pattern }}/libsaimetadata_*.deb
+        ${{ parameters.sairedis_artifact_pattern }}/libsaimetadata-dev_*.deb
+        ${{ parameters.sairedis_artifact_pattern }}/syncd-vs_*.deb
     displayName: "Download sonic sairedis deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
@@ -64,11 +108,11 @@ jobs:
   - task: DownloadPipelineArtifact@2
     inputs:
       source: specific
-      project: build
-      pipeline: Azure.sonic-buildimage.official.vs
-      artifact: sonic-buildimage.vs
+      project: ${{ parameters.buildimage_artifact_project }}
+      pipeline: ${{ parameters.buildimage_artifact_pipeline }}
+      artifact: ${{ parameters.buildimage_artifact_name }}
       runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/$(BUILD_BRANCH)'
+      runBranch: 'refs/heads/${{ parameters.buildimage_artifact_branch }}'
       path: $(Build.ArtifactStagingDirectory)/download
       patterns: '**/target/${{ parameters.artifact_name }}.gz'
     displayName: "Download sonic-buildimage ${{ parameters.artifact_name }}"
@@ -80,6 +124,7 @@ jobs:
 
       mkdir -p .azure-pipelines/docker-sonic-vs/debs
 
+      find $(Build.ArtifactStagingDirectory)/download/sairedis -name '*.deb' -exec cp "{}" .azure-pipelines/docker-sonic-vs/debs \;
       cp -v $(Build.ArtifactStagingDirectory)/download/*.deb .azure-pipelines/docker-sonic-vs/debs
 
       pushd .azure-pipelines
