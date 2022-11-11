@@ -289,6 +289,12 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
         return false;
     }
 
+    if (appliance_entries_.empty())
+    {
+        SWSS_LOG_INFO("Retry as no appliance table entry found");
+        return false;
+    }
+
     sai_object_id_t &eni_id = entry.eni_id;
     sai_attribute_t eni_attr;
     vector<sai_attribute_t> eni_attrs;
@@ -315,6 +321,15 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
 
     eni_attr.id = SAI_ENI_ATTR_ADMIN_STATE;
     eni_attr.value.booldata = entry.admin_state;
+    eni_attrs.push_back(eni_attr);
+
+    eni_attr.id = SAI_ENI_ATTR_VM_UNDERLAY_DIP;
+    copy(eni_attr.value.ipaddr, entry.underlay_ip);
+    eni_attrs.push_back(eni_attr);
+
+    eni_attr.id = SAI_ENI_ATTR_VM_VNI;
+    auto app_entry = appliance_entries_.begin()->second;
+    eni_attr.value.u32 = app_entry.vm_vni;
     eni_attrs.push_back(eni_attr);
 
     sai_status_t status = sai_dash_eni_api->create_eni(&eni_id, gSwitchId,
