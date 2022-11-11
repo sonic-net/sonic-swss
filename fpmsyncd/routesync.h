@@ -3,6 +3,7 @@
 
 #include "dbconnector.h"
 #include "producerstatetable.h"
+#include "shmproducerstatetable.h"
 #include "netmsg.h"
 #include "warmRestartHelper.h"
 #include <string.h>
@@ -30,7 +31,7 @@ public:
 
 private:
     /* regular route table */
-    ProducerStateTable  m_routeTable;
+    ShmProducerStateTable  m_routeTable;
     /* label route table */
     ProducerStateTable  m_label_routeTable;
     /* vnet route table */

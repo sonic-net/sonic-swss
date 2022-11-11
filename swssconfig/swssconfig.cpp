@@ -9,6 +9,7 @@
 #include "logger.h"
 #include "dbconnector.h"
 #include "producerstatetable.h"
+#include "shmproducerstatetable.h"
 #include "json.hpp"
 
 using namespace std;
@@ -43,7 +44,7 @@ bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items)
 {
     DBConnector db("APPL_DB", 0, false);
     RedisPipeline pipeline(&db); // dtor of RedisPipeline will automatically flush data
-    unordered_map<string, ProducerStateTable> table_map;
+    unordered_map<string, std::shared_ptr<ProducerStateTable>> table_map;
     
     for (auto &db_item : db_items)
     {
@@ -58,12 +59,27 @@ bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items)
         }
         string table_name = key.substr(0, pos);
         string key_name = key.substr(pos + 1);
-        auto ret = table_map.emplace(std::piecewise_construct, std::forward_as_tuple(table_name), std::forward_as_tuple(&pipeline, table_name, true));
+        
+        auto ret = table_map.find(table_name);
+        if (ret == table_map.end())
+        {
+            ProducerStateTable* tmp_table;
+            if (table_name == APP_ROUTE_TABLE_NAME)
+            {
+                tmp_table = new ShmProducerStateTable(&pipeline, table_name, true);
+            }
+            else
+            {
+                tmp_table = new ProducerStateTable(&pipeline, table_name, true);
+            }
+
+            ret = table_map.emplace(table_name, tmp_table).first;
+        }
 
         if (kfvOp(db_item) == SET_COMMAND)
-            ret.first->second.set(key_name, kfvFieldsValues(db_item), SET_COMMAND);
+            ret->second->set(key_name, kfvFieldsValues(db_item), SET_COMMAND);
         else if (kfvOp(db_item) == DEL_COMMAND)
-            ret.first->second.del(key_name, DEL_COMMAND);
+            ret->second->del(key_name, DEL_COMMAND);
         else
         {
             SWSS_LOG_ERROR("Invalid operation: %s\n", kfvOp(db_item).c_str());
