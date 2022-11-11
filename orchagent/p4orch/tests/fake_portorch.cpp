@@ -606,6 +606,11 @@ bool PortsOrch::getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uin
     return true;
 }
 
+bool PortsOrch::isAutoNegEnabled(sai_object_id_t id)
+{
+    return true;
+}
+
 task_process_status PortsOrch::setPortAutoNeg(sai_object_id_t id, int an)
 {
     return task_success;
