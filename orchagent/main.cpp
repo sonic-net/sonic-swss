@@ -708,9 +708,8 @@ int main(int argc, char **argv)
         if (gMySwitchType == "voq")
         {
             orchDaemon->setFabricEnabled(true);
-            // SAI doesn't fully support counters for non fabric asics
-            orchDaemon->setFabricPortStatEnabled(false);
-            orchDaemon->setFabricQueueStatEnabled(false);
+            orchDaemon->setFabricPortStatEnabled(true);
+            orchDaemon->setFabricQueueStatEnabled(true);
         }
     }
     else
