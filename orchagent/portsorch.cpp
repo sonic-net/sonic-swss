@@ -4587,6 +4587,50 @@ void PortsOrch::initializeQueues(Port &port)
     SWSS_LOG_INFO("Get queues for port %s", port.m_alias.c_str());
 }
 
+void PortsOrch::initializeSchedulerGroups(Port &port)
+{
+    std::vector<sai_object_id_t> scheduler_group_ids;
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_QOS_NUMBER_OF_SCHEDULER_GROUPS;
+    sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get number of scheduler groups for port:%s", port.m_alias.c_str());
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            throw runtime_error("PortsOrch initialization failure.");
+        }
+    }
+    SWSS_LOG_INFO("Got %d number of scheduler groups for port %s", attr.value.u32, port.m_alias.c_str());
+
+    scheduler_group_ids.resize(attr.value.u32);
+
+    if (attr.value.u32 == 0)
+    {
+        return;
+    }
+
+    attr.id = SAI_PORT_ATTR_QOS_SCHEDULER_GROUP_LIST;
+    attr.value.objlist.count = (uint32_t)scheduler_group_ids.size();
+    attr.value.objlist.list = scheduler_group_ids.data();
+
+    status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get scheduler group list for port %s rv:%d", port.m_alias.c_str(), status);
+        task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, status);
+        if (handle_status != task_process_status::task_success)
+        {
+            throw runtime_error("PortsOrch initialization failure.");
+        }
+    }
+
+    SWSS_LOG_INFO("Got scheduler groups for port %s", port.m_alias.c_str());
+}
+
 void PortsOrch::initializePriorityGroups(Port &port)
 {
     SWSS_LOG_ENTER();
@@ -4661,6 +4705,7 @@ bool PortsOrch::initializePort(Port &port)
 
     initializePriorityGroups(port);
     initializeQueues(port);
+    initializeSchedulerGroups(port);
     initializePortBufferMaximumParameters(port);
 
     /* Create host interface */
