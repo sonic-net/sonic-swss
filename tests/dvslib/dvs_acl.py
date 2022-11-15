@@ -241,11 +241,11 @@ class DVSAcl:
             num_tables: The total number of ACL tables in ASIC DB.
             stage: The stage of the ACL table that was created.
         """
-        fvs = self.asic_db.wait_for_entry(self.ADB_ACL_GROUP_TABLE_NAME, acl_table_id)
+        fvs = self.asic_db.wait_for_entry(self.ADB_ACL_TABLE_NAME, acl_table_id)
         action_list_str = fvs.get('SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST')
         action_count, actions = action_list_str.split(':')
         action_list = actions.split(',')
-        assert (action_count == len(action_list))
+        assert (int(action_count) == len(action_list))
         for action in expected_action_list:
             assert action in action_list
 

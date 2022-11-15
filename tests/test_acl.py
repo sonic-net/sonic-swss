@@ -12,11 +12,11 @@ L3V6_RULE_NAME = "L3V6_TEST_RULE"
 
 PFCWD_TABLE_NAME = "PFCWD_TEST"
 PFCWD_TABLE_TYPE = "PFCWD"
-PFCWD_BIND_PORTS = ["Ethernet0", "Ethernet4", "Ethernet8", "Ethernet12"]
+PFCWD_BIND_PORTS = ["Ethernet16"]
 
 DROP_TABLE_NAME = "DROP_TEST"
 DROP_TABLE_TYPE = "DROP"
-DROP_BIND_PORTS = ["Ethernet0", "Ethernet4", "Ethernet8", "Ethernet12"]
+DROP_BIND_PORTS = ["Ethernet20"]
 
 
 class TestAcl:
