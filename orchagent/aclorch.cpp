@@ -2918,7 +2918,7 @@ bool AclOrch::removeAclTable(string table_id)
         sai_acl_stage_t sai_stage = (stage == ACL_STAGE_INGRESS) ? SAI_ACL_STAGE_INGRESS : SAI_ACL_STAGE_EGRESS;
         gCrmOrch->decCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, sai_stage, SAI_ACL_BIND_POINT_TYPE_PORT, table_oid);
 
-        if (type != ACL_TABLE_PFCWD)
+        if ((type != ACL_TABLE_PFCWD) && (type != ACL_TABLE_DROP))
         {
             gCrmOrch->decCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, sai_stage, SAI_ACL_BIND_POINT_TYPE_LAG, table_oid);
         }
