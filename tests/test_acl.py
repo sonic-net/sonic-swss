@@ -10,6 +10,14 @@ L3V6_TABLE_NAME = "L3_V6_TEST"
 L3V6_BIND_PORTS = ["Ethernet0", "Ethernet4", "Ethernet8"]
 L3V6_RULE_NAME = "L3V6_TEST_RULE"
 
+PFCWD_TABLE_NAME = "PFCWD_TEST"
+PFCWD_TABLE_TYPE = "PFCWD"
+PFCWD_BIND_PORTS = ["Ethernet0", "Ethernet4", "Ethernet8", "Ethernet12"]
+
+DROP_TABLE_NAME = "DROP_TEST"
+DROP_TABLE_TYPE = "DROP"
+DROP_BIND_PORTS = ["Ethernet0", "Ethernet4", "Ethernet8", "Ethernet12"]
+
 
 class TestAcl:
     @pytest.fixture
@@ -63,6 +71,29 @@ class TestAcl:
         finally:
             dvs_acl.remove_acl_table(L3_TABLE_NAME)
             dvs_acl.verify_acl_table_count(0)
+
+    
+    def test_PFCWDAclTableCreationDeletion(self, dvs_acl):
+        try:
+            dvs_acl.create_acl_table(PFCWD_TABLE_NAME, PFCWD_TABLE_TYPE, PFCWD_BIND_PORTS)
+            acl_table_id = dvs_acl.get_acl_table_ids(1)[0]
+            expected_action_list = ['SAI_ACL_ACTION_TYPE_PACKET_ACTION']
+            dvs_acl.verify_acl_table_action_list(acl_table_id, expected_action_list)
+        finally:
+            dvs_acl.remove_acl_table(PFCWD_TABLE_NAME)
+            dvs_acl.verify_acl_table_count(0)
+
+
+    def test_DROPAclTableCreationDeletion(self, dvs_acl):
+        try:
+            dvs_acl.create_acl_table(DROP_TABLE_NAME, DROP_TABLE_TYPE, DROP_BIND_PORTS)
+            acl_table_id = dvs_acl.get_acl_table_ids(1)[0]
+            expected_action_list = ['SAI_ACL_ACTION_TYPE_PACKET_ACTION']
+            dvs_acl.verify_acl_table_action_list(acl_table_id, expected_action_list)
+        finally:
+            dvs_acl.remove_acl_table(DROP_TABLE_NAME)
+            dvs_acl.verify_acl_table_count(0)
+
 
     def test_AclRuleL4SrcPort(self, dvs_acl, l3_acl_table):
         config_qualifiers = {"L4_SRC_PORT": "65000"}

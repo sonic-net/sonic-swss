@@ -227,6 +227,29 @@ class DVSAcl:
 
         self.verify_acl_table_group_members(acl_table_id, acl_table_group_ids, num_tables)
 
+
+    def verify_acl_table_action_list(
+            self,
+            acl_table_id: str,
+            expected_action_list: List[str],
+    ) -> None:
+        """Verify that the ACL table has specified action list.
+
+        Args:
+            acl_table_id: The ACL table that is being checked.
+            expected_action_list: The expected action list set to the given ACL table.
+            num_tables: The total number of ACL tables in ASIC DB.
+            stage: The stage of the ACL table that was created.
+        """
+        fvs = self.asic_db.wait_for_entry(self.ADB_ACL_GROUP_TABLE_NAME, acl_table_id)
+        action_list_str = fvs.get('SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST')
+        action_count, actions = action_list_str.split(':')
+        action_list = actions.split(',')
+        assert (action_count == len(action_list))
+        for action in expected_action_list:
+            assert action in action_list
+
+
     def create_acl_rule(
             self,
             table_name: str,
