@@ -1384,6 +1384,14 @@ bool AclTable::create()
         attr.value.s32 = (stage == ACL_STAGE_INGRESS) ? SAI_ACL_STAGE_INGRESS : SAI_ACL_STAGE_EGRESS;
         table_attrs.push_back(attr);
 
+        // Only packet action is required for PFCWD and DROP
+        attr.id = SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST;
+        int32_t acl_action_list[1];
+        acl_action_list[0] = SAI_ACL_ACTION_TYPE_PACKET_ACTION;
+        attr.value.s32list.count = 1;
+        attr.value.s32list.list = acl_action_list;
+        table_attrs.push_back(attr);
+
         if (stage == ACL_STAGE_INGRESS)
         {
             attr.id = SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS;
