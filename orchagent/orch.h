@@ -132,32 +132,21 @@ protected:
     swss::Selectable *getSelectable() const { return m_selectable; }
 };
 
-class Consumer : public Executor {
+class ConsumerBase : public Executor {
 public:
-    Consumer(swss::ConsumerTableBase *select, Orch *orch, const std::string &name)
+    ConsumerBase(swss::Selectable *selectable, Orch *orch, const std::string &name)
         : Executor(select, orch, name)
     {
     }
 
-    swss::ConsumerTableBase *getConsumerTable() const
-    {
-        return static_cast<swss::ConsumerTableBase *>(getSelectable());
-    }
+    virtual std::string getTableName() const = 0;
 
-    std::string getTableName() const
-    {
-        return getConsumerTable()->getTableName();
-    }
+    virtual std::string getTableNameSeparator() const = 0;
 
-    int getDbId() const
-    {
-        return getConsumerTable()->getDbConnector()->getDbId();
-    }
+    const DBConnector* getDbConnector() const = 0;
 
-    std::string getDbName() const
-    {
-        return getConsumerTable()->getDbConnector()->getDbName();
-    }
+    /* Get multiple pop elements */
+    virtual void pops(std::deque<KeyOpFieldsValuesTuple> &vkco, const std::string &prefix = EMPTY_PREFIX) = 0;
 
     std::string dumpTuple(const swss::KeyOpFieldsValuesTuple &tuple);
     void dumpPendingTasks(std::vector<std::string> &ts);
@@ -175,6 +164,41 @@ public:
 
     // Returns: the number of entries added to m_toSync
     size_t addToSync(const std::deque<swss::KeyOpFieldsValuesTuple> &entries);
+};
+
+class Consumer : public ConsumerBase {
+public:
+    Consumer(swss::ConsumerTableBase *select, Orch *orch, const std::string &name)
+        : ConsumerBase(select, orch, name)
+    {
+    }
+
+    swss::ConsumerTableBase *getConsumerTable() const
+    {
+        return static_cast<swss::ConsumerTableBase *>(getSelectable());
+    }
+
+    std::string getTableName() const override
+    {
+        return getConsumerTable()->getTableName();
+    }
+
+    std::string getTableNameSeparator() const override
+    {
+        return getConsumerTable()->getTableNameSeparator();
+    }
+
+    const DBConnector* getDbConnector() const override
+    {
+        return getConsumerTable()->getDbConnector();
+    }
+
+    /* Get multiple pop elements */
+    void pops(std::deque<KeyOpFieldsValuesTuple> &vkco, const std::string &prefix = EMPTY_PREFIX) override
+    {
+        getConsumerTable()->pops(vkco, prefix);
+    }
+
 };
 
 typedef std::map<std::string, std::shared_ptr<Executor>> ConsumerMap;

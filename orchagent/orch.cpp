@@ -70,7 +70,7 @@ vector<Selectable *> Orch::getSelectables()
     return selectables;
 }
 
-void Consumer::addToSync(const KeyOpFieldsValuesTuple &entry)
+void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry)
 {
     SWSS_LOG_ENTER();
 
@@ -157,7 +157,7 @@ void Consumer::addToSync(const KeyOpFieldsValuesTuple &entry)
 
 }
 
-size_t Consumer::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries)
+size_t ConsumerBase::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries)
 {
     SWSS_LOG_ENTER();
 
@@ -170,7 +170,7 @@ size_t Consumer::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries)
 }
 
 // TODO: Table should be const
-size_t Consumer::refillToSync(Table* table)
+size_t ConsumerBase::refillToSync(Table* table)
 {
     std::deque<KeyOpFieldsValuesTuple> entries;
     vector<string> keys;
@@ -192,11 +192,9 @@ size_t Consumer::refillToSync(Table* table)
     return addToSync(entries);
 }
 
-size_t Consumer::refillToSync()
+size_t ConsumerBase::refillToSync()
 {
-    ConsumerTableBase *consumerTable = getConsumerTable();
-
-    auto subTable = dynamic_cast<SubscriberStateTable *>(consumerTable);
+    auto subTable = dynamic_cast<SubscriberStateTable *>(getSelectable());
     if (subTable != NULL)
     {
         size_t update_size = 0;
@@ -213,14 +211,14 @@ size_t Consumer::refillToSync()
     else
     {
         // consumerTable is either ConsumerStateTable or ConsumerTable
-        auto db = consumerTable->getDbConnector();
-        string tableName = consumerTable->getTableName();
+        auto db = getDbConnector();
+        string tableName = getTableName();
         auto table = Table(db, tableName);
         return refillToSync(&table);
     }
 }
 
-void Consumer::execute()
+void ConsumerBase::execute()
 {
     SWSS_LOG_ENTER();
 
@@ -228,22 +226,22 @@ void Consumer::execute()
     do
     {
         std::deque<KeyOpFieldsValuesTuple> entries;
-        getConsumerTable()->pops(entries);
+        pops(entries);
         update_size = addToSync(entries);
     } while (update_size != 0);
 
     drain();
 }
 
-void Consumer::drain()
+void ConsumerBase::drain()
 {
     if (!m_toSync.empty())
         m_orch->doTask(*this);
 }
 
-string Consumer::dumpTuple(const KeyOpFieldsValuesTuple &tuple)
+string ConsumerBase::dumpTuple(const KeyOpFieldsValuesTuple &tuple)
 {
-    string s = getTableName() + getConsumerTable()->getTableNameSeparator() + kfvKey(tuple)
+    string s = getTableName() + getTableNameSeparator() + kfvKey(tuple)
                + "|" + kfvOp(tuple);
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
     {
@@ -253,7 +251,7 @@ string Consumer::dumpTuple(const KeyOpFieldsValuesTuple &tuple)
     return s;
 }
 
-void Consumer::dumpPendingTasks(vector<string> &ts)
+void ConsumerBase::dumpPendingTasks(vector<string> &ts)
 {
     for (auto &tm : m_toSync)
     {
