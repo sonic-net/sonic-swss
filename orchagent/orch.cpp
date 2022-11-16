@@ -549,7 +549,7 @@ void Orch::dumpPendingTasks(vector<string> &ts)
 {
     for (auto &it : m_consumerMap)
     {
-        Consumer* consumer = dynamic_cast<Consumer *>(it.second.get());
+        ConsumerBase* consumer = dynamic_cast<ConsumerBase *>(it.second.get());
         if (consumer == NULL)
         {
             SWSS_LOG_DEBUG("Executor is not a Consumer");
@@ -579,7 +579,7 @@ void Orch::logfileReopen()
     }
 }
 
-void Orch::recordTuple(Consumer &consumer, const KeyOpFieldsValuesTuple &tuple)
+void Orch::recordTuple(ConsumerBase &consumer, const KeyOpFieldsValuesTuple &tuple)
 {
     string s = consumer.dumpTuple(tuple);
 
@@ -593,7 +593,7 @@ void Orch::recordTuple(Consumer &consumer, const KeyOpFieldsValuesTuple &tuple)
     }
 }
 
-string Orch::dumpTuple(Consumer &consumer, const KeyOpFieldsValuesTuple &tuple)
+string Orch::dumpTuple(ConsumerBase &consumer, const KeyOpFieldsValuesTuple &tuple)
 {
     string s = consumer.dumpTuple(tuple);
     return s;
@@ -1041,7 +1041,7 @@ bool Orch::parseHandleSaiStatusFailure(task_process_status status)
     return true;
 }
 
-void Orch2::doTask(Consumer &consumer)
+void Orch2::doTask(ConsumerBase &consumer)
 {
     SWSS_LOG_ENTER();
 

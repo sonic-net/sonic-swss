@@ -239,7 +239,7 @@ public:
     virtual void doTask();
 
     /* Run doTask against a specific executor */
-    virtual void doTask(Consumer &consumer) = 0;
+    virtual void doTask(ConsumerBase &consumer) = 0;
     virtual void doTask(swss::NotificationConsumer &consumer) { }
     virtual void doTask(swss::SelectableTimer &timer) { }
 
