@@ -4126,7 +4126,7 @@ void AclOrch::doAclTableTask(Consumer &consumer)
     {
         KeyOpFieldsValuesTuple t = it->second;
         string key = kfvKey(t);
-        size_t found = key.find(consumer.getConsumerTable()->getTableNameSeparator().c_str());
+        size_t found = key.find(consumer.getTableNameSeparator().c_str());
         string table_id = key.substr(0, found);
         string op = kfvOp(t);
 
@@ -4271,7 +4271,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
     {
         KeyOpFieldsValuesTuple t = it->second;
         string key = kfvKey(t);
-        size_t found = key.find(consumer.getConsumerTable()->getTableNameSeparator().c_str());
+        size_t found = key.find(consumer.getTableNameSeparator().c_str());
         string table_id = key.substr(0, found);
         string rule_id = key.substr(found + 1);
         string op = kfvOp(t);

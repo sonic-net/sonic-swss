@@ -70,7 +70,7 @@ vector<Selectable *> Orch::getSelectables()
     return selectables;
 }
 
-void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry)
+void Consumer::addToSync(const KeyOpFieldsValuesTuple &entry)
 {
     SWSS_LOG_ENTER();
 
@@ -157,7 +157,7 @@ void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry)
 
 }
 
-size_t ConsumerBase::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries)
+size_t Consumer::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries)
 {
     SWSS_LOG_ENTER();
 
@@ -170,7 +170,7 @@ size_t ConsumerBase::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries
 }
 
 // TODO: Table should be const
-size_t ConsumerBase::refillToSync(Table* table)
+size_t Consumer::refillToSync(Table* table)
 {
     std::deque<KeyOpFieldsValuesTuple> entries;
     vector<string> keys;
@@ -192,7 +192,7 @@ size_t ConsumerBase::refillToSync(Table* table)
     return addToSync(entries);
 }
 
-size_t ConsumerBase::refillToSync()
+size_t Consumer::refillToSync()
 {
     auto subTable = dynamic_cast<SubscriberStateTable *>(getSelectable());
     if (subTable != NULL)
@@ -218,7 +218,7 @@ size_t ConsumerBase::refillToSync()
     }
 }
 
-void ConsumerBase::execute()
+void Consumer::execute()
 {
     SWSS_LOG_ENTER();
 
@@ -233,13 +233,13 @@ void ConsumerBase::execute()
     drain();
 }
 
-void ConsumerBase::drain()
+void Consumer::drain()
 {
     if (!m_toSync.empty())
         m_orch->doTask(*this);
 }
 
-string ConsumerBase::dumpTuple(const KeyOpFieldsValuesTuple &tuple)
+string Consumer::dumpTuple(const KeyOpFieldsValuesTuple &tuple)
 {
     string s = getTableName() + getTableNameSeparator() + kfvKey(tuple)
                + "|" + kfvOp(tuple);
@@ -251,7 +251,7 @@ string ConsumerBase::dumpTuple(const KeyOpFieldsValuesTuple &tuple)
     return s;
 }
 
-void ConsumerBase::dumpPendingTasks(vector<string> &ts)
+void Consumer::dumpPendingTasks(vector<string> &ts)
 {
     for (auto &tm : m_toSync)
     {
@@ -549,7 +549,7 @@ void Orch::dumpPendingTasks(vector<string> &ts)
 {
     for (auto &it : m_consumerMap)
     {
-        ConsumerBase* consumer = dynamic_cast<ConsumerBase *>(it.second.get());
+        Consumer* consumer = dynamic_cast<Consumer *>(it.second.get());
         if (consumer == NULL)
         {
             SWSS_LOG_DEBUG("Executor is not a Consumer");
@@ -579,7 +579,7 @@ void Orch::logfileReopen()
     }
 }
 
-void Orch::recordTuple(ConsumerBase &consumer, const KeyOpFieldsValuesTuple &tuple)
+void Orch::recordTuple(Consumer &consumer, const KeyOpFieldsValuesTuple &tuple)
 {
     string s = consumer.dumpTuple(tuple);
 
@@ -593,7 +593,7 @@ void Orch::recordTuple(ConsumerBase &consumer, const KeyOpFieldsValuesTuple &tup
     }
 }
 
-string Orch::dumpTuple(ConsumerBase &consumer, const KeyOpFieldsValuesTuple &tuple)
+string Orch::dumpTuple(Consumer &consumer, const KeyOpFieldsValuesTuple &tuple)
 {
     string s = consumer.dumpTuple(tuple);
     return s;
@@ -822,11 +822,15 @@ void Orch::addConsumer(DBConnector *db, string tableName, int pri)
 {
     if (db->getDbId() == CONFIG_DB || db->getDbId() == STATE_DB || db->getDbId() == CHASSIS_APP_DB)
     {
-        addExecutor(new Consumer(new SubscriberStateTable(db, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, pri), this, tableName));
+        addExecutor(new TableConsumer(new SubscriberStateTable(db, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, pri), this, tableName));
+    }
+    else if (db->getDbId() == APPL_DB && tableName == APP_ROUTE_TABLE_NAME)
+    {
+        addExecutor(new ShmConsumer(new ShmConsumerStateTable(db, tableName, gBatchSize, pri), this, tableName));
     }
     else
     {
-        addExecutor(new Consumer(new ConsumerStateTable(db, tableName, gBatchSize, pri), this, tableName));
+        addExecutor(new TableConsumer(new ConsumerStateTable(db, tableName, gBatchSize, pri), this, tableName));
     }
 }
 
@@ -1041,7 +1045,7 @@ bool Orch::parseHandleSaiStatusFailure(task_process_status status)
     return true;
 }
 
-void Orch2::doTask(ConsumerBase &consumer)
+void Orch2::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 

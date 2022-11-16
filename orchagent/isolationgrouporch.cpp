@@ -88,7 +88,7 @@ IsoGrpOrch::doIsoGrpTblTask(Consumer &consumer)
         string op = kfvOp(t);
         string key = kfvKey(t);
 
-        size_t sep_loc = key.find(consumer.getConsumerTable()->getTableNameSeparator().c_str());
+        size_t sep_loc = key.find(consumer.getTableNameSeparator().c_str());
         string name = key.substr(0, sep_loc);
 
         SWSS_LOG_DEBUG("Op:%s IsoGrp:%s", op.c_str(), name.c_str());

@@ -1626,7 +1626,7 @@ void PbhOrch::doPbhRuleTask(Consumer &consumer)
 
         SWSS_LOG_INFO("KEY: %s, OP: %s", key.c_str(), op.c_str());
 
-        auto keyTokens = tokenize(key, consumer.getConsumerTable()->getTableNameSeparator()[0]);
+        auto keyTokens = tokenize(key, consumer.getTableNameSeparator()[0]);
 
         if (keyTokens.size() != 2)
         {

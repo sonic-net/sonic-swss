@@ -174,7 +174,7 @@ namespace aclorch_test
 
         void doAclTableTypeTask(const deque<KeyOpFieldsValuesTuple> &entries)
         {
-            auto consumer = unique_ptr<Consumer>(new Consumer(
+            auto consumer = unique_ptr<Consumer>(new TableConsumer(
                 new swss::ConsumerStateTable(config_db, CFG_ACL_TABLE_TYPE_TABLE_NAME, 1, 1), m_aclOrch, CFG_ACL_TABLE_TYPE_TABLE_NAME));
 
             consumer->addToSync(entries);
@@ -183,7 +183,7 @@ namespace aclorch_test
 
         void doAclTableTask(const deque<KeyOpFieldsValuesTuple> &entries)
         {
-            auto consumer = unique_ptr<Consumer>(new Consumer(
+            auto consumer = unique_ptr<Consumer>(new TableConsumer(
                 new swss::ConsumerStateTable(config_db, CFG_ACL_TABLE_TABLE_NAME, 1, 1), m_aclOrch, CFG_ACL_TABLE_TABLE_NAME));
 
             consumer->addToSync(entries);
@@ -192,7 +192,7 @@ namespace aclorch_test
 
         void doAclRuleTask(const deque<KeyOpFieldsValuesTuple> &entries)
         {
-            auto consumer = unique_ptr<Consumer>(new Consumer(
+            auto consumer = unique_ptr<Consumer>(new TableConsumer(
                 new swss::ConsumerStateTable(config_db, CFG_ACL_RULE_TABLE_NAME, 1, 1), m_aclOrch, CFG_ACL_RULE_TABLE_NAME));
 
             consumer->addToSync(entries);
@@ -440,7 +440,7 @@ namespace aclorch_test
             gMirrorOrch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession,
                                          gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, policer_orch);
 
-            auto consumer = unique_ptr<Consumer>(new Consumer(
+            auto consumer = unique_ptr<Consumer>(new TableConsumer(
                 new swss::ConsumerStateTable(m_app_db.get(), APP_PORT_TABLE_NAME, 1, 1), gPortsOrch, APP_PORT_TABLE_NAME));
 
             consumer->addToSync({ { "PortInitDone", EMPTY_PREFIX, { { "", "" } } } });

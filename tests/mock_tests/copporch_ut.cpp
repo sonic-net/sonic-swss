@@ -24,7 +24,7 @@ namespace copporch_test
         void doCoppTableTask(const std::deque<KeyOpFieldsValuesTuple> &entries)
         {
             // ConsumerStateTable is used for APP DB
-            auto consumer = std::unique_ptr<Consumer>(new Consumer(
+            auto consumer = std::unique_ptr<Consumer>(new TableConsumer(
                 new ConsumerStateTable(this->appDb.get(), APP_COPP_TABLE_NAME, 1, 1),
                 this->coppOrch.get(), APP_COPP_TABLE_NAME
             ));

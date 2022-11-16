@@ -39,7 +39,7 @@ NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch,
     {
         //Add subscriber to process VOQ system neigh
         tableName = CHASSIS_APP_SYSTEM_NEIGH_TABLE_NAME;
-        Orch::addExecutor(new Consumer(new SubscriberStateTable(chassisAppDb, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, 0), this, tableName));
+        Orch::addExecutor(new TableConsumer(new SubscriberStateTable(chassisAppDb, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, 0), this, tableName));
         m_tableVoqSystemNeighTable = unique_ptr<Table>(new Table(chassisAppDb, CHASSIS_APP_SYSTEM_NEIGH_TABLE_NAME));
 
         //STATE DB connection for setting state of the remote neighbor SAI programming
@@ -1221,7 +1221,7 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
         string key = kfvKey(t);
         string op = kfvOp(t);
 
-        size_t found = key.find_last_of(consumer.getConsumerTable()->getTableNameSeparator().c_str());
+        size_t found = key.find_last_of(consumer.getTableNameSeparator().c_str());
         if (found == string::npos)
         {
             SWSS_LOG_ERROR("Failed to parse key %s", key.c_str());

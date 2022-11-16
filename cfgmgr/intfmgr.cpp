@@ -45,12 +45,12 @@ IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
 {
     auto subscriberStateTable = new swss::SubscriberStateTable(stateDb,
             STATE_PORT_TABLE_NAME, TableConsumable::DEFAULT_POP_BATCH_SIZE, 100);
-    auto stateConsumer = new Consumer(subscriberStateTable, this, STATE_PORT_TABLE_NAME);
+    auto stateConsumer = new TableConsumer(subscriberStateTable, this, STATE_PORT_TABLE_NAME);
     Orch::addExecutor(stateConsumer);
 
     auto subscriberStateLagTable = new swss::SubscriberStateTable(stateDb,
             STATE_LAG_TABLE_NAME, TableConsumable::DEFAULT_POP_BATCH_SIZE, 200);
-    auto stateLagConsumer = new Consumer(subscriberStateLagTable, this, STATE_LAG_TABLE_NAME);
+    auto stateLagConsumer = new TableConsumer(subscriberStateLagTable, this, STATE_LAG_TABLE_NAME);
     Orch::addExecutor(stateLagConsumer);
 
     if (!WarmStart::isWarmStart())

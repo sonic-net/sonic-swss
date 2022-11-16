@@ -17,6 +17,7 @@ extern "C" {
 #include "table.h"
 #include "consumertable.h"
 #include "consumerstatetable.h"
+#include "shmconsumerstatetable.h"
 #include "notificationconsumer.h"
 #include "selectabletimer.h"
 #include "macaddress.h"
@@ -132,21 +133,31 @@ protected:
     swss::Selectable *getSelectable() const { return m_selectable; }
 };
 
-class ConsumerBase : public Executor {
+class Consumer : public Executor {
 public:
-    ConsumerBase(swss::Selectable *selectable, Orch *orch, const std::string &name)
-        : Executor(select, orch, name)
+    Consumer(swss::Selectable *selectable, Orch *orch, const std::string &name)
+        : Executor(selectable, orch, name)
     {
+    }
+
+    int getDbId() const
+    {
+        return getDbConnector()->getDbId();
+    }
+
+    std::string getDbName() const
+    {
+        return getDbConnector()->getDbName();
     }
 
     virtual std::string getTableName() const = 0;
 
     virtual std::string getTableNameSeparator() const = 0;
 
-    const DBConnector* getDbConnector() const = 0;
+    virtual const swss::DBConnector* getDbConnector() const = 0;
 
     /* Get multiple pop elements */
-    virtual void pops(std::deque<KeyOpFieldsValuesTuple> &vkco, const std::string &prefix = EMPTY_PREFIX) = 0;
+    virtual void pops(std::deque<swss::KeyOpFieldsValuesTuple> &vkco, const std::string &prefix = EMPTY_PREFIX) = 0;
 
     std::string dumpTuple(const swss::KeyOpFieldsValuesTuple &tuple);
     void dumpPendingTasks(std::vector<std::string> &ts);
@@ -166,10 +177,10 @@ public:
     size_t addToSync(const std::deque<swss::KeyOpFieldsValuesTuple> &entries);
 };
 
-class Consumer : public ConsumerBase {
+class TableConsumer : public Consumer {
 public:
-    Consumer(swss::ConsumerTableBase *select, Orch *orch, const std::string &name)
-        : ConsumerBase(select, orch, name)
+    TableConsumer(swss::ConsumerTableBase *select, Orch *orch, const std::string &name)
+        : Consumer(select, orch, name)
     {
     }
 
@@ -188,17 +199,51 @@ public:
         return getConsumerTable()->getTableNameSeparator();
     }
 
-    const DBConnector* getDbConnector() const override
+    const swss::DBConnector* getDbConnector() const override
     {
         return getConsumerTable()->getDbConnector();
     }
 
     /* Get multiple pop elements */
-    void pops(std::deque<KeyOpFieldsValuesTuple> &vkco, const std::string &prefix = EMPTY_PREFIX) override
+    void pops(std::deque<swss::KeyOpFieldsValuesTuple> &vkco, const std::string &prefix = EMPTY_PREFIX) override
     {
         getConsumerTable()->pops(vkco, prefix);
     }
 
+};
+
+class ShmConsumer : public Consumer {
+public:
+    ShmConsumer(swss::ShmConsumerStateTable *select, Orch *orch, const std::string &name)
+        : Consumer(select, orch, name)
+    {
+    }
+
+    swss::ShmConsumerStateTable *getConsumerTable() const
+    {
+        return static_cast<swss::ShmConsumerStateTable *>(getSelectable());
+    }
+
+    std::string getTableName() const override
+    {
+        return getConsumerTable()->getTableName();
+    }
+
+    std::string getTableNameSeparator() const override
+    {
+        return getConsumerTable()->getTableNameSeparator();
+    }
+
+    const swss::DBConnector* getDbConnector() const override
+    {
+        return getConsumerTable()->getDbConnector();
+    }
+
+    /* Get multiple pop elements */
+    void pops(std::deque<swss::KeyOpFieldsValuesTuple> &vkco, const std::string &prefix = EMPTY_PREFIX) override
+    {
+        getConsumerTable()->pops(vkco, prefix);
+    }
 };
 
 typedef std::map<std::string, std::shared_ptr<Executor>> ConsumerMap;
@@ -239,7 +284,7 @@ public:
     virtual void doTask();
 
     /* Run doTask against a specific executor */
-    virtual void doTask(ConsumerBase &consumer) = 0;
+    virtual void doTask(Consumer &consumer) = 0;
     virtual void doTask(swss::NotificationConsumer &consumer) { }
     virtual void doTask(swss::SelectableTimer &timer) { }
 

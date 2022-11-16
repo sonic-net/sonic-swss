@@ -29,7 +29,7 @@ namespace sflow_test
         void doSflowTableTask(const std::deque<KeyOpFieldsValuesTuple> &entries)
         {
             // ConsumerStateTable is used for APP DB
-            auto consumer = std::unique_ptr<Consumer>(new Consumer(
+            auto consumer = std::unique_ptr<Consumer>((Consumer*)new TableConsumer(
                 new ConsumerStateTable(this->appDb.get(), APP_SFLOW_TABLE_NAME, 1, 1),
                 this->sflowOrch.get(), APP_SFLOW_TABLE_NAME
             ));
@@ -41,7 +41,7 @@ namespace sflow_test
         void doSflowSessionTableTask(const std::deque<KeyOpFieldsValuesTuple> &entries)
         {
             // ConsumerStateTable is used for APP DB
-            auto consumer = std::unique_ptr<Consumer>(new Consumer(
+            auto consumer = std::unique_ptr<Consumer>((Consumer*)new TableConsumer(
                 new ConsumerStateTable(this->appDb.get(), APP_SFLOW_SESSION_TABLE_NAME, 1, 1),
                 this->sflowOrch.get(), APP_SFLOW_SESSION_TABLE_NAME
             ));
@@ -53,7 +53,7 @@ namespace sflow_test
         void doSflowSampleTableTask(const std::deque<KeyOpFieldsValuesTuple> &entries)
         {
             // ConsumerStateTable is used for APP DB
-            auto consumer = std::unique_ptr<Consumer>(new Consumer(
+            auto consumer = std::unique_ptr<Consumer>((Consumer*)new TableConsumer(
                 new ConsumerStateTable(this->appDb.get(), APP_SFLOW_SAMPLE_RATE_TABLE_NAME, 1, 1),
                 this->sflowOrch.get(), APP_SFLOW_SAMPLE_RATE_TABLE_NAME
             ));

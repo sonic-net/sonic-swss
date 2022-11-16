@@ -36,7 +36,7 @@ namespace consumer_test
             m_app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
             m_config_db = make_shared<swss::DBConnector>("CONFIG_DB", 0);
             m_state_db = make_shared<swss::DBConnector>("STATE_DB", 0);
-            consumer = unique_ptr<Consumer>(new Consumer(
+            consumer = unique_ptr<Consumer>((Consumer*)new TableConsumer(
                 new swss::ConsumerStateTable(m_config_db.get(), "CFG_TEST_TABLE", 1, 1), gPortsOrch, "CFG_TEST_TABLE"));
         }
 
