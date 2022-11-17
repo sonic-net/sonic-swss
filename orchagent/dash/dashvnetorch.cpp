@@ -291,6 +291,10 @@ bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
     memcpy(outbound_ca_to_pa_attr.value.mac, ctxt.mac_address.getMac(), sizeof(sai_mac_t));
     outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
 
+    outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_USE_DST_VNET_VNI;
+    outbound_ca_to_pa_attr.value.booldata = ctxt.use_dst_vni;
+    outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+
     object_statuses.emplace_back();
     outbound_ca_to_pa_bulker_.create_entry(&object_statuses.back(), &outbound_ca_to_pa_entry,
             (uint32_t)outbound_ca_to_pa_attrs.size(), outbound_ca_to_pa_attrs.data());

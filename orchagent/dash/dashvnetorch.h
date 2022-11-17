@@ -59,7 +59,7 @@ struct VnetMapBulkContext
     swss::IpAddress underlay_ip;
     swss::MacAddress mac_address;
     uint32_t metering_bucket;
-    bool use_dst_vni;
+    bool use_dst_vni = false;
     std::deque<sai_status_t> outbound_ca_to_pa_object_statuses;
     std::deque<sai_status_t> pa_validation_object_statuses;
     VnetMapBulkContext() {}
