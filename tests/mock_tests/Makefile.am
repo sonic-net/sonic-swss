@@ -62,6 +62,8 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/cbf/nhgmaporch.cpp \
                 $(top_srcdir)/orchagent/neighorch.cpp \
                 $(top_srcdir)/orchagent/intfsorch.cpp \
+                $(top_srcdir)/orchagent/port/portcnt.cpp \
+                $(top_srcdir)/orchagent/port/porthlpr.cpp \
                 $(top_srcdir)/orchagent/portsorch.cpp \
                 $(top_srcdir)/orchagent/fabricportsorch.cpp \
                 $(top_srcdir)/orchagent/copporch.cpp \

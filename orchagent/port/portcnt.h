@@ -1,0 +1,183 @@
+#pragma once
+
+extern "C" {
+#include <saiport.h>
+#include <saibridge.h>
+}
+
+#include <cstdbool>
+#include <cstdint>
+
+#include <unordered_map>
+#include <set>
+#include <vector>
+#include <string>
+
+#include "porttype.h"
+
+class PortContainer
+{
+public:
+    PortContainer() = default;
+    virtual ~PortContainer() = default;
+
+    PortContainer(const std::string &key, const std::string &op) noexcept;
+
+public:
+    std::string key;
+    std::string op;
+    std::unordered_map<std::string, std::string> fieldValueMap;
+};
+
+class PortConfig final : public PortContainer
+{
+public:
+    PortConfig() = default;
+    ~PortConfig() = default;
+
+    PortConfig(const std::string &key, const std::string &op) noexcept;
+
+    struct {
+        std::string value;
+        bool is_set = false;
+    } alias; // Port alias
+
+    struct {
+        std::uint16_t value;
+        bool is_set = false;
+    } index; // Interface index
+
+    struct {
+        std::set<std::uint32_t> value;
+        bool is_set = false;
+    } lanes; // Lane information of a physical port
+
+    struct {
+        std::uint32_t value;
+        bool is_set = false;
+    } speed; // Port speed
+
+    struct {
+        bool value;
+        bool is_set = false;
+    } autoneg; // Port autoneg
+
+    struct {
+        std::set<std::uint32_t> value;
+        bool is_set = false;
+    } adv_speeds; // Port advertised speeds
+
+    struct {
+        sai_port_interface_type_t value;
+        bool is_set = false;
+    } interface_type; // Port interface type
+
+    struct {
+        std::set<sai_port_interface_type_t> value;
+        bool is_set = false;
+    } adv_interface_types; // Port advertised interface types
+
+    struct {
+        sai_port_fec_mode_t value;
+        bool is_set = false;
+    } fec; // Port FEC
+
+    struct {
+        std::uint32_t value;
+        bool is_set = false;
+    } mtu; // Port MTU
+
+    struct {
+        std::uint16_t value;
+        bool is_set = false;
+    } tpid; // Port TPID
+
+    struct {
+        sai_port_priority_flow_control_mode_t value;
+        bool is_set = false;
+    } pfc_asym; // Port asymmetric PFC
+
+    struct {
+        sai_bridge_port_fdb_learning_mode_t value;
+        bool is_set = false;
+    } learn_mode; // Port FDB learn mode
+
+    struct {
+        bool value;
+        bool is_set = false;
+    } link_training; // Port link training
+
+    struct {
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } preemphasis; // Port serdes pre-emphasis
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } idriver; // Port serdes idriver
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } ipredriver; // Port serdes ipredriver
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } pre1; // Port serdes pre1
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } pre2; // Port serdes pre2
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } pre3; // Port serdes pre3
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } main; // Port serdes main
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } post1; // Port serdes post1
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } post2; // Port serdes post2
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } post3; // Port serdes post3
+
+        struct {
+            std::vector<std::uint32_t> value;
+            bool is_set = false;
+        } attn; // Port serdes attn
+
+    } serdes; // Port serdes
+
+    struct {
+        PortRole_t value;
+        bool is_set = false;
+    } role; // Port role
+
+    struct {
+        bool value;
+        bool is_set = false;
+    } admin_status; // Port admin status
+
+    struct {
+        std::string value;
+        bool is_set = false;
+    } description; // Port description
+};

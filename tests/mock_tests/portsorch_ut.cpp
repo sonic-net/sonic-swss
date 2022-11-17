@@ -10,6 +10,9 @@
 #define private public
 #include "pfcactionhandler.h"
 #undef private
+#define private public
+#include "warm_restart.h"
+#undef private
 
 #include <sstream>
 
@@ -270,6 +273,16 @@ namespace portsorch_test
 
     };
 
+    TEST_F(PortsOrchTest, PortLegacyCreateRemove)
+    {
+        // TODO: implement test case
+    }
+
+    TEST_F(PortsOrchTest, PortBulkCreateRemove)
+    {
+        // TODO: implement test case
+    }
+
     /**
      * Test that verifies PortsOrch::getPort() on a port that has been deleted
      */
@@ -339,7 +352,9 @@ namespace portsorch_test
 
         entries.push_back({"Ethernet0", "SET",
                            {
-                               {"fec", "rs"}
+                               { "lanes", "29,30,31,32" },
+                               { "speed", "1000"        },
+                               { "fec",   "rs"          }
                            }});
         auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
         consumer->addToSync(entries);
@@ -356,7 +371,9 @@ namespace portsorch_test
 
         entries.push_back({"Ethernet0", "SET",
                            {
-                               {"fec", "none"}
+                               { "lanes", "29,30,31,32" },
+                               { "speed", "1000"        },
+                               { "fec",   "none"        }
                            }});
         consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
         consumer->addToSync(entries);
@@ -403,7 +420,9 @@ namespace portsorch_test
 
         entries.push_back({"Ethernet0", "SET",
                            {
-                               {"fec", "rs"}
+                               { "lanes", "29,30,31,32" },
+                               { "speed", "1000"        },
+                               { "fec",   "rs"          }
                            }});
         auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
         consumer->addToSync(entries);
@@ -540,7 +559,6 @@ namespace portsorch_test
         //  create ports
 
         static_cast<Orch *>(gBufferOrch)->doTask();
-
         static_cast<Orch *>(gPortsOrch)->doTask();
 
         // Ports are not ready yet
@@ -624,6 +642,12 @@ namespace portsorch_test
 
         portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
         portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        // warm start, initialize ports ready list
+
+        WarmStart::getInstance().m_enabled = true;
+        gBufferOrch->initBufferReadyLists(m_app_db.get(), m_config_db.get());
+        WarmStart::getInstance().m_enabled = false;
 
         // warm start, bake fill refill consumer
 
