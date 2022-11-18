@@ -99,7 +99,8 @@ private:
     void parseInitFile(void);
     bool isTrapGroupInstalled(std::string key);
     bool isFeatureEnabled(std::string feature);
-    void mergeConfig(CoppCfg &init_cfg, CoppCfg &m_cfg, std::vector<std::string> &cfg_keys, Table &cfgTable);
+    void mergeConfig(CoppCfg &init_cfg, CoppCfg &m_cfg, std::vector<std::string> &cfg_keys, Table &cfgTable,
+    std::vector<std::string> &prev_copp_keys);
 
     void removeTrap(std::string key);
     void addTrap(std::string trap_ids, std::string trap_group);
