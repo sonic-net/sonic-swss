@@ -410,6 +410,10 @@ public:
     {
         return vxlan_tunnel_map_table_.find(name) != std::end(vxlan_tunnel_map_table_);
     }
+
+    bool isVniVlanMapExists(uint32_t vni_id, std::string& vniVlanMapName, sai_object_id_t *tnl_map_entry_id, uint32_t *vlan_id);
+
+    void updateTnlMapId(std::string vniVlanMapName, sai_object_id_t tunnel_map_id);
 private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
@@ -436,6 +440,10 @@ public:
 struct vrf_map_entry_t {
     sai_object_id_t encap_id;
     sai_object_id_t decap_id;
+    bool isL2Vni;
+    std::string vniVlanMapName;
+    uint32_t vlan_id;
+    uint32_t vni_id;
 };
 
 typedef std::map<string, vrf_map_entry_t> VxlanVrfTable;
