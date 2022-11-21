@@ -2280,10 +2280,10 @@ bool VxlanVrfMapOrch::delOperation(const Request& request)
             const auto tunnel_map_id = tunnel_obj->getDecapMapId(TUNNEL_MAP_T_VLAN);
             SWSS_LOG_NOTICE("Adding tunnel map entry. Tunnel: %s %s",tunnel_name.c_str(),entry.vniVlanMapName.c_str());
 
-            SWSS_LOG_DEBUG("create_tunnel_map_entry tunnel_map_id %lx, vni %d, vlan %d\n", tunnel_map_id, entry.vni_id, entry.vlan_id);
+            SWSS_LOG_DEBUG("create_tunnel_map_entry vni %d, vlan %d\n", entry.vni_id, entry.vlan_id);
             auto tunnel_map_entry_id = create_tunnel_map_entry(MAP_T::VNI_TO_VLAN_ID,
                     tunnel_map_id, entry.vni_id, (uint16_t)entry.vlan_id);
-            SWSS_LOG_DEBUG("updateTnlMapId name %s, map %lx\n", entry.vniVlanMapName.c_str(), tunnel_map_entry_id);
+            SWSS_LOG_DEBUG("updateTnlMapId name %s\n", entry.vniVlanMapName.c_str());
 
             vxlan_tun_map_orch->updateTnlMapId(entry.vniVlanMapName, tunnel_map_entry_id);
         }
@@ -2648,7 +2648,7 @@ bool VxlanTunnelMapOrch::isVniVlanMapExists(uint32_t vni_id, std::string& vniVla
             *tnl_map_entry_id = tunnel_map_entry.map_entry_id;
             *vlan_id = tunnel_map_entry.vlan_id;
             map_entry_exists = true;
-            SWSS_LOG_NOTICE("vniVlanMapName %s, map %lx, vlan %d\n", vniVlanMapName.c_str(), *tnl_map_entry_id, *vlan_id);
+            SWSS_LOG_NOTICE("vniVlanMapName %s, vlan %d\n", vniVlanMapName.c_str(), *vlan_id);
             break;
         }
     }
@@ -2659,7 +2659,7 @@ bool VxlanTunnelMapOrch::isVniVlanMapExists(uint32_t vni_id, std::string& vniVla
 void VxlanTunnelMapOrch::updateTnlMapId(std::string vniVlanMapName, sai_object_id_t tunnel_map_id)
 {
     SWSS_LOG_ENTER();
-    SWSS_LOG_NOTICE("name %s, map %lx\n", vniVlanMapName.c_str(), tunnel_map_id);
+    SWSS_LOG_NOTICE("name %s\n", vniVlanMapName.c_str());
     vxlan_tunnel_map_table_[vniVlanMapName].map_entry_id = tunnel_map_id;
 }
 
