@@ -737,10 +737,10 @@ void WcmpManager::updatePortOperStatusMap(const std::string &port, const sai_por
 ReturnCode WcmpManager::getSaiObject(const std::string &json_key, sai_object_type_t &object_type, std::string &object_key)
 {
     std::string     value;
-    nlohmann::json  j = nlohmann::json::parse(json_key);
 
     try
     {
+        nlohmann::json  j = nlohmann::json::parse(json_key);
         if (j.find(prependMatchField(p4orch::kWcmpGroupId)) != j.end())
         {
             value = j.at(prependMatchField(p4orch::kWcmpGroupId)).get<std::string>();
@@ -748,10 +748,14 @@ ReturnCode WcmpManager::getSaiObject(const std::string &json_key, sai_object_typ
             object_type = SAI_OBJECT_TYPE_NEXT_HOP_GROUP;
             return ReturnCode();
         }
+        else
+        {
+            SWSS_LOG_ERROR("%s match parameter absent: required for dependent object query", p4orch::kWcmpGroupId);
+        }
     }
     catch (std::exception &ex)
     {
-        SWSS_LOG_ERROR("unsupported action");
+        SWSS_LOG_ERROR("json_key parse error");
     }
 
     return StatusCode::SWSS_RC_INVALID_PARAM;

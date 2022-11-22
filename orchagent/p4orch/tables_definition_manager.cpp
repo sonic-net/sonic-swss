@@ -208,7 +208,7 @@ parseTableCounter (const nlohmann::json &table_json, TableInfo &table)
 }
 
 ReturnCode
-parseTables (const nlohmann::json &info_json, TablesInfo &info_entry)
+parseTablesInfo (const nlohmann::json &info_json, TablesInfo &info_entry)
 {
     ReturnCode status;
     int table_id;
@@ -294,20 +294,6 @@ parseTables (const nlohmann::json &info_json, TablesInfo &info_entry)
 
         info_entry.m_tableIdNameMap[std::to_string(table_id)] = table_name;
         info_entry.m_tableInfoMap[table_name] = table;
-    }
-
-    return ReturnCode();
-}
-
-ReturnCode
-parseTablesInfo (const nlohmann::json &info_json, TablesInfo &info_entry)
-{
-    ReturnCode status;
-
-    status = parseTables(info_json, info_entry);
-    if (!status.ok())
-    {
-        return status;
     }
 
     return ReturnCode();
@@ -437,7 +423,7 @@ ReturnCode TablesDefnManager::getSaiObject(const std::string &json_key,
 }
 
 std::unordered_map<int, std::unordered_set<int>>
-createGraph (int tables, std::vector<std::pair<int, int>> preReq)
+createGraph (std::vector<std::pair<int, int>> preReq)
 {
     std::unordered_map<int, std::unordered_set<int>> graph;
 
@@ -485,7 +471,7 @@ computeIndegree (std::unordered_map<int, std::unordered_set<int>> &graph)
 std::vector<int>
 findTablePrecedence (int tables, std::vector<std::pair<int, int>> preReq, TablesInfo *tables_info)
 {
-    std::unordered_map<int, std::unordered_set<int>> graph = createGraph(tables, preReq);
+    std::unordered_map<int, std::unordered_set<int>> graph = createGraph(preReq);
     std::unordered_map<int, int> degrees = computeIndegree(graph);
     std::vector<int> visited;
     std::vector<int> toposort;

@@ -24,10 +24,10 @@ namespace p4orch
 ReturnCode MirrorSessionManager::getSaiObject(const std::string &json_key, sai_object_type_t &object_type, std::string &object_key)
 {
     std::string     value;
-    nlohmann::json  j = nlohmann::json::parse(json_key);
 
     try
     {
+        nlohmann::json  j = nlohmann::json::parse(json_key);
         if (j.find(prependMatchField(p4orch::kMirrorSessionId)) != j.end())
         {
             value = j.at(prependMatchField(p4orch::kMirrorSessionId)).get<std::string>();
@@ -35,10 +35,14 @@ ReturnCode MirrorSessionManager::getSaiObject(const std::string &json_key, sai_o
             object_type = SAI_OBJECT_TYPE_MIRROR_SESSION;
             return ReturnCode();
         }
+        else
+        {
+            SWSS_LOG_ERROR("%s match parameter absent: required for dependent object query", p4orch::kMirrorSessionId);
+        }
     }
     catch (std::exception &ex)
     {
-        SWSS_LOG_ERROR("unsupported action");
+        SWSS_LOG_ERROR("json_key parse error");
     }
 
     return StatusCode::SWSS_RC_INVALID_PARAM;

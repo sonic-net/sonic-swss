@@ -328,10 +328,10 @@ ReturnCode NeighborManager::getSaiObject(const std::string &json_key, sai_object
 {
     std::string     router_intf_id, neighbor_id;
     swss::IpAddress neighbor;
-    nlohmann::json  j = nlohmann::json::parse(json_key);
 
     try
     {
+        nlohmann::json  j = nlohmann::json::parse(json_key);
         if (j.find(prependMatchField(p4orch::kRouterInterfaceId)) != j.end())
         {
             router_intf_id = j.at(prependMatchField(p4orch::kRouterInterfaceId)).get<std::string>();
@@ -343,11 +343,19 @@ ReturnCode NeighborManager::getSaiObject(const std::string &json_key, sai_object
                 object_type = SAI_OBJECT_TYPE_NEIGHBOR_ENTRY;
                 return ReturnCode();
             }
+            else
+            {
+                SWSS_LOG_ERROR("%s match parameter absent: required for dependent object query", p4orch::kNeighborId);
+            }
+        }
+        else
+        {
+            SWSS_LOG_ERROR("%s match parameter absent: required for dependent object query", p4orch::kRouterInterfaceId);
         }
     }
     catch (std::exception &ex)
     {
-        SWSS_LOG_ERROR("unsupported action");
+        SWSS_LOG_ERROR("json_key parse error");
     }
 
     return StatusCode::SWSS_RC_INVALID_PARAM;
