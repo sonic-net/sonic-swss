@@ -9,6 +9,8 @@
 #include "shellcmd.h"
 #include "warm_restart.h"
 #include "json.hpp"
+#include <unordered_map>
+#include <unordered_set>
 
 using json = nlohmann::json;
 
@@ -193,6 +195,7 @@ bool CoppMgr::isTrapIdDisabled(string trap_id)
 
 void CoppMgr::mergeConfig(CoppCfg &init_cfg, CoppCfg &m_cfg, std::vector<std::string> &cfg_keys, Table &cfgTable)
 {
+    CoppCfg helper;
     /* Read the init configuration first. If the same key is present in
      * user configuration, override the init fields with user fields
      */
@@ -232,12 +235,12 @@ void CoppMgr::mergeConfig(CoppCfg &init_cfg, CoppCfg &m_cfg, std::vector<std::st
             }
             if (!null_cfg)
             {
-                m_cfg[i.first] = merged_fvs;
+                helper[i.first] = merged_fvs;
             }
         }
         else
         {
-            m_cfg[i.first] = init_cfg[i.first];
+            helper[i.first] = init_cfg[i.first];
         }
     }
 
@@ -250,7 +253,69 @@ void CoppMgr::mergeConfig(CoppCfg &init_cfg, CoppCfg &m_cfg, std::vector<std::st
         {
             std::vector<FieldValueTuple> cfg_fvs;
             cfgTable.get(i, cfg_fvs);
-            m_cfg[i] = cfg_fvs;
+            helper[i] = cfg_fvs;
+        }
+    }
+
+    /* Compare with the existing content of copp tables, in case values merged in helper map
+     * will be ignored as they are duplicates. In case the value in helper (merge of init and
+     * user config) will overwrie the copp table entries, current entry will be deleted from copp
+     * tables.
+     */
+    unordered_map<string, string> preserved_copp_entry;
+    unordered_map<string, string>::const_iterator preserved_copp_it;
+    string field;
+    string value;
+    for (auto i : helper)
+    {
+        string table_key = i.first;
+        std::vector<FieldValueTuple> helper_fvs = i.second;
+        std::vector<FieldValueTuple> preserved_fvs;
+        std::vector<FieldValueTuple> new_fvs;
+
+        bool key_found = m_coppTable.get(table_key, preserved_fvs);
+        if (!key_found)
+        {
+            // key is not found in preserved copp table -> add
+            m_cfg[table_key] = helper[table_key];
+        }
+        else
+        {
+            for (auto prev_fv : preserved_fvs)
+            {
+                preserved_copp_entry[fvField(prev_fv)] = fvValue(prev_fv);
+            }
+            for (auto helper_fv: helper_fvs)
+            {
+                field = fvField(helper_fv);
+                value = fvValue(helper_fv);
+                preserved_copp_it = preserved_copp_entry.find(field);
+                bool field_found = (preserved_copp_it != preserved_copp_entry.end());
+                bool overwrite = false;
+                if (field_found)
+                {
+                    if (!preserved_copp_it->second.compare(value))
+                    {
+                        // duplicate -> ignore and continue to next key.
+                        continue;
+                    }
+                    else
+                    {
+                        // overwrite -> delete preserved FV tuple from copp table and add helper fvs to m_cfg
+                        overwrite = true;
+                        m_coppTable.hdel(table_key, field);
+                    }
+                }
+                if (!field_found || overwrite)
+                {
+                    new_fvs.push_back(helper_fv);
+                }
+            }
+            if (!new_fvs.empty())
+            {
+                m_cfg[table_key] = new_fvs;
+            }
+            preserved_copp_entry.clear();
         }
     }
 }
@@ -270,6 +335,7 @@ CoppMgr::CoppMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
     std::vector<string> group_keys;
     std::vector<string> trap_keys;
     std::vector<string> feature_keys;
+    std::vector<string> preserved_copp_keys;
 
     std::vector<string> group_cfg_keys;
     std::vector<string> trap_cfg_keys;
@@ -280,6 +346,7 @@ CoppMgr::CoppMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
     m_cfgCoppGroupTable.getKeys(group_cfg_keys);
     m_cfgCoppTrapTable.getKeys(trap_cfg_keys);
     m_cfgFeatureTable.getKeys(feature_keys);
+    m_coppTable.getKeys(preserved_copp_keys);
 
 
     for (auto i: feature_keys)
@@ -359,6 +426,25 @@ CoppMgr::CoppMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         if (g_cfg != group_cfg_keys.end())
         {
             g_copp_init_set.insert(i.first);
+        }
+    }
+
+    // Delete unsupported keys from preserved copp tables
+    unordered_set<string> supported_copp_keys;
+    for (auto i : m_coppGroupInitCfg)
+    {
+        supported_copp_keys.emplace(i.first);
+    }
+    for (auto i : group_cfg_keys)
+    {
+        supported_copp_keys.emplace(i);
+    }
+    for (auto it : preserved_copp_keys)
+    {
+        auto copp_it = supported_copp_keys.find(it);
+        if (copp_it == supported_copp_keys.end())
+        {
+            m_coppTable.del(it);
         }
     }
 }
