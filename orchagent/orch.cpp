@@ -12,6 +12,7 @@
 #include "tokenize.h"
 #include "logger.h"
 #include "consumerstatetable.h"
+#include "zmqconsumerstatetable.h"
 #include "sai_serialize.h"
 
 using namespace swss;
@@ -826,7 +827,7 @@ void Orch::addConsumer(DBConnector *db, string tableName, int pri)
     }
     else if (db->getDbId() == APPL_DB && tableName == APP_ROUTE_TABLE_NAME)
     {
-        addExecutor(new ShmConsumer(new ShmConsumerStateTable(db, tableName, gBatchSize, pri), this, tableName));
+        addExecutor(new ShmConsumer(new ZmqConsumerStateTable(db, tableName, "tcp://*:1234", gBatchSize, pri), this, tableName));
     }
     else
     {

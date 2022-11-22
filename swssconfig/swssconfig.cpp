@@ -9,7 +9,7 @@
 #include "logger.h"
 #include "dbconnector.h"
 #include "producerstatetable.h"
-#include "shmproducerstatetable.h"
+#include "zmqproducerstatetable.h"
 #include "json.hpp"
 
 using namespace std;
@@ -66,7 +66,7 @@ bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items)
             ProducerStateTable* tmp_table;
             if (table_name == APP_ROUTE_TABLE_NAME)
             {
-                tmp_table = new ShmProducerStateTable(&pipeline, table_name, true);
+                tmp_table = new ZmqProducerStateTable(&pipeline, table_name, "tcp://localhost:1234", true);
             }
             else
             {
