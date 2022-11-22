@@ -217,7 +217,7 @@ class MirrorSessionManagerTest : public ::testing::Test
 
     void Enqueue(const swss::KeyOpFieldsValuesTuple &entry)
     {
-        return mirror_session_manager_.enqueue(entry);
+        return mirror_session_manager_.enqueue(APP_P4RT_MIRROR_SESSION_TABLE_NAME, entry);
     }
 
     void Drain()

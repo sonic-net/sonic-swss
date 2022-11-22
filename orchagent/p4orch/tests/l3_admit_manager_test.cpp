@@ -178,7 +178,7 @@ class L3AdmitManagerTest : public ::testing::Test
 
     void Enqueue(const swss::KeyOpFieldsValuesTuple &entry)
     {
-        l3_admit_manager_.enqueue(entry);
+        l3_admit_manager_.enqueue(APP_P4RT_L3_ADMIT_TABLE_NAME, entry);
     }
 
     void Drain()
