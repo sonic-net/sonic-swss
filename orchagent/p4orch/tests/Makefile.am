@@ -33,7 +33,6 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       $(P4ORCH_DIR)/p4oidmapper.cpp \
 		       $(P4ORCH_DIR)/p4orch.cpp \
 		       $(P4ORCH_DIR)/p4orch_util.cpp \
-		       $(P4ORCH_DIR)/tables_definition_manager.cpp \
 		       $(P4ORCH_DIR)/router_interface_manager.cpp \
 		       $(P4ORCH_DIR)/gre_tunnel_manager.cpp \
 		       $(P4ORCH_DIR)/neighbor_manager.cpp \
@@ -45,7 +44,6 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       $(P4ORCH_DIR)/wcmp_manager.cpp \
 		       $(P4ORCH_DIR)/mirror_session_manager.cpp \
 		       $(P4ORCH_DIR)/l3_admit_manager.cpp \
-		       $(P4ORCH_DIR)/ext_tables_manager.cpp \
 		       $(top_srcdir)/tests/mock_tests/fake_response_publisher.cpp \
 		       fake_portorch.cpp \
 		       fake_crmorch.cpp \
