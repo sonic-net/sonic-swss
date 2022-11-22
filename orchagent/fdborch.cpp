@@ -1422,7 +1422,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
                     status = sai_fdb_api->create_fdb_entry(&fdb_entry, (uint32_t)attrs.size(), attrs.data());
                     if (SAI_STATUS_SUCCESS == status) {
                         SWSS_LOG_INFO("MAC-Update re-create success for FDB %s in %s on %s",
-                             entry.mac.to_string().c_str(), vlan.m_alias.c_str(), port_name.c_str());
+                           entry.mac.to_string().c_str(), vlan.m_alias.c_str(), port_name.c_str());
                         break;
                     } else {
                         SWSS_LOG_ERROR("MAC-Update re-create failed for FDB %s in %s on %s",
