@@ -282,7 +282,7 @@ bool WarmStartHelper::compareAllFV(const std::vector<FieldValueTuple> &v1,
         auto v1Iter = v1Map.find(v2fv.first);
 #if 0
         /* 
-         * On warm docker upgrade there may be new field additon
+         * On warm docker upgrade there may be new field addition
          * Hence the below assumption may not be valid anymore
          */
 
