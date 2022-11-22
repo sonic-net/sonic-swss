@@ -280,6 +280,12 @@ bool WarmStartHelper::compareAllFV(const std::vector<FieldValueTuple> &v1,
     for (auto &v2fv : v2)
     {
         auto v1Iter = v1Map.find(v2fv.first);
+#if 0
+        /* 
+         * On warm docker upgrade there may be new field additon
+         * Hence the below assumption may not be valid anymore
+         */
+
         /*
          * The sizes of both tuple-vectors should always match within any
          * given application. In other words, all fields within v1 should be
@@ -293,6 +299,18 @@ bool WarmStartHelper::compareAllFV(const std::vector<FieldValueTuple> &v1,
          * this assumption.
          */
         assert(v1Iter != v1Map.end());
+#endif
+        if (v1Iter == v1Map.end())
+        {
+            /* 
+             * New field added for the  refresh entry
+             * hence return 'no match'
+             */
+            SWSS_LOG_NOTICE("Warm-Restart: compareAllFV new field %s in refresh entry", 
+                    v2fv.first.c_str());
+            return true;
+        }
+        
 
         if (compareOneFV(v1Map[fvField(*v1Iter)], fvValue(v2fv)))
         {
