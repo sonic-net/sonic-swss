@@ -4984,7 +4984,7 @@ bool PortsOrch::removeBridgePort(Port &port)
     gFdbOrch->flushFDBEntries(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
     SWSS_LOG_INFO("Flush FDB entries for port %s", port.m_alias.c_str());
 
-    /* Notify bridge port deletion */
+    /* Notify about bridge port deletion */
     PortUpdate update = { port, false };
     notify(SUBJECT_TYPE_BRIDGE_PORT_CHANGE, static_cast<void *>(&update));
 
