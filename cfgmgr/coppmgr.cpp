@@ -262,10 +262,6 @@ void CoppMgr::mergeConfig(CoppCfg &init_cfg, CoppCfg &m_cfg, std::vector<std::st
      * user config) will overwrie the copp table entries, current entry will be deleted from copp
      * tables.
      */
-    unordered_map<string, string> preserved_copp_entry;
-    unordered_map<string, string>::const_iterator preserved_copp_it;
-    string field;
-    string value;
     for (auto i : helper)
     {
         string table_key = i.first;
@@ -281,15 +277,16 @@ void CoppMgr::mergeConfig(CoppCfg &init_cfg, CoppCfg &m_cfg, std::vector<std::st
         }
         else
         {
+            unordered_map<string, string> preserved_copp_entry;
             for (auto prev_fv : preserved_fvs)
             {
                 preserved_copp_entry[fvField(prev_fv)] = fvValue(prev_fv);
             }
             for (auto helper_fv: helper_fvs)
             {
-                field = fvField(helper_fv);
-                value = fvValue(helper_fv);
-                preserved_copp_it = preserved_copp_entry.find(field);
+                string field = fvField(helper_fv);
+                string value = fvValue(helper_fv);
+                unordered_map<string, string>::const_iterator preserved_copp_it = preserved_copp_entry.find(field);
                 bool field_found = (preserved_copp_it != preserved_copp_entry.end());
                 bool overwrite = false;
                 if (field_found)
@@ -315,7 +312,6 @@ void CoppMgr::mergeConfig(CoppCfg &init_cfg, CoppCfg &m_cfg, std::vector<std::st
             {
                 m_cfg[table_key] = new_fvs;
             }
-            preserved_copp_entry.clear();
         }
     }
 }
