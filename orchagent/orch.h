@@ -214,14 +214,14 @@ public:
 
 class ShmConsumer : public Consumer {
 public:
-    ShmConsumer(swss::ShmConsumerStateTable *select, Orch *orch, const std::string &name)
+    ShmConsumer(swss::ZmqConsumerStateTable *select, Orch *orch, const std::string &name)
         : Consumer(select, orch, name)
     {
     }
 
-    swss::ShmConsumerStateTable *getConsumerTable() const
+    swss::ZmqConsumerStateTable *getConsumerTable() const
     {
-        return static_cast<swss::ShmConsumerStateTable *>(getSelectable());
+        return static_cast<swss::ZmqConsumerStateTable *>(getSelectable());
     }
 
     std::string getTableName() const override
