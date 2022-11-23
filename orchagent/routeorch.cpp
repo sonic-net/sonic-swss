@@ -887,7 +887,9 @@ void RouteOrch::doTask(Consumer& consumer)
         }
 
         // Flush the route bulker, so routes will be written to syncd and ASIC
+        SWSS_LOG_ERROR("[PERF_TEST] Start Flush the route bulker, so routes will be written to syncd and ASIC");
         gRouteBulker.flush();
+        SWSS_LOG_ERROR("[PERF_TEST] End Flush the route bulker, so routes will be written to syncd and ASIC");
 
         // Go through the bulker results
         auto it_prev = consumer.m_toSync.begin();
