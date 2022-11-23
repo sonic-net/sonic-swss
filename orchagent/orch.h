@@ -17,7 +17,7 @@ extern "C" {
 #include "table.h"
 #include "consumertable.h"
 #include "consumerstatetable.h"
-#include "shmconsumerstatetable.h"
+#include "zmqconsumerstatetable.h"
 #include "notificationconsumer.h"
 #include "selectabletimer.h"
 #include "macaddress.h"
