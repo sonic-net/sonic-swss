@@ -5785,6 +5785,25 @@ void PortsOrch::getLagMember(Port &lag, vector<Port> &portv)
     }
 }
 
+/* Get the first linked up member of the LAG,
+    and notice that the return value from getPort() is still stale if triggered by SUBJECT_TYPE_PORT_OPER_STATE_CHANGE.
+	To avoid getting stale information, pass a port_alias as a filter.
+*/
+bool PortsOrch::getUpLagMember(Port &lag, Port &upPort, const string &aliasExclude)
+{
+    vector<Port> portv;
+    getLagMember(lag, portv);
+    for (const auto p : portv)
+    {
+        if (p.m_oper_status == SAI_PORT_OPER_STATUS_UP && p.m_alias != aliasExclude)
+        {
+            upPort = p;
+            return true;
+        }
+    }
+    return false;
+}
+
 bool PortsOrch::addLagMember(Port &lag, Port &port, bool enableForwarding)
 {
     SWSS_LOG_ENTER();

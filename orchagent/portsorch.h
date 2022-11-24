@@ -152,6 +152,7 @@ public:
     bool removeSubPort(const string &alias);
     bool updateL3VniStatus(uint16_t vlan_id, bool status);
     void getLagMember(Port &lag, vector<Port> &portv);
+    bool getUpLagMember(Port &lag, Port &upPort, const string &aliasExclude = "");
     void updateChildPortsMtu(const Port &p, const uint32_t mtu);
 
     bool addTunnel(string tunnel,sai_object_id_t, bool learning=true);
