@@ -69,7 +69,9 @@ acl_rule_attr_lookup_t aclMatchLookup =
     { MATCH_INNER_ETHER_TYPE,  SAI_ACL_ENTRY_ATTR_FIELD_INNER_ETHER_TYPE },
     { MATCH_INNER_IP_PROTOCOL, SAI_ACL_ENTRY_ATTR_FIELD_INNER_IP_PROTOCOL },
     { MATCH_INNER_L4_SRC_PORT, SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_SRC_PORT },
-    { MATCH_INNER_L4_DST_PORT, SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_DST_PORT }
+    { MATCH_INNER_L4_DST_PORT, SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_DST_PORT },
+    { MATCH_BTH_OPCODE,        SAI_ACL_ENTRY_ATTR_FIELD_BTH_OPCODE},
+    { MATCH_AETH_SYNDROME,     SAI_ACL_ENTRY_ATTR_FIELD_AETH_SYNDROME}
 };
 
 static acl_range_type_lookup_t aclRangeTypeLookup =
@@ -925,6 +927,36 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
         {
             matchData.data.u8 = to_uint<uint8_t>(attr_value);
             matchData.mask.u8 = 0xFF;
+        }
+        else if (attr_name == MATCH_BTH_OPCODE)
+        {
+            auto opcode_data = tokenize(attr_value, '/');
+
+            if (opcode_data.size() == 2)
+            {
+                matchData.data.u8 = to_uint<uint8_t>(opcode_data[0]);
+                matchData.mask.u8 = to_uint<uint8_t>(opcode_data[1]);
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Invalid BTH_OPCODE configuration: %s, expected format <data>/<mask>", attr_value);
+                return false;
+            }
+        }
+        else if (attr_name == MATCH_AETH_SYNDROME)
+        {
+            auto syndrome_data = tokenize(attr_value, '/');
+
+            if (syndrome_data.size() == 2)
+            {
+                matchData.data.u8 = to_uint<uint8_t>(syndrome_data[0]);
+                matchData.mask.u8 = to_uint<uint8_t>(syndrome_data[1]);
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Invalid AETH_SYNDROME configuration: %s, expected format <data>/<mask>", attr_value);
+                return false;
+            }
         }
     }
     catch (exception &e)
@@ -3720,7 +3752,7 @@ bool AclOrch::addAclTable(AclTable &newTable)
     }
     // Update matching field according to ACL stage
     newTable.addStageMandatoryMatchFields();
-    
+
     // Add mandatory ACL action if not present
     // We need to call addMandatoryActions here because addAclTable is directly called in other orchs.
     // The action_list is already added if the ACL table creation is triggered by CONFIGDD, but calling addMandatoryActions
