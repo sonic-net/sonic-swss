@@ -2495,11 +2495,7 @@ bool PortsOrch::isAutoNegEnabled(sai_object_id_t id)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to get port AutoNeg status for port pid:%" PRIx64, id);
-        task_process_status handle_status = handleSaiGetStatus(SAI_API_PORT, status);
-        if (handle_status != task_process_status::task_success)
-        {
-            return false;
-        }
+        return false;
     }
 
     return attr.value.booldata;
