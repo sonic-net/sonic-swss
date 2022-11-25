@@ -85,7 +85,7 @@ jobs:
         fakeroot dpkg-buildpackage -us -uc -b
         popd
         popd
-    - if: matrix.language == 'cpp11111'
+    - if: matrix.language == 'cpp'
       name: build-swss-common
       run: |
         set -x
@@ -94,6 +94,10 @@ jobs:
         pushd sonic-swss-common
         ./autogen.sh
         fakeroot dpkg-buildpackage -us -uc -b
+        popd
+        ls -al
+        dpkg-deb -x libswsscommon_1.0.0_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libswsscommon-dev_1.0.0_amd64.deb $(dirname $GITHUB_WORKSPACE)
     - if: matrix.language == 'cpp'
       name: build-sairedis
       run: |
@@ -102,36 +106,34 @@ jobs:
         git clone --recursive https://github.com/Azure/sonic-sairedis
         pushd sonic-sairedis
         ./autogen.sh
-        DEB_BUILD_OPTIONS=nocheck SWSS_COMMON_INC="$GITHUB_WORKSPACE/usr/include" SWSS_COMMON_LIB="$GITHUB_WORKSPACE/usr/lib/x86_64-linux-gnu" fakeroot debian/rules binary-syncd-vs
+        DEB_BUILD_OPTIONS=nocheck SWSS_COMMON_INC="$(dirname $GITHUB_WORKSPACE)/usr/include" SWSS_COMMON_LIB="$(dirname $GITHUB_WORKSPACE)/usr/lib/x86_64-linux-gnu" fakeroot debian/rules binary-syncd-vs
         popd
     - if: matrix.language == 'cpp'
       name: install-deb
       run: |
         set -x
         cd ..
-        dpkg-deb -x libswsscommon_1.0.0_amd64.deb $GITHUB_WORKSPACE
-        dpkg-deb -x libswsscommon-dev_1.0.0_amd64.deb $GITHUB_WORKSPACE
         pushd sonic-buildimage/src/libnl3/
-        dpkg-deb -x libnl-3-200_3.5.0-1_amd64.deb $GITHUB_WORKSPACE
-        dpkg-deb -x libnl-3-dev_3.5.0-1_amd64.deb $GITHUB_WORKSPACE
-        dpkg-deb -x libnl-genl-3-200_3.5.0-1_amd64.deb $GITHUB_WORKSPACE
-        dpkg-deb -x libnl-genl-3-dev_3.5.0-1_amd64.deb $GITHUB_WORKSPACE
-        dpkg-deb -x libnl-route-3-200_3.5.0-1_amd64.deb $GITHUB_WORKSPACE
-        dpkg-deb -x libnl-route-3-dev_3.5.0-1_amd64.deb $GITHUB_WORKSPACE
-        dpkg-deb -x libnl-nf-3-200_3.5.0-1_amd64.deb $GITHUB_WORKSPACE
-        dpkg-deb -x libnl-nf-3-dev_3.5.0-1_amd64.deb $GITHUB_WORKSPACE
+        dpkg-deb -x libnl-3-200_3.5.0-1_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-3-dev_3.5.0-1_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-genl-3-200_3.5.0-1_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-genl-3-dev_3.5.0-1_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-route-3-200_3.5.0-1_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-route-3-dev_3.5.0-1_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-nf-3-200_3.5.0-1_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-nf-3-dev_3.5.0-1_amd64.deb $(dirname $GITHUB_WORKSPACE)
         popd
-        dpkg-deb -x libsairedis_1.0.0_amd64.deb $GITHUB_WORKSPACE
-        dpkg-deb -x libsairedis-dev_1.0.0_amd64.deb $GITHUB_WORKSPACE
-        dpkg-deb -x libsaimetadata_1.0.0_amd64.deb $GITHUB_WORKSPACE
-        dpkg-deb -x libsaimetadata-dev_1.0.0_amd64.deb $GITHUB_WORKSPACE
-        dpkg-deb -x libsaivs_1.0.0_amd64.deb $GITHUB_WORKSPACE
-        dpkg-deb -x libsaivs-dev_1.0.0_amd64.deb $GITHUB_WORKSPACE
+        dpkg-deb -x libsairedis_1.0.0_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libsairedis-dev_1.0.0_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libsaimetadata_1.0.0_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libsaimetadata-dev_1.0.0_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libsaivs_1.0.0_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libsaivs-dev_1.0.0_amd64.deb $(dirname $GITHUB_WORKSPACE)
     - if: matrix.language == 'cpp'
       name: build
       run: |
         ./autogen.sh
-        ./configure --prefix=/usr --with-extra-inc=$GITHUB_WORKSPACE/usr/include --with-extra-lib=$GITHUB_WORKSPACE/lib/x86_64-linux-gnu --with-extra-usr-lib=$GITHUB_WORKSPACE/usr/lib/x86_64-linux-gnu --with-libnl-3.0-inc=$GITHUB_WORKSPACE/usr/include/libnl3
+        ./configure --prefix=/usr --with-extra-inc=$(dirname $GITHUB_WORKSPACE)/usr/include --with-extra-lib=$(dirname $GITHUB_WORKSPACE)/lib/x86_64-linux-gnu --with-extra-usr-lib=$(dirname $GITHUB_WORKSPACE)/usr/lib/x86_64-linux-gnu --with-libnl-3.0-inc=$(dirname $GITHUB_WORKSPACE)/usr/include/libnl3
 
     - name: Perform CodeQL Analysis
       uses: github/codeql-action/analyze@v2.1.29
