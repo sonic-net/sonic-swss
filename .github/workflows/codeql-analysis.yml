@@ -85,7 +85,7 @@ jobs:
         fakeroot dpkg-buildpackage -us -uc -b
         popd
         popd
-    - if: matrix.language == 'cpp'
+    - if: matrix.language == 'cpp11111'
       name: build-swss-common
       run: |
         set -x
@@ -95,13 +95,20 @@ jobs:
         ./autogen.sh
         fakeroot dpkg-buildpackage -us -uc -b
     - if: matrix.language == 'cpp'
+        set -x
+        cd ..
+        git clone --recursive https://github.com/Azure/sonic-sairedis
+        pushd sonic-sairedis
+        ./autogen.sh
+        DEB_BUILD_OPTIONS=nocheck SWSS_COMMON_INC="$GITHUB_WORKSPACE/usr/include" SWSS_COMMON_LIB="$GITHUB_WORKSPACE/usr/lib/x86_64-linux-gnu" fakeroot debian/rules binary-syncd-vs
+        popd
+    - if: matrix.language == 'cpp'
       name: install-deb
       run: |
         set -x
         cd ..
         dpkg-deb -x libswsscommon_1.0.0_amd64.deb $GITHUB_WORKSPACE
         dpkg-deb -x libswsscommon-dev_1.0.0_amd64.deb $GITHUB_WORKSPACE
-        git clone --recursive https://github.com/Azure/sonic-sairedis; pushd sonic-sairedis; ./autogen.sh; DEB_BUILD_OPTIONS=nocheck SWSS_COMMON_INC="$GITHUB_WORKSPACE/usr/include" SWSS_COMMON_LIB="$GITHUB_WORKSPACE/usr/lib/x86_64-linux-gnu" fakeroot debian/rules binary-syncd-vs; popd
         pushd sonic-buildimage/src/libnl3/
         dpkg-deb -x libnl-3-200_3.5.0-1_amd64.deb $GITHUB_WORKSPACE
         dpkg-deb -x libnl-3-dev_3.5.0-1_amd64.deb $GITHUB_WORKSPACE
