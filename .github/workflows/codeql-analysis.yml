@@ -95,6 +95,8 @@ jobs:
         ./autogen.sh
         fakeroot dpkg-buildpackage -us -uc -b
     - if: matrix.language == 'cpp'
+      name: build-sairedis
+      run: |
         set -x
         cd ..
         git clone --recursive https://github.com/Azure/sonic-sairedis
