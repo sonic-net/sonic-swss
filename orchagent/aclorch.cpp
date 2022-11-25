@@ -939,7 +939,7 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
             }
             else
             {
-                SWSS_LOG_ERROR("Invalid BTH_OPCODE configuration: %s, expected format <data>/<mask>", attr_value);
+                SWSS_LOG_ERROR("Invalid BTH_OPCODE configuration: %s, expected format <data>/<mask>", attr_value.c_str());
                 return false;
             }
         }
@@ -954,7 +954,7 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
             }
             else
             {
-                SWSS_LOG_ERROR("Invalid AETH_SYNDROME configuration: %s, expected format <data>/<mask>", attr_value);
+                SWSS_LOG_ERROR("Invalid AETH_SYNDROME configuration: %s, expected format <data>/<mask>", attr_value.c_str());
                 return false;
             }
         }
