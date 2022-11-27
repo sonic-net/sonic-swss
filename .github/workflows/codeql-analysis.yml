@@ -67,7 +67,7 @@ jobs:
             graphviz \
             autoconf-archive \
             uuid-dev \
-            python \
+            python
 
     - if: matrix.language == 'cpp'
       name: build-libnl
@@ -108,7 +108,7 @@ jobs:
         git clone --recursive https://github.com/Azure/sonic-sairedis
         pushd sonic-sairedis
         ./autogen.sh
-        DEB_BUILD_OPTIONS=nocheck SWSS_COMMON_INC="$(dirname $GITHUB_WORKSPACE)/usr/include" SWSS_COMMON_LIB="$(dirname $GITHUB_WORKSPACE)/usr/lib/x86_64-linux-gnu" fakeroot debian/rules binary-syncd-vs
+        DEB_BUILD_OPTIONS=nocheck SWSS_COMMON_INC="$(dirname $GITHUB_WORKSPACE)/usr/include" SWSS_COMMON_LIB="$(dirname $GITHUB_WORKSPACE)/usr/lib/x86_64-linux-gnu" fakeroot debian/rules CFLAGS="" CXXFLAGS="" binary-syncd-vs
         popd
     - if: matrix.language == 'cpp'
       name: install-deb
