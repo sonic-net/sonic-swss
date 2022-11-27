@@ -68,9 +68,8 @@ jobs:
             autoconf-archive \
             uuid-dev \
             python \
-            redis-server
 
-    - if: matrix.language == 'cpp11111'
+    - if: matrix.language == 'cpp'
       name: build-libnl
       run: |
         set -x
@@ -99,7 +98,8 @@ jobs:
 
         dpkg-deb -x libswsscommon_1.0.0_amd64.deb $(dirname $GITHUB_WORKSPACE)
         dpkg-deb -x libswsscommon-dev_1.0.0_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        ls -al
+        find usr
+        find var
     - if: matrix.language == 'cpp'
       name: build-sairedis
       run: |
