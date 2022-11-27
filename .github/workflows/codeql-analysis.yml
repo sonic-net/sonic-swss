@@ -67,6 +67,7 @@ jobs:
             graphviz \
             autoconf-archive \
             uuid-dev \
+            libjansson-dev \
             python
 
     - if: matrix.language == 'cpp'
