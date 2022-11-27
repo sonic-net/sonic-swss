@@ -74,7 +74,7 @@ jobs:
       name: build-libnl
       run: |
         cd ..
-        git clone https://github.com/Azure/sonic-buildimage
+        git clone https://github.com/sonic-net/sonic-buildimage
         pushd sonic-buildimage/src/libnl3
         git clone https://github.com/thom311/libnl libnl3-3.5.0
         pushd libnl3-3.5.0
@@ -90,7 +90,7 @@ jobs:
       name: build-swss-common
       run: |
         cd ..
-        git clone https://github.com/Azure/sonic-swss-common
+        git clone https://github.com/sonic-net/sonic-swss-common
         pushd sonic-swss-common
         ./autogen.sh
         fakeroot dpkg-buildpackage -us -uc -b
@@ -102,7 +102,7 @@ jobs:
       name: build-sairedis
       run: |
         cd ..
-        git clone --recursive https://github.com/Azure/sonic-sairedis
+        git clone --recursive https://github.com/sonic-net/sonic-sairedis
         pushd sonic-sairedis
         ./autogen.sh
         DEB_BUILD_OPTIONS=nocheck SWSS_COMMON_INC="$(dirname $GITHUB_WORKSPACE)/usr/include" SWSS_COMMON_LIB="$(dirname $GITHUB_WORKSPACE)/usr/lib/x86_64-linux-gnu" fakeroot debian/rules CFLAGS="-Wno-error" CXXFLAGS="-Wno-error" binary-syncd-vs
