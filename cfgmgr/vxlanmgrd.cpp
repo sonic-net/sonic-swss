@@ -14,6 +14,7 @@
 #include "vxlanmgr.h"
 #include "shellcmd.h"
 #include "warm_restart.h"
+#include "hbclient.h"
 
 using namespace std;
 using namespace swss;
@@ -73,11 +74,21 @@ int main(int argc, char **argv)
 
         std::vector<Orch *> cfgOrchList = {&vxlanmgr};
 
+	hb_client_sla_t hbSla;
+	memset(&hbSla, 0, sizeof(hbSla));
+	hbSla.hb_poll_time = 11;
+	hbSla.hb_dead_time = 35;
+	hbSla.action_on_dead_time_expiry = HB_ACTION_PRINT_BACKTRACE;
+	HBClient hbClient("vxlanmgrd", hbSla);
+
         swss::Select s;
         for (Orch *o : cfgOrchList)
         {
             s.addSelectables(o->getSelectables());
         }
+
+	SWSS_LOG_NOTICE("Registering as HB Client");
+	s.addSelectable(&hbClient);
 
         /*
          * swss service starts after interfaces-config.service which will have
@@ -115,6 +126,19 @@ int main(int argc, char **argv)
                 SWSS_LOG_NOTICE("Error: %s!", strerror(errno));
                 continue;
             }
+
+            /* If not successfully registered with HB monitor,   retry
+             * to register */
+            if (!hbClient.clientRegistered())
+            {
+                hbClient.registerWithServer();
+            }
+            if (sel == &hbClient)
+            {
+                SWSS_LOG_INFO("Got HB Client data, continuing");
+                continue;
+            }
+
             if (ret == Select::TIMEOUT)
             {
                 if (true == in_recon)

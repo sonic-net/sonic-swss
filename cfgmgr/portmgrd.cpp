@@ -8,6 +8,7 @@
 #include "portmgr.h"
 #include "schema.h"
 #include "select.h"
+#include "hbclient.h"
 
 using namespace std;
 using namespace swss;
@@ -57,11 +58,21 @@ int main(int argc, char **argv)
         // TODO: add tables in stateDB which interface depends on to monitor list
         vector<Orch *> cfgOrchList = {&portmgr};
 
+	hb_client_sla_t hbSla;
+	memset(&hbSla, 0, sizeof(hbSla));
+	hbSla.hb_poll_time = 10;
+	hbSla.hb_dead_time = 30;
+	hbSla.action_on_dead_time_expiry = HB_ACTION_LOG;
+	HBClient hbClient("portmgrd", hbSla);
+
         swss::Select s;
         for (Orch *o : cfgOrchList)
         {
             s.addSelectables(o->getSelectables());
         }
+
+	SWSS_LOG_NOTICE("Registering as HB Client");
+	s.addSelectable(&hbClient);
 
         while (true)
         {
@@ -74,6 +85,19 @@ int main(int argc, char **argv)
                 SWSS_LOG_NOTICE("Error: %s!", strerror(errno));
                 continue;
             }
+
+            /* If not successfully registered with HB monitor,   retry
+             * to register */
+            if (!hbClient.clientRegistered())
+            {
+                hbClient.registerWithServer();
+            }
+            if (sel == &hbClient)
+            {
+                SWSS_LOG_INFO("Got HB Client data, continuing");
+                continue;
+            }
+
             if (ret == Select::TIMEOUT)
             {
                 portmgr.doTask();
