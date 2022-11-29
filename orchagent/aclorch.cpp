@@ -109,7 +109,7 @@ static acl_rule_attr_lookup_t aclDTelActionLookup =
 
 static acl_rule_attr_lookup_t aclOtherActionLookup = 
 {
-    { ACTION_COUNTER,                       SAI_ACL_ACTION_TYPE_COUNTER}
+    { ACTION_COUNTER,                       SAI_ACL_ENTRY_ATTR_ACTION_COUNTER}
 };
 
 static acl_packet_action_lookup_t aclPacketActionLookup =
