@@ -155,6 +155,19 @@ public:
             return (-1);
         }
     }
+
+    bool isL3VniVlan(const uint32_t vni) const
+    {
+        if (l3vni_table_.find(vni) != std::end(l3vni_table_))
+        {
+            return l3vni_table_.at(vni).l3_vni;
+        }
+        else
+        {
+            return false;
+        }
+    }
+
     int updateL3VniVlan(uint32_t vni, uint16_t vlan_id);
 private:
     virtual bool addOperation(const Request& request);

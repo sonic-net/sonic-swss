@@ -1903,6 +1903,7 @@ bool VxlanTunnelMapOrch::addOperation(const Request& request)
 
     sai_vlan_id_t vlan_id = (sai_vlan_id_t)request.getAttrVlan("vlan");
     Port tempPort;
+    bool isL3Vni = false;
 
     const auto full_tunnel_map_entry_name = request.getFullKey();
     SWSS_LOG_INFO("Full name = %s",full_tunnel_map_entry_name.c_str());
@@ -1974,11 +1975,21 @@ bool VxlanTunnelMapOrch::addOperation(const Request& request)
     tunnel_obj->vlan_vrf_vni_count++;
     SWSS_LOG_INFO("vni count increased to %d",tunnel_obj->vlan_vrf_vni_count);
 
+    VRFOrch* vrf_orch = gDirectory.get<VRFOrch*>();
+    isL3Vni = vrf_orch->isL3VniVlan(vni_id);
+
     try
     {
-        auto tunnel_map_entry_id = create_tunnel_map_entry(MAP_T::VNI_TO_VLAN_ID,
-                                                           tunnel_map_id, vni_id, vlan_id);
-        vxlan_tunnel_map_table_[full_tunnel_map_entry_name].map_entry_id = tunnel_map_entry_id;
+        if (isL3Vni == false)
+        {
+            auto tunnel_map_entry_id = create_tunnel_map_entry(MAP_T::VNI_TO_VLAN_ID,
+                                                               tunnel_map_id, vni_id, vlan_id);
+            vxlan_tunnel_map_table_[full_tunnel_map_entry_name].map_entry_id = tunnel_map_entry_id;
+        }
+        else
+        {
+            vxlan_tunnel_map_table_[full_tunnel_map_entry_name].map_entry_id = SAI_NULL_OBJECT_ID;
+        }
         vxlan_tunnel_map_table_[full_tunnel_map_entry_name].vlan_id = vlan_id;
         vxlan_tunnel_map_table_[full_tunnel_map_entry_name].vni_id = vni_id;
     }
