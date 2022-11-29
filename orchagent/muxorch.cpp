@@ -212,6 +212,10 @@ static sai_object_id_t create_tunnel(
     attr.value.s32 = SAI_TUNNEL_TTL_MODE_PIPE_MODEL;
     tunnel_attrs.push_back(attr);
 
+    attr.id = SAI_TUNNEL_ATTR_DECAP_TTL_MODE;
+    attr.value.s32 = SAI_TUNNEL_TTL_MODE_PIPE_MODEL;
+    tunnel_attrs.push_back(attr);
+
     if (dscp_mode_name == "uniform" || dscp_mode_name == "pipe")
     {
         sai_tunnel_dscp_mode_t dscp_mode;
@@ -224,6 +228,10 @@ static sai_object_id_t create_tunnel(
             dscp_mode = SAI_TUNNEL_DSCP_MODE_PIPE_MODEL;
         }
         attr.id = SAI_TUNNEL_ATTR_ENCAP_DSCP_MODE;
+        attr.value.s32 = dscp_mode;
+        tunnel_attrs.push_back(attr);
+
+        attr.id = SAI_TUNNEL_ATTR_DECAP_DSCP_MODE;
         attr.value.s32 = dscp_mode;
         tunnel_attrs.push_back(attr);
     }
