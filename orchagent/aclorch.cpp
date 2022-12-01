@@ -72,7 +72,6 @@ acl_rule_attr_lookup_t aclMatchLookup =
     { MATCH_INNER_L4_DST_PORT, SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_DST_PORT },
     { MATCH_SRC_MAC,           SAI_ACL_ENTRY_ATTR_FIELD_SRC_MAC },
     { MATCH_DST_MAC,           SAI_ACL_ENTRY_ATTR_FIELD_DST_MAC },
-    { MATCH_OUTER_VLAN_ID,     SAI_ACL_ENTRY_ATTR_FIELD_OUTER_VLAN_ID},
     { MATCH_OUTER_VLAN_PRI,    SAI_ACL_ENTRY_ATTR_FIELD_OUTER_VLAN_PRI},
     { MATCH_OUTER_VLAN_CFI,    SAI_ACL_ENTRY_ATTR_FIELD_OUTER_VLAN_CFI}
 };
@@ -941,7 +940,7 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
             matchData.mask.u32 = 0xFFFFFFFF;
         }
         else if (attr_name == MATCH_INNER_ETHER_TYPE || attr_name == MATCH_INNER_L4_SRC_PORT ||
-            attr_name == MATCH_INNER_L4_DST_PORT || attr_name == MATCH_OUTER_VLAN_ID)
+            attr_name == MATCH_INNER_L4_DST_PORT)
         {
             matchData.data.u16 = to_uint<uint16_t>(attr_value);
             matchData.mask.u16 = 0xFFFF;

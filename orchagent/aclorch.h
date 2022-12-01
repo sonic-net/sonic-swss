@@ -51,7 +51,6 @@
 #define MATCH_INNER_L4_DST_PORT "INNER_L4_DST_PORT"
 #define MATCH_SRC_MAC           "SRC_MAC"
 #define MATCH_DST_MAC           "DST_MAC"
-#define MATCH_OUTER_VLAN_ID     "VLAN_ID"
 #define MATCH_OUTER_VLAN_PRI    "VLAN_PCP"
 #define MATCH_OUTER_VLAN_CFI    "VLAN_DEI"
 
