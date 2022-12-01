@@ -280,26 +280,6 @@ bool WarmStartHelper::compareAllFV(const std::vector<FieldValueTuple> &v1,
     for (auto &v2fv : v2)
     {
         auto v1Iter = v1Map.find(v2fv.first);
-#if 0
-        /* 
-         * On warm docker upgrade there may be new field addition
-         * Hence the below assumption may not be valid anymore
-         */
-
-        /*
-         * The sizes of both tuple-vectors should always match within any
-         * given application. In other words, all fields within v1 should be
-         * also present in v2.
-         *
-         * To make this possible, every application should continue relying on a
-         * uniform schema to create/generate information. For example, fpmsyncd
-         * will be always expected to push FieldValueTuples with "nexthop" and
-         * "ifname" fields; neighsyncd is expected to make use of "family" and
-         * "neigh" fields, etc. The existing reconciliation logic will rely on
-         * this assumption.
-         */
-        assert(v1Iter != v1Map.end());
-#endif
         if (v1Iter == v1Map.end())
         {
             /* 
