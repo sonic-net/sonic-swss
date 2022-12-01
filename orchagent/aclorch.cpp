@@ -69,7 +69,11 @@ acl_rule_attr_lookup_t aclMatchLookup =
     { MATCH_INNER_ETHER_TYPE,  SAI_ACL_ENTRY_ATTR_FIELD_INNER_ETHER_TYPE },
     { MATCH_INNER_IP_PROTOCOL, SAI_ACL_ENTRY_ATTR_FIELD_INNER_IP_PROTOCOL },
     { MATCH_INNER_L4_SRC_PORT, SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_SRC_PORT },
-    { MATCH_INNER_L4_DST_PORT, SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_DST_PORT }
+    { MATCH_INNER_L4_DST_PORT, SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_DST_PORT },
+    { MATCH_SRC_MAC,           SAI_ACL_ENTRY_ATTR_FIELD_SRC_MAC },
+    { MATCH_DST_MAC,           SAI_ACL_ENTRY_ATTR_FIELD_DST_MAC },
+    { MATCH_OUTER_VLAN_PRI,    SAI_ACL_ENTRY_ATTR_FIELD_OUTER_VLAN_PRI},
+    { MATCH_OUTER_VLAN_CFI,    SAI_ACL_ENTRY_ATTR_FIELD_OUTER_VLAN_CFI}
 };
 
 static acl_range_type_lookup_t aclRangeTypeLookup =
@@ -178,6 +182,26 @@ static acl_table_action_list_lookup_t defaultAclActionList =
     {
         // L3V6
         TABLE_TYPE_L3V6,
+        {
+            {
+                ACL_STAGE_INGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION,
+                    SAI_ACL_ACTION_TYPE_REDIRECT
+                }
+            },
+            {
+                ACL_STAGE_EGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION,
+                    SAI_ACL_ACTION_TYPE_REDIRECT
+                }
+            }
+        }
+    },
+    {
+        // L2
+        TABLE_TYPE_L2,
         {
             {
                 ACL_STAGE_INGRESS,
@@ -925,6 +949,41 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
         {
             matchData.data.u8 = to_uint<uint8_t>(attr_value);
             matchData.mask.u8 = 0xFF;
+        }
+        else if (attr_name == MATCH_SRC_MAC || attr_name == MATCH_DST_MAC)
+        {
+            auto mask_and_value = tokenize(attr_value, '/');
+            MacAddress mac(mask_and_value[0]);
+            memcpy(matchData.data.mac, mac.getMac(), sizeof(sai_mac_t));
+            if (mask_and_value.size() > 1)
+            {
+                MacAddress mask(mask_and_value[1]);
+                memcpy(matchData.mask.mac, mask.getMac(), sizeof(sai_mac_t));
+            }
+            else
+            {
+                const sai_mac_t mac_mask = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+                memcpy(matchData.mask.mac, mac_mask, sizeof(sai_mac_t));
+            }
+        }
+        else if (attr_name == MATCH_OUTER_VLAN_PRI)
+        {
+            auto vlan_pri = tokenize(attr_value, '/');
+
+            matchData.data.u8 = to_uint<uint8_t>(vlan_pri[0], 0, 0x7);
+            if (vlan_pri.size() > 1)
+            {
+                matchData.mask.u8 = to_uint<uint8_t>(vlan_pri[1], 0, 0x7);
+            }
+            else
+            {
+                matchData.mask.u8 = 0x7;
+            }
+        }
+        else if (attr_name == MATCH_OUTER_VLAN_CFI)
+        {
+            matchData.data.u8 = to_uint<uint8_t>(attr_value);
+            matchData.mask.u8 = 0x1;
         }
     }
     catch (exception &e)
@@ -3045,6 +3104,20 @@ void AclOrch::initDefaultTableTypes()
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS))
             .withMatch(make_shared<AclTableRangeMatch>(set<sai_acl_range_type_t>{
                 {SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE, SAI_ACL_RANGE_TYPE_L4_DST_PORT_RANGE}}))
+            .build()
+    );
+
+    addAclTableType(
+        builder.withName(TABLE_TYPE_L2)
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_PORT)
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_LAG)
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DST_MAC))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_SRC_MAC))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_PRI))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_CFI))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE))
             .build()
     );
 
