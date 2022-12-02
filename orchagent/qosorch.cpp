@@ -1461,7 +1461,7 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
     {
         size_t groups_count = port.m_scheduler_group_ids.size();
         m_scheduler_group_port_info[port.m_port_id] = {
-            .groups = std::move(port.m_scheduler_group_ids),
+            .groups = port.m_scheduler_group_ids,
             .child_groups = std::vector<std::vector<sai_object_id_t>>(groups_count),
             .group_has_been_initialized = std::vector<bool>(groups_count)
         };
