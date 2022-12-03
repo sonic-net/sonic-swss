@@ -68,10 +68,10 @@ class TestL3Vxlan(object):
         helper.check_object(self.pdb, "VXLAN_VRF_TABLE", "%s:%s" % (tunnel_name, vrf_map_name), exp_attr1)
 
         print ("\tTesting SIP Tunnel Creation")
-        vxlan_obj.check_vxlan_sip_tunnel(dvs, tunnel_name, '6.6.6.6', vlanlist, vnilist)
+        vxlan_obj.check_vxlan_sip_tunnel(dvs, tunnel_name, '6.6.6.6', vlanlist, vnilist, tunnel_map_entry_count = 2)
 
         print ("\tTesting Tunnel Vlan VNI Map Entry")
-        vxlan_obj.check_vxlan_tunnel_map_entry(dvs, tunnel_name, vlanlist, vnilist)
+        vxlan_obj.check_vxlan_tunnel_map_entry_removed(dvs, tunnel_name, vlanlist, vnilist)
 
         print ("\tTesting Tunnel VRF VNI Map Entry")
         vxlan_obj.check_vxlan_tunnel_vrf_map_entry(dvs, tunnel_name, 'Vrf-RED', '1000')
@@ -82,6 +82,7 @@ class TestL3Vxlan(object):
         vxlan_obj.check_vxlan_tunnel_vrf_map_entry_remove(dvs, tunnel_name, 'Vrf-RED', '1000')
 
         print ("\tTesting Tunnel Vlan VNI Map entry removal")
+        vxlan_obj.check_vxlan_tunnel_map_entry(dvs, tunnel_name, vlanlist, vnilist)
         vxlan_obj.remove_vxlan_tunnel_map(dvs, tunnel_name, map_name, '1000', 'Vlan100')
         vxlan_obj.check_vxlan_tunnel_map_entry_delete(dvs, tunnel_name, vlanlist, vnilist)
 
@@ -143,10 +144,10 @@ class TestL3Vxlan(object):
         helper.check_object(self.pdb, "VXLAN_VRF_TABLE", "%s:%s" % (tunnel_name, vrf_map_name), exp_attr1)
 
         print ("\tTesting SIP Tunnel Creation")
-        vxlan_obj.check_vxlan_sip_tunnel(dvs, tunnel_name, '6.6.6.6', vlanlist, vnilist)
+        vxlan_obj.check_vxlan_sip_tunnel(dvs, tunnel_name, '6.6.6.6', vlanlist, vnilist, tunnel_map_entry_count = 2)
 
         print ("\tTesting Tunnel Vlan Map Entry")
-        vxlan_obj.check_vxlan_tunnel_map_entry(dvs, tunnel_name, vlanlist, vnilist)
+        vxlan_obj.check_vxlan_tunnel_map_entry_removed(dvs, tunnel_name, vlanlist, vnilist)
 
         print ("\tTesting Tunnel Vrf Map Entry")
         vxlan_obj.check_vxlan_tunnel_vrf_map_entry(dvs, tunnel_name, 'Vrf-RED', '1000')
@@ -180,6 +181,7 @@ class TestL3Vxlan(object):
         vxlan_obj.check_del_router_interface(dvs, "Vlan100")
 
         print ("\tTesting Tunnel Map entry removal")
+        vxlan_obj.check_vxlan_tunnel_map_entry(dvs, tunnel_name, vlanlist, vnilist)
         vxlan_obj.remove_vxlan_tunnel_map(dvs, tunnel_name, map_name, '1000', 'Vlan100')
         vxlan_obj.check_vxlan_tunnel_map_entry_delete(dvs, tunnel_name, vlanlist, vnilist)
 
@@ -242,10 +244,10 @@ class TestL3Vxlan(object):
         helper.check_object(self.pdb, "VXLAN_VRF_TABLE", "%s:%s" % (tunnel_name, vrf_map_name), exp_attr1)
 
         print ("\tTesting SIP Tunnel Creation")
-        vxlan_obj.check_vxlan_sip_tunnel(dvs, tunnel_name, '6.6.6.6', vlanlist, vnilist)
+        vxlan_obj.check_vxlan_sip_tunnel(dvs, tunnel_name, '6.6.6.6', vlanlist, vnilist, tunnel_map_entry_count = 2)
 
         print ("\tTesting Tunnel Vlan Map Entry")
-        vxlan_obj.check_vxlan_tunnel_map_entry(dvs, tunnel_name, vlanlist, vnilist)
+        vxlan_obj.check_vxlan_tunnel_map_entry_removed(dvs, tunnel_name, vlanlist, vnilist)
 
         print ("\tTesting Tunnel Vrf Map Entry")
         vxlan_obj.check_vxlan_tunnel_vrf_map_entry(dvs, tunnel_name, 'Vrf-RED', '1000')
@@ -386,6 +388,7 @@ class TestL3Vxlan(object):
         vxlan_obj.check_del_router_interface(dvs, "Vlan100")
 
         print ("\tTesting Tunnel Map entry removal")
+        vxlan_obj.check_vxlan_tunnel_map_entry(dvs, tunnel_name, vlanlist, vnilist)
         vxlan_obj.remove_vxlan_tunnel_map(dvs, tunnel_name, map_name, '1000', 'Vlan100')
         vxlan_obj.check_vxlan_tunnel_map_entry_delete(dvs, tunnel_name, vlanlist, vnilist)
 
@@ -449,10 +452,10 @@ class TestL3Vxlan(object):
         helper.check_object(self.pdb, "VXLAN_VRF_TABLE", "%s:%s" % (tunnel_name, vrf_map_name), exp_attr1)
 
         print ("\tTesting SIP Tunnel Creation")
-        vxlan_obj.check_vxlan_sip_tunnel(dvs, tunnel_name, '6.6.6.6', vlanlist, vnilist)
+        vxlan_obj.check_vxlan_sip_tunnel(dvs, tunnel_name, '6.6.6.6', vlanlist, vnilist, tunnel_map_entry_count = 2)
 
         print ("\tTesting Tunnel Vlan Map Entry")
-        vxlan_obj.check_vxlan_tunnel_map_entry(dvs, tunnel_name, vlanlist, vnilist)
+        vxlan_obj.check_vxlan_tunnel_map_entry_removed(dvs, tunnel_name, vlanlist, vnilist)
 
         print ("\tTesting Tunnel Vrf Map Entry")
         vxlan_obj.check_vxlan_tunnel_vrf_map_entry(dvs, tunnel_name, 'Vrf-RED', '1000')
@@ -594,6 +597,7 @@ class TestL3Vxlan(object):
         vxlan_obj.check_del_router_interface(dvs, "Vlan100")
 
         print ("\tTesting Tunnel Map entry removal")
+        vxlan_obj.check_vxlan_tunnel_map_entry(dvs, tunnel_name, vlanlist, vnilist)
         vxlan_obj.remove_vxlan_tunnel_map(dvs, tunnel_name, map_name, '1000', 'Vlan100')
         vxlan_obj.check_vxlan_tunnel_map_entry_delete(dvs, tunnel_name, vlanlist, vnilist)
 
