@@ -359,8 +359,8 @@ static bool remove_nh_tunnel(sai_object_id_t nh_id, IpAddress& ipAddr)
     return true;
 }
 
-MuxCable::MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress peer_ip, std::set<IpAddress> skip_neighbors)
-         :mux_name_(name), srv_ip4_(srv_ip4), srv_ip6_(srv_ip6), peer_ip4_(peer_ip), skip_neighbors_(skip_neighbors)
+MuxCable::MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress peer_ip)
+         :mux_name_(name), srv_ip4_(srv_ip4), srv_ip6_(srv_ip6), peer_ip4_(peer_ip)
 {
     mux_orch_ = gDirectory.get<MuxOrch*>();
     mux_cb_orch_ = gDirectory.get<MuxCableOrch*>();
@@ -549,11 +549,6 @@ bool MuxCable::nbrHandler(bool enable, bool update_rt)
 void MuxCable::updateNeighbor(NextHopKey nh, bool add)
 {
     sai_object_id_t tnh = mux_orch_->getNextHopTunnelId(MUX_TUNNEL, peer_ip4_);
-    if (add && skip_neighbors_.find(nh.ip_address) != skip_neighbors_.end())
-    {
-        SWSS_LOG_INFO("Skip update neighbor %s on %s", nh.ip_address.to_string().c_str(), nh.alias.c_str());
-        return;
-    }
     nbr_handler_->update(nh, tnh, add, state_);
     if (add)
     {
@@ -570,7 +565,6 @@ void MuxNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, bool add, Mu
     SWSS_LOG_INFO("Neigh %s on %s, add %d, state %d",
                    nh.ip_address.to_string().c_str(), nh.alias.c_str(), add, state);
 
-    MuxCableOrch* mux_cb_orch = gDirectory.get<MuxCableOrch*>();
     IpPrefix pfx = nh.ip_address.to_string();
 
     if (add)
@@ -597,7 +591,7 @@ void MuxNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, bool add, Mu
         case MuxState::MUX_STATE_STANDBY:
             neighbors_[nh.ip_address] = tunnelId;
             gNeighOrch->disableNeighbor(nh);
-            mux_cb_orch->addTunnelRoute(nh);
+            updateTunnelRoute(nh, true);
             create_route(pfx, tunnelId);
             break;
         default:
@@ -612,7 +606,7 @@ void MuxNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, bool add, Mu
         if (state == MuxState::MUX_STATE_STANDBY)
         {
             remove_route(pfx);
-            mux_cb_orch->removeTunnelRoute(nh);
+            updateTunnelRoute(nh, false);
         }
         neighbors_.erase(nh.ip_address);
     }
@@ -621,7 +615,6 @@ void MuxNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, bool add, Mu
 bool MuxNbrHandler::enable(bool update_rt)
 {
     NeighborEntry neigh;
-    MuxCableOrch* mux_cb_orch = gDirectory.get<MuxCableOrch*>();
 
     auto it = neighbors_.begin();
     while (it != neighbors_.end())
@@ -677,7 +670,7 @@ bool MuxNbrHandler::enable(bool update_rt)
             {
                 return false;
             }
-            mux_cb_orch->removeTunnelRoute(nh_key);
+            updateTunnelRoute(nh_key, false);
         }
 
         it++;
@@ -689,7 +682,6 @@ bool MuxNbrHandler::enable(bool update_rt)
 bool MuxNbrHandler::disable(sai_object_id_t tnh)
 {
     NeighborEntry neigh;
-    MuxCableOrch* mux_cb_orch = gDirectory.get<MuxCableOrch*>();
 
     auto it = neighbors_.begin();
     while (it != neighbors_.end())
@@ -735,7 +727,7 @@ bool MuxNbrHandler::disable(sai_object_id_t tnh)
             return false;
         }
 
-        mux_cb_orch->addTunnelRoute(nh_key);
+        updateTunnelRoute(nh_key, true);
 
         IpPrefix pfx = it->first.to_string();
         if (create_route(pfx, it->second) != SAI_STATUS_SUCCESS)
@@ -758,6 +750,27 @@ sai_object_id_t MuxNbrHandler::getNextHopId(const NextHopKey nhKey)
     }
 
     return SAI_NULL_OBJECT_ID;
+}
+
+void MuxNbrHandler::updateTunnelRoute(NextHopKey nh, bool add)
+{
+    MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
+    MuxCableOrch* mux_cb_orch = gDirectory.get<MuxCableOrch*>();
+
+    if (mux_orch->isSkipNeighbor(nh.ip_address))
+    {
+        SWSS_LOG_INFO("Skip updating neighbor %s, add %d", nh.ip_address.to_string().c_str(), add);
+        return;
+    }
+
+    if (add)
+    {
+        mux_cb_orch->addTunnelRoute(nh);
+    }
+    else
+    {
+        mux_cb_orch->removeTunnelRoute(nh);
+    }
 }
 
 std::map<std::string, AclTable> MuxAclHandler::acl_table_;
@@ -977,7 +990,7 @@ bool MuxOrch::isNeighborActive(const IpAddress& nbr, const MacAddress& mac, stri
 
     if (ptr)
     {
-        return (ptr->isActive() || ptr->isSkipNeighbor(nbr));
+        return ptr->isActive();
     }
 
     string port;
@@ -991,7 +1004,7 @@ bool MuxOrch::isNeighborActive(const IpAddress& nbr, const MacAddress& mac, stri
     if (!port.empty() && isMuxExists(port))
     {
         MuxCable* ptr = getMuxCable(port);
-        return (ptr->isActive() || ptr->isSkipNeighbor(nbr));
+        return ptr->isActive();
     }
 
     NextHopKey nh_key = NextHopKey(nbr, alias);
@@ -999,7 +1012,7 @@ bool MuxOrch::isNeighborActive(const IpAddress& nbr, const MacAddress& mac, stri
     if (port.empty() && !curr_port.empty() && isMuxExists(curr_port))
     {
         MuxCable* ptr = getMuxCable(curr_port);
-        return (ptr->isActive() || ptr->isSkipNeighbor(nbr));
+        return ptr->isActive();
     }
 
     return true;
@@ -1295,7 +1308,8 @@ bool MuxOrch::handleMuxCfg(const Request& request)
         }
 
         mux_cable_tb_[port_name] = std::make_unique<MuxCable>
-                                   (MuxCable(port_name, srv_ip, srv_ip6, mux_peer_switch_, skip_neighbors));
+                                   (MuxCable(port_name, srv_ip, srv_ip6, mux_peer_switch_));
+        addSkipNeighbors(skip_neighbors);
 
         SWSS_LOG_NOTICE("Mux entry for port '%s' was added", port_name.c_str());
     }
@@ -1307,6 +1321,7 @@ bool MuxOrch::handleMuxCfg(const Request& request)
             return true;
         }
 
+        removeSkipNeighbors(skip_neighbors);
         mux_cable_tb_.erase(port_name);
 
         SWSS_LOG_NOTICE("Mux cable for port '%s' was removed", port_name.c_str());
