@@ -6618,13 +6618,13 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
 
 void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
 {
-    SWSS_LOG_NOTICE("Port %s oper state set from %s to %s",
-            port.m_alias.c_str(), oper_status_strings.at(port.m_oper_status).c_str(),
-            oper_status_strings.at(status).c_str());
     if (status == port.m_oper_status)
     {
         return;
     }
+    SWSS_LOG_NOTICE("Port %s oper state set from %s to %s",
+            port.m_alias.c_str(), oper_status_strings.at(port.m_oper_status).c_str(),
+            oper_status_strings.at(status).c_str());
 
     if (port.m_type == Port::PHY)
     {
