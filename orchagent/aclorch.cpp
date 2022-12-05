@@ -107,6 +107,11 @@ static acl_rule_attr_lookup_t aclDTelActionLookup =
     { ACTION_DTEL_REPORT_ALL_PACKETS,       SAI_ACL_ENTRY_ATTR_ACTION_DTEL_REPORT_ALL_PACKETS }
 };
 
+static acl_rule_attr_lookup_t aclOtherActionLookup = 
+{
+    { ACTION_COUNTER,                       SAI_ACL_ENTRY_ATTR_ACTION_COUNTER}
+};
+
 static acl_packet_action_lookup_t aclPacketActionLookup =
 {
     { PACKET_ACTION_FORWARD, SAI_PACKET_ACTION_FORWARD },
@@ -635,6 +640,7 @@ bool AclTableTypeParser::parseAclTableTypeActions(const std::string& value, AclT
         auto l3Action = aclL3ActionLookup.find(action);
         auto mirrorAction = aclMirrorStageLookup.find(action);
         auto dtelAction = aclDTelActionLookup.find(action);
+        auto otherAction = aclOtherActionLookup.find(action);
 
         if (l3Action != aclL3ActionLookup.end())
         {
@@ -648,11 +654,16 @@ bool AclTableTypeParser::parseAclTableTypeActions(const std::string& value, AclT
         {
             saiActionAttr = dtelAction->second;
         }
+        else if (otherAction != aclOtherActionLookup.end())
+        {
+            saiActionAttr = otherAction->second;
+        }
         else
         {
             SWSS_LOG_ERROR("Unknown action %s", action.c_str());
             return false;
         }
+        SWSS_LOG_INFO("Added action %s", action.c_str());
 
         builder.withAction(AclEntryActionToAclAction(saiActionAttr));
     }
@@ -4439,10 +4450,12 @@ void AclOrch::doAclTableTypeTask(Consumer &consumer)
             }
 
             addAclTableType(builder.build());
+            SWSS_LOG_NOTICE("Created ACL table type %s", key.c_str());
         }
         else if (op == DEL_COMMAND)
         {
             removeAclTableType(key);
+            SWSS_LOG_NOTICE("Removed ACL table type %s", key.c_str());
         }
         else
         {
