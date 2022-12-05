@@ -821,12 +821,14 @@ bool Orch::isItemIdsMapContinuous(unsigned long idsMap, sai_uint32_t maxId)
 
 void Orch::addConsumer(DBConnector *db, string tableName, int pri)
 {
+    SWSS_LOG_ERROR("addConsumer for table: %s, DB: %d", tableName.c_str(), db->getDbId());
     if (db->getDbId() == CONFIG_DB || db->getDbId() == STATE_DB || db->getDbId() == CHASSIS_APP_DB)
     {
         addExecutor(new TableConsumer(new SubscriberStateTable(db, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, pri), this, tableName));
     }
     else if (db->getDbId() == APPL_DB && tableName == APP_ROUTE_TABLE_NAME)
     {
+        SWSS_LOG_ERROR("addConsumer, ZmqConsumerStateTable: %s", tableName.c_str());
         addExecutor(new ShmConsumer(new ZmqConsumerStateTable(db, tableName, "tcp://*:1234", gBatchSize, pri), this, tableName));
     }
     else
