@@ -257,67 +257,6 @@ void CoppMgr::mergeConfig(CoppCfg &init_cfg, CoppCfg &m_cfg, std::vector<std::st
     }
 }
 
-void CoppMgr::mergePreservedConfig(CoppCfg &merged_cfg, CoppCfg &m_cfg)
-{
-    /* Compare with the existing content of copp tables, in case values merged in merged map
-     * will be ignored as they are duplicates. In case the value in helper (merge of init and
-     * user config) will overwrie the copp table entries, current entry will be deleted from copp
-     * tables.
-     */
-    for (auto i : merged_cfg)
-    {
-        string table_key = i.first;
-        std::vector<FieldValueTuple> merged_fvs = i.second;
-        std::vector<FieldValueTuple> preserved_fvs;
-        std::vector<FieldValueTuple> new_fvs;
-
-        bool key_found = m_coppTable.get(table_key, preserved_fvs);
-        if (!key_found)
-        {
-            // key is not found in preserved copp table -> add
-            m_cfg[table_key] = merged_cfg[table_key];
-        }
-        else
-        {
-            unordered_map<string, string> preserved_copp_entry;
-            for (auto prev_fv : preserved_fvs)
-            {
-                preserved_copp_entry[fvField(prev_fv)] = fvValue(prev_fv);
-            }
-            for (auto merged_fv: merged_fvs)
-            {
-                string field = fvField(merged_fv);
-                string value = fvValue(merged_fv);
-                unordered_map<string, string>::const_iterator preserved_copp_it = preserved_copp_entry.find(field);
-                bool field_found = (preserved_copp_it != preserved_copp_entry.end());
-                bool overwrite = false;
-                if (field_found)
-                {
-                    if (!preserved_copp_it->second.compare(value))
-                    {
-                        // duplicate -> ignore and continue to next key.
-                        continue;
-                    }
-                    else
-                    {
-                        // overwrite -> delete preserved FV tuple from copp table and add merged fvs to m_cfg
-                        overwrite = true;
-                        m_coppTable.hdel(table_key, field);
-                    }
-                }
-                if (!field_found || overwrite)
-                {
-                    new_fvs.push_back(merged_fv);
-                }
-            }
-            if (!new_fvs.empty())
-            {
-                m_cfg[table_key] = new_fvs;
-            }
-        }   
-    }
-}
-
 CoppMgr::CoppMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
         m_cfgCoppTrapTable(cfgDb, CFG_COPP_TRAP_TABLE_NAME),
@@ -393,9 +332,8 @@ CoppMgr::CoppMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         }
     }
 
-    mergeConfig(m_coppGroupInitCfg, merged_group_cfg, group_cfg_keys, m_cfgCoppGroupTable);
-    mergePreservedConfig(merged_group_cfg, group_cfg);
-    
+    mergeConfig(m_coppGroupInitCfg, group_cfg, group_cfg_keys, m_cfgCoppGroupTable);
+
     for (auto i: group_cfg)
     {
         string trap_ids;
@@ -419,8 +357,47 @@ CoppMgr::CoppMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
 
         if (!trap_group_fvs.empty())
         {
+            /* Compare with the existing contents of copp tables, in case for a key K preserved fvs are the same
+             * as the fvs in trap_group_fvs it will be ignored as a duplicate continue to next key.
+             * In case one of the fvs differs the preserved entry will be deleted and new entry will be set instead.
+             */
+            std::vector<FieldValueTuple> preserved_fvs;
+            bool key_found = m_coppTable.get(i.first, preserved_fvs);
+            if (key_found)
+            {
+                bool overwrite = false;
+                unordered_map<string, string> preserved_copp_entry;
+                for (auto prev_fv : preserved_fvs)
+                {
+                    preserved_copp_entry[fvField(prev_fv)] = fvValue(prev_fv);
+                }
+                for (auto trap_group_fv: trap_group_fvs)
+                {
+                    string field = fvField(trap_group_fv);
+                    string value = fvValue(trap_group_fv);
+                    unordered_map<string, string>::const_iterator preserved_copp_it = preserved_copp_entry.find(field);
+                    bool field_found = (preserved_copp_it != preserved_copp_entry.end());
+                    if (field_found)
+                    {
+                        if (preserved_copp_it->second.compare(value))
+                        {
+                            // overwrite -> delete preserved entry from copp table and set a new entry instead
+                            m_coppTable.del(table_key);
+                            overwrite = true;
+                            break;
+                        }
+                    }
+                }
+                if (!overwrite)
+                {
+                    // duplicate -> ignore and continue to next key.
+                    continue;
+                }
+            }
+
             m_appCoppTable.set(i.first, trap_group_fvs);
         }
+
         setCoppGroupStateOk(i.first);
         auto g_cfg = std::find(group_cfg_keys.begin(), group_cfg_keys.end(), i.first);
         if (g_cfg != group_cfg_keys.end())
