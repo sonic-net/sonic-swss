@@ -257,7 +257,7 @@ void CoppMgr::mergeConfig(CoppCfg &init_cfg, CoppCfg &m_cfg, std::vector<std::st
     }
 }
 
-bool CoppMgr::isDupEntry(std::string &key, std::vector<FieldValueTuple> &fvs)
+bool CoppMgr::isDupEntry(const std::string &key, std::vector<FieldValueTuple> &fvs)
 {
     /* Compare with the existing contents of copp tables, in case for a key K preserved fvs are the same
      * as the fvs in trap_group_fvs it will be ignored as a duplicate continue to next key.
@@ -287,7 +287,7 @@ bool CoppMgr::isDupEntry(std::string &key, std::vector<FieldValueTuple> &fvs)
                 if (preserved_copp_it->second.compare(value))
                 {
                     // overwrite -> delete preserved entry from copp table and set a new entry instead
-                    m_coppTable.del(table_key);
+                    m_coppTable.del(key);
                     return false;
                 }
             }
