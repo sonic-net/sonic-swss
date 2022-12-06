@@ -316,7 +316,6 @@ CoppMgr::CoppMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
     std::vector<string> group_cfg_keys;
     std::vector<string> trap_cfg_keys;
 
-    CoppCfg merged_group_cfg;
     CoppCfg group_cfg;
     CoppCfg trap_cfg;
 
