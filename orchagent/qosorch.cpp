@@ -58,6 +58,8 @@ map<string, sai_port_attr_t> qos_to_attr_map = {
     {mpls_tc_to_tc_field_name, SAI_PORT_ATTR_QOS_MPLS_EXP_TO_TC_MAP},
     {dot1p_to_tc_field_name, SAI_PORT_ATTR_QOS_DOT1P_TO_TC_MAP},
     {tc_to_queue_field_name, SAI_PORT_ATTR_QOS_TC_TO_QUEUE_MAP},
+    {tc_to_dot1p_field_name, SAI_PORT_ATTR_QOS_TC_AND_COLOR_TO_DOT1P_MAP},
+    {tc_to_dscp_field_name, SAI_PORT_ATTR_QOS_TC_AND_COLOR_TO_DSCP_MAP},
     {tc_to_pg_map_field_name, SAI_PORT_ATTR_QOS_TC_TO_PRIORITY_GROUP_MAP},
     {pfc_to_pg_map_name, SAI_PORT_ATTR_QOS_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP},
     {pfc_to_queue_map_name, SAI_PORT_ATTR_QOS_PFC_PRIORITY_TO_QUEUE_MAP},
@@ -85,6 +87,7 @@ type_map QosOrch::m_qos_maps = {
     {CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME, new object_reference_map()},
     {CFG_DSCP_TO_FC_MAP_TABLE_NAME, new object_reference_map()},
     {CFG_EXP_TO_FC_MAP_TABLE_NAME, new object_reference_map()},
+    {CFG_TC_TO_DOT1P_MAP_TABLE_NAME, new object_reference_map()},
     {CFG_TC_TO_DSCP_MAP_TABLE_NAME, new object_reference_map()},
     {APP_TUNNEL_DECAP_TABLE_NAME, new object_reference_map()}
 };
@@ -94,6 +97,8 @@ map<string, string> qos_to_ref_table_map = {
     {mpls_tc_to_tc_field_name, CFG_MPLS_TC_TO_TC_MAP_TABLE_NAME},
     {dot1p_to_tc_field_name, CFG_DOT1P_TO_TC_MAP_TABLE_NAME},
     {tc_to_queue_field_name, CFG_TC_TO_QUEUE_MAP_TABLE_NAME},
+    {tc_to_dot1p_field_name, CFG_TC_TO_DOT1P_MAP_TABLE_NAME},
+    {tc_to_dscp_field_name, CFG_TC_TO_DSCP_MAP_TABLE_NAME},
     {tc_to_pg_map_field_name, CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME},
     {pfc_to_pg_map_name, CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME},
     {pfc_to_queue_map_name, CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME},
@@ -178,7 +183,7 @@ task_process_status QosMapHandler::processWorkItem(Consumer& consumer, KeyOpFiel
         }
         if (!removeQosItem(sai_object))
         {
-            SWSS_LOG_ERROR("Failed to remove dscp_to_tc map. db name:%s sai object:%" PRIx64, qos_object_name.c_str(), sai_object);
+            SWSS_LOG_ERROR("Failed to remove QoS map. db name:%s sai object:%" PRIx64, qos_object_name.c_str(), sai_object);
             return task_process_status::task_failed;
         }
         auto it_to_delete = (QosOrch::getTypeMap()[qos_map_type_name])->find(qos_object_name);
@@ -468,6 +473,60 @@ task_process_status QosOrch::handleTcToQueueTable(Consumer& consumer, KeyOpField
     SWSS_LOG_ENTER();
     TcToQueueMapHandler tc_queue_handler;
     return tc_queue_handler.processWorkItem(consumer, tuple);
+}
+
+//Functions for TC-to-DOT1P qos map handling
+bool TcToDot1pMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes)
+{
+    SWSS_LOG_ENTER();
+    sai_attribute_t list_attr;
+    sai_qos_map_list_t tc_map_list;
+    tc_map_list.count = (uint32_t)kfvFieldsValues(tuple).size();
+    tc_map_list.list = new sai_qos_map_t[tc_map_list.count]();
+    uint32_t ind = 0;
+    for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++, ind++)
+    {
+        tc_map_list.list[ind].key.tc = (uint8_t)stoi(fvField(*i));
+        tc_map_list.list[ind].value.dot1p = (uint8_t)stoi(fvValue(*i));
+    }
+    list_attr.id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;
+    list_attr.value.qosmap.count = tc_map_list.count;
+    list_attr.value.qosmap.list = tc_map_list.list;
+    attributes.push_back(list_attr);
+    return true;
+}
+
+sai_object_id_t TcToDot1pMapHandler::addQosItem(const vector<sai_attribute_t> &attributes)
+{
+    SWSS_LOG_ENTER();
+    sai_status_t sai_status;
+    sai_object_id_t sai_object;
+    vector<sai_attribute_t> qos_map_attrs;
+    sai_attribute_t qos_map_attr;
+
+    qos_map_attr.id = SAI_QOS_MAP_ATTR_TYPE;
+    qos_map_attr.value.s32 = SAI_QOS_MAP_TYPE_TC_AND_COLOR_TO_DOT1P;
+    qos_map_attrs.push_back(qos_map_attr);
+
+    qos_map_attr.id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;
+    qos_map_attr.value.qosmap.count = attributes[0].value.qosmap.count;
+    qos_map_attr.value.qosmap.list = attributes[0].value.qosmap.list;
+    qos_map_attrs.push_back(qos_map_attr);
+
+    sai_status = sai_qos_map_api->create_qos_map(&sai_object, gSwitchId, (uint32_t)qos_map_attrs.size(), qos_map_attrs.data());
+    if (SAI_STATUS_SUCCESS != sai_status)
+    {
+        SWSS_LOG_ERROR("Failed to create tc_to_dot1p map. status:%d", sai_status);
+        return SAI_NULL_OBJECT_ID;
+    }
+    return sai_object;
+}
+
+task_process_status QosOrch::handleTcToDot1pTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple)
+{
+    SWSS_LOG_ENTER();
+    TcToDot1pMapHandler tc_dot1p_handler;
+    return tc_dot1p_handler.processWorkItem(consumer, tuple);
 }
 
 void WredMapHandler::freeAttribResources(vector<sai_attribute_t> &attributes)
@@ -857,7 +916,7 @@ sai_object_id_t TcToPgHandler::addQosItem(const vector<sai_attribute_t> &attribu
     sai_status = sai_qos_map_api->create_qos_map(&sai_object, gSwitchId, (uint32_t)qos_map_attrs.size(), qos_map_attrs.data());
     if (SAI_STATUS_SUCCESS != sai_status)
     {
-        SWSS_LOG_ERROR("Failed to create tc_to_queue map. status:%d", sai_status);
+        SWSS_LOG_ERROR("Failed to create tc_to_pg map. status:%d", sai_status);
         return SAI_NULL_OBJECT_ID;
     }
     return sai_object;
@@ -911,7 +970,7 @@ sai_object_id_t PfcPrioToPgHandler::addQosItem(const vector<sai_attribute_t> &at
     sai_status = sai_qos_map_api->create_qos_map(&sai_object, gSwitchId, (uint32_t)qos_map_attrs.size(), qos_map_attrs.data());
     if (SAI_STATUS_SUCCESS != sai_status)
     {
-        SWSS_LOG_ERROR("Failed to create tc_to_queue map. status:%d", sai_status);
+        SWSS_LOG_ERROR("Failed to create pfc_priority_to_queue map. status:%d", sai_status);
         return SAI_NULL_OBJECT_ID;
     }
     return sai_object;
@@ -966,7 +1025,7 @@ sai_object_id_t PfcToQueueHandler::addQosItem(const vector<sai_attribute_t> &att
     sai_status = sai_qos_map_api->create_qos_map(&sai_object, gSwitchId, (uint32_t)qos_map_attrs.size(), qos_map_attrs.data());
     if (SAI_STATUS_SUCCESS != sai_status)
     {
-        SWSS_LOG_ERROR("Failed to create tc_to_queue map. status:%d", sai_status);
+        SWSS_LOG_ERROR("Failed to create pfc_priority_to_queue map. status:%d", sai_status);
         return SAI_NULL_OBJECT_ID;
     }
     return sai_object;
@@ -1274,6 +1333,7 @@ void QosOrch::initTableHandlers()
     m_qos_handler_map.insert(qos_handler_pair(CFG_DSCP_TO_FC_MAP_TABLE_NAME, &QosOrch::handleDscpToFcTable));
     m_qos_handler_map.insert(qos_handler_pair(CFG_EXP_TO_FC_MAP_TABLE_NAME, &QosOrch::handleExpToFcTable));
     m_qos_handler_map.insert(qos_handler_pair(CFG_TC_TO_DSCP_MAP_TABLE_NAME, &QosOrch::handleTcToDscpTable));
+    m_qos_handler_map.insert(qos_handler_pair(CFG_TC_TO_DOT1P_MAP_TABLE_NAME, &QosOrch::handleTcToDot1pTable));
 
     m_qos_handler_map.insert(qos_handler_pair(CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME, &QosOrch::handleTcToPgTable));
     m_qos_handler_map.insert(qos_handler_pair(CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME, &QosOrch::handlePfcPrioToPgTable));

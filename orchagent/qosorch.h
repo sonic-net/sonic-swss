@@ -17,6 +17,8 @@ const string pfc_enable_name                    = "pfc_enable";
 const string pfcwd_sw_enable_name               = "pfcwd_sw_enable";
 const string tc_to_pg_map_field_name            = "tc_to_pg_map";
 const string tc_to_queue_field_name             = "tc_to_queue_map";
+const string tc_to_dot1p_field_name             = "tc_to_dot1p_map";
+const string tc_to_dscp_field_name              = "tc_to_dscp_map";
 const string scheduler_field_name               = "scheduler";
 const string red_max_threshold_field_name       = "red_max_threshold";
 const string red_min_threshold_field_name       = "red_min_threshold";
@@ -176,6 +178,13 @@ public:
     sai_object_id_t addQosItem(const vector<sai_attribute_t> &attributes) override;
 };
 
+class TcToDot1pMapHandler : public QosMapHandler
+{
+public:
+    bool convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes);
+    sai_object_id_t addQosItem(const vector<sai_attribute_t> &attributes);
+};
+
 class QosOrch : public Orch
 {
 public:
@@ -210,6 +219,7 @@ private:
     task_process_status handleDscpToFcTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
     task_process_status handleExpToFcTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
     task_process_status handleTcToDscpTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
+    task_process_status handleTcToDot1pTable(Consumer& consumer, KeyOpFieldsValuesTuple &tuple);
 
     task_process_status handleGlobalQosMap(const string &op, KeyOpFieldsValuesTuple &tuple);
 
