@@ -231,6 +231,8 @@ int main(int argc, char **argv)
             cout << "Exception caught: " << e.what() << endl;
                 return EXIT_FAILURE;
         }
+        
+        SWSS_LOG_NOTICE("Write config from JSON file finish:%s...", i.c_str());
     }
 
     return EXIT_SUCCESS;
