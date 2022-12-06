@@ -95,7 +95,11 @@ class TestMuxTunnelBase():
     TC_TO_QUEUE_MAP = {str(i):str(i) for i in range(0, 8)}
     DSCP_TO_TC_MAP = {str(i):str(1) for i in range(0, 64)}
     TC_TO_PRIORITY_GROUP_MAP = {str(i):str(i) for i in range(0, 8)}
-    
+
+    def check_syslog(self, dvs, marker, err_log, expected_cnt):
+        (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \"%s\" | wc -l" % (marker, err_log)])
+        assert num.strip() >= str(expected_cnt)
+
     def create_vlan_interface(self, dvs):
         confdb = dvs.get_config_db()
 
@@ -308,6 +312,15 @@ class TestMuxTunnelBase():
         )
         self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV4)
         self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV6)
+
+        marker = dvs.add_log_marker()
+
+        self.set_mux_state(appdb, "Ethernet0", "active")
+        self.set_mux_state(appdb, "Ethernet0", "active")
+        self.check_syslog(dvs, marker, "Maintaining current MUX state", 1)
+
+        self.set_mux_state(appdb, "Ethernet0", "init")
+        self.check_syslog(dvs, marker, "State transition from active to init is not-handled", 1)
 
     def create_and_test_fdb(self, appdb, asicdb, dvs, dvs_route):
 

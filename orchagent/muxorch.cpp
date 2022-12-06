@@ -451,13 +451,19 @@ void MuxCable::setState(string new_state)
     new_state = muxStateValToString.at(ns);
 
     auto it = muxStateTransition.find(make_pair(state_, ns));
-
     if (it ==  muxStateTransition.end())
     {
         // Update HW Mux cable state anyways
         mux_cb_orch_->updateMuxState(mux_name_, new_state);
-        SWSS_LOG_ERROR("State transition from %s to %s is not-handled ",
-                        muxStateValToString.at(state_).c_str(), new_state.c_str());
+        if (strcmp(new_state.c_str(), muxStateValToString.at(state_).c_str()) == 0)
+        {
+            SWSS_LOG_NOTICE("[%s] Maintaining current MUX state", mux_name_.c_str());
+        }
+        else
+        {
+            SWSS_LOG_ERROR("State transition from %s to %s is not-handled ",
+                            muxStateValToString.at(state_).c_str(), new_state.c_str());
+        }
         return;
     }
 
