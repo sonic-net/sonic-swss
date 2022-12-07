@@ -392,6 +392,9 @@ public:
     // Add stage mandatory matching fields to ACL table
     bool addStageMandatoryMatchFields();
 
+    // Add stage mandatory range fields to ACL table
+    bool addStageMandatoryRangeFields();
+
     // validate AclRule match attribute against rule and table configuration
     bool validateAclRuleMatch(sai_acl_entry_attr_t matchId, const AclRule& rule) const;
     // validate AclRule action attribute against rule and table configuration
