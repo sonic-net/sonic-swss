@@ -10,6 +10,7 @@
 #include "notificationconsumer.h"
 #include "notifier.h"
 #include "orch.h"
+#include "p4orch/tables_definition_manager.h"
 #include "p4orch/acl_rule_manager.h"
 #include "p4orch/acl_table_manager.h"
 #include "p4orch/gre_tunnel_manager.h"
@@ -22,8 +23,21 @@
 #include "p4orch/route_manager.h"
 #include "p4orch/router_interface_manager.h"
 #include "p4orch/wcmp_manager.h"
+#include "p4orch/ext_tables_manager.h"
 #include "response_publisher.h"
 #include "vrforch.h"
+
+static const std::map<std::string, std::string> FixedTablesMap = {
+    {"router_interface_table", APP_P4RT_ROUTER_INTERFACE_TABLE_NAME },
+    {"neighbor_table",         APP_P4RT_NEIGHBOR_TABLE_NAME},
+    {"nexthop_table",          APP_P4RT_NEXTHOP_TABLE_NAME},
+    {"wcmp_group_table",       APP_P4RT_WCMP_GROUP_TABLE_NAME},
+    {"ipv4_table",             APP_P4RT_IPV4_TABLE_NAME},
+    {"ipv6_table",             APP_P4RT_IPV6_TABLE_NAME},
+    {"mirror_session_table",   APP_P4RT_MIRROR_SESSION_TABLE_NAME},
+    {"l3_admit_table",         APP_P4RT_L3_ADMIT_TABLE_NAME},
+    {"tunnel_table",           APP_P4RT_TUNNEL_TABLE_NAME}
+};
 
 class P4Orch : public Orch
 {
@@ -37,6 +51,11 @@ class P4Orch : public Orch
     p4orch::AclRuleManager *getAclRuleManager();
     p4orch::WcmpManager *getWcmpManager();
     GreTunnelManager *getGreTunnelManager();
+    TablesInfo *tablesinfo = NULL;
+
+    // m_p4TableToManagerMap: P4 APP DB table name, P4 Object Manager
+    std::unordered_map<std::string, ObjectManagerInterface *> m_p4TableToManagerMap;
+ 
 
   private:
     void doTask(Consumer &consumer);
@@ -44,13 +63,13 @@ class P4Orch : public Orch
     void doTask(swss::NotificationConsumer &consumer);
     void handlePortStatusChangeNotification(const std::string &op, const std::string &data);
 
-    // m_p4TableToManagerMap: P4 APP DB table name, P4 Object Manager
-    std::unordered_map<std::string, ObjectManagerInterface *> m_p4TableToManagerMap;
     // P4 object manager request processing order.
     std::vector<ObjectManagerInterface *> m_p4ManagerPrecedence;
 
     swss::SelectableTimer *m_aclCounterStatsTimer;
+    swss::SelectableTimer *m_extCounterStatsTimer;
     P4OidMapper m_p4OidMapper;
+    std::unique_ptr<TablesDefnManager> m_tablesDefnManager;
     std::unique_ptr<RouterInterfaceManager> m_routerIntfManager;
     std::unique_ptr<GreTunnelManager> m_greTunnelManager;
     std::unique_ptr<NeighborManager> m_neighborManager;
@@ -61,6 +80,7 @@ class P4Orch : public Orch
     std::unique_ptr<p4orch::AclRuleManager> m_aclRuleManager;
     std::unique_ptr<p4orch::WcmpManager> m_wcmpManager;
     std::unique_ptr<L3AdmitManager> m_l3AdmitManager;
+    std::unique_ptr<ExtTablesManager> m_extTablesManager;
 
     // Notification consumer for port state change
     swss::NotificationConsumer *m_portStatusNotificationConsumer;

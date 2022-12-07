@@ -212,6 +212,10 @@ static sai_object_id_t create_tunnel(
     attr.value.s32 = SAI_TUNNEL_TTL_MODE_PIPE_MODEL;
     tunnel_attrs.push_back(attr);
 
+    attr.id = SAI_TUNNEL_ATTR_DECAP_TTL_MODE;
+    attr.value.s32 = SAI_TUNNEL_TTL_MODE_PIPE_MODEL;
+    tunnel_attrs.push_back(attr);
+
     if (dscp_mode_name == "uniform" || dscp_mode_name == "pipe")
     {
         sai_tunnel_dscp_mode_t dscp_mode;
@@ -224,6 +228,10 @@ static sai_object_id_t create_tunnel(
             dscp_mode = SAI_TUNNEL_DSCP_MODE_PIPE_MODEL;
         }
         attr.id = SAI_TUNNEL_ATTR_ENCAP_DSCP_MODE;
+        attr.value.s32 = dscp_mode;
+        tunnel_attrs.push_back(attr);
+
+        attr.id = SAI_TUNNEL_ATTR_DECAP_DSCP_MODE;
         attr.value.s32 = dscp_mode;
         tunnel_attrs.push_back(attr);
     }
@@ -443,13 +451,19 @@ void MuxCable::setState(string new_state)
     new_state = muxStateValToString.at(ns);
 
     auto it = muxStateTransition.find(make_pair(state_, ns));
-
     if (it ==  muxStateTransition.end())
     {
         // Update HW Mux cable state anyways
         mux_cb_orch_->updateMuxState(mux_name_, new_state);
-        SWSS_LOG_ERROR("State transition from %s to %s is not-handled ",
-                        muxStateValToString.at(state_).c_str(), new_state.c_str());
+        if (strcmp(new_state.c_str(), muxStateValToString.at(state_).c_str()) == 0)
+        {
+            SWSS_LOG_NOTICE("[%s] Maintaining current MUX state", mux_name_.c_str());
+        }
+        else
+        {
+            SWSS_LOG_ERROR("State transition from %s to %s is not-handled ",
+                            muxStateValToString.at(state_).c_str(), new_state.c_str());
+        }
         return;
     }
 

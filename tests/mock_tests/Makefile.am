@@ -4,9 +4,9 @@ P4_ORCH_DIR = $(top_srcdir)/orchagent/p4orch
 
 CFLAGS_SAI = -I /usr/include/sai
 
-TESTS = tests tests_intfmgrd tests_portsyncd
+TESTS = tests tests_intfmgrd tests_portsyncd tests_fpmsyncd
 
-noinst_PROGRAMS = tests tests_intfmgrd tests_portsyncd
+noinst_PROGRAMS = tests tests_intfmgrd tests_portsyncd tests_fpmsyncd
 
 LDADD_SAI = -lsaimeta -lsaimetadata -lsaivs -lsairedis
 
@@ -111,6 +111,7 @@ tests_SOURCES += $(DEBUG_CTR_DIR)/debug_counter.cpp $(DEBUG_CTR_DIR)/drop_counte
 tests_SOURCES += $(P4_ORCH_DIR)/p4orch.cpp \
 		 $(P4_ORCH_DIR)/p4orch_util.cpp \
 		 $(P4_ORCH_DIR)/p4oidmapper.cpp \
+		 $(P4_ORCH_DIR)/tables_definition_manager.cpp \
 		 $(P4_ORCH_DIR)/router_interface_manager.cpp \
 		 $(P4_ORCH_DIR)/neighbor_manager.cpp \
 		 $(P4_ORCH_DIR)/next_hop_manager.cpp \
@@ -122,6 +123,7 @@ tests_SOURCES += $(P4_ORCH_DIR)/p4orch.cpp \
 		 $(P4_ORCH_DIR)/mirror_session_manager.cpp \
 		 $(P4_ORCH_DIR)/gre_tunnel_manager.cpp \
 		 $(P4_ORCH_DIR)/l3_admit_manager.cpp \
+		 $(P4_ORCH_DIR)/ext_tables_manager.cpp \
 		 $(P4_ORCH_DIR)/tests/mock_sai_switch.cpp
 
 tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) 
@@ -166,3 +168,14 @@ tests_intfmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST
 tests_intfmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_intfmgrd_INCLUDES)
 tests_intfmgrd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis \
         -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lpthread
+
+## fpmsyncd unit tests
+
+tests_fpmsyncd_SOURCES = fpmsyncd/test_fpmlink.cpp \
+                         $(top_srcdir)/fpmsyncd/fpmlink.cpp
+
+tests_fpmsyncd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/tests_fpmsyncd -I$(top_srcdir)/lib -I$(top_srcdir)/warmrestart
+tests_fpmsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
+tests_fpmsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_fpmsyncd_INCLUDES)
+tests_fpmsyncd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis \
+        -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lpthread -lgmock -lgmock_main

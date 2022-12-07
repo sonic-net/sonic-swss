@@ -105,6 +105,7 @@ orchagent_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.
 orchagent_SOURCES += p4orch/p4orch.cpp \
 		     p4orch/p4orch_util.cpp \
 		     p4orch/p4oidmapper.cpp \
+ 		     p4orch/tables_definition_manager.cpp \
 		     p4orch/router_interface_manager.cpp \
 		     p4orch/gre_tunnel_manager.cpp \
 		     p4orch/neighbor_manager.cpp \
@@ -115,7 +116,8 @@ orchagent_SOURCES += p4orch/p4orch.cpp \
 		     p4orch/acl_rule_manager.cpp \
 		     p4orch/wcmp_manager.cpp \
 		     p4orch/mirror_session_manager.cpp \
-		     p4orch/l3_admit_manager.cpp
+		     p4orch/l3_admit_manager.cpp \
+ 		     p4orch/ext_tables_manager.cpp
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 orchagent_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)

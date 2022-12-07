@@ -165,7 +165,12 @@ std::vector<sai_attribute_t> getMeterSaiAttrs(const P4AclMeter &p4_acl_meter)
 
 } // namespace
 
-void AclRuleManager::enqueue(const swss::KeyOpFieldsValuesTuple &entry)
+ReturnCode AclRuleManager::getSaiObject(const std::string &json_key, sai_object_type_t &object_type, std::string &object_key)
+{
+    return StatusCode::SWSS_RC_UNIMPLEMENTED;
+}
+
+void AclRuleManager::enqueue(const std::string &table_name, const swss::KeyOpFieldsValuesTuple &entry)
 {
     m_entries.push_back(entry);
 }

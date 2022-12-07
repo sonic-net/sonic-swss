@@ -205,7 +205,12 @@ ReturnCodeOr<std::vector<sai_attribute_t>> AclTableManager::getUdfSaiAttrs(const
     return udf_attrs;
 }
 
-void AclTableManager::enqueue(const swss::KeyOpFieldsValuesTuple &entry)
+ReturnCode AclTableManager::getSaiObject(const std::string &json_key, sai_object_type_t &object_type, std::string &object_key)
+{
+    return StatusCode::SWSS_RC_UNIMPLEMENTED;
+}
+
+void AclTableManager::enqueue(const std::string &table_name, const swss::KeyOpFieldsValuesTuple &entry)
 {
     m_entries.push_back(entry);
 }

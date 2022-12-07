@@ -242,9 +242,9 @@ class RouteManagerTest : public ::testing::Test
         return route_manager_.deleteRouteEntries(route_entries);
     }
 
-    void Enqueue(const swss::KeyOpFieldsValuesTuple &entry)
+    void Enqueue(const std::string &table_name, const swss::KeyOpFieldsValuesTuple &entry)
     {
-        route_manager_.enqueue(entry);
+        route_manager_.enqueue(table_name, entry);
     }
 
     void Drain()
@@ -2469,7 +2469,7 @@ TEST_F(RouteManagerTest, RouteCreateAndUpdateInDrainSucceeds)
     p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_NEXT_HOP, KeyGenerator::generateNextHopKey(kNexthopId1), kNexthopOid1);
     auto key_op_fvs_1 = GenerateKeyOpFieldsValuesTuple(gVrfName, swss_ipv4_route_prefix, SET_COMMAND,
                                                        p4orch::kSetNexthopId, kNexthopId1);
-    Enqueue(key_op_fvs_1);
+    Enqueue(APP_P4RT_IPV4_TABLE_NAME, key_op_fvs_1);
     std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_route_, create_route_entries(_, _, _, _, _, _))
         .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
@@ -2482,7 +2482,7 @@ TEST_F(RouteManagerTest, RouteCreateAndUpdateInDrainSucceeds)
     p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_NEXT_HOP, KeyGenerator::generateNextHopKey(kNexthopId2), kNexthopOid2);
     auto key_op_fvs_2 = GenerateKeyOpFieldsValuesTuple(gVrfName, swss_ipv4_route_prefix, SET_COMMAND,
                                                        p4orch::kSetNexthopId, kNexthopId2);
-    Enqueue(key_op_fvs_2);
+    Enqueue(APP_P4RT_IPV4_TABLE_NAME, key_op_fvs_2);
     EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(_, _, _, _, _))
         .WillOnce(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_2)),
@@ -2505,7 +2505,7 @@ TEST_F(RouteManagerTest, RouteCreateAndUpdateInDrainSucceeds)
 
     auto key_op_fvs_3 = GenerateKeyOpFieldsValuesTuple(gVrfName, swss_ipv4_route_prefix, SET_COMMAND,
                                                        p4orch::kSetMetadataAndDrop, "", kMetadata1);
-    Enqueue(key_op_fvs_3);
+    Enqueue(APP_P4RT_IPV4_TABLE_NAME, key_op_fvs_3);
     EXPECT_CALL(mock_sai_route_, set_route_entries_attribute(_, _, _, _, _))
         .WillRepeatedly(DoAll(SetArrayArgument<4>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_3)),
@@ -2530,7 +2530,7 @@ TEST_F(RouteManagerTest, RouteCreateAndDeleteInDrainSucceeds)
     p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_NEXT_HOP, KeyGenerator::generateNextHopKey(kNexthopId1), kNexthopOid1);
     auto key_op_fvs_1 = GenerateKeyOpFieldsValuesTuple(gVrfName, swss_ipv4_route_prefix, SET_COMMAND,
                                                        p4orch::kSetNexthopId, kNexthopId1);
-    Enqueue(key_op_fvs_1);
+    Enqueue(APP_P4RT_IPV4_TABLE_NAME, key_op_fvs_1);
     std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_route_, create_route_entries(_, _, _, _, _, _))
         .WillOnce(DoAll(SetArrayArgument<5>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
@@ -2541,7 +2541,7 @@ TEST_F(RouteManagerTest, RouteCreateAndDeleteInDrainSucceeds)
     Drain();
 
     auto key_op_fvs_2 = GenerateKeyOpFieldsValuesTuple(gVrfName, swss_ipv4_route_prefix, DEL_COMMAND, "", "");
-    Enqueue(key_op_fvs_2);
+    Enqueue(APP_P4RT_IPV4_TABLE_NAME, key_op_fvs_2);
     EXPECT_CALL(mock_sai_route_, remove_route_entries(_, _, _, _))
         .WillOnce(DoAll(SetArrayArgument<3>(exp_status.begin(), exp_status.end()), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs_2)),
@@ -2566,10 +2566,10 @@ TEST_F(RouteManagerTest, UpdateFailsWhenCreateAndUpdateTheSameRouteInDrain)
     p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_NEXT_HOP, KeyGenerator::generateNextHopKey(kNexthopId2), kNexthopOid2);
     auto key_op_fvs_1 = GenerateKeyOpFieldsValuesTuple(gVrfName, swss::IpPrefix(kIpv4Prefix), SET_COMMAND,
                                                        p4orch::kSetNexthopId, kNexthopId1);
-    Enqueue(key_op_fvs_1);
+    Enqueue(APP_P4RT_IPV4_TABLE_NAME, key_op_fvs_1);
     auto key_op_fvs_2 = GenerateKeyOpFieldsValuesTuple(gVrfName, swss::IpPrefix(kIpv4Prefix), SET_COMMAND,
                                                        p4orch::kSetNexthopId, kNexthopId2);
-    Enqueue(key_op_fvs_2);
+    Enqueue(APP_P4RT_IPV4_TABLE_NAME, key_op_fvs_2);
 
     std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_route_, create_route_entries(_, _, _, _, _, _))
@@ -2603,9 +2603,9 @@ TEST_F(RouteManagerTest, DeleteFailsWhenCreateAndDeleteTheSameRouteInDrain)
     p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_NEXT_HOP, KeyGenerator::generateNextHopKey(kNexthopId1), kNexthopOid1);
     auto key_op_fvs_1 = GenerateKeyOpFieldsValuesTuple(gVrfName, swss::IpPrefix(kIpv4Prefix), SET_COMMAND,
                                                        p4orch::kSetNexthopId, kNexthopId1);
-    Enqueue(key_op_fvs_1);
+    Enqueue(APP_P4RT_IPV4_TABLE_NAME, key_op_fvs_1);
     auto key_op_fvs_2 = GenerateKeyOpFieldsValuesTuple(gVrfName, swss::IpPrefix(kIpv4Prefix), DEL_COMMAND, "", "");
-    Enqueue(key_op_fvs_2);
+    Enqueue(APP_P4RT_IPV4_TABLE_NAME, key_op_fvs_2);
 
     std::vector<sai_status_t> exp_status{SAI_STATUS_SUCCESS};
     EXPECT_CALL(mock_sai_route_, create_route_entries(_, _, _, _, _, _))
@@ -2639,7 +2639,7 @@ TEST_F(RouteManagerTest, RouteCreateInDrainSucceedsWhenVrfIsEmpty)
     p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_NEXT_HOP, KeyGenerator::generateNextHopKey(kNexthopId1), kNexthopOid1);
     auto key_op_fvs = GenerateKeyOpFieldsValuesTuple(kDefaultVrfName, swss::IpPrefix(kIpv4Prefix), SET_COMMAND,
                                                      p4orch::kSetNexthopId, kNexthopId1);
-    Enqueue(key_op_fvs);
+    Enqueue(APP_P4RT_IPV4_TABLE_NAME, key_op_fvs);
 
     sai_route_entry_t exp_sai_route_entry;
     exp_sai_route_entry.switch_id = gSwitchId;
@@ -2678,7 +2678,7 @@ TEST_F(RouteManagerTest, DeserializeRouteEntryInDrainFails)
     const std::string kKeyPrefix = std::string(APP_P4RT_IPV4_TABLE_NAME) + kTableKeyDelimiter;
     auto key_op_fvs =
         swss::KeyOpFieldsValuesTuple(kKeyPrefix + "{{{{{{{{{{{{", SET_COMMAND, std::vector<swss::FieldValueTuple>{});
-    Enqueue(key_op_fvs);
+    Enqueue(APP_P4RT_IPV4_TABLE_NAME, key_op_fvs);
     EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs)),
                                     FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs)),
                                     Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)))
@@ -2691,7 +2691,7 @@ TEST_F(RouteManagerTest, ValidateRouteEntryInDrainFailsWhenVrfDoesNotExist)
     p4_oid_mapper_.setOID(SAI_OBJECT_TYPE_NEXT_HOP, KeyGenerator::generateNextHopKey(kNexthopId1), kNexthopOid1);
     auto key_op_fvs = GenerateKeyOpFieldsValuesTuple("Invalid-Vrf", swss::IpPrefix(kIpv4Prefix), SET_COMMAND,
                                                      p4orch::kSetNexthopId, kNexthopId1);
-    Enqueue(key_op_fvs);
+    Enqueue(APP_P4RT_IPV4_TABLE_NAME, key_op_fvs);
     EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs)),
                                     FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs)),
                                     Eq(StatusCode::SWSS_RC_NOT_FOUND), Eq(true)))
@@ -2703,7 +2703,7 @@ TEST_F(RouteManagerTest, ValidateRouteEntryInDrainFailsWhenNexthopDoesNotExist)
 {
     auto key_op_fvs = GenerateKeyOpFieldsValuesTuple(gVrfName, swss::IpPrefix(kIpv4Prefix), SET_COMMAND,
                                                      p4orch::kSetNexthopId, kNexthopId1);
-    Enqueue(key_op_fvs);
+    Enqueue(APP_P4RT_IPV4_TABLE_NAME, key_op_fvs);
     EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs)),
                                     FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs)),
                                     Eq(StatusCode::SWSS_RC_NOT_FOUND), Eq(true)))
@@ -2717,7 +2717,7 @@ TEST_F(RouteManagerTest, InvalidateSetRouteEntryInDrainFails)
     // No nexthop ID with kSetNexthopId action.
     auto key_op_fvs =
         GenerateKeyOpFieldsValuesTuple(gVrfName, swss::IpPrefix(kIpv4Prefix), SET_COMMAND, p4orch::kSetNexthopId, "");
-    Enqueue(key_op_fvs);
+    Enqueue(APP_P4RT_IPV4_TABLE_NAME, key_op_fvs);
     EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs)),
                                     FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs)),
                                     Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)))
@@ -2730,7 +2730,7 @@ TEST_F(RouteManagerTest, InvalidateDelRouteEntryInDrainFails)
     // Route does not exist.
     auto key_op_fvs = GenerateKeyOpFieldsValuesTuple(gVrfName, swss::IpPrefix(kIpv4Prefix), DEL_COMMAND,
                                                      p4orch::kSetNexthopId, kNexthopId1);
-    Enqueue(key_op_fvs);
+    Enqueue(APP_P4RT_IPV4_TABLE_NAME, key_op_fvs);
     EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs)),
                                     FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs)),
                                     Eq(StatusCode::SWSS_RC_NOT_FOUND), Eq(true)))
@@ -2749,7 +2749,7 @@ TEST_F(RouteManagerTest, InvalidCommandInDrainFails)
     attributes.push_back(swss::FieldValueTuple{p4orch::kAction, p4orch::kSetNexthopId});
     attributes.push_back(swss::FieldValueTuple{prependParamField(p4orch::kNexthopId), kNexthopId1});
     auto key_op_fvs = swss::KeyOpFieldsValuesTuple(kKeyPrefix + j.dump(), "INVALID_COMMAND", attributes);
-    Enqueue(key_op_fvs);
+    Enqueue(APP_P4RT_IPV4_TABLE_NAME, key_op_fvs);
     EXPECT_CALL(publisher_, publish(Eq(APP_P4RT_TABLE_NAME), Eq(kfvKey(key_op_fvs)),
                                     FieldValueTupleArrayEq(kfvFieldsValues(key_op_fvs)),
                                     Eq(StatusCode::SWSS_RC_INVALID_PARAM), Eq(true)))

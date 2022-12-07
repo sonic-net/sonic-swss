@@ -54,7 +54,8 @@ class DVSAcl:
             self,
             name: str,
             matches: List[str],
-            bpoint_types: List[str]
+            bpoint_types: List[str],
+            actions: List[str]
     ) -> None:
         """Create a new ACL table type in Config DB.
 
@@ -62,10 +63,12 @@ class DVSAcl:
             name: The name for the new ACL table type.
             matches: A list of matches to use in ACL table.
             bpoint_types: A list of bind point types to use in ACL table.
+            actions: A list of actions to use in ACL table
         """
         table_type_attrs = {
             "matches@": ",".join(matches),
-            "bind_points@": ",".join(bpoint_types)
+            "bind_points@": ",".join(bpoint_types),
+            "actions@": ",".join(actions)
         }
 
         self.config_db.create_entry(self.CDB_ACL_TABLE_TYPE_NAME, name, table_type_attrs)
@@ -306,6 +309,26 @@ class DVSAcl:
 
         self.verify_acl_table_group_members(acl_table_id, acl_table_group_ids, num_tables)
 
+    
+    def verify_acl_table_action_list(
+            self,
+            acl_table_id: str,
+            expected_action_list: List[str],
+    ) -> None:
+        """Verify that the ACL table has specified action list.
+        Args:
+            acl_table_id: The ACL table that is being checked.
+            expected_action_list: The expected action list set to the given ACL table.
+        """
+        fvs = self.asic_db.wait_for_entry(self.ADB_ACL_TABLE_NAME, acl_table_id)
+        action_list_str = fvs.get('SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST')
+        action_count, actions = action_list_str.split(':')
+        action_list = actions.split(',')
+        assert (int(action_count) == len(action_list))
+        for action in expected_action_list:
+            assert action in action_list
+    
+            
     def create_acl_rule(
             self,
             table_name: str,

@@ -983,7 +983,7 @@ class AclManagerTest : public ::testing::Test
     }
     void EnqueueTableTuple(const swss::KeyOpFieldsValuesTuple &entry)
     {
-        acl_table_manager_->enqueue(entry);
+        acl_table_manager_->enqueue(APP_P4RT_ACL_TABLE_DEFINITION_NAME, entry);
     }
     std::string VerifyTableState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple)
     {
@@ -994,9 +994,9 @@ class AclManagerTest : public ::testing::Test
     {
         acl_rule_manager_->drain();
     }
-    void EnqueueRuleTuple(const swss::KeyOpFieldsValuesTuple &entry)
+    void EnqueueRuleTuple(const std::string &table_name, const swss::KeyOpFieldsValuesTuple &entry)
     {
-        acl_rule_manager_->enqueue(entry);
+        acl_rule_manager_->enqueue(table_name, entry);
     }
     std::string VerifyRuleState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple)
     {
@@ -2320,10 +2320,12 @@ TEST_F(AclManagerTest, DrainRuleTuplesToProcessSetRequestSucceeds)
                                     "ipv6_dst\":\"fdf8:f53b:82e4::53 & "
                                     "fdf8:f53b:82e4::53\",\"priority\":15}";
     const auto &rule_tuple_key = std::string(kAclIngressTableName) + kTableKeyDelimiter + acl_rule_json_key;
-    EnqueueRuleTuple(swss::KeyOpFieldsValuesTuple({rule_tuple_key, SET_COMMAND, getDefaultRuleFieldValueTuples()}));
+    EnqueueRuleTuple(std::string(kAclIngressTableName),
+                     swss::KeyOpFieldsValuesTuple({rule_tuple_key, SET_COMMAND, getDefaultRuleFieldValueTuples()}));
 
     // Update request on exact rule without change will not need SAI call
-    EnqueueRuleTuple(swss::KeyOpFieldsValuesTuple({rule_tuple_key, SET_COMMAND, getDefaultRuleFieldValueTuples()}));
+    EnqueueRuleTuple(std::string(kAclIngressTableName),
+                     swss::KeyOpFieldsValuesTuple({rule_tuple_key, SET_COMMAND, getDefaultRuleFieldValueTuples()}));
 
     // Drain rule tuples to process SET request
     EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
@@ -2348,7 +2350,8 @@ TEST_F(AclManagerTest, DrainRuleTuplesToProcessSetDelRequestSucceeds)
                                     "ipv6_dst\":\"fdf8:f53b:82e4::53 & "
                                     "fdf8:f53b:82e4::53\",\"priority\":15}";
     const auto &rule_tuple_key = std::string(kAclIngressTableName) + kTableKeyDelimiter + acl_rule_json_key;
-    EnqueueRuleTuple(swss::KeyOpFieldsValuesTuple({rule_tuple_key, SET_COMMAND, attributes}));
+    EnqueueRuleTuple(std::string(kAclIngressTableName),
+                     swss::KeyOpFieldsValuesTuple({rule_tuple_key, SET_COMMAND, attributes}));
 
     // Drain ACL rule tuple to process SET request
     EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
@@ -2385,7 +2388,8 @@ TEST_F(AclManagerTest, DrainRuleTuplesToProcessSetDelRequestSucceeds)
 
     // Drain ACL rule tuple to process DEL request
     attributes.clear();
-    EnqueueRuleTuple(swss::KeyOpFieldsValuesTuple({rule_tuple_key, DEL_COMMAND, attributes}));
+    EnqueueRuleTuple(std::string(kAclIngressTableName),
+                     swss::KeyOpFieldsValuesTuple({rule_tuple_key, DEL_COMMAND, attributes}));
 
     EXPECT_CALL(mock_sai_acl_, remove_acl_entry(Eq(kAclIngressRuleOid1))).WillOnce(Return(SAI_STATUS_SUCCESS));
     EXPECT_CALL(mock_sai_acl_, remove_acl_counter(_)).WillOnce(Return(SAI_STATUS_SUCCESS));
@@ -2401,7 +2405,8 @@ TEST_F(AclManagerTest, DrainRuleTuplesToProcessSetRequestInvalidTableNameRuleKey
                              "ipv6_dst\":\"fdf8:f53b:82e4::53 & "
                              "fdf8:f53b:82e4::53\",\"priority\":15}";
     auto rule_tuple_key = std::string("INVALID_TABLE_NAME") + kTableKeyDelimiter + acl_rule_json_key;
-    EnqueueRuleTuple(swss::KeyOpFieldsValuesTuple({rule_tuple_key, SET_COMMAND, attributes}));
+    EnqueueRuleTuple(std::string("INVALID_TABLE_NAME"),
+                     swss::KeyOpFieldsValuesTuple({rule_tuple_key, SET_COMMAND, attributes}));
     // Drain rule tuple to process SET request with invalid ACL table name:
     // "INVALID_TABLE_NAME"
     DrainRuleTuples();
@@ -2417,7 +2422,8 @@ TEST_F(AclManagerTest, DrainRuleTuplesToProcessSetRequestInvalidTableNameRuleKey
     rule_tuple_key = std::string(kAclIngressTableName) + kTableKeyDelimiter + acl_rule_json_key;
     acl_rule_key = "match/ether_type=0x0800:match/ipv6_dst=fdf8:f53b:82e4::53 & "
                    "fdf8:f53b:82e4::53";
-    EnqueueRuleTuple(swss::KeyOpFieldsValuesTuple({rule_tuple_key, SET_COMMAND, attributes}));
+    EnqueueRuleTuple(std::string(kAclIngressTableName),
+                     swss::KeyOpFieldsValuesTuple({rule_tuple_key, SET_COMMAND, attributes}));
     // Drain rule tuple to process SET request without priority field in rule
     // JSON key
     DrainRuleTuples();
@@ -2479,7 +2485,8 @@ TEST_F(AclManagerTest, DrainRuleTuplesWithInvalidCommand)
                                     "ipv6_dst\":\"fdf8:f53b:82e4::53 & "
                                     "fdf8:f53b:82e4::53\",\"priority\":15}";
     const auto &rule_tuple_key = std::string(kAclIngressTableName) + kTableKeyDelimiter + acl_rule_json_key;
-    EnqueueRuleTuple(swss::KeyOpFieldsValuesTuple({rule_tuple_key, "INVALID_COMMAND", attributes}));
+    EnqueueRuleTuple(std::string(kAclIngressTableName),
+                     swss::KeyOpFieldsValuesTuple({rule_tuple_key, "INVALID_COMMAND", attributes}));
     DrainRuleTuples();
     const auto &acl_rule_key = "match/ether_type=0x0800:match/ipv6_dst=fdf8:f53b:82e4::53 & "
                                "fdf8:f53b:82e4::53:priority=15";
@@ -4761,7 +4768,8 @@ TEST_F(AclManagerTest, AclRuleVerifyStateTest)
                                     "\"match/in_ports\": \"Ethernet1,Ethernet2\", \"match/out_ports\": "
                                     "\"Ethernet4,Ethernet5\", \"priority\":15}";
     const auto &rule_tuple_key = std::string(kAclIngressTableName) + kTableKeyDelimiter + acl_rule_json_key;
-    EnqueueRuleTuple(swss::KeyOpFieldsValuesTuple({rule_tuple_key, SET_COMMAND, attributes}));
+    EnqueueRuleTuple(std::string(kAclIngressTableName),
+                     swss::KeyOpFieldsValuesTuple({rule_tuple_key, SET_COMMAND, attributes}));
     EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _))
@@ -5189,7 +5197,8 @@ TEST_F(AclManagerTest, AclRuleVerifyStateAsicDbTest)
                                     "ipv6_dst\":\"fdf8:f53b:82e4::53 & "
                                     "fdf8:f53b:82e4::53\",\"priority\":15}";
     const auto &rule_tuple_key = std::string(kAclIngressTableName) + kTableKeyDelimiter + acl_rule_json_key;
-    EnqueueRuleTuple(swss::KeyOpFieldsValuesTuple({rule_tuple_key, SET_COMMAND, attributes}));
+    EnqueueRuleTuple(std::string(kAclIngressTableName),
+                     swss::KeyOpFieldsValuesTuple({rule_tuple_key, SET_COMMAND, attributes}));
     EXPECT_CALL(mock_sai_acl_, create_acl_entry(_, _, _, _))
         .WillOnce(DoAll(SetArgPointee<0>(kAclIngressRuleOid1), Return(SAI_STATUS_SUCCESS)));
     EXPECT_CALL(mock_sai_acl_, create_acl_counter(_, _, _, _))

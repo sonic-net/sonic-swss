@@ -8,6 +8,8 @@
 #include "copporch.h"
 #include "logger.h"
 #include "orch.h"
+#include "p4orch/p4orch_util.h"
+#include "p4orch/tables_definition_manager.h"
 #include "p4orch/acl_rule_manager.h"
 #include "p4orch/acl_table_manager.h"
 #include "p4orch/gre_tunnel_manager.h"
@@ -16,6 +18,7 @@
 #include "p4orch/next_hop_manager.h"
 #include "p4orch/route_manager.h"
 #include "p4orch/router_interface_manager.h"
+#include "p4orch/ext_tables_manager.h"
 #include "portsorch.h"
 #include "return_code.h"
 #include "sai_serialize.h"
@@ -23,12 +26,15 @@
 
 extern PortsOrch *gPortsOrch;
 #define P4_ACL_COUNTERS_STATS_POLL_TIMER_NAME "P4_ACL_COUNTERS_STATS_POLL_TIMER"
+#define P4_EXT_COUNTERS_STATS_POLL_TIMER_NAME "P4_EXT_COUNTERS_STATS_POLL_TIMER"
+#define APP_P4RT_EXT_TABLES_MANAGER "EXT_TABLES_MANAGER"
 
 P4Orch::P4Orch(swss::DBConnector *db, std::vector<std::string> tableNames, VRFOrch *vrfOrch, CoppOrch *coppOrch)
     : Orch(db, tableNames)
 {
     SWSS_LOG_ENTER();
 
+    m_tablesDefnManager = std::make_unique<TablesDefnManager>(&m_p4OidMapper, &m_publisher);
     m_routerIntfManager = std::make_unique<RouterInterfaceManager>(&m_p4OidMapper, &m_publisher);
     m_neighborManager = std::make_unique<NeighborManager>(&m_p4OidMapper, &m_publisher);
     m_greTunnelManager = std::make_unique<GreTunnelManager>(&m_p4OidMapper, &m_publisher);
@@ -39,7 +45,9 @@ P4Orch::P4Orch(swss::DBConnector *db, std::vector<std::string> tableNames, VRFOr
     m_aclRuleManager = std::make_unique<p4orch::AclRuleManager>(&m_p4OidMapper, vrfOrch, coppOrch, &m_publisher);
     m_wcmpManager = std::make_unique<p4orch::WcmpManager>(&m_p4OidMapper, &m_publisher);
     m_l3AdmitManager = std::make_unique<L3AdmitManager>(&m_p4OidMapper, &m_publisher);
+    m_extTablesManager = std::make_unique<ExtTablesManager>(&m_p4OidMapper, vrfOrch, &m_publisher);
 
+    m_p4TableToManagerMap[APP_P4RT_TABLES_DEFINITION_TABLE_NAME] = m_tablesDefnManager.get();
     m_p4TableToManagerMap[APP_P4RT_ROUTER_INTERFACE_TABLE_NAME] = m_routerIntfManager.get();
     m_p4TableToManagerMap[APP_P4RT_NEIGHBOR_TABLE_NAME] = m_neighborManager.get();
     m_p4TableToManagerMap[APP_P4RT_TUNNEL_TABLE_NAME] = m_greTunnelManager.get();
@@ -50,7 +58,9 @@ P4Orch::P4Orch(swss::DBConnector *db, std::vector<std::string> tableNames, VRFOr
     m_p4TableToManagerMap[APP_P4RT_ACL_TABLE_DEFINITION_NAME] = m_aclTableManager.get();
     m_p4TableToManagerMap[APP_P4RT_WCMP_GROUP_TABLE_NAME] = m_wcmpManager.get();
     m_p4TableToManagerMap[APP_P4RT_L3_ADMIT_TABLE_NAME] = m_l3AdmitManager.get();
+    m_p4TableToManagerMap[APP_P4RT_EXT_TABLES_MANAGER] = m_extTablesManager.get();
 
+    m_p4ManagerPrecedence.push_back(m_tablesDefnManager.get());
     m_p4ManagerPrecedence.push_back(m_routerIntfManager.get());
     m_p4ManagerPrecedence.push_back(m_neighborManager.get());
     m_p4ManagerPrecedence.push_back(m_greTunnelManager.get());
@@ -61,13 +71,22 @@ P4Orch::P4Orch(swss::DBConnector *db, std::vector<std::string> tableNames, VRFOr
     m_p4ManagerPrecedence.push_back(m_aclTableManager.get());
     m_p4ManagerPrecedence.push_back(m_aclRuleManager.get());
     m_p4ManagerPrecedence.push_back(m_l3AdmitManager.get());
+    m_p4ManagerPrecedence.push_back(m_extTablesManager.get());
 
+    tablesinfo = nullptr;
     // Add timer executor to update ACL counters stats in COUNTERS_DB
-    auto interv = timespec{.tv_sec = P4_COUNTERS_READ_INTERVAL, .tv_nsec = 0};
-    m_aclCounterStatsTimer = new swss::SelectableTimer(interv);
-    auto executor = new swss::ExecutableTimer(m_aclCounterStatsTimer, this, P4_ACL_COUNTERS_STATS_POLL_TIMER_NAME);
-    Orch::addExecutor(executor);
+    auto acl_interv = timespec{.tv_sec = P4_COUNTERS_READ_INTERVAL, .tv_nsec = 0};
+    m_aclCounterStatsTimer = new swss::SelectableTimer(acl_interv);
+    auto acl_executor = new swss::ExecutableTimer(m_aclCounterStatsTimer, this, P4_ACL_COUNTERS_STATS_POLL_TIMER_NAME);
+    Orch::addExecutor(acl_executor);
     m_aclCounterStatsTimer->start();
+
+    // Add timer executor to update EXT counters stats in COUNTERS_DB
+    auto ext_interv = timespec{.tv_sec = P4_COUNTERS_READ_INTERVAL, .tv_nsec = 0};
+    m_extCounterStatsTimer = new swss::SelectableTimer(ext_interv);
+    auto ext_executor = new swss::ExecutableTimer(m_extCounterStatsTimer, this, P4_EXT_COUNTERS_STATS_POLL_TIMER_NAME);
+    Orch::addExecutor(ext_executor);
+    m_extCounterStatsTimer->start();
 
     // Add port state change notification handling support
     swss::DBConnector notificationsDb("ASIC_DB", 0);
@@ -110,16 +129,25 @@ void P4Orch::doTask(Consumer &consumer)
                                 status);
             continue;
         }
-        if (m_p4TableToManagerMap.find(table_name) == m_p4TableToManagerMap.end())
+        if (m_p4TableToManagerMap.find(table_name) != m_p4TableToManagerMap.end())
         {
-            auto status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
-                          << "Failed to find P4Orch Manager for " << table_name << " P4RT DB table";
-            SWSS_LOG_ERROR("%s", status.message().c_str());
-            m_publisher.publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
-                                status);
-            continue;
+            m_p4TableToManagerMap[table_name]->enqueue(table_name, key_op_fvs_tuple);
         }
-        m_p4TableToManagerMap[table_name]->enqueue(key_op_fvs_tuple);
+        else
+        {
+            if (table_name.rfind(p4orch::kTablePrefixEXT, 0) != std::string::npos)
+            {
+                m_p4TableToManagerMap[APP_P4RT_EXT_TABLES_MANAGER]->enqueue(table_name, key_op_fvs_tuple);
+            }
+            else
+            {
+                auto status = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+                                  << "Failed to find P4Orch Manager for " << table_name << " P4RT DB table";
+                SWSS_LOG_ERROR("%s", status.message().c_str());
+                m_publisher.publish(APP_P4RT_TABLE_NAME, kfvKey(key_op_fvs_tuple), kfvFieldsValues(key_op_fvs_tuple),
+                                    status);
+            }
+        }
     }
 
     for (const auto &manager : m_p4ManagerPrecedence)
@@ -140,6 +168,10 @@ void P4Orch::doTask(swss::SelectableTimer &timer)
     if (&timer == m_aclCounterStatsTimer)
     {
         m_aclRuleManager->doAclCounterStatsTask();
+    }
+    else if (&timer == m_extCounterStatsTimer)
+    {
+        m_extTablesManager->doExtCounterStatsTask();
     }
     else
     {
