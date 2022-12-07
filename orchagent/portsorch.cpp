@@ -1958,6 +1958,23 @@ bool PortsOrch::getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uin
     return true;
 }
 
+bool PortsOrch::isAutoNegEnabled(sai_object_id_t id)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_AUTO_NEG_MODE;
+
+    sai_status_t status = sai_port_api->get_port_attribute(id, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get port AutoNeg status for port pid:%" PRIx64, id);
+        return false;
+    }
+
+    return attr.value.booldata;
+}
+
 bool PortsOrch::setPortAutoNeg(sai_object_id_t id, int an)
 {
     SWSS_LOG_ENTER();
@@ -3727,7 +3744,7 @@ bool PortsOrch::initializePort(Port &port)
     }
 
     /* initialize port admin speed */
-    if (!getPortSpeed(port.m_port_id, port.m_speed))
+    if (!isAutoNegEnabled(port.m_port_id) && !getPortSpeed(port.m_port_id, port.m_speed))
     {
         SWSS_LOG_ERROR("Failed to get initial port admin speed %d", port.m_speed);
         return false;
