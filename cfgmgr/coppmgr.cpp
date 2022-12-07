@@ -280,16 +280,13 @@ bool CoppMgr::isDupEntry(const std::string &key, std::vector<FieldValueTuple> &f
         {
             string field = fvField(fv);
             string value = fvValue(fv);
-            unordered_map<string, string>::const_iterator preserved_copp_it = preserved_copp_entry.find(field);
+            auto preserved_copp_it = preserved_copp_entry.find(field);
             bool field_found = (preserved_copp_it != preserved_copp_entry.end());
-            if (field_found)
+            if ((!field_found) || (field_found && preserved_copp_it->second.compare(value)))
             {
-                if (preserved_copp_it->second.compare(value))
-                {
-                    // overwrite -> delete preserved entry from copp table and set a new entry instead
-                    m_coppTable.del(key);
-                    return false;
-                }
+                // overwrite -> delete preserved entry from copp table and set a new entry instead
+                m_coppTable.del(key);
+                return false;
             }
         }
     }
@@ -315,6 +312,7 @@ CoppMgr::CoppMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
 
     std::vector<string> group_cfg_keys;
     std::vector<string> trap_cfg_keys;
+    unordered_set<string> supported_copp_keys;
 
     CoppCfg group_cfg;
     CoppCfg trap_cfg;
@@ -395,6 +393,7 @@ CoppMgr::CoppMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
 
         if (!trap_group_fvs.empty())
         {
+            supported_copp_keys.emplace(i.first);
             if (isDupEntry(i.first, trap_group_fvs))
             {
                 continue;
@@ -411,15 +410,6 @@ CoppMgr::CoppMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
     }
 
     // Delete unsupported keys from preserved copp tables
-    unordered_set<string> supported_copp_keys;
-    for (auto i : m_coppGroupInitCfg)
-    {
-        supported_copp_keys.emplace(i.first);
-    }
-    for (auto i : group_cfg_keys)
-    {
-        supported_copp_keys.emplace(i);
-    }
     for (auto it : preserved_copp_keys)
     {
         auto copp_it = supported_copp_keys.find(it);
