@@ -186,6 +186,7 @@ private:
     bool m_isPriorityGroupMapGenerated = false;
     void generatePriorityGroupMapPerPort(const Port& port);
 
+    bool isAutoNegEnabled(sai_object_id_t id);
     bool setPortAutoNeg(sai_object_id_t id, int an);
     bool setPortFecMode(sai_object_id_t id, int fec);
 
