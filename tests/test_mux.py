@@ -284,9 +284,6 @@ class TestMuxTunnelBase():
         self.add_neighbor(dvs, self.SERV1_IPV6, "00:00:00:00:00:01")
         srv1_v6 = self.check_neigh_in_asic_db(asicdb, self.SERV1_IPV6)
 
-        self.add_neighbor(dvs, self.SERV1_SOC_IPV4, "00:00:00:00:00:01")
-        srv1_soc_v4 = self.check_neigh_in_asic_db(asicdb, self.SERV1_SOC_IPV4)
-
         existing_keys = asicdb.get_keys(self.ASIC_NEIGH_TABLE)
 
         self.add_neighbor(dvs, self.SERV2_IPV4, "00:00:00:00:00:02")
@@ -298,47 +295,47 @@ class TestMuxTunnelBase():
         dvs_route.check_asicdb_route_entries(
             [self.SERV2_IPV4+self.IPV4_MASK, self.SERV2_IPV6+self.IPV6_MASK]
         )
-        self.check_tunnel_route_in_app_db(
-            dvs,
-            [self.SERV2_IPV4+self.IPV4_MASK, self.SERV2_IPV6+self.IPV6_MASK]
-        )
 
         # The first standby route also creates as tunnel Nexthop
-        self.check_tnl_nexthop_in_asic_db(asicdb, 4)
+        self.check_tnl_nexthop_in_asic_db(asicdb, 3)
 
         # Change state to Standby. This will delete Neigh and add Route
         self.set_mux_state(appdb, "Ethernet0", "standby")
 
         asicdb.wait_for_deleted_entry(self.ASIC_NEIGH_TABLE, srv1_v4)
         asicdb.wait_for_deleted_entry(self.ASIC_NEIGH_TABLE, srv1_v6)
-        asicdb.wait_for_deleted_entry(self.ASIC_NEIGH_TABLE, srv1_soc_v4)
         dvs_route.check_asicdb_route_entries(
-            [self.SERV1_IPV4+self.IPV4_MASK, self.SERV1_IPV6+self.IPV6_MASK, self.SERV1_SOC_IPV4+self.IPV4_MASK]
-        )
-        self.check_tunnel_route_in_app_db(
-            dvs,
             [self.SERV1_IPV4+self.IPV4_MASK, self.SERV1_IPV6+self.IPV6_MASK]
-        )
-        self.check_tunnel_route_in_app_db(
-            dvs,
-            [self.SERV1_SOC_IPV4+self.IPV4_MASK],
-            expected=False
         )
 
         # Change state to Active. This will add Neigh and delete Route
         self.set_mux_state(appdb, "Ethernet4", "active")
 
         dvs_route.check_asicdb_deleted_route_entries(
-            [self.SERV2_IPV4+self.IPV4_MASK, self.SERV2_IPV6+self.IPV6_MASK, self.SERV1_SOC_IPV4+self.IPV4_MASK]
+            [self.SERV2_IPV4+self.IPV4_MASK, self.SERV2_IPV6+self.IPV6_MASK]
         )
         self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV4)
         self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV6)
-        self.check_neigh_in_asic_db(asicdb, self.SERV1_SOC_IPV4)
-        self.check_tunnel_route_in_app_db(
-            dvs,
-            [self.SERV1_IPV4+self.IPV4_MASK, self.SERV1_IPV6+self.IPV6_MASK, self.SERV1_SOC_IPV4+self.IPV4_MASK],
-            expected=False
+
+    def create_and_test_soc(self, appdb, asicdb, dvs, dvs_route):
+
+        self.set_mux_state(appdb, "Ethernet0", "active")
+
+        self.add_fdb(dvs, "Ethernet0", "00-00-00-00-00-01")
+        self.add_neighbor(dvs, self.SERV1_SOC_IPV4, "00:00:00:00:00:01")
+
+        time.sleep(1)
+
+        srv1_soc_v4 = self.check_neigh_in_asic_db(asicdb, self.SERV1_SOC_IPV4)
+        self.check_tunnel_route_in_app_db(dvs, [self.SERV1_SOC_IPV4+self.IPV4_MASK], expected=False)
+
+        self.set_mux_state(appdb, "Ethernet0", "standby")
+
+        asicdb.wait_for_deleted_entry(self.ASIC_NEIGH_TABLE, srv1_soc_v4)
+        dvs_route.check_asicdb_route_entries(
+            [self.SERV1_SOC_IPV4+self.IPV4_MASK]
         )
+        self.check_tunnel_route_in_app_db(dvs, [self.SERV1_SOC_IPV4+self.IPV4_MASK], expected=False)
 
         marker = dvs.add_log_marker()
 
@@ -1149,6 +1146,11 @@ class TestMuxTunnel(TestMuxTunnelBase):
         for ip in test_ips:
             self.check_neighbor_state(dvs, dvs_route, ip, expect_route=False)
 
+    def test_soc_ip(self, dvs, dvs_route, setup_vlan, setup_mux_cable, testlog):
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        asicdb = dvs.get_asic_db()
+
+        self.create_and_test_soc(appdb, asicdb, dvs, dvs_route)
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
