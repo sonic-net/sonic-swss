@@ -447,9 +447,19 @@ std::string IntfMgr::setHostSubIntfMtu(const string &alias, const string &mtu, c
     }
     SWSS_LOG_INFO("subintf %s active mtu: %s", alias.c_str(), subifMtu.c_str());
     cmd << IP_CMD " link set " << shellquote(alias) << " mtu " << shellquote(subifMtu);
-    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+    std::string cmd_str = cmd.str();
+    int ret = swss::exec(cmd_str, res);
 
-    return subifMtu;
+    if (ret && !isIntfStateOk(alias))
+    {
+        // Can happen when a DEL notification is sent by portmgrd immediately followed by a new SET notif
+        SWSS_LOG_WARN("Setting mtu to alias:%s netdev failed with cmd:%s, rc:%d, error:%s", alias.c_str(), cmd_str.c_str(), ret, res.c_str());
+    }
+    else if(ret)
+    {
+        throw runtime_error(cmd_str + " : " + res);
+    }
+        return subifMtu;
 }
 
 void IntfMgr::updateSubIntfAdminStatus(const string &alias, const string &admin)
@@ -468,7 +478,7 @@ void IntfMgr::updateSubIntfAdminStatus(const string &alias, const string &admin)
                 continue;
             }
             std::vector<FieldValueTuple> fvVector;
-            string subintf_admin = setHostSubIntfAdminStatus(intf, m_subIntfList[intf].adminStatus, admin); 
+            string subintf_admin = setHostSubIntfAdminStatus(intf, m_subIntfList[intf].adminStatus, admin);
             m_subIntfList[intf].currAdminStatus = subintf_admin;
             FieldValueTuple fvTuple("admin_status", subintf_admin);
             fvVector.push_back(fvTuple);
