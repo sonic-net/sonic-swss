@@ -3,7 +3,6 @@
 
 #include "dbconnector.h"
 #include "producerstatetable.h"
-#include "zmqproducerstatetable.h"
 #include "netmsg.h"
 #include "warmRestartHelper.h"
 #include <string.h>
@@ -31,7 +30,7 @@ public:
 
 private:
     /* regular route table */
-    ZmqProducerStateTable  m_routeTable;
+    ProducerStateTable  m_routeTable;
     /* label route table */
     ProducerStateTable  m_label_routeTable;
     /* vnet route table */

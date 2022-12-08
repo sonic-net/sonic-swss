@@ -17,7 +17,6 @@ extern "C" {
 #include "table.h"
 #include "consumertable.h"
 #include "consumerstatetable.h"
-#include "zmqconsumerstatetable.h"
 #include "notificationconsumer.h"
 #include "selectabletimer.h"
 #include "macaddress.h"
@@ -210,40 +209,6 @@ public:
         getConsumerTable()->pops(vkco, prefix);
     }
 
-};
-
-class ShmConsumer : public Consumer {
-public:
-    ShmConsumer(swss::ZmqConsumerStateTable *select, Orch *orch, const std::string &name)
-        : Consumer(select, orch, name)
-    {
-    }
-
-    swss::ZmqConsumerStateTable *getConsumerTable() const
-    {
-        return static_cast<swss::ZmqConsumerStateTable *>(getSelectable());
-    }
-
-    std::string getTableName() const override
-    {
-        return getConsumerTable()->getTableName();
-    }
-
-    std::string getTableNameSeparator() const override
-    {
-        return getConsumerTable()->getTableNameSeparator();
-    }
-
-    const swss::DBConnector* getDbConnector() const override
-    {
-        return getConsumerTable()->getDbConnector();
-    }
-
-    /* Get multiple pop elements */
-    void pops(std::deque<swss::KeyOpFieldsValuesTuple> &vkco, const std::string &prefix = EMPTY_PREFIX) override
-    {
-        getConsumerTable()->pops(vkco, prefix);
-    }
 };
 
 typedef std::map<std::string, std::shared_ptr<Executor>> ConsumerMap;

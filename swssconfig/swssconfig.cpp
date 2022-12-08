@@ -9,7 +9,6 @@
 #include "logger.h"
 #include "dbconnector.h"
 #include "producerstatetable.h"
-#include "zmqproducerstatetable.h"
 #include "json.hpp"
 
 using namespace std;
@@ -63,15 +62,7 @@ bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items)
         auto ret = table_map.find(table_name);
         if (ret == table_map.end())
         {
-            ProducerStateTable* tmp_table;
-            if (table_name == APP_ROUTE_TABLE_NAME)
-            {
-                tmp_table = new ZmqProducerStateTable(&pipeline, table_name, "tcp://localhost:1234", true);
-            }
-            else
-            {
-                tmp_table = new ProducerStateTable(&pipeline, table_name, true);
-            }
+            ProducerStateTable* tmp_table = new ProducerStateTable(&pipeline, table_name, true);
 
             ret = table_map.emplace(table_name, tmp_table).first;
         }
@@ -231,8 +222,6 @@ int main(int argc, char **argv)
             cout << "Exception caught: " << e.what() << endl;
                 return EXIT_FAILURE;
         }
-        
-        SWSS_LOG_NOTICE("Write config from JSON file finish:%s...", i.c_str());
     }
 
     return EXIT_SUCCESS;

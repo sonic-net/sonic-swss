@@ -45,7 +45,7 @@ using namespace swss;
 #define ETHER_ADDR_STRLEN (3*ETH_ALEN)
 
 RouteSync::RouteSync(RedisPipeline *pipeline) :
-    m_routeTable(pipeline, APP_ROUTE_TABLE_NAME, "tcp://localhost:1234", true),
+    m_routeTable(pipeline, APP_ROUTE_TABLE_NAME, true),
     m_label_routeTable(pipeline, APP_LABEL_ROUTE_TABLE_NAME, true),
     m_vnet_routeTable(pipeline, APP_VNET_RT_TABLE_NAME, true),
     m_vnet_tunnelTable(pipeline, APP_VNET_RT_TUNNEL_TABLE_NAME, true),
