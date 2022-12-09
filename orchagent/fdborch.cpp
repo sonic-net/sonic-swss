@@ -1470,8 +1470,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
 
     string key = "Vlan" + to_string(vlan.m_vlan_info.vlan_id) + ":" + entry.mac.to_string();
 
-    if ((fdbData.origin != FDB_ORIGIN_MCLAG_ADVERTIZED) &&
-            (fdbData.origin != FDB_ORIGIN_VXLAN_ADVERTIZED))
+    if (fdbData.origin != FDB_ORIGIN_VXLAN_ADVERTIZED)
     {
         /* State-DB is updated only for Local Mac addresses */
         // Write to StateDb
@@ -1481,7 +1480,10 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
             fvs.push_back(FieldValueTuple("type", "dynamic"));
         else
             fvs.push_back(FieldValueTuple("type", fdbData.type));
-        m_fdbStateTable.set(key, fvs);
+        if (fdbData.origin != FDB_ORIGIN_MCLAG_ADVERTIZED || fdbData.type == "dynamic_local")
+        {
+            m_fdbStateTable.set(key, fvs);
+        }
     }
 
     else if (macUpdate && (oldOrigin != FDB_ORIGIN_MCLAG_ADVERTIZED) &&
