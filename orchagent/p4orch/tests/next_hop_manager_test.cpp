@@ -267,7 +267,7 @@ class NextHopManagerTest : public ::testing::Test
 
     void Enqueue(const swss::KeyOpFieldsValuesTuple &entry)
     {
-        next_hop_manager_.enqueue(entry);
+        next_hop_manager_.enqueue(APP_P4RT_NEXTHOP_TABLE_NAME, entry);
     }
 
     void Drain()
