@@ -452,8 +452,9 @@ std::string IntfMgr::setHostSubIntfMtu(const string &alias, const string &mtu, c
 
     if (ret && !isIntfStateOk(alias))
     {
-        // Can happen when a DEL notification is sent by portmgrd immediately followed by a new SET notif
-        SWSS_LOG_WARN("Setting mtu to alias:%s netdev failed with cmd:%s, rc:%d, error:%s", alias.c_str(), cmd_str.c_str(), ret, res.c_str());
+        // Can happen when a SET notification on the PORT_TABLE in the State DB
+        // followed by a new DEL notification that send by portmgrd
+        SWSS_LOG_WARN("Setting mtu to %s netdev failed with cmd:%s, rc:%d, error:%s", alias.c_str(), cmd_str.c_str(), ret, res.c_str());
     }
     else if(ret)
     {
