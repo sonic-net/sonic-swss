@@ -30,5 +30,5 @@ void on_switch_shutdown_request()
     /* TODO: Later a better restart story will be told here */
     SWSS_LOG_ERROR("Syncd stopped");
 
-    exit(EXIT_FAILURE);
+    _exit(EXIT_FAILURE);
 }
