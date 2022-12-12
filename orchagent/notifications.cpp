@@ -2,6 +2,7 @@ extern "C" {
 #include "sai.h"
 }
 
+#include <unistd.h>
 #include "logger.h"
 #include "notifications.h"
 
