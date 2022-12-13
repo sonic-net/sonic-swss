@@ -554,46 +554,54 @@ class TestMuxTunnelBase():
 
         dvs_acl.verify_no_acl_rules()
 
-        # Set one mux port to standby, verify ACL rule with inport bitmap (1 port)
+        # Set mux port in active-active cable type, no ACL rules programmed
         self.set_mux_state(appdb, "Ethernet0", "standby")
-        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet0"], dvs_acl)
+        dvs_acl.verify_no_acl_rules()
+
+        # Set one mux port to standby, verify ACL rule with inport bitmap (1 port)
+        self.set_mux_state(appdb, "Ethernet4", "standby")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet4"], dvs_acl)
         dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
 
         # Set two mux ports to standby, verify ACL rule with inport bitmap (2 ports)
-        self.set_mux_state(appdb, "Ethernet4", "standby")
-        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet0", "Ethernet4"], dvs_acl)
+        self.set_mux_state(appdb, "Ethernet8", "standby")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet4", "Ethernet8"], dvs_acl)
+        dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
+
+        self.set_mux_state(appdb, "Ethernet0", "active")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet4", "Ethernet8"], dvs_acl)
         dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
 
         # Set one mux port to active, verify ACL rule with inport bitmap (1 port)
-        self.set_mux_state(appdb, "Ethernet0", "active")
-        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet4"], dvs_acl)
+        self.set_mux_state(appdb, "Ethernet4", "active")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet8"], dvs_acl)
         dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
 
         # Set last mux port to active, verify ACL rule is deleted
-        self.set_mux_state(appdb, "Ethernet4", "active")
+        self.set_mux_state(appdb, "Ethernet8", "active")
         dvs_acl.verify_no_acl_rules()
 
         # Set unknown state and verify the behavior as standby
-        self.set_mux_state(appdb, "Ethernet0", "unknown")
-        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet0"], dvs_acl)
-        dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
-
-        # Verify change while setting unknown from active
         self.set_mux_state(appdb, "Ethernet4", "unknown")
-        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet0", "Ethernet4"], dvs_acl)
-        dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
-
-        self.set_mux_state(appdb, "Ethernet0", "active")
         sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet4"], dvs_acl)
         dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
 
-        self.set_mux_state(appdb, "Ethernet0", "standby")
-        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet0", "Ethernet4"], dvs_acl)
+        # Verify change while setting unknown from active
+        self.set_mux_state(appdb, "Ethernet8", "unknown")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet4", "Ethernet8"], dvs_acl)
+        dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
+
+        self.set_mux_state(appdb, "Ethernet4", "active")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet8"], dvs_acl)
+        dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
+
+        self.set_mux_state(appdb, "Ethernet4", "standby")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet4", "Ethernet8"], dvs_acl)
         dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
 
         # Verify no change while setting unknown from standby
-        self.set_mux_state(appdb, "Ethernet0", "unknown")
-        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet0", "Ethernet4"], dvs_acl)
+        self.set_mux_state(appdb, "Ethernet4", "unknown")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet4", "Ethernet8"], dvs_acl)
         dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
 
     def create_and_test_metrics(self, appdb, statedb):
@@ -1096,7 +1104,13 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
         appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
 
-        self.create_and_test_acl(appdb, dvs_acl)
+        try:
+            self.create_and_test_acl(appdb, dvs_acl)
+        finally:
+            self.set_mux_state(appdb, "Ethernet0", "active")
+            self.set_mux_state(appdb, "Ethernet4", "active")
+            self.set_mux_state(appdb, "Ethernet8", "active")
+            dvs_acl.verify_no_acl_rules()
 
     def test_mux_metrics(self, dvs, testlog):
         """ test metrics for mux state change """
