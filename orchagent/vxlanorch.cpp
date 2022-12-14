@@ -2204,11 +2204,11 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
     try
     {
         entry.isL2Vni = vxlan_tun_map_orch->isVniVlanMapExists(vni_id, vniVlanMapName, &tnl_map_entry_id, &vlan_id);
+        entry.vni_id = vni_id;
         if (entry.isL2Vni)
         {
             entry.vniVlanMapName = vniVlanMapName;
             entry.vlan_id = vlan_id;
-            entry.vni_id = vni_id;
             remove_tunnel_map_entry(tnl_map_entry_id);
             SWSS_LOG_DEBUG("remove_tunnel_map_entry name %s, vlan %d, vni %d\n", entry.vniVlanMapName.c_str(), entry.vlan_id, entry.vni_id);
         }
@@ -2246,6 +2246,9 @@ bool VxlanVrfMapOrch::delOperation(const Request& request)
     VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
     VxlanTunnelMapOrch* vxlan_tun_map_orch = gDirectory.get<VxlanTunnelMapOrch*>();
     const auto full_map_entry_name = request.getFullKey();
+    std::string vniVlanMapName;
+    uint32_t vlan_id = 0;
+    sai_object_id_t tnl_map_entry_id = SAI_NULL_OBJECT_ID;
 
     if (!isVrfMapExists(full_map_entry_name))
     {
@@ -2286,6 +2289,18 @@ bool VxlanVrfMapOrch::delOperation(const Request& request)
         remove_tunnel_map_entry(entry.decap_id);
         vrf_orch->decreaseVrfRefCount(vrf_name);
 
+        if (!entry.isL2Vni)
+        {
+            entry.isL2Vni = vxlan_tun_map_orch->isVniVlanMapExists(entry.vni_id, vniVlanMapName, &tnl_map_entry_id, &vlan_id);
+            SWSS_LOG_NOTICE("VxlanVrfMapOrch vni %d, isL2Vni %d\n", entry.vni_id, entry.isL2Vni);
+
+            if (entry.isL2Vni)
+            {
+                entry.vniVlanMapName = vniVlanMapName;
+                entry.vlan_id = vlan_id;
+                SWSS_LOG_DEBUG("add_tunnel_map_entry name %s, vlan %d, vni %d\n", entry.vniVlanMapName.c_str(), entry.vlan_id, entry.vni_id);
+            }
+        }
         if(entry.isL2Vni)
         {
             const auto tunnel_map_id = tunnel_obj->getDecapMapId(TUNNEL_MAP_T_VLAN);

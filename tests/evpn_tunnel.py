@@ -488,8 +488,6 @@ class VxlanTunnel(object):
     def check_vxlan_tunnel_map_entry_removed(self, dvs, tunnel_name, vidlist, vnidlist):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
-        tbl = swsscommon.Table(asic_db, self.ASIC_TUNNEL_MAP_ENTRY)
-
         expected_attributes_1 = {
         'SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP_TYPE': 'SAI_TUNNEL_MAP_TYPE_VNI_TO_VLAN_ID',
         'SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP': self.tunnel_map_map[tunnel_name][0],
