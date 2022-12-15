@@ -29,6 +29,12 @@ enum MuxStateChange
     MUX_STATE_UNKNOWN_STATE
 };
 
+enum MuxCableType
+{
+    ACTIVE_STANDBY,
+    ACTIVE_ACTIVE
+};
+
 // Forward Declarations
 class MuxOrch;
 class MuxCableOrch;
@@ -80,7 +86,7 @@ private:
 class MuxCable
 {
 public:
-    MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress peer_ip);
+    MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress peer_ip, MuxCableType cable_type);
 
     bool isActive() const
     {
@@ -111,6 +117,7 @@ private:
     bool nbrHandler(bool enable, bool update_routes = true);
 
     string mux_name_;
+    MuxCableType cable_type_;
 
     MuxState state_ = MuxState::MUX_STATE_INIT;
     bool st_chg_in_progress_ = false;

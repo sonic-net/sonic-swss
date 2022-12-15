@@ -359,8 +359,8 @@ static bool remove_nh_tunnel(sai_object_id_t nh_id, IpAddress& ipAddr)
     return true;
 }
 
-MuxCable::MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress peer_ip)
-         :mux_name_(name), srv_ip4_(srv_ip4), srv_ip6_(srv_ip6), peer_ip4_(peer_ip)
+MuxCable::MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress peer_ip, MuxCableType cable_type)
+         :mux_name_(name), srv_ip4_(srv_ip4), srv_ip6_(srv_ip6), peer_ip4_(peer_ip), cable_type_(cable_type)
 {
     mux_orch_ = gDirectory.get<MuxOrch*>();
     mux_cb_orch_ = gDirectory.get<MuxCableOrch*>();
@@ -497,6 +497,11 @@ string MuxCable::getState()
 
 bool MuxCable::aclHandler(sai_object_id_t port, string alias, bool add)
 {
+    if (cable_type_ == MuxCableType::ACTIVE_ACTIVE)
+    {
+        SWSS_LOG_INFO("Skip programming ACL for mux port %s, cable type %d, add %d", alias.c_str(), cable_type_, add);
+        return true;
+    }
     if (add)
     {
         acl_handler_ = make_shared<MuxAclHandler>(port, alias);
@@ -1276,6 +1281,7 @@ bool MuxOrch::handleMuxCfg(const Request& request)
     auto srv_ip = request.getAttrIpPrefix("server_ipv4");
     auto srv_ip6 = request.getAttrIpPrefix("server_ipv6");
 
+    MuxCableType cable_type = MuxCableType::ACTIVE_STANDBY;
     std::set<IpAddress> skip_neighbors;
 
     const auto& port_name = request.getKeyString(0);
@@ -1295,6 +1301,14 @@ bool MuxOrch::handleMuxCfg(const Request& request)
             SWSS_LOG_NOTICE("%s: %s was added to ignored neighbor list", port_name.c_str(), soc_ip6.getIp().to_string().c_str());
             skip_neighbors.insert(soc_ip6.getIp());
         }
+        else if (name == "cable_type")
+        {
+            auto cable_type_str = request.getAttrString("cable_type");
+            if (cable_type_str == "active-active")
+            {
+                cable_type = MuxCableType::ACTIVE_ACTIVE;
+            }
+        }
     }
 
     if (op == SET_COMMAND)
@@ -1312,10 +1326,10 @@ bool MuxOrch::handleMuxCfg(const Request& request)
         }
 
         mux_cable_tb_[port_name] = std::make_unique<MuxCable>
-                                   (MuxCable(port_name, srv_ip, srv_ip6, mux_peer_switch_));
+                                   (MuxCable(port_name, srv_ip, srv_ip6, mux_peer_switch_, cable_type));
         addSkipNeighbors(skip_neighbors);
 
-        SWSS_LOG_NOTICE("Mux entry for port '%s' was added", port_name.c_str());
+        SWSS_LOG_NOTICE("Mux entry for port '%s' was added, cable type %d", port_name.c_str(), cable_type);
     }
     else
     {
