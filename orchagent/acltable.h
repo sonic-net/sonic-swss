@@ -34,6 +34,7 @@ extern "C" {
 #define TABLE_TYPE_MCLAG                "MCLAG"
 #define TABLE_TYPE_MUX                  "MUX"
 #define TABLE_TYPE_DROP                 "DROP"
+#define TABLE_TYPE_L2                   "L2"
 
 typedef enum
 {

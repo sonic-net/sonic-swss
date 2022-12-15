@@ -24,6 +24,12 @@ MIRROR_RULE_NAME = "MIRROR_TEST_RULE"
 PFCWD_TABLE_TYPE = "PFCWD"
 PFCWD_TABLE_NAME = "PFCWD_TEST"
 PFCWD_BIND_PORTS = ["Ethernet0", "Ethernet4", "Ethernet8", "Ethernet12"]
+
+L2_TABLE_TYPE = "L2"
+L2_TABLE_NAME = "L2_TEST"
+L2_BIND_PORTS = ["Ethernet0", "Ethernet4", "Ethernet8", "Ethernet12"]
+L2_RULE_NAME = "L2_TEST_RULE"
+
 class TestAcl:
     @pytest.fixture
     def l3_acl_table(self, dvs_acl):
@@ -61,6 +67,15 @@ class TestAcl:
             yield dvs_acl.get_acl_table_ids(1)[0]
         finally:
             dvs_acl.remove_acl_table(MIRROR_TABLE_NAME)
+            dvs_acl.verify_acl_table_count(0)
+
+    @pytest.fixture
+    def l2_acl_table(self, dvs_acl):
+        try:
+            dvs_acl.create_acl_table(L2_TABLE_NAME, L2_TABLE_TYPE, L2_BIND_PORTS)
+            yield dvs_acl.get_acl_table_ids(1)[0]
+        finally:
+            dvs_acl.remove_acl_table(L2_TABLE_NAME)
             dvs_acl.verify_acl_table_count(0)
 
     @pytest.fixture(params=['ingress', 'egress'])
@@ -577,6 +592,51 @@ class TestAcl:
             assert match_in_ports
         else:
             assert not match_in_ports
+    def test_L2AclRuleSrcMac(self, dvs_acl, l2_acl_table):
+        config_qualifiers = {"SRC_MAC": "00:00:00:11:11:11/ff:ff:ff:ff:ff:ff"}
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_SRC_MAC": dvs_acl.get_simple_qualifier_comparator("00:00:00:11:11:11&mask:FF:FF:FF:FF:FF:FF")
+        }
+
+        dvs_acl.create_acl_rule(L2_TABLE_NAME, L2_RULE_NAME, config_qualifiers)
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+
+        dvs_acl.remove_acl_rule(L2_TABLE_NAME, L2_RULE_NAME)
+        dvs_acl.verify_no_acl_rules()
+    def test_L2AclRuleDstMac(self, dvs_acl, l2_acl_table):
+        config_qualifiers = {"DST_MAC": "00:00:00:22:22:22/ff:ff:ff:ff:ff:ff"}
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_DST_MAC": dvs_acl.get_simple_qualifier_comparator("00:00:00:22:22:22&mask:FF:FF:FF:FF:FF:FF")
+        }
+
+        dvs_acl.create_acl_rule(L2_TABLE_NAME, L2_RULE_NAME, config_qualifiers)
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+
+        dvs_acl.remove_acl_rule(L2_TABLE_NAME, L2_RULE_NAME)
+        dvs_acl.verify_no_acl_rules()
+    def test_L2AclRuleVlanPri(self, dvs_acl, l2_acl_table):
+        config_qualifiers = {"VLAN_PCP": "5/7"}
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_OUTER_VLAN_PRI": dvs_acl.get_simple_qualifier_comparator("5&mask:0x7")
+        }
+
+        dvs_acl.create_acl_rule(L2_TABLE_NAME, L2_RULE_NAME, config_qualifiers)
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+
+        dvs_acl.remove_acl_rule(L2_TABLE_NAME, L2_RULE_NAME)
+        dvs_acl.verify_no_acl_rules()
+    def test_L2AclRuleVlanCfi(self, dvs_acl, l2_acl_table):
+        config_qualifiers = {"VLAN_DEI": "1"}
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_OUTER_VLAN_CFI": dvs_acl.get_simple_qualifier_comparator("1&mask:0x1")
+        }
+
+        dvs_acl.create_acl_rule(L2_TABLE_NAME, L2_RULE_NAME, config_qualifiers)
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+
+        dvs_acl.remove_acl_rule(L2_TABLE_NAME, L2_RULE_NAME)
+        dvs_acl.verify_no_acl_rules()
+
 class TestAclCrmUtilization:
     @pytest.fixture(scope="class", autouse=True)
     def configure_crm_polling_interval_for_test(self, dvs):
