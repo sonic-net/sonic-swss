@@ -1014,7 +1014,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         {
             // In case of updating an existing route, decrease the reference count for the previous nexthop group
             NextHopGroupKey nhg = it_route->second;
-            if(--syncd_nexthop_groups_[vnet][nhg].ref_count == 0)
+            if((syncd_nexthop_groups_[vnet][nhg].ref_count - 1) == 0)
             {
                 if (nhg.getSize() > 1)
                 {
@@ -1022,10 +1022,11 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                 }
                 else
                 {
-                    syncd_nexthop_groups_[vnet].erase(nhg);
                     NextHopKey nexthop(nhg.to_string(), true);
                     vrf_obj->removeTunnelNextHop(nexthop);
+                    syncd_nexthop_groups_[vnet].erase(nhg);
                 }
+                --syncd_nexthop_groups_[vnet][nhg].ref_count;
                 delEndpointMonitor(vnet, nhg);
             }
             else

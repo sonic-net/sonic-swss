@@ -595,10 +595,8 @@ bool VxlanTunnel::removeNextHop(IpAddress& ipAddr, MacAddress macAddress, uint32
                     ipAddr.to_string().c_str(), macAddress.to_string().c_str(), vni,
                     nh_tunnels_[key].ref_count);
 
-    //Decrement ref count if already exists
-    nh_tunnels_[key].ref_count --;
 
-    if (!nh_tunnels_[key].ref_count)
+    if (!(nh_tunnels_[key].ref_count - 1))
     {
         if (sai_next_hop_api->remove_next_hop(nh_tunnels_[key].nh_id) != SAI_STATUS_SUCCESS)
         {
@@ -608,6 +606,8 @@ bool VxlanTunnel::removeNextHop(IpAddress& ipAddr, MacAddress macAddress, uint32
             throw std::runtime_error(err_msg);
         }
 
+        //Decrement ref count if already exists
+        nh_tunnels_[key].ref_count--;
         nh_tunnels_.erase(key);
     }
 
