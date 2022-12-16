@@ -606,6 +606,11 @@ bool PortsOrch::getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uin
     return true;
 }
 
+bool PortsOrch::isAutoNegEnabled(sai_object_id_t id)
+{
+    return true;
+}
+
 task_process_status PortsOrch::setPortAutoNeg(sai_object_id_t id, int an)
 {
     return task_success;
@@ -639,7 +644,7 @@ void PortsOrch::updateDbPortOperSpeed(Port &port, sai_uint32_t speed)
 {
 }
 
-void PortsOrch::getPortSerdesVal(const std::string &s, std::vector<uint32_t> &lane_values)
+void PortsOrch::getPortSerdesVal(const std::string &s, std::vector<uint32_t> &lane_values, int base)
 {
 }
 

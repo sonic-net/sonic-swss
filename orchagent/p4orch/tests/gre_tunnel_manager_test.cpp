@@ -215,7 +215,7 @@ class GreTunnelManagerTest : public ::testing::Test
 
     void Enqueue(const swss::KeyOpFieldsValuesTuple &entry)
     {
-        gre_tunnel_manager_.enqueue(entry);
+        gre_tunnel_manager_.enqueue(APP_P4RT_TUNNEL_TABLE_NAME, entry);
     }
 
     void Drain()

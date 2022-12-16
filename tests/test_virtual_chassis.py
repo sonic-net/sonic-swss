@@ -39,7 +39,7 @@ class TestVirtualChassis(object):
 
             # Configure only for line cards
             if cfg_switch_type == "voq":
-                dvs.runcmd(f"config interface startup {ibport}")
+                dvs.port_admin_set(f"{ibport}", "up")
                 config_db.create_entry("VOQ_INBAND_INTERFACE", f"{ibport}", {"inband_type": "port"})
                 
     def del_inbandif_port(self, vct, ibport):
