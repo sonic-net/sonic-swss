@@ -1464,7 +1464,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
         //MAC is added/updated as dynamic to allow aging.
         SWSS_LOG_INFO("MAC-Update Modify to dynamic FDB %s in %s on from-%s:to-%s from-%s:to-%s origin-%d-to-%d",
                 entry.mac.to_string().c_str(), vlan.m_alias.c_str(), oldPort.m_alias.c_str(),
-                port_name.c_str(), oldType.c_str(), fdbData.type.c_str(),
+                port_name.c_str(), oldType.c_str(), fdbData.type.c_str(), 
                 oldOrigin, fdbData.origin);
 
         storeFdbData.origin = FDB_ORIGIN_LEARN;
