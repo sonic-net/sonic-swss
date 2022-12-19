@@ -600,7 +600,7 @@ class DockerVirtualSwitch:
         self.ctn_restart()
         self.check_ready_status_and_init_db()
 
-    def runcmd(self, cmd: str) -> Tuple[int, str]:
+    def runcmd(self, cmd: str, include_stderr=True) -> Tuple[int, str]:
         res = self.ctn.exec_run(cmd)
         exitcode = res.exit_code
         out = res.output.decode("utf-8")
