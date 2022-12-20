@@ -271,7 +271,7 @@ void DashVnetOrch::doTaskVnetTable(Consumer& consumer)
     }
 }
 
-bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt)
+void DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -298,11 +298,9 @@ bool DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
     object_statuses.emplace_back();
     outbound_ca_to_pa_bulker_.create_entry(&object_statuses.back(), &outbound_ca_to_pa_entry,
             (uint32_t)outbound_ca_to_pa_attrs.size(), outbound_ca_to_pa_attrs.data());
-
-    return false;
 }
 
-bool DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
+void DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -320,8 +318,6 @@ bool DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
     object_statuses.emplace_back();
     pa_validation_bulker_.create_entry(&object_statuses.back(), &pa_validation_entry,
             attr_count, &pa_validation_attr);
-
-    return false;
 }
 
 bool DashVnetOrch::addVnetMap(const string& key, VnetMapBulkContext& ctxt)
@@ -432,7 +428,7 @@ bool DashVnetOrch::addVnetMapPost(const string& key, const VnetMapBulkContext& c
     return true;
 }
 
-bool DashVnetOrch::removeOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt)
+void DashVnetOrch::removeOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -444,11 +440,9 @@ bool DashVnetOrch::removeOutboundCaToPa(const string& key, VnetMapBulkContext& c
 
     object_statuses.emplace_back();
     outbound_ca_to_pa_bulker_.remove_entry(&object_statuses.back(), &outbound_ca_to_pa_entry);
-
-    return false;
 }
 
-bool DashVnetOrch::removePaValidation(const string& key, VnetMapBulkContext& ctxt)
+void DashVnetOrch::removePaValidation(const string& key, VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
@@ -460,8 +454,6 @@ bool DashVnetOrch::removePaValidation(const string& key, VnetMapBulkContext& ctx
 
     object_statuses.emplace_back();
     pa_validation_bulker_.remove_entry(&object_statuses.back(), &pa_validation_entry);
-
-    return false;
 }
 
 bool DashVnetOrch::removeVnetMap(const string& key, VnetMapBulkContext& ctxt)
