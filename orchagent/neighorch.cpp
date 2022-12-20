@@ -912,7 +912,7 @@ bool NeighOrch::addNeighbor(const NeighborEntry &neighborEntry, const MacAddress
     }
     else if (isHwConfigured(neighborEntry))
     {
-        for(auto itr : neighbor_attrs)
+        for (auto itr : neighbor_attrs)
         {
             status = sai_neighbor_api->set_neighbor_entry_attribute(&neighbor_entry, &itr);
             if (status != SAI_STATUS_SUCCESS)
