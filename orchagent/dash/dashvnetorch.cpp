@@ -331,7 +331,7 @@ bool DashVnetOrch::addVnetMap(const string& key, VnetMapBulkContext& ctxt)
     bool exists = (vnet_map_table_.find(key) != vnet_map_table_.end());
     if (!exists)
     {
-        bool vnet_exists = (gVnetNameToId.find(ctxt.vnet_name) != gVnetNameToId.end())
+        bool vnet_exists = (gVnetNameToId.find(ctxt.vnet_name) != gVnetNameToId.end());
         if (vnet_exists)
         {
             addOutboundCaToPa(key, ctxt);
@@ -339,7 +339,7 @@ bool DashVnetOrch::addVnetMap(const string& key, VnetMapBulkContext& ctxt)
         }
         else
         {
-            SWSS_LOG_INFO("Not creating VNET map for %s since VNET %s doesn't exist", key.c_str(), ctxt.vnet_name.c_str())
+            SWSS_LOG_INFO("Not creating VNET map for %s since VNET %s doesn't exist", key.c_str(), ctxt.vnet_name.c_str());
         }
         return false;
     }
