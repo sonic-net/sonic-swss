@@ -317,7 +317,7 @@ def delete_phy_interface(dvs, ifname, ipaddr):
     time.sleep(2)
 
 
-def create_vnet_entry(dvs, name, tunnel, vni, peer_list, scope="", advertise_prefix=False):
+def create_vnet_entry(dvs, name, tunnel, vni, peer_list, scope="", advertise_prefix=False, monitoring="", filter_mac=""):
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
     asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
@@ -332,6 +332,13 @@ def create_vnet_entry(dvs, name, tunnel, vni, peer_list, scope="", advertise_pre
 
     if advertise_prefix:
         attrs.append(('advertise_prefix', 'true'))
+
+    if monitoring:
+        attrs.append(('monitoring', monitoring))
+
+    if filter_mac:
+        attrs.append(('filter_mac', filter_mac))
+
 
     # create the VXLAN tunnel Term entry in Config DB
     create_entry_tbl(
@@ -2012,7 +2019,7 @@ class TestVnetOrch(object):
         vnet_obj.fetch_exist_entries(dvs)
 
         create_vxlan_tunnel(dvs, tunnel_name, '12.12.12.12')
-        create_vnet_entry(dvs, 'Vnet12', tunnel_name, '10012', "", advertise_prefix=True)
+        create_vnet_entry(dvs, 'Vnet12', tunnel_name, '10012', "", advertise_prefix=True, monitoring="custom", filter_mac="22:33:33:44:44:66")
 
         vnet_obj.check_vnet_entry(dvs, 'Vnet12')
         vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet12', '10012')

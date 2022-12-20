@@ -429,6 +429,8 @@ bool VNetOrch::addOperation(const Request& request)
     uint32_t vni=0;
     string tunnel;
     string scope;
+    string monitoring;
+    swss::MacAddress filter_mac;
 
     for (const auto& name: request.getAttrFieldNames())
     {
@@ -460,6 +462,14 @@ bool VNetOrch::addOperation(const Request& request)
         {
             advertise_prefix = request.getAttrBool("advertise_prefix");
         }
+        else if (name == "monitoring")
+        {
+            monitoring = request.getAttrString("monitoring");
+        }
+        else if (name == "filter_mac")
+        {
+            filter_mac = request.getAttrMacAddress("filter_mac");
+        }
         else
         {
             SWSS_LOG_INFO("Unknown attribute: %s", name.c_str());
@@ -486,7 +496,7 @@ bool VNetOrch::addOperation(const Request& request)
 
             if (it == std::end(vnet_table_))
             {
-                VNetInfo vnet_info = { tunnel, vni, peer_list, scope, advertise_prefix };
+                VNetInfo vnet_info = { tunnel, vni, peer_list, scope, advertise_prefix, monitoring, filter_mac };
                 obj = createObject<VNetVrfObject>(vnet_name, vnet_info, attrs);
                 create = true;
 
