@@ -891,23 +891,23 @@ class TestWarmReboot(object):
 
         time.sleep(1)
         # Should fail, since neighbor for next 20.0.0.1 has not been not resolved yet
-        (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check")
+        (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check", include_stderr=False)
         assert result == "RESTARTCHECK failed\n"
 
         # Should succeed, the option for skipPendingTaskCheck -s and noFreeze -n have been provided.
         # Wait up to 500 milliseconds for response from orchagent. Default wait time is 1000 milliseconds.
-        (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check -n -s -w 500")
+        (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check -n -s -w 500", include_stderr=False)
         assert result == "RESTARTCHECK succeeded\n"
 
         # Remove unfinished routes
         ps._del("3.3.3.0/24")
 
         time.sleep(1)
-        (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check")
+        (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check", include_stderr=False)
         assert result == "RESTARTCHECK succeeded\n"
 
         # Should fail since orchagent has been frozen at last step.
-        (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check -n -s -w 500")
+        (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check -n -s -w 500", include_stderr=False)
         assert result == "RESTARTCHECK failed\n"
 
         # Cleaning previously pushed route-entry to ease life of subsequent testcases.
