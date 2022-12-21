@@ -99,7 +99,8 @@ jobs:
         params=" ${params} --num-ports=${{ parameters.num_ports }} "
       fi
 
-      all_tests=$(ls test_*.py)
+      # By default, exclude DASH tests since they are run separately
+      all_tests=$(ls test_*.py | grep -v "test_dash")
       all_tests="${all_tests} p4rt"
 
       if [ -n '${{ parameters.run_tests_pattern }}' ]; then
