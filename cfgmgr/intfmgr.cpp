@@ -456,11 +456,11 @@ std::string IntfMgr::setHostSubIntfMtu(const string &alias, const string &mtu, c
         // followed by a new DEL notification that send by portmgrd
         SWSS_LOG_WARN("Setting mtu to %s netdev failed with cmd:%s, rc:%d, error:%s", alias.c_str(), cmd_str.c_str(), ret, res.c_str());
     }
-    else if(ret)
+    else if (ret)
     {
         throw runtime_error(cmd_str + " : " + res);
     }
-        return subifMtu;
+    return subifMtu;
 }
 
 void IntfMgr::updateSubIntfAdminStatus(const string &alias, const string &admin)
