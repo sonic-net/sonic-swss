@@ -917,8 +917,8 @@ bool NeighOrch::addNeighbor(const NeighborEntry &neighborEntry, const MacAddress
             status = sai_neighbor_api->set_neighbor_entry_attribute(&neighbor_entry, &itr);
             if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("Failed to update neighbor %s on %s, rv:%d",
-                               macAddress.to_string().c_str(), alias.c_str(), status);
+                SWSS_LOG_ERROR("Failed to update neighbor %s on %s, attr.id=0x%x, rv:%d",
+                               macAddress.to_string().c_str(), alias.c_str(), itr.id, status);
                 task_process_status handle_status = handleSaiSetStatus(SAI_API_NEIGHBOR, status);
                 if (handle_status != task_success)
                 {
