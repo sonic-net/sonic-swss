@@ -140,11 +140,11 @@ def delete_vnet_local_routes(dvs, prefix, vnet_name):
     time.sleep(2)
 
 
-def create_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile=""):
-    set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac=mac, vni=vni, ep_monitor=ep_monitor, profile=profile)
+def create_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="", primary="", monitoring="", adv_prefix=""):
+    set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac=mac, vni=vni, ep_monitor=ep_monitor, profile=profile, primary=primary, monitoring=monitoring, adv_prefix=adv_prefix)
 
 
-def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile=""):
+def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor="", profile="", primary="", monitoring="", adv_prefix=""):
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
     attrs = [
@@ -162,6 +162,15 @@ def set_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0, ep_monitor=
 
     if profile:
         attrs.append(('profile', profile))
+
+    if primary:
+        attrs.append(('primary', primary))
+
+    if monitoring:
+        attrs.append(('monitoring', monitoring))
+
+    if adv_prefix:
+        attrs.append(('adv_prefix', adv_prefix))
 
     tbl = swsscommon.Table(conf_db, "VNET_ROUTE_TUNNEL")
     fvs = swsscommon.FieldValuePairs(attrs)
@@ -317,7 +326,7 @@ def delete_phy_interface(dvs, ifname, ipaddr):
     time.sleep(2)
 
 
-def create_vnet_entry(dvs, name, tunnel, vni, peer_list, scope="", advertise_prefix=False, monitoring="", filter_mac=""):
+def create_vnet_entry(dvs, name, tunnel, vni, peer_list, scope="", advertise_prefix=False, overlay_dmac=""):
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
     asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
@@ -333,12 +342,8 @@ def create_vnet_entry(dvs, name, tunnel, vni, peer_list, scope="", advertise_pre
     if advertise_prefix:
         attrs.append(('advertise_prefix', 'true'))
 
-    if monitoring:
-        attrs.append(('monitoring', monitoring))
-
-    if filter_mac:
-        attrs.append(('filter_mac', filter_mac))
-
+    if overlay_dmac:
+        attrs.append(('overlay_dmac', overlay_dmac))
 
     # create the VXLAN tunnel Term entry in Config DB
     create_entry_tbl(
@@ -2019,7 +2024,7 @@ class TestVnetOrch(object):
         vnet_obj.fetch_exist_entries(dvs)
 
         create_vxlan_tunnel(dvs, tunnel_name, '12.12.12.12')
-        create_vnet_entry(dvs, 'Vnet12', tunnel_name, '10012', "", advertise_prefix=True, monitoring="custom", filter_mac="22:33:33:44:44:66")
+        create_vnet_entry(dvs, 'Vnet12', tunnel_name, '10012', "", advertise_prefix=True)
 
         vnet_obj.check_vnet_entry(dvs, 'Vnet12')
         vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet12', '10012')
@@ -2371,7 +2376,7 @@ class TestVnetOrch(object):
         vnet_obj.fetch_exist_entries(dvs)
 
         create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
-        create_vnet_entry(dvs, 'Vnet17', tunnel_name, '10009', "")
+        create_vnet_entry(dvs, 'Vnet17', tunnel_name, '10009', "", overlay_dmac="22:33:33:44:44:66")
 
         vnet_obj.check_vnet_entry(dvs, 'Vnet17')
         vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet17', '10009')
@@ -2379,7 +2384,7 @@ class TestVnetOrch(object):
         vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
 
         vnet_obj.fetch_exist_entries(dvs)
-        create_vnet_routes(dvs, "100.100.1.1/32", 'Vnet17', '9.0.0.1,9.0.0.2,9.0.0.3', ep_monitor='9.1.0.1,9.1.0.2,9.1.0.3')
+        create_vnet_routes(dvs, "100.100.1.1/32", 'Vnet17', '9.0.0.1,9.0.0.2,9.0.0.3', ep_monitor='9.1.0.1,9.1.0.2,9.1.0.3', primary ='9.0.0.1',monitoring='custom', adv_prefix='100.100.1.1/27')
 
         # default bfd status is down, route should not be programmed in this status
         vnet_obj.check_del_vnet_routes(dvs, 'Vnet17', ["100.100.1.1/32"])
