@@ -166,6 +166,8 @@ void P4Orch::doTask(Consumer& consumer) {
   for (const auto& manager : m_p4ManagerPrecedence) {
     manager->drain();
   }
+
+  m_publisher.flush();
 }
 
 void P4Orch::doTask(swss::SelectableTimer& timer) {
