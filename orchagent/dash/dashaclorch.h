@@ -38,6 +38,7 @@ struct DashAclEntry {
 struct DashAclGroupEntry {
     sai_object_id_t m_dash_acl_group_id;
     sai_status_t m_status;
+    size_t m_ref_count;
     size_t m_rule_count;
     boost::optional<std::string> m_guid;
     boost::optional<sai_ip_addr_family_t> m_ip_version;

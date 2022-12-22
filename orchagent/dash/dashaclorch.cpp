@@ -88,7 +88,7 @@ inline void lexical_convert(const string &buffer, DashAclStage &stage)
     else
     {
         SWSS_LOG_ERROR("Invalid stage : %s", buffer.c_str());
-        throw std::invalid_argument("Invalid stage");
+        throw invalid_argument("Invalid stage");
     }
 
 }
@@ -149,7 +149,7 @@ inline void lexical_convert(const string &buffer, bool &terminating)
     else
     {
         SWSS_LOG_ERROR("Invalid terminating : %s", buffer.c_str());
-        throw std::invalid_argument("Invalid terminating");
+        throw invalid_argument("Invalid terminating");
     }
 }
 
@@ -187,7 +187,7 @@ inline void lexical_convert(const string &buffer, vector<sai_ip_address_t> &ips)
 }
 
 template<>
-inline void lexical_convert(const string &buffer, std::vector<sai_u16_range_t> &ports)
+inline void lexical_convert(const string &buffer, vector<sai_u16_range_t> &ports)
 {
     SWSS_LOG_ENTER();
 
@@ -197,7 +197,7 @@ inline void lexical_convert(const string &buffer, std::vector<sai_u16_range_t> &
     for (auto &token : tokens)
     {
         sai_u16_range_t port;
-        if (token.find('-') == std::string::npos)
+        if (token.find('-') == string::npos)
         {
             // Only one port
             lexical_convert(token, port.min);
@@ -456,16 +456,8 @@ task_process_status DashAclOrch::taskUpdateDashAclGroup(
         else
         {
             // Update the ACL group's attributes
-            for (const auto &attr : attrs)
-            {
-                acl_group.m_status = sai_dash_acl_api->set_dash_acl_group_attribute(acl_group.m_dash_acl_group_id, &attr);
-                if (acl_group.m_status != SAI_STATUS_SUCCESS)
-                {
-                    SWSS_LOG_ERROR("Failed to update attribute %d to dash ACL group %s, rv:%s", attr.id, key.c_str(), sai_serialize_status(acl_group.m_status).c_str());
-                    return task_failed;
-                }
-            }
-            SWSS_LOG_NOTICE("Updated ACL group %s", key.c_str());
+            SWSS_LOG_WARN("Cannot update attributes of ACL group %s", key.c_str());
+            return task_failed;
         }
     }
 
@@ -489,7 +481,14 @@ task_process_status DashAclOrch::taskRemoveDashAclGroup(
     // The member rules of group should be removed first
     if (acl_group->m_rule_count != 0)
     {
-        SWSS_LOG_WARN("ACL group %s still has %d rules", key.c_str(), acl_group->m_rule_count);
+        SWSS_LOG_INFO("ACL group %s still has %d rules", key.c_str(), acl_group->m_rule_count);
+        return task_need_retry;
+    }
+
+    // The refer count of group should be cleaned first
+    if (acl_group->m_ref_count != 0)
+    {
+        SWSS_LOG_INFO("ACL group %s still has %d references", key.c_str(), acl_group->m_ref_count);
         return task_need_retry;
     }
 
@@ -527,7 +526,7 @@ task_process_status DashAclOrch::taskUpdateDashAclRule(
     auto acl_group = getAclGroup(group_id);
     if (acl_group == nullptr)
     {
-        SWSS_LOG_WARN("ACL group %s doesn't exist, waiting for group creating before creating rule %s", group_id.c_str(), rule_id.c_str());
+        SWSS_LOG_INFO("ACL group %s doesn't exist, waiting for group creating before creating rule %s", group_id.c_str(), rule_id.c_str());
         return task_need_retry;
     }
 
@@ -619,16 +618,14 @@ task_process_status DashAclOrch::taskUpdateDashAclRule(
         // If the attributes don't have default value, just skip and wait for the user to set the value at the next message
         if (!acl_rule.m_protocols)
         {
-            const static vector<uint8_t> all_protocols = {
-                    0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,
-                    32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,
-                    64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,
-                    96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,
-                    128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,
-                    160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,
-                    192,193,194,195,196,197,198,199,200,201,202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,219,220,221,222,223,
-                    224,225,226,227,228,229,230,231,232,233,234,235,236,237,238,239,240,241,242,243,244,245,246,247,248,249,250,251,252,253,254,255
-                };
+            const static vector<uint8_t> all_protocols = [](){
+                vector<uint8_t> protocols;
+                for (uint8_t i = 0; i < 255; i++)
+                {
+                    protocols.push_back(i);
+                }
+                return protocols;
+            }();
             acl_rule.m_protocols = all_protocols;
             attrs.emplace_back();
             attrs.back().id = SAI_DASH_ACL_RULE_ATTR_PROTOCOL;
@@ -669,7 +666,7 @@ task_process_status DashAclOrch::taskUpdateDashAclRule(
         }
         else
         {
-            // Update the ACL group's attributes
+            // Update the ACL rule's attributes
             for (const auto &attr : attrs)
             {
                 acl_rule.m_status = sai_dash_acl_api->set_dash_acl_rule_attribute(acl_rule.m_dash_acl_rule_id, &attr);
@@ -731,7 +728,7 @@ task_process_status DashAclOrch::taskRemoveDashAclRule(
     return task_success;
 }
 
-DashAclGroupEntry* DashAclOrch::getAclGroup(const std::string &group_id)
+DashAclGroupEntry* DashAclOrch::getAclGroup(const string &group_id)
 {
     SWSS_LOG_ENTER();
 
@@ -747,14 +744,14 @@ DashAclGroupEntry* DashAclOrch::getAclGroup(const std::string &group_id)
     }
 }
 
-task_process_status DashAclOrch::bindAclToEni(DashAclTable &acl_table, const std::string &key, const TaskArgs &data)
+task_process_status DashAclOrch::bindAclToEni(DashAclTable &acl_table, const string &key, const TaskArgs &data)
 {
     SWSS_LOG_ENTER();
 
     assert(&acl_table == &m_dash_acl_in_table || &acl_table == &m_dash_acl_out_table);
     DashAclDirection direction = ((&acl_table == &m_dash_acl_in_table) ? DashAclDirection::IN : DashAclDirection::OUT);
 
-    std::string eni;
+    string eni;
     DashAclStage stage;
     if (!extractVariables(key, ':', eni, stage))
     {
@@ -765,7 +762,7 @@ task_process_status DashAclOrch::bindAclToEni(DashAclTable &acl_table, const std
     auto eni_entry = m_dash_orch->getEni(eni);
     if (eni_entry == nullptr)
     {
-        SWSS_LOG_WARN("eni %s cannot be found", eni.c_str());
+        SWSS_LOG_INFO("eni %s cannot be found", eni.c_str());
         // The ENI may not be created yet, so we will wait for the ENI to be created
         return task_need_retry;
     }
@@ -785,6 +782,7 @@ task_process_status DashAclOrch::bindAclToEni(DashAclTable &acl_table, const std
 
         attr.id = getSaiStage(direction, *(acl_group->m_ip_version), stage);
         attr.value.oid = acl_group->m_dash_acl_group_id;
+        acl_group->m_ref_count++;
     }
     else
     {
@@ -807,14 +805,14 @@ task_process_status DashAclOrch::bindAclToEni(DashAclTable &acl_table, const std
     return task_success;
 }
 
-task_process_status DashAclOrch::unbindAclFromEni(DashAclTable &acl_table, const std::string &key, const TaskArgs &data)
+task_process_status DashAclOrch::unbindAclFromEni(DashAclTable &acl_table, const string &key, const TaskArgs &data)
 {
     SWSS_LOG_ENTER();
 
     assert(&acl_table == &m_dash_acl_in_table || &acl_table == &m_dash_acl_out_table);
     DashAclDirection direction = ((&acl_table == &m_dash_acl_in_table) ? DashAclDirection::IN : DashAclDirection::OUT);
 
-    std::string eni;
+    string eni;
     DashAclStage stage;
     if (!extractVariables(key, ':', eni, stage))
     {
@@ -855,6 +853,8 @@ task_process_status DashAclOrch::unbindAclFromEni(DashAclTable &acl_table, const
         SWSS_LOG_ERROR("Failed to unbind ACL %s to eni %s attribute, status : %s", key.c_str(), acl.m_acl_group_id->c_str(), sai_serialize_status(status).c_str());
         return task_failed;
     }
+
+    acl_group->m_ref_count--;
 
     SWSS_LOG_NOTICE("Unbind ACL group %s from %s", acl.m_acl_group_id->c_str(), key.c_str());
 
