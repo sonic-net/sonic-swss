@@ -8,7 +8,10 @@
  * when needed to test code that uses response publisher. */
 std::unique_ptr<MockResponsePublisher> gMockResponsePublisher;
 
-ResponsePublisher::ResponsePublisher(const std::string& dbName, bool buffered) : m_db(std::make_unique<swss::DBConnector>(dbName, 0)), m_buffered(buffered) {}
+ResponsePublisher::ResponsePublisher(const std::string& dbName, bool buffered, bool db_write_thread) :
+    m_db(std::make_unique<swss::DBConnector>(dbName, 0)), m_buffered(buffered) {}
+
+ResponsePublisher::~ResponsePublisher() {}
 
 void ResponsePublisher::publish(
     const std::string& table, const std::string& key,
