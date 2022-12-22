@@ -94,4 +94,5 @@ stages:
       log_artifact_name: log
       gcov_artifact_name: sonic-gcov
       sonic_slave: sonic-slave-buster
+      swss_common_branch: master
       archive_gcov: true
