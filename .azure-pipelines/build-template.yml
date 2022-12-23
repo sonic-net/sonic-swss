@@ -79,10 +79,6 @@ parameters:
   type: boolean
   default: false
 
-- name: allow_failed_artifact
-  type: boolean
-  default: false
-
 jobs:
 - job:
   displayName: ${{ parameters.arch }}
@@ -120,7 +116,6 @@ jobs:
       artifact: ${{ parameters.swss_common_artifact_name }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/${{ parameters.swss_common_branch }}'
-      allowFailedBuilds: ${{ parameters.allow_failed_artifact }}
       path: $(Build.ArtifactStagingDirectory)/download/swsscommon
       patterns: |
         libswsscommon_1.0.0_${{ parameters.arch }}.deb
