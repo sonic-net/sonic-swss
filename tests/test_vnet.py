@@ -2376,7 +2376,7 @@ class TestVnetOrch(object):
         vnet_obj.fetch_exist_entries(dvs)
 
         create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
-        create_vnet_entry(dvs, 'Vnet17', tunnel_name, '10009', "", overlay_dmac="22:33:33:44:44:66")
+        create_vnet_entry(dvs, 'Vnet17', tunnel_name, '10009', "")
 
         vnet_obj.check_vnet_entry(dvs, 'Vnet17')
         vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet17', '10009')
@@ -2384,7 +2384,7 @@ class TestVnetOrch(object):
         vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
 
         vnet_obj.fetch_exist_entries(dvs)
-        create_vnet_routes(dvs, "100.100.1.1/32", 'Vnet17', '9.0.0.1,9.0.0.2,9.0.0.3', ep_monitor='9.1.0.1,9.1.0.2,9.1.0.3', primary ='9.0.0.1',monitoring='custom', adv_prefix='100.100.1.1/27')
+        create_vnet_routes(dvs, "100.100.1.1/32", 'Vnet17', '9.0.0.1,9.0.0.2,9.0.0.3', ep_monitor='9.1.0.1,9.1.0.2,9.1.0.3')
 
         # default bfd status is down, route should not be programmed in this status
         vnet_obj.check_del_vnet_routes(dvs, 'Vnet17', ["100.100.1.1/32"])
