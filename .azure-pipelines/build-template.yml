@@ -98,7 +98,7 @@ jobs:
     clean: true
     submodules: true
   - script: |
-      sudo apt-get install -y libhiredis0.14 libhiredis-dev
+      sudo apt-get install -y libhiredis0.14 libhiredis-dev libgmock-dev
       sudo apt-get install -y libzmq5 libzmq3-dev
       sudo apt-get install -qq -y \
           libhiredis-dev \

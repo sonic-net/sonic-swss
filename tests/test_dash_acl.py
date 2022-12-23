@@ -137,7 +137,7 @@ class TestAcl(object):
 
         ctx.create_acl_group(acl_group1, {"ip_version": "ipv4"})
         ctx.create_acl_rule(acl_group1, acl_rule1, {"priority": "1", "action": "allow", "terminating": "false",
-                           "src_addr": "192.168.0.1,192.168.1.2", "dst_addr": "192.168.0.1,192.168.1.2", "src_port": "0-1", "dst_port": "0-1"})
+                           "src_addr": "192.168.0.1/32,192.168.1.2/30", "dst_addr": "192.168.0.1/32,192.168.1.2/30", "src_port": "0-1", "dst_port": "0-1"})
         ctx.bind_acl_in(self.eni_name, stage1, acl_group1)
         time.sleep(3)
 
@@ -151,23 +151,19 @@ class TestAcl(object):
         assert rule1_attr["SAI_DASH_ACL_RULE_ATTR_PRIORITY"] == "1"
         assert rule1_attr["SAI_DASH_ACL_RULE_ATTR_ACTION"] == "SAI_DASH_ACL_RULE_ACTION_PERMIT_AND_CONTINUE"
         assert rule1_attr["SAI_DASH_ACL_RULE_ATTR_DASH_ACL_GROUP_ID"] == group1_id
-        assert rule1_attr["SAI_DASH_ACL_RULE_ATTR_DIP"] == "2:192.168.0.1,192.168.1.2"
-        assert rule1_attr["SAI_DASH_ACL_RULE_ATTR_SIP"] == "2:192.168.0.1,192.168.1.2"
+        assert rule1_attr["SAI_DASH_ACL_RULE_ATTR_DIP"] == "2:192.168.0.1/32,192.168.1.2/30"
+        assert rule1_attr["SAI_DASH_ACL_RULE_ATTR_SIP"] == "2:192.168.0.1/32,192.168.1.2/30"
         assert rule1_attr["SAI_DASH_ACL_RULE_ATTR_DST_PORT"] == "1:0,1"
         assert rule1_attr["SAI_DASH_ACL_RULE_ATTR_SRC_PORT"] == "1:0,1"
         assert rule1_attr["SAI_DASH_ACL_RULE_ATTR_PROTOCOL"].split(":")[0] == "256"
         group1_attr = ctx.asic_dash_acl_group_table[group1_id]
         assert group1_attr["SAI_DASH_ACL_GROUP_ATTR_IP_ADDR_FAMILY"] == "SAI_IP_ADDR_FAMILY_IPV4"
-        eni_ids = ctx.asic_eni_table.get_keys()
-        assert eni_ids
-        eni1_id = eni_ids[0]
-        eni1_attr = ctx.asic_eni_table[eni1_id]
-        assert eni1_attr["SAI_ENI_ATTR_INBOUND_V4_STAGE" + stage1 + "_DASH_ACL_GROUP_ID"] == group1_id
+
         # Create multiple rules
         ctx.create_acl_rule(acl_group1, acl_rule2, {"priority": "2", "action": "allow", "terminating": "false",
-                           "src_addr": "192.168.0.1,192.168.1.2", "dst_addr": "192.168.0.1,192.168.1.2", "src_port": "0-1", "dst_port": "0-1"})
+                           "src_addr": "192.168.0.1/32,192.168.1.2/30", "dst_addr": "192.168.0.1/32,192.168.1.2/30", "src_port": "0-1", "dst_port": "0-1"})
         ctx.create_acl_rule(acl_group1, acl_rule3, {"priority": "2", "action": "allow", "terminating": "false",
-                           "src_addr": "192.168.0.1,192.168.1.2", "dst_addr": "192.168.0.1,192.168.1.2", "src_port": "0-1", "dst_port": "0-1"})
+                           "src_addr": "192.168.0.1/32,192.168.1.2/30", "dst_addr": "192.168.0.1/32,192.168.1.2/30", "src_port": "0-1", "dst_port": "0-1"})
         time.sleep(3)
         rule_ids = ctx.asic_dash_acl_rule_table.get_keys()
         assert len(rule_ids) == 3
@@ -188,7 +184,7 @@ class TestAcl(object):
 
         ctx.create_acl_group(acl_group1, {"ip_version": "ipv6"})
         ctx.create_acl_rule(acl_group1, acl_rule1, {"priority": "1", "action": "allow", "terminating": "false",
-                           "src_addr": "192.168.0.1,192.168.1.2", "dst_addr": "192.168.0.1,192.168.1.2", "src_port": "0-1", "dst_port": "0-1"})
+                           "src_addr": "192.168.0.1/32,192.168.1.2/30", "dst_addr": "192.168.0.1/32,192.168.1.2/30", "src_port": "0-1", "dst_port": "0-1"})
         time.sleep(3)
 
         # Remove group before removing its rule
@@ -209,7 +205,7 @@ class TestAcl(object):
 
         # Create acl rule before acl group
         ctx.create_acl_rule(acl_group1, acl_rule1, {"priority": "1", "action": "allow", "terminating": "false",
-                           "src_addr": "192.168.0.1,192.168.1.2", "dst_addr": "192.168.0.1,192.168.1.2", "src_port": "0-1", "dst_port": "0-1"})
+                           "src_addr": "192.168.0.1/32,192.168.1.2/30", "dst_addr": "192.168.0.1/32,192.168.1.2/30", "src_port": "0-1", "dst_port": "0-1"})
         time.sleep(3)
         rule_ids = ctx.asic_dash_acl_rule_table.get_keys()
         assert len(rule_ids) == 0
@@ -220,7 +216,7 @@ class TestAcl(object):
 
         # Create acl without a invalid acl group
         ctx.create_acl_rule("0", "0", {"priority": "1", "action": "allow", "terminating": "false",
-                           "src_addr": "192.168.0.1,192.168.1.2", "dst_addr": "192.168.0.1,192.168.1.2", "src_port": "0-1", "dst_port": "0-1"})
+                           "src_addr": "192.168.0.1/32,192.168.1.2/30", "dst_addr": "192.168.0.1/32,192.168.1.2/30", "src_port": "0-1", "dst_port": "0-1"})
         time.sleep(3)
         rule_ids = ctx.asic_dash_acl_rule_table.get_keys()
         assert len(rule_ids) == 1
@@ -236,7 +232,7 @@ class TestAcl(object):
         time.sleep(3)
         rule_ids = ctx.asic_dash_acl_rule_table.get_keys()
         assert len(rule_ids) == 1
-        ctx.create_acl_rule(acl_group1, acl_rule2, {"src_addr": "", "dst_addr": "192.168.0.1,192.168.1.2", "src_port": "", "dst_port": "0-1"})
+        ctx.create_acl_rule(acl_group1, acl_rule2, {"src_addr": "", "dst_addr": "192.168.0.1/32,192.168.1.2/30", "src_port": "", "dst_port": "0-1"})
         time.sleep(3)
         rule_ids = ctx.asic_dash_acl_rule_table.get_keys()
         assert len(rule_ids) == 2

@@ -398,34 +398,6 @@ struct SaiBulkerTraits<sai_dash_outbound_routing_api_t>
     using bulk_set_entry_attribute_fn = sai_bulk_set_outbound_routing_entry_attribute_fn;
 };
 
-struct sai_dash_acl_group_api_t {};
-
-template<>
-struct SaiBulkerTraits<sai_dash_acl_group_api_t>
-{
-    using entry_t = sai_object_id_t;
-    using api_t = sai_dash_acl_api_t;
-    using create_entry_fn = sai_create_dash_acl_group_fn;
-    using remove_entry_fn = sai_remove_dash_acl_group_fn;
-    using set_entry_attribute_fn = sai_set_dash_acl_group_attribute_fn;
-    using bulk_create_entry_fn = sai_bulk_object_create_fn;
-    using bulk_remove_entry_fn = sai_bulk_object_remove_fn;
-};
-
-struct sai_dash_acl_rule_api_t {};
-
-template<>
-struct SaiBulkerTraits<sai_dash_acl_rule_api_t>
-{
-    using entry_t = sai_object_id_t;
-    using api_t = sai_dash_acl_api_t;
-    using create_entry_fn = sai_create_dash_acl_rule_fn;
-    using remove_entry_fn = sai_remove_dash_acl_rule_fn;
-    using set_entry_attribute_fn = sai_set_dash_acl_rule_attribute_fn;
-    using bulk_create_entry_fn = sai_bulk_object_create_fn;
-    using bulk_remove_entry_fn = sai_bulk_object_remove_fn;
-};
-
 template <typename T>
 class EntityBulker
 {
@@ -1209,22 +1181,4 @@ inline ObjectBulker<sai_dash_vnet_api_t>::ObjectBulker(SaiBulkerTraits<sai_dash_
 {
     create_entries = api->create_vnets;
     remove_entries = api->remove_vnets;
-}
-
-template <>
-inline ObjectBulker<sai_dash_acl_group_api_t>::ObjectBulker(SaiBulkerTraits<sai_dash_acl_group_api_t>::api_t *api, sai_object_id_t switch_id, size_t max_bulk_size) :
-    switch_id(switch_id),
-    max_bulk_size(max_bulk_size)
-{
-    create_entries = api->create_dash_acl_groups;
-    remove_entries = api->remove_dash_acl_groups;
-}
-
-template <>
-inline ObjectBulker<sai_dash_acl_rule_api_t>::ObjectBulker(SaiBulkerTraits<sai_dash_acl_rule_api_t>::api_t *api, sai_object_id_t switch_id, size_t max_bulk_size) :
-    switch_id(switch_id),
-    max_bulk_size(max_bulk_size)
-{
-    create_entries = api->create_dash_acl_rules;
-    remove_entries = api->remove_dash_acl_rules;
 }

@@ -37,7 +37,6 @@ struct DashAclEntry {
 
 struct DashAclGroupEntry {
     sai_object_id_t m_dash_acl_group_id;
-    sai_status_t m_status;
     size_t m_ref_count;
     size_t m_rule_count;
     boost::optional<std::string> m_guid;
@@ -46,7 +45,6 @@ struct DashAclGroupEntry {
 
 struct DashAclRuleEntry {
     sai_object_id_t m_dash_acl_rule_id;
-    sai_status_t m_status;
     boost::optional<sai_uint32_t> m_priority;
     typedef enum
     {
@@ -56,8 +54,8 @@ struct DashAclRuleEntry {
     boost::optional<DashAclRuleEntry::Action> m_action;
     boost::optional<bool> m_terminating;
     boost::optional<std::vector<std::uint8_t> > m_protocols;
-    boost::optional<std::vector<sai_ip_address_t> > m_src_ips;
-    boost::optional<std::vector<sai_ip_address_t> > m_dst_ips;
+    boost::optional<std::vector<sai_ip_prefix_t> > m_src_prefixes;
+    boost::optional<std::vector<sai_ip_prefix_t> > m_dst_prefixes;
     boost::optional<std::vector<sai_u16_range_t> > m_src_ports;
     boost::optional<std::vector<sai_u16_range_t> > m_dst_ports;
 };
@@ -116,19 +114,10 @@ private:
         const std::string &key,
         const TaskArgs &data);
 
-    void callDeferFunctions();
-
     DashAclTable m_dash_acl_in_table;
     DashAclTable m_dash_acl_out_table;
     DashAclGroupTable m_dash_acl_group_table;
     DashAclRuleTable m_dash_acl_rule_table;
 
-    ObjectBulker<sai_dash_acl_group_api_t> m_dash_acl_group_bulker;
-    ObjectBulker<sai_dash_acl_rule_api_t> m_dash_acl_rule_bulker;
-
     DashOrch *m_dash_orch;
-
-    // There are some resources need to be released after bulker SAI functions,
-    // So, defer functions will be called after all bulker SAI functions
-    std::deque<std::function<void(void)>> m_defer_funcs;
 };
