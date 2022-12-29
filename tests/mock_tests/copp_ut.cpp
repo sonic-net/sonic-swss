@@ -17,17 +17,9 @@ void create_init_file()
 
     status = system("sudo chmod 777 /etc/sonic/");
     ASSERT_EQ(status, 0);
-
-    ofstream file(COPP_INIT_FILE);
-
-    ifstream t("copp_cfg.json");
-    string data((std::istreambuf_iterator<char>(t)),
-                 std::istreambuf_iterator<char>());
-
-    file << data;
-
-    t.close();
-    file.close();
+    
+    status = system("sudo cp copp_cfg.json /etc/sonic/");
+    ASSERT_EQ(status, 0);
 }
 
 void cleanup()
@@ -52,7 +44,13 @@ TEST(CoppMgrTest, CoppTest)
     DBConnector cfgDb("CONFIG_DB", 0);
     DBConnector appDb("APPL_DB", 0);
     DBConnector stateDb("STATE_DB", 0);
-
+    
+    /* The test will set an entry with queue1_group1|cbs value which differs from the init value
+     * found in the copp_cfg.json file. Then coppmgr constructor will be called and it will detect
+     * that there is already an entry for queue1_group1|cbs with different value and it should be
+     * overwritten with the init value.
+     * hget will verify that this indeed happened.
+     */
     Table coppTable = Table(&appDb, APP_COPP_TABLE_NAME);
     coppTable.set("queue1_group1",
                 {
