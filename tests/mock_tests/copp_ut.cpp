@@ -12,8 +12,11 @@ using namespace swss;
 
 void create_init_file()
 {
-    system("sudo mkdir /etc/sonic/");
-    system("sudo chmod 777 /etc/sonic/");
+    int status = system("sudo mkdir /etc/sonic/");
+    ASSERT_EQ(status, 0);
+
+    status = system("sudo chmod 777 /etc/sonic/");
+    ASSERT_EQ(status, 0);
 
     ofstream file(COPP_INIT_FILE);
 
@@ -29,7 +32,8 @@ void create_init_file()
 
 void cleanup()
 {
-    system("sudo rm -rf /etc/sonic/");
+    int status = system("sudo rm -rf /etc/sonic/");
+    ASSERT_EQ(status, 0);
 }
 
 TEST(CoppMgrTest, CoppTest)
@@ -69,9 +73,6 @@ TEST(CoppMgrTest, CoppTest)
     coppTable.hget("queue1_group1", "cbs",overide_val);
     EXPECT_EQ( overide_val, "6000");
 
-
     cleanup();
 }
-
-
 
