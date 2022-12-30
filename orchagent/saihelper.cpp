@@ -72,6 +72,7 @@ sai_l2mc_group_api_t*       sai_l2mc_group_api;
 sai_counter_api_t*          sai_counter_api;
 sai_bfd_api_t*              sai_bfd_api;
 sai_my_mac_api_t*           sai_my_mac_api;
+sai_generic_programmable_api_t* sai_generic_programmable_api;
 sai_dash_vnet_api_t                 sai_dash_vnet_api;
 sai_dash_outbound_ca_to_pa_api_t*   sai_dash_outbound_ca_to_pa_api;
 sai_dash_pa_validation_api_t *      sai_dash_pa_validation_api;
@@ -80,7 +81,6 @@ sai_dash_inbound_routing_api_t*     sai_dash_inbound_routing_api;
 sai_dash_eni_api_t*                 sai_dash_eni_api;
 sai_dash_vip_api_t*                 sai_dash_vip_api;
 sai_dash_direction_lookup_api_t*    sai_dash_direction_lookup_api;
-sai_generic_programmable_api_t* sai_generic_programmable_api;
 
 extern sai_object_id_t gSwitchId;
 extern bool gSairedisRecord;
@@ -210,7 +210,7 @@ void initSaiApi()
     sai_api_query(SAI_API_COUNTER,              (void **)&sai_counter_api);
     sai_api_query(SAI_API_BFD,                  (void **)&sai_bfd_api);
     sai_api_query(SAI_API_MY_MAC,               (void **)&sai_my_mac_api);
-<<<<<<< HEAD
+    sai_api_query(SAI_API_GENERIC_PROGRAMMABLE, (void **)&sai_generic_programmable_api);
     sai_api_query((sai_api_t)SAI_API_DASH_VNET,                 (void**)&sai_dash_vnet_api);
     sai_api_query((sai_api_t)SAI_API_DASH_OUTBOUND_CA_TO_PA,    (void**)&sai_dash_outbound_ca_to_pa_api);
     sai_api_query((sai_api_t)SAI_API_DASH_PA_VALIDATION,        (void**)&sai_dash_pa_validation_api);
@@ -219,9 +219,6 @@ void initSaiApi()
     sai_api_query((sai_api_t)SAI_API_DASH_ENI,                  (void**)&sai_dash_eni_api);
     sai_api_query((sai_api_t)SAI_API_DASH_VIP,                  (void**)&sai_dash_vip_api);
     sai_api_query((sai_api_t)SAI_API_DASH_DIRECTION_LOOKUP,     (void**)&sai_dash_direction_lookup_api);
-=======
-    sai_api_query(SAI_API_GENERIC_PROGRAMMABLE, (void **)&sai_generic_programmable_api);
->>>>>>> origin/master
 
     sai_log_set(SAI_API_SWITCH,                 SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_BRIDGE,                 SAI_LOG_LEVEL_NOTICE);
