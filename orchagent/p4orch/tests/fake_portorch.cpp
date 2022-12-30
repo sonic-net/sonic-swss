@@ -181,11 +181,35 @@ bool PortsOrch::setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask)
     return true;
 }
 
-void PortsOrch::generateQueueMap()
+void PortsOrch::generateQueueMap(std::map<string, FlexCounterQueueStates> queuesStateVector)
 {
 }
 
-void PortsOrch::generatePriorityGroupMap()
+void PortsOrch::generateQueueMapPerPort(const Port& port, FlexCounterQueueStates& queuesState, bool voq)
+{
+}
+
+void PortsOrch::createPortBufferQueueCounters(const Port &port, string queues)
+{
+}
+
+void PortsOrch::removePortBufferQueueCounters(const Port &port, string queues)
+{
+}
+
+void PortsOrch::generatePriorityGroupMap(std::map<string, FlexCounterPgStates> pgsStateVector)
+{
+}
+
+void PortsOrch::generatePriorityGroupMapPerPort(const Port& port, FlexCounterPgStates& pgsState)
+{
+}
+
+void PortsOrch::createPortBufferPgCounters(const Port& port, string pgs)
+{
+}
+
+void PortsOrch::removePortBufferPgCounters(const Port& port, string pgs)
 {
 }
 
@@ -582,12 +606,9 @@ bool PortsOrch::getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uin
     return true;
 }
 
-void PortsOrch::generateQueueMapPerPort(const Port &port)
+bool PortsOrch::isAutoNegEnabled(sai_object_id_t id)
 {
-}
-
-void PortsOrch::generatePriorityGroupMapPerPort(const Port &port)
-{
+    return true;
 }
 
 task_process_status PortsOrch::setPortAutoNeg(sai_object_id_t id, int an)
@@ -623,7 +644,7 @@ void PortsOrch::updateDbPortOperSpeed(Port &port, sai_uint32_t speed)
 {
 }
 
-void PortsOrch::getPortSerdesVal(const std::string &s, std::vector<uint32_t> &lane_values)
+void PortsOrch::getPortSerdesVal(const std::string &s, std::vector<uint32_t> &lane_values, int base)
 {
 }
 

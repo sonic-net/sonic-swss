@@ -95,8 +95,8 @@ class P4RtGreTunnelWrapper(util.DBInterface):
     DEFAULT_TUNNEL_ID = "tunnel-1"
     DEFAULT_ROUTER_INTERFACE_ID = "16"
     DEFAULT_ENCAP_SRC_IP = "1.2.3.4"
-    DEFAULT_ENCAP_DST_IP = "5.6.7.8"
-    DEFAULT_ACTION = "mark_for_tunnel_encap"
+    DEFAULT_ENCAP_DST_IP = "12.0.0.1"
+    DEFAULT_ACTION = "mark_for_p2p_tunnel_encap"
 
     def generate_app_db_key(self, tunnel_id):
         d = {}
@@ -240,7 +240,7 @@ class P4RtNextHopWrapper(util.DBInterface):
     DEFAULT_IPV6_NEIGHBOR_ID = "fe80::21a:11ff:fe17:5f80"
 
     # tunnel nexthop attribute values
-    TUNNEL_ACTION = "set_tunnel_encap_nexthop"
+    TUNNEL_ACTION = "set_p2p_tunnel_encap_nexthop"
     DEFAULT_TUNNEL_ID = "tunnel-1"
 
     def generate_app_db_key(self, nexthop_id):
@@ -266,12 +266,10 @@ class P4RtNextHopWrapper(util.DBInterface):
         else:
             neighbor_id = neighbor_id or self.DEFAULT_IPV6_NEIGHBOR_ID
         nexthop_id = nexthop_id or self.DEFAULT_NEXTHOP_ID
-        attr_list = [
-            (util.prepend_param_field(self.NEIGHBOR_ID_FIELD), neighbor_id),
-            (self.ACTION_FIELD, action),
-        ]
+        attr_list = [(self.ACTION_FIELD, action)]
         if action == self.DEFAULT_ACTION:
             attr_list.append((util.prepend_param_field(self.RIF_FIELD), router_interface_id))
+            attr_list.append((util.prepend_param_field(self.NEIGHBOR_ID_FIELD), neighbor_id))
         if tunnel_id != None:
             attr_list.append((util.prepend_param_field(self.TUNNEL_ID_FIELD), tunnel_id))
         nexthop_key = self.generate_app_db_key(nexthop_id)

@@ -93,13 +93,13 @@ private:
     bool addVnetPost(const std::string& key, const DashVnetBulkContext& ctxt);
     bool removeVnet(const std::string& key, DashVnetBulkContext& ctxt);
     bool removeVnetPost(const std::string& key, const DashVnetBulkContext& ctxt);
-    bool addOutboundCaToPa(const std::string& key, VnetMapBulkContext& ctxt);
+    void addOutboundCaToPa(const std::string& key, VnetMapBulkContext& ctxt);
     bool addOutboundCaToPaPost(const std::string& key, const VnetMapBulkContext& ctxt);
-    bool removeOutboundCaToPa(const std::string& key, VnetMapBulkContext& ctxt);
+    void removeOutboundCaToPa(const std::string& key, VnetMapBulkContext& ctxt);
     bool removeOutboundCaToPaPost(const std::string& key, const VnetMapBulkContext& ctxt);
-    bool addPaValidation(const std::string& key, VnetMapBulkContext& ctxt);
+    void addPaValidation(const std::string& key, VnetMapBulkContext& ctxt);
     bool addPaValidationPost(const std::string& key, const VnetMapBulkContext& ctxt);
-    bool removePaValidation(const std::string& key, VnetMapBulkContext& ctxt);
+    void removePaValidation(const std::string& key, VnetMapBulkContext& ctxt);
     bool removePaValidationPost(const std::string& key, const VnetMapBulkContext& ctxt);
     bool addVnetMap(const std::string& key, VnetMapBulkContext& ctxt);
     bool addVnetMapPost(const std::string& key, const VnetMapBulkContext& ctxt);

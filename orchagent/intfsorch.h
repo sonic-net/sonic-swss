@@ -93,10 +93,6 @@ private:
     unique_ptr<ProducerTable> m_flexCounterGroupTable;
 
     std::string getRifFlexCounterTableKey(std::string s);
-    std::string getRifCounterTableKey(std::string s);
-    std::string getRifRateTableKey(std::string s);
-    std::string getRifRateInitTableKey(std::string s);
-    void cleanUpRifFromCounterDb(const string &id, const string &name);
 
     bool addRouterIntfs(sai_object_id_t vrf_id, Port &port, string loopbackAction);
     bool removeRouterIntfs(Port &port);

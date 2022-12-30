@@ -712,6 +712,8 @@ int main(int argc, char **argv)
         if (gMySwitchType == "voq")
         {
             orchDaemon->setFabricEnabled(true);
+            orchDaemon->setFabricPortStatEnabled(true);
+            orchDaemon->setFabricQueueStatEnabled(true);
         }
     }
     else

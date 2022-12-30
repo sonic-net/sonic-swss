@@ -46,6 +46,10 @@ class DVSVlan(object):
         member = "Vlan{}|{}".format(vlanID, interface)
         self.config_db.delete_entry("VLAN_MEMBER", member)
 
+    def remove_vlan_interface(self, vlanID):
+        vlan = "Vlan{}".format(vlanID)
+        self.config_db.delete_entry("VLAN_INTERFACE", vlan)
+
     def check_app_db_vlan_fields(self, fvs, admin_status="up", mtu="9100"):
         assert fvs.get("admin_status") == admin_status
         assert fvs.get("mtu") == mtu
@@ -68,7 +72,7 @@ class DVSVlan(object):
                                 polling_config=PollingConfig()):
         vlan_entries = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_VLAN",
                                                     expected_num + 1,
-                                                    polling_config)
+                                                    polling_config=polling_config)
 
         return [v for v in vlan_entries if v != self.asic_db.default_vlan_id]
 
@@ -106,6 +110,6 @@ class DVSVlan(object):
     def get_and_verify_vlan_hostif_ids(self, expected_num, polling_config=PollingConfig()):
         hostif_entries = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF",
                                                       expected_num + 1,
-                                                      polling_config)
+                                                      polling_config=polling_config)
         return hostif_entries
 

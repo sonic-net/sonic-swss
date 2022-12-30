@@ -164,7 +164,7 @@ class RouterInterfaceManagerTest : public ::testing::Test
 
     void Enqueue(const swss::KeyOpFieldsValuesTuple &entry)
     {
-        router_intf_manager_.enqueue(entry);
+        router_intf_manager_.enqueue(APP_P4RT_ROUTER_INTERFACE_TABLE_NAME, entry);
     }
 
     void Drain()

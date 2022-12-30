@@ -65,6 +65,7 @@
 #define ACTION_DTEL_TAIL_DROP_REPORT_ENABLE "TAIL_DROP_REPORT_ENABLE"
 #define ACTION_DTEL_FLOW_SAMPLE_PERCENT     "FLOW_SAMPLE_PERCENT"
 #define ACTION_DTEL_REPORT_ALL_PACKETS      "REPORT_ALL_PACKETS"
+#define ACTION_COUNTER                      "COUNTER"
 
 #define PACKET_ACTION_FORWARD     "FORWARD"
 #define PACKET_ACTION_DROP        "DROP"
@@ -391,6 +392,9 @@ public:
 
     // Add stage mandatory matching fields to ACL table
     bool addStageMandatoryMatchFields();
+
+    // Add stage mandatory range fields to ACL table
+    bool addStageMandatoryRangeFields();
 
     // validate AclRule match attribute against rule and table configuration
     bool validateAclRuleMatch(sai_acl_entry_attr_t matchId, const AclRule& rule) const;
