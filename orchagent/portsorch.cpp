@@ -7871,13 +7871,14 @@ bool PortsOrch::addSystemPorts()
                 }
 
                 //System port for local port. Update the system port info in the existing physical port
-                if(!getPort(attr.value.oid, port))
+                Port local_port;
+                if(!getPort(attr.value.oid, local_port))
                 {
                     //This is system port for non-front panel local port (CPU or OLP or RCY (Inband)). Not an error
                     SWSS_LOG_NOTICE("Add port for non-front panel local system port 0x%" PRIx64 "; core: %d, core port: %d",
                             system_port_oid, core_index, core_port_index);
                 }
-                port.m_system_port_info.local_port_oid = attr.value.oid;
+                local_port.m_system_port_info.local_port_oid = attr.value.oid;
             }
 
             port.m_system_port_oid = system_port_oid;
@@ -8142,6 +8143,13 @@ bool PortsOrch::isMACsecPort(sai_object_id_t port_id) const
     SWSS_LOG_ENTER();
 
     return m_macsecEnabledPorts.find(port_id) != m_macsecEnabledPorts.end();
+}
+
+vector<sai_object_id_t> PortsOrch::getPortVoQIds(Port& port)
+{
+    SWSS_LOG_ENTER();
+
+    return m_port_voq_ids[port.m_alias];
 }
 
 /* Refresh the per-port Auto-Negotiation operational states */
