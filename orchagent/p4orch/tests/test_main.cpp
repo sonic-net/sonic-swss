@@ -72,6 +72,7 @@ sai_acl_api_t *sai_acl_api;
 sai_policer_api_t *sai_policer_api;
 sai_virtual_router_api_t *sai_virtual_router_api;
 sai_hostif_api_t *sai_hostif_api;
+sai_hash_api_t *sai_hash_api;
 sai_switch_api_t *sai_switch_api;
 sai_mirror_api_t *sai_mirror_api;
 sai_udf_api_t *sai_udf_api;
@@ -191,6 +192,7 @@ int main(int argc, char *argv[])
     sai_policer_api_t policer_api;
     sai_virtual_router_api_t virtual_router_api;
     sai_hostif_api_t hostif_api;
+    sai_hash_api_t hash_api;
     sai_switch_api_t switch_api;
     sai_mirror_api_t mirror_api;
     sai_udf_api_t udf_api;
@@ -207,6 +209,7 @@ int main(int argc, char *argv[])
     sai_policer_api = &policer_api;
     sai_virtual_router_api = &virtual_router_api;
     sai_hostif_api = &hostif_api;
+    sai_hash_api = &hash_api;
     sai_switch_api = &switch_api;
     sai_mirror_api = &mirror_api;
     sai_udf_api = &udf_api;

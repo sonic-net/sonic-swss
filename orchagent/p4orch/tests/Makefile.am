@@ -26,6 +26,8 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       $(ORCHAGENT_DIR)/vrforch.cpp \
 		       $(ORCHAGENT_DIR)/vxlanorch.cpp \
 		       $(ORCHAGENT_DIR)/copporch.cpp \
+		       $(ORCHAGENT_DIR)/switch/swcap.cpp \
+		       $(ORCHAGENT_DIR)/switch/swhlpr.cpp \
 		       $(ORCHAGENT_DIR)/switchorch.cpp \
 		       $(ORCHAGENT_DIR)/request_parser.cpp \
 		       $(ORCHAGENT_DIR)/flex_counter/flex_counter_manager.cpp \

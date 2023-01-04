@@ -19,6 +19,7 @@ extern VRFOrch *gVrfOrch;
 
 extern sai_acl_api_t *sai_acl_api;
 extern sai_switch_api_t *sai_switch_api;
+extern sai_hash_api_t *sai_hash_api;
 extern sai_port_api_t *sai_port_api;
 extern sai_vlan_api_t *sai_vlan_api;
 extern sai_bridge_api_t *sai_bridge_api;
@@ -312,6 +313,7 @@ namespace aclorch_test
             ASSERT_EQ(status, SAI_STATUS_SUCCESS);
 
             sai_api_query(SAI_API_SWITCH, (void **)&sai_switch_api);
+            sai_api_query(SAI_API_HASH, (void **)&sai_hash_api);
             sai_api_query(SAI_API_BRIDGE, (void **)&sai_bridge_api);
             sai_api_query(SAI_API_PORT, (void **)&sai_port_api);
             sai_api_query(SAI_API_VLAN, (void **)&sai_vlan_api);
