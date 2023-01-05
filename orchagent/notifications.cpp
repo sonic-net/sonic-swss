@@ -2,7 +2,6 @@ extern "C" {
 #include "sai.h"
 }
 
-#include <unistd.h>
 #include "logger.h"
 #include "notifications.h"
 
@@ -31,5 +30,5 @@ void on_switch_shutdown_request(sai_object_id_t switch_id)
     /* TODO: Later a better restart story will be told here */
     SWSS_LOG_ERROR("Syncd stopped");
 
-    _exit(EXIT_FAILURE);
+    exit(EXIT_FAILURE);
 }
