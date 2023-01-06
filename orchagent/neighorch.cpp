@@ -591,6 +591,12 @@ void NeighOrch::decreaseNextHopRefCount(const NextHopKey &nexthop, uint32_t coun
     assert(hasNextHop(nexthop));
     if (m_syncdNextHops.find(nexthop) != m_syncdNextHops.end())
     {
+        if ((m_syncdNextHops[nexthop].ref_count - (int)count) < 0)
+        {
+            SWSS_LOG_ERROR("Ref count cannot be negative for next_hop_id: 0x%" PRIx64 " with ip: %s and alias: %s",
+                   m_syncdNextHops[nexthop].next_hop_id, nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
+            return;
+        }
         m_syncdNextHops[nexthop].ref_count -= count;
     }
 }
