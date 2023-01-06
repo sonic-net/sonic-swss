@@ -554,6 +554,8 @@ void MuxCable::updateNeighbor(NextHopKey nh, bool add)
 
 void MuxNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, bool add, MuxState state)
 {
+    uint32_t num_routes = 0;
+
     SWSS_LOG_INFO("Neigh %s on %s, add %d, state %d",
                    nh.ip_address.to_string().c_str(), nh.alias.c_str(), add, state);
 
@@ -580,6 +582,7 @@ void MuxNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, bool add, Mu
         case MuxState::MUX_STATE_ACTIVE:
             neighbors_[nh.ip_address] = gNeighOrch->getLocalNextHopId(nh);
             gNeighOrch->enableNeighbor(nh);
+            gRouteOrch->updateNextHopRoutes(nh, num_routes);
             break;
         case MuxState::MUX_STATE_STANDBY:
             neighbors_[nh.ip_address] = tunnelId;
