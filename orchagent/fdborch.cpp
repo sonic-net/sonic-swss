@@ -1149,6 +1149,48 @@ void FdbOrch::updatePortOperState(const PortOperStateUpdate& update)
     return;
 }
 
+void FdbOrch::flushMclagRemoteFDBEntries(sai_object_id_t bridge_port_oid,
+                              Port &vlan)
+{
+    SWSS_LOG_DEBUG("Mclag remote mac flush:Input port = 0x%" PRIx64", bv_id=0x%" PRIx64,
+                               bridge_port_oid, vlan.m_vlan_info.vlan_oid);
+    Port port;
+    for (auto itr = m_entries.begin(); itr != m_entries.end();)
+    {
+        FdbData fdbData = itr->second;
+        FdbEntry entry;
+	entry.mac = itr->first.mac;
+	entry.bv_id = itr->first.bv_id;
+
+
+        SWSS_LOG_DEBUG("FDB DB:origin = %d, port = 0x%" PRIx64", mac=%s, bv_id=0x%" PRIx64,
+                     itr->second.origin, fdbData.bridge_port_id,
+                     itr->first.mac.to_string().c_str(), itr->first.bv_id);
+
+	++itr;
+        if ((fdbData.bridge_port_id == bridge_port_oid) &&
+            (entry.bv_id == vlan.m_vlan_info.vlan_oid) &&
+            (fdbData.origin == FDB_ORIGIN_MCLAG_ADVERTIZED))
+        {
+	    
+            if (!removeFdbEntry(entry, fdbData.origin))
+            {
+                SWSS_LOG_ERROR("remove FDB entry fail mac=%s, bv_id=0x%" PRIx64,
+                               entry.mac.to_string().c_str(), entry.bv_id);
+
+            } else {
+                SWSS_LOG_NOTICE("removed FDB entry. mac=%s, bv_id=0x%" PRIx64,
+                               entry.mac.to_string().c_str(), entry.bv_id);
+            }
+	    if (m_portsOrch->getPortByBridgePortId(fdbData.bridge_port_id, port))
+            {
+                saved_fdb_entries[port.m_alias].push_back(
+                        {entry.mac, vlan.m_vlan_info.vlan_id, fdbData});
+	    }
+        }
+    }
+}
+
 void FdbOrch::updateVlanMember(const VlanMemberUpdate& update)
 {
     SWSS_LOG_ENTER();
@@ -1157,6 +1199,7 @@ void FdbOrch::updateVlanMember(const VlanMemberUpdate& update)
     {
         swss::Port vlan = update.vlan;
         swss::Port port = update.member;
+        flushMclagRemoteFDBEntries(port.m_bridge_port_id,vlan);
         flushFDBEntries(port.m_bridge_port_id, vlan.m_vlan_info.vlan_oid);
         notifyObserversFDBFlush(port, vlan.m_vlan_info.vlan_oid);
         return;
@@ -1206,10 +1249,20 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
         return false;
     }
 
+    auto it = m_entries.find(entry);
     /* Retry until port is created */
     if (!m_portsOrch->getPort(port_name, port) || (port.m_bridge_port_id == SAI_NULL_OBJECT_ID))
     {
         SWSS_LOG_INFO("Saving a fdb entry until port %s becomes active", port_name.c_str());
+        /*
+         * Mclag Synced mac scenario
+         *     -> mac moved from ICL to Nonmember VLT (after shut/no shut on VLT portchannel)
+         *        delete the existing entry and save the fdb entries and wait VLT becomes member of VLAN
+         */
+        if (it != m_entries.end()) {
+            removeFdbEntry(entry, it->second.origin);
+        }
+
         saved_fdb_entries[port_name].push_back({entry.mac,
                 vlan.m_vlan_info.vlan_id, fdbData});
         return true;
@@ -1221,13 +1274,24 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
     {
         end_point_ip = fdbData.remote_ip;
     }
+
     /* Retry until port is member of vlan*/
     if (!m_portsOrch->isVlanMember(vlan, port, end_point_ip))
     {
         SWSS_LOG_INFO("Saving a fdb entry until port %s becomes vlan %s member", port_name.c_str(), vlan.m_alias.c_str());
+	/*
+	 * Mclag Synced mac scenario
+	 *     -> mac moved from ICL to Nonmember VLT (after shut/no shut on VLT portchannel)
+	 *        delete the existing entry and save the fdb entries and wait VLT becomes member of VLAN
+	 */
+	if (it != m_entries.end()) {
+            removeFdbEntry(entry, it->second.origin);
+	}
         saved_fdb_entries[port_name].push_back({entry.mac,
                 vlan.m_vlan_info.vlan_id, fdbData});
         return true;
+    } else {
+	deleteFdbEntryFromSavedFDB (entry.mac, vlan.m_vlan_info.vlan_id, fdbData.origin);
     }
 
     sai_status_t status;
@@ -1242,7 +1306,6 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
     FdbOrigin oldOrigin = FDB_ORIGIN_INVALID ;
     bool macUpdate = false;
 
-    auto it = m_entries.find(entry);
     if (it != m_entries.end())
     {
         /* get existing port and type */

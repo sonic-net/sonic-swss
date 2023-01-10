@@ -483,7 +483,278 @@ def test_mclagFdb_static_mac_dynamic_move_reject(dvs, testlog):
         "MCLAG_FDB_TABLE", "Vlan200:3C:85:99:5E:00:01",
     )
 
-# Test-12 Verify cleanup of the basic config.
+# Test-12 Remote Static MAC Add Vlan member remove and add
+
+@pytest.mark.dev_sanity
+def test_mclagFdb_remote_static_mac_add_member_remove_add(dvs, testlog):
+    dvs.setup_db()
+
+    create_entry_pst(
+        dvs.pdb,
+        "MCLAG_FDB_TABLE", "Vlan200:3C:85:99:5E:00:01",
+        [
+            ("port", "PortChannel0005"),
+            ("type", "static"),
+        ]
+    )
+
+    # check that the FDB entry was inserted into ASIC DB
+    assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 1, "The MCLAG static fdb entry not inserted to ASIC"
+
+    ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+            [("mac", "3C:85:99:5E:00:01"), ("bvid", str(dvs.getVlanOid("200")))],
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC")]
+    )
+
+    assert ok, str(extra)
+
+    dvs.remove_vlan_member("200", "PortChannel0005")
+    # check that the FDB entry was inserted into ASIC DB
+    assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 0, "The MCLAG static should not be present in ASIC"
+
+    ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+            [("mac", "3C:85:99:5E:00:01"), ("bvid", str(dvs.getVlanOid("200")))],
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC")]
+    )
+
+    assert ok == False, str(extra)
+
+    dvs.create_vlan_member("200", "PortChannel0005")
+    # check that the FDB entry was inserted into ASIC DB
+    assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 1, "The MCLAG static fdb entry not inserted to ASIC"
+
+    ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+            [("mac", "3C:85:99:5E:00:01"), ("bvid", str(dvs.getVlanOid("200")))],
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC")]
+    )
+    assert ok, str(extra)
+
+    delete_entry_pst(
+        dvs.pdb,
+        "MCLAG_FDB_TABLE", "Vlan200:3C:85:99:5E:00:01",
+    )
+
+
+# Test-13 Remote Static MAC Add
+# add static mac on vlan 200, portchannel5
+# remove portchannel5 from vlan 200
+# move mac from portchannel5 to portchannel6
+# delete mac from portchannel6
+# add portchannel5 to vlan 200
+# verify whether static mac is configured on portchannel5
+
+@pytest.mark.dev_sanity
+def test_mclagFdb_remote_static_mac_use_cases(dvs, testlog):
+    dvs.setup_db()
+
+    create_entry_pst(
+        dvs.pdb,
+        "MCLAG_FDB_TABLE", "Vlan200:3C:85:99:5E:00:01",
+        [
+            ("port", "PortChannel0005"),
+            ("type", "static"),
+        ]
+    )
+
+    # check that the FDB entry was inserted into ASIC DB
+    assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 1, "The MCLAG static fdb entry not inserted to ASIC"
+
+    ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+            [("mac", "3C:85:99:5E:00:01"), ("bvid", str(dvs.getVlanOid("200")))],
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC")]
+    )
+
+    assert ok, str(extra)
+
+    dvs.remove_vlan_member("200", "PortChannel0005")
+    # check that the FDB entry was inserted into ASIC DB
+    assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 0, "The MCLAG static should not be present in ASIC"
+
+    ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+            [("mac", "3C:85:99:5E:00:01"), ("bvid", str(dvs.getVlanOid("200")))],
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC")]
+    )
+    assert ok == False, str(extra)
+
+    #Move MAC to PortChannel0008 on Local PortChannel0006
+    create_entry_pst(
+        dvs.pdb,
+        "MCLAG_FDB_TABLE", "Vlan200:3C:85:99:5E:00:01",
+        [
+            ("port", "PortChannel0006"),
+            ("type", "static"),
+        ]
+    )
+    # check that the FDB entry was inserted into ASIC DB
+    assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 1, "The fdb entry  inserted to ASIC"
+
+    ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+            [("mac", "3C:85:99:5E:00:01"), ("bvid", str(dvs.getVlanOid("200")))],
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC")]
+    )
+
+    assert ok == True, str(extra)
+
+    delete_entry_pst(
+        dvs.pdb,
+        "MCLAG_FDB_TABLE", "Vlan200:3C:85:99:5E:00:01",
+    )
+
+    time.sleep(2)
+
+    # check that the FDB entry was inserted into ASIC DB
+    assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 0, "The fdb entry flushed"
+
+    ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+            [("mac", "3C:85:99:5E:00:01"), ("bvid", str(dvs.getVlanOid("200")))],
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_DYNAMIC")]
+    )
+
+    assert ok == False, str(extra)
+
+    dvs.create_vlan_member("200", "PortChannel0005")
+    # check that the FDB entry was inserted into ASIC DB
+    assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 0, "The MCLAG static should not be present in ASIC"
+
+    ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+            [("mac", "3C:85:99:5E:00:01"), ("bvid", str(dvs.getVlanOid("200")))],
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC")]
+    )
+
+    assert ok == False, str(extra)
+
+    time.sleep(2)
+    # check that the FDB entry was deleted from ASIC DB
+    assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 0, "The MCLAG static fdb entry not deleted"
+    delete_entry_pst(
+        dvs.pdb,
+        "MCLAG_FDB_TABLE", "Vlan200:3C:85:99:5E:00:01",
+    )
+
+# Test-14 Remote Static MAC Add
+# add static mac on vlan 200, portchannel5
+# remove portchannel5 from vlan 200
+# move mac from portchannel5 to portchannel6
+# move mac from portchannel6 to portchannel5 check for entry removed
+# flush fdb entry
+# add portchannel5 to vlan 200
+# verify whether static mac is not configured on portchannel5
+
+@pytest.mark.dev_sanity
+def test_mclagFdb_remote_static_mac_use_cases_2(dvs, testlog):
+    dvs.setup_db()
+
+    create_entry_pst(
+        dvs.pdb,
+        "MCLAG_FDB_TABLE", "Vlan200:3C:85:99:5E:00:01",
+        [
+            ("port", "PortChannel0005"),
+            ("type", "static"),
+        ]
+    )
+
+    # check that the FDB entry was inserted into ASIC DB
+    assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 1, "The MCLAG static fdb entry not inserted to ASIC"
+
+    ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+            [("mac", "3C:85:99:5E:00:01"), ("bvid", str(dvs.getVlanOid("200")))],
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC")]
+    )
+
+    assert ok, str(extra)
+
+    dvs.remove_vlan_member("200", "PortChannel0005")
+    time.sleep(2)
+    # check that the FDB entry was inserted into ASIC DB
+    assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 0, "The MCLAG static should not be present in ASIC"
+
+    ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+            [("mac", "3C:85:99:5E:00:01"), ("bvid", str(dvs.getVlanOid("200")))],
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC")]
+    )
+    assert ok == False, str(extra)
+
+    #Move MAC to PortChannel0008 on Local PortChannel0006
+    create_entry_pst(
+        dvs.pdb,
+        "MCLAG_FDB_TABLE", "Vlan200:3C:85:99:5E:00:01",
+        [
+            ("port", "PortChannel0006"),
+            ("type", "static"),
+        ]
+    )
+    time.sleep(2)
+    # check that the FDB entry was inserted into ASIC DB
+    assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 1, "The fdb entry  inserted to ASIC"
+
+    ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+            [("mac", "3C:85:99:5E:00:01"), ("bvid", str(dvs.getVlanOid("200")))],
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC")]
+    )
+
+    assert ok == True, str(extra)
+
+    #Move MAC to PortChannel0006 on Local PortChannel0005
+    create_entry_pst(
+        dvs.pdb,
+        "MCLAG_FDB_TABLE", "Vlan200:3C:85:99:5E:00:01",
+        [
+            ("port", "PortChannel0005"),
+            ("type", "static"),
+        ]
+    )
+
+    time.sleep(2)
+    # check that the FDB entry was not inserted into ASIC DB
+    assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 0, "The fdb entry should not be inserted to ASIC"
+
+    ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+            [("mac", "3C:85:99:5E:00:01"), ("bvid", str(dvs.getVlanOid("200")))],
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC")]
+    )
+
+    assert ok == False, str(extra)
+
+
+    delete_entry_pst(
+        dvs.pdb,
+        "MCLAG_FDB_TABLE", "Vlan200:3C:85:99:5E:00:01",
+    )
+
+    time.sleep(2)
+
+    # check that the FDB entry was inserted into ASIC DB
+    assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 0, "The fdb entry flushed"
+
+    ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+            [("mac", "3C:85:99:5E:00:01"), ("bvid", str(dvs.getVlanOid("200")))],
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_DYNAMIC")]
+    )
+
+    assert ok == False, str(extra)
+
+    dvs.create_vlan_member("200", "PortChannel0005")
+    # check that the FDB entry was inserted into ASIC DB
+    time.sleep(2)
+    assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 0, "The MCLAG static should not be present in ASIC"
+
+    ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+            [("mac", "3C:85:99:5E:00:01"), ("bvid", str(dvs.getVlanOid("200")))],
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC")]
+    )
+
+    assert ok == False, str(extra)
+
+    time.sleep(2)
+    # check that the FDB entry was deleted from ASIC DB
+    assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 0, "The MCLAG static fdb entry not deleted"
+    delete_entry_pst(
+        dvs.pdb,
+        "MCLAG_FDB_TABLE", "Vlan200:3C:85:99:5E:00:01",
+    )
+
+
+# Test-15 Verify cleanup of the basic config.
 
 @pytest.mark.dev_sanity
 def test_mclagFdb_basic_config_del(dvs, testlog):
