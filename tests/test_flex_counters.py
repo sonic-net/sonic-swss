@@ -20,6 +20,11 @@ counter_group_meta = {
         'group_name': 'QUEUE_STAT_COUNTER',
         'name_map': 'COUNTERS_QUEUE_NAME_MAP',
     },
+    'queue_watermark_counter': {
+        'key': 'QUEUE_WATERMARK',
+        'group_name': 'QUEUE_WATERMARK_STAT_COUNTER',
+        'name_map': 'COUNTERS_QUEUE_NAME_MAP',
+    },
     'rif_counter': {
         'key': 'RIF',
         'group_name': 'RIF_STAT_COUNTER',
@@ -36,6 +41,11 @@ counter_group_meta = {
         'key': 'PORT_BUFFER_DROP',
         'group_name': 'PORT_BUFFER_DROP_STAT',
         'name_map': 'COUNTERS_PORT_NAME_MAP',
+    },
+    'pg_drop_counter': {
+        'key': 'PG_DROP',
+        'group_name': 'PG_DROP_STAT_COUNTER',
+        'name_map': 'COUNTERS_PG_NAME_MAP',
     },
     'pg_watermark_counter': {
         'key': 'PG_WATERMARK',
@@ -702,7 +712,7 @@ class TestFlexCounters(object):
     def set_admin_status(self, interface, status):
         self.config_db.update_entry("PORT", interface, {"admin_status": status})
 
-    def test_create_remove_buffer_pg_counter(self, dvs):
+    def test_create_remove_buffer_pg_watermark_counter(self, dvs):
         """
         Test steps:
             1. Enable PG flex counters.
@@ -751,3 +761,37 @@ class TestFlexCounters(object):
         self.config_db.delete_entry('BUFFER_QUEUE', 'Ethernet0|7')
         self.wait_for_buffer_pg_queue_counter(meta_data['name_map'], 'Ethernet0', '7', False)
         self.wait_for_id_list_remove(meta_data['group_name'], "Ethernet0", counter_oid)
+
+    def test_create_remove_buffer_watermark_queue_pg_counter(self, dvs):
+        """
+        Test steps:
+            1. Enable Queue/Watermark/PG-drop flex counters.
+            2. Configure new buffer queue for a port
+            3. Verify counters is automatically created
+            4. Remove the new buffer queue for the port
+            5. Verify counters is automatically removed
+
+        Args:
+            dvs (object): virtual switch object
+        """
+        self.setup_dbs(dvs)
+
+        # set flex counter
+        for counterpoll_type, meta_data in counter_group_meta.items():
+            if 'queue' in counterpoll_type or 'pg' in counterpoll_type:
+                self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'])
+
+        self.config_db.update_entry('BUFFER_PG', 'Ethernet0|7', {'profile': 'ingress_lossy_profile'})
+        self.config_db.update_entry('BUFFER_QUEUE', 'Ethernet0|7', {'profile': 'egress_lossless_profile'})
+
+        for counterpoll_type, meta_data in counter_group_meta.items():
+            if 'queue' in counterpoll_type or 'pg' in counterpoll_type:
+                counter_oid = self.wait_for_buffer_pg_queue_counter(meta_data['name_map'], 'Ethernet0', '7', True)
+                self.wait_for_id_list(meta_data['group_name'], "Ethernet0", counter_oid)
+
+        self.config_db.delete_entry('BUFFER_QUEUE', 'Ethernet0|7')
+        self.config_db.delete_entry('BUFFER_PG', 'Ethernet0|7')
+        for counterpoll_type, meta_data in counter_group_meta.items():
+            if 'queue' in counterpoll_type or 'pg' in counterpoll_type:
+                self.wait_for_buffer_pg_queue_counter(meta_data['name_map'], 'Ethernet0', '7', False)
+                self.wait_for_id_list_remove(meta_data['group_name'], "Ethernet0", counter_oid)

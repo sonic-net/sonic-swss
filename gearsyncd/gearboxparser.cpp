@@ -15,6 +15,7 @@
  */
 
 #include "gearboxparser.h"
+#include "gearboxutils.h"
 #include "phyparser.h"
 #include <vector>
 
@@ -42,7 +43,7 @@ bool GearboxParser::parse()
         return false;
     }
 
-    json phys, phy, interfaces, interface, val, lanes;
+    json phys, phy, interfaces, interface, val, lanes, txFir;
 
     std::vector<swss::FieldValueTuple> attrs;
 
@@ -285,6 +286,27 @@ bool GearboxParser::parse()
                     SWSS_LOG_ERROR("missing 'line_lanes' field in 'interfaces' item %d in gearbox configuration", iter);
                     return false;
                 }
+
+                for (std::string txFirKey: swss::tx_fir_strings)
+                {
+                    if (interface.find(txFirKey) != interface.end())
+                    {
+                        txFir = interface[txFirKey]; // vec
+                        std::string txFirValuesStr("");
+                        for (uint32_t iter2 = 0; iter2 < txFir.size(); iter2++)
+                        {
+                            val = txFir[iter2];
+                            if (txFirValuesStr.length() > 0)
+                            {
+                                 txFirValuesStr += ",";
+                            }
+                            txFirValuesStr += std::to_string(val.get<int>());
+                        }
+                        attr = std::make_pair(txFirKey, txFirValuesStr);
+                        attrs.push_back(attr);
+                    }
+                }
+
                 std::string key;
                 key = "interface:" + std::to_string(index);
                 if (getWriteToDb() == true) 

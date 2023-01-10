@@ -25,6 +25,7 @@ namespace qosorch_test
     int sai_remove_scheduler_count;
     int sai_set_wred_attribute_count;
     sai_object_id_t switch_dscp_to_tc_map_id;
+    TunnelDecapOrch *tunnel_decap_orch;
 
     sai_remove_scheduler_fn old_remove_scheduler;
     sai_scheduler_api_t ut_sai_scheduler_api, *pold_sai_scheduler_api;
@@ -36,6 +37,7 @@ namespace qosorch_test
     sai_qos_map_api_t ut_sai_qos_map_api, *pold_sai_qos_map_api;
     sai_set_switch_attribute_fn old_set_switch_attribute_fn;
     sai_switch_api_t ut_sai_switch_api, *pold_sai_switch_api;
+    sai_tunnel_api_t ut_sai_tunnel_api, *pold_sai_tunnel_api;
 
     typedef struct
     {
@@ -212,6 +214,40 @@ namespace qosorch_test
         return rc;
     }
 
+    sai_status_t _ut_stub_sai_create_tunnel(
+        _Out_ sai_object_id_t *tunnel_id,
+        _In_ sai_object_id_t switch_id,
+        _In_ uint32_t attr_count,
+        _In_ const sai_attribute_t *attr_list)
+    {
+        *tunnel_id = (sai_object_id_t)(0x1);
+        return SAI_STATUS_SUCCESS;
+    }
+
+    sai_status_t _ut_stub_sai_create_tunnel_term_table_entry(
+        _Out_ sai_object_id_t *tunnel_term_table_entry_id,
+        _In_ sai_object_id_t switch_id,
+        _In_ uint32_t attr_count,
+        _In_ const sai_attribute_t *attr_list)
+    {
+        *tunnel_term_table_entry_id = (sai_object_id_t)(0x1);
+        return SAI_STATUS_SUCCESS;
+    }
+
+    void checkTunnelAttribute(sai_attr_id_t attr)
+    {
+        ASSERT_TRUE(attr != SAI_TUNNEL_ATTR_ENCAP_ECN_MODE);
+        ASSERT_TRUE(attr != SAI_TUNNEL_ATTR_DECAP_ECN_MODE);
+    }
+
+    sai_status_t _ut_stub_sai_set_tunnel_attribute(
+        _In_ sai_object_id_t tunnel_id,
+        _In_ const sai_attribute_t *attr)
+    {
+        checkTunnelAttribute(attr->id);
+        return SAI_STATUS_ATTR_NOT_SUPPORTED_0;
+    }
+
     struct QosOrchTest : public ::testing::Test
     {
         QosOrchTest()
@@ -291,6 +327,14 @@ namespace qosorch_test
             old_set_switch_attribute_fn = pold_sai_switch_api->set_switch_attribute;
             sai_switch_api = &ut_sai_switch_api;
             ut_sai_switch_api.set_switch_attribute = _ut_stub_sai_set_switch_attribute;
+
+            // Mock tunnel API
+            pold_sai_tunnel_api = sai_tunnel_api;
+            ut_sai_tunnel_api = *pold_sai_tunnel_api;
+            sai_tunnel_api = &ut_sai_tunnel_api;
+            ut_sai_tunnel_api.set_tunnel_attribute = _ut_stub_sai_set_tunnel_attribute;
+            ut_sai_tunnel_api.create_tunnel = _ut_stub_sai_create_tunnel;
+            ut_sai_tunnel_api.create_tunnel_term_table_entry = _ut_stub_sai_create_tunnel_term_table_entry;
 
             // Init switch and create dependencies
             m_app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
@@ -381,6 +425,9 @@ namespace qosorch_test
             ASSERT_EQ(gNeighOrch, nullptr);
             gNeighOrch = new NeighOrch(m_app_db.get(), APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch, m_chassis_app_db.get());
 
+            ASSERT_EQ(tunnel_decap_orch, nullptr);
+            tunnel_decap_orch = new TunnelDecapOrch(m_app_db.get(), APP_TUNNEL_DECAP_TABLE_NAME);
+
             vector<string> qos_tables = {
                 CFG_TC_TO_QUEUE_MAP_TABLE_NAME,
                 CFG_SCHEDULER_TABLE_NAME,
@@ -394,7 +441,8 @@ namespace qosorch_test
                 CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME,
                 CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME,
                 CFG_DSCP_TO_FC_MAP_TABLE_NAME,
-                CFG_EXP_TO_FC_MAP_TABLE_NAME
+                CFG_EXP_TO_FC_MAP_TABLE_NAME,
+                CFG_TC_TO_DSCP_MAP_TABLE_NAME
             };
             gQosOrch = new QosOrch(m_config_db.get(), qos_tables);
 
@@ -557,10 +605,14 @@ namespace qosorch_test
             delete gQosOrch;
             gQosOrch = nullptr;
 
+            delete tunnel_decap_orch;
+            tunnel_decap_orch = nullptr;
+
             sai_qos_map_api = pold_sai_qos_map_api;
             sai_scheduler_api = pold_sai_scheduler_api;
             sai_wred_api = pold_sai_wred_api;
             sai_switch_api = pold_sai_switch_api;
+            sai_tunnel_api = pold_sai_tunnel_api;
             ut_helper::uninitSaiApi();
         }
     };
@@ -1457,5 +1509,81 @@ namespace qosorch_test
 
         // Drain DSCP_TO_TC_MAP and PORT_QOS_MAP table
         static_cast<Orch *>(gQosOrch)->doTask();
+    }
+
+    /*
+     * Set tunnel QoS attribute test - OA should skip settings
+     */
+    TEST_F(QosOrchTest, QosOrchTestSetTunnelQoSAttribute)
+    {
+        // Create a new dscp to tc map
+        Table tcToDscpMapTable = Table(m_config_db.get(), CFG_TC_TO_DSCP_MAP_TABLE_NAME);
+        tcToDscpMapTable.set("AZURE",
+                             {
+                                 {"0", "0"},
+                                 {"1", "1"}
+                             });
+        gQosOrch->addExistingData(&tcToDscpMapTable);
+        static_cast<Orch *>(gQosOrch)->doTask();
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        entries.push_back({"MuxTunnel0", "SET",
+                            {
+                                {"decap_dscp_to_tc_map", "AZURE"},
+                                {"decap_tc_to_pg_map", "AZURE"},
+                                {"dscp_mode", "pipe"},
+                                {"dst_ip", "10.1.0.32"},
+                                {"encap_tc_to_dscp_map", "AZURE"},
+                                {"encap_tc_to_queue_map", "AZURE"},
+                                {"src_ip", "10.1.0.33"},
+                                {"ttl_mode", "pipe"},
+                                {"tunnel_type", "IPINIP"}
+                            }});
+        entries.push_back({"MuxTunnel1", "SET",
+                            {
+                                {"decap_dscp_to_tc_map", "AZURE"},
+                                {"dscp_mode", "pipe"},
+                                {"dst_ip", "10.1.0.32"},
+                                {"encap_tc_to_dscp_map", "AZURE"},
+                                {"encap_tc_to_queue_map", "AZURE"},
+                                {"src_ip", "10.1.0.33"},
+                                {"ttl_mode", "pipe"},
+                                {"tunnel_type", "IPINIP"}
+                            }});
+        auto consumer = dynamic_cast<Consumer *>(tunnel_decap_orch->getExecutor(APP_TUNNEL_DECAP_TABLE_NAME));
+        consumer->addToSync(entries);
+        // Drain TUNNEL_DECAP_TABLE table
+        static_cast<Orch *>(tunnel_decap_orch)->doTask();
+        entries.clear();
+
+        // Set an attribute that is not supported by vendor
+        entries.push_back({"MuxTunnel1", "SET",
+                           {
+                               {"decap_tc_to_pg_map", "AZURE"}
+                           }});
+        consumer->addToSync(entries);
+        // Drain TUNNEL_DECAP_TABLE table
+        static_cast<Orch *>(tunnel_decap_orch)->doTask();
+        entries.clear();
+
+        // Set attributes for the 2nd time
+        entries.push_back({"MuxTunnel0", "SET",
+                           {
+                               {"encap_ecn_mode", "standard"}
+                           }});
+        consumer->addToSync(entries);
+        // Drain TUNNEL_DECAP_TABLE table
+        static_cast<Orch *>(tunnel_decap_orch)->doTask();
+        entries.clear();
+
+        // Set attributes for the 2nd time
+        entries.push_back({"MuxTunnel1", "SET",
+                           {
+                               {"ecn_mode", "copy_from_outer"}
+                           }});
+        consumer->addToSync(entries);
+        // Drain TUNNEL_DECAP_TABLE table
+        static_cast<Orch *>(tunnel_decap_orch)->doTask();
+        entries.clear();
     }
 }

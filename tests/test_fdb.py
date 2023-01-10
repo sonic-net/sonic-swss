@@ -229,7 +229,7 @@ class TestFdb(object):
         dvs.warm_restart_swss("true")
 
         # freeze orchagent for warm restart
-        (exitcode, result) = dvs.runcmd("/usr/bin/orchagent_restart_check")
+        (exitcode, result) = dvs.runcmd("/usr/bin/orchagent_restart_check", include_stderr=False)
         assert result == "RESTARTCHECK succeeded\n"
         time.sleep(2)
 
