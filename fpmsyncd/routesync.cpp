@@ -740,9 +740,24 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
             // path will be left with stale route entry
             if(alsv.size() == 1)
             {
-                SWSS_LOG_NOTICE("RouteTable del msg for route with only one nh on eth0/docker0: %s %s %s %s",
-                        destipprefix, gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
-                m_routeTable.del(destipprefix);
+                if (!warmRestartInProgress)
+                {
+                    SWSS_LOG_NOTICE("RouteTable del msg for route with only one nh on eth0/docker0: %s %s %s %s",
+                            destipprefix, gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
+
+                    m_routeTable.del(destipprefix);
+                }
+                else
+                {
+                    SWSS_LOG_NOTICE("Warm-Restart mode: Receiving delete msg for route with only nh on eth0/docker0: %s %s %s %s",
+                            destipprefix, gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
+
+                    vector<FieldValueTuple> fvVector;
+                    const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix,
+                                                                       DEL_COMMAND,
+                                                                       fvVector);
+                    m_warmStartHelper.insertRefreshMap(kfv);
+                }
             }
             return;
         }
