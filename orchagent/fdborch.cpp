@@ -1462,6 +1462,11 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
     {
         //If the MAC is dynamic_local change the origin accordingly
         //MAC is added/updated as dynamic to allow aging.
+        SWSS_LOG_INFO("MAC-Update Modify to dynamic FDB %s in %s on from-%s:to-%s from-%s:to-%s origin-%d-to-%d",
+                entry.mac.to_string().c_str(), vlan.m_alias.c_str(), oldPort.m_alias.c_str(),
+                port_name.c_str(), oldType.c_str(), fdbData.type.c_str(), 
+                oldOrigin, fdbData.origin);
+
         storeFdbData.origin = FDB_ORIGIN_LEARN;
         storeFdbData.type = "dynamic";
     }
@@ -1470,8 +1475,10 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
 
     string key = "Vlan" + to_string(vlan.m_vlan_info.vlan_id) + ":" + entry.mac.to_string();
 
-    if ((fdbData.origin != FDB_ORIGIN_MCLAG_ADVERTIZED) &&
-            (fdbData.origin != FDB_ORIGIN_VXLAN_ADVERTIZED))
+    if (((fdbData.origin != FDB_ORIGIN_MCLAG_ADVERTIZED) &&
+         (fdbData.origin != FDB_ORIGIN_VXLAN_ADVERTIZED)) ||
+        ((fdbData.origin == FDB_ORIGIN_MCLAG_ADVERTIZED) &&
+          (fdbData.type == "dynamic_local")))
     {
         /* State-DB is updated only for Local Mac addresses */
         // Write to StateDb

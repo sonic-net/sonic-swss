@@ -82,16 +82,16 @@ namespace portsorch_test
     {
         sai_port_api = pold_sai_port_api;
     }
-    
+
     sai_queue_api_t ut_sai_queue_api;
     sai_queue_api_t *pold_sai_queue_api;
     int _sai_set_queue_attr_count = 0;
-    
+
     sai_status_t _ut_stub_sai_set_queue_attribute(sai_object_id_t queue_id, const sai_attribute_t *attr)
     {
         if(attr->id == SAI_QUEUE_ATTR_PFC_DLR_INIT)
         {
-            if(attr->value.booldata == true) 
+            if(attr->value.booldata == true)
             {
                 _sai_set_queue_attr_count++;
             }
@@ -160,13 +160,14 @@ namespace portsorch_test
 
             ASSERT_EQ(gPortsOrch, nullptr);
 
+            gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
+
             vector<string> flex_counter_tables = {
                 CFG_FLEX_COUNTER_TABLE_NAME
             };
             auto* flexCounterOrch = new FlexCounterOrch(m_config_db.get(), flex_counter_tables);
             gDirectory.set(flexCounterOrch);
 
-            gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
             vector<string> buffer_tables = { APP_BUFFER_POOL_TABLE_NAME,
                                              APP_BUFFER_PROFILE_TABLE_NAME,
                                              APP_BUFFER_QUEUE_TABLE_NAME,
@@ -268,6 +269,46 @@ namespace portsorch_test
         }
 
     };
+
+    /**
+     * Test that verifies PortsOrch::getPort() on a port that has been deleted
+     */
+    TEST_F(PortsOrchTest, GetPortTest)
+    {
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        ASSERT_NE(port.m_port_id, SAI_NULL_OBJECT_ID);
+
+        // Delete port
+        entries.push_back({"Ethernet0", "DEL", {}});
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        entries.clear();
+
+        ASSERT_FALSE(gPortsOrch->getPort(port.m_port_id, port));
+    }
 
     TEST_F(PortsOrchTest, PortSupportedFecModes)
     {
@@ -892,7 +933,7 @@ namespace portsorch_test
     * updated to DB.
     */
     TEST_F(PortsOrchTest, PortOperStatusIsUpAndOperSpeedIsZero)
-    {   
+    {
         Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
 
         // Get SAI default ports to populate DB
@@ -917,7 +958,7 @@ namespace portsorch_test
         Port port;
         gPortsOrch->getPort("Ethernet0", port);
         ASSERT_TRUE(port.m_oper_status != SAI_PORT_OPER_STATUS_UP);
-        
+
         // save original api since we will spy
         auto orig_port_api = sai_port_api;
         sai_port_api = new sai_port_api_t();
@@ -935,14 +976,14 @@ namespace portsorch_test
                     // Return 0 for port operational speed
                     attrs[0].value.u32 = 0;
                 }
-                
+
                 return (sai_status_t)SAI_STATUS_SUCCESS;
             }
         );
 
         auto exec = static_cast<Notifier *>(gPortsOrch->getExecutor("PORT_STATUS_NOTIFICATIONS"));
         auto consumer = exec->getNotificationConsumer();
-        
+
         // mock a redis reply for notification, it notifies that Ehernet0 is going to up
         mockReply = (redisReply *)calloc(sizeof(redisReply), 1);
         mockReply->type = REDIS_REPLY_ARRAY;
@@ -964,7 +1005,7 @@ namespace portsorch_test
         // trigger the notification
         consumer->readData();
         gPortsOrch->doTask(*consumer);
-        mockReply = nullptr; 
+        mockReply = nullptr;
 
         gPortsOrch->getPort("Ethernet0", port);
         ASSERT_TRUE(port.m_oper_status == SAI_PORT_OPER_STATUS_UP);

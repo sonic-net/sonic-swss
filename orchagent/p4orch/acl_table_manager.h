@@ -31,9 +31,10 @@ class AclTableManager : public ObjectManagerInterface
     explicit AclTableManager(P4OidMapper *p4oidMapper, ResponsePublisherInterface *publisher);
     virtual ~AclTableManager();
 
-    void enqueue(const swss::KeyOpFieldsValuesTuple &entry) override;
+    void enqueue(const std::string &table_name, const swss::KeyOpFieldsValuesTuple &entry) override;
     void drain() override;
     std::string verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple) override;
+    ReturnCode getSaiObject(const std::string &json_key, sai_object_type_t &object_type, std::string &object_key) override;
 
     // Get ACL table definition by table name in cache. Return nullptr if not
     // found.

@@ -25,11 +25,11 @@ PFCWD_TABLE_TYPE = "PFCWD"
 PFCWD_TABLE_NAME = "PFCWD_TEST"
 PFCWD_BIND_PORTS = ["Ethernet0", "Ethernet4", "Ethernet8", "Ethernet12"]
 class TestAcl:
-    @pytest.fixture
-    def l3_acl_table(self, dvs_acl):
+    @pytest.fixture(params=['ingress', 'egress'])
+    def l3_acl_table(self, dvs_acl, request):
         try:
-            dvs_acl.create_acl_table(L3_TABLE_NAME, L3_TABLE_TYPE, L3_BIND_PORTS)
-            yield dvs_acl.get_acl_table_ids(1)[0]
+            dvs_acl.create_acl_table(L3_TABLE_NAME, L3_TABLE_TYPE, L3_BIND_PORTS, stage=request.param)
+            yield dvs_acl.get_acl_table_ids(1)[0], request.param
         finally:
             dvs_acl.remove_acl_table(L3_TABLE_NAME)
             dvs_acl.verify_acl_table_count(0)
@@ -577,6 +577,20 @@ class TestAcl:
             assert match_in_ports
         else:
             assert not match_in_ports
+
+    def test_AclTableMandatoryRangeFields(self, dvs, l3_acl_table):
+        """
+        The test case is to verify range qualifier is not applied for egress ACL
+        """
+        table_oid, stage = l3_acl_table
+        match_range_qualifier = False
+        entry = dvs.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE", table_oid)
+        for k, v in entry.items():
+            if k == "SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE" and v == "true":
+                match_range_qualifier = True
+
+        assert not match_range_qualifier
+
 class TestAclCrmUtilization:
     @pytest.fixture(scope="class", autouse=True)
     def configure_crm_polling_interval_for_test(self, dvs):

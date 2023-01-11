@@ -49,6 +49,7 @@ private:
     void initTableHandlers();
     void initBufferReadyLists(DBConnector *confDb, DBConnector *applDb);
     void initBufferReadyList(Table& table, bool isConfigDb);
+    void initVoqBufferReadyList(Table& table, bool isConfigDb);
     void initFlexCounterGroupTable(void);
     void initBufferConstants();
     task_process_status processBufferPool(KeyOpFieldsValuesTuple &tuple);

@@ -15,7 +15,10 @@ dist_cfgmgr_DATA = \
 		buffer_pool_mellanox.lua \
 		buffer_check_headroom_vs.lua \
 		buffer_headroom_vs.lua \
-		buffer_pool_vs.lua
+		buffer_pool_vs.lua \
+		buffer_check_headroom_barefoot.lua \
+		buffer_headroom_barefoot.lua \
+		buffer_pool_barefoot.lua
 
 if DEBUG
 DBGFLAGS = -ggdb -DDEBUG

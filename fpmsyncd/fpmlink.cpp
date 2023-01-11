@@ -210,52 +210,70 @@ uint64_t FpmLink::readData()
         hdr = reinterpret_cast<fpm_msg_hdr_t *>(static_cast<void *>(m_messageBuffer + start));
         left = m_pos - start;
         if (left < FPM_MSG_HDR_LEN)
+        {
             break;
+        }
+
         /* fpm_msg_len includes header size */
         msg_len = fpm_msg_len(hdr);
         if (left < msg_len)
+        {
             break;
+        }
 
         if (!fpm_msg_ok(hdr, left))
-            throw system_error(make_error_code(errc::bad_message), "Malformed FPM message received");
-
-        if (hdr->msg_type == FPM_MSG_TYPE_NETLINK)
         {
-            bool isRaw = false;
-
-            nlmsghdr *nl_hdr = (nlmsghdr *)fpm_msg_data(hdr);
-
-            /*
-             * EVPN Type5 Add Routes need to be process in Raw mode as they contain 
-             * RMAC, VLAN and L3VNI information.
-             * Where as all other route will be using rtnl api to extract information 
-             * from the netlink msg.
-           * */
-            isRaw = isRawProcessing(nl_hdr);
-
-            nl_msg *msg = nlmsg_convert(nl_hdr);
-            if (msg == NULL)
-            {
-                throw system_error(make_error_code(errc::bad_message), "Unable to convert nlmsg");
-            }
-
-            nlmsg_set_proto(msg, NETLINK_ROUTE);
-
-            if (isRaw)
-            {
-                /* EVPN Type5 Add route processing */
-                processRawMsg(nl_hdr);
-            }
-            else
-            {
-                NetDispatcher::getInstance().onNetlinkMessage(msg);
-            }
-            nlmsg_free(msg);
+            throw system_error(make_error_code(errc::bad_message), "Malformed FPM message received");
         }
+
+        processFpmMessage(hdr);
+
         start += msg_len;
     }
 
     memmove(m_messageBuffer, m_messageBuffer + start, m_pos - start);
     m_pos = m_pos - (uint32_t)start;
     return 0;
+}
+
+void FpmLink::processFpmMessage(fpm_msg_hdr_t* hdr)
+{
+    size_t msg_len = fpm_msg_len(hdr);
+
+    if (hdr->msg_type != FPM_MSG_TYPE_NETLINK)
+    {
+        return;
+    }
+    nlmsghdr *nl_hdr = (nlmsghdr *)fpm_msg_data(hdr);
+
+    /* Read all netlink messages inside FPM message */
+    for (; NLMSG_OK (nl_hdr, msg_len); nl_hdr = NLMSG_NEXT(nl_hdr, msg_len))
+    {
+        /*
+         * EVPN Type5 Add Routes need to be process in Raw mode as they contain
+         * RMAC, VLAN and L3VNI information.
+         * Where as all other route will be using rtnl api to extract information
+         * from the netlink msg.
+         */
+        bool isRaw = isRawProcessing(nl_hdr);
+
+        nl_msg *msg = nlmsg_convert(nl_hdr);
+        if (msg == NULL)
+        {
+            throw system_error(make_error_code(errc::bad_message), "Unable to convert nlmsg");
+        }
+
+        nlmsg_set_proto(msg, NETLINK_ROUTE);
+
+        if (isRaw)
+        {
+            /* EVPN Type5 Add route processing */
+            processRawMsg(nl_hdr);
+        }
+        else
+        {
+            NetDispatcher::getInstance().onNetlinkMessage(msg);
+        }
+        nlmsg_free(msg);
+    }
 }

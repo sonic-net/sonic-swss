@@ -130,7 +130,7 @@ class NeighborManagerTest : public ::testing::Test
 
     void Enqueue(const swss::KeyOpFieldsValuesTuple &entry)
     {
-        neighbor_manager_.enqueue(entry);
+        neighbor_manager_.enqueue(APP_P4RT_NEIGHBOR_TABLE_NAME, entry);
     }
 
     void Drain()

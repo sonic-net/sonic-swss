@@ -77,12 +77,14 @@ class TestBuffer(object):
 
     @pytest.fixture
     def setup_teardown_test(self, dvs):
-        try:
-            self.setup_db(dvs)
-            self.set_port_qos_table(self.INTF, '3,4')
-            self.lossless_pg_combinations = ['3-4']
-        finally:
-            self.teardown()
+        self.setup_db(dvs)
+        self.set_port_qos_table(self.INTF, '3,4')
+        self.lossless_pg_combinations = ['3-4']
+        time.sleep(2)
+
+        yield
+
+        self.teardown()
 
     def test_zero_cable_len_profile_update(self, dvs, setup_teardown_test):
         orig_cable_len = None

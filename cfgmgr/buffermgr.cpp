@@ -196,7 +196,7 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port)
     // Although we have up to 8 PGs for now, the range to check is expanded to 32 support more PGs
     set<string> lossless_pg_combinations = generateIdListFromMap(lossless_pg_id, sizeof(lossless_pg_id));
 
-    if (m_portStatusLookup[port] == "down" && m_platform == "mellanox")
+    if (m_portStatusLookup[port] == "down" && (m_platform == "mellanox" || m_platform == "barefoot"))
     {
         for (auto lossless_pg : lossless_pg_combinations)
         {

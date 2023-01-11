@@ -16,6 +16,7 @@ class TestMuxTunnelBase():
     APP_MUX_CABLE               = "MUX_CABLE_TABLE"
     APP_NEIGH_TABLE             = "NEIGH_TABLE"
     APP_TUNNEL_DECAP_TABLE_NAME = "TUNNEL_DECAP_TABLE"
+    APP_TUNNEL_ROUTE_TABLE_NAME = "TUNNEL_ROUTE_TABLE"
     ASIC_TUNNEL_TABLE           = "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL"
     ASIC_TUNNEL_TERM_ENTRIES    = "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY"
     ASIC_RIF_TABLE              = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE"
@@ -95,7 +96,11 @@ class TestMuxTunnelBase():
     TC_TO_QUEUE_MAP = {str(i):str(i) for i in range(0, 8)}
     DSCP_TO_TC_MAP = {str(i):str(1) for i in range(0, 64)}
     TC_TO_PRIORITY_GROUP_MAP = {str(i):str(i) for i in range(0, 8)}
-    
+
+    def check_syslog(self, dvs, marker, err_log, expected_cnt):
+        (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \"%s\" | wc -l" % (marker, err_log)])
+        assert num.strip() >= str(expected_cnt)
+
     def create_vlan_interface(self, dvs):
         confdb = dvs.get_config_db()
 
@@ -161,6 +166,14 @@ class TestMuxTunnelBase():
                 break
 
         return vlan_oid
+
+    def check_tunnel_route_in_app_db(self, dvs, destinations, expected=True):
+        appdb = dvs.get_app_db()
+
+        if expected:
+            appdb.wait_for_matching_keys(self.APP_TUNNEL_ROUTE_TABLE_NAME, destinations)
+        else:
+            appdb.wait_for_deleted_keys(self.APP_TUNNEL_ROUTE_TABLE_NAME, destinations)
 
     def check_neigh_in_asic_db(self, asicdb, ip, expected=True):
         rif_oid = self.get_vlan_rif_oid(asicdb)
@@ -271,9 +284,6 @@ class TestMuxTunnelBase():
         self.add_neighbor(dvs, self.SERV1_IPV6, "00:00:00:00:00:01")
         srv1_v6 = self.check_neigh_in_asic_db(asicdb, self.SERV1_IPV6)
 
-        self.add_neighbor(dvs, self.SERV1_SOC_IPV4, "00:00:00:00:00:01")
-        self.check_neigh_in_asic_db(asicdb, self.SERV1_SOC_IPV4)
-
         existing_keys = asicdb.get_keys(self.ASIC_NEIGH_TABLE)
 
         self.add_neighbor(dvs, self.SERV2_IPV4, "00:00:00:00:00:02")
@@ -287,7 +297,7 @@ class TestMuxTunnelBase():
         )
 
         # The first standby route also creates as tunnel Nexthop
-        self.check_tnl_nexthop_in_asic_db(asicdb, 4)
+        self.check_tnl_nexthop_in_asic_db(asicdb, 3)
 
         # Change state to Standby. This will delete Neigh and add Route
         self.set_mux_state(appdb, "Ethernet0", "standby")
@@ -297,8 +307,6 @@ class TestMuxTunnelBase():
         dvs_route.check_asicdb_route_entries(
             [self.SERV1_IPV4+self.IPV4_MASK, self.SERV1_IPV6+self.IPV6_MASK]
         )
-        self.check_neigh_in_asic_db(asicdb, self.SERV1_SOC_IPV4)
-        dvs_route.check_asicdb_deleted_route_entries([self.SERV1_SOC_IPV4+self.IPV4_MASK])
 
         # Change state to Active. This will add Neigh and delete Route
         self.set_mux_state(appdb, "Ethernet4", "active")
@@ -308,6 +316,35 @@ class TestMuxTunnelBase():
         )
         self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV4)
         self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV6)
+
+    def create_and_test_soc(self, appdb, asicdb, dvs, dvs_route):
+
+        self.set_mux_state(appdb, "Ethernet0", "active")
+
+        self.add_fdb(dvs, "Ethernet0", "00-00-00-00-00-01")
+        self.add_neighbor(dvs, self.SERV1_SOC_IPV4, "00:00:00:00:00:01")
+
+        time.sleep(1)
+
+        srv1_soc_v4 = self.check_neigh_in_asic_db(asicdb, self.SERV1_SOC_IPV4)
+        self.check_tunnel_route_in_app_db(dvs, [self.SERV1_SOC_IPV4+self.IPV4_MASK], expected=False)
+
+        self.set_mux_state(appdb, "Ethernet0", "standby")
+
+        asicdb.wait_for_deleted_entry(self.ASIC_NEIGH_TABLE, srv1_soc_v4)
+        dvs_route.check_asicdb_route_entries(
+            [self.SERV1_SOC_IPV4+self.IPV4_MASK]
+        )
+        self.check_tunnel_route_in_app_db(dvs, [self.SERV1_SOC_IPV4+self.IPV4_MASK], expected=False)
+
+        marker = dvs.add_log_marker()
+
+        self.set_mux_state(appdb, "Ethernet0", "active")
+        self.set_mux_state(appdb, "Ethernet0", "active")
+        self.check_syslog(dvs, marker, "Maintaining current MUX state", 1)
+
+        self.set_mux_state(appdb, "Ethernet0", "init")
+        self.check_syslog(dvs, marker, "State transition from active to init is not-handled", 1)
 
     def create_and_test_fdb(self, appdb, asicdb, dvs, dvs_route):
 
@@ -517,46 +554,54 @@ class TestMuxTunnelBase():
 
         dvs_acl.verify_no_acl_rules()
 
-        # Set one mux port to standby, verify ACL rule with inport bitmap (1 port)
+        # Set mux port in active-active cable type, no ACL rules programmed
         self.set_mux_state(appdb, "Ethernet0", "standby")
-        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet0"], dvs_acl)
+        dvs_acl.verify_no_acl_rules()
+
+        # Set one mux port to standby, verify ACL rule with inport bitmap (1 port)
+        self.set_mux_state(appdb, "Ethernet4", "standby")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet4"], dvs_acl)
         dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
 
         # Set two mux ports to standby, verify ACL rule with inport bitmap (2 ports)
-        self.set_mux_state(appdb, "Ethernet4", "standby")
-        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet0", "Ethernet4"], dvs_acl)
+        self.set_mux_state(appdb, "Ethernet8", "standby")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet4", "Ethernet8"], dvs_acl)
+        dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
+
+        self.set_mux_state(appdb, "Ethernet0", "active")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet4", "Ethernet8"], dvs_acl)
         dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
 
         # Set one mux port to active, verify ACL rule with inport bitmap (1 port)
-        self.set_mux_state(appdb, "Ethernet0", "active")
-        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet4"], dvs_acl)
+        self.set_mux_state(appdb, "Ethernet4", "active")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet8"], dvs_acl)
         dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
 
         # Set last mux port to active, verify ACL rule is deleted
-        self.set_mux_state(appdb, "Ethernet4", "active")
+        self.set_mux_state(appdb, "Ethernet8", "active")
         dvs_acl.verify_no_acl_rules()
 
         # Set unknown state and verify the behavior as standby
-        self.set_mux_state(appdb, "Ethernet0", "unknown")
-        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet0"], dvs_acl)
-        dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
-
-        # Verify change while setting unknown from active
         self.set_mux_state(appdb, "Ethernet4", "unknown")
-        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet0", "Ethernet4"], dvs_acl)
-        dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
-
-        self.set_mux_state(appdb, "Ethernet0", "active")
         sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet4"], dvs_acl)
         dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
 
-        self.set_mux_state(appdb, "Ethernet0", "standby")
-        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet0", "Ethernet4"], dvs_acl)
+        # Verify change while setting unknown from active
+        self.set_mux_state(appdb, "Ethernet8", "unknown")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet4", "Ethernet8"], dvs_acl)
+        dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
+
+        self.set_mux_state(appdb, "Ethernet4", "active")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet8"], dvs_acl)
+        dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
+
+        self.set_mux_state(appdb, "Ethernet4", "standby")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet4", "Ethernet8"], dvs_acl)
         dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
 
         # Verify no change while setting unknown from standby
-        self.set_mux_state(appdb, "Ethernet0", "unknown")
-        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet0", "Ethernet4"], dvs_acl)
+        self.set_mux_state(appdb, "Ethernet4", "unknown")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet4", "Ethernet8"], dvs_acl)
         dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
 
     def create_and_test_metrics(self, appdb, statedb):
@@ -655,6 +700,8 @@ class TestMuxTunnelBase():
                 assert self.check_interface_exists_in_asicdb(asicdb, value)
             elif field == "SAI_TUNNEL_ATTR_ENCAP_TTL_MODE":
                 assert value == "SAI_TUNNEL_TTL_MODE_PIPE_MODEL"
+            elif field == "SAI_TUNNEL_ATTR_DECAP_TTL_MODE":
+                assert value == "SAI_TUNNEL_TTL_MODE_PIPE_MODEL"
             elif field == "SAI_TUNNEL_ATTR_LOOPBACK_PACKET_ACTION":
                 assert value == "SAI_PACKET_ACTION_DROP"
             elif field == "SAI_TUNNEL_ATTR_ENCAP_QOS_TC_AND_COLOR_TO_DSCP_MAP":
@@ -662,6 +709,8 @@ class TestMuxTunnelBase():
             elif field == "SAI_TUNNEL_ATTR_ENCAP_QOS_TC_TO_QUEUE_MAP":
                 assert value == tc_to_queue_map_oid
             elif field == "SAI_TUNNEL_ATTR_ENCAP_DSCP_MODE":
+                assert value == "SAI_TUNNEL_DSCP_MODE_PIPE_MODEL"
+            elif field == "SAI_TUNNEL_ATTR_DECAP_DSCP_MODE":
                 assert value == "SAI_TUNNEL_DSCP_MODE_PIPE_MODEL"
             else:
                 assert False, "Field %s is not tested" % field
@@ -1055,7 +1104,13 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
         appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
 
-        self.create_and_test_acl(appdb, dvs_acl)
+        try:
+            self.create_and_test_acl(appdb, dvs_acl)
+        finally:
+            self.set_mux_state(appdb, "Ethernet0", "active")
+            self.set_mux_state(appdb, "Ethernet4", "active")
+            self.set_mux_state(appdb, "Ethernet8", "active")
+            dvs_acl.verify_no_acl_rules()
 
     def test_mux_metrics(self, dvs, testlog):
         """ test metrics for mux state change """
@@ -1105,6 +1160,11 @@ class TestMuxTunnel(TestMuxTunnelBase):
         for ip in test_ips:
             self.check_neighbor_state(dvs, dvs_route, ip, expect_route=False)
 
+    def test_soc_ip(self, dvs, dvs_route, setup_vlan, setup_mux_cable, testlog):
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        asicdb = dvs.get_asic_db()
+
+        self.create_and_test_soc(appdb, asicdb, dvs, dvs_route)
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
