@@ -359,7 +359,7 @@ void DashAclOrch::doTask(Consumer &consumer)
 
             itr = consumer.m_toSync.erase(itr);
 
-            auto rit = make_reverse_iterator(it);
+            auto rit = make_reverse_iterator(itr);
             while (rit != consumer.m_toSync.rend() && rit->first == key && kfvOp(rit->second) == DEL_COMMAND)
             {
                 consumer.m_toSync.erase(next(rit).base());

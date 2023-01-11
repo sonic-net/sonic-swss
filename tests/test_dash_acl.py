@@ -245,6 +245,53 @@ class TestAcl(object):
         assert len(ctx.asic_dash_acl_group_table.get_keys()) == 0
         self.destroy_ctx(ctx)
 
+    def test_remove_pending_del_op(self, dvs):
+        ctx = self.create_ctx(dvs)
+        acl_group1 = "1"
+        acl_rule1 = "1"
+        stage1 = "1"
+
+        ctx.create_acl_group(acl_group1, {"ip_version": "ipv6"})
+        ctx.create_acl_rule(acl_group1, acl_rule1, {"priority": "1", "action": "allow", "terminating": "false",
+                           "src_addr": "192.168.0.1/32,192.168.1.2/30", "dst_addr": "192.168.0.1/32,192.168.1.2/30", "src_port": "0-1", "dst_port": "0-1"})
+        ctx.bind_acl_in(self.eni_name, stage1, acl_group1)
+
+        # Attempt to remove the group, this should be blocked because the group is still bound
+        ctx.remove_acl_group(acl_group1)
+        time.sleep(3)
+        assert len(ctx.asic_dash_acl_group_table.get_keys()) == 1
+
+        # Add the group again, which should clear the DEL op from above
+        ctx.create_acl_group(acl_group1, {"ip_version": "ipv6"})
+        assert len(ctx.asic_dash_acl_group_table.get_keys()) == 1
+
+        # Unbind the group, since the binding was blocking deletion
+        ctx.unbind_acl_in(self.eni_name, stage1)
+        # However, since the above creation should have removed the pending DEL op, we still expect the group to exist
+        time.sleep(3)
+        assert len(ctx.asic_dash_acl_group_table.get_keys()) == 1
+
+        # Attempt to remove the group again, which should now be blocked because the group still contains a rule
+        ctx.remove_acl_group(acl_group1)
+        time.sleep(3)
+        assert len(ctx.asic_dash_acl_group_table.get_keys()) == 1
+
+        # Add the group again, which should clear the DEL op from above
+        ctx.create_acl_group(acl_group1, {"ip_version": "ipv6"})
+        assert len(ctx.asic_dash_acl_group_table.get_keys()) == 1
+
+        # Remove the rule
+        ctx.remove_acl_rule(acl_group1, acl_rule1)
+        # However, since the above creation should have removed the pending DEL op, we still expect the group to exist
+        time.sleep(3)
+        assert len(ctx.asic_dash_acl_group_table.get_keys()) == 1
+
+        # Finally remove the group
+        ctx.remove_acl_group(acl_group1)
+        time.sleep(3)
+        assert len(ctx.asic_dash_acl_group_table.get_keys()) == 0
+
+        self.destroy_ctx(ctx)
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down
