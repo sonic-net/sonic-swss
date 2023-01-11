@@ -959,6 +959,18 @@ task_process_status Orch::handleSaiSetStatus(sai_api_t api, sai_status_t status,
                             sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
                     abort();
             }
+        case SAI_API_TUNNEL:
+            switch (status)
+            {
+                case SAI_STATUS_ATTR_NOT_SUPPORTED_0:
+                    SWSS_LOG_ERROR("Encountered SAI_STATUS_ATTR_NOT_SUPPORTED_0 in set operation, task failed, SAI API: %s, status: %s",
+                            sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+                    return task_failed;
+                default:
+                    SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
+                            sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+                    abort();
+            }
         default:
             SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
                         sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
