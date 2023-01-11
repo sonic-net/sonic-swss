@@ -1630,7 +1630,7 @@ void VNetRouteOrch::createMonitoringSession(const string& vnet, const NextHopKey
         auto *vnet_obj = vnet_orch_->getTypePtr<VNetVrfObject>(vnet);
 
         auto overlay_dmac = vnet_obj->getOverlayDMac();
-        string key = "VNET_MONITOR:" + ipPrefix.to_string() + ":" + monitor_addr.to_string();
+        string key = ipPrefix.to_string() + ":" + monitor_addr.to_string();
         FieldValueTuple fvTuple1("packet_type", "vxlan");
         data.push_back(fvTuple1);
 
@@ -1656,7 +1656,7 @@ void VNetRouteOrch::removeMonitoringSession(const string& vnet, const NextHopKey
         SWSS_LOG_ERROR("Monitor session for prefix %s endpoint %s does not exist", ipPrefix.to_string().c_str(), endpoint_addr.to_string().c_str());
     }
 
-    string key = "VNET_MONITOR:" + ipPrefix.to_string() + ":" + monitor_addr.to_string();
+    string key = ipPrefix.to_string() + ":" + monitor_addr.to_string();
     monitor_session_producer_->del(key);
     monitor_info_[vnet][ipPrefix].erase(endpoint);
 }
@@ -1694,7 +1694,7 @@ void VNetRouteOrch::delEndpointMonitor(const string& vnet, NextHopGroupKey& next
 
     std::set<NextHopKey> nhks = nexthops.getNextHops();
     bool is_custom_monitoring = false;
-    if (monitor_info_[vnet].find(ipPrefix) == monitor_info_[vnet].end())
+    if (monitor_info_[vnet].find(ipPrefix) != monitor_info_[vnet].end())
     {
         is_custom_monitoring = true;
     }
