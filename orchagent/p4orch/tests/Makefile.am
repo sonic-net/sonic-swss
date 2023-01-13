@@ -30,7 +30,6 @@ p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
 		       $(ORCHAGENT_DIR)/request_parser.cpp \
 		       $(ORCHAGENT_DIR)/flex_counter/flex_counter_manager.cpp \
 		       $(ORCHAGENT_DIR)/flex_counter/flow_counter_handler.cpp \
-		       $(ORCHAGENT_DIR)/saihelper.cpp \
 		       $(P4ORCH_DIR)/p4oidmapper.cpp \
 		       $(P4ORCH_DIR)/p4orch.cpp \
 		       $(P4ORCH_DIR)/p4orch_util.cpp \

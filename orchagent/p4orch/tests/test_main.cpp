@@ -80,6 +80,32 @@ sai_my_mac_api_t *sai_my_mac_api;
 sai_counter_api_t *sai_counter_api;
 sai_generic_programmable_api_t *sai_generic_programmable_api;
 
+task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, void *context)
+{
+    return task_success;
+}
+
+task_process_status handleSaiSetStatus(sai_api_t api, sai_status_t status, void *context)
+{
+    return task_success;
+}
+
+task_process_status handleSaiRemoveStatus(sai_api_t api, sai_status_t status, void *context)
+{
+    return task_success;
+}
+
+task_process_status handleSaiGetStatus(sai_api_t api, sai_status_t status, void *context)
+{
+    return task_success;
+}
+
+bool parseHandleSaiStatusFailure(task_process_status status)
+{
+    return true;
+}
+
+
 namespace
 {
 
