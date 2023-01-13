@@ -1,0 +1,141 @@
+# For more infomation, please visit: https://github.com/github/codeql-action
+
+name: "CodeQL"
+
+on:
+  push:
+    branches:
+      - 'master'
+      - '202[0-9][0-9][0-9]'
+  pull_request_target:
+    branches:
+      - 'master'
+      - '202[0-9][0-9][0-9]'
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: ubuntu-20.04
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [ 'cpp','python' ]
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    # Initializes the CodeQL tools for scanning.
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v2.1.29
+      with:
+        config-file: ./.github/codeql/codeql-config.yml
+        languages: ${{ matrix.language }}
+
+    - if: matrix.language == 'cpp'
+      name: prepare
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libxml-simple-perl \
+            aspell \
+            aspell-en \
+            libhiredis-dev \
+            libnl-3-dev \
+            libnl-genl-3-dev \
+            libnl-route-3-dev \
+            libnl-nf-3-dev \
+            libyang-dev \
+            libzmq3-dev \
+            libzmq5 \
+            swig3.0 \
+            libpython2.7-dev \
+            libgtest-dev \
+            libgmock-dev \
+            libboost1.71-dev \
+            libboost-serialization1.71-dev \
+            dh-exec \
+            doxygen \
+            cdbs \
+            bison \
+            flex \
+            graphviz \
+            autoconf-archive \
+            uuid-dev \
+            libjansson-dev \
+            python
+
+    - if: matrix.language == 'cpp'
+      name: build-libnl
+      run: |
+        cd ..
+        git clone https://github.com/sonic-net/sonic-buildimage
+        pushd sonic-buildimage/src/libnl3
+        git clone https://github.com/thom311/libnl libnl3-3.5.0
+        pushd libnl3-3.5.0
+        git checkout tags/libnl3_5_0
+        git apply ../patch/0001-mpls-encap-accessors.patch
+        git apply ../patch/0002-mpls-remove-nl_addr_valid.patch
+        ln -s ../debian debian
+        fakeroot dpkg-buildpackage -us -uc -b
+        popd
+        popd
+
+    - if: matrix.language == 'cpp'
+      name: build-swss-common
+      run: |
+        cd ..
+        git clone https://github.com/sonic-net/sonic-swss-common
+        pushd sonic-swss-common
+        ./autogen.sh
+        fakeroot dpkg-buildpackage -us -uc -b
+        popd
+        dpkg-deb -x libswsscommon_1.0.0_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libswsscommon-dev_1.0.0_amd64.deb $(dirname $GITHUB_WORKSPACE)
+
+    - if: matrix.language == 'cpp'
+      name: build-sairedis
+      run: |
+        cd ..
+        git clone --recursive https://github.com/sonic-net/sonic-sairedis
+        pushd sonic-sairedis
+        ./autogen.sh
+        DEB_BUILD_OPTIONS=nocheck SWSS_COMMON_INC="$(dirname $GITHUB_WORKSPACE)/usr/include" SWSS_COMMON_LIB="$(dirname $GITHUB_WORKSPACE)/usr/lib/x86_64-linux-gnu" fakeroot debian/rules CFLAGS="-Wno-error" CXXFLAGS="-Wno-error" binary-syncd-vs
+        popd
+
+    - if: matrix.language == 'cpp'
+      name: install-deb
+      run: |
+        cd ..
+        pushd sonic-buildimage/src/libnl3/
+        dpkg-deb -x libnl-3-200_3.5.0-1_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-3-dev_3.5.0-1_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-genl-3-200_3.5.0-1_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-genl-3-dev_3.5.0-1_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-route-3-200_3.5.0-1_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-route-3-dev_3.5.0-1_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-nf-3-200_3.5.0-1_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-nf-3-dev_3.5.0-1_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        popd
+        dpkg-deb -x libsairedis_1.0.0_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libsairedis-dev_1.0.0_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libsaimetadata_1.0.0_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libsaimetadata-dev_1.0.0_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libsaivs_1.0.0_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libsaivs-dev_1.0.0_amd64.deb $(dirname $GITHUB_WORKSPACE)
+
+    - if: matrix.language == 'cpp'
+      name: build
+      run: |
+        ./autogen.sh
+        ./configure --prefix=/usr --with-extra-inc=$(dirname $GITHUB_WORKSPACE)/usr/include --with-extra-lib=$(dirname $GITHUB_WORKSPACE)/lib/x86_64-linux-gnu --with-extra-usr-lib=$(dirname $GITHUB_WORKSPACE)/usr/lib/x86_64-linux-gnu --with-libnl-3.0-inc=$(dirname $GITHUB_WORKSPACE)/usr/include/libnl3
+
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v2.1.29
+      with:
+        category: "/language:${{matrix.language}}"
