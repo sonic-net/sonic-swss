@@ -98,7 +98,12 @@ P4GreTunnelEntry::P4GreTunnelEntry(const std::string &tunnel_id, const std::stri
     tunnel_key = KeyGenerator::generateTunnelKey(tunnel_id);
 }
 
-void GreTunnelManager::enqueue(const swss::KeyOpFieldsValuesTuple &entry)
+ReturnCode GreTunnelManager::getSaiObject(const std::string &json_key, sai_object_type_t &object_type, std::string &object_key)
+{
+    return StatusCode::SWSS_RC_UNIMPLEMENTED;
+}
+
+void GreTunnelManager::enqueue(const std::string &table_name, const swss::KeyOpFieldsValuesTuple &entry)
 {
     m_entries.push_back(entry);
 }

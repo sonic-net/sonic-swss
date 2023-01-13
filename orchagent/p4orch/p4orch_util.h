@@ -6,16 +6,23 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <unordered_map>
 
 #include "ipaddress.h"
 #include "ipprefix.h"
 #include "macaddress.h"
 #include "table.h"
+extern "C"
+{
+#include "saitypes.h"
+}
+ 
 
 namespace p4orch
 {
 
 // Field names in P4RT APP DB entry.
+constexpr char *kTablePrefixEXT = "EXT_";
 constexpr char *kRouterInterfaceId = "router_interface_id";
 constexpr char *kPort = "port";
 constexpr char *kInPort = "in_port";
@@ -80,6 +87,19 @@ constexpr char *kTos = "tos";
 constexpr char *kMirrorAsIpv4Erspan = "mirror_as_ipv4_erspan";
 constexpr char *kL3AdmitAction = "admit_to_l3";
 constexpr char *kTunnelAction = "mark_for_p2p_tunnel_encap";
+
+// Field names in P4RT TABLE DEFINITION APP DB entry.
+constexpr char *kTables = "tables";
+constexpr char *kId = "id";
+constexpr char *kName = "name";
+constexpr char *kAlias = "alias";
+constexpr char *kBitwidth = "bitwidth";
+constexpr char *kFormat = "format";
+constexpr char *kmatchFields = "matchFields";
+constexpr char *kActionParams = "params";
+constexpr char *kReferences = "references";
+constexpr char *kTableRef = "table";
+constexpr char *kMatchRef = "match";
 } // namespace p4orch
 
 // Prepends "match/" to the input string str to construct a new string.
@@ -87,6 +107,58 @@ std::string prependMatchField(const std::string &str);
 
 // Prepends "param/" to the input string str to construct a new string.
 std::string prependParamField(const std::string &str);
+
+struct ActionParamInfo
+{
+    std::string     name;
+    std::string     fieldtype;
+    std::string     datatype;
+    std::unordered_map<std::string, std::string>  table_reference_map;
+};
+
+struct ActionInfo
+{
+    std::string     name;
+    std::unordered_map<std::string, ActionParamInfo> params;
+    bool            refers_to;
+};
+
+struct TableMatchInfo
+{
+    std::string        name;
+    std::string        fieldtype;
+    std::string        datatype;
+    std::unordered_map<std::string, std::string>  table_reference_map;
+};
+
+/**
+ * Dervied table definition 
+ * This is a derived state out of table definition provided by P4RT-APP
+ */
+struct TableInfo
+{
+    std::string                                      name;
+    int                                              id;
+    int                                              precedence;
+    std::unordered_map<std::string, TableMatchInfo>  match_fields;
+    std::unordered_map<std::string, ActionInfo>      action_fields;
+    bool                                             counter_bytes_enabled;
+    bool                                             counter_packets_enabled;
+    std::vector<std::string>                         action_ref_tables;
+                                                     // list of tables across all actions, of current table, refer to
+};
+
+/**
+ * table-name to table-definition map
+ */
+typedef std::unordered_map<std::string, TableInfo>   TableInfoMap;
+
+struct TablesInfoAppDbEntry
+{
+    std::string context;
+    std::string info;
+};
+
 
 struct P4RouterInterfaceAppDbEntry
 {
@@ -221,6 +293,26 @@ struct P4AclRuleAppDbEntry
     P4AclMeterAppDb meter;
 };
 
+struct DepObject
+{
+    sai_object_type_t sai_object;
+    std::string       key;
+    sai_object_id_t   oid;
+};
+
+struct P4ExtTableAppDbEntry
+{
+    std::string db_key;
+    std::string table_name;
+    std::string table_key;
+    std::unordered_map<std::string, std::unordered_map<std::string, std::string>> action_params;
+    std::unordered_map<std::string, DepObject> action_dep_objects;
+};
+
+
+TableInfo *getTableInfo(const std::string &table_name);
+ActionInfo *getTableActionInfo(TableInfo *table, const std::string &action_name);
+
 // Get the table name and key content from the given P4RT key.
 // Outputs will be empty strings in case of error.
 // Example: FIXED_NEIGHBOR_TABLE:{content}
@@ -246,6 +338,8 @@ std::string verifyAttrs(const std::vector<swss::FieldValueTuple> &targets,
 class KeyGenerator
 {
   public:
+    static std::string generateTablesInfoKey(const std::string &context);
+
     static std::string generateRouteKey(const std::string &vrf_id, const swss::IpPrefix &ip_prefix);
 
     static std::string generateRouterInterfaceKey(const std::string &router_intf_id);
@@ -266,6 +360,8 @@ class KeyGenerator
                                           const uint32_t &priority);
 
     static std::string generateTunnelKey(const std::string &tunnel_id);
+
+    static std::string generateExtTableKey(const std::string &table_name, const std::string &table_key);
 
     // Generates key used by object managers and centralized mapper.
     // Takes map of <id, value> as input and returns a concatenated string
