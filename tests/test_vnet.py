@@ -546,7 +546,7 @@ class VnetVxlanVrfTunnel(object):
     ASIC_NEXT_HOP_GROUP     = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP"
     ASIC_NEXT_HOP_GROUP_MEMBER  = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER"
     ASIC_BFD_SESSION        = "ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION"
-    APP_VNET_MONITOR        =  "VNET_MONITOR"
+    APP_VNET_MONITOR        =  "VNET_MONITOR_TABLE"
 
     def __init__(self):
         self.tunnel_map_ids       = set()
