@@ -1,6 +1,6 @@
 extern "C" {
-#include "sai.h"
-#include "saistatus.h"
+#include <sai.h>
+#include <saistatus.h>
 }
 
 #include "orchdaemon.h"
