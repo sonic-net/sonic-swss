@@ -324,7 +324,44 @@ ReturnCode NeighborManager::processDeleteRequest(const std::string &neighbor_key
     return status;
 }
 
-void NeighborManager::enqueue(const swss::KeyOpFieldsValuesTuple &entry)
+ReturnCode NeighborManager::getSaiObject(const std::string &json_key, sai_object_type_t &object_type, std::string &object_key)
+{
+    std::string     router_intf_id, neighbor_id;
+    swss::IpAddress neighbor;
+
+    try
+    {
+        nlohmann::json  j = nlohmann::json::parse(json_key);
+        if (j.find(prependMatchField(p4orch::kRouterInterfaceId)) != j.end())
+        {
+            router_intf_id = j.at(prependMatchField(p4orch::kRouterInterfaceId)).get<std::string>();
+            if (j.find(prependMatchField(p4orch::kNeighborId)) != j.end())
+            {
+                neighbor_id = j.at(prependMatchField(p4orch::kNeighborId)).get<std::string>();
+                neighbor = swss::IpAddress(neighbor_id);
+                object_key = KeyGenerator::generateNeighborKey(router_intf_id, neighbor);
+                object_type = SAI_OBJECT_TYPE_NEIGHBOR_ENTRY;
+                return ReturnCode();
+            }
+            else
+            {
+                SWSS_LOG_ERROR("%s match parameter absent: required for dependent object query", p4orch::kNeighborId);
+            }
+        }
+        else
+        {
+            SWSS_LOG_ERROR("%s match parameter absent: required for dependent object query", p4orch::kRouterInterfaceId);
+        }
+    }
+    catch (std::exception &ex)
+    {
+        SWSS_LOG_ERROR("json_key parse error");
+    }
+
+    return StatusCode::SWSS_RC_INVALID_PARAM;
+}
+
+void NeighborManager::enqueue(const std::string &table_name, const swss::KeyOpFieldsValuesTuple &entry)
 {
     m_entries.push_back(entry);
 }

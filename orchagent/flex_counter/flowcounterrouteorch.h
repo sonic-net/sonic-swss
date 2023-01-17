@@ -141,7 +141,7 @@ private:
     RouterFlowCounterCache mBoundRouteCounters;
     /* Cache for those route flow counters pending update to FLEX DB */
     RouterFlowCounterCache mPendingAddToFlexCntr;
-    /* IP2ME, MUX */ // TODO: remove MUX support
+    /* IP2ME */
     MiscRouteEntryMap mMiscRoutes; // Save here for route flow counter
     /* Flex counter manager for route flow counter */
     FlexCounterManager mRouteFlowCounterMgr;

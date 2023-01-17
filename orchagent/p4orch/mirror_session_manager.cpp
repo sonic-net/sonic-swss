@@ -21,7 +21,34 @@ extern sai_object_id_t gSwitchId;
 namespace p4orch
 {
 
-void MirrorSessionManager::enqueue(const swss::KeyOpFieldsValuesTuple &entry)
+ReturnCode MirrorSessionManager::getSaiObject(const std::string &json_key, sai_object_type_t &object_type, std::string &object_key)
+{
+    std::string     value;
+
+    try
+    {
+        nlohmann::json  j = nlohmann::json::parse(json_key);
+        if (j.find(prependMatchField(p4orch::kMirrorSessionId)) != j.end())
+        {
+            value = j.at(prependMatchField(p4orch::kMirrorSessionId)).get<std::string>();
+            object_key = KeyGenerator::generateMirrorSessionKey(value);
+            object_type = SAI_OBJECT_TYPE_MIRROR_SESSION;
+            return ReturnCode();
+        }
+        else
+        {
+            SWSS_LOG_ERROR("%s match parameter absent: required for dependent object query", p4orch::kMirrorSessionId);
+        }
+    }
+    catch (std::exception &ex)
+    {
+        SWSS_LOG_ERROR("json_key parse error");
+    }
+
+    return StatusCode::SWSS_RC_INVALID_PARAM;
+}
+
+void MirrorSessionManager::enqueue(const std::string &table_name, const swss::KeyOpFieldsValuesTuple &entry)
 {
     SWSS_LOG_ENTER();
     m_entries.push_back(entry);

@@ -39,6 +39,8 @@ public:
         m_routesync->onMsgRaw(h);
     };
 
+    void processFpmMessage(fpm_msg_hdr_t* hdr);
+
 private:
     RouteSync *m_routesync;
     unsigned int m_bufSize;

@@ -591,6 +591,14 @@ void NeighOrch::decreaseNextHopRefCount(const NextHopKey &nexthop, uint32_t coun
     assert(hasNextHop(nexthop));
     if (m_syncdNextHops.find(nexthop) != m_syncdNextHops.end())
     {
+        if ((m_syncdNextHops[nexthop].ref_count - (int)count) < 0)
+        {
+            SWSS_LOG_ERROR("Ref count cannot be negative for next_hop_id: 0x%" PRIx64 " with ip: %s and alias: %s",
+                   m_syncdNextHops[nexthop].next_hop_id, nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
+            // Reset refcount to 0 to match expected value
+            m_syncdNextHops[nexthop].ref_count = 0;
+            return;
+        }
         m_syncdNextHops[nexthop].ref_count -= count;
     }
 }
@@ -912,15 +920,18 @@ bool NeighOrch::addNeighbor(const NeighborEntry &neighborEntry, const MacAddress
     }
     else if (isHwConfigured(neighborEntry))
     {
-        status = sai_neighbor_api->set_neighbor_entry_attribute(&neighbor_entry, &neighbor_attr);
-        if (status != SAI_STATUS_SUCCESS)
+        for (auto itr : neighbor_attrs)
         {
-            SWSS_LOG_ERROR("Failed to update neighbor %s on %s, rv:%d",
-                           macAddress.to_string().c_str(), alias.c_str(), status);
-            task_process_status handle_status = handleSaiSetStatus(SAI_API_NEIGHBOR, status);
-            if (handle_status != task_success)
+            status = sai_neighbor_api->set_neighbor_entry_attribute(&neighbor_entry, &itr);
+            if (status != SAI_STATUS_SUCCESS)
             {
-                return parseHandleSaiStatusFailure(handle_status);
+                SWSS_LOG_ERROR("Failed to update neighbor %s on %s, attr.id=0x%x, rv:%d",
+                               macAddress.to_string().c_str(), alias.c_str(), itr.id, status);
+                task_process_status handle_status = handleSaiSetStatus(SAI_API_NEIGHBOR, status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
         }
         SWSS_LOG_NOTICE("Updated neighbor %s on %s", macAddress.to_string().c_str(), alias.c_str());

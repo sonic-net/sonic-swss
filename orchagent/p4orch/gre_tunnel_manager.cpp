@@ -89,15 +89,21 @@ std::vector<sai_attribute_t> getSaiAttrs(const P4GreTunnelEntry &gre_tunnel_entr
 } // namespace
 
 P4GreTunnelEntry::P4GreTunnelEntry(const std::string &tunnel_id, const std::string &router_interface_id,
-                                   const swss::IpAddress &encap_src_ip, const swss::IpAddress &encap_dst_ip)
+                                   const swss::IpAddress &encap_src_ip, const swss::IpAddress &encap_dst_ip,
+                                   const swss::IpAddress &neighbor_id)
     : tunnel_id(tunnel_id), router_interface_id(router_interface_id), encap_src_ip(encap_src_ip),
-      encap_dst_ip(encap_dst_ip)
+      encap_dst_ip(encap_dst_ip), neighbor_id(neighbor_id)
 {
     SWSS_LOG_ENTER();
     tunnel_key = KeyGenerator::generateTunnelKey(tunnel_id);
 }
 
-void GreTunnelManager::enqueue(const swss::KeyOpFieldsValuesTuple &entry)
+ReturnCode GreTunnelManager::getSaiObject(const std::string &json_key, sai_object_type_t &object_type, std::string &object_key)
+{
+    return StatusCode::SWSS_RC_UNIMPLEMENTED;
+}
+
+void GreTunnelManager::enqueue(const std::string &table_name, const swss::KeyOpFieldsValuesTuple &entry)
 {
     m_entries.push_back(entry);
 }
@@ -188,7 +194,7 @@ P4GreTunnelEntry *GreTunnelManager::getGreTunnelEntry(const std::string &tunnel_
     }
 };
 
-ReturnCodeOr<const std::string> GreTunnelManager::getUnderlayIfFromGreTunnelEntry(const std::string &tunnel_key)
+ReturnCodeOr<const P4GreTunnelEntry> GreTunnelManager::getConstGreTunnelEntry(const std::string &tunnel_key)
 {
     SWSS_LOG_ENTER();
 
@@ -200,7 +206,7 @@ ReturnCodeOr<const std::string> GreTunnelManager::getUnderlayIfFromGreTunnelEntr
     }
     else
     {
-        return tunnel->router_interface_id;
+        return *tunnel;
     }
 }
 
@@ -274,7 +280,7 @@ ReturnCode GreTunnelManager::processAddRequest(const P4GreTunnelAppDbEntry &app_
     SWSS_LOG_ENTER();
 
     P4GreTunnelEntry gre_tunnel_entry(app_db_entry.tunnel_id, app_db_entry.router_interface_id,
-                                      app_db_entry.encap_src_ip, app_db_entry.encap_dst_ip);
+                                      app_db_entry.encap_src_ip, app_db_entry.encap_dst_ip, app_db_entry.encap_dst_ip);
     auto status = createGreTunnel(gre_tunnel_entry);
     if (!status.ok())
     {
@@ -567,6 +573,15 @@ std::string GreTunnelManager::verifyStateCache(const P4GreTunnelAppDbEntry &app_
         msg << "GreTunnel " << QuotedVar(app_db_entry.tunnel_id) << " with destination IP "
             << QuotedVar(app_db_entry.encap_dst_ip.to_string()) << " does not match internal cache "
             << QuotedVar(gre_tunnel_entry->encap_dst_ip.to_string()) << " in GreTunnel manager.";
+        return msg.str();
+    }
+
+    if (gre_tunnel_entry->neighbor_id.to_string() != app_db_entry.encap_dst_ip.to_string())
+    {
+        std::stringstream msg;
+        msg << "GreTunnel " << QuotedVar(app_db_entry.tunnel_id) << " with destination IP "
+            << QuotedVar(app_db_entry.encap_dst_ip.to_string()) << " does not match internal cache "
+            << QuotedVar(gre_tunnel_entry->neighbor_id.to_string()) << " fo neighbor_id in GreTunnel manager.";
         return msg.str();
     }
 

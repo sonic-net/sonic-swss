@@ -14,6 +14,8 @@ CUSTOM_TABLE_TYPE_MATCHES = [
     "VLAN_ID"
 ]
 CUSTOM_TABLE_TYPE_BPOINT_TYPES = ["PORT","PORTCHANNEL"]
+CUSTOM_TABLE_TYPE_ACTIONS = ["PACKET_ACTION,COUNTER"]
+EXPECTED_ACTION_LIST = ['SAI_ACL_ACTION_TYPE_PACKET_ACTION','SAI_ACL_ACTION_TYPE_COUNTER']
 TABLE_NAME = "EGRESS_TEST"
 BIND_PORTS = ["Ethernet0", "Ethernet4"]
 RULE_NAME = "EGRESS_TEST_RULE"
@@ -23,7 +25,7 @@ class TestEgressAclTable:
     @pytest.fixture
     def egress_acl_table(self, dvs_acl):
         try:
-            dvs_acl.create_acl_table_type(TABLE_TYPE, CUSTOM_TABLE_TYPE_MATCHES, CUSTOM_TABLE_TYPE_BPOINT_TYPES)
+            dvs_acl.create_acl_table_type(TABLE_TYPE, CUSTOM_TABLE_TYPE_MATCHES, CUSTOM_TABLE_TYPE_BPOINT_TYPES, CUSTOM_TABLE_TYPE_ACTIONS)
             dvs_acl.create_acl_table(TABLE_NAME, TABLE_TYPE, BIND_PORTS, stage="egress")
             yield dvs_acl.get_acl_table_ids(1)[0]
         finally:
@@ -33,7 +35,7 @@ class TestEgressAclTable:
 
     def test_EgressAclTableCreationDeletion(self, dvs_acl):
         try:
-            dvs_acl.create_acl_table_type(TABLE_TYPE, CUSTOM_TABLE_TYPE_MATCHES, CUSTOM_TABLE_TYPE_BPOINT_TYPES)
+            dvs_acl.create_acl_table_type(TABLE_TYPE, CUSTOM_TABLE_TYPE_MATCHES, CUSTOM_TABLE_TYPE_BPOINT_TYPES, CUSTOM_TABLE_TYPE_ACTIONS)
             dvs_acl.create_acl_table(TABLE_NAME, TABLE_TYPE, BIND_PORTS, stage="egress")
 
             acl_table_id = dvs_acl.get_acl_table_ids(1)[0]
@@ -41,6 +43,7 @@ class TestEgressAclTable:
 
             dvs_acl.verify_acl_table_group_members(acl_table_id, acl_table_group_ids, 1)
             dvs_acl.verify_acl_table_port_binding(acl_table_id, BIND_PORTS, 1, stage="egress")
+            dvs_acl.verify_acl_table_action_list(acl_table_id, EXPECTED_ACTION_LIST)
         finally:
             dvs_acl.remove_acl_table(TABLE_NAME)
             dvs_acl.remove_acl_table_type(TABLE_TYPE)
