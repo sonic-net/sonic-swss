@@ -931,7 +931,7 @@ bool PortHelper::validatePortConfig(PortConfig &port) const
 
     if (!port.admin_status.is_set)
     {
-        SWSS_LOG_NOTICE(
+        SWSS_LOG_INFO(
             "Missing non mandatory field(%s): setting default value(%s)",
             PORT_ADMIN_STATUS,
             PORT_STATUS_DOWN

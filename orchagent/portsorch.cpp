@@ -680,6 +680,11 @@ void PortsOrch::setPortConfigState(port_config_state_t value)
 
 bool PortsOrch::addPortBulk(const std::vector<PortConfig> &portList)
 {
+    // The method is used to create ports in a bulk mode.
+    // The action takes place when:
+    // 1. Ports are being initialized at system start
+    // 2. Ports are being added/removed by a user at runtime
+
     SWSS_LOG_ENTER();
 
     if (portList.empty())
@@ -3981,6 +3986,15 @@ void PortsOrch::doPortTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
+            Port p;
+            if (!getPort(pCfg.key, p))
+            {
+                SWSS_LOG_ERROR("Failed to remove port: alias %s doesn't exist", pCfg.key.c_str());
+                m_portConfigMap.erase(pCfg.key);
+                it = taskMap.erase(it);
+                continue;
+            }
+
             const auto &alias = pCfg.key;
 
             if (m_port_ref_count[alias] > 0)
