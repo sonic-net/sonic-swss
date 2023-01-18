@@ -233,6 +233,7 @@ private:
     // TODO: Add Bridge/Vlan class
     sai_object_id_t m_default1QBridge;
     sai_object_id_t m_defaultVlan;
+    unsigned int m_defaultVlanId;
 
     typedef enum
     {
