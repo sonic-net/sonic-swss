@@ -871,6 +871,7 @@ class TestVirtualChassis(object):
             cfg_switch_type = metatbl.get("switch_type")
 
             if cfg_switch_type == "voq":
+                num_ports = len(asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT"))
                 # Get the port info we'll flap
                 port = config_db.get_keys('PORT')[0]
                 port_info = config_db.get_entry("PORT", port)
@@ -878,7 +879,6 @@ class TestVirtualChassis(object):
                 # Remove port's other configs
                 pgs = config_db.get_keys('BUFFER_PG')
                 queues = config_db.get_keys('BUFFER_QUEUE')
-                breakout = config_db.get_keys('BREAKOUT_CFG')
                 for key in pgs:
                     if port in key:
                         config_db.delete_entry('BUFFER_PG', key)
@@ -892,12 +892,18 @@ class TestVirtualChassis(object):
                 # Remove port
                 config_db.delete_entry('PORT', port)
                 app_db.wait_for_deleted_entry('PORT_TABLE', port)
+                num = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT",
+                                              num_ports-1)
+                assert len(num) == num_ports-1
 
                 marker = dvs.add_log_marker()
 
                 # Create port
                 config_db.update_entry("PORT", port, port_info)
                 app_db.wait_for_entry("PORT_TABLE", port)
+                num = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT",
+                                              num_ports)
+                assert len(num) == num_ports
 
                 # Check that we see the logs for removing default vlan
                 matching_log = "removeDefaultVlanMembers: Remove 0 VLAN members from default VLAN"
