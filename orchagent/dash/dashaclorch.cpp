@@ -764,6 +764,7 @@ task_process_status DashAclOrch::bindAclToEni(DashAclTable &acl_table, const str
         if (acl_group->m_rule_count <= 0)
         {
             SWSS_LOG_INFO("acl group %s contains 0 rules, waiting for rule creation", acl.m_acl_group_id->c_str());
+            acl.m_acl_group_id.reset();
             return task_need_retry;
         }
 
