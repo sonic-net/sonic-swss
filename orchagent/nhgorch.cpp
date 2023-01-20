@@ -576,10 +576,10 @@ bool NextHopGroup::sync()
             SWSS_LOG_ERROR("Failed to create next hop group %s, rv:%d",
                             m_key.to_string().c_str(), status);
 
-            task_process_status handle_status = gNhgOrch->handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, status);
+            task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, status);
             if (handle_status != task_success)
             {
-                return gNhgOrch->parseHandleSaiStatusFailure(handle_status);
+                return parseHandleSaiStatusFailure(handle_status);
             }
         }
 

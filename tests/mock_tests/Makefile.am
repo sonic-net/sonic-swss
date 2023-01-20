@@ -21,7 +21,7 @@ LDADD_GTEST = -L/usr/src/gtest
 
 ## Orchagent Unit Tests
 
-tests_INCLUDES = -I $(FLEX_CTR_DIR) -I $(DEBUG_CTR_DIR) -I $(top_srcdir)/lib -I$(top_srcdir)/cfgmgr -I$(top_srcdir)/orchagent -I$(P4_ORCH_DIR)/tests
+tests_INCLUDES = -I $(FLEX_CTR_DIR) -I $(DEBUG_CTR_DIR) -I $(top_srcdir)/lib -I$(top_srcdir)/cfgmgr -I$(top_srcdir)/orchagent -I$(P4_ORCH_DIR)/tests -I$(top_srcdir)/warmrestart
 
 tests_SOURCES = aclorch_ut.cpp \
                 portsorch_ut.cpp \
@@ -49,6 +49,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 swssnet_ut.cpp \
                 flowcounterrouteorch_ut.cpp \
                 orchdaemon_ut.cpp \
+                warmrestartassist_ut.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/lib/subintf.cpp \
                 $(top_srcdir)/orchagent/orchdaemon.cpp \
@@ -105,7 +106,8 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/srv6orch.cpp \
                 $(top_srcdir)/orchagent/nvgreorch.cpp \
                 $(top_srcdir)/cfgmgr/portmgr.cpp \
-                $(top_srcdir)/cfgmgr/buffermgrdyn.cpp
+                $(top_srcdir)/cfgmgr/buffermgrdyn.cpp \
+                $(top_srcdir)/warmrestart/warmRestartAssist.cpp
 
 tests_SOURCES += $(FLEX_CTR_DIR)/flex_counter_manager.cpp $(FLEX_CTR_DIR)/flex_counter_stat_manager.cpp $(FLEX_CTR_DIR)/flow_counter_handler.cpp $(FLEX_CTR_DIR)/flowcounterrouteorch.cpp
 tests_SOURCES += $(DEBUG_CTR_DIR)/debug_counter.cpp $(DEBUG_CTR_DIR)/drop_counter.cpp
