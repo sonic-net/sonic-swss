@@ -1621,7 +1621,7 @@ void VNetRouteOrch::createMonitoringSession(const string& vnet, const NextHopKey
     if (monitor_info_[vnet].find(ipPrefix) != monitor_info_[vnet].end() &&
         monitor_info_[vnet][ipPrefix].find(endpoint) != monitor_info_[vnet][ipPrefix].end())
     {
-        SWSS_LOG_ERROR("Monitoring session for prefix %s endpoint %s already exist", ipPrefix.to_string().c_str(), endpoint_addr.to_string().c_str());
+        SWSS_LOG_NOTICE("Monitoring session for prefix %s endpoint %s already exist", ipPrefix.to_string().c_str(), endpoint_addr.to_string().c_str());
         return;
     }
     else
@@ -1653,7 +1653,7 @@ void VNetRouteOrch::removeMonitoringSession(const string& vnet, const NextHopKey
     if (monitor_info_[vnet].find(ipPrefix) == monitor_info_[vnet].end() ||
         monitor_info_[vnet][ipPrefix].find(endpoint) == monitor_info_[vnet][ipPrefix].end())
     {
-        SWSS_LOG_ERROR("Monitor session for prefix %s endpoint %s does not exist", ipPrefix.to_string().c_str(), endpoint_addr.to_string().c_str());
+        SWSS_LOG_NOTICE("Monitor session for prefix %s endpoint %s does not exist", ipPrefix.to_string().c_str(), endpoint_addr.to_string().c_str());
     }
 
     string key = ipPrefix.to_string() + ":" + monitor_addr.to_string();
@@ -1669,7 +1669,7 @@ void VNetRouteOrch::setEndpointMonitor(const string& vnet, const map<NextHopKey,
     {
         NextHopKey nh = monitor.first;
         IpAddress monitor_ip = monitor.second;
-        if (monitoring =="custom")
+            if (monitoring == "custom")
         {
             if (monitor_info_[vnet].find(ipPrefix) == monitor_info_[vnet].end() ||
                 monitor_info_[vnet][ipPrefix].find(nh) == monitor_info_[vnet][ipPrefix].end())
@@ -1701,9 +1701,12 @@ void VNetRouteOrch::delEndpointMonitor(const string& vnet, NextHopGroupKey& next
     for (auto nhk: nhks)
     {
         IpAddress ip = nhk.ip_address;
-        if (is_custom_monitoring && monitor_info_[vnet][ipPrefix].find(nhk) != monitor_info_[vnet][ipPrefix].end())
+        if (is_custom_monitoring)
         {
-            removeMonitoringSession(vnet, nhk, monitor_info_[vnet][ipPrefix][nhk].monitor, ipPrefix);
+            if ( monitor_info_[vnet][ipPrefix].find(nhk) != monitor_info_[vnet][ipPrefix].end())
+            {
+                removeMonitoringSession(vnet, nhk, monitor_info_[vnet][ipPrefix][nhk].monitor, ipPrefix);
+            }
         }
         else
         {

@@ -28,7 +28,7 @@ enum class MONITOR_SESSION_STATE
 {
     MONITOR_SESSION_STATE_UP,
     MONITOR_SESSION_STATE_DOWN,
-    MONITOR_SESSION_STATE_INVALID,
+    MONITOR_SESSION_STATE_UNKNOWN,
 };
 const request_description_t vnet_request_description = {
     { REQ_T_STRING },
