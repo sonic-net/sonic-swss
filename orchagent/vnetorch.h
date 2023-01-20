@@ -25,6 +25,12 @@
 
 extern sai_object_id_t gVirtualRouterId;
 
+enum class MONITOR_SESSION_STATE
+{
+    MONITOR_SESSION_STATE_UP,
+    MONITOR_SESSION_STATE_DOWN,
+    MONITOR_SESSION_STATE_UNKNOWN,
+};
 const request_description_t vnet_request_description = {
     { REQ_T_STRING },
     {
@@ -35,6 +41,8 @@ const request_description_t vnet_request_description = {
         { "guid",               REQ_T_STRING },
         { "scope",              REQ_T_STRING },
         { "advertise_prefix",   REQ_T_BOOL},
+        { "overlay_dmac",       REQ_T_MAC_ADDRESS},
+
     },
     { "vxlan_tunnel", "vni" } // mandatory attributes
 };
@@ -60,6 +68,7 @@ struct VNetInfo
     set<string> peers;
     string scope;
     bool advertise_prefix;
+    swss::MacAddress overlay_dmac;
 };
 
 typedef map<VR_TYPE, sai_object_id_t> vrid_list_t;
@@ -87,7 +96,8 @@ public:
                peer_list_(vnetInfo.peers),
                vni_(vnetInfo.vni),
                scope_(vnetInfo.scope),
-               advertise_prefix_(vnetInfo.advertise_prefix)
+               advertise_prefix_(vnetInfo.advertise_prefix),
+               overlay_dmac_(vnetInfo.overlay_dmac)
                { }
 
     virtual bool updateObj(vector<sai_attribute_t>&) = 0;
@@ -122,6 +132,11 @@ public:
         return advertise_prefix_;
     }
 
+    swss::MacAddress getOverlayDMac() const
+    {
+        return overlay_dmac_;
+    }
+
     virtual ~VNetObject() noexcept(false) {};
 
 private:
@@ -130,6 +145,7 @@ private:
     uint32_t vni_;
     string scope_;
     bool advertise_prefix_;
+    swss::MacAddress overlay_dmac_; 
 };
 
 struct nextHop
@@ -277,6 +293,9 @@ const request_description_t vnet_route_description = {
         { "mac_address",            REQ_T_STRING },
         { "endpoint_monitor",       REQ_T_IP_LIST },
         { "profile",                REQ_T_STRING },
+        { "primary",                REQ_T_IP_LIST },
+        { "monitoring",             REQ_T_STRING },
+        { "adv_prefix",             REQ_T_IP_PREFIX },
     },
     { }
 };
@@ -321,9 +340,16 @@ struct BfdSessionInfo
     NextHopKey endpoint;
 };
 
+struct MonitorSessionInfo
+{
+    MONITOR_SESSION_STATE state;
+    IpAddress monitor;
+};
+
 typedef std::map<NextHopGroupKey, NextHopGroupInfo> VNetNextHopGroupInfoTable;
 typedef std::map<IpPrefix, NextHopGroupKey> VNetTunnelRouteTable;
 typedef std::map<IpAddress, BfdSessionInfo> BfdSessionTable;
+typedef std::map<IpPrefix, std::map<NextHopKey, MonitorSessionInfo>> MonitorSessionTable;
 typedef std::map<IpAddress, VNetNextHopInfo> VNetEndpointInfoTable;
 
 class VNetRouteOrch : public Orch2, public Subject, public Observer
@@ -356,8 +382,11 @@ private:
 
     void createBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr);
     void removeBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr);
-    void setEndpointMonitor(const string& vnet, const map<NextHopKey, IpAddress>& monitors, NextHopGroupKey& nexthops);
-    void delEndpointMonitor(const string& vnet, NextHopGroupKey& nexthops);
+    void createMonitoringSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr, IpPrefix& ipPrefix);
+    void removeMonitoringSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr, IpPrefix& ipPrefix);
+    void setEndpointMonitor(const string& vnet, const map<NextHopKey, IpAddress>& monitors, NextHopGroupKey& nexthops,
+                            const string& monitoring, IpPrefix& ipPrefix);
+    void delEndpointMonitor(const string& vnet, NextHopGroupKey& nexthops, IpPrefix& ipPrefix);
     void postRouteState(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& profile);
     void removeRouteState(const string& vnet, IpPrefix& ipPrefix);
     void addRouteAdvertisement(IpPrefix& ipPrefix, string& profile);
@@ -368,6 +397,7 @@ private:
 
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op, string& profile,
+                    const string& monitoring,
                     const std::map<NextHopKey, IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
 
     template<typename T>
@@ -382,9 +412,12 @@ private:
     std::map<std::string, VNetNextHopGroupInfoTable> syncd_nexthop_groups_;
     std::map<std::string, VNetTunnelRouteTable> syncd_tunnel_routes_;
     BfdSessionTable bfd_sessions_;
+    std::map<std::string, MonitorSessionTable> monitor_info_;
     std::map<std::string, VNetEndpointInfoTable> nexthop_info_;
     ProducerStateTable bfd_session_producer_;
+    unique_ptr<Table> monitor_session_producer_;
     shared_ptr<DBConnector> state_db_;
+    shared_ptr<DBConnector> app_db_;
     unique_ptr<Table> state_vnet_rt_tunnel_table_;
     unique_ptr<Table> state_vnet_rt_adv_table_;
 };
