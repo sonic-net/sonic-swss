@@ -1669,7 +1669,7 @@ void VNetRouteOrch::setEndpointMonitor(const string& vnet, const map<NextHopKey,
     {
         NextHopKey nh = monitor.first;
         IpAddress monitor_ip = monitor.second;
-            if (monitoring == "custom")
+        if (monitoring == "custom")
         {
             if (monitor_info_[vnet].find(ipPrefix) == monitor_info_[vnet].end() ||
                 monitor_info_[vnet][ipPrefix].find(nh) == monitor_info_[vnet][ipPrefix].end())
