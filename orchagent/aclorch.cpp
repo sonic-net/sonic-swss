@@ -2588,6 +2588,12 @@ bool AclTable::clear()
     for (auto& rulepair: rules)
     {
         auto& rule = *rulepair.second;
+
+        if (rule.hasCounter())
+        {
+            m_pAclOrch->deregisterFlexCounter(rule);
+        }
+
         bool suc = rule.remove();
         if (!suc)
         {

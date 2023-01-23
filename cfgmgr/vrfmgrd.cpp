@@ -64,7 +64,6 @@ int main(int argc, char **argv)
 
         isWarmStart = WarmStart::isWarmStart();
 
-        // TODO: add tables in stateDB which interface depends on to monitor list
         std::vector<Orch *> cfgOrchList = {&vrfmgr};
 
         swss::Select s;
