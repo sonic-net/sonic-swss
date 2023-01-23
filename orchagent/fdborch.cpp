@@ -309,7 +309,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
             /* Some Platforms like Broadcom, sends the BCM L2 delete call back as Aged event.
              * if the bridge port is already deleted, to clean up the stale entries,
              * consider it as FLUSH event */
-            SWSS_LOG_INFO("Flush event: Bridge port ID 0x%" PRIx64 " not available, considering age event as flush.",
+            SWSS_LOG_INFO("Flush event:Bridge port ID 0x%" PRIx64 " not available, considering age event as flush.",
                            bridge_port_id);
             type = SAI_FDB_EVENT_FLUSHED;
         } else {
