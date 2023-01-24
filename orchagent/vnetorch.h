@@ -34,6 +34,8 @@ const request_description_t vnet_request_description = {
         { "guid",               REQ_T_STRING },
         { "scope",              REQ_T_STRING },
         { "advertise_prefix",   REQ_T_BOOL},
+        { "overlay_dmac",       REQ_T_MAC_ADDRESS},
+
     },
     { "vxlan_tunnel", "vni" } // mandatory attributes
 };
@@ -59,6 +61,7 @@ struct VNetInfo
     set<string> peers;
     string scope;
     bool advertise_prefix;
+    swss::MacAddress overlay_dmac;
 };
 
 typedef map<VR_TYPE, sai_object_id_t> vrid_list_t;
@@ -86,7 +89,8 @@ public:
                peer_list_(vnetInfo.peers),
                vni_(vnetInfo.vni),
                scope_(vnetInfo.scope),
-               advertise_prefix_(vnetInfo.advertise_prefix)
+               advertise_prefix_(vnetInfo.advertise_prefix),
+               overlay_dmac_(vnetInfo.overlay_dmac)
                { }
 
     virtual bool updateObj(vector<sai_attribute_t>&) = 0;
@@ -121,6 +125,11 @@ public:
         return advertise_prefix_;
     }
 
+    swss::MacAddress getOverlayDMac() const
+    {
+        return overlay_dmac_;
+    }
+
     virtual ~VNetObject() noexcept(false) {};
 
 private:
@@ -129,6 +138,7 @@ private:
     uint32_t vni_;
     string scope_;
     bool advertise_prefix_;
+    swss::MacAddress overlay_dmac_; 
 };
 
 struct nextHop
@@ -282,6 +292,9 @@ const request_description_t vnet_route_description = {
         { "mac_address",            REQ_T_STRING },
         { "endpoint_monitor",       REQ_T_IP_LIST },
         { "profile",                REQ_T_STRING },
+        { "primary",                REQ_T_IP_LIST },
+        { "monitoring",             REQ_T_STRING },
+        { "adv_prefix",             REQ_T_IP_PREFIX },
     },
     { }
 };

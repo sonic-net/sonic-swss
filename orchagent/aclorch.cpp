@@ -2525,6 +2525,12 @@ bool AclTable::clear()
     for (auto& rulepair: rules)
     {
         auto& rule = *rulepair.second;
+
+        if (rule.hasCounter())
+        {
+            m_pAclOrch->deregisterFlexCounter(rule);
+        }
+
         bool suc = rule.remove();
         if (!suc)
         {
@@ -3089,6 +3095,7 @@ void AclOrch::initDefaultTableTypes()
         builder.withName(TABLE_TYPE_DROP)
             .withBindPointType(SAI_ACL_BIND_POINT_TYPE_PORT)
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TC))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS))
             .build()
     );
 

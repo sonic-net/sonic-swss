@@ -451,11 +451,6 @@ public:
     }
     inline void decSyncedNhgCount() { NhgBase::decSyncedCount(); }
 
-    /* Handling SAI status*/
-    using Orch::handleSaiCreateStatus;
-    using Orch::handleSaiRemoveStatus;
-    using Orch::parseHandleSaiStatusFailure;
-
 protected:
     /*
      * Map of synced next hop groups.

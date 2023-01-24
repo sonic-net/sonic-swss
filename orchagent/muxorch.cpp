@@ -49,6 +49,13 @@ extern sai_router_interface_api_t* sai_router_intfs_api;
 #define MUX_HW_STATE_UNKNOWN "unknown"
 #define MUX_HW_STATE_ERROR "error"
 
+
+static inline bool isIngressAcl()
+{
+    string platform = getenv("platform") ? getenv("platform") : "";
+    return platform != MLNX_PLATFORM_SUBSTRING;
+}
+
 const map<std::pair<MuxState, MuxState>, MuxStateChange> muxStateTransition =
 {
     { { MuxState::MUX_STATE_INIT, MuxState::MUX_STATE_ACTIVE}, MuxStateChange::MUX_STATE_INIT_ACTIVE
@@ -567,6 +574,8 @@ void MuxCable::updateNeighbor(NextHopKey nh, bool add)
 
 void MuxNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, bool add, MuxState state)
 {
+    uint32_t num_routes = 0;
+
     SWSS_LOG_INFO("Neigh %s on %s, add %d, state %d",
                    nh.ip_address.to_string().c_str(), nh.alias.c_str(), add, state);
 
@@ -592,6 +601,7 @@ void MuxNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, bool add, Mu
         case MuxState::MUX_STATE_ACTIVE:
             neighbors_[nh.ip_address] = gNeighOrch->getLocalNextHopId(nh);
             gNeighOrch->enableNeighbor(nh);
+            gRouteOrch->updateNextHopRoutes(nh, num_routes);
             break;
         case MuxState::MUX_STATE_STANDBY:
             neighbors_[nh.ip_address] = tunnelId;
@@ -785,7 +795,7 @@ MuxAclHandler::MuxAclHandler(sai_object_id_t port, string alias)
     SWSS_LOG_ENTER();
 
     // There is one handler instance per MUX port
-    string table_name = MUX_ACL_TABLE_NAME;
+    string table_name = isIngressAcl() ? MUX_ACL_TABLE_NAME : EGRESS_TABLE_DROP;
     string rule_name = MUX_ACL_RULE_NAME;
 
     port_ = port;
@@ -823,7 +833,7 @@ MuxAclHandler::MuxAclHandler(sai_object_id_t port, string alias)
 MuxAclHandler::~MuxAclHandler(void)
 {
     SWSS_LOG_ENTER();
-    string table_name = MUX_ACL_TABLE_NAME;
+    string table_name = isIngressAcl() ? MUX_ACL_TABLE_NAME : EGRESS_TABLE_DROP;
     string rule_name = MUX_ACL_RULE_NAME;
 
     SWSS_LOG_NOTICE("Un-Binding port %" PRIx64 "", port_);
@@ -869,7 +879,7 @@ void MuxAclHandler::createMuxAclTable(sai_object_id_t port, string strTable)
     auto dropType = gAclOrch->getAclTableType(TABLE_TYPE_DROP);
     assert(dropType);
     acl_table.validateAddType(*dropType);
-    acl_table.stage = ACL_STAGE_INGRESS;
+    acl_table.stage = isIngressAcl() ? ACL_STAGE_INGRESS : ACL_STAGE_EGRESS;
     gAclOrch->addAclTable(acl_table);
     bindAllPorts(acl_table);
 }
