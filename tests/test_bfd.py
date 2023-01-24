@@ -87,6 +87,8 @@ class TestBfd(object):
         self.setup_db(dvs)
 
         bfdSessions = self.get_exist_bfd_session()
+        print(len(bfdSessions))
+        print(bfdSessions)
 
         # Create BFD session
         fieldValues = {"local_addr": "2000::1"}
@@ -122,6 +124,10 @@ class TestBfd(object):
         # Remove the BFD session
         self.remove_bfd_session("default:default:2000::2")
         self.adb.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", session)
+        bfdSessions = self.get_exist_bfd_session()
+        print(len(bfdSessions))
+        print(bfdSessions)
+
 
     def test_addRemoveBfdSession_interface(self, dvs):
         self.setup_db(dvs)
@@ -167,6 +173,10 @@ class TestBfd(object):
         self.remove_bfd_session("default:Ethernet0:10.0.0.2")
         self.adb.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", session)
         time.sleep(2)
+        bfdSessions = self.get_exist_bfd_session()
+        print(len(bfdSessions))
+        print(bfdSessions)
+
 
     def test_addRemoveBfdSession_txrx_interval(self, dvs):
         self.setup_db(dvs)
