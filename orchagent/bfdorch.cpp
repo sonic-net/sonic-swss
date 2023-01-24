@@ -306,9 +306,11 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     attrs.emplace_back(attr);
     fvVector.emplace_back("type", session_type_lookup.at(bfd_session_type));
 
+    uint32_t local_discriminator = bfd_gen_id();
     attr.id = SAI_BFD_SESSION_ATTR_LOCAL_DISCRIMINATOR;
-    attr.value.u32 = bfd_gen_id();
+    attr.value.u32 = local_discriminator;
     attrs.emplace_back(attr);
+    fvVector.emplace_back("local_discriminator", to_string(local_discriminator));
 
     attr.id = SAI_BFD_SESSION_ATTR_UDP_SRC_PORT;
     attr.value.u32 = bfd_src_port();
