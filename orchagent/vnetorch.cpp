@@ -851,7 +851,8 @@ bool VNetRouteOrch::removeNextHopGroup(const string& vnet, const NextHopGroupKey
 template<>
 bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipPrefix,
                                                NextHopGroupKey& nexthops, string& op, string& profile,
-                                               const string& monitoring,
+                                               const string& monitoring, NextHopGroupKey& nexthops_secondary,
+                                               const IpPrefix& adv_prefix,
                                                const map<NextHopKey, IpAddress>& monitors)
 {
     SWSS_LOG_ENTER();
@@ -998,6 +999,11 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
 
             syncd_tunnel_routes_[vnet][ipPrefix] = nexthops;
             syncd_nexthop_groups_[vnet][nexthops].ref_count++;
+            if (adv_prefix.to_string() != ipPrefix.to_string())
+            {
+                prefix_to_adv_prefix_[ipPrefix] = adv_prefix;
+                adv_prefix_to_prefix[adv_prefix][ipPrefix] = false;
+            }
             vrf_obj->addRoute(ipPrefix, nexthops);
         }
         if (!profile.empty())
@@ -1060,6 +1066,16 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         vrf_obj->removeProfile(ipPrefix);
 
         removeRouteState(vnet, ipPrefix);
+        if (prefix_to_adv_prefix_.find(ipPrefix) != prefix_to_adv_prefix_.end())
+        {
+            auto adv_pfx = prefix_to_adv_prefix_[ipPrefix];
+            prefix_to_adv_prefix_.erase(ipPrefix);
+            adv_prefix_to_prefix[adv_pfx].erase(ipPrefix);
+            if (adv_prefix_to_prefix[adv_pfx].size() ==0)
+            {
+                adv_prefix_to_prefix.erase(adv_pfx);
+            }
+        }
     }
 
     return true;
@@ -1658,13 +1674,12 @@ void VNetRouteOrch::delEndpointMonitor(const string& vnet, NextHopGroupKey& next
         }
         else
         {
-            if (nexthop_info_[vnet].find(ip) != nexthop_info_[vnet].end()) {
+            if (nexthop_info_[vnet].find(ip) != nexthop_info_[vnet].end())
+            {
                 if (--nexthop_info_[vnet][ip].ref_count == 0)
                 {
                     IpAddress monitor_addr = nexthop_info_[vnet][ip].monitor_addr;
-                    {
-                        removeBfdSession(vnet, nhk, monitor_addr);
-                    }
+                    removeBfdSession(vnet, nhk, monitor_addr);
                 }
             }
         }
@@ -1677,11 +1692,12 @@ void VNetRouteOrch::delEndpointMonitor(const string& vnet, NextHopGroupKey& next
 
 void VNetRouteOrch::postRouteState(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& profile)
 {
-    const string state_db_key = vnet + state_db_key_delimiter + ipPrefix.to_string();
     vector<FieldValueTuple> fvVector;
 
     NextHopGroupInfo& nhg_info = syncd_nexthop_groups_[vnet][nexthops];
     string route_state = nhg_info.active_members.empty() ? "inactive" : "active";
+    const string state_db_key = vnet + state_db_key_delimiter + ipPrefix.to_string();
+
     string ep_str = "";
     int idx_ep = 0;
     for (auto nh_pair : nhg_info.active_members)
@@ -1690,21 +1706,24 @@ void VNetRouteOrch::postRouteState(const string& vnet, IpPrefix& ipPrefix, NextH
         ep_str += idx_ep == 0 ? nh.ip_address.to_string() : "," + nh.ip_address.to_string();
         idx_ep++;
     }
-
     fvVector.emplace_back("active_endpoints", ep_str);
     fvVector.emplace_back("state", route_state);
 
     state_vnet_rt_tunnel_table_->set(state_db_key, fvVector);
 
+    string adv_pfx_route_state = "";
+    IpPrefix& adv_pfx = ipPrefix;
+    checkAdvPrefix(ipPrefix, route_state, adv_pfx, adv_pfx_route_state);
+    SWSS_LOG_INFO(" add got  prefix  %s, and route state %s to use \n",adv_pfx.to_string().c_str(), adv_pfx_route_state.c_str());
     if (vnet_orch_->getAdvertisePrefix(vnet))
     {
-        if (route_state == "active")
+        if (adv_pfx_route_state == "active")
         {
-            addRouteAdvertisement(ipPrefix, profile);
+            addRouteAdvertisement(adv_pfx, profile);
         }
-        else
+        else if (adv_pfx_route_state == "inactive")
         {
-            removeRouteAdvertisement(ipPrefix);
+            removeRouteAdvertisement(adv_pfx);
         }
     }
 }
@@ -1713,7 +1732,71 @@ void VNetRouteOrch::removeRouteState(const string& vnet, IpPrefix& ipPrefix)
 {
     const string state_db_key = vnet + state_db_key_delimiter + ipPrefix.to_string();
     state_vnet_rt_tunnel_table_->del(state_db_key);
-    removeRouteAdvertisement(ipPrefix);
+
+    string adv_pfx_route_state;
+    string inactive = "inactive";
+    IpPrefix& adv_pfx = ipPrefix;
+    
+    checkAdvPrefix(ipPrefix, inactive, adv_pfx, adv_pfx_route_state);
+    SWSS_LOG_INFO(" remove got  prefix  %s, and route state %s to use \n",adv_pfx.to_string().c_str(), adv_pfx_route_state.c_str());
+    if (adv_pfx_route_state == "inactive")
+    {
+        removeRouteAdvertisement(adv_pfx);
+    }
+}
+
+void VNetRouteOrch::checkAdvPrefix(IpPrefix& ipPrefix, string& route_state, IpPrefix& ipPrefix_to_use, string& route_state_to_use)
+{
+    auto prefix_to_use = ipPrefix;
+    auto rt_state_to_use = route_state;
+    SWSS_LOG_INFO(" Recieved prefix  %s, and route state %s\n",ipPrefix.to_string().c_str(), route_state.c_str());
+    if (prefix_to_adv_prefix_.find(ipPrefix) != prefix_to_adv_prefix_.end())
+    {
+        auto adv_prefix = prefix_to_adv_prefix_[ipPrefix];
+        int active_count = 0;
+        //check the number of active routes.
+        for (auto it_pfx : adv_prefix_to_prefix[adv_prefix])
+        {
+            if (it_pfx.second == true)
+            {
+                active_count ++;
+            }
+        }
+        int old_count = active_count;
+        if (rt_state_to_use == "active" && adv_prefix_to_prefix[adv_prefix][ipPrefix] != true)
+        {
+            adv_prefix_to_prefix[adv_prefix][ipPrefix] = true;
+            active_count +=1;
+        } else if(rt_state_to_use == "inactive" && adv_prefix_to_prefix[adv_prefix][ipPrefix] != false)
+        {
+            adv_prefix_to_prefix[adv_prefix][ipPrefix] = false; 
+            active_count -=1;
+        }
+        // if the above change made atleast one active we advertise.
+        // or if the above change made the last iactive to inactive then we stop advertise.
+        // else no action.
+        SWSS_LOG_INFO(" old count  %d, and active count %d\n", old_count, active_count);
+
+        if (old_count == 0 && active_count == 1)
+        {
+            rt_state_to_use = "active";
+        }
+        else if(old_count == 1 && active_count == 0)
+        {
+            rt_state_to_use = "inactive";
+        }
+        else
+        {
+            rt_state_to_use = "";
+        }
+        prefix_to_use = adv_prefix;
+    }
+
+    ipPrefix_to_use = prefix_to_use;
+    route_state_to_use = rt_state_to_use;
+    SWSS_LOG_INFO(" Advertisement prefix  %s, and route state %s to use \n",ipPrefix_to_use.to_string().c_str(), route_state_to_use.c_str());
+    return;
+
 }
 
 void VNetRouteOrch::addRouteAdvertisement(IpPrefix& ipPrefix, string& profile)
@@ -1936,6 +2019,8 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     vector<IpAddress> primary_list;
     string monitoring;
     swss::IpPrefix adv_prefix;
+    bool got_adv_prefix = false;
+    bool has_priority_ep = false;
     for (const auto& name: request.getAttrFieldNames())
     {
         if (name == "endpoint")
@@ -1971,6 +2056,7 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         else if (name == "adv_prefix")
         {
             adv_prefix = request.getAttrIpPrefix(name);
+            got_adv_prefix = true;
         }
         else
         {
@@ -1996,7 +2082,12 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         SWSS_LOG_ERROR("Peer monitor size of %zu does not match endpoint size of %zu", monitor_list.size(), ip_list.size());
         return false;
     }
-    
+    if (!primary_list.empty() && monitor_list.empty())
+    {
+        SWSS_LOG_ERROR("Primary/backup behaviour cannot function without endpoint monitoring.");
+        return true;
+    }
+
     const std::string& vnet_name = request.getKeyString(0);
     auto ip_pfx = request.getKeyIpPrefix(1);
     auto op = request.getOperation();
@@ -2004,6 +2095,17 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     SWSS_LOG_INFO("VNET-RT '%s' op '%s' for pfx %s", vnet_name.c_str(),
                    op.c_str(), ip_pfx.to_string().c_str());
 
+    if (!primary_list.empty())
+    {
+        has_priority_ep = true;
+        SWSS_LOG_INFO("Handling Priority Tunnel with prefix %s", ip_pfx.to_string().c_str());
+    }
+    if (!got_adv_prefix)
+    {
+        adv_prefix = ip_pfx;
+    }
+    NextHopGroupKey nhg_primary("", true);
+    NextHopGroupKey nhg_secondary("", true);
     NextHopGroupKey nhg("", true);
     map<NextHopKey, IpAddress> monitors;
     for (size_t idx_ip = 0; idx_ip < ip_list.size(); idx_ip++)
@@ -2026,16 +2128,28 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
         }
 
         NextHopKey nh(ip, mac, vni, true);
-        nhg.add(nh);
         if (!monitor_list.empty())
         {
             monitors[nh] = monitor_list[idx_ip];
         }
+        if (has_priority_ep)
+        {
+            if (std::find(primary_list.begin(), primary_list.end(), ip) != primary_list.end())
+            {
+                // only add the primary endpoint ips.
+                nhg_primary.add(nh);
+            }
+            else
+            {
+                nhg_secondary.add(nh);
+            }
+        }
+        nhg.add(nh);
     }
 
     if (vnet_orch_->isVnetExecVrf())
     {
-        return doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, nhg, op, profile, monitoring, monitors);
+        return doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, (has_priority_ep == true) ? nhg_primary : nhg, op, profile, monitoring, nhg_secondary, adv_prefix, monitors);
     }
 
     return true;

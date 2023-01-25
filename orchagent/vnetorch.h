@@ -391,13 +391,14 @@ private:
     void removeRouteState(const string& vnet, IpPrefix& ipPrefix);
     void addRouteAdvertisement(IpPrefix& ipPrefix, string& profile);
     void removeRouteAdvertisement(IpPrefix& ipPrefix);
+    void checkAdvPrefix(IpPrefix& ipPrefix, string& route_state, IpPrefix& ipPrefix_to_use, string& route_state_to_use);
 
     void updateVnetTunnel(const BfdUpdate&);
     bool updateTunnelRoute(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op);
 
     template<typename T>
-    bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op, string& profile,
-                    const string& monitoring,
+bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op, string& profile,
+                    const string& monitoring, NextHopGroupKey& nexthops_secondary, const IpPrefix& adv_prefix,
                     const std::map<NextHopKey, IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
 
     template<typename T>
@@ -414,6 +415,8 @@ private:
     BfdSessionTable bfd_sessions_;
     std::map<std::string, MonitorSessionTable> monitor_info_;
     std::map<std::string, VNetEndpointInfoTable> nexthop_info_;
+    std::map<IpPrefix, IpPrefix> prefix_to_adv_prefix_;
+    std::map<IpPrefix, std::map<IpPrefix, bool>> adv_prefix_to_prefix;
     ProducerStateTable bfd_session_producer_;
     unique_ptr<Table> monitor_session_producer_;
     shared_ptr<DBConnector> state_db_;
