@@ -2423,8 +2423,7 @@ class TestVnetOrch(object):
         delete_vnet_entry(dvs, 'Vnet17')
         vnet_obj.check_del_vnet_entry(dvs, 'Vnet17')
 
-
-
+    '''
     Test 18 - Test for vxlan custom monitoring with adv_prefix-no monitoring temporary.
     '''
     def test_vnet_orch_18(self, dvs, testlog):
