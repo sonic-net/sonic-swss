@@ -170,9 +170,17 @@ void getCfgSwitchType(DBConnector *cfgDb, string &switch_type)
 {
     Table cfgDeviceMetaDataTable(cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
 
-    if (!cfgDeviceMetaDataTable.hget("localhost", "switch_type", switch_type))
+    try
     {
-        //Switch type is not configured. Consider it default = "switch" (regular switch)
+        if (!cfgDeviceMetaDataTable.hget("localhost", "switch_type", switch_type))
+        {
+            //Switch type is not configured. Consider it default = "switch" (regular switch)
+            switch_type = "switch";
+        }
+    }
+    catch(const std::system_error& e)
+    {
+        SWSS_LOG_ERROR("System error: %s", e.what());
         switch_type = "switch";
     }
 
@@ -196,64 +204,72 @@ bool getSystemPortConfigList(DBConnector *cfgDb, DBConnector *appDb, vector<sai_
         return true;
     }
 
-    string value;
-    if (!cfgDeviceMetaDataTable.hget("localhost", "switch_id", value))
+    try
     {
-        //VOQ switch id is not configured.
-        SWSS_LOG_ERROR("VOQ switch id is not configured");
-        return false;
+        string value;
+        if (!cfgDeviceMetaDataTable.hget("localhost", "switch_id", value))
+        {
+            //VOQ switch id is not configured.
+            SWSS_LOG_ERROR("VOQ switch id is not configured");
+            return false;
+        }
+
+        if (value.size())
+            gVoqMySwitchId = stoi(value);
+
+        if (gVoqMySwitchId < 0)
+        {
+            SWSS_LOG_ERROR("Invalid VOQ switch id %d configured", gVoqMySwitchId);
+            return false;
+        }
+
+        if (!cfgDeviceMetaDataTable.hget("localhost", "max_cores", value))
+        {
+            //VOQ max cores is not configured.
+            SWSS_LOG_ERROR("VOQ max cores is not configured");
+            return false;
+        }
+
+        if (value.size())
+            gVoqMaxCores = stoi(value);
+
+        if (gVoqMaxCores == 0)
+        {
+            SWSS_LOG_ERROR("Invalid VOQ max cores %d configured", gVoqMaxCores);
+            return false;
+        }
+
+        if (!cfgDeviceMetaDataTable.hget("localhost", "hostname", value))
+        {
+            // hostname is not configured.
+            SWSS_LOG_ERROR("Host name is not configured");
+            return false;
+        }
+        gMyHostName = value;
+
+        if (!gMyHostName.size())
+        {
+            SWSS_LOG_ERROR("Invalid host name %s configured", gMyHostName.c_str());
+            return false;
+        }
+
+        if (!cfgDeviceMetaDataTable.hget("localhost", "asic_name", value))
+        {
+            // asic_name is not configured.
+            SWSS_LOG_ERROR("Asic name is not configured");
+            return false;
+        }
+        gMyAsicName = value;
+
+        if (!gMyAsicName.size())
+        {
+            SWSS_LOG_ERROR("Invalid asic name %s configured", gMyAsicName.c_str());
+            return false;
+        }
     }
-
-    if (value.size())
-        gVoqMySwitchId = stoi(value);
-
-    if (gVoqMySwitchId < 0)
+    catch(const std::system_error& e)
     {
-        SWSS_LOG_ERROR("Invalid VOQ switch id %d configured", gVoqMySwitchId);
-        return false;
-    }
-
-    if (!cfgDeviceMetaDataTable.hget("localhost", "max_cores", value))
-    {
-        //VOQ max cores is not configured.
-        SWSS_LOG_ERROR("VOQ max cores is not configured");
-        return false;
-    }
-
-    if (value.size())
-        gVoqMaxCores = stoi(value);
-
-    if (gVoqMaxCores == 0)
-    {
-        SWSS_LOG_ERROR("Invalid VOQ max cores %d configured", gVoqMaxCores);
-        return false;
-    }
-
-    if (!cfgDeviceMetaDataTable.hget("localhost", "hostname", value))
-    {
-        // hostname is not configured.
-        SWSS_LOG_ERROR("Host name is not configured");
-        return false;
-    }
-    gMyHostName = value;
-
-    if (!gMyHostName.size())
-    {
-        SWSS_LOG_ERROR("Invalid host name %s configured", gMyHostName.c_str());
-        return false;
-    }
-
-    if (!cfgDeviceMetaDataTable.hget("localhost", "asic_name", value))
-    {
-        // asic_name is not configured.
-        SWSS_LOG_ERROR("Asic name is not configured");
-        return false;
-    }
-    gMyAsicName = value;
-
-    if (!gMyAsicName.size())
-    {
-        SWSS_LOG_ERROR("Invalid asic name %s configured", gMyAsicName.c_str());
+        SWSS_LOG_ERROR("System error: %s", e.what());
         return false;
     }
 
