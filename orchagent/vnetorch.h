@@ -396,8 +396,8 @@ private:
     bool updateTunnelRoute(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op);
 
     template<typename T>
-    bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op, string& profile,
-                    const string& monitoring,
+bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op, string& profile,
+                    const string& monitoring, NextHopGroupKey& nexthops_secondary, const IpPrefix& adv_prefix,
                     const std::map<NextHopKey, IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
 
     template<typename T>
@@ -414,6 +414,8 @@ private:
     BfdSessionTable bfd_sessions_;
     std::map<std::string, MonitorSessionTable> monitor_info_;
     std::map<std::string, VNetEndpointInfoTable> nexthop_info_;
+    std::map<IpPrefix, IpPrefix> prefix_to_adv_prefix_;
+    std::map<IpPrefix, int> adv_prefix_refcount_;
     ProducerStateTable bfd_session_producer_;
     unique_ptr<Table> monitor_session_producer_;
     shared_ptr<DBConnector> state_db_;

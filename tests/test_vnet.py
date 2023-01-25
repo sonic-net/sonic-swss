@@ -2424,36 +2424,201 @@ class TestVnetOrch(object):
         vnet_obj.check_del_vnet_entry(dvs, 'Vnet17')
 
     '''
-    Test 18 - Test for vxlan custom monitoring config.
+    Test 18 - Test for vxlan custom monitoring with adv_prefix-no monitoring temporary.
     '''
     def test_vnet_orch_18(self, dvs, testlog):
         vnet_obj = self.get_vnet_obj()
 
         tunnel_name = 'tunnel_18'
-
+        vnet_name = "Vnet18"
         vnet_obj.fetch_exist_entries(dvs)
 
         create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
-        create_vnet_entry(dvs, 'Vnet18', tunnel_name, '10009', "", overlay_dmac="22:33:33:44:44:66")
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '10009', "", advertise_prefix=True, overlay_dmac="22:33:33:44:44:66")
 
-        vnet_obj.check_vnet_entry(dvs, 'Vnet18')
-        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet18', '10009')
+        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '10009')
 
         vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
 
         vnet_obj.fetch_exist_entries(dvs)
-        create_vnet_routes(dvs, "100.100.1.1/32", 'Vnet18', '9.0.0.1,9.0.0.2,9.0.0.3', ep_monitor='9.1.0.1,9.1.0.2,9.1.0.3',primary ='9.0.0.1',monitoring='custom', adv_prefix='100.100.1.1/27')
+ 
+        #Add first ROute
+        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.0.0.1,9.0.0.2,9.0.0.3', ep_monitor='9.1.0.1,9.1.0.2,9.1.0.3', profile = "test_prf", primary ='9.0.0.1',monitoring='custom', adv_prefix='100.100.1.1/24')
+        vnet_obj.check_vnet_routes(dvs, vnet_name, '9.0.0.1', tunnel_name)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.0.0.1'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.1/24")
 
-        vnet_obj.check_custom_monitor_app_db(dvs, "100.100.1.1/32", "9.1.0.1", "vxlan", "22:33:33:44:44:66")
-        vnet_obj.check_custom_monitor_app_db(dvs, "100.100.1.1/32", "9.1.0.2", "vxlan", "22:33:33:44:44:66")
-        vnet_obj.check_custom_monitor_app_db(dvs, "100.100.1.1/32", "9.1.0.3", "vxlan", "22:33:33:44:44:66")
+        #add 2nd route
+        create_vnet_routes(dvs, "100.100.1.57/32", vnet_name, '5.0.0.1,5.0.0.2,5.0.0.3,5.0.0.4', ep_monitor='5.1.0.1,5.1.0.2,5.1.0.3,5.1.0.4', profile = "test_prf", primary ='5.0.0.1,5.0.0.2',monitoring='custom', adv_prefix='100.100.1.1/24')
+        vnet_obj.check_vnet_ecmp_routes(dvs, vnet_name, ['5.0.0.1','5.0.0.2'], tunnel_name)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.57/32", ['5.0.0.1,5.0.0.2'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.1/24")
+
+        #remove first route
+        delete_vnet_routes(dvs, "100.100.1.1/32", vnet_name)
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet12', ["100.100.1.1/32"])
+        check_remove_state_db_routes(dvs, 'Vnet12', "100.100.1.1/32")
+
+        #adv should still be up.
+        check_routes_advertisement(dvs, "100.100.1.1/24")
+
+        #add 3rd route
+        create_vnet_routes(dvs, "100.100.1.64/32", vnet_name, '5.0.0.1,5.0.0.2,5.0.0.3,5.0.0.4', ep_monitor='5.1.0.1,5.1.0.2,5.1.0.3,5.1.0.4', profile = "test_prf", primary ='5.0.0.1,5.0.0.2',monitoring='custom', adv_prefix='100.100.1.1/24')
+        vnet_obj.check_vnet_ecmp_routes(dvs, vnet_name, ['5.0.0.1','5.0.0.2'], tunnel_name)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.64/32", ['5.0.0.1,5.0.0.2'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.1/24")
+
+        #delete 2nd route
+        delete_vnet_routes(dvs, "100.100.1.57/32", vnet_name)
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet12', ["100.100.1.57/32"])
+        check_remove_state_db_routes(dvs, 'Vnet12', "100.100.1.57/32")
+ 
+        #adv should still be up.
+        check_routes_advertisement(dvs, "100.100.1.1/24")
+
+        #remove 3rd route
+        delete_vnet_routes(dvs, "100.100.1.64/32", vnet_name)
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet12', ["100.100.1.64/32"])
+        check_remove_state_db_routes(dvs, 'Vnet12', "100.100.1.64/32")
+
+        #adv should be gone.
+        check_remove_routes_advertisement(dvs, "100.100.1.1/24")
+
+    '''
+    Test 15 - Test for vxlan custom monitoring with adv_prefix-no monitoring IPV6. temporary
+    '''
+    def test_vnet_orch_19(self, dvs, testlog):
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_19'
+        vnet_name = "Vnet19"
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, 'fd:10::32')
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '10019', "", advertise_prefix=True, overlay_dmac="22:33:33:44:44:66")
+
+        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '10019')
+
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, 'fd:10::32')
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        #Add first Route
+        create_vnet_routes(dvs, "fd:10:10::1/128", vnet_name, 'fd:10:1::1,fd:10:1::2,fd:10:1::3', ep_monitor='fd:10:2::1,fd:10:2::2,fd:10:2::3', profile = "test_prf", primary ='fd:10:1::3',monitoring='custom', adv_prefix="fd:10:10::/64")
+        vnet_obj.check_vnet_routes(dvs, vnet_name, 'fd:10:1::3', tunnel_name)
+        check_state_db_routes(dvs, vnet_name, "fd:10:10::1/128", ['fd:10:1::3'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "fd:10:10::/64")
+
+        #add 2nd route
+        create_vnet_routes(dvs, "fd:10:10::21/128", vnet_name, 'fd:11:1::1,fd:11:1::2,fd:11:1::3,fd:11:1::4', ep_monitor='fd:11:2::1,fd:11:2::2,fd:11:2::3,fd:11:2::4', profile = "test_prf", primary ='fd:11:1::1,fd:11:1::2',monitoring='custom', adv_prefix='fd:10:10::/64')
+        vnet_obj.check_vnet_ecmp_routes(dvs, vnet_name, ['fd:11:1::1','fd:11:1::2'], tunnel_name)
+        check_state_db_routes(dvs, vnet_name, "fd:10:10::21/128", ['fd:11:1::1,fd:11:1::2'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "fd:10:10::/64")
+
+        #remove first route
+        delete_vnet_routes(dvs, "fd:10:10::1/128", vnet_name)
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet12', ["fd:10:10::1/128"])
+        check_remove_state_db_routes(dvs, 'Vnet12', "fd:10:10::1/128")
+
+        #adv should still be up.
+        check_routes_advertisement(dvs, "fd:10:10::/64")
+
+        #add 3rd route
+        create_vnet_routes(dvs, "fd:10:10::31/128", vnet_name, 'fd:11:1::1,fd:11:1::2,fd:11:1::3,fd:11:1::4', ep_monitor='fd:11:2::1,fd:11:2::2,fd:11:2::3,fd:11:2::4', profile = "test_prf", primary ='fd:11:1::1,fd:11:1::2',monitoring='custom', adv_prefix='fd:10:10::/64')
+        vnet_obj.check_vnet_ecmp_routes(dvs, vnet_name, ['fd:11:1::1','fd:11:1::2'], tunnel_name)
+        check_state_db_routes(dvs, vnet_name, "fd:10:10::31/128", ['fd:11:1::1,fd:11:1::2'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "fd:10:10::/64")
+
+        #delete 2nd route
+        delete_vnet_routes(dvs, "fd:10:10::21/128", vnet_name)
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet12', ["fd:10:10::21/128"])
+        check_remove_state_db_routes(dvs, 'Vnet12', "fd:10:10::21/128")
+ 
+        #adv should still be up.
+        check_routes_advertisement(dvs, "fd:10:10::/64")
+
+        #remove 3rd route
+        delete_vnet_routes(dvs, "fd:10:10::31/128", vnet_name)
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet12', ["fd:10:10::31/128"])
+        check_remove_state_db_routes(dvs, 'Vnet12', "fd:10:10::31/128")
+
+        #adv should be gone.
+        check_remove_routes_advertisement(dvs, "fd:10:10::/64")
+
+    '''
+    Test 20 - Test for vxlan custom monitoring with adv_prefix-no monitoring temporary. Add route twice and change nexthops case
+    '''
+    def test_vnet_orch_20(self, dvs, testlog):
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_20'
+        vnet_name = "Vnet20"
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '10009', "", advertise_prefix=True, overlay_dmac="22:33:33:44:44:66")
+
+        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '10009')
+
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+
+        vnet_obj.fetch_exist_entries(dvs)
+        import pdb
+        pdb.set_trace()
         
-        delete_vnet_routes(dvs, "100.100.1.1/32", 'Vnet18')
-        
-        vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.1/32", "9.1.0.1")
-        vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.1/32", "9.1.0.2")
-        vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.1/32", "9.1.0.3")
-        
+        #Add first Route
+        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.0.0.1,9.0.0.2,9.0.0.3', ep_monitor='9.1.0.1,9.1.0.2,9.1.0.3', profile = "test_prf", primary ='9.0.0.1',monitoring='custom', adv_prefix='100.100.1.1/24')
+        vnet_obj.check_vnet_routes(dvs, vnet_name, '9.0.0.1', tunnel_name)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.0.0.1'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.1/24")
+
+        #Add first Route again
+        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.0.0.1,9.0.0.2,9.0.0.3', ep_monitor='9.1.0.1,9.1.0.2,9.1.0.3', profile = "test_prf", primary ='9.0.0.1',monitoring='custom', adv_prefix='100.100.1.1/24')
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.0.0.1'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.1/24")
+
+        #remove first route
+        delete_vnet_routes(dvs, "100.100.1.1/32", vnet_name)
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet12', ["100.100.1.1/32"])
+        check_remove_state_db_routes(dvs, 'Vnet12', "100.100.1.1/32")
+
+        #adv should be gone.
+        check_remove_routes_advertisement(dvs, "100.100.1.1/24")
+
+        #add 2nd route
+        create_vnet_routes(dvs, "100.100.1.57/32", vnet_name, '5.0.0.1,5.0.0.2,5.0.0.3,5.0.0.4', ep_monitor='5.1.0.1,5.1.0.2,5.1.0.3,5.1.0.4', profile = "test_prf", primary ='5.0.0.1,5.0.0.2',monitoring='custom', adv_prefix='100.100.1.1/24')
+        route2 , _ = vnet_obj.check_vnet_ecmp_routes(dvs, vnet_name, ['5.0.0.1','5.0.0.2'], tunnel_name)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.57/32", ['5.0.0.1,5.0.0.2'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.1/24")
+
+ 
+         #modify  2nd route next hops
+        create_vnet_routes(dvs, "100.100.1.57/32", vnet_name, '5.0.0.5,5.0.0.6,5.0.0.7,5.0.0.8', ep_monitor='5.1.0.1,5.1.0.2,5.1.0.3,5.1.0.4', profile = "test_prf", primary ='5.0.0.5,5.0.0.6',monitoring='custom', adv_prefix='100.100.1.1/24')
+        vnet_obj.check_vnet_ecmp_routes(dvs, vnet_name, ['5.0.0.5','5.0.0.6'], tunnel_name, route_ids=route2)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.57/32", ['5.0.0.5,5.0.0.6'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.1/24")
+
+        #delete 2nd route
+        delete_vnet_routes(dvs, "100.100.1.57/32", vnet_name)
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet12', ["100.100.1.57/32"])
+        check_remove_state_db_routes(dvs, 'Vnet12', "100.100.1.57/32")
+ 
+        #adv should be gone.
+        check_remove_routes_advertisement(dvs, "100.100.1.1/24")
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():
