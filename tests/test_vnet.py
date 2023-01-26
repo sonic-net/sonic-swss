@@ -2489,7 +2489,7 @@ class TestVnetOrch(object):
         check_remove_routes_advertisement(dvs, "100.100.1.1/24")
 
     '''
-    Test 15 - Test for vxlan custom monitoring with adv_prefix-no monitoring IPV6. temporary
+    Test 19 - Test for vxlan custom monitoring with adv_prefix-no monitoring IPV6. temporary
     '''
     def test_vnet_orch_19(self, dvs, testlog):
         vnet_obj = self.get_vnet_obj()
@@ -2572,9 +2572,7 @@ class TestVnetOrch(object):
         vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
 
         vnet_obj.fetch_exist_entries(dvs)
-        import pdb
-        pdb.set_trace()
-        
+
         #Add first Route
         create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.0.0.1,9.0.0.2,9.0.0.3', ep_monitor='9.1.0.1,9.1.0.2,9.1.0.3', profile = "test_prf", primary ='9.0.0.1',monitoring='custom', adv_prefix='100.100.1.1/24')
         vnet_obj.check_vnet_routes(dvs, vnet_name, '9.0.0.1', tunnel_name)
@@ -2602,7 +2600,13 @@ class TestVnetOrch(object):
         check_state_db_routes(dvs, vnet_name, "100.100.1.57/32", ['5.0.0.1,5.0.0.2'])
         # The default Vnet setting does not advertise prefix
         check_routes_advertisement(dvs, "100.100.1.1/24")
-
+ 
+        #modify  2nd route next hops to secondary
+        create_vnet_routes(dvs, "100.100.1.57/32", vnet_name, '5.0.0.1,5.0.0.2,5.0.0.3,5.0.0.4', ep_monitor='5.1.0.1,5.1.0.2,5.1.0.3,5.1.0.4', profile = "test_prf", primary ='5.0.0.3,5.0.0.4',monitoring='custom', adv_prefix='100.100.1.1/24')
+        vnet_obj.check_vnet_ecmp_routes(dvs, vnet_name, ['5.0.0.3','5.0.0.4'], tunnel_name, route_ids=route2)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.57/32", ['5.0.0.3,5.0.0.4'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.1/24")
  
          #modify  2nd route next hops
         create_vnet_routes(dvs, "100.100.1.57/32", vnet_name, '5.0.0.5,5.0.0.6,5.0.0.7,5.0.0.8', ep_monitor='5.1.0.1,5.1.0.2,5.1.0.3,5.1.0.4', profile = "test_prf", primary ='5.0.0.5,5.0.0.6',monitoring='custom', adv_prefix='100.100.1.1/24')
