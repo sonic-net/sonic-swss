@@ -2563,33 +2563,33 @@ class TestVnetOrch(object):
         vnet_name = "Vnet20"
         vnet_obj.fetch_exist_entries(dvs)
 
-        create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
-        create_vnet_entry(dvs, vnet_name, tunnel_name, '10009', "", advertise_prefix=True, overlay_dmac="22:33:33:44:44:66")
+        create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.3')
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '10039', "", advertise_prefix=True, overlay_dmac="22:33:33:44:44:66")
 
         vnet_obj.check_vnet_entry(dvs, vnet_name)
-        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '10009')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '10039')
 
-        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.3')
 
         vnet_obj.fetch_exist_entries(dvs)
 
         #Add first Route
-        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.0.0.1,9.0.0.2,9.0.0.3', ep_monitor='9.1.0.1,9.1.0.2,9.1.0.3', profile = "test_prf", primary ='9.0.0.1',monitoring='custom', adv_prefix='100.100.1.0/24')
-        vnet_obj.check_vnet_routes(dvs, vnet_name, '9.0.0.1', tunnel_name)
-        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.0.0.1'])
+        create_vnet_routes(dvs, "100.100.1.11/32", vnet_name, '19.0.0.1,19.0.0.2,19.0.0.3', ep_monitor='19.1.0.1,19.1.0.2,19.1.0.3', profile = "test_prf", primary ='19.0.0.1',monitoring='custom', adv_prefix='100.100.1.0/24')
+        vnet_obj.check_vnet_routes(dvs, vnet_name, '19.0.0.1', tunnel_name)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.11/32", ['19.0.0.1'])
         # The default Vnet setting does not advertise prefix
         check_routes_advertisement(dvs, "100.100.1.0/24")
 
         #Add first Route again
-        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.0.0.1,9.0.0.2,9.0.0.3', ep_monitor='9.1.0.1,9.1.0.2,9.1.0.3', profile = "test_prf", primary ='9.0.0.1',monitoring='custom', adv_prefix='100.100.1.0/24')
-        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.0.0.1'])
+        create_vnet_routes(dvs, "100.100.1.11/32", vnet_name, '19.0.0.1,19.0.0.2,19.0.0.3', ep_monitor='19.1.0.1,19.1.0.2,19.1.0.3', profile = "test_prf", primary ='19.0.0.1',monitoring='custom', adv_prefix='100.100.1.0/24')
+        check_state_db_routes(dvs, vnet_name, "100.100.1.11/32", ['19.0.0.1'])
         # The default Vnet setting does not advertise prefix
         check_routes_advertisement(dvs, "100.100.1.0/24")
 
         #remove first route
-        delete_vnet_routes(dvs, "100.100.1.1/32", vnet_name)
-        vnet_obj.check_del_vnet_routes(dvs, 'Vnet12', ["100.100.1.1/32"])
-        check_remove_state_db_routes(dvs, 'Vnet12', "100.100.1.1/32")
+        delete_vnet_routes(dvs, "100.100.1.11/32", vnet_name)
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet12', ["100.100.1.11/32"])
+        check_remove_state_db_routes(dvs, 'Vnet12', "100.100.1.11/32")
 
         #adv should be gone.
         check_remove_routes_advertisement(dvs, "100.100.1.0/24")
