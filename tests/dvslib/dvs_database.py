@@ -6,6 +6,7 @@ FIXME:
 """
 from typing import Dict, List
 from swsscommon import swsscommon
+from swsscommon.swsscommon import SonicDBConfig
 from dvslib.dvs_common import wait_for_result, PollingConfig
 
 
@@ -21,6 +22,12 @@ class DVSDatabase:
                 redis (e.g. UNIX socket, TCP socket, etc.).
         """
         self.db_connection = swsscommon.DBConnector(db_id, connector, 0)
+        self._separator = SonicDBConfig.getSeparator(self.db_connection)
+
+    @property
+    def separator(self) -> str:
+        """Get DB separator."""
+        return self._separator
 
     def create_entry(self, table_name: str, key: str, entry: Dict[str, str]) -> None:
         """Add the mapping {`key` -> `entry`} to the specified table.
