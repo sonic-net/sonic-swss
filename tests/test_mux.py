@@ -551,7 +551,8 @@ class TestMuxTunnelBase():
         self.set_mux_state(appdb, "Ethernet0", "active")
         self.add_neighbor(dvs, neigh_ip, mac)
         self.add_neighbor(dvs, neigh_ipv6, mac)
-        time.sleep(1)
+        asicdb.wait_for_entry(self.ASIC_NEIGH_TABLE, neigh_ip)
+        asicdb.wait_for_entry(self.ASIC_NEIGH_TABLE, neigh_ipv6)
         dvs.runcmd(
             "vtysh -c \"configure terminal\" -c \"ip route " + nh_route +
             " " + neigh_ip + "\""
@@ -561,6 +562,7 @@ class TestMuxTunnelBase():
             " " + neigh_ipv6 + "\""
         )
         apdb.wait_for_entry("ROUTE_TABLE", nh_route)
+
         rtkeys = dvs_route.check_asicdb_route_entries([nh_route])
         rtkeys_ipv6 = dvs_route.check_asicdb_route_entries([nh_route_ipv6])
         self.check_nexthop_in_asic_db(asicdb, rtkeys[0])
@@ -573,7 +575,9 @@ class TestMuxTunnelBase():
 
         self.del_neighbor(dvs, neigh_ip)
         self.del_neighbor(dvs, neigh_ipv6)
-        time.sleep(1)
+        asicdb.wait_for_deleted_entry(self.ASIC_NEIGH_TABLE, neigh_ip)
+        asicdb.wait_for_deleted_entry(self.ASIC_NEIGH_TABLE, neigh_ipv6)
+
         self.check_nexthop_in_asic_db(asicdb, rtkeys[0], True)
         self.check_nexthop_in_asic_db(asicdb, rtkeys_ipv6[0], True)
 
@@ -584,7 +588,9 @@ class TestMuxTunnelBase():
 
         self.add_neighbor(dvs, neigh_ip, mac)
         self.add_neighbor(dvs, neigh_ipv6, mac)
-        time.sleep(1)
+        asicdb.wait_for_entry(self.ASIC_NEIGH_TABLE, neigh_ip)
+        asicdb.wait_for_entry(self.ASIC_NEIGH_TABLE, neigh_ipv6)
+
         self.check_nexthop_in_asic_db(asicdb, rtkeys[0])
         self.check_nexthop_in_asic_db(asicdb, rtkeys_ipv6[0])
         dvs.runcmd(
