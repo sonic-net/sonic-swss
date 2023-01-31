@@ -551,6 +551,7 @@ class TestMuxTunnelBase():
         self.set_mux_state(appdb, "Ethernet0", "active")
         self.add_neighbor(dvs, neigh_ip, mac)
         self.add_neighbor(dvs, neigh_ipv6, mac)
+        time.sleep(1)
         dvs.runcmd(
             "vtysh -c \"configure terminal\" -c \"ip route " + nh_route +
             " " + neigh_ip + "\""
@@ -572,6 +573,7 @@ class TestMuxTunnelBase():
 
         self.del_neighbor(dvs, neigh_ip)
         self.del_neighbor(dvs, neigh_ipv6)
+        time.sleep(1)
         self.check_nexthop_in_asic_db(asicdb, rtkeys[0], True)
         self.check_nexthop_in_asic_db(asicdb, rtkeys_ipv6[0], True)
 
@@ -582,6 +584,7 @@ class TestMuxTunnelBase():
 
         self.add_neighbor(dvs, neigh_ip, mac)
         self.add_neighbor(dvs, neigh_ipv6, mac)
+        time.sleep(1)
         self.check_nexthop_in_asic_db(asicdb, rtkeys[0])
         self.check_nexthop_in_asic_db(asicdb, rtkeys_ipv6[0])
         dvs.runcmd(
