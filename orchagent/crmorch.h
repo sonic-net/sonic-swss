@@ -34,6 +34,7 @@ enum class CrmResourceType
     CRM_SRV6_MY_SID_ENTRY,
     CRM_SRV6_NEXTHOP,
     CRM_NEXTHOP_GROUP_MAP,
+    CRM_EXT_TABLE,
 };
 
 enum class CrmThresholdType
@@ -63,6 +64,10 @@ public:
     void incCrmAclTableUsedCounter(CrmResourceType resource, sai_object_id_t tableId);
     // Decrement "used" counter for the per ACL table CRM resources (ACL entry/counter)
     void decCrmAclTableUsedCounter(CrmResourceType resource, sai_object_id_t tableId);
+    // Increment "used" counter for the EXT table CRM resources
+    void incCrmExtTableUsedCounter(CrmResourceType resource, std::string table_name);
+    // Decrement "used" counter for the EXT table CRM resources
+    void decCrmExtTableUsedCounter(CrmResourceType resource, std::string table_name);
 
 private:
     std::shared_ptr<swss::DBConnector> m_countersDb = nullptr;
@@ -105,4 +110,5 @@ private:
     void checkCrmThresholds();
     std::string getCrmAclKey(sai_acl_stage_t stage, sai_acl_bind_point_type_t bindPoint);
     std::string getCrmAclTableKey(sai_object_id_t id);
+    std::string getCrmP4rtTableKey(std::string table_name);
 };

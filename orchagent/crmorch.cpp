@@ -48,6 +48,7 @@ const map<CrmResourceType, string> crmResTypeNameMap =
     { CrmResourceType::CRM_SRV6_MY_SID_ENTRY, "SRV6_MY_SID_ENTRY" },
     { CrmResourceType::CRM_SRV6_NEXTHOP, "SRV6_NEXTHOP" },
     { CrmResourceType::CRM_NEXTHOP_GROUP_MAP, "NEXTHOP_GROUP_MAP" },
+    { CrmResourceType::CRM_EXT_TABLE, "EXTENSION_TABLE" },
 };
 
 const map<CrmResourceType, uint32_t> crmResSaiAvailAttrMap =
@@ -93,6 +94,7 @@ const map<CrmResourceType, sai_object_type_t> crmResSaiObjAttrMap =
     { CrmResourceType::CRM_SRV6_MY_SID_ENTRY, SAI_OBJECT_TYPE_MY_SID_ENTRY },
     { CrmResourceType::CRM_SRV6_NEXTHOP, SAI_OBJECT_TYPE_NEXT_HOP },
     { CrmResourceType::CRM_NEXTHOP_GROUP_MAP, SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MAP },
+    { CrmResourceType::CRM_EXT_TABLE, SAI_OBJECT_TYPE_GENERIC_PROGRAMMABLE },
 };
 
 const map<CrmResourceType, sai_attr_id_t> crmResAddrFamilyAttrMap =
@@ -134,6 +136,7 @@ const map<string, CrmResourceType> crmThreshTypeResMap =
     { "srv6_my_sid_entry_threshold_type", CrmResourceType::CRM_SRV6_MY_SID_ENTRY },
     { "srv6_nexthop_threshold_type", CrmResourceType::CRM_SRV6_NEXTHOP },
     { "nexthop_group_map_threshold_type", CrmResourceType::CRM_NEXTHOP_GROUP_MAP },
+    { "extension_table_threshold_type", CrmResourceType::CRM_EXT_TABLE },
 };
 
 const map<string, CrmResourceType> crmThreshLowResMap =
@@ -159,6 +162,7 @@ const map<string, CrmResourceType> crmThreshLowResMap =
     {"srv6_my_sid_entry_low_threshold", CrmResourceType::CRM_SRV6_MY_SID_ENTRY },
     {"srv6_nexthop_low_threshold", CrmResourceType::CRM_SRV6_NEXTHOP },
     {"nexthop_group_map_low_threshold", CrmResourceType::CRM_NEXTHOP_GROUP_MAP },
+    {"extension_table_low_threshold", CrmResourceType::CRM_EXT_TABLE },
 };
 
 const map<string, CrmResourceType> crmThreshHighResMap =
@@ -184,6 +188,7 @@ const map<string, CrmResourceType> crmThreshHighResMap =
     {"srv6_my_sid_entry_high_threshold", CrmResourceType::CRM_SRV6_MY_SID_ENTRY },
     {"srv6_nexthop_high_threshold", CrmResourceType::CRM_SRV6_NEXTHOP },
     {"nexthop_group_map_high_threshold", CrmResourceType::CRM_NEXTHOP_GROUP_MAP },
+    {"extension_table_high_threshold", CrmResourceType::CRM_EXT_TABLE },
 };
 
 const map<string, CrmThresholdType> crmThreshTypeMap =
@@ -216,6 +221,7 @@ const map<string, CrmResourceType> crmAvailCntsTableMap =
     { "crm_stats_srv6_my_sid_entry_available", CrmResourceType::CRM_SRV6_MY_SID_ENTRY },
     { "crm_stats_srv6_nexthop_available", CrmResourceType::CRM_SRV6_NEXTHOP },
     { "crm_stats_nexthop_group_map_available", CrmResourceType::CRM_NEXTHOP_GROUP_MAP },
+    { "crm_stats_extension_table_available", CrmResourceType::CRM_EXT_TABLE },
 };
 
 const map<string, CrmResourceType> crmUsedCntsTableMap =
@@ -241,6 +247,7 @@ const map<string, CrmResourceType> crmUsedCntsTableMap =
     { "crm_stats_srv6_my_sid_entry_used", CrmResourceType::CRM_SRV6_MY_SID_ENTRY },
     { "crm_stats_srv6_nexthop_used", CrmResourceType::CRM_SRV6_NEXTHOP },
     { "crm_stats_nexthop_group_map_used", CrmResourceType::CRM_NEXTHOP_GROUP_MAP },
+    { "crm_stats_extension_table_used", CrmResourceType::CRM_EXT_TABLE },
 };
 
 CrmOrch::CrmOrch(DBConnector *db, string tableName):
@@ -502,6 +509,36 @@ void CrmOrch::decCrmAclTableUsedCounter(CrmResourceType resource, sai_object_id_
     }
 }
 
+void CrmOrch::incCrmExtTableUsedCounter(CrmResourceType resource, std::string table_name)
+{
+    SWSS_LOG_ENTER();
+
+    try
+    {
+        m_resourcesMap.at(resource).countersMap[getCrmP4rtTableKey(table_name)].usedCounter++;
+    }
+    catch (...)
+    {
+        SWSS_LOG_ERROR("Failed to increment \"used\" counter for the EXT %s CRM resource.", table_name.c_str());
+        return;
+    }
+}
+
+void CrmOrch::decCrmExtTableUsedCounter(CrmResourceType resource, std::string table_name)
+{
+    SWSS_LOG_ENTER();
+
+    try
+    {
+        m_resourcesMap.at(resource).countersMap[getCrmP4rtTableKey(table_name)].usedCounter--;
+    }
+    catch (...)
+    {
+        SWSS_LOG_ERROR("Failed to decrement \"used\" counter for the EXT %s CRM resource.", table_name.c_str());
+        return;
+    }
+}
+
 void CrmOrch::doTask(SelectableTimer &timer)
 {
     SWSS_LOG_ENTER();
@@ -673,6 +710,33 @@ void CrmOrch::getResAvailableCounters()
                 break;
             }
 
+            case CrmResourceType::CRM_EXT_TABLE:
+            {
+                for (auto &cnt : res.second.countersMap)
+                {
+                    std::string table_name = cnt.first;
+                    sai_object_type_t objType = crmResSaiObjAttrMap.at(res.first);
+                    sai_attribute_t attr;
+                    uint64_t availCount = 0;
+
+                    attr.id = SAI_GENERIC_PROGRAMMABLE_ATTR_OBJECT_NAME;
+                    attr.value.s8list.count = (uint32_t)table_name.size();
+                    attr.value.s8list.list = (int8_t *)const_cast<char *>(table_name.c_str());
+
+                    sai_status_t status = sai_object_type_get_availability(
+                                            gSwitchId, objType, 1, &attr, &availCount);
+                    if (status != SAI_STATUS_SUCCESS)
+                    {
+                        SWSS_LOG_ERROR("Failed to get EXT table resource count %s , rv:%d",
+       	                                table_name.c_str(), status);
+                        break;
+                    }
+
+                    cnt.second.availableCounter = static_cast<uint32_t>(availCount);
+                }
+                break;
+            }
+
             default:
                 SWSS_LOG_ERROR("Failed to get CRM resource type %u. Unknown resource type.\n", static_cast<uint32_t>(res.first));
                 return;
@@ -837,5 +901,12 @@ string CrmOrch::getCrmAclTableKey(sai_object_id_t id)
 {
     std::stringstream ss;
     ss << "ACL_TABLE_STATS:" << "0x" << std::hex << id;
+    return ss.str();
+}
+
+string CrmOrch::getCrmP4rtTableKey(std::string table_name)
+{
+    std::stringstream ss;
+    ss << "EXT_TABLE_STATS:" << table_name;
     return ss.str();
 }
