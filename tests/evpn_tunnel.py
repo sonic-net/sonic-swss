@@ -697,6 +697,18 @@ class VxlanTunnel(object):
         
         self.bridgeport_map[dip] = ret[0]
 
+    def check_vxlan_dip_tunnel_not_created(self, dvs, vtep_name, src_ip, dip):
+        state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+
+        expected_state_attributes = {
+            'src_ip': src_ip,
+            'dst_ip': dip,
+            'tnl_src': 'EVPN',
+        }
+
+        ret = self.helper.get_key_with_attr(state_db, 'VXLAN_TUNNEL_TABLE', expected_state_attributes)
+        assert len(ret) == 0, "Tunnel Statetable entry created"
+
     def check_vlan_extension_delete(self, dvs, vlan_name, dip):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
@@ -777,6 +789,32 @@ class VxlanTunnel(object):
         assert len(ret) == 1, "More than 1 L2MC group member created"
         self.l2mcgroup_member_map[dip+vlan_name] =  ret[0]
         
+    def check_vlan_extension_not_created_p2mp(self, dvs, vlan_name, sip, dip):
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        tbl = swsscommon.Table(asic_db, 'ASIC_STATE:SAI_OBJECT_TYPE_VLAN')
+        expected_vlan_attributes = {
+            'SAI_VLAN_ATTR_VLAN_ID': vlan_name,
+        }
+        ret = self.helper.get_key_with_attr(asic_db, 'ASIC_STATE:SAI_OBJECT_TYPE_VLAN', expected_vlan_attributes)
+        assert len(ret) > 0, "VLAN entry not created"
+        assert len(ret) == 1, "More than 1 VLAN entry created"
+
+        self.vlan_id_map[vlan_name] = ret[0]
+        status, fvs = tbl.get(self.vlan_id_map[vlan_name])
+
+        print(fvs)
+
+        uuc_flood_type = None
+        bc_flood_type = None
+        uuc_flood_group = None
+        bc_flood_group = None
+
+        for attr,value in fvs:
+            assert attr != 'SAI_VLAN_ATTR_UNKNOWN_UNICAST_FLOOD_CONTROL_TYPE', "Unknown unicast flood control type is set"
+            assert attr != 'SAI_VLAN_ATTR_BROADCAST_FLOOD_CONTROL_TYPE', "Broadcast flood control type is set"
+            assert attr != 'SAI_VLAN_ATTR_UNKNOWN_UNICAST_FLOOD_GROUP', "Unknown unicast flood group is set"
+            assert attr != 'SAI_VLAN_ATTR_UNKNOWN_UNICAST_FLOOD_CONTROL_TYPE', "Broadcast flood group is set"
+
     def check_vxlan_tunnel_entry(self, dvs, tunnel_name, vnet_name, vni_id):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 

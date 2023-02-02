@@ -46,33 +46,33 @@ void handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, boo
 
 int main(int argc, char **argv)
 {
-    Logger::linkToDbNative("portsyncd");
-    int opt;
-
-    while ((opt = getopt(argc, argv, "v:h")) != -1 )
-    {
-        switch (opt)
-        {
-        case 'h':
-            usage();
-            return 1;
-        default: /* '?' */
-            usage();
-            return EXIT_FAILURE;
-        }
-    }
-
-    DBConnector cfgDb("CONFIG_DB", 0);
-    DBConnector appl_db("APPL_DB", 0);
-    DBConnector state_db("STATE_DB", 0);
-    ProducerStateTable p(&appl_db, APP_PORT_TABLE_NAME);
-
-    WarmStart::initialize("portsyncd", "swss");
-    WarmStart::checkWarmStart("portsyncd", "swss");
-    const bool warm = WarmStart::isWarmStart();
-
     try
     {
+        Logger::linkToDbNative("portsyncd");
+        int opt;
+
+        while ((opt = getopt(argc, argv, "v:h")) != -1 )
+        {
+            switch (opt)
+            {
+            case 'h':
+                usage();
+                return 1;
+            default: /* '?' */
+                usage();
+                return EXIT_FAILURE;
+            }
+        }
+
+        DBConnector cfgDb("CONFIG_DB", 0);
+        DBConnector appl_db("APPL_DB", 0);
+        DBConnector state_db("STATE_DB", 0);
+        ProducerStateTable p(&appl_db, APP_PORT_TABLE_NAME);
+
+        WarmStart::initialize("portsyncd", "swss");
+        WarmStart::checkWarmStart("portsyncd", "swss");
+        const bool warm = WarmStart::isWarmStart();
+
         NetLink netlink;
         Select s;
 
@@ -135,6 +135,16 @@ int main(int argc, char **argv)
                 continue;
             }
         }
+    }
+    catch (const swss::RedisError& e)
+    {
+        cerr << "Exception \"" << e.what() << "\" was thrown in daemon" << endl;
+        return EXIT_FAILURE;
+    }
+    catch (const std::out_of_range& e)
+    {
+        cerr << "Exception \"" << e.what() << "\" was thrown in daemon" << endl;
+        return EXIT_FAILURE;
     }
     catch (const std::exception& e)
     {
