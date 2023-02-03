@@ -10,13 +10,11 @@
 #define private public
 #include "pfcactionhandler.h"
 #include <sys/mman.h>
-
 #undef private
 
 #include <sstream>
 
 extern redisReply *mockReply;
-
 
 namespace portsorch_test
 {
@@ -555,7 +553,6 @@ namespace portsorch_test
         _unhook_sai_port_api();
         _unhook_sai_switch_api();
     }
-
 
     TEST_F(PortsOrchTest, PortReadinessColdBoot)
     {

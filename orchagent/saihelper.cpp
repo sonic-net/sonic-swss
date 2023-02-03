@@ -664,7 +664,7 @@ bool parseHandleSaiStatusFailure(task_process_status status)
     return true;
 }
 
-/* Request redis to invoke SAI failure dump*/
+/* Handling SAI failure. Request redis to invoke SAI failure dump and abort if set*/
 void handleSaiFailure(bool abort_on_failure)
 {
     SWSS_LOG_ENTER();
