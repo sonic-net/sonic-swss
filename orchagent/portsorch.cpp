@@ -6178,12 +6178,12 @@ void PortsOrch::generateQueueMapPerPort(const Port& port, FlexCounterQueueStates
     else
     {
         m_queueTable->set("", queueVector);
+        CounterCheckOrch::getInstance().addPort(port);
     }
     m_queuePortTable->set("", queuePortVector);
     m_queueIndexTable->set("", queueIndexVector);
     m_queueTypeTable->set("", queueTypeVector);
 
-    CounterCheckOrch::getInstance().addPort(port);
 }
 
 void PortsOrch::addQueueFlexCounters(map<string, FlexCounterQueueStates> queuesStateVector)
