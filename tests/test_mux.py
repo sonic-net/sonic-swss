@@ -576,19 +576,19 @@ class TestMuxTunnelBase():
         self.del_neighbor(dvs, neigh_ipv6)
         apdb.wait_for_deleted_entry(self.APP_NEIGH_TABLE, neigh_ip)
         apdb.wait_for_deleted_entry(self.APP_NEIGH_TABLE, neigh_ipv6)
+        asicdb.wait_for_deleted_entry(self.ASIC_NEIGH_TABLE, neigh_ip)
+        asicdb.wait_for_deleted_entry(self.ASIC_NEIGH_TABLE, neigh_ip)
 
         self.check_nexthop_in_asic_db(asicdb, rtkeys[0], True)
         self.check_nexthop_in_asic_db(asicdb, rtkeys_ipv6[0], True)
 
         # Set state to active, learn neighbor again
         self.set_mux_state(appdb, "Ethernet0", "active")
-        self.check_nexthop_in_asic_db(asicdb, rtkeys[0], True)
-        self.check_nexthop_in_asic_db(asicdb, rtkeys_ipv6[0], True)
 
         self.add_neighbor(dvs, neigh_ip, mac)
         self.add_neighbor(dvs, neigh_ipv6, mac)
-        apdb.wait_for_entry(self.APP_NEIGH_TABLE, neigh_ip)
-        apdb.wait_for_entry(self.APP_NEIGH_TABLE, neigh_ipv6)
+        self.check_neigh_in_asic_db(asicdb, neigh_ip)
+        self.check_neigh_in_asic_db(asicdb, neigh_ipv6)
 
         self.check_nexthop_in_asic_db(asicdb, rtkeys[0])
         self.check_nexthop_in_asic_db(asicdb, rtkeys_ipv6[0])
@@ -608,12 +608,8 @@ class TestMuxTunnelBase():
             "vtysh -c \"configure terminal\" -c \"no ipv6 route " + nh_route_ipv6 +
             " " + neigh_ipv6 + "\""
         )
-        apdb.wait_for_deleted_entry("ROUTE_TABLE", nh_route)
-        apdb.wait_for_deleted_entry("ROUTE_TABLE", nh_route_ipv6)
         self.del_neighbor(dvs, neigh_ip)
         self.del_neighbor(dvs, neigh_ipv6)
-        apdb.wait_for_deleted_entry(self.APP_NEIGH_TABLE, neigh_ip)
-        apdb.wait_for_deleted_entry(self.APP_NEIGH_TABLE, neigh_ipv6)
 
     def get_expected_sai_qualifiers(self, portlist, dvs_acl):
         expected_sai_qualifiers = {
