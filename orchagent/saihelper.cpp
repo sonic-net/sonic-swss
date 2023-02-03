@@ -497,6 +497,7 @@ task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, vo
                     SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
                                 sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
                     handleSaiFailure(true);
+                    break;
             }
             break;
         case SAI_API_HOSTIF:
@@ -515,7 +516,9 @@ task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, vo
                     SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
                                 sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
                     handleSaiFailure(true);
+                    break;
             }
+            break;
         default:
             switch (status)
             {
@@ -526,6 +529,7 @@ task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, vo
                     SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
                                 sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
                     handleSaiFailure(true);
+                    break;
             }
     }
     return task_need_retry;
@@ -567,7 +571,9 @@ task_process_status handleSaiSetStatus(sai_api_t api, sai_status_t status, void 
                     SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
                             sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
                     handleSaiFailure(true);
+                    break;
             }
+            break;
         case SAI_API_TUNNEL:
             switch (status)
             {
@@ -579,11 +585,14 @@ task_process_status handleSaiSetStatus(sai_api_t api, sai_status_t status, void 
                     SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
                             sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
                     handleSaiFailure(true);
+                    break;
             }
+            break;
         default:
             SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
                         sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
             handleSaiFailure(true);
+            break;
     }
 
     return task_need_retry;
@@ -612,6 +621,7 @@ task_process_status handleSaiRemoveStatus(sai_api_t api, sai_status_t status, vo
             SWSS_LOG_ERROR("Encountered failure in remove operation, exiting orchagent, SAI API: %s, status: %s",
                         sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
             handleSaiFailure(true);
+            break;
     }
     return task_need_retry;
 }
@@ -670,6 +680,7 @@ void handleSaiFailure(bool abort_on_failure)
     SWSS_LOG_ENTER();
 
     sai_attribute_t attr;
+
     attr.id = SAI_REDIS_SWITCH_ATTR_NOTIFY_SYNCD;
     attr.value.s32 =  SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP;
     sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
