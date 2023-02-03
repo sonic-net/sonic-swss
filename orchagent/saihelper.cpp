@@ -496,8 +496,7 @@ task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, vo
                 default:
                     SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
                                 sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-                    requestSaiFailureDump();
-                    abort();
+                    handleSaiFailure(true);
             }
             break;
         case SAI_API_HOSTIF:
@@ -515,8 +514,7 @@ task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, vo
                 default:
                     SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
                                 sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-                    requestSaiFailureDump();
-                    abort();
+                    handleSaiFailure(true);
             }
         default:
             switch (status)
@@ -527,8 +525,7 @@ task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, vo
                 default:
                     SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
                                 sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-                    requestSaiFailureDump();
-                    abort();
+                    handleSaiFailure(true);
             }
     }
     return task_need_retry;
@@ -569,8 +566,7 @@ task_process_status handleSaiSetStatus(sai_api_t api, sai_status_t status, void 
                 default:
                     SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
                             sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-                    requestSaiFailureDump();
-                    abort();
+                    handleSaiFailure(true);
             }
         case SAI_API_TUNNEL:
             switch (status)
@@ -582,14 +578,12 @@ task_process_status handleSaiSetStatus(sai_api_t api, sai_status_t status, void 
                 default:
                     SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
                             sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-                    requestSaiFailureDump();
-                    abort();
+                    handleSaiFailure(true);
             }
         default:
             SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
                         sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-            requestSaiFailureDump();
-            abort();
+            handleSaiFailure(true);
     }
 
     return task_need_retry;
@@ -617,8 +611,7 @@ task_process_status handleSaiRemoveStatus(sai_api_t api, sai_status_t status, vo
         default:
             SWSS_LOG_ERROR("Encountered failure in remove operation, exiting orchagent, SAI API: %s, status: %s",
                         sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-            requestSaiFailureDump();
-            abort();
+            handleSaiFailure(true);
     }
     return task_need_retry;
 }
@@ -672,7 +665,7 @@ bool parseHandleSaiStatusFailure(task_process_status status)
 }
 
 /* Request redis to invoke SAI failure dump*/
-void requestSaiFailureDump()
+void handleSaiFailure(bool abort_on_failure)
 {
     SWSS_LOG_ENTER();
 
@@ -683,5 +676,9 @@ void requestSaiFailureDump()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to take sai failure dump %d", status);
+    }
+    if (abort_on_failure)
+    {
+        abort();
     }
 }
