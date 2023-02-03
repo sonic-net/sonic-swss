@@ -6165,7 +6165,7 @@ void PortsOrch::generateQueueMapPerPort(const Port& port, FlexCounterQueueStates
         {
             // Install a flex counter for this voq to track stats. Voq counters do
             // not have buffer queue config. So it does not get enabled through the
-            // flexcounter orch log. Always enabled voq counters.
+            // flexcounter orch logic. Always enabled voq counters.
             addQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, true);
             queuePortVector.emplace_back(id, sai_serialize_object_id(port.m_system_port_oid));
         }
