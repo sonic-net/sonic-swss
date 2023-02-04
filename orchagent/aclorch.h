@@ -553,6 +553,12 @@ private:
 
     string generateAclRuleIdentifierInCountersDb(const AclRule& rule) const;
 
+    void setAclTableStatus(string table_name, bool active);
+    void setAclRuleStatus(string rule_name, bool active);
+
+    void removeAclTableStatus(string table_name);
+    void removeAclRuleStatus(string rule_name);
+
     map<sai_object_id_t, AclTable> m_AclTables;
     // TODO: Move all ACL tables into one map: name -> instance
     map<string, AclTable> m_ctrlAclTables;
@@ -562,6 +568,9 @@ private:
     static Table m_countersTable;
 
     Table m_aclStageCapabilityTable;
+
+    Table m_aclTableStateTable;
+    Table m_aclRuleStateTable;
 
     map<acl_stage_type_t, string> m_mirrorTableId;
     map<acl_stage_type_t, string> m_mirrorV6TableId;

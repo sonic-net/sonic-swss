@@ -3508,6 +3508,8 @@ AclOrch::AclOrch(vector<TableConnector>& connectors, DBConnector* stateDb, Switc
         PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch, DTelOrch *dtelOrch) :
         Orch(connectors),
         m_aclStageCapabilityTable(stateDb, STATE_ACL_STAGE_CAPABILITY_TABLE_NAME),
+        m_aclTableStateTable(stateDb, STATE_ACL_TABLE_TABLE_NAME),
+        m_aclRuleStateTable(stateDB, STATE_ACL_RULE_TABLE_NAME),
         m_switchOrch(switchOrch),
         m_mirrorOrch(mirrorOrch),
         m_neighOrch(neighOrch),
@@ -4331,21 +4333,30 @@ void AclOrch::doAclTableTask(Consumer &consumer)
                     {
                         SWSS_LOG_NOTICE("Successfully updated existing ACL table %s",
                                         table_id.c_str());
+                        setAclTableStatus(table_id, true);
                         it = consumer.m_toSync.erase(it);
                     }
                     else
                     {
                         SWSS_LOG_ERROR("Failed to update existing ACL table %s",
                                         table_id.c_str());
+                        // For now, updateAclTable always return true. So we should never reach here
+                        setAclTableStatus(table_id, false);
                         it++;
                     }
                 }
                 else
                 {
                     if (addAclTable(newTable))
+                    {
+                        setAclTableStatus(table_id, true);
                         it = consumer.m_toSync.erase(it);
+                    }
                     else
+                    {
+                        setAclTableStatus(table_id, false);
                         it++;
+                    }
                 }
             }
             else
@@ -4358,7 +4369,10 @@ void AclOrch::doAclTableTask(Consumer &consumer)
         else if (op == DEL_COMMAND)
         {
             if (removeAclTable(table_id))
+            {
+                removeAclTableStatus(table_id);
                 it = consumer.m_toSync.erase(it);
+            }
             else
                 it++;
         }
@@ -4500,9 +4514,15 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
             if (bAllAttributesOk && newRule->validate())
             {
                 if (addAclRule(newRule, table_id))
+                {
+                    setAclRuleStatus(rule_id, true);
                     it = consumer.m_toSync.erase(it);
+                }
                 else
+                {
+                    setAclRuleStatus(rule_id, false);
                     it++;
+                }
             }
             else
             {
@@ -4513,7 +4533,10 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
         else if (op == DEL_COMMAND)
         {
             if (removeAclRule(table_id, rule_id))
+            {
+                removeAclRuleStatus(rule_id);
                 it = consumer.m_toSync.erase(it);
+            }
             else
                 it++;
         }
@@ -4872,4 +4895,46 @@ bool AclOrch::getAclBindPortId(Port &port, sai_object_id_t &port_id)
     }
 
     return true;
+}
+
+// Set the status of ACL table in STATE_DB
+void AclOrch::setAclTableStatus(string table_name, bool active)
+{
+    vector<FieldValueTuple> fvVector;
+    if (active)
+    {
+        fvVector.emplace_back("Status", "Active");
+    }
+    else
+    {
+        fvVector.emplace_back("Status", "Inactive");
+    }
+    m_aclTableStateTable.set(table_name, fvVector);
+}
+
+// Remove the status record of given ACL table from STATE_DB
+void AclOrch::removeAclTableStatus(string table_name)
+{
+    m_aclTableStateTable.del(table_name);
+}
+
+// Set the status of ACL rule in STATE_DB
+void AclOrch::setAclRuleStatus(string rule_name, book active)
+{
+    vector<FieldValueTuple> fvVector;
+    if (active)
+    {
+        fvVector.emplace_back("Status", "Active");
+    }
+    else
+    {
+        fvVector.emplace_back("Status", "Inactive");
+    }
+    m_aclRuleStateTable.set(rule_name, fvVector);
+}
+
+// Remove the status record of given ACL rule from STATE_DB
+void AclOrch::removeAclRuleStatus(string rule_name)
+{
+    m_aclRuleStateTable.del(rule_name);
 }
