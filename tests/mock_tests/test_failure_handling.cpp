@@ -39,7 +39,7 @@ namespace saifailure_test
         sai_switch_api = pold_sai_switch_api;
     }
 
-    TEST_F(SaiFailureTest, handleCreateFailure)
+    TEST_F(SaiFailureTest, handleSaiFailure)
     {
         _hook_sai_switch_api();
         _sai_syncd_notifications_count = (uint32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
