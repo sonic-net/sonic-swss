@@ -3509,7 +3509,7 @@ AclOrch::AclOrch(vector<TableConnector>& connectors, DBConnector* stateDb, Switc
         Orch(connectors),
         m_aclStageCapabilityTable(stateDb, STATE_ACL_STAGE_CAPABILITY_TABLE_NAME),
         m_aclTableStateTable(stateDb, STATE_ACL_TABLE_TABLE_NAME),
-        m_aclRuleStateTable(stateDB, STATE_ACL_RULE_TABLE_NAME),
+        m_aclRuleStateTable(stateDb, STATE_ACL_RULE_TABLE_NAME),
         m_switchOrch(switchOrch),
         m_mirrorOrch(mirrorOrch),
         m_neighOrch(neighOrch),
@@ -4362,6 +4362,8 @@ void AclOrch::doAclTableTask(Consumer &consumer)
             else
             {
                 it = consumer.m_toSync.erase(it);
+                // Mark the ACL table as inactive if the configuration is invalid
+                setAclTableStatus(table_id, false);
                 SWSS_LOG_ERROR("Failed to create ACL table %s, invalid configuration",
                         table_id.c_str());
             }
@@ -4527,6 +4529,8 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
             else
             {
                 it = consumer.m_toSync.erase(it);
+                // Mark the rule inactive if the configuration is invalid
+                setAclRuleStatus(rule_id, false);
                 SWSS_LOG_ERROR("Failed to create ACL rule. Rule configuration is invalid");
             }
         }
@@ -4919,7 +4923,7 @@ void AclOrch::removeAclTableStatus(string table_name)
 }
 
 // Set the status of ACL rule in STATE_DB
-void AclOrch::setAclRuleStatus(string rule_name, book active)
+void AclOrch::setAclRuleStatus(string rule_name, bool active)
 {
     vector<FieldValueTuple> fvVector;
     if (active)
