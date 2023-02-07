@@ -23,27 +23,13 @@ public:
     /* ip_string|if_alias|vni|router_mac separated by ',' */
     NextHopGroupKey(const std::string &nexthops, bool overlay_nh, bool srv6_nh = false)
     {
-        if (overlay_nh)
+        m_overlay_nexthops = overlay_nh;
+        m_srv6_nexthops = srv6_nh && !overlay_nh;
+        auto nhv = tokenize(nexthops, NHG_DELIMITER);
+        for (const auto &nh_str : nhv)
         {
-            m_overlay_nexthops = true;
-            m_srv6_nexthops = false;
-            auto nhv = tokenize(nexthops, NHG_DELIMITER);
-            for (const auto &nh_str : nhv)
-            {
-                auto nh = NextHopKey(nh_str, overlay_nh, srv6_nh);
-                m_nexthops.insert(nh);
-            }
-        }
-        else if (srv6_nh)
-        {
-            m_overlay_nexthops = false;
-            m_srv6_nexthops = true;
-            auto nhv = tokenize(nexthops, NHG_DELIMITER);
-            for (const auto &nh_str : nhv)
-            {
-                auto nh = NextHopKey(nh_str, overlay_nh, srv6_nh);
-                m_nexthops.insert(nh);
-            }
+            auto nh = NextHopKey(nh_str, overlay_nh, srv6_nh);
+            m_nexthops.insert(nh);
         }
     }
 

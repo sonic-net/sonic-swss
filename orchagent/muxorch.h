@@ -72,6 +72,8 @@ public:
     void update(NextHopKey nh, sai_object_id_t, bool = true, MuxState = MuxState::MUX_STATE_INIT);
 
     sai_object_id_t getNextHopId(const NextHopKey);
+    const MuxNeighbor getNeighbors() const {return neighbors_;}
+    const string getAlias() const {return alias_;}
 
 private:
     inline void updateTunnelRoute(NextHopKey, bool = true);
@@ -106,6 +108,9 @@ public:
     {
         return nbr_handler_->getNextHopId(nh);
     }
+
+    const MuxNeighbor getNeighbors() const {return nbr_handler_->getNeighbors();}
+    const string getAlias() const {return nbr_handler_->getAlias();}
 
 private:
     bool stateActive();
@@ -195,12 +200,17 @@ public:
 
     void addNexthop(NextHopKey, string = "");
     void removeNexthop(NextHopKey);
+    bool containsNextHop(const NextHopKey&);
+    bool isMuxNexthops(const NextHopGroupKey&);
     string getNexthopMuxName(NextHopKey);
     sai_object_id_t getNextHopId(const NextHopKey&);
 
     sai_object_id_t createNextHopTunnel(std::string tunnelKey, IpAddress& ipAddr);
     bool removeNextHopTunnel(std::string tunnelKey, IpAddress& ipAddr);
     sai_object_id_t getNextHopTunnelId(std::string tunnelKey, IpAddress& ipAddr);
+
+    void updateRoute(const IpPrefix &pfx);
+    void updateRoutesForCable(MuxCable* cable);
 
 private:
     virtual bool addOperation(const Request& request);

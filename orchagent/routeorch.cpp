@@ -6,6 +6,7 @@
 #include "cbf/cbfnhgorch.h"
 #include "logger.h"
 #include "flowcounterrouteorch.h"
+#include "muxorch.h"
 #include "swssnet.h"
 #include "crmorch.h"
 #include "directory.h"
@@ -1580,6 +1581,43 @@ bool RouteOrch::updateNextHopRoutes(const NextHopKey& nextHop, uint32_t& numRout
     return true;
 }
 
+/**
+ * @brief returns a list of nexthops associated with route
+ * @param routeKey routekey to lookup
+ * @return std::set<NextHopKey> of nexthop keys
+ */
+std::set<NextHopKey> RouteOrch::getNextHopsForRoute(const RouteKey& routeKey)
+{
+    std::set<NextHopKey> nh_list;
+    for (auto nh = m_nextHops.begin(); nh != m_nextHops.end(); nh++)
+    {
+        auto route_key = nh->second.find(routeKey);
+        if (route_key != nh->second.end())
+        {
+            nh_list.emplace(nh->first);
+        }
+    }
+    return nh_list;
+}
+
+/**
+ * @brief returns a route prefix associated with nexthopkey
+ * @param routekey_set empty set of routekeys to populate
+ * @param nexthop_key nexthop key to lookup
+ * @return true if found, false if not found.
+ */
+bool RouteOrch::getRoutesForNexthop(std::set<RouteKey>& routekey_set, const NextHopKey& nexthop_key)
+{
+    auto it = m_nextHops.find(nexthop_key);
+
+    if (it != m_nextHops.end())
+    {
+        routekey_set = it->second;
+    }
+
+    return it != m_nextHops.end();
+}
+
 void RouteOrch::addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
 {
     SWSS_LOG_ENTER();
@@ -1643,15 +1681,8 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
         m_vrfOrch->increaseVrfRefCount(vrf_id);
     }
 
-    if (nextHops.is_overlay_nexthop())
-    {
-        overlay_nh = true;
-    }
-
-    if (nextHops.is_srv6_nexthop())
-    {
-        srv6_nh = true;
-    }
+    overlay_nh = nextHops.is_overlay_nexthop();
+    srv6_nh = nextHops.is_srv6_nexthop();
 
     auto it_route = m_syncdRoutes.at(vrf_id).find(ipPrefix);
 
@@ -2202,14 +2233,23 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
                 ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
     }
 
-    if (ctx.nhg_index.empty() && nextHops.getSize() == 1 && !nextHops.is_overlay_nexthop() && !nextHops.is_srv6_nexthop())
+    MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
+    if ((ctx.nhg_index.empty() && nextHops.getSize() == 1 &&
+        !nextHops.is_overlay_nexthop() && !nextHops.is_srv6_nexthop()) ||
+        mux_orch->isMuxNexthops(nextHops))
     {
         RouteKey r_key = { vrf_id, ipPrefix };
-        auto nexthop = NextHopKey(nextHops.to_string());
-        if (!nexthop.ip_address.isZero())
+        auto nexthop_list = nextHops.getNextHops();
+
+        for (auto nh = nexthop_list.begin(); nh != nexthop_list.end(); nh++)
         {
-            addNextHopRoute(nexthop, r_key);
+            if (!nh->ip_address.isZero())
+            {
+                addNextHopRoute(*nh, r_key);
+            }
         }
+        // update routes to reflect mux state
+        mux_orch->updateRoute(ipPrefix);
     }
 
     if (ipPrefix.isDefaultRoute())

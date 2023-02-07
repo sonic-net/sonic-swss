@@ -195,6 +195,8 @@ public:
     void addNextHopRoute(const NextHopKey&, const RouteKey&);
     void removeNextHopRoute(const NextHopKey&, const RouteKey&);
     bool updateNextHopRoutes(const NextHopKey&, uint32_t&);
+    std::set<NextHopKey> getNextHopsForRoute(const RouteKey&);
+    bool getRoutesForNexthop(std::set<RouteKey>&, const NextHopKey&);
 
     bool validnexthopinNextHopGroup(const NextHopKey&, uint32_t&);
     bool invalidnexthopinNextHopGroup(const NextHopKey&, uint32_t&);
