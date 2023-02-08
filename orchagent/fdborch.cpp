@@ -505,29 +505,21 @@ bool FdbOrch::getPort(const MacAddress& mac, uint16_t vlan, Port& port)
         return false;
     }
 
-    sai_fdb_entry_t entry;
-    entry.switch_id = gSwitchId;
-    memcpy(entry.mac_address, mac.getMac(), sizeof(sai_mac_t));
+    FdbEntry entry;
+    entry.mac = mac;
     entry.bv_id = port.m_vlan_info.vlan_oid;
 
-    sai_attribute_t attr;
-    attr.id = SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID;
-
-    sai_status_t status = sai_fdb_api->get_fdb_entry_attribute(&entry, 1, &attr);
-    if (status != SAI_STATUS_SUCCESS)
+    auto it = m_entries.find(entry);
+    if (it == m_entries.end())
     {
-        SWSS_LOG_ERROR("Failed to get bridge port ID for FDB entry %s, rv:%d",
-            mac.to_string().c_str(), status);
-        task_process_status handle_status = handleSaiGetStatus(SAI_API_FDB, status);
-        if (handle_status != task_process_status::task_success)
-        {
-            return false;
-        }
+        SWSS_LOG_ERROR("Failed to get cached bridge port ID for FDB entry %s",
+            mac.to_string().c_str());
+        return false;
     }
 
-    if (!m_portsOrch->getPortByBridgePortId(attr.value.oid, port))
+    if (!m_portsOrch->getPortByBridgePortId(it->second.bridge_port_id, port))
     {
-        SWSS_LOG_ERROR("Failed to get port by bridge port ID 0x%" PRIx64, attr.value.oid);
+        SWSS_LOG_ERROR("Failed to get port by bridge port ID 0x%" PRIx64, it->second.bridge_port_id);
         return false;
     }
 
