@@ -18,4 +18,4 @@ task_process_status handleSaiSetStatus(sai_api_t api, sai_status_t status, void 
 task_process_status handleSaiRemoveStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
 task_process_status handleSaiGetStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
 bool parseHandleSaiStatusFailure(task_process_status status);
-
+void handleSaiFailure(bool abort_on_failure);

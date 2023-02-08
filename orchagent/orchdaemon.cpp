@@ -670,7 +670,7 @@ void OrchDaemon::flush()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to flush redis pipeline %d", status);
-        abort();
+        handleSaiFailure(true);
     }
 }
 
