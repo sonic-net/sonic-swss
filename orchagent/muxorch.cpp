@@ -534,6 +534,8 @@ bool MuxCable::isIpInSubnet(IpAddress ip)
 
 bool MuxCable::nbrHandler(bool enable, bool update_rt)
 {
+    SWSS_LOG_NOTICE("Processing neighbors for mux %s, enable %d, state %d",
+                     mux_name_.c_str(), enable, state_)
     if (enable)
     {
         return nbr_handler_->enable(update_rt);
@@ -553,6 +555,8 @@ bool MuxCable::nbrHandler(bool enable, bool update_rt)
 
 void MuxCable::updateNeighbor(NextHopKey nh, bool add)
 {
+    SWSS_LOG_NOTICE("Processing update on neighbor %s for mux %s, add %d, state %d",
+                     nh.ip_address.to_string().c_str(), mux_name_.c_str(), add, state_)
     sai_object_id_t tnh = mux_orch_->getNextHopTunnelId(MUX_TUNNEL, peer_ip4_);
     nbr_handler_->update(nh, tnh, add, state_);
     if (add)
