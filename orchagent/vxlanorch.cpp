@@ -2349,7 +2349,8 @@ bool EvpnRemoteVnip2pOrch::addOperation(const Request& request)
 
     EvpnNvoOrch* evpn_orch = gDirectory.get<EvpnNvoOrch*>();
     auto vtep_ptr = evpn_orch->getEVPNVtep();
-    if (!vtep_ptr) {
+    if (!vtep_ptr)
+    {
         SWSS_LOG_WARN("Remote VNI add: Source VTEP not found. remote=%s vid=%d",
                       remote_vtep.c_str(), vlan_id);
         return true;
