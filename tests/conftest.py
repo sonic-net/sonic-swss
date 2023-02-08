@@ -26,6 +26,7 @@ from dvslib import dvs_port
 from dvslib import dvs_lag
 from dvslib import dvs_mirror
 from dvslib import dvs_policer
+from dvslib import dvs_hash
 
 from buffer_model import enable_dynamic_buffer
 
@@ -150,6 +151,8 @@ class AsicDbValidator(DVSDatabase):
 
         self.default_acl_tables = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
         self.default_acl_entries = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
+
+        self.default_hash_keys = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_HASH")
 
         self.default_copp_policers = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_POLICER")
 
@@ -1338,6 +1341,7 @@ class DockerVirtualSwitch:
             db = DVSDatabase(self.ASIC_DB_ID, self.redis_sock)
             db.default_acl_tables = self.asicdb.default_acl_tables
             db.default_acl_entries = self.asicdb.default_acl_entries
+            db.default_hash_keys = self.asicdb.default_hash_keys
             db.default_copp_policers = self.asicdb.default_copp_policers
             db.port_name_map = self.asicdb.portnamemap
             db.default_vlan_id = self.asicdb.default_vlan_id
@@ -1915,6 +1919,11 @@ def dvs_mirror_manager(request, dvs):
 def dvs_policer_manager(request, dvs):
     request.cls.dvs_policer = dvs_policer.DVSPolicer(dvs.get_asic_db(),
                                                      dvs.get_config_db())
+
+@pytest.fixture(scope="class")
+def dvs_hash_manager(request, dvs):
+    request.cls.dvs_hash = dvs_hash.DVSHash(dvs.get_asic_db(),
+                                            dvs.get_config_db())
 
 ##################### DPB fixtures ###########################################
 def create_dpb_config_file(dvs):
