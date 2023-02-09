@@ -144,7 +144,9 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                     }
                     if (exists)
                     {
-                        setTunnelAttribute(fvField(i), ecn_mode, tunnel_id);
+                        SWSS_LOG_NOTICE("Skip setting ecn_mode since the SAI attribute SAI_TUNNEL_ATTR_DECAP_ECN_MODE is create only");
+                        valid = false;
+                        break;
                     }
                 }
                 else if (fvField(i) == "encap_ecn_mode")
@@ -158,7 +160,9 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                     }
                     if (exists)
                     {
-                        setTunnelAttribute(fvField(i), encap_ecn_mode, tunnel_id);
+                        SWSS_LOG_NOTICE("Skip setting encap_ecn_mode since the SAI attribute SAI_TUNNEL_ATTR_ENCAP_ECN_MODE is create only");
+                        valid = false;
+                        break;
                     }
                 }
                 else if (fvField(i) == "ttl_mode")
@@ -581,30 +585,6 @@ bool TunnelDecapOrch::setTunnelAttribute(string field, string value, sai_object_
 {
 
     sai_attribute_t attr;
-
-    if (field == "ecn_mode")
-    {
-        // decap ecn mode (copy from outer/standard)
-        attr.id = SAI_TUNNEL_ATTR_DECAP_ECN_MODE;
-        if (value == "copy_from_outer")
-        {
-            attr.value.s32 = SAI_TUNNEL_DECAP_ECN_MODE_COPY_FROM_OUTER;
-        }
-        else if (value == "standard")
-        {
-            attr.value.s32 = SAI_TUNNEL_DECAP_ECN_MODE_STANDARD;
-        }
-    }
-
-    if (field == "encap_ecn_mode")
-    {
-        // encap ecn mode (only standard is supported)
-        attr.id = SAI_TUNNEL_ATTR_ENCAP_ECN_MODE;
-        if (value == "standard")
-        {
-            attr.value.s32 = SAI_TUNNEL_ENCAP_ECN_MODE_STANDARD;
-        }
-    }
 
     if (field == "ttl_mode")
     {

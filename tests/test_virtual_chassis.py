@@ -3,6 +3,7 @@ from dvslib.dvs_database import DVSDatabase
 import ast
 import time
 import pytest
+import buffer_model
 
 class TestVirtualChassis(object):
 
@@ -852,7 +853,66 @@ class TestVirtualChassis(object):
                     assert len(lagmemberkeys) == 0, "Stale system lag member entries in asic db"
                     
                     break
-                    
+
+    def test_chassis_add_remove_ports(self, vct):
+        """Test removing and adding a port in a VOQ chassis.
+
+        Test validates that when a port is created the port is removed from the default vlan.
+        """
+        dvss = vct.dvss
+        for name in dvss.keys():
+            dvs = dvss[name]
+            buffer_model.enable_dynamic_buffer(dvs.get_config_db(), dvs.runcmd)
+
+            config_db = dvs.get_config_db()
+            app_db = dvs.get_app_db()
+            asic_db = dvs.get_asic_db()
+            metatbl = config_db.get_entry("DEVICE_METADATA", "localhost")
+            cfg_switch_type = metatbl.get("switch_type")
+
+            if cfg_switch_type == "voq":
+                num_ports = len(asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT"))
+                # Get the port info we'll flap
+                port = config_db.get_keys('PORT')[0]
+                port_info = config_db.get_entry("PORT", port)
+
+                # Remove port's other configs
+                pgs = config_db.get_keys('BUFFER_PG')
+                queues = config_db.get_keys('BUFFER_QUEUE')
+                for key in pgs:
+                    if port in key:
+                        config_db.delete_entry('BUFFER_PG', key)
+                        app_db.wait_for_deleted_entry('BUFFER_PG_TABLE', key)
+
+                for key in queues:
+                    if port in key:
+                        config_db.delete_entry('BUFFER_QUEUE', key)
+                        app_db.wait_for_deleted_entry('BUFFER_QUEUE_TABLE', key)
+
+                # Remove port
+                config_db.delete_entry('PORT', port)
+                app_db.wait_for_deleted_entry('PORT_TABLE', port)
+                num = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT",
+                                              num_ports-1)
+                assert len(num) == num_ports-1
+
+                marker = dvs.add_log_marker()
+
+                # Create port
+                config_db.update_entry("PORT", port, port_info)
+                app_db.wait_for_entry("PORT_TABLE", port)
+                num = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT",
+                                              num_ports)
+                assert len(num) == num_ports
+
+                # Check that we see the logs for removing default vlan
+                matching_log = "removeDefaultVlanMembers: Remove 0 VLAN members from default VLAN"
+                _, logSeen = dvs.runcmd( [ "sh", "-c",
+                     "awk '/{}/,ENDFILE {{print;}}' /var/log/syslog | grep '{}' | wc -l".format( marker, matching_log ) ] )
+                assert logSeen.strip() == "1"
+
+            buffer_model.disable_dynamic_buffer(dvs.get_config_db(), dvs.runcmd)
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():

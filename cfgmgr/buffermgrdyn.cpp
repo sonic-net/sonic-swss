@@ -3141,8 +3141,6 @@ task_process_status BufferMgrDynamic::handleSingleBufferQueueEntry(const string 
             return task_process_status::task_failed;
         }
 
-        // TODO: check overlap. Currently, assume there is no overlap
-
         auto &portQueue = m_portQueueLookup[port][queues];
         if (PORT_ADMIN_DOWN == portInfo.state)
         {

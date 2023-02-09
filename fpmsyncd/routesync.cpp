@@ -733,6 +733,32 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
         {
             SWSS_LOG_DEBUG("Skip routes to eth0 or docker0: %s %s %s",
                     destipprefix, gw_list.c_str(), intf_list.c_str());
+            // If intf_list has only this interface, that means all of the next hops of this route 
+            // have been removed and the next hop on the eth0/docker0 has become the only next hop. 
+            // In this case since we do not want the route with next hop on eth0/docker0, we return. 
+            // But still we need to clear the route from the APPL_DB. Otherwise the APPL_DB and data 
+            // path will be left with stale route entry
+            if(alsv.size() == 1)
+            {
+                if (!warmRestartInProgress)
+                {
+                    SWSS_LOG_NOTICE("RouteTable del msg for route with only one nh on eth0/docker0: %s %s %s %s",
+                            destipprefix, gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
+
+                    m_routeTable.del(destipprefix);
+                }
+                else
+                {
+                    SWSS_LOG_NOTICE("Warm-Restart mode: Receiving delete msg for route with only nh on eth0/docker0: %s %s %s %s",
+                            destipprefix, gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
+
+                    vector<FieldValueTuple> fvVector;
+                    const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix,
+                                                                       DEL_COMMAND,
+                                                                       fvVector);
+                    m_warmStartHelper.insertRefreshMap(kfv);
+                }
+            }
             return;
         }
     }

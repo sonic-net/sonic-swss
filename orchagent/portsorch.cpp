@@ -2702,6 +2702,13 @@ bool PortsOrch::addPort(const set<int> &lane_set, uint32_t speed, int an, string
     m_portListLaneMap[lane_set] = port_id;
     m_portCount++;
 
+    // newly created ports might be put in the default vlan so remove all ports from
+    // the default vlan.
+    if (gMySwitchType == "voq") {
+        removeDefaultVlanMembers();
+        removeDefaultBridgePorts();
+    }
+
     SWSS_LOG_NOTICE("Create port %" PRIx64 " with the speed %u", port_id, speed);
 
     return true;
@@ -2719,7 +2726,11 @@ sai_status_t PortsOrch::removePort(sai_object_id_t port_id)
      */
     if (getPort(port_id, port))
     {
-        setPortAdminStatus(port, false);
+        /* Bring port down before removing port */
+        if (!setPortAdminStatus(port, false))
+        {
+            SWSS_LOG_ERROR("Failed to set admin status to DOWN to remove port %" PRIx64, port_id);
+        }
     }
     /* else : port is in default state or not yet created */
 
@@ -3590,9 +3601,9 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         continue;
                     }
 
-                    if (adv_interface_types != p.m_adv_interface_types && p.m_autoneg == 1)
+                    if (adv_interface_types != p.m_adv_interface_types)
                     {
-                        if (p.m_admin_state_up)
+                        if (p.m_admin_state_up && p.m_autoneg == 1)
                         {
                             /* Bring port down before applying speed */
                             if (!setPortAdminStatus(p, false))
@@ -4463,7 +4474,7 @@ void PortsOrch::doTask()
         APP_LAG_TABLE_NAME,
         APP_LAG_MEMBER_TABLE_NAME,
         APP_VLAN_TABLE_NAME,
-        APP_VLAN_MEMBER_TABLE_NAME,
+        APP_VLAN_MEMBER_TABLE_NAME
     };
 
     for (auto tableName: tableOrder)

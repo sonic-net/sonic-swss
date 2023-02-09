@@ -537,6 +537,80 @@ class TestMuxTunnelBase():
 
         ps._del(rtprefix)
 
+    def create_and_test_NH_routes(self, appdb, asicdb, dvs, dvs_route, mac):
+        '''
+        Tests case where neighbor is removed in standby and added in active with route
+        '''
+        nh_route = "2.2.2.0/24"
+        nh_route_ipv6 = "2023::/64"
+        neigh_ip = self.SERV1_IPV4
+        neigh_ipv6 = self.SERV1_IPV6
+        apdb = dvs.get_app_db()
+
+        # Setup
+        self.set_mux_state(appdb, "Ethernet0", "active")
+        self.add_neighbor(dvs, neigh_ip, mac)
+        self.add_neighbor(dvs, neigh_ipv6, mac)
+        dvs.runcmd(
+            "vtysh -c \"configure terminal\" -c \"ip route " + nh_route +
+            " " + neigh_ip + "\""
+        )
+        dvs.runcmd(
+            "vtysh -c \"configure terminal\" -c \"ipv6 route " + nh_route_ipv6 +
+            " " + neigh_ipv6 + "\""
+        )
+        apdb.wait_for_entry("ROUTE_TABLE", nh_route)
+        apdb.wait_for_entry("ROUTE_TABLE", nh_route_ipv6)
+
+        rtkeys = dvs_route.check_asicdb_route_entries([nh_route])
+        rtkeys_ipv6 = dvs_route.check_asicdb_route_entries([nh_route_ipv6])
+        self.check_nexthop_in_asic_db(asicdb, rtkeys[0])
+        self.check_nexthop_in_asic_db(asicdb, rtkeys_ipv6[0])
+
+        # Set state to standby and delete neighbor
+        self.set_mux_state(appdb, "Ethernet0", "standby")
+        self.check_nexthop_in_asic_db(asicdb, rtkeys[0], True)
+        self.check_nexthop_in_asic_db(asicdb, rtkeys_ipv6[0], True)
+
+        self.del_neighbor(dvs, neigh_ip)
+        self.del_neighbor(dvs, neigh_ipv6)
+        apdb.wait_for_deleted_entry(self.APP_NEIGH_TABLE, neigh_ip)
+        apdb.wait_for_deleted_entry(self.APP_NEIGH_TABLE, neigh_ipv6)
+        asicdb.wait_for_deleted_entry(self.ASIC_NEIGH_TABLE, neigh_ip)
+        asicdb.wait_for_deleted_entry(self.ASIC_NEIGH_TABLE, neigh_ip)
+
+        self.check_nexthop_in_asic_db(asicdb, rtkeys[0], True)
+        self.check_nexthop_in_asic_db(asicdb, rtkeys_ipv6[0], True)
+
+        # Set state to active, learn neighbor again
+        self.set_mux_state(appdb, "Ethernet0", "active")
+
+        self.add_neighbor(dvs, neigh_ip, mac)
+        self.add_neighbor(dvs, neigh_ipv6, mac)
+        self.check_neigh_in_asic_db(asicdb, neigh_ip)
+        self.check_neigh_in_asic_db(asicdb, neigh_ipv6)
+
+        self.check_nexthop_in_asic_db(asicdb, rtkeys[0])
+        self.check_nexthop_in_asic_db(asicdb, rtkeys_ipv6[0])
+        dvs.runcmd(
+            "ip neigh flush " + neigh_ip
+        )
+        dvs.runcmd(
+            "ip neigh flush " + neigh_ipv6
+        )
+
+        # Cleanup
+        dvs.runcmd(
+            "vtysh -c \"configure terminal\" -c \"no ip route " + nh_route +
+            " " + neigh_ip + "\""
+        )
+        dvs.runcmd(
+            "vtysh -c \"configure terminal\" -c \"no ipv6 route " + nh_route_ipv6 +
+            " " + neigh_ipv6 + "\""
+        )
+        self.del_neighbor(dvs, neigh_ip)
+        self.del_neighbor(dvs, neigh_ipv6)
+
     def get_expected_sai_qualifiers(self, portlist, dvs_acl):
         expected_sai_qualifiers = {
             "SAI_ACL_ENTRY_ATTR_PRIORITY": self.ACL_PRIORITY,
@@ -1098,6 +1172,14 @@ class TestMuxTunnel(TestMuxTunnelBase):
         asicdb = dvs.get_asic_db()
 
         self.create_and_test_route(appdb, asicdb, dvs, dvs_route)
+
+    def test_NH(self, dvs, dvs_route, intf_fdb_map, setup_peer_switch, setup_tunnel, testlog):
+        """ test NH routes and mux state change """
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        asicdb = dvs.get_asic_db()
+        mac = intf_fdb_map["Ethernet0"]
+
+        self.create_and_test_NH_routes(appdb, asicdb, dvs, dvs_route, mac)
 
     def test_acl(self, dvs, dvs_acl, testlog):
         """ test acl and mux state change """

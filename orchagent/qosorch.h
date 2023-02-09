@@ -44,7 +44,6 @@ const string scheduler_algo_DWRR                = "DWRR";
 const string scheduler_algo_WRR                 = "WRR";
 const string scheduler_algo_STRICT              = "STRICT";
 const string scheduler_weight_field_name        = "weight";
-const string scheduler_priority_field_name      = "priority";
 const string scheduler_meter_type_field_name    = "meter_type";
 const string scheduler_min_bandwidth_rate_field_name       = "cir";//Committed Information Rate
 const string scheduler_min_bandwidth_burst_rate_field_name = "cbs";//Committed Burst Size

@@ -223,6 +223,11 @@ public:
     static void recordTuple(Consumer &consumer, const swss::KeyOpFieldsValuesTuple &tuple);
 
     void dumpPendingTasks(std::vector<std::string> &ts);
+
+    /**
+     * @brief Flush pending responses
+     */
+    void flushResponses();
 protected:
     ConsumerMap m_consumerMap;
 
@@ -245,13 +250,6 @@ protected:
     /* Note: consumer will be owned by this class */
     void addExecutor(Executor* executor);
     Executor *getExecutor(std::string executorName);
-
-    /* Handling SAI status*/
-    virtual task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
-    virtual task_process_status handleSaiSetStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
-    virtual task_process_status handleSaiRemoveStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
-    virtual task_process_status handleSaiGetStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
-    bool parseHandleSaiStatusFailure(task_process_status status);
 
     ResponsePublisher m_publisher;
 private:
