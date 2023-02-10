@@ -4517,12 +4517,12 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
             {
                 if (addAclRule(newRule, table_id))
                 {
-                    setAclRuleStatus(rule_id, true);
+                    setAclRuleStatus(table_id, rule_id, true);
                     it = consumer.m_toSync.erase(it);
                 }
                 else
                 {
-                    setAclRuleStatus(rule_id, false);
+                    setAclRuleStatus(table_id, rule_id, false);
                     it++;
                 }
             }
@@ -4530,7 +4530,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
             {
                 it = consumer.m_toSync.erase(it);
                 // Mark the rule inactive if the configuration is invalid
-                setAclRuleStatus(rule_id, false);
+                setAclRuleStatus(table_id, rule_id, false);
                 SWSS_LOG_ERROR("Failed to create ACL rule. Rule configuration is invalid");
             }
         }
@@ -4538,7 +4538,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
         {
             if (removeAclRule(table_id, rule_id))
             {
-                removeAclRuleStatus(rule_id);
+                removeAclRuleStatus(table_id, rule_id);
                 it = consumer.m_toSync.erase(it);
             }
             else
@@ -4907,11 +4907,11 @@ void AclOrch::setAclTableStatus(string table_name, bool active)
     vector<FieldValueTuple> fvVector;
     if (active)
     {
-        fvVector.emplace_back("Status", "Active");
+        fvVector.emplace_back("status", "Active");
     }
     else
     {
-        fvVector.emplace_back("Status", "Inactive");
+        fvVector.emplace_back("status", "Inactive");
     }
     m_aclTableStateTable.set(table_name, fvVector);
 }
@@ -4923,22 +4923,22 @@ void AclOrch::removeAclTableStatus(string table_name)
 }
 
 // Set the status of ACL rule in STATE_DB
-void AclOrch::setAclRuleStatus(string rule_name, bool active)
+void AclOrch::setAclRuleStatus(string table_name, string rule_name, bool active)
 {
     vector<FieldValueTuple> fvVector;
     if (active)
     {
-        fvVector.emplace_back("Status", "Active");
+        fvVector.emplace_back("status", "Active");
     }
     else
     {
-        fvVector.emplace_back("Status", "Inactive");
+        fvVector.emplace_back("status", "Inactive");
     }
-    m_aclRuleStateTable.set(rule_name, fvVector);
+    m_aclRuleStateTable.set(table_name + string("|") + rule_name, fvVector);
 }
 
 // Remove the status record of given ACL rule from STATE_DB
-void AclOrch::removeAclRuleStatus(string rule_name)
+void AclOrch::removeAclRuleStatus(string table_name, string rule_name)
 {
-    m_aclRuleStateTable.del(rule_name);
+    m_aclRuleStateTable.del(table_name + string("|") + rule_name);
 }
