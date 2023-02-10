@@ -139,6 +139,11 @@ public:
     {
     }
 
+    swss::ConsumerTableBase *getConsumerTable() const
+    {
+        return static_cast<swss::ConsumerTableBase *>(getSelectable());
+    }
+
     int getDbId() const
     {
         return getDbConnector()->getDbId();
@@ -181,11 +186,6 @@ public:
     TableConsumer(swss::ConsumerTableBase *select, Orch *orch, const std::string &name)
         : Consumer(select, orch, name)
     {
-    }
-
-    swss::ConsumerTableBase *getConsumerTable() const
-    {
-        return static_cast<swss::ConsumerTableBase *>(getSelectable());
     }
 
     std::string getTableName() const override

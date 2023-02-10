@@ -226,7 +226,7 @@ void Consumer::execute()
     do
     {
         std::deque<KeyOpFieldsValuesTuple> entries;
-        pops(entries);
+        getConsumerTable()->pops(entries);
         update_size = addToSync(entries);
     } while (update_size != 0);
 
