@@ -14,6 +14,7 @@
 #include "macaddress.h"
 #include "timer.h"
 #include "dashorch.h"
+#include "saihelper.h"
 
 struct ApplianceEntry
 {

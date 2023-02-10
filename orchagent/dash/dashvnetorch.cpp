@@ -17,6 +17,7 @@
 #include "saiextensions.h"
 #include "swssnet.h"
 #include "tokenize.h"
+#include "dashorch.h"
 
 using namespace std;
 using namespace swss;
