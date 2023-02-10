@@ -56,10 +56,15 @@ void RecordResponse(const std::string& response_channel, const std::string& key,
 
 }  // namespace
 
-ResponsePublisher::ResponsePublisher(bool buffered)
-    : m_db(std::make_unique<swss::DBConnector>("APPL_STATE_DB", 0)),
-      m_pipe(std::make_unique<swss::RedisPipeline>(m_db.get())),
-      m_buffered(buffered) {}
+ResponsePublisher::ResponsePublisher(const std::string& dbName, bool buffered)
+    : m_db(std::make_unique<swss::DBConnector>(dbName, 0)),
+      m_buffered(buffered) {
+  if (m_buffered) {
+    m_pipe = std::make_unique<swss::RedisPipeline>(m_db.get());
+  } else {
+    m_pipe = std::make_unique<swss::RedisPipeline>(m_db.get(), 1);
+  }
+}
 
 void ResponsePublisher::publish(
     const std::string& table, const std::string& key,

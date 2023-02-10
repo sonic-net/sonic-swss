@@ -16,7 +16,7 @@
 // 2. Writes the operation into the DB.
 class ResponsePublisher : public ResponsePublisherInterface {
  public:
-  explicit ResponsePublisher(bool buffered = false);
+  explicit ResponsePublisher(const std::string& dbName, bool buffered = false);
 
   virtual ~ResponsePublisher() = default;
 
