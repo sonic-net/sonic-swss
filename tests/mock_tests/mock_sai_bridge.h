@@ -12,20 +12,20 @@ extern "C"
 class MockSaiBridge
 {
   public:
-    MOCK_METHOD4(create_bridge_port, sai_status_t(_Out_ sai_object_id_t *bridge_port_id,
-                                                  _In_ sai_object_id_t switch_id,
-                                                  _In_ uint32_t attr_count,
-                                                  _In_ const sai_attribute_t *attr_list));
+    MOCK_METHOD4(create_bridge_port, sai_status_t(sai_object_id_t *bridge_port_id,
+                                                  sai_object_id_t switch_id,
+                                                  uint32_t attr_count,
+                                                  const sai_attribute_t *attr_list));
 };
 
 // Note that before mock functions below are used, mock_sai_bridge must be
 // initialized to point to an instance of MockSaiBridge.
 MockSaiBridge *mock_sai_bridge;
 
-sai_status_t mock_create_bridge_port(_Out_ sai_object_id_t *bridge_port_id,
-                                     _In_ sai_object_id_t switch_id,
-                                     _In_ uint32_t attr_count,
-                                     _In_ const sai_attribute_t *attr_list)
+sai_status_t mock_create_bridge_port(sai_object_id_t *bridge_port_id,
+                                     sai_object_id_t switch_id,
+                                     uint32_t attr_count,
+                                     const sai_attribute_t *attr_list)
 {
     return mock_sai_bridge->create_bridge_port(bridge_port_id, switch_id, attr_count, attr_list);
 }
