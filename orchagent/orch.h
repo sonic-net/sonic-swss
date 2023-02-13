@@ -40,6 +40,7 @@ const char state_db_key_delimiter  = '|';
 #define NPS_PLATFORM_SUBSTRING  "nephos"
 #define MRVL_PLATFORM_SUBSTRING "marvell"
 #define CISCO_8000_PLATFORM_SUBSTRING "cisco-8000"
+#define XS_PLATFORM_SUBSTRING   "xsight"
 
 #define CONFIGDB_KEY_SEPARATOR "|"
 #define DEFAULT_KEY_SEPARATOR  ":"
@@ -66,6 +67,7 @@ typedef struct
     // multiple objects being referenced are separated by ','
     std::map<std::string, std::string> m_objsReferencingByMe;
     sai_object_id_t m_saiObjectId;
+    bool m_pendingRemove;
 } referenced_object;
 
 typedef std::map<std::string, referenced_object> object_reference_map;
@@ -221,6 +223,11 @@ public:
     static void recordTuple(Consumer &consumer, const swss::KeyOpFieldsValuesTuple &tuple);
 
     void dumpPendingTasks(std::vector<std::string> &ts);
+
+    /**
+     * @brief Flush pending responses
+     */
+    void flushResponses();
 protected:
     ConsumerMap m_consumerMap;
 
@@ -243,13 +250,6 @@ protected:
     /* Note: consumer will be owned by this class */
     void addExecutor(Executor* executor);
     Executor *getExecutor(std::string executorName);
-
-    /* Handling SAI status*/
-    virtual task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
-    virtual task_process_status handleSaiSetStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
-    virtual task_process_status handleSaiRemoveStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
-    virtual task_process_status handleSaiGetStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
-    bool parseHandleSaiStatusFailure(task_process_status status);
 
     ResponsePublisher m_publisher;
 private:

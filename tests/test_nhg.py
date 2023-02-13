@@ -128,7 +128,7 @@ class TestNextHopGroupBase(object):
         return "10.0.0." + str(i * 2 + 1)
 
     def port_mac(self, i):
-        return "00:00:00:00:00:0" + str(i)
+        return "00:00:00:00:00:0" + str(i + 1)
 
     def config_intf(self, i):
         fvs = {'NULL': 'NULL'}

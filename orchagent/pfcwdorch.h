@@ -7,6 +7,7 @@
 #include "producertable.h"
 #include "notificationconsumer.h"
 #include "timer.h"
+#include "events.h"
 
 extern "C" {
 #include "sai.h"
@@ -49,15 +50,17 @@ public:
 
     virtual task_process_status createEntry(const string& key, const vector<FieldValueTuple>& data);
     task_process_status deleteEntry(const string& name);
+    PfcWdAction getPfcDlrPacketAction() { return PfcDlrPacketAction; }
+    void setPfcDlrPacketAction(PfcWdAction action) { PfcDlrPacketAction = action; }
 
 protected:
     virtual bool startWdActionOnQueue(const string &event, sai_object_id_t queueId) = 0;
     string m_platform = "";
-
 private:
 
     shared_ptr<DBConnector> m_countersDb = nullptr;
     shared_ptr<Table> m_countersTable = nullptr;
+    PfcWdAction PfcDlrPacketAction = PfcWdAction::PFC_WD_ACTION_UNKNOWN;
 };
 
 template <typename DropHandler, typename ForwardHandler>
@@ -117,6 +120,8 @@ private:
     void disableBigRedSwitchMode();
     void enableBigRedSwitchMode();
     void setBigRedSwitchMode(string value);
+
+    void report_pfc_storm(sai_object_id_t id, const PfcWdQueueEntry *);
 
     map<sai_object_id_t, PfcWdQueueEntry> m_entryMap;
     map<sai_object_id_t, PfcWdQueueEntry> m_brsEntryMap;

@@ -215,7 +215,8 @@ int main(int argc, char **argv)
                 CFG_BUFFER_QUEUE_TABLE_NAME,
                 CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME,
                 CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME,
-                CFG_DEVICE_METADATA_TABLE_NAME
+                CFG_DEVICE_METADATA_TABLE_NAME,
+                CFG_PORT_QOS_MAP_TABLE_NAME
             };
             cfgOrchList.emplace_back(new BufferMgr(&cfgDb, &applDb, pg_lookup_file, cfg_buffer_tables));
         }

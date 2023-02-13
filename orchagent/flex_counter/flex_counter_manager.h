@@ -31,6 +31,7 @@ enum class CounterType
     ACL_COUNTER,
     TUNNEL,
     HOSTIF_TRAP,
+    ROUTE,
 };
 
 // FlexCounterManager allows users to manage a group of flex counters.
@@ -50,6 +51,14 @@ class FlexCounterManager
 
         FlexCounterManager()
         {}
+
+        FlexCounterManager(
+                const std::string& db_name,
+                const std::string& group_name,
+                const StatsMode stats_mode,
+                const uint polling_interval,
+                const bool enabled,
+                swss::FieldValueTuple fv_plugin = std::make_pair("",""));
 
         FlexCounterManager(const FlexCounterManager&) = delete;
         FlexCounterManager& operator=(const FlexCounterManager&) = delete;

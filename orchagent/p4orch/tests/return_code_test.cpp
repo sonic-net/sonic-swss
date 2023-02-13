@@ -4,6 +4,7 @@
 
 #include <memory>
 #include <string>
+#include <unordered_map>
 
 extern "C"
 {
@@ -103,6 +104,43 @@ TEST(ReturnCodeTest, CopyAndAppendStringInMsg)
     EXPECT_EQ("SWSS_RC_INVALID_PARAM", return_code.codeStr());
     EXPECT_EQ("Detailed reasons. More details.", return_code.message());
     EXPECT_EQ("SWSS_RC_INVALID_PARAM:Detailed reasons. More details.", return_code.toString());
+}
+
+TEST(ReturnCodeTest, SaiCodeToReturnCodeMapping)
+{
+    std::unordered_map<sai_status_t, StatusCode> expect_mapping = {
+        {SAI_STATUS_SUCCESS, StatusCode::SWSS_RC_SUCCESS},
+        {SAI_STATUS_NOT_SUPPORTED, StatusCode::SWSS_RC_UNIMPLEMENTED},
+        {SAI_STATUS_NO_MEMORY, StatusCode::SWSS_RC_NO_MEMORY},
+        {SAI_STATUS_INSUFFICIENT_RESOURCES, StatusCode::SWSS_RC_FULL},
+        {SAI_STATUS_INVALID_PARAMETER, StatusCode::SWSS_RC_INVALID_PARAM},
+        {SAI_STATUS_ITEM_ALREADY_EXISTS, StatusCode::SWSS_RC_EXISTS},
+        {SAI_STATUS_ITEM_NOT_FOUND, StatusCode::SWSS_RC_NOT_FOUND},
+        {SAI_STATUS_TABLE_FULL, StatusCode::SWSS_RC_FULL},
+        {SAI_STATUS_NOT_IMPLEMENTED, StatusCode::SWSS_RC_UNIMPLEMENTED},
+        {SAI_STATUS_OBJECT_IN_USE, StatusCode::SWSS_RC_IN_USE},
+        {SAI_STATUS_FAILURE, StatusCode::SWSS_RC_UNKNOWN},
+        {SAI_STATUS_INVALID_ATTRIBUTE_0, StatusCode::SWSS_RC_INVALID_PARAM},
+        {SAI_STATUS_INVALID_ATTRIBUTE_10, StatusCode::SWSS_RC_INVALID_PARAM},
+        {SAI_STATUS_INVALID_ATTRIBUTE_MAX, StatusCode::SWSS_RC_INVALID_PARAM},
+        {SAI_STATUS_INVALID_ATTR_VALUE_0, StatusCode::SWSS_RC_INVALID_PARAM},
+        {SAI_STATUS_INVALID_ATTR_VALUE_10, StatusCode::SWSS_RC_INVALID_PARAM},
+        {SAI_STATUS_INVALID_ATTR_VALUE_MAX, StatusCode::SWSS_RC_INVALID_PARAM},
+        {SAI_STATUS_ATTR_NOT_IMPLEMENTED_0, StatusCode::SWSS_RC_UNIMPLEMENTED},
+        {SAI_STATUS_ATTR_NOT_IMPLEMENTED_10, StatusCode::SWSS_RC_UNIMPLEMENTED},
+        {SAI_STATUS_ATTR_NOT_IMPLEMENTED_MAX, StatusCode::SWSS_RC_UNIMPLEMENTED},
+        {SAI_STATUS_UNKNOWN_ATTRIBUTE_0, StatusCode::SWSS_RC_INVALID_PARAM},
+        {SAI_STATUS_UNKNOWN_ATTRIBUTE_10, StatusCode::SWSS_RC_INVALID_PARAM},
+        {SAI_STATUS_UNKNOWN_ATTRIBUTE_MAX, StatusCode::SWSS_RC_INVALID_PARAM},
+        {SAI_STATUS_ATTR_NOT_SUPPORTED_0, StatusCode::SWSS_RC_UNIMPLEMENTED},
+        {SAI_STATUS_ATTR_NOT_SUPPORTED_10, StatusCode::SWSS_RC_UNIMPLEMENTED},
+        {SAI_STATUS_ATTR_NOT_SUPPORTED_MAX, StatusCode::SWSS_RC_UNIMPLEMENTED},
+    };
+    for (const auto &it : expect_mapping)
+    {
+        ReturnCode return_code(it.first);
+        EXPECT_EQ(return_code, it.second);
+    }
 }
 
 TEST(ReturnCodeTest, ReturnCodeOrHasInt)

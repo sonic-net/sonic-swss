@@ -9,3 +9,22 @@
 # @prsunny will be requested for review when someone opens
 # a pull request.
 *       @prsunny
+
+# MACSEC
+/gearsyncd/            @Pterosaur
+/orchagent/macsecorch* @Pterosaur
+
+# LAG
+/teamsyncd/            @judyjoseph
+/tlm_teamd/            @judyjoseph
+/cfgmgr/teammgr*       @judyjoseph
+
+# Buffer Management, PFC
+/orchagent/bufferorch* @neethajohn
+/orchagent/qosorch*    @neethajohn
+/orchagent/pfc*        @neethajohn
+/cfgmgr/buffer*        @neethajohn
+
+# Chassis
+/orchagent/fabricportsorch* @abdosi @judyjoseph
+/tests/test_virtual_chassis.py @abdosi @judyjoseph

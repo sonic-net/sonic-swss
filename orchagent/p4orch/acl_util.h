@@ -51,6 +51,16 @@ struct P4AclCounter
     P4AclCounter() : bytes_enabled(false), packets_enabled(false), counter_oid(SAI_NULL_OBJECT_ID)
     {
     }
+
+    bool operator==(const P4AclCounter &entry) const
+    {
+        return bytes_enabled == entry.bytes_enabled && packets_enabled == entry.packets_enabled;
+    }
+
+    bool operator!=(const P4AclCounter &entry) const
+    {
+        return !(*this == entry);
+    }
 };
 
 struct P4AclMeter
@@ -71,6 +81,18 @@ struct P4AclMeter
           type(SAI_METER_TYPE_PACKETS), mode(SAI_POLICER_MODE_TR_TCM)
     {
     }
+
+    bool operator==(const P4AclMeter &entry) const
+    {
+        return enabled == entry.enabled && type == entry.type && mode == entry.mode && cir == entry.cir &&
+               cburst == entry.cburst && pir == entry.pir && pburst == entry.pburst &&
+               packet_color_actions == entry.packet_color_actions;
+    }
+
+    bool operator!=(const P4AclMeter &entry) const
+    {
+        return !(*this == entry);
+    }
 };
 
 struct P4AclMirrorSession
@@ -78,12 +100,32 @@ struct P4AclMirrorSession
     std::string name;
     std::string key; // KeyGenerator::generateMirrorSessionKey(name)
     sai_object_id_t oid;
+
+    bool operator==(const P4AclMirrorSession &entry) const
+    {
+        return name == entry.name && key == entry.key && oid == entry.oid;
+    }
+
+    bool operator!=(const P4AclMirrorSession &entry) const
+    {
+        return !(*this == entry);
+    }
 };
 
 struct P4UdfDataMask
 {
     std::vector<uint8_t> data;
     std::vector<uint8_t> mask;
+
+    bool operator==(const P4UdfDataMask &entry) const
+    {
+        return data == entry.data && mask == entry.mask;
+    }
+
+    bool operator!=(const P4UdfDataMask &entry) const
+    {
+        return !(*this == entry);
+    }
 };
 
 struct P4AclRule
@@ -120,6 +162,16 @@ struct SaiActionWithParam
     acl_entry_attr_union_t action;
     std::string param_name;
     std::string param_value;
+
+    bool operator==(const SaiActionWithParam &entry) const
+    {
+        return action == entry.action && param_name == entry.param_name && param_value == entry.param_value;
+    }
+
+    bool operator!=(const SaiActionWithParam &entry) const
+    {
+        return !(*this == entry);
+    }
 };
 
 struct SaiMatchField
@@ -128,6 +180,17 @@ struct SaiMatchField
     acl_table_attr_union_t table_attr;
     uint32_t bitwidth;
     Format format;
+
+    bool operator==(const SaiMatchField &entry) const
+    {
+        return entry_attr == entry.entry_attr && table_attr == entry.table_attr && bitwidth == entry.bitwidth &&
+               format == entry.format;
+    }
+
+    bool operator!=(const SaiMatchField &entry) const
+    {
+        return !(*this == entry);
+    }
 };
 
 struct P4UdfField
@@ -137,6 +200,17 @@ struct P4UdfField
     std::string udf_id;   // {group_id}-base{base}-offset{offset}
     uint16_t offset;      // in Bytes
     sai_udf_base_t base;
+
+    bool operator==(const P4UdfField &entry) const
+    {
+        return length == entry.length && group_id == entry.group_id && udf_id == entry.udf_id &&
+               offset == entry.offset && base == entry.base;
+    }
+
+    bool operator!=(const P4UdfField &entry) const
+    {
+        return !(*this == entry);
+    }
 };
 
 struct P4AclTableDefinition
@@ -152,8 +226,8 @@ struct P4AclTableDefinition
     std::string meter_unit;
     std::string counter_unit;
     // go/p4-composite-fields
-    // Only SAI attributes for IPv6-64bit(IPV6_WORDn) are supported as sai_field
-    // elements in composite field
+    // Only SAI attributes for IPv6-64bit(IPV6_WORDn) are supported as
+    // sai_field elements in composite field
     std::map<std::string, std::vector<SaiMatchField>> composite_sai_match_fields_lookup;
     // go/gpins-acl-udf
     // p4_match string to a list of P4UdfFields mapping
@@ -199,8 +273,6 @@ using P4AclRuleTables = std::map<std::string, std::map<std::string, P4AclRule>>;
 #define P4_FORMAT_IPV6 "IPV6"
 #define P4_FORMAT_STRING "STRING"
 
-// complete p4 match fields and action list:
-// https://docs.google.com/document/d/1gtxJe7aPIJgM2hTLo5gm62DuPJHB31eAyRAsV9zjwW0/edit#heading=h.dzb8jjrtxv49
 #define P4_MATCH_IN_PORT "SAI_ACL_TABLE_ATTR_FIELD_IN_PORT"
 #define P4_MATCH_OUT_PORT "SAI_ACL_TABLE_ATTR_FIELD_OUT_PORT"
 #define P4_MATCH_IN_PORTS "SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS"
@@ -251,6 +323,7 @@ using P4AclRuleTables = std::map<std::string, std::map<std::string, P4AclRule>>;
 #define P4_MATCH_DST_IPV6_WORD2 "SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6_WORD2"
 #define P4_MATCH_SRC_IPV6_WORD3 "SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6_WORD3"
 #define P4_MATCH_SRC_IPV6_WORD2 "SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6_WORD2"
+#define P4_MATCH_ROUTE_DST_USER_META "SAI_ACL_TABLE_ATTR_FIELD_ROUTE_DST_USER_META"
 
 #define P4_ACTION_PACKET_ACTION "SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION"
 #define P4_ACTION_REDIRECT "SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT"
@@ -351,7 +424,6 @@ using P4AclRuleTables = std::map<std::string, std::map<std::string, P4AclRule>>;
 
 #define GENL_PACKET_TRAP_GROUP_NAME_PREFIX "trap.group.cpu.queue."
 
-#define WHITESPACE " "
 #define EMPTY_STRING ""
 #define P4_CPU_QUEUE_MAX_NUM 8
 #define IPV6_SINGLE_WORD_BYTES_LENGTH 4
@@ -411,6 +483,7 @@ static const acl_table_attr_lookup_t aclMatchTableAttrLookup = {
     {P4_MATCH_PACKET_VLAN, SAI_ACL_TABLE_ATTR_FIELD_PACKET_VLAN},
     {P4_MATCH_TUNNEL_VNI, SAI_ACL_TABLE_ATTR_FIELD_TUNNEL_VNI},
     {P4_MATCH_IPV6_NEXT_HEADER, SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER},
+    {P4_MATCH_ROUTE_DST_USER_META, SAI_ACL_TABLE_ATTR_FIELD_ROUTE_DST_USER_META},
 };
 
 static const acl_table_attr_format_lookup_t aclMatchTableAttrFormatLookup = {
@@ -459,6 +532,7 @@ static const acl_table_attr_format_lookup_t aclMatchTableAttrFormatLookup = {
     {SAI_ACL_TABLE_ATTR_FIELD_PACKET_VLAN, Format::STRING},
     {SAI_ACL_TABLE_ATTR_FIELD_TUNNEL_VNI, Format::HEX_STRING},
     {SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER, Format::HEX_STRING},
+    {SAI_ACL_TABLE_ATTR_FIELD_ROUTE_DST_USER_META, Format::HEX_STRING},
 };
 
 static const acl_table_attr_lookup_t aclCompositeMatchTableAttrLookup = {
@@ -514,6 +588,7 @@ static const acl_rule_attr_lookup_t aclMatchEntryAttrLookup = {
     {P4_MATCH_PACKET_VLAN, SAI_ACL_ENTRY_ATTR_FIELD_PACKET_VLAN},
     {P4_MATCH_TUNNEL_VNI, SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI},
     {P4_MATCH_IPV6_NEXT_HEADER, SAI_ACL_ENTRY_ATTR_FIELD_IPV6_NEXT_HEADER},
+    {P4_MATCH_ROUTE_DST_USER_META, SAI_ACL_ENTRY_ATTR_FIELD_ROUTE_DST_USER_META},
 };
 
 static const acl_rule_attr_lookup_t aclCompositeMatchEntryAttrLookup = {
@@ -629,9 +704,6 @@ static std::map<sai_stat_id_t, std::string> aclCounterStatsIdNameMap = {
     {SAI_POLICER_STAT_RED_BYTES, P4_COUNTER_STATS_RED_BYTES},
 };
 
-// Trim tailing and leading whitespace
-std::string trim(const std::string &s);
-
 // Parse ACL table definition APP DB entry action field to P4ActionParamName
 // action_list and P4PacketActionWithColor action_color_list
 bool parseAclTableAppDbActionField(const std::string &aggr_actions_str, std::vector<P4ActionParamName> *action_list,
@@ -644,8 +716,8 @@ ReturnCode validateAndSetSaiMatchFieldJson(const nlohmann::json &match_json, con
                                            std::map<std::string, SaiMatchField> *sai_match_field_lookup,
                                            std::map<std::string, std::string> *ip_type_bit_type_lookup);
 
-// Validate and set composite match field element with kind:sai_field. Composite
-// SAI field only support IPv6-64bit now (IPV6_WORDn)
+// Validate and set composite match field element with kind:sai_field.
+// Composite SAI field only support IPv6-64bit now (IPV6_WORDn)
 ReturnCode validateAndSetCompositeElementSaiFieldJson(
     const nlohmann::json &element_match_json, const std::string &p4_match,
     std::map<std::string, std::vector<SaiMatchField>> *composite_sai_match_fields_lookup,
@@ -681,9 +753,10 @@ ReturnCode buildAclTableDefinitionActionFieldValues(
 bool isSetUserTrapActionInAclTableDefinition(
     const std::map<std::string, std::vector<SaiActionWithParam>> &aggr_sai_actions_lookup);
 
-// Build packet color(sai_policer_attr_t) to packet action(sai_packet_action_t)
-// map for ACL table definition by P4PacketActionWithColor action map. If packet
-// color is empty, then the packet action should add as a SaiActionWithParam
+// Build packet color(sai_policer_attr_t) to packet
+// action(sai_packet_action_t) map for ACL table definition by
+// P4PacketActionWithColor action map. If packet color is empty, then the
+// packet action should add as a SaiActionWithParam
 ReturnCode buildAclTableDefinitionActionColorFieldValues(
     const std::map<std::string, std::vector<P4PacketActionWithColor>> &action_color_lookup,
     std::map<std::string, std::vector<SaiActionWithParam>> *aggr_sai_actions_lookup,
@@ -702,9 +775,17 @@ ReturnCode setCompositeSaiMatchValue(const acl_entry_attr_union_t attr_name, con
 ReturnCode setUdfMatchValue(const P4UdfField &udf_field, const std::string &attr_value, sai_attribute_value_t *value,
                             P4UdfDataMask *udf_data_mask, uint16_t bytes_offset);
 
-// Compares the action value difference if the action field is present in both
-// new and old ACL rules. Returns true if action values are different.
+// Compares the action value difference if the action field is present in
+// both new and old ACL rules. Returns true if action values are different.
 bool isDiffActionFieldValue(const acl_entry_attr_union_t attr_name, const sai_attribute_value_t &value,
                             const sai_attribute_value_t &old_value, const P4AclRule &acl_rule,
                             const P4AclRule &old_acl_rule);
+
+// Compares the match value difference if the match field is present in
+// both new and old ACL rules. Returns true if match values are different.
+// This method is used in state verification only.
+bool isDiffMatchFieldValue(const acl_entry_attr_union_t attr_name, const sai_attribute_value_t &value,
+                           const sai_attribute_value_t &old_value, const P4AclRule &acl_rule,
+                           const P4AclRule &old_acl_rule);
+
 } // namespace p4orch

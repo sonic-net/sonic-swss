@@ -134,6 +134,11 @@ bool VlanMgr::addHostVlan(int vlan_id)
     std::string res;
     EXEC_WITH_ERROR_THROW(cmds, res);
 
+    res.clear();
+    const std::string echo_cmd = std::string("")
+      + ECHO_CMD + " 0 > /proc/sys/net/ipv4/conf/" + VLAN_PREFIX + std::to_string(vlan_id) + "/arp_evict_nocarrier";
+    swss::exec(echo_cmd, res);
+
     return true;
 }
 
@@ -330,10 +335,10 @@ void VlanMgr::doVlanTask(Consumer &consumer)
              */
             if (isVlanStateOk(key) && m_vlans.find(key) == m_vlans.end())
             {
+                SWSS_LOG_DEBUG("%s already created", kfvKey(t).c_str());
                 m_vlans.insert(key);
                 m_vlanReplay.erase(kfvKey(t));
                 it = consumer.m_toSync.erase(it);
-                SWSS_LOG_DEBUG("%s already created", kfvKey(t).c_str());
                 continue;
             }
 

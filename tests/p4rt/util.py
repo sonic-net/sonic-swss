@@ -54,8 +54,10 @@ def verify_response(consumer, key, attr_list, status, err_message = "SWSS_RC_SUC
   assert data == key
   assert op == status
   assert len(values) >= 1
-  assert values[0][0] == "err_str"
-  assert values[0][1] == err_message
+  assert values[0][0] == "err_str", "Unexpected status '%s' received, expected '%s'" % \
+                (values[0][0], "err_str")
+  assert values[0][1] == err_message, "Unexpected message '%s' received, expected '%s'" % \
+                (values[0][1], err_message)
   values = values[1:]
   verify_attr(values, attr_list)
 

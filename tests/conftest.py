@@ -22,9 +22,11 @@ from dvslib.dvs_acl import DVSAcl
 from dvslib.dvs_pbh import DVSPbh
 from dvslib.dvs_route import DVSRoute
 from dvslib import dvs_vlan
+from dvslib import dvs_port
 from dvslib import dvs_lag
 from dvslib import dvs_mirror
 from dvslib import dvs_policer
+from dvslib import dvs_hash
 
 from buffer_model import enable_dynamic_buffer
 
@@ -88,17 +90,23 @@ def pytest_addoption(parser):
                      default="traditional",
                      help="Buffer model")
 
+    parser.addoption("--graceful-stop",
+                     action="store_true",
+                     default=False,
+                     help="Stop swss and syncd before stopping a conatainer")
+
 
 def random_string(size=4, chars=string.ascii_uppercase + string.digits):
     return "".join(random.choice(chars) for x in range(size))
 
 
 class AsicDbValidator(DVSDatabase):
-    def __init__(self, db_id: int, connector: str):
+    def __init__(self, db_id: int, connector: str, switch_type: str):
         DVSDatabase.__init__(self, db_id, connector)
-        self._wait_for_asic_db_to_initialize()
-        self._populate_default_asic_db_values()
-        self._generate_oid_to_interface_mapping()
+        if switch_type not in ['fabric']:
+           self._wait_for_asic_db_to_initialize()
+           self._populate_default_asic_db_values()
+           self._generate_oid_to_interface_mapping()
 
     def _wait_for_asic_db_to_initialize(self) -> None:
         """Wait up to 30 seconds for the default fields to appear in ASIC DB."""
@@ -143,6 +151,8 @@ class AsicDbValidator(DVSDatabase):
 
         self.default_acl_tables = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
         self.default_acl_entries = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
+
+        self.default_hash_keys = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_HASH")
 
         self.default_copp_policers = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_POLICER")
 
@@ -406,7 +416,7 @@ class DockerVirtualSwitch:
         for i in range(NUM_PORTS):
             server = VirtualServer(self.ctn_sw.name, self.ctn_sw_pid, i)
             self.servers.append(server)
-            
+
     def reset_dbs(self):
         # DB wrappers are declared here, lazy-loaded in the tests
         self.app_db = None
@@ -491,7 +501,9 @@ class DockerVirtualSwitch:
         wait_for_result(_polling_function, service_polling_config)
 
     def init_asic_db_validator(self) -> None:
-        self.asicdb = AsicDbValidator(self.ASIC_DB_ID, self.redis_sock)
+        self.get_config_db()
+        metadata = self.config_db.get_entry('DEVICE_METADATA|localhost', '')
+        self.asicdb = AsicDbValidator(self.ASIC_DB_ID, self.redis_sock, metadata.get("switch_type"))
 
     def init_appl_db_validator(self) -> None:
         self.appldb = ApplDbValidator(self.APPL_DB_ID, self.redis_sock)
@@ -520,11 +532,13 @@ class DockerVirtualSwitch:
             port_table_keys = app_db.get_keys("PORT_TABLE")
             return ("PortInitDone" in port_table_keys and "PortConfigDone" in port_table_keys, None)
 
-        wait_for_result(_polling_function, startup_polling_config)
+        if metadata.get('switch_type') not in ['fabric']:
+            wait_for_result(_polling_function, startup_polling_config)
 
         # Verify that all ports have been created
-        asic_db = self.get_asic_db()
-        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT", num_ports + 1)  # +1 CPU Port
+        if metadata.get('switch_type') not in ['fabric']:
+            asic_db = self.get_asic_db()
+            asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT", num_ports + 1)  # +1 CPU Port
 
         # Verify that fabric ports are monitored in STATE_DB
         if metadata.get('switch_type', 'npu') in ['voq', 'fabric']:
@@ -589,8 +603,8 @@ class DockerVirtualSwitch:
         self.ctn_restart()
         self.check_ready_status_and_init_db()
 
-    def runcmd(self, cmd: str) -> Tuple[int, str]:
-        res = self.ctn.exec_run(cmd)
+    def runcmd(self, cmd: str, include_stderr=True) -> Tuple[int, str]:
+        res = self.ctn.exec_run(cmd, stdout=True, stderr=include_stderr)
         exitcode = res.exit_code
         out = res.output.decode("utf-8")
 
@@ -657,6 +671,11 @@ class DockerVirtualSwitch:
         for pname in self.swssd:
             cmd += "supervisorctl stop {}; ".format(pname)
         self.runcmd(['sh', '-c', cmd])
+        time.sleep(5)
+
+    def stop_syncd(self):
+        self.runcmd(['sh', '-c', 'supervisorctl stop syncd'])
+        time.sleep(5)
 
     # deps: warm_reboot
     def start_zebra(self):
@@ -668,7 +687,7 @@ class DockerVirtualSwitch:
     # deps: warm_reboot
     def stop_zebra(self):
         self.runcmd(['sh', '-c', 'pkill -9 zebra'])
-        time.sleep(1)
+        time.sleep(5)
 
     # deps: warm_reboot
     def start_fpmsyncd(self):
@@ -1195,6 +1214,94 @@ class DockerVirtualSwitch:
         fvs = swsscommon.FieldValuePairs([("enable",enable)])
         tbl.set("swss", fvs)
 
+    # nat
+    def nat_mode_set(self, value):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "NAT_GLOBAL")
+        fvs = swsscommon.FieldValuePairs([("admin_mode", value)])
+        tbl.set("Values", fvs)
+        time.sleep(1)
+
+    def nat_timeout_set(self, value):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "NAT_GLOBAL")
+        fvs = swsscommon.FieldValuePairs([("nat_timeout", value)])
+        tbl.set("Values", fvs)
+        time.sleep(1)
+
+    def nat_udp_timeout_set(self, value):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "NAT_GLOBAL")
+        fvs = swsscommon.FieldValuePairs([("nat_udp_timeout", value)])
+        tbl.set("Values", fvs)
+        time.sleep(1)
+
+    def nat_tcp_timeout_set(self, value):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "NAT_GLOBAL")
+        fvs = swsscommon.FieldValuePairs([("nat_tcp_timeout", value)])
+        tbl.set("Values", fvs)
+        time.sleep(1)
+
+    def add_nat_basic_entry(self, external, internal):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "STATIC_NAT")
+        fvs = swsscommon.FieldValuePairs([("local_ip", internal)])
+        tbl.set(external, fvs)
+        time.sleep(1)
+
+    def del_nat_basic_entry(self, external):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "STATIC_NAT")
+        tbl._del(external)
+        time.sleep(1)
+
+    def add_nat_udp_entry(self, external, extport, internal, intport):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "STATIC_NAPT")
+        fvs = swsscommon.FieldValuePairs([("local_ip", internal), ("local_port", intport)])
+        tbl.set(external + "|UDP|" + extport, fvs)
+        time.sleep(1)
+
+    def del_nat_udp_entry(self, external, extport):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "STATIC_NAPT")
+        tbl._del(external + "|UDP|" + extport)
+        time.sleep(1)
+
+    def add_twice_nat_basic_entry(self, external, internal, nat_type, twice_nat_id):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "STATIC_NAT")
+        fvs = swsscommon.FieldValuePairs([("local_ip", internal), ("nat_type", nat_type), ("twice_nat_id", twice_nat_id)])
+        tbl.set(external, fvs)
+        time.sleep(1)
+
+    def del_twice_nat_basic_entry(self, external):
+        self.del_nat_basic_entry(external)
+
+    def add_twice_nat_udp_entry(self, external, extport, internal, intport, nat_type, twice_nat_id):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        tbl = swsscommon.Table(cdb, "STATIC_NAPT")
+        fvs = swsscommon.FieldValuePairs([("local_ip", internal), ("local_port", intport), ("nat_type", nat_type), ("twice_nat_id", twice_nat_id)])
+        tbl.set(external + "|UDP|" + extport, fvs)
+        time.sleep(1)
+
+    def del_twice_nat_udp_entry(self, external, extport):
+        self.del_nat_udp_entry(external, extport)
+
+    def set_nat_zone(self, interface, nat_zone):
+        cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        if interface.startswith("PortChannel"):
+            tbl_name = "PORTCHANNEL_INTERFACE"
+        elif interface.startswith("Vlan"):
+            tbl_name = "VLAN_INTERFACE"
+        else:
+            tbl_name = "INTERFACE"
+        tbl = swsscommon.Table(cdb, tbl_name)
+        fvs = swsscommon.FieldValuePairs([("nat_zone", nat_zone)])
+        tbl.set(interface, fvs)
+        time.sleep(1)
+
     # deps: acl, crm, fdb
     def setReadOnlyAttr(self, obj, attr, val):
         db = swsscommon.DBConnector(swsscommon.ASIC_DB, self.redis_sock, 0)
@@ -1234,6 +1341,7 @@ class DockerVirtualSwitch:
             db = DVSDatabase(self.ASIC_DB_ID, self.redis_sock)
             db.default_acl_tables = self.asicdb.default_acl_tables
             db.default_acl_entries = self.asicdb.default_acl_entries
+            db.default_hash_keys = self.asicdb.default_hash_keys
             db.default_copp_policers = self.asicdb.default_copp_policers
             db.port_name_map = self.asicdb.portnamemap
             db.default_vlan_id = self.asicdb.default_vlan_id
@@ -1640,6 +1748,8 @@ def manage_dvs(request) -> str:
     max_cpu = request.config.getoption("--max_cpu")
     buffer_model = request.config.getoption("--buffer_model")
     force_recreate = request.config.getoption("--force-recreate-dvs")
+    graceful_stop = request.config.getoption("--graceful-stop")
+
     dvs = None
     curr_dvs_env = [] # lgtm[py/unused-local-variable]
 
@@ -1688,6 +1798,9 @@ def manage_dvs(request) -> str:
 
     yield update_dvs
 
+    if graceful_stop:
+        dvs.stop_swss()
+        dvs.stop_syncd()
     dvs.get_logs()
     dvs.destroy()
 
@@ -1695,7 +1808,7 @@ def manage_dvs(request) -> str:
         dvs.runcmd("mv /etc/sonic/config_db.json.orig /etc/sonic/config_db.json")
         dvs.ctn_restart()
 
-@pytest.yield_fixture(scope="module")
+@pytest.fixture(scope="module")
 def dvs(request, manage_dvs) -> DockerVirtualSwitch:
     dvs_env = getattr(request.module, "DVS_ENV", [])
     name = request.config.getoption("--dvsname")
@@ -1704,6 +1817,25 @@ def dvs(request, manage_dvs) -> DockerVirtualSwitch:
     return manage_dvs(log_path, dvs_env)
 
 @pytest.yield_fixture(scope="module")
+def vst(request):
+    vctns = request.config.getoption("--vctns")
+    topo = request.config.getoption("--topo")
+    forcedvs = request.config.getoption("--forcedvs")
+    keeptb = request.config.getoption("--keeptb")
+    imgname = request.config.getoption("--imgname")
+    max_cpu = request.config.getoption("--max_cpu")
+    log_path = vctns if vctns else request.module.__name__
+    dvs_env = getattr(request.module, "DVS_ENV", [])
+    if not topo:
+        # use ecmp topology as default
+        topo = "virtual_chassis/chassis_supervisor.json"
+    vct = DockerVirtualChassisTopology(vctns, imgname, keeptb, dvs_env, log_path, max_cpu,
+                                       forcedvs, topo)
+    yield vct
+    vct.get_logs(request.module.__name__)
+    vct.destroy()
+
+@pytest.fixture(scope="module")
 def vct(request):
     vctns = request.config.getoption("--vctns")
     topo = request.config.getoption("--topo")
@@ -1722,7 +1854,8 @@ def vct(request):
     vct.get_logs(request.module.__name__)
     vct.destroy()
 
-@pytest.yield_fixture
+
+@pytest.fixture
 def testlog(request, dvs):
     dvs.runcmd(f"logger -t pytest === start test {request.node.nodeid} ===")
     yield testlog
@@ -1751,13 +1884,14 @@ def dvs_route(request, dvs) -> DVSRoute:
 
 # FIXME: The rest of these also need to be reverted back to normal fixtures to
 # appease the linter.
-@pytest.yield_fixture(scope="class")
+@pytest.fixture(scope="class")
 def dvs_lag_manager(request, dvs):
     request.cls.dvs_lag = dvs_lag.DVSLag(dvs.get_asic_db(),
-                                         dvs.get_config_db())
+                                         dvs.get_config_db(),
+                                         dvs)
 
 
-@pytest.yield_fixture(scope="class")
+@pytest.fixture(scope="class")
 def dvs_vlan_manager(request, dvs):
     request.cls.dvs_vlan = dvs_vlan.DVSVlan(dvs.get_asic_db(),
                                             dvs.get_config_db(),
@@ -1766,7 +1900,13 @@ def dvs_vlan_manager(request, dvs):
                                             dvs.get_app_db())
 
 
-@pytest.yield_fixture(scope="class")
+@pytest.fixture(scope="class")
+def dvs_port_manager(request, dvs):
+    request.cls.dvs_port = dvs_port.DVSPort(dvs.get_asic_db(),
+                                            dvs.get_config_db())
+
+
+@pytest.fixture(scope="class")
 def dvs_mirror_manager(request, dvs):
     request.cls.dvs_mirror = dvs_mirror.DVSMirror(dvs.get_asic_db(),
                                                   dvs.get_config_db(),
@@ -1775,10 +1915,15 @@ def dvs_mirror_manager(request, dvs):
                                                   dvs.get_app_db())
 
 
-@pytest.yield_fixture(scope="class")
+@pytest.fixture(scope="class")
 def dvs_policer_manager(request, dvs):
     request.cls.dvs_policer = dvs_policer.DVSPolicer(dvs.get_asic_db(),
                                                      dvs.get_config_db())
+
+@pytest.fixture(scope="class")
+def dvs_hash_manager(request, dvs):
+    request.cls.dvs_hash = dvs_hash.DVSHash(dvs.get_asic_db(),
+                                            dvs.get_config_db())
 
 ##################### DPB fixtures ###########################################
 def create_dpb_config_file(dvs):
@@ -1793,7 +1938,8 @@ def remove_dpb_config_file(dvs):
     cmd = "mv /etc/sonic/config_db.json.bak /etc/sonic/config_db.json"
     dvs.runcmd(cmd)
 
-@pytest.yield_fixture(scope="module")
+
+@pytest.fixture(scope="module")
 def dpb_setup_fixture(dvs):
     create_dpb_config_file(dvs)
     if dvs.vct is None:

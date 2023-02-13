@@ -77,6 +77,7 @@ private:
     void updateSubIntfAdminStatus(const std::string &alias, const std::string &admin);
     void updateSubIntfMtu(const std::string &alias, const std::string &mtu);
     void updateSagMac(const std::string &macAddr);
+    bool enableIpv6Flag(const std::string&);
 
     bool m_replayDone {false};
 };

@@ -31,8 +31,10 @@ class AclTableManager : public ObjectManagerInterface
     explicit AclTableManager(P4OidMapper *p4oidMapper, ResponsePublisherInterface *publisher);
     virtual ~AclTableManager();
 
-    void enqueue(const swss::KeyOpFieldsValuesTuple &entry) override;
+    void enqueue(const std::string &table_name, const swss::KeyOpFieldsValuesTuple &entry) override;
     void drain() override;
+    std::string verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple) override;
+    ReturnCode getSaiObject(const std::string &json_key, sai_object_type_t &object_type, std::string &object_key) override;
 
     // Get ACL table definition by table name in cache. Return nullptr if not
     // found.
@@ -92,13 +94,29 @@ class AclTableManager : public ObjectManagerInterface
     ReturnCode createAclGroupMember(const P4AclTableDefinition &acl_table, sai_object_id_t *acl_grp_mem_oid);
 
     // Remove ACL group member for given ACL table.
-    ReturnCode removeAclGroupMember(const std::string &acl_table_name);
+    ReturnCode removeAclGroupMember(P4AclTableDefinition &acl_table);
+
+    // Verifies internal cache for an entry.
+    std::string verifyStateCache(const P4AclTableDefinitionAppDbEntry &app_db_entry,
+                                 const P4AclTableDefinition *acl_table);
+
+    // Verifies ASIC DB for an entry.
+    std::string verifyStateAsicDb(const P4AclTableDefinition *acl_table);
+
+    // Returns ACl table SAI attributes.
+    ReturnCodeOr<std::vector<sai_attribute_t>> getTableSaiAttrs(const P4AclTableDefinition &acl_table);
+
+    // Returns UDF SAI attributes.
+    ReturnCodeOr<std::vector<sai_attribute_t>> getUdfSaiAttrs(const P4UdfField &udf_field);
 
     P4OidMapper *m_p4OidMapper;
     ResponsePublisherInterface *m_publisher;
     P4AclTableDefinitions m_aclTableDefinitions;
     std::deque<swss::KeyOpFieldsValuesTuple> m_entries;
     std::map<sai_acl_stage_t, std::vector<std::string>> m_aclTablesByStage;
+
+    // Always add counter action in ACL table action list during creation
+    int32_t m_acl_action_list[1];
 
     friend class p4orch::test::AclManagerTest;
 };

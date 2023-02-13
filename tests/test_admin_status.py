@@ -9,6 +9,7 @@ class TestAdminStatus(object):
         self.pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
         self.adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
         self.cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        self.sdb = swsscommon.DBConnector(6, dvs.redis_sock, 0)
 
     def set_admin_status(self, port, admin_status):
         assert admin_status == "up" or admin_status == "down"
@@ -52,6 +53,16 @@ class TestAdminStatus(object):
             if fv[0] == "SAI_PORT_ATTR_ADMIN_STATE":
                 assert fv[1] == "true" if admin_status == "up" else "false"
 
+    def check_host_tx_ready_status(self, dvs, port, admin_status):
+        assert admin_status == "up" or admin_status == "down"
+        ptbl = swsscommon.Table(self.sdb, "PORT_TABLE")
+        (status, fvs) = ptbl.get(port)
+        assert status == True
+        assert "host_tx_ready" in [fv[0] for fv in fvs]
+        for fv in fvs:
+            if fv[0] == "host_tx_ready":
+                assert fv[1] == "true" if admin_status == "up" else "false"
+
     def test_PortChannelMemberAdminStatus(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -78,6 +89,24 @@ class TestAdminStatus(object):
 
         # remove port channel
         self.remove_port_channel(dvs, "PortChannel6")
+
+    def test_PortHostTxReadiness(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        # configure admin status to interface
+        self.set_admin_status("Ethernet0", "up")
+        self.set_admin_status("Ethernet4", "down")
+        self.set_admin_status("Ethernet8", "up")
+
+        # check ASIC port database
+        self.check_admin_status(dvs, "Ethernet0", "up")
+        self.check_admin_status(dvs, "Ethernet4", "down")
+        self.check_admin_status(dvs, "Ethernet8", "up")
+
+        # check host readiness status in PORT TABLE of STATE-DB
+        self.check_host_tx_ready_status(dvs, "Ethernet0", "up")
+        self.check_host_tx_ready_status(dvs, "Ethernet4", "down")
+        self.check_host_tx_ready_status(dvs, "Ethernet8", "up")
 
 
 # Add Dummy always-pass test at end as workaroud

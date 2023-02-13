@@ -71,6 +71,8 @@ sai_srv6_api_t**            sai_srv6_api;;
 sai_l2mc_group_api_t*       sai_l2mc_group_api;
 sai_counter_api_t*          sai_counter_api;
 sai_bfd_api_t*              sai_bfd_api;
+sai_my_mac_api_t*           sai_my_mac_api;
+sai_generic_programmable_api_t* sai_generic_programmable_api;
 
 extern sai_object_id_t gSwitchId;
 extern bool gSairedisRecord;
@@ -199,6 +201,8 @@ void initSaiApi()
     sai_api_query(SAI_API_L2MC_GROUP,           (void **)&sai_l2mc_group_api);
     sai_api_query(SAI_API_COUNTER,              (void **)&sai_counter_api);
     sai_api_query(SAI_API_BFD,                  (void **)&sai_bfd_api);
+    sai_api_query(SAI_API_MY_MAC,               (void **)&sai_my_mac_api);
+    sai_api_query(SAI_API_GENERIC_PROGRAMMABLE, (void **)&sai_generic_programmable_api);
 
     sai_log_set(SAI_API_SWITCH,                 SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_BRIDGE,                 SAI_LOG_LEVEL_NOTICE);
@@ -236,6 +240,8 @@ void initSaiApi()
     sai_log_set(SAI_API_L2MC_GROUP,             SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_COUNTER,                SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_BFD,                    SAI_LOG_LEVEL_NOTICE);
+    sai_log_set(SAI_API_MY_MAC,                 SAI_LOG_LEVEL_NOTICE);
+    sai_log_set(SAI_API_GENERIC_PROGRAMMABLE,   SAI_LOG_LEVEL_NOTICE);
 }
 
 void initSaiRedis(const string &record_location, const std::string &record_filename)
@@ -304,7 +310,7 @@ void initSaiRedis(const string &record_location, const std::string &record_filen
     SWSS_LOG_NOTICE("Enable redis pipeline");
 
     char *platform = getenv("platform");
-    if (platform && strstr(platform, MLNX_PLATFORM_SUBSTRING))
+    if (platform && (strstr(platform, MLNX_PLATFORM_SUBSTRING) || strstr(platform, XS_PLATFORM_SUBSTRING)))
     {
         /* We set this long timeout in order for Orchagent to wait enough time for
          * response from syncd. It is needed since in init, systemd syncd startup
@@ -334,7 +340,7 @@ void initSaiRedis(const string &record_location, const std::string &record_filen
     }
     SWSS_LOG_NOTICE("Notify syncd INIT_VIEW");
 
-    if (platform && strstr(platform, MLNX_PLATFORM_SUBSTRING))
+    if (platform && (strstr(platform, MLNX_PLATFORM_SUBSTRING) || strstr(platform, XS_PLATFORM_SUBSTRING)))
     {
         /* Set timeout back to the default value */
         attr.id = SAI_REDIS_SWITCH_ATTR_SYNC_OPERATION_RESPONSE_TIMEOUT;
@@ -359,9 +365,6 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
     sai_status_t status;
     char fwPath[PATH_MAX];
     char hwinfo[HWINFO_MAX_SIZE + 1];
-    char hwinfoIntf[IFNAMSIZ + 1];
-    unsigned int hwinfoPhyid;
-    int ret;
 
     SWSS_LOG_ENTER();
 
@@ -377,19 +380,11 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
     attr.value.u32 = 0;
     attrs.push_back(attr);
 
-    ret = sscanf(phy->hwinfo.c_str(), "%" STR(IFNAMSIZ) "[^/]/%u", hwinfoIntf, &hwinfoPhyid);
-    if (ret != 2) {
-        SWSS_LOG_ERROR("BOX: hardware info doesn't match the 'interface_name/phyid' "
-                       "format");
-        return SAI_STATUS_FAILURE;
+    if( phy->hwinfo.length() > HWINFO_MAX_SIZE ) {
+       SWSS_LOG_ERROR( "hwinfo string attribute is too long." );
+       return SAI_STATUS_FAILURE;
     }
-
-    if (hwinfoPhyid > std::numeric_limits<uint16_t>::max()) {
-        SWSS_LOG_ERROR("BOX: phyid is bigger than maximum limit");
-        return SAI_STATUS_FAILURE;
-    }
-
-    strcpy(hwinfo, phy->hwinfo.c_str());
+    strncpy(hwinfo, phy->hwinfo.c_str(), phy->hwinfo.length());
 
     attr.id = SAI_SWITCH_ATTR_SWITCH_HARDWARE_INFO;
     attr.value.s8list.count = (uint32_t) phy->hwinfo.length();
@@ -452,17 +447,249 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
 
     phy->phy_oid = sai_serialize_object_id(phyOid);
 
-    attr.id = SAI_SWITCH_ATTR_FIRMWARE_MAJOR_VERSION;
-    status = sai_switch_api->get_switch_attribute(phyOid, 1, &attr);
-    if (status != SAI_STATUS_SUCCESS)
+    if (phy->firmware.length() != 0)
     {
-        SWSS_LOG_ERROR("BOX: Failed to get firmware major version:%d rtn:%d", phy->phy_id, status);
-        return status;
+        attr.id = SAI_SWITCH_ATTR_FIRMWARE_MAJOR_VERSION;
+        status = sai_switch_api->get_switch_attribute(phyOid, 1, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("BOX: Failed to get firmware major version for hwinfo:%s, phy:%d, rtn:%d",
+                           phy->hwinfo.c_str(), phy->phy_id, status);
+            return status;
+        }
+        else
+        {
+            phy->firmware_major_version = string(attr.value.chardata);
+        }
     }
-    else
+    return status;
+}
+
+task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, void *context)
+{
+    /*
+     * This function aims to provide coarse handling of failures in sairedis create
+     * operation (i.e., notify users by throwing excepions when failures happen).
+     * Return value: task_success - Handled the status successfully. No need to retry this SAI operation.
+     *               task_need_retry - Cannot handle the status. Need to retry the SAI operation.
+     *               task_failed - Failed to handle the status but another attempt is unlikely to resolve the failure.
+     * TODO: 1. Add general handling logic for specific statuses (e.g., SAI_STATUS_ITEM_ALREADY_EXISTS)
+     *       2. Develop fine-grain failure handling mechanisms and replace this coarse handling
+     *          in each orch.
+     *       3. Take the type of sai api into consideration.
+     */
+    switch (api)
     {
-        phy->firmware_major_version = string(attr.value.chardata);
+        case SAI_API_FDB:
+            switch (status)
+            {
+                case SAI_STATUS_SUCCESS:
+                    SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiCreateStatus");
+                    return task_success;
+                case SAI_STATUS_ITEM_ALREADY_EXISTS:
+                    /*
+                     *  In FDB creation, there are scenarios where the hardware learns an FDB entry before orchagent.
+                     *  In such cases, the FDB SAI creation would report the status of SAI_STATUS_ITEM_ALREADY_EXISTS,
+                     *  and orchagent should ignore the error and treat it as entry was explicitly created.
+                     */
+                    return task_success;
+                default:
+                    SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
+                                sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+                    handleSaiFailure(true);
+                    break;
+            }
+            break;
+        case SAI_API_HOSTIF:
+            switch (status)
+            {
+                case SAI_STATUS_SUCCESS:
+                    return task_success;
+                case SAI_STATUS_FAILURE:
+                    /*
+                     * Host interface maybe failed due to lane not available.
+                     * In some scenarios, like SONiC virtual machine, the invalid lane may be not enabled by VM configuration,
+                     * So just ignore the failure and report an error log.
+                     */
+                    return task_ignore;
+                default:
+                    SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
+                                sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+                    handleSaiFailure(true);
+                    break;
+            }
+            break;
+        default:
+            switch (status)
+            {
+                case SAI_STATUS_SUCCESS:
+                    SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiCreateStatus");
+                    return task_success;
+                default:
+                    SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
+                                sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+                    handleSaiFailure(true);
+                    break;
+            }
+    }
+    return task_need_retry;
+}
+
+task_process_status handleSaiSetStatus(sai_api_t api, sai_status_t status, void *context)
+{
+    /*
+     * This function aims to provide coarse handling of failures in sairedis set
+     * operation (i.e., notify users by throwing excepions when failures happen).
+     * Return value: task_success - Handled the status successfully. No need to retry this SAI operation.
+     *               task_need_retry - Cannot handle the status. Need to retry the SAI operation.
+     *               task_failed - Failed to handle the status but another attempt is unlikely to resolve the failure.
+     * TODO: 1. Add general handling logic for specific statuses
+     *       2. Develop fine-grain failure handling mechanisms and replace this coarse handling
+     *          in each orch.
+     *       3. Take the type of sai api into consideration.
+     */
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiSetStatus");
+        return task_success;
     }
 
-    return status;
+    switch (api)
+    {
+        case SAI_API_PORT:
+            switch (status)
+            {
+                case SAI_STATUS_INVALID_ATTR_VALUE_0:
+                    /*
+                     * If user gives an invalid attribute value, no need to retry or exit orchagent, just fail the current task
+                     * and let user correct the configuration.
+                     */
+                    SWSS_LOG_ERROR("Encountered SAI_STATUS_INVALID_ATTR_VALUE_0 in set operation, task failed, SAI API: %s, status: %s",
+                            sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+                    return task_failed;
+                default:
+                    SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
+                            sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+                    handleSaiFailure(true);
+                    break;
+            }
+            break;
+        case SAI_API_TUNNEL:
+            switch (status)
+            {
+                case SAI_STATUS_ATTR_NOT_SUPPORTED_0:
+                    SWSS_LOG_ERROR("Encountered SAI_STATUS_ATTR_NOT_SUPPORTED_0 in set operation, task failed, SAI API: %s, status: %s",
+                            sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+                    return task_failed;
+                default:
+                    SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
+                            sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+                    handleSaiFailure(true);
+                    break;
+            }
+            break;
+        default:
+            SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
+                        sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+            handleSaiFailure(true);
+            break;
+    }
+
+    return task_need_retry;
+}
+
+task_process_status handleSaiRemoveStatus(sai_api_t api, sai_status_t status, void *context)
+{
+    /*
+     * This function aims to provide coarse handling of failures in sairedis remove
+     * operation (i.e., notify users by throwing excepions when failures happen).
+     * Return value: task_success - Handled the status successfully. No need to retry this SAI operation.
+     *               task_need_retry - Cannot handle the status. Need to retry the SAI operation.
+     *               task_failed - Failed to handle the status but another attempt is unlikely to resolve the failure.
+     * TODO: 1. Add general handling logic for specific statuses (e.g., SAI_STATUS_OBJECT_IN_USE,
+     *          SAI_STATUS_ITEM_NOT_FOUND)
+     *       2. Develop fine-grain failure handling mechanisms and replace this coarse handling
+     *          in each orch.
+     *       3. Take the type of sai api into consideration.
+     */
+    switch (status)
+    {
+        case SAI_STATUS_SUCCESS:
+            SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiRemoveStatus");
+            return task_success;
+        default:
+            SWSS_LOG_ERROR("Encountered failure in remove operation, exiting orchagent, SAI API: %s, status: %s",
+                        sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+            handleSaiFailure(true);
+            break;
+    }
+    return task_need_retry;
+}
+
+task_process_status handleSaiGetStatus(sai_api_t api, sai_status_t status, void *context)
+{
+    /*
+     * This function aims to provide coarse handling of failures in sairedis get
+     * operation (i.e., notify users by throwing excepions when failures happen).
+     * Return value: task_success - Handled the status successfully. No need to retry this SAI operation.
+     *               task_need_retry - Cannot handle the status. Need to retry the SAI operation.
+     *               task_failed - Failed to handle the status but another attempt is unlikely to resolve the failure.
+     * TODO: 1. Add general handling logic for specific statuses
+     *       2. Develop fine-grain failure handling mechanisms and replace this coarse handling
+     *          in each orch.
+     *       3. Take the type of sai api into consideration.
+     */
+    switch (status)
+    {
+        case SAI_STATUS_SUCCESS:
+            SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiGetStatus");
+            return task_success;
+        case SAI_STATUS_NOT_IMPLEMENTED:
+            SWSS_LOG_ERROR("Encountered failure in get operation due to the function is not implemented, exiting orchagent, SAI API: %s",
+                        sai_serialize_api(api).c_str());
+            throw std::logic_error("SAI get function not implemented");
+        default:
+            SWSS_LOG_ERROR("Encountered failure in get operation, SAI API: %s, status: %s",
+                        sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+    }
+    return task_failed;
+}
+
+bool parseHandleSaiStatusFailure(task_process_status status)
+{
+    /*
+     * This function parses task process status from SAI failure handling function to whether a retry is needed.
+     * Return value: true - no retry is needed.
+     *               false - retry is needed.
+     */
+    switch (status)
+    {
+        case task_need_retry:
+            return false;
+        case task_failed:
+            return true;
+        default:
+            SWSS_LOG_WARN("task_process_status %d is not expected in parseHandleSaiStatusFailure", status);
+    }
+    return true;
+}
+
+/* Handling SAI failure. Request redis to invoke SAI failure dump and abort if set*/
+void handleSaiFailure(bool abort_on_failure)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+
+    attr.id = SAI_REDIS_SWITCH_ATTR_NOTIFY_SYNCD;
+    attr.value.s32 =  SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP;
+    sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to take sai failure dump %d", status);
+    }
+    if (abort_on_failure)
+    {
+        abort();
+    }
 }

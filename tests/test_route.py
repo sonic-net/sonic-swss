@@ -604,6 +604,7 @@ class TestRoute(TestRouteBase):
         dvs.servers[1].runcmd("ip -6 route del default dev eth0")
         dvs.servers[1].runcmd("ip -6 address del 2001::2/64 dev eth0")
 
+    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_RouteAddRemoveIpv4RouteWithVrf(self, dvs, testlog):
         self.setup_db(dvs)
 

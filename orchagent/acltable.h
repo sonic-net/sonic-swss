@@ -31,7 +31,6 @@ extern "C" {
 #define TABLE_TYPE_PFCWD                "PFCWD"
 #define TABLE_TYPE_CTRLPLANE            "CTRLPLANE"
 #define TABLE_TYPE_DTEL_FLOW_WATCHLIST  "DTEL_FLOW_WATCHLIST"
-#define TABLE_TYPE_DTEL_DROP_WATCHLIST  "DTEL_DROP_WATCHLIST"
 #define TABLE_TYPE_MCLAG                "MCLAG"
 #define TABLE_TYPE_MUX                  "MUX"
 #define TABLE_TYPE_DROP                 "DROP"

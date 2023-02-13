@@ -19,7 +19,6 @@ int main(int argc, char **argv)
     DBConnector appDb(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
     RedisPipeline pipelineAppDB(&appDb);
     DBConnector stateDb(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-    DBConnector log_db(LOGLEVEL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
     DBConnector config_db(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
 
     FdbSync sync(&pipelineAppDB, &stateDb, &config_db);

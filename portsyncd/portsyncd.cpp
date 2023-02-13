@@ -42,43 +42,37 @@ void usage()
     cout << "       this program will exit if configDB does not contain that info" << endl;
 }
 
-void handlePortConfigFile(ProducerStateTable &p, string file, bool warm);
 void handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, bool warm);
-void handleVlanIntfFile(string file);
-void handlePortConfig(ProducerStateTable &p, map<string, KeyOpFieldsValuesTuple> &port_cfg_map);
-void checkPortInitDone(DBConnector *appl_db);
 
 int main(int argc, char **argv)
 {
-    Logger::linkToDbNative("portsyncd");
-    int opt;
-    map<string, KeyOpFieldsValuesTuple> port_cfg_map;
-
-    while ((opt = getopt(argc, argv, "v:h")) != -1 )
-    {
-        switch (opt)
-        {
-        case 'h':
-            usage();
-            return 1;
-        default: /* '?' */
-            usage();
-            return EXIT_FAILURE;
-        }
-    }
-
-    DBConnector cfgDb("CONFIG_DB", 0);
-    DBConnector appl_db("APPL_DB", 0);
-    DBConnector state_db("STATE_DB", 0);
-    ProducerStateTable p(&appl_db, APP_PORT_TABLE_NAME);
-    SubscriberStateTable portCfg(&cfgDb, CFG_PORT_TABLE_NAME);
-
-    WarmStart::initialize("portsyncd", "swss");
-    WarmStart::checkWarmStart("portsyncd", "swss");
-    const bool warm = WarmStart::isWarmStart();
-
     try
     {
+        Logger::linkToDbNative("portsyncd");
+        int opt;
+
+        while ((opt = getopt(argc, argv, "v:h")) != -1 )
+        {
+            switch (opt)
+            {
+            case 'h':
+                usage();
+                return 1;
+            default: /* '?' */
+                usage();
+                return EXIT_FAILURE;
+            }
+        }
+
+        DBConnector cfgDb("CONFIG_DB", 0);
+        DBConnector appl_db("APPL_DB", 0);
+        DBConnector state_db("STATE_DB", 0);
+        ProducerStateTable p(&appl_db, APP_PORT_TABLE_NAME);
+
+        WarmStart::initialize("portsyncd", "swss");
+        WarmStart::checkWarmStart("portsyncd", "swss");
+        const bool warm = WarmStart::isWarmStart();
+
         NetLink netlink;
         Select s;
 
@@ -93,7 +87,6 @@ int main(int argc, char **argv)
         NetDispatcher::getInstance().registerMessageHandler(RTM_DELLINK, &sync);
 
         s.addSelectable(&netlink);
-        s.addSelectable(&portCfg);
 
         while (true)
         {
@@ -135,28 +128,6 @@ int main(int argc, char **argv)
 
                     g_init = true;
                 }
-                if (!port_cfg_map.empty())
-                {
-                    handlePortConfig(p, port_cfg_map);
-                }
-            }
-            else if (temps == (Selectable *)&portCfg)
-            {
-                std::deque<KeyOpFieldsValuesTuple> entries;
-                portCfg.pops(entries);
-
-                for (auto entry: entries)
-                {
-                    string key = kfvKey(entry);
-
-                    if (port_cfg_map.find(key) != port_cfg_map.end())
-                    {
-                        /* For now we simply drop previous pending port config */
-                        port_cfg_map.erase(key);
-                    }
-                    port_cfg_map[key] = entry;
-                }
-                handlePortConfig(p, port_cfg_map);
             }
             else
             {
@@ -164,6 +135,16 @@ int main(int argc, char **argv)
                 continue;
             }
         }
+    }
+    catch (const swss::RedisError& e)
+    {
+        cerr << "Exception \"" << e.what() << "\" was thrown in daemon" << endl;
+        return EXIT_FAILURE;
+    }
+    catch (const std::out_of_range& e)
+    {
+        cerr << "Exception \"" << e.what() << "\" was thrown in daemon" << endl;
+        return EXIT_FAILURE;
     }
     catch (const std::exception& e)
     {
@@ -224,32 +205,4 @@ void handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, boo
         notifyPortConfigDone(p);
     }
 
-}
-
-void handlePortConfig(ProducerStateTable &p, map<string, KeyOpFieldsValuesTuple> &port_cfg_map)
-{
-    auto it = port_cfg_map.begin();
-    while (it != port_cfg_map.end())
-    {
-        KeyOpFieldsValuesTuple entry = it->second;
-        string key = kfvKey(entry);
-        string op  = kfvOp(entry);
-        auto values = kfvFieldsValues(entry);
-
-        /* only push down port config when port is not in hostif create pending state */
-        if (g_portSet.find(key) == g_portSet.end())
-        {
-            /* No support for port delete yet */
-            if (op == SET_COMMAND)
-            {
-                p.set(key, values);
-            }
-
-            it = port_cfg_map.erase(it);
-        }
-        else
-        {
-            it++;
-        }
-    }
 }

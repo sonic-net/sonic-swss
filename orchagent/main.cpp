@@ -58,7 +58,6 @@ bool gSairedisRecord = true;
 bool gSwssRecord = true;
 bool gResponsePublisherRecord = false;
 bool gLogRotate = false;
-bool gSaiRedisLogRotate = false;
 bool gResponsePublisherLogRotate = false;
 bool gSyncMode = false;
 sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
@@ -127,7 +126,7 @@ void syncd_apply_view()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to notify syncd APPLY_VIEW %d", status);
-        exit(EXIT_FAILURE);
+        handleSaiFailure(true);
     }
 }
 
@@ -171,13 +170,21 @@ void getCfgSwitchType(DBConnector *cfgDb, string &switch_type)
 {
     Table cfgDeviceMetaDataTable(cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
 
-    if (!cfgDeviceMetaDataTable.hget("localhost", "switch_type", switch_type))
+    try
     {
-        //Switch type is not configured. Consider it default = "switch" (regular switch)
+        if (!cfgDeviceMetaDataTable.hget("localhost", "switch_type", switch_type))
+        {
+            //Switch type is not configured. Consider it default = "switch" (regular switch)
+            switch_type = "switch";
+        }
+    }
+    catch(const std::system_error& e)
+    {
+        SWSS_LOG_ERROR("System error: %s", e.what());
         switch_type = "switch";
     }
 
-    if (switch_type != "voq" && switch_type != "fabric" && switch_type != "switch")
+    if (switch_type != "voq" && switch_type != "fabric" && switch_type != "chassis-packet" && switch_type != "switch")
     {
         SWSS_LOG_ERROR("Invalid switch type %s configured", switch_type.c_str());
     	//If configured switch type is none of the supported, assume regular switch
@@ -197,64 +204,72 @@ bool getSystemPortConfigList(DBConnector *cfgDb, DBConnector *appDb, vector<sai_
         return true;
     }
 
-    string value;
-    if (!cfgDeviceMetaDataTable.hget("localhost", "switch_id", value))
+    try
     {
-        //VOQ switch id is not configured.
-        SWSS_LOG_ERROR("VOQ switch id is not configured");
-        return false;
+        string value;
+        if (!cfgDeviceMetaDataTable.hget("localhost", "switch_id", value))
+        {
+            //VOQ switch id is not configured.
+            SWSS_LOG_ERROR("VOQ switch id is not configured");
+            return false;
+        }
+
+        if (value.size())
+            gVoqMySwitchId = stoi(value);
+
+        if (gVoqMySwitchId < 0)
+        {
+            SWSS_LOG_ERROR("Invalid VOQ switch id %d configured", gVoqMySwitchId);
+            return false;
+        }
+
+        if (!cfgDeviceMetaDataTable.hget("localhost", "max_cores", value))
+        {
+            //VOQ max cores is not configured.
+            SWSS_LOG_ERROR("VOQ max cores is not configured");
+            return false;
+        }
+
+        if (value.size())
+            gVoqMaxCores = stoi(value);
+
+        if (gVoqMaxCores == 0)
+        {
+            SWSS_LOG_ERROR("Invalid VOQ max cores %d configured", gVoqMaxCores);
+            return false;
+        }
+
+        if (!cfgDeviceMetaDataTable.hget("localhost", "hostname", value))
+        {
+            // hostname is not configured.
+            SWSS_LOG_ERROR("Host name is not configured");
+            return false;
+        }
+        gMyHostName = value;
+
+        if (!gMyHostName.size())
+        {
+            SWSS_LOG_ERROR("Invalid host name %s configured", gMyHostName.c_str());
+            return false;
+        }
+
+        if (!cfgDeviceMetaDataTable.hget("localhost", "asic_name", value))
+        {
+            // asic_name is not configured.
+            SWSS_LOG_ERROR("Asic name is not configured");
+            return false;
+        }
+        gMyAsicName = value;
+
+        if (!gMyAsicName.size())
+        {
+            SWSS_LOG_ERROR("Invalid asic name %s configured", gMyAsicName.c_str());
+            return false;
+        }
     }
-
-    if (value.size())
-        gVoqMySwitchId = stoi(value);
-
-    if (gVoqMySwitchId < 0)
+    catch(const std::system_error& e)
     {
-        SWSS_LOG_ERROR("Invalid VOQ switch id %d configured", gVoqMySwitchId);
-        return false;
-    }
-
-    if (!cfgDeviceMetaDataTable.hget("localhost", "max_cores", value))
-    {
-        //VOQ max cores is not configured.
-        SWSS_LOG_ERROR("VOQ max cores is not configured");
-        return false;
-    }
-
-    if (value.size())
-        gVoqMaxCores = stoi(value);
-
-    if (gVoqMaxCores == 0)
-    {
-        SWSS_LOG_ERROR("Invalid VOQ max cores %d configured", gVoqMaxCores);
-        return false;
-    }
-
-    if (!cfgDeviceMetaDataTable.hget("localhost", "hostname", value))
-    {
-        // hostname is not configured.
-        SWSS_LOG_ERROR("Host name is not configured");
-        return false;
-    }
-    gMyHostName = value;
-
-    if (!gMyHostName.size())
-    {
-        SWSS_LOG_ERROR("Invalid host name %s configured", gMyHostName.c_str());
-        return false;
-    }
-
-    if (!cfgDeviceMetaDataTable.hget("localhost", "asic_name", value))
-    {
-        // asic_name is not configured.
-        SWSS_LOG_ERROR("Asic name is not configured");
-        return false;
-    }
-    gMyAsicName = value;
-
-    if (!gMyAsicName.size())
-    {
-        SWSS_LOG_ERROR("Invalid asic name %s configured", gMyAsicName.c_str());
+        SWSS_LOG_ERROR("System error: %s", e.what());
         return false;
     }
 
@@ -570,7 +585,7 @@ int main(int argc, char **argv)
     attr.value.u64 = gSwitchId;
     attrs.push_back(attr);
 
-    if (gMySwitchType == "voq" || gMySwitchType == "fabric")
+    if (gMySwitchType == "voq" || gMySwitchType == "fabric" || gMySwitchType == "chassis-packet")
     {
         /* We set this long timeout in order for orchagent to wait enough time for
          * response from syncd. It is needed since switch create takes more time
@@ -578,7 +593,7 @@ int main(int argc, char **argv)
          * and systems ports to initialize
          */
 
-        if (gMySwitchType == "voq")
+        if (gMySwitchType == "voq" || gMySwitchType == "chassis-packet")
         {
             attr.value.u64 = (5 * SAI_REDIS_DEFAULT_SYNC_OPERATION_RESPONSE_TIMEOUT);
         }
@@ -604,11 +619,11 @@ int main(int argc, char **argv)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create a switch, rv:%d", status);
-        exit(EXIT_FAILURE);
+        handleSaiFailure(true);
     }
     SWSS_LOG_NOTICE("Create a switch, id:%" PRIu64, gSwitchId);
 
-    if (gMySwitchType == "voq" || gMySwitchType == "fabric")
+    if (gMySwitchType == "voq" || gMySwitchType == "fabric" || gMySwitchType == "chassis-packet")
     {
         /* Set syncd response timeout back to the default value */
         attr.id = SAI_REDIS_SWITCH_ATTR_SYNC_OPERATION_RESPONSE_TIMEOUT;
@@ -635,7 +650,7 @@ int main(int argc, char **argv)
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to get MAC address from switch, rv:%d", status);
-                exit(EXIT_FAILURE);
+                handleSaiFailure(true);
             }
             else
             {
@@ -650,7 +665,7 @@ int main(int argc, char **argv)
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Fail to get switch virtual router ID %d", status);
-            exit(EXIT_FAILURE);
+            handleSaiFailure(true);
         }
 
         gVirtualRouterId = attr.value.oid;
@@ -692,7 +707,7 @@ int main(int argc, char **argv)
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create underlay router interface %d", status);
-            exit(EXIT_FAILURE);
+            handleSaiFailure(true);
         }
 
         SWSS_LOG_NOTICE("Created underlay router interface ID %" PRIx64, gUnderlayIfId);
@@ -709,6 +724,9 @@ int main(int argc, char **argv)
         if (gMySwitchType == "voq")
         {
             orchDaemon->setFabricEnabled(true);
+            // SAI doesn't fully support counters for non fabric asics
+            orchDaemon->setFabricPortStatEnabled(false);
+            orchDaemon->setFabricQueueStatEnabled(false);
         }
     }
     else

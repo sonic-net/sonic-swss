@@ -62,15 +62,30 @@ NatMgr    *natmgr = NULL;
 NotificationConsumer   *timeoutNotificationsConsumer = NULL;
 NotificationConsumer   *flushNotificationsConsumer = NULL;
 
+static volatile sig_atomic_t gExit = 0;
+
 std::shared_ptr<swss::NotificationProducer> cleanupNotifier;
 
+static struct sigaction old_sigaction;
+
 void sigterm_handler(int signo)
+{
+    SWSS_LOG_ENTER();
+
+    if (old_sigaction.sa_handler != SIG_IGN && old_sigaction.sa_handler != SIG_DFL) {
+        old_sigaction.sa_handler(signo);
+    }
+
+    gExit = 1;
+}
+
+void cleanup()
 {
     int ret = 0;
     std::string res;
     const std::string conntrackFlush            = "conntrack -F";
 
-    SWSS_LOG_NOTICE("Got SIGTERM");
+    SWSS_LOG_ENTER();
 
     /*If there are any conntrack entries, clean them */
     ret = swss::exec(conntrackFlush, res);
@@ -129,10 +144,12 @@ int main(int argc, char **argv)
 
         cleanupNotifier = std::make_shared<swss::NotificationProducer>(&appDb, "NAT_DB_CLEANUP_NOTIFICATION");
 
-        if (signal(SIGTERM, sigterm_handler) == SIG_ERR)
+        struct sigaction sigact = {};
+        sigact.sa_handler = sigterm_handler;
+        if (sigaction(SIGTERM, &sigact, &old_sigaction))
         {
             SWSS_LOG_ERROR("failed to setup SIGTERM action handler");
-            exit(1);
+            exit(EXIT_FAILURE);
         }
 
         natmgr = new NatMgr(&cfgDb, &appDb, &stateDb, cfg_tables);
@@ -154,7 +171,7 @@ int main(int argc, char **argv)
         s.addSelectable(flushNotificationsConsumer);
 
         SWSS_LOG_NOTICE("starting main loop");
-        while (true)
+        while (!gExit)
         {
             Selectable *sel;
             int ret;
@@ -197,10 +214,14 @@ int main(int argc, char **argv)
             auto *c = (Executor *)sel;
             c->execute();
         }
+
+        cleanup();
     }
     catch(const std::exception &e)
     {
         SWSS_LOG_ERROR("Runtime error: %s", e.what());
+        return EXIT_FAILURE;
     }
-    return -1;
+
+    return 0;
 }

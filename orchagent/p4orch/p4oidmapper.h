@@ -37,11 +37,11 @@ class P4OidMapper
 
     // Gets oid for the given key for the SAI object_type.
     // Returns true on success.
-    bool getOID(_In_ sai_object_type_t object_type, _In_ const std::string &key, _Out_ sai_object_id_t *oid);
+    bool getOID(_In_ sai_object_type_t object_type, _In_ const std::string &key, _Out_ sai_object_id_t *oid) const;
 
     // Gets the reference count for the given key for the SAI object_type.
     // Returns true on success.
-    bool getRefCount(_In_ sai_object_type_t object_type, _In_ const std::string &key, _Out_ uint32_t *ref_count);
+    bool getRefCount(_In_ sai_object_type_t object_type, _In_ const std::string &key, _Out_ uint32_t *ref_count) const;
 
     // Erases oid for the given key for the SAI object_type.
     // This function checks if the reference count is zero or not before the
@@ -54,11 +54,11 @@ class P4OidMapper
     void eraseAllOIDs(_In_ sai_object_type_t object_type);
 
     // Gets the number of oids for the SAI object_type.
-    size_t getNumEntries(_In_ sai_object_type_t object_type);
+    size_t getNumEntries(_In_ sai_object_type_t object_type) const;
 
     // Checks whether OID mapping exists for the given key for the specific
     // object type.
-    bool existsOID(_In_ sai_object_type_t object_type, _In_ const std::string &key);
+    bool existsOID(_In_ sai_object_type_t object_type, _In_ const std::string &key) const;
 
     // Increases the reference count for the given object.
     // Returns true on success.
@@ -67,6 +67,12 @@ class P4OidMapper
     // Decreases the reference count for the given object.
     // Returns true on success.
     bool decreaseRefCount(_In_ sai_object_type_t object_type, _In_ const std::string &key);
+
+    // Verifies the OID mapping.
+    // Returns an empty string if the input has the correct mapping. Returns a
+    // non-empty error string otherwise.
+    std::string verifyOIDMapping(_In_ sai_object_type_t object_type, _In_ const std::string &key,
+                                 _In_ sai_object_id_t oid);
 
   private:
     struct MapperEntry

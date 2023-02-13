@@ -49,20 +49,20 @@ class Gearbox(object):
         for i in [x for x in intf_table.getKeys() if sr not in x]:
             (status, fvs) = intf_table.get(i)
             assert status == True
-            self.interfaces[i] = {"attrs" : dict(fvs)}
+            self.interfaces[i] = dict(fvs)
 
-    def SanityCheck(self, dvs, testlog):
+    def SanityCheck(self, testlog):
         """
         Verify data integrity of Gearbox objects in APPL_DB
         """
         for i in self.interfaces:
-            phy_id = self.interfaces[i]["attrs"]["phy_id"]
+            phy_id = self.interfaces[i]["phy_id"]
             assert phy_id in self.phys
-            assert self.interfaces[i]["attrs"]["index"] in self.phys[phy_id]["ports"]
+            assert self.interfaces[i]["index"] in self.phys[phy_id]["ports"]
 
-            for lane in self.interfaces[i]["attrs"]["system_lanes"].split(','):
+            for lane in self.interfaces[i]["system_lanes"].split(','):
                 assert lane in self.phys[phy_id]["lanes"]
-            for lane in self.interfaces[i]["attrs"]["line_lanes"].split(','):
+            for lane in self.interfaces[i]["line_lanes"].split(','):
                 assert lane in self.phys[phy_id]["lanes"]
 
 class GBAsic(DVSDatabase):
@@ -70,6 +70,7 @@ class GBAsic(DVSDatabase):
         DVSDatabase.__init__(self, db_id, connector)
         self.gearbox = gearbox
         self.ports = {}
+        self.port_oid_to_intf_idx = {}
         self._wait_for_gb_asic_db_to_initialize()
 
         for connector in self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT_CONNECTOR"):
@@ -85,11 +86,33 @@ class GBAsic(DVSDatabase):
 
             for i in self.gearbox.interfaces:
                 intf = self.gearbox.interfaces[i]
-                if intf["attrs"]["system_lanes"] == system_lanes:
-                    assert intf["attrs"]["line_lanes"] == line_lanes
-                    self.ports[intf["attrs"]["index"]] = (system_port_oid, line_port_oid)
+                if intf["system_lanes"] == system_lanes:
+                    assert intf["line_lanes"] == line_lanes
+                    self.ports[intf["index"]] = (system_port_oid, line_port_oid)
+                    self.port_oid_to_intf_idx[system_port_oid] = (i, True)
+                    self.port_oid_to_intf_idx[line_port_oid] = (i, False)
 
         assert len(self.ports) == len(self.gearbox.interfaces)
+
+        for serdes in self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT_SERDES"):
+            fvs = self.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_PORT_SERDES", serdes)
+            port_oid = fvs.get("SAI_PORT_SERDES_ATTR_PORT_ID")
+            intf_idx, is_system = self.port_oid_to_intf_idx[port_oid]
+            intf = self.gearbox.interfaces[ intf_idx ]
+            appl_db_key_prefix = 'system_' if is_system else 'line_'
+            for asic_db_key, appl_db_key_suffix in [
+                ("SAI_PORT_SERDES_ATTR_TX_FIR_MAIN", "tx_fir_main"),
+                ("SAI_PORT_SERDES_ATTR_TX_FIR_PRE1", "tx_fir_pre1"),
+                ("SAI_PORT_SERDES_ATTR_TX_FIR_PRE2", "tx_fir_pre2"),
+                ("SAI_PORT_SERDES_ATTR_TX_FIR_PRE3", "tx_fir_pre3"),
+                ("SAI_PORT_SERDES_ATTR_TX_FIR_POST1", "tx_fir_post1"),
+                ("SAI_PORT_SERDES_ATTR_TX_FIR_POST2", "tx_fir_post2"),
+                ("SAI_PORT_SERDES_ATTR_TX_FIR_POST3", "tx_fir_post3"),
+            ]:
+                if asic_db_key not in fvs:
+                   continue
+                asic_db_value = fvs.get(asic_db_key).split(":")[-1]
+                assert intf[appl_db_key_prefix + appl_db_key_suffix] == asic_db_value
 
     def _wait_for_gb_asic_db_to_initialize(self) -> None:
         """Wait up to 30 seconds for the default fields to appear in ASIC DB."""
@@ -112,13 +135,50 @@ class GBAsic(DVSDatabase):
         init_polling_config = PollingConfig(2, 30, strict=True)
         wait_for_result(_verify_db_contents, init_polling_config)
 
+@pytest.fixture(scope="module")
+def gearbox(dvs):
+    return Gearbox(dvs)
+
+@pytest.fixture(scope="module")
+def gbasic(dvs, gearbox):
+    return GBAsic(swsscommon.GB_ASIC_DB, dvs.redis_sock, gearbox)
+
+@pytest.fixture(scope="module")
+def enable_port_counter(dvs):
+    flex_counter_table = swsscommon.Table(dvs.get_config_db().db_connection,
+        "FLEX_COUNTER_TABLE")
+
+    # Enable port counter
+    flex_counter_table.hset("PORT", "FLEX_COUNTER_STATUS", "enable")
+    yield
+    # Disable port counter
+    flex_counter_table.hdel("PORT", "FLEX_COUNTER_STATUS")
 
 class TestGearbox(object):
-    def test_GearboxSanity(self, dvs, testlog):
-        Gearbox(dvs).SanityCheck(dvs, testlog)
+    def test_GearboxSanity(self, gearbox, testlog):
+        gearbox.SanityCheck(testlog)
 
-    def test_GbAsicFEC(self, dvs, testlog):
-        gbasic = GBAsic(swsscommon.GB_ASIC_DB, dvs.redis_sock, Gearbox(dvs))
+    def test_GearboxCounter(self, dvs, gbasic, enable_port_counter, testlog):
+        counters_db = DVSDatabase(swsscommon.COUNTERS_DB, dvs.redis_sock)
+        gb_counters_db = DVSDatabase(swsscommon.GB_COUNTERS_DB, dvs.redis_sock)
+
+        intf = gbasic.gearbox.interfaces["0"]
+        port_oid = counters_db.get_entry("COUNTERS_PORT_NAME_MAP", "")[intf["name"]]
+        system_port_oid, line_port_oid = gbasic.ports["0"]
+
+        fvs = gb_counters_db.wait_for_entry("COUNTERS", system_port_oid)
+        assert fvs.get("SAI_PORT_STAT_IF_OUT_ERRORS")
+
+        fvs = gb_counters_db.wait_for_entry("COUNTERS", line_port_oid)
+        assert fvs.get("SAI_PORT_STAT_IF_IN_ERRORS")
+
+        fvs = counters_db.wait_for_entry("COUNTERS", port_oid)
+        assert fvs.get("SAI_PORT_STAT_IF_IN_ERRORS")
+
+        fvs = counters_db.wait_for_entry("COUNTERS", port_oid)
+        assert fvs.get("SAI_PORT_STAT_IF_IN_ERRORS")
+
+    def test_GbAsicFEC(self, gbasic, testlog):
 
         # set fec rs on port 0 of phy 1
         fvs = swsscommon.FieldValuePairs([("system_fec","rs")])

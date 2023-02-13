@@ -591,24 +591,51 @@ void NeighOrch::decreaseNextHopRefCount(const NextHopKey &nexthop, uint32_t coun
     assert(hasNextHop(nexthop));
     if (m_syncdNextHops.find(nexthop) != m_syncdNextHops.end())
     {
+        if ((m_syncdNextHops[nexthop].ref_count - (int)count) < 0)
+        {
+            SWSS_LOG_ERROR("Ref count cannot be negative for next_hop_id: 0x%" PRIx64 " with ip: %s and alias: %s",
+                   m_syncdNextHops[nexthop].next_hop_id, nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
+            // Reset refcount to 0 to match expected value
+            m_syncdNextHops[nexthop].ref_count = 0;
+            return;
+        }
         m_syncdNextHops[nexthop].ref_count -= count;
     }
 }
 
 bool NeighOrch::getNeighborEntry(const NextHopKey &nexthop, NeighborEntry &neighborEntry, MacAddress &macAddress)
 {
+    Port inbp;
+    string nbr_alias;
     if (!hasNextHop(nexthop))
     {
         return false;
     }
+    if (gMySwitchType == "voq")
+    {
+        gPortsOrch->getInbandPort(inbp);
+        assert(inbp.m_alias.length());
+    }
 
     for (const auto &entry : m_syncdNeighbors)
     {
-        if (entry.first.ip_address == nexthop.ip_address && entry.first.alias == nexthop.alias)
+        if (entry.first.ip_address == nexthop.ip_address)
         {
-            neighborEntry = entry.first;
-            macAddress = entry.second.mac;
-            return true;
+           if (m_intfsOrch->isRemoteSystemPortIntf(entry.first.alias))
+           {
+               //For remote system ports, nexthops are always on inband.
+               nbr_alias = inbp.m_alias;
+           }
+           else
+           {
+               nbr_alias = entry.first.alias;
+           }
+           if (nbr_alias == nexthop.alias)
+           {
+              neighborEntry = entry.first;
+              macAddress = entry.second.mac;
+              return true;
+           }
         }
     }
 
@@ -715,7 +742,16 @@ void NeighOrch::doTask(Consumer &consumer)
             if (m_syncdNeighbors.find(neighbor_entry) == m_syncdNeighbors.end()
                     || m_syncdNeighbors[neighbor_entry].mac != mac_address)
             {
-                if (addNeighbor(neighbor_entry, mac_address))
+                // only for unresolvable neighbors that are new
+                if (!mac_address) 
+                {
+                    if (m_syncdNeighbors.find(neighbor_entry) == m_syncdNeighbors.end())
+                    {
+                        addZeroMacTunnelRoute(neighbor_entry, mac_address);
+                    }
+                    it = consumer.m_toSync.erase(it);
+                }
+                else if (addNeighbor(neighbor_entry, mac_address))
                 {
                     it = consumer.m_toSync.erase(it);
                 }
@@ -884,15 +920,18 @@ bool NeighOrch::addNeighbor(const NeighborEntry &neighborEntry, const MacAddress
     }
     else if (isHwConfigured(neighborEntry))
     {
-        status = sai_neighbor_api->set_neighbor_entry_attribute(&neighbor_entry, &neighbor_attr);
-        if (status != SAI_STATUS_SUCCESS)
+        for (auto itr : neighbor_attrs)
         {
-            SWSS_LOG_ERROR("Failed to update neighbor %s on %s, rv:%d",
-                           macAddress.to_string().c_str(), alias.c_str(), status);
-            task_process_status handle_status = handleSaiSetStatus(SAI_API_NEIGHBOR, status);
-            if (handle_status != task_success)
+            status = sai_neighbor_api->set_neighbor_entry_attribute(&neighbor_entry, &itr);
+            if (status != SAI_STATUS_SUCCESS)
             {
-                return parseHandleSaiStatusFailure(handle_status);
+                SWSS_LOG_ERROR("Failed to update neighbor %s on %s, attr.id=0x%x, rv:%d",
+                               macAddress.to_string().c_str(), alias.c_str(), itr.id, status);
+                task_process_status handle_status = handleSaiSetStatus(SAI_API_NEIGHBOR, status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
         }
         SWSS_LOG_NOTICE("Updated neighbor %s on %s", macAddress.to_string().c_str(), alias.c_str());
@@ -1203,7 +1242,7 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
 
         string alias = key.substr(0, found);
 
-        if(!gIntfsOrch->isRemoteSystemPortIntf(alias))
+        if(gIntfsOrch->isLocalSystemPortIntf(alias))
         {
             //Synced local neighbor. Skip
             it = consumer.m_toSync.erase(it);
@@ -1716,3 +1755,12 @@ void NeighOrch::updateSrv6Nexthop(const NextHopKey &nh, const sai_object_id_t &n
         m_syncdNextHops.erase(nh);
     }
 }
+void NeighOrch::addZeroMacTunnelRoute(const NeighborEntry& entry, const MacAddress& mac)
+{
+    SWSS_LOG_INFO("Creating tunnel route for neighbor %s", entry.ip_address.to_string().c_str());
+    MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
+    NeighborUpdate update = {entry, mac, true};
+    mux_orch->update(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
+    m_syncdNeighbors[entry] = { mac, false };
+}
+

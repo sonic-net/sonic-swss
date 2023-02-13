@@ -4,6 +4,7 @@
 #include "crmorch.h"
 #include "converter.h"
 #include "timer.h"
+#include "saihelper.h"
 
 #define CRM_POLLING_INTERVAL "polling_interval"
 #define CRM_COUNTERS_TABLE_KEY "STATS"
@@ -18,6 +19,7 @@
 extern sai_object_id_t gSwitchId;
 extern sai_switch_api_t *sai_switch_api;
 extern sai_acl_api_t *sai_acl_api;
+extern event_handle_t g_events_handle;
 
 using namespace std;
 using namespace swss;
@@ -339,10 +341,19 @@ void CrmOrch::handleSetCommand(const string& key, const vector<FieldValueTuple>&
             }
             else if (crmThreshTypeResMap.find(field) != crmThreshTypeResMap.end())
             {
-                auto resourceType = crmThreshTypeResMap.at(field);
                 auto thresholdType = crmThreshTypeMap.at(value);
+                auto resourceType = crmThreshTypeResMap.at(field);
+                auto &resource = m_resourcesMap.at(resourceType);
 
-                m_resourcesMap.at(resourceType).thresholdType = thresholdType;
+                if (resource.thresholdType != thresholdType)
+                {
+                    resource.thresholdType = thresholdType;
+
+                    for (auto &cnt : resource.countersMap)
+                    {
+                        cnt.second.exceededLogCounter = 0;
+                    }
+                }
             }
             else if (crmThreshLowResMap.find(field) != crmThreshLowResMap.end())
             {
@@ -718,7 +729,7 @@ void CrmOrch::checkCrmThresholds()
     {
         auto &res = i.second;
 
-        for (const auto &j : i.second.countersMap)
+        for (auto &j : i.second.countersMap)
         {
             auto &cnt = j.second;
             uint64_t utilization = 0;
@@ -757,19 +768,25 @@ void CrmOrch::checkCrmThresholds()
                     throw runtime_error("Unknown threshold type for CRM resource");
             }
 
-            if ((utilization >= res.highThreshold) && (res.exceededLogCounter < CRM_EXCEEDED_MSG_MAX))
+            if ((utilization >= res.highThreshold) && (cnt.exceededLogCounter < CRM_EXCEEDED_MSG_MAX))
             {
+                event_params_t params = {
+                    { "percent", to_string(percentageUtil) },
+                    { "used_cnt", to_string(cnt.usedCounter) },
+                    { "free_cnt", to_string(cnt.availableCounter) }};
+
                 SWSS_LOG_WARN("%s THRESHOLD_EXCEEDED for %s %u%% Used count %u free count %u",
                               res.name.c_str(), threshType.c_str(), percentageUtil, cnt.usedCounter, cnt.availableCounter);
 
-                res.exceededLogCounter++;
+                event_publish(g_events_handle, "chk_crm_threshold", &params);
+                cnt.exceededLogCounter++;
             }
-            else if ((utilization <= res.lowThreshold) && (res.exceededLogCounter > 0))
+            else if ((utilization <= res.lowThreshold) && (cnt.exceededLogCounter > 0) && (res.highThreshold != res.lowThreshold))
             {
                 SWSS_LOG_WARN("%s THRESHOLD_CLEAR for %s %u%% Used count %u free count %u",
                               res.name.c_str(), threshType.c_str(), percentageUtil, cnt.usedCounter, cnt.availableCounter);
 
-                res.exceededLogCounter = 0;
+                cnt.exceededLogCounter = 0;
             }
         } // end of counters loop
     } // end of resources loop

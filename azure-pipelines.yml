@@ -3,10 +3,36 @@
 # Add steps that publish test results, save build artifacts, deploy, and more:
 # https://docs.microsoft.com/azure/devops/pipelines/apps/c-cpp/gcc
 
+pr:
+- master
+- 202???
+- 201???
+
 trigger:
+  batch: true
   branches:
     include:
-      - "*"
+    - master
+    - 202???
+    - 201???
+
+# this part need to be set in UI
+schedules:
+- cron: "0 0 * * 6"
+  displayName: Weekly build
+  branches:
+    include:
+    - master
+    - 202???
+    - 201???
+  always: true
+
+variables:
+  - name: BUILD_BRANCH
+    ${{ if eq(variables['Build.Reason'], 'PullRequest') }}:
+      value: $(System.PullRequest.TargetBranch)
+    ${{ else }}:
+      value: $(Build.SourceBranchName)
 
 stages:
 - stage: Build
@@ -16,13 +42,25 @@ stages:
     parameters:
       arch: amd64
       sonic_slave: sonic-slave-buster
-      buildimage_artifact_name: sonic-buildimage.vs
-      buildimage_pipeline: 142
+      common_lib_artifact_name: common-lib
       swss_common_artifact_name: sonic-swss-common
       sairedis_artifact_name: sonic-sairedis
       artifact_name: sonic-swss
       archive_pytests: true
       archive_gcov: true
+
+- stage: BuildAsan
+  dependsOn: []
+  jobs:
+  - template: .azure-pipelines/build-template.yml
+    parameters:
+      arch: amd64
+      sonic_slave: sonic-slave-buster
+      common_lib_artifact_name: common-lib
+      swss_common_artifact_name: sonic-swss-common
+      sairedis_artifact_name: sonic-sairedis
+      artifact_name: sonic-swss-asan
+      asan: true
 
 - stage: BuildArm
   dependsOn: Build
@@ -34,8 +72,7 @@ stages:
       timeout: 240
       pool: sonicbld-armhf
       sonic_slave: sonic-slave-buster-armhf
-      buildimage_artifact_name: sonic-buildimage.marvell-armhf
-      buildimage_pipeline: 141
+      common_lib_artifact_name: common-lib.armhf
       swss_common_artifact_name: sonic-swss-common.armhf
       sairedis_artifact_name: sonic-sairedis.armhf
       artifact_name: sonic-swss.armhf
@@ -47,9 +84,8 @@ stages:
       timeout: 240
       pool: sonicbld-arm64
       sonic_slave: sonic-slave-buster-arm64
+      common_lib_artifact_name: common-lib.arm64
       swss_common_artifact_name: sonic-swss-common.arm64
-      buildimage_artifact_name: sonic-buildimage.centec-arm64
-      buildimage_pipeline: 140
       sairedis_artifact_name: sonic-sairedis.arm64
       artifact_name: sonic-swss.arm64
       archive_gcov: false
@@ -65,6 +101,18 @@ stages:
       swss_artifact_name: sonic-swss
       artifact_name: docker-sonic-vs
 
+- stage: BuildDockerAsan
+  dependsOn: BuildAsan
+  condition: succeeded('BuildAsan')
+  jobs:
+  - template: .azure-pipelines/build-docker-sonic-vs-template.yml
+    parameters:
+      swss_common_artifact_name: sonic-swss-common
+      sairedis_artifact_name: sonic-sairedis
+      swss_artifact_name: sonic-swss-asan
+      artifact_name: docker-sonic-vs-asan
+      asan: true
+
 - stage: Test
   dependsOn: BuildDocker
   condition: succeeded('BuildDocker')
@@ -76,9 +124,21 @@ stages:
       sonic_slave: sonic-slave-buster
       archive_gcov: true
 
+- stage: TestAsan
+  dependsOn: BuildDockerAsan
+  condition: succeeded('BuildDockerAsan')
+  jobs:
+  - template: .azure-pipelines/test-docker-sonic-vs-template.yml
+    parameters:
+      log_artifact_name: log-asan
+      gcov_artifact_name: sonic-gcov
+      sonic_slave: sonic-slave-buster
+      docker_sonic_vs_name: docker-sonic-vs-asan
+      asan: true
+
 - stage: Gcov
   dependsOn: Test
-  condition: always()
+  condition: in(dependencies.Test.result, 'Succeeded', 'SucceededWithIssues')
   jobs:
   - template: .azure-pipelines/gcov.yml
     parameters:

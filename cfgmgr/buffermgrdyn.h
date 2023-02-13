@@ -71,6 +71,7 @@ typedef struct {
     std::string xon_offset;
     std::string xoff;
     std::string threshold;
+    std::string threshold_mode;
     std::string pool_name;
     // port_pgs - stores pgs referencing this profile
     // An element will be added or removed when a PG added or removed
@@ -177,7 +178,7 @@ private:
 
     std::string m_configuredSharedHeadroomPoolSize;
 
-    std::shared_ptr<DBConnector> m_applDb = nullptr;
+    DBConnector *m_applDb = nullptr;
     SelectableTimer *m_buffermgrPeriodtimer = nullptr;
 
     // Fields for zero pool and profiles
@@ -195,6 +196,7 @@ private:
     // key: port name
     // updated only when a port's speed and cable length updated
     port_info_lookup_t m_portInfoLookup;
+    std::map<std::string, std::string> m_cableLengths;
     std::set<std::string> m_adminDownPorts;
     std::set<std::string> m_pendingApplyZeroProfilePorts;
     std::set<std::string> m_pendingSupportedButNotConfiguredPorts[BUFFER_DIR_MAX];
@@ -301,6 +303,7 @@ private:
     void handleSetSingleBufferObjectOnAdminDownPort(buffer_direction_t direction, const std::string &port, const std::string &key, const std::string &profile);
     void handleDelSingleBufferObjectOnAdminDownPort(buffer_direction_t direction, const std::string &port, const std::string &key, port_info_t &portInfo);
     bool isReadyToReclaimBufferOnPort(const std::string &port);
+    void cleanUpItemsForReclaimingBuffer(const std::string &port);
 
     // Main flows
     template<class T> task_process_status reclaimReservedBufferForPort(const std::string &port, T &obj, buffer_direction_t dir);

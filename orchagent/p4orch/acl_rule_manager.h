@@ -41,8 +41,10 @@ class AclRuleManager : public ObjectManagerInterface
     }
     virtual ~AclRuleManager() = default;
 
-    void enqueue(const swss::KeyOpFieldsValuesTuple &entry) override;
+    void enqueue(const std::string &table_name, const swss::KeyOpFieldsValuesTuple &entry) override;
     void drain() override;
+    std::string verifyState(const std::string &key, const std::vector<swss::FieldValueTuple> &tuple) override;
+    ReturnCode getSaiObject(const std::string &json_key, sai_object_type_t &object_type, std::string &object_key) override;
 
     // Update counters stats for every rule in each ACL table in COUNTERS_DB, if
     // counters are enabled in rules.
@@ -77,7 +79,7 @@ class AclRuleManager : public ObjectManagerInterface
 
     // Create an ACL counter.
     ReturnCode createAclCounter(const std::string &acl_table_name, const std::string &counter_key,
-                                const P4AclCounter &p4_acl_counter, sai_object_id_t *counter_oid);
+                                const P4AclRule &acl_rule, sai_object_id_t *counter_oid);
 
     // Create an ACL meter.
     ReturnCode createAclMeter(const P4AclMeter &p4_acl_meter, const std::string &meter_key, sai_object_id_t *meter_oid);
@@ -135,6 +137,12 @@ class AclRuleManager : public ObjectManagerInterface
     // sure ref count on user defined traps in m_userDefinedTraps are ones before
     // clean up.
     ReturnCode cleanUpUserDefinedTraps();
+
+    // Verifies internal cache for an entry.
+    std::string verifyStateCache(const P4AclRuleAppDbEntry &app_db_entry, const P4AclRule *acl_rule);
+
+    // Verifies ASIC DB for an entry.
+    std::string verifyStateAsicDb(const P4AclRule *acl_rule);
 
     P4OidMapper *m_p4OidMapper;
     ResponsePublisherInterface *m_publisher;

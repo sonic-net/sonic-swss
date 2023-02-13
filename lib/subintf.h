@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 #define VLAN_SUB_INTERFACE_SEPARATOR   "."
 namespace swss {
 	class subIntf

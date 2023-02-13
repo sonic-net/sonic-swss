@@ -347,7 +347,7 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
 void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
 {
     struct rtmsg *rtm;
-    struct rtattr *tb[RTA_MAX + 1];
+    struct rtattr *tb[RTA_MAX + 1] = {0};
     void *dest = NULL;
     char anyaddr[16] = {0};
     char dstaddr[16] = {0};
@@ -360,7 +360,6 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
     rtm = (struct rtmsg *)NLMSG_DATA(h);
 
     /* Parse attributes and extract fields of interest. */
-    memset(tb, 0, sizeof(tb));
     netlink_parse_rtattr(tb, RTA_MAX, RTM_RTA(rtm), len);
 
     if (tb[RTA_DST])
@@ -734,6 +733,32 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
         {
             SWSS_LOG_DEBUG("Skip routes to eth0 or docker0: %s %s %s",
                     destipprefix, gw_list.c_str(), intf_list.c_str());
+            // If intf_list has only this interface, that means all of the next hops of this route 
+            // have been removed and the next hop on the eth0/docker0 has become the only next hop. 
+            // In this case since we do not want the route with next hop on eth0/docker0, we return. 
+            // But still we need to clear the route from the APPL_DB. Otherwise the APPL_DB and data 
+            // path will be left with stale route entry
+            if(alsv.size() == 1)
+            {
+                if (!warmRestartInProgress)
+                {
+                    SWSS_LOG_NOTICE("RouteTable del msg for route with only one nh on eth0/docker0: %s %s %s %s",
+                            destipprefix, gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
+
+                    m_routeTable.del(destipprefix);
+                }
+                else
+                {
+                    SWSS_LOG_NOTICE("Warm-Restart mode: Receiving delete msg for route with only nh on eth0/docker0: %s %s %s %s",
+                            destipprefix, gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
+
+                    vector<FieldValueTuple> fvVector;
+                    const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix,
+                                                                       DEL_COMMAND,
+                                                                       fvVector);
+                    m_warmStartHelper.insertRefreshMap(kfv);
+                }
+            }
             return;
         }
     }
@@ -1208,7 +1233,7 @@ string RouteSync::getNextHopWt(struct rtnl_route *route_obj)
         uint8_t weight = rtnl_route_nh_get_weight(nexthop);
         if (weight)
         {
-            result += to_string(weight + 1);
+            result += to_string(weight);
         }
         else
         {

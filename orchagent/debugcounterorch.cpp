@@ -5,6 +5,7 @@
 #include "schema.h"
 #include "drop_counter.h"
 #include <memory>
+#include "observer.h"
 
 using std::string;
 using std::unordered_map;
@@ -34,11 +35,59 @@ DebugCounterOrch::DebugCounterOrch(DBConnector *db, const vector<string>& table_
 {
     SWSS_LOG_ENTER();
     publishDropCounterCapabilities();
+
+    gPortsOrch->attach(this);
 }
 
 DebugCounterOrch::~DebugCounterOrch(void)
 {
     SWSS_LOG_ENTER();
+}
+
+void DebugCounterOrch::update(SubjectType type, void *cntx)
+{
+    SWSS_LOG_ENTER();
+
+    if (type == SUBJECT_TYPE_PORT_CHANGE) 
+    {
+        if (!cntx) 
+        {
+            SWSS_LOG_ERROR("cntx is NULL");
+            return;
+        }
+
+        PortUpdate *update = static_cast<PortUpdate *>(cntx);
+        Port &port = update->port;
+
+        if (update->add) 
+        {
+            for (const auto& debug_counter: debug_counters)
+            {
+                DebugCounter *counter = debug_counter.second.get();
+                auto counter_type = counter->getCounterType();
+                auto counter_stat = counter->getDebugCounterSAIStat();
+                auto flex_counter_type = getFlexCounterType(counter_type);
+                if (flex_counter_type == CounterType::PORT_DEBUG)
+                {
+                    installDebugFlexCounters(counter_type, counter_stat, port.m_port_id);
+                }
+            }
+        } 
+        else 
+        {
+            for (const auto& debug_counter: debug_counters)
+            {
+                DebugCounter *counter = debug_counter.second.get();
+                auto counter_type = counter->getCounterType();
+                auto counter_stat = counter->getDebugCounterSAIStat();
+                auto flex_counter_type = getFlexCounterType(counter_type);
+                if (flex_counter_type == CounterType::PORT_DEBUG)
+                {
+                    uninstallDebugFlexCounters(counter_type, counter_stat, port.m_port_id);
+                }
+            }
+        }
+    }
 }
 
 // doTask processes updates from the consumer and modifies the state of the
@@ -476,7 +525,8 @@ CounterType DebugCounterOrch::getFlexCounterType(const string& counter_type)
 }
 
 void DebugCounterOrch::installDebugFlexCounters(const string& counter_type,
-                                                const string& counter_stat)
+                                                const string& counter_stat,
+                                                sai_object_id_t port_id)
 {
     SWSS_LOG_ENTER();
     CounterType flex_counter_type = getFlexCounterType(counter_type);
@@ -489,6 +539,14 @@ void DebugCounterOrch::installDebugFlexCounters(const string& counter_type,
     {
         for (auto const &curr : gPortsOrch->getAllPorts())
         {
+            if (port_id != SAI_NULL_OBJECT_ID)
+            {
+                if (curr.second.m_port_id != port_id)
+                {
+                    continue;
+                }
+            }
+
             if (curr.second.m_type != Port::Type::PHY)
             {
                 continue;
@@ -503,7 +561,8 @@ void DebugCounterOrch::installDebugFlexCounters(const string& counter_type,
 }
 
 void DebugCounterOrch::uninstallDebugFlexCounters(const string& counter_type,
-                                                  const string& counter_stat)
+                                                  const string& counter_stat,
+                                                  sai_object_id_t port_id)
 {
     SWSS_LOG_ENTER();
     CounterType flex_counter_type = getFlexCounterType(counter_type);
@@ -516,6 +575,14 @@ void DebugCounterOrch::uninstallDebugFlexCounters(const string& counter_type,
     {
         for (auto const &curr : gPortsOrch->getAllPorts())
         {
+            if (port_id != SAI_NULL_OBJECT_ID)
+            {
+                if (curr.second.m_port_id != port_id)
+                {
+                    continue;
+                }
+            }
+
             if (curr.second.m_type != Port::Type::PHY)
             {
                 continue;
@@ -616,3 +683,6 @@ bool DebugCounterOrch::isDropReasonValid(const string& drop_reason) const
 
     return true;
 }
+
+
+

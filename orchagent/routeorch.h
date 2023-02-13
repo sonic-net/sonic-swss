@@ -214,10 +214,11 @@ public:
 
     unsigned int getNhgCount() { return m_nextHopGroupCount; }
     unsigned int getMaxNhgCount() { return m_maxNextHopGroupCount; }
-    
+
     void increaseNextHopGroupCount();
     void decreaseNextHopGroupCount();
     bool checkNextHopGroupCount();
+    const RouteTables& getSyncdRoutes() const { return m_syncdRoutes; }
 
 private:
     SwitchOrch *m_switchOrch;
