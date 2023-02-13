@@ -1,6 +1,6 @@
 """Utilities for interacting with ACLs when writing VS tests."""
 from typing import Callable, Dict, List
-
+from swsscommon import swsscommon
 
 class DVSAcl:
     """Manage ACL tables and rules on the virtual switch."""
@@ -17,6 +17,9 @@ class DVSAcl:
     ADB_ACL_GROUP_TABLE_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP"
     ADB_ACL_GROUP_MEMBER_TABLE_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER"
     ADB_ACL_COUNTER_TABLE_NAME = "ASIC_STATE:SAI_OBJECT_TYPE_ACL_COUNTER"
+
+    STATE_DB_ACL_TABLE_TABLE_NAME = "ACL_TABLE_TABLE"
+    STATE_DB_ACL_RULE_TABLE_NAME = "ACL_RULE_TABLE"
 
     ADB_ACL_STAGE_LOOKUP = {
         "ingress": "SAI_ACL_STAGE_INGRESS",
@@ -740,3 +743,43 @@ class DVSAcl:
         rule_to_counter_map = self.counters_db.get_entry("ACL_COUNTER_RULE_MAP", "")
         counter_to_rule_map = {v: k for k, v in rule_to_counter_map.items()}
         assert counter_oid in counter_to_rule_map
+
+    def verify_acl_table_status(
+            self,
+            acl_table_name,
+            expected_status
+    ) -> None:
+        """Verify that the STATE_DB status of ACL table is as expected.
+
+        Args:
+            acl_table_name: The name of ACL table to check
+            expected_status: The expected status in STATE_DB
+        """
+        if expected_status:
+            fvs = self.state_db.wait_for_entry(self.STATE_DB_ACL_TABLE_TABLE_NAME, acl_table_name)
+            assert len(fvs) > 0
+            assert (fvs['status'] == expected_status) 
+        else:
+            self.state_db.wait_for_deleted_entry(self.STATE_DB_ACL_TABLE_TABLE_NAME, acl_table_name)
+
+    def verify_acl_rule_status(
+            self,
+            acl_table_name,
+            acl_rule_name,
+            expected_status
+    ) -> None:
+        """Verify that the STATE_DB status of ACL rule is as expected.
+
+        Args:
+            acl_table_name: The name of ACL table to check
+            acl_rule_name: The name of ACL rule to check
+            expected_status: The expected status in STATE_DB
+        """
+        key = acl_table_name + "|" + acl_rule_name
+        if expected_status:
+            fvs = self.state_db.wait_for_entry(self.STATE_DB_ACL_RULE_TABLE_NAME, key)
+            assert len(fvs) > 0
+            assert (fvs['status'] == expected_status) 
+        else:
+            self.state_db.wait_for_deleted_entry(self.STATE_DB_ACL_TABLE_TABLE_NAME, key)
+
