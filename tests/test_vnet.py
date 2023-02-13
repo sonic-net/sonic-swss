@@ -546,6 +546,7 @@ class VnetVxlanVrfTunnel(object):
     ASIC_NEXT_HOP_GROUP     = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP"
     ASIC_NEXT_HOP_GROUP_MEMBER  = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER"
     ASIC_BFD_SESSION        = "ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION"
+    APP_VNET_MONITOR        =  "VNET_MONITOR_TABLE"
 
     def __init__(self):
         self.tunnel_map_ids       = set()
@@ -960,7 +961,21 @@ class VnetVxlanVrfTunnel(object):
 
         return True
 
-
+    def check_custom_monitor_app_db(self, dvs, prefix, endpoint, packet_type, overlay_dmac):
+        app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        key = prefix + ':' + endpoint
+        check_object(app_db, self.APP_VNET_MONITOR, key,
+            {
+                "packet_type": packet_type,
+                "overlay_dmac" : overlay_dmac
+            }
+        )
+        return True
+    def check_custom_monitor_deleted(self, dvs, prefix, endpoint):
+        app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        key = prefix + ':' + endpoint
+        check_deleted_object(app_db, self.APP_VNET_MONITOR, key)
+    
 class TestVnetOrch(object):
 
     def get_vnet_obj(self):
@@ -2376,7 +2391,7 @@ class TestVnetOrch(object):
         vnet_obj.fetch_exist_entries(dvs)
 
         create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
-        create_vnet_entry(dvs, 'Vnet17', tunnel_name, '10009', "", overlay_dmac="22:33:33:44:44:66")
+        create_vnet_entry(dvs, 'Vnet17', tunnel_name, '10009', "")
 
         vnet_obj.check_vnet_entry(dvs, 'Vnet17')
         vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet17', '10009')
@@ -2384,7 +2399,7 @@ class TestVnetOrch(object):
         vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
 
         vnet_obj.fetch_exist_entries(dvs)
-        create_vnet_routes(dvs, "100.100.1.1/32", 'Vnet17', '9.0.0.1,9.0.0.2,9.0.0.3', ep_monitor='9.1.0.1,9.1.0.2,9.1.0.3', primary ='9.0.0.1',monitoring='custom', adv_prefix='100.100.1.1/27')
+        create_vnet_routes(dvs, "100.100.1.1/32", 'Vnet17', '9.0.0.1,9.0.0.2,9.0.0.3', ep_monitor='9.1.0.1,9.1.0.2,9.1.0.3')
 
         # default bfd status is down, route should not be programmed in this status
         vnet_obj.check_del_vnet_routes(dvs, 'Vnet17', ["100.100.1.1/32"])
@@ -2432,6 +2447,37 @@ class TestVnetOrch(object):
         delete_vnet_entry(dvs, 'Vnet17')
         vnet_obj.check_del_vnet_entry(dvs, 'Vnet17')
 
+    '''
+    Test 18 - Test for vxlan custom monitoring config.
+    '''
+    def test_vnet_orch_18(self, dvs, testlog):
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_18'
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+        create_vnet_entry(dvs, 'Vnet18', tunnel_name, '10009', "", overlay_dmac="22:33:33:44:44:66")
+
+        vnet_obj.check_vnet_entry(dvs, 'Vnet18')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet18', '10009')
+
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+
+        vnet_obj.fetch_exist_entries(dvs)
+        create_vnet_routes(dvs, "100.100.1.1/32", 'Vnet18', '9.0.0.1,9.0.0.2,9.0.0.3', ep_monitor='9.1.0.1,9.1.0.2,9.1.0.3',primary ='9.0.0.1',monitoring='custom', adv_prefix='100.100.1.1/27')
+
+        vnet_obj.check_custom_monitor_app_db(dvs, "100.100.1.1/32", "9.1.0.1", "vxlan", "22:33:33:44:44:66")
+        vnet_obj.check_custom_monitor_app_db(dvs, "100.100.1.1/32", "9.1.0.2", "vxlan", "22:33:33:44:44:66")
+        vnet_obj.check_custom_monitor_app_db(dvs, "100.100.1.1/32", "9.1.0.3", "vxlan", "22:33:33:44:44:66")
+        
+        delete_vnet_routes(dvs, "100.100.1.1/32", 'Vnet18')
+        
+        vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.1/32", "9.1.0.1")
+        vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.1/32", "9.1.0.2")
+        vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.1/32", "9.1.0.3")
+        
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():

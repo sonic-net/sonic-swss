@@ -1338,11 +1338,6 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer, KeyOpField
                 attr.value.u8 = (uint8_t)stoi(fvValue(*i));
                 sai_attr_list.push_back(attr);
             }
-            else if (fvField(*i) == scheduler_priority_field_name)
-            {
-                // TODO: The meaning is to be able to adjust priority of the given scheduler group.
-                // However currently SAI model does not provide such ability.
-            }
             else if (fvField(*i) == scheduler_meter_type_field_name)
             {
                 sai_meter_type_t meter_value = scheduler_meter_map.at(fvValue(*i));

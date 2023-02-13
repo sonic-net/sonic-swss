@@ -53,8 +53,6 @@ int main(int argc, char **argv)
         DBConnector stateDb("STATE_DB", 0);
 
         PortMgr portmgr(&cfgDb, &appDb, &stateDb, cfg_port_tables);
-
-        // TODO: add tables in stateDB which interface depends on to monitor list
         vector<Orch *> cfgOrchList = {&portmgr};
 
         swss::Select s;

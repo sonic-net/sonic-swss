@@ -62,8 +62,6 @@ int main(int argc, char **argv)
         WarmStart::checkWarmStart("intfmgrd", "swss");
 
         IntfMgr intfmgr(&cfgDb, &appDb, &stateDb, cfg_intf_tables);
-
-        // TODO: add tables in stateDB which interface depends on to monitor list
         std::vector<Orch *> cfgOrchList = {&intfmgr};
 
         swss::Select s;

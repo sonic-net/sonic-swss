@@ -1409,7 +1409,7 @@ namespace aclorch_test
                         {
                             {
                                 ACL_TABLE_TYPE_MATCHES,
-                                string(MATCH_SRC_IP) +  comma + MATCH_ETHER_TYPE + comma + MATCH_L4_SRC_PORT_RANGE
+                                string(MATCH_SRC_IP) +  comma + MATCH_ETHER_TYPE + comma + MATCH_L4_SRC_PORT_RANGE + comma + MATCH_BTH_OPCODE + comma + MATCH_AETH_SYNDROME
                             },
                             {
                                 ACL_TABLE_TYPE_BPOINT_TYPES,
@@ -1431,6 +1431,8 @@ namespace aclorch_test
             { "SAI_ACL_TABLE_ATTR_FIELD_SRC_IP", "true" },
             { "SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE", "true" },
             { "SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE", "1:SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE" },
+            { "SAI_ACL_TABLE_ATTR_FIELD_BTH_OPCODE", "true" },
+            { "SAI_ACL_TABLE_ATTR_FIELD_AETH_SYNDROME", "true" },
         };
 
         ASSERT_TRUE(validateAclTable(
@@ -1484,8 +1486,46 @@ namespace aclorch_test
                         aclTableName + "|" + aclRuleName,
                         SET_COMMAND,
                         {
+                            { ACTION_PACKET_ACTION, PACKET_ACTION_DROP },
+                            { MATCH_BTH_OPCODE, "0x60" },
+                        }
+                    }
+                }
+            )
+        );
+
+        // MATCH_BTH_OPCODE invalid format
+        ASSERT_FALSE(orch->getAclRule(aclTableName, aclRuleName));
+
+        orch->doAclRuleTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName + "|" + aclRuleName,
+                        SET_COMMAND,
+                        {
+                            { ACTION_PACKET_ACTION, PACKET_ACTION_DROP },
+                            { MATCH_AETH_SYNDROME, "0x60" },
+                        }
+                    }
+                }
+            )
+        );
+
+        // MATCH_AETH_SYNDROME invalid format
+        ASSERT_FALSE(orch->getAclRule(aclTableName, aclRuleName));
+
+        orch->doAclRuleTask(
+            deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        aclTableName + "|" + aclRuleName,
+                        SET_COMMAND,
+                        {
                             { MATCH_SRC_IP, "1.1.1.1/32" },
                             { ACTION_PACKET_ACTION, PACKET_ACTION_DROP },
+                            { MATCH_BTH_OPCODE, "0x60/0xff" },
+                            { MATCH_AETH_SYNDROME, "0x60/0x60" },
                         }
                     }
                 }

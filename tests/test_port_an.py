@@ -311,6 +311,48 @@ class TestPortAutoNeg(object):
         assert status == True
         assert "rmt_adv_speeds" in [fv[0] for fv in fvs]
 
+    def test_PortAdvWithoutAutoneg(self, dvs, testlog):
+
+        db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        sdb = swsscommon.DBConnector(6, dvs.redis_sock, 0)
+
+        tbl = swsscommon.ProducerStateTable(db, "PORT_TABLE")
+        ctbl = swsscommon.Table(cdb, "PORT")
+        stbl = swsscommon.Table(sdb, "PORT_TABLE")
+
+        # set autoneg = off
+        fvs = swsscommon.FieldValuePairs([("autoneg", "off")])
+        ctbl.set("Ethernet0", fvs)
+
+        time.sleep(1)
+        fvs = swsscommon.FieldValuePairs([("adv_speeds", "100,1000"),
+                                          ("adv_interface_types", "CR2,CR4")])
+        ctbl.set("Ethernet0", fvs)
+
+        time.sleep(1)
+
+        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+
+        atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
+        (status, fvs) = atbl.get(dvs.asicdb.portnamemap["Ethernet0"])
+        assert status == True
+
+        assert "SAI_PORT_ATTR_AUTO_NEG_MODE" in [fv[0] for fv in fvs]
+        assert "SAI_PORT_ATTR_ADVERTISED_SPEED" in [fv[0] for fv in fvs]
+        assert "SAI_PORT_ATTR_ADVERTISED_INTERFACE_TYPE" in [fv[0] for fv in fvs]
+        for fv in fvs:
+            if fv[0] == "SAI_PORT_ATTR_AUTO_NEG_MODE":
+                assert fv[1] == "false"
+            elif fv[0] == "SAI_PORT_ATTR_ADVERTISED_SPEED":
+                assert fv[1] == "2:100,1000"
+            elif fv[0] == "SAI_PORT_ATTR_ADVERTISED_INTERFACE_TYPE":
+                assert fv[1] == "2:SAI_PORT_INTERFACE_TYPE_CR2,SAI_PORT_INTERFACE_TYPE_CR4"
+
+        # set admin up
+        cfvs = swsscommon.FieldValuePairs([("admin_status", "up")])
+        ctbl.set("Ethernet0", cfvs)
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():
