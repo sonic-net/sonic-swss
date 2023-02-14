@@ -2347,6 +2347,15 @@ bool EvpnRemoteVnip2pOrch::addOperation(const Request& request)
         return true;
     }
 
+    EvpnNvoOrch* evpn_orch = gDirectory.get<EvpnNvoOrch*>();
+    auto vtep_ptr = evpn_orch->getEVPNVtep();
+    if (!vtep_ptr)
+    {
+        SWSS_LOG_WARN("Remote VNI add: Source VTEP not found. remote=%s vid=%d",
+                      remote_vtep.c_str(), vlan_id);
+        return true;
+    }
+
     VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
     Port tunnelPort, vlanPort;
     VxlanTunnelMapOrch* vxlan_tun_map_orch = gDirectory.get<VxlanTunnelMapOrch*>();
@@ -2373,16 +2382,8 @@ bool EvpnRemoteVnip2pOrch::addOperation(const Request& request)
 
         if (gPortsOrch->isVlanMember(vlanPort, tunnelPort))
         {
-            EvpnNvoOrch* evpn_orch = gDirectory.get<EvpnNvoOrch*>();
-            auto vtep_ptr = evpn_orch->getEVPNVtep();
-            if (!vtep_ptr)
-            {
-                SWSS_LOG_WARN("Remote VNI add: VTEP not found. remote=%s vid=%d",
-                              remote_vtep.c_str(),vlan_id);
-                return true;
-            }
             SWSS_LOG_WARN("tunnelPort %s already member of vid %d", 
-                            remote_vtep.c_str(),vlan_id);
+                          remote_vtep.c_str(),vlan_id);
             vtep_ptr->increment_spurious_imr_add(remote_vtep);
             return true;
         }
