@@ -853,6 +853,22 @@ task_process_status Orch::handleSaiCreateStatus(sai_api_t api, sai_status_t stat
                     exit(EXIT_FAILURE);
             }
             break;
+        case SAI_API_ROUTE:
+            switch (status)
+            {
+                case SAI_STATUS_SUCCESS:
+                    SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiCreateStatus");
+                    return task_success;
+                case SAI_STATUS_ITEM_ALREADY_EXISTS:
+                    /* With VNET routes, the same route can be learned via multiple
+                    sources, like via BGP. Handle this gracefully */
+                    return task_success;
+                default:
+                    SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
+                                sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+                    exit(EXIT_FAILURE);
+            }
+            break;
         default:
             switch (status)
             {
