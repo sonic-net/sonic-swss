@@ -784,6 +784,13 @@ bool PortsOrch::addPortBulk(const std::vector<PortConfig> &portList)
         m_portCount++;
     }
 
+    // newly created ports might be put in the default vlan so remove all ports from
+    // the default vlan.
+    if (gMySwitchType == "voq") {
+        removeDefaultVlanMembers();
+        removeDefaultBridgePorts();
+    }
+
     SWSS_LOG_NOTICE("Created ports: %s", swss::join(',', oidList.begin(), oidList.end()).c_str());
 
     return true;
