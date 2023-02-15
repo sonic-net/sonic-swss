@@ -3216,7 +3216,7 @@ void AclOrch::initDefaultTableTypes()
      * | -----------------------------------------------------------------|
      * | MATCH_ETHERTYPE   |      √       |      √       |                |
      * |------------------------------------------------------------------|
-     * | MATCH_IN_PORTS    |      √       |      √       |                |
+     * | MATCH_IN_PORTS    |      √       |      √       |       √        |
      * |------------------------------------------------------------------|
      */
 
@@ -3277,6 +3277,7 @@ void AclOrch::initDefaultTableTypes()
                 .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT))
                 .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT))
                 .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS))
+                .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS))
                 .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DSCP))
                 .withMatch(make_shared<AclTableRangeMatch>(set<sai_acl_range_type_t>{
                     {SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE, SAI_ACL_RANGE_TYPE_L4_DST_PORT_RANGE}}))
