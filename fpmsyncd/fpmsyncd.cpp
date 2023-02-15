@@ -1,3 +1,4 @@
+#include <getopt.h>
 #include <iostream>
 #include <inttypes.h>
 #include "logger.h"
@@ -7,6 +8,7 @@
 #include "warmRestartHelper.h"
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/routesync.h"
+#include "netlink.h"
 
 
 using namespace std;
@@ -44,12 +46,54 @@ static bool eoiuFlagsSet(Table &bgpStateTable)
     return true;
 }
 
+static void usage()
+{
+    cout << "Usage: fpmsyncd [ -l ( fpm | net) ]" << endl;
+    cout << "       fpm = FpmLink (default)" << endl;
+    cout << "       net = NetLink" << endl;
+}
+
 int main(int argc, char **argv)
 {
+    bool useFpmLink = true;
+    int opt;
+    while ((opt = getopt(argc, argv, "l:h")) != -1 )
+    {
+        switch (opt)
+        {
+        case 'l':
+        {
+            string linkmode(optarg);
+            if (linkmode == "net")
+            {
+                useFpmLink = false;
+            }
+            else if (linkmode == "fpm")
+            {
+                useFpmLink = true;
+            }
+            else
+            {
+                usage();
+                return EXIT_FAILURE;
+            }
+            break;
+        }
+
+        case 'h':
+            usage();
+            return 1;
+
+        default: /* '?' */
+            usage();
+            return EXIT_FAILURE;
+        }
+    }
+
     swss::Logger::linkToDbNative("fpmsyncd");
     DBConnector db("APPL_DB", 0);
     RedisPipeline pipeline(&db);
-    RouteSync sync(&pipeline);
+    RouteSync sync(&pipeline, useFpmLink);
 
     DBConnector stateDb("STATE_DB", 0);
     Table bgpStateTable(&stateDb, STATE_BGP_TABLE_NAME);
@@ -61,7 +105,6 @@ int main(int argc, char **argv)
     {
         try
         {
-            FpmLink fpm(&sync);
             Select s;
             SelectableTimer warmStartTimer(timespec{0, 0});
             // Before eoiu flags detected, check them periodically. It also stop upon detection of reconciliation done.
@@ -75,11 +118,30 @@ int main(int argc, char **argv)
              */
             pipeline.flush();
 
-            cout << "Waiting for fpm-client connection..." << endl;
-            fpm.accept();
-            cout << "Connected!" << endl;
+            shared_ptr<Selectable> link;
+            if (useFpmLink)
+            {
+                shared_ptr<FpmLink> fpm = make_shared<FpmLink>(&sync);
 
-            s.addSelectable(&fpm);
+                cout << "Waiting for fpm-client connection..." << endl;
+                fpm->accept();
+                cout << "Connected!" << endl;
+
+                link = fpm;
+            }
+            else
+            {
+                shared_ptr<NetLink> netlink = make_shared<NetLink>();
+
+                netlink->registerGroup(RTNLGRP_IPV4_ROUTE);
+                netlink->registerGroup(RTNLGRP_IPV6_ROUTE);
+                netlink->registerGroup(RTNLGRP_MPLS_ROUTE);
+                cout << "NetLink listening for route messages..." << endl;
+                netlink->dumpRequest(RTM_GETROUTE);
+
+                link = netlink;
+            }
+            s.addSelectable(link.get());
 
             /* If warm-restart feature is enabled, execute 'restoration' logic */
             bool warmStartEnabled = sync.m_warmStartHelper.checkAndStart();
