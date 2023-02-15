@@ -2376,6 +2376,13 @@ bool EvpnRemoteVnip2pOrch::addOperation(const Request& request)
         return false;
     }
 
+    VRFOrch* vrf_orch = gDirectory.get<VRFOrch*>();
+    if (vrf_orch->isL3VniVlan(vni_id))
+    {
+        SWSS_LOG_WARN("Ignoring remote VNI add for L3 VNI:%d, remote:%s", vni_id, remote_vtep.c_str());
+        return false;
+    }
+
     if (tunnel_orch->getTunnelPort(remote_vtep,tunnelPort))
     {
         SWSS_LOG_INFO("Vxlan tunnelPort exists: %s", remote_vtep.c_str());
@@ -2528,6 +2535,13 @@ bool EvpnRemoteVnip2mpOrch::addOperation(const Request& request)
     if (!vxlan_tun_map_orch->isVniVlanMapExists(vni_id, vniVlanMapName, &tnl_map_entry_id, &tmp_vlan_id))
     {
         SWSS_LOG_WARN("Vxlan tunnel map is not created for vni: %d", vni_id);
+        return false;
+    }
+
+    VRFOrch* vrf_orch = gDirectory.get<VRFOrch*>();
+    if (vrf_orch->isL3VniVlan(vni_id))
+    {
+        SWSS_LOG_WARN("Ignoring remote VNI add for L3 VNI:%d, remote:%s", vni_id, end_point_ip.c_str());
         return false;
     }
 

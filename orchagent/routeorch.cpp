@@ -665,6 +665,8 @@ void RouteOrch::doTask(Consumer& consumer)
                 NextHopGroupKey& nhg = ctx.nhg;
                 vector<string> srv6_segv;
                 vector<string> srv6_src;
+                bool l3Vni = true;
+                uint32_t vni = 0;
 
                 /* Check if the next hop group is owned by the NhgOrch. */
                 if (nhg_index.empty())
@@ -694,6 +696,23 @@ void RouteOrch::doTask(Consumer& consumer)
                     {
                         SWSS_LOG_NOTICE("Route %s: resize ipv to match alsv, %zd -> %zd.", key.c_str(), ipv.size(), alsv.size());
                         ipv.resize(alsv.size());
+                    }
+
+                    for (auto &vni_str: vni_labelv)
+                    {
+                        vni = static_cast<uint32_t>(std::stoul(vni_str));
+                        if (!m_vrfOrch->isL3VniVlan(vni))
+                        {
+                            SWSS_LOG_WARN("Route %s is received on non L3 VNI %s", key.c_str(), vni_str.c_str());
+                            l3Vni = false;
+                            break;
+                        }
+                    }
+
+                    if (!l3Vni)
+                    {
+                        it++;
+                        continue;
                     }
 
                     /* Set the empty ip(s) to zero
