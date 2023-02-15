@@ -512,7 +512,9 @@ bool FdbOrch::getPort(const MacAddress& mac, uint16_t vlan, Port& port)
     auto it = m_entries.find(entry);
     if (it == m_entries.end())
     {
-        SWSS_LOG_ERROR("Failed to get cached bridge port ID for FDB entry %s",
+        // This message is now expected in many cases since orchagent will process events such as
+        // learning new neighbor entries prior to updating the m_entries FDB cache.
+        SWSS_LOG_INFO("Failed to get cached bridge port ID for FDB entry %s",
             mac.to_string().c_str());
         return false;
     }
