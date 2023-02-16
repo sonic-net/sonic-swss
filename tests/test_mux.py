@@ -167,6 +167,26 @@ class TestMuxTunnelBase():
 
         return vlan_oid
 
+    def get_nexthop_oid(self, nexthop, asicdb):
+        # gets nexthop oid
+        nexthop_keys = asicdb.get_keys(self.ASIC_NEXTHOP_TABLE)
+
+        nexthop_oid = ''
+        for nexthop_key in nexthop_keys:
+            entry = asicdb.get_entry(self.ASIC_NEXTHOP_TABLE, nexthop_key)
+            if entry["SAI_NEXT_HOP_ATTR_IP"] == nexthop:
+                nexthop_oid = nexthop_key
+                break
+
+        return nexthop_oid
+
+    def get_route_nexthop_oid(self, route_key, asicdb):
+        # gets nexthop oid
+        entry = asicdb.get_entry(self.ASIC_ROUTE_TABLE, route_key)
+        assert 'SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID' in entry
+
+        return entry['SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID']
+
     def check_tunnel_route_in_app_db(self, dvs, destinations, expected=True):
         appdb = dvs.get_app_db()
 
@@ -602,6 +622,175 @@ class TestMuxTunnelBase():
         )
         self.del_neighbor(dvs, neigh_ip)
         self.del_neighbor(dvs, neigh_ipv6)
+
+    def create_and_test_multi_nexthop_routes(self, dvs, dvs_route, appdb, mac0, mac4, asicdb):
+        '''
+        Tests case where there are multiple mux nexthops tied to a route
+        '''
+        apdb = dvs.get_app_db()
+
+        route = "2.3.4.0/24"
+        route_ipv6 = "2023::/64"
+        NH1 = self.SERV1_IPV4
+        NH2 = self.SERV2_IPV4
+        NH1_ipv6 = self.SERV1_IPV6
+        NH2_ipv6 = self.SERV2_IPV6
+
+        # Setup
+        self.set_mux_state(appdb, "Ethernet0", "active")
+        self.set_mux_state(appdb, "Ethernet4", "active")
+
+        # add neighbors
+        self.add_neighbor(dvs, NH1, mac0)
+        self.add_neighbor(dvs, NH2, mac4)
+        self.add_neighbor(dvs, NH1_ipv6, mac0)
+        self.add_neighbor(dvs, NH2_ipv6, mac4)
+
+        NH1_oid = self.get_nexthop_oid(NH1, asicdb)
+        NH2_oid = self.get_nexthop_oid(NH2, asicdb)
+        NH1_ipv6_oid = self.get_nexthop_oid(NH1_ipv6, asicdb)
+        NH2_ipv6_oid = self.get_nexthop_oid(NH2_ipv6, asicdb)
+
+        # program route with 1 neighbor
+        dvs.runcmd(
+            "vtysh -c \"configure terminal\" -c \"ip route " + route +
+            " " + NH1 + "\""
+        )
+        dvs.runcmd(
+            "vtysh -c \"configure terminal\" -c \"ipv6 route " + route_ipv6 +
+            " " + NH1_ipv6 + "\""
+        )
+        apdb.wait_for_entry("ROUTE_TABLE", route)
+        apdb.wait_for_entry("ROUTE_TABLE", route_ipv6)
+
+        rtkeys = dvs_route.check_asicdb_route_entries([route])
+        rtkeys_ipv6 = dvs_route.check_asicdb_route_entries([route_ipv6])
+
+        route_oid = self.get_route_nexthop_oid(rtkeys[0], asicdb)
+        route_ipv6_oid = self.get_route_nexthop_oid(rtkeys_ipv6[0], asicdb)
+
+        assert NH1_oid == route_oid
+        assert NH1_ipv6_oid == route_ipv6_oid
+
+        # add second neighbor
+        dvs.runcmd(
+            "vtysh -c \"configure terminal\" -c \"ip route " + route +
+            " " + NH2 + "\""
+        )
+        dvs.runcmd(
+            "vtysh -c \"configure terminal\" -c \"ipv6 route " + route_ipv6 +
+            " " + NH2_ipv6 + "\""
+        )
+
+        route_oid = self.get_route_nexthop_oid(rtkeys[0], asicdb)
+        route_ipv6_oid = self.get_route_nexthop_oid(rtkeys_ipv6[0], asicdb)
+
+        assert NH1_oid == route_oid
+        assert NH1_ipv6_oid == route_ipv6_oid
+
+        # set first neighbor to standby
+        self.set_mux_state(appdb, "Ethernet0", "standby")
+
+        route_oid = self.get_route_nexthop_oid(rtkeys[0], asicdb)
+        route_ipv6_oid = self.get_route_nexthop_oid(rtkeys_ipv6[0], asicdb)
+
+        assert NH2_oid == route_oid
+        assert NH2_ipv6_oid == route_ipv6_oid
+
+        # set second neighbor to standby
+        self.set_mux_state(appdb, "Ethernet4", "standby")
+
+        route_oid = self.get_route_nexthop_oid(rtkeys[0], asicdb)
+        route_ipv6_oid = self.get_route_nexthop_oid(rtkeys_ipv6[0], asicdb)
+
+        assert tunnel_nh_id == route_oid
+        assert tunnel_nh_id == route_ipv6_oid
+
+        # set second neighbor to active
+        self.set_mux_state(appdb, "Ethernet4", "standby")
+
+        route_oid = self.get_route_nexthop_oid(rtkeys[0], asicdb)
+        route_ipv6_oid = self.get_route_nexthop_oid(rtkeys_ipv6[0], asicdb)
+
+        assert NH2_oid == route_oid
+        assert NH2_ipv6_oid == route_ipv6_oid
+
+        # set first neighbor to active
+        self.set_mux_state(appdb, "Ethernet4", "standby")
+
+        route_oid = self.get_route_nexthop_oid(rtkeys[0], asicdb)
+        route_ipv6_oid = self.get_route_nexthop_oid(rtkeys_ipv6[0], asicdb)
+
+        assert NH2_oid == route_oid
+        assert NH2_ipv6_oid == route_ipv6_oid
+
+        # delete second neigbor
+        self.del_neighbor(dvs, NH2)
+        self.del_neighbor(dvs, NH2_ipv6)
+
+        assert NH1_oid == route_oid
+        assert NH1_ipv6_oid == route_ipv6_oid
+
+        # Cleanup
+        dvs.runcmd(
+            "vtysh -c \"configure terminal\" -c \"no ip route " + route +
+            " " + NH1 + "\""
+        )
+        dvs.runcmd(
+            "vtysh -c \"configure terminal\" -c \"no ipv6 route " + nh_route_ipv6 +
+            " " + NH1_ipv6 + "\""
+        )
+        dvs.runcmd(
+            "vtysh -c \"configure terminal\" -c \"no ip route " + route +
+            " " + NH2 + "\""
+        )
+        dvs.runcmd(
+            "vtysh -c \"configure terminal\" -c \"no ip route " + route_ipv6 +
+            " " + NH2_ipv6 + "\""
+        )
+        self.del_neighbor(dvs, NH1)
+        self.del_neighbor(dvs, NH1_ipv6)
+
+        # non mux neighbor case
+        non_mux = "1.1.1.1"
+        non_mux_ipv6 = "fc02:1000::eeee"
+        non_mux_mac = "00:aa:bb:cc:dd:ee"
+        self.add_neighbor(dvs, non_mux, non_mux_mac)
+        self.add_neighbor(dvs, non_mux_ipv6, non_mux_mac)
+        dvs.runcmd(
+            "vtysh -c \"configure terminal\" -c \"no ip route " + route +
+            " " + non_mux + "\""
+        )
+        dvs.runcmd(
+            "vtysh -c \"configure terminal\" -c \"no ip route " + route_ipv6 +
+            " " + non_mux_ipv6 + "\""
+        )
+        apdb.wait_for_entry("ROUTE_TABLE", route)
+        apdb.wait_for_entry("ROUTE_TABLE", route_ipv6)
+
+        rtkeys = dvs_route.check_asicdb_route_entries([route])
+        rtkeys_ipv6 = dvs_route.check_asicdb_route_entries([route_ipv6])
+
+        route_oid = self.get_route_nexthop_oid(rtkeys[0], asicdb)
+        route_ipv6_oid = self.get_route_nexthop_oid(rtkeys_ipv6[0], asicdb)
+
+        non_mux_NH_oid = self.get_nexthop_oid(non_mux, asicdb)
+        non_mux_NH_ipv6_oid = self.get_nexthop_oid(non_mux_ipv6, asicdb)
+
+        assert non_mux_NH_oid == route_oid
+        assert non_mux_NH_ipv6_oid == route_ipv6_oid
+
+        # Cleanup
+        dvs.runcmd(
+            "vtysh -c \"configure terminal\" -c \"no ip route " + route +
+            " " + non_mux + "\""
+        )
+        dvs.runcmd(
+            "vtysh -c \"configure terminal\" -c \"no ip route " + route_ipv6 +
+            " " + non_mux_ipv6 + "\""
+        )
+        self.del_neighbor(dvs, NH1)
+        self.del_neighbor(dvs, NH1_ipv6)
 
     def get_expected_sai_qualifiers(self, portlist, dvs_acl):
         expected_sai_qualifiers = {
@@ -1172,6 +1361,14 @@ class TestMuxTunnel(TestMuxTunnelBase):
         mac = intf_fdb_map["Ethernet0"]
 
         self.create_and_test_NH_routes(appdb, asicdb, dvs, dvs_route, mac)
+
+    def test_multi_nexthop(self, dvs, dvs_route, intf_fdb_map, neighbor_cleanup, testlog):
+        appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        asicdb = dvs.get_asic_db()
+        mac0 = intf_fdb_map["Ethernet0"]
+        mac4 = intf_fdb_map["Ethernet4"]
+
+        self.create_and_test_multi_nexthop_routes(dvs, dvs_route, appdb, mac0, mac4, asicdb)
 
     def test_acl(self, dvs, dvs_acl, testlog):
         """ test acl and mux state change """
