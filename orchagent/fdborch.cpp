@@ -213,9 +213,6 @@ void FdbOrch::handleSyncdFlushNotif(const sai_object_id_t& bv_id,
     // Consolidated flush will have a zero mac
     MacAddress flush_mac("00:00:00:00:00:00");
 
-    /* TODO: Read the SAI_FDB_FLUSH_ATTR_ENTRY_TYPE attr from the flush notif
-    and clear the entries accordingly, currently only non-static entries are flushed
-    */
     if (bridge_port_id == SAI_NULL_OBJECT_ID && bv_id == SAI_NULL_OBJECT_ID)
     {
         for (auto itr = m_entries.begin(); itr != m_entries.end();)
