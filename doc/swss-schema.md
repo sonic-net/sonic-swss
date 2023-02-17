@@ -233,6 +233,7 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     key           = ROUTE_TABLE:segment ; SRV6 segment name
     ; field       = value
     path          = STRING              ; Comma-separated list of IPV6 prefixes for a SRV6 segment
+    type          = STRING              ; SRV6 segment list type like "insert", "encaps.red"; If not provided, default type will be "encaps.red"
 
 ---------------------------------------------
 ### SRV6_MY_SID_TABLE
