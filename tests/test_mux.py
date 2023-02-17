@@ -470,92 +470,7 @@ class TestMuxTunnelBase():
         self.set_mux_state(appdb, "Ethernet4", "active")
         dvs_route.check_asicdb_deleted_route_entries([rtprefix])
 
-        # Test ECMP routes
-
-        self.set_mux_state(appdb, "Ethernet0", "active")
-        self.set_mux_state(appdb, "Ethernet4", "active")
-
-        rtprefix = "5.6.7.0/24"
-
-        dvs_route.check_asicdb_deleted_route_entries([rtprefix])
-
-        ps = swsscommon.ProducerStateTable(pdb.db_connection, "ROUTE_TABLE")
-
-        fvs = swsscommon.FieldValuePairs(
-                [
-                    ("nexthop", self.SERV1_IPV4 + "," + self.SERV2_IPV4),
-                    ("ifname", "Vlan1000,Vlan1000")
-                ]
-              )
-
-        ps.set(rtprefix, fvs)
-
-        # Check if route was propagated to ASIC DB
-        rtkeys = dvs_route.check_asicdb_route_entries([rtprefix])
-
-        # Check for nexthop group and validate nexthop group member in asic db
-        self.check_nexthop_group_in_asic_db(asicdb, rtkeys[0])
-
-        # Step: 1 - Change one NH to standby and verify ecmp route
-        self.set_mux_state(appdb, "Ethernet0", "standby")
-        self.check_nexthop_group_in_asic_db(asicdb, rtkeys[0], 1)
-
-        # Step: 2 - Change the other NH to standby and verify ecmp route
-        self.set_mux_state(appdb, "Ethernet4", "standby")
-        self.check_nexthop_group_in_asic_db(asicdb, rtkeys[0], 2)
-
-        # Step: 3 - Change one NH to back to Active and verify ecmp route
-        self.set_mux_state(appdb, "Ethernet0", "active")
-        self.check_nexthop_group_in_asic_db(asicdb, rtkeys[0], 1)
-
-        # Step: 4 - Change the other NH to Active and verify ecmp route
-        self.set_mux_state(appdb, "Ethernet4", "active")
-        self.check_nexthop_group_in_asic_db(asicdb, rtkeys[0])
-
-        ps._del(rtprefix)
-
-        # Test IPv6 ECMP routes and start with standby config
-        self.set_mux_state(appdb, "Ethernet0", "standby")
-        self.set_mux_state(appdb, "Ethernet4", "standby")
-
-        rtprefix = "2020::/64"
-
-        dvs_route.check_asicdb_deleted_route_entries([rtprefix])
-
-        ps = swsscommon.ProducerStateTable(pdb.db_connection, "ROUTE_TABLE")
-
-        fvs = swsscommon.FieldValuePairs(
-                [
-                    ("nexthop", self.SERV1_IPV6 + "," + self.SERV2_IPV6),
-                    ("ifname", "tun0,tun0")
-                ]
-              )
-
-        ps.set(rtprefix, fvs)
-
-        # Check if route was propagated to ASIC DB
-        rtkeys = dvs_route.check_asicdb_route_entries([rtprefix])
-
-        # Check for nexthop group and validate nexthop group member in asic db
-        self.check_nexthop_group_in_asic_db(asicdb, rtkeys[0], 2)
-
-        # Step: 1 - Change one NH to active and verify ecmp route
-        self.set_mux_state(appdb, "Ethernet0", "active")
-        self.check_nexthop_group_in_asic_db(asicdb, rtkeys[0], 1)
-
-        # Step: 2 - Change the other NH to active and verify ecmp route
-        self.set_mux_state(appdb, "Ethernet4", "active")
-        self.check_nexthop_group_in_asic_db(asicdb, rtkeys[0])
-
-        # Step: 3 - Change one NH to back to standby and verify ecmp route
-        self.set_mux_state(appdb, "Ethernet0", "standby")
-        self.check_nexthop_group_in_asic_db(asicdb, rtkeys[0], 1)
-
-        # Step: 4 - Change the other NH to standby and verify ecmp route
-        self.set_mux_state(appdb, "Ethernet4", "standby")
-        self.check_nexthop_group_in_asic_db(asicdb, rtkeys[0], 2)
-
-        ps._del(rtprefix)
+        # nhg entries/ECMP routes covered in multi_nexthop routes test #
 
     def create_and_test_NH_routes(self, appdb, asicdb, dvs, dvs_route, mac):
         '''
@@ -652,35 +567,26 @@ class TestMuxTunnelBase():
         NH2_ipv6_oid = self.get_nexthop_oid(NH2_ipv6, asicdb)
 
         # program route with 1 neighbor
-        dvs.runcmd(
-            "vtysh -c \"configure terminal\" -c \"ip route " + route +
-            " " + NH1 + "\""
-        )
-        dvs.runcmd(
-            "vtysh -c \"configure terminal\" -c \"ipv6 route " + route_ipv6 +
-            " " + NH1_ipv6 + "\""
-        )
-        apdb.wait_for_entry("ROUTE_TABLE", route)
-        apdb.wait_for_entry("ROUTE_TABLE", route_ipv6)
+        ps = swsscommon.ProducerStateTable(apdb.db_connection, "ROUTE_TABLE")
+        fvs = swsscommon.FieldValuePairs(
+                [
+                    ("nexthop", NH1 + "," + NH2),
+                    ("ifname", "Vlan1000,Vlan1000")
+                ]
+              )
+        apdb.set(route, fvs)
+
+        ps = swsscommon.ProducerStateTable(apdb.db_connection, "ROUTE_TABLE")
+        fvs = swsscommon.FieldValuePairs(
+                [
+                    ("nexthop", NH1_ipv6 + "," + NH2_ipv6),
+                    ("ifname", "Vlan1000,Vlan1000")
+                ]
+              )
+        apdb.set(route, fvs)
 
         rtkeys = dvs_route.check_asicdb_route_entries([route])
         rtkeys_ipv6 = dvs_route.check_asicdb_route_entries([route_ipv6])
-
-        route_oid = self.get_route_nexthop_oid(rtkeys[0], asicdb)
-        route_ipv6_oid = self.get_route_nexthop_oid(rtkeys_ipv6[0], asicdb)
-
-        assert NH1_oid == route_oid
-        assert NH1_ipv6_oid == route_ipv6_oid
-
-        # add second neighbor
-        dvs.runcmd(
-            "vtysh -c \"configure terminal\" -c \"ip route " + route +
-            " " + NH2 + "\""
-        )
-        dvs.runcmd(
-            "vtysh -c \"configure terminal\" -c \"ipv6 route " + route_ipv6 +
-            " " + NH2_ipv6 + "\""
-        )
 
         route_oid = self.get_route_nexthop_oid(rtkeys[0], asicdb)
         route_ipv6_oid = self.get_route_nexthop_oid(rtkeys_ipv6[0], asicdb)
@@ -732,65 +638,58 @@ class TestMuxTunnelBase():
         assert NH1_ipv6_oid == route_ipv6_oid
 
         # Cleanup
-        dvs.runcmd(
-            "vtysh -c \"configure terminal\" -c \"no ip route " + route +
-            " " + NH1 + "\""
-        )
-        dvs.runcmd(
-            "vtysh -c \"configure terminal\" -c \"no ipv6 route " + nh_route_ipv6 +
-            " " + NH1_ipv6 + "\""
-        )
-        dvs.runcmd(
-            "vtysh -c \"configure terminal\" -c \"no ip route " + route +
-            " " + NH2 + "\""
-        )
-        dvs.runcmd(
-            "vtysh -c \"configure terminal\" -c \"no ip route " + route_ipv6 +
-            " " + NH2_ipv6 + "\""
-        )
+        ps._del(route)
+        ps._del(route_ipv6)
+
+        # delete neighbor1
         self.del_neighbor(dvs, NH1)
         self.del_neighbor(dvs, NH1_ipv6)
 
         # non mux neighbor case
         non_mux = "1.1.1.1"
+        non_mux2 = "2.2.2.2"
         non_mux_ipv6 = "fc02:1000::eeee"
+        non_mux2_ipv6 = "fc02:1000::eeee"
         non_mux_mac = "00:aa:bb:cc:dd:ee"
+        non_mux2_mac = "00:aa:bb:cc:dd:ff"
+
         self.add_neighbor(dvs, non_mux, non_mux_mac)
+        self.add_neighbor(dvs, non_mux2, non_mux2_mac)
         self.add_neighbor(dvs, non_mux_ipv6, non_mux_mac)
-        dvs.runcmd(
-            "vtysh -c \"configure terminal\" -c \"no ip route " + route +
-            " " + non_mux + "\""
-        )
-        dvs.runcmd(
-            "vtysh -c \"configure terminal\" -c \"no ip route " + route_ipv6 +
-            " " + non_mux_ipv6 + "\""
-        )
-        apdb.wait_for_entry("ROUTE_TABLE", route)
-        apdb.wait_for_entry("ROUTE_TABLE", route_ipv6)
+        self.add_neighbor(dvs, non_mux2_ipv6, non_mux2_mac)
+
+        ps = swsscommon.ProducerStateTable(apdb.db_connection, "ROUTE_TABLE")
+        fvs = swsscommon.FieldValuePairs(
+                [
+                    ("nexthop", non_mux + "," + non_mux2),
+                    ("ifname", "Vlan1000,Vlan1000")
+                ]
+              )
+        apdb.set(route, fvs)
+
+        ps = swsscommon.ProducerStateTable(apdb.db_connection, "ROUTE_TABLE")
+        fvs = swsscommon.FieldValuePairs(
+                [
+                    ("nexthop", non_mux_ipv6 + "," + non_mux2_ipv6),
+                    ("ifname", "Vlan1000,Vlan1000")
+                ]
+              )
+        apdb.set(route, fvs)
 
         rtkeys = dvs_route.check_asicdb_route_entries([route])
         rtkeys_ipv6 = dvs_route.check_asicdb_route_entries([route_ipv6])
 
-        route_oid = self.get_route_nexthop_oid(rtkeys[0], asicdb)
-        route_ipv6_oid = self.get_route_nexthop_oid(rtkeys_ipv6[0], asicdb)
-
-        non_mux_NH_oid = self.get_nexthop_oid(non_mux, asicdb)
-        non_mux_NH_ipv6_oid = self.get_nexthop_oid(non_mux_ipv6, asicdb)
-
-        assert non_mux_NH_oid == route_oid
-        assert non_mux_NH_ipv6_oid == route_ipv6_oid
+        # Check for nexthop group - should not be deleted by update_Route()
+        self.check_nexthop_group_in_asic_db(asicdb, rtkeys[0])
+        self.check_nexthop_group_in_asic_db(asicdb, rtkeys_ipv6[0])
 
         # Cleanup
-        dvs.runcmd(
-            "vtysh -c \"configure terminal\" -c \"no ip route " + route +
-            " " + non_mux + "\""
-        )
-        dvs.runcmd(
-            "vtysh -c \"configure terminal\" -c \"no ip route " + route_ipv6 +
-            " " + non_mux_ipv6 + "\""
-        )
-        self.del_neighbor(dvs, NH1)
-        self.del_neighbor(dvs, NH1_ipv6)
+        ps._del(route)
+        ps._del(route_ipv6)
+        self.del_neighbor(dvs, non_mux)
+        self.del_neighbor(dvs, non_mux2)
+        self.del_neighbor(dvs, non_mux_ipv6)
+        self.del_neighbor(dvs, non_mux2_ipv6)
 
     def get_expected_sai_qualifiers(self, portlist, dvs_acl):
         expected_sai_qualifiers = {

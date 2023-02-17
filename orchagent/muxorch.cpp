@@ -979,6 +979,8 @@ sai_object_id_t MuxOrch::getNextHopTunnelId(std::string tunnelKey, IpAddress& ip
  */
 void MuxOrch::updateRoute(const IpPrefix &pfx)
 {
+    sai_status_t status;
+
     // Create Route entry
     sai_route_entry_t route_entry;
     route_entry.switch_id = gSwitchId;
@@ -1006,30 +1008,29 @@ void MuxOrch::updateRoute(const IpPrefix &pfx)
         /* Multi-nexthop case should only program 1 active or 1 standby nexthop */
 
         // If the route already points to an Active neighbor, do nothing.
-        RouteTables m_syncdRoutes = gRouteOrch->getSyncdRoutes();
-        RouteNhg rtnhg;
-        if (m_syncdRoutes.find(gVirtualRouterId) != m_syncdRoutes.end())
+        NextHopGroupKey nhg_key = gRouteOrch->getSyncdRouteNhgKey(gVirtualRouterId, pfx);
+        std::set<NextHopKey> current_nexthops = nhg_key.getNextHops();
+        if (nhg_key.getSize() == 1 &&
+            findMuxCableInSubnet(current_nexthops.begin()->ip_address)->isActive())
         {
-            auto it = m_syncdRoutes[gVirtualRouterId].find(pfx);
-            if (it != m_syncdRoutes[gVirtualRouterId].end())
-            {
-                rtnhg = it->second;
-                NextHopGroupKey nhg_key = rtnhg.nhg_key;
-                std::set<NextHopKey> current_nexthops = nhg_key.getNextHops();
-                if (nhg_key.getSize() == 1 &&
-                    findMuxCableInSubnet(current_nexthops.begin()->ip_address)->isActive())
-                {
-                    SWSS_LOG_INFO("Route %s points to Active neighbor %s",
-                        pfx.getIp().to_string().c_str(), current_nexthops.begin()->to_string().c_str());
-                    return;
-                }
-                else if (gRouteOrch->hasNextHopGroup(nhg_key))
-                {
-                    SWSS_LOG_DEBUG("Removing route %s nexthop group: %s",
-                            pfx.getIp().to_string().c_str(), nhg_key.to_string().c_str());
-                    gRouteOrch->removeNextHopGroup(nhg_key);
-                }
-            }
+            SWSS_LOG_INFO("Route %s points to Active neighbor %s",
+                pfx.getIp().to_string().c_str(), current_nexthops.begin()->to_string().c_str());
+            return;
+        }
+
+        SWSS_LOG_NOTICE("Removing multi-nexthop route: %s", pfx.getIp().to_string().c_str());
+        status = sai_route_api->remove_route_entry(&route_entry);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove nexthop route %s rv:%d",
+                    pfx.getIp().to_string().c_str(), status);
+        }
+
+        if (gRouteOrch->hasNextHopGroup(nhg_key))
+        {
+            SWSS_LOG_INFO("Removing route %s nexthop group: %s",
+                    pfx.getIp().to_string().c_str(), nhg_key.to_string().c_str());
+            gRouteOrch->removeNextHopGroup(nhg_key);
         }
 
         SWSS_LOG_INFO("Updating route %s pointing to Mux neighbors",
@@ -1045,7 +1046,7 @@ void MuxOrch::updateRoute(const IpPrefix &pfx)
                 attrs.push_back(attr);
                 SWSS_LOG_NOTICE("Updating route %s with nexthop: %" PRIx64 "",
                     pfx.getIp().to_string().c_str(), attr.value.oid);
-                sai_status_t status = sai_route_api->create_route_entry(&route_entry, (uint32_t)attrs.size(), attrs.data());
+                status = sai_route_api->create_route_entry(&route_entry, (uint32_t)attrs.size(), attrs.data());
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("Failed to create nexthop route %s,nh %" PRIx64 " rv:%d",
@@ -1063,7 +1064,7 @@ void MuxOrch::updateRoute(const IpPrefix &pfx)
         SWSS_LOG_DEBUG("No Active neighbors found, setting route %s to point to tunnel: %" PRIx64 "",
                     pfx.getIp().to_string().c_str(), tun);
 
-        sai_status_t status = sai_route_api->create_route_entry(&route_entry, (uint32_t)attrs.size(), attrs.data());
+        status = sai_route_api->create_route_entry(&route_entry, (uint32_t)attrs.size(), attrs.data());
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create tunnel route %s,nh %" PRIx64 " rv:%d",
