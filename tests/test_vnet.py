@@ -64,7 +64,7 @@ def get_created_entry(db, table, existed_entries):
 def get_all_created_entries(db, table, existed_entries):
     tbl =  swsscommon.Table(db, table)
     entries = set(tbl.getKeys())
-    new_entries = list(entries - existed_entries)
+    new_entries = list(entries - set(existed_entries))
     assert len(new_entries) >= 0, "Get all could be no new created entries."
     new_entries.sort()
     return new_entries
@@ -456,6 +456,15 @@ def update_bfd_session_state(dvs, addr, state):
     ntf_data = "[{\"bfd_session_id\":\""+bfd_id+"\",\"session_state\":\""+bfd_sai_state[state]+"\"}]"
     ntf.send("bfd_session_state_change", ntf_data, fvp)
 
+def update_monitor_session_state(dvs, addr, monitor, state):
+    state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+    create_entry_tbl(
+        state_db,
+        "VNET_MONITOR_TABLE", '|', "%s|%s" % (addr,monitor),
+        [
+            ("state", state),
+        ]
+    )
 
 def get_bfd_session_id(dvs, addr):
     asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
@@ -878,6 +887,27 @@ class VnetVxlanVrfTunnel(object):
 
         assert self.serialize_endpoint_group(endpoints) == expected_endpoint_str
 
+    def get_nexthop_groups(self, dvs, nhg):
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        tbl_nhgm =  swsscommon.Table(asic_db, self.ASIC_NEXT_HOP_GROUP_MEMBER)
+        tbl_nh =  swsscommon.Table(asic_db, self.ASIC_NEXT_HOP)
+        nhg_data = {}
+        nhg_data['id'] = nhg
+        entries = set(tbl_nhgm.getKeys())
+        nhg_data['endpoints'] = []
+        for entry in entries:
+            status, fvs = tbl_nhgm.get(entry)
+            fvs = dict(fvs)
+            assert status, "Got an error when get a key"
+            if fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"] == nhg:
+                nh_key = fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID"]
+                status, nh_fvs = tbl_nh.get(nh_key)
+                nh_fvs = dict(nh_fvs)
+                assert status, "Got an error when get a key"
+                endpoint = nh_fvs["SAI_NEXT_HOP_ATTR_IP"]
+                nhg_data['endpoints'].append(endpoint)
+        return nhg_data
+
     def check_vnet_ecmp_routes(self, dvs, name, endpoints, tunnel, mac=[], vni=[], route_ids=[], nhg=""):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
         endpoint_str = name + "|" + self.serialize_endpoint_group(endpoints)
@@ -938,6 +968,72 @@ class VnetVxlanVrfTunnel(object):
         self.routes.update(new_route)
 
         return new_route, new_nhg
+
+    def check_priority_vnet_ecmp_routes(self, dvs, name, endpoints_primary, tunnel, mac=[], vni=[], route_ids=[], count =1, prefix =""):
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        endpoint_str_primary = name + "|" + self.serialize_endpoint_group(endpoints_primary)
+        new_nhgs = []
+        expected_attrs_primary = {}
+        for idx, endpoint in enumerate(endpoints_primary):
+            expected_attr = {
+                        "SAI_NEXT_HOP_ATTR_TYPE": "SAI_NEXT_HOP_TYPE_TUNNEL_ENCAP",
+                        "SAI_NEXT_HOP_ATTR_IP": endpoint,
+                        "SAI_NEXT_HOP_ATTR_TUNNEL_ID": self.tunnel[tunnel],
+                    }
+            if vni and vni[idx]:
+                expected_attr.update({'SAI_NEXT_HOP_ATTR_TUNNEL_VNI': vni[idx]})
+            if mac and mac[idx]:
+                expected_attr.update({'SAI_NEXT_HOP_ATTR_TUNNEL_MAC': mac[idx]})
+            expected_attrs_primary[endpoint] = expected_attr
+
+        if len(endpoints_primary) == 1:
+            if route_ids:
+                new_route = route_ids
+            else:
+                new_route = get_created_entries(asic_db, self.ASIC_ROUTE_ENTRY, self.routes, count)
+            return new_route
+        else :
+            new_nhgs = get_all_created_entries(asic_db, self.ASIC_NEXT_HOP_GROUP, self.nhgs)
+
+            for nhg in new_nhgs:
+                nhg_data = self.get_nexthop_groups(dvs, nhg)
+                eplist = self.serialize_endpoint_group(nhg_data['endpoints'])
+                if eplist == self.serialize_endpoint_group(endpoints_primary):
+                    self.nhg_ids[endpoint_str_primary] = nhg
+                else:
+                    assert False, "Unexpected Nexthop group"
+
+            # Check routes in ingress VRF
+            expected_nhg_attr = {
+                            "SAI_NEXT_HOP_GROUP_ATTR_TYPE": "SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP",
+                        }
+            for nhg in new_nhgs:
+                check_object(asic_db, self.ASIC_NEXT_HOP_GROUP, nhg, expected_nhg_attr)
+
+            # Check nexthop group member
+            self.check_next_hop_group_member(dvs, self.nhg_ids[endpoint_str_primary], "false", endpoints_primary, expected_attrs_primary)
+
+            if route_ids:
+                new_route = route_ids
+            else:
+                new_route = get_created_entries(asic_db, self.ASIC_ROUTE_ENTRY, self.routes, count)
+
+            #Check if the route is in expected VRF
+            active_nhg = self.nhg_ids[endpoint_str_primary]
+            for idx in range(count):
+                if prefix != "" and prefix not in new_route[idx] :
+                    continue
+                check_object(asic_db, self.ASIC_ROUTE_ENTRY, new_route[idx],
+                            {
+                                "SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID": active_nhg,
+                            }
+                        )
+                rt_key = json.loads(new_route[idx])
+
+
+            self.routes.update(new_route)
+            del self.nhg_ids[endpoint_str_primary]
+            return new_route
 
     def check_del_vnet_routes(self, dvs, name, prefixes=[]):
         # TODO: Implement for VRF VNET
@@ -2622,6 +2718,141 @@ class TestVnetOrch(object):
  
         #adv should be gone.
         check_remove_routes_advertisement(dvs, "100.100.1.0/24")
+
+    '''
+   Test 21 - Test for priority vnet tunnel routes with ECMP nexthop group with endpoint health monitor
+    '''
+    def test_vnet_orch_19(self, dvs, testlog):
+        vnet_obj = self.get_vnet_obj()
+        tunnel_name = 'tunnel_21'
+        vnet_name = 'vnet21'
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '10009', "", overlay_dmac="22:33:33:44:44:66")
+
+        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '10009')
+
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+
+        vnet_obj.fetch_exist_entries(dvs)
+        create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,9.1.0.2,9.1.0.3,9.1.0.4', ep_monitor='9.1.0.1,9.1.0.2,9.1.0.3,9.1.0.4', primary ='9.1.0.1,9.1.0.2', monitoring='custom', adv_prefix='100.100.1.1/32')
+
+        # default bfd status is down, route should not be programmed in this status
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", [])
+        check_remove_routes_advertisement(dvs, "100.100.1.1/32")
+
+        # Route should be properly configured when all bfd session states go up. Only primary Endpoints should be in use.
+
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.1', 'up')
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.2', 'up')
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.3', 'up')
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.4', 'up')
+
+        time.sleep(2)
+        route1 = vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1','9.1.0.2'], tunnel_name)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1','9.1.0.2'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.1/32")
+
+        # Remove first primary endpoint from group.
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.2', 'down')
+        time.sleep(2)
+        route1= vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1'], tunnel_name, route_ids=route1)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.1/32")
+
+        # Switch to secondary if both primary down
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.1', 'down')
+        time.sleep(2)
+        route1 = vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.3','9.1.0.4'], tunnel_name, route_ids=route1)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.3','9.1.0.4'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.1/32")
+
+
+        # removing first endpoint of secondary. route should remain on secondary NHG
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.3', 'down')
+        time.sleep(2)
+        route1 = vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.4'], tunnel_name, route_ids=route1)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.4'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.1/32")
+
+        # removing last endpoint of secondary. route should be removed
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.4', 'down')
+        time.sleep(2)
+
+        new_nhgs = get_all_created_entries(asic_db, vnet_obj.ASIC_NEXT_HOP_GROUP, [])
+        assert len(new_nhgs) == 0
+        check_remove_routes_advertisement(dvs, "100.100.1.1/32")
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", [])
+
+        #Route should come up with secondary endpoints.
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.3', 'up')
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.4', 'up')
+
+        time.sleep(2)
+        route1 = vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.3','9.1.0.4'], tunnel_name, route_ids=route1)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.3','9.1.0.4'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.1/32")
+
+        #Route should be switched to the primary endpoint.
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.1', 'up')
+        time.sleep(2)
+        route1= vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1'], tunnel_name, route_ids=route1)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.1/32")
+
+        #Route should be updated with the second primary endpoint.
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.2', 'up')
+        time.sleep(2)
+        route1 = vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1','9.1.0.2'], tunnel_name, route_ids=route1)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1','9.1.0.2'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.1/32")
+
+        #Route should not be impacted by seconday endpoints going down.
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.3', 'down')
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.4', 'down')
+        time.sleep(2)
+        route1 = vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1','9.1.0.2'], tunnel_name, route_ids=route1)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1','9.1.0.2'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.1/32")
+
+        #Route should not be impacted by seconday endpoints coming back up.
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.3', 'up')
+        update_monitor_session_state(dvs, '100.100.1.1/32', '9.1.0.4', 'up')
+        time.sleep(2)
+        route1 = vnet_obj.check_priority_vnet_ecmp_routes(dvs, vnet_name, ['9.1.0.1','9.1.0.2'], tunnel_name, route_ids=route1)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", ['9.1.0.1','9.1.0.2'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.1/32")
+
+        # Remove tunnel route 1
+        delete_vnet_routes(dvs, "100.100.1.1/32", vnet_name)
+        time.sleep(2)
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
+        check_remove_state_db_routes(dvs, vnet_name, "100.100.1.1/32")
+        check_remove_routes_advertisement(dvs, "100.100.1.1/32")
+
+        # Confirm the BFD sessions are removed
+        vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.1/32", "9.1.0.1")
+        vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.1/32", "9.1.0.2")
+        vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.1/32", "9.1.0.3")
+        vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.1/32", "9.1.0.4")
+
+        delete_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_del_vnet_entry(dvs, vnet_name)
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
