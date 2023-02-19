@@ -2555,8 +2555,8 @@ class TestVnetOrch(object):
 
         #remove first route
         delete_vnet_routes(dvs, "100.100.1.1/32", vnet_name)
-        vnet_obj.check_del_vnet_routes(dvs, 'Vnet12', ["100.100.1.1/32"])
-        check_remove_state_db_routes(dvs, 'Vnet12', "100.100.1.1/32")
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
+        check_remove_state_db_routes(dvs, vnet_name, "100.100.1.1/32")
 
         #adv should still be up.
         check_routes_advertisement(dvs, "100.100.1.0/24")
@@ -2570,16 +2570,16 @@ class TestVnetOrch(object):
 
         #delete 2nd route
         delete_vnet_routes(dvs, "100.100.1.57/32", vnet_name)
-        vnet_obj.check_del_vnet_routes(dvs, 'Vnet12', ["100.100.1.57/32"])
-        check_remove_state_db_routes(dvs, 'Vnet12', "100.100.1.57/32")
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.57/32"])
+        check_remove_state_db_routes(dvs, vnet_name, "100.100.1.57/32")
  
         #adv should still be up.
         check_routes_advertisement(dvs, "100.100.1.0/24")
 
         #remove 3rd route
         delete_vnet_routes(dvs, "100.100.1.64/32", vnet_name)
-        vnet_obj.check_del_vnet_routes(dvs, 'Vnet12', ["100.100.1.64/32"])
-        check_remove_state_db_routes(dvs, 'Vnet12', "100.100.1.64/32")
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.64/32"])
+        check_remove_state_db_routes(dvs, vnet_name, "100.100.1.64/32")
 
         #adv should be gone.
         check_remove_routes_advertisement(dvs, "100.100.1.0/24")
@@ -2620,8 +2620,8 @@ class TestVnetOrch(object):
 
         #remove first route
         delete_vnet_routes(dvs, "fd:10:10::1/128", vnet_name)
-        vnet_obj.check_del_vnet_routes(dvs, 'Vnet12', ["fd:10:10::1/128"])
-        check_remove_state_db_routes(dvs, 'Vnet12', "fd:10:10::1/128")
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["fd:10:10::1/128"])
+        check_remove_state_db_routes(dvs, vnet_name, "fd:10:10::1/128")
 
         #adv should still be up.
         check_routes_advertisement(dvs, "fd:10:10::/64")
@@ -2635,16 +2635,16 @@ class TestVnetOrch(object):
 
         #delete 2nd route
         delete_vnet_routes(dvs, "fd:10:10::21/128", vnet_name)
-        vnet_obj.check_del_vnet_routes(dvs, 'Vnet12', ["fd:10:10::21/128"])
-        check_remove_state_db_routes(dvs, 'Vnet12', "fd:10:10::21/128")
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["fd:10:10::21/128"])
+        check_remove_state_db_routes(dvs, vnet_name, "fd:10:10::21/128")
  
         #adv should still be up.
         check_routes_advertisement(dvs, "fd:10:10::/64")
 
         #remove 3rd route
         delete_vnet_routes(dvs, "fd:10:10::31/128", vnet_name)
-        vnet_obj.check_del_vnet_routes(dvs, 'Vnet12', ["fd:10:10::31/128"])
-        check_remove_state_db_routes(dvs, 'Vnet12', "fd:10:10::31/128")
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["fd:10:10::31/128"])
+        check_remove_state_db_routes(dvs, vnet_name, "fd:10:10::31/128")
 
         #adv should be gone.
         check_remove_routes_advertisement(dvs, "fd:10:10::/64")
@@ -2684,8 +2684,8 @@ class TestVnetOrch(object):
 
         #remove first route
         delete_vnet_routes(dvs, "100.100.1.11/32", vnet_name)
-        vnet_obj.check_del_vnet_routes(dvs, 'Vnet12', ["100.100.1.11/32"])
-        check_remove_state_db_routes(dvs, 'Vnet12', "100.100.1.11/32")
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.11/32"])
+        check_remove_state_db_routes(dvs, vnet_name, "100.100.1.11/32")
 
         #adv should be gone.
         check_remove_routes_advertisement(dvs, "100.100.1.0/24")
@@ -2713,8 +2713,8 @@ class TestVnetOrch(object):
 
         #delete 2nd route
         delete_vnet_routes(dvs, "100.100.1.57/32", vnet_name)
-        vnet_obj.check_del_vnet_routes(dvs, 'Vnet12', ["100.100.1.57/32"])
-        check_remove_state_db_routes(dvs, 'Vnet12', "100.100.1.57/32")
+        vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.57/32"])
+        check_remove_state_db_routes(dvs, vnet_name, "100.100.1.57/32")
  
         #adv should be gone.
         check_remove_routes_advertisement(dvs, "100.100.1.0/24")
