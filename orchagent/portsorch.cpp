@@ -4881,7 +4881,7 @@ bool PortsOrch::addBridgePort(Port &port)
 
     if (port.m_rif_id != 0)
     {
-        SWSS_LOG_NOTICE("Interface %s is a router port", port.m_alias.c_str());
+        SWSS_LOG_NOTICE("Cannot create bridge port, interface %s is a router port", port.m_alias.c_str());
         return false;
     }
 
