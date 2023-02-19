@@ -1011,7 +1011,7 @@ class VnetVxlanVrfTunnel(object):
                 check_object(asic_db, self.ASIC_NEXT_HOP_GROUP, nhg, expected_nhg_attr)
 
             # Check nexthop group member
-            self.check_next_hop_group_member(dvs, self.nhg_ids[endpoint_str_primary], "false", endpoints_primary, expected_attrs_primary)
+            self.check_next_hop_group_member(dvs, self.nhg_ids[endpoint_str_primary], endpoints_primary, expected_attrs_primary)
 
             if route_ids:
                 new_route = route_ids
