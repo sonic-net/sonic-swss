@@ -2463,10 +2463,10 @@ class TestVnetOrch(object):
         vnet_obj.fetch_exist_entries(dvs)
 
         create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
-        create_vnet_entry(dvs, 'Vnet17', tunnel_name, '10009', "")
+        create_vnet_entry(dvs, 'Vnet17', tunnel_name, '10017', "")
 
         vnet_obj.check_vnet_entry(dvs, 'Vnet17')
-        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet17', '10009')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet17', '10017')
 
         vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
 
@@ -2530,10 +2530,10 @@ class TestVnetOrch(object):
         vnet_obj.fetch_exist_entries(dvs)
 
         create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
-        create_vnet_entry(dvs, vnet_name, tunnel_name, '10009', "", advertise_prefix=True, overlay_dmac="22:33:33:44:44:66")
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '10018', "", advertise_prefix=True, overlay_dmac="22:33:33:44:44:66")
 
         vnet_obj.check_vnet_entry(dvs, vnet_name)
-        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '10009')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '10018')
 
         vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
 
@@ -2722,7 +2722,7 @@ class TestVnetOrch(object):
     '''
    Test 21 - Test for priority vnet tunnel routes with ECMP nexthop group with endpoint health monitor
     '''
-    def test_vnet_orch_19(self, dvs, testlog):
+    def test_vnet_orch_21(self, dvs, testlog):
         vnet_obj = self.get_vnet_obj()
         tunnel_name = 'tunnel_21'
         vnet_name = 'vnet21'
@@ -2731,10 +2731,10 @@ class TestVnetOrch(object):
         vnet_obj.fetch_exist_entries(dvs)
 
         create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
-        create_vnet_entry(dvs, vnet_name, tunnel_name, '10009', "", overlay_dmac="22:33:33:44:44:66")
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '10021', "", overlay_dmac="22:33:33:44:44:66")
 
         vnet_obj.check_vnet_entry(dvs, vnet_name)
-        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '10009')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '10021')
 
         vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
 
