@@ -92,6 +92,8 @@ private:
     unique_ptr<ProducerTable> m_flexCounterTable;
     unique_ptr<ProducerTable> m_flexCounterGroupTable;
 
+    std::set<std::string> m_removingIntfses;
+
     std::string getRifFlexCounterTableKey(std::string s);
 
     bool addRouterIntfs(sai_object_id_t vrf_id, Port &port, string loopbackAction);

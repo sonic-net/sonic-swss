@@ -470,6 +470,11 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
 {
     SWSS_LOG_ENTER();
 
+    if (m_removingIntfses.find(alias) != m_removingIntfses.end())
+    {
+        return false;
+    }
+
     Port port;
     gPortsOrch->getPort(alias, port);
 
@@ -1076,10 +1081,12 @@ void IntfsOrch::doTask(Consumer &consumer)
             {
                 if (removeIntf(alias, port.m_vr_id, ip_prefix_in_key ? &ip_prefix : nullptr))
                 {
+                    m_removingIntfses.erase(alias);
                     it = consumer.m_toSync.erase(it);
                 }
                 else
                 {
+                    m_removingIntfses.insert(alias);
                     it++;
                     continue;
                 }
