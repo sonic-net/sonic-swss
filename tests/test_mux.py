@@ -574,7 +574,7 @@ class TestMuxTunnelBase():
                     ("ifname", "Vlan1000,Vlan1000")
                 ]
               )
-        apdb.set(route, fvs)
+        ps.set(route, fvs)
 
         ps = swsscommon.ProducerStateTable(apdb.db_connection, "ROUTE_TABLE")
         fvs = swsscommon.FieldValuePairs(
@@ -583,7 +583,7 @@ class TestMuxTunnelBase():
                     ("ifname", "Vlan1000,Vlan1000")
                 ]
               )
-        apdb.set(route, fvs)
+        ps.set(route_ipv6, fvs)
 
         rtkeys = dvs_route.check_asicdb_route_entries([route])
         rtkeys_ipv6 = dvs_route.check_asicdb_route_entries([route_ipv6])
@@ -613,7 +613,10 @@ class TestMuxTunnelBase():
         assert tunnel_nh_id == route_ipv6_oid
 
         # set second neighbor to active
-        self.set_mux_state(appdb, "Ethernet4", "standby")
+        self.set_mux_state(appdb, "Ethernet4", "active")
+
+        NH2_oid = self.get_nexthop_oid(NH2, asicdb)
+        NH2_ipv6_oid = self.get_nexthop_oid(NH2_ipv6, asicdb)
 
         route_oid = self.get_route_nexthop_oid(rtkeys[0], asicdb)
         route_ipv6_oid = self.get_route_nexthop_oid(rtkeys_ipv6[0], asicdb)
@@ -622,7 +625,11 @@ class TestMuxTunnelBase():
         assert NH2_ipv6_oid == route_ipv6_oid
 
         # set first neighbor to active
-        self.set_mux_state(appdb, "Ethernet4", "standby")
+        import pdb; pdb.set_trace()
+        self.set_mux_state(appdb, "Ethernet0", "active")
+
+        NH1_oid = self.get_nexthop_oid(NH1, asicdb)
+        NH1_ipv6_oid = self.get_nexthop_oid(NH1_ipv6, asicdb)
 
         route_oid = self.get_route_nexthop_oid(rtkeys[0], asicdb)
         route_ipv6_oid = self.get_route_nexthop_oid(rtkeys_ipv6[0], asicdb)
@@ -641,7 +648,7 @@ class TestMuxTunnelBase():
         ps._del(route)
         ps._del(route_ipv6)
 
-        # delete neighbor1
+        # delete neighbor 1
         self.del_neighbor(dvs, NH1)
         self.del_neighbor(dvs, NH1_ipv6)
 
@@ -665,7 +672,7 @@ class TestMuxTunnelBase():
                     ("ifname", "Vlan1000,Vlan1000")
                 ]
               )
-        apdb.set(route, fvs)
+        ps.set(route, fvs)
 
         ps = swsscommon.ProducerStateTable(apdb.db_connection, "ROUTE_TABLE")
         fvs = swsscommon.FieldValuePairs(
@@ -674,7 +681,7 @@ class TestMuxTunnelBase():
                     ("ifname", "Vlan1000,Vlan1000")
                 ]
               )
-        apdb.set(route, fvs)
+        ps.set(route_ipv6, fvs)
 
         rtkeys = dvs_route.check_asicdb_route_entries([route])
         rtkeys_ipv6 = dvs_route.check_asicdb_route_entries([route_ipv6])

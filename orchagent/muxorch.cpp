@@ -1010,6 +1010,9 @@ void MuxOrch::updateRoute(const IpPrefix &pfx)
         // If the route already points to an Active neighbor, do nothing.
         NextHopGroupKey nhg_key = gRouteOrch->getSyncdRouteNhgKey(gVirtualRouterId, pfx);
         std::set<NextHopKey> current_nexthops = nhg_key.getNextHops();
+        SWSS_LOG_INFO("Found nhg_key: %s with size: %ld",
+            nhg_key.to_string().c_str(), nhg_key.getSize());
+
         if (nhg_key.getSize() == 1 &&
             findMuxCableInSubnet(current_nexthops.begin()->ip_address)->isActive())
         {
@@ -1018,7 +1021,7 @@ void MuxOrch::updateRoute(const IpPrefix &pfx)
             return;
         }
 
-        SWSS_LOG_NOTICE("Removing multi-nexthop route: %s", pfx.getIp().to_string().c_str());
+        SWSS_LOG_INFO("Removing multi-nexthop route: %s", pfx.getIp().to_string().c_str());
         status = sai_route_api->remove_route_entry(&route_entry);
         if (status != SAI_STATUS_SUCCESS)
         {
@@ -1044,8 +1047,9 @@ void MuxOrch::updateRoute(const IpPrefix &pfx)
                 // If we find an active nexthop neighbor, program it to hardware.
                 attr.value.oid = gNeighOrch->getNextHopId(*nh);
                 attrs.push_back(attr);
-                SWSS_LOG_NOTICE("Updating route %s with nexthop: %" PRIx64 "",
-                    pfx.getIp().to_string().c_str(), attr.value.oid);
+                SWSS_LOG_NOTICE("Updating route %s with nexthop: %s",
+                    pfx.getIp().to_string().c_str(), nh->to_string().c_str());
+
                 status = sai_route_api->create_route_entry(&route_entry, (uint32_t)attrs.size(), attrs.data());
                 if (status != SAI_STATUS_SUCCESS)
                 {
@@ -1061,7 +1065,7 @@ void MuxOrch::updateRoute(const IpPrefix &pfx)
         attr.value.oid = tun;
         attrs.push_back(attr);
 
-        SWSS_LOG_DEBUG("No Active neighbors found, setting route %s to point to tunnel: %" PRIx64 "",
+        SWSS_LOG_NOTICE("No Active neighbors found, setting route %s to point to tunnel: %" PRIx64 "",
                     pfx.getIp().to_string().c_str(), tun);
 
         status = sai_route_api->create_route_entry(&route_entry, (uint32_t)attrs.size(), attrs.data());
