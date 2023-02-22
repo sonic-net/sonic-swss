@@ -235,6 +235,7 @@ bool OrchDaemon::init()
         CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME,
         CFG_DSCP_TO_FC_MAP_TABLE_NAME,
         CFG_EXP_TO_FC_MAP_TABLE_NAME,
+        CFG_TC_TO_DOT1P_MAP_TABLE_NAME,
         CFG_TC_TO_DSCP_MAP_TABLE_NAME
     };
     gQosOrch = new QosOrch(m_configDb, qos_tables);
@@ -675,7 +676,12 @@ void OrchDaemon::flush()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to flush redis pipeline %d", status);
-        abort();
+        handleSaiFailure(true);
+    }
+
+    for (auto* orch: m_orchList)
+    {
+        orch->flushResponses();
     }
 }
 

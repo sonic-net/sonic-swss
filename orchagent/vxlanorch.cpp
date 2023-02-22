@@ -2347,12 +2347,32 @@ bool EvpnRemoteVnip2pOrch::addOperation(const Request& request)
         return true;
     }
 
+    EvpnNvoOrch* evpn_orch = gDirectory.get<EvpnNvoOrch*>();
+    auto vtep_ptr = evpn_orch->getEVPNVtep();
+    if (!vtep_ptr)
+    {
+        SWSS_LOG_WARN("Remote VNI add: Source VTEP not found. remote=%s vid=%d",
+                      remote_vtep.c_str(), vlan_id);
+        return true;
+    }
+
     VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
     Port tunnelPort, vlanPort;
+    VxlanTunnelMapOrch* vxlan_tun_map_orch = gDirectory.get<VxlanTunnelMapOrch*>();
+    std::string vniVlanMapName;
+    uint32_t tmp_vlan_id = 0;
+    sai_object_id_t tnl_map_entry_id = SAI_NULL_OBJECT_ID;
 
     if (!gPortsOrch->getVlanByVlanId(vlan_id, vlanPort))
     {
         SWSS_LOG_WARN("Vxlan tunnel map vlan id doesn't exist: %d", vlan_id);
+        return false;
+    }
+
+    /* Remote end point can be added only after local VLAN to VNI map gets created */
+    if (!vxlan_tun_map_orch->isVniVlanMapExists(vni_id, vniVlanMapName, &tnl_map_entry_id, &tmp_vlan_id))
+    {
+        SWSS_LOG_WARN("Vxlan tunnel map is not created for vni:%d", vni_id);
         return false;
     }
 
@@ -2362,16 +2382,8 @@ bool EvpnRemoteVnip2pOrch::addOperation(const Request& request)
 
         if (gPortsOrch->isVlanMember(vlanPort, tunnelPort))
         {
-            EvpnNvoOrch* evpn_orch = gDirectory.get<EvpnNvoOrch*>();
-            auto vtep_ptr = evpn_orch->getEVPNVtep();
-            if (!vtep_ptr)
-            {
-                SWSS_LOG_WARN("Remote VNI add: VTEP not found. remote=%s vid=%d",
-                              remote_vtep.c_str(),vlan_id);
-                return true;
-            }
             SWSS_LOG_WARN("tunnelPort %s already member of vid %d", 
-                            remote_vtep.c_str(),vlan_id);
+                          remote_vtep.c_str(),vlan_id);
             vtep_ptr->increment_spurious_imr_add(remote_vtep);
             return true;
         }
@@ -2492,6 +2504,11 @@ bool EvpnRemoteVnip2mpOrch::addOperation(const Request& request)
     }
 
     VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
+    VxlanTunnelMapOrch* vxlan_tun_map_orch = gDirectory.get<VxlanTunnelMapOrch*>();
+    std::string vniVlanMapName;
+    uint32_t tmp_vlan_id = 0;
+    sai_object_id_t tnl_map_entry_id = SAI_NULL_OBJECT_ID;
+
     Port tunnelPort, vlanPort;
     auto vtep_ptr = evpn_orch->getEVPNVtep();
     if (!vtep_ptr)
@@ -2504,6 +2521,13 @@ bool EvpnRemoteVnip2mpOrch::addOperation(const Request& request)
     if (!gPortsOrch->getVlanByVlanId(vlan_id, vlanPort))
     {
         SWSS_LOG_WARN("Vxlan tunnel map vlan id doesn't exist: %d", vlan_id);
+        return false;
+    }
+
+    /* Remote end point can be added only after local VLAN to VNI map gets created */
+    if (!vxlan_tun_map_orch->isVniVlanMapExists(vni_id, vniVlanMapName, &tnl_map_entry_id, &tmp_vlan_id))
+    {
+        SWSS_LOG_WARN("Vxlan tunnel map is not created for vni: %d", vni_id);
         return false;
     }
 

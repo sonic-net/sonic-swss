@@ -16,7 +16,8 @@
 class ResponsePublisher : public ResponsePublisherInterface
 {
   public:
-    explicit ResponsePublisher();
+    explicit ResponsePublisher(bool buffered = false);
+
     virtual ~ResponsePublisher() = default;
 
     // Intent attributes are the attributes sent in the notification into the
@@ -42,10 +43,21 @@ class ResponsePublisher : public ResponsePublisherInterface
     void writeToDB(const std::string &table, const std::string &key, const std::vector<swss::FieldValueTuple> &values,
                    const std::string &op, bool replace = false) override;
 
+    /**
+     * @brief Flush pending responses
+    */
+    void flush();
+
+    /**
+     * @brief Set buffering mode
+     *
+     * @param buffered Flag whether responses are buffered
+    */
+    void setBuffered(bool buffered);
+
   private:
-    swss::DBConnector m_db;
-    // Maps table names to tables.
-    std::unordered_map<std::string, std::unique_ptr<swss::Table>> m_tables;
-    // Maps table names to notifiers.
-    std::unordered_map<std::string, std::unique_ptr<swss::NotificationProducer>> m_notifiers;
+    std::unique_ptr<swss::DBConnector> m_db;
+    std::unique_ptr<swss::RedisPipeline> m_pipe;
+
+    bool m_buffered{false};
 };

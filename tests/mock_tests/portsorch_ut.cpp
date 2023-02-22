@@ -9,6 +9,7 @@
 #include "notifier.h"
 #define private public
 #include "pfcactionhandler.h"
+#include <sys/mman.h>
 #undef private
 
 #include <sstream>
@@ -21,6 +22,8 @@ namespace portsorch_test
 
     sai_port_api_t ut_sai_port_api;
     sai_port_api_t *pold_sai_port_api;
+    sai_switch_api_t ut_sai_switch_api;
+    sai_switch_api_t *pold_sai_switch_api;
 
     bool not_support_fetching_fec;
     vector<sai_port_fec_mode_t> mock_port_fec_modes = {SAI_PORT_FEC_MODE_RS, SAI_PORT_FEC_MODE_FC};
@@ -66,7 +69,26 @@ namespace portsorch_test
             _sai_set_port_fec_count++;
             _sai_port_fec_mode = attr[0].value.s32;
         }
+        else if (attr[0].id == SAI_PORT_ATTR_AUTO_NEG_MODE)
+        {
+            /* Simulating failure case */
+            return SAI_STATUS_FAILURE;
+        }
         return pold_sai_port_api->set_port_attribute(port_id, attr);
+    }
+
+    uint32_t *_sai_syncd_notifications_count;
+    int32_t *_sai_syncd_notification_event;
+    sai_status_t _ut_stub_sai_set_switch_attribute(
+        _In_ sai_object_id_t switch_id,
+        _In_ const sai_attribute_t *attr)
+    {
+        if (attr[0].id == SAI_REDIS_SWITCH_ATTR_NOTIFY_SYNCD)
+        {
+            *_sai_syncd_notifications_count =+ 1;
+            *_sai_syncd_notification_event = attr[0].value.s32;
+        }
+        return pold_sai_switch_api->set_switch_attribute(switch_id, attr);
     }
 
     void _hook_sai_port_api()
@@ -81,6 +103,19 @@ namespace portsorch_test
     void _unhook_sai_port_api()
     {
         sai_port_api = pold_sai_port_api;
+    }
+
+    void _hook_sai_switch_api()
+    {
+        ut_sai_switch_api = *sai_switch_api;
+        pold_sai_switch_api = sai_switch_api;
+        ut_sai_switch_api.set_switch_attribute = _ut_stub_sai_set_switch_attribute;
+        sai_switch_api = &ut_sai_switch_api;
+    }
+
+    void _unhook_sai_switch_api()
+    {
+        sai_switch_api = pold_sai_switch_api;
     }
 
     sai_queue_api_t ut_sai_queue_api;
@@ -471,6 +506,52 @@ namespace portsorch_test
 
         mock_port_fec_modes = old_mock_port_fec_modes;
         _unhook_sai_port_api();
+    }
+
+    TEST_F(PortsOrchTest, PortTestSAIFailureHandling)
+    {
+        _hook_sai_port_api();
+        _hook_sai_switch_api();
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        not_support_fetching_fec = false;
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        _sai_syncd_notifications_count = (uint32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
+                    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+        _sai_syncd_notification_event = (int32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
+                    MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+        *_sai_syncd_notifications_count = 0;
+
+        entries.push_back({"Ethernet0", "SET",
+                           {
+                               {"autoneg", "on"}
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(entries);
+        ASSERT_DEATH({static_cast<Orch *>(gPortsOrch)->doTask();}, "");
+
+        ASSERT_EQ(*_sai_syncd_notifications_count, 1);
+        ASSERT_EQ(*_sai_syncd_notification_event, SAI_REDIS_NOTIFY_SYNCD_INVOKE_DUMP);
+        _unhook_sai_port_api();
+        _unhook_sai_switch_api();
     }
 
     TEST_F(PortsOrchTest, PortReadinessColdBoot)

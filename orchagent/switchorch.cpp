@@ -9,6 +9,7 @@
 #include "notificationproducer.h"
 #include "macaddress.h"
 #include "return_code.h"
+#include "saihelper.h"
 
 using namespace std;
 using namespace swss;

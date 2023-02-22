@@ -47,6 +47,8 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
 {
     SWSS_LOG_ENTER();
 
+    m_publisher.setBuffered(true);
+
     sai_attribute_t attr;
     attr.id = SAI_SWITCH_ATTR_NUMBER_OF_ECMP_GROUPS;
 
@@ -499,7 +501,7 @@ void RouteOrch::doTask(Consumer& consumer)
 
             auto rc = toBulk.emplace(std::piecewise_construct,
                     std::forward_as_tuple(key, op),
-                    std::forward_as_tuple());
+                    std::forward_as_tuple(key, (op == SET_COMMAND)));
 
             bool inserted = rc.second;
             auto& ctx = rc.first->second;
@@ -630,6 +632,11 @@ void RouteOrch::doTask(Consumer& consumer)
 
                     if (fvField(i) == "seg_src")
                         srv6_source = fvValue(i);
+
+                    if (fvField(i) == "protocol")
+                    {
+                        ctx.protocol = fvValue(i);
+                    }
                 }
 
                 /*
@@ -831,6 +838,10 @@ void RouteOrch::doTask(Consumer& consumer)
                     /* fullmask subnet route is same as ip2me route */
                     else if (ip_prefix.isFullMask() && m_intfsOrch->isPrefixSubnet(ip_prefix, alsv[0]))
                     {
+                        /* The prefix is full mask (/32 or /128) and it is an interface subnet route, so IntfOrch has already
+                         * created an IP2ME route for it and we skip programming such route here as it already exists.
+                         * However, to keep APPL_DB and APPL_STATE_DB consistent we have to publish it. */
+                        publishRouteState(ctx);
                         it = consumer.m_toSync.erase(it);
                     }
                     /* subnet route, vrf leaked route, etc */
@@ -860,7 +871,9 @@ void RouteOrch::doTask(Consumer& consumer)
                 }
                 else
                 {
-                    /* Duplicate entry */
+                    /* Duplicate entry. Publish route state anyway since there could be multiple DEL, SET operations
+                     * consolidated by ConsumerStateTable leading to orchagent receiving only the last SET update. */
+                    publishRouteState(ctx);
                     it = consumer.m_toSync.erase(it);
                 }
 
@@ -2226,6 +2239,9 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
 
     notifyNextHopChangeObservers(vrf_id, ipPrefix, nextHops, true);
 
+    /* Publish and update APPL STATE DB route entry programming status */
+    publishRouteState(ctx);
+
     /*
      * If the route uses a temporary synced NHG owned by NhgOrch, return false
      * in order to keep trying to update the route in case the NHG is updated,
@@ -2419,6 +2435,9 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
 
     SWSS_LOG_INFO("Remove route %s with next hop(s) %s",
             ipPrefix.to_string().c_str(), it_route->second.nhg_key.to_string().c_str());
+    
+    /* Publish removal status, removes route entry from APPL STATE DB */
+    publishRouteState(ctx);
 
     if (ipPrefix.isDefaultRoute() && vrf_id == gVirtualRouterId)
     {
@@ -2573,4 +2592,23 @@ void RouteOrch::decNhgRefCount(const std::string &nhg_index)
     {
         gCbfNhgOrch->decNhgRefCount(nhg_index);
     }
+}
+
+void RouteOrch::publishRouteState(const RouteBulkContext& ctx, const ReturnCode& status)
+{
+    SWSS_LOG_ENTER();
+
+    std::vector<FieldValueTuple> fvs;
+
+    /* Leave the fvs empty if the operation type is "DEL".
+     * An empty fvs makes ResponsePublisher::publish() remove the state entry from APPL_STATE_DB
+     */
+    if (ctx.is_set)
+    {
+        fvs.emplace_back("protocol", ctx.protocol);
+    }
+
+    const bool replace = false;
+
+    m_publisher.publish(APP_ROUTE_TABLE_NAME, ctx.key, fvs, status, replace);
 }

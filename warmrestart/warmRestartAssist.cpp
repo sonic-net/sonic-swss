@@ -208,10 +208,31 @@ void AppRestartAssist::insertToMap(string tableName, string key, vector<FieldVal
         }
         else
         {
-            SWSS_LOG_INFO("%s, found key: %s, same value", tableName.c_str(), key.c_str());
-
-            // mark as SAME flag
-            setCacheEntryState(found->second, SAME);
+            auto state = getCacheEntryState(found->second);
+            /*
+             * In case an entry has been updated for more than once with the same value but different from the stored one,
+             * keep the state as NEW.
+             * Eg.
+             * Assume the entry's value that is restored from last warm reboot is V0.
+             * 1. The first update with value V1 is received and handled by the above `if (found != appTableCacheMap[tableName].end())` branch,
+             *    - state is set to NEW
+             *    - value is updated to V1
+             * 2. The second update with the same value V1 is received and handled by this branch
+             *    - Originally, state was set to SAME, which is wrong because V1 is different from the stored value V0
+             *    - The correct logic should be: set the state to same only if the state is not NEW
+             * This is a very rare case because in most of times the entry won't be updated for multiple times
+             */
+            if (state == NEW)
+            {
+                SWSS_LOG_NOTICE("%s, found key: %s, it has been updated for the second time, keep state as NEW",
+                                tableName.c_str(), key.c_str());
+            }
+            else
+            {
+                SWSS_LOG_INFO("%s, found key: %s, same value", tableName.c_str(), key.c_str());
+                // mark as SAME flag
+                setCacheEntryState(found->second, SAME);
+            }
         }
     }
     else

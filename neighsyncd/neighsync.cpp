@@ -143,6 +143,12 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
         nl_addr2str(rtnl_neigh_get_lladdr(neigh), macStr, MAX_ADDR_SIZE);
     }
 
+    if (!delete_key && !strncmp(macStr, "none", MAX_ADDR_SIZE))
+    {
+        SWSS_LOG_NOTICE("Mac address is 'none' for ADD op, ignoring for %s", ipStr);
+        return;
+    }
+
     /* Ignore neighbor entries with Broadcast Mac - Trigger for directed broadcast */
     if (!delete_key && (MacAddress(macStr) == MacAddress("ff:ff:ff:ff:ff:ff")))
     {
