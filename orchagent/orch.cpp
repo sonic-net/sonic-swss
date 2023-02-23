@@ -860,6 +860,7 @@ task_process_status Orch::handleSaiCreateStatus(sai_api_t api, sai_status_t stat
                     SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiCreateStatus");
                     return task_success;
                 case SAI_STATUS_ITEM_ALREADY_EXISTS:
+                case SAI_STATUS_NOT_EXECUTED:
                     /* With VNET routes, the same route can be learned via multiple
                     sources, like via BGP. Handle this gracefully */
                     return task_success;
@@ -933,6 +934,7 @@ task_process_status Orch::handleSaiRemoveStatus(sai_api_t api, sai_status_t stat
                     SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiRemoveStatus");
                     return task_success;
                 case SAI_STATUS_ITEM_NOT_FOUND:
+                case SAI_STATUS_NOT_EXECUTED:
                     /* When the same route is learned via multiple sources,
                        there can be a duplicate remove operation. Handle this gracefully */
                     return task_success;
