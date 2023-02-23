@@ -24,6 +24,7 @@ extern BufferOrch *gBufferOrch;
 extern Directory<Orch*> gDirectory;
 extern CoppOrch *gCoppOrch;
 extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
+extern string gMySwitchType;
 
 #define BUFFER_POOL_WATERMARK_KEY   "BUFFER_POOL_WATERMARK"
 #define PORT_KEY                    "PORT"
@@ -335,6 +336,11 @@ map<string, FlexCounterQueueStates> FlexCounterOrch::getQueueConfigurations()
     map<string, FlexCounterQueueStates> queuesStateVector;
     std::vector<std::string> portQueueKeys;
     m_bufferQueueConfigTable.getKeys(portQueueKeys);
+
+    if (gMySwitchType == "voq")
+    {
+        return queuesStateVector;
+    }
 
     for (const auto& portQueueKey : portQueueKeys)
     {
