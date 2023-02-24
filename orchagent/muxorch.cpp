@@ -981,7 +981,7 @@ void MuxOrch::updateRoute(const IpPrefix &pfx)
 {
     // get list of nexthops
     NextHopGroupKey nhg_key = gRouteOrch->getSyncdRouteNhgKey(gVirtualRouterId, pfx);
-    SWSS_LOG_INFO("Found nhg_key: %s with size: %ld",
+    SWSS_LOG_INFO("Found nhg_key: %s with size: %zu",
             nhg_key.to_string().c_str(), nhg_key.getSize());
 
     if (nhg_key.getSize() > 1)
@@ -1009,7 +1009,7 @@ void MuxOrch::updateRoute(const IpPrefix &pfx)
             {
                 SWSS_LOG_INFO("disabling nexthop: %s", nh->to_string().c_str());
                 gRouteOrch->invalidnexthopinNextHopGroup(*nh, nh_count);
-                gNeighOrch->increaseNextHopRefCount(*nh, nh_count);
+                gNeighOrch->decreaseNextHopRefCount(*nh, nh_count);
             }
         }
 

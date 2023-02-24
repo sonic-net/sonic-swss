@@ -517,7 +517,6 @@ class TestMuxTunnelBase():
 
         self.add_neighbor(dvs, neigh_ip, mac)
         self.add_neighbor(dvs, neigh_ipv6, mac)
-        sleep(1)
         self.check_nexthop_in_asic_db(asicdb, rtkeys[0])
         self.check_nexthop_in_asic_db(asicdb, rtkeys_ipv6[0])
         dvs.runcmd(
