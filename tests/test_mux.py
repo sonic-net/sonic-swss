@@ -1227,7 +1227,7 @@ class TestMuxTunnel(TestMuxTunnelBase):
             )
 
     def test_neighbor_miss_no_mux(
-            self, dvs, dvs_route, setup_vlan, setup_tunnel,
+            self, dvs, dvs_route, setup_vlan, setup_tunnel, setup,
             setup_peer_switch, neighbor_cleanup, testlog
     ):
         config_db = dvs.get_config_db()
@@ -1249,7 +1249,7 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
         # set port state as active
         self.set_mux_state(appdb, "Ethernet0", "active")
-        self.check_neighbor_state(dvs, dvs_route, test_ip, expect_route=False)
+        self.check_neighbor_state(dvs, dvs_route, test_ip, expect_route=True)
 
         # clear the FAILED neighbor
         self.clear_neighbors(dvs)
