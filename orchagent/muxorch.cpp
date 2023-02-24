@@ -1104,7 +1104,7 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
         return;
     }
 
-    auto standalone_tunnel_neigh_it = standalone_tunnel_neighbors_.find(update.entry.ip_address);
+    bool is_tunnel_route_installed = isStandaloneTunnelRouteInstalled(update.entry.ip_address);
     // Handling zero MAC neighbor updates
     if (!update.mac)
     {
@@ -1115,7 +1115,7 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
 
         if (update.add)
         {
-            if (standalone_tunnel_neigh_it == standalone_tunnel_neighbors_.end())
+            if (!is_tunnel_route_installed)
             {
                 createStandaloneTunnelRoute(update.entry.ip_address);
             }
@@ -1130,7 +1130,7 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
      * make sure to remove any existing tunnel routes to prevent conflicts.
      * This block also covers the case of neighbor deletion.
      */
-    if (standalone_tunnel_neigh_it != standalone_tunnel_neighbors_.end())
+    if (is_tunnel_route_installed)
     {
         removeStandaloneTunnelRoute(update.entry.ip_address);
     }
@@ -1472,6 +1472,11 @@ void MuxOrch::removeStandaloneTunnelRoute(IpAddress neighborIp)
     IpPrefix pfx = neighborIp.to_string();
     remove_route(pfx);
     standalone_tunnel_neighbors_.erase(neighborIp);
+}
+
+bool MuxOrch::isStandaloneTunnelRouteInstalled(const IpAddress& neighborIp)
+{
+    return standalone_tunnel_neighbors_.find(neighborIp) != standalone_tunnel_neighbors_.end();
 }
 
 MuxCableOrch::MuxCableOrch(DBConnector *db, DBConnector *sdb, const std::string& tableName):

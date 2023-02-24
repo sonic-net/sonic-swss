@@ -202,6 +202,8 @@ public:
     bool removeNextHopTunnel(std::string tunnelKey, IpAddress& ipAddr);
     sai_object_id_t getNextHopTunnelId(std::string tunnelKey, IpAddress& ipAddr);
 
+    bool isStandaloneTunnelRouteInstalled(const IpAddress& neighborIp);
+
 private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
