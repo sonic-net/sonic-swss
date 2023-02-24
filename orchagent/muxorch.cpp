@@ -979,102 +979,48 @@ sai_object_id_t MuxOrch::getNextHopTunnelId(std::string tunnelKey, IpAddress& ip
  */
 void MuxOrch::updateRoute(const IpPrefix &pfx)
 {
-    sai_status_t status;
-
-    // Create Route entry
-    sai_route_entry_t route_entry;
-    route_entry.switch_id = gSwitchId;
-    route_entry.vr_id = gVirtualRouterId;
-    copy(route_entry.destination, pfx);
-    subnet(route_entry.destination, route_entry.destination);
-
-    // initialize attr
-    sai_attribute_t attr;
-    vector<sai_attribute_t> attrs;
-    attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
-    attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
-    attrs.push_back(attr);
-    attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
-
-    // initialize route_key to get nexthops
-    RouteKey route_key;
-    route_key.vrf_id = gVirtualRouterId;
-    route_key.prefix = pfx;
-
     // get list of nexthops
-    std::set<NextHopKey> nextHops = gRouteOrch->getNextHopsForRoute(route_key);
-    if (nextHops.size() > 1)
-    {
-        /* Multi-nexthop case should only program 1 active or 1 standby nexthop */
-
-        // If the route already points to an Active neighbor, do nothing.
-        NextHopGroupKey nhg_key = gRouteOrch->getSyncdRouteNhgKey(gVirtualRouterId, pfx);
-        std::set<NextHopKey> current_nexthops = nhg_key.getNextHops();
-        SWSS_LOG_INFO("Found nhg_key: %s with size: %ld",
+    NextHopGroupKey nhg_key = gRouteOrch->getSyncdRouteNhgKey(gVirtualRouterId, pfx);
+    SWSS_LOG_INFO("Found nhg_key: %s with size: %ld",
             nhg_key.to_string().c_str(), nhg_key.getSize());
 
-        if (nhg_key.getSize() == 1 &&
-            findMuxCableInSubnet(current_nexthops.begin()->ip_address)->isActive())
-        {
-            SWSS_LOG_INFO("Route %s points to Active neighbor %s",
-                pfx.getIp().to_string().c_str(), current_nexthops.begin()->to_string().c_str());
-            return;
-        }
-
-        SWSS_LOG_INFO("Removing multi-nexthop route: %s", pfx.getIp().to_string().c_str());
-        status = sai_route_api->remove_route_entry(&route_entry);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Failed to remove nexthop route %s rv:%d",
-                    pfx.getIp().to_string().c_str(), status);
-        }
-
-        if (gRouteOrch->hasNextHopGroup(nhg_key))
-        {
-            SWSS_LOG_INFO("Removing route %s nexthop group: %s",
-                    pfx.getIp().to_string().c_str(), nhg_key.to_string().c_str());
-            gRouteOrch->removeNextHopGroup(nhg_key);
-        }
+    if (nhg_key.getSize() > 1)
+    {
+        /* Multi-nexthop case should only program 1 active or 1 standby nexthop */
+        std::set<NextHopKey> nextHops = nhg_key.getNextHops();
 
         SWSS_LOG_INFO("Updating route %s pointing to Mux neighbors",
                     pfx.getIp().to_string().c_str());
 
         // Loop through nexthops to find active neighbor
+        bool active_neighbor_found = false;
+        uint32_t nh_count;
         for (auto nh = nextHops.begin(); nh != nextHops.end(); nh++)
         {
-            if (findMuxCableInSubnet(nh->ip_address)->isActive())
+            if (findMuxCableInSubnet(nh->ip_address)->isActive() && !active_neighbor_found)
             {
                 // If we find an active nexthop neighbor, program it to hardware.
-                attr.value.oid = gNeighOrch->getNextHopId(*nh);
-                attrs.push_back(attr);
-                SWSS_LOG_NOTICE("Updating route %s with nexthop: %s",
-                    pfx.getIp().to_string().c_str(), nh->to_string().c_str());
-
-                status = sai_route_api->create_route_entry(&route_entry, (uint32_t)attrs.size(), attrs.data());
-                if (status != SAI_STATUS_SUCCESS)
-                {
-                    SWSS_LOG_ERROR("Failed to create nexthop route %s,nh %" PRIx64 " rv:%d",
-                            pfx.getIp().to_string().c_str(), attr.value.oid, status);
-                }
-                return;
+                SWSS_LOG_INFO("enabling nexthop: %s", nh->to_string().c_str());
+                gRouteOrch->validnexthopinNextHopGroup(*nh, nh_count);
+                gNeighOrch->increaseNextHopRefCount(*nh, nh_count);
+                active_neighbor_found = true;
+            }
+            else
+            {
+                SWSS_LOG_INFO("disabling nexthop: %s", nh->to_string().c_str());
+                gRouteOrch->invalidnexthopinNextHopGroup(*nh, nh_count);
+                gNeighOrch->increaseNextHopRefCount(*nh, nh_count);
             }
         }
 
         // No active neighbor was found. program tunnel route instead
         auto tun = getNextHopTunnelId(MUX_TUNNEL, mux_peer_switch_);
-        attr.value.oid = tun;
-        attrs.push_back(attr);
 
         SWSS_LOG_NOTICE("No Active neighbors found, setting route %s to point to tunnel: %" PRIx64 "",
                     pfx.getIp().to_string().c_str(), tun);
 
-        status = sai_route_api->create_route_entry(&route_entry, (uint32_t)attrs.size(), attrs.data());
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Failed to create tunnel route %s,nh %" PRIx64 " rv:%d",
-                    pfx.getIp().to_string().c_str(), tun, status);
-            return;
-        }
+        IpPrefix route_prefix = pfx.getIp().to_string();
+        create_route(route_prefix, tun);
     }
 }
 

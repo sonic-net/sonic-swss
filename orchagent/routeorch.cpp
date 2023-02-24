@@ -1606,13 +1606,13 @@ std::set<NextHopKey> RouteOrch::getNextHopsForRoute(const RouteKey& routeKey)
  * @param nexthop_key nexthop key to lookup
  * @return true if found, false if not found.
  */
-bool RouteOrch::getRoutesForNexthop(std::set<RouteKey>& routekey_set, const NextHopKey& nexthop_key)
+bool RouteOrch::getRoutesForNexthop(std::set<RouteKey>& routeKeys, const NextHopKey& nexthopKey)
 {
-    auto it = m_nextHops.find(nexthop_key);
+    auto it = m_nextHops.find(nexthopKey);
 
     if (it != m_nextHops.end())
     {
-        routekey_set = it->second;
+        routeKeys = it->second;
     }
 
     return it != m_nextHops.end();
@@ -2233,10 +2233,23 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
                 ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
     }
 
-    MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
     if ((ctx.nhg_index.empty() && nextHops.getSize() == 1 &&
-        !nextHops.is_overlay_nexthop() && !nextHops.is_srv6_nexthop()) ||
-        mux_orch->isMuxNexthops(nextHops))
+        !nextHops.is_overlay_nexthop() && !nextHops.is_srv6_nexthop()))
+    {
+        RouteKey r_key = { vrf_id, ipPrefix };
+        auto nexthop_list = nextHops.getNextHops();
+
+        for (auto nh = nexthop_list.begin(); nh != nexthop_list.end(); nh++)
+        {
+            if (!nh->ip_address.isZero())
+            {
+                addNextHopRoute(*nh, r_key);
+            }
+        }
+    }
+
+    MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
+    if (mux_orch->isMuxNexthops(nextHops))
     {
         RouteKey r_key = { vrf_id, ipPrefix };
         auto nexthop_list = nextHops.getNextHops();
