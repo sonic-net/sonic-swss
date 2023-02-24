@@ -23,6 +23,7 @@ class TestMuxTunnelBase():
     ASIC_VRF_TABLE              = "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER"
     ASIC_NEIGH_TABLE            = "ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY"
     ASIC_NEXTHOP_TABLE          = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP"
+    ASIC_NHG_MEMBER_TABLE       = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER"
     ASIC_ROUTE_TABLE            = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"
     ASIC_FDB_TABLE              = "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY"
     ASIC_SWITCH_TABLE           = "ASIC_STATE:SAI_OBJECT_TYPE_SWITCH"
@@ -241,6 +242,26 @@ class TestMuxTunnelBase():
             assert (nhid == tunnel_nh_id)
         else:
             assert (nhid != tunnel_nh_id)
+
+    def check_exact_nexthops_in_asic_group(self, asicdb, rtkey, nexthops):
+        route_fvs = asicdb.get_entry(self.ASIC_ROUTE_TABLE, rtkey)
+        nhg_id = route_fvs["SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID"]
+
+        asicdb.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP", nhg_id)
+
+        nexthop_oids = []
+        for nexthop in nexthops:
+            nexthop_oid = self.get_nexthop_oid(nexthop, asicdb)
+            if nexthop_oid == '':
+                assert False
+            nexthop_oids.append(nexthop_oid)
+
+        nhg_keys = asicdb.get_keys(self.ASIC_NHG_MEMBER_TABLE)
+        for key in nhg_keys:
+            entry = asicdb.get_entry(self.ASIC_NHG_MEMBER_TABLE, key)
+            if nhg_id != entry["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"]:
+                continue
+            assert nexthop_oids.__contains__(entry["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID"])
 
     def check_nexthop_group_in_asic_db(self, asicdb, key, num_tnl_nh=0):
 
@@ -561,11 +582,6 @@ class TestMuxTunnelBase():
         self.add_neighbor(dvs, NH1_ipv6, mac0)
         self.add_neighbor(dvs, NH2_ipv6, mac4)
 
-        NH1_oid = self.get_nexthop_oid(NH1, asicdb)
-        NH2_oid = self.get_nexthop_oid(NH2, asicdb)
-        NH1_ipv6_oid = self.get_nexthop_oid(NH1_ipv6, asicdb)
-        NH2_ipv6_oid = self.get_nexthop_oid(NH2_ipv6, asicdb)
-
         # program route with 1 neighbor
         ps = swsscommon.ProducerStateTable(apdb.db_connection, "ROUTE_TABLE")
         fvs = swsscommon.FieldValuePairs(
@@ -588,20 +604,14 @@ class TestMuxTunnelBase():
         rtkeys = dvs_route.check_asicdb_route_entries([route])
         rtkeys_ipv6 = dvs_route.check_asicdb_route_entries([route_ipv6])
 
-        route_oid = self.get_route_nexthop_oid(rtkeys[0], asicdb)
-        route_ipv6_oid = self.get_route_nexthop_oid(rtkeys_ipv6[0], asicdb)
-
-        assert NH1_oid == route_oid
-        assert NH1_ipv6_oid == route_ipv6_oid
+        self.check_exact_nexthops_in_asic_group(asicdb, rtkeys[0], [NH1])
+        self.check_exact_nexthops_in_asic_group(asicdb, rtkeys_ipv6[0], [NH1_ipv6])
 
         # set first neighbor to standby
         self.set_mux_state(appdb, "Ethernet0", "standby")
 
-        route_oid = self.get_route_nexthop_oid(rtkeys[0], asicdb)
-        route_ipv6_oid = self.get_route_nexthop_oid(rtkeys_ipv6[0], asicdb)
-
-        assert NH2_oid == route_oid
-        assert NH2_ipv6_oid == route_ipv6_oid
+        self.check_exact_nexthops_in_asic_group(asicdb, rtkeys[0], [NH2])
+        self.check_exact_nexthops_in_asic_group(asicdb, rtkeys_ipv6[0], [NH2_ipv6])
 
         # set second neighbor to standby
         self.set_mux_state(appdb, "Ethernet4", "standby")
@@ -615,26 +625,14 @@ class TestMuxTunnelBase():
         # set second neighbor to active
         self.set_mux_state(appdb, "Ethernet4", "active")
 
-        NH2_oid = self.get_nexthop_oid(NH2, asicdb)
-        NH2_ipv6_oid = self.get_nexthop_oid(NH2_ipv6, asicdb)
-
-        route_oid = self.get_route_nexthop_oid(rtkeys[0], asicdb)
-        route_ipv6_oid = self.get_route_nexthop_oid(rtkeys_ipv6[0], asicdb)
-
-        assert NH2_oid == route_oid
-        assert NH2_ipv6_oid == route_ipv6_oid
+        self.check_exact_nexthops_in_asic_group(asicdb, rtkeys[0], [NH2])
+        self.check_exact_nexthops_in_asic_group(asicdb, rtkeys_ipv6[0], [NH2_ipv6])
 
         # set first neighbor to active
         self.set_mux_state(appdb, "Ethernet0", "active")
 
-        NH1_oid = self.get_nexthop_oid(NH1, asicdb)
-        NH1_ipv6_oid = self.get_nexthop_oid(NH1_ipv6, asicdb)
-
-        route_oid = self.get_route_nexthop_oid(rtkeys[0], asicdb)
-        route_ipv6_oid = self.get_route_nexthop_oid(rtkeys_ipv6[0], asicdb)
-
-        assert NH1_oid == route_oid
-        assert NH1_ipv6_oid == route_ipv6_oid
+        self.check_exact_nexthops_in_asic_group(asicdb, rtkeys[0], [NH1])
+        self.check_exact_nexthops_in_asic_group(asicdb, rtkeys_ipv6[0], [NH1_ipv6])
 
         # Cleanup
         ps._del(route)
@@ -681,8 +679,8 @@ class TestMuxTunnelBase():
         rtkeys_ipv6 = dvs_route.check_asicdb_route_entries([route_ipv6])
 
         # Check for nexthop group - should not be deleted by update_Route()
-        self.check_nexthop_group_in_asic_db(asicdb, rtkeys[0])
-        self.check_nexthop_group_in_asic_db(asicdb, rtkeys_ipv6[0])
+        self.check_exact_nexthops_in_asic_group(asicdb, rtkeys[0], [non_mux, non_mux2])
+        self.check_exact_nexthops_in_asic_group(asicdb, rtkeys_ipv6[0], [non_mux_ipv6, non_mux2_ipv6])
 
         # Cleanup
         ps._del(route)

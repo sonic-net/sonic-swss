@@ -1002,25 +1002,26 @@ void MuxOrch::updateRoute(const IpPrefix &pfx)
                 // If we find an active nexthop neighbor, program it to hardware.
                 SWSS_LOG_INFO("enabling nexthop: %s", nh->to_string().c_str());
                 gRouteOrch->validnexthopinNextHopGroup(*nh, nh_count);
-                gNeighOrch->increaseNextHopRefCount(*nh, nh_count);
                 active_neighbor_found = true;
             }
             else
             {
                 SWSS_LOG_INFO("disabling nexthop: %s", nh->to_string().c_str());
                 gRouteOrch->invalidnexthopinNextHopGroup(*nh, nh_count);
-                gNeighOrch->decreaseNextHopRefCount(*nh, nh_count);
             }
         }
 
-        // No active neighbor was found. program tunnel route instead
-        auto tun = getNextHopTunnelId(MUX_TUNNEL, mux_peer_switch_);
+        if (!active_neighbor_found)
+        {
+            // No active neighbor was found. program tunnel route instead
+            auto tun = getNextHopTunnelId(MUX_TUNNEL, mux_peer_switch_);
 
-        SWSS_LOG_NOTICE("No Active neighbors found, setting route %s to point to tunnel: %" PRIx64 "",
-                    pfx.getIp().to_string().c_str(), tun);
+            SWSS_LOG_NOTICE("No Active neighbors found, setting route %s to point to tunnel: %" PRIx64 "",
+                        pfx.getIp().to_string().c_str(), tun);
 
-        IpPrefix route_prefix = pfx.getIp().to_string();
-        create_route(route_prefix, tun);
+            IpPrefix route_prefix = pfx.getIp().to_string();
+            create_route(route_prefix, tun);
+        }
     }
 }
 

@@ -2232,6 +2232,18 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         }
     }
 
+    if (ipPrefix.isDefaultRoute())
+    {
+        updateDefRouteState(ipPrefix.to_string(), true);
+    }
+
+    if (it_route == m_syncdRoutes.at(vrf_id).end())
+    {
+        gFlowCounterRouteOrch->handleRouteAdd(vrf_id, ipPrefix);
+    }
+
+    m_syncdRoutes[vrf_id][ipPrefix] = RouteNhg(nextHops, ctx.nhg_index);
+
     MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
     if (mux_orch->isMuxNexthops(nextHops))
     {
@@ -2248,18 +2260,6 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         // update routes to reflect mux state
         mux_orch->updateRoute(ipPrefix);
     }
-
-    if (ipPrefix.isDefaultRoute())
-    {
-        updateDefRouteState(ipPrefix.to_string(), true);
-    }
-
-    if (it_route == m_syncdRoutes.at(vrf_id).end())
-    {
-        gFlowCounterRouteOrch->handleRouteAdd(vrf_id, ipPrefix);
-    }
-
-    m_syncdRoutes[vrf_id][ipPrefix] = RouteNhg(nextHops, ctx.nhg_index);
 
     notifyNextHopChangeObservers(vrf_id, ipPrefix, nextHops, true);
 
