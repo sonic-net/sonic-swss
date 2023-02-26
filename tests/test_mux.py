@@ -1173,11 +1173,15 @@ class TestMuxTunnel(TestMuxTunnelBase):
 
         self.create_and_test_route(appdb, asicdb, dvs, dvs_route)
 
-    def test_NH(self, dvs, dvs_route, intf_fdb_map, setup_peer_switch, setup_tunnel, testlog):
+    def test_NH(self, dvs, dvs_route, intf_fdb_map, setup, setup_mux_cable,
+                setup_peer_switch, setup_tunnel, testlog):
         """ test NH routes and mux state change """
         appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         asicdb = dvs.get_asic_db()
         mac = intf_fdb_map["Ethernet0"]
+
+        # get tunnel nexthop
+        self.check_tnl_nexthop_in_asic_db(asicdb)
 
         self.create_and_test_NH_routes(appdb, asicdb, dvs, dvs_route, mac)
 
