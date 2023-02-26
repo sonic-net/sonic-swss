@@ -1246,6 +1246,8 @@ class TestMuxTunnel(TestMuxTunnelBase):
         # setup the mux
         config_db = dvs.get_config_db()
         self.create_mux_cable(config_db)
+        # tunnel route should be installed immediately after mux setup
+        self.check_neighbor_state(dvs, dvs_route, test_ip, expect_route=True)
 
         # set port state as standby
         self.set_mux_state(appdb, "Ethernet0", "standby")
