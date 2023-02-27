@@ -739,20 +739,32 @@ void NeighOrch::doTask(Consumer &consumer)
                     mac_address = MacAddress(fvValue(*i));
             }
 
-            if (m_syncdNeighbors.find(neighbor_entry) == m_syncdNeighbors.end()
-                    || m_syncdNeighbors[neighbor_entry].mac != mac_address)
+            bool nbr_not_found = (m_syncdNeighbors.find(neighbor_entry) == m_syncdNeighbors.end());
+            if (nbr_not_found || m_syncdNeighbors[neighbor_entry].mac != mac_address)
             {
-                // only for unresolvable neighbors that are new
                 if (!mac_address)
                 {
-                    if (addZeroMacTunnelRoute(neighbor_entry, mac_address))
+                    if (nbr_not_found)
                     {
-                        it = consumer.m_toSync.erase(it);
+                        // only for unresolvable neighbors that are new
+                        if (addZeroMacTunnelRoute(neighbor_entry, mac_address))
+                        {
+                            it = consumer.m_toSync.erase(it);
+                        }
+                        else
+                        {
+                            it++;
+                            continue;
+                        }
                     }
                     else
                     {
-                        it++;
-                        continue;
+                        /*
+                         * For neighbors that were previously resolvable but are now unresolvable,
+                         * we expect such neighbor entries to be deleted prior to a zero MAC update
+                         * arriving for that same neighbor.
+                         */
+                        it = consumer.m_toSync.erase(it);
                     }
                 }
                 else if (addNeighbor(neighbor_entry, mac_address))
