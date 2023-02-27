@@ -87,6 +87,7 @@ jobs:
       all_tests=$(ls test_*.py)
       all_tests="${all_tests} p4rt"
       test_set=()
+      sudo py.test test_mux.py -v --force-flaky --junitxml="test_mux_tr.xml" $params --imgname=docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber).asan-${{ parameters.asan }}
       # Run 20 tests as a set.
       for test in ${all_tests}; do
         test_set+=("${test}")
