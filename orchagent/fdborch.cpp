@@ -340,12 +340,13 @@ void FdbOrch::update(sai_fdb_event_t        type,
                     }
                     else
                     {
+                        SWSS_LOG_INFO("macUpdate. Bridge Port not matched for Previously MCLAG advertized MAC, update the dest port");
                         port.m_fdb_count--;
                         m_portsOrch->setPort(port.m_alias, port);
-                        vlan.m_fdb_count--;
-                        m_portsOrch->setPort(vlan.m_alias, vlan);
+                        update.port.m_fdb_count++;
+                        m_portsOrch->setPort(update.port.m_alias, update.port);
+                        update.entry.port_name = update.port.m_alias;
                     }
-                    // Continue to add (update/move) the MAC
                 }
                 else
                 {
@@ -355,38 +356,38 @@ void FdbOrch::update(sai_fdb_event_t        type,
 
                     // Existing MAC entry is on same VLAN, Port with Origin MCLAG(remote), its possible after the local learn MAC in
                     //the HW is updated to remote from FdbOrch, Update the MAC back to local in HW so that FdbOrch and HW is Sync and aging enabled.
-                    sai_status_t status;
-                    sai_fdb_entry_t fdb_entry;
-                    fdb_entry.switch_id = gSwitchId;
-                    memcpy(fdb_entry.mac_address, entry->mac_address, sizeof(sai_mac_t));
-                    fdb_entry.bv_id = entry->bv_id;
-                    sai_attribute_t attr;
-                    vector<sai_attribute_t> attrs;
-
-                    attr.id = SAI_FDB_ENTRY_ATTR_TYPE;
-                    attr.value.s32 = SAI_FDB_ENTRY_TYPE_DYNAMIC;
-                    attrs.push_back(attr);
-
-                    attr.id = SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID;
-                    attr.value.oid = existing_entry->second.bridge_port_id;
-                    attrs.push_back(attr);
-
-                    for(auto itr : attrs)
-                    {
-                        status = sai_fdb_api->set_fdb_entry_attribute(&fdb_entry, &itr);
-                        if (status != SAI_STATUS_SUCCESS)
-                        {
-                            SWSS_LOG_ERROR("macUpdate-Failed for MCLAG mac attr.id=0x%x for FDB %s in 0x%" PRIx64 "on %s, rv:%d",
-                                        itr.id, update.entry.mac.to_string().c_str(), entry->bv_id, update.port.m_alias.c_str(), status);
-                        }
-                    }
-                    update.add = true;
-                    update.type = "dynamic";
-                    storeFdbEntryState(update);
-                    notify(SUBJECT_TYPE_FDB_CHANGE, &update);
-
-                    return;
                 }
+                sai_status_t status;
+                sai_fdb_entry_t fdb_entry;
+                fdb_entry.switch_id = gSwitchId;
+                memcpy(fdb_entry.mac_address, entry->mac_address, sizeof(sai_mac_t));
+                fdb_entry.bv_id = entry->bv_id;
+                sai_attribute_t attr;
+                vector<sai_attribute_t> attrs;
+
+                attr.id = SAI_FDB_ENTRY_ATTR_TYPE;
+                attr.value.s32 = SAI_FDB_ENTRY_TYPE_DYNAMIC;
+                attrs.push_back(attr);
+
+                attr.id = SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID;
+                attr.value.oid = bridge_port_id;
+                attrs.push_back(attr);
+
+                for(auto itr : attrs)
+                {
+                    status = sai_fdb_api->set_fdb_entry_attribute(&fdb_entry, &itr);
+                    if (status != SAI_STATUS_SUCCESS)
+                    {
+                        SWSS_LOG_ERROR("macUpdate-Failed for MCLAG mac attr.id=0x%x for FDB %s in 0x%" PRIx64 "on %s, rv:%d",
+                                itr.id, update.entry.mac.to_string().c_str(), entry->bv_id, update.port.m_alias.c_str(), status);
+                    }
+                }
+                update.add = true;
+                update.type = "dynamic";
+                storeFdbEntryState(update);
+                notify(SUBJECT_TYPE_FDB_CHANGE, &update);
+
+                return;
             }
             else
             {
