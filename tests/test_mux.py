@@ -1220,15 +1220,24 @@ class TestMuxTunnel(TestMuxTunnelBase):
             MAC: mac
         }
 
+        dvs.runcmd("swssloglevel -c orchagent -l INFO")
         for step in neigh_miss_test_sequence:
             self.execute_action(step[TEST_ACTION], dvs, test_info)
             exp_result = step[EXPECTED_RESULT]
-            self.check_neighbor_state(
-                dvs, dvs_route, ip,
-                expect_route=exp_result[EXPECT_ROUTE],
-                expect_neigh=exp_result[EXPECT_NEIGH],
-                expected_mac=mac if exp_result[REAL_MAC] else '00:00:00:00:00:00'
-            )
+            try:
+                self.check_neighbor_state(
+                    dvs, dvs_route, ip,
+                    expect_route=exp_result[EXPECT_ROUTE],
+                    expect_neigh=exp_result[EXPECT_NEIGH],
+                    expected_mac=mac if exp_result[REAL_MAC] else '00:00:00:00:00:00'
+                )
+            except Exception as e:
+                print(step)
+                print(dvs.runcmd("ip neighbor")[1])
+                print(dvs.runcmd("ip addr show")[1])
+                raise e
+            finally:
+                dvs.runcmd("swssloglevel -c orchagent -l NOTICE")
 
     def test_neighbor_miss_no_mux(
             self, dvs, dvs_route, setup_vlan, setup_tunnel, setup,
