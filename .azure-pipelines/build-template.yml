@@ -62,15 +62,10 @@ jobs:
     clean: true
     submodules: true
   - script: |
-      sudo apt-get install -y libhiredis0.14 libhiredis-dev
-      sudo apt-get install -y libzmq5 libzmq3-dev
-      sudo apt-get install -qq -y \
-          libhiredis-dev \
-          swig3.0
+      sudo apt-get update
+      sudo apt-get install -y libhiredis-dev libzmq3-dev libteam-dev
+      sudo apt-get install -y swig3.0
       sudo apt-get install -y libdbus-1-3
-      sudo apt-get install -y libteam-dev \
-          libteam5 \
-          libteamdctl0
     displayName: "Install dependencies"
   - task: DownloadPipelineArtifact@2
     inputs:
