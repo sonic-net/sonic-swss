@@ -2247,16 +2247,6 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
     MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
     if (mux_orch->isMuxNexthops(nextHops))
     {
-        RouteKey r_key = { vrf_id, ipPrefix };
-        auto nexthop_list = nextHops.getNextHops();
-
-        for (auto nh = nexthop_list.begin(); nh != nexthop_list.end(); nh++)
-        {
-            if (!nh->ip_address.isZero())
-            {
-                addNextHopRoute(*nh, r_key);
-            }
-        }
         // update routes to reflect mux state
         mux_orch->updateRoute(ipPrefix);
     }

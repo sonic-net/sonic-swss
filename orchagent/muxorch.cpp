@@ -42,6 +42,7 @@ extern sai_route_api_t* sai_route_api;
 extern sai_tunnel_api_t* sai_tunnel_api;
 extern sai_next_hop_api_t* sai_next_hop_api;
 extern sai_router_interface_api_t* sai_router_intfs_api;
+extern sai_next_hop_group_api_t* sai_next_hop_group_api;
 
 /* Constants */
 #define MUX_ACL_TABLE_NAME INGRESS_TABLE_DROP
@@ -482,6 +483,8 @@ void MuxCable::setState(string new_state)
         st_chg_failed_ = true;
         throw std::runtime_error("Failed to handle state transition");
     }
+
+    mux_orch_->updateRoutesForCable(this);
 
     mux_cb_orch_->updateMuxMetricState(mux_name_, new_state, false);
 
@@ -973,6 +976,18 @@ sai_object_id_t MuxOrch::getNextHopTunnelId(std::string tunnelKey, IpAddress& ip
     return it->second.nh_id;
 }
 
+bool isNexthopInGroup(sai_object_list_t& objectList, sai_object_id_t nh)
+{
+    for (uint32_t i = 0; i < objectList.count; i++)
+    {
+        if (objectList.list[i] == nh)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 /**
  * @brief updates the given route to point to a single active NH or tunnel
  * @param pfx IpPrefix of route to update
@@ -983,6 +998,10 @@ void MuxOrch::updateRoute(const IpPrefix &pfx)
     NextHopGroupKey nhg_key = gRouteOrch->getSyncdRouteNhgKey(gVirtualRouterId, pfx);
     SWSS_LOG_INFO("Found nhg_key: %s with size: %zu",
             nhg_key.to_string().c_str(), nhg_key.getSize());
+
+    RouteKey route_key = RouteKey();
+    route_key.prefix = pfx;
+    route_key.vrf_id = gVirtualRouterId;
 
     if (nhg_key.getSize() > 1)
     {
@@ -995,19 +1014,42 @@ void MuxOrch::updateRoute(const IpPrefix &pfx)
         // Loop through nexthops to find active neighbor
         bool active_neighbor_found = false;
         uint32_t nh_count;
+
+        sai_attribute_t nhg_attr;
+        sai_object_id_t nhg_id = gRouteOrch->getNextHopGroupId(nhg_key);
+
+        nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_MEMBER_LIST;
+        nhg_attr.value.u32 = 0;
+
+        sai_status_t status = sai_next_hop_group_api->get_next_hop_group_attribute(nhg_id, 1, &nhg_attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to get nexthop group member list");
+        }
+
+        sai_object_list_t nexthop_group_list = nhg_attr.value.objlist;
+
         for (auto nh = nextHops.begin(); nh != nextHops.end(); nh++)
         {
             if (findMuxCableInSubnet(nh->ip_address)->isActive() && !active_neighbor_found)
             {
-                // If we find an active nexthop neighbor, program it to hardware.
-                SWSS_LOG_INFO("enabling nexthop: %s", nh->to_string().c_str());
-                gRouteOrch->validnexthopinNextHopGroup(*nh, nh_count);
-                active_neighbor_found = true;
+                if (!isNexthopInGroup(nexthop_group_list, gNeighOrch->getNextHopId(*nh)))
+                {
+                    // If we find an active nexthop neighbor, program it to hardware.
+                    SWSS_LOG_INFO("enabling nexthop: %s", nh->to_string().c_str());
+                    gRouteOrch->validnexthopinNextHopGroup(*nh, nh_count);
+                    gNeighOrch->increaseNextHopRefCount(*nh, nh_count);
+                    active_neighbor_found = true;
+                }
             }
             else
             {
-                SWSS_LOG_INFO("disabling nexthop: %s", nh->to_string().c_str());
-                gRouteOrch->invalidnexthopinNextHopGroup(*nh, nh_count);
+                if (isNexthopInGroup(nexthop_group_list, gNeighOrch->getNextHopId(*nh)))
+                {
+                    SWSS_LOG_INFO("disabling nexthop: %s", nh->to_string().c_str());
+                    gRouteOrch->invalidnexthopinNextHopGroup(*nh, nh_count);
+                    gNeighOrch->decreaseNextHopRefCount(*nh, nh_count);
+                }
             }
         }
 
@@ -1675,8 +1717,6 @@ bool MuxCableOrch::addOperation(const Request& request)
                         state.c_str(), port_name.c_str(), error.what());
         return true;
     }
-
-    mux_orch->updateRoutesForCable(mux_obj);
 
     SWSS_LOG_NOTICE("Mux State set to %s for port %s", state.c_str(), port_name.c_str());
 

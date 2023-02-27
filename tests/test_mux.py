@@ -604,8 +604,8 @@ class TestMuxTunnelBase():
         rtkeys = dvs_route.check_asicdb_route_entries([route])
         rtkeys_ipv6 = dvs_route.check_asicdb_route_entries([route_ipv6])
 
-        self.check_exact_nexthops_in_asic_group(asicdb, rtkeys[0], [NH1])
-        self.check_exact_nexthops_in_asic_group(asicdb, rtkeys_ipv6[0], [NH1_ipv6])
+        self.check_exact_nexthops_in_asic_group(asicdb, rtkeys[0], [NH1, NH2])
+        self.check_exact_nexthops_in_asic_group(asicdb, rtkeys_ipv6[0], [NH1_ipv6, NH2_ipv6])
 
         # set first neighbor to standby
         self.set_mux_state(appdb, "Ethernet0", "standby")
@@ -631,8 +631,8 @@ class TestMuxTunnelBase():
         # set first neighbor to active
         self.set_mux_state(appdb, "Ethernet0", "active")
 
-        self.check_exact_nexthops_in_asic_group(asicdb, rtkeys[0], [NH1])
-        self.check_exact_nexthops_in_asic_group(asicdb, rtkeys_ipv6[0], [NH1_ipv6])
+        self.check_exact_nexthops_in_asic_group(asicdb, rtkeys[0], [NH1, NH2])
+        self.check_exact_nexthops_in_asic_group(asicdb, rtkeys_ipv6[0], [NH1_ipv6, NH2_ipv6])
 
         # Cleanup
         ps._del(route)
@@ -648,7 +648,7 @@ class TestMuxTunnelBase():
         non_mux = "1.1.1.1"
         non_mux2 = "2.2.2.2"
         non_mux_ipv6 = "fc02:1000::eeee"
-        non_mux2_ipv6 = "fc02:1000::eeee"
+        non_mux2_ipv6 = "fc02:1000::ffff"
         non_mux_mac = "00:aa:bb:cc:dd:ee"
         non_mux2_mac = "00:aa:bb:cc:dd:ff"
 
