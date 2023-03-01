@@ -116,7 +116,7 @@ private:
     bool resolveNeighborEntry(const NeighborEntry &, const MacAddress &);
     void clearResolvedNeighborEntry(const NeighborEntry &);
 
-    void addZeroMacTunnelRoute(const NeighborEntry &, const MacAddress &);
+    bool addZeroMacTunnelRoute(const NeighborEntry &, const MacAddress &);
 };
 
 #endif /* SWSS_NEIGHORCH_H */
