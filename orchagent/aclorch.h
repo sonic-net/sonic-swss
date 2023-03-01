@@ -100,6 +100,14 @@
 
 #define ACL_COUNTER_FLEX_COUNTER_GROUP "ACL_STAT_COUNTER"
 
+enum AclObjectStatus
+{
+    ACTIVE = 0,
+    INACTIVE,
+    PENDING_CREATION,
+    PENDING_REMOVAL
+};
+
 struct AclActionCapabilities
 {
     set<sai_acl_action_type_t> actionList;
@@ -553,8 +561,8 @@ private:
 
     string generateAclRuleIdentifierInCountersDb(const AclRule& rule) const;
 
-    void setAclTableStatus(string table_name, bool active);
-    void setAclRuleStatus(string table_name, string rule_name, bool active);
+    void setAclTableStatus(string table_name, AclObjectStatus status);
+    void setAclRuleStatus(string table_name, string rule_name, AclObjectStatus status);
 
     void removeAclTableStatus(string table_name);
     void removeAclRuleStatus(string table_name, string rule_name);
