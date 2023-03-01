@@ -186,7 +186,9 @@ public:
     RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch);
 
     bool hasNextHopGroup(const NextHopGroupKey&) const;
+    bool inNextHopGroup(const NextHopKey&, NextHopGroupKey& nhgKey);
     sai_object_id_t getNextHopGroupId(const NextHopGroupKey&);
+    NextHopGroupEntry getNextHopGroupEntry(const NextHopGroupKey&);
 
     void attach(Observer *, const IpAddress&, sai_object_id_t vrf_id = gVirtualRouterId);
     void detach(Observer *, const IpAddress&, sai_object_id_t vrf_id = gVirtualRouterId);
@@ -201,6 +203,7 @@ public:
     void addNextHopRoute(const NextHopKey&, const RouteKey&);
     void removeNextHopRoute(const NextHopKey&, const RouteKey&);
     bool updateNextHopRoutes(const NextHopKey&, uint32_t&);
+    bool getRoutesForNexthop(std::set<RouteKey>&, const NextHopKey&);
 
     bool validnexthopinNextHopGroup(const NextHopKey&, uint32_t&);
     bool invalidnexthopinNextHopGroup(const NextHopKey&, uint32_t&);
