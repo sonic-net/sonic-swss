@@ -81,3 +81,4 @@ extern sai_queue_api_t *sai_queue_api;
 extern sai_udf_api_t* sai_udf_api;
 extern sai_mpls_api_t* sai_mpls_api;
 extern sai_counter_api_t* sai_counter_api;
+extern sai_fdb_api_t* sai_fdb_api;

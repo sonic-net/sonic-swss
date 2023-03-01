@@ -10,6 +10,7 @@
 
 #define ETH0 "Ethernet0"
 #define VLAN40 "Vlan40"
+#define VXLAN_REMOTE "Vxlan_1.1.1.1"
 
 extern redisReply *mockReply;
 extern CrmOrch*  gCrmOrch;
@@ -19,6 +20,28 @@ Test Fixture
 */
 namespace fdb_syncd_flush_test
 {
+
+    sai_fdb_api_t ut_sai_fdb_api;
+    sai_fdb_api_t *pold_sai_fdb_api;
+
+    sai_status_t _ut_stub_sai_create_fdb_entry (
+        _In_ const sai_fdb_entry_t *fdb_entry,
+        _In_ uint32_t attr_count,
+        _In_ const sai_attribute_t *attr_list)
+    {
+        return SAI_STATUS_SUCCESS;
+    }
+    void _hook_sai_fdb_api()
+    {
+        ut_sai_fdb_api = *sai_fdb_api;
+        pold_sai_fdb_api = sai_fdb_api;
+        ut_sai_fdb_api.create_fdb_entry = _ut_stub_sai_create_fdb_entry;
+        sai_fdb_api = &ut_sai_fdb_api;
+    }
+    void _unhook_sai_fdb_api()
+    {
+        sai_fdb_api = pold_sai_fdb_api;
+    }
     struct FdbOrchTest : public ::testing::Test
     {   
         std::shared_ptr<swss::DBConnector> m_config_db;
@@ -40,7 +63,7 @@ namespace fdb_syncd_flush_test
             };
 
             ut_helper::initSaiApi(profile);
-            
+
             /* Create Switch */
             sai_attribute_t attr;
             attr.id = SAI_SWITCH_ATTR_INIT_SWITCH;
@@ -70,6 +93,8 @@ namespace fdb_syncd_flush_test
             // 2) Crmorch
             ASSERT_EQ(gCrmOrch, nullptr);
             gCrmOrch = new CrmOrch(m_config_db.get(), CFG_CRM_TABLE_NAME);
+            VxlanTunnelOrch *vxlan_tunnel_orch_1 = new VxlanTunnelOrch(m_state_db.get(), m_app_db.get(), APP_VXLAN_TUNNEL_TABLE_NAME);
+            gDirectory.set(vxlan_tunnel_orch_1);
             
              // Construct fdborch
             vector<table_name_with_pri_t> app_fdb_tables = {
@@ -91,7 +116,7 @@ namespace fdb_syncd_flush_test
         virtual void TearDown() override {
             delete gCrmOrch;
             gCrmOrch = nullptr;
-
+            gDirectory.m_values.clear();
             ut_helper::uninitSaiApi();
         }
     };
@@ -126,6 +151,17 @@ namespace fdb_syncd_flush_test
         m_portsOrch->saiOidToAlias[oid] =  alias;
     }
 
+    void setUpVxlanPort(PortsOrch* m_portsOrch){
+        /* Updates portsOrch internal cache for Ethernet0 */
+        std::string alias = VXLAN_REMOTE;
+        sai_object_id_t oid = 0x10000000004a5;
+
+        Port port(alias, Port::PHY);
+        m_portsOrch->m_portList[alias] = port;
+        m_portsOrch->saiOidToAlias[oid] =  alias;
+    }
+
+
     void setUpVlanMember(PortsOrch* m_portsOrch){
         /* Updates portsOrch internal cache for adding Ethernet0 into Vlan40 */
         sai_object_id_t bridge_port_id = 0x3a000000002c33;
@@ -134,6 +170,16 @@ namespace fdb_syncd_flush_test
         m_portsOrch->m_portList[ETH0].m_bridge_port_id = bridge_port_id;
         m_portsOrch->saiOidToAlias[bridge_port_id] = ETH0;
         m_portsOrch->m_portList[VLAN40].m_members.insert(ETH0);
+    }
+
+    void setUpVxlanMember(PortsOrch* m_portsOrch){
+        /* Updates portsOrch internal cache for adding Ethernet0 into Vlan40 */
+        sai_object_id_t bridge_port_id = 0x3a000000002c34;
+
+        /* Add Bridge Port */
+        m_portsOrch->m_portList[VXLAN_REMOTE].m_bridge_port_id = bridge_port_id;
+        m_portsOrch->saiOidToAlias[bridge_port_id] = VXLAN_REMOTE;
+        m_portsOrch->m_portList[VLAN40].m_members.insert(VXLAN_REMOTE);
     }
 
     void triggerUpdate(FdbOrch* m_fdborch,
@@ -146,7 +192,7 @@ namespace fdb_syncd_flush_test
             *(entry.mac_address+i) = mac_addr[i];
         }
         entry.bv_id = bv_id;
-        m_fdborch->update(type, &entry, bridge_port_id);
+        m_fdborch->update(type, &entry, bridge_port_id, SAI_FDB_ENTRY_TYPE_DYNAMIC);
     }
 }
 
@@ -420,5 +466,47 @@ namespace fdb_syncd_flush_test
         /* Make sure state db is cleared */
         ASSERT_EQ(m_fdborch->m_fdbStateTable.hget("Vlan40:7c:fe:90:12:22:ec", "port", port), false);
         ASSERT_EQ(m_fdborch->m_fdbStateTable.hget("Vlan40:7c:fe:90:12:22:ec", "type", entry_type), false);
+    }
+
+    /* Test Consolidated Flush with origin VXLAN */
+    TEST_F(FdbOrchTest, ConsolidatedFlushAllVxLAN)
+    {
+        _hook_sai_fdb_api();
+        ASSERT_NE(m_portsOrch, nullptr);
+        setUpVlan(m_portsOrch.get());
+        setUpVxlanPort(m_portsOrch.get());
+        ASSERT_NE(m_portsOrch->m_portList.find(VLAN40), m_portsOrch->m_portList.end());
+        ASSERT_NE(m_portsOrch->m_portList.find(VXLAN_REMOTE), m_portsOrch->m_portList.end());
+        setUpVxlanMember(m_portsOrch.get());
+
+        FdbData fdbData;
+        fdbData.bridge_port_id = SAI_NULL_OBJECT_ID;
+        fdbData.type = "dynamic";
+        fdbData.origin = FDB_ORIGIN_VXLAN_ADVERTIZED;
+        fdbData.remote_ip = "1.1.1.1";
+        fdbData.esi = "";
+        fdbData.vni = 100;
+        FdbEntry entry;
+
+        MacAddress mac1 = MacAddress("52:54:00:ac:3a:99");
+        entry.mac = mac1;
+        entry.port_name = VXLAN_REMOTE;
+
+        entry.bv_id = m_portsOrch->m_portList[VLAN40].m_vlan_info.vlan_oid;
+        m_fdborch->addFdbEntry(entry, VXLAN_REMOTE, fdbData);
+
+        /* Make sure fdb_count is incremented as expected */
+        ASSERT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 1);
+        ASSERT_EQ(m_portsOrch->m_portList[VXLAN_REMOTE].m_fdb_count, 1);
+
+        /* Event2: Send a Consolidated Flush response from syncd */
+        vector<uint8_t> flush_mac_addr = {0, 0, 0, 0, 0, 0};
+        triggerUpdate(m_fdborch.get(), SAI_FDB_EVENT_FLUSHED, flush_mac_addr, SAI_NULL_OBJECT_ID,
+                      SAI_NULL_OBJECT_ID);
+
+        /* make sure fdb_counters are decremented */
+        ASSERT_EQ(m_portsOrch->m_portList[VLAN40].m_fdb_count, 1);
+        ASSERT_EQ(m_portsOrch->m_portList[VXLAN_REMOTE].m_fdb_count, 1);
+        _unhook_sai_fdb_api();
     }
 }
