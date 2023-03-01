@@ -28,8 +28,15 @@ namespace saifailure_test
 
     void _hook_sai_switch_api()
     {
+        map<string, string> profile = {
+            { "SAI_VS_SWITCH_TYPE", "SAI_VS_SWITCH_TYPE_BCM56850" },
+            { "KV_DEVICE_MAC_ADDRESS", "20:03:04:05:06:00" }
+        };
+
+        ut_helper::initSaiApi(profile);
         ut_sai_switch_api = *sai_switch_api;
         pold_sai_switch_api = sai_switch_api;
+        
         ut_sai_switch_api.set_switch_attribute = _ut_stub_sai_set_switch_attribute;
         sai_switch_api = &ut_sai_switch_api;
     }
@@ -37,6 +44,7 @@ namespace saifailure_test
     void _unhook_sai_switch_api()
     {
         sai_switch_api = pold_sai_switch_api;
+        ut_helper::uninitSaiApi();
     }
 
     TEST_F(SaiFailureTest, handleSaiFailure)
@@ -44,6 +52,7 @@ namespace saifailure_test
         _hook_sai_switch_api();
         _sai_syncd_notifications_count = (uint32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
                     MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+
         _sai_syncd_notification_event = (int32_t*)mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE,
                     MAP_SHARED | MAP_ANONYMOUS, -1, 0);
         *_sai_syncd_notifications_count = 0;
