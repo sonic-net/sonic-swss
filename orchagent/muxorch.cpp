@@ -163,6 +163,34 @@ static sai_status_t remove_route(IpPrefix &pfx)
     return status;
 }
 
+/**
+ * @brief sets the given route to point to the given nexthop
+ * @param pfx IpPrefix of the route
+ * @param nexthop NextHopKey of the nexthop
+ * @return SAI_STATUS_SUCCESS on success
+ */
+static sai_status_t set_route(const IpPrefix& pfx, sai_object_id_t next_hop_id)
+{
+    /* set route entry to point to nh */
+    sai_route_entry_t route_entry;
+    sai_attribute_t route_attr;
+
+    route_entry.vr_id = gVirtualRouterId;
+    route_entry.switch_id = gSwitchId;
+    copy(route_entry.destination, pfx);
+
+    route_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+    route_attr.value.oid = next_hop_id;
+
+    sai_status_t status = sai_route_api->set_route_entry_attribute(&route_entry, &route_attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set route entry %s nh %" PRIx64 " rv:%d",
+                pfx.to_string().c_str(), next_hop_id, status);
+    }
+    return status;
+}
+
 static sai_object_id_t create_tunnel(
     const IpAddress* p_dst_ip,
     const IpAddress* p_src_ip,
@@ -523,9 +551,11 @@ bool MuxCable::nbrHandler(bool enable, bool update_rt)
 {
     SWSS_LOG_NOTICE("Processing neighbors for mux %s, enable %d, state %d",
                      mux_name_.c_str(), enable, state_);
+    bool ret;
     if (enable)
     {
-        return nbr_handler_->enable(update_rt);
+        ret = nbr_handler_->enable(update_rt);
+        updateRoutes();
     }
     else
     {
@@ -535,9 +565,10 @@ bool MuxCable::nbrHandler(bool enable, bool update_rt)
             SWSS_LOG_INFO("Null NH object id, retry for %s", peer_ip4_.to_string().c_str());
             return false;
         }
-
-        return nbr_handler_->disable(tnh);
+        updateRoutes();
+        ret = nbr_handler_->disable(tnh);
     }
+    return ret;
 }
 
 void MuxCable::updateNeighbor(NextHopKey nh, bool add)
@@ -553,6 +584,29 @@ void MuxCable::updateNeighbor(NextHopKey nh, bool add)
     else if (mux_name_ == mux_orch_->getNexthopMuxName(nh))
     {
         mux_orch_->removeNexthop(nh);
+        nbr_handler_->removeNeighborRoutes(nh);
+    }
+    updateRoutes();
+}
+
+/**
+ * @brief updates all routes pointing to the cables neighbor list
+ */
+void MuxCable::updateRoutes()
+{
+    MuxNeighbor neighbors = nbr_handler_->getNeighbors();
+    string alias = nbr_handler_->getAlias();
+    for (auto nh = neighbors.begin(); nh != neighbors.end(); nh ++)
+    {
+        std::set<RouteKey> routes;
+        NextHopKey nhkey(nh->first, alias);
+        if (gRouteOrch->getRoutesForNexthop(routes, nhkey))
+        {
+            for (auto rt = routes.begin(); rt != routes.end(); rt++)
+            {
+                mux_orch_->updateRoute(rt->prefix, false);
+            }
+        }
     }
 }
 
@@ -741,6 +795,44 @@ bool MuxNbrHandler::disable(sai_object_id_t tnh)
     }
 
     return true;
+}
+
+/**
+ * @brief removes routes programmed by updateRoute
+ * @param nh NextHopKey that points to neighbor for which to remove routes
+ */
+void MuxNbrHandler::removeNeighborRoutes(NextHopKey nh)
+{
+    std::set<RouteKey> routes;
+    NextHopGroupKey nhg_key;
+    NextHopGroupEntry nhg_entry;
+
+    if (gRouteOrch->getRoutesForNexthop(routes, nh))
+    {
+        for (auto rt = routes.begin(); rt != routes.end(); rt++)
+        {
+            SWSS_LOG_INFO("Removing multi-nexthop route for %s", rt->prefix.to_string().c_str());
+            /* get nexthop group key from syncd */
+            nhg_key = gRouteOrch->getSyncdRouteNhgKey(gVirtualRouterId, rt->prefix);
+
+            /* check for cross-mux neighbors */
+            if (nhg_key.getSize() > 1)
+            {
+                sai_route_entry_t route_entry;
+                route_entry.switch_id = gSwitchId;
+                route_entry.vr_id = gVirtualRouterId;
+                copy(route_entry.destination, rt->prefix);
+                subnet(route_entry.destination, route_entry.destination);
+
+                sai_status_t status = sai_route_api->remove_route_entry(&route_entry);
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to remove route %s, rv:%d",
+                                    rt->prefix.to_string().c_str(), status);
+                }
+            }
+        }
+    }
 }
 
 sai_object_id_t MuxNbrHandler::getNextHopId(const NextHopKey nhKey)
@@ -944,6 +1036,91 @@ sai_object_id_t MuxOrch::getNextHopTunnelId(std::string tunnelKey, IpAddress& ip
     }
 
     return it->second.nh_id;
+}
+
+/**
+ * @brief updates the given route to point to a single active NH or tunnel
+ * @param pfx IpPrefix of route to update
+ * @param remove bool only true when route is getting removed
+ */
+void MuxOrch::updateRoute(const IpPrefix &pfx, bool remove)
+{
+    NextHopGroupKey nhg_key;
+    NextHopGroupEntry nhg_entry;
+
+    if (remove)
+    {
+        mux_multi_nh_route_tb.erase(pfx);
+        return;
+    }
+
+    /* get nexthop group key from syncd */
+    nhg_key = gRouteOrch->getSyncdRouteNhgKey(gVirtualRouterId, pfx);
+
+    /* check for cross-mux neighbors */
+    if (nhg_key.getSize() > 1)
+    {
+        std::set<NextHopKey> nextHops;
+        sai_object_id_t next_hop_id;
+        sai_status_t status;
+        bool active_found = false;
+
+        /* get nexthops from nexthop group */
+        nextHops = nhg_key.getNextHops();
+
+        auto it = mux_multi_nh_route_tb.find(pfx);
+        if (it != mux_multi_nh_route_tb.end())
+        {
+            MuxCable* cable = findMuxCableInSubnet(it->second.ip_address);
+            if (cable == nullptr || cable->isActive())
+            {
+                SWSS_LOG_NOTICE("Route %s pointing to active neighbor %s",
+                    pfx.to_string().c_str(), it->second.to_string().c_str());
+                return;
+            }
+        }
+
+        SWSS_LOG_NOTICE("Updating route %s pointing to Mux nexthops %s",
+                    pfx.to_string().c_str(), nhg_key.to_string().c_str());
+
+        for (auto it = nextHops.begin(); it != nextHops.end(); it++)
+        {
+            NextHopKey nexthop = *it;
+            MuxCable* cable = findMuxCableInSubnet(nexthop.ip_address);
+            if (cable == nullptr || (cable->isActive() && !active_found))
+            {
+                next_hop_id = gNeighOrch->getLocalNextHopId(nexthop);
+                /* set route entry to point to nh */
+                status = set_route(pfx, next_hop_id);
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to set route entry %s to nexthop %s",
+                            pfx.to_string().c_str(), nexthop.to_string().c_str());
+                    continue;
+                }
+                SWSS_LOG_INFO("setting route %s with nexthop %s %" PRIx64 "",
+                    pfx.to_string().c_str(), nexthop.to_string().c_str(), next_hop_id);
+                mux_multi_nh_route_tb[pfx] = nexthop;
+                active_found = true;
+                break;
+            }
+        }
+
+        if (!active_found)
+        {
+            next_hop_id = getNextHopTunnelId(MUX_TUNNEL, mux_peer_switch_);
+            /* no active nexthop found, point to first */
+            SWSS_LOG_NOTICE("No Active neighbors found, setting route %s to point to tun",
+                        pfx.getIp().to_string().c_str());
+            status = set_route(pfx, next_hop_id);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to set route entry %s to tunnel",
+                        pfx.getIp().to_string().c_str());
+            }
+            mux_multi_nh_route_tb.erase(pfx);
+        }
+    }
 }
 
 MuxCable* MuxOrch::findMuxCableInSubnet(IpAddress ip)
@@ -1172,6 +1349,35 @@ void MuxOrch::addNexthop(NextHopKey nh, string muxName)
 void MuxOrch::removeNexthop(NextHopKey nh)
 {
     mux_nexthop_tb_.erase(nh);
+}
+
+/**
+ * @brief checks if mux nexthop tb contains nexthop
+ * @param nexthop NextHopKey
+ * @return true if a mux contains the nexthop
+ */
+bool MuxOrch::containsNextHop(const NextHopKey& nexthop)
+{
+    return mux_nexthop_tb_.find(nexthop) != mux_nexthop_tb_.end();
+}
+
+/**
+ * @brief checks if a given nexthop group belongs to a mux
+ * @param nextHops NextHopGroupKey
+ * @return true if a mux contains any of the nexthops in the group
+ *         false if none of the nexthops belong to a mux
+ */
+bool MuxOrch::isMuxNexthops(const NextHopGroupKey& nextHops)
+{
+    const std::set<NextHopKey> s_nexthops = nextHops.getNextHops();
+    for (auto it = s_nexthops.begin(); it != s_nexthops.end(); it ++)
+    {
+        if (this->containsNextHop(*it))
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 string MuxOrch::getNexthopMuxName(NextHopKey nh)
