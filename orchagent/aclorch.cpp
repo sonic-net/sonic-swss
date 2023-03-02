@@ -3014,6 +3014,10 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
 {
     SWSS_LOG_ENTER();
 
+    // Clear ACL_TABLE and ACL_RULE status from STATE_DB
+    removeAllAclTableStatus();
+    removeAllAclRuleStatus();
+
     // TODO: Query SAI to get mirror table capabilities
     // Right now, verified platforms that support mirroring IPv6 packets are
     // Broadcom and Mellanox. Virtual switch is also supported for testing
@@ -4944,3 +4948,27 @@ void AclOrch::removeAclRuleStatus(string table_name, string rule_name)
 {
     m_aclRuleStateTable.del(table_name + string("|") + rule_name);
 }
+
+// Remove all ACL table status from STATE_DB
+void AclOrch::removeAllAclTableStatus()
+{
+    vector<string> keys;
+    m_aclTableStateTable.getKeys(keys);
+
+    for (auto key : keys)
+    {
+        m_aclTableStateTable.del(key);
+    }
+}
+
+// Remove all ACL rule status from STATE_DB
+void AclOrch::removeAllAclRuleStatus()
+{
+    vector<string> keys;
+    m_aclRuleStateTable.getKeys(keys);
+    for (auto key : keys)
+    {
+        m_aclRuleStateTable.del(key);
+    }
+}
+

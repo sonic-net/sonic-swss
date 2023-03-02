@@ -567,6 +567,9 @@ private:
     void removeAclTableStatus(string table_name);
     void removeAclRuleStatus(string table_name, string rule_name);
 
+    void removeAllAclTableStatus();
+    void removeAllAclRuleStatus();
+
     map<sai_object_id_t, AclTable> m_AclTables;
     // TODO: Move all ACL tables into one map: name -> instance
     map<string, AclTable> m_ctrlAclTables;
