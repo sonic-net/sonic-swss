@@ -26,6 +26,7 @@ function build_and_install_kmodule()
     SUBLEVEL=$(echo $KERNEL_MAINVERSION | cut -d. -f3)
 
     # Install the required debian packages to build the kernel modules
+    apt-get update
     apt-get install -y build-essential linux-headers-${KERNEL_RELEASE} autoconf pkg-config fakeroot
     apt-get install -y flex bison libssl-dev libelf-dev
     apt-get install -y libnl-route-3-200 libnl-route-3-dev libnl-cli-3-200 libnl-cli-3-dev libnl-3-dev
