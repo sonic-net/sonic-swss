@@ -243,6 +243,7 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     uint32_t tx_interval = BFD_SESSION_DEFAULT_TX_INTERVAL;
     uint32_t rx_interval = BFD_SESSION_DEFAULT_RX_INTERVAL;
     uint8_t multiplier = BFD_SESSION_DEFAULT_DETECT_MULTIPLIER;
+    uint8_t tos = 184;  // default value 46<<2. higher 6-bit tos 46, lower 2-bit ecn 0
     bool multihop = false;
     MacAddress dst_mac;
     bool dst_mac_provided = false;
@@ -290,6 +291,10 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
         {
             dst_mac = MacAddress(value);
             dst_mac_provided = true;
+        }
+        else if (fvField(i) == "tos")
+        {
+            tos = to_uint<uint8_t>(value);
         }
         else
             SWSS_LOG_ERROR("Unsupported BFD attribute %s\n", fvField(i).c_str());
@@ -351,6 +356,10 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     attr.value.u8 = multiplier;
     attrs.emplace_back(attr);
     fvVector.emplace_back("multiplier", to_string(multiplier));
+
+    attr.id = SAI_BFD_SESSION_ATTR_TOS;
+    attr.value.u8 = tos;
+    attrs.emplace_back(attr);
 
     if (multihop)
     {
