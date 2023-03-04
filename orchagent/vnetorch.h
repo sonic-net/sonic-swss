@@ -303,7 +303,7 @@ const request_description_t vnet_route_description = {
 };
 
 const request_description_t monitor_state_request_description = {
-            { REQ_T_IP_PREFIX, REQ_T_IP },
+            { REQ_T_IP, REQ_T_IP_PREFIX, },
             {
                 { "state",  REQ_T_STRING },
             },
