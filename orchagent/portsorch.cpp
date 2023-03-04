@@ -61,6 +61,7 @@ extern event_handle_t g_events_handle;
 #define VLAN_PREFIX         "Vlan"
 #define DEFAULT_VLAN_ID     1
 #define MAX_VALID_VLAN_ID   4094
+#define DEFAULT_HOSTIF_TX_QUEUE 7
 
 #define PORT_SPEED_LIST_DEFAULT_SIZE                     16
 #define PORT_STATE_POLLING_SEC                            5
@@ -2599,6 +2600,10 @@ bool PortsOrch::createVlanHostIntf(Port& vl, string hostif_name)
     attr.value.chardata[SAI_HOSTIF_NAME_SIZE - 1] = '\0';
     attrs.push_back(attr);
 
+    attr.id = SAI_HOSTIF_ATTR_QUEUE;
+    attr.value.u32 = DEFAULT_HOSTIF_TX_QUEUE;
+    attrs.push_back(attr);
+
     sai_status_t status = sai_hostif_api->create_hostif(&vl.m_vlan_info.host_intf_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -4834,6 +4839,10 @@ bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_int
         SWSS_LOG_WARN("Host interface name %s is too long and will be truncated to %d bytes", alias.c_str(), SAI_HOSTIF_NAME_SIZE - 1);
     }
     attr.value.chardata[SAI_HOSTIF_NAME_SIZE - 1] = '\0';
+    attrs.push_back(attr);
+
+    attr.id = SAI_HOSTIF_ATTR_QUEUE;
+    attr.value.u32 = DEFAULT_HOSTIF_TX_QUEUE;
     attrs.push_back(attr);
 
     sai_status_t status = sai_hostif_api->create_hostif(&host_intfs_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
