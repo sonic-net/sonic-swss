@@ -14,6 +14,7 @@ using namespace swss;
 #define BFD_SESSION_DEFAULT_TX_INTERVAL 1000
 #define BFD_SESSION_DEFAULT_RX_INTERVAL 1000
 #define BFD_SESSION_DEFAULT_DETECT_MULTIPLIER 10
+#define BFD_SESSION_DEFAULT_TOS_ECN 192 // default value of 48 <<2. higher 6 bits are TOS and lower 2 are ECN = 0
 #define BFD_SESSION_MILLISECOND_TO_MICROSECOND 1000
 #define BFD_SRCPORTINIT 49152
 #define BFD_SRCPORTMAX 65536
@@ -244,7 +245,7 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     uint32_t rx_interval = BFD_SESSION_DEFAULT_RX_INTERVAL;
     uint8_t multiplier = BFD_SESSION_DEFAULT_DETECT_MULTIPLIER;
     bool multihop = false;
-    uint8_t tos = 192; // default value of 48 <<2. higher 6 bits are TOS and lower 2 are ECN = 0
+    uint8_t tos = BFD_SESSION_DEFAULT_TOS_ECN;
     MacAddress dst_mac;
     bool dst_mac_provided = false;
     bool src_ip_provided = false;
