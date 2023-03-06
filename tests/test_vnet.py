@@ -460,7 +460,7 @@ def update_monitor_session_state(dvs, addr, monitor, state):
     state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
     create_entry_tbl(
         state_db,
-        "VNET_MONITOR_TABLE", '|', "%s|%s" % (addr,monitor),
+        "VNET_MONITOR_TABLE", '|', "%s|%s" % (monitor,addr),
         [
             ("state", state),
         ]
@@ -1061,7 +1061,7 @@ class VnetVxlanVrfTunnel(object):
 
     def check_custom_monitor_deleted(self, dvs, prefix, endpoint):
         app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-        key = prefix + ':' + endpoint
+        key = endpoint + ':' + prefix
         check_deleted_object(app_db, self.APP_VNET_MONITOR, key)
     
 class TestVnetOrch(object):

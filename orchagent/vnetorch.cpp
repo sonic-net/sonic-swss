@@ -2328,7 +2328,6 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
         syncd_nexthop_groups_[vnet][nhg_custom].ref_count++;
         syncd_nexthop_groups_[vnet][nhg_custom].tunnel_routes.insert(prefix);
         syncd_tunnel_routes_[vnet][prefix].nhg_key = nhg_custom;
-        SWSS_LOG_ERROR("Updating route");
         if (updateRoute)
         {
             if (nhg_custom.getSize() == 0 && active_nhg_size > 0)
