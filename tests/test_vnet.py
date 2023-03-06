@@ -1513,6 +1513,10 @@ class TestVnetOrch(object):
 
         create_vxlan_tunnel_map(dvs, tunnel_name, 'map_1', 'Vlan1000', '1000')
 
+        delete_vnet_entry(dvs, 'Vnet1')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet1')
+        delete_vxlan_tunnel(dvs, tunnel_name)
+
     '''
     Test 7 - Test for vnet tunnel routes with ECMP nexthop group
     '''
@@ -2538,6 +2542,10 @@ class TestVnetOrch(object):
         #adv should be gone.
         check_remove_routes_advertisement(dvs, "100.100.1.0/24")
 
+        delete_vnet_entry(dvs, 'Vnet18')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet18')
+        delete_vxlan_tunnel(dvs, tunnel_name)
+
     '''
     Test 19 - Test for vxlan custom monitoring with adv_prefix-no monitoring IPV6. temporary
     '''
@@ -2602,6 +2610,10 @@ class TestVnetOrch(object):
 
         #adv should be gone.
         check_remove_routes_advertisement(dvs, "fd:10:10::/64")
+
+        delete_vnet_entry(dvs, 'Vnet19')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet19')
+        delete_vxlan_tunnel(dvs, tunnel_name)
 
     '''
     Test 20 - Test for vxlan custom monitoring with adv_prefix-no monitoring temporary. Add route twice and change nexthops case
@@ -2673,6 +2685,10 @@ class TestVnetOrch(object):
         #adv should be gone.
         check_remove_routes_advertisement(dvs, "100.100.1.0/24")
 
+        delete_vnet_entry(dvs, 'Vnet20')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet20')
+        delete_vxlan_tunnel(dvs, tunnel_name)
+
     '''
     Test 21 - Test duplicate route addition and removal.
     '''
@@ -2728,12 +2744,12 @@ class TestVnetOrch(object):
         check_syslog(dvs, marker, log_string)
 
         # remove route entry
-        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route 100.100.1.1/32 10.10.10.1\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route 100.100.1.0/24 10.10.10.2\"")
 
         # delete vnet route
-        delete_vnet_routes(dvs, "100.100.1.1/32", 'Vnet_2000')
+        delete_vnet_routes(dvs, "100.100.1.0/24", 'Vnet_2000')
         vnet_obj.check_del_vnet_routes(dvs, 'Vnet_2000')
-        check_remove_state_db_routes(dvs, 'Vnet_2000', "100.100.1.1/32")
+        check_remove_state_db_routes(dvs, 'Vnet_2000', "100.100.1.0/24")
 
         # delete vnet
         delete_vnet_entry(dvs, 'Vnet_2000')
