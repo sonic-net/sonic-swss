@@ -14,8 +14,8 @@ using namespace swss;
 #define BFD_SESSION_DEFAULT_TX_INTERVAL 1000
 #define BFD_SESSION_DEFAULT_RX_INTERVAL 1000
 #define BFD_SESSION_DEFAULT_DETECT_MULTIPLIER 10
-// TOS: default 6-bit DSCP value 46, default 2-bit ecn value 0. 46<<2 = 184
-#define BFD_SESSION_DEFAULT_TOS 184
+// TOS: default 6-bit DSCP value 48, default 2-bit ecn value 0. 48<<2 = 192
+#define BFD_SESSION_DEFAULT_TOS 192
 #define BFD_SESSION_MILLISECOND_TO_MICROSECOND 1000
 #define BFD_SRCPORTINIT 49152
 #define BFD_SRCPORTMAX 65536
