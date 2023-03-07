@@ -822,7 +822,6 @@ void MuxNbrHandler::removeNeighborRoutes(NextHopKey nh)
         for (auto rt = routes.begin(); rt != routes.end(); rt++)
         {
             SWSS_LOG_INFO("Removing multi-nexthop route for %s", rt->prefix.to_string().c_str());
-            return false;
             /* get nexthop group key from syncd */
             nhg_key = gRouteOrch->getSyncdRouteNhgKey(gVirtualRouterId, rt->prefix);
 

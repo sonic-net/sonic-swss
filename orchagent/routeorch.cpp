@@ -2284,7 +2284,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
                 ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
     }
 
-    m_syncdRoutes[vrf_id][ipPrefix] = nextHops;
+    m_syncdRoutes[vrf_id][ipPrefix] = RouteNhg(nextHops, ctx.nhg_index);
 
     MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
     if (ctx.nhg_index.empty() && nextHops.getSize() == 1 && !nextHops.is_overlay_nexthop() && !nextHops.is_srv6_nexthop())
@@ -2295,7 +2295,8 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         {
             addNextHopRoute(nexthop, r_key);
         }
-    } else if (mux_orch->isMuxNexthops(nextHops))
+    }
+    else if (mux_orch->isMuxNexthops(nextHops))
     {
         RouteKey routekey = { vrf_id, ipPrefix };
         auto nexthop_list = nextHops.getNextHops();
@@ -2319,8 +2320,6 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
     {
         gFlowCounterRouteOrch->handleRouteAdd(vrf_id, ipPrefix);
     }
-
-    m_syncdRoutes[vrf_id][ipPrefix] = RouteNhg(nextHops, ctx.nhg_index);
 
     notifyNextHopChangeObservers(vrf_id, ipPrefix, nextHops, true);
 
