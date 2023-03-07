@@ -55,6 +55,7 @@ private:
     // class shared dict: ACL table name -> ACL table
     static std::map<std::string, AclTable> acl_table_;
     sai_object_id_t port_ = SAI_NULL_OBJECT_ID;
+    bool is_ingress_acl_ = true;
     string alias_;
 };
 
@@ -211,6 +212,7 @@ public:
     sai_object_id_t getNextHopTunnelId(std::string tunnelKey, IpAddress& ipAddr);
 
     void updateRoute(const IpPrefix &pfx, bool remove);
+    bool isStandaloneTunnelRouteInstalled(const IpAddress& neighborIp);
 
 private:
     virtual bool addOperation(const Request& request);

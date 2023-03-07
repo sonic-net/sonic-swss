@@ -563,6 +563,8 @@ bool MuxCable::isIpInSubnet(IpAddress ip)
 bool MuxCable::nbrHandler(bool enable, bool update_rt)
 {
     bool ret;
+    SWSS_LOG_NOTICE("Processing neighbors for mux %s, enable %d, state %d",
+                     mux_name_.c_str(), enable, state_);
     if (enable)
     {
         ret = nbr_handler_->enable(update_rt);
@@ -584,6 +586,8 @@ bool MuxCable::nbrHandler(bool enable, bool update_rt)
 
 void MuxCable::updateNeighbor(NextHopKey nh, bool add)
 {
+    SWSS_LOG_NOTICE("Processing update on neighbor %s for mux %s, add %d, state %d",
+                     nh.ip_address.to_string().c_str(), mux_name_.c_str(), add, state_);
     sai_object_id_t tnh = mux_orch_->getNextHopTunnelId(MUX_TUNNEL, peer_ip4_);
     nbr_handler_->update(nh, tnh, add, state_);
     if (add)
@@ -880,8 +884,14 @@ MuxAclHandler::MuxAclHandler(sai_object_id_t port, string alias)
 {
     SWSS_LOG_ENTER();
 
+    string value;
+    shared_ptr<DBConnector> m_config_db = shared_ptr<DBConnector>(new DBConnector("CONFIG_DB", 0));
+    unique_ptr<Table> m_systemDefaultsTable = unique_ptr<Table>(new Table(m_config_db.get(), "SYSTEM_DEFAULTS"));
+    m_systemDefaultsTable->hget("mux_tunnel_egress_acl", "status", value);
+    is_ingress_acl_ = value != "enabled";
+
     // There is one handler instance per MUX port
-    string table_name = MUX_ACL_TABLE_NAME;
+    string table_name = is_ingress_acl_ ? MUX_ACL_TABLE_NAME : EGRESS_TABLE_DROP;
     string rule_name = MUX_ACL_RULE_NAME;
 
     port_ = port;
@@ -919,7 +929,7 @@ MuxAclHandler::MuxAclHandler(sai_object_id_t port, string alias)
 MuxAclHandler::~MuxAclHandler(void)
 {
     SWSS_LOG_ENTER();
-    string table_name = MUX_ACL_TABLE_NAME;
+    string table_name = is_ingress_acl_ ? MUX_ACL_TABLE_NAME : EGRESS_TABLE_DROP;
     string rule_name = MUX_ACL_RULE_NAME;
 
     SWSS_LOG_NOTICE("Un-Binding port %" PRIx64 "", port_);
@@ -965,7 +975,7 @@ void MuxAclHandler::createMuxAclTable(sai_object_id_t port, string strTable)
     auto dropType = gAclOrch->getAclTableType(TABLE_TYPE_DROP);
     assert(dropType);
     acl_table.validateAddType(*dropType);
-    acl_table.stage = ACL_STAGE_INGRESS;
+    acl_table.stage = is_ingress_acl_ ? ACL_STAGE_INGRESS : ACL_STAGE_EGRESS;
     gAclOrch->addAclTable(acl_table);
     bindAllPorts(acl_table);
 }
@@ -1282,7 +1292,7 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
         return;
     }
 
-    auto standalone_tunnel_neigh_it = standalone_tunnel_neighbors_.find(update.entry.ip_address);
+    bool is_tunnel_route_installed = isStandaloneTunnelRouteInstalled(update.entry.ip_address);
     // Handling zero MAC neighbor updates
     if (!update.mac)
     {
@@ -1293,7 +1303,7 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
 
         if (update.add)
         {
-            if (standalone_tunnel_neigh_it == standalone_tunnel_neighbors_.end())
+            if (!is_tunnel_route_installed)
             {
                 createStandaloneTunnelRoute(update.entry.ip_address);
             }
@@ -1308,7 +1318,7 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
      * make sure to remove any existing tunnel routes to prevent conflicts.
      * This block also covers the case of neighbor deletion.
      */
-    if (standalone_tunnel_neigh_it != standalone_tunnel_neighbors_.end())
+    if (is_tunnel_route_installed)
     {
         removeStandaloneTunnelRoute(update.entry.ip_address);
     }
@@ -1679,6 +1689,11 @@ void MuxOrch::removeStandaloneTunnelRoute(IpAddress neighborIp)
     IpPrefix pfx = neighborIp.to_string();
     remove_route(pfx);
     standalone_tunnel_neighbors_.erase(neighborIp);
+}
+
+bool MuxOrch::isStandaloneTunnelRouteInstalled(const IpAddress& neighborIp)
+{
+    return standalone_tunnel_neighbors_.find(neighborIp) != standalone_tunnel_neighbors_.end();
 }
 
 MuxCableOrch::MuxCableOrch(DBConnector *db, DBConnector *sdb, const std::string& tableName):

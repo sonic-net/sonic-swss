@@ -52,6 +52,14 @@ const map<string, sai_my_sid_entry_endpoint_behavior_flavor_t> end_flavor_map =
     {"ua",                 SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD}
 };
 
+const map<string, sai_srv6_sidlist_type_t> sidlist_type_map =
+{
+    {"insert",             SAI_SRV6_SIDLIST_TYPE_INSERT},
+    {"insert.red",         SAI_SRV6_SIDLIST_TYPE_INSERT_RED},
+    {"encaps",             SAI_SRV6_SIDLIST_TYPE_ENCAPS},
+    {"encaps.red",         SAI_SRV6_SIDLIST_TYPE_ENCAPS_RED}
+};
+
 void Srv6Orch::srv6TunnelUpdateNexthops(const string srv6_source, const NextHopKey nhkey, bool insert)
 {
     if (insert)
@@ -267,7 +275,7 @@ bool Srv6Orch::srv6Nexthops(const NextHopGroupKey &nhgKey, sai_object_id_t &next
     return true;
 }
 
-bool Srv6Orch::createUpdateSidList(const string sid_name, const string sid_list)
+bool Srv6Orch::createUpdateSidList(const string sid_name, const string sid_list, const string sidlist_type)
 {
     SWSS_LOG_ENTER();
     bool exists = (sid_table_.find(sid_name) != sid_table_.end());
@@ -303,7 +311,16 @@ bool Srv6Orch::createUpdateSidList(const string sid_name, const string sid_list)
         attributes.push_back(attr);
 
         attr.id = SAI_SRV6_SIDLIST_ATTR_TYPE;
-        attr.value.s32 = SAI_SRV6_SIDLIST_TYPE_ENCAPS_RED;
+        if (sidlist_type_map.find(sidlist_type) == sidlist_type_map.end())
+        {
+            SWSS_LOG_INFO("Use default sidlist type: ENCAPS_RED");
+            attr.value.s32 = SAI_SRV6_SIDLIST_TYPE_ENCAPS_RED;
+        }
+        else
+        {
+            SWSS_LOG_INFO("sidlist type: %s", sidlist_type.c_str());
+            attr.value.s32 = sidlist_type_map.at(sidlist_type);
+        }
         attributes.push_back(attr);
         status = sai_srv6_api->create_srv6_sidlist(&segment_oid, gSwitchId, (uint32_t) attributes.size(), attributes.data());
         if (status != SAI_STATUS_SUCCESS)
@@ -365,7 +382,7 @@ void Srv6Orch::doTaskSidTable(const KeyOpFieldsValuesTuple & tuple)
     SWSS_LOG_ENTER();
     string sid_name = kfvKey(tuple);
     string op = kfvOp(tuple);
-    string sid_list;
+    string sid_list, sidlist_type;
 
     for (auto i : kfvFieldsValues(tuple))
     {
@@ -373,10 +390,14 @@ void Srv6Orch::doTaskSidTable(const KeyOpFieldsValuesTuple & tuple)
         {
           sid_list = fvValue(i);
         }
+        if (fvField(i) == "type")
+        {
+          sidlist_type = fvValue(i);
+        }
     }
     if (op == SET_COMMAND)
     {
-        if (!createUpdateSidList(sid_name, sid_list))
+        if (!createUpdateSidList(sid_name, sid_list, sidlist_type))
         {
           SWSS_LOG_ERROR("Failed to process sid %s", sid_name.c_str());
         }

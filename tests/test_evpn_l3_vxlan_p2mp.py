@@ -202,6 +202,7 @@ class TestL3VxlanP2MP(object):
         print ("\n\nTesting IPv4 Route and Overlay Nexthop Add and Delete")
         print ("\tCreate SIP Tunnel")
         vxlan_obj.create_vlan1(dvs,"Vlan100")
+        vxlan_obj.check_vlan_obj(dvs, "100")
         vxlan_obj.create_vxlan_tunnel(dvs, tunnel_name, '6.6.6.6')
         vxlan_obj.create_evpn_nvo(dvs, 'nvo1', tunnel_name)
 
@@ -242,19 +243,6 @@ class TestL3VxlanP2MP(object):
 
         print ("\tTesting Tunnel Vrf Map Entry")
         vxlan_obj.check_vxlan_tunnel_vrf_map_entry(dvs, tunnel_name, 'Vrf-RED', '1000')
-
-        print ("\tTesting First Remote end point to 7.7.7.7")
-        vxlan_obj.create_evpn_remote_vni(dvs, 'Vlan100', '7.7.7.7', '1000')
-
-        print ("\tTesting VLAN 100 extension")
-        vxlan_obj.check_vlan_extension_p2mp(dvs, '100', '6.6.6.6', '7.7.7.7')
-
-        print ("\tTesting Second remote end point to 8.8.8.8")
-        vxlan_obj.create_evpn_remote_vni(dvs, 'Vlan100', '8.8.8.8', '1000')
-
-        print ("\tTesting VLAN 100 extension to 8.8.8.8 and 7.7.7.7")
-        vxlan_obj.check_vlan_extension_p2mp(dvs, '100', '6.6.6.6', '8.8.8.8')
-        vxlan_obj.check_vlan_extension_p2mp(dvs, '100', '6.6.6.6', '7.7.7.7')
 
         print ("\tTesting VLAN 100 interface creation")
         vxlan_obj.create_vlan_interface(dvs, "Vlan100", "Ethernet24", "Vrf-RED", "100.100.3.1/24")
@@ -362,14 +350,6 @@ class TestL3VxlanP2MP(object):
         vxlan_obj.remove_vxlan_vrf_tunnel_map(dvs, 'Vrf-RED')
         vxlan_obj.check_vxlan_tunnel_vrf_map_entry_remove(dvs, tunnel_name, 'Vrf-RED', '1000')
 
-        print ("\tTesting LastVlan removal and remote end point delete for 7.7.7.7")
-        vxlan_obj.remove_evpn_remote_vni(dvs, 'Vlan100', '7.7.7.7')
-        vxlan_obj.check_vlan_extension_delete_p2mp(dvs, '100', '6.6.6.6', '7.7.7.7')
-
-        print ("\tTesting LastVlan removal and remote end point delete for 8.8.8.8")
-        vxlan_obj.remove_evpn_remote_vni(dvs, 'Vlan100', '8.8.8.8')
-        vxlan_obj.check_vlan_extension_delete_p2mp(dvs, '100', '6.6.6.6', '8.8.8.8')
-
         print ("\tTesting Vlan 100 interface delete")
         vxlan_obj.delete_vlan_interface(dvs, "Vlan100", "100.100.3.1/24")
         vxlan_obj.check_del_router_interface(dvs, "Vlan100")
@@ -405,6 +385,7 @@ class TestL3VxlanP2MP(object):
         print ("\n\nTesting IPv6 Route and Overlay Nexthop Add and Delete")
         print ("\tCreate SIP Tunnel")
         vxlan_obj.create_vlan1(dvs,"Vlan100")
+        vxlan_obj.check_vlan_obj(dvs, "100")
         vxlan_obj.create_vxlan_tunnel(dvs, tunnel_name, '6.6.6.6')
         vxlan_obj.create_evpn_nvo(dvs, 'nvo1', tunnel_name)
 
@@ -446,19 +427,6 @@ class TestL3VxlanP2MP(object):
 
         print ("\tTesting Tunnel Vrf Map Entry")
         vxlan_obj.check_vxlan_tunnel_vrf_map_entry(dvs, tunnel_name, 'Vrf-RED', '1000')
-
-        print ("\tTesting First remote endpoint creation to 7.7.7.7")
-        vxlan_obj.create_evpn_remote_vni(dvs, 'Vlan100', '7.7.7.7', '1000')
-
-        print ("\tTesting VLAN 100 extension")
-        vxlan_obj.check_vlan_extension_p2mp(dvs, '100', '6.6.6.6', '7.7.7.7')
-
-        print ("\tTesting Second remote endpoint creation to 8.8.8.8")
-        vxlan_obj.create_evpn_remote_vni(dvs, 'Vlan100', '8.8.8.8', '1000')
-
-        print ("\tTesting VLAN 100 extension to 8.8.8.8 and 7.7.7.7")
-        vxlan_obj.check_vlan_extension_p2mp(dvs, '100', '6.6.6.6', '8.8.8.8')
-        vxlan_obj.check_vlan_extension_p2mp(dvs, '100', '6.6.6.6', '7.7.7.7')
 
         vxlan_obj.fetch_exist_entries(dvs)
         print ("\tTesting VLAN 100 interface creation")
@@ -567,14 +535,6 @@ class TestL3VxlanP2MP(object):
         vxlan_obj.remove_vxlan_vrf_tunnel_map(dvs, 'Vrf-RED')
         vxlan_obj.check_vxlan_tunnel_vrf_map_entry_remove(dvs, tunnel_name, 'Vrf-RED', '1000')
 
-        print ("\tTesting LastVlan removal and remote endpoint delete for 7.7.7.7")
-        vxlan_obj.remove_evpn_remote_vni(dvs, 'Vlan100', '7.7.7.7')
-        vxlan_obj.check_vlan_extension_delete_p2mp(dvs, '100', '6.6.6.6', '7.7.7.7')
-
-        print ("\tTesting LastVlan removal and remote endpoint delete for 8.8.8.8")
-        vxlan_obj.remove_evpn_remote_vni(dvs, 'Vlan100', '8.8.8.8')
-        vxlan_obj.check_vlan_extension_delete_p2mp(dvs, '100', '6.6.6.6', '8.8.8.8')
-
         print ("\tTesting Vlan 100 interface delete")
         vxlan_obj.delete_vlan_interface(dvs, "Vlan100", "2001::8/64")
         vxlan_obj.check_del_router_interface(dvs, "Vlan100")
@@ -593,6 +553,95 @@ class TestL3VxlanP2MP(object):
         vxlan_obj.remove_vlan_member(dvs, "100", "Ethernet24")
         vxlan_obj.remove_vlan(dvs, "100")
 
+    def test_prefix_route_create_on_l2_vni(self, dvs, testlog):
+        vxlan_obj = self.get_vxlan_obj()
+        helper = self.get_vxlan_helper()
+
+        self.setup_db(dvs)
+        tunnel_name = 'tunnel_2'
+        map_name = 'map_1000_100'
+        vrf_map_name = 'evpn_map_1000_Vrf-RED'
+        vxlan_obj.fetch_exist_entries(dvs)
+
+        print ("\tCreate SIP Tunnel")
+        vlan_ids = vxlan_obj.helper.get_exist_entries(dvs, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        vlan_oid = vxlan_obj.create_vlan(dvs,"Vlan100", vlan_ids)
+        vxlan_obj.check_vlan_obj(dvs, "100")
+        vxlan_obj.create_vxlan_tunnel(dvs, tunnel_name, '6.6.6.6')
+        vxlan_obj.create_evpn_nvo(dvs, 'nvo1', tunnel_name)
+
+        print ("\tCreate Vlan-VNI map")
+        vxlan_obj.create_vxlan_tunnel_map(dvs, tunnel_name, map_name, '1000', 'Vlan100')
+
+        print ("\tTesting VRF-VNI map in APP DB")
+        vxlan_obj.create_vrf(dvs, "Vrf-RED")
+
+        vlanlist = ['100']
+        vnilist = ['1000']
+
+        print ("\tTesting SIP Tunnel Creation")
+        vxlan_obj.check_vxlan_sip_tunnel(dvs, tunnel_name, '6.6.6.6', vlanlist, vnilist, ignore_bp=False, tunnel_map_entry_count=1)
+
+        print ("\tTesting VLAN 100 interface creation")
+        vxlan_obj.create_vlan_interface(dvs, "Vlan100", "Ethernet24", "Vrf-RED", "100.100.3.1/24")
+        vxlan_obj.check_router_interface(dvs, 'Vrf-RED', vlan_oid, 2)
+
+        print ("\tTest if IPv4 Route with Tunnel Nexthop Add is not created")
+        vxlan_obj.create_vrf_route(dvs, "80.80.1.0/24", 'Vrf-RED', '7.7.7.7', "Vlan100", "00:11:11:11:11:11", '1000')
+        vxlan_obj.check_vrf_routes_absence(dvs, "80.80.1.0/24", 'Vrf-RED', '7.7.7.7', tunnel_name, "00:11:11:11:11:11", '1000')
+
+        print ("\tCreate Vlan-VNI map and VRF-VNI map")
+        vxlan_obj.create_vxlan_vrf_tunnel_map(dvs, 'Vrf-RED', '1000')
+
+        exp_attrs = [
+                ("vni", "1000"),
+        ]
+        exp_attr = {}
+        for an in range(len(exp_attrs)):
+            exp_attr[exp_attrs[an][0]] = exp_attrs[an][1]
+
+        helper.check_object(self.pdb, "VRF_TABLE", 'Vrf-RED', exp_attr)
+
+        exp_attrs1 = [
+                ("vni", "1000"),
+                ("vlan", "Vlan100"),
+        ]
+        exp_attr1 = {}
+        for an in range(len(exp_attrs1)):
+            exp_attr1[exp_attrs1[an][0]] = exp_attrs1[an][1]
+
+        helper.check_object(self.pdb, "VXLAN_VRF_TABLE", "%s:%s" % (tunnel_name, vrf_map_name), exp_attr1)
+        vxlan_obj.check_vxlan_tunnel_map_entry_removed(dvs, tunnel_name, vlanlist, vnilist)
+        vxlan_obj.check_vxlan_tunnel_vrf_map_entry(dvs, tunnel_name, 'Vrf-RED', '1000')
+        print ("\tTest VRF IPv4 Route with Tunnel Nexthop Add")
+        vxlan_obj.check_vrf_routes(dvs, "80.80.1.0/24", 'Vrf-RED', '7.7.7.7', tunnel_name, "00:11:11:11:11:11", '1000')
+
+        print ("\tTest VRF IPv4 Route with Tunnel Nexthop Delete")
+        vxlan_obj.delete_vrf_route(dvs, "80.80.1.0/24", 'Vrf-RED')
+        vxlan_obj.check_del_tunnel_nexthop(dvs, 'Vrf-RED', '7.7.7.7', tunnel_name, "00:11:11:11:11:11", '1000')
+        vxlan_obj.check_del_vrf_routes(dvs, "80.80.1.0/24", 'Vrf-RED')
+
+        print ("\tTesting Tunnel Vrf Map Entry removal")
+        vxlan_obj.remove_vxlan_vrf_tunnel_map(dvs, 'Vrf-RED')
+        vxlan_obj.check_vxlan_tunnel_vrf_map_entry_remove(dvs, tunnel_name, 'Vrf-RED', '1000')
+
+        print ("\tTesting Vlan 100 interface delete")
+        vxlan_obj.delete_vlan_interface(dvs, "Vlan100", "100.100.3.1/24")
+        vxlan_obj.check_del_router_interface(dvs, "Vlan100")
+
+        print ("\tTesting Tunnel Map entry removal")
+        vxlan_obj.check_vxlan_tunnel_map_entry(dvs, tunnel_name, vlanlist, vnilist)
+        vxlan_obj.remove_vxlan_tunnel_map(dvs, tunnel_name, map_name, '1000', 'Vlan100')
+        vxlan_obj.check_vxlan_tunnel_map_entry_delete(dvs, tunnel_name, vlanlist, vnilist)
+
+        print ("\tTesting SIP Tunnel Deletion")
+        vxlan_obj.remove_vxlan_tunnel(dvs, tunnel_name)
+        vxlan_obj.remove_evpn_nvo(dvs, 'nvo1')
+        time.sleep(2)
+        vxlan_obj.check_vxlan_sip_tunnel_delete(dvs, tunnel_name, '6.6.6.6', ignore_bp=False)
+        vxlan_obj.remove_vrf(dvs, "Vrf-RED")
+        vxlan_obj.remove_vlan_member(dvs, "100", "Ethernet24")
+        vxlan_obj.remove_vlan(dvs, "100")
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying

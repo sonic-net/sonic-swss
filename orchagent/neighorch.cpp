@@ -739,17 +739,33 @@ void NeighOrch::doTask(Consumer &consumer)
                     mac_address = MacAddress(fvValue(*i));
             }
 
-            if (m_syncdNeighbors.find(neighbor_entry) == m_syncdNeighbors.end()
-                    || m_syncdNeighbors[neighbor_entry].mac != mac_address)
+            bool nbr_not_found = (m_syncdNeighbors.find(neighbor_entry) == m_syncdNeighbors.end());
+            if (nbr_not_found || m_syncdNeighbors[neighbor_entry].mac != mac_address)
             {
-                // only for unresolvable neighbors that are new
-                if (!mac_address) 
+                if (!mac_address)
                 {
-                    if (m_syncdNeighbors.find(neighbor_entry) == m_syncdNeighbors.end())
+                    if (nbr_not_found)
                     {
-                        addZeroMacTunnelRoute(neighbor_entry, mac_address);
+                        // only for unresolvable neighbors that are new
+                        if (addZeroMacTunnelRoute(neighbor_entry, mac_address))
+                        {
+                            it = consumer.m_toSync.erase(it);
+                        }
+                        else
+                        {
+                            it++;
+                            continue;
+                        }
                     }
-                    it = consumer.m_toSync.erase(it);
+                    else
+                    {
+                        /*
+                         * For neighbors that were previously resolvable but are now unresolvable,
+                         * we expect such neighbor entries to be deleted prior to a zero MAC update
+                         * arriving for that same neighbor.
+                         */
+                        it = consumer.m_toSync.erase(it);
+                    }
                 }
                 else if (addNeighbor(neighbor_entry, mac_address))
                 {
@@ -1755,12 +1771,18 @@ void NeighOrch::updateSrv6Nexthop(const NextHopKey &nh, const sai_object_id_t &n
         m_syncdNextHops.erase(nh);
     }
 }
-void NeighOrch::addZeroMacTunnelRoute(const NeighborEntry& entry, const MacAddress& mac)
+
+bool NeighOrch::addZeroMacTunnelRoute(const NeighborEntry& entry, const MacAddress& mac)
 {
     SWSS_LOG_INFO("Creating tunnel route for neighbor %s", entry.ip_address.to_string().c_str());
     MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
     NeighborUpdate update = {entry, mac, true};
     mux_orch->update(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
-    m_syncdNeighbors[entry] = { mac, false };
-}
+    if (mux_orch->isStandaloneTunnelRouteInstalled(entry.ip_address))
+    {
+        m_syncdNeighbors[entry] = { mac, false };
+        return true;
+    }
 
+    return false;
+}

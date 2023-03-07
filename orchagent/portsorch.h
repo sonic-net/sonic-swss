@@ -387,7 +387,7 @@ private:
     void generateQueueMapPerPort(const Port& port, FlexCounterQueueStates& queuesState, bool voq);
     bool m_isQueueFlexCountersAdded = false;
     void addQueueFlexCountersPerPort(const Port& port, FlexCounterQueueStates& queuesState);
-    void addQueueFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex);
+    void addQueueFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex, bool voq);
 
     bool m_isQueueWatermarkFlexCountersAdded = false;
     void addQueueWatermarkFlexCountersPerPort(const Port& port, FlexCounterQueueStates& queuesState);

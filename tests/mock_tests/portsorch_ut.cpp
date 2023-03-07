@@ -7,6 +7,7 @@
 #include "mock_orchagent_main.h"
 #include "mock_table.h"
 #include "notifier.h"
+#include "mock_sai_bridge.h"
 #define private public
 #include "pfcactionhandler.h"
 #include <sys/mman.h>
@@ -15,6 +16,8 @@
 #include <sstream>
 
 extern redisReply *mockReply;
+using ::testing::_;
+using ::testing::StrictMock;
 
 namespace portsorch_test
 {
@@ -149,6 +152,21 @@ namespace portsorch_test
     void _unhook_sai_queue_api()
     {
         sai_queue_api = pold_sai_queue_api;
+    }
+
+    sai_bridge_api_t ut_sai_bridge_api;
+    sai_bridge_api_t *org_sai_bridge_api;
+
+    void _hook_sai_bridge_api()
+    {
+        ut_sai_bridge_api = *sai_bridge_api;
+        org_sai_bridge_api = sai_bridge_api;
+        sai_bridge_api = &ut_sai_bridge_api;
+    }
+
+    void _unhook_sai_bridge_api()
+    {
+        sai_bridge_api = org_sai_bridge_api;
     }
 
     struct PortsOrchTest : public ::testing::Test
@@ -343,6 +361,48 @@ namespace portsorch_test
         entries.clear();
 
         ASSERT_FALSE(gPortsOrch->getPort(port.m_port_id, port));
+    }
+
+    /**
+     * Test case: PortsOrch::addBridgePort() does not add router port to .1Q bridge
+     */
+    TEST_F(PortsOrchTest, addBridgePortOnRouterPort)
+    {
+        _hook_sai_bridge_api();
+
+        StrictMock<MockSaiBridge> mock_sai_bridge_;
+        mock_sai_bridge = &mock_sai_bridge_;
+        sai_bridge_api->create_bridge_port = mock_create_bridge_port;
+
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        // Populate port table with SAI ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone, PortInitDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+        // Apply configuration : create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // Get first port and set its rif id to simulate it is router port
+        Port port;
+        gPortsOrch->getPort("Ethernet0", port);
+        port.m_rif_id = 1;
+
+        ASSERT_FALSE(gPortsOrch->addBridgePort(port));
+        EXPECT_CALL(mock_sai_bridge_, create_bridge_port(_, _, _, _)).Times(0);
+
+        _unhook_sai_bridge_api();
     }
 
     TEST_F(PortsOrchTest, PortSupportedFecModes)

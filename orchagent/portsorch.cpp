@@ -4886,6 +4886,12 @@ bool PortsOrch::addBridgePort(Port &port)
         return true;
     }
 
+    if (port.m_rif_id != 0)
+    {
+        SWSS_LOG_NOTICE("Cannot create bridge port, interface %s is a router port", port.m_alias.c_str());
+        return false;
+    }
+
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
 
@@ -6163,6 +6169,10 @@ void PortsOrch::generateQueueMapPerPort(const Port& port, FlexCounterQueueStates
         queueVector.emplace_back(name.str(), id);
         if (voq)
         {
+            // Install a flex counter for this voq to track stats. Voq counters do
+            // not have buffer queue config. So it does not get enabled through the
+            // flexcounter orch logic. Always enabled voq counters.
+            addQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, true);
             queuePortVector.emplace_back(id, sai_serialize_object_id(port.m_system_port_oid));
         }
         else
@@ -6178,12 +6188,12 @@ void PortsOrch::generateQueueMapPerPort(const Port& port, FlexCounterQueueStates
     else
     {
         m_queueTable->set("", queueVector);
+        CounterCheckOrch::getInstance().addPort(port);
     }
     m_queuePortTable->set("", queuePortVector);
     m_queueIndexTable->set("", queueIndexVector);
     m_queueTypeTable->set("", queueTypeVector);
 
-    CounterCheckOrch::getInstance().addPort(port);
 }
 
 void PortsOrch::addQueueFlexCounters(map<string, FlexCounterQueueStates> queuesStateVector)
@@ -6224,19 +6234,30 @@ void PortsOrch::addQueueFlexCountersPerPort(const Port& port, FlexCounterQueueSt
                 continue;
             }
             // Install a flex counter for this queue to track stats
-            addQueueFlexCountersPerPortPerQueueIndex(port, queueIndex);
+            addQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, false);
         }
     }
 }
 
-void PortsOrch::addQueueFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex)
+void PortsOrch::addQueueFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex, bool voq)
 {
     std::unordered_set<string> counter_stats;
+    std::vector<sai_object_id_t> queue_ids;
+
     for (const auto& it: queue_stat_ids)
     {
         counter_stats.emplace(sai_serialize_queue_stat(it));
     }
-    queue_stat_manager.setCounterIdList(port.m_queue_ids[queueIndex], CounterType::QUEUE, counter_stats);
+    if (voq)
+    {
+        queue_ids = m_port_voq_ids[port.m_alias];
+    }
+    else
+    {
+        queue_ids = port.m_queue_ids;
+    }
+
+    queue_stat_manager.setCounterIdList(queue_ids[queueIndex], CounterType::QUEUE, counter_stats);
 }
 
 
@@ -6344,7 +6365,7 @@ void PortsOrch::createPortBufferQueueCounters(const Port &port, string queues)
         if (flexCounterOrch->getQueueCountersState())
         {
             // Install a flex counter for this queue to track stats
-            addQueueFlexCountersPerPortPerQueueIndex(port, queueIndex);
+            addQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, false);
         }
         if (flexCounterOrch->getQueueWatermarkCountersState())
         {

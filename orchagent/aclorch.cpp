@@ -3188,6 +3188,7 @@ void AclOrch::initDefaultTableTypes()
         builder.withName(TABLE_TYPE_DROP)
             .withBindPointType(SAI_ACL_BIND_POINT_TYPE_PORT)
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TC))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS))
             .build()
     );
 
