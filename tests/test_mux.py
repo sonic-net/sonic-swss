@@ -1357,7 +1357,7 @@ class TestMuxTunnel(TestMuxTunnelBase):
         mac = intf_fdb_map["Ethernet0"]
 
         # get tunnel nexthop
-        self.check_tnl_nexthop_in_asic_db(asicdb)
+        self.check_tnl_nexthop_in_asic_db(asicdb, 5)
 
         self.create_and_test_NH_routes(appdb, asicdb, dvs, dvs_route, mac)
 
