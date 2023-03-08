@@ -2710,9 +2710,9 @@ class TestVnetOrch(object):
         vnet_obj.fetch_exist_entries(dvs)
 
         # create vnet route
-        create_vnet_routes(dvs, "100.100.1.0/24", 'Vnet_2000', '10.10.10.2')
-        vnet_obj.check_vnet_routes(dvs, 'Vnet_2000', '10.10.10.2', tunnel_name)
-        check_state_db_routes(dvs, 'Vnet_2000', "100.100.1.0/24", ['10.10.10.2'])
+        create_vnet_routes(dvs, "100.100.1.0/24", 'Vnet_2000', '10.10.10.3')
+        vnet_obj.check_vnet_routes(dvs, 'Vnet_2000', '10.10.10.3', tunnel_name)
+        check_state_db_routes(dvs, 'Vnet_2000', "100.100.1.0/24", ['10.10.10.3'])
         time.sleep(2)
 
         # create l3 interface
@@ -2725,14 +2725,14 @@ class TestVnetOrch(object):
         self.set_admin_status("Ethernet0", "up")
 
         # set ip address and default route
-        dvs.servers[0].runcmd("ip address add 10.10.10.2/24 dev eth0")
+        dvs.servers[0].runcmd("ip address add 10.10.10.3/24 dev eth0")
         dvs.servers[0].runcmd("ip route add default via 10.10.10.1")
 
         marker = dvs.add_log_marker("/var/log/syslog")
         time.sleep(2)
 
         # add another route for same prefix as vnet route
-        dvs.runcmd("vtysh -c \"configure terminal\" -c \"ip route 100.100.1.0/24 10.10.10.2\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"ip route 100.100.1.0/24 10.10.10.3\"")
 
         # check application database
         self.pdb.wait_for_entry("ROUTE_TABLE", "100.100.1.0/24")
@@ -2744,7 +2744,7 @@ class TestVnetOrch(object):
         check_syslog(dvs, marker, log_string)
 
         # remove route entry
-        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route 100.100.1.0/24 10.10.10.2\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route 100.100.1.0/24 10.10.10.3\"")
 
         # delete vnet route
         delete_vnet_routes(dvs, "100.100.1.0/24", 'Vnet_2000')
