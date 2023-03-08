@@ -108,6 +108,29 @@ class TestAcl:
             # Verify the STATE_DB entry is removed
             dvs_acl.verify_acl_table_status(L3_TABLE_NAME, None)
 
+    def test_InvalidAclTableCreationDeletion(self, dvs_acl):
+        try:
+            dvs_acl.create_acl_table("INVALID_ACL_TABLE", L3_TABLE_TYPE, "dummy_port", "invalid_stage")
+            # Verify status is written into STATE_DB
+            dvs_acl.verify_acl_table_status("INVALID_ACL_TABLE", "Inactive")
+        finally:
+            dvs_acl.remove_acl_table("INVALID_ACL_TABLE")
+            dvs_acl.verify_acl_table_count(0)
+            # Verify the STATE_DB entry is removed
+            dvs_acl.verify_acl_table_status("INVALID_ACL_TABLE", None)
+
+    def test_InvalidAclRuleCreation(self, dvs_acl, l3_acl_table):
+        config_qualifiers = {"INVALID_QUALIFIER": "TEST"}
+
+        dvs_acl.create_acl_rule(L3_TABLE_NAME, "INVALID_RULE", config_qualifiers)
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, "INVALID_RULE", "Inactive")
+
+        dvs_acl.remove_acl_rule(L3_TABLE_NAME, "INVALID_RULE")
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, "INVALID_RULE", None)
+        dvs_acl.verify_no_acl_rules()
+
     def test_AclRuleL4SrcPort(self, dvs_acl, l3_acl_table):
         config_qualifiers = {"L4_SRC_PORT": "65000"}
         expected_sai_qualifiers = {

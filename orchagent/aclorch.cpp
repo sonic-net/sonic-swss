@@ -4345,6 +4345,7 @@ void AclOrch::doAclTableTask(Consumer &consumer)
                     {
                         SWSS_LOG_NOTICE("Successfully updated existing ACL table %s",
                                         table_id.c_str());
+                        // Mark ACL table as ACTIVE
                         setAclTableStatus(table_id, AclObjectStatus::ACTIVE);
                         it = consumer.m_toSync.erase(it);
                     }
@@ -4352,8 +4353,6 @@ void AclOrch::doAclTableTask(Consumer &consumer)
                     {
                         SWSS_LOG_ERROR("Failed to update existing ACL table %s",
                                         table_id.c_str());
-                        // For now, updateAclTable always return true. So we should never reach here
-                        setAclTableStatus(table_id, AclObjectStatus::INACTIVE);
                         it++;
                     }
                 }
@@ -4361,6 +4360,7 @@ void AclOrch::doAclTableTask(Consumer &consumer)
                 {
                     if (addAclTable(newTable))
                     {
+                        // Mark ACL table as ACTIVE
                         setAclTableStatus(table_id, AclObjectStatus::ACTIVE);
                         it = consumer.m_toSync.erase(it);
                     }
@@ -4384,6 +4384,7 @@ void AclOrch::doAclTableTask(Consumer &consumer)
         {
             if (removeAclTable(table_id))
             {
+                // Remove ACL table status from STATE_DB
                 removeAclTableStatus(table_id);
                 it = consumer.m_toSync.erase(it);
             }
