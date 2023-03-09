@@ -2915,7 +2915,14 @@ AclRange *AclRange::create(sai_acl_range_type_t type, int min, int max)
                 return NULL;
             }
         }
-
+        else if (platform && strstr(platform, CLX_PLATFORM_SUBSTRING))
+        {
+            if (m_ranges.size() >= CLNX_MAX_RANGES_COUNT)
+            {
+                SWSS_LOG_ERROR("Maximum numbers of ACL ranges reached");
+                return NULL;
+            }
+        }
         attr.id = SAI_ACL_RANGE_ATTR_TYPE;
         attr.value.s32 = type;
         range_attrs.push_back(attr);
@@ -3032,7 +3039,8 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
             platform == INVM_PLATFORM_SUBSTRING ||
             platform == NPS_PLATFORM_SUBSTRING ||
             platform == XS_PLATFORM_SUBSTRING ||
-            platform == VS_PLATFORM_SUBSTRING)
+            platform == VS_PLATFORM_SUBSTRING ||
+	    platform == CLX_PLATFORM_SUBSTRING)
     {
         m_mirrorTableCapabilities =
         {
