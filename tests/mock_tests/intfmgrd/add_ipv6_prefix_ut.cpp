@@ -26,6 +26,15 @@ int cb(const std::string &cmd, std::string &stdout){
     return 0;
 }
 
+
+int cb2(const std::string &cmd, std::string &stdout){
+    if (cmd == "/sbin/ip link set \"Ethernet64.10\" \"up\""){
+        return 1;
+    }
+    return 0;
+}
+
+
 // Test Fixture
 namespace add_ipv6_prefix_ut
 {
@@ -105,5 +114,21 @@ namespace add_ipv6_prefix_ut
             }
         }
         ASSERT_EQ(ip_cmd_called, 1);
+    }
+
+    TEST_F(IntfMgrTest, testEden){
+        callback = cb2;
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        intfmgr.setHostSubIntfAdminStatus("Ethernet64.10", "up", "up");
+    }
+
+    TEST_F(IntfMgrTest, testEden2){
+        callback = cb2;
+        swss::IntfMgr intfmgr(m_config_db.get(), m_app_db.get(), m_state_db.get(), cfg_intf_tables);
+        /* Set portStateTable */
+        std::vector<swss::FieldValueTuple> values;
+        values.emplace_back("state", "ok");
+        intfmgr.m_statePortTable.set("Ethernet64.10", values, "SET", "");
+        EXPECT_THROW(intfmgr.setHostSubIntfAdminStatus("Ethernet64.10", "up", "up"), std::runtime_error);
     }
 }
