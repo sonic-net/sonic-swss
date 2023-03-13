@@ -153,7 +153,7 @@ tests_portsyncd_LDADD = $(LDADD_GTEST) -lnl-genl-3 -lhiredis -lhiredis \
 
 ## intfmgrd unit tests
 
-tests_intfmgrd_SOURCES = intfmgrd/add_ipv6_prefix_ut.cpp \
+tests_intfmgrd_SOURCES = intfmgrd/intfmgr_ut.cpp \
                          $(top_srcdir)/cfgmgr/intfmgr.cpp \
                          $(top_srcdir)/lib/subintf.cpp \
                          $(top_srcdir)/orchagent/orch.cpp \
