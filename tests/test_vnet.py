@@ -1683,6 +1683,7 @@ class TestVnetOrch(object):
 
         delete_vnet_entry(dvs, 'Vnet7')
         vnet_obj.check_del_vnet_entry(dvs, 'Vnet7')
+        delete_vxlan_tunnel(dvs, tunnel_name)
 
     '''
     Test 8 - Test for ipv6 vnet tunnel routes with ECMP nexthop group
@@ -1767,6 +1768,7 @@ class TestVnetOrch(object):
 
         delete_vnet_entry(dvs, 'Vnet8')
         vnet_obj.check_del_vnet_entry(dvs, 'Vnet8')
+        delete_vxlan_tunnel(dvs, tunnel_name)
     
 
     '''
@@ -1904,6 +1906,7 @@ class TestVnetOrch(object):
 
         delete_vnet_entry(dvs, 'Vnet9')
         vnet_obj.check_del_vnet_entry(dvs, 'Vnet9')
+        delete_vxlan_tunnel(dvs, tunnel_name)
 
 
     '''
@@ -2046,7 +2049,7 @@ class TestVnetOrch(object):
 
         delete_vnet_entry(dvs, 'Vnet10')
         vnet_obj.check_del_vnet_entry(dvs, 'Vnet10')
-
+        delete_vxlan_tunnel(dvs, tunnel_name)
 
     '''
     Test 11 - Test for vnet tunnel routes with both single endpoint and ECMP group with endpoint health monitor
@@ -2154,6 +2157,7 @@ class TestVnetOrch(object):
 
         delete_vnet_entry(dvs, 'Vnet11')
         vnet_obj.check_del_vnet_entry(dvs, 'Vnet11')
+        delete_vxlan_tunnel(dvs, tunnel_name)
 
 
     '''
@@ -2283,6 +2287,7 @@ class TestVnetOrch(object):
 
         delete_vnet_entry(dvs, 'Vnet12')
         vnet_obj.check_del_vnet_entry(dvs, 'Vnet12')
+        delete_vxlan_tunnel(dvs, tunnel_name)
 
     '''
     Test 13 - Test for configuration idempotent behaviour
@@ -2396,6 +2401,7 @@ class TestVnetOrch(object):
 
         delete_vnet_entry(dvs, 'Vnet14')
         vnet_obj.check_del_vnet_entry(dvs, 'Vnet14')
+        delete_vxlan_tunnel(dvs, tunnel_name)
 
     '''
     Test 15 - Test for configuration idempotent behaviour single endpoint
@@ -2443,6 +2449,7 @@ class TestVnetOrch(object):
         assert len(vnet_obj.nhops) == 0
         delete_vnet_entry(dvs, 'Vnet15')
         vnet_obj.check_del_vnet_entry(dvs, 'Vnet15')
+        delete_vxlan_tunnel(dvs, tunnel_name)
 
     '''
     Test 16 - Test for configuration idempotent behaviour single endpoint with BFD
@@ -2507,6 +2514,7 @@ class TestVnetOrch(object):
         assert len(vnet_obj.nhops) == 0
         delete_vnet_entry(dvs, 'Vnet16')
         vnet_obj.check_del_vnet_entry(dvs, 'Vnet16')
+        delete_vxlan_tunnel(dvs, tunnel_name)
 
     '''
     Test 17 - Test for configuration idempotent behaviour multiple endpoint with BFD
@@ -2574,6 +2582,7 @@ class TestVnetOrch(object):
 
         delete_vnet_entry(dvs, 'Vnet17')
         vnet_obj.check_del_vnet_entry(dvs, 'Vnet17')
+        delete_vxlan_tunnel(dvs, tunnel_name)
 
 
     '''
@@ -2708,6 +2717,7 @@ class TestVnetOrch(object):
 
         delete_vnet_entry(dvs, vnet_name)
         vnet_obj.check_del_vnet_entry(dvs, vnet_name)
+        delete_vxlan_tunnel(dvs, tunnel_name)
 
     '''
    Test 19 - Test for 2 priority vnet tunnel routes with overlapping primary secondary ECMP nexthop group with monitor session
@@ -2865,6 +2875,7 @@ class TestVnetOrch(object):
 
         delete_vnet_entry(dvs, vnet_name)
         vnet_obj.check_del_vnet_entry(dvs, vnet_name)
+        delete_vxlan_tunnel(dvs, tunnel_name)
 
     '''
    Test 20 - Test for Single enpoint priority vnet tunnel routes
@@ -2999,6 +3010,7 @@ class TestVnetOrch(object):
 
         delete_vnet_entry(dvs, vnet_name)
         vnet_obj.check_del_vnet_entry(dvs, vnet_name)
+        delete_vxlan_tunnel(dvs, tunnel_name)
 
     '''
     Test 21 - Test for vxlan custom monitoring with adv_prefix-no monitoring IPV6. temporary
@@ -3073,6 +3085,9 @@ class TestVnetOrch(object):
 
         #adv should be gone.
         check_remove_routes_advertisement(dvs, "fd:10:10::/64")
+        delete_vnet_entry(dvs,vnet_name)
+        vnet_obj.check_del_vnet_entry(dvs, vnet_name)
+        delete_vxlan_tunnel(dvs, tunnel_name)
 
     '''
     Test 22 - Test for vxlan custom monitoring with adv_prefix-no monitoring temporary. Add route twice and change nexthops case
@@ -3183,6 +3198,9 @@ class TestVnetOrch(object):
         check_remove_state_db_routes(dvs, 'Vnet12', "100.100.1.67/32")
         #adv should be gone.
         check_remove_routes_advertisement(dvs, "100.100.1.0/24")
+        delete_vnet_entry(dvs,vnet_name)
+        vnet_obj.check_del_vnet_entry(dvs, vnet_name)
+        delete_vxlan_tunnel(dvs, tunnel_name)
 
     '''
     Test 23 - Test duplicate route addition and removal.
