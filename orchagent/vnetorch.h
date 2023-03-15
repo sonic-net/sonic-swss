@@ -28,9 +28,9 @@ extern sai_object_id_t gVirtualRouterId;
 
 typedef enum
 {
+    MONITOR_SESSION_STATE_UNKNOWN,
     MONITOR_SESSION_STATE_UP,
     MONITOR_SESSION_STATE_DOWN,
-    MONITOR_SESSION_STATE_UNKNOWN,
 } monitor_session_state_t;
 
 const request_description_t vnet_request_description = {
@@ -373,6 +373,7 @@ struct MonitorSessionInfo
 {
     monitor_session_state_t state;
     NextHopKey endpoint;
+    int ref_count;
 };
 
 struct MonitorUpdate
