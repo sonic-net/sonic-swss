@@ -389,9 +389,14 @@ class DockerVirtualSwitch:
         if buffer_model == 'dynamic':
             enable_dynamic_buffer(self.get_config_db(), self.runcmd)
 
-    def destroy(self) -> None:
-        if self.appldb:
+    def del_appl_db(self):
+        # APPL DB may not always exist, so use this helper method to check before deleting
+        if getattr(self, 'appldb', False):
             del self.appldb
+
+
+    def destroy(self) -> None:
+        self.del_appl_db()
 
         # In case persistent dvs was used removed all the extra server link
         # that were created
@@ -537,8 +542,7 @@ class DockerVirtualSwitch:
         self.ctn.restart()
 
     def restart(self) -> None:
-        if self.appldb:
-            del self.appldb
+        self.del_appl_db()
 
         self.ctn_restart()
         self.check_ready_status_and_init_db()

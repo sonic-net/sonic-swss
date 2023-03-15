@@ -536,6 +536,11 @@ def check_remove_routes_advertisement(dvs, prefix):
     assert prefix not in keys
 
 
+def check_syslog(dvs, marker, err_log):
+    (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \"%s\" | wc -l" % (marker, err_log)])
+    assert num.strip() == "0"
+
+
 loopback_id = 0
 def_vr_id = 0
 switch_mac = None
@@ -1063,11 +1068,56 @@ class VnetVxlanVrfTunnel(object):
         app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         key = endpoint + ':' + prefix
         check_deleted_object(app_db, self.APP_VNET_MONITOR, key)
-    
+
 class TestVnetOrch(object):
 
     def get_vnet_obj(self):
         return VnetVxlanVrfTunnel()
+
+    def setup_db(self, dvs):
+        self.pdb = dvs.get_app_db()
+        self.adb = dvs.get_asic_db()
+        self.cdb = dvs.get_config_db()
+        self.sdb = dvs.get_state_db()
+
+    def clear_srv_config(self, dvs):
+        dvs.servers[0].runcmd("ip address flush dev eth0")
+        dvs.servers[1].runcmd("ip address flush dev eth0")
+        dvs.servers[2].runcmd("ip address flush dev eth0")
+        dvs.servers[3].runcmd("ip address flush dev eth0")
+
+    def set_admin_status(self, interface, status):
+        self.cdb.update_entry("PORT", interface, {"admin_status": status})
+
+    def create_l3_intf(self, interface, vrf_name):
+        if len(vrf_name) == 0:
+            self.cdb.create_entry("INTERFACE", interface, {"NULL": "NULL"})
+        else:
+            self.cdb.create_entry("INTERFACE", interface, {"vrf_name": vrf_name})
+
+    def add_ip_address(self, interface, ip):
+        self.cdb.create_entry("INTERFACE", interface + "|" + ip, {"NULL": "NULL"})
+
+    def remove_ip_address(self, interface, ip):
+        self.cdb.delete_entry("INTERFACE", interface + "|" + ip)
+
+    def create_route_entry(self, key, pairs):
+        tbl = swsscommon.ProducerStateTable(self.pdb.db_connection, "ROUTE_TABLE")
+        fvs = swsscommon.FieldValuePairs(list(pairs.items()))
+        tbl.set(key, fvs)
+
+    def remove_route_entry(self, key):
+        tbl = swsscommon.ProducerStateTable(self.pdb.db_connection, "ROUTE_TABLE")
+        tbl._del(key)
+
+    def check_route_entries(self, destinations):
+        def _access_function():
+            route_entries = self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+            route_destinations = [json.loads(route_entry)["dest"]
+                                  for route_entry in route_entries]
+            return (all(destination in route_destinations for destination in destinations), None)
+
+        wait_for_result(_access_function)
 
     '''
     Test 1 - Create Vlan Interface, Tunnel and Vnet
@@ -1558,6 +1608,10 @@ class TestVnetOrch(object):
         vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '10.1.0.32')
 
         create_vxlan_tunnel_map(dvs, tunnel_name, 'map_1', 'Vlan1000', '1000')
+
+        delete_vnet_entry(dvs, 'Vnet1')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet1')
+        delete_vxlan_tunnel(dvs, tunnel_name)
 
     '''
     Test 7 - Test for vnet tunnel routes with ECMP nexthop group
@@ -2654,6 +2708,75 @@ class TestVnetOrch(object):
 
         delete_vnet_entry(dvs, vnet_name)
         vnet_obj.check_del_vnet_entry(dvs, vnet_name)
+
+    '''
+    Test 21 - Test duplicate route addition and removal.
+    '''
+    def test_vnet_orch_21(self, dvs, testlog):
+        self.setup_db(dvs)
+        self.clear_srv_config(dvs)
+
+        vnet_obj = self.get_vnet_obj()
+        vnet_obj.fetch_exist_entries(dvs)
+
+        # create vxlan tunnel and vnet in default vrf
+        tunnel_name = 'tunnel_21'
+        create_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
+        create_vnet_entry(dvs, 'Vnet_2000', tunnel_name, '2000', "", 'default')
+
+        vnet_obj.check_default_vnet_entry(dvs, 'Vnet_2000')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet_2000', '2000')
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
+        vnet_obj.fetch_exist_entries(dvs)
+
+        # create vnet route
+        create_vnet_routes(dvs, "100.100.1.0/24", 'Vnet_2000', '10.10.10.3')
+        vnet_obj.check_vnet_routes(dvs, 'Vnet_2000', '10.10.10.3', tunnel_name)
+        check_state_db_routes(dvs, 'Vnet_2000', "100.100.1.0/24", ['10.10.10.3'])
+        time.sleep(2)
+
+        # create l3 interface
+        self.create_l3_intf("Ethernet0", "")
+
+        # set ip address
+        self.add_ip_address("Ethernet0", "10.10.10.1/24")
+
+        # bring up interface
+        self.set_admin_status("Ethernet0", "up")
+
+        # set ip address and default route
+        dvs.servers[0].runcmd("ip address add 10.10.10.3/24 dev eth0")
+        dvs.servers[0].runcmd("ip route add default via 10.10.10.1")
+
+        marker = dvs.add_log_marker("/var/log/syslog")
+        time.sleep(2)
+
+        # add another route for same prefix as vnet route
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"ip route 100.100.1.0/24 10.10.10.3\"")
+
+        # check application database
+        self.pdb.wait_for_entry("ROUTE_TABLE", "100.100.1.0/24")
+
+        # check ASIC route database
+        self.check_route_entries(["100.100.1.0/24"])
+
+        log_string = "Encountered failure in create operation, exiting orchagent, SAI API: SAI_API_ROUTE, status: SAI_STATUS_NOT_EXECUTED"
+        check_syslog(dvs, marker, log_string)
+
+        # remove route entry
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route 100.100.1.0/24 10.10.10.3\"")
+
+        # delete vnet route
+        delete_vnet_routes(dvs, "100.100.1.0/24", 'Vnet_2000')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet_2000')
+        check_remove_state_db_routes(dvs, 'Vnet_2000', "100.100.1.0/24")
+
+        # delete vnet
+        delete_vnet_entry(dvs, 'Vnet_2000')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet_2000')
+
+        # delete vxlan tunnel
+        delete_vxlan_tunnel(dvs, tunnel_name)
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
