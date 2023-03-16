@@ -491,13 +491,24 @@ void IntfMgr::updateSubIntfAdminStatus(const string &alias, const string &admin)
 std::string IntfMgr::setHostSubIntfAdminStatus(const string &alias, const string &admin_status, const string &parent_admin_status)
 {
     stringstream cmd;
-    string res;
+    string res, cmd_str;
 
     if (parent_admin_status == "up" || admin_status == "down")
     {
         SWSS_LOG_INFO("subintf %s admin_status: %s", alias.c_str(), admin_status.c_str());
         cmd << IP_CMD " link set " << shellquote(alias) << " " << shellquote(admin_status);
-        EXEC_WITH_ERROR_THROW(cmd.str(), res);
+        cmd_str = cmd.str();
+        int ret = swss::exec(cmd_str, res);
+        if (ret && !isIntfStateOk(alias))
+        {
+            // Can happen when a DEL notification is sent by portmgrd immediately followed by a new SET notification
+            SWSS_LOG_WARN("Setting admin_status to %s netdev failed with cmd:%s, rc:%d, error:%s",
+                          alias.c_str(), cmd_str.c_str(), ret, res.c_str());
+        }
+        else if (ret)
+        {
+            throw runtime_error(cmd_str + " : " + res);
+        }
         return admin_status;
     }
     else

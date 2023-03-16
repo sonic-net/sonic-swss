@@ -128,7 +128,7 @@ tests_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis -lpthr
 
 ## intfmgrd unit tests
 
-tests_intfmgrd_SOURCES = intfmgrd/add_ipv6_prefix_ut.cpp \
+tests_intfmgrd_SOURCES = intfmgrd/intfmgr_ut.cpp \
                         $(top_srcdir)/cfgmgr/intfmgr.cpp \
                         $(top_srcdir)/orchagent/orch.cpp \
                         $(top_srcdir)/orchagent/request_parser.cpp \
