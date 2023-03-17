@@ -52,6 +52,8 @@ jobs:
 
   steps:
   - script: |
+      set -ex
+      sudo apt-get update
       sudo apt-get install -y lcov
     displayName: "Install dependencies"
     condition: eq('${{ parameters.archive_gcov }}', true)
