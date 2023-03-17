@@ -2914,7 +2914,8 @@ AclRange *AclRange::create(sai_acl_range_type_t type, int min, int max)
                 SWSS_LOG_ERROR("Maximum numbers of ACL ranges reached");
                 return NULL;
             }
-        }else if (platform && strstr(platform, CLX_PLATFORM_SUBSTRING))
+        }
+	else if (platform && strstr(platform, CLX_PLATFORM_SUBSTRING))
         {
             if (m_ranges.size() >= CLNX_MAX_RANGES_COUNT)
             {
@@ -2922,6 +2923,7 @@ AclRange *AclRange::create(sai_acl_range_type_t type, int min, int max)
                 return NULL;
             }
         }
+	
         attr.id = SAI_ACL_RANGE_ATTR_TYPE;
         attr.value.s32 = type;
         range_attrs.push_back(attr);
