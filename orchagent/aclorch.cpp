@@ -2907,6 +2907,7 @@ AclRange *AclRange::create(sai_acl_range_type_t type, int min, int max)
         // work around to avoid syncd termination on SAI error due to max count of ranges reached
         // can be removed when syncd start passing errors to the SAI callers
         char *platform = getenv("platform");
+
         if (platform && strstr(platform, MLNX_PLATFORM_SUBSTRING))
         {
             if (m_ranges.size() >= MLNX_MAX_RANGES_COUNT)
@@ -2915,15 +2916,18 @@ AclRange *AclRange::create(sai_acl_range_type_t type, int min, int max)
                 return NULL;
             }
         }
+	//add the platform of CLOUNIX
 	else if (platform && strstr(platform, CLX_PLATFORM_SUBSTRING))
         {
+	   
             if (m_ranges.size() >= CLNX_MAX_RANGES_COUNT)
             {
                 SWSS_LOG_ERROR("Maximum numbers of ACL ranges reached");
+                //SWSS_LOG_INFO(" CLX_MAX_RANGES_COUNT: %d", CLNX_MAX_RANGES_COUNT);
                 return NULL;
             }
         }
-	
+
         attr.id = SAI_ACL_RANGE_ATTR_TYPE;
         attr.value.s32 = type;
         range_attrs.push_back(attr);
@@ -3032,6 +3036,7 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     // purposes.
     string platform = getenv("platform") ? getenv("platform") : "";
     string sub_platform = getenv("sub_platform") ? getenv("sub_platform") : "";
+
     if (platform == BRCM_PLATFORM_SUBSTRING ||
             platform == CISCO_8000_PLATFORM_SUBSTRING ||
             platform == MLNX_PLATFORM_SUBSTRING ||
@@ -3070,7 +3075,8 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
         platform == CISCO_8000_PLATFORM_SUBSTRING ||
         platform == MRVL_PLATFORM_SUBSTRING ||
         platform == XS_PLATFORM_SUBSTRING ||
-        (platform == BRCM_PLATFORM_SUBSTRING && sub_platform == BRCM_DNX_PLATFORM_SUBSTRING))
+        (platform == BRCM_PLATFORM_SUBSTRING && sub_platform == BRCM_DNX_PLATFORM_SUBSTRING) ||
+	platform == CLX_PLATFORM_SUBSTRING)
     {
         m_isCombinedMirrorV6Table = false;
     }
@@ -3731,6 +3737,7 @@ bool AclOrch::updateAclTablePorts(AclTable &newTable, AclTable &curTable)
         curTable.link(port_oid);
         curTable.bind(port_oid);
     }
+
     return true;
 }
 
@@ -4225,6 +4232,7 @@ bool AclOrch::isAclActionListMandatoryOnTableCreation(acl_stage_type_t stage) co
     {
         return false;
     }
+
     return it->second.isActionListMandatoryOnTableCreation;
 }
 
