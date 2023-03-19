@@ -925,8 +925,20 @@ class TestVirtualChassis(object):
             break
         assert dvs
         _, _ = dvs.runcmd("counterpoll queue enable")
+
+        num_voqs_per_port = 8
+        # vs-switch creates 20 queues per port.
+        num_queues_per_local_port = 20
+        num_ports_per_linecard = 32
+        num_local_ports = 32
+        num_linecards = 3
+        num_sysports =  num_ports_per_linecard * num_linecards
+        num_egress_queues = num_local_ports * num_queues_per_local_port
+        num_voqs = ( num_ports_per_linecard * num_voqs_per_port * num_linecards )
+        num_queues_to_be_polled = num_voqs + num_egress_queues
+
         flex_db = dvs.get_flex_db()
-        flex_db.wait_for_n_keys("FLEX_COUNTER_TABLE:QUEUE_STAT_COUNTER", 1408)
+        flex_db.wait_for_n_keys("FLEX_COUNTER_TABLE:QUEUE_STAT_COUNTER", num_queues_to_be_polled)
  
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
