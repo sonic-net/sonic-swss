@@ -83,6 +83,7 @@ jobs:
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/$(BUILD_BRANCH)'
       path: $(Build.ArtifactStagingDirectory)/download
+      allowPartiallySucceededBuilds: true
       patterns: |
         libswsscommon_1.0.0_${{ parameters.arch }}.deb
         libswsscommon-dev_1.0.0_${{ parameters.arch }}.deb
@@ -96,6 +97,7 @@ jobs:
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/$(BUILD_BRANCH)'
       path: $(Build.ArtifactStagingDirectory)/download
+      allowPartiallySucceededBuilds: true
       patterns: |
         libsaivs_*.deb
         libsaivs-dev_*.deb
