@@ -385,8 +385,11 @@ struct MonitorUpdate
 };
 struct VNetTunnelRouteEntry
 {
+    // The nhg_key is the key for the next hop group which is currently active in hardware.
+    // For priority routes, this can be a subset of eith primary or secondary NHG or an empty NHG.
     NextHopGroupKey nhg_key;
-    bool active_from_primary;
+    // For regular Ecmp rotues the priamry and secondary fields wil lbe empty. For priority
+    // routes they wil lcontain the origna lprimary and secondary NHGs.
     NextHopGroupKey primary;
     NextHopGroupKey secondary;
 };

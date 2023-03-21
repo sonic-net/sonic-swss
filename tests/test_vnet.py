@@ -2586,7 +2586,7 @@ class TestVnetOrch(object):
 
 
     '''
-    Test 18 - Test for priority vnet tunnel routes with ECMP nexthop group with endpoint health monitor
+    Test 18 - Test for priority vnet tunnel routes with ECMP nexthop group. test primary secondary switchover.
     '''
     def test_vnet_orch_18(self, dvs, testlog):
         vnet_obj = self.get_vnet_obj()
@@ -2607,7 +2607,7 @@ class TestVnetOrch(object):
         vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "100.100.1.1/32", vnet_name, '9.1.0.1,9.1.0.2,9.1.0.3,9.1.0.4', ep_monitor='9.1.0.1,9.1.0.2,9.1.0.3,9.1.0.4', primary ='9.1.0.1,9.1.0.2', monitoring='custom', adv_prefix='100.100.1.0/24')
 
-        # default bfd status is down, route should not be programmed in this status
+        # default monitor status is down, route should not be programmed in this status
         vnet_obj.check_del_vnet_routes(dvs, vnet_name, ["100.100.1.1/32"])
         check_state_db_routes(dvs, vnet_name, "100.100.1.1/32", [])
         check_remove_routes_advertisement(dvs, "100.100.1.0/24")
@@ -2720,7 +2720,7 @@ class TestVnetOrch(object):
         delete_vxlan_tunnel(dvs, tunnel_name)
 
     '''
-   Test 19 - Test for 2 priority vnet tunnel routes with overlapping primary secondary ECMP nexthop group with monitor session
+   Test 19 - Test for 2 priority vnet tunnel routes with overlapping primary secondary ECMP nexthop group. 
     '''
     def test_vnet_orch_19(self, dvs, testlog):
         vnet_obj = self.get_vnet_obj()
@@ -2878,7 +2878,7 @@ class TestVnetOrch(object):
         delete_vxlan_tunnel(dvs, tunnel_name)
 
     '''
-   Test 20 - Test for Single enpoint priority vnet tunnel routes
+   Test 20 - Test for Single enpoint priority vnet tunnel routes. Test primary secondary switchover. 
     '''
     def test_vnet_orch_20(self, dvs, testlog):
         vnet_obj = self.get_vnet_obj()
@@ -3013,7 +3013,7 @@ class TestVnetOrch(object):
         delete_vxlan_tunnel(dvs, tunnel_name)
 
     '''
-    Test 21 - Test for vxlan custom monitoring with adv_prefix-no monitoring IPV6. temporary
+    Test 21 - Test for priority vxlan tunnel with adv_prefix, adv profile. test route re-addition, route update, primary seocndary swap.
     '''
     def test_vnet_orch_21(self, dvs, testlog):
         vnet_obj = self.get_vnet_obj()

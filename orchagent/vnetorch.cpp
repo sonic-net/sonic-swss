@@ -922,27 +922,25 @@ bool VNetRouteOrch::selectNextHopGroup(const string& vnet,
     if(nexthops_secondary.getSize() != 0 && monitoring == "custom")
     {
         auto it_route =  syncd_tunnel_routes_[vnet].find(ipPrefix);
-        if (monitoring == "custom")
+        if (it_route == syncd_tunnel_routes_[vnet].end())
         {
-            if (it_route == syncd_tunnel_routes_[vnet].end())
+            setEndpointMonitor(vnet, monitors, nexthops_primary, monitoring, ipPrefix);
+            setEndpointMonitor(vnet, monitors, nexthops_secondary, monitoring, ipPrefix);
+        }
+        else
+        {
+            if (it_route->second.primary != nexthops_primary)
             {
                 setEndpointMonitor(vnet, monitors, nexthops_primary, monitoring, ipPrefix);
+            }
+            if (it_route->second.secondary != nexthops_secondary)
+            {
                 setEndpointMonitor(vnet, monitors, nexthops_secondary, monitoring, ipPrefix);
             }
-            else
-            {
-                if (it_route->second.primary != nexthops_primary)
-                {
-                    setEndpointMonitor(vnet, monitors, nexthops_primary, monitoring, ipPrefix);
-                }
-                if (it_route->second.secondary != nexthops_secondary)
-                {
-                    setEndpointMonitor(vnet, monitors, nexthops_secondary, monitoring, ipPrefix);
-                }
-                nexthops_selected = it_route->second.nhg_key;
-                return true;
-            } 
+            nexthops_selected = it_route->second.nhg_key;
+            return true;
         }
+
         NextHopGroupKey nhg_custom = createActiveNHSet( vnet, nexthops_primary, ipPrefix);
         if (!hasNextHopGroup(vnet, nhg_custom))
         {
@@ -1052,7 +1050,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         NextHopGroupKey active_nhg("", true);
         if (!selectNextHopGroup(vnet, nexthops, nexthops_secondary, monitoring, ipPrefix, vrf_obj, active_nhg, monitors))
         {
-            return false;
+            return true;
         }
 
         // note: nh_id can be SAI_NULL_OBJECT_ID when active_nhg is empty.
@@ -1107,11 +1105,13 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                 return false;
             }
         }
-        bool route_update_happened = false;
+        bool route_updated = false;
+        bool priority_route_updated = false;
         if (it_route != syncd_tunnel_routes_[vnet].end() &&
             ((monitoring == "" && it_route->second.nhg_key != nexthops) ||
             (monitoring == "custom" && (it_route->second.primary != nexthops || it_route->second.secondary != nexthops_secondary))))
         {
+            route_updated = true;
             NextHopGroupKey nhg = it_route->second.nhg_key;
             if (monitoring == "custom")
             {
@@ -1130,7 +1130,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
                 {
                     monitor_info_[vnet].erase(ipPrefix);
                 }
-                route_update_happened = true;
+                priority_route_updated = true;
             }
             else
             {
@@ -1167,10 +1167,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         {
             vrf_obj->addProfile(ipPrefix, profile);
         }
-        if (it_route == syncd_tunnel_routes_[vnet].end() ||
-            (monitoring == "" && it_route != syncd_tunnel_routes_[vnet].end() && it_route->second.nhg_key != nexthops ) ||
-            (monitoring == "custom" && it_route != syncd_tunnel_routes_[vnet].end() &&
-                (it_route->second.primary != nexthops || it_route->second.secondary != nexthops_secondary)))
+        if (it_route == syncd_tunnel_routes_[vnet].end() || route_updated)
         {
             syncd_nexthop_groups_[vnet][active_nhg].tunnel_routes.insert(ipPrefix);
             VNetTunnelRouteEntry tunnel_route_entry;
@@ -1180,7 +1177,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             syncd_tunnel_routes_[vnet][ipPrefix] = tunnel_route_entry;
             syncd_nexthop_groups_[vnet][active_nhg].ref_count++;
 
-            if (route_update_happened && monitoring == "custom")
+            if (priority_route_updated)
             {
                 MonitorUpdate update;
                 update.prefix = ipPrefix;
@@ -1239,6 +1236,8 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
             else
             {
                 syncd_nexthop_groups_[vnet].erase(nhg);
+                // We need to check specifically if there is only one next hop active.
+                // In case of Priority routes we can end up in a situation where the active NHG has 0 nexthops.
                 if(nhg.getSize() == 1)
                 {
                     NextHopKey nexthop(nhg.to_string(), true);
@@ -1749,11 +1748,8 @@ void VNetRouteOrch::createBfdSession(const string& vnet, const NextHopKey& endpo
 
         FieldValueTuple fvTuple("local_addr", src_ip.to_string());
         data.push_back(fvTuple);
-
-	    data.emplace_back("multihop", "true");
-
+        data.emplace_back("multihop", "true");
         bfd_session_producer_.set(key, data);
-
         bfd_sessions_[monitor_addr].bfd_state = SAI_BFD_SESSION_STATE_DOWN;
     }
 
@@ -1789,7 +1785,7 @@ void VNetRouteOrch::createMonitoringSession(const string& vnet, const NextHopKey
 {
     SWSS_LOG_ENTER();
 
-   vector<FieldValueTuple>  data;
+    vector<FieldValueTuple>  data;
     auto *vnet_obj = vnet_orch_->getTypePtr<VNetVrfObject>(vnet);
 
     auto overlay_dmac = vnet_obj->getOverlayDMac();
@@ -1953,11 +1949,11 @@ void VNetRouteOrch::postRouteState(const string& vnet, IpPrefix& ipPrefix, NextH
 {
     const string state_db_key = vnet + state_db_key_delimiter + ipPrefix.to_string();
     vector<FieldValueTuple> fvVector;
-
     NextHopGroupInfo& nhg_info = syncd_nexthop_groups_[vnet][nexthops];
     string route_state = nhg_info.active_members.empty() ? "inactive" : "active";
     string ep_str = "";
     int idx_ep = 0;
+
     for (auto nh_pair : nhg_info.active_members)
     {
         NextHopKey nh = nh_pair.first;
@@ -2224,7 +2220,15 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
 void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
 {
     SWSS_LOG_ENTER();
-
+// This function recieves updates from the MonitorOrch for the endpoints state.
+// Based on the state of the endpoints for a pirticuar route, this function attempts
+// to construct the primary next hop group. if it fails to do so,it attempts to create
+// the secondary next hop group. After that it applies the next hop group and deletes
+// the old next hop group.
+// This function is also called in the case when the route configuration is updated to
+// apply the new next hop group. In this case, the caller sets the state to
+// MONITOR_SESSION_STATE_UNKNOWN and config_update and updateRoute are set to true.
+// This function should never recieve MONITOR_SESSION_STATE_UNKNOWN from MonitorOrch.
 
     auto prefix = update.prefix;
     auto state = update.state;
