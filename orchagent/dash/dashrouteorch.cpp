@@ -344,7 +344,6 @@ bool DashRouteOrch::addInboundRouting(const string& key, InboundRoutingBulkConte
     }
 
     sai_inbound_routing_entry_t inbound_routing_entry;
-    bool deny = !ctxt.action_type.compare("drop");
 
     inbound_routing_entry.switch_id = gSwitchId;
     inbound_routing_entry.eni_id = dash_orch_->getEni(ctxt.eni)->eni_id;
@@ -358,8 +357,7 @@ bool DashRouteOrch::addInboundRouting(const string& key, InboundRoutingBulkConte
     vector<sai_attribute_t> inbound_routing_attrs;
 
     inbound_routing_attr.id = SAI_INBOUND_ROUTING_ENTRY_ATTR_ACTION;
-    inbound_routing_attr.value.u32 = deny ? SAI_INBOUND_ROUTING_ENTRY_ACTION_DENY : (ctxt.pa_validation ?
-                                   SAI_INBOUND_ROUTING_ENTRY_ACTION_VXLAN_DECAP_PA_VALIDATE : SAI_INBOUND_ROUTING_ENTRY_ACTION_VXLAN_DECAP);
+    inbound_routing_attr.value.u32 = ctxt.pa_validation ? SAI_INBOUND_ROUTING_ENTRY_ACTION_VXLAN_DECAP_PA_VALIDATE : SAI_INBOUND_ROUTING_ENTRY_ACTION_VXLAN_DECAP;
     inbound_routing_attrs.push_back(inbound_routing_attr);
 
     if (!ctxt.vnet.empty())
