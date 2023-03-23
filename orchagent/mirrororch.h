@@ -130,6 +130,7 @@ private:
     void updateFdb(const FdbUpdate&);
     void updateLagMember(const LagMemberUpdate&);
     void updateVlanMember(const VlanMemberUpdate&);
+    void updateLagMemberOperChange(const PortOperStateUpdate&);
 
     bool checkPortExistsInSrcPortList(const string& port, const string& srcPortList);
     bool validateSrcPortList(const string& srcPort);

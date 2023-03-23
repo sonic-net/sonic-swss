@@ -192,6 +192,12 @@ void MirrorOrch::update(SubjectType type, void *cntx)
         updateVlanMember(*update);
         break;
     }
+    case SUBJECT_TYPE_PORT_OPER_STATE_CHANGE:
+    {
+        PortOperStateUpdate *update = static_cast<PortOperStateUpdate *>(cntx);
+        updateLagMemberOperChange(*update);
+        break;
+    }
     default:
         // Received update in which we are not interested
         // Ignore it
@@ -590,11 +596,11 @@ void MirrorOrch::setSessionState(const string& name, const MirrorEntry& session,
                  SWSS_LOG_ERROR("Failed to get recirc port for mirror session %s", name.c_str());
                  return;
              }
-	}
-	else
-	{
-           m_portsOrch->getPort(session.neighborInfo.portId, port);
-	}
+        }
+        else
+        {
+            m_portsOrch->getPort(session.neighborInfo.portId, port);
+        }
         fvVector.emplace_back(MIRROR_SESSION_MONITOR_PORT, port.m_alias);
     }
 
@@ -692,11 +698,12 @@ bool MirrorOrch::getNeighborInfo(const string& name, MirrorEntry& session)
             }
             else
             {
-                // Get the first member of the LAG
+                // Get the first linked up member of the LAG
                 Port member;
-                string first_member_alias = *session.neighborInfo.port.m_members.begin();
-                m_portsOrch->getPort(first_member_alias, member);
-
+                if (!m_portsOrch->getUpLagMember(session.neighborInfo.port, member))
+                {
+                    return false;
+                }
                 session.neighborInfo.portId = member.m_port_id;
             }
 
@@ -1438,6 +1445,7 @@ void MirrorOrch::updateLagMember(const LagMemberUpdate& update)
 {
     SWSS_LOG_ENTER();
 
+    Port update_lag = update.lag;
     for (auto it = m_syncdMirrors.begin(); it != m_syncdMirrors.end(); it++)
     {
         const auto& name = it->first;
@@ -1450,7 +1458,7 @@ void MirrorOrch::updateLagMember(const LagMemberUpdate& update)
         // if the above condition matches then set/unset mirror configuration to new member port.
         if (session.status &&
             !session.src_port.empty() &&
-            session.src_port.find(update.lag.m_alias.c_str()) != std::string::npos &&
+            session.src_port.find(update_lag.m_alias.c_str()) != std::string::npos &&
             !checkPortExistsInSrcPortList(update.member.m_alias, session.src_port))
         {
             if (session.direction == MIRROR_RX_DIRECTION  || session.direction == MIRROR_BOTH_DIRECTION)
@@ -1467,7 +1475,7 @@ void MirrorOrch::updateLagMember(const LagMemberUpdate& update)
         // 1) the neighbor is LAG
         // 2) the neighbor LAG matches the update LAG
         if (session.neighborInfo.port.m_type != Port::LAG ||
-                session.neighborInfo.port != update.lag)
+                session.neighborInfo.port != update_lag)
         {
             continue;
         }
@@ -1479,11 +1487,12 @@ void MirrorOrch::updateLagMember(const LagMemberUpdate& update)
             // session is already activated, no further action is needed.
             if (!session.status)
             {
-                assert(!update.lag.m_members.empty());
-                const string& member_name = *update.lag.m_members.begin();
+                assert(!update_lag.m_members.empty());
                 Port member;
-                m_portsOrch->getPort(member_name, member);
-
+                if (!m_portsOrch->getUpLagMember(update_lag, member))
+                {
+                    continue;
+                }
                 session.neighborInfo.portId = member.m_port_id;
                 activateSession(name, session);
             }
@@ -1491,7 +1500,7 @@ void MirrorOrch::updateLagMember(const LagMemberUpdate& update)
         else
         {
             // If LAG is empty, deactivate session
-            if (update.lag.m_members.empty())
+            if (update_lag.m_members.empty())
             {
                 if (session.status)
                 {
@@ -1502,10 +1511,11 @@ void MirrorOrch::updateLagMember(const LagMemberUpdate& update)
             // Switch to a new member of the LAG
             else
             {
-                const string& member_name = *update.lag.m_members.begin();
                 Port member;
-                m_portsOrch->getPort(member_name, member);
-
+                if (!m_portsOrch->getUpLagMember(update_lag, member))
+                {
+                    continue;
+                }
                 session.neighborInfo.portId = member.m_port_id;
                 // The destination MAC remains the same
                 updateSessionDstPort(name, session);
@@ -1543,6 +1553,79 @@ void MirrorOrch::updateVlanMember(const VlanMemberUpdate& update)
         // Deactivate session. Wait for FDB event to activate session
         session.neighborInfo.portId = SAI_OBJECT_TYPE_NULL;
         deactivateSession(name, session);
+    }
+}
+
+/* Handle the case when the member of the LAG is up or down.
+   This function is called when SUBJECT_TYPE_PORT_OPER_STATE_CHANGE is received. */
+void MirrorOrch::updateLagMemberOperChange(const PortOperStateUpdate& update)
+{
+    SWSS_LOG_ENTER();
+
+    /* Check the following two conditions:
+       1) The update port is PHY port.
+       2) The update port belongs to a LAG. */
+    Port update_lag;
+    if (update.port.m_type != Port::PHY ||
+            !m_portsOrch->getPort(update.port.m_lag_id, update_lag))
+    {
+        return;
+    }
+
+    for (auto it = m_syncdMirrors.begin(); it != m_syncdMirrors.end(); it++)
+    {
+        const auto& name = it->first;
+        auto& session = it->second;
+
+        /* Check the following two conditions:
+           1) the neighbor is LAG.
+           2) the neighbor LAG matches the update LAG. */
+        if (session.neighborInfo.port.m_type != Port::LAG ||
+                session.neighborInfo.port != update_lag)
+        {
+            continue;
+        }
+
+        Port cur_dst_port;
+        if (!m_portsOrch->getPort(session.neighborInfo.portId, cur_dst_port))
+        {
+            SWSS_LOG_ERROR("Failed to locate Port/LAG %s", session.dst_port.c_str());
+            continue;
+        }
+
+        if (update.operStatus == SAI_PORT_OPER_STATUS_UP)
+        {
+            /* Activate mirror session if it was deactivated due to the reason
+               that previously there was no active member in the LAG. If the mirror
+               session is already activated, no further action is needed. */
+            if (!session.status)
+            {
+                session.neighborInfo.portId = update.port.m_port_id;
+                activateSession(name, session);
+            }
+        }
+        else
+        {
+            // shutdown a LAG member
+            if (session.status)
+            {
+                // If the shoutdown port is the current dst port, try to switch to a new member of the LAG.
+                if (update.port == cur_dst_port)
+                {
+                    Port upPort;
+                    if (m_portsOrch->getUpLagMember(update_lag, upPort, update.port.m_alias))
+                    {
+                        session.neighborInfo.portId = upPort.m_port_id;
+                        updateSessionDstPort(name, session);
+                    }
+                    else
+                    {
+                        session.neighborInfo.portId = SAI_NULL_OBJECT_ID;
+                        deactivateSession(name, session);
+                    }
+                }
+            }
+        }
     }
 }
 
