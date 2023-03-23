@@ -1903,9 +1903,7 @@ void VNetRouteOrch::delEndpointMonitor(const string& vnet, NextHopGroupKey& next
                 if (--nexthop_info_[vnet][ip].ref_count == 0)
                 {
                     IpAddress monitor_addr = nexthop_info_[vnet][ip].monitor_addr;
-                    {
-                        removeBfdSession(vnet, nhk, monitor_addr);
-                    }
+                    removeBfdSession(vnet, nhk, monitor_addr);
                 }
             }
         }
@@ -2232,7 +2230,7 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
 {
     SWSS_LOG_ENTER();
 // This function recieves updates from the MonitorOrch for the endpoints state.
-// Based on the state of the endpoints for a pirticuar route, this function attempts
+// Based on the state of the endpoints for a particular route, this function attempts
 // to construct the primary next hop group. if it fails to do so,it attempts to create
 // the secondary next hop group. After that it applies the next hop group and deletes
 // the old next hop group.
@@ -2383,10 +2381,12 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
         }
         if (config_update && nhg_custom != active_nhg)
         {
-            //This convoluted logic has very good reason behind it.
-            // when a route configuration gets updated, if the new endpoints are same but primaries are changed we have increment the ref count of active group to save it from premature deletion here.so we increment the refcount of existing active group
-            // in do rotue task right before we call this function. once here we need to undo this operation for the activenhg_which is no longer relevent.
-            //however if they
+            // This convoluted logic has very good reason behind it.
+            // when a route configuration gets updated, if the new endpoints are same but primaries 
+            // are changed, we must increase the ref count of active group to save it from premature
+            // deletion at this place. So, we increment the refcount of existing active_nhg in doRotueTask right
+            // before we call this function. Once here we need to undo this increment of refCount for the active_nhg
+            // which is no longer relevant.
             syncd_nexthop_groups_[vnet][active_nhg].ref_count--;
         }
 
