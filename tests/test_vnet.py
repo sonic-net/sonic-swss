@@ -3090,7 +3090,7 @@ class TestVnetOrch(object):
         delete_vxlan_tunnel(dvs, tunnel_name)
 
     '''
-    Test 22 - Test for vxlan custom monitoring with adv_prefix-no monitoring temporary. Add route twice and change nexthops case
+    Test 22 - Test for vxlan custom monitoring with adv_prefix. Add route twice and change nexthops case
     '''
     def test_vnet_orch_22(self, dvs, testlog):
         vnet_obj = self.get_vnet_obj()

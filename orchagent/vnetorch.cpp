@@ -881,10 +881,13 @@ bool VNetRouteOrch::createNextHopGroup(const string& vnet,
     return true;
 }
 
-NextHopGroupKey VNetRouteOrch::createActiveNHSet(const string& vnet,
+NextHopGroupKey VNetRouteOrch::getActiveNHSet(const string& vnet,
                                        NextHopGroupKey& nexthops,
-                                       IpPrefix& ipPrefix)
+                                       const IpPrefix& ipPrefix)
 {
+    // This  function takes  a nexthop group key and iterates over the nexthops in that group
+    // to identify the ones which are active based on their monitor session state.
+    // These next hops are collected into another next hop group key called nhg_custom and returned.
     NextHopGroupKey nhg_custom("", true);
     set<NextHopKey> next_hop_set = nexthops.getNextHops();
     for (auto it : next_hop_set)
@@ -919,6 +922,13 @@ bool VNetRouteOrch::selectNextHopGroup(const string& vnet,
                                        NextHopGroupKey& nexthops_selected,
                                        const map<NextHopKey, IpAddress>& monitors)
 {
+    // This function returns the next hop group which is to be used to in the hardware.
+    // for non priority tunnel routes, this would return nexthops_primary or its subset if
+    // BFD sessions for the endpoits in the NHG are up.
+    // For priority tunnel scenario, it sets up endpoint monitors for both primary and secondary.
+    // This is followed by an attempt to create a NHG which can be subset of nexthops_primary
+    // depending on the endpoint monitor state. If no NHG from primary is created, we attempt
+    // the same for secondary.
     if(nexthops_secondary.getSize() != 0 && monitoring == "custom")
     {
         auto it_route =  syncd_tunnel_routes_[vnet].find(ipPrefix);
@@ -941,7 +951,7 @@ bool VNetRouteOrch::selectNextHopGroup(const string& vnet,
             return true;
         }
 
-        NextHopGroupKey nhg_custom = createActiveNHSet( vnet, nexthops_primary, ipPrefix);
+        NextHopGroupKey nhg_custom = getActiveNHSet( vnet, nexthops_primary, ipPrefix);
         if (!hasNextHopGroup(vnet, nhg_custom))
         {
             if (!createNextHopGroup(vnet, nhg_custom, vrf_obj, monitoring))
@@ -960,7 +970,8 @@ bool VNetRouteOrch::selectNextHopGroup(const string& vnet,
             nexthops_selected = nhg_custom;
             return true;
         }
-        NextHopGroupKey nhg_custom_sec = createActiveNHSet( vnet, nexthops_secondary, ipPrefix);
+        NextHopGroupKey nhg_custom_sec = getActiveNHSet( vnet, nexthops_secondary, ipPrefix);
+
         if (!hasNextHopGroup(vnet, nhg_custom_sec))
         {
             if (!createNextHopGroup(vnet, nhg_custom_sec, vrf_obj, monitoring))
@@ -2271,8 +2282,8 @@ void VNetRouteOrch::updateVnetTunnelCustomMonitor(const MonitorUpdate& update)
     NextHopGroupKey nhg_custom("", true);
     sai_ip_prefix_t pfx;
     copy(pfx, prefix);
-    NextHopGroupKey nhg_custom_primary = createActiveNHSet( vnet, primary, prefix);
-    NextHopGroupKey nhg_custom_secondary = createActiveNHSet( vnet, secondary, prefix);
+    NextHopGroupKey nhg_custom_primary = getActiveNHSet( vnet, primary, prefix);
+    NextHopGroupKey nhg_custom_secondary = getActiveNHSet( vnet, secondary, prefix);
     if (nhg_custom_primary.getSize() > 0)
     {
         if (nhg_custom_primary != active_nhg )

@@ -431,7 +431,7 @@ private:
     bool removeNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj);
     bool createNextHopGroup(const string&, NextHopGroupKey&, VNetVrfObject *vrf_obj,
                             const string& monitoring);
-    NextHopGroupKey createActiveNHSet(const string&, NextHopGroupKey&, IpPrefix& );
+    NextHopGroupKey getActiveNHSet(const string&, NextHopGroupKey&, const IpPrefix& );
 
     bool selectNextHopGroup(const string&, NextHopGroupKey&, NextHopGroupKey&, const string&, IpPrefix&,
                             VNetVrfObject *vrf_obj, NextHopGroupKey&,
