@@ -785,8 +785,6 @@ void MuxNbrHandler::updateTunnelRoute(NextHopKey nh, bool add)
     }
 }
 
-std::map<std::string, AclTable> MuxAclHandler::acl_table_;
-
 MuxAclHandler::MuxAclHandler(sai_object_id_t port, string alias)
 {
     SWSS_LOG_ENTER();
@@ -804,32 +802,21 @@ MuxAclHandler::MuxAclHandler(sai_object_id_t port, string alias)
     port_ = port;
     alias_ = alias;
 
-    auto found = acl_table_.find(table_name);
-    if (found == acl_table_.end())
-    {
-        SWSS_LOG_NOTICE("First time create for port %" PRIx64 "", port);
+    // Always try to create the table first. If it already exists, function will return early.
+    createMuxAclTable(port, table_name);
 
-        // First time handling of Mux Table, create ACL table, and bind
-        createMuxAclTable(port, table_name);
+    SWSS_LOG_NOTICE("Binding port %" PRIx64 "", port);
+
+    AclRule* rule = gAclOrch->getAclRule(table_name, rule_name);
+    if (rule == nullptr)
+    {
         shared_ptr<AclRulePacket> newRule =
                 make_shared<AclRulePacket>(gAclOrch, rule_name, table_name);
         createMuxAclRule(newRule, table_name);
     }
     else
     {
-        SWSS_LOG_NOTICE("Binding port %" PRIx64 "", port);
-
-        AclRule* rule = gAclOrch->getAclRule(table_name, rule_name);
-        if (rule == nullptr)
-        {
-            shared_ptr<AclRulePacket> newRule =
-                    make_shared<AclRulePacket>(gAclOrch, rule_name, table_name);
-            createMuxAclRule(newRule, table_name);
-        }
-        else
-        {
-            gAclOrch->updateAclRule(table_name, rule_name, MATCH_IN_PORTS, &port, RULE_OPER_ADD);
-        }
+        gAclOrch->updateAclRule(table_name, rule_name, MATCH_IN_PORTS, &port, RULE_OPER_ADD);
     }
 }
 
@@ -862,23 +849,17 @@ void MuxAclHandler::createMuxAclTable(sai_object_id_t port, string strTable)
 {
     SWSS_LOG_ENTER();
 
-    auto inserted = acl_table_.emplace(piecewise_construct,
-                                       std::forward_as_tuple(strTable),
-                                       std::forward_as_tuple(gAclOrch, strTable));
-
-    assert(inserted.second);
-
-    AclTable& acl_table = inserted.first->second;
-
     sai_object_id_t table_oid = gAclOrch->getTableById(strTable);
     if (table_oid != SAI_NULL_OBJECT_ID)
     {
         // DROP ACL table is already created
-        SWSS_LOG_NOTICE("ACL table %s exists, reuse the same", strTable.c_str());
-        acl_table = *(gAclOrch->getTableByOid(table_oid));
+        SWSS_LOG_INFO("ACL table %s exists, reuse the same", strTable.c_str());
+        // acl_table = *(gAclOrch->getTableByOid(table_oid));
         return;
     }
 
+    SWSS_LOG_NOTICE("First time create for port %" PRIx64 "", port);
+    AclTable acl_table(gAclOrch, strTable);
     auto dropType = gAclOrch->getAclTableType(TABLE_TYPE_DROP);
     assert(dropType);
     acl_table.validateAddType(*dropType);
