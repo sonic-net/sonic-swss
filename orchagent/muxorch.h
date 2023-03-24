@@ -95,6 +95,7 @@ public:
     using state_machine_handlers = map<MuxStateChange, bool (MuxCable::*)()>;
 
     void setState(string state);
+    void rollbackStateChange();
     string getState();
     bool isStateChangeInProgress() { return st_chg_in_progress_; }
     bool isStateChangeFailed() { return st_chg_failed_; }
@@ -118,6 +119,7 @@ private:
     MuxCableType cable_type_;
 
     MuxState state_ = MuxState::MUX_STATE_INIT;
+    MuxState prev_state_;
     bool st_chg_in_progress_ = false;
     bool st_chg_failed_ = false;
 
