@@ -21,6 +21,7 @@ namespace mux_rollback_test
 {
     using namespace std;
     using ::testing::Return;
+    using ::testing::Throw;
 
     static const string PEER_SWITCH_HOSTNAME = "peer_hostname";
     static const string PEER_IPV4_ADDRESS = "1.1.1.1";
@@ -463,19 +464,53 @@ namespace mux_rollback_test
         SetAndAssertMuxState(STANDBY);
     }
 
-    TEST_F(MuxRollbackTest, StandbyToActiveRollbackToStandby)
+    TEST_F(MuxRollbackTest, StandbyToActiveRuntimeErrorRollbackToStandby)
     {
         EXPECT_CALL(*mock_sai_route_api, remove_route_entry)
-            .WillOnce(::testing::Throw(runtime_error("Mock runtime error")));
+            .WillOnce(Throw(runtime_error("Mock runtime error")));
         SetMuxStateFromAppDb(ACTIVE);
         EXPECT_EQ(STANDBY, m_MuxCable->getState());
     }
 
-    TEST_F(MuxRollbackTest, ActiveToStandbyRollbackToActive)
+    TEST_F(MuxRollbackTest, ActiveToStandbyRuntimeErrorRollbackToActive)
     {
         SetAndAssertMuxState(ACTIVE);
         EXPECT_CALL(*mock_sai_route_api, create_route_entry)
-            .WillOnce(::testing::Throw(runtime_error("Mock runtime error")));
+            .WillOnce(Throw(runtime_error("Mock runtime error")));
+        SetMuxStateFromAppDb(STANDBY);
+        EXPECT_EQ(ACTIVE, m_MuxCable->getState());
+    }
+
+    TEST_F(MuxRollbackTest, StandbyToActiveLogicErrorRollbackToStandby)
+    {
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry)
+            .WillOnce(Throw(logic_error("Mock logic error")));
+        SetMuxStateFromAppDb(ACTIVE);
+        EXPECT_EQ(STANDBY, m_MuxCable->getState());
+    }
+
+    TEST_F(MuxRollbackTest, ActiveToStandbyLogicErrorRollbackToActive)
+    {
+        SetAndAssertMuxState(ACTIVE);
+        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry)
+            .WillOnce(Throw(logic_error("Mock logic error")));
+        SetMuxStateFromAppDb(STANDBY);
+        EXPECT_EQ(ACTIVE, m_MuxCable->getState());
+    }
+
+    TEST_F(MuxRollbackTest, StandbyToActiveExceptionRollbackToStandby)
+    {
+        EXPECT_CALL(*mock_sai_next_hop_api, create_next_hop)
+            .WillOnce(Throw(exception()));
+        SetMuxStateFromAppDb(ACTIVE);
+        EXPECT_EQ(STANDBY, m_MuxCable->getState());
+    }
+
+    TEST_F(MuxRollbackTest, ActiveToStandbyExceptionRollbackToActive)
+    {
+        SetAndAssertMuxState(ACTIVE);
+        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop)
+            .WillOnce(Throw(exception()));
         SetMuxStateFromAppDb(STANDBY);
         EXPECT_EQ(ACTIVE, m_MuxCable->getState());
     }
