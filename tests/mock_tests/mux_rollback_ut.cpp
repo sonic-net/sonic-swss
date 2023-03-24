@@ -293,6 +293,10 @@ namespace mux_rollback_test
             gDirectory.set(gSwitchOrch);
             ut_orch_list.push_back((Orch **)&gSwitchOrch);
 
+            gNhgOrch = new NhgOrch(m_app_db.get(), APP_NEXTHOP_GROUP_TABLE_NAME);
+            gDirectory.set(gNhgOrch);
+            ut_orch_list.push_back((Orch **)&gNhgOrch);
+
             vector<string> srv6_tables = {
                 APP_SRV6_SID_LIST_TABLE_NAME,
                 APP_SRV6_MY_SID_TABLE_NAME
