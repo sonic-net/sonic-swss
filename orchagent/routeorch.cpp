@@ -2046,6 +2046,12 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         }
     }
 
+    if (m_syncdRoutes.find(vrf_id) == m_syncdRoutes.end())
+    {
+        m_syncdRoutes.emplace(vrf_id, RouteTable());
+        m_vrfOrch->increaseVrfRefCount(vrf_id);
+    }
+
     auto it_status = object_statuses.begin();
     auto it_route = m_syncdRoutes.at(vrf_id).find(ipPrefix);
     if (isFineGrained)
@@ -2454,7 +2460,7 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
 
     SWSS_LOG_INFO("Remove route %s with next hop(s) %s",
             ipPrefix.to_string().c_str(), it_route->second.nhg_key.to_string().c_str());
-    
+
     /* Publish removal status, removes route entry from APPL STATE DB */
     publishRouteState(ctx);
 
