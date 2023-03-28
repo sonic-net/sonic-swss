@@ -828,7 +828,7 @@ MuxAclHandler::MuxAclHandler(sai_object_id_t port, string alias)
     if (rule == nullptr)
     {
         shared_ptr<AclRuleMux> newRule =
-                make_shared<AclRuleMux>(gAclOrch, rule_name, table_name);
+                make_shared<AclRuleMux>(gAclOrch, rule_name, table_name, table_type);
         createMuxAclRule(newRule, table_name);
     }
     else
