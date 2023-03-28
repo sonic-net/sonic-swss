@@ -293,20 +293,17 @@ namespace mux_rollback_test
             ut_orch_list.push_back((Orch **)&gMirrorOrch);
 
             TableConnector confDbAclTable(m_config_db.get(), CFG_ACL_TABLE_TABLE_NAME);
-            TableConnector confDbAclTableType(m_config_db.get(), CFG_ACL_TABLE_TYPE_TABLE_NAME);
             TableConnector confDbAclRuleTable(m_config_db.get(), CFG_ACL_RULE_TABLE_NAME);
             TableConnector appDbAclTable(m_app_db.get(), APP_ACL_TABLE_TABLE_NAME);
-            TableConnector appDbAclTableType(m_app_db.get(), APP_ACL_TABLE_TYPE_TABLE_NAME);
             TableConnector appDbAclRuleTable(m_app_db.get(), APP_ACL_RULE_TABLE_NAME);
 
             vector<TableConnector> acl_table_connectors = {
-                confDbAclTableType,
                 confDbAclTable,
                 confDbAclRuleTable,
                 appDbAclTable,
-                appDbAclRuleTable,
-                appDbAclTableType,
+                appDbAclRuleTable
             };
+
             gAclOrch = new AclOrch(acl_table_connectors, gSwitchOrch, gPortsOrch, gMirrorOrch, gNeighOrch, gRouteOrch, NULL);
             gDirectory.set(gAclOrch);
             ut_orch_list.push_back((Orch **)&gAclOrch);
