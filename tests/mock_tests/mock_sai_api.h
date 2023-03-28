@@ -1,12 +1,5 @@
 #include "mock_orchagent_main.h"
-#include "gmock/gmock.h"
-
-// sai_route_api_t *old_sai_route_api;
-// sai_route_api_t ut_sai_route_api;
-// sai_next_hop_api_t *old_sai_next_hop_api;
-// sai_next_hop_api_t ut_sai_next_hop_api;
-// sai_acl_api_t *old_sai_acl_api;
-// sai_acl_api_t ut_sai_acl_api;
+#include <gmock/gmock.h>
 
 using ::testing::Return;
 using ::testing::NiceMock;
@@ -52,8 +45,8 @@ The macro DEFINE_SAI_API_MOCK will perform the steps to mock the SAI API for the
                         return old_sai_##sai_object_type##_api->remove_##sai_object_type##_entry(REMOVE_ARGS(sai_object_type)); \
                     });                                                                                                         \
         }                                                                                                                       \
-        MOCK_METHOD(sai_status_t, create_##sai_object_type##_entry, (CREATE_PARAMS(sai_object_type)));                          \
-        MOCK_METHOD(sai_status_t, remove_##sai_object_type##_entry, (REMOVE_PARAMS(sai_object_type)));                          \
+        MOCK_METHOD3(create_##sai_object_type##_entry, sai_status_t(CREATE_PARAMS(sai_object_type)));                           \
+        MOCK_METHOD1(remove_##sai_object_type##_entry, sai_status_t(REMOVE_PARAMS(sai_object_type)));                           \
     };                                                                                                                          \
     mock_sai_##sai_object_type##_api_t *mock_sai_##sai_object_type##_api;                                                       \
     sai_status_t mock_create_##sai_object_type##_entry(CREATE_PARAMS(sai_object_type))                                          \
@@ -100,8 +93,8 @@ The macro DEFINE_SAI_API_MOCK will perform the steps to mock the SAI API for the
                         return old_sai_##sai_api_name##_api->remove_##sai_object_type(GENERIC_REMOVE_ARGS(sai_object_type)); \
                     });                                                                                                      \
         }                                                                                                                    \
-        MOCK_METHOD(sai_status_t, create_##sai_object_type, (GENERIC_CREATE_PARAMS(sai_object_type)));                       \
-        MOCK_METHOD(sai_status_t, remove_##sai_object_type, (GENERIC_REMOVE_PARAMS(sai_object_type)));                       \
+        MOCK_METHOD4(create_##sai_object_type, sai_status_t(GENERIC_CREATE_PARAMS(sai_object_type)));                        \
+        MOCK_METHOD1(remove_##sai_object_type, sai_status_t(GENERIC_REMOVE_PARAMS(sai_object_type)));                        \
     };                                                                                                                       \
     mock_sai_##sai_api_name##_api_t *mock_sai_##sai_api_name##_api;                                                          \
     sai_status_t mock_create_##sai_object_type(GENERIC_CREATE_PARAMS(sai_object_type))                                       \
