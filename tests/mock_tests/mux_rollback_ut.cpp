@@ -212,22 +212,15 @@ namespace mux_rollback_test
             gDirectory.set(m_FlexCounterOrch);
             ut_orch_list.push_back((Orch **)&m_FlexCounterOrch);
 
-            static const vector<string> route_pattern_tables = {
-                CFG_FLOW_COUNTER_ROUTE_PATTERN_TABLE_NAME,
-            };
-            gFlowCounterRouteOrch = new FlowCounterRouteOrch(m_config_db.get(), route_pattern_tables);
-            gDirectory.set(gFlowCounterRouteOrch);
-            ut_orch_list.push_back((Orch **)&gFlowCounterRouteOrch);
-
             gVrfOrch = new VRFOrch(m_app_db.get(), APP_VRF_TABLE_NAME, m_state_db.get(), STATE_VRF_OBJECT_TABLE_NAME);
             gDirectory.set(gVrfOrch);
             ut_orch_list.push_back((Orch **)&gVrfOrch);
 
-            gIntfsOrch = new IntfsOrch(m_app_db.get(), APP_INTF_TABLE_NAME, gVrfOrch, m_chassis_app_db.get());
+            gIntfsOrch = new IntfsOrch(m_app_db.get(), APP_INTF_TABLE_NAME, gVrfOrch);
             gDirectory.set(gIntfsOrch);
             ut_orch_list.push_back((Orch **)&gIntfsOrch);
 
-            gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
+            gPortsOrch = new PortsOrch(m_app_db.get(), ports_tables);
             gDirectory.set(gPortsOrch);
             ut_orch_list.push_back((Orch **)&gPortsOrch);
 
@@ -253,11 +246,11 @@ namespace mux_rollback_test
 
             TableConnector stateDbFdb(m_state_db.get(), STATE_FDB_TABLE_NAME);
             TableConnector stateMclagDbFdb(m_state_db.get(), STATE_MCLAG_REMOTE_FDB_TABLE_NAME);
-            gFdbOrch = new FdbOrch(m_app_db.get(), app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch);
+            gFdbOrch = new FdbOrch(m_app_db.get(), app_fdb_tables, stateDbFdb, gPortsOrch);
             gDirectory.set(gFdbOrch);
             ut_orch_list.push_back((Orch **)&gFdbOrch);
 
-            gNeighOrch = new NeighOrch(m_app_db.get(), APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch, m_chassis_app_db.get());
+            gNeighOrch = new NeighOrch(m_app_db.get(), APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch);
             gDirectory.set(gNeighOrch);
             ut_orch_list.push_back((Orch **)&gNeighOrch);
 
@@ -269,6 +262,10 @@ namespace mux_rollback_test
                 CFG_PEER_SWITCH_TABLE_NAME
             };
 
+            gPolicerOrch = new PolicerOrch(m_config_db.get(), CFG_POLICER_TABLE_NAME);
+            gDirectory.set(gPolicerOrch);
+            ut_orch_list.push_back((Orch **)&gPolicerOrch);
+
             TableConnector stateDbSwitchTable(m_state_db.get(), STATE_SWITCH_CAPABILITY_TABLE_NAME);
             TableConnector app_switch_table(m_app_db.get(), APP_SWITCH_TABLE_NAME);
             TableConnector conf_asic_sensors(m_config_db.get(), CFG_ASIC_SENSORS_TABLE_NAME);
@@ -277,41 +274,16 @@ namespace mux_rollback_test
                 conf_asic_sensors,
                 app_switch_table
             };
-            vector<TableConnector> policer_tables = {
-                TableConnector(m_config_db.get(), CFG_POLICER_TABLE_NAME),
-                TableConnector(m_config_db.get(), CFG_PORT_STORM_CONTROL_TABLE_NAME)
-            };
-
-            TableConnector stateDbStorm(m_state_db.get(), STATE_BUM_STORM_CAPABILITY_TABLE_NAME);
-            gPolicerOrch = new PolicerOrch(policer_tables, gPortsOrch);
-            gDirectory.set(gPolicerOrch);
-            ut_orch_list.push_back((Orch **)&gPolicerOrch);
 
             gSwitchOrch = new SwitchOrch(m_app_db.get(), switch_tables, stateDbSwitchTable);
             gDirectory.set(gSwitchOrch);
             ut_orch_list.push_back((Orch **)&gSwitchOrch);
 
-            gNhgOrch = new NhgOrch(m_app_db.get(), APP_NEXTHOP_GROUP_TABLE_NAME);
-            gDirectory.set(gNhgOrch);
-            ut_orch_list.push_back((Orch **)&gNhgOrch);
-
-            vector<string> srv6_tables = {
-                APP_SRV6_SID_LIST_TABLE_NAME,
-                APP_SRV6_MY_SID_TABLE_NAME
-            };
-            gSrv6Orch = new Srv6Orch(m_app_db.get(), srv6_tables, gSwitchOrch, gVrfOrch, gNeighOrch);
-            gDirectory.set(gSrv6Orch);
-            ut_orch_list.push_back((Orch **)&gSrv6Orch);
             gCrmOrch = new CrmOrch(m_config_db.get(), CFG_CRM_TABLE_NAME);
             gDirectory.set(gCrmOrch);
             ut_orch_list.push_back((Orch **)&gCrmOrch);
 
-            const int routeorch_pri = 5;
-            vector<table_name_with_pri_t> route_tables = {
-                { APP_ROUTE_TABLE_NAME, routeorch_pri },
-                { APP_LABEL_ROUTE_TABLE_NAME, routeorch_pri }
-            };
-            gRouteOrch = new RouteOrch(m_app_db.get(), route_tables, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch, gSrv6Orch);
+            gRouteOrch = new RouteOrch(m_app_db.get(), APP_ROUTE_TABLE_NAME, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch);
             gDirectory.set(gRouteOrch);
             ut_orch_list.push_back((Orch **)&gRouteOrch);
             TableConnector stateDbMirrorSession(m_state_db.get(), STATE_MIRROR_SESSION_TABLE_NAME);
@@ -335,8 +307,7 @@ namespace mux_rollback_test
                 appDbAclRuleTable,
                 appDbAclTableType,
             };
-            gAclOrch = new AclOrch(acl_table_connectors, m_state_db.get(),
-                                   gSwitchOrch, gPortsOrch, gMirrorOrch, gNeighOrch, gRouteOrch, NULL);
+            gAclOrch = new AclOrch(acl_table_connectors, gSwitchOrch, gPortsOrch, gMirrorOrch, gNeighOrch, gRouteOrch, NULL);
             gDirectory.set(gAclOrch);
             ut_orch_list.push_back((Orch **)&gAclOrch);
 

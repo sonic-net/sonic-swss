@@ -19,6 +19,8 @@
 #include "fgnhgorch.h"
 #include "flexcounterorch.h"
 #include "aclorch.h"
+#include "muxorch.h"
+#include "tunneldecaporch.h"
 #include "directory.h"
 
 extern int gBatchSize;
