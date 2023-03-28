@@ -1980,6 +1980,10 @@ bool BufferMgrDynamic::isSharedHeadroomPoolEnabledInSai()
 {
     string xoff;
     recalculateSharedBufferPool();
+    if (!isNonZero(m_bufferPoolLookup[INGRESS_LOSSLESS_PG_POOL_NAME].xoff))
+    {
+        return true;
+    }
     m_applBufferPoolTable.flush();
     m_applStateBufferPoolTable.hget(INGRESS_LOSSLESS_PG_POOL_NAME, "xoff", xoff);
     if (!isNonZero(xoff))
