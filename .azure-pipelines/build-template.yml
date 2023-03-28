@@ -71,7 +71,7 @@ jobs:
       sudo apt-get install -y libzmq5 libzmq3-dev
       sudo apt-get install -qq -y \
           libhiredis-dev \
-          swig3.0
+          swig4.0
       sudo apt-get install -y libdbus-1-3
       sudo apt-get install -y libteam-dev \
           libteam5 \
@@ -120,20 +120,20 @@ jobs:
       runBranch: 'refs/heads/$(BUILD_BRANCH)'
       path: $(Build.ArtifactStagingDirectory)/download
       patterns: |
-        target/debs/buster/libnl-3-200_*.deb
-        target/debs/buster/libnl-3-dev_*.deb
-        target/debs/buster/libnl-genl-3-200_*.deb
-        target/debs/buster/libnl-genl-3-dev_*.deb
-        target/debs/buster/libnl-route-3-200_*.deb
-        target/debs/buster/libnl-route-3-dev_*.deb
-        target/debs/buster/libnl-nf-3-200_*.deb
-        target/debs/buster/libnl-nf-3-dev_*.deb
-        target/debs/buster/libyang_*.deb
+        target/debs/bullseye/libnl-3-200_*.deb
+        target/debs/bullseye/libnl-3-dev_*.deb
+        target/debs/bullseye/libnl-genl-3-200_*.deb
+        target/debs/bullseye/libnl-genl-3-dev_*.deb
+        target/debs/bullseye/libnl-route-3-200_*.deb
+        target/debs/bullseye/libnl-route-3-dev_*.deb
+        target/debs/bullseye/libnl-nf-3-200_*.deb
+        target/debs/bullseye/libnl-nf-3-dev_*.deb
+        target/debs/bullseye/libyang_*.deb
     displayName: "Download common libs"
   - script: |
       set -ex
       cd download
-      sudo dpkg -i $(find target/debs/buster -type f)
+      sudo dpkg -i $(find target/debs/bullseye -type f)
       sudo dpkg -i $(ls *.deb)
       cd ..
       rm -rf download
