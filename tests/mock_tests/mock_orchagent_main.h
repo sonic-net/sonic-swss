@@ -41,7 +41,6 @@ extern SwitchOrch *gSwitchOrch;
 extern CrmOrch *gCrmOrch;
 extern PortsOrch *gPortsOrch;
 extern FgNhgOrch *gFgNhgOrch;
-
 extern RouteOrch *gRouteOrch;
 extern IntfsOrch *gIntfsOrch;
 extern NeighOrch *gNeighOrch;
