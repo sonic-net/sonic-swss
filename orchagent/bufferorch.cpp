@@ -559,6 +559,9 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
         auto it_to_delete = (m_buffer_type_maps[map_type_name])->find(object_name);
         (m_buffer_type_maps[map_type_name])->erase(it_to_delete);
         m_countersDb->hdel(COUNTERS_BUFFER_POOL_NAME_MAP, object_name);
+
+        vector<FieldValueTuple> fvs;
+        m_publisher.publish(APP_BUFFER_POOL_TABLE_NAME, object_name, fvs, ReturnCode(SAI_STATUS_SUCCESS), true);
     }
     else
     {
