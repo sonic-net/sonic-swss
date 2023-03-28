@@ -827,7 +827,8 @@ bool NeighOrch::removeNeighbor(const NeighborEntry &neighborEntry, bool disable)
                 }
             }
         }
-        else {
+        else
+        {
             if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
             {
                 gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEIGHBOR);

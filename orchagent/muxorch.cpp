@@ -117,7 +117,7 @@ static sai_status_t create_route(IpPrefix &pfx, sai_object_id_t nh)
     if (status != SAI_STATUS_SUCCESS)
     {
         if (status == SAI_STATUS_ITEM_ALREADY_EXISTS) {
-            SWSS_LOG_ERROR("Tunnel route to %s already exists", pfx.to_string().c_str());
+            SWSS_LOG_NOTICE("Tunnel route to %s already exists", pfx.to_string().c_str());
             return SAI_STATUS_SUCCESS;
         }
         SWSS_LOG_ERROR("Failed to create tunnel route %s,nh %" PRIx64 " rv:%d",
