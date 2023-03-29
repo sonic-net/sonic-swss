@@ -44,6 +44,7 @@ namespace mux_rollback_test
         TunnelDecapOrch *m_TunnelDecapOrch;
         MuxStateOrch *m_MuxStateOrch;
         FlexCounterOrch *m_FlexCounterOrch;
+        PolicerOrch *m_PolicerOrch;
         mock_sai_neighbor_api_t mock_sai_neighbor_api_;
 
         void SetMuxStateFromAppDb(std::string state)
@@ -262,9 +263,9 @@ namespace mux_rollback_test
                 CFG_PEER_SWITCH_TABLE_NAME
             };
 
-            gPolicerOrch = new PolicerOrch(m_config_db.get(), CFG_POLICER_TABLE_NAME);
-            gDirectory.set(gPolicerOrch);
-            ut_orch_list.push_back((Orch **)&gPolicerOrch);
+            m_PolicerOrch= new PolicerOrch(m_config_db.get(), CFG_POLICER_TABLE_NAME);
+            gDirectory.set(m_PolicerOrch);
+            ut_orch_list.push_back((Orch **)&m_PolicerOrch);
 
             TableConnector stateDbSwitchTable(m_state_db.get(), STATE_SWITCH_CAPABILITY_TABLE_NAME);
             TableConnector app_switch_table(m_app_db.get(), APP_SWITCH_TABLE_NAME);
@@ -288,7 +289,7 @@ namespace mux_rollback_test
             ut_orch_list.push_back((Orch **)&gRouteOrch);
             TableConnector stateDbMirrorSession(m_state_db.get(), STATE_MIRROR_SESSION_TABLE_NAME);
             TableConnector confDbMirrorSession(m_config_db.get(), CFG_MIRROR_SESSION_TABLE_NAME);
-            gMirrorOrch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, gPolicerOrch);
+            gMirrorOrch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, m_PolicerOrch);
             gDirectory.set(gMirrorOrch);
             ut_orch_list.push_back((Orch **)&gMirrorOrch);
 
