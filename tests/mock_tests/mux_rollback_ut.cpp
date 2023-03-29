@@ -192,7 +192,6 @@ namespace mux_rollback_test
             m_app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
             m_config_db = make_shared<swss::DBConnector>("CONFIG_DB", 0);
             m_state_db = make_shared<swss::DBConnector>("STATE_DB", 0);
-            m_chassis_app_db = make_shared<swss::DBConnector>("CHASSIS_APP_DB", 0);
 
             PrepareSai();
 
