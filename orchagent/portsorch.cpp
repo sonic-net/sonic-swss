@@ -6158,7 +6158,7 @@ void PortsOrch::generateQueueMapPerPort(const Port& port, FlexCounterQueueStates
         {
 	    /* voq counters are always enabled. There is no mechanism to disable voq
 	     * counters in a voq system. */
-            if (!voq && !queuesState.isQueueCounterEnabled(queueRealIndex))
+            if ((gMySwitchType != "voq")  && !queuesState.isQueueCounterEnabled(queueRealIndex))
             {
                 continue;
             }
@@ -6177,6 +6177,16 @@ void PortsOrch::generateQueueMapPerPort(const Port& port, FlexCounterQueueStates
         }
         else
         {
+            // In voq systems, always install a flex counter for this egress queue
+            // to track stats. In voq systems, the buffer profiles are defined on
+            // sysports. So the phy ports do not have buffer queue config. Hence
+            // queuesStateVector built by getQueueConfigurations in flexcounterorch
+            // never has phy ports in voq systems. So always enabled egress queue
+            // counter on voq systems.
+            if (gMySwitchType == "voq")
+            {
+               addQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, false);
+            }
             queuePortVector.emplace_back(id, sai_serialize_object_id(port.m_port_id));
         }
     }
