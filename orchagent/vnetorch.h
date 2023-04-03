@@ -138,6 +138,11 @@ public:
         return overlay_dmac_;
     }
 
+    void setOverlayDMac(swss::MacAddress mac_addr)
+    {
+        overlay_dmac_ = mac_addr;
+    }
+
     virtual ~VNetObject() noexcept(false) {};
 
 private:
@@ -418,6 +423,7 @@ public:
 
     void update(SubjectType, void *);
     void updateMonitorState(string& op, const IpPrefix& prefix , const IpAddress& endpoint, string state);
+    void updateAllMonitoringSession(const string& vnet);
 
 private:
     virtual bool addOperation(const Request& request);
