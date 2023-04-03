@@ -39,95 +39,6 @@ static bool extractVariables(const string &input, char delimiter, T &output, Arg
     }
 }
 
-template<class T>
-static bool getValue(
-    const DashAclOrch::TaskArgs &ta,
-    const string &field,
-    T &value)
-{
-    SWSS_LOG_ENTER();
-
-    auto value_opt = swss::fvsGetValue(ta, field, true);
-    if (!value_opt)
-    {
-        SWSS_LOG_DEBUG("Cannot find field : %s", field.c_str());
-        return false;
-    }
-
-    try
-    {
-        lexical_convert(*value_opt, value);
-        return true;
-    }
-    catch(const exception &err)
-    {
-        SWSS_LOG_WARN("Cannot convert field %s to type %s (%s)", field.c_str(), typeid(T).name(), err.what());
-        return false;
-    }
-}
-
-namespace swss {
-
-template<>
-inline void lexical_convert(const string &buffer, DashAclStage &stage)
-{
-    SWSS_LOG_ENTER();
-
-    if (buffer == "1")
-    {
-        stage = DashAclStage::STAGE1;
-    }
-    else if (buffer == "2")
-    {
-        stage = DashAclStage::STAGE2;
-    }
-    else if (buffer == "3")
-    {
-        stage = DashAclStage::STAGE3;
-    }
-    else if (buffer == "4")
-    {
-        stage = DashAclStage::STAGE4;
-    }
-    else if (buffer == "5")
-    {
-        stage = DashAclStage::STAGE5;
-    }
-    else
-    {
-        SWSS_LOG_ERROR("Invalid stage : %s", buffer.c_str());
-        throw invalid_argument("Invalid stage");
-    }
-
-}
-
-}
-
-template<class T>
-static bool updateValue(
-    const DashAclOrch::TaskArgs &ta,
-    const string &field,
-    boost::optional<T> &opt)
-{
-    SWSS_LOG_ENTER();
-
-    T value;
-
-    if (!getValue(ta, field, value))
-    {
-        return false;
-    }
-
-    if (opt && opt.value() == value)
-    {
-        return false;
-    }
-
-    opt = value;
-
-    return true;
-}
-
 sai_ip_prefix_t pbPrefix2SAIPrefix(const dash::types::IpPrefix *pb_prefix, sai_ip_addr_family_t addr_family)
 {
     SWSS_LOG_ENTER();
@@ -265,30 +176,30 @@ vector<RangeType> pbRangeOrValues2SAIRanges(
     return sai_ranges;
 }
 
-sai_attr_id_t getSaiStage(DashAclDirection d, sai_ip_addr_family_t f, DashAclStage s)
+sai_attr_id_t getSaiStage(DashAclDirection d, sai_ip_addr_family_t f, uint32_t s)
 {
-    const static map<tuple<DashAclDirection, sai_ip_addr_family_t, DashAclStage>, sai_attr_id_t> StageMaps =
+    const static map<tuple<DashAclDirection, sai_ip_addr_family_t, uint32_t>, sai_attr_id_t> StageMaps =
         {
-            {{IN, SAI_IP_ADDR_FAMILY_IPV4, DashAclStage::STAGE1}, SAI_ENI_ATTR_INBOUND_V4_STAGE1_DASH_ACL_GROUP_ID},
-            {{IN, SAI_IP_ADDR_FAMILY_IPV4, DashAclStage::STAGE2}, SAI_ENI_ATTR_INBOUND_V4_STAGE2_DASH_ACL_GROUP_ID},
-            {{IN, SAI_IP_ADDR_FAMILY_IPV4, DashAclStage::STAGE3}, SAI_ENI_ATTR_INBOUND_V4_STAGE3_DASH_ACL_GROUP_ID},
-            {{IN, SAI_IP_ADDR_FAMILY_IPV4, DashAclStage::STAGE4}, SAI_ENI_ATTR_INBOUND_V4_STAGE4_DASH_ACL_GROUP_ID},
-            {{IN, SAI_IP_ADDR_FAMILY_IPV4, DashAclStage::STAGE5}, SAI_ENI_ATTR_INBOUND_V4_STAGE5_DASH_ACL_GROUP_ID},
-            {{IN, SAI_IP_ADDR_FAMILY_IPV6, DashAclStage::STAGE1}, SAI_ENI_ATTR_INBOUND_V6_STAGE1_DASH_ACL_GROUP_ID},
-            {{IN, SAI_IP_ADDR_FAMILY_IPV6, DashAclStage::STAGE2}, SAI_ENI_ATTR_INBOUND_V6_STAGE2_DASH_ACL_GROUP_ID},
-            {{IN, SAI_IP_ADDR_FAMILY_IPV6, DashAclStage::STAGE3}, SAI_ENI_ATTR_INBOUND_V6_STAGE3_DASH_ACL_GROUP_ID},
-            {{IN, SAI_IP_ADDR_FAMILY_IPV6, DashAclStage::STAGE4}, SAI_ENI_ATTR_INBOUND_V6_STAGE4_DASH_ACL_GROUP_ID},
-            {{IN, SAI_IP_ADDR_FAMILY_IPV6, DashAclStage::STAGE5}, SAI_ENI_ATTR_INBOUND_V6_STAGE5_DASH_ACL_GROUP_ID},
-            {{OUT, SAI_IP_ADDR_FAMILY_IPV4, DashAclStage::STAGE1}, SAI_ENI_ATTR_OUTBOUND_V4_STAGE1_DASH_ACL_GROUP_ID},
-            {{OUT, SAI_IP_ADDR_FAMILY_IPV4, DashAclStage::STAGE2}, SAI_ENI_ATTR_OUTBOUND_V4_STAGE2_DASH_ACL_GROUP_ID},
-            {{OUT, SAI_IP_ADDR_FAMILY_IPV4, DashAclStage::STAGE3}, SAI_ENI_ATTR_OUTBOUND_V4_STAGE3_DASH_ACL_GROUP_ID},
-            {{OUT, SAI_IP_ADDR_FAMILY_IPV4, DashAclStage::STAGE4}, SAI_ENI_ATTR_OUTBOUND_V4_STAGE4_DASH_ACL_GROUP_ID},
-            {{OUT, SAI_IP_ADDR_FAMILY_IPV4, DashAclStage::STAGE5}, SAI_ENI_ATTR_OUTBOUND_V4_STAGE5_DASH_ACL_GROUP_ID},
-            {{OUT, SAI_IP_ADDR_FAMILY_IPV6, DashAclStage::STAGE1}, SAI_ENI_ATTR_OUTBOUND_V6_STAGE1_DASH_ACL_GROUP_ID},
-            {{OUT, SAI_IP_ADDR_FAMILY_IPV6, DashAclStage::STAGE2}, SAI_ENI_ATTR_OUTBOUND_V6_STAGE2_DASH_ACL_GROUP_ID},
-            {{OUT, SAI_IP_ADDR_FAMILY_IPV6, DashAclStage::STAGE3}, SAI_ENI_ATTR_OUTBOUND_V6_STAGE3_DASH_ACL_GROUP_ID},
-            {{OUT, SAI_IP_ADDR_FAMILY_IPV6, DashAclStage::STAGE4}, SAI_ENI_ATTR_OUTBOUND_V6_STAGE4_DASH_ACL_GROUP_ID},
-            {{OUT, SAI_IP_ADDR_FAMILY_IPV6, DashAclStage::STAGE5}, SAI_ENI_ATTR_OUTBOUND_V6_STAGE5_DASH_ACL_GROUP_ID},
+            {{IN, SAI_IP_ADDR_FAMILY_IPV4, 1}, SAI_ENI_ATTR_INBOUND_V4_STAGE1_DASH_ACL_GROUP_ID},
+            {{IN, SAI_IP_ADDR_FAMILY_IPV4, 2}, SAI_ENI_ATTR_INBOUND_V4_STAGE2_DASH_ACL_GROUP_ID},
+            {{IN, SAI_IP_ADDR_FAMILY_IPV4, 3}, SAI_ENI_ATTR_INBOUND_V4_STAGE3_DASH_ACL_GROUP_ID},
+            {{IN, SAI_IP_ADDR_FAMILY_IPV4, 4}, SAI_ENI_ATTR_INBOUND_V4_STAGE4_DASH_ACL_GROUP_ID},
+            {{IN, SAI_IP_ADDR_FAMILY_IPV4, 5}, SAI_ENI_ATTR_INBOUND_V4_STAGE5_DASH_ACL_GROUP_ID},
+            {{IN, SAI_IP_ADDR_FAMILY_IPV6, 1}, SAI_ENI_ATTR_INBOUND_V6_STAGE1_DASH_ACL_GROUP_ID},
+            {{IN, SAI_IP_ADDR_FAMILY_IPV6, 2}, SAI_ENI_ATTR_INBOUND_V6_STAGE2_DASH_ACL_GROUP_ID},
+            {{IN, SAI_IP_ADDR_FAMILY_IPV6, 3}, SAI_ENI_ATTR_INBOUND_V6_STAGE3_DASH_ACL_GROUP_ID},
+            {{IN, SAI_IP_ADDR_FAMILY_IPV6, 4}, SAI_ENI_ATTR_INBOUND_V6_STAGE4_DASH_ACL_GROUP_ID},
+            {{IN, SAI_IP_ADDR_FAMILY_IPV6, 5}, SAI_ENI_ATTR_INBOUND_V6_STAGE5_DASH_ACL_GROUP_ID},
+            {{OUT, SAI_IP_ADDR_FAMILY_IPV4, 1}, SAI_ENI_ATTR_OUTBOUND_V4_STAGE1_DASH_ACL_GROUP_ID},
+            {{OUT, SAI_IP_ADDR_FAMILY_IPV4, 2}, SAI_ENI_ATTR_OUTBOUND_V4_STAGE2_DASH_ACL_GROUP_ID},
+            {{OUT, SAI_IP_ADDR_FAMILY_IPV4, 3}, SAI_ENI_ATTR_OUTBOUND_V4_STAGE3_DASH_ACL_GROUP_ID},
+            {{OUT, SAI_IP_ADDR_FAMILY_IPV4, 4}, SAI_ENI_ATTR_OUTBOUND_V4_STAGE4_DASH_ACL_GROUP_ID},
+            {{OUT, SAI_IP_ADDR_FAMILY_IPV4, 5}, SAI_ENI_ATTR_OUTBOUND_V4_STAGE5_DASH_ACL_GROUP_ID},
+            {{OUT, SAI_IP_ADDR_FAMILY_IPV6, 1}, SAI_ENI_ATTR_OUTBOUND_V6_STAGE1_DASH_ACL_GROUP_ID},
+            {{OUT, SAI_IP_ADDR_FAMILY_IPV6, 2}, SAI_ENI_ATTR_OUTBOUND_V6_STAGE2_DASH_ACL_GROUP_ID},
+            {{OUT, SAI_IP_ADDR_FAMILY_IPV6, 3}, SAI_ENI_ATTR_OUTBOUND_V6_STAGE3_DASH_ACL_GROUP_ID},
+            {{OUT, SAI_IP_ADDR_FAMILY_IPV6, 4}, SAI_ENI_ATTR_OUTBOUND_V6_STAGE4_DASH_ACL_GROUP_ID},
+            {{OUT, SAI_IP_ADDR_FAMILY_IPV6, 5}, SAI_ENI_ATTR_OUTBOUND_V6_STAGE5_DASH_ACL_GROUP_ID},
         };
 
     auto stage = StageMaps.find({d, f, s});
@@ -699,7 +610,7 @@ task_process_status DashAclOrch::bindAclToEni(DashAclBindTable &acl_bind_table, 
     DashAclDirection direction = ((&acl_bind_table == &m_dash_acl_in_table) ? DashAclDirection::IN : DashAclDirection::OUT);
 
     string eni;
-    DashAclStage stage;
+    uint32_t stage;
     if (!extractVariables(key, ':', eni, stage))
     {
         SWSS_LOG_WARN("Invalid key : %s", key.c_str());
@@ -779,7 +690,7 @@ task_process_status DashAclOrch::unbindAclFromEni(DashAclBindTable &acl_bind_tab
     DashAclDirection direction = ((&acl_bind_table == &m_dash_acl_in_table) ? DashAclDirection::IN : DashAclDirection::OUT);
 
     string eni;
-    DashAclStage stage;
+    uint32_t stage;
     if (!extractVariables(key, ':', eni, stage))
     {
         SWSS_LOG_WARN("Invalid key : %s", key.c_str());

@@ -17,15 +17,6 @@
 #include "dashorch.h"
 #include "proto/acl.pb.h"
 
-typedef enum _DashAclStage
-{
-    STAGE1,
-    STAGE2,
-    STAGE3,
-    STAGE4,
-    STAGE5,
-} DashAclStage;
-
 typedef enum _DashAclDirection
 {
     IN,
