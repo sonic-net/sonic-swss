@@ -3226,6 +3226,13 @@ class TestVnetOrch(object):
         vnet_obj.check_custom_monitor_app_db(dvs, "100.100.1.11/32", "19.1.0.2", "vxlan", "22:33:33:44:44:88")
         vnet_obj.check_custom_monitor_app_db(dvs, "100.100.1.11/32", "19.1.0.3", "vxlan", "22:33:33:44:44:88")
 
+        #update the Dmac to empty. This should have no impact.
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '10022', "", advertise_prefix=True, overlay_dmac="")
+
+        #verify the appdb entries.
+        vnet_obj.check_custom_monitor_app_db(dvs, "100.100.1.11/32", "19.1.0.1", "vxlan", "22:33:33:44:44:88")
+        vnet_obj.check_custom_monitor_app_db(dvs, "100.100.1.11/32", "19.1.0.2", "vxlan", "22:33:33:44:44:88")
+        vnet_obj.check_custom_monitor_app_db(dvs, "100.100.1.11/32", "19.1.0.3", "vxlan", "22:33:33:44:44:88")
 
         #remove first route
         delete_vnet_routes(dvs, "100.100.1.11/32", vnet_name)

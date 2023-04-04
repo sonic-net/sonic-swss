@@ -425,7 +425,7 @@ bool VNetOrch::addOperation(const Request& request)
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
     set<string> peer_list = {};
-    bool peer = false, create = false, advertise_prefix = false;
+    bool peer = false, create = false, advertise_prefix = false, od_mac = false;
     uint32_t vni=0;
     string tunnel;
     string scope;
@@ -464,6 +464,7 @@ bool VNetOrch::addOperation(const Request& request)
         else if (name == "overlay_dmac")
         {
             overlay_dmac = request.getAttrMacAddress("overlay_dmac");
+            od_mac = true;
         }
         else
         {
@@ -509,7 +510,7 @@ bool VNetOrch::addOperation(const Request& request)
             else
             {
                 SWSS_LOG_NOTICE("VNET '%s' already exists ", vnet_name.c_str());
-                if (overlay_dmac != it->second->getOverlayDMac())
+                if (od_mac && overlay_dmac != it->second->getOverlayDMac())
                 {
                     it->second->setOverlayDMac(overlay_dmac);
                     VNetRouteOrch* vnet_route_orch = gDirectory.get<VNetRouteOrch*>();
