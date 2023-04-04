@@ -259,24 +259,6 @@ bool RouteOrch::hasNextHopGroup(const NextHopGroupKey& nexthops) const
     return m_syncdNextHopGroups.find(nexthops) != m_syncdNextHopGroups.end();
 }
 
-/**
- * @brief checks if given nexthop is in a nexthop group
- * @param nexthop NextHopKey
- * @returns true if nexthop is in a nexthop group
- */
-bool RouteOrch::inNextHopGroup(const NextHopKey& nexthop, NextHopGroupKey& nhgKey)
-{
-    for (auto it = m_syncdNextHopGroups.begin(); it != m_syncdNextHopGroups.end(); it++)
-    {
-        if (it->second.nhopgroup_members.find(nexthop) != it->second.nhopgroup_members.end())
-        {
-            nhgKey = it->first;
-            return true;
-        }
-    }
-    return false;
-}
-
 sai_object_id_t RouteOrch::getNextHopGroupId(const NextHopGroupKey& nexthops)
 {
     assert(hasNextHopGroup(nexthops));
@@ -1596,19 +1578,6 @@ bool RouteOrch::updateNextHopRoutes(const NextHopKey& nextHop, uint32_t& numRout
         return true;
     }
 
-    /* Check if nexthop is mux nexthop */
-    MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
-    NextHopGroupKey nhg_key;
-    if (inNextHopGroup(nextHop, nhg_key) && mux_orch->isMuxNexthops(nhg_key))
-    {
-        /* multiple mux nexthop case:
-         * skip for now, muxOrch::updateRoute() will handle route
-         */
-        SWSS_LOG_INFO("NH %s is in mux nexthop group, skipping.",
-                      nextHop.ip_address.to_string().c_str());
-        return true;
-    }
-
     sai_route_entry_t route_entry;
     sai_attribute_t route_attr;
     sai_object_id_t next_hop_id;
@@ -1616,6 +1585,24 @@ bool RouteOrch::updateNextHopRoutes(const NextHopKey& nextHop, uint32_t& numRout
     auto rt = it->second.begin();
     while(rt != it->second.end())
     {
+        /* Check if route is mux multi-nexthop route
+         * we define this as a route present in
+         * mux_multi_active_nh_table
+         * These routes originally point to NHG and should be handled by updateRoute()
+         */
+        MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
+        if (mux_orch->isMultiNexthopRoute((*rt).prefix))
+        {
+            /* multiple mux nexthop case:
+             * skip for now, muxOrch::updateRoute() will handle route
+             */
+            SWSS_LOG_INFO("Route %s is mux multi nexthop route, skipping.",
+                        (*rt).prefix.to_string().c_str());
+
+            ++rt;
+            continue;
+        }
+
         SWSS_LOG_INFO("Updating route %s", (*rt).prefix.to_string().c_str());
         next_hop_id = m_neighOrch->getNextHopId(nextHop);
 
@@ -2284,8 +2271,6 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
                 ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
     }
 
-    m_syncdRoutes[vrf_id][ipPrefix] = RouteNhg(nextHops, ctx.nhg_index);
-
     MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
     if (ctx.nhg_index.empty() && nextHops.getSize() == 1 && !nextHops.is_overlay_nexthop() && !nextHops.is_srv6_nexthop())
     {
@@ -2307,8 +2292,6 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
                 addNextHopRoute(*nh, routekey);
             }
         }
-        // update routes to reflect mux state
-        mux_orch->updateRoute(ipPrefix, false);
     }
 
     if (ipPrefix.isDefaultRoute())
@@ -2319,6 +2302,14 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
     if (it_route == m_syncdRoutes.at(vrf_id).end())
     {
         gFlowCounterRouteOrch->handleRouteAdd(vrf_id, ipPrefix);
+    }
+
+    m_syncdRoutes[vrf_id][ipPrefix] = RouteNhg(nextHops, ctx.nhg_index);
+
+    // update routes to reflect mux state
+    if (mux_orch->isMuxNexthops(nextHops))
+    {
+        mux_orch->updateRoute(ipPrefix, true);
     }
 
     notifyNextHopChangeObservers(vrf_id, ipPrefix, nextHops, true);
@@ -2500,7 +2491,7 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
                         removeNextHopRoute(*nh, routekey);
                     }
                 }
-                mux_orch->updateRoute(ipPrefix, true);
+                mux_orch->updateRoute(ipPrefix, false);
             }
         }
         else if (ol_nextHops.is_overlay_nexthop())

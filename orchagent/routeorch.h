@@ -186,9 +186,7 @@ public:
     RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch, Srv6Orch *srv6Orch);
 
     bool hasNextHopGroup(const NextHopGroupKey&) const;
-    bool inNextHopGroup(const NextHopKey&, NextHopGroupKey& nhgKey);
     sai_object_id_t getNextHopGroupId(const NextHopGroupKey&);
-    NextHopGroupEntry getNextHopGroupEntry(const NextHopGroupKey&);
 
     void attach(Observer *, const IpAddress&, sai_object_id_t vrf_id = gVirtualRouterId);
     void detach(Observer *, const IpAddress&, sai_object_id_t vrf_id = gVirtualRouterId);

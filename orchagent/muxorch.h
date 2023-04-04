@@ -72,8 +72,6 @@ public:
     bool disable(sai_object_id_t);
     void update(NextHopKey nh, sai_object_id_t, bool = true, MuxState = MuxState::MUX_STATE_INIT);
 
-    void removeNeighborRoutes(NextHopKey nh);
-
     sai_object_id_t getNextHopId(const NextHopKey);
     MuxNeighbor getNeighbors() const { return neighbors_; };
     string getAlias() const { return alias_; };
@@ -196,6 +194,11 @@ public:
         return (skip_neighbors_.find(nbr) != skip_neighbors_.end());
     }
 
+    bool isMultiNexthopRoute(const IpPrefix& pfx)
+    {
+        return (mux_multi_active_nh_table.find(pfx) != mux_multi_active_nh_table.end());
+    }
+
     MuxCable* findMuxCableInSubnet(IpAddress);
     bool isNeighborActive(const IpAddress&, const MacAddress&, string&);
     void update(SubjectType, void *);
@@ -211,7 +214,7 @@ public:
     bool removeNextHopTunnel(std::string tunnelKey, IpAddress& ipAddr);
     sai_object_id_t getNextHopTunnelId(std::string tunnelKey, IpAddress& ipAddr);
 
-    void updateRoute(const IpPrefix &pfx, bool remove);
+    void updateRoute(const IpPrefix &pfx, bool add);
     bool isStandaloneTunnelRouteInstalled(const IpAddress& neighborIp);
 
 private:
@@ -254,7 +257,7 @@ private:
     NextHopTb mux_nexthop_tb_;
 
     /* contains reference of programmed routes by updateRoute */
-    MuxRouteTb mux_multi_nh_route_tb;
+    MuxRouteTb mux_multi_active_nh_table;
 
     handler_map handler_map_;
 

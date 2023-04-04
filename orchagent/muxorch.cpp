@@ -597,7 +597,6 @@ void MuxCable::updateNeighbor(NextHopKey nh, bool add)
     else if (mux_name_ == mux_orch_->getNexthopMuxName(nh))
     {
         mux_orch_->removeNexthop(nh);
-        nbr_handler_->removeNeighborRoutes(nh);
     }
     updateRoutes();
 }
@@ -617,7 +616,7 @@ void MuxCable::updateRoutes()
         {
             for (auto rt = routes.begin(); rt != routes.end(); rt++)
             {
-                mux_orch_->updateRoute(rt->prefix, false);
+                mux_orch_->updateRoute(rt->prefix, true);
             }
         }
     }
@@ -805,44 +804,6 @@ bool MuxNbrHandler::disable(sai_object_id_t tnh)
     }
 
     return true;
-}
-
-/**
- * @brief removes routes programmed by updateRoute
- * @param nh NextHopKey that points to neighbor for which to remove routes
- */
-void MuxNbrHandler::removeNeighborRoutes(NextHopKey nh)
-{
-    std::set<RouteKey> routes;
-    NextHopGroupKey nhg_key;
-    NextHopGroupEntry nhg_entry;
-
-    if (gRouteOrch->getRoutesForNexthop(routes, nh))
-    {
-        for (auto rt = routes.begin(); rt != routes.end(); rt++)
-        {
-            SWSS_LOG_INFO("Removing multi-nexthop route for %s", rt->prefix.to_string().c_str());
-            /* get nexthop group key from syncd */
-            nhg_key = gRouteOrch->getSyncdRouteNhgKey(gVirtualRouterId, rt->prefix);
-
-            /* check for cross-mux neighbors */
-            if (nhg_key.getSize() > 1)
-            {
-                sai_route_entry_t route_entry;
-                route_entry.switch_id = gSwitchId;
-                route_entry.vr_id = gVirtualRouterId;
-                copy(route_entry.destination, rt->prefix);
-                subnet(route_entry.destination, route_entry.destination);
-
-                sai_status_t status = sai_route_api->remove_route_entry(&route_entry);
-                if (status != SAI_STATUS_SUCCESS)
-                {
-                    SWSS_LOG_ERROR("Failed to remove route %s, rv:%d",
-                                    rt->prefix.to_string().c_str(), status);
-                }
-            }
-        }
-    }
 }
 
 sai_object_id_t MuxNbrHandler::getNextHopId(const NextHopKey nhKey)
@@ -1080,83 +1041,103 @@ sai_object_id_t MuxOrch::getNextHopTunnelId(std::string tunnelKey, IpAddress& ip
  * @param pfx IpPrefix of route to update
  * @param remove bool only true when route is getting removed
  */
-void MuxOrch::updateRoute(const IpPrefix &pfx, bool remove)
+void MuxOrch::updateRoute(const IpPrefix &pfx, bool add)
 {
     NextHopGroupKey nhg_key;
     NextHopGroupEntry nhg_entry;
 
-    if (remove)
+    if (!add)
     {
-        mux_multi_nh_route_tb.erase(pfx);
+        mux_multi_active_nh_table.erase(pfx);
         return;
     }
 
     /* get nexthop group key from syncd */
     nhg_key = gRouteOrch->getSyncdRouteNhgKey(gVirtualRouterId, pfx);
 
-    /* check for cross-mux neighbors */
-    if (nhg_key.getSize() > 1)
+    /* check for multi-nh neighbors.
+     * if none are present, ignore
+     */
+    if (nhg_key.getSize() <= 1)
     {
-        std::set<NextHopKey> nextHops;
-        sai_object_id_t next_hop_id;
-        sai_status_t status;
-        bool active_found = false;
+        return;
+    }
 
-        /* get nexthops from nexthop group */
-        nextHops = nhg_key.getNextHops();
+    std::set<NextHopKey> nextHops;
+    sai_object_id_t next_hop_id;
+    sai_status_t status;
+    bool active_found = false;
 
-        auto it = mux_multi_nh_route_tb.find(pfx);
-        if (it != mux_multi_nh_route_tb.end())
+    /* get nexthops from nexthop group */
+    nextHops = nhg_key.getNextHops();
+
+    auto it = mux_multi_active_nh_table.find(pfx);
+    if (it != mux_multi_active_nh_table.end())
+    {
+        /* This will only work for configured MUX neighbors (most cases)
+         * TODO: add way to find MUX from neighbor
+         */
+        MuxCable* cable = findMuxCableInSubnet(it->second.ip_address);
+        auto standalone = standalone_tunnel_neighbors_.find(it->second.ip_address);
+
+        if ((cable == nullptr && standalone == standalone_tunnel_neighbors_.end()) ||
+             cable->isActive())
         {
-            MuxCable* cable = findMuxCableInSubnet(it->second.ip_address);
-            if (cable == nullptr || cable->isActive())
-            {
-                SWSS_LOG_NOTICE("Route %s pointing to active neighbor %s",
-                    pfx.to_string().c_str(), it->second.to_string().c_str());
-                return;
-            }
+            SWSS_LOG_INFO("Route %s pointing to active neighbor %s",
+                pfx.to_string().c_str(), it->second.to_string().c_str());
+            return;
         }
+    }
 
-        SWSS_LOG_NOTICE("Updating route %s pointing to Mux nexthops %s",
-                    pfx.to_string().c_str(), nhg_key.to_string().c_str());
+    SWSS_LOG_NOTICE("Updating route %s pointing to Mux nexthops %s",
+                pfx.to_string().c_str(), nhg_key.to_string().c_str());
 
-        for (auto it = nextHops.begin(); it != nextHops.end(); it++)
+    for (auto it = nextHops.begin(); it != nextHops.end(); it++)
+    {
+        NextHopKey nexthop = *it;
+        /* This will only work for configured MUX neighbors (most cases)
+         * TODO: add way to find MUX from neighbor
+         */
+        MuxCable* cable = findMuxCableInSubnet(nexthop.ip_address);
+        auto standalone = standalone_tunnel_neighbors_.find(nexthop.ip_address);
+
+        if ((cable == nullptr && standalone == standalone_tunnel_neighbors_.end()) ||
+             cable->isActive())
         {
-            NextHopKey nexthop = *it;
-            MuxCable* cable = findMuxCableInSubnet(nexthop.ip_address);
-            if (cable == nullptr || (cable->isActive() && !active_found))
-            {
-                next_hop_id = gNeighOrch->getLocalNextHopId(nexthop);
-                /* set route entry to point to nh */
-                status = set_route(pfx, next_hop_id);
-                if (status != SAI_STATUS_SUCCESS)
-                {
-                    SWSS_LOG_ERROR("Failed to set route entry %s to nexthop %s",
-                            pfx.to_string().c_str(), nexthop.to_string().c_str());
-                    continue;
-                }
-                SWSS_LOG_INFO("setting route %s with nexthop %s %" PRIx64 "",
-                    pfx.to_string().c_str(), nexthop.to_string().c_str(), next_hop_id);
-                mux_multi_nh_route_tb[pfx] = nexthop;
-                active_found = true;
-                break;
-            }
-        }
-
-        if (!active_found)
-        {
-            next_hop_id = getNextHopTunnelId(MUX_TUNNEL, mux_peer_switch_);
-            /* no active nexthop found, point to first */
-            SWSS_LOG_NOTICE("No Active neighbors found, setting route %s to point to tun",
-                        pfx.getIp().to_string().c_str());
+            /* Here we pull from local nexthop ID because neighbor update occurs during state change
+             * before nexthopID is updated in neighorch. This ensures that if a neighbor is Active
+             * only that neighbor's nexthop ID is added, and not the tunnel nexthop
+             */
+            next_hop_id = gNeighOrch->getLocalNextHopId(nexthop);
+            /* set route entry to point to nh */
             status = set_route(pfx, next_hop_id);
             if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("Failed to set route entry %s to tunnel",
-                        pfx.getIp().to_string().c_str());
+                SWSS_LOG_ERROR("Failed to set route entry %s to nexthop %s",
+                        pfx.to_string().c_str(), nexthop.to_string().c_str());
+                continue;
             }
-            mux_multi_nh_route_tb.erase(pfx);
+            SWSS_LOG_INFO("setting route %s with nexthop %s %" PRIx64 "",
+                pfx.to_string().c_str(), nexthop.to_string().c_str(), next_hop_id);
+            mux_multi_active_nh_table[pfx] = nexthop;
+            active_found = true;
+            break;
         }
+    }
+
+    if (!active_found)
+    {
+        next_hop_id = getNextHopTunnelId(MUX_TUNNEL, mux_peer_switch_);
+        /* no active nexthop found, point to first */
+        SWSS_LOG_INFO("No Active neighbors found, setting route %s to point to tun",
+                    pfx.getIp().to_string().c_str());
+        status = set_route(pfx, next_hop_id);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set route entry %s to tunnel",
+                    pfx.getIp().to_string().c_str());
+        }
+        mux_multi_active_nh_table.erase(pfx);
     }
 }
 
