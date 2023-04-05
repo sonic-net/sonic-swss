@@ -505,6 +505,12 @@ bool VNetOrch::addOperation(const Request& request)
             else
             {
                 SWSS_LOG_NOTICE("VNET '%s' already exists ", vnet_name.c_str());
+                if (!!overlay_dmac && overlay_dmac != it->second->getOverlayDMac())
+                {
+                    it->second->setOverlayDMac(overlay_dmac);
+                    VNetRouteOrch* vnet_route_orch = gDirectory.get<VNetRouteOrch*>();
+                    vnet_route_orch->updateAllMonitoringSession(vnet_name);
+                }
             }
         }
 
@@ -1790,6 +1796,36 @@ void VNetRouteOrch::removeBfdSession(const string& vnet, const NextHopKey& endpo
     bfd_session_producer_.del(key);
 
     bfd_sessions_.erase(monitor_addr);
+}
+
+void VNetRouteOrch::updateAllMonitoringSession(const string& vnet)
+{
+    SWSS_LOG_ENTER();
+    vector<FieldValueTuple>  data;
+    auto *vnet_obj = vnet_orch_->getTypePtr<VNetVrfObject>(vnet);
+    auto overlay_dmac = vnet_obj->getOverlayDMac();
+    SWSS_LOG_INFO ("updating overlay dmac value to %s", overlay_dmac.to_string().c_str());
+
+    if (monitor_info_.find(vnet) != monitor_info_.end())
+    {
+        for (auto prefix : monitor_info_[vnet])
+        {
+            for (auto monitor_addr : monitor_info_[vnet][prefix.first])
+            {
+
+                string key = monitor_addr.first.to_string() + ":" + prefix.first.to_string();
+                SWSS_LOG_INFO ("updating the overlay dmac of %s", key.c_str());
+
+                FieldValueTuple fvTuple1("packet_type", "vxlan");
+                data.push_back(fvTuple1);
+
+                FieldValueTuple fvTuple3("overlay_dmac", overlay_dmac.to_string());
+                data.push_back(fvTuple3);
+
+                monitor_session_producer_->set(key, data);
+            }
+        }
+    }
 }
 
 void VNetRouteOrch::createMonitoringSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& monitor_addr, IpPrefix& ipPrefix)

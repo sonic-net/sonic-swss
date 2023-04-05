@@ -3271,6 +3271,111 @@ class TestVnetOrch(object):
         # delete vxlan tunnel
         delete_vxlan_tunnel(dvs, tunnel_name)
 
+    '''
+    Test 24 - Test for vxlan custom monitoring. Changing the overlay_dmac of the Vnet on the fly.
+    '''
+    def test_vnet_orch_24(self, dvs, testlog):
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_24'
+        vnet_name = "Vnet24"
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.3')
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '10024', "", advertise_prefix=True, overlay_dmac="22:33:33:44:44:66")
+        delete_vnet_entry(dvs,vnet_name)
+
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '10024', "", advertise_prefix=True, overlay_dmac="22:33:33:44:44:66")
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '10024', "", advertise_prefix=True, overlay_dmac="22:33:33:44:44:77")
+        delete_vnet_entry(dvs,vnet_name)
+
+        #update the Dmac of the vnet before adding any routes.
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '10024', "", advertise_prefix=True, overlay_dmac="22:33:33:44:44:66")
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '10024', "", advertise_prefix=True, overlay_dmac="22:33:33:44:44:77")
+
+        vnet_obj.check_vnet_entry(dvs, vnet_name)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_name, '10024')
+
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.3')
+
+        vnet_obj.fetch_exist_entries(dvs)
+        #Add first Route
+        create_vnet_routes(dvs, "100.100.1.11/32", vnet_name, '19.0.0.1,19.0.0.2,19.0.0.3', ep_monitor='19.1.0.1,19.1.0.2,19.1.0.3', profile = "test_prf", primary ='19.0.0.1',monitoring='custom', adv_prefix='100.100.1.0/24')
+        #verify the appdb entries.
+        vnet_obj.check_custom_monitor_app_db(dvs, "100.100.1.11/32", "19.1.0.1", "vxlan", "22:33:33:44:44:77")
+        vnet_obj.check_custom_monitor_app_db(dvs, "100.100.1.11/32", "19.1.0.2", "vxlan", "22:33:33:44:44:77")
+        vnet_obj.check_custom_monitor_app_db(dvs, "100.100.1.11/32", "19.1.0.3", "vxlan", "22:33:33:44:44:77")
+
+        #update the Dmac after a route is added.
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '10024', "", advertise_prefix=True, overlay_dmac="22:33:33:44:44:88")
+
+        #verify the appdb entries.
+        vnet_obj.check_custom_monitor_app_db(dvs, "100.100.1.11/32", "19.1.0.1", "vxlan", "22:33:33:44:44:88")
+        vnet_obj.check_custom_monitor_app_db(dvs, "100.100.1.11/32", "19.1.0.2", "vxlan", "22:33:33:44:44:88")
+        vnet_obj.check_custom_monitor_app_db(dvs, "100.100.1.11/32", "19.1.0.3", "vxlan", "22:33:33:44:44:88")
+
+        #bring up an enpoint.
+        update_monitor_session_state(dvs, '100.100.1.11/32', '19.1.0.1', 'up')
+
+        #verify the appdb entries.
+        vnet_obj.check_custom_monitor_app_db(dvs, "100.100.1.11/32", "19.1.0.1", "vxlan", "22:33:33:44:44:88")
+        vnet_obj.check_custom_monitor_app_db(dvs, "100.100.1.11/32", "19.1.0.2", "vxlan", "22:33:33:44:44:88")
+        vnet_obj.check_custom_monitor_app_db(dvs, "100.100.1.11/32", "19.1.0.3", "vxlan", "22:33:33:44:44:88")
+
+        #update the Dmac to empty. This should have no impact.
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '10024', "", advertise_prefix=True, overlay_dmac="")
+
+        #verify the appdb entries.
+        vnet_obj.check_custom_monitor_app_db(dvs, "100.100.1.11/32", "19.1.0.1", "vxlan", "22:33:33:44:44:88")
+        vnet_obj.check_custom_monitor_app_db(dvs, "100.100.1.11/32", "19.1.0.2", "vxlan", "22:33:33:44:44:88")
+        vnet_obj.check_custom_monitor_app_db(dvs, "100.100.1.11/32", "19.1.0.3", "vxlan", "22:33:33:44:44:88")
+
+        #remove first route
+        delete_vnet_routes(dvs, "100.100.1.11/32", vnet_name)
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet12', ["100.100.1.11/32"])
+        check_remove_state_db_routes(dvs, 'Vnet12', "100.100.1.11/32")
+
+        #make sure that the app db entries are removed.
+        vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.11/32", "19.1.0.1")
+        vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.11/32", "19.1.0.2")
+        vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.11/32", "19.1.0.3")
+        vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.11/32", "19.1.0.4")
+        time.sleep(2)
+
+        #bring down an enpoint.
+        update_monitor_session_state(dvs, '100.100.1.11/32', '19.1.0.1', 'down')
+
+        create_vnet_entry(dvs, vnet_name, tunnel_name, '10024', "", advertise_prefix=True, overlay_dmac="22:33:33:44:44:66")
+
+        #Add first Route again
+        create_vnet_routes(dvs, "100.100.1.11/32", vnet_name, '19.0.0.1,19.0.0.2,19.0.0.3', ep_monitor='19.1.0.1,19.1.0.2,19.1.0.3', profile = "test_prf", primary ='19.0.0.1',monitoring='custom', adv_prefix='100.100.1.0/24')
+
+        #bring up the endpoint.
+        update_monitor_session_state(dvs, '100.100.1.11/32', '19.1.0.1', 'up')
+
+        # The default Vnet setting advertises the prefix.
+        check_routes_advertisement(dvs, "100.100.1.0/24", "test_prf")
+
+        #verify the appdb entries.
+        vnet_obj.check_custom_monitor_app_db(dvs, "100.100.1.11/32", "19.1.0.1", "vxlan", "22:33:33:44:44:66")
+        vnet_obj.check_custom_monitor_app_db(dvs, "100.100.1.11/32", "19.1.0.2", "vxlan", "22:33:33:44:44:66")
+        vnet_obj.check_custom_monitor_app_db(dvs, "100.100.1.11/32", "19.1.0.3", "vxlan", "22:33:33:44:44:66")
+
+        #remove first route
+        delete_vnet_routes(dvs, "100.100.1.11/32", vnet_name)
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet12', ["100.100.1.11/32"])
+        check_remove_state_db_routes(dvs, 'Vnet12', "100.100.1.11/32")
+
+        #make sure that the app db entries are removed.
+        vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.11/32", "19.1.0.1")
+        vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.11/32", "19.1.0.2")
+        vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.11/32", "19.1.0.3")
+        vnet_obj.check_custom_monitor_deleted(dvs, "100.100.1.11/32", "19.1.0.4")
+        time.sleep(2)
+        delete_vnet_entry(dvs,vnet_name)
+        vnet_obj.check_del_vnet_entry(dvs, vnet_name)
+        delete_vxlan_tunnel(dvs, tunnel_name)
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():

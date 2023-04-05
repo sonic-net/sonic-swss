@@ -139,6 +139,11 @@ public:
         return overlay_dmac_;
     }
 
+    void setOverlayDMac(swss::MacAddress mac_addr)
+    {
+        overlay_dmac_ = mac_addr;
+    }
+
     virtual ~VNetObject() noexcept(false) {};
 
 private:
@@ -321,7 +326,7 @@ class MonitorOrch : public Orch2
 public:
     MonitorOrch(swss::DBConnector *db, std::string tableName);
     virtual ~MonitorOrch(void);
- 
+
 private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
@@ -413,6 +418,7 @@ public:
 
     void update(SubjectType, void *);
     void updateMonitorState(string& op, const IpPrefix& prefix , const IpAddress& endpoint, string state);
+    void updateAllMonitoringSession(const string& vnet);
 
 private:
     virtual bool addOperation(const Request& request);
@@ -441,6 +447,7 @@ private:
     void removeBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr);
     void createMonitoringSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr, IpPrefix& ipPrefix);
     void removeMonitoringSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr, IpPrefix& ipPrefix);
+
     void setEndpointMonitor(const string& vnet, const map<NextHopKey, IpAddress>& monitors, NextHopGroupKey& nexthops,
                             const string& monitoring, IpPrefix& ipPrefix);
     void delEndpointMonitor(const string& vnet, NextHopGroupKey& nexthops, IpPrefix& ipPrefix);
@@ -454,7 +461,7 @@ private:
     bool updateTunnelRoute(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op);
 
     template<typename T>
-bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op, string& profile,
+    bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op, string& profile,
                     const string& monitoring, NextHopGroupKey& nexthops_secondary, const IpPrefix& adv_prefix,
                     const std::map<NextHopKey, IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
 
