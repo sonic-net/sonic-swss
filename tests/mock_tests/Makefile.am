@@ -35,6 +35,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 bulker_ut.cpp \
                 mock_sai_switch.cpp \
                 orchdaemon_ut.cpp \
+                mux_rollback_ut.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/orchagent/orchdaemon.cpp \
                 $(top_srcdir)/orchagent/orch.cpp \
