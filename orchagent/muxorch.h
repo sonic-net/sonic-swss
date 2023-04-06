@@ -46,8 +46,6 @@ private:
     void createMuxAclRule(shared_ptr<AclRuleMux> rule, string strTable);
     void bindAllPorts(AclTable &acl_table);
 
-    // class shared dict: ACL table name -> ACL table
-    static std::map<std::string, AclTable> acl_table_;
     sai_object_id_t port_ = SAI_NULL_OBJECT_ID;
     string alias_;
 };
@@ -89,6 +87,7 @@ public:
     using state_machine_handlers = map<MuxStateChange, bool (MuxCable::*)()>;
 
     void setState(string state);
+    void rollbackStateChange();
     string getState();
     bool isStateChangeInProgress() { return st_chg_in_progress_; }
     bool isStateChangeFailed() { return st_chg_failed_; }
@@ -112,6 +111,7 @@ private:
     string mux_name_;
 
     MuxState state_ = MuxState::MUX_STATE_INIT;
+    MuxState prev_state_;
     bool st_chg_in_progress_ = false;
     bool st_chg_failed_ = false;
 

@@ -116,6 +116,10 @@ static sai_status_t create_route(IpPrefix &pfx, sai_object_id_t nh)
     sai_status_t status = sai_route_api->create_route_entry(&route_entry, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
+        if (status == SAI_STATUS_ITEM_ALREADY_EXISTS) {
+            SWSS_LOG_NOTICE("Tunnel route to %s already exists", pfx.to_string().c_str());
+            return SAI_STATUS_SUCCESS;
+        }
         SWSS_LOG_ERROR("Failed to create tunnel route %s,nh %" PRIx64 " rv:%d",
                 pfx.getIp().to_string().c_str(), nh, status);
         return status;
@@ -145,6 +149,10 @@ static sai_status_t remove_route(IpPrefix &pfx)
     sai_status_t status = sai_route_api->remove_route_entry(&route_entry);
     if (status != SAI_STATUS_SUCCESS)
     {
+        if (status == SAI_STATUS_INVALID_PARAMETER || status == SAI_STATUS_ITEM_NOT_FOUND) {
+            SWSS_LOG_NOTICE("Tunnel route to %s already removed", pfx.to_string().c_str());
+            return SAI_STATUS_SUCCESS;
+        }
         SWSS_LOG_ERROR("Failed to remove tunnel route %s, rv:%d",
                         pfx.getIp().to_string().c_str(), status);
         return status;
@@ -489,7 +497,7 @@ void MuxCable::setState(string new_state)
 
     mux_cb_orch_->updateMuxMetricState(mux_name_, new_state, true);
 
-    MuxState state = state_;
+    prev_state_ = state_;
     state_ = ns;
 
     st_chg_in_progress_ = true;
@@ -497,7 +505,7 @@ void MuxCable::setState(string new_state)
     if (!(this->*(state_machine_handlers_[it->second]))())
     {
         //Reset back to original state
-        state_ = state;
+        state_ = prev_state_;
         st_chg_in_progress_ = false;
         st_chg_failed_ = true;
         throw std::runtime_error("Failed to handle state transition");
@@ -511,6 +519,51 @@ void MuxCable::setState(string new_state)
 
     mux_cb_orch_->updateMuxState(mux_name_, new_state);
     return;
+}
+
+void MuxCable::rollbackStateChange()
+{
+    if (prev_state_ == MuxState::MUX_STATE_FAILED || prev_state_ == MuxState::MUX_STATE_PENDING)
+    {
+        SWSS_LOG_ERROR("[%s] Rollback to %s not supported", mux_name_.c_str(),
+                            muxStateValToString.at(prev_state_).c_str());
+        return;
+    }
+    SWSS_LOG_WARN("[%s] Rolling back state change to %s", mux_name_.c_str(),
+                     muxStateValToString.at(prev_state_).c_str());
+    mux_cb_orch_->updateMuxMetricState(mux_name_, muxStateValToString.at(prev_state_), true);
+    st_chg_in_progress_ = true;
+    state_ = prev_state_;
+    bool success = false;
+    switch (prev_state_)
+    {
+        case MuxState::MUX_STATE_ACTIVE:
+            success = stateActive();
+            break;
+        case MuxState::MUX_STATE_INIT:
+        case MuxState::MUX_STATE_STANDBY:
+            success = stateStandby();
+            break;
+        case MuxState::MUX_STATE_FAILED:
+        case MuxState::MUX_STATE_PENDING:
+            // Check at the start of the function means we will never reach here
+            SWSS_LOG_ERROR("[%s] Rollback to %s not supported", mux_name_.c_str(),
+                                muxStateValToString.at(prev_state_).c_str());
+            return;
+    }
+    st_chg_in_progress_ = false;
+    if (success)
+    {
+        st_chg_failed_ = false;
+    }
+    else
+    {
+        st_chg_failed_ = true;
+        SWSS_LOG_ERROR("[%s] Rollback to %s failed",
+                        mux_name_.c_str(), muxStateValToString.at(prev_state_).c_str());
+    }
+    mux_cb_orch_->updateMuxMetricState(mux_name_, muxStateValToString.at(state_), false);
+    mux_cb_orch_->updateMuxState(mux_name_, muxStateValToString.at(state_));
 }
 
 string MuxCable::getState()
@@ -807,8 +860,6 @@ sai_object_id_t MuxNbrHandler::getNextHopId(const NextHopKey nhKey)
     return SAI_NULL_OBJECT_ID;
 }
 
-std::map<std::string, AclTable> MuxAclHandler::acl_table_;
-
 MuxAclHandler::MuxAclHandler(sai_object_id_t port, string alias)
 {
     SWSS_LOG_ENTER();
@@ -821,32 +872,21 @@ MuxAclHandler::MuxAclHandler(sai_object_id_t port, string alias)
     port_ = port;
     alias_ = alias;
 
-    auto found = acl_table_.find(table_name);
-    if (found == acl_table_.end())
-    {
-        SWSS_LOG_NOTICE("First time create for port %" PRIx64 "", port);
+    // Always try to create the table first. If it already exists, function will return early.
+    createMuxAclTable(port, table_name);
 
-        // First time handling of Mux Table, create ACL table, and bind
-        createMuxAclTable(port, table_name);
+    SWSS_LOG_NOTICE("Binding port %" PRIx64 "", port);
+
+    AclRule* rule = gAclOrch->getAclRule(table_name, rule_name);
+    if (rule == nullptr)
+    {
         shared_ptr<AclRuleMux> newRule =
                 make_shared<AclRuleMux>(gAclOrch, rule_name, table_name, table_type);
         createMuxAclRule(newRule, table_name);
     }
     else
     {
-        SWSS_LOG_NOTICE("Binding port %" PRIx64 "", port);
-
-        AclRule* rule = gAclOrch->getAclRule(table_name, rule_name);
-        if (rule == nullptr)
-        {
-            shared_ptr<AclRuleMux> newRule =
-                    make_shared<AclRuleMux>(gAclOrch, rule_name, table_name, table_type);
-            createMuxAclRule(newRule, table_name);
-        }
-        else
-        {
-            gAclOrch->updateAclRule(table_name, rule_name, MATCH_IN_PORTS, &port, RULE_OPER_ADD);
-        }
+        gAclOrch->updateAclRule(table_name, rule_name, MATCH_IN_PORTS, &port, RULE_OPER_ADD);
     }
 }
 
@@ -879,23 +919,16 @@ void MuxAclHandler::createMuxAclTable(sai_object_id_t port, string strTable)
 {
     SWSS_LOG_ENTER();
 
-    auto inserted = acl_table_.emplace(piecewise_construct,
-                                       std::forward_as_tuple(strTable),
-                                       std::forward_as_tuple());
-
-    assert(inserted.second);
-
-    AclTable& acl_table = inserted.first->second;
-
     sai_object_id_t table_oid = gAclOrch->getTableById(strTable);
     if (table_oid != SAI_NULL_OBJECT_ID)
     {
         // DROP ACL table is already created
-        SWSS_LOG_NOTICE("ACL table %s exists, reuse the same", strTable.c_str());
-        acl_table = *(gAclOrch->getTableByOid(table_oid));
+        SWSS_LOG_INFO("ACL table %s exists, reuse the same", strTable.c_str());
         return;
     }
 
+    SWSS_LOG_NOTICE("First time create for port %" PRIx64 "", port);
+    AclTable acl_table;
     acl_table.type = ACL_TABLE_DROP;
     acl_table.id = strTable;
     acl_table.stage = ACL_STAGE_INGRESS;
@@ -1699,10 +1732,25 @@ bool MuxCableOrch::addOperation(const Request& request)
     {
         mux_obj->setState(state);
     }
-    catch(const std::runtime_error& error)
+    catch(const std::runtime_error& e)
     {
         SWSS_LOG_ERROR("Mux Error setting state %s for port %s. Error: %s",
-                        state.c_str(), port_name.c_str(), error.what());
+                        state.c_str(), port_name.c_str(), e.what());
+        mux_obj->rollbackStateChange();
+        return true;
+    }
+    catch (const std::logic_error& e)
+    {
+        SWSS_LOG_ERROR("Logic error while setting state %s for port %s. Error: %s",
+                        state.c_str(), port_name.c_str(), e.what());
+        mux_obj->rollbackStateChange();
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        SWSS_LOG_ERROR("Exception caught while setting state %s for port %s. Error: %s",
+                        state.c_str(), port_name.c_str(), e.what());
+        mux_obj->rollbackStateChange();
         return true;
     }
 

@@ -197,6 +197,12 @@ bool NeighOrch::addNextHop(const IpAddress &ipAddress, const string &alias)
     sai_status_t status = sai_next_hop_api->create_next_hop(&next_hop_id, gSwitchId, (uint32_t)next_hop_attrs.size(), next_hop_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
+        if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
+        {
+            SWSS_LOG_NOTICE("Next hop %s on %s already exists",
+                        nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
+            return true;
+        }
         SWSS_LOG_ERROR("Failed to create next hop %s on %s, rv:%d",
                        ipAddress.to_string().c_str(), alias.c_str(), status);
         task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP, status);
@@ -770,9 +776,9 @@ bool NeighOrch::removeNeighbor(const NeighborEntry &neighborEntry, bool disable)
         if (status != SAI_STATUS_SUCCESS)
         {
             /* When next hop is not found, we continue to remove neighbor entry. */
-            if (status == SAI_STATUS_ITEM_NOT_FOUND)
+            if (status == SAI_STATUS_ITEM_NOT_FOUND || status == SAI_STATUS_INVALID_PARAMETER)
             {
-                SWSS_LOG_ERROR("Failed to locate next hop %s on %s, rv:%d",
+                SWSS_LOG_NOTICE("Next hop %s on %s doesn't exist, rv:%d",
                                ip_address.to_string().c_str(), alias.c_str(), status);
             }
             else
@@ -805,11 +811,10 @@ bool NeighOrch::removeNeighbor(const NeighborEntry &neighborEntry, bool disable)
         status = sai_neighbor_api->remove_neighbor_entry(&neighbor_entry);
         if (status != SAI_STATUS_SUCCESS)
         {
-            if (status == SAI_STATUS_ITEM_NOT_FOUND)
+            if (status == SAI_STATUS_ITEM_NOT_FOUND || status == SAI_STATUS_INVALID_PARAMETER)
             {
-                SWSS_LOG_ERROR("Failed to locate neighbor %s on %s, rv:%d",
+                SWSS_LOG_NOTICE("Neighbor %s on %s already removed, rv:%d",
                         m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str(), status);
-                return true;
             }
             else
             {
@@ -822,22 +827,24 @@ bool NeighOrch::removeNeighbor(const NeighborEntry &neighborEntry, bool disable)
                 }
             }
         }
-
-        if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
-        {
-            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEIGHBOR);
-        }
         else
         {
-            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
-        }
+            if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+            {
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEIGHBOR);
+            }
+            else
+            {
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
+            }
 
-        removeNextHop(ip_address, alias);
-        m_intfsOrch->decreaseRouterIntfsRefCount(alias);
+            removeNextHop(ip_address, alias);
+            m_intfsOrch->decreaseRouterIntfsRefCount(alias);
+            SWSS_LOG_NOTICE("Removed neighbor %s on %s",
+                    m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str());
+        }
     }
 
-    SWSS_LOG_NOTICE("Removed neighbor %s on %s",
-            m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str());
 
     /* Do not delete entry from cache if its disable request */
     if (disable)

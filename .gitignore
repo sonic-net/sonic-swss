@@ -51,6 +51,9 @@ cfgmgr/vrfmgrd
 cfgmgr/vxlanmgrd
 cfgmgr/natmgrd
 cfgmgr/sflowmgrd
+cfgmgr/coppmgrd
+cfgmgr/macsecmgrd
+cfgmgr/tunnelmgrd
 fpmsyncd/fpmsyncd
 gearsyncd/gearsyncd
 mclagsyncd/mclagsyncd
@@ -66,6 +69,11 @@ swssconfig/swssplayer
 tlm_teamd/tlm_teamd
 teamsyncd/teamsyncd
 tests/tests
+tests/mock_tests/tests_response_publisher
+tests/mock_tests/tests_fpmsyncd
+tests/mock_tests/tests_intfmgrd
+tests/mock_tests/tests_portsyncd
+
 
 # Test Files #
 ##############
@@ -76,3 +84,5 @@ tests/mock_tests/tests.trs
 tests/test-suite.log
 tests/tests.log
 tests/tests.trs
+tests/mock_tests/**/*log
+tests/mock_tests/**/*trs

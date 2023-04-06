@@ -561,6 +561,11 @@ bool AclRule::create()
     status = sai_acl_api->create_acl_entry(&m_ruleOid, gSwitchId, (uint32_t)rule_attrs.size(), rule_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
+        if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
+        {
+            SWSS_LOG_NOTICE("ACL rule %s already exists", m_id.c_str());
+            return true;
+        }
         SWSS_LOG_ERROR("Failed to create ACL rule %s, rv:%d",
                 m_id.c_str(), status);
         AclRange::remove(range_objects, range_object_list.count);
