@@ -1057,7 +1057,7 @@ class VnetVxlanVrfTunnel(object):
 
     def check_custom_monitor_app_db(self, dvs, prefix, endpoint, packet_type, overlay_dmac):
         app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-        key = prefix + ':' + endpoint
+        key = endpoint + ':' + prefix
         check_object(app_db, self.APP_VNET_MONITOR, key,
             {
                 "packet_type": packet_type,
