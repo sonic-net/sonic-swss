@@ -19,8 +19,6 @@
 #include "return_code.h"
 #include "swssnet.h"
 
-#define APP_P4RT_TABLE_NAME_SEPARATOR ":"
-
 extern "C"
 {
 #include "sai.h"
@@ -1341,18 +1339,15 @@ TEST_F(NextHopManagerTest, DrainStopOnFirstFailureDel) {
   nlohmann::json j;
   j[prependMatchField(p4orch::kNexthopId)] = kNextHopId;
   swss::KeyOpFieldsValuesTuple del_app_db_entry_1(
-      std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + APP_P4RT_TABLE_NAME_SEPARATOR +
-          j.dump(),
+      std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
       DEL_COMMAND, fvs);
   j[prependMatchField(p4orch::kNexthopId)] = kNextHopId;
   swss::KeyOpFieldsValuesTuple del_app_db_entry_2(
-      std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + APP_P4RT_TABLE_NAME_SEPARATOR +
-          j.dump(),
+      std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
       DEL_COMMAND, fvs);
   j[prependMatchField(p4orch::kNexthopId)] = kNextHopId;
   swss::KeyOpFieldsValuesTuple del_app_db_entry_3(
-      std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + APP_P4RT_TABLE_NAME_SEPARATOR +
-          j.dump(),
+      std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
       DEL_COMMAND, fvs);
 
   Enqueue(del_app_db_entry_1);
@@ -1395,18 +1390,15 @@ TEST_F(NextHopManagerTest, DrainStopOnFirstFailureDifferentTypes) {
   nlohmann::json j;
   j[prependMatchField(p4orch::kNexthopId)] = "1";
   swss::KeyOpFieldsValuesTuple app_db_entry_1(
-      std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + APP_P4RT_TABLE_NAME_SEPARATOR +
-          j.dump(),
+      std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
       SET_COMMAND, fvs);
   j[prependMatchField(p4orch::kNexthopId)] = kNextHopId;
   swss::KeyOpFieldsValuesTuple app_db_entry_2(
-      std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + APP_P4RT_TABLE_NAME_SEPARATOR +
-          j.dump(),
+      std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
       SET_COMMAND, fvs);
   j[prependMatchField(p4orch::kNexthopId)] = kNextHopId;
   swss::KeyOpFieldsValuesTuple app_db_entry_3(
-      std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + APP_P4RT_TABLE_NAME_SEPARATOR +
-          j.dump(),
+      std::string(APP_P4RT_NEXTHOP_TABLE_NAME) + kTableKeyDelimiter + j.dump(),
       DEL_COMMAND, fvs);
 
   Enqueue(app_db_entry_1);
