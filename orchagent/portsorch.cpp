@@ -78,8 +78,6 @@ extern event_handle_t g_events_handle;
 struct PortAttrValue
 {
     std::vector<std::uint32_t> lanes;
-    std::vector<std::uint32_t> adv_speeds;
-    std::vector<std::int32_t> adv_interface_types;
 };
 
 typedef PortAttrValue PortAttrValue_t;
@@ -731,67 +729,10 @@ bool PortsOrch::addPortBulk(const std::vector<PortConfig> &portList)
             attrList.push_back(attr);
         }
 
-        if (cit.adv_speeds.is_set)
-        {
-            PortAttrValue_t attrValue;
-            auto &outList = attrValue.adv_speeds;
-            auto &inList = cit.adv_speeds.value;
-            outList.insert(outList.begin(), inList.begin(), inList.end());
-            attrValueList.push_back(attrValue);
-
-            attr.id = SAI_PORT_ATTR_ADVERTISED_SPEED;
-            attr.value.u32list.count = static_cast<std::uint32_t>(attrValueList.back().adv_speeds.size());
-            attr.value.u32list.list = attrValueList.back().adv_speeds.data();
-            attrList.push_back(attr);
-        }
-
-        if (cit.interface_type.is_set)
-        {
-            attr.id = SAI_PORT_ATTR_INTERFACE_TYPE;
-            attr.value.s32 = cit.interface_type.value;
-            attrList.push_back(attr);
-        }
-
-        if (cit.adv_interface_types.is_set)
-        {
-            PortAttrValue_t attrValue;
-            auto &outList = attrValue.adv_interface_types;
-            auto &inList = cit.adv_interface_types.value;
-            outList.insert(outList.begin(), inList.begin(), inList.end());
-            attrValueList.push_back(attrValue);
-
-            attr.id = SAI_PORT_ATTR_ADVERTISED_INTERFACE_TYPE;
-            attr.value.s32list.count = static_cast<std::uint32_t>(attrValueList.back().adv_interface_types.size());
-            attr.value.s32list.list = attrValueList.back().adv_interface_types.data();
-            attrList.push_back(attr);
-        }
-
         if (cit.fec.is_set)
         {
             attr.id = SAI_PORT_ATTR_FEC_MODE;
             attr.value.s32 = cit.fec.value;
-            attrList.push_back(attr);
-        }
-
-        if (cit.mtu.is_set)
-        {
-            attr.id = SAI_PORT_ATTR_MTU;
-            /* mtu + 14 + 4 + 4 = 22 bytes */
-            attr.value.u32 = cit.mtu.value + (uint32_t)(sizeof(struct ether_header) + FCS_LEN + VLAN_TAG_LEN);
-            attrList.push_back(attr);
-        }
-
-        if (cit.tpid.is_set)
-        {
-            attr.id = SAI_PORT_ATTR_TPID;
-            attr.value.u16 = cit.tpid.value;
-            attrList.push_back(attr);
-        }
-
-        if (cit.pfc_asym.is_set)
-        {
-            attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL_MODE;
-            attr.value.s32 = cit.pfc_asym.value;
             attrList.push_back(attr);
         }
 
