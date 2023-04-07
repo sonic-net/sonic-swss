@@ -1755,8 +1755,6 @@ def manage_dvs(request) -> str:
     buffer_model = request.config.getoption("--buffer_model")
     force_recreate = request.config.getoption("--force-recreate-dvs")
     graceful_stop = request.config.getoption("--graceful-stop")
-    global NUM_PORTS
-    NUM_PORTS = request.config.getoption("--num-ports")
 
     dvs = None
     curr_dvs_env = [] # lgtm[py/unused-local-variable]
@@ -1819,6 +1817,11 @@ def manage_dvs(request) -> str:
 @pytest.fixture(scope="module")
 def dvs(request, manage_dvs) -> DockerVirtualSwitch:
     dvs_env = getattr(request.module, "DVS_ENV", [])
+    global NUM_PORTS
+    if getattr(request.module, "NUM_PORTS", None):
+        NUM_PORTS = getattr(request.module, "NUM_PORTS")
+    else:
+        NUM_PORTS = request.config.getoption("--num-ports")
     name = request.config.getoption("--dvsname")
     log_path = name if name else request.module.__name__
 
