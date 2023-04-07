@@ -570,7 +570,9 @@ int main(int argc, char **argv)
     attr.value.u64 = gSwitchId;
     attrs.push_back(attr);
 
-    if (gMySwitchType == "voq" || gMySwitchType == "fabric")
+    /* centec create switch take longtime */
+    char *platform = getenv("platform");
+    if (gMySwitchType == "voq" || gMySwitchType == "fabric" || (platform && strstr(platform, CENTEC_PLATFORM_SUBSTRING)))
     {
         /* We set this long timeout in order for orchagent to wait enough time for
          * response from syncd. It is needed since switch create takes more time
@@ -583,6 +585,10 @@ int main(int argc, char **argv)
             attr.value.u64 = (5 * SAI_REDIS_DEFAULT_SYNC_OPERATION_RESPONSE_TIMEOUT);
         }
         else if (gMySwitchType == "fabric")
+        {
+            attr.value.u64 = (10 * SAI_REDIS_DEFAULT_SYNC_OPERATION_RESPONSE_TIMEOUT);
+        }
+        else if (platform && strstr(platform, CENTEC_PLATFORM_SUBSTRING))
         {
             attr.value.u64 = (10 * SAI_REDIS_DEFAULT_SYNC_OPERATION_RESPONSE_TIMEOUT);
         }
@@ -608,11 +614,16 @@ int main(int argc, char **argv)
     }
     SWSS_LOG_NOTICE("Create a switch, id:%" PRIu64, gSwitchId);
 
-    if (gMySwitchType == "voq" || gMySwitchType == "fabric")
+    if (gMySwitchType == "voq" || gMySwitchType == "fabric" || (platform && strstr(platform, CENTEC_PLATFORM_SUBSTRING)))
     {
         /* Set syncd response timeout back to the default value */
         attr.id = SAI_REDIS_SWITCH_ATTR_SYNC_OPERATION_RESPONSE_TIMEOUT;
         attr.value.u64 = SAI_REDIS_DEFAULT_SYNC_OPERATION_RESPONSE_TIMEOUT;
+        /* centec platform set 3X default timeout*/
+        if (platform && strstr(platform, CENTEC_PLATFORM_SUBSTRING))
+        {
+            attr.value.u64 = (3 * SAI_REDIS_DEFAULT_SYNC_OPERATION_RESPONSE_TIMEOUT);
+        }
         status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
 
         if (status != SAI_STATUS_SUCCESS)
