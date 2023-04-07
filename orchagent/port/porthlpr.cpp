@@ -18,6 +18,10 @@
 
 using namespace swss;
 
+// types --------------------------------------------------------------------------------------------------------------
+
+typedef decltype(PortConfig::serdes) PortSerdes_t;
+
 // constants ----------------------------------------------------------------------------------------------------------
 
 static const std::uint32_t minPortSpeed = 1;
@@ -596,7 +600,8 @@ bool PortHelper::parsePortLinkTraining(PortConfig &port, const std::string &fiel
     return true;
 }
 
-bool PortHelper::parsePortSerdes(PortSerdesList_t &list, const std::string &field, const std::string &value) const
+template<typename T>
+bool PortHelper::parsePortSerdes(T &serdes, const std::string &field, const std::string &value) const
 {
     SWSS_LOG_ENTER();
 
@@ -612,7 +617,7 @@ bool PortHelper::parsePortSerdes(PortSerdesList_t &list, const std::string &fiel
     {
         for (const auto &cit : serdesList)
         {
-            list.push_back(toUInt32(cit));
+            serdes.value.push_back(toUInt32(cit));
         }
     }
     catch (const std::exception &e)
@@ -621,141 +626,22 @@ bool PortHelper::parsePortSerdes(PortSerdesList_t &list, const std::string &fiel
         return false;
     }
 
-    return true;
-}
-
-bool PortHelper::parsePortSerdesPreemphasis(PortConfig &port, const std::string &field, const std::string &value) const
-{
-    if (!this->parsePortSerdes(port.serdes.preemphasis.value, field, value))
-    {
-        return false;
-    }
-
-    port.serdes.preemphasis.is_set = true;
+    serdes.is_set = true;
 
     return true;
 }
 
-bool PortHelper::parsePortSerdesIdriver(PortConfig &port, const std::string &field, const std::string &value) const
-{
-    if (!this->parsePortSerdes(port.serdes.idriver.value, field, value))
-    {
-        return false;
-    }
-
-    port.serdes.idriver.is_set = true;
-
-    return true;
-}
-
-bool PortHelper::parsePortSerdesIpredriver(PortConfig &port, const std::string &field, const std::string &value) const
-{
-    if (!this->parsePortSerdes(port.serdes.ipredriver.value, field, value))
-    {
-        return false;
-    }
-
-    port.serdes.ipredriver.is_set = true;
-
-    return true;
-
-}
-
-bool PortHelper::parsePortSerdesPre1(PortConfig &port, const std::string &field, const std::string &value) const
-{
-    if (!this->parsePortSerdes(port.serdes.pre1.value, field, value))
-    {
-        return false;
-    }
-
-    port.serdes.pre1.is_set = true;
-
-    return true;
-}
-
-bool PortHelper::parsePortSerdesPre2(PortConfig &port, const std::string &field, const std::string &value) const
-{
-    if (!this->parsePortSerdes(port.serdes.pre2.value, field, value))
-    {
-        return false;
-    }
-
-    port.serdes.pre2.is_set = true;
-
-    return true;
-}
-
-bool PortHelper::parsePortSerdesPre3(PortConfig &port, const std::string &field, const std::string &value) const
-{
-    if (!this->parsePortSerdes(port.serdes.pre3.value, field, value))
-    {
-        return false;
-    }
-
-    port.serdes.pre3.is_set = true;
-
-    return true;
-}
-
-bool PortHelper::parsePortSerdesMain(PortConfig &port, const std::string &field, const std::string &value) const
-{
-    if (!this->parsePortSerdes(port.serdes.main.value, field, value))
-    {
-        return false;
-    }
-
-    port.serdes.main.is_set = true;
-
-    return true;
-}
-
-bool PortHelper::parsePortSerdesPost1(PortConfig &port, const std::string &field, const std::string &value) const
-{
-    if (!this->parsePortSerdes(port.serdes.post1.value, field, value))
-    {
-        return false;
-    }
-
-    port.serdes.post1.is_set = true;
-
-    return true;
-}
-
-bool PortHelper::parsePortSerdesPost2(PortConfig &port, const std::string &field, const std::string &value) const
-{
-    if (!this->parsePortSerdes(port.serdes.post2.value, field, value))
-    {
-        return false;
-    }
-
-    port.serdes.post2.is_set = true;
-
-    return true;
-}
-
-bool PortHelper::parsePortSerdesPost3(PortConfig &port, const std::string &field, const std::string &value) const
-{
-    if (!this->parsePortSerdes(port.serdes.post3.value, field, value))
-    {
-        return false;
-    }
-
-    port.serdes.post3.is_set = true;
-
-    return true;
-}
-
-bool PortHelper::parsePortSerdesAttn(PortConfig &port, const std::string &field, const std::string &value) const
-{
-    if (!this->parsePortSerdes(port.serdes.attn.value, field, value))
-    {
-        return false;
-    }
-
-    port.serdes.attn.is_set = true;
-
-    return true;
-}
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::preemphasis) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::idriver) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::ipredriver) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::pre1) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::pre2) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::pre3) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::main) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::post1) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::post2) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::post3) &serdes, const std::string &field, const std::string &value) const;
+template bool PortHelper::parsePortSerdes(decltype(PortSerdes_t::attn) &serdes, const std::string &field, const std::string &value) const;
 
 bool PortHelper::parsePortRole(PortConfig &port, const std::string &field, const std::string &value) const
 {
@@ -922,77 +808,77 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
         }
         else if (field == PORT_PREEMPHASIS)
         {
-            if (!this->parsePortSerdesPreemphasis(port, field, value))
+            if (!this->parsePortSerdes(port.serdes.preemphasis, field, value))
             {
                 return false;
             }
         }
         else if (field == PORT_IDRIVER)
         {
-            if (!this->parsePortSerdesIdriver(port, field, value))
+            if (!this->parsePortSerdes(port.serdes.idriver, field, value))
             {
                 return false;
             }
         }
         else if (field == PORT_IPREDRIVER)
         {
-            if (!this->parsePortSerdesIpredriver(port, field, value))
+            if (!this->parsePortSerdes(port.serdes.ipredriver, field, value))
             {
                 return false;
             }
         }
         else if (field == PORT_PRE1)
         {
-            if (!this->parsePortSerdesPre1(port, field, value))
+            if (!this->parsePortSerdes(port.serdes.pre1, field, value))
             {
                 return false;
             }
         }
         else if (field == PORT_PRE2)
         {
-            if (!this->parsePortSerdesPre2(port, field, value))
+            if (!this->parsePortSerdes(port.serdes.pre2, field, value))
             {
                 return false;
             }
         }
         else if (field == PORT_PRE3)
         {
-            if (!this->parsePortSerdesPre3(port, field, value))
+            if (!this->parsePortSerdes(port.serdes.pre3, field, value))
             {
                 return false;
             }
         }
         else if (field == PORT_MAIN)
         {
-            if (!this->parsePortSerdesMain(port, field, value))
+            if (!this->parsePortSerdes(port.serdes.main, field, value))
             {
                 return false;
             }
         }
         else if (field == PORT_POST1)
         {
-            if (!this->parsePortSerdesPost1(port, field, value))
+            if (!this->parsePortSerdes(port.serdes.post1, field, value))
             {
                 return false;
             }
         }
         else if (field == PORT_POST2)
         {
-            if (!this->parsePortSerdesPost2(port, field, value))
+            if (!this->parsePortSerdes(port.serdes.post2, field, value))
             {
                 return false;
             }
         }
         else if (field == PORT_POST3)
         {
-            if (!this->parsePortSerdesPost3(port, field, value))
+            if (!this->parsePortSerdes(port.serdes.post3, field, value))
             {
                 return false;
             }
         }
         else if (field == PORT_ATTN)
         {
-            if (!this->parsePortSerdesAttn(port, field, value))
+            if (!this->parsePortSerdes(port.serdes.attn, field, value))
             {
                 return false;
             }
