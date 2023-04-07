@@ -34,6 +34,21 @@ enum class CrmResourceType
     CRM_SRV6_MY_SID_ENTRY,
     CRM_SRV6_NEXTHOP,
     CRM_NEXTHOP_GROUP_MAP,
+    CRM_DASH_VNET,
+    CRM_DASH_ENI,
+    CRM_DASH_ENI_ETHER_ADDRESS_MAP,
+    CRM_DASH_IPV4_INBOUND_ROUTING,
+    CRM_DASH_IPV6_INBOUND_ROUTING,
+    CRM_DASH_IPV4_OUTBOUND_ROUTING,
+    CRM_DASH_IPV6_OUTBOUND_ROUTING,
+    CRM_DASH_IPV4_PA_VALIDATION,
+    CRM_DASH_IPV6_PA_VALIDATION,
+    CRM_DASH_IPV4_OUTBOUND_CA_TO_PA,
+    CRM_DASH_IPV6_OUTBOUND_CA_TO_PA,
+    CRM_DASH_IPV4_ACL_GROUP,
+    CRM_DASH_IPV6_ACL_GROUP,
+    CRM_DASH_IPV4_ACL_RULE,
+    CRM_DASH_IPV6_ACL_RULE
 };
 
 enum class CrmThresholdType
@@ -63,6 +78,10 @@ public:
     void incCrmAclTableUsedCounter(CrmResourceType resource, sai_object_id_t tableId);
     // Decrement "used" counter for the per ACL table CRM resources (ACL entry/counter)
     void decCrmAclTableUsedCounter(CrmResourceType resource, sai_object_id_t tableId);
+    // Increment "used" counter for the per DASH ACL CRM resources (ACL group/rule)
+    void incCrmDashAclUsedCounter(CrmResourceType resource, sai_object_id_t groupId);
+    // Decrement "used" counter for the per DASH ACL CRM resources (ACL group/rule)
+    void decCrmDashAclGroupUsedCounter(CrmResourceType resource, sai_object_id_t groupId);
 
 private:
     std::shared_ptr<swss::DBConnector> m_countersDb = nullptr;
@@ -100,9 +119,11 @@ private:
     void handleSetCommand(const std::string& key, const std::vector<swss::FieldValueTuple>& data);
     void doTask(swss::SelectableTimer &timer);
     bool getResAvailability(CrmResourceType type, CrmResourceEntry &res);
+    bool getDashAclGroupResAvailability(CrmResourceType type, CrmResourceEntry &res);
     void getResAvailableCounters();
     void updateCrmCountersTable();
     void checkCrmThresholds();
     std::string getCrmAclKey(sai_acl_stage_t stage, sai_acl_bind_point_type_t bindPoint);
     std::string getCrmAclTableKey(sai_object_id_t id);
+    std::string getCrmDashAclGroupKey(sai_object_id_t id);
 };

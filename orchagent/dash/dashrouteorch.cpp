@@ -17,6 +17,7 @@
 #include "swssnet.h"
 #include "tokenize.h"
 #include "dashorch.h"
+#include "crmorch.h"
 
 using namespace std;
 using namespace swss;
@@ -26,6 +27,7 @@ extern sai_dash_outbound_routing_api_t* sai_dash_outbound_routing_api;
 extern sai_dash_inbound_routing_api_t* sai_dash_inbound_routing_api;
 extern sai_object_id_t gSwitchId;
 extern size_t gMaxBulkSize;
+extern CrmOrch *gCrmOrch;
 
 static std::unordered_map<std::string, sai_outbound_routing_entry_action_t> sOutboundAction =
 {
@@ -128,6 +130,9 @@ bool DashRouteOrch::addOutboundRoutingPost(const string& key, const OutboundRout
 
     OutboundRoutingEntry entry = { dash_orch_->getEni(ctxt.eni)->eni_id, ctxt.destination, ctxt.action_type, ctxt.vnet, ctxt.overlay_ip };
     routing_entries_[key] = entry;
+
+    gCrmOrch->incCrmResUsedCounter(ctxt.destination.isV4() ? CrmResourceType::CRM_DASH_IPV4_OUTBOUND_ROUTING : CrmResourceType::CRM_DASH_IPV6_OUTBOUND_ROUTING);
+
     SWSS_LOG_NOTICE("Outbound routing entry for %s added", key.c_str());
 
     return true;
@@ -182,6 +187,8 @@ bool DashRouteOrch::removeOutboundRoutingPost(const string& key, const OutboundR
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
+
+    gCrmOrch->decCrmResUsedCounter(ctxt.destination.isV4() ? CrmResourceType::CRM_DASH_IPV4_OUTBOUND_ROUTING : CrmResourceType::CRM_DASH_IPV6_OUTBOUND_ROUTING);
 
     routing_entries_.erase(key);
     SWSS_LOG_NOTICE("Outbound routing entry for %s removed", key.c_str());
@@ -404,6 +411,9 @@ bool DashRouteOrch::addInboundRoutingPost(const string& key, const InboundRoutin
 
     InboundRoutingEntry entry = { dash_orch_->getEni(ctxt.eni)->eni_id, ctxt.vni, ctxt.sip, ctxt.sip_mask, ctxt.action_type, ctxt.vnet, ctxt.pa_validation, ctxt.priority };
     routing_rule_entries_[key] = entry;
+
+    gCrmOrch->incCrmResUsedCounter(ctxt.sip.isV4() ? CrmResourceType::CRM_DASH_IPV4_INBOUND_ROUTING : CrmResourceType::CRM_DASH_IPV6_INBOUND_ROUTING);
+
     SWSS_LOG_NOTICE("Inbound routing entry for %s added", key.c_str());
 
     return true;
@@ -462,6 +472,7 @@ bool DashRouteOrch::removeInboundRoutingPost(const string& key, const InboundRou
         }
     }
 
+    gCrmOrch->decCrmResUsedCounter(ctxt.sip.isV4() ? CrmResourceType::CRM_DASH_IPV4_INBOUND_ROUTING : CrmResourceType::CRM_DASH_IPV6_INBOUND_ROUTING);
 
     routing_rule_entries_.erase(key);
     SWSS_LOG_NOTICE("Inbound routing entry for %s removed", key.c_str());

@@ -18,6 +18,7 @@
 #include "swssnet.h"
 #include "tokenize.h"
 #include "dashorch.h"
+#include "crmorch.h"
 
 using namespace std;
 using namespace swss;
@@ -28,6 +29,7 @@ extern sai_dash_outbound_ca_to_pa_api_t* sai_dash_outbound_ca_to_pa_api;
 extern sai_dash_pa_validation_api_t* sai_dash_pa_validation_api;
 extern sai_object_id_t gSwitchId;
 extern size_t gMaxBulkSize;
+extern CrmOrch *gCrmOrch;
 
 DashVnetOrch::DashVnetOrch(DBConnector *db, vector<string> &tables) :
     vnet_bulker_(sai_dash_vnet_api, gSwitchId, gMaxBulkSize),
@@ -81,6 +83,9 @@ bool DashVnetOrch::addVnetPost(const string& vnet_name, const DashVnetBulkContex
     VnetEntry entry = { id, ctxt.guid };
     vnet_table_[vnet_name] = entry;
     gVnetNameToId[vnet_name] = id;
+
+    gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_DASH_VNET);
+
     SWSS_LOG_NOTICE("Vnet entry added for %s", vnet_name.c_str());
 
     return true;
@@ -134,6 +139,9 @@ bool DashVnetOrch::removeVnetPost(const string& vnet_name, const DashVnetBulkCon
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
+
+    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_DASH_VNET);
+
     vnet_table_.erase(vnet_name);
     gVnetNameToId.erase(vnet_name);
     SWSS_LOG_NOTICE("Vnet entry removed for %s", vnet_name.c_str());
@@ -372,6 +380,9 @@ bool DashVnetOrch::addOutboundCaToPaPost(const string& key, const VnetMapBulkCon
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
+
+    gCrmOrch->incCrmResUsedCounter(ctxt.dip.isV4() ? CrmResourceType::CRM_DASH_IPV4_OUTBOUND_CA_TO_PA : CrmResourceType::CRM_DASH_IPV6_OUTBOUND_CA_TO_PA);
+
     SWSS_LOG_NOTICE("Outbound CA to PA  map entry for %s added", key.c_str());
 
     return true;
@@ -404,6 +415,9 @@ bool DashVnetOrch::addPaValidationPost(const string& key, const VnetMapBulkConte
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
+
+    gCrmOrch->incCrmResUsedCounter(ctxt.underlay_ip.isV4() ? CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION : CrmResourceType::CRM_DASH_IPV6_PA_VALIDATION);
+
     SWSS_LOG_NOTICE("PA validation entry for %s added", key.c_str());
 
     return true;
@@ -501,6 +515,9 @@ bool DashVnetOrch::removeOutboundCaToPaPost(const string& key, const VnetMapBulk
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
+
+    gCrmOrch->decCrmResUsedCounter(vnet_map_table_[key].dip.isV4() ? CrmResourceType::CRM_DASH_IPV4_OUTBOUND_CA_TO_PA : CrmResourceType::CRM_DASH_IPV6_OUTBOUND_CA_TO_PA);
+
     SWSS_LOG_NOTICE("Outbound CA to PA map entry for %s removed", key.c_str());
 
     return true;
@@ -533,6 +550,9 @@ bool DashVnetOrch::removePaValidationPost(const string& key, const VnetMapBulkCo
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
+
+    gCrmOrch->decCrmResUsedCounter(vnet_map_table_[key].underlay_ip.isV4() ? CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION : CrmResourceType::CRM_DASH_IPV6_PA_VALIDATION);
+
     SWSS_LOG_NOTICE("PA validation entry for %s removed", key.c_str());
 
     return true;
