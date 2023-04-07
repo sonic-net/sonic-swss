@@ -10,9 +10,6 @@
 class PortHelper final
 {
 public:
-    typedef std::vector<std::uint32_t> PortSerdesList_t;
-
-public:
     PortHelper() = default;
     ~PortHelper() = default;
 
@@ -33,6 +30,9 @@ public:
 private:
     std::string getFieldValueStr(const PortConfig &port, const std::string &field) const;
 
+    template<typename T>
+    bool parsePortSerdes(T &serdes, const std::string &field, const std::string &value) const;
+
     bool parsePortAlias(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortIndex(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortLanes(PortConfig &port, const std::string &field, const std::string &value) const;
@@ -47,18 +47,6 @@ private:
     bool parsePortPfcAsym(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortLearnMode(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortLinkTraining(PortConfig &port, const std::string &field, const std::string &value) const;
-    bool parsePortSerdes(PortSerdesList_t &list, const std::string &field, const std::string &value) const;
-    bool parsePortSerdesPreemphasis(PortConfig &port, const std::string &field, const std::string &value) const;
-    bool parsePortSerdesIdriver(PortConfig &port, const std::string &field, const std::string &value) const;
-    bool parsePortSerdesIpredriver(PortConfig &port, const std::string &field, const std::string &value) const;
-    bool parsePortSerdesPre1(PortConfig &port, const std::string &field, const std::string &value) const;
-    bool parsePortSerdesPre2(PortConfig &port, const std::string &field, const std::string &value) const;
-    bool parsePortSerdesPre3(PortConfig &port, const std::string &field, const std::string &value) const;
-    bool parsePortSerdesMain(PortConfig &port, const std::string &field, const std::string &value) const;
-    bool parsePortSerdesPost1(PortConfig &port, const std::string &field, const std::string &value) const;
-    bool parsePortSerdesPost2(PortConfig &port, const std::string &field, const std::string &value) const;
-    bool parsePortSerdesPost3(PortConfig &port, const std::string &field, const std::string &value) const;
-    bool parsePortSerdesAttn(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortRole(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortAdminStatus(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortDescription(PortConfig &port, const std::string &field, const std::string &value) const;
