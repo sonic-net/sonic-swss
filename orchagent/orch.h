@@ -41,6 +41,7 @@ const char state_db_key_delimiter  = '|';
 #define MRVL_PLATFORM_SUBSTRING "marvell"
 #define CISCO_8000_PLATFORM_SUBSTRING "cisco-8000"
 #define XS_PLATFORM_SUBSTRING   "xsight"
+#define CENTEC_PLATFORM_SUBSTRING "centec"
 
 #define CONFIGDB_KEY_SEPARATOR "|"
 #define DEFAULT_KEY_SEPARATOR  ":"
