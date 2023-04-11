@@ -10,13 +10,11 @@
 
 #include "dashaclorch.h"
 #include "taskworker.h"
-
+#include "pbutils.h"
 
 using namespace std;
 using namespace swss;
 using namespace dash::acl;
-using namespace google::protobuf;
-
 
 extern sai_dash_acl_api_t* sai_dash_acl_api;
 extern sai_dash_eni_api_t* sai_dash_eni_api;
@@ -37,143 +35,6 @@ static bool extractVariables(const string &input, char delimiter, T &output, Arg
     {
         return false;
     }
-}
-
-sai_ip_prefix_t pbPrefix2SAIPrefix(const dash::types::IpPrefix *pb_prefix, sai_ip_addr_family_t addr_family)
-{
-    SWSS_LOG_ENTER();
-
-    if (pb_prefix == nullptr)
-    {
-        const static sai_ip_prefix_t ALL_IPV4_PREFIX = [](){
-            sai_ip_prefix_t ip_prefix;
-            ip_prefix.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
-            ip_prefix.addr.ip4 = 0;
-            ip_prefix.mask.ip4 = 0;
-            return ip_prefix;
-        }();
-        const static sai_ip_prefix_t ALL_IPV6_PREFIX = [](){
-            sai_ip_prefix_t ip_prefix;
-            ip_prefix.addr_family = SAI_IP_ADDR_FAMILY_IPV6;
-            memset(ip_prefix.addr.ip6, 0, sizeof(ip_prefix.addr.ip6));
-            memset(ip_prefix.mask.ip6, 0, sizeof(ip_prefix.mask.ip6));
-            return ip_prefix;
-        }();
-        if (addr_family == SAI_IP_ADDR_FAMILY_IPV4)
-        {
-            return ALL_IPV4_PREFIX;
-        }
-        else
-        {
-            return ALL_IPV6_PREFIX;
-        }
-    }
-
-    sai_ip_prefix_t sai_prefix;
-    sai_prefix.addr_family = addr_family;
-    if (addr_family == SAI_IP_ADDR_FAMILY_IPV4)
-    {
-        if (!pb_prefix->ip().has_ipv4() || !pb_prefix->mask().has_ipv4())
-        {
-            SWSS_LOG_WARN("The expected ip version is IPv4 at the message %s", pb_prefix->DebugString().c_str());
-            throw invalid_argument("The expected ip version is IPv4");
-        }
-        sai_prefix.addr.ip4 = pb_prefix->ip().ipv4();
-        sai_prefix.mask.ip4 = pb_prefix->mask().ipv4();
-    }
-    else
-    {
-        if (!pb_prefix->ip().has_ipv6() || !pb_prefix->mask().has_ipv6())
-        {
-            SWSS_LOG_WARN("The expected ip version is IPv6 at the message %s", pb_prefix->DebugString().c_str());
-            throw invalid_argument("The expected ip version is IPv6");
-        }
-        memcpy(sai_prefix.addr.ip6, pb_prefix->ip().ipv6().c_str(), sizeof(sai_prefix.addr.ip6));
-        memcpy(sai_prefix.mask.ip6, pb_prefix->mask().ipv6().c_str(), sizeof(sai_prefix.mask.ip6));
-    }
-
-    return sai_prefix;
-}
-
-vector<sai_ip_prefix_t> pbPrefixes2SAIPrefixes(
-    RepeatedPtrField<dash::types::IpPrefix>::const_iterator begin,
-    RepeatedPtrField<dash::types::IpPrefix>::const_iterator end,
-    sai_ip_addr_family_t addr_family)
-{
-    SWSS_LOG_ENTER();
-
-    vector<sai_ip_prefix_t> sai_prefixes;
-
-    if (begin != end)
-    {
-        sai_prefixes.reserve(end - begin);
-        try
-        {
-            for (auto it = begin; it != end; ++it)
-            {
-                sai_prefixes.push_back(pbPrefix2SAIPrefix(&*it, addr_family));
-            }
-        }
-        catch(const std::invalid_argument&)
-        {
-            sai_prefixes.clear();
-            return sai_prefixes;
-        }
-    }
-    else
-    {
-        sai_prefixes.push_back(pbPrefix2SAIPrefix(nullptr, addr_family));
-    }
-
-    return sai_prefixes;
-}
-
-template<typename RangeType>
-vector<RangeType> pbRangeOrValues2SAIRanges(
-    RepeatedPtrField<dash::types::ValueOrRange>::const_iterator begin,
-    RepeatedPtrField<dash::types::ValueOrRange>::const_iterator end)
-{
-    SWSS_LOG_ENTER();
-
-    vector<RangeType> sai_ranges;
-    using range_type = typename conditional<is_same<RangeType, sai_u32_range_t>::value, uint32_t,
-                        typename conditional<is_same<RangeType, sai_s32_range_t>::value, int32_t,
-                            typename conditional<is_same<RangeType, sai_u16_range_t>::value, uint16_t,
-                            void>::type>::type>::type;
-
-    if (begin != end)
-    {
-        sai_ranges.reserve(end - begin);
-        for (auto it = begin; it != end; ++it)
-        {
-            if (it->has_range())
-            {
-                if (it->range().min() > it->range().max() || it->range().min() < numeric_limits<range_type>::min() || it->range().max() > numeric_limits<range_type>::max())
-                {
-                    SWSS_LOG_WARN("The range %s is invalid", it->range().DebugString().c_str());
-                    sai_ranges.clear();
-                    return sai_ranges;
-                }
-                sai_ranges.push_back({static_cast<range_type>(it->range().min()), static_cast<range_type>(it->range().max())});
-            }
-            else
-            {
-                if (it->value() < numeric_limits<range_type>::min() || it->value() > numeric_limits<range_type>::max())
-                {
-                    SWSS_LOG_WARN("The value %s is invalid", it->value());
-                    sai_ranges.clear();
-                    return sai_ranges;
-                }
-                sai_ranges.push_back({static_cast<range_type>(it->value()), static_cast<range_type>(it->value())});
-            }
-        }
-    }
-    else
-    {
-        sai_ranges.push_back({numeric_limits<range_type>::min(), numeric_limits<range_type>::max()});
-    }
-
-    return sai_ranges;
 }
 
 sai_attr_id_t getSaiStage(DashAclDirection d, sai_ip_addr_family_t f, uint32_t s)
@@ -205,7 +66,7 @@ sai_attr_id_t getSaiStage(DashAclDirection d, sai_ip_addr_family_t f, uint32_t s
     auto stage = StageMaps.find({d, f, s});
     if (stage == StageMaps.end())
     {
-        SWSS_LOG_ERROR("Invalid stage %d %d %d", d, f, s);
+        SWSS_LOG_WARN("Invalid stage %d %d %d", d, f, s);
         throw runtime_error("Invalid stage");
     }
 
@@ -346,7 +207,7 @@ task_process_status DashAclOrch::taskUpdateDashAclGroup(
     sai_status_t status = sai_dash_acl_api->create_dash_acl_group(&acl_group.m_dash_acl_group_id, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create ACL group %s, rv: %s", key.c_str(), sai_serialize_status(status).c_str());
+        SWSS_LOG_WARN("Failed to create ACL group %s, rv: %s", key.c_str(), sai_serialize_status(status).c_str());
         return task_failed;
     }
     acl_group.m_rule_count = 0;
@@ -389,7 +250,7 @@ task_process_status DashAclOrch::taskRemoveDashAclGroup(
     sai_status_t status = sai_dash_acl_api->remove_dash_acl_group(acl_group->m_dash_acl_group_id);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to remove ACL group %s, rv: %s", key.c_str(), sai_serialize_status(status).c_str());
+        SWSS_LOG_WARN("Failed to remove ACL group %s, rv: %s", key.c_str(), sai_serialize_status(status).c_str());
         return task_failed;
     }
     m_dash_acl_group_table.erase(key);
@@ -407,7 +268,7 @@ task_process_status DashAclOrch::taskUpdateDashAclRule(
     string group_id, rule_id;
     if (!extractVariables(key, ':', group_id, rule_id))
     {
-        SWSS_LOG_ERROR("Failed to parse key %s", key.c_str());
+        SWSS_LOG_WARN("Failed to parse key %s", key.c_str());
         return task_failed;
     }
 
@@ -484,10 +345,34 @@ task_process_status DashAclOrch::taskUpdateDashAclRule(
         attrs.back().value.u8list.list = protocols.data();
     }
 
+
+    const static sai_ip_prefix_t SAI_ALL_IPV4_PREFIX = [](){
+        sai_ip_prefix_t ip_prefix;
+        ip_prefix.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+        ip_prefix.addr.ip4 = 0;
+        ip_prefix.mask.ip4 = 0;
+        return ip_prefix;
+    }();
+
+    const static sai_ip_prefix_t SAI_ALL_IPV6_PREFIX = [](){
+        sai_ip_prefix_t ip_prefix;
+        ip_prefix.addr_family = SAI_IP_ADDR_FAMILY_IPV6;
+        memset(ip_prefix.addr.ip6, 0, sizeof(ip_prefix.addr.ip6));
+        memset(ip_prefix.mask.ip6, 0, sizeof(ip_prefix.mask.ip6));
+        return ip_prefix;
+    }();
+
     attrs.emplace_back();
     attrs.back().id = SAI_DASH_ACL_RULE_ATTR_SIP;
-    vector<sai_ip_prefix_t> src_prefixes = pbPrefixes2SAIPrefixes(data.src_addr().begin(), data.src_addr().end(), acl_group->m_ip_version);
-    if (src_prefixes.empty())
+    vector<sai_ip_prefix_t> src_prefixes;
+    if (data.src_addr_size() == 0)
+    {
+        src_prefixes.push_back(
+            acl_group->m_ip_version == SAI_IP_ADDR_FAMILY_IPV4 ?
+            SAI_ALL_IPV4_PREFIX :
+            SAI_ALL_IPV6_PREFIX);
+    }
+    else if (!to_sai(data.src_addr(), src_prefixes))
     {
         return task_invalid_entry;
     }
@@ -496,18 +381,31 @@ task_process_status DashAclOrch::taskUpdateDashAclRule(
 
     attrs.emplace_back();
     attrs.back().id = SAI_DASH_ACL_RULE_ATTR_DIP;
-    vector<sai_ip_prefix_t> dst_prefixes = pbPrefixes2SAIPrefixes(data.dst_addr().begin(), data.dst_addr().end(), acl_group->m_ip_version);
-    if (dst_prefixes.empty())
+    vector<sai_ip_prefix_t> dst_prefixes;
+    if (data.src_addr_size() == 0)
+    {
+        dst_prefixes.push_back(
+            acl_group->m_ip_version == SAI_IP_ADDR_FAMILY_IPV4 ?
+            SAI_ALL_IPV4_PREFIX :
+            SAI_ALL_IPV6_PREFIX);
+    }
+    else if (!to_sai(data.src_addr(), dst_prefixes))
     {
         return task_invalid_entry;
     }
     attrs.back().value.ipprefixlist.count = static_cast<uint32_t>(dst_prefixes.size());
     attrs.back().value.ipprefixlist.list = dst_prefixes.data();
 
+    const static sai_u16_range_t SAI_ALL_PORTS{numeric_limits<uint16_t>::min(), numeric_limits<uint16_t>::max()};
+
     attrs.emplace_back();
     attrs.back().id = SAI_DASH_ACL_RULE_ATTR_SRC_PORT;
-    vector<sai_u16_range_t> src_ports = pbRangeOrValues2SAIRanges<sai_u16_range_t>(data.src_port().begin(), data.src_port().end());
-    if (src_ports.empty())
+    vector<sai_u16_range_t> src_ports;
+    if (data.src_port_size() == 0)
+    {
+        src_ports.push_back(SAI_ALL_PORTS);
+    }
+    else if (!to_sai(data.src_port(), src_ports))
     {
         return task_invalid_entry;
     }
@@ -516,8 +414,12 @@ task_process_status DashAclOrch::taskUpdateDashAclRule(
 
     attrs.emplace_back();
     attrs.back().id = SAI_DASH_ACL_RULE_ATTR_DST_PORT;
-    vector<sai_u16_range_t> dst_ports = pbRangeOrValues2SAIRanges<sai_u16_range_t>(data.dst_port().begin(), data.dst_port().end());
-    if (dst_ports.empty())
+    vector<sai_u16_range_t> dst_ports;
+    if (data.dst_port_size() == 0)
+    {
+        dst_ports.push_back(SAI_ALL_PORTS);
+    }
+    else if (!to_sai(data.dst_port(), dst_ports))
     {
         return task_invalid_entry;
     }
@@ -532,7 +434,7 @@ task_process_status DashAclOrch::taskUpdateDashAclRule(
     sai_status_t status = sai_dash_acl_api->create_dash_acl_rule(&acl_rule.m_dash_acl_rule_id, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create dash ACL rule %s, rv: %s", key.c_str(), sai_serialize_status(status).c_str());
+        SWSS_LOG_WARN("Failed to create dash ACL rule %s, rv: %s", key.c_str(), sai_serialize_status(status).c_str());
         return task_failed;
     }
     m_dash_acl_rule_table.emplace(key, acl_rule);
@@ -550,7 +452,7 @@ task_process_status DashAclOrch::taskRemoveDashAclRule(
     string group_id, rule_id;
     if (!extractVariables(key, ':', group_id, rule_id))
     {
-        SWSS_LOG_ERROR("Failed to parse key %s", key.c_str());
+        SWSS_LOG_WARN("Failed to parse key %s", key.c_str());
         return task_failed;
     }
 
@@ -576,7 +478,7 @@ task_process_status DashAclOrch::taskRemoveDashAclRule(
     sai_status_t status = sai_dash_acl_api->remove_dash_acl_rule(acl_rule.m_dash_acl_rule_id);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to remove dash ACL rule %s, rv: %s", key.c_str(), sai_serialize_status(status).c_str());
+        SWSS_LOG_WARN("Failed to remove dash ACL rule %s, rv: %s", key.c_str(), sai_serialize_status(status).c_str());
         return task_failed;
     }
     m_dash_acl_rule_table.erase(itr);
@@ -672,7 +574,7 @@ task_process_status DashAclOrch::bindAclToEni(DashAclBindTable &acl_bind_table, 
     sai_status_t status = sai_dash_eni_api->set_eni_attribute(eni_entry->eni_id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to bind ACL %s to eni %s attribute, status : %s", key.c_str(), acl_group_id.c_str(), sai_serialize_status(status).c_str());
+        SWSS_LOG_WARN("Failed to bind ACL %s to eni %s attribute, status : %s", key.c_str(), acl_group_id.c_str(), sai_serialize_status(status).c_str());
         return task_failed;
     }
     acl_group->m_ref_count++;
@@ -727,7 +629,7 @@ task_process_status DashAclOrch::unbindAclFromEni(DashAclBindTable &acl_bind_tab
     sai_status_t status = sai_dash_eni_api->set_eni_attribute(eni_entry->eni_id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to unbind ACL %s to eni %s attribute, status : %s", key.c_str(), acl_bind.m_acl_group_id.c_str(), sai_serialize_status(status).c_str());
+        SWSS_LOG_WARN("Failed to unbind ACL %s to eni %s attribute, status : %s", key.c_str(), acl_bind.m_acl_group_id.c_str(), sai_serialize_status(status).c_str());
         return task_failed;
     }
 

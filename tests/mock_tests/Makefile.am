@@ -1,6 +1,7 @@
 FLEX_CTR_DIR = $(top_srcdir)/orchagent/flex_counter
 DEBUG_CTR_DIR = $(top_srcdir)/orchagent/debug_counter
 P4_ORCH_DIR = $(top_srcdir)/orchagent/p4orch
+DASH_PROTO_DIR = $(top_srcdir)/orchagent/dash/proto
 
 CFLAGS_SAI = -I /usr/include/sai
 
@@ -134,10 +135,15 @@ tests_SOURCES += $(P4_ORCH_DIR)/p4orch.cpp \
 		 $(P4_ORCH_DIR)/ext_tables_manager.cpp \
 		 $(P4_ORCH_DIR)/tests/mock_sai_switch.cpp
 
+tests_SOURCES += $(top_srcdir)/orchagent/pbtypes.cpp \
+            $(DASH_PROTO_DIR)/acl.pb.cc \
+            $(DASH_PROTO_DIR)/types.pb.cc \
+            $(DASH_PROTO_DIR)/appliance.pb.cc
+
 tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) 
 tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_INCLUDES)
 tests_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis -lpthread \
-        -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lgmock -lgmock_main
+        -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lgmock -lgmock_main -lprotobuf
 
 ## portsyncd unit tests
 

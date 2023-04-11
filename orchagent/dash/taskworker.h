@@ -9,6 +9,7 @@
 #include <google/protobuf/message.h>
 
 #include <swss/logger.h>
+#include <swss/redisutility.h>
 #include <swss/rediscommand.h>
 
 #include <orch.h>
@@ -28,6 +29,33 @@ using TaskMap = std::map<TaskKey, TaskFunc>;
 #define PbIdentifier "pb"
 
 template<typename MessageType>
+bool parsePbMessage(
+    const std::vector<swss::FieldValueTuple> &data,
+    MessageType &msg)
+{
+    SWSS_LOG_ENTER();
+
+    auto pb = swss::fvsGetValue(data, PbIdentifier);
+    if (pb)
+    {
+        if (msg.ParseFromString(*pb))
+        {
+            return true;
+        }
+        else
+        {
+            SWSS_LOG_WARN("Failed to parse protobuf message from string: %s", pb->c_str());
+        }
+    }
+    else
+    {
+        SWSS_LOG_WARN("Protobuf field cannot be found");
+    }
+
+    return false;
+}
+
+template<typename MessageType>
 class PbWorker : public TaskWorker
 {
 public:
@@ -41,22 +69,14 @@ public:
     {
         SWSS_LOG_ENTER();
 
-        auto pb = swss::fvsGetValue(data, PbIdentifier);
-        if (pb)
+        MessageType msg;
+        if (parsePbMessage(data, msg))
         {
-            MessageType msg;
-            if (msg.ParseFromString(*pb))
-            {
-                return m_func(key, msg);
-            }
-            else
-            {
-                SWSS_LOG_WARN("Failed to parse protobuf message from string: %s", pb->c_str());
-            }
+            return m_func(key, msg);
         }
         else
         {
-            SWSS_LOG_ERROR("This orch requires protobuff message at :%s", key.c_str());
+            SWSS_LOG_WARN("This orch requires protobuff message at :%s", key.c_str());
         }
 
         return task_process_status::task_invalid_entry;
