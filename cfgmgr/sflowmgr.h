@@ -34,9 +34,11 @@ struct SflowPortInfo
 {
     bool        local_rate_cfg;
     bool        local_admin_cfg;
+    bool        local_dir_cfg;
     std::string speed;
     std::string rate;
     std::string admin;
+    std::string dir;
 };
 
 /* Port to Local config map  */
@@ -56,15 +58,17 @@ private:
     SflowPortConfMap  m_sflowPortConfMap;
     bool                   m_intfAllConf;
     bool                   m_gEnable;
+    std::string            m_intfAllDir;
+    std::string            m_gDirection;
 
     void doTask(Consumer &consumer);
     void sflowHandleService(bool enable);
     void sflowUpdatePortInfo(Consumer &consumer);
-    void sflowHandleSessionAll(bool enable);
+    void sflowHandleSessionAll(bool enable, std::string direction);
     void sflowHandleSessionLocal(bool enable);
     void sflowCheckAndFillValues(std::string alias, std::vector<FieldValueTuple> &values, std::vector<FieldValueTuple> &fvs);
     void sflowGetPortInfo(std::vector<FieldValueTuple> &fvs, SflowPortInfo &local_info);
-    void sflowGetGlobalInfo(std::vector<FieldValueTuple> &fvs, std::string speed);
+    void sflowGetGlobalInfo(std::vector<FieldValueTuple> &fvs, std::string speed, std::string direction);
 };
 
 }
