@@ -112,7 +112,7 @@ bool SflowOrch::sflowAddPort(sai_object_id_t sample_id, sai_object_id_t port_id,
     sai_attribute_t attr;
     sai_status_t    sai_rc;
 
-    SWSS_LOG_DEBUG("sflowAddPort  %" PRIx64 " portOid %" PRIx64 " dir %s" ,
+    SWSS_LOG_DEBUG("sflowAddPort  %" PRIx64 " portOid %" PRIx64 " dir %s",
                            sample_id, port_id, direction.c_str());
 
     if (direction == "both" || direction == "rx")
@@ -123,7 +123,7 @@ bool SflowOrch::sflowAddPort(sai_object_id_t sample_id, sai_object_id_t port_id,
 
         if (sai_rc != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to set session %" PRIx64 " on port %" PRIx64 , sample_id, port_id);
+            SWSS_LOG_ERROR("Failed to set session %" PRIx64 " on port %" PRIx64, sample_id, port_id);
             task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, sai_rc);
             if (handle_status != task_success)
             {
@@ -140,7 +140,7 @@ bool SflowOrch::sflowAddPort(sai_object_id_t sample_id, sai_object_id_t port_id,
 
         if (sai_rc != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to set session %" PRIx64 " on port %" PRIx64 , sample_id, port_id);
+            SWSS_LOG_ERROR("Failed to set session %" PRIx64 " on port %" PRIx64, sample_id, port_id);
             task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, sai_rc);
             if (handle_status != task_success)
             {
@@ -156,7 +156,7 @@ bool SflowOrch::sflowDelPort(sai_object_id_t port_id, string direction)
     sai_attribute_t attr;
     sai_status_t    sai_rc;
 
-    SWSS_LOG_DEBUG("sflowDelPort  portOid %" PRIx64 " dir %s" ,
+    SWSS_LOG_DEBUG("sflowDelPort  portOid %" PRIx64 " dir %s",
                            port_id, direction.c_str());
 
     if (direction == "both" || direction == "rx")
@@ -167,7 +167,7 @@ bool SflowOrch::sflowDelPort(sai_object_id_t port_id, string direction)
 
         if (sai_rc != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to delete session on port %" PRIx64  , port_id);
+            SWSS_LOG_ERROR("Failed to delete session on port %" PRIx64, port_id);
             task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, sai_rc);
             if (handle_status != task_success)
             {
@@ -184,7 +184,7 @@ bool SflowOrch::sflowDelPort(sai_object_id_t port_id, string direction)
 
         if (sai_rc != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to delete session on port %" PRIx64  , port_id);
+            SWSS_LOG_ERROR("Failed to delete session on port %" PRIx64, port_id);
             task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, sai_rc);
             if (handle_status != task_success)
             {
@@ -203,7 +203,7 @@ bool SflowOrch::sflowUpdateSampleDirection(sai_object_id_t port_id, string old_d
     sai_status_t    sai_rc;
     auto            port_info = m_sflowPortInfoMap.find(port_id);
 
-    SWSS_LOG_DEBUG("sflowUpdateSampleDirection  portOid %" PRIx64 " old dir %s new dir %s" ,
+    SWSS_LOG_DEBUG("sflowUpdateSampleDirection  portOid %" PRIx64 " old dir %s new dir %s",
                            port_id, old_dir.c_str(), new_dir.c_str());
 
     if ((new_dir == "tx") && (old_dir == "rx" || old_dir == "both"))
@@ -230,7 +230,7 @@ bool SflowOrch::sflowUpdateSampleDirection(sai_object_id_t port_id, string old_d
 
     if (sai_rc != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to Ingress session on port %" PRIx64  , port_id);
+        SWSS_LOG_ERROR("Failed to Ingress session on port %" PRIx64, port_id);
         task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, sai_rc);
         if (handle_status != task_success)
         {
@@ -244,7 +244,7 @@ bool SflowOrch::sflowUpdateSampleDirection(sai_object_id_t port_id, string old_d
 
     if (sai_rc != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to Update Egress session on port %" PRIx64  , port_id);
+        SWSS_LOG_ERROR("Failed to Update Egress session on port %" PRIx64, port_id);
         task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, sai_rc);
         if (handle_status != task_success)
         {

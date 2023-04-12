@@ -171,7 +171,7 @@ void SflowMgr::sflowHandleSessionAll(bool enable, string direction)
             }
             else
             {
-                sflowGetGlobalInfo(fvs, it.second.speed , direction);
+                sflowGetGlobalInfo(fvs, it.second.speed, direction);
             }
             m_appSflowSessionTable.set(it.first, fvs);
         }
