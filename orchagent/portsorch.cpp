@@ -2582,6 +2582,7 @@ bool PortsOrch::createVlanHostIntf(Port& vl, string hostif_name)
 
     vector<sai_attribute_t> attrs;
     sai_attribute_t attr;
+    sai_attr_capability_t capability;
 
     attr.id = SAI_HOSTIF_ATTR_TYPE;
     attr.value.s32 = SAI_HOSTIF_TYPE_NETDEV;
@@ -2600,9 +2601,32 @@ bool PortsOrch::createVlanHostIntf(Port& vl, string hostif_name)
     attr.value.chardata[SAI_HOSTIF_NAME_SIZE - 1] = '\0';
     attrs.push_back(attr);
 
-    attr.id = SAI_HOSTIF_ATTR_QUEUE;
-    attr.value.u32 = DEFAULT_HOSTIF_TX_QUEUE;
-    attrs.push_back(attr);
+    bool set_hostif_tx_queue = false;
+    if (sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_HOSTIF,
+                                            SAI_HOSTIF_ATTR_QUEUE,
+                                            &capability)
+                                            == SAI_STATUS_SUCCESS)
+    {
+        if (capability.create_implemented)
+        {
+            set_hostif_tx_queue = true;
+        }
+        else
+        {
+            SWSS_LOG_WARN("Hostif queue attribute not supported");
+        }
+    }
+    else
+    {
+        SWSS_LOG_WARN("Unable to query the hostif queue capability");
+    }
+
+    if (set_hostif_tx_queue)
+    {
+        attr.id = SAI_HOSTIF_ATTR_QUEUE;
+        attr.value.u32 = DEFAULT_HOSTIF_TX_QUEUE;
+        attrs.push_back(attr);
+    }
 
     sai_status_t status = sai_hostif_api->create_hostif(&vl.m_vlan_info.host_intf_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
@@ -4829,6 +4853,7 @@ bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_int
 
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
+    sai_attr_capability_t capability;
 
     attr.id = SAI_HOSTIF_ATTR_TYPE;
     attr.value.s32 = SAI_HOSTIF_TYPE_NETDEV;
@@ -4847,9 +4872,33 @@ bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_int
     attr.value.chardata[SAI_HOSTIF_NAME_SIZE - 1] = '\0';
     attrs.push_back(attr);
 
-    attr.id = SAI_HOSTIF_ATTR_QUEUE;
-    attr.value.u32 = DEFAULT_HOSTIF_TX_QUEUE;
-    attrs.push_back(attr);
+    bool set_hostif_tx_queue = false;
+    if (sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_HOSTIF,
+                                            SAI_HOSTIF_ATTR_QUEUE,
+                                            &capability)
+                                            == SAI_STATUS_SUCCESS)
+
+    {
+        if (capability.create_implemented)
+        {
+            set_hostif_tx_queue = true;
+        }
+        else
+        {
+            SWSS_LOG_WARN("Hostif queue attribute not supported");
+        }
+    }
+    else
+    {
+        SWSS_LOG_WARN("Unable to query the hostif queue capability");
+    }
+
+    if (set_hostif_tx_queue)
+    {
+        attr.id = SAI_HOSTIF_ATTR_QUEUE;
+        attr.value.u32 = DEFAULT_HOSTIF_TX_QUEUE;
+        attrs.push_back(attr);
+    }
 
     sai_status_t status = sai_hostif_api->create_hostif(&host_intfs_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
