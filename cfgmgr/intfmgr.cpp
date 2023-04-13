@@ -40,8 +40,7 @@ IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         m_stateVrfTable(stateDb, STATE_VRF_TABLE_NAME),
         m_stateIntfTable(stateDb, STATE_INTERFACE_TABLE_NAME),
         m_appIntfTableProducer(appDb, APP_INTF_TABLE_NAME),
-        m_neighTable(appDb, APP_NEIGH_TABLE_NAME),
-        m_appLagTable(appDb, APP_LAG_TABLE_NAME)
+        m_neighTable(appDb, APP_NEIGH_TABLE_NAME)
 {
     auto subscriberStateTable = new swss::SubscriberStateTable(stateDb,
             STATE_PORT_TABLE_NAME, TableConsumable::DEFAULT_POP_BATCH_SIZE, 100);
@@ -350,7 +349,7 @@ std::string IntfMgr::getIntfAdminStatus(const string &alias)
     }
     else if (!alias.compare(0, strlen("Po"), "Po"))
     {
-        portTable = &m_appLagTable;
+        portTable = &m_stateLagTable;
     }
     else
     {
@@ -382,7 +381,7 @@ std::string IntfMgr::getIntfMtu(const string &alias)
     }
     else if (!alias.compare(0, strlen("Po"), "Po"))
     {
-        portTable = &m_appLagTable;
+        portTable = &m_stateLagTable;
     }
     else
     {
@@ -491,13 +490,24 @@ void IntfMgr::updateSubIntfAdminStatus(const string &alias, const string &admin)
 std::string IntfMgr::setHostSubIntfAdminStatus(const string &alias, const string &admin_status, const string &parent_admin_status)
 {
     stringstream cmd;
-    string res;
+    string res, cmd_str;
 
     if (parent_admin_status == "up" || admin_status == "down")
     {
         SWSS_LOG_INFO("subintf %s admin_status: %s", alias.c_str(), admin_status.c_str());
         cmd << IP_CMD " link set " << shellquote(alias) << " " << shellquote(admin_status);
-        EXEC_WITH_ERROR_THROW(cmd.str(), res);
+        cmd_str = cmd.str();
+        int ret = swss::exec(cmd_str, res);
+        if (ret && !isIntfStateOk(alias))
+        {
+            // Can happen when a DEL notification is sent by portmgrd immediately followed by a new SET notification
+            SWSS_LOG_WARN("Setting admin_status to %s netdev failed with cmd:%s, rc:%d, error:%s",
+                          alias.c_str(), cmd_str.c_str(), ret, res.c_str());
+        }
+        else if (ret)
+        {
+            throw runtime_error(cmd_str + " : " + res);
+        }
         return admin_status;
     }
     else

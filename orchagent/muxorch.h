@@ -73,6 +73,8 @@ public:
     void update(NextHopKey nh, sai_object_id_t, bool = true, MuxState = MuxState::MUX_STATE_INIT);
 
     sai_object_id_t getNextHopId(const NextHopKey);
+    MuxNeighbor getNeighbors() const { return neighbors_; };
+    string getAlias() const { return alias_; };
 
 private:
     inline void updateTunnelRoute(NextHopKey, bool = true);
@@ -103,6 +105,7 @@ public:
 
     bool isIpInSubnet(IpAddress ip);
     void updateNeighbor(NextHopKey nh, bool add);
+    void updateRoutes();
     sai_object_id_t getNextHopId(const NextHopKey nh)
     {
         return nbr_handler_->getNextHopId(nh);
@@ -159,6 +162,7 @@ typedef std::unique_ptr<MuxCable> MuxCable_T;
 typedef std::map<std::string, MuxCable_T> MuxCableTb;
 typedef std::map<IpAddress, NHTunnel> MuxTunnelNHs;
 typedef std::map<NextHopKey, std::string> NextHopTb;
+typedef std::map<IpPrefix, NextHopKey> MuxRouteTb;
 
 class MuxCfgRequest : public Request
 {
@@ -190,12 +194,19 @@ public:
         return (skip_neighbors_.find(nbr) != skip_neighbors_.end());
     }
 
+    bool isMultiNexthopRoute(const IpPrefix& pfx)
+    {
+        return (mux_multi_active_nh_table.find(pfx) != mux_multi_active_nh_table.end());
+    }
+
     MuxCable* findMuxCableInSubnet(IpAddress);
     bool isNeighborActive(const IpAddress&, const MacAddress&, string&);
     void update(SubjectType, void *);
 
     void addNexthop(NextHopKey, string = "");
     void removeNexthop(NextHopKey);
+    bool containsNextHop(const NextHopKey&);
+    bool isMuxNexthops(const NextHopGroupKey&);
     string getNexthopMuxName(NextHopKey);
     sai_object_id_t getNextHopId(const NextHopKey&);
 
@@ -203,6 +214,7 @@ public:
     bool removeNextHopTunnel(std::string tunnelKey, IpAddress& ipAddr);
     sai_object_id_t getNextHopTunnelId(std::string tunnelKey, IpAddress& ipAddr);
 
+    void updateRoute(const IpPrefix &pfx, bool add);
     bool isStandaloneTunnelRouteInstalled(const IpAddress& neighborIp);
 
 private:
@@ -243,6 +255,9 @@ private:
     MuxCableTb mux_cable_tb_;
     MuxTunnelNHs mux_tunnel_nh_;
     NextHopTb mux_nexthop_tb_;
+
+    /* contains reference of programmed routes by updateRoute */
+    MuxRouteTb mux_multi_active_nh_table;
 
     handler_map handler_map_;
 

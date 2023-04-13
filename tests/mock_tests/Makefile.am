@@ -131,7 +131,7 @@ tests_SOURCES += $(P4_ORCH_DIR)/p4orch.cpp \
 		 $(P4_ORCH_DIR)/ext_tables_manager.cpp \
 		 $(P4_ORCH_DIR)/tests/mock_sai_switch.cpp
 
-tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) 
+tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_INCLUDES)
 tests_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis -lpthread \
         -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lgmock -lgmock_main
@@ -155,7 +155,7 @@ tests_portsyncd_LDADD = $(LDADD_GTEST) -lnl-genl-3 -lhiredis -lhiredis \
 
 ## intfmgrd unit tests
 
-tests_intfmgrd_SOURCES = intfmgrd/add_ipv6_prefix_ut.cpp \
+tests_intfmgrd_SOURCES = intfmgrd/intfmgr_ut.cpp \
                          $(top_srcdir)/cfgmgr/intfmgr.cpp \
                          $(top_srcdir)/lib/subintf.cpp \
                          $(top_srcdir)/orchagent/orch.cpp \
@@ -177,7 +177,16 @@ tests_intfmgrd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhired
 ## fpmsyncd unit tests
 
 tests_fpmsyncd_SOURCES = fpmsyncd/test_fpmlink.cpp \
-                         $(top_srcdir)/fpmsyncd/fpmlink.cpp
+                         fpmsyncd/test_routesync.cpp \
+                         fake_netlink.cpp \
+                         fake_warmstarthelper.cpp \
+                         fake_producerstatetable.cpp \
+                         mock_dbconnector.cpp \
+                         mock_table.cpp \
+                         mock_hiredis.cpp \
+                         $(top_srcdir)/warmrestart/ \
+                         $(top_srcdir)/fpmsyncd/fpmlink.cpp \
+                         $(top_srcdir)/fpmsyncd/routesync.cpp
 
 tests_fpmsyncd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/tests_fpmsyncd -I$(top_srcdir)/lib -I$(top_srcdir)/warmrestart
 tests_fpmsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)

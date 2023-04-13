@@ -340,7 +340,7 @@ private:
     bool addLag(string lag, uint32_t spa_id, int32_t switch_id);
     bool removeLag(Port lag);
     bool setLagTpid(sai_object_id_t id, sai_uint16_t tpid);
-    bool addLagMember(Port &lag, Port &port, bool enableForwarding);
+    bool addLagMember(Port &lag, Port &port, string status);
     bool removeLagMember(Port &lag, Port &port);
     bool setCollectionOnLagMember(Port &lagMember, bool enableCollection);
     bool setDistributionOnLagMember(Port &lagMember, bool enableDistribution);
@@ -459,7 +459,7 @@ private:
     unique_ptr<Table> m_tableVoqSystemLagMemberTable;
     void voqSyncAddLag(Port &lag);
     void voqSyncDelLag(Port &lag);
-    void voqSyncAddLagMember(Port &lag, Port &port);
+    void voqSyncAddLagMember(Port &lag, Port &port, string status);
     void voqSyncDelLagMember(Port &lag, Port &port);
     unique_ptr<LagIdAllocator> m_lagIdAllocator;
     set<sai_object_id_t> m_macsecEnabledPorts;
