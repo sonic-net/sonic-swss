@@ -333,12 +333,13 @@ bool DashVnetOrch::addVnetMap(const string& key, VnetMapBulkContext& ctxt)
         {
             addOutboundCaToPa(key, ctxt);
             addPaValidation(key, ctxt);
+            return true;
         }
         else
         {
             SWSS_LOG_INFO("Not creating VNET map for %s since VNET %s doesn't exist", key.c_str(), ctxt.vnet_name.c_str());
+            return false;
         }
-        return false;
     }
     // If the VNET map is already added, don't add it to the bulker and
     // return true so it's removed from the consumer 
