@@ -1822,7 +1822,7 @@ bool PortsOrch::bindAclTable(sai_object_id_t  port_oid,
     member_attrs.push_back(member_attr);
 
     member_attr.id = SAI_ACL_TABLE_GROUP_MEMBER_ATTR_PRIORITY;
-    member_attr.value.u32 = 100; // TODO: double check!
+    member_attr.value.u32 = 100;
     member_attrs.push_back(member_attr);
 
     status = sai_acl_api->create_acl_table_group_member(&group_member_oid, gSwitchId, (uint32_t)member_attrs.size(), member_attrs.data());
