@@ -34,6 +34,7 @@ extern CrmOrch *gCrmOrch;
 
 #define STATE_DB_ACL_ACTION_FIELD_IS_ACTION_LIST_MANDATORY "is_action_list_mandatory"
 #define STATE_DB_ACL_ACTION_FIELD_ACTION_LIST              "action_list"
+#define STATE_DB_ACL_L3V4V6_SUPPORTED                      "supported_L3V4V6"
 #define COUNTERS_ACL_COUNTER_RULE_MAP "ACL_COUNTER_RULE_MAP"
 
 #define ACL_COUNTER_DEFAULT_POLLING_INTERVAL_MS 10000 // ms
@@ -185,6 +186,26 @@ static acl_table_action_list_lookup_t defaultAclActionList =
     {
         // L3V6
         TABLE_TYPE_L3V6,
+        {
+            {
+                ACL_STAGE_INGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION,
+                    SAI_ACL_ACTION_TYPE_REDIRECT
+                }
+            },
+            {
+                ACL_STAGE_EGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION,
+                    SAI_ACL_ACTION_TYPE_REDIRECT
+                }
+            }
+        }
+    },
+    {
+        // L3V4V6
+        TABLE_TYPE_L3V4V6,
         {
             {
                 ACL_STAGE_INGRESS,
@@ -2292,6 +2313,19 @@ bool AclTable::validate()
         return false;
     }
 
+    if (type.getName() == TABLE_TYPE_L3V4V6)
+    {
+	    if (!m_pAclOrch->isAclL3V4V6TableSupported(stage))
+	    {
+
+                    SWSS_LOG_ERROR("Table %s: table type %s in stage %d not supported on this platform.",
+				    id.c_str(), type.getName().c_str(), stage);
+		    return false;
+	    }
+    }
+
+
+
     if (m_pAclOrch->isAclActionListMandatoryOnTableCreation(stage))
     {
         if (type.getActions().empty())
@@ -3049,11 +3083,36 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
         };
     }
 
+    if ( platform == MRVL_PLATFORM_SUBSTRING ||
+            platform == INVM_PLATFORM_SUBSTRING ||
+            platform == VS_PLATFORM_SUBSTRING)
+    {
+	m_L3V4V6Capability =
+        {
+		{ACL_STAGE_INGRESS, true},
+		{ACL_STAGE_EGRESS, true},
+	};
+    }
+    else
+    {
+	m_L3V4V6Capability =
+        {
+		{ACL_STAGE_INGRESS, false},
+		{ACL_STAGE_EGRESS, false},
+	};
+
+    }
+
+
     SWSS_LOG_NOTICE("%s switch capability:", platform.c_str());
     SWSS_LOG_NOTICE("    TABLE_TYPE_MIRROR: %s",
             m_mirrorTableCapabilities[TABLE_TYPE_MIRROR] ? "yes" : "no");
     SWSS_LOG_NOTICE("    TABLE_TYPE_MIRRORV6: %s",
             m_mirrorTableCapabilities[TABLE_TYPE_MIRRORV6] ? "yes" : "no");
+    SWSS_LOG_NOTICE("    TABLE_TYPE_L3v4V6: Ingress [%s], Egress [%s]",
+            m_L3V4V6Capability[ACL_STAGE_INGRESS] ? "yes" : "no",
+            m_L3V4V6Capability[ACL_STAGE_EGRESS] ? "yes" : "no");
+
 
     // In Mellanox platform, V4 and V6 rules are stored in different tables
     // In Broadcom DNX platform also, V4 and V6 rules are stored in different tables
@@ -3157,6 +3216,30 @@ void AclOrch::initDefaultTableTypes()
             .withBindPointType(SAI_ACL_BIND_POINT_TYPE_LAG)
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID))
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_CODE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_TYPE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS))
+            .build()
+    );
+
+
+    addAclTableType(
+        builder.withName(TABLE_TYPE_L3V4V6)
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_PORT)
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_LAG)
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_SRC_IP))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DST_IP))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ICMP_TYPE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ICMP_CODE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL))
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6))
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6))
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_CODE))
@@ -3408,10 +3491,21 @@ void AclOrch::putAclActionCapabilityInDB(acl_stage_type_t stage)
         }
     }
 
+
     is_action_list_mandatory_stream << boolalpha << capabilities.isActionListMandatoryOnTableCreation;
 
     fvVector.emplace_back(STATE_DB_ACL_ACTION_FIELD_IS_ACTION_LIST_MANDATORY, is_action_list_mandatory_stream.str());
     fvVector.emplace_back(STATE_DB_ACL_ACTION_FIELD_ACTION_LIST, acl_action_value_stream.str());
+
+    for (auto const& it : m_L3V4V6Capability)
+    {
+        string value = it.second ? "true" : "false";
+        if (it.first == stage)
+        {
+            fvVector.emplace_back(STATE_DB_ACL_L3V4V6_SUPPORTED, value);
+        }
+    }
+
     m_aclStageCapabilityTable.set(stage_str, fvVector);
 }
 
@@ -4217,6 +4311,16 @@ bool AclOrch::isAclActionListMandatoryOnTableCreation(acl_stage_type_t stage) co
         return false;
     }
     return it->second.isActionListMandatoryOnTableCreation;
+}
+
+bool AclOrch::isAclL3V4V6TableSupported(acl_stage_type_t stage) const
+{
+    const auto& it = m_L3V4V6Capability.find(stage);
+    if (it == m_L3V4V6Capability.cend())
+    {
+        return false;
+    }
+    return it->second;
 }
 
 bool AclOrch::isAclActionSupported(acl_stage_type_t stage, sai_acl_action_type_t action) const
