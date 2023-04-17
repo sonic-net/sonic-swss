@@ -18,6 +18,9 @@ using namespace swss;
 #define SELECT_TIMEOUT 1000
 #define PFC_WD_POLL_MSECS 100
 
+/* orchagent heart beat message interval */
+#define HEART_BEAT_INTERVAL_MSECS 60 * 1000
+
 extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
 extern bool                        gSaiRedisLogRotate;
@@ -713,6 +716,7 @@ void OrchDaemon::start()
     }
 
     auto tstart = std::chrono::high_resolution_clock::now();
+    auto heart_beat = tstart;
 
     while (true)
     {
@@ -758,6 +762,14 @@ void OrchDaemon::start()
 
             logRotate();
             continue;
+        }
+
+        // output heart beat message to SYSLOG
+        diff = std::chrono::duration_cast<std::chrono::milliseconds>(tend - heart_beat);
+        if (diff.count() >= HEART_BEAT_INTERVAL_MSECS)
+        {
+            heart_beat = tend;
+            SWSS_LOG_INFO("Orchagent heart beat message.");
         }
 
         auto *c = (Executor *)s;
