@@ -132,9 +132,9 @@ protected:
     swss::Selectable *getSelectable() const { return m_selectable; }
 };
 
-class Consumer : public Executor {
+class ConsumerBase : public Executor {
 public:
-    Consumer(swss::Selectable *selectable, Orch *orch, const std::string &name)
+    ConsumerBase(swss::Selectable *selectable, Orch *orch, const std::string &name)
         : Executor(selectable, orch, name)
     {
     }
@@ -176,10 +176,10 @@ public:
     size_t addToSync(const std::deque<swss::KeyOpFieldsValuesTuple> &entries);
 };
 
-class TableConsumer : public Consumer {
+class Consumer : public ConsumerBase {
 public:
-    TableConsumer(swss::ConsumerTableBase *select, Orch *orch, const std::string &name)
-        : Consumer(select, orch, name)
+    Consumer(swss::ConsumerTableBase *select, Orch *orch, const std::string &name)
+        : ConsumerBase(select, orch, name)
     {
     }
 
@@ -249,12 +249,13 @@ public:
     virtual void doTask();
 
     /* Run doTask against a specific executor */
-    virtual void doTask(Consumer &consumer) = 0;
+    virtual void doTask(Consumer &consumer) { };
+    virtual void doTask(ConsumerBase &consumer) { };
     virtual void doTask(swss::NotificationConsumer &consumer) { }
     virtual void doTask(swss::SelectableTimer &timer) { }
 
     /* TODO: refactor recording */
-    static void recordTuple(Consumer &consumer, const swss::KeyOpFieldsValuesTuple &tuple);
+    static void recordTuple(ConsumerBase &consumer, const swss::KeyOpFieldsValuesTuple &tuple);
 
     void dumpPendingTasks(std::vector<std::string> &ts);
 protected:
@@ -309,6 +310,7 @@ public:
 
 protected:
     virtual void doTask(Consumer& consumer);
+    virtual void doTask(ConsumerBase& consumer);
 
     virtual bool addOperation(const Request& request)=0;
     virtual bool delOperation(const Request& request)=0;

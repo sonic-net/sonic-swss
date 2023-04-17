@@ -70,7 +70,7 @@ vector<Selectable *> Orch::getSelectables()
     return selectables;
 }
 
-void Consumer::addToSync(const KeyOpFieldsValuesTuple &entry)
+void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry)
 {
     SWSS_LOG_ENTER();
 
@@ -157,7 +157,7 @@ void Consumer::addToSync(const KeyOpFieldsValuesTuple &entry)
 
 }
 
-size_t Consumer::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries)
+size_t ConsumerBase::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries)
 {
     SWSS_LOG_ENTER();
 
@@ -170,7 +170,7 @@ size_t Consumer::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries)
 }
 
 // TODO: Table should be const
-size_t Consumer::refillToSync(Table* table)
+size_t ConsumerBase::refillToSync(Table* table)
 {
     std::deque<KeyOpFieldsValuesTuple> entries;
     vector<string> keys;
@@ -192,7 +192,7 @@ size_t Consumer::refillToSync(Table* table)
     return addToSync(entries);
 }
 
-size_t Consumer::refillToSync()
+size_t ConsumerBase::refillToSync()
 {
     auto subTable = dynamic_cast<SubscriberStateTable *>(getSelectable());
     if (subTable != NULL)
@@ -218,7 +218,7 @@ size_t Consumer::refillToSync()
     }
 }
 
-void Consumer::execute()
+void ConsumerBase::execute()
 {
     SWSS_LOG_ENTER();
 
@@ -233,13 +233,13 @@ void Consumer::execute()
     drain();
 }
 
-void Consumer::drain()
+void ConsumerBase::drain()
 {
     if (!m_toSync.empty())
         m_orch->doTask(*this);
 }
 
-string Consumer::dumpTuple(const KeyOpFieldsValuesTuple &tuple)
+string ConsumerBase::dumpTuple(const KeyOpFieldsValuesTuple &tuple)
 {
     string s = getTableName() + getTableNameSeparator() + kfvKey(tuple)
                + "|" + kfvOp(tuple);
@@ -251,7 +251,7 @@ string Consumer::dumpTuple(const KeyOpFieldsValuesTuple &tuple)
     return s;
 }
 
-void Consumer::dumpPendingTasks(vector<string> &ts)
+void ConsumerBase::dumpPendingTasks(vector<string> &ts)
 {
     for (auto &tm : m_toSync)
     {
@@ -265,7 +265,7 @@ void Consumer::dumpPendingTasks(vector<string> &ts)
 
 size_t Orch::addExistingData(const string& tableName)
 {
-    auto consumer = dynamic_cast<Consumer *>(getExecutor(tableName));
+    auto consumer = dynamic_cast<ConsumerBase *>(getExecutor(tableName));
     if (consumer == NULL)
     {
         SWSS_LOG_ERROR("No consumer %s in Orch", tableName.c_str());
@@ -279,7 +279,7 @@ size_t Orch::addExistingData(const string& tableName)
 size_t Orch::addExistingData(Table *table)
 {
     string tableName = table->getTableName();
-    Consumer* consumer = dynamic_cast<Consumer *>(getExecutor(tableName));
+    ConsumerBase* consumer = dynamic_cast<ConsumerBase *>(getExecutor(tableName));
     if (consumer == NULL)
     {
         SWSS_LOG_ERROR("No consumer %s in Orch", tableName.c_str());
@@ -297,7 +297,7 @@ bool Orch::bake()
     {
         string executorName = it.first;
         auto executor = it.second;
-        auto consumer = dynamic_cast<Consumer *>(executor.get());
+        auto consumer = dynamic_cast<ConsumerBase *>(executor.get());
         if (consumer == NULL)
         {
             continue;
@@ -579,7 +579,7 @@ void Orch::logfileReopen()
     }
 }
 
-void Orch::recordTuple(Consumer &consumer, const KeyOpFieldsValuesTuple &tuple)
+void Orch::recordTuple(ConsumerBase &consumer, const KeyOpFieldsValuesTuple &tuple)
 {
     string s = consumer.dumpTuple(tuple);
 
@@ -822,11 +822,11 @@ void Orch::addConsumer(DBConnector *db, string tableName, int pri)
 {
     if (db->getDbId() == CONFIG_DB || db->getDbId() == STATE_DB || db->getDbId() == CHASSIS_APP_DB)
     {
-        addExecutor(new TableConsumer(new SubscriberStateTable(db, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, pri), this, tableName));
+        addExecutor(new Consumer(new SubscriberStateTable(db, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, pri), this, tableName));
     }
     else
     {
-        addExecutor(new TableConsumer(new ConsumerStateTable(db, tableName, gBatchSize, pri), this, tableName));
+        addExecutor(new Consumer(new ConsumerStateTable(db, tableName, gBatchSize, pri), this, tableName));
     }
 }
 
@@ -1054,6 +1054,11 @@ bool Orch::parseHandleSaiStatusFailure(task_process_status status)
 }
 
 void Orch2::doTask(Consumer &consumer)
+{
+    doTask(dynamic_cast<ConsumerBase&>(consumer));
+}
+
+void Orch2::doTask(ConsumerBase &consumer)
 {
     SWSS_LOG_ENTER();
 
