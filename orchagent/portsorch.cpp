@@ -1822,7 +1822,7 @@ bool PortsOrch::bindAclTable(sai_object_id_t  port_oid,
     member_attrs.push_back(member_attr);
 
     member_attr.id = SAI_ACL_TABLE_GROUP_MEMBER_ATTR_PRIORITY;
-    member_attr.value.u32 = 100; // TODO: double check!
+    member_attr.value.u32 = 100;
     member_attrs.push_back(member_attr);
 
     status = sai_acl_api->create_acl_table_group_member(&group_member_oid, gSwitchId, (uint32_t)member_attrs.size(), member_attrs.data());
@@ -4364,11 +4364,17 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
                     continue;
                 }
 
-                if (!addLagMember(lag, port, (status == "enabled")))
+                if (!addLagMember(lag, port, status))
                 {
                     it++;
                     continue;
                 }
+            }
+
+            if ((gMySwitchType == "voq") && (port.m_type != Port::SYSTEM))
+            {
+               //Sync to SYSTEM_LAG_MEMBER_TABLE of CHASSIS_APP_DB
+               voqSyncAddLagMember(lag, port, status);
             }
 
             /* Sync an enabled member */
@@ -5795,9 +5801,10 @@ void PortsOrch::getLagMember(Port &lag, vector<Port> &portv)
     }
 }
 
-bool PortsOrch::addLagMember(Port &lag, Port &port, bool enableForwarding)
+bool PortsOrch::addLagMember(Port &lag, Port &port, string member_status)
 {
     SWSS_LOG_ENTER();
+    bool enableForwarding = (member_status == "enabled");
 
     sai_uint32_t pvid;
     if (getPortPvid(lag, pvid))
@@ -5869,7 +5876,7 @@ bool PortsOrch::addLagMember(Port &lag, Port &port, bool enableForwarding)
     if (gMySwitchType == "voq")
     {
         //Sync to SYSTEM_LAG_MEMBER_TABLE of CHASSIS_APP_DB
-        voqSyncAddLagMember(lag, port);
+        voqSyncAddLagMember(lag, port, member_status);
     }
 
     return true;
@@ -5957,12 +5964,6 @@ bool PortsOrch::setCollectionOnLagMember(Port &lagMember, bool enableCollection)
     /* Port must be LAG member */
     assert(lagMember.m_lag_member_id);
 
-    // Collection is not applicable for system port lag members (i.e, members of remote LAGs)
-    if (lagMember.m_type == Port::SYSTEM)
-    {
-        return true;
-    }
-
     sai_status_t status = SAI_STATUS_FAILURE;
     sai_attribute_t attr {};
 
@@ -5993,12 +5994,6 @@ bool PortsOrch::setDistributionOnLagMember(Port &lagMember, bool enableDistribut
 {
     /* Port must be LAG member */
     assert(lagMember.m_lag_member_id);
-
-    // Distribution is not applicable for system port lag members (i.e, members of remote LAGs)
-    if (lagMember.m_type == Port::SYSTEM)
-    {
-        return true;
-    }
 
     sai_status_t status = SAI_STATUS_FAILURE;
     sai_attribute_t attr {};
@@ -7951,7 +7946,7 @@ void PortsOrch::voqSyncDelLag(Port &lag)
     m_tableVoqSystemLagTable->del(key);
 }
 
-void PortsOrch::voqSyncAddLagMember(Port &lag, Port &port)
+void PortsOrch::voqSyncAddLagMember(Port &lag, Port &port, string status)
 {
     // Sync only local lag's member add to CHASSIS_APP_DB
     if (lag.m_system_lag_info.switch_id != gVoqMySwitchId)
@@ -7960,8 +7955,8 @@ void PortsOrch::voqSyncAddLagMember(Port &lag, Port &port)
     }
 
     vector<FieldValueTuple> attrs;
-    FieldValueTuple nullFv ("NULL", "NULL");
-    attrs.push_back(nullFv);
+    FieldValueTuple statusFv ("status", status);
+    attrs.push_back(statusFv);
 
     string key = lag.m_system_lag_info.alias + ":" + port.m_system_port_info.alias;
     m_tableVoqSystemLagMemberTable->set(key, attrs);

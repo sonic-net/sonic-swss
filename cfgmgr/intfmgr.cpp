@@ -40,8 +40,7 @@ IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         m_stateVrfTable(stateDb, STATE_VRF_TABLE_NAME),
         m_stateIntfTable(stateDb, STATE_INTERFACE_TABLE_NAME),
         m_appIntfTableProducer(appDb, APP_INTF_TABLE_NAME),
-        m_neighTable(appDb, APP_NEIGH_TABLE_NAME),
-        m_appLagTable(appDb, APP_LAG_TABLE_NAME)
+        m_neighTable(appDb, APP_NEIGH_TABLE_NAME)
 {
     auto subscriberStateTable = new swss::SubscriberStateTable(stateDb,
             STATE_PORT_TABLE_NAME, TableConsumable::DEFAULT_POP_BATCH_SIZE, 100);
@@ -350,7 +349,7 @@ std::string IntfMgr::getIntfAdminStatus(const string &alias)
     }
     else if (!alias.compare(0, strlen("Po"), "Po"))
     {
-        portTable = &m_appLagTable;
+        portTable = &m_stateLagTable;
     }
     else
     {
@@ -382,7 +381,7 @@ std::string IntfMgr::getIntfMtu(const string &alias)
     }
     else if (!alias.compare(0, strlen("Po"), "Po"))
     {
-        portTable = &m_appLagTable;
+        portTable = &m_stateLagTable;
     }
     else
     {
