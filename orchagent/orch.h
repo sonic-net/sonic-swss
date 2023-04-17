@@ -164,7 +164,7 @@ public:
     size_t refillToSync();
     size_t refillToSync(swss::Table* table);
     void execute();
-    void drain();
+    virtual void drain();
 
     /* Store the latest 'golden' status */
     // TODO: hide?
@@ -209,6 +209,7 @@ public:
         getConsumerTable()->pops(vkco);
     }
 
+    void drain() override;
 };
 
 typedef std::map<std::string, std::shared_ptr<Executor>> ConsumerMap;
@@ -310,7 +311,6 @@ public:
 
 protected:
     virtual void doTask(Consumer& consumer);
-    virtual void doTask(ConsumerBase& consumer);
 
     virtual bool addOperation(const Request& request)=0;
     virtual bool delOperation(const Request& request)=0;

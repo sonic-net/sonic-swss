@@ -263,6 +263,12 @@ void ConsumerBase::dumpPendingTasks(vector<string> &ts)
     }
 }
 
+void Consumer::drain()
+{
+    if (!m_toSync.empty())
+        m_orch->doTask(*this);
+}
+
 size_t Orch::addExistingData(const string& tableName)
 {
     auto consumer = dynamic_cast<ConsumerBase *>(getExecutor(tableName));
@@ -1054,11 +1060,6 @@ bool Orch::parseHandleSaiStatusFailure(task_process_status status)
 }
 
 void Orch2::doTask(Consumer &consumer)
-{
-    doTask(dynamic_cast<ConsumerBase&>(consumer));
-}
-
-void Orch2::doTask(ConsumerBase &consumer)
 {
     SWSS_LOG_ENTER();
 
