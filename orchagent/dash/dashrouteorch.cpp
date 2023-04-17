@@ -240,7 +240,7 @@ void DashRouteOrch::doTaskRouteTable(Consumer& consumer)
 
             if (op == SET_COMMAND)
             {
-                if (parsePbMessage(kfvFieldsValues(tuple), ctxt.metadata))
+                if (!parsePbMessage(kfvFieldsValues(tuple), ctxt.metadata))
                 {
                     SWSS_LOG_WARN("Requires protobuff at OutboundRouting :%s", key.c_str());
                     it = consumer.m_toSync.erase(it);
@@ -517,7 +517,7 @@ void DashRouteOrch::doTaskRouteRuleTable(Consumer& consumer)
 
             if (op == SET_COMMAND)
             {
-                if (parsePbMessage(kfvFieldsValues(tuple), ctxt.metadata))
+                if (!parsePbMessage(kfvFieldsValues(tuple), ctxt.metadata))
                 {
                     SWSS_LOG_WARN("Requires protobuff at InboundRouting :%s", key.c_str());
                     it = consumer.m_toSync.erase(it);

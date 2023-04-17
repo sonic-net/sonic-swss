@@ -135,10 +135,17 @@ tests_SOURCES += $(P4_ORCH_DIR)/p4orch.cpp \
 		 $(P4_ORCH_DIR)/ext_tables_manager.cpp \
 		 $(P4_ORCH_DIR)/tests/mock_sai_switch.cpp
 
-tests_SOURCES += $(top_srcdir)/orchagent/pbtypes.cpp \
+tests_SOURCES += $(top_srcdir)/orchagent/pbutils.cpp \
             $(DASH_PROTO_DIR)/acl.pb.cc \
             $(DASH_PROTO_DIR)/types.pb.cc \
-            $(DASH_PROTO_DIR)/appliance.pb.cc
+            $(DASH_PROTO_DIR)/appliance.pb.cc \
+            $(DASH_PROTO_DIR)/route_type.pb.cc \
+            $(DASH_PROTO_DIR)/eni.pb.cc \
+            $(DASH_PROTO_DIR)/qos.pb.cc \
+            $(DASH_PROTO_DIR)/route_lpm.pb.cc \
+            $(DASH_PROTO_DIR)/route_rule.pb.cc \
+            $(DASH_PROTO_DIR)/vnet_mapping.pb.cc \
+            $(DASH_PROTO_DIR)/vnet.pb.cc
 
 tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) 
 tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_INCLUDES)

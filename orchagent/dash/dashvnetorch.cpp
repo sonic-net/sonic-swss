@@ -19,6 +19,9 @@
 #include "tokenize.h"
 #include "dashorch.h"
 
+#include "taskworker.h"
+#include "pbutils.h"
+
 using namespace std;
 using namespace swss;
 
@@ -53,7 +56,7 @@ bool DashVnetOrch::addVnet(const string& vnet_name, DashVnetBulkContext& ctxt)
     auto& object_ids = ctxt.object_ids;
     sai_attribute_t dash_vnet_attr;
     dash_vnet_attr.id = SAI_VNET_ATTR_VNI;
-    dash_vnet_attr.value.u32 = ctxt.vni;
+    dash_vnet_attr.value.u32 = ctxt.metadata.vni();
     object_ids.emplace_back();
     vnet_bulker_.create_entry(&object_ids.back(), attr_count, &dash_vnet_attr);
 
@@ -78,7 +81,7 @@ bool DashVnetOrch::addVnetPost(const string& vnet_name, const DashVnetBulkContex
         return false;
     }
 
-    VnetEntry entry = { id, ctxt.guid };
+    VnetEntry entry = { id, ctxt.metadata };
     vnet_table_[vnet_name] = entry;
     gVnetNameToId[vnet_name] = id;
     SWSS_LOG_NOTICE("Vnet entry added for %s", vnet_name.c_str());
@@ -169,25 +172,13 @@ void DashVnetOrch::doTaskVnetTable(Consumer& consumer)
                 vnet_ctxt.clear();
             }
 
-            uint32_t &vni = vnet_ctxt.vni;
-            string& guid = vnet_ctxt.guid;
-
             if (op == SET_COMMAND)
             {
-                for (auto i : kfvFieldsValues(tuple))
+                if (!parsePbMessage(kfvFieldsValues(tuple), vnet_ctxt.metadata))
                 {
-                    if (fvField(i) == "vni")
-                    {
-                        vni = to_uint<uint32_t>(fvValue(i));
-                    }
-                    else if (fvField(i) == "guid")
-                    {
-                        guid = fvValue(i);
-                    }
-                    else
-                    {
-                        SWSS_LOG_INFO("Unknown attribute: %s", fvValue(i).c_str());
-                    }
+                    SWSS_LOG_WARN("Requires protobuff at Vnet :%s", key.c_str());
+                    it = consumer.m_toSync.erase(it);
+                    continue;
                 }
                 if (addVnet(key, vnet_ctxt))
                 {
@@ -285,15 +276,15 @@ void DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
     vector<sai_attribute_t> outbound_ca_to_pa_attrs;
 
     outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_UNDERLAY_DIP;
-    swss::copy(outbound_ca_to_pa_attr.value.ipaddr, ctxt.underlay_ip);
+    to_sai(ctxt.metadata.underlay_ip(), outbound_ca_to_pa_attr.value.ipaddr);
     outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
 
     outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DMAC;
-    memcpy(outbound_ca_to_pa_attr.value.mac, ctxt.mac_address.getMac(), sizeof(sai_mac_t));
+    memcpy(outbound_ca_to_pa_attr.value.mac, ctxt.metadata.mac_address().c_str(), sizeof(sai_mac_t));
     outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
 
     outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_USE_DST_VNET_VNI;
-    outbound_ca_to_pa_attr.value.booldata = ctxt.use_dst_vni;
+    outbound_ca_to_pa_attr.value.booldata = ctxt.metadata.use_dst_vni();
     outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
 
     object_statuses.emplace_back();
@@ -309,7 +300,7 @@ void DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
     sai_pa_validation_entry_t pa_validation_entry;
     pa_validation_entry.vnet_id = gVnetNameToId[ctxt.vnet_name];
     pa_validation_entry.switch_id = gSwitchId;
-    swss::copy(pa_validation_entry.sip, ctxt.underlay_ip);
+    to_sai(ctxt.metadata.underlay_ip(), pa_validation_entry.sip);
     auto& object_statuses = ctxt.pa_validation_object_statuses;
     sai_attribute_t pa_validation_attr;
 
@@ -421,8 +412,7 @@ bool DashVnetOrch::addVnetMapPost(const string& key, const VnetMapBulkContext& c
     }
 
     string vnet_name = ctxt.vnet_name;
-    VnetMapEntry entry = {  gVnetNameToId[vnet_name], ctxt.routing_type, ctxt.dip, ctxt.underlay_ip,
-        ctxt.mac_address, ctxt.metering_bucket, ctxt.use_dst_vni };
+    VnetMapEntry entry = {  gVnetNameToId[vnet_name], ctxt.dip, ctxt.metadata };
     vnet_map_table_[key] = entry;
     SWSS_LOG_NOTICE("Vnet map added for %s", key.c_str());
 
@@ -451,7 +441,7 @@ void DashVnetOrch::removePaValidation(const string& key, VnetMapBulkContext& ctx
     sai_pa_validation_entry_t pa_validation_entry;
     pa_validation_entry.vnet_id = vnet_map_table_[key].dst_vnet_id;
     pa_validation_entry.switch_id = gSwitchId;
-    swss::copy(pa_validation_entry.sip, vnet_map_table_[key].underlay_ip);
+    to_sai(vnet_map_table_[key].metadata.underlay_ip(), pa_validation_entry.sip);
 
     object_statuses.emplace_back();
     pa_validation_bulker_.remove_entry(&object_statuses.back(), &pa_validation_entry);
@@ -582,11 +572,6 @@ void DashVnetOrch::doTaskVnetMapTable(Consumer& consumer)
 
             string& vnet_name = ctxt.vnet_name;
             IpAddress& dip = ctxt.dip;
-            string& routing_type = ctxt.routing_type;
-            IpAddress& underlay_ip = ctxt.underlay_ip;
-            MacAddress& mac_address = ctxt.mac_address;
-            uint32_t& metering_bucket = ctxt.metering_bucket;
-            bool& use_dst_vni = ctxt.use_dst_vni;
 
             vector<string> keys = tokenize(key, ':');
             vnet_name = keys[0];
@@ -596,32 +581,11 @@ void DashVnetOrch::doTaskVnetMapTable(Consumer& consumer)
 
             if (op == SET_COMMAND)
             {
-                for (auto i : kfvFieldsValues(tuple))
+                if (!parsePbMessage(kfvFieldsValues(tuple), ctxt.metadata))
                 {
-                    if (fvField(i) == "routing_type")
-                    {
-                        routing_type = fvValue(i);
-                    }
-                    else if (fvField(i) == "underlay_ip")
-                    {
-                        underlay_ip = IpAddress(fvValue(i));
-                    }
-                    else if (fvField(i) == "mac_address")
-                    {
-                        mac_address = MacAddress(fvValue(i));
-                    }
-                    else if (fvField(i) == "metering_bucket")
-                    {
-                        metering_bucket = to_uint<uint32_t>(fvValue(i));
-                    }
-                    else if (fvField(i) == "use_dst_vni")
-                    {
-                        use_dst_vni = fvValue(i) == "true";
-                    }
-                    else
-                    {
-                        SWSS_LOG_INFO("Unknown attribute: %s", fvValue(i).c_str());
-                    }
+                    SWSS_LOG_WARN("Requires protobuff at VnetMap :%s", key.c_str());
+                    it = consumer.m_toSync.erase(it);
+                    continue;
                 }
                 if (addVnetMap(key, ctxt))
                 {

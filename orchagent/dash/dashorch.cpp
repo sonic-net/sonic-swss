@@ -153,7 +153,7 @@ void DashOrch::doTaskApplianceTable(Consumer& consumer)
         {
             dash::appliance::Appliance entry;
 
-            if (parsePbMessage(kfvFieldsValues(t), entry))
+            if (!parsePbMessage(kfvFieldsValues(t), entry))
             {
                 SWSS_LOG_WARN("Requires protobuff at appliance :%s", appliance_id.c_str());
                 it = consumer.m_toSync.erase(it);
@@ -235,7 +235,7 @@ void DashOrch::doTaskRoutingTypeTable(Consumer& consumer)
         {
             dash::route_type::RouteType entry;
 
-            if (parsePbMessage(kfvFieldsValues(t), entry))
+            if (!parsePbMessage(kfvFieldsValues(t), entry))
             {
                 SWSS_LOG_WARN("Requires protobuff at routing type :%s", routing_type.c_str());
                 it = consumer.m_toSync.erase(it);
@@ -493,7 +493,7 @@ void DashOrch::doTaskEniTable(Consumer& consumer)
         {
             EniEntry entry;
 
-            if (parsePbMessage(kfvFieldsValues(t), entry.metadata))
+            if (!parsePbMessage(kfvFieldsValues(t), entry.metadata))
             {
                 SWSS_LOG_WARN("Requires protobuff at ENI :%s", eni.c_str());
                 it = consumer.m_toSync.erase(it);
@@ -570,7 +570,7 @@ void DashOrch::doTaskQosTable(Consumer& consumer)
         {
             dash::qos::Qos entry;
 
-            if (parsePbMessage(kfvFieldsValues(t), entry))
+            if (!parsePbMessage(kfvFieldsValues(t), entry))
             {
                 SWSS_LOG_WARN("Requires protobuff at QOS :%s", qos_name.c_str());
                 it = consumer.m_toSync.erase(it);

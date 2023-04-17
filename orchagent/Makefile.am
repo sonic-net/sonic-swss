@@ -123,10 +123,17 @@ orchagent_SOURCES += p4orch/p4orch.cpp \
 		     p4orch/l3_admit_manager.cpp \
  		     p4orch/ext_tables_manager.cpp
 
-orchagent_SOURCES += dash/pbtypes.cpp \
+orchagent_SOURCES += dash/pbutils.cpp \
             dash/proto/acl.pb.cc \
             dash/proto/types.pb.cc \
-            dash/proto/appliance.pb.cc
+            dash/proto/appliance.pb.cc \
+            dash/proto/route_type.pb.cc \
+            dash/proto/eni.pb.cc \
+            dash/proto/qos.pb.cc \
+            dash/proto/route_lpm.pb.cc \
+            dash/proto/route_rule.pb.cc \
+            dash/proto/vnet_mapping.pb.cc \
+            dash/proto/vnet.pb.cc
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 orchagent_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
