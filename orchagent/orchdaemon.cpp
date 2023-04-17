@@ -20,7 +20,7 @@ using namespace swss;
 #define PFC_WD_POLL_MSECS 100
 
 /* orchagent heart beat message interval */
-#define HEART_BEAT_INTERVAL_MSECS 60 * 1000
+#define HEART_BEAT_INTERVAL_MSECS 10 * 1000
 
 extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
@@ -771,7 +771,7 @@ void OrchDaemon::start()
         {
             heart_beat = tend;
             // output heart beat message to supervisord with 'PROCESS_COMMUNICATION' event: http://supervisord.org/events.html
-            cout << "<!--XSUPERVISOR:BEGIN-->" << "Orchagent heart beat." << "<!--XSUPERVISOR:END-->" << endl;
+            cout << "<!--XSUPERVISOR:BEGIN-->" << "process:orchagent\norchagent heart beat message." << "<!--XSUPERVISOR:END-->" << endl;
         }
 
         auto *c = (Executor *)s;
