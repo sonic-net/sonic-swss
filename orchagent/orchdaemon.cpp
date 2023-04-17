@@ -6,6 +6,7 @@
 #include "logger.h"
 #include <sairedis.h>
 #include "warm_restart.h"
+#include <iostream>
 
 #define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 #include "sairedis.h"
@@ -769,7 +770,8 @@ void OrchDaemon::start()
         if (diff.count() >= HEART_BEAT_INTERVAL_MSECS)
         {
             heart_beat = tend;
-            SWSS_LOG_INFO("Orchagent heart beat message.");
+            // output heart beat message to supervisord with 'PROCESS_COMMUNICATION' event: http://supervisord.org/events.html
+            cout << "<!--XSUPERVISOR:BEGIN-->" << "Orchagent heart beat." << "<!--XSUPERVISOR:END-->" << endl;
         }
 
         auto *c = (Executor *)s;
