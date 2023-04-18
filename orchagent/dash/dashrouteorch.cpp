@@ -84,7 +84,7 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
         outbound_routing_attrs.push_back(outbound_routing_attr);
     }
 
-    if (!ctxt.action_type.compare("vnet_direct"))
+    if (!ctxt.action_type.compare("vnet_direct") && !ctxt.overlay_ip.isZero())
     {
         outbound_routing_attr.id = SAI_OUTBOUND_ROUTING_ENTRY_ATTR_OVERLAY_IP;
         copy(outbound_routing_attr.value.ipaddr, ctxt.overlay_ip);
