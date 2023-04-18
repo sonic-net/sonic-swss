@@ -30,6 +30,7 @@
 #include "countercheckorch.h"
 #include "notifier.h"
 #include "fdborch.h"
+#include "switchorch.h"
 #include "stringutility.h"
 #include "subscriberstatetable.h"
 
@@ -49,6 +50,7 @@ extern NeighOrch *gNeighOrch;
 extern CrmOrch *gCrmOrch;
 extern BufferOrch *gBufferOrch;
 extern FdbOrch *gFdbOrch;
+extern SwitchOrch *gSwitchOrch;
 extern Directory<Orch*> gDirectory;
 extern sai_system_port_api_t *sai_system_port_api;
 extern string gMySwitchType;
@@ -2582,7 +2584,6 @@ bool PortsOrch::createVlanHostIntf(Port& vl, string hostif_name)
 
     vector<sai_attribute_t> attrs;
     sai_attribute_t attr;
-    sai_attr_capability_t capability;
 
     attr.id = SAI_HOSTIF_ATTR_TYPE;
     attr.value.s32 = SAI_HOSTIF_TYPE_NETDEV;
@@ -2602,23 +2603,13 @@ bool PortsOrch::createVlanHostIntf(Port& vl, string hostif_name)
     attrs.push_back(attr);
 
     bool set_hostif_tx_queue = false;
-    if (sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_HOSTIF,
-                                            SAI_HOSTIF_ATTR_QUEUE,
-                                            &capability)
-                                            == SAI_STATUS_SUCCESS)
+    if (gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_HOSTIF, SAI_HOSTIF_ATTR_QUEUE))
     {
-        if (capability.create_implemented)
-        {
-            set_hostif_tx_queue = true;
-        }
-        else
-        {
-            SWSS_LOG_WARN("Hostif queue attribute not supported");
-        }
+        set_hostif_tx_queue = true;
     }
     else
     {
-        SWSS_LOG_WARN("Unable to query the hostif queue capability");
+        SWSS_LOG_WARN("Hostif queue attribute not supported");
     }
 
     if (set_hostif_tx_queue)
@@ -4853,7 +4844,6 @@ bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_int
 
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
-    sai_attr_capability_t capability;
 
     attr.id = SAI_HOSTIF_ATTR_TYPE;
     attr.value.s32 = SAI_HOSTIF_TYPE_NETDEV;
@@ -4873,24 +4863,13 @@ bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_int
     attrs.push_back(attr);
 
     bool set_hostif_tx_queue = false;
-    if (sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_HOSTIF,
-                                            SAI_HOSTIF_ATTR_QUEUE,
-                                            &capability)
-                                            == SAI_STATUS_SUCCESS)
-
+    if (gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_HOSTIF, SAI_HOSTIF_ATTR_QUEUE))
     {
-        if (capability.create_implemented)
-        {
-            set_hostif_tx_queue = true;
-        }
-        else
-        {
-            SWSS_LOG_WARN("Hostif queue attribute not supported");
-        }
+        set_hostif_tx_queue = true;
     }
     else
     {
-        SWSS_LOG_WARN("Unable to query the hostif queue capability");
+        SWSS_LOG_WARN("Hostif queue attribute not supported");
     }
 
     if (set_hostif_tx_queue)
