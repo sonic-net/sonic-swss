@@ -1010,8 +1010,8 @@ bool VNetRouteOrch::selectNextHopGroup(const string& vnet,
     else if (!hasNextHopGroup(vnet, nexthops_primary))
     {
         SWSS_LOG_INFO("Creating next hop group  %s", nexthops_primary.to_string().c_str());
-        setEndpointMonitor(vnet, monitors, nexthops_primary, "", ipPrefix);
-        if (!createNextHopGroup(vnet, nexthops_primary, vrf_obj, ""))
+        setEndpointMonitor(vnet, monitors, nexthops_primary, monitoring, ipPrefix);
+        if (!createNextHopGroup(vnet, nexthops_primary, vrf_obj, monitoring))
         {
             delEndpointMonitor(vnet, nexthops_primary, ipPrefix);
             return false;
