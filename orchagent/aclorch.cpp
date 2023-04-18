@@ -1206,7 +1206,7 @@ bool AclRule::removeRule()
     auto status = sai_acl_api->remove_acl_entry(m_ruleOid);
     if (status != SAI_STATUS_SUCCESS)
     {
-        if (status == SAI_STATUS_ITEM_NOT_FOUND || status == SAI_STATUS_INVALID_PARAMETER)
+        if (status == SAI_STATUS_ITEM_NOT_FOUND)
         {
             SWSS_LOG_NOTICE("ACL rule already deleted");
             m_ruleOid = SAI_NULL_OBJECT_ID;

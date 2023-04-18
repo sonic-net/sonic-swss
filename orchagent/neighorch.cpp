@@ -1018,7 +1018,7 @@ bool NeighOrch::removeNeighbor(const NeighborEntry &neighborEntry, bool disable)
         if (status != SAI_STATUS_SUCCESS)
         {
             /* When next hop is not found, we continue to remove neighbor entry. */
-            if (status == SAI_STATUS_ITEM_NOT_FOUND || status == SAI_STATUS_INVALID_PARAMETER)
+            if (status == SAI_STATUS_ITEM_NOT_FOUND)
             {
                 SWSS_LOG_NOTICE("Next hop %s on %s doesn't exist, rv:%d",
                                ip_address.to_string().c_str(), alias.c_str(), status);
@@ -1053,7 +1053,7 @@ bool NeighOrch::removeNeighbor(const NeighborEntry &neighborEntry, bool disable)
         status = sai_neighbor_api->remove_neighbor_entry(&neighbor_entry);
         if (status != SAI_STATUS_SUCCESS)
         {
-            if (status == SAI_STATUS_ITEM_NOT_FOUND || status == SAI_STATUS_INVALID_PARAMETER)
+            if (status == SAI_STATUS_ITEM_NOT_FOUND)
             {
                 SWSS_LOG_NOTICE("Neighbor %s on %s already removed, rv:%d",
                         m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str(), status);

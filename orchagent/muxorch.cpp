@@ -149,7 +149,7 @@ static sai_status_t remove_route(IpPrefix &pfx)
     sai_status_t status = sai_route_api->remove_route_entry(&route_entry);
     if (status != SAI_STATUS_SUCCESS)
     {
-        if (status == SAI_STATUS_INVALID_PARAMETER || status == SAI_STATUS_ITEM_NOT_FOUND) {
+        if (status == SAI_STATUS_ITEM_NOT_FOUND) {
             SWSS_LOG_NOTICE("Tunnel route to %s already removed", pfx.to_string().c_str());
             return SAI_STATUS_SUCCESS;
         }
