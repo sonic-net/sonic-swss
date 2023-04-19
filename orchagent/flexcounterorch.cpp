@@ -44,6 +44,8 @@ extern sai_object_id_t gSwitchId;
 #define FLOW_CNT_TRAP_KEY           "FLOW_CNT_TRAP"
 #define FLOW_CNT_ROUTE_KEY          "FLOW_CNT_ROUTE"
 #define ENI_KEY                     "ENI"
+#define WRED_QUEUE_KEY              "WRED_ECN_QUEUE"
+#define WRED_PORT_KEY               "WRED_ECN_PORT"
 
 unordered_map<string, string> flexCounterGroupMap =
 {
@@ -66,7 +68,9 @@ unordered_map<string, string> flexCounterGroupMap =
     {"MACSEC_SA", COUNTERS_MACSEC_SA_GROUP},
     {"MACSEC_SA_ATTR", COUNTERS_MACSEC_SA_ATTR_GROUP},
     {"MACSEC_FLOW", COUNTERS_MACSEC_FLOW_GROUP},
-    {"ENI", ENI_STAT_COUNTER_FLEX_COUNTER_GROUP}
+    {"ENI", ENI_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {"WRED_ECN_PORT", WRED_PORT_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {"WRED_ECN_QUEUE", WRED_QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP},
 };
 
 
@@ -208,6 +212,17 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                             m_pg_watermark_enabled = true;
                             gPortsOrch->addPriorityGroupWatermarkFlexCounters(getPgConfigurations());
                         }
+			else if(key == WRED_PORT_KEY)
+			{
+                            gPortsOrch->generateWredPortCounterMap();
+                            m_wred_port_counter_enabled = true;
+			}
+			else if(key == WRED_QUEUE_KEY)
+			{
+                            gPortsOrch->generateQueueMap(getQueueConfigurations());
+                            m_wred_queue_counter_enabled = true;
+                            gPortsOrch->addWredQueueFlexCounters(getQueueConfigurations());
+			}
                     }
                     if(gIntfsOrch && (key == RIF_KEY) && (value == "enable"))
                     {
@@ -332,6 +347,16 @@ bool FlexCounterOrch::getPgCountersState() const
 bool FlexCounterOrch::getPgWatermarkCountersState() const
 {
     return m_pg_watermark_enabled;
+}
+
+bool FlexCounterOrch::getWredQueueCountersState() const
+{
+    return m_wred_queue_counter_enabled;
+}
+
+bool FlexCounterOrch::getWredPortCountersState() const
+{
+    return m_wred_port_counter_enabled;
 }
 
 bool FlexCounterOrch::bake()
