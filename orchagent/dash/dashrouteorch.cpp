@@ -31,7 +31,7 @@ static std::unordered_map<std::string, sai_outbound_routing_entry_action_t> sOut
 {
     { "vnet", SAI_OUTBOUND_ROUTING_ENTRY_ACTION_ROUTE_VNET },
     { "vnet_direct", SAI_OUTBOUND_ROUTING_ENTRY_ACTION_ROUTE_VNET_DIRECT },
-    { "route_direct", SAI_OUTBOUND_ROUTING_ENTRY_ACTION_ROUTE_DIRECT },
+    { "direct", SAI_OUTBOUND_ROUTING_ENTRY_ACTION_ROUTE_DIRECT },
     { "drop", SAI_OUTBOUND_ROUTING_ENTRY_ACTION_DROP }
 };
 
