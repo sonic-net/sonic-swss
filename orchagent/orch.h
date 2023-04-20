@@ -155,16 +155,13 @@ public:
 
     virtual const swss::DBConnector* getDbConnector() const = 0;
 
-    /* Get multiple pop elements */
-    virtual void pops(std::deque<swss::KeyOpFieldsValuesTuple> &vkco) = 0;
-
     std::string dumpTuple(const swss::KeyOpFieldsValuesTuple &tuple);
     void dumpPendingTasks(std::vector<std::string> &ts);
 
     size_t refillToSync();
     size_t refillToSync(swss::Table* table);
-    void execute();
-    void drain();
+    void execute() {};
+    void drain() {};
 
     /* Store the latest 'golden' status */
     // TODO: hide?
@@ -203,9 +200,7 @@ public:
         return getConsumerTable()->getDbConnector();
     }
 
-    /* Get multiple pop elements */
-    void pops(std::deque<swss::KeyOpFieldsValuesTuple> &vkco) override;
-
+    void execute() override;
     void drain() override;
 };
 

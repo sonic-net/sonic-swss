@@ -218,27 +218,6 @@ size_t ConsumerBase::refillToSync()
     }
 }
 
-void ConsumerBase::execute()
-{
-    SWSS_LOG_ENTER();
-
-    size_t update_size = 0;
-    do
-    {
-        std::deque<KeyOpFieldsValuesTuple> entries;
-        pops(entries);
-        update_size = addToSync(entries);
-    } while (update_size != 0);
-
-    drain();
-}
-
-void ConsumerBase::drain()
-{
-    if (!m_toSync.empty())
-        m_orch->doTask(*this);
-}
-
 string ConsumerBase::dumpTuple(const KeyOpFieldsValuesTuple &tuple)
 {
     string s = getTableName() + getTableNameSeparator() + kfvKey(tuple)
@@ -263,10 +242,19 @@ void ConsumerBase::dumpPendingTasks(vector<string> &ts)
     }
 }
 
-/* Get multiple pop elements */
-void Consumer::pops(std::deque<swss::KeyOpFieldsValuesTuple> &vkco)
+void Consumer::execute()
 {
-    getConsumerTable()->pops(vkco);
+    SWSS_LOG_ENTER();
+
+    size_t update_size = 0;
+    do
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        getConsumerTable()->pops(entries);
+        update_size = addToSync(entries);
+    } while (update_size != 0);
+
+    drain();
 }
 
 void Consumer::drain()
