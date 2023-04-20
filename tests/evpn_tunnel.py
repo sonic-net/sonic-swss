@@ -1156,7 +1156,7 @@ class VxlanTunnel(object):
             assert found_route
 
         self.helper.check_deleted_object(asic_db, self.ASIC_ROUTE_ENTRY, self.route_id[vrf_name + ":" + prefix])
-        self.route_id.clear()
+        del self.route_id[vrf_name + ":" + prefix]
 
         return True
 

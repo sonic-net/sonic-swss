@@ -309,6 +309,44 @@ class TestL3Vxlan(object):
         vxlan_obj.check_vrf_routes_ecmp_nexthop_grp_del(dvs, 2)
         vxlan_obj.check_del_vrf_routes(dvs, "80.80.1.0/24", 'Vrf-RED')
 
+        print ("\n\nTest VRF IPv4 Multiple Route with ECMP Tunnel Nexthop Add and Delete")
+        vxlan_obj.fetch_exist_entries(dvs)
+
+        ecmp_nexthop_attr = [
+            ("nexthop", "7.7.7.7,8.8.8.8"),
+            ("ifname", "Vlan100,Vlan100"),
+            ("vni_label", "1000,1000"),
+            ("router_mac", "00:11:11:11:11:11,00:22:22:22:22:22"),
+        ]
+
+        print ("\tTest VRF IPv4 Multiple Route with ECMP Tunnel Nexthop [7.7.7.7 , 8.8.8.8] Add")
+        vxlan_obj.create_vrf_route_ecmp(dvs, "80.80.1.0/24", 'Vrf-RED', ecmp_nexthop_attr)
+
+        nh_count = 2
+        ecmp_nhid_list = vxlan_obj.check_vrf_routes_ecmp(dvs, "80.80.1.0/24", 'Vrf-RED', tunnel_name, nh_count)
+        assert nh_count == len(ecmp_nhid_list)
+        vxlan_obj.check_add_tunnel_nexthop(dvs, ecmp_nhid_list[0], '7.7.7.7', tunnel_name, '00:11:11:11:11:11', '1000')
+        vxlan_obj.check_add_tunnel_nexthop(dvs, ecmp_nhid_list[1], '8.8.8.8', tunnel_name, '00:22:22:22:22:22', '1000')
+
+        nh_count = 2
+        vxlan_obj.create_vrf_route_ecmp(dvs, "90.90.1.0/24", 'Vrf-RED', ecmp_nexthop_attr)
+        ecmp_nhid_list = vxlan_obj.check_vrf_routes_ecmp(dvs, "90.90.1.0/24", 'Vrf-RED', tunnel_name, nh_count)
+        assert nh_count == len(ecmp_nhid_list)
+        vxlan_obj.check_add_tunnel_nexthop(dvs, ecmp_nhid_list[0], '7.7.7.7', tunnel_name, '00:11:11:11:11:11', '1000')
+        vxlan_obj.check_add_tunnel_nexthop(dvs, ecmp_nhid_list[1], '8.8.8.8', tunnel_name, '00:22:22:22:22:22', '1000')
+
+        print ("\tTest VRF IPv4 Multiple Route with ECMP Tunnel Nexthop [7.7.7.7 , 8.8.8.8] Delete")
+        vxlan_obj.fetch_exist_entries(dvs)
+        vxlan_obj.delete_vrf_route(dvs, "80.80.1.0/24", 'Vrf-RED')
+        vxlan_obj.check_del_vrf_routes(dvs, "80.80.1.0/24", 'Vrf-RED')
+        vxlan_obj.fetch_exist_entries(dvs)
+        vxlan_obj.delete_vrf_route(dvs, "90.90.1.0/24", 'Vrf-RED')
+        vxlan_obj.check_del_vrf_routes(dvs, "90.90.1.0/24", 'Vrf-RED')
+        helper.check_deleted_object(self.adb, vxlan_obj.ASIC_NEXT_HOP, ecmp_nhid_list[0])
+        helper.check_deleted_object(self.adb, vxlan_obj.ASIC_NEXT_HOP, ecmp_nhid_list[1])
+
+        vxlan_obj.check_vrf_routes_ecmp_nexthop_grp_del(dvs, 2)
+
         print ("\n\nTest VRF IPv4 Route with Tunnel Nexthop update from non-ECMP to ECMP")
         print ("\tTest VRF IPv4 Route with Tunnel Nexthop 7.7.7.7 Add")
         vxlan_obj.fetch_exist_entries(dvs)

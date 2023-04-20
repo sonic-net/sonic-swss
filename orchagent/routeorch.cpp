@@ -2164,10 +2164,12 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         {
             decreaseNextHopRefCount(it_route->second.nhg_key);
             auto ol_nextHops = it_route->second.nhg_key;
-            if (ol_nextHops.getSize() > 1
-                && m_syncdNextHopGroups[ol_nextHops].ref_count == 0)
+            if (ol_nextHops.getSize() > 1)
             {
-                m_bulkNhgReducedRefCnt.emplace(ol_nextHops, 0);
+                if (m_syncdNextHopGroups[ol_nextHops].ref_count == 0)
+                {
+                    m_bulkNhgReducedRefCnt.emplace(ol_nextHops, 0);
+                }
             }
             else if (ol_nextHops.is_overlay_nexthop())
             {
@@ -2403,10 +2405,12 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
 
         auto ol_nextHops = it_route->second.nhg_key;
 
-        if (it_route->second.nhg_key.getSize() > 1
-            && m_syncdNextHopGroups[it_route->second.nhg_key].ref_count == 0)
+        if (it_route->second.nhg_key.getSize() > 1)
         {
-            m_bulkNhgReducedRefCnt.emplace(it_route->second.nhg_key, 0);
+            if (m_syncdNextHopGroups[it_route->second.nhg_key].ref_count == 0)
+            {
+                m_bulkNhgReducedRefCnt.emplace(it_route->second.nhg_key, 0);
+            }
         }
         else if (ol_nextHops.is_overlay_nexthop())
         {
