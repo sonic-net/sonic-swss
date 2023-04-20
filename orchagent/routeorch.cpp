@@ -2214,10 +2214,12 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         {
             decreaseNextHopRefCount(it_route->second.nhg_key);
             auto ol_nextHops = it_route->second.nhg_key;
-            if (ol_nextHops.getSize() > 1
-                && m_syncdNextHopGroups[ol_nextHops].ref_count == 0)
+            if (ol_nextHops.getSize() > 1)
             {
-                m_bulkNhgReducedRefCnt.emplace(ol_nextHops, 0);
+                if (m_syncdNextHopGroups[ol_nextHops].ref_count == 0)
+                {
+                    m_bulkNhgReducedRefCnt.emplace(ol_nextHops, 0);
+                }
             }
             else if (ol_nextHops.is_overlay_nexthop())
             {
@@ -2475,23 +2477,25 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
 
         auto ol_nextHops = it_route->second.nhg_key;
         MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
-        if (it_route->second.nhg_key.getSize() > 1
-            && m_syncdNextHopGroups[it_route->second.nhg_key].ref_count == 0)
+        if (it_route->second.nhg_key.getSize() > 1)
         {
-            m_bulkNhgReducedRefCnt.emplace(it_route->second.nhg_key, 0);
-            if (mux_orch->isMuxNexthops(ol_nextHops))
+            if (m_syncdNextHopGroups[it_route->second.nhg_key].ref_count == 0)
             {
-                SWSS_LOG_NOTICE("Remove mux Nexthop %s", ol_nextHops.to_string().c_str());
-                RouteKey routekey = { vrf_id, ipPrefix };
-                auto nexthop_list = ol_nextHops.getNextHops();
-                for (auto nh = nexthop_list.begin(); nh != nexthop_list.end(); nh++)
+                m_bulkNhgReducedRefCnt.emplace(it_route->second.nhg_key, 0);
+                if (mux_orch->isMuxNexthops(ol_nextHops))
                 {
-                    if (!nh->ip_address.isZero())
+                    SWSS_LOG_NOTICE("Remove mux Nexthop %s", ol_nextHops.to_string().c_str());
+                    RouteKey routekey = { vrf_id, ipPrefix };
+                    auto nexthop_list = ol_nextHops.getNextHops();
+                    for (auto nh = nexthop_list.begin(); nh != nexthop_list.end(); nh++)
                     {
-                        removeNextHopRoute(*nh, routekey);
+                        if (!nh->ip_address.isZero())
+                        {
+                            removeNextHopRoute(*nh, routekey);
+                        }
                     }
+                    mux_orch->updateRoute(ipPrefix, false);
                 }
-                mux_orch->updateRoute(ipPrefix, false);
             }
         }
         else if (ol_nextHops.is_overlay_nexthop())
