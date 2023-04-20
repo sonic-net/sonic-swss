@@ -164,7 +164,7 @@ public:
     size_t refillToSync();
     size_t refillToSync(swss::Table* table);
     void execute();
-    virtual void drain();
+    void drain();
 
     /* Store the latest 'golden' status */
     // TODO: hide?
@@ -204,10 +204,7 @@ public:
     }
 
     /* Get multiple pop elements */
-    void pops(std::deque<swss::KeyOpFieldsValuesTuple> &vkco) override
-    {
-        getConsumerTable()->pops(vkco);
-    }
+    void pops(std::deque<swss::KeyOpFieldsValuesTuple> &vkco) override;
 
     void drain() override;
 };

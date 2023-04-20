@@ -263,6 +263,12 @@ void ConsumerBase::dumpPendingTasks(vector<string> &ts)
     }
 }
 
+/* Get multiple pop elements */
+void Consumer::pops(std::deque<swss::KeyOpFieldsValuesTuple> &vkco)
+{
+    getConsumerTable()->pops(vkco);
+}
+
 void Consumer::drain()
 {
     if (!m_toSync.empty())
