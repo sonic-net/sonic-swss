@@ -67,7 +67,7 @@ void RecordDBWrite(const std::string &table, const std::string &key, const std::
     }
 
     PerformLogRotate();
-    gResponsePublisherRecordOfs << swss::getTimestamp() << "|" << s << std::endl;
+    gResponsePublisherRecordOfs << swss::getTimestamp() << "|" << s << '\n';
 }
 
 void RecordResponse(const std::string &response_channel, const std::string &key,
@@ -85,7 +85,7 @@ void RecordResponse(const std::string &response_channel, const std::string &key,
     }
 
     PerformLogRotate();
-    gResponsePublisherRecordOfs << swss::getTimestamp() << "|" << s << std::endl;
+    gResponsePublisherRecordOfs << swss::getTimestamp() << "|" << s << '\n';
 }
 
 } // namespace

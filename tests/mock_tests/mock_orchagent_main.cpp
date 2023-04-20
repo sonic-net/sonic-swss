@@ -20,6 +20,8 @@ bool gSwssRecord = true;
 bool gLogRotate = false;
 ofstream gRecordOfs;
 string gRecordFile;
+std::ofstream gResponsePublisherRecordOfs;
+std::string gResponsePublisherRecordFile;
 string gMySwitchType = "switch";
 int32_t gVoqMySwitchId = 0;
 string gMyHostName = "Linecard1";
