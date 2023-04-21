@@ -189,6 +189,8 @@ int main(int argc, char **argv)
             WarmStart::initialize("buffermgrd", "swss");
             WarmStart::checkWarmStart("buffermgrd", "swss");
 
+            DBConnector applStateDb("APPL_STATE_DB", 0);
+
             vector<TableConnector> buffer_table_connectors = {
                 TableConnector(&cfgDb, CFG_PORT_TABLE_NAME),
                 TableConnector(&cfgDb, CFG_PORT_CABLE_LEN_TABLE_NAME),
@@ -202,7 +204,7 @@ int main(int argc, char **argv)
                 TableConnector(&stateDb, STATE_BUFFER_MAXIMUM_VALUE_TABLE),
                 TableConnector(&stateDb, STATE_PORT_TABLE_NAME)
             };
-            cfgOrchList.emplace_back(new BufferMgrDynamic(&cfgDb, &stateDb, &applDb, buffer_table_connectors, peripherial_table_ptr, zero_profiles_ptr));
+            cfgOrchList.emplace_back(new BufferMgrDynamic(&cfgDb, &stateDb, &applDb, &applStateDb, buffer_table_connectors, peripherial_table_ptr, zero_profiles_ptr));
         }
         else if (!pg_lookup_file.empty())
         {

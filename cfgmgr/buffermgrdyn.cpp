@@ -26,7 +26,7 @@
 using namespace std;
 using namespace swss;
 
-BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBConnector *applDb, const vector<TableConnector> &tables, shared_ptr<vector<KeyOpFieldsValuesTuple>> gearboxInfo, shared_ptr<vector<KeyOpFieldsValuesTuple>> zeroProfilesInfo) :
+BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBConnector *applDb, DBConnector *applStateDb, const vector<TableConnector> &tables, shared_ptr<vector<KeyOpFieldsValuesTuple>> gearboxInfo, shared_ptr<vector<KeyOpFieldsValuesTuple>> zeroProfilesInfo) :
         Orch(tables),
         m_platform(),
         m_bufferDirections{BUFFER_INGRESS, BUFFER_EGRESS},
@@ -38,6 +38,7 @@ BufferMgrDynamic::BufferMgrDynamic(DBConnector *cfgDb, DBConnector *stateDb, DBC
         m_cfgDefaultLosslessBufferParam(cfgDb, CFG_DEFAULT_LOSSLESS_BUFFER_PARAMETER),
         m_cfgDeviceMetaDataTable(cfgDb, CFG_DEVICE_METADATA_TABLE_NAME),
         m_applBufferPoolTable(applDb, APP_BUFFER_POOL_TABLE_NAME),
+        m_applStateBufferPoolTable(applStateDb, APP_BUFFER_POOL_TABLE_NAME),
         m_applBufferProfileTable(applDb, APP_BUFFER_PROFILE_TABLE_NAME),
         m_applBufferObjectTables{ProducerStateTable(applDb, APP_BUFFER_PG_TABLE_NAME), ProducerStateTable(applDb, APP_BUFFER_QUEUE_TABLE_NAME)},
         m_applBufferProfileListTables{ProducerStateTable(applDb, APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME), ProducerStateTable(applDb, APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME)},
@@ -1960,6 +1961,13 @@ task_process_status BufferMgrDynamic::handleDefaultLossLessBufferParam(KeyOpFiel
     {
         bool isSHPEnabled = isNonZero(m_overSubscribeRatio);
         bool willSHPBeEnabled = isNonZero(newRatio);
+        if (m_portInitDone && (!isSHPEnabled) && willSHPBeEnabled)
+        {
+            if (!isSharedHeadroomPoolEnabledInSai())
+            {
+                return task_process_status::task_need_retry;
+            }
+        }
         SWSS_LOG_INFO("Recalculate shared buffer pool size due to over subscribe ratio has been updated from %s to %s",
                       m_overSubscribeRatio.c_str(), newRatio.c_str());
         m_overSubscribeRatio = newRatio;
@@ -1967,6 +1975,24 @@ task_process_status BufferMgrDynamic::handleDefaultLossLessBufferParam(KeyOpFiel
     }
 
     return task_process_status::task_success;
+}
+bool BufferMgrDynamic::isSharedHeadroomPoolEnabledInSai()
+{
+    string xoff;
+    recalculateSharedBufferPool();
+    if (!isNonZero(m_bufferPoolLookup[INGRESS_LOSSLESS_PG_POOL_NAME].xoff))
+    {
+        return true;
+    }
+    m_applBufferPoolTable.flush();
+    m_applStateBufferPoolTable.hget(INGRESS_LOSSLESS_PG_POOL_NAME, "xoff", xoff);
+    if (!isNonZero(xoff))
+    {
+        SWSS_LOG_INFO("Shared headroom pool is enabled but has not been applied to SAI, retrying");
+        return false;
+    }
+
+    return true;
 }
 
 task_process_status BufferMgrDynamic::handleCableLenTable(KeyOpFieldsValuesTuple &tuple)
@@ -2415,6 +2441,14 @@ task_process_status BufferMgrDynamic::handleBufferPoolTable(KeyOpFieldsValuesTup
             if (newSHPSize != m_configuredSharedHeadroomPoolSize)
             {
                 bool isSHPEnabledBySize = isNonZero(m_configuredSharedHeadroomPoolSize);
+
+                if (m_portInitDone && (!isSHPEnabledBySize) && willSHPBeEnabledBySize)
+                {
+                    if (!isSharedHeadroomPoolEnabledInSai())
+                    {
+                        return task_process_status::task_need_retry;
+                    }
+                }
 
                 m_configuredSharedHeadroomPoolSize = newSHPSize;
                 refreshSharedHeadroomPool(false, isSHPEnabledBySize != willSHPBeEnabledBySize);
