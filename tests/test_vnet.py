@@ -3171,6 +3171,33 @@ class TestVnetOrch(object):
         check_remove_state_db_routes(dvs, 'Vnet12', "100.100.1.67/32")
         #adv should be gone.
         check_remove_routes_advertisement(dvs, "100.100.1.0/24")
+
+        #Add priority route with no secondary enpoints
+        create_vnet_routes(dvs, "100.100.1.71/32", vnet_name, '19.0.0.1,19.0.0.2', ep_monitor='19.0.0.1,19.0.0.2', profile = "test_prf", primary ='19.0.0.1,19.0.0.2',monitoring='custom', adv_prefix='100.100.1.0/24')
+        update_monitor_session_state(dvs, '100.100.1.71/32', '19.0.0.1', 'up')
+        update_monitor_session_state(dvs, '100.100.1.71/32', '19.0.0.2', 'up')
+
+        #verify that no BFD sessions are created.
+        check_del_bfd_session(dvs, ['19.0.0.1'])
+        check_del_bfd_session(dvs, ['19.0.0.2'])
+        time.sleep(2)
+        check_state_db_routes(dvs, vnet_name, "100.100.1.71/32", ['19.0.0.1,19.0.0.2'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.0/24", "test_prf")
+
+        update_monitor_session_state(dvs, '100.100.1.71/32', '19.0.0.1', 'down')
+        check_state_db_routes(dvs, vnet_name, "100.100.1.71/32", ['19.0.0.2'])
+        # The default Vnet setting does not advertise prefix
+        check_routes_advertisement(dvs, "100.100.1.0/24", "test_prf")
+
+        update_monitor_session_state(dvs, '100.100.1.71/32', '19.0.0.2', 'down')
+        check_remove_state_db_routes(dvs, 'Vnet12', "100.100.1.71/32")
+
+        #remove first route
+        delete_vnet_routes(dvs, "100.100.1.71/32", vnet_name)
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet12', ["100.100.1.71/32"])
+        check_remove_state_db_routes(dvs, 'Vnet12', "100.100.1.71/32")
+
         delete_vnet_entry(dvs,vnet_name)
         vnet_obj.check_del_vnet_entry(dvs, vnet_name)
         delete_vxlan_tunnel(dvs, tunnel_name)
