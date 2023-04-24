@@ -2218,13 +2218,18 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
             {
                 if (m_syncdNextHopGroups[ol_nextHops].ref_count == 0)
                 {
+                    SWSS_LOG_NOTICE("Update Nexthop Group %s", ol_nextHops.to_string().c_str());
                     m_bulkNhgReducedRefCnt.emplace(ol_nextHops, 0);
                 }
             }
             else if (ol_nextHops.is_overlay_nexthop())
             {
-                SWSS_LOG_NOTICE("Update overlay Nexthop %s", ol_nextHops.to_string().c_str());
-                m_bulkNhgReducedRefCnt.emplace(ol_nextHops, vrf_id);
+                const NextHopKey& nexthop = *it_route->second.nhg_key.getNextHops().begin();
+                if (m_neighOrch->getNextHopRefCount(nexthop) == 0)
+                {
+                    SWSS_LOG_NOTICE("Update overlay Nexthop %s", ol_nextHops.to_string().c_str());
+                    m_bulkNhgReducedRefCnt.emplace(ol_nextHops, vrf_id);
+                }
             }
             else if (ol_nextHops.is_srv6_nexthop())
             {
@@ -2481,6 +2486,7 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
         {
             if (m_syncdNextHopGroups[it_route->second.nhg_key].ref_count == 0)
             {
+                SWSS_LOG_NOTICE("Remove Nexthop Group %s", ol_nextHops.to_string().c_str());
                 m_bulkNhgReducedRefCnt.emplace(it_route->second.nhg_key, 0);
                 if (mux_orch->isMuxNexthops(ol_nextHops))
                 {
@@ -2500,8 +2506,12 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
         }
         else if (ol_nextHops.is_overlay_nexthop())
         {
-            SWSS_LOG_NOTICE("Remove overlay Nexthop %s", ol_nextHops.to_string().c_str());
-            m_bulkNhgReducedRefCnt.emplace(ol_nextHops, vrf_id);
+            const NextHopKey& nexthop = *it_route->second.nhg_key.getNextHops().begin();
+            if (m_neighOrch->getNextHopRefCount(nexthop) == 0)
+            {
+                SWSS_LOG_NOTICE("Remove overlay Nexthop %s", ol_nextHops.to_string().c_str());
+                m_bulkNhgReducedRefCnt.emplace(ol_nextHops, vrf_id);
+            }
         }
         /*
          * Additionally check if the NH has label and its ref count == 0, then
