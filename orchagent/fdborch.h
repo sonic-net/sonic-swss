@@ -103,6 +103,8 @@ public:
     void flushFDBEntries(sai_object_id_t bridge_port_oid,
                          sai_object_id_t vlan_oid);
     void notifyObserversFDBFlush(Port &p, sai_object_id_t&);
+    void flushMclagRemoteFDBEntries(sai_object_id_t bridge_port_oid,
+		                    Port &vlan);
 
 private:
     PortsOrch *m_portsOrch;
