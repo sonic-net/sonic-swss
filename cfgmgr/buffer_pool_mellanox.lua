@@ -324,7 +324,7 @@ for name in pairs(profiles) do
                size = size + lossypg_reserved
             end
             if size ~= 0 then
-                if shp_enabled and shp_size == 0 then
+                if shp_size == 0 then
                     local xon = tonumber(redis.call('HGET', name, 'xon'))
                     local xoff = tonumber(redis.call('HGET', name, 'xoff'))
                     if xon ~= nil and xoff ~= nil and xon + xoff > size then
@@ -346,6 +346,12 @@ accumulative_occupied_buffer = accumulative_occupied_buffer + lossypg_extra_for_
 
 -- Accumulate sizes for private headrooms
 local accumulative_private_headroom = 0
+local force_enable_shp = false
+if accumulative_xoff > 0 and shp_enabled ~= true then
+    force_enable_shp = true
+    shp_size = 655360
+    shp_enabled = true
+end
 if shp_enabled then
     accumulative_private_headroom = lossless_port_count * private_headroom
     accumulative_occupied_buffer = accumulative_occupied_buffer + accumulative_private_headroom
@@ -391,6 +397,9 @@ end
 
 if shp_enabled and shp_size == 0 then
     shp_size = math.ceil(accumulative_xoff / over_subscribe_ratio)
+    if shp_size == 0 then
+        shp_size = 655360
+    end
 end
 
 local pool_size
@@ -432,6 +441,7 @@ table.insert(result, "debug:mgmt_pool:" .. mgmt_pool_size)
 if shp_enabled then
     table.insert(result, "debug:accumulative_private_headroom:" .. accumulative_private_headroom)
     table.insert(result, "debug:accumulative xoff:" .. accumulative_xoff)
+    table.insert(result, "debug:force enabled shp:" .. tostring(force_enable_shp))
 end
 table.insert(result, "debug:accumulative_mgmt_pg:" .. accumulative_management_pg)
 table.insert(result, "debug:egress_mirror:" .. accumulative_egress_mirror_overhead)

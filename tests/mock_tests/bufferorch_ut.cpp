@@ -7,9 +7,11 @@
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
 #include "mock_table.h"
+#include "mock_response_publisher.h"
 
 extern string gMySwitchType;
 
+extern std::unique_ptr<MockResponsePublisher> gMockResponsePublisher;
 
 namespace bufferorch_test
 {
@@ -19,6 +21,7 @@ namespace bufferorch_test
     sai_port_api_t *pold_sai_port_api;
 
     shared_ptr<swss::DBConnector> m_app_db;
+    shared_ptr<swss::DBConnector> m_app_state_db;
     shared_ptr<swss::DBConnector> m_config_db;
     shared_ptr<swss::DBConnector> m_state_db;
     shared_ptr<swss::DBConnector> m_chassis_app_db;
@@ -113,6 +116,7 @@ namespace bufferorch_test
             m_app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
             m_config_db = make_shared<swss::DBConnector>("CONFIG_DB", 0);
             m_state_db = make_shared<swss::DBConnector>("STATE_DB", 0);
+            m_app_state_db = make_shared<swss::DBConnector>("APPL_STATE_DB", 0);
             if(gMySwitchType == "voq")
                 m_chassis_app_db = make_shared<swss::DBConnector>("CHASSIS_APP_DB", 0);
 
@@ -316,6 +320,24 @@ namespace bufferorch_test
             ut_helper::uninitSaiApi();
         }
     };
+
+    TEST_F(BufferOrchTest, BufferOrchTestSharedHeadroomPool)
+    {
+        gMockResponsePublisher = std::make_unique<MockResponsePublisher>();
+
+        Table bufferPoolTable = Table(m_app_db.get(), APP_BUFFER_POOL_TABLE_NAME);
+        Table bufferPoolStateTable = Table(m_app_state_db.get(), APP_BUFFER_POOL_TABLE_NAME);
+
+        bufferPoolTable.set("ingress_lossless_pool",
+                            {
+                                {"xoff", "10240"}
+                            });
+        gBufferOrch->addExistingData(&bufferPoolTable);
+        EXPECT_CALL(*gMockResponsePublisher, publish(APP_BUFFER_POOL_TABLE_NAME, "ingress_lossless_pool", std::vector<FieldValueTuple>{{"xoff", "10240"}}, ReturnCode(SAI_STATUS_SUCCESS), true)).Times(1);
+        static_cast<Orch *>(gBufferOrch)->doTask();
+
+        gMockResponsePublisher.reset();
+    }
 
     TEST_F(BufferOrchTest, BufferOrchTestBufferPgReferencingObjRemoveThenAdd)
     {
