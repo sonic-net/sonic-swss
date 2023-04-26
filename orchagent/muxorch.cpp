@@ -977,6 +977,13 @@ void MuxAclHandler::bindAllPorts(AclTable &acl_table)
             acl_table.link(port.m_port_id);
             acl_table.bind(port.m_port_id);
         }
+        else if (port.m_type == Port::LAG && !is_ingress_acl_)
+        {
+            SWSS_LOG_INFO("Binding LAG %" PRIx64 " to ACL table %s", port.m_lag_id, acl_table.id.c_str());
+
+            acl_table.link(port.m_lag_id);
+            acl_table.bind(port.m_lag_id);
+        }
     }
 }
 
