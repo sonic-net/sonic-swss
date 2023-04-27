@@ -241,7 +241,6 @@ public:
 
     /* Run doTask against a specific executor */
     virtual void doTask(Consumer &consumer) { };
-    virtual void doTask(ZmqConsumer &consumer) { };
     virtual void doTask(swss::NotificationConsumer &consumer) { }
     virtual void doTask(swss::SelectableTimer &timer) { }
 
