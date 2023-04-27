@@ -160,8 +160,6 @@ public:
 
     size_t refillToSync();
     size_t refillToSync(swss::Table* table);
-    void execute() {};
-    void drain() {};
 
     /* Store the latest 'golden' status */
     // TODO: hide?
@@ -243,7 +241,7 @@ public:
 
     /* Run doTask against a specific executor */
     virtual void doTask(Consumer &consumer) { };
-    virtual void doTask(ConsumerBase &consumer) { };
+    virtual void doTask(ZmqConsumer &consumer) { };
     virtual void doTask(swss::NotificationConsumer &consumer) { }
     virtual void doTask(swss::SelectableTimer &timer) { }
 
