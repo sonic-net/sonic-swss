@@ -771,7 +771,7 @@ void OrchDaemon::start()
         {
             heart_beat = tend;
             // output heart beat message to supervisord with 'PROCESS_COMMUNICATION' event: http://supervisord.org/events.html
-            cout << "<!--XSUPERVISOR:BEGIN-->" << "process:orchagent\norchagent heart beat message." << "<!--XSUPERVISOR:END-->" << endl;
+            cout << "<!--XSUPERVISOR:BEGIN-->\norchagent heart beat message.\n<!--XSUPERVISOR:END-->" << endl;
         }
 
         auto *c = (Executor *)s;
