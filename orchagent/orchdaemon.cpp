@@ -770,8 +770,8 @@ void OrchDaemon::start()
         if (diff.count() >= HEART_BEAT_INTERVAL_MSECS)
         {
             heart_beat = tend;
-            // output heart beat message to supervisord with 'PROCESS_COMMUNICATION' event: http://supervisord.org/events.html
-            cout << "<!--XSUPERVISOR:BEGIN-->\norchagent heart beat message.\n<!--XSUPERVISOR:END-->" << endl;
+            // output heart beat message to supervisord with 'PROCESS_COMMUNICATION_STDOUT' event: http://supervisord.org/events.html
+            cout << "<!--XSUPERVISOR:BEGIN-->heartbeat<!--XSUPERVISOR:END-->" << endl;
         }
 
         auto *c = (Executor *)s;
