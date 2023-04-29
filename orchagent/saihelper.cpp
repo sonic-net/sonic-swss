@@ -530,6 +530,27 @@ task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, vo
                     /* With VNET routes, the same route can be learned via multiple
                     sources, like via BGP. Handle this gracefully */
                     return task_success;
+                case SAI_STATUS_TABLE_FULL:
+                    return task_need_retry;
+                default:
+                    SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
+                                sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+                    handleSaiFailure(true);
+                    break;
+            }
+            break;
+        case SAI_API_NEIGHBOR:
+        case SAI_API_NEXT_HOP:
+        case SAI_API_NEXT_HOP_GROUP:
+            switch(status)
+            {
+                case SAI_STATUS_SUCCESS:
+                    SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiCreateStatus");
+                    return task_success;
+                case SAI_STATUS_ITEM_ALREADY_EXISTS:
+                    return task_success;
+                case SAI_STATUS_TABLE_FULL:
+                    return task_need_retry;
                 default:
                     SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
                                 sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
@@ -630,8 +651,8 @@ task_process_status handleSaiRemoveStatus(sai_api_t api, sai_status_t status, vo
      *          in each orch.
      *       3. Take the type of sai api into consideration.
      */
-switch (api)
-{
+    switch (api)
+    {
         case SAI_API_ROUTE:
             switch (status)
             {
@@ -642,6 +663,23 @@ switch (api)
                 case SAI_STATUS_NOT_EXECUTED:
                     /* When the same route is learned via multiple sources,
                        there can be a duplicate remove operation. Handle this gracefully */
+                    return task_success;
+                default:
+                    SWSS_LOG_ERROR("Encountered failure in remove operation, exiting orchagent, SAI API: %s, status: %s",
+                                sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+                    handleSaiFailure(true);
+                    break;
+            }
+            break;
+        case SAI_API_NEIGHBOR:
+        case SAI_API_NEXT_HOP:
+        case SAI_API_NEXT_HOP_GROUP:
+            switch (status)
+            {
+                case SAI_STATUS_SUCCESS:
+                    SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiRemoveStatus");
+                    return task_success;
+                case SAI_STATUS_ITEM_NOT_FOUND:
                     return task_success;
                 default:
                     SWSS_LOG_ERROR("Encountered failure in remove operation, exiting orchagent, SAI API: %s, status: %s",
