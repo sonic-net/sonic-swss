@@ -139,27 +139,15 @@ public:
     {
     }
 
-    int getDbId() const
+    virtual swss::TableBase *getConsumerTable() const = 0;
+
+    std::string getTableName() const
     {
-        return getDbConnector()->getDbId();
+        return getConsumerTable()->getTableName();
     }
-
-    std::string getDbName() const
-    {
-        return getDbConnector()->getDbName();
-    }
-
-    virtual std::string getTableName() const = 0;
-
-    virtual std::string getTableNameSeparator() const = 0;
-
-    virtual const swss::DBConnector* getDbConnector() const = 0;
 
     std::string dumpTuple(const swss::KeyOpFieldsValuesTuple &tuple);
     void dumpPendingTasks(std::vector<std::string> &ts);
-
-    size_t refillToSync();
-    size_t refillToSync(swss::Table* table);
 
     /* Store the latest 'golden' status */
     // TODO: hide?
@@ -178,26 +166,30 @@ public:
     {
     }
 
-    swss::ConsumerTableBase *getConsumerTable() const
+    swss::TableBase *getConsumerTable() const override
     {
-        return static_cast<swss::ConsumerTableBase *>(getSelectable());
+        auto table = static_cast<swss::ConsumerTableBase *>(getSelectable());
+        return static_cast<swss::TableBase *>(table);
     }
 
-    std::string getTableName() const override
+    const swss::DBConnector* getDbConnector() const
     {
-        return getConsumerTable()->getTableName();
+        auto table = static_cast<swss::ConsumerTableBase *>(getSelectable());
+        return table->getDbConnector();
     }
 
-    std::string getTableNameSeparator() const override
+    int getDbId() const
     {
-        return getConsumerTable()->getTableNameSeparator();
+        return getDbConnector()->getDbId();
     }
 
-    const swss::DBConnector* getDbConnector() const override
+    std::string getDbName() const
     {
-        return getConsumerTable()->getDbConnector();
+        return getDbConnector()->getDbName();
     }
 
+    size_t refillToSync();
+    size_t refillToSync(swss::Table* table);
     void execute() override;
     void drain() override;
 };
