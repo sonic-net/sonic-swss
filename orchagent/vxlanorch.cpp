@@ -2353,7 +2353,7 @@ bool EvpnRemoteVnip2pOrch::addOperation(const Request& request)
     {
         SWSS_LOG_WARN("Remote VNI add: Source VTEP not found. remote=%s vid=%d",
                       remote_vtep.c_str(), vlan_id);
-        return true;
+        return false;
     }
 
     VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
@@ -2522,7 +2522,7 @@ bool EvpnRemoteVnip2mpOrch::addOperation(const Request& request)
     {
         SWSS_LOG_WARN("Remote VNI add: Source VTEP not found. remote=%s vid=%d",
                       end_point_ip.c_str(),vlan_id);
-        return true;
+        return false;
     }
 
     if (!gPortsOrch->getVlanByVlanId(vlan_id, vlanPort))
@@ -2602,7 +2602,7 @@ bool EvpnRemoteVnip2mpOrch::delOperation(const Request& request)
     auto vtep_ptr = evpn_orch->getEVPNVtep();
     if (!vtep_ptr)
     {
-        SWSS_LOG_WARN("Remote VNI add: VTEP not found. remote=%s vid=%d",
+        SWSS_LOG_WARN("Remote VNI del: VTEP not found. remote=%s vid=%d",
                       end_point_ip.c_str(), vlan_id);
         return true;
     }
