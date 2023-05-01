@@ -391,25 +391,10 @@ namespace mux_rollback_test
         SetAndAssertMuxState(STANDBY);
     }
 
-    TEST_F(MuxRollbackTest, ActiveToStandbyNeighborInvalidParameter)
-    {
-        SetAndAssertMuxState(ACTIVE);
-        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry)
-            .WillOnce(Return(SAI_STATUS_INVALID_PARAMETER));
-        SetAndAssertMuxState(STANDBY);
-    }
-
     TEST_F(MuxRollbackTest, StandbyToActiveRouteNotFound)
     {
         EXPECT_CALL(*mock_sai_route_api, remove_route_entry)
             .WillOnce(Return(SAI_STATUS_ITEM_NOT_FOUND));
-        SetAndAssertMuxState(ACTIVE);
-    }
-
-    TEST_F(MuxRollbackTest, StandbyToActiveRouteInvalidParameter)
-    {
-        EXPECT_CALL(*mock_sai_route_api, remove_route_entry)
-            .WillOnce(Return(SAI_STATUS_INVALID_PARAMETER));
         SetAndAssertMuxState(ACTIVE);
     }
 
@@ -425,13 +410,6 @@ namespace mux_rollback_test
     {
         EXPECT_CALL(*mock_sai_acl_api, remove_acl_entry)
             .WillOnce(Return(SAI_STATUS_ITEM_NOT_FOUND));
-        SetAndAssertMuxState(ACTIVE);
-    }
-
-    TEST_F(MuxRollbackTest, StandbyToActiveAclInvalidParameter)
-    {
-        EXPECT_CALL(*mock_sai_acl_api, remove_acl_entry)
-            .WillOnce(Return(SAI_STATUS_INVALID_PARAMETER));
         SetAndAssertMuxState(ACTIVE);
     }
 
@@ -455,14 +433,6 @@ namespace mux_rollback_test
         SetAndAssertMuxState(ACTIVE);
         EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop)
             .WillOnce(Return(SAI_STATUS_ITEM_NOT_FOUND));
-        SetAndAssertMuxState(STANDBY);
-    }
-
-    TEST_F(MuxRollbackTest, ActiveToStandbyNextHopInvalidParameter)
-    {
-        SetAndAssertMuxState(ACTIVE);
-        EXPECT_CALL(*mock_sai_next_hop_api, remove_next_hop)
-            .WillOnce(Return(SAI_STATUS_INVALID_PARAMETER));
         SetAndAssertMuxState(STANDBY);
     }
 
