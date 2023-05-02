@@ -56,6 +56,8 @@ extern VRFOrch *gVrfOrch;
 extern NhgOrch *gNhgOrch;
 extern Srv6Orch  *gSrv6Orch;
 extern BfdOrch *gBfdOrch;
+extern AclOrch *gAclOrch;
+extern PolicerOrch *gPolicerOrch;
 extern Directory<Orch*> gDirectory;
 
 extern sai_acl_api_t *sai_acl_api;
@@ -70,6 +72,7 @@ extern sai_route_api_t *sai_route_api;
 extern sai_neighbor_api_t *sai_neighbor_api;
 extern sai_tunnel_api_t *sai_tunnel_api;
 extern sai_next_hop_api_t *sai_next_hop_api;
+extern sai_next_hop_group_api_t *sai_next_hop_group_api;
 extern sai_hostif_api_t *sai_hostif_api;
 extern sai_policer_api_t *sai_policer_api;
 extern sai_buffer_api_t *sai_buffer_api;
