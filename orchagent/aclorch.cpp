@@ -3109,7 +3109,7 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
             m_mirrorTableCapabilities[TABLE_TYPE_MIRROR] ? "yes" : "no");
     SWSS_LOG_NOTICE("    TABLE_TYPE_MIRRORV6: %s",
             m_mirrorTableCapabilities[TABLE_TYPE_MIRRORV6] ? "yes" : "no");
-    SWSS_LOG_NOTICE("    TABLE_TYPE_L3v4V6: Ingress [%s], Egress [%s]",
+    SWSS_LOG_NOTICE("    TABLE_TYPE_L3V4V6: Ingress [%s], Egress [%s]",
             m_L3V4V6Capability[ACL_STAGE_INGRESS] ? "yes" : "no",
             m_L3V4V6Capability[ACL_STAGE_EGRESS] ? "yes" : "no");
 
@@ -3248,6 +3248,7 @@ void AclOrch::initDefaultTableTypes()
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT))
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT))
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS))
             .build()
     );
 
@@ -4576,6 +4577,8 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
             }
             bool bHasTCPFlag = false;
             bool bHasIPProtocol = false;
+            bool bHasIPV4 = false;
+            bool bHasIPV6 = false;
             for (const auto& itr : kfvFieldsValues(t))
             {
                 string attr_name = to_upper(fvField(itr));
@@ -4585,6 +4588,14 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 if (attr_name == MATCH_TCP_FLAGS)
                 {
                     bHasTCPFlag = true;
+                }
+                if (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP)
+                {
+                    bHasIPV4 = true;
+                }
+                if (attr_name == MATCH_SRC_IPV6 || attr_name == MATCH_DST_IPV6)
+                {
+                    bHasIPV6 = true;
                 }
                 if (attr_name == MATCH_IP_PROTOCOL || attr_name == MATCH_NEXT_HEADER)
                 {
@@ -4633,6 +4644,15 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                     SWSS_LOG_ERROR("Failed to add attribute '%s : %s'", attr_name.c_str(), attr_value.c_str());
                 }
             }
+
+            if (bHasIPV4 && bHasIPV6)
+	    {
+		    if (type == TABLE_TYPE_L3V4V6)
+		    {
+			    SWSS_LOG_ERROR("Rule '%s' is invalid since it has both v4 and v6 matchfields.", rule_id.c_str());
+			    bAllAttributesOk = false;
+		    }
+	    }
 
             // validate and create ACL rule
             if (bAllAttributesOk && newRule->validate())

@@ -39,7 +39,6 @@ class TestAcl:
 
     def test_L3V4V6AclTableCreationDeletion(self, dvs_acl):
         try:
-            # Create an L3V4V6 ACL table with default ACL actions
             dvs_acl.create_acl_table(L3V4V6_TABLE_NAME, L3V4V6_TABLE_TYPE, L3V4V6_BIND_PORTS)
 
             acl_table_id = dvs_acl.get_acl_table_ids(1)[0]
@@ -55,6 +54,44 @@ class TestAcl:
             # Verify the STATE_DB entry is removed
             dvs_acl.verify_acl_table_status(L3V4V6_TABLE_NAME, None)
 
+    def test_ValidAclRuleCreation_sip_dip(self, dvs_acl, l3v4v6_acl_table):
+        config_qualifiers = {"DST_IP": "20.0.0.1/32",
+                             "SRC_IP": "10.0.0.0/32"};
+
+        dvs_acl.create_acl_rule(L3V4V6_TABLE_NAME, "VALID_RULE", config_qualifiers)
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3V4V6_TABLE_NAME, "VALID_RULE", "Active")
+
+        dvs_acl.remove_acl_rule(L3V4V6_TABLE_NAME, "VALID_RULE")
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3V4V6_TABLE_NAME, "VALID_RULE", None)
+        dvs_acl.verify_no_acl_rules()
+
+    def test_InvalidAclRuleCreation_sip_sipv6(self, dvs_acl, l3v4v6_acl_table):
+        config_qualifiers = {"SRC_IPV6": "2777::0/64",
+                             "SRC_IP": "10.0.0.0/32"};
+
+        dvs_acl.create_acl_rule(L3V4V6_TABLE_NAME, "INVALID_RULE", config_qualifiers)
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3V4V6_TABLE_NAME, "INVALID_RULE", "Inactive")
+
+        dvs_acl.remove_acl_rule(L3V4V6_TABLE_NAME, "INVALID_RULE")
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3V4V6_TABLE_NAME, "INVALID_RULE", None)
+        dvs_acl.verify_no_acl_rules()
+
+    def test_InvalidAclRuleCreation_dip_sipv6(self, dvs_acl, l3v4v6_acl_table):
+        config_qualifiers = {"SRC_IPV6": "2777::0/64",
+                             "DST_IP": "10.0.0.0/32"};
+
+        dvs_acl.create_acl_rule(L3V4V6_TABLE_NAME, "INVALID_RULE", config_qualifiers)
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3V4V6_TABLE_NAME, "INVALID_RULE", "Inactive")
+
+        dvs_acl.remove_acl_rule(L3V4V6_TABLE_NAME, "INVALID_RULE")
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3V4V6_TABLE_NAME, "INVALID_RULE", None)
+        dvs_acl.verify_no_acl_rules()
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
