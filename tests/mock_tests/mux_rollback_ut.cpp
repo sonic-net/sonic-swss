@@ -269,6 +269,16 @@ namespace mux_rollback_test
                 CFG_PEER_SWITCH_TABLE_NAME
             };
 
+            vector<string> buffer_tables = {
+                APP_BUFFER_POOL_TABLE_NAME,
+                APP_BUFFER_PROFILE_TABLE_NAME,
+                APP_BUFFER_QUEUE_TABLE_NAME,
+                APP_BUFFER_PG_TABLE_NAME,
+                APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME,
+                APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME
+            };
+            gBufferOrch = new BufferOrch(m_app_db.get(), m_config_db.get(), m_state_db.get(), buffer_tables);
+
             TableConnector stateDbSwitchTable(m_state_db.get(), STATE_SWITCH_CAPABILITY_TABLE_NAME);
             TableConnector app_switch_table(m_app_db.get(), APP_SWITCH_TABLE_NAME);
             TableConnector conf_asic_sensors(m_config_db.get(), CFG_ASIC_SENSORS_TABLE_NAME);
