@@ -289,13 +289,14 @@ bool DashOrch::setEniAdminState(const string& eni, const EniEntry& entry)
                                 &eni_attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create ENI object for %s", eni.c_str());
+        SWSS_LOG_ERROR("Failed to set ENI admin state for %s", eni.c_str());
         task_process_status handle_status = handleSaiSetStatus((sai_api_t) SAI_API_DASH_ENI, status);
         if (handle_status != task_success)
         {
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
+    eni_entries_[eni].admin_state = entry.admin_state;
     SWSS_LOG_NOTICE("Set ENI %s admin state to %s", eni.c_str(), entry.admin_state ? "UP" : "DOWN");
 
     return true;

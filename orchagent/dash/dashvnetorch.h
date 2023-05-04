@@ -31,6 +31,7 @@ struct VnetMapEntry
 
 typedef std::unordered_map<std::string, VnetEntry> DashVnetTable;
 typedef std::unordered_map<std::string, VnetMapEntry> DashVnetMapTable;
+typedef std::unordered_map<std::string, uint32_t> PaRefCountTable;
 
 struct DashVnetBulkContext
 {
@@ -82,6 +83,7 @@ public:
 private:
     DashVnetTable vnet_table_;
     DashVnetMapTable vnet_map_table_;
+    PaRefCountTable pa_refcount_table_;
     ObjectBulker<sai_dash_vnet_api_t> vnet_bulker_;
     EntityBulker<sai_dash_outbound_ca_to_pa_api_t> outbound_ca_to_pa_bulker_;
     EntityBulker<sai_dash_pa_validation_api_t> pa_validation_bulker_;

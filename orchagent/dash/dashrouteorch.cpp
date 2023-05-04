@@ -128,7 +128,7 @@ bool DashRouteOrch::addOutboundRoutingPost(const string& key, const OutboundRout
 
     OutboundRoutingEntry entry = { dash_orch_->getEni(ctxt.eni)->eni_id, ctxt.destination, ctxt.action_type, ctxt.vnet, ctxt.overlay_ip };
     routing_entries_[key] = entry;
-    SWSS_LOG_NOTICE("Outbound routing entry for %s added", key.c_str());
+    SWSS_LOG_INFO("Outbound routing entry for %s added", key.c_str());
 
     return true;
 }
@@ -140,7 +140,7 @@ bool DashRouteOrch::removeOutboundRouting(const string& key, OutboundRoutingBulk
     bool exists = (routing_entries_.find(key) != routing_entries_.end());
     if (!exists)
     {
-        SWSS_LOG_WARN("Failed to find outbound routing entry %s to remove", key.c_str());
+        SWSS_LOG_INFO("Failed to find outbound routing entry %s to remove", key.c_str());
         return true;
     }
 
@@ -184,7 +184,7 @@ bool DashRouteOrch::removeOutboundRoutingPost(const string& key, const OutboundR
     }
 
     routing_entries_.erase(key);
-    SWSS_LOG_NOTICE("Outbound routing entry for %s removed", key.c_str());
+    SWSS_LOG_INFO("Outbound routing entry for %s removed", key.c_str());
 
     return true;
 }
@@ -404,7 +404,7 @@ bool DashRouteOrch::addInboundRoutingPost(const string& key, const InboundRoutin
 
     InboundRoutingEntry entry = { dash_orch_->getEni(ctxt.eni)->eni_id, ctxt.vni, ctxt.sip, ctxt.sip_mask, ctxt.action_type, ctxt.vnet, ctxt.pa_validation, ctxt.priority };
     routing_rule_entries_[key] = entry;
-    SWSS_LOG_NOTICE("Inbound routing entry for %s added", key.c_str());
+    SWSS_LOG_INFO("Inbound routing entry for %s added", key.c_str());
 
     return true;
 }
@@ -416,7 +416,7 @@ bool DashRouteOrch::removeInboundRouting(const string& key, InboundRoutingBulkCo
     bool exists = (routing_rule_entries_.find(key) != routing_rule_entries_.end());
     if (!exists)
     {
-        SWSS_LOG_WARN("Failed to find inbound routing entry %s to remove", key.c_str());
+        SWSS_LOG_INFO("Failed to find inbound routing entry %s to remove", key.c_str());
         return true;
     }
 
@@ -464,7 +464,7 @@ bool DashRouteOrch::removeInboundRoutingPost(const string& key, const InboundRou
 
 
     routing_rule_entries_.erase(key);
-    SWSS_LOG_NOTICE("Inbound routing entry for %s removed", key.c_str());
+    SWSS_LOG_INFO("Inbound routing entry for %s removed", key.c_str());
 
     return true;
 }
