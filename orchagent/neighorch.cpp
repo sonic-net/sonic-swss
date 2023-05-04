@@ -448,7 +448,13 @@ bool NeighOrch::removeNextHop(const IpAddress &ipAddress, const string &alias)
         nexthop.alias = inbp.m_alias;
     }
 
-    assert(hasNextHop(nexthop));
+    // If the next hop does not exist, log an error as the code is wrongly trying to remove a NH and return true as it
+    // can be considered that the NH does not exist anymore.
+    if (!hasNextHop(nexthop))
+    {
+        SWSS_LOG_ERROR("Trying to remove next hop %s which does not exist", nexthop.to_string().c_str());
+        return true;
+    }
 
     gFgNhgOrch->invalidNextHopInNextHopGroup(nexthop);
 
@@ -479,7 +485,13 @@ bool NeighOrch::removeMplsNextHop(const NextHopKey& nh)
         nexthop.alias = inbp.m_alias;
     }
 
-    assert(hasNextHop(nexthop));
+    // If the next hop does not exist, log an error as the code is wrongly trying to remove a NH and return true as it
+    // can be considered that the NH does not exist anymore.
+    if (!hasNextHop(nexthop))
+    {
+        SWSS_LOG_ERROR("Trying to remove next hop %s which does not exist", nexthop.to_string().c_str());
+        return true;
+    }
 
     SWSS_LOG_INFO("Removing next hop %s", nexthop.to_string().c_str());
 
@@ -536,7 +548,13 @@ bool NeighOrch::removeOverlayNextHop(const NextHopKey &nexthop)
 {
     SWSS_LOG_ENTER();
 
-    assert(hasNextHop(nexthop));
+    // If the next hop does not exist, log an error as the code is wrongly trying to remove a NH and return true as it
+    // can be considered that the NH does not exist anymore.
+    if (!hasNextHop(nexthop))
+    {
+        SWSS_LOG_ERROR("Trying to remove next hop %s which does not exist", nexthop.to_string().c_str());
+        return true;
+    }
 
     if (m_syncdNextHops[nexthop].ref_count > 0)
     {
@@ -561,7 +579,13 @@ sai_object_id_t NeighOrch::getLocalNextHopId(const NextHopKey& nexthop)
 
 sai_object_id_t NeighOrch::getNextHopId(const NextHopKey &nexthop)
 {
-    assert(hasNextHop(nexthop));
+    // If the next hop does not exist, log an error as the code is wrongly trying to get the NH ID of a next hop that
+    // does not exist and return SAI_NULL_OBJECT_ID.
+    if (!hasNextHop(nexthop))
+    {
+        SWSS_LOG_ERROR("Trying to get next hop ID of %s which does not exist", nexthop.to_string().c_str());
+        return SAI_NULL_OBJECT_ID;
+    }
 
     /*
      * The nexthop id could be varying depending on the use-case
@@ -579,7 +603,13 @@ sai_object_id_t NeighOrch::getNextHopId(const NextHopKey &nexthop)
 
 int NeighOrch::getNextHopRefCount(const NextHopKey &nexthop)
 {
-    assert(hasNextHop(nexthop));
+    // If the next hop does not exist, log an error as the code is wrongly trying to get the ref count of a next hop
+    // that does not exist and return 0.
+    if (!hasNextHop(nexthop))
+    {
+        SWSS_LOG_ERROR("Trying to get next hop %s ref count which does not exist", nexthop.to_string().c_str());
+        return 0;
+    }
     return m_syncdNextHops[nexthop].ref_count;
 }
 
