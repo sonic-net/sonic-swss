@@ -43,6 +43,9 @@ extern sai_tunnel_api_t* sai_tunnel_api;
 extern sai_next_hop_api_t* sai_next_hop_api;
 extern sai_router_interface_api_t* sai_router_intfs_api;
 
+extern size_t gMaxBulkSize;
+EntityBulker<sai_route_api_t> gRouteBulker(sai_route_api, gMaxBulkSize);
+
 /* Constants */
 #define MUX_ACL_TABLE_NAME INGRESS_TABLE_DROP
 #define MUX_ACL_RULE_NAME "mux_acl_rule"
@@ -168,6 +171,30 @@ static sai_status_t remove_route(IpPrefix &pfx)
 
     SWSS_LOG_NOTICE("Removed tunnel route to %s ", pfx.to_string().c_str());
     return status;
+}
+
+static void create_route_bulk(IpPrefix &pfx, std::map<IpPrefix, sai_status_t> object_statuses)
+{
+    sai_route_entry_t route_entry;
+    route_entry.vr_id = gVirtualRouterId;
+    route_entry.switch_id = gSwitchId;
+    copy(route_entry.destination, pfx);
+    subnet(route_entry.destination, route_entry.destination);
+
+    object_statuses.emplace(pfx, sai_status_t());
+    gRouteBulker.remove_entry(&object_statuses[pfx], &route_entry);
+}
+
+static void remove_route_bulk(IpPrefix &pfx, std::map<IpPrefix, sai_status_t> object_statuses)
+{
+    sai_route_entry_t route_entry;
+    route_entry.vr_id = gVirtualRouterId;
+    route_entry.switch_id = gSwitchId;
+    copy(route_entry.destination, pfx);
+    subnet(route_entry.destination, route_entry.destination);
+
+    object_statuses.emplace(pfx, sai_status_t());
+    gRouteBulker.remove_entry(&object_statuses[pfx], &route_entry);
 }
 
 /**
@@ -687,6 +714,7 @@ void MuxNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, bool add, Mu
 bool MuxNbrHandler::enable(bool update_rt)
 {
     NeighborEntry neigh;
+    std::map<IpPrefix, sai_status_t> object_statuses;
 
     auto it = neighbors_.begin();
     while (it != neighbors_.end())
@@ -738,14 +766,24 @@ bool MuxNbrHandler::enable(bool update_rt)
         IpPrefix pfx = it->first.to_string();
         if (update_rt)
         {
-            if (remove_route(pfx) != SAI_STATUS_SUCCESS)
-            {
-                return false;
-            }
-            updateTunnelRoute(nh_key, false);
+            remove_route_bulk(pfx, object_statuses);
         }
 
         it++;
+    }
+
+    gRouteBulker.flush();
+
+    for (auto status : object_statuses)
+    {
+        NextHopKey nh_key = NextHopKey(status.first.to_string(), alias_);
+        if (status.second == SAI_STATUS_SUCCESS)
+        {
+            updateTunnelRoute(nh_key, false);
+        } else {
+            SWSS_LOG_ERROR("Failed to remove bulk route: %s", status.first.to_string().c_str());
+            return false;
+        }
     }
 
     return true;
@@ -754,6 +792,7 @@ bool MuxNbrHandler::enable(bool update_rt)
 bool MuxNbrHandler::disable(sai_object_id_t tnh)
 {
     NeighborEntry neigh;
+    std::map<IpPrefix, sai_status_t> object_statuses;
 
     auto it = neighbors_.begin();
     while (it != neighbors_.end())
@@ -802,12 +841,20 @@ bool MuxNbrHandler::disable(sai_object_id_t tnh)
         updateTunnelRoute(nh_key, true);
 
         IpPrefix pfx = it->first.to_string();
-        if (create_route(pfx, it->second) != SAI_STATUS_SUCCESS)
-        {
-            return false;
-        }
+        create_route_bulk(pfx, object_statuses);
 
         it++;
+    }
+
+    gRouteBulker.flush();
+
+    for (auto status : object_statuses)
+    {
+        if (status.second != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create bulk route: %s", status.first.to_string().c_str());
+            return false;
+        }
     }
 
     return true;
