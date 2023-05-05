@@ -89,16 +89,37 @@ if new_pg ~= nil then
     end
 end
 
--- Fetch all the PGs, accumulate the sizes
--- Assume there is only one lossless profile configured among all PGs on each port
-table.insert(debuginfo, 'debug:other overhead:' .. accumulative_size)
+-- Fetch all the PGs in APPL_DB, and store them into a hash table
 local pg_keys = redis.call('KEYS', 'BUFFER_PG_TABLE:' .. port .. ':*')
+local all_pgs = {}
 for i = 1, #pg_keys do
     local profile = redis.call('HGET', pg_keys[i], 'profile')
+    all_pgs[pg_keys[i]] = profile
+end
+
+-- Fetch all the pending PGs, and store them into the hash table
+-- Overwrite any existing entries
+local pending_pg_keys = redis.call('KEYS', '_BUFFER_PG_TABLE:' .. port .. ':*')
+for i = 1, #pending_pg_keys do
+    local profile = redis.call('HGET', pending_pg_keys[i], 'profile')
+    -- Remove the leading underscore when storing it into the hash table
+    all_pgs[string.sub(pending_pg_keys[i], 2, -1)] = profile
+    table.insert(debuginfo, 'debug:pending entry: ' .. pending_pg_keys[i] .. ':' .. profile)
+end
+
+-- Handle all the PGs, accumulate the sizes
+-- Assume there is only one lossless profile configured among all PGs on each port
+table.insert(debuginfo, 'debug:other overhead:' .. accumulative_size)
+-- local pg_keys = redis.call('KEYS', 'BUFFER_PG_TABLE:' .. port .. ':*')
+for pg_key, profile in pairs(all_pgs) do
     local current_profile_size
-    if profile ~= 'ingress_lossy_profile' and (no_input_pg or new_pg ~= pg_keys[i]) then
+    if profile ~= 'ingress_lossy_profile' and (no_input_pg or new_pg ~= pg_key) then
         if profile ~= input_profile_name and not no_input_pg then
             local referenced_profile = redis.call('HGETALL', 'BUFFER_PROFILE_TABLE:' .. profile)
+            if referenced_profile == nil then
+                referenced_profile = redis.call('HGETALL', '_BUFFER_PROFILE_TABLE:' .. profile)
+                table.insert(debuginfo, 'debug:pending profile: ' .. profile)
+            end
             for j = 1, #referenced_profile, 2 do
                 if referenced_profile[j] == 'size' then
                     current_profile_size = tonumber(referenced_profile[j+1])
@@ -108,8 +129,8 @@ for i = 1, #pg_keys do
             current_profile_size = input_profile_size
             profile = input_profile_name
         end
-        accumulative_size = accumulative_size + current_profile_size * get_number_of_pgs(pg_keys[i])
-        table.insert(debuginfo, 'debug:' .. pg_keys[i] .. ':' .. profile .. ':' .. current_profile_size .. ':' .. get_number_of_pgs(pg_keys[i]) .. ':accu:' .. accumulative_size)
+        accumulative_size = accumulative_size + current_profile_size * get_number_of_pgs(pg_key)
+        table.insert(debuginfo, 'debug:' .. pg_key .. ':' .. profile .. ':' .. current_profile_size .. ':' .. get_number_of_pgs(pg_key) .. ':accu:' .. accumulative_size)
     end
 end
 

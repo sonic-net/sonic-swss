@@ -1497,7 +1497,7 @@ task_process_status BufferMgrDynamic::refreshPgsForPort(const string &port, cons
 
         // Calculate whether accumulative headroom size exceeds the maximum value
         // Abort if it does
-        if (!isHeadroomResourceValid(port, m_bufferProfileLookup[newProfile], exactly_matched_key))
+        if (!isHeadroomResourceValid(port, m_bufferProfileLookup[newProfile], key))
         {
             SWSS_LOG_ERROR("Update speed (%s) and cable length (%s) for port %s failed, accumulative headroom size exceeds the limit",
                            speed.c_str(), cable_length.c_str(), port.c_str());
