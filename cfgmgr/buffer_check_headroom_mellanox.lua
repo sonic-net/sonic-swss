@@ -5,7 +5,7 @@
 
 local port = KEYS[1]
 local input_profile_name = ARGV[1]
-local input_profile_size = ARGV[2]
+local input_profile_size = tonumber(ARGV[2])
 local new_pg = ARGV[3]
 
 local function is_port_with_8lanes(lanes)
@@ -60,7 +60,8 @@ if is_port_with_8lanes(lanes) then
     pipeline_latency = pipeline_latency * 2 - 1
     egress_mirror_size = egress_mirror_size * 2
 end
-accumulative_size = accumulative_size + 2 * pipeline_latency * 1024 + egress_mirror_size
+local lossy_pg_size = pipeline_latency * 1024
+accumulative_size = accumulative_size + lossy_pg_size + egress_mirror_size
 
 -- Fetch all keys in BUFFER_PG according to the port
 redis.call('SELECT', appl_db)
@@ -110,24 +111,22 @@ end
 -- Handle all the PGs, accumulate the sizes
 -- Assume there is only one lossless profile configured among all PGs on each port
 table.insert(debuginfo, 'debug:other overhead:' .. accumulative_size)
--- local pg_keys = redis.call('KEYS', 'BUFFER_PG_TABLE:' .. port .. ':*')
 for pg_key, profile in pairs(all_pgs) do
     local current_profile_size
-    if profile ~= 'ingress_lossy_profile' and (no_input_pg or new_pg ~= pg_key) then
+    if no_input_pg or new_pg ~= pg_key then
         if profile ~= input_profile_name and not no_input_pg then
-            local referenced_profile = redis.call('HGETALL', 'BUFFER_PROFILE_TABLE:' .. profile)
-            if referenced_profile == nil then
-                referenced_profile = redis.call('HGETALL', '_BUFFER_PROFILE_TABLE:' .. profile)
+            local referenced_profile_size = redis.call('HGET', 'BUFFER_PROFILE_TABLE:' .. profile, 'size')
+            if not referenced_profile_size then
+                referenced_profile_size = redis.call('HGET', '_BUFFER_PROFILE_TABLE:' .. profile, 'size')
                 table.insert(debuginfo, 'debug:pending profile: ' .. profile)
             end
-            for j = 1, #referenced_profile, 2 do
-                if referenced_profile[j] == 'size' then
-                    current_profile_size = tonumber(referenced_profile[j+1])
-                end
-            end
+            current_profile_size = tonumber(referenced_profile_size)
         else
             current_profile_size = input_profile_size
             profile = input_profile_name
+        end
+        if current_profile_size == 0 then
+            current_profile_size = lossy_pg_size
         end
         accumulative_size = accumulative_size + current_profile_size * get_number_of_pgs(pg_key)
         table.insert(debuginfo, 'debug:' .. pg_key .. ':' .. profile .. ':' .. current_profile_size .. ':' .. get_number_of_pgs(pg_key) .. ':accu:' .. accumulative_size)
@@ -135,6 +134,9 @@ for pg_key, profile in pairs(all_pgs) do
 end
 
 if not no_input_pg then
+    if input_profile_size == 0 then
+        input_profile_size = lossy_pg_size
+    end
     accumulative_size = accumulative_size + input_profile_size * get_number_of_pgs(new_pg)
     table.insert(debuginfo, 'debug:' .. new_pg .. '*:' .. input_profile_name .. ':' .. input_profile_size .. ':' .. get_number_of_pgs(new_pg) .. ':accu:' .. accumulative_size)
 end
