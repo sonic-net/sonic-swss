@@ -779,4 +779,56 @@ class TestBufferMgrDyn(object):
         fvs = self.state_db.wait_for_entry("BUFFER_MAX_PARAM_TABLE", "Ethernet0")
         assert int(fvs["max_queues"]) and int(fvs["max_priority_groups"])
 
+        _, oa_pid = dvs.runcmd("pgrep orchagent")
+
+        try:
+            fvs["max_headroom_size"] = "122880"
+            self.state_db.update_entry("BUFFER_MAX_PARAM_TABLE", "Ethernet0", fvs)
+
+            # Startup interface
+            dvs.port_admin_set('Ethernet0', 'up')
+            # Wait for the lossy profile to be handled
+            self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:0", {"profile": "ingress_lossy_profile"})
+
+            # Stop orchagent to simulate the scenario that the system is during initialization
+            dvs.runcmd("kill -s SIGSTOP {}".format(oa_pid))
+
+            # Create a lossless profile
+            self.config_db.update_entry('BUFFER_PROFILE', 'test',
+                                        {'xon': '19456',
+                                         'xoff': '10240',
+                                         'size': '29696',
+                                         'dynamic_th': '0',
+                                         'pool': 'ingress_lossless_pool'})
+
+            self.config_db.update_entry('BUFFER_PG', 'Ethernet0|3-4', {'profile': 'test'})
+            # Should not be added due to the maximum headroom exceeded
+            self.config_db.update_entry('BUFFER_PG', 'Ethernet0|1', {'profile': 'ingress_lossy_profile'})
+            # Should not be added due to the maximum headroom exceeded
+            self.config_db.update_entry('BUFFER_PG', 'Ethernet0|6', {'profile': 'test'})
+
+            dvs.runcmd("kill -s SIGCONT {}".format(oa_pid))
+            time.sleep(1)
+
+            # Check whether BUFFER_PG_TABLE is updated as expected 
+            keys = self.app_db.get_keys('BUFFER_PG_TABLE')
+
+            assert 'Ethernet0:3-4' in keys
+            assert 'Ethernet0:0' in keys
+            assert 'Ethernet0:1' not in keys
+            assert 'Ethernet0:6' not in keys
+        finally:
+            dvs.runcmd("kill -s SIGCONT {}".format(oa_pid))
+
+            self.config_db.delete_entry('BUFFER_PG', 'Ethernet0|3-4')
+            self.config_db.delete_entry('BUFFER_PG', 'Ethernet0|1')
+            self.config_db.delete_entry('BUFFER_PG', 'Ethernet0|6')
+            self.config_db.delete_entry('BUFFER_PROFILE', 'test')
+
+            fvs.pop("max_headroom_size")
+            self.state_db.delete_entry("BUFFER_MAX_PARAM_TABLE", "Ethernet0")
+            self.state_db.update_entry("BUFFER_MAX_PARAM_TABLE", "Ethernet0", fvs)
+
+            dvs.port_admin_set('Ethernet0', 'down')
+
         self.cleanup_db(dvs)
