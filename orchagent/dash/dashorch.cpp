@@ -279,6 +279,31 @@ void DashOrch::doTaskRoutingTypeTable(Consumer& consumer)
     }
 }
 
+bool DashOrch::setEniAdminState(const string& eni, const EniEntry& entry)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t eni_attr;
+    eni_attr.id = SAI_ENI_ATTR_ADMIN_STATE;
+    eni_attr.value.booldata = entry.admin_state;
+
+    sai_status_t status = sai_dash_eni_api->set_eni_attribute(eni_entries_[eni].eni_id,
+                                &eni_attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set ENI admin state for %s", eni.c_str());
+        task_process_status handle_status = handleSaiSetStatus((sai_api_t) SAI_API_DASH_ENI, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+    eni_entries_[eni].admin_state = entry.admin_state;
+    SWSS_LOG_NOTICE("Set ENI %s admin state to %s", eni.c_str(), entry.admin_state ? "UP" : "DOWN");
+
+    return true;
+}
+
 bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
 {
     SWSS_LOG_ENTER();
@@ -390,7 +415,13 @@ bool DashOrch::addEni(const string& eni, EniEntry &entry)
 {
     SWSS_LOG_ENTER();
 
-    if (eni_entries_.find(eni) != eni_entries_.end())
+    auto it = eni_entries_.find(eni);
+    if (it != eni_entries_.end() && it->second.admin_state != entry.admin_state)
+    {
+        return setEniAdminState(eni, entry);
+    }
+
+    else if (it != eni_entries_.end())
     {
         SWSS_LOG_WARN("ENI %s already exists", eni.c_str());
         return true;

@@ -79,6 +79,7 @@ private:
     bool removeEniObject(const std::string& eni);
     bool removeEniAddrMapEntry(const std::string& eni);
     bool removeEni(const std::string& eni);
+    bool setEniAdminState(const std::string& eni, const EniEntry& entry);
     bool addQosEntry(const std::string& qos_name, const QosEntry &entry);
     bool removeQosEntry(const std::string& qos_name);
 };
