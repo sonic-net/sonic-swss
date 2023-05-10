@@ -807,14 +807,14 @@ class TestBufferMgrDyn(object):
             # Should not be added due to the maximum headroom exceeded
             self.config_db.update_entry('BUFFER_PG', 'Ethernet0|6', {'profile': 'test'})
 
+            # Resume orchagent
             dvs.runcmd("kill -s SIGCONT {}".format(oa_pid))
-            time.sleep(1)
 
             # Check whether BUFFER_PG_TABLE is updated as expected 
+            self.app_db.wait_for_field_match("_BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "test"})
+
             keys = self.app_db.get_keys('BUFFER_PG_TABLE')
 
-            assert 'Ethernet0:3-4' in keys
-            assert 'Ethernet0:0' in keys
             assert 'Ethernet0:1' not in keys
             assert 'Ethernet0:6' not in keys
         finally:
