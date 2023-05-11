@@ -788,15 +788,18 @@ class TestBufferMgrDyn(object):
         _, oa_pid = dvs.runcmd("pgrep orchagent")
 
         try:
+            dvs.runcmd(f"logger -t pytest === setting max_headroom_size ===")
             fvs["max_headroom_size"] = "122880"
             self.state_db.update_entry("BUFFER_MAX_PARAM_TABLE", "Ethernet0", fvs)
 
             # Startup interface
+            dvs.runcmd(f"logger -t pytest === starting up interface ===")
             dvs.port_admin_set('Ethernet0', 'up')
             # Wait for the lossy profile to be handled
             self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:0", {"profile": "ingress_lossy_profile"})
 
             # Stop orchagent to simulate the scenario that the system is during initialization
+            dvs.runcmd(f"logger -t pytest === stopping orchagent ===")
             dvs.runcmd("kill -s SIGSTOP {}".format(oa_pid))
 
             # Create a lossless profile
@@ -807,18 +810,23 @@ class TestBufferMgrDyn(object):
                                          'dynamic_th': '0',
                                          'pool': 'ingress_lossless_pool'})
 
+            dvs.runcmd(f"logger -t pytest === configuring Ethernet0|3-4 ===")
             self.config_db.update_entry('BUFFER_PG', 'Ethernet0|3-4', {'profile': 'test'})
             # Should not be added due to the maximum headroom exceeded
+            dvs.runcmd(f"logger -t pytest === configuring Ethernet0|1 fail ===")
             self.config_db.update_entry('BUFFER_PG', 'Ethernet0|1', {'profile': 'ingress_lossy_profile'})
             # Should not be added due to the maximum headroom exceeded
+            dvs.runcmd(f"logger -t pytest === configuring Ethernet0|6 fail ===")
             self.config_db.update_entry('BUFFER_PG', 'Ethernet0|6', {'profile': 'test'})
 
             # Resume orchagent
+            dvs.runcmd(f"logger -t pytest === resuming orchagent ===")
             dvs.runcmd("kill -s SIGCONT {}".format(oa_pid))
 
             # Check whether BUFFER_PG_TABLE is updated as expected 
+            dvs.runcmd(f"logger -t pytest === checking Ethernet0:3-4 ===")
             self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "test"})
-
+            dvs.runcmd(f"logger -t pytest === checking failing keys ===")
             keys = self.app_db.get_keys('BUFFER_PG_TABLE')
 
             assert 'Ethernet0:1' not in keys
