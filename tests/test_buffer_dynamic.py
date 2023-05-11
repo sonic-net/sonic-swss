@@ -812,6 +812,10 @@ class TestBufferMgrDyn(object):
 
             dvs.runcmd(f"logger -t pytest === configuring Ethernet0|3-4 ===")
             self.config_db.update_entry('BUFFER_PG', 'Ethernet0|3-4', {'profile': 'test'})
+
+            # Make sure the entry has been handled by buffermgrd and is pending on orchagent's queue
+            self.app_db.wait_for_field_match("_BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "test"})
+
             # Should not be added due to the maximum headroom exceeded
             dvs.runcmd(f"logger -t pytest === configuring Ethernet0|1 fail ===")
             self.config_db.update_entry('BUFFER_PG', 'Ethernet0|1', {'profile': 'ingress_lossy_profile'})
