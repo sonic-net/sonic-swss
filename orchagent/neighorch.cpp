@@ -151,6 +151,11 @@ void NeighOrch::update(SubjectType type, void *cntx)
             processFDBFlushUpdate(*update);
             break;
         }
+        case SUBJECT_TYPE_BFD_SESSION_STATE_CHANGE:
+        {
+            SWSS_LOG_INFO("Get BFD session state chnage event");
+            break;
+        }
         default:
             break;
     }
