@@ -169,6 +169,7 @@ public:
     swss::TableBase *getConsumerTable() const override
     {
         auto table = static_cast<swss::ConsumerTableBase *>(getSelectable());
+        // ConsumerTableBase is a subclass of TableBase
         return static_cast<swss::TableBase *>(table);
     }
 
