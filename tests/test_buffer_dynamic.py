@@ -775,6 +775,12 @@ class TestBufferMgrDyn(object):
     def test_bufferPortMaxParameter(self, dvs, testlog):
         self.setup_db(dvs)
 
+        # Update log level so that we can analyze the log in case the test failed
+        logfvs = self.config_db.wait_for_entry("LOGGER", "buffermgrd")
+        old_log_level = logfvs.get("LOGLEVEL")
+        logfvs["LOGLEVEL"] = "INFO"
+        self.config_db.update_entry("LOGGER", "buffermgrd", logfvs)
+
         # Check whether port's maximum parameter has been exposed to STATE_DB
         fvs = self.state_db.wait_for_entry("BUFFER_MAX_PARAM_TABLE", "Ethernet0")
         assert int(fvs["max_queues"]) and int(fvs["max_priority_groups"])
@@ -828,6 +834,10 @@ class TestBufferMgrDyn(object):
             fvs.pop("max_headroom_size")
             self.state_db.delete_entry("BUFFER_MAX_PARAM_TABLE", "Ethernet0")
             self.state_db.update_entry("BUFFER_MAX_PARAM_TABLE", "Ethernet0", fvs)
+
+            if old_log_level:
+                logfvs["LOGLEVEL"] = old_log_level
+                self.config_db.update_entry("LOGGER", "buffermgrd", logfvs)
 
             dvs.port_admin_set('Ethernet0', 'down')
 
