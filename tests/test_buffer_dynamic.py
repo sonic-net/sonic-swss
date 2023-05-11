@@ -811,7 +811,7 @@ class TestBufferMgrDyn(object):
             dvs.runcmd("kill -s SIGCONT {}".format(oa_pid))
 
             # Check whether BUFFER_PG_TABLE is updated as expected 
-            self.app_db.wait_for_field_match("_BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "test"})
+            self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "test"})
 
             keys = self.app_db.get_keys('BUFFER_PG_TABLE')
 
