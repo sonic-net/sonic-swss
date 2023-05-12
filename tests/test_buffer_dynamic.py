@@ -803,12 +803,12 @@ class TestBufferMgrDyn(object):
             dvs.runcmd("kill -s SIGSTOP {}".format(oa_pid))
 
             # Create a lossless profile
-            self.config_db.update_entry('BUFFER_PROFILE', 'test',
-                                        {'xon': '19456',
-                                         'xoff': '10240',
-                                         'size': '29696',
-                                         'dynamic_th': '0',
-                                         'pool': 'ingress_lossless_pool'})
+            profile_fvs = {'xon': '19456',
+                          'xoff': '10240',
+                          'size': '29696',
+                          'dynamic_th': '0',
+                          'pool': 'ingress_lossless_pool'}
+            self.config_db.update_entry('BUFFER_PROFILE', 'test', profile_fvs)
 
             dvs.runcmd(f"logger -t pytest === configuring Ethernet0|3-4 ===")
             self.config_db.update_entry('BUFFER_PG', 'Ethernet0|3-4', {'profile': 'test'})
@@ -835,6 +835,12 @@ class TestBufferMgrDyn(object):
 
             assert 'Ethernet0:1' not in keys
             assert 'Ethernet0:6' not in keys
+
+            # Update the profile
+            profile_fvs['size'] = '28672'
+            profile_fvs['xoff'] = '9216'
+            self.config_db.update_entry('BUFFER_PROFILE', 'test', profile_fvs)
+            self.app_db.wait_for_field_match('BUFFER_PROFILE_TABLE', 'test', profile_fvs)
         finally:
             dvs.runcmd("kill -s SIGCONT {}".format(oa_pid))
 
