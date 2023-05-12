@@ -585,15 +585,13 @@ int main(int argc, char **argv)
     attr.value.u64 = gSwitchId;
     attrs.push_back(attr);
 
-    bool asan_enabled = false;
-    uint32_t delay_factor = 1;
+    auto delay_factor = 1;
 
 #ifdef ASAN_ENABLED
-    asan_enabled = true;
     delay_factor = 2;
+#else
+    if (gMySwitchType == "voq" || gMySwitchType == "fabric" || gMySwitchType == "chassis-packet")
 #endif
-
-    if (gMySwitchType == "voq" || gMySwitchType == "fabric" || gMySwitchType == "chassis-packet" || asan_enabled)
     {
         /* We set this long timeout in order for orchagent to wait enough time for
          * response from syncd. It is needed since switch create takes more time
