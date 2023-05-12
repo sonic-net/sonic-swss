@@ -600,6 +600,7 @@ int main(int argc, char **argv)
          * than default time to create switch if there are lots of front panel ports
          * and systems ports to initialize
          */
+
         if (gMySwitchType == "voq" || gMySwitchType == "chassis-packet")
         {
             attr.value.u64 = (5 * SAI_REDIS_DEFAULT_SYNC_OPERATION_RESPONSE_TIMEOUT);
