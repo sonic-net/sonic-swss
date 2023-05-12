@@ -101,7 +101,7 @@ for i = 1, #pending_pg_keys do
 end
 
 if new_pg ~= nil and get_number_of_pgs(new_pg) ~= 0 then
-    all_pgs['BUFFER_PG_TABLE:' .. new_pg_pg] = input_profile_name
+    all_pgs['BUFFER_PG_TABLE:' .. new_pg] = input_profile_name
 end
 
 -- Handle all the PGs, accumulate the sizes
