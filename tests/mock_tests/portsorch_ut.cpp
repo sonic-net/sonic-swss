@@ -247,6 +247,9 @@ namespace portsorch_test
             ASSERT_EQ(gFdbOrch, nullptr);
             gFdbOrch = new FdbOrch(m_app_db.get(), app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch);
 
+            TableConnector stateDbBfdSessionTable(m_state_db.get(), STATE_BFD_SESSION_TABLE_NAME);
+            gBfdOrch = new BfdOrch(m_app_db.get(), APP_BFD_SESSION_TABLE_NAME, stateDbBfdSessionTable);
+
             ASSERT_EQ(gNeighOrch, nullptr);
             gNeighOrch = new NeighOrch(m_app_db.get(), APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch, m_chassis_app_db.get());
         }
@@ -263,6 +266,8 @@ namespace portsorch_test
 
             delete gNeighOrch;
             gNeighOrch = nullptr;
+            delete gBfdOrch;
+            gBfdOrch = nullptr;
             delete gFdbOrch;
             gFdbOrch = nullptr;
             delete gIntfsOrch;
