@@ -1119,6 +1119,8 @@ string CrmOrch::getCrmAclTableKey(sai_object_id_t id)
 string CrmOrch::getCrmDashAclGroupKey(sai_object_id_t id)
 {
     std::stringstream ss;
+    // Prepare the DASH_ACL_GROUP_STATS table key that will be used to store and access DASH ACL group counters
+    // in the Counters DB.
     ss << "DASH_ACL_GROUP_STATS:" << "0x" << std::hex << id;
     return ss.str();
 }

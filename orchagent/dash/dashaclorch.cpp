@@ -446,7 +446,7 @@ task_process_status DashAclOrch::taskUpdateDashAclGroup(
             }
             acl_group.m_rule_count = 0;
 
-            CrmResourceType crm_rtype = acl_group.m_ip_version == SAI_IP_ADDR_FAMILY_IPV4 ? 
+            CrmResourceType crm_rtype = (acl_group.m_ip_version == SAI_IP_ADDR_FAMILY_IPV4) ?
                 CrmResourceType::CRM_DASH_IPV4_ACL_GROUP : CrmResourceType::CRM_DASH_IPV6_ACL_GROUP;
             gCrmOrch->incCrmDashAclUsedCounter(crm_rtype, acl_group.m_dash_acl_group_id);
 
@@ -498,7 +498,7 @@ task_process_status DashAclOrch::taskRemoveDashAclGroup(
         SWSS_LOG_ERROR("Failed to remove ACL group %s, rv: %s", key.c_str(), sai_serialize_status(status).c_str());
         return task_failed;
     }
-    CrmResourceType crm_rtype = acl_group->m_ip_version == SAI_IP_ADDR_FAMILY_IPV4 ? 
+    CrmResourceType crm_rtype = (acl_group->m_ip_version == SAI_IP_ADDR_FAMILY_IPV4) ?
         CrmResourceType::CRM_DASH_IPV4_ACL_GROUP : CrmResourceType::CRM_DASH_IPV6_ACL_GROUP;
     gCrmOrch->decCrmDashAclGroupUsedCounter(crm_rtype, acl_group->m_dash_acl_group_id);
 
@@ -656,7 +656,7 @@ task_process_status DashAclOrch::taskUpdateDashAclRule(
             }
             acl_group->m_rule_count++;
 
-            CrmResourceType crm_rtype = acl_group->m_ip_version == SAI_IP_ADDR_FAMILY_IPV4 ? 
+            CrmResourceType crm_rtype = (acl_group->m_ip_version == SAI_IP_ADDR_FAMILY_IPV4) ?
                 CrmResourceType::CRM_DASH_IPV4_ACL_RULE : CrmResourceType::CRM_DASH_IPV6_ACL_RULE;
             gCrmOrch->incCrmDashAclUsedCounter(crm_rtype, acl_group->m_dash_acl_group_id);
 
@@ -723,7 +723,7 @@ task_process_status DashAclOrch::taskRemoveDashAclRule(
     m_dash_acl_rule_table.erase(itr);
     --acl_group.m_rule_count;
 
-    CrmResourceType crm_resource = acl_group.m_ip_version == SAI_IP_ADDR_FAMILY_IPV4 ? 
+    CrmResourceType crm_resource = (acl_group.m_ip_version == SAI_IP_ADDR_FAMILY_IPV4) ?
         CrmResourceType::CRM_DASH_IPV4_ACL_RULE : CrmResourceType::CRM_DASH_IPV6_ACL_RULE;
     gCrmOrch->decCrmDashAclGroupUsedCounter(crm_resource, acl_group.m_dash_acl_group_id);
 
