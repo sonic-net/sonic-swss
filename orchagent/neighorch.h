@@ -46,7 +46,7 @@ struct NeighborUpdate
 class NeighOrch : public Orch, public Subject, public Observer
 {
 public:
-    NeighOrch(DBConnector *db, string tableName, IntfsOrch *intfsOrch, FdbOrch *fdbOrch, PortsOrch *portsOrch, DBConnector *chassisAppDb);
+    NeighOrch(DBConnector *db, string tableName, IntfsOrch *intfsOrch, FdbOrch *fdbOrch, BfdOrch *bfdOrch, PortsOrch *portsOrch, DBConnector *chassisAppDb);
     ~NeighOrch();
 
     bool hasNextHop(const NextHopKey&);
