@@ -92,6 +92,8 @@ private:
     Select *m_select;
 
     void flush();
+
+    void heartBeat(std::chrono::time_point<std::chrono::high_resolution_clock> tcurrent);
 };
 
 class FabricOrchDaemon : public OrchDaemon

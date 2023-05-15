@@ -717,7 +717,6 @@ void OrchDaemon::start()
     }
 
     auto tstart = std::chrono::high_resolution_clock::now();
-    auto heart_beat = tstart;
 
     while (true)
     {
@@ -727,6 +726,7 @@ void OrchDaemon::start()
         ret = m_select->select(&s, SELECT_TIMEOUT);
 
         auto tend = std::chrono::high_resolution_clock::now();
+        heartBeat(tend);
 
         auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(tend - tstart);
 
@@ -763,15 +763,6 @@ void OrchDaemon::start()
 
             logRotate();
             continue;
-        }
-
-        // output heart beat message to SYSLOG
-        diff = std::chrono::duration_cast<std::chrono::milliseconds>(tend - heart_beat);
-        if (diff.count() >= HEART_BEAT_INTERVAL_MSECS)
-        {
-            heart_beat = tend;
-            // output heart beat message to supervisord with 'PROCESS_COMMUNICATION_STDOUT' event: http://supervisord.org/events.html
-            cout << "<!--XSUPERVISOR:BEGIN-->heartbeat<!--XSUPERVISOR:END-->" << endl;
         }
 
         auto *c = (Executor *)s;
@@ -970,6 +961,20 @@ bool OrchDaemon::warmRestartCheck()
 void OrchDaemon::addOrchList(Orch *o)
 {
     m_orchList.push_back(o);
+}
+
+void OrchDaemon::heartBeat(std::chrono::time_point<std::chrono::high_resolution_clock> tcurrent)
+{
+    static auto tlast = std::chrono::high_resolution_clock::now();
+
+    // output heart beat message to SYSLOG
+    auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(tcurrent - tlast);
+    if (diff.count() >= HEART_BEAT_INTERVAL_MSECS)
+    {
+        tlast = tcurrent;
+        // output heart beat message to supervisord with 'PROCESS_COMMUNICATION_STDOUT' event: http://supervisord.org/events.html
+        cout << "<!--XSUPERVISOR:BEGIN-->heartbeat<!--XSUPERVISOR:END-->" << endl;
+    }
 }
 
 FabricOrchDaemon::FabricOrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb, DBConnector *chassisAppDb) :
