@@ -86,6 +86,7 @@ private:
     PortsOrch *m_portsOrch;
     IntfsOrch *m_intfsOrch;
     FdbOrch *m_fdbOrch;
+    BfdOrch *m_bfdOrch;
     ProducerStateTable m_appNeighResolveProducer;
 
     NeighborTable m_syncdNeighbors;
