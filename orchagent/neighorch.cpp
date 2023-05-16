@@ -24,18 +24,19 @@ extern int32_t gVoqMySwitchId;
 
 const int neighorch_pri = 30;
 
-NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch, FdbOrch *fdbOrch, BfdOrch *bfdOrch, PortsOrch *portsOrch, DBConnector *chassisAppDb) :
+NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch, FdbOrch *fdbOrch, PortsOrch *portsOrch, DBConnector *chassisAppDb) :
         Orch(appDb, tableName, neighorch_pri),
         m_intfsOrch(intfsOrch),
         m_fdbOrch(fdbOrch),
-        m_bfdOrch(bfdOrch),
         m_portsOrch(portsOrch),
         m_appNeighResolveProducer(appDb, APP_NEIGH_RESOLVE_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
 
     m_fdbOrch->attach(this);
-    m_bfdOrch->attach(this);
+    if (gBfdOrch) {  //some UTs does not need gBfdOrch
+        gBfdOrch->attach(this);
+    }
 
     if(gMySwitchType == "voq")
     {
