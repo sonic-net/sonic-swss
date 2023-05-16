@@ -1027,7 +1027,7 @@ class TestNextHopGroup(TestNextHopGroupBase):
         keys = self.asic_db.get_keys(self.ASIC_NHGM_STR)
         print("bfd session down, check nexthop group member")
         print(keys)
-        #assert len(keys) == 2
+        assert len(keys) == 2
 
         # Send BFD session state notification to update BFD session state
         self.update_bfd_session_state(dvs, session, "Up")
