@@ -21,6 +21,7 @@ extern FgNhgOrch *gFgNhgOrch;
 extern Directory<Orch*> gDirectory;
 extern string gMySwitchType;
 extern int32_t gVoqMySwitchId;
+extern BfdOrch *gBfdOrch;
 
 const int neighorch_pri = 30;
 
