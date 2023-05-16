@@ -151,7 +151,7 @@ class TestNextHopGroupBase(object):
 
     # BFD utilities for static route BFD and ecmp acceleration -- begin
     def get_exist_bfd_session(self):
-        return set(self.app_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION"))
+        return set(self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION"))
     
     def create_bfd_session(self, key, pairs):
         tbl = swsscommon.ProducerStateTable(self.app_db.db_connection, "BFD_SESSION_TABLE")
@@ -163,7 +163,7 @@ class TestNextHopGroupBase(object):
         tbl._del(key)
 
     def check_asic_bfd_session_value(self, key, expected_values):
-        fvs = self.app_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", key)
+        fvs = self.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", key)
         for k, v in expected_values.items():
             assert fvs[k] == v
 
@@ -992,7 +992,7 @@ class TestNextHopGroup(TestNextHopGroupBase):
         bfdSessions = self.get_exist_bfd_session()
         # Create BFD session
         fieldValues = {"local_addr": "10.0.0.2"}
-        self.create_bfd_session("default:default:10.0.1.3", fieldValues)
+        self.create_bfd_session("default:default:10.0.0.3", fieldValues)
 
         # Checked created BFD session in ASIC_DB
         createdSessions = self.get_exist_bfd_session() - bfdSessions
