@@ -36,7 +36,10 @@ NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch,
 
     m_fdbOrch->attach(this);
     if (gBfdOrch) {  //some UTs does not need gBfdOrch
+        SWSS_LOG_NOTICE("gBfdOrch is NOT null");
         gBfdOrch->attach(this);
+    } else {
+        SWSS_LOG_NOTICE("gBfdOrch is null");
     }
 
     if(gMySwitchType == "voq")
