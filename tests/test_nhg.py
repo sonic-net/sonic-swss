@@ -987,7 +987,7 @@ class TestNextHopGroup(TestNextHopGroupBase):
             else:
                 assert fvs.get("SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID") is None
      
-        # BFD: test validate/invalidate nexthop group member when bfd state changes -- begin
+        # BFD: test validate/invalidate nexthop group member when bfd state changes -- begin 
         bfdSessions = self.get_exist_bfd_session()
         # Create BFD session
         fieldValues = {"local_addr": "10.0.0.2"}
