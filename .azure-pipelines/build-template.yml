@@ -126,7 +126,7 @@ jobs:
     inputs:
       source: specific
       project: ${{ parameters.sairedis_artifact_project }}
-      definition: ${{ parameters.sairedis_artifact_pipeline }}
+      pipeline: ${{ parameters.sairedis_artifact_pipeline }}
       artifact: ${{ parameters.sairedis_artifact_name }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/${{ parameters.sairedis_artifact_branch }}'

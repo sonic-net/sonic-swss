@@ -41,8 +41,8 @@ stages:
       archive_pytests: true
       archive_gcov: true
       sairedis_artifact_name: sonic-buildimage.vs
-      sairedis_artifact_project: 36606dc2-458f-4e67-8e62-4f82b74f027f
-      sairedis_artifact_pipeline: '697'
+      sairedis_artifact_project: nvidia
+      sairedis_artifact_pipeline: nvidia-sonic.sonic-buildimage
       sairedis_artifact_branch: bluefield
       sairedis_artifact_pattern: target/debs/bullseye
       common_lib_artifact_name: sonic-buildimage.vs
