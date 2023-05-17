@@ -35,7 +35,9 @@ NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch,
     SWSS_LOG_ENTER();
 
     m_fdbOrch->attach(this);
-    gBfdOrch->attach(this);
+    if (gBfdOrch) {  //some UTs instantiate NeighOrch but gBfdOrch is null, it is not null in orchagent
+        gBfdOrch->attach(this);
+    }
 
     if(gMySwitchType == "voq")
     {
@@ -490,11 +492,7 @@ void NeighOrch::updateNextHop(const BfdUpdate& update)
             rc = setNextHopFlag(nhop->first, NHFLAGS_IFDOWN);
         }
 
-        if (rc == true)
-        {
-            continue;
-        }
-        else
+        if (!rc)
         {
             break;
         }
