@@ -934,6 +934,130 @@ class TestNhgOrchNhgExhaust(TestNhgExhaustBase):
 
 class TestNextHopGroup(TestNextHopGroupBase):
 
+    @pytest.mark.parametrize('ordered_ecmp', ['false'])
+    def test_route_nhg_bfd(self, ordered_ecmp, dvs, dvs_route, testlog):
+        self.init_test(dvs, 3)
+        nhip_seqid_map = {"10.0.0.1" : "1", "10.0.0.3" : "2" , "10.0.0.5" : "3" }
+
+        if ordered_ecmp == 'true':
+           self.enable_ordered_ecmp()
+
+        rtprefix = "2.2.2.0/24"
+        rtprefix2 = "3.3.3.0/24"
+
+        dvs_route.check_asicdb_deleted_route_entries([rtprefix, rtprefix2])
+
+        # nexthop group without weight
+        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.3,10.0.0.5"),
+                                          ("ifname", "Ethernet0,Ethernet4,Ethernet8")])
+        self.rt_ps.set(rtprefix, fvs)
+        fvs2 = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.3"),
+                                          ("ifname", "Ethernet0,Ethernet4")])
+        self.rt_ps.set(rtprefix, fvs2)
+
+        # check if route was propagated to ASIC DB
+        rtkeys = dvs_route.check_asicdb_route_entries([rtprefix, rtprefix2])
+        print(rtkeys)
+
+        # assert the route points to next hop group
+        fvs = self.asic_db.get_entry(self.ASIC_RT_STR, rtkeys[0])
+        nhgid = fvs["SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID"]
+        fvs = self.asic_db.get_entry(self.ASIC_NHG_STR, nhgid)
+        assert bool(fvs)
+
+        fvs = self.asic_db.get_entry(self.ASIC_RT_STR, rtkeys[1])
+        nhgid = fvs["SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID"]
+        fvs = self.asic_db.get_entry(self.ASIC_NHG_STR, nhgid)
+        assert bool(fvs)
+
+        keys = self.asic_db.get_keys(self.ASIC_NHGM_STR)
+        print(keys)
+        assert len(keys) == 3
+
+        '''
+        for k in keys:
+            fvs = self.asic_db.get_entry(self.ASIC_NHGM_STR, k)
+
+            assert fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"] == nhgid
+
+            # verify weight attributes not in asic db
+            assert fvs.get("SAI_NEXT_HOP_GROUP_MEMBER_ATTR_WEIGHT") is None
+
+            if ordered_ecmp == "true":
+                nhid = fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID"]
+                nh_fvs = self.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", nhid)
+                assert nhip_seqid_map[nh_fvs["SAI_NEXT_HOP_ATTR_IP"]] == fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID"]
+            else:
+                assert fvs.get("SAI_NEXT_HOP_GROUP_MEMBER_ATTR_SEQUENCE_ID") is None
+        '''
+
+        # BFD: test validate/invalidate nexthop group member when bfd state changes
+        bfdSessions = self.get_exist_bfd_session()
+        print("before create BFD session 10.0.0.3")
+        print(bfdSessions)
+        # Create BFD session
+        fieldValues = {"local_addr": "10.0.0.2"}
+        self.create_bfd_session("default:default:10.0.0.3", fieldValues)
+        time.sleep(1)
+
+        # Checked created BFD session in ASIC_DB
+        createdSessions = self.get_exist_bfd_session() - bfdSessions
+        print("after create BFD session 10.0.0.3")
+        print(createdSessions)
+        assert len(createdSessions) == 1
+        session = createdSessions.pop()
+
+        expected_adb_values = {
+            "SAI_BFD_SESSION_ATTR_SRC_IP_ADDRESS": "10.0.0.2",
+            "SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS": "10.0.0.3",
+            "SAI_BFD_SESSION_ATTR_TYPE": "SAI_BFD_SESSION_TYPE_ASYNC_ACTIVE",
+            "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "4"
+        }
+        self.check_asic_bfd_session_value(session, expected_adb_values)
+
+        # Check STATE_DB entry related to the BFD session
+        expected_sdb_values = {"state": "Down", "type": "async_active", "local_addr" : "10.0.0.2"}
+        self.check_state_bfd_session_value("default|default|10.0.0.3", expected_sdb_values)
+
+        # Send BFD session state notification to update BFD session state
+        self.update_bfd_session_state(dvs, session, "Down")
+        time.sleep(1)
+        # Confirm BFD session state in STATE_DB is updated as expected 
+        expected_sdb_values["state"] = "Down"
+        #self.check_state_bfd_session_value("default|default|10.0.0.3", expected_sdb_values)
+
+        #check nexthop group member is removed
+        keys = self.asic_db.get_keys(self.ASIC_NHGM_STR)
+        print("bfd session down, check nexthop group member")
+        print(keys)
+        assert len(keys) == 2
+
+        # Send BFD session state notification to update BFD session state
+        self.update_bfd_session_state(dvs, session, "Up")
+        time.sleep(1)
+        # Confirm BFD session state in STATE_DB is updated as expected 
+        expected_sdb_values["state"] = "Up"
+        self.check_state_bfd_session_value("default|default|10.0.0.3", expected_sdb_values)
+
+        #check nexthop group member is added back
+        keys = self.asic_db.get_keys(self.ASIC_NHGM_STR)
+        print("bfd session up, check nexthop group member")
+        print(keys)
+        assert len(keys) == 3
+
+        # Remove the BFD session
+        self.remove_bfd_session("default:default:10.0.0.3")
+        self.app_db.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", session)
+
+        # Remove route 2.2.2.0/24
+        self.rt_ps._del(rtprefix)
+
+        # Remove route 3.3.3.0/24
+        self.rt_ps._del(rtprefix2)
+
+        # Wait for route 2.2.2.0/24 and 3.3.3.0/24 to be removed
+        dvs_route.check_asicdb_deleted_route_entries([rtprefix, rtprefix2])
+
     @pytest.mark.parametrize('ordered_ecmp', ['false', 'true'])
     def test_route_nhg(self, ordered_ecmp, dvs, dvs_route, testlog):
         self.init_test(dvs, 3)
