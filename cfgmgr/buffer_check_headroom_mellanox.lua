@@ -118,7 +118,6 @@ for pg_key, profile in pairs(all_pgs) do
         current_profile_size = tonumber(referenced_profile_size)
     else
         current_profile_size = input_profile_size
-        profile = input_profile_name
     end
     if current_profile_size == 0 then
         current_profile_size = lossy_pg_size
