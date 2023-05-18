@@ -35,7 +35,10 @@ NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch,
     SWSS_LOG_ENTER();
 
     m_fdbOrch->attach(this);
-    if (gBfdOrch) {  //some UTs instantiate NeighOrch but gBfdOrch is null, it is not null in orchagent
+
+    // Some UTs instantiate NeighOrch but gBfdOrch is null, it is not null in orchagent
+    if (gBfdOrch) 
+    {  
         gBfdOrch->attach(this);
     }
 
