@@ -435,7 +435,6 @@ namespace bufferorch_test
         // Drain BUFFER_PROFILE_TABLE table
         auto sai_pg_attr_set_count = _ut_stub_set_pg_count;
         static_cast<Orch *>(gBufferOrch)->doTask();
-        static_cast<Orch *>(gBufferOrch)->doTask();
         // Make sure the dependency recovers
         CheckDependency(APP_BUFFER_PG_TABLE_NAME, "Ethernet0:0", "profile", APP_BUFFER_PROFILE_TABLE_NAME, "ingress_lossy_profile");
         ASSERT_EQ(++sai_pg_attr_set_count, _ut_stub_set_pg_count);
