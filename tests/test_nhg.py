@@ -955,7 +955,7 @@ class TestNextHopGroup(TestNextHopGroupBase):
         self.rt_ps.set(rtprefix, fvs)
         fvs2 = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.3"),
                                           ("ifname", "Ethernet0,Ethernet4")])
-        self.rt_ps.set(rtprefix, fvs2)
+        self.rt_ps.set(rtprefix2, fvs2)
 
         # check if route was propagated to ASIC DB
         rtkeys = dvs_route.check_asicdb_route_entries([rtprefix, rtprefix2])
