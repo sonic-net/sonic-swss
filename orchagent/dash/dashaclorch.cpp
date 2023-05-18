@@ -500,7 +500,7 @@ task_process_status DashAclOrch::taskRemoveDashAclGroup(
     }
     CrmResourceType crm_rtype = (acl_group->m_ip_version == SAI_IP_ADDR_FAMILY_IPV4) ?
         CrmResourceType::CRM_DASH_IPV4_ACL_GROUP : CrmResourceType::CRM_DASH_IPV6_ACL_GROUP;
-    gCrmOrch->decCrmDashAclGroupUsedCounter(crm_rtype, acl_group->m_dash_acl_group_id);
+    gCrmOrch->decCrmDashAclUsedCounter(crm_rtype, acl_group->m_dash_acl_group_id);
 
     m_dash_acl_group_table.erase(key);
     SWSS_LOG_NOTICE("Removed ACL group %s", key.c_str());
@@ -725,7 +725,7 @@ task_process_status DashAclOrch::taskRemoveDashAclRule(
 
     CrmResourceType crm_resource = (acl_group.m_ip_version == SAI_IP_ADDR_FAMILY_IPV4) ?
         CrmResourceType::CRM_DASH_IPV4_ACL_RULE : CrmResourceType::CRM_DASH_IPV6_ACL_RULE;
-    gCrmOrch->decCrmDashAclGroupUsedCounter(crm_resource, acl_group.m_dash_acl_group_id);
+    gCrmOrch->decCrmDashAclUsedCounter(crm_resource, acl_group.m_dash_acl_group_id);
 
     SWSS_LOG_NOTICE("Removed ACL rule %s", key.c_str());
 

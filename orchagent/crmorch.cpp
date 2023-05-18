@@ -644,7 +644,7 @@ void CrmOrch::incCrmDashAclUsedCounter(CrmResourceType resource, sai_object_id_t
     }
 }
 
-void CrmOrch::decCrmDashAclGroupUsedCounter(CrmResourceType resource, sai_object_id_t tableId)
+void CrmOrch::decCrmDashAclUsedCounter(CrmResourceType resource, sai_object_id_t tableId)
 {
     SWSS_LOG_ENTER();
 

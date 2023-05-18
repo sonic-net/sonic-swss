@@ -81,7 +81,7 @@ public:
     // Increment "used" counter for the per DASH ACL CRM resources (ACL group/rule)
     void incCrmDashAclUsedCounter(CrmResourceType resource, sai_object_id_t groupId);
     // Decrement "used" counter for the per DASH ACL CRM resources (ACL group/rule)
-    void decCrmDashAclGroupUsedCounter(CrmResourceType resource, sai_object_id_t groupId);
+    void decCrmDashAclUsedCounter(CrmResourceType resource, sai_object_id_t groupId);
 
 private:
     std::shared_ptr<swss::DBConnector> m_countersDb = nullptr;
