@@ -17,6 +17,7 @@
 #include "swssnet.h"
 #include "tokenize.h"
 #include "dashorch.h"
+#include "saihelper.h"
 
 using namespace std;
 using namespace swss;

@@ -6,6 +6,7 @@
 #include <swssnet.h>
 
 #include "dashaclorch.h"
+#include "saihelper.h"
 
 using namespace std;
 using namespace swss;
