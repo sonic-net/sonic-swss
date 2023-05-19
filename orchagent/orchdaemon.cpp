@@ -965,13 +965,11 @@ void OrchDaemon::addOrchList(Orch *o)
 
 void OrchDaemon::heartBeat(std::chrono::time_point<std::chrono::high_resolution_clock> tcurrent)
 {
-    static auto tlast = std::chrono::high_resolution_clock::now();
-
     // output heart beat message to SYSLOG
-    auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(tcurrent - tlast);
+    auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(tcurrent - m_lastHeartBeat);
     if (diff.count() >= HEART_BEAT_INTERVAL_MSECS)
     {
-        tlast = tcurrent;
+        m_lastHeartBeat = tcurrent;
         // output heart beat message to supervisord with 'PROCESS_COMMUNICATION_STDOUT' event: http://supervisord.org/events.html
         cout << "<!--XSUPERVISOR:BEGIN-->heartbeat<!--XSUPERVISOR:END-->" << endl;
     }
