@@ -91,7 +91,7 @@ private:
     std::vector<Orch *> m_orchList;
     Select *m_select;
     
-    static std::chrono::time_point<std::chrono::high_resolution_clock> m_lastHeartBeat = std::chrono::high_resolution_clock::now();
+    std::chrono::time_point<std::chrono::high_resolution_clock> m_lastHeartBeat;
 
     void flush();
 

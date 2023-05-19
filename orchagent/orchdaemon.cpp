@@ -76,6 +76,7 @@ OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *
 {
     SWSS_LOG_ENTER();
     m_select = new Select();
+    m_lastHeartBeat = std::chrono::high_resolution_clock::now();
 }
 
 OrchDaemon::~OrchDaemon()
