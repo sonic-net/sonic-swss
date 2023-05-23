@@ -48,6 +48,21 @@ const map<CrmResourceType, string> crmResTypeNameMap =
     { CrmResourceType::CRM_SRV6_MY_SID_ENTRY, "SRV6_MY_SID_ENTRY" },
     { CrmResourceType::CRM_SRV6_NEXTHOP, "SRV6_NEXTHOP" },
     { CrmResourceType::CRM_NEXTHOP_GROUP_MAP, "NEXTHOP_GROUP_MAP" },
+    { CrmResourceType::CRM_DASH_VNET, "DASH_VNET" },
+    { CrmResourceType::CRM_DASH_ENI, "DASH_ENI" },
+    { CrmResourceType::CRM_DASH_ENI_ETHER_ADDRESS_MAP, "DASH_ENI_ETHER_ADDRESS_MAP" },
+    { CrmResourceType::CRM_DASH_IPV4_INBOUND_ROUTING, "DASH_IPV4_INBOUND_ROUTING" },
+    { CrmResourceType::CRM_DASH_IPV6_INBOUND_ROUTING, "DASH_IPV6_INBOUND_ROUTING" },
+    { CrmResourceType::CRM_DASH_IPV4_OUTBOUND_ROUTING, "DASH_IPV4_OUTBOUND_ROUTING" },
+    { CrmResourceType::CRM_DASH_IPV6_OUTBOUND_ROUTING, "DASH_IPV6_OUTBOUND_ROUTING" },
+    { CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION, "DASH_IPV4_PA_VALIDATION" },
+    { CrmResourceType::CRM_DASH_IPV6_PA_VALIDATION, "DASH_IPV6_PA_VALIDATION" },
+    { CrmResourceType::CRM_DASH_IPV4_OUTBOUND_CA_TO_PA, "DASH_IPV4_OUTBOUND_CA_TO_PA" },
+    { CrmResourceType::CRM_DASH_IPV6_OUTBOUND_CA_TO_PA, "DASH_IPV6_OUTBOUND_CA_TO_PA" },
+    { CrmResourceType::CRM_DASH_IPV4_ACL_GROUP, "DASH_IPV4_ACL_GROUP" },
+    { CrmResourceType::CRM_DASH_IPV6_ACL_GROUP, "DASH_IPV6_ACL_GROUP" },
+    { CrmResourceType::CRM_DASH_IPV4_ACL_RULE, "DASH_IPV4_ACL_RULE" },
+    { CrmResourceType::CRM_DASH_IPV6_ACL_RULE, "DASH_IPV6_ACL_RULE" },
 };
 
 const map<CrmResourceType, uint32_t> crmResSaiAvailAttrMap =
@@ -93,6 +108,21 @@ const map<CrmResourceType, sai_object_type_t> crmResSaiObjAttrMap =
     { CrmResourceType::CRM_SRV6_MY_SID_ENTRY, SAI_OBJECT_TYPE_MY_SID_ENTRY },
     { CrmResourceType::CRM_SRV6_NEXTHOP, SAI_OBJECT_TYPE_NEXT_HOP },
     { CrmResourceType::CRM_NEXTHOP_GROUP_MAP, SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MAP },
+    { CrmResourceType::CRM_DASH_VNET, (sai_object_type_t)SAI_OBJECT_TYPE_VNET },
+    { CrmResourceType::CRM_DASH_ENI, (sai_object_type_t)SAI_OBJECT_TYPE_ENI },
+    { CrmResourceType::CRM_DASH_ENI_ETHER_ADDRESS_MAP, (sai_object_type_t)SAI_OBJECT_TYPE_ENI_ETHER_ADDRESS_MAP_ENTRY },
+    { CrmResourceType::CRM_DASH_IPV4_INBOUND_ROUTING, (sai_object_type_t)SAI_OBJECT_TYPE_INBOUND_ROUTING_ENTRY },
+    { CrmResourceType::CRM_DASH_IPV6_INBOUND_ROUTING, (sai_object_type_t)SAI_OBJECT_TYPE_INBOUND_ROUTING_ENTRY },
+    { CrmResourceType::CRM_DASH_IPV4_OUTBOUND_ROUTING, (sai_object_type_t)SAI_OBJECT_TYPE_OUTBOUND_ROUTING_ENTRY },
+    { CrmResourceType::CRM_DASH_IPV6_OUTBOUND_ROUTING, (sai_object_type_t)SAI_OBJECT_TYPE_OUTBOUND_ROUTING_ENTRY },
+    { CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION, (sai_object_type_t)SAI_OBJECT_TYPE_PA_VALIDATION_ENTRY },
+    { CrmResourceType::CRM_DASH_IPV6_PA_VALIDATION, (sai_object_type_t)SAI_OBJECT_TYPE_PA_VALIDATION_ENTRY },
+    { CrmResourceType::CRM_DASH_IPV4_OUTBOUND_CA_TO_PA, (sai_object_type_t)SAI_OBJECT_TYPE_OUTBOUND_CA_TO_PA_ENTRY },
+    { CrmResourceType::CRM_DASH_IPV6_OUTBOUND_CA_TO_PA, (sai_object_type_t)SAI_OBJECT_TYPE_OUTBOUND_CA_TO_PA_ENTRY },
+    { CrmResourceType::CRM_DASH_IPV4_ACL_GROUP, (sai_object_type_t)SAI_OBJECT_TYPE_DASH_ACL_GROUP },
+    { CrmResourceType::CRM_DASH_IPV6_ACL_GROUP, (sai_object_type_t)SAI_OBJECT_TYPE_DASH_ACL_GROUP },
+    { CrmResourceType::CRM_DASH_IPV4_ACL_RULE, (sai_object_type_t)SAI_OBJECT_TYPE_DASH_ACL_RULE },
+    { CrmResourceType::CRM_DASH_IPV6_ACL_RULE, (sai_object_type_t)SAI_OBJECT_TYPE_DASH_ACL_RULE },
 };
 
 const map<CrmResourceType, sai_attr_id_t> crmResAddrFamilyAttrMap =
@@ -101,6 +131,8 @@ const map<CrmResourceType, sai_attr_id_t> crmResAddrFamilyAttrMap =
     { CrmResourceType::CRM_IPV6_ROUTE, SAI_ROUTE_ENTRY_ATTR_IP_ADDR_FAMILY },
     { CrmResourceType::CRM_IPV4_NEIGHBOR, SAI_NEIGHBOR_ENTRY_ATTR_IP_ADDR_FAMILY },
     { CrmResourceType::CRM_IPV6_NEIGHBOR, SAI_NEIGHBOR_ENTRY_ATTR_IP_ADDR_FAMILY },
+    { CrmResourceType::CRM_DASH_IPV4_ACL_GROUP, SAI_DASH_ACL_GROUP_ATTR_IP_ADDR_FAMILY },
+    { CrmResourceType::CRM_DASH_IPV6_ACL_GROUP, SAI_DASH_ACL_GROUP_ATTR_IP_ADDR_FAMILY },
 };
 
 const map<CrmResourceType, sai_ip_addr_family_t> crmResAddrFamilyValMap =
@@ -109,6 +141,8 @@ const map<CrmResourceType, sai_ip_addr_family_t> crmResAddrFamilyValMap =
     { CrmResourceType::CRM_IPV6_ROUTE, SAI_IP_ADDR_FAMILY_IPV6 },
     { CrmResourceType::CRM_IPV4_NEIGHBOR, SAI_IP_ADDR_FAMILY_IPV4 },
     { CrmResourceType::CRM_IPV6_NEIGHBOR, SAI_IP_ADDR_FAMILY_IPV6 },
+    { CrmResourceType::CRM_DASH_IPV4_ACL_GROUP, SAI_IP_ADDR_FAMILY_IPV4 },
+    { CrmResourceType::CRM_DASH_IPV6_ACL_GROUP, SAI_IP_ADDR_FAMILY_IPV6 },
 };
 
 const map<string, CrmResourceType> crmThreshTypeResMap =
@@ -134,6 +168,21 @@ const map<string, CrmResourceType> crmThreshTypeResMap =
     { "srv6_my_sid_entry_threshold_type", CrmResourceType::CRM_SRV6_MY_SID_ENTRY },
     { "srv6_nexthop_threshold_type", CrmResourceType::CRM_SRV6_NEXTHOP },
     { "nexthop_group_map_threshold_type", CrmResourceType::CRM_NEXTHOP_GROUP_MAP },
+    { "dash_vnet_threshold_type", CrmResourceType::CRM_DASH_VNET },
+    { "dash_eni_threshold_type", CrmResourceType:: CRM_DASH_ENI },
+    { "dash_eni_ether_address_map_threshold_type", CrmResourceType::CRM_DASH_ENI_ETHER_ADDRESS_MAP },
+    { "dash_ipv4_inbound_routing_threshold_type", CrmResourceType::CRM_DASH_IPV4_INBOUND_ROUTING },
+    { "dash_ipv6_inbound_routing_threshold_type", CrmResourceType::CRM_DASH_IPV6_INBOUND_ROUTING },
+    { "dash_ipv4_outbound_routing_threshold_type", CrmResourceType::CRM_DASH_IPV4_OUTBOUND_ROUTING },
+    { "dash_ipv6_outbound_routing_threshold_type", CrmResourceType::CRM_DASH_IPV6_OUTBOUND_ROUTING },
+    { "dash_ipv4_pa_validation_threshold_type", CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION },
+    { "dash_ipv6_pa_validation_threshold_type", CrmResourceType::CRM_DASH_IPV6_PA_VALIDATION },
+    { "dash_ipv4_outbound_ca_to_pa_threshold_type", CrmResourceType::CRM_DASH_IPV4_OUTBOUND_CA_TO_PA },
+    { "dash_ipv6_outbound_ca_to_pa_threshold_type", CrmResourceType::CRM_DASH_IPV6_OUTBOUND_CA_TO_PA },
+    { "dash_ipv4_acl_group_threshold_type", CrmResourceType::CRM_DASH_IPV4_ACL_GROUP },
+    { "dash_ipv6_acl_group_threshold_type", CrmResourceType::CRM_DASH_IPV6_ACL_GROUP },
+    { "dash_ipv4_acl_rule_threshold_type", CrmResourceType::CRM_DASH_IPV4_ACL_RULE },
+    { "dash_ipv6_acl_rule_threshold_type", CrmResourceType::CRM_DASH_IPV6_ACL_RULE }
 };
 
 const map<string, CrmResourceType> crmThreshLowResMap =
@@ -159,6 +208,21 @@ const map<string, CrmResourceType> crmThreshLowResMap =
     {"srv6_my_sid_entry_low_threshold", CrmResourceType::CRM_SRV6_MY_SID_ENTRY },
     {"srv6_nexthop_low_threshold", CrmResourceType::CRM_SRV6_NEXTHOP },
     {"nexthop_group_map_low_threshold", CrmResourceType::CRM_NEXTHOP_GROUP_MAP },
+    { "dash_vnet_low_threshold", CrmResourceType::CRM_DASH_VNET },
+    { "dash_eni_low_threshold", CrmResourceType:: CRM_DASH_ENI },
+    { "dash_eni_ether_address_map_low_threshold", CrmResourceType::CRM_DASH_ENI_ETHER_ADDRESS_MAP },
+    { "dash_ipv4_inbound_routing_low_threshold", CrmResourceType::CRM_DASH_IPV4_INBOUND_ROUTING },
+    { "dash_ipv6_inbound_routing_low_threshold", CrmResourceType::CRM_DASH_IPV6_INBOUND_ROUTING },
+    { "dash_ipv4_outbound_routing_low_threshold", CrmResourceType::CRM_DASH_IPV4_OUTBOUND_ROUTING },
+    { "dash_ipv6_outbound_routing_low_threshold", CrmResourceType::CRM_DASH_IPV6_OUTBOUND_ROUTING },
+    { "dash_ipv4_pa_validation_low_threshold", CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION },
+    { "dash_ipv6_pa_validation_low_threshold", CrmResourceType::CRM_DASH_IPV6_PA_VALIDATION },
+    { "dash_ipv4_outbound_ca_to_pa_low_threshold", CrmResourceType::CRM_DASH_IPV4_OUTBOUND_CA_TO_PA },
+    { "dash_ipv6_outbound_ca_to_pa_low_threshold", CrmResourceType::CRM_DASH_IPV6_OUTBOUND_CA_TO_PA },
+    { "dash_ipv4_acl_group_low_threshold", CrmResourceType::CRM_DASH_IPV4_ACL_GROUP },
+    { "dash_ipv6_acl_group_low_threshold", CrmResourceType::CRM_DASH_IPV6_ACL_GROUP },
+    { "dash_ipv4_acl_rule_low_threshold", CrmResourceType::CRM_DASH_IPV4_ACL_RULE },
+    { "dash_ipv6_acl_rule_low_threshold", CrmResourceType::CRM_DASH_IPV6_ACL_RULE }
 };
 
 const map<string, CrmResourceType> crmThreshHighResMap =
@@ -184,6 +248,21 @@ const map<string, CrmResourceType> crmThreshHighResMap =
     {"srv6_my_sid_entry_high_threshold", CrmResourceType::CRM_SRV6_MY_SID_ENTRY },
     {"srv6_nexthop_high_threshold", CrmResourceType::CRM_SRV6_NEXTHOP },
     {"nexthop_group_map_high_threshold", CrmResourceType::CRM_NEXTHOP_GROUP_MAP },
+    { "dash_vnet_high_threshold", CrmResourceType::CRM_DASH_VNET },
+    { "dash_eni_high_threshold", CrmResourceType:: CRM_DASH_ENI },
+    { "dash_eni_ether_address_map_high_threshold", CrmResourceType::CRM_DASH_ENI_ETHER_ADDRESS_MAP },
+    { "dash_ipv4_inbound_routing_high_threshold", CrmResourceType::CRM_DASH_IPV4_INBOUND_ROUTING },
+    { "dash_ipv6_inbound_routing_high_threshold", CrmResourceType::CRM_DASH_IPV6_INBOUND_ROUTING },
+    { "dash_ipv4_outbound_routing_high_threshold", CrmResourceType::CRM_DASH_IPV4_OUTBOUND_ROUTING },
+    { "dash_ipv6_outbound_routing_high_threshold", CrmResourceType::CRM_DASH_IPV6_OUTBOUND_ROUTING },
+    { "dash_ipv4_pa_validation_high_threshold", CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION },
+    { "dash_ipv6_pa_validation_high_threshold", CrmResourceType::CRM_DASH_IPV6_PA_VALIDATION },
+    { "dash_ipv4_outbound_ca_to_pa_high_threshold", CrmResourceType::CRM_DASH_IPV4_OUTBOUND_CA_TO_PA },
+    { "dash_ipv6_outbound_ca_to_pa_high_threshold", CrmResourceType::CRM_DASH_IPV6_OUTBOUND_CA_TO_PA },
+    { "dash_ipv4_acl_group_high_threshold", CrmResourceType::CRM_DASH_IPV4_ACL_GROUP },
+    { "dash_ipv6_acl_group_high_threshold", CrmResourceType::CRM_DASH_IPV6_ACL_GROUP },
+    { "dash_ipv4_acl_rule_high_threshold", CrmResourceType::CRM_DASH_IPV4_ACL_RULE },
+    { "dash_ipv6_acl_rule_high_threshold", CrmResourceType::CRM_DASH_IPV6_ACL_RULE }
 };
 
 const map<string, CrmThresholdType> crmThreshTypeMap =
@@ -216,6 +295,21 @@ const map<string, CrmResourceType> crmAvailCntsTableMap =
     { "crm_stats_srv6_my_sid_entry_available", CrmResourceType::CRM_SRV6_MY_SID_ENTRY },
     { "crm_stats_srv6_nexthop_available", CrmResourceType::CRM_SRV6_NEXTHOP },
     { "crm_stats_nexthop_group_map_available", CrmResourceType::CRM_NEXTHOP_GROUP_MAP },
+    { "crm_stats_dash_vnet_available", CrmResourceType::CRM_DASH_VNET },
+    { "crm_stats_dash_eni_available", CrmResourceType:: CRM_DASH_ENI },
+    { "crm_stats_dash_eni_ether_address_map_available", CrmResourceType::CRM_DASH_ENI_ETHER_ADDRESS_MAP },
+    { "crm_stats_dash_ipv4_inbound_routing_available", CrmResourceType::CRM_DASH_IPV4_INBOUND_ROUTING },
+    { "crm_stats_dash_ipv6_inbound_routing_available", CrmResourceType::CRM_DASH_IPV6_INBOUND_ROUTING },
+    { "crm_stats_dash_ipv4_outbound_routing_available", CrmResourceType::CRM_DASH_IPV4_OUTBOUND_ROUTING },
+    { "crm_stats_dash_ipv6_outbound_routing_available", CrmResourceType::CRM_DASH_IPV6_OUTBOUND_ROUTING },
+    { "crm_stats_dash_ipv4_pa_validation_available", CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION },
+    { "crm_stats_dash_ipv6_pa_validation_available", CrmResourceType::CRM_DASH_IPV6_PA_VALIDATION },
+    { "crm_stats_dash_ipv4_outbound_ca_to_pa_available", CrmResourceType::CRM_DASH_IPV4_OUTBOUND_CA_TO_PA },
+    { "crm_stats_dash_ipv6_outbound_ca_to_pa_available", CrmResourceType::CRM_DASH_IPV6_OUTBOUND_CA_TO_PA },
+    { "crm_stats_dash_ipv4_acl_group_available", CrmResourceType::CRM_DASH_IPV4_ACL_GROUP },
+    { "crm_stats_dash_ipv6_acl_group_available", CrmResourceType::CRM_DASH_IPV6_ACL_GROUP },
+    { "crm_stats_dash_ipv4_acl_rule_available", CrmResourceType::CRM_DASH_IPV4_ACL_RULE },
+    { "crm_stats_dash_ipv6_acl_rule_available", CrmResourceType::CRM_DASH_IPV6_ACL_RULE }
 };
 
 const map<string, CrmResourceType> crmUsedCntsTableMap =
@@ -241,6 +335,21 @@ const map<string, CrmResourceType> crmUsedCntsTableMap =
     { "crm_stats_srv6_my_sid_entry_used", CrmResourceType::CRM_SRV6_MY_SID_ENTRY },
     { "crm_stats_srv6_nexthop_used", CrmResourceType::CRM_SRV6_NEXTHOP },
     { "crm_stats_nexthop_group_map_used", CrmResourceType::CRM_NEXTHOP_GROUP_MAP },
+    { "crm_stats_dash_vnet_used", CrmResourceType::CRM_DASH_VNET },
+    { "crm_stats_dash_eni_used", CrmResourceType:: CRM_DASH_ENI },
+    { "crm_stats_dash_eni_ether_address_map_used", CrmResourceType::CRM_DASH_ENI_ETHER_ADDRESS_MAP },
+    { "crm_stats_dash_ipv4_inbound_routing_used", CrmResourceType::CRM_DASH_IPV4_INBOUND_ROUTING },
+    { "crm_stats_dash_ipv6_inbound_routing_used", CrmResourceType::CRM_DASH_IPV6_INBOUND_ROUTING },
+    { "crm_stats_dash_ipv4_outbound_routing_used", CrmResourceType::CRM_DASH_IPV4_OUTBOUND_ROUTING },
+    { "crm_stats_dash_ipv6_outbound_routing_used", CrmResourceType::CRM_DASH_IPV6_OUTBOUND_ROUTING },
+    { "crm_stats_dash_ipv4_pa_validation_used", CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION },
+    { "crm_stats_dash_ipv6_pa_validation_used", CrmResourceType::CRM_DASH_IPV6_PA_VALIDATION },
+    { "crm_stats_dash_ipv4_outbound_ca_to_pa_used", CrmResourceType::CRM_DASH_IPV4_OUTBOUND_CA_TO_PA },
+    { "crm_stats_dash_ipv6_outbound_ca_to_pa_used", CrmResourceType::CRM_DASH_IPV6_OUTBOUND_CA_TO_PA },
+    { "crm_stats_dash_ipv4_acl_group_used", CrmResourceType::CRM_DASH_IPV4_ACL_GROUP },
+    { "crm_stats_dash_ipv6_acl_group_used", CrmResourceType::CRM_DASH_IPV6_ACL_GROUP },
+    { "crm_stats_dash_ipv4_acl_rule_used", CrmResourceType::CRM_DASH_IPV4_ACL_RULE },
+    { "crm_stats_dash_ipv6_acl_rule_used", CrmResourceType::CRM_DASH_IPV6_ACL_RULE }
 };
 
 CrmOrch::CrmOrch(DBConnector *db, string tableName):
@@ -502,6 +611,70 @@ void CrmOrch::decCrmAclTableUsedCounter(CrmResourceType resource, sai_object_id_
     }
 }
 
+void CrmOrch::incCrmDashAclUsedCounter(CrmResourceType resource, sai_object_id_t tableId)
+{
+    SWSS_LOG_ENTER();
+
+    try
+    {
+        if (resource == CrmResourceType::CRM_DASH_IPV4_ACL_GROUP)
+        {
+            incCrmResUsedCounter(resource);
+            auto &rule_cnt = m_resourcesMap.at(CrmResourceType::CRM_DASH_IPV4_ACL_RULE).countersMap[getCrmDashAclGroupKey(tableId)];
+            rule_cnt.usedCounter = 0;
+            rule_cnt.id = tableId;
+        }
+        else if (resource == CrmResourceType::CRM_DASH_IPV6_ACL_GROUP)
+        {
+            incCrmResUsedCounter(resource);
+            auto &rule_cnt = m_resourcesMap.at(CrmResourceType::CRM_DASH_IPV6_ACL_RULE).countersMap[getCrmDashAclGroupKey(tableId)];
+            rule_cnt.usedCounter = 0;
+            rule_cnt.id = tableId;
+        }
+        else 
+        {
+            auto &rule_cnt = m_resourcesMap.at(resource).countersMap[getCrmDashAclGroupKey(tableId)];
+            ++rule_cnt.usedCounter;
+        }
+    }
+    catch (...)
+    {
+        SWSS_LOG_ERROR("Failed to increment \"used\" counter for the %s CRM resource (tableId:%" PRIx64 ").", crmResTypeNameMap.at(resource).c_str(), tableId);
+        return;
+    }
+}
+
+void CrmOrch::decCrmDashAclUsedCounter(CrmResourceType resource, sai_object_id_t tableId)
+{
+    SWSS_LOG_ENTER();
+
+    try
+    {
+        if (resource == CrmResourceType::CRM_DASH_IPV4_ACL_GROUP)
+        {
+            decCrmResUsedCounter(resource);
+            m_resourcesMap.at(CrmResourceType::CRM_DASH_IPV4_ACL_RULE).countersMap.erase(getCrmDashAclGroupKey(tableId));
+            m_countersCrmTable->del(getCrmDashAclGroupKey(tableId));
+        }
+        else if (resource == CrmResourceType::CRM_DASH_IPV6_ACL_GROUP)
+        {
+            decCrmResUsedCounter(resource);
+            m_resourcesMap.at(CrmResourceType::CRM_DASH_IPV6_ACL_RULE).countersMap.erase(getCrmDashAclGroupKey(tableId));
+            m_countersCrmTable->del(getCrmDashAclGroupKey(tableId));
+        }
+        else 
+        {
+            auto &rule_cnt = m_resourcesMap.at(resource).countersMap[getCrmDashAclGroupKey(tableId)];
+            --rule_cnt.usedCounter;
+        }
+    }
+    catch (...)
+    {
+        SWSS_LOG_ERROR("Failed to decrement \"used\" counter for the %s CRM resource (tableId:%" PRIx64 ").", crmResTypeNameMap.at(resource).c_str(), tableId);
+        return;
+    }
+}
+
 void CrmOrch::doTask(SelectableTimer &timer)
 {
     SWSS_LOG_ENTER();
@@ -523,24 +696,33 @@ bool CrmOrch::getResAvailability(CrmResourceType type, CrmResourceEntry &res)
     {
         uint32_t attrCount = 0;
 
-        if ((type == CrmResourceType::CRM_IPV4_ROUTE) || (type == CrmResourceType::CRM_IPV6_ROUTE) ||
-            (type == CrmResourceType::CRM_IPV4_NEIGHBOR) || (type == CrmResourceType::CRM_IPV6_NEIGHBOR))
+        switch (type)
         {
-            attr.id = crmResAddrFamilyAttrMap.at(type);
-            attr.value.s32 = crmResAddrFamilyValMap.at(type);
-            attrCount = 1;
-        }
-        else if (type == CrmResourceType::CRM_MPLS_NEXTHOP)
-        {
-            attr.id = SAI_NEXT_HOP_ATTR_TYPE;
-            attr.value.s32 = SAI_NEXT_HOP_TYPE_MPLS;
-            attrCount = 1;
-        }
-        else if (type == CrmResourceType::CRM_SRV6_NEXTHOP)
-        {
-            attr.id = SAI_NEXT_HOP_ATTR_TYPE;
-            attr.value.s32 = SAI_NEXT_HOP_TYPE_SRV6_SIDLIST;
-            attrCount = 1;
+            case CrmResourceType::CRM_IPV4_ROUTE:
+            case CrmResourceType::CRM_IPV6_ROUTE:
+            case CrmResourceType::CRM_IPV4_NEIGHBOR:
+            case CrmResourceType::CRM_IPV6_NEIGHBOR:
+            case CrmResourceType::CRM_DASH_IPV4_ACL_GROUP:
+            case CrmResourceType::CRM_DASH_IPV6_ACL_GROUP:
+                attr.id = crmResAddrFamilyAttrMap.at(type);
+                attr.value.s32 = crmResAddrFamilyValMap.at(type);
+                attrCount = 1;
+                break;
+            
+            case CrmResourceType::CRM_MPLS_NEXTHOP:
+                attr.id = SAI_NEXT_HOP_ATTR_TYPE;
+                attr.value.s32 = SAI_NEXT_HOP_TYPE_MPLS;
+                attrCount = 1;
+                break;
+            
+            case CrmResourceType::CRM_SRV6_NEXTHOP:
+                attr.id = SAI_NEXT_HOP_ATTR_TYPE;
+                attr.value.s32 = SAI_NEXT_HOP_TYPE_SRV6_SIDLIST;
+                attrCount = 1;
+                break;
+            
+            default:
+                break;
         }
 
         status = sai_object_type_get_availability(gSwitchId, objType, attrCount, &attr, &availCount);
@@ -567,7 +749,7 @@ bool CrmOrch::getResAvailability(CrmResourceType type, CrmResourceEntry &res)
 
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to get availability counter for %s CRM resourse", crmResTypeNameMap.at(type).c_str());
+            SWSS_LOG_ERROR("Failed to get availability counter for %s CRM resource", crmResTypeNameMap.at(type).c_str());
             return false;
         }
 
@@ -575,6 +757,41 @@ bool CrmOrch::getResAvailability(CrmResourceType type, CrmResourceEntry &res)
     }
 
     res.countersMap[CRM_COUNTERS_TABLE_KEY].availableCounter = static_cast<uint32_t>(availCount);
+
+    return true;
+}
+
+bool CrmOrch::getDashAclGroupResAvailability(CrmResourceType type, CrmResourceEntry &res)
+{
+    sai_object_type_t objType = crmResSaiObjAttrMap.at(type);
+
+    for (auto &cnt : res.countersMap)
+    { 
+        sai_attribute_t attr;
+        attr.id = SAI_DASH_ACL_RULE_ATTR_DASH_ACL_GROUP_ID;
+        attr.value.oid = cnt.second.id;
+
+        uint64_t availCount = 0;
+        sai_status_t status = sai_object_type_get_availability(gSwitchId, objType, 1, &attr, &availCount);
+        if ((status == SAI_STATUS_NOT_SUPPORTED) ||
+            (status == SAI_STATUS_NOT_IMPLEMENTED) ||
+            SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
+            SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status))
+        {
+            // mark unsupported resources
+            res.resStatus = CrmResourceStatus::CRM_RES_NOT_SUPPORTED;
+            SWSS_LOG_NOTICE("CRM resource %s not supported", crmResTypeNameMap.at(type).c_str());
+            return false;
+        }
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to get ACL table attribute %u , rv:%d", attr.id, status);
+            break;
+        }
+
+        cnt.second.availableCounter = static_cast<uint32_t>(availCount);
+    }
 
     return true;
 }
@@ -610,6 +827,19 @@ void CrmOrch::getResAvailableCounters()
             case CrmResourceType::CRM_SRV6_MY_SID_ENTRY:
             case CrmResourceType::CRM_MPLS_NEXTHOP:
             case CrmResourceType::CRM_SRV6_NEXTHOP:
+            case CrmResourceType::CRM_DASH_VNET:
+            case CrmResourceType::CRM_DASH_ENI:
+            case CrmResourceType::CRM_DASH_ENI_ETHER_ADDRESS_MAP:
+            case CrmResourceType::CRM_DASH_IPV4_INBOUND_ROUTING:
+            case CrmResourceType::CRM_DASH_IPV6_INBOUND_ROUTING:
+            case CrmResourceType::CRM_DASH_IPV4_OUTBOUND_ROUTING:
+            case CrmResourceType::CRM_DASH_IPV6_OUTBOUND_ROUTING:
+            case CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION:
+            case CrmResourceType::CRM_DASH_IPV6_PA_VALIDATION:
+            case CrmResourceType::CRM_DASH_IPV4_OUTBOUND_CA_TO_PA:
+            case CrmResourceType::CRM_DASH_IPV6_OUTBOUND_CA_TO_PA:
+            case CrmResourceType::CRM_DASH_IPV4_ACL_GROUP:
+            case CrmResourceType::CRM_DASH_IPV6_ACL_GROUP:
             {
                 getResAvailability(res.first, res.second);
                 break;
@@ -626,6 +856,17 @@ void CrmOrch::getResAvailableCounters()
                 attr.value.aclresource.count = CRM_ACL_RESOURCE_COUNT;
                 attr.value.aclresource.list = resources.data();
                 sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+                if ((status == SAI_STATUS_NOT_SUPPORTED) ||
+                    (status == SAI_STATUS_NOT_IMPLEMENTED) ||
+                    SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
+                    SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status))
+                {
+                    // mark unsupported resources
+                    res.second.resStatus = CrmResourceStatus::CRM_RES_NOT_SUPPORTED;
+                    SWSS_LOG_NOTICE("CRM resource %s not supported", crmResTypeNameMap.at(res.first).c_str());
+                    break;
+                }
+
                 if (status == SAI_STATUS_BUFFER_OVERFLOW)
                 {
                     resources.resize(attr.value.aclresource.count);
@@ -661,6 +902,17 @@ void CrmOrch::getResAvailableCounters()
                 for (auto &cnt : res.second.countersMap)
                 {
                     sai_status_t status = sai_acl_api->get_acl_table_attribute(cnt.second.id, 1, &attr);
+                    if ((status == SAI_STATUS_NOT_SUPPORTED) ||
+                        (status == SAI_STATUS_NOT_IMPLEMENTED) ||
+                        SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
+                        SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status))
+                    {
+                        // mark unsupported resources
+                        res.second.resStatus = CrmResourceStatus::CRM_RES_NOT_SUPPORTED;
+                        SWSS_LOG_NOTICE("CRM resource %s not supported", crmResTypeNameMap.at(res.first).c_str());
+                        break;
+                    }
+
                     if (status != SAI_STATUS_SUCCESS)
                     {
                         SWSS_LOG_ERROR("Failed to get ACL table attribute %u , rv:%d", attr.id, status);
@@ -670,6 +922,13 @@ void CrmOrch::getResAvailableCounters()
                     cnt.second.availableCounter = attr.value.u32;
                 }
 
+                break;
+            }
+
+            case CrmResourceType::CRM_DASH_IPV4_ACL_RULE:
+            case CrmResourceType::CRM_DASH_IPV6_ACL_RULE:
+            {
+                getDashAclGroupResAvailability(res.first, res.second);
                 break;
             }
 
@@ -689,7 +948,13 @@ void CrmOrch::updateCrmCountersTable()
     {
         try
         {
-            for (const auto &cnt : m_resourcesMap.at(i.second).countersMap)
+            const auto &res = m_resourcesMap.at(i.second);
+            if (res.resStatus == CrmResourceStatus::CRM_RES_NOT_SUPPORTED)
+            {
+                continue;
+            }
+
+            for (const auto &cnt : res.countersMap)
             {
                 FieldValueTuple attr(i.first, to_string(cnt.second.usedCounter));
                 vector<FieldValueTuple> attrs = { attr };
@@ -707,7 +972,13 @@ void CrmOrch::updateCrmCountersTable()
     {
         try
         {
-            for (const auto &cnt : m_resourcesMap.at(i.second).countersMap)
+            const auto &res = m_resourcesMap.at(i.second);
+            if (res.resStatus == CrmResourceStatus::CRM_RES_NOT_SUPPORTED)
+            {
+                continue;
+            }
+
+            for (const auto &cnt : res.countersMap)
             {
                 FieldValueTuple attr(i.first, to_string(cnt.second.availableCounter));
                 vector<FieldValueTuple> attrs = { attr };
@@ -728,6 +999,11 @@ void CrmOrch::checkCrmThresholds()
     for (auto &i : m_resourcesMap)
     {
         auto &res = i.second;
+
+        if (res.resStatus == CrmResourceStatus::CRM_RES_NOT_SUPPORTED)
+        {
+            continue;
+        }
 
         for (auto &j : i.second.countersMap)
         {
@@ -837,5 +1113,14 @@ string CrmOrch::getCrmAclTableKey(sai_object_id_t id)
 {
     std::stringstream ss;
     ss << "ACL_TABLE_STATS:" << "0x" << std::hex << id;
+    return ss.str();
+}
+
+string CrmOrch::getCrmDashAclGroupKey(sai_object_id_t id)
+{
+    std::stringstream ss;
+    // Prepare the DASH_ACL_GROUP_STATS table key that will be used to store and access DASH ACL group counters
+    // in the Counters DB.
+    ss << "DASH_ACL_GROUP_STATS:" << "0x" << std::hex << id;
     return ss.str();
 }
