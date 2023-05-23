@@ -1194,7 +1194,8 @@ bool PortsOrch::getPortMtu(const Port& port, sai_uint32_t &mtu)
 
     mtu = attr.value.u32 - (uint32_t)(sizeof(struct ether_header) + FCS_LEN + VLAN_TAG_LEN);
 
-    if (isMACsecPort(port.m_port_id))
+    /* Reduce the default MTU got from ASIC by MAX_MACSEC_SECTAG_SIZE */
+    if (mtu > MAX_MACSEC_SECTAG_SIZE)
     {
         mtu -= MAX_MACSEC_SECTAG_SIZE;
     }
