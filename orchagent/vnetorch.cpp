@@ -1730,7 +1730,7 @@ void VNetRouteOrch::updateVnetTunnel(const BfdUpdate& update)
     size_t found_vrf = key.find(state_db_key_delimiter);
     if (found_vrf == string::npos)
     {
-        SWSS_LOG_ERROR("Failed to parse key %s, no vrf is given", key.c_str());
+        SWSS_LOG_WARN("Failed to parse key %s, no vrf is given", key.c_str());
         return;
     }
 
