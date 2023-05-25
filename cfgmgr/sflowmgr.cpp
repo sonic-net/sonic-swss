@@ -111,7 +111,7 @@ void SflowMgr::sflowUpdatePortInfo(Consumer &consumer)
             }
 
             string def_dir = "rx";
-            if (m_sflowPortConfMap[key].dir != def_dir)
+            if (m_sflowPortConfMap[key].dir != def_dir && !m_sflowPortConfMap[key].local_dir_cfg)
             {
                 m_sflowPortConfMap[key].dir = def_dir;
             }
