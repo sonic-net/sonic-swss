@@ -597,7 +597,8 @@ void RouteOrch::doTask(Consumer& consumer)
                 string srv6_segments;
                 string srv6_source;
                 bool srv6_nh = false;
-
+                string srv6_vpn_sids;
+                bool srv6_vpn = false;
                 for (auto i : kfvFieldsValues(t))
                 {
                     if (fvField(i) == "nexthop")
@@ -634,6 +635,13 @@ void RouteOrch::doTask(Consumer& consumer)
                     if (fvField(i) == "seg_src")
                         srv6_source = fvValue(i);
 
+                    if (fvField(i) == "vpn_sid" && fvValue(i) != "")
+                    {
+                        srv6_vpn_sids = fvValue(i);
+                        srv6_nh = true;
+                        srv6_vpn = true;
+                    }
+
                     if (fvField(i) == "protocol")
                     {
                         ctx.protocol = fvValue(i);
@@ -666,6 +674,7 @@ void RouteOrch::doTask(Consumer& consumer)
                 NextHopGroupKey& nhg = ctx.nhg;
                 vector<string> srv6_segv;
                 vector<string> srv6_src;
+                vector<string> srv6_vpn_sidv;
                 bool l3Vni = true;
                 uint32_t vni = 0;
 
@@ -679,6 +688,7 @@ void RouteOrch::doTask(Consumer& consumer)
                     rmacv = tokenize(remote_macs, ',');
                     srv6_segv = tokenize(srv6_segments, ',');
                     srv6_src = tokenize(srv6_source, ',');
+                    srv6_vpn_sidv = tokenize(srv6_vpn_sids, ',');
 
                     /*
                     * For backward compatibility, adjust ip string from old format to
@@ -762,26 +772,52 @@ void RouteOrch::doTask(Consumer& consumer)
                     }
                     else if (srv6_nh == true)
                     {
-                        string ip;
-                        if (ipv.empty())
+                        if (srv6_vpn == true)
                         {
-                            ip = "0.0.0.0";
+                            if (ipv.size() != srv6_src.size())
+                            {
+                                SWSS_LOG_ERROR("inconsistent number of endpoints and srv6_srcs.");
+                                it = consumer.m_toSync.erase(it);
+                                continue;
+                            }
+
+                            if (ipv.size() != srv6_vpn_sidv.size())
+                            {
+                                SWSS_LOG_ERROR("inconsistent number of endpoints and srv6 vpn sids.");
+                                it = consumer.m_toSync.erase(it);
+                                continue;
+                            }
+
+                            for (uint32_t i = 0; i < ipv.size(); i++)
+                            {
+                                if (i) nhg_str += NHG_DELIMITER;
+                                nhg_str += ipv[i] + NH_DELIMITER;           // ip address
+                                nhg_str += srv6_vpn_sidv[i] + NH_DELIMITER; // srv6 vpn sid
+                                nhg_str += srv6_src[i] + NH_DELIMITER;      // srv6 source
+                                nhg_str += NH_DELIMITER;                    // srv6 segment (empty)
+                            }
                         }
                         else
                         {
-                            SWSS_LOG_ERROR("For SRV6 nexthop ipv should be empty");
-                            it = consumer.m_toSync.erase(it);
-                            continue;
-                        }
-                        nhg_str = ip + NH_DELIMITER + srv6_segv[0] + NH_DELIMITER + srv6_src[0];
+                            if (srv6_segv.size() != srv6_src.size())
+                            {
+                                SWSS_LOG_ERROR("inconsistent number of srv6_segv and srv6_srcs.");
+                                it = consumer.m_toSync.erase(it);
+                                continue;
+                            }
 
-                        for (uint32_t i = 1; i < srv6_segv.size(); i++)
-                        {
-                            nhg_str += NHG_DELIMITER + ip;
-                            nhg_str += NH_DELIMITER + srv6_segv[i];
-                            nhg_str += NH_DELIMITER + srv6_src[i];
+                            string ip = "0.0.0.0";
+                            for (uint32_t i = 0; i < srv6_segv.size(); i++)
+                            {
+                                if (i) nhg_str += NHG_DELIMITER;
+                                nhg_str += ip + NH_DELIMITER;            // ip address
+                                nhg_str += NH_DELIMITER;                 // srv6 vpn sid (empty)
+                                nhg_str += srv6_src[i] + NH_DELIMITER;   // srv6 source
+                                nhg_str += srv6_segv[i] + NH_DELIMITER;  // srv6 segment
+                            }
                         }
-                        nhg = NextHopGroupKey(nhg_str, overlay_nh, srv6_nh);
+
+                        nhg = NextHopGroupKey(nhg_str, overlay_nh, srv6_nh, srv6_vpn);
                         SWSS_LOG_INFO("SRV6 route with nhg %s", nhg.to_string().c_str());
                     }
                     else if (overlay_nh == false)
@@ -925,6 +961,7 @@ void RouteOrch::doTask(Consumer& consumer)
         // Go through the bulker results
         auto it_prev = consumer.m_toSync.begin();
         m_bulkNhgReducedRefCnt.clear();
+        m_bulkSrv6NhgReducedVec.clear();
         while (it_prev != it)
         {
             KeyOpFieldsValuesTuple t = it_prev->second;
@@ -1001,24 +1038,17 @@ void RouteOrch::doTask(Consumer& consumer)
             {
                 removeOverlayNextHops(it_nhg.second, it_nhg.first);
             }
-            else if (it_nhg.first.is_srv6_nexthop())
-            {
-                if(it_nhg.first.getSize() > 1)
-                {
-                    if(m_syncdNextHopGroups[it_nhg.first].ref_count == 0)
-                    {
-                      removeNextHopGroup(it_nhg.first);
-                    }
-                    else
-                    {
-                      SWSS_LOG_ERROR("SRV6 ECMP %s REF count is not zero", it_nhg.first.to_string().c_str());
-                    }
-                }
-            }
             else if (m_syncdNextHopGroups[it_nhg.first].ref_count == 0)
             {
                 removeNextHopGroup(it_nhg.first);
             }
+        }
+
+        /* Reduce reference for srv6 next hop group */
+        /* Later delete for increase refcnt early */
+        if (!m_bulkSrv6NhgReducedVec.empty())
+        {
+            m_srv6Orch->removeSrv6Nexthops(m_bulkSrv6NhgReducedVec);
         }
     }
 }
@@ -1123,6 +1153,11 @@ void RouteOrch::increaseNextHopRefCount(const NextHopGroupKey &nexthops)
     {
         m_syncdNextHopGroups[nexthops].ref_count ++;
     }
+
+    if (nexthops.is_srv6_vpn())
+    {
+        m_srv6Orch->increasePrefixAggIdRefCount(nexthops);
+    }
 }
 
 void RouteOrch::decreaseNextHopRefCount(const NextHopGroupKey &nexthops)
@@ -1143,6 +1178,12 @@ void RouteOrch::decreaseNextHopRefCount(const NextHopGroupKey &nexthops)
     else
     {
         m_syncdNextHopGroups[nexthops].ref_count --;
+
+    }
+
+    if (nexthops.is_srv6_vpn())
+    {
+        m_srv6Orch->decreasePrefixAggIdRefCount(nexthops);
     }
 }
 
@@ -1503,18 +1544,6 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops)
         }
     }
 
-    if (srv6_nh)
-    {
-        if (!m_srv6Orch->removeSrv6Nexthops(nexthops))
-        {
-            SWSS_LOG_ERROR("Failed to remove Srv6 Nexthop %s", nexthops.to_string().c_str());
-        }
-        else
-        {
-            SWSS_LOG_INFO("Remove ECMP Srv6 nexthops %s", nexthops.to_string().c_str());
-        }
-    }
-
     m_syncdNextHopGroups.erase(nexthops);
 
     return true;
@@ -1787,6 +1816,15 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
             if (m_neighOrch->hasNextHop(nexthop))
             {
                 next_hop_id = m_neighOrch->getNextHopId(nexthop);
+                if (srv6_nh)
+                {
+                    SWSS_LOG_INFO("Single NH: create srv6 vpn %s", nextHops.to_string().c_str());
+                    if (!m_srv6Orch->srv6Nexthops(nextHops, next_hop_id))
+                    {
+                        SWSS_LOG_ERROR("Failed to create SRV6 vpn %s", nextHops.to_string().c_str());
+                        return false;
+                    }
+                }
             }
             /* For non-existent MPLS NH, check if IP neighbor NH exists */
             else if (nexthop.isMplsNextHop() &&
@@ -1837,22 +1875,31 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
     /* The route is pointing to a next hop group */
     else
     {
+        /* Need to call srv6nexthops() always for srv6 route, */
+        /* regardless of whether there is already an existing next hop group */
+        /* because vpn refcount need to be add if need */
+        if (srv6_nh)
+        {
+            sai_object_id_t temp_nh_id;
+            SWSS_LOG_INFO("ECMP SRV6 NH: handle srv6 nexthops %s", nextHops.to_string().c_str());
+            if(!m_srv6Orch->srv6Nexthops(nextHops, temp_nh_id))
+            {
+                SWSS_LOG_ERROR("Failed to handle SRV6 nexthops for %s", nextHops.to_string().c_str());
+                return false;
+            }
+        }
+
         /* Check if there is already an existing next hop group */
         if (!hasNextHopGroup(nextHops))
         {
-            if(srv6_nh)
-            {
-                sai_object_id_t temp_nh_id;
-                SWSS_LOG_INFO("ECMP SRV6 NH: create srv6 nexthops %s", nextHops.to_string().c_str());
-                if(!m_srv6Orch->srv6Nexthops(nextHops, temp_nh_id))
-                {
-                    SWSS_LOG_ERROR("Failed to create SRV6 nexthops for %s", nextHops.to_string().c_str());
-                    return false;
-                }
-            }
             /* Try to create a new next hop group */
             if (!addNextHopGroup(nextHops))
             {
+                /* If the nexthop is a srv6 nexthop, not create tempRoute
+                 * retry to add route */
+                if (nextHops.is_srv6_nexthop()) {
+                    return false;
+                }
                 for(auto it = nextHops.getNextHops().begin(); it != nextHops.getNextHops().end(); ++it)
                 {
                     const NextHopKey& nextHop = *it;
@@ -1915,6 +1962,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
     copy(route_entry.destination, ipPrefix);
 
     sai_attribute_t route_attr;
+    vector<_sai_attribute_t> route_attrs;
     auto& object_statuses = ctx.object_statuses;
 
     /* If the prefix is not in m_syncdRoutes, then we need to create the route
@@ -1938,11 +1986,19 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
         {
             route_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
             route_attr.value.oid = next_hop_id;
+            route_attrs.push_back(route_attr);
+        }
+
+        if (nextHops.is_srv6_vpn())
+        {
+            route_attr.id = SAI_ROUTE_ENTRY_ATTR_PREFIX_AGG_ID;
+            route_attr.value.u32 = m_srv6Orch->getAggId(nextHops);
+            route_attrs.push_back(route_attr);
         }
 
         /* Default SAI_ROUTE_ATTR_PACKET_ACTION is SAI_PACKET_ACTION_FORWARD */
         object_statuses.emplace_back();
-        sai_status_t status = gRouteBulker.create_entry(&object_statuses.back(), &route_entry, 1, &route_attr);
+        sai_status_t status = gRouteBulker.create_entry(&object_statuses.back(), &route_entry, (uint32_t)route_attrs.size(), route_attrs.data());
         if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
         {
             SWSS_LOG_ERROR("Failed to create route %s with next hop(s) %s: already exists in bulker",
@@ -1985,6 +2041,15 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                 route_attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
                 route_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
 
+                object_statuses.emplace_back();
+                gRouteBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &route_attr);
+            }
+
+            // Set update preifx agg id if need
+            if (nextHops.is_srv6_vpn())
+            {
+                route_attr.id = SAI_ROUTE_ENTRY_ATTR_PREFIX_AGG_ID;
+                route_attr.value.u32 = m_srv6Orch->getAggId(nextHops);
                 object_statuses.emplace_back();
                 gRouteBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &route_attr);
             }
@@ -2143,6 +2208,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
                 /* Clean up the newly created next hop group entry */
                 removeNextHopGroup(nextHops);
             }
+
             task_process_status handle_status = handleSaiCreateStatus(SAI_API_ROUTE, status);
             if (handle_status != task_success)
             {
@@ -2214,6 +2280,12 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         {
             decreaseNextHopRefCount(it_route->second.nhg_key);
             auto ol_nextHops = it_route->second.nhg_key;
+
+            if (ol_nextHops.is_srv6_nexthop())
+            {
+                m_bulkSrv6NhgReducedVec.emplace_back(ol_nextHops);
+            }
+
             if (ol_nextHops.getSize() > 1)
             {
                 if (m_syncdNextHopGroups[ol_nextHops].ref_count == 0)
@@ -2230,10 +2302,6 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
                     SWSS_LOG_NOTICE("Update overlay Nexthop %s", ol_nextHops.to_string().c_str());
                     m_bulkNhgReducedRefCnt.emplace(ol_nextHops, vrf_id);
                 }
-            }
-            else if (ol_nextHops.is_srv6_nexthop())
-            {
-                m_srv6Orch->removeSrv6Nexthops(ol_nextHops);
             }
             else if (ol_nextHops.getSize() == 1)
             {
@@ -2481,6 +2549,11 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
         decreaseNextHopRefCount(it_route->second.nhg_key);
 
         auto ol_nextHops = it_route->second.nhg_key;
+        if (ol_nextHops.is_srv6_nexthop())
+        {
+            m_bulkSrv6NhgReducedVec.emplace_back(ol_nextHops);
+        }
+
         MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
         if (it_route->second.nhg_key.getSize() > 1)
         {
@@ -2524,11 +2597,6 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
                 (m_neighOrch->getNextHopRefCount(nexthop) == 0))
             {
                 m_neighOrch->removeMplsNextHop(nexthop);
-            }
-            else if (nexthop.isSrv6NextHop() &&
-                    (m_neighOrch->getNextHopRefCount(nexthop) == 0))
-            {
-                m_srv6Orch->removeSrv6Nexthops(it_route->second.nhg_key);
             }
 
             RouteKey r_key = { vrf_id, ipPrefix };

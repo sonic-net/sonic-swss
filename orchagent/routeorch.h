@@ -249,6 +249,7 @@ private:
 
     std::set<std::pair<NextHopGroupKey, sai_object_id_t>> m_bulkNhgReducedRefCnt;
     /* m_bulkNhgReducedRefCnt: nexthop, vrf_id */
+    std::vector<NextHopGroupKey> m_bulkSrv6NhgReducedVec;
 
     NextHopObserverTable m_nextHopObservers;
 
