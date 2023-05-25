@@ -2448,19 +2448,36 @@ bool PortsOrch::getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uin
 {
     SWSS_LOG_ENTER();
 
-    sai_attribute_t attr[2];
-    attr[0].id = SAI_QUEUE_ATTR_TYPE;
-    attr[1].id = SAI_QUEUE_ATTR_INDEX;
+    auto const &queueInfoRef = m_queueInfo.find(queue_id);
 
-    sai_status_t status = sai_queue_api->get_queue_attribute(queue_id, 2, attr);
-    if (status != SAI_STATUS_SUCCESS)
+    sai_attribute_t attr[2];
+    if (queueInfoRef == m_queueInfo.end())
     {
-        SWSS_LOG_ERROR("Failed to get queue type and index for queue %" PRIu64 " rv:%d", queue_id, status);
-        task_process_status handle_status = handleSaiGetStatus(SAI_API_QUEUE, status);
-        if (handle_status != task_process_status::task_success)
+        attr[0].id = SAI_QUEUE_ATTR_TYPE;
+        attr[1].id = SAI_QUEUE_ATTR_INDEX;
+
+        sai_status_t status = sai_queue_api->get_queue_attribute(queue_id, 2, attr);
+        if (status != SAI_STATUS_SUCCESS)
         {
-            return false;
+            SWSS_LOG_ERROR("Failed to get queue type and index for queue %" PRIu64 " rv:%d", queue_id, status);
+            task_process_status handle_status = handleSaiGetStatus(SAI_API_QUEUE, status);
+            if (handle_status != task_process_status::task_success)
+            {
+                return false;
+            }
         }
+
+        SWSS_LOG_INFO("Caching information (index %d type %d) for queue %" PRIx64, attr[1].value.u8, attr[0].value.s32, queue_id);
+
+        m_queueInfo[queue_id].type = static_cast<sai_queue_type_t>(attr[0].value.s32);
+        m_queueInfo[queue_id].index = attr[1].value.u8;
+    }
+    else
+    {
+        attr[0].value.s32 = m_queueInfo[queue_id].type;
+        attr[1].value.u8 = m_queueInfo[queue_id].index;
+
+        SWSS_LOG_INFO("Fetched cached information (index %d type %d) for queue %" PRIx64, attr[1].value.u8, attr[0].value.s32, queue_id);
     }
 
     switch (attr[0].value.s32)
@@ -2478,7 +2495,7 @@ bool PortsOrch::getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uin
         type = "SAI_QUEUE_TYPE_UNICAST_VOQ";
         break;
     default:
-        SWSS_LOG_ERROR("Got unsupported queue type %d for %" PRIu64 " queue", attr[0].value.s32, queue_id);
+        SWSS_LOG_ERROR("Got unsupported queue type %d for %" PRIx64 " queue", attr[0].value.s32, queue_id);
         throw runtime_error("Got unsupported queue type");
     }
 
@@ -2754,6 +2771,12 @@ sai_status_t PortsOrch::removePort(sai_object_id_t port_id)
      */
 
     removePortSerdesAttribute(port_id);
+
+    for (auto queue_id : port.m_queue_ids)
+    {
+        SWSS_LOG_INFO("Removing cached information for queue %" PRIx64, queue_id);
+        m_queueInfo.erase(queue_id);
+    }
 
     sai_status_t status = sai_port_api->remove_port(port_id);
     if (status != SAI_STATUS_SUCCESS)
@@ -7945,14 +7968,13 @@ bool PortsOrch::addSystemPorts()
                 }
 
                 //System port for local port. Update the system port info in the existing physical port
-                Port local_port;
-                if(!getPort(attr.value.oid, local_port))
+                if(!getPort(attr.value.oid, port))
                 {
                     //This is system port for non-front panel local port (CPU or OLP or RCY (Inband)). Not an error
                     SWSS_LOG_NOTICE("Add port for non-front panel local system port 0x%" PRIx64 "; core: %d, core port: %d",
                             system_port_oid, core_index, core_port_index);
                 }
-                local_port.m_system_port_info.local_port_oid = attr.value.oid;
+                port.m_system_port_info.local_port_oid = attr.value.oid;
             }
 
             port.m_system_port_oid = system_port_oid;

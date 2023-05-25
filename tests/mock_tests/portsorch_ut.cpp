@@ -141,17 +141,50 @@ namespace portsorch_test
         return SAI_STATUS_SUCCESS;
     }
 
+    uint32_t _sai_get_queue_attr_count;
+    bool _sai_mock_queue_attr = false;
+    sai_status_t _ut_stub_sai_get_queue_attribute(
+        _In_ sai_object_id_t queue_id,
+        _In_ uint32_t attr_count,
+        _Inout_ sai_attribute_t *attr_list)
+    {
+        if (_sai_mock_queue_attr)
+        {
+            _sai_get_queue_attr_count++;
+            for (auto i = 0u; i < attr_count; i++)
+            {
+                if (attr_list[i].id == SAI_QUEUE_ATTR_TYPE)
+                {
+                    attr_list[i].value.s32 = static_cast<sai_queue_type_t>(SAI_QUEUE_TYPE_UNICAST);
+                }
+                else if (attr_list[i].id == SAI_QUEUE_ATTR_INDEX)
+                {
+                    attr_list[i].value.u8 = 0;
+                }
+                else
+                {
+                    pold_sai_queue_api->get_queue_attribute(queue_id, 1, &attr_list[i]);
+                }
+            }
+        }
+
+        return SAI_STATUS_SUCCESS;
+    }
+
     void _hook_sai_queue_api()
     {
+        _sai_mock_queue_attr = true;
         ut_sai_queue_api = *sai_queue_api;
         pold_sai_queue_api = sai_queue_api;
         ut_sai_queue_api.set_queue_attribute = _ut_stub_sai_set_queue_attribute;
+        ut_sai_queue_api.get_queue_attribute = _ut_stub_sai_get_queue_attribute;
         sai_queue_api = &ut_sai_queue_api;
     }
 
     void _unhook_sai_queue_api()
     {
         sai_queue_api = pold_sai_queue_api;
+        _sai_mock_queue_attr = false;
     }
 
     sai_bridge_api_t ut_sai_bridge_api;
@@ -328,6 +361,7 @@ namespace portsorch_test
      */
     TEST_F(PortsOrchTest, GetPortTest)
     {
+        _hook_sai_queue_api();
         Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
         std::deque<KeyOpFieldsValuesTuple> entries;
 
@@ -353,6 +387,21 @@ namespace portsorch_test
         ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
         ASSERT_NE(port.m_port_id, SAI_NULL_OBJECT_ID);
 
+        // Get queue info
+        string type;
+        uint8_t index;
+        auto queue_id = port.m_queue_ids[0];
+        auto ut_sai_get_queue_attr_count = _sai_get_queue_attr_count;
+        gPortsOrch->getQueueTypeAndIndex(queue_id, type, index);
+        ASSERT_EQ(type, "SAI_QUEUE_TYPE_UNICAST");
+        ASSERT_EQ(index, 0);
+        type = "";
+        index = 255;
+        gPortsOrch->getQueueTypeAndIndex(queue_id, type, index);
+        ASSERT_EQ(type, "SAI_QUEUE_TYPE_UNICAST");
+        ASSERT_EQ(index, 0);
+        ASSERT_EQ(++ut_sai_get_queue_attr_count, _sai_get_queue_attr_count);
+
         // Delete port
         entries.push_back({"Ethernet0", "DEL", {}});
         auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
@@ -361,6 +410,8 @@ namespace portsorch_test
         entries.clear();
 
         ASSERT_FALSE(gPortsOrch->getPort(port.m_port_id, port));
+        ASSERT_EQ(gPortsOrch->m_queueInfo.find(queue_id), gPortsOrch->m_queueInfo.end());
+        _unhook_sai_queue_api();
     }
 
     /**
