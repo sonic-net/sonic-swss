@@ -238,11 +238,11 @@ task_process_status PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const st
                 {
                     if(gSwitchOrch->checkPfcDlrInitEnable())
                     {
-                        if(getPfcDlrPacketAction() == PfcWdAction::PFC_WD_ACTION_UNKNOWN)
+                        if((getPfcDlrPacketAction() == PfcWdAction::PFC_WD_ACTION_UNKNOWN) || m_pfcwd_ports.empty())
                         {
                             sai_attribute_t attr;
                             attr.id = SAI_SWITCH_ATTR_PFC_DLR_PACKET_ACTION;
-                            attr.value.u32 = (sai_uint32_t)action;
+                            attr.value.u32 = packet_action_map.at(value);
 
                             sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
                             if(status != SAI_STATUS_SUCCESS)
@@ -307,6 +307,7 @@ task_process_status PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const st
     }
 
     SWSS_LOG_NOTICE("Started PFC Watchdog on port %s", port.m_alias.c_str());
+    m_pfcwd_ports.insert(port.m_alias);
     return task_process_status::task_success;
 }
 
@@ -325,6 +326,7 @@ task_process_status PfcWdOrch<DropHandler, ForwardHandler>::deleteEntry(const st
     }
 
     SWSS_LOG_NOTICE("Stopped PFC Watchdog on port %s", name.c_str());
+    m_pfcwd_ports.erase(port.m_alias);
     return task_process_status::task_success;
 }
 
@@ -1104,5 +1106,5 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::bake()
 // Trick to keep member functions in a separate file
 template class PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>;
 template class PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>;
-template class PfcWdSwOrch<PfcWdDlrHandler, PfcWdLossyHandler>;
+template class PfcWdSwOrch<PfcWdDlrHandler, PfcWdDlrHandler>;
 template class PfcWdSwOrch<PfcWdSaiDlrInitHandler, PfcWdActionHandler>;

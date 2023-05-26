@@ -609,7 +609,7 @@ bool OrchDaemon::init()
 
         if(gSwitchOrch->checkPfcDlrInitEnable())
         {
-            m_orchList.push_back(new PfcWdSwOrch<PfcWdDlrHandler, PfcWdLossyHandler>(
+            m_orchList.push_back(new PfcWdSwOrch<PfcWdDlrHandler, PfcWdDlrHandler>(
                         m_configDb,
                         pfc_wd_tables,
                         portStatIds,
