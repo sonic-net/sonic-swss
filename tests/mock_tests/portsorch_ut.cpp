@@ -10,6 +10,7 @@
 #include "mock_sai_bridge.h"
 #define private public
 #include "pfcactionhandler.h"
+#include "switchorch.h"
 #include <sys/mman.h>
 #undef private
 
@@ -63,6 +64,7 @@ namespace portsorch_test
 
     uint32_t _sai_set_port_fec_count;
     int32_t _sai_port_fec_mode;
+    uint32_t _sai_set_pfc_mode_count;
     sai_status_t _ut_stub_sai_set_port_attribute(
         _In_ sai_object_id_t port_id,
         _In_ const sai_attribute_t *attr)
@@ -77,11 +79,17 @@ namespace portsorch_test
             /* Simulating failure case */
             return SAI_STATUS_FAILURE;
         }
+	else if (attr[0].id == SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_COMBINED)
+	{
+	    _sai_set_pfc_mode_count++;
+        }
         return pold_sai_port_api->set_port_attribute(port_id, attr);
     }
 
     uint32_t *_sai_syncd_notifications_count;
     int32_t *_sai_syncd_notification_event;
+    uint32_t _sai_switch_dlr_packet_action_count;
+    uint32_t _sai_switch_dlr_packet_action;
     sai_status_t _ut_stub_sai_set_switch_attribute(
         _In_ sai_object_id_t switch_id,
         _In_ const sai_attribute_t *attr)
@@ -91,6 +99,11 @@ namespace portsorch_test
             *_sai_syncd_notifications_count =+ 1;
             *_sai_syncd_notification_event = attr[0].value.s32;
         }
+	else if (attr[0].id == SAI_SWITCH_ATTR_PFC_DLR_PACKET_ACTION)
+        {
+	    _sai_switch_dlr_packet_action_count++;
+	    _sai_switch_dlr_packet_action = attr[0].value.s32;
+	}
         return pold_sai_switch_api->set_switch_attribute(switch_id, attr);
     }
 
@@ -200,6 +213,17 @@ namespace portsorch_test
             ::testing_db::reset();
 
             // Create dependencies ...
+            TableConnector stateDbSwitchTable(m_state_db.get(), "SWITCH_CAPABILITY");
+            TableConnector app_switch_table(m_app_db.get(), APP_SWITCH_TABLE_NAME);
+            TableConnector conf_asic_sensors(m_config_db.get(), CFG_ASIC_SENSORS_TABLE_NAME);
+
+            vector<TableConnector> switch_tables = {
+                conf_asic_sensors,
+                app_switch_table
+            };
+
+            ASSERT_EQ(gSwitchOrch, nullptr);
+            gSwitchOrch = new SwitchOrch(m_app_db.get(), switch_tables, stateDbSwitchTable);
 
             const int portsorch_base_pri = 40;
 
@@ -249,6 +273,62 @@ namespace portsorch_test
 
             ASSERT_EQ(gNeighOrch, nullptr);
             gNeighOrch = new NeighOrch(m_app_db.get(), APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch, m_chassis_app_db.get());
+
+            vector<string> qos_tables = {
+                CFG_TC_TO_QUEUE_MAP_TABLE_NAME,
+                CFG_SCHEDULER_TABLE_NAME,
+                CFG_DSCP_TO_TC_MAP_TABLE_NAME,
+                CFG_MPLS_TC_TO_TC_MAP_TABLE_NAME,
+                CFG_DOT1P_TO_TC_MAP_TABLE_NAME,
+                CFG_QUEUE_TABLE_NAME,
+                CFG_PORT_QOS_MAP_TABLE_NAME,
+                CFG_WRED_PROFILE_TABLE_NAME,
+                CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME,
+                CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME,
+                CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME,
+                CFG_DSCP_TO_FC_MAP_TABLE_NAME,
+                CFG_EXP_TO_FC_MAP_TABLE_NAME,
+                CFG_TC_TO_DSCP_MAP_TABLE_NAME
+            };
+            gQosOrch = new QosOrch(m_config_db.get(), qos_tables);
+
+            vector<string> pfc_wd_tables = {
+                CFG_PFC_WD_TABLE_NAME
+            };
+
+            static const vector<sai_port_stat_t> portStatIds =
+            {
+                SAI_PORT_STAT_PFC_0_RX_PKTS,
+                SAI_PORT_STAT_PFC_1_RX_PKTS,
+                SAI_PORT_STAT_PFC_2_RX_PKTS,
+                SAI_PORT_STAT_PFC_3_RX_PKTS,
+                SAI_PORT_STAT_PFC_4_RX_PKTS,
+                SAI_PORT_STAT_PFC_5_RX_PKTS,
+                SAI_PORT_STAT_PFC_6_RX_PKTS,
+                SAI_PORT_STAT_PFC_7_RX_PKTS,
+                SAI_PORT_STAT_PFC_0_ON2OFF_RX_PKTS,
+                SAI_PORT_STAT_PFC_1_ON2OFF_RX_PKTS,
+                SAI_PORT_STAT_PFC_2_ON2OFF_RX_PKTS,
+                SAI_PORT_STAT_PFC_3_ON2OFF_RX_PKTS,
+                SAI_PORT_STAT_PFC_4_ON2OFF_RX_PKTS,
+                SAI_PORT_STAT_PFC_5_ON2OFF_RX_PKTS,
+                SAI_PORT_STAT_PFC_6_ON2OFF_RX_PKTS,
+                SAI_PORT_STAT_PFC_7_ON2OFF_RX_PKTS,
+            };
+
+            static const vector<sai_queue_stat_t> queueStatIds =
+            {
+                SAI_QUEUE_STAT_PACKETS,
+                SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES,
+            };
+
+            static const vector<sai_queue_attr_t> queueAttrIds =
+            {
+                SAI_QUEUE_ATTR_PAUSE_STATUS,
+            };
+            ASSERT_EQ((gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>), nullptr);
+            gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler> = new PfcWdSwOrch<PfcWdDlrHandler, PfcWdDlrHandler>(m_config_db.get(), pfc_wd_tables, portStatIds, queueStatIds, queueAttrIds, 100);
+
         }
 
         virtual void TearDown() override
@@ -271,6 +351,12 @@ namespace portsorch_test
             gPortsOrch = nullptr;
             delete gBufferOrch;
             gBufferOrch = nullptr;
+            delete gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>;
+            gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler> = nullptr;
+            delete gQosOrch;
+            gQosOrch = nullptr;
+            delete gSwitchOrch;
+            gSwitchOrch = nullptr;
 
             // clear orchs saved in directory
             gDirectory.m_values.clear();
@@ -804,6 +890,7 @@ namespace portsorch_test
 
     TEST_F(PortsOrchTest, PfcDlrHandlerCallingDlrInitAttribute)
     {
+        _hook_sai_port_api();
         _hook_sai_queue_api();
         Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
         Table pgTable = Table(m_app_db.get(), APP_BUFFER_PG_TABLE_NAME);
@@ -847,14 +934,161 @@ namespace portsorch_test
         // Simulate storm drop handler started on Ethernet0 TC 3
         Port port;
         gPortsOrch->getPort("Ethernet0", port);
+	auto current_pfc_mode_count = _sai_set_pfc_mode_count;
         auto countersTable = make_shared<Table>(m_counters_db.get(), COUNTERS_TABLE);
         auto dropHandler = make_unique<PfcWdDlrHandler>(port.m_port_id, port.m_queue_ids[3], 3, countersTable);
+	ASSERT_EQ(current_pfc_mode_count, _sai_set_pfc_mode_count);
         ASSERT_TRUE(_sai_set_queue_attr_count == 1);
 
         dropHandler.reset();
+	ASSERT_EQ(current_pfc_mode_count, _sai_set_pfc_mode_count);
         ASSERT_FALSE(_sai_set_queue_attr_count == 1);
 
         _unhook_sai_queue_api();
+	_unhook_sai_port_api();
+    }
+
+    TEST_F(PortsOrchTest, PfcDlrPacketAction)
+    {
+	_hook_sai_switch_api();
+	std::deque<KeyOpFieldsValuesTuple> entries;
+	sai_packet_action_t dlr_packet_action;
+	gSwitchOrch->m_PfcDlrInitEnable = true;
+        gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>->m_platform = BRCM_PLATFORM_SUBSTRING;
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+	Table cfgPfcwdTable = Table(m_config_db.get(), CFG_PFC_WD_TABLE_NAME);
+	Table cfgPortQosMapTable = Table(m_config_db.get(), CFG_PORT_QOS_MAP_TABLE_NAME);
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        // Populate port table with SAI ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone, PortInitDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // Apply configuration
+        //          ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        ASSERT_TRUE(gPortsOrch->allPortsReady());
+
+        // No more tasks
+        vector<string> ts;
+        gPortsOrch->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+        ts.clear();
+
+        entries.clear();
+	entries.push_back({"Ethernet0", "SET",
+			    {
+			      {"pfc_enable", "3,4"},
+			      {"pfcwd_sw_enable", "3,4"}
+			  }});
+	entries.push_back({"Ethernet8", "SET",
+			    {
+			      {"pfc_enable", "3,4"},
+			      {"pfcwd_sw_enable", "3,4"}
+			  }});
+        auto portQosMapConsumer = dynamic_cast<Consumer *>(gQosOrch->getExecutor(CFG_PORT_QOS_MAP_TABLE_NAME));
+        portQosMapConsumer->addToSync(entries);
+        entries.clear();
+	static_cast<Orch *>(gQosOrch)->doTask();
+
+        // create pfcwd entry for first port with drop action
+	dlr_packet_action = SAI_PACKET_ACTION_DROP;
+	entries.push_back({"GLOBAL", "SET",
+			  {
+			    {"POLL_INTERVAL", "200"},
+			  }});
+	entries.push_back({"Ethernet0", "SET",
+			  {
+			    {"action", "drop"},
+			    {"detection_time", "200"},
+			    {"restoration_time", "200"}
+			  }});
+
+        auto PfcwdConsumer = dynamic_cast<Consumer *>(gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>->getExecutor(CFG_PFC_WD_TABLE_NAME));
+	PfcwdConsumer->addToSync(entries);
+        entries.clear();
+
+        auto current_switch_dlr_packet_action_count = _sai_switch_dlr_packet_action_count;
+        static_cast<Orch *>(gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>)->doTask();
+	ASSERT_EQ(++current_switch_dlr_packet_action_count, _sai_switch_dlr_packet_action_count);
+        ASSERT_EQ(_sai_switch_dlr_packet_action, dlr_packet_action);
+        ASSERT_EQ((gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>->m_pfcwd_ports.size()), 1);
+
+	// create pfcwd entry for second port with drop action
+	entries.push_back({"Ethernet8", "SET",
+			  {
+			    {"action", "drop"},
+			    {"detection_time", "200"},
+			    {"restoration_time", "200"}
+			  }});
+	PfcwdConsumer->addToSync(entries);
+        entries.clear();
+        current_switch_dlr_packet_action_count = _sai_switch_dlr_packet_action_count;
+        static_cast<Orch *>(gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>)->doTask();
+	// verify no change in count
+	ASSERT_EQ(current_switch_dlr_packet_action_count, _sai_switch_dlr_packet_action_count);
+
+        // remove both the entries
+        entries.push_back({"Ethernet0", "DEL",
+                           {{}}
+                          });
+	PfcwdConsumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>)->doTask();
+        ASSERT_EQ((gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>->m_pfcwd_ports.size()), 1);
+
+        entries.push_back({"Ethernet8", "DEL",
+                           {{}}
+                          });
+	PfcwdConsumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>)->doTask();
+
+        // create pfcwd entry for first port with forward action
+	dlr_packet_action = SAI_PACKET_ACTION_FORWARD;
+	entries.push_back({"Ethernet0", "SET",
+			  {
+			    {"action", "forward"},
+			    {"detection_time", "200"},
+			    {"restoration_time", "200"}
+			  }});
+
+	PfcwdConsumer->addToSync(entries);
+        entries.clear();
+
+        current_switch_dlr_packet_action_count = _sai_switch_dlr_packet_action_count;
+        static_cast<Orch *>(gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>)->doTask();
+	ASSERT_EQ(++current_switch_dlr_packet_action_count, _sai_switch_dlr_packet_action_count);
+        ASSERT_EQ(_sai_switch_dlr_packet_action, dlr_packet_action);
+        ASSERT_EQ((gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>->m_pfcwd_ports.size()), 1);
+
+        // remove the entry
+        entries.push_back({"Ethernet0", "DEL",
+                           {{}}
+                          });
+	PfcwdConsumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>)->doTask();
+        ASSERT_EQ((gPfcwdOrch<PfcWdDlrHandler, PfcWdDlrHandler>->m_pfcwd_ports.size()), 0);
+
+	_unhook_sai_switch_api();
     }
 
     TEST_F(PortsOrchTest, PfcZeroBufferHandler)
