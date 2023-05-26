@@ -1051,10 +1051,10 @@ bool BufferMgrDynamic::isHeadroomResourceValid(const string &port, const buffer_
     // profile: the profile referenced by the new_pg (if provided) or all PGs
     // new_pg: which pg is newly added?
 
-    if (!profile.lossless)
+    if (!profile.lossless && new_pg.empty())
     {
-        SWSS_LOG_INFO("No need to check headroom for lossy PG port %s profile %s size %s pg %s",
-                  port.c_str(), profile.name.c_str(), profile.size.c_str(), new_pg.c_str());
+        SWSS_LOG_INFO("No need to check headroom for lossy PG port %s profile %s size %s without a PG specified",
+                  port.c_str(), profile.name.c_str(), profile.size.c_str());
         return true;
     }
 
@@ -1497,7 +1497,7 @@ task_process_status BufferMgrDynamic::refreshPgsForPort(const string &port, cons
 
         // Calculate whether accumulative headroom size exceeds the maximum value
         // Abort if it does
-        if (!isHeadroomResourceValid(port, m_bufferProfileLookup[newProfile], exactly_matched_key))
+        if (!isHeadroomResourceValid(port, m_bufferProfileLookup[newProfile], key))
         {
             SWSS_LOG_ERROR("Update speed (%s) and cable length (%s) for port %s failed, accumulative headroom size exceeds the limit",
                            speed.c_str(), cable_length.c_str(), port.c_str());
@@ -3005,6 +3005,11 @@ task_process_status BufferMgrDynamic::handleSingleBufferPgEntry(const string &ke
                     bufferPg.dynamic_calculated = profileRef.dynamic_calculated;
                     bufferPg.configured_profile_name = profileName;
                     bufferPg.lossless = profileRef.lossless;
+                    if (!profileRef.lossless && !isHeadroomResourceValid(port, profileRef, key))
+                    {
+                        SWSS_LOG_ERROR("Unable to configure lossy PG %s, accumulative headroom size exceeds the limit", key.c_str());
+                        return task_process_status::task_failed;
+                    }
                 }
                 bufferPg.static_configured = true;
                 bufferPg.configured_profile_name = profileName;
