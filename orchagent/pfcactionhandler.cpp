@@ -25,6 +25,7 @@
 
 extern sai_object_id_t gSwitchId;
 extern PortsOrch *gPortsOrch;
+extern SwitchOrch *gSwitchOrch;
 extern AclOrch * gAclOrch;
 extern sai_port_api_t *sai_port_api;
 extern sai_queue_api_t *sai_queue_api;
@@ -483,7 +484,7 @@ PfcWdLossyHandler::PfcWdLossyHandler(sai_object_id_t port, sai_object_id_t queue
     SWSS_LOG_ENTER();
 
     string platform = getenv("platform") ? getenv("platform") : "";
-    if (platform == CISCO_8000_PLATFORM_SUBSTRING)
+    if (platform == CISCO_8000_PLATFORM_SUBSTRING || ((platform == BRCM_PLATFORM_SUBSTRING) && (gSwitchOrch->checkPfcDlrInitEnable())))
     {
         SWSS_LOG_DEBUG("Skipping in constructor PfcWdLossyHandler for platform %s on port 0x%" PRIx64,
                        platform.c_str(), port);
@@ -510,7 +511,7 @@ PfcWdLossyHandler::~PfcWdLossyHandler(void)
     SWSS_LOG_ENTER();
 
     string platform = getenv("platform") ? getenv("platform") : "";
-    if (platform == CISCO_8000_PLATFORM_SUBSTRING)
+    if (platform == CISCO_8000_PLATFORM_SUBSTRING || ((platform == BRCM_PLATFORM_SUBSTRING) && (gSwitchOrch->checkPfcDlrInitEnable())))
     {
         SWSS_LOG_DEBUG("Skipping in destructor PfcWdLossyHandler for platform %s on port 0x%" PRIx64,
                        platform.c_str(), getPort());

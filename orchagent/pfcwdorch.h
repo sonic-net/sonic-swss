@@ -22,6 +22,12 @@ enum class PfcWdAction
     PFC_WD_ACTION_ALERT,
 };
 
+static const map<string, sai_packet_action_t> packet_action_map = {
+    {"drop", SAI_PACKET_ACTION_DROP},
+    {"forward", SAI_PACKET_ACTION_FORWARD},
+    {"alert", SAI_PACKET_ACTION_FORWARD}
+};
+
 template <typename DropHandler, typename ForwardHandler>
 class PfcWdOrch: public Orch
 {
@@ -61,6 +67,7 @@ private:
     shared_ptr<DBConnector> m_countersDb = nullptr;
     shared_ptr<Table> m_countersTable = nullptr;
     PfcWdAction PfcDlrPacketAction = PfcWdAction::PFC_WD_ACTION_UNKNOWN;
+    std::set<std::string> m_pfcwd_ports;
 };
 
 template <typename DropHandler, typename ForwardHandler>
