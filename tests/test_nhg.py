@@ -178,7 +178,7 @@ class TestNextHopGroupBase(object):
                          "Down":        "SAI_BFD_SESSION_STATE_DOWN",
                          "Init":        "SAI_BFD_SESSION_STATE_INIT",
                          "Up":          "SAI_BFD_SESSION_STATE_UP"}
-
+        # FIXME rerun pipeline, check if dvs.adb fails
         ntf = swsscommon.NotificationProducer(dvs.adb, "NOTIFICATIONS")
         fvp = swsscommon.FieldValuePairs()
         ntf_data = "[{\"bfd_session_id\":\""+session+"\",\"session_state\":\""+bfd_sai_state[state]+"\"}]"
