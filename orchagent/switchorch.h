@@ -3,8 +3,8 @@
 #include "acltable.h"
 #include "orch.h"
 #include "timer.h"
-#include "switch/swcap.h"
-#include "switch/swhlpr.h"
+#include "switch/switch_capabilities.h"
+#include "switch/switch_helper.h"
 
 #define DEFAULT_ASIC_SENSORS_POLLER_INTERVAL 60
 #define ASIC_SENSORS_POLLER_STATUS "ASIC_SENSORS_POLLER_STATUS"
@@ -57,14 +57,10 @@ private:
     void querySwitchPortEgressSampleCapability();
 
     // Switch hash
-    bool setSwitchHashFieldListSai(sai_object_id_t oid, std::vector<sai_int32_t> &hfList) const;
-    bool setSwitchHashEcmpHash(const SwitchHash &hash) const;
-    bool setSwitchHashLagHash(const SwitchHash &hash) const;
+    bool setSwitchHashFieldListSai(const SwitchHash &hash, bool isEcmpHash) const;
     bool setSwitchHash(const SwitchHash &hash);
 
-    bool getSwitchHashOidSai(sai_object_id_t &oid, bool isEcmpHashOid) const;
-    void getSwitchHashEcmpOid();
-    void getSwitchHashLagOid();
+    bool getSwitchHashOidSai(sai_object_id_t &oid, bool isEcmpHash) const;
     void querySwitchHashDefaults();
 
     sai_status_t setSwitchTunnelVxlanParams(swss::FieldValueTuple &val);

@@ -14,9 +14,6 @@
 using namespace std;
 using namespace swss;
 
-#define CONFIG_DB_NAME "CONFIG_DB"
-#define APPL_DB_NAME   "APPL_DB"
-
 extern sai_object_id_t gSwitchId;
 extern sai_switch_api_t *sai_switch_api;
 extern sai_acl_api_t *sai_acl_api;
@@ -479,8 +476,17 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
     }
 }
 
-bool SwitchOrch::setSwitchHashFieldListSai(sai_object_id_t oid, std::vector<sai_int32_t> &hfList) const
+bool SwitchOrch::setSwitchHashFieldListSai(const SwitchHash &hash, bool isEcmpHash) const
 {
+    const auto &oid = isEcmpHash ? m_switchHashDefaults.ecmpHash.oid : m_switchHashDefaults.lagHash.oid;
+    const auto &hfSet = isEcmpHash ? hash.ecmp_hash.value : hash.lag_hash.value;
+
+    std::vector<sai_int32_t> hfList;
+    std::transform(
+        hfSet.cbegin(), hfSet.cend(), std::back_inserter(hfList),
+        [](sai_native_hash_field_t value) { return static_cast<sai_int32_t>(value); }
+    );
+
     sai_attribute_t attr;
 
     attr.id = SAI_HASH_ATTR_NATIVE_HASH_FIELD_LIST;
@@ -491,54 +497,26 @@ bool SwitchOrch::setSwitchHashFieldListSai(sai_object_id_t oid, std::vector<sai_
     return status == SAI_STATUS_SUCCESS;
 }
 
-bool SwitchOrch::setSwitchHashEcmpHash(const SwitchHash &hash) const
-{
-    const auto &oid = this->m_switchHashDefaults.ecmpHash.oid;
-    const auto &hfSet = hash.ecmp_hash.value;
-
-    std::vector<sai_int32_t> hfList;
-    std::transform(
-        hfSet.cbegin(), hfSet.cend(), std::back_inserter(hfList),
-        [](sai_native_hash_field_t value) { return static_cast<sai_int32_t>(value); }
-    );
-
-    return this->setSwitchHashFieldListSai(oid, hfList);
-}
-
-bool SwitchOrch::setSwitchHashLagHash(const SwitchHash &hash) const
-{
-    const auto &oid = this->m_switchHashDefaults.lagHash.oid;
-    const auto &hfSet = hash.lag_hash.value;
-
-    std::vector<sai_int32_t> hfList;
-    std::transform(
-        hfSet.cbegin(), hfSet.cend(), std::back_inserter(hfList),
-        [](sai_native_hash_field_t value) { return static_cast<sai_int32_t>(value); }
-    );
-
-    return this->setSwitchHashFieldListSai(oid, hfList);
-}
-
 bool SwitchOrch::setSwitchHash(const SwitchHash &hash)
 {
     SWSS_LOG_ENTER();
 
-    auto hObj = this->swHlpr.getSwHash();
+    auto hObj = swHlpr.getSwHash();
     auto cfgUpd = false;
 
     if (hash.ecmp_hash.is_set)
     {
         if (hObj.ecmp_hash.value != hash.ecmp_hash.value)
         {
-            if (this->swCap.isSwitchEcmpHashSupported())
+            if (swCap.isSwitchEcmpHashSupported())
             {
-                if (!this->swCap.validateSwitchHashFieldCap(hash.ecmp_hash.value))
+                if (!swCap.validateSwitchHashFieldCap(hash.ecmp_hash.value))
                 {
                     SWSS_LOG_ERROR("Failed to validate switch ECMP hash: capability is not supported");
                     return false;
                 }
 
-                if (!this->setSwitchHashEcmpHash(hash))
+                if (!setSwitchHashFieldListSai(hash, true))
                 {
                     SWSS_LOG_ERROR("Failed to set switch ECMP hash in SAI");
                     return false;
@@ -565,15 +543,15 @@ bool SwitchOrch::setSwitchHash(const SwitchHash &hash)
     {
         if (hObj.lag_hash.value != hash.lag_hash.value)
         {
-            if (this->swCap.isSwitchLagHashSupported())
+            if (swCap.isSwitchLagHashSupported())
             {
-                if (!this->swCap.validateSwitchHashFieldCap(hash.lag_hash.value))
+                if (!swCap.validateSwitchHashFieldCap(hash.lag_hash.value))
                 {
                     SWSS_LOG_ERROR("Failed to validate switch LAG hash: capability is not supported");
                     return false;
                 }
 
-                if (!this->setSwitchHashLagHash(hash))
+                if (!setSwitchHashFieldListSai(hash, false))
                 {
                     SWSS_LOG_ERROR("Failed to set switch LAG hash in SAI");
                     return false;
@@ -596,13 +574,14 @@ bool SwitchOrch::setSwitchHash(const SwitchHash &hash)
         }
     }
 
+    // Don't update internal cache when config remains unchanged
     if (!cfgUpd)
     {
         SWSS_LOG_NOTICE("Switch hash in SAI is up-to-date");
         return true;
     }
 
-    this->swHlpr.setSwHash(hash);
+    swHlpr.setSwHash(hash);
 
     SWSS_LOG_NOTICE("Set switch hash in SAI");
 
@@ -645,9 +624,9 @@ void SwitchOrch::doCfgSwitchHashTableTask(Consumer &consumer)
                 hash.fieldValueMap[fieldName] = fieldValue;
             }
 
-            if (this->swHlpr.parseSwHash(hash))
+            if (swHlpr.parseSwHash(hash))
             {
-                if (!this->setSwitchHash(hash))
+                if (!setSwitchHash(hash))
                 {
                     SWSS_LOG_ERROR("Failed to set switch hash: ASIC and CONFIG DB are diverged");
                 }
@@ -670,38 +649,23 @@ void SwitchOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    const std::string &dbName = consumer.getDbName();
-    const std::string &tableName = consumer.getTableName();
+    const auto &tableName = consumer.getTableName();
 
-    if (dbName == CONFIG_DB_NAME)
+    if (tableName == APP_SWITCH_TABLE_NAME)
     {
-        if (tableName == CFG_SWITCH_HASH_TABLE_NAME)
-        {
-            doCfgSwitchHashTableTask(consumer);
-        }
-        else if (tableName == CFG_ASIC_SENSORS_TABLE_NAME)
-        {
-            doCfgSensorsTableTask(consumer);
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Unknown table : %s", tableName.c_str());
-        }
+        doAppSwitchTableTask(consumer);
     }
-    else if (dbName == APPL_DB_NAME)
+    else if (tableName == CFG_ASIC_SENSORS_TABLE_NAME)
     {
-        if (tableName == APP_SWITCH_TABLE_NAME)
-        {
-            doAppSwitchTableTask(consumer);
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Unknown table : %s", tableName.c_str());
-        }
+        doCfgSensorsTableTask(consumer);
+    }
+    else if (tableName == CFG_SWITCH_HASH_TABLE_NAME)
+    {
+        doCfgSwitchHashTableTask(consumer);
     }
     else
     {
-        SWSS_LOG_ERROR("Unknown DB : %s", dbName.c_str());
+        SWSS_LOG_ERROR("Unknown table : %s", tableName.c_str());
     }
 }
 
@@ -1026,50 +990,36 @@ void SwitchOrch::querySwitchTpidCapability()
     }
 }
 
-bool SwitchOrch::getSwitchHashOidSai(sai_object_id_t &oid, bool isEcmpHashOid) const
+bool SwitchOrch::getSwitchHashOidSai(sai_object_id_t &oid, bool isEcmpHash) const
 {
     sai_attribute_t attr;
-    attr.id = isEcmpHashOid ? SAI_SWITCH_ATTR_ECMP_HASH : SAI_SWITCH_ATTR_LAG_HASH;
+    attr.id = isEcmpHash ? SAI_SWITCH_ATTR_ECMP_HASH : SAI_SWITCH_ATTR_LAG_HASH;
     attr.value.oid = SAI_NULL_OBJECT_ID;
 
     auto status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        return false;
+    }
+
     oid = attr.value.oid;
 
-    return status == SAI_STATUS_SUCCESS;
-}
-
-void SwitchOrch::getSwitchHashEcmpOid()
-{
-    SWSS_LOG_ENTER();
-
-    sai_object_id_t oid = SAI_NULL_OBJECT_ID;
-
-    if (!this->getSwitchHashOidSai(oid, true))
-    {
-        SWSS_LOG_THROW("Failed to get switch ECMP hash OID");
-    }
-
-    this->m_switchHashDefaults.ecmpHash.oid = oid;
-}
-
-void SwitchOrch::getSwitchHashLagOid()
-{
-    SWSS_LOG_ENTER();
-
-    sai_object_id_t oid = SAI_NULL_OBJECT_ID;
-
-    if (!this->getSwitchHashOidSai(oid, false))
-    {
-        SWSS_LOG_THROW("Failed to get switch LAG hash OID");
-    }
-
-    this->m_switchHashDefaults.lagHash.oid = oid;
+    return true;
 }
 
 void SwitchOrch::querySwitchHashDefaults()
 {
-    this->getSwitchHashEcmpOid();
-    this->getSwitchHashLagOid();
+    SWSS_LOG_ENTER();
+
+    if (!getSwitchHashOidSai(m_switchHashDefaults.ecmpHash.oid, true))
+    {
+        SWSS_LOG_WARN("Failed to get switch ECMP hash OID");
+    }
+
+    if (!getSwitchHashOidSai(m_switchHashDefaults.lagHash.oid, false))
+    {
+        SWSS_LOG_WARN("Failed to get switch LAG hash OID");
+    }
 }
 
 bool SwitchOrch::querySwitchCapability(sai_object_type_t sai_object, sai_attr_id_t attr_id)

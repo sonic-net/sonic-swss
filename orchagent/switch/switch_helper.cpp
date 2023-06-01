@@ -7,8 +7,8 @@
 #include <tokenize.h>
 #include <logger.h>
 
-#include "swschema.h"
-#include "swhlpr.h"
+#include "switch_schema.h"
+#include "switch_helper.h"
 
 using namespace swss;
 
@@ -40,12 +40,12 @@ static const std::unordered_map<std::string, sai_native_hash_field_t> swHashHash
 
 const SwitchHash& SwitchHelper::getSwHash() const
 {
-    return this->swHash;
+    return swHash;
 }
 
 void SwitchHelper::setSwHash(const SwitchHash &hash)
 {
-    this->swHash = hash;
+    swHash = hash;
 }
 
 template<typename T>
@@ -88,12 +88,12 @@ bool SwitchHelper::parseSwHashFieldList(T &obj, const std::string &field, const 
 
 bool SwitchHelper::parseSwHashEcmpHash(SwitchHash &hash, const std::string &field, const std::string &value) const
 {
-    return this->parseSwHashFieldList(hash.ecmp_hash, field, value);
+    return parseSwHashFieldList(hash.ecmp_hash, field, value);
 }
 
 bool SwitchHelper::parseSwHashLagHash(SwitchHash &hash, const std::string &field, const std::string &value) const
 {
-    return this->parseSwHashFieldList(hash.lag_hash, field, value);
+    return parseSwHashFieldList(hash.lag_hash, field, value);
 }
 
 bool SwitchHelper::parseSwHash(SwitchHash &hash) const
@@ -107,14 +107,14 @@ bool SwitchHelper::parseSwHash(SwitchHash &hash) const
 
         if (field == SWITCH_HASH_ECMP_HASH)
         {
-            if (!this->parseSwHashEcmpHash(hash, field, value))
+            if (!parseSwHashEcmpHash(hash, field, value))
             {
                 return false;
             }
         }
         else if (field == SWITCH_HASH_LAG_HASH)
         {
-            if (!this->parseSwHashLagHash(hash, field, value))
+            if (!parseSwHashLagHash(hash, field, value))
             {
                 return false;
             }
@@ -125,7 +125,7 @@ bool SwitchHelper::parseSwHash(SwitchHash &hash) const
         }
     }
 
-    return this->validateSwHash(hash);
+    return validateSwHash(hash);
 }
 
 bool SwitchHelper::validateSwHash(SwitchHash &hash) const

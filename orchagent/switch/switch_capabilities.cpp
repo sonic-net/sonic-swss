@@ -18,8 +18,8 @@ extern "C" {
 #include <schema.h>
 #include <logger.h>
 
-#include "swschema.h"
-#include "swcap.h"
+#include "switch_schema.h"
+#include "switch_capabilities.h"
 
 using namespace swss;
 
@@ -99,37 +99,37 @@ Table SwitchCapabilities::capTable(&stateDb, STATE_SWITCH_CAPABILITY_TABLE_NAME)
 
 SwitchCapabilities::SwitchCapabilities()
 {
-    this->queryHashCapabilities();
-    this->querySwitchCapabilities();
+    queryHashCapabilities();
+    querySwitchCapabilities();
 
-    this->writeHashCapabilitiesToDb();
-    this->writeSwitchCapabilitiesToDb();
+    writeHashCapabilitiesToDb();
+    writeSwitchCapabilitiesToDb();
 }
 
 bool SwitchCapabilities::isSwitchEcmpHashSupported() const
 {
-    const auto &nativeHashFieldList = this->hashCapabilities.nativeHashFieldList;
-    const auto &ecmpHash = this->switchCapabilities.ecmpHash;
+    const auto &nativeHashFieldList = hashCapabilities.nativeHashFieldList;
+    const auto &ecmpHash = switchCapabilities.ecmpHash;
 
     return nativeHashFieldList.isAttrSupported && ecmpHash.isAttrSupported;
 }
 
 bool SwitchCapabilities::isSwitchLagHashSupported() const
 {
-    const auto &nativeHashFieldList = this->hashCapabilities.nativeHashFieldList;
-    const auto &lagHash = this->switchCapabilities.lagHash;
+    const auto &nativeHashFieldList = hashCapabilities.nativeHashFieldList;
+    const auto &lagHash = switchCapabilities.lagHash;
 
     return nativeHashFieldList.isAttrSupported && lagHash.isAttrSupported;
 }
 
 bool SwitchCapabilities::validateSwitchHashFieldCap(const std::set<sai_native_hash_field_t> &hfSet) const
 {
-    if (!this->hashCapabilities.nativeHashFieldList.isEnumSupported)
+    if (!hashCapabilities.nativeHashFieldList.isEnumSupported)
     {
         return true;
     }
 
-    if (this->hashCapabilities.nativeHashFieldList.hfSet.empty())
+    if (hashCapabilities.nativeHashFieldList.hfSet.empty())
     {
         SWSS_LOG_ERROR("Failed to validate hash field: no hash field capabilities");
         return false;
@@ -137,7 +137,7 @@ bool SwitchCapabilities::validateSwitchHashFieldCap(const std::set<sai_native_ha
 
     for (const auto &cit : hfSet)
     {
-        if (this->hashCapabilities.nativeHashFieldList.hfSet.count(cit) == 0)
+        if (hashCapabilities.nativeHashFieldList.hfSet.count(cit) == 0)
         {
             SWSS_LOG_ERROR("Failed to validate hash field: value(%s) is not supported");
             return false;
@@ -149,7 +149,7 @@ bool SwitchCapabilities::validateSwitchHashFieldCap(const std::set<sai_native_ha
 
 FieldValueTuple SwitchCapabilities::makeHashFieldCapDbEntry() const
 {
-    const auto &nativeHashFieldList = this->hashCapabilities.nativeHashFieldList;
+    const auto &nativeHashFieldList = hashCapabilities.nativeHashFieldList;
 
     auto field = SWITCH_CAPABILITY_HASH_NATIVE_HASH_FIELD_LIST_FIELD;
     auto value = nativeHashFieldList.isEnumSupported ? toStr(nativeHashFieldList.hfSet) : "N/A";
@@ -160,7 +160,7 @@ FieldValueTuple SwitchCapabilities::makeHashFieldCapDbEntry() const
 FieldValueTuple SwitchCapabilities::makeEcmpHashCapDbEntry() const
 {
     auto field = SWITCH_CAPABILITY_ECMP_HASH_CAPABLE_FIELD;
-    auto value = toStr(this->isSwitchEcmpHashSupported());
+    auto value = toStr(isSwitchEcmpHashSupported());
 
     return FieldValueTuple(field, value);
 }
@@ -168,7 +168,7 @@ FieldValueTuple SwitchCapabilities::makeEcmpHashCapDbEntry() const
 FieldValueTuple SwitchCapabilities::makeLagHashCapDbEntry() const
 {
     auto field = SWITCH_CAPABILITY_LAG_HASH_CAPABLE_FIELD;
-    auto value = toStr(this->isSwitchLagHashSupported());
+    auto value = toStr(isSwitchLagHashSupported());
 
     return FieldValueTuple(field, value);
 }
@@ -199,7 +199,7 @@ void SwitchCapabilities::queryHashNativeHashFieldListEnumCapabilities()
     SWSS_LOG_ENTER();
 
     std::vector<sai_int32_t> hfList;
-    auto status = this->queryEnumCapabilitiesSai(
+    auto status = queryEnumCapabilitiesSai(
         hfList, SAI_OBJECT_TYPE_HASH, SAI_HASH_ATTR_NATIVE_HASH_FIELD_LIST
     );
     if (status != SAI_STATUS_SUCCESS)
@@ -211,13 +211,13 @@ void SwitchCapabilities::queryHashNativeHashFieldListEnumCapabilities()
         return;
     }
 
-    auto &hfSet = this->hashCapabilities.nativeHashFieldList.hfSet;
+    auto &hfSet = hashCapabilities.nativeHashFieldList.hfSet;
     std::transform(
         hfList.cbegin(), hfList.cend(), std::inserter(hfSet, hfSet.begin()),
         [](sai_int32_t value) { return static_cast<sai_native_hash_field_t>(value); }
     );
 
-    this->hashCapabilities.nativeHashFieldList.isEnumSupported = true;
+    hashCapabilities.nativeHashFieldList.isEnumSupported = true;
 }
 
 void SwitchCapabilities::queryHashNativeHashFieldListAttrCapabilities()
@@ -226,7 +226,7 @@ void SwitchCapabilities::queryHashNativeHashFieldListAttrCapabilities()
 
     sai_attr_capability_t attrCap;
 
-    auto status = this->queryAttrCapabilitiesSai(
+    auto status = queryAttrCapabilitiesSai(
         attrCap, SAI_OBJECT_TYPE_HASH, SAI_HASH_ATTR_NATIVE_HASH_FIELD_LIST
     );
     if (status != SAI_STATUS_SUCCESS)
@@ -247,13 +247,13 @@ void SwitchCapabilities::queryHashNativeHashFieldListAttrCapabilities()
         return;
     }
 
-    this->hashCapabilities.nativeHashFieldList.isAttrSupported = true;
+    hashCapabilities.nativeHashFieldList.isAttrSupported = true;
 }
 
 void SwitchCapabilities::queryHashCapabilities()
 {
-    this->queryHashNativeHashFieldListEnumCapabilities();
-    this->queryHashNativeHashFieldListAttrCapabilities();
+    queryHashNativeHashFieldListEnumCapabilities();
+    queryHashNativeHashFieldListAttrCapabilities();
 }
 
 void SwitchCapabilities::querySwitchEcmpHashCapabilities()
@@ -262,7 +262,7 @@ void SwitchCapabilities::querySwitchEcmpHashCapabilities()
 
     sai_attr_capability_t attrCap;
 
-    auto status = this->queryAttrCapabilitiesSai(
+    auto status = queryAttrCapabilitiesSai(
         attrCap, SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_ECMP_HASH
     );
     if (status != SAI_STATUS_SUCCESS)
@@ -283,7 +283,7 @@ void SwitchCapabilities::querySwitchEcmpHashCapabilities()
         return;
     }
 
-    this->switchCapabilities.ecmpHash.isAttrSupported = true;
+    switchCapabilities.ecmpHash.isAttrSupported = true;
 }
 
 void SwitchCapabilities::querySwitchLagHashCapabilities()
@@ -292,7 +292,7 @@ void SwitchCapabilities::querySwitchLagHashCapabilities()
 
     sai_attr_capability_t attrCap;
 
-    auto status = this->queryAttrCapabilitiesSai(
+    auto status = queryAttrCapabilitiesSai(
         attrCap, SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_LAG_HASH
     );
     if (status != SAI_STATUS_SUCCESS)
@@ -313,13 +313,13 @@ void SwitchCapabilities::querySwitchLagHashCapabilities()
         return;
     }
 
-    this->switchCapabilities.lagHash.isAttrSupported = true;
+    switchCapabilities.lagHash.isAttrSupported = true;
 }
 
 void SwitchCapabilities::querySwitchCapabilities()
 {
-    this->querySwitchEcmpHashCapabilities();
-    this->querySwitchLagHashCapabilities();
+    querySwitchEcmpHashCapabilities();
+    querySwitchLagHashCapabilities();
 }
 
 void SwitchCapabilities::writeHashCapabilitiesToDb()
@@ -329,7 +329,7 @@ void SwitchCapabilities::writeHashCapabilitiesToDb()
     auto key = SwitchCapabilities::capTable.getKeyName(SWITCH_CAPABILITY_KEY);
 
     std::vector<FieldValueTuple> fvList = {
-        this->makeHashFieldCapDbEntry()
+        makeHashFieldCapDbEntry()
     };
 
     SwitchCapabilities::capTable.set(SWITCH_CAPABILITY_KEY, fvList);
@@ -344,8 +344,8 @@ void SwitchCapabilities::writeSwitchCapabilitiesToDb()
     auto key = SwitchCapabilities::capTable.getKeyName(SWITCH_CAPABILITY_KEY);
 
     std::vector<FieldValueTuple> fvList = {
-        this->makeEcmpHashCapDbEntry(),
-        this->makeLagHashCapDbEntry()
+        makeEcmpHashCapDbEntry(),
+        makeLagHashCapDbEntry()
     };
 
     SwitchCapabilities::capTable.set(SWITCH_CAPABILITY_KEY, fvList);
