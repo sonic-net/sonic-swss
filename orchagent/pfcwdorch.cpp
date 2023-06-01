@@ -238,7 +238,7 @@ task_process_status PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const st
                 {
                     if(gSwitchOrch->checkPfcDlrInitEnable())
                     {
-                        if((getPfcDlrPacketAction() == PfcWdAction::PFC_WD_ACTION_UNKNOWN) || m_pfcwd_ports.empty())
+                        if(m_pfcwd_ports.empty())
                         {
                             sai_attribute_t attr;
                             attr.id = SAI_SWITCH_ATTR_PFC_DLR_PACKET_ACTION;
