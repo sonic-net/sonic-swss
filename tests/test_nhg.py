@@ -178,7 +178,7 @@ class TestNextHopGroupBase(object):
                          "Init":        "SAI_BFD_SESSION_STATE_INIT",
                          "Up":          "SAI_BFD_SESSION_STATE_UP"}
 
-        ntf = swsscommon.NotificationProducer(dvs.adb, "NOTIFICATIONS")
+        ntf = swsscommon.NotificationProducer(self.asic_db.db_connection, "NOTIFICATIONS")
         fvp = swsscommon.FieldValuePairs()
         ntf_data = "[{\"bfd_session_id\":\""+session+"\",\"session_state\":\""+bfd_sai_state[state]+"\"}]"
         ntf.send("bfd_session_state_change", ntf_data, fvp)
