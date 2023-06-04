@@ -190,6 +190,15 @@ bool CoppMgr::isTrapIdDisabled(string trap_id)
     {
         return false;
     }
+    string nac_trap_id("eapol");
+    string nac_trap_name("nac");
+    if ((trap_id == nac_trap_id) && (isFeatureEnabled(nac_trap_name)))
+    {
+        SWSS_LOG_NOTICE("Copp: NAC: isTrapIdDisabled: trap-id %s is enabled:%s", trap_id.c_str(), nac_trap_name.c_str());
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("Copp: isTrapIdDisabled: trap-id %s is disabled: %s", trap_id.c_str(), trap_name.c_str());
     return true;
 }
 
