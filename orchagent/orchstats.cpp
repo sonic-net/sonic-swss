@@ -31,7 +31,7 @@ OrchStats::~OrchStats()
     m_background_thread->join();
 }
 
-void OrchStats::recordIncomingTask(Consumer &consumer, const KeyOpFieldsValuesTuple &tuple)
+void OrchStats::recordIncomingTask(ConsumerBase &consumer, const KeyOpFieldsValuesTuple &tuple)
 {
     SWSS_LOG_ENTER();
 

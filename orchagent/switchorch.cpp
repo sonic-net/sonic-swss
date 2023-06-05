@@ -85,6 +85,7 @@ SwitchOrch::SwitchOrch(DBConnector *db, vector<TableConnector>& connectors, Tabl
     set_switch_pfc_dlr_init_capability();
     initSensorsTable();
     querySwitchTpidCapability();
+    querySwitchPortEgressSampleCapability();
     auto executorT = new ExecutableTimer(m_sensorsPollerTimer, this, "ASIC_SENSORS_POLL_TIMER");
     Orch::addExecutor(executorT);
 }
@@ -729,6 +730,35 @@ void SwitchOrch::initSensorsTable()
 void SwitchOrch::set_switch_capability(const std::vector<FieldValueTuple>& values)
 {
      m_switchTable.set("switch", values);
+}
+
+void SwitchOrch::querySwitchPortEgressSampleCapability()
+{
+    vector<FieldValueTuple> fvVector;
+    sai_status_t status = SAI_STATUS_SUCCESS;
+    sai_attr_capability_t capability;
+
+    // Check if SAI is capable of handling Port egress sample.
+    status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_PORT,
+                            SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE, &capability);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Could not query port egress Sample capability %d", status);
+        fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_EGRESS_SAMPLE_CAPABLE, "false");
+    }
+    else
+    {
+        if (capability.set_implemented)
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_EGRESS_SAMPLE_CAPABLE, "true");
+        }
+        else
+        {
+            fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PORT_EGRESS_SAMPLE_CAPABLE, "false");
+        }
+        SWSS_LOG_NOTICE("port egress Sample capability %d", capability.set_implemented);
+    }
+    set_switch_capability(fvVector);
 }
 
 void SwitchOrch::querySwitchTpidCapability()

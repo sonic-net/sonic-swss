@@ -50,6 +50,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 flowcounterrouteorch_ut.cpp \
                 orchdaemon_ut.cpp \
                 intfsorch_ut.cpp \
+                mux_rollback_ut.cpp \
                 warmrestartassist_ut.cpp \
                 test_failure_handling.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
@@ -132,7 +133,7 @@ tests_SOURCES += $(P4_ORCH_DIR)/p4orch.cpp \
 		 $(P4_ORCH_DIR)/ext_tables_manager.cpp \
 		 $(P4_ORCH_DIR)/tests/mock_sai_switch.cpp
 
-tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) 
+tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_INCLUDES)
 tests_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis -lpthread \
         -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lgmock -lgmock_main
@@ -179,7 +180,16 @@ tests_intfmgrd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhired
 ## fpmsyncd unit tests
 
 tests_fpmsyncd_SOURCES = fpmsyncd/test_fpmlink.cpp \
-                         $(top_srcdir)/fpmsyncd/fpmlink.cpp
+                         fpmsyncd/test_routesync.cpp \
+                         fake_netlink.cpp \
+                         fake_warmstarthelper.cpp \
+                         fake_producerstatetable.cpp \
+                         mock_dbconnector.cpp \
+                         mock_table.cpp \
+                         mock_hiredis.cpp \
+                         $(top_srcdir)/warmrestart/ \
+                         $(top_srcdir)/fpmsyncd/fpmlink.cpp \
+                         $(top_srcdir)/fpmsyncd/routesync.cpp
 
 tests_fpmsyncd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/tests_fpmsyncd -I$(top_srcdir)/lib -I$(top_srcdir)/warmrestart
 tests_fpmsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)

@@ -35,7 +35,7 @@ SWSS, Redis, and all the other required components run inside a virtual switch D
 
     ```
     sudo modprobe team
-    sudo apt install python3-pip net-tools ethtool vlan libnl-nf-3-200 libnl-cli-3-200
+    sudo apt install python3-pip net-tools bridge-utils ethtool vlan libnl-nf-3-200 libnl-cli-3-200
     sudo pip3 install docker pytest flaky redis distro dataclasses fstring
     ```
 

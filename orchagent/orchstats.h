@@ -14,7 +14,7 @@ public:
     static OrchStats* getInstance();
     ~OrchStats();
 
-    void recordIncomingTask(Consumer &consumer, const swss::KeyOpFieldsValuesTuple &tuple);
+    void recordIncomingTask(ConsumerBase &consumer, const swss::KeyOpFieldsValuesTuple &tuple);
 private:
 
     struct Stats

@@ -76,6 +76,8 @@ teamsyncd/teamsyncd
 tests/tests
 tests/mock_tests/tests_response_publisher
 tests/mock_tests/tests_fpmsyncd
+tests/mock_tests/tests_intfmgrd
+tests/mock_tests/tests_portsyncd
 
 
 # Test Files #
@@ -87,5 +89,7 @@ tests/mock_tests/tests.trs
 tests/test-suite.log
 tests/tests.log
 tests/tests.trs
+tests/mock_tests/**/*log
+tests/mock_tests/**/*trs
 orchagent/p4orch/tests/**/*gcda
 orchagent/p4orch/tests/**/*gcno

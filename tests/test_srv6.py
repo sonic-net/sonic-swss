@@ -57,6 +57,7 @@ class TestSrv6Mysid(object):
         mysid1='16:8:8:8:baba:2001:10::'
         mysid2='16:8:8:8:baba:2001:20::'
         mysid3='16:8:8:8:fcbb:bb01:800::'
+        mysid4='16:8:8:8:baba:2001:40::'
 
         # create MySID END
         fvs = swsscommon.FieldValuePairs([('action', 'end')])
@@ -107,10 +108,27 @@ class TestSrv6Mysid(object):
             elif fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR":
                 assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD"
 
+        # create MySID END.DT4 with default vrf
+        fvs = swsscommon.FieldValuePairs([('action', 'end.dt4'), ('vrf', 'default')])
+        key = self.create_mysid(mysid4, fvs)
+
+        # check ASIC MySID database
+        mysid = json.loads(key)
+        assert mysid["sid"] == "baba:2001:40::"
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY")
+        (status, fvs) = tbl.get(key)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_MY_SID_ENTRY_ATTR_VRF":
+                assert True
+            elif fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR":
+                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT4"
+
         # delete MySID
         self.remove_mysid(mysid1)
         self.remove_mysid(mysid2)
         self.remove_mysid(mysid3)
+        self.remove_mysid(mysid4)
 
         # remove vrf
         self.remove_vrf("VrfDt46")

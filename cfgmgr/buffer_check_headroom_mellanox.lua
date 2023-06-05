@@ -5,7 +5,7 @@
 
 local port = KEYS[1]
 local input_profile_name = ARGV[1]
-local input_profile_size = ARGV[2]
+local input_profile_size = tonumber(ARGV[2])
 local new_pg = ARGV[3]
 
 local function is_port_with_8lanes(lanes)
@@ -60,7 +60,8 @@ if is_port_with_8lanes(lanes) then
     pipeline_latency = pipeline_latency * 2 - 1
     egress_mirror_size = egress_mirror_size * 2
 end
-accumulative_size = accumulative_size + 2 * pipeline_latency * 1024 + egress_mirror_size
+local lossy_pg_size = pipeline_latency * 1024
+accumulative_size = accumulative_size + lossy_pg_size + egress_mirror_size
 
 -- Fetch all keys in BUFFER_PG according to the port
 redis.call('SELECT', appl_db)
@@ -81,41 +82,48 @@ local function get_number_of_pgs(keyname)
     return size
 end
 
-local no_input_pg = true
-if new_pg ~= nil then
-    if get_number_of_pgs(new_pg) ~= 0 then
-        no_input_pg = false
-        new_pg = 'BUFFER_PG_TABLE:' .. new_pg
-    end
-end
-
--- Fetch all the PGs, accumulate the sizes
--- Assume there is only one lossless profile configured among all PGs on each port
-table.insert(debuginfo, 'debug:other overhead:' .. accumulative_size)
+-- Fetch all the PGs in APPL_DB, and store them into a hash table
 local pg_keys = redis.call('KEYS', 'BUFFER_PG_TABLE:' .. port .. ':*')
+local all_pgs = {}
 for i = 1, #pg_keys do
     local profile = redis.call('HGET', pg_keys[i], 'profile')
-    local current_profile_size
-    if profile ~= 'ingress_lossy_profile' and (no_input_pg or new_pg ~= pg_keys[i]) then
-        if profile ~= input_profile_name and not no_input_pg then
-            local referenced_profile = redis.call('HGETALL', 'BUFFER_PROFILE_TABLE:' .. profile)
-            for j = 1, #referenced_profile, 2 do
-                if referenced_profile[j] == 'size' then
-                    current_profile_size = tonumber(referenced_profile[j+1])
-                end
-            end
-        else
-            current_profile_size = input_profile_size
-            profile = input_profile_name
-        end
-        accumulative_size = accumulative_size + current_profile_size * get_number_of_pgs(pg_keys[i])
-        table.insert(debuginfo, 'debug:' .. pg_keys[i] .. ':' .. profile .. ':' .. current_profile_size .. ':' .. get_number_of_pgs(pg_keys[i]) .. ':accu:' .. accumulative_size)
-    end
+    all_pgs[pg_keys[i]] = profile
 end
 
-if not no_input_pg then
-    accumulative_size = accumulative_size + input_profile_size * get_number_of_pgs(new_pg)
-    table.insert(debuginfo, 'debug:' .. new_pg .. '*:' .. input_profile_name .. ':' .. input_profile_size .. ':' .. get_number_of_pgs(new_pg) .. ':accu:' .. accumulative_size)
+-- Fetch all the pending PGs, and store them into the hash table
+-- Overwrite any existing entries
+local pending_pg_keys = redis.call('KEYS', '_BUFFER_PG_TABLE:' .. port .. ':*')
+for i = 1, #pending_pg_keys do
+    local profile = redis.call('HGET', pending_pg_keys[i], 'profile')
+    -- Remove the leading underscore when storing it into the hash table
+    all_pgs[string.sub(pending_pg_keys[i], 2, -1)] = profile
+    table.insert(debuginfo, 'debug:pending entry: ' .. pending_pg_keys[i] .. ':' .. profile)
+end
+
+if new_pg ~= nil and get_number_of_pgs(new_pg) ~= 0 then
+    all_pgs['BUFFER_PG_TABLE:' .. new_pg] = input_profile_name
+end
+
+-- Handle all the PGs, accumulate the sizes
+-- Assume there is only one lossless profile configured among all PGs on each port
+table.insert(debuginfo, 'debug:other overhead:' .. accumulative_size)
+for pg_key, profile in pairs(all_pgs) do
+    local current_profile_size
+    if profile ~= input_profile_name then
+        local referenced_profile_size = redis.call('HGET', 'BUFFER_PROFILE_TABLE:' .. profile, 'size')
+        if not referenced_profile_size then
+            referenced_profile_size = redis.call('HGET', '_BUFFER_PROFILE_TABLE:' .. profile, 'size')
+            table.insert(debuginfo, 'debug:pending profile: ' .. profile)
+        end
+        current_profile_size = tonumber(referenced_profile_size)
+    else
+        current_profile_size = input_profile_size
+    end
+    if current_profile_size == 0 then
+        current_profile_size = lossy_pg_size
+    end
+    accumulative_size = accumulative_size + current_profile_size * get_number_of_pgs(pg_key)
+    table.insert(debuginfo, 'debug:' .. pg_key .. ':' .. profile .. ':' .. current_profile_size .. ':' .. get_number_of_pgs(pg_key) .. ':accu:' .. accumulative_size)
 end
 
 if max_headroom_size > accumulative_size then
