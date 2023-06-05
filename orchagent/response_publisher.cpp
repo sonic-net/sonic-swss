@@ -156,6 +156,7 @@ void ResponsePublisher::writeToDB(
   } else {
     writeToDBInternal(table, key, values, op, replace);
   }
+  RecordDBWrite(table, key, values, op);
 }
 
 void ResponsePublisher::writeToDBInternal(
@@ -178,7 +179,6 @@ void ResponsePublisher::writeToDBInternal(
     std::vector<swss::FieldValueTuple> fv;
     if (!applStateTable.get(key, fv)) {
       applStateTable.set(key, attrs);
-      RecordDBWrite(table, key, attrs, op);
       return;
     }
     for (auto it = attrs.cbegin(); it != attrs.cend();) {
@@ -190,11 +190,9 @@ void ResponsePublisher::writeToDBInternal(
     }
     if (attrs.size()) {
       applStateTable.set(key, attrs);
-      RecordDBWrite(table, key, attrs, op);
     }
   } else if (op == DEL_COMMAND) {
     applStateTable.del(key);
-    RecordDBWrite(table, key, {}, op);
   }
 }
 
