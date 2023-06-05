@@ -6,6 +6,7 @@
 #include <sys/time.h>
 #include "timestamp.h"
 #include "orch.h"
+#include "orchstats.h"
 
 #include "subscriberstatetable.h"
 #include "portsorch.h"
@@ -83,6 +84,8 @@ void Consumer::addToSync(const KeyOpFieldsValuesTuple &entry)
     {
         Orch::recordTuple(*this, entry);
     }
+
+    OrchStats::getInstance()->recordIncomingTask(*this, entry);
 
     /*
     * m_toSync is a multimap which will allow one key with multiple values,

@@ -47,6 +47,7 @@ orchagent_SOURCES = \
             $(top_srcdir)/lib/subintf.cpp \
             orchdaemon.cpp \
             orch.cpp \
+            orchstats.cpp \
             notifications.cpp \
             nhgorch.cpp \
             nhgbase.cpp \
