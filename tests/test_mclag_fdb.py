@@ -20,6 +20,10 @@ def create_entry_pst(db, table, key, pairs):
     tbl = swsscommon.ProducerStateTable(db, table)
     create_entry(tbl, key, pairs)
 
+def delete_entry_tbl(db, table, key):
+    tbl = swsscommon.Table(db, table)
+    tbl._del(key)
+    
 def delete_entry_pst(db, table, key):
     tbl = swsscommon.ProducerStateTable(db, table)
     tbl._del(key)
@@ -29,6 +33,14 @@ def get_port_oid(dvs, port_name):
     port_map_tbl = swsscommon.Table(counters_db, 'COUNTERS_PORT_NAME_MAP')
     for k in port_map_tbl.get('')[1]:
         if k[0] == port_name:
+            return k[1]
+    return None
+
+def get_portchannel_oid(dvs, alias):
+    counters_db = swsscommon.DBConnector(swsscommon.COUNTERS_DB, dvs.redis_sock, 0)
+    lag_name_map_tbl = swsscommon.Table(counters_db, 'COUNTERS_LAG_NAME_MAP')
+    for k in lag_name_map_tbl.get('')[1]:
+        if k[0] == alias:
             return k[1]
     return None
 
@@ -483,7 +495,77 @@ def test_mclagFdb_static_mac_dynamic_move_reject(dvs, testlog):
         "MCLAG_FDB_TABLE", "Vlan200:3C:85:99:5E:00:01",
     )
 
-# Test-12 Verify cleanup of the basic config.
+# Test-12 Verify Remote to Local Move.
+
+@pytest.mark.dev_sanity
+def test_mclagFdb_remote_to_local_mac_move_ntf(dvs, testlog):
+    dvs.setup_db()
+
+    #Add remote MAC to MCLAG_FDB_TABLE on PortChannel0005
+    create_entry_pst(
+        dvs.pdb,
+        "MCLAG_FDB_TABLE", "Vlan200:3C:85:99:5E:00:01",
+        [
+            ("port", "PortChannel0005"),
+            ("type", "dynamic"),
+        ]
+    )
+
+    # check that the FDB entry inserted into ASIC DB
+    assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 1, "The MCLAG fdb entry not inserted to ASIC"
+
+    ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+            [("mac", "3C:85:99:5E:00:01"), ("bvid", str(dvs.getVlanOid("200")))],
+            [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC"),
+             ("SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE", "true")]
+    )
+
+    assert ok, str(extra)
+
+    mac = "3C:85:99:5E:00:01"
+    vlan_oid = dvs.getVlanOid("200")
+    switch_id = dvs.getSwitchOid()
+    port_oid = get_portchannel_oid(dvs, "PortChannel0008")
+    bp_port_oid = get_bridge_port_oid(dvs, port_oid)
+    
+    # send fdb_event SAI_FDB_EVENT_MOVE 
+    ntf = swsscommon.NotificationProducer(dvs.adb, "NOTIFICATIONS")
+    fvp = swsscommon.FieldValuePairs()
+    ntf_data = "[{\"fdb_entry\":\"{\\\"bvid\\\":\\\""+vlan_oid+"\\\",\\\"mac\\\":\\\"3C:85:99:5E:00:01\\\",\\\"switch_id\\\":\\\""+switch_id+"\\\"}\",\"fdb_event\":\"SAI_FDB_EVENT_MOVE\",\"list\":[{\"id\":\"SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID\",\"value\":\""+bp_port_oid+"\"}]}]"
+    ntf.send("fdb_event", ntf_data, fvp)
+
+    time.sleep(2)
+
+    # check that the FDB entry was inserted into ASIC DB
+    assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 1, "The fdb entry not inserted to ASIC"
+    ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+            [("mac", "3C:85:99:5E:00:01"), ("bvid", str(dvs.getVlanOid("200")))],
+            [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_DYNAMIC"),
+             ("SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE", "false")]
+    )
+    assert ok, str(extra)
+   
+    delete_entry_tbl(
+        dvs.sdb,
+        "FDB_TABLE", "Vlan200:3c:85:99:5e:00:01",
+    ) 
+    
+    time.sleep(2)
+    
+    delete_entry_tbl(
+        dvs.adb,
+        "ASIC_STATE", "SAI_OBJECT_TYPE_FDB_ENTRY:{\"bvid\":\""+vlan_oid+"\",\"mac\":\"3C:85:99:5E:00:01\",\"switch_id\":\""+switch_id+"\"}"
+    )
+    
+    # check that the FDB entry was deleted from ASIC DB
+    assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 0, "The MCLAG static fdb entry not deleted"
+    
+    delete_entry_pst(
+        dvs.pdb,
+        "MCLAG_FDB_TABLE", "Vlan200:3C:85:99:5E:00:01",
+    )
+	
+# Test-13 Verify cleanup of the basic config.
 
 @pytest.mark.dev_sanity
 def test_mclagFdb_basic_config_del(dvs, testlog):
