@@ -150,15 +150,15 @@ jobs:
       runBranch: 'refs/heads/${{ parameters.common_lib_artifact_branch }}'
       path: $(Build.ArtifactStagingDirectory)/download/common
       patterns: |
-        target/debs/buster/libnl-3-200_*.deb
-        target/debs/buster/libnl-3-dev_*.deb
-        target/debs/buster/libnl-genl-3-200_*.deb
-        target/debs/buster/libnl-genl-3-dev_*.deb
-        target/debs/buster/libnl-route-3-200_*.deb
-        target/debs/buster/libnl-route-3-dev_*.deb
-        target/debs/buster/libnl-nf-3-200_*.deb
-        target/debs/buster/libnl-nf-3-dev_*.deb
-        target/debs/buster/libyang_*.deb
+        target/debs/bullseye/libnl-3-200_*.deb
+        target/debs/bullseye/libnl-3-dev_*.deb
+        target/debs/bullseye/libnl-genl-3-200_*.deb
+        target/debs/bullseye/libnl-genl-3-dev_*.deb
+        target/debs/bullseye/libnl-route-3-200_*.deb
+        target/debs/bullseye/libnl-route-3-dev_*.deb
+        target/debs/bullseye/libnl-nf-3-200_*.deb
+        target/debs/bullseye/libnl-nf-3-dev_*.deb
+        target/debs/bullseye/libyang_*.deb
     displayName: "Download common libs"
   - script: |
       set -ex

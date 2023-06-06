@@ -43,7 +43,7 @@ stages:
   - template: .azure-pipelines/build-template.yml
     parameters:
       arch: amd64
-      sonic_slave: sonic-slave-buster
+      sonic_slave: sonic-slave-bullseye
       swss_common_branch: master
       sairedis_artifact_branch: master
       common_lib_artifact_branch: master
@@ -60,7 +60,7 @@ stages:
   - template: .azure-pipelines/build-template.yml
     parameters:
       arch: amd64
-      sonic_slave: sonic-slave-buster
+      sonic_slave: sonic-slave-bullseye
       swss_common_branch: master
       sairedis_artifact_branch: master
       common_lib_artifact_branch: master
@@ -79,7 +79,7 @@ stages:
       arch: armhf
       timeout: 240
       pool: sonicbld-armhf
-      sonic_slave: sonic-slave-buster-armhf
+      sonic_slave: sonic-slave-bullseye-armhf
       swss_common_branch: master
       sairedis_artifact_branch: master
       common_lib_artifact_branch: master
@@ -94,7 +94,7 @@ stages:
       arch: arm64
       timeout: 240
       pool: sonicbld-arm64
-      sonic_slave: sonic-slave-buster-arm64
+      sonic_slave: sonic-slave-bullseye-arm64
       swss_common_branch: master
       sairedis_artifact_branch: master
       common_lib_artifact_branch: master
@@ -142,7 +142,7 @@ stages:
       swss_common_branch: master
       log_artifact_name: log
       gcov_artifact_name: sonic-gcov
-      sonic_slave: sonic-slave-buster
+      sonic_slave: sonic-slave-bullseye
       archive_gcov: true
 
 - stage: TestAsan
@@ -154,7 +154,7 @@ stages:
       swss_common_branch: master
       log_artifact_name: log-asan
       gcov_artifact_name: sonic-gcov
-      sonic_slave: sonic-slave-buster
+      sonic_slave: sonic-slave-bullseye
       docker_sonic_vs_name: docker-sonic-vs-asan
       asan: true
 
@@ -165,7 +165,7 @@ stages:
   - template: .azure-pipelines/gcov.yml
     parameters:
       arch: amd64
-      sonic_slave: sonic-slave-buster
+      sonic_slave: sonic-slave-bullseye
       swss_common_artifact_name: sonic-swss-common
       sairedis_artifact_name: sonic-sairedis
       swss_artifact_name: sonic-swss
