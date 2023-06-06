@@ -57,7 +57,7 @@ OrchStats::Stats &OrchStats::getTableStats(const std::string &table_name)
     auto it = m_table_stats_map.find(table_name);
     if (it == m_table_stats_map.end())
     {
-        // lock_guard<mutex> lock(m_mutex);
+        lock_guard<mutex> lock(m_mutex);
         it = m_table_stats_map.emplace(
             std::piecewise_construct,
             std::forward_as_tuple(table_name),
