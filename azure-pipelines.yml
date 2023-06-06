@@ -44,6 +44,9 @@ stages:
     parameters:
       arch: amd64
       sonic_slave: sonic-slave-buster
+      swss_common_branch: master
+      sairedis_artifact_branch: master
+      common_lib_artifact_branch: master
       common_lib_artifact_name: common-lib
       swss_common_artifact_name: sonic-swss-common
       sairedis_artifact_name: sonic-sairedis
@@ -58,6 +61,9 @@ stages:
     parameters:
       arch: amd64
       sonic_slave: sonic-slave-buster
+      swss_common_branch: master
+      sairedis_artifact_branch: master
+      common_lib_artifact_branch: master
       common_lib_artifact_name: common-lib
       swss_common_artifact_name: sonic-swss-common
       sairedis_artifact_name: sonic-sairedis
@@ -74,6 +80,9 @@ stages:
       timeout: 240
       pool: sonicbld-armhf
       sonic_slave: sonic-slave-buster-armhf
+      swss_common_branch: master
+      sairedis_artifact_branch: master
+      common_lib_artifact_branch: master
       common_lib_artifact_name: common-lib.armhf
       swss_common_artifact_name: sonic-swss-common.armhf
       sairedis_artifact_name: sonic-sairedis.armhf
@@ -86,6 +95,9 @@ stages:
       timeout: 240
       pool: sonicbld-arm64
       sonic_slave: sonic-slave-buster-arm64
+      swss_common_branch: master
+      sairedis_artifact_branch: master
+      common_lib_artifact_branch: master
       common_lib_artifact_name: common-lib.arm64
       swss_common_artifact_name: sonic-swss-common.arm64
       sairedis_artifact_name: sonic-sairedis.arm64
@@ -98,6 +110,9 @@ stages:
   jobs:
   - template: .azure-pipelines/build-docker-sonic-vs-template.yml
     parameters:
+      swss_common_branch: master
+      sairedis_artifact_branch: master
+      buildimage_artifact_branch: master
       swss_common_artifact_name: sonic-swss-common
       sairedis_artifact_name: sonic-sairedis
       swss_artifact_name: sonic-swss
@@ -109,6 +124,9 @@ stages:
   jobs:
   - template: .azure-pipelines/build-docker-sonic-vs-template.yml
     parameters:
+      swss_common_branch: master
+      sairedis_artifact_branch: master
+      buildimage_artifact_branch: master
       swss_common_artifact_name: sonic-swss-common
       sairedis_artifact_name: sonic-sairedis
       swss_artifact_name: sonic-swss-asan
@@ -121,6 +139,7 @@ stages:
   jobs:
   - template: .azure-pipelines/test-docker-sonic-vs-template.yml
     parameters:
+      swss_common_branch: master
       log_artifact_name: log
       gcov_artifact_name: sonic-gcov
       sonic_slave: sonic-slave-buster
@@ -132,6 +151,7 @@ stages:
   jobs:
   - template: .azure-pipelines/test-docker-sonic-vs-template.yml
     parameters:
+      swss_common_branch: master
       log_artifact_name: log-asan
       gcov_artifact_name: sonic-gcov
       sonic_slave: sonic-slave-buster
