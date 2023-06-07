@@ -627,7 +627,9 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
     {
         SWSS_LOG_WARN("VNET %s doesn't exist for prefix %s, op %s",
                       vnet.c_str(), ipPrefix.to_string().c_str(), op.c_str());
-        return (op == DEL_COMMAND)?true:false;
+        if (op == DEL_COMMAND) return true;
+        tip = VnetDeletionType::TYPE_VNET_D;
+        return true;
     }
 
     set<sai_object_id_t> vr_set;
@@ -691,7 +693,9 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
     {
         SWSS_LOG_WARN("VNET %s doesn't exist for prefix %s, op %s",
                       vnet.c_str(), ipPrefix.to_string().c_str(), op.c_str());
-        return (op == DEL_COMMAND)?true:false;
+        if (op == DEL_COMMAND) return true;
+        tip = VnetDeletionType::TYPE_VNET_D;
+        return true;
     }
 
     auto *vrf_obj = vnet_orch_->getTypePtr<VNetVrfObject>(vnet);
@@ -948,6 +952,59 @@ void VNetRouteOrch::detach(Observer* observer, const IpAddress& dstAddr)
     next_hop_observers_.erase(observerEntry);
 }
 
+bool VNetRouteOrch::handleVnetFlow(std::string create_vnet_name)
+{
+    SWSS_LOG_ENTER();
+    SWSS_LOG_NOTICE("Enter to handleVnetFlow");
+    bool success = true;
+
+    // Handle requests in m_requestMap_vniMap
+    SafeMap<std::string, SafeMap<std::string, swss::KeyOpFieldsValuesTuple>>& requestsMap = m_requestMap;
+    SafeMap<std::string, swss::KeyOpFieldsValuesTuple> requests;
+
+    if (requestsMap.Find(create_vnet_name, requests))
+    {
+        for (auto& kv : requests.GetMap())
+        {
+            try
+            {
+                request_vnet.parse(kv.second);
+                addOperation(request_vnet);
+
+                m_requestMap[request_.getKeyString(0)].GetMap().erase(request_.getFullKey());
+                if (tip != VNetDeletionType::TYPE_DEFAULT)
+                {
+                    if (tip == VNetDeletionType::TYPE_VNET_D)
+                    {
+                        SWSS_LOG_ERROR("catch vnet vni map flow.");
+                        m_requestMap[request_.getKeyString(0)][request_.getFullKey()] = kv.second;
+                        //erase_from_queue = true;
+                        tip = VNetDeletionType::TYPE_DEFAULT;
+                    }
+                }
+                // fail to m_toSync?
+                //...
+            }
+            catch (const std::exception& e)
+            {
+                // SWSS_LOG_ERROR("Failed to handle request %s: %s", *kv.second->getFullKey().c_str(), e.what());
+                SWSS_LOG_ERROR("Failed to handle request ,handleVnetFlow: %s", e.what());
+                success = false;
+            }
+            request_vnet.clear();
+        }
+
+        // Remove handled requests
+        if (requestsMap[request_.getKeyString(0)].IsEmpty())
+        {
+            requestsMap.Erase(create_vnet_name);            
+        }
+
+    }
+
+    return success;
+}
+
 void VNetRouteOrch::addRoute(const std::string& vnet, const IpPrefix& ipPrefix, const nextHop& nh)
 {
     SWSS_LOG_ENTER();
@@ -1088,7 +1145,92 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     return true;
 }
 
-bool VNetRouteOrch::addOperation(const Request& request)
+void VNetRouteOrch::doTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        // auto [key, value] = it;
+        // swss::KeyOpFieldsValuesTuple entry(key, swss::SET_COMMAND, { { "", value } });
+
+        SWSS_LOG_NOTICE("m toSync NUM is: %lu", consumer.m_toSync.size());
+
+        bool erase_from_queue = true;
+
+        try
+        {
+            request_.parse(it->second);
+
+            auto table_name = consumer.getTableName();
+            request_.setTableName(table_name);
+
+            auto op = request_.getOperation();
+
+            if (op == SET_COMMAND)
+            {
+                erase_from_queue = addOperation(request_);
+                if (tip != VNetDeletionType::TYPE_DEFAULT)
+                {
+                    if (tip == VNetDeletionType::TYPE_VNET_D)
+                    {
+                        SWSS_LOG_ERROR("catch vnet flow.");
+                        m_requestMap[request_.getKeyString(0)][request_.getFullKey()] = it->second;
+                        //erase_from_queue = true;
+                        tip = VNetDeletionType::TYPE_DEFAULT;
+                    }
+
+                } 
+            }
+            else if (op == DEL_COMMAND)
+            {
+                SWSS_LOG_NOTICE("DEL COMMAND: %s", request_.getFullKey().c_str());
+                // memory
+                if (m_requestMap.Find(request_.getKeyString(0)))
+                {
+                    m_requestMap[request_.getKeyString(0)].Erase(request_.getFullKey());
+                    SWSS_LOG_NOTICE("DEL vnet flow: %s %s", request_.getKeyString(0).c_str(), request_.getFullKey().c_str());
+                }
+
+                erase_from_queue = delOperation(request_);
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Wrong operation. Check RequestParser: %s", op.c_str());
+            }
+        }
+        catch (const std::invalid_argument &e)
+        {
+            SWSS_LOG_ERROR("Parse error: %s", e.what());
+        }
+        catch (const std::logic_error &e)
+        {
+            SWSS_LOG_ERROR("Logic error: %s", e.what());
+        }
+        catch (const std::exception &e)
+        {
+            SWSS_LOG_ERROR("Exception was catched in the request parser: %s", e.what());
+        }
+        catch (...)
+        {
+            SWSS_LOG_ERROR("Unknown exception was catched in the request parser");
+        }
+
+        request_.clear();
+
+        if (erase_from_queue)
+        {
+            it = consumer.m_toSync.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+}
+
+bool VNetRouteOrch::addOperation(const Request &request)
 {
     SWSS_LOG_ENTER();
 
@@ -1227,4 +1369,13 @@ bool VNetCfgRouteOrch::doVnetRouteTask(const KeyOpFieldsValuesTuple & t, const s
     }
 
     return true;
+}
+
+void vnetCreateEvent(std::string vnet_name)
+{
+    SWSS_LOG_ENTER();
+    VNetRouteOrch *vnet_rt_orch = gDirectory.get<VNetRouteOrch *>();
+    vnet_rt_orch->handleVnetFlow(vnet_name);
+    SWSS_LOG_NOTICE("EVENT: VNET %s created", vnet_name.c_str());
+
 }

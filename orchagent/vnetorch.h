@@ -7,11 +7,22 @@
 #include <algorithm>
 #include <bitset>
 #include <tuple>
+#include <iostream>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <queue>
+#include <functional>
+#include <sstream>
 
 #include "request_parser.h"
 #include "ipaddresses.h"
 #include "producerstatetable.h"
 #include "observer.h"
+#include "threadpool.h"
+#include "safe_map.h"
+
+using namespace std;
 
 #define VNET_BITMAP_SIZE 32
 #define VNET_TUNNEL_SIZE 40960
@@ -191,10 +202,77 @@ private:
 typedef std::unique_ptr<VNetObject> VNetObject_T;
 typedef std::unordered_map<std::string, VNetObject_T> VNetTable;
 
+void vnetCreateEvent(std::string vnet_name);
+
+class VNetObserver : public Observer 
+{
+public:
+    void update(SubjectType event, void *_vnet_name)
+    {
+        //SWSS_LOG_ENTER();
+        std::string vnet_name = std::string(static_cast<char *>(_vnet_name));
+        if (event == SubjectType::SUBJECT_TYPE_VNET_CREATE)
+        {
+            /* TODO: Handle VNET created event */
+            // pool.enqueue(&vnetCreateEvent, vnet_name);
+            auto result = pool.enqueue(vnetCreateEvent, vnet_name);
+        }
+    }
+
+private:
+    ThreadPool pool{ 1 };
+    std::mutex m_mutex;
+
+};
+
+/* Define a Subject type */
+class VNetSubject : public Subject
+{
+public:
+    void attach(Observer *observer)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_observers.push_back(observer);
+    }
+
+    void detach(Observer *observer)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+
+        m_observers.remove(observer);
+    }
+
+    void notify(SubjectType type, void *cntx)
+    {
+        SWSS_LOG_ENTER();
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (m_observers.empty())
+        {
+            SWSS_LOG_NOTICE("Observer has no members!");
+            return;
+        }
+        SWSS_LOG_NOTICE("Get notify, Observer members Num: %lu", m_observers.size());
+        for (auto iter: m_observers)
+        {
+            // std::string vnet_name = std::string(static_cast<char *>(cntx));
+            // SWSS_LOG_NOTICE("VNET or VniMap added/updated event: %s", vnet_name.c_str());
+            //iter->update(type, vnet_name);
+            iter->update(type, cntx);
+
+        }
+        SWSS_LOG_NOTICE("Notify end!");
+    }
+    std::list<Observer *> m_observers;
+
+};
+
 class VNetOrch : public Orch2
 {
 public:
     VNetOrch(DBConnector *db, const std::string&, VNET_EXEC op = VNET_EXEC::VNET_EXEC_VRF);
+
+    /* Define a VNetSubject object */
+    VNetSubject m_vnetSubject;
 
     bool setIntf(const string& alias, const string name, const IpPrefix *prefix = nullptr, const bool adminUp = true, const uint32_t mtu = 0);
     bool delIntf(const string& alias, const string name, const IpPrefix *prefix = nullptr);
@@ -281,6 +359,12 @@ struct VNetNextHopObserverEntry
 /* NextHopObserverTable: Destination IP address, next hop observer entry */
 typedef std::map<IpAddress, VNetNextHopObserverEntry> VNetNextHopObserverTable;
 
+enum VNetDeletionType
+{
+    TYPE_DEFAULT,
+    TYPE_VNET_D,
+};
+
 class VNetRouteOrch : public Orch2, public Subject
 {
 public:
@@ -291,6 +375,12 @@ public:
 
     void attach(Observer* observer, const IpAddress& dstAddr);
     void detach(Observer* observer, const IpAddress& dstAddr);
+
+    bool handleVnetFlow(std::string create_vnet_name);
+
+    SafeMap<std::string, SafeMap<std::string, swss::KeyOpFieldsValuesTuple>> m_requestMap;
+
+    void doTask(Consumer &consumer); 
 
 private:
     virtual bool addOperation(const Request& request);
@@ -307,6 +397,9 @@ private:
 
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, nextHop& nh, string& op);
+
+    VNetRouteRequest request_vnet;
+    VNetDeletionType tip = TYPE_DEFAULT;
 
     VNetOrch *vnet_orch_;
     VNetRouteRequest request_;
