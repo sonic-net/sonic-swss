@@ -17,6 +17,8 @@ extern "C" {
 #include "table.h"
 #include "consumertable.h"
 #include "consumerstatetable.h"
+#include "zmqconsumerstatetable.h"
+#include "zmqserver.h"
 #include "notificationconsumer.h"
 #include "selectabletimer.h"
 #include "macaddress.h"
@@ -194,6 +196,23 @@ public:
     void drain() override;
 };
 
+class ZmqConsumer : public ConsumerBase {
+public:
+    ZmqConsumer(swss::ZmqConsumerStateTable *select, Orch *orch, const std::string &name)
+        : ConsumerBase(select, orch, name)
+    {
+    }
+
+    swss::TableBase *getConsumerTable() const override
+    {
+        // ZmqConsumerStateTable is a subclass of TableBase
+        return static_cast<swss::ZmqConsumerStateTable *>(getSelectable());
+    }
+
+    void execute() override;
+    void drain() override;
+};
+
 typedef std::map<std::string, std::shared_ptr<Executor>> ConsumerMap;
 
 typedef enum
@@ -212,9 +231,9 @@ typedef std::pair<swss::DBConnector *, std::vector<std::string>> TablesConnector
 class Orch
 {
 public:
-    Orch(swss::DBConnector *db, const std::string tableName, int pri = default_orch_pri);
-    Orch(swss::DBConnector *db, const std::vector<std::string> &tableNames);
-    Orch(swss::DBConnector *db, const std::vector<table_name_with_pri_t> &tableNameWithPri);
+    Orch(swss::DBConnector *db, const std::string tableName, int pri = default_orch_pri, swss::ZmqServer *zmqServer = nullptr);
+    Orch(swss::DBConnector *db, const std::vector<std::string> &tableNames, swss::ZmqServer *zmqServer = nullptr);
+    Orch(swss::DBConnector *db, const std::vector<table_name_with_pri_t> &tableNameWithPri, swss::ZmqServer *zmqServer = nullptr);
     Orch(const std::vector<TableConnector>& tables);
     virtual ~Orch();
 
@@ -233,6 +252,7 @@ public:
 
     /* Run doTask against a specific executor */
     virtual void doTask(Consumer &consumer) { };
+    virtual void doTask(ZmqConsumer &consumer) { };
     virtual void doTask(swss::NotificationConsumer &consumer) { }
     virtual void doTask(swss::SelectableTimer &timer) { }
 
@@ -270,7 +290,7 @@ protected:
 
     ResponsePublisher m_publisher;
 private:
-    void addConsumer(swss::DBConnector *db, std::string tableName, int pri = default_orch_pri);
+    void addConsumer(swss::DBConnector *db, std::string tableName, int pri = default_orch_pri, swss::ZmqServer *zmqServer = nullptr);
 };
 
 #include "request_parser.h"

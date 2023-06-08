@@ -32,11 +32,11 @@ extern sai_object_id_t gSwitchId;
 extern size_t gMaxBulkSize;
 extern CrmOrch *gCrmOrch;
 
-DashVnetOrch::DashVnetOrch(DBConnector *db, vector<string> &tables) :
+DashVnetOrch::DashVnetOrch(DBConnector *db, vector<string> &tables, ZmqServer *zmqServer) :
     vnet_bulker_(sai_dash_vnet_api, gSwitchId, gMaxBulkSize),
     outbound_ca_to_pa_bulker_(sai_dash_outbound_ca_to_pa_api, gMaxBulkSize),
     pa_validation_bulker_(sai_dash_pa_validation_api, gMaxBulkSize),
-    Orch(db, tables)
+    Orch(db, tables, zmqServer)
 {
     SWSS_LOG_ENTER();
 }
@@ -150,7 +150,7 @@ bool DashVnetOrch::removeVnetPost(const string& vnet_name, const DashVnetBulkCon
     return true;
 }
 
-void DashVnetOrch::doTaskVnetTable(Consumer& consumer)
+void DashVnetOrch::doTaskVnetTable(ZmqConsumer& consumer)
 {
     SWSS_LOG_ENTER();
 
@@ -628,7 +628,7 @@ bool DashVnetOrch::removeVnetMapPost(const string& key, const VnetMapBulkContext
     return true;
 }
 
-void DashVnetOrch::doTaskVnetMapTable(Consumer& consumer)
+void DashVnetOrch::doTaskVnetMapTable(ZmqConsumer& consumer)
 {
     SWSS_LOG_ENTER();
 
@@ -776,7 +776,7 @@ void DashVnetOrch::doTaskVnetMapTable(Consumer& consumer)
     }
 }
 
-void DashVnetOrch::doTask(Consumer &consumer)
+void DashVnetOrch::doTask(ZmqConsumer &consumer)
 {
     SWSS_LOG_ENTER();
 

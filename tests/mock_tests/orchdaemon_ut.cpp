@@ -33,7 +33,7 @@ namespace orchdaemon_test
                 sai_switch_api->get_switch_attribute = &mock_get_switch_attribute;
                 sai_switch_api->set_switch_attribute = &mock_set_switch_attribute;
 
-                orchd = new OrchDaemon(&appl_db, &config_db, &state_db, &counters_db);
+                orchd = new OrchDaemon(&appl_db, &config_db, &state_db, &counters_db, nullptr);
 
             };
 

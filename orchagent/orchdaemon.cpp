@@ -64,11 +64,12 @@ event_handle_t g_events_handle;
 #define DEFAULT_MAX_BULK_SIZE 1000
 size_t gMaxBulkSize = DEFAULT_MAX_BULK_SIZE;
 
-OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb, DBConnector *chassisAppDb) :
+OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb, DBConnector *chassisAppDb, ZmqServer *zmqServer) :
         m_applDb(applDb),
         m_configDb(configDb),
         m_stateDb(stateDb),
-        m_chassisAppDb(chassisAppDb)
+        m_chassisAppDb(chassisAppDb),
+        m_zmqServer(zmqServer)
 {
     SWSS_LOG_ENTER();
     m_select = new Select();
@@ -226,7 +227,7 @@ bool OrchDaemon::init()
         APP_DASH_VNET_TABLE_NAME,
         APP_DASH_VNET_MAPPING_TABLE_NAME
     };
-    DashVnetOrch *dash_vnet_orch = new DashVnetOrch(m_applDb, dash_vnet_tables);
+    DashVnetOrch *dash_vnet_orch = new DashVnetOrch(m_applDb, dash_vnet_tables, m_zmqServer);
     gDirectory.set(dash_vnet_orch);
 
     vector<string> dash_tables = {
@@ -236,7 +237,7 @@ bool OrchDaemon::init()
         APP_DASH_QOS_TABLE_NAME
     };
 
-    DashOrch *dash_orch = new DashOrch(m_applDb, dash_tables);
+    DashOrch *dash_orch = new DashOrch(m_applDb, dash_tables, m_zmqServer);
     gDirectory.set(dash_orch);
 
     vector<string> dash_route_tables = {
@@ -244,7 +245,7 @@ bool OrchDaemon::init()
         APP_DASH_ROUTE_RULE_TABLE_NAME
     };
 
-    DashRouteOrch *dash_route_orch = new DashRouteOrch(m_applDb, dash_route_tables, dash_orch);
+    DashRouteOrch *dash_route_orch = new DashRouteOrch(m_applDb, dash_route_tables, dash_orch, m_zmqServer);
     gDirectory.set(dash_route_orch);
 
     vector<string> dash_acl_tables = {
@@ -253,7 +254,7 @@ bool OrchDaemon::init()
         APP_DASH_ACL_GROUP_TABLE_NAME,
         APP_DASH_ACL_RULE_TABLE_NAME
     };
-    DashAclOrch *dash_acl_orch = new DashAclOrch(m_applDb, dash_acl_tables, dash_orch);
+    DashAclOrch *dash_acl_orch = new DashAclOrch(m_applDb, dash_acl_tables, dash_orch, m_zmqServer);
     gDirectory.set(dash_acl_orch);
 
     vector<string> qos_tables = {
@@ -993,8 +994,8 @@ void OrchDaemon::addOrchList(Orch *o)
     m_orchList.push_back(o);
 }
 
-FabricOrchDaemon::FabricOrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb, DBConnector *chassisAppDb) :
-    OrchDaemon(applDb, configDb, stateDb, chassisAppDb),
+FabricOrchDaemon::FabricOrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb, DBConnector *chassisAppDb, ZmqServer *zmqServer) :
+    OrchDaemon(applDb, configDb, stateDb, chassisAppDb, zmqServer),
     m_applDb(applDb),
     m_configDb(configDb)
 {

@@ -12,6 +12,8 @@
 #include "tokenize.h"
 #include "logger.h"
 #include "consumerstatetable.h"
+#include "zmqserver.h"
+#include "zmqconsumerstatetable.h"
 #include "sai_serialize.h"
 
 using namespace swss;
@@ -23,24 +25,24 @@ extern ofstream gRecordOfs;
 extern bool gLogRotate;
 extern string gRecordFile;
 
-Orch::Orch(DBConnector *db, const string tableName, int pri)
+Orch::Orch(DBConnector *db, const string tableName, int pri, ZmqServer *zmqServer)
 {
-    addConsumer(db, tableName, pri);
+    addConsumer(db, tableName, pri, zmqServer);
 }
 
-Orch::Orch(DBConnector *db, const vector<string> &tableNames)
+Orch::Orch(DBConnector *db, const vector<string> &tableNames, ZmqServer *zmqServer)
 {
     for (auto it : tableNames)
     {
-        addConsumer(db, it, default_orch_pri);
+        addConsumer(db, it, default_orch_pri, zmqServer);
     }
 }
 
-Orch::Orch(DBConnector *db, const vector<table_name_with_pri_t> &tableNames_with_pri)
+Orch::Orch(DBConnector *db, const vector<table_name_with_pri_t> &tableNames_with_pri, ZmqServer *zmqServer)
 {
     for (const auto& it : tableNames_with_pri)
     {
-        addConsumer(db, it.first, it.second);
+        addConsumer(db, it.first, it.second, zmqServer);
     }
 }
 
@@ -259,6 +261,28 @@ void Consumer::execute()
 }
 
 void Consumer::drain()
+{
+    if (!m_toSync.empty())
+        m_orch->doTask(*this);
+}
+
+void ZmqConsumer::execute()
+{
+    SWSS_LOG_ENTER();
+
+    size_t update_size = 0;
+    auto table = static_cast<swss::ZmqConsumerStateTable *>(getSelectable());
+    do
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        table->pops(entries);
+        update_size = addToSync(entries);
+    } while (update_size != 0);
+
+    drain();
+}
+
+void ZmqConsumer::drain()
 {
     if (!m_toSync.empty())
         m_orch->doTask(*this);
@@ -824,9 +848,21 @@ bool Orch::isItemIdsMapContinuous(unsigned long idsMap, sai_uint32_t maxId)
     return true;
 }
 
-void Orch::addConsumer(DBConnector *db, string tableName, int pri)
+void Orch::addConsumer(DBConnector *db, string tableName, int pri, ZmqServer *zmqServer)
 {
-    if (db->getDbId() == CONFIG_DB || db->getDbId() == STATE_DB || db->getDbId() == CHASSIS_APP_DB)
+    if (zmqServer != nullptr)
+    {
+        if (db->getDbId() == APPL_DB)
+        {
+            SWSS_LOG_DEBUG("[ZMQ] ZmqConsumer initialize for: %s", tableName.c_str());
+            addExecutor(new ZmqConsumer(new ZmqConsumerStateTable(db, tableName, *zmqServer, gBatchSize, pri), this, tableName));
+        }
+        else
+        {
+            SWSS_LOG_WARN("ZmqConsumer not enabled for consumer db: %d, table: %s", db->getDbId(), tableName.c_str());
+        }
+    }
+    else if (db->getDbId() == CONFIG_DB || db->getDbId() == STATE_DB || db->getDbId() == CHASSIS_APP_DB)
     {
         addExecutor(new Consumer(new SubscriberStateTable(db, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, pri), this, tableName));
     }

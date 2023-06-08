@@ -14,7 +14,7 @@
 #include "macaddress.h"
 #include "timer.h"
 #include "dashorch.h"
-#include "saihelper.h"
+#include "zmqserver.h"
 
 struct ApplianceEntry
 {
@@ -56,7 +56,7 @@ typedef std::map<std::string, QosEntry> QosTable;
 class DashOrch : public Orch
 {
 public:
-    DashOrch(swss::DBConnector *db, std::vector<std::string> &tables);
+    DashOrch(swss::DBConnector *db, std::vector<std::string> &tables, swss::ZmqServer *zmqServer);
     const EniEntry *getEni(const std::string &eni) const;
 
 private:
@@ -64,11 +64,11 @@ private:
     RoutingTypeTable routing_type_entries_;
     EniTable eni_entries_;
     QosTable qos_entries_;
-    void doTask(Consumer &consumer);
-    void doTaskApplianceTable(Consumer &consumer);
-    void doTaskRoutingTypeTable(Consumer &consumer);
-    void doTaskEniTable(Consumer &consumer);
-    void doTaskQosTable(Consumer &consumer);
+    void doTask(ZmqConsumer &consumer);
+    void doTaskApplianceTable(ZmqConsumer &consumer);
+    void doTaskRoutingTypeTable(ZmqConsumer &consumer);
+    void doTaskEniTable(ZmqConsumer &consumer);
+    void doTaskQosTable(ZmqConsumer &consumer);
     bool addApplianceEntry(const std::string& appliance_id, const ApplianceEntry &entry);
     bool removeApplianceEntry(const std::string& appliance_id);
     bool addRoutingTypeEntry(const std::string& routing_type, const RoutingTypeEntry &entry);
