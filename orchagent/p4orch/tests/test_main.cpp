@@ -42,6 +42,7 @@ int gBatchSize = DEFAULT_BATCH_SIZE;
 size_t gMaxBulkSize = DEFAULT_MAX_BULK_SIZE;
 bool gSairedisRecord = true;
 bool gSwssRecord = true;
+bool gOrchStatsRecord = false;
 bool gLogRotate = false;
 bool gResponsePublisherRecord = false;
 bool gResponsePublisherLogRotate = false;

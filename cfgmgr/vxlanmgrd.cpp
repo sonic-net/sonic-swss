@@ -31,6 +31,7 @@ using namespace swss;
  */
 int gBatchSize = 0;
 bool gSwssRecord = false;
+bool gOrchStatsRecord = false;
 bool gLogRotate = false;
 ofstream gRecordOfs;
 string gRecordFile;

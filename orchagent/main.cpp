@@ -56,6 +56,7 @@ int gBatchSize = DEFAULT_BATCH_SIZE;
 
 bool gSairedisRecord = true;
 bool gSwssRecord = true;
+bool gOrchStatsRecord = true;
 bool gResponsePublisherRecord = false;
 bool gLogRotate = false;
 bool gResponsePublisherLogRotate = false;

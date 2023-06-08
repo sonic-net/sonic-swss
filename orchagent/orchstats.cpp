@@ -63,6 +63,7 @@ OrchStats::Stats &OrchStats::getTableStats(const std::string &table_name)
             std::forward_as_tuple(table_name),
             std::forward_as_tuple()).first;
     }
+
     return it->second;
 }
 

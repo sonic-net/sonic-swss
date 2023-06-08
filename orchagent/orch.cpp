@@ -23,6 +23,7 @@ extern bool gSwssRecord;
 extern ofstream gRecordOfs;
 extern bool gLogRotate;
 extern string gRecordFile;
+extern bool gOrchStatsRecord;
 
 Orch::Orch(DBConnector *db, const string tableName, int pri)
 {
@@ -85,7 +86,10 @@ void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry)
         Orch::recordTuple(*this, entry);
     }
 
-    OrchStats::getInstance()->recordIncomingTask(*this, entry);
+    if (gOrchStatsRecord)
+    {
+        OrchStats::getInstance()->recordIncomingTask(*this, entry);
+    }
 
     /*
     * m_toSync is a multimap which will allow one key with multiple values,
