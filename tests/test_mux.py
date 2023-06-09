@@ -1478,6 +1478,27 @@ class TestMuxTunnel(TestMuxTunnelBase):
         for ip in test_ips:
             self.check_neighbor_state(dvs, dvs_route, ip, expect_route=False)
 
+    def test_warm_boot_mux_state(
+            self, dvs, appdb, dvs_route, setup_vlan, setup_mux_cable, setup_tunnel,
+            remove_peer_switch, neighbor_cleanup, testlog
+    ):
+        """
+        test mux initialization during warm boot.
+        """
+        self.set_mux_state(appdb, "Ethernet0", "active")
+
+        # Execute the warm reboot
+        dvs.runcmd("config warm_restart enable swss")
+        dvs.stop_swss()
+        dvs.start_swss()
+
+        time.sleep(5)
+
+        fvs = appdb.get_entry(self.APP_MUX_CABLE, "Ethernet0")
+        for key in fvs:
+            if key == "state":
+                assert fvs[key] == "active", "Mux state is not active after warm boot, state: {}".format(fvs[key])
+
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
