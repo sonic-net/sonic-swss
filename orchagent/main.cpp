@@ -31,7 +31,6 @@ extern "C" {
 #include <signal.h>
 #include "warm_restart.h"
 #include "gearboxutils.h"
-#include "schema.h"
 
 using namespace std;
 using namespace swss;
