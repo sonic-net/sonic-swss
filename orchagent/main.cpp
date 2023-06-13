@@ -31,6 +31,7 @@ extern "C" {
 #include <signal.h>
 #include "warm_restart.h"
 #include "gearboxutils.h"
+#include "schema.h"
 
 using namespace std;
 using namespace swss;
@@ -454,7 +455,7 @@ int main(int argc, char **argv)
     DBConnector state_db("STATE_DB", 0);
 
     // Instantiate ZMQ server 
-    SWSS_LOG_NOTICE("[ZMQ] Instantiate ZMQ server : %s", zmq_server_address.c_str());
+    SWSS_LOG_NOTICE("Instantiate ZMQ server : %s", zmq_server_address.c_str());
     ZmqServer zmq_server(zmq_server_address.c_str());
 
     // Get switch_type
