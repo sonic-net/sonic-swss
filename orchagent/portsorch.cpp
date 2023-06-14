@@ -1102,8 +1102,8 @@ void PortsOrch::initHostTxReadyState(Port &port)
     if (hostTxReady.empty())
     {
         m_portStateTable.hset(port.m_alias, "host_tx_ready", "false");
-        SWSS_LOG_INFO("initalize hostTxReady %s with status %s",
-                port.m_alias.c_str(), hostTxReady.c_str());
+        SWSS_LOG_NOTICE("initialize host_tx_ready as false for port %s",
+                        port.m_alias.c_str());
     }
 }
 
@@ -1119,15 +1119,16 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
     if (!state)
     {
         m_portStateTable.hset(port.m_alias, "host_tx_ready", "false");
-        SWSS_LOG_INFO("Set admin status DOWN host_tx_ready to false to port pid:%" PRIx64,
-                port.m_port_id);
+        SWSS_LOG_NOTICE("Set admin status DOWN host_tx_ready to false for port %s",
+                port.m_alias.c_str());
     }
 
     sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to set admin status %s to port pid:%" PRIx64,
-                       state ? "UP" : "DOWN", port.m_port_id);
+        SWSS_LOG_ERROR("Failed to set admin status %s for port %s."
+                       " Setting host_tx_ready as false",
+                       state ? "UP" : "DOWN", port.m_alias.c_str());
         m_portStateTable.hset(port.m_alias, "host_tx_ready", "false");
         task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
         if (handle_status != task_success)
@@ -1140,14 +1141,16 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
     if (gbstatus != true)
     {
         m_portStateTable.hset(port.m_alias, "host_tx_ready", "false");
+        SWSS_LOG_NOTICE("Set host_tx_ready to false as gbstatus is false "
+                        "for port %s", port.m_alias.c_str());
     }
 
     /* Update the state table for host_tx_ready*/
     if (state && (gbstatus == true) && (status == SAI_STATUS_SUCCESS) )
     {
         m_portStateTable.hset(port.m_alias, "host_tx_ready", "true");
-        SWSS_LOG_INFO("Set admin status UP host_tx_ready to true to port pid:%" PRIx64,
-                port.m_port_id);
+        SWSS_LOG_NOTICE("Set admin status UP host_tx_ready to true for port %s",
+                port.m_alias.c_str());
     }
 
     return true;
