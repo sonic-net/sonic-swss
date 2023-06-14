@@ -25,24 +25,24 @@ extern ofstream gRecordOfs;
 extern bool gLogRotate;
 extern string gRecordFile;
 
-Orch::Orch(DBConnector *db, const string tableName, int pri, ZmqServer *zmqServer)
+Orch::Orch(DBConnector *db, const string tableName, int pri)
 {
-    addConsumer(db, tableName, pri, zmqServer);
+    addConsumer(db, tableName, pri);
 }
 
-Orch::Orch(DBConnector *db, const vector<string> &tableNames, ZmqServer *zmqServer)
+Orch::Orch(DBConnector *db, const vector<string> &tableNames)
 {
     for (auto it : tableNames)
     {
-        addConsumer(db, it, default_orch_pri, zmqServer);
+        addConsumer(db, it, default_orch_pri);
     }
 }
 
-Orch::Orch(DBConnector *db, const vector<table_name_with_pri_t> &tableNames_with_pri, ZmqServer *zmqServer)
+Orch::Orch(DBConnector *db, const vector<table_name_with_pri_t> &tableNames_with_pri)
 {
     for (const auto& it : tableNames_with_pri)
     {
-        addConsumer(db, it.first, it.second, zmqServer);
+        addConsumer(db, it.first, it.second);
     }
 }
 
@@ -54,11 +54,39 @@ Orch::Orch(const vector<TableConnector>& tables)
     }
 }
 
+Orch::Orch()
+{
+}
+
 Orch::~Orch()
 {
     if (gRecordOfs.is_open())
     {
         gRecordOfs.close();
+    }
+}
+
+ZmqOrch::ZmqOrch(DBConnector *db, const string tableName, int pri, ZmqServer *zmqServer)
+: Orch()
+{
+    addConsumer(db, tableName, pri, zmqServer);
+}
+
+ZmqOrch::ZmqOrch(DBConnector *db, const vector<string> &tableNames, ZmqServer *zmqServer)
+: Orch()
+{
+    for (auto it : tableNames)
+    {
+        addConsumer(db, it, default_orch_pri, zmqServer);
+    }
+}
+
+ZmqOrch::ZmqOrch(DBConnector *db, const vector<table_name_with_pri_t> &tableNames_with_pri, ZmqServer *zmqServer)
+: Orch()
+{
+    for (const auto& it : tableNames_with_pri)
+    {
+        addConsumer(db, it.first, it.second, zmqServer);
     }
 }
 
@@ -244,12 +272,13 @@ void ConsumerBase::dumpPendingTasks(vector<string> &ts)
     }
 }
 
-void Consumer::execute()
+template<class SELECTABLE_T>
+void ConsumerBase::execute_impl()
 {
     SWSS_LOG_ENTER();
 
     size_t update_size = 0;
-    auto table = static_cast<swss::ConsumerTableBase *>(getSelectable());
+    auto table = static_cast<SELECTABLE_T *>(getSelectable());
     do
     {
         std::deque<KeyOpFieldsValuesTuple> entries;
@@ -258,34 +287,34 @@ void Consumer::execute()
     } while (update_size != 0);
 
     drain();
+}
+
+template<class CONSUMER_T>
+void ConsumerBase::drain_impl()
+{
+    if (!m_toSync.empty())
+        m_orch->doTask((CONSUMER_T&)*this);
+}
+
+
+void Consumer::execute()
+{
+    ConsumerBase::execute_impl<swss::ConsumerTableBase>();
 }
 
 void Consumer::drain()
 {
-    if (!m_toSync.empty())
-        m_orch->doTask(*this);
+    ConsumerBase::drain_impl<Consumer>();
 }
 
 void ZmqConsumer::execute()
 {
-    SWSS_LOG_ENTER();
-
-    size_t update_size = 0;
-    auto table = static_cast<swss::ZmqConsumerStateTable *>(getSelectable());
-    do
-    {
-        std::deque<KeyOpFieldsValuesTuple> entries;
-        table->pops(entries);
-        update_size = addToSync(entries);
-    } while (update_size != 0);
-
-    drain();
+    ConsumerBase::execute_impl<swss::ZmqConsumerStateTable>();
 }
 
 void ZmqConsumer::drain()
 {
-    if (!m_toSync.empty())
-        m_orch->doTask(*this);
+    ConsumerBase::drain_impl<ZmqConsumer>();
 }
 
 size_t Orch::addExistingData(const string& tableName)
@@ -848,27 +877,28 @@ bool Orch::isItemIdsMapContinuous(unsigned long idsMap, sai_uint32_t maxId)
     return true;
 }
 
-void Orch::addConsumer(DBConnector *db, string tableName, int pri, ZmqServer *zmqServer)
+void Orch::addConsumer(DBConnector *db, string tableName, int pri)
 {
-    if (zmqServer != nullptr)
-    {
-        if (db->getDbId() == APPL_DB)
-        {
-            SWSS_LOG_DEBUG("[ZMQ] ZmqConsumer initialize for: %s", tableName.c_str());
-            addExecutor(new ZmqConsumer(new ZmqConsumerStateTable(db, tableName, *zmqServer, gBatchSize, pri), this, tableName));
-        }
-        else
-        {
-            SWSS_LOG_WARN("ZmqConsumer not enabled for consumer db: %d, table: %s", db->getDbId(), tableName.c_str());
-        }
-    }
-    else if (db->getDbId() == CONFIG_DB || db->getDbId() == STATE_DB || db->getDbId() == CHASSIS_APP_DB)
+    if (db->getDbId() == CONFIG_DB || db->getDbId() == STATE_DB || db->getDbId() == CHASSIS_APP_DB)
     {
         addExecutor(new Consumer(new SubscriberStateTable(db, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, pri), this, tableName));
     }
     else
     {
         addExecutor(new Consumer(new ConsumerStateTable(db, tableName, gBatchSize, pri), this, tableName));
+    }
+}
+
+void ZmqOrch::addConsumer(DBConnector *db, string tableName, int pri, ZmqServer *zmqServer)
+{
+    if (db->getDbId() == APPL_DB)
+    {
+        SWSS_LOG_DEBUG("[ZMQ] ZmqConsumer initialize for: %s", tableName.c_str());
+        addExecutor(new ZmqConsumer(new ZmqConsumerStateTable(db, tableName, *zmqServer, gBatchSize, pri), this, tableName));
+    }
+    else
+    {
+        SWSS_LOG_WARN("ZmqConsumer not enabled for consumer db: %d, table: %s", db->getDbId(), tableName.c_str());
     }
 }
 

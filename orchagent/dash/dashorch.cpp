@@ -29,7 +29,7 @@ extern sai_object_id_t gSwitchId;
 extern size_t gMaxBulkSize;
 extern CrmOrch *gCrmOrch;
 
-DashOrch::DashOrch(DBConnector *db, vector<string> &tableName, ZmqServer *zmqServer) : Orch(db, tableName, zmqServer)
+DashOrch::DashOrch(DBConnector *db, vector<string> &tableName, ZmqServer *zmqServer) : ZmqOrch(db, tableName, zmqServer)
 {
     SWSS_LOG_ENTER();
 }

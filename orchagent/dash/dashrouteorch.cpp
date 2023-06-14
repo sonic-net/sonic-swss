@@ -41,7 +41,7 @@ static std::unordered_map<std::string, sai_outbound_routing_entry_action_t> sOut
 DashRouteOrch::DashRouteOrch(DBConnector *db, vector<string> &tableName, DashOrch *dash_orch, ZmqServer *zmqServer) :
     outbound_routing_bulker_(sai_dash_outbound_routing_api, gMaxBulkSize),
     inbound_routing_bulker_(sai_dash_inbound_routing_api, gMaxBulkSize),
-    Orch(db, tableName, zmqServer),
+    ZmqOrch(db, tableName, zmqServer),
     dash_orch_(dash_orch)
 {
     SWSS_LOG_ENTER();

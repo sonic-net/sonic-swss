@@ -76,7 +76,7 @@ struct VnetMapBulkContext
     }
 };
 
-class DashVnetOrch : public Orch
+class DashVnetOrch : public ZmqOrch
 {
 public:
     DashVnetOrch(swss::DBConnector *db, std::vector<std::string> &tables, swss::ZmqServer *zmqServer);

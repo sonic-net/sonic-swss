@@ -350,7 +350,7 @@ int main(int argc, char **argv)
     string record_location = ".";
     string swss_rec_filename = "swss.rec";
     string sairedis_rec_filename = "sairedis.rec";
-    string zmq_server_address = "tcp://*:1234";
+    string zmq_server_address = "tcp://*:" + to_string(DASH_ORCH_ZMQ_PORT);
     string responsepublisher_rec_filename = "responsepublisher.rec";
     int record_type = 3; // Only swss and sairedis recordings enabled by default.
 

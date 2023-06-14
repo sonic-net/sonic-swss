@@ -159,6 +159,12 @@ public:
 
     // Returns: the number of entries added to m_toSync
     size_t addToSync(const std::deque<swss::KeyOpFieldsValuesTuple> &entries);
+
+    template<class SELECTABLE_T>
+    void execute_impl();
+
+    template<class CONSUMER_T>
+    void drain_impl();
 };
 
 class Consumer : public ConsumerBase {
@@ -231,10 +237,11 @@ typedef std::pair<swss::DBConnector *, std::vector<std::string>> TablesConnector
 class Orch
 {
 public:
-    Orch(swss::DBConnector *db, const std::string tableName, int pri = default_orch_pri, swss::ZmqServer *zmqServer = nullptr);
-    Orch(swss::DBConnector *db, const std::vector<std::string> &tableNames, swss::ZmqServer *zmqServer = nullptr);
-    Orch(swss::DBConnector *db, const std::vector<table_name_with_pri_t> &tableNameWithPri, swss::ZmqServer *zmqServer = nullptr);
+    Orch(swss::DBConnector *db, const std::string tableName, int pri = default_orch_pri);
+    Orch(swss::DBConnector *db, const std::vector<std::string> &tableNames);
+    Orch(swss::DBConnector *db, const std::vector<table_name_with_pri_t> &tableNameWithPri);
     Orch(const std::vector<TableConnector>& tables);
+    Orch();
     virtual ~Orch();
 
     std::vector<swss::Selectable*> getSelectables();
@@ -290,7 +297,18 @@ protected:
 
     ResponsePublisher m_publisher;
 private:
-    void addConsumer(swss::DBConnector *db, std::string tableName, int pri = default_orch_pri, swss::ZmqServer *zmqServer = nullptr);
+    void addConsumer(swss::DBConnector *db, std::string tableName, int pri = default_orch_pri);
+};
+
+class ZmqOrch : public Orch
+{
+public:
+    ZmqOrch(swss::DBConnector *db, const std::string tableName, int pri, swss::ZmqServer *zmqServer);
+    ZmqOrch(swss::DBConnector *db, const std::vector<std::string> &tableNames, swss::ZmqServer *zmqServer);
+    ZmqOrch(swss::DBConnector *db, const std::vector<table_name_with_pri_t> &tableNameWithPri, swss::ZmqServer *zmqServer);
+
+private:
+    void addConsumer(swss::DBConnector *db, std::string tableName, int pri, swss::ZmqServer *zmqServer);
 };
 
 #include "request_parser.h"
