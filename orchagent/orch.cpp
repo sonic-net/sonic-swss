@@ -289,11 +289,11 @@ void ConsumerBase::execute_impl()
     drain();
 }
 
-template<class CONSUMER_T>
+template<class ORCH_T, class CONSUMER_T>
 void ConsumerBase::drain_impl()
 {
     if (!m_toSync.empty())
-        m_orch->doTask((CONSUMER_T&)*this);
+        ((ORCH_T *)m_orch)->doTask((CONSUMER_T&)*this);
 }
 
 
@@ -304,7 +304,7 @@ void Consumer::execute()
 
 void Consumer::drain()
 {
-    ConsumerBase::drain_impl<Consumer>();
+    ConsumerBase::drain_impl<Orch, Consumer>();
 }
 
 void ZmqConsumer::execute()
@@ -314,7 +314,7 @@ void ZmqConsumer::execute()
 
 void ZmqConsumer::drain()
 {
-    ConsumerBase::drain_impl<ZmqConsumer>();
+    ConsumerBase::drain_impl<ZmqOrch, ZmqConsumer>();
 }
 
 size_t Orch::addExistingData(const string& tableName)

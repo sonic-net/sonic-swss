@@ -163,7 +163,7 @@ public:
     template<class SELECTABLE_T>
     void execute_impl();
 
-    template<class CONSUMER_T>
+    template<class ORCH_T, class CONSUMER_T>
     void drain_impl();
 };
 
@@ -259,7 +259,6 @@ public:
 
     /* Run doTask against a specific executor */
     virtual void doTask(Consumer &consumer) { };
-    virtual void doTask(ZmqConsumer &consumer) { };
     virtual void doTask(swss::NotificationConsumer &consumer) { }
     virtual void doTask(swss::SelectableTimer &timer) { }
 
@@ -306,6 +305,8 @@ public:
     ZmqOrch(swss::DBConnector *db, const std::string tableName, int pri, swss::ZmqServer *zmqServer);
     ZmqOrch(swss::DBConnector *db, const std::vector<std::string> &tableNames, swss::ZmqServer *zmqServer);
     ZmqOrch(swss::DBConnector *db, const std::vector<table_name_with_pri_t> &tableNameWithPri, swss::ZmqServer *zmqServer);
+
+    virtual void doTask(ZmqConsumer &consumer) { };
 
 private:
     void addConsumer(swss::DBConnector *db, std::string tableName, int pri, swss::ZmqServer *zmqServer);
