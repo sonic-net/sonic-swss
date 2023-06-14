@@ -13,6 +13,9 @@
 #define private public
 #include "bufferorch.h"
 #include "qosorch.h"
+#define protected public
+#include "pfcwdorch.h"
+#undef protected
 #undef private
 #include "vrforch.h"
 #include "vnetorch.h"
@@ -52,10 +55,13 @@ extern FdbOrch *gFdbOrch;
 extern MirrorOrch *gMirrorOrch;
 extern BufferOrch *gBufferOrch;
 extern QosOrch *gQosOrch;
+template <typename DropHandler, typename ForwardHandler> PfcWdSwOrch<DropHandler, ForwardHandler> *gPfcwdOrch;
 extern VRFOrch *gVrfOrch;
 extern NhgOrch *gNhgOrch;
 extern Srv6Orch  *gSrv6Orch;
 extern BfdOrch *gBfdOrch;
+extern AclOrch *gAclOrch;
+extern PolicerOrch *gPolicerOrch;
 extern Directory<Orch*> gDirectory;
 
 extern sai_acl_api_t *sai_acl_api;
@@ -70,6 +76,7 @@ extern sai_route_api_t *sai_route_api;
 extern sai_neighbor_api_t *sai_neighbor_api;
 extern sai_tunnel_api_t *sai_tunnel_api;
 extern sai_next_hop_api_t *sai_next_hop_api;
+extern sai_next_hop_group_api_t *sai_next_hop_group_api;
 extern sai_hostif_api_t *sai_hostif_api;
 extern sai_policer_api_t *sai_policer_api;
 extern sai_buffer_api_t *sai_buffer_api;
@@ -82,3 +89,4 @@ extern sai_udf_api_t* sai_udf_api;
 extern sai_mpls_api_t* sai_mpls_api;
 extern sai_counter_api_t* sai_counter_api;
 extern sai_samplepacket_api_t *sai_samplepacket_api;
+extern sai_fdb_api_t* sai_fdb_api;

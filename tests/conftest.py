@@ -1144,10 +1144,10 @@ class DockerVirtualSwitch:
     # deps: acl, fdb_update, fdb, intf_mac, mirror_port_erspan, mirror_port_span,
     # policer, port_dpb_vlan, vlan
     def setup_db(self):
-        self.pdb = swsscommon.DBConnector(0, self.redis_sock, 0)
-        self.adb = swsscommon.DBConnector(1, self.redis_sock, 0)
-        self.cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
-        self.sdb = swsscommon.DBConnector(6, self.redis_sock, 0)
+        self.pdb = swsscommon.DBConnector(swsscommon.APPL_DB, self.redis_sock, 0)
+        self.adb = swsscommon.DBConnector(swsscommon.ASIC_DB, self.redis_sock, 0)
+        self.cdb = swsscommon.DBConnector(swsscommon.CONFIG_DB, self.redis_sock, 0)
+        self.sdb = swsscommon.DBConnector(swsscommon.STATE_DB, self.redis_sock, 0)
 
     def getSwitchOid(self):
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_SWITCH")

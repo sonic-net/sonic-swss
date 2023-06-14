@@ -52,9 +52,8 @@ private:
     void createMuxAclRule(shared_ptr<AclRulePacket> rule, string strTable);
     void bindAllPorts(AclTable &acl_table);
 
-    // class shared dict: ACL table name -> ACL table
-    static std::map<std::string, AclTable> acl_table_;
     sai_object_id_t port_ = SAI_NULL_OBJECT_ID;
+    bool is_ingress_acl_ = true;
     string alias_;
 };
 
@@ -72,6 +71,8 @@ public:
     void update(NextHopKey nh, sai_object_id_t, bool = true, MuxState = MuxState::MUX_STATE_INIT);
 
     sai_object_id_t getNextHopId(const NextHopKey);
+    MuxNeighbor getNeighbors() const { return neighbors_; };
+    string getAlias() const { return alias_; };
 
 private:
     inline void updateTunnelRoute(NextHopKey, bool = true);
@@ -96,12 +97,14 @@ public:
     using state_machine_handlers = map<MuxStateChange, bool (MuxCable::*)()>;
 
     void setState(string state);
+    void rollbackStateChange();
     string getState();
     bool isStateChangeInProgress() { return st_chg_in_progress_; }
     bool isStateChangeFailed() { return st_chg_failed_; }
 
     bool isIpInSubnet(IpAddress ip);
     void updateNeighbor(NextHopKey nh, bool add);
+    void updateRoutes();
     sai_object_id_t getNextHopId(const NextHopKey nh)
     {
         return nbr_handler_->getNextHopId(nh);
@@ -119,6 +122,7 @@ private:
     MuxCableType cable_type_;
 
     MuxState state_ = MuxState::MUX_STATE_INIT;
+    MuxState prev_state_;
     bool st_chg_in_progress_ = false;
     bool st_chg_failed_ = false;
 
@@ -158,6 +162,7 @@ typedef std::unique_ptr<MuxCable> MuxCable_T;
 typedef std::map<std::string, MuxCable_T> MuxCableTb;
 typedef std::map<IpAddress, NHTunnel> MuxTunnelNHs;
 typedef std::map<NextHopKey, std::string> NextHopTb;
+typedef std::map<IpPrefix, NextHopKey> MuxRouteTb;
 
 class MuxCfgRequest : public Request
 {
@@ -189,18 +194,28 @@ public:
         return (skip_neighbors_.find(nbr) != skip_neighbors_.end());
     }
 
+    bool isMultiNexthopRoute(const IpPrefix& pfx)
+    {
+        return (mux_multi_active_nh_table.find(pfx) != mux_multi_active_nh_table.end());
+    }
+
     MuxCable* findMuxCableInSubnet(IpAddress);
     bool isNeighborActive(const IpAddress&, const MacAddress&, string&);
     void update(SubjectType, void *);
 
     void addNexthop(NextHopKey, string = "");
     void removeNexthop(NextHopKey);
+    bool containsNextHop(const NextHopKey&);
+    bool isMuxNexthops(const NextHopGroupKey&);
     string getNexthopMuxName(NextHopKey);
     sai_object_id_t getNextHopId(const NextHopKey&);
 
     sai_object_id_t createNextHopTunnel(std::string tunnelKey, IpAddress& ipAddr);
     bool removeNextHopTunnel(std::string tunnelKey, IpAddress& ipAddr);
     sai_object_id_t getNextHopTunnelId(std::string tunnelKey, IpAddress& ipAddr);
+
+    void updateRoute(const IpPrefix &pfx, bool add);
+    bool isStandaloneTunnelRouteInstalled(const IpAddress& neighborIp);
 
 private:
     virtual bool addOperation(const Request& request);
@@ -240,6 +255,9 @@ private:
     MuxCableTb mux_cable_tb_;
     MuxTunnelNHs mux_tunnel_nh_;
     NextHopTb mux_nexthop_tb_;
+
+    /* contains reference of programmed routes by updateRoute */
+    MuxRouteTb mux_multi_active_nh_table;
 
     handler_map handler_map_;
 

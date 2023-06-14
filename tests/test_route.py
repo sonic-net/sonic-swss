@@ -1035,6 +1035,84 @@ class TestRoutePerf(TestRouteBase):
         dvs.servers[1].runcmd("ip route del default dev eth0")
         dvs.servers[1].runcmd("ip address del 10.0.0.3/31 dev eth0")
 
+class TestFpmSyncResponse(TestRouteBase):
+    @pytest.fixture
+    def setup(self, dvs):
+        self.setup_db(dvs)
+
+        # create l3 interface
+        self.create_l3_intf("Ethernet0", "")
+        # set ip address
+        self.add_ip_address("Ethernet0", "10.0.0.0/31")
+        # bring up interface
+        self.set_admin_status("Ethernet0", "up")
+
+        # set ip address and default route
+        dvs.servers[0].runcmd("ip address add 10.0.0.1/31 dev eth0")
+        dvs.servers[0].runcmd("ip route add default via 10.0.0.0")
+
+        dvs.runcmd("ping -c 1 10.0.0.1")
+
+        yield
+
+        # remove ip address and default route
+        dvs.servers[0].runcmd("ip route del default dev eth0")
+        dvs.servers[0].runcmd("ip address del 10.0.0.1/31 dev eth0")
+
+        # bring interface down
+        self.set_admin_status("Ethernet0", "down")
+        # remove ip address
+        self.remove_ip_address("Ethernet0", "10.0.0.0/31")
+        # remove l3 interface
+        self.remove_l3_intf("Ethernet0")
+
+    def is_offloaded(self, dvs, route):
+        rc, output = dvs.runcmd(f"vtysh -c 'show ip route {route} json'")
+        assert rc == 0
+
+        route_entry = json.loads(output)
+        return bool(route_entry[route][0].get('offloaded'))
+
+    @pytest.mark.xfail(reason="Requires VS docker update in https://github.com/sonic-net/sonic-buildimage/pull/12853")
+    @pytest.mark.parametrize("suppress_state", ["enabled", "disabled"])
+    def test_offload(self, suppress_state, setup, dvs):
+        route = "1.1.1.0/24"
+
+        # enable route suppression
+        rc, _ = dvs.runcmd(f"config suppress-fib-pending {suppress_state}")
+        assert rc == 0, "Failed to configure suppress-fib-pending"
+
+        time.sleep(5)
+
+        try:
+            rc, _ = dvs.runcmd("bash -c 'kill -SIGSTOP $(pidof orchagent)'")
+            assert rc == 0, "Failed to suspend orchagent"
+
+            rc, _ = dvs.runcmd(f"ip route add {route} via 10.0.0.1 proto bgp")
+            assert rc == 0, "Failed to configure route"
+
+            time.sleep(5)
+
+            if suppress_state == 'disabled':
+                assert self.is_offloaded(dvs,route), f"{route} is expected to be offloaded (suppression is {suppress_state})"
+                return
+
+            assert not self.is_offloaded(dvs, route), f"{route} is expected to be not offloaded (suppression is {suppress_state})"
+
+            rc, _ = dvs.runcmd("bash -c 'kill -SIGCONT $(pidof orchagent)'")
+            assert rc == 0, "Failed to resume orchagent"
+
+            def check_offloaded():
+                return (self.is_offloaded(dvs, route), None)
+
+            wait_for_result(check_offloaded, failure_message=f"{route} is expected to be offloaded after orchagent resume")
+        finally:
+            dvs.runcmd("bash -c 'kill -SIGCONT $(pidof orchagent)'")
+            dvs.runcmd(f"ip route del {route}")
+
+            # make sure route suppression is disabled
+            dvs.runcmd("config suppress-fib-pending disabled")
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():

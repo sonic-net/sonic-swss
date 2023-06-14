@@ -100,9 +100,36 @@ class TestAcl:
 
             dvs_acl.verify_acl_table_group_members(acl_table_id, acl_table_group_ids, 1)
             dvs_acl.verify_acl_table_port_binding(acl_table_id, L3_BIND_PORTS, 1)
+            # Verify status is written into STATE_DB
+            dvs_acl.verify_acl_table_status(L3_TABLE_NAME, "Active")
         finally:
             dvs_acl.remove_acl_table(L3_TABLE_NAME)
             dvs_acl.verify_acl_table_count(0)
+            # Verify the STATE_DB entry is removed
+            dvs_acl.verify_acl_table_status(L3_TABLE_NAME, None)
+
+    def test_InvalidAclTableCreationDeletion(self, dvs_acl):
+        try:
+            dvs_acl.create_acl_table("INVALID_ACL_TABLE", L3_TABLE_TYPE, "dummy_port", "invalid_stage")
+            # Verify status is written into STATE_DB
+            dvs_acl.verify_acl_table_status("INVALID_ACL_TABLE", "Inactive")
+        finally:
+            dvs_acl.remove_acl_table("INVALID_ACL_TABLE")
+            dvs_acl.verify_acl_table_count(0)
+            # Verify the STATE_DB entry is removed
+            dvs_acl.verify_acl_table_status("INVALID_ACL_TABLE", None)
+
+    def test_InvalidAclRuleCreation(self, dvs_acl, l3_acl_table):
+        config_qualifiers = {"INVALID_QUALIFIER": "TEST"}
+
+        dvs_acl.create_acl_rule(L3_TABLE_NAME, "INVALID_RULE", config_qualifiers)
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, "INVALID_RULE", "Inactive")
+
+        dvs_acl.remove_acl_rule(L3_TABLE_NAME, "INVALID_RULE")
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, "INVALID_RULE", None)
+        dvs_acl.verify_no_acl_rules()
 
     def test_AclRuleL4SrcPort(self, dvs_acl, l3_acl_table):
         config_qualifiers = {"L4_SRC_PORT": "65000"}
@@ -112,8 +139,12 @@ class TestAcl:
 
         dvs_acl.create_acl_rule(L3_TABLE_NAME, L3_RULE_NAME, config_qualifiers)
         dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, L3_RULE_NAME, "Active")
 
         dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, L3_RULE_NAME, None)
         dvs_acl.verify_no_acl_rules()
 
     def test_AclRuleIpProtocol(self, dvs_acl, l3_acl_table):
@@ -124,8 +155,12 @@ class TestAcl:
 
         dvs_acl.create_acl_rule(L3_TABLE_NAME, L3_RULE_NAME, config_qualifiers)
         dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, L3_RULE_NAME, "Active")
 
         dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, L3_RULE_NAME, None)
         dvs_acl.verify_no_acl_rules()
 
     def test_AclRuleTCPProtocolAppendedForTCPFlags(self, dvs_acl, l3_acl_table):
@@ -141,8 +176,12 @@ class TestAcl:
         }
         dvs_acl.create_acl_rule(L3_TABLE_NAME, L3_RULE_NAME, config_qualifiers)
         dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, L3_RULE_NAME, "Active")
 
         dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, L3_RULE_NAME, None)
         dvs_acl.verify_no_acl_rules()
 
     def test_AclRuleNextHeader(self, dvs_acl, l3_acl_table):
@@ -150,9 +189,13 @@ class TestAcl:
 
         # Shouldn't allow NEXT_HEADER on vanilla L3 tables.
         dvs_acl.create_acl_rule(L3_TABLE_NAME, L3_RULE_NAME, config_qualifiers)
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, L3_RULE_NAME, "Inactive")
         dvs_acl.verify_no_acl_rules()
 
         dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, L3_RULE_NAME, None)
         dvs_acl.verify_no_acl_rules()
 
     def test_V6AclRuleNextHeaderAppendedForTCPFlags(self, dvs_acl, l3v6_acl_table):
@@ -169,8 +212,12 @@ class TestAcl:
 
         dvs_acl.create_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME, config_qualifiers)
         dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, "Active")
 
         dvs_acl.remove_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, None)
         dvs_acl.verify_no_acl_rules()
 
     def test_AclRuleInPorts(self, dvs_acl, mirror_acl_table):
@@ -187,9 +234,13 @@ class TestAcl:
         }
 
         dvs_acl.create_acl_rule(MIRROR_TABLE_NAME, MIRROR_RULE_NAME, config_qualifiers)
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(MIRROR_TABLE_NAME, MIRROR_RULE_NAME, "Active")
         dvs_acl.verify_acl_rule(expected_sai_qualifiers)
 
         dvs_acl.remove_acl_rule(MIRROR_TABLE_NAME, MIRROR_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(MIRROR_TABLE_NAME, MIRROR_RULE_NAME, None)
         dvs_acl.verify_no_acl_rules()
 
     def test_AclRuleOutPorts(self, dvs_acl, mclag_acl_table):
@@ -207,8 +258,12 @@ class TestAcl:
 
         dvs_acl.create_acl_rule(MCLAG_TABLE_NAME, MCLAG_RULE_NAME, config_qualifiers)
         dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(MCLAG_TABLE_NAME, MCLAG_RULE_NAME, "Active")
 
         dvs_acl.remove_acl_rule(MCLAG_TABLE_NAME, MCLAG_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(MCLAG_TABLE_NAME, MCLAG_RULE_NAME, None)
         dvs_acl.verify_no_acl_rules()
 
     def test_AclRuleInPortsNonExistingInterface(self, dvs_acl, mirror_acl_table):
@@ -220,9 +275,12 @@ class TestAcl:
         }
 
         dvs_acl.create_acl_rule(MIRROR_TABLE_NAME, MIRROR_RULE_NAME, config_qualifiers)
-
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(MIRROR_TABLE_NAME, MIRROR_RULE_NAME, "Inactive")
         dvs_acl.verify_no_acl_rules()
         dvs_acl.remove_acl_rule(MIRROR_TABLE_NAME, MIRROR_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(MIRROR_TABLE_NAME, MIRROR_RULE_NAME, None)
 
     def test_AclRuleOutPortsNonExistingInterface(self, dvs_acl, mclag_acl_table):
         """
@@ -233,9 +291,12 @@ class TestAcl:
         }
 
         dvs_acl.create_acl_rule(MCLAG_TABLE_NAME, MCLAG_RULE_NAME, config_qualifiers)
-
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(MCLAG_TABLE_NAME, MCLAG_RULE_NAME, "Inactive")
         dvs_acl.verify_no_acl_rules()
         dvs_acl.remove_acl_rule(MCLAG_TABLE_NAME, MCLAG_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(MCLAG_TABLE_NAME, MCLAG_RULE_NAME, None)
 
     def test_AclRuleVlanId(self, dvs_acl, l3_acl_table):
         config_qualifiers = {"VLAN_ID": "100"}
@@ -244,9 +305,13 @@ class TestAcl:
         }
 
         dvs_acl.create_acl_rule(L3_TABLE_NAME, L3_RULE_NAME, config_qualifiers)
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, L3_RULE_NAME, "Active")
         dvs_acl.verify_acl_rule(expected_sai_qualifiers)
 
         dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, L3_RULE_NAME, None)
         dvs_acl.verify_no_acl_rules()
 
     def test_V6AclTableCreationDeletion(self, dvs_acl):
@@ -259,8 +324,12 @@ class TestAcl:
             acl_table_group_ids = dvs_acl.get_acl_table_group_ids(len(L3V6_BIND_PORTS))
             dvs_acl.verify_acl_table_group_members(acl_table_id, acl_table_group_ids, 1)
             dvs_acl.verify_acl_table_port_binding(acl_table_id, L3V6_BIND_PORTS, 1)
+            # Verify status is written into STATE_DB
+            dvs_acl.verify_acl_table_status(L3V6_TABLE_NAME, "Active")
         finally:
             dvs_acl.remove_acl_table(L3V6_TABLE_NAME)
+            # Verify the STATE_DB entry is cleared
+            dvs_acl.verify_acl_table_status(L3V6_TABLE_NAME, None)
             dvs_acl.verify_acl_table_count(0)
 
     def test_V6AclRuleIPv6Any(self, dvs_acl, l3v6_acl_table):
@@ -270,9 +339,13 @@ class TestAcl:
         }
 
         dvs_acl.create_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME, config_qualifiers)
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, "Active")
         dvs_acl.verify_acl_rule(expected_sai_qualifiers)
 
         dvs_acl.remove_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, None)
         dvs_acl.verify_no_acl_rules()
 
     def test_V6AclRuleIPv6AnyDrop(self, dvs_acl, l3v6_acl_table):
@@ -286,8 +359,12 @@ class TestAcl:
                                 config_qualifiers,
                                 action="DROP")
         dvs_acl.verify_acl_rule(expected_sai_qualifiers, action="DROP")
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, "Active")
 
         dvs_acl.remove_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, None)
         dvs_acl.verify_no_acl_rules()
 
     # This test validates that backwards compatibility works as expected, it should
@@ -300,8 +377,12 @@ class TestAcl:
 
         dvs_acl.create_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME, config_qualifiers)
         dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, "Active")
 
         dvs_acl.remove_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, None)
         dvs_acl.verify_no_acl_rules()
 
     def test_V6AclRuleNextHeader(self, dvs_acl, l3v6_acl_table):
@@ -312,8 +393,12 @@ class TestAcl:
 
         dvs_acl.create_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME, config_qualifiers)
         dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, "Active")
 
         dvs_acl.remove_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, None)
         dvs_acl.verify_no_acl_rules()
 
     def test_V6AclRuleSrcIPv6(self, dvs_acl, l3v6_acl_table):
@@ -325,8 +410,12 @@ class TestAcl:
 
         dvs_acl.create_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME, config_qualifiers)
         dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, "Active")
 
         dvs_acl.remove_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, None)
         dvs_acl.verify_no_acl_rules()
 
     def test_V6AclRuleDstIPv6(self, dvs_acl, l3v6_acl_table):
@@ -337,8 +426,12 @@ class TestAcl:
 
         dvs_acl.create_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME, config_qualifiers)
         dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, "Active")
 
         dvs_acl.remove_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, None)
         dvs_acl.verify_no_acl_rules()
 
     def test_V6AclRuleL4SrcPort(self, dvs_acl, l3v6_acl_table):
@@ -349,8 +442,12 @@ class TestAcl:
 
         dvs_acl.create_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME, config_qualifiers)
         dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, "Active")
 
         dvs_acl.remove_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, None)
         dvs_acl.verify_no_acl_rules()
 
     def test_V6AclRuleL4DstPort(self, dvs_acl, l3v6_acl_table):
@@ -361,8 +458,12 @@ class TestAcl:
 
         dvs_acl.create_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME, config_qualifiers)
         dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, "Active")
 
         dvs_acl.remove_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, None)
         dvs_acl.verify_no_acl_rules()
 
     def test_V6AclRuleL4SrcPortRange(self, dvs_acl, l3v6_acl_table):
@@ -373,8 +474,12 @@ class TestAcl:
 
         dvs_acl.create_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME, config_qualifiers)
         dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, "Active")
 
         dvs_acl.remove_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, None)
         dvs_acl.verify_no_acl_rules()
 
     def test_V6AclRuleL4DstPortRange(self, dvs_acl, l3v6_acl_table):
@@ -385,8 +490,12 @@ class TestAcl:
 
         dvs_acl.create_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME, config_qualifiers)
         dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, "Active")
 
         dvs_acl.remove_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, None)
         dvs_acl.verify_no_acl_rules()
 
     def test_V6AclRuleVlanId(self, dvs_acl, l3v6_acl_table):
@@ -397,8 +506,12 @@ class TestAcl:
 
         dvs_acl.create_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME, config_qualifiers)
         dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, "Active")
 
         dvs_acl.remove_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, None)
         dvs_acl.verify_no_acl_rules()
 
     def test_InsertAclRuleBetweenPriorities(self, dvs_acl, l3_acl_table):
@@ -430,6 +543,8 @@ class TestAcl:
                                     f"PRIORITY_TEST_RULE_{rule}",
                                     config_qualifiers[rule], action=config_actions[rule],
                                     priority=rule)
+            # Verify status is written into STATE_DB
+            dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, f"PRIORITY_TEST_RULE_{rule}", "Active")
 
         dvs_acl.verify_acl_rule_set(rule_priorities, config_actions, expected_sai_qualifiers)
 
@@ -447,9 +562,12 @@ class TestAcl:
                                 action="DROP",
                                 priority=odd_priority)
         dvs_acl.verify_acl_rule_set(rule_priorities, config_actions, expected_sai_qualifiers)
-
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, f"PRIORITY_TEST_RULE_{odd_priority}", "Active")
         for rule in rule_priorities:
             dvs_acl.remove_acl_rule(L3_TABLE_NAME, f"PRIORITY_TEST_RULE_{rule}")
+            # Verify the STATE_DB entry is removed
+            dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, f"PRIORITY_TEST_RULE_{rule}", None)
         dvs_acl.verify_no_acl_rules()
 
     def test_RulesWithDiffMaskLengths(self, dvs_acl, l3_acl_table):
@@ -488,10 +606,14 @@ class TestAcl:
                                     config_qualifiers[rule],
                                     action=config_actions[rule],
                                     priority=rule)
+            # Verify status is written into STATE_DB
+            dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, f"MASK_TEST_RULE_{rule}", "Active")
         dvs_acl.verify_acl_rule_set(rule_priorities, config_actions, expected_sai_qualifiers)
 
         for rule in rule_priorities:
             dvs_acl.remove_acl_rule(L3_TABLE_NAME, f"MASK_TEST_RULE_{rule}")
+            # Verify the STATE_DB entry is removed
+            dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, f"MASK_TEST_RULE_{rule}", None)
         dvs_acl.verify_no_acl_rules()
 
     def test_AclRuleIcmp(self, dvs_acl, l3_acl_table):
@@ -507,8 +629,12 @@ class TestAcl:
 
         dvs_acl.create_acl_rule(L3_TABLE_NAME, L3_RULE_NAME, config_qualifiers)
         dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, L3_RULE_NAME, "Active")
 
         dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, L3_RULE_NAME, None)
         dvs_acl.verify_no_acl_rules()
 
         dvs_acl.remove_acl_table(L3_TABLE_NAME)
@@ -527,8 +653,12 @@ class TestAcl:
 
         dvs_acl.create_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME, config_qualifiers)
         dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, "Active")
 
         dvs_acl.remove_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, None)
         dvs_acl.verify_no_acl_rules()
 
     def test_AclRuleRedirect(self, dvs, dvs_acl, l3_acl_table, setup_teardown_neighbor):
@@ -546,8 +676,11 @@ class TestAcl:
 
         next_hop_id = setup_teardown_neighbor
         dvs_acl.verify_redirect_acl_rule(expected_sai_qualifiers, next_hop_id, priority="20")
-
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, L3_RULE_NAME, "Active")
         dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, L3_RULE_NAME, None)
         dvs_acl.verify_no_acl_rules()
 
         dvs_acl.create_redirect_acl_rule(L3_TABLE_NAME,
@@ -558,8 +691,11 @@ class TestAcl:
 
         intf_id = dvs.asic_db.port_name_map["Ethernet4"]
         dvs_acl.verify_redirect_acl_rule(expected_sai_qualifiers, intf_id, priority="20")
-
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, L3_RULE_NAME, "Active")
         dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, L3_RULE_NAME, None)
         dvs_acl.verify_no_acl_rules()
     
     def test_AclTableMandatoryMatchFields(self, dvs, pfcwd_acl_table):

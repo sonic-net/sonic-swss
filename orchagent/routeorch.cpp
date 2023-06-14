@@ -6,6 +6,7 @@
 #include "cbf/cbfnhgorch.h"
 #include "logger.h"
 #include "flowcounterrouteorch.h"
+#include "muxorch.h"
 #include "swssnet.h"
 #include "crmorch.h"
 #include "directory.h"
@@ -46,6 +47,8 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
         m_resync(false)
 {
     SWSS_LOG_ENTER();
+
+    m_publisher.setBuffered(true);
 
     sai_attribute_t attr;
     attr.id = SAI_SWITCH_ATTR_NUMBER_OF_ECMP_GROUPS;
@@ -499,7 +502,7 @@ void RouteOrch::doTask(Consumer& consumer)
 
             auto rc = toBulk.emplace(std::piecewise_construct,
                     std::forward_as_tuple(key, op),
-                    std::forward_as_tuple());
+                    std::forward_as_tuple(key, (op == SET_COMMAND)));
 
             bool inserted = rc.second;
             auto& ctx = rc.first->second;
@@ -630,6 +633,11 @@ void RouteOrch::doTask(Consumer& consumer)
 
                     if (fvField(i) == "seg_src")
                         srv6_source = fvValue(i);
+
+                    if (fvField(i) == "protocol")
+                    {
+                        ctx.protocol = fvValue(i);
+                    }
                 }
 
                 /*
@@ -658,6 +666,8 @@ void RouteOrch::doTask(Consumer& consumer)
                 NextHopGroupKey& nhg = ctx.nhg;
                 vector<string> srv6_segv;
                 vector<string> srv6_src;
+                bool l3Vni = true;
+                uint32_t vni = 0;
 
                 /* Check if the next hop group is owned by the NhgOrch. */
                 if (nhg_index.empty())
@@ -687,6 +697,23 @@ void RouteOrch::doTask(Consumer& consumer)
                     {
                         SWSS_LOG_NOTICE("Route %s: resize ipv to match alsv, %zd -> %zd.", key.c_str(), ipv.size(), alsv.size());
                         ipv.resize(alsv.size());
+                    }
+
+                    for (auto &vni_str: vni_labelv)
+                    {
+                        vni = static_cast<uint32_t>(std::stoul(vni_str));
+                        if (!m_vrfOrch->isL3VniVlan(vni))
+                        {
+                            SWSS_LOG_WARN("Route %s is received on non L3 VNI %s", key.c_str(), vni_str.c_str());
+                            l3Vni = false;
+                            break;
+                        }
+                    }
+
+                    if (!l3Vni)
+                    {
+                        it++;
+                        continue;
                     }
 
                     /* Set the empty ip(s) to zero
@@ -831,6 +858,10 @@ void RouteOrch::doTask(Consumer& consumer)
                     /* fullmask subnet route is same as ip2me route */
                     else if (ip_prefix.isFullMask() && m_intfsOrch->isPrefixSubnet(ip_prefix, alsv[0]))
                     {
+                        /* The prefix is full mask (/32 or /128) and it is an interface subnet route, so IntfOrch has already
+                         * created an IP2ME route for it and we skip programming such route here as it already exists.
+                         * However, to keep APPL_DB and APPL_STATE_DB consistent we have to publish it. */
+                        publishRouteState(ctx);
                         it = consumer.m_toSync.erase(it);
                     }
                     /* subnet route, vrf leaked route, etc */
@@ -860,7 +891,9 @@ void RouteOrch::doTask(Consumer& consumer)
                 }
                 else
                 {
-                    /* Duplicate entry */
+                    /* Duplicate entry. Publish route state anyway since there could be multiple DEL, SET operations
+                     * consolidated by ConsumerStateTable leading to orchagent receiving only the last SET update. */
+                    publishRouteState(ctx);
                     it = consumer.m_toSync.erase(it);
                 }
 
@@ -1552,6 +1585,24 @@ bool RouteOrch::updateNextHopRoutes(const NextHopKey& nextHop, uint32_t& numRout
     auto rt = it->second.begin();
     while(rt != it->second.end())
     {
+        /* Check if route is mux multi-nexthop route
+         * we define this as a route present in
+         * mux_multi_active_nh_table
+         * These routes originally point to NHG and should be handled by updateRoute()
+         */
+        MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
+        if (mux_orch->isMultiNexthopRoute((*rt).prefix))
+        {
+            /* multiple mux nexthop case:
+             * skip for now, muxOrch::updateRoute() will handle route
+             */
+            SWSS_LOG_INFO("Route %s is mux multi nexthop route, skipping.",
+                        (*rt).prefix.to_string().c_str());
+
+            ++rt;
+            continue;
+        }
+
         SWSS_LOG_INFO("Updating route %s", (*rt).prefix.to_string().c_str());
         next_hop_id = m_neighOrch->getNextHopId(nextHop);
 
@@ -1578,6 +1629,24 @@ bool RouteOrch::updateNextHopRoutes(const NextHopKey& nextHop, uint32_t& numRout
     }
 
     return true;
+}
+
+/**
+ * @brief returns a route prefix associated with nexthopkey
+ * @param routeKeys empty set of routekeys to populate
+ * @param nexthopKey nexthop key to lookup
+ * @return true if found, false if not found.
+ */
+bool RouteOrch::getRoutesForNexthop(std::set<RouteKey>& routeKeys, const NextHopKey& nexthopKey)
+{
+    auto it = m_nextHops.find(nexthopKey);
+
+    if (it != m_nextHops.end())
+    {
+        routeKeys = it->second;
+    }
+
+    return it != m_nextHops.end();
 }
 
 void RouteOrch::addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
@@ -2145,15 +2214,22 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         {
             decreaseNextHopRefCount(it_route->second.nhg_key);
             auto ol_nextHops = it_route->second.nhg_key;
-            if (ol_nextHops.getSize() > 1
-                && m_syncdNextHopGroups[ol_nextHops].ref_count == 0)
+            if (ol_nextHops.getSize() > 1)
             {
-                m_bulkNhgReducedRefCnt.emplace(ol_nextHops, 0);
+                if (m_syncdNextHopGroups[ol_nextHops].ref_count == 0)
+                {
+                    SWSS_LOG_NOTICE("Update Nexthop Group %s", ol_nextHops.to_string().c_str());
+                    m_bulkNhgReducedRefCnt.emplace(ol_nextHops, 0);
+                }
             }
             else if (ol_nextHops.is_overlay_nexthop())
             {
-                SWSS_LOG_NOTICE("Update overlay Nexthop %s", ol_nextHops.to_string().c_str());
-                m_bulkNhgReducedRefCnt.emplace(ol_nextHops, vrf_id);
+                const NextHopKey& nexthop = *it_route->second.nhg_key.getNextHops().begin();
+                if (m_neighOrch->getNextHopRefCount(nexthop) == 0)
+                {
+                    SWSS_LOG_NOTICE("Update overlay Nexthop %s", ol_nextHops.to_string().c_str());
+                    m_bulkNhgReducedRefCnt.emplace(ol_nextHops, vrf_id);
+                }
             }
             else if (ol_nextHops.is_srv6_nexthop())
             {
@@ -2202,6 +2278,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
                 ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
     }
 
+    MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
     if (ctx.nhg_index.empty() && nextHops.getSize() == 1 && !nextHops.is_overlay_nexthop() && !nextHops.is_srv6_nexthop())
     {
         RouteKey r_key = { vrf_id, ipPrefix };
@@ -2209,6 +2286,18 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         if (!nexthop.ip_address.isZero())
         {
             addNextHopRoute(nexthop, r_key);
+        }
+    }
+    else if (mux_orch->isMuxNexthops(nextHops))
+    {
+        RouteKey routekey = { vrf_id, ipPrefix };
+        auto nexthop_list = nextHops.getNextHops();
+        for (auto nh = nexthop_list.begin(); nh != nexthop_list.end(); nh++)
+        {
+            if (!nh->ip_address.isZero())
+            {
+                addNextHopRoute(*nh, routekey);
+            }
         }
     }
 
@@ -2224,7 +2313,16 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
 
     m_syncdRoutes[vrf_id][ipPrefix] = RouteNhg(nextHops, ctx.nhg_index);
 
+    // update routes to reflect mux state
+    if (mux_orch->isMuxNexthops(nextHops))
+    {
+        mux_orch->updateRoute(ipPrefix, true);
+    }
+
     notifyNextHopChangeObservers(vrf_id, ipPrefix, nextHops, true);
+
+    /* Publish and update APPL STATE DB route entry programming status */
+    publishRouteState(ctx);
 
     /*
      * If the route uses a temporary synced NHG owned by NhgOrch, return false
@@ -2383,16 +2481,37 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
         decreaseNextHopRefCount(it_route->second.nhg_key);
 
         auto ol_nextHops = it_route->second.nhg_key;
-
-        if (it_route->second.nhg_key.getSize() > 1
-            && m_syncdNextHopGroups[it_route->second.nhg_key].ref_count == 0)
+        MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
+        if (it_route->second.nhg_key.getSize() > 1)
         {
-            m_bulkNhgReducedRefCnt.emplace(it_route->second.nhg_key, 0);
+            if (m_syncdNextHopGroups[it_route->second.nhg_key].ref_count == 0)
+            {
+                SWSS_LOG_NOTICE("Remove Nexthop Group %s", ol_nextHops.to_string().c_str());
+                m_bulkNhgReducedRefCnt.emplace(it_route->second.nhg_key, 0);
+                if (mux_orch->isMuxNexthops(ol_nextHops))
+                {
+                    SWSS_LOG_NOTICE("Remove mux Nexthop %s", ol_nextHops.to_string().c_str());
+                    RouteKey routekey = { vrf_id, ipPrefix };
+                    auto nexthop_list = ol_nextHops.getNextHops();
+                    for (auto nh = nexthop_list.begin(); nh != nexthop_list.end(); nh++)
+                    {
+                        if (!nh->ip_address.isZero())
+                        {
+                            removeNextHopRoute(*nh, routekey);
+                        }
+                    }
+                    mux_orch->updateRoute(ipPrefix, false);
+                }
+            }
         }
         else if (ol_nextHops.is_overlay_nexthop())
         {
-            SWSS_LOG_NOTICE("Remove overlay Nexthop %s", ol_nextHops.to_string().c_str());
-            m_bulkNhgReducedRefCnt.emplace(ol_nextHops, vrf_id);
+            const NextHopKey& nexthop = *it_route->second.nhg_key.getNextHops().begin();
+            if (m_neighOrch->getNextHopRefCount(nexthop) == 0)
+            {
+                SWSS_LOG_NOTICE("Remove overlay Nexthop %s", ol_nextHops.to_string().c_str());
+                m_bulkNhgReducedRefCnt.emplace(ol_nextHops, vrf_id);
+            }
         }
         /*
          * Additionally check if the NH has label and its ref count == 0, then
@@ -2419,6 +2538,9 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
 
     SWSS_LOG_INFO("Remove route %s with next hop(s) %s",
             ipPrefix.to_string().c_str(), it_route->second.nhg_key.to_string().c_str());
+    
+    /* Publish removal status, removes route entry from APPL STATE DB */
+    publishRouteState(ctx);
 
     if (ipPrefix.isDefaultRoute() && vrf_id == gVirtualRouterId)
     {
@@ -2429,7 +2551,6 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
     }
     else
     {
-        gFlowCounterRouteOrch->handleRouteRemove(vrf_id, ipPrefix);
         it_route_table->second.erase(ipPrefix);
 
         /* Notify about the route next hop removal */
@@ -2440,6 +2561,8 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
             m_syncdRoutes.erase(vrf_id);
             m_vrfOrch->decreaseVrfRefCount(vrf_id);
         }
+
+        gFlowCounterRouteOrch->handleRouteRemove(vrf_id, ipPrefix);
     }
 
     return true;
@@ -2573,4 +2696,23 @@ void RouteOrch::decNhgRefCount(const std::string &nhg_index)
     {
         gCbfNhgOrch->decNhgRefCount(nhg_index);
     }
+}
+
+void RouteOrch::publishRouteState(const RouteBulkContext& ctx, const ReturnCode& status)
+{
+    SWSS_LOG_ENTER();
+
+    std::vector<FieldValueTuple> fvs;
+
+    /* Leave the fvs empty if the operation type is "DEL".
+     * An empty fvs makes ResponsePublisher::publish() remove the state entry from APPL_STATE_DB
+     */
+    if (ctx.is_set)
+    {
+        fvs.emplace_back("protocol", ctx.protocol);
+    }
+
+    const bool replace = false;
+
+    m_publisher.publish(APP_ROUTE_TABLE_NAME, ctx.key, fvs, status, replace);
 }

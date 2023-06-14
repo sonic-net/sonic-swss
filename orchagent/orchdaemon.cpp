@@ -6,6 +6,7 @@
 #include "logger.h"
 #include <sairedis.h>
 #include "warm_restart.h"
+#include <iostream>
 
 #define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 #include "sairedis.h"
@@ -17,6 +18,9 @@ using namespace swss;
 /* select() function timeout retry time */
 #define SELECT_TIMEOUT 1000
 #define PFC_WD_POLL_MSECS 100
+
+/* orchagent heart beat message interval */
+#define HEART_BEAT_INTERVAL_MSECS 10 * 1000
 
 extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
@@ -55,6 +59,7 @@ BfdOrch *gBfdOrch;
 Srv6Orch *gSrv6Orch;
 FlowCounterRouteOrch *gFlowCounterRouteOrch;
 DebugCounterOrch *gDebugCounterOrch;
+MonitorOrch *gMonitorOrch;
 
 bool gIsNatSupported = false;
 bool gSaiRedisLogRotate = false;
@@ -71,6 +76,7 @@ OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *
 {
     SWSS_LOG_ENTER();
     m_select = new Select();
+    m_lastHeartBeat = std::chrono::high_resolution_clock::now();
 }
 
 OrchDaemon::~OrchDaemon()
@@ -165,6 +171,8 @@ bool OrchDaemon::init()
     gDirectory.set(vnet_rt_orch);
     VRFOrch *vrf_orch = new VRFOrch(m_applDb, APP_VRF_TABLE_NAME, m_stateDb, STATE_VRF_OBJECT_TABLE_NAME);
     gDirectory.set(vrf_orch);
+    gMonitorOrch = new MonitorOrch(m_stateDb, STATE_VNET_MONITOR_TABLE_NAME); 
+    gDirectory.set(gMonitorOrch);
 
     const vector<string> chassis_frontend_tables = {
         CFG_PASS_THROUGH_ROUTE_TABLE_NAME,
@@ -240,6 +248,7 @@ bool OrchDaemon::init()
         CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME,
         CFG_DSCP_TO_FC_MAP_TABLE_NAME,
         CFG_EXP_TO_FC_MAP_TABLE_NAME,
+        CFG_TC_TO_DOT1P_MAP_TABLE_NAME,
         CFG_TC_TO_DSCP_MAP_TABLE_NAME
     };
     gQosOrch = new QosOrch(m_configDb, qos_tables);
@@ -357,7 +366,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, tunnel_decap_orch, sflow_orch, gDebugCounterOrch, gMacsecOrch, gBfdOrch, gSrv6Orch, mux_orch, mux_cb_orch};
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gFlowCounterRouteOrch, gIntfsOrch, gNeighOrch, gNhgMapOrch, gNhgOrch, gCbfNhgOrch, gRouteOrch, gCoppOrch, gQosOrch, wm_orch, gPolicerOrch, tunnel_decap_orch, sflow_orch, gDebugCounterOrch, gMacsecOrch, gBfdOrch, gSrv6Orch, mux_orch, mux_cb_orch, gMonitorOrch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
@@ -610,7 +619,7 @@ bool OrchDaemon::init()
 
         if(gSwitchOrch->checkPfcDlrInitEnable())
         {
-            m_orchList.push_back(new PfcWdSwOrch<PfcWdDlrHandler, PfcWdLossyHandler>(
+            m_orchList.push_back(new PfcWdSwOrch<PfcWdDlrHandler, PfcWdDlrHandler>(
                         m_configDb,
                         pfc_wd_tables,
                         portStatIds,
@@ -723,6 +732,7 @@ void OrchDaemon::start()
         ret = m_select->select(&s, SELECT_TIMEOUT);
 
         auto tend = std::chrono::high_resolution_clock::now();
+        heartBeat(tend);
 
         auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(tend - tstart);
 
@@ -758,7 +768,6 @@ void OrchDaemon::start()
             gSaiRedisLogRotate = false;
 
             logRotate();
-            continue;
         }
 
         auto *c = (Executor *)s;
@@ -957,6 +966,18 @@ bool OrchDaemon::warmRestartCheck()
 void OrchDaemon::addOrchList(Orch *o)
 {
     m_orchList.push_back(o);
+}
+
+void OrchDaemon::heartBeat(std::chrono::time_point<std::chrono::high_resolution_clock> tcurrent)
+{
+    // output heart beat message to SYSLOG
+    auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(tcurrent - m_lastHeartBeat);
+    if (diff.count() >= HEART_BEAT_INTERVAL_MSECS)
+    {
+        m_lastHeartBeat = tcurrent;
+        // output heart beat message to supervisord with 'PROCESS_COMMUNICATION_STDOUT' event: http://supervisord.org/events.html
+        cout << "<!--XSUPERVISOR:BEGIN-->heartbeat<!--XSUPERVISOR:END-->" << endl;
+    }
 }
 
 FabricOrchDaemon::FabricOrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb, DBConnector *chassisAppDb) :

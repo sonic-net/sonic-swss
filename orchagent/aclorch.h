@@ -95,10 +95,19 @@
 
 #define MLNX_MAX_RANGES_COUNT   16
 #define INGRESS_TABLE_DROP      "IngressTableDrop"
+#define EGRESS_TABLE_DROP       "EgressTableDrop"
 #define RULE_OPER_ADD           0
 #define RULE_OPER_DELETE        1
 
 #define ACL_COUNTER_FLEX_COUNTER_GROUP "ACL_STAT_COUNTER"
+
+enum AclObjectStatus
+{
+    ACTIVE = 0,
+    INACTIVE,
+    PENDING_CREATION,
+    PENDING_REMOVAL
+};
 
 struct AclActionCapabilities
 {
@@ -493,12 +502,14 @@ public:
     bool isAclMirrorV6Supported() const;
     bool isAclMirrorV4Supported() const;
     bool isAclMirrorTableSupported(string type) const;
+    bool isAclL3V4V6TableSupported(acl_stage_type_t stage) const;
     bool isAclActionListMandatoryOnTableCreation(acl_stage_type_t stage) const;
     bool isAclActionSupported(acl_stage_type_t stage, sai_acl_action_type_t action) const;
     bool isAclActionEnumValueSupported(sai_acl_action_type_t action, sai_acl_action_parameter_t param) const;
 
     bool m_isCombinedMirrorV6Table = true;
     map<string, bool> m_mirrorTableCapabilities;
+    map<acl_stage_type_t, bool> m_L3V4V6Capability;
 
     void registerFlexCounter(const AclRule& rule);
     void deregisterFlexCounter(const AclRule& rule);
@@ -553,6 +564,15 @@ private:
 
     string generateAclRuleIdentifierInCountersDb(const AclRule& rule) const;
 
+    void setAclTableStatus(string table_name, AclObjectStatus status);
+    void setAclRuleStatus(string table_name, string rule_name, AclObjectStatus status);
+
+    void removeAclTableStatus(string table_name);
+    void removeAclRuleStatus(string table_name, string rule_name);
+
+    void removeAllAclTableStatus();
+    void removeAllAclRuleStatus();
+
     map<sai_object_id_t, AclTable> m_AclTables;
     // TODO: Move all ACL tables into one map: name -> instance
     map<string, AclTable> m_ctrlAclTables;
@@ -562,6 +582,9 @@ private:
     static Table m_countersTable;
 
     Table m_aclStageCapabilityTable;
+
+    Table m_aclTableStateTable;
+    Table m_aclRuleStateTable;
 
     map<acl_stage_type_t, string> m_mirrorTableId;
     map<acl_stage_type_t, string> m_mirrorV6TableId;

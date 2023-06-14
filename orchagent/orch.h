@@ -132,40 +132,22 @@ protected:
     swss::Selectable *getSelectable() const { return m_selectable; }
 };
 
-class Consumer : public Executor {
+class ConsumerBase : public Executor {
 public:
-    Consumer(swss::ConsumerTableBase *select, Orch *orch, const std::string &name)
-        : Executor(select, orch, name)
+    ConsumerBase(swss::Selectable *selectable, Orch *orch, const std::string &name)
+        : Executor(selectable, orch, name)
     {
     }
 
-    swss::ConsumerTableBase *getConsumerTable() const
-    {
-        return static_cast<swss::ConsumerTableBase *>(getSelectable());
-    }
+    virtual swss::TableBase *getConsumerTable() const = 0;
 
     std::string getTableName() const
     {
         return getConsumerTable()->getTableName();
     }
 
-    int getDbId() const
-    {
-        return getConsumerTable()->getDbConnector()->getDbId();
-    }
-
-    std::string getDbName() const
-    {
-        return getConsumerTable()->getDbConnector()->getDbName();
-    }
-
     std::string dumpTuple(const swss::KeyOpFieldsValuesTuple &tuple);
     void dumpPendingTasks(std::vector<std::string> &ts);
-
-    size_t refillToSync();
-    size_t refillToSync(swss::Table* table);
-    void execute();
-    void drain();
 
     /* Store the latest 'golden' status */
     // TODO: hide?
@@ -175,6 +157,41 @@ public:
 
     // Returns: the number of entries added to m_toSync
     size_t addToSync(const std::deque<swss::KeyOpFieldsValuesTuple> &entries);
+};
+
+class Consumer : public ConsumerBase {
+public:
+    Consumer(swss::ConsumerTableBase *select, Orch *orch, const std::string &name)
+        : ConsumerBase(select, orch, name)
+    {
+    }
+
+    swss::TableBase *getConsumerTable() const override
+    {
+        // ConsumerTableBase is a subclass of TableBase
+        return static_cast<swss::ConsumerTableBase *>(getSelectable());
+    }
+
+    const swss::DBConnector* getDbConnector() const
+    {
+        auto table = static_cast<swss::ConsumerTableBase *>(getSelectable());
+        return table->getDbConnector();
+    }
+
+    int getDbId() const
+    {
+        return getDbConnector()->getDbId();
+    }
+
+    std::string getDbName() const
+    {
+        return getDbConnector()->getDbName();
+    }
+
+    size_t refillToSync();
+    size_t refillToSync(swss::Table* table);
+    void execute() override;
+    void drain() override;
 };
 
 typedef std::map<std::string, std::shared_ptr<Executor>> ConsumerMap;
@@ -215,12 +232,12 @@ public:
     virtual void doTask();
 
     /* Run doTask against a specific executor */
-    virtual void doTask(Consumer &consumer) = 0;
+    virtual void doTask(Consumer &consumer) { };
     virtual void doTask(swss::NotificationConsumer &consumer) { }
     virtual void doTask(swss::SelectableTimer &timer) { }
 
     /* TODO: refactor recording */
-    static void recordTuple(Consumer &consumer, const swss::KeyOpFieldsValuesTuple &tuple);
+    static void recordTuple(ConsumerBase &consumer, const swss::KeyOpFieldsValuesTuple &tuple);
 
     void dumpPendingTasks(std::vector<std::string> &ts);
 

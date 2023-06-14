@@ -90,8 +90,12 @@ private:
 
     std::vector<Orch *> m_orchList;
     Select *m_select;
+    
+    std::chrono::time_point<std::chrono::high_resolution_clock> m_lastHeartBeat;
 
     void flush();
+
+    void heartBeat(std::chrono::time_point<std::chrono::high_resolution_clock> tcurrent);
 };
 
 class FabricOrchDaemon : public OrchDaemon

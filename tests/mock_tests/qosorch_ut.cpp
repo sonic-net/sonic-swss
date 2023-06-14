@@ -1086,6 +1086,8 @@ namespace qosorch_test
         entries.clear();
         // Drain QUEUE table
         static_cast<Orch *>(gQosOrch)->doTask();
+        // Drain SCHEDULER table
+        static_cast<Orch *>(gQosOrch)->doTask();
         // The dependency should be removed
         CheckDependency(CFG_QUEUE_TABLE_NAME, "Ethernet0|0", "scheduler", CFG_SCHEDULER_TABLE_NAME);
         static_cast<Orch *>(gQosOrch)->dumpPendingTasks(ts);

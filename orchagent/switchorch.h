@@ -12,6 +12,7 @@
 #define SWITCH_CAPABILITY_TABLE_LAG_TPID_CAPABLE                       "LAG_TPID_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_ORDERED_ECMP_CAPABLE                   "ORDERED_ECMP_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_PFC_DLR_INIT_CAPABLE                   "PFC_DLR_INIT_CAPABLE"
+#define SWITCH_CAPABILITY_TABLE_PORT_EGRESS_SAMPLE_CAPABLE             "PORT_EGRESS_SAMPLE_CAPABLE"
 
 struct WarmRestartCheck
 {
@@ -50,6 +51,7 @@ private:
     void doAppSwitchTableTask(Consumer &consumer);
     void initSensorsTable();
     void querySwitchTpidCapability();
+    void querySwitchPortEgressSampleCapability();
     sai_status_t setSwitchTunnelVxlanParams(swss::FieldValueTuple &val);
     void setSwitchNonSaiAttributes(swss::FieldValueTuple &val);
 

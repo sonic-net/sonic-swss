@@ -39,7 +39,7 @@ namespace orchdaemon_test
 
             ~OrchDaemonTest()
             {
-
+                sai_switch_api = nullptr;
             };
     };
 

@@ -34,6 +34,7 @@ extern CrmOrch *gCrmOrch;
 
 #define STATE_DB_ACL_ACTION_FIELD_IS_ACTION_LIST_MANDATORY "is_action_list_mandatory"
 #define STATE_DB_ACL_ACTION_FIELD_ACTION_LIST              "action_list"
+#define STATE_DB_ACL_L3V4V6_SUPPORTED                      "supported_L3V4V6"
 #define COUNTERS_ACL_COUNTER_RULE_MAP "ACL_COUNTER_RULE_MAP"
 
 #define ACL_COUNTER_DEFAULT_POLLING_INTERVAL_MS 10000 // ms
@@ -109,7 +110,7 @@ static acl_rule_attr_lookup_t aclDTelActionLookup =
     { ACTION_DTEL_REPORT_ALL_PACKETS,       SAI_ACL_ENTRY_ATTR_ACTION_DTEL_REPORT_ALL_PACKETS }
 };
 
-static acl_rule_attr_lookup_t aclOtherActionLookup = 
+static acl_rule_attr_lookup_t aclOtherActionLookup =
 {
     { ACTION_COUNTER,                       SAI_ACL_ENTRY_ATTR_ACTION_COUNTER}
 };
@@ -185,6 +186,26 @@ static acl_table_action_list_lookup_t defaultAclActionList =
     {
         // L3V6
         TABLE_TYPE_L3V6,
+        {
+            {
+                ACL_STAGE_INGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION,
+                    SAI_ACL_ACTION_TYPE_REDIRECT
+                }
+            },
+            {
+                ACL_STAGE_EGRESS,
+                {
+                    SAI_ACL_ACTION_TYPE_PACKET_ACTION,
+                    SAI_ACL_ACTION_TYPE_REDIRECT
+                }
+            }
+        }
+    },
+    {
+        // L3V4V6
+        TABLE_TYPE_L3V4V6,
         {
             {
                 ACL_STAGE_INGRESS,
@@ -413,6 +434,14 @@ static map<sai_acl_counter_attr_t, sai_acl_counter_attr_t> aclCounterLookup =
 {
     {SAI_ACL_COUNTER_ATTR_ENABLE_BYTE_COUNT,   SAI_ACL_COUNTER_ATTR_BYTES},
     {SAI_ACL_COUNTER_ATTR_ENABLE_PACKET_COUNT, SAI_ACL_COUNTER_ATTR_PACKETS},
+};
+
+static map<AclObjectStatus, string> aclObjectStatusLookup =
+{
+    {AclObjectStatus::ACTIVE, "Active"},
+    {AclObjectStatus::INACTIVE, "Inactive"},
+    {AclObjectStatus::PENDING_CREATION, "Pending creation"},
+    {AclObjectStatus::PENDING_REMOVAL, "Pending removal"}
 };
 
 static sai_acl_table_attr_t AclEntryFieldToAclTableField(sai_acl_entry_attr_t attr)
@@ -1132,6 +1161,11 @@ bool AclRule::createRule()
     status = sai_acl_api->create_acl_entry(&m_ruleOid, gSwitchId, (uint32_t)rule_attrs.size(), rule_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
+        if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
+        {
+            SWSS_LOG_NOTICE("ACL rule %s already exists", m_id.c_str());
+            return true;
+        }
         SWSS_LOG_ERROR("Failed to create ACL rule %s, rv:%d",
                 m_id.c_str(), status);
         AclRange::remove(range_objects, range_object_list.count);
@@ -1193,6 +1227,12 @@ bool AclRule::removeRule()
     auto status = sai_acl_api->remove_acl_entry(m_ruleOid);
     if (status != SAI_STATUS_SUCCESS)
     {
+        if (status == SAI_STATUS_ITEM_NOT_FOUND)
+        {
+            SWSS_LOG_NOTICE("ACL rule already deleted");
+            m_ruleOid = SAI_NULL_OBJECT_ID;
+            return true;
+        }
         SWSS_LOG_ERROR("Failed to delete ACL rule, status %s", sai_serialize_status(status).c_str());
         return false;
     }
@@ -2284,6 +2324,19 @@ bool AclTable::validate()
         return false;
     }
 
+    if (type.getName() == TABLE_TYPE_L3V4V6)
+    {
+	    if (!m_pAclOrch->isAclL3V4V6TableSupported(stage))
+	    {
+
+                    SWSS_LOG_ERROR("Table %s: table type %s in stage %d not supported on this platform.",
+				    id.c_str(), type.getName().c_str(), stage);
+		    return false;
+	    }
+    }
+
+
+
     if (m_pAclOrch->isAclActionListMandatoryOnTableCreation(stage))
     {
         if (type.getActions().empty())
@@ -3006,6 +3059,10 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
 {
     SWSS_LOG_ENTER();
 
+    // Clear ACL_TABLE and ACL_RULE status from STATE_DB
+    removeAllAclTableStatus();
+    removeAllAclRuleStatus();
+
     // TODO: Query SAI to get mirror table capabilities
     // Right now, verified platforms that support mirroring IPv6 packets are
     // Broadcom and Mellanox. Virtual switch is also supported for testing
@@ -3037,11 +3094,36 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
         };
     }
 
+    if ( platform == MRVL_PLATFORM_SUBSTRING ||
+            platform == INVM_PLATFORM_SUBSTRING ||
+            platform == VS_PLATFORM_SUBSTRING)
+    {
+	m_L3V4V6Capability =
+        {
+		{ACL_STAGE_INGRESS, true},
+		{ACL_STAGE_EGRESS, true},
+	};
+    }
+    else
+    {
+	m_L3V4V6Capability =
+        {
+		{ACL_STAGE_INGRESS, false},
+		{ACL_STAGE_EGRESS, false},
+	};
+
+    }
+
+
     SWSS_LOG_NOTICE("%s switch capability:", platform.c_str());
     SWSS_LOG_NOTICE("    TABLE_TYPE_MIRROR: %s",
             m_mirrorTableCapabilities[TABLE_TYPE_MIRROR] ? "yes" : "no");
     SWSS_LOG_NOTICE("    TABLE_TYPE_MIRRORV6: %s",
             m_mirrorTableCapabilities[TABLE_TYPE_MIRRORV6] ? "yes" : "no");
+    SWSS_LOG_NOTICE("    TABLE_TYPE_L3V4V6: Ingress [%s], Egress [%s]",
+            m_L3V4V6Capability[ACL_STAGE_INGRESS] ? "yes" : "no",
+            m_L3V4V6Capability[ACL_STAGE_EGRESS] ? "yes" : "no");
+
 
     // In Mellanox platform, V4 and V6 rules are stored in different tables
     // In Broadcom DNX platform also, V4 and V6 rules are stored in different tables
@@ -3156,6 +3238,31 @@ void AclOrch::initDefaultTableTypes()
             .build()
     );
 
+
+    addAclTableType(
+        builder.withName(TABLE_TYPE_L3V4V6)
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_PORT)
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_LAG)
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_SRC_IP))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DST_IP))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ICMP_TYPE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ICMP_CODE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_CODE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_TYPE))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS))
+            .build()
+    );
+
     addAclTableType(
         builder.withName(TABLE_TYPE_MCLAG)
             .withBindPointType(SAI_ACL_BIND_POINT_TYPE_PORT)
@@ -3187,7 +3294,9 @@ void AclOrch::initDefaultTableTypes()
     addAclTableType(
         builder.withName(TABLE_TYPE_DROP)
             .withBindPointType(SAI_ACL_BIND_POINT_TYPE_PORT)
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_LAG)
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TC))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS))
             .build()
     );
 
@@ -3395,10 +3504,21 @@ void AclOrch::putAclActionCapabilityInDB(acl_stage_type_t stage)
         }
     }
 
+
     is_action_list_mandatory_stream << boolalpha << capabilities.isActionListMandatoryOnTableCreation;
 
     fvVector.emplace_back(STATE_DB_ACL_ACTION_FIELD_IS_ACTION_LIST_MANDATORY, is_action_list_mandatory_stream.str());
     fvVector.emplace_back(STATE_DB_ACL_ACTION_FIELD_ACTION_LIST, acl_action_value_stream.str());
+
+    for (auto const& it : m_L3V4V6Capability)
+    {
+        string value = it.second ? "true" : "false";
+        if (it.first == stage)
+        {
+            fvVector.emplace_back(STATE_DB_ACL_L3V4V6_SUPPORTED, value);
+        }
+    }
+
     m_aclStageCapabilityTable.set(stage_str, fvVector);
 }
 
@@ -3449,8 +3569,6 @@ void AclOrch::queryAclActionAttrEnumValues(const string &action_name,
             SWSS_LOG_THROW("%s is not an enum", action_name.c_str());
         }
 
-        // TODO: once sai object api is available make this code compile
-#ifdef SAIREDIS_SUPPORT_OBJECT_API
         vector<int32_t> values_list(meta->enummetadata->valuescount);
         sai_s32_list_t values;
         values.count = static_cast<uint32_t>(values_list.size());
@@ -3469,7 +3587,7 @@ void AclOrch::queryAclActionAttrEnumValues(const string &action_name,
         }
         else
         {
-            SWSS_LOG_WARN("Failed to query enum values supported for ACL action %s - ",
+            SWSS_LOG_WARN("Failed to query enum values supported for ACL action %s - "
                     "API is not implemented, assuming all values are supported for this action",
                     action_name.c_str());
             /* assume all enum values are supported */
@@ -3478,13 +3596,6 @@ void AclOrch::queryAclActionAttrEnumValues(const string &action_name,
                 m_aclEnumActionCapabilities[acl_action].insert(meta->enummetadata->values[i]);
             }
         }
-#else
-        /* assume all enum values are supported until sai object api is available */
-        for (size_t i = 0; i < meta->enummetadata->valuescount; i++)
-        {
-            m_aclEnumActionCapabilities[acl_action].insert(meta->enummetadata->values[i]);
-        }
-#endif
 
         // put supported values in DB
         for (const auto& it: lookupMap)
@@ -3508,6 +3619,8 @@ AclOrch::AclOrch(vector<TableConnector>& connectors, DBConnector* stateDb, Switc
         PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch, DTelOrch *dtelOrch) :
         Orch(connectors),
         m_aclStageCapabilityTable(stateDb, STATE_ACL_STAGE_CAPABILITY_TABLE_NAME),
+        m_aclTableStateTable(stateDb, STATE_ACL_TABLE_TABLE_NAME),
+        m_aclRuleStateTable(stateDb, STATE_ACL_RULE_TABLE_NAME),
         m_switchOrch(switchOrch),
         m_mirrorOrch(mirrorOrch),
         m_neighOrch(neighOrch),
@@ -4204,6 +4317,16 @@ bool AclOrch::isAclActionListMandatoryOnTableCreation(acl_stage_type_t stage) co
     return it->second.isActionListMandatoryOnTableCreation;
 }
 
+bool AclOrch::isAclL3V4V6TableSupported(acl_stage_type_t stage) const
+{
+    const auto& it = m_L3V4V6Capability.find(stage);
+    if (it == m_L3V4V6Capability.cend())
+    {
+        return false;
+    }
+    return it->second;
+}
+
 bool AclOrch::isAclActionSupported(acl_stage_type_t stage, sai_acl_action_type_t action) const
 {
     const auto& it = m_aclCapabilities.find(stage);
@@ -4331,6 +4454,8 @@ void AclOrch::doAclTableTask(Consumer &consumer)
                     {
                         SWSS_LOG_NOTICE("Successfully updated existing ACL table %s",
                                         table_id.c_str());
+                        // Mark ACL table as ACTIVE
+                        setAclTableStatus(table_id, AclObjectStatus::ACTIVE);
                         it = consumer.m_toSync.erase(it);
                     }
                     else
@@ -4343,14 +4468,23 @@ void AclOrch::doAclTableTask(Consumer &consumer)
                 else
                 {
                     if (addAclTable(newTable))
+                    {
+                        // Mark ACL table as ACTIVE
+                        setAclTableStatus(table_id, AclObjectStatus::ACTIVE);
                         it = consumer.m_toSync.erase(it);
+                    }
                     else
+                    {
+                        setAclTableStatus(table_id, AclObjectStatus::PENDING_CREATION);
                         it++;
+                    }
                 }
             }
             else
             {
                 it = consumer.m_toSync.erase(it);
+                // Mark the ACL table as inactive if the configuration is invalid
+                setAclTableStatus(table_id, AclObjectStatus::INACTIVE);
                 SWSS_LOG_ERROR("Failed to create ACL table %s, invalid configuration",
                         table_id.c_str());
             }
@@ -4358,9 +4492,17 @@ void AclOrch::doAclTableTask(Consumer &consumer)
         else if (op == DEL_COMMAND)
         {
             if (removeAclTable(table_id))
+            {
+                // Remove ACL table status from STATE_DB
+                removeAclTableStatus(table_id);
                 it = consumer.m_toSync.erase(it);
+            }
             else
+            {
+                // Set the status of ACL_TABLE to pending removal if removeAclTable returns error
+                setAclTableStatus(table_id, AclObjectStatus::PENDING_REMOVAL);
                 it++;
+            }
         }
         else
         {
@@ -4438,6 +4580,8 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
             }
             bool bHasTCPFlag = false;
             bool bHasIPProtocol = false;
+            bool bHasIPV4 = false;
+            bool bHasIPV6 = false;
             for (const auto& itr : kfvFieldsValues(t))
             {
                 string attr_name = to_upper(fvField(itr));
@@ -4447,6 +4591,14 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 if (attr_name == MATCH_TCP_FLAGS)
                 {
                     bHasTCPFlag = true;
+                }
+                if (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP)
+                {
+                    bHasIPV4 = true;
+                }
+                if (attr_name == MATCH_SRC_IPV6 || attr_name == MATCH_DST_IPV6)
+                {
+                    bHasIPV6 = true;
                 }
                 if (attr_name == MATCH_IP_PROTOCOL || attr_name == MATCH_NEXT_HEADER)
                 {
@@ -4496,26 +4648,50 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 }
             }
 
+            if (bHasIPV4 && bHasIPV6)
+	    {
+		    if (type == TABLE_TYPE_L3V4V6)
+		    {
+			    SWSS_LOG_ERROR("Rule '%s' is invalid since it has both v4 and v6 matchfields.", rule_id.c_str());
+			    bAllAttributesOk = false;
+		    }
+	    }
+
             // validate and create ACL rule
             if (bAllAttributesOk && newRule->validate())
             {
                 if (addAclRule(newRule, table_id))
+                {
+                    setAclRuleStatus(table_id, rule_id, AclObjectStatus::ACTIVE);
                     it = consumer.m_toSync.erase(it);
+                }
                 else
+                {
+                    setAclRuleStatus(table_id, rule_id, AclObjectStatus::PENDING_CREATION);
                     it++;
+                }
             }
             else
             {
                 it = consumer.m_toSync.erase(it);
+                // Mark the rule inactive if the configuration is invalid
+                setAclRuleStatus(table_id, rule_id, AclObjectStatus::INACTIVE);
                 SWSS_LOG_ERROR("Failed to create ACL rule. Rule configuration is invalid");
             }
         }
         else if (op == DEL_COMMAND)
         {
             if (removeAclRule(table_id, rule_id))
+            {
+                removeAclRuleStatus(table_id, rule_id);
                 it = consumer.m_toSync.erase(it);
+            }
             else
+            {
+                // Mark pending removal status if removeAclRule returns error
+                setAclRuleStatus(table_id, rule_id, AclObjectStatus::PENDING_REMOVAL);
                 it++;
+            }
         }
         else
         {
@@ -4873,3 +5049,55 @@ bool AclOrch::getAclBindPortId(Port &port, sai_object_id_t &port_id)
 
     return true;
 }
+
+// Set the status of ACL table in STATE_DB
+void AclOrch::setAclTableStatus(string table_name, AclObjectStatus status)
+{
+    vector<FieldValueTuple> fvVector;
+    fvVector.emplace_back("status", aclObjectStatusLookup[status]);
+    m_aclTableStateTable.set(table_name, fvVector);
+}
+
+// Remove the status record of given ACL table from STATE_DB
+void AclOrch::removeAclTableStatus(string table_name)
+{
+    m_aclTableStateTable.del(table_name);
+}
+
+// Set the status of ACL rule in STATE_DB
+void AclOrch::setAclRuleStatus(string table_name, string rule_name, AclObjectStatus status)
+{
+    vector<FieldValueTuple> fvVector;
+    fvVector.emplace_back("status", aclObjectStatusLookup[status]);
+    m_aclRuleStateTable.set(table_name + string("|") + rule_name, fvVector);
+}
+
+// Remove the status record of given ACL rule from STATE_DB
+void AclOrch::removeAclRuleStatus(string table_name, string rule_name)
+{
+    m_aclRuleStateTable.del(table_name + string("|") + rule_name);
+}
+
+// Remove all ACL table status from STATE_DB
+void AclOrch::removeAllAclTableStatus()
+{
+    vector<string> keys;
+    m_aclTableStateTable.getKeys(keys);
+
+    for (auto key : keys)
+    {
+        m_aclTableStateTable.del(key);
+    }
+}
+
+// Remove all ACL rule status from STATE_DB
+void AclOrch::removeAllAclRuleStatus()
+{
+    vector<string> keys;
+    m_aclRuleStateTable.getKeys(keys);
+    for (auto key : keys)
+    {
+        m_aclRuleStateTable.del(key);
+    }
+}
+

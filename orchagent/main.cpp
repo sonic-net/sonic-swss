@@ -585,7 +585,16 @@ int main(int argc, char **argv)
     attr.value.u64 = gSwitchId;
     attrs.push_back(attr);
 
-    if (gMySwitchType == "voq" || gMySwitchType == "fabric" || gMySwitchType == "chassis-packet")
+    auto delay_factor = 1;
+    bool asan_enabled = false;
+
+    if (getenv("ASAN_OPTIONS"))
+    {
+        asan_enabled = true;
+        delay_factor = 2;
+    }
+
+    if (gMySwitchType == "voq" || gMySwitchType == "fabric" || gMySwitchType == "chassis-packet" || asan_enabled)
     {
         /* We set this long timeout in order for orchagent to wait enough time for
          * response from syncd. It is needed since switch create takes more time
@@ -601,7 +610,12 @@ int main(int argc, char **argv)
         {
             attr.value.u64 = (10 * SAI_REDIS_DEFAULT_SYNC_OPERATION_RESPONSE_TIMEOUT);
         }
+        else
+        {
+            attr.value.u64 = SAI_REDIS_DEFAULT_SYNC_OPERATION_RESPONSE_TIMEOUT;
+        }
 
+        attr.value.u64 = attr.value.u64*delay_factor;
         attr.id = SAI_REDIS_SWITCH_ATTR_SYNC_OPERATION_RESPONSE_TIMEOUT;
         status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
 
