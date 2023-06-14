@@ -37,6 +37,7 @@ extern bool gIsNatSupported;
 extern NeighOrch *gNeighOrch;
 extern string gMySwitchType;
 extern int32_t gVoqMySwitchId;
+extern RouteOrch *gRouteOrch;
 
 const int IntfsOrch::intfsorch_pri = 35;
 
