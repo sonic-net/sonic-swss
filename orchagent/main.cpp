@@ -101,7 +101,7 @@ void usage()
     cout << "    -f swss_rec_filename: swss record log filename(default 'swss.rec')" << endl;
     cout << "    -j sairedis_rec_filename: sairedis record log filename(default sairedis.rec)" << endl;
     cout << "    -k max bulk size in bulk mode (default 1000)" << endl;
-    cout << "    -q zmq_server_address: ZMQ server address (default tcp://*:1234)" << endl;
+    cout << "    -q zmq_server_address: ZMQ server address (default tcp://*:8020)" << endl;
 }
 
 void sighup_handler(int signo)
@@ -350,7 +350,7 @@ int main(int argc, char **argv)
     string record_location = ".";
     string swss_rec_filename = "swss.rec";
     string sairedis_rec_filename = "sairedis.rec";
-    string zmq_server_address = "tcp://*:" + to_string(DASH_ORCH_ZMQ_PORT);
+    string zmq_server_address = "tcp://*:" + to_string(ORCH_ZMQ_PORT);
     string responsepublisher_rec_filename = "responsepublisher.rec";
     int record_type = 3; // Only swss and sairedis recordings enabled by default.
 
