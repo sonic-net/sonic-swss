@@ -994,31 +994,19 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
                 // only VLAN interface can set static anycast gateway
                 if (!alias.compare(0, strlen(VLAN_PREFIX), VLAN_PREFIX))
                 {
-                    vector<FieldValueTuple> fvs;
                     string gwmac = "";
-                    if (m_cfgSagTable.get("GLOBAL", fvs))
+                    if (m_cfgSagTable.hget("GLOBAL", "gateway_mac", gwmac))
                     {
-                        for (auto idx: fvs)
-                        {
-                            const auto &field = fvField(idx);
-                            const auto &value = fvValue(idx);
-
-                            if (field == "gateway_mac")
-                            {
-                                gwmac = value;
-                            }
-                        }
-                    }
-
-                    if (!gwmac.empty())
-                    {
+                        // before change interface MAC, update sub-interface admin staus to down,
+                        // it can prevent unwanted events received during interface changed in kernel
+                        // bring it up after the changed
                         if (sag == "true")
                         {
                             updateSubIntfAdminStatus(alias, "down");
                             setIntfMac(alias, gwmac);
                             updateSubIntfAdminStatus(alias, "up");
 
-                            FieldValueTuple fvTuple("mac_addr", MacAddress(gwmac).to_string());
+                            FieldValueTuple fvTuple("mac_addr", gwmac);
                             data.push_back(fvTuple);
                         }
                         else if (sag == "false")
@@ -1029,6 +1017,8 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
 
                             FieldValueTuple fvTuple("mac_addr", MacAddress().to_string());
                             data.push_back(fvTuple);
+                        } else {
+                            SWSS_LOG_ERROR("invalid SAG config \"%s\", it should be \"true\" or \"false\"", sag.c_str());
                         }
                     }
                 }
@@ -1322,18 +1312,17 @@ void IntfMgr::updateSagMac(const std::string &macAddr)
             continue;
         }
 
+        // only process the entry includes the SAG's config
+        // e.g. VLAN_INTERFACE|Vlan201
         if (entryKeys.size() != 1)
         {
             continue;
         }
 
-        vector<FieldValueTuple> fvs;
-        m_cfgVlanIntfTable.get(key, fvs);
-        for (auto &fv: fvs)
+        string value = "";
+        if (m_cfgVlanIntfTable.hget(key, "static_anycast_gateway", value))
         {
-            std::string field = fvField(fv);
-            std::string value = fvValue(fv);
-            if (field == "static_anycast_gateway" && value == "true")
+            if (value == "true")
             {
                 SWSS_LOG_NOTICE("set %s mac address to %s", key.c_str(), macAddr.c_str());
 
@@ -1343,7 +1332,7 @@ void IntfMgr::updateSagMac(const std::string &macAddr)
                 updateSubIntfAdminStatus(key, "up");
 
                 vector<FieldValueTuple> vlanIntFv;
-                FieldValueTuple fvTuple("mac_addr", MacAddress(macAddr).to_string());
+                FieldValueTuple fvTuple("mac_addr", macAddr);
                 vlanIntFv.push_back(fvTuple);
                 m_appIntfTableProducer.set(key, vlanIntFv);
             }

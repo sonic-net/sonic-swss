@@ -74,13 +74,13 @@ int main(int argc, char **argv)
         }
 
         Table table(&cfgDb, "DEVICE_METADATA");
-        std::vector<FieldValueTuple> ovalues;
-        table.get("localhost", ovalues);
-        auto it = std::find_if(ovalues.begin(), ovalues.end(), [](const FieldValueTuple& t){ return t.first == "mac";} );
-        if (it == ovalues.end()) {
+        string mac = "";
+        if (!table.hget("localhost", "mac", mac))
+        {
             throw runtime_error("couldn't find MAC address of the device from config DB");
         }
-        gMacAddress = MacAddress(it->second);
+
+        gMacAddress = MacAddress(mac);
 
         SWSS_LOG_NOTICE("starting main loop");
         while (true)
