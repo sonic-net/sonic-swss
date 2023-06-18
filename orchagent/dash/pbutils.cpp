@@ -1,6 +1,8 @@
 #include "pbutils.h"
 
+
 using namespace std;
+using namespace swss;
 using namespace google::protobuf;
 
 bool to_sai(const dash::types::IpAddress &pb_address, sai_ip_address_t &sai_address)
@@ -72,3 +74,32 @@ bool to_sai(const RepeatedPtrField<dash::types::IpPrefix> &pb_prefixes, vector<s
     return true;
 }
 
+ip_addr_t to_swss(const dash::types::IpAddress &pb_address)
+{
+    SWSS_LOG_ENTER();
+
+    ip_addr_t ip_address;
+    if (pb_address.has_ipv4())
+    {
+        ip_address.family = AF_INET;
+        ip_address.ip_addr.ipv4_addr = pb_address.ipv4();
+    }
+    else if (pb_address.has_ipv6())
+    {
+        ip_address.family = AF_INET6;
+        memcpy(ip_address.ip_addr.ipv6_addr, pb_address.ipv6().c_str(), sizeof(ip_address.ip_addr.ipv6_addr));
+    }
+    else
+    {
+        SWSS_LOG_THROW("The protobuf IP address %s is invalid", pb_address.DebugString().c_str());
+    }
+
+    return ip_address;
+}
+
+std::string to_string(const dash::types::IpAddress &pb_address)
+{
+    SWSS_LOG_ENTER();
+
+    return IpAddress(to_swss(pb_address)).to_string();
+}

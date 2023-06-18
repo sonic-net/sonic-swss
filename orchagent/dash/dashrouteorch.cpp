@@ -91,7 +91,8 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
         outbound_routing_attrs.push_back(outbound_routing_attr);
     }
 
-    if (ctxt.metadata.action_type() == dash::route_type::RoutingType::ROUTING_TYPE_VNET_DIRECT && !ctxt.overlay_ip.isZero())
+    if (ctxt.metadata.action_type() == dash::route_type::RoutingType::ROUTING_TYPE_VNET_DIRECT 
+        && (ctxt.metadata.service_tunnel().overlay_ip().has_ipv4() || ctxt.metadata.service_tunnel().overlay_ip().has_ipv6()))
     {
         outbound_routing_attr.id = SAI_OUTBOUND_ROUTING_ENTRY_ATTR_OVERLAY_IP;
         if (!ctxt.metadata.has_service_tunnel())

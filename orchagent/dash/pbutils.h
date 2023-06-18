@@ -6,8 +6,9 @@
 #include <saitypes.h>
 #include <sai.h>
 #include <logger.h>
+#include <ipaddress.h>
 
-#include "proto/acl.pb.h"
+#include "proto/types.pb.h"
 
 bool to_sai(const dash::types::IpAddress &pb_address, sai_ip_address_t &sai_address);
 
@@ -70,3 +71,7 @@ bool to_sai(const google::protobuf::RepeatedPtrField<dash::types::ValueOrRange> 
 
     return true;
 }
+
+swss::ip_addr_t to_swss(const dash::types::IpAddress &pb_address);
+
+std::string to_string(const dash::types::IpAddress &pb_address);

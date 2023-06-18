@@ -29,6 +29,14 @@ struct EniEntry
     dash::eni::Eni metadata;
 };
 
+struct QosEntry
+{
+    std::string qos_id;
+    uint32_t bw;
+    uint32_t cps;
+    uint32_t flows;
+};
+
 typedef std::map<std::string, dash::appliance::Appliance> ApplianceTable;
 typedef std::map<std::string, dash::route_type::RouteType> RoutingTypeTable;
 typedef std::map<std::string, EniEntry> EniTable;
@@ -61,6 +69,6 @@ private:
     bool removeEniAddrMapEntry(const std::string& eni);
     bool removeEni(const std::string& eni);
     bool setEniAdminState(const std::string& eni, const EniEntry& entry);
-    bool addQosEntry(const std::string& qos_name, const QosEntry &entry);
+    bool addQosEntry(const std::string& qos_name, const dash::qos::Qos &entry);
     bool removeQosEntry(const std::string& qos_name);
 };

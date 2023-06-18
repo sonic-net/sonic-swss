@@ -306,7 +306,8 @@ void DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
     SWSS_LOG_ENTER();
 
     auto& object_statuses = ctxt.pa_validation_object_statuses;
-    string pa_ref_key = ctxt.vnet_name + ":" + ctxt.underlay_ip.to_string();
+    string underlay_ip_str = to_string(ctxt.metadata.underlay_ip());
+    string pa_ref_key = ctxt.vnet_name + ":" + underlay_ip_str;
     auto it = pa_refcount_table_.find(pa_ref_key);
     if (it != pa_refcount_table_.end())
     {
@@ -318,7 +319,7 @@ void DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
         pa_refcount_table_[pa_ref_key]++;
         SWSS_LOG_INFO("Increment PA refcount to %u for PA IP %s",
                         pa_refcount_table_[pa_ref_key],
-                        ctxt.underlay_ip.to_string().c_str());
+                        underlay_ip_str.c_str());
         return;
     }
 
@@ -337,7 +338,7 @@ void DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
             attr_count, &pa_validation_attr);
     pa_refcount_table_[pa_ref_key] = 1;
     SWSS_LOG_INFO("Initialize PA refcount to 1 for PA IP %s",
-                    ctxt.underlay_ip.to_string().c_str());
+                    underlay_ip_str.c_str());
 }
 
 bool DashVnetOrch::addVnetMap(const string& key, VnetMapBulkContext& ctxt)
@@ -412,7 +413,8 @@ bool DashVnetOrch::addPaValidationPost(const string& key, const VnetMapBulkConte
     }
 
     auto it_status = object_statuses.begin();
-    string pa_ref_key = ctxt.vnet_name + ":" + ctxt.underlay_ip.to_string();
+    string underlay_ip_str = to_string(ctxt.metadata.underlay_ip());
+    string pa_ref_key = ctxt.vnet_name + ":" + underlay_ip_str;
     sai_status_t status = *it_status++;
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -432,7 +434,7 @@ bool DashVnetOrch::addPaValidationPost(const string& key, const VnetMapBulkConte
         }
     }
 
-    gCrmOrch->incCrmResUsedCounter(ctxt.underlay_ip.isV4() ? CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION : CrmResourceType::CRM_DASH_IPV6_PA_VALIDATION);
+    gCrmOrch->incCrmResUsedCounter(ctxt.metadata.underlay_ip().has_ipv4() ? CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION : CrmResourceType::CRM_DASH_IPV6_PA_VALIDATION);
 
     SWSS_LOG_INFO("PA validation entry for %s added", key.c_str());
 
@@ -477,7 +479,7 @@ void DashVnetOrch::removePaValidation(const string& key, VnetMapBulkContext& ctx
     SWSS_LOG_ENTER();
 
     auto& object_statuses = ctxt.pa_validation_object_statuses;
-    string underlay_ip = vnet_map_table_[key].underlay_ip.to_string();
+    string underlay_ip = to_string(vnet_map_table_[key].metadata.underlay_ip());
     string pa_ref_key = ctxt.vnet_name + ":" + underlay_ip;
     auto it = pa_refcount_table_.find(pa_ref_key);
     if (it == pa_refcount_table_.end())
@@ -570,7 +572,7 @@ bool DashVnetOrch::removePaValidationPost(const string& key, const VnetMapBulkCo
 {
     SWSS_LOG_ENTER();
 
-    string underlay_ip = vnet_map_table_[key].underlay_ip.to_string();
+    string underlay_ip = to_string(vnet_map_table_[key].metadata.underlay_ip());
     string pa_ref_key = ctxt.vnet_name + ":" + underlay_ip;
     const auto& object_statuses = ctxt.pa_validation_object_statuses;
     if (object_statuses.empty())
@@ -596,7 +598,7 @@ bool DashVnetOrch::removePaValidationPost(const string& key, const VnetMapBulkCo
         }
     }
 
-    gCrmOrch->decCrmResUsedCounter(vnet_map_table_[key].underlay_ip.isV4() ? CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION : CrmResourceType::CRM_DASH_IPV6_PA_VALIDATION);
+    gCrmOrch->decCrmResUsedCounter(vnet_map_table_[key].metadata.underlay_ip().has_ipv4() ? CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION : CrmResourceType::CRM_DASH_IPV6_PA_VALIDATION);
 
     SWSS_LOG_INFO("PA validation entry for %s removed", key.c_str());
 
