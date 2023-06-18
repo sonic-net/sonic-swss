@@ -81,6 +81,7 @@ jobs:
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/${{ parameters.swss_common_branch }}'
       path: $(Build.ArtifactStagingDirectory)/download
+      allowPartiallySucceededBuilds: true
     displayName: "Download sonic swss common deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
@@ -91,6 +92,7 @@ jobs:
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/${{ parameters.sairedis_artifact_branch }}'
       path: $(Build.ArtifactStagingDirectory)/download/sairedis
+      allowPartiallySucceededBuilds: true
       patterns: |
         ${{ parameters.sairedis_artifact_pattern }}/libsaivs_*.deb
         ${{ parameters.sairedis_artifact_pattern }}/libsaivs-dev_*.deb

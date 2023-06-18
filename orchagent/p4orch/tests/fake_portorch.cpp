@@ -473,7 +473,7 @@ bool PortsOrch::setLagTpid(sai_object_id_t id, sai_uint16_t tpid)
     return true;
 }
 
-bool PortsOrch::addLagMember(Port &lag, Port &port, bool enableForwarding)
+bool PortsOrch::addLagMember(Port &lag, Port &port, string member_status)
 {
     return true;
 }
@@ -699,7 +699,7 @@ void PortsOrch::voqSyncDelLag(Port &lag)
 {
 }
 
-void PortsOrch::voqSyncAddLagMember(Port &lag, Port &port)
+void PortsOrch::voqSyncAddLagMember(Port &lag, Port &port, string status)
 {
 }
 

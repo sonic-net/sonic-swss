@@ -57,6 +57,7 @@ class TestSrv6Mysid(object):
         mysid1='16:8:8:8:baba:2001:10::'
         mysid2='16:8:8:8:baba:2001:20::'
         mysid3='16:8:8:8:fcbb:bb01:800::'
+        mysid4='16:8:8:8:baba:2001:40::'
 
         # create MySID END
         fvs = swsscommon.FieldValuePairs([('action', 'end')])
@@ -107,10 +108,27 @@ class TestSrv6Mysid(object):
             elif fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR":
                 assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD"
 
+        # create MySID END.DT4 with default vrf
+        fvs = swsscommon.FieldValuePairs([('action', 'end.dt4'), ('vrf', 'default')])
+        key = self.create_mysid(mysid4, fvs)
+
+        # check ASIC MySID database
+        mysid = json.loads(key)
+        assert mysid["sid"] == "baba:2001:40::"
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY")
+        (status, fvs) = tbl.get(key)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_MY_SID_ENTRY_ATTR_VRF":
+                assert True
+            elif fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR":
+                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT4"
+
         # delete MySID
         self.remove_mysid(mysid1)
         self.remove_mysid(mysid2)
         self.remove_mysid(mysid3)
+        self.remove_mysid(mysid4)
 
         # remove vrf
         self.remove_vrf("VrfDt46")
@@ -121,11 +139,14 @@ class TestSrv6(object):
         self.adb = dvs.get_asic_db()
         self.cdb = dvs.get_config_db()
 
-    def create_sidlist(self, segname, ips):
+    def create_sidlist(self, segname, ips, type=None):
         table = "ASIC_STATE:SAI_OBJECT_TYPE_SRV6_SIDLIST"
         existed_entries = get_exist_entries(self.adb.db_connection, table)
 
-        fvs=swsscommon.FieldValuePairs([('path', ips)])
+        if type is None:
+            fvs=swsscommon.FieldValuePairs([('path', ips)])
+        else:
+            fvs=swsscommon.FieldValuePairs([('path', ips), ('type', type)])
         segtbl = swsscommon.ProducerStateTable(self.pdb.db_connection, "SRV6_SID_LIST_TABLE")
         segtbl.set(segname, fvs)
 
@@ -239,9 +260,30 @@ class TestSrv6(object):
 
 
         # create 2nd seg lists
-        self.create_sidlist('seg2', 'baba:2002:10::,baba:2002:20::')
-        # create 3rd seg lists
-        self.create_sidlist('seg3', 'baba:2003:10::,baba:2003:20::')
+        sidlist_id = self.create_sidlist('seg2', 'baba:2002:10::,baba:2002:20::', 'insert.red')
+
+        # check ASIC SAI_OBJECT_TYPE_SRV6_SIDLIST database
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_SRV6_SIDLIST")
+        (status, fvs) = tbl.get(sidlist_id)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_SRV6_SIDLIST_ATTR_SEGMENT_LIST":
+                assert fv[1] == "2:baba:2002:10::,baba:2002:20::"
+            elif fv[0] == "SAI_SRV6_SIDLIST_ATTR_TYPE":
+                assert fv[1] == "SAI_SRV6_SIDLIST_TYPE_INSERT_RED"
+
+        # create 3rd seg lists with unsupported or wrong naming of sid list type, for this case, it will use default type: ENCAPS_RED
+        sidlist_id = self.create_sidlist('seg3', 'baba:2003:10::,baba:2003:20::', 'reduced')
+
+        # check ASIC SAI_OBJECT_TYPE_SRV6_SIDLIST database
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_SRV6_SIDLIST")
+        (status, fvs) = tbl.get(sidlist_id)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_SRV6_SIDLIST_ATTR_SEGMENT_LIST":
+                assert fv[1] == "2:baba:2003:10::,baba:2003:20::"
+            elif fv[0] == "SAI_SRV6_SIDLIST_ATTR_TYPE":
+                assert fv[1] == "SAI_SRV6_SIDLIST_TYPE_ENCAPS_RED"
 
         # create 2nd v4 route with single sidlists
         self.create_srv6_route('20.20.20.21/32','seg2','1001:2000::1')

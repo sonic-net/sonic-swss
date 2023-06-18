@@ -18,6 +18,8 @@
 #include "swssnet.h"
 #include "tokenize.h"
 #include "dashorch.h"
+#include "crmorch.h"
+#include "saihelper.h"
 
 #include "taskworker.h"
 #include "pbutils.h"
@@ -31,6 +33,7 @@ extern sai_dash_outbound_ca_to_pa_api_t* sai_dash_outbound_ca_to_pa_api;
 extern sai_dash_pa_validation_api_t* sai_dash_pa_validation_api;
 extern sai_object_id_t gSwitchId;
 extern size_t gMaxBulkSize;
+extern CrmOrch *gCrmOrch;
 
 DashVnetOrch::DashVnetOrch(DBConnector *db, vector<string> &tables) :
     vnet_bulker_(sai_dash_vnet_api, gSwitchId, gMaxBulkSize),
@@ -84,7 +87,10 @@ bool DashVnetOrch::addVnetPost(const string& vnet_name, const DashVnetBulkContex
     VnetEntry entry = { id, ctxt.metadata };
     vnet_table_[vnet_name] = entry;
     gVnetNameToId[vnet_name] = id;
-    SWSS_LOG_NOTICE("Vnet entry added for %s", vnet_name.c_str());
+
+    gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_DASH_VNET);
+
+    SWSS_LOG_INFO("Vnet entry added for %s", vnet_name.c_str());
 
     return true;
 }
@@ -137,9 +143,12 @@ bool DashVnetOrch::removeVnetPost(const string& vnet_name, const DashVnetBulkCon
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
+
+    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_DASH_VNET);
+
     vnet_table_.erase(vnet_name);
     gVnetNameToId.erase(vnet_name);
-    SWSS_LOG_NOTICE("Vnet entry removed for %s", vnet_name.c_str());
+    SWSS_LOG_INFO("Vnet entry removed for %s", vnet_name.c_str());
 
     return true;
 }
@@ -296,12 +305,28 @@ void DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
 {
     SWSS_LOG_ENTER();
 
+    auto& object_statuses = ctxt.pa_validation_object_statuses;
+    string pa_ref_key = ctxt.vnet_name + ":" + ctxt.underlay_ip.to_string();
+    auto it = pa_refcount_table_.find(pa_ref_key);
+    if (it != pa_refcount_table_.end())
+    {
+        /*
+         * PA validation entry already exisits. Just increment refcount and add
+         * a dummy success status to satisfy postop
+         */
+        object_statuses.emplace_back(SAI_STATUS_SUCCESS);
+        pa_refcount_table_[pa_ref_key]++;
+        SWSS_LOG_INFO("Increment PA refcount to %u for PA IP %s",
+                        pa_refcount_table_[pa_ref_key],
+                        ctxt.underlay_ip.to_string().c_str());
+        return;
+    }
+
     uint32_t attr_count = 1;
     sai_pa_validation_entry_t pa_validation_entry;
     pa_validation_entry.vnet_id = gVnetNameToId[ctxt.vnet_name];
     pa_validation_entry.switch_id = gSwitchId;
     to_sai(ctxt.metadata.underlay_ip(), pa_validation_entry.sip);
-    auto& object_statuses = ctxt.pa_validation_object_statuses;
     sai_attribute_t pa_validation_attr;
 
     pa_validation_attr.id = SAI_PA_VALIDATION_ENTRY_ATTR_ACTION;
@@ -310,6 +335,9 @@ void DashVnetOrch::addPaValidation(const string& key, VnetMapBulkContext& ctxt)
     object_statuses.emplace_back();
     pa_validation_bulker_.create_entry(&object_statuses.back(), &pa_validation_entry,
             attr_count, &pa_validation_attr);
+    pa_refcount_table_[pa_ref_key] = 1;
+    SWSS_LOG_INFO("Initialize PA refcount to 1 for PA IP %s",
+                    ctxt.underlay_ip.to_string().c_str());
 }
 
 bool DashVnetOrch::addVnetMap(const string& key, VnetMapBulkContext& ctxt)
@@ -331,8 +359,10 @@ bool DashVnetOrch::addVnetMap(const string& key, VnetMapBulkContext& ctxt)
         }
         return false;
     }
-    // If the VNET map is already added, don't add it to the bulker and
-    // return true so it's removed from the consumer 
+    /*
+     * If the VNET map is already added, don't add it to the bulker and
+     * return true so it's removed from the consumer
+     */
     return true;
 }
 
@@ -363,7 +393,10 @@ bool DashVnetOrch::addOutboundCaToPaPost(const string& key, const VnetMapBulkCon
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
-    SWSS_LOG_NOTICE("Outbound CA to PA  map entry for %s added", key.c_str());
+
+    gCrmOrch->incCrmResUsedCounter(ctxt.dip.isV4() ? CrmResourceType::CRM_DASH_IPV4_OUTBOUND_CA_TO_PA : CrmResourceType::CRM_DASH_IPV6_OUTBOUND_CA_TO_PA);
+
+    SWSS_LOG_INFO("Outbound CA to PA  map entry for %s added", key.c_str());
 
     return true;
 }
@@ -379,9 +412,12 @@ bool DashVnetOrch::addPaValidationPost(const string& key, const VnetMapBulkConte
     }
 
     auto it_status = object_statuses.begin();
+    string pa_ref_key = ctxt.vnet_name + ":" + ctxt.underlay_ip.to_string();
     sai_status_t status = *it_status++;
     if (status != SAI_STATUS_SUCCESS)
     {
+        /* PA validation entry add failed. Remove PA refcount entry */
+        pa_refcount_table_.erase(pa_ref_key);
         if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
         {
             // Retry if item exists in the bulker
@@ -395,7 +431,10 @@ bool DashVnetOrch::addPaValidationPost(const string& key, const VnetMapBulkConte
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
-    SWSS_LOG_NOTICE("PA validation entry for %s added", key.c_str());
+
+    gCrmOrch->incCrmResUsedCounter(ctxt.underlay_ip.isV4() ? CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION : CrmResourceType::CRM_DASH_IPV6_PA_VALIDATION);
+
+    SWSS_LOG_INFO("PA validation entry for %s added", key.c_str());
 
     return true;
 }
@@ -407,14 +446,14 @@ bool DashVnetOrch::addVnetMapPost(const string& key, const VnetMapBulkContext& c
     bool status = addOutboundCaToPaPost(key, ctxt) && addPaValidationPost(key, ctxt);
     if (!status)
     {
-        SWSS_LOG_ERROR("addVnetMapPost return due to status false for %s ", key.c_str());
+        SWSS_LOG_ERROR("addVnetMapPost failed for %s ", key.c_str());
         return false;
     }
 
     string vnet_name = ctxt.vnet_name;
     VnetMapEntry entry = {  gVnetNameToId[vnet_name], ctxt.dip, ctxt.metadata };
     vnet_map_table_[key] = entry;
-    SWSS_LOG_NOTICE("Vnet map added for %s", key.c_str());
+    SWSS_LOG_INFO("Vnet map added for %s", key.c_str());
 
     return true;
 }
@@ -438,13 +477,41 @@ void DashVnetOrch::removePaValidation(const string& key, VnetMapBulkContext& ctx
     SWSS_LOG_ENTER();
 
     auto& object_statuses = ctxt.pa_validation_object_statuses;
-    sai_pa_validation_entry_t pa_validation_entry;
-    pa_validation_entry.vnet_id = vnet_map_table_[key].dst_vnet_id;
-    pa_validation_entry.switch_id = gSwitchId;
-    to_sai(vnet_map_table_[key].metadata.underlay_ip(), pa_validation_entry.sip);
+    string underlay_ip = vnet_map_table_[key].underlay_ip.to_string();
+    string pa_ref_key = ctxt.vnet_name + ":" + underlay_ip;
+    auto it = pa_refcount_table_.find(pa_ref_key);
+    if (it == pa_refcount_table_.end())
+    {
+        return;
+    }
+    else
+    {
+        if (--pa_refcount_table_[pa_ref_key] > 0)
+        {
+            /*
+             * PA validation entry already exisits. Just decrement refcount and add
+             * a dummy success status to satisfy postop
+             */
+            object_statuses.emplace_back(SAI_STATUS_SUCCESS);
+            SWSS_LOG_INFO("Decrement PA refcount to %u for PA IP %s",
+                            pa_refcount_table_[pa_ref_key],
+                            underlay_ip.c_str());
+            return;
+        }
+        else
+        {
+            sai_pa_validation_entry_t pa_validation_entry;
+            pa_validation_entry.vnet_id = vnet_map_table_[key].dst_vnet_id;
+            pa_validation_entry.switch_id = gSwitchId;
+            to_sai(vnet_map_table_[key].metadata.underlay_ip(), pa_validation_entry.sip);
 
-    object_statuses.emplace_back();
-    pa_validation_bulker_.remove_entry(&object_statuses.back(), &pa_validation_entry);
+            object_statuses.emplace_back();
+            pa_validation_bulker_.remove_entry(&object_statuses.back(), &pa_validation_entry);
+            SWSS_LOG_INFO("PA refcount refcount is zero for PA IP %s, removing refcount table entry",
+                            underlay_ip.c_str());
+            pa_refcount_table_.erase(pa_ref_key);
+        }
+    }
 }
 
 bool DashVnetOrch::removeVnetMap(const string& key, VnetMapBulkContext& ctxt)
@@ -454,7 +521,7 @@ bool DashVnetOrch::removeVnetMap(const string& key, VnetMapBulkContext& ctxt)
     bool exists = (vnet_map_table_.find(key) != vnet_map_table_.end());
     if (!exists)
     {
-        SWSS_LOG_WARN("Failed to find vnet mapping %s to remove", key.c_str());
+        SWSS_LOG_INFO("Failed to find vnet mapping %s to remove", key.c_str());
         return true;
     }
 
@@ -491,7 +558,10 @@ bool DashVnetOrch::removeOutboundCaToPaPost(const string& key, const VnetMapBulk
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
-    SWSS_LOG_NOTICE("Outbound CA to PA map entry for %s removed", key.c_str());
+
+    gCrmOrch->decCrmResUsedCounter(vnet_map_table_[key].dip.isV4() ? CrmResourceType::CRM_DASH_IPV4_OUTBOUND_CA_TO_PA : CrmResourceType::CRM_DASH_IPV6_OUTBOUND_CA_TO_PA);
+
+    SWSS_LOG_INFO("Outbound CA to PA map entry for %s removed", key.c_str());
 
     return true;
 }
@@ -500,6 +570,8 @@ bool DashVnetOrch::removePaValidationPost(const string& key, const VnetMapBulkCo
 {
     SWSS_LOG_ENTER();
 
+    string underlay_ip = vnet_map_table_[key].underlay_ip.to_string();
+    string pa_ref_key = ctxt.vnet_name + ":" + underlay_ip;
     const auto& object_statuses = ctxt.pa_validation_object_statuses;
     if (object_statuses.empty())
     {
@@ -523,7 +595,10 @@ bool DashVnetOrch::removePaValidationPost(const string& key, const VnetMapBulkCo
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
-    SWSS_LOG_NOTICE("PA validation entry for %s removed", key.c_str());
+
+    gCrmOrch->decCrmResUsedCounter(vnet_map_table_[key].underlay_ip.isV4() ? CrmResourceType::CRM_DASH_IPV4_PA_VALIDATION : CrmResourceType::CRM_DASH_IPV6_PA_VALIDATION);
+
+    SWSS_LOG_INFO("PA validation entry for %s removed", key.c_str());
 
     return true;
 }
@@ -538,7 +613,7 @@ bool DashVnetOrch::removeVnetMapPost(const string& key, const VnetMapBulkContext
         return false;
     }
     vnet_map_table_.erase(key);
-    SWSS_LOG_NOTICE("Vnet map removed for %s", key.c_str());
+    SWSS_LOG_INFO("Vnet map removed for %s", key.c_str());
 
     return true;
 }

@@ -11,6 +11,9 @@
 #include "dashaclorch.h"
 #include "taskworker.h"
 #include "pbutils.h"
+#include "crmorch.h"
+#include "dashaclorch.h"
+#include "saihelper.h"
 
 using namespace std;
 using namespace swss;
@@ -19,6 +22,7 @@ using namespace dash::acl;
 extern sai_dash_acl_api_t* sai_dash_acl_api;
 extern sai_dash_eni_api_t* sai_dash_eni_api;
 extern sai_object_id_t gSwitchId;
+extern CrmOrch *gCrmOrch;
 
 template <typename T, typename... Args>
 static bool extractVariables(const string &input, char delimiter, T &output, Args &... args)
@@ -216,6 +220,10 @@ task_process_status DashAclOrch::taskUpdateDashAclGroup(
     m_dash_acl_group_table.emplace(key, acl_group);
     SWSS_LOG_NOTICE("Created ACL group %s", key.c_str());
 
+    CrmResourceType crm_rtype = (acl_group.m_ip_version == SAI_IP_ADDR_FAMILY_IPV4) ?
+        CrmResourceType::CRM_DASH_IPV4_ACL_GROUP : CrmResourceType::CRM_DASH_IPV6_ACL_GROUP;
+    gCrmOrch->incCrmDashAclUsedCounter(crm_rtype, acl_group.m_dash_acl_group_id);
+
     return task_success;
 }
 
@@ -253,6 +261,10 @@ task_process_status DashAclOrch::taskRemoveDashAclGroup(
         SWSS_LOG_WARN("Failed to remove ACL group %s, rv: %s", key.c_str(), sai_serialize_status(status).c_str());
         return task_failed;
     }
+    CrmResourceType crm_rtype = (acl_group->m_ip_version == SAI_IP_ADDR_FAMILY_IPV4) ?
+        CrmResourceType::CRM_DASH_IPV4_ACL_GROUP : CrmResourceType::CRM_DASH_IPV6_ACL_GROUP;
+    gCrmOrch->decCrmDashAclUsedCounter(crm_rtype, acl_group->m_dash_acl_group_id);
+
     m_dash_acl_group_table.erase(key);
     SWSS_LOG_NOTICE("Removed ACL group %s", key.c_str());
 
@@ -441,6 +453,10 @@ task_process_status DashAclOrch::taskUpdateDashAclRule(
     acl_group->m_rule_count++;
     SWSS_LOG_NOTICE("Created ACL rule %s", key.c_str());
 
+    CrmResourceType crm_rtype = (acl_group->m_ip_version == SAI_IP_ADDR_FAMILY_IPV4) ?
+        CrmResourceType::CRM_DASH_IPV4_ACL_RULE : CrmResourceType::CRM_DASH_IPV6_ACL_RULE;
+    gCrmOrch->incCrmDashAclUsedCounter(crm_rtype, acl_group->m_dash_acl_group_id);
+
     return task_success;
 }
 
@@ -455,6 +471,8 @@ task_process_status DashAclOrch::taskRemoveDashAclRule(
         SWSS_LOG_WARN("Failed to parse key %s", key.c_str());
         return task_failed;
     }
+
+    auto &acl_group = m_dash_acl_group_table[group_id];
 
     auto itr = m_dash_acl_rule_table.find(key);
 
@@ -482,7 +500,12 @@ task_process_status DashAclOrch::taskRemoveDashAclRule(
         return task_failed;
     }
     m_dash_acl_rule_table.erase(itr);
-    m_dash_acl_group_table[group_id].m_rule_count--;
+    --acl_group.m_rule_count;
+
+    CrmResourceType crm_resource = (acl_group.m_ip_version == SAI_IP_ADDR_FAMILY_IPV4) ?
+        CrmResourceType::CRM_DASH_IPV4_ACL_RULE : CrmResourceType::CRM_DASH_IPV6_ACL_RULE;
+    gCrmOrch->decCrmDashAclUsedCounter(crm_resource, acl_group.m_dash_acl_group_id);
+
     SWSS_LOG_NOTICE("Removed ACL rule %s", key.c_str());
 
     return task_success;

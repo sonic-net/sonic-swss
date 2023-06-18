@@ -97,6 +97,14 @@ struct VlanMemberUpdate
     bool add;
 };
 
+struct queueInfo
+{
+    // SAI_QUEUE_ATTR_TYPE
+    sai_queue_type_t type;
+    // SAI_QUEUE_ATTR_INDEX
+    sai_uint8_t index;
+};
+
 class PortsOrch : public Orch, public Subject
 {
 public:
@@ -340,7 +348,7 @@ private:
     bool addLag(string lag, uint32_t spa_id, int32_t switch_id);
     bool removeLag(Port lag);
     bool setLagTpid(sai_object_id_t id, sai_uint16_t tpid);
-    bool addLagMember(Port &lag, Port &port, bool enableForwarding);
+    bool addLagMember(Port &lag, Port &port, string status);
     bool removeLagMember(Port &lag, Port &port);
     bool setCollectionOnLagMember(Port &lagMember, bool enableCollection);
     bool setDistributionOnLagMember(Port &lagMember, bool enableDistribution);
@@ -387,7 +395,7 @@ private:
     void generateQueueMapPerPort(const Port& port, FlexCounterQueueStates& queuesState, bool voq);
     bool m_isQueueFlexCountersAdded = false;
     void addQueueFlexCountersPerPort(const Port& port, FlexCounterQueueStates& queuesState);
-    void addQueueFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex);
+    void addQueueFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex, bool voq);
 
     bool m_isQueueWatermarkFlexCountersAdded = false;
     void addQueueWatermarkFlexCountersPerPort(const Port& port, FlexCounterQueueStates& queuesState);
@@ -459,11 +467,12 @@ private:
     unique_ptr<Table> m_tableVoqSystemLagMemberTable;
     void voqSyncAddLag(Port &lag);
     void voqSyncDelLag(Port &lag);
-    void voqSyncAddLagMember(Port &lag, Port &port);
+    void voqSyncAddLagMember(Port &lag, Port &port, string status);
     void voqSyncDelLagMember(Port &lag, Port &port);
     unique_ptr<LagIdAllocator> m_lagIdAllocator;
     set<sai_object_id_t> m_macsecEnabledPorts;
 
     std::unordered_set<std::string> generateCounterStats(const string& type, bool gearbox = false);
+    map<sai_object_id_t, struct queueInfo> m_queueInfo;
 };
 #endif /* SWSS_PORTSORCH_H */

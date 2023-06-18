@@ -416,6 +416,14 @@ static map<sai_acl_counter_attr_t, sai_acl_counter_attr_t> aclCounterLookup =
     {SAI_ACL_COUNTER_ATTR_ENABLE_PACKET_COUNT, SAI_ACL_COUNTER_ATTR_PACKETS},
 };
 
+static map<AclObjectStatus, string> aclObjectStatusLookup = 
+{
+    {AclObjectStatus::ACTIVE, "Active"},
+    {AclObjectStatus::INACTIVE, "Inactive"},
+    {AclObjectStatus::PENDING_CREATION, "Pending creation"},
+    {AclObjectStatus::PENDING_REMOVAL, "Pending removal"}
+};
+
 static sai_acl_table_attr_t AclEntryFieldToAclTableField(sai_acl_entry_attr_t attr)
 {
     if (!IS_ATTR_ID_IN_RANGE(attr, ACL_ENTRY, FIELD))
@@ -1133,6 +1141,11 @@ bool AclRule::createRule()
     status = sai_acl_api->create_acl_entry(&m_ruleOid, gSwitchId, (uint32_t)rule_attrs.size(), rule_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
+        if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
+        {
+            SWSS_LOG_NOTICE("ACL rule %s already exists", m_id.c_str());
+            return true;
+        }
         SWSS_LOG_ERROR("Failed to create ACL rule %s, rv:%d",
                 m_id.c_str(), status);
         AclRange::remove(range_objects, range_object_list.count);
@@ -1194,6 +1207,12 @@ bool AclRule::removeRule()
     auto status = sai_acl_api->remove_acl_entry(m_ruleOid);
     if (status != SAI_STATUS_SUCCESS)
     {
+        if (status == SAI_STATUS_ITEM_NOT_FOUND)
+        {
+            SWSS_LOG_NOTICE("ACL rule already deleted");
+            m_ruleOid = SAI_NULL_OBJECT_ID;
+            return true;
+        }
         SWSS_LOG_ERROR("Failed to delete ACL rule, status %s", sai_serialize_status(status).c_str());
         return false;
     }
@@ -3007,6 +3026,10 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
 {
     SWSS_LOG_ENTER();
 
+    // Clear ACL_TABLE and ACL_RULE status from STATE_DB
+    removeAllAclTableStatus();
+    removeAllAclRuleStatus();
+
     // TODO: Query SAI to get mirror table capabilities
     // Right now, verified platforms that support mirroring IPv6 packets are
     // Broadcom and Mellanox. Virtual switch is also supported for testing
@@ -3191,7 +3214,9 @@ void AclOrch::initDefaultTableTypes()
     addAclTableType(
         builder.withName(TABLE_TYPE_DROP)
             .withBindPointType(SAI_ACL_BIND_POINT_TYPE_PORT)
+            .withBindPointType(SAI_ACL_BIND_POINT_TYPE_LAG)
             .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_TC))
+            .withMatch(make_shared<AclTableMatch>(SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS))
             .build()
     );
 
@@ -3512,6 +3537,8 @@ AclOrch::AclOrch(vector<TableConnector>& connectors, DBConnector* stateDb, Switc
         PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch, DTelOrch *dtelOrch) :
         Orch(connectors),
         m_aclStageCapabilityTable(stateDb, STATE_ACL_STAGE_CAPABILITY_TABLE_NAME),
+        m_aclTableStateTable(stateDb, STATE_ACL_TABLE_TABLE_NAME),
+        m_aclRuleStateTable(stateDb, STATE_ACL_RULE_TABLE_NAME),
         m_switchOrch(switchOrch),
         m_mirrorOrch(mirrorOrch),
         m_neighOrch(neighOrch),
@@ -4335,6 +4362,8 @@ void AclOrch::doAclTableTask(Consumer &consumer)
                     {
                         SWSS_LOG_NOTICE("Successfully updated existing ACL table %s",
                                         table_id.c_str());
+                        // Mark ACL table as ACTIVE
+                        setAclTableStatus(table_id, AclObjectStatus::ACTIVE);
                         it = consumer.m_toSync.erase(it);
                     }
                     else
@@ -4347,14 +4376,23 @@ void AclOrch::doAclTableTask(Consumer &consumer)
                 else
                 {
                     if (addAclTable(newTable))
+                    {
+                        // Mark ACL table as ACTIVE
+                        setAclTableStatus(table_id, AclObjectStatus::ACTIVE);
                         it = consumer.m_toSync.erase(it);
+                    }
                     else
+                    {
+                        setAclTableStatus(table_id, AclObjectStatus::PENDING_CREATION);
                         it++;
+                    }
                 }
             }
             else
             {
                 it = consumer.m_toSync.erase(it);
+                // Mark the ACL table as inactive if the configuration is invalid
+                setAclTableStatus(table_id, AclObjectStatus::INACTIVE);
                 SWSS_LOG_ERROR("Failed to create ACL table %s, invalid configuration",
                         table_id.c_str());
             }
@@ -4362,9 +4400,17 @@ void AclOrch::doAclTableTask(Consumer &consumer)
         else if (op == DEL_COMMAND)
         {
             if (removeAclTable(table_id))
+            {
+                // Remove ACL table status from STATE_DB
+                removeAclTableStatus(table_id);
                 it = consumer.m_toSync.erase(it);
+            }
             else
+            {
+                // Set the status of ACL_TABLE to pending removal if removeAclTable returns error
+                setAclTableStatus(table_id, AclObjectStatus::PENDING_REMOVAL);
                 it++;
+            }
         }
         else
         {
@@ -4504,22 +4550,37 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
             if (bAllAttributesOk && newRule->validate())
             {
                 if (addAclRule(newRule, table_id))
+                {
+                    setAclRuleStatus(table_id, rule_id, AclObjectStatus::ACTIVE);
                     it = consumer.m_toSync.erase(it);
+                }
                 else
+                {
+                    setAclRuleStatus(table_id, rule_id, AclObjectStatus::PENDING_CREATION);
                     it++;
+                }
             }
             else
             {
                 it = consumer.m_toSync.erase(it);
+                // Mark the rule inactive if the configuration is invalid
+                setAclRuleStatus(table_id, rule_id, AclObjectStatus::INACTIVE);
                 SWSS_LOG_ERROR("Failed to create ACL rule. Rule configuration is invalid");
             }
         }
         else if (op == DEL_COMMAND)
         {
             if (removeAclRule(table_id, rule_id))
+            {
+                removeAclRuleStatus(table_id, rule_id);
                 it = consumer.m_toSync.erase(it);
+            }
             else
+            {
+                // Mark pending removal status if removeAclRule returns error
+                setAclRuleStatus(table_id, rule_id, AclObjectStatus::PENDING_REMOVAL);
                 it++;
+            }
         }
         else
         {
@@ -4877,3 +4938,55 @@ bool AclOrch::getAclBindPortId(Port &port, sai_object_id_t &port_id)
 
     return true;
 }
+
+// Set the status of ACL table in STATE_DB
+void AclOrch::setAclTableStatus(string table_name, AclObjectStatus status)
+{
+    vector<FieldValueTuple> fvVector;
+    fvVector.emplace_back("status", aclObjectStatusLookup[status]);
+    m_aclTableStateTable.set(table_name, fvVector);
+}
+
+// Remove the status record of given ACL table from STATE_DB
+void AclOrch::removeAclTableStatus(string table_name)
+{
+    m_aclTableStateTable.del(table_name);
+}
+
+// Set the status of ACL rule in STATE_DB
+void AclOrch::setAclRuleStatus(string table_name, string rule_name, AclObjectStatus status)
+{
+    vector<FieldValueTuple> fvVector;
+    fvVector.emplace_back("status", aclObjectStatusLookup[status]);
+    m_aclRuleStateTable.set(table_name + string("|") + rule_name, fvVector);
+}
+
+// Remove the status record of given ACL rule from STATE_DB
+void AclOrch::removeAclRuleStatus(string table_name, string rule_name)
+{
+    m_aclRuleStateTable.del(table_name + string("|") + rule_name);
+}
+
+// Remove all ACL table status from STATE_DB
+void AclOrch::removeAllAclTableStatus()
+{
+    vector<string> keys;
+    m_aclTableStateTable.getKeys(keys);
+
+    for (auto key : keys)
+    {
+        m_aclTableStateTable.del(key);
+    }
+}
+
+// Remove all ACL rule status from STATE_DB
+void AclOrch::removeAllAclRuleStatus()
+{
+    vector<string> keys;
+    m_aclRuleStateTable.getKeys(keys);
+    for (auto key : keys)
+    {
+        m_aclRuleStateTable.del(key);
+    }
+}
+

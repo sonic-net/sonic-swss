@@ -75,7 +75,7 @@ jobs:
       # install packages for vs test
       sudo apt-get install -y net-tools bridge-utils vlan
       sudo apt-get install -y python3-pip
-      sudo pip3 install pytest==4.6.2 attrs==19.1.0 exabgp==4.0.10 distro==1.5.0 docker==4.4.1 redis==3.3.4 flaky==3.7.0
+      sudo pip3 install pytest==4.6.2 attrs==19.1.0 exabgp==4.0.10 distro==1.5.0 docker>=4.4.1 redis==3.3.4 flaky==3.7.0
     displayName: "Install dependencies"
 
   - script: |
@@ -99,7 +99,7 @@ jobs:
         params=" ${params} --num-ports=${{ parameters.num_ports }} "
       fi
 
-      all_tests=$(ls test_*.py)
+      all_tests=$(ls test_*.py | grep -v test_dash)
       all_tests="${all_tests} p4rt"
 
       if [ -n '${{ parameters.run_tests_pattern }}' ]; then

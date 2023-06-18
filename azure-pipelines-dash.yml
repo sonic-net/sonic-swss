@@ -34,21 +34,16 @@ stages:
   - template: .azure-pipelines/build-template.yml
     parameters:
       arch: amd64
-      sonic_slave: sonic-slave-buster
+      sonic_slave: sonic-slave-bullseye
       swss_common_artifact_name: sonic-swss-common
       swss_common_branch: master
       artifact_name: sonic-swss
       archive_pytests: true
       archive_gcov: true
-      sairedis_artifact_name: sonic-buildimage.vs
-      sairedis_artifact_project: nvidia
-      sairedis_artifact_pipeline: nvidia-sonic.sonic-buildimage
-      sairedis_artifact_branch: bluefield
-      sairedis_artifact_pattern: target/debs/buster
-      common_lib_artifact_name: sonic-buildimage.vs
-      common_lib_artifact_project: nvidia
-      common_lib_artifact_pipeline: nvidia-sonic.sonic-buildimage
-      common_lib_artifact_branch: bluefield
+      sairedis_artifact_name: sonic-sairedis
+      sairedis_artifact_branch: master
+      common_lib_artifact_name: common-lib
+      common_lib_artifact_branch: master
 
 
 - stage: BuildDocker
@@ -57,19 +52,13 @@ stages:
   jobs:
   - template: .azure-pipelines/build-docker-sonic-vs-template.yml
     parameters:
+      buildimage_artifact_branch: master
       swss_common_artifact_name: sonic-swss-common
       swss_common_branch: master
       swss_artifact_name: sonic-swss
       artifact_name: docker-sonic-vs
-      buildimage_artifact_name: sonic-buildimage.vs
-      buildimage_artifact_project: nvidia
-      buildimage_artifact_pipeline: nvidia-sonic.sonic-buildimage
-      buildimage_artifact_branch: bluefield
-      sairedis_artifact_name: sonic-buildimage.vs
-      sairedis_artifact_project: nvidia
-      sairedis_artifact_pipeline: nvidia-sonic.sonic-buildimage
-      sairedis_artifact_branch: bluefield
-      sairedis_artifact_pattern: target/debs/buster
+      sairedis_artifact_name: sonic-sairedis
+      sairedis_artifact_branch: master
 
 - stage: Test
   dependsOn: BuildDocker
@@ -79,7 +68,7 @@ stages:
     parameters:
       log_artifact_name: log
       gcov_artifact_name: sonic-gcov
-      sonic_slave: sonic-slave-buster
+      sonic_slave: sonic-slave-bullseye
       swss_common_branch: master
       archive_gcov: true
       num_ports: 2

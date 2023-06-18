@@ -7,6 +7,7 @@
 #include "mock_orchagent_main.h"
 #include "mock_table.h"
 #include "notifier.h"
+#include "mock_sai_bridge.h"
 #define private public
 #include "pfcactionhandler.h"
 #include <sys/mman.h>
@@ -15,6 +16,8 @@
 #include <sstream>
 
 extern redisReply *mockReply;
+using ::testing::_;
+using ::testing::StrictMock;
 
 namespace portsorch_test
 {
@@ -138,17 +141,65 @@ namespace portsorch_test
         return SAI_STATUS_SUCCESS;
     }
 
+    uint32_t _sai_get_queue_attr_count;
+    bool _sai_mock_queue_attr = false;
+    sai_status_t _ut_stub_sai_get_queue_attribute(
+        _In_ sai_object_id_t queue_id,
+        _In_ uint32_t attr_count,
+        _Inout_ sai_attribute_t *attr_list)
+    {
+        if (_sai_mock_queue_attr)
+        {
+            _sai_get_queue_attr_count++;
+            for (auto i = 0u; i < attr_count; i++)
+            {
+                if (attr_list[i].id == SAI_QUEUE_ATTR_TYPE)
+                {
+                    attr_list[i].value.s32 = static_cast<sai_queue_type_t>(SAI_QUEUE_TYPE_UNICAST);
+                }
+                else if (attr_list[i].id == SAI_QUEUE_ATTR_INDEX)
+                {
+                    attr_list[i].value.u8 = 0;
+                }
+                else
+                {
+                    pold_sai_queue_api->get_queue_attribute(queue_id, 1, &attr_list[i]);
+                }
+            }
+        }
+
+        return SAI_STATUS_SUCCESS;
+    }
+
     void _hook_sai_queue_api()
     {
+        _sai_mock_queue_attr = true;
         ut_sai_queue_api = *sai_queue_api;
         pold_sai_queue_api = sai_queue_api;
         ut_sai_queue_api.set_queue_attribute = _ut_stub_sai_set_queue_attribute;
+        ut_sai_queue_api.get_queue_attribute = _ut_stub_sai_get_queue_attribute;
         sai_queue_api = &ut_sai_queue_api;
     }
 
     void _unhook_sai_queue_api()
     {
         sai_queue_api = pold_sai_queue_api;
+        _sai_mock_queue_attr = false;
+    }
+
+    sai_bridge_api_t ut_sai_bridge_api;
+    sai_bridge_api_t *org_sai_bridge_api;
+
+    void _hook_sai_bridge_api()
+    {
+        ut_sai_bridge_api = *sai_bridge_api;
+        org_sai_bridge_api = sai_bridge_api;
+        sai_bridge_api = &ut_sai_bridge_api;
+    }
+
+    void _unhook_sai_bridge_api()
+    {
+        sai_bridge_api = org_sai_bridge_api;
     }
 
     struct PortsOrchTest : public ::testing::Test
@@ -310,6 +361,7 @@ namespace portsorch_test
      */
     TEST_F(PortsOrchTest, GetPortTest)
     {
+        _hook_sai_queue_api();
         Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
         std::deque<KeyOpFieldsValuesTuple> entries;
 
@@ -335,6 +387,21 @@ namespace portsorch_test
         ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
         ASSERT_NE(port.m_port_id, SAI_NULL_OBJECT_ID);
 
+        // Get queue info
+        string type;
+        uint8_t index;
+        auto queue_id = port.m_queue_ids[0];
+        auto ut_sai_get_queue_attr_count = _sai_get_queue_attr_count;
+        gPortsOrch->getQueueTypeAndIndex(queue_id, type, index);
+        ASSERT_EQ(type, "SAI_QUEUE_TYPE_UNICAST");
+        ASSERT_EQ(index, 0);
+        type = "";
+        index = 255;
+        gPortsOrch->getQueueTypeAndIndex(queue_id, type, index);
+        ASSERT_EQ(type, "SAI_QUEUE_TYPE_UNICAST");
+        ASSERT_EQ(index, 0);
+        ASSERT_EQ(++ut_sai_get_queue_attr_count, _sai_get_queue_attr_count);
+
         // Delete port
         entries.push_back({"Ethernet0", "DEL", {}});
         auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
@@ -343,6 +410,50 @@ namespace portsorch_test
         entries.clear();
 
         ASSERT_FALSE(gPortsOrch->getPort(port.m_port_id, port));
+        ASSERT_EQ(gPortsOrch->m_queueInfo.find(queue_id), gPortsOrch->m_queueInfo.end());
+        _unhook_sai_queue_api();
+    }
+
+    /**
+     * Test case: PortsOrch::addBridgePort() does not add router port to .1Q bridge
+     */
+    TEST_F(PortsOrchTest, addBridgePortOnRouterPort)
+    {
+        _hook_sai_bridge_api();
+
+        StrictMock<MockSaiBridge> mock_sai_bridge_;
+        mock_sai_bridge = &mock_sai_bridge_;
+        sai_bridge_api->create_bridge_port = mock_create_bridge_port;
+
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        // Populate port table with SAI ports
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone, PortInitDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        portTable.set("PortInitDone", { { "lanes", "0" } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+        // Apply configuration : create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        // Get first port and set its rif id to simulate it is router port
+        Port port;
+        gPortsOrch->getPort("Ethernet0", port);
+        port.m_rif_id = 1;
+
+        ASSERT_FALSE(gPortsOrch->addBridgePort(port));
+        EXPECT_CALL(mock_sai_bridge_, create_bridge_port(_, _, _, _)).Times(0);
+
+        _unhook_sai_bridge_api();
     }
 
     TEST_F(PortsOrchTest, PortSupportedFecModes)

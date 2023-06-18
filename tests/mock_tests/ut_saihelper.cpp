@@ -75,6 +75,7 @@ namespace ut_helper
         sai_api_query(SAI_API_NEIGHBOR, (void **)&sai_neighbor_api);
         sai_api_query(SAI_API_TUNNEL, (void **)&sai_tunnel_api);
         sai_api_query(SAI_API_NEXT_HOP, (void **)&sai_next_hop_api);
+        sai_api_query(SAI_API_NEXT_HOP_GROUP, (void **)&sai_next_hop_group_api);
         sai_api_query(SAI_API_ACL, (void **)&sai_acl_api);
         sai_api_query(SAI_API_HOSTIF, (void **)&sai_hostif_api);
         sai_api_query(SAI_API_POLICER, (void **)&sai_policer_api);
@@ -86,6 +87,7 @@ namespace ut_helper
         sai_api_query(SAI_API_QUEUE, (void **)&sai_queue_api);
         sai_api_query(SAI_API_MPLS, (void**)&sai_mpls_api);
         sai_api_query(SAI_API_COUNTER, (void**)&sai_counter_api);
+        sai_api_query(SAI_API_FDB, (void**)&sai_fdb_api);
 
         return SAI_STATUS_SUCCESS;
     }

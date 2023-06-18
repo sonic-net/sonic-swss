@@ -30,6 +30,7 @@
 #include "countercheckorch.h"
 #include "notifier.h"
 #include "fdborch.h"
+#include "switchorch.h"
 #include "stringutility.h"
 #include "subscriberstatetable.h"
 
@@ -49,6 +50,7 @@ extern NeighOrch *gNeighOrch;
 extern CrmOrch *gCrmOrch;
 extern BufferOrch *gBufferOrch;
 extern FdbOrch *gFdbOrch;
+extern SwitchOrch *gSwitchOrch;
 extern Directory<Orch*> gDirectory;
 extern sai_system_port_api_t *sai_system_port_api;
 extern string gMySwitchType;
@@ -61,6 +63,7 @@ extern event_handle_t g_events_handle;
 #define VLAN_PREFIX         "Vlan"
 #define DEFAULT_VLAN_ID     1
 #define MAX_VALID_VLAN_ID   4094
+#define DEFAULT_HOSTIF_TX_QUEUE 7
 
 #define PORT_SPEED_LIST_DEFAULT_SIZE                     16
 #define PORT_STATE_POLLING_SEC                            5
@@ -1828,7 +1831,7 @@ bool PortsOrch::bindAclTable(sai_object_id_t  port_oid,
     member_attrs.push_back(member_attr);
 
     member_attr.id = SAI_ACL_TABLE_GROUP_MEMBER_ATTR_PRIORITY;
-    member_attr.value.u32 = 100; // TODO: double check!
+    member_attr.value.u32 = 100;
     member_attrs.push_back(member_attr);
 
     status = sai_acl_api->create_acl_table_group_member(&group_member_oid, gSwitchId, (uint32_t)member_attrs.size(), member_attrs.data());
@@ -2451,19 +2454,36 @@ bool PortsOrch::getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uin
 {
     SWSS_LOG_ENTER();
 
-    sai_attribute_t attr[2];
-    attr[0].id = SAI_QUEUE_ATTR_TYPE;
-    attr[1].id = SAI_QUEUE_ATTR_INDEX;
+    auto const &queueInfoRef = m_queueInfo.find(queue_id);
 
-    sai_status_t status = sai_queue_api->get_queue_attribute(queue_id, 2, attr);
-    if (status != SAI_STATUS_SUCCESS)
+    sai_attribute_t attr[2];
+    if (queueInfoRef == m_queueInfo.end())
     {
-        SWSS_LOG_ERROR("Failed to get queue type and index for queue %" PRIu64 " rv:%d", queue_id, status);
-        task_process_status handle_status = handleSaiGetStatus(SAI_API_QUEUE, status);
-        if (handle_status != task_process_status::task_success)
+        attr[0].id = SAI_QUEUE_ATTR_TYPE;
+        attr[1].id = SAI_QUEUE_ATTR_INDEX;
+
+        sai_status_t status = sai_queue_api->get_queue_attribute(queue_id, 2, attr);
+        if (status != SAI_STATUS_SUCCESS)
         {
-            return false;
+            SWSS_LOG_ERROR("Failed to get queue type and index for queue %" PRIu64 " rv:%d", queue_id, status);
+            task_process_status handle_status = handleSaiGetStatus(SAI_API_QUEUE, status);
+            if (handle_status != task_process_status::task_success)
+            {
+                return false;
+            }
         }
+
+        SWSS_LOG_INFO("Caching information (index %d type %d) for queue %" PRIx64, attr[1].value.u8, attr[0].value.s32, queue_id);
+
+        m_queueInfo[queue_id].type = static_cast<sai_queue_type_t>(attr[0].value.s32);
+        m_queueInfo[queue_id].index = attr[1].value.u8;
+    }
+    else
+    {
+        attr[0].value.s32 = m_queueInfo[queue_id].type;
+        attr[1].value.u8 = m_queueInfo[queue_id].index;
+
+        SWSS_LOG_INFO("Fetched cached information (index %d type %d) for queue %" PRIx64, attr[1].value.u8, attr[0].value.s32, queue_id);
     }
 
     switch (attr[0].value.s32)
@@ -2481,7 +2501,7 @@ bool PortsOrch::getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uin
         type = "SAI_QUEUE_TYPE_UNICAST_VOQ";
         break;
     default:
-        SWSS_LOG_ERROR("Got unsupported queue type %d for %" PRIu64 " queue", attr[0].value.s32, queue_id);
+        SWSS_LOG_ERROR("Got unsupported queue type %d for %" PRIx64 " queue", attr[0].value.s32, queue_id);
         throw runtime_error("Got unsupported queue type");
     }
 
@@ -2604,6 +2624,23 @@ bool PortsOrch::createVlanHostIntf(Port& vl, string hostif_name)
     strncpy(attr.value.chardata, hostif_name.c_str(), SAI_HOSTIF_NAME_SIZE);
     attr.value.chardata[SAI_HOSTIF_NAME_SIZE - 1] = '\0';
     attrs.push_back(attr);
+
+    bool set_hostif_tx_queue = false;
+    if (gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_HOSTIF, SAI_HOSTIF_ATTR_QUEUE))
+    {
+        set_hostif_tx_queue = true;
+    }
+    else
+    {
+        SWSS_LOG_WARN("Hostif queue attribute not supported");
+    }
+
+    if (set_hostif_tx_queue)
+    {
+        attr.id = SAI_HOSTIF_ATTR_QUEUE;
+        attr.value.u32 = DEFAULT_HOSTIF_TX_QUEUE;
+        attrs.push_back(attr);
+    }
 
     sai_status_t status = sai_hostif_api->create_hostif(&vl.m_vlan_info.host_intf_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
@@ -2740,6 +2777,12 @@ sai_status_t PortsOrch::removePort(sai_object_id_t port_id)
      */
 
     removePortSerdesAttribute(port_id);
+
+    for (auto queue_id : port.m_queue_ids)
+    {
+        SWSS_LOG_INFO("Removing cached information for queue %" PRIx64, queue_id);
+        m_queueInfo.erase(queue_id);
+    }
 
     sai_status_t status = sai_port_api->remove_port(port_id);
     if (status != SAI_STATUS_SUCCESS)
@@ -4394,11 +4437,17 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
                     continue;
                 }
 
-                if (!addLagMember(lag, port, (status == "enabled")))
+                if (!addLagMember(lag, port, status))
                 {
                     it++;
                     continue;
                 }
+            }
+
+            if ((gMySwitchType == "voq") && (port.m_type != Port::SYSTEM))
+            {
+               //Sync to SYSTEM_LAG_MEMBER_TABLE of CHASSIS_APP_DB
+               voqSyncAddLagMember(lag, port, status);
             }
 
             /* Sync an enabled member */
@@ -4845,6 +4894,23 @@ bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_int
     attr.value.chardata[SAI_HOSTIF_NAME_SIZE - 1] = '\0';
     attrs.push_back(attr);
 
+    bool set_hostif_tx_queue = false;
+    if (gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_HOSTIF, SAI_HOSTIF_ATTR_QUEUE))
+    {
+        set_hostif_tx_queue = true;
+    }
+    else
+    {
+        SWSS_LOG_WARN("Hostif queue attribute not supported");
+    }
+
+    if (set_hostif_tx_queue)
+    {
+        attr.id = SAI_HOSTIF_ATTR_QUEUE;
+        attr.value.u32 = DEFAULT_HOSTIF_TX_QUEUE;
+        attrs.push_back(attr);
+    }
+
     sai_status_t status = sai_hostif_api->create_hostif(&host_intfs_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -4893,6 +4959,12 @@ bool PortsOrch::addBridgePort(Port &port)
     if (port.m_bridge_port_id != SAI_NULL_OBJECT_ID)
     {
         return true;
+    }
+
+    if (port.m_rif_id != 0)
+    {
+        SWSS_LOG_NOTICE("Cannot create bridge port, interface %s is a router port", port.m_alias.c_str());
+        return false;
     }
 
     sai_attribute_t attr;
@@ -5822,9 +5894,10 @@ void PortsOrch::getLagMember(Port &lag, vector<Port> &portv)
     }
 }
 
-bool PortsOrch::addLagMember(Port &lag, Port &port, bool enableForwarding)
+bool PortsOrch::addLagMember(Port &lag, Port &port, string member_status)
 {
     SWSS_LOG_ENTER();
+    bool enableForwarding = (member_status == "enabled");
 
     sai_uint32_t pvid;
     if (getPortPvid(lag, pvid))
@@ -5896,7 +5969,7 @@ bool PortsOrch::addLagMember(Port &lag, Port &port, bool enableForwarding)
     if (gMySwitchType == "voq")
     {
         //Sync to SYSTEM_LAG_MEMBER_TABLE of CHASSIS_APP_DB
-        voqSyncAddLagMember(lag, port);
+        voqSyncAddLagMember(lag, port, member_status);
     }
 
     return true;
@@ -5984,12 +6057,6 @@ bool PortsOrch::setCollectionOnLagMember(Port &lagMember, bool enableCollection)
     /* Port must be LAG member */
     assert(lagMember.m_lag_member_id);
 
-    // Collection is not applicable for system port lag members (i.e, members of remote LAGs)
-    if (lagMember.m_type == Port::SYSTEM)
-    {
-        return true;
-    }
-
     sai_status_t status = SAI_STATUS_FAILURE;
     sai_attribute_t attr {};
 
@@ -6020,12 +6087,6 @@ bool PortsOrch::setDistributionOnLagMember(Port &lagMember, bool enableDistribut
 {
     /* Port must be LAG member */
     assert(lagMember.m_lag_member_id);
-
-    // Distribution is not applicable for system port lag members (i.e, members of remote LAGs)
-    if (lagMember.m_type == Port::SYSTEM)
-    {
-        return true;
-    }
 
     sai_status_t status = SAI_STATUS_FAILURE;
     sai_attribute_t attr {};
@@ -6161,7 +6222,7 @@ void PortsOrch::generateQueueMapPerPort(const Port& port, FlexCounterQueueStates
         {
 	    /* voq counters are always enabled. There is no mechanism to disable voq
 	     * counters in a voq system. */
-            if (!voq && !queuesState.isQueueCounterEnabled(queueRealIndex))
+            if ((gMySwitchType != "voq")  && !queuesState.isQueueCounterEnabled(queueRealIndex))
             {
                 continue;
             }
@@ -6172,10 +6233,24 @@ void PortsOrch::generateQueueMapPerPort(const Port& port, FlexCounterQueueStates
         queueVector.emplace_back(name.str(), id);
         if (voq)
         {
+            // Install a flex counter for this voq to track stats. Voq counters do
+            // not have buffer queue config. So it does not get enabled through the
+            // flexcounter orch logic. Always enabled voq counters.
+            addQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, true);
             queuePortVector.emplace_back(id, sai_serialize_object_id(port.m_system_port_oid));
         }
         else
         {
+            // In voq systems, always install a flex counter for this egress queue
+            // to track stats. In voq systems, the buffer profiles are defined on
+            // sysports. So the phy ports do not have buffer queue config. Hence
+            // queuesStateVector built by getQueueConfigurations in flexcounterorch
+            // never has phy ports in voq systems. So always enabled egress queue
+            // counter on voq systems.
+            if (gMySwitchType == "voq")
+            {
+               addQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, false);
+            }
             queuePortVector.emplace_back(id, sai_serialize_object_id(port.m_port_id));
         }
     }
@@ -6187,12 +6262,12 @@ void PortsOrch::generateQueueMapPerPort(const Port& port, FlexCounterQueueStates
     else
     {
         m_queueTable->set("", queueVector);
+        CounterCheckOrch::getInstance().addPort(port);
     }
     m_queuePortTable->set("", queuePortVector);
     m_queueIndexTable->set("", queueIndexVector);
     m_queueTypeTable->set("", queueTypeVector);
 
-    CounterCheckOrch::getInstance().addPort(port);
 }
 
 void PortsOrch::addQueueFlexCounters(map<string, FlexCounterQueueStates> queuesStateVector)
@@ -6233,19 +6308,30 @@ void PortsOrch::addQueueFlexCountersPerPort(const Port& port, FlexCounterQueueSt
                 continue;
             }
             // Install a flex counter for this queue to track stats
-            addQueueFlexCountersPerPortPerQueueIndex(port, queueIndex);
+            addQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, false);
         }
     }
 }
 
-void PortsOrch::addQueueFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex)
+void PortsOrch::addQueueFlexCountersPerPortPerQueueIndex(const Port& port, size_t queueIndex, bool voq)
 {
     std::unordered_set<string> counter_stats;
+    std::vector<sai_object_id_t> queue_ids;
+
     for (const auto& it: queue_stat_ids)
     {
         counter_stats.emplace(sai_serialize_queue_stat(it));
     }
-    queue_stat_manager.setCounterIdList(port.m_queue_ids[queueIndex], CounterType::QUEUE, counter_stats);
+    if (voq)
+    {
+        queue_ids = m_port_voq_ids[port.m_alias];
+    }
+    else
+    {
+        queue_ids = port.m_queue_ids;
+    }
+
+    queue_stat_manager.setCounterIdList(queue_ids[queueIndex], CounterType::QUEUE, counter_stats);
 }
 
 
@@ -6353,7 +6439,7 @@ void PortsOrch::createPortBufferQueueCounters(const Port &port, string queues)
         if (flexCounterOrch->getQueueCountersState())
         {
             // Install a flex counter for this queue to track stats
-            addQueueFlexCountersPerPortPerQueueIndex(port, queueIndex);
+            addQueueFlexCountersPerPortPerQueueIndex(port, queueIndex, false);
         }
         if (flexCounterOrch->getQueueWatermarkCountersState())
         {
@@ -7891,14 +7977,13 @@ bool PortsOrch::addSystemPorts()
                 }
 
                 //System port for local port. Update the system port info in the existing physical port
-                Port local_port;
-                if(!getPort(attr.value.oid, local_port))
+                if(!getPort(attr.value.oid, port))
                 {
                     //This is system port for non-front panel local port (CPU or OLP or RCY (Inband)). Not an error
                     SWSS_LOG_NOTICE("Add port for non-front panel local system port 0x%" PRIx64 "; core: %d, core port: %d",
                             system_port_oid, core_index, core_port_index);
                 }
-                local_port.m_system_port_info.local_port_oid = attr.value.oid;
+                port.m_system_port_info.local_port_oid = attr.value.oid;
             }
 
             port.m_system_port_oid = system_port_oid;
@@ -8026,7 +8111,7 @@ void PortsOrch::voqSyncDelLag(Port &lag)
     m_tableVoqSystemLagTable->del(key);
 }
 
-void PortsOrch::voqSyncAddLagMember(Port &lag, Port &port)
+void PortsOrch::voqSyncAddLagMember(Port &lag, Port &port, string status)
 {
     // Sync only local lag's member add to CHASSIS_APP_DB
     if (lag.m_system_lag_info.switch_id != gVoqMySwitchId)
@@ -8035,8 +8120,8 @@ void PortsOrch::voqSyncAddLagMember(Port &lag, Port &port)
     }
 
     vector<FieldValueTuple> attrs;
-    FieldValueTuple nullFv ("NULL", "NULL");
-    attrs.push_back(nullFv);
+    FieldValueTuple statusFv ("status", status);
+    attrs.push_back(statusFv);
 
     string key = lag.m_system_lag_info.alias + ":" + port.m_system_port_info.alias;
     m_tableVoqSystemLagMemberTable->set(key, attrs);

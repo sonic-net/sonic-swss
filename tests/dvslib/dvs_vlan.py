@@ -106,6 +106,7 @@ class DVSVlan(object):
         assert hostif.get("SAI_HOSTIF_ATTR_TYPE") == "SAI_HOSTIF_TYPE_NETDEV"
         assert hostif.get("SAI_HOSTIF_ATTR_OBJ_ID") == vlan_oid
         assert hostif.get("SAI_HOSTIF_ATTR_NAME") == hostif_name
+        assert hostif.get("SAI_HOSTIF_ATTR_QUEUE") == "7"
 
     def get_and_verify_vlan_hostif_ids(self, expected_num, polling_config=PollingConfig()):
         hostif_entries = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF",
