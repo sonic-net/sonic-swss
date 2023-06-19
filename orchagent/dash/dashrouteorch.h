@@ -14,8 +14,9 @@
 #include "timer.h"
 #include "dashorch.h"
 
-#include "proto/route_lpm.pb.h"
-#include "proto/route_rule.pb.h"
+#include "dash_api/route.pb.h"
+#include "dash_api/route_rule.pb.h"
+
 
 struct OutboundRoutingEntry
 {

@@ -8,7 +8,7 @@
 #include <logger.h>
 #include <ipaddress.h>
 
-#include "proto/types.pb.h"
+#include "dash_api/types.pb.h"
 
 bool to_sai(const dash::types::IpAddress &pb_address, sai_ip_address_t &sai_address);
 

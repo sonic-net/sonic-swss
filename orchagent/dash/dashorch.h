@@ -18,10 +18,10 @@
 #include "dashorch.h"
 #include "saihelper.h"
 
-#include "proto/appliance.pb.h"
-#include "proto/route_type.pb.h"
-#include "proto/eni.pb.h"
-#include "proto/qos.pb.h"
+#include "dash_api/appliance.pb.h"
+#include "dash_api/route_type.pb.h"
+#include "dash_api/eni.pb.h"
+#include "dash_api/qos.pb.h"
 
 struct EniEntry
 {

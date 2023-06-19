@@ -102,7 +102,8 @@ orchagent_SOURCES = \
             dash/dashorch.cpp \
             dash/dashrouteorch.cpp \
             dash/dashvnetorch.cpp \
-            dash/dashaclorch.cpp
+            dash/dashaclorch.cpp \
+            dash/pbutils.cpp
 
 orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp flex_counter/flow_counter_handler.cpp flex_counter/flowcounterrouteorch.cpp
 orchagent_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.cpp
@@ -123,21 +124,9 @@ orchagent_SOURCES += p4orch/p4orch.cpp \
 		     p4orch/l3_admit_manager.cpp \
  		     p4orch/ext_tables_manager.cpp
 
-orchagent_SOURCES += dash/pbutils.cpp \
-            dash/proto/acl.pb.cc \
-            dash/proto/types.pb.cc \
-            dash/proto/appliance.pb.cc \
-            dash/proto/route_type.pb.cc \
-            dash/proto/eni.pb.cc \
-            dash/proto/qos.pb.cc \
-            dash/proto/route_lpm.pb.cc \
-            dash/proto/route_rule.pb.cc \
-            dash/proto/vnet_mapping.pb.cc \
-            dash/proto/vnet.pb.cc
-
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 orchagent_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
-orchagent_LDADD = $(LDFLAGS_ASAN) -lnl-3 -lnl-route-3 -lpthread -lsairedis -lsaimeta -lsaimetadata -lswsscommon -lzmq -lprotobuf
+orchagent_LDADD = $(LDFLAGS_ASAN) -lnl-3 -lnl-route-3 -lpthread -lsairedis -lsaimeta -lsaimetadata -lswsscommon -lzmq -lprotobuf -ldashapi
 
 routeresync_SOURCES = routeresync.cpp
 routeresync_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_ASAN)

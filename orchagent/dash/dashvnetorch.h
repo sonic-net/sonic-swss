@@ -12,8 +12,8 @@
 #include "macaddress.h"
 #include "timer.h"
 
-#include "proto/vnet.pb.h"
-#include "proto/vnet_mapping.pb.h"
+#include "dash_api/vnet.pb.h"
+#include "dash_api/vnet_mapping.pb.h"
 
 struct VnetEntry
 {

@@ -15,7 +15,10 @@
 #include <orch.h>
 
 #include "dashorch.h"
-#include "proto/acl.pb.h"
+#include "dash_api/acl_group.pb.h"
+#include "dash_api/acl_rule.pb.h"
+#include "dash_api/acl_in.pb.h"
+#include "dash_api/acl_out.pb.h"
 
 typedef enum _DashAclDirection
 {
@@ -54,25 +57,25 @@ private:
 
     task_process_status taskUpdateDashAclIn(
         const std::string &key,
-        const dash::acl::AclIn &data);
+        const dash::acl_in::AclIn &data);
     task_process_status taskRemoveDashAclIn(
         const std::string &key);
 
     task_process_status taskUpdateDashAclOut(
         const std::string &key,
-        const dash::acl::AclOut &data);
+        const dash::acl_out::AclOut &data);
     task_process_status taskRemoveDashAclOut(
         const std::string &key);
 
     task_process_status taskUpdateDashAclGroup(
         const std::string &key,
-        const dash::acl::AclGroup &data);
+        const dash::acl_group::AclGroup &data);
     task_process_status taskRemoveDashAclGroup(
         const std::string &key);
 
     task_process_status taskUpdateDashAclRule(
         const std::string &key,
-        const dash::acl::AclRule &data);
+        const dash::acl_rule::AclRule &data);
     task_process_status taskRemoveDashAclRule(
         const std::string &key);
 

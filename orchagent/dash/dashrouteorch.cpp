@@ -22,7 +22,7 @@
 
 #include "taskworker.h"
 #include "pbutils.h"
-#include "proto/route_type.pb.h"
+#include "dash_api/route_type.pb.h"
 
 using namespace std;
 using namespace swss;
@@ -91,16 +91,12 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
         outbound_routing_attrs.push_back(outbound_routing_attr);
     }
 
-    if (ctxt.metadata.action_type() == dash::route_type::RoutingType::ROUTING_TYPE_VNET_DIRECT 
-        && (ctxt.metadata.service_tunnel().overlay_ip().has_ipv4() || ctxt.metadata.service_tunnel().overlay_ip().has_ipv6()))
+    if (ctxt.metadata.action_type() == dash::route_type::RoutingType::ROUTING_TYPE_VNET_DIRECT
+        && ctxt.metadata.has_vnet_direct()
+        && (ctxt.metadata.vnet_direct().overlay_ip().has_ipv4() || ctxt.metadata.vnet_direct().overlay_ip().has_ipv6()))
     {
         outbound_routing_attr.id = SAI_OUTBOUND_ROUTING_ENTRY_ATTR_OVERLAY_IP;
-        if (!ctxt.metadata.has_service_tunnel())
-        {
-            SWSS_LOG_WARN("The service tunnel should be set for vnet direct at: %s", key.c_str());
-            return false;
-        }
-        if (!to_sai(ctxt.metadata.service_tunnel().overlay_ip(), outbound_routing_attr.value.ipaddr))
+        if (!to_sai(ctxt.metadata.vnet_direct().overlay_ip(), outbound_routing_attr.value.ipaddr))
         {
             return false;
         }

@@ -17,7 +17,11 @@
 
 using namespace std;
 using namespace swss;
-using namespace dash::acl;
+using namespace dash::acl_in;
+using namespace dash::acl_out;
+using namespace dash::acl_rule;
+using namespace dash::acl_group;
+using namespace dash::types;
 
 extern sai_dash_acl_api_t* sai_dash_acl_api;
 extern sai_dash_eni_api_t* sai_dash_eni_api;
@@ -157,7 +161,24 @@ task_process_status DashAclOrch::taskUpdateDashAclIn(
 {
     SWSS_LOG_ENTER();
 
-    return bindAclToEni(m_dash_acl_in_table, key, data.acl_group_id());
+    task_process_status v4_status = task_success, v6_status = task_success;
+    if (!data.v4_acl_group_id().empty())
+    {
+        v4_status = bindAclToEni(m_dash_acl_in_table, key, data.v4_acl_group_id());
+    }
+    if (v4_status != task_success)
+    {
+        return v4_status;
+    }
+    if (!data.v6_acl_group_id().empty())
+    {
+        v6_status = bindAclToEni(m_dash_acl_in_table, key, data.v6_acl_group_id());
+    }
+    if (v6_status != task_success)
+    {
+        return v6_status;
+    }
+    return task_success;
 }
 
 task_process_status DashAclOrch::taskRemoveDashAclIn(
@@ -174,7 +195,24 @@ task_process_status DashAclOrch::taskUpdateDashAclOut(
 {
     SWSS_LOG_ENTER();
 
-    return bindAclToEni(m_dash_acl_out_table, key, data.acl_group_id());
+    task_process_status v4_status = task_success, v6_status = task_success;
+    if (!data.v4_acl_group_id().empty())
+    {
+        v4_status = bindAclToEni(m_dash_acl_out_table, key, data.v4_acl_group_id());
+    }
+    if (v4_status != task_success)
+    {
+        return v4_status;
+    }
+    if (!data.v6_acl_group_id().empty())
+    {
+        v6_status = bindAclToEni(m_dash_acl_out_table, key, data.v6_acl_group_id());
+    }
+    if (v6_status != task_success)
+    {
+        return v6_status;
+    }
+    return task_success;
 }
 
 task_process_status DashAclOrch::taskRemoveDashAclOut(
@@ -187,7 +225,7 @@ task_process_status DashAclOrch::taskRemoveDashAclOut(
 
 task_process_status DashAclOrch::taskUpdateDashAclGroup(
     const string &key,
-    const dash::acl::AclGroup &data)
+    const AclGroup &data)
 {
     SWSS_LOG_ENTER();
 
@@ -198,7 +236,7 @@ task_process_status DashAclOrch::taskUpdateDashAclGroup(
         return task_failed;
     }
 
-    sai_ip_addr_family_t ip_version = data.ip_version() == dash::types::IpVersion::IP_VERSION_IPV4 ? SAI_IP_ADDR_FAMILY_IPV4 : SAI_IP_ADDR_FAMILY_IPV6;
+    sai_ip_addr_family_t ip_version = data.ip_version() == IpVersion::IP_VERSION_IPV4 ? SAI_IP_ADDR_FAMILY_IPV4 : SAI_IP_ADDR_FAMILY_IPV6;
     vector<sai_attribute_t> attrs;
     attrs.emplace_back();
     attrs.back().id = SAI_DASH_ACL_GROUP_ATTR_IP_ADDR_FAMILY;
@@ -273,7 +311,7 @@ task_process_status DashAclOrch::taskRemoveDashAclGroup(
 
 task_process_status DashAclOrch::taskUpdateDashAclRule(
     const string &key,
-    const dash::acl::AclRule &data)
+    const AclRule &data)
 {
     SWSS_LOG_ENTER();
 
@@ -310,7 +348,7 @@ task_process_status DashAclOrch::taskUpdateDashAclRule(
 
     attrs.emplace_back();
     attrs.back().id = SAI_DASH_ACL_RULE_ATTR_ACTION;
-    if (data.action() == dash::acl::Action::ACTION_PERMIT)
+    if (data.action() == Action::ACTION_PERMIT)
     {
         if (data.terminating())
         {
