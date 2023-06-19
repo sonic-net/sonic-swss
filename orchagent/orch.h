@@ -160,9 +160,6 @@ public:
     // Returns: the number of entries added to m_toSync
     size_t addToSync(const std::deque<swss::KeyOpFieldsValuesTuple> &entries);
 
-    template<class SELECTABLE_T>
-    void execute_impl();
-
     template<class ORCH_T, class CONSUMER_T>
     void drain_impl();
 };

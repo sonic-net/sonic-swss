@@ -272,23 +272,6 @@ void ConsumerBase::dumpPendingTasks(vector<string> &ts)
     }
 }
 
-template<class SELECTABLE_T>
-void ConsumerBase::execute_impl()
-{
-    SWSS_LOG_ENTER();
-
-    size_t update_size = 0;
-    auto table = static_cast<SELECTABLE_T *>(getSelectable());
-    do
-    {
-        std::deque<KeyOpFieldsValuesTuple> entries;
-        table->pops(entries);
-        update_size = addToSync(entries);
-    } while (update_size != 0);
-
-    drain();
-}
-
 template<class ORCH_T, class CONSUMER_T>
 void ConsumerBase::drain_impl()
 {
@@ -321,7 +304,19 @@ void Consumer::drain()
 
 void ZmqConsumer::execute()
 {
-    ConsumerBase::execute_impl<swss::ZmqConsumerStateTable>();
+    // ConsumerBase::execute_impl<swss::ConsumerTableBase>();
+    SWSS_LOG_ENTER();
+
+    size_t update_size = 0;
+    auto table = static_cast<swss::ZmqConsumerStateTable *>(getSelectable());
+    do
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        table->pops(entries);
+        update_size = addToSync(entries);
+    } while (update_size != 0);
+
+    drain();
 }
 
 void ZmqConsumer::drain()
