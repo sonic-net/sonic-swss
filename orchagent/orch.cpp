@@ -272,14 +272,6 @@ void ConsumerBase::dumpPendingTasks(vector<string> &ts)
     }
 }
 
-template<class ORCH_T, class CONSUMER_T>
-void ConsumerBase::drain_impl()
-{
-    if (!m_toSync.empty())
-        ((ORCH_T *)m_orch)->doTask((CONSUMER_T&)*this);
-}
-
-
 void Consumer::execute()
 {
     // ConsumerBase::execute_impl<swss::ConsumerTableBase>();
@@ -299,7 +291,8 @@ void Consumer::execute()
 
 void Consumer::drain()
 {
-    ConsumerBase::drain_impl<Orch, Consumer>();
+    if (!m_toSync.empty())
+        ((Orch *)m_orch)->doTask((Consumer&)*this);
 }
 
 void ZmqConsumer::execute()
@@ -321,7 +314,8 @@ void ZmqConsumer::execute()
 
 void ZmqConsumer::drain()
 {
-    ConsumerBase::drain_impl<ZmqOrch, ZmqConsumer>();
+    if (!m_toSync.empty())
+        ((ZmqOrch *)m_orch)->doTask((ZmqConsumer&)*this);
 }
 
 size_t Orch::addExistingData(const string& tableName)
