@@ -2696,6 +2696,13 @@ bool PortsOrch::addPort(const set<int> &lane_set, uint32_t speed, int an, string
     m_portListLaneMap[lane_set] = port_id;
     m_portCount++;
 
+    // newly created ports might be put in the default vlan so remove all ports from
+    // the default vlan.
+    if (gMySwitchType == "voq") {
+        removeDefaultVlanMembers();
+        removeDefaultBridgePorts();
+    }
+
     SWSS_LOG_NOTICE("Create port %" PRIx64 " with the speed %u", port_id, speed);
 
     return true;
