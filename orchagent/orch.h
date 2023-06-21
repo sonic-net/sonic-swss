@@ -235,7 +235,6 @@ public:
     Orch(swss::DBConnector *db, const std::vector<std::string> &tableNames);
     Orch(swss::DBConnector *db, const std::vector<table_name_with_pri_t> &tableNameWithPri);
     Orch(const std::vector<TableConnector>& tables);
-    Orch();
     virtual ~Orch();
 
     std::vector<swss::Selectable*> getSelectables();
@@ -268,6 +267,7 @@ public:
 protected:
     ConsumerMap m_consumerMap;
 
+    Orch();
     static void logfileReopen();
     std::string dumpTuple(Consumer &consumer, const swss::KeyOpFieldsValuesTuple &tuple);
     ref_resolve_status resolveFieldRefValue(type_map&, const std::string&, const std::string&, swss::KeyOpFieldsValuesTuple&, sai_object_id_t&, std::string&);
