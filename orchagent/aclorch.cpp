@@ -110,7 +110,7 @@ static acl_rule_attr_lookup_t aclDTelActionLookup =
     { ACTION_DTEL_REPORT_ALL_PACKETS,       SAI_ACL_ENTRY_ATTR_ACTION_DTEL_REPORT_ALL_PACKETS }
 };
 
-static acl_rule_attr_lookup_t aclOtherActionLookup = 
+static acl_rule_attr_lookup_t aclOtherActionLookup =
 {
     { ACTION_COUNTER,                       SAI_ACL_ENTRY_ATTR_ACTION_COUNTER}
 };
@@ -436,7 +436,7 @@ static map<sai_acl_counter_attr_t, sai_acl_counter_attr_t> aclCounterLookup =
     {SAI_ACL_COUNTER_ATTR_ENABLE_PACKET_COUNT, SAI_ACL_COUNTER_ATTR_PACKETS},
 };
 
-static map<AclObjectStatus, string> aclObjectStatusLookup = 
+static map<AclObjectStatus, string> aclObjectStatusLookup =
 {
     {AclObjectStatus::ACTIVE, "Active"},
     {AclObjectStatus::INACTIVE, "Inactive"},
@@ -3569,8 +3569,6 @@ void AclOrch::queryAclActionAttrEnumValues(const string &action_name,
             SWSS_LOG_THROW("%s is not an enum", action_name.c_str());
         }
 
-        // TODO: once sai object api is available make this code compile
-#ifdef SAIREDIS_SUPPORT_OBJECT_API
         vector<int32_t> values_list(meta->enummetadata->valuescount);
         sai_s32_list_t values;
         values.count = static_cast<uint32_t>(values_list.size());
@@ -3589,7 +3587,7 @@ void AclOrch::queryAclActionAttrEnumValues(const string &action_name,
         }
         else
         {
-            SWSS_LOG_WARN("Failed to query enum values supported for ACL action %s - ",
+            SWSS_LOG_WARN("Failed to query enum values supported for ACL action %s - "
                     "API is not implemented, assuming all values are supported for this action",
                     action_name.c_str());
             /* assume all enum values are supported */
@@ -3598,13 +3596,6 @@ void AclOrch::queryAclActionAttrEnumValues(const string &action_name,
                 m_aclEnumActionCapabilities[acl_action].insert(meta->enummetadata->values[i]);
             }
         }
-#else
-        /* assume all enum values are supported until sai object api is available */
-        for (size_t i = 0; i < meta->enummetadata->valuescount; i++)
-        {
-            m_aclEnumActionCapabilities[acl_action].insert(meta->enummetadata->values[i]);
-        }
-#endif
 
         // put supported values in DB
         for (const auto& it: lookupMap)
