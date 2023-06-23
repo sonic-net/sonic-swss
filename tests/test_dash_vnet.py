@@ -2,6 +2,9 @@ from swsscommon import swsscommon
 import typing
 import time
 
+DVS_ENV = ["HWSKU=NPU"]
+NUM_PORTS = 2
+
 def to_string(value):
     if isinstance(value, bool):
         return "true" if value else "false"
