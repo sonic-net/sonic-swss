@@ -198,6 +198,27 @@ bool IntfMgr::setIntfMpls(const string &alias, const string& mpls)
     return true;
 }
 
+void IntfMgr::setIntfState(const string &alias, bool isUp)
+{
+    stringstream cmd;
+    string res;
+
+    if (isUp)
+    {
+        cmd << IP_CMD << " link set " << shellquote(alias) << " up";
+    }
+    else
+    {
+        cmd << IP_CMD << " link set " << shellquote(alias) << " down";
+    }
+
+    int ret = swss::exec(cmd.str(), res);
+    if (ret)
+    {
+        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
+    }
+}
+
 void IntfMgr::addLoopbackIntf(const string &alias)
 {
     stringstream cmd;
@@ -997,23 +1018,21 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
                     string gwmac = "";
                     if (m_cfgSagTable.hget("GLOBAL", "gateway_mac", gwmac))
                     {
-                        // before change interface MAC, update sub-interface admin staus to down,
-                        // it can prevent unwanted events received during interface changed in kernel
-                        // bring it up after the changed
+                        // before change interface MAC, set interface down and up to regenerate IPv6 LL by MAC
                         if (sag == "true")
                         {
-                            updateSubIntfAdminStatus(alias, "down");
+                            setIntfState(alias, false);
                             setIntfMac(alias, gwmac);
-                            updateSubIntfAdminStatus(alias, "up");
+                            setIntfState(alias, true);
 
                             FieldValueTuple fvTuple("mac_addr", gwmac);
                             data.push_back(fvTuple);
                         }
                         else if (sag == "false")
                         {
-                            updateSubIntfAdminStatus(alias, "down");
+                            setIntfState(alias, false);
                             setIntfMac(alias, gMacAddress.to_string());
-                            updateSubIntfAdminStatus(alias, "up");
+                            setIntfState(alias, true);
 
                             FieldValueTuple fvTuple("mac_addr", MacAddress().to_string());
                             data.push_back(fvTuple);
@@ -1326,16 +1345,26 @@ void IntfMgr::updateSagMac(const std::string &macAddr)
             {
                 SWSS_LOG_NOTICE("set %s mac address to %s", key.c_str(), macAddr.c_str());
 
-                // enable SAG
-                updateSubIntfAdminStatus(key, "down");
+                // enable SAG, set device down and up to regenerate IPv6 LL by MAC
+                setIntfState(key, false);
                 setIntfMac(key, macAddr);
-                updateSubIntfAdminStatus(key, "up");
+                setIntfState(key, true);
 
                 vector<FieldValueTuple> vlanIntFv;
-                FieldValueTuple fvTuple("mac_addr", macAddr);
+
+                // keep consistent with default MAC 00:00:00:00:00:00
+                string entryMac = MacAddress().to_string();
+                if (macAddr != gMacAddress.to_string())
+                {
+                    entryMac = macAddr;
+                }
+
+                FieldValueTuple fvTuple("mac_addr", entryMac);
                 vlanIntFv.push_back(fvTuple);
                 m_appIntfTableProducer.set(key, vlanIntFv);
             }
+        } else {
+            SWSS_LOG_INFO("can't get %s in VLAN_INTERFACE table", key.c_str());
         }
     }
 }

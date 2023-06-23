@@ -43,6 +43,7 @@ private:
     void setIntfVrf(const std::string &alias, const std::string &vrfName);
     void setIntfMac(const std::string &alias, const std::string &macAddr);
     bool setIntfMpls(const std::string &alias, const std::string &mpls);
+    void setIntfState(const std::string &alias, bool isUp);
 
     bool doIntfGeneralTask(const std::vector<std::string>& keys, std::vector<FieldValueTuple> data, const std::string& op);
     bool doIntfAddrTask(const std::vector<std::string>& keys, const std::vector<FieldValueTuple>& data, const std::string& op);

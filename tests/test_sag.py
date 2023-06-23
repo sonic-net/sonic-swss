@@ -42,7 +42,7 @@ class TestSag(object):
         time.sleep(1)
 
     def add_sag_mac(self, mac):
-        self.cfg_db.create_entry(swsscommon.CFG_SAG_TABLE_NAME, "GLOBAL", {"gwmac": mac})
+        self.cfg_db.create_entry(swsscommon.CFG_SAG_TABLE_NAME, "GLOBAL", {"gateway_mac": mac})
         time.sleep(1)
 
     def remove_sag_mac(self):
@@ -88,7 +88,7 @@ class TestSag(object):
         assert addr in result
 
     def check_app_db_sag_mac(self, fvs, mac):
-        assert fvs.get("gwmac") == mac
+        assert fvs.get("gateway_mac") == mac
 
     def check_app_db_intf(self, fvs, mac, sag):
         assert fvs.get("mac_addr") == mac and fvs.get("static_anycast_gateway") == sag
@@ -190,6 +190,71 @@ class TestSag(object):
 
         # reset interface
         self.reset_interface(dvs, interface, vlan)
+
+    def test_SagRemoveWhenSagVlanEnabled(self, dvs):
+        self.setup_db(dvs)
+
+        default_mac = "00:00:00:00:00:00"
+        default_vrf_oid = self.get_asic_db_default_vrf_oid()
+        system_mac = self.get_system_mac(dvs)
+
+        interface = "Ethernet0"
+        vlan = "100"
+        vlan_intf = "Vlan{}".format(vlan)
+        self.setup_interface(dvs, interface, vlan)
+
+        ip = "1.1.1.1/24"
+        dvs.add_ip_address(vlan_intf, ip)
+
+        # add SAG global MAC address
+        mac = "00:11:22:33:44:55"
+        self.add_sag_mac(mac)
+        fvs = dvs.get_app_db().wait_for_entry(swsscommon.APP_SAG_TABLE_NAME, "GLOBAL")
+        self.check_app_db_sag_mac(fvs, mac)
+
+        ipv6_ll_route = self.generate_ipv6_link_local_addr(mac, 128)
+        self.check_asic_db_route_entry(str(ipv6_ll_route), default_vrf_oid, exist=True)
+
+        # enable SAG on the VLAN interface
+        self.enable_sag(vlan)
+        fvs = self.app_db.wait_for_field_match(
+            swsscommon.APP_INTF_TABLE_NAME,
+            vlan_intf,
+            {"mac_addr": mac})
+
+        self.check_app_db_intf(fvs, mac, "true")
+        self.check_kernel_intf_mac(dvs, vlan_intf, mac)
+
+        ipv6_ll = self.generate_ipv6_link_local_addr(mac, 64)
+        self.check_kernel_intf_ipv6_addr(dvs, vlan_intf, str(ipv6_ll))
+        self.check_asic_db_router_interface(dvs.getVlanOid(vlan), mac, default_vrf_oid)
+
+        # delete SAG global MAC address
+        self.remove_sag_mac()
+        self.app_db.wait_for_deleted_entry(swsscommon.APP_SAG_TABLE_NAME, "GLOBAL")
+
+        ipv6_ll_route = self.generate_ipv6_link_local_addr(mac, 128)
+        self.check_asic_db_route_entry(str(ipv6_ll_route), default_vrf_oid, exist=False)
+
+        fvs = self.app_db.wait_for_field_match(
+            swsscommon.APP_INTF_TABLE_NAME,
+            vlan_intf,
+            {"NULL": "NULL"}
+        )
+
+        self.check_app_db_intf(fvs, default_mac, "true")
+        self.check_kernel_intf_mac(dvs, vlan_intf, system_mac)
+
+        ipv6_ll = self.generate_ipv6_link_local_addr(system_mac, 64)
+        self.check_kernel_intf_ipv6_addr(dvs, vlan_intf, str(ipv6_ll))
+        self.check_asic_db_router_interface(dvs.getVlanOid(vlan), system_mac, default_vrf_oid)
+
+        # remove ip
+        dvs.remove_ip_address(vlan_intf, ip)
+
+        # reset interface
+        self.reset_interface(dvs, interface, vlan)
+
 
     def test_SagAddRemoveInVrf(self, dvs):
         self.setup_db(dvs)

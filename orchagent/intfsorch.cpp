@@ -499,8 +499,6 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
             else
             {
                 intfs_entry.mac = gMacAddress;
-                port.m_mac = gMacAddress;
-                gPortsOrch->setPort(alias, port);
             }
             m_syncdIntfses[alias] = intfs_entry;
             m_vrfOrch->increaseVrfRefCount(vrf_id);
@@ -979,30 +977,48 @@ void IntfsOrch::doTask(Consumer &consumer)
                 }
             }
 
-            // the interface MAC is updated by setIntf(), it can get from PortsOrch
-            if (mac && gPortsOrch->getPort(alias, port))
+            if (!mac)
             {
-                sai_attribute_t attr;
-                attr.id = SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS;
+                mac = gMacAddress;
+            }
 
-                memcpy(attr.value.mac, port.m_mac.getMac(), sizeof(sai_mac_t));
-                sai_status_t status = sai_router_intfs_api->set_router_interface_attribute(port.m_rif_id, &attr);
-
-                if (status != SAI_STATUS_SUCCESS)
+            // update mac if it is changed
+            if (m_syncdIntfses.find(alias) != m_syncdIntfses.end())
+            {
+                if (m_syncdIntfses[alias].mac != mac)
                 {
-                    SWSS_LOG_ERROR("Failed to set router interface mac %s for port %s, rv:%d",
-                                                port.m_mac.to_string().c_str(), port.m_alias.c_str(), status);
-                    if (handleSaiSetStatus(SAI_API_ROUTER_INTERFACE, status) == task_need_retry)
+                    // port.m_rif_id is set in setIntf(), need to get port again
+                    if (gPortsOrch->getPort(alias, port))
                     {
-                        it++;
-                        continue;
+                        sai_attribute_t attr;
+                        attr.id = SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS;
+
+                        memcpy(attr.value.mac, mac.getMac(), sizeof(sai_mac_t));
+                        sai_status_t status = sai_router_intfs_api->set_router_interface_attribute(port.m_rif_id, &attr);
+
+                        if (status != SAI_STATUS_SUCCESS)
+                        {
+                            SWSS_LOG_ERROR("Failed to set router interface mac %s for port %s, rv:%d",
+                                                        mac.to_string().c_str(), port.m_alias.c_str(), status);
+                            if (handleSaiSetStatus(SAI_API_ROUTER_INTERFACE, status) == task_need_retry)
+                            {
+                                it++;
+                                continue;
+                            }
+                        }
+                        else
+                        {
+                            SWSS_LOG_NOTICE("Set router interface mac %s for port %s success",
+                                                        mac.to_string().c_str(), alias.c_str());
+                            m_syncdIntfses[alias].mac = mac;
+                        }
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed to set router interface mac %s for port %s, get port fail",
+                                                        mac.to_string().c_str(), alias.c_str());
                     }
                 }
-            }
-            else
-            {
-                SWSS_LOG_ERROR("Failed to set router interface mac %s for port %s, getPort fail",
-                                                mac.to_string().c_str(), alias.c_str());
             }
 
             if (!proxy_arp.empty())
