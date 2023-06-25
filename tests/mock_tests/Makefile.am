@@ -109,6 +109,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/srv6orch.cpp \
                 $(top_srcdir)/orchagent/nvgreorch.cpp \
                 $(top_srcdir)/cfgmgr/portmgr.cpp \
+                $(top_srcdir)/orchagent/dash/dashorchbase.cpp \
                 $(top_srcdir)/orchagent/dash/dashaclorch.cpp \
                 $(top_srcdir)/orchagent/dash/dashorch.cpp \
                 $(top_srcdir)/orchagent/dash/dashrouteorch.cpp \
