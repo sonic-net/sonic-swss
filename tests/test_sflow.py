@@ -253,6 +253,93 @@ class TestSflow:
         self.cdb.delete_entry("SFLOW", "global")
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", 0)
 
+    def test_globalSetSampleDir(self, dvs, testlog):
+        self.setup_sflow(dvs)
+
+        # Verify that the session is up first
+        port_oid = self.adb.port_name_map["Ethernet0"]
+        expected_fields = {"SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE": "oid:0x0"}
+        expected_fields_egr = {"SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE": "oid:0x0"}
+
+        self.adb.wait_for_field_negative_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
+
+        self.cdb.update_entry("SFLOW", "global", {"sample_direction": "both"})
+        self.adb.wait_for_field_negative_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
+        self.adb.wait_for_field_negative_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields_egr)
+
+        self.cdb.update_entry("SFLOW", "global", {"sample_direction": "tx"})
+        self.adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
+        self.adb.wait_for_field_negative_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields_egr)
+
+        self.cdb.delete_entry("SFLOW", "global")
+        self.adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
+        self.adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields_egr)
+
+    def test_globalAllSetDir(self, dvs, testlog):
+        self.setup_sflow(dvs)
+        # Verify that the session is up first
+        port_oid = self.adb.port_name_map["Ethernet0"]
+        self.cdb.update_entry("SFLOW_SESSION", "all", {"sample_direction": "both"})
+        expected_fields = {"SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE": "oid:0x0"}
+        expected_fields_egr = {"SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE": "oid:0x0"}
+        self.adb.wait_for_field_negative_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
+        self.adb.wait_for_field_negative_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields_egr)
+
+        self.cdb.update_entry("SFLOW_SESSION", "all", {"sample_direction": "tx"})
+        self.adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
+        self.adb.wait_for_field_negative_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields_egr)
+
+        self.cdb.delete_entry("SFLOW", "global")
+        self.adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
+        self.adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields_egr)
+
+    def test_InterfaceSetDir(self, dvs, testlog):
+        self.setup_sflow(dvs)
+
+        # Get the global session info as a baseline
+        port_oid = self.adb.port_name_map["Ethernet0"]
+        expected_fields = ["SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE"]
+        fvs = self.adb.wait_for_fields("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
+        global_session = fvs["SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE"]
+
+        # Then create the interface session
+        session_params = {"admin_state": "up", "sample_rate": "1000", "sample_direction": "both"}
+        self.cdb.create_entry("SFLOW_SESSION", "Ethernet0", session_params)
+
+        # Verify that the new interface session has been created and is different from the global one
+        port_oid = self.adb.port_name_map["Ethernet0"]
+        expected_fields = {"SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE": global_session}
+        fvs = self.adb.wait_for_field_negative_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
+
+        expected_fields_egr = {"SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE": global_session}
+        fvs = self.adb.wait_for_field_negative_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields_egr)
+
+        local_ing_session = fvs["SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE"]
+        local_egr_session = fvs["SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE"]
+
+        self.cdb.update_entry("SFLOW_SESSION", "Ethernet0", {"sample_direction": "tx"})
+
+        expected_fields = {"SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE": "oid:0x0"}
+        expected_fields_egr = {"SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE": local_egr_session}
+        fvs = self.adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
+        fvs = self.adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields_egr)
+
+        self.cdb.update_entry("SFLOW_SESSION", "Ethernet0", {"sample_direction": "rx"})
+
+        expected_fields = {"SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE": local_ing_session}
+        expected_fields_egr = {"SAI_PORT_ATTR_EGRESS_SAMPLEPACKET_ENABLE": "oid:0x0"}
+        fvs = self.adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
+        fvs = self.adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields_egr)
+
+        # interface config higher precedence then global/all. Changing all sample-dir should not affect existing interface config
+        self.cdb.create_entry("SFLOW_SESSION", "all", {"admin_state": "up", "sample_direction": "both"})
+        fvs = self.adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
+        fvs = self.adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields_egr)
+
+        # interface delete will set fallback to all (sample-direction) if enabled.
+        self.cdb.delete_entry("SFLOW_SESSION", "Ethernet0")
+        fvs = self.adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, {"SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE": local_ing_session})
+        fvs = self.adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, {"SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE": local_egr_session})
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
