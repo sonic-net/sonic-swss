@@ -41,7 +41,6 @@ public:
             m_overlay_nexthops = false;
             m_srv6_nexthops = true;
             m_srv6_vpn = srv6_vpn;
-            m_srv6_str = nexthops;
 
             auto nhv = tokenize(nexthops, NHG_DELIMITER);
             for (const auto &nh_str : nhv)
@@ -81,11 +80,6 @@ public:
 
     inline bool operator<(const NextHopGroupKey &o) const
     {
-        if (m_srv6_nexthops)
-        {
-            return m_srv6_str < o.m_srv6_str;
-        }
-
         if (m_nexthops < o.m_nexthops)
         {
             return true;
@@ -205,9 +199,6 @@ public:
 
     const std::string to_string() const
     {
-        if (m_srv6_nexthops) {
-            return m_srv6_str;
-        }
         string nhs_str;
 
         for (auto it = m_nexthops.begin(); it != m_nexthops.end(); ++it)
@@ -241,12 +232,6 @@ public:
         return m_srv6_vpn;
     }
 
-    inline string get_srv6_vpn_key() const
-    {
-        // use nexthopgroupkey as vpn key
-        return m_srv6_str;
-    }
-
     void clear()
     {
         m_nexthops.clear();
@@ -256,8 +241,6 @@ private:
     std::set<NextHopKey> m_nexthops;
     bool m_overlay_nexthops;
     bool m_srv6_nexthops;
-
-    string m_srv6_str;
     bool m_srv6_vpn;
 };
 

@@ -788,11 +788,10 @@ uint32_t Srv6Orch::getAggId(const NextHopGroupKey &nhg)
 {
     SWSS_LOG_ENTER();
     uint32_t agg_id;
-    string agg_id_key = nhg.get_srv6_vpn_key();
 
-    if (srv6_prefix_agg_id_table_.find(agg_id_key) != srv6_prefix_agg_id_table_.end()) {
-        agg_id = srv6_prefix_agg_id_table_[agg_id_key].prefix_agg_id;
-        SWSS_LOG_INFO("Agg id already exist, agg_id_key: %s, agg_id %u", agg_id_key.c_str(), agg_id);
+    if (srv6_prefix_agg_id_table_.find(nhg) != srv6_prefix_agg_id_table_.end()) {
+        agg_id = srv6_prefix_agg_id_table_[nhg].prefix_agg_id;
+        SWSS_LOG_INFO("Agg id already exist, agg_id_key: %s, agg_id %u", nhg.to_string().c_str(), agg_id);
     } else {
         while (srv6_prefix_agg_id_set_.find(m_srv6_agg_id) != srv6_prefix_agg_id_set_.end()) {
             SWSS_LOG_INFO("Agg id %d is busy, try next", m_srv6_agg_id);
@@ -803,11 +802,11 @@ uint32_t Srv6Orch::getAggId(const NextHopGroupKey &nhg)
             }
         }
         agg_id = m_srv6_agg_id;
-        srv6_prefix_agg_id_table_[agg_id_key].prefix_agg_id = m_srv6_agg_id;
+        srv6_prefix_agg_id_table_[nhg].prefix_agg_id = m_srv6_agg_id;
         // initual ref_count with 0, will be added in increasePrefixAggIdRefCount() later
-        srv6_prefix_agg_id_table_[agg_id_key].ref_count = 0;
+        srv6_prefix_agg_id_table_[nhg].ref_count = 0;
         srv6_prefix_agg_id_set_.insert(m_srv6_agg_id);
-        SWSS_LOG_INFO("Agg id not exist, create agg_id_key: %s, agg_id %u", agg_id_key.c_str(), agg_id);
+        SWSS_LOG_INFO("Agg id not exist, create agg_id_key: %s, agg_id %u", nhg.to_string().c_str(), agg_id);
     }
 
     return agg_id;
@@ -816,51 +815,47 @@ uint32_t Srv6Orch::getAggId(const NextHopGroupKey &nhg)
 void Srv6Orch::deleteAggId(const NextHopGroupKey &nhg)
 {
     SWSS_LOG_ENTER();
-
-    string agg_id_key = nhg.get_srv6_vpn_key();
     uint32_t agg_id;
 
-    if (srv6_prefix_agg_id_table_.find(agg_id_key) == srv6_prefix_agg_id_table_.end()) {
+    if (srv6_prefix_agg_id_table_.find(nhg) == srv6_prefix_agg_id_table_.end()) {
         return;
     }
 
-    agg_id = srv6_prefix_agg_id_table_[agg_id_key].prefix_agg_id;
-    if (srv6_prefix_agg_id_table_[agg_id_key].ref_count == 0) {
-        srv6_prefix_agg_id_table_.erase(agg_id_key);
+    agg_id = srv6_prefix_agg_id_table_[nhg].prefix_agg_id;
+    if (srv6_prefix_agg_id_table_[nhg].ref_count == 0) {
+        srv6_prefix_agg_id_table_.erase(nhg);
         srv6_prefix_agg_id_set_.erase(agg_id);
-        SWSS_LOG_INFO("Delete Agg id %d, agg_id_key: %s", agg_id, agg_id_key.c_str());
+        SWSS_LOG_INFO("Delete Agg id %d, agg_id_key: %s", agg_id, nhg.to_string().c_str());
     }
     else
     {
-        SWSS_LOG_INFO("Referencing this prefix agg id %u : %u", agg_id, srv6_prefix_agg_id_table_[agg_id_key].ref_count);
+        SWSS_LOG_INFO("Referencing this prefix agg id %u : %u", agg_id, srv6_prefix_agg_id_table_[nhg].ref_count);
     }
 }
 
 void Srv6Orch::increasePrefixAggIdRefCount(const NextHopGroupKey &nhg)
 {
     SWSS_LOG_ENTER();
-    string k = nhg.get_srv6_vpn_key();
-    if (srv6_prefix_agg_id_table_.find(k) == srv6_prefix_agg_id_table_.end())
+    if (srv6_prefix_agg_id_table_.find(nhg) == srv6_prefix_agg_id_table_.end())
     {
         SWSS_LOG_ERROR("Unexpected prefix agg refcount increase for nexthop %s", nhg.to_string().c_str());
     }
     else
     {
-        srv6_prefix_agg_id_table_[k].ref_count++;
+        srv6_prefix_agg_id_table_[nhg].ref_count++;
     }
 }
 
 void Srv6Orch::decreasePrefixAggIdRefCount(const NextHopGroupKey &nhg)
 {
     SWSS_LOG_ENTER();
-    string k = nhg.get_srv6_vpn_key();
-    if (srv6_prefix_agg_id_table_.find(k) == srv6_prefix_agg_id_table_.end())
+    if (srv6_prefix_agg_id_table_.find(nhg) == srv6_prefix_agg_id_table_.end())
     {
         SWSS_LOG_ERROR("Unexpected prefix agg refcount decrease for nexthop %s", nhg.to_string().c_str());
     }
     else
     {
-        srv6_prefix_agg_id_table_[k].ref_count--;
+        srv6_prefix_agg_id_table_[nhg].ref_count--;
     }
 
 }

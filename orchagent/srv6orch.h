@@ -120,7 +120,7 @@ typedef unordered_map<string, SidTunnelEntry> Srv6TunnelTable;
 typedef map<NextHopKey, sai_object_id_t> Srv6NextHopTable;
 typedef unordered_map<string, MySidEntry> Srv6MySidTable;
 typedef map<P2pTunnelKey, P2pTunnelEntry> Srv6P2pTunnelTable;
-typedef unordered_map<string, Srv6PrefixAggIdEntry> Srv6PrefixAggIdTable;
+typedef map<NextHopGroupKey, Srv6PrefixAggIdEntry> Srv6PrefixAggIdTable;
 typedef set<uint32_t> Srv6PrefixAggIdSet;
 typedef map<Srv6TunnelMapEntryKey, Srv6TunnelMapEntryEntry> Srv6TunnelMapEntryTable;
 
