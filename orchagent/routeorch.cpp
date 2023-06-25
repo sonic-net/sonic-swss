@@ -792,9 +792,9 @@ void RouteOrch::doTask(Consumer& consumer)
                             {
                                 if (i) nhg_str += NHG_DELIMITER;
                                 nhg_str += ipv[i] + NH_DELIMITER;           // ip address
-                                nhg_str += srv6_vpn_sidv[i] + NH_DELIMITER; // srv6 vpn sid
                                 nhg_str += srv6_src[i] + NH_DELIMITER;      // srv6 source
                                 nhg_str += NH_DELIMITER;                    // srv6 segment (empty)
+                                nhg_str += srv6_vpn_sidv[i] + NH_DELIMITER; // srv6 vpn sid
                             }
                         }
                         else
@@ -811,9 +811,9 @@ void RouteOrch::doTask(Consumer& consumer)
                             {
                                 if (i) nhg_str += NHG_DELIMITER;
                                 nhg_str += ip + NH_DELIMITER;            // ip address
-                                nhg_str += NH_DELIMITER;                 // srv6 vpn sid (empty)
                                 nhg_str += srv6_src[i] + NH_DELIMITER;   // srv6 source
                                 nhg_str += srv6_segv[i] + NH_DELIMITER;  // srv6 segment
+                                nhg_str += NH_DELIMITER;                 // srv6 vpn sid (empty)
                             }
                         }
 

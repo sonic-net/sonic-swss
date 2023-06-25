@@ -787,7 +787,6 @@ bool Srv6Orch::deleteMysidEntry(const string my_sid_string)
 uint32_t Srv6Orch::getAggId(const NextHopGroupKey &nhg)
 {
     SWSS_LOG_ENTER();
-    static uint32_t g_agg_id = 1;
     uint32_t agg_id;
     string agg_id_key = nhg.get_srv6_vpn_key();
 
@@ -795,19 +794,19 @@ uint32_t Srv6Orch::getAggId(const NextHopGroupKey &nhg)
         agg_id = srv6_prefix_agg_id_table_[agg_id_key].prefix_agg_id;
         SWSS_LOG_INFO("Agg id already exist, agg_id_key: %s, agg_id %u", agg_id_key.c_str(), agg_id);
     } else {
-        while (srv6_prefix_agg_id_set_.find(g_agg_id) != srv6_prefix_agg_id_set_.end()) {
-            SWSS_LOG_INFO("Agg id %d is busy, try next", g_agg_id);
-            g_agg_id++;
+        while (srv6_prefix_agg_id_set_.find(m_srv6_agg_id) != srv6_prefix_agg_id_set_.end()) {
+            SWSS_LOG_INFO("Agg id %d is busy, try next", m_srv6_agg_id);
+            m_srv6_agg_id++;
             // restart with 1 if flip
-            if (g_agg_id == 0) {
-                g_agg_id = 1;
+            if (m_srv6_agg_id == 0) {
+                m_srv6_agg_id = 1;
             }
         }
-        agg_id = g_agg_id;
-        srv6_prefix_agg_id_table_[agg_id_key].prefix_agg_id = g_agg_id;
+        agg_id = m_srv6_agg_id;
+        srv6_prefix_agg_id_table_[agg_id_key].prefix_agg_id = m_srv6_agg_id;
         // initual ref_count with 0, will be added in increasePrefixAggIdRefCount() later
         srv6_prefix_agg_id_table_[agg_id_key].ref_count = 0;
-        srv6_prefix_agg_id_set_.insert(g_agg_id);
+        srv6_prefix_agg_id_set_.insert(m_srv6_agg_id);
         SWSS_LOG_INFO("Agg id not exist, create agg_id_key: %s, agg_id %u", agg_id_key.c_str(), agg_id);
     }
 

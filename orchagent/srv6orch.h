@@ -135,7 +135,8 @@ class Srv6Orch : public Orch
           m_switchOrch(switchOrch),
           m_neighOrch(neighOrch),
           m_sidTable(applDb, APP_SRV6_SID_LIST_TABLE_NAME),
-          m_mysidTable(applDb, APP_SRV6_MY_SID_TABLE_NAME)
+          m_mysidTable(applDb, APP_SRV6_MY_SID_TABLE_NAME),
+          m_srv6_agg_id(1)
         {
         }
         ~Srv6Orch()
@@ -192,6 +193,7 @@ class Srv6Orch : public Orch
         Srv6PrefixAggIdTable srv6_prefix_agg_id_table_;
         Srv6PrefixAggIdSet srv6_prefix_agg_id_set_;
         Srv6TunnelMapEntryTable srv6_tunnel_map_entry_table_;
+        uint32_t m_srv6_agg_id;
         VRFOrch *m_vrfOrch;
         SwitchOrch *m_switchOrch;
         NeighOrch *m_neighOrch;

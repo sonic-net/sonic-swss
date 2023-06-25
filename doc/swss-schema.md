@@ -169,6 +169,7 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     nexthop_group = string ; index within the NEXTHOP_GROUP_TABLE, used instead of nexthop and intf fields
     segment       = string ; SRV6 segment name
     seg_src       = string ; ipv6 address for SRV6 tunnel source
+    vpn_sid       = string ; ipv6 address for SRV6 VPN sid
 
 ---------------------------------------------
 
