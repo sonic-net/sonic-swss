@@ -1052,7 +1052,7 @@ bool Srv6Orch::createSrv6Vpn(const NextHopKey &nh, const uint32_t prefix_agg_id)
                                                 tunnel_map_entry_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create vpn tunnel_map entry for vpn_sid: %s", nh.srv6_vpn_sid.c_str());
+        SWSS_LOG_ERROR("Failed to create vpn tunnel_map entry for vpn_sid: %s prefix_agg_id %u", nh.srv6_vpn_sid.c_str(), prefix_agg_id);
         return false;
     }
 
@@ -1088,7 +1088,7 @@ bool Srv6Orch::deleteSrv6Vpn(const NextHopKey &nh, const uint32_t prefix_agg_id)
         status = sai_tunnel_api->remove_tunnel_map_entry(tunnel_entry_id);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to remove nexthop tunnel map entry %s", nh.to_string(false, true).c_str());
+            SWSS_LOG_ERROR("Failed to remove nexthop tunnel map entry %s prefix_agg_id %u", nh.to_string(false, true).c_str(), prefix_agg_id);
             return false;
         }
         srv6_tunnel_map_entry_table_.erase(tmek);
