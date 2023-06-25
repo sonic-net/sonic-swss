@@ -41,7 +41,7 @@ static std::unordered_map<std::string, sai_outbound_routing_entry_action_t> sOut
 DashRouteOrch::DashRouteOrch(DBConnector *db, vector<string> &tableName, DashOrch *dash_orch, ZmqServer *zmqServer) :
     outbound_routing_bulker_(sai_dash_outbound_routing_api, gMaxBulkSize),
     inbound_routing_bulker_(sai_dash_inbound_routing_api, gMaxBulkSize),
-    ZmqOrch(db, tableName, zmqServer),
+    DashOrchBase(db, tableName, zmqServer),
     dash_orch_(dash_orch)
 {
     SWSS_LOG_ENTER();
@@ -197,7 +197,7 @@ bool DashRouteOrch::removeOutboundRoutingPost(const string& key, const OutboundR
     return true;
 }
 
-void DashRouteOrch::doTaskRouteTable(ZmqConsumer& consumer)
+void DashRouteOrch::doTaskRouteTable(ConsumerBase& consumer)
 {
     SWSS_LOG_ENTER();
 
@@ -481,7 +481,7 @@ bool DashRouteOrch::removeInboundRoutingPost(const string& key, const InboundRou
     return true;
 }
 
-void DashRouteOrch::doTaskRouteRuleTable(ZmqConsumer& consumer)
+void DashRouteOrch::doTaskRouteRuleTable(ConsumerBase& consumer)
 {
     SWSS_LOG_ENTER();
 
@@ -626,7 +626,7 @@ void DashRouteOrch::doTaskRouteRuleTable(ZmqConsumer& consumer)
     }
 }
 
-void DashRouteOrch::doTask(ZmqConsumer& consumer)
+void DashRouteOrch::doTask(ConsumerBase& consumer)
 {
     SWSS_LOG_ENTER();
 
