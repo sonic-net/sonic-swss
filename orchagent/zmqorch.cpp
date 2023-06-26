@@ -20,37 +20,37 @@ void ZmqConsumer::execute()
 
 void ZmqConsumer::drain()
 {
-    if (!m_toSync.empty())
+    if (!m_toSync.empty() || !m_queue.empty())
         (static_cast<ZmqOrch*>(m_orch))->doTask(*this);
 }
 
 
-ZmqOrch::ZmqOrch(DBConnector *db, const vector<string> &tableNames, ZmqServer *zmqServer)
+ZmqOrch::ZmqOrch(DBConnector *db, const vector<string> &tableNames, ZmqServer *zmqServer, bool orderedQueue, bool dbPersistence)
 : Orch()
 {
     for (auto it : tableNames)
     {
-        addConsumer(db, it, default_orch_pri, zmqServer);
+        addConsumer(db, it, default_orch_pri, zmqServer, orderedQueue, dbPersistence);
     }
 }
 
 
-ZmqOrch::ZmqOrch(DBConnector *db, const vector<table_name_with_pri_t> &tableNames_with_pri, ZmqServer *zmqServer)
+ZmqOrch::ZmqOrch(DBConnector *db, const vector<table_name_with_pri_t> &tableNames_with_pri, ZmqServer *zmqServer, bool orderedQueue, bool dbPersistence)
 {
     for (const auto& it : tableNames_with_pri)
     {
-        addConsumer(db, it.first, it.second, zmqServer);
+        addConsumer(db, it.first, it.second, zmqServer, orderedQueue, dbPersistence);
     }
 }
 
-void ZmqOrch::addConsumer(DBConnector *db, string tableName, int pri, ZmqServer *zmqServer)
+void ZmqOrch::addConsumer(DBConnector *db, string tableName, int pri, ZmqServer *zmqServer, bool orderedQueue, bool dbPersistence)
 {
     if (db->getDbId() == APPL_DB || db->getDbId() == DPU_APPL_DB)
     {
         if (zmqServer != nullptr)
         {
             SWSS_LOG_DEBUG("ZmqConsumer initialize for: %s", tableName.c_str());
-            addExecutor(new ZmqConsumer(new ZmqConsumerStateTable(db, tableName, *zmqServer, gBatchSize, pri), this, tableName));
+            addExecutor(new ZmqConsumer(new ZmqConsumerStateTable(db, tableName, *zmqServer, gBatchSize, pri, dbPersistence), this, tableName, orderedQueue));
         }
         else
         {
