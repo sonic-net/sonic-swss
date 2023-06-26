@@ -355,7 +355,7 @@ int main(int argc, char **argv)
     string responsepublisher_rec_filename = "responsepublisher.rec";
     int record_type = 3; // Only swss and sairedis recordings enabled by default.
 
-    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:q:")) != -1)
     {
         switch (opt)
         {
