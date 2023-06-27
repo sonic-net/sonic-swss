@@ -111,11 +111,13 @@ bool OrchDaemon::init()
 
     gCrmOrch = new CrmOrch(m_configDb, CFG_CRM_TABLE_NAME);
 
-    TableConnector stateDbSwitchTable(m_stateDb, "SWITCH_CAPABILITY");
+    TableConnector stateDbSwitchTable(m_stateDb, STATE_SWITCH_CAPABILITY_TABLE_NAME);
     TableConnector app_switch_table(m_applDb, APP_SWITCH_TABLE_NAME);
     TableConnector conf_asic_sensors(m_configDb, CFG_ASIC_SENSORS_TABLE_NAME);
+    TableConnector conf_switch_hash(m_configDb, CFG_SWITCH_HASH_TABLE_NAME);
 
     vector<TableConnector> switch_tables = {
+        conf_switch_hash,
         conf_asic_sensors,
         app_switch_table
     };

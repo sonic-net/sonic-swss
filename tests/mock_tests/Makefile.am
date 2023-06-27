@@ -84,6 +84,8 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/pbhorch.cpp \
                 $(top_srcdir)/orchagent/saihelper.cpp \
                 $(top_srcdir)/orchagent/saiattr.cpp \
+                $(top_srcdir)/orchagent/switch/switch_capabilities.cpp \
+                $(top_srcdir)/orchagent/switch/switch_helper.cpp \
                 $(top_srcdir)/orchagent/switchorch.cpp \
                 $(top_srcdir)/orchagent/pfcwdorch.cpp \
                 $(top_srcdir)/orchagent/pfcactionhandler.cpp \

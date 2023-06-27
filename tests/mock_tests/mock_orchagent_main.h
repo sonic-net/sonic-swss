@@ -66,6 +66,7 @@ extern Directory<Orch*> gDirectory;
 
 extern sai_acl_api_t *sai_acl_api;
 extern sai_switch_api_t *sai_switch_api;
+extern sai_hash_api_t *sai_hash_api;
 extern sai_virtual_router_api_t *sai_virtual_router_api;
 extern sai_port_api_t *sai_port_api;
 extern sai_lag_api_t *sai_lag_api;

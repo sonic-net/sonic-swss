@@ -3,6 +3,8 @@
 #include "acltable.h"
 #include "orch.h"
 #include "timer.h"
+#include "switch/switch_capabilities.h"
+#include "switch/switch_helper.h"
 
 #define DEFAULT_ASIC_SENSORS_POLLER_INTERVAL 60
 #define ASIC_SENSORS_POLLER_STATUS "ASIC_SENSORS_POLLER_STATUS"
@@ -47,11 +49,20 @@ public:
 private:
     void doTask(Consumer &consumer);
     void doTask(swss::SelectableTimer &timer);
+    void doCfgSwitchHashTableTask(Consumer &consumer);
     void doCfgSensorsTableTask(Consumer &consumer);
     void doAppSwitchTableTask(Consumer &consumer);
     void initSensorsTable();
     void querySwitchTpidCapability();
     void querySwitchPortEgressSampleCapability();
+
+    // Switch hash
+    bool setSwitchHashFieldListSai(const SwitchHash &hash, bool isEcmpHash) const;
+    bool setSwitchHash(const SwitchHash &hash);
+
+    bool getSwitchHashOidSai(sai_object_id_t &oid, bool isEcmpHash) const;
+    void querySwitchHashDefaults();
+
     sai_status_t setSwitchTunnelVxlanParams(swss::FieldValueTuple &val);
     void setSwitchNonSaiAttributes(swss::FieldValueTuple &val);
 
@@ -87,7 +98,23 @@ private:
     bool m_orderedEcmpEnable = false;
     bool m_PfcDlrInitEnable = false;
 
+    // Switch hash SAI defaults
+    struct {
+        struct {
+            sai_object_id_t oid = SAI_NULL_OBJECT_ID;
+        } ecmpHash;
+        struct {
+            sai_object_id_t oid = SAI_NULL_OBJECT_ID;
+        } lagHash;
+    } m_switchHashDefaults;
+
     // Information contained in the request from
     // external program for orchagent pre-shutdown state check
     WarmRestartCheck m_warmRestartCheck = {false, false, false};
+
+    // Switch OA capabilities
+    SwitchCapabilities swCap;
+
+    // Switch OA helper
+    SwitchHelper swHlpr;
 };
