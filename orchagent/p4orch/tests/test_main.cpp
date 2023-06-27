@@ -38,6 +38,7 @@ sai_object_id_t gUnderlayIfId;
 
 #define DEFAULT_BATCH_SIZE 128
 #define DEFAULT_MAX_BULK_SIZE 1000
+extern int gBatchSize;
 size_t gMaxBulkSize = DEFAULT_MAX_BULK_SIZE;
 bool gSyncMode = false;
 bool gIsNatSupported = false;
