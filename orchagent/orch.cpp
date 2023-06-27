@@ -589,7 +589,7 @@ void Orch::recordTuple(ConsumerBase &consumer, const KeyOpFieldsValuesTuple &tup
 {
     string s = consumer.dumpTuple(tuple);
 
-    gRecordOfs << getTimestamp() << "|" << s << endl;
+    gRecordOfs << getTimestamp() << "|" << s << '\n';
 
     if (gLogRotate)
     {

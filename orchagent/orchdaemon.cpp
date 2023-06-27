@@ -26,6 +26,9 @@ extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
 extern bool                        gSaiRedisLogRotate;
 
+extern ofstream gRecordOfs;
+extern ofstream gResponsePublisherRecordOfs;
+
 extern void syncd_apply_view();
 /*
  * Global orch daemon variables
@@ -693,6 +696,10 @@ void OrchDaemon::flush()
     {
         orch->flushResponses();
     }
+
+    // Flush the record files.
+    gRecordOfs.flush();
+    gResponsePublisherRecordOfs.flush();
 }
 
 /* Release the file handle so the log can be rotated */
