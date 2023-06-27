@@ -1,0 +1,25 @@
+#pragma once
+
+// defines ------------------------------------------------------------------------------------------------------------
+
+#define SWITCH_HASH_FIELD_IN_PORT           "IN_PORT"
+#define SWITCH_HASH_FIELD_DST_MAC           "DST_MAC"
+#define SWITCH_HASH_FIELD_SRC_MAC           "SRC_MAC"
+#define SWITCH_HASH_FIELD_ETHERTYPE         "ETHERTYPE"
+#define SWITCH_HASH_FIELD_VLAN_ID           "VLAN_ID"
+#define SWITCH_HASH_FIELD_IP_PROTOCOL       "IP_PROTOCOL"
+#define SWITCH_HASH_FIELD_DST_IP            "DST_IP"
+#define SWITCH_HASH_FIELD_SRC_IP            "SRC_IP"
+#define SWITCH_HASH_FIELD_L4_DST_PORT       "L4_DST_PORT"
+#define SWITCH_HASH_FIELD_L4_SRC_PORT       "L4_SRC_PORT"
+#define SWITCH_HASH_FIELD_INNER_DST_MAC     "INNER_DST_MAC"
+#define SWITCH_HASH_FIELD_INNER_SRC_MAC     "INNER_SRC_MAC"
+#define SWITCH_HASH_FIELD_INNER_ETHERTYPE   "INNER_ETHERTYPE"
+#define SWITCH_HASH_FIELD_INNER_IP_PROTOCOL "INNER_IP_PROTOCOL"
+#define SWITCH_HASH_FIELD_INNER_DST_IP      "INNER_DST_IP"
+#define SWITCH_HASH_FIELD_INNER_SRC_IP      "INNER_SRC_IP"
+#define SWITCH_HASH_FIELD_INNER_L4_DST_PORT "INNER_L4_DST_PORT"
+#define SWITCH_HASH_FIELD_INNER_L4_SRC_PORT "INNER_L4_SRC_PORT"
+
+#define SWITCH_HASH_ECMP_HASH "ecmp_hash"
+#define SWITCH_HASH_LAG_HASH  "lag_hash"
