@@ -1,10 +1,29 @@
 from swsscommon import swsscommon
+
+from appliance_pb2 import *
+from vnet_pb2 import *
+from eni_pb2 import *
+from route_pb2 import *
+from route_rule_pb2 import *
+from vnet_mapping_pb2 import *
+from route_type_pb2 import *
+from types_pb2 import *
+
 import typing
 import time
+import binascii
+import uuid
+import ipaddress
+import sys
+
 
 def to_string(value):
     if isinstance(value, bool):
         return "true" if value else "false"
+    elif isinstance(value, bytes):
+        return value
+        return value.decode("latin1")
+        return "".join([chr(i) for i in value])
     return str(value)
 
 
@@ -117,14 +136,16 @@ class Dash(object):
     def remove_inbound_routing(self, mac_string, vni, ip):
         del self.app_dash_route_rule_table[str(mac_string) + ":" + str(vni) + ":" + str(ip)]
 
-
 class TestDash(object):
     def test_appliance(self, dvs):
         dashobj = Dash(dvs)
         self.appliance_id = "100"
         self.sip = "10.0.0.1"
         self.vm_vni = "4321"
-        dashobj.create_appliance(self.appliance_id, {"sip": self.sip, "vm_vni": self.vm_vni})
+        pb = Appliance()
+        pb.sip.ipv4 = int(ipaddress.ip_address(self.sip))
+        pb.vm_vni = int(self.vm_vni)
+        dashobj.create_appliance(self.appliance_id, {"pb": pb.SerializeToString()})
         time.sleep(3)
 
         direction_entries = dashobj.asic_direction_lookup_table.get_keys()
@@ -146,7 +167,10 @@ class TestDash(object):
         self.vnet = "Vnet1"
         self.vni = "45654"
         self.guid = "559c6ce8-26ab-4193-b946-ccc6e8f930b2"
-        dashobj.create_vnet(self.vnet, {"vni": self.vni, "guid": self.guid})
+        pb = Vnet()
+        pb.vni = int(self.vni)
+        pb.guid.value = bytes.fromhex(uuid.UUID(self.guid).hex)
+        dashobj.create_vnet(self.vnet, {"pb": pb.SerializeToString()})
         time.sleep(3)
         vnets = dashobj.asic_dash_vnet_table.get_keys()
         assert vnets
@@ -163,7 +187,13 @@ class TestDash(object):
         self.eni_id = "497f23d7-f0ac-4c99-a98f-59b470e8c7bd"
         self.underlay_ip = "25.1.1.1"
         self.admin_state = "enabled"
-        dashobj.create_eni(self.mac_string, {"eni_id": self.eni_id, "mac_address": self.mac_address, "underlay_ip": self.underlay_ip, "admin_state": self.admin_state, "vnet": self.vnet})
+        pb = Eni()
+        pb.eni_id = self.eni_id
+        pb.mac_address = bytes.fromhex(self.mac_address.replace(":", ""))
+        pb.underlay_ip.ipv4 = int(ipaddress.ip_address(self.underlay_ip))
+        pb.admin_state = State.STATE_ENABLED
+        pb.vnet = self.vnet
+        dashobj.create_eni(self.mac_string, {"pb": pb.SerializeToString()})
         time.sleep(3)
         vnets = dashobj.asic_dash_vnet_table.get_keys()
         assert vnets
@@ -200,7 +230,12 @@ class TestDash(object):
         self.mac_address = "F4:93:9F:EF:C4:7E"
         self.routing_type = "vnet_encap"
         self.underlay_ip = "101.1.2.3"
-        dashobj.create_vnet_map(self.vnet, self.ip, {"mac_address": self.mac_address, "routing_type": self.routing_type, "underlay_ip": self.underlay_ip})
+        pb = VnetMapping()
+        pb.mac_address = bytes.fromhex(self.mac_address.replace(":", ""))
+        pb.action_type = RoutingType.ROUTING_TYPE_VNET_ENCAP
+        pb.underlay_ip.ipv4 = int(ipaddress.ip_address(self.underlay_ip))
+
+        dashobj.create_vnet_map(self.vnet, self.ip, {"pb": pb.SerializeToString()})
         time.sleep(3)
 
         vnet_ca_to_pa_maps = dashobj.asic_dash_outbound_ca_to_pa_table.get_keys()
@@ -227,7 +262,11 @@ class TestDash(object):
         self.ip = "10.1.0.0/24"
         self.action_type = "vnet_direct"
         self.overlay_ip= "10.0.0.6"
-        dashobj.create_outbound_routing(self.mac_string, self.ip, {"action_type": self.action_type, "overlay_ip": self.overlay_ip, "vnet": self.vnet})
+        pb = Route()
+        pb.action_type = RoutingType.ROUTING_TYPE_VNET_DIRECT
+        pb.vnet_direct.vnet = self.vnet
+        pb.vnet_direct.overlay_ip.ipv4 = int(ipaddress.ip_address(self.overlay_ip))
+        dashobj.create_outbound_routing(self.mac_string, self.ip, {"pb": pb.SerializeToString()})
         time.sleep(3)
 
         outbound_routing_entries = dashobj.asic_outbound_routing_table.get_keys()
@@ -250,7 +289,14 @@ class TestDash(object):
         self.pa_validation = "true"
         self.priority = "1"
         self.protocol = "0"
-        dashobj.create_inbound_routing(self.mac_string, self.vni, self.ip, {"action_type": self.action_type, "pa_validation": self.pa_validation, "priority": self.priority, "protocol": self.protocol, "vnet": self.vnet})
+        pb = RouteRule()
+# pb.action_type = RoutingType.ROUTING_TYPE_DECAP
+        pb.pa_validation = True
+        pb.priority = int(self.priority)
+        pb.protocol = int(self.protocol)
+        pb.vnet = self.vnet
+
+        dashobj.create_inbound_routing(self.mac_string, self.vni, self.ip, {"pb": pb.SerializeToString()})
         time.sleep(3)
 
         inbound_routing_entries = dashobj.asic_inbound_routing_rule_table.get_keys()
