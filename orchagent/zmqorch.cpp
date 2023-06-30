@@ -1,4 +1,4 @@
-#include "dashorchbase.h"
+#include "zmqorch.h"
 
 using namespace swss;
 using namespace std;
@@ -24,11 +24,11 @@ void ZmqConsumer::execute()
 void ZmqConsumer::drain()
 {
     if (!m_toSync.empty())
-        ((DashOrchBase *)m_orch)->doTask((ZmqConsumer&)*this);
+        ((ZmqOrch *)m_orch)->doTask((ZmqConsumer&)*this);
 }
 
 
-DashOrchBase::DashOrchBase(DBConnector *db, const vector<string> &tableNames, ZmqServer *zmqServer)
+ZmqOrch::ZmqOrch(DBConnector *db, const vector<string> &tableNames, ZmqServer *zmqServer)
 : Orch()
 {
     for (auto it : tableNames)
@@ -37,7 +37,7 @@ DashOrchBase::DashOrchBase(DBConnector *db, const vector<string> &tableNames, Zm
     }
 }
 
-void DashOrchBase::addConsumer(DBConnector *db, string tableName, int pri, ZmqServer *zmqServer)
+void ZmqOrch::addConsumer(DBConnector *db, string tableName, int pri, ZmqServer *zmqServer)
 {
     if (db->getDbId() == APPL_DB)
     {
@@ -54,6 +54,6 @@ void DashOrchBase::addConsumer(DBConnector *db, string tableName, int pri, ZmqSe
     }
     else
     {
-        SWSS_LOG_WARN("DashOrchBase does not support create consumer for db: %d, table: %s", db->getDbId(), tableName.c_str());
+        SWSS_LOG_WARN("ZmqOrch does not support create consumer for db: %d, table: %s", db->getDbId(), tableName.c_str());
     }
 }

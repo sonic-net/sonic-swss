@@ -286,7 +286,7 @@ sai_attr_id_t getSaiStage(DashAclDirection d, sai_ip_addr_family_t f, DashAclSta
 }
 
 DashAclOrch::DashAclOrch(DBConnector *db, const vector<string> &tables, DashOrch *dash_orch, ZmqServer *zmqServer) :
-    DashOrchBase(db, tables, zmqServer),
+    ZmqOrch(db, tables, zmqServer),
     m_dash_orch(dash_orch)
 {
     SWSS_LOG_ENTER();

@@ -22,10 +22,10 @@ public:
     void drain() override;
 };
 
-class DashOrchBase : public Orch
+class ZmqOrch : public Orch
 {
 public:
-    DashOrchBase(swss::DBConnector *db, const std::vector<std::string> &tableNames, swss::ZmqServer *zmqServer);
+    ZmqOrch(swss::DBConnector *db, const std::vector<std::string> &tableNames, swss::ZmqServer *zmqServer);
 
     virtual void doTask(ConsumerBase &consumer) { };
 

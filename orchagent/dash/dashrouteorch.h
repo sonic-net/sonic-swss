@@ -13,7 +13,7 @@
 #include "macaddress.h"
 #include "timer.h"
 #include "dashorch.h"
-#include "dashorchbase.h"
+#include <zmqorch.h>
 #include "zmqserver.h"
 
 struct OutboundRoutingEntry
@@ -79,7 +79,7 @@ struct InboundRoutingBulkContext
     }
 };
 
-class DashRouteOrch : public DashOrchBase
+class DashRouteOrch : public ZmqOrch
 {
 public:
     DashRouteOrch(swss::DBConnector *db, std::vector<std::string> &tables, DashOrch *dash_orch, swss::ZmqServer *zmqServer);

@@ -36,7 +36,7 @@ DashVnetOrch::DashVnetOrch(DBConnector *db, vector<string> &tables, ZmqServer *z
     vnet_bulker_(sai_dash_vnet_api, gSwitchId, gMaxBulkSize),
     outbound_ca_to_pa_bulker_(sai_dash_outbound_ca_to_pa_api, gMaxBulkSize),
     pa_validation_bulker_(sai_dash_pa_validation_api, gMaxBulkSize),
-    DashOrchBase(db, tables, zmqServer)
+    ZmqOrch(db, tables, zmqServer)
 {
     SWSS_LOG_ENTER();
 }

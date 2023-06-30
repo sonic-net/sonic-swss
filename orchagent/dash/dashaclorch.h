@@ -13,7 +13,7 @@
 #include <dbconnector.h>
 #include <bulker.h>
 #include <orch.h>
-#include "dashorchbase.h"
+#include <zmqorch.h>
 #include "zmqserver.h"
 
 #include "dashorch.h"
@@ -66,7 +66,7 @@ using DashAclTable = std::unordered_map<std::string, DashAclEntry>;
 using DashAclGroupTable = std::unordered_map<std::string, DashAclGroupEntry>;
 using DashAclRuleTable = std::unordered_map<std::string, DashAclRuleEntry>;
 
-class DashAclOrch : public DashOrchBase
+class DashAclOrch : public ZmqOrch
 {
 public:
     using TaskArgs = std::vector<swss::FieldValueTuple>;

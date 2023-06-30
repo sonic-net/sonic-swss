@@ -13,7 +13,7 @@
 #include "ipprefix.h"
 #include "macaddress.h"
 #include "timer.h"
-#include "dashorchbase.h"
+#include <zmqorch.h>
 #include "zmqserver.h"
 
 struct ApplianceEntry
@@ -53,7 +53,7 @@ typedef std::map<std::string, RoutingTypeEntry> RoutingTypeTable;
 typedef std::map<std::string, EniEntry> EniTable;
 typedef std::map<std::string, QosEntry> QosTable;
 
-class DashOrch : public DashOrchBase
+class DashOrch : public ZmqOrch
 {
 public:
     DashOrch(swss::DBConnector *db, std::vector<std::string> &tables, swss::ZmqServer *zmqServer);

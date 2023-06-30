@@ -11,7 +11,7 @@
 #include "ipaddresses.h"
 #include "macaddress.h"
 #include "timer.h"
-#include "dashorchbase.h"
+#include <zmqorch.h>
 #include "zmqserver.h"
 
 struct VnetEntry
@@ -77,7 +77,7 @@ struct VnetMapBulkContext
     }
 };
 
-class DashVnetOrch : public DashOrchBase
+class DashVnetOrch : public ZmqOrch
 {
 public:
     DashVnetOrch(swss::DBConnector *db, std::vector<std::string> &tables, swss::ZmqServer *zmqServer);

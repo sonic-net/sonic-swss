@@ -99,7 +99,7 @@ orchagent_SOURCES = \
             srv6orch.cpp \
             response_publisher.cpp \
             nvgreorch.cpp \
-            dash/dashorchbase.cpp \
+            zmqorch.cpp \
             dash/dashorch.cpp \
             dash/dashrouteorch.cpp \
             dash/dashvnetorch.cpp \
