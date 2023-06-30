@@ -101,8 +101,8 @@ void DashAclOrch::doTask(Consumer &consumer)
         KeyOnlyWorker::makeMemberTask(APP_DASH_ACL_IN_TABLE_NAME, DEL_COMMAND, &DashAclOrch::taskRemoveDashAclOut, this),
         PbWorker<AclGroup>::makeMemberTask(APP_DASH_ACL_GROUP_TABLE_NAME, SET_COMMAND, &DashAclOrch::taskUpdateDashAclGroup, this),
         KeyOnlyWorker::makeMemberTask(APP_DASH_ACL_GROUP_TABLE_NAME, DEL_COMMAND, &DashAclOrch::taskRemoveDashAclGroup, this),
-        PbWorker<AclRule>::makeMemberTask(APP_DASH_ACL_GROUP_TABLE_NAME, SET_COMMAND, &DashAclOrch::taskUpdateDashAclRule, this),
-        KeyOnlyWorker::makeMemberTask(APP_DASH_ACL_GROUP_TABLE_NAME, DEL_COMMAND, &DashAclOrch::taskRemoveDashAclRule, this),
+        PbWorker<AclRule>::makeMemberTask(APP_DASH_ACL_RULE_TABLE_NAME, SET_COMMAND, &DashAclOrch::taskUpdateDashAclRule, this),
+        KeyOnlyWorker::makeMemberTask(APP_DASH_ACL_RULE_TABLE_NAME, DEL_COMMAND, &DashAclOrch::taskRemoveDashAclRule, this),
     };
 
     const string &table_name = consumer.getTableName();
