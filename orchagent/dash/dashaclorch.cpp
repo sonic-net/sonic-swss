@@ -229,7 +229,7 @@ task_process_status DashAclOrch::taskUpdateDashAclGroup(
 {
     SWSS_LOG_ENTER();
 
-    if (m_dash_acl_group_table.find(key) == m_dash_acl_group_table.end())
+    if (m_dash_acl_group_table.find(key) != m_dash_acl_group_table.end())
     {
         // Update the ACL group's attributes
         SWSS_LOG_WARN("Cannot update attributes of ACL group %s", key.c_str());
