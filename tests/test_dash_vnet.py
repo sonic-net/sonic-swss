@@ -1,13 +1,13 @@
 from swsscommon import swsscommon
 
-from appliance_pb2 import *
-from vnet_pb2 import *
-from eni_pb2 import *
-from route_pb2 import *
-from route_rule_pb2 import *
-from vnet_mapping_pb2 import *
-from route_type_pb2 import *
-from types_pb2 import *
+from dash_api.appliance_pb2 import *
+from dash_api.vnet_pb2 import *
+from dash_api.eni_pb2 import *
+from dash_api.route_pb2 import *
+from dash_api.route_rule_pb2 import *
+from dash_api.vnet_mapping_pb2 import *
+from dash_api.route_type_pb2 import *
+from dash_api.types_pb2 import *
 
 import typing
 import time
