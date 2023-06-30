@@ -1,7 +1,20 @@
 from swsscommon import swsscommon
 from dvslib.dvs_database import DVSDatabase
+
+from dash_api.appliance_pb2 import *
+from dash_api.vnet_pb2 import *
+from dash_api.eni_pb2 import *
+from dash_api.acl_group_pb2 import *
+from dash_api.acl_rule_pb2 import *
+from dash_api.acl_in_pb2 import *
+from dash_api.acl_out_pb2 import *
+from dash_api.types_pb2 import *
+
 from typing import Union
 import time
+import ipaddress
+import socket
+import binascii
 
 import pytest
 
@@ -20,6 +33,8 @@ SAI_NULL_OID = "oid:0x0"
 def to_string(value):
     if isinstance(value, bool):
         return "true" if value else "false"
+    elif isinstance(value, bytes):
+        return value
     return str(value)
 
 
@@ -137,47 +152,57 @@ class DashAcl(object):
             self.asic_vnet_table
         ]
 
-    def create_acl_rule(self, group_id, rule_id, attr_maps: dict):
+    def create_acl_rule(self, group_id, rule_id, pb):
         self.app_dash_acl_rule_table[str(
-            group_id) + ":" + str(rule_id)] = attr_maps
+            group_id) + ":" + str(rule_id)] = {"pb": pb.SerializeToString()}
 
     def remove_acl_rule(self, group_id, rule_id):
         del self.app_dash_acl_rule_table[str(group_id) + ":" + str(rule_id)]
 
-    def create_acl_group(self, group_id, attr_maps: dict):
-        self.app_dash_acl_group_table[str(group_id)] = attr_maps
+    def create_acl_group(self, group_id, pb):
+        self.app_dash_acl_group_table[str(group_id)] = {"pb": pb.SerializeToString()}
 
     def remove_acl_group(self, group_id):
         del self.app_dash_acl_group_table[str(group_id)]
 
-    def create_appliance(self, name, attr_maps: dict):
-        self.app_dash_appliance_table[str(name)] = attr_maps
+    def create_appliance(self, name, pb):
+        self.app_dash_appliance_table[str(name)] = {"pb": pb.SerializeToString()}
 
     def remove_appliance(self, name):
         del self.app_dash_appliance_table[str(name)]
 
-    def create_eni(self, eni, attr_maps: dict):
-        self.app_dash_eni_table[str(eni)] = attr_maps
+    def create_eni(self, eni, pb):
+        self.app_dash_eni_table[str(eni)] = {"pb": pb.SerializeToString()}
 
     def remove_eni(self, eni):
         del self.app_dash_eni_table[str(eni)]
 
-    def create_vnet(self, vnet, attr_maps: dict):
-        self.app_dash_vnet_table[str(vnet)] = attr_maps
+    def create_vnet(self, vnet, pb):
+        self.app_dash_vnet_table[str(vnet)] = {"pb": pb.SerializeToString()}
 
     def remove_vnet(self, vnet):
         del self.app_dash_vnet_table[str(vnet)]
 
-    def bind_acl_in(self, eni, stage, group_id):
+    def bind_acl_in(self, eni, stage, v4_group_id = None, v6_group_id = None):
+        pb = AclIn()
+        if v4_group_id:
+            pb.v4_acl_group_id = v4_group_id
+        if v6_group_id:
+            pb.v6_acl_group_id = v6_group_id
         self.app_dash_acl_in_table[str(
-            eni) + ":" + str(stage)] = {"acl_group_id": str(group_id)}
+            eni) + ":" + str(stage)] = {"pb": pb.SerializeToString()}
 
     def unbind_acl_in(self, eni, stage):
         del self.app_dash_acl_in_table[str(eni) + ":" + str(stage)]
 
-    def bind_acl_out(self, eni, stage, group_id):
+    def bind_acl_out(self, eni, stage, v4_group_id = None, v6_group_id = None):
+        pb = AclIn()
+        if v4_group_id:
+            pb.v4_acl_group_id = v4_group_id
+        if v6_group_id:
+            pb.v6_acl_group_id = v6_group_id
         self.app_dash_acl_out_table[str(
-            eni) + ":" + str(stage)] = {"acl_group_id": str(group_id)}
+            eni) + ":" + str(stage)] = {"pb": pb.SerializeToString()}
 
     def unbind_acl_out(self, eni, stage):
         del self.app_dash_acl_out_table[str(eni) + ":" + str(stage)]
@@ -196,10 +221,20 @@ class TestAcl(object):
         self.underlay_ip = "1.1.1.1"
 
         acl_context = DashAcl(dvs)
-        acl_context.create_appliance(self.appliance_name, {"sip": self.appliance_sip, "vm_vni": self.vm_vni})
-        acl_context.create_vnet(self.vnet_name, {"vni": self.vni})
-        acl_context.create_eni(self.eni_name, {"vnet": self.vnet_name,
-                      "mac_address": self.mac_address, "underlay_ip": self.underlay_ip})
+        pb = Appliance()
+        pb.sip.ipv4 = socket.htonl(int(ipaddress.ip_address(self.appliance_sip)))
+        pb.vm_vni = int(self.vm_vni)
+
+        acl_context.create_appliance(self.appliance_name, pb)
+        pb = Vnet()
+        pb.vni = int(self.vni)
+
+        acl_context.create_vnet(self.vnet_name, pb)
+        pb = Eni()
+        pb.vnet = self.vnet_name
+        pb.mac_address = bytes.fromhex(self.mac_address.replace(":", ""))
+        pb.underlay_ip.ipv4 = socket.htonl(int(ipaddress.ip_address(self.underlay_ip)))
+        acl_context.create_eni(self.eni_name, pb)
 
         acl_context.asic_vip_table.wait_for_n_keys(num_keys=1)
         acl_context.asic_vnet_table.wait_for_n_keys(num_keys=1)
@@ -217,18 +252,39 @@ class TestAcl(object):
             table.wait_for_n_keys(num_keys=0)
 
     def test_acl_flow(self, ctx):
-        ctx.create_acl_group(ACL_GROUP_1, {"ip_version": "ipv4"})
-        ctx.create_acl_rule(ACL_GROUP_1, ACL_RULE_1, {"priority": "1", "action": "allow", "terminating": "false",
-                           "src_addr": "192.168.0.1/32,192.168.1.2/30", "dst_addr": "192.168.0.1/32,192.168.1.2/30", "src_port": "0-1", "dst_port": "0-1"})
-
+        pb = AclGroup()
+        pb.ip_version = IpVersion.IP_VERSION_IPV4
+        ctx.create_acl_group(ACL_GROUP_1, pb)
+        pb = AclRule()
+        pb.priority = 1
+        pb.action = Action.ACTION_PERMIT
+        pb.terminating = False
+        net = ipaddress.IPv4Network("192.168.0.1/32", False)
+        pfx = IpPrefix()
+        pfx.ip.ipv4 = socket.htonl(int(net.network_address))
+        pfx.mask.ipv4 = socket.htonl(int(net.netmask))
+        pb.src_addr.append(pfx)
+        pb.dst_addr.append(pfx)
+        net = ipaddress.IPv4Network("192.168.1.2/30", False)
+        pfx = IpPrefix()
+        pfx.ip.ipv4 = socket.htonl(int(net.network_address))
+        pfx.mask.ipv4 = socket.htonl(int(net.netmask))
+        pb.src_addr.append(pfx)
+        pb.dst_addr.append(pfx)
+        vr = ValueOrRange()
+        vr.range.min = 0
+        vr.range.max = 1
+        pb.src_port.append(vr)
+        pb.dst_port.append(vr)
+        ctx.create_acl_rule(ACL_GROUP_1, ACL_RULE_1, pb)
         rule1_id= ctx.asic_dash_acl_rule_table.wait_for_n_keys(num_keys=1)[0]
         group1_id= ctx.asic_dash_acl_group_table.wait_for_n_keys(num_keys=1)[0]
         rule1_attr = ctx.asic_dash_acl_rule_table[rule1_id]
         assert rule1_attr["SAI_DASH_ACL_RULE_ATTR_PRIORITY"] == "1"
         assert rule1_attr["SAI_DASH_ACL_RULE_ATTR_ACTION"] == "SAI_DASH_ACL_RULE_ACTION_PERMIT_AND_CONTINUE"
         assert rule1_attr["SAI_DASH_ACL_RULE_ATTR_DASH_ACL_GROUP_ID"] == group1_id
-        assert rule1_attr["SAI_DASH_ACL_RULE_ATTR_DIP"] == "2:192.168.0.1/32,192.168.1.2/30"
-        assert rule1_attr["SAI_DASH_ACL_RULE_ATTR_SIP"] == "2:192.168.0.1/32,192.168.1.2/30"
+        assert rule1_attr["SAI_DASH_ACL_RULE_ATTR_DIP"] == "2:192.168.0.1/32,192.168.1.0/30"
+        assert rule1_attr["SAI_DASH_ACL_RULE_ATTR_SIP"] == "2:192.168.0.1/32,192.168.1.0/30"
         assert rule1_attr["SAI_DASH_ACL_RULE_ATTR_DST_PORT"] == "1:0,1"
         assert rule1_attr["SAI_DASH_ACL_RULE_ATTR_SRC_PORT"] == "1:0,1"
         assert rule1_attr["SAI_DASH_ACL_RULE_ATTR_PROTOCOL"].split(":")[0] == "256"
@@ -236,10 +292,9 @@ class TestAcl(object):
         assert group1_attr["SAI_DASH_ACL_GROUP_ATTR_IP_ADDR_FAMILY"] == "SAI_IP_ADDR_FAMILY_IPV4"
 
         # Create multiple rules
-        ctx.create_acl_rule(ACL_GROUP_1, ACL_RULE_2, {"priority": "2", "action": "allow", "terminating": "false",
-                           "src_addr": "192.168.0.1/32,192.168.1.2/30", "dst_addr": "192.168.0.1/32,192.168.1.2/30", "src_port": "0-1", "dst_port": "0-1"})
-        ctx.create_acl_rule(ACL_GROUP_1, ACL_RULE_3, {"priority": "2", "action": "allow", "terminating": "false",
-                           "src_addr": "192.168.0.1/32,192.168.1.2/30", "dst_addr": "192.168.0.1/32,192.168.1.2/30", "src_port": "0-1", "dst_port": "0-1"})
+        pb.priority = 2
+        ctx.create_acl_rule(ACL_GROUP_1, ACL_RULE_2, pb)
+        ctx.create_acl_rule(ACL_GROUP_1, ACL_RULE_3, pb)
         ctx.asic_dash_acl_rule_table.wait_for_n_keys(num_keys=3)
         ctx.unbind_acl_in(self.eni_name, ACL_STAGE_1)
         ctx.remove_acl_rule(ACL_GROUP_1, ACL_RULE_1)
@@ -250,9 +305,31 @@ class TestAcl(object):
         ctx.asic_dash_acl_group_table.wait_for_n_keys(num_keys=0)
 
     def test_acl_group(self, ctx):
-        ctx.create_acl_group(ACL_GROUP_1, {"ip_version": "ipv6"})
-        ctx.create_acl_rule(ACL_GROUP_1, ACL_RULE_1, {"priority": "1", "action": "allow", "terminating": "false",
-                           "src_addr": "192.168.0.1/32,192.168.1.2/30", "dst_addr": "192.168.0.1/32,192.168.1.2/30", "src_port": "0-1", "dst_port": "0-1"})
+        pb = AclGroup()
+        pb.ip_version = IpVersion.IP_VERSION_IPV6
+        ctx.create_acl_group(ACL_GROUP_1, pb)
+        pb = AclRule()
+        pb.priority = 1
+        pb.action = Action.ACTION_PERMIT
+        pb.terminating = False
+        net = ipaddress.IPv4Network("192.168.0.1/32", False)
+        pfx = IpPrefix()
+        pfx.ip.ipv4 = socket.htonl(int(net.network_address))
+        pfx.mask.ipv4 = socket.htonl(int(net.netmask))
+        pb.src_addr.append(pfx)
+        pb.dst_addr.append(pfx)
+        net = ipaddress.IPv4Network("192.168.1.2/30", False)
+        pfx = IpPrefix()
+        pfx.ip.ipv4 = socket.htonl(int(net.network_address))
+        pfx.mask.ipv4 = socket.htonl(int(net.netmask))
+        pb.src_addr.append(pfx)
+        pb.dst_addr.append(pfx)
+        vr = ValueOrRange()
+        vr.range.min = 0
+        vr.range.max = 1
+        pb.src_port.append(vr)
+        pb.dst_port.append(vr)
+        ctx.create_acl_rule(ACL_GROUP_1, ACL_RULE_1, pb)
         ctx.asic_dash_acl_group_table.wait_for_n_keys(num_keys=1)
 
         # Remove group before removing its rule
@@ -272,15 +349,38 @@ class TestAcl(object):
         eni_key = ctx.asic_eni_table.get_keys()[0]
         sai_stage = get_sai_stage(outbound=False, v4=True, stage_num=ACL_STAGE_1)
 
-        ctx.create_acl_group(ACL_GROUP_1, {"ip_version": "ipv4"})
+        pb = AclGroup()
+        pb.ip_version = IpVersion.IP_VERSION_IPV4
+        ctx.create_acl_group(ACL_GROUP_1, pb)
         acl_group_key = ctx.asic_dash_acl_group_table.wait_for_n_keys(num_keys=1)[0]
-        ctx.bind_acl_in(self.eni_name, ACL_STAGE_1, ACL_GROUP_1)
+        ctx.bind_acl_in(self.eni_name, ACL_STAGE_1, v4_group_id = ACL_GROUP_1)
         time.sleep(3)
         # Binding should not happen yet because the ACL group is empty
         assert sai_stage not in ctx.asic_eni_table[eni_key]
 
-        ctx.create_acl_rule(ACL_GROUP_1, ACL_RULE_1, {"priority": "1", "action": "allow", "terminating": "false",
-                           "src_addr": "192.168.0.1/32,192.168.1.2/30", "dst_addr": "192.168.0.1/32,192.168.1.2/30", "src_port": "0-1", "dst_port": "0-1"})
+        pb = AclRule()
+        pb.priority = 1
+        pb.action = Action.ACTION_PERMIT
+        pb.terminating = False
+        net = ipaddress.IPv4Network("192.168.0.1/32", False)
+        pfx = IpPrefix()
+        pfx.ip.ipv4 = socket.htonl(int(net.network_address))
+        pfx.mask.ipv4 = socket.htonl(int(net.netmask))
+        pb.src_addr.append(pfx)
+        pb.dst_addr.append(pfx)
+        net = ipaddress.IPv4Network("192.168.1.2/30", False)
+        pfx = IpPrefix()
+        pfx.ip.ipv4 = socket.htonl(int(net.network_address))
+        pfx.mask.ipv4 = socket.htonl(int(net.netmask))
+        pb.src_addr.append(pfx)
+        pb.dst_addr.append(pfx)
+        vr = ValueOrRange()
+        vr.range.min = 0
+        vr.range.max = 1
+        pb.src_port.append(vr)
+        pb.dst_port.append(vr)
+
+        ctx.create_acl_rule(ACL_GROUP_1, ACL_RULE_1, pb)
         # Now that the group contains a rule, expect binding to occur
         ctx.asic_eni_table.wait_for_field_match(key=eni_key, expected_fields={sai_stage: acl_group_key})
 
@@ -292,11 +392,35 @@ class TestAcl(object):
         eni_key = ctx.asic_eni_table.get_keys()[0]
         sai_stage = get_sai_stage(outbound=False, v4=True, stage_num=ACL_STAGE_2)
 
-        ctx.create_acl_group(ACL_GROUP_2, {"ip_version": "ipv4"})
+        pb = AclGroup()
+        pb.ip_version = IpVersion.IP_VERSION_IPV4
+        ctx.create_acl_group(ACL_GROUP_2, pb)
         acl_group_key = ctx.asic_dash_acl_group_table.wait_for_n_keys(num_keys=1)[0]
-        ctx.create_acl_rule(ACL_GROUP_2, ACL_RULE_1, {"priority": "1", "action": "allow", "terminating": "false",
-                           "src_addr": "192.168.0.1/32,192.168.1.2/30", "dst_addr": "192.168.0.1/32,192.168.1.2/30", "src_port": "0-1", "dst_port": "0-1"})
-        ctx.bind_acl_in(self.eni_name, ACL_STAGE_2, ACL_GROUP_2)
+
+        pb = AclRule()
+        pb.priority = 1
+        pb.action = Action.ACTION_PERMIT
+        pb.terminating = False
+        net = ipaddress.IPv4Network("192.168.0.1/32", False)
+        pfx = IpPrefix()
+        pfx.ip.ipv4 = socket.htonl(int(net.network_address))
+        pfx.mask.ipv4 = socket.htonl(int(net.netmask))
+        pb.src_addr.append(pfx)
+        pb.dst_addr.append(pfx)
+        net = ipaddress.IPv4Network("192.168.1.2/30", False)
+        pfx = IpPrefix()
+        pfx.ip.ipv4 = socket.htonl(int(net.network_address))
+        pfx.mask.ipv4 = socket.htonl(int(net.netmask))
+        pb.src_addr.append(pfx)
+        pb.dst_addr.append(pfx)
+        vr = ValueOrRange()
+        vr.range.min = 0
+        vr.range.max = 1
+        pb.src_port.append(vr)
+        pb.dst_port.append(vr)
+
+        ctx.create_acl_rule(ACL_GROUP_2, ACL_RULE_1, pb)
+        ctx.bind_acl_in(self.eni_name, ACL_STAGE_2, v4_group_id = ACL_GROUP_2)
         # Binding should occurr immediately since we added a rule to the group prior to binding
         ctx.asic_eni_table.wait_for_field_match(key=eni_key, expected_fields={sai_stage: acl_group_key})
 
@@ -305,31 +429,69 @@ class TestAcl(object):
 
     def test_acl_rule(self, ctx):
         # Create acl rule before acl group
-        ctx.create_acl_rule(ACL_GROUP_1, ACL_RULE_1, {"priority": "1", "action": "allow", "terminating": "false",
-                           "src_addr": "192.168.0.1/32,192.168.1.2/30", "dst_addr": "192.168.0.1/32,192.168.1.2/30", "src_port": "0-1", "dst_port": "0-1"})
+        pb = AclRule()
+        pb.priority = 1
+        pb.action = Action.ACTION_PERMIT
+        pb.terminating = False
+        net = ipaddress.IPv4Network("192.168.0.1/32", False)
+        pfx = IpPrefix()
+        pfx.ip.ipv4 = socket.htonl(int(net.network_address))
+        pfx.mask.ipv4 = socket.htonl(int(net.netmask))
+        pb.src_addr.append(pfx)
+        pb.dst_addr.append(pfx)
+        net = ipaddress.IPv4Network("192.168.1.2/30", False)
+        pfx = IpPrefix()
+        pfx.ip.ipv4 = socket.htonl(int(net.network_address))
+        pfx.mask.ipv4 = socket.htonl(int(net.netmask))
+        pb.src_addr.append(pfx)
+        pb.dst_addr.append(pfx)
+        vr = ValueOrRange()
+        vr.range.min = 0
+        vr.range.max = 1
+        pb.src_port.append(vr)
+        pb.dst_port.append(vr)
+        ctx.create_acl_rule(ACL_GROUP_1, ACL_RULE_1, pb)
         time.sleep(3)
         ctx.asic_dash_acl_rule_table.wait_for_n_keys(num_keys=0)
-        ctx.create_acl_group(ACL_GROUP_1, {"ip_version": "ipv4"})
+        pb = AclGroup()
+        pb.ip_version = IpVersion.IP_VERSION_IPV4
+        ctx.create_acl_group(ACL_GROUP_1, pb)
 
         ctx.asic_dash_acl_rule_table.wait_for_n_keys(num_keys=1)
 
         # Create acl rule with nonexistent acl group, which should never get programmed to ASIC_DB
-        ctx.create_acl_rule("0", "0", {"priority": "1", "action": "allow", "terminating": "false",
-                           "src_addr": "192.168.0.1/32,192.168.1.2/30", "dst_addr": "192.168.0.1/32,192.168.1.2/30", "src_port": "0-1", "dst_port": "0-1"})
+        ctx.create_acl_rule("0", "0", pb)
         time.sleep(3)
         ctx.asic_dash_acl_rule_table.wait_for_n_keys(num_keys=1)
 
-        # Create acl with invalid attribute
-        ctx.create_acl_rule(ACL_GROUP_1, ACL_RULE_2, {"priority": "abc"})
-        time.sleep(3)
-        ctx.asic_dash_acl_rule_table.wait_for_n_keys(num_keys=1)
+#        # Create acl with invalid attribute
+#        ctx.create_acl_rule(ACL_GROUP_1, ACL_RULE_2, {"priority": "abc"})
+#        time.sleep(3)
+#        ctx.asic_dash_acl_rule_table.wait_for_n_keys(num_keys=1)
 
-        # Create acl without some mandatory attributes at first
-        ctx.create_acl_rule(ACL_GROUP_1, ACL_RULE_2, {"priority": "1", "action": "allow", "terminating": "false"})
-        time.sleep(3)
-        ctx.asic_dash_acl_rule_table.wait_for_n_keys(num_keys=1)
+#        # Create acl without some mandatory attributes at first
+#        ctx.create_acl_rule(ACL_GROUP_1, ACL_RULE_2, {"priority": "1", "action": "allow", "terminating": "false"})
+#        time.sleep(3)
+#        ctx.asic_dash_acl_rule_table.wait_for_n_keys(num_keys=1)
+
+        pb = AclRule()
+        net = ipaddress.IPv4Network("192.168.0.1/32", False)
+        pfx = IpPrefix()
+        pfx.ip.ipv4 = socket.htonl(int(net.network_address))
+        pfx.mask.ipv4 = socket.htonl(int(net.netmask))
+        pb.dst_addr.append(pfx)
+        net = ipaddress.IPv4Network("192.168.1.2/30", False)
+        pfx = IpPrefix()
+        pfx.ip.ipv4 = socket.htonl(int(net.network_address))
+        pfx.mask.ipv4 = socket.htonl(int(net.netmask))
+        pb.dst_addr.append(pfx)
+        vr = ValueOrRange()
+        vr.range.min = 0
+        vr.range.max = 1
+        pb.dst_port.append(vr)
+
         # Expect the rule to be created only after all the mandatory attributes are added
-        ctx.create_acl_rule(ACL_GROUP_1, ACL_RULE_2, {"src_addr": "", "dst_addr": "192.168.0.1/32,192.168.1.2/30", "src_port": "", "dst_port": "0-1"})
+        ctx.create_acl_rule(ACL_GROUP_1, ACL_RULE_2, pb)
         time.sleep(3)
         ctx.asic_dash_acl_rule_table.wait_for_n_keys(num_keys=2)
 

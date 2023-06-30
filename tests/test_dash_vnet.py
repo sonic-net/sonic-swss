@@ -22,8 +22,6 @@ def to_string(value):
         return "true" if value else "false"
     elif isinstance(value, bytes):
         return value
-        return value.decode("latin1")
-        return "".join([chr(i) for i in value])
     return str(value)
 
 
