@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-DVS_ENV = ["HWSKU=NPU-2P"]
+DVS_ENV = ["HWSKU=DPU-2P"]
 NUM_PORTS = 2
 
 ACL_GROUP_1 = "acl_group_1"

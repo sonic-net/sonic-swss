@@ -2,7 +2,7 @@ from swsscommon import swsscommon
 import typing
 import time
 
-DVS_ENV = ["HWSKU=NPU-2P"]
+DVS_ENV = ["HWSKU=DPU-2P"]
 NUM_PORTS = 2
 
 def to_string(value):

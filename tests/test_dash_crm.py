@@ -7,7 +7,7 @@ import pytest
 from swsscommon import swsscommon
 
 
-DVS_ENV = ["HWSKU=NPU-2P"]
+DVS_ENV = ["HWSKU=DPU-2P"]
 NUM_PORTS = 2
 
 
