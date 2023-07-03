@@ -11,9 +11,13 @@ const std::string Recorder::SWSS_FNAME = "swss.rec";
 const std::string Recorder::SAIREDIS_FNAME = "sairedis.rec";
 const std::string Recorder::RESPPUB_FNAME = "responsepublisher.rec";
 
-std::unique_ptr<SwSSRec> Recorder::swss = std::make_unique<SwSSRec>();
-std::unique_ptr<SaiRedisRec> Recorder::sairedis = std::make_unique<SaiRedisRec>();
-std::unique_ptr<ResPubRec> Recorder::respub = std::make_unique<ResPubRec>();
+
+Recorder& Recorder::Instance()
+{
+    static Recorder m_recorder;
+    return m_recorder;
+}
+
 
 SwSSRec::SwSSRec() 
 {

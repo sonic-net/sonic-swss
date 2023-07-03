@@ -251,11 +251,11 @@ void initSaiRedis()
     sai_attribute_t attr;
     sai_status_t status;
 
-    auto record_filename = Recorder::sairedis->getFile();
-    auto record_location = Recorder::sairedis->getLoc();
+    auto record_filename = Recorder::Instance().sairedis.getFile();
+    auto record_location = Recorder::Instance().sairedis.getLoc();
 
     /* set recording dir before enable recording */
-    if (Recorder::sairedis->isRecord())
+    if (Recorder::Instance().sairedis.isRecord())
     {
         attr.id = SAI_REDIS_SWITCH_ATTR_RECORDING_OUTPUT_DIR;
         attr.value.s8list.count = (uint32_t)record_location.size();
@@ -285,13 +285,13 @@ void initSaiRedis()
 
     /* Disable/enable SAI Redis recording */
     attr.id = SAI_REDIS_SWITCH_ATTR_RECORD;
-    attr.value.booldata = Recorder::sairedis->isRecord();
+    attr.value.booldata = Recorder::Instance().sairedis.isRecord();
 
     status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to %s SAI Redis recording, rv:%d",
-            Recorder::sairedis->isRecord() ? "enable" : "disable", status);
+            Recorder::Instance().sairedis.isRecord() ? "enable" : "disable", status);
         exit(EXIT_FAILURE);
     }
 

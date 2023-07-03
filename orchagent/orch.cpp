@@ -62,7 +62,7 @@ void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry)
     string op  = kfvOp(entry);
 
     /* Record incoming tasks */
-    Recorder::swss->record(dumpTuple(entry));
+    Recorder::Instance().swss.record(dumpTuple(entry));
 
     /*
     * m_toSync is a multimap which will allow one key with multiple values,

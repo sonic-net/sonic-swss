@@ -220,7 +220,7 @@ public:
     Orch(swss::DBConnector *db, const std::vector<std::string> &tableNames);
     Orch(swss::DBConnector *db, const std::vector<table_name_with_pri_t> &tableNameWithPri);
     Orch(const std::vector<TableConnector>& tables);
-    virtual ~Orch() {};
+    virtual ~Orch() = default;
 
     std::vector<swss::Selectable*> getSelectables();
 

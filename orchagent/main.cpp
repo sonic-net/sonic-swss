@@ -96,9 +96,9 @@ void sighup_handler(int signo)
     /*
      * Don't do any logging since they are using mutexes.
      */
-    Recorder::swss->setRotate(true);
-    Recorder::sairedis->setRotate(true);
-    Recorder::respub->setRotate(true);
+    Recorder::Instance().swss.setRotate(true);
+    Recorder::Instance().sairedis.setRotate(true);
+    Recorder::Instance().respub.setRotate(true);
 }
 
 void syncd_apply_view()
@@ -427,31 +427,31 @@ int main(int argc, char **argv)
     SWSS_LOG_NOTICE("--- Starting Orchestration Agent ---");
 
     /* Initialize sairedis recording parameters */
-    Recorder::sairedis->setRecord(
+    Recorder::Instance().sairedis.setRecord(
         (record_type & SAIREDIS_RECORD_ENABLE) == SAIREDIS_RECORD_ENABLE
     );
-    Recorder::sairedis->setLocation(record_location);
-    Recorder::sairedis->setFileName(sairedis_rec_filename);
+    Recorder::Instance().sairedis.setLocation(record_location);
+    Recorder::Instance().sairedis.setFileName(sairedis_rec_filename);
 
     /* Initialize sairedis */
     initSaiApi();
     initSaiRedis();
 
     /* Initialize remaining recorder parameters  */
-    Recorder::swss->setRecord(
+    Recorder::Instance().swss.setRecord(
         (record_type & SWSS_RECORD_ENABLE) == SWSS_RECORD_ENABLE
     );
-    Recorder::swss->setLocation(record_location);
-    Recorder::swss->setFileName(swss_rec_filename);
-    Recorder::swss->startRec(true);
+    Recorder::Instance().swss.setLocation(record_location);
+    Recorder::Instance().swss.setFileName(swss_rec_filename);
+    Recorder::Instance().swss.startRec(true);
 
-    Recorder::respub->setRecord(
+    Recorder::Instance().respub.setRecord(
         (record_type & RESPONSE_PUBLISHER_RECORD_ENABLE) ==
         RESPONSE_PUBLISHER_RECORD_ENABLE
     );
-    Recorder::respub->setLocation(record_location);
-    Recorder::respub->setFileName(responsepublisher_rec_filename);
-    Recorder::respub->startRec(false);
+    Recorder::Instance().respub.setLocation(record_location);
+    Recorder::Instance().respub.setFileName(responsepublisher_rec_filename);
+    Recorder::Instance().respub.startRec(false);
 
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;

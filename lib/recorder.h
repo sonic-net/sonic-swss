@@ -10,32 +10,32 @@ namespace swss {
 
 class RecBase {
 public:
-    RecBase() {}
+    RecBase() = default;
     /* Setters */
-    void setRecord(bool record)  { enable_rec = record; }
-    void setRotate(bool rotate)  { log_rotate = rotate; }
-    void setLocation(const std::string& loc) { location = loc; }
-    void setFileName(const std::string& name) { filename = name; }
+    void setRecord(bool record)  { m_recording = record; }
+    void setRotate(bool rotate)  { m_rotate = rotate; }
+    void setLocation(const std::string& loc) { m_location = loc; }
+    void setFileName(const std::string& name) { m_filename = name; }
     void setName(const std::string& name)  { m_name = name; }
 
     /* getters */
-    bool isRecord()  { return enable_rec; }
-    bool isRotate()  { return log_rotate; }
-    std::string getLoc() { return location; }
-    std::string getFile() { return filename; }
+    bool isRecord()  { return m_recording; }
+    bool isRotate()  { return m_rotate; }
+    std::string getLoc() { return m_location; }
+    std::string getFile() { return m_filename; }
     std::string getName() { return m_name; }
 
 private:
-    bool enable_rec;
-    bool log_rotate;
-    std::string location;
-    std::string filename;
+    bool m_recording;
+    bool m_rotate;
+    std::string m_location;
+    std::string m_filename;
     std::string m_name;
 };
 
 class RecWriter : public RecBase {
 public:
-    RecWriter() : RecBase() {}
+    RecWriter() = default;
     virtual ~RecWriter();
     void startRec(bool exit_if_failure);
     void record(const std::string& val);
@@ -67,15 +67,18 @@ public:
 /* Interface to access recorder classes */
 class Recorder {
 public:
+    static Recorder& Instance();
     static const std::string DEFAULT_DIR;
     static const std::string REC_START;
     static const std::string SWSS_FNAME;
     static const std::string SAIREDIS_FNAME;
     static const std::string RESPPUB_FNAME;
-    
-    static std::unique_ptr<SwSSRec> swss;
-    static std::unique_ptr<SaiRedisRec> sairedis;
-    static std::unique_ptr<ResPubRec> respub;
+
+    Recorder() = default;
+    /* Individual Handlers */
+    SwSSRec swss;
+    SaiRedisRec sairedis;
+    ResPubRec respub;
 };
 
 }

@@ -711,7 +711,7 @@ void OrchDaemon::start()
 {
     SWSS_LOG_ENTER();
 
-    Recorder::sairedis->setRotate(false);
+    Recorder::Instance().sairedis.setRotate(false);
 
     for (Orch *o : m_orchList)
     {
@@ -757,10 +757,10 @@ void OrchDaemon::start()
         }
 
         // check if logroate is requested
-        if (Recorder::sairedis->isRotate())
+        if (Recorder::Instance().sairedis.isRotate())
         {
-            SWSS_LOG_NOTICE("performing log rotate");
-            Recorder::sairedis->setRotate(false);
+            SWSS_LOG_NOTICE("Performing %s log rotate", Recorder::Instance().sairedis.getName().c_str());
+            Recorder::Instance().sairedis.setRotate(false);
             logRotate();
         }
 
