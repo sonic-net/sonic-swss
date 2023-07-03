@@ -56,15 +56,16 @@ SWSS, Redis, and all the other required components run inside a virtual switch D
     ```
 
     You can get these two packages by:
-    - [Building it from scratch](https://github.com/Azure/sonic-swss-common)
-    - Downloading the latest build from Jenkins:
-      - [Ubuntu 18.04](https://sonic-jenkins.westus2.cloudapp.azure.com/job/common/job/sonic-swss-common-build-ubuntu/lastSuccessfulBuild/artifact/target/)
-      - [Ubuntu 20.04](https://sonic-jenkins.westus2.cloudapp.azure.com/job/common/job/sonic-swss-common-build-ubuntu-20_04/lastSuccessfulBuild/artifact/target/)
+    - [Building it from scratch](https://github.com/sonic-net/sonic-swss-common)
+    - Downloading the latest build from Azure:
+      - [Ubuntu 20.04](https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&definitionId=9&artifactName=sonic-swss-common.amd64.ubuntu20_04)
 
 5. Load the `docker-sonic-vs.gz` file into docker. You can get the image by:
-    - [Building it from scratch](https://github.com/Azure/sonic-buildimage)
-    - [Downloading the latest build from Jenkins](https://sonic-jenkins.westus2.cloudapp.azure.com/job/vs/job/buildimage-vs-all/lastSuccessfulBuild/artifact/target/)
-    
+    - [Building it from scratch](https://github.com/sonic-net/sonic-buildimage)
+    - Downloading the latest build from Azure:
+      - [docker-sonic-vs-asan.gz](https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&platform=vs&target=target/docker-sonic-vs-asan.gz)
+      - [docker-sonic-vs.gz](https://sonic-build.azurewebsites.net/api/sonic/artifacts?branchName=master&platform=vs&target=target/docker-sonic-vs.gz)
+
     Once you have the file, you can load it into docker by running `docker load < docker-sonic-vs.gz`.
 
 ## Running the tests
@@ -76,7 +77,7 @@ sudo pytest
 ## Setting up a persistent testbed
 For those developing new features for SWSS or the DVS framework, you might find it helpful to setup a persistent DVS container that you can inspect and make modifications to (e.g. using `dpkg -i` to install a new version of SWSS to test a new feature).
 
-1. [Download `create_vnet.sh`](https://github.com/Azure/sonic-buildimage/blob/master/platform/vs/create_vnet.sh).
+1. [Download `create_vnet.sh`](https://github.com/sonic-net/sonic-buildimage/blob/master/platform/vs/create_vnet.sh).
 
 2. Setup a virtual server and network. **Note**: It is _highly_ recommended you include the `-n 32` option or you may run into problems running the tests later.
 
