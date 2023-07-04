@@ -13,7 +13,7 @@
 #include "macaddress.h"
 #include "timer.h"
 #include "dashorch.h"
-#include <zmqorch.h>
+#include "zmqorch.h"
 #include "zmqserver.h"
 
 struct OutboundRoutingEntry

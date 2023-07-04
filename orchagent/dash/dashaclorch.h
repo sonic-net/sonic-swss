@@ -13,7 +13,7 @@
 #include <dbconnector.h>
 #include <bulker.h>
 #include <orch.h>
-#include <zmqorch.h>
+#include "zmqorch.h"
 #include "zmqserver.h"
 
 #include "dashorch.h"
