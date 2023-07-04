@@ -39,7 +39,7 @@ jobs:
         languages: ${{ matrix.language }}
 
     - if: matrix.language == 'cpp'
-      name: prepare
+      name: Install prerequisites
       run: |
         sudo apt-get update
         sudo apt-get install -y libxml-simple-perl \
@@ -68,74 +68,88 @@ jobs:
             autoconf-archive \
             uuid-dev \
             libjansson-dev \
-            python
+            python \
+            stgit
 
     - if: matrix.language == 'cpp'
-      name: build-libnl
+      name: Build sonic-swss-common
       run: |
         cd ..
-        git clone https://github.com/sonic-net/sonic-buildimage
-        pushd sonic-buildimage/src/libnl3
-        git clone https://github.com/thom311/libnl libnl3-3.5.0
-        pushd libnl3-3.5.0
-        git checkout tags/libnl3_5_0
-        git apply ../patch/0001-mpls-encap-accessors.patch
-        git apply ../patch/0002-mpls-remove-nl_addr_valid.patch
-        ln -s ../debian debian
-        fakeroot dpkg-buildpackage -us -uc -b
-        popd
-        popd
-
-    - if: matrix.language == 'cpp'
-      name: build-swss-common
-      run: |
-        cd ..
-        git clone https://github.com/sonic-net/sonic-swss-common
+        git clone -b ${{ github.ref_name }} https://github.com/sonic-net/sonic-swss-common
         pushd sonic-swss-common
         ./autogen.sh
-        fakeroot dpkg-buildpackage -us -uc -b
+        dpkg-buildpackage -rfakeroot -us -uc -b -j$(nproc)
         popd
-        dpkg-deb -x libswsscommon_1.0.0_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libswsscommon-dev_1.0.0_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libswsscommon_${SWSSCOMMON_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libswsscommon-dev_${SWSSCOMMON_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+      env:
+        SWSSCOMMON_VER: "1.0.0"
 
     - if: matrix.language == 'cpp'
-      name: build-sairedis
+      name: Build sonic-sairedis
       run: |
         cd ..
-        git clone --recursive https://github.com/sonic-net/sonic-sairedis
+        git clone -b ${{ github.ref_name }} --recursive https://github.com/sonic-net/sonic-sairedis
         pushd sonic-sairedis
         ./autogen.sh
-        DEB_BUILD_OPTIONS=nocheck SWSS_COMMON_INC="$(dirname $GITHUB_WORKSPACE)/usr/include" SWSS_COMMON_LIB="$(dirname $GITHUB_WORKSPACE)/usr/lib/x86_64-linux-gnu" fakeroot debian/rules CFLAGS="-Wno-error" CXXFLAGS="-Wno-error" binary-syncd-vs
+        DEB_BUILD_OPTIONS=nocheck \
+        SWSS_COMMON_INC="$(dirname $GITHUB_WORKSPACE)/usr/include" \
+        SWSS_COMMON_LIB="$(dirname $GITHUB_WORKSPACE)/usr/lib/x86_64-linux-gnu" \
+        fakeroot debian/rules -j$(nproc) CFLAGS="-Wno-error" CXXFLAGS="-Wno-error" binary-syncd-vs
         popd
+        dpkg-deb -x libsairedis_${SAIREDIS_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libsairedis-dev_${SAIREDIS_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libsaimetadata_${SAIREDIS_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libsaimetadata-dev_${SAIREDIS_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libsaivs_${SAIREDIS_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libsaivs-dev_${SAIREDIS_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+      env:
+        SAIREDIS_VER: "1.0.0"
 
+    # Inject libnl deb only after sonic-sairedis compilation is done.
     - if: matrix.language == 'cpp'
-      name: install-deb
+      name: Build libnl
       run: |
         cd ..
-        pushd sonic-buildimage/src/libnl3/
-        dpkg-deb -x libnl-3-200_3.5.0-1_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libnl-3-dev_3.5.0-1_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libnl-genl-3-200_3.5.0-1_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libnl-genl-3-dev_3.5.0-1_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libnl-route-3-200_3.5.0-1_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libnl-route-3-dev_3.5.0-1_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libnl-nf-3-200_3.5.0-1_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libnl-nf-3-dev_3.5.0-1_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        git clone -b ${{ github.ref_name }} https://github.com/sonic-net/sonic-buildimage
+        pushd sonic-buildimage/src/libnl3
+        git clone https://github.com/thom311/libnl libnl3-${LIBNL3_VER}
+        pushd libnl3-${LIBNL3_VER}
+        git checkout tags/libnl${LIBNL3_VER//./_}
+        git checkout -b sonic
+        git config --local user.name $USER
+        git config --local user.email $USER@microsoft.com
+        stg init
+        stg import -s ../patch/series
+        git config --local --unset user.name
+        git config --local --unset user.email
+        ln -s ../debian debian
+        dpkg-buildpackage -rfakeroot -us -uc -b -j$(nproc)
         popd
-        dpkg-deb -x libsairedis_1.0.0_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libsairedis-dev_1.0.0_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libsaimetadata_1.0.0_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libsaimetadata-dev_1.0.0_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libsaivs_1.0.0_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libsaivs-dev_1.0.0_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-3-200_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-3-dev_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-genl-3-200_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-genl-3-dev_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-route-3-200_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-route-3-dev_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-nf-3-200_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-nf-3-dev_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        popd
+      env:
+        LIBNL3_VER: "3.5.0"
+        LIBNL3_REV: "1"
 
     - if: matrix.language == 'cpp'
-      name: build
+      name: Build repository
       run: |
         ./autogen.sh
-        ./configure --prefix=/usr --with-extra-inc=$(dirname $GITHUB_WORKSPACE)/usr/include --with-extra-lib=$(dirname $GITHUB_WORKSPACE)/lib/x86_64-linux-gnu --with-extra-usr-lib=$(dirname $GITHUB_WORKSPACE)/usr/lib/x86_64-linux-gnu --with-libnl-3.0-inc=$(dirname $GITHUB_WORKSPACE)/usr/include/libnl3
+        ./configure --prefix=/usr \
+        --with-extra-inc=$(dirname $GITHUB_WORKSPACE)/usr/include \
+        --with-extra-lib=$(dirname $GITHUB_WORKSPACE)/lib/x86_64-linux-gnu \
+        --with-extra-usr-lib=$(dirname $GITHUB_WORKSPACE)/usr/lib/x86_64-linux-gnu \
+        --with-libnl-3.0-inc=$(dirname $GITHUB_WORKSPACE)/usr/include/libnl3
 
-    - name: Perform CodeQL Analysis
+    - name: Perform CodeQL analysis
       uses: github/codeql-action/analyze@v2.1.29
       with:
         category: "/language:${{matrix.language}}"
