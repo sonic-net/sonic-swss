@@ -61,6 +61,5 @@ void ZmqOrch::addConsumer(DBConnector *db, string tableName, int pri, ZmqServer 
 void ZmqOrch::doTask(Consumer &consumer)
 {
     // When ZMQ disabled, forward data from Consumer
-    SWSS_LOG_NOTICE("[ZMQ] forward doTask data");
     doTask((ConsumerBase &)consumer);
 }
