@@ -10,7 +10,7 @@ void ZmqConsumer::execute()
     SWSS_LOG_ENTER();
 
     size_t update_size = 0;
-    auto table = static_cast<swss::ZmqConsumerStateTable *>(getSelectable());
+    auto table = static_cast<swss::ZmqConsumerStateTable*>(getSelectable());
     do
     {
         std::deque<KeyOpFieldsValuesTuple> entries;
@@ -24,7 +24,7 @@ void ZmqConsumer::execute()
 void ZmqConsumer::drain()
 {
     if (!m_toSync.empty())
-        ((ZmqOrch *)m_orch)->doTask((ZmqConsumer&)*this);
+        (static_cast<ZmqOrch*>(m_orch))->doTask(static_cast<ZmqConsumer&>(*this));
 }
 
 
@@ -61,5 +61,5 @@ void ZmqOrch::addConsumer(DBConnector *db, string tableName, int pri, ZmqServer 
 void ZmqOrch::doTask(Consumer &consumer)
 {
     // When ZMQ disabled, forward data from Consumer
-    doTask((ConsumerBase &)consumer);
+    doTask(static_cast<ConsumerBase &>(consumer));
 }
