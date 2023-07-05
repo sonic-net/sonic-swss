@@ -57,3 +57,10 @@ void ZmqOrch::addConsumer(DBConnector *db, string tableName, int pri, ZmqServer 
         SWSS_LOG_WARN("ZmqOrch does not support create consumer for db: %d, table: %s", db->getDbId(), tableName.c_str());
     }
 }
+
+void ZmqOrch::doTask(Consumer &consumer)
+{
+    // When ZMQ disabled, forward data from Consumer
+    SWSS_LOG_NOTICE("[ZMQ] forward doTask data");
+    doTask((ConsumerBase &)consumer);
+}

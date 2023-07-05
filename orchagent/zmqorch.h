@@ -28,6 +28,7 @@ public:
     ZmqOrch(swss::DBConnector *db, const std::vector<std::string> &tableNames, swss::ZmqServer *zmqServer);
 
     virtual void doTask(ConsumerBase &consumer) { };
+    void doTask(Consumer &consumer) override;
 
 private:
     void addConsumer(swss::DBConnector *db, std::string tableName, int pri, swss::ZmqServer *zmqServer);
