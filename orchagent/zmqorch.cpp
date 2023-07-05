@@ -43,17 +43,17 @@ void ZmqOrch::addConsumer(DBConnector *db, string tableName, int pri, ZmqServer 
     {
         if (zmqServer != nullptr)
         {
-            SWSS_LOG_DEBUG("ZmqConsumer initialize for: %s", tableName.c_str());
+            SWSS_LOG_NOTICE("ZmqConsumer initialize for: %s", tableName.c_str());
             addExecutor(new ZmqConsumer(new ZmqConsumerStateTable(db, tableName, *zmqServer, gBatchSize, pri), this, tableName));
         }
         else
         {
-            SWSS_LOG_DEBUG("Consumer initialize for: %s", tableName.c_str());
+            SWSS_LOG_NOTICE("Consumer initialize for: %s", tableName.c_str());
             addExecutor(new Consumer(new ConsumerStateTable(db, tableName, gBatchSize, pri), this, tableName));
         }
     }
     else
     {
-        SWSS_LOG_WARN("ZmqOrch does not support create consumer for db: %d, table: %s", db->getDbId(), tableName.c_str());
+        SWSS_LOG_NOTICE("ZmqOrch does not support create consumer for db: %d, table: %s", db->getDbId(), tableName.c_str());
     }
 }
