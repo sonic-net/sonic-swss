@@ -18,7 +18,6 @@ PortMgr::PortMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         m_cfgLagMemberTable(cfgDb, CFG_LAG_MEMBER_TABLE_NAME),
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
         m_appSendToIngressPortTable(appDb, APP_SEND_TO_INGRESS_PORT_TABLE_NAME),
-        m_appSendToIngressStatePortTable(appStateDb, APP_SEND_TO_INGRESS_PORT_TABLE_NAME),
         m_appPortTable(appDb, APP_PORT_TABLE_NAME)
 {
 }

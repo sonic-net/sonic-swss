@@ -27,7 +27,6 @@ private:
     Table m_statePortTable;
     ProducerStateTable m_appPortTable;
     ProducerStateTable m_appSendToIngressPortTable;
-    Table m_appSendToIngressStatePortTable;
 
     std::set<std::string> m_portList;
 
