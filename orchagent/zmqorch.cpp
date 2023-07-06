@@ -24,7 +24,7 @@ void ZmqConsumer::execute()
 void ZmqConsumer::drain()
 {
     if (!m_toSync.empty())
-        (static_cast<ZmqOrch*>(m_orch))->doTask(static_cast<ZmqConsumer&>(*this));
+        (static_cast<ZmqOrch*>(m_orch))->doTask(*this);
 }
 
 
