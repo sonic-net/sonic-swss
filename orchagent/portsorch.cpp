@@ -382,7 +382,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
     /* Initialize port and vlan table */
     m_portTable = unique_ptr<Table>(new Table(db, APP_PORT_TABLE_NAME));
-    m_sendToIngressPortTable = unique_ptr<Table>(new Table(m_app_db.get(), APP_SEND_TO_INGRESS_PORT_TABLE_NAME));
+    m_sendToIngressPortTable = unique_ptr<Table>(new Table(db, APP_SEND_TO_INGRESS_PORT_TABLE_NAME));
 
     /* Initialize gearbox */
     m_gearboxTable = unique_ptr<Table>(new Table(db, "_GEARBOX_TABLE"));
