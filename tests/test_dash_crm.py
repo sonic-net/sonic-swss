@@ -7,7 +7,7 @@ import pytest
 from swsscommon import swsscommon
 
 
-DVS_ENV = ["HWSKU=Nvidia-MBF2H536C"]
+DVS_ENV = ["HWSKU=NPU-2P"]
 NUM_PORTS = 2
 
 

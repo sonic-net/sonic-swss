@@ -81,8 +81,8 @@ sai_attr_id_t getSaiStage(DashAclDirection d, sai_ip_addr_family_t f, uint32_t s
     return stage->second;
 }
 
-DashAclOrch::DashAclOrch(DBConnector *db, const vector<string> &tables, DashOrch *dash_orch) :
-    Orch(db, tables),
+DashAclOrch::DashAclOrch(DBConnector *db, const vector<string> &tables, DashOrch *dash_orch, ZmqServer *zmqServer) :
+    ZmqOrch(db, tables, zmqServer),
     m_dash_orch(dash_orch)
 {
     SWSS_LOG_ENTER();
@@ -90,7 +90,7 @@ DashAclOrch::DashAclOrch(DBConnector *db, const vector<string> &tables, DashOrch
     assert(m_dash_orch);
 }
 
-void DashAclOrch::doTask(Consumer &consumer)
+void DashAclOrch::doTask(ConsumerBase &consumer)
 {
     SWSS_LOG_ENTER();
 

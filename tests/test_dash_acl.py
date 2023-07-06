@@ -18,7 +18,8 @@ import binascii
 
 import pytest
 
-DVS_ENV = ["HWSKU=Nvidia-MBF2H536C"]
+DVS_ENV = ["HWSKU=NPU-2P"]
+NUM_PORTS = 2
 
 ACL_GROUP_1 = "acl_group_1"
 ACL_GROUP_2 = "acl_group_2"

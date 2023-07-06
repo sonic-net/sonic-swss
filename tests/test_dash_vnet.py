@@ -17,6 +17,9 @@ import ipaddress
 import sys
 
 
+DVS_ENV = ["HWSKU=NPU-2P"]
+NUM_PORTS = 2
+
 def to_string(value):
     if isinstance(value, bool):
         return "true" if value else "false"

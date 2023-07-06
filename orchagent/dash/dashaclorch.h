@@ -13,6 +13,8 @@
 #include <dbconnector.h>
 #include <bulker.h>
 #include <orch.h>
+#include "zmqorch.h"
+#include "zmqserver.h"
 
 #include "dashorch.h"
 #include "dash_api/acl_group.pb.h"
@@ -45,15 +47,15 @@ using DashAclBindTable = std::unordered_map<std::string, DashAclBindEntry>;
 using DashAclGroupTable = std::unordered_map<std::string, DashAclGroupEntry>;
 using DashAclRuleTable = std::unordered_map<std::string, DashAclRuleEntry>;
 
-class DashAclOrch : public Orch
+class DashAclOrch : public ZmqOrch
 {
 public:
     using TaskArgs = std::vector<swss::FieldValueTuple>;
 
-    DashAclOrch(swss::DBConnector *db, const std::vector<std::string> &tables, DashOrch *dash_orch);
+    DashAclOrch(swss::DBConnector *db, const std::vector<std::string> &tables, DashOrch *dash_orch, swss::ZmqServer *zmqServer);
 
 private:
-    void doTask(Consumer &consumer);
+    void doTask(ConsumerBase &consumer);
 
     task_process_status taskUpdateDashAclIn(
         const std::string &key,
