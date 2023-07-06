@@ -810,7 +810,7 @@ namespace portsorch_test
         // Set PortConfigDone
         portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
         // Populate send to ingresss port table
-        sendToIngressPortTable.set(SEND_TO_INGRESS_PORT_NAME, {{"NULL", "NULL"}});
+        sendToIngressPortTable.set("SEND_TO_INGRESS", {{"NULL", "NULL"}});
 
         // refill consumer
         gPortsOrch->addExistingData(&portTable);
