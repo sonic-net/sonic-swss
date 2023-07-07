@@ -3,7 +3,7 @@ FROM docker-sonic-vs
 ARG docker_container_name
 ARG need_dbg
 
-ADD ["debs", "/debs"]
+COPY ["debs", "/debs"]
 
 RUN dpkg -i /debs/libswsscommon_1.0.0_amd64.deb \
             /debs/python3-swsscommon_1.0.0_amd64.deb \

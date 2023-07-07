@@ -21,6 +21,7 @@ extern FgNhgOrch *gFgNhgOrch;
 extern Directory<Orch*> gDirectory;
 extern string gMySwitchType;
 extern int32_t gVoqMySwitchId;
+extern BfdOrch *gBfdOrch;
 
 const int neighorch_pri = 30;
 
@@ -34,6 +35,12 @@ NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch,
     SWSS_LOG_ENTER();
 
     m_fdbOrch->attach(this);
+
+    // Some UTs instantiate NeighOrch but gBfdOrch is null, it is not null in orchagent
+    if (gBfdOrch) 
+    {  
+        gBfdOrch->attach(this);
+    }
 
     if(gMySwitchType == "voq")
     {
@@ -149,6 +156,12 @@ void NeighOrch::update(SubjectType type, void *cntx)
         {
             FdbFlushUpdate *update = reinterpret_cast<FdbFlushUpdate *>(cntx);
             processFDBFlushUpdate(*update);
+            break;
+        }
+        case SUBJECT_TYPE_BFD_SESSION_STATE_CHANGE:
+        {
+            BfdUpdate *update = static_cast<BfdUpdate *>(cntx);
+            updateNextHop (*update);
             break;
         }
         default:
@@ -431,6 +444,62 @@ bool NeighOrch::ifChangeInformNextHop(const string &alias, bool if_up)
     }
 
     return rc;
+}
+
+void NeighOrch::updateNextHop(const BfdUpdate& update)
+{
+    SWSS_LOG_ENTER();
+    bool rc = true;
+
+    auto key = update.peer;
+    sai_bfd_session_state_t state = update.state;
+
+    size_t found_vrf = key.find(state_db_key_delimiter);
+    if (found_vrf == string::npos)
+    {
+        SWSS_LOG_INFO("Failed to parse key %s, no vrf is given", key.c_str());
+        return;
+    }
+
+    size_t found_ifname = key.find(state_db_key_delimiter, found_vrf + 1);
+    if (found_ifname == string::npos)
+    {
+        SWSS_LOG_INFO("Failed to parse key %s, no ifname is given", key.c_str());
+        return;
+    }
+
+    string vrf_name = key.substr(0, found_vrf);
+    string alias = key.substr(found_vrf + 1, found_ifname - found_vrf - 1);
+    IpAddress peer_address(key.substr(found_ifname + 1));
+
+    if (alias != "default" || vrf_name != "default")
+    {
+        return;
+    }
+
+    for (auto nhop = m_syncdNextHops.begin(); nhop != m_syncdNextHops.end(); ++nhop)
+    {
+        if (nhop->first.ip_address != peer_address)
+        {
+            continue;
+        }
+
+        if (state == SAI_BFD_SESSION_STATE_UP)
+        {
+            SWSS_LOG_INFO("updateNextHop get BFD session UP event, key %s", key.c_str());
+            rc = clearNextHopFlag(nhop->first, NHFLAGS_IFDOWN);
+        }
+        else
+        {
+            SWSS_LOG_INFO("updateNextHop get BFD session DOWN event, key %s", key.c_str());
+            rc = setNextHopFlag(nhop->first, NHFLAGS_IFDOWN);
+        }
+
+        if (!rc)
+        {
+            break;
+        }
+    }
 }
 
 bool NeighOrch::removeNextHop(const IpAddress &ipAddress, const string &alias)

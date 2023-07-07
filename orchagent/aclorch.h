@@ -502,12 +502,14 @@ public:
     bool isAclMirrorV6Supported() const;
     bool isAclMirrorV4Supported() const;
     bool isAclMirrorTableSupported(string type) const;
+    bool isAclL3V4V6TableSupported(acl_stage_type_t stage) const;
     bool isAclActionListMandatoryOnTableCreation(acl_stage_type_t stage) const;
     bool isAclActionSupported(acl_stage_type_t stage, sai_acl_action_type_t action) const;
     bool isAclActionEnumValueSupported(sai_acl_action_type_t action, sai_acl_action_parameter_t param) const;
 
     bool m_isCombinedMirrorV6Table = true;
     map<string, bool> m_mirrorTableCapabilities;
+    map<acl_stage_type_t, bool> m_L3V4V6Capability;
 
     void registerFlexCounter(const AclRule& rule);
     void deregisterFlexCounter(const AclRule& rule);

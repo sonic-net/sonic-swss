@@ -12,6 +12,7 @@
 #include "logger.h"
 #include "tokenize.h"
 #include "orch.h"
+#include "crmorch.h"
 #include "p4orch/p4orch.h"
 #include "p4orch/p4orch_util.h"
 
@@ -21,6 +22,7 @@ extern sai_generic_programmable_api_t *sai_generic_programmable_api;
 extern Directory<Orch *> gDirectory;
 extern sai_object_id_t gSwitchId;
 extern P4Orch *gP4Orch;
+extern CrmOrch *gCrmOrch;
 
 P4ExtTableEntry *ExtTablesManager::getP4ExtTableEntry(const std::string &table_name, const std::string &key)
 {
@@ -467,6 +469,9 @@ ReturnCode ExtTablesManager::createP4ExtTableEntry(const P4ExtTableAppDbEntry &a
                            << app_db_entry.table_name.c_str()
                            << " , entry " << app_db_entry.table_key.c_str();
     }
+    std::string crm_table_name = "EXT_" + app_db_entry.table_name;
+    boost::algorithm::to_upper(crm_table_name);
+    gCrmOrch->incCrmExtTableUsedCounter(CrmResourceType::CRM_EXT_TABLE, crm_table_name);
 
 
     ext_table_entry.sai_entry_oid = sai_generic_programmable_oid;
@@ -598,6 +603,9 @@ ReturnCode ExtTablesManager::removeP4ExtTableEntry(const std::string &table_name
                            << "remove sai api call failed for extension entry table "
                            << table_name.c_str() << " , entry " << table_key.c_str();
     }
+    std::string crm_table_name = "EXT_" + table_name;
+    boost::algorithm::to_upper(crm_table_name);
+    gCrmOrch->decCrmExtTableUsedCounter(CrmResourceType::CRM_EXT_TABLE, crm_table_name);
 
 
     auto ext_table_key = KeyGenerator::generateExtTableKey(table_name, table_key);

@@ -32,6 +32,14 @@ void CrmOrch::decCrmAclTableUsedCounter(CrmResourceType resource, sai_object_id_
 {
 }
 
+void CrmOrch::incCrmExtTableUsedCounter(CrmResourceType resource, std::string table_name)
+{
+}
+
+void CrmOrch::decCrmExtTableUsedCounter(CrmResourceType resource, std::string table_name)
+{
+}
+
 void CrmOrch::doTask(Consumer &consumer)
 {
 }

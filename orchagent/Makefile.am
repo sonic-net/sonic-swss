@@ -1,6 +1,7 @@
 INCLUDES = -I $(top_srcdir)/lib \
            -I $(top_srcdir) \
            -I $(top_srcdir)/warmrestart \
+           -I switch \
            -I flex_counter \
            -I debug_counter \
            -I pbh \
@@ -73,6 +74,8 @@ orchagent_SOURCES = \
             pbhorch.cpp \
             saihelper.cpp \
             saiattr.cpp \
+            switch/switch_capabilities.cpp \
+            switch/switch_helper.cpp \
             switchorch.cpp \
             pfcwdorch.cpp \
             pfcactionhandler.cpp \

@@ -70,7 +70,7 @@ vector<Selectable *> Orch::getSelectables()
     return selectables;
 }
 
-void Consumer::addToSync(const KeyOpFieldsValuesTuple &entry)
+void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry)
 {
     SWSS_LOG_ENTER();
 
@@ -157,7 +157,7 @@ void Consumer::addToSync(const KeyOpFieldsValuesTuple &entry)
 
 }
 
-size_t Consumer::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries)
+size_t ConsumerBase::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries)
 {
     SWSS_LOG_ENTER();
 
@@ -194,9 +194,7 @@ size_t Consumer::refillToSync(Table* table)
 
 size_t Consumer::refillToSync()
 {
-    ConsumerTableBase *consumerTable = getConsumerTable();
-
-    auto subTable = dynamic_cast<SubscriberStateTable *>(consumerTable);
+    auto subTable = dynamic_cast<SubscriberStateTable *>(getSelectable());
     if (subTable != NULL)
     {
         size_t update_size = 0;
@@ -213,35 +211,14 @@ size_t Consumer::refillToSync()
     else
     {
         // consumerTable is either ConsumerStateTable or ConsumerTable
-        auto db = consumerTable->getDbConnector();
-        string tableName = consumerTable->getTableName();
+        auto db = getDbConnector();
+        string tableName = getTableName();
         auto table = Table(db, tableName);
         return refillToSync(&table);
     }
 }
 
-void Consumer::execute()
-{
-    SWSS_LOG_ENTER();
-
-    size_t update_size = 0;
-    do
-    {
-        std::deque<KeyOpFieldsValuesTuple> entries;
-        getConsumerTable()->pops(entries);
-        update_size = addToSync(entries);
-    } while (update_size != 0);
-
-    drain();
-}
-
-void Consumer::drain()
-{
-    if (!m_toSync.empty())
-        m_orch->doTask(*this);
-}
-
-string Consumer::dumpTuple(const KeyOpFieldsValuesTuple &tuple)
+string ConsumerBase::dumpTuple(const KeyOpFieldsValuesTuple &tuple)
 {
     string s = getTableName() + getConsumerTable()->getTableNameSeparator() + kfvKey(tuple)
                + "|" + kfvOp(tuple);
@@ -253,7 +230,7 @@ string Consumer::dumpTuple(const KeyOpFieldsValuesTuple &tuple)
     return s;
 }
 
-void Consumer::dumpPendingTasks(vector<string> &ts)
+void ConsumerBase::dumpPendingTasks(vector<string> &ts)
 {
     for (auto &tm : m_toSync)
     {
@@ -263,6 +240,28 @@ void Consumer::dumpPendingTasks(vector<string> &ts)
 
         ts.push_back(s);
     }
+}
+
+void Consumer::execute()
+{
+    SWSS_LOG_ENTER();
+
+    size_t update_size = 0;
+    auto table = static_cast<swss::ConsumerTableBase *>(getSelectable());
+    do
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        table->pops(entries);
+        update_size = addToSync(entries);
+    } while (update_size != 0);
+
+    drain();
+}
+
+void Consumer::drain()
+{
+    if (!m_toSync.empty())
+        m_orch->doTask(*this);
 }
 
 size_t Orch::addExistingData(const string& tableName)
@@ -586,7 +585,7 @@ void Orch::logfileReopen()
     }
 }
 
-void Orch::recordTuple(Consumer &consumer, const KeyOpFieldsValuesTuple &tuple)
+void Orch::recordTuple(ConsumerBase &consumer, const KeyOpFieldsValuesTuple &tuple)
 {
     string s = consumer.dumpTuple(tuple);
 

@@ -361,7 +361,10 @@ bool MirrorOrch::isHwResourcesAvailable()
     );
     if (status != SAI_STATUS_SUCCESS)
     {
-        if (status == SAI_STATUS_NOT_SUPPORTED)
+        if ((status == SAI_STATUS_NOT_SUPPORTED) ||
+            (status == SAI_STATUS_NOT_IMPLEMENTED) ||
+            SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
+            SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status))
         {
             SWSS_LOG_WARN("Mirror session resource availability monitoring is not supported. Skipping ...");
             return true;
