@@ -29,6 +29,8 @@ extern QosOrch *gQosOrch;
 extern sai_object_id_t gSwitchId;
 extern CrmOrch *gCrmOrch;
 extern string gMySwitchType;
+extern string gMyHostName;
+extern string gMyAsicName;
 
 map<string, sai_ecn_mark_mode_t> ecn_map = {
     {"ecn_none", SAI_ECN_MARK_MODE_NONE},
@@ -1752,6 +1754,8 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer, KeyOpFieldsVal
     string op = kfvOp(tuple);
     size_t queue_ind = 0;
     vector<string> tokens;
+    bool local_port = false;
+    string local_port_name;
 
     sai_uint32_t range_low, range_high;
     vector<string> port_names;
@@ -1776,6 +1780,13 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer, KeyOpFieldsVal
         {
             SWSS_LOG_ERROR("Failed to parse range:%s", tokens[3].c_str());
             return task_process_status::task_invalid_entry;
+        }
+
+        if(tokens[0] == gMyHostName)
+        {
+           local_port = true;
+           local_port_name = tokens[2];
+           SWSS_LOG_INFO("System port %s is local port %d local port name %s", port_names[0].c_str(), local_port, local_port_name.c_str());
         }
     }
     else
@@ -1884,6 +1895,12 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer, KeyOpFieldsVal
     {
         Port port;
         SWSS_LOG_DEBUG("processing port:%s", port_name.c_str());
+
+        if(local_port == true)
+        {
+            port_name = local_port_name;
+        }
+
         if (!gPortsOrch->getPort(port_name, port))
         {
             SWSS_LOG_ERROR("Port with alias:%s not found", port_name.c_str());

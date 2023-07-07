@@ -7971,8 +7971,7 @@ bool PortsOrch::addSystemPorts()
                     }
                 }
 
-                Port local_port;
-                if(!getPort(attr.value.oid, local_port))
+                if(!getPort(attr.value.oid, port))
                 {
                     //This is system port for non-front panel local port (CPU or OLP or RCY (Inband)). Not an error
                     SWSS_LOG_NOTICE("Add port for non-front panel local system port 0x%" PRIx64 "; core: %d, core port: %d",
