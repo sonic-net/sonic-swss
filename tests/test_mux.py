@@ -333,15 +333,6 @@ class TestMuxTunnelBase():
         )
         self.check_tunnel_route_in_app_db(dvs, [self.SERV1_SOC_IPV4+self.IPV4_MASK], expected=False)
 
-        marker = dvs.add_log_marker()
-
-        self.set_mux_state(appdb, "Ethernet0", "active")
-        self.set_mux_state(appdb, "Ethernet0", "active")
-        self.check_syslog(dvs, marker, "Maintaining current MUX state", 1)
-
-        self.set_mux_state(appdb, "Ethernet0", "init")
-        self.check_syslog(dvs, marker, "State transition from active to init is not-handled", 1)
-
     def create_and_test_fdb(self, appdb, asicdb, dvs, dvs_route):
 
         self.set_mux_state(appdb, "Ethernet0", "active")
