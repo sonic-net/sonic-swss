@@ -176,7 +176,7 @@ size_t ConsumerBase::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries
 }
 
 // TODO: Table should be const
-size_t Consumer::refillToSync(Table* table)
+size_t ConsumerBase::refillToSync(Table* table)
 {
     std::deque<KeyOpFieldsValuesTuple> entries;
     vector<string> keys;
@@ -198,9 +198,10 @@ size_t Consumer::refillToSync(Table* table)
     return addToSync(entries);
 }
 
-size_t Consumer::refillToSync()
+size_t ConsumerBase::refillToSync()
 {
     auto subTable = dynamic_cast<SubscriberStateTable *>(getSelectable());
+    auto consumertable = dynamic_cast<ConsumerTableBase *>(getSelectable());
     if (subTable != NULL)
     {
         size_t update_size = 0;
@@ -214,12 +215,20 @@ size_t Consumer::refillToSync()
         } while (update_size != 0);
         return total_size;
     }
-    else
+    else if (consumertable != NULL)
     {
         // consumerTable is either ConsumerStateTable or ConsumerTable
-        auto db = getDbConnector();
+        auto db = consumertable->getDbConnector();
         string tableName = getTableName();
         auto table = Table(db, tableName);
+        return refillToSync(&table);
+    }
+    else
+    {
+        // The consumerTable should be ZmqConsumerStateTable.
+        DBConnector db("APPL_DB", 0);
+        string tableName = getTableName();
+        auto table = Table(&db, tableName);
         return refillToSync(&table);
     }
 }
@@ -273,7 +282,7 @@ void Consumer::drain()
 
 size_t Orch::addExistingData(const string& tableName)
 {
-    auto consumer = dynamic_cast<Consumer *>(getExecutor(tableName));
+    auto consumer = dynamic_cast<ConsumerBase *>(getExecutor(tableName));
     if (consumer == NULL)
     {
         SWSS_LOG_ERROR("No consumer %s in Orch", tableName.c_str());
@@ -287,7 +296,7 @@ size_t Orch::addExistingData(const string& tableName)
 size_t Orch::addExistingData(Table *table)
 {
     string tableName = table->getTableName();
-    Consumer* consumer = dynamic_cast<Consumer *>(getExecutor(tableName));
+    ConsumerBase* consumer = dynamic_cast<ConsumerBase *>(getExecutor(tableName));
     if (consumer == NULL)
     {
         SWSS_LOG_ERROR("No consumer %s in Orch", tableName.c_str());
@@ -305,7 +314,7 @@ bool Orch::bake()
     {
         string executorName = it.first;
         auto executor = it.second;
-        auto consumer = dynamic_cast<Consumer *>(executor.get());
+        auto consumer = dynamic_cast<ConsumerBase *>(executor.get());
         if (consumer == NULL)
         {
             continue;
@@ -557,7 +566,7 @@ void Orch::dumpPendingTasks(vector<string> &ts)
 {
     for (auto &it : m_consumerMap)
     {
-        Consumer* consumer = dynamic_cast<Consumer *>(it.second.get());
+        ConsumerBase* consumer = dynamic_cast<ConsumerBase *>(it.second.get());
         if (consumer == NULL)
         {
             SWSS_LOG_DEBUG("Executor is not a Consumer");

@@ -159,6 +159,9 @@ public:
 
     // Returns: the number of entries added to m_toSync
     size_t addToSync(const std::deque<swss::KeyOpFieldsValuesTuple> &entries);
+
+    size_t refillToSync();
+    size_t refillToSync(swss::Table* table);
 };
 
 class Consumer : public ConsumerBase {
@@ -190,8 +193,6 @@ public:
         return getDbConnector()->getDbName();
     }
 
-    size_t refillToSync();
-    size_t refillToSync(swss::Table* table);
     void execute() override;
     void drain() override;
 };
