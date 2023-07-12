@@ -19,6 +19,10 @@ namespace bufferorch_test
 
     sai_port_api_t ut_sai_port_api;
     sai_port_api_t *pold_sai_port_api;
+    sai_buffer_api_t ut_sai_buffer_api;
+    sai_buffer_api_t *pold_sai_buffer_api;
+    sai_queue_api_t ut_sai_queue_api;
+    sai_queue_api_t *pold_sai_queue_api;
 
     shared_ptr<swss::DBConnector> m_app_db;
     shared_ptr<swss::DBConnector> m_app_state_db;
@@ -51,17 +55,47 @@ namespace bufferorch_test
         return pold_sai_port_api->set_port_attribute(port_id, attr);
     }
 
-    void _hook_sai_port_api()
+    uint32_t _ut_stub_set_pg_count;
+    sai_status_t _ut_stub_sai_set_ingress_priority_group_attribute(
+        _In_ sai_object_id_t ingress_priority_group_id,
+        _In_ const sai_attribute_t *attr)
+    {
+        _ut_stub_set_pg_count++;
+        return pold_sai_buffer_api->set_ingress_priority_group_attribute(ingress_priority_group_id, attr);
+    }
+
+    uint32_t _ut_stub_set_queue_count;
+    sai_status_t _ut_stub_sai_set_queue_attribute(
+        _In_ sai_object_id_t queue_id,
+        _In_ const sai_attribute_t *attr)
+    {
+        _ut_stub_set_queue_count++;
+        return pold_sai_queue_api->set_queue_attribute(queue_id, attr);
+    }
+
+    void _hook_sai_apis()
     {
         ut_sai_port_api = *sai_port_api;
         pold_sai_port_api = sai_port_api;
         ut_sai_port_api.set_port_attribute = _ut_stub_sai_set_port_attribute;
         sai_port_api = &ut_sai_port_api;
+
+        ut_sai_buffer_api = *sai_buffer_api;
+        pold_sai_buffer_api = sai_buffer_api;
+        ut_sai_buffer_api.set_ingress_priority_group_attribute = _ut_stub_sai_set_ingress_priority_group_attribute;
+        sai_buffer_api = &ut_sai_buffer_api;
+
+        ut_sai_queue_api = *sai_queue_api;
+        pold_sai_queue_api = sai_queue_api;
+        ut_sai_queue_api.set_queue_attribute = _ut_stub_sai_set_queue_attribute;
+        sai_queue_api = &ut_sai_queue_api;
     }
 
-    void _unhook_sai_port_api()
+    void _unhook_sai_apis()
     {
         sai_port_api = pold_sai_port_api;
+        sai_buffer_api = pold_sai_buffer_api;
+        sai_queue_api = pold_sai_queue_api;
     }
 
     struct BufferOrchTest : public ::testing::Test
@@ -341,6 +375,7 @@ namespace bufferorch_test
 
     TEST_F(BufferOrchTest, BufferOrchTestBufferPgReferencingObjRemoveThenAdd)
     {
+        _hook_sai_apis();
         vector<string> ts;
         std::deque<KeyOpFieldsValuesTuple> entries;
         Table bufferPgTable = Table(m_app_db.get(), APP_BUFFER_PG_TABLE_NAME);
@@ -398,18 +433,34 @@ namespace bufferorch_test
         bufferProfileConsumer->addToSync(entries);
         entries.clear();
         // Drain BUFFER_PROFILE_TABLE table
+        auto sai_pg_attr_set_count = _ut_stub_set_pg_count;
         static_cast<Orch *>(gBufferOrch)->doTask();
         // Make sure the dependency recovers
         CheckDependency(APP_BUFFER_PG_TABLE_NAME, "Ethernet0:0", "profile", APP_BUFFER_PROFILE_TABLE_NAME, "ingress_lossy_profile");
+        ASSERT_EQ(++sai_pg_attr_set_count, _ut_stub_set_pg_count);
 
         // All items have been drained
         static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
         ASSERT_TRUE(ts.empty());
+
+        // Try applying the same profile, which should not call SAI API
+        entries.push_back({"Ethernet0:0", "SET",
+                           {
+                               {"profile", "ingress_lossy_profile"}
+                           }});
+        bufferPgConsumer->addToSync(entries);
+        entries.clear();
+        sai_pg_attr_set_count = _ut_stub_set_pg_count;
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        ASSERT_EQ(sai_pg_attr_set_count, _ut_stub_set_pg_count);
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+        _unhook_sai_apis();
     }
 
     TEST_F(BufferOrchTest, BufferOrchTestReferencingObjRemoveThenAdd)
     {
-        _hook_sai_port_api();
+        _hook_sai_apis();
         vector<string> ts;
         std::deque<KeyOpFieldsValuesTuple> entries;
         Table bufferProfileListTable = Table(m_app_db.get(), APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME);
@@ -494,6 +545,29 @@ namespace bufferorch_test
         // As an side-effect, all pending notifications should be drained
         ASSERT_TRUE(ts.empty());
 
+        // Apply a buffer item only if it is changed
+        _ut_stub_expected_profile_list_type = SAI_PORT_ATTR_QOS_INGRESS_BUFFER_PROFILE_LIST;
+        _ut_stub_expected_profile_count = 1;
+        entries.push_back({"Ethernet0", "SET",
+                           {
+                               {"profile_list", "ingress_lossy_profile"}
+                           }});
+        consumer = dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME));
+        consumer->addToSync(entries);
+        sai_port_profile_list_create_count = _ut_stub_port_profile_list_add_count;
+        // Drain BUFFER_PORT_INGRESS_PROFILE_LIST_TABLE table
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        ASSERT_EQ(++sai_port_profile_list_create_count, _ut_stub_port_profile_list_add_count);
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+
+        // Try applying it for the second time, which should not call SAI API
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        ASSERT_EQ(sai_port_profile_list_create_count, _ut_stub_port_profile_list_add_count);
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+
         // To satisfy the coverage requirement
         bufferProfileListTable.set("Ethernet0",
                                    {
@@ -505,12 +579,12 @@ namespace bufferorch_test
         ASSERT_EQ(ts[0], "BUFFER_PORT_INGRESS_PROFILE_LIST_TABLE:Ethernet0|SET|profile_list:ingress_no_exist_profile");
         ts.clear();
 
-        _unhook_sai_port_api();
+        _unhook_sai_apis();
     }
 
     TEST_F(BufferOrchTest, BufferOrchTestCreateAndRemoveEgressProfileList)
     {
-        _hook_sai_port_api();
+        _hook_sai_apis();
         vector<string> ts;
         std::deque<KeyOpFieldsValuesTuple> entries;
         Table bufferPoolTable = Table(m_app_db.get(), APP_BUFFER_POOL_TABLE_NAME);
@@ -553,9 +627,21 @@ namespace bufferorch_test
         CheckDependency(APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, "Ethernet0", "profile_list",
                         APP_BUFFER_PROFILE_TABLE_NAME, "egress_lossless_profile");
 
+        // Try applying it for the second time, which should not call SAI API
+        entries.push_back({"Ethernet0", "SET",
+                           {
+                               {"profile_list", "egress_lossless_profile"}
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        ASSERT_EQ(sai_port_profile_list_create_count, _ut_stub_port_profile_list_add_count);
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+
         // Remove egress port profile list
         entries.push_back({"Ethernet0", "DEL", {}});
-        auto consumer = dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME));
         consumer->addToSync(entries);
         entries.clear();
         // Drain BUFFER_PORT_EGRESS_PROFILE_LIST_TABLE table
@@ -567,6 +653,25 @@ namespace bufferorch_test
         static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
         ASSERT_TRUE(ts.empty());
 
-        _unhook_sai_port_api();
+        // Queue table
+        entries.push_back({"Ethernet0:0", "SET",
+                           {
+                               {"profile", "egress_lossless_profile"}
+                           }});
+        consumer = dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_QUEUE_TABLE_NAME));
+        consumer->addToSync(entries);
+        auto sai_queue_set_count = _ut_stub_set_queue_count;
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        ASSERT_EQ(++sai_queue_set_count, _ut_stub_set_queue_count);
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gBufferOrch)->doTask();
+         ASSERT_EQ(sai_queue_set_count, _ut_stub_set_queue_count);
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+
+        _unhook_sai_apis();
     }
 }

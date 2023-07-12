@@ -559,11 +559,49 @@ void FdbOrch::update(sai_fdb_event_t        type,
         {
              SWSS_LOG_WARN("FdbOrch MOVE notification: mac %s is not found in bv_id 0x%" PRIx64,
                     update.entry.mac.to_string().c_str(), entry->bv_id);
+            break;
         }
         else if (!m_portsOrch->getPortByBridgePortId(existing_entry->second.bridge_port_id, port_old))
         {
             SWSS_LOG_ERROR("FdbOrch MOVE notification: Failed to get port by bridge port ID 0x%" PRIx64, existing_entry->second.bridge_port_id);
             return;
+        }
+
+        /* If the existing MAC is MCLAG remote, change its type to dynamic. */
+        if (existing_entry->second.origin == FDB_ORIGIN_MCLAG_ADVERTIZED)
+        {
+            if (existing_entry->second.bridge_port_id != bridge_port_id)
+            {
+                sai_status_t status;
+                sai_fdb_entry_t fdb_entry;
+                fdb_entry.switch_id = gSwitchId;
+                memcpy(fdb_entry.mac_address, entry->mac_address, sizeof(sai_mac_t));
+                fdb_entry.bv_id = entry->bv_id;
+                sai_attribute_t attr;
+                vector<sai_attribute_t> attrs;
+
+                attr.id = SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE;
+                attr.value.booldata = false;
+                attrs.push_back(attr);
+
+                attr.id = SAI_FDB_ENTRY_ATTR_TYPE;
+                attr.value.s32 = SAI_FDB_ENTRY_TYPE_DYNAMIC;
+                attrs.push_back(attr);
+
+                attr.id = SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID;
+                attr.value.oid = bridge_port_id;
+                attrs.push_back(attr);
+
+                for(auto itr : attrs)
+                {
+                    status = sai_fdb_api->set_fdb_entry_attribute(&fdb_entry, &itr);
+                    if (status != SAI_STATUS_SUCCESS)
+                    {
+                        SWSS_LOG_ERROR("macUpdate-Failed for MCLAG mac attr.id=0x%x for FDB %s in 0x%" PRIx64 "on %s, rv:%d",
+                                        itr.id, update.entry.mac.to_string().c_str(), entry->bv_id, update.port.m_alias.c_str(), status);
+                    }
+                }
+            }
         }
 
         update.add = true;

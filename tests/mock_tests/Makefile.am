@@ -45,6 +45,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 mock_redisreply.cpp \
                 bulker_ut.cpp \
                 portmgr_ut.cpp \
+                sflowmgrd_ut.cpp \
                 fake_response_publisher.cpp \
                 swssnet_ut.cpp \
                 flowcounterrouteorch_ut.cpp \
@@ -83,6 +84,8 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/pbhorch.cpp \
                 $(top_srcdir)/orchagent/saihelper.cpp \
                 $(top_srcdir)/orchagent/saiattr.cpp \
+                $(top_srcdir)/orchagent/switch/switch_capabilities.cpp \
+                $(top_srcdir)/orchagent/switch/switch_helper.cpp \
                 $(top_srcdir)/orchagent/switchorch.cpp \
                 $(top_srcdir)/orchagent/pfcwdorch.cpp \
                 $(top_srcdir)/orchagent/pfcactionhandler.cpp \
@@ -109,6 +112,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/srv6orch.cpp \
                 $(top_srcdir)/orchagent/nvgreorch.cpp \
                 $(top_srcdir)/cfgmgr/portmgr.cpp \
+                $(top_srcdir)/cfgmgr/sflowmgr.cpp \
                 $(top_srcdir)/cfgmgr/buffermgrdyn.cpp \
                 $(top_srcdir)/warmrestart/warmRestartAssist.cpp
 

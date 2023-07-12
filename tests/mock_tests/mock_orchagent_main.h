@@ -13,6 +13,9 @@
 #define private public
 #include "bufferorch.h"
 #include "qosorch.h"
+#define protected public
+#include "pfcwdorch.h"
+#undef protected
 #undef private
 #include "vrforch.h"
 #include "vnetorch.h"
@@ -52,6 +55,7 @@ extern FdbOrch *gFdbOrch;
 extern MirrorOrch *gMirrorOrch;
 extern BufferOrch *gBufferOrch;
 extern QosOrch *gQosOrch;
+template <typename DropHandler, typename ForwardHandler> PfcWdSwOrch<DropHandler, ForwardHandler> *gPfcwdOrch;
 extern VRFOrch *gVrfOrch;
 extern NhgOrch *gNhgOrch;
 extern Srv6Orch  *gSrv6Orch;
@@ -62,6 +66,7 @@ extern Directory<Orch*> gDirectory;
 
 extern sai_acl_api_t *sai_acl_api;
 extern sai_switch_api_t *sai_switch_api;
+extern sai_hash_api_t *sai_hash_api;
 extern sai_virtual_router_api_t *sai_virtual_router_api;
 extern sai_port_api_t *sai_port_api;
 extern sai_lag_api_t *sai_lag_api;

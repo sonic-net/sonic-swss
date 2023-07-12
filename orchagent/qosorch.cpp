@@ -2137,12 +2137,13 @@ void QosOrch::doTask()
     SWSS_LOG_ENTER();
 
     auto *port_qos_map_cfg_exec = getExecutor(CFG_PORT_QOS_MAP_TABLE_NAME);
+    auto *queue_exec = getExecutor(CFG_QUEUE_TABLE_NAME);
 
     for (const auto &it : m_consumerMap)
     {
         auto *exec = it.second.get();
 
-        if (exec == port_qos_map_cfg_exec)
+        if (exec == port_qos_map_cfg_exec || exec == queue_exec)
         {
             continue;
         }
@@ -2151,6 +2152,7 @@ void QosOrch::doTask()
     }
 
     port_qos_map_cfg_exec->drain();
+    queue_exec->drain();
 }
 
 void QosOrch::doTask(Consumer &consumer)
