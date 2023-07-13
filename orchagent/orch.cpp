@@ -6,6 +6,7 @@
 #include <sys/time.h>
 #include "timestamp.h"
 #include "orch.h"
+#include "orchstats.h"
 
 #include "subscriberstatetable.h"
 #include "portsorch.h"
@@ -22,6 +23,7 @@ extern bool gSwssRecord;
 extern ofstream gRecordOfs;
 extern bool gLogRotate;
 extern string gRecordFile;
+extern bool gOrchStatsRecord;
 
 Orch::Orch(DBConnector *db, const string tableName, int pri)
 {
@@ -82,6 +84,11 @@ void ConsumerBase::addToSync(const KeyOpFieldsValuesTuple &entry)
     if (gSwssRecord)
     {
         Orch::recordTuple(*this, entry);
+    }
+
+    if (gOrchStatsRecord)
+    {
+        OrchStats::getInstance()->recordIncomingTask(*this, entry);
     }
 
     /*

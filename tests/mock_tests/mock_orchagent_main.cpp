@@ -17,6 +17,7 @@ int gBatchSize = DEFAULT_BATCH_SIZE;
 
 bool gSairedisRecord = true;
 bool gSwssRecord = true;
+bool gOrchStatsRecord = false;
 bool gLogRotate = false;
 ofstream gRecordOfs;
 string gRecordFile;

@@ -23,6 +23,7 @@ CFLAGS_TSAN = -fsanitize=thread
 CFLAGS_USAN = -fsanitize=undefined
 
 p4orch_tests_SOURCES = $(ORCHAGENT_DIR)/orch.cpp \
+		       $(ORCHAGENT_DIR)/orchstats.cpp \
 		       $(ORCHAGENT_DIR)/vrforch.cpp \
 		       $(ORCHAGENT_DIR)/vxlanorch.cpp \
 		       $(ORCHAGENT_DIR)/copporch.cpp \
