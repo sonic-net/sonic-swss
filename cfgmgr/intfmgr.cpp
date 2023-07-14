@@ -632,6 +632,18 @@ bool IntfMgr::setIntfProxyArp(const string &alias, const string &proxy_arp)
     return true;
 }
 
+bool IntfMgr::setIntfTimeoutArp(const string &alias, const string &timeout_arp)
+{
+    stringstream cmd;
+    string res;
+
+    cmd << ECHO_CMD << " " << timeout_arp << " > /proc/sys/net/ipv4/neigh/" << alias << "/base_reachable_time";
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+
+    SWSS_LOG_INFO("ARP timeout set to \"%s\" on interface \"%s\"",  timeout_arp.c_str(), alias.c_str());
+    return true;
+}
+
 bool IntfMgr::isIntfStateOk(const string &alias)
 {
     vector<FieldValueTuple> temp;
@@ -763,6 +775,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
     string nat_zone = "";
     string proxy_arp = "";
     string grat_arp = "";
+    string timeout_arp = "";
     string mpls = "";
     string ipv6_link_local_mode = "";
     string loopback_action = "";
@@ -791,6 +804,10 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         else if (field == "grat_arp")
         {
             grat_arp = value;
+        }
+        else if (field == "timeout_arp")
+        {
+            timeout_arp = value;
         }
         else if (field == "mpls")
         {
@@ -1009,6 +1026,21 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
             if (!alias.compare(0, strlen(VLAN_PREFIX), VLAN_PREFIX))
             {
                 FieldValueTuple fvTuple("grat_arp", grat_arp);
+                data.push_back(fvTuple);
+            }
+        }
+
+        if (!timeout_arp.empty())
+        {
+            if (!setIntfTimeoutArp(alias, timeout_arp))
+            {
+                SWSS_LOG_ERROR("Failed to set ARP timeout to \"%s\" state for the \"%s\" interface", timeout_arp.c_str(), alias.c_str());
+                return false;
+            }
+
+            if (!alias.compare(0, strlen(VLAN_PREFIX), VLAN_PREFIX))
+            {
+                FieldValueTuple fvTuple("timeout_arp", timeout_arp);
                 data.push_back(fvTuple);
             }
         }
