@@ -7971,6 +7971,7 @@ bool PortsOrch::addSystemPorts()
                     }
                 }
 
+                //System port for local port. Update the system port info in the existing physical port
                 if(!getPort(attr.value.oid, port))
                 {
                     //This is system port for non-front panel local port (CPU or OLP or RCY (Inband)). Not an error
