@@ -1018,9 +1018,17 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
         // set order is detected.
         for (const auto &port_name : port_names)
         {
-            auto &tmp_port_name = local_port ? local_port_name : port_name;
-            if (gPortsOrch->isPortAdminUp(tmp_port_name)) {
-                SWSS_LOG_WARN("Queue profile '%s' applied after port %s is up", key.c_str(), port_name.c_str());
+            if(local_port == true)
+            {
+                if (gPortsOrch->isPortAdminUp(local_port_name)) {
+                    SWSS_LOG_WARN("Queue profile '%s' applied after port %s is up", key.c_str(), port_name.c_str());
+                }
+            }
+            else
+            {
+                if (gPortsOrch->isPortAdminUp(port_name)) {
+                    SWSS_LOG_WARN("Queue profile '%s' applied after port %s is up", key.c_str(), port_name.c_str());
+                }
             }
         }
     }
