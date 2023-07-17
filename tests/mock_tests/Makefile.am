@@ -56,6 +56,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 test_failure_handling.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/lib/subintf.cpp \
+                $(top_srcdir)/lib/recorder.cpp \
                 $(top_srcdir)/orchagent/orchdaemon.cpp \
                 $(top_srcdir)/orchagent/orch.cpp \
                 $(top_srcdir)/orchagent/notifications.cpp \
@@ -144,6 +145,7 @@ tests_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis -lpthr
 ## portsyncd unit tests
 
 tests_portsyncd_SOURCES = portsyncd/portsyncd_ut.cpp \
+                          $(top_srcdir)/lib/recorder.cpp \
                           $(top_srcdir)/portsyncd/linksync.cpp \
                           mock_dbconnector.cpp \
                           common/mock_shell_command.cpp \
@@ -151,7 +153,7 @@ tests_portsyncd_SOURCES = portsyncd/portsyncd_ut.cpp \
                           mock_hiredis.cpp \
                           mock_redisreply.cpp
 
-tests_portsyncd_INCLUDES = -I $(top_srcdir)/portsyncd -I $(top_srcdir)/cfgmgr
+tests_portsyncd_INCLUDES = -I $(top_srcdir)/portsyncd -I $(top_srcdir)/cfgmgr -I $(top_srcdir)/lib
 tests_portsyncd_CXXFLAGS = -Wl,-wrap,if_nameindex -Wl,-wrap,if_freenameindex
 tests_portsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST)
 tests_portsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(tests_portsyncd_INCLUDES)
@@ -163,6 +165,7 @@ tests_portsyncd_LDADD = $(LDADD_GTEST) -lnl-genl-3 -lhiredis -lhiredis \
 tests_intfmgrd_SOURCES = intfmgrd/intfmgr_ut.cpp \
                          $(top_srcdir)/cfgmgr/intfmgr.cpp \
                          $(top_srcdir)/lib/subintf.cpp \
+                         $(top_srcdir)/lib/recorder.cpp \
                          $(top_srcdir)/orchagent/orch.cpp \
                          $(top_srcdir)/orchagent/request_parser.cpp \
                          mock_orchagent_main.cpp \
@@ -203,6 +206,7 @@ tests_fpmsyncd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhired
 
 tests_response_publisher_SOURCES = response_publisher/response_publisher_ut.cpp \
                                    $(top_srcdir)/orchagent/response_publisher.cpp \
+                                   $(top_srcdir)/lib/recorder.cpp \
                                    mock_orchagent_main.cpp \
                                    mock_dbconnector.cpp \
                                    mock_table.cpp \

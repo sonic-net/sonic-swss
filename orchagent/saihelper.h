@@ -9,7 +9,7 @@
     ((attrId) >= SAI_ ## objectType ## _ATTR_ ## attrPrefix ## _START && (attrId) <= SAI_ ## objectType ## _ATTR_ ## attrPrefix ## _END)
 
 void initSaiApi();
-void initSaiRedis(const std::string &record_location, const std::string &record_filename);
+void initSaiRedis();
 sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy);
 
 /* Handling SAI status*/

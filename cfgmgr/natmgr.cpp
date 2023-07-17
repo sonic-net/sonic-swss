@@ -6129,7 +6129,7 @@ void NatMgr::doStaticNatTask(Consumer &consumer)
         else
         {
             SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
-            SWSS_LOG_DEBUG("%s", (dumpTuple(consumer, t)).c_str());
+            SWSS_LOG_DEBUG("%s", (consumer.dumpTuple(t)).c_str());
             it = consumer.m_toSync.erase(it);
         }
     }
@@ -6472,7 +6472,7 @@ void NatMgr::doStaticNaptTask(Consumer &consumer)
         else
         {
             SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
-            SWSS_LOG_DEBUG("%s", (dumpTuple(consumer, t)).c_str());
+            SWSS_LOG_DEBUG("%s", (consumer.dumpTuple(t)).c_str());
             it = consumer.m_toSync.erase(it);
         }
     }
@@ -6859,7 +6859,7 @@ void NatMgr::doNatPoolTask(Consumer &consumer)
         else
         {
             SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
-            SWSS_LOG_DEBUG("%s", (dumpTuple(consumer, t)).c_str());
+            SWSS_LOG_DEBUG("%s", (consumer.dumpTuple(t)).c_str());
             it = consumer.m_toSync.erase(it);
         }
     }
@@ -7095,7 +7095,7 @@ void NatMgr::doNatBindingTask(Consumer &consumer)
         else
         {
             SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
-            SWSS_LOG_DEBUG("%s", (dumpTuple(consumer, t)).c_str());
+            SWSS_LOG_DEBUG("%s", (consumer.dumpTuple(t)).c_str());
             it = consumer.m_toSync.erase(it);
         }
     }
@@ -7873,7 +7873,7 @@ void NatMgr::doNatAclTableTask(Consumer &consumer)
         else
         {
             SWSS_LOG_INFO("Unknown operation type %s", op.c_str());
-            SWSS_LOG_DEBUG("%s", (dumpTuple(consumer, t)).c_str());
+            SWSS_LOG_DEBUG("%s", (consumer.dumpTuple(t)).c_str());
             it = consumer.m_toSync.erase(it);
         }
     }
@@ -8137,7 +8137,7 @@ void NatMgr::doNatAclRuleTask(Consumer &consumer)
         else
         {
             SWSS_LOG_INFO("Unknown operation type %s", op.c_str());
-            SWSS_LOG_DEBUG("%s", (dumpTuple(consumer, t)).c_str());
+            SWSS_LOG_DEBUG("%s", (consumer.dumpTuple(t)).c_str());
             it = consumer.m_toSync.erase(it);
         }
     }

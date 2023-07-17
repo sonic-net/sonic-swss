@@ -30,11 +30,6 @@
 #include "directory.h"
 
 extern int gBatchSize;
-extern bool gSwssRecord;
-extern bool gSairedisRecord;
-extern bool gLogRotate;
-extern ofstream gRecordOfs;
-extern string gRecordFile;
 
 extern MacAddress gMacAddress;
 extern MacAddress gVxlanMacAddress;
