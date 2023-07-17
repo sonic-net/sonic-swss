@@ -159,6 +159,10 @@ jobs:
         target/debs/bullseye/libnl-nf-3-200_*.deb
         target/debs/bullseye/libnl-nf-3-dev_*.deb
         target/debs/bullseye/libyang_*.deb
+        target/debs/bullseye/libprotobuf*.deb
+        target/debs/bullseye/libprotoc*.deb
+        target/debs/bullseye/protobuf-compiler*.deb
+        target/debs/bullseye/libdashapi*.deb
     displayName: "Download common libs"
   - script: |
       set -ex
