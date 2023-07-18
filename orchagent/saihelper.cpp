@@ -75,10 +75,6 @@ sai_my_mac_api_t*           sai_my_mac_api;
 sai_generic_programmable_api_t* sai_generic_programmable_api;
 
 extern sai_object_id_t gSwitchId;
-extern bool gSairedisRecord;
-extern bool gSwssRecord;
-extern ofstream gRecordOfs;
-extern string gRecordFile;
 
 static map<string, sai_switch_hardware_access_bus_t> hardware_access_map =
 {
@@ -244,7 +240,7 @@ void initSaiApi()
     sai_log_set(SAI_API_GENERIC_PROGRAMMABLE,   SAI_LOG_LEVEL_NOTICE);
 }
 
-void initSaiRedis(const string &record_location, const std::string &record_filename)
+void initSaiRedis()
 {
     /**
      * NOTE: Notice that all Redis attributes here are using SAI_NULL_OBJECT_ID
@@ -255,9 +251,11 @@ void initSaiRedis(const string &record_location, const std::string &record_filen
     sai_attribute_t attr;
     sai_status_t status;
 
-    /* set recording dir before enable recording */
+    auto record_filename = Recorder::Instance().sairedis.getFile();
+    auto record_location = Recorder::Instance().sairedis.getLoc();
 
-    if (gSairedisRecord)
+    /* set recording dir before enable recording */
+    if (Recorder::Instance().sairedis.isRecord())
     {
         attr.id = SAI_REDIS_SWITCH_ATTR_RECORDING_OUTPUT_DIR;
         attr.value.s8list.count = (uint32_t)record_location.size();
@@ -286,15 +284,14 @@ void initSaiRedis(const string &record_location, const std::string &record_filen
     }
 
     /* Disable/enable SAI Redis recording */
-
     attr.id = SAI_REDIS_SWITCH_ATTR_RECORD;
-    attr.value.booldata = gSairedisRecord;
+    attr.value.booldata = Recorder::Instance().sairedis.isRecord();
 
     status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to %s SAI Redis recording, rv:%d",
-            gSairedisRecord ? "enable" : "disable", status);
+            Recorder::Instance().sairedis.isRecord() ? "enable" : "disable", status);
         exit(EXIT_FAILURE);
     }
 

@@ -2,11 +2,6 @@
 
 #include <gtest/gtest.h>
 
-bool gResponsePublisherRecord{false};
-bool gResponsePublisherLogRotate{false};
-std::ofstream gResponsePublisherRecordOfs;
-std::string gResponsePublisherRecordFile;
-
 using namespace swss;
 
 TEST(ResponsePublisher, TestPublish)

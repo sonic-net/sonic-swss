@@ -19,8 +19,6 @@ extern "C" {
 #include <string.h>
 
 #include <sys/time.h>
-#include "timestamp.h"
-
 #include <sairedis.h>
 #include <logger.h>
 
@@ -52,23 +50,13 @@ MacAddress gVxlanMacAddress;
 extern size_t gMaxBulkSize;
 
 #define DEFAULT_BATCH_SIZE  128
-int gBatchSize = DEFAULT_BATCH_SIZE;
+extern int gBatchSize;
 
-bool gSairedisRecord = true;
-bool gSwssRecord = true;
-bool gResponsePublisherRecord = false;
-bool gLogRotate = false;
-bool gResponsePublisherLogRotate = false;
 bool gSyncMode = false;
 sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
 string gAsicInstance;
 
 extern bool gIsNatSupported;
-
-ofstream gRecordOfs;
-string gRecordFile;
-ofstream gResponsePublisherRecordOfs;
-string gResponsePublisherRecordFile;
 
 #define SAIREDIS_RECORD_ENABLE 0x1
 #define SWSS_RECORD_ENABLE (0x1 << 1)
@@ -108,9 +96,9 @@ void sighup_handler(int signo)
     /*
      * Don't do any logging since they are using mutexes.
      */
-    gLogRotate = true;
-    gSaiRedisLogRotate = true;
-    gResponsePublisherLogRotate = true;
+    Recorder::Instance().swss.setRotate(true);
+    Recorder::Instance().sairedis.setRotate(true);
+    Recorder::Instance().respub.setRotate(true);
 }
 
 void syncd_apply_view()
@@ -346,10 +334,11 @@ int main(int argc, char **argv)
     int opt;
     sai_status_t status;
 
-    string record_location = ".";
-    string swss_rec_filename = "swss.rec";
-    string sairedis_rec_filename = "sairedis.rec";
-    string responsepublisher_rec_filename = "responsepublisher.rec";
+    gBatchSize = DEFAULT_BATCH_SIZE;
+    string record_location = Recorder::DEFAULT_DIR;
+    string swss_rec_filename = Recorder::SWSS_FNAME;
+    string sairedis_rec_filename = Recorder::SAIREDIS_FNAME;
+    string responsepublisher_rec_filename = Recorder::RESPPUB_FNAME;
     int record_type = 3; // Only swss and sairedis recordings enabled by default.
 
     while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:k:")) != -1)
@@ -437,8 +426,32 @@ int main(int argc, char **argv)
 
     SWSS_LOG_NOTICE("--- Starting Orchestration Agent ---");
 
+    /* Initialize sairedis recording parameters */
+    Recorder::Instance().sairedis.setRecord(
+        (record_type & SAIREDIS_RECORD_ENABLE) == SAIREDIS_RECORD_ENABLE
+    );
+    Recorder::Instance().sairedis.setLocation(record_location);
+    Recorder::Instance().sairedis.setFileName(sairedis_rec_filename);
+
+    /* Initialize sairedis */
     initSaiApi();
-    initSaiRedis(record_location, sairedis_rec_filename);
+    initSaiRedis();
+
+    /* Initialize remaining recorder parameters  */
+    Recorder::Instance().swss.setRecord(
+        (record_type & SWSS_RECORD_ENABLE) == SWSS_RECORD_ENABLE
+    );
+    Recorder::Instance().swss.setLocation(record_location);
+    Recorder::Instance().swss.setFileName(swss_rec_filename);
+    Recorder::Instance().swss.startRec(true);
+
+    Recorder::Instance().respub.setRecord(
+        (record_type & RESPONSE_PUBLISHER_RECORD_ENABLE) ==
+        RESPONSE_PUBLISHER_RECORD_ENABLE
+    );
+    Recorder::Instance().respub.setLocation(record_location);
+    Recorder::Instance().respub.setFileName(responsepublisher_rec_filename);
+    Recorder::Instance().respub.startRec(false);
 
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
@@ -449,45 +462,6 @@ int main(int argc, char **argv)
     attr.id = SAI_SWITCH_ATTR_FDB_EVENT_NOTIFY;
     attr.value.ptr = (void *)on_fdb_event;
     attrs.push_back(attr);
-
-    // Initialize recording parameters.
-    gSairedisRecord =
-        (record_type & SAIREDIS_RECORD_ENABLE) == SAIREDIS_RECORD_ENABLE;
-    gSwssRecord = (record_type & SWSS_RECORD_ENABLE) == SWSS_RECORD_ENABLE;
-    gResponsePublisherRecord =
-        (record_type & RESPONSE_PUBLISHER_RECORD_ENABLE) ==
-        RESPONSE_PUBLISHER_RECORD_ENABLE;
-
-    /* Disable/enable SwSS recording */
-    if (gSwssRecord)
-    {
-        gRecordFile = record_location + "/" + swss_rec_filename;
-        gRecordOfs.open(gRecordFile, std::ofstream::out | std::ofstream::app);
-        if (!gRecordOfs.is_open())
-        {
-            SWSS_LOG_ERROR("Failed to open SwSS recording file %s", gRecordFile.c_str());
-            exit(EXIT_FAILURE);
-        }
-        gRecordOfs << getTimestamp() << "|recording started" << endl;
-    }
-
-    // Disable/Enable response publisher recording.
-    if (gResponsePublisherRecord) 
-    {
-        gResponsePublisherRecordFile = record_location + "/" + responsepublisher_rec_filename;
-        gResponsePublisherRecordOfs.open(gResponsePublisherRecordFile, std::ofstream::out | std::ofstream::app);
-        if (!gResponsePublisherRecordOfs.is_open())
-        {
-            SWSS_LOG_ERROR("Failed to open Response Publisher recording file %s",
-                    gResponsePublisherRecordFile.c_str());
-            gResponsePublisherRecord = false;
-        } 
-        else 
-        {
-            gResponsePublisherRecordOfs << getTimestamp() << "|recording started"
-                << endl;
-        }
-    }
 
     attr.id = SAI_SWITCH_ATTR_PORT_STATE_CHANGE_NOTIFY;
     attr.value.ptr = (void *)on_port_state_change;
