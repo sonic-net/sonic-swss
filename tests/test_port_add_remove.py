@@ -248,4 +248,278 @@ class TestPortAddRemove(object):
         dvs.set_interface_status(PORT_B, port_admin_b)
         dvs.remove_vlan_member("6", PORT_A)
         dvs.remove_vlan_member("6", PORT_B)
+        dvs.remove_ip_address("Vlan6", "6.6.6.1/24")
         dvs.remove_vlan("6")
+
+
+@pytest.mark.usefixtures("dynamic_buffer")
+@pytest.mark.usefixtures("dvs_port_manager")
+class TestPortAddRemoveDup(object):
+    def test_add_remove_with_dup_lanes(self, testlog, dvs):
+        config_db = dvs.get_config_db()
+        app_db = dvs.get_app_db()
+        state_db = dvs.get_state_db()
+
+        # set mmu size
+        fvs = {"mmu_size": "12766208"}
+        state_db.create_entry("BUFFER_MAX_PARAM_TABLE", "global", fvs)
+
+        # get port count
+        port_count = len(self.dvs_port.get_port_ids())
+
+        # get port info
+        port_info = config_db.get_entry("PORT", PORT_A)
+
+        # remove buffer pg cfg for the port
+        pgs = config_db.get_keys("BUFFER_PG")
+        buffer_pgs = {}
+        for key in pgs:
+            if PORT_A in key:
+                buffer_pgs[key] = config_db.get_entry("BUFFER_PG", key)
+                config_db.delete_entry("BUFFER_PG", key)
+                app_db.wait_for_deleted_entry("BUFFER_PG_TABLE", key.replace(config_db.separator, app_db.separator))
+
+        # remove buffer queue cfg for the port
+        queues = config_db.get_keys("BUFFER_QUEUE")
+        buffer_queues = {}
+        for key in queues:
+            if PORT_A in key:
+                buffer_queues[key] = config_db.get_entry("BUFFER_QUEUE", key)
+                config_db.delete_entry("BUFFER_QUEUE", key)
+                app_db.wait_for_deleted_entry("BUFFER_QUEUE_TABLE", key.replace(config_db.separator, app_db.separator))
+
+        # shutdown port
+        dvs.port_admin_set(PORT_A, "down")
+
+        # remove port
+        self.dvs_port.remove_port_generic(PORT_A)
+        self.dvs_port.verify_port_count(port_count-1)
+
+        # make port config with duplicate lanes
+        dup_lanes = port_info["lanes"]
+        dup_lanes += ",{}".format(port_info["lanes"].split(",")[-1])
+
+        # add port
+        self.dvs_port.create_port_generic(PORT_A, dup_lanes, port_info["speed"])
+        self.dvs_port.verify_port_count(port_count)
+
+        # shutdown port
+        dvs.port_admin_set(PORT_A, "down")
+
+        # remove port
+        self.dvs_port.remove_port_generic(PORT_A)
+        self.dvs_port.verify_port_count(port_count-1)
+
+        # make port config
+        port_lanes = port_info.pop("lanes")
+        port_speed = port_info.pop("speed")
+
+        # re-add port
+        self.dvs_port.create_port_generic(PORT_A, port_lanes, port_speed, port_info)
+        self.dvs_port.verify_port_count(port_count)
+
+        # re-add buffer pg and queue cfg to the port
+        for key, pg in buffer_pgs.items():
+            config_db.update_entry("BUFFER_PG", key, pg)
+            app_db.wait_for_entry("BUFFER_PG_TABLE", key.replace(config_db.separator, app_db.separator))
+
+        for key, queue in buffer_queues.items():
+            config_db.update_entry("BUFFER_QUEUE", key, queue)
+            app_db.wait_for_entry("BUFFER_QUEUE_TABLE", key.replace(config_db.separator, app_db.separator))
+
+
+@pytest.mark.usefixtures("dvs_port_manager")
+class TestPortAddRemoveInvalidMandatoryParam(object):
+    @pytest.mark.parametrize(
+        "port,lanes,speed", [
+            pytest.param("Ethernet1000", "", "10000", id="empty-lanes-list"),
+            pytest.param("Ethernet1004", "1004,x,1006,1007", "10000", id="invalid-lanes-list"),
+            pytest.param("Ethernet1008", "1008,1009,1010,1011", "", id="empty-speed"),
+            pytest.param("Ethernet1012", "1012,1013,1014,1015", "invalid", id="invalid-speed"),
+            pytest.param("Ethernet1016", "1016,1017,1018,1019", "0", id="out-of-range-speed")
+        ]
+    )
+    def test_add_remove_neg(self, testlog, port, lanes, speed):
+        # get port count
+        port_asicdb_count = len(self.dvs_port.get_port_ids(dbid=self.dvs_port.ASIC_DB))
+        port_appdb_count = len(self.dvs_port.get_port_ids(dbid=self.dvs_port.APPL_DB))
+
+        # add port
+        self.dvs_port.create_port_generic(port, lanes, speed)
+        self.dvs_port.verify_port_count(port_appdb_count+1, self.dvs_port.APPL_DB)
+        self.dvs_port.verify_port_count(port_asicdb_count, self.dvs_port.ASIC_DB)
+
+        # remove port
+        self.dvs_port.remove_port_generic(port)
+        self.dvs_port.verify_port_count(port_appdb_count, self.dvs_port.APPL_DB)
+        self.dvs_port.verify_port_count(port_asicdb_count, self.dvs_port.ASIC_DB)
+
+
+@pytest.mark.usefixtures("dvs_port_manager")
+class TestPortAddRemoveInvalidSerdesParam(object):
+    @pytest.fixture(scope="class")
+    def port_attr(self):
+        meta_dict = {
+            "port": "Ethernet1000",
+            "lanes": "1000,1001,1002,1003",
+            "speed": "100000",
+            "port_asicdb_count": len(self.dvs_port.get_port_ids(dbid=self.dvs_port.ASIC_DB)),
+            "port_appdb_count": len(self.dvs_port.get_port_ids(dbid=self.dvs_port.APPL_DB))
+        }
+        yield meta_dict
+
+    def verify_add_remove(self, attr, qualifiers):
+        # add port
+        self.dvs_port.create_port_generic(attr["port"], attr["lanes"], attr["speed"], qualifiers)
+        self.dvs_port.verify_port_count(attr["port_appdb_count"]+1, self.dvs_port.APPL_DB)
+        self.dvs_port.verify_port_count(attr["port_asicdb_count"], self.dvs_port.ASIC_DB)
+
+        # remove port
+        self.dvs_port.remove_port_generic(attr["port"])
+        self.dvs_port.verify_port_count(attr["port_appdb_count"], self.dvs_port.APPL_DB)
+        self.dvs_port.verify_port_count(attr["port_asicdb_count"], self.dvs_port.ASIC_DB)
+
+    @pytest.mark.parametrize(
+        "serdes", [
+            pytest.param("preemphasis", id="preemphasis"),
+            pytest.param("idriver", id="idriver"),
+            pytest.param("ipredriver", id="ipredriver"),
+            pytest.param("pre1", id="pre1"),
+            pytest.param("pre2", id="pre2"),
+            pytest.param("pre3", id="pre3"),
+            pytest.param("main", id="main"),
+            pytest.param("post1", id="post1"),
+            pytest.param("post2", id="post2"),
+            pytest.param("post3", id="post3"),
+            pytest.param("attn", id="attn")
+        ]
+    )
+    def test_add_remove_neg(self, testlog, port_attr, serdes):
+        qualifiers = { serdes: "" }
+        self.verify_add_remove(port_attr, qualifiers)
+
+        qualifiers = { serdes: "invalid" }
+        self.verify_add_remove(port_attr, qualifiers)
+
+
+@pytest.mark.usefixtures("dvs_port_manager")
+class TestPortAddRemoveInvalidParam(object):
+    def verify_add_remove(self, qualifiers):
+        port = "Ethernet1000"
+        lanes = "1000,1001,1002,1003"
+        speed = "100000"
+
+        # get port count
+        port_asicdb_count = len(self.dvs_port.get_port_ids(dbid=self.dvs_port.ASIC_DB))
+        port_appdb_count = len(self.dvs_port.get_port_ids(dbid=self.dvs_port.APPL_DB))
+
+        # add port
+        self.dvs_port.create_port_generic(port, lanes, speed, qualifiers)
+        self.dvs_port.verify_port_count(port_appdb_count+1, self.dvs_port.APPL_DB)
+        self.dvs_port.verify_port_count(port_asicdb_count, self.dvs_port.ASIC_DB)
+
+        # remove port
+        self.dvs_port.remove_port_generic(port)
+        self.dvs_port.verify_port_count(port_appdb_count, self.dvs_port.APPL_DB)
+        self.dvs_port.verify_port_count(port_asicdb_count, self.dvs_port.ASIC_DB)
+
+    def test_add_remove_neg_alias(self, testlog):
+        qualifiers = { "alias": "" }
+        self.verify_add_remove(qualifiers)
+
+    def test_add_remove_neg_index(self, testlog):
+        qualifiers = { "index": "" }
+        self.verify_add_remove(qualifiers)
+
+        qualifiers = { "index": "invalid" }
+        self.verify_add_remove(qualifiers)
+
+    def test_add_remove_neg_autoneg(self, testlog):
+        qualifiers = { "autoneg": "" }
+        self.verify_add_remove(qualifiers)
+
+        qualifiers = { "autoneg": "invalid" }
+        self.verify_add_remove(qualifiers)
+
+    def test_add_remove_neg_adv_speeds(self, testlog):
+        qualifiers = { "adv_speeds": "" }
+        self.verify_add_remove(qualifiers)
+
+        qualifiers = { "adv_speeds": "0" }
+        self.verify_add_remove(qualifiers)
+
+        qualifiers = { "adv_speeds": "invalid" }
+        self.verify_add_remove(qualifiers)
+
+    def test_add_remove_neg_interface_type(self, testlog):
+        qualifiers = { "interface_type": "" }
+        self.verify_add_remove(qualifiers)
+
+        qualifiers = { "interface_type": "invalid" }
+        self.verify_add_remove(qualifiers)
+
+    def test_add_remove_neg_adv_interface_types(self, testlog):
+        qualifiers = { "adv_interface_types": "" }
+        self.verify_add_remove(qualifiers)
+
+        qualifiers = { "adv_interface_types": "invalid" }
+        self.verify_add_remove(qualifiers)
+
+    def test_add_remove_neg_fec(self, testlog):
+        qualifiers = { "fec": "" }
+        self.verify_add_remove(qualifiers)
+
+        qualifiers = { "fec": "invalid" }
+        self.verify_add_remove(qualifiers)
+
+    def test_add_remove_neg_mtu(self, testlog):
+        qualifiers = { "mtu": "" }
+        self.verify_add_remove(qualifiers)
+
+        qualifiers = { "mtu": "0" }
+        self.verify_add_remove(qualifiers)
+
+        qualifiers = { "mtu": "invalid" }
+        self.verify_add_remove(qualifiers)
+
+    def test_add_remove_neg_tpid(self, testlog):
+        qualifiers = { "tpid": "" }
+        self.verify_add_remove(qualifiers)
+
+        qualifiers = { "tpid": "invalid" }
+        self.verify_add_remove(qualifiers)
+
+    def test_add_remove_neg_pfc_asym(self, testlog):
+        qualifiers = { "pfc_asym": "" }
+        self.verify_add_remove(qualifiers)
+
+        qualifiers = { "pfc_asym": "invalid" }
+        self.verify_add_remove(qualifiers)
+
+    def test_add_remove_neg_learn_mode(self, testlog):
+        qualifiers = { "learn_mode": "" }
+        self.verify_add_remove(qualifiers)
+
+        qualifiers = { "learn_mode": "invalid" }
+        self.verify_add_remove(qualifiers)
+
+    def test_add_remove_neg_link_training(self, testlog):
+        qualifiers = { "link_training": "" }
+        self.verify_add_remove(qualifiers)
+
+        qualifiers = { "link_training": "invalid" }
+        self.verify_add_remove(qualifiers)
+
+    def test_add_remove_neg_role(self, testlog):
+        qualifiers = { "role": "" }
+        self.verify_add_remove(qualifiers)
+
+        qualifiers = { "role": "invalid" }
+        self.verify_add_remove(qualifiers)
+
+    def test_add_remove_neg_admin_status(self, testlog):
+        qualifiers = { "admin_status": "" }
+        self.verify_add_remove(qualifiers)
+
+        qualifiers = { "admin_status": "invalid" }
+        self.verify_add_remove(qualifiers)
