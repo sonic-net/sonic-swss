@@ -24,6 +24,13 @@
 
 extern sai_object_id_t gVirtualRouterId;
 
+typedef enum
+{
+    MONITOR_SESSION_STATE_UNKNOWN,
+    MONITOR_SESSION_STATE_UP,
+    MONITOR_SESSION_STATE_DOWN,
+} monitor_session_state_t;
+
 const request_description_t vnet_request_description = {
     { REQ_T_STRING },
     {
@@ -286,6 +293,33 @@ const request_description_t vnet_route_description = {
     { }
 };
 
+const request_description_t monitor_state_request_description = {
+            { REQ_T_IP, REQ_T_IP_PREFIX, },
+            {
+                { "state",  REQ_T_STRING },
+            },
+            { "state" }
+};
+
+class MonitorStateRequest : public Request
+{
+public:
+    MonitorStateRequest() : Request(monitor_state_request_description, '|') { }
+};
+
+class MonitorOrch : public Orch2
+{
+public:
+    MonitorOrch(swss::DBConnector *db, std::string tableName);
+    virtual ~MonitorOrch(void);
+
+private:
+    virtual bool addOperation(const Request& request);
+    virtual bool delOperation(const Request& request);
+
+    MonitorStateRequest request_;
+};
+
 class VNetRouteRequest : public Request
 {
 public:
@@ -326,9 +360,35 @@ struct BfdSessionInfo
     NextHopKey endpoint;
 };
 
+struct MonitorSessionInfo
+{
+    monitor_session_state_t state;
+    NextHopKey endpoint;
+    int ref_count;
+};
+
+struct MonitorUpdate
+{
+    monitor_session_state_t state;
+    IpAddress monitor;
+    IpPrefix prefix;
+    std::string vnet;
+};
+struct VNetTunnelRouteEntry
+{
+    // The nhg_key is the key for the next hop group which is currently active in hardware.
+    // For priority routes, this can be a subset of eith primary or secondary NHG or an empty NHG.
+    NextHopGroupKey nhg_key;
+    // For regular Ecmp rotues the priamry and secondary fields wil lbe empty. For priority
+    // routes they wil lcontain the origna lprimary and secondary NHGs.
+    NextHopGroupKey primary;
+    NextHopGroupKey secondary;
+};
+
 typedef std::map<NextHopGroupKey, NextHopGroupInfo> VNetNextHopGroupInfoTable;
-typedef std::map<IpPrefix, NextHopGroupKey> VNetTunnelRouteTable;
+typedef std::map<IpPrefix, VNetTunnelRouteEntry> VNetTunnelRouteTable;
 typedef std::map<IpAddress, BfdSessionInfo> BfdSessionTable;
+typedef std::map<IpPrefix, std::map<IpAddress, MonitorSessionInfo>> MonitorSessionTable;
 typedef std::map<IpAddress, VNetNextHopInfo> VNetEndpointInfoTable;
 
 class VNetRouteOrch : public Orch2, public Subject, public Observer
@@ -343,6 +403,7 @@ public:
     void detach(Observer* observer, const IpAddress& dstAddr);
 
     void update(SubjectType, void *);
+    void updateMonitorState(string& op, const IpPrefix& prefix , const IpAddress& endpoint, string state);
 
 private:
     virtual bool addOperation(const Request& request);
@@ -356,8 +417,16 @@ private:
 
     bool hasNextHopGroup(const string&, const NextHopGroupKey&);
     sai_object_id_t getNextHopGroupId(const string&, const NextHopGroupKey&);
-    bool addNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj);
+    bool addNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj,
+                            const string& monitoring);
     bool removeNextHopGroup(const string&, const NextHopGroupKey&, VNetVrfObject *vrf_obj);
+    bool createNextHopGroup(const string&, NextHopGroupKey&, VNetVrfObject *vrf_obj,
+                            const string& monitoring);
+    NextHopGroupKey getActiveNHSet(const string&, NextHopGroupKey&, const IpPrefix& );
+
+    bool selectNextHopGroup(const string&, NextHopGroupKey&, NextHopGroupKey&, const string&, IpPrefix&,
+                            VNetVrfObject *vrf_obj, NextHopGroupKey&,
+                            const std::map<NextHopKey,IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
 
     void createBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr);
     void removeBfdSession(const string& vnet, const NextHopKey& endpoint, const IpAddress& ipAddr);
@@ -369,10 +438,12 @@ private:
     void removeRouteAdvertisement(IpPrefix& ipPrefix);
 
     void updateVnetTunnel(const BfdUpdate&);
+    void updateVnetTunnelCustomMonitor(const MonitorUpdate& update);
     bool updateTunnelRoute(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op);
 
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, NextHopGroupKey& nexthops, string& op, string& profile,
+                    const string& monitoring, NextHopGroupKey& nexthops_secondary, const IpPrefix& adv_prefix,
                     const std::map<NextHopKey, IpAddress>& monitors=std::map<NextHopKey, IpAddress>());
 
     template<typename T>
@@ -388,6 +459,8 @@ private:
     std::map<std::string, VNetTunnelRouteTable> syncd_tunnel_routes_;
     BfdSessionTable bfd_sessions_;
     std::map<std::string, VNetEndpointInfoTable> nexthop_info_;
+    std::map<IpPrefix, IpPrefix> prefix_to_adv_prefix_;
+    std::map<IpPrefix, int> adv_prefix_refcount_;
     ProducerStateTable bfd_session_producer_;
     shared_ptr<DBConnector> state_db_;
     unique_ptr<Table> state_vnet_rt_tunnel_table_;
