@@ -29,14 +29,6 @@ struct EniEntry
     dash::eni::Eni metadata;
 };
 
-struct QosEntry
-{
-    std::string qos_id;
-    uint32_t bw;
-    uint32_t cps;
-    uint32_t flows;
-};
-
 typedef std::map<std::string, dash::appliance::Appliance> ApplianceTable;
 typedef std::map<std::string, dash::route_type::RouteType> RoutingTypeTable;
 typedef std::map<std::string, EniEntry> EniTable;
