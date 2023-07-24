@@ -24,6 +24,10 @@ parameters:
   type: string
   default: '$(BUILD_BRANCH)'
 
+- name: sonic_buildimage_ubuntu20_04
+  type: string
+  default: 'master'
+
 - name: asan
   type: boolean
   default: false
@@ -63,12 +67,24 @@ jobs:
       runBranch: 'refs/heads/${{ parameters.swss_common_branch }}'
       path: $(Build.ArtifactStagingDirectory)/download
     displayName: "Download sonic swss common deb packages"
+  - task: DownloadPipelineArtifact@2
+    inputs:
+      source: specific
+      project: build
+      pipeline: sonic-net.sonic-buildimage-ubuntu20.04
+      artifact: sonic-buildimage.amd64.ubuntu20_04
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/${{ parameters.sonic_buildimage_ubuntu20_04 }}'
+      path: $(Build.ArtifactStagingDirectory)/download
+    displayName: "Download sonic buildimage ubuntu20.04 deb packages"
 
   - script: |
       set -ex
       sudo .azure-pipelines/build_and_install_module.sh
 
       sudo apt-get install -y libhiredis0.14 libyang0.16
+      sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/libprotobuf*_amd64.deb $(Build.ArtifactStagingDirectory)/download/libprotobuf-lite*_amd64.deb $(Build.ArtifactStagingDirectory)/download/python3-protobuf*_amd64.deb 
+      sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/libdashapi*.deb
       sudo dpkg -i --force-confask,confnew $(Build.ArtifactStagingDirectory)/download/libswsscommon_1.0.0_amd64.deb || apt-get install -f
       sudo dpkg -i $(Build.ArtifactStagingDirectory)/download/python3-swsscommon_1.0.0_amd64.deb
 
