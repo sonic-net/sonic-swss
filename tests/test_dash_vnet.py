@@ -227,7 +227,8 @@ class TestDash(object):
     def test_vnet_map(self, dvs):
         dashobj = Dash(dvs)
         self.vnet = "Vnet1"
-        self.ip = "10.1.1.1"
+        self.ip1 = "10.1.1.1"
+        self.ip2 = "10.1.1.2"
         self.mac_address = "F4:93:9F:EF:C4:7E"
         self.routing_type = "vnet_encap"
         self.underlay_ip = "101.1.2.3"
@@ -236,11 +237,12 @@ class TestDash(object):
         pb.action_type = RoutingType.ROUTING_TYPE_VNET_ENCAP
         pb.underlay_ip.ipv4 = int(ipaddress.ip_address(self.underlay_ip))
 
-        dashobj.create_vnet_map(self.vnet, self.ip, {"pb": pb.SerializeToString()})
+        dashobj.create_vnet_map(self.vnet, self.ip1, {"pb": pb.SerializeToString()})
+        dashobj.create_vnet_map(self.vnet, self.ip2, {"pb": pb.SerializeToString()})
         time.sleep(3)
 
         vnet_ca_to_pa_maps = dashobj.asic_dash_outbound_ca_to_pa_table.get_keys()
-        assert vnet_ca_to_pa_maps
+        assert len(vnet_ca_to_pa_maps) >= 2
         fvs = dashobj.asic_dash_outbound_ca_to_pa_table[vnet_ca_to_pa_maps[0]]
         for fv in fvs:
             if fv[0] == "SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_UNDERLAY_DIP":
