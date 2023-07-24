@@ -329,7 +329,6 @@ task_process_status DashAclOrch::taskUpdateDashAclRule(
         return task_need_retry;
     }
 
-    // auto &acl_rule = m_dash_acl_rule_table[key];
     if (m_dash_acl_rule_table.find(key) != m_dash_acl_rule_table.end())
     {
         // Remove the old ACL rule
