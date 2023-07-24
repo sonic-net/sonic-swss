@@ -9,8 +9,8 @@
 #include <utility>
 
 extern "C" {
-#include "sai.h"
-#include "saistatus.h"
+#include <sai.h>
+#include <saistatus.h>
 }
 
 #include "dbconnector.h"
