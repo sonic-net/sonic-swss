@@ -1858,7 +1858,7 @@ def vct(request):
 @pytest.fixture
 def testlog(request, dvs):
     dvs.runcmd(f"logger -t pytest === start test {request.node.nodeid} ===")
-    yield
+    yield testlog
     dvs.runcmd(f"logger -t pytest === finish test {request.node.nodeid} ===")
 
 ################# DVSLIB module manager fixtures #############################
@@ -1903,7 +1903,6 @@ def dvs_vlan_manager(request, dvs):
 @pytest.fixture(scope="class")
 def dvs_port_manager(request, dvs):
     request.cls.dvs_port = dvs_port.DVSPort(dvs.get_asic_db(),
-                                            dvs.get_app_db(),
                                             dvs.get_config_db())
 
 
