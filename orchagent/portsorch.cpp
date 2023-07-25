@@ -4014,7 +4014,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                         if (setPortSerdesAttribute(p.m_port_id, gSwitchId, serdes_attr))
                         {
-                            SWSS_LOG_NOTICE("Set port %s preemphasis is success", p.m_alias.c_str());
+                            SWSS_LOG_NOTICE("Set port %s SI settings is successful", p.m_alias.c_str());
                             p.m_preemphasis = serdes_attr;
                             m_portList[p.m_alias] = p;
                         }
