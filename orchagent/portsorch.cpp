@@ -4020,7 +4020,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         }
                         else
                         {
-                            SWSS_LOG_ERROR("Failed to set port %s pre-emphasis", p.m_alias.c_str());
+                            SWSS_LOG_ERROR("Failed to set port %s SI settings", p.m_alias.c_str());
                             it++;
                             continue;
                         }
