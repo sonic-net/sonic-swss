@@ -322,7 +322,7 @@ bool PortsOrch::setVoqInbandIntf(string &alias, string &type)
     return true;
 }
 
-bool PortsOrch::getRecircPort(Port &p, string role)
+bool PortsOrch::getRecircPort(Port &p, Port::Role role)
 {
     return true;
 }
@@ -443,7 +443,7 @@ bool PortsOrch::setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip)
     return true;
 }
 
-bool PortsOrch::setBridgePortLearnMode(Port &port, string learn_mode)
+bool PortsOrch::setBridgePortLearnMode(Port &port, sai_bridge_port_fdb_learning_mode_t learn_mode)
 {
     return true;
 }
@@ -493,7 +493,7 @@ bool PortsOrch::setDistributionOnLagMember(Port &lagMember, bool enableDistribut
     return true;
 }
 
-bool PortsOrch::addPort(const set<int> &lane_set, uint32_t speed, int an, string fec)
+bool PortsOrch::addPort(const PortConfig &port)
 {
     return true;
 }
@@ -503,7 +503,7 @@ sai_status_t PortsOrch::removePort(sai_object_id_t port_id)
     return SAI_STATUS_SUCCESS;
 }
 
-bool PortsOrch::initPort(const string &alias, const string &role, const int index, const set<int> &lane_set)
+bool PortsOrch::initPort(const PortConfig &port)
 {
     return true;
 }
@@ -527,7 +527,7 @@ bool PortsOrch::setPortMtu(const Port &port, sai_uint32_t mtu)
     return true;
 }
 
-bool PortsOrch::setPortTpid(sai_object_id_t id, sai_uint16_t tpid)
+bool PortsOrch::setPortTpid(Port &port, sai_uint16_t tpid)
 {
     return true;
 }
@@ -542,12 +542,12 @@ bool PortsOrch::getPortPvid(Port &port, sai_uint32_t &pvid)
     return true;
 }
 
-bool PortsOrch::setPortFec(Port &port, std::string &mode)
+bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t fec_mode)
 {
     return true;
 }
 
-bool PortsOrch::setPortPfcAsym(Port &port, string pfc_asym)
+bool PortsOrch::setPortPfcAsym(Port &port, sai_port_priority_flow_control_mode_t pfc_asym)
 {
     return true;
 }
@@ -596,7 +596,7 @@ bool PortsOrch::setGearboxPortAttr(const Port &port, dest_port_type_t port_type,
     return true;
 }
 
-task_process_status PortsOrch::setPortAdvSpeeds(sai_object_id_t port_id, std::vector<sai_uint32_t> &speed_list)
+task_process_status PortsOrch::setPortAdvSpeeds(Port &port, std::set<sai_uint32_t> &speed_list)
 {
     return task_success;
 }
@@ -611,22 +611,17 @@ bool PortsOrch::isAutoNegEnabled(sai_object_id_t id)
     return true;
 }
 
-task_process_status PortsOrch::setPortAutoNeg(sai_object_id_t id, int an)
+task_process_status PortsOrch::setPortAutoNeg(Port &port, bool autoneg)
 {
     return task_success;
 }
 
-bool PortsOrch::setPortFecMode(sai_object_id_t id, int fec)
-{
-    return true;
-}
-
-task_process_status PortsOrch::setPortInterfaceType(sai_object_id_t id, sai_port_interface_type_t interface_type)
+task_process_status PortsOrch::setPortInterfaceType(Port &port, sai_port_interface_type_t interface_type)
 {
     return task_success;
 }
 
-task_process_status PortsOrch::setPortAdvInterfaceTypes(sai_object_id_t id, std::vector<uint32_t> &interface_types)
+task_process_status PortsOrch::setPortAdvInterfaceTypes(Port &port, std::set<sai_port_interface_type_t> &interface_types)
 {
     return task_success;
 }
@@ -646,21 +641,6 @@ void PortsOrch::updateDbPortOperSpeed(Port &port, sai_uint32_t speed)
 
 void PortsOrch::getPortSerdesVal(const std::string &s, std::vector<uint32_t> &lane_values, int base)
 {
-}
-
-bool PortsOrch::getPortAdvSpeedsVal(const std::string &s, std::vector<uint32_t> &speed_values)
-{
-    return true;
-}
-
-bool PortsOrch::getPortInterfaceTypeVal(const std::string &s, sai_port_interface_type_t &interface_type)
-{
-    return true;
-}
-
-bool PortsOrch::getPortAdvInterfaceTypesVal(const std::string &s, std::vector<uint32_t> &type_values)
-{
-    return true;
 }
 
 void PortsOrch::removePortSerdesAttribute(sai_object_id_t port_id)

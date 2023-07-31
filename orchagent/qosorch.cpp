@@ -28,6 +28,9 @@ extern PortsOrch *gPortsOrch;
 extern QosOrch *gQosOrch;
 extern sai_object_id_t gSwitchId;
 extern CrmOrch *gCrmOrch;
+extern string gMySwitchType;
+extern string gMyHostName;
+extern string gMyAsicName;
 
 map<string, sai_ecn_mark_mode_t> ecn_map = {
     {"ecn_none", SAI_ECN_MARK_MODE_NONE},
@@ -1626,22 +1629,58 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
 bool QosOrch::applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, sai_object_id_t scheduler_profile_id)
 {
     SWSS_LOG_ENTER();
+    sai_object_id_t queue_id;
+    Port input_port = port;
+    sai_object_id_t group_id = 0;
 
-    if (port.m_queue_ids.size() <= queue_ind)
+    if (gMySwitchType == "voq") 
     {
-        SWSS_LOG_ERROR("Invalid queue index specified:%zd", queue_ind);
-        return false;
+        if(port.m_system_port_info.type == SAI_SYSTEM_PORT_TYPE_REMOTE)
+        {
+            return true;
+        }
+       
+        // Get local port from system port. port is pointing to local port now
+        if (!gPortsOrch->getPort(port.m_system_port_info.local_port_oid, port))
+        {
+            SWSS_LOG_ERROR("Port with alias:%s not found", port.m_alias.c_str());
+            return task_process_status::task_invalid_entry;
+        }
+
+        if (port.m_queue_ids.size() <= queue_ind)
+        {
+            SWSS_LOG_ERROR("Invalid queue index specified:%zd", queue_ind);
+            return false;
+        }
+        queue_id = port.m_queue_ids[queue_ind];
+        
+        group_id = getSchedulerGroup(port, queue_id);
+        if(group_id == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_ERROR("Failed to find a scheduler group for port: %s queue: %zu", port.m_alias.c_str(), queue_ind);
+            return false;
+        }
+
+        // port is set back to system port
+        port = input_port;
     }
-
-    const sai_object_id_t queue_id = port.m_queue_ids[queue_ind];
-
-    const sai_object_id_t group_id = getSchedulerGroup(port, queue_id);
-    if(group_id == SAI_NULL_OBJECT_ID)
+    else
     {
-        SWSS_LOG_ERROR("Failed to find a scheduler group for port: %s queue: %zu", port.m_alias.c_str(), queue_ind);
-        return false;
+        if (port.m_queue_ids.size() <= queue_ind)
+        {
+            SWSS_LOG_ERROR("Invalid queue index specified:%zd", queue_ind);
+            return false;
+        }
+        queue_id = port.m_queue_ids[queue_ind];
+        
+        group_id = getSchedulerGroup(port, queue_id);
+        if(group_id == SAI_NULL_OBJECT_ID)
+        {
+            SWSS_LOG_ERROR("Failed to find a scheduler group for port: %s queue: %zu", port.m_alias.c_str(), queue_ind);
+            return false;
+        }
     }
-
+    
     /* Apply scheduler profile to all port groups  */
     sai_attribute_t attr;
     sai_status_t    sai_status;
@@ -1672,12 +1711,25 @@ bool QosOrch::applyWredProfileToQueue(Port &port, size_t queue_ind, sai_object_i
     sai_status_t    sai_status;
     sai_object_id_t queue_id;
 
-    if (port.m_queue_ids.size() <= queue_ind)
+    if (gMySwitchType == "voq") 
     {
-        SWSS_LOG_ERROR("Invalid queue index specified:%zd", queue_ind);
-        return false;
+        std :: vector<sai_object_id_t> queue_ids = gPortsOrch->getPortVoQIds(port);
+        if (queue_ids.size() <= queue_ind)
+        {
+            SWSS_LOG_ERROR("Invalid voq index specified:%zd", queue_ind);
+            return task_process_status::task_invalid_entry;
+        }
+        queue_id = queue_ids[queue_ind];
+    } 
+    else
+    {
+        if (port.m_queue_ids.size() <= queue_ind)
+        {
+            SWSS_LOG_ERROR("Invalid queue index specified:%zd", queue_ind);
+            return false;
+        }
+        queue_id = port.m_queue_ids[queue_ind];
     }
-    queue_id = port.m_queue_ids[queue_ind];
 
     attr.id = SAI_QUEUE_ATTR_WRED_PROFILE_ID;
     attr.value.oid = sai_wred_profile;
@@ -1703,23 +1755,54 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer, KeyOpFieldsVal
     string op = kfvOp(tuple);
     size_t queue_ind = 0;
     vector<string> tokens;
+    bool local_port = false;
+    string local_port_name;
 
     sai_uint32_t range_low, range_high;
     vector<string> port_names;
 
     ref_resolve_status  resolve_result;
-    // sample "QUEUE: {Ethernet4|0-1}"
+    /*
+        Input sample "QUEUE : {Ethernet4|0-1}" or
+                     "QUEUE : {STG01-0101-0400-01T2-LC6|ASIC0|Ethernet4|0-1}"
+    */
     tokens = tokenize(key, config_db_key_delimiter);
-    if (tokens.size() != 2)
+
+    if (gMySwitchType == "voq") 
     {
-        SWSS_LOG_ERROR("malformed key:%s. Must contain 2 tokens", key.c_str());
-        return task_process_status::task_invalid_entry;
+        if (tokens.size() != 4)
+        {
+            SWSS_LOG_ERROR("malformed key:%s. Must contain 4 tokens", key.c_str());
+            return task_process_status::task_invalid_entry;
+        }
+
+        port_names = tokenize(tokens[0] + config_db_key_delimiter + tokens[1] + config_db_key_delimiter + tokens[2], list_item_delimiter);
+        if (!parseIndexRange(tokens[3], range_low, range_high))
+        {
+            SWSS_LOG_ERROR("Failed to parse range:%s", tokens[3].c_str());
+            return task_process_status::task_invalid_entry;
+        }
+
+        if(tokens[0] == gMyHostName)
+        {
+           local_port = true;
+           local_port_name = tokens[2];
+           SWSS_LOG_INFO("System port %s is local port %d local port name %s", port_names[0].c_str(), local_port, local_port_name.c_str());
+        }
     }
-    port_names = tokenize(tokens[0], list_item_delimiter);
-    if (!parseIndexRange(tokens[1], range_low, range_high))
+    else
     {
-        SWSS_LOG_ERROR("Failed to parse range:%s", tokens[1].c_str());
-        return task_process_status::task_invalid_entry;
+        if (tokens.size() != 2)
+        {
+            SWSS_LOG_ERROR("malformed key:%s. Must contain 2 tokens", key.c_str());
+            return task_process_status::task_invalid_entry;
+        }
+        port_names = tokenize(tokens[0], list_item_delimiter);
+        if (!parseIndexRange(tokens[1], range_low, range_high))
+        {
+            SWSS_LOG_ERROR("Failed to parse range:%s", tokens[1].c_str());
+            return task_process_status::task_invalid_entry;
+        }
     }
 
     bool donotChangeScheduler = false;
@@ -1813,6 +1896,12 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer, KeyOpFieldsVal
     {
         Port port;
         SWSS_LOG_DEBUG("processing port:%s", port_name.c_str());
+
+        if(local_port == true)
+        {
+            port_name = local_port_name;
+        }
+
         if (!gPortsOrch->getPort(port_name, port))
         {
             SWSS_LOG_ERROR("Port with alias:%s not found", port_name.c_str());

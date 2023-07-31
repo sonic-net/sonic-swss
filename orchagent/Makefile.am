@@ -4,6 +4,7 @@ INCLUDES = -I $(top_srcdir)/lib \
            -I switch \
            -I flex_counter \
            -I debug_counter \
+           -I port \
            -I pbh \
            -I nhg
 
@@ -58,6 +59,7 @@ orchagent_SOURCES = \
             mplsrouteorch.cpp \
             neighorch.cpp \
             intfsorch.cpp \
+            port/porthlpr.cpp \
             portsorch.cpp \
             fabricportsorch.cpp \
             fgnhgorch.cpp \
