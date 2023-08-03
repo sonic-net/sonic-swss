@@ -41,6 +41,24 @@ static inline bool operator==(const sai_route_entry_t& a, const sai_route_entry_
         ;
 }
 
+static inline bool operator==(const sai_nat_entry_t& a, const sai_nat_entry_t& b)
+{
+    return a.switch_id == b.switch_id
+        && a.vr_id == b.vr_id
+        && a.nat_type == b.nat_type
+        && a.data.key.src_ip == b.data.key.src_ip
+        && a.data.key.dst_ip == b.data.key.dst_ip
+        && a.data.key.proto == b.data.key.proto
+        && a.data.key.l4_src_port == b.data.key.l4_src_port
+        && a.data.key.l4_dst_port == b.data.key.l4_dst_port
+        && a.data.mask.src_ip == b.data.mask.src_ip
+        && a.data.mask.dst_ip == b.data.mask.dst_ip
+        && a.data.mask.proto == b.data.mask.proto
+        && a.data.mask.l4_src_port == b.data.mask.l4_src_port
+        && a.data.mask.l4_dst_port == b.data.mask.l4_dst_port
+        ;
+}
+
 static inline bool operator==(const sai_inseg_entry_t& a, const sai_inseg_entry_t& b)
 {
     return a.switch_id == b.switch_id
@@ -76,6 +94,29 @@ namespace std
             boost::hash_combine(seed, a.switch_id);
             boost::hash_combine(seed, a.vr_id);
             boost::hash_combine(seed, a.destination);
+            return seed;
+        }
+    };
+
+    template <>
+    struct hash<sai_nat_entry_t>
+    {
+        size_t operator()(const sai_nat_entry_t& a) const noexcept
+        {
+            size_t seed = 0;
+            boost::hash_combine(seed, a.switch_id);
+            boost::hash_combine(seed, a.vr_id);
+            boost::hash_combine(seed, a.nat_type);
+            boost::hash_combine(seed, a.data.key.src_ip);
+            boost::hash_combine(seed, a.data.key.dst_ip);
+            boost::hash_combine(seed, a.data.key.proto);
+            boost::hash_combine(seed, a.data.key.l4_src_port);
+            boost::hash_combine(seed, a.data.key.l4_dst_port);
+            boost::hash_combine(seed, a.data.mask.src_ip);
+            boost::hash_combine(seed, a.data.mask.dst_ip);
+            boost::hash_combine(seed, a.data.mask.proto);
+            boost::hash_combine(seed, a.data.mask.l4_src_port);
+            boost::hash_combine(seed, a.data.mask.l4_dst_port);
             return seed;
         }
     };
@@ -141,6 +182,19 @@ struct SaiBulkerTraits<sai_route_api_t>
     using bulk_create_entry_fn = sai_bulk_create_route_entry_fn;
     using bulk_remove_entry_fn = sai_bulk_remove_route_entry_fn;
     using bulk_set_entry_attribute_fn = sai_bulk_set_route_entry_attribute_fn;
+};
+
+template<>
+struct SaiBulkerTraits<sai_nat_api_t>
+{
+    using entry_t = sai_nat_entry_t;
+    using api_t = sai_nat_api_t;
+    using create_entry_fn = sai_create_nat_entry_fn;
+    using remove_entry_fn = sai_remove_nat_entry_fn;
+    using set_entry_attribute_fn = sai_set_nat_entry_attribute_fn;
+    using bulk_create_entry_fn = sai_bulk_create_nat_entry_fn;
+    using bulk_remove_entry_fn = sai_bulk_remove_nat_entry_fn;
+    using bulk_set_entry_attribute_fn = sai_bulk_set_nat_entry_attribute_fn;
 };
 
 template<>
@@ -572,6 +626,15 @@ inline EntityBulker<sai_route_api_t>::EntityBulker(sai_route_api_t *api, size_t 
     create_entries = api->create_route_entries;
     remove_entries = api->remove_route_entries;
     set_entries_attribute = api->set_route_entries_attribute;
+}
+
+template <>
+inline EntityBulker<sai_nat_api_t>::EntityBulker(sai_nat_api_t *api, size_t max_bulk_size) :
+    max_bulk_size(max_bulk_size)
+{
+    create_entries = api->create_nat_entries;
+    remove_entries = api->remove_nat_entries;
+    set_entries_attribute = api->set_nat_entries_attribute;
 }
 
 template <>
