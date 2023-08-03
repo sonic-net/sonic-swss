@@ -84,7 +84,11 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
     outbound_routing_attr.value.u32 = sOutboundAction[ctxt.metadata.action_type()];
     outbound_routing_attrs.push_back(outbound_routing_attr);
 
-    if (ctxt.metadata.action_type() == dash::route_type::RoutingType::ROUTING_TYPE_VNET
+    if (ctxt.metadata.action_type() == dash::route_type::RoutingType::ROUTING_TYPE_DIRECT)
+    {
+        // Intentional empty line, To direct action type, don't need set extra attributes
+    }
+    else if (ctxt.metadata.action_type() == dash::route_type::RoutingType::ROUTING_TYPE_VNET
         && ctxt.metadata.has_vnet()
         && !ctxt.metadata.vnet().empty())
     {   
@@ -110,8 +114,7 @@ bool DashRouteOrch::addOutboundRouting(const string& key, OutboundRoutingBulkCon
     }
     else
     {
-        
-        SWSS_LOG_WARN("Attribute error for outbound routing entry %s", key.c_str());
+        SWSS_LOG_WARN("Attribute action for outbound routing entry %s", key.c_str());
         return false;
     }
 
