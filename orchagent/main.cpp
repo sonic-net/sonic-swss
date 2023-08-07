@@ -64,6 +64,7 @@ extern bool gIsNatSupported;
 
 string gMySwitchType = "";
 int32_t gVoqMySwitchId = -1;
+int32_t gFabricMySwitchId = -1;
 int32_t gVoqMaxCores = 0;
 uint32_t gCfgSystemPorts = 0;
 string gMyHostName = "";
@@ -210,6 +211,18 @@ bool getSystemPortConfigList(DBConnector *cfgDb, DBConnector *appDb, vector<sai_
             SWSS_LOG_ERROR("Invalid VOQ switch id %d configured", gVoqMySwitchId);
             return false;
         }
+
+    if (value.size())
+        gFabricMySwitchId = stoi(value);
+
+    if (gFabricMySwitchId < 0)
+    {
+        SWSS_LOG_ERROR("Invalid Fabric switch id %d configured", gFabricMySwitchId);
+        return false;
+    }
+    else {
+        SWSS_LOG_WARN("Fabric switch id %d configured is", gFabricMySwitchId);
+    }
 
         if (!cfgDeviceMetaDataTable.hget("localhost", "max_cores", value))
         {
@@ -552,6 +565,26 @@ int main(int argc, char **argv)
         attr.id = SAI_SWITCH_ATTR_TYPE;
         attr.value.u32 = SAI_SWITCH_TYPE_FABRIC;
         attrs.push_back(attr);
+
+        sai_attribute_t switchIdAttr;
+        switchIdAttr.id = SAI_SWITCH_ATTR_SWITCH_ID;
+        switchIdAttr.value.u32 = 0; // Initialize the value to 0 or any other default value
+
+        // Get the switch ID attribute value
+        sai_status_t status = sai_switch_api->get_switch_attribute(0, 1, &switchIdAttr);
+
+        SWSS_LOG_WARN("Fabric switch id %d configured", gFabricMySwitchId);
+
+        if (status == SAI_STATUS_SUCCESS) {
+            SWSS_LOG_WARN("Switch-id configured is %u configured", switchIdAttr.value.u32);
+            if (switchIdAttr.value.u32 != 0) {
+                attr.id = SAI_SWITCH_ATTR_SWITCH_ID;
+                attr.value.u32 = gFabricMySwitchId;
+                attrs.push_back(attr);
+            }
+        } else {
+            SWSS_LOG_WARN("Fabric switch create with switch-id set to 00000");
+        }
     }
 
     /* Must be last Attribute */
