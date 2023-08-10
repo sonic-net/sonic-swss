@@ -6072,6 +6072,14 @@ void PortsOrch::generateQueueMap(map<string, FlexCounterQueueStates> queuesState
         return;
     }
 
+    bool isCreateAllQueues = false;
+
+    if (queuesStateVector.count(createAllAvailableBuffersStr))
+    {
+        isCreateAllQueues = true;
+        queuesStateVector.clear();
+    }
+
     for (const auto& it: m_portList)
     {
         if (it.second.m_type == Port::PHY)
@@ -6080,6 +6088,10 @@ void PortsOrch::generateQueueMap(map<string, FlexCounterQueueStates> queuesState
             {
                 auto maxQueueNumber = getNumberOfPortSupportedQueueCounters(it.second.m_alias);
                 FlexCounterQueueStates flexCounterQueueState(maxQueueNumber);
+                if (isCreateAllQueues)
+                {
+                    flexCounterQueueState.enableQueueCounters(0, maxQueueNumber - 1);
+                }
                 queuesStateVector.insert(make_pair(it.second.m_alias, flexCounterQueueState));
             }
             generateQueueMapPerPort(it.second, queuesStateVector.at(it.second.m_alias), false);
@@ -6094,6 +6106,10 @@ void PortsOrch::generateQueueMap(map<string, FlexCounterQueueStates> queuesState
             {
                 auto maxQueueNumber = getNumberOfPortSupportedQueueCounters(it.second.m_alias);
                 FlexCounterQueueStates flexCounterQueueState(maxQueueNumber);
+                if (isCreateAllQueues)
+                {
+                    flexCounterQueueState.enableQueueCounters(0, maxQueueNumber - 1);
+                }
                 queuesStateVector.insert(make_pair(it.second.m_alias, flexCounterQueueState));
             }
 
@@ -6198,6 +6214,14 @@ void PortsOrch::addQueueFlexCounters(map<string, FlexCounterQueueStates> queuesS
         return;
     }
 
+    bool isCreateAllQueues = false;
+
+    if (queuesStateVector.count(createAllAvailableBuffersStr))
+    {
+        isCreateAllQueues = true;
+        queuesStateVector.clear();
+    }
+
     for (const auto& it: m_portList)
     {
         if (it.second.m_type == Port::PHY)
@@ -6206,6 +6230,10 @@ void PortsOrch::addQueueFlexCounters(map<string, FlexCounterQueueStates> queuesS
             {
                 auto maxQueueNumber = getNumberOfPortSupportedQueueCounters(it.second.m_alias);
                 FlexCounterQueueStates flexCounterQueueState(maxQueueNumber);
+                if (isCreateAllQueues)
+                {
+                    flexCounterQueueState.enableQueueCounters(0, maxQueueNumber - 1);
+                }
                 queuesStateVector.insert(make_pair(it.second.m_alias, flexCounterQueueState));
             }
             addQueueFlexCountersPerPort(it.second, queuesStateVector.at(it.second.m_alias));
@@ -6263,6 +6291,14 @@ void PortsOrch::addQueueWatermarkFlexCounters(map<string, FlexCounterQueueStates
         return;
     }
 
+    bool isCreateAllQueues = false;
+
+    if (queuesStateVector.count(createAllAvailableBuffersStr))
+    {
+        isCreateAllQueues = true;
+        queuesStateVector.clear();
+    }
+
     for (const auto& it: m_portList)
     {
         if (it.second.m_type == Port::PHY)
@@ -6271,6 +6307,10 @@ void PortsOrch::addQueueWatermarkFlexCounters(map<string, FlexCounterQueueStates
             {
                 auto maxQueueNumber = getNumberOfPortSupportedQueueCounters(it.second.m_alias);
                 FlexCounterQueueStates flexCounterQueueState(maxQueueNumber);
+                if (isCreateAllQueues)
+                {
+                    flexCounterQueueState.enableQueueCounters(0, maxQueueNumber - 1);
+                }
                 queuesStateVector.insert(make_pair(it.second.m_alias, flexCounterQueueState));
             }
             addQueueWatermarkFlexCountersPerPort(it.second, queuesStateVector.at(it.second.m_alias));
@@ -6434,6 +6474,14 @@ void PortsOrch::generatePriorityGroupMap(map<string, FlexCounterPgStates> pgsSta
         return;
     }
 
+    bool isCreateAllPgs = false;
+
+    if (pgsStateVector.count(createAllAvailableBuffersStr))
+    {
+        isCreateAllPgs = true;
+        pgsStateVector.clear();
+    }
+
     for (const auto& it: m_portList)
     {
         if (it.second.m_type == Port::PHY)
@@ -6442,6 +6490,10 @@ void PortsOrch::generatePriorityGroupMap(map<string, FlexCounterPgStates> pgsSta
             {
                 auto maxPgNumber = getNumberOfPortSupportedPgCounters(it.second.m_alias);
                 FlexCounterPgStates flexCounterPgState(maxPgNumber);
+                if (isCreateAllPgs)
+                {
+                    flexCounterPgState.enablePgCounters(0, maxPgNumber - 1);
+                }
                 pgsStateVector.insert(make_pair(it.second.m_alias, flexCounterPgState));
             }
             generatePriorityGroupMapPerPort(it.second, pgsStateVector.at(it.second.m_alias));
@@ -6538,6 +6590,14 @@ void PortsOrch::addPriorityGroupFlexCounters(map<string, FlexCounterPgStates> pg
         return;
     }
 
+    bool isCreateAllPgs = false;
+
+    if (pgsStateVector.count(createAllAvailableBuffersStr))
+    {
+        isCreateAllPgs = true;
+        pgsStateVector.clear();
+    }
+
     for (const auto& it: m_portList)
     {
         if (it.second.m_type == Port::PHY)
@@ -6546,6 +6606,10 @@ void PortsOrch::addPriorityGroupFlexCounters(map<string, FlexCounterPgStates> pg
             {
                 auto maxPgNumber = getNumberOfPortSupportedPgCounters(it.second.m_alias);
                 FlexCounterPgStates flexCounterPgState(maxPgNumber);
+                if (isCreateAllPgs)
+                {
+                    flexCounterPgState.enablePgCounters(0, maxPgNumber - 1);
+                }
                 pgsStateVector.insert(make_pair(it.second.m_alias, flexCounterPgState));
             }
             addPriorityGroupFlexCountersPerPort(it.second, pgsStateVector.at(it.second.m_alias));
@@ -6595,6 +6659,14 @@ void PortsOrch::addPriorityGroupWatermarkFlexCounters(map<string, FlexCounterPgS
         return;
     }
 
+    bool isCreateAllPgs = false;
+
+    if (pgsStateVector.count(createAllAvailableBuffersStr))
+    {
+        isCreateAllPgs = true;
+        pgsStateVector.clear();
+    }
+
     for (const auto& it: m_portList)
     {
         if (it.second.m_type == Port::PHY)
@@ -6603,6 +6675,10 @@ void PortsOrch::addPriorityGroupWatermarkFlexCounters(map<string, FlexCounterPgS
             {
                 auto maxPgNumber = getNumberOfPortSupportedPgCounters(it.second.m_alias);
                 FlexCounterPgStates flexCounterPgState(maxPgNumber);
+                if (isCreateAllPgs)
+                {
+                    flexCounterPgState.enablePgCounters(0, maxPgNumber - 1);
+                }
                 pgsStateVector.insert(make_pair(it.second.m_alias, flexCounterPgState));
             }
             addPriorityGroupWatermarkFlexCountersPerPort(it.second, pgsStateVector.at(it.second.m_alias));
