@@ -364,7 +364,6 @@ private:
     bool setCollectionOnLagMember(Port &lagMember, bool enableCollection);
     bool setDistributionOnLagMember(Port &lagMember, bool enableDistribution);
 
-    bool addPort(const PortConfig &port);
     sai_status_t removePort(sai_object_id_t port_id);
     bool initPort(const PortConfig &port);
     void deInitPort(string alias, sai_object_id_t port_id);
