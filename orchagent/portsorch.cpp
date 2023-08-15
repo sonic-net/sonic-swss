@@ -512,6 +512,18 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         }
     }
 
+    sai_attr_capability_t attr_cap;
+    if (sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_PORT,
+                                       SAI_PORT_ATTR_AUTO_NEG_FEC_MODE_OVERRIDE,
+                                       &attr_cap) != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_NOTICE("Unable to query autoneg fec mode override");
+    }
+    else if (attr_cap.set_implemented && attr_cap.create_implemented)
+    {
+        fec_override_sup = true;
+    }
+
     /* Get default 1Q bridge and default VLAN */
     sai_status_t status;
     sai_attribute_t attr;
@@ -1502,6 +1514,28 @@ bool PortsOrch::setPortTpid(Port &port, sai_uint16_t tpid)
     return true;
 }
 
+bool PortsOrch::setPortFecOverride(sai_object_id_t port_obj, bool fec_override)
+{
+    sai_attribute_t attr;
+    sai_status_t status;
+
+    attr.id = SAI_PORT_ATTR_AUTO_NEG_FEC_MODE_OVERRIDE;
+    attr.value.booldata = fec_override;
+
+    status = sai_port_api->set_port_attribute(port_obj, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set fec override %d to port pid:%" PRIx64, attr.value.booldata, port_obj);
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+    SWSS_LOG_INFO("Set fec override %d to port pid:%" PRIx64, attr.value.booldata, port_obj);
+    return true;
+}
+
 bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t fec_mode)
 {
     SWSS_LOG_ENTER();
@@ -1521,6 +1555,10 @@ bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t fec_mode)
         }
     }
 
+    if (fec_override_sup && !setPortFecOverride(port.m_port_id, true))
+    {
+        return false;
+    }
     setGearboxPortsAttr(port, SAI_PORT_ATTR_FEC_MODE, &fec_mode);
 
     SWSS_LOG_NOTICE("Set port %s FEC mode %d", port.m_alias.c_str(), fec_mode);
@@ -2523,6 +2561,10 @@ bool PortsOrch::setGearboxPortAttr(const Port &port, dest_port_type_t port_type,
                     string key = "phy:"+to_string(m_gearboxInterfaceMap[port.m_index].phy_id)+":ports:"+to_string(port.m_index);
                     m_gearboxTable->hset(key, speed_attr, to_string(speed));
                     SWSS_LOG_NOTICE("BOX: Updated APPL_DB key:%s %s %d", key.c_str(), speed_attr.c_str(), speed);
+                }
+                else if (id == SAI_PORT_ATTR_FEC_MODE && fec_override_sup && !setPortFecOverride(dest_port_id, true))
+                {
+                    return false;
                 }
             }
             else
