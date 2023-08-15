@@ -65,29 +65,29 @@ jobs:
   - checkout: self
     clean: true
     submodules: true
+  - checkout: sonic-swss-common
+    clean: true
   - script: |
       sudo apt-get update
-      sudo apt-get install -y \
-        libhiredis-dev \
-        libzmq3-dev \
-        swig4.0 \
-        libdbus-1-dev \
-        libteam-dev
+      sudo apt-get install -y libhiredis0.14 libhiredis-dev
+      sudo apt-get install -y libzmq5 libzmq3-dev
+      sudo apt-get install -qq -y \
+          libhiredis-dev \
+          swig3.0
+      sudo apt-get install -y libdbus-1-3
+      sudo apt-get install -y libteam-dev \
+          libteam5 \
+          libteamdctl0
+      sudo apt-get install -y libnl-3-dev libnl-genl-3-dev libnl-route-3-dev libnl-nf-3-dev
     displayName: "Install dependencies"
-  - task: DownloadPipelineArtifact@2
-    inputs:
-      source: specific
-      project: build
-      pipeline: Azure.sonic-swss-common
-      artifact: ${{ parameters.swss_common_artifact_name }}
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/$(BUILD_BRANCH)'
-      path: $(Build.ArtifactStagingDirectory)/download
-      allowPartiallySucceededBuilds: true
-      patterns: |
-        libswsscommon_1.0.0_${{ parameters.arch }}.deb
-        libswsscommon-dev_1.0.0_${{ parameters.arch }}.deb
-    displayName: "Download sonic swss common deb packages"
+  - script: |
+      set -ex
+      git checkout $(BUILD_BRANCH)
+      ./autogen.sh
+      dpkg-buildpackage -us -uc -b -j$(nproc)
+      sudo dpkg -i ../libswsscommon*.deb
+    workingDirectory: $(System.DefaultWorkingDirectory)/sonic-swss-common
+    displayName: "Build and install sonic-swss-common"
   - task: DownloadPipelineArtifact@2
     inputs:
       source: specific
@@ -147,9 +147,12 @@ jobs:
          export ENABLE_ASAN=y
       fi
       ./autogen.sh
-      dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
+      dpkg-buildpackage -us -uc -b -j$(nproc)
+      mkdir artifacts
+      cp ../*.deb artifacts/
+    workingDirectory: $(System.DefaultWorkingDirectory)/sonic-swss
     displayName: "Compile sonic swss"
-  - publish: $(System.DefaultWorkingDirectory)/
+  - publish: $(System.DefaultWorkingDirectory)/sonic-swss/artifacts/
     artifact: ${{ parameters.artifact_name }}
     displayName: "Archive swss debian packages"
   - publish: $(Build.ArtifactStagingDirectory)/

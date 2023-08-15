@@ -28,6 +28,13 @@ schedules:
     - 201???
   always: true
 
+resources:
+  repositories:
+  - repository: sonic-swss-common
+    type: github
+    name: sonic-net/sonic-swss-common
+    endpoint: sonic-net
+
 variables:
   - name: BUILD_BRANCH
     ${{ if eq(variables['Build.Reason'], 'PullRequest') }}:
