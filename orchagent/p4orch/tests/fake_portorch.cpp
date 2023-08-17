@@ -493,11 +493,6 @@ bool PortsOrch::setDistributionOnLagMember(Port &lagMember, bool enableDistribut
     return true;
 }
 
-bool PortsOrch::addPort(const PortConfig &port)
-{
-    return true;
-}
-
 sai_status_t PortsOrch::removePort(sai_object_id_t port_id)
 {
     return SAI_STATUS_SUCCESS;

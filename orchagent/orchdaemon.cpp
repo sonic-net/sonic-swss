@@ -24,6 +24,7 @@ using namespace swss;
 
 extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
+extern string                      gMySwitchType;
 
 extern void syncd_apply_view();
 /*
@@ -66,11 +67,12 @@ event_handle_t g_events_handle;
 #define DEFAULT_MAX_BULK_SIZE 1000
 size_t gMaxBulkSize = DEFAULT_MAX_BULK_SIZE;
 
-OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb, DBConnector *chassisAppDb) :
+OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb, DBConnector *chassisAppDb, ZmqServer *zmqServer) :
         m_applDb(applDb),
         m_configDb(configDb),
         m_stateDb(stateDb),
-        m_chassisAppDb(chassisAppDb)
+        m_chassisAppDb(chassisAppDb),
+        m_zmqServer(zmqServer)
 {
     SWSS_LOG_ENTER();
     m_select = new Select();
@@ -228,6 +230,40 @@ bool OrchDaemon::init()
     gDirectory.set(nvgre_tunnel_orch);
     NvgreTunnelMapOrch *nvgre_tunnel_map_orch = new NvgreTunnelMapOrch(m_configDb, CFG_NVGRE_TUNNEL_MAP_TABLE_NAME);
     gDirectory.set(nvgre_tunnel_map_orch);
+
+	vector<string> dash_vnet_tables = {
+        APP_DASH_VNET_TABLE_NAME,
+        APP_DASH_VNET_MAPPING_TABLE_NAME
+    };
+    DashVnetOrch *dash_vnet_orch = new DashVnetOrch(m_applDb, dash_vnet_tables, m_zmqServer);
+    gDirectory.set(dash_vnet_orch);
+
+    vector<string> dash_tables = {
+        APP_DASH_APPLIANCE_TABLE_NAME,
+        APP_DASH_ROUTING_TYPE_TABLE_NAME,
+        APP_DASH_ENI_TABLE_NAME,
+        APP_DASH_QOS_TABLE_NAME
+    };
+
+    DashOrch *dash_orch = new DashOrch(m_applDb, dash_tables, m_zmqServer);
+    gDirectory.set(dash_orch);
+
+    vector<string> dash_route_tables = {
+        APP_DASH_ROUTE_TABLE_NAME,
+        APP_DASH_ROUTE_RULE_TABLE_NAME
+    };
+
+    DashRouteOrch *dash_route_orch = new DashRouteOrch(m_applDb, dash_route_tables, dash_orch, m_zmqServer);
+    gDirectory.set(dash_route_orch);
+
+    vector<string> dash_acl_tables = {
+        APP_DASH_ACL_IN_TABLE_NAME,
+        APP_DASH_ACL_OUT_TABLE_NAME,
+        APP_DASH_ACL_GROUP_TABLE_NAME,
+        APP_DASH_ACL_RULE_TABLE_NAME
+    };
+    DashAclOrch *dash_acl_orch = new DashAclOrch(m_applDb, dash_acl_tables, dash_orch, m_zmqServer);
+    gDirectory.set(dash_acl_orch);
 
     vector<string> qos_tables = {
         CFG_TC_TO_QUEUE_MAP_TABLE_NAME,
@@ -462,6 +498,10 @@ bool OrchDaemon::init()
     m_orchList.push_back(mux_st_orch);
     m_orchList.push_back(nvgre_tunnel_orch);
     m_orchList.push_back(nvgre_tunnel_map_orch);
+    m_orchList.push_back(dash_acl_orch);
+    m_orchList.push_back(dash_vnet_orch);
+    m_orchList.push_back(dash_route_orch);
+    m_orchList.push_back(dash_orch);
 
     if (m_fabricEnabled)
     {
@@ -974,8 +1014,8 @@ void OrchDaemon::heartBeat(std::chrono::time_point<std::chrono::high_resolution_
     }
 }
 
-FabricOrchDaemon::FabricOrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb, DBConnector *chassisAppDb) :
-    OrchDaemon(applDb, configDb, stateDb, chassisAppDb),
+FabricOrchDaemon::FabricOrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb, DBConnector *chassisAppDb, ZmqServer *zmqServer) :
+    OrchDaemon(applDb, configDb, stateDb, chassisAppDb, zmqServer),
     m_applDb(applDb),
     m_configDb(configDb)
 {

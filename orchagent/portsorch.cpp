@@ -512,34 +512,52 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         }
     }
 
-    /* Get default 1Q bridge and default VLAN */
-    sai_status_t status;
-    sai_attribute_t attr;
-    vector<sai_attribute_t> attrs;
-    attr.id = SAI_SWITCH_ATTR_DEFAULT_1Q_BRIDGE_ID;
-    attrs.push_back(attr);
-    attr.id = SAI_SWITCH_ATTR_DEFAULT_VLAN_ID;
-    attrs.push_back(attr);
-
-    status = sai_switch_api->get_switch_attribute(gSwitchId, (uint32_t)attrs.size(), attrs.data());
-    if (status != SAI_STATUS_SUCCESS)
+    if (gMySwitchType != "dpu")
     {
-        SWSS_LOG_ERROR("Failed to get default 1Q bridge and/or default VLAN, rv:%d", status);
-        task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
-        if (handle_status != task_process_status::task_success)
+        sai_attr_capability_t attr_cap;
+        if (sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_PORT,
+                                           SAI_PORT_ATTR_AUTO_NEG_FEC_MODE_OVERRIDE,
+                                           &attr_cap) != SAI_STATUS_SUCCESS)
         {
-            throw runtime_error("PortsOrch initialization failure");
+            SWSS_LOG_NOTICE("Unable to query autoneg fec mode override");
         }
-    }
+        else if (attr_cap.set_implemented && attr_cap.create_implemented)
+        {
+            fec_override_sup = true;
+        }
 
-    m_default1QBridge = attrs[0].value.oid;
-    m_defaultVlan = attrs[1].value.oid;
+        /* Get default 1Q bridge and default VLAN */
+        sai_status_t status;
+        sai_attribute_t attr;
+        vector<sai_attribute_t> attrs;
+        attr.id = SAI_SWITCH_ATTR_DEFAULT_1Q_BRIDGE_ID;
+        attrs.push_back(attr);
+        attr.id = SAI_SWITCH_ATTR_DEFAULT_VLAN_ID;
+        attrs.push_back(attr);
+
+        status = sai_switch_api->get_switch_attribute(gSwitchId, (uint32_t)attrs.size(), attrs.data());
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to get default 1Q bridge and/or default VLAN, rv:%d", status);
+            task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
+            if (handle_status != task_process_status::task_success)
+            {
+                throw runtime_error("PortsOrch initialization failure");
+            }
+        }
+
+        m_default1QBridge = attrs[0].value.oid;
+        m_defaultVlan = attrs[1].value.oid;
+    }
 
     /* Get System ports */
     getSystemPorts();
 
-    removeDefaultVlanMembers();
-    removeDefaultBridgePorts();
+    if (gMySwitchType != "dpu")
+    {
+        removeDefaultVlanMembers();
+        removeDefaultBridgePorts();
+    }
 
     /* Add port oper status notification support */
     DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
@@ -1502,6 +1520,28 @@ bool PortsOrch::setPortTpid(Port &port, sai_uint16_t tpid)
     return true;
 }
 
+bool PortsOrch::setPortFecOverride(sai_object_id_t port_obj, bool fec_override)
+{
+    sai_attribute_t attr;
+    sai_status_t status;
+
+    attr.id = SAI_PORT_ATTR_AUTO_NEG_FEC_MODE_OVERRIDE;
+    attr.value.booldata = fec_override;
+
+    status = sai_port_api->set_port_attribute(port_obj, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set fec override %d to port pid:%" PRIx64, attr.value.booldata, port_obj);
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+    SWSS_LOG_INFO("Set fec override %d to port pid:%" PRIx64, attr.value.booldata, port_obj);
+    return true;
+}
+
 bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t fec_mode)
 {
     SWSS_LOG_ENTER();
@@ -1521,6 +1561,10 @@ bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t fec_mode)
         }
     }
 
+    if (fec_override_sup && !setPortFecOverride(port.m_port_id, true))
+    {
+        return false;
+    }
     setGearboxPortsAttr(port, SAI_PORT_ATTR_FEC_MODE, &fec_mode);
 
     SWSS_LOG_NOTICE("Set port %s FEC mode %d", port.m_alias.c_str(), fec_mode);
@@ -2524,6 +2568,10 @@ bool PortsOrch::setGearboxPortAttr(const Port &port, dest_port_type_t port_type,
                     m_gearboxTable->hset(key, speed_attr, to_string(speed));
                     SWSS_LOG_NOTICE("BOX: Updated APPL_DB key:%s %s %d", key.c_str(), speed_attr.c_str(), speed);
                 }
+                else if (id == SAI_PORT_ATTR_FEC_MODE && fec_override_sup && !setPortFecOverride(dest_port_id, true))
+                {
+                    return false;
+                }
             }
             else
             {
@@ -2915,74 +2963,6 @@ void PortsOrch::updateDbPortOperStatus(const Port& port, sai_port_oper_status_t 
     FieldValueTuple tuple("oper_status", oper_status_strings.at(status));
     tuples.push_back(tuple);
     m_portTable->set(port.m_alias, tuples);
-}
-
-bool PortsOrch::addPort(const PortConfig &port)
-{
-    SWSS_LOG_ENTER();
-
-    if (!port.speed.is_set || !port.lanes.is_set)
-    {
-        /*
-        speed and lane list are mandatory attributes for the initial create_port call
-        This check is required because the incoming notifs may not be atomic
-        */
-        return true;
-    }
-
-    vector<uint32_t> lanes(port.lanes.value.begin(), port.lanes.value.end());
-
-    sai_attribute_t attr;
-    vector<sai_attribute_t> attrs;
-
-    attr.id = SAI_PORT_ATTR_SPEED;
-    attr.value.u32 = port.speed.value;
-    attrs.push_back(attr);
-
-    attr.id = SAI_PORT_ATTR_HW_LANE_LIST;
-    attr.value.u32list.list = lanes.data();
-    attr.value.u32list.count = static_cast<uint32_t>(lanes.size());
-    attrs.push_back(attr);
-
-    if (port.autoneg.is_set)
-    {
-        attr.id = SAI_PORT_ATTR_AUTO_NEG_MODE;
-        attr.value.booldata = port.autoneg.value;
-        attrs.push_back(attr);
-    }
-
-    if (port.fec.is_set)
-    {
-        attr.id = SAI_PORT_ATTR_FEC_MODE;
-        attr.value.s32 = port.fec.value;
-        attrs.push_back(attr);
-    }
-
-    sai_object_id_t port_id;
-    sai_status_t status = sai_port_api->create_port(&port_id, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to create port with the speed %u, rv:%d", port.speed.value, status);
-        task_process_status handle_status = handleSaiCreateStatus(SAI_API_PORT, status);
-        if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
-    }
-
-    m_portListLaneMap[port.lanes.value] = port_id;
-    m_portCount++;
-
-    // newly created ports might be put in the default vlan so remove all ports from
-    // the default vlan.
-    if (gMySwitchType == "voq") {
-        removeDefaultVlanMembers();
-        removeDefaultBridgePorts();
-    }
-
-    SWSS_LOG_NOTICE("Create port %" PRIx64 " with the speed %u", port_id, port.speed.value);
-
-    return true;
 }
 
 sai_status_t PortsOrch::removePort(sai_object_id_t port_id)
@@ -5011,10 +4991,13 @@ bool PortsOrch::initializePort(Port &port)
 
     SWSS_LOG_NOTICE("Initializing port alias:%s pid:%" PRIx64, port.m_alias.c_str(), port.m_port_id);
 
-    initializePriorityGroups(port);
-    initializeQueues(port);
-    initializeSchedulerGroups(port);
-    initializePortBufferMaximumParameters(port);
+    if (gMySwitchType != "dpu")
+    {
+        initializePriorityGroups(port);
+        initializeQueues(port);
+        initializeSchedulerGroups(port);
+        initializePortBufferMaximumParameters(port);
+    }
 
     /* Create host interface */
     if (!addHostIntfs(port, port.m_alias, port.m_hif_id))
