@@ -322,6 +322,7 @@ private:
     map<string, uint32_t> m_bridge_port_ref_count;
 
     NotificationConsumer* m_portStatusNotificationConsumer;
+    bool fec_override_sup = false;
 
     swss::SelectableTimer *m_port_state_poller = nullptr;
 
@@ -379,6 +380,7 @@ private:
     bool setPortPvid (Port &port, sai_uint32_t pvid);
     bool getPortPvid(Port &port, sai_uint32_t &pvid);
     bool setPortFec(Port &port, sai_port_fec_mode_t fec_mode);
+    bool setPortFecOverride(sai_object_id_t port_obj, bool fec_override);
     bool setPortPfcAsym(Port &port, sai_port_priority_flow_control_mode_t pfc_asym);
     bool getDestPortId(sai_object_id_t src_port_id, dest_port_type_t port_type, sai_object_id_t &des_port_id);
 
