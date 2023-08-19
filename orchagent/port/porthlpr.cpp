@@ -108,6 +108,12 @@ static const std::unordered_map<std::string, Port::Role> portRoleMap =
     { PORT_ROLE_REC, Port::Role::Rec }
 };
 
+static const std::unordered_map<std::string, sai_link_event_damping_algorithm_t> linkEventDampingAlgorithmMap =
+{
+    { "disabled", SAI_LINK_EVENT_DAMPING_ALGORITHM_DISABLED },
+    { "aied", SAI_LINK_EVENT_DAMPING_ALGORITHM_AIED }
+};
+
 // functions ----------------------------------------------------------------------------------------------------------
 
 template<typename T>
@@ -699,6 +705,53 @@ bool PortHelper::parsePortDescription(PortConfig &port, const std::string &field
     return true;
 }
 
+bool PortHelper::parsePortLinkDampingAlgorithm(decltype(PortConfig::link_damping::algorithm) &config, const std::string &field, const std::string &value) const
+{
+    SWSS_LOG_ENTER();
+
+    if (value.empty())
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): empty value is prohibited", field.c_str());
+        return false;
+    }
+
+    const auto &cit = linkEventDampingAlgorithmMap.find(value);
+    if (cit == linkEventDampingAlgorithmMap.cend())
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): invalid value(%s)", field.c_str(), value.c_str());
+        return false;
+    }
+
+    config.value = cit->second;
+    config.is_set = true;
+
+    return true;
+}
+
+bool PortHelper::parsePortLinkDampingConfig(decltype(PortConfig::link_damping::max_suppress_time) &config, const std::string &field, const std::string &value) const
+{
+    SWSS_LOG_ENTER();
+
+    if (value.empty())
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): empty value is prohibited", field.c_str());
+        return false;
+    }
+
+    try
+    {
+        config.value = to_uint<std::uint32_t>(value);
+        config.is_set = true;
+    }
+    catch (const std::exception &e)
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): %s", field.c_str(), e.what());
+        return false;
+    }
+
+    return true;
+}
+
 bool PortHelper::parsePortConfig(PortConfig &port) const
 {
     SWSS_LOG_ENTER();
@@ -900,6 +953,48 @@ bool PortHelper::parsePortConfig(PortConfig &port) const
         else if (field == PORT_DESCRIPTION)
         {
             if (!this->parsePortDescription(port, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_LINK_DAMPING_ALG)
+        {
+            if (!this->parsePortLinkDampingAlgorithm(port.link_damping.algorithm, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_MAX_SUPPRESS_TIME)
+        {
+            if (!this->parsePortLinkDampingConfig(port.link_damping.max_suppress_time, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_DECAY_HALF_LIFE)
+        {
+            if (!this->parsePortLinkDampingConfig(port.link_damping.decay_half_life, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_SUPPRESS_THRESHOLD)
+        {
+            if (!this->parsePortLinkDampingConfig(port.link_damping.suppress_threshold, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_REUSE_THRESHOLD)
+        {
+            if (!this->parsePortLinkDampingConfig(port.link_damping.reuse_threshold, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == PORT_FLAP_PENALTY)
+        {
+            if (!this->parsePortLinkDampingConfig(port.link_damping.flap_penalty, field, value))
             {
                 return false;
             }

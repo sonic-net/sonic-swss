@@ -50,6 +50,8 @@ private:
     bool parsePortRole(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortAdminStatus(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortDescription(PortConfig &port, const std::string &field, const std::string &value) const;
+    bool parsePortLinkDampingAlgorithm(decltype(PortConfig::link_damping::algorithm) &config, const std::string &field, const std::string &value) const;
+    bool parsePortLinkDampingConfig(decltype(PortConfig::link_damping::max_suppress_time) &config, const std::string &field, const std::string &value) const;
 
     bool validatePortConfig(PortConfig &port) const;
 };
