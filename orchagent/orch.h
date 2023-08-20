@@ -215,6 +215,7 @@ typedef enum
 
 typedef std::pair<swss::DBConnector *, std::string> TableConnector;
 typedef std::pair<swss::DBConnector *, std::vector<std::string>> TablesConnector;
+typedef std::pair<swss::DBConnector *, const std::vector<table_name_with_pri_t> &> PriTablesConnector;
 
 class Orch
 {
@@ -223,6 +224,8 @@ public:
     Orch(swss::DBConnector *db, const std::vector<std::string> &tableNames);
     Orch(swss::DBConnector *db, const std::vector<table_name_with_pri_t> &tableNameWithPri);
     Orch(const std::vector<TableConnector>& tables);
+    Orch(const std::vector<PriTablesConnector> &dbsTablesWithPri);
+
     virtual ~Orch() = default;
 
     std::vector<swss::Selectable*> getSelectables();

@@ -135,13 +135,27 @@ bool OrchDaemon::init()
         { APP_LAG_MEMBER_TABLE_NAME,  portsorch_base_pri     }
     };
 
+    vector<table_name_with_pri_t> state_transceiver_tables = {
+        {STATE_TRANSCEIVER_INFO_TABLE_NAME, portsorch_base_pri}
+    };
+
+    // PriTablesConnector appPriTables(m_applDb, ports_tables);
+    // PriTablesConnector statePriTables(m_stateDb, state_transceiver_tables);
+
+    // vector<PriTablesConnector> portsOrchTables = {
+    //     appPriTables,
+    //     statePriTables
+    // };
+
+    gPortsOrch = new PortsOrch(m_applDb, m_stateDb, ports_tables, m_chassisAppDb);
+    // gPortsOrch = new PortsOrch(m_applDb, m_stateDb, portsOrchTables, m_chassisAppDb);
+
     vector<table_name_with_pri_t> app_fdb_tables = {
         { APP_FDB_TABLE_NAME,        FdbOrch::fdborch_pri},
         { APP_VXLAN_FDB_TABLE_NAME,  FdbOrch::fdborch_pri},
         { APP_MCLAG_FDB_TABLE_NAME,  FdbOrch::fdborch_pri}
     };
 
-    gPortsOrch = new PortsOrch(m_applDb, m_stateDb, ports_tables, m_chassisAppDb);
     TableConnector stateDbFdb(m_stateDb, STATE_FDB_TABLE_NAME);
     TableConnector stateMclagDbFdb(m_stateDb, STATE_MCLAG_REMOTE_FDB_TABLE_NAME);
     gFdbOrch = new FdbOrch(m_applDb, app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch);
