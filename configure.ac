@@ -153,6 +153,7 @@ AC_CONFIG_FILES([
     natsyncd/Makefile
     portsyncd/Makefile
     teamsyncd/Makefile
+    vrrpsyncd/Makefile
     tlm_teamd/Makefile
     mclagsyncd/Makefile
     swssconfig/Makefile

@@ -47,6 +47,7 @@ orchagent_SOURCES = \
             main.cpp \
             $(top_srcdir)/lib/gearboxutils.cpp \
             $(top_srcdir)/lib/subintf.cpp \
+            $(top_srcdir)/lib/vrrpintf.cpp \
             $(top_srcdir)/lib/recorder.cpp \
             orchdaemon.cpp \
             orch.cpp \
@@ -106,6 +107,7 @@ orchagent_SOURCES = \
             response_publisher.cpp \
             nvgreorch.cpp \
             zmqorch.cpp \
+            vrrporch.cpp \
             dash/dashorch.cpp \
             dash/dashrouteorch.cpp \
             dash/dashvnetorch.cpp \
