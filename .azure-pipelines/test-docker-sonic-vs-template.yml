@@ -26,7 +26,7 @@ parameters:
 
 - name: sonic_buildimage_ubuntu20_04
   type: string
-  default: 'master'
+  default: '$(BUILD_BRANCH)'
 
 - name: asan
   type: boolean
