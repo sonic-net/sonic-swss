@@ -674,7 +674,25 @@ bool OrchDaemon::init()
         }
     } else if (platform == CISCO_8000_PLATFORM_SUBSTRING)
     {
-        static const vector<sai_port_stat_t> portStatIds;
+        static const vector<sai_port_stat_t> portStatIds =
+        {
+            SAI_PORT_STAT_PFC_0_RX_PKTS,
+            SAI_PORT_STAT_PFC_1_RX_PKTS,
+            SAI_PORT_STAT_PFC_2_RX_PKTS,
+            SAI_PORT_STAT_PFC_3_RX_PKTS,
+            SAI_PORT_STAT_PFC_4_RX_PKTS,
+            SAI_PORT_STAT_PFC_5_RX_PKTS,
+            SAI_PORT_STAT_PFC_6_RX_PKTS,
+            SAI_PORT_STAT_PFC_7_RX_PKTS,
+            SAI_PORT_STAT_PFC_0_TX_PKTS,
+            SAI_PORT_STAT_PFC_1_TX_PKTS,
+            SAI_PORT_STAT_PFC_2_TX_PKTS,
+            SAI_PORT_STAT_PFC_3_TX_PKTS,
+            SAI_PORT_STAT_PFC_4_TX_PKTS,
+            SAI_PORT_STAT_PFC_5_TX_PKTS,
+            SAI_PORT_STAT_PFC_6_TX_PKTS,
+            SAI_PORT_STAT_PFC_7_TX_PKTS,
+        };
 
         static const vector<sai_queue_stat_t> queueStatIds =
         {
