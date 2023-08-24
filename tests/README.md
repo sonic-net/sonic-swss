@@ -43,11 +43,13 @@ SWSS, Redis, and all the other required components run inside a virtual switch D
     ```
     sudo apt install libhiredis0.13
     ```
+    ****Dash testcases aren't supported in Ubuntu 18.04****
 
     If you are running **Ubuntu 20.04** you will need to install this package:
     ```
     sudo apt install libhiredis0.14
     ```
+    If you want to run DASH testcases, please download and install the latest ubuntu20.04 [dependencies](https://dev.azure.com/mssonic/build/_build?definitionId=1055&_a=summary&repositoryFilter=158&branchFilter=11237%2C11237%2C11237%2C11237%2C11237) of DASH from Azp.
 
 4. Install `swsscommon`.
 

@@ -95,6 +95,12 @@ def pytest_addoption(parser):
                      default=False,
                      help="Stop swss and syncd before stopping a conatainer")
 
+    parser.addoption("--num-ports",
+                     action="store",
+                     default=NUM_PORTS,
+                     type=int,
+                     help="number of ports")
+
 
 def random_string(size=4, chars=string.ascii_uppercase + string.digits):
     return "".join(random.choice(chars) for x in range(size))
@@ -1811,6 +1817,11 @@ def manage_dvs(request) -> str:
 @pytest.fixture(scope="module")
 def dvs(request, manage_dvs) -> DockerVirtualSwitch:
     dvs_env = getattr(request.module, "DVS_ENV", [])
+    global NUM_PORTS
+    if getattr(request.module, "NUM_PORTS", None):
+        NUM_PORTS = getattr(request.module, "NUM_PORTS")
+    else:
+        NUM_PORTS = request.config.getoption("--num-ports")
     name = request.config.getoption("--dvsname")
     log_path = name if name else request.module.__name__
 

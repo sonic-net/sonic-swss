@@ -39,6 +39,7 @@ local ret = {}
 -- the key of table pause_quanta_per_speed is operating speed at Mb/s
 -- the value of table pause_quanta_per_speed is the number of pause_quanta
 local pause_quanta_per_speed = {}
+pause_quanta_per_speed[800000] = 905
 pause_quanta_per_speed[400000] = 905
 pause_quanta_per_speed[200000] = 453
 pause_quanta_per_speed[100000] = 394
