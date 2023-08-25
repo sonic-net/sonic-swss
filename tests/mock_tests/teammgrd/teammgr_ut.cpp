@@ -36,6 +36,8 @@ namespace teammgr_ut
             m_app_db = std::make_shared<swss::DBConnector>("APPL_DB", 0);
             m_state_db = std::make_shared<swss::DBConnector>("STATE_DB", 0);
 
+            m_config_db.get()->hset("DEVICE_METADATA|localhost", "mac", "01:23:45:67:89:ab");
+
             TableConnector conf_lag_table(m_config_db.get(), CFG_LAG_TABLE_NAME);
             TableConnector conf_lag_member_table(m_config_db.get(), CFG_LAG_MEMBER_TABLE_NAME);
             TableConnector state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
