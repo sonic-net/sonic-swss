@@ -71,6 +71,8 @@ namespace portsorch_test
     uint32_t _sai_set_port_fec_count;
     int32_t _sai_port_fec_mode;
     uint32_t _sai_set_pfc_mode_count;
+    uint32_t _sai_set_admin_state_up_count;
+    uint32_t _sai_set_admin_state_down_count;
     sai_status_t _ut_stub_sai_set_port_attribute(
         _In_ sai_object_id_t port_id,
         _In_ const sai_attribute_t *attr)
@@ -88,6 +90,14 @@ namespace portsorch_test
 	else if (attr[0].id == SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_COMBINED)
 	{
 	    _sai_set_pfc_mode_count++;
+        }
+	else if (attr[0].id == SAI_PORT_ATTR_ADMIN_STATE)
+	{
+            if (attr[0].value.booldata) {
+	        _sai_set_admin_state_up_count++;
+            } else {
+	        _sai_set_admin_state_down_count++;
+            }
         }
         return pold_sai_port_api->set_port_attribute(port_id, attr);
     }
@@ -750,6 +760,95 @@ namespace portsorch_test
         // Verify attn
         std::vector<std::uint32_t> attn = { 0x80, 0x82, 0x81, 0x83 };
         ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_FIR_ATTN), attn);
+
+        // Dump pending tasks
+        std::vector<std::string> taskList;
+        gPortsOrch->dumpPendingTasks(taskList);
+        ASSERT_TRUE(taskList.empty());
+
+        // Cleanup ports
+        cleanupPorts(gPortsOrch);
+    }
+
+    /**
+     * Test that verifies admin-disable then admin-enable during setPortSerdesAttribute()
+     */
+    TEST_F(PortsOrchTest, PortSerdesConfig)
+    {
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        // Generate port config
+        for (const auto &cit : ports)
+        {
+            portTable.set(cit.first, cit.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+
+        // Refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Generate basic port config
+        std::deque<KeyOpFieldsValuesTuple> kfvBasic = {{
+            "Ethernet0",
+            SET_COMMAND, {
+                { "speed",               "100000"            },
+                { "fec",                 "rs"                },
+                { "mtu",                 "9100"              },
+                { "admin_status",        "up"                }
+            }
+        }};
+
+        // Refill consumer
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(kfvBasic);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Get port and verify admin status
+        Port p;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        ASSERT_TRUE(p.m_admin_state_up);
+
+        // Generate port serdes config
+        std::deque<KeyOpFieldsValuesTuple> kfvSerdes = {{
+            "Ethernet0",
+            SET_COMMAND, {
+                { "admin_status", "up"              },
+                { "idriver"     , "0x6,0x6,0x6,0x6" }
+            }
+        }};
+
+        // Refill consumer
+        consumer->addToSync(kfvSerdes);
+
+        _hook_sai_port_api();
+        uint32_t current_sai_api_call_count = _sai_set_admin_state_down_count;
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        _unhook_sai_port_api();
+
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        ASSERT_TRUE(p.m_admin_state_up);
+
+        // Verify idriver
+        std::vector<std::uint32_t> idriver = { 0x6, 0x6, 0x6, 0x6 };
+        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_IDRIVER), idriver);
+
+        // Verify admin-disable then admin-enable
+        ASSERT_EQ(_sai_set_admin_state_down_count, ++current_sai_api_call_count);
+        ASSERT_EQ(_sai_set_admin_state_up_count, current_sai_api_call_count);
 
         // Dump pending tasks
         std::vector<std::string> taskList;
