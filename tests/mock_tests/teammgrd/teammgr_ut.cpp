@@ -12,7 +12,7 @@ int cb(const std::string &cmd, std::string &stdout)
     {
         return 1;
     }
-    else if (cmd.find("cat /var/run/teamd/PortChannel1.pid") != std::string::npos)
+    else if (cmd.find("cat \"/var/run/teamd/PortChannel1.pid\"") != std::string::npos)
     {
         stdout = "1234";
         return 0;
@@ -36,7 +36,10 @@ namespace teammgr_ut
             m_app_db = std::make_shared<swss::DBConnector>("APPL_DB", 0);
             m_state_db = std::make_shared<swss::DBConnector>("STATE_DB", 0);
 
-            m_config_db.get()->hset("DEVICE_METADATA|localhost", "mac", "01:23:45:67:89:ab");
+            swss::Table metadata_table = swss::Table(m_config_db.get(), CFG_DEVICE_METADATA_TABLE_NAME);
+            std::vector<swss::FieldValueTuple> vec;
+            vec.emplace_back("mac", "01:23:45:67:89:ab");
+            metadata_table.set("localhost", vec);
 
             TableConnector conf_lag_table(m_config_db.get(), CFG_LAG_TABLE_NAME);
             TableConnector conf_lag_member_table(m_config_db.get(), CFG_LAG_MEMBER_TABLE_NAME);
@@ -63,6 +66,7 @@ namespace teammgr_ut
                                             { "lacp_key", "auto" },
                                             { "min_links", "2" } });
         teammgr.addExistingData(&cfg_lag_table);
+        teammgr.doTask();
         int kill_cmd_called = 0;
         for (auto cmd : mockCallArgs){
             if (cmd.find("kill -TERM 1234") != std::string::npos){
