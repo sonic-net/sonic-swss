@@ -629,7 +629,7 @@ task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fal
     SWSS_LOG_INFO("Port channel %s teamd configuration: %s",
             alias.c_str(), conf.str().c_str());
 
-    string warmstart_flag = WarmStart::isWarmStart() ? " -w -o " : " -r ";
+    string warmstart_flag = WarmStart::isWarmStart() ? " -w -o" : " -r";
 
     cmd << TEAMD_CMD
         << warmstart_flag
