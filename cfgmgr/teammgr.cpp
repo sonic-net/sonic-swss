@@ -658,9 +658,6 @@ bool TeamMgr::removeLag(const string &alias)
     string res;
     pid_t pid;
 
-    cmd << TEAMD_CMD << " -k -t " << shellquote(alias);
-    EXEC_WITH_ERROR_THROW(cmd.str(), res);
-
     try
     {
         std::stringstream cmd;
