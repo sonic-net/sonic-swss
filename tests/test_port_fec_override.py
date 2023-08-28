@@ -29,6 +29,16 @@ class TestPort(object):
         expected_fields = {"SAI_PORT_ATTR_FEC_MODE":"SAI_PORT_FEC_MODE_RS", "SAI_PORT_ATTR_AUTO_NEG_FEC_MODE_OVERRIDE":"true"}
         adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
 
+        fvs = swsscommon.FieldValuePairs([("fec","none")])
+        ptbl.set("Ethernet0", fvs)
+        ptbl.set("Ethernet4", fvs)
+        port_oid = adb.port_name_map["Ethernet0"]
+        expected_fields = {"SAI_PORT_ATTR_FEC_MODE":"SAI_PORT_FEC_MODE_NONE", "SAI_PORT_ATTR_AUTO_NEG_FEC_MODE_OVERRIDE":"true"}
+        adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
+        port_oid = adb.port_name_map["Ethernet4"]
+        expected_fields = {"SAI_PORT_ATTR_FEC_MODE":"SAI_PORT_FEC_MODE_NONE", "SAI_PORT_ATTR_AUTO_NEG_FEC_MODE_OVERRIDE":"true"}
+        adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
+
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying

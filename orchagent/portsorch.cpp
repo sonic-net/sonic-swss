@@ -3861,7 +3861,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 if (pCfg.fec.is_set)
                 {
                     /* reset fec mode upon mode change */
-                    if (!p.m_fec_cfg || p.m_fec_mode != pCfg.fec.value)
+                    if (!p.m_fec_cfg || p.m_fec_mode != pCfg.fec.value || p.m_is_fec_auto != pCfg.fec.is_auto)
                     {
                         if (!isFecModeSupported(p, pCfg.fec.value, pCfg.fec.is_auto))
                         {
@@ -3902,6 +3902,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         }
 
                         p.m_fec_mode = pCfg.fec.value;
+                        p.m_is_fec_auto = pCfg.fec.is_auto;
                         p.m_fec_cfg = true;
                         m_portList[p.m_alias] = p;
 
