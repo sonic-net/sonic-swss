@@ -62,7 +62,11 @@ BufferOrch::BufferOrch(DBConnector *applDb, DBConnector *confDb, DBConnector *st
     initTableHandlers();
     initBufferReadyLists(applDb, confDb);
     initFlexCounterGroupTable();
-    initBufferConstants();
+
+    if (gMySwitchType != "dpu")
+    {
+        initBufferConstants();
+    }
 };
 
 void BufferOrch::initTableHandlers()

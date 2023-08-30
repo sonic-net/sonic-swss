@@ -513,34 +513,52 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         }
     }
 
-    /* Get default 1Q bridge and default VLAN */
-    sai_status_t status;
-    sai_attribute_t attr;
-    vector<sai_attribute_t> attrs;
-    attr.id = SAI_SWITCH_ATTR_DEFAULT_1Q_BRIDGE_ID;
-    attrs.push_back(attr);
-    attr.id = SAI_SWITCH_ATTR_DEFAULT_VLAN_ID;
-    attrs.push_back(attr);
-
-    status = sai_switch_api->get_switch_attribute(gSwitchId, (uint32_t)attrs.size(), attrs.data());
-    if (status != SAI_STATUS_SUCCESS)
+    if (gMySwitchType != "dpu")
     {
-        SWSS_LOG_ERROR("Failed to get default 1Q bridge and/or default VLAN, rv:%d", status);
-        task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
-        if (handle_status != task_process_status::task_success)
+        sai_attr_capability_t attr_cap;
+        if (sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_PORT,
+                                           SAI_PORT_ATTR_AUTO_NEG_FEC_MODE_OVERRIDE,
+                                           &attr_cap) != SAI_STATUS_SUCCESS)
         {
-            throw runtime_error("PortsOrch initialization failure");
+            SWSS_LOG_NOTICE("Unable to query autoneg fec mode override");
         }
-    }
+        else if (attr_cap.set_implemented && attr_cap.create_implemented)
+        {
+            fec_override_sup = true;
+        }
 
-    m_default1QBridge = attrs[0].value.oid;
-    m_defaultVlan = attrs[1].value.oid;
+        /* Get default 1Q bridge and default VLAN */
+        sai_status_t status;
+        sai_attribute_t attr;
+        vector<sai_attribute_t> attrs;
+        attr.id = SAI_SWITCH_ATTR_DEFAULT_1Q_BRIDGE_ID;
+        attrs.push_back(attr);
+        attr.id = SAI_SWITCH_ATTR_DEFAULT_VLAN_ID;
+        attrs.push_back(attr);
+
+        status = sai_switch_api->get_switch_attribute(gSwitchId, (uint32_t)attrs.size(), attrs.data());
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to get default 1Q bridge and/or default VLAN, rv:%d", status);
+            task_process_status handle_status = handleSaiGetStatus(SAI_API_SWITCH, status);
+            if (handle_status != task_process_status::task_success)
+            {
+                throw runtime_error("PortsOrch initialization failure");
+            }
+        }
+
+        m_default1QBridge = attrs[0].value.oid;
+        m_defaultVlan = attrs[1].value.oid;
+    }
 
     /* Get System ports */
     getSystemPorts();
 
-    removeDefaultVlanMembers();
-    removeDefaultBridgePorts();
+    if (gMySwitchType != "dpu")
+    {
+        removeDefaultVlanMembers();
+        removeDefaultBridgePorts();
+    }
 
     /* Add port oper status notification support */
     DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
@@ -1503,6 +1521,28 @@ bool PortsOrch::setPortTpid(Port &port, sai_uint16_t tpid)
     return true;
 }
 
+bool PortsOrch::setPortFecOverride(sai_object_id_t port_obj, bool fec_override)
+{
+    sai_attribute_t attr;
+    sai_status_t status;
+
+    attr.id = SAI_PORT_ATTR_AUTO_NEG_FEC_MODE_OVERRIDE;
+    attr.value.booldata = fec_override;
+
+    status = sai_port_api->set_port_attribute(port_obj, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set fec override %d to port pid:%" PRIx64, attr.value.booldata, port_obj);
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+    SWSS_LOG_INFO("Set fec override %d to port pid:%" PRIx64, attr.value.booldata, port_obj);
+    return true;
+}
+
 bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t fec_mode)
 {
     SWSS_LOG_ENTER();
@@ -1522,6 +1562,10 @@ bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t fec_mode)
         }
     }
 
+    if (fec_override_sup && !setPortFecOverride(port.m_port_id, true))
+    {
+        return false;
+    }
     setGearboxPortsAttr(port, SAI_PORT_ATTR_FEC_MODE, &fec_mode);
 
     SWSS_LOG_NOTICE("Set port %s FEC mode %d", port.m_alias.c_str(), fec_mode);
@@ -2524,6 +2568,10 @@ bool PortsOrch::setGearboxPortAttr(const Port &port, dest_port_type_t port_type,
                     string key = "phy:"+to_string(m_gearboxInterfaceMap[port.m_index].phy_id)+":ports:"+to_string(port.m_index);
                     m_gearboxTable->hset(key, speed_attr, to_string(speed));
                     SWSS_LOG_NOTICE("BOX: Updated APPL_DB key:%s %s %d", key.c_str(), speed_attr.c_str(), speed);
+                }
+                else if (id == SAI_PORT_ATTR_FEC_MODE && fec_override_sup && !setPortFecOverride(dest_port_id, true))
+                {
+                    return false;
                 }
             }
             else
@@ -3991,17 +4039,34 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         p.m_preemphasis = serdes_attr;
                         m_portList[p.m_alias] = p;
                     }
-                    else if (setPortSerdesAttribute(p.m_port_id, gSwitchId, serdes_attr))
-                    {
-                        SWSS_LOG_NOTICE("Set port %s preemphasis is success", p.m_alias.c_str());
-                        p.m_preemphasis = serdes_attr;
-                        m_portList[p.m_alias] = p;
-                    }
                     else
                     {
-                        SWSS_LOG_ERROR("Failed to set port %s pre-emphasis", p.m_alias.c_str());
-                        it++;
-                        continue;
+                        if (p.m_admin_state_up)
+                        {
+                                /* Bring port down before applying serdes attribute*/
+                                if (!setPortAdminStatus(p, false))
+                                {
+                                    SWSS_LOG_ERROR("Failed to set port %s admin status DOWN to set serdes attr", p.m_alias.c_str());
+                                    it++;
+                                    continue;
+                                }
+
+                                p.m_admin_state_up = false;
+                                m_portList[p.m_alias] = p;
+                        }
+
+                        if (setPortSerdesAttribute(p.m_port_id, gSwitchId, serdes_attr))
+                        {
+                            SWSS_LOG_NOTICE("Set port %s SI settings is successful", p.m_alias.c_str());
+                            p.m_preemphasis = serdes_attr;
+                            m_portList[p.m_alias] = p;
+                        }
+                        else
+                        {
+                            SWSS_LOG_ERROR("Failed to set port %s SI settings", p.m_alias.c_str());
+                            it++;
+                            continue;
+                        }
                     }
                 }
 
@@ -4993,10 +5058,13 @@ bool PortsOrch::initializePort(Port &port)
 
     SWSS_LOG_NOTICE("Initializing port alias:%s pid:%" PRIx64, port.m_alias.c_str(), port.m_port_id);
 
-    initializePriorityGroups(port);
-    initializeQueues(port);
-    initializeSchedulerGroups(port);
-    initializePortBufferMaximumParameters(port);
+    if (gMySwitchType != "dpu")
+    {
+        initializePriorityGroups(port);
+        initializeQueues(port);
+        initializeSchedulerGroups(port);
+        initializePortBufferMaximumParameters(port);
+    }
 
     /* Create host interface */
     if (!addHostIntfs(port, port.m_alias, port.m_hif_id))

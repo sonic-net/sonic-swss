@@ -4,6 +4,7 @@
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "consumertable.h"
+#include "zmqserver.h"
 #include "select.h"
 
 #include "portsorch.h"
@@ -45,6 +46,10 @@
 #include "bfdorch.h"
 #include "srv6orch.h"
 #include "nvgreorch.h"
+#include "dash/dashaclorch.h"
+#include "dash/dashorch.h"
+#include "dash/dashrouteorch.h"
+#include "dash/dashvnetorch.h"
 #include <sairedis.h>
 
 using namespace swss;
@@ -52,7 +57,7 @@ using namespace swss;
 class OrchDaemon
 {
 public:
-    OrchDaemon(DBConnector *, DBConnector *, DBConnector *, DBConnector *);
+    OrchDaemon(DBConnector *, DBConnector *, DBConnector *, DBConnector *, ZmqServer *);
     ~OrchDaemon();
 
     virtual bool init();
@@ -82,6 +87,7 @@ private:
     DBConnector *m_configDb;
     DBConnector *m_stateDb;
     DBConnector *m_chassisAppDb;
+    ZmqServer *m_zmqServer;
 
     bool m_fabricEnabled = false;
     bool m_fabricPortStatEnabled = true;
@@ -100,7 +106,7 @@ private:
 class FabricOrchDaemon : public OrchDaemon
 {
 public:
-    FabricOrchDaemon(DBConnector *, DBConnector *, DBConnector *, DBConnector *);
+    FabricOrchDaemon(DBConnector *, DBConnector *, DBConnector *, DBConnector *, ZmqServer *);
     bool init() override;
 private:
     DBConnector *m_applDb;
