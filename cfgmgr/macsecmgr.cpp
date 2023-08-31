@@ -78,6 +78,47 @@ static void lexical_convert(const std::string &cipher_str, MACsecMgr::MACsecProf
     }
 }
 
+
+/* Decodes a Type 7 encoded input.
+ *
+ * The Type 7 encoded string consists of two decimal digits, followed by a series of hexadecimal characters
+ *
+ * An example: encoding of string "password" is 044B0A151C36435C0D.
+ * This has a salt/offset of 4 (04 in the example), and the encoded string for "password" is 4B0A151C36435C0D.
+ *
+ * The algorithm is a straightforward XOR Cipher that relies on an ascii-encoded 53-byte magic salt string
+ *
+ * Decode()
+ *    Get the salt index from the first 2 chars
+ *    For each byte in the provided text after the encoded salt:
+ *        j = (salt index + 1) % 53
+ *        XOR the i'th byte of the password with the j'th byte of the magic constant.
+ *        append to the decoded string.
+ */
+static std::string decodeKey(const std::string &cipher_str)
+{
+    int salts[] = { 0x64, 0x73, 0x66, 0x64, 0x3B, 0x6B, 0x66, 0x6F, 0x41, 0x2C, 0x2E, 0x69, 0x79, 0x65, 0x77, 0x72, 0x6B, 0x6C, 0x64, 0x4A, 0x4B, 0x44, 0x48, 0x53, 0x55, 0x42, 0x73, 0x67, 0x76, 0x63, 0x61, 0x36, 0x39, 0x38, 0x33, 0x34, 0x6E, 0x63, 0x78, 0x76, 0x39, 0x38, 0x37, 0x33, 0x32, 0x35, 0x34, 0x6B, 0x3B, 0x66, 0x67, 0x38, 0x37 };
+
+    std::string decodedPassword = std::string("");
+    std::string cipher_hex_str = std::string("");
+    unsigned int hex_int, saltIdx;
+
+    // Get the salt index from the cipher_str
+    saltIdx = (unsigned int) stoi(cipher_str.substr(0,2));
+
+    // Convert the hex string (eg: "aabbcc") to hex integers (eg: 0xaa, 0xbb, 0xcc) taking a substring of 2 chars at a time
+    // and do xor with the magic salt string
+    for (size_t i = 2; i < cipher_str.length(); i += 2) {
+        std::stringstream ss;
+        ss << std::hex << cipher_str.substr(i,2);
+        ss >> hex_int;
+        decodedPassword += (char)(hex_int ^ salts[saltIdx++ % (sizeof(salts)/sizeof(salts[0]))]);
+    }
+
+    SWSS_LOG_ERROR("\n INPUT (%s) OUTPUT (%s)", cipher_str.c_str(), decodedPassword.c_str());
+    return decodedPassword;
+}
+
 template<class T>
 static bool get_value(
     const MACsecMgr::TaskArgs & ta,
@@ -699,7 +740,7 @@ bool MACsecMgr::configureMACsec(
             port_name,
             network_id,
             "mka_cak",
-            profile.primary_cak);
+            decodeKey(profile.primary_cak));
 
         wpa_cli_exec_and_check(
             session.sock,
