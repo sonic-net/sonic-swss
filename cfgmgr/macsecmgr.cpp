@@ -143,7 +143,6 @@ static std::string decodeKey(const std::string &cipher_str, const MACsecMgr::MAC
         decodedPassword += (char)(hex_int ^ salts[saltIdx++ % (sizeof(salts)/sizeof(salts[0]))]);
     }
 
-    SWSS_LOG_ERROR("\n INPUT (%s) OUTPUT (%s)", cipher_str.c_str(), decodedPassword.c_str());
     return decodedPassword;
 }
 
