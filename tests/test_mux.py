@@ -66,6 +66,7 @@ class TestMuxTunnelBase():
     DEFAULT_TUNNEL_PARAMS = {
         "tunnel_type": "IPINIP",
         "dst_ip": SELF_IPV4,
+        "src_ip": PEER_IPV4,
         "dscp_mode": "pipe",
         "ecn_mode": "standard",
         "ttl_mode": "pipe",

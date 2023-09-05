@@ -2393,6 +2393,7 @@ class TestWarmReboot(object):
         tunnel_params = {
             "tunnel_type": "IPINIP",
             "dst_ip": "10.1.0.32",
+            "src_ip": "10.1.0.33",
             "dscp_mode": "uniform",
             "ecn_mode": "standard",
             "ttl_mode": "pipe"

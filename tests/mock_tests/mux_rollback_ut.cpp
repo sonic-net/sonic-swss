@@ -98,6 +98,7 @@ namespace mux_rollback_test
 
             tunnel_table.set(MUX_TUNNEL, { { "dscp_mode", "uniform" },
                                            { "dst_ip", "2.2.2.2" },
+                                           { "src_ip", "3.3.3.3" },
                                            { "ecn_mode", "copy_from_outer" },
                                            { "encap_ecn_mode", "standard" },
                                            { "ttl_mode", "pipe" },
