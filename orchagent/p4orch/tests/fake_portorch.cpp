@@ -537,7 +537,12 @@ bool PortsOrch::getPortPvid(Port &port, sai_uint32_t &pvid)
     return true;
 }
 
-bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t fec_mode)
+bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t fec_mode, bool auto_fec)
+{
+    return true;
+}
+
+bool PortsOrch::isFecModeSupported(const Port &port, sai_port_fec_mode_t fec_mode, bool is_auto)
 {
     return true;
 }
@@ -586,7 +591,7 @@ bool PortsOrch::setGearboxPortsAttr(const Port &port, sai_port_attr_t id, void *
     return true;
 }
 
-bool PortsOrch::setGearboxPortAttr(const Port &port, dest_port_type_t port_type, sai_port_attr_t id, void *value)
+bool PortsOrch::setGearboxPortAttr(const Port &port, dest_port_type_t port_type, sai_port_attr_t id, void *value, bool auto_fec)
 {
     return true;
 }
