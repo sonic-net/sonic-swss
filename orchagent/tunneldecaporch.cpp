@@ -540,6 +540,17 @@ bool TunnelDecapOrch::addDecapTunnelTermEntries(string tunnelKey, swss::IpAddres
             copy(attr.value.ipaddr, ia);
             tunnel_table_entry_attrs.push_back(attr);
 
+            if (SAI_API_VERSION > SAI_VERSION(1,12,0))
+            {
+                // because of breaking change https://github.com/sonic-net/sonic-sairedis/pull/1255
+
+                attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_SRC_IP; // required since v1.13.0
+                attr.value.ipaddr.addr_family = SAI_IP_ADDR_FAMILY_IPV4; // TODO may require revisit
+                attr.value.ipaddr.addr.ip4 = 0;
+
+                tunnel_table_entry_attrs.push_back(attr);
+            }
+
             // create the tunnel table entry
             sai_object_id_t tunnel_term_table_entry_id;
             sai_status_t status = sai_tunnel_api->create_tunnel_term_table_entry(&tunnel_term_table_entry_id, gSwitchId, (uint32_t)tunnel_table_entry_attrs.size(), tunnel_table_entry_attrs.data());
