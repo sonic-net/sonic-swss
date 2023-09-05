@@ -586,7 +586,7 @@ bool PortsOrch::getPortSpeed(sai_object_id_t port_id, sai_uint32_t &speed)
     return true;
 }
 
-bool PortsOrch::setGearboxPortsAttr(const Port &port, sai_port_attr_t id, void *value)
+bool PortsOrch::setGearboxPortsAttr(const Port &port, sai_port_attr_t id, void *value, bool auto_fec)
 {
     return true;
 }
