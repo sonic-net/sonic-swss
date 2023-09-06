@@ -453,6 +453,64 @@ namespace portsorch_test
     };
 
     /**
+     * Test that verifies PortsOrch::getPort() on a port that has been deleted
+     */
+    TEST_F(PortsOrchTest, GetPortTest)
+    {
+        _hook_sai_queue_api();
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        Port port;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
+        ASSERT_NE(port.m_port_id, SAI_NULL_OBJECT_ID);
+
+        // Get queue info
+        string type;
+        uint8_t index;
+        auto queue_id = port.m_queue_ids[0];
+        auto ut_sai_get_queue_attr_count = _sai_get_queue_attr_count;
+        gPortsOrch->getQueueTypeAndIndex(queue_id, type, index);
+        ASSERT_EQ(type, "SAI_QUEUE_TYPE_UNICAST");
+        ASSERT_EQ(index, 0);
+        type = "";
+        index = 255;
+        gPortsOrch->getQueueTypeAndIndex(queue_id, type, index);
+        ASSERT_EQ(type, "SAI_QUEUE_TYPE_UNICAST");
+        ASSERT_EQ(index, 0);
+        ASSERT_EQ(++ut_sai_get_queue_attr_count, _sai_get_queue_attr_count);
+
+        // Delete port
+        entries.push_back({"Ethernet0", "DEL", {}});
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        entries.clear();
+
+        ASSERT_FALSE(gPortsOrch->getPort(port.m_port_id, port));
+        ASSERT_EQ(gPortsOrch->m_queueInfo.find(queue_id), gPortsOrch->m_queueInfo.end());
+        _unhook_sai_queue_api();
+    }
+
+    /**
      * Test that verifies admin-disable then admin-enable during setPortSerdesAttribute()
      */
     TEST_F(PortsOrchTest, PortSerdesConfig)
@@ -536,64 +594,6 @@ namespace portsorch_test
         std::vector<std::string> taskList;
         gPortsOrch->dumpPendingTasks(taskList);
         ASSERT_TRUE(taskList.empty());
-    }
-
-    /**
-     * Test that verifies PortsOrch::getPort() on a port that has been deleted
-     */
-    TEST_F(PortsOrchTest, GetPortTest)
-    {
-        _hook_sai_queue_api();
-        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
-        std::deque<KeyOpFieldsValuesTuple> entries;
-
-        // Get SAI default ports to populate DB
-        auto ports = ut_helper::getInitialSaiPorts();
-
-        for (const auto &it : ports)
-        {
-            portTable.set(it.first, it.second);
-        }
-
-        // Set PortConfigDone
-        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
-
-        // refill consumer
-        gPortsOrch->addExistingData(&portTable);
-
-        // Apply configuration :
-        //  create ports
-        static_cast<Orch *>(gPortsOrch)->doTask();
-
-        Port port;
-        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", port));
-        ASSERT_NE(port.m_port_id, SAI_NULL_OBJECT_ID);
-
-        // Get queue info
-        string type;
-        uint8_t index;
-        auto queue_id = port.m_queue_ids[0];
-        auto ut_sai_get_queue_attr_count = _sai_get_queue_attr_count;
-        gPortsOrch->getQueueTypeAndIndex(queue_id, type, index);
-        ASSERT_EQ(type, "SAI_QUEUE_TYPE_UNICAST");
-        ASSERT_EQ(index, 0);
-        type = "";
-        index = 255;
-        gPortsOrch->getQueueTypeAndIndex(queue_id, type, index);
-        ASSERT_EQ(type, "SAI_QUEUE_TYPE_UNICAST");
-        ASSERT_EQ(index, 0);
-        ASSERT_EQ(++ut_sai_get_queue_attr_count, _sai_get_queue_attr_count);
-
-        // Delete port
-        entries.push_back({"Ethernet0", "DEL", {}});
-        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
-        consumer->addToSync(entries);
-        static_cast<Orch *>(gPortsOrch)->doTask();
-        entries.clear();
-
-        ASSERT_FALSE(gPortsOrch->getPort(port.m_port_id, port));
-        ASSERT_EQ(gPortsOrch->m_queueInfo.find(queue_id), gPortsOrch->m_queueInfo.end());
-        _unhook_sai_queue_api();
     }
 
     /**
