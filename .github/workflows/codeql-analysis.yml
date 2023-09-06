@@ -150,6 +150,7 @@ jobs:
         --with-extra-lib=$(dirname $GITHUB_WORKSPACE)/lib/x86_64-linux-gnu \
         --with-extra-usr-lib=$(dirname $GITHUB_WORKSPACE)/usr/lib/x86_64-linux-gnu \
         --with-libnl-3.0-inc=$(dirname $GITHUB_WORKSPACE)/usr/include/libnl3
+        ls -al ${{ github.workspace }}
 
     - name: Perform CodeQL analysis
       uses: github/codeql-action/analyze@v2.1.29
@@ -161,12 +162,12 @@ jobs:
       with:
         name: all-in-one
         path: |
-          $(dirname $GITHUB_WORKSPACE)
-          !$(dirname $GITHUB_WORKSPACE)/sonic-swss-common
-          !$(dirname $GITHUB_WORKSPACE)/sonic-sairedis
-          !$(dirname $GITHUB_WORKSPACE)/sonic-buildimage
-          !$(dirname $GITHUB_WORKSPACE)/binskim
-          !$(dirname $GITHUB_WORKSPACE)/libnl3-**
+          ${{ github.workspace }}
+          !${{ github.workspace }}/sonic-swss-common/
+          !${{ github.workspace }}/sonic-sairedis/
+          !${{ github.workspace }}/sonic-buildimage/
+          !${{ github.workspace }}/binskim/
+          !${{ github.workspace }}/libnl3-**/**
 
   binskim:
     needs: analyze
