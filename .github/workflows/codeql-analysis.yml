@@ -7,7 +7,7 @@ on:
     branches:
       - 'master'
       - '202[0-9][0-9][0-9]'
-  pull_request_target:
+  pull_request:
     branches:
       - 'master'
       - '202[0-9][0-9][0-9]'
@@ -81,8 +81,8 @@ jobs:
         ./autogen.sh
         dpkg-buildpackage -rfakeroot -us -uc -b -j$(nproc)
         popd
-        dpkg-deb -x libswsscommon_${SWSSCOMMON_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libswsscommon-dev_${SWSSCOMMON_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libswsscommon_${SWSSCOMMON_VER}_amd64.deb ${{ github.workspace }}/artifacts
+        dpkg-deb -x libswsscommon-dev_${SWSSCOMMON_VER}_amd64.deb ${{ github.workspace }}/artifacts
       env:
         SWSSCOMMON_VER: "1.0.0"
 
@@ -99,12 +99,12 @@ jobs:
         DEB_CFLAGS_SET="-Wno-error" DEB_CXXFLAGS_SET="-Wno-error" \
         dpkg-buildpackage -rfakeroot -us -uc -b -Psyncd,vs,nopython2 -j$(nproc)
         popd
-        dpkg-deb -x libsairedis_${SAIREDIS_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libsairedis-dev_${SAIREDIS_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libsaimetadata_${SAIREDIS_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libsaimetadata-dev_${SAIREDIS_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libsaivs_${SAIREDIS_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libsaivs-dev_${SAIREDIS_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libsairedis_${SAIREDIS_VER}_amd64.deb ${{ github.workspace }}/artifacts
+        dpkg-deb -x libsairedis-dev_${SAIREDIS_VER}_amd64.deb ${{ github.workspace }}/artifacts
+        dpkg-deb -x libsaimetadata_${SAIREDIS_VER}_amd64.deb ${{ github.workspace }}/artifacts
+        dpkg-deb -x libsaimetadata-dev_${SAIREDIS_VER}_amd64.deb ${{ github.workspace }}/artifacts
+        dpkg-deb -x libsaivs_${SAIREDIS_VER}_amd64.deb ${{ github.workspace }}/artifacts
+        dpkg-deb -x libsaivs-dev_${SAIREDIS_VER}_amd64.deb ${{ github.workspace }}/artifacts
       env:
         SAIREDIS_VER: "1.0.0"
 
@@ -128,14 +128,14 @@ jobs:
         ln -s ../debian debian
         dpkg-buildpackage -rfakeroot -us -uc -b -j$(nproc)
         popd
-        dpkg-deb -x libnl-3-200_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libnl-3-dev_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libnl-genl-3-200_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libnl-genl-3-dev_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libnl-route-3-200_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libnl-route-3-dev_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libnl-nf-3-200_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libnl-nf-3-dev_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        dpkg-deb -x libnl-3-200_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb ${{ github.workspace }}/artifacts
+        dpkg-deb -x libnl-3-dev_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb ${{ github.workspace }}/artifacts
+        dpkg-deb -x libnl-genl-3-200_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb ${{ github.workspace }}/artifacts
+        dpkg-deb -x libnl-genl-3-dev_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb ${{ github.workspace }}/artifacts
+        dpkg-deb -x libnl-route-3-200_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb ${{ github.workspace }}/artifacts
+        dpkg-deb -x libnl-route-3-dev_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb ${{ github.workspace }}/artifacts
+        dpkg-deb -x libnl-nf-3-200_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb ${{ github.workspace }}/artifacts
+        dpkg-deb -x libnl-nf-3-dev_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb ${{ github.workspace }}/artifacts
         popd
       env:
         LIBNL3_VER: "3.5.0"
@@ -155,3 +155,36 @@ jobs:
       uses: github/codeql-action/analyze@v2.1.29
       with:
         category: "/language:${{matrix.language}}"
+
+    - if: matrix.language == 'cpp'
+      uses: actions/upload-artifact@v3
+      with:
+        name: all-in-one
+        path: "${{ github.workspace }}/artifacts/"
+
+  binskim:
+    needs: analyze
+    runs-on: windows-latest
+    steps:
+    - uses: actions/download-artifact@v3
+      with:
+        name: all-in-one
+        path: '${{ github.workspace }}\artifacts\'
+
+    - name: binskim
+      shell: pwsh
+      run: |
+        ls ${{ github.workspace }}\artifacts\usr\bin\
+        git clone https://github.com/microsoft/binskim
+        cd binskim
+        try
+        {
+          .\BuildAndTest.cmd
+        }
+        catch
+        {
+          Write-Error $_.Exception.ToString()
+        }
+        .\bld\bin\x64_Release\net6.0\BinSkim.exe analyze --version
+        Write-Host "=================== Start to scan ====================="
+        .\bld\bin\x64_Release\net6.0\BinSkim.exe analyze -r ${{ github.workspace }}\artifacts\usr\bin\swssloglevel
