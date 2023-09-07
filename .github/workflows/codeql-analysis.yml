@@ -83,6 +83,10 @@ jobs:
         popd
         dpkg-deb -x libswsscommon_${SWSSCOMMON_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
         dpkg-deb -x libswsscommon-dev_${SWSSCOMMON_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
+        echo "============================================"
+        echo $(dirname $GITHUB_WORKSPACE)
+        ls $(dirname $GITHUB_WORKSPACE)
+        ls $(dirname $GITHUB_WORKSPACE)/../
       env:
         SWSSCOMMON_VER: "1.0.0"
 
@@ -162,8 +166,8 @@ jobs:
       with:
         name: all-in-one
         path: |
-          ${{ github.workspace }}
-          !${{ github.workspace }}/binskim/
+          ${{ github.workspace }}/../
+          !${{ github.workspace }}/
 
   binskim:
     needs: analyze
