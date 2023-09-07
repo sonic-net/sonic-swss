@@ -34,6 +34,20 @@ constexpr std::uint64_t RETRY_TIME = 30;
 /* retry interval, in millisecond */
 constexpr std::uint64_t RETRY_INTERVAL = 100;
 
+/*
+ * The input cipher_str is the encoded string which can be either of length 66 bytes or 130 bytes.
+ *
+ * 66 bytes of length, for 128-byte cipher suite
+ *   - first 2 bytes of the string will be the index from the magic salt string.
+ *   - remaining 64 bytes will be encoded string from the 32-byte plain text CAK input string.
+ *
+ * 130 bytes of length, for 256-byte cipher suite
+ *   - first 2 bytes of the string will be the index from the magic salt string.
+ *   - remaining 128 bytes will be encoded string from the 32 byte plain text CAK input string.
+*/
+constexpr std::size_t AES_LEN_128_BYTE = 66;
+constexpr std::size_t AES_LEN_256_BYTE = 130;
+
 static void lexical_convert(const std::string &policy_str, MACsecMgr::MACsecProfile::Policy & policy)
 {
     SWSS_LOG_ENTER();
@@ -76,6 +90,60 @@ static void lexical_convert(const std::string &cipher_str, MACsecMgr::MACsecProf
     {
         throw std::invalid_argument("Invalid cipher_suite : " + cipher_str);
     }
+}
+
+
+
+/* Decodes a Type 7 encoded input.
+ *
+ * The Type 7 encoding consists of two decimal digits(encoding the salt), followed a series of hexadecimal characters,
+ * two for every byte in the encoded password. An example encoding(of "password") is 044B0A151C36435C0D.
+ * This has a salt/offset of 4 (04 in the example), and encodes password via 4B0A151C36435C0D.
+ *
+ * The algorithm is a straightforward XOR Cipher that relies on the following ascii-encoded 53-byte constant:
+ *    "dsfd;kfoA,.iyewrkldJKDHSUBsgvca69834ncxv9873254k;fg87"
+ *
+ * Decode()
+ *    Get the salt index from the first 2 chars
+ *    For each byte in the provided text after the encoded salt:
+ *        j = (salt index + 1) % 53
+ *        XOR the i'th byte of the password with the j'th byte of the magic constant.
+ *        append to the decoded string.
+ */
+static std::string decodeKey(const std::string &cipher_str, const MACsecMgr::MACsecProfile::CipherSuite & cipher_suite)
+{
+    int salts[] = { 0x64, 0x73, 0x66, 0x64, 0x3B, 0x6B, 0x66, 0x6F, 0x41, 0x2C, 0x2E, 0x69, 0x79, 0x65, 0x77, 0x72, 0x6B, 0x6C, 0x64, 0x4A, 0x4B, 0x44, 0x48, 0x53, 0x55, 0x42, 0x73, 0x67, 0x76, 0x63, 0x61, 0x36, 0x39, 0x38, 0x33, 0x34, 0x6E, 0x63, 0x78, 0x76, 0x39, 0x38, 0x37, 0x33, 0x32, 0x35, 0x34, 0x6B, 0x3B, 0x66, 0x67, 0x38, 0x37 };
+
+    std::string decodedPassword = std::string("");
+    std::string cipher_hex_str = std::string("");
+    unsigned int hex_int, saltIdx;
+
+    if ((cipher_suite == MACsecMgr::MACsecProfile::CipherSuite::GCM_AES_128) ||
+        (cipher_suite == MACsecMgr::MACsecProfile::CipherSuite::GCM_AES_XPN_128))
+    {
+        if (cipher_str.length() != AES_LEN_128_BYTE)
+            throw std::invalid_argument("Invalid length for cipher_string : " + cipher_str);
+    }
+    else if ((cipher_suite == MACsecMgr::MACsecProfile::CipherSuite::GCM_AES_256) ||
+             (cipher_suite == MACsecMgr::MACsecProfile::CipherSuite::GCM_AES_XPN_256))
+    {
+        if (cipher_str.length() != AES_LEN_256_BYTE)
+            throw std::invalid_argument("Invalid length for cipher_string : " + cipher_str);
+    }
+
+    // Get the salt index from the cipher_str
+    saltIdx = (unsigned int) stoi(cipher_str.substr(0,2));
+
+    // Convert the hex string (eg: "aabbcc") to hex integers (eg: 0xaa, 0xbb, 0xcc) taking a substring of 2 chars at a time
+    // and do xor with the magic salt string
+    for (size_t i = 2; i < cipher_str.length(); i += 2) {
+        std::stringstream ss;
+        ss << std::hex << cipher_str.substr(i,2);
+        ss >> hex_int;
+        decodedPassword += (char)(hex_int ^ salts[saltIdx++ % (sizeof(salts)/sizeof(salts[0]))]);
+    }
+
+    return decodedPassword;
 }
 
 template<class T>
@@ -699,7 +767,7 @@ bool MACsecMgr::configureMACsec(
             port_name,
             network_id,
             "mka_cak",
-            profile.primary_cak);
+            decodeKey(profile.primary_cak, profile.cipher_suite));
 
         wpa_cli_exec_and_check(
             session.sock,
