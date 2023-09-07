@@ -163,11 +163,7 @@ jobs:
         name: all-in-one
         path: |
           ${{ github.workspace }}
-          !${{ github.workspace }}/sonic-swss-common/
-          !${{ github.workspace }}/sonic-sairedis/
-          !${{ github.workspace }}/sonic-buildimage/
           !${{ github.workspace }}/binskim/
-          !${{ github.workspace }}/libnl3-**/**
 
   binskim:
     needs: analyze
@@ -181,7 +177,8 @@ jobs:
     - name: binskim
       shell: pwsh
       run: |
-        ls ${{ github.workspace }}\artifacts\usr\bin\
+        ls ${{ github.workspace }}
+        ls ${{ github.workspace }}\artifacts\
         git clone https://github.com/microsoft/binskim
         cd binskim
         try
