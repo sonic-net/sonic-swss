@@ -145,14 +145,6 @@ jobs:
         dpkg-deb -x libnl-route-3-dev_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb $(dirname $GITHUB_WORKSPACE)
         dpkg-deb -x libnl-nf-3-200_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb $(dirname $GITHUB_WORKSPACE)
         dpkg-deb -x libnl-nf-3-dev_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb $(dirname $GITHUB_WORKSPACE)
-        dpkg-deb -x libnl-3-200_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb ${{ github.workspace }}/artifacts
-        dpkg-deb -x libnl-3-dev_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb ${{ github.workspace }}/artifacts
-        dpkg-deb -x libnl-genl-3-200_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb ${{ github.workspace }}/artifacts
-        dpkg-deb -x libnl-genl-3-dev_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb ${{ github.workspace }}/artifacts
-        dpkg-deb -x libnl-route-3-200_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb ${{ github.workspace }}/artifacts
-        dpkg-deb -x libnl-route-3-dev_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb ${{ github.workspace }}/artifacts
-        dpkg-deb -x libnl-nf-3-200_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb ${{ github.workspace }}/artifacts
-        dpkg-deb -x libnl-nf-3-dev_${LIBNL3_VER}-${LIBNL3_REV}_amd64.deb ${{ github.workspace }}/artifacts
         popd
       env:
         LIBNL3_VER: "3.5.0"
@@ -167,6 +159,8 @@ jobs:
         --with-extra-lib=$(dirname $GITHUB_WORKSPACE)/lib/x86_64-linux-gnu \
         --with-extra-usr-lib=$(dirname $GITHUB_WORKSPACE)/usr/lib/x86_64-linux-gnu \
         --with-libnl-3.0-inc=$(dirname $GITHUB_WORKSPACE)/usr/include/libnl3
+        dpkg -x ../swss_1.0.0_amd64.deb ${{ github.workspace }}/artifacts
+        ls -al ../
 
     - name: Perform CodeQL analysis
       uses: github/codeql-action/analyze@v2.1.29
