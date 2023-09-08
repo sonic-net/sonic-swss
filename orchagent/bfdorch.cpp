@@ -16,6 +16,8 @@ using namespace swss;
 #define BFD_SESSION_DEFAULT_DETECT_MULTIPLIER 10
 // TOS: default 6-bit DSCP value 48, default 2-bit ecn value 0. 48<<2 = 192
 #define BFD_SESSION_DEFAULT_TOS 192
+// Default TC value for BFD packets.
+#define BFD_SESSION_DEFAULT_TC 7
 #define BFD_SESSION_MILLISECOND_TO_MICROSECOND 1000
 #define BFD_SRCPORTINIT 49152
 #define BFD_SRCPORTMAX 65536
@@ -246,6 +248,7 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     uint32_t rx_interval = BFD_SESSION_DEFAULT_RX_INTERVAL;
     uint8_t multiplier = BFD_SESSION_DEFAULT_DETECT_MULTIPLIER;
     uint8_t tos = BFD_SESSION_DEFAULT_TOS;
+    uint8_t tc = BFD_SESSION_DEFAULT_TC;
     bool multihop = false;
     MacAddress dst_mac;
     bool dst_mac_provided = false;
@@ -297,6 +300,10 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
         else if (fvField(i) == "tos")
         {
             tos = to_uint<uint8_t>(value);
+        }
+        else if (fvField(i) == "tc")
+        {
+            tc = to_uint<uint8_t>(value);
         }
         else
             SWSS_LOG_ERROR("Unsupported BFD attribute %s\n", fvField(i).c_str());
@@ -361,6 +368,10 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
 
     attr.id = SAI_BFD_SESSION_ATTR_TOS;
     attr.value.u8 = tos;
+    attrs.emplace_back(attr);
+
+    attr.id = SAI_BFD_SESSION_ATTR_TC;
+    attr.value.u8 = tc;
     attrs.emplace_back(attr);
 
     if (multihop)

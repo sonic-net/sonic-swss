@@ -49,7 +49,7 @@ class TestBfd(object):
         bfdSessions = self.get_exist_bfd_session()
 
         # Create BFD session
-        fieldValues = {"local_addr": "10.0.0.1","tos":"64"}
+        fieldValues = {"local_addr": "10.0.0.1","tos":"64","tc":"4"}
         self.create_bfd_session("default:default:10.0.0.2", fieldValues)
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", len(bfdSessions) + 1)
 
@@ -63,7 +63,8 @@ class TestBfd(object):
             "SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS": "10.0.0.2",
             "SAI_BFD_SESSION_ATTR_TYPE": "SAI_BFD_SESSION_TYPE_ASYNC_ACTIVE",
             "SAI_BFD_SESSION_ATTR_TOS": "64",
-            "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "4"
+            "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "4",
+            "SAI_BFD_SESSION_ATTR_TC": "4"
         }
         self.check_asic_bfd_session_value(session, expected_adb_values)
 
@@ -104,7 +105,8 @@ class TestBfd(object):
             "SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS": "2000::2",
             "SAI_BFD_SESSION_ATTR_TYPE": "SAI_BFD_SESSION_TYPE_ASYNC_ACTIVE",
             "SAI_BFD_SESSION_ATTR_TOS": "192",
-            "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "6"
+            "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "6",
+            "SAI_BFD_SESSION_ATTR_TC": "7"
         }
         self.check_asic_bfd_session_value(session, expected_adb_values)
 
@@ -147,7 +149,8 @@ class TestBfd(object):
             "SAI_BFD_SESSION_ATTR_TOS": "192",
             "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "4",
             "SAI_BFD_SESSION_ATTR_HW_LOOKUP_VALID": "false",
-            "SAI_BFD_SESSION_ATTR_DST_MAC_ADDRESS": "00:02:03:04:05:06"
+            "SAI_BFD_SESSION_ATTR_DST_MAC_ADDRESS": "00:02:03:04:05:06",
+            "SAI_BFD_SESSION_ATTR_TC": "7"
         }
         self.check_asic_bfd_session_value(session, expected_adb_values)
 
@@ -191,6 +194,7 @@ class TestBfd(object):
             "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "4",
             "SAI_BFD_SESSION_ATTR_MIN_TX": "300000",
             "SAI_BFD_SESSION_ATTR_MIN_RX": "500000",
+            "SAI_BFD_SESSION_ATTR_TC": "7"
         }
         self.check_asic_bfd_session_value(session, expected_adb_values)
 
@@ -232,7 +236,8 @@ class TestBfd(object):
             "SAI_BFD_SESSION_ATTR_TYPE": "SAI_BFD_SESSION_TYPE_ASYNC_ACTIVE",
             "SAI_BFD_SESSION_ATTR_TOS": "192",
             "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "4",
-            "SAI_BFD_SESSION_ATTR_MULTIPLIER": "5"
+            "SAI_BFD_SESSION_ATTR_MULTIPLIER": "5",
+            "SAI_BFD_SESSION_ATTR_TC": "7"
         }
         self.check_asic_bfd_session_value(session, expected_adb_values)
 
@@ -274,7 +279,8 @@ class TestBfd(object):
             "SAI_BFD_SESSION_ATTR_TYPE": "SAI_BFD_SESSION_TYPE_ASYNC_ACTIVE",
             "SAI_BFD_SESSION_ATTR_TOS": "192",
             "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "4",
-            "SAI_BFD_SESSION_ATTR_MULTIHOP": "true"
+            "SAI_BFD_SESSION_ATTR_MULTIHOP": "true",
+            "SAI_BFD_SESSION_ATTR_TC": "7"
         }
         self.check_asic_bfd_session_value(session, expected_adb_values)
 
@@ -315,7 +321,8 @@ class TestBfd(object):
             "SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS": "10.0.0.2",
             "SAI_BFD_SESSION_ATTR_TYPE": "SAI_BFD_SESSION_TYPE_DEMAND_ACTIVE",
             "SAI_BFD_SESSION_ATTR_TOS": "192",
-            "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "4"
+            "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "4",
+            "SAI_BFD_SESSION_ATTR_TC": "7"
         }
         self.check_asic_bfd_session_value(session, expected_adb_values)
 
@@ -358,7 +365,8 @@ class TestBfd(object):
             "SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS": "10.0.0.2",
             "SAI_BFD_SESSION_ATTR_TYPE": "SAI_BFD_SESSION_TYPE_ASYNC_ACTIVE",
             "SAI_BFD_SESSION_ATTR_TOS": "192",
-            "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "4"
+            "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "4",
+            "SAI_BFD_SESSION_ATTR_TC": "7"
         }
         self.check_asic_bfd_session_value(session1, expected_adb_values)
 
@@ -388,6 +396,7 @@ class TestBfd(object):
             "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "4",
             "SAI_BFD_SESSION_ATTR_MIN_TX": "300000",
             "SAI_BFD_SESSION_ATTR_MIN_RX": "500000",
+            "SAI_BFD_SESSION_ATTR_TC": "7"
         }
         self.check_asic_bfd_session_value(session2, expected_adb_values)
 
@@ -414,7 +423,8 @@ class TestBfd(object):
             "SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS": "2000::2",
             "SAI_BFD_SESSION_ATTR_TYPE": "SAI_BFD_SESSION_TYPE_DEMAND_ACTIVE",
             "SAI_BFD_SESSION_ATTR_TOS": "192",
-            "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "6"
+            "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "6",
+            "SAI_BFD_SESSION_ATTR_TC": "7"
         }
         self.check_asic_bfd_session_value(session3, expected_adb_values)
 
@@ -441,7 +451,8 @@ class TestBfd(object):
             "SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS": "3000::2",
             "SAI_BFD_SESSION_ATTR_TYPE": "SAI_BFD_SESSION_TYPE_ASYNC_ACTIVE",
             "SAI_BFD_SESSION_ATTR_TOS": "192",
-            "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "6"
+            "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "6",
+            "SAI_BFD_SESSION_ATTR_TC": "7"
         }
         self.check_asic_bfd_session_value(session4, expected_adb_values)
 
