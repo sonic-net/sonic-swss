@@ -9,6 +9,7 @@
 #include "notificationproducer.h"
 #include "response_publisher_interface.h"
 #include "table.h"
+#include "recorder.h"
 
 // This class performs two tasks when publish is called:
 // 1. Sends a notification into the redis channel.

@@ -141,8 +141,6 @@ int FabricPortsOrch::getFabricPortList()
 
     m_getFabricPortListDone = true;
 
-    updateFabricPortState();
-
     return FABRIC_PORT_SUCCESS;
 }
 

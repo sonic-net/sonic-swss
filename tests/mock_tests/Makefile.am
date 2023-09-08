@@ -1,6 +1,7 @@
 FLEX_CTR_DIR = $(top_srcdir)/orchagent/flex_counter
 DEBUG_CTR_DIR = $(top_srcdir)/orchagent/debug_counter
 P4_ORCH_DIR = $(top_srcdir)/orchagent/p4orch
+DASH_PROTO_DIR = $(top_srcdir)/orchagent/dash/proto
 
 CFLAGS_SAI = -I /usr/include/sai
 
@@ -56,6 +57,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 test_failure_handling.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/lib/subintf.cpp \
+                $(top_srcdir)/lib/recorder.cpp \
                 $(top_srcdir)/orchagent/orchdaemon.cpp \
                 $(top_srcdir)/orchagent/orch.cpp \
                 $(top_srcdir)/orchagent/notifications.cpp \
@@ -68,6 +70,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/cbf/nhgmaporch.cpp \
                 $(top_srcdir)/orchagent/neighorch.cpp \
                 $(top_srcdir)/orchagent/intfsorch.cpp \
+                $(top_srcdir)/orchagent/port/porthlpr.cpp \
                 $(top_srcdir)/orchagent/portsorch.cpp \
                 $(top_srcdir)/orchagent/fabricportsorch.cpp \
                 $(top_srcdir)/orchagent/copporch.cpp \
@@ -84,6 +87,8 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/pbhorch.cpp \
                 $(top_srcdir)/orchagent/saihelper.cpp \
                 $(top_srcdir)/orchagent/saiattr.cpp \
+                $(top_srcdir)/orchagent/switch/switch_capabilities.cpp \
+                $(top_srcdir)/orchagent/switch/switch_helper.cpp \
                 $(top_srcdir)/orchagent/switchorch.cpp \
                 $(top_srcdir)/orchagent/pfcwdorch.cpp \
                 $(top_srcdir)/orchagent/pfcactionhandler.cpp \
@@ -111,8 +116,14 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/nvgreorch.cpp \
                 $(top_srcdir)/cfgmgr/portmgr.cpp \
                 $(top_srcdir)/cfgmgr/sflowmgr.cpp \
+                $(top_srcdir)/orchagent/zmqorch.cpp \
+                $(top_srcdir)/orchagent/dash/dashaclorch.cpp \
+                $(top_srcdir)/orchagent/dash/dashorch.cpp \
+                $(top_srcdir)/orchagent/dash/dashrouteorch.cpp \
+                $(top_srcdir)/orchagent/dash/dashvnetorch.cpp \
                 $(top_srcdir)/cfgmgr/buffermgrdyn.cpp \
-                $(top_srcdir)/warmrestart/warmRestartAssist.cpp
+                $(top_srcdir)/warmrestart/warmRestartAssist.cpp \
+                $(top_srcdir)/orchagent/dash/pbutils.cpp
 
 tests_SOURCES += $(FLEX_CTR_DIR)/flex_counter_manager.cpp $(FLEX_CTR_DIR)/flex_counter_stat_manager.cpp $(FLEX_CTR_DIR)/flow_counter_handler.cpp $(FLEX_CTR_DIR)/flowcounterrouteorch.cpp
 tests_SOURCES += $(DEBUG_CTR_DIR)/debug_counter.cpp $(DEBUG_CTR_DIR)/drop_counter.cpp
@@ -137,11 +148,12 @@ tests_SOURCES += $(P4_ORCH_DIR)/p4orch.cpp \
 tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI) $(tests_INCLUDES)
 tests_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhiredis -lpthread \
-        -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lgmock -lgmock_main
+        -lswsscommon -lswsscommon -lgtest -lgtest_main -lzmq -lnl-3 -lnl-route-3 -lgmock -lgmock_main -lprotobuf -ldashapi
 
 ## portsyncd unit tests
 
 tests_portsyncd_SOURCES = portsyncd/portsyncd_ut.cpp \
+                          $(top_srcdir)/lib/recorder.cpp \
                           $(top_srcdir)/portsyncd/linksync.cpp \
                           mock_dbconnector.cpp \
                           common/mock_shell_command.cpp \
@@ -149,7 +161,7 @@ tests_portsyncd_SOURCES = portsyncd/portsyncd_ut.cpp \
                           mock_hiredis.cpp \
                           mock_redisreply.cpp
 
-tests_portsyncd_INCLUDES = -I $(top_srcdir)/portsyncd -I $(top_srcdir)/cfgmgr
+tests_portsyncd_INCLUDES = -I $(top_srcdir)/portsyncd -I $(top_srcdir)/cfgmgr -I $(top_srcdir)/lib
 tests_portsyncd_CXXFLAGS = -Wl,-wrap,if_nameindex -Wl,-wrap,if_freenameindex
 tests_portsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST)
 tests_portsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(tests_portsyncd_INCLUDES)
@@ -161,6 +173,7 @@ tests_portsyncd_LDADD = $(LDADD_GTEST) -lnl-genl-3 -lhiredis -lhiredis \
 tests_intfmgrd_SOURCES = intfmgrd/intfmgr_ut.cpp \
                          $(top_srcdir)/cfgmgr/intfmgr.cpp \
                          $(top_srcdir)/lib/subintf.cpp \
+                         $(top_srcdir)/lib/recorder.cpp \
                          $(top_srcdir)/orchagent/orch.cpp \
                          $(top_srcdir)/orchagent/request_parser.cpp \
                          mock_orchagent_main.cpp \
@@ -201,6 +214,7 @@ tests_fpmsyncd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhired
 
 tests_response_publisher_SOURCES = response_publisher/response_publisher_ut.cpp \
                                    $(top_srcdir)/orchagent/response_publisher.cpp \
+                                   $(top_srcdir)/lib/recorder.cpp \
                                    mock_orchagent_main.cpp \
                                    mock_dbconnector.cpp \
                                    mock_table.cpp \
