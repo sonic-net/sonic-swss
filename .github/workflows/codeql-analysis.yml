@@ -159,8 +159,8 @@ jobs:
         --with-extra-lib=$(dirname $GITHUB_WORKSPACE)/lib/x86_64-linux-gnu \
         --with-extra-usr-lib=$(dirname $GITHUB_WORKSPACE)/usr/lib/x86_64-linux-gnu \
         --with-libnl-3.0-inc=$(dirname $GITHUB_WORKSPACE)/usr/include/libnl3
-        dpkg -x ../swss_1.0.0_amd64.deb ${{ github.workspace }}/artifacts
         ls -al ../
+        ls -al ../*.deb *.deb | xargs -i dpkg -x {} ${{ github.workspace }}/artifacts
 
     - name: Perform CodeQL analysis
       uses: github/codeql-action/analyze@v2.1.29
