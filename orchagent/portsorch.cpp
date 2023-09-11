@@ -6106,10 +6106,6 @@ void PortsOrch::generateQueueMap(map<string, FlexCounterQueueStates> queuesState
             {
                 auto maxQueueNumber = getNumberOfPortSupportedQueueCounters(it.second.m_alias);
                 FlexCounterQueueStates flexCounterQueueState(maxQueueNumber);
-                if (isCreateAllQueues)
-                {
-                    flexCounterQueueState.enableQueueCounters(0, maxQueueNumber - 1);
-                }
                 queuesStateVector.insert(make_pair(it.second.m_alias, flexCounterQueueState));
             }
 
