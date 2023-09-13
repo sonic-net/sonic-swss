@@ -452,7 +452,23 @@ bool Srv6Orch::mySidVrfRequired(const sai_my_sid_entry_endpoint_behavior_t end_b
     return false;
 }
 
-bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf, const string end_action)
+bool Srv6Orch::mySidNextHopRequired(const sai_my_sid_entry_endpoint_behavior_t end_behavior)
+{
+    if (end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_X ||
+        end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DX4 ||
+        end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DX6 ||
+        end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_B6_ENCAPS ||
+        end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_B6_ENCAPS_RED ||
+        end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_B6_INSERT ||
+        end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_B6_INSERT_RED ||
+        end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UA)
+    {
+      return true;
+    }
+    return false;
+}
+
+bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf, const string adj, const string end_action)
 {
     SWSS_LOG_ENTER();
     vector<sai_attribute_t> attributes;
@@ -490,9 +506,9 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
         my_sid_entry = srv6_my_sid_table_[key_string].entry;
     }
 
-    SWSS_LOG_INFO("MySid: sid %s, action %s, vrf %s, block %d, node %d, func %d, arg %d dt_vrf %s",
+    SWSS_LOG_INFO("MySid: sid %s, action %s, vrf %s, block %d, node %d, func %d, arg %d dt_vrf %s, adj %s",
       my_sid_string.c_str(), end_action.c_str(), dt_vrf.c_str(),my_sid_entry.locator_block_len, my_sid_entry.locator_node_len,
-      my_sid_entry.function_len, my_sid_entry.args_len, dt_vrf.c_str());
+      my_sid_entry.function_len, my_sid_entry.args_len, dt_vrf.c_str(), adj.c_str());
 
     if (sidEntryEndpointBehavior(end_action, end_behavior, end_flavor) != true)
     {
@@ -529,6 +545,34 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
         attributes.push_back(vrf_attr);
         vrf_update = true;
     }
+    sai_attribute_t nh_attr;
+    NextHopKey nexthop;
+    bool nh_update = false;
+    if (mySidNextHopRequired(end_behavior))
+    {
+        sai_object_id_t next_hop_id;
+        nexthop = NextHopKey(adj); 
+        SWSS_LOG_INFO("Adjacency %s", adj.c_str());
+        if (m_neighOrch->hasNextHop(nexthop))
+        {
+            SWSS_LOG_INFO("Nexthop for adjacency %s exists in DB", adj.c_str());
+            next_hop_id = m_neighOrch->getNextHopId(nexthop);
+            if(next_hop_id == SAI_NULL_OBJECT_ID)
+            {
+              SWSS_LOG_ERROR("Failed to get nexthop for adjacency %s", adj.c_str());
+              return false;
+            }
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Nexthop for adjacency %s doesn't exist in DB", adj.c_str());
+            return false;
+        }
+        nh_attr.id = SAI_MY_SID_ENTRY_ATTR_NEXT_HOP_ID;
+        nh_attr.value.oid = next_hop_id;
+        attributes.push_back(nh_attr);
+        nh_update = true;
+    }
     attr.id = SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR;
     attr.value.s32 = end_behavior;
     attributes.push_back(attr);
@@ -559,12 +603,30 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
                 return false;
             }
         }
+        if (nh_update)
+        {
+            status = sai_srv6_api->set_my_sid_entry_attribute(&my_sid_entry, &nh_attr);
+            if(status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to update nexthop to my_sid_entry %s, rv %d", key_string.c_str(), status);
+                return false;
+            }
+        }
     }
     SWSS_LOG_INFO("Store keystring %s in cache", key_string.c_str());
     if(vrf_update)
     {
         m_vrfOrch->increaseVrfRefCount(dt_vrf);
         srv6_my_sid_table_[key_string].endVrfString = dt_vrf;
+    }
+    if(nh_update)
+    {
+        m_neighOrch->increaseNextHopRefCount(nexthop, 1);
+
+        SWSS_LOG_INFO("Increasing refcount to %d for Nexthop %s",
+          m_neighOrch->getNextHopRefCount(nexthop), nexthop.to_string(false,true).c_str());
+
+        srv6_my_sid_table_[key_string].endAdjString = adj;
     }
     srv6_my_sid_table_[key_string].endBehavior = end_behavior;
     srv6_my_sid_table_[key_string].entry = my_sid_entry;
@@ -596,6 +658,15 @@ bool Srv6Orch::deleteMysidEntry(const string my_sid_string)
     {
         m_vrfOrch->decreaseVrfRefCount(srv6_my_sid_table_[my_sid_string].endVrfString);
     }
+    /* Decrease NextHop refcount */
+    if (mySidNextHopRequired(srv6_my_sid_table_[my_sid_string].endBehavior))
+    {
+        NextHopKey nexthop = NextHopKey(srv6_my_sid_table_[my_sid_string].endAdjString);
+        m_neighOrch->decreaseNextHopRefCount(nexthop, 1);
+
+        SWSS_LOG_INFO("Decreasing refcount to %d for Nexthop %s",
+          m_neighOrch->getNextHopRefCount(nexthop), nexthop.to_string(false,true).c_str());
+    }
     srv6_my_sid_table_.erase(my_sid_string);
     return true;
 }
@@ -604,7 +675,7 @@ void Srv6Orch::doTaskMySidTable(const KeyOpFieldsValuesTuple & tuple)
 {
     SWSS_LOG_ENTER();
     string op = kfvOp(tuple);
-    string end_action, dt_vrf;
+    string end_action, dt_vrf, adj;
 
     /* Key for mySid : block_len:node_len:function_len:args_len:sid-ip */
     string keyString = kfvKey(tuple);
@@ -619,10 +690,14 @@ void Srv6Orch::doTaskMySidTable(const KeyOpFieldsValuesTuple & tuple)
         {
           dt_vrf = fvValue(i);
         }
+        if(fvField(i) == "adj")
+        {
+          adj = fvValue(i);
+        }
     }
     if (op == SET_COMMAND)
     {
-        if(!createUpdateMysidEntry(keyString, dt_vrf, end_action))
+        if(!createUpdateMysidEntry(keyString, dt_vrf, adj, end_action))
         {
           SWSS_LOG_ERROR("Failed to create/update my_sid entry for sid %s", keyString.c_str());
           return;

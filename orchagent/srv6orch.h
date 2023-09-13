@@ -43,6 +43,7 @@ struct MySidEntry
     sai_my_sid_entry_t entry;
     sai_my_sid_entry_endpoint_behavior_t endBehavior;
     string            endVrfString; // Used for END.T, END.DT4, END.DT6 and END.DT46,
+    string            endAdjString; // Used for END.X, END.DX4, END.DX6
 };
 
 typedef unordered_map<string, SidTableEntry> SidTable;
@@ -81,12 +82,13 @@ class Srv6Orch : public Orch
         bool createSrv6Tunnel(const string srv6_source);
         bool createSrv6Nexthop(const NextHopKey &nh);
         bool srv6NexthopExists(const NextHopKey &nh);
-        bool createUpdateMysidEntry(string my_sid_string, const string vrf, const string end_action);
+        bool createUpdateMysidEntry(string my_sid_string, const string vrf, const string adj, const string end_action);
         bool deleteMysidEntry(const string my_sid_string);
         bool sidEntryEndpointBehavior(const string action, sai_my_sid_entry_endpoint_behavior_t &end_behavior,
                                       sai_my_sid_entry_endpoint_behavior_flavor_t &end_flavor);
         bool mySidExists(const string mysid_string);
         bool mySidVrfRequired(const sai_my_sid_entry_endpoint_behavior_t end_behavior);
+        bool mySidNextHopRequired(const sai_my_sid_entry_endpoint_behavior_t end_behavior);
         void srv6TunnelUpdateNexthops(const string srv6_source, const NextHopKey nhkey, bool insert);
         size_t srv6TunnelNexthopSize(const string srv6_source);
 
