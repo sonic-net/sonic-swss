@@ -36,6 +36,30 @@ class TestSrv6Mysid(object):
     def remove_vrf(self, vrf_name):
         self.cdb.delete_entry("VRF", vrf_name)
 
+    def add_ip_address(self, interface, ip):
+        table = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP"
+        existed_entries = get_exist_entries(self.adb.db_connection, table)
+
+        self.cdb.create_entry("INTERFACE", interface + "|" + ip, {"NULL": "NULL"})
+
+        self.adb.wait_for_n_keys(table, len(existed_entries) + 1)
+        return get_created_entry(self.adb.db_connection, table, existed_entries)
+
+    def remove_ip_address(self, interface, ip):
+        self.cdb.delete_entry("INTERFACE", interface + "|" + ip)
+
+    def add_neighbor(self, interface, ip, mac):
+        table = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP"
+        existed_entries = get_exist_entries(self.adb.db_connection, table)
+
+        self.cdb.create_entry("NEIGH", interface + "|" + ip, {"neigh": mac})
+
+        self.adb.wait_for_n_keys(table, len(existed_entries) + 1)
+        return get_created_entry(self.adb.db_connection, table, existed_entries)
+
+    def remove_neighbor(self, interface, ip):
+        self.cdb.delete_entry("NEIGH", interface + "|" + ip)
+
     def create_mysid(self, mysid, fvs):
         table = "ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY"
         existed_entries = get_exist_entries(self.adb.db_connection, table)
@@ -58,6 +82,12 @@ class TestSrv6Mysid(object):
         mysid2='16:8:8:8:baba:2001:20::'
         mysid3='16:8:8:8:fcbb:bb01:800::'
         mysid4='16:8:8:8:baba:2001:40::'
+        mysid5='32:16:16:0:fc00:0:e000::'
+        mysid6='32:16:16:0:fc00:0:e001::'
+        mysid7='32:16:16:0:fc00:0:e002::'
+        mysid8='32:16:16:0:fc00:0:e003::'
+        mysid9='32:16:16:0:fc00:0:e004::'
+        mysid10='32:16:16:0:fc00:0:e005::'
 
         # create MySID END
         fvs = swsscommon.FieldValuePairs([('action', 'end')])
@@ -124,14 +154,144 @@ class TestSrv6Mysid(object):
             elif fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR":
                 assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DT4"
 
+        # Assign IP to interface
+        self.add_ip_address("Ethernet104", "2001::2/126")
+        self.add_ip_address("Ethernet104", "192.0.2.2/31")
+
+        # create nexthop
+        next_hop_id_ipv6 = self.add_neighbor("Ethernet104", "2001::1", "00:00:00:01:02:04")
+        next_hop_id_ipv4 = self.add_neighbor("Ethernet112", "192.0.2.1", "00:00:00:01:02:05")
+
+        # create MySID END.X
+        fvs = swsscommon.FieldValuePairs([('action', 'end.x'), ('adj', '2001::1')])
+        key = self.create_mysid(mysid5, fvs)
+
+        # check ASIC MySID database
+        mysid = json.loads(key)
+        assert mysid["sid"] == "fcf0:0:1:e000::"
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY")
+        (status, fvs) = tbl.get(key)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_MY_SID_ENTRY_ATTR_NEXT_HOP_ID":
+                assert fv[1] == next_hop_id_ipv6
+            if fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR":
+                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_X"
+            elif fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR":
+                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD"
+
+        # create MySID END.DX4
+        fvs = swsscommon.FieldValuePairs([('action', 'end.dx4'), ('adj', '192.0.2.1')])
+        key = self.create_mysid(mysid6, fvs)
+
+        # check ASIC MySID database
+        mysid = json.loads(key)
+        assert mysid["sid"] == "fcf0:0:1:e001::"
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY")
+        (status, fvs) = tbl.get(key)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_MY_SID_ENTRY_ATTR_NEXT_HOP_ID":
+                assert fv[1] == next_hop_id_ipv4
+            if fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR":
+                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DX6"
+            elif fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR":
+                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD"
+
+        # create MySID END.DX6
+        fvs = swsscommon.FieldValuePairs([('action', 'end.dx6'), ('adj', '2001::1')])
+        key = self.create_mysid(mysid7, fvs)
+
+        # check ASIC MySID database
+        mysid = json.loads(key)
+        assert mysid["sid"] == "fcf0:0:1:e002::"
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY")
+        (status, fvs) = tbl.get(key)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_MY_SID_ENTRY_ATTR_NEXT_HOP_ID":
+                assert fv[1] == next_hop_id_ipv6
+            if fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR":
+                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DX6"
+            elif fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR":
+                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD"
+
+        # create MySID uA
+        fvs = swsscommon.FieldValuePairs([('action', 'ua'), ('adj', '2001::1')])
+        key = self.create_mysid(mysid8, fvs)
+
+        # check ASIC MySID database
+        mysid = json.loads(key)
+        assert mysid["sid"] == "fcf0:0:1:e003::"
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY")
+        (status, fvs) = tbl.get(key)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_MY_SID_ENTRY_ATTR_NEXT_HOP_ID":
+                assert fv[1] == next_hop_id
+            if fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR":
+                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UA"
+            elif fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR":
+                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD"
+
+        # create MySID uDX4
+        fvs = swsscommon.FieldValuePairs([('action', 'udx4'), ('adj', '192.0.2.1')])
+        key = self.create_mysid(mysid9, fvs)
+
+        # check ASIC MySID database
+        mysid = json.loads(key)
+        assert mysid["sid"] == "fcf0:0:1:e004::"
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY")
+        (status, fvs) = tbl.get(key)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_MY_SID_ENTRY_ATTR_NEXT_HOP_ID":
+                assert fv[1] == next_hop_id_ipv4
+            if fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR":
+                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DX4"
+            elif fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR":
+                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD"
+
+        # create MySID END.DX6
+        fvs = swsscommon.FieldValuePairs([('action', 'udx6'), ('adj', '2001::1')])
+        key = self.create_mysid(mysid10, fvs)
+
+        # check ASIC MySID database
+        mysid = json.loads(key)
+        assert mysid["sid"] == "fcf0:0:1:e005::"
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY")
+        (status, fvs) = tbl.get(key)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_MY_SID_ENTRY_ATTR_NEXT_HOP_ID":
+                assert fv[1] == next_hop_id_ipv6
+            if fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR":
+                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DX6"
+            elif fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR":
+                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD"
+
         # delete MySID
         self.remove_mysid(mysid1)
         self.remove_mysid(mysid2)
         self.remove_mysid(mysid3)
         self.remove_mysid(mysid4)
+        self.remove_mysid(mysid5)
+        self.remove_mysid(mysid6)
+        self.remove_mysid(mysid7)
+        self.remove_mysid(mysid8)
+        self.remove_mysid(mysid9)
+        self.remove_mysid(mysid10)
 
         # remove vrf
         self.remove_vrf("VrfDt46")
+
+        # remove nexthop
+        self.remove_neighbor("Ethernet104", "2001::1")
+        self.remove_neighbor("Ethernet112", "192.0.2.1")
+
+        # Reemove IP from interface
+        self.add_ip_address("Ethernet104", "2001::2/126")
+        self.add_ip_address("Ethernet104", "192.0.2.2/31")
 
 class TestSrv6(object):
     def setup_db(self, dvs):
