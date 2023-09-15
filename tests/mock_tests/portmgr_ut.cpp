@@ -131,7 +131,7 @@ namespace portmgr_ut
         Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
 
         // Port is not ready, verify that doTask does not handle port configuration
-        
+
         cfg_port_table.set("Ethernet0", {
             {"speed", "100000"},
             {"index", "1"},
@@ -162,14 +162,14 @@ namespace portmgr_ut
         ASSERT_FALSE(value_opt);
     }
 
-    TEST_F(PortMgrTest, ConfigurePortPTTimestampTemplate2)
+    TEST_F(PortMgrTest, ConfigurePortPTNonDefaultTimestampTemplate)
     {
         Table state_port_table(m_state_db.get(), STATE_PORT_TABLE_NAME);
         Table app_port_table(m_app_db.get(), APP_PORT_TABLE_NAME);
         Table cfg_port_table(m_config_db.get(), CFG_PORT_TABLE_NAME);
 
         // Port is not ready, verify that doTask does not handle port configuration
-        
+
         cfg_port_table.set("Ethernet0", {
             {"speed", "100000"},
             {"index", "1"},

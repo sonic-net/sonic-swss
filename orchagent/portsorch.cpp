@@ -1007,7 +1007,7 @@ bool PortsOrch::addPortBulk(const std::vector<PortConfig> &portList)
                     m_portPtTam[cit.key] = m_ptTam;
                 }
             }
-            
+
             attr.id = SAI_PORT_ATTR_PATH_TRACING_INTF;
             attr.value.u16 = cit.pt_intf_id.value;
             attrList.push_back(attr);
