@@ -11,6 +11,34 @@
 #include "logger.h"
 #include "sai_serialize.h"
 
+typedef sai_status_t (*sai_bulk_set_outbound_ca_to_pa_entry_attribute_fn) (
+        _In_ uint32_t object_count,
+        _In_ const sai_outbound_ca_to_pa_entry_t *entry,
+        _In_ const sai_attribute_t *attr_list,
+        _In_ sai_bulk_op_error_mode_t mode,
+        _Out_ sai_status_t *object_statuses);
+
+typedef sai_status_t (*sai_bulk_set_pa_validation_entry_attribute_fn) (
+        _In_ uint32_t object_count,
+        _In_ const sai_pa_validation_entry_t *entry,
+        _In_ const sai_attribute_t *attr_list,
+        _In_ sai_bulk_op_error_mode_t mode,
+        _Out_ sai_status_t *object_statuses);
+
+typedef sai_status_t (*sai_bulk_set_outbound_routing_entry_attribute_fn) (
+        _In_ uint32_t object_count,
+        _In_ const sai_outbound_routing_entry_t *entry,
+        _In_ const sai_attribute_t *attr_list,
+        _In_ sai_bulk_op_error_mode_t mode,
+        _Out_ sai_status_t *object_statuses);
+
+typedef sai_status_t (*sai_bulk_set_inbound_routing_entry_attribute_fn) (
+        _In_ uint32_t object_count,
+        _In_ const sai_inbound_routing_entry_t *entry,
+        _In_ const sai_attribute_t *attr_list,
+        _In_ sai_bulk_op_error_mode_t mode,
+        _Out_ sai_status_t *object_statuses);
+
 static inline bool operator==(const sai_ip_prefix_t& a, const sai_ip_prefix_t& b)
 {
     if (a.addr_family != b.addr_family) return false;
@@ -25,6 +53,26 @@ static inline bool operator==(const sai_ip_prefix_t& a, const sai_ip_prefix_t& b
     {
         return memcmp(a.addr.ip6, b.addr.ip6, sizeof(a.addr.ip6)) == 0
             && memcmp(a.mask.ip6, b.mask.ip6, sizeof(a.mask.ip6)) == 0
+            ;
+    }
+    else
+    {
+        throw std::invalid_argument("a has invalid addr_family");
+    }
+}
+
+static inline bool operator==(const sai_ip_address_t& a, const sai_ip_address_t& b)
+{
+    if (a.addr_family != b.addr_family) return false;
+
+    if (a.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+    {
+        return a.addr.ip4 == b.addr.ip4
+            ;
+    }
+    else if (a.addr_family == SAI_IP_ADDR_FAMILY_IPV6)
+    {
+        return memcmp(a.addr.ip6, b.addr.ip6, sizeof(a.addr.ip6)) == 0
             ;
     }
     else
@@ -48,6 +96,41 @@ static inline bool operator==(const sai_inseg_entry_t& a, const sai_inseg_entry_
         ;
 }
 
+static inline bool operator==(const sai_inbound_routing_entry_t& a, const sai_inbound_routing_entry_t& b)
+{
+    return a.switch_id == b.switch_id
+        && a.eni_id == b.eni_id
+        && a.vni == b.vni
+        && a.sip == b.sip
+        && a.sip_mask == b.sip_mask
+        && a.priority == b.priority
+        ;
+}
+
+static inline bool operator==(const sai_outbound_ca_to_pa_entry_t& a, const sai_outbound_ca_to_pa_entry_t& b)
+{
+    return a.switch_id == b.switch_id
+        && a.dst_vnet_id == b.dst_vnet_id
+        && a.dip == b.dip
+        ;
+}
+
+static inline bool operator==(const sai_pa_validation_entry_t& a, const sai_pa_validation_entry_t& b)
+{
+    return a.switch_id == b.switch_id
+        && a.vnet_id == b.vnet_id
+        && a.sip == b.sip
+        ;
+}
+
+static inline bool operator==(const sai_outbound_routing_entry_t& a, const sai_outbound_routing_entry_t& b)
+{
+    return a.switch_id == b.switch_id
+        && a.eni_id == b.eni_id
+        && a.destination == b.destination
+        ;
+}
+
 static inline std::size_t hash_value(const sai_ip_prefix_t& a)
 {
     size_t seed = 0;
@@ -61,6 +144,21 @@ static inline std::size_t hash_value(const sai_ip_prefix_t& a)
     {
         boost::hash_combine(seed, a.addr.ip6);
         boost::hash_combine(seed, a.mask.ip6);
+    }
+    return seed;
+}
+
+static inline std::size_t hash_value(const sai_ip_address_t& a)
+{
+    size_t seed = 0;
+    boost::hash_combine(seed, a.addr_family);
+    if (a.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+    {
+        boost::hash_combine(seed, a.addr.ip4);
+    }
+    else if (a.addr_family == SAI_IP_ADDR_FAMILY_IPV6)
+    {
+        boost::hash_combine(seed, a.addr.ip6);
     }
     return seed;
 }
@@ -101,6 +199,59 @@ namespace std
             size_t seed = 0;
             boost::hash_combine(seed, a.switch_id);
             boost::hash_combine(seed, a.label);
+            return seed;
+        }
+    };
+
+    template <>
+    struct hash<sai_outbound_ca_to_pa_entry_t>
+    {
+        size_t operator()(const sai_outbound_ca_to_pa_entry_t& a) const noexcept
+        {
+            size_t seed = 0;
+            boost::hash_combine(seed, a.switch_id);
+            boost::hash_combine(seed, a.dst_vnet_id);
+            boost::hash_combine(seed, a.dip);
+            return seed;
+        }
+    };
+
+    template <>
+    struct hash<sai_pa_validation_entry_t>
+    {
+        size_t operator()(const sai_pa_validation_entry_t& a) const noexcept
+        {
+            size_t seed = 0;
+            boost::hash_combine(seed, a.switch_id);
+            boost::hash_combine(seed, a.vnet_id);
+            boost::hash_combine(seed, a.sip);
+            return seed;
+        }
+    };
+
+    template <>
+    struct hash<sai_outbound_routing_entry_t>
+    {
+        size_t operator()(const sai_outbound_routing_entry_t& a) const noexcept
+        {
+            size_t seed = 0;
+            boost::hash_combine(seed, a.switch_id);
+            boost::hash_combine(seed, a.eni_id);
+            boost::hash_combine(seed, a.destination);
+            return seed;
+        }
+    };
+
+    template <>
+    struct hash<sai_inbound_routing_entry_t>
+    {
+        size_t operator()(const sai_inbound_routing_entry_t& a) const noexcept
+        {
+            size_t seed = 0;
+            boost::hash_combine(seed, a.switch_id);
+            boost::hash_combine(seed, a.eni_id);
+            boost::hash_combine(seed, a.vni);
+            boost::hash_combine(seed, a.sip);
             return seed;
         }
     };
@@ -181,6 +332,70 @@ struct SaiBulkerTraits<sai_mpls_api_t>
     using bulk_create_entry_fn = sai_bulk_create_inseg_entry_fn;
     using bulk_remove_entry_fn = sai_bulk_remove_inseg_entry_fn;
     using bulk_set_entry_attribute_fn = sai_bulk_set_inseg_entry_attribute_fn;
+};
+
+template<>
+struct SaiBulkerTraits<sai_dash_vnet_api_t>
+{
+    using entry_t = sai_object_id_t;
+    using api_t = sai_dash_vnet_api_t;
+    using create_entry_fn = sai_create_vnet_fn;
+    using remove_entry_fn = sai_remove_vnet_fn;
+    using set_entry_attribute_fn = sai_set_vnet_attribute_fn;
+    using bulk_create_entry_fn = sai_bulk_object_create_fn;
+    using bulk_remove_entry_fn = sai_bulk_object_remove_fn;
+};
+
+template<>
+struct SaiBulkerTraits<sai_dash_inbound_routing_api_t>
+{
+    using entry_t = sai_inbound_routing_entry_t;
+    using api_t = sai_dash_inbound_routing_api_t;
+    using create_entry_fn = sai_create_inbound_routing_entry_fn;
+    using remove_entry_fn = sai_remove_inbound_routing_entry_fn;
+    using set_entry_attribute_fn = sai_set_inbound_routing_entry_attribute_fn;
+    using bulk_create_entry_fn = sai_bulk_create_inbound_routing_entry_fn;
+    using bulk_remove_entry_fn = sai_bulk_remove_inbound_routing_entry_fn;
+    using bulk_set_entry_attribute_fn = sai_bulk_set_inbound_routing_entry_attribute_fn;
+};
+
+template<>
+struct SaiBulkerTraits<sai_dash_outbound_ca_to_pa_api_t>
+{
+    using entry_t = sai_outbound_ca_to_pa_entry_t;
+    using api_t = sai_dash_outbound_ca_to_pa_api_t;
+    using create_entry_fn = sai_create_outbound_ca_to_pa_entry_fn;
+    using remove_entry_fn = sai_remove_outbound_ca_to_pa_entry_fn;
+    using set_entry_attribute_fn = sai_set_outbound_ca_to_pa_entry_attribute_fn;
+    using bulk_create_entry_fn = sai_bulk_create_outbound_ca_to_pa_entry_fn;
+    using bulk_remove_entry_fn = sai_bulk_remove_outbound_ca_to_pa_entry_fn;
+    using bulk_set_entry_attribute_fn = sai_bulk_set_outbound_ca_to_pa_entry_attribute_fn;
+};
+
+template<>
+struct SaiBulkerTraits<sai_dash_pa_validation_api_t>
+{
+    using entry_t = sai_pa_validation_entry_t;
+    using api_t = sai_dash_pa_validation_api_t;
+    using create_entry_fn = sai_create_pa_validation_entry_fn;
+    using remove_entry_fn = sai_remove_pa_validation_entry_fn;
+    using set_entry_attribute_fn = sai_set_pa_validation_entry_attribute_fn;
+    using bulk_create_entry_fn = sai_bulk_create_pa_validation_entry_fn;
+    using bulk_remove_entry_fn = sai_bulk_remove_pa_validation_entry_fn;
+    using bulk_set_entry_attribute_fn = sai_bulk_set_pa_validation_entry_attribute_fn;
+};
+
+template<>
+struct SaiBulkerTraits<sai_dash_outbound_routing_api_t>
+{
+    using entry_t = sai_outbound_routing_entry_t;
+    using api_t = sai_dash_outbound_routing_api_t;
+    using create_entry_fn = sai_create_outbound_routing_entry_fn;
+    using remove_entry_fn = sai_remove_outbound_routing_entry_fn;
+    using set_entry_attribute_fn = sai_set_outbound_routing_entry_attribute_fn;
+    using bulk_create_entry_fn = sai_bulk_create_outbound_routing_entry_fn;
+    using bulk_remove_entry_fn = sai_bulk_remove_outbound_routing_entry_fn;
+    using bulk_set_entry_attribute_fn = sai_bulk_set_outbound_routing_entry_attribute_fn;
 };
 
 template <typename T>
@@ -596,6 +811,38 @@ inline EntityBulker<sai_mpls_api_t>::EntityBulker(sai_mpls_api_t *api, size_t ma
     set_entries_attribute = api->set_inseg_entries_attribute;
 }
 
+template <>
+inline EntityBulker<sai_dash_inbound_routing_api_t>::EntityBulker(sai_dash_inbound_routing_api_t *api, size_t max_bulk_size) : max_bulk_size(max_bulk_size)
+{
+    create_entries = api->create_inbound_routing_entries;
+    remove_entries = api->remove_inbound_routing_entries;
+    set_entries_attribute = nullptr;
+}
+
+template <>
+inline EntityBulker<sai_dash_outbound_ca_to_pa_api_t>::EntityBulker(sai_dash_outbound_ca_to_pa_api_t *api, size_t max_bulk_size) : max_bulk_size(max_bulk_size)
+{
+    create_entries = api->create_outbound_ca_to_pa_entries;
+    remove_entries = api->remove_outbound_ca_to_pa_entries;
+    set_entries_attribute = nullptr;
+}
+
+template <>
+inline EntityBulker<sai_dash_pa_validation_api_t>::EntityBulker(sai_dash_pa_validation_api_t *api, size_t max_bulk_size) : max_bulk_size(max_bulk_size)
+{
+    create_entries = api->create_pa_validation_entries;
+    remove_entries = api->remove_pa_validation_entries;
+    set_entries_attribute = nullptr;
+}
+
+template <>
+inline EntityBulker<sai_dash_outbound_routing_api_t>::EntityBulker(sai_dash_outbound_routing_api_t *api, size_t max_bulk_size) : max_bulk_size(max_bulk_size)
+{
+    create_entries = api->create_outbound_routing_entries;
+    remove_entries = api->remove_outbound_routing_entries;
+    set_entries_attribute = nullptr;
+}
+
 template <typename T>
 class ObjectBulker
 {
@@ -925,4 +1172,13 @@ inline ObjectBulker<sai_next_hop_group_api_t>::ObjectBulker(SaiBulkerTraits<sai_
     remove_entries = api->remove_next_hop_group_members;
     // TODO: wait until available in SAI
     //set_entries_attribute = ;
+}
+
+template <>
+inline ObjectBulker<sai_dash_vnet_api_t>::ObjectBulker(SaiBulkerTraits<sai_dash_vnet_api_t>::api_t *api, sai_object_id_t switch_id, size_t max_bulk_size) :
+    switch_id(switch_id),
+    max_bulk_size(max_bulk_size)
+{
+    create_entries = api->create_vnets;
+    remove_entries = api->remove_vnets;
 }
