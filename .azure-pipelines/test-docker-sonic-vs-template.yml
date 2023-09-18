@@ -26,7 +26,7 @@ parameters:
 
 - name: sonic_buildimage_ubuntu20_04
   type: string
-  default: 'master'
+  default: '$(BUILD_BRANCH)'
 
 - name: asan
   type: boolean
@@ -115,7 +115,7 @@ jobs:
         params=" ${params} --num-ports=${{ parameters.num_ports }} "
       fi
 
-      all_tests=$(ls test_*.py | grep -v test_dash)
+      all_tests=$(ls test_*.py)
       all_tests="${all_tests} p4rt"
 
       if [ -n '${{ parameters.run_tests_pattern }}' ]; then

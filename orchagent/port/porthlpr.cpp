@@ -919,13 +919,13 @@ bool PortHelper::validatePortConfig(PortConfig &port) const
 
     if (!port.lanes.is_set)
     {
-        SWSS_LOG_ERROR("Validation error: missing mandatory field(%s)", PORT_LANES);
+        SWSS_LOG_WARN("Validation error: missing mandatory field(%s)", PORT_LANES);
         return false;
     }
 
     if (!port.speed.is_set)
     {
-        SWSS_LOG_ERROR("Validation error: missing mandatory field(%s)", PORT_SPEED);
+        SWSS_LOG_WARN("Validation error: missing mandatory field(%s)", PORT_SPEED);
         return false;
     }
 

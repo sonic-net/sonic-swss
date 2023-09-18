@@ -15,6 +15,7 @@ import binascii
 import uuid
 import ipaddress
 import sys
+import socket
 
 
 DVS_ENV = ["HWSKU=DPU-2P"]
@@ -144,7 +145,7 @@ class TestDash(object):
         self.sip = "10.0.0.1"
         self.vm_vni = "4321"
         pb = Appliance()
-        pb.sip.ipv4 = int(ipaddress.ip_address(self.sip))
+        pb.sip.ipv4 = socket.htonl(int(ipaddress.ip_address(self.sip)))
         pb.vm_vni = int(self.vm_vni)
         dashobj.create_appliance(self.appliance_id, {"pb": pb.SerializeToString()})
         time.sleep(3)
@@ -152,13 +153,13 @@ class TestDash(object):
         direction_entries = dashobj.asic_direction_lookup_table.get_keys()
         assert direction_entries
         fvs = dashobj.asic_direction_lookup_table[direction_entries[0]]
-        for fv in fvs:
+        for fv in fvs.items():
             if fv[0] == "SAI_DIRECTION_LOOKUP_ENTRY_ATTR_ACTION":
                 assert fv[1] == "SAI_DIRECTION_LOOKUP_ENTRY_ACTION_SET_OUTBOUND_DIRECTION"
         vip_entries = dashobj.asic_vip_table.get_keys()
         assert vip_entries
         fvs = dashobj.asic_vip_table[vip_entries[0]]
-        for fv in fvs:
+        for fv in fvs.items():
             if fv[0] == "SAI_VIP_ENTRY_ATTR_ACTION":
                 assert fv[1] == "SAI_VIP_ENTRY_ACTION_ACCEPT"
         return dashobj
@@ -191,7 +192,7 @@ class TestDash(object):
         pb = Eni()
         pb.eni_id = self.eni_id
         pb.mac_address = bytes.fromhex(self.mac_address.replace(":", ""))
-        pb.underlay_ip.ipv4 = int(ipaddress.ip_address(self.underlay_ip))
+        pb.underlay_ip.ipv4 = socket.htonl(int(ipaddress.ip_address(self.underlay_ip)))
         pb.admin_state = State.STATE_ENABLED
         pb.vnet = self.vnet
         dashobj.create_eni(self.mac_string, {"pb": pb.SerializeToString()})
@@ -203,7 +204,7 @@ class TestDash(object):
         assert enis
         self.eni_oid = enis[0];
         fvs = dashobj.asic_eni_table[enis[0]]
-        for fv in fvs:
+        for fv in fvs.items():
             if fv[0] == "SAI_ENI_ATTR_VNET_ID":
                 assert fv[1] == str(self.vnet_oid)
             if fv[0] == "SAI_ENI_ATTR_PPS":
@@ -219,7 +220,7 @@ class TestDash(object):
         eni_addr_maps = dashobj.asic_eni_ether_addr_map_table.get_keys()
         assert eni_addr_maps
         fvs = dashobj.asic_eni_ether_addr_map_table[eni_addr_maps[0]]
-        for fv in fvs:
+        for fv in fvs.items():
             if fv[0] == "SAI_ENI_ETHER_ADDRESS_MAP_ENTRY_ATTR_ENI_ID":
                 assert fv[1] == str(self.eni_oid)
         return dashobj
@@ -235,7 +236,7 @@ class TestDash(object):
         pb = VnetMapping()
         pb.mac_address = bytes.fromhex(self.mac_address.replace(":", ""))
         pb.action_type = RoutingType.ROUTING_TYPE_VNET_ENCAP
-        pb.underlay_ip.ipv4 = int(ipaddress.ip_address(self.underlay_ip))
+        pb.underlay_ip.ipv4 = socket.htonl(int(ipaddress.ip_address(self.underlay_ip)))
 
         dashobj.create_vnet_map(self.vnet, self.ip1, {"pb": pb.SerializeToString()})
         dashobj.create_vnet_map(self.vnet, self.ip2, {"pb": pb.SerializeToString()})
@@ -244,16 +245,16 @@ class TestDash(object):
         vnet_ca_to_pa_maps = dashobj.asic_dash_outbound_ca_to_pa_table.get_keys()
         assert len(vnet_ca_to_pa_maps) >= 2
         fvs = dashobj.asic_dash_outbound_ca_to_pa_table[vnet_ca_to_pa_maps[0]]
-        for fv in fvs:
+        for fv in fvs.items():
             if fv[0] == "SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_UNDERLAY_DIP":
                 assert fv[1] == "101.1.2.3"
             if fv[0] == "SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_OVERLAY_DMAC":
-                assert fv[1] == "F9:22:83:99:22:A2"
+                assert fv[1] == "F4:93:9F:EF:C4:7E"
 
         vnet_pa_validation_maps = dashobj.asic_pa_validation_table.get_keys()
         assert vnet_pa_validation_maps
         fvs = dashobj.asic_pa_validation_table[vnet_pa_validation_maps[0]]
-        for fv in fvs:
+        for fv in fvs.items():
             if fv[0] == "SAI_PA_VALIDATION_ENTRY_ATTR_ACTION":
                 assert fv[1] == "SAI_PA_VALIDATION_ENTRY_ACTION_PERMIT"
         return dashobj
@@ -268,18 +269,19 @@ class TestDash(object):
         pb = Route()
         pb.action_type = RoutingType.ROUTING_TYPE_VNET_DIRECT
         pb.vnet_direct.vnet = self.vnet
-        pb.vnet_direct.overlay_ip.ipv4 = int(ipaddress.ip_address(self.overlay_ip))
+        pb.vnet_direct.overlay_ip.ipv4 = socket.htonl(int(ipaddress.ip_address(self.overlay_ip)))
         dashobj.create_outbound_routing(self.mac_string, self.ip, {"pb": pb.SerializeToString()})
         time.sleep(3)
 
         outbound_routing_entries = dashobj.asic_outbound_routing_table.get_keys()
         assert outbound_routing_entries
         fvs = dashobj.asic_outbound_routing_table[outbound_routing_entries[0]]
-        for fv in fvs:
+        for fv in fvs.items():
             if fv[0] == "SAI_OUTBOUND_ROUTING_ENTRY_ATTR_ACTION":
                 assert fv[1] == "SAI_OUTBOUND_ROUTING_ENTRY_ACTION_ROUTE_VNET_DIRECT"
             if fv[0] == "SAI_OUTBOUND_ROUTING_ENTRY_ATTR_OVERLAY_IP":
                 assert fv[1] == "10.0.0.6"
+        assert "SAI_OUTBOUND_ROUTING_ENTRY_ATTR_DST_VNET_ID" in fvs
         return dashobj
 
     def test_inbound_routing(self, dvs):
@@ -305,7 +307,7 @@ class TestDash(object):
         inbound_routing_entries = dashobj.asic_inbound_routing_rule_table.get_keys()
         assert inbound_routing_entries
         fvs = dashobj.asic_inbound_routing_rule_table[inbound_routing_entries[0]]
-        for fv in fvs:
+        for fv in fvs.items():
             if fv[0] == "SAI_INBOUND_ROUTING_ENTRY_ATTR_ACTION":
                 assert fv[1] == "SAI_INBOUND_ROUTING_ENTRY_ACTION_VXLAN_DECAP_PA_VALIDATE"
         return dashobj
