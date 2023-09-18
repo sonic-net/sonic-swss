@@ -75,7 +75,7 @@ jobs:
       name: Build sonic-swss-common
       run: |
         cd ..
-        git clone https://github.com/sonic-net/sonic-swss-common
+        git clone -b ${{ github.ref_name }} https://github.com/sonic-net/sonic-swss-common
         pushd sonic-swss-common
         ./autogen.sh
         dpkg-buildpackage -rfakeroot -us -uc -b -j$(nproc)
@@ -89,14 +89,13 @@ jobs:
       name: Build sonic-sairedis
       run: |
         cd ..
-        git clone --recursive https://github.com/sonic-net/sonic-sairedis
+        git clone -b ${{ github.ref_name }} --recursive https://github.com/sonic-net/sonic-sairedis
         pushd sonic-sairedis
         ./autogen.sh
         DEB_BUILD_OPTIONS=nocheck \
         SWSS_COMMON_INC="$(dirname $GITHUB_WORKSPACE)/usr/include" \
         SWSS_COMMON_LIB="$(dirname $GITHUB_WORKSPACE)/usr/lib/x86_64-linux-gnu" \
-        DEB_CFLAGS_SET="-Wno-error" DEB_CXXFLAGS_SET="-Wno-error" \
-        dpkg-buildpackage -rfakeroot -us -uc -b -Psyncd,vs,nopython2 -j$(nproc)
+        fakeroot debian/rules -j$(nproc) CFLAGS="-Wno-error" CXXFLAGS="-Wno-error" binary-syncd-vs
         popd
         dpkg-deb -x libsairedis_${SAIREDIS_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
         dpkg-deb -x libsairedis-dev_${SAIREDIS_VER}_amd64.deb $(dirname $GITHUB_WORKSPACE)
@@ -112,7 +111,7 @@ jobs:
       name: Build libnl
       run: |
         cd ..
-        git clone https://github.com/sonic-net/sonic-buildimage
+        git clone -b ${{ github.ref_name }} https://github.com/sonic-net/sonic-buildimage
         pushd sonic-buildimage/src/libnl3
         git clone https://github.com/thom311/libnl libnl3-${LIBNL3_VER}
         pushd libnl3-${LIBNL3_VER}
