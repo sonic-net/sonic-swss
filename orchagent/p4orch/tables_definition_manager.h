@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "macaddress.h"
-#include "json.hpp"
+#include <nlohmann/json.hpp>
 #include "orch.h"
 #include "p4orch/object_manager_interface.h"
 #include "p4orch/p4oidmapper.h"
