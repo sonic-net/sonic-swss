@@ -769,7 +769,7 @@ namespace bufferorch_test
         static_cast<Orch *>(gBufferOrch)->doTask();
         ASSERT_EQ(_ut_stub_buffer_profile_size, 29936);
         ASSERT_EQ(_ut_stub_buffer_profile_xoff, 10480);
-        ASSERT_EQ(_ut_stub_buffer_profile_size, 19456);
+        ASSERT_EQ(_ut_stub_buffer_profile_xon, 19456);
         static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
         ASSERT_TRUE(ts.empty());
 
@@ -785,7 +785,7 @@ namespace bufferorch_test
         static_cast<Orch *>(gBufferOrch)->doTask();
         ASSERT_EQ(_ut_stub_buffer_profile_size, 39936);
         ASSERT_EQ(_ut_stub_buffer_profile_xoff, 20480);
-        ASSERT_EQ(_ut_stub_buffer_profile_size, 19456);
+        ASSERT_EQ(_ut_stub_buffer_profile_xon, 19456);
         static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
         ASSERT_TRUE(ts.empty());
 
