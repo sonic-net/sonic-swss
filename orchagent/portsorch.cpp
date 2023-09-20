@@ -2351,6 +2351,11 @@ bool PortsOrch::isFecModeSupported(const Port &port, sai_port_fec_mode_t fec_mod
     {
         return false;
     }
+
+    if (is_auto && !port.m_autoneg)
+    {
+        SWSS_LOG_NOTICE("Autoneg must be enabled for port fec mode auto to work");
+    }
     const auto &obj = m_portSupportedFecModes.at(port.m_port_id);
 
     if (!obj.supported)
