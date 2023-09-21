@@ -1267,7 +1267,7 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         // skip next hop group member create for neighbor from down port
         if (m_neighOrch->isNextHopFlagSet(it, NHFLAGS_IFDOWN))
         {
-            SWSS_LOG_INFO("Interface down for NH %s, skip this NH", it.to_string().c_str());
+            SWSS_LOG_NOTICE("Interface down for NH %s, skip this NH", it.to_string().c_str());
             continue;
         }
 
