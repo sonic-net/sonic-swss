@@ -5,11 +5,12 @@ name: "CodeQL"
 on:
   push:
     branches:
-      - 'master'
+      - '*'
       - '202[0-9][0-9][0-9]'
   pull_request:
     branches:
       - 'master'
+      - '*'
       - '202[0-9][0-9][0-9]'
   workflow_dispatch:
 
@@ -78,6 +79,7 @@ jobs:
         cd ..
         git clone https://github.com/sonic-net/sonic-swss-common
         pushd sonic-swss-common
+        git reset dc14d3627c6516495fd5d8c9579bdb939a4c9930 --hard
         ./autogen.sh
         dpkg-buildpackage -rfakeroot -us -uc -b -j$(nproc)
         popd
@@ -89,7 +91,7 @@ jobs:
       env:
         SWSSCOMMON_VER: "1.0.0"
 
-    - if: matrix.language == 'cpp'
+    - if: matrix.language == 'cpp1'
       name: Build sonic-sairedis
       run: |
         cd ..
@@ -118,7 +120,7 @@ jobs:
         SAIREDIS_VER: "1.0.0"
 
     # Inject libnl deb only after sonic-sairedis compilation is done.
-    - if: matrix.language == 'cpp'
+    - if: matrix.language == 'cpp1'
       name: Build libnl
       run: |
         cd ..
@@ -150,7 +152,7 @@ jobs:
         LIBNL3_VER: "3.5.0"
         LIBNL3_REV: "1"
 
-    - if: matrix.language == 'cpp'
+    - if: matrix.language == 'cpp1'
       name: Build repository
       run: |
         ./autogen.sh
