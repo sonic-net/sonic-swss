@@ -6245,12 +6245,12 @@ void PortsOrch::generateQueueMap(map<string, FlexCounterQueueStates> queuesState
         return;
     }
 
-    bool isCreateAllPgs = false;
+    bool isCreateAllQueues = false;
 
-    if (pgsStateVector.count(createAllAvailableBuffersStr))
+    if (queuesStateVector.count(createAllAvailableBuffersStr))
     {
-        isCreateAllPgs = true;
-        pgsStateVector.clear();
+        isCreateAllQueues = true;
+        queuesStateVector.clear();
     }
 
     for (const auto& it: m_portList)
@@ -6616,12 +6616,12 @@ void PortsOrch::generatePriorityGroupMap(map<string, FlexCounterPgStates> pgsSta
         return;
     }
 
-    bool isCreateAllQueues = false;
+    bool isCreateAllPgs = false;
 
-    if (queuesStateVector.count(createAllAvailableBuffersStr))
+    if (pgsStateVector.count(createAllAvailableBuffersStr))
     {
-        isCreateAllQueues = true;
-        queuesStateVector.clear();
+        isCreateAllPgs = true;
+        pgsStateVector.clear();
     }
 
     for (const auto& it: m_portList)
