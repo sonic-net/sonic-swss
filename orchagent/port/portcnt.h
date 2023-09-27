@@ -70,7 +70,7 @@ public:
     struct {
         sai_port_fec_mode_t value;
         bool is_set = false;
-        bool is_auto = false;
+        bool override_fec = false;
     } fec; // Port FEC
 
     struct {

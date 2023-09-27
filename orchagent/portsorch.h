@@ -380,7 +380,7 @@ private:
     bool setPortTpid(Port &port, sai_uint16_t tpid);
     bool setPortPvid (Port &port, sai_uint32_t pvid);
     bool getPortPvid(Port &port, sai_uint32_t &pvid);
-    bool setPortFec(Port &port, sai_port_fec_mode_t fec_mode, bool auto_fec);
+    bool setPortFec(Port &port, sai_port_fec_mode_t fec_mode, bool fec_override);
     bool setPortFecOverride(sai_object_id_t port_obj, bool fec_override);
     bool setPortPfcAsym(Port &port, sai_port_priority_flow_control_mode_t pfc_asym);
     bool getDestPortId(sai_object_id_t src_port_id, dest_port_type_t port_type, sai_object_id_t &des_port_id);
@@ -397,8 +397,8 @@ private:
     void initPortSupportedFecModes(const std::string& alias, sai_object_id_t port_id);
     task_process_status setPortSpeed(Port &port, sai_uint32_t speed);
     bool getPortSpeed(sai_object_id_t id, sai_uint32_t &speed);
-    bool setGearboxPortsAttr(const Port &port, sai_port_attr_t id, void *value, bool auto_fec=false);
-    bool setGearboxPortAttr(const Port &port, dest_port_type_t port_type, sai_port_attr_t id, void *value, bool auto_fec);
+    bool setGearboxPortsAttr(const Port &port, sai_port_attr_t id, void *value, bool fec_override=true);
+    bool setGearboxPortAttr(const Port &port, dest_port_type_t port_type, sai_port_attr_t id, void *value, bool fec_override);
 
     bool getPortAdvSpeeds(const Port& port, bool remote, std::vector<sai_uint32_t>& speed_list);
     bool getPortAdvSpeeds(const Port& port, bool remote, string& adv_speeds);

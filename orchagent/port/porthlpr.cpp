@@ -69,6 +69,28 @@ static const std::unordered_map<std::string, sai_port_interface_type_t> portInte
     { PORT_INTERFACE_TYPE_XGMII, SAI_PORT_INTERFACE_TYPE_XGMII }
 };
 
+static const std::unordered_map<std::string, sai_port_fec_mode_t> portFecMap =
+{
+    { PORT_FEC_NONE, SAI_PORT_FEC_MODE_NONE },
+    { PORT_FEC_RS,   SAI_PORT_FEC_MODE_RS   },
+    { PORT_FEC_FC,   SAI_PORT_FEC_MODE_FC   },
+    { PORT_FEC_AUTO, SAI_PORT_FEC_MODE_NONE }
+};
+
+static const std::unordered_map<sai_port_fec_mode_t, std::string> portFecRevMap =
+{
+    { SAI_PORT_FEC_MODE_NONE, PORT_FEC_NONE },
+    { SAI_PORT_FEC_MODE_RS,   PORT_FEC_RS   },
+    { SAI_PORT_FEC_MODE_FC,   PORT_FEC_FC   }
+};
+
+static const std::unordered_map<std::string, bool> portFecOverrideMap =
+{
+    { PORT_FEC_NONE, true  },
+    { PORT_FEC_RS,   true  },
+    { PORT_FEC_FC,   true  },
+    { PORT_FEC_AUTO, false }
+};
 
 static const std::unordered_map<std::string, sai_port_priority_flow_control_mode_t> portPfcAsymMap =
 {
@@ -132,6 +154,30 @@ bool PortHelper::fecToStr(std::string &str, sai_port_fec_mode_t value) const
     return true;
 }
 
+bool PortHelper::fecToSaiFecMode(const std::string &str, sai_port_fec_mode_t &value) const
+{
+    const auto &cit = portFecMap.find(str);
+    if (cit == portFecMap.cend())
+    {
+        return false;
+    }
+
+    value = cit->second;
+
+    return true;
+}
+
+bool PortHelper::fecIsOverrideRequired(const std::string &str) const
+{
+    const auto &cit = portFecMap.find(value);
+    if (cit == portFecMap.cend())
+    {
+        return false;
+    }
+
+    return cit->second;
+
+}
 std::string PortHelper::getFieldValueStr(const PortConfig &port, const std::string &field) const
 {
     static std::string str;
@@ -456,11 +502,7 @@ bool PortHelper::parsePortFec(PortConfig &port, const std::string &field, const 
 
     port.fec.value = cit->second;
     port.fec.is_set = true;
-
-    if (value == PORT_FEC_AUTO)
-    {
-        port.fec.is_auto = true;
-    }
+    port.fec.override_fec = portFecOverrideMap[value];
 
     return true;
 }
