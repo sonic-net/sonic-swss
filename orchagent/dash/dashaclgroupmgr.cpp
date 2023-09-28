@@ -222,13 +222,13 @@ task_process_status DashAclGroupMgr::remove(const string& group_id)
 
     if (!group.m_dash_acl_rule_table.empty())
     {
-        SWSS_LOG_ERROR("ACL group %s still has %lu rules", group_id.c_str(), group.m_dash_acl_rule_table.size());
+        SWSS_LOG_ERROR("ACL group %s still has %zu rules", group_id.c_str(), group.m_dash_acl_rule_table.size());
         return task_need_retry;
     }
 
     if (isBound(group))
     {
-        SWSS_LOG_ERROR("ACL group %s still has %lu references", group_id.c_str(), group.m_in_tables.size() + group.m_out_tables.size());
+        SWSS_LOG_ERROR("ACL group %s still has %zu references", group_id.c_str(), group.m_in_tables.size() + group.m_out_tables.size());
         return task_need_retry;
     }
 
