@@ -1170,7 +1170,10 @@ void FdbOrch::updatePortOperState(const PortOperStateUpdate& update)
     if (update.operStatus == SAI_PORT_OPER_STATUS_DOWN)
     {
         swss::Port p = update.port;
-        flushFDBEntries(p.m_bridge_port_id, SAI_NULL_OBJECT_ID);
+        if (p.m_bridge_port_id != SAI_NULL_OBJECT_ID)
+        {
+            flushFDBEntries(p.m_bridge_port_id, SAI_NULL_OBJECT_ID);
+        }
 
         // Get BVID of each VLAN that this port is a member of
         // and call notifyObserversFDBFlush

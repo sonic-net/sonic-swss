@@ -11,7 +11,7 @@
 #include <fstream>
 #include <iostream>
 #include "json.h"
-#include "json.hpp"
+#include <nlohmann/json.hpp>
 #include "warm_restart.h"
 
 using namespace std;
