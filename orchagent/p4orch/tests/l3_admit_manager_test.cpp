@@ -7,7 +7,7 @@
 #include <string>
 #include <unordered_map>
 
-#include "json.hpp"
+#include <nlohmann/json.hpp>
 #include "mock_response_publisher.h"
 #include "mock_sai_my_mac.h"
 #include "p4oidmapper.h"

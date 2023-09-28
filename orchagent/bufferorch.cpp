@@ -704,6 +704,7 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
         }
         if (SAI_NULL_OBJECT_ID != sai_object)
         {
+            vector<sai_attribute_t> attribs_to_retry;
             SWSS_LOG_DEBUG("Modifying existing sai object:%" PRIx64, sai_object);
             for (auto &attribute : attribs)
             {
@@ -715,7 +716,18 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
                 }
                 else if (SAI_STATUS_SUCCESS != sai_status)
                 {
-                    SWSS_LOG_ERROR("Failed to modify buffer profile, name:%s, sai object:%" PRIx64 ", status:%d", object_name.c_str(), sai_object, sai_status);
+                    SWSS_LOG_NOTICE("Unable to modify buffer profile, name:%s, sai object:%" PRIx64 ", status:%d, will retry one more time", object_name.c_str(), sai_object, sai_status);
+                    attribs_to_retry.push_back(attribute);
+                }
+            }
+
+            for (auto &attribute : attribs)
+            {
+                sai_status = sai_buffer_api->set_buffer_profile_attribute(sai_object, &attribute);
+                if (SAI_STATUS_SUCCESS != sai_status)
+                {
+                    // A retried attribute can not be "not implemented"
+                    SWSS_LOG_ERROR("Failed to modify buffer profile, name:%s, sai object:%" PRIx64 ", status:%d, will retry once", object_name.c_str(), sai_object, sai_status);
                     task_process_status handle_status = handleSaiSetStatus(SAI_API_BUFFER, sai_status);
                     if (handle_status != task_process_status::task_success)
                     {

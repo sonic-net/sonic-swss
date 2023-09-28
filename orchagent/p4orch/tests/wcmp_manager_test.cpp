@@ -5,7 +5,7 @@
 
 #include <string>
 
-#include "json.hpp"
+#include <nlohmann/json.hpp>
 #include "mock_response_publisher.h"
 #include "mock_sai_acl.h"
 #include "mock_sai_hostif.h"

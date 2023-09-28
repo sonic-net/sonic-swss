@@ -4,7 +4,7 @@
 
 #include "SaiAttributeList.h"
 #include "dbconnector.h"
-#include "json.hpp"
+#include <nlohmann/json.hpp>
 #include "p4orch/p4orch_util.h"
 #include "portsorch.h"
 #include "sai_serialize.h"
