@@ -64,6 +64,53 @@ namespace bufferorch_test
         return pold_sai_buffer_api->set_ingress_priority_group_attribute(ingress_priority_group_id, attr);
     }
 
+    sai_uint64_t _ut_stub_buffer_profile_size;
+    sai_uint64_t _ut_stub_buffer_profile_xon;
+    sai_uint64_t _ut_stub_buffer_profile_xoff;
+    bool _ut_stub_buffer_profile_sanity_check = false;
+    sai_status_t _ut_stub_sai_set_buffer_profile_attribute(
+        _In_ sai_object_id_t buffer_profile_id,
+        _In_ const sai_attribute_t *attr)
+    {
+        if (_ut_stub_buffer_profile_sanity_check)
+        {
+            if (SAI_BUFFER_PROFILE_ATTR_BUFFER_SIZE == attr[0].id)
+            {
+                if (attr[0].value.u64 < _ut_stub_buffer_profile_xon + _ut_stub_buffer_profile_xoff)
+                {
+                    return SAI_STATUS_INVALID_PARAMETER;
+                }
+                else
+                {
+                    _ut_stub_buffer_profile_size = attr[0].value.u64;
+                }
+            }
+            if (SAI_BUFFER_PROFILE_ATTR_XOFF_TH == attr[0].id)
+            {
+                if (_ut_stub_buffer_profile_size < _ut_stub_buffer_profile_xon + attr[0].value.u64)
+                {
+                    return SAI_STATUS_INVALID_PARAMETER;
+                }
+                else
+                {
+                    _ut_stub_buffer_profile_xoff = attr[0].value.u64;
+                }
+            }
+            if (SAI_BUFFER_PROFILE_ATTR_XON_TH == attr[0].id)
+            {
+                if (_ut_stub_buffer_profile_size < _ut_stub_buffer_profile_xoff + attr[0].value.u64)
+                {
+                    return SAI_STATUS_INVALID_PARAMETER;
+                }
+                else
+                {
+                    _ut_stub_buffer_profile_xon = attr[0].value.u64;
+                }
+            }
+        }
+        return pold_sai_buffer_api->set_buffer_profile_attribute(buffer_profile_id, attr);
+    }
+
     uint32_t _ut_stub_set_queue_count;
     sai_status_t _ut_stub_sai_set_queue_attribute(
         _In_ sai_object_id_t queue_id,
@@ -83,6 +130,7 @@ namespace bufferorch_test
         ut_sai_buffer_api = *sai_buffer_api;
         pold_sai_buffer_api = sai_buffer_api;
         ut_sai_buffer_api.set_ingress_priority_group_attribute = _ut_stub_sai_set_ingress_priority_group_attribute;
+        ut_sai_buffer_api.set_buffer_profile_attribute = _ut_stub_sai_set_buffer_profile_attribute;
         sai_buffer_api = &ut_sai_buffer_api;
 
         ut_sai_queue_api = *sai_queue_api;
@@ -672,6 +720,76 @@ namespace bufferorch_test
         static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
         ASSERT_TRUE(ts.empty());
 
+        _unhook_sai_apis();
+    }
+
+    TEST_F(BufferOrchTest, BufferOrchTestSetBufferProfile)
+    {
+        _hook_sai_apis();
+        vector<string> ts;
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        Table bufferPoolTable = Table(m_app_db.get(), APP_BUFFER_POOL_TABLE_NAME);
+        Table bufferProfileTable = Table(m_app_db.get(), APP_BUFFER_PROFILE_TABLE_NAME);
+
+        bufferPoolTable.set("ingress_lossless_pool",
+                            {
+                                {"size", "1024000"},
+                                {"mode", "dynamic"},
+                                {"type", "ingress"}
+                            });
+        bufferProfileTable.set("test_lossless_profile",
+                               {
+                                   {"pool", "ingress_lossless_pool"},
+                                   {"dynamic_th", "0"},
+                                   {"size", "39936"},
+                                   {"xon", "19456"},
+                                   {"xoff", "20480"}
+                               });
+
+        gBufferOrch->addExistingData(&bufferPoolTable);
+        gBufferOrch->addExistingData(&bufferProfileTable);
+
+        static_cast<Orch *>(gBufferOrch)->doTask();
+
+        _ut_stub_buffer_profile_size = 39936;
+        _ut_stub_buffer_profile_xon = 19456;
+        _ut_stub_buffer_profile_xoff = 20480;
+        _ut_stub_buffer_profile_sanity_check = true;
+
+        // Decrease xoff, size
+        entries.push_back({"test_lossless_profile", "SET",
+                           {
+                               {"size", "29936"},
+                               {"xon", "19456"},
+                               {"xoff", "10480"}
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gBufferOrch->getExecutor(APP_BUFFER_PROFILE_TABLE_NAME));
+        consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        ASSERT_EQ(_ut_stub_buffer_profile_size, 29936);
+        ASSERT_EQ(_ut_stub_buffer_profile_xoff, 10480);
+        ASSERT_EQ(_ut_stub_buffer_profile_xon, 19456);
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+
+        // Increase xoff, size
+        entries.push_back({"test_lossless_profile", "SET",
+                           {
+                               {"xoff", "20480"},
+                               {"size", "39936"},
+                               {"xon", "19456"}
+                           }});
+        consumer->addToSync(entries);
+        entries.clear();
+        static_cast<Orch *>(gBufferOrch)->doTask();
+        ASSERT_EQ(_ut_stub_buffer_profile_size, 39936);
+        ASSERT_EQ(_ut_stub_buffer_profile_xoff, 20480);
+        ASSERT_EQ(_ut_stub_buffer_profile_xon, 19456);
+        static_cast<Orch *>(gBufferOrch)->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+
+        _ut_stub_buffer_profile_sanity_check = false;
         _unhook_sai_apis();
     }
 }
