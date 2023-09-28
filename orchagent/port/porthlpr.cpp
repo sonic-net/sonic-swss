@@ -9,6 +9,7 @@
 
 #include <boost/algorithm/string.hpp>
 
+#include "portschema.h"
 #include "converter.h"
 #include "tokenize.h"
 #include "logger.h"
@@ -169,7 +170,7 @@ bool PortHelper::fecToSaiFecMode(const std::string &str, sai_port_fec_mode_t &va
 
 bool PortHelper::fecIsOverrideRequired(const std::string &str) const
 {
-    const auto &cit = portFecMap.find(value);
+    const auto &cit = portFecMap.find(str);
     if (cit == portFecMap.cend())
     {
         return false;
@@ -500,9 +501,16 @@ bool PortHelper::parsePortFec(PortConfig &port, const std::string &field, const 
         return false;
     }
 
+    const auto &override_cit = portFecOverrideMap.find(value);
+    if (override_cit == portFecOverrideMap.cend())
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): invalid value(%s) in override map", field.c_str(), value.c_str());
+        return false;
+    }
+
     port.fec.value = cit->second;
     port.fec.is_set = true;
-    port.fec.override_fec = portFecOverrideMap[value];
+    port.fec.override_fec =override_cit->second;
 
     return true;
 }
