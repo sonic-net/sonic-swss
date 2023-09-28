@@ -578,6 +578,10 @@ int main(int argc, char **argv)
         attr.id = SAI_SWITCH_ATTR_TYPE;
         attr.value.u32 = SAI_SWITCH_TYPE_FABRIC;
         attrs.push_back(attr);
+
+        attr.id = SAI_SWITCH_ATTR_SWITCH_ID;
+        attr.value.u32 = gVoqMySwitchId;
+        attrs.push_back(attr);
     }
 
     /* Must be last Attribute */

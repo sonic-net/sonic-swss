@@ -307,6 +307,8 @@ void TeamMgr::doLagTask(Consumer &consumer)
             {
                 if (addLag(alias, min_links, fallback, fast_rate) == task_need_retry)
                 {
+                    // If LAG creation fails, we need to clean up any potentially orphaned teamd processes
+                    removeLag(alias);
                     it++;
                     continue;
                 }
@@ -627,7 +629,7 @@ task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fal
     SWSS_LOG_INFO("Port channel %s teamd configuration: %s",
             alias.c_str(), conf.str().c_str());
 
-    string warmstart_flag = WarmStart::isWarmStart() ? " -w -o " : " -r ";
+    string warmstart_flag = WarmStart::isWarmStart() ? " -w -o" : " -r";
 
     cmd << TEAMD_CMD
         << warmstart_flag
@@ -654,9 +656,42 @@ bool TeamMgr::removeLag(const string &alias)
 
     stringstream cmd;
     string res;
+    pid_t pid;
 
-    cmd << TEAMD_CMD << " -k -t " << shellquote(alias);
-    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+    try
+    {
+        std::stringstream cmd;
+        cmd << "cat " << shellquote("/var/run/teamd/" + alias + ".pid");
+        EXEC_WITH_ERROR_THROW(cmd.str(), res);
+    }
+    catch (const std::exception &e)
+    {
+        SWSS_LOG_NOTICE("Failed to remove non-existent port channel %s pid...", alias.c_str());
+        return false;
+    }
+
+    try
+    {
+        pid = static_cast<pid_t>(std::stoul(res, nullptr, 10));
+        SWSS_LOG_INFO("Read port channel %s pid %d", alias.c_str(), pid);
+    }
+    catch (const std::exception &e)
+    {
+        SWSS_LOG_ERROR("Failed to read port channel %s pid: %s", alias.c_str(), e.what());
+        return false;
+    }
+
+    try
+    {
+        std::stringstream cmd;
+        cmd << "kill -TERM " << pid;
+        EXEC_WITH_ERROR_THROW(cmd.str(), res);
+    }
+    catch (const std::exception &e)
+    {
+        SWSS_LOG_ERROR("Failed to send SIGTERM to port channel %s pid %d: %s", alias.c_str(), pid, e.what());
+        return false;
+    }
 
     SWSS_LOG_NOTICE("Stop port channel %s", alias.c_str());
 
