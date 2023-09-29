@@ -182,7 +182,6 @@ tests_intfmgrd_LDADD = $(LDADD_GTEST) $(LDADD_SAI) -lnl-genl-3 -lhiredis -lhired
 tests_teammgrd_SOURCES = teammgrd/teammgr_ut.cpp \
                          $(top_srcdir)/cfgmgr/teammgr.cpp \
                          $(top_srcdir)/lib/subintf.cpp \
-                         $(top_srcdir)/lib/recorder.cpp \
                          $(top_srcdir)/orchagent/orch.cpp \
                          $(top_srcdir)/orchagent/request_parser.cpp \
                          mock_orchagent_main.cpp \
