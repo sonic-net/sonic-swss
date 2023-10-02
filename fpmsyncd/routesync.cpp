@@ -14,6 +14,10 @@
 #include <string.h>
 #include <arpa/inet.h>
 
+#ifdef HAVE_NEXTHOP_GROUP
+#include <linux/nexthop.h>
+#endif
+
 using namespace std;
 using namespace swss;
 
@@ -106,6 +110,8 @@ enum {
     ROUTE_ENCAP_SRV6_ENCAP_SRC_ADDR    = 2,
 };
 
+#define MULTIPATH_NUM 256 //Same value used for FRR in SONiC
+
 /* Returns name of the protocol passed number represents */
 static string getProtocolString(int proto)
 {
@@ -138,6 +144,9 @@ static decltype(auto) makeNlAddr(const T& ip)
 
 RouteSync::RouteSync(RedisPipeline *pipeline) :
     m_routeTable(pipeline, APP_ROUTE_TABLE_NAME, true),
+#ifdef HAVE_NEXTHOP_GROUP
+    m_nexthop_groupTable(pipeline, APP_NEXTHOP_GROUP_TABLE_NAME, true),
+#endif
     m_label_routeTable(pipeline, APP_LABEL_ROUTE_TABLE_NAME, true),
     m_vnet_routeTable(pipeline, APP_VNET_RT_TABLE_NAME, true),
     m_vnet_tunnelTable(pipeline, APP_VNET_RT_TUNNEL_TABLE_NAME, true),
@@ -1444,11 +1453,26 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
     if ((h->nlmsg_type != RTM_NEWROUTE)
         && (h->nlmsg_type != RTM_DELROUTE)
         && (h->nlmsg_type != RTM_NEWSRV6LOCALSID)
-        && (h->nlmsg_type != RTM_DELSRV6LOCALSID))
+        && (h->nlmsg_type != RTM_DELSRV6LOCALSID)
+#ifdef HAVE_NEXTHOP_GROUP
+        && (h->nlmsg_type != RTM_NEWNEXTHOP)
+        && (h->nlmsg_type != RTM_DELNEXTHOP)
+#endif
+    )
         return;
 
+
+#ifdef HAVE_NEXTHOP_GROUP
+    if(h->nlmsg_type == RTM_NEWNEXTHOP || h->nlmsg_type == RTM_DELNEXTHOP)
+    {
+        len = (int)(h->nlmsg_len - NLMSG_LENGTH(sizeof(struct nhmsg)));
+    }
+    else
+#endif
+    {
+        len = (int)(h->nlmsg_len - NLMSG_LENGTH(sizeof(struct ndmsg)));
+    }
     /* Length validity. */
-    len = (int)(h->nlmsg_len - NLMSG_LENGTH(sizeof(struct ndmsg)));
     if (len < 0) 
     {
         SWSS_LOG_ERROR("%s: Message received from netlink is of a broken size %d %zu",
@@ -1457,6 +1481,14 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
         return;
     }
 
+#ifdef HAVE_NEXTHOP_GROUP
+    if(h->nlmsg_type == RTM_NEWNEXTHOP || h->nlmsg_type == RTM_DELNEXTHOP)
+    {
+        onNextHopMsg(h, len);
+        return;
+    }
+#endif
+    
     if ((h->nlmsg_type == RTM_NEWSRV6LOCALSID)
         || (h->nlmsg_type == RTM_DELSRV6LOCALSID))
     {
@@ -1481,8 +1513,6 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
             onEvpnRouteMsg(h, len);
             break;
     }
-
-    return;
 }
 
 void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
@@ -1588,6 +1618,18 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
         if (!warmRestartInProgress)
         {
             m_routeTable.del(destipprefix);
+#ifdef HAVE_NEXTHOP_GROUP
+            const auto it = m_nh_routes.find(string(destipprefix));
+            if(it == m_nh_routes.end())
+            {
+                SWSS_LOG_INFO("Route not found: %s", destipprefix);
+                return;
+            }
+
+            const NextHopGroupRoute& nh_route = it->second;
+            deleteNextHopGroup(nh_route.id);
+            m_nh_routes.erase(it);
+#endif
             return;
         }
         else
@@ -1637,88 +1679,178 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
             return;
     }
 
-    struct nl_list_head *nhs = rtnl_route_get_nexthops(route_obj);
-    if (!nhs)
-    {
-        SWSS_LOG_INFO("Nexthop list is empty for %s", destipprefix);
-        return;
-    }
-
-    /* Get nexthop lists */
+    vector<FieldValueTuple> fvVector;
     string gw_list;
     string intf_list;
     string mpls_list;
-    getNextHopList(route_obj, gw_list, mpls_list, intf_list);
-    string weights = getNextHopWt(route_obj);
+    string nhg_id_key;
 
-    vector<string> alsv = tokenize(intf_list, NHG_DELIMITER);
-    for (auto alias : alsv)
+#ifdef HAVE_NEXTHOP_GROUP
+    uint32_t old_nhg_id = 0;
+    bool delete_route = false;
+    uint32_t nhg_id = rtnl_route_get_nh_id(route_obj);
+    if(nhg_id)
     {
-        /*
-         * An FRR behavior change from 7.2 to 7.5 makes FRR update default route to eth0 in interface
-         * up/down events. Skipping routes to eth0 or docker0 to avoid such behavior
-         */
-        if (alias == "eth0" || alias == "docker0")
+        bool use_nhg = false;
+        const auto itg = m_nh_groups.find(nhg_id);
+        if(itg == m_nh_groups.end())
         {
-            SWSS_LOG_DEBUG("Skip routes to eth0 or docker0: %s %s %s",
-                    destipprefix, gw_list.c_str(), intf_list.c_str());
-            // If intf_list has only this interface, that means all of the next hops of this route 
-            // have been removed and the next hop on the eth0/docker0 has become the only next hop. 
-            // In this case since we do not want the route with next hop on eth0/docker0, we return. 
-            // But still we need to clear the route from the APPL_DB. Otherwise the APPL_DB and data 
-            // path will be left with stale route entry
-            if(alsv.size() == 1)
-            {
-                if (!warmRestartInProgress)
-                {
-                    SWSS_LOG_NOTICE("RouteTable del msg for route with only one nh on eth0/docker0: %s %s %s %s",
-                            destipprefix, gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
-
-                    m_routeTable.del(destipprefix);
-                }
-                else
-                {
-                    SWSS_LOG_NOTICE("Warm-Restart mode: Receiving delete msg for route with only nh on eth0/docker0: %s %s %s %s",
-                            destipprefix, gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
-
-                    vector<FieldValueTuple> fvVector;
-                    const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix,
-                                                                       DEL_COMMAND,
-                                                                       fvVector);
-                    m_warmStartHelper.insertRefreshMap(kfv);
-                }
-            }
+            SWSS_LOG_DEBUG("NextHop group id %d not found. Dropping the route %s", nhg_id, destipprefix);
             return;
         }
+        NextHopGroup& nhg = itg->second;
+        if(hasIntfNextHop(nhg))
+        {
+            string nexthops, ifnames, weights;
+
+            getNextHopGroupFields(nhg, nexthops, ifnames, weights, rtnl_route_get_family(route_obj));
+            FieldValueTuple gw("nexthop", nexthops.c_str());
+            FieldValueTuple intf("ifname", ifnames.c_str());
+            fvVector.push_back(gw);
+            fvVector.push_back(intf);
+            if(!weights.empty())
+            {
+                FieldValueTuple wg("weight", weights.c_str());
+                fvVector.push_back(wg);
+            }
+            use_nhg = false;
+            SWSS_LOG_DEBUG("NextHop group id %d has interface nexthop address. Filling the route table %s with nexthop and ifname", nhg_id, destipprefix);
+        }
+        else
+        {
+            nhg_id_key = getNextHopGroupKeyAsString(nhg_id);
+            FieldValueTuple nhg("nexthop_group", nhg_id_key.c_str());
+            fvVector.push_back(nhg);
+            updateNextHopGroup(nhg_id);
+            use_nhg = false;
+        }
+
+        auto proto_num = rtnl_route_get_protocol(route_obj);
+        auto proto_str = getProtocolString(proto_num);
+        FieldValueTuple proto("protocol", proto_str);
+        fvVector.push_back(proto);
+
+        const auto itr = m_nh_routes.find(destipprefix);
+        if(itr != m_nh_routes.end())
+        {
+            NextHopGroupRoute &route = itr->second;
+            if(use_nhg != route.use_nhg)
+            {
+                delete_route = true;
+            }
+            old_nhg_id = route.id;
+            route.id = nhg_id;
+            route.use_nhg = use_nhg;
+        }
+        else
+        {
+            m_nh_routes.insert({string(destipprefix), NextHopGroupRoute{nhg_id, use_nhg}});
+        }
     }
-
-    auto proto_num = rtnl_route_get_protocol(route_obj);
-    auto proto_str = getProtocolString(proto_num);
-
-    vector<FieldValueTuple> fvVector;
-    FieldValueTuple proto("protocol", proto_str);
-    FieldValueTuple gw("nexthop", gw_list);
-    FieldValueTuple intf("ifname", intf_list);
-
-    fvVector.push_back(proto);
-    fvVector.push_back(gw);
-    fvVector.push_back(intf);
-    if (!mpls_list.empty())
+    else
+#endif
     {
-        FieldValueTuple mpls_nh("mpls_nh", mpls_list);
-        fvVector.push_back(mpls_nh);
-    }
-    if (!weights.empty())
-    {
-        FieldValueTuple wt("weight", weights);
-        fvVector.push_back(wt);
+        struct nl_list_head *nhs = rtnl_route_get_nexthops(route_obj);
+        if (!nhs)
+        {
+            SWSS_LOG_INFO("Nexthop list is empty for %s", destipprefix);
+            return;
+        }
+
+        /* Get nexthop lists */
+
+        getNextHopList(route_obj, gw_list, mpls_list, intf_list);
+        string weights = getNextHopWt(route_obj);
+
+        vector<string> alsv = tokenize(intf_list, NHG_DELIMITER);
+        for (auto alias : alsv)
+        {
+            /*
+             * An FRR behavior change from 7.2 to 7.5 makes FRR update default route to eth0 in interface
+             * up/down events. Skipping routes to eth0 or docker0 to avoid such behavior
+             */
+            if (alias == "eth0" || alias == "docker0")
+            {
+                SWSS_LOG_DEBUG("Skip routes to eth0 or docker0: %s %s %s",
+                        destipprefix, gw_list.c_str(), intf_list.c_str());
+                // If intf_list has only this interface, that means all of the next hops of this route
+                // have been removed and the next hop on the eth0/docker0 has become the only next hop.
+                // In this case since we do not want the route with next hop on eth0/docker0, we return.
+                // But still we need to clear the route from the APPL_DB. Otherwise the APPL_DB and data
+                // path will be left with stale route entry
+                if(alsv.size() == 1)
+                {
+                    if (!warmRestartInProgress)
+                    {
+                        SWSS_LOG_NOTICE("RouteTable del msg for route with only one nh on eth0/docker0: %s %s %s %s",
+                                destipprefix, gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
+
+                        m_routeTable.del(destipprefix);
+                    }
+                    else
+                    {
+                        SWSS_LOG_NOTICE("Warm-Restart mode: Receiving delete msg for route with only nh on eth0/docker0: %s %s %s %s",
+                                destipprefix, gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
+
+                        vector<FieldValueTuple> fvVector;
+                        const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix,
+                                                                           DEL_COMMAND,
+                                                                           fvVector);
+                        m_warmStartHelper.insertRefreshMap(kfv);
+                    }
+                }
+                return;
+            }
+        }
+
+        auto proto_num = rtnl_route_get_protocol(route_obj);
+        auto proto_str = getProtocolString(proto_num);
+
+
+        FieldValueTuple proto("protocol", proto_str);
+        FieldValueTuple gw("nexthop", gw_list);
+        FieldValueTuple intf("ifname", intf_list);
+
+        fvVector.push_back(proto);
+        fvVector.push_back(gw);
+        fvVector.push_back(intf);
+        if (!mpls_list.empty())
+        {
+            FieldValueTuple mpls_nh("mpls_nh", mpls_list);
+            fvVector.push_back(mpls_nh);
+        }
+        if (!weights.empty())
+        {
+            FieldValueTuple wt("weight", weights);
+            fvVector.push_back(wt);
+        }
     }
 
     if (!warmRestartInProgress)
     {
-        m_routeTable.set(destipprefix, fvVector);
-        SWSS_LOG_DEBUG("RouteTable set msg: %s %s %s %s", destipprefix,
+#ifdef HAVE_NEXTHOP_GROUP
+        if(nhg_id)
+        {
+            if(delete_route)
+            {
+                SWSS_LOG_DEBUG("Deleting route: %s. The nhg changed", destipprefix);
+                m_routeTable.del(destipprefix);
+            }
+            m_routeTable.set(destipprefix, fvVector);
+            SWSS_LOG_INFO("RouteTable set msg: %s group-id %s", destipprefix, nhg_id_key.c_str());
+            if(old_nhg_id)
+            {
+                //Remove the old nhg and update
+                deleteNextHopGroup(old_nhg_id);
+            }
+        }
+        else
+#endif
+        {
+            m_routeTable.set(destipprefix, fvVector);
+            SWSS_LOG_INFO("RouteTable set msg: %s %s %s %s", destipprefix,
                        gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
+        }
     }
 
     /*
@@ -1737,7 +1869,152 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
     }
 }
 
-/* 
+/*
+ * Handle Nexthop msg
+ * @arg nlmsghdr      Netlink message
+ */
+#ifdef HAVE_NEXTHOP_GROUP
+void RouteSync::onNextHopMsg(struct nlmsghdr *h, int len)
+{
+    int nlmsg_type = h->nlmsg_type;
+    uint32_t id = 0;
+    unsigned char addr_family;
+    int32_t ifindex = -1, grp_count = 0;
+    string ifname;
+    struct nhmsg *nhm = NULL;
+    struct rtattr *tb[NHA_MAX + 1] = {};
+    struct nexthop_grp grp[MULTIPATH_NUM];
+    struct in_addr ipv4 = {0};
+    struct in6_addr ipv6 = {0};
+    char gateway[INET6_ADDRSTRLEN] = {0};
+    char ifname_unknown[IFNAMSIZ] = "unknown";
+
+    SWSS_LOG_INFO("type %d len %d", nlmsg_type, len);
+    if ((nlmsg_type != RTM_NEWNEXTHOP)
+        && (nlmsg_type != RTM_DELNEXTHOP))
+    {
+        return;
+    }
+
+    nhm = (struct nhmsg *)NLMSG_DATA(h);
+
+    netlink_parse_rtattr(tb, NHA_MAX, ((struct rtattr *)(((char *)(nhm)) + NLMSG_ALIGN(sizeof(struct nhmsg)))), len);
+
+    if (!tb[NHA_ID]) {
+        SWSS_LOG_ERROR(
+            "Nexthop group without an ID received from the zebra");
+        return;
+    }
+
+    sendOffloadReply(h);
+
+    /* We use the ID key'd nhg table for kernel updates */
+    id = *((uint32_t *)RTA_DATA(tb[NHA_ID]));
+
+    addr_family = nhm->nh_family;
+
+    if (nlmsg_type == RTM_NEWNEXTHOP)
+    {
+        if(tb[NHA_GROUP])
+        {
+            SWSS_LOG_INFO("New nexthop group message!");
+            struct nexthop_grp *nha_grp = (struct nexthop_grp *)RTA_DATA(tb[NHA_GROUP]);
+            grp_count = (int)(RTA_PAYLOAD(tb[NHA_GROUP]) / sizeof(*nha_grp));
+
+            if(grp_count > MULTIPATH_NUM)
+                grp_count = MULTIPATH_NUM;
+
+            for (int i = 0; i < grp_count; i++) {
+                    grp[i].id = nha_grp[i].id;
+                    /*
+                        The minimum weight value is 1, but kernel store it as zero (https://git.kernel.org/pub/scm/network/iproute2/iproute2.git/tree/ip/iproute.c?h=v5.19.0#n1028).
+                        Adding one to weight to write the right value to the database.
+                    */
+                    grp[i].weight = nha_grp[i].weight + 1;
+            }
+        }
+        else
+        {
+            if (tb[NHA_GATEWAY])
+            {
+                if (addr_family == AF_INET)
+                {
+                    memcpy(&ipv4, (void *)RTA_DATA(tb[NHA_GATEWAY]), 4);
+                    inet_ntop(AF_INET, &ipv4, gateway, INET_ADDRSTRLEN);
+                }
+                else if (addr_family == AF_INET6)
+                {
+                    memcpy(&ipv6, (void *)RTA_DATA(tb[NHA_GATEWAY]), 16);
+                    inet_ntop(AF_INET6, &ipv6, gateway, INET6_ADDRSTRLEN);
+                }
+                else
+                {
+                    SWSS_LOG_ERROR(
+                        "Unexpected nexthop address family");
+                    return;
+                }
+            }
+
+            if(tb[NHA_OIF])
+            {
+                ifindex = *((int32_t *)RTA_DATA(tb[NHA_OIF]));
+                char if_name[IFNAMSIZ] = {0};
+                if (!getIfName(ifindex, if_name, IFNAMSIZ))
+                {
+                    strcpy(if_name, ifname_unknown);
+                }
+                ifname = string(if_name);
+                if (ifname == "eth0" || ifname == "docker0")
+                {
+                    SWSS_LOG_DEBUG("Skip routes to inteface: %s id[%d]", ifname.c_str(), id);
+                    return;
+                }
+            }
+        }
+        if(grp_count)
+        {
+            vector<pair<uint32_t,uint8_t>> group;
+            for(int i = 0; i < grp_count; i++)
+            {
+                group.push_back(std::make_pair(grp[i].id, grp[i].weight));
+            }
+            auto it = m_nh_groups.find(id);
+            if(it != m_nh_groups.end())
+            {
+                NextHopGroup &nhg = it->second;
+                nhg.group = group;
+                if(nhg.refcnt > 0)
+                {
+                    updateNextHopGroupDb(nhg);
+                }
+            }
+            else
+            {
+                m_nh_groups.insert({id, NextHopGroup(id, group)});
+            }
+        }
+        else
+        {
+            SWSS_LOG_INFO("Received: id[%d], if[%d/%s] address[%s]", id, ifindex, ifname.c_str(), gateway);
+            m_nh_groups.insert({id, NextHopGroup(id, string(gateway), ifname)});
+        }
+    }
+    else if (nlmsg_type == RTM_DELNEXTHOP)
+    {
+        SWSS_LOG_INFO("NextHopGroup del event: %d", id);
+        string key = getNextHopGroupKeyAsString(id);
+        m_nexthop_groupTable.del(key.c_str()); //Force delete even if is not installed
+        if(m_nh_groups.find(id) != m_nh_groups.end())
+        {
+            m_nh_groups.erase(id);
+        }
+    }
+
+    return;
+}
+#endif
+
+/*
  * Handle label route
  * @arg nlmsg_type      Netlink message type
  * @arg obj             Netlink object
@@ -2393,3 +2670,177 @@ void RouteSync::onWarmStartEnd(DBConnector& applStateDb)
         SWSS_LOG_NOTICE("Warm-Restart reconciliation processed.");
     }
 }
+
+/*
+ * Get nexthop group key as string
+ * @arg id     next hop group id
+ *
+ * Return nexthop group key
+ */
+#ifdef HAVE_NEXTHOP_GROUP
+const string RouteSync::getNextHopGroupKeyAsString(uint32_t id) const
+{
+    return string("ID") + to_string(id);
+}
+
+/*
+ * update the nexthop group entry
+ * @arg nh_id     nexthop group id
+ *
+ */
+void RouteSync::updateNextHopGroup(uint32_t nh_id)
+{
+    auto git = m_nh_groups.find(nh_id);
+    if(git == m_nh_groups.end())
+    {
+        SWSS_LOG_INFO("Nexthop not found: %d", nh_id);
+        return;
+    }
+
+    NextHopGroup& nhg = git->second;
+
+    if(nhg.refcnt > 0)
+    {
+        //Nexthop group already installed
+        nhg.refcnt++;
+        return;
+    }
+    nhg.refcnt++;
+    updateNextHopGroupDb(nhg);
+}
+
+/*
+ * delete the nexthop group entry
+ * @arg nh_id     nexthop group id
+ *
+ */
+void RouteSync::deleteNextHopGroup(uint32_t nh_id)
+{
+    auto git = m_nh_groups.find(nh_id);
+    if(git == m_nh_groups.end())
+    {
+        SWSS_LOG_INFO("Nexthop not found: %d", nh_id);
+        return;
+    }
+
+    NextHopGroup& nhg = git->second;
+
+    if(nhg.refcnt > 0 && --nhg.refcnt == 0)
+    {
+        string key = getNextHopGroupKeyAsString(nh_id);
+        m_nexthop_groupTable.del(key.c_str());
+        SWSS_LOG_INFO("NextHopGroup table del: key [%s]", key.c_str());
+    }
+
+}
+
+/*
+ * update the nexthop group table in database
+ * @arg nhg     the nexthop group
+ *
+ */
+void RouteSync::updateNextHopGroupDb(const NextHopGroup& nhg)
+{
+    vector<FieldValueTuple> fvVector;
+    string nexthops;
+    string ifnames;
+    string weights;
+    string key = getNextHopGroupKeyAsString(nhg.id);
+    getNextHopGroupFields(nhg, nexthops, ifnames, weights);
+
+    FieldValueTuple nh("nexthop", nexthops.c_str());
+    FieldValueTuple ifname("ifname", ifnames.c_str());
+    fvVector.push_back(nh);
+    fvVector.push_back(ifname);
+    if(!weights.empty())
+    {
+        FieldValueTuple wg("weight", weights.c_str());
+        fvVector.push_back(wg);
+    }
+    SWSS_LOG_INFO("NextHopGroup table set: key [%s] nexthop[%s] ifname[%s] weight[%s]", key.c_str(), nexthops.c_str(), ifnames.c_str(), weights.c_str());
+
+    //TODO: Take care of warm reboot
+    m_nexthop_groupTable.set(key.c_str(), fvVector);
+}
+
+/*
+ * check if there are some interface route in the nexthop group
+ * @arg nhg     the nexthop group
+ *
+ */
+bool RouteSync::hasIntfNextHop(const NextHopGroup& nhg)
+{
+    if(nhg.group.size() == 0 && nhg.nexthop.empty())
+    {
+        return true;
+    }
+    else if(nhg.group.size() > 0)
+    {
+        for(const auto nh : nhg.group)
+        {
+            uint32_t id = nh.first;
+            auto itr = m_nh_groups.find(id);
+            if(itr == m_nh_groups.end())
+            {
+                SWSS_LOG_INFO("NextHop group is incomplete: %d", nhg.id);
+                return false;
+            }
+
+            NextHopGroup& nhgr = itr->second;
+            if(nhgr.nexthop.empty())
+            {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+/*
+ * generate the database fields.
+ * @arg nhg     the nexthop group
+ *
+ */
+void RouteSync::getNextHopGroupFields(const NextHopGroup& nhg, string& nexthops, string& ifnames, string& weights, uint8_t af /*= AF_INET*/)
+{
+    if(nhg.group.size() == 0)
+    {
+        if(!nhg.nexthop.empty())
+        {
+            nexthops = nhg.nexthop;
+        }
+        else
+        {
+            nexthops = af == AF_INET ? "0.0.0.0" : "::";
+        }
+        ifnames = nhg.intf;
+    }
+    else
+    {
+        int i = 0;
+        for(const auto nh : nhg.group)
+        {
+            uint32_t id = nh.first;
+            auto itr = m_nh_groups.find(id);
+            if(itr == m_nh_groups.end())
+            {
+                SWSS_LOG_INFO("NextHop group is incomplete: %d", nhg.id);
+                return;
+            }
+
+            NextHopGroup& nhgr = itr->second;
+            string weight = to_string(nh.second);
+            if(i)
+            {
+                nexthops += NHG_DELIMITER;
+                ifnames += NHG_DELIMITER;
+                weights += NHG_DELIMITER;
+            }
+            nexthops += nhgr.nexthop.empty() ? (af == AF_INET ? "0.0.0.0" : "::") : nhgr.nexthop;
+            ifnames += nhgr.intf;
+            weights += weight;
+            ++i;
+        }
+    }
+}
+#endif

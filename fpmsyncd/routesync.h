@@ -9,8 +9,13 @@
 #include "warmRestartHelper.h"
 #include <string.h>
 #include <bits/stdc++.h>
+#include <linux/version.h>
 
 #include <netlink/route/route.h>
+
+#if (LINUX_VERSION_CODE > KERNEL_VERSION(5,3,0))
+#define HAVE_NEXTHOP_GROUP
+#endif
 
 // Add RTM_F_OFFLOAD define if it is not there.
 // Debian buster does not provide one but it is neccessary for compilation.
@@ -25,6 +30,23 @@ extern void netlink_parse_rtattr(struct rtattr **tb, int max, struct rtattr *rta
                                                 int len);
 
 namespace swss {
+
+#ifdef HAVE_NEXTHOP_GROUP
+struct NextHopGroup {
+    uint32_t id;
+    vector<pair<uint32_t,uint8_t>> group;
+    string nexthop;
+    string intf;
+    uint32_t refcnt;
+    NextHopGroup(uint32_t id, const string& nexthop, const string& interface) : refcnt(0), id(id), nexthop(nexthop), intf(interface) {};
+    NextHopGroup(uint32_t id, const vector<pair<uint32_t,uint8_t>>& group) : refcnt(0), id(id), group(group) {};
+};
+
+struct NextHopGroupRoute {
+    uint32_t id;
+    bool use_nhg;
+};
+#endif
 
 /* Path to protocol name database provided by iproute2 */
 constexpr auto DefaultRtProtoPath = "/etc/iproute2/rt_protos";
@@ -81,6 +103,12 @@ private:
     ProducerStateTable m_srv6SidListTable; 
     struct nl_cache    *m_link_cache;
     struct nl_sock     *m_nl_sock;
+#ifdef HAVE_NEXTHOP_GROUP
+    /* nexthop group table */
+    ProducerStateTable  m_nexthop_groupTable;
+    map<uint32_t,NextHopGroup> m_nh_groups;
+    map<string,NextHopGroupRoute> m_nh_routes;
+#endif
 
     bool                m_isSuppressionEnabled{false};
     FpmInterface*       m_fpmInterface {nullptr};
@@ -169,6 +197,17 @@ private:
     uint16_t getEncapType(struct nlmsghdr *h);
 
     const char *mySidAction2Str(uint32_t action);
+#ifdef HAVE_NEXTHOP_GROUP
+    /* Handle Nexthop message */
+    void onNextHopMsg(struct nlmsghdr *h, int len);
+    /* Get next hop group key */
+    const string getNextHopGroupKeyAsString(uint32_t id) const;
+    void updateNextHopGroup(uint32_t nh_id);
+    void deleteNextHopGroup(uint32_t nh_id);
+    void updateNextHopGroupDb(const NextHopGroup& nhg);
+    bool hasIntfNextHop(const NextHopGroup& nhg);
+    void getNextHopGroupFields(const NextHopGroup& nhg, string& nexthops, string& ifnames, string& weights, uint8_t af = AF_INET);
+#endif
 };
 
 }
