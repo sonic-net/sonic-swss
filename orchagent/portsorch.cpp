@@ -3819,17 +3819,34 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         p.m_preemphasis = serdes_attr;
                         m_portList[alias] = p;
                     }
-                    else if (setPortSerdesAttribute(p.m_port_id, gSwitchId, serdes_attr))
-                    {
-                        SWSS_LOG_NOTICE("Set port %s preemphasis is success", alias.c_str());
-                        p.m_preemphasis = serdes_attr;
-                        m_portList[alias] = p;
-                    }
                     else
                     {
-                        SWSS_LOG_ERROR("Failed to set port %s pre-emphasis", alias.c_str());
-                        it++;
-                        continue;
+                        if (p.m_admin_state_up)
+                        {
+                                /* Bring port down before applying serdes attribute*/
+                                if (!setPortAdminStatus(p, false))
+                                {
+                                    SWSS_LOG_ERROR("Failed to set port %s admin status DOWN to set serdes attr", alias.c_str());
+                                    it++;
+                                    continue;
+                                }
+
+                                p.m_admin_state_up = false;
+                                m_portList[alias] = p;
+                        }
+
+                        if (setPortSerdesAttribute(p.m_port_id, gSwitchId, serdes_attr))
+                        {
+                            SWSS_LOG_NOTICE("Set port %s SI settings is successful", alias.c_str());
+                            p.m_preemphasis = serdes_attr;
+                            m_portList[alias] = p;
+                        }
+                        else
+                        {
+                            SWSS_LOG_ERROR("Failed to set port %s SI settings", alias.c_str());
+                            it++;
+                            continue;
+                        }
                     }
                 }
 
