@@ -324,6 +324,7 @@ private:
 
     NotificationConsumer* m_portStatusNotificationConsumer;
     bool fec_override_sup = false;
+    bool oper_fec_sup = false;
 
     swss::SelectableTimer *m_port_state_poller = nullptr;
 
@@ -465,6 +466,8 @@ private:
                                 sai_acl_bind_point_type_t &sai_acl_bind_type);
     void initGearbox();
     bool initGearboxPort(Port &port);
+    bool getPortOperFec(const Port& port, sai_port_fec_mode_t &fec_mode) const;
+    void updateDbPortOperFec(Port &port, string fec_str);
 
     map<string, Port::Role> m_recircPortRole;
 

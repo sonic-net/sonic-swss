@@ -512,6 +512,18 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
             fec_override_sup = true;
         }
 
+        sai_attr_capability_t oper_fec_cap;
+        if (sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_PORT,
+                                           SAI_PORT_ATTR_OPER_PORT_FEC_MODE, &oper_fec_cap)
+                                           != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_NOTICE("Unable to query capability support for oper fec mode");
+        }
+        else if (oper_fec_cap.get_implemented)
+        {
+            oper_fec_sup = true;
+        }
+
         /* Get default 1Q bridge and default VLAN */
         sai_status_t status;
         sai_attribute_t attr;
@@ -7075,6 +7087,22 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
                 {
                     updateDbPortOperSpeed(port, 0);
                 }
+                sai_port_fec_mode_t fec_mode;
+                string fec_str;
+                if (oper_fec_sup && getPortOperFec(port, fec_mode))
+                {
+                    if (!m_portHlpr.fecToStr(fec_str, fec_mode))
+                    {
+                        SWSS_LOG_ERROR("Error unknown fec mode %d while querying port %s fec mode",
+                                       static_cast<std::int32_t>(fec_mode), port.m_alias.c_str());
+                        continue;
+                    }
+                    updateDbPortOperFec(port,fec_str);
+                }
+                else
+                {
+                    updateDbPortOperFec(port, "N/A");
+                }
             }
 
             /* update m_portList */
@@ -7156,6 +7184,16 @@ void PortsOrch::updateDbPortOperSpeed(Port &port, sai_uint32_t speed)
     // We don't set port.m_speed = speed here, because CONFIG_DB still hold the old
     // value. If we set it here, next time configure any attributes related port will
     // cause a port flapping.
+}
+
+void PortsOrch::updateDbPortOperFec(Port &port, string fec_str)
+{
+    SWSS_LOG_ENTER();
+
+    vector<FieldValueTuple> tuples;
+    tuples.emplace_back(std::make_pair("fec", fec_str));
+    m_portStateTable.set(port.m_alias, tuples);
+
 }
 
 /*
@@ -7266,6 +7304,28 @@ bool PortsOrch::getPortOperSpeed(const Port& port, sai_uint32_t& speed) const
     return true;
 }
 
+bool PortsOrch::getPortOperFec(const Port& port, sai_port_fec_mode_t &fec_mode) const
+{
+    SWSS_LOG_ENTER();
+
+    if (port.m_type != Port::PHY)
+    {
+        return false;
+    }
+
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_OPER_PORT_FEC_MODE;
+
+    sai_status_t ret = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
+    if (ret != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get oper fec for %s", port.m_alias.c_str());
+        return false;
+    }
+
+    fec_mode = static_cast<sai_port_fec_mode_t>(attr.value.s32);
+    return true;
+}
 bool PortsOrch::getPortLinkTrainingRxStatus(const Port &port, sai_port_link_training_rx_status_t &rx_status)
 {
     SWSS_LOG_ENTER();
