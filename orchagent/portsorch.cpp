@@ -3296,14 +3296,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
             setPortConfigState(PORT_CONFIG_RECEIVED);
 
-            for (const auto &cit : kfvFieldsValues(keyOpFieldsValues))
-            {
-                if (fvField(cit) == "count")
-                {
-                    m_portCount = to_uint<uint32_t>(fvValue(cit));
-                }
-            }
-
             SWSS_LOG_INFO("Got PortConfigDone notification from portsyncd");
 
             it = taskMap.begin();
