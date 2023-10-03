@@ -542,7 +542,7 @@ bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t fec_mode, bool overri
     return true;
 }
 
-bool PortsOrch::isFecModeSupported(const Port &port, sai_port_fec_mode_t fec_mode, bool override_fec)
+bool PortsOrch::isFecModeSupported(const Port &port, sai_port_fec_mode_t fec_mode)
 {
     return true;
 }

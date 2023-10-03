@@ -2355,19 +2355,10 @@ void PortsOrch::initPortCapLinkTraining(Port &port)
     SWSS_LOG_WARN("Unable to get %s LT support capability", port.m_alias.c_str());
 }
 
-bool PortsOrch::isFecModeSupported(const Port &port, sai_port_fec_mode_t fec_mode, bool override_fec)
+bool PortsOrch::isFecModeSupported(const Port &port, sai_port_fec_mode_t fec_mode)
 {
     initPortSupportedFecModes(port.m_alias, port.m_port_id);
 
-    if (!override_fec && !fec_override_sup)
-    {
-        return false;
-    }
-
-    if (!override_fec && !port.m_autoneg)
-    {
-        SWSS_LOG_NOTICE("Autoneg must be enabled for port fec mode auto to work");
-    }
     const auto &obj = m_portSupportedFecModes.at(port.m_port_id);
 
     if (!obj.supported)
@@ -3880,7 +3871,13 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     /* reset fec mode upon mode change */
                     if (!p.m_fec_cfg || p.m_fec_mode != pCfg.fec.value || p.m_override_fec != pCfg.fec.override_fec)
                     {
-                        if (!isFecModeSupported(p, pCfg.fec.value, pCfg.fec.override_fec))
+                        if (!pCfg.fec.override_fec && !fec_override_sup)
+                        {
+                            SWSS_LOG_ERROR("Auto FEC mode is not supported");
+                            it = taskMap.erase(it);
+                            continue;
+                        }
+                        if (!isFecModeSupported(p, pCfg.fec.value))
                         {
                             SWSS_LOG_ERROR(
                                 "Unsupported port %s FEC mode %s",
@@ -3889,6 +3886,11 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             // FEC mode is not supported, don't retry
                             it = taskMap.erase(it);
                             continue;
+                        }
+
+                        if (!pCfg.fec.override_fec && !p.m_autoneg)
+                        {
+                            SWSS_LOG_NOTICE("Autoneg must be enabled for port fec mode auto to work");
                         }
 
                         if (p.m_admin_state_up)
@@ -7095,7 +7097,7 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
                     {
                         SWSS_LOG_ERROR("Error unknown fec mode %d while querying port %s fec mode",
                                        static_cast<std::int32_t>(fec_mode), port.m_alias.c_str());
-                        continue;
+                        fec_str = "N/A";
                     }
                     updateDbPortOperFec(port,fec_str);
                 }
@@ -7773,6 +7775,7 @@ bool PortsOrch::initGearboxPort(Port &port)
             attr.value.s32 = sai_fec;
             attrs.push_back(attr);
 
+            // FEC override will take effect only when autoneg is enabled
             if (fec_override_sup)
             {
                 attr.id = SAI_PORT_ATTR_AUTO_NEG_FEC_MODE_OVERRIDE;

@@ -393,7 +393,7 @@ private:
     void getPortSupportedSpeeds(const std::string& alias, sai_object_id_t port_id, PortSupportedSpeeds &supported_speeds);
     void initPortSupportedSpeeds(const std::string& alias, sai_object_id_t port_id);
     // Get supported FEC modes on system side
-    bool isFecModeSupported(const Port &port, sai_port_fec_mode_t fec_mode, bool override_fec);
+    bool isFecModeSupported(const Port &port, sai_port_fec_mode_t fec_mode);
     sai_status_t getPortSupportedFecModes(PortSupportedFecModes &supported_fecmodes, sai_object_id_t port_id);
     void initPortSupportedFecModes(const std::string& alias, sai_object_id_t port_id);
     task_process_status setPortSpeed(Port &port, sai_uint32_t speed);
