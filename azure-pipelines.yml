@@ -15,7 +15,6 @@ trigger:
     - master
     - 202???
     - 201???
-    - dash
 
 # this part need to be set in UI
 schedules:

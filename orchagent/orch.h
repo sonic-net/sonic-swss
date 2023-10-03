@@ -17,6 +17,8 @@ extern "C" {
 #include "table.h"
 #include "consumertable.h"
 #include "consumerstatetable.h"
+#include "zmqconsumerstatetable.h"
+#include "zmqserver.h"
 #include "notificationconsumer.h"
 #include "selectabletimer.h"
 #include "macaddress.h"
@@ -72,7 +74,7 @@ typedef struct
 } referenced_object;
 
 typedef std::map<std::string, referenced_object> object_reference_map;
-typedef std::map<std::string, object_reference_map*> type_map;
+typedef std::map<std::string, std::shared_ptr<object_reference_map>> type_map;
 
 typedef std::map<std::string, sai_object_id_t> object_map;
 typedef std::pair<std::string, sai_object_id_t> object_map_pair;
@@ -249,6 +251,7 @@ public:
 protected:
     ConsumerMap m_consumerMap;
 
+    Orch();
     ref_resolve_status resolveFieldRefValue(type_map&, const std::string&, const std::string&, swss::KeyOpFieldsValuesTuple&, sai_object_id_t&, std::string&);
     std::set<std::string> generateIdListFromMap(unsigned long idsMap, sai_uint32_t maxId);
     unsigned long generateBitMapFromIdsStr(const std::string &idsStr);

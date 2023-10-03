@@ -33,12 +33,12 @@ static const vector<sai_buffer_pool_stat_t> bufferPoolWatermarkStatIds =
 };
 
 type_map BufferOrch::m_buffer_type_maps = {
-    {APP_BUFFER_POOL_TABLE_NAME, new object_reference_map()},
-    {APP_BUFFER_PROFILE_TABLE_NAME, new object_reference_map()},
-    {APP_BUFFER_QUEUE_TABLE_NAME, new object_reference_map()},
-    {APP_BUFFER_PG_TABLE_NAME, new object_reference_map()},
-    {APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, new object_reference_map()},
-    {APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, new object_reference_map()}
+    {APP_BUFFER_POOL_TABLE_NAME, make_shared<object_reference_map>()},
+    {APP_BUFFER_PROFILE_TABLE_NAME, make_shared<object_reference_map>()},
+    {APP_BUFFER_QUEUE_TABLE_NAME, make_shared<object_reference_map>()},
+    {APP_BUFFER_PG_TABLE_NAME, make_shared<object_reference_map>()},
+    {APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, make_shared<object_reference_map>()},
+    {APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, make_shared<object_reference_map>()}
 };
 
 map<string, string> buffer_to_ref_table_map = {
@@ -62,7 +62,11 @@ BufferOrch::BufferOrch(DBConnector *applDb, DBConnector *confDb, DBConnector *st
     initTableHandlers();
     initBufferReadyLists(applDb, confDb);
     initFlexCounterGroupTable();
-    initBufferConstants();
+
+    if (gMySwitchType != "dpu")
+    {
+        initBufferConstants();
+    }
 };
 
 void BufferOrch::initTableHandlers()
@@ -700,6 +704,7 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
         }
         if (SAI_NULL_OBJECT_ID != sai_object)
         {
+            vector<sai_attribute_t> attribs_to_retry;
             SWSS_LOG_DEBUG("Modifying existing sai object:%" PRIx64, sai_object);
             for (auto &attribute : attribs)
             {
@@ -711,7 +716,18 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
                 }
                 else if (SAI_STATUS_SUCCESS != sai_status)
                 {
-                    SWSS_LOG_ERROR("Failed to modify buffer profile, name:%s, sai object:%" PRIx64 ", status:%d", object_name.c_str(), sai_object, sai_status);
+                    SWSS_LOG_NOTICE("Unable to modify buffer profile, name:%s, sai object:%" PRIx64 ", status:%d, will retry one more time", object_name.c_str(), sai_object, sai_status);
+                    attribs_to_retry.push_back(attribute);
+                }
+            }
+
+            for (auto &attribute : attribs)
+            {
+                sai_status = sai_buffer_api->set_buffer_profile_attribute(sai_object, &attribute);
+                if (SAI_STATUS_SUCCESS != sai_status)
+                {
+                    // A retried attribute can not be "not implemented"
+                    SWSS_LOG_ERROR("Failed to modify buffer profile, name:%s, sai object:%" PRIx64 ", status:%d, will retry once", object_name.c_str(), sai_object, sai_status);
                     task_process_status handle_status = handleSaiSetStatus(SAI_API_BUFFER, sai_status);
                     if (handle_status != task_process_status::task_success)
                     {
