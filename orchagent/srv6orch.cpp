@@ -422,6 +422,175 @@ bool Srv6Orch::mySidExists(string my_sid_string)
     return false;
 }
 
+/*
+ * Neighbor change notification to be processed for the SRv6 MySID entries
+ *
+ * In summary, this function handles both add and delete neighbor notifications
+ *
+ * When a neighbor ADD notification is received, we do the following steps:
+ *     - We walk through the list of pending SRv6 MySID entries that are waiting for this neighbor to be ready
+ *     - For each SID, we install the SID into the ASIC
+ *     - We remove the SID from the pending MySID entries list
+ * 
+ * When a neighbor DELETE notification is received, we do the following steps:
+ *     - We walk through the list of pending SRv6 MySID entries installed in the ASIC
+ *     - For each SID, we remove the SID from the ASIC
+ *     - We add the SID to the pending MySID entries list
+ */
+void Srv6Orch::updateNeighbor(const NeighborUpdate& update)
+{
+    SWSS_LOG_ENTER();
+
+    /* Check if the received notification is a neighbor add or a neighbor delete */
+    if (update.add)
+    {
+        /*
+         * It's a neighbor add notification, let's walk through the list of SRv6 MySID entries
+         * that are waiting for that neighbor to be ready, and install them into the ASIC.
+         */
+
+        SWSS_LOG_INFO("Neighbor ADD event: %s, installing pending SRv6 SIDs",
+                        update.entry.ip_address.to_string().c_str());
+
+        auto it = m_pendingSRv6MySIDEntries.find(NextHopKey(update.entry.ip_address.to_string()));
+        if (it == m_pendingSRv6MySIDEntries.end())
+        {
+            /* No SID is waiting for this neighbor. Nothing to do */
+            return;
+        }
+        auto &nexthop_key = it->first;
+        auto &pending_my_sid_entries = it->second;
+
+        for (auto iter = pending_my_sid_entries.begin(); iter != pending_my_sid_entries.end();)
+        {
+            string my_sid_string = get<0>(*iter);
+            const string dt_vrf = get<1>(*iter);
+            const string adj = get<2>(*iter);
+            const string end_action = get<3>(*iter);
+
+            SWSS_LOG_INFO("Creating SID %s, action %s, vrf %s, adj %s", my_sid_string.c_str(), dt_vrf.c_str(), adj.c_str(), end_action.c_str());
+        
+            if(!createUpdateMysidEntry(my_sid_string, dt_vrf, adj, end_action))
+            {
+                SWSS_LOG_ERROR("Failed to create/update my_sid entry for sid %s", my_sid_string.c_str());
+                ++iter;
+                continue;
+            }
+
+            SWSS_LOG_INFO("SID %s created successfully", my_sid_string.c_str());
+
+            iter = pending_my_sid_entries.erase(iter);
+        }
+
+        if (pending_my_sid_entries.size() == 0)
+        {
+            m_pendingSRv6MySIDEntries.erase(nexthop_key);
+        }
+    }
+    else
+    {
+        /*
+         * It's a neighbor delete notification, let's uninstall the SRv6 MySID entries associated with that
+         * nexthop from the ASIC, and add them to the SRv6 MySID entries pending set.
+         */
+
+        SWSS_LOG_INFO("Neighbor DELETE event: %s, removing associated SRv6 SIDs",
+                        update.entry.ip_address.to_string().c_str());
+
+        for (auto it = srv6_my_sid_table_.begin(); it != srv6_my_sid_table_.end();)
+        {
+            /* Skip SIDs that are not associated with a L3 Adjacency */
+            if (it->second.endAdjString.empty())
+            {
+                ++it;
+                continue;
+            }
+
+            try
+            {
+                /* Skip SIDs that are not associated with this neighbor */
+                if (IpAddress(it->second.endAdjString) != update.entry.ip_address)
+                {
+                    ++it;
+                    continue;
+                }
+            }
+            catch (const std::invalid_argument &e)
+            {
+                /* SRv6 SID is associated with an invalid L3 Adjacency IP address, skipping */
+                ++it;
+                continue;
+            }
+
+            /*
+             * Save SID entry information to temp variables, before removing the SID.
+             * This information will be consumed used later. 
+             */
+            string my_sid_string = it->first;
+            const string dt_vrf = it->second.endVrfString;
+            const string adj = it->second.endAdjString;
+            string end_action;
+            for (auto iter = end_behavior_map.begin(); iter != end_behavior_map.end(); iter++)
+            {
+                if (iter->second == it->second.endBehavior)
+                {
+                    end_action = iter->first;
+                    break;
+                }
+            }
+
+            /* Skip SIDs with unknown SRv6 behavior */
+            if (end_action.empty())
+            {
+                ++it;
+                continue;
+            }
+
+            SWSS_LOG_INFO("Removing SID %s, action %s, vrf %s, adj %s", my_sid_string.c_str(), dt_vrf.c_str(), adj.c_str(), end_action.c_str());
+
+            /* Let's delete the SID from the ASIC */
+            unordered_map<string, MySidEntry>::iterator tmp = it;
+            ++tmp;
+            if(!deleteMysidEntry(it->first))
+            {
+                SWSS_LOG_ERROR("Failed to delete my_sid entry for sid %s", it->first.c_str());
+                ++it;
+                continue;
+            }
+            it = tmp;
+
+            SWSS_LOG_INFO("SID %s removed successfully", my_sid_string.c_str());
+
+            /*
+             * Finally, add the SID to the pending MySID entries set, so that we can re-install it 
+             * when the neighbor comes back
+             */
+            auto pending_mysid_entry = make_tuple(my_sid_string, dt_vrf, adj, end_action);
+            m_pendingSRv6MySIDEntries[NextHopKey(update.entry.ip_address.to_string())].insert(pending_mysid_entry);
+        }
+    }
+}
+
+void Srv6Orch::update(SubjectType type, void *cntx)
+{
+    SWSS_LOG_ENTER();
+
+    assert(cntx);
+
+    switch(type) {
+    case SUBJECT_TYPE_NEIGH_CHANGE:
+    {
+        NeighborUpdate *update = static_cast<NeighborUpdate *>(cntx);
+        updateNeighbor(*update);
+        break;
+    }
+    default:
+        // Received update in which we are not interested
+        // Ignore it
+        return;
+    }
+}
+
 bool Srv6Orch::sidEntryEndpointBehavior(string action, sai_my_sid_entry_endpoint_behavior_t &end_behavior,
                                         sai_my_sid_entry_endpoint_behavior_flavor_t &end_flavor)
 {
@@ -565,7 +734,9 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
         }
         else
         {
-            SWSS_LOG_ERROR("Nexthop for adjacency %s doesn't exist in DB", adj.c_str());
+            SWSS_LOG_INFO("Nexthop for adjacency %s doesn't exist in DB yet", adj.c_str());
+            auto pending_mysid_entry = make_tuple(my_sid_string, dt_vrf, adj, end_action);
+            m_pendingSRv6MySIDEntries[nexthop].insert(pending_mysid_entry);
             return false;
         }
         nh_attr.id = SAI_MY_SID_ENTRY_ATTR_NEXT_HOP_ID;
