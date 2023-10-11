@@ -36,6 +36,8 @@ namespace portsorch_test
     sai_switch_api_t *pold_sai_switch_api;
 
     bool not_support_fetching_fec;
+    uint32_t _sai_set_port_fec_count;
+    int32_t _sai_port_fec_mode;
     vector<sai_port_fec_mode_t> mock_port_fec_modes = {SAI_PORT_FEC_MODE_RS, SAI_PORT_FEC_MODE_FC};
 
     sai_status_t _ut_stub_sai_get_port_attribute(
@@ -61,6 +63,11 @@ namespace portsorch_test
                 status = SAI_STATUS_SUCCESS;
             }
         }
+        else if (attr_count == 1 && attr_list[0].id == SAI_PORT_ATTR_OPER_PORT_FEC_MODE)
+        {
+            attr_list[0].value.s32 = _sai_port_fec_mode;
+            status = SAI_STATUS_SUCCESS;
+        }
         else
         {
             status = pold_sai_port_api->get_port_attribute(port_id, attr_count, attr_list);
@@ -68,8 +75,6 @@ namespace portsorch_test
         return status;
     }
 
-    uint32_t _sai_set_port_fec_count;
-    int32_t _sai_port_fec_mode;
     uint32_t _sai_set_pfc_mode_count;
     uint32_t _sai_set_admin_state_up_count;
     uint32_t _sai_set_admin_state_down_count;
@@ -1123,6 +1128,65 @@ namespace portsorch_test
         _unhook_sai_port_api();
     }
 
+    /*
+     * Test case: Fetching SAI_PORT_ATTR_OPER_PORT_FEC_MODE
+     **/
+    TEST_F(PortsOrchTest, PortVerifyOperFec)
+    {
+        _hook_sai_port_api();
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        not_support_fetching_fec = false;
+        auto old_mock_port_fec_modes = mock_port_fec_modes;
+        mock_port_fec_modes.clear();
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        uint32_t current_sai_api_call_count = _sai_set_port_fec_count;
+        gPortsOrch->oper_fec_sup = true;
+
+        entries.push_back({"Ethernet0", "SET",
+                           {
+                               {"fec", "rs"}
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        entries.clear();
+
+        ASSERT_EQ(_sai_set_port_fec_count, current_sai_api_call_count);
+
+        vector<string> ts;
+
+        gPortsOrch->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+        Port port;
+        gPortsOrch->getPort("Ethernet0", port);
+
+        sai_port_fec_mode_t fec_mode;
+        gPortsOrch->getPortOperFec(port, fec_mode);
+
+        ASSERT_EQ(fec_mode, SAI_PORT_FEC_MODE_RS);
+
+        mock_port_fec_modes = old_mock_port_fec_modes;
+        _unhook_sai_port_api();
+    }
     TEST_F(PortsOrchTest, PortTestSAIFailureHandling)
     {
         _hook_sai_port_api();
