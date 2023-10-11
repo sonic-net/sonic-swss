@@ -35,6 +35,10 @@ private:
     template<typename T>
     bool parsePortSerdes(T &serdes, const std::string &field, const std::string &value) const;
 
+    bool parsePortLinkEventDampingAlgorithm(PortConfig &port, const std::string &field, const std::string &value) const;
+    template<typename T>
+    bool parsePortLinkEventDampingConfig(T &damping_config_attr, const std::string &field, const std::string &value) const;
+
     bool parsePortAlias(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortIndex(PortConfig &port, const std::string &field, const std::string &value) const;
     bool parsePortLanes(PortConfig &port, const std::string &field, const std::string &value) const;

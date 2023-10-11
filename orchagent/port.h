@@ -206,6 +206,14 @@ public:
 
     int m_cap_an = -1; /* Capability - AutoNeg, -1 means not set */
     int m_cap_lt = -1; /* Capability - LinkTraining, -1 means not set */
+
+    /* link event damping */
+    sai_link_event_damping_algorithm_t m_link_event_damping_algorithm;
+    uint32_t m_max_suppress_time = 0;
+    uint32_t m_decay_half_life = 0;
+    uint32_t m_suppress_threshold = 0;
+    uint32_t m_reuse_threshold = 0;
+    uint32_t m_flap_penalty = 0;
 };
 
 }
