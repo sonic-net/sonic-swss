@@ -432,6 +432,54 @@ class TestPort(object):
         for key, queue in buffer_queues.items():
             dvs.get_config_db().update_entry("BUFFER_QUEUE", key, queue)
 
+    def test_PortLinkEventDamping(self, dvs, testlog):
+        cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+
+        cfg_tbl = swsscommon.Table(cdb, "PORT")
+        app_tbl = swsscommon.Table(pdb, "PORT_TABLE")
+        port_name = "Ethernet0"
+
+        # Set link event damping.
+        fvs = swsscommon.FieldValuePairs([("link_event_damping_algorithm", "aied"),
+                                          ("max_suppress_time", "54000"),
+                                          ("decay_half_life", "45000"),
+                                          ("suppress_threshold", "1650"),
+                                          ("reuse_threshold", "1500"),
+                                          ("flap_penalty", "1000")
+                                         ])
+        cfg_tbl.set(port_name, fvs)
+        time.sleep(1)
+
+        # Check application database.
+        (status, fvs) = app_tbl.get(port_name)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "link_event_damping_algorithm":
+                assert fv[1] == "aied"
+            elif fv[0] == "max_suppress_time":
+                assert fv[1] == "54000"
+            elif fv[0] == "decay_half_life":
+                assert fv[1] == "45000"
+            elif fv[0] == "suppress_threshold":
+                assert fv[1] == "1650"
+            elif fv[0] == "reuse_threshold":
+                assert fv[1] == "1500"
+            elif fv[0] == "flap_penalty":
+                assert fv[1] == "1000"
+
+        # Disable link event damping.
+        fvs = swsscommon.FieldValuePairs([("link_event_damping_algorithm", "disabled")])
+        cfg_tbl.set(port_name, fvs)
+        time.sleep(1)
+
+        # Check application database.
+        (status, fvs) = app_tbl.get(port_name)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "link_event_damping_algorithm":
+                assert fv[1] == "disabled"
+
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
