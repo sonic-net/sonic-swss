@@ -74,7 +74,8 @@ static const std::unordered_map<std::string, sai_port_fec_mode_t> portFecMap =
 {
     { PORT_FEC_NONE, SAI_PORT_FEC_MODE_NONE },
     { PORT_FEC_RS,   SAI_PORT_FEC_MODE_RS   },
-    { PORT_FEC_FC,   SAI_PORT_FEC_MODE_FC   }
+    { PORT_FEC_FC,   SAI_PORT_FEC_MODE_FC   },
+    { PORT_FEC_AUTO, SAI_PORT_FEC_MODE_NONE }
 };
 
 static const std::unordered_map<sai_port_fec_mode_t, std::string> portFecRevMap =
@@ -82,6 +83,14 @@ static const std::unordered_map<sai_port_fec_mode_t, std::string> portFecRevMap 
     { SAI_PORT_FEC_MODE_NONE, PORT_FEC_NONE },
     { SAI_PORT_FEC_MODE_RS,   PORT_FEC_RS   },
     { SAI_PORT_FEC_MODE_FC,   PORT_FEC_FC   }
+};
+
+static const std::unordered_map<std::string, bool> portFecOverrideMap =
+{
+    { PORT_FEC_NONE, true  },
+    { PORT_FEC_RS,   true  },
+    { PORT_FEC_FC,   true  },
+    { PORT_FEC_AUTO, false }
 };
 
 static const std::unordered_map<std::string, sai_port_priority_flow_control_mode_t> portPfcAsymMap =
@@ -146,6 +155,30 @@ bool PortHelper::fecToStr(std::string &str, sai_port_fec_mode_t value) const
     return true;
 }
 
+bool PortHelper::fecToSaiFecMode(const std::string &str, sai_port_fec_mode_t &value) const
+{
+    const auto &cit = portFecMap.find(str);
+    if (cit == portFecMap.cend())
+    {
+        return false;
+    }
+
+    value = cit->second;
+
+    return true;
+}
+
+bool PortHelper::fecIsOverrideRequired(const std::string &str) const
+{
+    const auto &cit = portFecMap.find(str);
+    if (cit == portFecMap.cend())
+    {
+        return false;
+    }
+
+    return cit->second;
+
+}
 std::string PortHelper::getFieldValueStr(const PortConfig &port, const std::string &field) const
 {
     static std::string str;
@@ -468,8 +501,16 @@ bool PortHelper::parsePortFec(PortConfig &port, const std::string &field, const 
         return false;
     }
 
+    const auto &override_cit = portFecOverrideMap.find(value);
+    if (override_cit == portFecOverrideMap.cend())
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): invalid value(%s) in override map", field.c_str(), value.c_str());
+        return false;
+    }
+
     port.fec.value = cit->second;
     port.fec.is_set = true;
+    port.fec.override_fec =override_cit->second;
 
     return true;
 }
