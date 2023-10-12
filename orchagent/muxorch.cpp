@@ -848,18 +848,18 @@ bool MuxNbrHandler::disable(sai_object_id_t tnh)
             return false;
         }
 
-        neigh = NeighborEntry(it->first, alias_);
-        if (!gNeighOrch->disableNeighbor(neigh))
-        {
-            SWSS_LOG_INFO("Disabling neigh failed for %s", neigh.ip_address.to_string().c_str());
-            return false;
-        }
-
         updateTunnelRoute(nh_key, true);
 
         IpPrefix pfx = it->first.to_string();
         if (create_route(pfx, it->second) != SAI_STATUS_SUCCESS)
         {
+            return false;
+        }
+
+        neigh = NeighborEntry(it->first, alias_);
+        if (!gNeighOrch->disableNeighbor(neigh))
+        {
+            SWSS_LOG_INFO("Disabling neigh failed for %s", neigh.ip_address.to_string().c_str());
             return false;
         }
 

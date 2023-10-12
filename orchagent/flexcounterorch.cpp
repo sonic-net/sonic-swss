@@ -67,6 +67,7 @@ FlexCounterOrch::FlexCounterOrch(DBConnector *db, vector<string> &tableNames):
     m_flexCounterConfigTable(db, CFG_FLEX_COUNTER_TABLE_NAME),
     m_bufferQueueConfigTable(db, CFG_BUFFER_QUEUE_TABLE_NAME),
     m_bufferPgConfigTable(db, CFG_BUFFER_PG_TABLE_NAME),
+    m_deviceMetadataConfigTable(db, CFG_DEVICE_METADATA_TABLE_NAME),
     m_flexCounterDb(new DBConnector("FLEX_COUNTER_DB", 0)),
     m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE)),
     m_gbflexCounterDb(new DBConnector("GB_FLEX_COUNTER_DB", 0)),
@@ -328,11 +329,41 @@ bool FlexCounterOrch::bake()
     return consumer->addToSync(entries);
 }
 
+static bool isCreateOnlyConfigDbBuffers(Table& deviceMetadataConfigTable)
+{
+    std::string createOnlyConfigDbBuffersValue;
+
+    try
+    {
+        if (deviceMetadataConfigTable.hget("localhost", "create_only_config_db_buffers", createOnlyConfigDbBuffersValue))
+        {
+            if (createOnlyConfigDbBuffersValue == "true")
+            {
+                return true;
+            }
+        }
+    }
+    catch(const std::system_error& e)
+    {
+        SWSS_LOG_ERROR("System error: %s", e.what());
+    }
+
+    return false;
+}
+
 map<string, FlexCounterQueueStates> FlexCounterOrch::getQueueConfigurations()
 {
     SWSS_LOG_ENTER();
 
     map<string, FlexCounterQueueStates> queuesStateVector;
+
+    if (!isCreateOnlyConfigDbBuffers(m_deviceMetadataConfigTable))
+    {
+        FlexCounterQueueStates flexCounterQueueState(0);
+        queuesStateVector.insert(make_pair(createAllAvailableBuffersStr, flexCounterQueueState));
+        return queuesStateVector;
+    }
+
     std::vector<std::string> portQueueKeys;
     m_bufferQueueConfigTable.getKeys(portQueueKeys);
 
@@ -387,6 +418,14 @@ map<string, FlexCounterPgStates> FlexCounterOrch::getPgConfigurations()
     SWSS_LOG_ENTER();
 
     map<string, FlexCounterPgStates> pgsStateVector;
+
+    if (!isCreateOnlyConfigDbBuffers(m_deviceMetadataConfigTable))
+    {
+        FlexCounterPgStates flexCounterPgState(0);
+        pgsStateVector.insert(make_pair(createAllAvailableBuffersStr, flexCounterPgState));
+        return pgsStateVector;
+    }
+
     std::vector<std::string> portPgKeys;
     m_bufferPgConfigTable.getKeys(portPgKeys);
 

@@ -97,8 +97,8 @@ void DashAclOrch::doTask(ConsumerBase &consumer)
     const static TaskMap TaskMap = {
         PbWorker<AclIn>::makeMemberTask(APP_DASH_ACL_IN_TABLE_NAME, SET_COMMAND, &DashAclOrch::taskUpdateDashAclIn, this),
         KeyOnlyWorker::makeMemberTask(APP_DASH_ACL_IN_TABLE_NAME, DEL_COMMAND, &DashAclOrch::taskRemoveDashAclIn, this),
-        PbWorker<AclOut>::makeMemberTask(APP_DASH_ACL_IN_TABLE_NAME, SET_COMMAND, &DashAclOrch::taskUpdateDashAclOut, this),
-        KeyOnlyWorker::makeMemberTask(APP_DASH_ACL_IN_TABLE_NAME, DEL_COMMAND, &DashAclOrch::taskRemoveDashAclOut, this),
+        PbWorker<AclOut>::makeMemberTask(APP_DASH_ACL_OUT_TABLE_NAME, SET_COMMAND, &DashAclOrch::taskUpdateDashAclOut, this),
+        KeyOnlyWorker::makeMemberTask(APP_DASH_ACL_OUT_TABLE_NAME, DEL_COMMAND, &DashAclOrch::taskRemoveDashAclOut, this),
         PbWorker<AclGroup>::makeMemberTask(APP_DASH_ACL_GROUP_TABLE_NAME, SET_COMMAND, &DashAclOrch::taskUpdateDashAclGroup, this),
         KeyOnlyWorker::makeMemberTask(APP_DASH_ACL_GROUP_TABLE_NAME, DEL_COMMAND, &DashAclOrch::taskRemoveDashAclGroup, this),
         PbWorker<AclRule>::makeMemberTask(APP_DASH_ACL_RULE_TABLE_NAME, SET_COMMAND, &DashAclOrch::taskUpdateDashAclRule, this),

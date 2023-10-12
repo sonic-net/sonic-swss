@@ -15,6 +15,8 @@ public:
 
 public:
     bool fecToStr(std::string &str, sai_port_fec_mode_t value) const;
+    bool fecToSaiFecMode(const std::string &str, sai_port_fec_mode_t &value) const;
+    bool fecIsOverrideRequired(const std::string &str) const;
 
     std::string getAutonegStr(const PortConfig &port) const;
     std::string getPortInterfaceTypeStr(const PortConfig &port) const;

@@ -10,6 +10,8 @@ extern "C" {
 #include "sai.h"
 }
 
+const std::string createAllAvailableBuffersStr = "create_all_available_buffers";
+
 class FlexCounterQueueStates
 {
 public:
@@ -68,6 +70,7 @@ private:
     Table m_flexCounterConfigTable;
     Table m_bufferQueueConfigTable;
     Table m_bufferPgConfigTable;
+    Table m_deviceMetadataConfigTable;
 };
 
 #endif

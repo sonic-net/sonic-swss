@@ -348,13 +348,13 @@ class TestAcl(object):
         Verifies behavior when binding ACL groups
         """
         eni_key = ctx.asic_eni_table.get_keys()[0]
-        sai_stage = get_sai_stage(outbound=False, v4=True, stage_num=ACL_STAGE_1)
+        sai_stage = get_sai_stage(outbound=True, v4=True, stage_num=ACL_STAGE_1)
 
         pb = AclGroup()
         pb.ip_version = IpVersion.IP_VERSION_IPV4
         ctx.create_acl_group(ACL_GROUP_1, pb)
         acl_group_key = ctx.asic_dash_acl_group_table.wait_for_n_keys(num_keys=1)[0]
-        ctx.bind_acl_in(self.eni_name, ACL_STAGE_1, v4_group_id = ACL_GROUP_1)
+        ctx.bind_acl_out(self.eni_name, ACL_STAGE_1, v4_group_id = ACL_GROUP_1)
         time.sleep(3)
         # Binding should not happen yet because the ACL group is empty
         assert sai_stage not in ctx.asic_eni_table[eni_key]
@@ -386,7 +386,7 @@ class TestAcl(object):
         ctx.asic_eni_table.wait_for_field_match(key=eni_key, expected_fields={sai_stage: acl_group_key})
 
         # Unbinding should occur immediately
-        ctx.unbind_acl_in(self.eni_name, ACL_STAGE_1)
+        ctx.unbind_acl_out(self.eni_name, ACL_STAGE_1)
         ctx.asic_eni_table.wait_for_field_match(key=eni_key, expected_fields={sai_stage: SAI_NULL_OID})
 
     def test_acl_group_binding(self, ctx):
