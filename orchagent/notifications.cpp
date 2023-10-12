@@ -27,6 +27,12 @@ void on_bfd_session_state_change(uint32_t count, sai_bfd_session_state_notificat
     // which causes concurrency access to the DB
 }
 
+void on_twamp_session_event(uint32_t count, sai_twamp_session_event_notification_data_t *data)
+{
+    // don't use this event handler, because it runs by libsairedis in a separate thread
+    // which causes concurrency access to the DB
+}
+
 void on_switch_shutdown_request(sai_object_id_t switch_id)
 {
     SWSS_LOG_ENTER();
