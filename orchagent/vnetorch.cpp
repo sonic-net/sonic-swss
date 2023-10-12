@@ -1817,6 +1817,7 @@ void VNetRouteOrch::createBfdSession(const string& vnet, const NextHopKey& endpo
         FieldValueTuple fvTuple("local_addr", src_ip.to_string());
         data.push_back(fvTuple);
         data.emplace_back("multihop", "true");
+        data.emplace_back("tsa_shutdown", "true");
         bfd_session_producer_.set(key, data);
         bfd_sessions_[monitor_addr].bfd_state = SAI_BFD_SESSION_STATE_DOWN;
     }
