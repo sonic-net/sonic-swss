@@ -384,6 +384,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
     /* Initialize port and vlan table */
     m_portTable = unique_ptr<Table>(new Table(db, APP_PORT_TABLE_NAME));
+    m_sendToIngressPortTable = unique_ptr<Table>(new Table(db, APP_SEND_TO_INGRESS_PORT_TABLE_NAME));
 
     /* Initialize gearbox */
     m_gearboxTable = unique_ptr<Table>(new Table(db, "_GEARBOX_TABLE"));
@@ -3250,6 +3251,68 @@ void PortsOrch::removePortFromPortListMap(sai_object_id_t port_id)
     }
 }
 
+void PortsOrch::doSendToIngressPortTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        auto &t = it->second;
+
+        string alias = kfvKey(t);
+        string op = kfvOp(t);
+        ReturnCode rc;
+        std::vector<FieldValueTuple> app_state_db_attrs;
+
+        if (op == SET_COMMAND)
+        {
+            if (m_isSendToIngressPortConfigured)
+            {
+                rc = ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
+                    << "Update operation on SendToIngress port with alias="
+                    << alias << " is not suported";
+                SWSS_LOG_ERROR("%s", rc.message().c_str());
+                m_publisher.publish(consumer.getTableName(), kfvKey(t),
+                                kfvFieldsValues(t), rc);
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+            rc = addSendToIngressHostIf(alias);
+            if (!rc.ok())
+            {
+                SWSS_LOG_ERROR("%s", rc.message().c_str());
+            }
+            else
+            {
+                m_isSendToIngressPortConfigured = true;
+            }
+        }
+        else if (op == DEL_COMMAND)
+        {
+            // For SendToIngress port, delete the host interface and unbind from the CPU port
+            rc = removeSendToIngressHostIf();
+            if (!rc.ok())
+            {
+                SWSS_LOG_ERROR("Failed to remove SendToIngress port rc=%s",
+                    rc.message().c_str());
+            }
+            else
+            {
+                m_isSendToIngressPortConfigured = false;
+            }
+        }
+        else
+        {
+            rc = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) <<
+                            "Unknown operation type " << op;
+            SWSS_LOG_ERROR("%s", rc.message().c_str());
+        }
+        m_publisher.publish(consumer.getTableName(), kfvKey(t),
+                            kfvFieldsValues(t), rc);
+        it = consumer.m_toSync.erase(it);
+    }
+}
 
 void PortsOrch::doPortTask(Consumer &consumer)
 {
@@ -4765,6 +4828,10 @@ void PortsOrch::doTask(Consumer &consumer)
     {
         doPortTask(consumer);
     }
+    else if (table_name == APP_SEND_TO_INGRESS_PORT_TABLE_NAME)
+    {
+        doSendToIngressPortTask(consumer);
+    }
     else
     {
         /* Wait for all ports to be initialized */
@@ -5136,6 +5203,64 @@ bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_int
     SWSS_LOG_NOTICE("Create host interface for port %s", alias.c_str());
 
     return true;
+}
+
+ReturnCode PortsOrch::addSendToIngressHostIf(const std::string &send_to_ingress_name)
+{
+    SWSS_LOG_ENTER();
+
+    // For SendToIngress port, add the host interface and bind to the CPU port
+    vector<sai_attribute_t> ingress_attribs;
+    sai_attribute_t attr;
+
+    attr.id = SAI_HOSTIF_ATTR_TYPE;
+    attr.value.s32 = SAI_HOSTIF_TYPE_NETDEV;
+    ingress_attribs.push_back(attr);
+
+    attr.id = SAI_HOSTIF_ATTR_NAME;
+    auto size = sizeof(attr.value.chardata);
+    strncpy(attr.value.chardata, send_to_ingress_name.c_str(),
+            size - 1);
+    attr.value.chardata[size - 1] = '\0';
+    ingress_attribs.push_back(attr);
+
+    // If this isn't passed as true, the false setting makes
+    // the device unready for later attempts to set UP/RUNNING
+    attr.id = SAI_HOSTIF_ATTR_OPER_STATUS;
+    attr.value.booldata = true;
+    ingress_attribs.push_back(attr);
+
+    // Get CPU port object id to signal send to ingress
+    attr.id = SAI_HOSTIF_ATTR_OBJ_ID;
+    attr.value.oid = m_cpuPort.m_port_id;
+    ingress_attribs.push_back(attr);
+
+    LOG_AND_RETURN_IF_ERROR(sai_hostif_api->create_hostif(&m_cpuPort.m_hif_id,
+                                                          gSwitchId,
+                                                          (uint32_t)ingress_attribs.size(),
+                                                          ingress_attribs.data()));
+
+    return ReturnCode();
+}
+
+ReturnCode PortsOrch::removeSendToIngressHostIf()
+{
+    SWSS_LOG_ENTER();
+
+    if (SAI_NULL_OBJECT_ID == m_cpuPort.m_hif_id)
+    {
+        ReturnCode rc = ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+            << "Can't delete invalid SendToIngress hostif with SAI_NULL_OBJECT_ID oid";
+        SWSS_LOG_ERROR("%s", rc.message().c_str());
+        return rc;
+    }
+
+    CHECK_ERROR_AND_LOG_AND_RETURN(
+        sai_hostif_api->remove_hostif(m_cpuPort.m_hif_id),
+        "Failed to delete SendToIngress hostif:0x"
+            << std::hex << m_cpuPort.m_hif_id);
+
+    return ReturnCode();
 }
 
 bool PortsOrch::setBridgePortLearningFDB(Port &port, sai_bridge_port_fdb_learning_mode_t mode)
