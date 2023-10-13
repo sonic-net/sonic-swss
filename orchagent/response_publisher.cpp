@@ -5,13 +5,6 @@
 #include <string>
 #include <vector>
 
-#include "timestamp.h"
-
-extern bool gResponsePublisherRecord;
-extern bool gResponsePublisherLogRotate;
-extern std::ofstream gResponsePublisherRecordOfs;
-extern std::string gResponsePublisherRecordFile;
-
 namespace
 {
 
@@ -35,27 +28,10 @@ std::string PrependedComponent(const ReturnCode &status)
     return kOrchagentComponent;
 }
 
-void PerformLogRotate()
-{
-    if (!gResponsePublisherLogRotate)
-    {
-        return;
-    }
-    gResponsePublisherLogRotate = false;
-
-    gResponsePublisherRecordOfs.close();
-    gResponsePublisherRecordOfs.open(gResponsePublisherRecordFile);
-    if (!gResponsePublisherRecordOfs.is_open())
-    {
-        SWSS_LOG_ERROR("Failed to reopen Response Publisher record file %s: %s", gResponsePublisherRecordFile.c_str(),
-                       strerror(errno));
-    }
-}
-
 void RecordDBWrite(const std::string &table, const std::string &key, const std::vector<swss::FieldValueTuple> &attrs,
                    const std::string &op)
 {
-    if (!gResponsePublisherRecord)
+    if (!swss::Recorder::Instance().respub.isRecord())
     {
         return;
     }
@@ -66,16 +42,15 @@ void RecordDBWrite(const std::string &table, const std::string &key, const std::
         s += "|" + fvField(attr) + ":" + fvValue(attr);
     }
 
-    PerformLogRotate();
-    gResponsePublisherRecordOfs << swss::getTimestamp() << "|" << s << std::endl;
+    swss::Recorder::Instance().respub.record(s);
 }
 
 void RecordResponse(const std::string &response_channel, const std::string &key,
                     const std::vector<swss::FieldValueTuple> &attrs, const std::string &status)
 {
-    if (!gResponsePublisherRecord)
+    if (!swss::Recorder::Instance().respub.isRecord())
     {
-        return;
+       return;
     }
 
     std::string s = response_channel + ":" + key + "|" + status;
@@ -84,8 +59,7 @@ void RecordResponse(const std::string &response_channel, const std::string &key,
         s += "|" + fvField(attr) + ":" + fvValue(attr);
     }
 
-    PerformLogRotate();
-    gResponsePublisherRecordOfs << swss::getTimestamp() << "|" << s << std::endl;
+    swss::Recorder::Instance().respub.record(s);
 }
 
 } // namespace

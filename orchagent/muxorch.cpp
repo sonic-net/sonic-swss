@@ -24,6 +24,7 @@
 #include "routeorch.h"
 #include "fdborch.h"
 #include "qosorch.h"
+#include "warm_restart.h"
 
 /* Global variables */
 extern Directory<Orch*> gDirectory;
@@ -409,9 +410,18 @@ MuxCable::MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress 
     state_machine_handlers_.insert(handler_pair(MUX_STATE_INIT_STANDBY, &MuxCable::stateStandby));
     state_machine_handlers_.insert(handler_pair(MUX_STATE_ACTIVE_STANDBY, &MuxCable::stateStandby));
 
-    /* Set initial state to "standby" */
-    stateStandby();
-    state_ = MuxState::MUX_STATE_STANDBY;
+    if (WarmStart::isWarmStart()) {
+        /* Warmboot case, Set initial state to "init" 
+         * State will be updated to previous value upon APP DB sync
+         */
+        state_ = MuxState::MUX_STATE_INIT;
+    }
+    else
+    {
+        /* Set initial state to "standby" */
+        stateStandby();
+        state_ = MuxState::MUX_STATE_STANDBY;
+    }
 }
 
 bool MuxCable::stateInitActive()
@@ -838,18 +848,18 @@ bool MuxNbrHandler::disable(sai_object_id_t tnh)
             return false;
         }
 
-        neigh = NeighborEntry(it->first, alias_);
-        if (!gNeighOrch->disableNeighbor(neigh))
-        {
-            SWSS_LOG_INFO("Disabling neigh failed for %s", neigh.ip_address.to_string().c_str());
-            return false;
-        }
-
         updateTunnelRoute(nh_key, true);
 
         IpPrefix pfx = it->first.to_string();
         if (create_route(pfx, it->second) != SAI_STATUS_SUCCESS)
         {
+            return false;
+        }
+
+        neigh = NeighborEntry(it->first, alias_);
+        if (!gNeighOrch->disableNeighbor(neigh))
+        {
+            SWSS_LOG_INFO("Disabling neigh failed for %s", neigh.ip_address.to_string().c_str());
             return false;
         }
 

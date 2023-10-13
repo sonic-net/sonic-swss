@@ -20,6 +20,8 @@ extern PortsOrch *gPortsOrch;
 extern Directory<Orch*> gDirectory;
 extern sai_object_id_t gSwitchId;
 extern string gMySwitchType;
+extern string gMyHostName;
+extern string gMyAsicName;
 
 #define BUFFER_POOL_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS  "60000"
 
@@ -31,12 +33,12 @@ static const vector<sai_buffer_pool_stat_t> bufferPoolWatermarkStatIds =
 };
 
 type_map BufferOrch::m_buffer_type_maps = {
-    {APP_BUFFER_POOL_TABLE_NAME, new object_reference_map()},
-    {APP_BUFFER_PROFILE_TABLE_NAME, new object_reference_map()},
-    {APP_BUFFER_QUEUE_TABLE_NAME, new object_reference_map()},
-    {APP_BUFFER_PG_TABLE_NAME, new object_reference_map()},
-    {APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, new object_reference_map()},
-    {APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, new object_reference_map()}
+    {APP_BUFFER_POOL_TABLE_NAME, make_shared<object_reference_map>()},
+    {APP_BUFFER_PROFILE_TABLE_NAME, make_shared<object_reference_map>()},
+    {APP_BUFFER_QUEUE_TABLE_NAME, make_shared<object_reference_map>()},
+    {APP_BUFFER_PG_TABLE_NAME, make_shared<object_reference_map>()},
+    {APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, make_shared<object_reference_map>()},
+    {APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, make_shared<object_reference_map>()}
 };
 
 map<string, string> buffer_to_ref_table_map = {
@@ -60,7 +62,11 @@ BufferOrch::BufferOrch(DBConnector *applDb, DBConnector *confDb, DBConnector *st
     initTableHandlers();
     initBufferReadyLists(applDb, confDb);
     initFlexCounterGroupTable();
-    initBufferConstants();
+
+    if (gMySwitchType != "dpu")
+    {
+        initBufferConstants();
+    }
 };
 
 void BufferOrch::initTableHandlers()
@@ -698,6 +704,7 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
         }
         if (SAI_NULL_OBJECT_ID != sai_object)
         {
+            vector<sai_attribute_t> attribs_to_retry;
             SWSS_LOG_DEBUG("Modifying existing sai object:%" PRIx64, sai_object);
             for (auto &attribute : attribs)
             {
@@ -709,7 +716,18 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
                 }
                 else if (SAI_STATUS_SUCCESS != sai_status)
                 {
-                    SWSS_LOG_ERROR("Failed to modify buffer profile, name:%s, sai object:%" PRIx64 ", status:%d", object_name.c_str(), sai_object, sai_status);
+                    SWSS_LOG_NOTICE("Unable to modify buffer profile, name:%s, sai object:%" PRIx64 ", status:%d, will retry one more time", object_name.c_str(), sai_object, sai_status);
+                    attribs_to_retry.push_back(attribute);
+                }
+            }
+
+            for (auto &attribute : attribs)
+            {
+                sai_status = sai_buffer_api->set_buffer_profile_attribute(sai_object, &attribute);
+                if (SAI_STATUS_SUCCESS != sai_status)
+                {
+                    // A retried attribute can not be "not implemented"
+                    SWSS_LOG_ERROR("Failed to modify buffer profile, name:%s, sai object:%" PRIx64 ", status:%d, will retry once", object_name.c_str(), sai_object, sai_status);
                     task_process_status handle_status = handleSaiSetStatus(SAI_API_BUFFER, sai_status);
                     if (handle_status != task_process_status::task_success)
                     {
@@ -788,6 +806,8 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
     vector<string> tokens;
     sai_uint32_t range_low, range_high;
     bool need_update_sai = true;
+    bool local_port = false;
+    string local_port_name;
 
     SWSS_LOG_DEBUG("Processing:%s", key.c_str());
     tokens = tokenize(key, delimiter);
@@ -805,6 +825,13 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
         if (!parseIndexRange(tokens[3], range_low, range_high))
         {
             return task_process_status::task_invalid_entry;
+        }
+
+        if(tokens[0] == gMyHostName)
+        {
+           local_port = true;
+           local_port_name = tokens[2];
+           SWSS_LOG_INFO("System port %s is local port %d local port name %s", port_names[0].c_str(), local_port, local_port_name.c_str());
         }
     }
     else 
@@ -884,6 +911,12 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
     {
         Port port;
         SWSS_LOG_DEBUG("processing port:%s", port_name.c_str());
+
+        if(local_port == true)
+        {
+            port_name = local_port_name;
+        }
+
         if (!gPortsOrch->getPort(port_name, port))
         {
             SWSS_LOG_ERROR("Port with alias:%s not found", port_name.c_str());
@@ -1001,8 +1034,17 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
         // set order is detected.
         for (const auto &port_name : port_names)
         {
-            if (gPortsOrch->isPortAdminUp(port_name)) {
-                SWSS_LOG_WARN("Queue profile '%s' applied after port %s is up", key.c_str(), port_name.c_str());
+            if(local_port == true)
+            {
+                if (gPortsOrch->isPortAdminUp(local_port_name)) {
+                    SWSS_LOG_WARN("Queue profile '%s' applied after port %s is up", key.c_str(), port_name.c_str());
+                }
+            }
+            else
+            {
+                if (gPortsOrch->isPortAdminUp(port_name)) {
+                    SWSS_LOG_WARN("Queue profile '%s' applied after port %s is up", key.c_str(), port_name.c_str());
+                }
             }
         }
     }

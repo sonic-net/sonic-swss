@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "ipprefix.h"
-#include "json.hpp"
+#include <nlohmann/json.hpp>
 #include "mock_response_publisher.h"
 #include "mock_sai_route.h"
 #include "p4orch.h"
