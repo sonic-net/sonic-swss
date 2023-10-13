@@ -16,9 +16,13 @@ public:
 private:
     template<typename T>
     bool parseSwHashFieldList(T &obj, const std::string &field, const std::string &value) const;
+    template<typename T>
+    bool parseSwHashAlgorithm(T &obj, const std::string &field, const std::string &value) const;
 
     bool parseSwHashEcmpHash(SwitchHash &hash, const std::string &field, const std::string &value) const;
     bool parseSwHashLagHash(SwitchHash &hash, const std::string &field, const std::string &value) const;
+    bool parseSwHashEcmpHashAlgorithm(SwitchHash &hash, const std::string &field, const std::string &value) const;
+    bool parseSwHashLagHashAlgorithm(SwitchHash &hash, const std::string &field, const std::string &value) const;
 
     bool validateSwHash(SwitchHash &hash) const;
 
