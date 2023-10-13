@@ -7510,7 +7510,7 @@ bool PortsOrch::getPortOperFec(const Port& port, sai_port_fec_mode_t &fec_mode) 
     sai_status_t ret = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
     if (ret != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to get oper fec for %s", port.m_alias.c_str());
+        SWSS_LOG_NOTICE("Failed to get oper fec for %s", port.m_alias.c_str());
         return false;
     }
 
