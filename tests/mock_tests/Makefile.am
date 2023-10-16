@@ -160,7 +160,7 @@ tests_teammgrd_SOURCES = teammgrd/teammgr_ut.cpp \
                          mock_hiredis.cpp \
                          fake_response_publisher.cpp \
                          mock_redisreply.cpp \
-                         common/mock_shell_command.cpp
+                         mock_shell_command.cpp
 
 tests_teammgrd_INCLUDES = $(tests_INCLUDES) -I$(top_srcdir)/cfgmgr -I$(top_srcdir)/lib
 tests_teammgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
