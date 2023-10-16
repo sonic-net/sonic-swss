@@ -36,6 +36,8 @@ namespace portsorch_test
     sai_switch_api_t *pold_sai_switch_api;
 
     bool not_support_fetching_fec;
+    uint32_t _sai_set_port_fec_count;
+    int32_t _sai_port_fec_mode;
     vector<sai_port_fec_mode_t> mock_port_fec_modes = {SAI_PORT_FEC_MODE_RS, SAI_PORT_FEC_MODE_FC};
 
     sai_status_t _ut_stub_sai_get_port_attribute(
@@ -61,6 +63,11 @@ namespace portsorch_test
                 status = SAI_STATUS_SUCCESS;
             }
         }
+        else if (attr_count == 1 && attr_list[0].id == SAI_PORT_ATTR_OPER_PORT_FEC_MODE)
+        {
+            attr_list[0].value.s32 = _sai_port_fec_mode;
+            status = SAI_STATUS_SUCCESS;
+        }
         else
         {
             status = pold_sai_port_api->get_port_attribute(port_id, attr_count, attr_list);
@@ -68,9 +75,9 @@ namespace portsorch_test
         return status;
     }
 
-    uint32_t _sai_set_port_fec_count;
-    int32_t _sai_port_fec_mode;
     uint32_t _sai_set_pfc_mode_count;
+    uint32_t _sai_set_admin_state_up_count;
+    uint32_t _sai_set_admin_state_down_count;
     sai_status_t _ut_stub_sai_set_port_attribute(
         _In_ sai_object_id_t port_id,
         _In_ const sai_attribute_t *attr)
@@ -88,6 +95,14 @@ namespace portsorch_test
 	else if (attr[0].id == SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_COMBINED)
 	{
 	    _sai_set_pfc_mode_count++;
+        }
+	else if (attr[0].id == SAI_PORT_ATTR_ADMIN_STATE)
+	{
+            if (attr[0].value.booldata) {
+	        _sai_set_admin_state_up_count++;
+            } else {
+	        _sai_set_admin_state_down_count++;
+            }
         }
         return pold_sai_port_api->set_port_attribute(port_id, attr);
     }
@@ -299,6 +314,7 @@ namespace portsorch_test
 
             vector<table_name_with_pri_t> ports_tables = {
                 { APP_PORT_TABLE_NAME, portsorch_base_pri + 5 },
+                { APP_SEND_TO_INGRESS_PORT_TABLE_NAME, portsorch_base_pri + 5 },
                 { APP_VLAN_TABLE_NAME, portsorch_base_pri + 2 },
                 { APP_VLAN_MEMBER_TABLE_NAME, portsorch_base_pri },
                 { APP_LAG_TABLE_NAME, portsorch_base_pri + 4 },
@@ -761,6 +777,95 @@ namespace portsorch_test
     }
 
     /**
+     * Test that verifies admin-disable then admin-enable during setPortSerdesAttribute()
+     */
+    TEST_F(PortsOrchTest, PortSerdesConfig)
+    {
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+
+        // Get SAI default ports
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        // Generate port config
+        for (const auto &cit : ports)
+        {
+            portTable.set(cit.first, cit.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+
+        // Refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Generate basic port config
+        std::deque<KeyOpFieldsValuesTuple> kfvBasic = {{
+            "Ethernet0",
+            SET_COMMAND, {
+                { "speed",               "100000"            },
+                { "fec",                 "rs"                },
+                { "mtu",                 "9100"              },
+                { "admin_status",        "up"                }
+            }
+        }};
+
+        // Refill consumer
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(kfvBasic);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Get port and verify admin status
+        Port p;
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        ASSERT_TRUE(p.m_admin_state_up);
+
+        // Generate port serdes config
+        std::deque<KeyOpFieldsValuesTuple> kfvSerdes = {{
+            "Ethernet0",
+            SET_COMMAND, {
+                { "admin_status", "up"              },
+                { "idriver"     , "0x6,0x6,0x6,0x6" }
+            }
+        }};
+
+        // Refill consumer
+        consumer->addToSync(kfvSerdes);
+
+        _hook_sai_port_api();
+        uint32_t current_sai_api_call_count = _sai_set_admin_state_down_count;
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        _unhook_sai_port_api();
+
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        ASSERT_TRUE(p.m_admin_state_up);
+
+        // Verify idriver
+        std::vector<std::uint32_t> idriver = { 0x6, 0x6, 0x6, 0x6 };
+        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_IDRIVER), idriver);
+
+        // Verify admin-disable then admin-enable
+        ASSERT_EQ(_sai_set_admin_state_down_count, ++current_sai_api_call_count);
+        ASSERT_EQ(_sai_set_admin_state_up_count, current_sai_api_call_count);
+
+        // Dump pending tasks
+        std::vector<std::string> taskList;
+        gPortsOrch->dumpPendingTasks(taskList);
+        ASSERT_TRUE(taskList.empty());
+
+        // Cleanup ports
+        cleanupPorts(gPortsOrch);
+    }
+
+    /**
      * Test that verifies PortsOrch::getPort() on a port that has been deleted
      */
     TEST_F(PortsOrchTest, GetPortTest)
@@ -1024,6 +1129,65 @@ namespace portsorch_test
         _unhook_sai_port_api();
     }
 
+    /*
+     * Test case: Fetching SAI_PORT_ATTR_OPER_PORT_FEC_MODE
+     **/
+    TEST_F(PortsOrchTest, PortVerifyOperFec)
+    {
+        _hook_sai_port_api();
+        Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        std::deque<KeyOpFieldsValuesTuple> entries;
+
+        not_support_fetching_fec = false;
+        auto old_mock_port_fec_modes = mock_port_fec_modes;
+        mock_port_fec_modes.clear();
+        // Get SAI default ports to populate DB
+        auto ports = ut_helper::getInitialSaiPorts();
+
+        for (const auto &it : ports)
+        {
+            portTable.set(it.first, it.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+
+        // refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration :
+        //  create ports
+        static_cast<Orch *>(gPortsOrch)->doTask();
+
+        uint32_t current_sai_api_call_count = _sai_set_port_fec_count;
+        gPortsOrch->oper_fec_sup = true;
+
+        entries.push_back({"Ethernet0", "SET",
+                           {
+                               {"fec", "rs"}
+                           }});
+        auto consumer = dynamic_cast<Consumer *>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+        consumer->addToSync(entries);
+        static_cast<Orch *>(gPortsOrch)->doTask();
+        entries.clear();
+
+        ASSERT_EQ(_sai_set_port_fec_count, current_sai_api_call_count);
+
+        vector<string> ts;
+
+        gPortsOrch->dumpPendingTasks(ts);
+        ASSERT_TRUE(ts.empty());
+        Port port;
+        gPortsOrch->getPort("Ethernet0", port);
+
+        sai_port_fec_mode_t fec_mode;
+        gPortsOrch->getPortOperFec(port, fec_mode);
+
+        ASSERT_EQ(fec_mode, SAI_PORT_FEC_MODE_RS);
+
+        mock_port_fec_modes = old_mock_port_fec_modes;
+        _unhook_sai_port_api();
+    }
     TEST_F(PortsOrchTest, PortTestSAIFailureHandling)
     {
         _hook_sai_port_api();
@@ -1073,6 +1237,7 @@ namespace portsorch_test
     TEST_F(PortsOrchTest, PortReadinessColdBoot)
     {
         Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table sendToIngressPortTable = Table(m_app_db.get(), APP_SEND_TO_INGRESS_PORT_TABLE_NAME);
         Table pgTable = Table(m_app_db.get(), APP_BUFFER_PG_TABLE_NAME);
         Table pgTableCfg = Table(m_config_db.get(), CFG_BUFFER_PG_TABLE_NAME);
         Table profileTable = Table(m_app_db.get(), APP_BUFFER_PROFILE_TABLE_NAME);
@@ -1126,6 +1291,8 @@ namespace portsorch_test
 
         // Set PortConfigDone
         portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        // Populate send to ingresss port table
+        sendToIngressPortTable.set("SEND_TO_INGRESS", {{"NULL", "NULL"}});
 
         // refill consumer
         gPortsOrch->addExistingData(&portTable);

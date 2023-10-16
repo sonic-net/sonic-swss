@@ -200,6 +200,10 @@ class TestFlexCounters(object):
         self.config_db.create_entry("FLEX_COUNTER_TABLE", key, group_stats_entry)
         self.wait_for_interval_set(group, interval)
 
+    def set_only_config_db_buffers_field(self, value):
+        fvs = {'create_only_config_db_buffers' : value}
+        self.config_db.update_entry("DEVICE_METADATA", "localhost", fvs)
+
     @pytest.mark.parametrize("counter_type", counter_group_meta.keys())
     def test_flex_counters(self, dvs, counter_type):
         """
@@ -712,19 +716,43 @@ class TestFlexCounters(object):
     def set_admin_status(self, interface, status):
         self.config_db.update_entry("PORT", interface, {"admin_status": status})
 
+    @pytest.mark.parametrize('counter_type', [('queue_counter'), ('pg_drop_counter')])
+    def test_create_only_config_db_buffers_false(self, dvs, counter_type):
+        """
+        Test steps:
+            1. By default the configuration knob 'create_only_config_db_value' is missing.
+            2. Get the counter OID for the interface 'Ethernet0:7' from the counters database.
+            3. Perform assertions based on the 'create_only_config_db_value':
+                - If 'create_only_config_db_value' is 'false' or does not exist, assert that the counter OID has a valid OID value.
+
+        Args:
+            dvs (object): virtual switch object
+            counter_type (str): The type of counter being tested
+        """
+        self.setup_dbs(dvs)
+        meta_data = counter_group_meta[counter_type]
+        self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'])
+
+        counter_oid = self.counters_db.db_connection.hget(meta_data['name_map'], 'Ethernet0:7')
+        assert counter_oid is not None, "Counter OID should have a valid OID value when create_only_config_db_value is 'false' or does not exist"
+
     def test_create_remove_buffer_pg_watermark_counter(self, dvs):
         """
         Test steps:
-            1. Enable PG flex counters.
-            2. Configure new buffer prioriy group for a port
-            3. Verify counter is automatically created
-            4. Remove the new buffer prioriy group for the port
-            5. Verify counter is automatically removed
+            1. Reset config_db
+            2. Set 'create_only_config_db_buffers' to 'true'
+            3. Enable PG flex counters.
+            4. Configure new buffer prioriy group for a port
+            5. Verify counter is automatically created
+            6. Remove the new buffer prioriy group for the port
+            7. Verify counter is automatically removed
 
         Args:
             dvs (object): virtual switch object
         """
+        dvs.restart()
         self.setup_dbs(dvs)
+        self.set_only_config_db_buffers_field('true')
         meta_data = counter_group_meta['pg_watermark_counter']
 
         self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'])
@@ -736,6 +764,26 @@ class TestFlexCounters(object):
         self.config_db.delete_entry('BUFFER_PG', 'Ethernet0|1')
         self.wait_for_buffer_pg_queue_counter(meta_data['name_map'], 'Ethernet0', '1', False)
         self.wait_for_id_list_remove(meta_data['group_name'], "Ethernet0", counter_oid)
+
+    @pytest.mark.parametrize('counter_type', [('queue_counter'), ('pg_drop_counter')])
+    def test_create_only_config_db_buffers_true(self, dvs, counter_type):
+        """
+        Test steps:
+            1. The 'create_only_config_db_buffers' was set to 'true' by previous test.
+            2. Get the counter OID for the interface 'Ethernet0:7' from the counters database.
+            3. Perform assertions based on the 'create_only_config_db_value':
+                - If 'create_only_config_db_value' is 'true', assert that the counter OID is None.
+
+        Args:
+            dvs (object): virtual switch object
+            counter_type (str): The type of counter being tested
+        """
+        self.setup_dbs(dvs)
+        meta_data = counter_group_meta[counter_type]
+        self.set_flex_counter_group_status(meta_data['key'], meta_data['name_map'])
+
+        counter_oid = self.counters_db.db_connection.hget(meta_data['name_map'], 'Ethernet0:7')
+        assert counter_oid is None, "Counter OID should be None when create_only_config_db_value is 'true'"
 
     def test_create_remove_buffer_queue_counter(self, dvs):
         """

@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-#include "json.hpp"
+#include <nlohmann/json.hpp>
 #include "p4orch/p4orch_util.h"
 #include "return_code.h"
 extern "C"
