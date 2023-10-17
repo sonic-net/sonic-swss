@@ -121,7 +121,6 @@ class PortsOrch : public Orch, public Subject
 {
 public:
     PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames, DBConnector *chassisAppDb);
-    // PortsOrch(DBConnector *db, DBConnector *stateDb, vector<PriTablesConnector> &tables, DBConnector *chassisAppDb);
 
     bool allPortsReady();
     bool isInitDone();
@@ -335,8 +334,6 @@ private:
 
     swss::SelectableTimer *m_port_state_poller = nullptr;
 
-    bool m_saiHwTxSignalSupported = false;
-    bool m_saiTxReadyNotifySupported = false;
     bool m_cmisModuleAsicSyncSupported = false;
 
     void doTask() override;
@@ -402,9 +399,9 @@ private:
 
     bool setBridgePortAdminStatus(sai_object_id_t id, bool up);
 
-    bool setSaiHostTxSignal(Port port, bool enable);
+    bool setSaiHostTxSignal(const Port &port, bool enable);
 
-    void setHostTxReady(sai_object_id_t portId, std::string status);
+    void setHostTxReady(sai_object_id_t portId, const std::string &status);
     // Get supported speeds on system side
     bool isSpeedSupported(const std::string& alias, sai_object_id_t port_id, sai_uint32_t speed);
     void getPortSupportedSpeeds(const std::string& alias, sai_object_id_t port_id, PortSupportedSpeeds &supported_speeds);

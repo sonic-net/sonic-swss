@@ -135,27 +135,13 @@ bool OrchDaemon::init()
         { APP_LAG_MEMBER_TABLE_NAME,  portsorch_base_pri     }
     };
 
-    vector<table_name_with_pri_t> state_transceiver_tables = {
-        {STATE_TRANSCEIVER_INFO_TABLE_NAME, portsorch_base_pri}
-    };
-
-    // PriTablesConnector appPriTables(m_applDb, ports_tables);
-    // PriTablesConnector statePriTables(m_stateDb, state_transceiver_tables);
-
-    // vector<PriTablesConnector> portsOrchTables = {
-    //     appPriTables,
-    //     statePriTables
-    // };
-
-    gPortsOrch = new PortsOrch(m_applDb, m_stateDb, ports_tables, m_chassisAppDb);
-    // gPortsOrch = new PortsOrch(m_applDb, m_stateDb, portsOrchTables, m_chassisAppDb);
-
     vector<table_name_with_pri_t> app_fdb_tables = {
         { APP_FDB_TABLE_NAME,        FdbOrch::fdborch_pri},
         { APP_VXLAN_FDB_TABLE_NAME,  FdbOrch::fdborch_pri},
         { APP_MCLAG_FDB_TABLE_NAME,  FdbOrch::fdborch_pri}
     };
 
+    gPortsOrch = new PortsOrch(m_applDb, m_stateDb, ports_tables, m_chassisAppDb);
     TableConnector stateDbFdb(m_stateDb, STATE_FDB_TABLE_NAME);
     TableConnector stateMclagDbFdb(m_stateDb, STATE_MCLAG_REMOTE_FDB_TABLE_NAME);
     gFdbOrch = new FdbOrch(m_applDb, app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch);
@@ -188,7 +174,7 @@ bool OrchDaemon::init()
     gDirectory.set(vnet_rt_orch);
     VRFOrch *vrf_orch = new VRFOrch(m_applDb, APP_VRF_TABLE_NAME, m_stateDb, STATE_VRF_OBJECT_TABLE_NAME);
     gDirectory.set(vrf_orch);
-    gMonitorOrch = new MonitorOrch(m_stateDb, STATE_VNET_MONITOR_TABLE_NAME);
+    gMonitorOrch = new MonitorOrch(m_stateDb, STATE_VNET_MONITOR_TABLE_NAME); 
     gDirectory.set(gMonitorOrch);
 
     const vector<string> chassis_frontend_tables = {
