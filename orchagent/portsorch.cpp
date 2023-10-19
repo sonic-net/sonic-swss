@@ -6261,7 +6261,7 @@ void PortsOrch::generateQueueMap(map<string, FlexCounterQueueStates> queuesState
             {
                 auto maxQueueNumber = getNumberOfPortSupportedQueueCounters(it.second.m_alias);
                 FlexCounterQueueStates flexCounterQueueState(maxQueueNumber);
-                if (isCreateAllQueues)
+                if (isCreateAllQueues && maxQueueNumber)
                 {
                     flexCounterQueueState.enableQueueCounters(0, maxQueueNumber - 1);
                 }
@@ -6383,7 +6383,7 @@ void PortsOrch::addQueueFlexCounters(map<string, FlexCounterQueueStates> queuesS
             {
                 auto maxQueueNumber = getNumberOfPortSupportedQueueCounters(it.second.m_alias);
                 FlexCounterQueueStates flexCounterQueueState(maxQueueNumber);
-                if (isCreateAllQueues)
+                if (isCreateAllQueues && maxQueueNumber)
                 {
                     flexCounterQueueState.enableQueueCounters(0, maxQueueNumber - 1);
                 }
@@ -6449,7 +6449,7 @@ void PortsOrch::addQueueWatermarkFlexCounters(map<string, FlexCounterQueueStates
             {
                 auto maxQueueNumber = getNumberOfPortSupportedQueueCounters(it.second.m_alias);
                 FlexCounterQueueStates flexCounterQueueState(maxQueueNumber);
-                if (isCreateAllQueues)
+                if (isCreateAllQueues && maxQueueNumber)
                 {
                     flexCounterQueueState.enableQueueCounters(0, maxQueueNumber - 1);
                 }
@@ -6632,7 +6632,7 @@ void PortsOrch::generatePriorityGroupMap(map<string, FlexCounterPgStates> pgsSta
             {
                 auto maxPgNumber = getNumberOfPortSupportedPgCounters(it.second.m_alias);
                 FlexCounterPgStates flexCounterPgState(maxPgNumber);
-                if (isCreateAllPgs)
+                if (isCreateAllPgs && maxPgNumber)
                 {
                     flexCounterPgState.enablePgCounters(0, maxPgNumber - 1);
                 }
@@ -6748,7 +6748,7 @@ void PortsOrch::addPriorityGroupFlexCounters(map<string, FlexCounterPgStates> pg
             {
                 auto maxPgNumber = getNumberOfPortSupportedPgCounters(it.second.m_alias);
                 FlexCounterPgStates flexCounterPgState(maxPgNumber);
-                if (isCreateAllPgs)
+                if (isCreateAllPgs && maxPgNumber)
                 {
                     flexCounterPgState.enablePgCounters(0, maxPgNumber - 1);
                 }
@@ -6818,7 +6818,7 @@ void PortsOrch::addPriorityGroupWatermarkFlexCounters(map<string, FlexCounterPgS
             {
                 auto maxPgNumber = getNumberOfPortSupportedPgCounters(it.second.m_alias);
                 FlexCounterPgStates flexCounterPgState(maxPgNumber);
-                if (isCreateAllPgs)
+                if (isCreateAllPgs && maxPgNumber)
                 {
                     flexCounterPgState.enablePgCounters(0, maxPgNumber - 1);
                 }
