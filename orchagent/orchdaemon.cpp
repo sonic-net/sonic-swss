@@ -258,6 +258,7 @@ bool OrchDaemon::init()
     gDirectory.set(dash_route_orch);
 
     vector<string> dash_acl_tables = {
+        APP_DASH_PREFIX_TAG_TABLE_NAME,
         APP_DASH_ACL_IN_TABLE_NAME,
         APP_DASH_ACL_OUT_TABLE_NAME,
         APP_DASH_ACL_GROUP_TABLE_NAME,
