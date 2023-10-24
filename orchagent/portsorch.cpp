@@ -88,20 +88,6 @@ typedef std::map<sai_port_serdes_attr_t, std::vector<std::uint32_t>> PortSerdesA
 
 // constants ----------------------------------------------------------------------------------------------------------
 
-static map<string, sai_port_fec_mode_t> fec_mode_map =
-{
-    { "none",  SAI_PORT_FEC_MODE_NONE },
-    { "rs", SAI_PORT_FEC_MODE_RS },
-    { "fc", SAI_PORT_FEC_MODE_FC }
-};
-
-static map<sai_port_fec_mode_t, string> fec_mode_reverse_map =
-{
-    { SAI_PORT_FEC_MODE_NONE, "none" },
-    { SAI_PORT_FEC_MODE_RS, "rs"  },
-    { SAI_PORT_FEC_MODE_FC, "fc"  }
-};
-
 static map<string, sai_bridge_port_fdb_learning_mode_t> learn_mode_map =
 {
     { "drop",  SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DROP },
@@ -398,6 +384,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
     /* Initialize port and vlan table */
     m_portTable = unique_ptr<Table>(new Table(db, APP_PORT_TABLE_NAME));
+    m_sendToIngressPortTable = unique_ptr<Table>(new Table(db, APP_SEND_TO_INGRESS_PORT_TABLE_NAME));
 
     /* Initialize gearbox */
     m_gearboxTable = unique_ptr<Table>(new Table(db, "_GEARBOX_TABLE"));
@@ -524,6 +511,18 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         else if (attr_cap.set_implemented && attr_cap.create_implemented)
         {
             fec_override_sup = true;
+        }
+
+        sai_attr_capability_t oper_fec_cap;
+        if (sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_PORT,
+                                           SAI_PORT_ATTR_OPER_PORT_FEC_MODE, &oper_fec_cap)
+                                           != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_NOTICE("Unable to query capability support for oper fec mode");
+        }
+        else if (oper_fec_cap.get_implemented)
+        {
+            oper_fec_sup = true;
         }
 
         /* Get default 1Q bridge and default VLAN */
@@ -1520,13 +1519,13 @@ bool PortsOrch::setPortTpid(Port &port, sai_uint16_t tpid)
     return true;
 }
 
-bool PortsOrch::setPortFecOverride(sai_object_id_t port_obj, bool fec_override)
+bool PortsOrch::setPortFecOverride(sai_object_id_t port_obj, bool override_fec)
 {
     sai_attribute_t attr;
     sai_status_t status;
 
     attr.id = SAI_PORT_ATTR_AUTO_NEG_FEC_MODE_OVERRIDE;
-    attr.value.booldata = fec_override;
+    attr.value.booldata = override_fec;
 
     status = sai_port_api->set_port_attribute(port_obj, &attr);
     if (status != SAI_STATUS_SUCCESS)
@@ -1542,7 +1541,7 @@ bool PortsOrch::setPortFecOverride(sai_object_id_t port_obj, bool fec_override)
     return true;
 }
 
-bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t fec_mode)
+bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t fec_mode, bool override_fec)
 {
     SWSS_LOG_ENTER();
 
@@ -1561,11 +1560,11 @@ bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t fec_mode)
         }
     }
 
-    if (fec_override_sup && !setPortFecOverride(port.m_port_id, true))
+    if (fec_override_sup && !setPortFecOverride(port.m_port_id, override_fec))
     {
         return false;
     }
-    setGearboxPortsAttr(port, SAI_PORT_ATTR_FEC_MODE, &fec_mode);
+    setGearboxPortsAttr(port, SAI_PORT_ATTR_FEC_MODE, &fec_mode, override_fec);
 
     SWSS_LOG_NOTICE("Set port %s FEC mode %d", port.m_alias.c_str(), fec_mode);
 
@@ -2462,6 +2461,10 @@ void PortsOrch::initPortSupportedFecModes(const std::string& alias, sai_object_i
 
             fecModeList.push_back(fecMode);
         }
+        if (!fecModeList.empty() && fec_override_sup)
+        {
+            fecModeList.push_back(PORT_FEC_AUTO);
+        }
     }
 
     std::vector<FieldValueTuple> v;
@@ -2474,15 +2477,15 @@ void PortsOrch::initPortSupportedFecModes(const std::string& alias, sai_object_i
 /*
  * If Gearbox is enabled and this is a Gearbox port then set the attributes accordingly.
  */
-bool PortsOrch::setGearboxPortsAttr(const Port &port, sai_port_attr_t id, void *value)
+bool PortsOrch::setGearboxPortsAttr(const Port &port, sai_port_attr_t id, void *value, bool override_fec)
 {
     bool status = false;
 
-    status = setGearboxPortAttr(port, PHY_PORT_TYPE, id, value);
+    status = setGearboxPortAttr(port, PHY_PORT_TYPE, id, value, override_fec);
 
     if (status == true)
     {
-        status = setGearboxPortAttr(port, LINE_PORT_TYPE, id, value);
+        status = setGearboxPortAttr(port, LINE_PORT_TYPE, id, value, override_fec);
     }
 
     return status;
@@ -2492,7 +2495,7 @@ bool PortsOrch::setGearboxPortsAttr(const Port &port, sai_port_attr_t id, void *
  * If Gearbox is enabled and this is a Gearbox port then set the specific lane attribute.
  * Note: the appl_db is also updated (Gearbox config_db tables are TBA).
  */
-bool PortsOrch::setGearboxPortAttr(const Port &port, dest_port_type_t port_type, sai_port_attr_t id, void *value)
+bool PortsOrch::setGearboxPortAttr(const Port &port, dest_port_type_t port_type, sai_port_attr_t id, void *value, bool override_fec)
 {
     sai_status_t status = SAI_STATUS_SUCCESS;
     sai_object_id_t dest_port_id;
@@ -2568,7 +2571,7 @@ bool PortsOrch::setGearboxPortAttr(const Port &port, dest_port_type_t port_type,
                     m_gearboxTable->hset(key, speed_attr, to_string(speed));
                     SWSS_LOG_NOTICE("BOX: Updated APPL_DB key:%s %s %d", key.c_str(), speed_attr.c_str(), speed);
                 }
-                else if (id == SAI_PORT_ATTR_FEC_MODE && fec_override_sup && !setPortFecOverride(dest_port_id, true))
+                else if (id == SAI_PORT_ATTR_FEC_MODE && fec_override_sup && !setPortFecOverride(dest_port_id, override_fec))
                 {
                     return false;
                 }
@@ -3248,6 +3251,68 @@ void PortsOrch::removePortFromPortListMap(sai_object_id_t port_id)
     }
 }
 
+void PortsOrch::doSendToIngressPortTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        auto &t = it->second;
+
+        string alias = kfvKey(t);
+        string op = kfvOp(t);
+        ReturnCode rc;
+        std::vector<FieldValueTuple> app_state_db_attrs;
+
+        if (op == SET_COMMAND)
+        {
+            if (m_isSendToIngressPortConfigured)
+            {
+                rc = ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED)
+                    << "Update operation on SendToIngress port with alias="
+                    << alias << " is not suported";
+                SWSS_LOG_ERROR("%s", rc.message().c_str());
+                m_publisher.publish(consumer.getTableName(), kfvKey(t),
+                                kfvFieldsValues(t), rc);
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+            rc = addSendToIngressHostIf(alias);
+            if (!rc.ok())
+            {
+                SWSS_LOG_ERROR("%s", rc.message().c_str());
+            }
+            else
+            {
+                m_isSendToIngressPortConfigured = true;
+            }
+        }
+        else if (op == DEL_COMMAND)
+        {
+            // For SendToIngress port, delete the host interface and unbind from the CPU port
+            rc = removeSendToIngressHostIf();
+            if (!rc.ok())
+            {
+                SWSS_LOG_ERROR("Failed to remove SendToIngress port rc=%s",
+                    rc.message().c_str());
+            }
+            else
+            {
+                m_isSendToIngressPortConfigured = false;
+            }
+        }
+        else
+        {
+            rc = ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM) <<
+                            "Unknown operation type " << op;
+            SWSS_LOG_ERROR("%s", rc.message().c_str());
+        }
+        m_publisher.publish(consumer.getTableName(), kfvKey(t),
+                            kfvFieldsValues(t), rc);
+        it = consumer.m_toSync.erase(it);
+    }
+}
 
 void PortsOrch::doPortTask(Consumer &consumer)
 {
@@ -3293,14 +3358,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
             }
 
             setPortConfigState(PORT_CONFIG_RECEIVED);
-
-            for (const auto &cit : kfvFieldsValues(keyOpFieldsValues))
-            {
-                if (fvField(cit) == "count")
-                {
-                    m_portCount = to_uint<uint32_t>(fvValue(cit));
-                }
-            }
 
             SWSS_LOG_INFO("Got PortConfigDone notification from portsyncd");
 
@@ -3867,8 +3924,14 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 if (pCfg.fec.is_set)
                 {
                     /* reset fec mode upon mode change */
-                    if (!p.m_fec_cfg || p.m_fec_mode != pCfg.fec.value)
+                    if (!p.m_fec_cfg || p.m_fec_mode != pCfg.fec.value || p.m_override_fec != pCfg.fec.override_fec)
                     {
+                        if (!pCfg.fec.override_fec && !fec_override_sup)
+                        {
+                            SWSS_LOG_ERROR("Auto FEC mode is not supported");
+                            it = taskMap.erase(it);
+                            continue;
+                        }
                         if (!isFecModeSupported(p, pCfg.fec.value))
                         {
                             SWSS_LOG_ERROR(
@@ -3878,6 +3941,11 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             // FEC mode is not supported, don't retry
                             it = taskMap.erase(it);
                             continue;
+                        }
+
+                        if (!pCfg.fec.override_fec && !p.m_autoneg)
+                        {
+                            SWSS_LOG_NOTICE("Autoneg must be enabled for port fec mode auto to work");
                         }
 
                         if (p.m_admin_state_up)
@@ -3897,7 +3965,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             m_portList[p.m_alias] = p;
                         }
 
-                        if (!setPortFec(p, pCfg.fec.value))
+                        if (!setPortFec(p, pCfg.fec.value, pCfg.fec.override_fec))
                         {
                             SWSS_LOG_ERROR(
                                 "Failed to set port %s FEC mode %s",
@@ -3908,6 +3976,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         }
 
                         p.m_fec_mode = pCfg.fec.value;
+                        p.m_override_fec = pCfg.fec.override_fec;
                         p.m_fec_cfg = true;
                         m_portList[p.m_alias] = p;
 
@@ -4759,6 +4828,10 @@ void PortsOrch::doTask(Consumer &consumer)
     {
         doPortTask(consumer);
     }
+    else if (table_name == APP_SEND_TO_INGRESS_PORT_TABLE_NAME)
+    {
+        doSendToIngressPortTask(consumer);
+    }
     else
     {
         /* Wait for all ports to be initialized */
@@ -5130,6 +5203,64 @@ bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_int
     SWSS_LOG_NOTICE("Create host interface for port %s", alias.c_str());
 
     return true;
+}
+
+ReturnCode PortsOrch::addSendToIngressHostIf(const std::string &send_to_ingress_name)
+{
+    SWSS_LOG_ENTER();
+
+    // For SendToIngress port, add the host interface and bind to the CPU port
+    vector<sai_attribute_t> ingress_attribs;
+    sai_attribute_t attr;
+
+    attr.id = SAI_HOSTIF_ATTR_TYPE;
+    attr.value.s32 = SAI_HOSTIF_TYPE_NETDEV;
+    ingress_attribs.push_back(attr);
+
+    attr.id = SAI_HOSTIF_ATTR_NAME;
+    auto size = sizeof(attr.value.chardata);
+    strncpy(attr.value.chardata, send_to_ingress_name.c_str(),
+            size - 1);
+    attr.value.chardata[size - 1] = '\0';
+    ingress_attribs.push_back(attr);
+
+    // If this isn't passed as true, the false setting makes
+    // the device unready for later attempts to set UP/RUNNING
+    attr.id = SAI_HOSTIF_ATTR_OPER_STATUS;
+    attr.value.booldata = true;
+    ingress_attribs.push_back(attr);
+
+    // Get CPU port object id to signal send to ingress
+    attr.id = SAI_HOSTIF_ATTR_OBJ_ID;
+    attr.value.oid = m_cpuPort.m_port_id;
+    ingress_attribs.push_back(attr);
+
+    LOG_AND_RETURN_IF_ERROR(sai_hostif_api->create_hostif(&m_cpuPort.m_hif_id,
+                                                          gSwitchId,
+                                                          (uint32_t)ingress_attribs.size(),
+                                                          ingress_attribs.data()));
+
+    return ReturnCode();
+}
+
+ReturnCode PortsOrch::removeSendToIngressHostIf()
+{
+    SWSS_LOG_ENTER();
+
+    if (SAI_NULL_OBJECT_ID == m_cpuPort.m_hif_id)
+    {
+        ReturnCode rc = ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+            << "Can't delete invalid SendToIngress hostif with SAI_NULL_OBJECT_ID oid";
+        SWSS_LOG_ERROR("%s", rc.message().c_str());
+        return rc;
+    }
+
+    CHECK_ERROR_AND_LOG_AND_RETURN(
+        sai_hostif_api->remove_hostif(m_cpuPort.m_hif_id),
+        "Failed to delete SendToIngress hostif:0x"
+            << std::hex << m_cpuPort.m_hif_id);
+
+    return ReturnCode();
 }
 
 bool PortsOrch::setBridgePortLearningFDB(Port &port, sai_bridge_port_fdb_learning_mode_t mode)
@@ -6341,6 +6472,14 @@ void PortsOrch::generateQueueMap(map<string, FlexCounterQueueStates> queuesState
         return;
     }
 
+    bool isCreateAllQueues = false;
+
+    if (queuesStateVector.count(createAllAvailableBuffersStr))
+    {
+        isCreateAllQueues = true;
+        queuesStateVector.clear();
+    }
+
     for (const auto& it: m_portList)
     {
         if (it.second.m_type == Port::PHY)
@@ -6349,6 +6488,10 @@ void PortsOrch::generateQueueMap(map<string, FlexCounterQueueStates> queuesState
             {
                 auto maxQueueNumber = getNumberOfPortSupportedQueueCounters(it.second.m_alias);
                 FlexCounterQueueStates flexCounterQueueState(maxQueueNumber);
+                if (isCreateAllQueues && maxQueueNumber)
+                {
+                    flexCounterQueueState.enableQueueCounters(0, maxQueueNumber - 1);
+                }
                 queuesStateVector.insert(make_pair(it.second.m_alias, flexCounterQueueState));
             }
             generateQueueMapPerPort(it.second, queuesStateVector.at(it.second.m_alias), false);
@@ -6467,6 +6610,14 @@ void PortsOrch::addQueueFlexCounters(map<string, FlexCounterQueueStates> queuesS
         return;
     }
 
+    bool isCreateAllQueues = false;
+
+    if (queuesStateVector.count(createAllAvailableBuffersStr))
+    {
+        isCreateAllQueues = true;
+        queuesStateVector.clear();
+    }
+
     for (const auto& it: m_portList)
     {
         if (it.second.m_type == Port::PHY)
@@ -6475,6 +6626,10 @@ void PortsOrch::addQueueFlexCounters(map<string, FlexCounterQueueStates> queuesS
             {
                 auto maxQueueNumber = getNumberOfPortSupportedQueueCounters(it.second.m_alias);
                 FlexCounterQueueStates flexCounterQueueState(maxQueueNumber);
+                if (isCreateAllQueues && maxQueueNumber)
+                {
+                    flexCounterQueueState.enableQueueCounters(0, maxQueueNumber - 1);
+                }
                 queuesStateVector.insert(make_pair(it.second.m_alias, flexCounterQueueState));
             }
             addQueueFlexCountersPerPort(it.second, queuesStateVector.at(it.second.m_alias));
@@ -6532,6 +6687,14 @@ void PortsOrch::addQueueWatermarkFlexCounters(map<string, FlexCounterQueueStates
         return;
     }
 
+    bool isCreateAllQueues = false;
+
+    if (queuesStateVector.count(createAllAvailableBuffersStr))
+    {
+        isCreateAllQueues = true;
+        queuesStateVector.clear();
+    }
+
     for (const auto& it: m_portList)
     {
         if (it.second.m_type == Port::PHY)
@@ -6540,6 +6703,10 @@ void PortsOrch::addQueueWatermarkFlexCounters(map<string, FlexCounterQueueStates
             {
                 auto maxQueueNumber = getNumberOfPortSupportedQueueCounters(it.second.m_alias);
                 FlexCounterQueueStates flexCounterQueueState(maxQueueNumber);
+                if (isCreateAllQueues && maxQueueNumber)
+                {
+                    flexCounterQueueState.enableQueueCounters(0, maxQueueNumber - 1);
+                }
                 queuesStateVector.insert(make_pair(it.second.m_alias, flexCounterQueueState));
             }
             addQueueWatermarkFlexCountersPerPort(it.second, queuesStateVector.at(it.second.m_alias));
@@ -6703,6 +6870,14 @@ void PortsOrch::generatePriorityGroupMap(map<string, FlexCounterPgStates> pgsSta
         return;
     }
 
+    bool isCreateAllPgs = false;
+
+    if (pgsStateVector.count(createAllAvailableBuffersStr))
+    {
+        isCreateAllPgs = true;
+        pgsStateVector.clear();
+    }
+
     for (const auto& it: m_portList)
     {
         if (it.second.m_type == Port::PHY)
@@ -6711,6 +6886,10 @@ void PortsOrch::generatePriorityGroupMap(map<string, FlexCounterPgStates> pgsSta
             {
                 auto maxPgNumber = getNumberOfPortSupportedPgCounters(it.second.m_alias);
                 FlexCounterPgStates flexCounterPgState(maxPgNumber);
+                if (isCreateAllPgs && maxPgNumber)
+                {
+                    flexCounterPgState.enablePgCounters(0, maxPgNumber - 1);
+                }
                 pgsStateVector.insert(make_pair(it.second.m_alias, flexCounterPgState));
             }
             generatePriorityGroupMapPerPort(it.second, pgsStateVector.at(it.second.m_alias));
@@ -6807,6 +6986,14 @@ void PortsOrch::addPriorityGroupFlexCounters(map<string, FlexCounterPgStates> pg
         return;
     }
 
+    bool isCreateAllPgs = false;
+
+    if (pgsStateVector.count(createAllAvailableBuffersStr))
+    {
+        isCreateAllPgs = true;
+        pgsStateVector.clear();
+    }
+
     for (const auto& it: m_portList)
     {
         if (it.second.m_type == Port::PHY)
@@ -6815,6 +7002,10 @@ void PortsOrch::addPriorityGroupFlexCounters(map<string, FlexCounterPgStates> pg
             {
                 auto maxPgNumber = getNumberOfPortSupportedPgCounters(it.second.m_alias);
                 FlexCounterPgStates flexCounterPgState(maxPgNumber);
+                if (isCreateAllPgs && maxPgNumber)
+                {
+                    flexCounterPgState.enablePgCounters(0, maxPgNumber - 1);
+                }
                 pgsStateVector.insert(make_pair(it.second.m_alias, flexCounterPgState));
             }
             addPriorityGroupFlexCountersPerPort(it.second, pgsStateVector.at(it.second.m_alias));
@@ -6864,6 +7055,14 @@ void PortsOrch::addPriorityGroupWatermarkFlexCounters(map<string, FlexCounterPgS
         return;
     }
 
+    bool isCreateAllPgs = false;
+
+    if (pgsStateVector.count(createAllAvailableBuffersStr))
+    {
+        isCreateAllPgs = true;
+        pgsStateVector.clear();
+    }
+
     for (const auto& it: m_portList)
     {
         if (it.second.m_type == Port::PHY)
@@ -6872,6 +7071,10 @@ void PortsOrch::addPriorityGroupWatermarkFlexCounters(map<string, FlexCounterPgS
             {
                 auto maxPgNumber = getNumberOfPortSupportedPgCounters(it.second.m_alias);
                 FlexCounterPgStates flexCounterPgState(maxPgNumber);
+                if (isCreateAllPgs && maxPgNumber)
+                {
+                    flexCounterPgState.enablePgCounters(0, maxPgNumber - 1);
+                }
                 pgsStateVector.insert(make_pair(it.second.m_alias, flexCounterPgState));
             }
             addPriorityGroupWatermarkFlexCountersPerPort(it.second, pgsStateVector.at(it.second.m_alias));
@@ -7075,6 +7278,22 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
                 {
                     updateDbPortOperSpeed(port, 0);
                 }
+                sai_port_fec_mode_t fec_mode;
+                string fec_str;
+                if (oper_fec_sup && getPortOperFec(port, fec_mode))
+                {
+                    if (!m_portHlpr.fecToStr(fec_str, fec_mode))
+                    {
+                        SWSS_LOG_ERROR("Error unknown fec mode %d while querying port %s fec mode",
+                                       static_cast<std::int32_t>(fec_mode), port.m_alias.c_str());
+                        fec_str = "N/A";
+                    }
+                    updateDbPortOperFec(port,fec_str);
+                }
+                else
+                {
+                    updateDbPortOperFec(port, "N/A");
+                }
             }
 
             /* update m_portList */
@@ -7156,6 +7375,16 @@ void PortsOrch::updateDbPortOperSpeed(Port &port, sai_uint32_t speed)
     // We don't set port.m_speed = speed here, because CONFIG_DB still hold the old
     // value. If we set it here, next time configure any attributes related port will
     // cause a port flapping.
+}
+
+void PortsOrch::updateDbPortOperFec(Port &port, string fec_str)
+{
+    SWSS_LOG_ENTER();
+
+    vector<FieldValueTuple> tuples;
+    tuples.emplace_back(std::make_pair("fec", fec_str));
+    m_portStateTable.set(port.m_alias, tuples);
+
 }
 
 /*
@@ -7266,6 +7495,28 @@ bool PortsOrch::getPortOperSpeed(const Port& port, sai_uint32_t& speed) const
     return true;
 }
 
+bool PortsOrch::getPortOperFec(const Port& port, sai_port_fec_mode_t &fec_mode) const
+{
+    SWSS_LOG_ENTER();
+
+    if (port.m_type != Port::PHY)
+    {
+        return false;
+    }
+
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_OPER_PORT_FEC_MODE;
+
+    sai_status_t ret = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
+    if (ret != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_NOTICE("Failed to get oper fec for %s", port.m_alias.c_str());
+        return false;
+    }
+
+    fec_mode = static_cast<sai_port_fec_mode_t>(attr.value.s32);
+    return true;
+}
 bool PortsOrch::getPortLinkTrainingRxStatus(const Port &port, sai_port_link_training_rx_status_t &rx_status)
 {
     SWSS_LOG_ENTER();
@@ -7582,6 +7833,7 @@ bool PortsOrch::initGearboxPort(Port &port)
     sai_status_t status;
     string phyOidStr;
     int phy_id;
+    sai_port_fec_mode_t sai_fec;
 
     SWSS_LOG_ENTER();
 
@@ -7635,8 +7887,21 @@ bool PortsOrch::initGearboxPort(Port &port)
             attrs.push_back(attr);
 
             attr.id = SAI_PORT_ATTR_FEC_MODE;
-            attr.value.s32 = fec_mode_map[m_gearboxPortMap[port.m_index].system_fec];
+            if (!m_portHlpr.fecToSaiFecMode(m_gearboxPortMap[port.m_index].system_fec, sai_fec))
+            {
+                SWSS_LOG_ERROR("Invalid system FEC mode %s", m_gearboxPortMap[port.m_index].system_fec.c_str());
+                return false;
+            }
+            attr.value.s32 = sai_fec;
             attrs.push_back(attr);
+           
+            if (fec_override_sup)
+            {
+                attr.id = SAI_PORT_ATTR_AUTO_NEG_FEC_MODE_OVERRIDE;
+            
+                attr.value.booldata = m_portHlpr.fecIsOverrideRequired(m_gearboxPortMap[port.m_index].system_fec);
+                attrs.push_back(attr);
+            }
 
             attr.id = SAI_PORT_ATTR_INTERNAL_LOOPBACK_MODE;
             attr.value.u32 = loopback_mode_map[m_gearboxPortMap[port.m_index].system_loopback];
@@ -7691,8 +7956,21 @@ bool PortsOrch::initGearboxPort(Port &port)
             attrs.push_back(attr);
 
             attr.id = SAI_PORT_ATTR_FEC_MODE;
-            attr.value.s32 = fec_mode_map[m_gearboxPortMap[port.m_index].line_fec];
+            if (!m_portHlpr.fecToSaiFecMode(m_gearboxPortMap[port.m_index].line_fec, sai_fec))
+            {
+                SWSS_LOG_ERROR("Invalid line FEC mode %s", m_gearboxPortMap[port.m_index].line_fec.c_str());
+                return false;
+            }
+            attr.value.s32 = sai_fec;
             attrs.push_back(attr);
+
+            // FEC override will take effect only when autoneg is enabled
+            if (fec_override_sup)
+            {
+                attr.id = SAI_PORT_ATTR_AUTO_NEG_FEC_MODE_OVERRIDE;
+                attr.value.booldata = m_portHlpr.fecIsOverrideRequired(m_gearboxPortMap[port.m_index].line_fec);
+                attrs.push_back(attr);
+            }
 
             attr.id = SAI_PORT_ATTR_MEDIA_TYPE;
             attr.value.u32 = media_type_map[m_gearboxPortMap[port.m_index].line_media_type];

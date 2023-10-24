@@ -186,6 +186,7 @@ class TestPort(object):
         for fv in fvs:
             if fv[0] == "SAI_PORT_ATTR_FEC_MODE":
                 assert fv[1] == "SAI_PORT_FEC_MODE_RS"
+            assert fv[0] != "SAI_PORT_ATTR_AUTO_NEG_FEC_MODE_OVERRIDE"
 
     def test_PortPreemp(self, dvs, testlog):
 
