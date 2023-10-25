@@ -119,6 +119,8 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/zmqorch.cpp \
                 $(top_srcdir)/orchagent/dash/dashaclorch.cpp \
                 $(top_srcdir)/orchagent/dash/dashorch.cpp \
+                $(top_srcdir)/orchagent/dash/dashaclgroupmgr.cpp \
+                $(top_srcdir)/orchagent/dash/dashtagmgr.cpp \
                 $(top_srcdir)/orchagent/dash/dashrouteorch.cpp \
                 $(top_srcdir)/orchagent/dash/dashvnetorch.cpp \
                 $(top_srcdir)/cfgmgr/buffermgrdyn.cpp \
