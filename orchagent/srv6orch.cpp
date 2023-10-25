@@ -452,7 +452,7 @@ void Srv6Orch::updateNeighbor(const NeighborUpdate& update)
         SWSS_LOG_INFO("Neighbor ADD event: %s, installing pending SRv6 SIDs",
                         update.entry.ip_address.to_string().c_str());
 
-        auto it = m_pendingSRv6MySIDEntries.find(NextHopKey(update.entry.ip_address.to_string()));
+        auto it = m_pendingSRv6MySIDEntries.find(NextHopKey(update.entry.ip_address.to_string(), update.entry.alias.c_str()));
         if (it == m_pendingSRv6MySIDEntries.end())
         {
             /* No SID is waiting for this neighbor. Nothing to do */
