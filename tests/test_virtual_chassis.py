@@ -905,6 +905,39 @@ class TestVirtualChassis(object):
 
             buffer_model.disable_dynamic_buffer(dvs.get_config_db(), dvs.runcmd)
 
+    def test_chassis_wred_profile_on_system_ports(self, vct):
+        """Test whether wred profile is applied on system ports in VoQ chassis.
+        """
+        dvss = vct.dvss
+        for name in dvss.keys():
+            dvs = dvss[name]
+
+            config_db = dvs.get_config_db()
+            app_db = dvs.get_app_db()
+            asic_db = dvs.get_asic_db()
+            metatbl = config_db.get_entry("DEVICE_METADATA", "localhost")
+            cfg_switch_type = metatbl.get("switch_type")
+
+            if cfg_switch_type == "voq":
+                # Get all the keys from SYTEM_PORT table and check whether wred_profile is applied properly
+                system_ports = config_db.get_keys('SYSTEM_PORT')
+
+                for key in system_ports:
+                    queue3 = key + '|' + '3'
+                    queue_entry = config_db.get_entry('QUEUE', queue3)
+                    wred_profile = queue_entry['wred_profile']
+                    if wred_profile != 'AZURE_LOSSLESS':
+                        print("WRED profile not applied on queue3 on system port %s", key)
+                        assert wred_profile == 'AZURE_LOSSLESS'
+
+                    queue4 = key + '|' + '4'
+                    queue_entry = config_db.get_entry('QUEUE', queue4)
+                    wred_profile = queue_entry['wred_profile']
+                    if wred_profile != 'AZURE_LOSSLESS':
+                        print("WRED profile not applied on queue4 on system port %s", key)
+                        assert wred_profile == 'AZURE_LOSSLESS'
+
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():
