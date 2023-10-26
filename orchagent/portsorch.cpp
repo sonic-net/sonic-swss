@@ -866,6 +866,14 @@ bool PortsOrch::addPortBulk(const std::vector<PortConfig> &portList)
 
         if (cit.pt_intf_id.is_set)
         {
+            if (!m_isPathTracingSupported)
+            {
+                SWSS_LOG_WARN(
+                    "Failed to set Path Tracing Interface ID: Path Tracing is not supported by the switch"
+                );
+                continue;
+            }
+
             /*
              * First, let's check the Path Tracing Interface ID configured for the port.
              *
@@ -912,6 +920,14 @@ bool PortsOrch::addPortBulk(const std::vector<PortConfig> &portList)
 
         if (cit.pt_timestamp_template.is_set)
         {
+            if (!m_isPathTracingSupported)
+            {
+                SWSS_LOG_WARN(
+                    "Failed to set Path Tracing Timestamp Template: Path Tracing is not supported by the switch"
+                );
+                continue;
+            }
+
             attr.id = SAI_PORT_ATTR_PATH_TRACING_TIMESTAMP_TYPE;
             attr.value.u16 = cit.pt_timestamp_template.value;
             attrList.push_back(attr);
@@ -4216,6 +4232,15 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 if (pCfg.pt_intf_id.is_set)
                 {
+                    if (!m_isPathTracingSupported)
+                    {
+                        SWSS_LOG_WARN(
+                            "Failed to set Path Tracing Interface ID: Path Tracing is not supported by the switch"
+                        );
+                        it = taskMap.erase(it);
+                        continue;
+                    }
+
                     if (p.m_pt_intf_id != pCfg.pt_intf_id.value)
                     {
                         /*
@@ -4278,6 +4303,15 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 if (pCfg.pt_timestamp_template.is_set)
                 {
+                    if (!m_isPathTracingSupported)
+                    {
+                        SWSS_LOG_WARN(
+                            "Failed to set Path Tracing Timestamp Template: Path Tracing is not supported by the switch"
+                        );
+                        it = taskMap.erase(it);
+                        continue;
+                    }
+
                     if (p.m_pt_timestamp_template != pCfg.pt_timestamp_template.value)
                     {
                         if (!setPortPtTimestampTemplate(p, pCfg.pt_timestamp_template.value))
