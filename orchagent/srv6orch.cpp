@@ -738,7 +738,10 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
             next_hop_id = m_neighOrch->getNextHopId(nexthop);
             if(next_hop_id == SAI_NULL_OBJECT_ID)
             {
-              SWSS_LOG_ERROR("Failed to get nexthop for adjacency %s", adj.c_str());
+              SWSS_LOG_INFO("Failed to get nexthop for adjacency %s", adj.c_str());
+              SWSS_LOG_INFO("Nexthop for adjacency %s doesn't exist in DB yet", adj.c_str());
+              auto pending_mysid_entry = make_tuple(key_string, dt_vrf, adj, end_action);
+              m_pendingSRv6MySIDEntries[nexthop].insert(pending_mysid_entry);
               return false;
             }
         }
