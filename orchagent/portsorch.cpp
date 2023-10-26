@@ -366,7 +366,6 @@ static bool isPathTracingSupported()
 
     /* First, query switch capabilities */
     sai_attribute_t attr;
-    std::vector<sai_int32_t> switchCapabilities;
     std::vector<sai_int32_t> switchCapabilities(SAI_OBJECT_TYPE_MAX);
     attr.id = SAI_SWITCH_ATTR_SUPPORTED_OBJECT_TYPE_LIST;
     attr.value.s32list.count = static_cast<uint32_t>(switchCapabilities.size());
