@@ -509,6 +509,8 @@ private:
     /* Prototypes for Path Tracing */
     bool createPtTam();
     bool removePtTam(sai_object_id_t tam_id);
+    bool createAndSetPortPtTam(const Port &p);
+    bool unsetPortPtTam(const Port &p);
     sai_object_id_t m_ptTamReport = SAI_NULL_OBJECT_ID;
     sai_object_id_t m_ptTamInt = SAI_NULL_OBJECT_ID;
     sai_object_id_t m_ptTam = SAI_NULL_OBJECT_ID;

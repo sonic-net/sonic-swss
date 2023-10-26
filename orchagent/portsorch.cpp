@@ -4151,77 +4151,30 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         {
                             /* Path Tracing ENABLED case */
 
-                            /*
-                             * First, let's check if a TAM object is already assigned to the port.
-                             */
-                            if (m_portPtTam.find(p.m_alias) == m_portPtTam.end())
+                            /* Create and set port TAM object */
+                            if (!createAndSetPortPtTam(p))
                             {
-                                /*
-                                 * The port does not have a TAM object assigned to it.
-                                 *
-                                 * Let's create a new TAM object (if we don't already have one)
-                                 * and assign it to the port.
-                                 */
-                                if (m_ptTam == SAI_NULL_OBJECT_ID)
-                                {
-                                    if (!createPtTam())
-                                    {
-                                        SWSS_LOG_ERROR(
-                                            "Failed to create TAM object for Path Tracing"
-                                        );
-                                        it++;
-                                        continue;
-                                    }
-                                }
-
-                                if (!setPortPtTam(p, m_ptTam))
-                                {
-                                    SWSS_LOG_ERROR(
-                                        "Failed to set port %s TAM object for Path Tracing",
-                                        p.m_alias.c_str()
-                                    );
-                                    it++;
-                                    continue;
-                                }
-                                m_ptTamRefCount++;
-                                m_portPtTam[p.m_alias] = m_ptTam;
+                                SWSS_LOG_ERROR(
+                                    "Failed to create and set port %s TAM object for Path Tracing",
+                                    p.m_alias.c_str()
+                                );
+                                it++;
+                                continue;
                             }
                         }
                         else
                         {
                             /* Path Tracing DISABLED case */
 
-                            /*
-                             * Let's unassign the TAM object from the port and decrease ref counter
-                             */
-                            if (m_portPtTam.find(p.m_alias) != m_portPtTam.end())
+                            /* Unset port TAM object */
+                            if (!unsetPortPtTam(p))
                             {
-                                if (!setPortPtTam(p, SAI_NULL_OBJECT_ID))
-                                {
-                                    SWSS_LOG_ERROR(
-                                        "Failed to unset port %s TAM object for Path Tracing",
-                                        p.m_alias.c_str()
-                                    );
-                                    it++;
-                                    continue;
-                                }
-                                m_ptTamRefCount--;
-                                m_portPtTam.erase(p.m_alias);
-
-                                /*
-                                * If the TAM object is no longer used, we can safely remove it.
-                                */
-                                if (m_ptTamRefCount == 0)
-                                {
-                                    if (!removePtTam(m_ptTam))
-                                    {
-                                        SWSS_LOG_ERROR(
-                                            "Failed to remove TAM object for Path Tracing"
-                                        );
-                                        it++;
-                                        continue;
-                                    }
-                                }
+                                SWSS_LOG_ERROR(
+                                    "Failed to unset port %s TAM object for Path Tracing",
+                                    p.m_alias.c_str()
+                                );
+                                it++;
+                                continue;
                             }
                         }
 
@@ -4326,27 +4279,15 @@ void PortsOrch::doPortTask(Consumer &consumer)
             }
 
             /*
-             * Decrease TAM object ref count before removing the port, if the port
-             * has a TAM object assigned
+             * Unset port Path Tracing TAM object and decrease TAM object refcount before
+             * removing the port (if the port has a TAM object associated)
              */
-            if (m_portPtTam.find(alias) != m_portPtTam.end())
+            if (!unsetPortPtTam(p))
             {
-                if (!setPortPtTam(p, SAI_NULL_OBJECT_ID))
-                {
-                    SWSS_LOG_ERROR(
-                        "Failed to unset port %s TAM object for Path Tracing",
-                        p.m_alias.c_str()
-                    );
-                }
-                m_ptTamRefCount--;
-                m_portPtTam.erase(alias);
-                if (m_ptTamRefCount == 0)
-                {
-                    if (!removePtTam(m_ptTam))
-                    {
-                        throw runtime_error("Remove port TAM object for Path Tracing failed");
-                    }
-                }
+                SWSS_LOG_ERROR(
+                    "Failed to unset port %s TAM object for Path Tracing",
+                    p.m_alias.c_str()
+                );
             }
 
             sai_status_t status = removePort(port_id);
@@ -8860,6 +8801,89 @@ void PortsOrch::updatePortStatePoll(const Port &port, port_state_poll_t type, bo
     {
         m_port_state_poll[port.m_alias] &= ~type;
     }
+}
+
+bool PortsOrch::createAndSetPortPtTam(const Port &p)
+{
+    /*
+     * First, let's check if a TAM object is already assigned to the port.
+     */
+
+    /* If the port has already a TAM object, nothing to do */
+    if (m_portPtTam.find(p.m_alias) != m_portPtTam.end())
+    {
+        SWSS_LOG_DEBUG(
+            "Port %s has already a TAM object", p.m_alias.c_str()
+        );
+        return true;
+    }
+
+    /*
+     * The port does not have a TAM object assigned to it.
+     *
+     * Let's create a new TAM object (if we don't already have one)
+     * and assign it to the port.
+     */
+    if (m_ptTam == SAI_NULL_OBJECT_ID)
+    {
+        if (!createPtTam())
+        {
+            SWSS_LOG_ERROR(
+                "Failed to create TAM object for Path Tracing"
+            );
+            return false;
+        }
+    }
+
+    if (!setPortPtTam(p, m_ptTam))
+    {
+        SWSS_LOG_ERROR(
+            "Failed to set port %s TAM object for Path Tracing",
+            p.m_alias.c_str()
+        );
+        return false;
+    }
+
+    m_ptTamRefCount++;
+    m_portPtTam[p.m_alias] = m_ptTam;
+
+    return true;
+}
+
+bool PortsOrch::unsetPortPtTam(const Port &p)
+{
+    /*
+     * Let's unassign the TAM object from the port and decrease ref counter
+     */
+    if (m_portPtTam.find(p.m_alias) != m_portPtTam.end())
+    {
+        if (!setPortPtTam(p, SAI_NULL_OBJECT_ID))
+        {
+            SWSS_LOG_ERROR(
+                "Failed to unset port %s TAM object for Path Tracing",
+                p.m_alias.c_str()
+            );
+            return false;
+        }
+        m_ptTamRefCount--;
+        m_portPtTam.erase(p.m_alias);
+
+        /*
+         * If the TAM object is no longer used, we can safely remove it.
+         */
+        if (m_ptTamRefCount == 0)
+        {
+            if (!removePtTam(m_ptTam))
+            {
+                SWSS_LOG_ERROR(
+                    "Failed to remove TAM object for Path Tracing"
+                );
+                return false;
+            }
+        }
+    }
+
+    return true;
 }
 
 bool PortsOrch::getPortPtIntfId(const Port& port, sai_uint16_t &intf_id)
