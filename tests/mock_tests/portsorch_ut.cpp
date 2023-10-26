@@ -112,6 +112,41 @@ namespace portsorch_test
         return pold_sai_port_api->set_port_attribute(port_id, attr);
     }
 
+    vector<sai_object_type_t> supported_sai_objects = {
+        SAI_OBJECT_TYPE_PORT,
+        SAI_OBJECT_TYPE_LAG,
+        SAI_OBJECT_TYPE_TAM,
+        SAI_OBJECT_TYPE_TAM_INT,
+        SAI_OBJECT_TYPE_TAM_COLLECTOR,
+        SAI_OBJECT_TYPE_TAM_REPORT,
+        SAI_OBJECT_TYPE_TAM_TRANSPORT,
+        SAI_OBJECT_TYPE_TAM_TELEMETRY,
+        SAI_OBJECT_TYPE_TAM_EVENT_THRESHOLD
+    };
+
+    sai_status_t _ut_stub_sai_get_switch_attribute(
+        _In_ sai_object_id_t switch_id,
+        _In_ uint32_t attr_count,
+        _Inout_ sai_attribute_t *attr_list)
+    {
+        sai_status_t status;
+        if (attr_count == 1 && attr_list[0].id == SAI_SWITCH_ATTR_SUPPORTED_OBJECT_TYPE_LIST)
+        {
+            uint32_t i;
+            for (i = 0; i < attr_list[0].value.s32list.count && i < supported_sai_objects.size(); i++)
+            {
+                attr_list[0].value.s32list.list[i] = supported_sai_objects[i];
+            }
+            attr_list[0].value.s32list.count = i;
+            status = SAI_STATUS_SUCCESS;
+        }
+        else
+        {
+            status = pold_sai_switch_api->get_switch_attribute(switch_id, attr_count, attr_list);
+        }
+        return status;
+    }
+
     uint32_t *_sai_syncd_notifications_count;
     int32_t *_sai_syncd_notification_event;
     uint32_t _sai_switch_dlr_packet_action_count;
@@ -152,6 +187,7 @@ namespace portsorch_test
         ut_sai_switch_api = *sai_switch_api;
         pold_sai_switch_api = sai_switch_api;
         ut_sai_switch_api.set_switch_attribute = _ut_stub_sai_set_switch_attribute;
+        ut_sai_switch_api.get_switch_attribute = _ut_stub_sai_get_switch_attribute;
         sai_switch_api = &ut_sai_switch_api;
     }
 
@@ -328,7 +364,9 @@ namespace portsorch_test
 
             ASSERT_EQ(gPortsOrch, nullptr);
 
+            _hook_sai_switch_api();
             gPortsOrch = new PortsOrch(m_app_db.get(), m_state_db.get(), ports_tables, m_chassis_app_db.get());
+            _unhook_sai_switch_api();
 
             vector<string> flex_counter_tables = {
                 CFG_FLEX_COUNTER_TABLE_NAME
