@@ -516,6 +516,8 @@ private:
     sai_object_id_t m_ptTam = SAI_NULL_OBJECT_ID;
     uint32_t m_ptTamRefCount = 0;
     map<string, sai_object_id_t> m_portPtTam;
+    // Define whether the switch supports or not Path Tracing
+    bool m_isPathTracingSupported = false;
 
 private:
     // Port config aggregator

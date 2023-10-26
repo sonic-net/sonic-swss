@@ -353,6 +353,80 @@ static void getPortSerdesAttr(PortSerdesAttrMap_t &map, const PortConfig &port)
     }
 }
 
+static bool isPathTracingSupported()
+{
+    /*
+     * Path Tracing is supported when three conditions are met:
+     *
+     *   1. The switch supports SAI_OBJECT_TYPE_TAM, SAI_OBJECT_TYPE_TAM_INT and SAI_OBJECT_TYPE_TAM_REPORT
+     *   2. SAI_OBJECT_TYPE_PORT supports SAI_PORT_ATTR_PATH_TRACING_INTF attribute
+     *   3. SAI_OBJECT_TYPE_PORT supports SAI_PORT_ATTR_PATH_TRACING_TIMESTAMP_TYPE attribute
+     *   4. SAI_OBJECT_TYPE_PORT supports SAI_PORT_ATTR_TAM_OBJECT attribute
+     */
+
+    /* First, query switch capabilities */
+    sai_attribute_t attr;
+    std::vector<sai_int32_t> switchCapabilities;
+    std::vector<sai_int32_t> switchCapabilities(SAI_OBJECT_TYPE_MAX);
+    attr.id = SAI_SWITCH_ATTR_SUPPORTED_OBJECT_TYPE_LIST;
+    attr.value.s32list.count = static_cast<uint32_t>(switchCapabilities.size());
+    attr.value.s32list.list = switchCapabilities.data();
+
+    bool is_tam_supported = false;
+    bool is_tam_int_supported = false;
+    bool is_tam_report_supported = false;
+    auto status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        for (std::uint32_t i = 0; i < attr.value.s32list.count; i++)
+        {
+            switch(static_cast<sai_object_type_t>(attr.value.s32list.list[i]))
+            {
+                case SAI_OBJECT_TYPE_TAM:
+                    is_tam_supported = true;
+                    break;
+                case SAI_OBJECT_TYPE_TAM_INT:
+                    is_tam_int_supported = true;
+                    break;
+                case SAI_OBJECT_TYPE_TAM_REPORT:
+                    is_tam_report_supported = true;
+                    break;
+                default:
+                    /* Received an attribute in which we are not interested, ignoring it */
+                    break;
+            }
+        }
+    }
+    else
+    {
+        SWSS_LOG_ERROR(
+            "Failed to get a list of supported switch capabilities. Error=%d", status
+        );
+        return false;
+    }
+
+    /* Then verify if the three conditions are met */
+    if (!is_tam_supported || !is_tam_int_supported || !is_tam_report_supported)
+        return false;
+
+    if (!gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_PORT, SAI_PORT_ATTR_PATH_TRACING_INTF))
+    {
+        return false;
+    }
+
+    if (!gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_PORT, SAI_PORT_ATTR_PATH_TRACING_TIMESTAMP_TYPE))
+    {
+        return false;
+    }
+
+    if (!gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_PORT, SAI_PORT_ATTR_TAM_OBJECT))
+    {
+        return false;
+    }
+        
+    return true;
+}
+
 // Port OA ------------------------------------------------------------------------------------------------------------
 
 /*
@@ -593,17 +667,19 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
     /* Query Path Tracing capability */
     vector<FieldValueTuple> fvVector;
-    if (gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_PORT, SAI_PORT_ATTR_PATH_TRACING_INTF) &&
-            gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_PORT, SAI_PORT_ATTR_PATH_TRACING_TIMESTAMP_TYPE) &&
-            gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_PORT, SAI_PORT_ATTR_TAM_OBJECT))
+    if (isPathTracingSupported())
     {
         SWSS_LOG_INFO("Path Tracing is supported");
+        /* Set PATH_TRACING_CAPABLE = true in STATE DB */
         fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PATH_TRACING_CAPABLE, "true");
+        m_isPathTracingSupported = true;
     }
     else
     {
         SWSS_LOG_INFO("Path Tracing is not supported");
+        /* Set PATH_TRACING_CAPABLE = false in STATE DB */
         fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PATH_TRACING_CAPABLE, "false");
+        m_isPathTracingSupported = false;
     }
     gSwitchOrch->set_switch_capability(fvVector);
 
