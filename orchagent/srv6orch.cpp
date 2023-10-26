@@ -451,10 +451,10 @@ void Srv6Orch::updateNeighbor(const NeighborUpdate& update)
          * that are waiting for that neighbor to be ready, and install them into the ASIC.
          */
 
-        SWSS_LOG_INFO("Neighbor ADD event: %s, installing pending SRv6 SIDs",
-                        update.entry.ip_address.to_string().c_str());
+        SWSS_LOG_INFO("Neighbor ADD event: %s alias '%s', installing pending SRv6 SIDs",
+                        update.entry.ip_address.to_string().c_str(), update.entry.alias.c_str());
 
-        auto it = m_pendingSRv6MySIDEntries.find(NextHopKey(update.entry.ip_address.to_string(), update.entry.alias.c_str()));
+        auto it = m_pendingSRv6MySIDEntries.find(NextHopKey(update.entry.ip_address.to_string(), update.entry.alias));
         if (it == m_pendingSRv6MySIDEntries.end())
         {
             /* No SID is waiting for this neighbor. Nothing to do */
@@ -496,8 +496,8 @@ void Srv6Orch::updateNeighbor(const NeighborUpdate& update)
          * nexthop from the ASIC, and add them to the SRv6 MySID entries pending set.
          */
 
-        SWSS_LOG_INFO("Neighbor DELETE event: %s, removing associated SRv6 SIDs",
-                        update.entry.ip_address.to_string().c_str());
+        SWSS_LOG_INFO("Neighbor DELETE event: %s alias '%s', removing associated SRv6 SIDs",
+                        update.entry.ip_address.to_string().c_str(), update.entry.alias.c_str());
 
         for (auto it = srv6_my_sid_table_.begin(); it != srv6_my_sid_table_.end();)
         {
@@ -568,7 +568,7 @@ void Srv6Orch::updateNeighbor(const NeighborUpdate& update)
              * when the neighbor comes back
              */
             auto pending_mysid_entry = make_tuple(my_sid_string, dt_vrf, adj, end_action);
-            m_pendingSRv6MySIDEntries[NextHopKey(update.entry.ip_address.to_string())].insert(pending_mysid_entry);
+            m_pendingSRv6MySIDEntries[NextHopKey(update.entry.ip_address.to_string(), update.entry.alias)].insert(pending_mysid_entry);
         }
     }
 }
