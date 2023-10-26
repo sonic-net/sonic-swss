@@ -594,7 +594,8 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
     /* Query Path Tracing capability */
     vector<FieldValueTuple> fvVector;
     if (gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_PORT, SAI_PORT_ATTR_PATH_TRACING_INTF) &&
-            gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_PORT, SAI_PORT_ATTR_PATH_TRACING_TIMESTAMP_TYPE))
+            gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_PORT, SAI_PORT_ATTR_PATH_TRACING_TIMESTAMP_TYPE) &&
+            gSwitchOrch->querySwitchCapability(SAI_OBJECT_TYPE_PORT, SAI_PORT_ATTR_TAM_OBJECT))
     {
         SWSS_LOG_INFO("Path Tracing is supported");
         fvVector.emplace_back(SWITCH_CAPABILITY_TABLE_PATH_TRACING_CAPABLE, "true");
