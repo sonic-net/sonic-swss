@@ -17,35 +17,18 @@
 #include "zmqserver.h"
 
 #include "dashorch.h"
+#include "dashaclgroupmgr.h"
+#include "dashtagmgr.h"
 #include "dash_api/acl_group.pb.h"
 #include "dash_api/acl_rule.pb.h"
 #include "dash_api/acl_in.pb.h"
 #include "dash_api/acl_out.pb.h"
 
-typedef enum _DashAclDirection
-{
-    IN,
-    OUT,
-} DashAclDirection;
-
-struct DashAclBindEntry {
+struct DashAclEntry {
     std::string m_acl_group_id;
 };
 
-struct DashAclGroupEntry {
-    sai_object_id_t m_dash_acl_group_id;
-    size_t m_ref_count;
-    size_t m_rule_count;
-    sai_ip_addr_family_t m_ip_version;
-};
-
-struct DashAclRuleEntry {
-    sai_object_id_t m_dash_acl_rule_id;
-};
-
-using DashAclBindTable = std::unordered_map<std::string, DashAclBindEntry>;
-using DashAclGroupTable = std::unordered_map<std::string, DashAclGroupEntry>;
-using DashAclRuleTable = std::unordered_map<std::string, DashAclRuleEntry>;
+using DashAclTable = std::unordered_map<std::string, DashAclEntry>;
 
 class DashAclOrch : public ZmqOrch
 {
@@ -53,6 +36,8 @@ public:
     using TaskArgs = std::vector<swss::FieldValueTuple>;
 
     DashAclOrch(swss::DBConnector *db, const std::vector<std::string> &tables, DashOrch *dash_orch, swss::ZmqServer *zmqServer);
+    DashAclGroupMgr& getDashAclGroupMgr();
+    DashTagMgr& getDashAclTagMgr();
 
 private:
     void doTask(ConsumerBase &consumer);
@@ -81,20 +66,26 @@ private:
     task_process_status taskRemoveDashAclRule(
         const std::string &key);
 
-    DashAclGroupEntry* getAclGroup(const std::string &group_id);
-
-    task_process_status bindAclToEni(
-        DashAclBindTable &acl_table,
+    task_process_status taskUpdateDashPrefixTag(
         const std::string &key,
-        const std::string &acl_group_id);
-    task_process_status unbindAclFromEni(
-        DashAclBindTable &acl_table,
+        const dash::tag::PrefixTag &data);
+
+    task_process_status taskRemoveDashPrefixTag(
         const std::string &key);
 
-    DashAclBindTable m_dash_acl_in_table;
-    DashAclBindTable m_dash_acl_out_table;
-    DashAclGroupTable m_dash_acl_group_table;
-    DashAclRuleTable m_dash_acl_rule_table;
+    task_process_status bindAclToEni(
+        DashAclDirection direction, 
+        const std::string table_id, 
+        const std::string &acl_group_id);
+    task_process_status unbindAclFromEni(
+        DashAclDirection direction, 
+        const std::string table_id);
+
+    DashAclTable m_dash_acl_in_table;
+    DashAclTable m_dash_acl_out_table;
+
+    DashAclGroupMgr m_group_mgr;
+    DashTagMgr m_tag_mgr;
 
     DashOrch *m_dash_orch;
 };

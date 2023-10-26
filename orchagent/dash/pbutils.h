@@ -10,6 +10,8 @@
 
 #include "dash_api/types.pb.h"
 
+bool to_sai(const dash::types::IpVersion &pb_version, sai_ip_addr_family_t &sai_ip_family);
+
 bool to_sai(const dash::types::IpAddress &pb_address, sai_ip_address_t &sai_address);
 
 bool to_sai(const dash::types::IpPrefix &pb_prefix, sai_ip_prefix_t &sai_prefix);
@@ -40,7 +42,7 @@ bool to_sai(const dash::types::ValueOrRange &pb_range, RangeType &sai_range)
     {
         if (pb_range.value() < std::numeric_limits<range_type>::min() || pb_range.value() > std::numeric_limits<range_type>::max())
         {
-            SWSS_LOG_WARN("The value %s is invalid", pb_range.value());
+            SWSS_LOG_WARN("The value %s is invalid", std::to_string(pb_range.value()).c_str());
             return false;
         }
         sai_range.min = static_cast<range_type>(pb_range.value());

@@ -26,6 +26,7 @@ int main(int argc, char **argv)
     {
         vector<string> cfg_port_tables = {
             CFG_PORT_TABLE_NAME,
+            CFG_SEND_TO_INGRESS_PORT_TABLE_NAME,
         };
 
         DBConnector cfgDb("CONFIG_DB", 0);

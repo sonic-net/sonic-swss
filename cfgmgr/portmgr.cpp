@@ -14,8 +14,10 @@ using namespace swss;
 PortMgr::PortMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
         m_cfgPortTable(cfgDb, CFG_PORT_TABLE_NAME),
+        m_cfgSendToIngressPortTable(cfgDb, CFG_SEND_TO_INGRESS_PORT_TABLE_NAME),
         m_cfgLagMemberTable(cfgDb, CFG_LAG_MEMBER_TABLE_NAME),
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
+        m_appSendToIngressPortTable(appDb, APP_SEND_TO_INGRESS_PORT_TABLE_NAME),
         m_appPortTable(appDb, APP_PORT_TABLE_NAME)
 {
 }
@@ -93,11 +95,49 @@ bool PortMgr::isPortStateOk(const string &alias)
     return false;
 }
 
+void PortMgr::doSendToIngressPortTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple t = it->second;
+
+        string alias = kfvKey(t);
+        string op = kfvOp(t);
+        auto fvs = kfvFieldsValues(t);
+
+        if (op == SET_COMMAND)
+        {
+            SWSS_LOG_NOTICE("Add SendToIngress Port: %s",
+                            alias.c_str());
+            m_appSendToIngressPortTable.set(alias, fvs);
+        }
+        else if (op == DEL_COMMAND)
+        {
+            SWSS_LOG_NOTICE("Removing SendToIngress Port: %s",
+                                alias.c_str());
+            m_appSendToIngressPortTable.del(alias);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
+        }
+        it = consumer.m_toSync.erase(it);
+    }
+
+}
+
 void PortMgr::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
     auto table = consumer.getTableName();
+    if (table == CFG_SEND_TO_INGRESS_PORT_TABLE_NAME)
+    {
+        doSendToIngressPortTask(consumer);
+        return;
+    }
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
@@ -146,7 +186,7 @@ void PortMgr::doTask(Consumer &consumer)
                 {
                     admin_status = fvValue(i);
                 }
-                else 
+                else
                 {
                     field_values.emplace_back(i);
                 }
