@@ -470,7 +470,7 @@ void Srv6Orch::updateNeighbor(const NeighborUpdate& update)
             const string adj = get<2>(*iter);
             const string end_action = get<3>(*iter);
 
-            SWSS_LOG_INFO("Creating SID %s, action %s, vrf %s, adj %s", my_sid_string.c_str(), dt_vrf.c_str(), adj.c_str(), end_action.c_str());
+            SWSS_LOG_INFO("Creating SID %s, action %s, vrf %s, adj %s", my_sid_string.c_str(), end_action.c_str(), dt_vrf.c_str(), adj.c_str());
         
             if(!createUpdateMysidEntry(my_sid_string, dt_vrf, adj, end_action))
             {
@@ -745,7 +745,7 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
         else
         {
             SWSS_LOG_INFO("Nexthop for adjacency %s doesn't exist in DB yet", adj.c_str());
-            auto pending_mysid_entry = make_tuple(my_sid_string, dt_vrf, adj, end_action);
+            auto pending_mysid_entry = make_tuple(key_string, dt_vrf, adj, end_action);
             m_pendingSRv6MySIDEntries[nexthop].insert(pending_mysid_entry);
             return false;
         }
