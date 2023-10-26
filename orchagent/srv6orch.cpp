@@ -10,6 +10,8 @@
 using namespace std;
 using namespace swss;
 
+#define ADJ_DELIMITER ','
+
 extern sai_object_id_t gSwitchId;
 extern sai_object_id_t  gVirtualRouterId;
 extern sai_object_id_t  gUnderlayIfId;
@@ -720,6 +722,14 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
     if (mySidNextHopRequired(end_behavior))
     {
         sai_object_id_t next_hop_id;
+
+        vector<string> adjv = tokenize(adj, ADJ_DELIMITER);
+        if (adjv.size() > 1)
+        {
+            SWSS_LOG_ERROR("Failed to create my_sid entry %s adj %s: ECMP adjacency not yet supported", key_string.c_str(), adj.c_str());
+            return false;
+        }
+
         nexthop = NextHopKey(adj); 
         SWSS_LOG_INFO("Adjacency %s", adj.c_str());
         if (m_neighOrch->hasNextHop(nexthop))
