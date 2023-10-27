@@ -42,17 +42,22 @@ class TestSrv6Mysid(object):
     def remove_ip_address(self, interface, ip):
         self.cdb.delete_entry("INTERFACE", interface + "|" + ip)
 
-    def add_neighbor(self, interface, ip, mac):
+    def add_neighbor(self, interface, ip, mac, family):
         table = "ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY"
         existed_entries = get_exist_entries(self.adb.db_connection, table)
 
-        self.cdb.create_entry("NEIGH", interface + "|" + ip, {"neigh": mac})
+        tbl = swsscommon.ProducerStateTable(self.pdb.db_connection, "NEIGH_TABLE")
+        fvs = swsscommon.FieldValuePairs([("neigh", mac),
+                                          ("family", family)])
+        tbl.set(interface + ":" + ip, fvs)
 
         self.adb.wait_for_n_keys(table, len(existed_entries) + 1)
         return get_created_entry(self.adb.db_connection, table, existed_entries)
 
     def remove_neighbor(self, interface, ip):
-        self.cdb.delete_entry("NEIGH", interface + "|" + ip)
+        tbl = swsscommon.ProducerStateTable(self.pdb.db_connection, "NEIGH_TABLE")
+        tbl._del(interface + ":" + ip)
+        time.sleep(1)
 
     def create_mysid(self, mysid, fvs):
         table = "ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY"
@@ -76,12 +81,34 @@ class TestSrv6Mysid(object):
             self.cdb.create_entry("INTERFACE", interface, {"NULL": "NULL"})
         else:
             self.cdb.create_entry("INTERFACE", interface, {"vrf_name": vrf_name})
-        
+
         self.adb.wait_for_n_keys(table, len(existed_entries) + 1)
         return get_created_entry(self.adb.db_connection, table, existed_entries)
 
     def remove_l3_intf(self, interface):
         self.cdb.delete_entry("INTERFACE", interface)
+
+    def get_nexthop_id(self, ip_address):
+        next_hop_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
+        for next_hop_entry in next_hop_entries:
+            (status, fvs) = tbl.get(next_hop_entry)
+
+            assert status == True
+            assert len(fvs) == 3
+
+            for fv in fvs:
+                if fv[0] == "SAI_NEXT_HOP_ATTR_IP" and fv[1] == ip_address:
+                    return next_hop_entry
+
+        return None
+
+    def set_interface_status(self, dvs, interface, admin_status):
+        tbl_name = "PORT"
+        tbl = swsscommon.Table(self.cdb.db_connection, tbl_name)
+        fvs = swsscommon.FieldValuePairs([("admin_status", "up")])
+        tbl.set(interface, fvs)
+        time.sleep(1)
 
     def test_mysid(self, dvs, testlog):
         self.setup_db(dvs)
@@ -171,8 +198,8 @@ class TestSrv6Mysid(object):
         self.add_ip_address("Ethernet104", "192.0.2.2/30")
 
         # create neighbor
-        self.add_neighbor("Ethernet104", "2001::1", "00:00:00:01:02:04")
-        self.add_neighbor("Ethernet104", "192.0.2.1", "00:00:00:01:02:05")
+        self.add_neighbor("Ethernet104", "2001::1", "00:00:00:01:02:04", "IPv6")
+        self.add_neighbor("Ethernet104", "192.0.2.1", "00:00:00:01:02:05", "IPv4")
 
         # get nexthops
         next_hop_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
@@ -322,7 +349,7 @@ class TestSrv6Mysid(object):
 
         # remove nexthop
         self.remove_neighbor("Ethernet104", "2001::1")
-        self.remove_neighbor("Ethernet112", "192.0.2.1")
+        self.remove_neighbor("Ethernet104", "192.0.2.1")
 
         # Reemove IP from interface
         self.remove_ip_address("Ethernet104", "2001::2/126")
