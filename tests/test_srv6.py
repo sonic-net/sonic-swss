@@ -357,6 +357,96 @@ class TestSrv6Mysid(object):
 
         self.remove_l3_intf("Ethernet104")
 
+    def test_mysid_l3adj(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        # create MySID entries
+        mysid1='32:16:16:0:fc00:0:1:e000::'
+
+        # create interface
+        self.create_l3_intf("Ethernet104", "")
+
+        # assign IP to interface
+        self.add_ip_address("Ethernet104", "2001::2/64")
+
+        time.sleep(3)
+
+        # bring up Ethernet104
+        self.set_interface_status(dvs, "Ethernet104", "up")
+
+        time.sleep(3)
+
+        # save the initial number of entries in MySID table
+        initial_my_sid_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY")
+
+        # save the initial number of entries in Nexthop table
+        initial_next_hop_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
+
+        # create MySID END.X, neighbor does not exist yet
+        fvs = swsscommon.FieldValuePairs([('action', 'end.x'), ('adj', '2001::1')])
+        tbl = swsscommon.ProducerStateTable(self.pdb.db_connection, "SRV6_MY_SID_TABLE")
+        tbl.set(mysid1, fvs)
+
+        time.sleep(2)
+
+        # check the current number of entries in MySID table
+        # since the neighbor does not exist yet, we expect the SID has not been installed (i.e., we
+        # expect the same number of MySID entries as before)
+        exist_my_sid_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY")
+        assert len(exist_my_sid_entries) == len(initial_my_sid_entries)
+
+        # now, let's create the neighbor
+        self.add_neighbor("Ethernet104", "2001::1", "00:00:00:01:02:04", "IPv6")
+
+        # verify that the nexthop is created in the ASIC (i.e., we have the previous number of next hop entries + 1)
+        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", len(initial_next_hop_entries) + 1)
+
+        # get the new nexthop and nexthop ID, which will be used later to verify the MySID entry
+        next_hop_entry = get_created_entry(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", initial_next_hop_entries)
+        assert next_hop_entry is not None
+        next_hop_id = self.get_nexthop_id("2001::1")
+        assert next_hop_id is not None
+
+        # now the neighbor has been created in the ASIC, we expect the MySID entry to be created in the ASIC as well
+        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY", len(initial_my_sid_entries) + 1)
+        my_sid_entry = get_created_entry(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY", initial_my_sid_entries)
+        assert my_sid_entry is not None
+
+        # check ASIC MySID database and verify the SID
+        mysid = json.loads(my_sid_entry)
+        assert mysid is not None
+        assert mysid["sid"] == "fc00:0:1:e000::"
+        tbl = swsscommon.Table(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY")
+        (status, fvs) = tbl.get(my_sid_entry)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_MY_SID_ENTRY_ATTR_NEXT_HOP_ID":
+                assert fv[1] == next_hop_id
+            if fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR":
+                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_X"
+            elif fv[0] == "SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR_FLAVOR":
+                assert fv[1] == "SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_FLAVOR_PSP_AND_USD"
+
+        # remove neighbor
+        self.remove_neighbor("Ethernet104", "2001::1")
+
+        # delete MySID
+        self.remove_mysid(mysid1)
+
+        # # verify that the nexthop has been removed from the ASIC
+        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", len(initial_next_hop_entries))
+
+        # check the current number of entries in MySID table
+        # since the MySID has been removed, we expect the SID has been removed from the ASIC as well
+        exist_my_sid_entries = get_exist_entries(self.adb.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_MY_SID_ENTRY")
+        assert len(exist_my_sid_entries) == len(initial_my_sid_entries)
+
+        # remove IP from interface
+        self.remove_ip_address("Ethernet104", "2001::2/64")
+
+        # remove interface
+        self.remove_l3_intf("Ethernet104")
+
 class TestSrv6(object):
     def setup_db(self, dvs):
         self.pdb = dvs.get_app_db()
