@@ -1149,6 +1149,142 @@ namespace portsorch_test
         ASSERT_TRUE(taskList.empty());
     }
 
+    TEST_F(PortsOrchTest, PortPTConfigInvalidInterfaceID)
+    {
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Port p;
+        std::deque<KeyOpFieldsValuesTuple> kfvList;
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+
+        // Get SAI default ports
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        // Generate port config
+        for (const auto &cit : ports)
+        {
+            portTable.set(cit.first, cit.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+
+        // Refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Port count: 32 Data + 1 CPU
+        ASSERT_EQ(gPortsOrch->getAllPorts().size(), ports.size() + 1);
+
+        // Get port
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet9", p));
+
+        // Verify PT Interface ID
+        ASSERT_EQ(p.m_pt_intf_id, 0);
+
+        // Verify PT Timestamp Template
+        ASSERT_EQ(p.m_pt_timestamp_template, SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_16_23);
+
+        // Enable Path Tracing on Ethernet9 with Interface ID 4096 (INVALID) and Timestamp Template template2
+        kfvList = {{
+            "Ethernet9",
+            SET_COMMAND, {
+                { "pt_interface_id",       "4096"      },
+                { "pt_timestamp_template", "template2" }
+            }
+        }};
+
+        // Refill consumer
+        consumer->addToSync(kfvList);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+        kfvList.clear();
+
+        // Get port
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet9", p));
+
+        // Verify PT Interface ID
+        // We provided an invalid Path Tracing Interface ID, therefore we expect PortsOrch rejects the port
+        // configuration and Path Tracing remains disabled (i.e., Tracing Interface ID should be 0)
+        ASSERT_EQ(p.m_pt_intf_id, 0);
+
+        // Dump pending tasks
+        std::vector<std::string> taskList;
+        gPortsOrch->dumpPendingTasks(taskList);
+        ASSERT_TRUE(taskList.empty());
+    }
+
+    TEST_F(PortsOrchTest, PortPTConfigInvalidInterfaceTimestampTemplate)
+    {
+        auto portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Port p;
+        std::deque<KeyOpFieldsValuesTuple> kfvList;
+        auto consumer = dynamic_cast<Consumer*>(gPortsOrch->getExecutor(APP_PORT_TABLE_NAME));
+
+        // Get SAI default ports
+        auto &ports = defaultPortList;
+        ASSERT_TRUE(!ports.empty());
+
+        // Generate port config
+        for (const auto &cit : ports)
+        {
+            portTable.set(cit.first, cit.second);
+        }
+
+        // Set PortConfigDone
+        portTable.set("PortConfigDone", { { "count", std::to_string(ports.size()) } });
+
+        // Refill consumer
+        gPortsOrch->addExistingData(&portTable);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        // Port count: 32 Data + 1 CPU
+        ASSERT_EQ(gPortsOrch->getAllPorts().size(), ports.size() + 1);
+
+        // Get port
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet9", p));
+
+        // Verify PT Interface ID
+        ASSERT_EQ(p.m_pt_intf_id, 0);
+
+        // Verify PT Timestamp Template
+        ASSERT_EQ(p.m_pt_timestamp_template, SAI_PORT_PATH_TRACING_TIMESTAMP_TYPE_16_23);
+
+        // Enable Path Tracing on Ethernet9 with Interface ID 129 and Timestamp Template template5 (INVALID)
+        kfvList = {{
+            "Ethernet9",
+            SET_COMMAND, {
+                { "pt_interface_id",       "129"      },
+                { "pt_timestamp_template", "template5" }
+            }
+        }};
+
+        // Refill consumer
+        consumer->addToSync(kfvList);
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+        kfvList.clear();
+
+        // Get port
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet9", p));
+
+        // Verify PT Interface ID
+        // We provided an invalid Timestamp Template, therefore we expect PortsOrch rejects the port
+        // configuration and Path Tracing remains disabled (i.e., Tracing Interface ID should be 0)
+        ASSERT_EQ(p.m_pt_intf_id, 0);
+
+        // Dump pending tasks
+        std::vector<std::string> taskList;
+        gPortsOrch->dumpPendingTasks(taskList);
+        ASSERT_TRUE(taskList.empty());
+    }
+
     /**
      * Test case: PortsOrch::addBridgePort() does not add router port to .1Q bridge
      */
