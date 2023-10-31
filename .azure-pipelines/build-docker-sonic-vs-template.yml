@@ -44,6 +44,7 @@ jobs:
       artifact: ${{ parameters.swss_common_artifact_name }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/$(BUILD_BRANCH)'
+      allowPartiallySucceededBuilds: true
       path: $(Build.ArtifactStagingDirectory)/download
     displayName: "Download sonic swss common deb packages"
   - task: DownloadPipelineArtifact@2
@@ -54,6 +55,7 @@ jobs:
       artifact: ${{ parameters.sairedis_artifact_name }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/$(BUILD_BRANCH)'
+      allowPartiallySucceededBuilds: true
       path: $(Build.ArtifactStagingDirectory)/download
     displayName: "Download sonic sairedis deb packages"
   - task: DownloadPipelineArtifact@2
