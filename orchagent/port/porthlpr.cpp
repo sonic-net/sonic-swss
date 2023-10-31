@@ -759,11 +759,18 @@ bool PortHelper::parsePortPtIntfId(PortConfig &port, const std::string &field, c
 {
     SWSS_LOG_ENTER();
 
+    uint16_t pt_intf_id;
     try
     {
         if (value != "None")
         {
-            port.pt_intf_id.value = to_uint<std::uint16_t>(value);
+            pt_intf_id = to_uint<std::uint16_t>(value);
+            if (pt_intf_id < 1 || pt_intf_id > 4095)
+            {
+                throw std::invalid_argument("Out of range Path Tracing Interface ID: " + value);
+            }
+
+            port.pt_intf_id.value = pt_intf_id;
         }
         else
         {
