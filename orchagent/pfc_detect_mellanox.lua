@@ -12,6 +12,17 @@ local rets = {}
 
 redis.call('SELECT', counters_db)
 
+-- Record the polling time
+local timestamp_last = redis.call('HGET', 'TIMESTAMP', 'pfcwd_poll_timestamp_last')
+local timestamp_struct = redis.call('TIME')
+local timestamp_current = timestamp_struct[1] + timestamp_struct[2] / 1000000
+local timestamp_string = tostring(timestamp_current)
+redis.call('HSET', 'TIMESTAMP', 'pfcwd_poll_timestamp_last', timestamp_string)
+local real_poll_time = poll_time
+if timestamp_last ~= false then
+    real_poll_time = (timestamp_current - tonumber(timestamp_last)) * 1000000
+end
+
 -- Iterate through each queue
 local n = table.getn(KEYS)
 for i = n, 1, -1 do
@@ -78,7 +89,12 @@ for i = n, 1, -1 do
                             if time_left <= poll_time then
                                 redis.call('HDEL', counters_table_name .. ':' .. port_id, pfc_rx_pkt_key .. '_last')
                                 redis.call('HDEL', counters_table_name .. ':' .. port_id, pfc_duration_key .. '_last')
-                                redis.call('PUBLISH', 'PFC_WD_ACTION', '["' .. KEYS[i] .. '","storm"]')
+                                local occupancy_string = '"occupancy","' .. tostring(occupancy_bytes) .. '",'
+                                local packets_string = '"packets","' .. tostring(packets) .. '","packets_last","' .. tostring(packets_last) .. '",'
+                                local pfc_rx_packets_string = '"pfc_rx_packets","' .. tostring(pfc_rx_packets) .. '","pfc_rx_packets_last","' .. tostring(pfc_rx_packets_last) .. '",'
+                                local storm_condition_string = '"pfc_duration","' .. tostring(pfc_duration) .. '","pfc_duration_last","' .. tostring(pfc_duration_last) .. '",'
+                                local timestamps = '"timestamp","' .. timestamp_string .. '","timestamp_last","' .. timestamp_last .. '","real_poll_time","' .. real_poll_time .. '"'
+                                redis.call('PUBLISH', 'PFC_WD_ACTION', '["' .. KEYS[i] .. '","storm",' .. occupancy_string .. packets_string .. pfc_rx_packets_string .. storm_condition_string .. timestamps .. ']')
                                 is_deadlock = true
                                 time_left = detection_time
                             else
