@@ -18,6 +18,8 @@
 
 using namespace swss;
 
+#define LAG_PREFIX          "PortChannel"
+
 // types --------------------------------------------------------------------------------------------------------------
 
 typedef decltype(PortConfig::serdes) PortSerdes_t;
@@ -1069,6 +1071,18 @@ bool PortHelper::validatePortConfig(PortConfig &port) const
         port.admin_status.is_set = true;
 
         port.fieldValueMap[PORT_ADMIN_STATUS] = PORT_STATUS_DOWN;
+    }
+
+    if (port.pt_intf_id.is_set && port.alias.value.compare(0, strlen(LAG_PREFIX), LAG_PREFIX) == 0)
+    {
+        SWSS_LOG_WARN("Validation error: %s not supported for PortChannel", PORT_PT_INTF_ID);
+        return false;
+    }
+
+    if (port.pt_timestamp_template.is_set && port.alias.value.compare(0, strlen(LAG_PREFIX), LAG_PREFIX) == 0)
+    {
+        SWSS_LOG_WARN("Validation error: %s not supported for PortChannel", PORT_PT_TIMESTAMP_TEMPLATE);
+        return false;
     }
 
     return true;
