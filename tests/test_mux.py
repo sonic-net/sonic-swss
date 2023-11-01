@@ -584,14 +584,14 @@ class TestMuxTunnelBase():
                         print("setting %s to %s" % (mux_ports[toggle_index], ACTIVE))
                         self.set_mux_state(appdb, mux_ports[toggle_index], ACTIVE)
                         if start[keep_index] == ACTIVE:
-                            self.check_route_nexthop(dvs_route, asicdb, route, neighbors[keep_index])
+                            self.check_route_nexthop(dvs_route, asicdb, route, neighbors[0])
                         else:
                             self.check_route_nexthop(dvs_route, asicdb, route, neighbors[toggle_index])
                     else:
                         print("setting %s to %s" % (mux_ports[toggle_index], ACTIVE))
                         self.set_mux_state(appdb, mux_ports[toggle_index], ACTIVE)
                         if start[keep_index] == ACTIVE:
-                            self.check_route_nexthop(dvs_route, asicdb, route, neighbors[keep_index])
+                            self.check_route_nexthop(dvs_route, asicdb, route, neighbors[0])
                         else:
                             self.check_route_nexthop(dvs_route, asicdb, route, neighbors[toggle_index])
 
@@ -602,6 +602,25 @@ class TestMuxTunnelBase():
                         else:
                             self.check_route_nexthop(dvs_route, asicdb, route, tunnel_nh_id, True)
                 self.del_route(dvs, route)
+
+            # Check route_updates
+            print("Testing route updates")
+            self.add_route(dvs, route, neighbors)
+            print("setting states to active")
+            for port in mux_ports:
+                self.set_mux_state(appdb, port, "active")
+            print("triggering another route update")
+            self.add_route(dvs, route, neighbors)
+            self.check_route_nexthop(dvs_route, asicdb, route, neighbors[0])
+
+            print("setting states to standby")
+            for port in mux_ports:
+                self.set_mux_state(appdb, port, "standby")
+            print("triggering another route update")
+            self.add_route(dvs, route, neighbors)
+            self.check_route_nexthop(dvs_route, asicdb, route, tunnel_nh_id, True)
+
+            self.del_route(dvs,route)
 
             for neighbor in neighbors:
                 self.del_neighbor(dvs, neighbor)
