@@ -1,9 +1,10 @@
 // includes -----------------------------------------------------------------------------------------------------------
 
 extern "C" {
+#include <saitypes.h>
 #include <saiobject.h>
 #include <saistatus.h>
-#include <saitypes.h>
+#include <saihash.h>
 #include <saiswitch.h>
 }
 
@@ -11,6 +12,7 @@ extern "C" {
 #include <string>
 #include <vector>
 #include <set>
+#include <unordered_map>
 #include <algorithm>
 
 #include <sai_serialize.h>
@@ -81,28 +83,28 @@ extern sai_object_id_t gSwitchId;
 
 // functions ----------------------------------------------------------------------------------------------------------
 
-static std::string toStr(sai_object_type_t objType, sai_attr_id_t attrId) noexcept
+static std::string toStr(sai_object_type_t objType, sai_attr_id_t attrId)
 {
     const auto *meta = sai_metadata_get_attr_metadata(objType, attrId);
 
     return meta != nullptr ? meta->attridname : "UNKNOWN";
 }
 
-static std::string toStr(sai_native_hash_field_t value) noexcept
+static std::string toStr(sai_native_hash_field_t value)
 {
     const auto *name = sai_metadata_get_native_hash_field_name(value);
 
     return name != nullptr ? name : "UNKNOWN";
 }
 
-static std::string toStr(sai_hash_algorithm_t value) noexcept
+static std::string toStr(sai_hash_algorithm_t value)
 {
     const auto *name = sai_metadata_get_hash_algorithm_name(value);
 
     return name != nullptr ? name : "UNKNOWN";
 }
 
-static std::string toStr(const std::set<sai_native_hash_field_t> &value) noexcept
+static std::string toStr(const std::set<sai_native_hash_field_t> &value)
 {
     std::vector<std::string> strList;
 
@@ -118,7 +120,7 @@ static std::string toStr(const std::set<sai_native_hash_field_t> &value) noexcep
     return join(",", strList.cbegin(), strList.cend());
 }
 
-static std::string toStr(const std::set<sai_hash_algorithm_t> &value) noexcept
+static std::string toStr(const std::set<sai_hash_algorithm_t> &value)
 {
     std::vector<std::string> strList;
 
@@ -134,13 +136,13 @@ static std::string toStr(const std::set<sai_hash_algorithm_t> &value) noexcept
     return join(",", strList.cbegin(), strList.cend());
 }
 
-static std::string toStr(bool value) noexcept
+static std::string toStr(bool value)
 {
     return value ? "true" : "false";
 }
 
 template <typename T1, typename T2>
-static void insertBack(T1 &out, const T2 &in) noexcept
+static void insertBack(T1 &out, const T2 &in)
 {
     out.insert(out.end(), in.cbegin(), in.cend());
 }

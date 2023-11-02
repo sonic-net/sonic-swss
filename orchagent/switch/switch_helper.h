@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 #include "switch_container.h"
 
 class SwitchHelper final

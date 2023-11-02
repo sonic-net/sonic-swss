@@ -1,9 +1,10 @@
 #pragma once
 
 extern "C" {
-#include <saiobject.h>
 #include <saitypes.h>
+#include <saiobject.h>
 #include <saihash.h>
+#include <saiswitch.h>
 }
 
 #include <vector>
