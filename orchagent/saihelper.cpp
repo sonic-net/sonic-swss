@@ -218,7 +218,7 @@ void initSaiApi()
     sai_api_query((sai_api_t)SAI_API_DASH_ENI,                  (void**)&sai_dash_eni_api);
     sai_api_query((sai_api_t)SAI_API_DASH_VIP,                  (void**)&sai_dash_vip_api);
     sai_api_query((sai_api_t)SAI_API_DASH_DIRECTION_LOOKUP,     (void**)&sai_dash_direction_lookup_api);
-    sai_api_query(SAI_API_TAM,                  (void **)&sai_tam_api);
+    sai_api_query(SAI_API_TAM,                                  (void **)&sai_tam_api);
 
     sai_log_set(SAI_API_SWITCH,                 SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_BRIDGE,                 SAI_LOG_LEVEL_NOTICE);
