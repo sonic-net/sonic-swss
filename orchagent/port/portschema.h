@@ -38,6 +38,7 @@
 #define PORT_FEC_NONE "none"
 #define PORT_FEC_RS   "rs"
 #define PORT_FEC_FC   "fc"
+#define PORT_FEC_AUTO "auto"
 
 #define PORT_LEARN_MODE_DROP         "drop"
 #define PORT_LEARN_MODE_DISABLE      "disable"
