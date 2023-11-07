@@ -971,12 +971,13 @@ class TestVirtualChassis(object):
                     if wred_profile != 'AZURE_LOSSLESS':
                         print("WRED profile not applied on queue4 on system port %s", key)
                         assert wred_profile == 'AZURE_LOSSLESS'
+
                 # Check that we see the logs for applying WRED_PROFILE on all system ports
                 matching_log = "SAI_QUEUE_ATTR_WRED_PROFILE_ID"
                 _, logSeen = dvs.runcmd([ "sh", "-c",
                      "awk STARTFILE/ENDFILE /var/log/swss/sairedis.rec | grep SAI_QUEUE_ATTR_WRED_PROFILE_ID | wc -l"])
 
-                assert logSeen.strip() == len(system_port)
+                assert logSeen.strip() == len(system_ports)
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
