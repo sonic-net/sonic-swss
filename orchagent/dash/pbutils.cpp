@@ -5,6 +5,23 @@ using namespace std;
 using namespace swss;
 using namespace google::protobuf;
 
+bool to_sai(const dash::types::IpVersion &pb_version, sai_ip_addr_family_t &sai_ip_family)
+{
+    switch (pb_version)
+    {
+    case dash::types::IP_VERSION_IPV4:
+        sai_ip_family = SAI_IP_ADDR_FAMILY_IPV4;
+        break;
+    case dash::types::IP_VERSION_IPV6:
+        sai_ip_family = SAI_IP_ADDR_FAMILY_IPV6;
+        break;
+    default:
+        return false;
+    }
+
+    return true;
+}
+
 bool to_sai(const dash::types::IpAddress &pb_address, sai_ip_address_t &sai_address)
 {
     SWSS_LOG_ENTER();

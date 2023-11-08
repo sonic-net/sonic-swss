@@ -314,6 +314,22 @@ class TestAcl:
         dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, L3_RULE_NAME, None)
         dvs_acl.verify_no_acl_rules()
 
+    def test_AclRuleIPTypeNonIpv4(self, dvs_acl, l3_acl_table):
+        config_qualifiers = {"IP_TYPE": "NON_IPv4"}
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_ACL_IP_TYPE": dvs_acl.get_simple_qualifier_comparator("SAI_ACL_IP_TYPE_NON_IPV4&mask:0xffffffffffffffff")
+        }
+
+        dvs_acl.create_acl_rule(L3_TABLE_NAME, L3_RULE_NAME, config_qualifiers)
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, L3_RULE_NAME, "Active")
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+
+        dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3_TABLE_NAME, L3_RULE_NAME, None)
+        dvs_acl.verify_no_acl_rules()
+
     def test_V6AclTableCreationDeletion(self, dvs_acl):
         try:
             dvs_acl.create_acl_table(L3V6_TABLE_NAME,
@@ -331,6 +347,22 @@ class TestAcl:
             # Verify the STATE_DB entry is cleared
             dvs_acl.verify_acl_table_status(L3V6_TABLE_NAME, None)
             dvs_acl.verify_acl_table_count(0)
+
+    def test_V6AclRuleIPTypeNonIpv6(self, dvs_acl, l3v6_acl_table):
+        config_qualifiers = {"IP_TYPE": "NON_IPv6"}
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_ACL_IP_TYPE": dvs_acl.get_simple_qualifier_comparator("SAI_ACL_IP_TYPE_NON_IPV6&mask:0xffffffffffffffff")
+        }
+
+        dvs_acl.create_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME, config_qualifiers)
+        # Verify status is written into STATE_DB
+        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, "Active")
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+
+        dvs_acl.remove_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME)
+        # Verify the STATE_DB entry is removed
+        dvs_acl.verify_acl_rule_status(L3V6_TABLE_NAME, L3V6_RULE_NAME, None)
+        dvs_acl.verify_no_acl_rules()
 
     def test_V6AclRuleIPv6Any(self, dvs_acl, l3v6_acl_table):
         config_qualifiers = {"IP_TYPE": "IPv6ANY"}

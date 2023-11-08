@@ -101,6 +101,8 @@ private:
     void flush();
 
     void heartBeat(std::chrono::time_point<std::chrono::high_resolution_clock> tcurrent);
+
+    void freezeAndHeartBeat(unsigned int duration);
 };
 
 class FabricOrchDaemon : public OrchDaemon
