@@ -2867,11 +2867,10 @@ ReturnCode PortsOrch::setPortLinkEventDampingAlgorithm(Port &port,
 
     CHECK_ERROR_AND_LOG_AND_RETURN(
         sai_port_api->set_port_attribute(port.m_port_id, &attr),
-        "Failed to set link event damping algorithm (" << link_event_damping_algorithm << ") for port 0x"
-                                     << std::hex << port.m_port_id);
+        "Failed to set link event damping algorithm (" << link_event_damping_algorithm << ") for port "
+                                                       << port.m_alias);
 
-    SWSS_LOG_INFO("Set link event damping algorithm %u for port pid 0x%" PRIx64,
-                  attr.value.s32, port.m_port_id);
+    SWSS_LOG_INFO("Set link event damping algorithm %u for port %s", port.m_alias.c_str());
     return ReturnCode();
 }
 
@@ -2884,8 +2883,7 @@ ReturnCode PortsOrch::setPortLinkEventDampingAiedConfig(Port &port,
     attr.value.ptr = (void *) &config;
 
     std::stringstream msg;
-    msg << "link event damping algorithm aied config for port pid 0x";
-    msg << std::hex << port.m_port_id << " - " << std::dec;
+    msg << "link event damping algorithm aied config for port " << port.m_alias << " - ";
     msg << "max_suppress_time: " << config.max_suppress_time << ", ";
     msg << "decay_half_life: " << config.decay_half_life << ", ";
     msg << "suppress_threshold: " << config.suppress_threshold << ", ";
@@ -3768,11 +3766,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     m_portList[p.m_alias] = p;
 
                     SWSS_LOG_NOTICE("Set port %s link event damping config successfully", p.m_alias.c_str());
-                    SWSS_LOG_NOTICE("Set port %s max suppress time to %u", p.m_alias.c_str(), aied_config.max_suppress_time);
-                    SWSS_LOG_NOTICE("Set port %s decay half life to %u", p.m_alias.c_str(), aied_config.decay_half_life);
-                    SWSS_LOG_NOTICE("Set port %s suppress threshold to %u", p.m_alias.c_str(), aied_config.suppress_threshold);
-                    SWSS_LOG_NOTICE("Set port %s reuse thershold to %u", p.m_alias.c_str(), aied_config.reuse_threshold);
-                    SWSS_LOG_NOTICE("Set port %s flap penalty to %u", p.m_alias.c_str(), aied_config.flap_penalty);
                 }
 
                 if (pCfg.speed.is_set)
