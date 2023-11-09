@@ -1618,18 +1618,6 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
         if (!warmRestartInProgress)
         {
             m_routeTable.del(destipprefix);
-#ifdef HAVE_NEXTHOP_GROUP
-            const auto it = m_nh_routes.find(string(destipprefix));
-            if(it == m_nh_routes.end())
-            {
-                SWSS_LOG_INFO("Route not found: %s", destipprefix);
-                return;
-            }
-
-            const NextHopGroupRoute& nh_route = it->second;
-            deleteNextHopGroup(nh_route.id);
-            m_nh_routes.erase(it);
-#endif
             return;
         }
         else
@@ -1683,15 +1671,12 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
     string gw_list;
     string intf_list;
     string mpls_list;
-    string nhg_id_key;
 
 #ifdef HAVE_NEXTHOP_GROUP
-    uint32_t old_nhg_id = 0;
-    bool delete_route = false;
+    string nhg_id_key;
     uint32_t nhg_id = rtnl_route_get_nh_id(route_obj);
     if(nhg_id)
     {
-        bool use_nhg = false;
         const auto itg = m_nh_groups.find(nhg_id);
         if(itg == m_nh_groups.end())
         {
@@ -1699,8 +1684,9 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
             return;
         }
         NextHopGroup& nhg = itg->second;
-        if(hasIntfNextHop(nhg))
+        if(nhg.group.size() == 0)
         {
+            //Using route-table only for single next-hop
             string nexthops, ifnames, weights;
 
             getNextHopGroupFields(nhg, nexthops, ifnames, weights, rtnl_route_get_family(route_obj));
@@ -1708,13 +1694,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
             FieldValueTuple intf("ifname", ifnames.c_str());
             fvVector.push_back(gw);
             fvVector.push_back(intf);
-            if(!weights.empty())
-            {
-                FieldValueTuple wg("weight", weights.c_str());
-                fvVector.push_back(wg);
-            }
-            use_nhg = false;
-            SWSS_LOG_DEBUG("NextHop group id %d has interface nexthop address. Filling the route table %s with nexthop and ifname", nhg_id, destipprefix);
+            SWSS_LOG_DEBUG("NextHop group id %d is a single nexthop address. Filling the route table %s with nexthop and ifname", nhg_id, destipprefix);
         }
         else
         {
@@ -1722,7 +1702,6 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
             FieldValueTuple nhg("nexthop_group", nhg_id_key.c_str());
             fvVector.push_back(nhg);
             updateNextHopGroup(nhg_id);
-            use_nhg = false;
         }
 
         auto proto_num = rtnl_route_get_protocol(route_obj);
@@ -1730,22 +1709,6 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
         FieldValueTuple proto("protocol", proto_str);
         fvVector.push_back(proto);
 
-        const auto itr = m_nh_routes.find(destipprefix);
-        if(itr != m_nh_routes.end())
-        {
-            NextHopGroupRoute &route = itr->second;
-            if(use_nhg != route.use_nhg)
-            {
-                delete_route = true;
-            }
-            old_nhg_id = route.id;
-            route.id = nhg_id;
-            route.use_nhg = use_nhg;
-        }
-        else
-        {
-            m_nh_routes.insert({string(destipprefix), NextHopGroupRoute{nhg_id, use_nhg}});
-        }
     }
     else
 #endif
@@ -1831,18 +1794,8 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
 #ifdef HAVE_NEXTHOP_GROUP
         if(nhg_id)
         {
-            if(delete_route)
-            {
-                SWSS_LOG_DEBUG("Deleting route: %s. The nhg changed", destipprefix);
-                m_routeTable.del(destipprefix);
-            }
             m_routeTable.set(destipprefix, fvVector);
-            SWSS_LOG_INFO("RouteTable set msg: %s group-id %s", destipprefix, nhg_id_key.c_str());
-            if(old_nhg_id)
-            {
-                //Remove the old nhg and update
-                deleteNextHopGroup(old_nhg_id);
-            }
+            SWSS_LOG_INFO("RouteTable set msg: %s %d ", destipprefix, nhg_id);
         }
         else
 #endif
@@ -1905,8 +1858,6 @@ void RouteSync::onNextHopMsg(struct nlmsghdr *h, int len)
             "Nexthop group without an ID received from the zebra");
         return;
     }
-
-    sendOffloadReply(h);
 
     /* We use the ID key'd nhg table for kernel updates */
     id = *((uint32_t *)RTA_DATA(tb[NHA_ID]));
@@ -1983,7 +1934,7 @@ void RouteSync::onNextHopMsg(struct nlmsghdr *h, int len)
             {
                 NextHopGroup &nhg = it->second;
                 nhg.group = group;
-                if(nhg.refcnt > 0)
+                if(nhg.installed)
                 {
                     updateNextHopGroupDb(nhg);
                 }
@@ -1995,19 +1946,14 @@ void RouteSync::onNextHopMsg(struct nlmsghdr *h, int len)
         }
         else
         {
-            SWSS_LOG_INFO("Received: id[%d], if[%d/%s] address[%s]", id, ifindex, ifname.c_str(), gateway);
+            SWSS_LOG_DEBUG("Received: id[%d], if[%d/%s] address[%s]", id, ifindex, ifname.c_str(), gateway);
             m_nh_groups.insert({id, NextHopGroup(id, string(gateway), ifname)});
         }
     }
     else if (nlmsg_type == RTM_DELNEXTHOP)
     {
-        SWSS_LOG_INFO("NextHopGroup del event: %d", id);
-        string key = getNextHopGroupKeyAsString(id);
-        m_nexthop_groupTable.del(key.c_str()); //Force delete even if is not installed
-        if(m_nh_groups.find(id) != m_nh_groups.end())
-        {
-            m_nh_groups.erase(id);
-        }
+        SWSS_LOG_DEBUG("NextHopGroup del event: %d", id);
+        deleteNextHopGroup(id);
     }
 
     return;
@@ -2699,13 +2645,12 @@ void RouteSync::updateNextHopGroup(uint32_t nh_id)
 
     NextHopGroup& nhg = git->second;
 
-    if(nhg.refcnt > 0)
+    if(nhg.installed)
     {
         //Nexthop group already installed
-        nhg.refcnt++;
         return;
     }
-    nhg.refcnt++;
+    nhg.installed = true;
     updateNextHopGroupDb(nhg);
 }
 
@@ -2725,13 +2670,13 @@ void RouteSync::deleteNextHopGroup(uint32_t nh_id)
 
     NextHopGroup& nhg = git->second;
 
-    if(nhg.refcnt > 0 && --nhg.refcnt == 0)
+    if(nhg.installed)
     {
         string key = getNextHopGroupKeyAsString(nh_id);
         m_nexthop_groupTable.del(key.c_str());
-        SWSS_LOG_INFO("NextHopGroup table del: key [%s]", key.c_str());
+        SWSS_LOG_DEBUG("NextHopGroup table del: key [%s]", key.c_str());
     }
-
+    m_nh_groups.erase(git);
 }
 
 /*
@@ -2761,39 +2706,6 @@ void RouteSync::updateNextHopGroupDb(const NextHopGroup& nhg)
 
     //TODO: Take care of warm reboot
     m_nexthop_groupTable.set(key.c_str(), fvVector);
-}
-
-/*
- * check if there are some interface route in the nexthop group
- * @arg nhg     the nexthop group
- *
- */
-bool RouteSync::hasIntfNextHop(const NextHopGroup& nhg)
-{
-    if(nhg.group.size() == 0 && nhg.nexthop.empty())
-    {
-        return true;
-    }
-    else if(nhg.group.size() > 0)
-    {
-        for(const auto nh : nhg.group)
-        {
-            uint32_t id = nh.first;
-            auto itr = m_nh_groups.find(id);
-            if(itr == m_nh_groups.end())
-            {
-                SWSS_LOG_INFO("NextHop group is incomplete: %d", nhg.id);
-                return false;
-            }
-
-            NextHopGroup& nhgr = itr->second;
-            if(nhgr.nexthop.empty())
-            {
-                return true;
-            }
-        }
-    }
-    return false;
 }
 
 /*

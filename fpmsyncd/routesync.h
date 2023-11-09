@@ -37,14 +37,9 @@ struct NextHopGroup {
     vector<pair<uint32_t,uint8_t>> group;
     string nexthop;
     string intf;
-    uint32_t refcnt;
-    NextHopGroup(uint32_t id, const string& nexthop, const string& interface) : refcnt(0), id(id), nexthop(nexthop), intf(interface) {};
-    NextHopGroup(uint32_t id, const vector<pair<uint32_t,uint8_t>>& group) : refcnt(0), id(id), group(group) {};
-};
-
-struct NextHopGroupRoute {
-    uint32_t id;
-    bool use_nhg;
+    bool installed;
+    NextHopGroup(uint32_t id, const string& nexthop, const string& interface) : installed(false), id(id), nexthop(nexthop), intf(interface) {};
+    NextHopGroup(uint32_t id, const vector<pair<uint32_t,uint8_t>>& group) : installed(false), id(id), group(group) {};
 };
 #endif
 
@@ -107,7 +102,6 @@ private:
     /* nexthop group table */
     ProducerStateTable  m_nexthop_groupTable;
     map<uint32_t,NextHopGroup> m_nh_groups;
-    map<string,NextHopGroupRoute> m_nh_routes;
 #endif
 
     bool                m_isSuppressionEnabled{false};
@@ -205,7 +199,6 @@ private:
     void updateNextHopGroup(uint32_t nh_id);
     void deleteNextHopGroup(uint32_t nh_id);
     void updateNextHopGroupDb(const NextHopGroup& nhg);
-    bool hasIntfNextHop(const NextHopGroup& nhg);
     void getNextHopGroupFields(const NextHopGroup& nhg, string& nexthops, string& ifnames, string& weights, uint8_t af = AF_INET);
 #endif
 };
