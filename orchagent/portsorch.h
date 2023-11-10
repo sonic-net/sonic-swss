@@ -16,7 +16,7 @@
 #include "flexcounterorch.h"
 #include "events.h"
 
-#include "port/portcap.h"
+#include "port/port_capabilities.h"
 #include "port/porthlpr.h"
 #include "port/portschema.h"
 

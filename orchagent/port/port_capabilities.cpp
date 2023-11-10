@@ -9,7 +9,7 @@ extern "C" {
 #include <sai_serialize.h>
 #include <logger.h>
 
-#include "portcap.h"
+#include "port_capabilities.h"
 
 using namespace swss;
 
