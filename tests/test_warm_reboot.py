@@ -60,6 +60,19 @@ def check_port_oper_status(appl_db, port_name, state):
             break
     assert oper_status == state
 
+def check_port_host_tx_ready_status(state_db, port_name, status):
+    portTable = swsscommon.Table(state_db, swsscommon.STATE_PORT_TABLE_NAME)
+    (status, fvs) = portTable.get(port_name)
+
+    assert status == True
+
+    host_tx_ready = "N/A"
+    for v in fvs:
+        if v[0] == "host_tx_ready":
+            host_tx_ready = v[1]
+            break
+    assert host_tx_ready == status
+
 # function to check the restore count incremented by 1 for a single process
 def swss_app_check_RestoreCount_single(state_db, restore_count, name):
     warmtbl = swsscommon.Table(state_db, swsscommon.STATE_WARM_RESTART_TABLE_NAME)
@@ -294,6 +307,10 @@ class TestWarmReboot(object):
         check_port_oper_status(appl_db, "Ethernet16", "up")
         check_port_oper_status(appl_db, "Ethernet20", "up")
 
+        # Ethernet port host_tx_ready status should be "true"
+        check_port_host_tx_ready_status(state_db, "Ethernet16", "true")
+        check_port_host_tx_ready_status(state_db, "Ethernet20", "true")
+
         # Ping should work between servers via vs vlan interfaces
         ping_stats = dvs.servers[4].runcmd("ping -c 1 11.0.0.10")
         time.sleep(1)
@@ -337,6 +354,9 @@ class TestWarmReboot(object):
         check_port_oper_status(appl_db, "Ethernet20", "up")
         check_port_oper_status(appl_db, "Ethernet24", "down")
 
+        check_port_host_tx_ready_status(state_db, "Ethernet16", "true")
+        check_port_host_tx_ready_status(state_db, "Ethernet20", "true")
+        check_port_host_tx_ready_status(state_db, "Ethernet24", "false")
 
         swss_app_check_RestoreCount_single(state_db, restore_count, "portsyncd")
 
@@ -2397,7 +2417,7 @@ class TestWarmReboot(object):
             "ecn_mode": "standard",
             "ttl_mode": "pipe"
         }
-        
+
         pubsub = dvs.SubscribeAppDbObject(tunnel_table)
 
         dvs.runcmd("config warm_restart enable swss")
