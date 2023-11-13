@@ -280,19 +280,17 @@ bool WarmStartHelper::compareAllFV(const std::vector<FieldValueTuple> &v1,
     for (auto &v2fv : v2)
     {
         auto v1Iter = v1Map.find(v2fv.first);
-        /*
-         * The sizes of both tuple-vectors should always match within any
-         * given application. In other words, all fields within v1 should be
-         * also present in v2.
-         *
-         * To make this possible, every application should continue relying on a
-         * uniform schema to create/generate information. For example, fpmsyncd
-         * will be always expected to push FieldValueTuples with "nexthop" and
-         * "ifname" fields; neighsyncd is expected to make use of "family" and
-         * "neigh" fields, etc. The existing reconciliation logic will rely on
-         * this assumption.
-         */
-        assert(v1Iter != v1Map.end());
+        if (v1Iter == v1Map.end())
+        {
+            /* 
+             * New field added for the  refresh entry
+             * hence return 'no match'
+             */
+            SWSS_LOG_NOTICE("Warm-Restart: compareAllFV new field %s in refresh entry", 
+                    v2fv.first.c_str());
+            return true;
+        }
+        
 
         if (compareOneFV(v1Map[fvField(*v1Iter)], fvValue(v2fv)))
         {
