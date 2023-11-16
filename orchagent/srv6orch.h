@@ -76,7 +76,7 @@ class Srv6Orch : public Orch
         void doTask(Consumer &consumer);
         void doTaskSidTable(const KeyOpFieldsValuesTuple &tuple);
         void doTaskMySidTable(const KeyOpFieldsValuesTuple &tuple);
-        bool createUpdateSidList(const string seg_name, const string ips);
+        bool createUpdateSidList(const string seg_name, const string ips, const string sidlist_type);
         bool deleteSidList(const string seg_name);
         bool createSrv6Tunnel(const string srv6_source);
         bool createSrv6Nexthop(const NextHopKey &nh);

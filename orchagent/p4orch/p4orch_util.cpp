@@ -1,8 +1,10 @@
+#include "p4orch/p4orch.h"
 #include "p4orch/p4orch_util.h"
 
 #include "schema.h"
 
 using ::p4orch::kTableKeyDelimiter;
+extern P4Orch *gP4Orch;
 
 // Prepends "match/" to the input string str to construct a new string.
 std::string prependMatchField(const std::string &str)
@@ -80,6 +82,46 @@ std::string verifyAttrs(const std::vector<swss::FieldValueTuple> &targets,
     return "";
 }
 
+TableInfo *getTableInfo(const std::string &table_name)
+{
+    if (!gP4Orch->tablesinfo)
+    {
+        return nullptr;
+    }
+
+    auto it = gP4Orch->tablesinfo->m_tableInfoMap.find(table_name);
+    if (it == gP4Orch->tablesinfo->m_tableInfoMap.end())
+    {
+        return nullptr;
+    }
+
+    return &it->second;
+}
+
+ActionInfo *getTableActionInfo(TableInfo *table, const std::string &action_name)
+{
+    if (!table)
+    {
+        return nullptr;
+    }
+
+    auto it = table->action_fields.find(action_name);
+    if (it == table->action_fields.end())
+    {
+        return nullptr;
+    }
+
+    return &it->second;
+}
+
+std::string KeyGenerator::generateTablesInfoKey(const std::string &context)
+{
+    std::map<std::string, std::string> fv_map = {
+            {"context", context}
+    };
+    return generateKey(fv_map);
+}
+
 std::string KeyGenerator::generateRouteKey(const std::string &vrf_id, const swss::IpPrefix &ip_prefix)
 {
     std::map<std::string, std::string> fv_map = {
@@ -150,6 +192,17 @@ std::string KeyGenerator::generateTunnelKey(const std::string &tunnel_id)
 {
     std::map<std::string, std::string> fv_map = {{p4orch::kTunnelId, tunnel_id}};
     return generateKey(fv_map);
+}
+
+std::string KeyGenerator::generateExtTableKey(const std::string &table_name, const std::string &table_key)
+{
+    std::string key;
+
+    key.append(table_name);
+    key.append(":");
+    key.append(table_key);
+
+    return key;
 }
 
 std::string KeyGenerator::generateKey(const std::map<std::string, std::string> &fv_map)

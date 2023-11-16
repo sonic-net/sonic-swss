@@ -49,7 +49,7 @@ class TestBfd(object):
         bfdSessions = self.get_exist_bfd_session()
 
         # Create BFD session
-        fieldValues = {"local_addr": "10.0.0.1"}
+        fieldValues = {"local_addr": "10.0.0.1","tos":"64"}
         self.create_bfd_session("default:default:10.0.0.2", fieldValues)
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", len(bfdSessions) + 1)
 
@@ -62,13 +62,14 @@ class TestBfd(object):
             "SAI_BFD_SESSION_ATTR_SRC_IP_ADDRESS": "10.0.0.1",
             "SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS": "10.0.0.2",
             "SAI_BFD_SESSION_ATTR_TYPE": "SAI_BFD_SESSION_TYPE_ASYNC_ACTIVE",
+            "SAI_BFD_SESSION_ATTR_TOS": "64",
             "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "4"
         }
         self.check_asic_bfd_session_value(session, expected_adb_values)
 
         # Check STATE_DB entry related to the BFD session
         expected_sdb_values = {"state": "Down", "type": "async_active", "local_addr" : "10.0.0.1", "tx_interval" :"1000",
-                                        "rx_interval" : "1000", "multiplier" : "3", "multihop": "false"}
+                                        "rx_interval" : "1000", "multiplier" : "10", "multihop": "false", "local_discriminator" : "1"}
         self.check_state_bfd_session_value("default|default|10.0.0.2", expected_sdb_values)
 
         # Send BFD session state notification to update BFD session state
@@ -102,13 +103,14 @@ class TestBfd(object):
             "SAI_BFD_SESSION_ATTR_SRC_IP_ADDRESS": "2000::1",
             "SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS": "2000::2",
             "SAI_BFD_SESSION_ATTR_TYPE": "SAI_BFD_SESSION_TYPE_ASYNC_ACTIVE",
+            "SAI_BFD_SESSION_ATTR_TOS": "192",
             "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "6"
         }
         self.check_asic_bfd_session_value(session, expected_adb_values)
 
         # Check STATE_DB entry related to the BFD session
         expected_sdb_values = {"state": "Down", "type": "async_active", "local_addr" : "2000::1", "tx_interval" :"1000",
-                                        "rx_interval" : "1000", "multiplier" : "3", "multihop": "false"}
+                                        "rx_interval" : "1000", "multiplier" : "10", "multihop": "false", "local_discriminator" : "2"}
         self.check_state_bfd_session_value("default|default|2000::2", expected_sdb_values)
 
         # Send BFD session state notification to update BFD session state
@@ -142,6 +144,7 @@ class TestBfd(object):
             "SAI_BFD_SESSION_ATTR_SRC_IP_ADDRESS": "10.0.0.1",
             "SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS": "10.0.0.2",
             "SAI_BFD_SESSION_ATTR_TYPE": "SAI_BFD_SESSION_TYPE_ASYNC_ACTIVE",
+            "SAI_BFD_SESSION_ATTR_TOS": "192",
             "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "4",
             "SAI_BFD_SESSION_ATTR_HW_LOOKUP_VALID": "false",
             "SAI_BFD_SESSION_ATTR_DST_MAC_ADDRESS": "00:02:03:04:05:06"
@@ -150,7 +153,7 @@ class TestBfd(object):
 
         # Check STATE_DB entry related to the BFD session
         expected_sdb_values = {"state": "Down", "type": "async_active", "local_addr" : "10.0.0.1", "tx_interval" :"1000",
-                                        "rx_interval" : "1000", "multiplier" : "3", "multihop": "false"}
+                                        "rx_interval" : "1000", "multiplier" : "10", "multihop": "false", "local_discriminator" : "3"}
         self.check_state_bfd_session_value("default|Ethernet0|10.0.0.2", expected_sdb_values)
 
         # Send BFD session state notification to update BFD session state
@@ -184,6 +187,7 @@ class TestBfd(object):
             "SAI_BFD_SESSION_ATTR_SRC_IP_ADDRESS": "10.0.0.1",
             "SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS": "10.0.0.2",
             "SAI_BFD_SESSION_ATTR_TYPE": "SAI_BFD_SESSION_TYPE_ASYNC_ACTIVE",
+            "SAI_BFD_SESSION_ATTR_TOS": "192",
             "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "4",
             "SAI_BFD_SESSION_ATTR_MIN_TX": "300000",
             "SAI_BFD_SESSION_ATTR_MIN_RX": "500000",
@@ -192,7 +196,7 @@ class TestBfd(object):
 
         # Check STATE_DB entry related to the BFD session
         expected_sdb_values = {"state": "Down", "type": "async_active", "local_addr" : "10.0.0.1", "tx_interval" :"300",
-                                        "rx_interval" : "500", "multiplier" : "3", "multihop": "false"}
+                                        "rx_interval" : "500", "multiplier" : "10", "multihop": "false", "local_discriminator" : "4"}
         self.check_state_bfd_session_value("default|default|10.0.0.2", expected_sdb_values)
 
         # Send BFD session state notification to update BFD session state
@@ -226,6 +230,7 @@ class TestBfd(object):
             "SAI_BFD_SESSION_ATTR_SRC_IP_ADDRESS": "10.0.0.1",
             "SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS": "10.0.0.2",
             "SAI_BFD_SESSION_ATTR_TYPE": "SAI_BFD_SESSION_TYPE_ASYNC_ACTIVE",
+            "SAI_BFD_SESSION_ATTR_TOS": "192",
             "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "4",
             "SAI_BFD_SESSION_ATTR_MULTIPLIER": "5"
         }
@@ -233,7 +238,7 @@ class TestBfd(object):
 
         # Check STATE_DB entry related to the BFD session
         expected_sdb_values = {"state": "Down", "type": "async_active", "local_addr" : "10.0.0.1", "tx_interval" :"1000",
-                                        "rx_interval" : "1000", "multiplier" : "5", "multihop": "false"}
+                                        "rx_interval" : "1000", "multiplier" : "5", "multihop": "false", "local_discriminator" : "5"}
         self.check_state_bfd_session_value("default|default|10.0.0.2", expected_sdb_values)
 
         # Send BFD session state notification to update BFD session state
@@ -267,6 +272,7 @@ class TestBfd(object):
             "SAI_BFD_SESSION_ATTR_SRC_IP_ADDRESS": "10.0.0.1",
             "SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS": "10.0.0.2",
             "SAI_BFD_SESSION_ATTR_TYPE": "SAI_BFD_SESSION_TYPE_ASYNC_ACTIVE",
+            "SAI_BFD_SESSION_ATTR_TOS": "192",
             "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "4",
             "SAI_BFD_SESSION_ATTR_MULTIHOP": "true"
         }
@@ -274,7 +280,7 @@ class TestBfd(object):
 
         # Check STATE_DB entry related to the BFD session
         expected_sdb_values = {"state": "Down", "type": "async_active", "local_addr" : "10.0.0.1", "tx_interval" :"1000",
-                                        "rx_interval" : "1000", "multiplier" : "3", "multihop": "true"}
+                                        "rx_interval" : "1000", "multiplier" : "10", "multihop": "true", "local_discriminator" : "6"}
         self.check_state_bfd_session_value("default|default|10.0.0.2", expected_sdb_values)
 
         # Send BFD session state notification to update BFD session state
@@ -308,13 +314,14 @@ class TestBfd(object):
             "SAI_BFD_SESSION_ATTR_SRC_IP_ADDRESS": "10.0.0.1",
             "SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS": "10.0.0.2",
             "SAI_BFD_SESSION_ATTR_TYPE": "SAI_BFD_SESSION_TYPE_DEMAND_ACTIVE",
+            "SAI_BFD_SESSION_ATTR_TOS": "192",
             "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "4"
         }
         self.check_asic_bfd_session_value(session, expected_adb_values)
 
         # Check STATE_DB entry related to the BFD session
         expected_sdb_values = {"state": "Down", "type": "demand_active", "local_addr" : "10.0.0.1", "tx_interval" :"1000",
-                                        "rx_interval" : "1000", "multiplier" : "3", "multihop": "false"}
+                                        "rx_interval" : "1000", "multiplier" : "10", "multihop": "false", "local_discriminator" : "7"}
         self.check_state_bfd_session_value("default|default|10.0.0.2", expected_sdb_values)
 
         # Send BFD session state notification to update BFD session state
@@ -350,6 +357,7 @@ class TestBfd(object):
             "SAI_BFD_SESSION_ATTR_SRC_IP_ADDRESS": "10.0.0.1",
             "SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS": "10.0.0.2",
             "SAI_BFD_SESSION_ATTR_TYPE": "SAI_BFD_SESSION_TYPE_ASYNC_ACTIVE",
+            "SAI_BFD_SESSION_ATTR_TOS": "192",
             "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "4"
         }
         self.check_asic_bfd_session_value(session1, expected_adb_values)
@@ -357,7 +365,7 @@ class TestBfd(object):
         # Check STATE_DB entry related to the BFD session 1
         key_state_db1 = "default|default|10.0.0.2"
         expected_sdb_values1 = {"state": "Down", "type": "async_active", "local_addr" : "10.0.0.1", "tx_interval" :"1000",
-                                        "rx_interval" : "1000", "multiplier" : "3", "multihop": "false"}
+                                        "rx_interval" : "1000", "multiplier" : "10", "multihop": "false", "local_discriminator" : "8"}
         self.check_state_bfd_session_value(key_state_db1, expected_sdb_values1)
 
         # Create BFD session 2
@@ -376,6 +384,7 @@ class TestBfd(object):
             "SAI_BFD_SESSION_ATTR_SRC_IP_ADDRESS": "10.0.0.1",
             "SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS": "10.0.1.2",
             "SAI_BFD_SESSION_ATTR_TYPE": "SAI_BFD_SESSION_TYPE_ASYNC_ACTIVE",
+            "SAI_BFD_SESSION_ATTR_TOS": "192",
             "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "4",
             "SAI_BFD_SESSION_ATTR_MIN_TX": "300000",
             "SAI_BFD_SESSION_ATTR_MIN_RX": "500000",
@@ -385,7 +394,7 @@ class TestBfd(object):
         # Check STATE_DB entry related to the BFD session 2
         key_state_db2 = "default|default|10.0.1.2"
         expected_sdb_values2 = {"state": "Down", "type": "async_active", "local_addr" : "10.0.0.1", "tx_interval" :"300",
-                                        "rx_interval" : "500", "multiplier" : "3", "multihop": "false"}
+                                        "rx_interval" : "500", "multiplier" : "10", "multihop": "false", "local_discriminator" : "9"}
         self.check_state_bfd_session_value(key_state_db2, expected_sdb_values2)
 
         # Create BFD session 3
@@ -404,6 +413,7 @@ class TestBfd(object):
             "SAI_BFD_SESSION_ATTR_SRC_IP_ADDRESS": "2000::1",
             "SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS": "2000::2",
             "SAI_BFD_SESSION_ATTR_TYPE": "SAI_BFD_SESSION_TYPE_DEMAND_ACTIVE",
+            "SAI_BFD_SESSION_ATTR_TOS": "192",
             "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "6"
         }
         self.check_asic_bfd_session_value(session3, expected_adb_values)
@@ -411,7 +421,7 @@ class TestBfd(object):
         # Check STATE_DB entry related to the BFD session 3
         key_state_db3 = "default|default|2000::2"
         expected_sdb_values3 = {"state": "Down", "type": "demand_active", "local_addr" : "2000::1", "tx_interval" :"1000",
-                                        "rx_interval" : "1000", "multiplier" : "3", "multihop": "false"}
+                                        "rx_interval" : "1000", "multiplier" : "10", "multihop": "false", "local_discriminator" : "10"}
         self.check_state_bfd_session_value(key_state_db3, expected_sdb_values3)
 
         # Create BFD session 4
@@ -430,6 +440,7 @@ class TestBfd(object):
             "SAI_BFD_SESSION_ATTR_SRC_IP_ADDRESS": "3000::1",
             "SAI_BFD_SESSION_ATTR_DST_IP_ADDRESS": "3000::2",
             "SAI_BFD_SESSION_ATTR_TYPE": "SAI_BFD_SESSION_TYPE_ASYNC_ACTIVE",
+            "SAI_BFD_SESSION_ATTR_TOS": "192",
             "SAI_BFD_SESSION_ATTR_IPHDR_VERSION": "6"
         }
         self.check_asic_bfd_session_value(session4, expected_adb_values)
@@ -437,7 +448,7 @@ class TestBfd(object):
         # Check STATE_DB entry related to the BFD session 4
         key_state_db4 = "default|default|3000::2"
         expected_sdb_values4 = {"state": "Down", "type": "async_active", "local_addr" : "3000::1", "tx_interval" :"1000",
-                                        "rx_interval" : "1000", "multiplier" : "3", "multihop": "false"}
+                                        "rx_interval" : "1000", "multiplier" : "10", "multihop": "false", "local_discriminator" : "11"}
         self.check_state_bfd_session_value(key_state_db4, expected_sdb_values4)
 
         # Update BFD session states

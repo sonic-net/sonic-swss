@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#include "json.hpp"
+#include <nlohmann/json.hpp>
 #include "mock_response_publisher.h"
 #include "mock_sai_mirror.h"
 #include "p4oidmapper.h"
@@ -217,7 +217,7 @@ class MirrorSessionManagerTest : public ::testing::Test
 
     void Enqueue(const swss::KeyOpFieldsValuesTuple &entry)
     {
-        return mirror_session_manager_.enqueue(entry);
+        return mirror_session_manager_.enqueue(APP_P4RT_MIRROR_SESSION_TABLE_NAME, entry);
     }
 
     void Drain()

@@ -11,6 +11,7 @@ class DVSPbh:
     CDB_PBH_HASH_FIELD = "PBH_HASH_FIELD"
 
     ADB_PBH_HASH = "ASIC_STATE:SAI_OBJECT_TYPE_HASH"
+    ADB_PBH_HASH_FIELD = "ASIC_STATE:SAI_OBJECT_TYPE_FINE_GRAINED_HASH_FIELD"
 
     def __init__(self, asic_db, config_db):
         """Create a new DVS PBH Manager."""
@@ -110,13 +111,6 @@ class DVSPbh:
         """Remove PBH hash from Config DB."""
         self.config_db.delete_entry(self.CDB_PBH_HASH, hash_name)
 
-    def verify_pbh_hash_count(
-        self,
-        expected: int
-    ) -> None:
-        """Verify that there are N hash objects in ASIC DB."""
-        self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_HASH", expected)
-
     def create_pbh_hash_field(
         self,
         hash_field_name: str,
@@ -147,11 +141,4 @@ class DVSPbh:
         expected: int
     ) -> None:
         """Verify that there are N hash field objects in ASIC DB."""
-        self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_FINE_GRAINED_HASH_FIELD", expected)
-
-    def get_pbh_hash_ids(
-        self,
-        expected: int
-    ) -> List[str]:
-        """Get all of the PBH hash IDs in ASIC DB."""
-        return self.asic_db.wait_for_n_keys(self.ADB_PBH_HASH, expected)
+        self.asic_db.wait_for_n_keys(self.ADB_PBH_HASH_FIELD, expected)

@@ -11,13 +11,13 @@
 #include <unistd.h>
 #include <exception>
 
-#include "selectable.h"
 #include "fpm/fpm.h"
+#include "fpmsyncd/fpminterface.h"
 #include "fpmsyncd/routesync.h"
 
 namespace swss {
 
-class FpmLink : public Selectable {
+class FpmLink : public FpmInterface {
 public:
     const int MSG_BATCH_SIZE;
     FpmLink(RouteSync *rsync, unsigned short port = FPM_DEFAULT_PORT);
@@ -41,10 +41,13 @@ public:
 
     void processFpmMessage(fpm_msg_hdr_t* hdr);
 
+    bool send(nlmsghdr* nl_hdr) override;
+
 private:
     RouteSync *m_routesync;
     unsigned int m_bufSize;
     char *m_messageBuffer;
+    char *m_sendBuffer;
     unsigned int m_pos;
 
     bool m_connected;

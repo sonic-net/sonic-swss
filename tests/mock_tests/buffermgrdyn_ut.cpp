@@ -22,6 +22,7 @@ namespace buffermgrdyn_test
     shared_ptr<swss::DBConnector> m_app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
     shared_ptr<swss::DBConnector> m_config_db = make_shared<swss::DBConnector>("CONFIG_DB", 0);
     shared_ptr<swss::DBConnector> m_state_db = make_shared<swss::DBConnector>("STATE_DB", 0);
+    shared_ptr<swss::DBConnector> m_app_state_db = make_shared<swss::DBConnector>("APPL_STATE_DB", 0);
 
     BufferMgrDynamic *m_dynamicBuffer;
     SelectableTimer m_selectableTable(timespec({ .tv_sec = BUFFERMGR_TIMER_PERIOD, .tv_nsec = 0 }), 0);
@@ -180,7 +181,7 @@ namespace buffermgrdyn_test
                 TableConnector(m_state_db.get(), STATE_PORT_TABLE_NAME)
             };
 
-            m_dynamicBuffer = new BufferMgrDynamic(m_config_db.get(), m_state_db.get(), m_app_db.get(), buffer_table_connectors, nullptr, zero_profile);
+            m_dynamicBuffer = new BufferMgrDynamic(m_config_db.get(), m_state_db.get(), m_app_db.get(), m_app_state_db.get(), buffer_table_connectors, nullptr, zero_profile);
         }
 
         void InitPort(const string &port="Ethernet0", const string &admin_status="up")

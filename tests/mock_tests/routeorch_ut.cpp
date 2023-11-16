@@ -7,10 +7,14 @@
 #include "ut_helper.h"
 #include "mock_orchagent_main.h"
 #include "mock_table.h"
+#include "mock_response_publisher.h"
 #include "bulker.h"
 
 extern string gMySwitchType;
 
+extern std::unique_ptr<MockResponsePublisher> gMockResponsePublisher;
+
+using ::testing::_;
 
 namespace routeorch_test
 {
@@ -282,6 +286,10 @@ namespace routeorch_test
                                          {"mac_addr", "00:00:00:00:00:00" }});
             intfTable.set("Ethernet0:10.0.0.1/24", { { "scope", "global" },
                                                      { "family", "IPv4" }});
+            intfTable.set("Ethernet4", { {"NULL", "NULL" },
+                                         {"mac_addr", "00:00:00:00:00:00" }});
+            intfTable.set("Ethernet4:11.0.0.1/32", { { "scope", "global" },
+                                                     { "family", "IPv4" }});
             gIntfsOrch->addExistingData(&intfTable);
             static_cast<Orch *>(gIntfsOrch)->doTask();
 
@@ -421,5 +429,59 @@ namespace routeorch_test
         ASSERT_EQ(current_remove_count, remove_route_count);
         ASSERT_EQ(current_set_count + 1, set_route_count);
         ASSERT_EQ(sai_fail_count, 0);
+    }
+
+    TEST_F(RouteOrchTest, RouteOrchTestSetDelResponse)
+    {
+        gMockResponsePublisher = std::make_unique<MockResponsePublisher>();
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        std::string key = "2.2.2.0/24";
+        std::vector<FieldValueTuple> fvs{{"ifname", "Ethernet0,Ethernet0"}, {"nexthop", "10.0.0.2,10.0.0.3"}, {"protocol", "bgp"}};
+        entries.push_back({key, "SET", fvs});
+
+        auto consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        consumer->addToSync(entries);
+
+        EXPECT_CALL(*gMockResponsePublisher, publish(APP_ROUTE_TABLE_NAME, key, std::vector<FieldValueTuple>{{"protocol", "bgp"}}, ReturnCode(SAI_STATUS_SUCCESS), false)).Times(1);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        // add entries again to the consumer queue (in case of rapid DEL/SET operations from fpmsyncd, routeorch just gets the last SET update)
+        consumer->addToSync(entries);
+
+        EXPECT_CALL(*gMockResponsePublisher, publish(APP_ROUTE_TABLE_NAME, key, std::vector<FieldValueTuple>{{"protocol", "bgp"}}, ReturnCode(SAI_STATUS_SUCCESS), false)).Times(1);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        entries.clear();
+
+        // Route deletion
+
+        entries.clear();
+        entries.push_back({key, "DEL", {}});
+
+        consumer->addToSync(entries);
+
+        EXPECT_CALL(*gMockResponsePublisher, publish(APP_ROUTE_TABLE_NAME, key, std::vector<FieldValueTuple>{}, ReturnCode(SAI_STATUS_SUCCESS), false)).Times(1);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        gMockResponsePublisher.reset();
+    }
+
+    TEST_F(RouteOrchTest, RouteOrchSetFullMaskSubnetPrefix)
+    {
+        gMockResponsePublisher = std::make_unique<MockResponsePublisher>();
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        std::string key = "11.0.0.1/32";
+        std::vector<FieldValueTuple> fvs{{"ifname", "Ethernet4"}, {"nexthop", "0.0.0.0"}, {"protocol", "bgp"}};
+        entries.push_back({key, "SET", fvs});
+
+        auto consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        consumer->addToSync(entries);
+
+        EXPECT_CALL(*gMockResponsePublisher, publish(APP_ROUTE_TABLE_NAME, key, std::vector<FieldValueTuple>{{"protocol", "bgp"}}, ReturnCode(SAI_STATUS_SUCCESS), false)).Times(1);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        gMockResponsePublisher.reset();
     }
 }

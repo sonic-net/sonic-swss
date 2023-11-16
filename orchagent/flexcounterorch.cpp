@@ -29,7 +29,9 @@ extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
 #define PORT_KEY                    "PORT"
 #define PORT_BUFFER_DROP_KEY        "PORT_BUFFER_DROP"
 #define QUEUE_KEY                   "QUEUE"
+#define QUEUE_WATERMARK             "QUEUE_WATERMARK"
 #define PG_WATERMARK_KEY            "PG_WATERMARK"
+#define PG_DROP_KEY                 "PG_DROP"
 #define RIF_KEY                     "RIF"
 #define ACL_KEY                     "ACL"
 #define TUNNEL_KEY                  "TUNNEL"
@@ -65,6 +67,7 @@ FlexCounterOrch::FlexCounterOrch(DBConnector *db, vector<string> &tableNames):
     m_flexCounterConfigTable(db, CFG_FLEX_COUNTER_TABLE_NAME),
     m_bufferQueueConfigTable(db, CFG_BUFFER_QUEUE_TABLE_NAME),
     m_bufferPgConfigTable(db, CFG_BUFFER_PG_TABLE_NAME),
+    m_deviceMetadataConfigTable(db, CFG_DEVICE_METADATA_TABLE_NAME),
     m_flexCounterDb(new DBConnector("FLEX_COUNTER_DB", 0)),
     m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE)),
     m_gbflexCounterDb(new DBConnector("GB_FLEX_COUNTER_DB", 0)),
@@ -162,11 +165,25 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                         {
                             gPortsOrch->generateQueueMap(getQueueConfigurations());
                             m_queue_enabled = true;
+                            gPortsOrch->addQueueFlexCounters(getQueueConfigurations());
+                        }
+                        else if(key == QUEUE_WATERMARK)
+                        {
+                            gPortsOrch->generateQueueMap(getQueueConfigurations());
+                            m_queue_watermark_enabled = true;
+                            gPortsOrch->addQueueWatermarkFlexCounters(getQueueConfigurations());
+                        }
+                        else if(key == PG_DROP_KEY)
+                        {
+                            gPortsOrch->generatePriorityGroupMap(getPgConfigurations());
+                            m_pg_enabled = true;
+                            gPortsOrch->addPriorityGroupFlexCounters(getPgConfigurations());
                         }
                         else if(key == PG_WATERMARK_KEY)
                         {
                             gPortsOrch->generatePriorityGroupMap(getPgConfigurations());
                             m_pg_watermark_enabled = true;
+                            gPortsOrch->addPriorityGroupWatermarkFlexCounters(getPgConfigurations());
                         }
                     }
                     if(gIntfsOrch && (key == RIF_KEY) && (value == "enable"))
@@ -250,14 +267,24 @@ bool FlexCounterOrch::getPortBufferDropCountersState() const
     return m_port_buffer_drop_counter_enabled;
 }
 
-bool FlexCounterOrch::getPgWatermarkCountersState() const
-{
-    return m_pg_watermark_enabled;
-}
-
 bool FlexCounterOrch::getQueueCountersState() const
 {
     return m_queue_enabled;
+}
+
+bool FlexCounterOrch::getQueueWatermarkCountersState() const
+{
+    return m_queue_watermark_enabled;
+}
+
+bool FlexCounterOrch::getPgCountersState() const
+{
+    return m_pg_enabled;
+}
+
+bool FlexCounterOrch::getPgWatermarkCountersState() const
+{
+    return m_pg_watermark_enabled;
 }
 
 bool FlexCounterOrch::bake()
@@ -302,11 +329,41 @@ bool FlexCounterOrch::bake()
     return consumer->addToSync(entries);
 }
 
+static bool isCreateOnlyConfigDbBuffers(Table& deviceMetadataConfigTable)
+{
+    std::string createOnlyConfigDbBuffersValue;
+
+    try
+    {
+        if (deviceMetadataConfigTable.hget("localhost", "create_only_config_db_buffers", createOnlyConfigDbBuffersValue))
+        {
+            if (createOnlyConfigDbBuffersValue == "true")
+            {
+                return true;
+            }
+        }
+    }
+    catch(const std::system_error& e)
+    {
+        SWSS_LOG_ERROR("System error: %s", e.what());
+    }
+
+    return false;
+}
+
 map<string, FlexCounterQueueStates> FlexCounterOrch::getQueueConfigurations()
 {
     SWSS_LOG_ENTER();
 
     map<string, FlexCounterQueueStates> queuesStateVector;
+
+    if (!isCreateOnlyConfigDbBuffers(m_deviceMetadataConfigTable))
+    {
+        FlexCounterQueueStates flexCounterQueueState(0);
+        queuesStateVector.insert(make_pair(createAllAvailableBuffersStr, flexCounterQueueState));
+        return queuesStateVector;
+    }
+
     std::vector<std::string> portQueueKeys;
     m_bufferQueueConfigTable.getKeys(portQueueKeys);
 
@@ -361,6 +418,14 @@ map<string, FlexCounterPgStates> FlexCounterOrch::getPgConfigurations()
     SWSS_LOG_ENTER();
 
     map<string, FlexCounterPgStates> pgsStateVector;
+
+    if (!isCreateOnlyConfigDbBuffers(m_deviceMetadataConfigTable))
+    {
+        FlexCounterPgStates flexCounterPgState(0);
+        pgsStateVector.insert(make_pair(createAllAvailableBuffersStr, flexCounterPgState));
+        return pgsStateVector;
+    }
+
     std::vector<std::string> portPgKeys;
     m_bufferPgConfigTable.getKeys(portPgKeys);
 

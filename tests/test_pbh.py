@@ -130,6 +130,7 @@ class TestPbhInterfaceBinding:
             self.dvs_lag.get_and_verify_port_channel(0)
 
 
+@pytest.mark.usefixtures("dvs_hash_manager")
 class TestPbhBasicFlows:
     def test_PbhHashFieldCreationDeletion(self, testlog):
         try:
@@ -162,12 +163,12 @@ class TestPbhBasicFlows:
                 hash_name=PBH_HASH_NAME,
                 hash_field_list=PBH_HASH_HASH_FIELD_LIST
             )
-            self.dvs_pbh.verify_pbh_hash_count(1)
+            self.dvs_hash.verify_hash_count(1)
         finally:
             # PBH hash
             pbhlogger.info("Remove PBH hash: {}".format(PBH_HASH_NAME))
             self.dvs_pbh.remove_pbh_hash(PBH_HASH_NAME)
-            self.dvs_pbh.verify_pbh_hash_count(0)
+            self.dvs_hash.verify_hash_count(0)
 
             # PBH hash field
             pbhlogger.info("Remove PBH hash field: {}".format(PBH_HASH_FIELD_NAME))
@@ -205,7 +206,7 @@ class TestPbhBasicFlows:
                 hash_name=PBH_HASH_NAME,
                 hash_field_list=PBH_HASH_HASH_FIELD_LIST
             )
-            self.dvs_pbh.verify_pbh_hash_count(1)
+            self.dvs_hash.verify_hash_count(1)
 
             # PBH table
             pbhlogger.info("Create PBH table: {}".format(PBH_TABLE_NAME))
@@ -247,7 +248,7 @@ class TestPbhBasicFlows:
             # PBH hash
             pbhlogger.info("Remove PBH hash: {}".format(PBH_HASH_NAME))
             self.dvs_pbh.remove_pbh_hash(PBH_HASH_NAME)
-            self.dvs_pbh.verify_pbh_hash_count(0)
+            self.dvs_hash.verify_hash_count(0)
 
             # PBH hash field
             pbhlogger.info("Remove PBH hash field: {}".format(PBH_HASH_FIELD_NAME))
@@ -255,6 +256,7 @@ class TestPbhBasicFlows:
             self.dvs_pbh.verify_pbh_hash_field_count(0)
 
 
+@pytest.mark.usefixtures("dvs_hash_manager")
 class TestPbhBasicEditFlows:
     def test_PbhRuleUpdate(self, testlog):
         try:
@@ -273,7 +275,7 @@ class TestPbhBasicEditFlows:
                 hash_name=PBH_HASH_NAME,
                 hash_field_list=PBH_HASH_HASH_FIELD_LIST
             )
-            self.dvs_pbh.verify_pbh_hash_count(1)
+            self.dvs_hash.verify_hash_count(1)
 
             # PBH table
             pbhlogger.info("Create PBH table: {}".format(PBH_TABLE_NAME))
@@ -319,7 +321,7 @@ class TestPbhBasicEditFlows:
                 flow_counter="ENABLED"
             )
 
-            hash_id = self.dvs_pbh.get_pbh_hash_ids(1)[0]
+            hash_id = self.dvs_hash.get_hash_ids(1)[0]
             counter_id = self.dvs_acl.get_acl_counter_ids(1)[0]
 
             sai_attr_dict = {
@@ -352,7 +354,7 @@ class TestPbhBasicEditFlows:
             # PBH hash
             pbhlogger.info("Remove PBH hash: {}".format(PBH_HASH_NAME))
             self.dvs_pbh.remove_pbh_hash(PBH_HASH_NAME)
-            self.dvs_pbh.verify_pbh_hash_count(0)
+            self.dvs_hash.verify_hash_count(0)
 
             # PBH hash field
             pbhlogger.info("Remove PBH hash field: {}".format(PBH_HASH_FIELD_NAME))
@@ -377,7 +379,7 @@ class TestPbhBasicEditFlows:
                 hash_name=PBH_HASH_NAME,
                 hash_field_list=PBH_HASH_HASH_FIELD_LIST
             )
-            self.dvs_pbh.verify_pbh_hash_count(1)
+            self.dvs_hash.verify_hash_count(1)
 
             # PBH table
             pbhlogger.info("Create PBH table: {}".format(PBH_TABLE_NAME))
@@ -463,7 +465,7 @@ class TestPbhBasicEditFlows:
             # PBH hash
             pbhlogger.info("Remove PBH hash: {}".format(PBH_HASH_NAME))
             self.dvs_pbh.remove_pbh_hash(PBH_HASH_NAME)
-            self.dvs_pbh.verify_pbh_hash_count(0)
+            self.dvs_hash.verify_hash_count(0)
 
             # PBH hash field
             pbhlogger.info("Remove PBH hash field: {}".format(PBH_HASH_FIELD_NAME))
@@ -475,6 +477,7 @@ class TestPbhBasicEditFlows:
             test_flex_counters.post_trap_flow_counter_test(meta_data)
 
 
+@pytest.mark.usefixtures("dvs_hash_manager")
 @pytest.mark.usefixtures("dvs_lag_manager")
 class TestPbhExtendedFlows:
     class PbhRefCountHelper(object):
@@ -596,13 +599,13 @@ class TestPbhExtendedFlows:
             hash_field_list=meta_dict["hash_field_list"]
         )
         pbh_ref_count.incPbhHashCount()
-        self.dvs_pbh.verify_pbh_hash_count(pbh_ref_count.getPbhHashCount())
+        self.dvs_hash.verify_hash_count(pbh_ref_count.getPbhHashCount())
 
     def remove_hash(self, meta_dict, pbh_ref_count):
         pbhlogger.info("Remove PBH hash: {}".format(meta_dict["name"]))
         self.dvs_pbh.remove_pbh_hash(meta_dict["name"])
         pbh_ref_count.decPbhHashCount()
-        self.dvs_pbh.verify_pbh_hash_count(pbh_ref_count.getPbhHashCount())
+        self.dvs_hash.verify_hash_count(pbh_ref_count.getPbhHashCount())
 
     def create_table(self, meta_dict, pbh_ref_count):
         pbhlogger.info("Create PBH table: {}".format(meta_dict["name"]))
@@ -909,6 +912,7 @@ class TestPbhExtendedFlows:
         pass
 
 
+@pytest.mark.usefixtures("dvs_hash_manager")
 class TestPbhDependencyFlows:
     def test_PbhHashCreationDeletionWithDependencies(self, testlog):
         try:
@@ -918,7 +922,7 @@ class TestPbhDependencyFlows:
                 hash_name=PBH_HASH_NAME,
                 hash_field_list=PBH_HASH_HASH_FIELD_LIST
             )
-            self.dvs_pbh.verify_pbh_hash_count(0)
+            self.dvs_hash.verify_hash_count(0)
 
             # PBH hash field
             pbhlogger.info("Create PBH hash field: {}".format(PBH_HASH_FIELD_NAME))
@@ -928,7 +932,7 @@ class TestPbhDependencyFlows:
                 sequence_id=PBH_HASH_FIELD_SEQUENCE_ID
             )
             self.dvs_pbh.verify_pbh_hash_field_count(1)
-            self.dvs_pbh.verify_pbh_hash_count(1)
+            self.dvs_hash.verify_hash_count(1)
         finally:
             # PBH hash field
             pbhlogger.info("Remove PBH hash field: {}".format(PBH_HASH_FIELD_NAME))
@@ -938,7 +942,7 @@ class TestPbhDependencyFlows:
             # PBH hash
             pbhlogger.info("Remove PBH hash: {}".format(PBH_HASH_NAME))
             self.dvs_pbh.remove_pbh_hash(PBH_HASH_NAME)
-            self.dvs_pbh.verify_pbh_hash_count(0)
+            self.dvs_hash.verify_hash_count(0)
             self.dvs_pbh.verify_pbh_hash_field_count(0)
 
     def test_PbhRuleCreationDeletionWithDependencies(self, testlog):
@@ -949,7 +953,7 @@ class TestPbhDependencyFlows:
                 hash_name=PBH_HASH_NAME,
                 hash_field_list=PBH_HASH_HASH_FIELD_LIST
             )
-            self.dvs_pbh.verify_pbh_hash_count(0)
+            self.dvs_hash.verify_hash_count(0)
 
             # PBH hash field
             pbhlogger.info("Create PBH hash field: {}".format(PBH_HASH_FIELD_NAME))
@@ -959,7 +963,7 @@ class TestPbhDependencyFlows:
                 sequence_id=PBH_HASH_FIELD_SEQUENCE_ID
             )
             self.dvs_pbh.verify_pbh_hash_field_count(1)
-            self.dvs_pbh.verify_pbh_hash_count(1)
+            self.dvs_hash.verify_hash_count(1)
 
             # PBH rule
             attr_dict = {
@@ -1009,7 +1013,7 @@ class TestPbhDependencyFlows:
             # PBH hash
             pbhlogger.info("Remove PBH hash: {}".format(PBH_HASH_NAME))
             self.dvs_pbh.remove_pbh_hash(PBH_HASH_NAME)
-            self.dvs_pbh.verify_pbh_hash_count(0)
+            self.dvs_hash.verify_hash_count(0)
             self.dvs_pbh.verify_pbh_hash_field_count(0)
 
 

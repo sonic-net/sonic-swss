@@ -4,10 +4,14 @@
 #include "select.h"
 #include "selectabletimer.h"
 #include "netdispatcher.h"
+#include "netlink.h"
+#include "notificationconsumer.h"
+#include "subscriberstatetable.h"
 #include "warmRestartHelper.h"
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/routesync.h"
 
+#include <netlink/route/route.h>
 
 using namespace std;
 using namespace swss;
@@ -47,21 +51,47 @@ static bool eoiuFlagsSet(Table &bgpStateTable)
 int main(int argc, char **argv)
 {
     swss::Logger::linkToDbNative("fpmsyncd");
+
+    const auto routeResponseChannelName = std::string("APPL_DB_") + APP_ROUTE_TABLE_NAME + "_RESPONSE_CHANNEL";
+
     DBConnector db("APPL_DB", 0);
+    DBConnector cfgDb("CONFIG_DB", 0);
+    SubscriberStateTable deviceMetadataTableSubscriber(&cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
+    Table deviceMetadataTable(&cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
+    DBConnector applStateDb("APPL_STATE_DB", 0);
+    std::unique_ptr<NotificationConsumer> routeResponseChannel;
+
     RedisPipeline pipeline(&db);
     RouteSync sync(&pipeline);
 
     DBConnector stateDb("STATE_DB", 0);
     Table bgpStateTable(&stateDb, STATE_BGP_TABLE_NAME);
 
+    NetLink netlink;
+
+    netlink.registerGroup(RTNLGRP_LINK);
+
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWROUTE, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELROUTE, &sync);
+    NetDispatcher::getInstance().registerMessageHandler(RTM_NEWLINK, &sync);
+    NetDispatcher::getInstance().registerMessageHandler(RTM_DELLINK, &sync);
+
+    rtnl_route_read_protocol_names(DefaultRtProtoPath);
+
+    std::string suppressionEnabledStr;
+    deviceMetadataTable.hget("localhost", "suppress-fib-pending", suppressionEnabledStr);
+    if (suppressionEnabledStr == "enabled")
+    {
+        routeResponseChannel = std::make_unique<NotificationConsumer>(&applStateDb, routeResponseChannelName);
+        sync.setSuppressionEnabled(true);
+    }
 
     while (true)
     {
         try
         {
             FpmLink fpm(&sync);
+
             Select s;
             SelectableTimer warmStartTimer(timespec{0, 0});
             // Before eoiu flags detected, check them periodically. It also stop upon detection of reconciliation done.
@@ -80,6 +110,13 @@ int main(int argc, char **argv)
             cout << "Connected!" << endl;
 
             s.addSelectable(&fpm);
+            s.addSelectable(&netlink);
+            s.addSelectable(&deviceMetadataTableSubscriber);
+
+            if (sync.isSuppressionEnabled())
+            {
+                s.addSelectable(routeResponseChannel.get());
+            }
 
             /* If warm-restart feature is enabled, execute 'restoration' logic */
             bool warmStartEnabled = sync.m_warmStartHelper.checkAndStart();
@@ -139,11 +176,8 @@ int main(int argc, char **argv)
                         SWSS_LOG_NOTICE("Warm-Restart EOIU hold timer expired.");
                     }
 
-                    if (sync.m_warmStartHelper.inProgress())
-                    {
-                        sync.m_warmStartHelper.reconcile();
-                        SWSS_LOG_NOTICE("Warm-Restart reconciliation processed.");
-                    }
+                    sync.onWarmStartEnd(applStateDb);
+
                     // remove the one-shot timer.
                     s.removeSelectable(temps);
                     pipeline.flush();
@@ -180,6 +214,74 @@ int main(int argc, char **argv)
                     else
                     {
                         s.removeSelectable(&eoiuCheckTimer);
+                    }
+                }
+                else if (temps == &deviceMetadataTableSubscriber)
+                {
+                    std::deque<KeyOpFieldsValuesTuple> keyOpFvsQueue;
+                    deviceMetadataTableSubscriber.pops(keyOpFvsQueue);
+
+                    for (const auto& keyOpFvs: keyOpFvsQueue)
+                    {
+                        const auto& key = kfvKey(keyOpFvs);
+                        const auto& op = kfvOp(keyOpFvs);
+                        const auto& fvs = kfvFieldsValues(keyOpFvs);
+
+                        if (op != SET_COMMAND)
+                        {
+                            continue;
+                        }
+
+                        if (key != "localhost")
+                        {
+                            continue;
+                        }
+
+                        for (const auto& fv: fvs)
+                        {
+                            const auto& field = fvField(fv);
+                            const auto& value = fvValue(fv);
+
+                            if (field != "suppress-fib-pending")
+                            {
+                                continue;
+                            }
+
+                            bool shouldEnable = (value == "enabled");
+
+                            if (shouldEnable && !sync.isSuppressionEnabled())
+                            {
+                                routeResponseChannel = std::make_unique<NotificationConsumer>(&applStateDb, routeResponseChannelName);
+                                sync.setSuppressionEnabled(true);
+                                s.addSelectable(routeResponseChannel.get());
+                            }
+                            else if (!shouldEnable && sync.isSuppressionEnabled())
+                            {
+                                /* When disabling suppression we mark all existing routes offloaded in zebra
+                                 * as there could be some transient routes which are pending response from
+                                 * orchagent, thus such updates might be missing. Since we are disabling suppression
+                                 * we no longer care about real HW offload status and can mark all routes as offloaded
+                                 * to avoid routes stuck in suppressed state after transition. */
+                                sync.markRoutesOffloaded(db);
+
+                                sync.setSuppressionEnabled(false);
+                                s.removeSelectable(routeResponseChannel.get());
+                                routeResponseChannel.reset();
+                            }
+                        } // end for fvs
+                    } // end for keyOpFvsQueue
+                }
+                else if (routeResponseChannel && (temps == routeResponseChannel.get()))
+                {
+                    std::deque<KeyOpFieldsValuesTuple> notifications;
+                    routeResponseChannel->pops(notifications);
+
+                    for (const auto& notification: notifications)
+                    {
+                        const auto& key = kfvKey(notification);
+                        const auto& fieldValues = kfvFieldsValues(notification);
+
+                        sync.onRouteResponse(key, fieldValues);
                     }
                 }
                 else if (!warmStartEnabled || sync.m_warmStartHelper.isReconciled())

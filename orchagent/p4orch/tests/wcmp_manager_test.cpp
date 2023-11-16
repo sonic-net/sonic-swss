@@ -5,7 +5,7 @@
 
 #include <string>
 
-#include "json.hpp"
+#include <nlohmann/json.hpp>
 #include "mock_response_publisher.h"
 #include "mock_sai_acl.h"
 #include "mock_sai_hostif.h"
@@ -273,7 +273,7 @@ class WcmpManagerTest : public ::testing::Test
 
     void Enqueue(const swss::KeyOpFieldsValuesTuple &entry)
     {
-        wcmp_group_manager_->enqueue(entry);
+        wcmp_group_manager_->enqueue(APP_P4RT_WCMP_GROUP_TABLE_NAME, entry);
     }
 
     void Drain()

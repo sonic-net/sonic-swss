@@ -13,7 +13,9 @@ using namespace swss;
 
 #define BFD_SESSION_DEFAULT_TX_INTERVAL 1000
 #define BFD_SESSION_DEFAULT_RX_INTERVAL 1000
-#define BFD_SESSION_DEFAULT_DETECT_MULTIPLIER 3
+#define BFD_SESSION_DEFAULT_DETECT_MULTIPLIER 10
+// TOS: default 6-bit DSCP value 48, default 2-bit ecn value 0. 48<<2 = 192
+#define BFD_SESSION_DEFAULT_TOS 192
 #define BFD_SESSION_MILLISECOND_TO_MICROSECOND 1000
 #define BFD_SRCPORTINIT 49152
 #define BFD_SRCPORTMAX 65536
@@ -243,6 +245,7 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     uint32_t tx_interval = BFD_SESSION_DEFAULT_TX_INTERVAL;
     uint32_t rx_interval = BFD_SESSION_DEFAULT_RX_INTERVAL;
     uint8_t multiplier = BFD_SESSION_DEFAULT_DETECT_MULTIPLIER;
+    uint8_t tos = BFD_SESSION_DEFAULT_TOS;
     bool multihop = false;
     MacAddress dst_mac;
     bool dst_mac_provided = false;
@@ -291,6 +294,10 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
             dst_mac = MacAddress(value);
             dst_mac_provided = true;
         }
+        else if (fvField(i) == "tos")
+        {
+            tos = to_uint<uint8_t>(value);
+        }
         else
             SWSS_LOG_ERROR("Unsupported BFD attribute %s\n", fvField(i).c_str());
     }
@@ -306,9 +313,11 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     attrs.emplace_back(attr);
     fvVector.emplace_back("type", session_type_lookup.at(bfd_session_type));
 
+    uint32_t local_discriminator = bfd_gen_id();
     attr.id = SAI_BFD_SESSION_ATTR_LOCAL_DISCRIMINATOR;
-    attr.value.u32 = bfd_gen_id();
+    attr.value.u32 = local_discriminator;
     attrs.emplace_back(attr);
+    fvVector.emplace_back("local_discriminator", to_string(local_discriminator));
 
     attr.id = SAI_BFD_SESSION_ATTR_UDP_SRC_PORT;
     attr.value.u32 = bfd_src_port();
@@ -349,6 +358,10 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
     attr.value.u8 = multiplier;
     attrs.emplace_back(attr);
     fvVector.emplace_back("multiplier", to_string(multiplier));
+
+    attr.id = SAI_BFD_SESSION_ATTR_TOS;
+    attr.value.u8 = tos;
+    attrs.emplace_back(attr);
 
     if (multihop)
     {

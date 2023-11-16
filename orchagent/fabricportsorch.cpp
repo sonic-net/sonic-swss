@@ -9,6 +9,7 @@
 #include "schema.h"
 #include "sai_serialize.h"
 #include "timer.h"
+#include "saihelper.h"
 
 #define FABRIC_POLLING_INTERVAL_DEFAULT   (30)
 #define FABRIC_PORT_PREFIX    "PORT"
@@ -139,8 +140,6 @@ int FabricPortsOrch::getFabricPortList()
     generatePortStats();
 
     m_getFabricPortListDone = true;
-
-    updateFabricPortState();
 
     return FABRIC_PORT_SUCCESS;
 }

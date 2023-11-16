@@ -8,7 +8,7 @@
 #include <unordered_map>
 
 #include "ipaddress.h"
-#include "json.hpp"
+#include <nlohmann/json.hpp>
 #include "mock_response_publisher.h"
 #include "mock_sai_hostif.h"
 #include "mock_sai_next_hop.h"
@@ -267,7 +267,7 @@ class NextHopManagerTest : public ::testing::Test
 
     void Enqueue(const swss::KeyOpFieldsValuesTuple &entry)
     {
-        next_hop_manager_.enqueue(entry);
+        next_hop_manager_.enqueue(APP_P4RT_NEXTHOP_TABLE_NAME, entry);
     }
 
     void Drain()

@@ -6,7 +6,7 @@
 #include <string>
 #include <unordered_set>
 
-#include "json.hpp"
+#include <nlohmann/json.hpp>
 #include "mock_response_publisher.h"
 #include "mock_sai_neighbor.h"
 #include "p4orch.h"
@@ -130,7 +130,7 @@ class NeighborManagerTest : public ::testing::Test
 
     void Enqueue(const swss::KeyOpFieldsValuesTuple &entry)
     {
-        neighbor_manager_.enqueue(entry);
+        neighbor_manager_.enqueue(APP_P4RT_NEIGHBOR_TABLE_NAME, entry);
     }
 
     void Drain()

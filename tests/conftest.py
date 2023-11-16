@@ -26,6 +26,7 @@ from dvslib import dvs_port
 from dvslib import dvs_lag
 from dvslib import dvs_mirror
 from dvslib import dvs_policer
+from dvslib import dvs_hash
 
 from buffer_model import enable_dynamic_buffer
 
@@ -94,6 +95,12 @@ def pytest_addoption(parser):
                      default=False,
                      help="Stop swss and syncd before stopping a conatainer")
 
+    parser.addoption("--num-ports",
+                     action="store",
+                     default=NUM_PORTS,
+                     type=int,
+                     help="number of ports")
+
 
 def random_string(size=4, chars=string.ascii_uppercase + string.digits):
     return "".join(random.choice(chars) for x in range(size))
@@ -150,6 +157,8 @@ class AsicDbValidator(DVSDatabase):
 
         self.default_acl_tables = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
         self.default_acl_entries = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
+
+        self.default_hash_keys = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_HASH")
 
         self.default_copp_policers = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_POLICER")
 
@@ -600,8 +609,8 @@ class DockerVirtualSwitch:
         self.ctn_restart()
         self.check_ready_status_and_init_db()
 
-    def runcmd(self, cmd: str) -> Tuple[int, str]:
-        res = self.ctn.exec_run(cmd)
+    def runcmd(self, cmd: str, include_stderr=True) -> Tuple[int, str]:
+        res = self.ctn.exec_run(cmd, stdout=True, stderr=include_stderr)
         exitcode = res.exit_code
         out = res.output.decode("utf-8")
 
@@ -1141,10 +1150,10 @@ class DockerVirtualSwitch:
     # deps: acl, fdb_update, fdb, intf_mac, mirror_port_erspan, mirror_port_span,
     # policer, port_dpb_vlan, vlan
     def setup_db(self):
-        self.pdb = swsscommon.DBConnector(0, self.redis_sock, 0)
-        self.adb = swsscommon.DBConnector(1, self.redis_sock, 0)
-        self.cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
-        self.sdb = swsscommon.DBConnector(6, self.redis_sock, 0)
+        self.pdb = swsscommon.DBConnector(swsscommon.APPL_DB, self.redis_sock, 0)
+        self.adb = swsscommon.DBConnector(swsscommon.ASIC_DB, self.redis_sock, 0)
+        self.cdb = swsscommon.DBConnector(swsscommon.CONFIG_DB, self.redis_sock, 0)
+        self.sdb = swsscommon.DBConnector(swsscommon.STATE_DB, self.redis_sock, 0)
 
     def getSwitchOid(self):
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_SWITCH")
@@ -1338,6 +1347,7 @@ class DockerVirtualSwitch:
             db = DVSDatabase(self.ASIC_DB_ID, self.redis_sock)
             db.default_acl_tables = self.asicdb.default_acl_tables
             db.default_acl_entries = self.asicdb.default_acl_entries
+            db.default_hash_keys = self.asicdb.default_hash_keys
             db.default_copp_policers = self.asicdb.default_copp_policers
             db.port_name_map = self.asicdb.portnamemap
             db.default_vlan_id = self.asicdb.default_vlan_id
@@ -1807,6 +1817,11 @@ def manage_dvs(request) -> str:
 @pytest.fixture(scope="module")
 def dvs(request, manage_dvs) -> DockerVirtualSwitch:
     dvs_env = getattr(request.module, "DVS_ENV", [])
+    global NUM_PORTS
+    if getattr(request.module, "NUM_PORTS", None):
+        NUM_PORTS = getattr(request.module, "NUM_PORTS")
+    else:
+        NUM_PORTS = request.config.getoption("--num-ports")
     name = request.config.getoption("--dvsname")
     log_path = name if name else request.module.__name__
 
@@ -1854,7 +1869,7 @@ def vct(request):
 @pytest.fixture
 def testlog(request, dvs):
     dvs.runcmd(f"logger -t pytest === start test {request.node.nodeid} ===")
-    yield testlog
+    yield
     dvs.runcmd(f"logger -t pytest === finish test {request.node.nodeid} ===")
 
 ################# DVSLIB module manager fixtures #############################
@@ -1899,6 +1914,7 @@ def dvs_vlan_manager(request, dvs):
 @pytest.fixture(scope="class")
 def dvs_port_manager(request, dvs):
     request.cls.dvs_port = dvs_port.DVSPort(dvs.get_asic_db(),
+                                            dvs.get_app_db(),
                                             dvs.get_config_db())
 
 
@@ -1915,6 +1931,11 @@ def dvs_mirror_manager(request, dvs):
 def dvs_policer_manager(request, dvs):
     request.cls.dvs_policer = dvs_policer.DVSPolicer(dvs.get_asic_db(),
                                                      dvs.get_config_db())
+
+@pytest.fixture(scope="class")
+def dvs_hash_manager(request, dvs):
+    request.cls.dvs_hash = dvs_hash.DVSHash(dvs.get_asic_db(),
+                                            dvs.get_config_db())
 
 ##################### DPB fixtures ###########################################
 def create_dpb_config_file(dvs):

@@ -186,6 +186,7 @@ class TestPort(object):
         for fv in fvs:
             if fv[0] == "SAI_PORT_ATTR_FEC_MODE":
                 assert fv[1] == "SAI_PORT_FEC_MODE_RS"
+            assert fv[0] != "SAI_PORT_ATTR_AUTO_NEG_FEC_MODE_OVERRIDE"
 
     def test_PortPreemp(self, dvs, testlog):
 
@@ -276,6 +277,17 @@ class TestPort(object):
         for fv in fvs:
             if fv[0] == "SAI_PORT_ATTR_SERDES_IPREDRIVER":
                 assert fv[1] == ipre_val_asic
+
+    def test_PortHostif(self, dvs):
+        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF")
+        host_intfs = atbl.getKeys()
+        for intf in host_intfs:
+            status, fvs = atbl.get(intf)
+            assert status, "Error getting value for key"
+            attributes = dict(fvs)
+            hostif_queue = attributes.get("SAI_HOSTIF_ATTR_QUEUE")
+            assert hostif_queue == "7"
 
 
 # Add Dummy always-pass test at end as workaroud

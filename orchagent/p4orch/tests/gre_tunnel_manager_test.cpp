@@ -8,7 +8,7 @@
 #include <unordered_map>
 
 #include "ipaddress.h"
-#include "json.hpp"
+#include <nlohmann/json.hpp>
 #include "mock_response_publisher.h"
 #include "mock_sai_router_interface.h"
 #include "mock_sai_serialize.h"
@@ -215,7 +215,7 @@ class GreTunnelManagerTest : public ::testing::Test
 
     void Enqueue(const swss::KeyOpFieldsValuesTuple &entry)
     {
-        gre_tunnel_manager_.enqueue(entry);
+        gre_tunnel_manager_.enqueue(APP_P4RT_TUNNEL_TABLE_NAME, entry);
     }
 
     void Drain()

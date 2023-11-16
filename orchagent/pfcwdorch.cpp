@@ -238,11 +238,11 @@ task_process_status PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const st
                 {
                     if(gSwitchOrch->checkPfcDlrInitEnable())
                     {
-                        if(getPfcDlrPacketAction() == PfcWdAction::PFC_WD_ACTION_UNKNOWN)
+                        if(m_pfcwd_ports.empty())
                         {
                             sai_attribute_t attr;
                             attr.id = SAI_SWITCH_ATTR_PFC_DLR_PACKET_ACTION;
-                            attr.value.u32 = (sai_uint32_t)action;
+                            attr.value.u32 = packet_action_map.at(value);
 
                             sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
                             if(status != SAI_STATUS_SUCCESS)
@@ -307,6 +307,7 @@ task_process_status PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const st
     }
 
     SWSS_LOG_NOTICE("Started PFC Watchdog on port %s", port.m_alias.c_str());
+    m_pfcwd_ports.insert(port.m_alias);
     return task_process_status::task_success;
 }
 
@@ -325,6 +326,7 @@ task_process_status PfcWdOrch<DropHandler, ForwardHandler>::deleteEntry(const st
     }
 
     SWSS_LOG_NOTICE("Stopped PFC Watchdog on port %s", name.c_str());
+    m_pfcwd_ports.erase(port.m_alias);
     return task_process_status::task_success;
 }
 
@@ -911,10 +913,20 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(swss::NotificationConsumer
 
     wdNotification.pop(queueIdStr, event, values);
 
+    string info;
+    for (auto &fv : values)
+    {
+        info += fvField(fv) + ":" + fvValue(fv) + "|";
+    }
+    if (!info.empty())
+    {
+        info.pop_back();
+    }
+
     sai_object_id_t queueId = SAI_NULL_OBJECT_ID;
     sai_deserialize_object_id(queueIdStr, queueId);
 
-    if (!startWdActionOnQueue(event, queueId))
+    if (!startWdActionOnQueue(event, queueId, info))
     {
         SWSS_LOG_ERROR("Failed to start PFC watchdog %s event action on queue %s", event.c_str(), queueIdStr.c_str());
     }
@@ -937,7 +949,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(SelectableTimer &timer)
 
 template <typename DropHandler, typename ForwardHandler>
 void PfcWdSwOrch<DropHandler, ForwardHandler>::report_pfc_storm(
-        sai_object_id_t id, const PfcWdQueueEntry *entry)
+        sai_object_id_t id, const PfcWdQueueEntry *entry, const string &info)
 {
     event_params_t params = {
         { "ifname", entry->portAlias },
@@ -945,18 +957,32 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::report_pfc_storm(
         { "queue_id", to_string(id) },
         { "port_id", to_string(entry->portId) }};
 
-    SWSS_LOG_NOTICE(
-            "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ".",
+    if (info.empty())
+    {
+        SWSS_LOG_NOTICE(
+            "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64,
             entry->portAlias.c_str(),
             entry->index,
             id,
             entry->portId);
+    }
+    else
+    {
+        SWSS_LOG_NOTICE(
+            "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ", additional info: %s.",
+            entry->portAlias.c_str(),
+            entry->index,
+            id,
+            entry->portId,
+            info.c_str());
+        params["additional_info"] = info;
+    }
 
     event_publish(g_events_handle, "pfc-storm", &params);
 }
 
 template <typename DropHandler, typename ForwardHandler>
-bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string &event, sai_object_id_t queueId)
+bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string &event, sai_object_id_t queueId, const string &info)
 {
     auto entry = m_entryMap.find(queueId);
     if (entry == m_entryMap.end())
@@ -977,7 +1003,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
         {
             if (entry->second.handler == nullptr)
             {
-                report_pfc_storm(entry->first, &entry->second);
+                report_pfc_storm(entry->first, &entry->second, info);
 
                 entry->second.handler = make_shared<PfcWdActionHandler>(
                         entry->second.portId,
@@ -994,7 +1020,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
         {
             if (entry->second.handler == nullptr)
             {
-                report_pfc_storm(entry->first, &entry->second);
+                report_pfc_storm(entry->first, &entry->second, info);
 
                 entry->second.handler = make_shared<DropHandler>(
                         entry->second.portId,
@@ -1011,7 +1037,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
         {
             if (entry->second.handler == nullptr)
             {
-                report_pfc_storm(entry->first, &entry->second);
+                report_pfc_storm(entry->first, &entry->second, info);
 
                 entry->second.handler = make_shared<ForwardHandler>(
                         entry->second.portId,
@@ -1104,5 +1130,5 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::bake()
 // Trick to keep member functions in a separate file
 template class PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>;
 template class PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>;
-template class PfcWdSwOrch<PfcWdDlrHandler, PfcWdLossyHandler>;
+template class PfcWdSwOrch<PfcWdDlrHandler, PfcWdDlrHandler>;
 template class PfcWdSwOrch<PfcWdSaiDlrInitHandler, PfcWdActionHandler>;

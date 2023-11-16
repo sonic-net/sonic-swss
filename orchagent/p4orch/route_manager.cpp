@@ -11,7 +11,7 @@
 #include "converter.h"
 #include "crmorch.h"
 #include "dbconnector.h"
-#include "json.hpp"
+#include <nlohmann/json.hpp>
 #include "logger.h"
 #include "p4orch/p4orch_util.h"
 #include "sai_serialize.h"
@@ -837,7 +837,12 @@ std::vector<ReturnCode> RouteManager::deleteRouteEntries(const std::vector<P4Rou
     return statuses;
 }
 
-void RouteManager::enqueue(const swss::KeyOpFieldsValuesTuple &entry)
+ReturnCode RouteManager::getSaiObject(const std::string &json_key, sai_object_type_t &object_type, std::string &object_key)
+{
+    return StatusCode::SWSS_RC_UNIMPLEMENTED;
+}
+
+void RouteManager::enqueue(const std::string &table_name, const swss::KeyOpFieldsValuesTuple &entry)
 {
     m_entries.push_back(entry);
 }
