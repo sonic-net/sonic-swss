@@ -3956,10 +3956,17 @@ void PortsOrch::doVlanTask(Consumer &consumer)
             Port vlan;
             getPort(vlan_alias, vlan);
 
+            if (!getPort(vlan_alias, vlan))
+            {
+                SWSS_LOG_NOTICE("Failed to locate VLAN %s", vlan_alias.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
             if (removeVlan(vlan))
                 it = consumer.m_toSync.erase(it);
             else
-                it++;
+                it = consumer.m_toSync.upper_bound(it->first);
         }
         else
         {
