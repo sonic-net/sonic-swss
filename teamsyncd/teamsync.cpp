@@ -41,6 +41,10 @@ TeamSync::TeamSync(DBConnector *db, DBConnector *stateDb, Select *select) :
         WarmStart::setWarmStartState(TEAMSYNCD_APP_NAME, WarmStart::INITIALIZED);
         SWSS_LOG_NOTICE("Starting in warmstart mode");
     }
+    else
+    {
+        WarmStart::setWarmStartState(TEAMSYNCD_APP_NAME, WarmStart::WSDISABLED);
+    }
 }
 
 void TeamSync::periodic()
