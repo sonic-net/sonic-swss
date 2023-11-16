@@ -36,7 +36,8 @@ for i = 1, n do
     logit(initialized)
 
     -- Get new COUNTERS values
-    local in_pkts = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'SAI_COUNTER_STAT_PACKETS')
+    local in_pkts_str = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'SAI_COUNTER_STAT_PACKETS')
+    local in_pkts = tonumber(in_pkts_str) or 0
 
     if initialized == 'DONE' or initialized == 'COUNTERS_LAST' then
         -- Get old COUNTERS values
