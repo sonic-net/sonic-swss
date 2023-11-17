@@ -167,7 +167,7 @@ jobs:
       fi
 
       if [ '${{ parameters.archive_gcov }}' == True ]; then
-        sudo apt-get install -y lcov
+        sudo apt-get install -y lcov=1.13-4
         cd $(Build.ArtifactStagingDirectory)/gcov_tmp/
         tar -zcvf sonic-gcov.tar.gz sonic-gcov/
         rm -rf sonic-gcov

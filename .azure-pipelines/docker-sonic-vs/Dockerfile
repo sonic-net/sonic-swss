@@ -23,4 +23,4 @@ RUN if [ "$need_dbg" = "y" ] ; then dpkg -i /debs/swss-dbg_1.0.0_amd64.deb ; fi
 
 RUN apt-get update
 
-RUN apt-get -y install lcov
+RUN apt-get -y install lcov=1.13-4
