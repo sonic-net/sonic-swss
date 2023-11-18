@@ -4016,24 +4016,34 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 {
                     if (!p.m_pfc_asym_cfg || p.m_pfc_asym != pCfg.pfc_asym.value)
                     {
-                        if (!setPortPfcAsym(p, pCfg.pfc_asym.value))
+                        if (m_portCap.isPortPfcAsymSupported())
                         {
-                            SWSS_LOG_ERROR(
-                                "Failed to set port %s asymmetric PFC to %s",
+                            if (!setPortPfcAsym(p, pCfg.pfc_asym.value))
+                            {
+                                SWSS_LOG_ERROR(
+                                    "Failed to set port %s asymmetric PFC to %s",
+                                    p.m_alias.c_str(), m_portHlpr.getPfcAsymStr(pCfg).c_str()
+                                );
+                                it++;
+                                continue;
+                            }
+
+                            p.m_pfc_asym = pCfg.pfc_asym.value;
+                            p.m_pfc_asym_cfg = true;
+                            m_portList[p.m_alias] = p;
+
+                            SWSS_LOG_NOTICE(
+                                "Set port %s asymmetric PFC to %s",
                                 p.m_alias.c_str(), m_portHlpr.getPfcAsymStr(pCfg).c_str()
                             );
-                            it++;
-                            continue;
                         }
-
-                        p.m_pfc_asym = pCfg.pfc_asym.value;
-                        p.m_pfc_asym_cfg = true;
-                        m_portList[p.m_alias] = p;
-
-                        SWSS_LOG_NOTICE(
-                            "Set port %s asymmetric PFC to %s",
-                            p.m_alias.c_str(), m_portHlpr.getPfcAsymStr(pCfg).c_str()
-                        );
+                        else
+                        {
+                            SWSS_LOG_WARN(
+                                "Port %s asymmetric PFC configuration is not supported: skipping ...",
+                                p.m_alias.c_str()
+                            );
+                        }
                     }
                 }
 
