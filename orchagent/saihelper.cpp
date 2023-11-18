@@ -642,6 +642,20 @@ task_process_status handleSaiSetStatus(sai_api_t api, sai_status_t status, void 
                     break;
             }
             break;
+        case SAI_API_BUFFER:
+            switch (status)
+            {
+                case SAI_STATUS_INSUFFICIENT_RESOURCES:
+                    SWSS_LOG_ERROR("Encountered SAI_STATUS_INSUFFICIENT_RESOURCES in set operation, task failed, SAI API: %s, status: %s",
+                                   sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+                    return task_failed;
+                default:
+                    SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
+                            sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+                    handleSaiFailure(true);
+                    break;
+            }
+            break;
         default:
             SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
                         sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
