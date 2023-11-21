@@ -865,7 +865,7 @@ void OrchDaemon::start()
                     flush();
 
                     SWSS_LOG_WARN("Orchagent is frozen for warm restart!");
-                    sleep(UINT_MAX);
+                    freezeAndHeartBeat(UINT_MAX);
                 }
             }
         }
@@ -1031,6 +1031,19 @@ void OrchDaemon::heartBeat(std::chrono::time_point<std::chrono::high_resolution_
         m_lastHeartBeat = tcurrent;
         // output heart beat message to supervisord with 'PROCESS_COMMUNICATION_STDOUT' event: http://supervisord.org/events.html
         cout << "<!--XSUPERVISOR:BEGIN-->heartbeat<!--XSUPERVISOR:END-->" << endl;
+    }
+}
+
+void OrchDaemon::freezeAndHeartBeat(unsigned int duration)
+{
+    while (duration > 0)
+    {
+        // Send heartbeat message to prevent Orchagent stuck alert.
+        auto tend = std::chrono::high_resolution_clock::now();
+        heartBeat(tend);
+
+        duration--;
+        sleep(1);
     }
 }
 
