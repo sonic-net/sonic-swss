@@ -977,7 +977,7 @@ class TestVirtualChassis(object):
                 _, logSeen = dvs.runcmd([ "sh", "-c",
                      "awk STARTFILE/ENDFILE /var/log/swss/sairedis.rec | grep SAI_QUEUE_ATTR_WRED_PROFILE_ID | wc -l"])
 
-                assert logSeen.strip() == len(system_ports)
+                assert logSeen.strip() == len(system_ports)*2
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
