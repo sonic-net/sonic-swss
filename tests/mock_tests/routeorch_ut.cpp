@@ -329,6 +329,9 @@ namespace routeorch_test
             delete gIntfsOrch;
             gIntfsOrch = nullptr;
 
+            delete gSrv6Orch;
+            gSrv6Orch = nullptr;
+
             delete gNeighOrch;
             gNeighOrch = nullptr;
 
@@ -337,9 +340,6 @@ namespace routeorch_test
 
             delete gFgNhgOrch;
             gFgNhgOrch = nullptr;
-
-            delete gSrv6Orch;
-            gSrv6Orch = nullptr;
 
             delete gRouteOrch;
             gRouteOrch = nullptr;

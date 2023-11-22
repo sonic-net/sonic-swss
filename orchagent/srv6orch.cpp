@@ -10,6 +10,8 @@
 using namespace std;
 using namespace swss;
 
+#define ADJ_DELIMITER ','
+
 extern sai_object_id_t gSwitchId;
 extern sai_object_id_t  gVirtualRouterId;
 extern sai_object_id_t  gUnderlayIfId;
@@ -422,6 +424,175 @@ bool Srv6Orch::mySidExists(string my_sid_string)
     return false;
 }
 
+/*
+ * Neighbor change notification to be processed for the SRv6 MySID entries
+ *
+ * In summary, this function handles both add and delete neighbor notifications
+ *
+ * When a neighbor ADD notification is received, we do the following steps:
+ *     - We walk through the list of pending SRv6 MySID entries that are waiting for this neighbor to be ready
+ *     - For each SID, we install the SID into the ASIC
+ *     - We remove the SID from the pending MySID entries list
+ * 
+ * When a neighbor DELETE notification is received, we do the following steps:
+ *     - We walk through the list of pending SRv6 MySID entries installed in the ASIC
+ *     - For each SID, we remove the SID from the ASIC
+ *     - We add the SID to the pending MySID entries list
+ */
+void Srv6Orch::updateNeighbor(const NeighborUpdate& update)
+{
+    SWSS_LOG_ENTER();
+
+    /* Check if the received notification is a neighbor add or a neighbor delete */
+    if (update.add)
+    {
+        /*
+         * It's a neighbor add notification, let's walk through the list of SRv6 MySID entries
+         * that are waiting for that neighbor to be ready, and install them into the ASIC.
+         */
+
+        SWSS_LOG_INFO("Neighbor ADD event: %s alias '%s', installing pending SRv6 SIDs",
+                        update.entry.ip_address.to_string().c_str(), update.entry.alias.c_str());
+
+        auto it = m_pendingSRv6MySIDEntries.find(NextHopKey(update.entry.ip_address.to_string(), update.entry.alias));
+        if (it == m_pendingSRv6MySIDEntries.end())
+        {
+            /* No SID is waiting for this neighbor. Nothing to do */
+            return;
+        }
+        auto &nexthop_key = it->first;
+        auto &pending_my_sid_entries = it->second;
+
+        for (auto iter = pending_my_sid_entries.begin(); iter != pending_my_sid_entries.end();)
+        {
+            string my_sid_string = get<0>(*iter);
+            const string dt_vrf = get<1>(*iter);
+            const string adj = get<2>(*iter);
+            const string end_action = get<3>(*iter);
+
+            SWSS_LOG_INFO("Creating SID %s, action %s, vrf %s, adj %s", my_sid_string.c_str(), end_action.c_str(), dt_vrf.c_str(), adj.c_str());
+        
+            if(!createUpdateMysidEntry(my_sid_string, dt_vrf, adj, end_action))
+            {
+                SWSS_LOG_ERROR("Failed to create/update my_sid entry for sid %s", my_sid_string.c_str());
+                ++iter;
+                continue;
+            }
+
+            SWSS_LOG_INFO("SID %s created successfully", my_sid_string.c_str());
+
+            iter = pending_my_sid_entries.erase(iter);
+        }
+
+        if (pending_my_sid_entries.size() == 0)
+        {
+            m_pendingSRv6MySIDEntries.erase(nexthop_key);
+        }
+    }
+    else
+    {
+        /*
+         * It's a neighbor delete notification, let's uninstall the SRv6 MySID entries associated with that
+         * nexthop from the ASIC, and add them to the SRv6 MySID entries pending set.
+         */
+
+        SWSS_LOG_INFO("Neighbor DELETE event: %s alias '%s', removing associated SRv6 SIDs",
+                        update.entry.ip_address.to_string().c_str(), update.entry.alias.c_str());
+
+        for (auto it = srv6_my_sid_table_.begin(); it != srv6_my_sid_table_.end();)
+        {
+            /* Skip SIDs that are not associated with a L3 Adjacency */
+            if (it->second.endAdjString.empty())
+            {
+                ++it;
+                continue;
+            }
+
+            try
+            {
+                /* Skip SIDs that are not associated with this neighbor */
+                if (IpAddress(it->second.endAdjString) != update.entry.ip_address)
+                {
+                    ++it;
+                    continue;
+                }
+            }
+            catch (const std::invalid_argument &e)
+            {
+                /* SRv6 SID is associated with an invalid L3 Adjacency IP address, skipping */
+                ++it;
+                continue;
+            }
+
+            /*
+             * Save SID entry information to temp variables, before removing the SID.
+             * This information will be consumed used later. 
+             */
+            string my_sid_string = it->first;
+            const string dt_vrf = it->second.endVrfString;
+            const string adj = it->second.endAdjString;
+            string end_action;
+            for (auto iter = end_behavior_map.begin(); iter != end_behavior_map.end(); iter++)
+            {
+                if (iter->second == it->second.endBehavior)
+                {
+                    end_action = iter->first;
+                    break;
+                }
+            }
+
+            /* Skip SIDs with unknown SRv6 behavior */
+            if (end_action.empty())
+            {
+                ++it;
+                continue;
+            }
+
+            SWSS_LOG_INFO("Removing SID %s, action %s, vrf %s, adj %s", my_sid_string.c_str(), dt_vrf.c_str(), adj.c_str(), end_action.c_str());
+
+            /* Let's delete the SID from the ASIC */
+            unordered_map<string, MySidEntry>::iterator tmp = it;
+            ++tmp;
+            if(!deleteMysidEntry(it->first))
+            {
+                SWSS_LOG_ERROR("Failed to delete my_sid entry for sid %s", it->first.c_str());
+                ++it;
+                continue;
+            }
+            it = tmp;
+
+            SWSS_LOG_INFO("SID %s removed successfully", my_sid_string.c_str());
+
+            /*
+             * Finally, add the SID to the pending MySID entries set, so that we can re-install it 
+             * when the neighbor comes back
+             */
+            auto pending_mysid_entry = make_tuple(my_sid_string, dt_vrf, adj, end_action);
+            m_pendingSRv6MySIDEntries[NextHopKey(update.entry.ip_address.to_string(), update.entry.alias)].insert(pending_mysid_entry);
+        }
+    }
+}
+
+void Srv6Orch::update(SubjectType type, void *cntx)
+{
+    SWSS_LOG_ENTER();
+
+    assert(cntx);
+
+    switch(type) {
+    case SUBJECT_TYPE_NEIGH_CHANGE:
+    {
+        NeighborUpdate *update = static_cast<NeighborUpdate *>(cntx);
+        updateNeighbor(*update);
+        break;
+    }
+    default:
+        // Received update in which we are not interested
+        // Ignore it
+        return;
+    }
+}
+
 bool Srv6Orch::sidEntryEndpointBehavior(string action, sai_my_sid_entry_endpoint_behavior_t &end_behavior,
                                         sai_my_sid_entry_endpoint_behavior_flavor_t &end_flavor)
 {
@@ -452,7 +623,23 @@ bool Srv6Orch::mySidVrfRequired(const sai_my_sid_entry_endpoint_behavior_t end_b
     return false;
 }
 
-bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf, const string end_action)
+bool Srv6Orch::mySidNextHopRequired(const sai_my_sid_entry_endpoint_behavior_t end_behavior)
+{
+    if (end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_X ||
+        end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DX4 ||
+        end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_DX6 ||
+        end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_B6_ENCAPS ||
+        end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_B6_ENCAPS_RED ||
+        end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_B6_INSERT ||
+        end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_B6_INSERT_RED ||
+        end_behavior == SAI_MY_SID_ENTRY_ENDPOINT_BEHAVIOR_UA)
+    {
+      return true;
+    }
+    return false;
+}
+
+bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf, const string adj, const string end_action)
 {
     SWSS_LOG_ENTER();
     vector<sai_attribute_t> attributes;
@@ -490,9 +677,9 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
         my_sid_entry = srv6_my_sid_table_[key_string].entry;
     }
 
-    SWSS_LOG_INFO("MySid: sid %s, action %s, vrf %s, block %d, node %d, func %d, arg %d dt_vrf %s",
+    SWSS_LOG_INFO("MySid: sid %s, action %s, vrf %s, block %d, node %d, func %d, arg %d dt_vrf %s, adj %s",
       my_sid_string.c_str(), end_action.c_str(), dt_vrf.c_str(),my_sid_entry.locator_block_len, my_sid_entry.locator_node_len,
-      my_sid_entry.function_len, my_sid_entry.args_len, dt_vrf.c_str());
+      my_sid_entry.function_len, my_sid_entry.args_len, dt_vrf.c_str(), adj.c_str());
 
     if (sidEntryEndpointBehavior(end_action, end_behavior, end_flavor) != true)
     {
@@ -529,6 +716,47 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
         attributes.push_back(vrf_attr);
         vrf_update = true;
     }
+    sai_attribute_t nh_attr;
+    NextHopKey nexthop;
+    bool nh_update = false;
+    if (mySidNextHopRequired(end_behavior))
+    {
+        sai_object_id_t next_hop_id;
+
+        vector<string> adjv = tokenize(adj, ADJ_DELIMITER);
+        if (adjv.size() > 1)
+        {
+            SWSS_LOG_ERROR("Failed to create my_sid entry %s adj %s: ECMP adjacency not yet supported", key_string.c_str(), adj.c_str());
+            return false;
+        }
+
+        nexthop = NextHopKey(adj); 
+        SWSS_LOG_INFO("Adjacency %s", adj.c_str());
+        if (m_neighOrch->hasNextHop(nexthop))
+        {
+            SWSS_LOG_INFO("Nexthop for adjacency %s exists in DB", adj.c_str());
+            next_hop_id = m_neighOrch->getNextHopId(nexthop);
+            if(next_hop_id == SAI_NULL_OBJECT_ID)
+            {
+              SWSS_LOG_INFO("Failed to get nexthop for adjacency %s", adj.c_str());
+              SWSS_LOG_INFO("Nexthop for adjacency %s doesn't exist in DB yet", adj.c_str());
+              auto pending_mysid_entry = make_tuple(key_string, dt_vrf, adj, end_action);
+              m_pendingSRv6MySIDEntries[nexthop].insert(pending_mysid_entry);
+              return false;
+            }
+        }
+        else
+        {
+            SWSS_LOG_INFO("Nexthop for adjacency %s doesn't exist in DB yet", adj.c_str());
+            auto pending_mysid_entry = make_tuple(key_string, dt_vrf, adj, end_action);
+            m_pendingSRv6MySIDEntries[nexthop].insert(pending_mysid_entry);
+            return false;
+        }
+        nh_attr.id = SAI_MY_SID_ENTRY_ATTR_NEXT_HOP_ID;
+        nh_attr.value.oid = next_hop_id;
+        attributes.push_back(nh_attr);
+        nh_update = true;
+    }
     attr.id = SAI_MY_SID_ENTRY_ATTR_ENDPOINT_BEHAVIOR;
     attr.value.s32 = end_behavior;
     attributes.push_back(attr);
@@ -559,12 +787,30 @@ bool Srv6Orch::createUpdateMysidEntry(string my_sid_string, const string dt_vrf,
                 return false;
             }
         }
+        if (nh_update)
+        {
+            status = sai_srv6_api->set_my_sid_entry_attribute(&my_sid_entry, &nh_attr);
+            if(status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to update nexthop to my_sid_entry %s, rv %d", key_string.c_str(), status);
+                return false;
+            }
+        }
     }
     SWSS_LOG_INFO("Store keystring %s in cache", key_string.c_str());
     if(vrf_update)
     {
         m_vrfOrch->increaseVrfRefCount(dt_vrf);
         srv6_my_sid_table_[key_string].endVrfString = dt_vrf;
+    }
+    if(nh_update)
+    {
+        m_neighOrch->increaseNextHopRefCount(nexthop, 1);
+
+        SWSS_LOG_INFO("Increasing refcount to %d for Nexthop %s",
+          m_neighOrch->getNextHopRefCount(nexthop), nexthop.to_string(false,true).c_str());
+
+        srv6_my_sid_table_[key_string].endAdjString = adj;
     }
     srv6_my_sid_table_[key_string].endBehavior = end_behavior;
     srv6_my_sid_table_[key_string].entry = my_sid_entry;
@@ -596,6 +842,15 @@ bool Srv6Orch::deleteMysidEntry(const string my_sid_string)
     {
         m_vrfOrch->decreaseVrfRefCount(srv6_my_sid_table_[my_sid_string].endVrfString);
     }
+    /* Decrease NextHop refcount */
+    if (mySidNextHopRequired(srv6_my_sid_table_[my_sid_string].endBehavior))
+    {
+        NextHopKey nexthop = NextHopKey(srv6_my_sid_table_[my_sid_string].endAdjString);
+        m_neighOrch->decreaseNextHopRefCount(nexthop, 1);
+
+        SWSS_LOG_INFO("Decreasing refcount to %d for Nexthop %s",
+          m_neighOrch->getNextHopRefCount(nexthop), nexthop.to_string(false,true).c_str());
+    }
     srv6_my_sid_table_.erase(my_sid_string);
     return true;
 }
@@ -604,7 +859,7 @@ void Srv6Orch::doTaskMySidTable(const KeyOpFieldsValuesTuple & tuple)
 {
     SWSS_LOG_ENTER();
     string op = kfvOp(tuple);
-    string end_action, dt_vrf;
+    string end_action, dt_vrf, adj;
 
     /* Key for mySid : block_len:node_len:function_len:args_len:sid-ip */
     string keyString = kfvKey(tuple);
@@ -619,10 +874,14 @@ void Srv6Orch::doTaskMySidTable(const KeyOpFieldsValuesTuple & tuple)
         {
           dt_vrf = fvValue(i);
         }
+        if(fvField(i) == "adj")
+        {
+          adj = fvValue(i);
+        }
     }
     if (op == SET_COMMAND)
     {
-        if(!createUpdateMysidEntry(keyString, dt_vrf, end_action))
+        if(!createUpdateMysidEntry(keyString, dt_vrf, adj, end_action))
         {
           SWSS_LOG_ERROR("Failed to create/update my_sid entry for sid %s", keyString.c_str());
           return;
