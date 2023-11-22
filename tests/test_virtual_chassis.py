@@ -896,8 +896,6 @@ class TestVirtualChassis(object):
                                               num_ports)
                 assert len(num) == num_ports
 
-                marker = dvs.add_log_marker()
-
                 # Create port
                 config_db.update_entry("PORT", port, port_info)
                 app_db.wait_for_entry("PORT_TABLE", port)
@@ -906,9 +904,8 @@ class TestVirtualChassis(object):
                 assert len(num) == num_ports
 
                 # Check that we see the logs for removing default vlan
-                matching_log = "removeDefaultVlanMembers: Remove 32 VLAN members from default VLAN"
                 _, logSeen = dvs.runcmd( [ "sh", "-c",
-                     "awk '/{}/,ENDFILE {{print;}}' /var/log/syslog | grep '{}' | wc -l".format( marker, matching_log ) ] )
+                    "awk STARTFILE/ENDFILE /var/log/syslog | grep 'removeDefaultVlanMembers: Remove 32 VLAN members from default VLAN' | wc -l"] )
                 assert logSeen.strip() == "1"
 
             buffer_model.disable_dynamic_buffer(dvs.get_config_db(), dvs.runcmd)
