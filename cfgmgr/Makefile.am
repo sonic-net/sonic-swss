@@ -5,7 +5,7 @@ LIBNL_LIBS = -lnl-genl-3 -lnl-route-3 -lnl-3
 SAIMETA_LIBS = -lsaimeta -lsaimetadata -lzmq
 COMMON_LIBS = -lswsscommon
 
-bin_PROGRAMS = vlanmgrd teammgrd portmgrd intfmgrd buffermgrd vrfmgrd nbrmgrd vxlanmgrd sflowmgrd natmgrd coppmgrd tunnelmgrd macsecmgrd
+bin_PROGRAMS = vlanmgrd teammgrd portmgrd intfmgrd buffermgrd vrfmgrd nbrmgrd vxlanmgrd sflowmgrd natmgrd coppmgrd tunnelmgrd macsecmgrd vrrpmgrd
 
 cfgmgrdir = $(datadir)/swss
 
@@ -96,6 +96,11 @@ macsecmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CF
 macsecmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(CFLAGS_ASAN)
 macsecmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
 
+vrrpmgrd_SOURCES = vrrpmgrd.cpp vrrpmgr.cpp $(top_srcdir)/orchagent/orch.cpp $(top_srcdir)/orchagent/request_parser.cpp $(top_srcdir)/lib/vrrpintf.cpp $(top_srcdir)/orchagent/response_publisher.cpp shellcmd.h
+vrrpmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
+vrrpmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
+vrrpmgrd_LDADD = $(COMMON_LIBS) $(SAIMETA_LIBS)
+
 if GCOV_ENABLED
 vlanmgrd_LDADD += -lgcovpreload
 teammgrd_LDADD += -lgcovpreload
@@ -110,6 +115,7 @@ natmgrd_LDADD += -lgcovpreload
 coppmgrd_LDADD += -lgcovpreload
 tunnelmgrd_LDADD += -lgcovpreload
 macsecmgrd_LDADD += -lgcovpreload
+vrrpmgrd_LDADD += -lgcovpreload
 endif
 
 if ASAN_ENABLED
