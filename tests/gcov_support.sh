@@ -125,17 +125,15 @@ lcov_merge_all()
         fi
     done < infolist
 
-    lcov --extract total.info '*sonic-gcov/*' -o total.info
-
     # Remove unit test files.
-    lcov -o total.info -r total.info "*sonic-gcov/common_work/gcov/orchagent/p4orch/tests/*"
-    lcov -o total.info -r total.info "*sonic-gcov/common_work/gcov/tests/*"
+    lcov -o total.info -r total.info "*tests/*"
+    lcov -o total.info -r total.info "/usr/*"
 
     cp $1/lcov_cobertura.py $1/common_work/gcov/
     python $1/common_work/gcov/lcov_cobertura.py total.info -o coverage.xml
 
-    sed -i "s#common_work/gcov/##" coverage.xml
-    sed -i "s#common_work.gcov.##" coverage.xml
+    sed -i "s#../../__w/1/s/##" coverage.xml
+    sed -i "s#......__w.1.s.##" coverage.xml
 
     cd gcov_output/
     if [ ! -d ${ALLMERGE_DIR} ]; then
@@ -385,9 +383,7 @@ main()
             echo "Usage:"
             echo " collect               collect .gcno files based on module"
             echo " collect_gcda          collect .gcda files"
-            echo " collect_gcda_files    collect .gcda files in a docker"
             echo " generate              generate gcov report in html form (all or submodule_name)"
-            echo " tar_output            tar gcov_output forder"
             echo " merge_container_info  merge homonymic info files from different container"
             echo " set_environment       set environment ready for report generating in containers"
     esac
