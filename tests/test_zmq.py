@@ -82,11 +82,11 @@ class TestZmqDash(object):
         asic_direction_lookup_table = Table(
             dvs.get_asic_db(), "ASIC_STATE:SAI_OBJECT_TYPE_DIRECTION_LOOKUP_ENTRY")
         direction_entries = asic_direction_lookup_table.get_keys()
-        zmq_logger.warning("Keys from asic_direction_lookup_table: {}".format(direction_entries))
+        zmq_logger.info("Keys from asic_direction_lookup_table: {}".format(direction_entries))
 
         assert direction_entries
         fvs = asic_direction_lookup_table[direction_entries[0]]
-        zmq_logger.warning("Data from asic_direction_lookup_table: {}={}".format(direction_entries[0], fvs))
+        zmq_logger.info("Data from asic_direction_lookup_table: {}={}".format(direction_entries[0], fvs))
         for fv in fvs.items():
             if fv[0] == "SAI_DIRECTION_LOOKUP_ENTRY_ATTR_ACTION":
                 assert fv[1] == "SAI_DIRECTION_LOOKUP_ENTRY_ACTION_SET_OUTBOUND_DIRECTION"
@@ -94,11 +94,11 @@ class TestZmqDash(object):
         asic_vip_table = Table(
             dvs.get_asic_db(), "ASIC_STATE:SAI_OBJECT_TYPE_VIP_ENTRY")
         vip_entries = asic_vip_table.get_keys()
-        zmq_logger.warning("Keys from asic_vip_table: {}".format(direction_entries))
+        zmq_logger.info("Keys from asic_vip_table: {}".format(direction_entries))
 
         assert vip_entries
         fvs = asic_vip_table[vip_entries[0]]
-        zmq_logger.warning("Data from asic_vip_table: {}={}".format(vip_entries[0], fvs))
+        zmq_logger.info("Data from asic_vip_table: {}={}".format(vip_entries[0], fvs))
         for fv in fvs.items():
             if fv[0] == "SAI_VIP_ENTRY_ATTR_ACTION":
                 assert fv[1] == "SAI_VIP_ENTRY_ACTION_ACCEPT"
