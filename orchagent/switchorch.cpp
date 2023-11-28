@@ -1049,12 +1049,25 @@ void SwitchOrch::onSwitchAsicSdkHealthEvent(sai_object_id_t switch_id,
     switch (data.data_type)
     {
     case SAI_HEALTH_DATA_TYPE_GENERAL:
-        SWSS_LOG_INFO("Before reinterpret_cast");
-        description_str = string(reinterpret_cast<char*>(description.list));
+    {
+        vector<uint8_t> description_with_terminator(description.list, description.list + description.count);
+        // Add the terminate character
+        description_with_terminator.push_back(0);
+        description_str = string(reinterpret_cast<char*>(description_with_terminator.data()));
+        // Remove unprintable characters but keep CR and NL
+        description_str.erase(std::remove_if(
+                                  description_str.begin(),
+                                  description_str.end(),
+                                  [](unsigned char x) {
+                                      return (x != 0x0d) && (x != 0x0a) && !std::isprint(x);
+                                  }),
+                              description_str.end());
         break;
+    }
     default:
         SWSS_LOG_ERROR("Unknown data type %d when receiving ASIC/SDK health event", data.data_type);
         // Do not return. The ASIC/SDK health event will still be recorded but without the description
+        break;
     }
 
     SWSS_LOG_NOTICE("[%s] ASIC/SDK health event occurred at %s, asic <asicid>, category %s: %s", severity_str.c_str(), time_ss.str().c_str(), category_str.c_str(), description_str.c_str());
