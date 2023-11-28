@@ -147,8 +147,8 @@ bool OrchDaemon::init()
 
     TableConnector stateDbBfdSessionTable(m_stateDb, STATE_BFD_SESSION_TABLE_NAME);
 
-    BgpGolbalStateOrch* bgp_global_state_orch;
-    bgp_global_state_orch = new BgpGolbalStateOrch(m_configDb, CFG_BGP_DEVICE_GLOBAL_TABLE_NAME);
+    BgpGlobalStateOrch* bgp_global_state_orch;
+    bgp_global_state_orch = new BgpGlobalStateOrch(m_configDb, CFG_BGP_DEVICE_GLOBAL_TABLE_NAME);
     gDirectory.set(bgp_global_state_orch);
 
     gBfdOrch = new BfdOrch(m_applDb, APP_BFD_SESSION_TABLE_NAME, stateDbBfdSessionTable);

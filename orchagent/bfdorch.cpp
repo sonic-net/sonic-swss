@@ -74,7 +74,7 @@ BfdOrch::BfdOrch(DBConnector *db, string tableName, TableConnector stateDbBfdSes
 
     Orch::addExecutor(bfdStateNotificatier);
     register_state_change_notif = false;
-    BgpGolbalStateOrch* bgp_global_state_orch = gDirectory.get<BgpGolbalStateOrch*>();
+    BgpGlobalStateOrch* bgp_global_state_orch = gDirectory.get<BgpGlobalStateOrch*>();
     tsa_enabled = bgp_global_state_orch->getTsaState();
 }
 
@@ -636,38 +636,37 @@ void BfdOrch::handleTsaStateChange(bool tsaState)
             notify_session_state_down(it.first);
             if (!remove_bfd_session(it.first))
             {
-                SWSS_LOG_ERROR("Failed ot remove BFD session %s\n", it.first.c_str());
+                SWSS_LOG_ERROR("Failed to remove BFD session %s\n", it.first.c_str());
             }
         } else
         {
             if (!create_bfd_session(it.first, it.second))
             {
-                SWSS_LOG_ERROR("Failed ot create BFD session %s\n", it.first.c_str());
+                SWSS_LOG_ERROR("Failed to create BFD session %s\n", it.first.c_str());
             }
         }
     }
 }
 
-BgpGolbalStateOrch::BgpGolbalStateOrch(DBConnector *db, string tableName):
+BgpGlobalStateOrch::BgpGlobalStateOrch(DBConnector *db, string tableName):
     Orch(db, tableName)
 {
     SWSS_LOG_ENTER();
     tsa_enabled = false;
-    SWSS_LOG_ERROR("BgpGolbalStateOrch init complete\n");
+    SWSS_LOG_ERROR("BgpGlobalStateOrch init complete\n");
 }
 
-BgpGolbalStateOrch::~BgpGolbalStateOrch(void)
+BgpGlobalStateOrch::~BgpGlobalStateOrch(void)
 {
     SWSS_LOG_ENTER();
 }
 
-bool BgpGolbalStateOrch::getTsaState()
+bool BgpGlobalStateOrch::getTsaState()
 {
     SWSS_LOG_ENTER();
-    SWSS_LOG_ERROR("SOME ONE CALLED ME\n");
     return tsa_enabled;
 }
-void BgpGolbalStateOrch::doTask(Consumer &consumer)
+void BgpGlobalStateOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
@@ -682,7 +681,6 @@ void BgpGolbalStateOrch::doTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            SWSS_LOG_INFO("SET on key %s\n", key.c_str());
             for (auto i : data)
             {
                 auto value = fvValue(i);

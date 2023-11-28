@@ -44,12 +44,12 @@ private:
 
 };
 
-class BgpGolbalStateOrch : public Orch
+class BgpGlobalStateOrch : public Orch
 {
 public:
     void doTask(Consumer &consumer);
-    BgpGolbalStateOrch(swss::DBConnector *db, std::string tableName);
-    virtual ~BgpGolbalStateOrch(void);
+    BgpGlobalStateOrch(swss::DBConnector *db, std::string tableName);
+    virtual ~BgpGlobalStateOrch(void);
     bool getTsaState();
 
 private:
