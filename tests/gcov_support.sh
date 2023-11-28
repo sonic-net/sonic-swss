@@ -125,7 +125,8 @@ lcov_merge_all()
         fi
     done < infolist
 
-    lcov --extract total.info '*sonic-gcov/*' -o total.info
+    # Fix total.info empty issue
+    # lcov --extract total.info '*sonic-gcov/*' -o total.info
 
     # Remove unit test files.
     lcov -o total.info -r total.info "*sonic-gcov/common_work/gcov/orchagent/p4orch/tests/*"

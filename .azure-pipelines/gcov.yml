@@ -51,7 +51,7 @@ jobs:
     DIFF_COVER_ENABLE: 'true'
 
   container:
-    image: sonicdev-microsoft.azurecr.io:443/${{ parameters.sonic_slave }}:latest
+    image: sonicdev-microsoft.azurecr.io:443/sonic-slave-buster:latest
   
 
   steps:
@@ -59,9 +59,9 @@ jobs:
         set -ex
         # Install .NET CORE
         curl -sSL https://packages.microsoft.com/keys/microsoft.asc | sudo apt-key add -
-        sudo apt-add-repository https://packages.microsoft.com/debian/11/prod
+        sudo apt-add-repository https://packages.microsoft.com/debian/10/prod
         sudo apt-get update
-        sudo apt-get install -y dotnet-sdk-7.0
+        sudo apt-get install -y dotnet-sdk-5.0
     displayName: "Install .NET CORE"
   - script: |
       sudo apt-get install -y lcov
@@ -94,8 +94,8 @@ jobs:
       pushd ./s/
       sudo tar -zcvf swss.tar.gz ./*
       ls -lh ./*
-      cp ./gcovpreload/lcov_cobertura.py $(Build.ArtifactStagingDirectory)/
-      cp ./tests/gcov_support.sh $(Build.ArtifactStagingDirectory)/sonic-gcov
+      sudo cp ./gcovpreload/lcov_cobertura.py $(Build.ArtifactStagingDirectory)/
+      sudo cp ./tests/gcov_support.sh $(Build.ArtifactStagingDirectory)/sonic-gcov
       sudo cp -rf swss.tar.gz $(Build.ArtifactStagingDirectory)/sonic-gcov
       popd
       sudo cp -rf $(Build.ArtifactStagingDirectory)/sonic-gcov ./
