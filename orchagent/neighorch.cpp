@@ -237,6 +237,8 @@ bool NeighOrch::addNextHop(const NextHopKey &nh)
     {
         next_hop_attr.id = SAI_NEXT_HOP_ATTR_TYPE;
         next_hop_attr.value.s32 = SAI_NEXT_HOP_TYPE_MPLS;
+        next_hop_attr.id = SAI_NEXT_HOP_ATTR_TYPE;
+        next_hop_attr.value.s32 = SAI_NEXT_HOP_TYPE_MPLS;
         next_hop_attrs.push_back(next_hop_attr);
 
         next_hop_attr.id = SAI_NEXT_HOP_ATTR_OUTSEG_TYPE;
