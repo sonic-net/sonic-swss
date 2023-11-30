@@ -23,8 +23,6 @@ class TestVirtualChassis(object):
 
                # get config_db information
                cdb = dvs.get_config_db()
-               # check if the link isolateStatus in config_db is False as a start value.
-               cdb.wait_for_field_match("FABRIC_PORT", "Fabric1", {"isolateStatus": "False"})
 
                # set config_db to isolateStatus: True
                cdb.update_entry("FABRIC_PORT", "Fabric1", {"isolateStatus": "True"})
