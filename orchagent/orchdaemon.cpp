@@ -128,6 +128,7 @@ bool OrchDaemon::init()
 
     vector<table_name_with_pri_t> ports_tables = {
         { APP_PORT_TABLE_NAME,        portsorch_base_pri + 5 },
+        { APP_SEND_TO_INGRESS_PORT_TABLE_NAME,        portsorch_base_pri + 5 },
         { APP_VLAN_TABLE_NAME,        portsorch_base_pri + 2 },
         { APP_VLAN_MEMBER_TABLE_NAME, portsorch_base_pri     },
         { APP_LAG_TABLE_NAME,         portsorch_base_pri + 4 },
@@ -179,7 +180,7 @@ bool OrchDaemon::init()
     gDirectory.set(vnet_rt_orch);
     VRFOrch *vrf_orch = new VRFOrch(m_applDb, APP_VRF_TABLE_NAME, m_stateDb, STATE_VRF_OBJECT_TABLE_NAME);
     gDirectory.set(vrf_orch);
-    gMonitorOrch = new MonitorOrch(m_stateDb, STATE_VNET_MONITOR_TABLE_NAME); 
+    gMonitorOrch = new MonitorOrch(m_stateDb, STATE_VNET_MONITOR_TABLE_NAME);
     gDirectory.set(gMonitorOrch);
 
     const vector<string> chassis_frontend_tables = {
@@ -263,6 +264,7 @@ bool OrchDaemon::init()
     gDirectory.set(dash_route_orch);
 
     vector<string> dash_acl_tables = {
+        APP_DASH_PREFIX_TAG_TABLE_NAME,
         APP_DASH_ACL_IN_TABLE_NAME,
         APP_DASH_ACL_OUT_TABLE_NAME,
         APP_DASH_ACL_GROUP_TABLE_NAME,
@@ -869,7 +871,7 @@ void OrchDaemon::start()
                     flush();
 
                     SWSS_LOG_WARN("Orchagent is frozen for warm restart!");
-                    sleep(UINT_MAX);
+                    freezeAndHeartBeat(UINT_MAX);
                 }
             }
         }
@@ -1035,6 +1037,19 @@ void OrchDaemon::heartBeat(std::chrono::time_point<std::chrono::high_resolution_
         m_lastHeartBeat = tcurrent;
         // output heart beat message to supervisord with 'PROCESS_COMMUNICATION_STDOUT' event: http://supervisord.org/events.html
         cout << "<!--XSUPERVISOR:BEGIN-->heartbeat<!--XSUPERVISOR:END-->" << endl;
+    }
+}
+
+void OrchDaemon::freezeAndHeartBeat(unsigned int duration)
+{
+    while (duration > 0)
+    {
+        // Send heartbeat message to prevent Orchagent stuck alert.
+        auto tend = std::chrono::high_resolution_clock::now();
+        heartBeat(tend);
+
+        duration--;
+        sleep(1);
     }
 }
 

@@ -1,5 +1,10 @@
 // includes -----------------------------------------------------------------------------------------------------------
 
+extern "C" {
+#include <saihash.h>
+#include <saiswitch.h>
+}
+
 #include <unordered_map>
 #include <unordered_set>
 #include <string>
@@ -34,6 +39,17 @@ static const std::unordered_map<std::string, sai_native_hash_field_t> swHashHash
     { SWITCH_HASH_FIELD_INNER_SRC_IP,      SAI_NATIVE_HASH_FIELD_INNER_SRC_IP      },
     { SWITCH_HASH_FIELD_INNER_L4_DST_PORT, SAI_NATIVE_HASH_FIELD_INNER_L4_DST_PORT },
     { SWITCH_HASH_FIELD_INNER_L4_SRC_PORT, SAI_NATIVE_HASH_FIELD_INNER_L4_SRC_PORT }
+};
+
+static const std::unordered_map<std::string, sai_hash_algorithm_t> swHashAlgorithmMap =
+{
+    { SWITCH_HASH_ALGORITHM_CRC,       SAI_HASH_ALGORITHM_CRC       },
+    { SWITCH_HASH_ALGORITHM_XOR,       SAI_HASH_ALGORITHM_XOR       },
+    { SWITCH_HASH_ALGORITHM_RANDOM,    SAI_HASH_ALGORITHM_RANDOM    },
+    { SWITCH_HASH_ALGORITHM_CRC_32LO,  SAI_HASH_ALGORITHM_CRC_32LO  },
+    { SWITCH_HASH_ALGORITHM_CRC_32HI,  SAI_HASH_ALGORITHM_CRC_32HI  },
+    { SWITCH_HASH_ALGORITHM_CRC_CCITT, SAI_HASH_ALGORITHM_CRC_CCITT },
+    { SWITCH_HASH_ALGORITHM_CRC_XOR,   SAI_HASH_ALGORITHM_CRC_XOR   }
 };
 
 // switch helper ------------------------------------------------------------------------------------------------------
@@ -86,6 +102,30 @@ bool SwitchHelper::parseSwHashFieldList(T &obj, const std::string &field, const 
     return true;
 }
 
+template<typename T>
+bool SwitchHelper::parseSwHashAlgorithm(T &obj, const std::string &field, const std::string &value) const
+{
+    SWSS_LOG_ENTER();
+
+    if (value.empty())
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): empty value is prohibited", field.c_str());
+        return false;
+    }
+
+    const auto &cit = swHashAlgorithmMap.find(value);
+    if (cit == swHashAlgorithmMap.cend())
+    {
+        SWSS_LOG_ERROR("Failed to parse field(%s): invalid value(%s)", field.c_str(), value.c_str());
+        return false;
+    }
+
+    obj.value = cit->second;
+    obj.is_set = true;
+
+    return true;
+}
+
 bool SwitchHelper::parseSwHashEcmpHash(SwitchHash &hash, const std::string &field, const std::string &value) const
 {
     return parseSwHashFieldList(hash.ecmp_hash, field, value);
@@ -94,6 +134,16 @@ bool SwitchHelper::parseSwHashEcmpHash(SwitchHash &hash, const std::string &fiel
 bool SwitchHelper::parseSwHashLagHash(SwitchHash &hash, const std::string &field, const std::string &value) const
 {
     return parseSwHashFieldList(hash.lag_hash, field, value);
+}
+
+bool SwitchHelper::parseSwHashEcmpHashAlgorithm(SwitchHash &hash, const std::string &field, const std::string &value) const
+{
+    return parseSwHashAlgorithm(hash.ecmp_hash_algorithm, field, value);
+}
+
+bool SwitchHelper::parseSwHashLagHashAlgorithm(SwitchHash &hash, const std::string &field, const std::string &value) const
+{
+    return parseSwHashAlgorithm(hash.lag_hash_algorithm, field, value);
 }
 
 bool SwitchHelper::parseSwHash(SwitchHash &hash) const
@@ -119,6 +169,20 @@ bool SwitchHelper::parseSwHash(SwitchHash &hash) const
                 return false;
             }
         }
+        else if (field == SWITCH_HASH_ECMP_HASH_ALGORITHM)
+        {
+            if (!parseSwHashEcmpHashAlgorithm(hash, field, value))
+            {
+                return false;
+            }
+        }
+        else if (field == SWITCH_HASH_LAG_HASH_ALGORITHM)
+        {
+            if (!parseSwHashLagHashAlgorithm(hash, field, value))
+            {
+                return false;
+            }
+        }
         else
         {
             SWSS_LOG_WARN("Unknown field(%s): skipping ...", field.c_str());
@@ -132,7 +196,10 @@ bool SwitchHelper::validateSwHash(SwitchHash &hash) const
 {
     SWSS_LOG_ENTER();
 
-    if (!hash.ecmp_hash.is_set && !hash.lag_hash.is_set)
+    auto cond = hash.ecmp_hash.is_set || hash.lag_hash.is_set;
+    cond = cond || hash.ecmp_hash_algorithm.is_set || hash.lag_hash_algorithm.is_set;
+
+    if (!cond)
     {
         SWSS_LOG_ERROR("Validation error: missing valid fields");
         return false;

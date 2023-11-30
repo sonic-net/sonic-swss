@@ -16,6 +16,7 @@
 #include "flexcounterorch.h"
 #include "events.h"
 
+#include "port/port_capabilities.h"
 #include "port/porthlpr.h"
 #include "port/portschema.h"
 
@@ -239,6 +240,7 @@ private:
     unique_ptr<Table> m_counterSysPortTable;
     unique_ptr<Table> m_counterLagTable;
     unique_ptr<Table> m_portTable;
+    unique_ptr<Table> m_sendToIngressPortTable;
     unique_ptr<Table> m_gearboxTable;
     unique_ptr<Table> m_queueTable;
     unique_ptr<Table> m_voqTable;
@@ -276,6 +278,7 @@ private:
     std::map<sai_object_id_t, PortFecModeCapability_t> m_portSupportedFecModes;
 
     bool m_initDone = false;
+    bool m_isSendToIngressPortConfigured = false;
     Port m_cpuPort;
     // TODO: Add Bridge/Vlan class
     sai_object_id_t m_default1QBridge;
@@ -331,6 +334,7 @@ private:
     void doTask() override;
     void doTask(Consumer &consumer);
     void doPortTask(Consumer &consumer);
+    void doSendToIngressPortTask(Consumer &consumer);
     void doVlanTask(Consumer &consumer);
     void doVlanMemberTask(Consumer &consumer);
     void doLagTask(Consumer &consumer);
@@ -464,6 +468,9 @@ private:
 
     bool getSaiAclBindPointType(Port::Type                type,
                                 sai_acl_bind_point_type_t &sai_acl_bind_type);
+
+    ReturnCode addSendToIngressHostIf(const std::string &send_to_ingress_name);
+    ReturnCode removeSendToIngressHostIf();
     void initGearbox();
     bool initGearboxPort(Port &port);
     bool getPortOperFec(const Port& port, sai_port_fec_mode_t &fec_mode) const;
@@ -501,6 +508,9 @@ private:
 private:
     // Port config aggregator
     std::unordered_map<std::string, std::unordered_map<std::string, std::string>> m_portConfigMap;
+
+    // Port OA capabilities
+    PortCapabilities m_portCap;
 
     // Port OA helper
     PortHelper m_portHlpr;

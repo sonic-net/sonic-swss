@@ -459,6 +459,8 @@ namespace aclorch_test
             gMirrorOrch = nullptr;
             delete gRouteOrch;
             gRouteOrch = nullptr;
+            delete gSrv6Orch;
+            gSrv6Orch = nullptr;
             delete gNeighOrch;
             gNeighOrch = nullptr;
             delete gFdbOrch;
@@ -473,8 +475,6 @@ namespace aclorch_test
             gPortsOrch = nullptr;
             delete gFgNhgOrch;
             gFgNhgOrch = nullptr;
-            delete gSrv6Orch;
-            gSrv6Orch = nullptr;
 
             auto status = sai_switch_api->remove_switch(gSwitchId);
             ASSERT_EQ(status, SAI_STATUS_SUCCESS);

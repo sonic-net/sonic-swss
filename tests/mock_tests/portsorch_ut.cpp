@@ -314,6 +314,7 @@ namespace portsorch_test
 
             vector<table_name_with_pri_t> ports_tables = {
                 { APP_PORT_TABLE_NAME, portsorch_base_pri + 5 },
+                { APP_SEND_TO_INGRESS_PORT_TABLE_NAME, portsorch_base_pri + 5 },
                 { APP_VLAN_TABLE_NAME, portsorch_base_pri + 2 },
                 { APP_VLAN_MEMBER_TABLE_NAME, portsorch_base_pri },
                 { APP_LAG_TABLE_NAME, portsorch_base_pri + 4 },
@@ -1236,6 +1237,7 @@ namespace portsorch_test
     TEST_F(PortsOrchTest, PortReadinessColdBoot)
     {
         Table portTable = Table(m_app_db.get(), APP_PORT_TABLE_NAME);
+        Table sendToIngressPortTable = Table(m_app_db.get(), APP_SEND_TO_INGRESS_PORT_TABLE_NAME);
         Table pgTable = Table(m_app_db.get(), APP_BUFFER_PG_TABLE_NAME);
         Table pgTableCfg = Table(m_config_db.get(), CFG_BUFFER_PG_TABLE_NAME);
         Table profileTable = Table(m_app_db.get(), APP_BUFFER_PROFILE_TABLE_NAME);
@@ -1289,6 +1291,8 @@ namespace portsorch_test
 
         // Set PortConfigDone
         portTable.set("PortConfigDone", { { "count", to_string(ports.size()) } });
+        // Populate send to ingresss port table
+        sendToIngressPortTable.set("SEND_TO_INGRESS", {{"NULL", "NULL"}});
 
         // refill consumer
         gPortsOrch->addExistingData(&portTable);
