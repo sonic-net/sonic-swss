@@ -497,6 +497,17 @@ bool SwitchOrch::setSwitchHashFieldListSai(const SwitchHash &hash, bool isEcmpHa
     return status == SAI_STATUS_SUCCESS;
 }
 
+bool SwitchOrch::setSwitchHashAlgorithmSai(const SwitchHash &hash, bool isEcmpHash) const
+{
+    sai_attribute_t attr;
+
+    attr.id = isEcmpHash ? SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_ALGORITHM : SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_ALGORITHM;
+    attr.value.s32 = static_cast<sai_int32_t>(isEcmpHash ? hash.ecmp_hash_algorithm.value : hash.lag_hash_algorithm.value);
+
+    auto status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    return status == SAI_STATUS_SUCCESS;
+}
+
 bool SwitchOrch::setSwitchHash(const SwitchHash &hash)
 {
     SWSS_LOG_ENTER();
@@ -570,6 +581,76 @@ bool SwitchOrch::setSwitchHash(const SwitchHash &hash)
         if (hObj.lag_hash.is_set)
         {
             SWSS_LOG_ERROR("Failed to remove switch LAG hash configuration: operation is not supported");
+            return false;
+        }
+    }
+
+    if (hash.ecmp_hash_algorithm.is_set)
+    {
+        if (!hObj.ecmp_hash_algorithm.is_set || (hObj.ecmp_hash_algorithm.value != hash.ecmp_hash_algorithm.value))
+        {
+            if (swCap.isSwitchEcmpHashAlgorithmSupported())
+            {
+                if (!swCap.validateSwitchEcmpHashAlgorithmCap(hash.ecmp_hash_algorithm.value))
+                {
+                    SWSS_LOG_ERROR("Failed to validate switch ECMP hash algorithm: capability is not supported");
+                    return false;
+                }
+
+                if (!setSwitchHashAlgorithmSai(hash, true))
+                {
+                    SWSS_LOG_ERROR("Failed to set switch ECMP hash algorithm in SAI");
+                    return false;
+                }
+
+                cfgUpd = true;
+            }
+            else
+            {
+                SWSS_LOG_WARN("Switch ECMP hash algorithm configuration is not supported: skipping ...");
+            }
+        }
+    }
+    else
+    {
+        if (hObj.ecmp_hash_algorithm.is_set)
+        {
+            SWSS_LOG_ERROR("Failed to remove switch ECMP hash algorithm configuration: operation is not supported");
+            return false;
+        }
+    }
+
+    if (hash.lag_hash_algorithm.is_set)
+    {
+        if (!hObj.lag_hash_algorithm.is_set || (hObj.lag_hash_algorithm.value != hash.lag_hash_algorithm.value))
+        {
+            if (swCap.isSwitchLagHashAlgorithmSupported())
+            {
+                if (!swCap.validateSwitchLagHashAlgorithmCap(hash.lag_hash_algorithm.value))
+                {
+                    SWSS_LOG_ERROR("Failed to validate switch LAG hash algorithm: capability is not supported");
+                    return false;
+                }
+
+                if (!setSwitchHashAlgorithmSai(hash, false))
+                {
+                    SWSS_LOG_ERROR("Failed to set switch LAG hash algorithm in SAI");
+                    return false;
+                }
+
+                cfgUpd = true;
+            }
+            else
+            {
+                SWSS_LOG_WARN("Switch LAG hash algorithm configuration is not supported: skipping ...");
+            }
+        }
+    }
+    else
+    {
+        if (hObj.lag_hash_algorithm.is_set)
+        {
+            SWSS_LOG_ERROR("Failed to remove switch LAG hash algorithm configuration: operation is not supported");
             return false;
         }
     }

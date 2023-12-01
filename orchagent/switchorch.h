@@ -58,6 +58,7 @@ private:
 
     // Switch hash
     bool setSwitchHashFieldListSai(const SwitchHash &hash, bool isEcmpHash) const;
+    bool setSwitchHashAlgorithmSai(const SwitchHash &hash, bool isEcmpHash) const;
     bool setSwitchHash(const SwitchHash &hash);
 
     bool getSwitchHashOidSai(sai_object_id_t &oid, bool isEcmpHash) const;
