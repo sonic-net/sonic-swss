@@ -378,17 +378,15 @@ void DashAclGroupMgr::createRule(DashAclGroup& group, DashAclRule& rule)
     attrs.emplace_back();
     attrs.back().id = SAI_DASH_ACL_RULE_ATTR_PROTOCOL;
 
-    if (rule.m_protocols.size())
-    {
-        attrs.back().value.u8list.count = static_cast<uint32_t>(rule.m_protocols.size());
-        attrs.back().value.u8list.list = rule.m_protocols.data();
+    vector<uint8_t> protocols;
+    if (rule.m_protocols.size()) {
+        protocols = rule.m_protocols;
+    } else {
+        protocols = all_protocols;
     }
-    else
-    {
-        auto protocols = all_protocols;
-        attrs.back().value.u8list.count = static_cast<uint32_t>(protocols.size());
-        attrs.back().value.u8list.list = protocols.data();
-    }
+
+    attrs.back().value.u8list.count = static_cast<uint32_t>(protocols.size());
+    attrs.back().value.u8list.list = protocols.data();
 
     if (!rule.m_src_prefixes.empty())
     {

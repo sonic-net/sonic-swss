@@ -1,9 +1,10 @@
 // includes -----------------------------------------------------------------------------------------------------------
 
 extern "C" {
+#include <saitypes.h>
 #include <saiobject.h>
 #include <saistatus.h>
-#include <saitypes.h>
+#include <saihash.h>
 #include <saiswitch.h>
 }
 
@@ -11,6 +12,7 @@ extern "C" {
 #include <string>
 #include <vector>
 #include <set>
+#include <unordered_map>
 #include <algorithm>
 
 #include <sai_serialize.h>
@@ -26,8 +28,14 @@ using namespace swss;
 // defines ------------------------------------------------------------------------------------------------------------
 
 #define SWITCH_CAPABILITY_HASH_NATIVE_HASH_FIELD_LIST_FIELD "HASH|NATIVE_HASH_FIELD_LIST"
-#define SWITCH_CAPABILITY_ECMP_HASH_CAPABLE_FIELD           "ECMP_HASH_CAPABLE"
-#define SWITCH_CAPABILITY_LAG_HASH_CAPABLE_FIELD            "LAG_HASH_CAPABLE"
+
+#define SWITCH_CAPABILITY_ECMP_HASH_CAPABLE_FIELD "ECMP_HASH_CAPABLE"
+#define SWITCH_CAPABILITY_LAG_HASH_CAPABLE_FIELD  "LAG_HASH_CAPABLE"
+
+#define SWITCH_CAPABILITY_ECMP_HASH_ALGORITHM_FIELD         "ECMP_HASH_ALGORITHM"
+#define SWITCH_CAPABILITY_ECMP_HASH_ALGORITHM_CAPABLE_FIELD "ECMP_HASH_ALGORITHM_CAPABLE"
+#define SWITCH_CAPABILITY_LAG_HASH_ALGORITHM_FIELD          "LAG_HASH_ALGORITHM"
+#define SWITCH_CAPABILITY_LAG_HASH_ALGORITHM_CAPABLE_FIELD  "LAG_HASH_ALGORITHM_CAPABLE"
 
 #define SWITCH_CAPABILITY_KEY "switch"
 
@@ -58,20 +66,45 @@ static const std::unordered_map<sai_native_hash_field_t, std::string> swHashHash
     { SAI_NATIVE_HASH_FIELD_INNER_L4_SRC_PORT, SWITCH_HASH_FIELD_INNER_L4_SRC_PORT }
 };
 
+static const std::unordered_map<sai_hash_algorithm_t, std::string> swHashAlgorithmMap =
+{
+    { SAI_HASH_ALGORITHM_CRC,       SWITCH_HASH_ALGORITHM_CRC       },
+    { SAI_HASH_ALGORITHM_XOR,       SWITCH_HASH_ALGORITHM_XOR       },
+    { SAI_HASH_ALGORITHM_RANDOM,    SWITCH_HASH_ALGORITHM_RANDOM    },
+    { SAI_HASH_ALGORITHM_CRC_32LO,  SWITCH_HASH_ALGORITHM_CRC_32LO  },
+    { SAI_HASH_ALGORITHM_CRC_32HI,  SWITCH_HASH_ALGORITHM_CRC_32HI  },
+    { SAI_HASH_ALGORITHM_CRC_CCITT, SWITCH_HASH_ALGORITHM_CRC_CCITT },
+    { SAI_HASH_ALGORITHM_CRC_XOR,   SWITCH_HASH_ALGORITHM_CRC_XOR   }
+};
+
 // variables ----------------------------------------------------------------------------------------------------------
 
 extern sai_object_id_t gSwitchId;
 
 // functions ----------------------------------------------------------------------------------------------------------
 
-static std::string toStr(sai_object_type_t objType, sai_attr_id_t attrId) noexcept
+static std::string toStr(sai_object_type_t objType, sai_attr_id_t attrId)
 {
     const auto *meta = sai_metadata_get_attr_metadata(objType, attrId);
 
     return meta != nullptr ? meta->attridname : "UNKNOWN";
 }
 
-static std::string toStr(const std::set<sai_native_hash_field_t> &value) noexcept
+static std::string toStr(sai_native_hash_field_t value)
+{
+    const auto *name = sai_metadata_get_native_hash_field_name(value);
+
+    return name != nullptr ? name : "UNKNOWN";
+}
+
+static std::string toStr(sai_hash_algorithm_t value)
+{
+    const auto *name = sai_metadata_get_hash_algorithm_name(value);
+
+    return name != nullptr ? name : "UNKNOWN";
+}
+
+static std::string toStr(const std::set<sai_native_hash_field_t> &value)
 {
     std::vector<std::string> strList;
 
@@ -87,9 +120,31 @@ static std::string toStr(const std::set<sai_native_hash_field_t> &value) noexcep
     return join(",", strList.cbegin(), strList.cend());
 }
 
-static std::string toStr(bool value) noexcept
+static std::string toStr(const std::set<sai_hash_algorithm_t> &value)
+{
+    std::vector<std::string> strList;
+
+    for (const auto &cit1 : value)
+    {
+        const auto &cit2 = swHashAlgorithmMap.find(cit1);
+        if (cit2 != swHashAlgorithmMap.cend())
+        {
+            strList.push_back(cit2->second);
+        }
+    }
+
+    return join(",", strList.cbegin(), strList.cend());
+}
+
+static std::string toStr(bool value)
 {
     return value ? "true" : "false";
+}
+
+template <typename T1, typename T2>
+static void insertBack(T1 &out, const T2 &in)
+{
+    out.insert(out.end(), in.cbegin(), in.cend());
 }
 
 // Switch capabilities ------------------------------------------------------------------------------------------------
@@ -122,8 +177,20 @@ bool SwitchCapabilities::isSwitchLagHashSupported() const
     return nativeHashFieldList.isAttrSupported && lagHash.isAttrSupported;
 }
 
+bool SwitchCapabilities::isSwitchEcmpHashAlgorithmSupported() const
+{
+    return switchCapabilities.ecmpHashAlgorithm.isAttrSupported;
+}
+
+bool SwitchCapabilities::isSwitchLagHashAlgorithmSupported() const
+{
+    return switchCapabilities.lagHashAlgorithm.isAttrSupported;
+}
+
 bool SwitchCapabilities::validateSwitchHashFieldCap(const std::set<sai_native_hash_field_t> &hfSet) const
 {
+    SWSS_LOG_ENTER();
+
     if (!hashCapabilities.nativeHashFieldList.isEnumSupported)
     {
         return true;
@@ -139,9 +206,44 @@ bool SwitchCapabilities::validateSwitchHashFieldCap(const std::set<sai_native_ha
     {
         if (hashCapabilities.nativeHashFieldList.hfSet.count(cit) == 0)
         {
-            SWSS_LOG_ERROR("Failed to validate hash field: value(%s) is not supported");
+            SWSS_LOG_ERROR("Failed to validate hash field: value(%s) is not supported", toStr(cit).c_str());
             return false;
         }
+    }
+
+    return true;
+}
+
+bool SwitchCapabilities::validateSwitchEcmpHashAlgorithmCap(sai_hash_algorithm_t haValue) const
+{
+    return validateSwitchHashAlgorithmCap(switchCapabilities.ecmpHashAlgorithm, haValue);
+}
+
+bool SwitchCapabilities::validateSwitchLagHashAlgorithmCap(sai_hash_algorithm_t haValue) const
+{
+    return validateSwitchHashAlgorithmCap(switchCapabilities.lagHashAlgorithm, haValue);
+}
+
+template<typename T>
+bool SwitchCapabilities::validateSwitchHashAlgorithmCap(const T &obj, sai_hash_algorithm_t haValue) const
+{
+    SWSS_LOG_ENTER();
+
+    if (!obj.isEnumSupported)
+    {
+        return true;
+    }
+
+    if (obj.haSet.empty())
+    {
+        SWSS_LOG_ERROR("Failed to validate hash algorithm: no hash algorithm capabilities");
+        return false;
+    }
+
+    if (obj.haSet.count(haValue) == 0)
+    {
+        SWSS_LOG_ERROR("Failed to validate hash algorithm: value(%s) is not supported", toStr(haValue).c_str());
+        return false;
     }
 
     return true;
@@ -171,6 +273,42 @@ FieldValueTuple SwitchCapabilities::makeLagHashCapDbEntry() const
     auto value = toStr(isSwitchLagHashSupported());
 
     return FieldValueTuple(field, value);
+}
+
+std::vector<FieldValueTuple> SwitchCapabilities::makeEcmpHashAlgorithmCapDbEntry() const
+{
+    const auto &ecmpHashAlgorithm = switchCapabilities.ecmpHashAlgorithm;
+
+    std::vector<FieldValueTuple> fvList;
+
+    fvList.emplace_back(
+        SWITCH_CAPABILITY_ECMP_HASH_ALGORITHM_FIELD,
+        ecmpHashAlgorithm.isEnumSupported ? toStr(ecmpHashAlgorithm.haSet) : "N/A"
+    );
+    fvList.emplace_back(
+        SWITCH_CAPABILITY_ECMP_HASH_ALGORITHM_CAPABLE_FIELD,
+        toStr(isSwitchEcmpHashAlgorithmSupported())
+    );
+
+    return fvList;
+}
+
+std::vector<FieldValueTuple> SwitchCapabilities::makeLagHashAlgorithmCapDbEntry() const
+{
+    const auto &lagHashAlgorithm = switchCapabilities.lagHashAlgorithm;
+
+    std::vector<FieldValueTuple> fvList;
+
+    fvList.emplace_back(
+        SWITCH_CAPABILITY_LAG_HASH_ALGORITHM_FIELD,
+        lagHashAlgorithm.isEnumSupported ? toStr(lagHashAlgorithm.haSet) : "N/A"
+    );
+    fvList.emplace_back(
+        SWITCH_CAPABILITY_LAG_HASH_ALGORITHM_CAPABLE_FIELD,
+        toStr(isSwitchLagHashAlgorithmSupported())
+    );
+
+    return fvList;
 }
 
 sai_status_t SwitchCapabilities::queryEnumCapabilitiesSai(std::vector<sai_int32_t> &capList, sai_object_type_t objType, sai_attr_id_t attrId) const
@@ -256,7 +394,7 @@ void SwitchCapabilities::queryHashCapabilities()
     queryHashNativeHashFieldListAttrCapabilities();
 }
 
-void SwitchCapabilities::querySwitchEcmpHashCapabilities()
+void SwitchCapabilities::querySwitchEcmpHashAttrCapabilities()
 {
     SWSS_LOG_ENTER();
 
@@ -286,7 +424,7 @@ void SwitchCapabilities::querySwitchEcmpHashCapabilities()
     switchCapabilities.ecmpHash.isAttrSupported = true;
 }
 
-void SwitchCapabilities::querySwitchLagHashCapabilities()
+void SwitchCapabilities::querySwitchLagHashAttrCapabilities()
 {
     SWSS_LOG_ENTER();
 
@@ -316,17 +454,132 @@ void SwitchCapabilities::querySwitchLagHashCapabilities()
     switchCapabilities.lagHash.isAttrSupported = true;
 }
 
+void SwitchCapabilities::querySwitchEcmpHashAlgorithmEnumCapabilities()
+{
+    SWSS_LOG_ENTER();
+
+    std::vector<sai_int32_t> haList;
+    auto status = queryEnumCapabilitiesSai(
+        haList, SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_ALGORITHM
+    );
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR(
+            "Failed to get attribute(%s) enum value capabilities",
+            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_ALGORITHM).c_str()
+        );
+        return;
+    }
+
+    auto &haSet = switchCapabilities.ecmpHashAlgorithm.haSet;
+    std::transform(
+        haList.cbegin(), haList.cend(), std::inserter(haSet, haSet.begin()),
+        [](sai_int32_t value) { return static_cast<sai_hash_algorithm_t>(value); }
+    );
+
+    switchCapabilities.ecmpHashAlgorithm.isEnumSupported = true;
+}
+
+void SwitchCapabilities::querySwitchEcmpHashAlgorithmAttrCapabilities()
+{
+    SWSS_LOG_ENTER();
+
+    sai_attr_capability_t attrCap;
+
+    auto status = queryAttrCapabilitiesSai(
+        attrCap, SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_ALGORITHM
+    );
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR(
+            "Failed to get attribute(%s) capabilities",
+            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_ALGORITHM).c_str()
+        );
+        return;
+    }
+
+    if (!attrCap.set_implemented)
+    {
+        SWSS_LOG_WARN(
+            "Attribute(%s) SET is not implemented in SAI",
+            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_ALGORITHM).c_str()
+        );
+        return;
+    }
+
+    switchCapabilities.ecmpHashAlgorithm.isAttrSupported = true;
+}
+
+void SwitchCapabilities::querySwitchLagHashAlgorithmEnumCapabilities()
+{
+    SWSS_LOG_ENTER();
+
+    std::vector<sai_int32_t> haList;
+    auto status = queryEnumCapabilitiesSai(
+        haList, SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_ALGORITHM
+    );
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR(
+            "Failed to get attribute(%s) enum value capabilities",
+            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_ALGORITHM).c_str()
+        );
+        return;
+    }
+
+    auto &haSet = switchCapabilities.lagHashAlgorithm.haSet;
+    std::transform(
+        haList.cbegin(), haList.cend(), std::inserter(haSet, haSet.begin()),
+        [](sai_int32_t value) { return static_cast<sai_hash_algorithm_t>(value); }
+    );
+
+    switchCapabilities.lagHashAlgorithm.isEnumSupported = true;
+}
+
+void SwitchCapabilities::querySwitchLagHashAlgorithmAttrCapabilities()
+{
+    SWSS_LOG_ENTER();
+
+    sai_attr_capability_t attrCap;
+
+    auto status = queryAttrCapabilitiesSai(
+        attrCap, SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_ALGORITHM
+    );
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR(
+            "Failed to get attribute(%s) capabilities",
+            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_ALGORITHM).c_str()
+        );
+        return;
+    }
+
+    if (!attrCap.set_implemented)
+    {
+        SWSS_LOG_WARN(
+            "Attribute(%s) SET is not implemented in SAI",
+            toStr(SAI_OBJECT_TYPE_SWITCH, SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_ALGORITHM).c_str()
+        );
+        return;
+    }
+
+    switchCapabilities.lagHashAlgorithm.isAttrSupported = true;
+}
+
 void SwitchCapabilities::querySwitchCapabilities()
 {
-    querySwitchEcmpHashCapabilities();
-    querySwitchLagHashCapabilities();
+    querySwitchEcmpHashAttrCapabilities();
+    querySwitchLagHashAttrCapabilities();
+
+    querySwitchEcmpHashAlgorithmEnumCapabilities();
+    querySwitchEcmpHashAlgorithmAttrCapabilities();
+    querySwitchLagHashAlgorithmEnumCapabilities();
+    querySwitchLagHashAlgorithmAttrCapabilities();
 }
 
 void SwitchCapabilities::writeHashCapabilitiesToDb()
 {
     SWSS_LOG_ENTER();
-
-    auto key = SwitchCapabilities::capTable.getKeyName(SWITCH_CAPABILITY_KEY);
 
     std::vector<FieldValueTuple> fvList = {
         makeHashFieldCapDbEntry()
@@ -334,21 +587,27 @@ void SwitchCapabilities::writeHashCapabilitiesToDb()
 
     SwitchCapabilities::capTable.set(SWITCH_CAPABILITY_KEY, fvList);
 
-    SWSS_LOG_NOTICE("Wrote hash enum capabilities to State DB: %s key", key.c_str());
+    SWSS_LOG_NOTICE(
+        "Wrote hash capabilities to State DB: %s key",
+        SwitchCapabilities::capTable.getKeyName(SWITCH_CAPABILITY_KEY).c_str()
+    );
 }
 
 void SwitchCapabilities::writeSwitchCapabilitiesToDb()
 {
     SWSS_LOG_ENTER();
 
-    auto key = SwitchCapabilities::capTable.getKeyName(SWITCH_CAPABILITY_KEY);
-
     std::vector<FieldValueTuple> fvList = {
         makeEcmpHashCapDbEntry(),
         makeLagHashCapDbEntry()
     };
+    insertBack(fvList, makeEcmpHashAlgorithmCapDbEntry());
+    insertBack(fvList, makeLagHashAlgorithmCapDbEntry());
 
     SwitchCapabilities::capTable.set(SWITCH_CAPABILITY_KEY, fvList);
 
-    SWSS_LOG_NOTICE("Wrote switch hash capabilities to State DB: %s key", key.c_str());
+    SWSS_LOG_NOTICE(
+        "Wrote switch capabilities to State DB: %s key",
+        SwitchCapabilities::capTable.getKeyName(SWITCH_CAPABILITY_KEY).c_str()
+    );
 }
