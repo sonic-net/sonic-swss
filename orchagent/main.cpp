@@ -434,7 +434,7 @@ int main(int argc, char **argv)
         }
     }
 
-    SWSS_LOG_NOTICE("--- Starting Orchestration Agent ---");
+    SWSS_LOG_NOTICE("--- this line changedStarting Orchestration Agent ---");
 
     /* Initialize sairedis recording parameters */
     Recorder::Instance().sairedis.setRecord(
