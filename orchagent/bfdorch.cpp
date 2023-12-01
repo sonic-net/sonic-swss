@@ -74,6 +74,8 @@ BfdOrch::BfdOrch(DBConnector *db, string tableName, TableConnector stateDbBfdSes
 
     Orch::addExecutor(bfdStateNotificatier);
     register_state_change_notif = false;
+    BgpGlobalStateOrch* bgp_global_state_orch = gDirectory.get<BgpGlobalStateOrch*>();
+    tsa_enabled = bgp_global_state_orch->getTsaState();
 }
 
 BfdOrch::~BfdOrch(void)
@@ -96,18 +98,62 @@ void BfdOrch::doTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            if (!create_bfd_session(key, data))
+            bool tsa_shutdown_enabled = false;
+            for (auto i : data)
             {
-                it++;
-                continue;
+                auto value = fvValue(i);
+                if (fvField(i) == "tsa_shutdown" && value == "true" )
+                {
+                    tsa_shutdown_enabled = true;
+                    break;
+                }
+            }
+            if (tsa_shutdown_enabled)
+            {
+                bfd_session_cache[key] = data;
+                if (!tsa_enabled)
+                {
+                    if (!create_bfd_session(key, data))
+                    {
+                        it++;
+                        continue;
+                    }
+                }
+                else
+                {
+                    notify_session_state_down(key);
+                }
+            }
+            else
+            {
+                if (!create_bfd_session(key, data))
+                {
+                    it++;
+                    continue;
+                }
             }
         }
         else if (op == DEL_COMMAND)
         {
-            if (!remove_bfd_session(key))
+            if (bfd_session_cache.find(key) != bfd_session_cache.end() )
             {
-                it++;
-                continue;
+                bfd_session_cache.erase(key);
+                if (!tsa_enabled)
+                {
+                    if (!remove_bfd_session(key))
+                    {
+                        it++;
+                        continue;
+                    }
+                }
+            }
+            else
+            {
+                if (!remove_bfd_session(key))
+                {
+                    it++;
+                    continue;
+                }
             }
         }
         else
@@ -297,6 +343,10 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
         else if (fvField(i) == "tos")
         {
             tos = to_uint<uint8_t>(value);
+        }
+        else if (fvField(i) == "tsa_shutdown")
+        {
+            continue;
         }
         else
             SWSS_LOG_ERROR("Unsupported BFD attribute %s\n", fvField(i).c_str());
@@ -549,5 +599,115 @@ uint32_t BfdOrch::bfd_src_port(void)
     }
 
     return (port++);
+}
+
+void BfdOrch::notify_session_state_down(const string& key)
+{
+    size_t found_vrf = key.find(delimiter);
+    if (found_vrf == string::npos)
+    {
+        SWSS_LOG_ERROR("Failed to parse key %s, no vrf is given", key.c_str());
+        return;
+    }
+
+    size_t found_ifname = key.find(delimiter, found_vrf + 1);
+    if (found_ifname == string::npos)
+    {
+        SWSS_LOG_ERROR("Failed to parse key %s, no ifname is given", key.c_str());
+        return;
+    }
+    string vrf_name = key.substr(0, found_vrf);
+    string alias = key.substr(found_vrf + 1, found_ifname - found_vrf - 1);
+    IpAddress peer_address(key.substr(found_ifname + 1));
+    BfdUpdate update;
+    update.peer = get_state_db_key(vrf_name, alias, peer_address);
+    update.state = SAI_BFD_SESSION_STATE_DOWN;
+    notify(SUBJECT_TYPE_BFD_SESSION_STATE_CHANGE, static_cast<void *>(&update));
+    return;
+}
+
+void BfdOrch::handleTsaStateChange(bool tsaState)
+{
+    SWSS_LOG_INFO("BfdOrch TSA state Changed to %d.\n", int(tsaState));
+    for (auto it : bfd_session_cache)
+    {
+        if (tsaState == true)
+        {
+            notify_session_state_down(it.first);
+            if (!remove_bfd_session(it.first))
+            {
+                SWSS_LOG_ERROR("Failed to remove BFD session %s\n", it.first.c_str());
+            }
+        } else
+        {
+            if (!create_bfd_session(it.first, it.second))
+            {
+                SWSS_LOG_ERROR("Failed to create BFD session %s\n", it.first.c_str());
+            }
+        }
+    }
+}
+
+BgpGlobalStateOrch::BgpGlobalStateOrch(DBConnector *db, string tableName):
+    Orch(db, tableName)
+{
+    SWSS_LOG_ENTER();
+    tsa_enabled = false;
+    SWSS_LOG_ERROR("BgpGlobalStateOrch init complete\n");
+}
+
+BgpGlobalStateOrch::~BgpGlobalStateOrch(void)
+{
+    SWSS_LOG_ENTER();
+}
+
+bool BgpGlobalStateOrch::getTsaState()
+{
+    SWSS_LOG_ENTER();
+    return tsa_enabled;
+}
+void BgpGlobalStateOrch::doTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple t = it->second;
+
+        string key =  kfvKey(t);
+        string op = kfvOp(t);
+        auto data = kfvFieldsValues(t);
+
+        if (op == SET_COMMAND)
+        {
+            for (auto i : data)
+            {
+                auto value = fvValue(i);
+                auto type = fvField(i);
+                SWSS_LOG_INFO("SET on key %s, data T %s, V %s\n", key.c_str(), type.c_str(), value.c_str());
+                if (type == "tsa_enabled")
+                {
+                    bool state = true ? value == "true" : false;
+                    tsa_enabled = state;
+                    BfdOrch* bfd_orch = gDirectory.get<BfdOrch*>();
+
+                    if (bfd_orch)
+                    {
+                        bfd_orch->handleTsaStateChange(state);
+                    }
+                }
+            }
+        }
+        else if (op == DEL_COMMAND)
+        {
+            SWSS_LOG_ERROR("DEL on key %s is not expected.\n", key.c_str());
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
+        }
+        it = consumer.m_toSync.erase(it);
+    }
 }
 
