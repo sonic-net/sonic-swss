@@ -75,7 +75,14 @@ BfdOrch::BfdOrch(DBConnector *db, string tableName, TableConnector stateDbBfdSes
     Orch::addExecutor(bfdStateNotificatier);
     register_state_change_notif = false;
     BgpGlobalStateOrch* bgp_global_state_orch = gDirectory.get<BgpGlobalStateOrch*>();
-    tsa_enabled = bgp_global_state_orch->getTsaState();
+    if (bgp_global_state_orch)
+    {
+        tsa_enabled = bgp_global_state_orch->getTsaState();
+    }
+    else
+    {
+        tsa_enabled = false;
+    }
 }
 
 BfdOrch::~BfdOrch(void)
