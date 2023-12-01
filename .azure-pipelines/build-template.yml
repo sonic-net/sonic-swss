@@ -75,6 +75,9 @@ parameters:
   type: string
   default: '$(BUILD_BRANCH)'
 
+- name: dash_api_artifact_name
+  type: string
+
 - name: asan
   type: boolean
   default: false
@@ -159,8 +162,19 @@ jobs:
         target/debs/bullseye/libprotobuf*.deb
         target/debs/bullseye/libprotoc*.deb
         target/debs/bullseye/protobuf-compiler*.deb
-        target/debs/bullseye/libdashapi*.deb
     displayName: "Download common libs"
+  - task: DownloadPipelineArtifact@2
+    inputs:
+      source: specific
+      project: build
+      pipeline: sonic-net.sonic-dash-api
+      artifact: ${{ parameters.dash_api_artifact_name }}
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/$(BUILD_BRANCH)'
+      path: $(Build.ArtifactStagingDirectory)/download/common
+      patterns: |
+        libdashapi*.deb
+    displayName: "Download dash api"
   - script: |
       set -ex
       cd download
