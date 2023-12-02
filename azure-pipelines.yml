@@ -102,6 +102,7 @@ stages:
     parameters:
       swss_common_artifact_name: sonic-swss-common
       sairedis_artifact_name: sonic-sairedis
+      dash_api_artifact_name: sonic-dash-api
       swss_artifact_name: sonic-swss
       artifact_name: docker-sonic-vs
 
@@ -113,6 +114,7 @@ stages:
     parameters:
       swss_common_artifact_name: sonic-swss-common
       sairedis_artifact_name: sonic-sairedis
+      dash_api_artifact_name: sonic-dash-api
       swss_artifact_name: sonic-swss-asan
       artifact_name: docker-sonic-vs-asan
       asan: true
