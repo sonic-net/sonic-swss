@@ -708,7 +708,13 @@ namespace portsorch_test
                 { "post1",       "0x10,0x12,0x11,0x13"         },
                 { "post2",       "0x10,0x12,0x11,0x13"         },
                 { "post3",       "0x10,0x12,0x11,0x13"         },
-                { "attn",        "0x80,0x82,0x81,0x83"         }
+                { "attn",        "0x80,0x82,0x81,0x83"         },
+                { "ob_m2lp",     "0x4,0x6,0x5,0x7"             },
+                { "ob_alev_out", "0xf,0x11,0x10,0x12"          },
+                { "obplev",      "0x69,0x6b,0x6a,0x6c"         },
+                { "obnlev",      "0x5f,0x61,0x60,0x62"         },
+                { "regn_bfm1p",  "0x1e,0x20,0x1f,0x21"         },
+                { "regn_bfm1n",  "0xaa,0xac,0xab,0xad"         }
             }
         }};
 
@@ -766,6 +772,30 @@ namespace portsorch_test
         // Verify attn
         std::vector<std::uint32_t> attn = { 0x80, 0x82, 0x81, 0x83 };
         ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_FIR_ATTN), attn);
+
+        // Verify ob_m2lp
+        std::vector<std::uint32_t> ob_m2lp = { 0x4, 0x6, 0x5, 0x7 };
+        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_PAM4_RATIO), ob_m2lp);
+
+        // Verify ob_alev_out
+        std::vector<std::uint32_t> ob_alev_out = { 0xf, 0x11, 0x10, 0x12 };
+        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_OUT_COMMON_MODE), ob_alev_out);
+
+        // Verify obplev
+        std::vector<std::uint32_t> obplev = { 0x69, 0x6b, 0x6a, 0x6c };
+        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_PMOS_COMMON_MODE), obplev);
+
+        // Verify obnlev
+        std::vector<std::uint32_t> obnlev = { 0x5f, 0x61, 0x60, 0x62 };
+        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_NMOS_COMMON_MODE), obnlev);
+
+        // Verify regn_bfm1p
+        std::vector<std::uint32_t> regn_bfm1p = { 0x1e, 0x20, 0x1f, 0x21 };
+        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_PMOS_VLTG_REG), regn_bfm1p);
+
+        // Verify regn_bfm1n
+        std::vector<std::uint32_t> regn_bfm1n = { 0xaa, 0xac, 0xab, 0xad };
+        ASSERT_EQ(p.m_preemphasis.at(SAI_PORT_SERDES_ATTR_TX_NMOS_VLTG_REG), regn_bfm1n);
 
         // Dump pending tasks
         std::vector<std::string> taskList;
