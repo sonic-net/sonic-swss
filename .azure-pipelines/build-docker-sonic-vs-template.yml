@@ -59,9 +59,6 @@ parameters:
   type: string
   default: '**'
 
-- name: dash_api_artifact_name
-  type: string
-
 - name: asan
   type: boolean
   default: false
@@ -108,7 +105,10 @@ jobs:
       source: specific
       project: build
       pipeline: sonic-net.sonic-dash-api
-      artifact: ${{ parameters.dash_api_artifact_name }}
+      ${{ if eq(parameters.arch, 'amd64') }}:
+        artifact: sonic-dash-api
+      ${{ else }}:
+        artifact: sonic-dash-api.${{ parameters.arch }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/$(BUILD_BRANCH)'
       path: $(Build.ArtifactStagingDirectory)/download

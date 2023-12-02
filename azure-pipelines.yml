@@ -45,7 +45,6 @@ stages:
       common_lib_artifact_name: common-lib
       swss_common_artifact_name: sonic-swss-common
       sairedis_artifact_name: sonic-sairedis
-      dash_api_artifact_name: sonic-dash-api
       artifact_name: sonic-swss
       archive_pytests: true
       archive_gcov: true
@@ -60,7 +59,6 @@ stages:
       common_lib_artifact_name: common-lib
       swss_common_artifact_name: sonic-swss-common
       sairedis_artifact_name: sonic-sairedis
-      dash_api_artifact_name: sonic-dash-api
       artifact_name: sonic-swss-asan
       asan: true
 
@@ -77,7 +75,6 @@ stages:
       common_lib_artifact_name: common-lib.armhf
       swss_common_artifact_name: sonic-swss-common.armhf
       sairedis_artifact_name: sonic-sairedis.armhf
-      dash_api_artifact_name: sonic-dash-api.armhf
       artifact_name: sonic-swss.armhf
       archive_gcov: false
 
@@ -90,7 +87,6 @@ stages:
       common_lib_artifact_name: common-lib.arm64
       swss_common_artifact_name: sonic-swss-common.arm64
       sairedis_artifact_name: sonic-sairedis.arm64
-      dash_api_artifact_name: sonic-dash-api.arm64
       artifact_name: sonic-swss.arm64
       archive_gcov: false
 
@@ -102,7 +98,6 @@ stages:
     parameters:
       swss_common_artifact_name: sonic-swss-common
       sairedis_artifact_name: sonic-sairedis
-      dash_api_artifact_name: sonic-dash-api
       swss_artifact_name: sonic-swss
       artifact_name: docker-sonic-vs
 
@@ -114,7 +109,6 @@ stages:
     parameters:
       swss_common_artifact_name: sonic-swss-common
       sairedis_artifact_name: sonic-sairedis
-      dash_api_artifact_name: sonic-dash-api
       swss_artifact_name: sonic-swss-asan
       artifact_name: docker-sonic-vs-asan
       asan: true
