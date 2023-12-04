@@ -159,8 +159,22 @@ jobs:
         target/debs/bullseye/libprotobuf*.deb
         target/debs/bullseye/libprotoc*.deb
         target/debs/bullseye/protobuf-compiler*.deb
-        target/debs/bullseye/libdashapi*.deb
     displayName: "Download common libs"
+  - task: DownloadPipelineArtifact@2
+    inputs:
+      source: specific
+      project: build
+      pipeline: sonic-net.sonic-dash-api
+      ${{ if eq(parameters.arch, 'amd64') }}:
+        artifact: sonic-dash-api
+      ${{ else }}:
+        artifact: sonic-dash-api.${{ parameters.arch }}
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/$(BUILD_BRANCH)'
+      path: $(Build.ArtifactStagingDirectory)/download/common
+      patterns: |
+        libdashapi*.deb
+    displayName: "Download dash api"
   - script: |
       set -ex
       cd download
