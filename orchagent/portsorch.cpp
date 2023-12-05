@@ -339,6 +339,39 @@ static void getPortSerdesAttr(PortSerdesAttrMap_t &map, const PortConfig &port)
     {
         map[SAI_PORT_SERDES_ATTR_TX_FIR_ATTN] = port.serdes.attn.value;
     }
+
+    if (port.serdes.ob_m2lp.is_set)
+    {
+    
+        map[SAI_PORT_SERDES_ATTR_TX_PAM4_RATIO] = port.serdes.ob_m2lp.value;
+    }
+
+    if (port.serdes.ob_alev_out.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_OUT_COMMON_MODE] = port.serdes.ob_alev_out.value;
+    }
+
+    if (port.serdes.obplev.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_PMOS_COMMON_MODE] = port.serdes.obplev.value;
+    }
+
+    if (port.serdes.obnlev.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_NMOS_COMMON_MODE] = port.serdes.obnlev.value;
+    }
+
+    if (port.serdes.regn_bfm1p.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_PMOS_VLTG_REG] = port.serdes.regn_bfm1p.value;
+    }
+
+    if (port.serdes.regn_bfm1n.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_NMOS_VLTG_REG] = port.serdes.regn_bfm1n.value;
+    }
+
+    
 }
 
 // Port OA ------------------------------------------------------------------------------------------------------------
@@ -8775,3 +8808,4 @@ void PortsOrch::doTask(swss::SelectableTimer &timer)
         m_port_state_poller->stop();
     }
 }
+
