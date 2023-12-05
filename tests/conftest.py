@@ -1795,8 +1795,6 @@ def manage_dvs(request) -> str:
             curr_dvs_env = new_dvs_env
 
         else:
-            # First generate GCDA files for GCov
-            dvs.runcmd('killall5 -15')
             # If not re-creating the DVS, restart container
             # between modules to ensure a consistent start state
             dvs.net_cleanup()
@@ -1829,7 +1827,13 @@ def dvs(request, manage_dvs) -> DockerVirtualSwitch:
     name = request.config.getoption("--dvsname")
     log_path = name if name else request.module.__name__
 
-    return manage_dvs(log_path, dvs_env)
+    dvs_obj = manage_dvs(log_path, dvs_env)
+
+    yield dvs_obj 
+    # First generate GCDA files for GCov
+    dvs_obj.runcmd('killall5 -15')
+    gcda_archive = dvs_obj.runcmd('mktemp -p /tmp/gcov/ gcda_XXXX.tar.gz')[1].strip('\n')
+    dvs_obj.runcmd('tar -C /__w/1/s/ -zcvf {} .'.format(gcda_archive))
 
 @pytest.yield_fixture(scope="module")
 def vst(request):

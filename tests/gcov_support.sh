@@ -65,12 +65,11 @@ list_lcov_path()
     echo "Start searching .gcda files..."
     exec 4>$TMP_FILE
     find_gcda_file=`find ${gcda_dir} -name *.gcda`
-    echo ${find_gcda_file}
     RESULT=${find_gcda_file}
     echo "$RESULT" >&4
     exec 4>&-
 
-    cat ${TMP_FILE} | xargs dirname | uniq > ${gcda_dir}/gcda_dir_list.txt
+    cat ${TMP_FILE} | xargs dirname | uniq | grep -v "tests" > ${gcda_dir}/gcda_dir_list.txt
 }
 
 # generate gcov base info and html report for specified range files
@@ -90,8 +89,17 @@ lcov_genhtml_report()
         GCDA_COUNT=`find -name "*.gcda" | wc -l`
         echo "gcda count: $GCDA_COUNT"
         if [ $GCDA_COUNT -ge 1 ]; then
-            echo "Executing lcov -c -d . -o ${infoname}"
-            lcov -c -d . -o ${infoname} &>/dev/null
+            if [ -f "$infoname" ]; then
+                echo "Executing lcov -c -d . -o temp.info"
+                lcov -c -d . -o temp.info &>/dev/null
+                echo "Executing lcov -a temp.info -a ${infoname} -o ${infoname}"
+                lcov -a ${infoname} -a temp.info -o ${infoname} &>/dev/null
+                rm temp.info
+            else
+                echo "Executing lcov -c -d . -o ${infoname}"
+                lcov -c -d . -o ${infoname} &>/dev/null
+            fi
+
             if [ "$?" != "0" ]; then
                 echo "lcov fail!"
                 rm ${infoname}
@@ -100,17 +108,6 @@ lcov_genhtml_report()
         popd
     done < ${gcda_file_range}/gcda_dir_list.txt
 }
-
-# generate html reports for all eligible submodules
-lcov_genhtml_all()
-{
-    local container_id
-
-    container_id=$1
-
-    echo " === Start generating all gcov reports === "
-    lcov_genhtml_report ${container_id}/gcov
-} 
 
 lcov_merge_all()
 {
@@ -196,49 +193,44 @@ gcov_support_generate_report()
     sed -i '/gcov_output/d' container_dir_list
     sed -i "s#\/##g" container_dir_list
 
-    mkdir -p gcov_output
     mkdir -p gcov_output/info
 
     #for same code path
     mkdir -p common_work/gcov
-    tar -zxvf swss.tar.gz -C common_work/gcov
+    tar -zxf swss.tar.gz -C common_work/gcov
 
-    cat container_dir_list
     while read line
     do
         local container_id=${line}
-        echo ${container_id}
+        echo "Processing container ${container_id}"
 
         cp -rf ${container_id}/* common_work
-        cd common_work/gcov/
-        find -name gcda*.tar.gz > tmp_gcda.txt
+        pushd common_work/gcov
+
+        find -name gcno*.tar.gz > tmp_gcno.txt
+        echo "Found GCNO archives:"
+        cat tmp_gcno.txt
         while read LINE ; do
-            echo ${LINE}
-            echo ${LINE#*.}
-            tar -zxvf ${LINE}
+            tar -zxf ${LINE}
+        done < tmp_gcno.txt
+        rm tmp_gcno.txt
+
+        find -name 'gcda*.tar.gz' > tmp_gcda.txt
+        echo "Found GCDA archives:"
+        cat tmp_gcda.txt
+        while read LINE ; do
+            tar -zxf ${LINE}
+            lcov_genhtml_report .
         done < tmp_gcda.txt
         rm tmp_gcda.txt
+        popd
 
-        gcno_count=`find -name "*.gcno" | wc -l`
-        if [ ${gcno_count} -lt 1 ]; then
-            find -name gcno*.tar.gz > tmp_gcno.txt
-            while read LINE ; do
-                echo ${LINE}
-                echo ${LINE%%.*}
-                tar -zxvf ${LINE}
-            done < tmp_gcno.txt
-            rm tmp_gcno.txt
-        fi
-        cd -
-
-        ls -lh common_work/*
-        lcov_genhtml_all common_work
         if [ "$?" != "0" ]; then
             echo "###lcov operation fail.."
             return 0
         fi
         mkdir -p gcov_output/${container_id}
-        cp -rf common_work/*  gcov_output/${container_id}/*
+        cp -rf common_work/*  gcov_output/${container_id}/
         pushd gcov_output/${container_id}
         find . -name "*.gcda" -o -name "*.gcno" -o -name "*.gz" -o -name "*.cpp" -o -name "*.h" | xargs rm -rf
         popd
@@ -271,13 +263,6 @@ gcov_support_collect_gcda()
         return 0
     fi
 
-    CODE_PREFFIX=/__w/1/s/
-
-    pushd ${CODE_PREFFIX}
-    tar -zcvf /tmp/gcov/gcda.tar.gz *
-    popd
-
-    popd
     echo "### collect gcda done!"
 
     gcov_support_clean
