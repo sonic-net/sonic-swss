@@ -494,12 +494,16 @@ class TestBfd(object):
         self.adb.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", session4)
 
     def test_addRemoveBfdSession_with_tsa_case1(self, dvs):
+        # This is a test for BFD caching mechanism.
+        # This test sets up a BFD session with shutdown_bfd_during_tsa=true and checks state DB for session creation.
+        # Then TSA is applied and removal of the session is verified in app db. This is followed by TSB and finally the
+        # reinstated session is verified.
         self.setup_db(dvs)
 
         bfdSessions = self.get_exist_bfd_session()
 
         # Create BFD session
-        fieldValues = {"local_addr": "10.0.0.1", "type": "demand_active", "tsa_shutdown": "true"}
+        fieldValues = {"local_addr": "10.0.0.1", "type": "demand_active", "shutdown_bfd_during_tsa": "true"}
         self.create_bfd_session("default:default:10.0.0.2", fieldValues)
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_BFD_SESSION", len(bfdSessions) + 1)
 
@@ -556,6 +560,11 @@ class TestBfd(object):
 
 
     def test_addRemoveBfdSession_with_tsa_case2(self, dvs):
+        # This is a test for BFD caching mechanism.
+        # This test sets up a BFD session with shutdown_bfd_during_tsa=true and checks state DB for session creation.
+        # Then TSA is applied and removal of the session is verified from app db. At this point the session is removed.
+        # This isfollowed by TSB. Since the session configuration has been removed during TSB, the BFD session should not
+        # start up.
         self.setup_db(dvs)
 
         bfdSessions = self.get_exist_bfd_session()

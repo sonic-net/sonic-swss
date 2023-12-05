@@ -110,7 +110,11 @@ void BfdOrch::doTask(Consumer &consumer)
             for (auto i : data)
             {
                 auto value = fvValue(i);
-                if (fvField(i) == "tsa_shutdown" && value == "true" )
+                //shutdown_bfd_during_tsa parameter is used by the BFD session creator to ensure that the the
+                //specified session gets removed when the device goes into TSA state.
+                //if this parameter is not specified or set to false for a session, the
+                // corrosponding BFD session would be maintained even in TSA state.
+                if (fvField(i) == "shutdown_bfd_during_tsa" && value == "true" )
                 {
                     tsa_shutdown_enabled = true;
                     break;
@@ -352,8 +356,10 @@ bool BfdOrch::create_bfd_session(const string& key, const vector<FieldValueTuple
         {
             tos = to_uint<uint8_t>(value);
         }
-        else if (fvField(i) == "tsa_shutdown")
+        else if (fvField(i) == "shutdown_bfd_during_tsa")
         {
+            //since we are handling shutdown_bfd_during_tsa in the caller function, we need to ignore it here.
+            //failure to ignore this parameter would cause error log.
             continue;
         }
         else
@@ -637,6 +643,7 @@ void BfdOrch::notify_session_state_down(const string& key)
 void BfdOrch::handleTsaStateChange(bool tsaState)
 {
     SWSS_LOG_INFO("BfdOrch TSA state Changed to %d.\n", int(tsaState));
+    tsa_enabled = tsaState;
     for (auto it : bfd_session_cache)
     {
         if (tsaState == true)
@@ -697,12 +704,14 @@ void BgpGlobalStateOrch::doTask(Consumer &consumer)
                 if (type == "tsa_enabled")
                 {
                     bool state = true ? value == "true" : false;
-                    tsa_enabled = state;
-                    BfdOrch* bfd_orch = gDirectory.get<BfdOrch*>();
-
-                    if (bfd_orch)
+                    if (tsa_enabled != state)
                     {
-                        bfd_orch->handleTsaStateChange(state);
+                        tsa_enabled = state;
+                        BfdOrch* bfd_orch = gDirectory.get<BfdOrch*>();
+                        if (bfd_orch)
+                        {
+                            bfd_orch->handleTsaStateChange(state);
+                        }
                     }
                 }
             }
