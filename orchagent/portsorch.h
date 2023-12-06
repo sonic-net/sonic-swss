@@ -344,7 +344,7 @@ private:
     void doVlanMemberTask(Consumer &consumer);
     void doLagTask(Consumer &consumer);
     void doLagMemberTask(Consumer &consumer);
-    void doTransceiverInfoTableTask(Consumer &consumer);
+    void doTransceiverPresenceCheck(Consumer &consumer);
 
     void doTask(NotificationConsumer &consumer);
     void doTask(swss::SelectableTimer &timer);

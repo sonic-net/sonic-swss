@@ -342,7 +342,7 @@ static void getPortSerdesAttr(PortSerdesAttrMap_t &map, const PortConfig &port)
 
     if (port.serdes.ob_m2lp.is_set)
     {
-    
+
         map[SAI_PORT_SERDES_ATTR_TX_PAM4_RATIO] = port.serdes.ob_m2lp.value;
     }
 
@@ -371,7 +371,7 @@ static void getPortSerdesAttr(PortSerdesAttrMap_t &map, const PortConfig &port)
         map[SAI_PORT_SERDES_ATTR_TX_NMOS_VLTG_REG] = port.serdes.regn_bfm1n.value;
     }
 
-    
+
 }
 
 // Port OA ------------------------------------------------------------------------------------------------------------
@@ -4561,7 +4561,7 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
     }
 }
 
-void PortsOrch::doTransceiverInfoTableTask(Consumer &consumer)
+void PortsOrch::doTransceiverPresenceCheck(Consumer &consumer)
 {
     /*
     the idea is to listen to transceiver info table, and also maintain an internal list of plugged modules.
@@ -5024,7 +5024,7 @@ void PortsOrch::doTask(Consumer &consumer)
 
     if (table_name == STATE_TRANSCEIVER_INFO_TABLE_NAME)
     {
-        doTransceiverInfoTableTask(consumer);
+        doTransceiverPresenceCheck(consumer);
     }
     else if (table_name == APP_PORT_TABLE_NAME)
     {
