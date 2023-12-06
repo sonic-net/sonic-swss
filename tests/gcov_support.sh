@@ -69,7 +69,7 @@ list_lcov_path()
     echo "$RESULT" >&4
     exec 4>&-
 
-    cat ${TMP_FILE} | xargs dirname | uniq | grep -v "tests" > ${gcda_dir}/gcda_dir_list.txt
+    cat ${TMP_FILE} | xargs dirname | uniq > ${gcda_dir}/gcda_dir_list.txt
 }
 
 # generate gcov base info and html report for specified range files
@@ -85,7 +85,7 @@ lcov_genhtml_report()
 
         echo ${fullpath}
 
-        pushd ${fullpath}
+        pushd ${fullpath} > /dev/null
         GCDA_COUNT=`find -name "*.gcda" | wc -l`
         echo "gcda count: $GCDA_COUNT"
         if [ $GCDA_COUNT -ge 1 ]; then
@@ -105,7 +105,7 @@ lcov_genhtml_report()
                 rm ${infoname}
             fi
         fi
-        popd
+        popd > /dev/null
     done < ${gcda_file_range}/gcda_dir_list.txt
 }
 
@@ -219,8 +219,10 @@ gcov_support_generate_report()
         echo "Found GCDA archives:"
         cat tmp_gcda.txt
         while read LINE ; do
+            echo "Generating tracefiles from ${LINE}..."
             tar -zxf ${LINE}
             lcov_genhtml_report .
+            echo "Done generating tracefiles from ${LINE}"
         done < tmp_gcda.txt
         rm tmp_gcda.txt
         popd
