@@ -1,5 +1,13 @@
 #!/usr/bin/python3
 
+"""
+    Connect to Dash orch with ZMQ and send create appliance request.
+    usage:
+        python3 create_appliance.py [appliance ID]
+    Example:
+        python3 create_appliance.py 1234
+"""
+
 from swsscommon import swsscommon
 from dash_api.appliance_pb2 import *
 import typing
