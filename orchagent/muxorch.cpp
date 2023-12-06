@@ -1099,9 +1099,6 @@ void MuxOrch::updateRoute(const IpPrefix &pfx, bool add)
 
     if (!add)
     {
-        SWSS_LOG_INFO("Removing route %s from mux_multi_active_nh_table",
-                pfx.to_string().c_str());
-        mux_multi_active_nh_table.erase(pfx);
         return;
     }
 
@@ -1155,7 +1152,6 @@ void MuxOrch::updateRoute(const IpPrefix &pfx, bool add)
             }
             SWSS_LOG_NOTICE("setting route %s with nexthop %s %" PRIx64 "",
                 pfx.to_string().c_str(), nexthop.to_string().c_str(), next_hop_id);
-            mux_multi_active_nh_table[pfx] = nexthop;
             active_found = true;
             break;
         }
@@ -1173,7 +1169,6 @@ void MuxOrch::updateRoute(const IpPrefix &pfx, bool add)
             SWSS_LOG_ERROR("Failed to set route entry %s to tunnel",
                     pfx.getIp().to_string().c_str());
         }
-        mux_multi_active_nh_table.erase(pfx);
     }
 }
 
