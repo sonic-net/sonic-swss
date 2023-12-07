@@ -1099,6 +1099,8 @@ void MuxOrch::updateRoute(const IpPrefix &pfx, bool add)
 
     if (!add)
     {
+        SWSS_LOG_INFO("Removing route %s from mux_multi_active_nh_table",
+                      pfx.to_string().c_str());
         return;
     }
 
