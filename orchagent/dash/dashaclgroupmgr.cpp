@@ -378,17 +378,15 @@ void DashAclGroupMgr::createRule(DashAclGroup& group, DashAclRule& rule)
     attrs.emplace_back();
     attrs.back().id = SAI_DASH_ACL_RULE_ATTR_PROTOCOL;
 
-    if (rule.m_protocols.size())
-    {
-        attrs.back().value.u8list.count = static_cast<uint32_t>(rule.m_protocols.size());
-        attrs.back().value.u8list.list = rule.m_protocols.data();
+    vector<uint8_t> protocols;
+    if (rule.m_protocols.size()) {
+        protocols = rule.m_protocols;
+    } else {
+        protocols = all_protocols;
     }
-    else
-    {
-        auto protocols = all_protocols;
-        attrs.back().value.u8list.count = static_cast<uint32_t>(protocols.size());
-        attrs.back().value.u8list.list = protocols.data();
-    }
+
+    attrs.back().value.u8list.count = static_cast<uint32_t>(protocols.size());
+    attrs.back().value.u8list.list = protocols.data();
 
     if (!rule.m_src_prefixes.empty())
     {
@@ -512,12 +510,6 @@ task_process_status DashAclGroupMgr::updateRule(const string& group_id, const st
 {
     SWSS_LOG_ENTER();
 
-    if (isBound(group_id))
-    {
-        SWSS_LOG_INFO("Failed to update dash ACL rule %s:%s, ACL group is bound to the ENI", group_id.c_str(), rule_id.c_str());
-        return task_failed;
-    }
-
     if (ruleExists(group_id, rule_id))
     {
         removeRule(group_id, rule_id);
@@ -621,15 +613,15 @@ task_process_status DashAclGroupMgr::bind(const string& group_id, const string& 
     if (group_it == m_groups_table.end())
     {
         SWSS_LOG_INFO("Failed to bind ACL group %s to ENI %s. ACL group does not exist", group_id.c_str(), eni_id.c_str());
-        return task_need_retry;
+        return task_failed;
     }
 
     auto& group = group_it->second;
 
     if (group.m_dash_acl_rule_table.empty())
     {
-        SWSS_LOG_INFO("ACL group %s has no rules attached. Waiting for ACL rules creation", group_id.c_str());
-        return task_need_retry;
+        SWSS_LOG_INFO("Failed to bind ACL group %s to ENI %s. ACL group has no rules attached.", group_id.c_str(), eni_id.c_str());
+        return task_failed;
     }
 
     auto eni = m_dash_orch->getEni(eni_id);

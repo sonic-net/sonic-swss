@@ -669,6 +669,7 @@ void MuxCable::updateNeighbor(NextHopKey nh, bool add)
  */
 void MuxCable::updateRoutes()
 {
+    SWSS_LOG_INFO("Updating routes pointing to multiple mux nexthops");
     MuxNeighbor neighbors = nbr_handler_->getNeighbors();
     string alias = nbr_handler_->getAlias();
     for (auto nh = neighbors.begin(); nh != neighbors.end(); nh ++)
@@ -1098,6 +1099,8 @@ void MuxOrch::updateRoute(const IpPrefix &pfx, bool add)
 
     if (!add)
     {
+        SWSS_LOG_INFO("Removing route %s from mux_multi_active_nh_table",
+                pfx.to_string().c_str());
         mux_multi_active_nh_table.erase(pfx);
         return;
     }
@@ -1110,6 +1113,7 @@ void MuxOrch::updateRoute(const IpPrefix &pfx, bool add)
      */
     if (nhg_key.getSize() <= 1)
     {
+        SWSS_LOG_INFO("Route points to single nexthop, ignoring");
         return;
     }
 
@@ -1120,24 +1124,6 @@ void MuxOrch::updateRoute(const IpPrefix &pfx, bool add)
 
     /* get nexthops from nexthop group */
     nextHops = nhg_key.getNextHops();
-
-    auto it = mux_multi_active_nh_table.find(pfx);
-    if (it != mux_multi_active_nh_table.end())
-    {
-        /* This will only work for configured MUX neighbors (most cases)
-         * TODO: add way to find MUX from neighbor
-         */
-        MuxCable* cable = findMuxCableInSubnet(it->second.ip_address);
-        auto standalone = standalone_tunnel_neighbors_.find(it->second.ip_address);
-
-        if ((cable == nullptr && standalone == standalone_tunnel_neighbors_.end()) ||
-             cable->isActive())
-        {
-            SWSS_LOG_INFO("Route %s pointing to active neighbor %s",
-                pfx.to_string().c_str(), it->second.to_string().c_str());
-            return;
-        }
-    }
 
     SWSS_LOG_NOTICE("Updating route %s pointing to Mux nexthops %s",
                 pfx.to_string().c_str(), nhg_key.to_string().c_str());
@@ -1167,7 +1153,7 @@ void MuxOrch::updateRoute(const IpPrefix &pfx, bool add)
                         pfx.to_string().c_str(), nexthop.to_string().c_str());
                 continue;
             }
-            SWSS_LOG_INFO("setting route %s with nexthop %s %" PRIx64 "",
+            SWSS_LOG_NOTICE("setting route %s with nexthop %s %" PRIx64 "",
                 pfx.to_string().c_str(), nexthop.to_string().c_str(), next_hop_id);
             mux_multi_active_nh_table[pfx] = nexthop;
             active_found = true;
@@ -1442,9 +1428,11 @@ bool MuxOrch::isMuxNexthops(const NextHopGroupKey& nextHops)
     {
         if (this->containsNextHop(*it))
         {
+            SWSS_LOG_INFO("Found mux nexthop %s", it->to_string().c_str());
             return true;
         }
     }
+    SWSS_LOG_INFO("No mux nexthop found");
     return false;
 }
 
