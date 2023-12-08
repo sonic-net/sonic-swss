@@ -93,8 +93,8 @@ lcov_merge_all()
 
     python lcov_cobertura.py total.info -o coverage.xml
 
-    sed -i "s#../../__w/1/s/##" coverage.xml
-    sed -i "s#......__w.1.s.##" coverage.xml
+    sed -i "s#\.\./s/##" coverage.xml
+    sed -i "s#\.\.\.s\.##" coverage.xml
 
     pushd gcov_output/
     if [ ! -d ${ALLMERGE_DIR} ]; then

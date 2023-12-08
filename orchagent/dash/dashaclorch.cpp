@@ -272,6 +272,12 @@ task_process_status DashAclOrch::taskUpdateDashAclRule(
         return task_failed;
     }
 
+    if (m_group_mgr.isBound(group_id))
+    {
+        SWSS_LOG_INFO("Failed to set dash ACL rule %s:%s, ACL group is bound to the ENI", group_id.c_str(), rule_id.c_str());
+        return task_failed;
+    }
+
     if (m_group_mgr.ruleExists(group_id, rule_id))
     {
         return m_group_mgr.updateRule(group_id, rule_id, rule);
