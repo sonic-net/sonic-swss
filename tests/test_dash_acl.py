@@ -429,11 +429,50 @@ class TestAcl(object):
                             src_port=[PortRange(0,1)], dst_port=[PortRange(0,1)])
 
         # Now that the group contains a rule, expect binding to occur
+        ctx.bind_acl_out(self.eni_name, ACL_STAGE_1, v4_group_id = ACL_GROUP_1)
         ctx.asic_eni_table.wait_for_field_match(key=eni_key, expected_fields={sai_stage: acl_group_key})
 
         # Unbinding should occur immediately
         ctx.unbind_acl_out(self.eni_name, ACL_STAGE_1)
         ctx.asic_eni_table.wait_for_field_match(key=eni_key, expected_fields={sai_stage: SAI_NULL_OID})
+
+    def test_acl_rule_after_group_bind(self, ctx):
+        eni_key = ctx.asic_eni_table.get_keys()[0]
+        sai_stage = get_sai_stage(outbound=False, v4=True, stage_num=ACL_STAGE_1)
+
+        ctx.create_acl_group(ACL_GROUP_1, IpVersion.IP_VERSION_IPV4)
+        acl_group_key = ctx.asic_dash_acl_group_table.wait_for_n_keys(num_keys=1)[0]
+        ctx.create_acl_rule(ACL_GROUP_1, ACL_RULE_1,
+                            priority=1, action=Action.ACTION_PERMIT, terminating=False,
+                            src_addr=["192.168.0.1/32", "192.168.1.2/30"], dst_addr=["192.168.0.1/32", "192.168.1.2/30"],
+                            src_port=[PortRange(0,1)], dst_port=[PortRange(0,1)])
+        ctx.asic_dash_acl_rule_table.wait_for_n_keys(num_keys=1)
+
+        self.bind_acl_group(ctx, ACL_STAGE_1, ACL_GROUP_1, acl_group_key)
+
+        # The new rule should not be created since the group is bound
+        ctx.create_acl_rule(ACL_GROUP_1, ACL_RULE_2,
+                            priority=2, action=Action.ACTION_PERMIT, terminating=False,
+                            src_addr=["192.168.0.1/32", "192.168.1.2/30"], dst_addr=["192.168.0.1/32", "192.168.1.2/30"],
+                            src_port=[PortRange(0,1)], dst_port=[PortRange(0,1)])
+        time.sleep(3)
+        ctx.asic_dash_acl_rule_table.wait_for_n_keys(num_keys=1)
+
+        # Unbinding the group
+        ctx.unbind_acl_in(self.eni_name, ACL_STAGE_1)
+        ctx.asic_eni_table.wait_for_field_match(key=eni_key, expected_fields={sai_stage: SAI_NULL_OID})
+
+        # Now the rule can be created since the group is no longer bound
+        ctx.create_acl_rule(ACL_GROUP_1, ACL_RULE_2,
+                            priority=2, action=Action.ACTION_PERMIT, terminating=False,
+                            src_addr=["192.168.0.1/32", "192.168.1.2/30"], dst_addr=["192.168.0.1/32", "192.168.1.2/30"],
+                            src_port=[PortRange(0,1)], dst_port=[PortRange(0,1)])
+        ctx.asic_dash_acl_rule_table.wait_for_n_keys(num_keys=2)
+
+        # cleanup
+        ctx.remove_acl_rule(ACL_GROUP_1, ACL_RULE_1)
+        ctx.remove_acl_rule(ACL_GROUP_1, ACL_RULE_2)
+        ctx.remove_acl_group(ACL_GROUP_1)
 
     def test_acl_group_binding(self, ctx):
         eni_key = ctx.asic_eni_table.get_keys()[0]
