@@ -324,7 +324,7 @@ void FdbSync::updateLocalMac (struct m_fdb_info *info)
 
     if (fdb_type == FDB_TYPE_DYNAMIC)
     {
-        type = "dynamic";
+        type = "dynamic extern_learn";
     }
     else
     {
@@ -333,7 +333,7 @@ void FdbSync::updateLocalMac (struct m_fdb_info *info)
 
     const std::string cmds = std::string("")
         + " bridge fdb " + op + " " + info->mac + " dev " 
-        + port_name + " master " + type + " vlan " + info->vid.substr(4) + " extern_learn ";
+        + port_name + " master " + type + " vlan " + info->vid.substr(4);
 
     std::string res;
     int ret = swss::exec(cmds, res);
@@ -384,7 +384,7 @@ void FdbSync::addLocalMac(string key, string op)
 
         if (m_fdb_mac[key].type == FDB_TYPE_DYNAMIC)
         {
-            type = "dynamic";
+            type = "dynamic extern_learn";
         }
         else
         {
@@ -393,7 +393,7 @@ void FdbSync::addLocalMac(string key, string op)
 
         const std::string cmds = std::string("")
                 + " bridge fdb " + op + " " + mac + " dev "
-                + port_name + " master " + type  + " vlan " + vlan + " extern_learn ";
+                + port_name + " master " + type  + " vlan " + vlan;
 
         std::string res;
         int ret = swss::exec(cmds, res);
@@ -432,7 +432,7 @@ void FdbSync::updateMclagRemoteMac (struct m_fdb_info *info)
 
     if (fdb_type == FDB_TYPE_DYNAMIC)
     {
-        type = "dynamic";
+        type = "dynamic extern_learn";
     }
     else
     {
@@ -441,7 +441,7 @@ void FdbSync::updateMclagRemoteMac (struct m_fdb_info *info)
 
     const std::string cmds = std::string("")
         + " bridge fdb " + op + " " + info->mac + " dev "
-        + port_name + " master " + type + " vlan " + info->vid.substr(4) + " extern_learn ";
+        + port_name + " master " + type + " vlan " + info->vid.substr(4);
 
     std::string res;
     int ret = swss::exec(cmds, res);
@@ -469,7 +469,7 @@ void FdbSync::updateMclagRemoteMacPort(int ifindex, int vlan, std::string mac)
         {
             const std::string cmds = std::string("")
                 + " bridge fdb replace" + " " + mac + " dev "
-                + port_name + " master static vlan " + to_string(vlan) + " extern_learn ";
+                + port_name + " master static vlan " + to_string(vlan);
 
             std::string res;
             int ret = swss::exec(cmds, res);
@@ -511,7 +511,7 @@ void FdbSync::macRefreshStateDB(int vlan, string kmac)
 
         if (m_fdb_mac[key].type == FDB_TYPE_DYNAMIC)
         {
-            type = "dynamic";
+            type = "dynamic extern_learn";
         }
         else
         {
@@ -520,7 +520,7 @@ void FdbSync::macRefreshStateDB(int vlan, string kmac)
 
         const std::string cmds = std::string("")
             + " bridge fdb " + "replace" + " " + kmac + " dev "
-            + port_name + " master " + type  + " vlan " + to_string(vlan) + " extern_learn ";
+            + port_name + " master " + type  + " vlan " + to_string(vlan);
 
         std::string res;
         int ret = swss::exec(cmds, res);
