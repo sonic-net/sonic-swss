@@ -122,6 +122,8 @@ jobs:
       codeCoverageTool: Cobertura
       summaryFileLocation: '$(Build.ArtifactStagingDirectory)/gcov_output/AllMergeReport/coverage.xml'
       reportDirectory: '$(Build.ArtifactStagingDirectory)/gcov_output/AllMergeReport/'
+      pathToSources: '$(Build.SourcesDirectory)'
+      failIfCoverageEmpty: true
     displayName: 'Publish c c++ test coverage'
     condition: eq('${{ parameters.archive_gcov }}', true)
   
