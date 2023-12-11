@@ -114,6 +114,7 @@ jobs:
       artifact: ${{ parameters.swss_common_artifact_name }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/${{ parameters.swss_common_branch }}'
+      allowPartiallySucceededBuilds: true
       path: $(Build.ArtifactStagingDirectory)/download/swsscommon
       patterns: |
         libswsscommon_1.0.0_${{ parameters.arch }}.deb
@@ -127,6 +128,7 @@ jobs:
       artifact: ${{ parameters.sairedis_artifact_name }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/${{ parameters.sairedis_artifact_branch }}'
+      allowPartiallySucceededBuilds: true
       path: $(Build.ArtifactStagingDirectory)/download/sairedis
       patterns: |
         ${{ parameters.sairedis_artifact_pattern }}/libsaivs_*.deb
