@@ -409,7 +409,7 @@ void FabricPortsOrch::updateFabricDebugCounters()
         {
             const auto field = fvField(fv);
             const auto value = fvValue(fv);
-            for (int cnt = 0; cnt != cntNames.size(); cnt++)
+            for (size_t cnt = 0; cnt != cntNames.size(); cnt++)
             {
                 if (field == "SAI_PORT_STAT_IF_IN_ERRORS")
                 {
