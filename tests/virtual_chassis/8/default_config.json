@@ -9,5 +9,87 @@
             "start_chassis_db" : "1",
             "comment" : "default_config for a vs that runs chassis_db"
         }
+   },
+   "FABRIC_PORT": {
+        "Fabric0": {
+            "alias": "Fabric0",
+            "isolateStatus": "False",
+            "lanes": "0"
+        },
+        "Fabric1": {
+            "alias": "Fabric1",
+            "isolateStatus": "False",
+            "lanes": "1"
+        },
+        "Fabric2": {
+            "alias": "Fabric2",
+            "isolateStatus": "False",
+            "lanes": "2"
+        },
+        "Fabric3": {
+            "alias": "Fabric3",
+            "isolateStatus": "False",
+            "lanes": "3"
+        },
+        "Fabric4": {
+            "alias": "Fabric4",
+            "isolateStatus": "False",
+            "lanes": "4"
+        },
+        "Fabric5": {
+            "alias": "Fabric5",
+            "isolateStatus": "False",
+            "lanes": "5"
+        },
+        "Fabric6": {
+            "alias": "Fabric6",
+            "isolateStatus": "False",
+            "lanes": "6"
+        },
+        "Fabric7": {
+            "alias": "Fabric7",
+            "isolateStatus": "False",
+            "lanes": "7"
+        },
+        "Fabric8": {
+            "alias": "Fabric8",
+            "isolateStatus": "False",
+            "lanes": "8"
+        },
+        "Fabric9": {
+            "alias": "Fabric9",
+            "isolateStatus": "False",
+            "lanes": "9"
+        },
+        "Fabric10": {
+            "alias": "Fabric10",
+            "isolateStatus": "False",
+            "lanes": "10"
+        },
+        "Fabric11": {
+            "alias": "Fabric11",
+            "isolateStatus": "False",
+            "lanes": "11"
+        },
+        "Fabric12": {
+            "alias": "Fabric12",
+            "isolateStatus": "False",
+            "lanes": "12"
+        },
+        "Fabric13": {
+            "alias": "Fabric13",
+            "isolateStatus": "False",
+            "lanes": "13"
+        },
+        "Fabric14": {
+            "alias": "Fabric14",
+            "isolateStatus": "False",
+            "lanes": "14"
+        },
+        "Fabric15": {
+            "alias": "Fabric15",
+            "isolateStatus": "False",
+            "lanes": "15"
+        }
     }
 }
