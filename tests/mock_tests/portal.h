@@ -81,6 +81,11 @@ struct Portal
             obj.getTrapIdsFromTrapGroup(trapGroupOid, trapIdList);
             return trapIdList;
         }
+
+        static task_process_status processCoppRule(CoppOrch &obj, Consumer& processCoppRule)
+        {
+            return obj.processCoppRule(processCoppRule);
+        }
     };
 
     struct SflowOrchInternal

@@ -93,6 +93,7 @@ public:
     task_process_status create(const std::string& group_id, DashAclGroup& group);
     task_process_status remove(const std::string& group_id);
     bool exists(const std::string& group_id) const;
+    bool isBound(const std::string& group_id);
 
     void onUpdate(const std::string& group_id, const std::string& tag_id,const DashTag& tag);
 
@@ -114,7 +115,6 @@ private:
 
     void bind(const DashAclGroup& group, const EniEntry& eni, DashAclDirection direction, DashAclStage stage);
     void unbind(const DashAclGroup& group, const EniEntry& eni, DashAclDirection direction, DashAclStage stage);
-    bool isBound(const std::string &group_id);
     bool isBound(const DashAclGroup& group);
     void attachTags(const std::string &group_id, const std::unordered_set<std::string>& tags);
     void detachTags(const std::string &group_id, const std::unordered_set<std::string>& tags);
