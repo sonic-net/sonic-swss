@@ -203,7 +203,5 @@ namespace switchorch_test
         ASSERT_EQ(value, "fatal");
         gSwitchOrch->m_asicSdkHealthEventTable->hget(key, "description", value);
         ASSERT_EQ(value, "description\n{}");
-        gSwitchOrch->m_asicSdkHealthEventTable->hget(key, "asic_id", value);
-        ASSERT_EQ(value, "0");
     }
 }

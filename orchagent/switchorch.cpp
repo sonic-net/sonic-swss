@@ -24,6 +24,7 @@ extern sai_hash_api_t *sai_hash_api;
 extern MacAddress gVxlanMacAddress;
 extern CrmOrch *gCrmOrch;
 extern event_handle_t g_events_handle;
+extern string gMyAsicName;
 
 const map<string, sai_switch_attr_t> switch_attribute_map =
 {
@@ -1070,21 +1071,27 @@ void SwitchOrch::onSwitchAsicSdkHealthEvent(sai_object_id_t switch_id,
         break;
     }
 
-    SWSS_LOG_NOTICE("[%s] ASIC/SDK health event occurred at %s, asic <asicid>, category %s: %s", severity_str.c_str(), time_ss.str().c_str(), category_str.c_str(), description_str.c_str());
-
-    values.emplace_back("severity", severity_str);
-    values.emplace_back("category", category_str);
-    values.emplace_back("asic_id", "0");
-    values.emplace_back("description", description_str);
-
-    m_asicSdkHealthEventTable->set(time_ss.str(),values);
-
     event_params_t params = {
-        { "timestamp", time_ss.str() },
-        { "asicid", "0" },
+        { "sai_timestamp", time_ss.str() },
         { "severity", severity_str },
         { "category", category_str },
         { "description", description_str }};
+
+    if (0 == gMyAsicName.size())
+    {
+        SWSS_LOG_NOTICE("[%s] ASIC/SDK health event occurred at %s, category %s: %s", severity_str.c_str(), time_ss.str().c_str(), category_str.c_str(), description_str.c_str());
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("[%s] ASIC/SDK health event occurred at %s, asic %s, category %s: %s", severity_str.c_str(), time_ss.str().c_str(), gMyAsicName.c_str(), category_str.c_str(), description_str.c_str());
+        params["asic_name"] = gMyAsicName;
+    }
+
+    values.emplace_back("severity", severity_str);
+    values.emplace_back("category", category_str);
+    values.emplace_back("description", description_str);
+
+    m_asicSdkHealthEventTable->set(time_ss.str(),values);
 
     event_publish(g_events_handle, "asic-sdk-health-event", &params);
 }
