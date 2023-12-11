@@ -114,6 +114,7 @@ jobs:
       artifact: ${{ parameters.swss_common_artifact_name }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/${{ parameters.swss_common_branch }}'
+      allowPartiallySucceededBuilds: true
       path: $(Build.ArtifactStagingDirectory)/download/swsscommon
       patterns: |
         libswsscommon_1.0.0_${{ parameters.arch }}.deb
@@ -127,6 +128,7 @@ jobs:
       artifact: ${{ parameters.sairedis_artifact_name }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/${{ parameters.sairedis_artifact_branch }}'
+      allowPartiallySucceededBuilds: true
       path: $(Build.ArtifactStagingDirectory)/download/sairedis
       patterns: |
         ${{ parameters.sairedis_artifact_pattern }}/libsaivs_*.deb
@@ -159,8 +161,22 @@ jobs:
         target/debs/bullseye/libprotobuf*.deb
         target/debs/bullseye/libprotoc*.deb
         target/debs/bullseye/protobuf-compiler*.deb
-        target/debs/bullseye/libdashapi*.deb
     displayName: "Download common libs"
+  - task: DownloadPipelineArtifact@2
+    inputs:
+      source: specific
+      project: build
+      pipeline: sonic-net.sonic-dash-api
+      ${{ if eq(parameters.arch, 'amd64') }}:
+        artifact: sonic-dash-api
+      ${{ else }}:
+        artifact: sonic-dash-api.${{ parameters.arch }}
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/$(BUILD_BRANCH)'
+      path: $(Build.ArtifactStagingDirectory)/download/common
+      patterns: |
+        libdashapi*.deb
+    displayName: "Download dash api"
   - script: |
       set -ex
       cd download
