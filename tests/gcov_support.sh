@@ -8,6 +8,7 @@ ALLMERGE_DIR=AllMergeReport
 GCOV_OUTPUT=${work_dir}/gcov_output
 HTML_FILE_PREFIX="GCOVHTML_"
 INFO_FILE_PREFIX="GCOVINFO_"
+MAX_PARALLEL_JOBS=8
 
 # overload pushd and popd to reduce log output
 pushd()
@@ -48,8 +49,10 @@ generate_single_tracefile()
 {
     local gcda_dir=$1
     local output_file=${gcda_dir}/$2
+    echo "Generating ${output_file}"
     lcov -c -d "${gcda_dir}" -o "${output_file}" &>/dev/null
     verify_info_file "${output_file}"
+    echo "Done generating ${output_file}"
 }
 
 # generate gcov base info and html report for specified range files
@@ -71,7 +74,7 @@ generate_archive_tracefiles()
             generate_single_tracefile "${fullpath}" "${infoname}" &
         fi
         # limit max # of parallel jobs to half the # of CPU cores
-        [ "$( jobs | wc -l )" -ge "$(( $(nproc) / 2 ))" ] && wait 
+        [ "$( jobs | wc -l )" -ge "$MAX_PARALLEL_JOBS" ] && wait 
     done <<< "${gcda_dir_list}"
     wait
 }
@@ -110,8 +113,7 @@ gcov_set_environment()
     local build_dir containers
 
     build_dir=$1
-    mkdir -p "${build_dir}"/gcov_tmp
-    mkdir -p "${build_dir}"/gcov_tmp/sonic-gcov
+    mkdir -p "${build_dir}"/gcda_archives/sonic-gcov
 
     containers=$(docker ps -q)
 
@@ -120,24 +122,13 @@ gcov_set_environment()
 
     while IFS= read -r line; do
         local container_id=${line}
-        echo "${container_id}"
-        echo "script_count"
-        script_count=$(docker exec -i "${container_id}" find / -name gcov_support.sh | wc -l)
-        echo "${script_count}"
-        if [ "${script_count}" -gt 0 ]; then
-            docker exec -i "${container_id}" killall5 -15
-            docker exec -i "${container_id}" /tmp/gcov/gcov_support.sh collect_gcda
-        fi
-        gcda_count=$(docker exec -i "${container_id}" find / -name *.gcda | wc -l)
+        gcda_count=$(docker exec -i "${container_id}" find / -name "gcda*.tar.gz" | wc -l)
         if [ "${gcda_count}" -gt 0 ]; then
-            echo "find gcda in "
-            echo "${container_id}"
-            mkdir -p "${build_dir}/gcov_tmp/sonic-gcov/${container_id}"
-            pushd "${build_dir}/gcov_tmp/sonic-gcov/${container_id}"
-            docker cp "${container_id}":/tmp/gcov/ .
-            cp gcov/gcov_support.sh "${build_dir}"/gcov_tmp/sonic-gcov
-            cp gcov/lcov_cobertura.py "${build_dir}"/gcov_tmp/sonic-gcov
-            popd
+            echo "Found ${gcda_count} gcda archives in container ${container_id}"
+            mkdir -p "${build_dir}/gcda_archives/sonic-gcov/${container_id}"
+            docker cp "${container_id}":/tmp/gcov/. "${build_dir}/gcda_archives/sonic-gcov/${container_id}/"
+        else
+            echo "No gcda archives found in container ${container_id}"
         fi
     done <<< "${containers}"
 }
@@ -210,7 +201,7 @@ generate_tracefiles()
             while IFS= read -r gcda_archive; do
                 process_gcda_archive "${gcda_archive}" &
                 # limit max # of parallel jobs to half the # of CPU cores
-                [ "$( jobs | wc -l )" -ge "$(( $(nproc) / 2 ))" ] && wait 
+                [ "$( jobs | wc -l )" -ge "$MAX_PARALLEL_JOBS" ] && wait 
             done <<< "$gcda_archives"
             wait
         fi
@@ -228,18 +219,7 @@ generate_tracefiles()
 gcov_support_collect_gcda()
 {
     echo "gcov_support_collect_gcda begin"
-    local gcda_files_count
     local gcda_count
-
-    pushd /
-    # check whether .gcda files exist
-    gcda_files_count=$(find \. -name "*\.gcda" 2>/dev/null | wc -l)
-    if [ "${gcda_files_count}" -lt 1 ]; then
-        echo "### no gcda files found!"
-        return 0
-    fi
-
-    echo "### collect gcda done!"
 
     gcov_support_clean
 
@@ -256,10 +236,6 @@ gcov_support_collect_gcda()
         return 0
     fi
 
-    rm -rf /tmp/gcov/gcov_output
-    mkdir -p /tmp/gcov/gcov_output
-
-    echo "### Make /tmp/gcov dir completed !!"
     popd
 
 }
@@ -271,7 +247,7 @@ gcov_support_collect_gcno()
     local tar_command
     local submodule_name
 
-    find "gcno*.tar.gz" > tmp_gcno.txt
+    find . -name "gcno*.tar.gz" > tmp_gcno.txt
     while read -r LINE ; do
         rm -f "${LINE}"
     done < tmp_gcno.txt
