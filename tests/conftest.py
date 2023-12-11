@@ -1842,7 +1842,6 @@ def dvs(request, manage_dvs) -> DockerVirtualSwitch:
     yield dvs_obj 
     # First generate GCDA files for GCov
     dvs_obj.runcmd('killall5 -15')
-    import pdb; pdb.set_trace()
     gcda_count = len(dvs_obj.runcmd('find /__w/1/s/ -name "*.gcda"')[1].split())
     if gcda_count > 0:
         gcda_archive = dvs_obj.runcmd('mktemp -p /tmp/gcov/ gcda_XXXX.tar.gz')[1].strip('\n')
