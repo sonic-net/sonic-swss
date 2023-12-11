@@ -379,7 +379,6 @@ void FabricPortsOrch::updateFabricDebugCounters()
     int recoveryPollsCfg = RECOVERY_POLLS_CFG;           // monPollThreshRecovery
     int errorRateCrcCellsCfg = ERROR_RATE_CRC_CELLS_CFG; // monErrThreshCrcCells
     int errorRateRxCellsCfg = ERROR_RATE_RX_CELLS_CFG;   // monErrThreshRxCells
-    string applConstKey = FABRIC_MONITOR_DATA;
     std::vector<FieldValueTuple> constValues;
     SWSS_LOG_INFO("updateFabricDebugCounters");
 
