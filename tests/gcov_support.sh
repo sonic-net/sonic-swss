@@ -126,7 +126,7 @@ gcov_set_environment()
         if [ "${gcda_count}" -gt 0 ]; then
             echo "Found ${gcda_count} gcda archives in container ${container_id}"
             mkdir -p "${build_dir}/gcda_archives/sonic-gcov/${container_id}"
-            docker cp "${container_id}":/tmp/gcov/. "${build_dir}/gcda_archives/sonic-gcov/${container_id}/"
+            docker cp "${container_id}":/tmp/gcov/ "${build_dir}/gcda_archives/sonic-gcov/${container_id}/"
         else
             echo "No gcda archives found in container ${container_id}"
         fi
