@@ -77,7 +77,6 @@ jobs:
       ls -lh
       sudo tar -zxvf sonic-gcov.tar.gz
       sudo cp -rf sonic-gcov $(Build.ArtifactStagingDirectory)
-      mkdir -p $(Build.ArtifactStagingDirectory)/sonic-gcov/mock_tests/
       sudo rm sonic-gcov.tar.gz
       ls -lh
     workingDirectory: $(Pipeline.Workspace)
@@ -86,8 +85,15 @@ jobs:
   - task: DownloadPipelineArtifact@2
     inputs:
       artifact: "mock_test_gcov"
-      targetPath: "$(Build.ArtifactStagingDirectory)/sonic-gcov/mock_tests/"
     displayName: "Download mock test gcov files"
+    condition: eq('${{ parameters.archive_gcov }}', true)
+  - script: |
+      destdir="$(Build.ArtifactStagingDirectory)/gcda_archives/mock_tests"
+      sudo mkdir -p $destdir
+      sudo cp gcda*.tar.gz $destdir/
+      sudo cp gcno*.tar.gz $destdir/
+    workingDirectory: $(Pipeline.Workspace)
+    displayName: "Download mock_tests gcov files"
     condition: eq('${{ parameters.archive_gcov }}', true)
   - checkout: self
     submodules: true

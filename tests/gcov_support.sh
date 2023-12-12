@@ -200,6 +200,7 @@ generate_tracefiles()
             done <<< "$gcda_archives"
             wait
         fi
+        popd
 
         mkdir -p "gcov_output/${container_id}"
         find "${container_id}" -name "*.info" -exec "cp" "-r" "--parents" "{}" "gcov_output/" ";"
