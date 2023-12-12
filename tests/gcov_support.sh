@@ -47,36 +47,38 @@ verify_info_file()
 
 generate_single_tracefile()
 {
-    local gcda_dir=$1
-    local output_file=${gcda_dir}/$2
+    local gcno_dir=$1
+    local output_file=${gcno_dir}/$2
+    local tmp_file=${gcno_dir}/tmp.info
     echo "Generating ${output_file}"
-    lcov -c -d "${gcda_dir}" -o "${output_file}" &>/dev/null
+    # Always generate baseline tracefile with zero coverage for all GCNO files
+    # This ensures that the final coverage report includes all instrumented files even if they were not run during testing
+    lcov --initial --capture --directory "${gcno_dir}" --output-file "${output_file}" &>/dev/null
+    GCDA_COUNT=$(find "${gcno_dir}" -name "*.gcda" | wc -l)
+    if [ "$GCDA_COUNT" -ge 1 ]; then
+        lcov --capture --directory "${gcno_dir}" --output-file "${tmp_file}" &>/dev/null
+        lcov --add-tracefile "${output_file}" --add-tracefile "${tmp_file}" --output-file "${output_file}" &>/dev/null
+        rm "${tmp_file}"
+    fi
     verify_info_file "${output_file}"
     echo "Done generating ${output_file}"
 }
 
 # generate gcov base info and html report for specified range files
-generate_archive_tracefiles()
+generate_archive_tracefile()
 {
-    local gcda_file_range=$1
-
-    # find all directories that contain GCDA files
-    local gcda_dir_list
-    gcda_dir_list=$(find "${gcda_file_range}" -name "*.gcda" -exec "dirname" "{}" ";" | uniq)
-
-    # for each directory containg GCDA files, use lcov to generate a tracefile
-    while IFS= read -r line; do
-        local fullpath=$line
-        local infoname=${INFO_FILE_PREFIX}${fullpath##*/}.info
-
-        GCDA_COUNT=$(find "${fullpath}" -name "*.gcda" | wc -l)
-        if [ "$GCDA_COUNT" -ge 1 ]; then
-            generate_single_tracefile "${fullpath}" "${infoname}" &
-        fi
-        # limit max # of parallel jobs to half the # of CPU cores
-        [ "$( jobs | wc -l )" -ge "$MAX_PARALLEL_JOBS" ] && wait 
-    done <<< "${gcda_dir_list}"
-    wait
+    local gcno_dir=$1
+    local tmp_file=${gcno_dir}/tmp.info
+    local output_file=${gcno_dir}/${gcno_dir}.info
+    # Always generate baseline tracefile with zero coverage for all GCNO files
+    # This ensures that the final coverage report includes all instrumented files even if they were not run during testing
+    lcov --initial --capture --directory "${gcno_dir}" --output-file "${output_file}" &>/dev/null
+    GCDA_COUNT=$(find "${gcno_dir}" -name "*.gcda" | wc -l)
+    if [ "$GCDA_COUNT" -ge 1 ]; then
+        lcov --capture --directory "${gcno_dir}" --output-file "${tmp_file}" &>/dev/null
+        lcov --add-tracefile "${output_file}" --add-tracefile "${tmp_file}" --output-file "${output_file}" &>/dev/null
+        rm "${tmp_file}"
+    fi
 }
 
 lcov_merge_all()
@@ -141,7 +143,7 @@ process_gcda_archive()
     cp -r "${src_dir}/." "${dst_dir}"
     tar -C "${dst_dir}" -zxf "${dst_dir}/${src_archive}"
 
-    generate_archive_tracefiles "${dst_dir}"
+    generate_archive_tracefile "${dst_dir}"
     echo "Done generating tracefiles from ${archive_path}"
 }
 
