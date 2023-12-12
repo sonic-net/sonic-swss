@@ -77,10 +77,17 @@ jobs:
       ls -lh
       sudo tar -zxvf sonic-gcov.tar.gz
       sudo cp -rf sonic-gcov $(Build.ArtifactStagingDirectory)
+      mkdir -p $(Build.ArtifactStagingDirectory)/sonic-gcov/mock_tests/
       sudo rm sonic-gcov.tar.gz
       ls -lh
     workingDirectory: $(Pipeline.Workspace)
     displayName: "store sonic-gcov"
+    condition: eq('${{ parameters.archive_gcov }}', true)
+  - task: DownloadPipelineArtifact@2
+    inputs:
+      artifact: "mock_test_gcov"
+      targetPath: "$(Build.ArtifactStagingDirectory)/sonic-gcov/mock_tests/"
+    displayName: "Download mock test gcov files"
     condition: eq('${{ parameters.archive_gcov }}', true)
   - checkout: self
     submodules: true
@@ -94,8 +101,8 @@ jobs:
       pushd ./s/
       sudo tar -zcvf swss.tar.gz ./*
       # ls -lh ./*
-      cp ./gcovpreload/lcov_cobertura.py $(Build.ArtifactStagingDirectory)/
-      cp ./tests/gcov_support.sh $(Build.ArtifactStagingDirectory)/sonic-gcov
+      sudo cp ./gcovpreload/lcov_cobertura.py $(Build.ArtifactStagingDirectory)/
+      sudo cp ./tests/gcov_support.sh $(Build.ArtifactStagingDirectory)/sonic-gcov
       sudo cp -rf swss.tar.gz $(Build.ArtifactStagingDirectory)/sonic-gcov
       popd
       sudo cp -rf $(Build.ArtifactStagingDirectory)/sonic-gcov ./

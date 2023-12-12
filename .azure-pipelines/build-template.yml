@@ -200,6 +200,16 @@ jobs:
       ./autogen.sh
       dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
     displayName: "Compile sonic swss"
+  - script: |
+      dest_dir="$(Build.ArtifactStagingDirectory)/gcda_archives/mock_tests"
+      mkdir -p $dest_dir
+      find $(Build.SourcesDirectory) -name '*.gcda' | xargs tar -czf "$dest_dir/gcda_mock_tests.tar.gz"
+      find $(Build.SourcesDirectory) -name '*.gcno' | xargs tar -czf "$dest_dir/gcno.tar.gz"
+    condition: eq('${{ parameters.archive_gcov }}', true)
+  - publish: $(Build.ArtifactStagingDirectory)/gcda_archives/mock_tests
+    artifact: "mock_test_gcov"
+    displayName: "Archive mock test gcov files"
+    condition: eq('${{ parameters.archive_gcov }}', true)
   - publish: $(System.DefaultWorkingDirectory)/
     artifact: ${{ parameters.artifact_name }}
     displayName: "Archive swss debian packages"

@@ -132,7 +132,8 @@ jobs:
           container_count=$(docker ps -q -a | wc -l)
           if [ '${{ parameters.archive_gcov }}' == True ] && [ ${container_count} -gt 0 ]; then
             ./gcov_support.sh collect_container_gcda $(Build.ArtifactStagingDirectory)
-            docker stop $(docker ps -q -a)
+            echo "Stopping and removing all containers"
+            docker stop $(docker ps -q -a) > /dev/null
             docker rm $(docker ps -q -a)
           fi
           test_set=()
@@ -144,7 +145,8 @@ jobs:
         container_count=$(docker ps -q -a | wc -l)
         if [ '${{ parameters.archive_gcov }}' == True ] && [ ${container_count} -gt 0 ]; then
           ./gcov_support.sh collect_container_gcda $(Build.ArtifactStagingDirectory)
-          docker stop $(docker ps -q -a)
+          echo "Stopping and removing all containers"
+          docker stop $(docker ps -q -a) > /dev/null
           docker rm $(docker ps -q -a)
         fi
       fi
