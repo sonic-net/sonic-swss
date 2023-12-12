@@ -175,6 +175,14 @@ jobs:
     displayName: "Collect logs"
     condition: always()
 
+  - script: |
+      num_archives=$(find $(Build.ArtifactStagingDirectory)/gcda_archives -name "gcda*.tar.gz" | wc -l)
+      echo "Number of GCDA archives: ${num_archives}"
+      num_test_modules=$(ls -l "tests/test*.py" | wc -l)
+      echo "Number of test modules: ${num_test_modules}"
+    displayName: "Count GCDA archives"
+    condition: and(succeeded(), eq('${{ parameters.archive_gcov }}', true))
+
   - publish: $(Build.ArtifactStagingDirectory)/gcda_archives
     artifact: ${{ parameters.gcov_artifact_name }}
     displayName: "Publish gcov output"
