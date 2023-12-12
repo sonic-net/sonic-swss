@@ -122,7 +122,7 @@ gcov_set_environment()
 
     while IFS= read -r line; do
         local container_id=${line}
-        gcda_count=$(docker exec -i "${container_id}" find / -name "gcda*.tar.gz" | wc -l)
+        gcda_count=$(docker exec "${container_id}" find / -name "gcda*.tar.gz" 2>/dev/null | wc -l)
         if [ "${gcda_count}" -gt 0 ]; then
             echo "Found ${gcda_count} gcda archives in container ${container_id}"
             mkdir -p "${build_dir}/gcda_archives/sonic-gcov/${container_id}"
