@@ -81,6 +81,7 @@ generate_archive_tracefiles()
 
 lcov_merge_all()
 {
+    local source_dir=$1
     info_files=$(find "${GCOV_OUTPUT}" -name "*.info")
     while IFS= read -r info_file; do
         if [ ! -f "total.info" ]; then
@@ -94,26 +95,18 @@ lcov_merge_all()
     lcov -o total.info -r total.info "*tests/*"
     lcov -o total.info -r total.info "/usr/*"
 
-    python lcov_cobertura.py total.info -o coverage.xml
+    python lcov_cobertura.py total.info --output coverage.xml --demangle --base-dir "${source_dir}"
 
-    sed -i "s#\.\./s/##" coverage.xml
-    sed -i "s#\.\.\.s\.##" coverage.xml
-
-    pushd gcov_output/
-    if [ ! -d ${ALLMERGE_DIR} ]; then
-        mkdir -p ${ALLMERGE_DIR}
-    fi
-
-    cp ../coverage.xml ${ALLMERGE_DIR}
-    popd
+    mkdir -p gcov_output/${ALLMERGE_DIR}
+    cp coverage.xml gcov_output/${ALLMERGE_DIR}
 }
 
-gcov_set_environment()
+collect_container_gcda()
 {
-    local build_dir containers
+    local archive_dir containers
 
-    build_dir=$1
-    mkdir -p "${build_dir}"/gcda_archives/sonic-gcov
+    archive_dir=$1
+    mkdir -p "${archive_dir}"/gcda_archives/sonic-gcov
 
     containers=$(docker ps -q)
 
@@ -125,8 +118,8 @@ gcov_set_environment()
         gcda_count=$(docker exec "${container_id}" find / -name "gcda*.tar.gz" 2>/dev/null | wc -l)
         if [ "${gcda_count}" -gt 0 ]; then
             echo "Found ${gcda_count} gcda archives in container ${container_id}"
-            mkdir -p "${build_dir}/gcda_archives/sonic-gcov/${container_id}"
-            docker cp "${container_id}":/tmp/gcov/ "${build_dir}/gcda_archives/sonic-gcov/${container_id}/"
+            mkdir -p "${archive_dir}/gcda_archives/sonic-gcov/${container_id}"
+            docker cp "${container_id}":/tmp/gcov/ "${archive_dir}/gcda_archives/sonic-gcov/${container_id}/"
         else
             echo "No gcda archives found in container ${container_id}"
         fi
@@ -313,18 +306,20 @@ main()
             generate_tracefiles
             ;;
         merge_container_info)
-            lcov_merge_all
+            lcov_merge_all "$2"
             ;;
-        set_environment)
-            gcov_set_environment "$2"
+        collect_container_gcda)
+            collect_container_gcda "$2"
             ;;
         *)
             echo "Usage:"
-            echo " collect               collect .gcno files based on module"
-            echo " collect_gcda          collect .gcda files"
-            echo " generate              generate gcov report in html form (all or submodule_name)"
-            echo " merge_container_info  merge homonymic info files from different container"
-            echo " set_environment       set environment ready for report generating in containers"
+            echo " collect                                  collect .gcno files based on module"
+            echo " collect_gcda                             collect .gcda files"
+            echo " generate                                 generate gcov report in html form (all or submodule_name)"
+            echo " merge_container_info [source dir]        merge info files from different containers"
+            echo "                                          - source_dir is the root directory of the source code"
+            echo " collect_container_gcda [archive dir]     collect GCDA archives from existing docker containers"
+            echo "                                          - archive_dir is the destination directory for GCDA archives" 
     esac
 }
 

@@ -131,7 +131,7 @@ jobs:
           echo "${test_set[*]}" | xargs sudo py.test -v --force-flaky --junitxml="${test_name}_tr.xml" $params --imgname=docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber).asan-${{ parameters.asan }}
           container_count=$(docker ps -q -a | wc -l)
           if [ '${{ parameters.archive_gcov }}' == True ] && [ ${container_count} -gt 0 ]; then
-            ./gcov_support.sh set_environment $(Build.ArtifactStagingDirectory)
+            ./gcov_support.sh collect_container_gcda $(Build.ArtifactStagingDirectory)
             docker stop $(docker ps -q -a)
             docker rm $(docker ps -q -a)
           fi
@@ -143,7 +143,7 @@ jobs:
         echo "${test_set[*]}" | xargs sudo py.test -v $params --force-flaky --junitxml="${test_name}_tr.xml" $params --imgname=docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber).asan-${{ parameters.asan }}
         container_count=$(docker ps -q -a | wc -l)
         if [ '${{ parameters.archive_gcov }}' == True ] && [ ${container_count} -gt 0 ]; then
-          ./gcov_support.sh set_environment $(Build.ArtifactStagingDirectory)
+          ./gcov_support.sh collect_container_gcda $(Build.ArtifactStagingDirectory)
           docker stop $(docker ps -q -a)
           docker rm $(docker ps -q -a)
         fi

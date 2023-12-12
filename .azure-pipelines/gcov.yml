@@ -104,7 +104,7 @@ jobs:
       echo "Found following gcov archives" find . -name "*.tar.gz"
       sudo chmod +x ./gcov_support.sh
       sudo ./gcov_support.sh generate
-      sudo ./gcov_support.sh merge_container_info $(Build.ArtifactStagingDirectory)
+      sudo ./gcov_support.sh merge_container_info $(Build.SourcesDirectory)
       sudo cp -rf gcov_output $(Build.ArtifactStagingDirectory)
       sudo cp -rf $(Build.ArtifactStagingDirectory)/gcov_output/AllMergeReport/coverage.xml $(System.DefaultWorkingDirectory)/
       ls -lh $(Build.ArtifactStagingDirectory)
