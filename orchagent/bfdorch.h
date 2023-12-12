@@ -40,7 +40,6 @@ private:
     swss::NotificationConsumer* m_bfdStateNotificationConsumer;
     bool register_state_change_notif;
     std::map<std::string, vector<FieldValueTuple>> bfd_session_cache;
-    bool tsa_enabled;
 
 };
 

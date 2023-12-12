@@ -74,16 +74,6 @@ BfdOrch::BfdOrch(DBConnector *db, string tableName, TableConnector stateDbBfdSes
 
     Orch::addExecutor(bfdStateNotificatier);
     register_state_change_notif = false;
-    BgpGlobalStateOrch* bgp_global_state_orch = gDirectory.get<BgpGlobalStateOrch*>();
-    if (bgp_global_state_orch)
-    {
-        tsa_enabled = bgp_global_state_orch->getTsaState();
-    }
-    else
-    {
-        tsa_enabled = false;
-    }
-
 }
 
 BfdOrch::~BfdOrch(void)
@@ -94,7 +84,12 @@ BfdOrch::~BfdOrch(void)
 void BfdOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
-
+    BgpGlobalStateOrch* bgp_global_state_orch = gDirectory.get<BgpGlobalStateOrch*>();
+    bool tsa_enabled = false;
+    if (bgp_global_state_orch)
+    {
+        tsa_enabled = bgp_global_state_orch->getTsaState();
+    }
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
@@ -642,23 +637,15 @@ void BfdOrch::notify_session_state_down(const string& key)
 
 void BfdOrch::handleTsaStateChange(bool tsaState)
 {
-    SWSS_LOG_INFO("BfdOrch TSA state Changed to %d.\n", int(tsaState));
-    tsa_enabled = tsaState;
     for (auto it : bfd_session_cache)
     {
         if (tsaState == true)
         {
             notify_session_state_down(it.first);
-            if (!remove_bfd_session(it.first))
-            {
-                SWSS_LOG_ERROR("Failed to remove BFD session %s\n", it.first.c_str());
-            }
+            remove_bfd_session(it.first);
         } else
         {
-            if (!create_bfd_session(it.first, it.second))
-            {
-                SWSS_LOG_ERROR("Failed to create BFD session %s\n", it.first.c_str());
-            }
+            create_bfd_session(it.first, it.second);
         }
     }
 }
@@ -668,7 +655,7 @@ BgpGlobalStateOrch::BgpGlobalStateOrch(DBConnector *db, string tableName):
 {
     SWSS_LOG_ENTER();
     tsa_enabled = false;
-    SWSS_LOG_ERROR("BgpGlobalStateOrch init complete\n");
+    SWSS_LOG_INFO("BgpGlobalStateOrch init complete\n");
 }
 
 BgpGlobalStateOrch::~BgpGlobalStateOrch(void)
@@ -706,7 +693,9 @@ void BgpGlobalStateOrch::doTask(Consumer &consumer)
                     bool state = true ? value == "true" : false;
                     if (tsa_enabled != state)
                     {
+                        SWSS_LOG_NOTICE("BgpGlobalStateOrch TSA state Changed to %d from %d.\n", int(state), int(tsa_enabled));
                         tsa_enabled = state;
+
                         BfdOrch* bfd_orch = gDirectory.get<BfdOrch*>();
                         if (bfd_orch)
                         {
