@@ -37,7 +37,7 @@ verify_info_file()
 {
     local file=$1
     local valid_line_count
-    valid_line_count=$(grep -c "FN:" "${file}")
+    valid_line_count=$(grep --count "FN:" "${file}")
 
     if [ "$valid_line_count" -lt 1 ] ;then
         echo "${file}" >> info_err_list
@@ -68,12 +68,12 @@ generate_single_tracefile()
 generate_archive_tracefile()
 {
     local gcno_dir=$1
+    local output_file=$2
     local tmp_file=${gcno_dir}/tmp.info
-    local output_file=${gcno_dir}/${gcno_dir}.info
     # Always generate baseline tracefile with zero coverage for all GCNO files
     # This ensures that the final coverage report includes all instrumented files even if they were not run during testing
     lcov --initial --capture --directory "${gcno_dir}" --output-file "${output_file}" &>/dev/null
-    GCDA_COUNT=$(find "${gcno_dir}" -name "*.gcda" | wc -l)
+    GCDA_COUNT=$(find "${gcno_dir}" -name "*.gcda" | wc --lines)
     if [ "$GCDA_COUNT" -ge 1 ]; then
         lcov --capture --directory "${gcno_dir}" --output-file "${tmp_file}" &>/dev/null
         lcov --add-tracefile "${output_file}" --add-tracefile "${tmp_file}" --output-file "${output_file}" &>/dev/null
@@ -136,14 +136,17 @@ process_gcda_archive()
     local src_archive src_dir dst_dir
     src_archive=$(basename "${archive_path}")
     src_dir=$(dirname "${archive_path}")
-    dst_dir=${src_archive//".tar.gz"/}
+    tmp_dir=${src_archive//".tar.gz"/}
+    dst_tracefile="${src_dir}/${dst_dir}.info"
 
     # create a temp working directory for the GCDA archive so that GCDA files from other archives aren't overwritten
-    mkdir -p "${dst_dir}"
-    cp -r "${src_dir}/." "${dst_dir}"
-    tar -C "${dst_dir}" -zxf "${dst_dir}/${src_archive}"
+    mkdir --parents "${tmp_dir}"
+    cp --recursive "${src_dir}/." "${tmp_dir}"
+    tar --directory="${tmp_dir}" --extract --gzip --file="${tmp_dir}/${src_archive}"
 
-    generate_archive_tracefile "${dst_dir}"
+    generate_archive_tracefile "${tmp_dir}" "${dst_tracefile}"
+
+    rm --recursive --force "${tmp_dir}"
     echo "Done generating tracefiles from ${archive_path}"
 }
 
@@ -182,7 +185,7 @@ generate_tracefiles()
             echo "Found GCNO archives:"
             echo "${gcno_archives}"
             while IFS= read -r gcno_archive; do
-                tar -C "$(dirname "${gcno_archive}")" -zxf "${gcno_archive}"
+                tar --directory="$(dirname "${gcno_archive}")" --gzip --extract --file="${gcno_archive}"
             done <<< "$gcno_archives"
         fi
 
@@ -196,16 +199,16 @@ generate_tracefiles()
             while IFS= read -r gcda_archive; do
                 process_gcda_archive "${gcda_archive}" &
                 # limit max # of parallel jobs to half the # of CPU cores
-                [ "$( jobs | wc -l )" -ge "$MAX_PARALLEL_JOBS" ] && wait 
+                [ "$( jobs | wc --lines )" -ge "$MAX_PARALLEL_JOBS" ] && wait 
             done <<< "$gcda_archives"
             wait
         fi
         popd
 
-        mkdir -p "gcov_output/${container_id}"
+        mkdir --parents "gcov_output/${container_id}"
         find "${container_id}" -name "*.info" -exec "cp" "-r" "--parents" "{}" "gcov_output/" ";"
 
-        rm -rf "${container_id}"
+        rm --recursive --force "${container_id}"
         echo "Done processing container ${container_id}"
     done <<< "$container_dir_list" 
     echo "Tracefile generation completed"
