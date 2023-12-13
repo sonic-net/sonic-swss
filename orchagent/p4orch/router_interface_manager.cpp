@@ -119,6 +119,15 @@ ReturnCodeOr<std::vector<sai_attribute_t>> getSaiAttrs(const P4RouterInterfaceEn
     }
     attrs.push_back(attr);
 
+    // Enable multicast.
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE;
+    attr.value.booldata = true;
+    attrs.push_back(attr);
+
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE;
+    attr.value.booldata = true;
+    attrs.push_back(attr);
+
     // Configure port MTU on router interface
     attr.id = SAI_ROUTER_INTERFACE_ATTR_MTU;
     attr.value.u32 = port.m_mtu;
