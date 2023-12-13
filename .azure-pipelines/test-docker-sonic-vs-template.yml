@@ -162,7 +162,7 @@ jobs:
     condition: succeeded()
 
   - script: |
-      cd "${{Build.SourcesDirectory}}"
+      cd "$(Build.SourcesDirectory)"
       num_archives=$(find $(Build.ArtifactStagingDirectory)/gcda_archives -name "gcda*.tar.gz" | wc -l)
       echo "Number of GCDA archives: ${num_archives}"
       num_test_modules=$(ls -l tests/test*.py | wc -l)
