@@ -1056,13 +1056,17 @@ void SwitchOrch::onSwitchAsicSdkHealthEvent(sai_object_id_t switch_id,
         description_with_terminator.push_back(0);
         description_str = string(reinterpret_cast<char*>(description_with_terminator.data()));
         // Remove unprintable characters but keep CR and NL
-        description_str.erase(std::remove_if(
+        if (description_str.end() !=
+            description_str.erase(std::remove_if(
                                   description_str.begin(),
                                   description_str.end(),
                                   [](unsigned char x) {
                                       return (x != 0x0d) && (x != 0x0a) && !std::isprint(x);
                                   }),
-                              description_str.end());
+                                  description_str.end()))
+        {
+            SWSS_LOG_NOTICE("Unprintable characters in description of ASIC/SDK health event");
+        }
         break;
     }
     default:
