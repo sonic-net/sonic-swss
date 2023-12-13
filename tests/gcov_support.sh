@@ -174,8 +174,7 @@ generate_tracefiles()
 
     while IFS= read -r container_id; do
         echo "Processing container ${container_id}"
-        df -h
-        sudo du /__w/1/ -a 2>/dev/null | sort -n -r | head -n 20
+        df -h .
         pushd "${container_id}"
 
         # untar any GCNO archives
@@ -212,8 +211,7 @@ generate_tracefiles()
 
         rm --recursive --force "${container_id}"
         echo "Done processing container ${container_id}"
-        df -h
-        sudo du /__w/1/ -a 2>/dev/null | sort -n -r | head -n 20
+        df -h .
     done <<< "$container_dir_list" 
     echo "Tracefile generation completed"
 }

@@ -477,6 +477,24 @@ task_process_status DashAclGroupMgr::createRule(const string& group_id, const st
     auto acl_rule_it = group.m_dash_acl_rule_table.find(rule_id);
     ABORT_IF_NOT(acl_rule_it == group.m_dash_acl_rule_table.end(), "Failed to create ACL rule %s. Rule already exist in ACL group %s", rule_id.c_str(), group_id.c_str());
 
+    for (const auto& tag_id : rule.m_src_tags)
+    {
+        if (!m_dash_acl_orch->getDashAclTagMgr().exists(tag_id))
+        {
+            SWSS_LOG_INFO("ACL tag %s doesn't exist, waiting for tag creating before creating rule %s", tag_id.c_str(), rule_id.c_str());
+            return task_need_retry;
+        }
+    }
+
+    for (const auto& tag_id : rule.m_dst_tags)
+    {
+        if (!m_dash_acl_orch->getDashAclTagMgr().exists(tag_id))
+        {
+            SWSS_LOG_INFO("ACL tag %s doesn't exist, waiting for tag creating before creating rule %s", tag_id.c_str(), rule_id.c_str());
+            return task_need_retry;
+        }
+    }
+
     createRule(group, rule);
 
     group.m_dash_acl_rule_table.emplace(rule_id, rule);
