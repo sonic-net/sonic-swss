@@ -8,7 +8,7 @@ ALLMERGE_DIR=AllMergeReport
 GCOV_OUTPUT=${work_dir}/gcov_output
 HTML_FILE_PREFIX="GCOVHTML_"
 INFO_FILE_PREFIX="GCOVINFO_"
-MAX_PARALLEL_JOBS=8
+MAX_PARALLEL_JOBS="$(nproc)"
 
 # overload pushd and popd to reduce log output
 pushd()
