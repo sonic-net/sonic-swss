@@ -91,6 +91,12 @@ std::unordered_map<sai_attr_id_t, sai_attribute_value_t> CreateRouterInterfaceAt
     attr_value.u32 = mtu;
     attr_list[SAI_ROUTER_INTERFACE_ATTR_MTU] = attr_value;
 
+    attr_value.booldata = true;
+    attr_list[SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE] = attr_value;
+
+    attr_value.booldata = true;
+    attr_list[SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE] = attr_value;
+
     return attr_list;
 }
 
@@ -152,6 +158,24 @@ bool MatchCreateRouterInterfaceAttributeList(
             if (attr_list[i].value.oid !=
                 expected_attr_list.at(SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID)
                     .oid) {
+              return false;
+            }
+            matched_attr_num++;
+            break;
+
+        case SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE:
+            if (attr_list[i].value.booldata !=
+                expected_attr_list.at(SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE)
+                    .booldata) {
+              return false;
+            }
+            matched_attr_num++;
+            break;
+
+        case SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE:
+            if (attr_list[i].value.booldata !=
+                expected_attr_list.at(SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE)
+                    .booldata) {
               return false;
             }
             matched_attr_num++;
@@ -274,7 +298,7 @@ class RouterInterfaceManagerTest : public ::testing::Test
     {
         EXPECT_CALL(mock_sai_router_intf_,
                     create_router_interface(
-                        ::testing::NotNull(), Eq(gSwitchId), sub_port ? Eq(6) : Eq(5),
+                        ::testing::NotNull(), Eq(gSwitchId), sub_port ? Eq(8) : Eq(7),
                         Truly(std::bind(MatchCreateRouterInterfaceAttributeList, std::placeholders::_1,
                                         CreateRouterInterfaceAttributeList(
                                             gVirtualRouterId, router_intf_entry.src_mac_address, port_oid, mtu, sub_port, vlan_oid)))))
@@ -360,7 +384,7 @@ TEST_F(RouterInterfaceManagerTest, CreateRouterInterfaceNoMacAddress)
     router_intf_entry.port_name = kPortName1;
 
     EXPECT_CALL(mock_sai_router_intf_,
-                create_router_interface(::testing::NotNull(), Eq(gSwitchId), Eq(4),
+                create_router_interface(::testing::NotNull(), Eq(gSwitchId), Eq(6),
                                         Truly(std::bind(MatchCreateRouterInterfaceAttributeList, std::placeholders::_1,
                                                         CreateRouterInterfaceAttributeList(
                                                             gVirtualRouterId, kZeroMacAddress, kPortOid1, kMtu1)))))
@@ -490,7 +514,7 @@ TEST_F(RouterInterfaceManagerTest, ProcessAddRequestValidAppDbParams)
                                                       .is_set_src_mac = true};
 
     EXPECT_CALL(mock_sai_router_intf_,
-                create_router_interface(::testing::NotNull(), Eq(gSwitchId), Eq(5),
+                create_router_interface(::testing::NotNull(), Eq(gSwitchId), Eq(7),
                                         Truly(std::bind(MatchCreateRouterInterfaceAttributeList, std::placeholders::_1,
                                                         CreateRouterInterfaceAttributeList(
                                                             gVirtualRouterId, kMacAddress1, kPortOid1, kMtu1)))))
@@ -1010,6 +1034,10 @@ TEST_F(RouterInterfaceManagerTest, VerifyStateTest)
                   swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS", "00:01:02:03:04:05"},
                   swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_TYPE", "SAI_ROUTER_INTERFACE_TYPE_PORT"},
                   swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_PORT_ID", "oid:0x112233"},
+                  swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE",
+                                        "true"},
+                  swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE",
+                                        "true"},
                   swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "1500"}});
 
     const std::string db_key = std::string(APP_P4RT_TABLE_NAME) + kTableKeyDelimiter +
@@ -1081,6 +1109,10 @@ TEST_F(RouterInterfaceManagerTest, VerifyStateAsicDbTest)
                   swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS", "00:01:02:03:04:05"},
                   swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_TYPE", "SAI_ROUTER_INTERFACE_TYPE_PORT"},
                   swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_PORT_ID", "oid:0x1234"},
+                  swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE",
+                                        "true"},
+                  swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE",
+                                        "true"},
                   swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "9100"}});
 
     const std::string db_key = std::string(APP_P4RT_TABLE_NAME) + kTableKeyDelimiter +
@@ -1106,6 +1138,10 @@ TEST_F(RouterInterfaceManagerTest, VerifyStateAsicDbTest)
                   swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS", "00:01:02:03:04:05"},
                   swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_TYPE", "SAI_ROUTER_INTERFACE_TYPE_PORT"},
                   swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_PORT_ID", "oid:0x1234"},
+                  swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V4_MCAST_ENABLE",
+                                        "true"},
+                  swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_V6_MCAST_ENABLE",
+                                        "true"},
                   swss::FieldValueTuple{"SAI_ROUTER_INTERFACE_ATTR_MTU", "9100"}});
 
     // Verification should fail if SAI attr cannot be constructed.
