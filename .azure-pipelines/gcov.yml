@@ -90,8 +90,8 @@ jobs:
   - script: |
       destdir="$(Build.ArtifactStagingDirectory)/gcda_archives/mock_tests"
       sudo mkdir -p $destdir
-      sudo cp gcda*.tar.gz $destdir/
-      sudo cp gcno*.tar.gz $destdir/
+      sudo mv gcda*.tar.gz $destdir/
+      sudo mv gcno*.tar.gz $destdir/
     workingDirectory: $(Pipeline.Workspace)
     displayName: "Download mock_tests gcov files"
     condition: eq('${{ parameters.archive_gcov }}', true)
@@ -105,16 +105,13 @@ jobs:
       # sudo apt-get update
       # sudo apt-get install -y dotnet-sdk-5.0
       pushd ./s/
-      sudo tar -zcvf swss.tar.gz ./*
-      # ls -lh ./*
+      sudo tar -zcf swss.tar.gz ./*
       sudo cp ./gcovpreload/lcov_cobertura.py $(Build.ArtifactStagingDirectory)/
       sudo cp ./tests/gcov_support.sh $(Build.ArtifactStagingDirectory)/sonic-gcov
       sudo cp -rf swss.tar.gz $(Build.ArtifactStagingDirectory)/sonic-gcov
       popd
       sudo cp -rf $(Build.ArtifactStagingDirectory)/sonic-gcov ./
       pushd sonic-gcov
-      # ls -lh ./*
-      echo "Found following gcov archives" find . -name "*.tar.gz"
       sudo chmod +x ./gcov_support.sh
       sudo ./gcov_support.sh generate
       sudo ./gcov_support.sh merge_container_info $(Build.SourcesDirectory)
