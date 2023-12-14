@@ -117,10 +117,12 @@ collect_container_gcda()
 
     while IFS= read -r line; do
         local container_id=${line}
-        gcda_count=$(docker exec "${container_id}" find / -name "gcda*.tar.gz" 2>/dev/null | wc -l)
+        docker exec "${container_id}" killall5 -15
+        gcda_count=$(docker exec "${container_id}" find / -name "*.gcda" 2>/dev/null | wc -l)
         if [ "${gcda_count}" -gt 0 ]; then
-            echo "Found ${gcda_count} gcda archives in container ${container_id}"
+            echo "Found ${gcda_count} gcda files in container ${container_id}"
             mkdir -p "${archive_dir}/gcda_archives/sonic-gcov/${container_id}"
+            docker exec "${container_id}" bash -c "tar -C /__w/1/s/ -zcvf /tmp/gcov/gcda_${container_id}.tar.gz ."
             docker cp "${container_id}":/tmp/gcov/ "${archive_dir}/gcda_archives/sonic-gcov/${container_id}/"
         else
             echo "No gcda archives found in container ${container_id}"
@@ -133,11 +135,11 @@ process_gcda_archive()
     local archive_path=$1
     echo "Generating tracefiles from ${archive_path}"
 
-    local src_archive src_dir dst_dir
+    local src_archive src_dir tmp_dir
     src_archive=$(basename "${archive_path}")
     src_dir=$(dirname "${archive_path}")
     tmp_dir=${src_archive//".tar.gz"/}
-    dst_tracefile="${src_dir}/${dst_dir}.info"
+    dst_tracefile="${src_dir}/${tmp_dir}.info"
     container_dir="$(pwd)"
 
     # create a temp working directory for the GCDA archive so that GCDA files from other archives aren't overwritten

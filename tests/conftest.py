@@ -11,7 +11,6 @@ import subprocess
 import sys
 import tarfile
 import io
-import logging 
 
 from typing import Dict, Tuple
 from datetime import datetime
@@ -31,8 +30,6 @@ from dvslib import dvs_hash
 from dvslib import dvs_switch
 
 from buffer_model import enable_dynamic_buffer
-
-logger = logging.getLogger(__name__)
 
 # FIXME: For the sake of stabilizing the PR pipeline we currently assume there are 32 front-panel
 # ports in the system (much like the rest of the test suite). This should be adjusted to accomodate
@@ -409,7 +406,6 @@ class DockerVirtualSwitch:
                                                   cpu_count=max_cpu,
                                                   **kwargs)
 
-        logger.warning("Created DVS container {}".format(self.dvs_id()))
         _, output = subprocess.getstatusoutput(f"docker inspect --format '{{{{.State.Pid}}}}' {self.ctn.name}")
 
         self.pid = int(output)
@@ -424,12 +420,6 @@ class DockerVirtualSwitch:
         # Switch buffer model to dynamic if necessary
         if buffer_model == 'dynamic':
             enable_dynamic_buffer(self.get_config_db(), self.runcmd)
-
-    def dvs_id(self, short=True):
-        if short:
-            return self.ctn.id[:12]
-        else:
-            return self.ctn.id
 
     def create_servers(self):
         for i in range(NUM_PORTS):
@@ -1805,6 +1795,8 @@ def manage_dvs(request) -> str:
             curr_dvs_env = new_dvs_env
 
         else:
+            # First generate GCDA files for GCov
+            dvs.runcmd('killall5 -15')
             # If not re-creating the DVS, restart container
             # between modules to ensure a consistent start state
             dvs.net_cleanup()
@@ -1837,18 +1829,7 @@ def dvs(request, manage_dvs) -> DockerVirtualSwitch:
     name = request.config.getoption("--dvsname")
     log_path = name if name else request.module.__name__
 
-    dvs_obj = manage_dvs(log_path, dvs_env)
-
-    yield dvs_obj 
-    # First generate GCDA files for GCov
-    dvs_obj.runcmd('killall5 -15')
-    gcda_count = len(dvs_obj.runcmd('find /__w/1/s/ -name "*.gcda"')[1].split())
-    if gcda_count > 0:
-        gcda_archive = dvs_obj.runcmd('mktemp -p /tmp/gcov/ gcda_XXXX.tar.gz')[1].strip('\n')
-        dvs_obj.runcmd('tar -C /__w/1/s/ -zcvf {} .'.format(gcda_archive))
-        logger.warning('Archived {} GCDA files to {} in container {}'.format(gcda_count, gcda_archive, dvs_obj.dvs_id()))
-    else:
-        logger.error('No GCDA files found in container {}'.format(dvs_obj.dvs_id()))
+    return manage_dvs(log_path, dvs_env)
 
 @pytest.yield_fixture(scope="module")
 def vst(request):
