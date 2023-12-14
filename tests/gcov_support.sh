@@ -70,15 +70,16 @@ generate_archive_tracefile()
     local gcno_dir=$1
     local output_file=$2
     local tmp_file=${gcno_dir}/tmp.info
+    fastcov -l -X -n -eg "/usr/*" -eg "tests/*" -o "${output_file}" -d "${gcno_dir}" &>/dev/null
     # Always generate baseline tracefile with zero coverage for all GCNO files
     # This ensures that the final coverage report includes all instrumented files even if they were not run during testing
-    lcov --initial --capture --directory "${gcno_dir}" --output-file "${output_file}" &>/dev/null
-    GCDA_COUNT=$(find "${gcno_dir}" -name "*.gcda" | wc --lines)
-    if [ "$GCDA_COUNT" -ge 1 ]; then
-        lcov --capture --directory "${gcno_dir}" --output-file "${tmp_file}" &>/dev/null
-        lcov --add-tracefile "${output_file}" --add-tracefile "${tmp_file}" --output-file "${output_file}" &>/dev/null
-        rm "${tmp_file}"
-    fi
+    # lcov --initial --capture --directory "${gcno_dir}" --output-file "${output_file}" &>/dev/null
+    # GCDA_COUNT=$(find "${gcno_dir}" -name "*.gcda" | wc --lines)
+    # if [ "$GCDA_COUNT" -ge 1 ]; then
+        # lcov --capture --directory "${gcno_dir}" --output-file "${tmp_file}" &>/dev/null
+        # lcov --add-tracefile "${output_file}" --add-tracefile "${tmp_file}" --output-file "${output_file}" &>/dev/null
+        # rm "${tmp_file}"
+    # fi
 }
 
 lcov_merge_all()
@@ -87,15 +88,17 @@ lcov_merge_all()
     info_files=$(find "${GCOV_OUTPUT}" -name "*.info")
     while IFS= read -r info_file; do
         if [ ! -f "total.info" ]; then
-            lcov -o total.info -a "${info_file}"
+            # lcov -o total.info -a "${info_file}"
+            fastcov -o total.info -C "${info_file}"
         else
-            lcov -o total.info -a total.info -a "${info_file}"
+            fastcov -o total.info -C total.info -C "${info_file}"
+            # lcov -o total.info -a total.info -a "${info_file}"
         fi
     done <<< "$info_files"
 
     # Remove unit test files and system libraries
-    lcov -o total.info -r total.info "*tests/*"
-    lcov -o total.info -r total.info "/usr/*"
+    # lcov -o total.info -r total.info "*tests/*"
+    # lcov -o total.info -r total.info "/usr/*"
 
     python lcov_cobertura.py total.info --output coverage.xml --demangle --base-dir "${source_dir}"
 
@@ -133,11 +136,11 @@ process_gcda_archive()
     local archive_path=$1
     echo "Generating tracefiles from ${archive_path}"
 
-    local src_archive src_dir dst_dir
+    local src_archive src_dir tmp_dir 
     src_archive=$(basename "${archive_path}")
     src_dir=$(dirname "${archive_path}")
     tmp_dir=${src_archive//".tar.gz"/}
-    dst_tracefile="${src_dir}/${dst_dir}.info"
+    dst_tracefile="${src_dir}/${tmp_dir}.info"
     container_dir="$(pwd)"
 
     # create a temp working directory for the GCDA archive so that GCDA files from other archives aren't overwritten
