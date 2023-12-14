@@ -138,11 +138,14 @@ process_gcda_archive()
     src_dir=$(dirname "${archive_path}")
     tmp_dir=${src_archive//".tar.gz"/}
     dst_tracefile="${src_dir}/${dst_dir}.info"
+    container_dir="$(pwd)"
 
     # create a temp working directory for the GCDA archive so that GCDA files from other archives aren't overwritten
     mkdir --parents "${tmp_dir}"
-    cp --recursive "${src_dir}/." "${tmp_dir}"
-    tar --directory="${tmp_dir}" --extract --gzip --file="${tmp_dir}/${src_archive}"
+    # symlink GCNO files to temp directory to save disk space
+    find gcov/ -name "*.gcno" -exec "cp" "--parents" "--recursive" "--symbolic-link" "${container_dir}/{}" "${tmp_dir}/" ";"
+    cp --recursive "${tmp_dir}${container_dir}/gcov/." "${tmp_dir}"
+    tar --directory="${tmp_dir}" --extract --gzip --file="${src_dir}/${src_archive}"
 
     generate_archive_tracefile "${tmp_dir}" "${dst_tracefile}"
 
