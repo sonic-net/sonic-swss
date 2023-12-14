@@ -8,7 +8,6 @@ ALLMERGE_DIR=AllMergeReport
 GCOV_OUTPUT=${work_dir}/gcov_output
 HTML_FILE_PREFIX="GCOVHTML_"
 INFO_FILE_PREFIX="GCOVINFO_"
-MAX_PARALLEL_JOBS="1"
 BASE_COV_FILE="${GCOV_OUTPUT}/gcno_only.info"
 
 # overload pushd and popd to reduce log output
@@ -209,11 +208,8 @@ generate_tracefiles()
         else
             echo "Found GCDA archives:"
             echo "${gcda_archives}"
-            # process each GCDA archive in parallel. since each archive is extracted to a separate directory, there is no risk of overwriting files
             while IFS= read -r gcda_archive; do
-                process_gcda_archive "${gcda_archive}" &
-                # limit max # of parallel jobs to half the # of CPU cores
-                [ "$( jobs | wc --lines )" -ge "$MAX_PARALLEL_JOBS" ] && wait 
+                process_gcda_archive "${gcda_archive}" 
             done <<< "$gcda_archives"
             wait
         fi
