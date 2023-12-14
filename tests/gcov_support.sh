@@ -89,9 +89,9 @@ lcov_merge_all()
     while IFS= read -r info_file; do
         if [ ! -f "total.info" ]; then
             # lcov -o total.info -a "${info_file}"
-            fastcov -o total.info -C "${info_file}"
+            fastcov -l -o total.info -C "${info_file}"
         else
-            fastcov -o total.info -C total.info -C "${info_file}"
+            fastcov -l -o total.info -C total.info -C "${info_file}"
             # lcov -o total.info -a total.info -a "${info_file}"
         fi
     done <<< "$info_files"
