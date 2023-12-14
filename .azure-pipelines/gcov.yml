@@ -64,7 +64,8 @@ jobs:
   #       sudo apt-get install -y dotnet-sdk-7.0
   #   displayName: "Install .NET CORE"
   - script: |
-      sudo apt-get install -y lcov
+      sudo apt-get install -y lcov python3-pip
+      sudo pip3 install fastcov
     displayName: "Install dependencies"
     condition: eq('${{ parameters.archive_gcov }}', true)
   - task: DownloadPipelineArtifact@2

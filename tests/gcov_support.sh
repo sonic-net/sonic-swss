@@ -8,7 +8,8 @@ ALLMERGE_DIR=AllMergeReport
 GCOV_OUTPUT=${work_dir}/gcov_output
 HTML_FILE_PREFIX="GCOVHTML_"
 INFO_FILE_PREFIX="GCOVINFO_"
-MAX_PARALLEL_JOBS="4"
+MAX_PARALLEL_JOBS="1"
+BASE_COV_FILE="${GCOV_OUTPUT}/gcno_only.info"
 
 # overload pushd and popd to reduce log output
 pushd()
@@ -70,15 +71,16 @@ generate_archive_tracefile()
     local gcno_dir=$1
     local output_file=$2
     local tmp_file=${gcno_dir}/tmp.info
+    fastcov -l -X -e "/usr/" "tests/" -o "${output_file}" -d "${gcno_dir}" &>/dev/null
     # Always generate baseline tracefile with zero coverage for all GCNO files
     # This ensures that the final coverage report includes all instrumented files even if they were not run during testing
-    lcov --initial --capture --directory "${gcno_dir}" --output-file "${output_file}" &>/dev/null
-    GCDA_COUNT=$(find "${gcno_dir}" -name "*.gcda" | wc --lines)
-    if [ "$GCDA_COUNT" -ge 1 ]; then
-        lcov --capture --directory "${gcno_dir}" --output-file "${tmp_file}" &>/dev/null
-        lcov --add-tracefile "${output_file}" --add-tracefile "${tmp_file}" --output-file "${output_file}" &>/dev/null
-        rm "${tmp_file}"
-    fi
+    # lcov --initial --capture --directory "${gcno_dir}" --output-file "${output_file}" &>/dev/null
+    # GCDA_COUNT=$(find "${gcno_dir}" -name "*.gcda" | wc --lines)
+    # if [ "$GCDA_COUNT" -ge 1 ]; then
+        # lcov --capture --directory "${gcno_dir}" --output-file "${tmp_file}" &>/dev/null
+        # lcov --add-tracefile "${output_file}" --add-tracefile "${tmp_file}" --output-file "${output_file}" &>/dev/null
+        # rm "${tmp_file}"
+    # fi
 }
 
 lcov_merge_all()
@@ -87,15 +89,17 @@ lcov_merge_all()
     info_files=$(find "${GCOV_OUTPUT}" -name "*.info")
     while IFS= read -r info_file; do
         if [ ! -f "total.info" ]; then
-            lcov -o total.info -a "${info_file}"
+            # lcov -o total.info -a "${info_file}"
+            fastcov -l -o total.info -C "${info_file}"
         else
-            lcov -o total.info -a total.info -a "${info_file}"
+            fastcov -l -o total.info -C total.info "${info_file}"
+            # lcov -o total.info -a total.info -a "${info_file}"
         fi
     done <<< "$info_files"
 
     # Remove unit test files and system libraries
-    lcov -o total.info -r total.info "*tests/*"
-    lcov -o total.info -r total.info "/usr/*"
+    # lcov -o total.info -r total.info "*tests/*"
+    # lcov -o total.info -r total.info "/usr/*"
 
     python lcov_cobertura.py total.info --output coverage.xml --demangle --base-dir "${source_dir}"
 
@@ -193,6 +197,10 @@ generate_tracefiles()
             while IFS= read -r gcno_archive; do
                 tar --directory="$(dirname "${gcno_archive}")" --gzip --extract --file="${gcno_archive}"
             done <<< "$gcno_archives"
+        fi
+
+        if [ ! -f "$BASE_COV_FILE" ]; then
+            fastcov --lcov --skip-exclusion-markers --process-gcno --exclude "/usr/" "tests/" --output "${BASE_COV_FILE}" --search-directory . &>/dev/null
         fi
 
         gcda_archives=$(find . -name 'gcda*.tar.gz')
