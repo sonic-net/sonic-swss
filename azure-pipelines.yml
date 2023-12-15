@@ -35,21 +35,8 @@ variables:
       value: $(Build.SourceBranchName)
 
 stages:
-- stage: GcovDebug
-  dependsOn: []
-  jobs:
-  - template: .azure-pipelines/gcov.yml
-    parameters:
-      arch: amd64
-      sonic_slave: sonic-slave-bullseye
-      swss_common_artifact_name: sonic-swss-common
-      sairedis_artifact_name: sonic-sairedis
-      swss_artifact_name: sonic-swss
-      artifact_name: sonic-gcov
-      archive_gcov: true
-
 - stage: Build
-  dependsOn: []
+
   jobs:
   - template: .azure-pipelines/build-template.yml
     parameters:

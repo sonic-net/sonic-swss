@@ -71,21 +71,11 @@ jobs:
   - task: DownloadPipelineArtifact@2
     inputs:
       artifact: ${{ parameters.artifact_name }}
-      source: 'specific'
-      project: 'build'
-      pipeline: 'Azure.sonic-swss'
-      runVersion: 'specific'
-      pipelineId: '432228'
     displayName: "Download gcov artifact"
     condition: eq('${{ parameters.archive_gcov }}', true)
   - task: DownloadPipelineArtifact@2
     inputs:
       artifact: "mock_test_gcov"
-      source: 'specific'
-      project: 'build'
-      pipeline: 'Azure.sonic-swss'
-      runVersion: 'specific'
-      pipelineId: '432228'
     displayName: "Download mock test gcov files"
     condition: eq('${{ parameters.archive_gcov }}', true)
   - script: |
