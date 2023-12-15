@@ -2182,11 +2182,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
             if (ol_nextHops.getSize() > 1
                 && m_syncdNextHopGroups[ol_nextHops].ref_count == 0)
             {
-                if (m_syncdNextHopGroups[ol_nextHops].ref_count == 0)
-                {
-                    SWSS_LOG_NOTICE("Update Nexthop Group %s", ol_nextHops.to_string().c_str());
-                    m_bulkNhgReducedRefCnt.emplace(ol_nextHops, 0);
-                }
+                m_bulkNhgReducedRefCnt.emplace(ol_nextHops, 0);
                 if (mux_orch->isMuxNexthops(ol_nextHops))
                 {
                     SWSS_LOG_NOTICE("Remove mux Nexthop %s", ol_nextHops.to_string().c_str());
