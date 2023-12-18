@@ -309,10 +309,18 @@ class TestMuxTunnelBase():
 
     def add_route(self, dvs, route, nexthops, ifaces=[]):
         apdb = dvs.get_app_db()
-        nexthop_str = ",".join(nexthops)
-        if len(ifaces) == 0:
-            ifaces = [self.VLAN_1000 for k in range(len(nexthops))]
-        iface_str = ",".join(ifaces)
+        if len(nexthops) > 1:
+            nexthop_str = ",".join(nexthops)
+            if len(ifaces) == 0:
+                ifaces = [self.VLAN_1000 for k in range(len(nexthops))]
+            iface_str = ",".join(ifaces)
+        else:
+            nexthop_str = str(nexthops[0])
+            if len(ifaces) == 0:
+                iface_str = self.VLAN_1000
+            else:
+                iface_str = ifaces[0]
+
         ps = swsscommon.ProducerStateTable(apdb.db_connection, self.APP_ROUTE_TABLE)
         fvs = swsscommon.FieldValuePairs(
                 [
@@ -633,9 +641,34 @@ class TestMuxTunnelBase():
             self.check_route_nexthop(dvs_route, asicdb, route, tunnel_nh_id, True)
             self.del_route(dvs,route)
 
+            self.del_neighbor(dvs, self.SERV3_IPV4)
+
+            print("Testing route update to single nexthop")
+            for start in starting_states:
+                self.set_mux_state(appdb, mux_ports[0], start[0])
+                self.set_mux_state(appdb, mux_ports[1], start[1])
+                self.add_route(dvs, route, neighbors)
+
+                print("route update to single nexthop")
+                # add new neighbor to route to force route update
+                self.add_route(dvs, route, [neighbors[0]])
+                if start[0] == ACTIVE:
+                    self.check_route_nexthop(dvs_route, asicdb, route, neighbors[0])
+                else:
+                    self.check_route_nexthop(dvs_route, asicdb, route, tunnel_nh_id, True)
+
+                print("change state of nexthop")
+                if start[0] == ACTIVE:
+                    self.set_mux_state(appdb, mux_ports[0], STANDBY)
+                    self.check_route_nexthop(dvs_route, asicdb, route, tunnel_nh_id, True)
+                else:
+                    self.set_mux_state(appdb, mux_ports[0], ACTIVE)
+                    self.check_route_nexthop(dvs_route, asicdb, route, neighbors[0])
+
+                self.del_route(dvs,route)
+
             for neighbor in neighbors:
                 self.del_neighbor(dvs, neighbor)
-            self.del_neighbor(dvs, self.SERV3_IPV4)
 
             print("Testing add/remove of neighbors")
             for start in starting_states:
