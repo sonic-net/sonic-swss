@@ -96,11 +96,14 @@ lcov_merge_all()
         fi
     done <<< "$info_files"
 
+    echo "Generating cobertura report"
+
     # Remove unit test files and system libraries
     # lcov -o total.info -r total.info "*tests/*"
     # lcov -o total.info -r total.info "/usr/*"
 
     python lcov_cobertura.py total.info --output coverage.xml --demangle --base-dir "${source_dir}"
+    echo "Done generating report"
 
     mkdir -p gcov_output/${ALLMERGE_DIR}
     cp coverage.xml gcov_output/${ALLMERGE_DIR}
@@ -182,7 +185,6 @@ generate_tracefiles()
 
     while IFS= read -r container_id; do
         echo "Processing container ${container_id}"
-        df -h .
         pushd "${container_id}"
 
         # untar any GCNO archives
@@ -220,7 +222,6 @@ generate_tracefiles()
 
         rm --recursive --force "${container_id}"
         echo "Done processing container ${container_id}"
-        df -h .
     done <<< "$container_dir_list" 
     echo "Tracefile generation completed"
 }
