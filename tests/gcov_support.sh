@@ -102,7 +102,7 @@ lcov_merge_all()
     # lcov -o total.info -r total.info "*tests/*"
     # lcov -o total.info -r total.info "/usr/*"
 
-    python lcov_cobertura.py total.info --output coverage.xml --demangle --base-dir "${source_dir}"
+    timeout -v 1h python lcov_cobertura.py total.info --output coverage.xml --demangle --base-dir "${source_dir}"
     echo "Done generating report"
 
     mkdir -p gcov_output/${ALLMERGE_DIR}
