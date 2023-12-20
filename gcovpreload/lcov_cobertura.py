@@ -77,6 +77,7 @@ class LcovCobertura(object):
             self.format = demangler.demangle
         else:
             self.format = lambda x: x
+        print("LCOV object created")
 
     def convert(self):
         """
@@ -90,7 +91,7 @@ class LcovCobertura(object):
         Generate a data structure representing it that can be serialized in any
         logical format.
         """
-
+        print("Parsing coverage data")
         coverage_data = {
             'packages': {},
             'summary': {'lines-total': 0, 'lines-covered': 0,
@@ -200,12 +201,13 @@ class LcovCobertura(object):
                     file_methods[function_name] = ['0', '0']
                 file_methods[function_name][-1] = function_hits
 
+        print("Parsed raw data")
         # Exclude packages
         excluded = [x for x in coverage_data['packages'] for e in self.excludes
                     if re.match(e, x)]
         for package in excluded:
             del coverage_data['packages'][package]
-
+        print("Excluded packages")
         # Compute line coverage rates
         for package_data in list(coverage_data['packages'].values()):
             package_data['line-rate'] = self._percent(
@@ -214,7 +216,7 @@ class LcovCobertura(object):
             package_data['branch-rate'] = self._percent(
                 package_data['branches-total'],
                 package_data['branches-covered'])
-
+        print("Line coverage calculated")
         return coverage_data
 
     def generate_cobertura_xml(self, coverage_data):
@@ -223,7 +225,7 @@ class LcovCobertura(object):
         :param coverage_data: Nested dict representing coverage information.
         :type coverage_data: dict
         """
-
+        print("Generating XML")
         dom_impl = minidom.getDOMImplementation()
         doctype = dom_impl.createDocumentType("coverage", None,
                                               "http://cobertura.sourceforge.net/xml/coverage-04.dtd")
@@ -254,6 +256,7 @@ class LcovCobertura(object):
         packages_el = self._el(document, 'packages', {})
 
         packages = coverage_data['packages']
+        print("Base XML created")
         for package_name, package_data in list(packages.items()):
             package_el = self._el(document, 'package', {
                 'line-rate': package_data['line-rate'],
@@ -316,6 +319,7 @@ class LcovCobertura(object):
                 classes_el.appendChild(class_el)
             package_el.appendChild(classes_el)
             packages_el.appendChild(package_el)
+            print("Finished package {}".format(package_name))
         root.appendChild(packages_el)
 
         return document.toprettyxml()
@@ -395,6 +399,7 @@ def main(argv=None):
 
     try:
         with open(args[1], 'r') as lcov_file:
+            print("Converting LCOV file")
             lcov_data = lcov_file.read()
             lcov_cobertura = LcovCobertura(lcov_data, options.base_dir, options.excludes, options.demangle)
             cobertura_xml = lcov_cobertura.convert()
