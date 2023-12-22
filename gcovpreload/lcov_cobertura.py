@@ -370,6 +370,7 @@ def main(argv=None):
         lcov_cobertura.py lcov-file.dat -b src/dir -e test.lib -o path/out.xml
     By default, XML output will be written to ./coverage.xml
     """
+    print("start")
     if argv is None:
         argv = sys.argv
     parser = OptionParser()
@@ -392,11 +393,12 @@ def main(argv=None):
 
     if options.demangle and not HAVE_CPPFILT:
         raise RuntimeError("C++ filter executable (%s) not found!" % CPPFILT)
-
+    print("demangle set")
     if len(args) != 2:
         print(main.__doc__)
         sys.exit(1)
 
+    print("opening file")
     try:
         with open(args[1], 'r') as lcov_file:
             print("Converting LCOV file")
