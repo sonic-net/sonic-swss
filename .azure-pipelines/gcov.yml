@@ -133,7 +133,7 @@ jobs:
     condition: eq('${{ parameters.archive_gcov }}', true)
 
   - publish: $(Build.ArtifactStagingDirectory)/gcov_output
-    artifact: gcov_info
+    artifact: gcov_output
     displayName: "Archive gcov info"
     condition: eq('${{ parameters.archive_gcov }}', true)
 
