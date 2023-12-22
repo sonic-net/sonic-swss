@@ -88,7 +88,8 @@ jobs:
       sudo mkdir -p $destdir
       sudo mv gcda*.tar.gz $destdir/
       sudo mv gcno*.tar.gz $destdir/
-      ls -lh
+      ls -lh "$(Build.ArtifactStagingDirectory)/gcda_archives/"
+      find "$(Build.ArtifactStagingDirectory)/gcda_archives/" -name "*.tar.gz";
     workingDirectory: $(Pipeline.Workspace)
     displayName: "Unpack GCDA/GCNO archives"
     condition: eq('${{ parameters.archive_gcov }}', true)
@@ -111,6 +112,7 @@ jobs:
       pushd sonic-gcov
       sudo chmod +x ./gcov_support.sh
       sudo ./gcov_support.sh generate
+      ls -lh
       sudo ./gcov_support.sh merge_container_info $(Build.SourcesDirectory)
       sudo cp -rf gcov_output $(Build.ArtifactStagingDirectory)
       sudo cp -rf $(Build.ArtifactStagingDirectory)/gcov_output/AllMergeReport/coverage.xml $(System.DefaultWorkingDirectory)/
