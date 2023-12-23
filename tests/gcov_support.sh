@@ -95,6 +95,8 @@ lcov_merge_all()
             # lcov -o total.info -a total.info -a "${info_file}"
         fi
     done <<< "$info_files"
+    free -h
+    df -h
 
     echo "Generating cobertura report"
 

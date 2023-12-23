@@ -120,6 +120,7 @@ jobs:
       popd
       sudo cp -rf $(Build.ArtifactStagingDirectory)/sonic-gcov ./
       pushd sonic-gcov
+      ls -lh
       sudo chmod +x ./gcov_support.sh
       sudo ./gcov_support.sh generate
       ls -lh
