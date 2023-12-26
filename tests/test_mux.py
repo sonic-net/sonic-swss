@@ -736,7 +736,7 @@ class TestMuxTunnelBase():
             # self.multi_nexthop_test_route_update_decrease_size(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv6_nexthops)
 
             # # These tests do not create route, so create beforehand:
-            # import pdb; pdb.set_trace()
+            import pdb; pdb.set_trace()
             self.add_route(dvs, route_ipv4, ipv4_nexthops)
             # self.add_route(dvs, route_ipv6, ipv6_nexthops)
             self.add_route(dvs, route_B_ipv4, ipv4_nexthops)
