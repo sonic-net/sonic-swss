@@ -2473,17 +2473,20 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
 
     if (m_fgNhgOrch->syncdContainsFgNhg(vrf_id, ipPrefix))
     {
+        SWSS_LOG_NOTICE("syncdContainsFgNhg");
         /* Delete Fine Grained nhg if the revmoved route pointed to it */
         m_fgNhgOrch->removeFgNhg(vrf_id, ipPrefix);
     }
     /* Check if the next hop group is not owned by NhgOrch. */
     else if (!it_route->second.nhg_index.empty())
     {
+        SWSS_LOG_NOTICE("!it_route->second.nhg_index.empty()");
         decNhgRefCount(it_route->second.nhg_index);
     }
     /* The NHG is owned by RouteOrch */
     else
     {
+        SWSS_LOG_NOTICE("The NHG is owned by RouteOrch");
         /*
          * Decrease the reference count only when the route is pointing to a next hop.
          */
@@ -2493,6 +2496,7 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
         MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
         if (it_route->second.nhg_key.getSize() > 1)
         {
+            SWSS_LOG_NOTICE("it_route->second.nhg_key.getSize() > 1");
             if (m_syncdNextHopGroups[it_route->second.nhg_key].ref_count == 0)
             {
                 SWSS_LOG_NOTICE("Remove Nexthop Group %s", ol_nextHops.to_string().c_str());
@@ -2506,6 +2510,7 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
                     {
                         if (!nh->ip_address.isZero())
                         {
+                            SWSS_LOG_NOTICE("removeNextHopRoute");
                             removeNextHopRoute(*nh, routekey);
                         }
                     }
@@ -2515,6 +2520,7 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
         }
         else if (ol_nextHops.is_overlay_nexthop())
         {
+            SWSS_LOG_NOTICE("ol_nextHops.is_overlay_nexthop()");
             const NextHopKey& nexthop = *it_route->second.nhg_key.getNextHops().begin();
             if (m_neighOrch->getNextHopRefCount(nexthop) == 0)
             {
@@ -2528,6 +2534,7 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
          */
         else if (it_route->second.nhg_key.getSize() == 1)
         {
+            SWSS_LOG_NOTICE("it_route->second.nhg_key.getSize() == 1");
             const NextHopKey& nexthop = *it_route->second.nhg_key.getNextHops().begin();
             if (nexthop.isMplsNextHop() &&
                 (m_neighOrch->getNextHopRefCount(nexthop) == 0))
