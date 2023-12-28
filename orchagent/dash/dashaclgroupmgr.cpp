@@ -9,6 +9,7 @@
 #include "dashaclorch.h"
 #include "saihelper.h"
 #include "pbutils.h"
+#include "taskworker.h"
 
 extern sai_dash_acl_api_t* sai_dash_acl_api;
 extern sai_dash_eni_api_t* sai_dash_eni_api;
@@ -126,9 +127,22 @@ sai_attr_id_t getSaiStage(DashAclDirection d, sai_ip_addr_family_t f, DashAclSta
     return stage->second;
 }
 
-DashAclGroupMgr::DashAclGroupMgr(DashOrch *dashorch, DashAclOrch *aclorch) :
+DashAclRuleInfo::DashAclRuleInfo(const DashAclRule &rule) :
+    m_src_tags(rule.m_src_tags),
+    m_dst_tags(rule.m_dst_tags)
+{
+    SWSS_LOG_ENTER();
+}
+
+bool DashAclRuleInfo::isTagUsed(const std::string &tag_id) const
+{
+    return (m_src_tags.find(tag_id) != end(m_src_tags)) || (m_dst_tags.find(tag_id) != end(m_dst_tags));
+}
+
+DashAclGroupMgr::DashAclGroupMgr(DBConnector *db, DashOrch *dashorch, DashAclOrch *aclorch) :
     m_dash_orch(dashorch),
-    m_dash_acl_orch(aclorch)
+    m_dash_acl_orch(aclorch),
+    m_dash_acl_rules_table(new Table(db, APP_DASH_ACL_RULE_TABLE_NAME))
 {
     SWSS_LOG_ENTER();
 }
@@ -247,14 +261,14 @@ bool DashAclGroupMgr::exists(const string& group_id) const
     return m_groups_table.find(group_id) != m_groups_table.end();
 }
 
-void DashAclGroupMgr::onUpdate(const string& group_id, const string& tag_id, const DashTag& tag)
+task_process_status DashAclGroupMgr::onUpdate(const string& group_id, const string& tag_id, const DashTag& tag)
 {
     SWSS_LOG_ENTER();
 
     auto group_it = m_groups_table.find(group_id);
     if (group_it == m_groups_table.end())
     {
-        return;
+        return task_success;
     }
 
     auto& group = group_it->second;
@@ -264,25 +278,33 @@ void DashAclGroupMgr::onUpdate(const string& group_id, const string& tag_id, con
         // When the group is bound to the ENI we need to make sure that the update of the affected rules will be atomic.
         SWSS_LOG_INFO("Update full ACL group %s", group_id.c_str());
 
-        refreshAclGroupFull(group_id);
+        return refreshAclGroupFull(group_id);
     }
-    else
+
+    // If the group is not bound to ENI update the rule immediately.
+    SWSS_LOG_INFO("Update ACL group %s", group_id.c_str());
+    for (auto& rule_it: group.m_dash_acl_rule_table)
     {
-        // If the group is not bound to ENI update the rule immediately.
-        SWSS_LOG_INFO("Update ACL group %s", group_id.c_str());
-        for (auto& rule_it: group.m_dash_acl_rule_table)
+        auto& rule_id = rule_it.first;
+        auto& rule_info = rule_it.second;
+        if (rule_info.isTagUsed(tag_id))
         {
-            auto& rule = rule_it.second;
-            if (rule.m_src_tags.find(tag_id) != rule.m_src_tags.end() || rule.m_dst_tags.find(tag_id) != rule.m_dst_tags.end())
+            DashAclRule rule;
+            bool found = fetchRule(group_id, rule_id, rule);
+            if (!found)
             {
-                removeRule(group, rule);
-                createRule(group, rule);
+                SWSS_LOG_ERROR("Failed to fetch group %s rule %s", group_id.c_str(), rule_id.c_str());
+                return task_failed;
             }
+            removeRule(group, rule_info);
+            rule_info = createRule(group, rule);
         }
     }
+
+    return task_success;
 }
 
-void DashAclGroupMgr::refreshAclGroupFull(const string &group_id)
+task_process_status DashAclGroupMgr::refreshAclGroupFull(const string &group_id)
 {
     SWSS_LOG_ENTER();
 
@@ -292,9 +314,19 @@ void DashAclGroupMgr::refreshAclGroupFull(const string &group_id)
     init(new_group);
     create(new_group);
 
-    for (auto& rule: new_group.m_dash_acl_rule_table)
+    for (auto& rule_it: new_group.m_dash_acl_rule_table)
     {
-        createRule(new_group, rule.second);
+        auto& rule_id = rule_it.first;
+        auto& rule_info = rule_it.second;
+        DashAclRule rule;
+        bool found = fetchRule(group_id, rule_id, rule);
+        if (!found)
+        {
+            SWSS_LOG_ERROR("Failed to fetch group %s rule %s", group_id.c_str(), rule_id.c_str());
+            return task_failed;
+        }
+
+        rule_info = createRule(new_group, rule);
     }
 
     for (const auto& table: new_group.m_in_tables)
@@ -328,6 +360,8 @@ void DashAclGroupMgr::refreshAclGroupFull(const string &group_id)
     removeAclGroupFull(group);
 
     group = new_group;
+
+    return task_success;
 }
 
 void DashAclGroupMgr::removeAclGroupFull(DashAclGroup& group)
@@ -342,13 +376,15 @@ void DashAclGroupMgr::removeAclGroupFull(DashAclGroup& group)
     remove(group);
 }
 
-void DashAclGroupMgr::createRule(DashAclGroup& group, DashAclRule& rule)
+DashAclRuleInfo DashAclGroupMgr::createRule(DashAclGroup& group, DashAclRule& rule)
 {
     SWSS_LOG_ENTER();
 
     vector<sai_attribute_t> attrs;
     vector<sai_ip_prefix_t> src_prefixes = {};
     vector<sai_ip_prefix_t> dst_prefixes = {};
+
+    DashAclRuleInfo rule_info = rule;
 
     auto any_ip = [] (const auto& g)
     {
@@ -450,7 +486,7 @@ void DashAclGroupMgr::createRule(DashAclGroup& group, DashAclRule& rule)
     attrs.back().id = SAI_DASH_ACL_RULE_ATTR_DASH_ACL_GROUP_ID;
     attrs.back().value.oid = group.m_dash_acl_group_id;
 
-    auto status = sai_dash_acl_api->create_dash_acl_rule(&rule.m_dash_acl_rule_id, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
+    auto status = sai_dash_acl_api->create_dash_acl_rule(&rule_info.m_dash_acl_rule_id, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create ACL rule: %d, %s", status, sai_serialize_status(status).c_str());
@@ -460,6 +496,8 @@ void DashAclGroupMgr::createRule(DashAclGroup& group, DashAclRule& rule)
     CrmResourceType crm_rtype = (group.m_ip_version == SAI_IP_ADDR_FAMILY_IPV4) ?
             CrmResourceType::CRM_DASH_IPV4_ACL_RULE : CrmResourceType::CRM_DASH_IPV6_ACL_RULE;
     gCrmOrch->incCrmDashAclUsedCounter(crm_rtype, group.m_dash_acl_group_id);
+
+    return rule_info;
 }
 
 task_process_status DashAclGroupMgr::createRule(const string& group_id, const string& rule_id, DashAclRule& rule)
@@ -495,9 +533,9 @@ task_process_status DashAclGroupMgr::createRule(const string& group_id, const st
         }
     }
 
-    createRule(group, rule);
+    auto rule_info = createRule(group, rule);
 
-    group.m_dash_acl_rule_table.emplace(rule_id, rule);
+    group.m_dash_acl_rule_table.emplace(rule_id, rule_info);
     attachTags(group_id, rule.m_src_tags);
     attachTags(group_id, rule.m_dst_tags);
 
@@ -520,7 +558,7 @@ task_process_status DashAclGroupMgr::updateRule(const string& group_id, const st
     return task_success;
 }
 
-void DashAclGroupMgr::removeRule(DashAclGroup& group, DashAclRule& rule)
+void DashAclGroupMgr::removeRule(DashAclGroup& group, DashAclRuleInfo& rule)
 {
     SWSS_LOG_ENTER();
 
@@ -548,7 +586,7 @@ task_process_status DashAclGroupMgr::removeRule(const string& group_id, const st
 {
     SWSS_LOG_ENTER();
 
-    if (!exists(group_id) || !ruleExists(group_id, rule_id))
+    if (!ruleExists(group_id, rule_id))
     {
         SWSS_LOG_INFO("ACL rule %s:%s does not exists", group_id.c_str(), rule_id.c_str());
         return task_success;
@@ -573,6 +611,34 @@ task_process_status DashAclGroupMgr::removeRule(const string& group_id, const st
     SWSS_LOG_INFO("Removed ACL rule %s:%s", group_id.c_str(), rule_id.c_str());
 
     return task_success;
+}
+
+bool DashAclGroupMgr::fetchRule(const std::string &group_id, const std::string &rule_id, DashAclRule &rule)
+{
+    auto key = group_id + ":" + rule_id;
+    vector<FieldValueTuple> tuples;
+
+    bool exists = m_dash_acl_rules_table->get(key, tuples);
+    if (!exists)
+    {
+        SWSS_LOG_ERROR("Failed to fetch DASH ACL Rule %s", key.c_str());
+        return false;
+    }
+
+    AclRule pb_rule;
+    if (!parsePbMessage(tuples, pb_rule))
+    {
+        SWSS_LOG_ERROR("Failed to parse PB message for DASH ACL rule");
+        return false;
+    }
+
+    if (!from_pb(pb_rule, rule))
+    {
+        SWSS_LOG_ERROR("Failed to convert PB DASH ACL Rule");
+        return false;
+    }
+
+    return true;
 }
 
 void DashAclGroupMgr::bind(const DashAclGroup& group, const EniEntry& eni, DashAclDirection direction, DashAclStage stage)

@@ -2497,20 +2497,21 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
             {
                 SWSS_LOG_NOTICE("Remove Nexthop Group %s", ol_nextHops.to_string().c_str());
                 m_bulkNhgReducedRefCnt.emplace(it_route->second.nhg_key, 0);
-                if (mux_orch->isMuxNexthops(ol_nextHops))
+            }
+            if (mux_orch->isMuxNexthops(ol_nextHops))
+            {
+                SWSS_LOG_NOTICE("Remove mux Nexthop %s", ol_nextHops.to_string().c_str());
+                RouteKey routekey = { vrf_id, ipPrefix };
+                auto nexthop_list = ol_nextHops.getNextHops();
+                for (auto nh = nexthop_list.begin(); nh != nexthop_list.end(); nh++)
                 {
-                    SWSS_LOG_NOTICE("Remove mux Nexthop %s", ol_nextHops.to_string().c_str());
-                    RouteKey routekey = { vrf_id, ipPrefix };
-                    auto nexthop_list = ol_nextHops.getNextHops();
-                    for (auto nh = nexthop_list.begin(); nh != nexthop_list.end(); nh++)
+                    if (!nh->ip_address.isZero())
                     {
-                        if (!nh->ip_address.isZero())
-                        {
-                            removeNextHopRoute(*nh, routekey);
-                        }
+                        SWSS_LOG_NOTICE("removeNextHopRoute");
+                        removeNextHopRoute(*nh, routekey);
                     }
-                    mux_orch->updateRoute(ipPrefix, false);
                 }
+                mux_orch->updateRoute(ipPrefix, false);
             }
         }
         else if (ol_nextHops.is_overlay_nexthop())
