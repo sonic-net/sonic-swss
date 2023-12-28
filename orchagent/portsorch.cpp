@@ -392,7 +392,6 @@ static void getPortSerdesAttr(PortSerdesAttrMap_t &map, const PortConfig &port)
  *    default VLAN and all ports removed from .1Q bridge.
  */
 
-
 PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames, DBConnector *chassisAppDb) :
         Orch(db, tableNames),
         m_portStateTable(stateDb, STATE_PORT_TABLE_NAME),
@@ -5315,7 +5314,6 @@ bool PortsOrch::initializePort(Port &port)
     {
         port.m_oper_status = SAI_PORT_OPER_STATUS_DOWN;
     }
-
 
     /* initialize port admin status */
     if (!getPortAdminStatus(port.m_port_id, port.m_admin_state_up))
