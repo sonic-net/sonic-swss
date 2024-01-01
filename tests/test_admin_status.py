@@ -53,7 +53,7 @@ class TestAdminStatus(object):
 
     def get_port_id(self, dvs, port_name):
         port_name_map = swsscommon.Table(self.countdb, "COUNTERS_PORT_NAME_MAP")
-        status, returned_value = port_name_map.hget("", port_name);
+        status, returned_value = port_name_map.hget("", port_name)
         assert status == True
         return returned_value
 
