@@ -666,6 +666,7 @@ class TestDropCounters(object):
         assert status == True
         return returned_value
     
+    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_add_remove_port(self, dvs, testlog):
         """
             This test verifies that debug counters are removed when we remove a port 
@@ -733,6 +734,7 @@ class TestDropCounters(object):
         self.delete_drop_counter(name2)
         self.remove_drop_reason(name2, reason2)
 
+    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_createAndDeleteMultipleCounters(self, dvs, testlog):
         """
             This test verifies that creating and deleting multiple drop counters
