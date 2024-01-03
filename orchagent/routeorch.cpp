@@ -2449,10 +2449,12 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
 
         auto ol_nextHops = it_route->second.nhg_key;
         MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
-        if (it_route->second.nhg_key.getSize() > 1
-            && m_syncdNextHopGroups[it_route->second.nhg_key].ref_count == 0)
+        if (it_route->second.nhg_key.getSize() > 1)
         {
-            m_bulkNhgReducedRefCnt.emplace(it_route->second.nhg_key, 0);
+            if (m_syncdNextHopGroups[it_route->second.nhg_key].ref_count == 0)
+            {
+                m_bulkNhgReducedRefCnt.emplace(it_route->second.nhg_key, 0);
+            }
             if (mux_orch->isMuxNexthops(ol_nextHops))
             {
                 SWSS_LOG_NOTICE("Remove mux Nexthop %s", ol_nextHops.to_string().c_str());
