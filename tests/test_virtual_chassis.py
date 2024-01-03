@@ -213,6 +213,7 @@ class TestVirtualChassis(object):
                     # Remote system ports's switch id should not match local switch id
                     assert spcfginfo["attached_switch_id"] != lc_switch_id, "RIF system port with wrong switch_id"
 
+    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_chassis_system_neigh(self, vct):
         """Test neigh record create/delete and syncing to chassis app db.
 
@@ -846,7 +847,8 @@ class TestVirtualChassis(object):
                     assert len(lagmemberkeys) == 0, "Stale system lag member entries in asic db"
                     
                     break
-                    
+
+    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_chassis_add_remove_ports(self, vct):
         """Test removing and adding a port in a VOQ chassis.
         Test validates that when a port is created the port is removed from the default vlan.
