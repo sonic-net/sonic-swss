@@ -391,7 +391,6 @@ static void getPortSerdesAttr(PortSerdesAttrMap_t &map, const PortConfig &port)
  *    bridge. By design, SONiC switch starts with all bridge ports removed from
  *    default VLAN and all ports removed from .1Q bridge.
  */
-
 PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames, DBConnector *chassisAppDb) :
         Orch(db, tableNames),
         m_portStateTable(stateDb, STATE_PORT_TABLE_NAME),
@@ -1437,7 +1436,7 @@ void PortsOrch::initHostTxReadyState(Port &port)
 
     if (hostTxReady.empty())
     {
-        m_portStateTable.hset(port.m_alias, "host_tx_ready", "false");
+        setHostTxReady(port.m_port_id, "false");
         SWSS_LOG_NOTICE("initialize host_tx_ready as false for port %s",
                         port.m_alias.c_str());
     }
@@ -1457,7 +1456,7 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
     /* Update the host_tx_ready to false before setting admin_state, when admin state is false */
     if (!state && !m_cmisModuleAsicSyncSupported)
     {
-        m_portStateTable.hset(port.m_alias, "host_tx_ready", "false");
+        setHostTxReady(port.m_port_id, "false");
         SWSS_LOG_NOTICE("Set admin status DOWN host_tx_ready to false for port %s",
                 port.m_alias.c_str());
     }
@@ -1471,7 +1470,7 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
 
         if (!m_cmisModuleAsicSyncSupported)
         {
-            m_portStateTable.hset(port.m_alias, "host_tx_ready", "false");
+            setHostTxReady(port.m_port_id, "false");
         }
         task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
         if (handle_status != task_success)
@@ -1483,7 +1482,7 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
     bool gbstatus = setGearboxPortsAttr(port, SAI_PORT_ATTR_ADMIN_STATE, &state);
     if (gbstatus != true && !m_cmisModuleAsicSyncSupported)
     {
-        m_portStateTable.hset(port.m_alias, "host_tx_ready", "false");
+        setHostTxReady(port.m_port_id, "false");
         SWSS_LOG_NOTICE("Set host_tx_ready to false as gbstatus is false "
                         "for port %s", port.m_alias.c_str());
     }
@@ -1491,7 +1490,7 @@ bool PortsOrch::setPortAdminStatus(Port &port, bool state)
     /* Update the state table for host_tx_ready*/
     if (state && (gbstatus == true) && (status == SAI_STATUS_SUCCESS) && !m_cmisModuleAsicSyncSupported)
     {
-        m_portStateTable.hset(port.m_alias, "host_tx_ready", "true");
+        setHostTxReady(port.m_port_id, "true");
         SWSS_LOG_NOTICE("Set admin status UP host_tx_ready to true for port %s",
                 port.m_alias.c_str());
     }
@@ -1509,7 +1508,7 @@ void PortsOrch::setHostTxReady(sai_object_id_t portId, const std::string &status
         return;
     }
 
-    SWSS_LOG_NOTICE("Setting host_tx_ready status = %s, port_id = 0x%" PRIx64, status.c_str(), portId);
+    SWSS_LOG_NOTICE("Setting host_tx_ready status = %s, alias = %s, port_id = 0x%" PRIx64, status.c_str(), p.m_alias.c_str(), portId);
     m_portStateTable.hset(p.m_alias, "host_tx_ready", status);
 }
 
@@ -5348,7 +5347,7 @@ bool PortsOrch::initializePort(Port &port)
         string hostTxReadyStr = hostTxReadyVal ? "true" : "false";
 
         SWSS_LOG_DEBUG("Received host_tx_ready current status: port_id: 0x%" PRIx64 " status: %s", port.m_port_id, hostTxReadyStr.c_str());
-        m_portStateTable.hset(port.m_alias, "host_tx_ready", hostTxReadyStr);
+        setHostTxReady(port.m_port_id, hostTxReadyStr);
     }
 
     /*
