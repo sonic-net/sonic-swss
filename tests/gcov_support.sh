@@ -88,11 +88,11 @@ lcov_merge_all()
     info_files=$(find "${GCOV_OUTPUT}" -name "*.info")
     while IFS= read -r info_file; do
         if [ ! -f "total.info" ]; then
-            lcov -o total.info -a "${info_file}"
-            # fastcov -l -o total.info -C "${info_file}"
+            # lcov -o total.info -a "${info_file}"
+            fastcov -l -o total.info -C "${info_file}"
         else
-            # fastcov -l -o total.info -C total.info "${info_file}"
-            lcov -o total.info -a total.info -a "${info_file}"
+            fastcov -l -o total.info -C total.info "${info_file}"
+            # lcov -o total.info -a total.info -a "${info_file}"
         fi
     done <<< "$info_files"
     free -h
@@ -101,10 +101,10 @@ lcov_merge_all()
     echo "Generating cobertura report"
 
     # Remove unit test files and system libraries
-    lcov -o total.info -r total.info "*tests/*"
-    lcov -o total.info -r total.info "/usr/*"
+    # lcov -o total.info -r total.info "*tests/*"
+    # lcov -o total.info -r total.info "/usr/*"
 
-    python lcov_cobertura.py total.info --output coverage.xml --demangle --base-dir "${source_dir}"
+    timeout -v 1h python lcov_cobertura.py total.info --output coverage.xml --demangle --base-dir "${source_dir}"
     echo "Done generating report"
 
     mkdir -p gcov_output/${ALLMERGE_DIR}
