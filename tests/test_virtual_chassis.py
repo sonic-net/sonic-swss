@@ -3,6 +3,7 @@ from dvslib.dvs_database import DVSDatabase
 import ast
 import time
 import buffer_model
+import pytest
 
 class TestVirtualChassis(object):
 
