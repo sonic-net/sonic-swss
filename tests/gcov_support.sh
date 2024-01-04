@@ -103,8 +103,9 @@ lcov_merge_all()
     # Remove unit test files and system libraries
     # lcov -o total.info -r total.info "*tests/*"
     # lcov -o total.info -r total.info "/usr/*"
-
-    timeout -v 1h python lcov_cobertura.py total.info --output coverage.xml --demangle --base-dir "${source_dir}"
+    python -v
+    python3 -v
+    timeout --foreground -v 5m python lcov_cobertura.py total.info --output coverage.xml --demangle --base-dir "${source_dir}"
     echo "Done generating report"
 
     mkdir -p gcov_output/${ALLMERGE_DIR}
