@@ -1,6 +1,7 @@
 import time
 import pytest
 import json
+import itertools
 
 from ipaddress import ip_network, ip_address, IPv4Address
 from swsscommon import swsscommon
@@ -512,264 +513,184 @@ class TestMuxTunnelBase():
         self.set_mux_state(appdb, "Ethernet4", "active")
         dvs_route.check_asicdb_deleted_route_entries([rtprefix])
 
-    def multi_nexthop_test(self, dvs, dvs_route, asicdb, appdb, route, neighbors, macs):
-        mux_ports = ["Ethernet0", "Ethernet4"]
-        starting_states = [(ACTIVE, ACTIVE), (ACTIVE, STANDBY), (STANDBY, ACTIVE), (STANDBY, STANDBY)]
+        dvs.runcmd(
+            "vtysh -c \"configure terminal\" -c \"no ip route " + rtprefix +
+            " " + self.SERV1_IPV4 + "\""
+        )
 
-        # Set state to active for initial state
-        for port in mux_ports:
-            self.set_mux_state(appdb, port, "active")
+    def multi_nexthop_check(self, asicdb, dvs_route, route, nexthops, mux_states):
+        if isinstance(route, list):
+            route_copy = route.copy()
+        else:
+            route_copy = [route]
+        for r in route_copy:
+            for i,state in enumerate(mux_states):
+                # Find first active mux port, and check that route points to that neighbor
+                if state == ACTIVE:
+                    self.check_route_nexthop(dvs_route, asicdb, r, nexthops[i])
+                    return
+            else:
+                # If no active mux port, check that route points to tunnel
+                self.check_route_nexthop(dvs_route, asicdb, r, tunnel_nh_id, True)
 
-        # add neighbors for initial state
-        for i,neighbor in enumerate(neighbors):
-            self.add_neighbor(dvs, neighbor, macs[i])
-        
-        try:
-            # toggle between states and add route in various combos of state
-            print("Testing add/remove/update of route")
-            for start in starting_states:
-                print("Adding route with %s: %s and %s: %s" % (mux_ports[0], start[0], mux_ports[1], start[1]))
-                self.set_mux_state(appdb, mux_ports[0], start[0])
-                self.set_mux_state(appdb, mux_ports[1], start[1])
-                self.add_route(dvs, route, neighbors)
-                if start[0] == "active":
-                    self.check_route_nexthop(dvs_route, asicdb, route, neighbors[0])
-                elif start[1] == "active":
-                    self.check_route_nexthop(dvs_route, asicdb, route, neighbors[1])
+    def multi_nexthop_test_create(self, appdb, asicdb, dvs, dvs_route, route, mux_ports, nexthops):
+        '''
+        Tests the creation of a route with multiple nexthops in various combinations of initial mux state
+        '''
+        init_mux_states = list(itertools.product([ACTIVE, STANDBY], repeat=len(mux_ports)))
+
+        print("Test create route in various combos of mux nexthop states for route with multiple nexthops")
+        for states in init_mux_states:
+            print("Create route with mux ports: %s in states: %s" % (str(mux_ports), str(states)))
+            # Set mux states
+            for i,port in enumerate(mux_ports):
+                self.set_mux_state(appdb, port, states[i])
+
+            # Add route
+            self.add_route(dvs, route, nexthops)
+            self.multi_nexthop_check(asicdb, dvs_route, route, nexthops, states)
+
+            self.del_route(dvs, route)
+
+    def multi_nexthop_test_fdb(self, appdb, asicdb, dvs, dvs_route, route, mux_ports, nexthops, macs):
+        '''
+        Tests fbd updates for mux neighbors
+        '''
+        init_mux_states = list(itertools.product([ACTIVE, STANDBY], repeat=len(mux_ports)))
+
+        print("Test fdb update on route with multiple mux nexthops for various mux states")
+        for states in init_mux_states:
+            print("Testing fdb update in states: %s, for nexthops: %s" % (str(states), str(nexthops)))
+
+            # Set mux states
+            for i,port in enumerate(mux_ports):
+                self.set_mux_state(appdb, port, states[i])
+
+            for i,nexthop in enumerate(nexthops):
+                print("Triggering fdb update for %s" % (nexthop))
+                # only supports testing up to 9 nexhops at the moment
+                self.add_neighbor(dvs, nexthop, "00:aa:bb:cc:dd:0%d" % (i))
+                self.multi_nexthop_check(asicdb, dvs_route, route, nexthops, states)
+
+                # Reset fdb
+                self.add_neighbor(dvs, nexthop, macs[i])
+
+    def multi_nexthop_test_toggle(self, appdb, asicdb, dvs, dvs_route, route, mux_ports, nexthops):
+        '''
+        Tests toggling mux state for a route with multiple nexthops
+        '''
+        init_mux_states = list(list(tup) for tup in itertools.product([ACTIVE, STANDBY], repeat=len(mux_ports)))
+
+        print("Test toggling mux state for route with multiple mux nexthops")
+        for states in init_mux_states:
+            print("Testing state change in states: %s, for nexthops: %s" % (str(states), str(nexthops)))
+            for i,port in enumerate(mux_ports):
+                self.set_mux_state(appdb, port, states[i])
+
+            for toggle_index,toggle_port in enumerate(mux_ports):
+                new_states = states.copy()
+
+                print("Toggling %s from %s" % (toggle_port, states[toggle_index]))
+
+                if states[toggle_index] == ACTIVE:
+                    print("setting %s to %s" % (toggle_port, STANDBY))
+                    new_states[toggle_index] = STANDBY
+                    self.set_mux_state(appdb, toggle_port, STANDBY)
+                    self.multi_nexthop_check(asicdb, dvs_route, route, nexthops, new_states)
+
+                    print("setting %s to %s" % (toggle_port, ACTIVE))
+                    new_states[toggle_index] = ACTIVE
+                    self.set_mux_state(appdb, toggle_port, ACTIVE)
+                    self.multi_nexthop_check(asicdb, dvs_route, route, nexthops, new_states)
                 else:
-                    self.check_route_nexthop(dvs_route, asicdb, route, tunnel_nh_id, True)
+                    print("setting %s to %s" % (toggle_port, ACTIVE))
+                    new_states[toggle_index] = ACTIVE
+                    self.set_mux_state(appdb, toggle_port, ACTIVE)
+                    self.multi_nexthop_check(asicdb, dvs_route, route, nexthops, new_states)
 
-                print("Testing fdb update in %s, %s for %s" % (start[0], start[1], neighbors[0]))
-                # move neighbor 1
-                self.add_neighbor(dvs, neighbors[0], "00:aa:bb:cc:dd:ee")
-                if start[0] == "active":
-                    self.check_route_nexthop(dvs_route, asicdb, route, neighbors[0])
-                elif start[1] == "active":
-                    self.check_route_nexthop(dvs_route, asicdb, route, neighbors[1])
-                else:
-                    self.check_route_nexthop(dvs_route, asicdb, route, tunnel_nh_id, True)
+                    print("setting %s to %s" % (toggle_port, STANDBY))
+                    new_states[toggle_index] = STANDBY
+                    self.set_mux_state(appdb, toggle_port, STANDBY)
+                    self.multi_nexthop_check(asicdb, dvs_route, route, nexthops, new_states)
 
-                # move neighbor 1 back
-                self.add_neighbor(dvs, neighbors[0], macs[0])
+        # Set everything back to active
+        for i,port in enumerate(mux_ports):
+                self.set_mux_state(appdb, port, ACTIVE)
 
-                print("Testing fdb update in %s, %s for %s" % (start[0], start[1], neighbors[1]))
-                # move neighbor 2
-                self.add_neighbor(dvs, neighbors[0], "00:aa:bb:cc:dd:ee")
-                if start[0] == "active":
-                    self.check_route_nexthop(dvs_route, asicdb, route, neighbors[0])
-                elif start[1] == "active":
-                    self.check_route_nexthop(dvs_route, asicdb, route, neighbors[1])
-                else:
-                    self.check_route_nexthop(dvs_route, asicdb, route, tunnel_nh_id, True)
+    def multi_nexthop_test_route_update_keep_size(self, appdb, asicdb, dvs, dvs_route, route, mux_ports, nexthops, new_nexthop, new_mux_port):
+        '''
+        Tests route update for a route with multiple nexthops with same number of nexthops
+        '''
+        # Add route
+        self.add_route(dvs, route, nexthops)
 
-                # move neighbor 2 back
-                self.add_neighbor(dvs, neighbors[1], macs[1])
+        print("Test route update for route with multiple mux nexthops")
+        for i,nexthop in enumerate(nexthops):
+            new_nexthops = nexthops.copy()
+            new_muxports = mux_ports.copy()
 
-                self.del_route(dvs, route)
+            print("Triggering route update %s to replace: %s" % (str(new_nexthops), str(nexthop)))
+            new_nexthops[i] = new_nexthop
+            new_muxports[i] = new_mux_port
 
+            new_nexthops.sort()
+            new_muxports.sort()
 
-            # toggle mux states to check setState actions
-            print("Testing toggling state")
-            for start in starting_states:
-                self.set_mux_state(appdb, mux_ports[0], start[0])
-                self.set_mux_state(appdb, mux_ports[1], start[1])
-                self.add_route(dvs, route, neighbors)
+            self.add_route(dvs, route, new_nexthops)
+            self.multi_nexthop_test_toggle(appdb, asicdb, dvs, dvs_route, route, new_muxports, new_nexthops)
 
-                for toggle_index,port in enumerate(mux_ports):
-                    keep_index = (toggle_index + 1) % 2
+            # Reset route
+            self.add_route(dvs, route, nexthops)
 
-                    print("keeping %s as %s while toggling %s from %s" % \
-                          (mux_ports[keep_index], start[keep_index], mux_ports[toggle_index], start[toggle_index]))
+        self.del_route(dvs, route)
 
-                    if start[toggle_index] == ACTIVE:
-                        print("setting %s to %s" % (mux_ports[toggle_index], STANDBY))
-                        self.set_mux_state(appdb, mux_ports[toggle_index], STANDBY)
-                        if start[keep_index] == ACTIVE:
-                            self.check_route_nexthop(dvs_route, asicdb, route, neighbors[keep_index])
-                        else:
-                            self.check_route_nexthop(dvs_route, asicdb, route, tunnel_nh_id, True)
+    def multi_nexthop_test_route_update_increase_size(self, appdb, asicdb, dvs, dvs_route, route, mux_ports, nexthops):
+        '''
+        Tests route update for a route with multiple nexthops increasing number of nexthops over time
+        '''
+        print("Test route update for route with multiple mux nexthops")
+        for i,nexthop in enumerate(nexthops):
+            print("Triggering route update to add: %s. new route %s -> %s" % (str(nexthop), route, nexthops[:i+1]))
+            self.add_route(dvs, route, nexthops[:i+1])
+            self.multi_nexthop_test_toggle(appdb, asicdb, dvs, dvs_route, route, mux_ports[:i+1], nexthops[:i+1])
 
-                        print("setting %s to %s" % (mux_ports[toggle_index], ACTIVE))
-                        self.set_mux_state(appdb, mux_ports[toggle_index], ACTIVE)
-                        if start[keep_index] == ACTIVE:
-                            self.check_route_nexthop(dvs_route, asicdb, route, neighbors[0])
-                        else:
-                            self.check_route_nexthop(dvs_route, asicdb, route, neighbors[toggle_index])
-                    else:
-                        print("setting %s to %s" % (mux_ports[toggle_index], ACTIVE))
-                        self.set_mux_state(appdb, mux_ports[toggle_index], ACTIVE)
-                        if start[keep_index] == ACTIVE:
-                            self.check_route_nexthop(dvs_route, asicdb, route, neighbors[0])
-                        else:
-                            self.check_route_nexthop(dvs_route, asicdb, route, neighbors[toggle_index])
+        self.del_route(dvs, route)
 
-                        print("setting %s to %s" % (mux_ports[toggle_index], STANDBY))
-                        self.set_mux_state(appdb, mux_ports[toggle_index], STANDBY)
-                        if start[keep_index] == ACTIVE:
-                            self.check_route_nexthop(dvs_route, asicdb, route, neighbors[keep_index])
-                        else:
-                            self.check_route_nexthop(dvs_route, asicdb, route, tunnel_nh_id, True)
-                self.del_route(dvs, route)
+    def multi_nexthop_test_route_update_decrease_size(self, appdb, asicdb, dvs, dvs_route, route, mux_ports, nexthops):
+        '''
+        Tests route update for a route with multiple nexthops increasing number of nexthops over time
+        '''
+        print("Test route update for route with multiple mux nexthops")
+        for i,nexthop in enumerate(nexthops):
+            if i == len(nexthops)-1:
+                break
+            print("Triggering route update to remove: %s. new route %s -> %s" % (str(nexthop), route, nexthops[i:]))
+            self.add_route(dvs, route, nexthops[i:])
+            self.multi_nexthop_test_toggle(appdb, asicdb, dvs, dvs_route, route, mux_ports, nexthops)
 
-            # Check route_updates
-            self.add_neighbor(dvs, self.SERV3_IPV4, macs[2])
-            print("Testing route updates")
-            self.add_route(dvs, route, neighbors)
-            print("setting states to active")
-            for port in mux_ports:
-                self.set_mux_state(appdb, port, "active")
-            self.set_mux_state(appdb, "Ethernet4", "active")
+        self.del_route(dvs, route)
 
-            print("triggering another route update")
-            # add new neighbor to route to force route update
-            self.add_route(dvs, route, [neighbors[0], self.SERV3_IPV4])
-            self.check_route_nexthop(dvs_route, asicdb, route, neighbors[0])
-            self.del_route(dvs,route)
+    def multi_nexthop_test_neighbor_add(self, appdb, asicdb, dvs, dvs_route, route, mux_ports, nexthops, macs):
+        '''
+        Tests adding neighbors for a route with multiple nexthops
+        '''
+        print("Test adding neighbors for route with multiple mux nexthops")
+        for i,nexthop in enumerate(nexthops):
+            print("Triggering neighbor add for %s" % (nexthop))
+            self.add_neighbor(dvs, nexthop, macs[i])
+            self.multi_nexthop_test_toggle(appdb, asicdb, dvs, dvs_route, route, mux_ports, nexthops)
 
-            time.sleep(2)
+    def multi_nexthop_test_neighbor_del(self, appdb, asicdb, dvs, dvs_route, route, mux_ports, nexthops):
+        '''
+        Tests deleting neighbors for a route with multiple nexthops
+        '''
+        print("Test setting 0 mac neighbors for route with multiple mux nexthops")
+        for nexthop in nexthops:
+            print("Triggering neighbor del for %s" % (nexthop))
+            self.add_neighbor(dvs, nexthop, "00:00:00:00:00:00")
+            self.multi_nexthop_test_toggle(appdb, asicdb, dvs, dvs_route, route, mux_ports, nexthops)
 
-            self.add_route(dvs, route, neighbors)
-            print("setting states to standby")
-            for port in mux_ports:
-                self.set_mux_state(appdb, port, "standby")
-            self.set_mux_state(appdb, "Ethernet4", "standby")
-
-            print("triggering another route update")
-            # add new neighbor to route to force route update
-            self.add_route(dvs, route, [neighbors[0], self.SERV3_IPV4])
-            self.add_route(dvs, route, neighbors)
-            self.check_route_nexthop(dvs_route, asicdb, route, tunnel_nh_id, True)
-            self.del_route(dvs,route)
-
-            self.del_neighbor(dvs, self.SERV3_IPV4)
-
-            print("Testing route update to single nexthop")
-            for start in starting_states:
-                self.set_mux_state(appdb, mux_ports[0], start[0])
-                self.set_mux_state(appdb, mux_ports[1], start[1])
-                self.add_route(dvs, route, neighbors)
-
-                print("route update to single nexthop")
-                # add new neighbor to route to force route update
-                self.add_route(dvs, route, [neighbors[0]])
-                if start[0] == ACTIVE:
-                    self.check_route_nexthop(dvs_route, asicdb, route, neighbors[0])
-                else:
-                    self.check_route_nexthop(dvs_route, asicdb, route, tunnel_nh_id, True)
-
-                print("change state of nexthop")
-                if start[0] == ACTIVE:
-                    self.set_mux_state(appdb, mux_ports[0], STANDBY)
-                    self.check_route_nexthop(dvs_route, asicdb, route, tunnel_nh_id, True)
-                else:
-                    self.set_mux_state(appdb, mux_ports[0], ACTIVE)
-                    self.check_route_nexthop(dvs_route, asicdb, route, neighbors[0])
-
-                self.del_route(dvs,route)
-
-            for neighbor in neighbors:
-                self.del_neighbor(dvs, neighbor)
-
-            print("Testing add/remove of neighbors")
-            for start in starting_states:
-                print("Testing add/remove of neighbors in %s, %s" % start)
-                self.set_mux_state(appdb, mux_ports[0], start[0])
-                self.set_mux_state(appdb, mux_ports[1], start[1])
-                self.add_route(dvs, route, neighbors)
-
-                # add first neighbor
-                self.add_neighbor(dvs, neighbors[0], macs[0])
-                if start[0] == ACTIVE:
-                    self.check_route_nexthop(dvs_route, asicdb, route, neighbors[0])
-
-                # add second neighbor
-                self.add_neighbor(dvs, neighbors[1], macs[1])
-                time.sleep(1)
-                if start[0] == ACTIVE:
-                    self.check_route_nexthop(dvs_route, asicdb, route, neighbors[0])
-                elif start[1] == ACTIVE:
-                    self.check_route_nexthop(dvs_route, asicdb, route, neighbors[1])
-                else:
-                    self.check_route_nexthop(dvs_route, asicdb, route, tunnel_nh_id, True)
-
-                # remove neighbors (shouldn't work)
-                for neighbor in neighbors:
-                    self.del_neighbor(dvs, neighbor)
-                    if start[0] == ACTIVE:
-                        self.check_route_nexthop(dvs_route, asicdb, route, neighbors[0])
-                    elif start[1] == ACTIVE:
-                        self.check_route_nexthop(dvs_route, asicdb, route, neighbors[1])
-                    else:
-                        self.check_route_nexthop(dvs_route, asicdb, route, tunnel_nh_id, True)
-
-                # add neighbor again to trick ip
-                for i,neighbor in enumerate(neighbors):
-                    self.add_neighbor(dvs, neighbor, macs[i])
-
-                self.del_route(dvs,route)
-                for neighbor in neighbors:
-                    self.del_neighbor(dvs, neighbor)
-
-            # add the neighbors
-            for i,neighbor in enumerate(neighbors):
-                self.add_neighbor(dvs, neighbor, macs[i])
-
-            print("Testing multiple routes pointing to one of the NH")
-            r2 = "3.4.5.0/24"
-            for start in starting_states:
-                print("Adding routes with %s: %s and %s: %s" % (mux_ports[0], start[0], mux_ports[1], start[1]))
-
-                self.set_mux_state(appdb, mux_ports[0], start[0])
-                self.set_mux_state(appdb, mux_ports[1], start[1])
-                self.add_route(dvs, route, neighbors)
-
-                # add R2 -> NH1
-                # R2 should behave like a normal route.
-                self.add_route(dvs, r2, [neighbors[0]])
-                if start[0] == "active":
-                    self.check_route_nexthop(dvs_route, asicdb, r2, neighbors[0])
-                else:
-                    self.check_route_nexthop(dvs_route, asicdb, r2, tunnel_nh_id, True)
-
-                self.del_route(dvs,route)
-                self.del_route(dvs,r2)
-
-            # remove the neighbors
-            for neighbor in neighbors:
-                self.del_neighbor(dvs, neighbor)
-
-            # add one neighbor as MUX other as standalone
-            self.add_neighbor(dvs, neighbors[0], macs[i])
-            self.add_neighbor(dvs, neighbors[1], "00:00:00:00:00:00")
-
-            print("Testing one mux, one standalone neighbor")
-            for start in starting_states:
-                print("Testing add/remove of neighbors in %s, %s" % start)
-                self.set_mux_state(appdb, mux_ports[0], start[0])
-                self.set_mux_state(appdb, mux_ports[1], start[1])
-                self.add_route(dvs, route, neighbors)
-
-                if start[0] == "active":
-                    self.check_route_nexthop(dvs_route, asicdb, route, neighbors[0])
-                else:
-                    # N2 should always be standby
-                    self.check_route_nexthop(dvs_route, asicdb, route, tunnel_nh_id, True)
-
-                self.del_route(dvs,route)
-
-            # remove the neighbors
-            for neighbor in neighbors:
-                self.del_neighbor(dvs, neighbor)
-
-        finally:
-            # Cleanup
-            for port in mux_ports:
-                self.set_mux_state(appdb, port, "active")
-            self.del_route(dvs,route)
-            for neighbor in neighbors:
-                self.del_neighbor(dvs, neighbor)
-
-    def create_and_test_multi_nexthop_routes(self, dvs, dvs_route, appdb, macs, asicdb):
+    def create_and_test_multi_nexthop_routes(self, dvs, dvs_route, appdb, macs, new_mac, asicdb):
         '''
         Tests case where there are multiple nexthops tied to a route
         If the nexthops are tied to a mux, then only the first active neighbor will be programmed
@@ -778,114 +699,66 @@ class TestMuxTunnelBase():
 
         route_ipv4 = "2.3.4.0/24"
         route_ipv6 = "2023::/64"
-        ipv4_neighbors = [self.SERV1_IPV4, self.SERV2_IPV4]
-        ipv6_neighbors = [self.SERV1_IPV6, self.SERV2_IPV6]
+        route_B_ipv4 = "2.3.5.0/24"
+        route_B_ipv6 = "2024::/64"
+        ipv4_nexthops = [self.SERV1_IPV4, self.SERV2_IPV4]
+        ipv6_nexthops = [self.SERV1_IPV6, self.SERV2_IPV6]
+        new_ipv4_nexthop = self.SERV3_IPV4
+        new_ipv6_nexthop = self.SERV3_IPV6
+        non_mux_ipv4 = ["11.11.11.11", "12.12.12.12"]
+        non_mux_ipv6 = ["2222::100", "2222::101"]
+        non_mux_mac = "00:aa:aa:aa:aa:aa"
+        mux_ports = ["Ethernet0", "Ethernet4"]
+        new_mux_port = "Ethernet8"
 
-        self.multi_nexthop_test(dvs, dvs_route, asicdb, appdb, route_ipv4, ipv4_neighbors, macs)
-        self.multi_nexthop_test(dvs, dvs_route, asicdb, appdb, route_ipv6, ipv6_neighbors, macs)
+        for i,mac in enumerate(macs):
+            self.add_neighbor(dvs, ipv4_nexthops[i], mac)
+            self.add_neighbor(dvs, ipv6_nexthops[i], mac)
+
+        self.add_neighbor(dvs, new_ipv4_nexthop, new_mac)
+        self.add_neighbor(dvs, new_ipv6_nexthop, new_mac)
+
+        for port in mux_ports:
+            self.set_mux_state(appdb, port, ACTIVE)
+        self.set_mux_state(appdb, new_mux_port, ACTIVE)
 
         try:
-            # neighbor not tied to mux cable case
-            non_mux_ipv4 = ["11.11.11.11", "12.12.12.12"]
-            non_mux_ipv6 = ["2222::100", "2222::101"]
-            non_mux_macs = ["00:aa:bb:cc:dd:ee", "00:aa:bb:cc:dd:ff"]
-            print("Testing neighbors that are not tied to a mux cable")
+            # These tests create route:
+            self.multi_nexthop_test_create(appdb, asicdb, dvs, dvs_route, route_ipv4, mux_ports, ipv4_nexthops)
+            self.multi_nexthop_test_create(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv6_nexthops)
+            self.multi_nexthop_test_route_update_keep_size(appdb, asicdb, dvs, dvs_route, route_ipv4, mux_ports, ipv4_nexthops, new_ipv4_nexthop, new_mux_port)
+            self.multi_nexthop_test_route_update_keep_size(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv6_nexthops, new_ipv6_nexthop, new_mux_port)
+            self.multi_nexthop_test_route_update_increase_size(appdb, asicdb, dvs, dvs_route, route_ipv4, mux_ports, ipv4_nexthops)
+            self.multi_nexthop_test_route_update_increase_size(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv6_nexthops)
+            self.multi_nexthop_test_route_update_decrease_size(appdb, asicdb, dvs, dvs_route, route_ipv4, mux_ports, ipv4_nexthops)
+            self.multi_nexthop_test_route_update_decrease_size(appdb, asicdb, dvs, dvs_route, route_ipv6, mux_ports, ipv6_nexthops)
 
-            for i in range(2):
-                self.add_neighbor(dvs, non_mux_ipv4[i], non_mux_macs[i])
-                self.add_neighbor(dvs, non_mux_ipv6[i], non_mux_macs[i])
+            # # These tests do not create route, so create beforehand:
+            self.add_route(dvs, route_ipv4, ipv4_nexthops)
+            self.add_route(dvs, route_ipv6, ipv6_nexthops)
+            self.add_route(dvs, route_B_ipv4, ipv4_nexthops)
+            self.add_route(dvs, route_B_ipv6, ipv6_nexthops)
 
-            self.add_route(dvs, route_ipv4, non_mux_ipv4)
-            self.add_route(dvs, route_ipv6, non_mux_ipv6)
-
-            # Check for route pointing to first neighbor
-            self.check_route_nexthop(dvs_route, asicdb, route_ipv4, non_mux_ipv4[0])
-            self.check_route_nexthop(dvs_route, asicdb, route_ipv6, non_mux_ipv6[0])
-
-            # Cleanup
-            self.del_route(dvs, route_ipv4)
-            self.del_route(dvs, route_ipv6)
-            for i in range(2):
-                self.del_neighbor(dvs, non_mux_ipv4[i])
-                self.del_neighbor(dvs, non_mux_ipv6[i])
-
-            # neighbor not in mux cable case
-            non_mux_ipv4 = ["11.11.11.11", "12.12.12.12"]
-            non_mux_ipv6 = ["2222::100", "2222::101"]
-            non_mux_macs = ["00:aa:bb:cc:dd:ee", "00:aa:bb:cc:dd:ff"]
-            print("Testing neighbors that are not tied to a mux cable")
-            for i in range(2):
-                self.add_neighbor(dvs, non_mux_ipv4[i], non_mux_macs[i])
-                self.add_neighbor(dvs, non_mux_ipv6[i], non_mux_macs[i])
-
-            self.add_route(dvs, route_ipv4, non_mux_ipv4)
-            self.add_route(dvs, route_ipv6, non_mux_ipv6)
-
-            # Check for route pointing to first neighbor
-            self.check_route_nexthop(dvs_route, asicdb, route_ipv4, non_mux_ipv4[0])
-            self.check_route_nexthop(dvs_route, asicdb, route_ipv6, non_mux_ipv6[0])
-
-            # Cleanup
-            self.del_route(dvs, route_ipv4)
-            self.del_route(dvs, route_ipv6)
-            for i in range(2):
-                self.del_neighbor(dvs, non_mux_ipv4[i])
-                self.del_neighbor(dvs, non_mux_ipv6[i])
-
-
-            # add one neighbor as MUX other as non-mux
-            mux_ports = ["Ethernet0", "Ethernet4"]
-            self.set_mux_state(appdb, mux_ports[0], ACTIVE)
-            self.set_mux_state(appdb, mux_ports[1], ACTIVE)
-            self.add_neighbor(dvs, ipv4_neighbors[0], macs[0])
-            self.add_neighbor(dvs, non_mux_ipv4[0], "00:aa:bb:cc:dd:ee")
-
-            print("Testing one mux, one standalone neighbor ipv4")
-            starting_states = [(ACTIVE, ACTIVE), (ACTIVE, STANDBY), (STANDBY, ACTIVE), (STANDBY, STANDBY)]
-            for start in starting_states:
-                print("Testing add/remove of neighbors in %s, %s" % start)
-                self.set_mux_state(appdb, mux_ports[0], start[0])
-                self.set_mux_state(appdb, mux_ports[1], start[1])
-                self.add_route(dvs, route_ipv4, [ipv4_neighbors[0], non_mux_ipv4[0]])
-
-                #N2 should always be active
-                self.check_route_nexthop(dvs_route, asicdb, route_ipv4, non_mux_ipv4[0])
-
-                self.del_route(dvs,route_ipv4)
-
-            self.del_neighbor(dvs, ipv4_neighbors[0])
-            self.del_neighbor(dvs, non_mux_ipv4[0])
-
-            # add one neighbor as MUX other as non-mux for ipv6
-            self.set_mux_state(appdb, mux_ports[0], ACTIVE)
-            self.set_mux_state(appdb, mux_ports[1], ACTIVE)
-            self.add_neighbor(dvs, ipv6_neighbors[0], macs[0])
-            self.add_neighbor(dvs, non_mux_ipv6[0], "00:aa:bb:cc:dd:ee")
-
-            print("Testing one mux, one standalone neighbor ipv6")
-            mux_ports = ["Ethernet0", "Ethernet4"]
-            starting_states = [(ACTIVE, ACTIVE), (ACTIVE, STANDBY), (STANDBY, ACTIVE), (STANDBY, STANDBY)]
-            for start in starting_states:
-                print("Testing add/remove of neighbors in %s, %s" % start)
-                self.set_mux_state(appdb, mux_ports[0], start[0])
-                self.set_mux_state(appdb, mux_ports[1], start[1])
-                self.add_route(dvs, route_ipv6, [ipv6_neighbors[0], non_mux_ipv6[0]])
-
-                #N2 should always be active
-                self.check_route_nexthop(dvs_route, asicdb, route_ipv6, non_mux_ipv6[0])
-
-                self.del_route(dvs,route_ipv6)
-
-            self.del_neighbor(dvs, ipv6_neighbors[0])
-            self.del_neighbor(dvs, non_mux_ipv6[0])
-
+            self.multi_nexthop_test_fdb(appdb, asicdb, dvs, dvs_route, [route_ipv4, route_B_ipv4], mux_ports, ipv4_nexthops, macs)
+            self.multi_nexthop_test_fdb(appdb, asicdb, dvs, dvs_route, [route_ipv6, route_B_ipv6], mux_ports, ipv6_nexthops, macs)
+            self.multi_nexthop_test_toggle(appdb, asicdb, dvs, dvs_route, [route_ipv4, route_B_ipv4], mux_ports, ipv4_nexthops)
+            self.multi_nexthop_test_toggle(appdb, asicdb, dvs, dvs_route, [route_ipv6, route_B_ipv6], mux_ports, ipv6_nexthops)
+            self.multi_nexthop_test_neighbor_add(appdb, asicdb, dvs, dvs_route, [route_ipv4, route_B_ipv4], mux_ports, ipv4_nexthops, macs)
+            self.multi_nexthop_test_neighbor_add(appdb, asicdb, dvs, dvs_route, [route_ipv6, route_B_ipv6], mux_ports, ipv6_nexthops, macs)
+            self.multi_nexthop_test_neighbor_del(appdb, asicdb, dvs, dvs_route, [route_ipv4, route_B_ipv4], mux_ports, ipv4_nexthops)
+            self.multi_nexthop_test_neighbor_del(appdb, asicdb, dvs, dvs_route, [route_ipv6, route_B_ipv6], mux_ports, ipv6_nexthops)
         finally:
             # Cleanup
-            self.del_route(dvs, route_ipv4)
-            self.del_route(dvs, route_ipv6)
-            for i in range(2):
-                self.del_neighbor(dvs, non_mux_ipv4[i])
-                self.del_neighbor(dvs, non_mux_ipv6[i])
+            self.del_route(dvs,route_ipv4)
+            self.del_route(dvs,route_B_ipv4)
+            self.del_route(dvs,route_ipv6)
+            self.del_route(dvs,route_B_ipv6)
+            for neighbor in ipv4_nexthops:
+                self.del_neighbor(dvs, neighbor)
+            for neighbor in ipv6_nexthops:
+                self.del_neighbor(dvs, neighbor)
+            self.del_neighbor(dvs, new_ipv4_nexthop)
+            self.del_neighbor(dvs, new_ipv6_nexthop)
 
     def create_and_test_NH_routes(self, appdb, asicdb, dvs, dvs_route, mac):
         '''
@@ -1538,9 +1411,10 @@ class TestMuxTunnel(TestMuxTunnelBase):
     def test_multi_nexthop(self, dvs, dvs_route, intf_fdb_map, neighbor_cleanup, testlog):
         appdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
         asicdb = dvs.get_asic_db()
-        macs = [intf_fdb_map["Ethernet0"], intf_fdb_map["Ethernet4"], intf_fdb_map["Ethernet8"]]
+        macs = [intf_fdb_map["Ethernet0"], intf_fdb_map["Ethernet4"]]
+        new_mac = intf_fdb_map["Ethernet8"]
 
-        self.create_and_test_multi_nexthop_routes(dvs, dvs_route, appdb, macs, asicdb)
+        self.create_and_test_multi_nexthop_routes(dvs, dvs_route, appdb, macs, new_mac, asicdb)
 
     def test_acl(self, dvs, dvs_acl, testlog):
         """ test acl and mux state change """
