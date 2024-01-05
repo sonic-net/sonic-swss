@@ -782,7 +782,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
             // In this case since we do not want the route with next hop on eth0/docker0, we return. 
             // But still we need to clear the route from the APPL_DB. Otherwise the APPL_DB and data 
             // path will be left with stale route entry
-            if(alsv.size() == 1)
+            if((nlmsg_type == RTM_DELROUTE) && (alsv.size() == 1))
             {
                 if (!warmRestartInProgress)
                 {
