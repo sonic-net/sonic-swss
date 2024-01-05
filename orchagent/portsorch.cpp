@@ -4111,9 +4111,9 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             m_portList[p.m_alias] = p;
 
                             string value;
-                            bool foundNPUSiSettingsSyncStatus = m_portTable->hget(p.m_alias, "NPU_SI_SETTINGS_SYNC_STATUS", value);
+                            bool foundNPUSiSettingsSyncStatus = m_portStateTable.hget(p.m_alias, "NPU_SI_SETTINGS_SYNC_STATUS", value);
                             if (foundNPUSiSettingsSyncStatus) {
-                                m_portTable->hset(p.m_alias, "NPU_SI_SETTINGS_SYNC_STATUS", "NPU_SI_SETTINGS_DONE");
+                                m_portStateTable.hset(p.m_alias, "NPU_SI_SETTINGS_SYNC_STATUS", "NPU_SI_SETTINGS_DONE");
                                 SWSS_LOG_NOTICE("NPU_SI_SETTINGS_SYNC_STATUS modified to NPU_SI_SETTINGS_DONE for port %s", p.m_alias.c_str());
                             } else {
                                 SWSS_LOG_ERROR("Unable to find NPU_SI_SETTINGS_SYNC_STATUS for port %s", p.m_alias.c_str());
