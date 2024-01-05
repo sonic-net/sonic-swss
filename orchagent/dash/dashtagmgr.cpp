@@ -70,7 +70,11 @@ task_process_status DashTagMgr::update(const string& tag_id, const DashTag& new_
     for (auto& group_it: tag.m_group_refcnt)
     {
         const auto& group_id = group_it.first;
-        m_dash_acl_orch->getDashAclGroupMgr().onUpdate(group_id, tag_id, tag);
+        auto handle_status = m_dash_acl_orch->getDashAclGroupMgr().onUpdate(group_id, tag_id, tag);
+        if (handle_status != task_success)
+        {
+            return handle_status;
+        }
     }
 
     return task_success;

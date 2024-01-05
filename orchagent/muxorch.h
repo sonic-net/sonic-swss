@@ -194,11 +194,6 @@ public:
         return (skip_neighbors_.find(nbr) != skip_neighbors_.end());
     }
 
-    bool isMultiNexthopRoute(const IpPrefix& pfx)
-    {
-        return (mux_multi_active_nh_table.find(pfx) != mux_multi_active_nh_table.end());
-    }
-
     MuxCable* findMuxCableInSubnet(IpAddress);
     bool isNeighborActive(const IpAddress&, const MacAddress&, string&);
     void update(SubjectType, void *);
@@ -255,9 +250,6 @@ private:
     MuxCableTb mux_cable_tb_;
     MuxTunnelNHs mux_tunnel_nh_;
     NextHopTb mux_nexthop_tb_;
-
-    /* contains reference of programmed routes by updateRoute */
-    MuxRouteTb mux_multi_active_nh_table;
 
     handler_map handler_map_;
 

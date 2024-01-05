@@ -55,6 +55,8 @@ tests_SOURCES = aclorch_ut.cpp \
                 mux_rollback_ut.cpp \
                 warmrestartassist_ut.cpp \
                 test_failure_handling.cpp \
+                warmrestarthelper_ut.cpp \
+                $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/lib/subintf.cpp \
                 $(top_srcdir)/lib/recorder.cpp \
@@ -70,6 +72,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/cbf/nhgmaporch.cpp \
                 $(top_srcdir)/orchagent/neighorch.cpp \
                 $(top_srcdir)/orchagent/intfsorch.cpp \
+                $(top_srcdir)/orchagent/port/port_capabilities.cpp \
                 $(top_srcdir)/orchagent/port/porthlpr.cpp \
                 $(top_srcdir)/orchagent/portsorch.cpp \
                 $(top_srcdir)/orchagent/fabricportsorch.cpp \

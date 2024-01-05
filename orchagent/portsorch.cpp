@@ -339,6 +339,39 @@ static void getPortSerdesAttr(PortSerdesAttrMap_t &map, const PortConfig &port)
     {
         map[SAI_PORT_SERDES_ATTR_TX_FIR_ATTN] = port.serdes.attn.value;
     }
+
+    if (port.serdes.ob_m2lp.is_set)
+    {
+    
+        map[SAI_PORT_SERDES_ATTR_TX_PAM4_RATIO] = port.serdes.ob_m2lp.value;
+    }
+
+    if (port.serdes.ob_alev_out.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_OUT_COMMON_MODE] = port.serdes.ob_alev_out.value;
+    }
+
+    if (port.serdes.obplev.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_PMOS_COMMON_MODE] = port.serdes.obplev.value;
+    }
+
+    if (port.serdes.obnlev.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_NMOS_COMMON_MODE] = port.serdes.obnlev.value;
+    }
+
+    if (port.serdes.regn_bfm1p.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_PMOS_VLTG_REG] = port.serdes.regn_bfm1p.value;
+    }
+
+    if (port.serdes.regn_bfm1n.is_set)
+    {
+        map[SAI_PORT_SERDES_ATTR_TX_NMOS_VLTG_REG] = port.serdes.regn_bfm1n.value;
+    }
+
+    
 }
 
 // Port OA ------------------------------------------------------------------------------------------------------------
@@ -4016,24 +4049,34 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 {
                     if (!p.m_pfc_asym_cfg || p.m_pfc_asym != pCfg.pfc_asym.value)
                     {
-                        if (!setPortPfcAsym(p, pCfg.pfc_asym.value))
+                        if (m_portCap.isPortPfcAsymSupported())
                         {
-                            SWSS_LOG_ERROR(
-                                "Failed to set port %s asymmetric PFC to %s",
+                            if (!setPortPfcAsym(p, pCfg.pfc_asym.value))
+                            {
+                                SWSS_LOG_ERROR(
+                                    "Failed to set port %s asymmetric PFC to %s",
+                                    p.m_alias.c_str(), m_portHlpr.getPfcAsymStr(pCfg).c_str()
+                                );
+                                it++;
+                                continue;
+                            }
+
+                            p.m_pfc_asym = pCfg.pfc_asym.value;
+                            p.m_pfc_asym_cfg = true;
+                            m_portList[p.m_alias] = p;
+
+                            SWSS_LOG_NOTICE(
+                                "Set port %s asymmetric PFC to %s",
                                 p.m_alias.c_str(), m_portHlpr.getPfcAsymStr(pCfg).c_str()
                             );
-                            it++;
-                            continue;
                         }
-
-                        p.m_pfc_asym = pCfg.pfc_asym.value;
-                        p.m_pfc_asym_cfg = true;
-                        m_portList[p.m_alias] = p;
-
-                        SWSS_LOG_NOTICE(
-                            "Set port %s asymmetric PFC to %s",
-                            p.m_alias.c_str(), m_portHlpr.getPfcAsymStr(pCfg).c_str()
-                        );
+                        else
+                        {
+                            SWSS_LOG_WARN(
+                                "Port %s asymmetric PFC configuration is not supported: skipping ...",
+                                p.m_alias.c_str()
+                            );
+                        }
                     }
                 }
 
@@ -8774,3 +8817,4 @@ void PortsOrch::doTask(swss::SelectableTimer &timer)
         m_port_state_poller->stop();
     }
 }
+
