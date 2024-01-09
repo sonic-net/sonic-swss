@@ -355,7 +355,8 @@ bool IntfsOrch::setIntfVlanFloodType(const Port &port, sai_vlan_flood_control_ty
 
     sai_attribute_t attr;
     attr.id = SAI_VLAN_ATTR_BROADCAST_FLOOD_CONTROL_TYPE;
-    attr.value.s32 = vlan_flood_type;
+    // add multicast flood control type as well
+    attr.value.s32 = vlan_flood_type; 
 
     sai_status_t status = sai_vlan_api->set_vlan_attribute(port.m_vlan_info.vlan_oid, &attr);
     if (status != SAI_STATUS_SUCCESS)
@@ -367,6 +368,21 @@ bool IntfsOrch::setIntfVlanFloodType(const Port &port, sai_vlan_flood_control_ty
             return parseHandleSaiStatusFailure(handle_status);
         }
     }
+
+    attr.id = SAI_VLAN_ATTR_UNKNOWN_MULTICAST_FLOOD_CONTROL_TYPE;
+    attr.value.s32 = vlan_flood_type;
+
+    sai_status_t status = sai_vlan_api->set_vlan_attribute(port.m_vlan_info.vlan_oid, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set MC flood type for VLAN %u, rv:%d", port.m_vlan_info.vlan_id, status);
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_VLAN, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
+    }
+    SWSS_LOG_NOTICE("Set flood type for VLAN %u", port.m_vlan_info.vlan_id);
 
     return true;
 }
