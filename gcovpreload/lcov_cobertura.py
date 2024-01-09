@@ -8,7 +8,7 @@
 """
 Converts lcov line coverage output to Cobertura-compatible XML for CI
 """
-
+print("file start")
 import re
 import sys
 import os
@@ -22,8 +22,10 @@ from distutils.spawn import find_executable
 CPPFILT = "c++filt"
 HAVE_CPPFILT = False
 
+print("finding c++filt")
 if find_executable(CPPFILT) is not None:
     HAVE_CPPFILT = True
+print("found c++filt")
 
 VERSION = '1.6'
 __all__ = ['LcovCobertura']

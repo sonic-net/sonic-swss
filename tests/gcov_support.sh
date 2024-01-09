@@ -104,8 +104,8 @@ lcov_merge_all()
     # lcov -o total.info -r total.info "*tests/*"
     # lcov -o total.info -r total.info "/usr/*"
     set -x
-    timeout -v 5s python lcov_cobertura.py -h
     timeout -v 5m python lcov_cobertura.py total.info --output coverage.xml --demangle --base-dir "${source_dir}"
+    timeout -v 5m python lcov_cobertura.py total.info --output coverage.xml --base-dir "${source_dir}"
     echo "Done generating report"
 
     mkdir -p gcov_output/${ALLMERGE_DIR}
