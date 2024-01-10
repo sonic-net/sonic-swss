@@ -156,6 +156,21 @@ namespace switchorch_test
                     SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_FW,
                     SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_ASIC_HW}));
 
+        // case: severity: warning, operation: set max_events only, which means to remove suppress list
+        entries.push_back({"warning", "SET",
+                           {
+                               {"max_events", "10"}
+                           }});
+        consumer->addToSync(entries);
+        entries.clear();
+        _ut_stub_asic_sdk_health_event_attribute_to_check = SAI_SWITCH_ATTR_REG_WARNING_SWITCH_ASIC_SDK_HEALTH_CATEGORY;
+        static_cast<Orch *>(gSwitchOrch)->doTask();
+        ASSERT_EQ(_ut_stub_asic_sdk_health_event_passed_categories, set<sai_switch_asic_sdk_health_category_t>({
+                    SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_SW,
+                    SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_FW,
+                    SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_CPU_HW,
+                    SAI_SWITCH_ASIC_SDK_HEALTH_CATEGORY_ASIC_HW}));
+
         // case: severity: notice, operation: suppress no category
         entries.push_back({"notice", "DEL", {}});
         consumer->addToSync(entries);

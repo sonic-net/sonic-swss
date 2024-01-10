@@ -17,6 +17,7 @@ CFLAGS_SAI = -I /usr/include/sai
 swssdir = $(datadir)/swss
 
 dist_swss_DATA = \
+		 eliminate_events.lua \
 		 rif_rates.lua \
 		 pfc_detect_innovium.lua  \
 		 pfc_detect_mellanox.lua  \

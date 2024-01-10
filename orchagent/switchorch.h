@@ -16,6 +16,7 @@
 #define SWITCH_CAPABILITY_TABLE_PFC_DLR_INIT_CAPABLE                   "PFC_DLR_INIT_CAPABLE"
 #define SWITCH_CAPABILITY_TABLE_PORT_EGRESS_SAMPLE_CAPABLE             "PORT_EGRESS_SAMPLE_CAPABLE"
 
+#define ASIC_SDK_HEALTH_EVENT_ELIMINATE_INTERVAL 3600
 #define SWITCH_CAPABILITY_TABLE_ASIC_SDK_HEALTH_EVENT_CAPABLE          "ASIC_SDK_HEALTH_EVENT"
 #define SWITCH_CAPABILITY_TABLE_REG_FATAL_ASIC_SDK_HEALTH_CATEGORY     "REG_FATAL_ASIC_SDK_HEALTH_CATEGORY"
 #define SWITCH_CAPABILITY_TABLE_REG_WARNING_ASIC_SDK_HEALTH_CATEGORY   "REG_WARNING_ASIC_SDK_HEALTH_CATEGORY"
@@ -117,6 +118,8 @@ private:
     std::shared_ptr<swss::DBConnector> m_stateDbForNotification = nullptr;
     std::shared_ptr<swss::Table> m_asicSdkHealthEventTable = nullptr;
     std::set<sai_switch_attr_t> m_supportedAsicSdkHealthEventAttributes;
+    std::string m_eliminateEventsSha;
+    swss::SelectableTimer* m_eliminateEventsTimer = nullptr;
 
     void initAsicSdkHealthEventNotification();
     sai_status_t registerAsicSdkHealthEventCategories(sai_switch_attr_t saiSeverity, const std::string &severityString, const std::string &suppressed_category_list="");

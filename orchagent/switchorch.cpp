@@ -13,6 +13,7 @@
 #include "saihelper.h"
 #include "sai_serialize.h"
 #include "notifications.h"
+#include "redisapi.h"
 
 using namespace std;
 using namespace swss;
@@ -207,6 +208,17 @@ void SwitchOrch::initAsicSdkHealthEventNotification()
     }
 
     set_switch_capability(fvVector);
+
+    // Load the Lua script to eliminate oldest entries
+    string eliminateEventsLuaScript = swss::loadLuaScript("eliminate_events.lua");
+    m_eliminateEventsSha = swss::loadRedisScript(m_stateDb.get(), eliminateEventsLuaScript);
+
+    // Init timer
+    auto interv = timespec { .tv_sec = ASIC_SDK_HEALTH_EVENT_ELIMINATE_INTERVAL, .tv_nsec = 0 };
+    m_eliminateEventsTimer = new SelectableTimer(interv);
+    auto executor = new ExecutableTimer(m_eliminateEventsTimer, this, "ASIC_SDK_HEALTH_EVENT_ELIMINATE_TIMER");
+    Orch::addExecutor(executor);
+    m_eliminateEventsTimer->start();
 }
 
 void SwitchOrch::initAclGroupsBindToSwitch()
@@ -811,6 +823,7 @@ void SwitchOrch::doCfgSwitchHashTableTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
+            bool categoriesConfigured = false;
             for (const auto &cit : kfvFieldsValues(keyOpFieldsValues))
             {
                 auto fieldName = fvField(cit);
@@ -935,11 +948,13 @@ void SwitchOrch::doCfgSuppressAsicSdkHealthEventTableTask(Consumer &consumer)
                 if (fieldName == "categories")
                 {
                     registerAsicSdkHealthEventCategories(saiSeverity, key, fieldValue);
+                    categoriesConfigured = true;
                 }
-                else
-                {
-                    SWSS_LOG_ERROR("Unknown field %s in SUPPRESS_ASIC_SDK_HEALTH_EVENT table, skipped", fieldName.c_str());
-                }
+            }
+
+            if (!categoriesConfigured)
+            {
+                registerAsicSdkHealthEventCategories(saiSeverity, key);
             }
         }
         else if (op == DEL_COMMAND)
@@ -1212,6 +1227,11 @@ void SwitchOrch::doTask(SelectableTimer &timer)
                 SWSS_LOG_ERROR("ASIC sensors : failed to get SAI_SWITCH_ATTR_AVERAGE_TEMP: %d", status);
             }
         }
+    }
+    else if (&timer == m_eliminateEventsTimer)
+    {
+        auto ret = swss::runRedisScript(*m_stateDb, m_eliminateEventsSha, {}, {});
+        SWSS_LOG_INFO("Eliminate ASIC/SDK health events");
     }
 }
 
