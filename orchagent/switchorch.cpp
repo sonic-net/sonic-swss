@@ -860,7 +860,7 @@ sai_status_t SwitchOrch::registerAsicSdkHealthEventCategories(sai_switch_attr_t 
     sai_status_t status;
     set<sai_switch_asic_sdk_health_category_t> interested_categories_set = switch_asic_sdk_health_event_category_universal_set;
 
-    SWSS_LOG_INFO("Register ASIC/SDK health event for severity %d with categories [%s] suppressed", saiSeverity, suppressed_category_list.c_str());
+    SWSS_LOG_INFO("Register ASIC/SDK health event for severity %s(%d) with categories [%s] suppressed", severityString.c_str(), saiSeverity, suppressed_category_list.c_str());
 
     if (!suppressed_category_list.empty())
     {
@@ -1231,7 +1231,10 @@ void SwitchOrch::doTask(SelectableTimer &timer)
     else if (&timer == m_eliminateEventsTimer)
     {
         auto ret = swss::runRedisScript(*m_stateDb, m_eliminateEventsSha, {}, {});
-        SWSS_LOG_INFO("Eliminate ASIC/SDK health events");
+        for (auto str: ret)
+        {
+            SWSS_LOG_INFO("Eliminate ASIC/SDK health %s", str.c_str());
+        }
     }
 }
 
