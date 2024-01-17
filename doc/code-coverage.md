@@ -25,7 +25,7 @@ The majority of tests in sonic-swss run in a Docker Virtual Switch (DVS), essent
 1. Create a new DVS if necessary. (This is only needed for the first module in each batch, and for some specific modules which require it)
     - Implemented in `tests/conftest.py::manage_dvs`
 2. Run the next test module in the batch
-3. Send a `SIGKILL` to all processes inside the DVS to generated `.gcda` files for the module. Archive these files to `/tmp/gcov/` inside the DVS.
+3. Send a `SIGKILL` to all processes inside the DVS to generated `.gcda` files for the module. If `.gcda` files already exist, new coverage information will be appended to the existing files.
     - Implemented in `tests/conftest.py::dvs`
 5. Cleanup/restart the DVS to prepare for the next module.
     - Implemented in `tests/conftest.py::manage_dvs`
@@ -39,6 +39,6 @@ After all test modules have run, `$(Build.ArtifactStagingDirectory)/gcda_archive
 ## 4. Coverage Analysis
 Once all `.gcda` archives are collected, `tests/gcov_support.sh` is used to generate coverage information in two steps:
 
-1. For each container under `$(Build.ArtifactStagingDirectory)/gcda_archives/`, generate one tracefile for each module run in that container. This tracefile (`*.info`) is an intermediary format which contains coverage information for one test module. (In this step, we include the mock test coverage information by treating `$(Build.ArtifactStagingDirectory)/gcda_archives/mock_tests/` as another container-specific directory)
+1. For each container under `$(Build.ArtifactStagingDirectory)/gcda_archives/`, generate one tracefile. This tracefile (`*.info`) is an intermediary format which contains coverage information for one test module. (In this step, we include the mock test coverage information by treating `$(Build.ArtifactStagingDirectory)/gcda_archives/mock_tests/` as another container-specific directory)
     - Implemented in `tests/gcov_support.sh::generate_tracefiles`
 2. Combine all tracefiles into a single comprehensive tracefile containing coverage information for the entire sonic-swss repository. Then transform this comprehensive tracefile into a Cobertura-style `coverage.xml` file which can be ingested by the AZP code coverage tool.
