@@ -75,7 +75,7 @@ jobs:
       project: 'build'
       pipeline: 'Azure.sonic-swss'
       runVersion: 'specific'
-      pipelineId: '429240'
+      pipelineId: '455776'
     displayName: "Download gcov artifact"
     condition: eq('${{ parameters.archive_gcov }}', true)
   - task: DownloadPipelineArtifact@2
@@ -85,7 +85,7 @@ jobs:
       project: 'build'
       pipeline: 'Azure.sonic-swss'
       runVersion: 'specific'
-      pipelineId: '429240'
+      pipelineId: '455776'
     displayName: "Download mock test gcov files"
     condition: eq('${{ parameters.archive_gcov }}', true)
   - script: |
