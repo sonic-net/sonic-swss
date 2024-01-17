@@ -823,7 +823,6 @@ void SwitchOrch::doCfgSwitchHashTableTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            bool categoriesConfigured = false;
             for (const auto &cit : kfvFieldsValues(keyOpFieldsValues))
             {
                 auto fieldName = fvField(cit);
@@ -931,6 +930,7 @@ void SwitchOrch::doCfgSuppressAsicSdkHealthEventTableTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
+            bool categoriesConfigured = false;
             for (const auto &cit : kfvFieldsValues(keyOpFieldsValues))
             {
                 auto fieldName = fvField(cit);
