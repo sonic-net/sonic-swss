@@ -893,6 +893,17 @@ void CrmOrch::getResAvailableCounters()
                 attr.value.aclresource.count = CRM_ACL_RESOURCE_COUNT;
                 attr.value.aclresource.list = resources.data();
                 sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+                if ((status == SAI_STATUS_NOT_SUPPORTED) ||
+                    (status == SAI_STATUS_NOT_IMPLEMENTED) ||
+                    SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
+                    SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status))
+                {
+                    // mark unsupported resources
+                    res.second.resStatus = CrmResourceStatus::CRM_RES_NOT_SUPPORTED;
+                    SWSS_LOG_NOTICE("CRM resource %s not supported", crmResTypeNameMap.at(res.first).c_str());
+                    break;
+                }
+
                 if (status == SAI_STATUS_BUFFER_OVERFLOW)
                 {
                     resources.resize(attr.value.aclresource.count);
@@ -928,6 +939,16 @@ void CrmOrch::getResAvailableCounters()
                 for (auto &cnt : res.second.countersMap)
                 {
                     sai_status_t status = sai_acl_api->get_acl_table_attribute(cnt.second.id, 1, &attr);
+                    if ((status == SAI_STATUS_NOT_SUPPORTED) ||
+                        (status == SAI_STATUS_NOT_IMPLEMENTED) ||
+                        SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
+                        SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status))
+                    {
+                        // mark unsupported resources
+                        res.second.resStatus = CrmResourceStatus::CRM_RES_NOT_SUPPORTED;
+                        SWSS_LOG_NOTICE("CRM resource %s not supported", crmResTypeNameMap.at(res.first).c_str());
+                        break;
+                    }
                     if (status != SAI_STATUS_SUCCESS)
                     {
                         SWSS_LOG_ERROR("Failed to get ACL table attribute %u , rv:%d", attr.id, status);
