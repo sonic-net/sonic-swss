@@ -104,12 +104,13 @@ lcov_merge_all()
     # lcov -o total.info -r total.info "*tests/*"
     # lcov -o total.info -r total.info "/usr/*"
     set -x
-    timeout -v 5m python lcov_cobertura.py total.info --output coverage.xml --demangle --base-dir "${source_dir}"
-    timeout -v 5m python lcov_cobertura.py total.info --output coverage.xml --base-dir "${source_dir}"
+    timeout -v 5m python lcov_cobertura.py total.info --output mangled.xml --base-dir "${source_dir}"
     echo "Done generating report"
 
+    c++filt mangled.xml > coverage.xml
+
     mkdir -p gcov_output/${ALLMERGE_DIR}
-    cp coverage.xml gcov_output/${ALLMERGE_DIR}
+    cp ./*.xml gcov_output/${ALLMERGE_DIR}
 }
 
 collect_container_gcda()
