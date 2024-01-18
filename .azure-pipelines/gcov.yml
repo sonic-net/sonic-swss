@@ -127,6 +127,7 @@ jobs:
       sudo ./gcov_support.sh merge_container_info $(Build.SourcesDirectory)
       sudo cp -rf gcov_output $(Build.ArtifactStagingDirectory)
       sudo cp -rf $(Build.ArtifactStagingDirectory)/gcov_output/AllMergeReport/coverage.xml $(System.DefaultWorkingDirectory)/
+      sudo chmod 777 $(Build.ArtifactStagingDirectory)/gcov_output -R
       ls -lh $(Build.ArtifactStagingDirectory)
       popd
     workingDirectory: $(Pipeline.Workspace)
