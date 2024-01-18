@@ -8,7 +8,6 @@
 """
 Converts lcov line coverage output to Cobertura-compatible XML for CI
 """
-print("file start")
 import re
 import sys
 import os
@@ -22,10 +21,8 @@ from distutils.spawn import find_executable
 CPPFILT = "c++filt"
 HAVE_CPPFILT = False
 
-print("finding c++filt")
 if find_executable(CPPFILT) is not None:
     HAVE_CPPFILT = True
-print("found c++filt")
 
 VERSION = '1.6'
 __all__ = ['LcovCobertura']
@@ -79,7 +76,6 @@ class LcovCobertura(object):
             self.format = demangler.demangle
         else:
             self.format = lambda x: x
-        print("LCOV object created")
 
     def convert(self):
         """
@@ -93,7 +89,6 @@ class LcovCobertura(object):
         Generate a data structure representing it that can be serialized in any
         logical format.
         """
-        print("Parsing coverage data")
         coverage_data = {
             'packages': {},
             'summary': {'lines-total': 0, 'lines-covered': 0,
@@ -203,13 +198,11 @@ class LcovCobertura(object):
                     file_methods[function_name] = ['0', '0']
                 file_methods[function_name][-1] = function_hits
 
-        print("Parsed raw data")
         # Exclude packages
         excluded = [x for x in coverage_data['packages'] for e in self.excludes
                     if re.match(e, x)]
         for package in excluded:
             del coverage_data['packages'][package]
-        print("Excluded packages")
         # Compute line coverage rates
         for package_data in list(coverage_data['packages'].values()):
             package_data['line-rate'] = self._percent(
@@ -218,7 +211,6 @@ class LcovCobertura(object):
             package_data['branch-rate'] = self._percent(
                 package_data['branches-total'],
                 package_data['branches-covered'])
-        print("Line coverage calculated")
         return coverage_data
 
     def generate_cobertura_xml(self, coverage_data):
@@ -227,7 +219,6 @@ class LcovCobertura(object):
         :param coverage_data: Nested dict representing coverage information.
         :type coverage_data: dict
         """
-        print("Generating XML")
         dom_impl = minidom.getDOMImplementation()
         doctype = dom_impl.createDocumentType("coverage", None,
                                               "http://cobertura.sourceforge.net/xml/coverage-04.dtd")
@@ -258,7 +249,6 @@ class LcovCobertura(object):
         packages_el = self._el(document, 'packages', {})
 
         packages = coverage_data['packages']
-        print("Base XML created")
         for package_name, package_data in list(packages.items()):
             package_el = self._el(document, 'package', {
                 'line-rate': package_data['line-rate'],
@@ -321,7 +311,6 @@ class LcovCobertura(object):
                 classes_el.appendChild(class_el)
             package_el.appendChild(classes_el)
             packages_el.appendChild(package_el)
-            print("Finished package {}".format(package_name))
         root.appendChild(packages_el)
 
         return document.toprettyxml()
@@ -372,7 +361,6 @@ def main(argv=None):
         lcov_cobertura.py lcov-file.dat -b src/dir -e test.lib -o path/out.xml
     By default, XML output will be written to ./coverage.xml
     """
-    print("start")
     if argv is None:
         argv = sys.argv
     parser = OptionParser()
@@ -395,15 +383,12 @@ def main(argv=None):
 
     if options.demangle and not HAVE_CPPFILT:
         raise RuntimeError("C++ filter executable (%s) not found!" % CPPFILT)
-    print("demangle set")
     if len(args) != 2:
         print(main.__doc__)
         sys.exit(1)
 
-    print("opening file")
     try:
         with open(args[1], 'r') as lcov_file:
-            print("Converting LCOV file")
             lcov_data = lcov_file.read()
             lcov_cobertura = LcovCobertura(lcov_data, options.base_dir, options.excludes, options.demangle)
             cobertura_xml = lcov_cobertura.convert()
