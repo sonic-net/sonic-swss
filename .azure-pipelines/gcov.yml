@@ -65,7 +65,7 @@ jobs:
   #   displayName: "Install .NET CORE"
   - script: |
       sudo apt-get install -y lcov python3-pip
-      sudo pip3 install fastcov
+      sudo pip3 install fastcov lcov_cobertura
     displayName: "Install dependencies"
     condition: eq('${{ parameters.archive_gcov }}', true)
   - task: DownloadPipelineArtifact@2
