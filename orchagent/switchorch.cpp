@@ -209,16 +209,24 @@ void SwitchOrch::initAsicSdkHealthEventNotification()
 
     set_switch_capability(fvVector);
 
-    // Load the Lua script to eliminate oldest entries
-    string eliminateEventsLuaScript = swss::loadLuaScript("eliminate_events.lua");
-    m_eliminateEventsSha = swss::loadRedisScript(m_stateDb.get(), eliminateEventsLuaScript);
+    try
+    {
+        // Load the Lua script to eliminate oldest entries
+        string eliminateEventsLuaScript = swss::loadLuaScript("eliminate_events.lua");
+        m_eliminateEventsSha = swss::loadRedisScript(m_stateDb.get(), eliminateEventsLuaScript);
 
-    // Init timer
-    auto interv = timespec { .tv_sec = ASIC_SDK_HEALTH_EVENT_ELIMINATE_INTERVAL, .tv_nsec = 0 };
-    m_eliminateEventsTimer = new SelectableTimer(interv);
-    auto executor = new ExecutableTimer(m_eliminateEventsTimer, this, "ASIC_SDK_HEALTH_EVENT_ELIMINATE_TIMER");
-    Orch::addExecutor(executor);
-    m_eliminateEventsTimer->start();
+        // Init timer
+        auto interv = timespec { .tv_sec = ASIC_SDK_HEALTH_EVENT_ELIMINATE_INTERVAL, .tv_nsec = 0 };
+        m_eliminateEventsTimer = new SelectableTimer(interv);
+        auto executor = new ExecutableTimer(m_eliminateEventsTimer, this, "ASIC_SDK_HEALTH_EVENT_ELIMINATE_TIMER");
+        Orch::addExecutor(executor);
+        m_eliminateEventsTimer->start();
+    }
+    catch (...)
+    {
+        // This can happen only on mock test. If it happens on a real switch, we should log an error message
+        SWSS_LOG_ERROR("Unable to load the Lua script to eliminate events\n");
+    }
 }
 
 void SwitchOrch::initAclGroupsBindToSwitch()
