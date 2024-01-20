@@ -102,20 +102,20 @@ macsecmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(
 macsecmgrd_LDADD = $(LDFLAGS_ASAN) $(COMMON_LIBS) $(SAIMETA_LIBS)
 
 if GCOV_ENABLED
-vlanmgrd_LDADD += -lgcovpreload
-teammgrd_LDADD += -lgcovpreload
-portmgrd_LDADD += -lgcovpreload
-intfmgrd_LDADD+= -lgcovpreload
-buffermgrd_LDADD += -lgcovpreload
-vrfmgrd_LDADD += -lgcovpreload
-nbrmgrd_LDADD += -lgcovpreload
-vxlanmgrd_LDADD += -lgcovpreload
-sflowmgrd_LDADD += -lgcovpreload
-natmgrd_LDADD += -lgcovpreload
-coppmgrd_LDADD += -lgcovpreload
-tunnelmgrd_LDADD += -lgcovpreload
-macsecmgrd_LDADD += -lgcovpreload
-fabricmgrd_LDADD += -lgcovpreload
+vlanmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
+teammgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
+portmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
+fabricmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
+intfmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
+buffermgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
+vrfmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
+nbrmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
+vxlanmgrd_SOURCES +=  ../gcovpreload/gcovpreload.cpp
+sflowmgrd_SOURCES +=  ../gcovpreload/gcovpreload.cpp
+natmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
+coppmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
+tunnelmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
+macsecmgrd_SOURCES += ../gcovpreload/gcovpreload.cpp
 endif
 
 if ASAN_ENABLED

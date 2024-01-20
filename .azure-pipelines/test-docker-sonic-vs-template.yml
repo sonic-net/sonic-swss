@@ -49,6 +49,7 @@ jobs:
 
   steps:
   - script: |
+      ip a show dev eth0 || true
       ls -A1 | xargs -I{} sudo rm -rf {}
     displayName: "Clean workspace"
   - checkout: self
