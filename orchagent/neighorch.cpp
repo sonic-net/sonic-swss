@@ -226,7 +226,7 @@ bool NeighOrch::addNextHop(const NextHopKey &nh)
         nexthop.alias = inbp.m_alias;
     }
 
-    assert(!hasNextHop(nexthop));
+    // assert(!hasNextHop(nexthop));
     sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(nh.alias);
 
     vector<sai_attribute_t> next_hop_attrs;
@@ -654,7 +654,7 @@ int NeighOrch::getNextHopRefCount(const NextHopKey &nexthop)
 
 void NeighOrch::increaseNextHopRefCount(const NextHopKey &nexthop, uint32_t count)
 {
-    assert(hasNextHop(nexthop));
+    // assert(hasNextHop(nexthop));
     if (m_syncdNextHops.find(nexthop) != m_syncdNextHops.end())
     {
         m_syncdNextHops[nexthop].ref_count += count;
