@@ -200,7 +200,6 @@ jobs:
          export ENABLE_ASAN=y
       fi
       ./autogen.sh
-      #export DEB_BUILD_OPTIONS="debug nostrip noopt"
       dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
     displayName: "Compile sonic swss"
   - publish: $(System.DefaultWorkingDirectory)/
