@@ -282,6 +282,10 @@ namespace routeorch_test
             static_cast<Orch *>(gPortsOrch)->doTask();
 
             Table intfTable = Table(m_app_db.get(), APP_INTF_TABLE_NAME);
+            intfTable.set("Loopback0", { {"NULL", "NULL" },
+                                         {"mac_addr", "00:00:00:00:00:00" }});
+            intfTable.set("Loopback0:10.1.0.32/32", { { "scope", "global" },
+                                                      { "family", "IPv4" }});
             intfTable.set("Ethernet0", { {"NULL", "NULL" },
                                          {"mac_addr", "00:00:00:00:00:00" }});
             intfTable.set("Ethernet0:10.0.0.1/24", { { "scope", "global" },
@@ -480,6 +484,24 @@ namespace routeorch_test
         consumer->addToSync(entries);
 
         EXPECT_CALL(*gMockResponsePublisher, publish(APP_ROUTE_TABLE_NAME, key, std::vector<FieldValueTuple>{{"protocol", "bgp"}}, ReturnCode(SAI_STATUS_SUCCESS), false)).Times(1);
+        static_cast<Orch *>(gRouteOrch)->doTask();
+
+        gMockResponsePublisher.reset();
+    }
+
+    TEST_F(RouteOrchTest, RouteOrchLoopbackRoute)
+    {
+        gMockResponsePublisher = std::make_unique<MockResponsePublisher>();
+
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        std::string key = "fc00:1::/64";
+        std::vector<FieldValueTuple> fvs{{"ifname", "Loopback"}, {"nexthop", "::"}, {"protocol", "static"}};
+        entries.push_back({key, "SET", fvs});
+
+        auto consumer = dynamic_cast<Consumer *>(gRouteOrch->getExecutor(APP_ROUTE_TABLE_NAME));
+        consumer->addToSync(entries);
+
+        EXPECT_CALL(*gMockResponsePublisher, publish(APP_ROUTE_TABLE_NAME, key, std::vector<FieldValueTuple>{{"protocol", "static"}}, ReturnCode(SAI_STATUS_SUCCESS), false)).Times(1);
         static_cast<Orch *>(gRouteOrch)->doTask();
 
         gMockResponsePublisher.reset();

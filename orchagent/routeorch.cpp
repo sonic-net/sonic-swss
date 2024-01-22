@@ -751,6 +751,9 @@ void RouteOrch::doTask(Consumer& consumer)
                             it = consumer.m_toSync.erase(it);
                         else
                             it++;
+
+                        /* Publish route state to advertise routes to Loopback interface */
+                        publishRouteState(ctx);
                         continue;
                     }
 
@@ -2548,7 +2551,7 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
 
     SWSS_LOG_INFO("Remove route %s with next hop(s) %s",
             ipPrefix.to_string().c_str(), it_route->second.nhg_key.to_string().c_str());
-    
+
     /* Publish removal status, removes route entry from APPL STATE DB */
     publishRouteState(ctx);
 
