@@ -886,6 +886,35 @@ namespace portsorch_test
         ASSERT_EQ(_sai_set_admin_state_down_count, ++current_sai_api_call_count);
         ASSERT_EQ(_sai_set_admin_state_up_count, current_sai_api_call_count);
 
+        // Configure non-serdes attribute that does not trigger admin state change
+        std::deque<KeyOpFieldsValuesTuple> kfvMtu = {{
+            "Ethernet0",
+            SET_COMMAND, {
+                { "mtu", "1234" },
+            }
+        }};
+
+        // Refill consumer
+        consumer->addToSync(kfvMtu);
+
+        _hook_sai_port_api();
+        current_sai_api_call_count = _sai_set_admin_state_down_count;
+
+        // Apply configuration
+        static_cast<Orch*>(gPortsOrch)->doTask();
+
+        _unhook_sai_port_api();
+
+        ASSERT_TRUE(gPortsOrch->getPort("Ethernet0", p));
+        ASSERT_TRUE(p.m_admin_state_up);
+
+        // Verify mtu is set
+        ASSERT_EQ(p.m_mtu, 1234);
+
+        // Verify no admin-disable then admin-enable
+        ASSERT_EQ(_sai_set_admin_state_down_count, current_sai_api_call_count);
+        ASSERT_EQ(_sai_set_admin_state_up_count, current_sai_api_call_count);
+
         // Dump pending tasks
         std::vector<std::string> taskList;
         gPortsOrch->dumpPendingTasks(taskList);

@@ -3667,12 +3667,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         m_portList[p.m_alias] = p;
                         updatePortStatePoll(p, PORT_STATE_POLL_LT, pCfg.link_training.value);
 
-                        // Restore pre-emphasis when LT is transitioned from ON to OFF
-                        if (!p.m_link_training && serdes_attr.empty())
-                        {
-                            serdes_attr = p.m_preemphasis;
-                        }
-
                         SWSS_LOG_NOTICE(
                             "Set port %s link training to %s",
                             p.m_alias.c_str(), m_portHlpr.getLinkTrainingStr(pCfg).c_str()
@@ -4080,15 +4074,9 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                 }
 
-                if (!serdes_attr.empty())
+                if (p.m_preemphasis != serdes_attr)
                 {
-                    if (p.m_link_training)
-                    {
-                        SWSS_LOG_NOTICE("Save port %s preemphasis for LT", p.m_alias.c_str());
-                        p.m_preemphasis = serdes_attr;
-                        m_portList[p.m_alias] = p;
-                    }
-                    else
+                    if (!p.m_link_training)
                     {
                         if (p.m_admin_state_up)
                         {
