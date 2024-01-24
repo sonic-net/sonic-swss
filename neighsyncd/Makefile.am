@@ -15,7 +15,7 @@ neighsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_ASAN)
 neighsyncd_LDADD = $(LDFLAGS_ASAN) -lnl-3 -lnl-route-3 -lswsscommon
 
 if GCOV_ENABLED
-neighsyncd_LDADD += -lgcovpreload
+neighsyncd_SOURCES += ../gcovpreload/gcovpreload.cpp
 endif
 
 if ASAN_ENABLED

@@ -148,9 +148,9 @@ orchagent_restart_check_CPPFLAGS = $(DBGFLAGS) $(AM_CPPFLAGS) $(CFLAGS_COMMON) $
 orchagent_restart_check_LDADD = $(LDFLAGS_ASAN) -lhiredis -lswsscommon -lpthread
 
 if GCOV_ENABLED
-orchagent_LDADD += -lgcovpreload
-routeresync_LDADD += -lgcovpreload
-orchagent_restart_check_LDADD += -lgcovpreload
+orchagent_SOURCES += ../gcovpreload/gcovpreload.cpp
+routeresync_SOURCES += ../gcovpreload/gcovpreload.cpp
+orchagent_restart_check_SOURCES += ../gcovpreload/gcovpreload.cpp
 endif
 
 if ASAN_ENABLED
