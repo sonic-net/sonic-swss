@@ -37,6 +37,14 @@ ZmqOrch::ZmqOrch(DBConnector *db, const vector<string> &tableNames, ZmqServer *z
     }
 }
 
+ZmqOrch::ZmqOrch(DBConnector *db, const vector<table_name_with_pri_t> &tableNames_with_pri, ZmqServer *zmqServer)
+{
+    for (const auto& it : tableNames_with_pri)
+    {
+        addConsumer(db, it.first, it.second, zmqServer);
+    }
+}
+
 void ZmqOrch::addConsumer(DBConnector *db, string tableName, int pri, ZmqServer *zmqServer)
 {
     if (db->getDbId() == APPL_DB)
