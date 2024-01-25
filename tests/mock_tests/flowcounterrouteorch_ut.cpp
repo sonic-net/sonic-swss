@@ -304,6 +304,9 @@ namespace flowcounterrouteorch_test
             delete gBfdOrch;
             gBfdOrch = nullptr;
 
+            delete gSrv6Orch;
+            gSrv6Orch = nullptr;
+
             delete gNeighOrch;
             gNeighOrch = nullptr;
 
@@ -318,9 +321,6 @@ namespace flowcounterrouteorch_test
 
             delete gFgNhgOrch;
             gFgNhgOrch = nullptr;
-
-            delete gSrv6Orch;
-            gSrv6Orch = nullptr;
 
             delete gRouteOrch;
             gRouteOrch = nullptr;

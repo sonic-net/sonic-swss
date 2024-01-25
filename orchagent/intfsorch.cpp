@@ -718,7 +718,7 @@ void IntfsOrch::doTask(Consumer &consumer)
         MacAddress mac;
 
         uint32_t mtu = 0;
-        bool adminUp;
+        bool adminUp = false;
         bool adminStateChanged = false;
         uint32_t nat_zone_id = 0;
         string proxy_arp = "";
@@ -887,10 +887,11 @@ void IntfsOrch::doTask(Consumer &consumer)
             {
                 if (!ip_prefix_in_key && isSubIntf)
                 {
-                    if (adminStateChanged == false)
+                    if (!adminStateChanged)
                     {
                         adminUp = port.m_admin_state_up;
                     }
+
                     if (!gPortsOrch->addSubPort(port, alias, vlan, adminUp, mtu))
                     {
                         it++;
@@ -918,6 +919,12 @@ void IntfsOrch::doTask(Consumer &consumer)
                     it++;
                     continue;
                 }
+
+                if (!adminStateChanged)
+                {
+                    adminUp = port.m_admin_state_up;
+                }
+
                 if (!vnet_orch->setIntf(alias, vnet_name, ip_prefix_in_key ? &ip_prefix : nullptr, adminUp, mtu))
                 {
                     it++;
@@ -931,7 +938,7 @@ void IntfsOrch::doTask(Consumer &consumer)
             }
             else
             {
-                if (adminStateChanged == false)
+                if (!adminStateChanged)
                 {
                     adminUp = port.m_admin_state_up;
                 }

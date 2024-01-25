@@ -833,6 +833,19 @@ class TestBufferMgrDyn(object):
             profile_fvs['xoff'] = '9216'
             self.config_db.update_entry('BUFFER_PROFILE', 'test', profile_fvs)
             self.app_db.wait_for_field_match('BUFFER_PROFILE_TABLE', 'test', profile_fvs)
+
+            # Verify a pending remove PG is not counted into the accumulative headroom
+            dvs.runcmd("kill -s SIGSTOP {}".format(oa_pid))
+
+            self.config_db.delete_entry('BUFFER_PG', 'Ethernet0|3-4')
+            # Should be added because PG 3-4 has been removed and there are sufficient headroom
+            self.config_db.update_entry('BUFFER_PG', 'Ethernet0|1', {'profile': 'ingress_lossy_profile'})
+
+            # Resume orchagent
+            dvs.runcmd("kill -s SIGCONT {}".format(oa_pid))
+
+            # Check whether BUFFER_PG_TABLE is updated as expected
+            self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:1", {"profile": "ingress_lossy_profile"})
         finally:
             dvs.runcmd("kill -s SIGCONT {}".format(oa_pid))
 

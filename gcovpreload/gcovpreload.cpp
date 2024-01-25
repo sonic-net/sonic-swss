@@ -2,15 +2,15 @@
 #include <stdlib.h>
 #include <signal.h>
 #include <signal.h>
-#define SIMPLE_WAY
+
+extern "C" void __gcov_dump();
 
 void sighandler(int signo)
 {
 #ifdef SIMPLE_WAY
     exit(signo);
 #else
-    extern void __gcov_flush();
-    __gcov_flush(); /* flush out gcov stats data */
+    __gcov_dump();
     raise(signo); /* raise the signal again to crash process */
 #endif
 }
@@ -33,9 +33,9 @@ void ctor()
     struct sigaction sa;
     sa.sa_handler = sighandler;
     sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_RESETHAND;
+    sa.sa_flags = (int)SA_RESETHAND;
 
-    for(i = 0; i < sizeof(sigs)/sizeof(sigs[0]); ++i) {
+    for(i = 0; i < (int)(sizeof(sigs)/sizeof(sigs[0])); ++i) {
         if (sigaction(sigs[i], &sa, NULL) == -1) {
             perror("Could not set signal handler");
         }

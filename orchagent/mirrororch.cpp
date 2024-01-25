@@ -361,7 +361,10 @@ bool MirrorOrch::isHwResourcesAvailable()
     );
     if (status != SAI_STATUS_SUCCESS)
     {
-        if (status == SAI_STATUS_NOT_SUPPORTED)
+        if ((status == SAI_STATUS_NOT_SUPPORTED) ||
+            (status == SAI_STATUS_NOT_IMPLEMENTED) ||
+            SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
+            SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status))
         {
             SWSS_LOG_WARN("Mirror session resource availability monitoring is not supported. Skipping ...");
             return true;
@@ -585,7 +588,7 @@ void MirrorOrch::setSessionState(const string& name, const MirrorEntry& session,
         Port port;
         if ((gMySwitchType == "voq") && (session.type == MIRROR_SESSION_ERSPAN))
         {
-             if (!m_portsOrch->getRecircPort(port, "Rec"))
+             if (!m_portsOrch->getRecircPort(port, Port::Role::Rec))
              {
                  SWSS_LOG_ERROR("Failed to get recirc port for mirror session %s", name.c_str());
                  return;
@@ -943,7 +946,7 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
         if (gMySwitchType == "voq")
         {
             Port recirc_port;
-            if (!m_portsOrch->getRecircPort(recirc_port, "Rec"))
+            if (!m_portsOrch->getRecircPort(recirc_port, Port::Role::Rec))
             {
                 SWSS_LOG_ERROR("Failed to get recirc port");
                 return false;
@@ -1174,7 +1177,7 @@ bool MirrorOrch::updateSessionDstPort(const string& name, MirrorEntry& session)
     // Set monitor port to recirc port in voq switch.
     if ((gMySwitchType == "voq") && (session.type == MIRROR_SESSION_ERSPAN))
     {
-         if (!m_portsOrch->getRecircPort(port, "Rec"))
+         if (!m_portsOrch->getRecircPort(port, Port::Role::Rec))
          {
              SWSS_LOG_ERROR("Failed to get recirc port for mirror session %s", name.c_str());
              return false;
