@@ -22,6 +22,7 @@ extern sai_object_id_t gSwitchId;
 extern string gMySwitchType;
 extern string gMyHostName;
 extern string gMyAsicName;
+extern bool gTraditionalFlexCounter;
 
 #define BUFFER_POOL_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS  "60000"
 
@@ -229,21 +230,41 @@ void BufferOrch::initBufferConstants()
 void BufferOrch::initFlexCounterGroupTable(void)
 {
     string bufferPoolWmPluginName = "watermark_bufferpool.lua";
+    string bufferPoolWmSha;
 
     try
     {
         string bufferPoolLuaScript = swss::loadLuaScript(bufferPoolWmPluginName);
-        string bufferPoolWmSha = swss::loadRedisScript(m_countersDb.get(), bufferPoolLuaScript);
+        bufferPoolWmSha = swss::loadRedisScript(m_countersDb.get(), bufferPoolLuaScript);
+    }
+    catch (const runtime_error &e)
+    {
+        SWSS_LOG_ERROR("Buffer pool watermark lua script and/or flex counter group not set successfully. Runtime error: %s", e.what());
+    }
 
+    if (gTraditionalFlexCounter)
+    {
         vector<FieldValueTuple> fvTuples;
         fvTuples.emplace_back(BUFFER_POOL_PLUGIN_FIELD, bufferPoolWmSha);
         fvTuples.emplace_back(POLL_INTERVAL_FIELD, BUFFER_POOL_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS);
 
         m_flexCounterGroupTable->set(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, fvTuples);
     }
-    catch (const runtime_error &e)
+    else
     {
-        SWSS_LOG_ERROR("Buffer pool watermark lua script and/or flex counter group not set successfully. Runtime error: %s", e.what());
+        sai_redis_flex_counter_group_parameter_t flexCounterGroupParam;
+        sai_attribute_t attr;
+
+        flexCounterGroupParam.counter_group_name = BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP;
+        flexCounterGroupParam.poll_interval = BUFFER_POOL_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS;
+        flexCounterGroupParam.plugin_name = BUFFER_POOL_PLUGIN_FIELD;
+        flexCounterGroupParam.plugins = bufferPoolWmSha.c_str();
+        flexCounterGroupParam.stats_mode = nullptr;
+        flexCounterGroupParam.operation = nullptr;
+
+        attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
+        attr.value.ptr = (void*)&flexCounterGroupParam;
+        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
     }
 }
 
@@ -275,7 +296,21 @@ void BufferOrch::clearBufferPoolWatermarkCounterIdList(const sai_object_id_t obj
     if (m_isBufferPoolWatermarkCounterIdListGenerated)
     {
         string key = BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP ":" + sai_serialize_object_id(object_id);
-        m_flexCounterTable->del(key);
+        if (gTraditionalFlexCounter)
+        {
+            m_flexCounterTable->del(key);
+        }
+        else
+        {
+            sai_attribute_t attr;
+            sai_redis_flex_counter_parameter_t counterParam = {nullptr, nullptr, nullptr, nullptr};
+            counterParam.counter_key = key.c_str();
+            attr.value.ptr = &counterParam;
+
+            attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER;
+
+            sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+        }
     }
 }
 
@@ -326,36 +361,92 @@ void BufferOrch::generateBufferPoolWatermarkCounterIdList(void)
 
     if (!noWmClrCapability)
     {
-        vector<FieldValueTuple> fvs;
-
-        fvs.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ_AND_CLEAR);
-        m_flexCounterGroupTable->set(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, fvs);
-    }
-
-    // Push buffer pool watermark COUNTER_ID_LIST to FLEX_COUNTER_TABLE on a per buffer pool basis
-    vector<FieldValueTuple> fvTuples;
-    fvTuples.emplace_back(BUFFER_POOL_COUNTER_ID_LIST, statList);
-    bitMask = 1;
-    for (const auto &it : *(m_buffer_type_maps[APP_BUFFER_POOL_TABLE_NAME]))
-    {
-        string key = BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP ":" + sai_serialize_object_id(it.second.m_saiObjectId);
-
-        if (noWmClrCapability)
+        if (gTraditionalFlexCounter)
         {
-            string stats_mode = STATS_MODE_READ_AND_CLEAR;
-            if (noWmClrCapability & bitMask)
-            {
-                stats_mode = STATS_MODE_READ;
-            }
-            fvTuples.emplace_back(STATS_MODE_FIELD, stats_mode);
+            vector<FieldValueTuple> fvs;
 
-            m_flexCounterTable->set(key, fvTuples);
-            fvTuples.pop_back();
-            bitMask <<= 1;
+            fvs.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ_AND_CLEAR);
+            m_flexCounterGroupTable->set(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, fvs);
         }
         else
         {
-            m_flexCounterTable->set(key, fvTuples);
+            sai_redis_flex_counter_group_parameter_t flexCounterGroupParam;
+            sai_attribute_t attr;
+
+            flexCounterGroupParam.counter_group_name = BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP;
+            flexCounterGroupParam.poll_interval = nullptr;
+            flexCounterGroupParam.plugins = nullptr;
+            flexCounterGroupParam.stats_mode = STATS_MODE_READ_AND_CLEAR;
+            flexCounterGroupParam.operation = nullptr;
+
+            attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
+            attr.value.ptr = (void*)&flexCounterGroupParam;
+            sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+        }
+    }
+
+    // Push buffer pool watermark COUNTER_ID_LIST to FLEX_COUNTER_TABLE on a per buffer pool basis
+    if (gTraditionalFlexCounter)
+    {
+        vector<FieldValueTuple> fvTuples;
+        fvTuples.emplace_back(BUFFER_POOL_COUNTER_ID_LIST, statList);
+        bitMask = 1;
+        for (const auto &it : *(m_buffer_type_maps[APP_BUFFER_POOL_TABLE_NAME]))
+        {
+            string key = BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP ":" + sai_serialize_object_id(it.second.m_saiObjectId);
+
+            if (noWmClrCapability)
+            {
+                string stats_mode = STATS_MODE_READ_AND_CLEAR;
+                if (noWmClrCapability & bitMask)
+                {
+                    stats_mode = STATS_MODE_READ;
+                }
+                fvTuples.emplace_back(STATS_MODE_FIELD, stats_mode);
+
+                m_flexCounterTable->set(key, fvTuples);
+                fvTuples.pop_back();
+                bitMask <<= 1;
+            }
+            else
+            {
+                m_flexCounterTable->set(key, fvTuples);
+            }
+        }
+    }
+    else
+    {
+        sai_attribute_t attr;
+        sai_redis_flex_counter_parameter_t counterParam = {nullptr, nullptr, nullptr, nullptr};
+
+        counterParam.counter_ids = statList.c_str();
+        counterParam.counter_field_name = BUFFER_POOL_COUNTER_ID_LIST;
+
+        attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER;
+        attr.value.ptr = &counterParam;
+
+        bitMask = 1;
+
+        for (const auto &it : *(m_buffer_type_maps[APP_BUFFER_POOL_TABLE_NAME]))
+        {
+            string key = BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP ":" + sai_serialize_object_id(it.second.m_saiObjectId);
+
+            counterParam.counter_key = key.c_str();
+            if (noWmClrCapability)
+            {
+                if (noWmClrCapability & bitMask)
+                {
+                    counterParam.stats_mode = STATS_MODE_READ;
+                }
+                else
+                {
+                    counterParam.stats_mode = STATS_MODE_READ_AND_CLEAR;
+                }
+
+                bitMask <<= 1;
+            }
+
+            sai_switch_api->set_switch_attribute(gSwitchId, &attr);
         }
     }
 

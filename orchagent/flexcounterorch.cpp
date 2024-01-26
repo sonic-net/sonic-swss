@@ -16,6 +16,7 @@
 #include "flowcounterrouteorch.h"
 
 extern sai_port_api_t *sai_port_api;
+extern sai_switch_api_t *sai_switch_api;
 
 extern PortsOrch *gPortsOrch;
 extern FabricPortsOrch *gFabricPortsOrch;
@@ -24,6 +25,8 @@ extern BufferOrch *gBufferOrch;
 extern Directory<Orch*> gDirectory;
 extern CoppOrch *gCoppOrch;
 extern FlowCounterRouteOrch *gFlowCounterRouteOrch;
+extern sai_object_id_t gSwitchId;
+extern bool gTraditionalFlexCounter;
 
 #define BUFFER_POOL_WATERMARK_KEY   "BUFFER_POOL_WATERMARK"
 #define PORT_KEY                    "PORT"
@@ -115,6 +118,7 @@ void FlexCounterOrch::doTask(Consumer &consumer)
         if (op == SET_COMMAND)
         {
             auto itDelay = std::find(std::begin(data), std::end(data), FieldValueTuple(FLEX_COUNTER_DELAY_STATUS_FIELD, "true"));
+            string poll_interval;
 
             if (itDelay != data.end())
             {
@@ -128,15 +132,34 @@ void FlexCounterOrch::doTask(Consumer &consumer)
 
                 if (field == POLL_INTERVAL_FIELD)
                 {
-                    vector<FieldValueTuple> fieldValues;
-                    fieldValues.emplace_back(POLL_INTERVAL_FIELD, value);
-                    m_flexCounterGroupTable->set(flexCounterGroupMap[key], fieldValues);
-                    if (gPortsOrch && gPortsOrch->isGearboxEnabled())
+                    if (gTraditionalFlexCounter)
                     {
-                        if (key == PORT_KEY || key.rfind("MACSEC", 0) == 0)
+                        vector<FieldValueTuple> fieldValues;
+                        fieldValues.emplace_back(POLL_INTERVAL_FIELD, value);
+                        m_flexCounterGroupTable->set(flexCounterGroupMap[key], fieldValues);
+
+                        if (gPortsOrch && gPortsOrch->isGearboxEnabled())
                         {
-                            m_gbflexCounterGroupTable->set(flexCounterGroupMap[key], fieldValues);
+                            if (key == PORT_KEY || key.rfind("MACSEC", 0) == 0)
+                            {
+                                m_gbflexCounterGroupTable->set(flexCounterGroupMap[key], fieldValues);
+                            }
                         }
+                    }
+                    else
+                    {
+                        sai_redis_flex_counter_group_parameter_t flexCounterGroupParam;
+                        sai_attribute_t attr;
+
+                        flexCounterGroupParam.counter_group_name = flexCounterGroupMap[key].c_str();
+                        flexCounterGroupParam.poll_interval = value.c_str();
+                        flexCounterGroupParam.plugins = nullptr;
+                        flexCounterGroupParam.stats_mode = nullptr;
+                        flexCounterGroupParam.operation = nullptr;
+
+                        attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
+                        attr.value.ptr = (void*)&flexCounterGroupParam;
+                        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
                     }
                 }
                 else if(field == FLEX_COUNTER_STATUS_FIELD)
@@ -228,16 +251,35 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                             m_route_flow_counter_enabled = false;
                         }
                     }
-                    vector<FieldValueTuple> fieldValues;
-                    fieldValues.emplace_back(FLEX_COUNTER_STATUS_FIELD, value);
-                    m_flexCounterGroupTable->set(flexCounterGroupMap[key], fieldValues);
 
-                    if (gPortsOrch && gPortsOrch->isGearboxEnabled())
+                    if (gTraditionalFlexCounter)
                     {
-                        if (key == PORT_KEY || key.rfind("MACSEC", 0) == 0)
+                        vector<FieldValueTuple> fieldValues;
+                        fieldValues.emplace_back(FLEX_COUNTER_STATUS_FIELD, value);
+                        m_flexCounterGroupTable->set(flexCounterGroupMap[key], fieldValues);
+
+                        if (gPortsOrch && gPortsOrch->isGearboxEnabled())
                         {
-                            m_gbflexCounterGroupTable->set(flexCounterGroupMap[key], fieldValues);
+                            if (key == PORT_KEY || key.rfind("MACSEC", 0) == 0)
+                            {
+                                m_gbflexCounterGroupTable->set(flexCounterGroupMap[key], fieldValues);
+                            }
                         }
+                    }
+                    else
+                    {
+                        sai_redis_flex_counter_group_parameter_t flexCounterGroupParam;
+                        sai_attribute_t attr;
+
+                        flexCounterGroupParam.counter_group_name = flexCounterGroupMap[key].c_str();
+                        flexCounterGroupParam.poll_interval = nullptr;
+                        flexCounterGroupParam.plugins = nullptr;
+                        flexCounterGroupParam.stats_mode = nullptr;
+                        flexCounterGroupParam.operation = value.c_str();
+
+                        attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
+                        attr.value.ptr = (void*)&flexCounterGroupParam;
+                        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
                     }
                 }
                 else if(field == FLEX_COUNTER_DELAY_STATUS_FIELD)

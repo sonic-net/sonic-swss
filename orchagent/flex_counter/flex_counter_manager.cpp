@@ -18,6 +18,11 @@ using swss::DBConnector;
 using swss::FieldValueTuple;
 using swss::ProducerTable;
 
+extern sai_switch_api_t *sai_switch_api;
+
+extern sai_object_id_t gSwitchId;
+extern bool gTraditionalFlexCounter;
+
 const string FLEX_COUNTER_ENABLE("enable");
 const string FLEX_COUNTER_DISABLE("disable");
 
@@ -140,6 +145,32 @@ void FlexCounterManager::applyGroupConfiguration()
 {
     SWSS_LOG_ENTER();
 
+    if (!gTraditionalFlexCounter)
+    {
+        sai_redis_flex_counter_group_parameter_t flexCounterGroupParam;
+        sai_attribute_t attr;
+
+        flexCounterGroupParam.counter_group_name = group_name.c_str();
+        flexCounterGroupParam.poll_interval = std::to_string(polling_interval).c_str();
+        flexCounterGroupParam.stats_mode = stats_mode_lookup.at(stats_mode).c_str();
+        flexCounterGroupParam.operation = status_lookup.at(enabled).c_str();
+        if (!fvField(fv_plugin).empty())
+        {
+            flexCounterGroupParam.plugins = fvValue(fv_plugin).c_str();
+            flexCounterGroupParam.plugin_name = fvField(fv_plugin).c_str();
+        }
+        else
+        {
+            flexCounterGroupParam.plugins = nullptr;
+        }
+
+        attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
+        attr.value.ptr = (void*)&flexCounterGroupParam;
+        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+
+        return;
+    }
+
     vector<FieldValueTuple> field_values =
     {
         FieldValueTuple(STATS_MODE_FIELD, stats_mode_lookup.at(stats_mode)),
@@ -160,6 +191,25 @@ void FlexCounterManager::updateGroupPollingInterval(
 {
     SWSS_LOG_ENTER();
 
+    if (!gTraditionalFlexCounter)
+    {
+        sai_redis_flex_counter_group_parameter_t flexCounterGroupParam;
+        sai_attribute_t attr;
+        std::string pollingIntervalStr = std::to_string(polling_interval);
+
+        flexCounterGroupParam.counter_group_name = group_name.c_str();
+        flexCounterGroupParam.poll_interval = pollingIntervalStr.c_str();
+        flexCounterGroupParam.stats_mode = nullptr;
+        flexCounterGroupParam.operation = nullptr;
+        flexCounterGroupParam.plugins = nullptr;
+
+        attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
+        attr.value.ptr = (void*)&flexCounterGroupParam;
+        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+
+        return;
+    }
+
     vector<FieldValueTuple> field_values =
     {
         FieldValueTuple(POLL_INTERVAL_FIELD, std::to_string(polling_interval))
@@ -178,6 +228,24 @@ void FlexCounterManager::enableFlexCounterGroup()
 
     if (enabled)
     {
+        return;
+    }
+
+    if (!gTraditionalFlexCounter)
+    {
+        sai_redis_flex_counter_group_parameter_t flexCounterGroupParam;
+        sai_attribute_t attr;
+
+        flexCounterGroupParam.counter_group_name = group_name.c_str();
+        flexCounterGroupParam.poll_interval = nullptr;
+        flexCounterGroupParam.stats_mode = nullptr;
+        flexCounterGroupParam.operation = FLEX_COUNTER_ENABLE.c_str();
+        flexCounterGroupParam.plugins = nullptr;
+
+        attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
+        attr.value.ptr = (void*)&flexCounterGroupParam;
+        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+
         return;
     }
 
@@ -231,11 +299,30 @@ void FlexCounterManager::setCounterIdList(
         return;
     }
 
-    std::vector<swss::FieldValueTuple> field_values =
+    auto key = getFlexCounterTableKey(group_name, object_id);
+    auto counter_ids = serializeCounterStats(counter_stats);
+
+    if (gTraditionalFlexCounter)
     {
-        FieldValueTuple(counter_type_it->second, serializeCounterStats(counter_stats))
-    };
-    flex_counter_table->set(getFlexCounterTableKey(group_name, object_id), field_values);
+        std::vector<swss::FieldValueTuple> field_values =
+            {
+                FieldValueTuple(counter_type_it->second, counter_ids)
+            };
+        flex_counter_table->set(key, field_values);
+    }
+    else
+    {
+        sai_attribute_t attr;
+        sai_redis_flex_counter_parameter_t counterParam = {nullptr, nullptr, nullptr, nullptr};
+
+        attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER;
+        counterParam.counter_key = key.c_str();
+        counterParam.counter_ids = counter_ids.c_str();
+        counterParam.counter_field_name = counter_type_it->second.c_str();
+        attr.value.ptr = &counterParam;
+
+        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    }
     installed_counters.insert(object_id);
 
     SWSS_LOG_DEBUG("Updated flex counter id list for object '%" PRIu64 "' in group '%s'.",
@@ -258,7 +345,22 @@ void FlexCounterManager::clearCounterIdList(const sai_object_id_t object_id)
         return;
     }
 
-    flex_counter_table->del(getFlexCounterTableKey(group_name, object_id));
+    auto key = getFlexCounterTableKey(group_name, object_id);
+    if (gTraditionalFlexCounter)
+    {
+        flex_counter_table->del(key);
+    }
+    else
+    {
+        sai_attribute_t attr;
+        sai_redis_flex_counter_parameter_t counterParam = {nullptr, nullptr, nullptr, nullptr};
+
+        attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER;
+        counterParam.counter_key = key.c_str();
+        attr.value.ptr = &counterParam;
+
+        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    }
     installed_counters.erase(counter_it);
 
     SWSS_LOG_DEBUG("Cleared flex counter id list for object '%" PRIu64 "' in group '%s'.",

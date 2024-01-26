@@ -378,6 +378,9 @@ namespace bufferorch_test
             delete gCrmOrch;
             gCrmOrch = nullptr;
 
+            delete gBufferOrch;
+            gBufferOrch = nullptr;
+
             delete gSwitchOrch;
             gSwitchOrch = nullptr;
 

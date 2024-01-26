@@ -26,6 +26,7 @@ extern sai_object_id_t      gSwitchId;
 extern PortsOrch*           gPortsOrch;
 extern Directory<Orch*>     gDirectory;
 extern bool                 gIsNatSupported;
+extern bool                 gTraditionalFlexCounter;
 
 #define FLEX_COUNTER_UPD_INTERVAL 1
 
@@ -772,7 +773,7 @@ void CoppOrch::doTask(SelectableTimer &timer)
     for (auto it = m_pendingAddToFlexCntr.begin(); it != m_pendingAddToFlexCntr.end(); )
     {
         const auto id = sai_serialize_object_id(it->first);
-        if (m_vidToRidTable->hget("", id, value))
+        if (!gTraditionalFlexCounter || m_vidToRidTable->hget("", id, value))
         {
             SWSS_LOG_INFO("Registering %s, id %s", it->second.c_str(), id.c_str());
 

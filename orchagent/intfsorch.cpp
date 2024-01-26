@@ -37,6 +37,7 @@ extern bool gIsNatSupported;
 extern NeighOrch *gNeighOrch;
 extern string gMySwitchType;
 extern int32_t gVoqMySwitchId;
+extern bool gTraditionalFlexCounter;
 
 const int intfsorch_pri = 35;
 
@@ -79,10 +80,28 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch, DBCon
     m_flexCounterTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_TABLE));
     m_flexCounterGroupTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_GROUP_TABLE));
 
-    vector<FieldValueTuple> fieldValues;
-    fieldValues.emplace_back(POLL_INTERVAL_FIELD, RIF_FLEX_STAT_COUNTER_POLL_MSECS);
-    fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
-    m_flexCounterGroupTable->set(RIF_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
+    if (gTraditionalFlexCounter)
+    {
+        vector<FieldValueTuple> fieldValues;
+        fieldValues.emplace_back(POLL_INTERVAL_FIELD, RIF_FLEX_STAT_COUNTER_POLL_MSECS);
+        fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
+        m_flexCounterGroupTable->set(RIF_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
+    }
+    else
+    {
+        sai_redis_flex_counter_group_parameter_t flexCounterGroupParam;
+        sai_attribute_t attr;
+
+        flexCounterGroupParam.counter_group_name = RIF_STAT_COUNTER_FLEX_COUNTER_GROUP;
+        flexCounterGroupParam.poll_interval = RIF_FLEX_STAT_COUNTER_POLL_MSECS;
+        flexCounterGroupParam.plugins = nullptr;
+        flexCounterGroupParam.stats_mode = STATS_MODE_READ;
+        flexCounterGroupParam.operation = nullptr;
+
+        attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
+        attr.value.ptr = (void*)&flexCounterGroupParam;
+        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    }
 
     string rifRatePluginName = "rif_rates.lua";
 
@@ -91,11 +110,30 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch, DBCon
         string rifRateLuaScript = swss::loadLuaScript(rifRatePluginName);
         string rifRateSha = swss::loadRedisScript(m_counter_db.get(), rifRateLuaScript);
 
-        vector<FieldValueTuple> fieldValues;
-        fieldValues.emplace_back(RIF_PLUGIN_FIELD, rifRateSha);
-        fieldValues.emplace_back(POLL_INTERVAL_FIELD, RIF_FLEX_STAT_COUNTER_POLL_MSECS);
-        fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
-        m_flexCounterGroupTable->set(RIF_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
+        if (gTraditionalFlexCounter)
+        {
+            vector<FieldValueTuple> fieldValues;
+            fieldValues.emplace_back(RIF_PLUGIN_FIELD, rifRateSha);
+            fieldValues.emplace_back(POLL_INTERVAL_FIELD, RIF_FLEX_STAT_COUNTER_POLL_MSECS);
+            fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
+            m_flexCounterGroupTable->set(RIF_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
+        }
+        else
+        {
+            sai_redis_flex_counter_group_parameter_t flexCounterGroupParam;
+            sai_attribute_t attr;
+
+            flexCounterGroupParam.counter_group_name = RIF_STAT_COUNTER_FLEX_COUNTER_GROUP;
+            flexCounterGroupParam.poll_interval = RIF_FLEX_STAT_COUNTER_POLL_MSECS;
+            flexCounterGroupParam.plugin_name = RIF_PLUGIN_FIELD;
+            flexCounterGroupParam.plugins = rifRateSha.c_str();
+            flexCounterGroupParam.stats_mode = STATS_MODE_READ;
+            flexCounterGroupParam.operation = nullptr;
+
+            attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
+            attr.value.ptr = (void*)&flexCounterGroupParam;
+            sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+        }
     }
     catch (const runtime_error &e)
     {
@@ -1506,11 +1544,27 @@ void IntfsOrch::addRifToFlexCounter(const string &id, const string &name, const 
     {
         counters_stream << sai_serialize_router_interface_stat(it) << comma;
     }
+    auto &&counters_str = counters_stream.str();
 
     /* check the state of intf, if registering the intf to FC will result in runtime error */
-    vector<FieldValueTuple> fieldValues;
-    fieldValues.emplace_back(RIF_COUNTER_ID_LIST, counters_stream.str());
-    m_flexCounterTable->set(key, fieldValues);
+    if (gTraditionalFlexCounter)
+    {
+        vector<FieldValueTuple> fieldValues;
+        fieldValues.emplace_back(RIF_COUNTER_ID_LIST, counters_str);
+        m_flexCounterTable->set(key, fieldValues);
+    }
+    else
+    {
+        sai_attribute_t attr;
+        attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER;
+        sai_redis_flex_counter_parameter_t counterParam = {nullptr, nullptr, nullptr, nullptr};
+        counterParam.counter_key = key.c_str();
+        counterParam.counter_ids = counters_str.c_str();
+        counterParam.counter_field_name = RIF_COUNTER_ID_LIST;
+        attr.value.ptr = &counterParam;
+
+        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    }
     SWSS_LOG_DEBUG("Registered interface %s to Flex counter", name.c_str());
 }
 
@@ -1524,7 +1578,20 @@ void IntfsOrch::removeRifFromFlexCounter(const string &id, const string &name)
     /* remove it from FLEX_COUNTER_DB */
     string key = getRifFlexCounterTableKey(id);
 
-    m_flexCounterTable->del(key);
+    if (gTraditionalFlexCounter)
+    {
+        m_flexCounterTable->del(key);
+    }
+    else
+    {
+        sai_attribute_t attr;
+        attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER;
+        sai_redis_flex_counter_parameter_t counterParam = {nullptr, nullptr, nullptr, nullptr};
+        counterParam.counter_key = key.c_str();
+        attr.value.ptr = &counterParam;
+
+        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    }
     SWSS_LOG_DEBUG("Unregistered interface %s from Flex counter", name.c_str());
 }
 
@@ -1584,7 +1651,7 @@ void IntfsOrch::doTask(SelectableTimer &timer)
                 type = "";
                 break;
         }
-        if (m_vidToRidTable->hget("", id, value))
+        if (!gTraditionalFlexCounter || m_vidToRidTable->hget("", id, value))
         {
             SWSS_LOG_INFO("Registering %s it is ready", it->m_alias.c_str());
             addRifToFlexCounter(id, it->m_alias, type);

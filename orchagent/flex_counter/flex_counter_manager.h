@@ -12,6 +12,7 @@
 
 extern "C" {
 #include "sai.h"
+#include "sairedis.h"
 }
 
 enum class StatsMode

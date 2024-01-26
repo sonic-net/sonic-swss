@@ -45,6 +45,7 @@ extern sai_queue_api_t *sai_queue_api;
 extern sai_object_id_t gSwitchId;
 extern sai_fdb_api_t *sai_fdb_api;
 extern sai_l2mc_group_api_t *sai_l2mc_group_api;
+extern sai_buffer_api_t *sai_buffer_api;
 extern IntfsOrch *gIntfsOrch;
 extern NeighOrch *gNeighOrch;
 extern CrmOrch *gCrmOrch;
@@ -58,6 +59,7 @@ extern int32_t gVoqMySwitchId;
 extern string gMyHostName;
 extern string gMyAsicName;
 extern event_handle_t g_events_handle;
+extern bool gTraditionalFlexCounter;
 
 // defines ------------------------------------------------------------------------------------------------------------
 
@@ -460,7 +462,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
 
     initGearbox();
 
-    string queueWmSha, pgWmSha;
+    string queueWmSha, pgWmSha, portRateSha;
     string queueWmPluginName = "watermark_queue.lua";
     string pgWmPluginName = "watermark_pg.lua";
     string portRatePluginName = "port_rates.lua";
@@ -474,8 +476,15 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         pgWmSha = swss::loadRedisScript(m_counter_db.get(), pgLuaScript);
 
         string portRateLuaScript = swss::loadLuaScript(portRatePluginName);
-        string portRateSha = swss::loadRedisScript(m_counter_db.get(), portRateLuaScript);
+        portRateSha = swss::loadRedisScript(m_counter_db.get(), portRateLuaScript);
+    }
+    catch (const runtime_error &e)
+    {
+        SWSS_LOG_ERROR("Port flex counter groups were not set successfully: %s", e.what());
+    }
 
+    if (gTraditionalFlexCounter)
+    {
         vector<FieldValueTuple> fieldValues;
         fieldValues.emplace_back(QUEUE_PLUGIN_FIELD, queueWmSha);
         fieldValues.emplace_back(POLL_INTERVAL_FIELD, QUEUE_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS);
@@ -499,9 +508,51 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
         m_flexCounterGroupTable->set(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
     }
-    catch (const runtime_error &e)
+    else
     {
-        SWSS_LOG_ERROR("Port flex counter groups were not set successfully: %s", e.what());
+        sai_redis_flex_counter_group_parameter_t flexCounterGroupParam;
+        sai_attribute_t attr;
+
+        flexCounterGroupParam.operation = nullptr;
+
+        flexCounterGroupParam.counter_group_name = QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP;
+        flexCounterGroupParam.poll_interval = QUEUE_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS;
+        flexCounterGroupParam.plugin_name = QUEUE_PLUGIN_FIELD;
+        flexCounterGroupParam.plugins = queueWmSha.c_str();
+        flexCounterGroupParam.stats_mode = STATS_MODE_READ_AND_CLEAR;
+
+        attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
+        attr.value.ptr = (void*)&flexCounterGroupParam;
+        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+
+        flexCounterGroupParam.counter_group_name = PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP;
+        flexCounterGroupParam.poll_interval = PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS;
+        flexCounterGroupParam.plugin_name = PG_PLUGIN_FIELD;
+        flexCounterGroupParam.plugins = pgWmSha.c_str();
+        flexCounterGroupParam.stats_mode = STATS_MODE_READ_AND_CLEAR;
+
+        attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
+        attr.value.ptr = (void*)&flexCounterGroupParam;
+        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+
+        flexCounterGroupParam.counter_group_name = PORT_STAT_COUNTER_FLEX_COUNTER_GROUP;
+        flexCounterGroupParam.poll_interval = PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS;
+        flexCounterGroupParam.plugin_name = PORT_PLUGIN_FIELD;
+        flexCounterGroupParam.plugins = portRateSha.c_str();
+        flexCounterGroupParam.stats_mode = STATS_MODE_READ;
+
+        attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
+        attr.value.ptr = (void*)&flexCounterGroupParam;
+        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+
+        flexCounterGroupParam.counter_group_name = PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP;
+        flexCounterGroupParam.poll_interval = PG_DROP_FLEX_STAT_COUNTER_POLL_MSECS;
+        flexCounterGroupParam.plugins = nullptr;
+        flexCounterGroupParam.stats_mode = STATS_MODE_READ;
+
+        attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER_GROUP;
+        attr.value.ptr = (void*)&flexCounterGroupParam;
+        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
     }
 
     /* Get CPU port */
@@ -3167,6 +3218,10 @@ sai_status_t PortsOrch::removePort(sai_object_id_t port_id)
         }
     }
     /* else : port is in default state or not yet created */
+
+    /* Remove port counters */
+    port_stat_manager.clearCounterIdList(port.m_port_id);
+    port_buffer_drop_stat_manager.clearCounterIdList(port.m_port_id);
 
     /*
      * Remove port serdes (if exists) before removing port since this
@@ -7084,11 +7139,27 @@ void PortsOrch::addQueueWatermarkFlexCountersPerPortPerQueueIndex(const Port& po
         counters_stream << delimiter << sai_serialize_queue_stat(it);
         delimiter = comma;
     }
+    auto &&counters_str = counters_stream.str();
 
-    vector<FieldValueTuple> fieldValues;
-    fieldValues.emplace_back(QUEUE_COUNTER_ID_LIST, counters_stream.str());
+    if (gTraditionalFlexCounter)
+    {
+        vector<FieldValueTuple> fieldValues;
+        fieldValues.emplace_back(QUEUE_COUNTER_ID_LIST, counters_str);
 
-    m_flexCounterTable->set(key, fieldValues);
+        m_flexCounterTable->set(key, fieldValues);
+    }
+    else
+    {
+        sai_attribute_t attr;
+        attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER;
+        sai_redis_flex_counter_parameter_t counterParam = {nullptr, nullptr, nullptr, nullptr};
+        counterParam.counter_key = key.c_str();
+        counterParam.counter_ids = counters_str.c_str();
+        counterParam.counter_field_name = QUEUE_COUNTER_ID_LIST;
+        attr.value.ptr = &counterParam;
+
+        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    }
 }
 
 void PortsOrch::createPortBufferQueueCounters(const Port &port, string queues)
@@ -7191,7 +7262,20 @@ void PortsOrch::removePortBufferQueueCounters(const Port &port, string queues)
         {
             // Remove watermark queue counters
             string key = getQueueWatermarkFlexCounterTableKey(id);
-            m_flexCounterTable->del(key);
+            if (gTraditionalFlexCounter)
+            {
+                m_flexCounterTable->del(key);
+            }
+            else
+            {
+                sai_attribute_t attr;
+                attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER;
+                sai_redis_flex_counter_parameter_t counterParam = {nullptr, nullptr, nullptr, nullptr};
+                counterParam.counter_key = key.c_str();
+                attr.value.ptr = &counterParam;
+
+                sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+            }
         }
     }
 
@@ -7378,9 +7462,25 @@ void PortsOrch::addPriorityGroupFlexCountersPerPortPerPgIndex(const Port& port, 
             delimiter = comma;
         }
     }
-    vector<FieldValueTuple> fieldValues;
-    fieldValues.emplace_back(PG_COUNTER_ID_LIST, ingress_pg_drop_packets_counters_stream.str());
-    m_flexCounterTable->set(key, fieldValues);
+    auto &&counters_str = ingress_pg_drop_packets_counters_stream.str();
+    if (gTraditionalFlexCounter)
+    {
+        vector<FieldValueTuple> fieldValues;
+        fieldValues.emplace_back(PG_COUNTER_ID_LIST, counters_str);
+        m_flexCounterTable->set(key, fieldValues);
+    }
+    else
+    {
+        sai_attribute_t attr;
+        attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER;
+        sai_redis_flex_counter_parameter_t counterParam = {nullptr, nullptr, nullptr, nullptr};
+        counterParam.counter_key = key.c_str();
+        counterParam.counter_ids = counters_str.c_str();
+        counterParam.counter_field_name = PG_COUNTER_ID_LIST;
+        attr.value.ptr = &counterParam;
+
+        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    }
 }
 
 void PortsOrch::addPriorityGroupWatermarkFlexCounters(map<string, FlexCounterPgStates> pgsStateVector)
@@ -7448,9 +7548,26 @@ void PortsOrch::addPriorityGroupWatermarkFlexCountersPerPortPerPgIndex(const Por
         delimiter = comma;
     }
 
-    vector<FieldValueTuple> fieldValues;
-    fieldValues.emplace_back(PG_COUNTER_ID_LIST, counters_stream.str());
-    m_flexCounterTable->set(key, fieldValues);
+    auto &&counters_str = counters_stream.str();
+
+    if (gTraditionalFlexCounter)
+    {
+        vector<FieldValueTuple> fieldValues;
+        fieldValues.emplace_back(PG_COUNTER_ID_LIST, counters_str);
+        m_flexCounterTable->set(key, fieldValues);
+    }
+    else
+    {
+        sai_attribute_t attr;
+        attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER;
+        sai_redis_flex_counter_parameter_t counterParam = {nullptr, nullptr, nullptr, nullptr};
+        counterParam.counter_key = key.c_str();
+        counterParam.counter_ids = counters_str.c_str();
+        counterParam.counter_field_name = PG_COUNTER_ID_LIST;
+        attr.value.ptr = &counterParam;
+
+        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    }
 }
 
 void PortsOrch::removePortBufferPgCounters(const Port& port, string pgs)
@@ -7483,14 +7600,40 @@ void PortsOrch::removePortBufferPgCounters(const Port& port, string pgs)
         {
             // Remove dropped packets counters from flex_counter
             string key = getPriorityGroupDropPacketsFlexCounterTableKey(id);
-            m_flexCounterTable->del(key);
+            if (gTraditionalFlexCounter)
+            {
+                m_flexCounterTable->del(key);
+            }
+            else
+            {
+                sai_attribute_t attr;
+                attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER;
+                sai_redis_flex_counter_parameter_t counterParam = {nullptr, nullptr, nullptr, nullptr};
+                counterParam.counter_key = key.c_str();
+                attr.value.ptr = &counterParam;
+
+                sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+            }
         }
 
         if (flexCounterOrch->getPgWatermarkCountersState())
         {
             // Remove watermark counters from flex_counter
             string key = getPriorityGroupWatermarkFlexCounterTableKey(id);
-            m_flexCounterTable->del(key);
+            if (gTraditionalFlexCounter)
+            {
+                m_flexCounterTable->del(key);
+            }
+            else
+            {
+                sai_attribute_t attr;
+                attr.id = SAI_REDIS_SWITCH_ATTR_FLEX_COUNTER;
+                sai_redis_flex_counter_parameter_t counterParam = {nullptr, nullptr, nullptr, nullptr};
+                counterParam.counter_key = key.c_str();
+                attr.value.ptr = &counterParam;
+
+                sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+            }
         }
     }
 
