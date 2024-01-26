@@ -45,6 +45,7 @@ extern sai_queue_api_t *sai_queue_api;
 extern sai_object_id_t gSwitchId;
 extern sai_fdb_api_t *sai_fdb_api;
 extern sai_l2mc_group_api_t *sai_l2mc_group_api;
+extern sai_buffer_api_t *sai_buffer_api;
 extern IntfsOrch *gIntfsOrch;
 extern NeighOrch *gNeighOrch;
 extern CrmOrch *gCrmOrch;
@@ -72,10 +73,6 @@ extern event_handle_t g_events_handle;
 #define PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS     1000
 #define PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS     60000
 #define QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   10000
-#define QUEUE_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS "60000"
-#define PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS    "60000"
-#define PG_DROP_FLEX_STAT_COUNTER_POLL_MSECS         "10000"
-#define PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS   "1000"
 
 // types --------------------------------------------------------------------------------------------------------------
 
@@ -412,7 +409,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         Orch(db, tableNames),
         m_portStateTable(stateDb, STATE_PORT_TABLE_NAME),
         port_stat_manager(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
-        gb_port_stat_manager("GB_FLEX_COUNTER_DB",
+        gb_port_stat_manager(true,
                 PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ,
                 PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, false),
         port_buffer_drop_stat_manager(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS, false),
@@ -451,16 +448,12 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
     m_pgPortTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_PG_PORT_MAP));
     m_pgIndexTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_PG_INDEX_MAP));
 
-    m_flex_db = shared_ptr<DBConnector>(new DBConnector("FLEX_COUNTER_DB", 0));
-    m_flexCounterTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_TABLE));
-    m_flexCounterGroupTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_GROUP_TABLE));
-
     m_state_db = shared_ptr<DBConnector>(new DBConnector("STATE_DB", 0));
     m_stateBufferMaximumValueTable = unique_ptr<Table>(new Table(m_state_db.get(), STATE_BUFFER_MAXIMUM_VALUE_TABLE));
 
     initGearbox();
 
-    string queueWmSha, pgWmSha;
+    string queueWmSha, pgWmSha, portRateSha;
     string queueWmPluginName = "watermark_queue.lua";
     string pgWmPluginName = "watermark_pg.lua";
     string portRatePluginName = "port_rates.lua";
@@ -474,35 +467,34 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         pgWmSha = swss::loadRedisScript(m_counter_db.get(), pgLuaScript);
 
         string portRateLuaScript = swss::loadLuaScript(portRatePluginName);
-        string portRateSha = swss::loadRedisScript(m_counter_db.get(), portRateLuaScript);
-
-        vector<FieldValueTuple> fieldValues;
-        fieldValues.emplace_back(QUEUE_PLUGIN_FIELD, queueWmSha);
-        fieldValues.emplace_back(POLL_INTERVAL_FIELD, QUEUE_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS);
-        fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ_AND_CLEAR);
-        m_flexCounterGroupTable->set(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
-
-        fieldValues.clear();
-        fieldValues.emplace_back(PG_PLUGIN_FIELD, pgWmSha);
-        fieldValues.emplace_back(POLL_INTERVAL_FIELD, PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS);
-        fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ_AND_CLEAR);
-        m_flexCounterGroupTable->set(PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
-
-        fieldValues.clear();
-        fieldValues.emplace_back(PORT_PLUGIN_FIELD, portRateSha);
-        fieldValues.emplace_back(POLL_INTERVAL_FIELD, PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS);
-        fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
-        m_flexCounterGroupTable->set(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
-
-        fieldValues.clear();
-        fieldValues.emplace_back(POLL_INTERVAL_FIELD, PG_DROP_FLEX_STAT_COUNTER_POLL_MSECS);
-        fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
-        m_flexCounterGroupTable->set(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
+        portRateSha = swss::loadRedisScript(m_counter_db.get(), portRateLuaScript);
     }
     catch (const runtime_error &e)
     {
         SWSS_LOG_ERROR("Port flex counter groups were not set successfully: %s", e.what());
     }
+
+    setFlexCounterGroupParameter(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                 QUEUE_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS,
+                                 STATS_MODE_READ_AND_CLEAR,
+                                 QUEUE_PLUGIN_FIELD,
+                                 queueWmSha);
+
+    setFlexCounterGroupParameter(PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                 PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS,
+                                 STATS_MODE_READ_AND_CLEAR,
+                                 PG_PLUGIN_FIELD,
+                                 pgWmSha);
+
+    setFlexCounterGroupParameter(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                 PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS,
+                                 STATS_MODE_READ,
+                                 PORT_PLUGIN_FIELD,
+                                 portRateSha);
+
+    setFlexCounterGroupParameter(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP,
+                                 PG_DROP_FLEX_STAT_COUNTER_POLL_MSECS,
+                                 STATS_MODE_READ);
 
     /* Get CPU port */
     this->initializeCpuPort();
@@ -3172,6 +3164,10 @@ sai_status_t PortsOrch::removePort(sai_object_id_t port_id)
     }
     /* else : port is in default state or not yet created */
 
+    /* Remove port counters */
+    port_stat_manager.clearCounterIdList(port.m_port_id);
+    port_buffer_drop_stat_manager.clearCounterIdList(port.m_port_id);
+
     /*
      * Remove port serdes (if exists) before removing port since this
      * reference is dependency.
@@ -3269,10 +3265,10 @@ bool PortsOrch::initPort(const PortConfig &port)
                     auto gbport_counter_stats = generateCounterStats(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, true);
                     if (p.m_system_side_id)
                         gb_port_stat_manager.setCounterIdList(p.m_system_side_id,
-                                CounterType::PORT, gbport_counter_stats);
+                                CounterType::PORT, gbport_counter_stats, p.m_switch_id);
                     if (p.m_line_side_id)
                         gb_port_stat_manager.setCounterIdList(p.m_line_side_id,
-                                CounterType::PORT, gbport_counter_stats);
+                                CounterType::PORT, gbport_counter_stats, p.m_switch_id);
                 }
                 if (flex_counters_orch->getPortBufferDropCountersState())
                 {
@@ -7091,11 +7087,9 @@ void PortsOrch::addQueueWatermarkFlexCountersPerPortPerQueueIndex(const Port& po
         counters_stream << delimiter << sai_serialize_queue_stat(it);
         delimiter = comma;
     }
+    auto &&counters_str = counters_stream.str();
 
-    vector<FieldValueTuple> fieldValues;
-    fieldValues.emplace_back(QUEUE_COUNTER_ID_LIST, counters_stream.str());
-
-    m_flexCounterTable->set(key, fieldValues);
+    startFlexCounterPolling(gSwitchId, key, counters_str, QUEUE_COUNTER_ID_LIST);
 }
 
 void PortsOrch::createPortBufferQueueCounters(const Port &port, string queues)
@@ -7198,7 +7192,7 @@ void PortsOrch::removePortBufferQueueCounters(const Port &port, string queues)
         {
             // Remove watermark queue counters
             string key = getQueueWatermarkFlexCounterTableKey(id);
-            m_flexCounterTable->del(key);
+            stopFlexCounterPolling(gSwitchId, key);
         }
     }
 
@@ -7385,9 +7379,8 @@ void PortsOrch::addPriorityGroupFlexCountersPerPortPerPgIndex(const Port& port, 
             delimiter = comma;
         }
     }
-    vector<FieldValueTuple> fieldValues;
-    fieldValues.emplace_back(PG_COUNTER_ID_LIST, ingress_pg_drop_packets_counters_stream.str());
-    m_flexCounterTable->set(key, fieldValues);
+    auto &&counters_str = ingress_pg_drop_packets_counters_stream.str();
+    startFlexCounterPolling(gSwitchId, key, counters_str, PG_COUNTER_ID_LIST);
 }
 
 void PortsOrch::addPriorityGroupWatermarkFlexCounters(map<string, FlexCounterPgStates> pgsStateVector)
@@ -7455,9 +7448,9 @@ void PortsOrch::addPriorityGroupWatermarkFlexCountersPerPortPerPgIndex(const Por
         delimiter = comma;
     }
 
-    vector<FieldValueTuple> fieldValues;
-    fieldValues.emplace_back(PG_COUNTER_ID_LIST, counters_stream.str());
-    m_flexCounterTable->set(key, fieldValues);
+    auto &&counters_str = counters_stream.str();
+
+    startFlexCounterPolling(gSwitchId, key, counters_str, PG_COUNTER_ID_LIST);
 }
 
 void PortsOrch::removePortBufferPgCounters(const Port& port, string pgs)
@@ -7490,14 +7483,14 @@ void PortsOrch::removePortBufferPgCounters(const Port& port, string pgs)
         {
             // Remove dropped packets counters from flex_counter
             string key = getPriorityGroupDropPacketsFlexCounterTableKey(id);
-            m_flexCounterTable->del(key);
+            stopFlexCounterPolling(gSwitchId, key);
         }
 
         if (flexCounterOrch->getPgWatermarkCountersState())
         {
             // Remove watermark counters from flex_counter
             string key = getPriorityGroupWatermarkFlexCounterTableKey(id);
-            m_flexCounterTable->del(key);
+            stopFlexCounterPolling(gSwitchId, key);
         }
     }
 
@@ -7524,10 +7517,10 @@ void PortsOrch::generatePortCounterMap()
                 CounterType::PORT, port_counter_stats);
         if (it.second.m_system_side_id)
             gb_port_stat_manager.setCounterIdList(it.second.m_system_side_id,
-                    CounterType::PORT, gbport_counter_stats);
+                    CounterType::PORT, gbport_counter_stats, it.second.m_switch_id);
         if (it.second.m_line_side_id)
             gb_port_stat_manager.setCounterIdList(it.second.m_line_side_id,
-                    CounterType::PORT, gbport_counter_stats);
+                    CounterType::PORT, gbport_counter_stats, it.second.m_switch_id);
     }
 
     m_isPortCounterMapGenerated = true;

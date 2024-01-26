@@ -18,6 +18,11 @@ extern MacAddress gMacAddress;
 
 #define RIF_STAT_COUNTER_FLEX_COUNTER_GROUP "RIF_STAT_COUNTER"
 #define RIF_RATE_COUNTER_FLEX_COUNTER_GROUP "RIF_RATE_COUNTER"
+#define RIF_FLEX_STAT_COUNTER_POLL_MSECS "1000"
+
+const string rif_stat_counter_flex_counter_group = RIF_STAT_COUNTER_FLEX_COUNTER_GROUP;
+const string rif_rate_counter_flex_counter_group = RIF_RATE_COUNTER_FLEX_COUNTER_GROUP;
+const string rif_flex_stat_counter_poll_msecs = RIF_FLEX_STAT_COUNTER_POLL_MSECS;
 
 struct IntfsEntry
 {
@@ -84,13 +89,10 @@ private:
     void doTask(SelectableTimer &timer);
 
     shared_ptr<DBConnector> m_counter_db;
-    shared_ptr<DBConnector> m_flex_db;
     shared_ptr<DBConnector> m_asic_db;
     unique_ptr<Table> m_rifNameTable;
     unique_ptr<Table> m_rifTypeTable;
     unique_ptr<Table> m_vidToRidTable;
-    unique_ptr<ProducerTable> m_flexCounterTable;
-    unique_ptr<ProducerTable> m_flexCounterGroupTable;
 
     std::set<std::string> m_removingIntfses;
 
