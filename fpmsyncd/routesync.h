@@ -7,6 +7,7 @@
 #include "linkcache.h"
 #include "fpminterface.h"
 #include "warmRestartHelper.h"
+#include "zmqclient.h"
 #include <string.h>
 #include <memory.h>
 #include <bits/stdc++.h>
