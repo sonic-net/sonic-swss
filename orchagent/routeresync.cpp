@@ -25,7 +25,7 @@ int main(int argc, char **argv)
     ZmqClient zmqClient("tcp://localhost:8100");
 
     DBConnector db("APPL_DB", 0);
-    ZmqProducerStateTable r(&db, APP_ROUTE_TABLE_NAME, &zmqClient);
+    ZmqProducerStateTable r(&db, APP_ROUTE_TABLE_NAME, zmqClient);
 
     if (argc != 2)
     {
