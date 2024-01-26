@@ -32,7 +32,7 @@ FgNhgOrch::FgNhgOrch(DBConnector *db, DBConnector *appDb, DBConnector *stateDb, 
 {
     SWSS_LOG_ENTER();
     isFineGrainedConfigured = false;
-    gPortsOrch->attach(this);,
+    gPortsOrch->attach(this);
 }
 
 
