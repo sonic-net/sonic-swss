@@ -7,6 +7,7 @@
 #include "ipprefix.h"
 #include "dbconnector.h"
 #include "producerstatetable.h"
+#include "zmqproducerstatetable.h"
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/routesync.h"
 #include "macaddress.h"
