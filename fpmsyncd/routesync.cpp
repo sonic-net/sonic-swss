@@ -75,14 +75,20 @@ static decltype(auto) makeNlAddr(const T& ip)
 }
 
 
-RouteSync::RouteSync(RedisPipeline *pipeline) :
-    m_routeTable(pipeline, APP_ROUTE_TABLE_NAME, true),
-    m_label_routeTable(pipeline, APP_LABEL_ROUTE_TABLE_NAME, true),
+RouteSync::RouteSync(RedisPipeline *pipeline, ZmqClient *zmqClient) :
     m_vnet_routeTable(pipeline, APP_VNET_RT_TABLE_NAME, true),
     m_vnet_tunnelTable(pipeline, APP_VNET_RT_TUNNEL_TABLE_NAME, true),
     m_warmStartHelper(pipeline, &m_routeTable, APP_ROUTE_TABLE_NAME, "bgp", "bgp"),
     m_nl_sock(NULL), m_link_cache(NULL)
 {
+    if (zmqClient != nullptr) {
+        m_routeTable = unique_ptr<ProducerStateTable>(new ZmqProducerStateTable(pipeline, APP_ROUTE_TABLE_NAME, zmqClient, true));
+        m_label_routeTable = unique_ptr<ProducerStateTable>(new ZmqProducerStateTable(pipeline, APP_LABEL_ROUTE_TABLE_NAME, zmqClient, true));
+    }
+    else {
+        m_routeTable = make_unique<ProducerStateTable>(pipeline, APP_ROUTE_TABLE_NAME, true);
+        m_label_routeTable = make_unique<ProducerStateTable>(pipeline, APP_LABEL_ROUTE_TABLE_NAME, true);
+    }
     m_nl_sock = nl_socket_alloc();
     nl_connect(m_nl_sock, NETLINK_ROUTE);
     rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
@@ -870,7 +876,7 @@ void RouteSync::onLabelRouteMsg(int nlmsg_type, struct nl_object *obj)
 
     if (nlmsg_type == RTM_DELROUTE)
     {
-        m_label_routeTable.del(destaddr);
+        m_label_routeTable->del(destaddr);
         return;
     }
     else if (nlmsg_type != RTM_NEWROUTE)
@@ -898,7 +904,7 @@ void RouteSync::onLabelRouteMsg(int nlmsg_type, struct nl_object *obj)
             vector<FieldValueTuple> fvVector;
             FieldValueTuple fv("blackhole", "true");
             fvVector.push_back(fv);
-            m_label_routeTable.set(destaddr, fvVector);
+            m_label_routeTable->set(destaddr, fvVector);
             return;
         }
         case RTN_UNICAST:
@@ -941,7 +947,7 @@ void RouteSync::onLabelRouteMsg(int nlmsg_type, struct nl_object *obj)
     }
     fvVector.push_back(mpls_pop);
 
-    m_label_routeTable.set(destaddr, fvVector);
+    m_label_routeTable->set(destaddr, fvVector);
     SWSS_LOG_INFO("LabelRouteTable set msg: %s %s %s %s", destaddr,
                   gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
 }
@@ -976,7 +982,7 @@ void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj, string vne
     if (nlmsg_type == RTM_DELROUTE)
     {
         /* Duplicated delete as we do not know if it is a VXLAN tunnel route*/
-        m_vnet_routeTable.del(vnet_dip);
+        m_vnet_routeTable->del(vnet_dip);
         m_vnet_tunnelTable.del(vnet_dip);
         return;
     }
@@ -1053,7 +1059,7 @@ void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj, string vne
                            APP_VNET_RT_TABLE_NAME, vnet_dip.c_str(), ifnames.c_str());
         }
 
-        m_vnet_routeTable.set(vnet_dip, fvVector);
+        m_vnet_routeTable->set(vnet_dip, fvVector);
     }
 }
 

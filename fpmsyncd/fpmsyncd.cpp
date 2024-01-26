@@ -7,6 +7,7 @@
 #include "netlink.h"
 #include "notificationconsumer.h"
 #include "subscriberstatetable.h"
+#include "zmqclient.h"
 #include "warmRestartHelper.h"
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/routesync.h"
@@ -61,8 +62,12 @@ int main(int argc, char **argv)
     DBConnector applStateDb("APPL_STATE_DB", 0);
     std::unique_ptr<NotificationConsumer> routeResponseChannel;
 
+    // [Hua] test code, need improve to a parameter
+    ZmqClient zmqClient("tcp://localhost:8100");
+
     RedisPipeline pipeline(&db);
-    RouteSync sync(&pipeline);
+    RouteSync sync(&pipeline, &zmqClient);
+
 
     DBConnector stateDb("STATE_DB", 0);
     Table bgpStateTable(&stateDb, STATE_BGP_TABLE_NAME);
