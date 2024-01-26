@@ -485,7 +485,7 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
     {
         if (!warmRestartInProgress)
         {
-            m_routeTable.del(destipprefix);
+            m_routeTable->del(destipprefix);
             return;
         }
         else
@@ -564,7 +564,7 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
 
     if (!warmRestartInProgress)
     {
-        m_routeTable.set(destipprefix, fvVector);
+        m_routeTable->set(destipprefix, fvVector);
         SWSS_LOG_DEBUG("RouteTable set msg: %s vtep:%s vni:%s mac:%s intf:%s",
                        destipprefix, nexthops.c_str(), vni_list.c_str(), mac_list.c_str(), intf_list.c_str());
     }
@@ -708,7 +708,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
     {
         if (!warmRestartInProgress)
         {
-            m_routeTable.del(destipprefix);
+            m_routeTable->del(destipprefix);
             return;
         }
         else
@@ -742,7 +742,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
             vector<FieldValueTuple> fvVector;
             FieldValueTuple fv("blackhole", "true");
             fvVector.push_back(fv);
-            m_routeTable.set(destipprefix, fvVector);
+            m_routeTable->set(destipprefix, fvVector);
             return;
         }
         case RTN_UNICAST:
@@ -795,7 +795,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
                     SWSS_LOG_NOTICE("RouteTable del msg for route with only one nh on eth0/docker0: %s %s %s %s",
                             destipprefix, gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
 
-                    m_routeTable.del(destipprefix);
+                    m_routeTable->del(destipprefix);
                 }
                 else
                 {
@@ -837,7 +837,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
 
     if (!warmRestartInProgress)
     {
-        m_routeTable.set(destipprefix, fvVector);
+        m_routeTable->set(destipprefix, fvVector);
         SWSS_LOG_DEBUG("RouteTable set msg: %s %s %s %s", destipprefix,
                        gw_list.c_str(), intf_list.c_str(), mpls_list.c_str());
     }
@@ -982,7 +982,7 @@ void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj, string vne
     if (nlmsg_type == RTM_DELROUTE)
     {
         /* Duplicated delete as we do not know if it is a VXLAN tunnel route*/
-        m_vnet_routeTable->del(vnet_dip);
+        m_vnet_routeTable.del(vnet_dip);
         m_vnet_tunnelTable.del(vnet_dip);
         return;
     }
@@ -1059,7 +1059,7 @@ void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj, string vne
                            APP_VNET_RT_TABLE_NAME, vnet_dip.c_str(), ifnames.c_str());
         }
 
-        m_vnet_routeTable->set(vnet_dip, fvVector);
+        m_vnet_routeTable.set(vnet_dip, fvVector);
     }
 }
 
