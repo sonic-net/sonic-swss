@@ -20,6 +20,7 @@ using namespace swss;
 
 extern sai_virtual_router_api_t* sai_virtual_router_api;
 extern sai_object_id_t gSwitchId;
+extern MacAddress gMacAddress;
 
 extern Directory<Orch*>      gDirectory;
 extern PortsOrch*            gPortsOrch;
