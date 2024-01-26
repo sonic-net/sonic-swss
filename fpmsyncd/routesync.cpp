@@ -82,15 +82,15 @@ RouteSync::RouteSync(RedisPipeline *pipeline, ZmqClient *zmqClient) :
     m_nl_sock(NULL), m_link_cache(NULL)
 {
     if (zmqClient != nullptr) {
-        m_routeTable = unique_ptr<ProducerStateTable>(new ZmqProducerStateTable(pipeline, APP_ROUTE_TABLE_NAME, zmqClient, true));
-        m_label_routeTable = unique_ptr<ProducerStateTable>(new ZmqProducerStateTable(pipeline, APP_LABEL_ROUTE_TABLE_NAME, zmqClient, true));
+        m_routeTable = unique_ptr<ProducerStateTable>(new ZmqProducerStateTable(pipeline, APP_ROUTE_TABLE_NAME, *zmqClient, true));
+        m_label_routeTable = unique_ptr<ProducerStateTable>(new ZmqProducerStateTable(pipeline, APP_LABEL_ROUTE_TABLE_NAME, *zmqClient, true));
     }
     else {
         m_routeTable = make_unique<ProducerStateTable>(pipeline, APP_ROUTE_TABLE_NAME, true);
         m_label_routeTable = make_unique<ProducerStateTable>(pipeline, APP_LABEL_ROUTE_TABLE_NAME, true);
     }
     
-    m_warmStartHelper = make_unique<WarmStartHelper>(pipeline, m_routeTable, APP_ROUTE_TABLE_NAME, "bgp", "bgp")
+    m_warmStartHelper = make_unique<WarmStartHelper>(pipeline, m_routeTable.get(), APP_ROUTE_TABLE_NAME, "bgp", "bgp");
     m_nl_sock = nl_socket_alloc();
     nl_connect(m_nl_sock, NETLINK_ROUTE);
     rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
