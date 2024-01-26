@@ -66,7 +66,7 @@ public:
         m_fpmInterface = nullptr;
     }
 
-    WarmStartHelper  m_warmStartHelper;
+    unique_ptr<WarmStartHelper> m_warmStartHelper;
 
 private:
     /* regular route table */
