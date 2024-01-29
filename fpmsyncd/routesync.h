@@ -36,7 +36,7 @@ class RouteSync : public NetMsg
 public:
     enum { MAX_ADDR_SIZE = 64 };
 
-    RouteSync(RedisPipeline *pipeline, ZmqClient *zmqClient);
+    RouteSync(RedisPipeline *pipeline, ZmqClient *zmqClient = nullptr);
 
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
 
