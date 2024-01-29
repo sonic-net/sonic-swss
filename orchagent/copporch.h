@@ -46,8 +46,18 @@ struct copp_trap_objects
     sai_hostif_trap_type_t trap_type;
 };
 
+struct policer_object
+{
+    sai_object_id_t policer_id;
+    sai_meter_type_t meter;
+    sai_policer_mode_t mode;
+    sai_policer_color_source_t color;
+
+    policer_object() : policer_id(SAI_NULL_OBJECT_ID) {}
+};
+
 /* TrapGroupPolicerTable: trap group ID, policer ID */
-typedef std::map<sai_object_id_t, sai_object_id_t> TrapGroupPolicerTable;
+typedef std::map<sai_object_id_t, policer_object> TrapGroupPolicerTable;
 /* TrapIdTrapObjectsTable: trap ID, copp trap objects */
 typedef std::map<sai_hostif_trap_type_t, copp_trap_objects> TrapIdTrapObjectsTable;
 /* TrapGroupHostIfMap: trap group ID, host interface ID */
@@ -113,7 +123,7 @@ protected:
     bool createPolicer(std::string trap_group, std::vector<sai_attribute_t> &policer_attribs);
     bool removePolicer(std::string trap_group_name);
 
-    sai_object_id_t getPolicer(std::string trap_group_name);
+    policer_object getPolicer(std::string trap_group_name);
 
     bool createGenetlinkHostIf(std::string trap_group_name, std::vector<sai_attribute_t> &hostif_attribs);
     bool removeGenetlinkHostIf(std::string trap_group_name);

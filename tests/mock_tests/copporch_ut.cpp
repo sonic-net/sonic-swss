@@ -33,6 +33,18 @@ namespace copporch_test
             static_cast<Orch*>(this->coppOrch.get())->doTask(*consumer);
         }
 
+        task_process_status doProcessCoppRule(const std::deque<KeyOpFieldsValuesTuple> &entries)
+        {
+            // ConsumerStateTable is used for APP DB
+            auto consumer = std::unique_ptr<Consumer>(new Consumer(
+                new ConsumerStateTable(this->appDb.get(), APP_COPP_TABLE_NAME, 1, 1),
+                this->coppOrch.get(), APP_COPP_TABLE_NAME
+            ));
+
+            consumer->addToSync(entries);
+            return Portal::CoppOrchInternal::processCoppRule(*coppOrch, *consumer);
+        }
+
         CoppOrch& get()
         {
             return *coppOrch;
@@ -322,7 +334,7 @@ namespace copporch_test
         }
     }
 
-    TEST_F(CoppOrchTest, TrapGroupWithPolicer_AddRemove)
+    TEST_F(CoppOrchTest, TrapGroupWithPolicer_AddUpdateRemove)
     {
         const std::string trapGroupName = "queue4_group2";
 
@@ -330,6 +342,80 @@ namespace copporch_test
 
         // Create CoPP Trap Group
         {
+            auto tableKofvt = std::deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        trapGroupName,
+                        SET_COMMAND,
+                        {
+                            { copp_trap_action_field,        "copy"    },
+                            { copp_trap_priority_field,      "4"       },
+                            { copp_queue_field,              "4"       },
+                            { copp_policer_meter_type_field, "packets" },
+                            { copp_policer_mode_field,       "sr_tcm"  },
+                            { copp_policer_color_field,      "aware"   },
+                            { copp_policer_cir_field,        "600"     },
+                            { copp_policer_cbs_field,        "600"     },
+                            { copp_policer_action_red_field, "drop"    }
+                        }
+                    }
+                }
+            );
+            coppOrch.doCoppTableTask(tableKofvt);
+
+            const auto &trapGroupMap = coppOrch.get().getTrapGroupMap();
+            const auto &cit1 = trapGroupMap.find(trapGroupName);
+            EXPECT_TRUE(cit1 != trapGroupMap.end());
+
+            const auto &trapGroupPolicerMap = Portal::CoppOrchInternal::getTrapGroupPolicerMap(coppOrch.get());
+            const auto &trapGroupOid = cit1->second;
+            const auto &cit2 = trapGroupPolicerMap.find(trapGroupOid);
+            EXPECT_TRUE(cit2 != trapGroupPolicerMap.end());
+            EXPECT_TRUE(cit2->second.meter == SAI_METER_TYPE_PACKETS);
+            EXPECT_TRUE(cit2->second.mode == SAI_POLICER_MODE_SR_TCM);
+
+            /* Update the non create only attributes */
+            auto tableKofvt2 = std::deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        trapGroupName,
+                        SET_COMMAND,
+                        {
+                            { copp_policer_cir_field,        "1000"    },
+                            { copp_policer_cbs_field,        "1000"   },
+                            { copp_policer_action_red_field, "drop"    }
+                        }
+                    }
+                }
+            );
+            ASSERT_EQ(coppOrch.doProcessCoppRule(tableKofvt2), task_process_status::task_success);
+        }
+
+
+        // Delete CoPP Trap Group
+        {
+            auto tableKofvt = std::deque<KeyOpFieldsValuesTuple>(
+                { { trapGroupName, DEL_COMMAND, { } } }
+            );
+            coppOrch.doCoppTableTask(tableKofvt);
+
+            const auto &trapGroupMap = coppOrch.get().getTrapGroupMap();
+            const auto &cit = trapGroupMap.find(trapGroupName);
+            EXPECT_TRUE(cit == trapGroupMap.end());
+
+            const auto &trapGroupPolicerMap = Portal::CoppOrchInternal::getTrapGroupPolicerMap(coppOrch.get());
+            EXPECT_TRUE(trapGroupPolicerMap.empty());
+        }
+    }
+
+    TEST_F(CoppOrchTest, TrapGroupWithPolicer_nothrowExec)
+    {
+        const std::string trapGroupName = "queue4_group2";
+
+        MockCoppOrch coppOrch;
+
+        {
+            // Create CoPP Trap Group
             auto tableKofvt = std::deque<KeyOpFieldsValuesTuple>(
                 {
                     {
@@ -350,29 +436,21 @@ namespace copporch_test
             );
             coppOrch.doCoppTableTask(tableKofvt);
 
-            const auto &trapGroupMap = coppOrch.get().getTrapGroupMap();
-            const auto &cit1 = trapGroupMap.find(trapGroupName);
-            EXPECT_TRUE(cit1 != trapGroupMap.end());
-
-            const auto &trapGroupPolicerMap = Portal::CoppOrchInternal::getTrapGroupPolicerMap(coppOrch.get());
-            const auto &trapGroupOid = cit1->second;
-            const auto &cit2 = trapGroupPolicerMap.find(trapGroupOid);
-            EXPECT_TRUE(cit2 != trapGroupPolicerMap.end());
-        }
-
-        // Delete CoPP Trap Group
-        {
-            auto tableKofvt = std::deque<KeyOpFieldsValuesTuple>(
-                { { trapGroupName, DEL_COMMAND, { } } }
+            // Update create-only Policer Attributes
+            auto tableKofvt2 = std::deque<KeyOpFieldsValuesTuple>(
+                {
+                    {
+                        trapGroupName,
+                        SET_COMMAND,
+                        {
+                            { copp_policer_meter_type_field, "bytes"    },
+                            { copp_policer_mode_field,       "tr_tcm"   },
+                            { copp_policer_color_field,      "blind"    },
+                        }
+                    }
+                }
             );
-            coppOrch.doCoppTableTask(tableKofvt);
-
-            const auto &trapGroupMap = coppOrch.get().getTrapGroupMap();
-            const auto &cit = trapGroupMap.find(trapGroupName);
-            EXPECT_TRUE(cit == trapGroupMap.end());
-
-            const auto &trapGroupPolicerMap = Portal::CoppOrchInternal::getTrapGroupPolicerMap(coppOrch.get());
-            EXPECT_TRUE(trapGroupPolicerMap.empty());
+            EXPECT_NO_THROW(coppOrch.doProcessCoppRule(tableKofvt2));
         }
     }
 

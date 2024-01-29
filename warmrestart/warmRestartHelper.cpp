@@ -264,7 +264,7 @@ void WarmStartHelper::reconcile(void)
  * Compare all field-value-tuples within two vectors.
  *
  * Example: v1 {nexthop: 10.1.1.1, ifname: eth1}
- *          v2 {nexthop: 10.1.1.2, ifname: eth2}
+ *          v2 {nexthop: 10.1.1.2, ifname: eth2, protocol: kernel, weight: 1}
  *
  * Returns:
  *
@@ -274,25 +274,24 @@ void WarmStartHelper::reconcile(void)
 bool WarmStartHelper::compareAllFV(const std::vector<FieldValueTuple> &v1,
                                    const std::vector<FieldValueTuple> &v2)
 {
+    /* Size mismatch implies a diff */
+    if (v1.size() != v2.size())
+    {
+        return true;
+    }
+
     std::unordered_map<std::string, std::string> v1Map((v1.begin()), v1.end());
 
      /* Iterate though all v2 tuples to check if their content match v1 ones */
     for (auto &v2fv : v2)
     {
         auto v1Iter = v1Map.find(v2fv.first);
-        /*
-         * The sizes of both tuple-vectors should always match within any
-         * given application. In other words, all fields within v1 should be
-         * also present in v2.
-         *
-         * To make this possible, every application should continue relying on a
-         * uniform schema to create/generate information. For example, fpmsyncd
-         * will be always expected to push FieldValueTuples with "nexthop" and
-         * "ifname" fields; neighsyncd is expected to make use of "family" and
-         * "neigh" fields, etc. The existing reconciliation logic will rely on
-         * this assumption.
-         */
-        assert(v1Iter != v1Map.end());
+
+        /* Return true when v2 has a new field */
+        if (v1Iter == v1Map.end())
+        {
+            return true;
+        }
 
         if (compareOneFV(v1Map[fvField(*v1Iter)], fvValue(v2fv)))
         {

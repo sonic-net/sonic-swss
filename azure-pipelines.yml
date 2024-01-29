@@ -41,6 +41,7 @@ stages:
   - template: .azure-pipelines/build-template.yml
     parameters:
       arch: amd64
+      pool: sonicbld
       sonic_slave: sonic-slave-bullseye
       common_lib_artifact_name: common-lib
       swss_common_artifact_name: sonic-swss-common
@@ -55,6 +56,7 @@ stages:
   - template: .azure-pipelines/build-template.yml
     parameters:
       arch: amd64
+      pool: sonicbld
       sonic_slave: sonic-slave-bullseye
       common_lib_artifact_name: common-lib
       swss_common_artifact_name: sonic-swss-common
@@ -137,8 +139,8 @@ stages:
       asan: true
 
 - stage: Gcov
+  condition: false
   dependsOn: Test
-  condition: in(dependencies.Test.result, 'Succeeded', 'SucceededWithIssues')
   jobs:
   - template: .azure-pipelines/gcov.yml
     parameters:

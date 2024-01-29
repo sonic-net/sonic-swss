@@ -24,7 +24,7 @@ struct OutboundRoutingEntry
 {
     sai_object_id_t eni;
     swss::IpPrefix destination;
-    dash::route_lpm::Route metadata;
+    dash::route::Route metadata;
 };
 
 struct InboundRoutingEntry
@@ -43,7 +43,7 @@ struct OutboundRoutingBulkContext
 {
     std::string eni;
     swss::IpPrefix destination;
-    dash::route_lpm::Route metadata;
+    dash::route::Route metadata;
     std::deque<sai_status_t> object_statuses;
     OutboundRoutingBulkContext() {}
     OutboundRoutingBulkContext(const OutboundRoutingBulkContext&) = delete;

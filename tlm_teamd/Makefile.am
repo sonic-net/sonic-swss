@@ -15,7 +15,7 @@ tlm_teamd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(JANSSON_CFLAGS)
 tlm_teamd_LDADD = $(LDFLAGS_ASAN) -lhiredis -lswsscommon -lteamdctl $(JANSSON_LIBS)
 
 if GCOV_ENABLED
-tlm_teamd_LDADD += -lgcovpreload
+tlm_teamd_SOURCES += ../gcovpreload/gcovpreload.cpp
 endif
 
 if ASAN_ENABLED

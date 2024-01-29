@@ -285,7 +285,7 @@ bool CoppMgr::isDupEntry(const std::string &key, std::vector<FieldValueTuple> &f
             if ((!field_found) || (field_found && preserved_copp_it->second.compare(value)))
             {
                 // overwrite -> delete preserved entry from copp table and set a new entry instead
-                m_coppTable.del(key);
+                m_appCoppTable.del(key);
                 return false;
             }
         }
@@ -415,7 +415,7 @@ CoppMgr::CoppMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         auto copp_it = supported_copp_keys.find(it);
         if (copp_it == supported_copp_keys.end())
         {
-            m_coppTable.del(it);
+            m_appCoppTable.del(it);
         }
     }
 }

@@ -893,10 +893,8 @@ class TestVirtualChassis(object):
                 config_db.delete_entry('PORT', port)
                 app_db.wait_for_deleted_entry('PORT_TABLE', port)
                 num = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT",
-                                              num_ports-1)
-                assert len(num) == num_ports-1
-
-                marker = dvs.add_log_marker()
+                                              num_ports)
+                assert len(num) == num_ports
 
                 # Create port
                 config_db.update_entry("PORT", port, port_info)
@@ -906,9 +904,8 @@ class TestVirtualChassis(object):
                 assert len(num) == num_ports
 
                 # Check that we see the logs for removing default vlan
-                matching_log = "removeDefaultVlanMembers: Remove 0 VLAN members from default VLAN"
                 _, logSeen = dvs.runcmd( [ "sh", "-c",
-                     "awk '/{}/,ENDFILE {{print;}}' /var/log/syslog | grep '{}' | wc -l".format( marker, matching_log ) ] )
+                    "awk STARTFILE/ENDFILE /var/log/syslog | grep 'removeDefaultVlanMembers: Remove 32 VLAN members from default VLAN' | wc -l"] )
                 assert logSeen.strip() == "1"
 
             buffer_model.disable_dynamic_buffer(dvs.get_config_db(), dvs.runcmd)
@@ -940,6 +937,46 @@ class TestVirtualChassis(object):
         flex_db = dvs.get_flex_db()
         flex_db.wait_for_n_keys("FLEX_COUNTER_TABLE:QUEUE_STAT_COUNTER", num_queues_to_be_polled)
  
+    def test_chassis_wred_profile_on_system_ports(self, vct):
+        """Test whether wred profile is applied on system ports in VoQ chassis.
+        """
+        dvss = vct.dvss
+        for name in dvss.keys():
+            dvs = dvss[name]
+
+            config_db = dvs.get_config_db()
+            app_db = dvs.get_app_db()
+            asic_db = dvs.get_asic_db()
+            metatbl = config_db.get_entry("DEVICE_METADATA", "localhost")
+            cfg_switch_type = metatbl.get("switch_type")
+
+            if cfg_switch_type == "voq":
+                # Get all the keys from SYTEM_PORT table and check whether wred_profile is applied properly
+                system_ports = config_db.get_keys('SYSTEM_PORT')
+
+                for key in system_ports:
+                    queue3 = key + '|' + '3'
+                    queue_entry = config_db.get_entry('QUEUE', queue3)
+                    wred_profile = queue_entry['wred_profile']
+                    if wred_profile != 'AZURE_LOSSLESS':
+                        print("WRED profile not applied on queue3 on system port %s", key)
+                        assert wred_profile == 'AZURE_LOSSLESS'
+
+                    queue4 = key + '|' + '4'
+                    queue_entry = config_db.get_entry('QUEUE', queue4)
+                    wred_profile = queue_entry['wred_profile']
+                    if wred_profile != 'AZURE_LOSSLESS':
+                        print("WRED profile not applied on queue4 on system port %s", key)
+                        assert wred_profile == 'AZURE_LOSSLESS'
+
+                # Check that we see the logs for applying WRED_PROFILE on all system ports
+                matching_log = "SAI_QUEUE_ATTR_WRED_PROFILE_ID"
+                _, logSeen = dvs.runcmd([ "sh", "-c",
+                     "awk STARTFILE/ENDFILE /var/log/swss/sairedis.rec | grep SAI_QUEUE_ATTR_WRED_PROFILE_ID | wc -l"])
+
+                # Total number of logs = (No of system ports * No of lossless priorities) - No of lossless priorities for CPU ports
+                assert logSeen.strip() == str(len(system_ports)*2 - 2)
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():

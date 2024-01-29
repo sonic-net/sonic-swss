@@ -505,6 +505,10 @@ int main(int argc, char **argv)
     attr.value.ptr = (void *)on_switch_shutdown_request;
     attrs.push_back(attr);
 
+    attr.id = SAI_SWITCH_ATTR_PORT_HOST_TX_READY_NOTIFY;
+    attr.value.ptr = (void *)on_port_host_tx_ready;
+    attrs.push_back(attr);
+
     if (gMySwitchType != "fabric" && gMacAddress)
     {
         attr.id = SAI_SWITCH_ATTR_SRC_MAC_ADDRESS;

@@ -289,6 +289,22 @@ class TestPort(object):
             hostif_queue = attributes.get("SAI_HOSTIF_ATTR_QUEUE")
             assert hostif_queue == "7"
 
+    def test_PortHostTxSignalSet(self, dvs, testlog):
+        adb = dvs.get_asic_db()
+        statedb = dvs.get_state_db()
+
+        transceiver_info_tbl = swsscommon.Table(statedb.db_connection, "TRANSCEIVER_INFO")
+        fvs = swsscommon.FieldValuePairs([("supported_max_tx_power","N/A")])
+        transceiver_info_tbl.set("Ethernet0", fvs)
+
+        port_oid = adb.port_name_map["Ethernet0"]
+        expected_fields = {"SAI_PORT_ATTR_HOST_TX_SIGNAL_ENABLE":"true"}
+        adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
+
+        transceiver_info_tbl.hdel("Ethernet0", "supported_max_tx_power")
+        expected_fields = {"SAI_PORT_ATTR_HOST_TX_SIGNAL_ENABLE":"false"}
+        adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
+
     def test_PortPtDefaultTimestampTemplate(self, dvs, testlog):
         pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
