@@ -50,6 +50,7 @@ bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items)
 
     // [Hua] test code, need improve to a parameter
     ZmqClient zmqClient("tcp://localhost:8100");
+    SWSS_LOG_WARN("[Hua] write_db_data start.");
 
     for (auto &db_item : db_items)
     {
@@ -96,6 +97,7 @@ bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items)
     }
 
     
+    SWSS_LOG_WARN("[Hua] write_db_data end.");
     // [Hua] test code, need improve to a parameter
     // release tables
     for (const auto& table_item : table_map)
