@@ -985,6 +985,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
 
         if (!proxy_arp.empty())
         {
+            setIntfProxyNA(alias);
             if (!setIntfProxyArp(alias, proxy_arp))
             {
                 SWSS_LOG_ERROR("Failed to set proxy ARP to \"%s\" state for the \"%s\" interface", proxy_arp.c_str(), alias.c_str());
