@@ -104,6 +104,7 @@ private:
 
     bool setIntfVlanFloodType(const Port &port, sai_vlan_flood_control_type_t vlan_flood_type);
     bool setIntfProxyArp(const string &alias, const string &proxy_arp);
+    bool setIntfProxyNA(const string &alias);
 
     unique_ptr<Table> m_tableVoqSystemInterfaceTable;
     void voqSyncAddIntf(string &alias);
