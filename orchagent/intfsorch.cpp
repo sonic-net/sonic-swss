@@ -416,6 +416,47 @@ bool IntfsOrch::setIntfProxyArp(const string &alias, const string &proxy_arp)
     return true;
 }
 
+bool IntfsOrch::setIntfProxyNA(const string &alias)
+{
+    SWSS_LOG_ENTER();
+    SWSS_LOG_NOTICE("Entering setIntfProxyNA");
+
+    if (m_syncdIntfses.find(alias) == m_syncdIntfses.end())
+    {
+        SWSS_LOG_ERROR("Interface \"%s\" doesn't exist", alias.c_str());
+        return false;
+    }
+
+    Port port;
+    if (!gPortsOrch->getPort(alias, port))
+    {
+        SWSS_LOG_ERROR("Failed to get port info for the interface \"%s\"", alias.c_str());
+        return false;
+    }
+
+    if (port.m_type == Port::VLAN)
+    {
+        SWSS_LOG_NOTICE("Setting multicast flood type none for %u", port.m_vlan_info.vlan_id);
+
+        sai_attribute_t attr;
+        attr.id = SAI_VLAN_ATTR_UNKNOWN_IPV6_MCAST_OUTPUT_GROUP_ID;
+        attr.value.s32 = SAI_VLAN_FLOOD_CONTROL_TYPE_NONE;
+
+        sai_status_t status = sai_vlan_api->set_vlan_attribute(port.m_vlan_info.vlan_oid, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set multicast flood type for VLAN %u, rv:%d", port.m_vlan_info.vlan_id, status);
+            task_process_status handle_status = handleSaiSetStatus(SAI_API_VLAN, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
+        }
+    }
+
+    return true;
+}
+
 bool IntfsOrch::setIntfLoopbackAction(const Port &port, string actionStr)
 {
     sai_attribute_t attr;
@@ -999,6 +1040,7 @@ void IntfsOrch::doTask(Consumer &consumer)
             if (!proxy_arp.empty())
             {
                 setIntfProxyArp(alias, proxy_arp);
+                setIntfProxyNA(alias);
             }
 
             it = consumer.m_toSync.erase(it);
@@ -1062,6 +1104,7 @@ void IntfsOrch::doTask(Consumer &consumer)
             if (m_syncdIntfses[alias].proxy_arp)
             {
                 setIntfProxyArp(alias, "disabled");
+                setIntfProxyNA(alias);
             }
 
             if (!vnet_name.empty())
