@@ -439,7 +439,7 @@ bool IntfsOrch::setIntfProxyNA(const string &alias)
         SWSS_LOG_NOTICE("Setting multicast flood type none for %u", port.m_vlan_info.vlan_id);
 
         sai_attribute_t attr;
-        attr.id = SAI_VLAN_ATTR_UNKNOWN_IPV6_MCAST_OUTPUT_GROUP_ID;
+        attr.id = SAI_VLAN_ATTR_UNKNOWN_MULTICAST_FLOOD_CONTROL_TYPE;
         attr.value.s32 = SAI_VLAN_FLOOD_CONTROL_TYPE_NONE;
 
         sai_status_t status = sai_vlan_api->set_vlan_attribute(port.m_vlan_info.vlan_oid, &attr);
