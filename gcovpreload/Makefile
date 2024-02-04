@@ -6,7 +6,7 @@ CXX:=$(shell sh -c 'type $${CXX%% *} >/dev/null 2>/dev/null && echo $(CXX) || ec
 
 DYLIBSUFFIX=so
 DYLIBNAME=$(LIBNAME).$(DYLIBSUFFIX)
-DYLIB_MAKE_CMD=$(CC) -shared -fpic gcovpreload.cpp -o ${DYLIBNAME}
+DYLIB_MAKE_CMD=$(CC) -shared -fpic gcovpreload.c -o ${DYLIBNAME}
 
 all:
 	$(DYLIB_MAKE_CMD)

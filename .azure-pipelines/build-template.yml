@@ -105,7 +105,6 @@ jobs:
         swig4.0 \
         libdbus-1-dev \
         libteam-dev
-      sudo pip3 install lcov_cobertura
     displayName: "Install dependencies"
   - task: DownloadPipelineArtifact@2
     inputs:
@@ -194,7 +193,6 @@ jobs:
       cp -r pytest.tgz $(Build.ArtifactStagingDirectory)/
       if [ '${{ parameters.archive_gcov }}' == True ]; then
          export ENABLE_GCOV=y
-         echo BUILD_DIR=$(pwd) > build.info
       fi
       if [ '${{ parameters.asan }}' == True ]; then
          export ENABLE_ASAN=y

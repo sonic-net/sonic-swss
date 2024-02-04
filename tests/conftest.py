@@ -11,7 +11,6 @@ import subprocess
 import sys
 import tarfile
 import io
-import traceback
 
 from typing import Dict, Tuple
 from datetime import datetime
@@ -102,11 +101,6 @@ def pytest_addoption(parser):
                      default=NUM_PORTS,
                      type=int,
                      help="number of ports")
-
-    parser.addoption("--enable-coverage",
-                     action="store_true",
-                     default=False,
-                     help="Collect the test coverage information")
 
 
 def random_string(size=4, chars=string.ascii_uppercase + string.digits):
@@ -289,7 +283,6 @@ class DockerVirtualSwitch:
         newctnname: str = None,
         ctnmounts: Dict[str, str] = None,
         buffer_model: str = None,
-        enable_coverage: bool = False
     ):
         self.basicd = ["redis-server", "rsyslogd"]
         self.swssd = [
@@ -311,7 +304,6 @@ class DockerVirtualSwitch:
         self.dvsname = name
         self.vct = vct
         self.ctn = None
-        self.enable_coverage = enable_coverage
 
         self.cleanup = not keeptb
 
@@ -448,36 +440,9 @@ class DockerVirtualSwitch:
         if getattr(self, 'appldb', False):
             del self.appldb
 
-    def collect_coverage(self):
-        if not self.enable_coverage:
-            return
-        try:
-            # Generate the gcda files
-            self.runcmd('killall5 -15')
-            time.sleep(1)
-
-            # Stop the services to reduce the CPU comsuption
-            if self.cleanup:
-                self.runcmd('supervisorctl stop all')
-
-            # Generate the converage info by lcov and copy to the host
-            cmd = f"docker exec {self.ctn.short_id} sh -c 'cd $BUILD_DIR; rm -rf **/.libs ./lib/libSaiRedis*; lcov -c --directory . --no-external --exclude tests --ignore-errors gcov,unused --output-file /tmp/coverage.info; sed -i \"s#SF:$BUILD_DIR/#SF:#\" /tmp/coverage.info; lcov_cobertura /tmp/coverage.info -o /tmp/coverage.xml'"
-            subprocess.getstatusoutput(cmd)
-            cmd = f"docker exec {self.ctn.short_id} sh -c 'cd $BUILD_DIR; find . -name *.gcda -type f   -exec tar -rf /tmp/gcda.tar {{}} \\;'"
-            subprocess.getstatusoutput(cmd)
-            cmd = f"docker cp {self.ctn.short_id}:/tmp/gcda.tar {self.ctn.short_id}.gcda.tar"
-            subprocess.getstatusoutput(cmd)
-            cmd = f"docker cp {self.ctn.short_id}:/tmp/coverage.info {self.ctn.short_id}.coverage.info"
-            subprocess.getstatusoutput(cmd)
-            cmd = f"docker cp {self.ctn.short_id}:/tmp/coverage.xml {self.ctn.short_id}.coverage.xml"
-            subprocess.getstatusoutput(cmd)
-        except:
-            traceback.print_exc()
 
     def destroy(self) -> None:
         self.del_appl_db()
-
-        self.collect_coverage()
 
         # In case persistent dvs was used removed all the extra server link
         # that were created
@@ -486,13 +451,10 @@ class DockerVirtualSwitch:
 
         # persistent and clean-up flag are mutually exclusive
         elif self.cleanup:
-            try:
-                self.ctn.remove(force=True)
-                self.ctn_sw.remove(force=True)
-                os.system(f"rm -rf {self.mount}")
-                self.destroy_servers()
-            except docker.errors.NotFound:
-                print("Skipped the container not found error, the container has already removed.")
+            self.ctn.remove(force=True)
+            self.ctn_sw.remove(force=True)
+            os.system(f"rm -rf {self.mount}")
+            self.destroy_servers()
 
     def destroy_servers(self):
         for s in self.servers:
@@ -1438,8 +1400,7 @@ class DockerVirtualChassisTopology:
         log_path=None,
         max_cpu=2,
         forcedvs=None,
-        topoFile=None,
-        enable_coverage=False,
+        topoFile=None
     ):
         self.ns = namespace
         self.chassbr = "br4chs"
@@ -1453,7 +1414,6 @@ class DockerVirtualChassisTopology:
         self.log_path = log_path
         self.max_cpu = max_cpu
         self.forcedvs = forcedvs
-        self.enable_coverage = enable_coverage
 
         if self.ns is None:
             self.ns = random_string()
@@ -1506,7 +1466,7 @@ class DockerVirtualChassisTopology:
                 self.dvss[ctn.name] = DockerVirtualSwitch(ctn.name, self.imgname, self.keeptb,
                                                           self.env, log_path=ctn.name,
                                                           max_cpu=self.max_cpu, forcedvs=self.forcedvs,
-                                                          vct=self, enable_coverage=self.enable_coverage)
+                                                          vct=self)
         if self.chassbr is None and len(self.dvss) > 0:
             ret, res = self.ctn_runcmd(self.dvss.values()[0].ctn,
                                        "sonic-cfggen --print-data -j /usr/share/sonic/virtual_chassis/vct_connections.json")
@@ -1577,8 +1537,6 @@ class DockerVirtualChassisTopology:
 
     def destroy(self):
         self.verify_vct()
-        for dv in self.dvss.values():
-            dv.collect_coverage()
         if self.keeptb:
             return
         self.oper = "delete"
@@ -1629,8 +1587,7 @@ class DockerVirtualChassisTopology:
                                                          max_cpu=self.max_cpu,
                                                          forcedvs=self.forcedvs,
                                                          vct=self,newctnname=ctnname,
-                                                         ctnmounts=vol,
-                                                         enable_coverage=self.enable_coverage)
+                                                         ctnmounts=vol)
             self.set_ctninfo(ctndir, ctnname, self.dvss[ctnname].pid)
         return
 
@@ -1802,7 +1759,6 @@ def manage_dvs(request) -> str:
     buffer_model = request.config.getoption("--buffer_model")
     force_recreate = request.config.getoption("--force-recreate-dvs")
     graceful_stop = request.config.getoption("--graceful-stop")
-    enable_coverage = request.config.getoption("--enable-coverage")
 
     dvs = None
     curr_dvs_env = [] # lgtm[py/unused-local-variable]
@@ -1834,7 +1790,7 @@ def manage_dvs(request) -> str:
                 dvs.get_logs()
                 dvs.destroy()
 
-            dvs = DockerVirtualSwitch(name, imgname, keeptb, new_dvs_env, log_path, max_cpu, forcedvs, buffer_model = buffer_model, enable_coverage=enable_coverage)
+            dvs = DockerVirtualSwitch(name, imgname, keeptb, new_dvs_env, log_path, max_cpu, forcedvs, buffer_model = buffer_model)
 
             curr_dvs_env = new_dvs_env
 
@@ -1855,7 +1811,6 @@ def manage_dvs(request) -> str:
     if graceful_stop:
         dvs.stop_swss()
         dvs.stop_syncd()
-
     dvs.get_logs()
     dvs.destroy()
 
@@ -1884,14 +1839,13 @@ def vst(request):
     keeptb = request.config.getoption("--keeptb")
     imgname = request.config.getoption("--imgname")
     max_cpu = request.config.getoption("--max_cpu")
-    enable_coverage = request.config.getoption("--enable-coverage")
     log_path = vctns if vctns else request.module.__name__
     dvs_env = getattr(request.module, "DVS_ENV", [])
     if not topo:
         # use ecmp topology as default
         topo = "virtual_chassis/chassis_supervisor.json"
     vct = DockerVirtualChassisTopology(vctns, imgname, keeptb, dvs_env, log_path, max_cpu,
-                                       forcedvs, topo, enable_coverage)
+                                       forcedvs, topo)
     yield vct
     vct.get_logs(request.module.__name__)
     vct.destroy()
@@ -1904,14 +1858,13 @@ def vct(request):
     keeptb = request.config.getoption("--keeptb")
     imgname = request.config.getoption("--imgname")
     max_cpu = request.config.getoption("--max_cpu")
-    enable_coverage = request.config.getoption("--enable-coverage")
     log_path = vctns if vctns else request.module.__name__
     dvs_env = getattr(request.module, "DVS_ENV", [])
     if not topo:
         # use ecmp topology as default
         topo = "virtual_chassis/chassis_with_ecmp_neighbors.json"
     vct = DockerVirtualChassisTopology(vctns, imgname, keeptb, dvs_env, log_path, max_cpu,
-                                       forcedvs, topo, enable_coverage)
+                                       forcedvs, topo)
     yield vct
     vct.get_logs(request.module.__name__)
     vct.destroy()
