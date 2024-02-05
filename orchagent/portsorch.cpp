@@ -628,7 +628,7 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
     }
 
     /* Add port oper status notification support */
-    m_notificationsDb = shared_ptr<DBConnector>(new DBConnector("ASIC_DB", 0));
+    m_notificationsDb = make_shared<DBConnector>("ASIC_DB", 0);
     m_portStatusNotificationConsumer = new swss::NotificationConsumer(m_notificationsDb.get(), "NOTIFICATIONS");
     auto portStatusNotificatier = new Notifier(m_portStatusNotificationConsumer, this, "PORT_STATUS_NOTIFICATIONS");
     Orch::addExecutor(portStatusNotificatier);
