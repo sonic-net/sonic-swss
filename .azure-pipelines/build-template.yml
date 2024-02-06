@@ -105,6 +105,7 @@ jobs:
         swig4.0 \
         libdbus-1-dev \
         libteam-dev
+      sudo pip3 install lcov_cobertura
     displayName: "Install dependencies"
   - task: DownloadPipelineArtifact@2
     inputs:
@@ -114,6 +115,7 @@ jobs:
       artifact: ${{ parameters.swss_common_artifact_name }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/${{ parameters.swss_common_branch }}'
+      allowPartiallySucceededBuilds: true
       path: $(Build.ArtifactStagingDirectory)/download/swsscommon
       patterns: |
         libswsscommon_1.0.0_${{ parameters.arch }}.deb
@@ -127,6 +129,7 @@ jobs:
       artifact: ${{ parameters.sairedis_artifact_name }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/${{ parameters.sairedis_artifact_branch }}'
+      allowPartiallySucceededBuilds: true
       path: $(Build.ArtifactStagingDirectory)/download/sairedis
       patterns: |
         ${{ parameters.sairedis_artifact_pattern }}/libsaivs_*.deb
@@ -191,6 +194,7 @@ jobs:
       cp -r pytest.tgz $(Build.ArtifactStagingDirectory)/
       if [ '${{ parameters.archive_gcov }}' == True ]; then
          export ENABLE_GCOV=y
+         echo BUILD_DIR=$(pwd) > build.info
       fi
       if [ '${{ parameters.asan }}' == True ]; then
          export ENABLE_ASAN=y

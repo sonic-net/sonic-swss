@@ -44,11 +44,16 @@ jobs:
 - job:
   displayName: vstest
   timeoutInMinutes: ${{ parameters.timeout }}
+  ${{ if parameters.archive_gcov }}:
+    variables:
+      DIFF_COVER_CHECK_THRESHOLD: 80
+      DIFF_COVER_ENABLE: 'true'
 
-  pool: sonic-common
+  pool: sonic-common-test
 
   steps:
   - script: |
+      ip a show dev eth0 || true
       ls -A1 | xargs -I{} sudo rm -rf {}
     displayName: "Clean workspace"
   - checkout: self
@@ -79,6 +84,16 @@ jobs:
     displayName: "Download sonic buildimage ubuntu20.04 deb packages"
 
   - script: |
+        set -ex
+        # Install .NET CORE
+        curl -sSL https://packages.microsoft.com/keys/microsoft.asc | sudo apt-key add -
+        sudo apt-add-repository https://packages.microsoft.com/ubuntu/20.04/prod
+        sudo apt-get update
+        sudo apt-get install -y dotnet-sdk-7.0
+        sudo dotnet tool install dotnet-reportgenerator-globaltool  --tool-path /usr/bin
+    displayName: "Install .NET CORE"
+
+  - script: |
       set -ex
       sudo .azure-pipelines/build_and_install_module.sh
 
@@ -92,6 +107,7 @@ jobs:
       sudo apt-get install -y net-tools bridge-utils vlan
       sudo apt-get install -y python3-pip
       sudo pip3 install pytest==4.6.2 attrs==19.1.0 exabgp==4.0.10 distro==1.5.0 docker>=4.4.1 redis==3.3.4 flaky==3.7.0
+      sudo pip3 install lcov_cobertura
     displayName: "Install dependencies"
 
   - script: |
@@ -106,7 +122,9 @@ jobs:
 
       params=""
       if [ '${{ parameters.archive_gcov }}' == True ]; then
-        params=" ${params} --keeptb "
+        cp $(Build.ArtifactStagingDirectory)/download/coverage.info ./
+        cp $(Build.ArtifactStagingDirectory)/download/coverage.xml ./
+        params=" ${params} --enable-coverage --force-recreate-dvs "
       fi
       if [ '${{ parameters.asan }}' == True ]; then
         params=" ${params} --graceful-stop "
@@ -115,43 +133,36 @@ jobs:
         params=" ${params} --num-ports=${{ parameters.num_ports }} "
       fi
 
-      all_tests=$(ls test_*.py)
+      all_tests=$(ls test_*.py | xargs)
       all_tests="${all_tests} p4rt"
 
       if [ -n '${{ parameters.run_tests_pattern }}' ]; then
-        all_tests=" $(ls ${{ parameters.run_tests_pattern }}) "
+        all_tests=" $(ls ${{ parameters.run_tests_pattern }} | xargs) "
       fi
-
-      test_set=()
-      # Run 20 tests as a set.
-      for test in ${all_tests}; do
-        test_set+=("${test}")
-        if [ ${#test_set[@]} -ge 20 ]; then
-          test_name=$(echo "${test_set[0]}" | cut -d "." -f 1)
-          echo "${test_set[*]}" | xargs sudo py.test -v --force-flaky --junitxml="${test_name}_tr.xml" $params --imgname=docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber).asan-${{ parameters.asan }}
-          container_count=$(docker ps -q -a | wc -l)
-          if [ '${{ parameters.archive_gcov }}' == True ] && [ ${container_count} -gt 0 ]; then
-            ./gcov_support.sh set_environment $(Build.ArtifactStagingDirectory)
-            docker stop $(docker ps -q -a)
-            docker rm $(docker ps -q -a)
-          fi
-          test_set=()
-        fi
-      done
-      if [ ${#test_set[@]} -gt 0 ]; then
-        test_name=$(echo "${test_set[0]}" | cut -d "." -f 1)
-        echo "${test_set[*]}" | xargs sudo py.test -v $params --force-flaky --junitxml="${test_name}_tr.xml" $params --imgname=docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber).asan-${{ parameters.asan }}
-        container_count=$(docker ps -q -a | wc -l)
-        if [ '${{ parameters.archive_gcov }}' == True ] && [ ${container_count} -gt 0 ]; then
-          ./gcov_support.sh set_environment $(Build.ArtifactStagingDirectory)
-          docker stop $(docker ps -q -a)
-          docker rm $(docker ps -q -a)
-        fi
-      fi
+      # Run the tests in parallel and retry
+      retry=3
+      IMAGE_NAME=docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber).asan-${{ parameters.asan }}
+      echo $all_tests | xargs -n 1 | xargs -P 8 -I TEST_MODULE sudo ./run-tests.py "$IMAGE_NAME" "$params" "TEST_MODULE" 3
 
       rm -rf $(Build.ArtifactStagingDirectory)/download
     displayName: "Run vs tests"
     continueOnError: ${{ parameters.asan }}
+
+  - script: |
+      set -ex
+      reportgenerator -reporttypes:Cobertura -reports:tests/*coverage.xml -targetdir:.
+      mkdir $(Build.ArtifactStagingDirectory)/gcov
+      cp Cobertura.xml tests/*coverage.xml $(Build.ArtifactStagingDirectory)/gcov/
+      cp tests/*coverage.info $(Build.ArtifactStagingDirectory)/gcov/
+    condition: ${{ parameters.archive_gcov }}
+    displayName: "Generate coverage.xml"
+
+  - task: PublishCodeCoverageResults@1
+    condition: ${{ parameters.archive_gcov }}
+    inputs:
+      codeCoverageTool: Cobertura
+      summaryFileLocation: '$(System.DefaultWorkingDirectory)/Cobertura.xml'
+    displayName: 'Publish test coverage'
 
   - task: PublishTestResults@2
     inputs:
@@ -165,20 +176,8 @@ jobs:
       if [ '${{ parameters.asan }}' == True ]; then
         cp -vr tests/log/*/log/asan $(Build.ArtifactStagingDirectory)/
       fi
-
-      if [ '${{ parameters.archive_gcov }}' == True ]; then
-        sudo apt-get install -y lcov
-        cd $(Build.ArtifactStagingDirectory)/gcov_tmp/
-        tar -zcvf sonic-gcov.tar.gz sonic-gcov/
-        rm -rf sonic-gcov
-      fi
     displayName: "Collect logs"
     condition: always()
-
-  - publish: $(Build.ArtifactStagingDirectory)/gcov_tmp
-    artifact: ${{ parameters.gcov_artifact_name }}
-    displayName: "Publish gcov output"
-    condition: and(succeeded(), eq('${{ parameters.archive_gcov }}', true))
 
   - publish: $(Build.ArtifactStagingDirectory)/
     artifact: ${{ parameters.log_artifact_name }}@$(System.JobAttempt)
