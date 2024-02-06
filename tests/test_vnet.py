@@ -3447,8 +3447,9 @@ class TestVnetOrch(object):
     Test 25 - Test for BFD TSA and TSB behaviour within overlay tunnel routes.
     '''
     def test_vnet_orch_25(self, dvs, testlog):
+        # This test creates a vnet route with BFD monitoring.This followd by application of TSA and absence of BFD sessions
+        # is verified. Following the removal of TSA the Vnet route is verified to be up.
         vnet_obj = self.get_vnet_obj()
-
         tunnel_name = 'tunnel_25'
 
         vnet_obj.fetch_exist_entries(dvs)

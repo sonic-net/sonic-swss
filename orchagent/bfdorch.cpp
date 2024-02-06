@@ -612,6 +612,7 @@ uint32_t BfdOrch::bfd_src_port(void)
 
 void BfdOrch::notify_session_state_down(const string& key)
 {
+    SWSS_LOG_ENTER();
     size_t found_vrf = key.find(delimiter);
     if (found_vrf == string::npos)
     {
@@ -632,20 +633,27 @@ void BfdOrch::notify_session_state_down(const string& key)
     update.peer = get_state_db_key(vrf_name, alias, peer_address);
     update.state = SAI_BFD_SESSION_STATE_DOWN;
     notify(SUBJECT_TYPE_BFD_SESSION_STATE_CHANGE, static_cast<void *>(&update));
-    return;
 }
 
 void BfdOrch::handleTsaStateChange(bool tsaState)
 {
+    SWSS_LOG_ENTER();
     for (auto it : bfd_session_cache)
     {
         if (tsaState == true)
         {
-            notify_session_state_down(it.first);
-            remove_bfd_session(it.first);
-        } else
+            if (bfd_session_map.find(it.first) != bfd_session_map.end())
+            {
+                notify_session_state_down(it.first);
+                remove_bfd_session(it.first);
+            }
+        }
+        else
         {
-            create_bfd_session(it.first, it.second);
+            if (bfd_session_map.find(it.first) == bfd_session_map.end())
+            {
+                create_bfd_session(it.first, it.second);
+            }
         }
     }
 }
@@ -655,7 +663,6 @@ BgpGlobalStateOrch::BgpGlobalStateOrch(DBConnector *db, string tableName):
 {
     SWSS_LOG_ENTER();
     tsa_enabled = false;
-    SWSS_LOG_INFO("BgpGlobalStateOrch init complete\n");
 }
 
 BgpGlobalStateOrch::~BgpGlobalStateOrch(void)
