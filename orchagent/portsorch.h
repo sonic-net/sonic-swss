@@ -263,6 +263,7 @@ private:
     shared_ptr<DBConnector> m_counter_db;
     shared_ptr<DBConnector> m_flex_db;
     shared_ptr<DBConnector> m_state_db;
+    shared_ptr<DBConnector> m_notificationsDb;
 
     FlexCounterManager port_stat_manager;
     FlexCounterManager port_buffer_drop_stat_manager;
