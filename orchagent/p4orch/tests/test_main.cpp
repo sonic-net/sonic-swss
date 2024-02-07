@@ -234,13 +234,6 @@ int main(int argc, char *argv[])
     gCrmOrch = &crm_orch;
     VRFOrch vrf_orch(gAppDb, APP_VRF_TABLE_NAME, gStateDb, STATE_VRF_OBJECT_TABLE_NAME);
     gVrfOrch = &vrf_orch;
-     const int routeorch_pri = 5;
-    vector<table_name_with_pri_t> route_tables = {
-        { APP_ROUTE_TABLE_NAME,        routeorch_pri },
-        { APP_LABEL_ROUTE_TABLE_NAME,  routeorch_pri }
-    };
-    RouteOrch route_orch(gAppDb, route_tables, NULL, NULL, NULL, NULL, NULL, NULL);
-    gRouteOrch = &route_orch;
     gDirectory.set(static_cast<VRFOrch *>(&vrf_orch));
 
     const int routeorch_pri = 5;
