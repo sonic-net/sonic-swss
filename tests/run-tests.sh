@@ -4,7 +4,7 @@ IMAGE_NAME=$1
 PY_TEST_PARAMS="$2"
 TESTS="$3"
 RETRY=$4
-[ -z "RETRY" ] && RETRY=1
+[ -z "$RETRY" ] && RETRY=1
 JUNITXML=$(echo "$TESTS" | cut -d "." -f1)_tr.xml
 
 set -x
