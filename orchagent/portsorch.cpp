@@ -670,6 +670,12 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
         m_tableVoqSystemLagMemberTable = unique_ptr<Table>(new Table(chassisAppDb, CHASSIS_APP_LAG_MEMBER_TABLE_NAME));
 
         m_lagIdAllocator = unique_ptr<LagIdAllocator> (new LagIdAllocator(chassisAppDb));
+        m_tableVoqQueueCounter = unique_ptr<Table>(new Table(chassisAppDb, CHASSIS_APP_COUNTERS_TABLE_NAME));
+        m_agg_voq_poller = new SelectableTimer(timespec { .tv_sec = AGG_VOQ_POLL_SEC, .tv_nsec = 0 });
+
+        auto agg_voq_executor = new ExecutableTimer(m_agg_voq_poller, this, "AGG_VOQ_POLLER");
+        Orch::addExecutor(agg_voq_executor);
+        m_agg_voq_poller->start();
     }
 
     auto executor = new ExecutableTimer(m_port_state_poller, this, "PORT_STATE_POLLER");
@@ -8995,7 +9001,19 @@ void PortsOrch::updatePortStatePoll(const Port &port, port_state_poll_t type, bo
 void PortsOrch::doTask(swss::SelectableTimer &timer)
 {
     Port port;
+    if (timer.getFd() == m_port_state_poller->getFd())
+    {
+        updatePortState();
+    }
+    else if(m_agg_voq_poller && timer.getFd() == m_agg_voq_poller->getFd())
+    {
+        updateVoqStatsChassisDb();
+    }
+}
 
+void PortsOrch::updatePortState()
+{
+    Port port;
     for (auto it = m_port_state_poll.begin(); it != m_port_state_poll.end(); )
     {
         if ((it->second == PORT_STATE_POLL_NONE) || !getPort(it->first, port))
@@ -9022,5 +9040,57 @@ void PortsOrch::doTask(swss::SelectableTimer &timer)
     {
         m_port_state_poller->stop();
     }
+}
+
+void PortsOrch::updateVoqStatsPerPortChassisDb(const Port& port)
+{
+    std::vector<sai_object_id_t> queue_ids;
+    static const vector<sai_stat_id_t> queueStatIds =
+    {
+        SAI_QUEUE_STAT_PACKETS,
+        SAI_QUEUE_STAT_BYTES,
+        SAI_QUEUE_STAT_DROPPED_PACKETS,
+        SAI_QUEUE_STAT_DROPPED_BYTES,
+    };
+    vector<uint64_t> queueStats(queueStatIds.size());
+
+    queue_ids = m_port_voq_ids[port.m_alias];
+    SWSS_LOG_ENTER();
+
+    for (size_t queueIndex = 0; queueIndex < queue_ids.size(); ++queueIndex)
+    {
+        std::ostringstream key;
+        key << port.m_system_port_info.alias << "@" << gMyHostName << "|" << gMyAsicName << ":" << queueIndex;
+
+        sai_status_t status = sai_queue_api->get_queue_stats(
+           queue_ids[queueIndex],
+           static_cast<uint32_t>(queueStatIds.size()),
+           queueStatIds.data(),
+           queueStats.data());
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+           SWSS_LOG_ERROR("Failed to fetch queue 0x%" PRIx64 " status: %d", queue_ids[queueIndex], status);
+           continue;
+        }
+
+        //Add to CHASSIS_APP_DB
+        int index = 0;
+        for (const auto& it: queue_stat_ids)
+        {
+            SWSS_LOG_DEBUG("%s %s %s",key.str().c_str(), sai_serialize_queue_stat(it).c_str(),
+                           to_string(queueStats[index]).c_str());
+            m_tableVoqQueueCounter->hset(key.str(), sai_serialize_queue_stat(it), to_string(queueStats[index++]));
+        }
+    }
+}
+
+void PortsOrch::updateVoqStatsChassisDb(){
+   for (const auto& it: m_portList)
+   {
+       if (it.second.m_type != Port::PHY && it.second.m_type != Port::SYSTEM)
+          continue;
+       updateVoqStatsPerPortChassisDb( it.second );
+   }
 }
 
