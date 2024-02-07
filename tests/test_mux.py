@@ -601,25 +601,21 @@ class TestMuxTunnelBase():
                     continue
                 new_states = states.copy()
 
-                #print("Toggling %s from %s" % (toggle_port, states[toggle_index]))
+                print("Toggling %s from %s" % (toggle_port, states[toggle_index]))
 
                 if states[toggle_index] == ACTIVE:
-                    #print("setting %s to %s" % (toggle_port, STANDBY))
                     new_states[toggle_index] = STANDBY
                     self.set_mux_state(appdb, toggle_port, STANDBY)
                     self.multi_nexthop_check(asicdb, dvs_route, route, nexthops, new_states, non_mux_nexthop)
 
-                    #print("setting %s to %s" % (toggle_port, ACTIVE))
                     new_states[toggle_index] = ACTIVE
                     self.set_mux_state(appdb, toggle_port, ACTIVE)
                     self.multi_nexthop_check(asicdb, dvs_route, route, nexthops, new_states, non_mux_nexthop)
                 else:
-                    #print("setting %s to %s" % (toggle_port, ACTIVE))
                     new_states[toggle_index] = ACTIVE
                     self.set_mux_state(appdb, toggle_port, ACTIVE)
                     self.multi_nexthop_check(asicdb, dvs_route, route, nexthops, new_states, non_mux_nexthop)
 
-                    #print("setting %s to %s" % (toggle_port, STANDBY))
                     new_states[toggle_index] = STANDBY
                     self.set_mux_state(appdb, toggle_port, STANDBY)
                     self.multi_nexthop_check(asicdb, dvs_route, route, nexthops, new_states, non_mux_nexthop)
