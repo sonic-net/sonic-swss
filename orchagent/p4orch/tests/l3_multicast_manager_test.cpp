@@ -107,11 +107,13 @@ class L3MulticastManagerTest : public ::testing::Test {
       const std::string& multicast_replica_port,
       const std::string& multicast_replica_instance,
       const swss::MacAddress src_mac,
-      const std::string& multicast_metadata = "") {
+      const std::string& multicast_metadata = "",
+      const std::string& action = p4orch::kSetMulticastSrcMac) {
     P4MulticastRouterInterfaceEntry router_interface_entry = {};
     router_interface_entry.multicast_replica_port = multicast_replica_port;
     router_interface_entry.multicast_replica_instance =
         multicast_replica_instance;
+    router_interface_entry.action = action;
     router_interface_entry.src_mac = src_mac;
     router_interface_entry.multicast_metadata = multicast_metadata;
     router_interface_entry.multicast_router_interface_entry_key =
@@ -296,6 +298,18 @@ class L3MulticastManagerTest : public ::testing::Test {
         app_db_entry, multicast_router_interface_entry);
   }
 
+  std::string VerifyMulticastRouterInterfaceStateAsicDb(
+      const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry) {
+    return l3_multicast_manager_.verifyMulticastRouterInterfaceStateAsicDb(
+        multicast_router_interface_entry);
+  }
+
+  std::string VerifyL2MulticastRouterInterfaceStateAsicDb(
+      const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry) {
+    return l3_multicast_manager_.verifyL2MulticastRouterInterfaceStateAsicDb(
+        multicast_router_interface_entry);
+  }
+
   std::string VerifyMulticastGroupStateCache(
       const P4MulticastGroupEntry& app_db_entry,
       const P4MulticastGroupEntry* multicast_group_entry) {
@@ -329,6 +343,20 @@ class L3MulticastManagerTest : public ::testing::Test {
       const std::string& operation) {
     return l3_multicast_manager_.validateMulticastRouterInterfaceEntry(
         multicast_router_interface_entry, operation);
+  }
+
+  ReturnCode ValidateL2SetMulticastRouterInterfaceEntry(
+      const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry,
+      const P4MulticastRouterInterfaceEntry* router_interface_entry_ptr) {
+    return l3_multicast_manager_.validateL2SetMulticastRouterInterfaceEntry(
+        multicast_router_interface_entry, router_interface_entry_ptr);
+  }
+
+  ReturnCode ValidateL2DelMulticastRouterInterfaceEntry(
+      const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry,
+      const P4MulticastRouterInterfaceEntry* router_interface_entry_ptr) {
+    return l3_multicast_manager_.validateL2DelMulticastRouterInterfaceEntry(
+        multicast_router_interface_entry, router_interface_entry_ptr);
   }
 
   ReturnCode ValidateMulticastGroupEntry(
@@ -1697,6 +1725,49 @@ TEST_F(L3MulticastManagerTest, ValidateSetMulticastRouterInterfaceEntryTest) {
   EXPECT_TRUE(status.ok());
 }
 
+TEST_F(L3MulticastManagerTest, ValidateL2SetMulticastRouterInterfaceEntryTest) {
+  auto entry = GenerateP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x0", swss::MacAddress(kSrcMac1),
+      /*multicast_metadata=*/"", p4orch::kNoAction);
+  ReturnCode status = ValidateL2SetMulticastRouterInterfaceEntry(entry, &entry);
+  EXPECT_EQ(StatusCode::SWSS_RC_UNIMPLEMENTED, status);
+}
+
+TEST_F(L3MulticastManagerTest,
+       VerifyMulticastRouterInterfaceStateAsicDbNoActionTest) {
+  auto entry = GenerateP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x0", swss::MacAddress(kSrcMac1),
+      /*multicast_metadata=*/"", p4orch::kNoAction);
+  EXPECT_EQ("SWSS_RC_UNIMPLEMENTED",
+            VerifyMulticastRouterInterfaceStateAsicDb(&entry));
+}
+
+TEST_F(L3MulticastManagerTest,
+       VerifyL2MulticastRouterInterfaceStateAsicDbTest) {
+  auto entry = GenerateP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x0", swss::MacAddress(kSrcMac1),
+      /*multicast_metadata=*/"", p4orch::kNoAction);
+  EXPECT_EQ("SWSS_RC_UNIMPLEMENTED",
+            VerifyL2MulticastRouterInterfaceStateAsicDb(&entry));
+}
+
+TEST_F(L3MulticastManagerTest,
+       verifyMulticastRouterInterfaceStateCacheForNoAction) {
+  auto entry = GenerateP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x0", swss::MacAddress(kSrcMac1),
+      /*multicast_metadata=*/"", p4orch::kNoAction);
+  EXPECT_EQ("SWSS_RC_UNIMPLEMENTED",
+            VerifyMulticastRouterInterfaceStateCache(entry, &entry));
+}
+
+TEST_F(L3MulticastManagerTest, ValidateL2DelMulticastRouterInterfaceEntryTest) {
+  auto entry = GenerateP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x0", swss::MacAddress(kSrcMac1),
+      /*multicast_metadata=*/"", p4orch::kNoAction);
+  ReturnCode status = ValidateL2DelMulticastRouterInterfaceEntry(entry, &entry);
+  EXPECT_EQ(StatusCode::SWSS_RC_UNIMPLEMENTED, status);
+}
+
 TEST_F(L3MulticastManagerTest, ValidateDelMulticastRouterInterfaceEntryNoOid) {
   auto entry = SetupP4MulticastRouterInterfaceEntry(
       "Ethernet2", "0x0", swss::MacAddress(kSrcMac1), kRifOid1);
@@ -1718,6 +1789,24 @@ TEST_F(L3MulticastManagerTest,
        ValidateSetMulticastRouterInterfaceEntryEmptyInstanceTest) {
   auto entry = GenerateP4MulticastRouterInterfaceEntry(
       "Ethernet2", "", swss::MacAddress(kSrcMac1));
+  ReturnCode status = ValidateMulticastRouterInterfaceEntry(entry, SET_COMMAND);
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, status);
+}
+
+TEST_F(L3MulticastManagerTest,
+       ValidateSetMulticastRouterInterfaceEntryEmptyActionTest) {
+  auto entry = GenerateP4MulticastRouterInterfaceEntry(
+      "Ethernet2", "0x0", swss::MacAddress(kSrcMac1));
+  entry.action = "";
+  ReturnCode status = ValidateMulticastRouterInterfaceEntry(entry, SET_COMMAND);
+  EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, status);
+}
+
+TEST_F(L3MulticastManagerTest,
+       ValidateSetMulticastRouterInterfaceEntryActionChangeFails) {
+  auto entry = SetupP4MulticastRouterInterfaceEntry(
+      "Ethernet1", "0x0", swss::MacAddress(kSrcMac1), kRifOid1);
+  entry.action = p4orch::kNoAction;
   ReturnCode status = ValidateMulticastRouterInterfaceEntry(entry, SET_COMMAND);
   EXPECT_EQ(StatusCode::SWSS_RC_INVALID_PARAM, status);
 }

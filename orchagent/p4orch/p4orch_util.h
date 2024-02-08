@@ -58,6 +58,7 @@ constexpr char *kSetMetadataAndDrop = "set_metadata_and_drop";
 constexpr char *kSetNexthop = "set_nexthop";
 constexpr char *kSetIpNexthop = "set_ip_nexthop";
 constexpr char *kSetTunnelNexthop = "set_p2p_tunnel_encap_nexthop";
+constexpr char* kNoAction = "no_action";
 constexpr char *kDrop = "drop";
 constexpr char *kTrap = "trap";
 constexpr char *kStage = "stage";

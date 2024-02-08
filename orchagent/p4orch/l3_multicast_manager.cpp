@@ -432,7 +432,9 @@ L3MulticastManager::deserializeMulticastRouterInterfaceEntry(
     const auto& field = fvField(it);
     const auto& value = fvValue(it);
     if (field == p4orch::kAction) {
-      if (value != p4orch::kSetMulticastSrcMac) {
+      if (value == p4orch::kSetMulticastSrcMac || value == p4orch::kNoAction) {
+        router_interface_entry.action = value;
+      } else {
         return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
                << "Unexpected action " << QuotedVar(value) << " in "
                << APP_P4RT_MULTICAST_ROUTER_INTERFACE_TABLE_NAME;
@@ -797,64 +799,101 @@ ReturnCode L3MulticastManager::validateDelMulticastGroupEntry(
   return ReturnCode();
 }
 
+ReturnCode L3MulticastManager::validateL3SetMulticastRouterInterfaceEntry(
+    const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry,
+    const P4MulticastRouterInterfaceEntry* router_interface_entry_ptr) {
+  // Confirm RIF had SAI object ID.
+  if (router_interface_entry_ptr->router_interface_oid ==
+      SAI_OBJECT_TYPE_NULL) {
+    return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+           << "RIF was not assigned before updating multicast router "
+              "interface "
+              "entry with keys "
+           << QuotedVar(multicast_router_interface_entry.multicast_replica_port)
+           << " and "
+           << QuotedVar(
+                  multicast_router_interface_entry.multicast_replica_instance);
+  }
+
+  // Confirm we have a reference to the RIF object ID.
+  if (m_rifOidToRouterInterfaceEntries.find(
+          router_interface_entry_ptr->router_interface_oid) ==
+      m_rifOidToRouterInterfaceEntries.end()) {
+    return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+           << "Expected RIF OID is missing from map: "
+           << router_interface_entry_ptr->router_interface_oid;
+  }
+
+  // Confirm the RIF object ID exists in central mapper.
+  std::string rif_key = KeyGenerator::generateMulticastRouterInterfaceRifKey(
+      router_interface_entry_ptr->multicast_replica_port,
+      router_interface_entry_ptr->src_mac);
+  bool exist_in_mapper =
+      m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE, rif_key);
+  if (!exist_in_mapper) {
+    return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+           << "Multicast router interface entry exists in manager but RIF "
+              "does "
+              "not exist in the centralized map";
+  }
+  return ReturnCode();
+}
+
+ReturnCode L3MulticastManager::validateL2SetMulticastRouterInterfaceEntry(
+    const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry,
+    const P4MulticastRouterInterfaceEntry* router_interface_entry_ptr) {
+  // TODO: This needs to be implemented.
+  return ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED);
+}
+
 ReturnCode L3MulticastManager::validateSetMulticastRouterInterfaceEntry(
     const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry) {
   auto* router_interface_entry_ptr = getMulticastRouterInterfaceEntry(
       multicast_router_interface_entry.multicast_router_interface_entry_key);
 
+  // Confirm action is populated.
+  if (multicast_router_interface_entry.action.empty()) {
+    return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+           << "Multicast router interface entry did not specify an action.";
+  }
+
   bool is_update_operation = router_interface_entry_ptr != nullptr;
   if (is_update_operation) {
-    // Confirm RIF had SAI object ID.
-    if (router_interface_entry_ptr->router_interface_oid ==
-        SAI_OBJECT_TYPE_NULL) {
-      return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
-             << "RIF was not assigned before updating multicast router "
-                "interface "
-                "entry with keys "
-             << QuotedVar(
-                    multicast_router_interface_entry.multicast_replica_port)
-             << " and "
+    // Confirm action did not change.
+    if (multicast_router_interface_entry.action !=
+        router_interface_entry_ptr->action) {
+      return ReturnCode(StatusCode::SWSS_RC_INVALID_PARAM)
+             << "Multicast router interface entry with key "
              << QuotedVar(multicast_router_interface_entry
-                              .multicast_replica_instance);
+                              .multicast_router_interface_entry_key)
+             << " cannot change action from "
+             << QuotedVar(router_interface_entry_ptr->action) << " to "
+             << QuotedVar(multicast_router_interface_entry.action);
     }
 
-    // Confirm we have a reference to the RIF object ID.
-    if (m_rifOidToRouterInterfaceEntries.find(
-            router_interface_entry_ptr->router_interface_oid) ==
-        m_rifOidToRouterInterfaceEntries.end()) {
-      return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
-             << "Expected RIF OID is missing from map: "
-             << router_interface_entry_ptr->router_interface_oid;
-    }
-
-    // Confirm the RIF object ID exists in central mapper.
-    std::string rif_key = KeyGenerator::generateMulticastRouterInterfaceRifKey(
-        router_interface_entry_ptr->multicast_replica_port,
-        router_interface_entry_ptr->src_mac);
-    bool exist_in_mapper =
-        m_p4OidMapper->existsOID(SAI_OBJECT_TYPE_ROUTER_INTERFACE, rif_key);
-    if (!exist_in_mapper) {
-      return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
-             << "Multicast router interface entry exists in manager but RIF "
-                "does "
-                "not exist in the centralized map";
+    if (multicast_router_interface_entry.action ==
+        p4orch::kSetMulticastSrcMac) {
+      return validateL3SetMulticastRouterInterfaceEntry(
+          multicast_router_interface_entry, router_interface_entry_ptr);
+    } else {
+      return validateL2SetMulticastRouterInterfaceEntry(
+          multicast_router_interface_entry, router_interface_entry_ptr);
     }
   }
   // No additional validation required for add operation.
   return ReturnCode();
 }
 
-ReturnCode L3MulticastManager::validateDelMulticastRouterInterfaceEntry(
-    const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry) {
-  auto* router_interface_entry_ptr = getMulticastRouterInterfaceEntry(
-      multicast_router_interface_entry.multicast_router_interface_entry_key);
+ReturnCode L3MulticastManager::validateL2DelMulticastRouterInterfaceEntry(
+    const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry,
+    const P4MulticastRouterInterfaceEntry* router_interface_entry_ptr) {
+  // TODO: This needs to be implemented.
+  return ReturnCode(StatusCode::SWSS_RC_UNIMPLEMENTED);
+}
 
-  // Can't delete what isn't there.
-  if (router_interface_entry_ptr == nullptr) {
-    return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
-           << "Multicast router interface entry exists does not exist";
-  }
-
+ReturnCode L3MulticastManager::validateL3DelMulticastRouterInterfaceEntry(
+    const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry,
+    const P4MulticastRouterInterfaceEntry* router_interface_entry_ptr) {
   // Confirm we have a reference to the RIF object ID.
   if (m_rifOidToRouterInterfaceEntries.find(
           router_interface_entry_ptr->router_interface_oid) ==
@@ -873,6 +912,29 @@ ReturnCode L3MulticastManager::validateDelMulticastRouterInterfaceEntry(
     RETURN_INTERNAL_ERROR_AND_RAISE_CRITICAL(
         "Multicast router interface entry does not exist in the central map");
   }
+
+  return ReturnCode();
+}
+
+ReturnCode L3MulticastManager::validateDelMulticastRouterInterfaceEntry(
+    const P4MulticastRouterInterfaceEntry& multicast_router_interface_entry) {
+  auto* router_interface_entry_ptr = getMulticastRouterInterfaceEntry(
+      multicast_router_interface_entry.multicast_router_interface_entry_key);
+
+  // Can't delete what isn't there.
+  if (router_interface_entry_ptr == nullptr) {
+    return ReturnCode(StatusCode::SWSS_RC_NOT_FOUND)
+           << "Multicast router interface entry exists does not exist";
+  }
+
+  if (router_interface_entry_ptr->action == p4orch::kSetMulticastSrcMac) {
+    return validateL3DelMulticastRouterInterfaceEntry(
+        multicast_router_interface_entry, router_interface_entry_ptr);
+  } else {
+    return validateL2DelMulticastRouterInterfaceEntry(
+        multicast_router_interface_entry, router_interface_entry_ptr);
+  }
+
   return ReturnCode();
 }
 
@@ -1923,6 +1985,8 @@ std::string L3MulticastManager::verifyMulticastRouterInterfaceStateCache(
         << " in l3 multicast manager.";
     return msg.str();
   }
+  // Note: action is checked for differences in the
+  // validateMulticastRouterInterfaceEntry function.
   if (multicast_router_interface_entry->src_mac.to_string() !=
       app_db_entry.src_mac.to_string()) {
     std::stringstream msg;
@@ -1941,15 +2005,31 @@ std::string L3MulticastManager::verifyMulticastRouterInterfaceStateCache(
         << " in l3 multicast manager.";
     return msg.str();
   }
-  std::string rif_key = KeyGenerator::generateMulticastRouterInterfaceRifKey(
-      multicast_router_interface_entry->multicast_replica_port,
-      multicast_router_interface_entry->src_mac);
-  return m_p4OidMapper->verifyOIDMapping(
-      SAI_OBJECT_TYPE_ROUTER_INTERFACE, rif_key,
-      multicast_router_interface_entry->router_interface_oid);
+
+  if (multicast_router_interface_entry->action == p4orch::kSetMulticastSrcMac) {
+    std::string rif_key = KeyGenerator::generateMulticastRouterInterfaceRifKey(
+        multicast_router_interface_entry->multicast_replica_port,
+        multicast_router_interface_entry->src_mac);
+    return m_p4OidMapper->verifyOIDMapping(
+        SAI_OBJECT_TYPE_ROUTER_INTERFACE, rif_key,
+        multicast_router_interface_entry->router_interface_oid);
+  } else {
+    return "SWSS_RC_UNIMPLEMENTED";
+  }
 }
 
 std::string L3MulticastManager::verifyMulticastRouterInterfaceStateAsicDb(
+    const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry) {
+  if (multicast_router_interface_entry->action == p4orch::kSetMulticastSrcMac) {
+    return verifyL3MulticastRouterInterfaceStateAsicDb(
+        multicast_router_interface_entry);
+  } else {
+    return verifyL2MulticastRouterInterfaceStateAsicDb(
+        multicast_router_interface_entry);
+  }
+}
+
+std::string L3MulticastManager::verifyL3MulticastRouterInterfaceStateAsicDb(
     const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry) {
   auto attrs_or = prepareRifSaiAttrs(*multicast_router_interface_entry);
   if (!attrs_or.ok()) {
@@ -1975,6 +2055,12 @@ std::string L3MulticastManager::verifyMulticastRouterInterfaceStateAsicDb(
 
   return verifyAttrs(values, exp, std::vector<swss::FieldValueTuple>{},
                      /*allow_unknown=*/false);
+}
+
+std::string L3MulticastManager::verifyL2MulticastRouterInterfaceStateAsicDb(
+    const P4MulticastRouterInterfaceEntry* multicast_router_interface_entry) {
+  // TODO: This needs to be implemented.
+  return "SWSS_RC_UNIMPLEMENTED";
 }
 
 std::string L3MulticastManager::verifyMulticastGroupStateCache(
