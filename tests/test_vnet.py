@@ -545,6 +545,21 @@ loopback_id = 0
 def_vr_id = 0
 switch_mac = None
 
+def update_bgp_global_dev_state(dvs, state):
+    config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    create_entry_tbl(
+        config_db,
+        "BGP_DEVICE_GLOBAL",'|',"STATE",
+        [
+            ("tsa_enabled", state),
+        ]
+    )
+
+def set_tsa(dvs):
+    update_bgp_global_dev_state(dvs, "true")
+
+def clear_tsa(dvs):
+    update_bgp_global_dev_state(dvs, "false")
 
 class VnetVxlanVrfTunnel(object):
 
@@ -3426,6 +3441,84 @@ class TestVnetOrch(object):
         vnet_obj.check_del_vnet_entry(dvs, 'Vnet_2000')
 
         # delete vxlan tunnel
+        delete_vxlan_tunnel(dvs, tunnel_name)
+
+    '''
+    Test 25 - Test for BFD TSA and TSB behaviour within overlay tunnel routes.
+    '''
+    def test_vnet_orch_25(self, dvs, testlog):
+        # This test creates a vnet route with BFD monitoring.This followd by application of TSA and absence of BFD sessions
+        # is verified. Following the removal of TSA the Vnet route is verified to be up.
+        vnet_obj = self.get_vnet_obj()
+        tunnel_name = 'tunnel_25'
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+        create_vnet_entry(dvs, 'Vnet25', tunnel_name, '10025', "")
+
+        vnet_obj.check_vnet_entry(dvs, 'Vnet25')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet25', '10025')
+
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '9.9.9.9')
+
+        vnet_obj.fetch_exist_entries(dvs)
+        create_vnet_routes(dvs, "125.100.1.1/32", 'Vnet25', '9.0.0.1,9.0.0.2,9.0.0.3', ep_monitor='9.1.0.1,9.1.0.2,9.1.0.3')
+
+        # default bfd status is down, route should not be programmed in this status
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet25', ["125.100.1.1/32"])
+        check_state_db_routes(dvs, 'Vnet25', "125.100.1.1/32", [])
+        check_remove_routes_advertisement(dvs, "125.100.1.1/32")
+
+        # Route should be properly configured when all bfd session states go up
+        update_bfd_session_state(dvs, '9.1.0.1', 'Up')
+        update_bfd_session_state(dvs, '9.1.0.2', 'Up')
+        update_bfd_session_state(dvs, '9.1.0.3', 'Up')
+        time.sleep(2)
+
+        # make sure the route is up.
+        route1, nhg1_1 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet25', ['9.0.0.1', '9.0.0.2', '9.0.0.3'], tunnel_name)
+        check_state_db_routes(dvs, 'Vnet25', "125.100.1.1/32", ['9.0.0.1', '9.0.0.2', '9.0.0.3'])
+        # The default Vnet setting does not advertise prefix
+        check_remove_routes_advertisement(dvs, "125.100.1.1/32")
+
+        # tsa would remove all bfd sessions down.
+        set_tsa(dvs)
+        time.sleep(2)
+
+        # Route should be removed.
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet25', ["125.100.1.1/32"])
+        check_state_db_routes(dvs, 'Vnet25', "125.100.1.1/32", [])
+        check_remove_routes_advertisement(dvs, "125.100.1.1/32")
+
+        #clearing TSA should bring the route back.
+        clear_tsa(dvs)
+        time.sleep(2)
+
+        update_bfd_session_state(dvs, '9.1.0.1', 'Up')
+        update_bfd_session_state(dvs, '9.1.0.2', 'Up')
+        update_bfd_session_state(dvs, '9.1.0.3', 'Up')
+        time.sleep(2)
+
+        route1, nhg1_1 = vnet_obj.check_vnet_ecmp_routes(dvs, 'Vnet25', ['9.0.0.1', '9.0.0.2', '9.0.0.3'], tunnel_name, route_ids=route1, nhg=nhg1_1)
+        check_state_db_routes(dvs, 'Vnet25', "125.100.1.1/32", ['9.0.0.1', '9.0.0.2', '9.0.0.3'])
+        # The default Vnet setting does not advertise prefix
+        check_remove_routes_advertisement(dvs, "125.100.1.1/32")
+
+        # Remove tunnel route
+        delete_vnet_routes(dvs, "125.100.1.1/32", 'Vnet25')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet25', ["125.100.1.1/32"])
+        check_remove_state_db_routes(dvs, 'Vnet25', "125.100.1.1/32")
+        check_remove_routes_advertisement(dvs, "125.100.1.1/32")
+
+        # Check the corresponding nexthop group is removed
+        vnet_obj.fetch_exist_entries(dvs)
+        assert nhg1_1 not in vnet_obj.nhgs
+        # Check the BFD session specific to the endpoint group is removed while others exist
+        check_del_bfd_session(dvs, ['9.1.0.1', '9.1.0.2', '9.1.0.3'])
+
+        delete_vnet_entry(dvs, 'Vnet25')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet25')
         delete_vxlan_tunnel(dvs, tunnel_name)
 
 # Add Dummy always-pass test at end as workaroud
