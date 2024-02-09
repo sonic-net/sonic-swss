@@ -175,11 +175,11 @@ class L3MulticastManagerTest : public ::testing::Test {
 
   P4MulticastRouterInterfaceEntry SetupP4MulticastRouterInterfaceNoActionEntry(
       const std::string& port, const std::string& instance,
-      const swss::MacAddress mac, const sai_object_id_t bridge_port_oid,
-      bool expect_mock = true) {
+      const sai_object_id_t bridge_port_oid, bool expect_mock = true) {
     std::vector<P4MulticastRouterInterfaceEntry> entries;
     auto entry = GenerateP4MulticastRouterInterfaceEntry(
-        port, instance, mac, /*multicast_metadata=*/"", p4orch::kNoAction);
+        port, instance, swss::MacAddress(kSrcMac1), /*multicast_metadata=*/"",
+        p4orch::kNoAction);
     entries.push_back(entry);
 
     if (expect_mock) {
@@ -873,8 +873,7 @@ TEST_F(L3MulticastManagerTest,
 TEST_F(L3MulticastManagerTest,
        AddMulticastRouterInterfaceEntryNoActionSuccess) {
   auto entry = SetupP4MulticastRouterInterfaceNoActionEntry(
-      "Ethernet1", /*instance=*/"0x0", swss::MacAddress(kSrcMac1),
-      kBridgePortOid1);
+      "Ethernet1", /*instance=*/"0x0", kBridgePortOid1);
   EXPECT_EQ(kBridgePortOid1, GetBridgePortOid(&entry));
 }
 
@@ -970,6 +969,132 @@ TEST_F(L3MulticastManagerTest, DeleteMulticastRouterInterfaceEntriesSuccess) {
             nullptr);
   EXPECT_EQ(GetRifOid(&entries[0]), SAI_NULL_OBJECT_ID);
   EXPECT_EQ(GetRifOid(&entries[1]), SAI_NULL_OBJECT_ID);
+}
+
+TEST_F(L3MulticastManagerTest,
+       DeleteMulticastRouterInterfaceNoActionEntriesSuccess) {
+  auto entry = SetupP4MulticastRouterInterfaceNoActionEntry(
+      "Ethernet1", /*instance=*/"0x0", kBridgePortOid1);
+  auto entry2 = SetupP4MulticastRouterInterfaceNoActionEntry(
+      "Ethernet2", /*instance=*/"0x0", kBridgePortOid2);
+
+  std::vector<ReturnCode> statuses;
+  // Second, delete entries just added.  Expect success and no more references
+  // to the old entries.
+  std::vector<P4MulticastRouterInterfaceEntry> entries;
+  entries.push_back(entry2);
+  entries.push_back(entry);
+
+  EXPECT_CALL(mock_sai_bridge_, remove_bridge_port(_))
+      .WillOnce(Return(SAI_STATUS_SUCCESS))
+      .WillOnce(Return(SAI_STATUS_SUCCESS));
+  statuses = DeleteMulticastRouterInterfaceEntries(entries);
+  ASSERT_EQ(statuses.size(), 2);
+  for (size_t i = 0; i < statuses.size(); ++i) {
+    EXPECT_TRUE(statuses[i].ok());
+  }
+  // Expect no more references to entries.
+  EXPECT_EQ(GetMulticastRouterInterfaceEntry(
+                entries[0].multicast_router_interface_entry_key),
+            nullptr);
+  EXPECT_EQ(GetMulticastRouterInterfaceEntry(
+                entries[1].multicast_router_interface_entry_key),
+            nullptr);
+  EXPECT_EQ(GetBridgePortOid(&entries[0]), SAI_NULL_OBJECT_ID);
+  EXPECT_EQ(GetBridgePortOid(&entries[1]), SAI_NULL_OBJECT_ID);
+}
+
+TEST_F(L3MulticastManagerTest,
+       DeleteMulticastRouterInterfaceNoActionEntriesSaiFailure) {
+  auto entry = SetupP4MulticastRouterInterfaceNoActionEntry(
+      "Ethernet1", /*instance=*/"0x0", kBridgePortOid1);
+  auto entry2 = SetupP4MulticastRouterInterfaceNoActionEntry(
+      "Ethernet2", /*instance=*/"0x0", kBridgePortOid2);
+
+  std::vector<ReturnCode> statuses;
+  // Second, delete entries just added.  Force SAI failure on first delete.
+  std::vector<P4MulticastRouterInterfaceEntry> entries;
+  entries.push_back(entry);
+  entries.push_back(entry2);
+
+  EXPECT_CALL(mock_sai_bridge_, remove_bridge_port(_))
+      .WillOnce(Return(SAI_STATUS_FAILURE));
+  statuses = DeleteMulticastRouterInterfaceEntries(entries);
+  ASSERT_EQ(statuses.size(), 2);
+  EXPECT_EQ(statuses[0].code(), StatusCode::SWSS_RC_UNKNOWN);
+  EXPECT_EQ(statuses[1].code(), StatusCode::SWSS_RC_NOT_EXECUTED);
+
+  // Expect entries to remain.
+  EXPECT_NE(GetMulticastRouterInterfaceEntry(
+                entries[0].multicast_router_interface_entry_key),
+            nullptr);
+  EXPECT_NE(GetMulticastRouterInterfaceEntry(
+                entries[1].multicast_router_interface_entry_key),
+            nullptr);
+  EXPECT_EQ(GetBridgePortOid(&entries[0]), kBridgePortOid1);
+  EXPECT_EQ(GetBridgePortOid(&entries[1]), kBridgePortOid2);
+}
+
+TEST_F(L3MulticastManagerTest,
+       DeleteMulticastRouterInterfaceNoActionEntriesMissingOid) {
+  auto entry = SetupP4MulticastRouterInterfaceNoActionEntry(
+      "Ethernet1", /*instance=*/"0x0", kBridgePortOid1);
+  auto entry2 = SetupP4MulticastRouterInterfaceNoActionEntry(
+      "Ethernet2", /*instance=*/"0x0", kBridgePortOid2);
+
+  std::vector<ReturnCode> statuses;
+  // Second, delete entries just added.  Force OID to be missing from map.
+  std::vector<P4MulticastRouterInterfaceEntry> entries;
+  entries.push_back(entry);
+  entries.push_back(entry2);
+
+  // Force internal error.
+  p4_oid_mapper_.decreaseRefCount(SAI_OBJECT_TYPE_BRIDGE_PORT,
+                                  entry.multicast_replica_port);
+  p4_oid_mapper_.eraseOID(SAI_OBJECT_TYPE_BRIDGE_PORT,
+                          entry.multicast_replica_port);
+
+  // Expect to enter critical state.
+
+  statuses = DeleteMulticastRouterInterfaceEntries(entries);
+  ASSERT_EQ(statuses.size(), 2);
+  EXPECT_EQ(statuses[0].code(), StatusCode::SWSS_RC_INTERNAL);
+  EXPECT_EQ(statuses[1].code(), StatusCode::SWSS_RC_NOT_EXECUTED);
+
+  // Expect entries to remain.
+  EXPECT_NE(GetMulticastRouterInterfaceEntry(
+                entries[0].multicast_router_interface_entry_key),
+            nullptr);
+  EXPECT_NE(GetMulticastRouterInterfaceEntry(
+                entries[1].multicast_router_interface_entry_key),
+            nullptr);
+  // The OID we didn't mess with should still be there.
+  EXPECT_EQ(GetBridgePortOid(&entries[1]), kBridgePortOid2);
+}
+
+TEST_F(L3MulticastManagerTest,
+       DeleteMulticastRouterInterfaceNoActionEntriesSamePortSuccess) {
+  auto entry = SetupP4MulticastRouterInterfaceNoActionEntry(
+      "Ethernet1", /*instance=*/"0x0", kBridgePortOid1);
+  auto entry2 = SetupP4MulticastRouterInterfaceNoActionEntry(
+      "Ethernet1", /*instance=*/"0x1", kBridgePortOid1, /*expect_mock=*/false);
+
+  // Only delete one entry.  Expect bridge port to remain.
+  std::vector<P4MulticastRouterInterfaceEntry> entries = {entry};
+  std::vector<ReturnCode> statuses =
+      DeleteMulticastRouterInterfaceEntries(entries);
+
+  ASSERT_EQ(statuses.size(), 1);
+  EXPECT_TRUE(statuses[0].ok());
+
+  // Expect no more references to entries.
+  EXPECT_EQ(GetMulticastRouterInterfaceEntry(
+                entry.multicast_router_interface_entry_key),
+            nullptr);
+  EXPECT_NE(GetMulticastRouterInterfaceEntry(
+                entry2.multicast_router_interface_entry_key),
+            nullptr);
+  EXPECT_EQ(GetBridgePortOid(&entry2), kBridgePortOid1);
 }
 
 TEST_F(L3MulticastManagerTest,

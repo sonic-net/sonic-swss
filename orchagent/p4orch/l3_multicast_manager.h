@@ -193,6 +193,8 @@ class L3MulticastManager : public ObjectManagerInterface {
   // Wrapper around SAI setup and call, for easy mocking.
   ReturnCode createBridgePort(P4MulticastRouterInterfaceEntry& entry,
                               sai_object_id_t* bridge_port_oid);
+  ReturnCode deleteBridgePort(const std::string& port,
+                              sai_object_id_t bridge_port_oid);
   ReturnCode createRouterInterface(const std::string& rif_key,
                                    P4MulticastRouterInterfaceEntry& entry,
                                    sai_object_id_t* rif_oid);
@@ -222,9 +224,14 @@ class L3MulticastManager : public ObjectManagerInterface {
   // Update existing multicast router interface table entries.
   std::vector<ReturnCode> updateMulticastRouterInterfaceEntries(
       std::vector<P4MulticastRouterInterfaceEntry>& entries);
+
   // Delete existing multicast router interface table entries.
   std::vector<ReturnCode> deleteMulticastRouterInterfaceEntries(
       const std::vector<P4MulticastRouterInterfaceEntry>& entries);
+  ReturnCode deleteL3MulticastRouterInterfaceEntry(
+      const P4MulticastRouterInterfaceEntry* entry);
+  ReturnCode deleteL2MulticastRouterInterfaceEntry(
+      const P4MulticastRouterInterfaceEntry* entry);
 
   // Add new multicast group table entries.
   std::vector<ReturnCode> addMulticastGroupEntries(
