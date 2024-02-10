@@ -329,7 +329,7 @@ bool MirrorOrch::validateSrcPortList(const string& srcPortList)
                 vector<Port> portv;
                 int portCount = 0;
                 m_portsOrch->getLagMember(port, portv);
-                for (const auto p : portv)
+                for (const auto &p : portv)
                 {
                     if (checkPortExistsInSrcPortList(p.m_alias, srcPortList))
                     {
@@ -828,7 +828,7 @@ bool MirrorOrch::setUnsetPortMirror(Port port,
     {
         vector<Port> portv;
         m_portsOrch->getLagMember(port, portv);
-        for (const auto p : portv)
+        for (const auto &p : portv)
         {
             if (p.m_type != Port::PHY)
             {

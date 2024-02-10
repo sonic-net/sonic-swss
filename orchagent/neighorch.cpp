@@ -298,7 +298,7 @@ bool NeighOrch::addNextHop(const NextHopKey &nh)
     next_hop_entry.nh_flags = 0;
     m_syncdNextHops[nexthop] = next_hop_entry;
 
-    m_intfsOrch->increaseRouterIntfsRefCount(nexthop.alias);
+    m_intfsOrch->increaseRouterIntfsRefCount(nh.alias);
 
     if (nexthop.isMplsNextHop())
     {

@@ -269,8 +269,8 @@ void FabricPortsOrch::updateFabricPortState()
 
         string key = FABRIC_PORT_PREFIX + to_string(lane);
         std::vector<FieldValueTuple> values;
-        uint32_t remote_peer;
-        uint32_t remote_port;
+        uint32_t remote_peer = 0;
+        uint32_t remote_port = 0;
 
         attr.id = SAI_PORT_ATTR_FABRIC_ATTACHED;
         status = sai_port_api->get_port_attribute(port, 1, &attr);
