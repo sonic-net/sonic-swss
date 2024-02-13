@@ -765,7 +765,6 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
     string grat_arp = "";
     string mpls = "";
     string ipv6_link_local_mode = "";
-    string loopback_action = "";
 
     for (auto idx : data)
     {
@@ -808,10 +807,6 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         {
             vlanId = value;
         }
-        else if (field == "loopback_action")
-        {
-            loopback_action = value;
-        }
     }
 
     if (op == SET_COMMAND)
@@ -850,13 +845,6 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
             if (!nat_zone.empty())
             {
                 FieldValueTuple fvTuple("nat_zone", nat_zone);
-                data.push_back(fvTuple);
-            }
-
-            /* Set loopback action */
-            if (!loopback_action.empty())
-            {
-                FieldValueTuple fvTuple("loopback_action", loopback_action);
                 data.push_back(fvTuple);
             }
 
