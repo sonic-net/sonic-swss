@@ -75,6 +75,7 @@ extern event_handle_t g_events_handle;
 #define PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS    "60000"
 #define PG_DROP_FLEX_STAT_COUNTER_POLL_MSECS         "10000"
 #define PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS   "1000"
+#define AGG_VOQ_POLL_SEC                                 10
 
 // types --------------------------------------------------------------------------------------------------------------
 
