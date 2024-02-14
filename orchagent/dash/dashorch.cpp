@@ -37,6 +37,21 @@ DashOrch::DashOrch(DBConnector *db, vector<string> &tableName, ZmqServer *zmqSer
     SWSS_LOG_ENTER();
 }
 
+bool DashOrch::getRouteTypeActions(dash::route_type::RoutingType routing_type, dash::route_type::RouteType* route_type)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = routing_type_entries_.find(routing_type);
+    if (it == routing_type_entries_.end())
+    {
+        SWSS_LOG_WARN("Routing type %s not found", dash::route_type::RoutingType_Name(routing_type).c_str());
+        return false;
+    }
+
+    route_type = &it->second;
+    return true;
+}
+
 bool DashOrch::addApplianceEntry(const string& appliance_id, const dash::appliance::Appliance &entry)
 {
     SWSS_LOG_ENTER();
@@ -191,34 +206,34 @@ void DashOrch::doTaskApplianceTable(ConsumerBase& consumer)
     }
 }
 
-bool DashOrch::addRoutingTypeEntry(const string& routing_type, const dash::route_type::RouteType &entry)
+bool DashOrch::addRoutingTypeEntry(const dash::route_type::RoutingType& routing_type, const dash::route_type::RouteType &entry)
 {
     SWSS_LOG_ENTER();
 
     if (routing_type_entries_.find(routing_type) != routing_type_entries_.end())
     {
-        SWSS_LOG_WARN("Routing type entry already exists for %s", routing_type.c_str());
+        SWSS_LOG_WARN("Routing type entry already exists for %s", dash::route_type::RoutingType_Name(routing_type).c_str());
         return true;
     }
 
     routing_type_entries_[routing_type] = entry;
-    SWSS_LOG_NOTICE("Routing type entry added %s", routing_type.c_str());
+    SWSS_LOG_NOTICE("Routing type entry added %s", dash::route_type::RoutingType_Name(routing_type).c_str());
 
     return true;
 }
 
-bool DashOrch::removeRoutingTypeEntry(const string& routing_type)
+bool DashOrch::removeRoutingTypeEntry(const dash::route_type::RoutingType& routing_type)
 {
     SWSS_LOG_ENTER();
 
     if (routing_type_entries_.find(routing_type) == routing_type_entries_.end())
     {
-        SWSS_LOG_WARN("Routing type entry does not exist for %s", routing_type.c_str());
+        SWSS_LOG_WARN("Routing type entry does not exist for %s", dash::route_type::RoutingType_Name(routing_type).c_str());
         return true;
     }
 
     routing_type_entries_.erase(routing_type);
-    SWSS_LOG_NOTICE("Routing type entry removed for %s", routing_type.c_str());
+    SWSS_LOG_NOTICE("Routing type entry removed for %s", dash::route_type::RoutingType_Name(routing_type).c_str());
 
     return true;
 }
@@ -231,8 +246,16 @@ void DashOrch::doTaskRoutingTypeTable(ConsumerBase& consumer)
     while (it != consumer.m_toSync.end())
     {
         KeyOpFieldsValuesTuple t = it->second;
-        string routing_type = kfvKey(t);
+        string routing_type_str = kfvKey(t);
         string op = kfvOp(t);
+        dash::route_type::RoutingType routing_type;
+
+        if (!dash::route_type::RoutingType_Parse(routing_type_str, &routing_type))
+        {
+            SWSS_LOG_WARN("Invalid routing type %s", routing_type_str.c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
 
         if (op == SET_COMMAND)
         {
@@ -240,7 +263,7 @@ void DashOrch::doTaskRoutingTypeTable(ConsumerBase& consumer)
 
             if (!parsePbMessage(kfvFieldsValues(t), entry))
             {
-                SWSS_LOG_WARN("Requires protobuff at routing type :%s", routing_type.c_str());
+                SWSS_LOG_WARN("Requires protobuff at routing type :%s", routing_type_str.c_str());
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
@@ -355,6 +378,25 @@ bool DashOrch::addEniObject(const string& eni, EniEntry& entry)
     auto app_entry = appliance_entries_.begin()->second;
     eni_attr.value.u32 = app_entry.vm_vni();
     eni_attrs.push_back(eni_attr);
+
+    if (entry.metadata.has_pl_sip_encoding())
+    {
+
+        eni_attr.id = SAI_ENI_ATTR_PL_SIP;
+        to_sai(entry.metadata.pl_sip_encoding().ip(), eni_attr.value.ipaddr);
+        eni_attrs.push_back(eni_attr);
+
+        eni_attr.id = SAI_ENI_ATTR_PL_SIP_MASK;
+        to_sai(entry.metadata.pl_sip_encoding().mask(), eni_attr.value.ipaddr);
+        eni_attrs.push_back(eni_attr);
+    }
+
+    if (entry.metadata.has_pl_underlay_sip())
+    {
+        eni_attr.id = SAI_ENI_ATTR_PL_UNDERLAY_SIP;
+        to_sai(entry.metadata.pl_underlay_sip(), eni_attr.value.ipaddr);
+        eni_attrs.push_back(eni_attr);
+    }
 
     sai_status_t status = sai_dash_eni_api->create_eni(&eni_id, gSwitchId,
                                 (uint32_t)eni_attrs.size(), eni_attrs.data());
