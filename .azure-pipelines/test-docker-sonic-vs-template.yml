@@ -48,6 +48,7 @@ jobs:
     variables:
       DIFF_COVER_CHECK_THRESHOLD: 80
       DIFF_COVER_ENABLE: 'true'
+      DIFF_COVER_COVERAGE_FILES: Cobertura.xml
 
   pool: sonic-common-test
 
@@ -142,7 +143,7 @@ jobs:
       # Run the tests in parallel and retry
       retry=3
       IMAGE_NAME=docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber).asan-${{ parameters.asan }}
-      echo $all_tests | xargs -n 1 | xargs -P 8 -I TEST_MODULE sudo ./run-tests.py "$IMAGE_NAME" "$params" "TEST_MODULE" 3
+      echo $all_tests | xargs -n 1 | xargs -P 8 -I TEST_MODULE sudo ./run-tests.sh "$IMAGE_NAME" "$params" "TEST_MODULE" 3
 
       rm -rf $(Build.ArtifactStagingDirectory)/download
     displayName: "Run vs tests"
