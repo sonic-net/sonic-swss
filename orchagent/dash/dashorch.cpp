@@ -37,7 +37,7 @@ DashOrch::DashOrch(DBConnector *db, vector<string> &tableName, ZmqServer *zmqSer
     SWSS_LOG_ENTER();
 }
 
-bool DashOrch::getRouteTypeActions(dash::route_type::RoutingType routing_type, dash::route_type::RouteType* route_type)
+bool DashOrch::getRouteTypeActions(dash::route_type::RoutingType routing_type, dash::route_type::RouteType& route_type)
 {
     SWSS_LOG_ENTER();
 
@@ -48,7 +48,7 @@ bool DashOrch::getRouteTypeActions(dash::route_type::RoutingType routing_type, d
         return false;
     }
 
-    route_type = &it->second;
+    route_type = it->second;
     return true;
 }
 

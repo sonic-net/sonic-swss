@@ -39,7 +39,7 @@ class DashOrch : public ZmqOrch
 public:
     DashOrch(swss::DBConnector *db, std::vector<std::string> &tables, swss::ZmqServer *zmqServer);
     const EniEntry *getEni(const std::string &eni) const;
-    bool getRouteTypeActions(dash::route_type::RoutingType routing_type, dash::route_type::RouteType* route_type);
+    bool getRouteTypeActions(dash::route_type::RoutingType routing_type, dash::route_type::RouteType& route_type);
 
 private:
     ApplianceTable appliance_entries_;
