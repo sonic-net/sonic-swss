@@ -250,6 +250,9 @@ void DashOrch::doTaskRoutingTypeTable(ConsumerBase& consumer)
         string op = kfvOp(t);
         dash::route_type::RoutingType routing_type;
 
+        std::transform(routing_type_str.begin(), routing_type_str.end(), routing_type_str.begin(), ::toupper);
+        routing_type_str = "ROUTING_TYPE_" + routing_type_str;
+
         if (!dash::route_type::RoutingType_Parse(routing_type_str, &routing_type))
         {
             SWSS_LOG_WARN("Invalid routing type %s", routing_type_str.c_str());
