@@ -926,6 +926,7 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
         {
             SWSS_LOG_DEBUG("processing queue:%zd", ind);
             sai_object_id_t queue_id;
+            string queues;
 
             if (gMySwitchType == "voq") 
             {
@@ -936,6 +937,7 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
                     return task_process_status::task_invalid_entry;
                 }
                 queue_id = queue_ids[ind];
+                queues = tokens[3];
             } 
             else
             {
@@ -951,11 +953,13 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
                     return task_process_status::task_need_retry;
                 }
                 queue_id = port.m_queue_ids[ind];
+                queues = tokens[1];
             }
 
             if (need_update_sai)
             {
                 SWSS_LOG_DEBUG("Applying buffer profile:0x%" PRIx64 " to queue index:%zd, queue sai_id:0x%" PRIx64, sai_buffer_profile, ind, queue_id);
+
                 sai_status_t sai_status = sai_queue_api->set_queue_attribute(queue_id, &attr);
                 if (sai_status != SAI_STATUS_SUCCESS)
                 {
@@ -970,7 +974,7 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
                 else
                 {
                     auto flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
-                    auto queues = tokens[1];
+
                     if (op == SET_COMMAND &&
                         (flexCounterOrch->getQueueCountersState() || flexCounterOrch->getQueueWatermarkCountersState()))
                     {
