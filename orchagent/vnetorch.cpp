@@ -1817,6 +1817,10 @@ void VNetRouteOrch::createBfdSession(const string& vnet, const NextHopKey& endpo
         FieldValueTuple fvTuple("local_addr", src_ip.to_string());
         data.push_back(fvTuple);
         data.emplace_back("multihop", "true");
+        // The BFD sessions established by the Vnet routes with monitoring need to be brought down
+        // when the device goes into TSA.  The following parameter ensures that these session are
+        // brought down while transitioning to TSA and brought back up when transitioning to TSB.
+        data.emplace_back("shutdown_bfd_during_tsa", "true");
         bfd_session_producer_.set(key, data);
         bfd_sessions_[monitor_addr].bfd_state = SAI_BFD_SESSION_STATE_DOWN;
     }
