@@ -1,11 +1,13 @@
+#ifndef MOCK_SAI_API_H
+#define MOCK_SAI_API_H
 #include "mock_orchagent_main.h"
 #include <gmock/gmock.h>
 
 using ::testing::Return;
 using ::testing::NiceMock;
 
-std::set<void (*)()> apply_mock_fns;
-std::set<void (*)()> remove_mock_fns;
+extern std::set<void (*)()> apply_mock_fns;
+extern std::set<void (*)()> remove_mock_fns;
 
 #define CREATE_PARAMS(sai_object_type) _In_ const sai_##sai_object_type##_entry_t *sai_object_type##_entry, _In_ uint32_t attr_count, _In_ const sai_attribute_t *attr_list
 #define REMOVE_PARAMS(sai_object_type) _In_ const sai_##sai_object_type##_entry_t *sai_object_type##_entry
@@ -127,23 +129,6 @@ The macro DEFINE_SAI_API_MOCK will perform the steps to mock the SAI API for the
     apply_mock_fns.insert(&apply_sai_##sai_object_type##_api_mock); \
     remove_mock_fns.insert(&remove_sai_##sai_object_type##_api_mock);
 
-void MockSaiApis()
-{
-    if (apply_mock_fns.empty())
-    {
-        EXPECT_TRUE(false) << "No mock application functions found. Did you call DEFINE_SAI_API_MOCK and INIT_SAI_API_MOCK for the necessary SAI object type?";
-    }
-
-    for (auto apply_fn : apply_mock_fns)
-    {
-        (*apply_fn)();
-    }
-}
-
-void RestoreSaiApis()
-{
-    for (auto remove_fn : remove_mock_fns)
-    {
-        (*remove_fn)();
-    }
-}
+void MockSaiApis();
+void RestoreSaiApis();
+#endif
