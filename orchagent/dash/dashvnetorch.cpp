@@ -290,8 +290,7 @@ void DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
     dash::route_type::RouteType route_type_actions;
     if (!dash_orch->getRouteTypeActions(ctxt.metadata.action_type(), route_type_actions))
     {
-        SWSS_LOG_ERROR("Failed to get route type actions for %s", key.c_str());
-        return;
+        SWSS_LOG_INFO("Failed to get route type actions for %s", key.c_str());
     }
 
     for (auto action: route_type_actions.items())
