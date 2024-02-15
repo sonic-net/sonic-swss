@@ -295,13 +295,6 @@ void DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
 
     for (auto action: route_type_actions.items())
     {
-        if (action.action_type() == dash::route_type::ACTION_TYPE_4_to_6)
-        {
-            outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_ACTION;
-            outbound_ca_to_pa_attr.value.u32 = SAI_OUTBOUND_CA_TO_PA_ENTRY_ACTION_SET_PRIVATE_LINK_MAPPING;
-            outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
-        }
-
         if (action.action_type() == dash::route_type::ACTION_TYPE_STATICENCAP)
         {
             outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_DASH_ENCAPSULATION;
@@ -328,6 +321,10 @@ void DashVnetOrch::addOutboundCaToPa(const string& key, VnetMapBulkContext& ctxt
 
     if (ctxt.metadata.action_type() == dash::route_type::ROUTING_TYPE_PRIVATELINK)
     {
+        outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_ACTION;
+        outbound_ca_to_pa_attr.value.u32 = SAI_OUTBOUND_CA_TO_PA_ENTRY_ACTION_SET_PRIVATE_LINK_MAPPING;
+        outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr);
+
         outbound_ca_to_pa_attr.id = SAI_OUTBOUND_CA_TO_PA_ENTRY_ATTR_UNDERLAY_DIP;
         to_sai(ctxt.metadata.underlay_ip(), outbound_ca_to_pa_attr.value.ipaddr);
         outbound_ca_to_pa_attrs.push_back(outbound_ca_to_pa_attr); 

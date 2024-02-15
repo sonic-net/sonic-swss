@@ -100,6 +100,8 @@ ROUTING_TYPE = {
 
 @pytest.fixture(scope='module', autouse=True)
 def common_setup_teardown(dash_db):
+    routing_type_msg = ParseDict(ROUTING_TYPE, RouteType())
+    dash_db.create_routing_type("privatelink", {"pb": routing_type_msg.SerializeToString()})
     pb = Vnet()
     pb.vni = int("45654")
     pb.guid.value = bytes.fromhex(uuid.UUID("559c6ce8-26ab-4193-b946-ccc6e8f930b2").hex)
@@ -112,8 +114,6 @@ def common_setup_teardown(dash_db):
     eni_msg = ParseDict(ENI, Eni())
     eni = "F4939FEFC47E"
     dash_db.create_eni(eni, {"pb": eni_msg.SerializeToString()})
-    routing_type_msg = ParseDict(ROUTING_TYPE, RouteType())
-    dash_db.create_routing_type("privatelink", {"pb": routing_type_msg.SerializeToString()})
     vnet_mapping_msg = ParseDict(VNET_MAPPING, VnetMapping())
     vnet_map_ip = "10.1.1.1"
     dash_db.create_vnet_map(vnet, vnet_map_ip, {"pb": vnet_mapping_msg.SerializeToString()})
