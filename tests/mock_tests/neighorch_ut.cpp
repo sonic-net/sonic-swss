@@ -10,42 +10,23 @@
 #include "mock_orch_test.h"
 
 
-extern std::set<void (*)()> apply_mock_fns;
-extern std::set<void (*)()> remove_mock_fns;
+EXTERN_MOCK_FNS
 
 namespace neighorch_test
 {
     DEFINE_SAI_API_MOCK(neighbor);
     using namespace std;
+    using namespace mock_orch_test;
     using ::testing::Return;
     using ::testing::Throw;
 
-    static const string PEER_SWITCH_HOSTNAME = "peer_hostname";
-    static const string PEER_IPV4_ADDRESS = "1.1.1.1";
-    static const string ACTIVE_INTERFACE = "Ethernet4";
-    static const string STANDBY_INTERFACE = "Ethernet8";
-    static const string ACTIVE = "active";
-    static const string STANDBY = "standby";
-    static const string STATE = "state";
-    static const string VLAN_1000 = "Vlan1000";
-    static const string VLAN_2000 = "Vlan2000";
-    static const string SERVER_IP1 = "192.168.0.2";
-    static const string SERVER_IP2 = "192.168.0.3";
-    static const string MAC1 = "62-f9-65-10-2f-01";
-    static const string MAC2 = "62-f9-65-10-2f-02";
-    static const string MAC3 = "62-f9-65-10-2f-03";
+    static const string TEST_IP = "10.10.10.10";
+    static const NeighborEntry VLAN1000_NEIGH = NeighborEntry(TEST_IP, VLAN_1000); 
+    static const NeighborEntry VLAN2000_NEIGH = NeighborEntry(TEST_IP, VLAN_2000);
 
-    class NeighOrchTest: public mock_orch_test::MockOrchTest
+    class NeighOrchTest: public MockOrchTest
     {
     protected:
-        void SetMuxStateFromAppDb(std::string interface, std::string state)
-        {
-            Table mux_cable_table = Table(m_app_db.get(), APP_MUX_CABLE_TABLE_NAME);
-            mux_cable_table.set(interface, { { STATE, state } });
-            m_MuxCableOrch->addExistingData(&mux_cable_table);
-            static_cast<Orch *>(m_MuxCableOrch)->doTask();
-        }
-
         void SetAndAssertMuxState(std::string interface, std::string state)
         {
             MuxCable* muxCable = m_MuxOrch->getMuxCable(interface);
@@ -56,11 +37,11 @@ namespace neighorch_test
         void LearnNeighbor(std::string vlan, std::string ip, std::string mac)
         {
             Table neigh_table = Table(m_app_db.get(), APP_NEIGH_TABLE_NAME);
-            neigh_table.set(
-                vlan + neigh_table.getTableNameSeparator() + ip, { { "neigh", mac },
-                                                                   { "family", "IPv4" } });
+            string key = vlan + neigh_table.getTableNameSeparator() + ip;
+            neigh_table.set(key, { { "neigh", mac }, { "family", "IPv4" } });
             gNeighOrch->addExistingData(&neigh_table);
             static_cast<Orch *>(gNeighOrch)->doTask();
+            neigh_table.del(key);
         }
 
         void ApplyInitialConfigs()
@@ -166,41 +147,52 @@ namespace neighorch_test
             gFdbOrch->addExistingData(&fdb_table);
             static_cast<Orch *>(gFdbOrch)->doTask();
 
-            SetAndAssertMuxState(ACTIVE_INTERFACE, ACTIVE);
-            SetAndAssertMuxState(STANDBY_INTERFACE, STANDBY);
+            SetAndAssertMuxState(ACTIVE_INTERFACE, ACTIVE_STATE);
+            SetAndAssertMuxState(STANDBY_INTERFACE, STANDBY_STATE);
         }
 
-        void SetUp() override
+        void PostSetUp() override
         {
-            mock_orch_test::MockOrchTest::SetUp();
             INIT_SAI_API_MOCK(neighbor);
             MockSaiApis();
         }
 
-        void TearDown() override
+        void PreTearDown() override
         {
-            mock_orch_test::MockOrchTest::TearDown();  
             RestoreSaiApis();
         }
     };
 
     TEST_F(NeighOrchTest, MultiVlanIpLearning)
     {
-        std::string neigh_ip = "10.10.10.10";
+        
         EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry);
-        LearnNeighbor(VLAN_1000, neigh_ip, MAC1);
-        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(NeighborEntry(IpAddress(neigh_ip), VLAN_1000)), 1);
+        LearnNeighbor(VLAN_1000, TEST_IP, MAC1);
+        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(VLAN1000_NEIGH), 1);
 
         EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry);
-        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry);
-        LearnNeighbor(VLAN_2000, neigh_ip, MAC2);
-        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(NeighborEntry(IpAddress(neigh_ip), VLAN_1000)), 0);
-        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(NeighborEntry(IpAddress(neigh_ip), VLAN_2000)), 1);
+        LearnNeighbor(VLAN_2000, TEST_IP, MAC2);
+        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(VLAN1000_NEIGH), 0);
+        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(VLAN2000_NEIGH), 1);
 
-        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry);
         EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry);
-        LearnNeighbor(VLAN_1000, neigh_ip, MAC3);
-        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(NeighborEntry(IpAddress(neigh_ip), VLAN_2000)), 0);
-        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(NeighborEntry(IpAddress(neigh_ip), VLAN_1000)), 1);
+        LearnNeighbor(VLAN_1000, TEST_IP, MAC3);
+        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(VLAN1000_NEIGH), 1);
+        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(VLAN2000_NEIGH), 0);
+    }
+
+    TEST_F(NeighOrchTest, MultiVlanUnableToRemoveNeighbor)
+    {
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry);
+        LearnNeighbor(VLAN_1000, TEST_IP, MAC1);
+        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(VLAN1000_NEIGH), 1);
+        NextHopKey nexthop = { TEST_IP, VLAN_1000 };
+        gNeighOrch->m_syncdNextHops[nexthop].ref_count = 1;
+
+        EXPECT_CALL(*mock_sai_neighbor_api, remove_neighbor_entry).Times(0);
+        EXPECT_CALL(*mock_sai_neighbor_api, create_neighbor_entry).Times(0);
+        LearnNeighbor(VLAN_2000, TEST_IP, MAC2);
+        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(VLAN1000_NEIGH), 1);
+        ASSERT_EQ(gNeighOrch->m_syncdNeighbors.count(VLAN2000_NEIGH), 0);
     }
 }
