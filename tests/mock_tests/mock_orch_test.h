@@ -44,6 +44,7 @@ namespace mock_orch_test
         TunnelDecapOrch *m_TunnelDecapOrch;
         MuxStateOrch *m_MuxStateOrch;
         FlexCounterOrch *m_FlexCounterOrch;
+        VxlanTunnelOrch *m_VxlanTunnelOrch;
 
         virtual void ApplyInitialConfigs() {}
 
@@ -92,7 +93,9 @@ namespace mock_orch_test
             ASSERT_EQ(status, SAI_STATUS_SUCCESS);
         }
 
-        virtual void SetUp() override
+        virtual void PostSetUp() {};
+
+        void SetUp() override
         {
             map<string, string> profile = {
                 { "SAI_VS_SWITCH_TYPE", "SAI_VS_SWITCH_TYPE_BCM56850" },
@@ -274,11 +277,19 @@ namespace mock_orch_test
             gDirectory.set(m_MuxStateOrch);
             ut_orch_list.push_back((Orch **)&m_MuxStateOrch);
 
+            m_VxlanTunnelOrch = new VxlanTunnelOrch(m_state_db.get(), m_app_db.get(), APP_VXLAN_TUNNEL_TABLE_NAME);
+            gDirectory.set(m_VxlanTunnelOrch);
+            ut_orch_list.push_back((Orch **)&m_VxlanTunnelOrch);
+
             ApplyInitialConfigs();
+            PostSetUp();
         }
+
+        virtual void PreTearDown() {};
 
         void TearDown() override
         {
+            PreTearDown();
             for (std::vector<Orch **>::reverse_iterator rit = ut_orch_list.rbegin(); rit != ut_orch_list.rend(); ++rit)
             {
                 Orch **orch = *rit;
