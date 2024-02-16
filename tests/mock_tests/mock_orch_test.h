@@ -9,23 +9,23 @@
 #include "gtest/gtest.h"
 #include <string>
 
-namespace mock_orch_test 
-{
-    using namespace std;
-    using ::testing::Return;
-    using ::testing::Throw;
+using namespace std;
+using ::testing::Return;
+using ::testing::Throw;
 
+namespace mock_orch_test
+{
     static const string PEER_SWITCH_HOSTNAME = "peer_hostname";
     static const string PEER_IPV4_ADDRESS = "1.1.1.1";
     static const string ACTIVE_INTERFACE = "Ethernet4";
     static const string STANDBY_INTERFACE = "Ethernet8";
-    static const string ACTIVE = "active";
-    static const string STANDBY = "standby";
+    static const string ACTIVE_STATE = "active";
+    static const string STANDBY_STATE = "standby";
     static const string STATE = "state";
     static const string VLAN_1000 = "Vlan1000";
     static const string VLAN_2000 = "Vlan2000";
     static const string SERVER_IP1 = "192.168.0.2";
-    static const string SERVER_IP2 = "192>168.0.3";
+    static const string SERVER_IP2 = "192.168.0.3";
     static const string MAC1 = "62:f9:65:10:2f:01";
     static const string MAC2 = "62:f9:65:10:2f:02";
     static const string MAC3 = "62:f9:65:10:2f:03";
@@ -261,7 +261,7 @@ namespace mock_orch_test
                 appDbAclTableType,
             };
             gAclOrch = new AclOrch(acl_table_connectors, m_state_db.get(),
-                                   gSwitchOrch, gPortsOrch, gMirrorOrch, gNeighOrch, gRouteOrch, NULL);
+                                    gSwitchOrch, gPortsOrch, gMirrorOrch, gNeighOrch, gRouteOrch, NULL);
             gDirectory.set(gAclOrch);
             ut_orch_list.push_back((Orch **)&gAclOrch);
 
