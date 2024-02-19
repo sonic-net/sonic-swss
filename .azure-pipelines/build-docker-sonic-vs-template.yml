@@ -141,12 +141,17 @@ jobs:
 
       find $(Build.ArtifactStagingDirectory)/download/sairedis -name '*.deb' -exec cp "{}" .azure-pipelines/docker-sonic-vs/debs \;
       cp -v $(Build.ArtifactStagingDirectory)/download/*.deb .azure-pipelines/docker-sonic-vs/debs
+      if [ -f $(Build.ArtifactStagingDirectory)/download/coverage.info ]; then
+        cp -v $(Build.ArtifactStagingDirectory)/download/coverage.info $(Build.ArtifactStagingDirectory)/
+        cp -v $(Build.ArtifactStagingDirectory)/download/coverage.xml $(Build.ArtifactStagingDirectory)/
+      fi
 
       pushd .azure-pipelines
 
-      build_args=""
+      build_dir=$(grep BUILD_DIR $(Build.ArtifactStagingDirectory)/download/build.info | cut -d= -f2)
+      build_args="--build-arg build_dir=$build_dir"
       if [ '${{ parameters.asan }}' == True ]; then
-        build_args="--build-arg need_dbg=y"
+        build_args="$build_args --build-arg need_dbg=y"
       fi
 
       docker build $build_args --no-cache -t docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber).asan-${{ parameters.asan }} docker-sonic-vs
