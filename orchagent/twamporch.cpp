@@ -52,9 +52,6 @@ using namespace swss;
 #define TWAMP_SESSION_TIMEOUT_MIN    1
 #define TWAMP_SESSION_TIMEOUT_MAX    10
 
-/* Default maximum number of TWAMP session */
-#define DEFAULT_NUMBER_OF_TWAMP_SESSION   0
-
 static map<string, sai_twamp_session_role_t> twamp_role_map =
 {
     { "SENDER",       SAI_TWAMP_SESSION_ROLE_SENDER    },
@@ -126,18 +123,26 @@ TwampOrch::TwampOrch(TableConnector confDbConnector, TableConnector stateDbConne
     sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_WARN("Failed to get switch attribute maximum TWAMP sessions.");
-        m_maxTwampSessionCount = DEFAULT_NUMBER_OF_TWAMP_SESSION;
+        SWSS_LOG_NOTICE("Twamp session resource availability is not supported. Skipping ...");
+        return;
     }
     else
     {
-        m_maxTwampSessionCount = attr.value.s32;
+        m_maxTwampSessionCount = attr.value.u32;
     }
 
-    /* Set MAX entries to counter DB */
-    vector<FieldValueTuple> fvTuple;
-    fvTuple.emplace_back("MAX_TWAMP_SESSION_COUNT", to_string(m_maxTwampSessionCount));
-    m_switchOrch->set_switch_capability(fvTuple);
+    /* Set MAX entries to state DB */
+    if (m_maxTwampSessionCount)
+    {
+        vector<FieldValueTuple> fvTuple;
+        fvTuple.emplace_back("MAX_TWAMP_SESSION_COUNT", to_string(m_maxTwampSessionCount));
+        m_switchOrch->set_switch_capability(fvTuple);
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("Twamp session resource availability is not supported. Skipping ...");
+        return;
+    }
 
     /* Add TWAMP session event notification support */
     DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
@@ -235,14 +240,14 @@ bool TwampOrch::getSessionStatus(const string &name, string& status)
 
 void TwampOrch::removeSessionStatus(const string& name)
 {
-	SWSS_LOG_ENTER();
+    SWSS_LOG_ENTER();
 
-	m_stateDbTwampTable.del(name);
+    m_stateDbTwampTable.del(name);
 }
 
 void TwampOrch::removeSessionCounter(const sai_object_id_t session_id)
 {
-	SWSS_LOG_ENTER();
+    SWSS_LOG_ENTER();
 
     string key_pattern = "COUNTERS:" + sai_serialize_object_id(session_id) + "*";
     auto keys = m_countersDb->keys(key_pattern);
@@ -292,13 +297,13 @@ bool TwampOrch::registerTwampEventNotification(void)
 
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Unable to query the TWAMP event notification capability");
+        SWSS_LOG_NOTICE("Unable to query the TWAMP event notification capability");
         return false;
     }
 
     if (!capability.set_implemented)
     {
-        SWSS_LOG_ERROR("TWAMP register event notification not supported");
+        SWSS_LOG_NOTICE("TWAMP register event notification not supported");
         return false;
     }
 
@@ -928,7 +933,7 @@ void TwampOrch::calculateCounters(const string& name, const uint32_t index, cons
     total_stats.min_jitter = (index == 1) ? stats[SAI_TWAMP_SESSION_STAT_MIN_JITTER] :
                               ((stats[SAI_TWAMP_SESSION_STAT_MIN_JITTER] < total_stats.min_jitter) ?
                                 stats[SAI_TWAMP_SESSION_STAT_MIN_JITTER] : total_stats.min_jitter);
-    total_stats.avg_latency_total += stats[SAI_TWAMP_SESSION_STAT_AVG_JITTER];
+    total_stats.avg_jitter_total += stats[SAI_TWAMP_SESSION_STAT_AVG_JITTER];
     total_stats.avg_jitter = total_stats.avg_jitter_total / index;
 }
 
