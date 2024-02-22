@@ -113,6 +113,7 @@ private:
     Table m_mclagFdbStateTable;
     NotificationConsumer* m_flushNotificationsConsumer;
     NotificationConsumer* m_fdbNotificationConsumer;
+    shared_ptr<DBConnector> m_notificationsDb;
 
     void doTask(Consumer& consumer);
     void doTask(NotificationConsumer& consumer);

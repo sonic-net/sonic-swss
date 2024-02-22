@@ -215,7 +215,23 @@ const vector<sai_port_stat_t> port_stat_ids =
     SAI_PORT_STAT_IP_IN_RECEIVES,
     SAI_PORT_STAT_IF_IN_FEC_CORRECTABLE_FRAMES,
     SAI_PORT_STAT_IF_IN_FEC_NOT_CORRECTABLE_FRAMES,
-    SAI_PORT_STAT_IF_IN_FEC_SYMBOL_ERRORS
+    SAI_PORT_STAT_IF_IN_FEC_SYMBOL_ERRORS,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S0,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S1,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S2,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S3,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S4,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S5,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S6,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S7,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S8,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S9,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S10,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S11,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S12,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S13,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S14,
+    SAI_PORT_STAT_IF_IN_FEC_CODEWORD_ERRORS_S15
 };
 
 const vector<sai_port_stat_t> gbport_stat_ids =
@@ -628,14 +644,14 @@ PortsOrch::PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_wi
     }
 
     /* Add port oper status notification support */
-    DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
-    m_portStatusNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
+    m_notificationsDb = make_shared<DBConnector>("ASIC_DB", 0);
+    m_portStatusNotificationConsumer = new swss::NotificationConsumer(m_notificationsDb.get(), "NOTIFICATIONS");
     auto portStatusNotificatier = new Notifier(m_portStatusNotificationConsumer, this, "PORT_STATUS_NOTIFICATIONS");
     Orch::addExecutor(portStatusNotificatier);
 
     if (m_cmisModuleAsicSyncSupported)
     {
-        m_portHostTxReadyNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
+        m_portHostTxReadyNotificationConsumer = new swss::NotificationConsumer(m_notificationsDb.get(), "NOTIFICATIONS");
         auto portHostTxReadyNotificatier = new Notifier(m_portHostTxReadyNotificationConsumer, this, "PORT_HOST_TX_NOTIFICATIONS");
         Orch::addExecutor(portHostTxReadyNotificatier);
     }
@@ -2335,7 +2351,7 @@ bool PortsOrch::setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip)
         return false;
     }
 
-    for (const auto p: portv)
+    for (const auto &p: portv)
     {
         sai_attribute_t attr;
         attr.id = SAI_HOSTIF_ATTR_VLAN_TAG;
