@@ -27,6 +27,7 @@
 #include "muxorch.h"
 #include "nhgorch.h"
 #include "copporch.h"
+#include "twamporch.h"
 #include "directory.h"
 
 extern int gBatchSize;
@@ -86,3 +87,4 @@ extern sai_mpls_api_t* sai_mpls_api;
 extern sai_counter_api_t* sai_counter_api;
 extern sai_samplepacket_api_t *sai_samplepacket_api;
 extern sai_fdb_api_t* sai_fdb_api;
+extern sai_twamp_api_t* sai_twamp_api;

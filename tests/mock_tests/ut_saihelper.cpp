@@ -89,6 +89,7 @@ namespace ut_helper
         sai_api_query(SAI_API_MPLS, (void**)&sai_mpls_api);
         sai_api_query(SAI_API_COUNTER, (void**)&sai_counter_api);
         sai_api_query(SAI_API_FDB, (void**)&sai_fdb_api);
+        sai_api_query(SAI_API_TWAMP, (void**)&sai_twamp_api);
 
         return SAI_STATUS_SUCCESS;
     }
@@ -118,6 +119,7 @@ namespace ut_helper
         sai_buffer_api = nullptr;
         sai_queue_api = nullptr;
         sai_counter_api = nullptr;
+        sai_twamp_api = nullptr;
 
         return SAI_STATUS_SUCCESS;
     }
