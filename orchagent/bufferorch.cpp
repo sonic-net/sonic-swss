@@ -967,8 +967,8 @@ task_process_status BufferOrch::processQueue(KeyOpFieldsValuesTuple &tuple)
                     }
                 }
                 // create/remove a port queue counter for the queue buffer.
-                // For VOQ chassis, flexcounterorch adds the Queue Counters for all egress and VOQ queueis for all front panel and system ports
-                // to  the FLEX_COUNTER_DB irrespective of BUFFER_QUEUE configuration.
+                // For VOQ chassis, flexcounterorch adds the Queue Counters for all egress and VOQ queues of all front panel and system ports
+                // to  the FLEX_COUNTER_DB irrespective of BUFFER_QUEUE configuration. So Port Queue counter needs to be updated only for non VOQ switch.
                 else if (gMySwitchType != "voq")
                 {
                     auto flexCounterOrch = gDirectory.get<FlexCounterOrch*>();
