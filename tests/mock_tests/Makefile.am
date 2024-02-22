@@ -58,6 +58,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 test_failure_handling.cpp \
                 warmrestarthelper_ut.cpp \
                 neighorch_ut.cpp \
+                twamporch_ut.cpp \
                 $(top_srcdir)/warmrestart/warmRestartHelper.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/lib/subintf.cpp \
