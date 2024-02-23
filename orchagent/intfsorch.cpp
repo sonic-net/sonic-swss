@@ -372,7 +372,7 @@ bool IntfsOrch::setIntfVlanFloodType(const Port &port, sai_vlan_flood_control_ty
     attr.id = SAI_VLAN_ATTR_UNKNOWN_MULTICAST_FLOOD_CONTROL_TYPE;
     attr.value.s32 = vlan_flood_type;
 
-    sai_status_t status = sai_vlan_api->set_vlan_attribute(port.m_vlan_info.vlan_oid, &attr);
+    status = sai_vlan_api->set_vlan_attribute(port.m_vlan_info.vlan_oid, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set multicast flood type for VLAN %u, rv:%d", port.m_vlan_info.vlan_id, status);
