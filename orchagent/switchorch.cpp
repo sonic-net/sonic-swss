@@ -1121,6 +1121,11 @@ void SwitchOrch::onSwitchAsicSdkHealthEvent(sai_object_id_t switch_id,
     m_asicSdkHealthEventTable->set(time_ss.str(),values);
 
     event_publish(g_events_handle, "asic-sdk-health-event", &params);
+
+    if (severity == SAI_SWITCH_ASIC_SDK_HEALTH_SEVERITY_FATAL)
+    {
+        m_fatalEventCount++;
+    }
 }
 
 bool SwitchOrch::setAgingFDB(uint32_t sec)

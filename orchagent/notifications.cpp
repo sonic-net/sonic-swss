@@ -37,6 +37,11 @@ void on_switch_shutdown_request(sai_object_id_t switch_id)
     /* TODO: Later a better restart story will be told here */
     SWSS_LOG_ERROR("Syncd stopped");
 
+    if (gSwitchOrch->isFatalEventReceived())
+    {
+        abort();
+    }
+
     /*
         The quick_exit() is used instead of the exit() to avoid a following data race:
             * the exit() calls the destructors for global static variables (e.g.BufferOrch::m_buffer_type_maps)

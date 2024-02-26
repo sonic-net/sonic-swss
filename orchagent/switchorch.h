@@ -58,6 +58,12 @@ public:
                                     sai_switch_asic_sdk_health_category_t category,
                                     sai_switch_health_data_t data,
                                     const sai_u8_list_t &description);
+
+    inline bool isFatalEventReceived() const
+        {
+            return (m_fatalEventCount != 0);
+        }
+
 private:
     void doTask(Consumer &consumer);
     void doTask(swss::SelectableTimer &timer);
@@ -120,6 +126,7 @@ private:
     std::set<sai_switch_attr_t> m_supportedAsicSdkHealthEventAttributes;
     std::string m_eliminateEventsSha;
     swss::SelectableTimer* m_eliminateEventsTimer = nullptr;
+    uint32_t m_fatalEventCount = 0;
 
     void initAsicSdkHealthEventNotification();
     sai_status_t registerAsicSdkHealthEventCategories(sai_switch_attr_t saiSeverity, const std::string &severityString, const std::string &suppressed_category_list="");
