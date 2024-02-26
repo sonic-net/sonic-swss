@@ -1156,7 +1156,7 @@ map<string, Port>& PortsOrch::getAllPorts()
     return m_portList;
 }
 
-unordered_set<string>& PortsOrch::getVlanPorts()
+unordered_set<string>& PortsOrch::getAllVlans()
 {
     return m_vlanPorts;
 }

@@ -151,7 +151,7 @@ public:
     bool createVlanHostIntf(Port& vl, string hostif_name);
     bool removeVlanHostIntf(Port vl);
 
-    unordered_set<string>& getVlanPorts();
+    unordered_set<string>& getAllVlans();
 
     bool createBindAclTableGroup(sai_object_id_t  port_oid,
                    sai_object_id_t  acl_table_oid,
